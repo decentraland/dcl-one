@@ -125,7 +125,7 @@ pub struct SceneUpdates {
     /// movement controller, [`MOVEMENT_CONTROLLER`]). These scenes bypass the `scene_threads`
     /// limit but still occupy slots, preventing non-priority scenes from running.
     pub priority_scenes: HashMap<&'static str, Entity>,
-    /// The movement controller's recent tick times, for its re-dispatch on a late reply.
+    /// For the movement controller's re-dispatch on a late reply.
     pub(crate) movement_ticks: movement_redispatch::MovementTickTimes,
     /// When the previous frame's scene loop ended.
     pub(crate) previous_loop_end: Instant,
@@ -1667,8 +1667,8 @@ fn send_scene_updates(
     let (_, mut context, mut tick_timing, redispatch_rotation, scene_transform, is_super, traffic) =
         scenes.get_mut(ent).unwrap();
 
-    // only live scenes are queued, so this only fails if the scene broke this frame. Its queue
-    // entry is spent, so the loop stops counting it as a job left to send
+    // only live scenes are queued, so this only fails if the scene broke this frame. The queue
+    // entry is spent, so it no longer counts as a job left to send
     let Some(sender) = context.sender().cloned() else {
         updates.eligible_jobs -= 1;
         return;
@@ -1884,7 +1884,6 @@ fn receive_scene_updates(
     let first_poll = !std::mem::replace(&mut updates.loop_polled, true);
     let movement_scene = updates.priority_scenes.get(MOVEMENT_CONTROLLER).copied();
     loop {
-        // the movement scene, to dispatch again on its late reply
         let mut redispatch = None;
         let maybe_completed_job = match updates.receiver().try_recv() {
             Ok((scene_id, response)) => match response {
@@ -1985,7 +1984,7 @@ fn receive_scene_updates(
                             context.last_update_frame = frame.0;
                             // with at most one tick in flight, this reply's tick is the last sent
                             context.reply_sent = context.last_sent;
-                            // a context requires its timing (`#[require(SceneTickTiming)]`)
+                            // `RendererSceneContext` requires `SceneTickTiming`
                             let tick_timing = tick_timings.get_mut(root);
                             dcl_assert!(tick_timing.is_ok());
                             if let Ok(mut tick_timing) = tick_timing {
@@ -2083,7 +2082,7 @@ fn receive_scene_updates(
             updates.jobs_in_flight.remove(&completed_job);
         }
         if let Some(scene) = redispatch {
-            // ahead of the queue, in a slot of its own: the loop's next pass sends it
+            // ahead of the queue, with a slot of its own, so that the loop's next pass sends it
             updates.scene_queue.push_front((scene, FloatOrd(0.0)));
             updates.eligible_jobs += 1;
         }

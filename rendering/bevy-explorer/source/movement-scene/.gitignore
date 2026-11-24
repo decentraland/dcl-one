@@ -2,7 +2,6 @@ node_modules
 .DS_Store
 bin
 
-# Blender source files stay out of git.
 *.blend
 *.blend1
 

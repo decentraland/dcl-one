@@ -1,16 +1,11 @@
-//! The movement controller scene's re-dispatch. The player's movement comes from that scene's
-//! reply to the tick dispatched at the start of the frame; a reply that lands after the frame's
-//! scene loop deadline is applied a frame late, and the scene, still in flight when the next frame
-//! queues its scenes, skips that frame's dispatch. When such a late reply lands, the scene is
-//! dispatched again at once with the frame's input, ahead of the queue. A reply seen at the
-//! loop's first poll is always answered; one seen later in the loop only if the time left
-//! before the deadline covers the 90th percentile of the scene's recent ticks.
+//! Re-dispatches the movement controller scene on a late reply. A reply that lands after the
+//! frame's scene loop deadline leaves the scene in flight, so the next frame would skip its
+//! dispatch. On such a reply, the scene is dispatched again at once, ahead of the queue.
 //!
-//! The re-dispatch is sent the player's rotation as the late reply sets it
-//! (`RedispatchRotation`): the engine applies that reply's orientation only after the scene loop,
-//! and the scene turns from the rotation it is sent, so from the player's current rotation it
-//! would turn again from the one before that reply. Every other frame would then continue a
-//! different chain of replies, and the avatar would alternate between the two.
+//! The re-dispatch is sent the rotation that the late reply sets (`RedispatchRotation`), because
+//! the engine applies that rotation only after the scene loop. With the player's current rotation,
+//! every other frame would continue a different chain of replies, and the avatar would alternate
+//! between two rotations.
 
 use std::{collections::VecDeque, time::Duration};
 
@@ -21,8 +16,8 @@ use crate::renderer_context::{RendererSceneContext, SceneTickTiming, SCENE_FIRST
 /// Ticks the percentile is taken over.
 const TICK_SAMPLES: usize = 32;
 
-/// The movement scene's recent tick times, dispatch to reply, and counts of its re-dispatches
-/// since startup for the debug panel.
+/// The movement scene's recent tick times, from dispatch to reply, and counters for the debug
+/// panel.
 #[derive(Debug, Default)]
 pub(crate) struct MovementTickTimes {
     samples: VecDeque<Duration>,
@@ -44,18 +39,16 @@ impl MovementTickTimes {
         self.samples.push_back(tick);
     }
 
-    /// Ticks recorded for the percentile, up to [`TICK_SAMPLES`].
     pub(crate) fn samples(&self) -> usize {
         self.samples.len()
     }
 
-    /// A re-dispatch was sent the staged `rotation`.
     pub(crate) fn record_staged_rotation(&mut self, rotation: bevy::math::Quat) {
         self.staged_rotations += 1;
         self.last_staged_yaw = Some(rotation.to_euler(bevy::math::EulerRot::YXZ).0.to_degrees());
     }
 
-    /// The 90th percentile (nearest rank) of the recorded ticks; None before the first.
+    /// Nearest rank. `None` before the first tick.
     pub(crate) fn p90(&self) -> Option<Duration> {
         if self.samples.is_empty() {
             return None;
@@ -66,21 +59,15 @@ impl MovementTickTimes {
         Some(sorted[rank.max(1) - 1])
     }
 
-    /// A re-dispatch is worth it while the frame's scene loop has time left and, for a late
-    /// reply seen after the loop's first poll, the time left covers the percentile (with no
-    /// ticks recorded yet, always). A re-dispatch at the first poll goes out where the frame's
-    /// regular dispatch would, with as much of the loop left, so it is as likely to land in time.
-    /// The percentile cannot judge it there: a tick that missed its frame counts as lasting
-    /// until its loop ended, so once over a tenth of the recent ticks miss, the percentile is at
-    /// least a whole loop, more than any loop has left after its first poll.
+    /// At the loop's first poll, a re-dispatch leaves where the frame's regular dispatch would, so
+    /// any time left is enough. The percentile cannot judge that case: a missed tick counts as a
+    /// whole loop, so once over a tenth of the ticks miss, the percentile exceeds what any loop has
+    /// left after its first poll.
     fn redispatch_fits(&self, left: Duration, first_poll: bool) -> bool {
         !left.is_zero() && (first_poll || self.p90().is_none_or(|p90| left >= p90))
     }
 
-    /// Records the movement scene's tick that just replied and tells whether to dispatch the
-    /// scene again now: its reply came in a later frame than its dispatch, the scene is live and
-    /// can run and, unless the reply is seen at this loop's first poll, the time left before
-    /// `loop_end` covers its recent ticks.
+    /// Records the tick that just replied. Returns whether to dispatch the scene again now.
     pub(crate) fn redispatch_due(
         &mut self,
         context: &RendererSceneContext,
@@ -116,10 +103,9 @@ impl MovementTickTimes {
     }
 }
 
-/// How long a tick took from its dispatch to its reply. The scene loop polls replies only while
-/// it runs, so a reply first seen at a loop's first poll, from a tick dispatched in an earlier
-/// frame, arrived some time after the previous loop ended: it counts as taking until then, the
-/// least it took.
+/// The scene loop polls replies only while it runs. A late reply first seen at a loop's first poll
+/// arrived after the previous loop ended, so it counts as arriving then, the earliest it could
+/// have.
 fn tick_time(
     sent: Instant,
     received: Instant,
@@ -216,10 +202,10 @@ mod tests {
         };
         // the reply of frame 6's tick landed in frame 7
         assert!(replied(6, 7).late_reply_in(7));
-        // it is no reason to call frame 8's dispatch one
+        // frame 8's dispatch is not a re-dispatch
         assert!(!replied(6, 7).late_reply_in(8));
-        // a reply two frames late makes its frame's dispatch one too: that dispatch alone is sent
-        // the staged rotation
+        // a reply two frames late also makes a re-dispatch, and only that dispatch gets the staged
+        // rotation
         assert!(replied(5, 7).late_reply_in(7));
         let staged = RedispatchRotation(bevy::math::Quat::from_rotation_y(1.0));
         let two_late = replied(5, 7);

@@ -10,11 +10,11 @@ export var sprintJumpHeight = 0;
 export var doubleJumpHeight = 0;
 export var glidingSpeed = 0;
 export var glidingFallingSpeed = 0;
-export var landingStunTime = LANDING_STUN_TIME; // s without horizontal movement after a stunning landing
+export var landingStunTime = LANDING_STUN_TIME;
 var doubleJumpEnabled = false;
 export var glideEnabled = false;
-// Slots available between two grounded frames. applyJump() tracks usage in
-// separate counters and falls through to a glide once the air slot is spent.
+// Slots available between two grounded frames. The vertical model counts the jumps
+// since the ground and falls through to a glide once the air slot is spent.
 export var maxGroundJumps = 0; // 1 unless disableJump
 export var maxAirJumps = 0;    // 1 unless disableDoubleJump
 export var disableOrientation = false;
@@ -23,7 +23,7 @@ export function initParameters(
     locomotion: DeepReadonlyObject<PBAvatarLocomotionSettings> | undefined,
     modifiers: DeepReadonlyObject<PBInputModifier> | undefined
 ) {
-    // Engine-provided locomotion values win; settings.ts supplies the defaults.
+    // Engine-provided locomotion values win over the settings.ts defaults.
     const baseSprintSpeed = locomotion?.runSpeed ?? settings.sprintSpeed;
     const baseJogSpeed = locomotion?.jogSpeed ?? settings.jogSpeed;
     const baseWalkSpeed = locomotion?.walkSpeed ?? settings.walkSpeed;
@@ -31,12 +31,11 @@ export function initParameters(
     const baseJumpHeight = locomotion?.jumpHeight ?? settings.jumpHeight;
     const baseSprintJumpHeight = locomotion?.runJumpHeight ?? settings.sprintJumpHeight;
 
-    // Double-jump height and glide speeds have no entry in settings.ts; the constants
-    // are the defaults, overridden by the engine locomotion component.
+    // Double-jump height and glide speeds have no entry in settings.ts, so the constants are their defaults.
     doubleJumpHeight = locomotion?.doubleJumpHeight ?? DOUBLE_JUMP_HEIGHT;
     glidingSpeed = locomotion?.glidingSpeed ?? GLIDE_HORIZONTAL_SPEED;
     glidingFallingSpeed = locomotion?.glidingFallingSpeed ?? GLIDE_FALL_SPEED;
-    // the scene's hardLandingCooldown as set: 0 or less leaves no stun
+    // taken as set: 0 or less means no stun
     landingStunTime = locomotion?.hardLandingCooldown ?? LANDING_STUN_TIME;
 
     const jogEnabled = !modifiers?.mode?.standard.disableJog && !modifiers?.mode?.standard.disableAll;
@@ -63,7 +62,6 @@ export function initParameters(
     sprintJumpHeight = jumpEnabled ? baseSprintJumpHeight : 0;
 
     maxGroundJumps = jumpEnabled ? 1 : 0;
-    // One air jump per airtime; once it is spent a fresh airborne press goes to the glide.
     maxAirJumps = doubleJumpEnabled && doubleJumpHeight > 0 ? AIR_JUMP_COUNT : 0;
 
     disableOrientation = !anyEnabled;

@@ -202,8 +202,7 @@ impl Plugin for SceneDebugPanelPlugin {
     }
 }
 
-/// Read the movement scene's re-dispatch: its late replies, the re-dispatches they queued and the
-/// rotation those were sent.
+/// Read the movement scene's late replies, re-dispatches and staged rotations.
 #[derive(clap::Parser, ConsoleCommand)]
 #[command(name = "/movement_redispatch_state")]
 struct MovementRedispatchState;

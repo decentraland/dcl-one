@@ -108,8 +108,8 @@ export function setGrounded(g: boolean) {
     grounded = g;
 }
 
-// height of the ground the avatar stood on at the end of the previous tick, if it was grounded: the ground under the
-// centre, or on an edge the edge's top, where the capsule touches it
+// height of the ground the avatar stood on at the end of the previous tick (NaN: not grounded). On an edge it is the
+// edge's top, where the capsule touches it.
 var prevGroundY = NaN;
 // slope (tangent of the angle) of the ground under the centre at the end of the previous tick
 var prevGroundSlope = 0;
@@ -123,22 +123,18 @@ export function recordGroundForNextTick() {
     prevGroundSlope = slopeOf(groundRayNormal);
 }
 
-// Walkable ground under the centre, no further below the capsule's contact than a walkable slope puts it.
 export function centreOnGround(): boolean {
     return groundRayDistance !== Infinity && groundRayNormal.y >= GROUNDED_ANGLE_Y_LEN
         && groundRayDistance - Math.max(0, groundDistance) <= GROUND_SNAP_STEP_DROP;
 }
 
-// centreOnGround, and no further below the ground stood on last tick than the ground snap follows (a step of
-// GROUND_SNAP_STEP_DROP, see stepDropAllowsSnap). False on an edge: only the rim of the capsule rests on the corner of a
-// ledge, a riser or a steep crest.
+// False on an edge, where only the capsule's rim rests on the corner of a ledge, a riser or a steep crest.
 export function centreSupported(): boolean {
     return centreOnGround() && stepDropAllowsSnap();
 }
 
-// Snap follows the ground under the centre down from the ground stood on last tick (on an edge, from the edge) by at
-// most GROUND_SNAP_STEP_DROP beyond what the slope of the ground (then or now) accounts for over the distance moved
-// since; past a larger drop (a step edge) the avatar falls.
+// A drop from the ground stood on last tick larger than GROUND_SNAP_STEP_DROP, plus what the steeper slope (then or
+// now) drops over the distance moved, is a step edge.
 function stepDropAllowsSnap(): boolean {
     if (Number.isNaN(prevGroundY)) return true;
     if (groundRayDistance === Infinity) return false;

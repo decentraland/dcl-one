@@ -1,8 +1,11 @@
 use bevy::prelude::*;
 
-use common::structs::{
-    AvatarDynamicState, HeadSync, LocomotionSpeeds, MoveKind, PointAtSync, PrimaryUser,
-    SceneDrivenAnim,
+use common::{
+    dynamics::PLAYER_LANDED_THRESHOLD,
+    structs::{
+        AvatarDynamicState, HeadSync, LocomotionSpeeds, MoveKind, PointAtSync, PrimaryUser,
+        SceneDrivenAnim,
+    },
 };
 use dcl_component::{
     proto_components::kernel::comms::rfc4,
@@ -55,7 +58,6 @@ struct LastAnim {
     // Monotonic counter stamped onto each outbound SDA so the (unreliable) receiver can
     // order datagrams and drop reordered/duplicate ones. Carries no timing.
     sequence: u32,
-    // Jumps since the ground, followed every frame from the clips.
     jump_count: JumpCount,
 }
 
@@ -116,9 +118,9 @@ fn broadcast_position(
         last_anim.last_seen_sounds = current_sounds.to_vec();
     }
 
-    // What the scene's clip (or, without one, the engine's move kind) shows, and the jumps since
-    // the ground, followed every frame so a short jump clip between broadcasts still counts.
-    let grounded = dynamics.ground_height < 0.2;
+    // the jump count updates every frame, before the send pacing, so that a jump clip shorter than
+    // the broadcast interval still counts
+    let grounded = dynamics.ground_height < PLAYER_LANDED_THRESHOLD;
     let motion = match scene_anim.and_then(|s| s.active.as_ref()) {
         Some(anim) => ClipMotion::of_clip(&anim.src, anim.speed),
         None => ClipMotion::of_move_kind(dynamics.move_kind),
@@ -244,10 +246,6 @@ fn broadcast_position(
         None
     };
 
-    // The animation state other clients read: the movement blend from the horizontal speed at the
-    // player's locomotion speeds (`gait`), falls from the vertical speed, and jumps, the glider and
-    // a hard landing from the clip (see `movement_animation`). The packet below takes its animation
-    // fields from it.
     let animation = wire_animation(
         dynamics.velocity,
         &speeds.copied().unwrap_or_default(),
@@ -262,13 +260,11 @@ fn broadcast_position(
         position_y: dcl_position.0[1],
         position_z: dcl_position.0[2],
         // Yaw in [0, 360). Pulse quantizes rotation_y over [0, 360] on the delta tier, so a negative
-        // angle clamps to 0 there and freezes remote rotation. Taken raw from the yaw (not the
-        // compressed round-trip) to avoid the extra 6-bit (~5.6°) coarsening; the receiver maps it
-        // back with `from_rotation_y(-rotation_y)`.
+        // angle clamps to 0 there and freezes remote rotation. The receiver maps it back with
+        // `from_rotation_y(-rotation_y)`.
         rotation_y: (-rotation.to_euler(bevy::math::EulerRot::YXZ).0.to_degrees())
             .rem_euclid(360.0),
-        // Raw velocity — the uncompressed packet carries no quantization, and Pulse re-quantizes
-        // server-side anyway, so the old compressed round-trip only threw away precision (3–5 bits).
+        // Raw velocity, which Pulse quantizes server-side.
         // z is negated to match the receiver's `-velocity_z` DCL-space flip.
         velocity_x: dynamics.velocity.x,
         velocity_y: dynamics.velocity.y,

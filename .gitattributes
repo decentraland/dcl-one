@@ -106,7 +106,7 @@ library/ui/apps/sites/assets/**/*.webp filter=lfs diff=lfs merge=lfs -text
 library/ui/apps/sites/assets/**/*.mp4 filter=lfs diff=lfs merge=lfs -text
 library/ui/apps/sites/assets/**/*.webm filter=lfs diff=lfs merge=lfs -text
 library/ui/assets/**/*.webp filter=lfs diff=lfs merge=lfs -text
-# The Explorer's movement scene: its models, images and sounds live in Git LFS.
+# The Explorer's movement scene.
 rendering/bevy-explorer/source/movement-scene/**/*.[gG][lL][bB] filter=lfs diff=lfs merge=lfs -text
 rendering/bevy-explorer/source/movement-scene/**/*.[pP][nN][gG] filter=lfs diff=lfs merge=lfs -text
 rendering/bevy-explorer/source/movement-scene/**/*.[wW][aA][vV] filter=lfs diff=lfs merge=lfs -text

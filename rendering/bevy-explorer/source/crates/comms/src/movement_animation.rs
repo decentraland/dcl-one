@@ -1,8 +1,5 @@
-//! The animation state other clients receive with the player's rfc4 `Movement`, derived from what
-//! the engine knows: the movement blend from the horizontal speed (`gait`), ground from the
-//! engine's ground test, falls from the vertical speed, and jumps, the glider and hard landings
-//! from the file name of the clip the scene controlling movement plays
-//! (`AvatarMovement.animation.src`).
+//! The animation fields of the rfc4 `Movement` that this client sends. Jumps, the glider and hard
+//! landings come from the file name of the clip that the movement scene plays.
 
 use bevy::prelude::*;
 use common::structs::{LocomotionSpeeds, MoveKind};
@@ -10,7 +7,7 @@ use dcl_component::proto_components::kernel::comms::rfc4::{self, movement::Glide
 
 use crate::gait;
 
-/// Vertical speed (m/s, up positive) below which an avatar off the ground is falling far.
+/// m/s, up positive. An avatar off the ground that falls faster is in a long fall.
 const LONG_FALLING_SPEED: f32 = -8.0;
 
 /// The phases of a hard landing's stun, by file name prefix.
@@ -20,20 +17,14 @@ const STUN_CLIPS: [&str; 3] = [
     "hard_landing_exit",
 ];
 
-/// What the file name of a movement clip says about the avatar's motion. The naming convention,
-/// matched case-insensitively on the file name without its folder and extension:
+/// What the file name of a movement clip says about the avatar's motion. Matched
+/// case-insensitively on the file name, without folder and extension.
 ///
-/// - `DoubleJump*`: the second jump;
-/// - `Hard_Landing*Glider*`: landing while the glider closes;
-/// - `Glid*` (`Gliding_AvatarForwardRig`, `glide`): gliding; with `Start` in the name the glider
-///   is opening, with `End` it is closing;
-/// - `*Jump_Start`, `*Jump_Rise_Loop`, `*Jump_Mid` (any prefix, e.g. `Jog_`, `Run_`): a jump
-///   under way; the fall loops are not jumps, so walking off a ledge is not one;
-/// - `Hard_Landing_Enter*`, `Hard_Landing_Loop*`, `Hard_Landing_Exit*` played at speed 1 or
-///   slower: a hard landing, the stun; the scene plays Exit faster as the stun ends;
-/// - plain `Hard_Landing`: the landing of any big drop, or sped up the quick dip of a soft
-///   landing, which is nothing;
-/// - any other name: nothing.
+/// - The fall loops are not jumps, so walking off a ledge is not a jump.
+/// - The stun clips count only at speed 1 or slower, because the scene speeds up the Exit clip as
+///   the stun ends.
+/// - The plain `Hard_Landing` clip is no stun. The scene plays it for any big drop, and faster for
+///   a soft landing.
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 pub enum ClipMotion {
     #[default]
@@ -47,7 +38,6 @@ pub enum ClipMotion {
 }
 
 impl ClipMotion {
-    /// The motion the clip at `src`, played at `speed`, shows.
     pub fn of_clip(src: &str, speed: f32) -> Self {
         let file = src.rsplit(['/', '\\']).next().unwrap_or(src);
         let name = file
@@ -78,7 +68,6 @@ impl ClipMotion {
         }
     }
 
-    /// The motion with no scene clip playing: the engine's own move kind.
     pub fn of_move_kind(kind: MoveKind) -> Self {
         match kind {
             MoveKind::Jump => Self::Jump,
@@ -88,7 +77,7 @@ impl ClipMotion {
         }
     }
 
-    /// The jumps since the ground the motion shows: a glide only follows the air jump.
+    /// A glide only follows the air jump, so it counts two.
     fn jumps(self) -> u32 {
         match self {
             Self::Jump => 1,
@@ -107,9 +96,7 @@ impl ClipMotion {
     }
 }
 
-/// Jumps since the avatar last stood on ground: reset on the ground, raised by the clips and by a
-/// jump the engine has in flight (`AvatarDynamicState::jump_time`). Updated every frame, so a jump
-/// clip shorter than the broadcast interval still counts.
+/// Jumps since the avatar last stood on the ground.
 #[derive(Debug, Default, Clone, Copy)]
 pub struct JumpCount(u32);
 
@@ -124,10 +111,7 @@ impl JumpCount {
     }
 }
 
-/// An rfc4 `Movement` with the animation fields the engine derives set (`movement_blend_value`,
-/// `is_grounded`, `is_jumping`, `is_falling`, `is_long_fall`, `is_stunned`, `jump_count`,
-/// `glide_state`) and every other field left at its default for the sender to fill.
-/// `is_jumping` (deprecated) marks a jump in the air not yet falling.
+/// An rfc4 `Movement` with only the animation fields set. The sender fills the rest.
 pub fn wire_animation(
     velocity: Vec3,
     speeds: &LocomotionSpeeds,

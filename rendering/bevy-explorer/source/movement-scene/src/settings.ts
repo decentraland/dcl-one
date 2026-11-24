@@ -1,5 +1,3 @@
-// Runtime values the movement and animation code reads as `settings.*`. The
-// speeds and jump heights are seeded from constants.ts.
 import {
   WALK_SPEED, JOG_SPEED, SPRINT_SPEED,
   HORIZONTAL_ACCEL_TIME_GROUND, HORIZONTAL_DAMP_TIME_GROUND,
@@ -11,10 +9,7 @@ export const settings = {
   walkSpeed: WALK_SPEED,
   jogSpeed: JOG_SPEED,
   sprintSpeed: SPRINT_SPEED,
-  // Time (s) for the input-hold weight to ramp 0 -> 1; the acceleration blends from its low to
-  // its high value with that weight.
   accelTimeGround: HORIZONTAL_ACCEL_TIME_GROUND,
-  // Smoothing time (s) of a released input axis; 0 stops within one integration step.
   dampTimeGround: HORIZONTAL_DAMP_TIME_GROUND,
 
   // --- Animation phasing ---
@@ -40,19 +35,15 @@ export const settings = {
   // step, which otherwise reads as a shuffle (0.1 tuned in testing).
   jogStopStart: 0.1,
   // --- Glide pose selection ---
-  // Turn rate (deg/s) of the glide's facing at which the bank reaches its full angle (GLIDE_TILT_FULL_ANGLE); a
-  // gentle glide turn banks a fraction of it, a tight spiral fully.
+  // Turn rate (deg/s) at which the glide bank reaches its full angle (GLIDE_TILT_FULL_ANGLE).
   glideLeanRate: 300,
   // h-speed (m/s) above which glide uses the forward (pitched) pose; below it
   // uses the upright/idle pose ("lean back").
   glideForwardSpeed: 3,
-  // Crossfade time (s) between the forward and idle glide poses (GLIDE_AVATAR in index.ts).
-  // Higher = a lazier, smoother swap.
+  // Crossfade time (s) between the forward and idle glide poses.
   gliderFade: 0.5,
 
   // --- Jump look & feel ---
-  // Apex (m) of a tapped standing jump / full-speed sprint jump; holding the key reaches about
-  // twice as high.
   jumpHeight: JUMP_HEIGHT,
   sprintJumpHeight: JUMP_HEIGHT_SPRINT,
   // Blend time (s) INTO the jump start clip on a fresh ground jump. Kept much

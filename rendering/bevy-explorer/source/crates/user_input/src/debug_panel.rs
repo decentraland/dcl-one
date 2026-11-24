@@ -108,8 +108,8 @@ fn camera_state(
     cmd.reply_ok(json!({"sensitivity":camera.sensitivity, "distance":camera.distance, "far":far, "fov":fov, "override":camera.scene_override.is_some()}).to_string());
 }
 
-/// Read the active SDK movement settings, the last frame of controller feedback and the player's
-/// height over the ground.
+/// Read the active SDK movement settings, the last movement step and the player's height over the
+/// ground.
 #[derive(clap::Parser, ConsoleCommand)]
 #[command(name = "/movement_state")]
 struct MovementState;
@@ -128,7 +128,6 @@ fn movement_state(
     let loc = active.single().ok().map(|active| &active.component.0);
     let player = player.single().ok();
     let vector = |v: Vector3| [v.x, v.y, v.z];
-    // the last completed step: this frame's has not run yet when a command reads
     let requested = step.requested_velocity.or_else(|| {
         player.map(|(movement, _)| Vector3::world_vec_from_vec3(&movement.component.velocity))
     });
@@ -197,8 +196,6 @@ mod tests {
         assert!(report["external"].is_null());
     }
 
-    // The scenes' broadcast clears `AvatarMovementInfo` at the start of each frame, before a
-    // command runs: the reply still carries the step that moved the player.
     #[test]
     fn a_moving_step_reports_its_actual_velocity_after_the_next_broadcast() {
         use crate::avatar_movement::{apply_movement, broadcast_movement_info, CentralCollisions};
@@ -224,7 +221,7 @@ mod tests {
             .add_systems(Update, (broadcast_movement_info, movement_state).chain())
             .add_systems(PostUpdate, apply_movement);
         let mut movement = ActivePlayerComponent::<AvatarMovement>::from_config(&default());
-        // 2 m/s east, 1 m/s north (SDK axes; bevy's z points south)
+        // 2 m/s east, 1 m/s north: bevy's z points south
         movement.component.velocity = Vec3::new(2.0, 0.0, -1.0);
         app.world_mut().spawn((
             PrimaryUser::default(),

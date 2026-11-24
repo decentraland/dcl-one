@@ -1,10 +1,7 @@
-// Step clock shared by the horizontal and vertical models. Both step once per engine frame, by the
-// frame's duration; this module turns the engine's tick timing into the time each tick covers
-// and the reply delay to predict over.
+// Step clock of the horizontal and vertical models. Both models step once per engine frame, by the frame's duration.
 import { FRAME_TIME_SMOOTHING, MAX_STEPS, MAX_TICK_TIME } from './constants';
 
-// Time the models advance this tick: from the end of the previous tick's frame to the end of
-// this tick's frame.
+// Time the models advance this tick: from the end of the previous tick's frame to the end of this tick's frame.
 export var tickAdvance = 0;
 // Duration of this tick's frame (AvatarMovementInfo.stepTime).
 export var frameTime = 0;
@@ -17,19 +14,16 @@ var lastFrameTime = 0;
 var meanFrameTime = 0;
 var meanRatio = 1;
 
-// tickTime: engine time since the previous tick (previousStepTime, clamped), which ends at
-// the frame before this one. stepTime: this frame's duration, clamped the same way. lateFrames: frames the previous reply was still in flight
-// after the frame before this one (the engine applied an earlier reply there, see index.ts).
+// tickTime: engine time since the previous tick, which ends at the frame before this one.
+// lateFrames: frames the previous reply was still in flight after the frame before this one.
 export function beginTick(tickTime: number, stepTime: number, previousStepTime: number, lateFrames: number) {
   frameTime = Math.min(Math.max(0, stepTime), MAX_TICK_TIME);
   tickAdvance = Math.max(0, tickTime + frameTime - lastFrameTime);
   lastFrameTime = frameTime;
 
-  // previousStepTime spans the previous dispatch frame through the frame its reply landed on,
-  // so its ratio to the frame time is 1 + that reply's delay. An engine that answers a late reply
-  // with a tick on the frame it lands on dispatches every frame: there the delay shows as
-  // lateFrames instead. Frame times jitter, so the frame time is smoothed; the smoothed ratio gives
-  // replyDelaySmooth.
+  // previousStepTime spans the previous dispatch frame to the frame its reply landed on, so its ratio to the frame time
+  // is 1 + that reply's delay. An engine that ticks on the frame a late reply lands on dispatches every frame, so there
+  // the delay shows as lateFrames. Frame times jitter, so the frame time is smoothed.
   replyDelay = 0;
   if (frameTime <= 0 || previousStepTime <= 0) return;
   meanFrameTime = meanFrameTime > 0 ? meanFrameTime + (frameTime - meanFrameTime) * FRAME_TIME_SMOOTHING : frameTime;
@@ -39,8 +33,7 @@ export function beginTick(tickTime: number, stepTime: number, previousStepTime: 
   replyDelaySmooth = Math.max(0, Math.min(2, meanRatio - 1));
 }
 
-// Steps that cover `time`: one per frame of this tick's frame length, the time split evenly
-// between them (a tick that covers missed frames runs one step per frame).
+// Steps that cover `time`: one per frame of this tick's frame length, with the time split evenly between them.
 export function stepsFor(time: number): number {
   if (time <= 1e-9) return 0;
   return frameTime > 0 ? Math.max(1, Math.min(MAX_STEPS, Math.round(time / frameTime))) : 1;

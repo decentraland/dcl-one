@@ -127,7 +127,7 @@ function updateDropCaster(walkAxis: Vector3 | null) {
 
 // Returns a normalized XZ walk axis if auto-walk is active, or null.
 // Handles manual-input cancellation and all stopping conditions.
-// Call this at the start of updateMovementAxis(); if non-null, use the returned axis directly.
+// Call this in readInput() (horizontal.ts); if non-null, use the returned axis directly.
 export function getWalkAxis(): Vector3 | null {
   if (walkTarget === null) {
     updateDropCaster(null);
@@ -151,7 +151,7 @@ export function getWalkAxis(): Vector3 | null {
   const dz = walkTarget.z - playerPosition.z;
   const xzDist = Math.sqrt(dx * dx + dz * dz);
 
-  // Stop: reached target within tolerance, or exactly on it (a zero tolerance; the axis to it is undefined)
+  // Stop: reached target within tolerance, or exactly on it, where a zero tolerance leaves no axis to it
   if (xzDist < walkTolerance || xzDist < 1e-6) {
     walkResult = true;
     walkTarget = null;

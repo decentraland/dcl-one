@@ -235,10 +235,8 @@ across workers:
   global.
 - `bevy_animation`: newly added graphs are threaded the same frame (no one-frame T-pose);
   evaluator hash maps replaced with dense index lists; the evaluator stack is cleared.
-  `AnimationTransitions` fades the new clip in linearly over the pose that was playing; a
-  transition started during another fades in over that blend, which carries on underneath,
-  so the pose doesn't jump (stock bevy hands the new clip a quarter of the pose at once when
-  a transition is interrupted half-way).
+  `AnimationTransitions` fades a new clip in linearly over the current pose, also over a
+  transition that is still running, so the pose does not jump.
 - `bevy_text`: faces of removed `Font` assets are evicted from the cosmic font system;
   `TextFont` is `PartialEq`.
 - `bevy_winit`: modifier transitions reported only via `ModifiersChanged` are synthesised as key

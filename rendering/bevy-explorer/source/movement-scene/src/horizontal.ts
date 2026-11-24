@@ -21,13 +21,13 @@ var horizontalVelocity = Vector3.Zero();
 
 // ---------------------------------------------------------------- input
 
-// Camera-relative basis (horizontal, unit) and input of one tick.
+// camera-relative horizontal unit vectors
 var fwd = Vector3.Zero();
 var right = Vector3.Zero();
 // stun: a landing stun holds from the first step (the steps after a predicted touchdown)
 type StepInput = { x: number; z: number; limit: number; grounded: boolean; stun: boolean };
 const input: StepInput = { x: 0, z: 0, limit: 0, grounded: true, stun: false };
-// Input of the previous tick: the steps that cover the time up to this tick's frame use it.
+// The steps that cover the time up to this tick's frame use the previous tick's input.
 const prevInput: StepInput = { x: 0, z: 0, limit: 0, grounded: true, stun: false };
 const landInput: StepInput = { x: 0, z: 0, limit: 0, grounded: true, stun: false };
 
@@ -40,7 +40,7 @@ function readInput() {
   Vector3.multiplyToRef(right, VEC3_HORIZONTAL_MASK, right);
   Vector3.normalizeToRef(right, right);
 
-  // Auto-walk takes priority; getWalkAxis() returns null (and cancels the walk) on manual input.
+  // Auto-walk takes priority. getWalkAxis() returns null, and cancels the walk, on manual input.
   const walkAxis = getWalkAxis();
   if (walkAxis !== null) {
     Vector3.copyFrom(walkAxis, movementAxis);
@@ -55,9 +55,8 @@ function readInput() {
 
   input.x = snap(Vector3.dot(movementAxis, right));
   input.z = snap(Vector3.dot(movementAxis, fwd));
-  // Each held key drives its own axis at full speed: a diagonal is not shortened here, the step cuts the move to the
-  // gait's speed. Adding or releasing a side key while running then only turns the move; shortened axes would have one
-  // slow down while the other speeds up, a dip of about a fifth of the speed.
+  // Each held key drives its axis at full speed, and the step cuts the move to the gait's speed. With shortened axes,
+  // adding or releasing a side key while running would dip the speed instead of only turning the move.
   if (walkAxis === null && input.x !== 0 && input.z !== 0) {
     input.x = Math.sign(input.x);
     input.z = Math.sign(input.z);
@@ -70,8 +69,8 @@ function readInput() {
   if (!isGliding) input.limit *= slopeSpeedFactor();
 }
 
-// Gait speed factor of the slope along the move (SLOPE_SPEED_FACTOR), from the walkable ground the capsule rests on (on
-// a step edge, the edge's slope), else the ground under the centre; the factor of the last ground holds in the air.
+// The slope comes from the capsule's walkable contact (on a step edge, the edge), else from the ground under the centre.
+// In the air the factor of the last ground holds.
 var slopeFactor = 1;
 function slopeSpeedFactor(): number {
   const n = groundNormal.y >= GROUNDED_ANGLE_Y_LEN ? groundNormal : groundRayNormal;
@@ -96,18 +95,17 @@ function copyInput(from: StepInput, to: StepInput) {
 
 // ---------------------------------------------------------------- per-frame model
 
-// Integration state. ax/az are the camera-relative axis speeds (right, forward), adx/adz their
-// smoothing rates, weight the input-hold weight (0..1), vx/vz the world-space move velocity,
-// ex/ez the external (impulse) velocity, t the model time at the end of the steps run so far and
-// t0 the start of the last step (the vertical model's clock).
+// ax/az: camera-relative axis speeds (right, forward). adx/adz: their smoothing rates. weight: input-hold weight (0..1).
+// vx/vz: world-space move velocity. ex/ez: velocity of scene pushes. t: model time at the end of the steps run so far.
+// t0: start of the last step.
 type State = { ax: number; az: number; adx: number; adz: number; weight: number; vx: number; vz: number; ex: number; ez: number; t: number; t0: number };
 const state: State = { ax: 0, az: 0, adx: 0, adz: 0, weight: 0, vx: 0, vz: 0, ex: 0, ez: 0, t: 0, t0: 0 };
 const probe: State = { ax: 0, az: 0, adx: 0, adz: 0, weight: 0, vx: 0, vz: 0, ex: 0, ez: 0, t: 0, t0: 0 };
-// The air jump launches on the first step starting at or after this time (vertical model), read once per tick.
+// The air jump's launch time from the vertical model, read once per tick.
 var launchTime = -1e9;
 // Horizontal velocity of the last reply (ramp guard).
 var lastReplyX = 0, lastReplyZ = 0;
-// Steps starting before this time are stunned (vertical model's committed landing stun), read once per tick.
+// Steps starting before this time are stunned, read once per tick.
 var stunEnd = -1e9;
 // Start of the step the last reply was predicted for, and whether that step was stunned.
 var lastReplyT0 = -1e9;
@@ -130,7 +128,7 @@ function accelCurve(w: number): number {
   return s * s * (3 - 2 * s);
 }
 
-// Critically damped spring toward target (returns the new value, writes the new rate to rate[0]).
+// Critically damped spring toward target (returns the new value, writes the new rate to rateOut[0]).
 const rateOut = [0];
 function smoothDamp(current: number, target: number, rate: number, smoothTime: number, dt: number): number {
   smoothTime = Math.max(0.0001, smoothTime);
@@ -164,8 +162,7 @@ function step(s: State, c: StepInput, h: number) {
   const k = accelCurve(0.5 * (w0 + s.weight));
   const accel = c.grounded ? GROUND_ACCEL + (GROUND_MAX_ACCEL - GROUND_ACCEL) * k : AIR_ACCEL + (AIR_MAX_ACCEL - AIR_ACCEL) * k;
 
-  // A held axis keeps its speed when its key flips sign (strafe A/D, W/S reversal), then moves
-  // toward the target; a released axis settles to 0 over the stop time.
+  // A held axis keeps its speed when its key flips sign, then moves toward the target. A released axis settles to 0.
   if (c.x !== 0) {
     s.ax = moveTowards(Math.sign(xTarget) * Math.abs(s.ax), xTarget, accel * h);
   } else {
@@ -188,12 +185,10 @@ function step(s: State, c: StepInput, h: number) {
   }
 
   if (c.grounded) {
-    // on the ground the move velocity follows the axes directly
     s.vx = tx; s.vz = tz;
     if (launch) airLaunch(s, c);
   } else {
-    // in the air it chases them at the air acceleration, against quadratic drag. The drag acts first and the chase
-    // makes up for it, so a speed the chase holds ends every step at its target whatever the step's length.
+    // the drag acts before the chase, so a speed the chase holds ends every step at its target whatever the step length
     airDrag(s, h);
     const dx = tx - s.vx, dz = tz - s.vz;
     const dl = Math.sqrt(dx * dx + dz * dz);
@@ -201,8 +196,8 @@ function step(s: State, c: StepInput, h: number) {
     if (dl <= maxD) { s.vx = tx; s.vz = tz; } else { s.vx += dx / dl * maxD; s.vz += dz / dl * maxD; }
     if (launch) airLaunch(s, c);
   }
-  // a landing stun stops the move velocity (external pushes still apply); the keys held through it keep moving the
-  // axes, so the gait speed is back on the first step after it
+  // A landing stun stops the move velocity, not the pushes. The axes keep moving, so the gait speed is back on the first
+  // step after the stun.
   if (stun) { s.vx = 0; s.vz = 0; }
 
   const damping = c.grounded ? EXTERNAL_ENV_DRAG + EXTERNAL_GROUND_FRICTION : EXTERNAL_ENV_DRAG;
@@ -213,7 +208,7 @@ function step(s: State, c: StepInput, h: number) {
   else if (es > MAX_EXTERNAL_SPEED * MAX_EXTERNAL_SPEED) { const f = MAX_EXTERNAL_SPEED / Math.sqrt(es); s.ex *= f; s.ez *= f; }
 }
 
-// Quadratic air drag over h in closed form: dv/dt = -AIR_DRAG v^2 gives v / (1 + AIR_DRAG v h).
+// closed form of dv/dt = -AIR_DRAG v^2 over h
 function airDrag(s: State, h: number) {
   const sp = Math.sqrt(s.vx * s.vx + s.vz * s.vz);
   if (sp > 0) {
@@ -222,9 +217,8 @@ function airDrag(s: State, h: number) {
   }
 }
 
-// Air jump launch: the move velocity turns to the keys held on this step, each held axis at least AIR_JUMP_IMPULSE
-// fast. A diagonal launches sqrt(2) faster; above the gait's speed, air drag and acceleration take the excess back
-// within about 0.1 s. With no movement key held the launch stops the move.
+// A diagonal launches sqrt(2) faster, and air drag and acceleration take back the excess over the gait's speed. With no
+// movement key held the launch stops the move.
 function airLaunch(s: State, c: StepInput) {
   const v = Math.max(AIR_JUMP_IMPULSE, Math.sqrt(s.vx * s.vx + s.vz * s.vz));
   s.ax = v * c.x; s.az = v * c.z; s.adx = 0; s.adz = 0;
@@ -232,7 +226,6 @@ function airLaunch(s: State, c: StepInput) {
   s.vz = right.z * s.ax + fwd.z * s.az;
 }
 
-// Runs the steps that cover `time` (one per frame, see clock.ts).
 function advance(s: State, c: StepInput, time: number) {
   const n = stepsFor(time);
   for (let k = 0; k < n; k++) step(s, c, time / n);
@@ -244,7 +237,6 @@ export function updateHorizontalVelocity() {
   stunEnd = stunEndTime();
 
   if (horizontalResync) {
-    // the engine moved us at another velocity: continue from what it applied
     state.vx = prevActualVelocity.x; state.vz = prevActualVelocity.z;
     state.ax = state.vx * right.x + state.vz * right.z;
     state.az = state.vx * fwd.x + state.vz * fwd.z;
@@ -253,26 +245,22 @@ export function updateHorizontalVelocity() {
   state.ex += prevExternalVelocity.x;
   state.ez += prevExternalVelocity.z;
 
-  // Cover the time up to the end of this frame with the previous tick's input. Off an edge this tick, those steps are in
-  // the air: the keys reach the model a tick late, leaving the edge does not (a release a frame before an edge is a
-  // release in the air past it).
+  // The steps up to this frame use the previous tick's keys, but leaving an edge applies to them at once, so a release a
+  // frame before an edge is a release in the air past it.
   if (leftEdge) prevInput.grounded = false;
   advance(state, prevInput, tickAdvance);
 
-  // The engine holds the reply from the frame it lands on until the next reply lands; reply
-  // with the state predicted (on this tick's input) for the last of those frames.
+  // Reply with the state predicted, on this tick's input, for the last frame that the engine holds the reply.
   let ox = state.vx + state.ex, oz = state.vz + state.ez;
-  // the move velocity of that state alone, without pushes and before the cuts below: the avatar faces its heading
+  // the move velocity alone, without pushes and before the cuts below: the avatar faces its heading
   let mx = state.vx, mz = state.vz;
   let replyT0 = state.t0, replyStun = false;
   if (replyDelay > 0 && frameTime > 0) {
     copyState(state, probe);
     const frames = 2 * replyDelay;
     if (!input.grounded && predictedLandFrame >= 0 && predictedLandFrame < replyDelay) {
-      // the avatar touches the ground before the reply lands, so every frame it is held for
-      // comes after the touchdown: the steps after that frame are ground steps (the first
-      // grounded step sets the move velocity to its target). A touchdown inside the held
-      // frames keeps the air velocity, so the touchdown frame still moves at air speed.
+      // A touchdown before the reply lands makes the steps after it ground steps. A touchdown inside the held frames
+      // keeps the air velocity, so the touchdown frame still moves at air speed.
       copyInput(input, landInput);
       landInput.grounded = true;
       landInput.stun = landingStuns();
@@ -286,8 +274,8 @@ export function updateHorizontalVelocity() {
     mx = probe.vx; mz = probe.vz;
     replyT0 = probe.t0;
   } else if (launchAhead) {
-    // the vertical reply already carries a launch the committed steps reach after this frame: so does this one,
-    // with this tick's input for the launch step (a ground move), so a jump with the keys released goes straight up
+    // the vertical reply carries a launch ahead of the committed steps, so this one does too, on this tick's input, so a
+    // jump with the keys released goes straight up
     copyState(state, probe);
     advance(probe, input, oneStep());
     ox = probe.vx + probe.ex; oz = probe.vz + probe.ez;
@@ -305,12 +293,9 @@ export function updateHorizontalVelocity() {
     replyStun = true;
   }
 
-  // Ramp guard. The delay estimate follows the previous reply's delay, which does not predict
-  // this one, so consecutive replies alternate between the predicted and the committed state.
-  // During a ground acceleration that reads as a speed dip of up to one prediction horizon
-  // (0.5-0.9 m/s), which the rigidly attached camera shows as a jerk. While the same input is
-  // held on the ground and the model is still accelerating, a reply never slows below the last
-  // one; the committed state catches up within a tick or two.
+  // Ramp guard: the delay estimate does not predict this reply's delay, so replies alternate between the predicted and
+  // the committed state, which the camera shows as a jerk during a ground acceleration. While the same input is held on
+  // the ground and the model still accelerates, a reply never slows below the last one.
   if (!horizontalResync && !(replyStun && lastReplyT0 < stunEnd - EPS) && (input.x !== 0 || input.z !== 0) && input.grounded && prevInput.grounded
     && input.x === prevInput.x && input.z === prevInput.z && input.limit === prevInput.limit
     && state.ex === 0 && state.ez === 0) {
@@ -328,9 +313,8 @@ export function updateHorizontalVelocity() {
       }
     }
   }
-  // Slope limit: a slope ahead too steep to walk (steeper than GROUNDED_ANGLE) stops the move into it at the contact,
-  // where the engine would slide the avatar up it: on the ground the speed toward it is cut to reach it no sooner than
-  // the next reply lands.
+  // Slope limit: on the ground, cut the speed into a steep slope ahead so that the avatar reaches it no sooner than the
+  // next reply lands.
   const steep = input.grounded ? steepAhead() : null;
   if (steep !== null) {
     const into = -(ox * steep.x + oz * steep.z);
@@ -340,9 +324,8 @@ export function updateHorizontalVelocity() {
       oz += (into - allowed) * steep.z;
     }
   }
-  // Against a wall on the ground the move slows with how squarely it meets the wall: by 1 - |cos| of the angle between
-  // the move and the wall's normal, so head-on it stops and at 45 degrees it slides along the wall at 0.29 x 0.71 of
-  // the speed. In the air a wall only blocks the move.
+  // Against a wall on the ground the move scales by 1 - cos of its angle to the wall's normal, so head-on it stops. In
+  // the air the wall only blocks the move.
   const wall = input.grounded ? wallContact() : null;
   if (wall !== null) {
     const speed = Math.hypot(ox, oz);
@@ -364,12 +347,11 @@ export function updateHorizontalVelocity() {
 var targetOrientation = 0;
 var scratch: Vector3.MutableVector3 = Vector3.Zero();
 var targetFacing = Quaternion.Identity();
-// The heading the avatar turns toward, kept when the keys are released so a turn under way finishes; null until the
-// keys move the avatar, and again after the engine sets the facing itself.
+// The heading the avatar turns toward. It is kept after the keys are released, so a turn under way finishes. null until
+// the keys move the avatar, and after the engine sets the facing itself.
 var heading: number | null = null;
-// Facings of the last replies, newest first. The engine applies a reply from the frame it lands on, possibly a frame
-// late, so the facing a tick reads is one of these unless the engine set it itself (a movePlayerTo target, a teleport,
-// a rotating platform).
+// Facings of the last replies, newest first. A reply can land a frame late, so a facing that is none of these was set
+// by the engine (a movePlayerTo target, a teleport, a rotating platform).
 const publishedOrientation: number[] = [NaN, NaN, NaN];
 
 // returns equivalent angle within 180 degrees of center
@@ -377,10 +359,8 @@ export function relativeDegrees(center: number, angle: number): number {
   return center + ((angle - center + 180) % 360 + 360) % 360 - 180;
 }
 
-// Turns the avatar toward the heading of its own move velocity (moveX, moveZ: without scene pushes and before the reply's
-// cuts at slopes and walls), in every state: on the ground, in the air, while the glider opens, glides and closes. The
-// heading follows the move while the keys are held; on release the avatar keeps turning to the last one. A landing stun
-// holds the facing.
+// Turns the avatar toward its own move velocity (without pushes and before the slope and wall cuts) in every state. A
+// landing stun holds the facing.
 function setOrientation(moveX: number, moveZ: number, stun: boolean) {
   // Always adopt the current avatar transform as the orientation baseline, even when
   // locked, so an engine-imposed facing (e.g. a movePlayerTo cameraTarget) takes effect
@@ -404,9 +384,8 @@ function setOrientation(moveX: number, moveZ: number, stun: boolean) {
   }
   targetOrientation = heading === null || stun ? orientation : heading;
 
-  // The facing eases toward the heading over TURN_FULL_TIME, at most TURN_MAX_DEGREES_SEC; a turn under way trails a
-  // turning heading by about TURN_FULL_TIME of that turn. A glide slowed to 1-3 m/s lets a key spiral turn its heading
-  // at 350-700 deg/s: a slower limit would fall further behind on every lap until the avatar flies backwards.
+  // A slow glide lets a key spiral turn the heading fast. A lower TURN_MAX_DEGREES_SEC falls further behind on every lap
+  // until the avatar flies backwards.
   if (targetOrientation != orientation) {
     if (Math.abs(targetOrientation - orientation) < 1) {
       orientation = targetOrientation;

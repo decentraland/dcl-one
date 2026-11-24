@@ -11,7 +11,10 @@ use bevy::{
     prelude::*,
 };
 use common::{
-    dynamics::{PLAYER_COLLIDER_OVERLAP, PLAYER_COLLIDER_RADIUS, PLAYER_GROUND_THRESHOLD},
+    dynamics::{
+        PLAYER_COLLIDER_OVERLAP, PLAYER_COLLIDER_RADIUS, PLAYER_GROUND_THRESHOLD,
+        PLAYER_LANDED_THRESHOLD,
+    },
     sets::{PostUpdateSets, SceneLoopSets, SceneSets},
     structs::{
         avatar_tilt_quat, AppConfig, AvatarDynamicState, EngineMovementControl, LocomotionSpeeds,
@@ -301,7 +304,7 @@ impl FromConfig for AvatarLocomotionSettings {
             run_speed: Some(config.player_settings.run_speed),
             jump_height: Some(config.player_settings.jump_height),
             run_jump_height: Some(config.player_settings.run_jump_height),
-            // unset: the movement scene keeps its own landing stun; 0 would remove it
+            // unset, so that the movement scene keeps its own landing stun. 0 removes the stun
             hard_landing_cooldown: None,
             double_jump_height: None,
             gliding_speed: None,
@@ -339,7 +342,7 @@ pub struct ActivePlayerComponent<C: Component> {
     scene_last_update: u32,
     scene_start_tick: u32,
     scene_is_portable: bool,
-    /// Engine dispatch time (`RendererSceneContext::last_sent`) of the scene tick
+    /// Engine dispatch time (`RendererSceneContext::reply_sent`) of the scene tick
     /// that produced `component`. Used to reject AvatarMovement that was initiated
     /// before a `movePlayerTo`-imposed facing (and so read a stale transform).
     initiated_at: f64,
@@ -352,16 +355,14 @@ impl<C: Component> ActivePlayerComponent<C> {
     }
 }
 
-/// What the last completed movement step applied, in SDK world axes. [`AvatarMovementInfo`] holds
-/// the same velocities only from the step until the next frame's broadcast to the scenes clears
-/// them, which is before any console command or `Update` system can read them.
+/// The velocities of the last completed movement step, in SDK world axes. The broadcast to the
+/// scenes clears [`AvatarMovementInfo`] before `Update` systems and console commands can read it.
 #[derive(Resource, Default, Clone, Copy, Debug)]
 pub struct LastMovementStep {
-    /// The velocity the controlling scene asked for
     pub requested_velocity: Option<Vector3>,
-    /// The displacement over the step's delta, after collisions; zero when the step did not move
+    /// After collisions. Zero when the step did not move.
     pub actual_velocity: Option<Vector3>,
-    /// The SDK forces and impulses applied in the step
+    /// From SDK forces and impulses.
     pub external_velocity: Option<Vector3>,
 }
 
@@ -532,9 +533,8 @@ impl<C: Component + Clone + FromConfig> ActivePlayerComponent<C> {
     }
 }
 
-/// The choice [`ActivePlayerComponent::pick_latest_frame_only_by_priority`] makes from
-/// `current_choice`, the one it made last, and the components `changed` since then. Writes to
-/// `current_choice` only when the choice changes.
+/// The choice of [`ActivePlayerComponent::pick_latest_frame_only_by_priority`], shared with
+/// [`NextMovementPick`]. `changed` holds the components changed since the last pick.
 fn choose_latest_frame<'a, C: Component + Clone + FromConfig>(
     current_choice: &mut impl DerefMut<Target = ActivePlayerComponent<C>>,
     changed: impl Iterator<Item = (Entity, &'a C, &'a SceneEntity)>,
@@ -621,16 +621,15 @@ pub fn apply_impulses(
 // was initiated before the most recent movePlayerTo-imposed facing — such a tick read a
 // pre-teleport transform, so applying its orientation would clobber the imposed facing.
 // Strict `>` (here as `<=` to suppress) treats a same-frame dispatch as stale, since
-// `last_sent` is captured before the restricted-action runs and shares the frame's timestamp.
+// `reply_sent` is captured before the restricted-action runs and shares the frame's timestamp.
 fn movement_suppressed(movement_control: &EngineMovementControl, initiated_at: f64) -> bool {
     !movement_control.suppress_avatar_physics.is_empty()
         || initiated_at <= movement_control.accept_movement_after
 }
 
 impl AvatarMovement {
-    /// The player's rotation this movement sets. Yaw is authoritative (broadcast to other
-    /// clients, used by physics); tilt is a render-only lean composed on top.
-    /// `to_euler(YXZ).0` still recovers the yaw.
+    /// Yaw is authoritative (broadcast to other clients, used by physics); tilt is a render-only
+    /// lean composed on top. `to_euler(YXZ).0` still recovers the yaw.
     fn rotation(&self) -> Quat {
         Quat::from_rotation_y(self.orientation / 360.0 * TAU)
             * avatar_tilt_quat(self.tilt_pitch, self.tilt_roll)
@@ -655,8 +654,8 @@ pub fn apply_rotation(
     }
 }
 
-/// The change tick [`ActivePlayerComponent::pick_latest_frame_only_by_priority`] for `C` last
-/// ran at, which it records: its `Changed<C>` filter next sees the `C` changed after it.
+/// The change tick of the last run of [`ActivePlayerComponent::pick_latest_frame_only_by_priority`]
+/// for `C`. Its next run sees only the `C` changed after this tick.
 #[derive(Resource)]
 struct LatestFramePick<C> {
     tick: Tick,
@@ -672,8 +671,8 @@ impl<C> Default for LatestFramePick<C> {
     }
 }
 
-/// What [`ActivePlayerComponent::pick_latest_frame_only_by_priority`] for [`AvatarMovement`]
-/// reads, to tell during the scene loop the movement that pick will choose after it.
+/// Predicts, during the scene loop, the [`AvatarMovement`] that
+/// [`ActivePlayerComponent::pick_latest_frame_only_by_priority`] will choose after the loop.
 #[derive(SystemParam)]
 struct NextMovementPick<'w, 's> {
     movements: Query<'w, 's, (Entity, Ref<'static, AvatarMovement>, &'static SceneEntity)>,
@@ -686,8 +685,6 @@ struct NextMovementPick<'w, 's> {
 }
 
 impl NextMovementPick<'_, '_> {
-    /// The choice the pick will make from `current`, the one it made last, with the movements
-    /// changed so far: those its `Changed` filter will see, changed since it last ran.
     fn choose(
         &self,
         current: &ActivePlayerComponent<AvatarMovement>,
@@ -713,18 +710,11 @@ impl NextMovementPick<'_, '_> {
     }
 }
 
-/// After each pass of the scene loop, stages the movement scene's [`RedispatchRotation`]: the
-/// rotation [`apply_rotation`] will set this frame, for the re-dispatch answering the scene's
-/// late reply that landed in this frame. The pass that takes the late reply queues the
-/// re-dispatch and the next pass sends it, so the rotation is staged once, after the pass the
-/// reply's `AvatarMovement` update is applied in. The frame's movement is the one
-/// [`NextMovementPick`] tells: another scene's movement that takes over in this frame, or none
-/// when the reply changed no movement or the player has left the scene. Nothing is staged when
-/// that choice is not applied ([`movement_suppressed`]): the re-dispatch is then sent the
-/// player's rotation, which [`apply_rotation`] keeps.
-/// Every other scene's staged rotation is removed, as is the movement scene's once its late
-/// reply's frame has passed: the engine applies no movement from a scene that no longer drives
-/// the player, so it is not sent a rotation it staged while it did.
+/// Stages on the movement scene the rotation that [`apply_rotation`] will set this frame, for the
+/// re-dispatch that answers a late reply landing in this frame. Stages once per frame, after the
+/// loop pass that applies the late reply, because the next pass sends the re-dispatch. Stages
+/// nothing when [`movement_suppressed`] holds, so the re-dispatch gets the player's rotation. A
+/// staged rotation stays only on the scene that drives the player, in its late reply's frame.
 fn stage_redispatch_rotation(
     mut commands: Commands,
     player: Query<&ActivePlayerComponent<AvatarMovement>, With<PrimaryUser>>,
@@ -735,7 +725,6 @@ fn stage_redispatch_rotation(
     frame: Res<FrameCount>,
     mut staged_in: Local<Option<u32>>,
 ) {
-    // the scene that drives the player, when its late reply landed in this frame
     let late = player.single().ok().filter(|active| {
         tick_timings
             .get(active.scene())
@@ -781,7 +770,6 @@ pub(crate) fn apply_movement(
     let Ok((mut transform, mut dynamic_state, movement)) = player.single_mut() else {
         return;
     };
-    // the scene's velocity; one that is not finite moves nothing
     let requested = Some(movement.component.velocity)
         .filter(|velocity| velocity.is_finite())
         .unwrap_or(Vec3::ZERO);
@@ -894,8 +882,7 @@ pub(crate) fn apply_movement(
     end_jump_on_landing(&mut dynamic_state);
 }
 
-/// The velocity of a step that moved the avatar from `from` to `to` in `delta` seconds. A frame
-/// with no elapsed time (the first) reports none.
+/// Zero for a step with no elapsed time, such as the first frame.
 fn actual_velocity(from: DVec3, to: DVec3, delta: f64) -> DVec3 {
     if delta > 0.0 {
         (to - from) / delta
@@ -904,8 +891,7 @@ fn actual_velocity(from: DVec3, to: DVec3, delta: f64) -> DVec3 {
     }
 }
 
-/// The feet's height above ground the player stands on, over the colliders of every scene that
-/// can ground it; at most the height above the world floor.
+/// The height of the feet above the ground the player stands on, in every scene that can ground it.
 fn ground_height(scenes: &mut Query<(Entity, &mut SceneColliderData)>, feet: Vec3) -> f32 {
     scenes
         .iter_mut()
@@ -926,7 +912,7 @@ fn ground_height(scenes: &mut Query<(Entity, &mut SceneColliderData)>, feet: Vec
 /// `jump_time` marks a jump in flight (`<= 0.0` for none): the animation's take-off window and the
 /// `jump_count` this client broadcasts both read it.
 fn end_jump_on_landing(dynamic_state: &mut AvatarDynamicState) {
-    if dynamic_state.ground_height < 0.2 && dynamic_state.velocity.y <= 0.0 {
+    if dynamic_state.ground_height < PLAYER_LANDED_THRESHOLD && dynamic_state.velocity.y <= 0.0 {
         dynamic_state.jump_time = -1.0;
     }
 }
@@ -1298,8 +1284,8 @@ mod tests {
             .velocity = velocity;
     }
 
-    /// An app running `apply_movement` over the floor (top at y 0) in steps of 20 ms after the
-    /// first, which has no elapsed time, and its player, standing still at `start`.
+    /// `apply_movement` over a floor with its top at y 0, with the player still at `start`. The
+    /// steps last 20 ms, except the first, which has no elapsed time.
     fn movement_app(start: Vec3) -> (App, Entity) {
         let mut app = App::new();
         app.add_plugins(TimePlugin)
@@ -1336,7 +1322,6 @@ mod tests {
         (app, player)
     }
 
-    /// The resources mapping a position to the scenes around it, with no scene placed yet.
     fn add_scene_resources(app: &mut App) {
         use scene_runner::initialize_scene::{LiveScenes, PortableScenes, ScenePointers};
 
@@ -1345,8 +1330,7 @@ mod tests {
             .init_resource::<ScenePointers>();
     }
 
-    /// The context of a scene `hash`, `scene`: a portable started at `portable`'s tick, or a
-    /// parcel scene.
+    /// `Some(tick)` makes a portable scene that started at that tick. `None` makes a parcel scene.
     fn scene_context(scene: Entity, hash: &str, portable: Option<u32>) -> RendererSceneContext {
         use dcl_types::SceneId;
 
@@ -1371,7 +1355,6 @@ mod tests {
         )
     }
 
-    /// Makes `scene` the live parcel scene `hash` on `parcels`.
     fn place_scene(
         app: &mut App,
         scene: Entity,
@@ -1400,7 +1383,6 @@ mod tests {
         }
     }
 
-    /// Runs `frames` frames of the scene moving the player at `velocity`; its position after.
     fn run_for(app: &mut App, player: Entity, velocity: Vec3, frames: usize) -> Vec3 {
         set_velocity(app, player, velocity);
         for _ in 0..frames {
@@ -1435,10 +1417,7 @@ mod tests {
         rotation.to_euler(EulerRot::YXZ).0.to_degrees()
     }
 
-    /// An app that stages the re-dispatch's rotation in `Update`, as after a pass of the scene
-    /// loop, and chooses and applies the frame's movement in `PostUpdate`; and its player, in the
-    /// middle of parcel 0,0, with no movement chosen yet. Movement initiated at or before
-    /// `accept_movement_after` is not applied.
+    /// `Update` stands for a pass of the scene loop. The player stands in the middle of parcel 0,0.
     fn rotation_app(accept_movement_after: f64) -> (App, Entity) {
         let mut app = App::new();
         app.insert_resource(EngineMovementControl {
@@ -1471,9 +1450,8 @@ mod tests {
         (app, player)
     }
 
-    /// A scene the player is in, `hash`, and the entity its player maps to, which holds the
-    /// scene's `AvatarMovement` once a reply sets one: a portable started at `portable`'s tick, or
-    /// the scene of parcel 0,0.
+    /// Returns the scene and its player entity, which holds the scene's `AvatarMovement`. `None`
+    /// makes the scene of parcel 0,0.
     fn add_scene(app: &mut App, hash: &str, portable: Option<u32>) -> (Entity, Entity) {
         use dcl_types::SceneId;
         use scene_runner::initialize_scene::{LiveScenes, PortableScenes, PortableSource};
@@ -1510,9 +1488,7 @@ mod tests {
         (scene, scene_player)
     }
 
-    /// The reply to `scene`'s tick dispatched in `sent` lands in `frame`, setting the scene's
-    /// movement to `orientation` when there is one. The engine clock reads 1 s at frame 0 and
-    /// advances a second a frame.
+    /// `None` sets no movement. The engine clock reads 1 s at frame 0 and advances 1 s a frame.
     fn land_reply(
         app: &mut App,
         (scene, scene_player): (Entity, Entity),
@@ -1538,8 +1514,7 @@ mod tests {
         context.last_update_frame = frame;
     }
 
-    /// The player's rotation a dispatch of `scene` in `frame` is sent: the staged
-    /// [`RedispatchRotation`] for the re-dispatch answering a late reply that landed in `frame`.
+    /// The staged rotation in the frame of a late reply, else the player's rotation.
     fn rotation_to_send(world: &World, scene: Entity, player: Entity, frame: u32) -> Quat {
         world
             .get::<RedispatchRotation>(scene)
@@ -1554,8 +1529,8 @@ mod tests {
             })
     }
 
-    /// Runs `frame` once its replies have landed. Returns the yaw a dispatch of `scene` in the
-    /// frame is sent, and the player's yaw after the frame's movement is applied.
+    /// Returns the yaw that a dispatch of `scene` in `frame` is sent, and the player's yaw after
+    /// the frame.
     fn run_frame(app: &mut App, frame: u32, scene: Entity, player: Entity) -> (f32, f32) {
         app.insert_resource(FrameCount(frame));
         app.world_mut().run_schedule(Update);
@@ -1565,12 +1540,10 @@ mod tests {
         (yaw(sent), yaw(applied))
     }
 
-    /// A movement scene turning the player while each reply lands a frame late and the scene is
-    /// dispatched again in the frame it lands. A tick with input turns 10 degrees toward 90 from
-    /// the yaw it is sent; one without holds that yaw. The first `turning` ticks have input.
-    /// With `imposed`, the player starts at that yaw and every reply was dispatched before it was
-    /// imposed. Returns, for each frame, the yaw the tick is sent and the player's yaw after the
-    /// frame.
+    /// Each reply of the movement scene lands a frame late and is re-dispatched in that frame.
+    /// Each of the first `turning` ticks turns 10 degrees toward 90 from the yaw it is sent. Later
+    /// ticks hold that yaw. `imposed` starts the player at that yaw, and every reply predates it.
+    /// Returns, for each frame, the yaw sent and the player's yaw after the frame.
     fn late_replies(turning: u32, frames: u32, imposed: Option<f32>) -> Vec<(f32, f32)> {
         let (mut app, player) = rotation_app(if imposed.is_some() { f64::MAX } else { 0.0 });
         let scene = add_scene(&mut app, "movement", Some(1));
@@ -1602,10 +1575,7 @@ mod tests {
         frames_out
     }
 
-    /// The movement scene's re-dispatch in the frame a parcel scene takes over is sent the parcel
-    /// scene's 70 degrees; something else then turns the player to 40. When the movement scene's
-    /// next reply lands late, its re-dispatch is sent the player's 40 degrees, not the 70 it was
-    /// sent while it drove the player.
+    /// A parcel scene takes over at 70 degrees, then something else turns the player to 40.
     #[test]
     fn a_scene_no_longer_driving_the_player_is_not_sent_its_staged_rotation() {
         let (mut app, player) = rotation_app(0.0);
@@ -1635,9 +1605,6 @@ mod tests {
         assert!((sent - 40.0).abs() < 1e-3, "sent {sent}");
     }
 
-    /// A parcel scene sets the player's movement in the frame the movement scene's late reply
-    /// lands: the parcel scene's takes priority, so the movement scene's re-dispatch is sent the
-    /// yaw the parcel scene sets, not the one of its own reply.
     #[test]
     fn a_redispatch_is_sent_the_rotation_of_a_scene_taking_over_in_its_frame() {
         let (mut app, player) = rotation_app(0.0);
@@ -1656,9 +1623,7 @@ mod tests {
         );
     }
 
-    /// A late reply that sets no movement leaves the player's rotation as it is (here turned
-    /// from the scene's last movement by a rotating platform): the re-dispatch is sent that
-    /// rotation, not the scene's last movement.
+    /// The turn to 40 degrees stands for a rotating platform.
     #[test]
     fn a_late_reply_without_movement_redispatches_the_players_rotation() {
         let (mut app, player) = rotation_app(0.0);
@@ -1687,19 +1652,16 @@ mod tests {
             yaws.windows(2).all(|pair| pair[1] >= pair[0] - 1e-3),
             "turned back: {yaws:?}"
         );
-        // every tick turns on from the one before it: three ticks with input turn 30 degrees
+        // three ticks with input turn 30 degrees
         assert!(
             yaws[4..].iter().all(|yaw| (yaw - 30.0).abs() < 1e-3),
             "settled at {yaws:?}"
         );
     }
 
-    /// A movement scene turning the player as in [`late_replies`], with the reply to its `k`th
-    /// tick landing `schedule[k % schedule.len()]` frames after the tick's dispatch (0: in the
-    /// frame of the dispatch). The scene is dispatched in each frame it is not in flight in: a
-    /// dispatch in the frame a late reply lands is the re-dispatch. The first `turning` ticks have
-    /// input. Returns, for each tick, the yaw it is sent and the yaw it replies; and the player's
-    /// yaw after each frame.
+    /// As [`late_replies`], but the reply to tick `k` lands `schedule[k % schedule.len()]` frames
+    /// after its dispatch. Returns the (sent, replied) yaw of each tick, and the player's yaw
+    /// after each frame.
     fn scheduled_replies(
         schedule: &[u32],
         turning: usize,
@@ -1747,8 +1709,6 @@ mod tests {
 
     #[test]
     fn a_redispatch_turns_on_from_a_reply_two_frames_late_or_between_in_frame_ones() {
-        // every reply two frames late; in the frame of its dispatch and a frame late in turn; a
-        // frame and two frames late in turn
         for schedule in [&[2][..], &[0, 1], &[1, 2]] {
             let (ticks, applied) = scheduled_replies(schedule, 3, 16);
             // every tick is sent the yaw the one before it replied

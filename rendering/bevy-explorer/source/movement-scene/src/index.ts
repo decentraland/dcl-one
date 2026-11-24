@@ -54,10 +54,8 @@ function pickRandom(pool: string[]): string {
 const WALK_STEP_TIMES = [0.41, 0.91];
 const RUN_STEP_TIMES = [0.21, 0.54];
 
-// Ground speed (m/s) at which each locomotion loop plays at 1.0x: the default
-// walk, jog and run gait speeds. Playback = horizontal speed / this, so the
-// stride stays matched to the ground at any speed. Fixed per clip: a scene
-// that changes its gait speeds keeps the clips' stride, not their cadence.
+// Ground speed (m/s) at which each locomotion loop plays at 1.0x: the default gait speeds. Fixed per clip, so a scene
+// that changes its gait speeds keeps the clips' stride.
 const WALK_CLIP_SPEED = 1.5;
 const JOG_CLIP_SPEED = 8;
 const RUN_CLIP_SPEED = 10;
@@ -88,26 +86,22 @@ const CLIP_HARD_LANDING = ANIM + 'Hard_Landing.glb';
 // gliding so the glider stows as part of the landing (plays from 0, not soft-sliced).
 const CLIP_GLIDE_LANDING = ANIM + 'Hard_Landing_GliderRig.glb';
 const CLIP_JOG_STOP = ANIM + 'Jog_Stop.glb';
-// Hard landing on a stunning touchdown (the vertical model's stunned()): Enter once, Loop while the stun lasts, then
-// Exit, cut short at HARD_LANDING_EXIT_END of its length into whatever plays next. Only after the long fall loop;
-// other stunning landings play the usual landing clip. The engine's network state reads a stun from these clips played
-// at speed 1 or slower: Enter and Loop, not the faster Exit, nor the plain `Hard_Landing` of any big drop.
+// Hard landing on a stunning touchdown out of the long fall loop. The engine's network state reads a stun from these
+// clips played at speed 1 or slower: Enter and Loop, not the faster Exit, nor the plain `Hard_Landing`.
 const HARD_LANDING = {
   enter: ANIM + 'Hard_Landing_Enter.glb',
   loop: ANIM + 'Hard_Landing_Loop.glb',
   exit: ANIM + 'Hard_Landing_Exit.glb',
 };
 const HARD_LANDING_ENTER_BLEND = 0.0585; // s, from the long fall
-const HARD_LANDING_LOOP_BLEND = 0.15; // s, from the end of Enter; the stun's end waits for it
+const HARD_LANDING_LOOP_BLEND = 0.15; // s, from the end of Enter. The stun's end waits for it.
 const HARD_LANDING_EXIT_BLEND = 0.05; // s, from Loop
 const HARD_LANDING_EXIT_SPEED = 1.2;
 const HARD_LANDING_EXIT_END = 0.2; // fraction of Exit
 const HARD_LANDING_AFTER_BLEND = 0.14; // s, from Exit to the next clip
 
-// Double-jump avatar clips, per take-off locomotion variation: each air jump picks the plain or the right variant at
-// random, half each. The clips play at DOUBLE_JUMP_SPEED, blended in over DOUBLE_JUMP_BLEND; once the clip reaches
-// DOUBLE_JUMP_EXIT of its length the fall loop takes over (blended over transAir). The engine's network state reads
-// the second jump from the `DoubleJump` file name prefix.
+// Double-jump avatar clips, per take-off locomotion variation. The engine's network state reads the second jump from
+// the `DoubleJump` file name prefix.
 const DOUBLE_JUMP: Record<JumpVariation, { plain: string; right: string }> = {
   idle: { plain: ANIM + 'DoubleJump_Base.glb', right: ANIM + 'DoubleJump_Base_Right.glb' },
   jog: { plain: ANIM + 'DoubleJump_Jog.glb', right: ANIM + 'DoubleJump_Jog_Right.glb' },
@@ -115,7 +109,7 @@ const DOUBLE_JUMP: Record<JumpVariation, { plain: string; right: string }> = {
 };
 const DOUBLE_JUMP_SPEED = 0.7;
 const DOUBLE_JUMP_BLEND = 0.05; // s
-const DOUBLE_JUMP_EXIT = 0.778; // fraction of the clip
+const DOUBLE_JUMP_EXIT = 0.778; // fraction of the clip at which the fall loop takes over
 // Directional glide avatar poses.
 // The glider model is embedded in these clips, so it renders and networks for free via the scene-driven movement animation — no
 // separate prop rig. Left/right banking is procedural (tiltRoll), not per-clip.
@@ -182,8 +176,8 @@ export var horizontalResync = false;
 // What we published last frame. Compared against prevRequestedVelocity in
 // initFrame to detect engine takeover (resync to prevActual when they differ).
 var lastPublished = Vector3.Zero();
-// The replies published before it, newest first. The engine answers a reply that lands after its frame with a tick on
-// the frame it lands on, so the frame before a tick can have applied one of these: that reply is late, not a takeover.
+// The replies published before it, newest first. A late reply gets a tick on the frame it lands on, so the frame before
+// a tick may have applied one of these. That is a late reply, not a takeover.
 const PUBLISHED_HISTORY = 2;
 const earlierPublished: Vector3.MutableVector3[] = [];
 for (let i = 0; i < PUBLISHED_HISTORY; i++) earlierPublished.push(Vector3.Zero());
@@ -207,7 +201,6 @@ function initFrame() {
     prevStepTime = movementInfo.previousStepTime;
   }
   tickTime = Math.min(prevStepTime > 0 ? prevStepTime : stepTime, MAX_TICK_TIME);
-  // the applied velocity is the last reply's, or a late one's predecessor's (see earlierPublished)
   replyLateFrames = -1;
   if (Vector3.distance(lastPublished, prevRequestedVelocity) <= 0.1) replyLateFrames = 0;
   else for (let i = 0; i < PUBLISHED_HISTORY && replyLateFrames < 0; i++) {
@@ -221,8 +214,8 @@ function initFrame() {
 
   // If we are not in control (engine consumed a different velocity than we
   // published), resync velocity to prevActual.
-  // A missing requestedVelocity also means the engine applied zero, which is not a takeover
-  // when we published zero ourselves; the horizontal model only resyncs on a real mismatch.
+  // A missing requestedVelocity also means the engine applied zero. If the scene published zero, that is not a
+  // takeover, so the horizontal model resyncs only on a real mismatch.
   horizontalResync = replyLateFrames < 0;
   const notInControl = horizontalResync || movementInfo?.requestedVelocity === undefined;
   if (notInControl) {
@@ -294,7 +287,7 @@ var glidePrevOrientation = 0;
 var glideTurnRate = 0;
 // Smoothed procedural glide bank (roll, degrees), eased toward a target derived from
 // glideTurnRate while gliding and back to 0 otherwise. Published as AvatarMovement.tiltRoll
-// so the engine banks the whole avatar; no separate left/right lean clips are needed.
+// so the engine banks the whole avatar.
 var glideTilt = 0;
 
 // Glide animation phase, from the vertical model's glider prop (glideProp): 'deploy' plays the
@@ -444,7 +437,6 @@ function landingAnimation(justLanded: boolean): MovementAnimation | null {
       landingSoft = soft;
       landingSpeed = soft ? settings.softLandSpeed : 1;
     }
-    // a landing stun (vertical model) holds the avatar in place: the clip plays out
     landingLocked = stunned();
     landingStartTime = time;
     maxUngroundedY = -Infinity;
@@ -668,8 +660,8 @@ function selectAnimation(): MovementAnimation {
       prevJumpPhase = 'none';
     }
 
-    // Phased jump/fall: Start -> Rise -> Mid -> Fall (-> End on landing below); the launch of an air jump is no new
-    // jump here.
+    // Phased jump/fall: Start -> Rise -> Mid -> Fall (-> End on landing below). An air jump's launch is not a new jump
+    // here.
     return jumpPhaseAnimation(newJump && !isDoubleJump, horizontalSpeed);
   }
 
@@ -679,10 +671,8 @@ function selectAnimation(): MovementAnimation {
     if (landing !== null) return landing;
   }
 
-  // Locomotion clips play at horizontal speed / the clip's reference speed. The
-  // magnitude, not a projection on the facing: the clip never plays backwards
-  // while the avatar turns. No floor: below moveGate the avatar idles, and
-  // above it a slower clip keeps the feet planted (walk starts at ~0.07x).
+  // Locomotion clips play at the speed's magnitude, not its projection on the facing, so a clip never plays backwards
+  // while the avatar turns. No floor: below moveGate the avatar idles, and above it a slower clip keeps the feet planted.
 
   // Locomotion tiers only while there's actual movement input. With no keys
   // held, the residual decelerating velocity (jog -> 0 passes through walk
@@ -825,7 +815,7 @@ function applyMovement() {
   const tiltAlpha = 1 - Math.exp(-tickTime / GLIDE_TILT_DAMP_TIME);
   glideTilt += (tiltTarget - glideTilt) * tiltAlpha;
 
-  // External velocity is integrated by the horizontal and vertical models.
+  // Scene pushes are already in the velocity of the horizontal and vertical models.
 
   // The speed cap applies to movement, not to the ground snap's speed down.
   const speed = Vector3.length(velocity);

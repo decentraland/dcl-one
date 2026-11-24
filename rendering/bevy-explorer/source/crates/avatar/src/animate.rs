@@ -24,6 +24,7 @@ use collectibles::{
 #[cfg(feature = "explorer")]
 use common::rpc::{RpcCall, RpcCallEvent, RpcEventSender, RpcOrigin};
 use common::{
+    dynamics::PLAYER_LANDED_THRESHOLD,
     sets::SceneSets,
     structs::{
         AudioEmitter, AudioType, AvatarDynamicState, Clips, EmoteCommand, EmoteLifecycle,
@@ -888,7 +889,7 @@ fn animate(
                     },
                     MoveKind::Glide,
                 )
-            } else if dynamic_state.ground_height > 0.2
+            } else if dynamic_state.ground_height > PLAYER_LANDED_THRESHOLD
                 || (dynamic_state.velocity.y > 0.0 && just_jumped)
             {
                 let move_kind = if just_jumped {
@@ -2380,11 +2381,10 @@ mod tests {
     const IDLE: usize = 1;
     const WALK: usize = 2;
     const JUMP: usize = 3;
-    /// A frame, in seconds: steps of 1/8 of `FADE` keep the expected shares exact in `f32`.
+    /// Seconds. A step of 1/8 of `FADE` keeps the expected shares exact in `f32`.
     const FRAME: f32 = 0.0625;
     const FADE: f32 = 0.5;
 
-    /// An avatar's player with its transitions, advanced by bevy's transition systems.
     fn crossfade() -> (App, Entity) {
         let mut app = App::new();
         app.init_resource::<Time>().add_systems(
@@ -2417,8 +2417,8 @@ mod tests {
         app.update();
     }
 
-    /// Each playing clip's share of the pose (the evaluator blends clips by weighted average),
-    /// after checking the weights sum to 1, which upper-body overlays rely on.
+    /// Each playing clip's share of the pose. Asserts that the weights sum to 1, because the
+    /// upper-body overlays rely on it.
     fn shares(app: &App, avatar: Entity) -> Vec<(usize, f32)> {
         let player = app.world().get::<AnimationPlayer>(avatar).unwrap();
         let total: f32 = player.playing_animations().map(|(_, a)| a.weight()).sum();
@@ -2488,7 +2488,7 @@ mod tests {
         step(&mut app, 0.0);
         assert_shares(&app, avatar, &[(IDLE, 0.5), (WALK, 0.5), (JUMP, 0.0)]);
 
-        // the jump rises linearly over its own duration; idle to walk carries on under it
+        // the jump rises linearly over its own duration, and idle to walk carries on under it
         for frame in 1..4 {
             step(&mut app, FRAME);
             let jump = frame as f32 * FRAME / (FADE / 2.0);

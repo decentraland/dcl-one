@@ -871,9 +871,8 @@ impl AppConfig {
     /// so every saved config lands on Medium.
     /// gen 5: Render Resolution moves in 10% steps; move a value saved between steps to its
     /// nearest step.
-    /// gen 6: player speeds moved from walk 2.5 / jog 8.18 / run 11 m/s to 1.5 / 8 / 10, and jump
-    /// heights from 1.9 / 2.95 m (held apex) to 1 / 1.5 m (tapped apex); move each value still on
-    /// its old default, keeping one the player set.
+    /// gen 6: new defaults for the player speeds and jump heights, which now measure a tapped
+    /// jump. A value still on its old default moves to the new default.
     pub fn reset_outdated_settings(&mut self) {
         if self.settings_generation >= SETTINGS_GENERATION {
             return;
@@ -1982,7 +1981,7 @@ pub enum MoveKind {
 #[derive(Component, Default)]
 pub struct AvatarDynamicState {
     pub velocity: Vec3,
-    /// Height of the feet above ground the avatar can stand on.
+    /// Height of the feet above the ground the avatar can stand on.
     pub ground_height: f32,
     pub jump_time: f64,
     pub move_kind: MoveKind,
@@ -2962,7 +2961,7 @@ mod tests {
 
     #[test]
     fn reset_outdated_settings_moves_movement_still_on_the_old_defaults() {
-        // a config as the old build wrote it, read back through JSON as at startup
+        // written by the old build and read back through JSON, as at startup
         let saved = |settings_generation, walk_speed| {
             let old = AppConfig {
                 settings_generation,
@@ -2994,7 +2993,7 @@ mod tests {
         assert_eq!(moved(&config.player_settings), (8.0, 10.0, 1.0, 1.5));
         assert_eq!(config.settings_generation, SETTINGS_GENERATION);
 
-        // a value the player set stays; the others still on the old defaults move
+        // a value the player set stays
         let config = saved(5, 3.2);
         assert_eq!(config.player_settings.walk_speed, 3.2);
         assert_eq!(moved(&config.player_settings), (8.0, 10.0, 1.0, 1.5));

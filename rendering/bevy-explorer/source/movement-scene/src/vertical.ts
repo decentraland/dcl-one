@@ -31,31 +31,27 @@ export function updateVerticalVelocity() {
     setGrounded(isLaunched() ? false : prevGrounded);
     const top = vstate.topY;
     applyJumpAndGravity(true);
-    // a fall from where the engine put us counts from the top before, raised only by heights above the placement, so a
-    // placement high up never stuns
+    // keep the stun's top from before the placement, so a placement high up never stuns
     vstate.topY = top; placedY = playerPosition.y;
     return;
   }
   stepUp();
   leaveEdge();
-  // a snap keeps the model on the ground this tick
   const snap = snapDistance();
   if (snap > 0) setGrounded(true);
   applyJumpAndGravity(false);
   // pushed upward: off the ground for this tick's horizontal move and the next tick
   if (isLaunched()) setGrounded(false);
-  // in the air, or a jump leaves the ground: no climb, snap or ground following
   if (!grounded || jumpStartHeight !== undefined) {
     stepping = false;
     climbSent = 0;
     return;
   }
   if (stepping) {
-    // not past the tread: the climb replies still in flight rise further before this one applies
+    // do not overshoot the tread: the climb replies still in flight rise further before this one applies
     const left = stepTargetY - playerPosition.y - replyDelay * oneStep() * climbSent;
     velocity.y = Math.min(stepSpeed, left / oneStep());
     climbSent = velocity.y;
-    // the model stands where the climb has the feet
     vstate.y = playerPosition.y;
     return;
   }
@@ -64,13 +60,9 @@ export function updateVerticalVelocity() {
   followsGround = centreOnGround();
 }
 
-// The avatar stands on an edge: grounded with no ground under the centre (centreSupported), only the rim of the capsule
-// resting on the corner, its centre R * sin(tilt) past it, where the tilt of the contact normal reaches GROUNDED_ANGLE at
-// the most. A move off the edge that carries the centre past that before the next reply lands leaves the ground at
-// once: it goes on at air speed and falls (a jog released at a ledge carries on past it), where a slower one stays on
-// the edge until then. Standing on an edge, the capsule rests on the corner: the ground snap leaves it there.
+// On an edge only the capsule's rim rests on the corner, with the centre at most EDGE_REACH past it. A move that carries
+// the centre past EDGE_REACH before the next reply lands leaves the ground at once, so it falls at air speed.
 var onEdge = false;
-// The avatar leaves the edge this tick.
 export var leftEdge = false;
 const EDGE_REACH = PLAYER_COLLIDER_RADIUS * Math.sin(GROUNDED_ANGLE * Math.PI / 180);
 function leaveEdge() {
@@ -86,30 +78,25 @@ function leaveEdge() {
 }
 
 // ---------------------------------------------------------------- jump and gravity
-// Stepped once per frame on the same clock as the horizontal model (see clock.ts). Timers are in seconds of model time:
-// an event happens on the first step that starts at or after its time.
+// Timers are in seconds of model time. An event happens on the first step that starts at or after its time.
 
 // Height the current (or next) jump was launched for (a tapped jump's apex).
 var currentJumpHeight = 0;
-// Feet height at launch while the jump is rising; undefined otherwise.
+// Feet height at launch while the jump rises, else undefined.
 export var jumpStartHeight: number | undefined = undefined;
-// An air jump is under way (from its press until the landing or a glide), for the animation selector.
+// From an air jump's press until the landing or a glide.
 export var isDoubleJump = false;
-// The glider: its prop opens over GLIDE_OPEN_TIME before the glide holds the fall, and closes over GLIDE_CLOSE_TIME
-// before the glide cooldown starts. Only GLIDING moves the avatar differently (isGliding); the prop's state is for the
-// animation.
+// The glider prop. Only GLIDING changes the movement (isGliding). The other states time the glider's clips.
 export enum GlideProp { CLOSED, OPENING, GLIDING, CLOSING }
 export var glideProp = GlideProp.CLOSED;
 export var isGliding = false;
 
-// The avatar moves at vy + ve: one vertical speed that gravity and scene pushes act on (the ballistic speed, vg + ve),
-// with the player's own moves added on top of it (vy - vg). A jump's rise and its held window, an air jump's held
-// height and the glide's fall shape vy only, so they never cancel a push, and a push never gets the jump's slowdown.
-// The glider's drag takes a push's share while gliding (GLIDE_DAMP_TIME).
+// The avatar moves at vy + ve. Gravity and scene pushes act on the ballistic speed vg + ve. The player's own moves (a
+// jump, an air jump's hover, the glide's fall) shape vy only, so they never cancel a push, and a push never gets the
+// jump's slowdown.
 type VState = {
   vy: number; // the player's own vertical velocity: gravity, jumps, an air jump's held height, the glide
-  // the ballistic part of vy: vy itself, except while a jump rises or an air jump holds the height, when it goes on
-  // under plain gravity from the step before (at the apex the jump's added lift joins it)
+  // the ballistic part of vy. While a jump rises or an air jump hovers, it goes on under plain gravity.
   vg: number;
   ve: number; // what scene pushes add to vy
   t: number; // model time at the end of the steps run so far (s)
@@ -117,14 +104,14 @@ type VState = {
   y0: number; // model feet height at the start of the last step
   yo: number; // the player's own vertical travel so far (pushes excluded), for the replies' mean velocity
   yo0: number; // the same at the start of the last step
-  groundedLast: boolean; // the last step was on the ground
-  lastGroundedEnd: number; // end of the last step on the ground
+  groundedLast: boolean;
+  lastGroundedEnd: number;
   triggerT: number; // start of the step the latest press is due on
   pressBack: number; // s the latest press may predate its due step (it was made in an earlier frame of its tick)
   consumedT: number; // start of the step the latest jump launched on
   jumpCount: number; // jumps since the ground (falling past the coyote window counts as one)
   glideWanted: boolean;
-  prop: GlideProp; // the glider prop's state
+  prop: GlideProp;
   propT: number; // start of the step the prop entered that state
   glideOpenT: number; // start of the step the prop last started opening
   glideClosedT: number; // start of the step the prop last closed: the glide cooldown counts from it
@@ -152,7 +139,7 @@ var prevJumpPressed = false;
 var prevRunning = false;
 // The published reply includes a launch that the committed steps have not reached yet.
 var launchPending = false;
-// A launch is published ahead of the committed steps this tick (read by the horizontal reply).
+// A launch is published ahead of the committed steps this tick.
 export var launchAhead = false;
 // Frames from this tick's dispatch frame to the frame the avatar is predicted to touch the
 // ground (0 = during this frame), within the frames this reply is held; -1 otherwise.
@@ -170,14 +157,13 @@ function copyVState(from: VState, to: VState) {
   to.pressBack = from.pressBack;
 }
 
-// Ground height under the avatar this tick (-Infinity: none in range). An air jump needs the model above it.
+// Ground height under the avatar this tick (-Infinity: none in range).
 var groundY = -Infinity;
 function airJumpAllowed(s: VState): boolean {
   return maxAirJumps > 0 && s.jumpCount >= 1 && Math.max(s.jumpCount, 1) <= maxAirJumps
     && s.t0 - s.consumedT >= AIR_JUMP_COOLDOWN - EPS && s.y > groundY;
 }
 
-// The launch speed of a jump of `height`: the speed that rises height while slowing at JUMP_RISE_DECEL.
 function launchFor(height: number): number {
   return Math.sqrt(2 * Math.max(0, height) * JUMP_RISE_DECEL);
 }
@@ -206,7 +192,6 @@ function vstep(s: VState, pressed: boolean, running: boolean, onGroundTick: bool
   let glideDrag = false;
   const onGround = onGroundTick && s.vy <= 0;
   if (onGround) {
-    // a landing more than LANDING_STUN_DROP below the top of the airtime stuns for landingStunTime
     if (!s.groundedLast && s.topY - s.y > LANDING_STUN_DROP) {
       s.stunEndT = t0 + landingStunTime;
     }
@@ -229,8 +214,6 @@ function vstep(s: VState, pressed: boolean, running: boolean, onGroundTick: bool
 
   let airPress = false;
   if (!hover) {
-    // the press is due on this step; off while moving up, a press is buffered before a landing and a late one off an
-    // edge still jumps from the ground
     const due = Math.abs(t0 - s.triggerT) < EPS;
     const windows = !(s.vy > 0) && t0 >= JUMP_COYOTE_TIME;
     // a late jump off an edge counts from when the press may have been made, not from when the tick saw it
@@ -247,7 +230,7 @@ function vstep(s: VState, pressed: boolean, running: boolean, onGroundTick: bool
       s.triggerT = NEVER;
       s.consumedT = t0;
     } else if (wants && !onGround && airJumpAllowed(s)) {
-      // air jump: gravity still acts on this step, the height is held from the next one for AIR_JUMP_HOVER_TIME
+      // air jump: gravity still acts on this step, and the hover starts on the next one
       airPress = true;
       vb0 = keepPush(s);
       s.jumpCount++;
@@ -259,11 +242,9 @@ function vstep(s: VState, pressed: boolean, running: boolean, onGroundTick: bool
     }
   }
 
-  // glide: a fresh press in the air once the jumps are spent opens the glider's prop, held to keep gliding
-  // the model's own height above the ground (the avatar's lags it by the reply delay)
+  // the model's height, because the avatar's lags it by the reply delay
   const canGlide = glideEnabled && s.jumpCount > maxAirJumps && !onGround && s.y - groundY > GLIDE_MIN_GROUND_DISTANCE;
-  // the prop's clips run on their own time: an open prop glides, a shut one starts the cooldown. Once it starts opening
-  // it opens fully, through a release (a tap) or a landing, and closes from there on the next step.
+  // Once the prop starts opening it opens fully, through a release or a landing, then closes on the next step.
   if (s.prop === GlideProp.OPENING && t0 - s.propT >= GLIDE_OPEN_TIME - EPS) {
     s.prop = GlideProp.GLIDING;
     s.propT = t0;
@@ -288,15 +269,12 @@ function vstep(s: VState, pressed: boolean, running: boolean, onGroundTick: bool
         s.propT = t0;
       }
     } else {
-      // the glide holds the player's own fall at glidingFallingSpeed; the glider's drag takes a push, up or down
       glideDrag = true;
     }
   }
 
-  // the player's own move over the step
   let own: number;
   if (hover) {
-    // no gravity while the height is held
     own = s.vy * h;
   } else if (!onGround || justJumped) {
     own = ownMove(s, pressed, noGravity, t0, h, glideDrag ? -glidingFallingSpeed : -Infinity);
@@ -304,8 +282,7 @@ function vstep(s: VState, pressed: boolean, running: boolean, onGroundTick: bool
     s.vy = 0;
     own = 0.5 * vy0 * h;
   }
-  // scene pushes: while the ballistic speed rises it fades and is braked, which takes from their share; on the ground
-  // the ballistic speed is all theirs, gravity takes it and the ground stops it; a glide's drag takes their share instead
+  // on the ground the ballistic speed is all the pushes', so gravity takes it and the ground stops it
   const vb = vb0 > 0 ? Math.max(0, vb0 * Math.exp(-h / VERTICAL_DAMP_TIME) - VERTICAL_STOP_DECEL * h) : vb0;
   if (onGround && !justJumped) {
     s.ve = Math.max(0, noGravity ? vb : vb - G * h);
@@ -316,22 +293,19 @@ function vstep(s: VState, pressed: boolean, running: boolean, onGroundTick: bool
     if (!hover && s.vy <= 0) s.vg = s.vy;
     else if (!noGravity) s.vg -= G * h;
   }
-  // height: the player's own move and the pushes' share
   s.y += own + s.ve * h;
   s.yo += own;
 
   if (airPress && s.y <= groundY) {
-    // the press step reaches the ground: the landing cancels the air jump, and the press is spent
+    // the press step reaches the ground: the landing cancels the air jump and spends the press
     s.airLaunchT = NEVER;
     s.airPressT = NEVER;
   }
 }
 
-// The player's own vertical move over a step from t0 to t0 + h: a rise slows at JUMP_RISE_DECEL to the apex, then the
-// fall gains G down to minVy (a glide's held fall); inside the held window (heldUntil) both are scaled by
-// JUMP_HOLD_SCALE. Each piece has a constant acceleration and moves in closed form, the step split at the apex, at the
-// end of the held window and where the fall reaches minVy, so the height does not depend on the step length. Updates
-// s.vy and returns the height moved.
+// The player's own vertical move over one step, in closed form. The step splits where the acceleration changes (the
+// apex, the end of the held window, the fall reaching minVy), so the height does not depend on the step length.
+// Updates s.vy and returns the height moved.
 function ownMove(s: VState, pressed: boolean, noGravity: boolean, t0: number, h: number, minVy: number): number {
   const holdEnd = heldUntil(s, pressed);
   if (s.vy < minVy) s.vy = minVy;
@@ -341,7 +315,6 @@ function ownMove(s: VState, pressed: boolean, noGravity: boolean, t0: number, h:
     let seg = held ? Math.min(h - t, holdEnd - t0 - t) : h - t;
     const scale = held ? JUMP_HOLD_SCALE : 1;
     if (s.vy > 0) {
-      // the jump's own rise slows until the apex
       const a = JUMP_RISE_DECEL * scale;
       const apex = s.vy / a;
       if (apex <= seg) {
@@ -371,56 +344,49 @@ function ownMove(s: VState, pressed: boolean, noGravity: boolean, t0: number, h:
   return dy;
 }
 
-// A jump replaces the player's own vertical velocity, so the ballistic speed starts again from what the pushes still
-// add: an upward push only as far as it still carries the avatar up (gravity has taken the rest), a downward one in
-// full. Returns the ballistic speed.
+// A jump restarts the ballistic speed from what the pushes still add: an upward push only as far as it still lifts the
+// avatar, a downward one in full. Returns the ballistic speed.
 function keepPush(s: VState): number {
   if (s.ve > 0) s.ve = Math.max(0, s.vg + s.ve);
   s.vg = 0;
   return s.ve;
 }
 
-// A held key scales the player's own vertical acceleration for JUMP_HOLD_TIME after a jump's press (an air jump's from
-// the air press, so the hover uses part of it). Any jump key held in it counts (a later, ignored press too). Returns
-// the end of the window while the key is held (-Infinity: not held).
+// The held window counts from the latest jump's press (for an air jump, the air press, so the hover uses part of it).
+// Any held jump key counts. -Infinity: not held.
 function heldUntil(s: VState, pressed: boolean): number {
   return pressed ? s.consumedT + JUMP_HOLD_TIME : -Infinity;
 }
 
-// Runs the steps that cover `time` (one per frame, see clock.ts).
 function vadvance(s: VState, pressed: boolean, running: boolean, onGround: boolean, noGravity: boolean, time: number) {
   const n = stepsFor(time);
   for (let k = 0; k < n; k++) {
     vstep(s, pressed, running, onGround, noGravity, time / n);
-    // after a launch the ground is left behind for the rest of the tick
     if (s.launched) onGround = false;
   }
 }
 
 function applyJumpAndGravity(noGravity: boolean) {
   const pressed = inputSystem.isPressed(InputAction.IA_JUMP);
-  // a running jump: sprint held with a movement key down
   const running = inputSystem.isPressed(InputAction.IA_MODIFIER) && (
     inputSystem.isPressed(InputAction.IA_FORWARD) || inputSystem.isPressed(InputAction.IA_BACKWARD)
     || inputSystem.isPressed(InputAction.IA_LEFT) || inputSystem.isPressed(InputAction.IA_RIGHT)
     || Vector3.lengthSquared(movementAxis) > 0);
 
   if (horizontalResync) {
-    // the engine moved us at another velocity: continue from what it applied
     vstate.vy = prevActualVelocity.y;
     vstate.vg = Math.min(0, vstate.vy);
     vstate.ve = 0;
   }
 
   groundY = groundDistance < Infinity ? playerPosition.y - Math.max(0, groundDistance) : -Infinity;
-  // While the model holds an air jump's height above the ground, the avatar reaching the ground on a late reply is not a
-  // landing: the air jump goes on.
+  // While the model hovers above the ground in an air jump, the avatar reaching the ground on a late reply is not a
+  // landing.
   if (grounded && vstate.airLaunchT !== NEVER && vstate.t < vstate.airLaunchT - EPS && vstate.y > groundY && !isLaunched()) {
     setGrounded(false);
   }
-  // a published launch the committed steps have not reached yet: the model is still on the ground, even when the
-  // published launch has already lifted the avatar past the grounded height. A push that lifts the avatar arrived
-  // after these steps (it is added below): they still run on the ground.
+  // Until the committed steps reach a published launch, they run on the ground, even if the avatar already rose. A push
+  // is added after these steps, so it does not lift them.
   const onGround = grounded || launchPending;
   // on the ground the model stands where the avatar stands (a published late jump off an edge launches from where the
   // model is, not from the ground below the avatar)
@@ -434,8 +400,6 @@ function applyJumpAndGravity(noGravity: boolean) {
   const pressBefore = vstate.airPressT;
   // the committed steps up to the end of this frame run on the previous tick's keys
   vadvance(vstate, prevJumpPressed, prevRunning, onGround, noGravity, tickAdvance);
-  // this tick's scene pushes (externalVelocity sums impulses and force * time since the last tick); on the ground one
-  // too weak to lift the avatar (isLaunched) is held by the ground
   if (!onGround || vstate.launched || isLaunched()) {
     vstate.ve += prevExternalVelocity.y;
   }
@@ -447,14 +411,14 @@ function applyJumpAndGravity(noGravity: boolean) {
     jumpStartHeight = playerPosition.y;
   }
   if (vstate.airLaunched || (vstate.airLaunchT !== NEVER && vstate.airPressT !== pressBefore)) jumpTracked = true;
-  // a published air jump (press or launch) is kept until the committed steps reach it (within half a step: the
-  // prediction's steps need not end where the committed ones do)
+  // keep a published air jump until the committed steps reach it, within half a step, because the prediction's steps
+  // need not end where the committed ones do
   if (onGround || vstate.t >= airPublishedT - 0.5 * oneStep() || (vstate.airLaunchT === NEVER && vstate.triggerT === NEVER)) airPublishedT = NEVER;
 
   // a press is due on the first step after this frame
   if (pressed && !jumpWasPressed) {
     vstate.triggerT = vstate.t;
-    // the frames of this tick before the current one (none when the scene answers every frame)
+    // the frames of this tick before the current one
     vstate.pressBack = Math.max(0, tickAdvance - frameTime);
   }
   jumpWasPressed = pressed;
@@ -462,17 +426,13 @@ function applyJumpAndGravity(noGravity: boolean) {
   prevRunning = running;
   if (vstate.launched || vstate.triggerT === NEVER) launchPending = false;
 
-  // The reply is held from the frame it lands on (replyDelay frames after this one) until the
-  // next reply lands (2 * replyDelay frames after this one). A launch from the ground answers with
-  // the mean of the predicted per-frame velocities over those frames, so the height the engine
-  // integrates over them is the height the model reaches (a rise is not cut short); in the air the
-  // reply carries the model's mean velocity over the frame it is predicted for (below).
-  // A launch the prediction has already published but the committed steps have not reached
-  // yet (launchPending) is kept: the prediction then covers at least the next step.
+  // The reply is held from the frame it lands on (replyDelay frames ahead) until the next reply lands (2 * replyDelay
+  // ahead). A launch from the ground answers with the mean predicted velocity over those frames, so the engine reaches
+  // the model's height.
   let vy = vstate.vy;
   const frames = frameTime > 0 ? 2 * replyDelay : 0;
-  // the smoothed horizon once the committed model is airborne; a launch from the ground keeps the per-tick
-  // delay (a smoothed horizon would publish a launch before the press frame's reply is due)
+  // Smoothed horizon once the committed model is airborne. A launch from the ground keeps the per-tick delay, because a
+  // smoothed horizon would publish the launch before the press frame's reply is due.
   const smooth = frameTime > 0 && (vstate.vy !== 0 || vstate.launched || vstate.airLaunchT !== NEVER);
   const ahead = smooth ? 1.5 * replyDelaySmooth * frameTime : 0;
   if (vstate.launched) jumpTracked = true;
@@ -487,7 +447,6 @@ function applyJumpAndGravity(noGravity: boolean) {
     vprobe.airLaunched = false;
     let ground = onGround && !vstate.launched;
     if (smooth || airAhead > 0) {
-      // the frame that ends at the predicted time
       const end = Math.max(ahead, launchPending ? oneStep() : 0, airAhead);
       const frame = frameTime > 0 ? frameTime : oneStep();
       let from = ownTravelAt(end - frame);
@@ -525,32 +484,26 @@ function applyJumpAndGravity(noGravity: boolean) {
   // an air jump's hold or launch is in this reply (committed or published)
   const airJump = vstate.airLaunched || (vstate.airLaunchT !== NEVER && vstate.t < vstate.airLaunchT - EPS)
     || (probeRan && (vprobe.airLaunched || (vprobe.airLaunchT !== NEVER && vprobe.t < vprobe.airLaunchT - EPS)));
-  // A reply carries the model's mean velocity over its frame, so the height the engine integrates is the model's
-  // whatever the frame length; a launch or an air jump's held height is carried as it is, at once.
+  // A reply carries the model's mean velocity over its frame, so the engine integrates the model's height whatever the
+  // frame length. A launch or an air jump's hover is sent as it is.
   if (meanVy !== null && !airJump && !vstate.launched && !(probeRan && vprobe.launched) && !launchPending) vy = meanVy;
   const hoverReply = (vstate.airLaunchT !== NEVER && vstate.t < vstate.airLaunchT - EPS && (!probeRan || vprobe.t < vprobe.airLaunchT - EPS))
     || (probeRan && vprobe.airLaunchT !== NEVER && vprobe.t < vprobe.airLaunchT - EPS && vprobe.t > vstate.t + EPS);
   if (launchPending && jumpStartHeight === undefined) {
-    // published launch: the jump starts now. The grounded state stays, so the launch step's
-    // horizontal move is still a ground move.
     jumpStartHeight = playerPosition.y;
   }
-  // Until the committed steps launch, the model is on the ground even when the published launch has already
-  // lifted the avatar past the grounded height: the launch step's horizontal move stays a ground move.
+  // until the committed steps launch, the launch step's horizontal move stays a ground move
   launchAhead = launchPending && !vstate.launched;
   if (launchAhead) setGrounded(true);
 
-  // Height tracking (VERTICAL_TRACK_TIME): from a launch (committed or published) until the model lands.
-  // Tracking stops when the engine did not move the avatar as asked: a rise cut short (a ceiling) or a lift it did not
-  // ask for (a platform, a slope). The gap to the model is then geometry, not reply timing. In free flight the applied
-  // vertical velocity equals the requested one; the ground stopping a fall is the landing, handled below.
+  // Height tracking runs from a launch until the model lands. It stops when the engine did not move the avatar as asked
+  // (a ceiling, a platform, a slope), because the gap is then geometry, not reply timing.
   const blocked = (prevRequestedVelocity.y > 0 && prevActualVelocity.y < prevRequestedVelocity.y - VERTICAL_TRACK_BLOCK)
     || prevActualVelocity.y > Math.max(0, prevRequestedVelocity.y) + VERTICAL_TRACK_BLOCK;
   if (jumpTracked && (vstate.prop === GlideProp.GLIDING || vstate.ve !== 0 || horizontalResync || noGravity || blocked
     || (onGround && vstate.vy <= 0 && !vstate.launched && !launchPending))) jumpTracked = false;
   if (jumpTracked && frameTime > 0) {
-    // compared at the start of this frame, where the avatar's height is known whichever reply the engine applies
-    // over this frame (the model state is at the end of this frame; its last step ends with this frame)
+    // compare at the start of this frame, where the avatar's height is known whichever reply the engine applies
     const h = vstate.t - vstate.t0;
     const yStart = h > 0 ? vstate.y - (vstate.y - vstate.y0) * Math.min(1, frameTime / h) : vstate.y;
     const err = yStart - playerPosition.y;
@@ -563,17 +516,15 @@ function applyJumpAndGravity(noGravity: boolean) {
       if (vy + c > 0 && vy <= 0) c = -vy;
       if (vy + c < 0 && vy > 0) c = -vy;
     }
-    // a correction upward never makes the reply rise above both the model's own reply and the last airborne reply
-    // (the ramp guard below only covers ticks without a launch; this covers the launch ticks too)
+    // An upward correction never lifts the reply above both the model's reply and the last airborne reply. The ramp
+    // guard below skips launch ticks.
     const model = vy;
     vy += c;
     if (c > 0 && lastReplyVy !== 0) vy = Math.min(vy, Math.max(model, lastReplyVy));
   }
 
-  // Predicted landing: frames from this one until the engine puts the avatar on the ground,
-  // with the previous reply held for the frames before this one's lands (-1: not in the window).
-  // Not on the launch tick: the avatar still touches the ground then, and the contact's tiny
-  // height (either sign) must not read as a landing.
+  // Predicted landing: frames until the engine puts the avatar on the ground (-1: not within the held frames). Not on
+  // the launch tick: the avatar still touches the ground then, and that contact must not read as a landing.
   predictedLandFrame = -1;
   if (!grounded && !vstate.launched && frameTime > 0 && vstate.prop !== GlideProp.GLIDING && groundDistance < Infinity) {
     let h = groundDistance;
@@ -589,10 +540,9 @@ function applyJumpAndGravity(noGravity: boolean) {
   isDoubleJump = air !== null && air.glideOpenT < air.airPressT;
   if ((vstate.vy <= 0 && !launchPending) || isGliding) jumpStartHeight = undefined;
 
-  // Vertical ramp guard: in the air gravity only lowers vy, but the switching delay estimate
-  // makes consecutive replies alternate between the committed and the predicted state. Between
-  // two airborne replies without a launch, glide, landing or push, a reply never rises above
-  // the last one. It runs after the height tracking: a correction can slow a fall but never makes vy rise in the air.
+  // Vertical ramp guard: the switching delay estimate makes consecutive replies alternate between the committed and the
+  // predicted state. Between two plain airborne replies, a reply never rises above the last one. It runs after the
+  // height tracking, so a correction never makes vy rise in the air.
   const inAir = !grounded && !vstate.launched && !launchPending && !isGliding && vstate.ve === 0
     && !horizontalResync && predictedLandFrame < 0 && !airJump;
   if (inAir && lastReplyAir) vy = Math.min(vy, lastReplyVy);
@@ -601,7 +551,6 @@ function applyJumpAndGravity(noGravity: boolean) {
 
   velocity.y = vy + vstate.ve;
 }
-// A jump is in progress (launched or published): replies track the model's height (VERTICAL_TRACK_MAX).
 var jumpTracked = false;
 // The committed model's own vertical travel `dt` after the end of its steps (dt <= 0: within its last step, where the
 // travel is taken as linear).
@@ -613,13 +562,10 @@ function ownTravelAt(dt: number): number {
 // End of the furthest step of an air jump (press .. launch) a reply has published; later predictions reach at least
 // that far.
 var airPublishedT = NEVER;
-// The time the committed air jump launches at (NEVER: none), for the horizontal launch push: the first step starting
-// at or after it launches.
+// NEVER: no committed air jump.
 export function airLaunchTime(): number { return vstate.airLaunchT; }
-// Landing stun: horizontal movement stops on the steps of the committed model that start before stunEndTime(). Before
-// the committed model reaches the ground, landingStuns() tells whether that landing will stun (the drop from the top
-// to the ground under the avatar is over LANDING_STUN_DROP and the scene's hardLandingCooldown is above 0); once landed
-// the top is the ground and it is false.
+// Before the committed model lands, landingStuns() tells whether that landing will stun. Once landed it is false,
+// because the top is then the ground.
 export function stunEndTime(): number { return vstate.stunEndT; }
 export function stunned(): boolean { return vstate.t0 < vstate.stunEndT - EPS; }
 export function landingStuns(): boolean { return landingStunTime > 0 && vstate.topY - groundY > LANDING_STUN_DROP; }
@@ -638,24 +584,17 @@ function isLaunched(): boolean {
 }
 
 // ---------------------------------------------------------------- the ground: step up, ground snap, ground following
-// The engine moves the avatar by collide-and-slide alone, so the reply keeps it on the ground. Four casts read the
-// ground: the capsule and the ray down from the feet (ground.ts), and here the capsule along the facing and the ray
-// down past the face it finds.
 
-// The forward cast reads a face the capsule touches (WALL_CONTACT_DISTANCE) and the risers and steep slopes ahead. It
-// reaches further: the engine casts against the scenes its centre line crosses, so a wall on the next scene's edge is
-// found only once that line reaches the edge, which this length does for a capsule meeting the wall up to about 75
-// degrees off its normal.
+// The engine casts only against the scenes that the cast's centre line crosses. This length finds a wall on the next
+// scene's edge for a capsule that meets the wall up to about 75 degrees off its normal.
 const FWD_CAST_LENGTH = 1.3; // m
-// Landing probe: a ray down onto the tread past the face the forward cast found, from above MAX_STEP_HEIGHT so a tread
-// at exactly max step height is still hit. Each tick moves it to the face found that tick, LANDING_CAST_INSET past it;
-// it reads there on the next tick, when the avatar has moved on by up to a frame, so up to LANDING_CAST_SLACK further.
+// Landing probe: a ray down onto the tread past the face that the forward cast found. It starts above MAX_STEP_HEIGHT,
+// so a tread at exactly that height is still hit. It is placed each tick and read on the next one, after the avatar
+// has moved by up to LANDING_CAST_SLACK.
 const LANDING_CAST_HEIGHT = MAX_STEP_HEIGHT + 0.1;
 const LANDING_CAST_INSET = 0.05; // past the riser face, so the probe lands on the tread rather than the riser
-const LANDING_CAST_SLACK = 0.4; // m, a run's frame at 30 fps and more
-// It reaches below the feet, not only down to them: treadRise counts the rise from the ground under the avatar,
-// landingHeight + max(0, groundDistance), so while the avatar is above that ground a tread below its feet can still be a
-// step. Below the feet it reaches as far as a walkable slope drops over the forward cast's length, about 1.4 m.
+const LANDING_CAST_SLACK = 0.4; // m, more than a run moves in one frame at 30 fps
+// It reaches below the feet, because treadRise measures from the ground under the avatar, which can be below the feet.
 const LANDING_CAST_RANGE = LANDING_CAST_HEIGHT + FWD_CAST_LENGTH * Math.tan(GROUNDED_ANGLE * Math.PI / 180);
 
 // cast fwd (nearest hit)
@@ -707,7 +646,7 @@ export function initStepCasts() {
     }
   })
 
-  // local forward offset, along the avatar's facing (the parent's yaw turns the position)
+  // the parent's yaw turns this forward offset along the facing
   landingCaster = initCast({ x: 0, y: LANDING_CAST_HEIGHT, z: PLAYER_COLLIDER_RADIUS + LANDING_CAST_INSET }, false, { direction: Vector3.Down(), maxDistance: LANDING_CAST_RANGE, shape: RaycastShape.RS_RAY }, (hits) => {
     landingHeight = -Infinity;
     landingWalkable = false;
@@ -735,8 +674,6 @@ function treadRise(): number {
   return landingWalkable ? landingHeight + Math.max(0, groundDistance) : -Infinity;
 }
 
-// The face along the facing is a riser the avatar steps onto: too steep to stand on, with walkable ground past it
-// MIN_STEP_HEIGHT to MAX_STEP_HEIGHT above the ground under the feet.
 function stepAhead(): boolean {
   if (fwdWalkable) return false;
   const rise = treadRise();
@@ -756,9 +693,8 @@ export function wallContact(): { x: number, z: number } | null {
 }
 const WALL_CONTACT_DISTANCE = 0.02; // m of capsule travel to the face
 
-// Slope limit: a slope ahead along the facing too steep to stand on (not a wall, not a riser): the horizontal unit
-// normal pointing away from it and the capsule's distance to it; null if none. The engine's collide-and-slide would
-// slide a move into it up the slope; the horizontal reply stops it at the face instead.
+// A slope ahead too steep to stand on (not a wall or a riser): its horizontal unit normal and the capsule's distance to
+// it, or null. Collide-and-slide would slide a move up it, so the horizontal reply stops the move at the face.
 const steepFace = { x: 0, z: 0, distance: 0 };
 export function steepAhead(): { x: number, z: number, distance: number } | null {
   if (fwdDistance === Infinity || fwdWalkable || fwdNormal.y < 0.05 || stepping || stepAhead()) return null;
@@ -770,12 +706,9 @@ export function steepAhead(): { x: number, z: number, distance: number } | null 
   return steepFace;
 }
 
-// Step up: on the ground, a move along the facing toward a riser (stepAhead) rises onto its tread. A move at
-// STEP_UP_PLAN_SPEED or faster plans the climb once the capsule would reach the face within STEP_UP_REACH_TIME plus
-// twice the reply delay, so the feet are on the tread as the capsule reaches it; a slower one climbs once it touches
-// the face, over STEP_UP_TIME, so a walk pauses at each riser. A move that has just left the ground (a climb that rose
-// past the tread) still plans the next riser. The climb keeps the fastest speed planned, and holds the grounded state
-// until the ground cast finds the feet on the tread, the keys are released or it stops rising.
+// Step up onto a riser ahead. A fast move plans the climb, so the feet reach the tread as the capsule reaches the face.
+// A slow one climbs on contact, so a walk pauses at each riser. The climb holds the grounded state until the feet are on
+// the tread, the keys are released, or it stops rising.
 var stepping = false;
 // vertical speed of the last climb reply (0 when the last reply did not climb)
 var climbSent = 0;
@@ -842,10 +775,8 @@ function planStepUp(speed: number): number {
   return Math.max(0, landingHeight) / climb;
 }
 
-// Ground snap: on the ground last tick and not jumping, the avatar follows walkable ground under its centre down by up
-// to GROUND_SNAP_STEP_DROP beyond the ground's slope over the distance moved (centreSupported), measured from the ground
-// it stood on, or from the edge it rested on. A larger drop is an edge it walks off. The distance to move down: to the
-// capsule's contact, or to the ground under the centre when the capsule only touches a face too steep to stand on.
+// Ground snap moves down to the capsule's contact, or to the ground under the centre when the capsule only touches a
+// face too steep to stand on.
 var snapSpeed = 0;
 // the reply follows the ground under the centre (groundSpeed)
 var followsGround = false;
@@ -857,9 +788,8 @@ function snapDistance(): number {
   return d > SNAP_MIN ? d : 0;
 }
 
-// The vertical reply on the ground on top of the model's: ground following, the vertical speed that moves the
-// horizontal (vx, vz) along the walkable ground under the centre, so the engine's collide-and-slide neither slows a move
-// up a slope nor leaves the slope going down; and the ground snap's speed down (0 when neither applies).
+// The vertical reply on the ground, added to the model's. follow moves (vx, vz) along the ground under the centre, so
+// collide-and-slide neither slows a move up a slope nor leaves the slope going down. snap is the ground snap's speed.
 export function groundSpeed(vx: number, vz: number): { follow: number, snap: number } {
   groundReply.follow = followsGround ? -(groundRayNormal.x * vx + groundRayNormal.z * vz) / groundRayNormal.y : 0;
   groundReply.snap = snapSpeed;
