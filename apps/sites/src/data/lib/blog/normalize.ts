@@ -13,7 +13,7 @@ import {
   type BlogCategory,
   type BlogImage,
   type BlogRichTextNode,
-} from "@dcl/one-ui";
+} from "@dcl/one-ui/apps/sites";
 
 /** A raw CMS entry or asset: `sys.id` plus untyped, already localized `fields`. */
 export type CmsEntry = { sys: { id: string }; fields?: Record<string, unknown> };

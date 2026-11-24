@@ -3,7 +3,7 @@ import { useState } from "react";
 import { type ShouldRevalidateFunctionArgs } from "react-router";
 import { HydrationBoundary } from "@tanstack/react-query";
 import SitesLayout from "@/features/components/chrome/SitesLayout";
-import type { SitesLocaleHandle } from "@dcl/one-ui";
+import type { SitesLocaleHandle } from "@dcl/one-ui/apps/sites";
 
 import { detectPlatform } from "@/features/download/options";
 import { EventsLocaleProvider, useEventsFooterCopy } from "@/features/events/locale";

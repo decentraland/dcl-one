@@ -1,4 +1,4 @@
-import { AdminTabsBar, type AdminTab } from "@dcl/one-ui";
+import { AdminTabsBar, type AdminTab } from "@dcl/one-ui/apps/sites";
 
 import { useEventAdmin } from "./useEventAdmin";
 

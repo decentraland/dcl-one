@@ -1,6 +1,14 @@
 import { useState } from "react";
 
 import {
+  BackpackUpperBody,
+  GeneralGrid,
+  GeneralMapPin,
+  GeneralName,
+  GeneralSecondaryBarEmotes,
+  Button,
+} from "@dcl/one-ui";
+import {
   CollectiblesItem,
   CollectiblesPanel,
   NameRow,
@@ -11,13 +19,7 @@ import {
   AssetCard,
   NameActions,
   EmptyMessage,
-  BackpackUpperBody,
-  GeneralGrid,
-  GeneralMapPin,
-  GeneralName,
-  GeneralSecondaryBarEmotes,
-  Button,
-} from "@dcl/one-ui";
+} from "@dcl/one-ui/apps/sites";
 
 
 import { assetPage, SHOP_BASE } from "@/core/lib/shop/redirects";

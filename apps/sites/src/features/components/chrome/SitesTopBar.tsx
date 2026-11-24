@@ -7,11 +7,6 @@ import {
 } from "react";
 import { useLocation } from "react-router";
 import {
-  SitesNotificationsDialog,
-  notificationMedia,
-  dclLogoUrl as logo,
-  dclNameUrl as wordmark,
-  SitesLocaleContext,
   type ChromeTopBarProps,
   useChromeAuth,
   ChromeLink,
@@ -26,6 +21,13 @@ import {
   GeneralSecondaryBarWearables,
   type NavBarLinkProps,
 } from "@dcl/one-ui";
+import {
+  SitesNotificationsDialog,
+  notificationMedia,
+  dclLogoUrl as logo,
+  dclNameUrl as wordmark,
+  SitesLocaleContext,
+} from "@dcl/one-ui/apps/sites";
 import { chainLabel } from "@shop/model/chain";
 import { browserProvider, web3Usable } from "@/data/lib/auth/shop-wallet";
 import { selectEthereumChain, selectSettlementChain } from "@shop/checkout/chain/selection";

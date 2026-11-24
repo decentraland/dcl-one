@@ -6,7 +6,7 @@ import {
   Busy,
   Notice,
   type NoticeTone,
-} from "@dcl/one-ui";
+} from "@dcl/one-ui/apps/sites";
 import { Button as OneButton, GeneralAdd, GeneralCamera, GeneralDelete, GeneralInfoButton } from "@dcl/one-ui";
 import { useEffect, useRef, useState, type DragEvent } from "react";
 import { useMachine } from "@xstate/react";

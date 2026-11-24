@@ -2,7 +2,7 @@
 import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 import { renderToString } from "react-dom/server";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { Hero, ComeHangOut, WhatsOn, Carousel, type CarouselLabels } from "@dcl/one-ui";
+import { Hero, ComeHangOut, WhatsOn, Carousel, type CarouselLabels } from "@dcl/one-ui/apps/sites";
 import { downloadActions } from "../download/actions";
 import { homeDownloadActions } from "./actions";
 

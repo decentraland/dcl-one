@@ -1,4 +1,4 @@
-import { HelpAccordion, HelpChatBanner, HelpPage, HelpSection, HelpStatus, type HelpTab } from "@dcl/one-ui";
+import { HelpAccordion, HelpChatBanner, HelpPage, HelpSection, HelpStatus, type HelpTab } from "@dcl/one-ui/apps/sites";
 import { useState } from "react";
 
 import { useAuth } from "@/data/lib/auth/context";

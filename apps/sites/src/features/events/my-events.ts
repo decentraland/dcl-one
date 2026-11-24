@@ -1,6 +1,6 @@
 import { queryOptions, skipToken } from "@tanstack/react-query";
 
-import { type MyEventCardProps, eventText, type EventsLocale } from "@dcl/one-ui";
+import { type MyEventCardProps, eventText, type EventsLocale } from "@dcl/one-ui/apps/sites";
 
 import type { AuthIdentity } from "@/data/lib/auth/types";
 import {

@@ -3,7 +3,7 @@ import { useEffect, useRef, useState } from "react";
 import { useLocation } from "react-router";
 
 import SitesLayout from "@/features/components/chrome/SitesLayout";
-import { BlogIndexPage, BlogNotFound, BlogRoutingProvider, BlogSearchForm, BlogUnavailable } from "@dcl/one-ui";
+import { BlogIndexPage, BlogNotFound, BlogRoutingProvider, BlogSearchForm, BlogUnavailable } from "@dcl/one-ui/apps/sites";
 
 import type { BlogListPayload } from "@/data/lib/blog/types";
 import { track } from "@/core/lib/telemetry/track";

@@ -11,7 +11,7 @@ vi.hoisted(() =>
   }),
 );
 
-import { Rail } from "@dcl/one-ui";
+import { Rail } from "@dcl/one-ui/apps/sites";
 
 afterEach(() => {
   cleanup();

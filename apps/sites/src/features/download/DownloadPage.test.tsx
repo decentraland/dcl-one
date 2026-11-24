@@ -3,7 +3,7 @@ import { cleanup, render, screen } from "@testing-library/react";
 import type { ComponentProps } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { DownloadPage } from "@dcl/one-ui";
+import { DownloadPage } from "@dcl/one-ui/apps/sites";
 
 vi.hoisted(() =>
   Object.assign(window, {

@@ -4,7 +4,7 @@ import type {
   BlogCategory,
   BlogNotFoundKind,
   BlogRelatedCard,
-} from "@dcl/one-ui";
+} from "@dcl/one-ui/apps/sites";
 
 /** A blog page the CMS could not answer: an unknown slug (404) or no reachable CMS (503). */
 export type BlogMissing = { state: "not-found"; kind: BlogNotFoundKind } | { state: "unavailable" };

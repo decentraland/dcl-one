@@ -1,6 +1,6 @@
 import { useState } from "react";
 
-import { ProfileMemberActionControls, type MemberActionNotice } from "@dcl/one-ui";
+import { ProfileMemberActionControls, type MemberActionNotice } from "@dcl/one-ui/apps/sites";
 
 import { useAuth } from "@/data/lib/auth/index";
 import { normalizeAddress } from "@/data/lib/catalyst/social/profile";

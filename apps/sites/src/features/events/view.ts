@@ -4,7 +4,7 @@ import {
   type EventsLocale,
   type SitesEventCardCreator as EventCardCreator,
   type UpcomingEventCardProps,
-} from "@dcl/one-ui";
+} from "@dcl/one-ui/apps/sites";
 
 import { eventOccurrence, type Event } from "@/data/lib/catalyst/places/events";
 import {

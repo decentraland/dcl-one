@@ -3,7 +3,8 @@ import { Link } from "react-router";
 
 import SitesLayout from "../components/chrome/SitesLayout";
 
-import { ProfileFrame, type ProfileShellTab, ProfileHeader, Button, type TabsLinkProps } from "@dcl/one-ui";
+import { Button, type TabsLinkProps } from "@dcl/one-ui";
+import { ProfileFrame, type ProfileShellTab, ProfileHeader } from "@dcl/one-ui/apps/sites";
 
 
 import { SHOP_BASE } from "@/core/lib/shop/redirects";

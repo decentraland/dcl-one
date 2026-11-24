@@ -73,6 +73,7 @@
   },
   "exports": {
     ".": "./index.ts",
+    "./apps/sites": "./apps/sites/index.ts",
     "./foundations": "./foundations/index.ts",
     "./foundations.css": "./foundations/foundations.css",
     "./text-styles.module.css": "./foundations/typography/text-styles.module.css"

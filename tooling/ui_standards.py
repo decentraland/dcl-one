@@ -26,8 +26,10 @@ either kind, which is the floor of an unlisted one.
 (outside library/ui itself) or tooling/ that names a `@dcl/one-ui/<path>` module
 fails, because shared UI comes only from the `@dcl/one-ui` entry
 (docs/ui-standards.md, "Shared UI: library/ui"). Stylesheets (`.css`) keep their
-paths. The in-world Shop and HUD UI (`@dcl/one-ui/apps/shop/`, `apps/hud/`) are
-not exported yet: they resolve their host's aliases, which the entry cannot.
+paths. The app-scoped Sites UI has its own entry, `@dcl/one-ui/apps/sites`; a
+path below it fails. The in-world Shop and HUD UI (`@dcl/one-ui/apps/shop/`,
+`apps/hud/`) are not exported yet: they resolve their host's aliases, which the
+entry cannot.
 A script under apps/ that imports a library/ui module by a relative path
 (`import`, `export ... from`, `import()`, `require()`, `vi.mock()`) fails the same
 way; stylesheets and the Node-only Figma review tooling listed in
@@ -368,7 +370,7 @@ def check(base='HEAD', staged=False):
 
 SHARED_IMPORT_ROOTS = ('apps/', 'library/', 'tooling/')
 SHARED_IMPORT_EXTENSIONS = SCRIPT_EXTENSIONS + ('.mts', '.cts')
-SHARED_UI_DEEP = re.compile(r'^@dcl/one-ui/(?!apps/(?:shop|hud)/)(?!\S*\.css(?:\?\S*)?$)[\w.-]\S*$')
+SHARED_UI_DEEP = re.compile(r'^@dcl/one-ui/(?!apps/(?:shop|hud)/)(?!apps/sites$)(?!\S*\.css(?:\?\S*)?$)[\w.-]\S*$')
 # Preserve the isolated lazy chunk and mock the exact module that LivePromo loads.
 LAZY_ANIMATED_BACKGROUND = '@dcl/one-ui/components/AnimatedBackground/AnimatedBackground'
 SHARED_IMPORT_KEPT = frozenset(

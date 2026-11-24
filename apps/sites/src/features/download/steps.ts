@@ -12,7 +12,7 @@ import {
   downloadStepsWindowsFirefoxStep1Url as windowsFirefoxStepOne,
   downloadStepsWindowsOperaStep1Url as windowsOperaStepOne,
   downloadStepsWindowsStep2Url as windowsStepTwo,
-} from "@dcl/one-ui";
+} from "@dcl/one-ui/apps/sites";
 
 type DownloadOs = "windows" | "macos";
 

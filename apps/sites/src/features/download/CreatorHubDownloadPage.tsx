@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 
-import { creatorHubBannerUrl as banner } from "@dcl/one-ui";
+import { creatorHubBannerUrl as banner } from "@dcl/one-ui/apps/sites";
 import logo from "./creator-hub-download-logo.svg?url";
 import SitesLayout from "../components/chrome/SitesLayout";
 

@@ -1,6 +1,6 @@
 import { useEffect, useRef } from "react";
 
-import { ProfileCommunities } from "@dcl/one-ui";
+import { ProfileCommunities } from "@dcl/one-ui/apps/sites";
 
 import { track } from "@/core/lib/telemetry/track";
 import { useAuth } from "@/data/lib/auth/index";

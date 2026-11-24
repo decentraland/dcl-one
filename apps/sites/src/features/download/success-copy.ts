@@ -1,4 +1,4 @@
-import type { SitesLocale } from "@dcl/one-ui";
+import type { SitesLocale } from "@dcl/one-ui/apps/sites";
 
 // Copy from decentraland/sites; only the install page is included.
 export const successCopy = {

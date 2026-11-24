@@ -1,12 +1,10 @@
 import * as ui from '@dcl/one-ui'
 import * as foundations from '@dcl/one-ui/foundations'
-import * as sitesUi from '../../apps/sites'
 import { describe, expect, it } from 'vitest'
 import { componentExports, coverageProblems } from '../src/coverage'
 import { entries, exclusions } from '../src/examples'
 
-// The app-scoped Sites UI the entry re-exports is not a shared component, so the gallery does not show it.
-const components = componentExports(ui, { ...foundations, ...sitesUi })
+const components = componentExports(ui, foundations)
 const page = (name: string, shown: string[]) => ({
   name,
   components: shown,

@@ -1,4 +1,4 @@
-import { PhotoViewer, ReelsPage } from "@dcl/one-ui";
+import { PhotoViewer, ReelsPage } from "@dcl/one-ui/apps/sites";
 
 import type { ProfilePhoto } from "@/data/lib/catalyst/social/photos";
 import { canReadProfile } from "@/data/lib/profile/queries";

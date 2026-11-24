@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { genesisPlazaUrl as plazaThumbnail } from "@dcl/one-ui";
+import { genesisPlazaUrl as plazaThumbnail } from "@dcl/one-ui/apps/sites";
 
 import { profileFaceUrl } from "../../auth/profile-face-url";
 import { withDeadline } from "../../request-deadline";

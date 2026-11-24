@@ -1,4 +1,4 @@
-import { Notice, useEventsCopy, SitesButton as Button } from "@dcl/one-ui";
+import { Notice, useEventsCopy, SitesButton as Button } from "@dcl/one-ui/apps/sites";
 import { GeneralCheck } from "@dcl/one-ui";
 import { useEffect, useRef } from "react";
 import { useNavigate } from "react-router";

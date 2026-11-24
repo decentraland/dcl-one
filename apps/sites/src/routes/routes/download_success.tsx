@@ -8,7 +8,7 @@ import {
   SitesLocaleContext,
   saveSitesLocale,
   sitesLanguage,
-} from "@dcl/one-ui";
+} from "@dcl/one-ui/apps/sites";
 import { parseCookies } from "@/core/lib/telemetry/session";
 import { installerUrl } from "@/data/lib/download/installers";
 import { installerSelection } from "@/features/download/installers";

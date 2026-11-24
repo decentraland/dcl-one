@@ -17,6 +17,7 @@ import "@dcl/one-ui/foundations/spacing/spacing.css";
 import "@dcl/one-ui/foundations/layout/layout.css";
 import "@dcl/one-ui/apps/sites/profile-tokens.css";
 import "@ui/atoms/primitives.css";
+import { ThumbnailPublicBase } from "@dcl/one-ui";
 import {
   dclLogoUrl as logo,
   StatusPage,
@@ -24,8 +25,7 @@ import {
   sitesLanguage,
   type SitesLocale,
   type SitesLocaleHandle,
-  ThumbnailPublicBase,
-} from "@dcl/one-ui";
+} from "@dcl/one-ui/apps/sites";
 
 import { QUERY_CLIENT_CONFIG } from "@/core/lib/query/defaults";
 import ChromeAuthBridge from "@/features/components/chrome/ChromeAuthBridge";

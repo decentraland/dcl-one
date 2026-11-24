@@ -2,8 +2,6 @@ import { useId, type ComponentType } from "react";
 import { Link } from "react-router";
 
 import {
-  CopyAddress,
-  useBrokenImage,
   useChromeAuth,
   GeneralGift,
   GeneralLogout,
@@ -12,6 +10,10 @@ import {
   MenusNotifications,
   type IconProps,
 } from "@dcl/one-ui";
+import {
+  CopyAddress,
+  useBrokenImage,
+} from "@dcl/one-ui/apps/sites";
 
 
 import { shortAddress } from "@/data/lib/catalyst/format/address";

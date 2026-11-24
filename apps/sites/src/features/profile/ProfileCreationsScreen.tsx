@@ -1,6 +1,11 @@
 import { useState } from "react";
 
 import {
+  BackpackUpperBody,
+  GeneralSecondaryBarEmotes,
+  type ShopCardCreator,
+} from "@dcl/one-ui";
+import {
   CollectiblesItem,
   CollectiblesPanel,
   useCategoryTabs,
@@ -8,10 +13,7 @@ import {
   ViewAllLink,
   type CategoryOption,
   type CollectiblesState,
-  BackpackUpperBody,
-  GeneralSecondaryBarEmotes,
-  type ShopCardCreator,
-} from "@dcl/one-ui";
+} from "@dcl/one-ui/apps/sites";
 
 
 import { accountPage } from "@/core/lib/shop/redirects";

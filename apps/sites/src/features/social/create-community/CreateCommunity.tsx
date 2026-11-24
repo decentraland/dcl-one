@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { useNavigate } from "react-router";
 
-import { CommunityCreate, type CommunityCreateInput } from "@dcl/one-ui";
+import { CommunityCreate, type CommunityCreateInput } from "@dcl/one-ui/apps/sites";
 import { siteUrl } from "@web-core/site";
 
 import type { TrackContext, TrackFn } from "@/core/lib/telemetry/track";

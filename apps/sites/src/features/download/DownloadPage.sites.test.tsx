@@ -8,7 +8,7 @@ import { track } from "@/core/lib/telemetry/track";
 
 import DownloadPage from "./DownloadPage";
 import { googlePlayHref } from "./google-play";
-import { dclLogoUrl as sitesLogo } from "@dcl/one-ui";
+import { dclLogoUrl as sitesLogo } from "@dcl/one-ui/apps/sites";
 
 vi.hoisted(() => Object.assign(window, { __vite_plugin_react_preamble_installed__: true }));
 vi.mock("../components/chrome/SitesLayout", () => ({ default: ({ children }: { children: ReactNode }) => <>{children}</> }));

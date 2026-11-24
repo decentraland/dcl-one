@@ -9,7 +9,7 @@ import {
   errorsNotFoundAvatarUrl as notFoundAvatar,
   errorsWaveUrl as wave,
   StatusPage,
-} from "@dcl/one-ui";
+} from "@dcl/one-ui/apps/sites";
 import { ErrorBoundary } from "./root";
 
 const routeError = (status: number, statusText: string, data: unknown = "") =>

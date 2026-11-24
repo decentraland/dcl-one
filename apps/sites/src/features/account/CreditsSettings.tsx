@@ -1,6 +1,7 @@
 import { useEffect, useId, useRef, useState } from "react";
 
-import { LeaveCreditsDialog, Button, Skeleton } from "@dcl/one-ui";
+import { Button, Skeleton } from "@dcl/one-ui";
+import { LeaveCreditsDialog } from "@dcl/one-ui/apps/sites";
 
 import { optOutFailureMessage } from "@/data/lib/account/credits";
 import type { AuthIdentity } from "@/data/lib/auth/types";

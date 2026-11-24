@@ -1,7 +1,7 @@
 import { useInfiniteQuery } from "@tanstack/react-query";
 import { useRef } from "react";
 
-import { CommunityMembersList } from "@dcl/one-ui";
+import { CommunityMembersList } from "@dcl/one-ui/apps/sites";
 
 import { useAuth } from "@/data/lib/auth/context";
 import { shortAddress } from "@/data/lib/catalyst/format/address";

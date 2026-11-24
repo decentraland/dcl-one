@@ -1,7 +1,7 @@
 import { useEffect, useRef } from "react";
 
 import SitesLayout from "@/features/components/chrome/SitesLayout";
-import { BlogArticlePage, BlogNotFound, BlogRoutingProvider, BlogUnavailable } from "@dcl/one-ui";
+import { BlogArticlePage, BlogNotFound, BlogRoutingProvider, BlogUnavailable } from "@dcl/one-ui/apps/sites";
 
 import type { BlogPostPayload } from "@/data/lib/blog/types";
 import { track } from "@/core/lib/telemetry/track";

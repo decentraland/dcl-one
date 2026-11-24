@@ -15,7 +15,7 @@ import {
   type LiveEventCardProps,
   type UpcomingEventCardProps,
   useEventsCopy,
-} from "@dcl/one-ui";
+} from "@dcl/one-ui/apps/sites";
 
 import { useAuth } from "@/data/lib/auth/context";
 import { siteUrl } from "@/data/lib/catalyst/bases";

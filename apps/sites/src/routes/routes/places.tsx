@@ -14,7 +14,7 @@ import {
   PlacesPage,
   type PlaceCardData,
   type PlaceCardLabels,
-} from "@dcl/one-ui";
+} from "@dcl/one-ui/apps/sites";
 import { remoteFlag, remoteFlagsPrimed, remoteFlagVariant } from "@dcl/one-ui/apps/shop/remote-flags";
 import { remoteFlagOn, remoteFlagVariantIn } from "@shop/discovery/lib/rolloutFlags";
 

@@ -1,4 +1,4 @@
-// The app-scoped Sites UI that consumers import through @dcl/one-ui.
+// The app-scoped Sites UI, imported as @dcl/one-ui/apps/sites. The shared entry (../../index.ts) does not re-export it.
 export { CopyAddress } from './CopyAddress'
 export { EmailConfirmation, type EmailConfirmationState } from './account/EmailConfirmation'
 export { LeaveCreditsDialog } from './account/LeaveCreditsDialog'

@@ -3,6 +3,14 @@ import { useEffect, useState } from "react";
 import { useRouteLoaderData, useSearchParams } from "react-router";
 
 import {
+  GeneralGallery,
+  GeneralImage,
+  GeneralLock,
+  GeneralPublic,
+  Button,
+  JumpInCTA,
+} from "@dcl/one-ui";
+import {
   CollectiblesItem,
   CollectiblesPanel,
   useCategoryTabs,
@@ -13,13 +21,7 @@ import {
   PhotoViewer,
   PhotoTile,
   PrivatePhotosNotice,
-  GeneralGallery,
-  GeneralImage,
-  GeneralLock,
-  GeneralPublic,
-  Button,
-  JumpInCTA,
-} from "@dcl/one-ui";
+} from "@dcl/one-ui/apps/sites";
 
 
 import { useAuth } from "@/data/lib/auth/index";

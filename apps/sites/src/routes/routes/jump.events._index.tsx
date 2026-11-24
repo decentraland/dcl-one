@@ -1,4 +1,4 @@
-import { JumpCard, JumpEventActions, JumpPage } from "@dcl/one-ui";
+import { JumpCard, JumpEventActions, JumpPage } from "@dcl/one-ui/apps/sites";
 import { useState } from "react";
 import { redirect } from "react-router";
 import SitesLayout from "@/features/components/chrome/SitesLayout";

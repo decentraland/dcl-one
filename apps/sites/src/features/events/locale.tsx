@@ -1,6 +1,6 @@
 import { useContext, type ReactNode } from "react";
 
-import { EventsLocaleContext, sitesFooterCopy, SitesLocaleContext } from "@dcl/one-ui";
+import { EventsLocaleContext, sitesFooterCopy, SitesLocaleContext } from "@dcl/one-ui/apps/sites";
 
 export function useEventsFooterCopy() {
   return sitesFooterCopy[useContext(EventsLocaleContext)];

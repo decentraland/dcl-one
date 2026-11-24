@@ -1,12 +1,14 @@
 import { lazy, Suspense, useEffect, useRef, useState } from "react";
 
 import {
-  dclLogoUrl as logo,
-  googlePlayCtaUrl as googlePlayBadge,
-  VerifiedIcon,
   useChromeAuth,
   Button,
 } from "@dcl/one-ui";
+import {
+  dclLogoUrl as logo,
+  googlePlayCtaUrl as googlePlayBadge,
+  VerifiedIcon,
+} from "@dcl/one-ui/apps/sites";
 import SitesLayout from "../components/chrome/SitesLayout";
 
 import { successHref, type Installer } from "@/data/lib/download/installers";

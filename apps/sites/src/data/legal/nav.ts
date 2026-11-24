@@ -1,4 +1,4 @@
-import type { LegalIconName } from "@dcl/one-ui";
+import type { LegalIconName } from "@dcl/one-ui/apps/sites";
 
 import type { LegalKey } from "./types";
 

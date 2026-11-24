@@ -4,7 +4,7 @@
 // decentraland/auth is Apache-2.0.
 // Upstream shows WalletConnect's own modal; this site has no such SDK, so its pairing code sits in the same modal.
 
-import { dclLogoUrl as logo } from "@dcl/one-ui";
+import { dclLogoUrl as logo } from "@dcl/one-ui/apps/sites";
 import { useCallback, useEffect, useRef, useState, type ClipboardEvent, type KeyboardEvent, type ReactNode } from "react";
 
 import emailIcon from "./assets/email.svg?url";

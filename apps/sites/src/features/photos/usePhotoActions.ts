@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 
-import type { PhotoViewerActions } from "@dcl/one-ui";
+import type { PhotoViewerActions } from "@dcl/one-ui/apps/sites";
 
 import type { ProfilePhoto } from "@/data/lib/catalyst/social/photos";
 

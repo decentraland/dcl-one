@@ -1,7 +1,7 @@
 import { useQueryClient } from "@tanstack/react-query";
 import { useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore } from "react";
 import { useLocation, useNavigate, useSearchParams } from "react-router";
-import { useEventsCopy, Notice, SubmitHangoutView as LdSubmitHangoutView, type SitesLocaleHandle } from "@dcl/one-ui";
+import { useEventsCopy, Notice, SubmitHangoutView as LdSubmitHangoutView, type SitesLocaleHandle } from "@dcl/one-ui/apps/sites";
 import { rejectedNotice } from "@/features/social/submit-hangout/review-notice";
 import { EventsLocaleProvider, useEventsFooterCopy } from "@/features/events/locale";
 

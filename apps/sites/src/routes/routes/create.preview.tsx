@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useMachine } from "@xstate/react";
 
-import { MpLaunchForm, MpLiveRunView, type MpPerfSeries, MpReplayDialog, MpReportView, MpUnpaired } from "@dcl/one-ui";
+import { MpLaunchForm, MpLiveRunView, type MpPerfSeries, MpReplayDialog, MpReportView, MpUnpaired } from "@dcl/one-ui/apps/sites";
 import type { MpLane, MpLaunchRequest } from "@web-core/multiplayer-test/rules";
 import {
   MpSidecar,

@@ -1,6 +1,6 @@
 import type { RefObject } from "react";
 
-import type { CommunityListMore, CommunityListStatus } from "@dcl/one-ui";
+import type { CommunityListMore, CommunityListStatus } from "@dcl/one-ui/apps/sites";
 
 type PagedQuery = {
   isPending: boolean;

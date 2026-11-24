@@ -1,4 +1,4 @@
-import type { LegalBlock, LegalSection, LegalTocEntry } from "@dcl/one-ui";
+import type { LegalBlock, LegalSection, LegalTocEntry } from "@dcl/one-ui/apps/sites";
 
 export type {
   LegalBlock,
@@ -6,7 +6,7 @@ export type {
   LegalLink,
   LegalSection,
   LegalTocEntry,
-} from "@dcl/one-ui";
+} from "@dcl/one-ui/apps/sites";
 
 /** The legal documents, by the key the route, telemetry and agent markdown name them. */
 export type LegalKey =

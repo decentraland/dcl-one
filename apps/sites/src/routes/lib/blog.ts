@@ -1,5 +1,5 @@
 import { redirect, type HeadersArgs, type MetaDescriptor, type RouterContextProvider } from "react-router";
-import { BLOG_HOME, blogPostHref } from "@dcl/one-ui";
+import { BLOG_HOME, blogPostHref } from "@dcl/one-ui/apps/sites";
 
 import { parseBlogQuery, UNCATEGORIZED } from "@/data/lib/blog/normalize";
 import type { BlogOutcome } from "@/data/lib/blog/pages";

@@ -1,4 +1,4 @@
-import { ReelsEmpty, ReelsGallery, ReelsPage } from "@dcl/one-ui";
+import { ReelsEmpty, ReelsGallery, ReelsPage } from "@dcl/one-ui/apps/sites";
 
 import { CollectibleLink } from "@/features/profile/collectibles";
 

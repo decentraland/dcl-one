@@ -6,7 +6,7 @@ import { useState } from "react";
 import { createRoutesStub } from "react-router";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { SitesLocaleContext, type SitesLocale } from "@dcl/one-ui";
+import { SitesLocaleContext, type SitesLocale } from "@dcl/one-ui/apps/sites";
 import Press from "./press";
 
 vi.hoisted(() =>

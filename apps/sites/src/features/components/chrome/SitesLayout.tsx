@@ -2,6 +2,11 @@ import { useContext, useId, type ReactNode } from "react";
 import { Link } from "react-router";
 import { useQuery } from "@tanstack/react-query";
 import {
+  useChromeAuth,
+  SiteLayout,
+  NavCreditsBalance,
+} from "@dcl/one-ui";
+import {
   SitesFooter,
   type FooterCopy,
   SitesSectionNavigation,
@@ -9,10 +14,7 @@ import {
   ProfileNavigationContext,
   SITES_NAV_AREAS,
   type SitesNavId,
-  useChromeAuth,
-  SiteLayout,
-  NavCreditsBalance,
-} from "@dcl/one-ui";
+} from "@dcl/one-ui/apps/sites";
 import { creditsBalanceQuery, formatCreditsBalance } from "@shop/credits/balance-query";
 import { docsUrl } from "@web-core/docs";
 import { subscribeSiteNewsletter } from "@web-core/newsletter";

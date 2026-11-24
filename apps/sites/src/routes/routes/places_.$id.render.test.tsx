@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import type { PlaceDetailProps } from "@dcl/one-ui";
+import type { PlaceDetailProps } from "@dcl/one-ui/apps/sites";
 import { renderToString } from "react-dom/server";
 import { createMemoryRouter, RouterProvider } from "react-router";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -14,8 +14,8 @@ import PlaceDetailRoute from "./places_.$id";
 
 const seen: { props: PlaceDetailProps | null } = { props: null };
 
-vi.mock("@dcl/one-ui", async (importOriginal) => ({
-  ...(await importOriginal<typeof import("@dcl/one-ui")>()),
+vi.mock("@dcl/one-ui/apps/sites", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@dcl/one-ui/apps/sites")>()),
   PlaceDetail: (props: PlaceDetailProps) => {
     seen.props = props;
     return null;

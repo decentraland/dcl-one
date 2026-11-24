@@ -1,4 +1,5 @@
-import { SitesLocaleContext, sitesLanguage, type SitesLocaleHandle, sitesFooterCopy, AnimatedBackground, Hero, WhatsOn, CatchTheVibe, WeeklyRituals, ComeHangOut } from "@dcl/one-ui";
+import { AnimatedBackground } from "@dcl/one-ui";
+import { SitesLocaleContext, sitesLanguage, type SitesLocaleHandle, sitesFooterCopy, Hero, WhatsOn, CatchTheVibe, WeeklyRituals, ComeHangOut } from "@dcl/one-ui/apps/sites";
 import { useContext, useEffect, useRef } from "react";
 
 import SitesLayout from "@/features/components/chrome/SitesLayout";

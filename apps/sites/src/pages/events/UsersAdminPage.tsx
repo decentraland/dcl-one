@@ -6,7 +6,7 @@ import {
   PermissionsModal,
   UsersTable,
   type AdminUserRow,
-} from "@dcl/one-ui";
+} from "@dcl/one-ui/apps/sites";
 import { skipToken, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useRef, useState } from "react";
 

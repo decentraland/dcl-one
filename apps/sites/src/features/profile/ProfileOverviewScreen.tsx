@@ -1,3 +1,4 @@
+import { Button } from "@dcl/one-ui";
 import {
   AvatarBody,
   EquippedItems,
@@ -5,8 +6,7 @@ import {
   CollectiblesItem,
   CollectiblesPanel,
   type CollectiblesState,
-  Button,
-} from "@dcl/one-ui";
+} from "@dcl/one-ui/apps/sites";
 
 import { playUrl } from "@/data/lib/catalyst/bases";
 import type { ProfileBadge } from "@/data/lib/catalyst/social/badges";

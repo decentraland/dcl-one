@@ -1,7 +1,7 @@
 import { useLocation, useNavigate, useNavigation } from "react-router";
 import { useEffect, useState } from "react";
 
-import { PlaceDetail } from "@dcl/one-ui";
+import { PlaceDetail } from "@dcl/one-ui/apps/sites";
 import { isPlaceholderThumbnail, type PlaceViewer } from "@web-core/place-view";
 import SitesLayout from "@/features/components/chrome/SitesLayout";
 

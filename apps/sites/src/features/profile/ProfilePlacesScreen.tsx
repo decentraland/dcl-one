@@ -2,17 +2,19 @@ import { useState } from "react";
 import { Link } from "react-router";
 
 import {
-  OWNER_EMPTY_TITLE,
-  PlacesOwnerEmpty,
-  ProfilePlaces,
-  type PlacesPanelState,
-  EmptyMessage,
   GeneralFavorites,
   Button,
   JumpInCTA,
   type PlaceCardCreator,
   type PlaceCardLinkProps,
 } from "@dcl/one-ui";
+import {
+  OWNER_EMPTY_TITLE,
+  PlacesOwnerEmpty,
+  ProfilePlaces,
+  type PlacesPanelState,
+  EmptyMessage,
+} from "@dcl/one-ui/apps/sites";
 
 
 import { track } from "@/core/lib/telemetry/track";

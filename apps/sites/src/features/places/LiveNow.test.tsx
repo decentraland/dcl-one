@@ -3,7 +3,7 @@ import { cleanup, fireEvent, render, screen, within } from "@testing-library/rea
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, type Mock, vi } from "vitest";
 
-import { PlacesLiveNow as LiveNow, PlaceCardSlot, type PlaceCardData } from "@dcl/one-ui";
+import { PlacesLiveNow as LiveNow, PlaceCardSlot, type PlaceCardData } from "@dcl/one-ui/apps/sites";
 
 vi.hoisted(() =>
   Object.assign(window, {

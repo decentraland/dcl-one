@@ -1,4 +1,4 @@
-import type { PlaceCardData, JumpInModalPlace } from "@dcl/one-ui";
+import type { PlaceCardData, JumpInModalPlace } from "@dcl/one-ui/apps/sites";
 
 import { FOUNDATION_CONTACT_NAME } from "@/data/lib/catalyst/jump/jump";
 import type { Destination } from "@/data/lib/catalyst/places/destinations";

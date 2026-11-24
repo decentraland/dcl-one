@@ -2,7 +2,7 @@ import { useState } from "react";
 import { useInfiniteQuery, useQueries } from "@tanstack/react-query";
 import { Link } from "react-router";
 
-import { ProfileFriendsButton, ProfileFriendsDialog, ProfileInviteButton } from "@dcl/one-ui";
+import { ProfileFriendsButton, ProfileFriendsDialog, ProfileInviteButton } from "@dcl/one-ui/apps/sites";
 
 import { useAuth } from "@/data/lib/auth/index";
 import type { AuthIdentity } from "@/data/lib/auth/types";

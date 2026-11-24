@@ -1,4 +1,4 @@
-import { adminCopy, adminPageStyles, Busy, Notice, SitesButton as Button } from "@dcl/one-ui";
+import { adminCopy, adminPageStyles, Busy, Notice, SitesButton as Button } from "@dcl/one-ui/apps/sites";
 import type { ReactNode } from "react";
 import { Navigate } from "react-router";
 

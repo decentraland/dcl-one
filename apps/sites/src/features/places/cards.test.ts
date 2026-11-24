@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it } from "vitest";
 
-import type { PlaceCardData } from "@dcl/one-ui";
+import type { PlaceCardData } from "@dcl/one-ui/apps/sites";
 
 import type { Destination } from "@/data/lib/catalyst/places/destinations";
 import { destination } from "@/data/lib/catalyst/places/destination.fixture";

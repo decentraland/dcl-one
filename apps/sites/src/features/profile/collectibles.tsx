@@ -2,15 +2,17 @@ import type { InfiniteData, UseInfiniteQueryResult } from "@tanstack/react-query
 import type { MouseEvent, ReactNode } from "react";
 import { Link, useNavigate } from "react-router";
 import {
+  Button,
+  type ShopCardCreator,
+  type ShopCardLinkProps,
+} from "@dcl/one-ui";
+import {
   CreationCard as CreationView,
   ProfileLoadMore as LoadMore,
   type CollectibleLinkProps,
   type CollectiblesState,
   type FocusRows,
-  Button,
-  type ShopCardCreator,
-  type ShopCardLinkProps,
-} from "@dcl/one-ui";
+} from "@dcl/one-ui/apps/sites";
 
 import { assetPage } from "@/core/lib/shop/redirects";
 import type { CollectiblePage, ProfileCreation } from "@/data/lib/catalyst/marketplace/profile-collectibles";

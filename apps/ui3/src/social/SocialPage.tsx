@@ -3,7 +3,7 @@ import { useEffect, useState } from "react";
 import ChromeShell from "../components/ChromeShell";
 import DclTopBar from "../web/frames/DclTopBar";
 import Communities, { type SocialCommunity, type SocialDetail, type SocialMember, type SocialPost, type SocialPlace } from "../explorer/pages/Communities";
-import { CommunityCreate } from "@dcl/one-ui";
+import { CommunityCreate } from "@dcl/one-ui/apps/sites";
 import ConfirmDialog from "../explorer/components/ConfirmDialog";
 import CommunityRequests, { type CommunityRequest, type RequestDecision } from "./CommunityRequests";
 import CommunityPosts from "./CommunityPosts";

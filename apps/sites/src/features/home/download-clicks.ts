@@ -1,4 +1,4 @@
-import type { DownloadActionsProps, DownloadAlternative, StoreBadgeProps } from "@dcl/one-ui";
+import type { DownloadActionsProps, DownloadAlternative, StoreBadgeProps } from "@dcl/one-ui/apps/sites";
 
 import type { DownloadClick, DownloadClickPlace } from "../download/download-click";
 import { osName } from "../download/actions";

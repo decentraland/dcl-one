@@ -10,7 +10,7 @@ import {
   weeklyRitualsTuesdayUrl as tuesday,
   weeklyRitualsWednesdayUrl as wednesday,
   type SitesLocale,
-} from "@dcl/one-ui";
+} from "@dcl/one-ui/apps/sites";
 import type { HomeContent } from "@/data/lib/catalyst/landings/home";
 import { VIBE_CREATORS } from "@/data/lib/catalyst/landings/vibe-creators";
 import { homeEventHref } from "./links";

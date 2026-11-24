@@ -1,6 +1,6 @@
 import { useContext } from "react";
 
-import { sitesFooterCopy, PressKit, SitesLocaleContext, type SitesLocaleHandle } from "@dcl/one-ui";
+import { sitesFooterCopy, PressKit, SitesLocaleContext, type SitesLocaleHandle } from "@dcl/one-ui/apps/sites";
 
 import SitesLayout from "@/features/components/chrome/SitesLayout";
 import { pressCopy } from "@/features/press/locale";

@@ -2,18 +2,20 @@ import { useContext, useId, type ReactNode } from "react";
 import DclTopBar from "./DclTopBar";
 import SitesCreditsChip from "./SitesCreditsChip";
 import {
+  useChromeAuth,
+  SiteLayout,
+} from "@dcl/one-ui";
+import {
   SITES_NAV_AREAS,
   type SitesNavId,
   SitesFooter,
   type FooterCopy,
   ProfileNavigationContext,
-  useChromeAuth,
-  SiteLayout,
-} from "@dcl/one-ui";
+} from "@dcl/one-ui/apps/sites";
 import "../../atoms/maskicon.css";
 import { docsUrl } from "@web-core/docs";
 import "./siteschrome.css";
-export type { SitesNavId } from "@dcl/one-ui";
+export type { SitesNavId } from "@dcl/one-ui/apps/sites";
 import { subscribeSiteNewsletter } from "@web-core/newsletter";
 import SiteSectionNavigation from "./SiteSectionNavigation";
 
