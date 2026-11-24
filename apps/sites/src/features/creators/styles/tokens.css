@@ -32,8 +32,6 @@
   --color-chip-dark: rgba(0, 0, 0, 0.3);
   /* Modal surface: the solid deep purple dialogs sit on (Figma "Create Collection Modal"). */
   /* System/info blues (Figma "Status Tab" draft variant). */
-  /* Sub-nav band: translucent deep purple, the same as sites' sub-tab bar. */
-  --color-subnav-overlay: rgba(39, 5, 55, 0.6);
   /* Deeper fill for dropdowns over the page (Select). */
   --color-subnav-overlay-scrolled: rgba(64, 20, 88, 0.8);
   /* Translucent white fills for controls on dark surfaces (filter pills, search bars, buttons). */
