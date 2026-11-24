@@ -119,8 +119,12 @@ jobs:
           path: base_build
           run-id: ${{ inputs.base_run_id }}
           github-token: ${{ github.token }}
+      # The release is optional: a failed download or warm-up drops it, and the leg still measures
+      # the change and the base.
       - name: Download the latest release build
+        id: release-download
         if: inputs.release_artifact != ''
+        continue-on-error: true
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: ${{ inputs.release_artifact }}
@@ -142,21 +146,23 @@ jobs:
         timeout-minutes: 10
         run: benchmark warmup
       - name: Warmup latest release build
-        if: inputs.release_artifact != ''
+        id: release-warmup
+        if: steps.release-download.outcome == 'success'
+        continue-on-error: true
         env:
           APP_DIR: release_build
           BUILD_NAME: release_build
         timeout-minutes: 10
         run: benchmark warmup
-      # The builds are measured fresh in the same session, interleaved; without a release artifact
-      # RELEASE_BUILD_DIR is empty, which the runner reads as no release. The step first removes an
+      # The builds are measured fresh in the same session, interleaved; without a release that
+      # downloaded and warmed up, RELEASE_BUILD_DIR is empty, which the runner reads as no release. The step first removes an
       # earlier session's run files and writes runs_on.txt last.
       - name: Test builds
         id: measure
         env:
           CHANGE_BUILD_DIR: change_build
           BASE_BUILD_DIR: base_build
-          RELEASE_BUILD_DIR: ${{ inputs.release_artifact != '' && 'release_build' || '' }}
+          RELEASE_BUILD_DIR: ${{ steps.release-warmup.outcome == 'success' && 'release_build' || '' }}
           RUNS: ${{ inputs.runs }}
           SETTLE_SECONDS: '15'
         timeout-minutes: 90

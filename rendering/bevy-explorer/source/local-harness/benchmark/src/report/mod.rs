@@ -134,6 +134,8 @@ enum RunnerCaveat {
     /// The legs measured the latest release, and none of this section's release runs produced
     /// data: it has no release table.
     NoReleaseData,
+    /// The change and release sessions cannot be compared: the release table has no verdicts.
+    ReleaseSessionsNotComparable(SessionsNotComparable),
 }
 
 struct RunnerSection {
@@ -295,7 +297,10 @@ pub fn build_report(options: &ReportOptions) -> Result<BenchmarkReport, Failure>
     } else if has_data && options.release.is_some() {
         markdown += render::NOTHING_COMPARED_WITH_RELEASE;
     }
-    markdown += &render::legend(options.expected_runs, options.release.is_some());
+    markdown += &render::legend(
+        options.expected_runs,
+        options.release.is_some() || release_compared,
+    );
     markdown += &sections;
     Ok(BenchmarkReport {
         markdown,
@@ -431,13 +436,13 @@ fn compare_builds(
     }
 
     // the frame-time verdicts alone, as against the base; a session the release cannot be
-    // compared with withholds them with its reason
+    // compared with withholds them, and a note says why
     let release_comparison = (release.run_count > 0).then(|| {
-        let frame_time_verdicts = frame_time_verdicts(
-            &change,
-            &release,
-            sessions_not_comparable(&change, &release),
-        );
+        let incomparable = sessions_not_comparable(&change, &release);
+        if let Some(incomparable) = incomparable {
+            caveats.push(RunnerCaveat::ReleaseSessionsNotComparable(incomparable));
+        }
+        let frame_time_verdicts = frame_time_verdicts(&change, &release, incomparable);
         ReleaseComparison {
             release,
             frame_time_verdicts,
@@ -701,6 +706,38 @@ mod tests {
 
     fn lines(bytes: &[u8]) -> Vec<String> {
         Lines::new(bytes).map(Result::unwrap).collect()
+    }
+
+    #[test]
+    fn a_release_session_that_cannot_be_compared_withholds_its_verdicts_and_says_why() {
+        let run = || BuildBenchmarkRun {
+            sample_count: 1000,
+            frame_time_ms: [10.0; 6],
+            exception_count: 0,
+            exception_kinds: ExceptionKindCounts::default(),
+            perf_summary: None,
+        };
+        let section = compare_builds(
+            "apple-m1".to_owned(),
+            vec![run(), run(), run()],
+            vec![run(), run(), run()],
+            vec![run()],
+            3,
+            true,
+        );
+        let comparison = section.release_comparison.as_ref().unwrap();
+        assert!(comparison
+            .frame_time_verdicts
+            .iter()
+            .all(|verdict| *verdict == FrameTimeVerdict::Withheld("too few runs")));
+        assert!(section.caveats.iter().any(|caveat| matches!(
+            caveat,
+            RunnerCaveat::ReleaseSessionsNotComparable(SessionsNotComparable::TooFewRuns)
+        )));
+        assert!(!section
+            .caveats
+            .iter()
+            .any(|caveat| matches!(caveat, RunnerCaveat::SessionsNotComparable(_))));
     }
 
     #[test]

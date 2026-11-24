@@ -169,16 +169,27 @@ fn release_each_machine_also_compares_the_change_with_the_latest_release() {
 }
 
 #[test]
-fn release_a_machine_without_release_runs_says_so_beside_one_with_them() {
+fn release_a_machine_without_release_runs_says_so_beside_one_with_some() {
     let mut options = options("release-partial");
     options.release = Some("`0.1.0-80.commit-9999999`".into());
     let report = build(&options);
     let note =
         "> ⚠️ No Release run produced data — the change is not compared with the latest release here.";
 
+    // two of three release runs: compared, with the missing run noted
     let apple = section(&report, "Apple M1 (Chrome)");
     assert!(
         apple.contains(&"**Against the latest release**"),
+        "{apple:#?}"
+    );
+    assert!(
+        apple.contains(&"| Samples | 10 (×2) | 10 (×3) | | |"),
+        "{apple:#?}"
+    );
+    assert!(
+        apple.contains(
+            &"> ⚠️ Only 2 of 3 Release runs produced data — the app may have crashed in the missing runs."
+        ),
         "{apple:#?}"
     );
     assert!(!apple.contains(&note), "{apple:#?}");
@@ -213,7 +224,7 @@ fn release_a_release_without_runs_is_said_and_the_base_comparison_stays() {
         &report,
         "**Against the latest release: ⚠️ nothing was compared — no Release run produced data**",
     );
-    assert!(!report.markdown.contains("**Against the latest release**"));
+    assert!(!report.markdown.contains("| Metric | Release | Change |"));
 
     // without a release, no release line, note or legend bullet at all
     let report = report_of("ok");

@@ -610,12 +610,13 @@ its merge commit.
 
 The latest release is the web app every player gets at decentraland.org/play. *Bevy Explorer /
 Manual CDN rollout* (`bevy-explorer-rollout-manual.yml`) records each rollout as a GitHub deployment
-to the `org` environment, whose payload names the package `@dcl-regenesislabs/bevy-explorer-web`,
-the rollout percentage and the npm version, `0.1.0-<CI run id>.commit-<short sha>`. Setup resolves
-it in four steps:
+to the `org` environment, whose payload names the package `@dcl-regenesislabs/bevy-explorer-web`
+(`prefix`), the path (`play`), the rollout percentage and the npm version,
+`0.1.0-<CI run id>.commit-<short sha>`. Setup resolves it in four steps:
 
-1. Among the newest 30 `org` deployments, the first of that package at 100% whose latest status is
-   *success*: a partial rollout or a failed one is not the release.
+1. Among the newest 100 `org` deployments, the first of that package at `play` and 100% whose
+   latest status is *success*: a partial rollout, a failed one or one still in progress is not the
+   release.
 2. Its version names the *Bevy Explorer / CI* run that stamped and published the package: setup reads
    that run and requires it to be a passed `push` or `workflow_dispatch` run of this repository
    whose commit starts with the short sha.
@@ -627,7 +628,8 @@ When any step fails (no rollout yet, a version that names no run, an expired art
 main build's web app 90 days and a branch build's 7, an unoptimized build, a GitHub API error) or
 the release is the base build itself, the legs
 measure the change and the base only, and a note in the report says why the release was not
-compared.
+compared. On a laptop, a release download or warm-up that fails drops the release from that leg
+only, and the report notes "No Release run produced data" in its section.
 
 **The report job** runs `benchmark report results` with `PR_NUMBER`, `CHANGE_DESCRIPTION`
 (`#<pr> at <commit>`), `BASE_DESCRIPTION` (`main at <commit>`), `RELEASE_DESCRIPTION`

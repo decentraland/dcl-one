@@ -419,6 +419,18 @@ fn caveat_text(note: &RunnerCaveat) -> String {
             "⚠️ No verdicts: the builds produced wildly different sample counts per run ({base} baseline vs {change} change, {:.0}% apart) — far beyond any plausible performance difference, so one of them likely did not run the full session and their frame times cannot be compared.",
             (ratio - 1.0) * 100.0
         ),
+        RunnerCaveat::ReleaseSessionsNotComparable(SessionsNotComparable::TooFewRuns) => {
+            "⚠️ No verdicts against the latest release: fewer than 2 usable runs of a build — the run-to-run noise cannot be estimated from a single run."
+                .to_string()
+        }
+        RunnerCaveat::ReleaseSessionsNotComparable(SessionsNotComparable::SampleCountsDiffer {
+            base,
+            change,
+            ratio,
+        }) => format!(
+            "⚠️ No verdicts against the latest release: the builds produced wildly different sample counts per run ({base} release vs {change} change, {:.0}% apart), so their frame times cannot be compared.",
+            (ratio - 1.0) * 100.0
+        ),
         RunnerCaveat::NoReleaseData => {
             "⚠️ No Release run produced data — the change is not compared with the latest release here."
                 .to_string()

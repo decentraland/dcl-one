@@ -35,6 +35,7 @@ WEB = 'bevy-explorer-web'
 PACKAGE = '@dcl-regenesislabs/bevy-explorer-web'
 # The deployment environment of decentraland.org (bevy-explorer-rollout-manual.yml).
 RELEASE_ENVIRONMENT = 'org'
+RELEASE_PATH = 'play'
 RELEASE_VERSION = re.compile(r'[0-9]+\.[0-9]+\.[0-9]+-([0-9]+)\.commit-([0-9a-f]{7,40})')
 RUNNER = 'bevy-explorer-benchmark-'
 # A leg's Test builds step is cut off after 90 minutes, so runs x 3 builds x (the 480 s run timeout
@@ -124,12 +125,12 @@ def base_runs(repo, base_sha):
 
 def latest_release(repo):
     """The version of the newest successful rollout to every player of decentraland.org, or None."""
-    deployments = api(f'repos/{repo}/deployments?environment={RELEASE_ENVIRONMENT}&per_page=30')
+    deployments = api(f'repos/{repo}/deployments?environment={RELEASE_ENVIRONMENT}&per_page=100')
     for deployment in deployments:
         payload = deployment.get('payload')
-        if not isinstance(payload, dict) or PACKAGE not in (payload.get('prefix'), payload.get('packageName')):
+        if not isinstance(payload, dict) or payload.get('prefix') != PACKAGE or payload.get('path') != RELEASE_PATH:
             continue
-        if str(payload.get('percentage', '100')) != '100':
+        if str(payload.get('percentage')) != '100':
             continue
         statuses = api(f"repos/{repo}/deployments/{deployment['id']}/statuses?per_page=1")
         if statuses and statuses[0].get('state') == 'success':

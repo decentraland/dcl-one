@@ -50,12 +50,20 @@ class GitHub:
         # The latest release: run 80 on main, rolled out to decentraland.org; newest first.
         self.release_run = ci_run(80, RELEASE, event='push', branch='main')
         self.artifacts[80] = artifacts(RELEASE)
+        rollout = {'prefix': inputs.PACKAGE, 'path': 'play', 'percentage': 100}
         self.deployments = [
-            {'id': 3, 'payload': {'prefix': inputs.PACKAGE, 'percentage': 10, 'version': '0.1.0-81.commit-1111111'}},
-            {'id': 2, 'payload': {'prefix': inputs.PACKAGE, 'percentage': 100, 'version': '0.1.0-82.commit-2222222'}},
-            {'id': 1, 'payload': {'prefix': inputs.PACKAGE, 'percentage': 100, 'version': RELEASE_VERSION}},
+            {'id': 8, 'payload': {**rollout, 'version': '0.1.0-88.commit-8888888'}},
+            {'id': 7, 'payload': {**rollout, 'prefix': '@dcl/other', 'version': '0.1.0-87.commit-7777777'}},
+            {'id': 6, 'payload': {**rollout, 'path': 'other', 'version': '0.1.0-86.commit-6666666'}},
+            {'id': 5, 'payload': {'prefix': inputs.PACKAGE, 'path': 'play', 'version': '0.1.0-85.commit-5555555'}},
+            {'id': 4, 'payload': 'not an object'},
+            {'id': 3, 'payload': {**rollout, 'percentage': 10, 'version': '0.1.0-81.commit-1111111'}},
+            {'id': 2, 'payload': {**rollout, 'version': '0.1.0-82.commit-2222222'}},
+            {'id': 1, 'payload': {**rollout, 'version': RELEASE_VERSION}},
         ]
-        self.deployment_states = {3: 'success', 2: 'failure', 1: 'success'}
+        # 8 is still in progress, 2 failed; only the newest status of each counts
+        self.deployment_states = {8: 'queued', 7: 'success', 6: 'success', 5: 'success', 4: 'success',
+                                  3: 'success', 2: 'failure', 1: 'success'}
         self.expired = set()
         # build-info.json per web app, an optimized engine unless given here; None leaves it out.
         self.build_info = {}
@@ -75,7 +83,7 @@ class GitHub:
         self.calls.append(path)
         if path == f'repos/{REPO}/pulls/7':
             return self.pr
-        if path == f'repos/{REPO}/deployments?environment=org&per_page=30':
+        if path == f'repos/{REPO}/deployments?environment=org&per_page=100':
             return self.deployments
         if match := re.fullmatch(rf'repos/{REPO}/deployments/([0-9]+)/statuses\?per_page=1', path):
             return [{'state': self.deployment_states[int(match.group(1))]}]
@@ -151,7 +159,7 @@ class ResolverTest(unittest.TestCase):
             github.deployments = []
 
         def unnamed_run(github):
-            github.deployments[2]['payload']['version'] = '1.2.3'
+            github.deployments[-1]['payload']['version'] = '1.2.3'
 
         def other_commit(github):
             github.release_run['head_sha'] = 'f' * 40
@@ -161,7 +169,7 @@ class ResolverTest(unittest.TestCase):
 
         def is_base(github):
             github.release_run['head_sha'] = MAIN[0]
-            github.deployments[2]['payload']['version'] = f'0.1.0-80.commit-{MAIN[0][:7]}'
+            github.deployments[-1]['payload']['version'] = f'0.1.0-80.commit-{MAIN[0][:7]}'
 
         def expired(github):
             github.expired = {f'bevy-explorer-web-{RELEASE}'}
@@ -178,7 +186,10 @@ class ResolverTest(unittest.TestCase):
         def too_many_artifacts(github):
             """release_build raises; see failures below."""
 
-        for change, note in ((no_rollout, 'No successful rollout'), (unnamed_run, 'does not name the CI run'),
+        def deployments_error(github):
+            """latest_release's own read fails."""
+
+        for change, note in ((no_rollout, 'No successful rollout'), (deployments_error, 'could not be read'), (unnamed_run, 'does not name the CI run'),
                              (other_commit, 'is not a successful'), (failed_run, 'is not a successful'),
                              (is_base, 'is the base build'), (expired, 'has expired'),
                              (unoptimized, 'is not optimized'), (no_api, 'could not be read'),
@@ -190,7 +201,17 @@ class ResolverTest(unittest.TestCase):
                     failures = {no_api: subprocess.CalledProcessError(1, 'gh'),
                                 slow_zip: subprocess.TimeoutExpired('gh', 300),
                                 too_many_artifacts: ValueError('run 80 has more artifacts than one page lists')}
-                    if change in failures:
+                    if change is deployments_error:
+                        real_api = inputs.api
+
+                        def failing(path, raw=False):
+                            if '/deployments?' in path:
+                                raise subprocess.TimeoutExpired('gh', 60)
+                            return real_api(path, raw)
+
+                        with patch.object(inputs, 'api', side_effect=failing):
+                            result = self.resolve()
+                    elif change in failures:
                         with patch.object(inputs, 'release_build', side_effect=failures[change]):
                             result = self.resolve()
                     else:
