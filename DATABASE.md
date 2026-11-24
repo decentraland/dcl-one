@@ -89,6 +89,26 @@ the data and its operations.
    regenerates those windows; the row keeps its real `generation_time`, which
    `/snapshots` publishes as upstream does.
 
+Content sync looks up peer snapshot receipts by primary key in batches during
+bootstrap and periodic refresh. A receipt records the entity types already
+processed. Unfiltered coverage uses a null array. Migration 0061 initializes
+older receipts to an empty set. On the first sync pass after upgrade, the
+leader can redownload and parse every advertised peer snapshot with a legacy
+receipt, including on unfiltered nodes. The existing snapshot concurrency
+bounds parallel work, and the deployer still skips entities already present.
+Writes extend coverage and a peer's cursor advances after its receipts are durable.
+Peer downloads use temporary staging. The blob collector can reclaim old
+peer snapshot files once their final owning reference is gone. A local
+published snapshot continues to retain its blob.
+
+New local deployments require an array when `content` is present. Peer replay
+reads an explicit null as an empty list for compatibility with legacy manifests.
+Both paths accept at most 25,000 declarations per entity, counted before hashes
+are deduplicated. An older manifest above that limit can remain stored on the
+node that accepted it. A new deployment or a replay of that manifest fails
+validation. The `content_sync_manifest_rejections_total` counter reports peer
+rejections with the reason `declaration_limit` or `invalid_cid`.
+
 ## Worlds, persistent storage and scene hosting
 
 One worlds subsystem owns deployment/permission lookup, world/player storage
@@ -1832,6 +1852,39 @@ so changes to scene eligibility may remain cached until expiry. GET and batch
 POST use the same resolver; photo privacy, review and deletion filters apply
 after resolution. Production lookup rates and latency have not been measured.
 
+## Wallet rental reads
+
+`GET /v1/rentals/{address}` reads `shop.chain_cursor` and
+`shop.rental_event` in one statement snapshot. A single lookup returns
+both wallet roles. The two partial participant indexes find the
+wallet's historical assets in the requested venue, and the existing asset
+index finds each candidate's latest rent or claim and the current period's
+rent events. Each result contains one row per asset and role. There is no new
+projection table or response cache. Production lookup rates and latency
+have not been measured.
+
+The missing-objects step of `schema migrate` builds
+`rental_event_lessor_idx` and `rental_event_tenant_idx` non-concurrently.
+It holds a SHARE lock on `shop.rental_event` until the migration commits,
+so chain index writes wait. To keep writes moving during an index build on
+a large history, prebuild both indexes with `CREATE INDEX CONCURRENTLY`
+using the definitions in `schemas/30_shop.sql`.
+
+The read stops at the published block. A stale or unpublished cursor
+returns 503. The latest rent or claim is evaluated before checking the
+current participants. A rent stays in the lessor's list until claim and
+in the tenant's list until expiry. Extensions add to the end of the original
+period, as the Rentals contract does. The route returns the operator on the
+latest rent event. Mainnet and Sepolia use separate
+`(network, block_number, log_index)` event keys and separate cursors under the
+Ethereum supervisor. Only the mainnet index updates listing statuses and
+supplies rental notifications.
+
+The index worker uses the `TRADE_RPC_URLS` entry for chain 11155111 or
+`ETH_RPC_URL` with `ETH_NETWORK=sepolia`. Check the selected chain's
+`ready` field at `GET /signatures-api/v1/rentals-index` before routing
+clients to the wallet rental endpoint.
+
 ## Rental listing status workload
 
 `signatures.rentals.status` (`schemas/32_signatures.sql`) has three writers.
@@ -2444,7 +2497,7 @@ revokes, whose `address` a catalog write does not have.
 ## Market chain index cursors
 
 `shop.chain_cursor` holds one row per projection: an index (`nft`,
-`trade_events`, `rentals`, `mana_transfers`, `sales`, `committee`) on one
+`trade_events`, `rentals`, `rentals_sepolia`, `mana_transfers`, `sales`, `committee`) on one
 network (`ethereum`, `matic`). A window commit writes it once, and so do a
 fold record, a publish and a rewind; the table stays at a dozen rows.
 `shop.chain_checkpoint` holds each projection's recovery points (see
@@ -2481,6 +2534,10 @@ rejected documents then have no row. Ownership and profiles remain available
 during the repair. A rewind removes orphaned events and shortens the repair
 range before the walk resumes. If the rewind removes the remaining archive
 windows, it reconciles the retained estates in its own fenced transaction.
+Migration 0062 installs a reset trigger for the repair marker. It invalidates
+the marker only when the Ethereum NFT cursor completes a full rebuild reset to
+its start block; ordinary reorg rewinds preserve the repaired prefix and are
+reconciled by the walker.
 
 The default window is at most 10,000 blocks. The historical prefix is roughly
 17 million blocks, so it takes at least about 1,700 successful repair passes;
@@ -2510,7 +2567,7 @@ The sampler uses the index worker's existing pool and writes no rows.
 `chain-walk-matic`, in the process that runs the indexes. It walks each
 projection that process enables under the projection's own lease,
 `<index job>-<network>` (`nft-index-matic`, `trade-events-index-matic`,
-`rentals-index-ethereum`), so
+`rentals-index-ethereum`, `rentals-index-sepolia-ethereum`), so
 processes with different projections enabled share a network. Each
 projection keeps its own cadence and backoff, though one that reached the
 target may join a due companion's shared walk ahead of its own turn, so
@@ -3706,3 +3763,15 @@ The object pass creates only objects the database lacks, so it then skips the
 index. A failed concurrent build leaves an invalid index of that name: drop it
 before retrying. Each nft fold maintains the index beside `nft_owner_idx` and
 `nft_item_idx`.
+
+The DCL NAME owner read (`services/catalyst/shop/src/market/names.rs`) looks
+a label up lowercased, through `nft_ens_label_idx`, which only the
+DCLRegistrar's rows enter (`ens_subdomain` set). The object pass builds it the
+same way; to build it outside the release window:
+
+```sql
+CREATE INDEX CONCURRENTLY nft_ens_label_idx
+    ON shop.nft (lower(ens_subdomain)) WHERE ens_subdomain IS NOT NULL;
+```
+
+Its size and the lookup time on production data are unmeasured.

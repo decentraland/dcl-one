@@ -769,9 +769,15 @@ fn entity_file(
     (catalyst::auth::hash_bytes_v1(&bytes), bytes)
 }
 
-/// The stub peer node A syncs from: an empty snapshot list, its entities as
-/// pointer changes, and their files.
-async fn spawn_stub_peer(now: i64) -> (String, tokio::task::JoinHandle<()>) {
+/// A peer serving its signed entities through one snapshot or pointer-changes.
+async fn spawn_stub_peer(
+    now: i64,
+    snapshot_only: bool,
+) -> (
+    String,
+    tokio::task::JoinHandle<()>,
+    Option<SnapshotMetadata>,
+) {
     let mut files: HashMap<String, Vec<u8>> = HashMap::new();
     let scene_file = b"{\"main\":\"bin/game.js\"}".to_vec();
     let scene_file_hash = catalyst::auth::hash_bytes_v1(&scene_file);
@@ -827,8 +833,32 @@ async fn spawn_stub_peer(now: i64) -> (String, tokio::task::JoinHandle<()>) {
         }));
         files.insert(id.clone(), bytes.clone());
     }
+    let snapshot = snapshot_only.then(|| {
+        let mut snapshot = String::from("### Decentraland json snapshot\n");
+        for delta in &deltas {
+            snapshot.push_str(&format!("{delta}\n"));
+        }
+        let hash = catalyst::auth::hash_bytes_v1(snapshot.as_bytes());
+        files.insert(hash.clone(), snapshot.into_bytes());
+        let number_of_entities = deltas.len() as u64;
+        deltas.clear();
+        SnapshotMetadata {
+            hash,
+            time_range: TimeRange {
+                init_timestamp: now - 400 * DAY,
+                end_timestamp: now - 2 * DAY,
+            },
+            number_of_entities,
+            replaced_snapshot_hashes: None,
+            generation_timestamp: now,
+        }
+    });
+    let listing: Vec<_> = snapshot.iter().cloned().collect();
     let app = Router::new()
-        .route("/snapshots", get(|| async { Json(json!([])) }))
+        .route("/snapshots", get(move || {
+            let listing = listing.clone();
+            async move { Json(listing) }
+        }))
         .route(
             "/pointer-changes",
             get(move |Query(query): Query<HashMap<String, String>>| {
@@ -852,6 +882,7 @@ async fn spawn_stub_peer(now: i64) -> (String, tokio::task::JoinHandle<()>) {
     (
         url,
         tokio::spawn(async move { axum::serve(listener, app).await.unwrap() }),
+        snapshot,
     )
 }
 
@@ -862,6 +893,9 @@ fn sync_settings(peer: &str) -> SyncSettings {
         entity_types: None,
         from_timestamp_ms: 0,
         phased_sync: true,
+        snapshot_resync_initial_delay: Duration::from_secs(3_600),
+        snapshot_resync_interval: Duration::from_secs(14 * 86_400),
+        pointer_changes_wait_time_ms: 5_000,
         content_download_concurrency: 8,
         connections_max_idle: 4,
         snapshot_concurrency: 2,
@@ -1091,7 +1125,7 @@ async fn a_second_node_syncs_from_the_first_nodes_snapshots_and_pointer_changes(
     );
     assert!(!gen_a.report().ready);
 
-    let (peer, peer_task) = spawn_stub_peer(now).await;
+    let (peer, peer_task, _) = spawn_stub_peer(now, false).await;
     worker::start(
         &sync_settings(&peer),
         db_a.pool.clone(),
@@ -1179,6 +1213,11 @@ async fn a_second_node_syncs_from_the_first_nodes_snapshots_and_pointer_changes(
             row.hash,
             row.number_of_entities
         );
+        assert!(
+            !node_b.storage.exist(&row.hash).await.unwrap(),
+            "B released the temporary peer snapshot {}",
+            row.hash
+        );
     }
     let paths = seen_a.lock().clone();
     assert!(paths.iter().any(|p| p == "/content/snapshots"));
@@ -1260,6 +1299,82 @@ async fn a_second_node_syncs_from_the_first_nodes_snapshots_and_pointer_changes(
     db_b.teardown().await;
     let _ = std::fs::remove_dir_all(root_a);
     let _ = std::fs::remove_dir_all(root_b);
+}
+
+#[tokio::test]
+async fn widening_the_allowlist_replays_an_already_processed_peer_snapshot() {
+    let Some(db) = db::scratch_database().await else {
+        return;
+    };
+    let root = temp_dir("widen-sync-types");
+    let state = content_state(&db.pool, &root).await;
+    let now = chrono::Utc::now().timestamp_millis();
+    let (peer, peer_task, snapshot) = spawn_stub_peer(now, true).await;
+    let snapshot = snapshot.unwrap();
+    let mut settings = sync_settings(&peer);
+    settings.entity_types = Some(["scene".to_string()].into_iter().collect());
+
+    let jobs = Arc::new(Jobs::new());
+    worker::start(
+        &settings,
+        db.pool.clone(),
+        state.storage.clone(),
+        state.sync.clone(),
+        catalyst::content::sync::test_sync_client(reqwest::Client::new()),
+        catalyst::content::sync_deployer::SyncValidation::AuthChainOnly,
+        &jobs,
+    )
+    .await
+    .unwrap();
+    wait_until("initial snapshot bootstrap", 30, || {
+        state.sync.state() == SyncState::Syncing
+    })
+    .await;
+    jobs.shutdown(Duration::from_secs(10)).await;
+
+    let first_coverage: Vec<String> =
+        sqlx::query_scalar("SELECT entity_types FROM content.processed_snapshots WHERE hash = $1")
+            .bind(&snapshot.hash)
+            .fetch_one(&db.pool)
+            .await
+            .unwrap();
+    assert_eq!(first_coverage, ["scene"]);
+    let entities = active_view(&db.pool).await.0;
+    assert_eq!(entities.len(), 1);
+    assert_eq!(entities[0].1, "scene");
+    assert!(!state.storage.exist(&snapshot.hash).await.unwrap());
+
+    settings.entity_types = Some(
+        ["scene".to_string(), "profile".to_string()]
+            .into_iter()
+            .collect(),
+    );
+    state.sync.set_state(SyncState::Bootstrapping);
+    let jobs = Arc::new(Jobs::new());
+    worker::start(
+        &settings,
+        db.pool.clone(),
+        state.storage.clone(),
+        state.sync.clone(),
+        catalyst::content::sync::test_sync_client(reqwest::Client::new()),
+        catalyst::content::sync_deployer::SyncValidation::AuthChainOnly,
+        &jobs,
+    )
+    .await
+    .unwrap();
+    wait_until("widened snapshot bootstrap", 30, || {
+        state.sync.state() == SyncState::Syncing
+    })
+    .await;
+    jobs.shutdown(Duration::from_secs(10)).await;
+
+    let entities = active_view(&db.pool).await.0;
+    assert_eq!(entities.len(), 2);
+    assert!(entities.iter().any(|entity| entity.1 == "profile"));
+    assert!(!state.storage.exist(&snapshot.hash).await.unwrap());
+    peer_task.abort();
+    db.teardown().await;
+    let _ = std::fs::remove_dir_all(root);
 }
 
 /// A scene this node unpublished (`DELETE /scenes/{coord}`: tombstoned, its

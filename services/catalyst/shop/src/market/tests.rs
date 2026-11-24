@@ -606,10 +606,6 @@ async fn the_lambdas_answer_the_envelope_without_a_reader() {
             "nft-index",
         ),
         (
-            "/lambdas/users/0xdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef/names",
-            "marketplace-subgraph",
-        ),
-        (
             "/lambdas/collections/wearables-by-owner/0xdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef",
             "nft-index",
         ),
@@ -625,6 +621,25 @@ async fn the_lambdas_answer_the_envelope_without_a_reader() {
             "{uri}: {body}"
         );
     }
+    // The NAMEs on mainnet read the nft index, which another process may
+    // publish into this database: one that cannot be read is lamb2's 502.
+    // Off mainnet, without the subgraph, there is no NAME source at all.
+    let names = "/lambdas/users/0xdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef/names";
+    let (status, body) = get_json(router(state.clone()), names).await;
+    assert_eq!(status, StatusCode::BAD_GATEWAY, "{body}");
+    let testnet = support::state_without_db_settings(Settings {
+        eth_network: "sepolia".into(),
+        ..Settings::for_tests()
+    });
+    let (status, body) = get_json(router(testnet), names).await;
+    assert_eq!(
+        (status, body["source"].as_str()),
+        (
+            StatusCode::SERVICE_UNAVAILABLE,
+            Some("marketplace-subgraph")
+        ),
+        "{body}"
+    );
     let subgraphs_only = support::state_without_db_settings(Settings {
         eth_collections_subgraph_url: Some("https://subgraph.example/eth".into()),
         matic_collections_subgraph_url: Some("https://subgraph.example/matic".into()),

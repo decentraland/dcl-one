@@ -167,8 +167,6 @@ pub const REFERENCE_SOURCES: &[&str] = &[
     "content.active_pointers.entity_id",
     "content.local_entities.entity_id",
     "content.snapshots.hash",
-    "content.processed_snapshots.hash",
-    "content.failed_deployments.snapshot_hash",
     "content.failed_deployments.entity_id",
     "content.pending_deployments.entity_id",
     "content.pending_deployment_files.hash",
@@ -207,6 +205,14 @@ pub const REFERENCE_SOURCES: &[&str] = &[
 
 /// Columns whose names look like store keys but are not, with the reason.
 pub const NOT_STORE_KEYS: &[(&str, &str)] = &[
+    (
+        "content.processed_snapshots.hash",
+        "a peer snapshot processing receipt; the peer snapshot file is temporary",
+    ),
+    (
+        "content.failed_deployments.snapshot_hash",
+        "the provenance of a failed deployment; retries fetch the entity by its own id",
+    ),
     (
         "content.snapshots.replaced_hashes",
         "the snapshot files a newer snapshot replaced: garbage for this collector",

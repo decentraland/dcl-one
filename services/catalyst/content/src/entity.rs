@@ -40,6 +40,100 @@ pub struct ContentMapping {
     pub hash: String,
 }
 
+const MAX_CONTENT_FILES: usize = 25_000;
+
+/// A new upload must declare its content as an array when the field is present.
+pub(crate) fn deserialize_content<'de, D: serde::Deserializer<'de>>(
+    deserializer: D,
+) -> Result<Vec<ContentMapping>, D::Error> {
+    read_content(deserializer, false)
+}
+
+/// Some historical peer manifests use null for an empty list. Retain the
+/// declaration and CID checks for any files a manifest names.
+pub(crate) fn parse_peer_content(
+    value: &serde_json::Value,
+) -> Result<Vec<ContentMapping>, serde_json::Error> {
+    if value.is_null() {
+        return Ok(Vec::new());
+    }
+    read_content(value, true)
+}
+
+fn read_content<'de, D: serde::Deserializer<'de>>(
+    deserializer: D,
+    record_peer_rejections: bool,
+) -> Result<Vec<ContentMapping>, D::Error> {
+    #[derive(Deserialize)]
+    struct RawEntry {
+        file: Option<serde_json::Value>,
+        hash: Option<serde_json::Value>,
+    }
+
+    struct Content {
+        record_peer_rejections: bool,
+    }
+
+    impl<'de> serde::de::Visitor<'de> for Content {
+        type Value = Vec<ContentMapping>;
+
+        fn expecting(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            f.write_str("an array as content")
+        }
+
+        fn visit_seq<A: serde::de::SeqAccess<'de>>(
+            self,
+            mut seq: A,
+        ) -> Result<Self::Value, A::Error> {
+            use serde::de::Error as _;
+            use serde_json::Value::String;
+
+            let record_rejection = |reason: &'static str| {
+                if self.record_peer_rejections {
+                    metrics::counter!("content_sync_manifest_rejections_total", "reason" => reason)
+                        .increment(1);
+                }
+            };
+            let over_limit = || {
+                record_rejection("declaration_limit");
+                A::Error::custom(format_args!(
+                    "content declares more files than the maximum of {MAX_CONTENT_FILES}"
+                ))
+            };
+            let size = seq.size_hint().unwrap_or_default();
+            if size > MAX_CONTENT_FILES {
+                return Err(over_limit());
+            }
+            let missing_file =
+                || A::Error::custom("Content must contain a file name and a file hash");
+            let mut content = Vec::with_capacity(size);
+            while let Some(entry) = seq.next_element::<RawEntry>().map_err(|_| missing_file())? {
+                if content.len() == MAX_CONTENT_FILES {
+                    return Err(over_limit());
+                }
+                let Some(String(file)) = entry.file else {
+                    return Err(missing_file());
+                };
+                let Some(String(hash)) = entry.hash else {
+                    return Err(A::Error::custom(
+                        "Please make sure that all file names and a file hashes are valid strings",
+                    ));
+                };
+                if !crate::auth::is_canonical_cid(&hash) {
+                    record_rejection("invalid_cid");
+                    return Err(A::Error::custom("Content entry has an invalid hash"));
+                }
+                content.push(ContentMapping { file, hash });
+            }
+            Ok(content)
+        }
+    }
+
+    deserializer.deserialize_seq(Content {
+        record_peer_rejections,
+    })
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Entity {
     #[serde(default)]
@@ -53,7 +147,7 @@ pub struct Entity {
     pub timestamp: i64,
 
     // The Explorer deploys a profile without snapshots as an entity with no `content`.
-    #[serde(default)]
+    #[serde(default, deserialize_with = "deserialize_content")]
     pub content: Vec<ContentMapping>,
 
     #[serde(default = "default_version", deserialize_with = "version_or_default")]
@@ -170,6 +264,28 @@ mod tests {
     use super::*;
 
     #[test]
+    fn peer_manifest_limits_report_rejection_reasons() {
+        let recorder = metrics_exporter_prometheus::PrometheusBuilder::new().build_recorder();
+        let handle = recorder.handle();
+        let oversized = serde_json::Value::Array(vec![serde_json::Value::Null; 25_001]);
+        let invalid_cid = serde_json::json!([{"file":"a","hash":"not-a-cid"}]);
+        metrics::with_local_recorder(&recorder, || {
+            for content in [&oversized, &invalid_cid] {
+                assert!(parse_peer_content(content).is_err());
+                assert!(deserialize_content(content).is_err());
+            }
+        });
+        let output = handle.render();
+        assert!(
+            output
+                .contains("content_sync_manifest_rejections_total{reason=\"declaration_limit\"} 1")
+        );
+        assert!(
+            output.contains("content_sync_manifest_rejections_total{reason=\"invalid_cid\"} 1")
+        );
+    }
+
+    #[test]
     fn ipfs_hashes_follow_the_schema_patterns() {
         let v2 = |tail: &str| format!("ba{tail}");
         for (hash, want) in [
@@ -252,8 +368,9 @@ mod tests {
             .unwrap(),
             r#"{"v":{"z":1,"a":2}}"#
         );
+        let hash = crate::auth::hash_bytes_v1(b"content");
         let deep = format!(
-            r#"{{"type":"scene","pointers":["0,0"],"timestamp":1,"content":[{{"file":"a","hash":"b","unused":1e400}}],"metadata":{{"z":1,"a":2}},"unused":{}0{}}}"#,
+            r#"{{"type":"scene","pointers":["0,0"],"timestamp":1,"content":[{{"file":"a","hash":"{hash}","unused":1e400}}],"metadata":{{"z":1,"a":2}},"unused":{}0{}}}"#,
             "[".repeat(160),
             "]".repeat(160)
         );
@@ -363,16 +480,17 @@ mod tests {
 
     #[test]
     fn entity_id_and_version_default_when_absent() {
+        let hash = crate::auth::hash_bytes_v1(b"body");
         let entity: Entity = serde_json::from_value(serde_json::json!({
             "type": "profile",
             "pointers": ["0xabc"],
             "timestamp": 1,
-            "content": [{"file": "body.png", "hash": "bafy"}]
+            "content": [{"file": "body.png", "hash": hash}]
         }))
         .unwrap();
         assert_eq!(entity.id, "");
         assert_eq!(entity.version, "v3");
-        assert_eq!(entity.content[0].hash, "bafy");
+        assert_eq!(entity.content[0].hash, hash);
         assert!(entity.metadata.is_none());
     }
 

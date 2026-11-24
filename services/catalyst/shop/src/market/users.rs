@@ -527,15 +527,24 @@ pub async fn urn_tokens(
     ))
 }
 
+/// The owner's NAMEs from the node's NAME source, a display read.
 async fn names_of(
     state: &MarketplaceState,
     owner: &str,
 ) -> Result<Vec<graph::OwnedName>, Response> {
-    readers::require_marketplace(state)?;
-    graph::owned_names(&state.index, owner)
+    use crate::chain_index::names::{NamesError, Purpose};
+    let source = state.name_source();
+    let authority = state
+        .names()
+        .map_err(|e| super::unavailable(source, &e.to_string()))?;
+    authority
+        .owned_names(owner, Purpose::Display)
         .await
-        .map(|n| (*n).clone())
-        .map_err(|e| readers::upstream_failed("/v1/users/names", &e))
+        .map(|answer| (*answer.value).clone())
+        .map_err(|e| match e {
+            NamesError::NotEstablished(message) => super::unavailable(source, &message),
+            NamesError::Failed(message) => readers::upstream_failed("/v1/users/names", &message),
+        })
 }
 
 fn respond<T: Serialize>(
