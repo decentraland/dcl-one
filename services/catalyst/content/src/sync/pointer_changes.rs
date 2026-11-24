@@ -74,15 +74,14 @@ pub(crate) fn is_usable_timestamp(ts: Timestamp, now_ms: Timestamp) -> bool {
 /// the confirmed timestamp at the next poll boundary and from there the durable, GREATEST-monotonic
 /// frontier, so one hostile delta reaching the max() below would poison the node permanently.
 ///
-/// Malformed rows are skipped. A well-formed row above a structural limit
-/// fails the poll so the confirmed cursor cannot advance past it.
+/// Malformed and oversized rows are skipped before scheduling or advancing the mark.
 fn accept_delta_and_advance_mark(
     item: serde_json::Value,
     from_timestamp: Timestamp,
     now_ms: Timestamp,
     greatest_timestamp: &mut Timestamp,
     rejected_logged: &mut u64,
-) -> Result<Option<SyncDeployment>, SyncError> {
+) -> Option<SyncDeployment> {
     let mut report_rejected = |reason: &str, detail: String| {
         if *rejected_logged < MAX_REJECTED_DELTA_LOGS {
             *rejected_logged += 1;
@@ -100,22 +99,26 @@ fn accept_delta_and_advance_mark(
         Ok(d) => d,
         Err(e) => {
             report_rejected("unparseable", e.to_string());
-            return Ok(None);
+            return None;
         }
     };
 
     if let Err(reason) = deployment.validate_shape() {
         report_rejected("invalid deployment", reason.into());
-        return Ok(None);
+        return None;
     }
     let Some(local_ts) = deployment.local_timestamp else {
         report_rejected("invalid deployment", "localTimestamp is required".into());
-        return Ok(None);
+        return None;
     };
-    check_delta_limits(&deployment).map_err(SyncError::Other)?;
+    if let Err(reason) = check_delta_limits(&deployment) {
+        metrics::counter!("content_sync_oversized_pointer_changes_total").increment(1);
+        report_rejected("oversized deployment", reason);
+        return None;
+    }
     if let Err(reason) = deployment.validate_auth_chain() {
         report_rejected("invalid deployment", reason.into());
-        return Ok(None);
+        return None;
     }
     if !is_usable_timestamp(deployment.entity_timestamp, now_ms)
         || !is_usable_timestamp(local_ts, now_ms)
@@ -127,14 +130,14 @@ fn accept_delta_and_advance_mark(
                 deployment.entity_id, deployment.entity_timestamp, deployment.local_timestamp
             ),
         );
-        return Ok(None);
+        return None;
     }
 
     if local_ts >= from_timestamp {
         *greatest_timestamp = (*greatest_timestamp).max(local_ts);
     }
 
-    Ok(Some(deployment))
+    Some(deployment)
 }
 
 fn check_delta_limits(deployment: &SyncDeployment) -> Result<(), String> {
@@ -398,8 +401,7 @@ where
                 now_ms,
                 &mut greatest_timestamp,
                 &mut rejected_logged,
-            )?
-            else {
+            ) else {
                 continue;
             };
 
@@ -539,8 +541,7 @@ mod tests {
             NOW_MS,
             &mut mark,
             &mut logged,
-        )
-        .unwrap();
+        );
         assert!(rejected.is_none(), "far-future delta must be rejected");
         assert_eq!(mark, FROM_TS, "a rejected delta must not move the mark");
 
@@ -550,8 +551,7 @@ mod tests {
             NOW_MS,
             &mut mark,
             &mut logged,
-        )
-        .unwrap();
+        );
         assert!(negative.is_none(), "negative delta must be rejected");
         assert_eq!(mark, FROM_TS);
     }
@@ -571,8 +571,7 @@ mod tests {
         };
         let mut mark = FROM_TS;
         let mut logged = 0;
-        let rejected =
-            accept_delta_and_advance_mark(item, FROM_TS, NOW_MS, &mut mark, &mut logged).unwrap();
+        let rejected = accept_delta_and_advance_mark(item, FROM_TS, NOW_MS, &mut mark, &mut logged);
         assert!(rejected.is_none(), "overflowed timestamp must be rejected");
         assert_eq!(mark, FROM_TS, "a rejected delta must not move the mark");
     }
@@ -583,8 +582,7 @@ mod tests {
         item["entityTimestamp"] = serde_json::json!(253_402_300_799_000i64);
         let mut mark = FROM_TS;
         let mut logged = 0;
-        let rejected =
-            accept_delta_and_advance_mark(item, FROM_TS, NOW_MS, &mut mark, &mut logged).unwrap();
+        let rejected = accept_delta_and_advance_mark(item, FROM_TS, NOW_MS, &mut mark, &mut logged);
         assert!(rejected.is_none());
         assert_eq!(mark, FROM_TS);
     }
@@ -599,8 +597,7 @@ mod tests {
             NOW_MS,
             &mut mark,
             &mut logged,
-        )
-        .unwrap();
+        );
         assert!(accepted.is_some());
         assert_eq!(mark, FROM_TS + 1000);
         assert_eq!(logged, 0);
@@ -611,8 +608,7 @@ mod tests {
             NOW_MS,
             &mut mark,
             &mut logged,
-        )
-        .unwrap();
+        );
         assert!(skewed.is_some());
         assert_eq!(mark, NOW_MS + MAX_TIMESTAMP_CLOCK_SKEW_MS - 1);
     }
@@ -623,8 +619,7 @@ mod tests {
         item.as_object_mut().unwrap().remove("localTimestamp");
         let mut mark = FROM_TS;
         let mut logged = 0;
-        let accepted =
-            accept_delta_and_advance_mark(item, FROM_TS, NOW_MS, &mut mark, &mut logged).unwrap();
+        let accepted = accept_delta_and_advance_mark(item, FROM_TS, NOW_MS, &mut mark, &mut logged);
         assert!(accepted.is_none());
         assert_eq!(mark, FROM_TS);
     }
@@ -648,7 +643,6 @@ mod tests {
             item[field] = value;
             assert!(
                 accept_delta_and_advance_mark(item, FROM_TS, NOW_MS, &mut mark, &mut logged)
-                    .unwrap()
                     .is_none(),
                 "{field}"
             );
@@ -668,15 +662,14 @@ mod tests {
         item.as_object_mut().unwrap().remove("authChain");
         let mut mark = FROM_TS;
         let mut logged = 0;
-        let accepted =
-            accept_delta_and_advance_mark(item, FROM_TS, NOW_MS, &mut mark, &mut logged).unwrap();
+        let accepted = accept_delta_and_advance_mark(item, FROM_TS, NOW_MS, &mut mark, &mut logged);
         assert!(accepted.is_none());
         assert_eq!(mark, FROM_TS);
         assert_eq!(logged, 1);
     }
 
     #[test]
-    fn oversized_deltas_fail_the_poll_before_advancing_its_mark() {
+    fn oversized_deltas_are_skipped_before_advancing_the_mark() {
         let mut mark = FROM_TS;
         let mut logged = 0;
         for pointers in [
@@ -686,10 +679,10 @@ mod tests {
         ] {
             let mut item = delta(serde_json::json!(FROM_TS + 1_000));
             item["pointers"] = serde_json::json!(pointers);
-            let error =
+            assert!(
                 accept_delta_and_advance_mark(item, FROM_TS, NOW_MS, &mut mark, &mut logged)
-                    .unwrap_err();
-            assert!(error.to_string().contains("pointer-change delta"));
+                    .is_none()
+            );
         }
         let mut item = delta(serde_json::json!(FROM_TS + 1_000));
         let mut links = item["authChain"].as_array().unwrap().clone();
@@ -698,11 +691,11 @@ mod tests {
             100,
         ));
         item["authChain"] = serde_json::json!(links);
-        let error = accept_delta_and_advance_mark(item, FROM_TS, NOW_MS, &mut mark, &mut logged)
-            .unwrap_err();
-        assert!(error.to_string().contains("exceeds 100 auth links"));
+        assert!(
+            accept_delta_and_advance_mark(item, FROM_TS, NOW_MS, &mut mark, &mut logged).is_none()
+        );
         assert_eq!(mark, FROM_TS);
-        assert_eq!(logged, 0);
+        assert_eq!(logged, 4);
     }
 
     fn deployment_at(entity_id: &str, local_ts: Timestamp) -> SyncDeployment {
@@ -1026,6 +1019,39 @@ mod tests {
             "the cursor settles the overlap behind the newest row: {confirmed}"
         );
         assert_eq!((report.scheduled(), report.lost()), (2, 0));
+    }
+
+    #[tokio::test]
+    async fn a_peer_repeating_an_oversized_delta_can_still_deliver_valid_rows() {
+        use std::sync::atomic::Ordering;
+
+        let Some(pool) = crate::sync_test_support::test_pool(3).await else {
+            return;
+        };
+        let prefix = crate::sync_test_support::unique();
+        let mut entities = scenes(&prefix, 0, &[900_000, 1_000_000]).await.into_iter();
+        let (mut oversized, rejected, rejected_body) = entities.next().unwrap();
+        let (valid, accepted, accepted_body) = entities.next().unwrap();
+        oversized["pointers"] = serde_json::json!(vec!["0,0"; 10_001]);
+        let (base, server, served) = spawn_peer(
+            vec![oversized, valid],
+            Vec::new(),
+            std::collections::HashMap::from([
+                (rejected.clone(), rejected_body),
+                (accepted.clone(), accepted_body),
+            ]),
+        )
+        .await;
+
+        let (confirmed, report) =
+            stream_into(&pool, &base, 10, || served.load(Ordering::SeqCst) >= 3).await;
+        server.abort();
+        let missing = missing(&pool, &[rejected.clone(), accepted]).await;
+        forget(pool, &prefix).await;
+
+        assert_eq!(missing, [rejected]);
+        assert!((600_000..=700_000).contains(&confirmed), "{confirmed}");
+        assert_eq!((report.scheduled(), report.lost()), (1, 0));
     }
 
     #[tokio::test]

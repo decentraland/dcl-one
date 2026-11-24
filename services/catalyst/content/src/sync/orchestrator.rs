@@ -139,6 +139,7 @@ struct SyncTasks {
 }
 
 const POINTER_CHANGES_SHIFT_MS: Timestamp = 20 * 60_000;
+const DEPLOYMENT_DRAIN_TIMEOUT: Duration = Duration::from_secs(5);
 
 /// The operator's sync control (the old `SyncControlHandle`, re-added for
 /// `/admin/api/content/sync/{pause,resume,force}`): process state beside the
@@ -328,8 +329,16 @@ impl SyncOrchestrator {
             }
             tasks.retired_streams.pop();
         }
-        if let Err(e) = self.inner.deployer.on_idle().await {
-            error!(error = %e, "Failed to drain sync deployments during shutdown");
+        match tokio::time::timeout(DEPLOYMENT_DRAIN_TIMEOUT, self.inner.deployer.on_idle()).await {
+            Ok(Ok(())) => {}
+            Ok(Err(e)) => error!(error = %e, "Failed to drain sync deployments during shutdown"),
+            Err(_) => {
+                warn!(
+                    in_flight = self.inner.deployer.in_flight(),
+                    "Sync deployment drain timed out; next bootstrap replays unconfirmed work"
+                );
+                self.inner.deployer.cancel_pending();
+            }
         }
         tasks.stopped = true;
     }
@@ -351,6 +360,7 @@ impl SyncOrchestrator {
 impl Drop for SyncOrchestrator {
     fn drop(&mut self) {
         self.inner.cancel.cancel();
+        self.inner.deployer.cancel_pending();
     }
 }
 
@@ -586,21 +596,17 @@ impl SyncOrchestratorRefs {
         self.bootstrap_done.notify_waiters();
     }
 
-    async fn servers_not_syncing(&self) -> Vec<String> {
-        self.select_servers(|url, s| (s.phase != ServerPhase::Syncing).then(|| url.to_string()))
-            .await
-    }
-
-    /// Publishes `state` once a bootstrap pass over every peer finished. A peer that failed in
-    /// the pass (unreachable, an unreadable snapshot list, a snapshot or pointer-changes run that
-    /// did not fully deploy) does not hold the node: it stays in bootstrap and the straggler
-    /// retry keeps working on it. A node already `Syncing` (a peer added by a DAO list refresh
-    /// re-runs the bootstrap) is never sent back to `PartiallySynced`.
-    async fn announce(&self, state: SyncState, message: &str) {
-        if self.status.state() == SyncState::Syncing && state != SyncState::Syncing {
-            return;
+    /// A pass must cover a current peer generation before opening the deployment gate.
+    /// Unreachable peers that were attempted stay eligible for background bootstrap retries.
+    async fn announce(&self, peers: &[Peer], state: SyncState, message: &str) -> bool {
+        let servers = self.servers.lock().await;
+        if !peers.iter().any(|peer| !peer.cancel.is_cancelled()) {
+            return false;
         }
-        let held = self.servers_not_syncing().await;
+        let held: Vec<_> = servers
+            .iter()
+            .filter_map(|(url, state)| (state.phase != ServerPhase::Syncing).then_some(url))
+            .collect();
         if held.is_empty() {
             info!("{message}");
         } else {
@@ -610,22 +616,50 @@ impl SyncOrchestratorRefs {
             );
         }
         self.set_state(state);
+        true
     }
 
-    async fn run_bootstrap(&self, initial_peers: Vec<Peer>) -> Result<(), SyncError> {
+    async fn run_bootstrap(&self, mut peers: Vec<Peer>) -> Result<(), SyncError> {
         let phased = self.config.phased_sync
             && self.config.entity_types.as_ref().is_none_or(|allow| {
                 allow.contains("profile") && NON_PROFILE_TYPES.iter().any(|t| allow.contains(*t))
             });
         let mut backoff_ms = self.bootstrap_backoff_start();
         loop {
+            self.check_stopped()?;
+            if peers.iter().all(|peer| peer.cancel.is_cancelled()) {
+                peers = self
+                    .select_servers(|url, state| {
+                        Some(Peer {
+                            url: url.to_owned(),
+                            cancel: state.cancel.clone(),
+                        })
+                    })
+                    .await;
+                if peers.is_empty() {
+                    self.until_stopped(self.peers_changed.notified()).await?;
+                    continue;
+                }
+            }
+
             let result = if phased {
-                self.run_phased_bootstrap(&initial_peers).await
+                self.run_phased_bootstrap(&peers).await
             } else {
-                self.run_full_bootstrap(&initial_peers).await
+                self.run_full_bootstrap(&peers).await
             };
             match result {
-                Ok(()) => break,
+                Ok(()) => {
+                    if self
+                        .announce(
+                            &peers,
+                            SyncState::Syncing,
+                            "Bootstrap complete, entering steady-state sync",
+                        )
+                        .await
+                    {
+                        break;
+                    }
+                }
                 Err(SyncError::Stopped) => return Err(SyncError::Stopped),
                 Err(e) => {
                     warn!(error = %e, backoff_ms, "Bootstrap failed; retrying");
@@ -638,8 +672,8 @@ impl SyncOrchestratorRefs {
         }
 
         let next_resync = Instant::now() + self.config.snapshot_resync_initial_delay;
-        self.defer_bootstrap_retries(&initial_peers).await;
-        drop(initial_peers);
+        self.defer_bootstrap_retries(&peers).await;
+        drop(peers);
         self.maintain_peers(next_resync).await
     }
 
@@ -806,12 +840,6 @@ impl SyncOrchestratorRefs {
         self.resolve_deleters().await;
         self.check_stopped()?;
 
-        self.announce(
-            SyncState::Syncing,
-            "Bootstrap complete, entering steady-state sync",
-        )
-        .await;
-
         self.start_steady_state_sync().await
     }
 
@@ -848,6 +876,7 @@ impl SyncOrchestratorRefs {
         let mut ready_types: Vec<String> = non_profile_filter.iter().cloned().collect();
         ready_types.sort();
         self.announce(
+            peers,
             SyncState::PartiallySynced { ready_types },
             "Phase 3: Partially synced \u{2014} non-profile types ready, starting to serve queries",
         )
@@ -881,12 +910,6 @@ impl SyncOrchestratorRefs {
         info!("Phase 6: Resolving deleter_deployment for overwritten entities");
         self.resolve_deleters().await;
         self.check_stopped()?;
-
-        self.announce(
-            SyncState::Syncing,
-            "Bootstrap complete, entering steady-state sync",
-        )
-        .await;
 
         self.start_steady_state_sync().await
     }
@@ -1104,7 +1127,7 @@ impl SyncOrchestratorRefs {
             .await;
 
         self.check_stopped()?;
-        self.deployer.on_idle().await?;
+        self.until_stopped(self.deployer.on_idle()).await??;
         self.check_stopped()?;
 
         let mut failed_hashes = failed_hashes.into_inner().unwrap();
@@ -1309,7 +1332,7 @@ impl SyncOrchestratorRefs {
             .await;
 
         self.check_stopped()?;
-        self.deployer.on_idle().await?;
+        self.until_stopped(self.deployer.on_idle()).await??;
         self.check_stopped()
     }
 

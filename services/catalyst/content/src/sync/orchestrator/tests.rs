@@ -812,6 +812,7 @@ async fn removing_a_peer_cancels_its_stalled_snapshot_download() {
     };
     let (removed, _) = spawn_test_peer(&[], json!([]), false).await;
     let (added, _) = spawn_test_peer(&[], json!([]), false).await;
+    added.snapshot_gate.held.send_replace(true);
     let timestamp = chrono::Utc::now().timestamp_millis() - 1_000;
     let id = removed.advertise_snapshot(timestamp).await;
     removed.content_gate.held.send_replace(true);
@@ -836,6 +837,12 @@ async fn removing_a_peer_cancels_its_stalled_snapshot_download() {
         .sync_with_servers(HashSet::from([added.url.clone()]))
         .await
         .unwrap();
+    wait_until("the replacement peer's snapshot request", async || {
+        added.snapshot_gate.calls() == 1
+    })
+    .await;
+    assert_eq!(orchestrator.state(), SyncState::Bootstrapping);
+    added.snapshot_gate.held.send_replace(false);
     wait_until(
         "the added peer's cursor while the removed peer is stalled",
         async || {
@@ -846,6 +853,11 @@ async fn removing_a_peer_cancels_its_stalled_snapshot_download() {
         },
     )
     .await;
+    wait_until(
+        "readiness after the replacement peer completes",
+        async || orchestrator.state() == SyncState::Syncing,
+    )
+    .await;
     orchestrator.stop().await;
     let _ = std::fs::remove_dir_all(temp);
     assert_eq!(deployed(&pool, &[id]).await, 0);
@@ -853,6 +865,55 @@ async fn removing_a_peer_cancels_its_stalled_snapshot_download() {
         repo.get_server_sync_cursor(&removed.url).await.unwrap(),
         None
     );
+}
+
+#[tokio::test]
+async fn a_peer_readded_during_bootstrap_only_publishes_from_its_new_membership() {
+    let Some(pool) = crate::sync_test_support::test_pool(8).await else {
+        return;
+    };
+    let (peer, _) = spawn_test_peer(&[], json!([]), false).await;
+    peer.snapshot_gate.held.send_replace(true);
+    let (orchestrator, repo, temp) = test_orchestrator(
+        &pool,
+        SyncOrchestratorConfig {
+            phased_sync: false,
+            ..fast_config()
+        },
+    )
+    .await;
+    let _cleanup = crate::sync_test_support::RemoveOnDrop(temp);
+    let peers = HashSet::from([peer.url.clone()]);
+    orchestrator.sync_with_servers(peers.clone()).await.unwrap();
+    wait_until("the original snapshot request", async || {
+        peer.snapshot_gate.calls() == 1
+    })
+    .await;
+
+    orchestrator
+        .sync_with_servers(HashSet::new())
+        .await
+        .unwrap();
+    orchestrator.sync_with_servers(peers).await.unwrap();
+    wait_until("the readded peer's snapshot request", async || {
+        peer.snapshot_gate.calls() == 2
+    })
+    .await;
+    assert_eq!(orchestrator.state(), SyncState::Bootstrapping);
+    assert_eq!(repo.get_server_sync_cursor(&peer.url).await.unwrap(), None);
+
+    peer.snapshot_gate.held.send_replace(false);
+    wait_until("the new membership bootstraps", async || {
+        orchestrator.state() == SyncState::Syncing
+    })
+    .await;
+    assert!(
+        repo.get_server_sync_cursor(&peer.url)
+            .await
+            .unwrap()
+            .is_some()
+    );
+    orchestrator.stop().await;
 }
 
 #[tokio::test]
@@ -935,4 +996,48 @@ async fn concurrent_stop_callers_wait_for_scheduled_deployments_to_flush() {
         .unwrap();
     let _ = std::fs::remove_dir_all(temp);
     assert_eq!(deployed(&pool, &ids).await, 1);
+}
+
+#[tokio::test]
+async fn stop_cancels_a_stalled_deployment_after_the_drain_budget() {
+    let Some(pool) = crate::sync_test_support::test_pool(8).await else {
+        return;
+    };
+    let timestamp = chrono::Utc::now().timestamp_millis() - 1_000;
+    let (peer, ids) = spawn_test_peer(&[("scene", timestamp)], json!([]), false).await;
+    peer.content_gate.held.send_replace(true);
+    let (orchestrator, repo, temp) = test_orchestrator(
+        &pool,
+        SyncOrchestratorConfig {
+            phased_sync: false,
+            ..fast_config()
+        },
+    )
+    .await;
+    let _cleanup = crate::sync_test_support::RemoveOnDrop(temp);
+    orchestrator
+        .sync_with_servers(HashSet::from([peer.url.clone()]))
+        .await
+        .unwrap();
+    wait_until("the stalled entity download", async || {
+        peer.content_gate.calls() == 1
+    })
+    .await;
+    let cursor = repo.get_server_sync_cursor(&peer.url).await.unwrap();
+
+    tokio::time::timeout(
+        DEPLOYMENT_DRAIN_TIMEOUT + Duration::from_secs(3),
+        orchestrator.stop(),
+    )
+    .await
+    .expect("stop must finish while the peer is stalled");
+    wait_until("the cancelled deployment releases its slot", async || {
+        orchestrator.inner.deployer.in_flight() == 0
+    })
+    .await;
+    assert_eq!(deployed(&pool, &ids).await, 0);
+    assert_eq!(
+        repo.get_server_sync_cursor(&peer.url).await.unwrap(),
+        cursor
+    );
 }
