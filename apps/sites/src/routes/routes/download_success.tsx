@@ -1,7 +1,14 @@
 import { useContext, useEffect, useRef, useState, type ReactNode } from "react";
 import { useNavigate } from "react-router";
-import { DownloadSuccess } from "@dcl/one-ui/apps/sites/download/DownloadSuccess";
-import { DownloadSuccessFooter } from "@dcl/one-ui/apps/sites/download/DownloadSuccessFooter";
+import {
+  DownloadSuccess,
+  DownloadSuccessFooter,
+  sitesFooterCopy,
+  SITES_LANGUAGES,
+  SitesLocaleContext,
+  saveSitesLocale,
+  sitesLanguage,
+} from "@dcl/one-ui";
 import { parseCookies } from "@/core/lib/telemetry/session";
 import { installerUrl } from "@/data/lib/download/installers";
 import { installerSelection } from "@/features/download/installers";
@@ -11,13 +18,6 @@ import {
   type DownloadBrowser,
 } from "@/features/download/steps";
 import { successCopy } from "@/features/download/success-copy";
-import { sitesFooterCopy } from "@dcl/one-ui/apps/sites/chrome/footer-copy";
-import {
-  SITES_LANGUAGES,
-  SitesLocaleContext,
-  saveSitesLocale,
-  sitesLanguage,
-} from "@dcl/one-ui/apps/sites/chrome/sites-locale";
 import { publicBase } from "../lib/social-meta";
 import { staticPageMeta } from "../lib/static-page-meta";
 import type { Route } from "./+types/download_success";

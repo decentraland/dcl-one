@@ -1865,7 +1865,7 @@ mod tests {
         let steps = parse_steps(crate::MIGRATIONS_SQL);
         let step = steps
             .iter()
-            .find(|s| s.name == "0057_streaming_notification_recipients")
+            .find(|s| s.name == "0058_streaming_notification_recipients")
             .unwrap();
         lint_steps(std::slice::from_ref(step)).unwrap();
         let sql = step

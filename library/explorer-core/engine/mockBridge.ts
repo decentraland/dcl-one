@@ -1399,6 +1399,7 @@ export function startMockBridge(opts: Partial<MockOptions> = {}): () => void {
     }
     if (msg.kind === 'engineViewport') {
       // No engine in mock mode — nothing to render into the cutout.
+      if (msg.region === 'avatarPreview' && msg.rect != null) reply({ kind: 'avatarPreviewReady' })
       return
     }
     if (msg.kind === 'interactableArea') return
@@ -1423,7 +1424,8 @@ export function startMockBridge(opts: Partial<MockOptions> = {}): () => void {
     }
     if (msg.kind === 'teleport') {
       reply({ kind: 'mapState', x: msg.x, y: msg.y })
-      if (msg.realm != null) travelResult(msg.realm, msg.travelId)
+      // a teleport inside the realm answers too when it carries an id (chat's /goto)
+      travelResult(msg.realm ?? '', msg.travelId)
       return
     }
     if (msg.kind === 'changeRealm') {

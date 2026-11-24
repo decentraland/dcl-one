@@ -1,5 +1,4 @@
-import { useEventsCopy } from "@dcl/one-ui/apps/sites/events/locale";
-import { Notice } from "@dcl/one-ui/apps/sites/events/Notice";
+import { useEventsCopy, Notice } from "@dcl/one-ui";
 import type { HangoutDraft } from "@/data/lib/catalyst/landings/submit-hangout";
 import type { HangoutOptions } from "@/data/lib/catalyst/landings/hangout-options";
 import styles from "./HangoutAssociations.module.css";

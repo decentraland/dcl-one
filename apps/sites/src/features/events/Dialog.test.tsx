@@ -12,7 +12,7 @@ vi.hoisted(() =>
   }),
 );
 
-import { Dialog } from "@dcl/one-ui/apps/sites/events/Dialog";
+import { Dialog } from "@dcl/one-ui";
 
 afterEach(() => {
   cleanup();

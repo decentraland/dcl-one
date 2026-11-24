@@ -39,7 +39,7 @@ blocks are not detected.
 
 [[step]]
 name = "world"
-targets = ["worlds.worlds", "worlds.world_permissions", "worlds.world_access_communities"]
+targets = ["worlds.worlds", "worlds.world_permissions", "worlds.world_access_communities", "worlds.thumbnail_aliases"]
 extract = "world.extract.sql"
 load = "world.load.sql"
 key = ["name"]

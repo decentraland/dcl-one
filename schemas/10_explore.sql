@@ -221,6 +221,15 @@ CREATE INDEX place_world_owner_idx ON explore.place
 CREATE INDEX place_world_local_owner_idx ON explore.place_world_local
     (lower(COALESCE(raw->>'owner', creator_address))) WHERE world IS TRUE;
 
+-- A committed Worlds edit asks Places to refresh this world. One row per
+-- pending world, ordered by when the oldest unprocessed edit was queued.
+CREATE TABLE explore.world_place_updates (
+    world_name text PRIMARY KEY,
+    queued_at  timestamp without time zone NOT NULL DEFAULT timezone('UTC', clock_timestamp())
+);
+
+CREATE INDEX world_place_updates_oldest_idx ON explore.world_place_updates (queued_at, world_name);
+
 -- The read surface for every place/world query: the mirrored leg and the local leg.
 CREATE VIEW explore.place_indexed AS
     SELECT id, base_position, title, description, creator_address, content_rating,

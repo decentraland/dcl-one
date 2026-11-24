@@ -162,6 +162,13 @@ This is a deployment requirement, not an automated restore orchestrator. See the
 Runtime admission under complete generation churn and rollout readiness remain
 unverified pending acceptance evidence.
 
+On SIGTERM or SIGINT, `catalyst pulse` sends one ENet disconnect with reason
+`Graceful` (1) to each connected ENet peer, including peers still authenticating.
+If the datagram is lost or the process is killed, the client detects the loss
+on its own timer. While Pulse is running, it sets both ENet timeout bounds to
+five seconds on each connection. ENet measures outstanding reliable traffic,
+including pings, when deciding that a peer is unreachable.
+
 ## Services and how they talk
 
 | Link | Channel |

@@ -1700,6 +1700,23 @@ pub async fn refuse_on_join(
     Ok(banned)
 }
 
+/// Whether `identity`, a `stream:` or `presentation-bot:` publisher of
+/// `room`, belongs to the room's active Cast credential: the credential it is
+/// tagged with is the active one, or, untagged, the room still streams.
+pub async fn publisher_credential_current(
+    pool: &PgPool,
+    room: &str,
+    identity: &str,
+) -> Result<bool, sqlx::Error> {
+    let active = access_by_room(pool, room).await?;
+    Ok(match (tagged_access(identity), &active) {
+        (Some(access), Some(active)) => access == active.id,
+        (Some(_), None) => false,
+        // Untagged: kept while the room still streams, as before tagging.
+        (None, active) => active.is_some(),
+    })
+}
+
 pub async fn refuse_revoked_publisher(
     state: &CommsState,
     room: &str,
@@ -1710,14 +1727,7 @@ pub async fn refuse_revoked_publisher(
     {
         return Ok(false);
     }
-    let active = access_by_room(&state.pool, room).await?;
-    let allowed = match (tagged_access(identity), &active) {
-        (Some(access), Some(active)) => access == active.id,
-        (Some(_), None) => false,
-        // Untagged: kept while the room still streams, as before tagging.
-        (None, active) => active.is_some(),
-    };
-    if allowed {
+    if publisher_credential_current(&state.pool, room, identity).await? {
         return Ok(false);
     }
     state

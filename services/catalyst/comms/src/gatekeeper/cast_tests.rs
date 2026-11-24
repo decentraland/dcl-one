@@ -1876,6 +1876,16 @@ async fn revoking_a_key_removes_the_cast_publishers_it_admitted() {
             .unwrap(),
         "a publisher of a credential that is not the room's active one"
     );
+    // The Cast presenter asks the same question before a new presentation
+    // replaces the room's running one.
+    let rooms: &dyn crate::cast_presenter::bot::Rooms = &*h.state;
+    assert!(
+        rooms
+            .holds_credential(&scene.room, &streamer_id)
+            .await
+            .unwrap()
+    );
+    assert!(!rooms.holds_credential(&scene.room, &fresh).await.unwrap());
 
     // Revoked through the route, with no successor: the durable cleanup
     // removes every publisher it admitted, and the key admits no one.

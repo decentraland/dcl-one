@@ -225,6 +225,11 @@ State, in every build:
   scene's) holds the keyboard: while it is true keys are typed and resolve no action, so a test
   waits for it to turn true after filling a field and false after leaving one (null where the
   client takes no input).
+- `/teleport_state`: the landings on a named spawn point as JSON, the Teleport debug section's
+  readout: `pending`, the name the landing under way looks for (or the realm change that has yet
+  to start one), and `last`, the `name` the player's last such landing looked for with `found`,
+  whether its scene had a spawn point of that name. `/teleport <x> <y> [realm] --spawn <name>`
+  asks for such a landing.
 - `/avatar_state [all|<address>]`: avatars as selected (body shape, wearables, emotes, forced
   slots), as rendered (built or not, wearables by category, hidden categories), the files it
   could not be built from (`loadFailures`: bodies and wearables its builds leave out, `noBody`
@@ -523,7 +528,8 @@ of the contract.
   show-out-of-bounds on regardless of `--preview`. Point the client at the same preview server
   by LAN address, `--realm http://$(ipconfig getifaddr en0):<port>`. Colliders follow the same
   switch: a run that shows out-of-bounds geometry keeps its colliders on, and any other run turns
-  off a collider that leaves the bounds and counts it in the debug panel's Scene Content section.
+  off a collider that leaves the bounds and counts it in the debug panel's Scene Content section,
+  and cuts collider queries to the space each scene is drawn in.
   A local scene server is always a preview run, so it keeps those colliders on while a client
   pointed at the LAN address does not.
 - **The bridge scene's build output is not what the engine loads.** After any bridge-scene
