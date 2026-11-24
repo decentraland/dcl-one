@@ -1,6 +1,6 @@
 // IconButton — the round navigation button of the HUD's bar: a 42px circle with rest and
 // selected states and an optional notification badge, wrapped in the design-system Tooltip
-// (label + optional keyboard-shortcut hint, e.g. "Chat [T]").
+// (label + optional keyboard-shortcut hint, e.g. "Friends [L]").
 
 import { Avatar } from './Avatar'
 import { Icon, type IconName } from './icons'
@@ -23,7 +23,7 @@ interface IconButtonProps
   label: string
   /** Tooltip text in place of `label`, for a button whose hover hint is a status (e.g. counts). */
   tooltip?: string
-  /** Single-key shortcut shown dimmed in the tooltip, e.g. 'T' → "Chat [T]". */
+  /** Single-key shortcut shown dimmed in the tooltip, e.g. 'L' → "Friends [L]". */
   shortcut?: string
   /** No hover label: the button's own panel is open beside it and takes the label's place. */
   quiet?: boolean

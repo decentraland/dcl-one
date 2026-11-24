@@ -1,0 +1,198 @@
+.toggleButton {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 48px;
+  padding: 0 14px;
+  border: 1px solid var(--editor-line);
+  border-radius: var(--dcl-radius-sm);
+  background: var(--editor-surface);
+  color: var(--dcl-neutrals-white);
+  font: inherit;
+  font-size: 14px;
+
+  &:hover,
+  &[data-open] {
+    background: var(--editor-surface-hover);
+  }
+}
+
+/* Below the preview on desktop; a bottom sheet over it on phones, where there is no room to split. */
+.drawer {
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  max-height: 50%;
+  overflow-y: auto;
+  padding: 8px 12px 12px;
+  border-top: 1px solid var(--editor-line);
+  background: var(--editor-surface);
+  color: var(--dcl-neutrals-white);
+
+  @media (max-width: 768px) {
+    position: fixed;
+    inset: auto 0 0 0;
+    z-index: 2;
+    max-height: 70vh;
+    border-radius: var(--dcl-radius-lg) var(--dcl-radius-lg) 0 0;
+    padding-bottom: 24px;
+    box-shadow: 0 -8px 24px var(--dcl-transparencies-black-60);
+  }
+}
+
+.drawerHeader {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 40px;
+}
+
+.drawerTitle {
+  flex: 1;
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: 2px;
+  text-transform: uppercase;
+}
+
+.closeButton {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 40px;
+  height: 40px;
+  border: 0;
+  border-radius: var(--radius-chip);
+  background: transparent;
+  color: var(--dcl-neutrals-white);
+
+  &:hover {
+    background: var(--editor-surface-hover);
+  }
+}
+
+.grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px 12px;
+
+  @media (max-width: 768px) {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+.field {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+
+  &[data-select] button[role="combobox"] {
+    height: 40px;
+    font-size: 15px;
+  }
+}
+
+.fieldBox {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  min-width: 0;
+  padding: 0 12px;
+
+  height: 40px;
+  border: 1px solid var(--editor-line);
+  border-radius: var(--dcl-radius-xs);
+  background: var(--editor-bg);
+}
+
+.label {
+  flex: none;
+  font-size: 12px;
+  letter-spacing: 1px;
+  text-transform: uppercase;
+  color: var(--editor-label);
+}
+
+.segmented {
+  display: flex;
+  gap: 4px;
+}
+
+.segmentButton {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  height: 28px;
+  padding: 0 10px 0 7px;
+  border: 1px solid var(--editor-line);
+  border-radius: var(--radius-pill);
+  background: transparent;
+  color: var(--dcl-neutrals-white);
+  font: inherit;
+  font-size: 14px;
+
+  & svg {
+    font-size: 16px;
+  }
+
+  &[data-selected] {
+    border-width: 2px;
+    border-color: var(--editor-accent);
+    background: var(--editor-surface-hover);
+  }
+}
+
+/* Scrolls sideways (no visible bar) when the field is too narrow; the ends fade where more is hidden. */
+.swatches {
+  display: flex;
+  flex: 1 1 auto;
+  gap: 4px;
+  min-width: 0;
+  padding: 2px;
+  overflow-x: auto;
+  scrollbar-width: none;
+
+  &::-webkit-scrollbar {
+    display: none;
+  }
+
+  /* Right-aligns while there is room; once the row overflows the auto margin collapses to 0 so the
+     palette scrolls from its start (justify-content: flex-end would hide the start for good). */
+  & > :first-of-type {
+    margin-left: auto;
+  }
+
+  &[data-fade-start] {
+    mask-image: linear-gradient(to right, transparent, var(--dcl-neutrals-shadow) 20px);
+  }
+  &[data-fade-end] {
+    mask-image: linear-gradient(to left, transparent, var(--dcl-neutrals-shadow) 20px);
+  }
+  &[data-fade-start][data-fade-end] {
+    mask-image: linear-gradient(
+      to right,
+      transparent,
+      var(--dcl-neutrals-shadow) 20px,
+      var(--dcl-neutrals-shadow) calc(100% - 20px),
+      transparent
+    );
+  }
+}
+
+.swatch {
+  flex: none;
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  border: 1px solid var(--dcl-transparencies-white-20);
+  border-radius: 50%;
+  cursor: pointer;
+
+  &[data-selected] {
+    border-color: var(--dcl-neutrals-white);
+    outline: 2px solid var(--editor-accent);
+  }
+}

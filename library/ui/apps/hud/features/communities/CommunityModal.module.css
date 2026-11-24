@@ -312,9 +312,58 @@
   border-radius: 10px;
   overflow: hidden;
 }
+/* A card with the places service's row: as unity-explorer's, hovering or focusing it shows its
+   actions, and the cover gives up the room they take so the card keeps its height. */
+.placeActionable {
+  /* the actions' height: 10px above, two 36px rows 8px apart */
+  --place-actions-h: 90px;
+  position: relative;
+  container-type: inline-size;
+  cursor: pointer;
+}
+.placeActionable .placeCover {
+  aspect-ratio: auto;
+  height: calc(100cqw * 10 / 16);
+  transition: height var(--dur-hover) var(--ease-outquad);
+}
+.placeActionable:hover .placeCover,
+.placeActionable:focus-within .placeCover {
+  height: calc(100cqw * 10 / 16 - var(--place-actions-h));
+}
+.placeOpen {
+  position: absolute;
+  inset: 0;
+}
+.placeActions {
+  display: none;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 10px;
+  cursor: default;
+}
+.placeActionable:hover .placeActions,
+.placeActionable:focus-within .placeActions {
+  display: flex;
+}
+.placeButtons {
+  display: flex;
+  gap: 8px;
+}
+.placeToggle {
+  flex: 1;
+  height: 36px;
+}
+.placeJump {
+  width: 100%;
+  height: 36px;
+  gap: 8px;
+  font-size: var(--type-14);
+  font-weight: 600;
+}
 /* Delete on a place the user owns (owners and moderators): over the cover's top-right corner. */
 .placeDelete {
   position: absolute;
+  z-index: 1;
   top: 8px;
   right: 8px;
   display: flex;

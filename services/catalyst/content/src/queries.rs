@@ -76,7 +76,12 @@ impl EntityDoc {
 /// Fail closed: an entity carrying no string `id` cannot be checked against
 /// the denylist, so it is dropped rather than served.
 pub fn retain_non_denylisted(docs: &mut Vec<EntityDoc>, denylist: &super::Denylist) {
-    docs.retain(|doc| !doc.id.is_empty() && !denylist.contains(&doc.id));
+    docs.retain(|doc| non_denylisted(&doc.id, denylist));
+}
+
+/// Whether a read may serve the entity `id` ([`retain_non_denylisted`]'s test).
+pub fn non_denylisted(id: &str, denylist: &super::Denylist) -> bool {
+    !id.is_empty() && !denylist.contains(id)
 }
 
 #[derive(Debug, sqlx::FromRow)]
@@ -202,7 +207,7 @@ fn active_entity_projection(mode: MetadataProjection) -> String {
     };
     let files = match mode {
         MetadataProjection::TextThumbnail => {
-            "AND cf.key = CASE WHEN json_typeof(dep.entity_metadata -> 'v' -> 'display' -> 'navmapThumbnail') = 'string' THEN dep.entity_metadata -> 'v' -> 'display' ->> 'navmapThumbnail' END AND cf.key <> '' AND cf.key NOT LIKE 'http%'"
+            "AND cf.key = CASE WHEN json_typeof(dep.entity_metadata -> 'v' -> 'display' -> 'navmapThumbnail') = 'string' THEN dep.entity_metadata -> 'v' -> 'display' ->> 'navmapThumbnail' END AND cf.key <> ''"
         }
         _ => "",
     };
@@ -413,15 +418,17 @@ fn escape_like(s: &str) -> String {
         .replace('_', "\\_")
 }
 
-/// Entities whose active pointer starts with `prefix` (a collection URN);
-/// `total` counts matching pointers, the page walks them in pointer order.
+/// Entities whose active pointer starts with `prefix` (a collection URN) in
+/// any letter case; `total` counts matching pointers, the page walks them in
+/// pointer order. Pointers are stored lowercased, so lowercasing the prefix
+/// compares case-insensitively and keeps `active_pointers_pointer_ops_idx`.
 pub async fn active_entity_docs_by_prefix(
     pool: &PgPool,
     prefix: &str,
     offset: i64,
     limit: i64,
 ) -> Result<PrefixDocsResult, sqlx::Error> {
-    let pattern = format!("{}%", escape_like(prefix));
+    let pattern = format!("{}%", escape_like(&prefix.to_lowercase()));
     let projection = active_entity_projection(MetadataProjection::Json);
     let total: i64 = sqlx::query_scalar(
         r"SELECT count(*) FROM content.active_pointers p WHERE p.pointer LIKE $1 ESCAPE '\'",

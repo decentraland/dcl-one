@@ -1,40 +1,18 @@
-//! The WebSocket handshake: the first frame the explorer sends is the
-//! signed-fetch header bag encoded as one JSON object (`x-identity-auth-chain-N`,
-//! `x-identity-timestamp`, `x-identity-metadata`), signed over
-//! `get:<path>:<timestamp>:<metadata>` in the crypto-middleware 6.x shape (an
-//! absent metadata signed as nothing, `get:<path>:<timestamp>:`). The
-//! verified SIGNER address becomes the connection's identity; nothing else
-//! authenticates a procedure call.
-//!
-//! 6.x only: the pre-6.0.0 folded payload is never accepted on this socket,
-//! so a re-cased metadata key cannot fold back into the scene metadata that
-//! was actually signed (the explorer signs `{}` here, which folds to itself).
-//! A chain the explorer signed on a scene's behalf (`signer:
-//! decentraland-kernel-scene`, ADR-44) is refused before the signature is
-//! checked, and a non-canonical spelling of the `signer` key or value is a
-//! refusal rather than an absence.
-//!
-//! EIP-1654 (contract wallet) SIGNER links verify through the validator the
-//! caller passes; with `None` they fail closed.
+//! The WebSocket handshake envelope: the first frame a client sends is the
+//! signed-request header bag encoded as one JSON object
+//! (`x-identity-auth-chain-N`, `x-identity-timestamp`, `x-identity-metadata`).
+//! [`frame_fields`] reads it as upstream's `parseAuthChainHeaders` does and
+//! [`frame_parts`] hands the fields to `dcl_auth::request::verify_request`
+//! for the socket's own signed path. The verified SIGNER address becomes the
+//! connection's identity; nothing else authenticates a procedure call.
 
-mod number;
-
-use std::sync::Arc;
-
-use axum::http::HeaderMap;
 use serde_json::{Map, Value};
 use thiserror::Error;
 
-use crate::auth::eip1654::Eip1654Validator;
-use crate::auth::signed_fetch::{
-    ChainShapeError, LegacyPayload, SignatureRefusal, SignedRequest, UnsignedLinks,
-    extract_auth_chain_with, verify_signature,
-};
-use crate::auth::{AuthChain, AuthError, MAX_AUTH_CHAIN_LINKS};
-use crate::identity::Address;
-use crate::signed_fetch::{
-    AUTH_CHAIN_HEADER_PREFIX, AUTH_METADATA_HEADER, AUTH_TIMESTAMP_HEADER, ORIGINAL_PATH_HEADER,
-};
+use crate::auth::request::RequestParts;
+use crate::auth::signed_fetch::{ChainShapeError, UnsignedLinks, extract_auth_chain_with};
+use crate::auth::{AuthChain, MAX_AUTH_CHAIN_LINKS};
+use crate::signed_fetch::{AUTH_CHAIN_HEADER_PREFIX, ORIGINAL_PATH_HEADER, SignedPath};
 
 pub use crate::auth::signed_fetch::is_refused_signer;
 
@@ -50,22 +28,6 @@ pub enum HandshakeError {
     MalformedChain { index: usize, detail: String },
     #[error("auth-chain shorter than 2 links")]
     InsufficientLinks,
-    #[error("missing {0}")]
-    MissingHeader(&'static str),
-    #[error("signature older than {window_secs}s window: signed_at={signed_at} now={now}")]
-    Expired {
-        signed_at: i64,
-        now: i64,
-        window_secs: i64,
-    },
-    #[error("signature did not verify: {0}")]
-    InvalidSignature(String),
-    #[error("EIP-1654 chains need an RPC validator")]
-    EipNotImplemented,
-    #[error("catalyst unavailable: {0}")]
-    CatalystUnavailable(String),
-    #[error("requests from scenes are not allowed")]
-    RefusedSigner,
 }
 
 fn truncate_detail(value: &str) -> String {
@@ -78,14 +40,14 @@ fn truncate_detail(value: &str) -> String {
 }
 
 /// A header read under its exact lowercase name, as `verify()` in
-/// `@dcl/crypto-middleware` 6.3.0 reads the frame (`dist/verify.js:72`,
-/// `:321-322`): a re-cased key is never read, so it cannot shadow the
-/// lowercase one.
+/// `@dcl/crypto-middleware` reads the frame: a re-cased key is never read, so
+/// it cannot shadow the lowercase one.
 fn obj_str<'a>(obj: &'a Map<String, Value>, key: &str) -> Option<&'a str> {
     obj.get(key).and_then(Value::as_str)
 }
 
-fn frame_object(frame_json: &str) -> Result<Map<String, Value>, HandshakeError> {
+/// The first frame as its identity fields ([`identity_headers`]).
+pub fn frame_fields(frame_json: &str) -> Result<Map<String, Value>, HandshakeError> {
     let value: Value =
         serde_json::from_str(frame_json).map_err(|e| HandshakeError::MalformedChain {
             index: 0,
@@ -97,18 +59,28 @@ fn frame_object(frame_json: &str) -> Result<Map<String, Value>, HandshakeError> 
     }
 }
 
+/// The frame's fields as a request to `method path`. The signed path is the
+/// socket's own: an `x-original-path` in the frame is never read.
+pub fn frame_parts(fields: &Map<String, Value>, method: &str, path: SignedPath) -> RequestParts {
+    RequestParts::from_fields(method, path, |name| {
+        (name != ORIGINAL_PATH_HEADER)
+            .then(|| obj_str(fields, name).map(str::to_owned))
+            .flatten()
+    })
+}
+
 const IDENTITY_PREFIX: &str = "x-identity-";
 
 /// Every `x-identity-*` field, in any case, must be a string or an array of
 /// strings before anything is verified (upstream's `parseAuthChainHeaders` in
 /// `ws-handler.ts`); other fields are left alone. An array reads as its first
 /// element and an empty one as absent, as `firstOf` in `@dcl/crypto-middleware`
-/// 6.3.0 (`dist/verify.js`) reads a repeated header.
+/// reads a repeated header.
 ///
-/// The chain links as `verify()` reads them (`dist/verify.js:71-89`): an
-/// empty link ends the chain (`if (!raw) break`), and the raw value at index
-/// [`MAX_AUTH_CHAIN_LINKS`] is tested before `firstOf`, so any array there,
-/// an empty one included, or a non-empty string is one link too many.
+/// The chain links as `verify()` reads them: an empty link ends the chain,
+/// and the raw value at index [`MAX_AUTH_CHAIN_LINKS`] is tested before
+/// `firstOf`, so any array there, an empty one included, or a non-empty
+/// string is one link too many.
 fn identity_headers(mut obj: Map<String, Value>) -> Result<Map<String, Value>, HandshakeError> {
     let past_cap = format!("{AUTH_CHAIN_HEADER_PREFIX}{MAX_AUTH_CHAIN_LINKS}");
     let too_long = match obj.get(&past_cap) {
@@ -160,227 +132,6 @@ pub fn extract_from_object(obj: &Map<String, Value>) -> Result<AuthChain, Handsh
         };
         HandshakeError::MalformedChain { index, detail }
     })
-}
-
-/// Unparseable or non-object metadata is refused before anything is verified;
-/// an explicit JSON `null` reads as an empty object.
-fn parse_metadata(raw: &str) -> Result<Value, HandshakeError> {
-    crate::auth::signed_fetch::parse_metadata(raw).ok_or_else(|| HandshakeError::MalformedChain {
-        index: 0,
-        detail: format!("invalid chain metadata: \"{}\"", truncate_detail(raw)),
-    })
-}
-
-fn map_auth_error(err: AuthError) -> HandshakeError {
-    match err {
-        AuthError::MalformedChain(d) => HandshakeError::MalformedChain {
-            index: 0,
-            detail: d,
-        },
-        AuthError::MissingSignature { .. } => HandshakeError::MalformedChain {
-            index: 0,
-            detail: err.to_string(),
-        },
-        AuthError::RecoveryFailed(d) => HandshakeError::InvalidSignature(d),
-        AuthError::SignerMismatch { .. } | AuthError::FinalAuthorityMismatch { .. } => {
-            HandshakeError::InvalidSignature(err.to_string())
-        }
-        AuthError::EphemeralExpired {
-            expiration_ms,
-            now_ms,
-        } => HandshakeError::Expired {
-            signed_at: expiration_ms / 1000,
-            now: now_ms / 1000,
-            window_secs: 0,
-        },
-        AuthError::InvalidEphemeralPayload(d) => HandshakeError::MalformedChain {
-            index: 0,
-            detail: d,
-        },
-        AuthError::Eip1654NotImplemented => HandshakeError::EipNotImplemented,
-        AuthError::Eip1654Rejected { .. } => HandshakeError::InvalidSignature(err.to_string()),
-        AuthError::Eip1654ValidationFailed(d) => HandshakeError::CatalystUnavailable(d),
-    }
-}
-
-/// Candidates for callers that choose proxy/mount alias compatibility. The first
-/// verifying path settles it; only an invalid signature tries the next one.
-/// Social uses its fixed source protocol paths instead of this opt-in helper.
-pub fn candidate_paths(headers: &HeaderMap, route: &str) -> Vec<String> {
-    let mut paths = vec![handshake_path(headers, "/")];
-    if !paths.contains(&route.to_string()) {
-        paths.push(route.to_string());
-    }
-    paths
-}
-
-/// Verifies the first frame against every candidate path; the identity is the
-/// lowercased SIGNER address.
-pub async fn verify_handshake(
-    frame_json: &str,
-    method: &str,
-    paths: &[String],
-    expiration_secs: i64,
-    now_secs: i64,
-    validator: Option<&dyn Eip1654Validator>,
-) -> Result<Address, HandshakeError> {
-    verify_handshake_ms(
-        frame_json,
-        method,
-        paths,
-        expiration_secs.saturating_mul(1000),
-        now_secs.saturating_mul(1000),
-        validator,
-    )
-    .await
-}
-
-/// The source socket settings use independent millisecond signature expiry.
-pub async fn verify_handshake_ms(
-    frame_json: &str,
-    method: &str,
-    paths: &[String],
-    expiration_ms: i64,
-    now_ms: i64,
-    validator: Option<&dyn Eip1654Validator>,
-) -> Result<Address, HandshakeError> {
-    verify_handshake_inner(
-        frame_json,
-        method,
-        paths,
-        expiration_ms as f64,
-        now_ms,
-        validator,
-        false,
-    )
-    .await
-}
-/// Social's source uses JavaScript Number for timestamps and a numeric
-/// millisecond expiry. Existing integer callers retain their header syntax.
-pub async fn verify_handshake_number_ms(
-    frame_json: &str,
-    method: &str,
-    paths: &[String],
-    expiration_ms: f64,
-    now_ms: i64,
-    validator: Option<&dyn Eip1654Validator>,
-) -> Result<Address, HandshakeError> {
-    verify_handshake_inner(
-        frame_json,
-        method,
-        paths,
-        expiration_ms,
-        now_ms,
-        validator,
-        true,
-    )
-    .await
-}
-async fn verify_handshake_inner(
-    frame_json: &str,
-    method: &str,
-    paths: &[String],
-    expiration_ms: f64,
-    now_ms: i64,
-    validator: Option<&dyn Eip1654Validator>,
-    number_timestamp: bool,
-) -> Result<Address, HandshakeError> {
-    let now_secs = now_ms / 1000;
-    let obj = frame_object(frame_json)?;
-    let chain = extract_from_object(&obj)?;
-    let timestamp = if number_timestamp {
-        obj_str(&obj, AUTH_TIMESTAMP_HEADER).unwrap_or("")
-    } else {
-        obj_str(&obj, AUTH_TIMESTAMP_HEADER)
-            .ok_or(HandshakeError::MissingHeader(AUTH_TIMESTAMP_HEADER))?
-    };
-    let signed_ms = if number_timestamp {
-        number::timestamp(timestamp)
-    } else {
-        timestamp.parse::<i64>().ok().map(|value| value as f64)
-    }
-    .ok_or_else(|| HandshakeError::MalformedChain {
-        index: 0,
-        detail: format!("invalid timestamp: {}", truncate_detail(timestamp)),
-    })?;
-    if signed_ms + expiration_ms < now_ms as f64 || signed_ms > now_ms as f64 + expiration_ms {
-        return Err(HandshakeError::Expired {
-            signed_at: (signed_ms / 1000.0) as i64,
-            now: now_secs,
-            window_secs: (expiration_ms / 1000.0) as i64,
-        });
-    }
-    // An absent metadata reads as `{}` and is signed as nothing: `createPayload`
-    // joins `undefined` as empty, so the payload ends with `:` (`dist/verify.js:173`, `:218`).
-    let metadata_raw = obj_str(&obj, AUTH_METADATA_HEADER);
-    let metadata = parse_metadata(metadata_raw.unwrap_or("{}"))?;
-    if is_refused_signer(&metadata) {
-        return Err(HandshakeError::RefusedSigner);
-    }
-    let paths: Vec<&str> = paths.iter().map(String::as_str).collect();
-    let request = SignedRequest {
-        method,
-        paths: &paths,
-        timestamp,
-        metadata: metadata_raw.unwrap_or(""),
-    };
-    verify_signature(
-        &chain,
-        &request,
-        now_secs,
-        LegacyPayload::Refused,
-        validator,
-    )
-    .await
-    .map_err(|refusal| match refusal {
-        SignatureRefusal::Invalid(Some(e)) | SignatureRefusal::Settled(e) => map_auth_error(e),
-        // `Refused` never reaches the legacy guard.
-        SignatureRefusal::Invalid(None) | SignatureRefusal::LegacyKeysNotCanonical => {
-            HandshakeError::InvalidSignature("no payload".into())
-        }
-    })?;
-    Address::parse(&chain[0].payload).map_err(|e| HandshakeError::MalformedChain {
-        index: 0,
-        detail: format!("SIGNER payload is not an address: {e}"),
-    })
-}
-
-/// The socket's own path; the only `x-original-path` the root fallback accepts.
-pub const SOCKET_PATH: &str = "/social-rpc";
-
-/// The public path a prefix-stripping proxy forwards as `x-original-path`,
-/// accepted only when it is the socket path itself, with or without a
-/// trailing slash (against the root fallback), or ends with the route
-/// (against a nested fallback); anything else is the fallback itself. The
-/// header is client-controlled, so any other single segment would let a
-/// chain signed for another root-level path open the socket.
-pub fn handshake_path(headers: &HeaderMap, fallback: &str) -> String {
-    match headers
-        .get(ORIGINAL_PATH_HEADER)
-        .and_then(|v| v.to_str().ok())
-    {
-        Some(raw) => {
-            let stripped = raw.split('?').next().unwrap_or(raw);
-            let accept = if fallback == "/" {
-                stripped.trim_end_matches('/') == SOCKET_PATH
-            } else {
-                stripped.ends_with(fallback)
-            };
-            if accept {
-                stripped.to_string()
-            } else {
-                fallback.to_string()
-            }
-        }
-        None => fallback.to_string(),
-    }
-}
-
-/// The validator handle the state carries, as the `Option<&dyn>` the verifier takes.
-pub fn validator_ref(
-    validator: &Option<Arc<dyn Eip1654Validator>>,
-) -> Option<&dyn Eip1654Validator> {
-    validator.as_deref()
 }
 
 #[cfg(any(test, feature = "test-support"))]
@@ -466,377 +217,190 @@ pub mod test_support {
 #[cfg(test)]
 mod tests {
     use super::test_support::*;
-    #[tokio::test]
-    async fn millisecond_signature_window_keeps_its_exact_boundary() {
-        let now = 1_800_000_000_555i64;
-        let (_, frame) = frame("/", now - 17).await;
-        let paths = vec!["/".to_string()];
-        assert!(
-            super::verify_handshake_ms(&frame, "get", &paths, 17, now, None)
-                .await
-                .is_ok()
-        );
-        assert!(matches!(
-            super::verify_handshake_ms(&frame, "get", &paths, 16, now, None).await,
-            Err(super::HandshakeError::Expired { .. })
-        ));
-    }
-    #[tokio::test]
-    async fn social_numeric_timestamps_and_expiry_match_executed_source_without_rewriting_signed_bytes()
-     {
-        let fixture: serde_json::Value = serde_json::from_str(include_str!(concat!(
-            env!("DCL_ONE_ROOT"),
-            "/services/catalyst/tests/fixtures/conformance/social/ws-numbers-source-cases.json"
-        )))
-        .unwrap();
-        let now = fixture["now"].as_i64().unwrap();
-        let paths = vec!["/".to_string()];
-        for case in fixture["timestamps"].as_array().unwrap() {
-            let raw = case["raw"].as_str();
-            let text = raw.unwrap_or("");
-            let payload = crate::signed_fetch::build_payload_v6("get", "/", text, "{}");
-            let (_, frame) = frame_with(&ROOT_WALLET, now, &payload, "{}").await;
-            let mut frame: serde_json::Value = serde_json::from_str(&frame).unwrap();
-            if let Some(raw) = raw {
-                frame[super::AUTH_TIMESTAMP_HEADER] = serde_json::Value::String(raw.into());
-            } else {
-                frame
-                    .as_object_mut()
-                    .unwrap()
-                    .remove(super::AUTH_TIMESTAMP_HEADER);
-            }
-            let window = case["window"]
-                .as_f64()
-                .unwrap_or_else(|| case["window"].as_str().unwrap().parse().unwrap());
-            let result = super::verify_handshake_number_ms(
-                &frame.to_string(),
-                "get",
-                &paths,
-                window,
-                now,
-                None,
-            )
-            .await;
-            assert_eq!(
-                result.is_ok(),
-                case["accepted"].as_bool().unwrap(),
-                "{} {:?}",
-                case,
-                result
-            );
-            if let Some(expected) = case["parsed"].as_f64() {
-                assert_eq!(super::number::timestamp(text), Some(expected));
-            }
-        }
-        let (_, frame) = frame("/", now).await;
-        let mut frame: serde_json::Value = serde_json::from_str(&frame).unwrap();
-        frame[super::AUTH_TIMESTAMP_HEADER] = serde_json::Value::String(format!("0x{now:x}"));
-        assert!(
-            super::verify_handshake_number_ms(&frame.to_string(), "get", &paths, 1.0, now, None)
-                .await
-                .is_err(),
-            "a differently signed timestamp cannot authenticate just because its numeric value matches"
-        );
-    }
     use super::*;
-    use crate::signed_fetch::{FIVE_MINUTES, SCENE_SIGNER, build_payload_v6};
-    use axum::http::HeaderValue;
+    use crate::auth::request::{
+        RequestAuthError, VerifiedRequest, VerifyOptions, reject_if_signer, verify_request_at,
+    };
+    use crate::signed_fetch::{SCENE_SIGNER, build_legacy_payload, build_payload_v6};
     use serde_json::json;
 
-    fn root() -> Vec<String> {
-        vec!["/".to_string()]
+    const NOW_MS: i64 = 1_700_000_000_000;
+
+    #[derive(Debug)]
+    enum Refused {
+        Envelope(HandshakeError),
+        Request(RequestAuthError),
     }
 
-    async fn verify(
-        frame: &str,
-        method: &str,
-        paths: &[String],
-        now_secs: i64,
-    ) -> Result<Address, HandshakeError> {
-        verify_handshake(frame, method, paths, FIVE_MINUTES, now_secs, None).await
-    }
-
-    #[tokio::test]
-    async fn verify_handshake_accepts_valid_chain() {
-        let now_secs = 1_700_000_000;
-        let (expected_signer, frame) = frame("/", now_secs * 1000).await;
-        let signer = verify(&frame, "get", &root(), now_secs)
+    async fn verify(frame: &str, method: &str, path: &str) -> Result<VerifiedRequest, Refused> {
+        let fields = frame_fields(frame).map_err(Refused::Envelope)?;
+        let options = VerifyOptions::builder()
+            .metadata_validator(reject_if_signer(&[SCENE_SIGNER]).unwrap())
+            .build()
+            .unwrap();
+        let parts = frame_parts(&fields, method, SignedPath::local(path));
+        verify_request_at(&parts, &options, NOW_MS)
             .await
-            .expect("valid chain must verify");
-        assert_eq!(signer.as_str(), expected_signer);
+            .map(Option::unwrap)
+            .map_err(Refused::Request)
     }
 
-    #[tokio::test]
-    async fn verify_handshake_rejects_method_path_mismatch() {
-        let now_secs = 1_700_000_000;
-        let (_, frame) = frame("/", now_secs * 1000).await;
-        let err = verify(&frame, "post", &root(), now_secs)
-            .await
-            .expect_err("wrong method must be rejected");
-        assert!(
-            matches!(err, HandshakeError::InvalidSignature(_)),
-            "{err:?}"
-        );
-    }
-
-    #[tokio::test]
-    async fn verify_handshake_rejects_expired() {
-        let signed_secs = 1_700_000_000;
-        let now_secs = signed_secs + 10 * 60;
-        let (_, frame) = frame("/", signed_secs * 1000).await;
-        let err = verify(&frame, "get", &root(), now_secs)
-            .await
-            .expect_err("expired chain must be rejected");
-        assert!(matches!(err, HandshakeError::Expired { .. }), "{err:?}");
-    }
-
-    #[tokio::test]
-    async fn a_prefixed_path_verifies_against_its_own_candidate_only() {
-        let now_secs = 1_700_000_000;
-        let (expected_signer, frame) = frame("/social-rpc", now_secs * 1000).await;
-        let signer = verify(&frame, "get", &["/social-rpc".to_string()], now_secs)
-            .await
-            .expect("matching path");
-        assert_eq!(signer.as_str(), expected_signer);
-        let err = verify(&frame, "get", &root(), now_secs)
-            .await
-            .expect_err("must not verify against /");
-        assert!(
-            matches!(err, HandshakeError::InvalidSignature(_)),
-            "{err:?}"
-        );
-        // The route's candidates: the root first, then the route; a frame
-        // signed over either verifies.
-        let paths = candidate_paths(&HeaderMap::new(), "/social-rpc");
-        assert_eq!(paths, vec!["/".to_string(), "/social-rpc".to_string()]);
-        assert!(verify(&frame, "get", &paths, now_secs).await.is_ok());
-        let (_, over_root) = super::test_support::frame("/", now_secs * 1000).await;
-        assert!(verify(&over_root, "get", &paths, now_secs).await.is_ok());
-    }
-
-    #[test]
-    fn handshake_path_accepts_stripped_prefix_and_defaults_to_root() {
-        let mut headers = HeaderMap::new();
-        headers.insert(
-            ORIGINAL_PATH_HEADER,
-            HeaderValue::from_static("/social-rpc"),
-        );
-        assert_eq!(handshake_path(&headers, "/"), "/social-rpc");
-        assert_eq!(
-            candidate_paths(&headers, "/social-rpc"),
-            vec!["/social-rpc".to_string()]
-        );
-        headers.insert(
-            ORIGINAL_PATH_HEADER,
-            HeaderValue::from_static("/social-rpc/?ts=1"),
-        );
-        assert_eq!(handshake_path(&headers, "/"), "/social-rpc/");
-        assert_eq!(handshake_path(&HeaderMap::new(), "/"), "/");
-    }
-
-    #[test]
-    fn handshake_path_rejects_any_original_but_the_socket_path_against_root() {
-        let mut headers = HeaderMap::new();
-        for forged in [
-            "/v1/friends",
-            "/social-rpc/deep",
-            "/status",
-            "/about",
-            "/v1",
-            "//social-rpc",
-            "social-rpc",
-        ] {
-            headers.insert(ORIGINAL_PATH_HEADER, HeaderValue::from_static(forged));
-            assert_eq!(handshake_path(&headers, "/"), "/", "{forged}");
+    fn status(result: Result<VerifiedRequest, Refused>) -> u16 {
+        match result {
+            Err(Refused::Request(e)) => e.status(),
+            other => panic!("expected a verifier refusal: {other:?}"),
         }
-        headers.insert(
-            ORIGINAL_PATH_HEADER,
-            HeaderValue::from_static("/social-rpc//?x=1"),
-        );
-        assert_eq!(handshake_path(&headers, "/"), "/social-rpc//");
     }
 
-    #[test]
-    fn handshake_path_rejects_non_suffix_original() {
-        let mut headers = HeaderMap::new();
-        headers.insert(
-            ORIGINAL_PATH_HEADER,
-            HeaderValue::from_static("/v1/friends"),
-        );
-        assert_eq!(
-            handshake_path(&headers, "/v1/communities"),
-            "/v1/communities"
-        );
-        headers.insert(
-            ORIGINAL_PATH_HEADER,
-            HeaderValue::from_static("/edge/v1/lists"),
-        );
-        assert_eq!(handshake_path(&headers, "/v1/lists"), "/edge/v1/lists");
-    }
-
-    #[tokio::test]
-    async fn verify_handshake_rejects_malformed_envelope() {
-        let err = verify("not json", "get", &root(), 0).await.unwrap_err();
-        assert!(
-            matches!(err, HandshakeError::MalformedChain { .. }),
-            "{err:?}"
-        );
-        let err2 = verify("[]", "get", &root(), 0).await.unwrap_err();
-        assert!(
-            matches!(err2, HandshakeError::EnvelopeNotObject),
-            "{err2:?}"
-        );
-    }
-
-    #[tokio::test]
-    async fn verify_handshake_rejects_short_chain_and_missing_timestamp() {
-        let frame = json!({
-            "x-identity-auth-chain-0": "{\"type\":\"SIGNER\",\"payload\":\"0xabc\",\"signature\":\"\"}",
-            "x-identity-timestamp": "0",
-            "x-identity-metadata": "{}"
-        })
-        .to_string();
-        let err = verify(&frame, "get", &root(), 0).await.unwrap_err();
-        assert!(matches!(err, HandshakeError::InsufficientLinks), "{err:?}");
-
-        let now_secs = 1_700_000_000;
-        let (_, signed) = super::test_support::frame("/", now_secs * 1000).await;
-        let mut obj: Map<String, Value> = serde_json::from_str(&signed).unwrap();
-        obj.remove("x-identity-timestamp");
-        let err = verify(&Value::Object(obj).to_string(), "get", &root(), now_secs)
-            .await
-            .unwrap_err();
-        assert!(matches!(err, HandshakeError::MissingHeader(_)), "{err:?}");
-    }
-
-    /// A signed frame at `now_secs` with `edit` applied to its object.
-    async fn edited(now_secs: i64, edit: impl FnOnce(&mut Map<String, Value>)) -> String {
-        let (_, signed) = super::test_support::frame("/", now_secs * 1000).await;
+    async fn edited(edit: impl FnOnce(&mut Map<String, Value>)) -> String {
+        let (_, signed) = frame("/", NOW_MS).await;
         let mut obj: Map<String, Value> = serde_json::from_str(&signed).unwrap();
         edit(&mut obj);
         Value::Object(obj).to_string()
     }
 
-    /// Upstream's `parseAuthChainHeaders` (`ws-handler.ts:139-146`): an
-    /// `x-identity-*` field in any case that is neither a string nor an array
-    /// of strings is refused before anything is verified; metadata included,
-    /// so a non-string one is never read as `{}`.
+    #[tokio::test]
+    async fn a_frame_verifies_for_its_method_and_path_only() {
+        let (signer, signed) = frame("/", NOW_MS).await;
+        assert_eq!(verify(&signed, "get", "/").await.unwrap().signer, signer);
+        assert_eq!(status(verify(&signed, "post", "/").await), 401);
+        assert_eq!(status(verify(&signed, "get", "/social-rpc").await), 401);
+    }
+
+    #[tokio::test]
+    async fn an_original_path_in_the_frame_is_never_a_candidate() {
+        let (_, signed) = frame("/v1/friends/", NOW_MS).await;
+        let mut obj: Map<String, Value> = serde_json::from_str(&signed).unwrap();
+        obj.insert(ORIGINAL_PATH_HEADER.into(), json!("/v1/friends/"));
+        let fields = frame_fields(&Value::Object(obj).to_string()).unwrap();
+        let parts = frame_parts(&fields, "get", SignedPath::local("/"));
+        assert_eq!(parts.original_path, None);
+        assert_eq!(parts.candidate_paths(), vec!["/"]);
+    }
+
+    #[tokio::test]
+    async fn a_timestamp_outside_sixty_seconds_is_expired() {
+        let (_, stale) = frame("/", NOW_MS - 61_000).await;
+        assert_eq!(status(verify(&stale, "get", "/").await), 401);
+        let (_, fresh) = frame("/", NOW_MS - 59_000).await;
+        assert!(verify(&fresh, "get", "/").await.is_ok());
+    }
+
+    #[tokio::test]
+    async fn a_malformed_envelope_is_refused_before_the_verifier() {
+        assert!(matches!(
+            verify("not json", "get", "/").await,
+            Err(Refused::Envelope(HandshakeError::MalformedChain { .. }))
+        ));
+        assert!(matches!(
+            verify("[]", "get", "/").await,
+            Err(Refused::Envelope(HandshakeError::EnvelopeNotObject))
+        ));
+        let short = json!({
+            "x-identity-auth-chain-0": "{\"type\":\"SIGNER\",\"payload\":\"0xabc\",\"signature\":\"\"}",
+            "x-identity-timestamp": "0",
+            "x-identity-metadata": "{}"
+        })
+        .to_string();
+        assert_eq!(status(verify(&short, "get", "/").await), 400);
+        let no_timestamp = edited(|obj| {
+            obj.remove("x-identity-timestamp");
+        })
+        .await;
+        assert_eq!(status(verify(&no_timestamp, "get", "/").await), 401);
+    }
+
+    /// Upstream's `parseAuthChainHeaders`: an `x-identity-*` field in any case
+    /// that is neither a string nor an array of strings is refused before
+    /// anything is verified.
     #[tokio::test]
     async fn an_identity_field_that_is_not_a_string_is_refused_up_front() {
-        let now_secs = 1_700_000_000;
         for (key, value) in [
-            ("x-identity-timestamp", json!(now_secs * 1000)),
+            ("x-identity-timestamp", json!(NOW_MS)),
             ("x-identity-metadata", json!({})),
             ("x-identity-metadata", Value::Null),
-            ("x-identity-metadata", json!(true)),
             ("x-identity-auth-chain-0", json!({ "type": "SIGNER" })),
             ("x-identity-auth-chain-1", json!(["{}", 1])),
             ("X-Identity-Anything", json!(1)),
         ] {
-            let frame = edited(now_secs, |obj| {
+            let frame = edited(|obj| {
                 obj.insert(key.to_string(), value.clone());
             })
             .await;
-            let err = verify(&frame, "get", &root(), now_secs).await.unwrap_err();
             assert!(
-                matches!(err, HandshakeError::HeaderNotString),
-                "{key} {value}: {err:?}"
+                matches!(
+                    verify(&frame, "get", "/").await,
+                    Err(Refused::Envelope(HandshakeError::HeaderNotString))
+                ),
+                "{key} {value}"
             );
         }
-        let other = edited(now_secs, |obj| {
+        let other = edited(|obj| {
             obj.insert("version".into(), json!({ "nested": [1] }));
         })
         .await;
-        assert!(verify(&other, "get", &root(), now_secs).await.is_ok());
+        assert!(verify(&other, "get", "/").await.is_ok());
     }
 
-    /// `firstOf` in `@dcl/crypto-middleware` 6.3.0 (`dist/verify.js`): an
-    /// array of strings reads as its first element, whatever follows it, and
-    /// an empty one as absent.
+    /// `firstOf`: an array of strings reads as its first element, and an empty
+    /// one as absent.
     #[tokio::test]
     async fn an_array_of_strings_reads_as_its_first_element() {
-        let now_secs = 1_700_000_000;
-        let (signer, _) = super::test_support::frame("/", now_secs * 1000).await;
-        let wrapped = edited(now_secs, |obj| {
+        let (signer, _) = frame("/", NOW_MS).await;
+        let wrapped = edited(|obj| {
             for value in obj.values_mut() {
                 *value = json!([value.clone(), "ignored"]);
             }
         })
         .await;
-        let got = verify(&wrapped, "get", &root(), now_secs)
-            .await
-            .expect("every field as an array");
-        assert_eq!(got.as_str(), signer);
-
-        let no_timestamp = edited(now_secs, |obj| {
-            obj.insert("x-identity-timestamp".into(), json!([]));
-        })
-        .await;
-        let err = verify(&no_timestamp, "get", &root(), now_secs)
-            .await
-            .unwrap_err();
-        assert!(matches!(err, HandshakeError::MissingHeader(_)), "{err:?}");
-
-        // An empty metadata array reads as absent, which is signed as nothing:
-        // a chain signed over `{}` does not verify without it.
-        let empty_metadata = edited(now_secs, |obj| {
+        assert_eq!(verify(&wrapped, "get", "/").await.unwrap().signer, signer);
+        // An empty metadata array is absent, signed as nothing: a chain signed
+        // over `{}` does not verify without it.
+        let empty_metadata = edited(|obj| {
             obj.insert("x-identity-metadata".into(), json!([]));
         })
         .await;
-        let err = verify(&empty_metadata, "get", &root(), now_secs)
-            .await
-            .unwrap_err();
-        assert!(
-            matches!(err, HandshakeError::InvalidSignature(_)),
-            "{err:?}"
-        );
+        assert_eq!(status(verify(&empty_metadata, "get", "/").await), 401);
     }
 
-    /// `createPayload` joins an absent `x-identity-metadata` as empty
-    /// (`@dcl/crypto-middleware` 6.3.0 `dist/verify.js:173`, `:218`): the
-    /// payload ends with `:`, and the metadata the gate reads is `{}`.
+    /// `createPayload` joins an absent metadata as empty: the payload ends
+    /// with `:`, and a chain signed over `{}` does not verify without it.
     #[tokio::test]
     async fn an_absent_metadata_is_signed_as_nothing() {
-        let now_secs = 1_700_000_000;
-        let ts = (now_secs * 1000).to_string();
+        let ts = NOW_MS.to_string();
         let absent = async |signed_metadata: &str| {
             let payload = build_payload_v6("get", "/", &ts, signed_metadata);
-            let (signer, frame) =
-                super::test_support::frame_with(&ROOT_WALLET, now_secs * 1000, &payload, "{}")
-                    .await;
+            let (signer, frame) = frame_with(&ROOT_WALLET, NOW_MS, &payload, "{}").await;
             let mut obj: Map<String, Value> = serde_json::from_str(&frame).unwrap();
             obj.remove("x-identity-metadata");
             (signer, Value::Object(obj).to_string())
         };
         let (signer, frame) = absent("").await;
-        assert!(build_payload_v6("get", "/", &ts, "").ends_with(&format!(":{ts}:")));
-        let got = verify(&frame, "get", &root(), now_secs).await.unwrap();
-        assert_eq!(got.as_str(), signer);
+        assert_eq!(verify(&frame, "get", "/").await.unwrap().signer, signer);
         let (_, frame) = absent("{}").await;
-        let err = verify(&frame, "get", &root(), now_secs).await.unwrap_err();
-        assert!(
-            matches!(err, HandshakeError::InvalidSignature(_)),
-            "{err:?}"
-        );
+        assert_eq!(status(verify(&frame, "get", "/").await), 401);
     }
 
-    /// `extractAuthChain` (`dist/verify.js:71-89`): the raw value at index 10
-    /// is tested before `firstOf`, so any array there, an empty one included,
-    /// or a non-empty string is too long; an empty string there is not, and
-    /// an empty link anywhere ends the chain.
+    /// The raw value at index 10 is tested before `firstOf`: any array there,
+    /// an empty one included, or a non-empty string is too long; an empty
+    /// string there is not, and an empty link anywhere ends the chain.
     #[tokio::test]
     async fn a_link_at_the_cap_is_too_long_whatever_its_value() {
-        let now_secs = 1_700_000_000;
-        let (signer, _) = super::test_support::frame("/", now_secs * 1000).await;
+        let (signer, _) = frame("/", NOW_MS).await;
         for value in [json!([]), json!([""]), json!(["{}"]), json!("x")] {
-            let frame = edited(now_secs, |obj| {
+            let frame = edited(|obj| {
                 obj.insert("x-identity-auth-chain-10".into(), value.clone());
             })
             .await;
-            let err = verify(&frame, "get", &root(), now_secs).await.unwrap_err();
             assert!(
-                matches!(err, HandshakeError::MalformedChain { index: 10, .. }),
-                "{value}: {err:?}"
+                matches!(
+                    verify(&frame, "get", "/").await,
+                    Err(Refused::Envelope(HandshakeError::MalformedChain {
+                        index: 10,
+                        ..
+                    }))
+                ),
+                "{value}"
             );
         }
         for (key, value) in [
@@ -844,165 +408,73 @@ mod tests {
             ("x-identity-auth-chain-3", json!("")),
             ("x-identity-auth-chain-3", json!([""])),
         ] {
-            let frame = edited(now_secs, |obj| {
+            let frame = edited(|obj| {
                 obj.insert(key.into(), value.clone());
                 obj.insert("x-identity-auth-chain-4".into(), json!("not a link"));
             })
             .await;
-            let got = verify(&frame, "get", &root(), now_secs)
+            let got = verify(&frame, "get", "/")
                 .await
                 .unwrap_or_else(|e| panic!("{key} {value}: {e:?}"));
-            assert_eq!(got.as_str(), signer);
+            assert_eq!(got.signer, signer);
         }
     }
 
-    /// `verify()` reads the exact lowercase keys (`dist/verify.js:72`,
-    /// `:321-322`): a re-cased duplicate passes the up-front type check and is
-    /// then never read, so it cannot shadow the lowercase header, and a
-    /// re-cased header alone is absent.
+    /// A re-cased duplicate passes the type check and is never read.
     #[tokio::test]
     async fn a_re_cased_identity_header_is_never_read() {
-        let now_secs = 1_700_000_000;
-        let (signer, _) = super::test_support::frame("/", now_secs * 1000).await;
+        let (signer, _) = frame("/", NOW_MS).await;
         for (key, value) in [
-            ("X-Identity-Timestamp", json!([])),
             ("X-Identity-Timestamp", json!("0")),
-            ("X-Identity-Metadata", json!([])),
             (
                 "X-Identity-Metadata",
                 json!(r#"{"signer":"decentraland-kernel-scene"}"#),
             ),
             ("X-Identity-Auth-Chain-0", json!("not a link")),
         ] {
-            let frame = edited(now_secs, |obj| {
+            let frame = edited(|obj| {
                 obj.insert(key.to_string(), value.clone());
             })
             .await;
-            let got = verify(&frame, "get", &root(), now_secs)
+            let got = verify(&frame, "get", "/")
                 .await
                 .unwrap_or_else(|e| panic!("{key} {value}: {e:?}"));
-            assert_eq!(got.as_str(), signer);
+            assert_eq!(got.signer, signer);
         }
-        let re_cased = edited(now_secs, |obj| {
-            let ts = obj.remove("x-identity-timestamp").unwrap();
-            obj.insert("X-Identity-Timestamp".into(), ts);
-        })
-        .await;
-        let err = verify(&re_cased, "get", &root(), now_secs)
-            .await
-            .unwrap_err();
-        assert!(matches!(err, HandshakeError::MissingHeader(_)), "{err:?}");
-    }
-
-    #[test]
-    fn scene_signer_gate_matches_upstream_reject_if_signer() {
-        assert!(is_refused_signer(&json!({ "signer": SCENE_SIGNER })));
-        assert!(is_refused_signer(
-            &json!({ "signer": "Decentraland-Kernel-Scene" })
-        ));
-        assert!(is_refused_signer(
-            &json!({ "signer": "  decentraland-kernel-scene\t" })
-        ));
-        assert!(is_refused_signer(&json!({ "signer": "DCL:Explorer" })));
-        assert!(is_refused_signer(
-            &json!({ "signer": format!("\u{FEFF}{SCENE_SIGNER}") })
-        ));
-        assert!(is_refused_signer(&json!({ "signer": 42 })));
-        assert!(is_refused_signer(&json!({ "signer": null })));
-        assert!(is_refused_signer(&json!({ "signer": [SCENE_SIGNER] })));
-        assert!(is_refused_signer(&json!({ "Signer": SCENE_SIGNER })));
-        assert!(is_refused_signer(
-            &json!({ "signer": "dcl:explorer", "Signer": SCENE_SIGNER })
-        ));
-
-        assert!(!is_refused_signer(&json!({ "signer": "dcl:explorer" })));
-        assert!(!is_refused_signer(&json!({ "signer": "" })));
-        assert!(!is_refused_signer(&json!({})));
-        assert!(!is_refused_signer(&Value::Null));
-        assert!(!is_refused_signer(&json!({ "sceneId": "BafkreiAbcDef" })));
-    }
-
-    const SCENE_METADATA: &str = r#"{"signer":"decentraland-kernel-scene"}"#;
-    const RECASED_KEY: &str = r#"{"Signer":"decentraland-kernel-scene"}"#;
-
-    #[tokio::test]
-    async fn a_scene_signed_frame_is_refused_before_the_signature_is_checked() {
-        let now_secs = 1_700_000_000;
-        let ts_ms = now_secs * 1000;
-        for delivered in [SCENE_METADATA, RECASED_KEY] {
-            // Signed as delivered: the signature alone would accept it.
-            let signed = build_payload_v6("get", "/", &ts_ms.to_string(), delivered);
-            let (_, frame) = frame_with(&ROOT_WALLET, ts_ms, &signed, delivered).await;
-            let err = verify(&frame, "get", &root(), now_secs).await.unwrap_err();
-            assert!(
-                matches!(err, HandshakeError::RefusedSigner),
-                "{delivered}: {err:?}"
-            );
-        }
-        // The re-cased-key attack shape: signed over the scene metadata,
-        // delivered under the re-spelled key.
-        let signed = build_payload_v6("get", "/", &ts_ms.to_string(), SCENE_METADATA);
-        let (_, frame) = frame_with(&ROOT_WALLET, ts_ms, &signed, RECASED_KEY).await;
-        assert!(matches!(
-            verify(&frame, "get", &root(), now_secs).await.unwrap_err(),
-            HandshakeError::RefusedSigner
-        ));
     }
 
     #[tokio::test]
-    async fn the_socket_is_6x_only_for_metadata_that_does_not_fold_to_itself() {
-        let now_secs = 1_700_000_000;
-        let ts_ms = now_secs * 1000;
+    async fn a_scene_signed_frame_is_refused_as_malformed() {
+        let ts = NOW_MS.to_string();
+        for delivered in [
+            r#"{"signer":"decentraland-kernel-scene"}"#,
+            r#"{"Signer":"decentraland-kernel-scene"}"#,
+        ] {
+            let signed = build_payload_v6("get", "/", &ts, delivered);
+            let (_, frame) = frame_with(&ROOT_WALLET, NOW_MS, &signed, delivered).await;
+            assert_eq!(status(verify(&frame, "get", "/").await), 400, "{delivered}");
+        }
+    }
+
+    #[tokio::test]
+    async fn the_socket_takes_the_current_payload_only() {
+        let ts = NOW_MS.to_string();
         let cased = r#"{"signer":"dcl:explorer","sceneId":"bafkreiAbC123"}"#;
-        let v6 = build_payload_v6("get", "/", &ts_ms.to_string(), cased);
-        let (_, frame) = frame_with(&ROOT_WALLET, ts_ms, &v6, cased).await;
-        assert!(verify(&frame, "get", &root(), now_secs).await.is_ok());
-        let legacy =
-            crate::signed_fetch::build_legacy_payload("get", "/", &ts_ms.to_string(), cased);
-        let (_, frame) = frame_with(&ROOT_WALLET, ts_ms, &legacy, cased).await;
-        let err = verify(&frame, "get", &root(), now_secs).await.unwrap_err();
-        assert!(
-            matches!(err, HandshakeError::InvalidSignature(_)),
-            "{err:?}"
-        );
-    }
-
-    #[tokio::test]
-    async fn a_metadata_field_this_service_never_reads_is_still_bound_to_the_signature() {
-        let now_secs = 1_700_000_000;
-        let ts_ms = now_secs * 1000;
-        let signed = build_payload_v6(
-            "get",
-            "/",
-            &ts_ms.to_string(),
-            r#"{"sceneId":"bafkreiabcdef"}"#,
-        );
-        let (_, frame) = frame_with(
-            &ROOT_WALLET,
-            ts_ms,
-            &signed,
-            r#"{"sceneId":"BAFKREIABCDEF"}"#,
-        )
-        .await;
-        let err = verify(&frame, "get", &root(), now_secs).await.unwrap_err();
-        assert!(
-            matches!(err, HandshakeError::InvalidSignature(_)),
-            "{err:?}"
-        );
+        let v6 = build_payload_v6("get", "/", &ts, cased);
+        let (_, frame) = frame_with(&ROOT_WALLET, NOW_MS, &v6, cased).await;
+        assert!(verify(&frame, "get", "/").await.is_ok());
+        let legacy = build_legacy_payload("get", "/", &ts, cased);
+        let (_, frame) = frame_with(&ROOT_WALLET, NOW_MS, &legacy, cased).await;
+        assert_eq!(status(verify(&frame, "get", "/").await), 401);
     }
 
     #[tokio::test]
     async fn unparseable_metadata_is_refused_as_malformed() {
-        let now_secs = 1_700_000_000;
-        let ts_ms = now_secs * 1000;
+        let ts = NOW_MS.to_string();
         for raw in ["not json", "[]", "42"] {
-            let signed = build_payload_v6("get", "/", &ts_ms.to_string(), raw);
-            let (_, frame) = frame_with(&ROOT_WALLET, ts_ms, &signed, raw).await;
-            let err = verify(&frame, "get", &root(), now_secs).await.unwrap_err();
-            assert!(
-                matches!(err, HandshakeError::MalformedChain { .. }),
-                "{raw}: {err:?}"
-            );
+            let signed = build_payload_v6("get", "/", &ts, raw);
+            let (_, frame) = frame_with(&ROOT_WALLET, NOW_MS, &signed, raw).await;
+            assert_eq!(status(verify(&frame, "get", "/").await), 400, "{raw}");
         }
     }
 }

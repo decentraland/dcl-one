@@ -4,7 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, onTestFinished, vi } from 
 
 import { shopCart } from "../cart/store";
 import { invalidateShopQueries } from "../discovery/query";
-import { COLLECTION, ITEM_ID, RESALE_WEARABLE, RESELLER, ShopHarness, TOKEN_ID, catalogClient, catalogTransport, defaultAnswers, fixtureHost, type CatalogAnswers, type CatalogScenario, type SessionKind } from "../discovery/fixtures";
+import { COLLECTION, ITEM_ID, ITEM_META, RESALE_WEARABLE, RESELLER, ShopHarness, TOKEN_ID, catalogClient, catalogTransport, defaultAnswers, fixtureHost, type CatalogAnswers, type CatalogScenario, type SessionKind } from "../discovery/fixtures";
 import type { TransportRequest } from "@shop/api/signer";
 import { encodeTokenId } from "./lib/token-id";
 import { createShopClient, type ShopClient } from "../api";
@@ -19,6 +19,9 @@ import { fakeChain, fakeWallet } from "../market/testing";
 import { marketplaceOn } from "../market/testing-flags";
 import type { EvmAddress } from "@shop/model/address";
 import { CHAIN } from "@shop/model/chain";
+import { requireContracts } from "../checkout/chain/contracts";
+import { setShopChainReader } from "../checkout/chain/rpc";
+import { createFakeChain } from "../checkout/fakes";
 
 beforeEach(() => {
   vi.stubGlobal("fetch", vi.fn(async () => new Response("[]", { status: 200, headers: { "content-type": "application/json" } })));
@@ -184,6 +187,20 @@ describe("the item route (a collection item, sold by its creator)", () => {
     return dialog;
   }
 
+  it("Buy now's dialog shows the MANA balance the page read, without reading it again", async () => {
+    const chain = createFakeChain();
+    chain.manaBalances.set(`137:${BOOK.buyer.toLowerCase()}`, 10n ** 21n);
+    setShopChainReader(chain);
+    onTestFinished(() => setShopChainReader(null));
+    const mana = requireContracts(CHAIN.POLYGON).mana.address.toLowerCase();
+    const balanceReads = () => chain.calls.filter((c) => c.to.toLowerCase() === mana && c.data.startsWith("0x70a08231")).length;
+    itemPage({ session: "web3", offers: { kind: "storeMint" } });
+    await waitFor(() => expect(balanceReads()).toBe(1));
+    const dialog = await openBuyNow();
+    expect(within(dialog).getByTestId("payment-method-step")).toHaveTextContent("Mana Balance:1,000");
+    expect(balanceReads()).toBe(1);
+  });
+
   it("web2: credits only, in Buy now's dialog too: no MANA to choose", async () => {
     itemPage({ session: "web2", offers: { kind: "storeMint" } });
     expect(await screen.findByTestId("cta-buy-now")).toHaveTextContent("Buy now");
@@ -290,7 +307,7 @@ describe("the item route (a collection item, sold by its creator)", () => {
 
 describe("the description", () => {
   const LONG = "A hat for the discerning nacho, stitched by hand from the finest corn. ".repeat(3).trim();
-  const answers: CatalogAnswers = { "/v2/catalog": { data: [{ data: { wearable: { description: LONG } } }], total: 1 } };
+  const answers: CatalogAnswers = { "/v1/items": { data: [{ ...ITEM_META, data: { wearable: { ...ITEM_META.data.wearable, description: LONG } } }], total: 1 } };
 
   afterEach(() => {
     vi.restoreAllMocks();
@@ -475,6 +492,45 @@ describe("a LAND legacy order, bought from its token page", () => {
       expect((calls[0]![1] as { args: readonly unknown[] }).args[1]).toBe(4000n * 10n ** 18n);
       expect((calls[1]![1] as { args: readonly unknown[] }).args).toEqual([BOOK.land, BigInt(TOKEN_ID), 4000n * 10n ** 18n]);
       expect(shopCart.getSnapshot().lines).toEqual([]);
+    } finally {
+      restore();
+    }
+  });
+
+  it("web3: a bought order keeps its success up, and the page reads the token again only once it closes", async () => {
+    const wallet = fakeWallet({ chainId: 1 });
+    const restore = fakeChain({ contracts: { [manaToken(CHAIN.ETHEREUM).address]: { abi: ERC20_ABI, answer: () => 0n } } });
+    let tokenReads = 0;
+    try {
+      const nfts = (url: URL) => {
+        if (url.searchParams.get("tokenId")) tokenReads += 1;
+        return url.searchParams.get("owner") && url.searchParams.get("owner") !== RESELLER ? { data: [], total: 0 } : { data: [PARCEL_ROW], total: 1 };
+      };
+      const client = catalogClient("ok", { "/v1/nfts": nfts, "/v1/items": { data: [], total: 0 }, "/v3/catalog/unified": { data: [], total: 0 } });
+      const host = fixtureHost("web3", wallet.address as EvmAddress, { provider: () => wallet });
+      render(
+        <ShopHarness path="/shop/token/:contractAddress/:tokenId" entry={`/shop/token/${BOOK.land}/${TOKEN_ID}`} session="web3" host={host} client={client} offers={fixtureOfferSource({ kind: "parcel" })}>
+          <ItemDetailRoute />
+        </ShopHarness>,
+      );
+      const buy = await screen.findByTestId("cta-buy");
+      await waitFor(() => expect(buy).toBeEnabled());
+      fireEvent.click(buy);
+      const dialog = await screen.findByTestId("legacy-order-buy");
+      const confirm = within(dialog).getByTestId("order-buy");
+      await waitFor(() => expect(confirm).toBeEnabled());
+      const before = tokenReads;
+      await act(async () => fireEvent.click(confirm));
+      expect(await within(dialog).findByText(/Purchase complete/)).toBeTruthy();
+      // Not read under the success: the read drops the token until it answers, and would take the dialog with it.
+      // A whole task later (the page's reads answer as promises), still none.
+      await act(() => new Promise((resolve) => setTimeout(resolve, 0)));
+      expect(tokenReads).toBe(before);
+      expect(screen.getByTestId("legacy-order-buy")).toBeTruthy();
+
+      fireEvent.click(within(dialog).getByRole("button", { name: "Done" }));
+      await waitFor(() => expect(tokenReads).toBeGreaterThan(before));
+      expect(screen.queryByTestId("legacy-order-buy")).toBeNull();
     } finally {
       restore();
     }

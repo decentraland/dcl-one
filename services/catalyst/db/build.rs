@@ -158,6 +158,7 @@ fn render_migrations() -> String {
     };
     files.sort();
     let mut out = String::from(MIGRATIONS_HEADER);
+    let mut numbers = std::collections::HashSet::new();
     for path in &files {
         println!("cargo:rerun-if-changed={}", path.display());
         let stem = path.file_stem().unwrap().to_string_lossy();
@@ -166,6 +167,10 @@ fn render_migrations() -> String {
                 && stem.as_bytes()[..4].iter().all(u8::is_ascii_digit)
                 && stem.as_bytes()[4] == b'_',
             "schemas/migrations/{stem}.sql: a step is named NNNN_<what_it_adds>.sql"
+        );
+        assert!(
+            numbers.insert(stem[..4].to_owned()),
+            "schemas/migrations/{stem}.sql: another step has this number; take the next free one"
         );
         let body =
             fs::read_to_string(path).unwrap_or_else(|e| panic!("reading {}: {e}", path.display()));

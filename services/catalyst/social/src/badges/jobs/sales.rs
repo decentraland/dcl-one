@@ -234,11 +234,13 @@ async fn trade_item_types(
 }
 
 /// The block `log`'s index has published, when it has (shop's readiness:
-/// full history folded through the last indexed block within 30 minutes).
+/// full history folded through the last indexed block within 30 minutes,
+/// bound to Polygon and out of quarantine).
 async fn published(conn: &mut PgConnection, log: Log) -> Result<Option<i64>, sqlx::Error> {
     sqlx::query_scalar(
         "SELECT folded_block FROM shop.chain_cursor \
          WHERE indexer = $1 AND network = 'matic' AND full_history \
+           AND chain_id = 137 AND quarantined_at IS NULL \
            AND folded_block = last_block \
            AND folded_at <= timezone('UTC', now()) \
            AND folded_at >= timezone('UTC', now()) - interval '30 minutes'",

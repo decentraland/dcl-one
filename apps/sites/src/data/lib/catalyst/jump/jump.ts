@@ -140,6 +140,8 @@ export type JumpEventRecord = {
   coordinates: [number, number];
   user: string | null;
   user_name: string | null;
+  /** The share card's `{name} at {scene}`. */
+  scene_name?: string | null;
   total_attendees: number;
   live: boolean;
   world: boolean;

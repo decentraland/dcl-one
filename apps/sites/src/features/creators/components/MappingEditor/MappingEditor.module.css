@@ -1,0 +1,136 @@
+.editor {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 0;
+
+  &[data-compact] {
+    flex-direction: row;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+}
+
+.typeCell {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.input {
+  width: 100%;
+  min-width: 0;
+  min-height: 44px;
+  padding: 10px 12px;
+  border: 1px solid var(--color-glass-line);
+  border-radius: 8px;
+  background: var(--dcl-transparencies-white-10);
+  font: inherit;
+  font-size: 14px;
+  color: var(--dcl-neutrals-white);
+  resize: vertical;
+
+  &::placeholder {
+    color: var(--color-off-white-muted);
+  }
+
+  &:focus-visible {
+    outline: 2px solid var(--dcl-neutrals-white);
+    outline-offset: -1px;
+  }
+
+  &:disabled {
+    opacity: 0.6;
+    cursor: not-allowed;
+  }
+
+  &[data-invalid] {
+    border-color: var(--dcl-system-red);
+    background: var(--color-err-overlay);
+  }
+
+  [data-compact] > & {
+    flex: 1 1 140px;
+  }
+
+  /* One token id and each bound of a range share one fixed width, so the column lines up whatever the type. */
+  [data-compact] > &[data-size="short"],
+  [data-compact] [data-range] > & {
+    flex: none;
+    width: 104px;
+  }
+
+  [data-tone="dark"] & {
+    background: var(--color-chip-dark);
+    border-color: var(--dcl-neutrals-pale-black);
+  }
+
+  /* Full-size on the default surface (the add-items form): the same box as that form's other text fields. */
+  [data-tone="default"]:not([data-compact]) & {
+    min-height: 56px;
+    padding: 0 12px;
+    border-color: var(--dcl-neutrals-silver);
+    border-radius: var(--dcl-radius-xs);
+    background: transparent;
+    font-size: 16px;
+    font-weight: 600;
+    line-height: 24px;
+    color: var(--dcl-neutrals-snow);
+
+    &::placeholder {
+      color: var(--dcl-neutrals-silver);
+      font-weight: 600;
+    }
+
+    &:focus-visible {
+      outline: 0;
+      border-color: var(--dcl-neutrals-white);
+    }
+
+    &[data-invalid] {
+      border-color: var(--color-err-strong);
+      background: transparent;
+    }
+  }
+
+  [data-tone="default"]:not([data-compact]) textarea& {
+    padding: 16px 12px;
+  }
+}
+
+.rangeRow {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+
+  [data-compact] > & {
+    flex: none;
+  }
+}
+
+.rangeDash {
+  flex: none;
+  color: var(--color-off-white-muted);
+}
+
+.errorText {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.4;
+  color: var(--dcl-system-red);
+}
+
+.help {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 13px;
+  line-height: 1.4;
+  text-align: left;
+
+  & strong {
+    margin-bottom: 4px;
+  }
+}

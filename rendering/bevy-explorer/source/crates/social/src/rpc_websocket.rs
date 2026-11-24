@@ -23,10 +23,13 @@ impl WebSocketCloseSignal {
     }
 }
 
-/// SAFETY: WASM is single-threaded, so Send/Sync are safe.
+// SAFETY: the web build is multithreaded (atomics), and this socket holds JS handles, which
+// belong to the thread that made them. It never leaves that thread: on wasm it is created and
+// used only inside tasks on the `SocialRuntime` local runtime (`spawn_local`), on the thread that
+// owns it. Don't hand it to anything that can run on another thread.
 #[cfg(target_arch = "wasm32")]
 unsafe impl Send for PlatformRpcWebSocket {}
-/// SAFETY: WASM is single-threaded, so Send/Sync are safe.
+// SAFETY: as for Send.
 #[cfg(target_arch = "wasm32")]
 unsafe impl Sync for PlatformRpcWebSocket {}
 

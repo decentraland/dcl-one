@@ -1,5 +1,8 @@
 //! One Prometheus exporter installer for the Pulse and serve processes.
-use crate::pulse::metrics::{CLUSTER_SIZE_BUCKETS, RESYNC_SEQ_GAP_BUCKETS};
+use crate::pulse::metrics::{
+    CLUSTER_SIZE_BUCKETS, RESYNC_SEQ_GAP_BUCKETS, SIMULATION_TICK_DELAY, SIMULATION_TICK_DURATION,
+    SIMULATION_TICK_TIMING_BUCKETS,
+};
 pub use metrics_exporter_prometheus::PrometheusHandle;
 use metrics_exporter_prometheus::{BuildError, Matcher, PrometheusBuilder};
 use std::net::SocketAddr;
@@ -103,6 +106,14 @@ pub fn prometheus_builder() -> Result<PrometheusBuilder, BuildError> {
         .set_buckets_for_metric(
             Matcher::Full("pulse_cluster_size".into()),
             &CLUSTER_SIZE_BUCKETS,
+        )?
+        .set_buckets_for_metric(
+            Matcher::Full(SIMULATION_TICK_DURATION.into()),
+            &SIMULATION_TICK_TIMING_BUCKETS,
+        )?
+        .set_buckets_for_metric(
+            Matcher::Full(SIMULATION_TICK_DELAY.into()),
+            &SIMULATION_TICK_TIMING_BUCKETS,
         )
 }
 

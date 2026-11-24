@@ -11,7 +11,7 @@ use common::{
         PrimaryPlayerRes, PrimaryUser,
     },
 };
-use comms::{global_crdt::ForeignPlayer, BlockedOrBanned};
+use comms::{global_crdt::ForeignPlayer, BlockedOrBanned, Transport};
 use dcl_component::{
     proto_components::sdk::components::{
         pb_input_modifier, AvatarControlType, AvatarModifierType, PbAvatarModifierArea,
@@ -79,7 +79,6 @@ impl Plugin for AvatarModifierAreaPlugin {
 #[derive(Component)]
 pub struct HiddenNametag;
 
-#[allow(clippy::type_complexity, clippy::too_many_arguments)]
 fn update_avatar_modifier_area(
     mut commands: Commands,
     mut players: Query<
@@ -393,26 +392,25 @@ fn update_avatar_modifier_area(
     active_hide_areas.retain(|ent, _| scenes.contains(ent));
 }
 
-// primary user visiblity is more complex, and is managed in user_input::manage_player_visibility.
-// a foreign player is hidden by a scene's modifier area, or when the local user must not see them
-// (`BlockedOrBanned`)
+// The primary user's visibility is managed by user_input::manage_player_visibility.
+// Pulse supplies the avatar pose. Other transports can keep the player in their rosters
+// for voice and room messages while the avatar and its nametag are hidden.
 fn manage_foreign_player_visibility(
-    mut players: Query<
-        (&mut Visibility, &PlayerModifiers, Has<BlockedOrBanned>),
-        With<ForeignPlayer>,
-    >,
+    mut players: Query<(
+        &mut Visibility,
+        &ForeignPlayer,
+        &PlayerModifiers,
+        Has<BlockedOrBanned>,
+    )>,
+    transports: Query<&Transport>,
 ) {
-    for (mut vis, modifiers, moderated) in players.iter_mut() {
-        #[allow(clippy::collapsible_else_if)]
-        if modifiers.hide || moderated {
-            if *vis != Visibility::Hidden {
-                *vis = Visibility::Hidden;
-            }
+    for (mut visibility, player, modifiers, moderated) in &mut players {
+        let visible = !moderated && !modifiers.hide && player.has_pulse_transport(&transports);
+        visibility.set_if_neq(if visible {
+            Visibility::Inherited
         } else {
-            if *vis != Visibility::Inherited {
-                *vis = Visibility::Inherited;
-            }
-        }
+            Visibility::Hidden
+        });
     }
 }
 
@@ -446,4 +444,147 @@ fn show_nametag(
         return;
     };
     *visibility = Visibility::Inherited;
+}
+
+#[cfg(test)]
+mod tests {
+    use common::{
+        rpc::RpcCallEvent,
+        structs::{CurrentRealm, NoRenderApp, PreviewMode},
+    };
+    use comms::{
+        chat_reaction::ChatReactionEvent,
+        global_crdt::{
+            CrdtContexts, GlobalCrdtPlugin, GlobalCrdtState, NetworkUpdate, PlayerMessage,
+            PlayerUpdate,
+        },
+        scene_messages::SceneMessageTraffic,
+        SceneRoomConnection, ServerSceneRooms, TransportType,
+    };
+    use dcl_component::proto_components::kernel::comms::rfc4;
+    use system_bridge::SystemApi;
+
+    use super::*;
+
+    #[test]
+    fn a_pulse_departure_hides_the_avatar_until_pulse_presence_returns() {
+        let mut app = App::new();
+        app.insert_resource(NoRenderApp)
+            .init_resource::<Time>()
+            .init_resource::<CurrentRealm>()
+            .init_resource::<PreviewMode>()
+            .init_resource::<SceneRoomConnection>()
+            .init_resource::<ServerSceneRooms>()
+            .init_resource::<SceneMessageTraffic>()
+            .add_event::<RpcCallEvent>()
+            .add_event::<ChatReactionEvent>()
+            .add_event::<SystemApi>()
+            .add_plugins(GlobalCrdtPlugin)
+            .add_systems(PostUpdate, manage_foreign_player_visibility);
+        let context = app.world().resource::<CrdtContexts>().shared();
+        let sender = app
+            .world()
+            .get::<GlobalCrdtState>(context)
+            .unwrap()
+            .get_sender();
+        let mut transport = |transport_type| {
+            let (sender, _) = tokio::sync::mpsc::channel(1);
+            app.world_mut()
+                .spawn(Transport {
+                    transport_type,
+                    sender,
+                    control: None,
+                    context,
+                })
+                .id()
+        };
+        let livekit = transport(TransportType::Livekit);
+        let websocket = transport(TransportType::WebsocketRoom);
+        let pulse = transport(TransportType::Pulse);
+        let address = "0x1111111111111111111111111111111111111111"
+            .parse()
+            .unwrap();
+        let send = |transport_id, message| {
+            sender
+                .try_send(
+                    PlayerUpdate {
+                        transport_id,
+                        address,
+                        message,
+                    }
+                    .into(),
+                )
+                .unwrap();
+        };
+
+        let join_pulse = |position_x, timestamp| {
+            send(pulse, PlayerMessage::Joined);
+            send(
+                pulse,
+                PlayerMessage::Movement {
+                    movement: Box::new(rfc4::Movement {
+                        position_x,
+                        ..Default::default()
+                    }),
+                    teleport: true,
+                    timestamp,
+                },
+            );
+        };
+
+        send(livekit, PlayerMessage::Joined);
+        send(websocket, PlayerMessage::Joined);
+        join_pulse(1.0, 1.0);
+        app.update();
+        let player = app
+            .world_mut()
+            .query_filtered::<Entity, With<ForeignPlayer>>()
+            .single(app.world())
+            .unwrap();
+        app.world_mut()
+            .entity_mut(player)
+            .insert(PlayerModifiers::default());
+        app.update();
+        let visibility = |app: &App| *app.world().get::<Visibility>(player).unwrap();
+        assert_eq!(visibility(&app), Visibility::Inherited);
+        let initial = app.world().get::<ForeignPlayer>(player).unwrap();
+        assert!(initial.transports.contains(&pulse));
+        assert!(initial.transports.contains(&livekit));
+        assert!(initial.transports.contains(&websocket));
+
+        sender
+            .try_send(NetworkUpdate::PlayerLeft {
+                transport_id: pulse,
+                address,
+            })
+            .unwrap();
+        app.update();
+        let retained = app.world().get::<ForeignPlayer>(player).unwrap();
+        assert!(!retained.transports.contains(&pulse));
+        assert!(retained.transports.contains(&livekit));
+        assert!(retained.transports.contains(&websocket));
+        assert_eq!(visibility(&app), Visibility::Hidden);
+
+        app.world_mut().entity_mut(player).insert(BlockedOrBanned);
+        join_pulse(7.0, 2.0);
+        app.update();
+        assert_eq!(visibility(&app), Visibility::Hidden);
+
+        app.world_mut()
+            .entity_mut(player)
+            .remove::<BlockedOrBanned>();
+        app.world_mut()
+            .get_mut::<PlayerModifiers>(player)
+            .unwrap()
+            .hide = true;
+        app.update();
+        assert_eq!(visibility(&app), Visibility::Hidden);
+
+        app.world_mut()
+            .get_mut::<PlayerModifiers>(player)
+            .unwrap()
+            .hide = false;
+        app.update();
+        assert_eq!(visibility(&app), Visibility::Inherited);
+    }
 }

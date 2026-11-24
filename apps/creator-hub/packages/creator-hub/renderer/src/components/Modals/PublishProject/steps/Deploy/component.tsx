@@ -4,7 +4,7 @@ import { cx } from '/@/lib/cx';
 import Checkbox from '@ui/atoms/Checkbox';
 import Text from '@ui/atoms/Text';
 
-import { misc } from '#preload';
+import { analytics, misc } from '#preload';
 import { useDispatch, useSelector } from '#store';
 
 import { type File, type Info, type Status } from '/@/lib/deploy';
@@ -201,10 +201,18 @@ export function Deploy(props: Props) {
   /** Web link shown and copied for sharing: it opens for people without the desktop client. */
   const shareUrl = useMemo(() => getSceneJumpInUrl(jumpInLocation), [jumpInLocation]);
 
-  /** Jump In opens the installed desktop client; the share link stays the web one. */
-  const handleJumpIn = useCallback(() => {
-    void misc.openExternal(getSceneJumpInDeeplink(jumpInLocation));
-  }, [jumpInLocation]);
+  /** Jump In opens the installed desktop client, or the web link when there is none. */
+  const handleJumpIn = useCallback(async () => {
+    const opened = await misc
+      .openDeepLink(getSceneJumpInDeeplink(jumpInLocation))
+      .catch(() => false);
+    if (!opened) void misc.openExternal(shareUrl);
+    void analytics.track('Jump In Published Scene', {
+      project_id: project.id,
+      is_world: !!jumpInLocation.world,
+      opened_in: opened ? 'client' : 'web',
+    });
+  }, [jumpInLocation, shareUrl, project.id]);
 
   const handleReportIssue = useCallback(() => setReportOpen(true), []);
 

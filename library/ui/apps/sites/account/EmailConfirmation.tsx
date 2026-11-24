@@ -1,6 +1,6 @@
+import { Button } from '../../../components/Button/Button'
 import { useId, type ReactNode } from 'react'
 import decentralandLogo from '../assets/dcl-logo.svg'
-import { Button } from '../shared/Button/Button'
 import styles from './EmailConfirmation.module.css'
 
 type EmailConfirmationSource = 'account' | 'credits'
@@ -71,6 +71,7 @@ function EmailConfirmation({ source, state, challenge, onConfirm }: EmailConfirm
               </p>
             ) : null}
             <Button
+              size="lg"
               className={styles.action}
               disabled={state.pending || !state.canConfirm}
               aria-busy={state.pending || undefined}
@@ -100,7 +101,7 @@ function EmailConfirmation({ source, state, challenge, onConfirm }: EmailConfirm
               <br />
               {READY[source]}
             </p>
-            <Button className={styles.action} href={state.continueHref}>
+            <Button size="lg" className={styles.action} href={state.continueHref}>
               {source === 'credits' ? 'Go to Shop' : 'Go to Decentraland'}
             </Button>
           </>
@@ -113,7 +114,7 @@ function EmailConfirmation({ source, state, challenge, onConfirm }: EmailConfirm
             <p className={styles.error} role="alert">
               {state.message}
             </p>
-            <Button className={styles.action} href={state.homeHref} variant="secondary">
+            <Button size="lg" className={styles.action} href={state.homeHref} variant="secondary">
               Go to Decentraland
             </Button>
           </>

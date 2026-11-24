@@ -504,14 +504,18 @@ async fn same_room_recovery_renews_expired_credentials_without_periodic_churn() 
 }
 
 #[tokio::test]
-async fn started_native_periodic_replay_retries_borrowed_and_foreign_rows_after_lapse() {
-    for row in [
-        "same-session-null",
-        "same-session-assignment",
-        "foreign-session",
-    ] {
-        periodic_native_retry_case(row).await;
-    }
+async fn started_native_periodic_replay_retries_a_borrowed_null_row_after_lapse() {
+    periodic_native_retry_case("same-session-null").await;
+}
+
+#[tokio::test]
+async fn started_native_periodic_replay_retries_a_borrowed_assignment_row_after_lapse() {
+    periodic_native_retry_case("same-session-assignment").await;
+}
+
+#[tokio::test]
+async fn started_native_periodic_replay_retries_a_foreign_row_after_lapse() {
+    periodic_native_retry_case("foreign-session").await;
 }
 
 #[tokio::test]
@@ -1279,6 +1283,48 @@ async fn started_selected_retirement_waits_for_a_lease_and_preserves_a_real_fore
         "retirement cannot renew, release or restore over a real additive API successor"
     );
     assert_eq!(harness.gateway.fences.lock().unwrap().len(), 1);
+    harness.shutdown().await;
+    fixture.finish().await;
+}
+
+#[tokio::test]
+async fn a_retired_wallet_replaces_its_own_fresh_row_and_never_a_changed_one() {
+    use catalyst::comms::archipelago::control_v4::{AssignmentAuthority, LaneKey, V4Owner};
+    let fixture = Fixture::new()
+        .await
+        .expect("required disposable PostgreSQL");
+    let mut harness = RetirementHarness::new(fixture.pool.clone(), 1);
+    // Each sign-in follows the retirement of the last one, inside the 90-second lease.
+    // Before the fourth, a control owner takes the row: it stays a conflict.
+    for (minted, native) in [(1, false), (2, false), (3, true), (3, false)] {
+        let selected = harness.select(WALLET, SESSION, native);
+        harness.hint(&selected).await;
+        tokio::time::timeout(
+            std::time::Duration::from_secs(5),
+            harness.subscriber.settle(),
+        )
+        .await
+        .unwrap();
+        assert_eq!(harness.gateway.fences.lock().unwrap().len(), minted);
+        let row = periodic_native_owner_row(&fixture).await;
+        harness.depart(native).await;
+        harness.wait_retired().await;
+        assert_eq!(periodic_native_owner_row(&fixture).await, row);
+        if native {
+            let authority = AssignmentAuthority::pg_with_namespace(fixture.pool.clone(), AUDIENCE)
+                .await
+                .unwrap();
+            let successor = V4Owner {
+                address: WALLET.into(),
+                session: STALE_SESSION.into(),
+                epoch: authority.next_connection_epoch().await.unwrap(),
+            };
+            authority
+                .claim_lanes(&successor, &[LaneKey::parse("realm").unwrap()])
+                .await
+                .unwrap();
+        }
+    }
     harness.shutdown().await;
     fixture.finish().await;
 }

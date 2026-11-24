@@ -20,7 +20,7 @@ type HmacSha256 = Hmac<Sha256>;
 
 pub use dcl_livekit_token::{
     AccessToken, LivekitError, TRACK_SOURCE_MICROPHONE, VideoGrants, ingress_admin_token,
-    join_grants, room_admin_token, sign_hs256, with_not_before,
+    join_grants, room_admin_token, sign_hs256, unix_now, with_not_before,
 };
 
 pub const DEV_API_KEY: &str = "devkey";
@@ -167,17 +167,18 @@ fn decode_body_digest(claim: &str) -> Option<Vec<u8>> {
         .filter(|b| b.len() == 32)
 }
 
-/// The LiveKit webhook bearer: HS256 by the API secret, `iss` = the API key,
-/// unexpired (60 s leeway), and its `sha256` claim = the body's digest.
-/// Returns the authenticated last accepted UNIX second, including that leeway.
-pub fn verify_webhook_token(
+/// LiveKit's leeway on `exp` and `nbf`.
+const TOKEN_LEEWAY: u64 = 60;
+
+/// The claims of a LiveKit JWT that LiveKit itself would accept from this
+/// key: HS256 by `api_secret`, `iss` = `api_key`, unexpired at `now` (unix
+/// seconds) and not before its `nbf`, both with LiveKit's 60 s leeway.
+pub fn verify_access_token(
     api_key: &str,
     api_secret: &str,
-    body: &[u8],
-    auth_header: &str,
-) -> Option<u64> {
-    let trimmed = auth_header.trim();
-    let token = trimmed.strip_prefix("Bearer ").unwrap_or(trimmed).trim();
+    token: &str,
+    now: u64,
+) -> Option<serde_json::Map<String, serde_json::Value>> {
     let mut segments = token.split('.');
     let (Some(header_b64), Some(payload_b64), Some(sig_b64), None) = (
         segments.next(),
@@ -187,54 +188,56 @@ pub fn verify_webhook_token(
     ) else {
         return None;
     };
-    let Ok(header_bytes) = URL_SAFE_NO_PAD.decode(header_b64) else {
-        return None;
-    };
-    let Ok(header) = serde_json::from_slice::<serde_json::Value>(&header_bytes) else {
-        return None;
-    };
+    let header_bytes = URL_SAFE_NO_PAD.decode(header_b64).ok()?;
+    let header = serde_json::from_slice::<serde_json::Value>(&header_bytes).ok()?;
     if header.get("alg").and_then(|a| a.as_str()) != Some("HS256") {
         return None;
     }
-    let Ok(provided_sig) = URL_SAFE_NO_PAD.decode(sig_b64) else {
-        return None;
-    };
-    let Ok(mut mac) = HmacSha256::new_from_slice(api_secret.as_bytes()) else {
-        return None;
-    };
+    let provided_sig = URL_SAFE_NO_PAD.decode(sig_b64).ok()?;
+    let mut mac = HmacSha256::new_from_slice(api_secret.as_bytes()).ok()?;
     mac.update(header_b64.as_bytes());
     mac.update(b".");
     mac.update(payload_b64.as_bytes());
-    if mac.verify_slice(&provided_sig).is_err() {
-        return None;
-    }
-    let Ok(payload_bytes) = URL_SAFE_NO_PAD.decode(payload_b64) else {
-        return None;
-    };
-    let Ok(payload) = serde_json::from_slice::<serde_json::Value>(&payload_bytes) else {
+    mac.verify_slice(&provided_sig).ok()?;
+    let payload_bytes = URL_SAFE_NO_PAD.decode(payload_b64).ok()?;
+    let serde_json::Value::Object(payload) =
+        serde_json::from_slice::<serde_json::Value>(&payload_bytes).ok()?
+    else {
         return None;
     };
-    let Ok(now) = SystemTime::now().duration_since(UNIX_EPOCH) else {
-        return None;
-    };
-    let now = now.as_secs();
-    const LEEWAY: u64 = 60;
     let exp = payload.get("exp").and_then(json_u64)?;
-    if now > exp.saturating_add(LEEWAY) {
+    if now > exp.saturating_add(TOKEN_LEEWAY) {
         return None;
     }
     if let Some(nbf) = payload.get("nbf").and_then(json_u64)
-        && nbf > now.saturating_add(LEEWAY)
+        && nbf > now.saturating_add(TOKEN_LEEWAY)
     {
         return None;
     }
     if payload.get("iss").and_then(|v| v.as_str()) != Some(api_key) {
         return None;
     }
+    Some(payload)
+}
+
+/// The LiveKit webhook bearer: a token [`verify_access_token`] accepts now
+/// whose `sha256` claim is the body's digest. Returns the authenticated last
+/// accepted UNIX second, including the leeway.
+pub fn verify_webhook_token(
+    api_key: &str,
+    api_secret: &str,
+    body: &[u8],
+    auth_header: &str,
+) -> Option<u64> {
+    let trimmed = auth_header.trim();
+    let token = trimmed.strip_prefix("Bearer ").unwrap_or(trimmed).trim();
+    let now = SystemTime::now().duration_since(UNIX_EPOCH).ok()?.as_secs();
+    let payload = verify_access_token(api_key, api_secret, token, now)?;
+    let exp = payload.get("exp").and_then(json_u64)?;
     let claim = payload.get("sha256").and_then(|v| v.as_str())?;
     let expected = decode_body_digest(claim)?;
     crate::auth::admin_bearer::timing_safe_eq(&expected, &Sha256::digest(body))
-        .then_some(exp.saturating_add(LEEWAY))
+        .then_some(exp.saturating_add(TOKEN_LEEWAY))
 }
 
 /// How many rooms a ban kick or a teardown touches at once.
@@ -840,6 +843,13 @@ impl<'a> RoomServiceClient<'a> {
             Ok(_) | Err(RoomServiceError::NotFound) => Ok(()),
             Err(e) => Err(e),
         }
+    }
+
+    /// `data` to every participant of `room`, reliably, with no sender.
+    pub async fn send_data(&self, room: &str, data: &[u8]) -> Result<(), RoomServiceError> {
+        let data = base64::engine::general_purpose::STANDARD.encode(data);
+        let body = serde_json::json!({ "room": room, "data": data, "kind": "RELIABLE" });
+        self.call("SendData", room, body).await.map(drop)
     }
 
     /// Removes a participant and requests a token cutoff (enforced by LiveKit
@@ -1670,6 +1680,37 @@ mod tests {
         assert!(verify_webhook_token("devkey", "other", body, &good).is_none());
         assert!(verify_webhook_token("otherkey", "devsecret", body, &good).is_none());
         assert!(verify_webhook_token("devkey", "devsecret", body, "not.a.jwt.at.all").is_none());
+    }
+
+    #[test]
+    fn access_tokens_verify_as_livekit_does() {
+        let now = 1_800_000_000;
+        let sign = |header: serde_json::Value, payload: serde_json::Value| {
+            sign_hs256(
+                "secret",
+                &serde_json::to_vec(&header).unwrap(),
+                &serde_json::to_vec(&payload).unwrap(),
+            )
+            .unwrap()
+        };
+        let claims = |exp: u64, nbf: u64| serde_json::json!({"iss": "key", "sub": "a", "exp": exp, "nbf": nbf});
+        let hs256 = dcl_livekit_token::jwt_header();
+        let good = sign(hs256.clone(), claims(now + 300, now));
+        assert_eq!(
+            verify_access_token("key", "secret", &good, now).unwrap()["sub"],
+            "a"
+        );
+        assert!(verify_access_token("key", "other", &good, now).is_none());
+        assert!(verify_access_token("other", "secret", &good, now).is_none());
+        // 60 s of leeway either side, as LiveKit.
+        assert!(verify_access_token("key", "secret", &good, now + 360).is_some());
+        assert!(verify_access_token("key", "secret", &good, now + 361).is_none());
+        let early = sign(hs256.clone(), claims(now + 600, now + 61));
+        assert!(verify_access_token("key", "secret", &early, now).is_none());
+        let none = sign(serde_json::json!({"alg": "none"}), claims(now + 300, now));
+        assert!(verify_access_token("key", "secret", &none, now).is_none());
+        let no_exp = sign(hs256, serde_json::json!({"iss": "key"}));
+        assert!(verify_access_token("key", "secret", &no_exp, now).is_none());
     }
 
     #[tokio::test]

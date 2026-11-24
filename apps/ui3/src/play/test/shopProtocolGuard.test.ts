@@ -2,8 +2,9 @@
 // (shell/shop/walletGuard).
 import { describe, expect, it } from 'vitest'
 import type { Hex } from 'viem'
-import { decodeAbiParameters, encodeAbiParameters, encodeFunctionData, getAbiItem, parseAbi } from 'viem'
-import { COLLECTION_STORE_ABI } from '@shop/checkout/chain/abi'
+import { decodeAbiParameters, encodeAbiParameters, encodeFunctionData, getAbiItem, maxUint256, parseAbi } from 'viem'
+import { COLLECTION_STORE_ABI, ERC20_ABI } from '@shop/checkout/chain/abi'
+import { requireContracts } from '../../shop/checkout/chain/contracts'
 import { metaTxTypedData } from '../../shop/checkout/chain/metatx'
 import { createFakeWallet, creatorTrade } from '../../shop/checkout/fakes'
 import { buildStoreUseCreditsArgs, buildUseCreditsArgs, encodeUseCredits, type SpendableCredit, type StoreItemToBuy, type UseCreditsArgs } from '../../shop/checkout/purchase/encoding'
@@ -11,6 +12,7 @@ import { BOOK, ITEM } from '@shop/payment/fixtures'
 import { ADDRESS, OPERATION_STATES, parseBuyNameRequest, parseBuyRequest, parseLines, parseOperationEvent, SHOP_EVENT, SHOP_PROTOCOL } from '@dcl/one-ui/apps/shop/shopProtocol'
 import { AMOY_ADD_PARAMS } from '../../shop/wallet/chain'
 import { guardedProvider, type PurchaseIntent } from '../shell/shop/walletGuard'
+import { RefusedBeforeWallet } from '../../shop/checkout/chain/wallet'
 
 const BUYER = BOOK.buyer.toLowerCase()
 const OTHER = '0x' + 'cc'.repeat(20)
@@ -229,6 +231,114 @@ describe('the purchase wallet', () => {
     expect(g.forwarded()).toBe(0)
   })
 
+  describe('Credits and MANA together', () => {
+    const GAP = 7n * 10n ** 17n
+    const MANA_INFO = requireContracts(CHAIN as never).mana
+    const MANA_TOKEN = MANA_INFO.address.toLowerCase()
+    const approve = (spender: string = MANAGER, amount: bigint = GAP) => encodeFunctionData({ abi: ERC20_ABI, functionName: 'approve', args: [spender as Hex, amount] })
+    const manaTyped = (data: Hex = approve(), from = BUYER) => metaTxTypedData(MANA_INFO as never, from, 3n, data)
+    /** The approval's permission: MANA's exact approve, nothing else. */
+    const approving = (mayApprove: () => boolean = () => true) => ({ split: { gapWei: GAP, phase: 'approve' as const, mayApprove } })
+    /** The sale's permission, bound to the credit issued (`credit`), its value and the call as reviewed. */
+    const selling = (over: { credit?: { id: string } | null; creditWei?: bigint; callData?: Hex } = {}) => ({
+      split: {
+        gapWei: GAP,
+        phase: 'sale' as const,
+        mayApprove: () => false,
+        sale: { creditWei: over.creditWei ?? BigInt(credit.amount), callData: over.callData ?? storeArgs().externalCall.data, credit: () => (over.credit === undefined ? { id: credit.id } : over.credit) }
+      }
+    })
+    const splitSale = (over: Partial<UseCreditsArgs> = {}) => typed(encodeUseCredits(storeArgs({ maxUncreditedValue: GAP, ...over })))
+
+    it('signs the sale bound to the issued credit, its exact share, the confirmed gap and the reviewed call', async () => {
+      const g = setup(selling())
+      await expect(sign(g, splitSale())).resolves.toMatch(/^0x/)
+      expect(g.forwarded()).toBe(1)
+    })
+
+    it.each([
+      ['more than the gap', { maxUncreditedValue: GAP + 1n }],
+      ['less than the gap', { maxUncreditedValue: GAP - 1n }],
+      ['nothing from the wallet', { maxUncreditedValue: 0n }],
+      ['crediting more than the share', { maxCreditedValue: BigInt(credit.amount) + 1n }],
+      ['crediting less than the share', { maxCreditedValue: BigInt(credit.amount) - 1n }]
+    ] as [string, Partial<UseCreditsArgs>][])('refuses a sale %s', async (_, over) => {
+      const g = setup(selling())
+      await expect(sign(g, splitSale(over))).rejects.toMatchObject({ code: 4100 })
+      expect(g.forwarded()).toBe(0)
+    })
+
+    it('refuses a sale before the credit is issued, or of another credit, or of a credit worth another share', async () => {
+      for (const terms of [{ credit: null }, { credit: { id: '0x' + 'b2'.repeat(32) } }, { creditWei: BigInt(credit.amount) - 1n }]) {
+        const g = setup(selling(terms))
+        await expect(sign(g, splitSale())).rejects.toMatchObject({ code: 4100 })
+        expect(g.forwarded()).toBe(0)
+      }
+    })
+
+    it('refuses a sale whose external call isn\'t the one reviewed (another price)', async () => {
+      const g = setup(selling({ callData: storeArgs({}, [{ ...item, priceWei: '1' }]).externalCall.data }))
+      await expect(sign(g, splitSale())).rejects.toMatchObject({ code: 4100 })
+    })
+
+    it('refuses a zero gap as a split', async () => {
+      const g = setup({ split: { ...selling().split, gapWei: 0n } })
+      await expect(sign(g, splitSale({ maxUncreditedValue: 0n }))).rejects.toMatchObject({ code: 4100 })
+    })
+
+    it('signs MANA’s approve of exactly the gap to the manager while the buyer authorizes, with no record of the sale asked', async () => {
+      let asked = 0
+      const g = setup({ ...approving(), durable: () => (asked++, true) })
+      await expect(sign(g, manaTyped())).resolves.toMatch(/^0x/)
+      expect(g.forwarded()).toBe(1)
+      expect(asked).toBe(0)
+    })
+
+    it('keeps the two permissions apart: no sale while approving, no approve while selling', async () => {
+      const approvingOnly = setup(approving())
+      await expect(sign(approvingOnly, splitSale())).rejects.toMatchObject({ code: 4100 })
+      // Even were an approve otherwise allowed now, the sale's permission never carries one.
+      const sellingOnly = setup({ split: { ...selling().split, mayApprove: () => true } })
+      await expect(sign(sellingOnly, manaTyped())).rejects.toMatchObject({ code: 4100 })
+      expect(approvingOnly.forwarded() + sellingOnly.forwarded()).toBe(0)
+    })
+
+    it.each([
+      ['an unlimited approve', approve(MANAGER, maxUint256)],
+      ['another amount', approve(MANAGER, GAP + 1n)],
+      ['another spender (the sale’s venue)', approve(STORE)],
+      ['a call other than approve', encodeFunctionData({ abi: parseAbi(['function transfer(address to, uint256 amount)']), functionName: 'transfer', args: [OTHER as Hex, GAP] })],
+      ['the right approve with bytes after it', `${approve()}00` as Hex],
+      ['the right approve with a word after it', `${approve()}${'00'.repeat(32)}` as Hex]
+    ])('refuses %s', async (_, data) => {
+      const g = setup(approving())
+      await expect(sign(g, manaTyped(data))).rejects.toMatchObject({ code: 4100 })
+      expect(g.forwarded()).toBe(0)
+    })
+
+    it('refuses the approve outside the buyer’s AUTHORIZE, including one that ends while the wallet is read', async () => {
+      const g = setup(approving(() => false))
+      await expect(sign(g, manaTyped())).rejects.toMatchObject({ code: 4100 })
+      let reads = 0
+      const late = setup(approving(() => ++reads === 1))
+      await expect(sign(late, manaTyped())).rejects.toMatchObject({ code: 4100 })
+      expect(late.forwarded()).toBe(0)
+    })
+
+    it('refuses MANA’s approve for a purchase paid with Credits alone', async () => {
+      const g = setup()
+      await expect(sign(g, manaTyped())).rejects.toMatchObject({ code: 4100 })
+    })
+
+    it('never sends a split from the wallet: neither its approve nor its sale', async () => {
+      const a = setup(approving())
+      await expect(a.guarded.request({ method: 'eth_sendTransaction', params: [{ from: BUYER, to: MANA_TOKEN, data: approve() }] })).rejects.toMatchObject({ code: 4100 })
+      const b = setup(selling())
+      await expect(b.guarded.request({ method: 'eth_sendTransaction', params: [{ from: BUYER, to: MANAGER, data: encodeUseCredits(storeArgs({ maxUncreditedValue: GAP })) }] })).rejects.toMatchObject({ code: 4100 })
+      expect(a.forwarded() + b.forwarded()).toBe(0)
+    })
+  })
+
   describe('a cart’s group', () => {
     const other: StoreItemToBuy = { collection: OTHER, itemId: '8', priceWei: '1000000000000000000' }
     const units = [
@@ -328,6 +438,25 @@ describe('the purchase wallet', () => {
   it('refuses once the confirmed login is no longer current', async () => {
     const g = setup({ current: () => false })
     await expect(sign(g, typed())).rejects.toMatchObject({ code: 4100 })
+    expect(g.forwarded()).toBe(0)
+  })
+
+  it.each([
+    ['its network', 'eth_chainId'],
+    ['its account', 'eth_accounts']
+  ])('refuses a send before the wallet when the read of %s fails then, keeping why, and hands the wallet nothing', async (_, method) => {
+    const g = setup()
+    const original = g.wallet.request.bind(g.wallet)
+    const down = Object.assign(new Error('The wallet disconnected.'), { code: 4900 })
+    let sending = false
+    g.wallet.request = (async (args: { method: string; params?: unknown[] }) => {
+      if (sending && args.method === method) throw down
+      return original(args as never)
+    }) as typeof g.wallet.request
+    sending = true
+    const refused = g.guarded.request({ method: 'eth_sendTransaction', params: [{ from: BUYER, to: MANAGER, data: encodeUseCredits(storeArgs()) }] })
+    await expect(refused).rejects.toBeInstanceOf(RefusedBeforeWallet)
+    await expect(refused).rejects.toMatchObject({ code: 4100, cause: down })
     expect(g.forwarded()).toBe(0)
   })
 

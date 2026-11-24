@@ -8,6 +8,7 @@ export async function handleAction(action: Action) {
   if (isActionTrackable(action)) {
     const handler = analyticsConfig[action.type];
     const payload = handler.getPayload(action as any, store.getState);
+    if (payload === null) return;
     await analytics.track(handler.eventName, payload);
   }
 }

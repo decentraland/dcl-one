@@ -5,9 +5,12 @@ import { NON_RENDERING, pageRasters } from './strip-image-metadata.js'
 // component page is parsed with the ingest schema and enumerated with pageRasters, the same structure
 // ingest sanitizes: node.png, masks, PNGs inside node.svg and the image-fill map. Generated CSS, SVG and
 // code are traversed for PNG data URIs, standalone PNGs are read as they are, and any other JSON is
-// walked field by field as extra coverage.
+// walked field by field as extra coverage. Standalone WebP files are read for their EXIF and XMP chunks.
 const DATA_URI = /data:image\/png;base64,([A-Za-z0-9+/]+={0,2})/g
 const PNG_SIGNATURE = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a])
+const RIFF = Buffer.from('RIFF', 'latin1')
+const WEBP = Buffer.from('WEBP', 'latin1')
+const WEBP_NON_RENDERING = new Set(['EXIF', 'XMP '])
 const TEXT = /\.(svg|css|ts|tsx|mjs|js|html)$/
 const CAPTURE_PAGE = /(^|\/)figma-snapshot\/components\/[^/]+\.json$/
 
@@ -25,6 +28,22 @@ function metadataChunks(png: Buffer): string[] {
   }
   return found
 }
+
+// A WebP file is a RIFF container of chunks, each padded to an even length.
+function webpMetadataChunks(webp: Buffer): string[] {
+  const found: string[] = []
+  let offset = 12
+  while (offset + 8 <= webp.length) {
+    const type = webp.subarray(offset, offset + 4).toString('latin1')
+    const length = webp.readUInt32LE(offset + 4)
+    if (WEBP_NON_RENDERING.has(type)) found.push(type)
+    offset += 8 + length + (length % 2)
+  }
+  return found
+}
+
+const isWebp = (bytes: Buffer) =>
+  bytes.subarray(0, 4).equals(RIFF) && bytes.subarray(8, 12).equals(WEBP)
 
 const dataUris = (text: string) =>
   [...text.matchAll(DATA_URI)].map((match) => Buffer.from(match[1]!, 'base64'))
@@ -55,6 +74,8 @@ function rastersIn(file: string, bytes: Buffer): Buffer[] {
 /** Chunk-type counts of the metadata found in a file, empty when it is clean. */
 function fileMetadata(file: string, bytes: Buffer): Record<string, number> {
   const counts: Record<string, number> = {}
+  if (file.endsWith('.webp') && isWebp(bytes))
+    for (const chunk of webpMetadataChunks(bytes)) counts[chunk] = (counts[chunk] ?? 0) + 1
   for (const raster of rastersIn(file, bytes))
     if (raster.subarray(0, 8).equals(PNG_SIGNATURE))
       for (const chunk of metadataChunks(raster)) counts[chunk] = (counts[chunk] ?? 0) + 1

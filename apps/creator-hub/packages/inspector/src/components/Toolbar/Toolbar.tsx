@@ -31,6 +31,7 @@ import { selectCanSave, selectInspectorPreferences } from '../../redux/app';
 import { setSceneRunIntent } from '../../redux/ui';
 import { useInspectorUIState } from '../../hooks/sdk/useInspectorUIState';
 import { useAppSelector, useAppDispatch } from '../../redux/hooks';
+import { analytics, Event, type HistorySource } from '../../lib/logic/analytics';
 import {
   REDO,
   REDO_2,
@@ -144,14 +145,30 @@ const Toolbar = withSdk(({ sdk }) => {
   }, [audio]);
 
   const handleSaveClick = useCallback(() => dispatch(save()), []);
-  const handleUndo = useCallback(() => dispatch(undo()), [dispatch]);
-  const handleRedo = useCallback(() => dispatch(redo()), [dispatch]);
+  const undoFrom = useCallback(
+    (source: HistorySource) => {
+      if (canUndo) analytics.track(Event.UNDO, { source });
+      dispatch(undo());
+    },
+    [canUndo, dispatch],
+  );
+  const redoFrom = useCallback(
+    (source: HistorySource) => {
+      if (canRedo) analytics.track(Event.REDO, { source });
+      dispatch(redo());
+    },
+    [canRedo, dispatch],
+  );
+  const handleUndoClick = useCallback(() => undoFrom('toolbar'), [undoFrom]);
+  const handleRedoClick = useCallback(() => redoFrom('toolbar'), [redoFrom]);
+  const handleUndoShortcut = useCallback(() => undoFrom('shortcut'), [undoFrom]);
+  const handleRedoShortcut = useCallback(() => redoFrom('shortcut'), [redoFrom]);
   const handleToggleSceneInfo = useCallback(() => {
     updateUIState({ sceneInfoPanelVisible: !isSceneInfoPanelOpen });
   }, [isSceneInfoPanelOpen, updateUIState]);
   useHotkey([SAVE, SAVE_ALT], handleSaveClick);
-  useHotkey([UNDO, UNDO_ALT], handleUndo);
-  useHotkey([REDO, REDO_2, REDO_ALT, REDO_ALT_2], handleRedo);
+  useHotkey([UNDO, UNDO_ALT], handleUndoShortcut);
+  useHotkey([REDO, REDO_2, REDO_ALT, REDO_ALT_2], handleRedoShortcut);
 
   const handleEditScene = useCallback(async () => {
     sdk.operations.updateSelectedEntity(sdk.engine.RootEntity, false);
@@ -173,7 +190,7 @@ const Toolbar = withSdk(({ sdk }) => {
         className="undo"
         title="Undo"
         disabled={!canUndo}
-        onClick={canUndo ? handleUndo : undefined}
+        onClick={canUndo ? handleUndoClick : undefined}
       >
         <BiUndo />
       </ToolbarButton>
@@ -181,7 +198,7 @@ const Toolbar = withSdk(({ sdk }) => {
         className="redo"
         title="Redo"
         disabled={!canRedo}
-        onClick={canRedo ? handleRedo : undefined}
+        onClick={canRedo ? handleRedoClick : undefined}
       >
         <BiRedo />
       </ToolbarButton>

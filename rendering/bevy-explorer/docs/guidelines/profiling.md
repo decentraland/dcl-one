@@ -47,8 +47,9 @@ numbers.
   carries the windows of its sampled time summed (`snapshot.hudMainThreadCost`, `null` when none
   arrived).
 - **Hiccup threshold.** The larger of 50 ms and two target frame times: 50 ms at 60 FPS and
-  above, 66.7 ms at a 30 FPS cap, 50 ms with vsync or uncapped. The target is the session
-  override (`/session_graphics fps`), else the configured one.
+  above, 66.7 ms at a 30 FPS cap, 50 ms uncapped. The target is the session override
+  (`/session_graphics fps`), else the configured one, capped at the monitor's refresh rate under
+  vsync.
 - **Frame time breakdown.** Where the previous frame's wall time went, smoothed: the main world's
   schedules (`First` through `Last`), the scene loop until its deadline, the frame limiter's sleep
   (native), the render world's CPU time from `ExtractCommands` on (extraction and the swapchain wait
@@ -61,7 +62,7 @@ numbers.
   `perf/swapchain_present_wait_ms` and `gpu/frame_time`.
 - **Bottleneck.** Which stage bounds the frame rate, from the smoothed values with a 20 %
   margin: `frame_rate_limiter` when the frame's pacing wait is a fifth of the frame or more (the
-  limiter's sleep natively; on the web, where the scene loop never sleeps, the app loop's time
+  limiter's sleep natively; on the web, where there is no limiter sleep, the app loop's time
   outside the app's update, `pipelined/main_update` minus the main world's schedules: its frame
   timer, the cap, then the animation frame that runs the next update);
   `swapchain_present_wait` when the present wait takes a fifth of the frame or more (vsync; on

@@ -1,18 +1,16 @@
+import { SitesLocaleContext, sitesLanguage, type SitesLocaleHandle, sitesFooterCopy, AnimatedBackground, Hero, WhatsOn, CatchTheVibe, WeeklyRituals, ComeHangOut } from "@dcl/one-ui";
 import { useContext, useEffect, useRef } from "react";
 
-import SitesChrome from "@ui/web/frames/SitesChrome";
-import { SitesLocaleContext, sitesLanguage } from "@ui/web/frames/sites-locale";
+import SitesLayout from "@/features/components/chrome/SitesLayout";
 import { homeCopy } from "@/features/home/locale";
-import { successCopy } from "@/features/download/success-copy";
 import { parseCookies } from "@/core/lib/telemetry/session";
-import AnimatedBackground from "@ui/shop/discovery/components/animated-background/AnimatedBackground";
-import { Hero } from "@dcl/one-ui/apps/sites/home/Hero";
-import { WhatsOn } from "@dcl/one-ui/apps/sites/home/WhatsOn";
-import { CatchTheVibe } from "@dcl/one-ui/apps/sites/home/CatchTheVibe";
-import { WeeklyRituals } from "@dcl/one-ui/apps/sites/home/WeeklyRituals";
-import { ComeHangOut } from "@dcl/one-ui/apps/sites/home/ComeHangOut";
 import { homeEventHref } from "@/features/home/links";
 import { homeDownloadActions } from "@/features/home/actions";
+import { googlePlayHref } from "@/features/download/google-play";
+import { withDownloadClicks } from "@/features/home/download-clicks";
+import { trackDownloadClick } from "@/features/download/download-click";
+import { homeClicks } from "@/features/home/clicks";
+import { trackLegacyClick, useLegacyTrackScope } from "@/core/lib/telemetry/legacy-click";
 import { whatsOnCards } from "@/features/home/cards.server";
 import { detectPlatform } from "@/features/download/options";
 import {
@@ -25,21 +23,24 @@ import { loadDownloadCounts } from "@/data/lib/download/counts.server";
 import { explorerInstallersUrl } from "@/data/lib/catalyst/bases";
 import { loadHomeLive } from "@/data/lib/catalyst/landings/home.server";
 import { sidLoader } from "@/core/lib/telemetry/page-loader";
+import { useAnalyticsUserId } from "@/core/lib/telemetry/page-view";
 import { track } from "@/core/lib/telemetry/track";
 
+import { homeMeta, publicBase } from "../lib/social-meta";
 import type { Route } from "./+types/_index";
 import type { AgentMarkdownHandle } from "@/data/lib/agent/markdown";
 
 export const handle = {
   agentMarkdown: "discover",
-} satisfies AgentMarkdownHandle;
+  sitesLocalized: true,
+} satisfies AgentMarkdownHandle & SitesLocaleHandle;
 
 const STORY = "discover";
 /** The reference's count while its download counter loads or fails. */
 const DOWNLOADS_FALLBACK = "+400K";
 
-export function meta() {
-  return [{ title: "Decentraland" }];
+export function meta({ matches }: Route.MetaArgs) {
+  return homeMeta(publicBase(matches));
 }
 
 export async function loader({ request, context }: Route.LoaderArgs) {
@@ -56,6 +57,7 @@ export async function loader({ request, context }: Route.LoaderArgs) {
     content,
     downloads: downloads ?? DOWNLOADS_FALLBACK,
     platform: detectPlatform(request.headers.get("user-agent")),
+    googlePlay: googlePlayHref(new URL(request.url).search),
     installers: explorerInstallersUrl() !== null,
     cards: whatsOnCards(cards, profiles),
     faces: Object.fromEntries(
@@ -69,10 +71,12 @@ export async function loader({ request, context }: Route.LoaderArgs) {
 }
 
 export default function Home({ loaderData }: Route.ComponentProps) {
-  const { sid, platform, installers, downloads, cards, faces } = loaderData;
+  const { sid, platform, installers, downloads, cards, faces, googlePlay } = loaderData;
 
   const locale = useContext(SitesLocaleContext)?.locale ?? loaderData.locale;
   const copy = homeCopy[locale];
+  const userId = useAnalyticsUserId();
+  const scope = useLegacyTrackScope();
   const viewed = useRef(false);
   useEffect(() => {
     if (viewed.current) return;
@@ -80,12 +84,11 @@ export default function Home({ loaderData }: Route.ComponentProps) {
     track("lp_discover_viewed", {}, { sid, story: STORY });
   }, [sid]);
 
-  const { hero, hangOut, store, alternateStore } = homeDownloadActions(
-    platform,
-    downloads,
-    installers,
-    copy.download,
+  const { hero, hangOut, store, alternateStore, hangOutStore } = withDownloadClicks(
+    homeDownloadActions(platform, downloads, installers, copy.download, googlePlay),
+    (click) => trackDownloadClick(click, { sid, userId, scope }),
   );
+  const clicks = homeClicks((click) => trackLegacyClick(click, { sid, userId, scope }));
   const labels = {
     previous: copy.slides.previous,
     next: copy.slides.next,
@@ -96,11 +99,11 @@ export default function Home({ loaderData }: Route.ComponentProps) {
         .replace("{total}", String(total)),
   };
   return (
-    <SitesChrome
+    <SitesLayout
       active="play"
       overlayNav
       headerSurface="overlay"
-      footerCopy={successCopy[locale].footer}
+      footerCopy={sitesFooterCopy[locale]}
     >
       <main>
         <Hero
@@ -118,9 +121,11 @@ export default function Home({ loaderData }: Route.ComponentProps) {
           title={copy.whatsOn.title}
           labels={copy.whatsOn}
           carouselLabels={labels}
-          viewAll={{ label: copy.whatsOn.view_all, href: "/events" }}
+          viewAll={{ label: copy.whatsOn.view_all, href: "/events", onClick: clicks.viewAll }}
           background={<AnimatedBackground />}
           cards={cards}
+          onCardClick={clicks.whatsOnCard}
+          onJumpInClick={clicks.whatsOnJumpIn}
         />
         <CatchTheVibe
           title={copy.vibe}
@@ -136,11 +141,12 @@ export default function Home({ loaderData }: Route.ComponentProps) {
               avatarUrl: faces[clip.address] ?? undefined,
             },
           }))}
-          hangOut={{ label: copy.hangOutNow, href: "/play/" }}
+          hangOut={{ label: copy.hangOutNow, href: "/play/", onClick: clicks.hangOut }}
         />
         <WeeklyRituals
           title={copy.rituals.title}
           labels={labels}
+          onCardClick={clicks.ritual}
           cards={WEEKLY_RITUALS.map((ritual) => ({
             id: ritual.id,
             title: copy.rituals[ritual.id],
@@ -153,9 +159,9 @@ export default function Home({ loaderData }: Route.ComponentProps) {
           title={copy.hangOut}
           background={<AnimatedBackground />}
           actions={hangOut}
-          store={store}
+          store={hangOutStore}
         />
       </main>
-    </SitesChrome>
+    </SitesLayout>
   );
 }

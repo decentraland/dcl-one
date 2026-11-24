@@ -76,12 +76,3 @@ describe("the /shop routes", () => {
     );
   });
 });
-
-describe("the Creator Hub's publish flow through /shop/names", () => {
-  it("returns to publishing with its project, World and origin, and the registered NAME", async () => {
-    const { returnToPublishHref } = await import("./shop.names");
-    const q = new URLSearchParams("from=deploy-world&project=p1&world=w1&origin=create");
-    expect(returnToPublishHref(q)).toBe("/create/deploy-world?project=p1&world=w1&from=create");
-    expect(returnToPublishHref(q, "ana.dcl.eth")).toBe("/create/deploy-world?name=ana.dcl.eth&claimed=1&project=p1&world=w1&from=create");
-  });
-});

@@ -19,7 +19,7 @@ use serde::Serialize;
 use serde_json::{Value, json};
 
 use crate::AuthorityNotEstablished;
-use crate::shared::signed_fetch::SignedFetchError;
+use crate::auth::request::RequestAuthError;
 
 pub const MAX_LIMIT: i64 = 100;
 pub const MAX_OFFSET: i64 = 100_000;
@@ -280,9 +280,6 @@ pub async fn social_api_methods(
     response
 }
 
-/// Matches upstream's own cut.
-const METADATA_ECHO_MAX: usize = 64;
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Pagination {
     pub limit: i64,
@@ -492,63 +489,20 @@ impl IntoResponse for CommError {
     }
 }
 
-fn echo_metadata(metadata: &str) -> String {
-    if metadata.chars().count() <= METADATA_ECHO_MAX {
-        return metadata.to_string();
-    }
-    let head: String = metadata.chars().take(METADATA_ECHO_MAX).collect();
-    format!("{head}\u{2026}")
+/// A refused signed request: the verifier's status and message; a check that
+/// could not run (503) keeps its detail out of the body.
+pub fn signed_fetch_gate_parts(e: &RequestAuthError) -> (StatusCode, String) {
+    let status = StatusCode::from_u16(e.status()).unwrap_or(StatusCode::UNAUTHORIZED);
+    (status, e.to_string())
 }
 
-/// Why a signed fetch was refused, before or during verification.
-#[derive(Debug)]
-pub enum SignedFetchRejection {
-    /// The metadata named the scene signer (ADR-44): answered before any
-    /// crypto, echoing the metadata as upstream does.
-    RefusedMetadata(String),
-    Chain(SignedFetchError),
-}
-
-impl From<SignedFetchError> for SignedFetchRejection {
-    fn from(e: SignedFetchError) -> Self {
-        SignedFetchRejection::Chain(e)
-    }
-}
-
-pub fn signed_fetch_gate_parts(e: SignedFetchRejection) -> (StatusCode, String) {
-    use SignedFetchError as E;
-    let e = match e {
-        SignedFetchRejection::RefusedMetadata(metadata) => {
-            return (
-                StatusCode::BAD_REQUEST,
-                format!("Invalid metadata content: {}", echo_metadata(&metadata)),
-            );
-        }
-        SignedFetchRejection::Chain(e) => e,
-    };
-    match e {
-        E::InsufficientLinks | E::MalformedChain { .. } => {
-            (StatusCode::BAD_REQUEST, "Invalid Auth Chain".to_string())
-        }
-        E::InvalidTimestamp(v) => (
-            StatusCode::BAD_REQUEST,
-            format!("Invalid chain timestamp: {v}"),
-        ),
-        E::InvalidSignature(d) => (StatusCode::UNAUTHORIZED, format!("Invalid signature: {d}")),
-        E::Expired { .. } => (StatusCode::UNAUTHORIZED, "Expired signature".to_string()),
-        E::EipNotImplemented | E::CatalystUnavailable(_) => {
-            (StatusCode::UNAUTHORIZED, "Invalid signature".to_string())
-        }
-    }
-}
-
-pub fn signed_fetch_gate(e: SignedFetchRejection) -> CommError {
-    let (status, error) = signed_fetch_gate_parts(e);
+pub fn signed_fetch_gate(e: RequestAuthError) -> CommError {
+    let (status, error) = signed_fetch_gate_parts(&e);
     CommError::SignedFetchGate { status, error }
 }
 
-impl From<SignedFetchRejection> for CommError {
-    fn from(e: SignedFetchRejection) -> Self {
+impl From<RequestAuthError> for CommError {
+    fn from(e: RequestAuthError) -> Self {
         signed_fetch_gate(e)
     }
 }
@@ -735,51 +689,31 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn refused_metadata_wire_shape() {
-        let raw = r#"{"signer":"decentraland-kernel-scene"}"#;
-        let resp = signed_fetch_gate(SignedFetchRejection::RefusedMetadata(raw.to_string()))
-            .into_response();
-        assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
-        let bytes = axum::body::to_bytes(resp.into_body(), 1024).await.unwrap();
-        let v: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
-        assert_eq!(
-            v,
-            json!({ "error": format!("Invalid metadata content: {raw}"), "message": ADR44_MESSAGE })
-        );
-    }
-
-    #[tokio::test]
-    async fn a_missing_chain_is_the_upstream_400_and_a_bad_signature_a_401() {
-        let resp = signed_fetch_gate(SignedFetchError::InsufficientLinks.into()).into_response();
-        assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
-        let bytes = axum::body::to_bytes(resp.into_body(), 1024).await.unwrap();
-        let v: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
-        assert_eq!(
-            v,
-            json!({ "error": "Invalid Auth Chain", "message": ADR44_MESSAGE })
-        );
-
-        let resp = signed_fetch_gate(SignedFetchError::InvalidSignature("x".into()).into())
-            .into_response();
-        assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
-        let bytes = axum::body::to_bytes(resp.into_body(), 1024).await.unwrap();
-        let v: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
-        assert_eq!(
-            v,
-            json!({ "error": "Invalid signature: x", "message": ADR44_MESSAGE })
-        );
-    }
-
-    #[test]
-    fn a_long_metadata_echo_is_cut_where_upstream_cuts_it() {
-        let raw = format!(r#"{{"signer":"{}"}}"#, "a".repeat(120));
-        let (status, error) =
-            signed_fetch_gate_parts(SignedFetchRejection::RefusedMetadata(raw.clone()));
-        assert_eq!(status, StatusCode::BAD_REQUEST);
-        let echoed = error.strip_prefix("Invalid metadata content: ").unwrap();
-        assert_eq!(echoed.chars().count(), METADATA_ECHO_MAX + 1);
-        assert!(echoed.starts_with(&raw[..METADATA_ECHO_MAX]));
-        assert!(echoed.ends_with('\u{2026}'));
+    async fn verifier_refusals_keep_the_gate_envelope() {
+        let cases = [
+            (
+                RequestAuthError::Malformed("Invalid Auth Chain".into()),
+                StatusCode::BAD_REQUEST,
+                "Invalid Auth Chain",
+            ),
+            (
+                RequestAuthError::Unauthorized("Invalid signature: x".into()),
+                StatusCode::UNAUTHORIZED,
+                "Invalid signature: x",
+            ),
+            (
+                RequestAuthError::Unavailable,
+                StatusCode::SERVICE_UNAVAILABLE,
+                "Signature verification unavailable",
+            ),
+        ];
+        for (err, status, error) in cases {
+            let resp = signed_fetch_gate(err).into_response();
+            assert_eq!(resp.status(), status);
+            let bytes = axum::body::to_bytes(resp.into_body(), 1024).await.unwrap();
+            let v: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+            assert_eq!(v, json!({ "error": error, "message": ADR44_MESSAGE }));
+        }
     }
 
     #[test]

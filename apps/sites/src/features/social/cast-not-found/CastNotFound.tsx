@@ -1,6 +1,9 @@
-import StCastNotFound from "@ui/web/pages/StCastNotFound";
+import type { ComponentProps } from "react";
+import { StCastNotFound } from "@dcl/one-ui";
 
 import { track, type TrackContext } from "@/core/lib/telemetry/track";
+
+import SitesLayout from "../../components/chrome/SitesLayout";
 
 const HOME_HREF = "/";
 const DOCS_HREF = "https://docs.decentraland.org/creator/worlds/cast/";
@@ -12,6 +15,14 @@ type CastNotFoundProps = {
   onTrack?: typeof track;
 };
 
+export function CastNotFoundScreen(props: ComponentProps<typeof StCastNotFound>) {
+  return (
+    <SitesLayout active="legal" overlayNav>
+      <StCastNotFound {...props} />
+    </SitesLayout>
+  );
+}
+
 export default function CastNotFound({
   trackCtx,
   from,
@@ -20,7 +31,7 @@ export default function CastNotFound({
 }: CastNotFoundProps) {
   return (
     <div className="cast-not-found">
-      <StCastNotFound
+      <CastNotFoundScreen
         homeHref={HOME_HREF}
         docsHref={DOCS_HREF}
         onGoHome={() =>

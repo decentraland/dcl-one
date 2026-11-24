@@ -15,6 +15,10 @@ pub struct CrdtGOEntry {
 pub struct CrdtGOState(pub HashMap<SceneEntityId, VecDeque<CrdtGOEntry>>);
 
 impl CrdtGOState {
+    /// Adds a payload once per entity while its exact bytes remain in this set
+    /// ([ADR-117](https://adr.decentraland.org/adr/ADR-117)).
+    ///
+    /// Returns false for a duplicate. At capacity, a distinct append evicts the oldest value.
     pub fn append(
         &mut self,
         entity: SceneEntityId,

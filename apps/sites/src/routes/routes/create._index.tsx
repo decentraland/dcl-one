@@ -1,54 +1,68 @@
-import { useEffect } from "react";
-import { redirect, useLocation, useNavigate } from "react-router";
+import { redirect } from "react-router";
 import { dehydrate, HydrationBoundary, QueryClient } from "@tanstack/react-query";
 
 import SitesChrome from "@ui/web/frames/SitesChrome";
 
-import { creatorHubHost } from "@ui/creatorhub/explorer-host";
-
-import { isDesktopShell } from "@/data/lib/auth/native-shell";
 import { latestPostsQuery } from "@/data/lib/create-landing/blog-posts";
 import { latestPosts } from "@/data/lib/create-landing/blog-posts.server";
 import { liveScenesQuery } from "@/data/lib/create-landing/live-scenes";
+import { heroDownloads, loadLatestRelease } from "@/data/lib/download/creator-hub.server";
 import { sidLoader } from "@/core/lib/telemetry/page-loader";
 import CreateLanding from "@/features/create-landing/CreateLanding";
+import { CREATOR_HUB_DOWNLOAD } from "@/features/create-landing/HeroDownload";
+import { SubNav } from "@/features/creators/components/SubNav";
+import { useAnalyticsSid, useAnalyticsUserId } from "@/core/lib/telemetry/page-view";
 
+import { absoluteUrl, publicBase, socialMeta } from "../lib/social-meta";
 import type { Route } from "./+types/create._index";
 
-export const meta = () => [
-  { title: "Create in Decentraland | Decentraland" },
-  {
-    name: "description",
-    content: "Download the Creator Hub to start building immersive scenes and interactive experiences in Decentraland.",
-  },
-];
+// decentraland.org serves /create from creators-website, whose shell carries this card.
+const CREATE_SOCIAL_IMAGE =
+  "https://images.ctfassets.net/ea2ybdmmn1kv/3fZB29mbYNJdp7sv1y2SJ2/108e55d6d3e23cd11e7d75563d81caf5/hero.webp?fm=jpg&q=85";
 
-/** Where `/create?projectUrl=…` (the link dcl-scene-cli start prints) goes: the SDK workspace of the
-    scene editor. The run token rides the link as a `#token=` fragment, which the browser carries
-    across this redirect untouched and the editor route claims client-side; it never reaches a
-    query string or this server. */
-export function sdkWorkspaceHandoff(url: URL): string | null {
-  const projectUrl = url.searchParams.get("projectUrl")?.trim();
-  if (!projectUrl) return null;
-  const target = new URLSearchParams({ source: "sdk", projectUrl, from: "home" });
-  return `/create/scene-editor?${target.toString()}`;
+export function meta({ matches }: Route.MetaArgs) {
+  return socialMeta({
+    title: "Create in Decentraland | Wearables, Emotes, Scenes & Worlds",
+    description:
+      "Everything you need to create in Decentraland: build Wearables, Emotes, Scenes and Worlds, manage your collections and join the creator community.",
+    image: CREATE_SOCIAL_IMAGE,
+    url: absoluteUrl(publicBase(matches), "/create"),
+  });
 }
 
-/** `/create` is the Creator Hub's marketing landing on the web; the desktop shell and the Explorer's
-    framed hub start at the hub home. */
-export async function loader({ request, context }: Route.LoaderArgs) {
-  const handoff = sdkWorkspaceHandoff(new URL(request.url));
-  if (handoff) throw redirect(handoff, { headers: { "Cache-Control": "private, no-store" } });
+// The landing never waits long for the release: without it the hero links to the download page, which does.
+const RELEASE_WAIT_MS = 300;
 
-  const { wrap } = sidLoader(request, context);
+async function latestReleaseInTime() {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      loadLatestRelease().catch(() => null),
+      new Promise<null>((resolve) => {
+        timer = setTimeout(() => resolve(null), RELEASE_WAIT_MS);
+      }),
+    ]);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+export async function loader({ request, context }: Route.LoaderArgs) {
+  // `dcl-scene-cli start` still links here with `?projectUrl=`; scenes are edited in the desktop app.
+  if (new URL(request.url).searchParams.has("projectUrl")) {
+    throw redirect(CREATOR_HUB_DOWNLOAD, { headers: { "Cache-Control": "private, no-store" } });
+  }
+  const { sid, wrap } = sidLoader(request, context);
   const queryClient = new QueryClient();
-  await Promise.all([
+  const [release] = await Promise.all([
+    latestReleaseInTime(),
     queryClient.prefetchQuery(liveScenesQuery()),
     queryClient.prefetchQuery({ ...latestPostsQuery(), queryFn: () => latestPosts() }),
   ]);
   const dehydratedState = dehydrate(queryClient);
   queryClient.clear();
-  return wrap({ dehydratedState });
+  const downloads = release ? heroDownloads(release, request.headers.get("user-agent")) : null;
+  return wrap({ dehydratedState, downloads, sid });
 }
 
 export async function clientLoader(): Promise<null> {
@@ -56,17 +70,14 @@ export async function clientLoader(): Promise<null> {
 }
 
 export default function CreateRoute({ loaderData }: Route.ComponentProps) {
-  const navigate = useNavigate();
-  const { search, hash } = useLocation();
-
-  useEffect(() => {
-    if (isDesktopShell() || creatorHubHost(window)) navigate(`/create/home${search}${hash}`, { replace: true });
-  }, [navigate, search, hash]);
-
+  const userId = useAnalyticsUserId();
+  // A client navigation runs the clientLoader, which carries no sid: the root's session stands in.
+  const rootSid = useAnalyticsSid();
   return (
     <HydrationBoundary state={loaderData?.dehydratedState}>
       <SitesChrome active="create" overlayNav>
-        <CreateLanding />
+        <SubNav landing />
+        <CreateLanding downloads={loaderData?.downloads} sid={loaderData?.sid || rootSid} userId={userId} />
       </SitesChrome>
     </HydrationBoundary>
   );

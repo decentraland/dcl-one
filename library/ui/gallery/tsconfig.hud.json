@@ -1,0 +1,28 @@
+{
+  // The HUD canvas and its tests, with the Explorer HUD they compile, under the profile the HUD hosts check the HUD
+  // with (react-web's tsconfig.json): strict, without the index-access check the rest of the gallery adds. The paths
+  // are the names the gallery's Vite config gives the HUD.
+  "compilerOptions": {
+    "target": "ES2022",
+    "lib": ["ES2022", "DOM", "DOM.Iterable"],
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    "jsx": "react-jsx",
+    "strict": true,
+    "noUnusedLocals": true,
+    "noUnusedParameters": true,
+    "noFallthroughCasesInSwitch": true,
+    "allowImportingTsExtensions": true,
+    "skipLibCheck": true,
+    "isolatedModules": true,
+    "resolveJsonModule": true,
+    "noEmit": true,
+    "types": ["node", "vite/client"],
+    "paths": {
+      "@hud-host": ["../apps/hud/test/host.ts"],
+      "@hud/*": ["../apps/hud/*"],
+      "@explorer-core/*": ["../../explorer-core/*"]
+    }
+  },
+  "include": ["src/hud", "test/hud"]
+}

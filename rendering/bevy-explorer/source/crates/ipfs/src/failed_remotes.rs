@@ -10,7 +10,7 @@ use web_time::{Duration, Instant};
 pub(crate) const RETRY_AFTER: Duration = Duration::from_secs(10);
 
 /// Most urls held at once.
-const LIMIT: usize = 4096;
+pub(crate) const LIMIT: usize = 4096;
 
 /// A client error about the url itself, which asking again does not change. Every other status
 /// keeps the retry window: 401, 403 and 407 come from a CDN, firewall or proxy; 408, 421, 425 and

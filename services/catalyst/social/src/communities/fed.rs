@@ -1201,6 +1201,106 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
     }
 
+    /// Before the place id release, a stored row may be in another case: a
+    /// federated add of it writes no second row and a federated removal in
+    /// any spelling reaches it.
+    #[tokio::test]
+    async fn federated_place_writes_match_rows_stored_in_another_case() {
+        let Some(database) = crate::db::scratch::OwnedDatabase::new(
+            "fed_place_ids",
+            crate::db::scratch::Schema::Full,
+            4,
+        )
+        .await
+        else {
+            return;
+        };
+        let pool = database.pool.clone();
+        sqlx::query("ALTER TABLE social.community_places DROP CONSTRAINT community_places_place_id_lowercase")
+            .execute(&pool)
+            .await
+            .unwrap();
+        let dir = std::env::temp_dir().join(format!("catalyst-fed-place-ids-{}", Uuid::new_v4()));
+        let storage =
+            std::sync::Arc::new(crate::storage::Storage::from_config(&dir).await.unwrap());
+        let settings = super::super::Settings {
+            places_ownership_check: false,
+            ..super::super::Settings::for_tests()
+        };
+        let state = std::sync::Arc::new(CommunitiesState::new(
+            pool.clone(),
+            storage,
+            settings,
+            None,
+            &crate::http::Outbound::for_tests(),
+            CommunitiesState::explore_for_tests(&pool),
+        ));
+        let app = super::super::router(state.clone());
+        let owner = PrivateKeySigner::random();
+        let id = CommunityId::new();
+        let hex_id = id.as_uuid().simple().to_string();
+        let base = format!("/v1/communities/{id}");
+        sqlx::query("INSERT INTO social.communities (id, name, description, owner_address, private, unlisted) VALUES ($1, 'Cased', 'd', $2, FALSE, FALSE)")
+            .bind(id)
+            .bind(address(&owner))
+            .execute(&pool)
+            .await
+            .unwrap();
+        sqlx::query("INSERT INTO social.community_members (community_id, member_address, role) VALUES ($1, $2, 'owner')")
+            .bind(id)
+            .bind(address(&owner))
+            .execute(&pool)
+            .await
+            .unwrap();
+        sqlx::query("INSERT INTO social.community_places (place_id, community_id, added_by) VALUES ('Kept.DCL.eth', $1, $2), ('Gone.DCL.eth', $1, $2)")
+            .bind(id)
+            .bind(address(&owner))
+            .execute(&pool)
+            .await
+            .unwrap();
+        let (status, body) = send(
+            &app,
+            &owner,
+            "POST",
+            &format!("{base}/places"),
+            &env(
+                &owner,
+                CommunityPlacesAdd {
+                    community_id: hex_id.clone(),
+                    place_ids: vec!["kept.dcl.eth".into()],
+                },
+            ),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        let (status, body) = send(
+            &app,
+            &owner,
+            "DELETE",
+            &format!("{base}/places/gone.dcl.eth"),
+            &env(
+                &owner,
+                CommunityPlaceRemove {
+                    community_id: hex_id.clone(),
+                    place_id: "gone.dcl.eth".into(),
+                },
+            ),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        let places: Vec<String> = sqlx::query_scalar(
+            "SELECT place_id FROM social.community_places WHERE community_id = $1",
+        )
+        .bind(id)
+        .fetch_all(&pool)
+        .await
+        .unwrap();
+        assert_eq!(places, ["Kept.DCL.eth"]);
+        drop((app, state));
+        database.drop().await;
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
     /// A REST ban holds the membership lock while it removes the member and
     /// records the ban. A federation join that passed its ban pre-check
     /// before that ban committed waits for the lock, sees the ban and is
@@ -1468,6 +1568,186 @@ mod tests {
                     StatusCode::BAD_REQUEST
                 },
                 "native buffers before auth; gateway authenticates first: {body}"
+            );
+        }
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    /// A deleted or suspended community answers 404 to a federated like,
+    /// unlike, join and request decision, and records none of them; the
+    /// request stays pending until the community reopens.
+    #[tokio::test]
+    async fn closed_communities_refuse_federated_writes_without_recording_them() {
+        let Some(pool) = crate::db::scratch::pool(4).await else {
+            return;
+        };
+        let dir = std::env::temp_dir().join(format!("catalyst-fed-closed-{}", Uuid::new_v4()));
+        let storage =
+            std::sync::Arc::new(crate::storage::Storage::from_config(&dir).await.unwrap());
+        let state = std::sync::Arc::new(CommunitiesState::new(
+            pool.clone(),
+            storage,
+            super::super::Settings::for_tests(),
+            None,
+            &crate::http::Outbound::for_tests(),
+            CommunitiesState::explore_for_tests(&pool),
+        ));
+        let app = super::super::router(state.clone());
+        let owner = PrivateKeySigner::random();
+        claimed_name(&pool, &state, &owner).await;
+        for (closing, reopening) in [
+            (
+                "UPDATE social.communities SET active = FALSE WHERE id = $1",
+                "UPDATE social.communities SET active = TRUE WHERE id = $1",
+            ),
+            (
+                "UPDATE social.communities SET suspended = TRUE, suspended_at = now(), suspended_by = 'op' WHERE id = $1",
+                "UPDATE social.communities SET suspended = FALSE, suspended_at = NULL, suspended_by = NULL WHERE id = $1",
+            ),
+        ] {
+            let (member, joiner, invitee) = (
+                PrivateKeySigner::random(),
+                PrivateKeySigner::random(),
+                PrivateKeySigner::random(),
+            );
+            let id = CommunityId::new();
+            let hex_id = id.as_uuid().simple().to_string();
+            let base = format!("/v1/communities/{id}");
+            sqlx::query("INSERT INTO social.communities (id, name, description, owner_address, private, unlisted) VALUES ($1, 'Closed', 'd', $2, FALSE, FALSE)")
+                .bind(id).bind(address(&owner)).execute(&pool).await.unwrap();
+            for (w, role) in [(&owner, "owner"), (&member, "member")] {
+                sqlx::query("INSERT INTO social.community_members (community_id, member_address, role) VALUES ($1, $2, $3)")
+                    .bind(id).bind(address(w)).bind(role).execute(&pool).await.unwrap();
+            }
+            let (status, stored) = upload(&app, &owner, "closed soon").await;
+            assert_eq!(status, StatusCode::OK, "{stored}");
+            let post_env = env(
+                &owner,
+                CommunityPost {
+                    community_id: hex_id.clone(),
+                    content_hash: stored["content_hash"].as_str().unwrap().to_string(),
+                },
+            );
+            let (status, body) =
+                send(&app, &owner, "POST", &format!("{base}/posts"), &post_env).await;
+            assert_eq!(status, StatusCode::OK, "{body}");
+            let post_id = post_env.signature_hash();
+            let invite = Uuid::new_v4();
+            sqlx::query("INSERT INTO social.community_requests (id, community_id, member_address, type) VALUES ($1, $2, $3, 'invite')")
+                .bind(invite).bind(id).bind(address(&invitee)).execute(&pool).await.unwrap();
+            sqlx::query(closing).bind(id).execute(&pool).await.unwrap();
+
+            let like_path = format!("{base}/posts/{post_id}/like");
+            let like = env(
+                &member,
+                CommunityPostLike {
+                    community_id: hex_id.clone(),
+                    post_id: post_id.clone(),
+                },
+            );
+            let unlike = env(
+                &member,
+                CommunityPostUnlike {
+                    community_id: hex_id.clone(),
+                    post_id: post_id.clone(),
+                },
+            );
+            let join = env(
+                &joiner,
+                CommunityJoin {
+                    community_id: hex_id.clone(),
+                },
+            );
+            let accept = env(
+                &invitee,
+                CommunityRequestStatusUpdate {
+                    community_id: hex_id.clone(),
+                    request_id: invite.to_string(),
+                    status: "accepted".into(),
+                },
+            );
+            let invite_path = format!("{base}/requests/{invite}");
+            for (what, (status, body)) in [
+                ("like", send(&app, &member, "POST", &like_path, &like).await),
+                (
+                    "unlike",
+                    send(&app, &member, "DELETE", &like_path, &unlike).await,
+                ),
+                (
+                    "join",
+                    send(&app, &joiner, "POST", &format!("{base}/members"), &join).await,
+                ),
+                (
+                    "accept",
+                    send(&app, &invitee, "PATCH", &invite_path, &accept).await,
+                ),
+            ] {
+                assert_eq!(status, StatusCode::NOT_FOUND, "{closing}: {what}: {body}");
+                if what == "accept" {
+                    assert_eq!(
+                        body["message"],
+                        format!("Community not found: {id}"),
+                        "{closing}: the client route's body"
+                    );
+                }
+            }
+            for hash in [
+                like.signature_hash(),
+                unlike.signature_hash(),
+                join.signature_hash(),
+                accept.signature_hash(),
+            ] {
+                let logged: bool = sqlx::query_scalar(
+                    "SELECT EXISTS(SELECT 1 FROM social.community_signed_actions WHERE signature_hash = $1)",
+                )
+                .bind(&hash)
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+                assert!(!logged, "{closing}: a refused write is not recorded");
+            }
+            let likes: i64 = sqlx::query_scalar(
+                "SELECT count(*) FROM social.community_post_likes WHERE post_id = $1",
+            )
+            .bind(post_uuid(&post_id))
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+            assert_eq!(likes, 0, "{closing}");
+            assert_eq!(
+                role_of(&pool, id.as_uuid(), &joiner).await,
+                None,
+                "{closing}"
+            );
+            assert_eq!(
+                role_of(&pool, id.as_uuid(), &invitee).await,
+                None,
+                "{closing}"
+            );
+
+            sqlx::query(reopening)
+                .bind(id)
+                .execute(&pool)
+                .await
+                .unwrap();
+            let accept = env(
+                &invitee,
+                CommunityRequestStatusUpdate {
+                    community_id: hex_id.clone(),
+                    request_id: invite.to_string(),
+                    status: "accepted".into(),
+                },
+            );
+            let (status, body) = send(&app, &invitee, "PATCH", &invite_path, &accept).await;
+            assert_eq!(
+                status,
+                StatusCode::OK,
+                "{closing}: accept after reopening: {body}"
+            );
+            assert_eq!(
+                role_of(&pool, id.as_uuid(), &invitee).await.as_deref(),
+                Some("member"),
+                "{closing}: the invite is still pending"
             );
         }
         let _ = std::fs::remove_dir_all(dir);
@@ -2161,7 +2441,8 @@ mod tests {
                 &member,
                 CommunityPlacesAdd {
                     community_id: hex_id.clone(),
-                    place_ids: vec!["p-1".into(), "p-2".into()],
+                    // stored lowercased, case variants once
+                    place_ids: vec!["P-1".into(), "p-2".into(), "p-1".into()],
                 },
             ),
         )
@@ -2171,12 +2452,12 @@ mod tests {
             &app,
             &owner,
             "DELETE",
-            &format!("{base}/places/p-2"),
+            &format!("{base}/places/P-2"),
             &env(
                 &owner,
                 CommunityPlaceRemove {
                     community_id: hex_id.clone(),
-                    place_id: "p-2".into(),
+                    place_id: "P-2".into(),
                 },
             ),
         )

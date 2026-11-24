@@ -12,7 +12,7 @@ import type { PinMarker } from '@explorer-core/features/map/mapPins'
 import type { CategoryKey } from '@explorer-core/features/map/navmap'
 import type { PlayerPose } from '../session/useEngineSession'
 import { CAT_PINS, MARKER_ART, SEA_ART, SEA_SIZE } from './mapArt'
-import { QuestPinIcon } from './QuestPinIcon'
+import { SatelliteDetailLayer } from './SatelliteDetailLayer'
 import type { MapCamera } from './useMapCamera'
 import styles from './MapCanvas.module.css'
 
@@ -232,7 +232,7 @@ const QuestPin = memo(function QuestPin({ pin, onPick }: { pin: PinMarker; onPic
       }}
     >
       <span className={styles.scaler}>
-        <QuestPinIcon icon={pin.icon} className={styles.pinIcon} />
+        <img className={styles.pinIcon} src={MARKER_ART.quest} alt="" draggable={false} />
       </span>
     </button>
   )
@@ -293,6 +293,10 @@ export interface MapCanvasProps {
   onEvent: (marker: EventMarker) => void
   onPlace: (layer: 'pois' | 'search' | 'category', marker: PlaceMarker) => void
   onHome: () => void
+  /** The engine's decoder for a deep-zoom satellite tile (base64 JPEG), when this host has one. */
+  fetchSatelliteTile?: (path: string) => Promise<string | null>
+  /** The realm's own satellite map is Genesis City's, the one the detail tiles continue. */
+  satelliteDetail?: boolean
 }
 
 export function MapCanvas(props: MapCanvasProps): React.JSX.Element {
@@ -385,6 +389,7 @@ export function MapCanvas(props: MapCanvasProps): React.JSX.Element {
       {layers.has('satellite') && (
         <>
           <Atlas chunks={SATELLITE_CHUNKS} visible={camera.visible} loadingTile={false} />
+          <SatelliteDetailLayer camera={camera} enabled={props.satelliteDetail === true} fetchTile={props.fetchSatelliteTile} />
           <div className={styles.world}>
             {EDGE_PATCHES.map((patch, i) => (
               <div key={i} className={styles.patch} style={{ '--cx': patch.x, '--cy': patch.y, '--w': patch.w, '--h': patch.h } as CSSProperties} />

@@ -1,7 +1,6 @@
 export type HelpQuestion = { readonly question: string; readonly answer: string };
 
 export const HELP_COPY = {
-  pageTitle: "Decentraland - Help Center",
   title: "Help Center",
   description: "Browse through FAQs and Support Updates or use the contact options below to get help.",
   tabs: {

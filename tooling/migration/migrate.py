@@ -98,6 +98,14 @@ CREATE TABLE IF NOT EXISTS dcl_migration.world_limit_seeded (
     max_parcels integer,
     max_size_bytes bigint
 );
+-- Exact attendance rows written by the import; later local changes retain ownership.
+CREATE TABLE IF NOT EXISTS dcl_migration.event_attendance_loaded (
+    event_id text NOT NULL,
+    signer text NOT NULL,
+    signed_at timestamp NOT NULL,
+    signed_payload jsonb NOT NULL,
+    PRIMARY KEY (event_id, signer)
+);
 -- What the notifications-workers loads wrote, so its reconcile steps delete only imported rows that
 -- upstream no longer holds; a row whose values no longer match was changed on the node and is kept.
 CREATE TABLE IF NOT EXISTS dcl_migration.notification_opt_out_loaded (
@@ -232,6 +240,25 @@ CREATE TABLE IF NOT EXISTS dcl_migration.social_community_post_loaded (
     id uuid PRIMARY KEY,
     content text NOT NULL
 );
+-- Upstream's ranking counters as last loaded: unchanged, the node's are left alone; the node's own
+-- photo/stream count is what it holds above them.
+CREATE TABLE IF NOT EXISTS dcl_migration.social_community_ranking_loaded (
+    community_id uuid PRIMARY KEY,
+    events_count integer NOT NULL,
+    photos_count integer NOT NULL,
+    streams_count integer NOT NULL,
+    events_total_attendees integer NOT NULL,
+    streams_total_participants integer NOT NULL,
+    ranking_score real NOT NULL
+);
+DO $ddl$ BEGIN
+  IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema = 'dcl_migration'
+             AND table_name = 'social_community_ranking_loaded' AND column_name = 'written_photos_count') THEN
+    ALTER TABLE dcl_migration.social_community_ranking_loaded
+        DROP COLUMN written_photos_count, DROP COLUMN written_streams_count,
+        DROP COLUMN written_streams_total_participants;
+  END IF;
+END $ddl$;
 -- The has_started_program the wallet import last wrote; a wallet that no longer matches started
 -- the program on the node.
 CREATE TABLE IF NOT EXISTS dcl_migration.credit_wallet_loaded (
@@ -1509,6 +1536,9 @@ SELECT encode(convert_to(o, 'UTF8'), 'hex'), encode(convert_to(k, 'UTF8'), 'hex'
     UNION ALL
     SELECT name || ' (thumbnail)', thumbnail_hash FROM worlds.worlds
     WHERE mirror_source IS NULL AND coalesce(thumbnail_hash, '') <> ''
+    UNION ALL
+    SELECT legacy_sha256 || ' (legacy thumbnail)', blob_cid FROM worlds.thumbnail_aliases
+    WHERE mirror_expires_at IS NULL
 ) x ORDER BY o, k""",
         'steps': {'world', 'world_scene'},
     },
@@ -1634,6 +1664,71 @@ def cmd_camera_blobs(args, sources):
             return int(any(counts[k] for k in ('missing', 'corrupt', 'invalid', 'failed')))
 
 
+SOCIAL = 'social-service-ea'
+# Upstream's communities (on the source) and those of them the node holds without a thumbnail (on the target).
+COMMUNITY_IDS_SOURCE = "SELECT id::text FROM communities ORDER BY id"
+COMMUNITY_THUMBNAIL_BATCH = 200
+
+
+def cmd_community_thumbnails(args, sources):
+    """`blobs social-service-ea`: each imported community's upstream thumbnail into the store, then its
+    `social.community_thumbnails` row. A thumbnail the node already holds stays (a newer one set here);
+    a community upstream has no thumbnail for keeps none, as upstream answers it."""
+    # Not --from-s3: without s3:ListBucket a community with no picture answers 403, which S3Source reads
+    # as unreadable credentials until a probe succeeds, and most communities have none.
+    if args.verify or args.object_metadata or args.refresh or args.retry_missing or args.allow_missing or args.from_s3:
+        raise MigrationError(f'{SOCIAL} blobs take only --to and one of --from-url or --from-dir')
+    if args.from_url and args.from_dir:
+        raise MigrationError('pass at most one of --from-url or --from-dir DIR')
+    blobs = load_blobs_module()
+    store = blobs.Store(storage_root(args))
+    try:
+        if args.from_dir:
+            upstream = blobs.FolderArtSource(args.from_dir)
+        else:
+            upstream = blobs.HttpArtSource(args.from_url or blobs.COMMUNITY_THUMBNAIL_BASE)
+    except (OSError, RuntimeError) as e:
+        raise MigrationError(str(e)) from e
+    source_url, target_url = database_url(sources[SOCIAL].database_env), database_url(args.target_env)
+    upstream_ids = {line.strip() for line in psql(source_url, COMMUNITY_IDS_SOURCE + ';\n', read_only=True).splitlines() if line.strip()}
+    lacking = [line.strip() for line in psql(target_url, (
+        "SELECT c.id::text FROM social.communities c WHERE c.origin = 'local' AND NOT EXISTS"
+        " (SELECT 1 FROM social.community_thumbnails t WHERE t.community_id = c.id) ORDER BY c.id;\n")).splitlines() if line.strip()]
+    todo = [i for i in lacking if i in upstream_ids]
+    print(f'{SOCIAL}: {len(upstream_ids)} upstream communities, {len(todo)} imported without a thumbnail here;'
+          f' reading theirs from {upstream.describe()} into {store.contents}', flush=True)
+    counts = dict.fromkeys(('copied', 'present', 'missing', 'corrupt', 'invalid', 'failed'), 0)
+    stored = []
+
+    def flush():
+        # Right after the copy, so the storage GC never sees these blobs unreferenced for long. A row the node
+        # wrote since (a new thumbnail set here) wins.
+        if stored:
+            values = ', '.join(f'({literal(i)}::uuid, {literal(cid)}, timezone(\'UTC\', now()))' for i, cid in stored)
+            psql(target_url, 'INSERT INTO social.community_thumbnails (community_id, thumbnail_hash, updated_at)'
+                             f' VALUES {values} ON CONFLICT (community_id) DO NOTHING;\n')
+            stored.clear()
+
+    try:
+        for outcome in blobs.copy_all(upstream, store, todo, args.workers, copy=blobs.copy_community_thumbnail):
+            counts[outcome.status] += 1
+            if outcome.status in ('copied', 'present'):
+                stored.append((outcome.key, outcome.cid))
+                if len(stored) >= COMMUNITY_THUMBNAIL_BATCH:
+                    flush()
+            elif outcome.status != 'missing':
+                print(f'  {outcome.key}: {outcome.status}: {outcome.reason}', flush=True)
+        flush()
+    except blobs.SourceError as e:
+        flush()
+        raise MigrationError(f'upstream storage: {e}') from e
+    print(f'{SOCIAL}: thumbnails copied {counts["copied"]}, already in the store {counts["present"]},'
+          f' none upstream {counts["missing"]}, not an image {counts["corrupt"] + counts["invalid"]},'
+          f' read failed {counts["failed"]} (a re-run retries every community still without one)', flush=True)
+    # most communities have no picture upstream: only a picture that could not be taken fails the run
+    return int(any(counts[k] for k in ('corrupt', 'invalid', 'failed')))
+
+
 def cmd_blobs(args, sources):
     if getattr(args, 'object_metadata', None) and args.source != CAMERA:
         raise MigrationError('--object-metadata applies only to Camera snapshot objects')
@@ -1641,6 +1736,8 @@ def cmd_blobs(args, sources):
         return cmd_camera_blobs(args, sources)
     if args.source == 'badges':
         return cmd_badge_art(args)
+    if args.source == SOCIAL:
+        return cmd_community_thumbnails(args, sources)
     if args.source not in BLOB_SETS:
         raise MigrationError(f'no blob set for {args.source!r}; known: {", ".join(sorted(BLOB_SETS))}')
     if args.from_url or args.refresh:
@@ -2045,12 +2142,13 @@ def parser():
                      help="the node's STORAGE_ROOT_FOLDER (default: that variable); runs of steps whose rows"
                           ' name blobs end by checking the store holds them')
     blobs = sub.add_parser('blobs', help="copy a source's blobs into the node's store, or --verify them")
-    blobs.add_argument('source', help=f'one of: {", ".join(sorted([*BLOB_SETS, "badges"]))}')
+    blobs.add_argument('source', help=f'one of: {", ".join(sorted([*BLOB_SETS, "badges", SOCIAL]))}')
     blobs.add_argument('--to', help='the node\'s STORAGE_ROOT_FOLDER (default: that variable); for badges,'
                                     ' its BADGES_ASSETS_DIR (default: that variable)')
     blobs.add_argument('--object-metadata', type=Path, help='Camera: required JSONL with literal object_key and original content_type')
     blobs.add_argument('--from-dir', help='upstream storage folder (or a local sync of its bucket)')
-    blobs.add_argument('--from-url', help='badges: upstream art base URL (default: its production CDN_HOST)')
+    blobs.add_argument('--from-url', help='badges and social-service-ea: upstream CDN base URL (default: its'
+                                          ' production assets CDN)')
     blobs.add_argument('--refresh', action='store_true',
                        help='badges: copy every texture again, also those already in the directory')
     blobs.add_argument('--from-s3', metavar='BUCKET', help='upstream S3 bucket (needs boto3)')

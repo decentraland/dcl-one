@@ -1,4 +1,5 @@
 use super::*;
+use common::sync::MutexExt;
 use priority_gate::{DownloadAttempts, DownloadReaders, GateClosed, Registration};
 use std::sync::Mutex;
 use tokio::sync::oneshot;
@@ -54,7 +55,14 @@ impl IpfsIo {
         SharedReader,
         Option<impl ConditionalSendFuture<Output = ()> + 'static>,
     ) {
-        self.share_download_with(key, token, path, remote, scene, FetchPolicy::CONTENT)
+        // a far LOD the client named is a variant: one short attempt, the scene's own meshes
+        // being the fallback
+        let policy = if self.is_named_far_lod(&remote) {
+            crate::bevy_variants::VARIANT_FETCH
+        } else {
+            FetchPolicy::CONTENT
+        };
+        self.share_download_with(key, token, path, remote, scene, policy)
     }
 
     /// [`Self::share_download`] under its own timeouts and attempts. Readers that join an
@@ -71,7 +79,7 @@ impl IpfsIo {
         SharedReader,
         Option<impl ConditionalSendFuture<Output = ()> + 'static>,
     ) {
-        let mut entries = self.in_flight.lock().unwrap();
+        let mut entries = self.in_flight.lock_ignore_poison();
         if let Some(download) = entries.get(&remote).and_then(Weak::upgrade) {
             if let Some(reader) = download.readers.try_register(scene.clone()) {
                 debug!("[{token:?}]: remote url: `{remote}` joining in-flight download");
@@ -112,7 +120,7 @@ impl IpfsIo {
                 )) => Some(result),
             };
             // Another reader may already have started a new generation for the same URL.
-            let mut entries = io.in_flight.lock().unwrap();
+            let mut entries = io.in_flight.lock_ignore_poison();
             if entries
                 .get(&remote)
                 .is_some_and(|entry| entry.ptr_eq(&identity))
@@ -370,10 +378,16 @@ impl IpfsIo {
                 {
                     self.request_metrics
                         .downloads
-                        .lock()
-                        .unwrap()
+                        .lock_ignore_poison()
                         .connect_failed += 1;
                 }
+                self.far_lod_fetched(
+                    &remote,
+                    Err(match &e {
+                        platform::FetchError::Status(status, _) => Some(*status),
+                        _ => None,
+                    }),
+                );
                 // a catalyst only activates an entity once it holds all of its files, so a server
                 // that says a content hash's url is wrong says so for the rest of the session;
                 // preview always asks again
@@ -396,10 +410,11 @@ impl IpfsIo {
                     }
                     platform::FetchError::Body(e) => format!("body stream error: {e}"),
                 };
-                self.failed_remotes
-                    .lock()
-                    .unwrap_or_else(std::sync::PoisonError::into_inner)
-                    .record(remote.clone(), session, Instant::now());
+                self.failed_remotes.lock_ignore_poison().record(
+                    remote.clone(),
+                    session,
+                    Instant::now(),
+                );
                 return ipfs_io_read_state.send_failure(Err(AssetReaderError::Io(Arc::new(
                     std::io::Error::other(format!(
                         "[{token:?}] failed to retrieve `{remote}`: {detail}"
@@ -419,18 +434,15 @@ impl IpfsIo {
         }
 
         if let Some(start) = timing.started {
-            self.request_metrics.downloads.lock().unwrap().download(
-                fetched.body.len(),
-                start.elapsed(),
-                timing.first_byte,
-            );
+            self.request_metrics
+                .downloads
+                .lock_ignore_poison()
+                .download(fetched.body.len(), start.elapsed(), timing.first_byte);
         }
         let data = SharedBytes(Arc::new(fetched.body));
 
-        // Bytes that are not what their hash names fail the read like a failed transfer: they
-        // never reach a loader, nor the cache, which is keyed on the hash alone and answers for
-        // every server. The url is asked for again after the retry window. A name the check
-        // can't verify is read but not cached.
+        // The starting read's key determines the check for every reader sharing the download.
+        // A cached content hash answers for every server, so only verified bytes belong under it.
         let verified = match &cache_key {
             Some(CacheKey::Content(hash)) => match content_hash::check_content_hash(hash, &data) {
                 content_hash::Check::Matches => true,
@@ -440,10 +452,11 @@ impl IpfsIo {
                         data.len()
                     );
                     warn!("{message}");
-                    self.failed_remotes
-                        .lock()
-                        .unwrap_or_else(std::sync::PoisonError::into_inner)
-                        .record(remote.clone(), None, Instant::now());
+                    self.failed_remotes.lock_ignore_poison().record(
+                        remote.clone(),
+                        None,
+                        Instant::now(),
+                    );
                     return ipfs_io_read_state.send_failure(Err(AssetReaderError::Io(Arc::new(
                         std::io::Error::other(message),
                     ))));
@@ -461,8 +474,8 @@ impl IpfsIo {
         #[cfg(target_arch = "wasm32")]
         {
             let kept = match &cache_key {
-                Some(key @ CacheKey::Content(_)) => {
-                    web_cache::share(&remote, key.name(), &data, || verified).await
+                Some(CacheKey::Content(hash)) if verified => {
+                    web_cache::share(&remote, hash, &data).await
                 }
                 Some(CacheKey::Url(_)) if !no_cache => web_cache::keep(&remote, &data).await,
                 _ => Ok(()),
@@ -485,10 +498,8 @@ impl IpfsIo {
         }
 
         debug!("[{token:?}]: completed remote url: `{remote}`");
-        self.failed_remotes
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .forget(&remote);
+        self.far_lod_fetched(&remote, Ok(()));
+        self.failed_remotes.lock_ignore_poison().forget(&remote);
         ipfs_io_read_state.send_success(data.len());
         Ok(data)
     }
