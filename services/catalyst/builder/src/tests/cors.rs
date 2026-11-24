@@ -150,6 +150,28 @@ async fn a_listed_origin_reads_the_answers_and_any_other_origin_does_not_at_both
 }
 
 #[tokio::test]
+async fn the_public_file_route_and_info_answer_every_origin() {
+    let app = app(Some(ORIGINS)).await;
+    for mount in ["", "/builder-api"] {
+        for (method, path) in [
+            ("GET", format!("{mount}/v1/storage/contents/{HASH}")),
+            ("HEAD", format!("{mount}/v1/storage/contents/{HASH}")),
+            ("GET", format!("{mount}/v1/info")),
+        ] {
+            let (_, headers, _) = answer(&app, request(method, &path, Some(FOREIGN))).await;
+            assert_eq!(allowed(&headers), Some(FOREIGN), "{method} {path}");
+            assert!(headers.get("access-control-allow-credentials").is_none());
+            let (_, headers, _) = answer(
+                &app,
+                preflight(&path, FOREIGN, method, "x-identity-auth-chain-0"),
+            )
+            .await;
+            assert_eq!(allowed(&headers), Some(FOREIGN), "preflight {path}");
+        }
+    }
+}
+
+#[tokio::test]
 async fn a_preflight_is_answered_before_authentication_the_database_and_any_budget() {
     let app = app_with(
         crate::Settings::parse(raw(Some(ORIGINS), None)).unwrap(),
