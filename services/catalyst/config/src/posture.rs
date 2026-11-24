@@ -492,6 +492,11 @@ const ROWS: &[Row] = &[
     ),
     // `/convert` fetches a client-named URL only on a mirror.
     mirrored("upstreams", "MEDIA_CONVERT_REMOTE_SOURCES"),
+    upstream(
+        "upstreams",
+        "MEDIA_POSTER_CONVERTER_URL",
+        "https://metamorph-api.decentraland.org/convert",
+    ),
     // Only the scratch journey stack runs on the LiveKit dev pair, which
     // never calls a LiveKit API (`configured = false`); an island holds real
     // data and its own SFU, so it names its credentials as a mirror does.

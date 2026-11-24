@@ -8,7 +8,8 @@ The exact `/events/assets/event-default.webp` path serves Catalyst's bundled eve
 
 On mirrors with `PUBLIC_URL` and `MEDIA_CONVERT_REMOTE_SOURCES=true`, a
 no-width `GET` or `HEAD /metamorph-api/convert` for a public event poster checks
-`MEDIA_POSTER_CONVERTER_URL` (default `https://metamorph-api.decentraland.org/convert`).
+`MEDIA_POSTER_CONVERTER_URL`. The mirror posture sets this endpoint to
+`https://metamorph-api.decentraland.org/convert`. An empty setting disables delegation.
 The first request queues conversion on a miss. While the artifact is pending or
 unavailable, the node returns the poster with `Cache-Control: no-store`, rendering
 WebP and GIF as JPEG or transparent PNG. Once published, the same URL serves the

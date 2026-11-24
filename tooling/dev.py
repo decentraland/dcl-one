@@ -595,6 +595,7 @@ def runtime_env(config, refuse_exposed_relayer=True):
             'BVIMPOSTERS_UPSTREAM_URL': 'https://bevy-imposters.dclregenesislabs.xyz',
             # Mirrored place and event images come from the upstream peers' content URLs.
             'MEDIA_CONVERT_REMOTE_SOURCES': 'true',
+            'MEDIA_POSTER_CONVERTER_URL': 'https://metamorph-api.decentraland.org/convert',
             # Avatar faces of profiles this node holds no snapshot files of come from the upstream
             # service into the blob store: the only source until `make bevy-avatar-render` builds the
             # renderer (avatar_render_bin), the last resort once it has.

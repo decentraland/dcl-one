@@ -898,6 +898,8 @@ class DevTest(unittest.TestCase):
         offline = dev.runtime_env(self.config)
         self.assertEqual(offline['MARKETPLACE_MIRRORS_ENABLED'], 'false')
         self.assertEqual(env['MEDIA_CONVERT_REMOTE_SOURCES'], 'true')
+        self.assertEqual(env['MEDIA_POSTER_CONVERTER_URL'], 'https://metamorph-api.decentraland.org/convert')
+        self.assertNotIn('MEDIA_POSTER_CONVERTER_URL', dev.runtime_env(self.config))
         self.assertNotIn('MEDIA_CONVERT_REMOTE_SOURCES', dev.runtime_env(self.config))
         self.assertEqual(env['PROFILE_IMAGES_ORIGIN_URL'], 'https://profile-images.decentraland.org')
         self.assertNotIn('PROFILE_IMAGES_ORIGIN_URL', offline)
