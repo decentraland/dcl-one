@@ -1084,7 +1084,7 @@ fn the_endpoint_flag_routes_only_to_decentraland_hosts() {
             value: value.to_owned(),
         }),
     };
-    let base = |v: Option<FlagVariant>| flagged_base(v.as_ref(), DEFAULT).0;
+    let base = |v: Option<FlagVariant>| flagged_base(v.as_ref(), Some(DEFAULT)).0;
     let staging = Some(("string", "https://abgen-cdn.decentraland.zone/"));
 
     // unread, disabled or without an enabled variant: the default
@@ -1116,6 +1116,9 @@ fn the_endpoint_flag_routes_only_to_decentraland_hosts() {
         Some(("string", "https://decentraland.org.example")),
         Some(("string", "https://abgen-cdn.decentraland.org/?x=1")),
         Some(("string", "not a url")),
+        Some(("string", "https://abgen-cdn.decentraland.org:8443")),
+        Some(("string", "https://user@abgen-cdn.decentraland.org")),
+        Some(("string", "https://abgen-cdn.decentraland.org#x")),
     ] {
         assert_eq!(
             base(Some(variant("zone", true, payload))).as_deref(),
@@ -1152,19 +1155,53 @@ async fn a_new_base_applies_to_entities_asked_for_after_it() {
     std::fs::remove_dir_all(dir).unwrap();
 }
 
-/// A variant read goes to the base its entity's manifest came from, whatever the base is now,
-/// and stops once the variants are off.
+/// Once the base moves on, a manifest from an earlier base serves nothing: its files read their
+/// originals, and the earlier base is not asked again.
 #[tokio::test]
-async fn a_variant_is_read_from_its_manifests_base() {
+async fn a_manifest_from_an_earlier_base_serves_nothing() {
     let (io, dir) = io_with_cache("manifest-base");
     let (ktx2, cid) = bc7_variant();
     let variant_route = format!("/{}", served_path(&cid));
-    let (base, log) = serve(vec![(variant_route.clone(), ktx2.clone())]).await;
+    let (base, log) = serve(vec![(variant_route.clone(), ktx2)]).await;
     scene_with_variant(&io, &base, &cid).await;
     io.set_bevy_variants_base(Some("https://abgen-cdn.decentraland.zone"));
     let path = content_path("tex.png");
-    assert_eq!(read_all(&io, &path).await, ktx2);
-    assert_eq!(requests_for(&log, &variant_route), 1);
+    let ipfs_path = IpfsPath::new_from_path(&path).unwrap().unwrap();
+    assert!(io.read_bevy_variant(&ipfs_path, &path).await.is_none());
+    assert_eq!(requests_for(&log, &variant_route), 0);
+    std::fs::remove_dir_all(dir).unwrap();
+}
+
+/// A read waiting on a pending manifest when the variants are turned off reads the original.
+#[tokio::test]
+async fn variants_turned_off_during_a_manifest_wait_serve_nothing() {
+    let (io, dir) = io_with_cache("off-while-waiting");
+    let (ktx2, cid) = bc7_variant();
+    let variant_route = format!("/{}", served_path(&cid));
+    let (base, log) = serve(vec![(variant_route.clone(), ktx2)]).await;
+    scene_with_variant(&io, &base, &cid).await;
+    let loaded = io.bevy_variants.manifest(SCENE).unwrap().borrow().clone();
+    let (sender, receiver) = watch::channel(ManifestState::Pending);
+    io.bevy_variants
+        .manifests
+        .lock_ignore_poison()
+        .insert(SCENE.to_owned(), receiver);
+    io.bevy_variants
+        .requested_at
+        .lock_ignore_poison()
+        .insert(SCENE.to_owned(), web_time::Instant::now());
+    let path = content_path("tex.png");
+    let io2 = io.clone();
+    let path2 = path.clone();
+    let reading = tokio::spawn(async move {
+        let ipfs_path = IpfsPath::new_from_path(&path2).unwrap().unwrap();
+        io2.read_bevy_variant(&ipfs_path, &path2).await.is_none()
+    });
+    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    io.set_bevy_variants_base(None);
+    sender.send_replace(loaded);
+    assert!(reading.await.unwrap());
+    assert_eq!(requests_for(&log, &variant_route), 0);
     std::fs::remove_dir_all(dir).unwrap();
 }
 
@@ -1260,11 +1297,11 @@ fn the_flag_routes_the_variants_once_the_flags_settle() {
         let mut app = App::new();
         app.insert_resource(common::structs::AppConfig::default())
             .insert_resource(IpfsResource { inner: io.clone() })
-            .insert_resource(FlagDefaultBase(DEFAULT.to_owned()))
+            .insert_resource(FlagDefaultBase(Some(DEFAULT.to_owned())))
             .add_plugins(common::feature_flags::FeatureFlagsPlugin {
                 overrides: Some(ff.to_owned()),
             })
-            .add_systems(Update, route_by_endpoint_flag.run_if(routing_condition()));
+            .add_plugins(EndpointFlagRoutingPlugin);
         for _ in 0..3 {
             app.update();
         }
@@ -1315,9 +1352,9 @@ async fn a_flagged_base_outside_decentraland_is_never_requested() {
     let mut app = App::new();
     app.insert_resource(common::structs::AppConfig::default())
         .insert_resource(IpfsResource { inner: io.clone() })
-        .insert_resource(FlagDefaultBase(default.clone()))
+        .insert_resource(FlagDefaultBase(Some(default.clone())))
         .add_plugins(common::feature_flags::FeatureFlagsPlugin::default())
-        .add_systems(Update, route_by_endpoint_flag.run_if(routing_condition()));
+        .add_plugins(EndpointFlagRoutingPlugin);
     for _ in 0..500 {
         app.update();
         if !app.world().contains_resource::<FlagDefaultBase>() {
@@ -1331,7 +1368,7 @@ async fn a_flagged_base_outside_decentraland_is_never_requested() {
     assert!(snapshot_of(&io.bevy_variants)["baseSource"]
         .as_str()
         .unwrap()
-        .contains("`elsewhere` names no https Decentraland url"));
+        .contains("`elsewhere` names no https Decentraland base url"));
 
     io.request_bevy_variants(SCENE);
     let mut state = io.bevy_variants.manifest(SCENE).unwrap();

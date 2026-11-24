@@ -1,14 +1,13 @@
 //! Prototype: GPU-ready "Bevy variants" of the textures and models of scenes, wearables and
 //! emotes, published by abgen.
 //!
-//! The variants base is `--bevy-variants-url`, `?bevyVariants=` or the `bevy_variants_url` config
-//! field, else the asset-bundle generator's CDN for the base domain (`https://abgen-cdn.<base>`);
-//! `off` in any of them turns the client off. Without the launch option, the config field or an
-//! `abgen_cdn` service override, the feature flag [`ENDPOINT_FLAG`] routes the session once the
-//! flags are read ([`flagged_base`]); until then, and when they cannot be read, the CDN serves. A
-//! new base applies to the entities asked for after it: a manifest keeps the base it was fetched
-//! from, and the breakers start over. For each scene, wearable and emote entity it loads, the
-//! explorer fetches
+//! The variants base is `--bevy-variants-url` / `?bevyVariants=`, else an `abgen_cdn` service
+//! override; either pins it. Otherwise the feature flag [`ENDPOINT_FLAG`] routes the session once
+//! the flags are read ([`flagged_base`]), falling back to the `bevy_variants_url` config field,
+//! else to the asset-bundle generator's CDN for the base domain (`https://abgen-cdn.<base>`),
+//! which serve until the flags are read. `off` turns the client off. A new base applies to the
+//! entities asked for after it; a manifest from an earlier base serves nothing more, and the
+//! breakers start over. For each scene, wearable and emote entity it loads, the explorer fetches
 //! `{base}/bevy/manifest/{entityId}.json` once; it maps original content CIDs to the
 //! paths of their variants, `bevy/{prefix}/{name}`, whose prefix letter is the variant's class
 //! (`t` a BC KTX2 texture, `m` a `glb-br` model, `g` a GLB). A content file read whose
@@ -276,29 +275,40 @@ impl Variant {
 /// base (`explorer-bevy-variants-endpoint` in Unleash).
 pub(crate) const ENDPOINT_FLAG: &str = "bevy-variants-endpoint";
 
+/// Whether a flag may name `url` as the variants base: `https` on a Decentraland host (one of
+/// [`base_domain::DECENTRALAND_DOMAINS`] or under it), on the default port, with no userinfo,
+/// query or fragment.
+fn is_decentraland_base(url: &str) -> bool {
+    url::Url::parse(url).is_ok_and(|parsed| {
+        parsed.scheme() == "https"
+            && parsed.username().is_empty()
+            && parsed.password().is_none()
+            && parsed.port().is_none()
+            && parsed.query().is_none()
+            && parsed.fragment().is_none()
+            && base_domain::decentraland_domain(url).is_some()
+    })
+}
+
 /// The variants base [`ENDPOINT_FLAG`] chooses, None for off, and how it chose it. Its enabled
 /// variant decides: `off` turns the variants off, `on` keeps `default`, and any other carries the
-/// base as a `string` payload. Anything else keeps `default`: the flag disabled or unread, no
-/// enabled variant, or a payload that is not an `https` url on a Decentraland host, so a flag
-/// cannot send the variants' requests elsewhere.
+/// base as a `string` payload. Anything else keeps `default` (None: off): the flag disabled or
+/// unread, no enabled variant, or a payload [`is_decentraland_base`] refuses, so a flag cannot
+/// send the variants' requests elsewhere.
 pub(crate) fn flagged_base(
     variant: Option<&FlagVariant>,
-    default: &str,
+    default: Option<&str>,
 ) -> (Option<String>, String) {
+    let default = || default.map(str::to_owned);
     let Some(variant) = variant.filter(|variant| variant.enabled) else {
         return (
-            Some(default.to_owned()),
+            default(),
             "endpoint flag: no variant, the default".to_owned(),
         );
     };
     match variant.name.as_str() {
         "off" => return (None, "endpoint flag: `off`".to_owned()),
-        "on" => {
-            return (
-                Some(default.to_owned()),
-                "endpoint flag: `on`, the default".to_owned(),
-            )
-        }
+        "on" => return (default(), "endpoint flag: `on`, the default".to_owned()),
         _ => (),
     }
     let url = variant
@@ -307,22 +317,20 @@ pub(crate) fn flagged_base(
         .filter(|payload| payload.kind == "string")
         .map(|payload| payload.value.trim());
     match url {
-        Some(url) if base_domain::device_identifier_domain(url).is_some() && !url.contains('?') => {
-            (
-                Some(url.to_owned()),
-                format!("endpoint flag: `{}`", variant.name),
-            )
-        }
+        Some(url) if is_decentraland_base(url) => (
+            Some(url.to_owned()),
+            format!("endpoint flag: `{}`", variant.name),
+        ),
         _ => {
             warn!(
                 "bevy variants: the `{ENDPOINT_FLAG}` variant `{}` names no https Decentraland \
-                 url; keeping `{default}`",
+                 base url; keeping the default",
                 variant.name
             );
             (
-                Some(default.to_owned()),
+                default(),
                 format!(
-                    "endpoint flag: `{}` names no https Decentraland url, the default",
+                    "endpoint flag: `{}` names no https Decentraland base url, the default",
                     variant.name
                 ),
             )
@@ -356,7 +364,7 @@ struct ManifestJson {
 /// kept for the debug panel. It is fetched at the entity's own url, so it names no entity. Paths
 /// that are not `bevy/{prefix}/{name}` with plain segments (a path becomes part of a url) or
 /// whose prefix letter names no class are dropped, and so is an original left with none.
-pub fn parse_manifest(base: &str, bytes: &[u8]) -> Result<Manifest, String> {
+pub(crate) fn parse_manifest(base: &str, bytes: &[u8]) -> Result<Manifest, String> {
     let json: ManifestJson = serde_json::from_slice(bytes).map_err(|e| e.to_string())?;
     let files = json
         .files
@@ -584,8 +592,7 @@ impl BevyVariants {
 
     /// The scene whose far LOD `remote` is ([`IpfsIo::bevy_far_lod`]'s url, under any base of
     /// the session), if it is one, and whether it is under the current base.
-    fn far_lod_scene<'a>(&self, remote: &'a str) -> Option<(&'a str, bool)> {
-        let bases = self.base.lock_ignore_poison();
+    fn far_lod_scene<'a>(bases: &Bases, remote: &'a str) -> Option<(&'a str, bool)> {
         bases.used.iter().find_map(|base| {
             let scene = remote
                 .strip_prefix(base.as_str())?
@@ -616,15 +623,15 @@ impl BevyVariants {
         }
         // the serialised form, so a prefix match agrees with a re-serialised remote url
         let url = parsed.as_str().trim_end_matches('/');
-        {
-            let mut bases = self.base.lock_ignore_poison();
-            if bases.current.as_deref() == Some(url) {
-                return;
-            }
-            bases.current = Some(url.to_owned());
-            if !bases.used.iter().any(|used| used == url) {
-                bases.used.push(url.to_owned());
-            }
+        // the base lock is held while the breakers reset, and while a report is counted
+        // (`transport_failed`, `far_lod_fetched`), so a report is counted for the base it went to
+        let mut bases = self.base.lock_ignore_poison();
+        if bases.current.as_deref() == Some(url) {
+            return;
+        }
+        bases.current = Some(url.to_owned());
+        if !bases.used.iter().any(|used| used == url) {
+            bases.used.push(url.to_owned());
         }
         info!("bevy variants: on, from `{url}`");
         // what the breakers learnt was about another service
@@ -632,7 +639,6 @@ impl BevyVariants {
             let mut session = self.session.lock_ignore_poison();
             session.disabled = None;
             session.transport_failures = 0;
-            session.bad.clear();
         }
         self.far_lods.lock_ignore_poison().new_base();
     }
@@ -671,14 +677,16 @@ impl BevyVariants {
 
     /// A request to `base` was answered. Only the current base's requests count.
     fn transport_ok(&self, base: &str) {
-        if self.is_current(base) {
+        let bases = self.base.lock_ignore_poison();
+        if bases.current.as_deref() == Some(base) {
             self.session.lock_ignore_poison().transport_failures = 0;
         }
     }
 
     /// A request to `base` failed. Only the current base's requests count.
     fn transport_failed(&self, base: &str, reason: &str) {
-        if !self.is_current(base) {
+        let bases = self.base.lock_ignore_poison();
+        if bases.current.as_deref() != Some(base) {
             return;
         }
         let mut session = self.session.lock_ignore_poison();
@@ -890,10 +898,12 @@ impl IpfsIo {
         remote: &str,
         result: Result<(), Option<reqwest::StatusCode>>,
     ) {
-        let Some((scene, current)) = self.bevy_variants.far_lod_scene(remote) else {
-            return;
-        };
         let change = {
+            // held while counting, so the answer counts for the base it came from
+            let bases = self.bevy_variants.base.lock_ignore_poison();
+            let Some((scene, current)) = BevyVariants::far_lod_scene(&bases, remote) else {
+                return;
+            };
             let mut health = self.bevy_variants.far_lods.lock_ignore_poison();
             // only a url this client named is a far LOD: a scene can make up any other
             if !health.is_named(scene) {
@@ -938,14 +948,13 @@ impl IpfsIo {
 
     /// Whether `remote` is a far LOD url this client named ([`IpfsIo::bevy_far_lod`]).
     pub(crate) fn is_named_far_lod(&self, remote: &str) -> bool {
-        self.bevy_variants
-            .far_lod_scene(remote)
-            .is_some_and(|(scene, _)| {
-                self.bevy_variants
-                    .far_lods
-                    .lock_ignore_poison()
-                    .is_named(scene)
-            })
+        let bases = self.bevy_variants.base.lock_ignore_poison();
+        BevyVariants::far_lod_scene(&bases, remote).is_some_and(|(scene, _)| {
+            self.bevy_variants
+                .far_lods
+                .lock_ignore_poison()
+                .is_named(scene)
+        })
     }
 
     /// Whether no far LOD can be offered this session: no variants base, variants turned off,
@@ -992,6 +1001,9 @@ impl IpfsIo {
         if let Some(reason) = self.bevy_variants.disabled() {
             return ManifestState::Failed(format!("variants off: {reason}"));
         }
+        if !self.bevy_variants.is_current(base) {
+            return ManifestState::Failed("the variants base changed".to_owned());
+        }
         let url = format!("{base}/bevy/manifest/{entity}.json");
         let request = match self.client.get(&url).build() {
             Ok(request) => request,
@@ -1035,7 +1047,6 @@ impl IpfsIo {
         path: &Path,
     ) -> Option<VariantRead> {
         let variants = &self.bevy_variants;
-        // variants turned off stop every read, whichever base a manifest came from
         variants.base()?;
         let (scene, file) = (ipfs_path.scene_hash()?, ipfs_path.content_path()?);
         if !could_have_variant(file) {
@@ -1080,6 +1091,11 @@ impl IpfsIo {
         let ManifestState::Loaded(manifest) = state else {
             return None;
         };
+        // a manifest from an earlier base, or variants turned off while it was awaited: the
+        // original, so an earlier base is never asked again once the base has moved on
+        if !variants.is_current(&manifest.base) {
+            return None;
+        }
         let original = self
             .context
             .read()
@@ -1219,10 +1235,10 @@ impl IpfsIo {
     }
 }
 
-/// The base [`ENDPOINT_FLAG`] falls back to. Inserted when no launch option, config field or
-/// service override sets the base, and removed once the flag has routed the variants.
+/// The base [`ENDPOINT_FLAG`] falls back to, None for off. Inserted when no launch option sets
+/// the base, and removed once the flag has routed the variants.
 #[derive(Resource)]
-pub struct FlagDefaultBase(pub String);
+pub struct FlagDefaultBase(pub Option<String>);
 
 /// Once the flags are read, points the variants where [`ENDPOINT_FLAG`] says.
 fn route_by_endpoint_flag(
@@ -1235,16 +1251,25 @@ fn route_by_endpoint_flag(
         return;
     }
     commands.remove_resource::<FlagDefaultBase>();
-    let (base, source) = flagged_base(flags.variant(ENDPOINT_FLAG).as_ref(), &default.0);
+    let (base, source) = flagged_base(flags.variant(ENDPOINT_FLAG).as_ref(), default.0.as_deref());
     ipfs.set_bevy_variants_base(base.as_deref());
     ipfs.set_bevy_variants_source(&source);
 }
 
-/// [`route_by_endpoint_flag`] runs while the flag may route and the flags have changed.
-fn routing_condition() -> impl Condition<()> {
-    resource_exists::<FlagDefaultBase>
-        .and(resource_exists::<IpfsResource>)
-        .and(resource_exists_and_changed::<FeatureFlags>)
+/// Routes the variants by [`ENDPOINT_FLAG`] once, while [`FlagDefaultBase`] says it may.
+pub(crate) struct EndpointFlagRoutingPlugin;
+
+impl Plugin for EndpointFlagRoutingPlugin {
+    fn build(&self, app: &mut App) {
+        app.add_systems(
+            Update,
+            route_by_endpoint_flag.run_if(
+                resource_exists::<FlagDefaultBase>
+                    .and(resource_exists::<IpfsResource>)
+                    .and(resource_exists_and_changed::<FeatureFlags>),
+            ),
+        );
+    }
 }
 
 pub(crate) struct BevyVariantsPlugin;
@@ -1252,7 +1277,7 @@ pub(crate) struct BevyVariantsPlugin;
 impl Plugin for BevyVariantsPlugin {
     fn build(&self, app: &mut App) {
         app.add_systems(Update, detect_gpu_formats);
-        app.add_systems(Update, route_by_endpoint_flag.run_if(routing_condition()));
+        app.add_plugins(EndpointFlagRoutingPlugin);
         app.add_plugins(debug_panel::BevyVariantsDebugPanelPlugin);
     }
 

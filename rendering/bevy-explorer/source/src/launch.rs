@@ -128,7 +128,10 @@ pub fn apply_client(
         ipfs.set_bevy_variants_source(routing.source);
     }
     if routing.flag_may_route {
-        app.insert_resource(ipfs::bevy_variants::FlagDefaultBase(routing.base));
+        let off = routing.base.trim().eq_ignore_ascii_case("off");
+        app.insert_resource(ipfs::bevy_variants::FlagDefaultBase(
+            (!off).then_some(routing.base),
+        ));
     }
 
     let gpu_bytes_per_frame = gpu_bytes_per_frame.unwrap_or(config.graphics.gpu_bytes_per_frame);
@@ -150,9 +153,9 @@ struct BevyVariantsRouting {
     flag_may_route: bool,
 }
 
-/// The launch option, else the config field, else the `abgen_cdn` service: an override of it
-/// is pinned like the other two, and its composition for the base domain is the default the
-/// endpoint flag may replace.
+/// Launch options first: `bevy_variants`, then an `abgen_cdn` service override; both pin the
+/// base. Otherwise the endpoint flag decides once the flags are read, falling back to the
+/// config field, else to the `abgen_cdn` service composed for the base domain.
 fn bevy_variants_routing(
     launch_option: Option<&str>,
     config: Option<&str>,
@@ -166,10 +169,14 @@ fn bevy_variants_routing(
     };
     if let Some(base) = launch_option {
         pinned(base, "launch option")
-    } else if let Some(base) = config {
-        pinned(base, "config")
     } else if let Some(base) = abgen_cdn_override {
         pinned(base, "`abgen_cdn` service override")
+    } else if let Some(base) = config {
+        BevyVariantsRouting {
+            base: base.to_owned(),
+            source: "config, until the endpoint flag is read",
+            flag_may_route: true,
+        }
     } else {
         BevyVariantsRouting {
             base: abgen_cdn,
@@ -194,13 +201,7 @@ mod tests {
     }
 
     #[test]
-    fn only_an_unpinned_bevy_variants_base_is_left_to_the_flag() {
-        let unpinned = routing(None, None, None);
-        assert_eq!(
-            (unpinned.base.as_str(), unpinned.flag_may_route),
-            (CDN, true)
-        );
-
+    fn launch_options_pin_the_bevy_variants_base_and_the_flag_outranks_the_config() {
         let option = routing(
             Some("https://a.example"),
             Some("off"),
@@ -210,15 +211,18 @@ mod tests {
             (option.base.as_str(), option.source, option.flag_may_route),
             ("https://a.example", "launch option", false)
         );
-        let config = routing(None, Some("off"), Some("https://c.example"));
-        assert_eq!(
-            (config.base.as_str(), config.source, config.flag_may_route),
-            ("off", "config", false)
-        );
-        let overridden = routing(None, None, Some("https://c.example"));
+        let overridden = routing(None, Some("off"), Some("https://c.example"));
         assert_eq!(
             (overridden.base.as_str(), overridden.flag_may_route),
             ("https://c.example", false)
+        );
+        // the config field is only the flag's fallback
+        let config = routing(None, Some("off"), None);
+        assert_eq!((config.base.as_str(), config.flag_may_route), ("off", true));
+        let unpinned = routing(None, None, None);
+        assert_eq!(
+            (unpinned.base.as_str(), unpinned.flag_may_route),
+            (CDN, true)
         );
     }
 }
