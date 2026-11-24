@@ -213,6 +213,10 @@ async fn cached_png_render<F>(
 where
     F: FnOnce(&Grid) -> Result<Vec<u8>, Box<Response>> + Send + 'static,
 {
+    // Without a grid, the envelope as it is: never a 304 for a stamp no grid carries.
+    if !state.map.is_ready() {
+        return state.map.unavailable();
+    }
     let last = state.map.last_updated_at();
     let etag = http_cache::etag_for(last, &key);
     if let Some(r) = http_cache::not_modified_etag(headers, last, &etag, max_age, swr) {

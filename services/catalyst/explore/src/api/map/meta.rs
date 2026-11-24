@@ -307,12 +307,13 @@ fn validated(headers: &HeaderMap, last: i64, resp: impl FnOnce() -> Response) ->
     }
 }
 
+/// A grid answer, or, without a grid, the unavailable envelope as it is:
+/// never a 304 or a cache policy, which would keep it past the first grid.
 fn with_grid(state: &Shared, headers: &HeaderMap, f: impl FnOnce(&Grid) -> Response) -> Response {
-    let last = state.map.last_updated_at();
-    validated(headers, last, || match state.map.snapshot() {
-        Some(grid) => f(&grid),
-        None => state.map.unavailable(),
-    })
+    let Some(grid) = state.map.snapshot() else {
+        return state.map.unavailable();
+    };
+    validated(headers, grid.last_updated_at, || f(&grid))
 }
 
 /// An estate id as the grid and the LAND index both spell it: the decimal
@@ -382,10 +383,10 @@ pub async fn get_estate(
     headers: HeaderMap,
     Path(id): Path<String>,
 ) -> Response {
-    let last = state.map.last_updated_at();
     let Some(grid) = state.map.snapshot() else {
-        return validated(&headers, last, || state.map.unavailable());
+        return state.map.unavailable();
     };
+    let last = grid.last_updated_at;
     let Some(id) = canonical_estate_id(&id) else {
         return validated(&headers, last, || {
             (StatusCode::FORBIDDEN, "Invalid id").into_response()
@@ -401,10 +402,10 @@ pub async fn get_token(
     headers: HeaderMap,
     Path((address, id)): Path<(String, String)>,
 ) -> Response {
-    let last = state.map.last_updated_at();
     let Some(grid) = state.map.snapshot() else {
-        return validated(&headers, last, || state.map.unavailable());
+        return state.map.unavailable();
     };
+    let last = grid.last_updated_at;
     let addr = address.to_lowercase();
     if addr == state.settings.estate_contract_address
         && let Some(id) = canonical_estate_id(&id)

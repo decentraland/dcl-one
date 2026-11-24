@@ -360,14 +360,17 @@ async fn serve_tiles(
     legacy: bool,
 ) -> Response {
     // One grid for the key, the stamp and the body, so a concurrent swap
-    // cannot key one grid's body under the other's tag.
-    let grid = state.map.snapshot();
-    let last = grid.as_ref().map_or(0, |g| g.last_updated_at);
+    // cannot key one grid's body under the other's tag. Without a grid, the
+    // envelope as it is: never a 304 for a stamp no grid carries.
+    let Some(grid) = state.map.snapshot() else {
+        return state.map.unavailable();
+    };
+    let last = grid.last_updated_at;
     let key = canonical_key(
         if legacy { "v1" } else { "v2" },
         q,
-        grid.as_ref().and_then(|g| g.bounds),
-        grid.as_ref().map_or(0, |g| g.content_tag),
+        grid.bounds,
+        grid.content_tag,
     );
     if let Some(r) = http_cache::not_modified_etag(
         headers,
@@ -378,9 +381,6 @@ async fn serve_tiles(
     ) {
         return r;
     }
-    let Some(grid) = grid else {
-        return state.map.unavailable();
-    };
     if let Some(body) = state.map.cached_tiles(&key) {
         return cached_json(body, last, &key);
     }

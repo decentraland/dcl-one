@@ -2918,8 +2918,10 @@ gone.
   LAND snapshot read takes 0.47 s, the estates 16 ms, the orders 10 ms, the
   names 34 ms and the trades 16 ms. Composing the grid takes 0.14 s,
   serializing it 0.19 s (a 36.5 MB body) and gzip 0.04 s (4.4 MB stored).
-- **Deploy:** no schema step. The first pass after the upgrade replaces the
-  row the mirror left, whose body differs. Until the sources publish, the
+- **Deploy:** no schema step. An environment that still sets
+  `EXPLORER_MAP_SOURCE_URL` or `EXPLORER_MAP_MIN_REFRESH_SECS` starts: the
+  binary and the posture checks read neither. The first pass after the
+  upgrade replaces the row the mirror left, whose body differs. Until the sources publish, the
   mirror's last copy keeps serving. A node without the land-authz index,
   the nft index (`MARKETPLACE_NFT_INDEX_ENABLED`, mainnet only) or a trades
   source never builds a grid, and its map routes answer the envelope.

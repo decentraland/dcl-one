@@ -1956,6 +1956,56 @@ async fn stored_grid(pool: &PgPool) -> Option<(i64, i32, chrono::NaiveDateTime)>
     .unwrap()
 }
 
+/// No grid is held or stored, and every map route answers the unavailable
+/// envelope naming `source`: never an empty or partial map.
+async fn assert_no_map(app: &Router, pool: &PgPool, source: &str, configure: &str) {
+    for path in [
+        "/api/v2/tiles",
+        "/api/v2/tiles?x1=10&x2=11&y1=13&y2=14",
+        "/api/v1/tiles",
+        "/api/v2/tiles/info",
+        "/api/v2/parcels/10/14",
+        "/api/v2/estates/7",
+        "/api/ready",
+        "/api/v1/map.png?width=64&height=64&center=0,0&size=5",
+        "/api/v1/minimap.png",
+    ] {
+        let (status, headers, body) = call(app, "GET", path, None).await;
+        assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE, "{path}");
+        assert_eq!(headers["retry-after"], "60", "{path}");
+        assert_eq!(headers["cache-control"], "no-store", "{path}");
+        let body: Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(body["error"], "Service Unavailable", "{path}: {body}");
+        assert_eq!(body["source"], source, "{path}: {body}");
+        assert_eq!(body["configure"], configure, "{path}: {body}");
+    }
+    // A conditional request gets the envelope too, never a 304.
+    for path in [
+        "/api/v2/tiles",
+        "/api/v2/parcels/10/14",
+        "/api/v1/minimap.png",
+    ] {
+        let resp = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri(path)
+                    .header("if-none-match", "*")
+                    .header("if-modified-since", "Thu, 01 Jan 2099 00:00:00 GMT")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::SERVICE_UNAVAILABLE, "{path}");
+    }
+    assert_eq!(
+        stored_grid(pool).await,
+        None,
+        "nothing stored while {source} waits"
+    );
+}
+
 #[tokio::test]
 async fn map_grid_is_built_from_the_land_index_and_shop_and_waits_for_unpublished_sources() {
     let Some(db) = scratch_database().await else {
@@ -1964,28 +2014,15 @@ async fn map_grid_is_built_from_the_land_index_and_shop_and_waits_for_unpublishe
     let node = node_with_db(Settings::for_tests(Sources::defaults()), db.pool.clone()).await;
     let app = router(node.state.clone());
     let (jobs, ctx) = job_ctx().await;
-    let unavailable = |body: &Value, source: &str, configure: &str| {
-        assert_eq!(body["error"], "Service Unavailable", "{body}");
-        assert_eq!(body["source"], source, "{body}");
-        assert_eq!(body["configure"], configure, "{body}");
-    };
 
     // No grid yet: every map route answers the envelope, never an empty map.
-    for path in [
-        "/api/v2/tiles",
-        "/api/v1/tiles",
-        "/api/v2/tiles/info",
-        "/api/v2/parcels/10/14",
-        "/api/v2/estates/7",
-        "/api/ready",
-        "/api/v1/map.png?width=64&height=64&center=0,0&size=5",
-    ] {
-        let (status, headers, body) = call(&app, "GET", path, None).await;
-        assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE, "{path}");
-        assert_eq!(headers["retry-after"], "60", "{path}");
-        let body: Value = serde_json::from_slice(&body).unwrap();
-        unavailable(&body, "land-authz-index", "LAND_AUTHZ_INDEX_ENABLED");
-    }
+    assert_no_map(
+        &app,
+        &db.pool,
+        "land-authz-index",
+        "LAND_AUTHZ_INDEX_ENABLED",
+    )
+    .await;
 
     // Nothing attached, then an index that has not published: no grid.
     assert!(map::run_pass(&node.state, &ctx).await.is_err());
@@ -2007,16 +2044,26 @@ async fn map_grid_is_built_from_the_land_index_and_shop_and_waits_for_unpublishe
         err.to_string().contains("land-authz-index not ready"),
         "{err}"
     );
+    assert_no_map(
+        &app,
+        &db.pool,
+        "land-authz-index",
+        "LAND_AUTHZ_INDEX_ENABLED",
+    )
+    .await;
 
-    // The LAND index published, Shop's nft index not yet: still no grid,
-    // and the envelope names what the pass waits for.
+    // The LAND index published, Shop's order or trade tables not yet: still
+    // no grid (not one without prices), and the envelope names what the pass
+    // waits for.
     publish_land(&db.pool, &settings).await;
+    *market.0.lock() = Err(crate::chain_index::source::Source::TradesMirror);
+    let err = map::run_pass(&node.state, &ctx).await.unwrap_err();
+    assert!(err.to_string().contains("trades-mirror not ready"), "{err}");
+    assert_no_map(&app, &db.pool, "trades-mirror", "TRADES_SYNC_UPSTREAM_URL").await;
+    *market.0.lock() = Err(crate::chain_index::source::Source::NftIndex);
     let err = map::run_pass(&node.state, &ctx).await.unwrap_err();
     assert!(err.to_string().contains("nft-index not ready"), "{err}");
-    let (status, body) = call_json(&app, "GET", "/api/v2/tiles", None).await;
-    assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE);
-    unavailable(&body, "nft-index", "MARKETPLACE_NFT_INDEX_ENABLED");
-    assert_eq!(stored_grid(&db.pool).await, None);
+    assert_no_map(&app, &db.pool, "nft-index", "MARKETPLACE_NFT_INDEX_ENABLED").await;
     let (_, report) = call_json(&app, "GET", "/mirrors", None).await;
     let row = report["mirrors"]
         .as_array()
