@@ -61,13 +61,14 @@ CI* run, whose artifacts hold the builds ([The workflow](#the-workflow)).
   failed: that night is not measured and nothing reports it. A manual run of main takes `pr`
   empty; a `pr` of spaces is refused.
 - **A run of main that cannot measure fails** with setup's notes as the error (no release rollout,
-  an expired release build, no runner, no laptop, an unoptimized build), so a nightly never stays
-  green without measuring. Main unchanged since the release skips and passes, as does main whose
-  newest passed web build predates the release's CI run (a release whose run failed a guard). A report in which
-  nothing was compared (no base leg produced data), or one without a known **Overall** line, fails
-  the regression job too. The one quiet
-  case is the [queue watchdog](#the-fleet): a laptop that never starts its leg leaves the run
-  *cancelled*, which GitHub does not notify; the watchdog's job summary names the laptop.
+  an expired release build, no runner, no enabled laptop, an unoptimized build), so a nightly
+  never stays green without measuring. It skips and passes when main is unchanged since the
+  release, when main's newest passed web build predates the release's CI run (a release whose run
+  failed a guard), or when `BENCHMARK_ENABLED_RUNNERS` is `none`. A report in which nothing was
+  compared (no base leg produced data), or one without a known **Overall** line, fails the
+  regression job too. The one quiet case is the [queue watchdog](#the-fleet): a laptop that never
+  starts its leg leaves the run *cancelled*, which GitHub does not notify; the watchdog's job
+  summary names the laptop.
 - **One run per pull request.** The next run for the same pull request cancels one in progress:
   any passed CI run of it that a `pull_request` event started (a re-run of an older commit's
   included, which then skips), or a manual run naming it by number (one naming it by URL is a

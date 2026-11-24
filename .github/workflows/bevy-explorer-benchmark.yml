@@ -47,7 +47,7 @@ permissions: {}
 # the PR still joins: it cancels a run in progress, then the resolver skips it. A PR given by URL
 # to a manual run forms a group of its own. Runs of main, nightly or manual without a PR, share
 # one group and queue rather than cancel, so they never share the laptops; GitHub keeps only the
-# newest waiting one.
+# newest waiting one. A PR's key carries a `pr-` prefix so no pr input can name main's group.
 concurrency:
   group: >-
     bevy-explorer-benchmark-${{
@@ -56,8 +56,10 @@ concurrency:
       (github.event_name == 'workflow_run' && github.event.workflow_run.event == 'pull_request' &&
        github.event.workflow_run.conclusion == 'success' &&
        github.event.workflow_run.head_repository.full_name == github.repository &&
-       github.event.workflow_run.pull_requests[0].number) ||
-      (github.event_name == 'workflow_dispatch' && github.event.inputs.pr) ||
+       github.event.workflow_run.pull_requests[0].number &&
+       format('pr-{0}', github.event.workflow_run.pull_requests[0].number)) ||
+      (github.event_name == 'workflow_dispatch' && github.event.inputs.pr &&
+       format('pr-{0}', github.event.inputs.pr)) ||
       format('run-{0}', github.run_id) }}
   cancel-in-progress: >-
     ${{ !(github.event_name == 'schedule' ||
@@ -415,8 +417,11 @@ jobs:
           name: benchmark-report
           path: report
       # An issue body holds 65536 characters; a longer report stays in the run's artifact.
+      # `shell: bash` adds pipefail: a failed issue search must not read as "no issue" and open a
+      # second one.
       - name: Open or update the regression issue
         if: needs.gather.outputs.status != '2'
+        shell: bash
         env:
           CHANGE_DESCRIPTION: ${{ needs.setup.outputs.change_description }}
           BASE_DESCRIPTION: ${{ needs.setup.outputs.base_description }}

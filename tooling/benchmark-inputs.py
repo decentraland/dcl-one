@@ -277,6 +277,9 @@ def resolve_main(inputs, repo, enabled, runs):
     """Main's newest web build, or a given commit's, against the latest release or a given base."""
     change_sha, base_sha = commits(inputs)
     runs = run_count(inputs, runs)
+    # The fleet switched off on purpose is not a failure of main's nightly.
+    if (enabled or '').strip() == 'none':
+        return skip('BENCHMARK_ENABLED_RUNNERS is none: the fleet is off')
     result = outcome('', change_sha, runs, 'main')
     if change_sha:
         candidates = api(f'repos/{repo}/{RUNS_PATH}?head_sha={change_sha}&status=success&per_page=100')['workflow_runs']

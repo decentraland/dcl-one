@@ -332,6 +332,12 @@ class MainTest(Fixture):
         self.github.statuses[2] = ['inactive', 'in_progress']
         self.assertEqual(self.resolve('schedule', {})['base_sha'], MAIN[1])
 
+    def test_the_fleet_switched_off_skips_while_no_enabled_laptop_fails(self):
+        result = self.resolve('schedule', {}, enabled='none')
+        self.assert_skipped(result)
+        self.assertIn('fleet is off', result['reason'])
+        self.assertEqual(self.resolve('schedule', {}, enabled='nothing-online')['notes'], inputs.NO_LAPTOP)
+
     def test_main_older_than_a_release_whose_guard_failed_is_not_measured_backwards(self):
         # The release is CI run 89, which failed a guard; main's newest passed web build is run 88.
         self.github.deployments = [rollout(2, inputs.RELEASE_PACKAGE, '0.1.0-89.commit-ddddddd')]
@@ -499,7 +505,7 @@ class QueueWatchdogTest(unittest.TestCase):
 class RegressionIssueTest(unittest.TestCase):
     """The regression job's step, run with a gh that records its calls and lists the given issues."""
 
-    def step(self, report, issues=()):
+    def step(self, report, issues=(), fail_list=False):
         source = (Path(__file__).parents[2] / '.github/workflows/bevy-explorer-benchmark.yml').read_text()
         step = source.split('      - name: Open or update the regression issue\n', 1)[1]
         body = step.split('        run: |\n', 1)[1].split('      - name:', 1)[0]
@@ -516,6 +522,8 @@ class RegressionIssueTest(unittest.TestCase):
                 with open(folder / 'calls', 'a') as calls:
                     calls.write(json.dumps(sys.argv[1:]) + '\\n')
                 if sys.argv[1:3] == ['issue', 'list']:
+                    if os.environ.get('FAIL_LIST'):
+                        sys.exit(1)
                     print((folder / 'issues.json').read_text())
                 elif sys.argv[1:3] == ['issue', 'create']:
                     print('https://example.test/issues/9')
@@ -523,8 +531,10 @@ class RegressionIssueTest(unittest.TestCase):
             gh.chmod(0o755)
             environment = dict(os.environ, PATH=f'{folder}{os.pathsep}{os.environ["PATH"]}', FIXTURE=str(folder),
                                TITLE='Main issue', CHANGE_DESCRIPTION='main at c', BASE_DESCRIPTION='release at e',
-                               RUN_URL='https://example.test/run', GITHUB_STEP_SUMMARY=str(folder / 'summary'))
-            result = subprocess.run(['bash', '-euo', 'pipefail', '-c', textwrap.dedent(body)], cwd=folder,
+                               RUN_URL='https://example.test/run', GITHUB_STEP_SUMMARY=str(folder / 'summary'),
+                               FAIL_LIST='1' if fail_list else '')
+            # As GitHub runs a step with `shell: bash`.
+            result = subprocess.run(['bash', '--noprofile', '--norc', '-eo', 'pipefail', '-c', textwrap.dedent(body)], cwd=folder,
                                     env=environment, capture_output=True, text=True, timeout=10)
             calls = [json.loads(line) for line in (folder / 'calls').read_text().splitlines()] \
                 if (folder / 'calls').exists() else []
@@ -562,6 +572,11 @@ class RegressionIssueTest(unittest.TestCase):
         result, calls, _ = self.step(report, [{'number': 3, 'title': 'Main issue'}])
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual([call[:3] for call in calls[1:]], [['issue', 'edit', '3'], ['issue', 'comment', '3']])
+
+    def test_a_failed_issue_search_opens_no_second_issue(self):
+        result, calls, _ = self.step('**Overall: 🔴 CPU average regressed on A**\n', fail_list=True)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertEqual([call[:2] for call in calls], [['issue', 'list']])
 
     def test_a_report_too_long_for_an_issue_points_to_the_artifact(self):
         _, _, written = self.step('**Overall: 🔴 CPU average regressed on A**\n' + 'x' * 60001)
