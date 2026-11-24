@@ -116,7 +116,8 @@ use dcl_component::proto_components::{
 #[cfg(feature = "explorer")]
 use dcl_component::{
     proto_components::sdk::components::{
-        PbAssetLoadLoadingState, PbAvatarBase, PbAvatarEquippedData, PbGltfContainerLoadingState,
+        pb_avatar_equipped_data::EquippedWearable, PbAssetLoadLoadingState, PbAvatarBase,
+        PbAvatarEquippedData, PbGltfContainerLoadingState,
     },
     SceneComponentId, SceneEntityId,
 };
@@ -385,6 +386,15 @@ pub fn update_avatar_info(
                             .find(|emote| emote.slot == ix)
                             .map(|emote| emote.urn.clone())
                             .unwrap_or_default()
+                    })
+                    .collect(),
+                // `visible` stays unset: what the outfit hides is known only once it has loaded
+                wearables: avatar
+                    .wearables
+                    .iter()
+                    .map(|urn| EquippedWearable {
+                        urn: urn.clone(),
+                        visible: None,
                     })
                     .collect(),
                 force_render: avatar.force_render.clone().unwrap_or_default(),

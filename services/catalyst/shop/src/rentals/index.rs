@@ -42,6 +42,57 @@ pub const INDEXER_RENTALS: &str = "rentals";
 pub const RENTALS_MAINNET: &str = "0x3a1469499d0be105d4f77045ca403a5f6dc2f3f5";
 pub const RENTALS_MAINNET_START_BLOCK: u64 = 16_070_889;
 
+const RENTALS_SEPOLIA: &str = "0xe70db6319e9cee3f604909bdade58d1f5c1cf702";
+const RENTALS_SEPOLIA_START_BLOCK: u64 = 3_831_254;
+pub(crate) const INDEXER_RENTALS_SEPOLIA: &str = "rentals_sepolia";
+
+#[derive(Clone, Copy)]
+pub(super) enum RentalsChain {
+    Mainnet,
+    Sepolia,
+}
+
+impl RentalsChain {
+    pub(super) fn id(self) -> i64 {
+        match self {
+            Self::Mainnet => 1,
+            Self::Sepolia => 11_155_111,
+        }
+    }
+
+    pub(super) fn indexer(self) -> &'static str {
+        match self {
+            Self::Mainnet => INDEXER_RENTALS,
+            Self::Sepolia => INDEXER_RENTALS_SEPOLIA,
+        }
+    }
+
+    pub(super) fn event_network(self) -> &'static str {
+        match self {
+            Self::Mainnet => "ethereum",
+            Self::Sepolia => "sepolia",
+        }
+    }
+
+    pub(super) fn venue(self) -> &'static str {
+        match self {
+            Self::Mainnet => RENTALS_MAINNET,
+            Self::Sepolia => RENTALS_SEPOLIA,
+        }
+    }
+
+    pub(super) fn registries(self) -> [&'static str; 2] {
+        use crate::land_authz::{
+            ESTATE_REGISTRY_MAINNET, ESTATE_REGISTRY_SEPOLIA, LAND_REGISTRY_MAINNET,
+            LAND_REGISTRY_SEPOLIA,
+        };
+        match self {
+            Self::Mainnet => [LAND_REGISTRY_MAINNET, ESTATE_REGISTRY_MAINNET],
+            Self::Sepolia => [LAND_REGISTRY_SEPOLIA, ESTATE_REGISTRY_SEPOLIA],
+        }
+    }
+}
+
 /// `AssetRented(address indexed _contractAddress, uint256 indexed _tokenId, address _lessor, address _tenant, address _operator, uint256 _rentalDays, uint256 _pricePerDay, bool _isExtension, address _sender, bytes _signature)`.
 pub const TOPIC_ASSET_RENTED: &str =
     "0xfe3b2e4cd1e8ad8d90abfd715fe3d39a303e0a6e9adde116d5d10bebfa678d80";
@@ -246,9 +297,9 @@ pub fn decode_log(log: &RpcLog, block_time: i64) -> Result<Option<RentalEvent>, 
 }
 
 /// Appends a window's rows (`ON CONFLICT (network, block_number, log_index) DO NOTHING`).
-pub async fn insert_events(
+pub(super) async fn insert_events(
     conn: &mut PgConnection,
-    net: ChainNet,
+    chain: RentalsChain,
     rows: &[RentalEvent],
 ) -> Result<usize, sqlx::Error> {
     let mut written = 0;
@@ -263,7 +314,7 @@ pub async fn insert_events(
                   AS u(b, i, t, ra, k, c, tok, s, te, o, d, p, x, se, sg, n, h) \
              ON CONFLICT (network, block_number, log_index) DO NOTHING",
         )
-        .bind(net.db_name())
+        .bind(chain.event_network())
         .bind(chunk.iter().map(|r| r.block_number).collect::<Vec<_>>())
         .bind(chunk.iter().map(|r| r.log_index).collect::<Vec<_>>())
         .bind(chunk.iter().map(|r| r.block_time).collect::<Vec<_>>())
@@ -560,18 +611,24 @@ pub async fn fold_listing(
     Ok(written)
 }
 
-/// The walk of one Rentals deployment on Ethereum (the mainnet proxy, or a
-/// test deployment: the address and the block it was deployed in).
+/// The walk of one Ethereum Rentals deployment. Mainnet also folds listing
+/// statuses. Sepolia publishes the wallet rental history for that chain.
 pub struct RentalsIndex {
     pub venue: String,
     pub start: u64,
+    chain: RentalsChain,
 }
 
 impl RentalsIndex {
     pub fn mainnet() -> Self {
+        Self::at(RENTALS_MAINNET, RENTALS_MAINNET_START_BLOCK)
+    }
+
+    pub fn sepolia() -> Self {
         Self {
-            venue: RENTALS_MAINNET.to_string(),
-            start: RENTALS_MAINNET_START_BLOCK,
+            venue: RENTALS_SEPOLIA.to_string(),
+            start: RENTALS_SEPOLIA_START_BLOCK,
+            chain: RentalsChain::Sepolia,
         }
     }
 
@@ -579,6 +636,7 @@ impl RentalsIndex {
         Self {
             venue: venue.to_ascii_lowercase(),
             start,
+            chain: RentalsChain::Mainnet,
         }
     }
 }
@@ -586,11 +644,15 @@ impl RentalsIndex {
 #[async_trait::async_trait]
 impl ChainIndex for RentalsIndex {
     fn indexer(&self) -> &'static str {
-        INDEXER_RENTALS
+        self.chain.indexer()
     }
 
     fn net(&self) -> ChainNet {
         ChainNet::Ethereum
+    }
+
+    fn chain_id(&self) -> i64 {
+        self.chain.id()
     }
 
     fn start_block(&self) -> u64 {
@@ -623,13 +685,14 @@ impl ChainIndex for RentalsIndex {
                 rows.push(row);
             }
         }
-        Ok(insert_events(conn, ChainNet::Ethereum, &rows).await?)
+        Ok(insert_events(conn, self.chain, &rows).await?)
     }
 
     async fn rewind(&self, conn: &mut PgConnection, to: i64) -> anyhow::Result<()> {
         // The cursor's cleared fold marker makes the next fold a rebuild,
         // which revisits every listing of the venue from the remaining log.
-        sqlx::query("DELETE FROM shop.rental_event WHERE network = 'ethereum' AND rentals_address = $1 AND block_number > $2")
+        sqlx::query("DELETE FROM shop.rental_event WHERE network = $1 AND rentals_address = $2 AND block_number > $3")
+            .bind(self.chain.event_network())
             .bind(&self.venue)
             .bind(to)
             .execute(&mut *conn)
@@ -644,8 +707,10 @@ impl ChainIndex for RentalsIndex {
         _upto: i64,
         owner: &chain_walk::Owner,
     ) -> anyhow::Result<bool> {
-        let written = fold(pool, &self.venue, since, Utc::now(), owner).await?;
-        tracing::info!(venue = %self.venue, listings = written, "rentals index: folded");
+        if matches!(self.chain, RentalsChain::Mainnet) {
+            let written = fold(pool, &self.venue, since, Utc::now(), owner).await?;
+            tracing::info!(venue = %self.venue, listings = written, "rentals index: folded");
+        }
         Ok(true)
     }
 }
@@ -722,15 +787,29 @@ pub async fn ready(pool: &PgPool, now: DateTime<Utc>) -> bool {
 
 /// The index's state for the status route and the tests.
 pub async fn status(pool: &PgPool) -> Value {
-    let c = chain_walk::cursor(pool, INDEXER_RENTALS, ChainNet::Ethereum)
-        .await
-        .ok()
-        .flatten();
-    json!({
-        "ethereum": c.map(|c| json!({
+    async fn cursor_status(
+        pool: &PgPool,
+        chain: RentalsChain,
+        now: DateTime<Utc>,
+    ) -> Option<Value> {
+        let c = chain_walk::cursor(pool, chain.indexer(), ChainNet::Ethereum)
+            .await
+            .ok()
+            .flatten()?;
+        Some(json!({
             "lastBlock": c.last_block, "foldedBlock": c.folded_block, "fullHistory": c.full_history,
-            "ready": chain_walk::is_ready(&c, Utc::now()), "reorgRewinds": c.reorg_rewinds, "divergedAt": c.diverged_at,
-        })),
+            "ready": chain_walk::is_ready_on(&c, chain.id(), now), "reorgRewinds": c.reorg_rewinds,
+            "divergedAt": c.diverged_at,
+        }))
+    }
+    let now = Utc::now();
+    let (ethereum, sepolia) = tokio::join!(
+        cursor_status(pool, RentalsChain::Mainnet, now),
+        cursor_status(pool, RentalsChain::Sepolia, now),
+    );
+    json!({
+        "ethereum": ethereum,
+        "sepolia": sepolia,
         "venue": RENTALS_MAINNET,
     })
 }
@@ -1220,7 +1299,7 @@ pub(crate) mod tests {
         .iter()
         .map(|l| at_venue(decode_log(l, 1_700_000_000).unwrap().unwrap()))
         .collect();
-        insert_events(&mut conn, ChainNet::Ethereum, &rows)
+        insert_events(&mut conn, RentalsChain::Mainnet, &rows)
             .await
             .unwrap();
         drop(conn);
@@ -1254,7 +1333,7 @@ pub(crate) mod tests {
             .unwrap()
             .unwrap(),
         );
-        insert_events(&mut conn, ChainNet::Ethereum, &[claim])
+        insert_events(&mut conn, RentalsChain::Mainnet, &[claim])
             .await
             .unwrap();
         drop(conn);
@@ -1351,7 +1430,7 @@ pub(crate) mod tests {
         let mut conn = pool.acquire().await.unwrap();
         insert_events(
             &mut conn,
-            ChainNet::Ethereum,
+            RentalsChain::Mainnet,
             &[
                 at_venue(asset_index_log(
                     &lessor,
@@ -1381,7 +1460,7 @@ pub(crate) mod tests {
         let mut conn = pool.acquire().await.unwrap();
         insert_events(
             &mut conn,
-            ChainNet::Ethereum,
+            RentalsChain::Mainnet,
             &[at_venue(asset_index_log(
                 &lessor,
                 &land,
@@ -1408,7 +1487,7 @@ pub(crate) mod tests {
         let mut conn = pool.acquire().await.unwrap();
         insert_events(
             &mut conn,
-            ChainNet::Ethereum,
+            RentalsChain::Mainnet,
             &[at_venue(rented_log(
                 &land,
                 U256::from(3u8),
@@ -1597,7 +1676,7 @@ pub(crate) mod tests {
         let mut conn = pool.acquire().await.unwrap();
         insert_events(
             &mut conn,
-            ChainNet::Ethereum,
+            RentalsChain::Mainnet,
             &[rent(3, 9_300), rent(1, 9_320)],
         )
         .await
@@ -1682,9 +1761,13 @@ pub(crate) mod tests {
             e
         };
         let mut conn = pool.acquire().await.unwrap();
-        insert_events(&mut conn, ChainNet::Ethereum, &[rent(9_320), rent(9_330)])
-            .await
-            .unwrap();
+        insert_events(
+            &mut conn,
+            RentalsChain::Mainnet,
+            &[rent(9_320), rent(9_330)],
+        )
+        .await
+        .unwrap();
         let verdicts = changed_verdicts(&mut conn, &venue, 9_310, None)
             .await
             .unwrap();
@@ -1774,7 +1857,7 @@ pub(crate) mod tests {
         let mut conn = pool.acquire().await.unwrap();
         insert_events(
             &mut conn,
-            ChainNet::Ethereum,
+            RentalsChain::Mainnet,
             &[at_venue(asset_index_log(
                 &lessor,
                 &land,
@@ -1849,7 +1932,7 @@ pub(crate) mod tests {
         let mut conn = pool.acquire().await.unwrap();
         insert_events(
             &mut conn,
-            ChainNet::Ethereum,
+            RentalsChain::Mainnet,
             &[at_venue(rented_log(
                 &land,
                 U256::from(2u8),

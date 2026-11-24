@@ -706,13 +706,9 @@ mod tests {
         .unwrap()
         .unwrap();
         let mut conn = pool.acquire().await.unwrap();
-        index::insert_events(
-            &mut conn,
-            crate::market::chain_walk::ChainNet::Ethereum,
-            &[bump],
-        )
-        .await
-        .unwrap();
+        index::insert_events(&mut conn, index::RentalsChain::Mainnet, &[bump])
+            .await
+            .unwrap();
         drop(conn);
         sync_listing(pool, bumped, Some(&row(LESSOR, "parcel", None)), now)
             .await
@@ -753,13 +749,9 @@ mod tests {
         .unwrap()
         .unwrap();
         let mut conn = pool.acquire().await.unwrap();
-        index::insert_events(
-            &mut conn,
-            crate::market::chain_walk::ChainNet::Ethereum,
-            &[rent],
-        )
-        .await
-        .unwrap();
+        index::insert_events(&mut conn, index::RentalsChain::Mainnet, &[rent])
+            .await
+            .unwrap();
         drop(conn);
         sync_listing(pool, stale, None, Utc::now()).await.unwrap();
         assert_eq!(state_of(pool, stale).await, ("executed".into(), None));
@@ -787,13 +779,9 @@ mod tests {
         .unwrap()
         .unwrap();
         let mut conn = pool.acquire().await.unwrap();
-        index::insert_events(
-            &mut conn,
-            crate::market::chain_walk::ChainNet::Ethereum,
-            &[rent],
-        )
-        .await
-        .unwrap();
+        index::insert_events(&mut conn, index::RentalsChain::Mainnet, &[rent])
+            .await
+            .unwrap();
     }
 
     async fn publish_rentals_index(pool: &PgPool) {
@@ -1050,7 +1038,6 @@ mod tests {
         let decoded = |log| index::decode_log(&log, 1_700_000_000).unwrap().unwrap();
         let token = alloy_primitives::U256::from(1u8);
         let mut conn = pool.acquire().await.unwrap();
-        let net = crate::market::chain_walk::ChainNet::Ethereum;
         let bump = decoded(index::tests::asset_index_log(
             LESSOR,
             LAND_REGISTRY_MAINNET,
@@ -1059,7 +1046,9 @@ mod tests {
             50,
             0,
         ));
-        index::insert_events(&mut conn, net, &[bump]).await.unwrap();
+        index::insert_events(&mut conn, index::RentalsChain::Mainnet, &[bump])
+            .await
+            .unwrap();
         let verdicts = index::changed_verdicts(&mut conn, RENTALS, -1, None)
             .await
             .unwrap();
@@ -1091,7 +1080,9 @@ mod tests {
             51,
             0,
         ));
-        index::insert_events(&mut conn, net, &[rent]).await.unwrap();
+        index::insert_events(&mut conn, index::RentalsChain::Mainnet, &[rent])
+            .await
+            .unwrap();
         let verdicts = index::changed_verdicts(&mut conn, RENTALS, -1, None)
             .await
             .unwrap();

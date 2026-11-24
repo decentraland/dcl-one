@@ -11,9 +11,11 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 use tokio::sync::Semaphore;
+use tokio_util::sync::CancellationToken;
 use tracing::{debug, error, info, warn};
 
 use super::bloom_filter::BloomFilter;
+use super::deploy_remote_entity::{CurrentDownloadPeers, DownloadPeers};
 use super::failed_deployments_store::LiveFailedDeploymentsStore;
 use super::sync_deployer::{LiveSyncDeployer, deployed_entity_ids, is_entity_deployed};
 use super::sync_types::{
@@ -211,7 +213,8 @@ pub struct BatchDeployer {
     queue_depth: usize,
     idle_notify: Arc<tokio::sync::Notify>,
     deployed_bloom: Arc<parking_lot::RwLock<BloomFilter>>,
-    servers: Arc<parking_lot::RwLock<Vec<String>>>,
+    servers: CurrentDownloadPeers,
+    cancel: CancellationToken,
     lost: Arc<AtomicU64>,
     progress: Arc<SyncProgress>,
 }
@@ -242,7 +245,8 @@ impl BatchDeployer {
             queue_depth,
             idle_notify: Arc::new(tokio::sync::Notify::new()),
             deployed_bloom: Arc::new(parking_lot::RwLock::new(bloom)),
-            servers: Arc::new(parking_lot::RwLock::new(Vec::new())),
+            servers: Default::default(),
+            cancel: CancellationToken::new(),
             lost: Arc::new(AtomicU64::new(0)),
             progress: Arc::new(SyncProgress::new()),
         }
@@ -261,6 +265,16 @@ impl BatchDeployer {
         self.queue_depth - self.queue.available_permits()
     }
 
+    /// Replaces the eligible peers, including for deployments already queued.
+    pub(crate) async fn set_peers(&self, servers: Vec<String>) {
+        *self.servers.write().await = servers;
+    }
+
+    pub(crate) fn cancel_pending(&self) {
+        self.queue.close();
+        self.cancel.cancel();
+    }
+
     /// Ignored types and profiles older than `profile_max_age_ms` are never deployed.
     fn out_of_scope(&self, entity: &SyncDeployment, now_ms: i64) -> bool {
         self.config.ignored_types.contains(&entity.entity_type)
@@ -271,7 +285,7 @@ impl BatchDeployer {
     pub async fn schedule_entity_deployment(
         &self,
         entity: SyncDeployment,
-        content_servers: &[String],
+        advertising_peers: &[String],
         report: Option<&Arc<DeploymentReport>>,
     ) -> Result<(), SyncError> {
         if self.out_of_scope(&entity, chrono::Utc::now().timestamp_millis()) {
@@ -282,7 +296,7 @@ impl BatchDeployer {
         {
             return Ok(());
         }
-        self.schedule_undeployed(entity, content_servers, report)
+        self.schedule_undeployed(entity, advertising_peers, report)
             .await
     }
 
@@ -317,18 +331,9 @@ impl BatchDeployer {
     pub async fn schedule_undeployed(
         &self,
         entity: SyncDeployment,
-        content_servers: &[String],
+        advertising_peers: &[String],
         report: Option<&Arc<DeploymentReport>>,
     ) -> Result<(), SyncError> {
-        {
-            let mut s = self.servers.write();
-            for server in content_servers {
-                if !s.contains(server) {
-                    s.push(server.clone());
-                }
-            }
-        }
-
         let slot = self
             .queue
             .clone()
@@ -347,26 +352,26 @@ impl BatchDeployer {
         let deployed_bloom = self.deployed_bloom.clone();
         let lost = self.lost.clone();
         let progress = self.progress.clone();
-        let servers: Vec<String> = self.servers.read().clone();
+        let servers = DownloadPeers::current(advertising_peers, self.servers.clone());
         let report = report.cloned();
 
         if let Some(report) = &report {
             report.record_scheduled();
         }
 
-        tokio::spawn(async move {
-            let mut slot = InFlight {
-                permit: Some(slot),
-                idle_notify,
-                lost: lost.clone(),
-                report: report.clone(),
-                acknowledged: false,
-            };
+        let mut slot = InFlight {
+            permit: Some(slot),
+            idle_notify,
+            lost: lost.clone(),
+            report: report.clone(),
+            acknowledged: false,
+        };
+        let task = async move {
             let result = super::deploy_remote_entity::deploy_entity_streaming(
                 super::deploy_remote_entity::ContentSource {
                     client: &http_client,
                     storage,
-                    servers: &servers,
+                    servers,
                     content_semaphore,
                 },
                 deployer.as_ref(),
@@ -439,7 +444,8 @@ impl BatchDeployer {
                 lost.load(Ordering::SeqCst) + deployer.lost_count(),
                 deployer.flush_backlog(),
             );
-        });
+        };
+        tokio::spawn(self.cancel.clone().run_until_cancelled_owned(task));
 
         Ok(())
     }
@@ -565,6 +571,7 @@ mod tests {
             Arc::new(LiveFailedDeploymentsStore::new(pool.clone())),
             BloomFilter::with_capacity(100),
         );
+        batch.set_peers(vec![base.clone()]).await;
         let report = Arc::new(DeploymentReport::default());
         let announce = |id: String, entity_type: String, chain_for: String| async move {
             SyncDeployment {
@@ -821,6 +828,7 @@ mod tests {
             failed_store.clone(),
             BloomFilter::with_capacity(100),
         );
+        batch.set_peers(vec![base.clone()]).await;
         batch
             .schedule_entity_deployment(
                 SyncDeployment {

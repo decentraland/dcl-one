@@ -1297,9 +1297,10 @@ mod tests {
         let dir =
             std::env::temp_dir().join(format!("catalyst-uploads-of-{}", uuid::Uuid::new_v4()));
         std::fs::create_dir_all(&dir).unwrap();
+        let thumbnail_hash = crate::auth::hash_bytes_v1(&[7; 3000]);
         let entity = serde_json::to_vec(&json!({
             "version": "v3", "type": "wearable", "pointers": ["urn:x"], "timestamp": 1,
-            "content": [{"file": "thumbnail.png", "hash": "bafythumb"}],
+            "content": [{"file": "thumbnail.png", "hash": thumbnail_hash}],
             "metadata": {"thumbnail": "thumbnail.png"}
         }))
         .unwrap();
@@ -1315,7 +1316,7 @@ mod tests {
         };
         let parts = vec![
             part("bafyentity", "bafyentity", &entity),
-            part("bafythumb", "bafythumb", &[7; 3000]),
+            part("thumbnail", &thumbnail_hash, &[7; 3000]),
             part("bafymodel", "bafymodel", &[9; 50_000]),
         ];
         let fields = fields(&[("entityId", "bafyentity")]);
