@@ -1,5 +1,5 @@
-//! Third-party wearables: the approved providers of the third-party registry
-//! subgraph (`THIRD_PARTY_REGISTRY_L2_SUBGRAPH_URL`), the entities each
+//! Third-party wearables: the approved providers of the Polygon registry,
+//! the entities each
 //! provider deployed (their `metadata.mappings` link a wearable to NFT token
 //! ids), and the one ownership resolver the listings, the profiles and the
 //! outfits share:
@@ -53,6 +53,7 @@ use crate::shared::query_params::{
 use super::definitions::{extract_wearable_definition, locale_cmp};
 use super::graph::graph_query;
 use super::listings::{ETHEREUM_MAINNET, ETHEREUM_SEPOLIA, MATIC_AMOY, MATIC_MAINNET};
+use super::third_party_registry;
 use super::{MarketplaceState, SharedState, bad_request};
 
 const PROVIDER_TTL: Duration = Duration::from_secs(6 * 60 * 60);
@@ -128,7 +129,7 @@ impl Default for Caches {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, serde::Deserialize, serde::Serialize)]
 pub struct TpContract {
     pub network: String,
     pub address: String,
@@ -205,13 +206,15 @@ fn parse_providers(data: &Value) -> Vec<ThirdPartyProvider> {
     out
 }
 
-/// The approved providers; empty without a registry subgraph. A failed
-/// registry read serves the last list however old, and with none is an
-/// error, as lamb2's providers storage
-/// (decentraland/lamb2:src/logic/third-party-providers-storage.ts:33-52).
+/// Approved providers from the published Polygon registry. Nodes without
+/// the index can opt in to the legacy subgraph, whose cache retains the
+/// last successful result during an upstream failure.
 pub async fn third_party_providers(
     state: &MarketplaceState,
 ) -> Result<Vec<ThirdPartyProvider>, String> {
+    if third_party_registry::enabled(state) {
+        return third_party_registry::approved_providers(&state.pool).await;
+    }
     let Some(url) = state.settings.third_party_registry_subgraph_url.clone() else {
         tracing::debug!("THIRD_PARTY_REGISTRY_L2_SUBGRAPH_URL is unset: no third-party providers");
         return Ok(Vec::new());
@@ -1098,7 +1101,10 @@ pub async fn fetch_all_third_party_wearables(
         .map_err(FetchFailure::Fetch)?;
     if let Some(name) = only_provider {
         providers.retain(|p| collection_provider(&p.id) == Some(name));
-        if providers.is_empty() && state.settings.third_party_registry_subgraph_url.is_some() {
+        if providers.is_empty()
+            && (third_party_registry::enabled(state)
+                || state.settings.third_party_registry_subgraph_url.is_some())
+        {
             return Err(FetchFailure::ThirdPartyNotFound(name.to_string()));
         }
     }
@@ -1432,12 +1438,9 @@ fn integration_of(p: &ThirdPartyProvider) -> Value {
 }
 
 /// `GET /lambdas/third-party-integrations`: `{data: [...]}` over the
-/// providers list the other third-party routes read (the registry's
-/// approved providers, its default page of 100), empty without a registry
-/// subgraph (decentraland/lamb2:src/controllers/handlers/third-party-wearables-handler.ts:143-155).
-/// A failed registry read serves the last list, and with none is lamb2's
-/// 502 `Cannot fetch third party providers`
-/// (decentraland/lamb2:src/logic/third-party-providers-storage.ts:46-52).
+/// approved providers the other third-party routes read. The index
+/// requires a current published snapshot. A failed provider read answers
+/// with the Lambda 502 `Cannot fetch third party providers`.
 pub async fn third_party_integrations(State(state): State<SharedState>) -> Response {
     match third_party_providers(&state).await {
         Ok(providers) => {

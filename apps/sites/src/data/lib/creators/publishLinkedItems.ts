@@ -13,6 +13,7 @@ import type {
 } from './auth'
 import { BuilderServerError, isRefusedRequest, type PublishLinkedItemsResult, type SlotsCheque } from './builder'
 import { CurationStatus, type Collection } from './collections'
+import type { IndexedThirdPartySlots } from './indexedThirdPartySlots'
 import type { Item } from './items'
 import { canPushLinkedItem, type ItemCuration } from './linkedItemStatus'
 import { buildManaApproveCall } from './mana'
@@ -164,23 +165,29 @@ export function getResumablePayment(error: LinkedPublishError): LinkedPayment | 
 }
 
 export type LinkedSlots = {
-  /** Free slots, counting any the registry sold that builder-server hasn't indexed yet. */
+  /** Free slots after Builder reservations and on-chain consumption, including recently bought slots. */
   available: number
   /** Whether the registry has the third party, even if builder-server still reads it as virtual. */
   registered: boolean
 }
 
 /**
- * builder-server counts free slots against its indexed `maxItems`, which lags the registry after a purchase; adding
- * the difference tells a purchase still being indexed apart from one that never happened, so it is never bought twice.
+ * Builder subtracts all submitted items, including reviews that have yet to consume slots on-chain. Purchases and
+ * consumption only grow, so each higher total lets us correct for the lag between the on-chain sources.
  */
 export function getLinkedSlots(
   serverAvailable: number,
   indexedMaxItems: number,
-  registry: Pick<RegisteredThirdParty, 'registered' | 'maxItems'>
+  registry: Pick<RegisteredThirdParty, 'registered' | 'maxItems' | 'consumedSlots'>,
+  indexedRegistry?: IndexedThirdPartySlots
 ): LinkedSlots {
+  const maxItems = Math.max(registry.maxItems, indexedRegistry?.maxItems ?? 0)
+  const builderAvailable = serverAvailable + Math.max(0, maxItems - indexedMaxItems)
+  const registryAvailable = indexedRegistry
+    ? Math.max(0, maxItems - Math.max(registry.consumedSlots, indexedRegistry.maxItems - indexedRegistry.availableSlots))
+    : builderAvailable
   return {
-    available: serverAvailable + Math.max(0, registry.maxItems - indexedMaxItems),
+    available: Math.min(builderAvailable, registryAvailable),
     registered: registry.registered
   }
 }

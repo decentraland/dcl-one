@@ -1,5 +1,6 @@
 import { privateKey, privateDomain } from '@/data/lib/creators/queryKeys'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import { polygon } from 'viem/chains'
 import { errorCode, track } from '@/data/lib/creators/analytics'
 import {
   readTransactionSender,
@@ -21,6 +22,7 @@ import {
   type SlotsCheque
 } from '@/data/lib/creators/builder'
 import type { Collection } from '@/data/lib/creators/collections'
+import { fetchIndexedThirdPartySlots } from '@/data/lib/creators/indexedThirdPartySlots'
 import type { Item } from '@/data/lib/creators/items'
 import { canPushLinkedItem, type ItemCuration } from '@/data/lib/creators/linkedItemStatus'
 import { fetchManaAllowance } from '@/data/lib/creators/mana'
@@ -54,12 +56,17 @@ export function useThirdPartyPrice(enabled = true) {
 }
 
 async function fetchLinkedSlots(address: string, chainId: number, thirdPartyId: string): Promise<LinkedSlots> {
-  const [available, indexed, registry] = await Promise.all([
+  const registryPromise = fetchRegisteredThirdParty(chainId, thirdPartyId)
+  const [available, indexed, registry, indexedRegistry] = await Promise.all([
     fetchThirdPartySlots(address, thirdPartyId),
     fetchThirdParty(address, thirdPartyId),
-    fetchRegisteredThirdParty(chainId, thirdPartyId)
+    registryPromise,
+    // The Catalyst index covers registered Polygon mainnet providers. Builder also handles Amoy and virtual records.
+    chainId === polygon.id
+      ? registryPromise.then(record => (record.registered ? fetchIndexedThirdPartySlots(thirdPartyId) : undefined))
+      : undefined
   ])
-  return getLinkedSlots(available, Number(indexed.maxItems) || 0, registry)
+  return getLinkedSlots(available, Number(indexed.maxItems) || 0, registry, indexedRegistry)
 }
 
 /** The item slots the third party has free for the publish fee, read against the registry as well. */

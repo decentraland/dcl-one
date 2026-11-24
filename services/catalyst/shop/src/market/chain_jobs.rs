@@ -1485,11 +1485,20 @@ pub fn projections(
             market_cfg(),
         );
     }
-    if settings.committee_enabled {
+    if settings.committee_enabled && net == ChainNet::Matic {
         add(
             "committee-index",
-            state.committee_rpc_url(net),
+            state.polygon_mainnet_rpc_url(),
             Arc::new(|| Arc::new(super::committee_index::CommitteeIndex)),
+            None,
+            market_cfg(),
+        );
+    }
+    if settings.third_party_registry_enabled && net == ChainNet::Matic {
+        add(
+            "third-party-registry-index",
+            state.polygon_mainnet_rpc_url(),
+            Arc::new(|| Arc::new(super::third_party_registry::ThirdPartyRegistryIndex)),
             None,
             market_cfg(),
         );
@@ -1657,10 +1666,16 @@ fn log_switches(state: &Arc<MarketplaceState>, rentals: Option<bool>) {
             job = "committee-index",
             "committee index off: builder's committee routes admit only BUILDER_ADMIN_ADDRESSES"
         );
-    } else if state.committee_rpc_url(ChainNet::Matic).is_none() {
+    } else if state.polygon_mainnet_rpc_url().is_none() {
         tracing::warn!(
             job = "committee-index",
             "committee index enabled but no Polygon JSON-RPC endpoint is configured (TRADE_RPC_URLS 137=, or RPC_ENDPOINT_POLYGON on mainnet): it stays off"
+        );
+    }
+    if settings.third_party_registry_enabled && state.polygon_mainnet_rpc_url().is_none() {
+        tracing::warn!(
+            job = "third-party-registry-index",
+            "third-party registry index enabled but no Polygon JSON-RPC endpoint is configured (TRADE_RPC_URLS 137=, or RPC_ENDPOINT_POLYGON on mainnet): it stays off"
         );
     }
     if rentals == Some(false) {

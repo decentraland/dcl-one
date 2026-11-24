@@ -2444,7 +2444,8 @@ revokes, whose `address` a catalog write does not have.
 ## Market chain index cursors
 
 `shop.chain_cursor` holds one row per projection: an index (`nft`,
-`trade_events`, `rentals`, `mana_transfers`, `sales`, `committee`) on one
+`trade_events`, `rentals`, `mana_transfers`, `sales`, `committee`,
+`third_party_registry`) on one
 network (`ethereum`, `matic`). A window commit writes it once, and so do a
 fold record, a publish and a rewind; the table stays at a dozen rows.
 `shop.chain_checkpoint` holds each projection's recovery points (see
@@ -2680,6 +2681,31 @@ readable while a pass runs. An index that is off, not yet published or
 published more than 30 minutes ago (`READY_WINDOW`) admits only the
 configured addresses, and a failed read answers 503. Changing a column builder reads updates this section
 and the AGENTS.md "Ownership" entry in the same change.
+
+## Third-party registry
+
+The Polygon registry walk appends one version to
+`shop.third_party_registry_event` per registry event that changes a known
+provider. The state holds the event's provider metadata, linked contracts,
+approval, root, resolver, managers and slot counts. A consumption event also
+holds its message hash, quantity, signer and curator. Block time and position
+identify when the receipt was recorded. Exact decimal strings preserve the
+contract's 256-bit counts.
+
+The registry has a small provider catalogue and far more reads than writes.
+The primary key supports rewind by block and the provider version index
+supports the previous state lookup on write and the latest state lookup on
+read. Each version and its receipt commit with the cursor advance. A rewind
+deletes the affected suffix, so prior provider state is already available
+at the remaining event positions. No TypeScript import writes this table.
+
+Provider queries read the latest state per provider at or below the same
+statement's published block. Only then do they filter approval or manager
+membership. Rows from a partial, stale, diverged, quarantined or wrong-chain
+publication cannot be served. An empty result from a current publication
+means there are no matching providers. The index exposes on-chain slot
+availability as the maximum less consumed slots. Publish reservations and
+submission state still belong to the service that processes the submission.
 
 ## Auth API relay state workload
 
