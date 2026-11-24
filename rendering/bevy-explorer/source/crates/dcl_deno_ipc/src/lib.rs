@@ -3,6 +3,7 @@
 use anyhow::anyhow;
 use bevy::log::{debug, error, warn};
 use common::structs::SceneJsFile;
+use common::sync::RwLockExt;
 use common::{
     rpc::{rmp_encode, IpcMessage, ResponseContext, ENGINE_IPC_CONTEXT},
     structs::GlobalCrdtStateUpdate,
@@ -172,7 +173,7 @@ pub fn init_runtime() -> anyhow::Result<()> {
         let (new_scene_sx, new_scene_rx) = tokio::sync::mpsc::unbounded_channel();
         let (router_sx, router_rx) = tokio::sync::mpsc::unbounded_channel();
 
-        *NEW_SCENE_SENDER.write().unwrap() = Some(new_scene_sx);
+        *NEW_SCENE_SENDER.write_ignore_poison() = Some(new_scene_sx);
         ENGINE_IPC_CONTEXT.set(Some(ResponseContext {
             ipc_channel_registry: Default::default(),
             ipc_router: router_sx,
@@ -410,7 +411,7 @@ pub fn spawn_scene(
 
     let (main_sx, thread_rx) = tokio::sync::mpsc::unbounded_channel::<RendererResponse>();
 
-    let ipc_out = NEW_SCENE_SENDER.read().unwrap();
+    let ipc_out = NEW_SCENE_SENDER.read_ignore_poison();
     let Some(ipc_out) = ipc_out.as_ref() else {
         error!("scene {id:?} not started: ipc runtime is not initialized");
         return (main_sx, None);

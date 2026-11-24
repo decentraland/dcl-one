@@ -8,6 +8,7 @@ use bevy::{
     winit::{UpdateMode, WinitSettings},
 };
 use bevy_console::ConsoleConfiguration;
+use common::sync::MutexExt;
 use common::{
     perf::{HudMainThreadCostDataPoint, LongAnimationFrameSums, ReactCommitSums},
     rpc::RpcResultSender,
@@ -89,7 +90,7 @@ pub fn engine_set_hud_main_thread_cost(
             style_and_layout_time_sum_ms,
         }),
     };
-    let Ok(mut stored) = HUD_MAIN_THREAD_COST_WINDOW.try_lock() else {
+    let Some(mut stored) = HUD_MAIN_THREAD_COST_WINDOW.try_lock_ignore_poison() else {
         return false;
     };
     match stored.as_mut() {
@@ -837,10 +838,7 @@ pub(crate) fn viewport_active() -> bool {
 /// Takes the HUD cost windows the page stored since the last take, summed; `None` when none
 /// arrived.
 pub(crate) fn take_hud_main_thread_cost_window() -> Option<HudMainThreadCostDataPoint> {
-    HUD_MAIN_THREAD_COST_WINDOW
-        .lock()
-        .unwrap_or_else(|poison| poison.into_inner())
-        .take()
+    HUD_MAIN_THREAD_COST_WINDOW.lock_ignore_poison().take()
 }
 
 fn update_text_focus(priorities: Res<InputPriorities>, mut prev: Local<bool>, _js: JsThread) {
