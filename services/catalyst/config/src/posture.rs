@@ -759,26 +759,33 @@ pub fn check(config: &Config, env: &Lookup) -> anyhow::Result<()> {
     Ok(())
 }
 
-/// A DCL NAME world's owner is its NAME's holder, read from
-/// `MARKETPLACE_SUBGRAPH_URL`; without it no DCL NAME world has an owner. A
-/// `serve` taking world writes is refused without the reader, unless it
-/// skips the chain checks (`IGNORE_BLOCKCHAIN_ACCESS_CHECKS`), which gets the
-/// warning returned here and serves personal worlds only. The indexer takes
-/// no world writes, so only `serve` runs this.
+/// A DCL NAME world's owner is its NAME's holder. A node that walks the nft
+/// index (`MARKETPLACE_NFT_INDEX_ENABLED` on mainnet) reads it there, so
+/// world writes need nothing more: while the index is not current, a DCL
+/// NAME world's owner writes answer 503. A node that does not reads
+/// `MARKETPLACE_SUBGRAPH_URL`; without it no DCL NAME world has an owner, so
+/// a `serve` taking world writes is refused, unless it skips the chain checks
+/// (`IGNORE_BLOCKCHAIN_ACCESS_CHECKS`), which gets the warning returned here
+/// and serves personal worlds only. The indexer takes no world writes, so
+/// only `serve` runs this.
 pub fn worlds_names_reader(config: &Config) -> anyhow::Result<Option<&'static str>> {
+    let walks = config.marketplace.marketplace_nft_index_enabled
+        && config.node.eth_network.trim() == "mainnet";
     if !config.worlds.worlds_writes_enabled
+        || walks
         || Config::non_empty(&config.market_upstreams.marketplace_subgraph_url).is_some()
     {
         return Ok(None);
     }
     if !config.validator.ignore_blockchain_access_checks {
         anyhow::bail!(
-            "WORLDS_WRITES_ENABLED=true needs MARKETPLACE_SUBGRAPH_URL, the DCL NAME holder reader: \
-             set it, or IGNORE_BLOCKCHAIN_ACCESS_CHECKS=true on a node without chain access"
+            "WORLDS_WRITES_ENABLED=true needs a DCL NAME holder reader: the nft index \
+             (MARKETPLACE_NFT_INDEX_ENABLED=true on mainnet) or MARKETPLACE_SUBGRAPH_URL. Set one, or \
+             IGNORE_BLOCKCHAIN_ACCESS_CHECKS=true on a node without chain access"
         );
     }
     Ok(Some(
-        "MARKETPLACE_SUBGRAPH_URL is unset: DCL NAME worlds have no owner here, only personal worlds take owner writes",
+        "neither the nft index nor MARKETPLACE_SUBGRAPH_URL reads DCL NAMEs here: DCL NAME worlds have no owner, only personal worlds take owner writes",
     ))
 }
 
@@ -801,26 +808,28 @@ pub fn unchecked_profile_items(config: &Config) -> Option<&'static str> {
 }
 
 /// A mirror replaces a Catalyst whose lambdas always check the profiles'
-/// items and names against their owner. The names read the marketplace
-/// subgraph, which may not be blanked; the wearables and emotes read the
-/// nft index, so on mainnet (the chains the walk reads) the index stays on
-/// with a JSON-RPC endpoint for chain 137 (`TRADE_RPC_URLS`; chain 1 falls
-/// back to `ETH_RPC_URL`, which a mirror always has). An island, with no
-/// ownership source, and a testnet mirror serve the items as deployed.
+/// items and names against their owner. On mainnet (the chains the walk
+/// reads) the wearables, emotes and DCL NAMEs all read the nft index, so the
+/// index stays on with a JSON-RPC endpoint for chain 137 (`TRADE_RPC_URLS`;
+/// chain 1 falls back to `ETH_RPC_URL`, which a mirror always has). Off
+/// mainnet the index walks nothing: the names read the marketplace subgraph,
+/// which may not be blanked there, and the items are served as deployed. An
+/// island, with no ownership source, serves both as deployed.
 fn refuse_unfiltered_profiles(config: &Config, env: &Lookup) -> anyhow::Result<()> {
-    if Config::non_empty(&config.market_upstreams.marketplace_subgraph_url).is_none() {
-        anyhow::bail!(
-            "{ENV}=mirror checks every profile's names against their owner, but \
-             MARKETPLACE_SUBGRAPH_URL is empty: unset it to read Decentraland's subgraph"
-        );
-    }
     if config.node.eth_network.trim() != "mainnet" {
+        if Config::non_empty(&config.market_upstreams.marketplace_subgraph_url).is_none() {
+            anyhow::bail!(
+                "{ENV}=mirror off mainnet checks every profile's names against their owner through \
+                 the marketplace subgraph, but MARKETPLACE_SUBGRAPH_URL is empty: unset it to read \
+                 Decentraland's subgraph"
+            );
+        }
         return Ok(());
     }
     if !config.marketplace.marketplace_nft_index_enabled {
         anyhow::bail!(
-            "{ENV}=mirror checks every profile's wearables and emotes against the nft index, but \
-             MARKETPLACE_NFT_INDEX_ENABLED is off: unset it to walk the index"
+            "{ENV}=mirror checks every profile's wearables, emotes and names against the nft index, \
+             but MARKETPLACE_NFT_INDEX_ENABLED is off: unset it to walk the index"
         );
     }
     // The walk takes its contracts from the collections mirror and starts on
