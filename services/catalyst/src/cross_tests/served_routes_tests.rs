@@ -162,7 +162,7 @@ impl Rig {
         let storage = Arc::new(Storage::from_config(&dir).await.unwrap());
         storage.store(&corpus.hash, blob.clone()).await.unwrap();
         storage
-            .builder()
+            .item_files()
             .unwrap()
             .store(&corpus.hash, blob.clone())
             .await

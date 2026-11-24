@@ -46,23 +46,28 @@ pub struct Storage {
     known_shards: KnownShards,
     kind: &'static str,
     denylist: Arc<Denylist>,
-    builder: Option<Arc<Storage>>,
+    item_files: Option<Arc<Storage>>,
 }
 
 impl Storage {
     /// `root` is `STORAGE_ROOT_FOLDER`; blobs live under `<root>/contents/<shard>/<cid>`, the tree
-    /// the nginx `X-Accel-Redirect` alias serves from. Also opens the builder's tree beside it
-    /// ([`builder`](Self::builder)). Creates the trees and kicks off the orphaned staging-file
+    /// the nginx `X-Accel-Redirect` alias serves from. Also opens the item-files tree beside it
+    /// ([`item_files`](Self::item_files)). Creates the trees and kicks off the orphaned staging-file
     /// sweeps in the background.
     pub async fn from_config(root: &Path) -> Result<Self, StorageError> {
         let denylist = Arc::new(Denylist::default());
-        let builder =
-            Self::open_tree(root.join("builder"), "builder", denylist.clone(), None).await?;
+        let item_files = Self::open_tree(
+            root.join("item-files"),
+            "item-files",
+            denylist.clone(),
+            None,
+        )
+        .await?;
         Self::open_tree(
             root.join("contents"),
             "content",
             denylist,
-            Some(Arc::new(builder)),
+            Some(Arc::new(item_files)),
         )
         .await
     }
@@ -71,7 +76,7 @@ impl Storage {
         root: PathBuf,
         kind: &'static str,
         denylist: Arc<Denylist>,
-        builder: Option<Arc<Storage>>,
+        item_files: Option<Arc<Storage>>,
     ) -> Result<Self, StorageError> {
         tokio::fs::create_dir_all(&root).await?;
         let sweep_root = root.clone();
@@ -84,15 +89,15 @@ impl Storage {
             root,
             kind,
             denylist,
-            builder,
+            item_files,
         })
     }
 
-    /// The builder's item files, `<STORAGE_ROOT_FOLDER>/builder/<shard>/<cid>`: a tree of its own
+    /// The builder's item files, `<STORAGE_ROOT_FOLDER>/item-files/<shard>/<cid>`: a tree of its own
     /// with this store's denylist, so no route or deploy check of the content tree reads, finds or
-    /// reuses a draft file. `None` on the builder tree itself. The collector walks both trees.
-    pub fn builder(&self) -> Option<&Arc<Storage>> {
-        self.builder.as_ref()
+    /// reuses a draft file. `None` on the item-files tree itself. The collector walks both trees.
+    pub fn item_files(&self) -> Option<&Arc<Storage>> {
+        self.item_files.as_ref()
     }
 
     pub fn root(&self) -> &Path {

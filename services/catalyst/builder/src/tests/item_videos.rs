@@ -202,7 +202,7 @@ async fn node_on(
         pool,
         app,
         state,
-        storage: storage.builder().unwrap().clone(),
+        storage: storage.item_files().unwrap().clone(),
     })
 }
 

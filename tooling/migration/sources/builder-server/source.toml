@@ -10,7 +10,7 @@ third parties, collection and item curations, collection events and slot
 usage cheques. See MAPPING.md.
 
 Prerequisite, out of scope for a DB import: every item content hash must be
-in the blob store's builder tree (<STORAGE_ROOT_FOLDER>/builder) and
+in the blob store's item-files tree (<STORAGE_ROOT_FOLDER>/item-files) and
 recorded, with its size, in
 dcl_migration.blob_inventory (source 'builder-server', object_key = hash);
 item_content stops on a missing hash of an item it writes.

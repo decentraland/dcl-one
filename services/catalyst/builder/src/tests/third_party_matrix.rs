@@ -150,7 +150,7 @@ async fn world() -> Option<World> {
     let bytes = unique("third-party-file");
     let hash = dcl_auth::hash_bytes_v1(&bytes);
     storage
-        .builder()
+        .item_files()
         .unwrap()
         .store(&hash, bytes.clone().into())
         .await
@@ -184,7 +184,7 @@ async fn world() -> Option<World> {
         pool,
         app,
         registry,
-        storage: storage.builder().unwrap().clone(),
+        storage: storage.item_files().unwrap().clone(),
         state,
         hash,
         bytes,

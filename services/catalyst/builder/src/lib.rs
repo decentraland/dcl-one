@@ -537,7 +537,7 @@ pub fn guarded_client() -> Outbound {
 
 impl State {
     /// `blobs` is the node's blob store; the builder keeps its item files in
-    /// its [`Storage::builder`] tree, which the content routes never read.
+    /// its [`Storage::item_files`] tree, which the content routes never read.
     pub fn new(
         pool: PgPool,
         blobs: Arc<Storage>,
@@ -549,9 +549,9 @@ impl State {
     ) -> anyhow::Result<Self> {
         let notices = curation::slack::Notices::new(settings.slack.clone(), settings.links.clone());
         let blobs = blobs
-            .builder()
+            .item_files()
             .cloned()
-            .context("the builder keeps its files in the blob store's builder tree")?;
+            .context("the builder keeps its files in the blob store's item-files tree")?;
         let mut limits = limits::Limits::default();
         limits.node_bytes = settings.unpublished_max_bytes.unwrap_or(limits.node_bytes);
         limits.node_files = settings.unpublished_max_files.unwrap_or(limits.node_files);

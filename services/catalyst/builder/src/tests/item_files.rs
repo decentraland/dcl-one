@@ -545,7 +545,7 @@ async fn files(committee: &FakeCommittee) -> Option<Files> {
     Some(Files {
         pool,
         app,
-        store: store.builder().unwrap().clone(),
+        store: store.item_files().unwrap().clone(),
         denylist,
     })
 }

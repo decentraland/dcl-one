@@ -2,7 +2,7 @@
 //! hash-addressed store (content files and entities, world scenes and
 //! thumbnails, posters, satellite regions, world manifests, community
 //! thumbnails and federated post bodies, camera-reel photos, builder item uploads
-//! (in a tree of their own, [`Storage::builder`], walked after the main one),
+//! (in a tree of their own, [`Storage::item_files`], walked after the main one),
 //! player-report evidence, MLS commits and ciphertexts, snapshot files), so
 //! a file may go only when no domain names it. The store is walked once;
 //! its aged files (untouched for the age floor: at least an hour and the
@@ -856,7 +856,7 @@ pub async fn unlink_orphans_on(
     Ok(failed)
 }
 
-/// One collection pass: the store and its builder tree are walked in chunks
+/// One collection pass: the store and its item-files tree are walked in chunks
 /// of aged files, each checked against every domain's references; a
 /// candidate is re-checked right before it is unlinked (a deployment may
 /// reuse a stored blob).
@@ -877,7 +877,7 @@ pub async fn collect(
         min_age_seconds: options.min_age.as_secs(),
         ..GcReport::default()
     };
-    for tree in std::iter::once(storage).chain(storage.builder().map(|tree| &**tree)) {
+    for tree in std::iter::once(storage).chain(storage.item_files().map(|tree| &**tree)) {
         let mut orphans: Vec<String> = Vec::new();
         let mut chunk: Vec<String> = Vec::with_capacity(CHUNK);
         let mut ids = tree.all_file_ids(None);
@@ -1463,7 +1463,7 @@ mod tests {
         let retired_file = put(b"retired scene file".to_vec()).await;
         let global_file = put(b"global file".to_vec()).await;
         let fresh = put(b"fresh".to_vec()).await;
-        let item_tree = storage.builder().unwrap();
+        let item_tree = storage.item_files().unwrap();
         let put_item_file = |bytes: Vec<u8>| async move {
             let key = crate::auth::hash::hash_bytes_v1(&bytes);
             item_tree.store(&key, Bytes::from(bytes)).await.unwrap();

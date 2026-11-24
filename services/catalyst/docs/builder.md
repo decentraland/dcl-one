@@ -123,7 +123,7 @@ the curation committee from the Polygon collections subgraph.
 - `CREATE_WRITES_ENABLED=true` opens the writes; off, each answers 503, and
   the builder's jobs (the terms forward to the warehouse and the
   validation-request sweep) change no row and call no outside service.
-- `STORAGE_ROOT_FOLDER/builder` holds item files and videos, apart from
+- `STORAGE_ROOT_FOLDER/item-files` holds item files and videos, apart from
   the content tree, so no content or worlds route serves them. The next
   section bounds what each wallet, source address and the whole node may
   store and send there.

@@ -164,7 +164,7 @@ carry upstream deletions or URN swaps: make the final sync a start-over
 (`sources/builder-server/start_over.sql`, which refuses a node that took
 builder writes and empties the builder tables, the import's ledger and its
 checkpoints in one transaction) followed by a run, with no storage GC in
-between (the run doesn't check the builder tree for the copied files); see
+between (the run doesn't check the item-files tree for the copied files); see
 MAPPING.md "Start over".
 
 A configured `worlds-content-server` import also requires

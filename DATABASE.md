@@ -142,7 +142,7 @@ lock still busy after 30 s ends the run, and uploads that wrote no file go
 without it. An upload a newer deployment overtook is released the same way
 within its request, which takes the lock only if it is free and otherwise
 marks the upload expired for the cleanup's next run. Builder's item file
-uploads store their blobs in the builder's tree first, as a content deploy
+uploads store their blobs in the item-files tree first, as a content deploy
 does, then take the shared side, at most 5 s and then 503, re-check every
 blob (503 when the collector removed one) and hold it until the
 `builder.uploaded_contents` rows naming them commit. Video uploads take the
@@ -1452,7 +1452,7 @@ Tables and what they hold:
   `builder.uploaded_contents` by key.
 - `builder.uploaded_contents`: one row per hash and uploader, the record that
   this wallet sent the bytes and the node stored them in the blob store's
-  builder tree (`<STORAGE_ROOT_FOLDER>/builder`), which no content or worlds
+  item-files tree (`<STORAGE_ROOT_FOLDER>/item-files`), which no content or worlds
   route reads.
   An upload stores only a hash its item names, verified against the bytes.
   `size` is at most 250,000,000 bytes, the largest item video
@@ -1587,8 +1587,8 @@ reference data's size without secondary indexes and longer with them.
 
 ## Builder item files workload
 
-The builder serves item files from the blob store's builder tree
-(`<STORAGE_ROOT_FOLDER>/builder`) at `GET` and `HEAD
+The builder serves item files from the blob store's item-files tree
+(`<STORAGE_ROOT_FOLDER>/item-files`) at `GET` and `HEAD
 /v1/storage/contents/{hash}` and answers `GET .../exists`
 (`services/catalyst/builder/src/handlers/storage.rs`). One statement,
 `FILE_READ` in `services/catalyst/builder/src/access.rs`, decides each

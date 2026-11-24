@@ -101,7 +101,7 @@ const SLICE_BYTES: usize = 16 * 1024;
 /// [`DEFAULT_DEADLINE`] and the store after it.
 pub const SPOOL_ORPHAN_AGE: Duration = Duration::from_secs(60 * 60);
 
-const SPOOL_DIR: &str = "builder-videos";
+const SPOOL_DIR: &str = "item-videos";
 
 /// Where uploads spool: beside the blob tree, so storing is a hard link.
 pub fn spool_root(storage: &Storage) -> PathBuf {

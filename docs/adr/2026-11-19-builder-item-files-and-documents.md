@@ -128,7 +128,7 @@ The builder answers items as `github.com/decentraland/builder-server` at
   check, and it opens the file to that wallet as the file routes below
   decide.
 - **Files are private until published.** The node keeps item files in the
-  builder's own tree of the blob store, `<STORAGE_ROOT_FOLDER>/builder`,
+  item-files tree of the blob store, `<STORAGE_ROOT_FOLDER>/item-files`,
   which no content or worlds route reads: `/contents/{hash}`,
   `/available-content` and a deployment's check for files already stored
   never find an item file. The collector walks both trees. An upload checks

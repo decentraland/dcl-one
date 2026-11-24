@@ -183,8 +183,8 @@ of each staged item's video as well, and stops the batch when the video's
 hash is not in the
 blob inventory either. What an imported name and record let a wallet read is the file
 routes' decision, the same as for a save and an upload on the node. The blob copy (out of
-scope) copies the bytes into the blob store's builder tree
-(`<STORAGE_ROOT_FOLDER>/builder`, where the node keeps item files apart from
+scope) copies the bytes into the blob store's item-files tree
+(`<STORAGE_ROOT_FOLDER>/item-files`, where the node keeps item files apart from
 the content tree) and must record each hash in `dcl_migration.blob_inventory (source,
 object_key, hash, size)` with `source = 'builder-server'` and
 `object_key = hash`; `item_content` stops the batch on any missing hash, and on any
@@ -284,7 +284,7 @@ upstream whatever changed between rehearsals; start over earlier too
 whenever a run leaves rows out with no duplicate upstream. Start over only
 while creator writes have stayed closed since the first run, and don't run
 the node's storage GC until the run that follows has finished: the copied
-blobs are unreferenced in between. The run doesn't check the builder tree
+blobs are unreferenced in between. The run doesn't check the item-files tree
 for them, so after a GC in that gap, delete the `builder-server` rows of
 `dcl_migration.blob_inventory` and copy the blobs again before the run.
 
