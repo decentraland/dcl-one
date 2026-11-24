@@ -2051,3 +2051,72 @@ async fn terminal_pointer_contention_waits_then_retains_the_upload() {
     );
     assert_eq!(pending_rows(&node.state.pool, &scene.id).await, 1);
 }
+
+/// A contract wallet that refuses at latest and signed at every past block; `past` counts
+/// the past-block questions.
+#[derive(Default)]
+struct RemovedKey {
+    past: AtomicUsize,
+}
+
+#[async_trait::async_trait]
+impl crate::auth::Eip1654Validator for RemovedKey {
+    async fn validate_signature(
+        &self,
+        _: &str,
+        _: &[u8],
+        _: &[u8],
+    ) -> Result<bool, crate::auth::AuthError> {
+        Ok(false)
+    }
+
+    async fn validate_signature_at_block(
+        &self,
+        _: &str,
+        _: &[u8],
+        _: &[u8],
+        _: u64,
+    ) -> Result<bool, crate::auth::AuthError> {
+        self.past.fetch_add(1, Ordering::Relaxed);
+        Ok(true)
+    }
+
+    async fn verification_time_block(&self, _: i64) -> Result<Option<u64>, crate::auth::AuthError> {
+        Ok(Some(7))
+    }
+}
+
+/// A batch without the entity file is authenticated at now with its contract wallet asked
+/// at latest only: a wallet refused there is refused, never asked at a past block.
+#[tokio::test]
+async fn a_batch_without_the_entity_file_asks_its_contract_wallet_at_latest() {
+    let wallet = Arc::new(RemovedKey::default());
+    require_test_db!(
+        Some(node) = Node::with_contract_wallets(
+            "resume-latest",
+            Settings::for_tests(),
+            Some(wallet.clone())
+        )
+        .await
+    );
+    let router = node.router();
+    let scene = make_scene(&PrivateKeySigner::random(), &[b"resume-latest"], "scene").await;
+    let contract = serde_json::to_value(
+        crate::sync_test_support::signed_chain_behind_contract(
+            &scene.id,
+            &(chrono::Utc::now() + chrono::Duration::days(1)).to_rfc3339(),
+        )
+        .await,
+    )
+    .unwrap();
+
+    let (status, _, body) = send(&router, &scene, &contract, scene.files.clone()).await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
+    assert!(
+        body["errors"][0]
+            .as_str()
+            .is_some_and(|e| e.starts_with("The signature is invalid.")),
+        "{body}"
+    );
+    assert_eq!(wallet.past.load(Ordering::Relaxed), 0);
+}
