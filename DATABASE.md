@@ -214,8 +214,9 @@ access excludes clears, `/env*` and `/usage*`.
 `GET /world-storage/collaborator` is a rare, user-initiated, self-scoped listing.
 It derives membership at read time through `worlds.logs_permissions_decoded`, with no
 stored projection. The partial GIN `world_scenes_logs_permissions_decoded_idx` covers
-local world scenes; `deployments_scene_logs_permissions_decoded_idx` covers live
-Genesis scenes, followed by an `active_pointers_entity_id_idx` probe per match.
+local world scenes; `deployments_scene_v_logs_permissions_decoded_idx` covers live
+Genesis scenes (content stores metadata as `{"v": metadata}`, so it indexes
+`entity_metadata -> 'v' -> 'logsPermissions'`), followed by an `active_pointers_entity_id_idx` probe per match.
 Superseded Genesis rows leave the index. One statement counts and pages the
 matches by `deployed_at DESC, scene_id` with `LIMIT/OFFSET`.
 The function decodes JSON escapes as `JSON.parse` does and leaves out an entry
@@ -224,10 +225,12 @@ can fail an insert through an index. It reads the escapes as Unicode, so the dat
 must use the `UTF8` server encoding (the one `catalyst` supports): under another
 encoding a non-ASCII escape would fail the insert or the index build. `schema apply`
 and `schema migrate` check the server encoding before any schema changes. A database stamped before it keeps the
-superseded `worlds.logs_permissions` and its two indexes, which `catalyst schema
-status` does not report, until their release drops them. Run it once, with the
-administrative role, after `catalyst schema migrate` created the decoded function
-and every replica runs a binary that queries it (an older `serve` calls the old
+superseded `worlds.logs_permissions` and its two indexes, and a database migrated
+before the `v` path keeps `deployments_scene_logs_permissions_decoded_idx` on the
+unwrapped path; `catalyst schema status` reports none of them. Their release drops
+them. Run it with the administrative role, after `catalyst schema migrate` created
+the decoded function and its current indexes and every replica runs a binary that
+queries them (an older `serve` calls the old
 function from its storage grant and `GET /collaborator`, which fail after the
 drop); it refuses a database without the decoded function and both its indexes
 built and valid, and drops the old indexes concurrently, outside a transaction
@@ -237,7 +240,7 @@ built and valid, and drops the old indexes concurrently, outside a transaction
 psql "$DATABASE_URL" -X -f schemas/releases/worlds-logs-permissions-retired.sql
 ```
 
-The object pass builds `deployments_scene_logs_permissions_decoded_idx` on
+The object pass builds `deployments_scene_v_logs_permissions_decoded_idx` on
 `content.deployments` in the migrate transaction, not concurrently, so writes to
 that table wait for the build (unmeasured on production). To build it outside
 that window, run beforehand, with the same definition as `schemas/20_worlds.sql`
@@ -245,9 +248,9 @@ that window, run beforehand, with the same definition as `schemas/20_worlds.sql`
 
 ```sql
 CREATE FUNCTION worlds.logs_permissions_decoded(text) ... ; -- as in schemas/20_worlds.sql
-CREATE INDEX CONCURRENTLY deployments_scene_logs_permissions_decoded_idx
+CREATE INDEX CONCURRENTLY deployments_scene_v_logs_permissions_decoded_idx
     ON content.deployments
-    USING gin (worlds.logs_permissions_decoded((entity_metadata -> 'logsPermissions')::text))
+    USING gin (worlds.logs_permissions_decoded((entity_metadata -> 'v' -> 'logsPermissions')::text))
     WHERE entity_type = 'scene' AND deleter_deployment IS NULL;
 ```
 
@@ -303,6 +306,11 @@ access or other scenes' environment values. Mirroring cannot overwrite local
 saves or grant host authority. Keep live CRDT/tick state in the scene runtime;
 persist only what the restart contract requires. Test cross-scene/player
 isolation, redeploy, revocation and restart.
+
+A Genesis scene's storage scope (realm `main`) is its effective base
+parcel: the declared `metadata.scene.base` when it is one of the scene's parcels,
+else its least parcel. The resolver reads it at `entity_metadata -> 'v'`, where
+content stores the metadata as `{"v": metadata}`.
 
 Places owns one active identity row per world scene, explicitly bound to its
 current `(world_name, entity_id)` deployment. Worlds calls the Places identity
@@ -3200,8 +3208,9 @@ whose backing scenes are gone. No grant history is inferred from parcel overlap.
 scene, one row for each `(place_id, admin_address)`. `place_id` is the place of
 the scene, read from the active deployment by the room resolver
 (`ActiveDeployment::place_key`): the `explore.world_scene_place` identity of a
-world scene, the canonical base parcel of a Genesis scene. These are the keys
-that scene storage uses.
+world scene, the canonical base parcel of a Genesis scene (its declared base,
+read at `entity_metadata -> 'v'`, when the scene holds that parcel; otherwise
+its first parcel). These are the keys that scene storage uses.
 
 Workload: one primary-key read for each scene-signed gatekeeper request of a
 wallet that is not the owner (`Policy::is_admin`: `/scene-admin`, `/scene-bans`,
@@ -3242,7 +3251,21 @@ Invariants:
   the grant. For one place and wallet the script keeps an active grant before
   a revoked one, then the row with the newest change
   (`COALESCE(removed_at, added_at)`), also against a row the place already
-  has. It removes each entity row that it moved.
+  has. It removes each entity row that it moved. It can run again: it moves
+  only rows that have an entity key, and never changes the key of a row that
+  is on a parcel or a world-scene identity.
+- A Genesis grant on its scene's least parcel, while the scene's place is
+  another declared base, is read by no request of that scene, and no script
+  moves it: the same row can be a grant made for an earlier scene whose base
+  was that parcel and that the place removal cleanup has not revoked, which
+  this scene does not inherit. A database that holds
+  Genesis grants on parcel keys when it takes the release can hold such
+  rows. The operator lists them with the check in
+  `infra/containers/README.md` "Scene admin upgrade" (active Genesis
+  deployments whose `social.scene_base_parcel` over `{v,scene,base}` differs
+  from the one over no declared base, joined to the active grants on the
+  latter) and sets `place_id` to the place on each row made for the listed
+  scene.
 - A row keeps the entity key when its entity is not deployed, or has no
   parcel that parses. A world scene with no active identity reads its grants
   by entity id, so a retired world scene still reads such a row inside its
@@ -3252,7 +3275,9 @@ Invariants:
   the effective base parcel that the room resolver computes
   (`ParcelSet::effective_base`). The release script and the import loads of
   scene admins and scene bans call it; `the_sql_base_parcel_is_the_resolvers`
-  compares the two.
+  compares the two. Its callers pass the declared base from where it is
+  stored: `entity_metadata #>> '{v,scene,base}'` for a Genesis scene,
+  `entity #>> '{metadata,scene,base}'` for a world scene.
 
 ## Scene bans
 
@@ -3304,7 +3329,11 @@ Invariants:
   not supported after the move; restore the matching backup. A row of an
   entity that is not deployed, or has no parcel that parses, keeps its key,
   and no request reads it. A local preview scene, which has no deployment,
-  keeps its entity id.
+  keeps its entity id. A ban on a scene's least parcel while the scene's
+  place is another declared base stays where it is, as an admin grant does
+  ("Scene admin grants"), and no longer refuses its wallet; the same operator
+  check lists it, and the upgrade re-keys it before players are admitted
+  (`infra/containers/README.md`, "Scene admin upgrade").
 - A kick intent queued before the release names the entity id; the removal
   job reads its ban again on the scene's place (`legacy_ban_key`).
 
