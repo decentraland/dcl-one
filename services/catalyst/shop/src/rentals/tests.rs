@@ -1203,7 +1203,7 @@ async fn non_walking_nodes_use_the_configured_graph_for_create_and_refresh() {
         async move {
             let vars = &request["variables"];
             axum::Json(json!({"data":{
-                "_meta":{"block":{"number": 100 + n}},
+                "_meta":{"block":{"number": 100 + n, "timestamp": 1800000000 + n}},
                 "nfts":[{
                     "contractAddress": vars["contract"], "tokenId": vars["tokenId"],
                     "category":"estate", "owner":{"id":owner}, "searchText":format!("estate {n}"),
@@ -1300,6 +1300,156 @@ async fn non_walking_nodes_use_the_configured_graph_for_create_and_refresh() {
     assert_eq!(code, StatusCode::SERVICE_UNAVAILABLE, "{out}");
     assert_eq!(out["source"], "nft-index");
     assert_eq!(reads.load(Ordering::Relaxed), before);
+}
+
+/// The graph lookup and status update use different connections. Keep a
+/// newer fill uncommitted until the older PATCH reaches its cancellation.
+#[tokio::test]
+async fn graph_refresh_dates_membership_guards_concurrent_fills_and_retries_invalid_owners() {
+    use std::sync::Mutex;
+    let Some(pool) = crate::db::scratch::isolated_pool(5).await else {
+        return;
+    };
+    let id =
+        super::index::tests::seed_listing(&pool, ESTATE, "7", ["0"; 3], "0x17", LESSOR, RENTALS)
+            .await;
+    let now = chrono::Utc::now().timestamp();
+    let updated = now - 200;
+    sqlx::query("UPDATE signatures.rental_assets SET nft_updated_at=to_timestamp($1) AT TIME ZONE 'UTC',estate_size=1").bind(updated as f64).execute(&pool).await.unwrap();
+    let response = |owner: &str, block: i64, time: i64, size: i32| {
+        json!({"data":{
+            "_meta":{"block":{"number":block,"timestamp":time}},"nfts":[{
+            "contractAddress":ESTATE,"tokenId":"7","category":"estate","owner":{"id":owner},
+            "createdAt":(updated-10).to_string(),"updatedAt":updated.to_string(),
+            "transferredAt":(now+10).to_string(),"searchText":"estate","searchEstateSize":size
+        }]}})
+    };
+    let answer = Arc::new(Mutex::new(response("invalid", 90, now + 20, 1)));
+    let served = answer.clone();
+    let graph = Router::new().route(
+        "/",
+        axum::routing::post(move || {
+            let data = served.lock().unwrap().clone();
+            async move { axum::Json(data) }
+        }),
+    );
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let url = format!("http://{}", listener.local_addr().unwrap());
+    tokio::spawn(async move { axum::serve(listener, graph).await.unwrap() });
+    let app = || {
+        let mut settings = crate::market::Settings::for_tests();
+        settings.marketplace_subgraph_url = Some(url.clone());
+        let m = MarketplaceState::new(pool.clone(), crate::http::Outbound::for_tests(), settings);
+        m.test_allow_loopback
+            .store(true, std::sync::atomic::Ordering::Relaxed);
+        router(state_over(pool.clone(), Some(Arc::new(m)), true))
+    };
+    let path = format!("/v1/rentals-listings/{id}");
+    let patch = |app| {
+        let path = path.clone();
+        async move { send(app, "PATCH", &path, vec![], None).await }
+    };
+    let cached = app();
+    let (code, _, body) = patch(cached.clone()).await;
+    assert_eq!(code, StatusCode::SERVICE_UNAVAILABLE, "{body}");
+    assert_eq!(body["source"], "marketplace-subgraph");
+    let status = || {
+        sqlx::query_scalar::<_, String>("SELECT status::text FROM signatures.rentals WHERE id=$1")
+            .bind(id)
+            .fetch_one(&pool)
+    };
+    assert_eq!(status().await.unwrap(), "open");
+    *answer.lock().unwrap() = response(LESSOR, 91, now - 10, 0);
+    let (code, _, body) = patch(cached).await;
+    assert_eq!(code, StatusCode::OK, "{body}");
+    assert_eq!(body["data"]["status"], "open");
+
+    *answer.lock().unwrap() = response(LESSOR, 100, now + 20, 0);
+    let mut newer = pool.begin().await.unwrap();
+    sqlx::query("UPDATE signatures.rental_assets SET estate_size=2,membership_block=101 WHERE contract_address=$1 AND token_id=7")
+        .bind(ESTATE).execute(&mut *newer).await.unwrap();
+    let pid: i32 = sqlx::query_scalar("SELECT pg_backend_pid()")
+        .fetch_one(&mut *newer)
+        .await
+        .unwrap();
+    let older = tokio::spawn(patch(app()));
+    tokio::time::timeout(std::time::Duration::from_secs(10), async {
+        loop {
+            let waiting: bool = sqlx::query_scalar(
+                "SELECT EXISTS(SELECT FROM pg_stat_activity WHERE datname=current_database()
+                AND $1=ANY(pg_blocking_pids(pid)) AND query LIKE '%WITH locked AS MATERIALIZED%')",
+            )
+            .bind(pid)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+            if waiting {
+                break;
+            }
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .expect("older PATCH reached the guarded cancellation");
+    newer.commit().await.unwrap();
+    let (code, _, body) = older.await.unwrap();
+    assert_eq!(code, StatusCode::OK, "{body}");
+    assert_eq!(body["data"]["status"], "open");
+    let size: i16 =
+        sqlx::query_scalar("SELECT estate_size FROM signatures.rental_assets WHERE token_id=7")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(size, 2);
+    *answer.lock().unwrap() = response(LESSOR, 102, now + 40, 0);
+    let (code, _, body) = patch(app()).await;
+    assert_eq!(code, StatusCode::OK, "{body}");
+    assert_eq!(
+        body["data"]["status"], "cancelled",
+        "later membership with unchanged NFT updatedAt"
+    );
+}
+
+#[tokio::test]
+async fn repeated_patch_resolves_custody_when_only_the_rentals_publication_changes() {
+    let Some(pool) = crate::db::scratch::isolated_pool(4).await else {
+        return;
+    };
+    publish_land(&pool).await;
+    let time = chrono::Utc::now().timestamp() + 30;
+    let app = router(state_over(pool.clone(), Some(market()), true));
+    let mut paths = vec![];
+    for (n, signer, arrival) in [(1, LESSOR, time), (2, ESTATE, time), (3, ESTATE, time - 60)] {
+        let token = n.to_string();
+        let id = super::index::tests::seed_listing(
+            &pool,
+            LAND,
+            &token,
+            ["0"; 3],
+            &format!("0x0{n}"),
+            LESSOR,
+            RENTALS,
+        )
+        .await;
+        sqlx::query("UPDATE signatures.rental_assets SET nft_updated_at=to_timestamp($1) AT TIME ZONE 'UTC' WHERE token_id=$2::numeric")
+            .bind((arrival - 1) as f64).bind(&token).execute(&pool).await.unwrap();
+        transfer(&pool, LAND, &token, RENTALS, n, arrival).await;
+        sqlx::query("INSERT INTO shop.rental_event(network,block_number,log_index,block_time,rentals_address,kind,contract_address,token_id,signer,tenant,rental_days,price_per_day,signature,tx_hash)
+        VALUES ('ethereum',$1::bigint+4,0,$2,$3,'rented',$4,$1,$5,$6,1,1,'0x','0x')")
+        .bind(n).bind(time).bind(RENTALS).bind(LAND).bind(signer).bind(ESTATE).execute(&pool).await.unwrap();
+        let path = format!("/v1/rentals-listings/{id}");
+        let (code, _, body) = send(app.clone(), "PATCH", &path, vec![], None).await;
+        assert_eq!(code, StatusCode::OK, "{body}");
+        assert_eq!(body["data"]["status"], "open");
+        paths.push(path);
+    }
+    sqlx::query("INSERT INTO shop.chain_cursor(indexer,network,start_block,last_block,folded_block,folded_at,full_history,chain_id)
+        VALUES ('rentals','ethereum',0,10,10,timezone('UTC',now()),true,1)").execute(&pool).await.unwrap();
+    for (path, status) in paths.iter().zip(["open", "cancelled", "cancelled"]) {
+        let (code, _, body) = send(app.clone(), "PATCH", path, vec![], None).await;
+        assert_eq!(code, StatusCode::OK, "{body}");
+        assert_eq!(body["data"]["status"], status);
+    }
 }
 
 #[tokio::test]

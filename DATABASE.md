@@ -1861,11 +1861,15 @@ beyond the LAND fold returns the unavailable envelope. A transfer beyond the
 NFT publication also waits for metadata to catch up. The NFT index publishes
 Ethereum mainnet metadata. A listing by a lessor whose asset is in Rentals
 custody requires a published Rentals cursor and a rent at or after the LAND
-transfer into custody. The lookup reads the rent and its publication together.
+transfer into custody. PATCH rechecks a current custody observation when a
+later Rentals publication names the lessor, even if its first refresh already
+saved the transfer time. The status job reads the Rentals publication and
+the rent in its LAND snapshot. A dissolution write locks the asset and
+rechecks its membership version before closing the listing.
 
 Nodes that do not walk the NFT index, including Sepolia, read listing assets
 from the configured marketplace subgraph. The subgraph reports transfer time
-in seconds and the block of its estate membership snapshot. A missing or
+in seconds and the block number and time of its estate membership snapshot. A missing or
 unavailable subgraph returns the marketplace-subgraph unavailable envelope.
 A walking node always uses its local publications.
 

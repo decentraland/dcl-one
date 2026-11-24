@@ -15,7 +15,7 @@ pub(super) fn cache() -> Cache {
 
 const QUERY: &str = r#"
 query nft($contract: Bytes!, $tokenId: BigInt!) {
-  _meta { block { number } }
+  _meta { block { number timestamp } }
   nfts(first: 1, where: { contractAddress: $contract, tokenId: $tokenId }) {
     contractAddress tokenId category owner { id } searchText searchDistanceToPlaza
     searchAdjacentToRoad searchEstateSize createdAt updatedAt transferredAt
@@ -48,13 +48,14 @@ fn parse(
     }
     let time = |key: &str| integer(&nft[key]).filter(|v| *v > 0).ok_or_else(incomplete);
     let updated_at = time("updatedAt")?;
+    let owner = nft["owner"]["id"]
+        .as_str()
+        .filter(|address| crate::market::is_valid_eth_address(address))
+        .ok_or_else(incomplete)?;
     Ok(Some(LandNft {
         nft_id: format!("{contract}-{token}"),
         category: category.into(),
-        owner_address: nft["owner"]["id"]
-            .as_str()
-            .ok_or_else(incomplete)?
-            .to_ascii_lowercase(),
+        owner_address: owner.to_ascii_lowercase(),
         search_text: nft["searchText"].as_str().unwrap_or_default().into(),
         distance_to_plaza: integer(&nft["searchDistanceToPlaza"]).and_then(|v| v.try_into().ok()),
         adjacent_to_road: nft["searchAdjacentToRoad"].as_bool(),
@@ -68,7 +69,15 @@ fn parse(
         } else {
             0
         },
-        membership_checked_at: estate.then_some(updated_at),
+        membership_checked_at: if estate {
+            Some(
+                integer(&data["_meta"]["block"]["timestamp"])
+                    .filter(|t| *t > 0)
+                    .ok_or_else(incomplete)?,
+            )
+        } else {
+            None
+        },
     }))
 }
 

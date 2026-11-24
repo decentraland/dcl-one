@@ -93,6 +93,7 @@ macro_rules! latest_rent_sql {
 async fn cancel(
     pool: &PgPool,
     cancels: &[(Uuid, &'static str)],
+    membership: Option<(i64, i64)>,
     now: NaiveDateTime,
 ) -> Result<u64, sqlx::Error> {
     if cancels.is_empty() {
@@ -101,13 +102,24 @@ async fn cancel(
     let ids: Vec<Uuid> = cancels.iter().map(|c| c.0).collect();
     let reasons: Vec<&str> = cancels.iter().map(|c| c.1).collect();
     Ok(sqlx::query(
-        "UPDATE signatures.rentals r SET status = 'cancelled', cancel_reason = u.reason, updated_at = $3 \
-         FROM UNNEST($1::uuid[], $2::text[]) AS u(id, reason) \
-         WHERE r.id = u.id AND r.status = 'open'",
+        // PostgreSQL rechecks the locked asset after a concurrent fill commits.
+        "WITH locked AS MATERIALIZED (
+             SELECT r.id, u.reason FROM UNNEST($1::uuid[], $2::text[]) AS u(id, reason)
+             JOIN signatures.rentals r ON r.id=u.id
+             JOIN signatures.rental_assets a USING (contract_address, token_id)
+             WHERE r.status='open' AND (u.reason <> 'dissolved' OR
+                 (a.membership_block <= $4 AND a.nft_updated_at < to_timestamp($5) AT TIME ZONE 'UTC'
+                  AND r.created_at < to_timestamp($5) AT TIME ZONE 'UTC'))
+             ORDER BY a.contract_address, a.token_id FOR UPDATE OF a
+         )
+         UPDATE signatures.rentals r SET status='cancelled', cancel_reason=u.reason, updated_at=$3
+         FROM locked u WHERE r.id=u.id AND r.status='open'",
     )
     .bind(&ids)
     .bind(&reasons)
     .bind(now)
+    .bind(membership.map(|(block, _)| block))
+    .bind(membership.map(|(_, time)| time as f64))
     .execute(pool)
     .await?
     .rows_affected())
@@ -128,7 +140,7 @@ pub async fn cancel_expired(pool: &PgPool, now: DateTime<Utc>) -> Result<u64, sq
 
 /// Every open listing of the index's registries whose asset the index
 /// holds, with what decides it. `$1`/`$2` the LAND and Estate registries,
-/// `$3` the folded block, `$4` whether the rentals index is published.
+/// `$3` the folded block, `$4` the published Rentals height from the same snapshot.
 /// `moved` is whether the latest folded transfer came after the listing;
 /// `dissolved` needs the estate's row, no parcels, and a folded head newer
 /// than the listing (`$5`, the head's block time). `custody_lessor` is the
@@ -160,7 +172,7 @@ LEFT JOIN LATERAL (",
         "r.contract_address",
         "r.token_id"
     ),
-    ") ren ON $4 AND ren.block_number >= lt.block_number
+    ") ren ON ren.block_number BETWEEN lt.block_number AND $4::bigint AND r.chain_id=1
 WHERE r.status = 'open' AND r.contract_address IN ($1, $2)"
 );
 
@@ -172,7 +184,6 @@ pub async fn cancel_moved(
     land: LandNetwork,
     now: DateTime<Utc>,
 ) -> Result<Option<u64>, sqlx::Error> {
-    let rentals_ready = index::ready(pool, now).await;
     let Some(mut snapshot) = crate::market::nft_reads::land_snapshot(pool, land).await else {
         return Ok(None);
     };
@@ -186,11 +197,15 @@ pub async fn cancel_moved(
     .bind(folded)
     .fetch_optional(&mut *snapshot.tx)
     .await?;
+    let ready = crate::market::chain_walk::ready_sql("c", "$1::timestamp");
+    let rentals_head: Option<i64> = sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
+        "SELECT folded_block FROM shop.chain_cursor c WHERE indexer='rentals' AND network='ethereum' AND {ready}"
+    ))).bind(now.naive_utc()).fetch_optional(&mut *snapshot.tx).await?;
     let rows = sqlx::query(OWNERSHIP_SQL)
         .bind(land.land_registry.to_ascii_lowercase())
         .bind(land.estate_registry.to_ascii_lowercase())
         .bind(folded)
-        .bind(rentals_ready)
+        .bind(rentals_head)
         .bind(head_time.unwrap_or(0) as f64)
         .fetch_all(&mut *snapshot.tx)
         .await?;
@@ -220,7 +235,14 @@ pub async fn cancel_moved(
             .map(|reason| (r.get("id"), reason))
         })
         .collect();
-    cancel(pool, &cancels, now.naive_utc()).await.map(Some)
+    cancel(
+        pool,
+        &cancels,
+        head_time.map(|time| (folded, time)),
+        now.naive_utc(),
+    )
+    .await
+    .map(Some)
 }
 
 /// What one pass did.
@@ -288,9 +310,18 @@ pub async fn sync_listing(
         return Ok(());
     }
     let lessor: String = row.get("lessor");
-    // Date each cancellation decision from the LAND fold that established it.
+    // Date transfer and membership observations independently of metadata fills.
     let stored_at: i64 = row.get("stored_at");
-    let transfer = nft.filter(|n| n.transferred_at > stored_at);
+    let created_at = row
+        .get::<NaiveDateTime, _>("created_at")
+        .and_utc()
+        .timestamp();
+    // Metadata can be filled while custody evidence is still unpublished.
+    // Recheck the covering rent for a current venue observation on each refresh.
+    let transfer = nft.filter(|n| {
+        n.transferred_at > stored_at
+            || (n.owner_address.eq_ignore_ascii_case(&venue) && n.updated_at >= stored_at)
+    });
     let owner = transfer.map(|n| n.owner_address.as_str());
     let custody: Option<String> = match transfer {
         Some(n) if rentals_ready && n.owner_address.eq_ignore_ascii_case(&venue) => {
@@ -301,17 +332,16 @@ pub async fn sync_listing(
                 row.get("token_id"),
             )
             .await?;
-            evidence
-                .covers_transfer(n.transfer_block, n.transferred_at)
+            let later_custody = n.transferred_at > stored_at
+                || n.transferred_at > created_at
+                || evidence.rent_time.is_some_and(|time| time > created_at);
+            (later_custody && evidence.covers_transfer(n.transfer_block, n.transferred_at))
                 .then_some(evidence.signer)
                 .flatten()
         }
         _ => None,
     };
-    let created_at = row
-        .get::<NaiveDateTime, _>("created_at")
-        .and_utc()
-        .timestamp();
+
     let dissolved = nft.is_some_and(|n| {
         n.category == "estate"
             && n.estate_size == Some(0)
@@ -327,7 +357,13 @@ pub async fn sync_listing(
         &venue,
         custody.as_deref(),
     ) {
-        cancel(pool, &[(id, reason)], now.naive_utc()).await?;
+        cancel(
+            pool,
+            &[(id, reason)],
+            nft.and_then(|n| Some((n.membership_block, n.membership_checked_at?))),
+            now.naive_utc(),
+        )
+        .await?;
     }
     Ok(())
 }
@@ -827,6 +863,27 @@ mod tests {
         assert_eq!(state_of(pool, rented_by_other).await, open());
 
         publish_rentals_index(pool).await;
+        sqlx::query(
+            "UPDATE shop.chain_cursor SET last_block=40,folded_block=40 WHERE indexer='rentals'",
+        )
+        .execute(pool)
+        .await
+        .unwrap();
+        let withheld = run_pass(pool, Some(LAND_MAINNET), Utc::now())
+            .await
+            .unwrap();
+        assert_eq!(withheld.moved, Some(0));
+        assert_eq!(
+            state_of(pool, rented_by_other).await,
+            open(),
+            "rent 41 is above the published Rentals head"
+        );
+        sqlx::query(
+            "UPDATE shop.chain_cursor SET last_block=50,folded_block=50 WHERE indexer='rentals'",
+        )
+        .execute(pool)
+        .await
+        .unwrap();
         let pass = run_pass(pool, Some(LAND_MAINNET), Utc::now())
             .await
             .unwrap();

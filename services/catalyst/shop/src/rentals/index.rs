@@ -660,7 +660,7 @@ pub fn walks(venue: &str) -> bool {
 pub(super) struct RentEvidence {
     pub(super) published_through: Option<i64>,
     pub(super) rent_block: Option<i64>,
-    rent_time: Option<i64>,
+    pub(super) rent_time: Option<i64>,
     pub(super) signer: Option<String>,
     pub(super) ends_at: Option<i64>,
 }

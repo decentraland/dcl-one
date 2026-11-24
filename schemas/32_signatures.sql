@@ -6,8 +6,8 @@
 -- `metadata` becomes `rental_assets` keyed by (contract, token) with the
 -- wire's `nft_id` as a UNIQUE, uuids come from gen_random_uuid (no uuid-ossp),
 -- every timestamp is `timestamp without time zone` UTC. The asset's owner and
--- LAND columns come from the published chain indexes at create/refresh
--- time; `fetched_at` records the metadata refresh. Status
+-- LAND columns come from the published chain indexes on walking nodes and the
+-- configured marketplace subgraph on non-walking nodes at create/refresh time; `fetched_at` records the metadata refresh. Status
 -- comes from the `rentals` chain index (shop.rental_event) and from the
 -- `rental-listing-status` pass (transfer, dissolution, expiry); no sync row
 -- exists. Writes are local authority behind DATA_WRITES_ENABLED.
