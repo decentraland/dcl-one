@@ -376,6 +376,14 @@ async fn sales_accounting_replays_fees_in_log_order_and_removes_empty_reorg_grou
         if fork {
             chain.fork(block, 0xba, vec![]);
         }
+        if fork {
+            // An earlier execution survives even when two cursor revisions arrive before the fold.
+            sqlx::query("INSERT INTO shop.sale_execution(network,block_number,log_index,tx_hash,venue,kind,block_time,receipt_read)
+                VALUES('ethereum',$1,0,$2,$3,'order',0,true)")
+                .bind(block as i64-1).bind(format!("0x{:064x}",5)).bind(venue).execute(&db.pool).await.unwrap();
+            sqlx::query("UPDATE shop.chain_cursor SET sale_dirty_from=$1,sale_history_revision=sale_history_revision+1")
+                .bind(block as i64+2).execute(&db.pool).await.unwrap();
+        }
         let hash = chain.hash_of(block);
         let mut dbtx = db.pool.begin().await.unwrap();
         if fork {
@@ -393,7 +401,7 @@ async fn sales_accounting_replays_fees_in_log_order_and_removes_empty_reorg_grou
                 full_history,folded_block,folded_at,sale_input_version,sale_verified_through,sale_covered_rewinds)
              VALUES ($1,'ethereum',1,1,$2,$3,true,$2,timezone('UTC',now()),1,$2,0)
              ON CONFLICT(indexer,network) DO UPDATE SET last_block_hash=excluded.last_block_hash,
-                sale_history_revision=chain_cursor.sale_history_revision+1")
+                sale_dirty_from=least(chain_cursor.sale_dirty_from,excluded.last_block),sale_history_revision=chain_cursor.sale_history_revision+1")
                 .bind(name).bind(block as i64).bind(&hash).execute(&mut *dbtx).await.unwrap();
         }
         sqlx::query("INSERT INTO shop.nft(network,contract_address,token_id,item_id,minted_block,minted_at,transferred_block,transferred_log,transferred_at)
@@ -436,6 +444,23 @@ async fn sales_accounting_replays_fees_in_log_order_and_removes_empty_reorg_grou
             "blockHash":hash,"transactionHash":tx_hash,"logs":receipt}),
         );
         sale_fold::pass(&db.pool, &rpc, net).await.unwrap();
+        if fork {
+            assert!(
+                sqlx::query_scalar::<_, bool>(
+                    "SELECT receipt_read FROM shop.sale_execution WHERE block_number=$1"
+                )
+                .bind(block as i64 - 1)
+                .fetch_one(&db.pool)
+                .await
+                .unwrap()
+            );
+            let firsts: Vec<(String, i64)> =
+                sqlx::query_as("SELECT seller,first_day FROM shop.sale_first_purchase")
+                    .fetch_all(&db.pool)
+                    .await
+                    .unwrap();
+            assert_eq!(firsts, [(seller.to_string(), time)]);
+        }
         let n = if fork { 1 } else { 2 };
         let fees = if fork { fee1 } else { fee1 + fee2 };
         let expected_volume = (sale_price * U256::from(n as u64)).to_string();
@@ -508,7 +533,16 @@ async fn sales_history_repair_resumes_at_the_next_window_and_discovers_store_iss
     two.transaction_hash = Some(hash.clone());
     let buy1 = sales_index::tests::bought_log(&[(CARL, 4, 25, ALICE)], &hash, b, 1);
     let buy2 = sales_index::tests::bought_log(&[(CARL, 4, 63, ALICE)], &hash, b, 3);
-    let chain = FakeChain::new(tip + 64, vec![one, buy1, two, buy2], 100_000, 100);
+    let mut malformed = two.clone();
+    malformed.log_index = "0x4".into();
+    malformed.data = "0x12".into();
+    let orphan = sales_index::tests::bought_log(&[(CARL, 5, 17, BOB)], &hash, b, 5);
+    let chain = FakeChain::new(
+        tip + 64,
+        vec![one, buy1, two, buy2, malformed, orphan],
+        100_000,
+        100,
+    );
     let url = serve(chain.clone()).await;
     let mut settings = index_settings(100, 100_000);
     settings.sales_enabled = true;
@@ -522,7 +556,7 @@ async fn sales_history_repair_resumes_at_the_next_window_and_discovers_store_iss
         sale_history::pending(&db.pool, &SalesIndex).await.unwrap(),
         Some(s as i64)
     );
-    for (expected, calls) in [(Some((s + 10_000) as i64), 0), (None, 2)] {
+    for (expected, calls) in [(Some((s + 10_000) as i64), 0), (None, 3)] {
         let owner = chain_walk::test_owner(&db.pool, &SalesIndex, &settings).await;
         sale_history::repair(
             &db.pool,
@@ -548,12 +582,14 @@ async fn sales_history_repair_resumes_at_the_next_window_and_discovers_store_iss
         );
     }
     let pairs: Vec<(i32, i32, String)> = sqlx::query_as(
-        "SELECT bought_log,issue_log,price::text FROM shop.store_sale_line ORDER BY bought_log",
+        "SELECT bought_log,issue_log,price::text FROM shop.store_sale_line WHERE issue_log IS NOT NULL ORDER BY bought_log",
     )
     .fetch_all(&db.pool)
     .await
     .unwrap();
     assert_eq!(pairs, [(1, 0, "25".into()), (3, 2, "63".into())]);
+    assert!(sqlx::query_scalar::<_,bool>("SELECT issue_checked AND issue_log IS NULL FROM shop.store_sale_line WHERE bought_log=5")
+        .fetch_one(&db.pool).await.unwrap());
     // A newly owed line at this height invalidates the old semantic revision,
     // even though the cursor never moved.
     sqlx::query("UPDATE shop.store_sale_line SET issue_log=NULL WHERE bought_log=3")
@@ -586,6 +622,32 @@ async fn sales_history_repair_resumes_at_the_next_window_and_discovers_store_iss
             .await
             .unwrap();
     assert_eq!(after, (before + 1, tip as i64));
+    // Prove the neighbouring independent walks on the same branch.
+    for name in ["nft", "trade_events"] {
+        sqlx::query("INSERT INTO shop.chain_cursor(indexer,network,chain_id,start_block,last_block,last_block_hash,
+            full_history,folded_block,folded_at,sale_input_version,sale_verified_through,sale_covered_rewinds)
+            VALUES($1,'matic',137,1,$2,$3,true,$2,timezone('UTC',now()),1,$2,0)")
+            .bind(name).bind(tip as i64).bind(&anchor).execute(&db.pool).await.unwrap();
+    }
+    *chain.head.lock() = tip + 5;
+    let rpc = Rpc::at(&st.http, &url);
+    crate::market::sale_fold::pass(&db.pool, &rpc, ChainNet::Matic)
+        .await
+        .unwrap();
+    assert!(
+        crate::market::sale_fold::snapshot(&db.pool, &[ChainNet::Matic], chrono::Utc::now())
+            .await
+            .unwrap()
+            .is_some()
+    );
+    let canonical: (i64, i64, String) = sqlx::query_as(
+        "SELECT (SELECT count(*) FROM shop.sale_execution),
+        (SELECT count(*) FROM shop.sale_asset),sum(gross)::text FROM shop.sale_payment",
+    )
+    .fetch_one(&db.pool)
+    .await
+    .unwrap();
+    assert_eq!(canonical, (3, 2, "105".into()));
     assert_eq!(
         sale_history::pending(&db.pool, &SalesIndex).await.unwrap(),
         None
@@ -622,7 +684,7 @@ async fn sales_accounting_bundles_preserve_order_and_gross_once_per_currency() {
     event.caller = BOB.into();
     event.assets = Some(
         json!({"sent":[asset("3",DAVE,"12",CARL),asset("3",DAVE,"13",BOB)],
-        "received":[asset("1",mana,"115",DAVE),asset("1",mana,"8",ALICE),asset("1",CARL,"99",ALICE)],"uses":"1"}),
+        "received":[asset("1",mana,"115",DAVE),asset("2",mana,"8",ALICE),asset("1",CARL,"99",ALICE),asset("2",DAVE,"10",ALICE)],"uses":"1"}),
     );
     let mut c = db.pool.acquire().await.unwrap();
     trade_events::insert_events(&mut c, net, &[event])
@@ -660,7 +722,8 @@ async fn sales_accounting_bundles_preserve_order_and_gross_once_per_currency() {
         amounts,
         [
             (mana.into(), "123".into(), 0, 1, 2),
-            (CARL.into(), "99".into(), 0, 1, 1)
+            (CARL.into(), "99".into(), 0, 1, 1),
+            ("usd".into(), "10".into(), 0, 1, 1)
         ]
     );
     let legs: Vec<(String, String)> =
@@ -672,6 +735,7 @@ async fn sales_accounting_bundles_preserve_order_and_gross_once_per_currency() {
         legs,
         [
             (BOB.into(), DAVE.into()),
+            (BOB.into(), ALICE.into()),
             (BOB.into(), ALICE.into()),
             (BOB.into(), ALICE.into())
         ]

@@ -23,6 +23,7 @@ struct Input {
     folded_at: NaiveDateTime,
     epoch: Uuid,
     revision: i64,
+    dirty_from: Option<i64>,
 }
 
 struct Inputs {
@@ -41,6 +42,23 @@ impl Inputs {
 
     fn revisions(&self) -> Vec<i64> {
         self.rows.iter().map(|r| r.revision).collect()
+    }
+
+    fn reusable_prefix(&self, marker: &Marker) -> Option<i64> {
+        if marker.input_version != sale_history::VERSION
+            || marker.input_epochs != self.epochs()
+            || marker.input_revisions.len() != self.rows.len()
+            || marker.late_collections != self.late_collections
+        {
+            return None;
+        }
+        let mut prefix = marker.block_number.min(self.common());
+        for (row, previous) in self.rows.iter().zip(&marker.input_revisions) {
+            if row.revision != *previous {
+                prefix = prefix.min(row.dirty_from?.checked_sub(1)?);
+            }
+        }
+        Some(prefix)
     }
 
     fn covers(&self, marker: &Marker) -> bool {
@@ -109,7 +127,7 @@ async fn inputs(
            (SELECT FROM shop.nft_contract k WHERE k.network=c.network AND k.contract_address=c.contract_address))")
         .bind(net.db_name()).fetch_one(&mut *c).await?;
     let missing: bool = net == ChainNet::Matic && sqlx::query_scalar(
-        "SELECT EXISTS(SELECT FROM shop.store_sale_line WHERE issue_log IS NULL AND block_number <= $1)")
+        "SELECT EXISTS(SELECT FROM shop.store_sale_line WHERE issue_log IS NULL AND NOT issue_checked AND block_number <= $1)")
         .bind(common).fetch_one(&mut *c).await?;
     Ok((!owed && !missing && !undiscovered).then_some(Inputs {
         rows,
@@ -235,12 +253,6 @@ async fn rollups(c: &mut PgConnection, net: ChainNet, days: &[i64]) -> anyhow::R
     sqlx::query(include_str!("rollups.sql"))
         .bind(net.db_name())
         .bind(days)
-        .bind(
-            &[
-                "0xadfeb1de7876fcabeaf87df5a6c566b70f970018",
-                "0x0fcf114c63a5387878e0da051c81cb6febd93b6c",
-            ][..],
-        )
         .bind(ethereum_sales::BURNING_NAME_CONTROLLER)
         .execute(&mut *c)
         .await?;
@@ -273,10 +285,13 @@ pub(super) async fn pass(pool: &PgPool, rpc: &Rpc<'_>, net: ChainNet) -> anyhow:
     let previous = marker(&mut c, net).await?;
     drop(c);
     let same_history = previous.as_ref().is_some_and(|m| start.covers(m));
+    let initial = nft_index::start_block(net) as i64 - 1;
     let from = previous
         .as_ref()
-        .filter(|_| same_history)
-        .map_or(nft_index::start_block(net) as i64 - 1, |m| m.block_number);
+        .and_then(|m| start.reusable_prefix(m))
+        .unwrap_or(initial)
+        .max(initial);
+    let preserved_marker = previous.as_ref().filter(|m| m.block_number == from);
     let limit = start.common().min(from + 250_000);
     // Limit RPC receipt work even in a dense block range. Never split a block.
     let to: i64 = sqlx::query_scalar(include_str!("window.sql"))
@@ -296,12 +311,7 @@ pub(super) async fn pass(pool: &PgPool, rpc: &Rpc<'_>, net: ChainNet) -> anyhow:
         .iter()
         .map(|r| r.last_block as u64)
         .chain([to as u64])
-        .chain(
-            previous
-                .iter()
-                .filter(|_| same_history)
-                .map(|m| m.block_number as u64),
-        )
+        .chain(preserved_marker.iter().map(|m| m.block_number as u64))
         .collect();
     let (blocks, _) = rpc
         .block_headers(&headers.into_iter().collect::<Vec<_>>())
@@ -312,7 +322,7 @@ pub(super) async fn pass(pool: &PgPool, rpc: &Rpc<'_>, net: ChainNet) -> anyhow:
             "sales input is on a different branch"
         );
     }
-    if let Some(m) = previous.as_ref().filter(|_| same_history) {
+    if let Some(m) = preserved_marker {
         ensure!(
             blocks[&(m.block_number as u64)].hash == m.block_hash,
             "sales prefix changed branch"
@@ -320,42 +330,53 @@ pub(super) async fn pass(pool: &PgPool, rpc: &Rpc<'_>, net: ChainNet) -> anyhow:
     }
     let hash = &blocks[&(to as u64)].hash;
     let mut tx = pool.begin().await?;
+    let mut days: Vec<i64> = Vec::new();
     if !same_history {
-        for clear in [
-            "DELETE FROM shop.sale_analytics_day WHERE network=$1",
-            "DELETE FROM shop.sale_item_day WHERE network=$1",
-            "DELETE FROM shop.sale_account_day WHERE network=$1",
-            "DELETE FROM shop.sale_account_total WHERE network=$1",
-            "DELETE FROM shop.sale_first_purchase WHERE network=$1",
-        ] {
-            sqlx::query(clear)
-                .bind(net.db_name())
-                .execute(&mut *tx)
-                .await?;
-        }
-        sqlx::query("DELETE FROM shop.sale_execution WHERE network=$1")
+        // Capture the old UTC days before the cascading delete. A replacement
+        // can move the only purchase to another day, seller or item.
+        days = sqlx::query_scalar("WITH removed AS (
+            DELETE FROM shop.sale_execution WHERE network=$1 AND block_number>$2 RETURNING block_time)
+            SELECT DISTINCT block_time/86400*86400 FROM removed")
+            .bind(net.db_name()).bind(from).fetch_all(&mut *tx).await?;
+        sqlx::query("DELETE FROM shop.sale_first_purchase WHERE network=$1 AND first_day=ANY($2)")
             .bind(net.db_name())
+            .bind(&days)
             .execute(&mut *tx)
             .await?;
     }
     write_rows(&mut tx, net, from, to).await?;
-    let mut days = creators::write(&mut tx, rpc, net, from, to).await?;
+    days.extend(creators::write(&mut tx, rpc, net, from, to).await?);
     days.extend(settlements::write(&mut tx, rpc, net, from, to).await?);
     days.sort_unstable();
     days.dedup();
     // These checkout providers take custody before delivery. Preserve the
     // immediate beneficiary and the payment sender alongside the public buyer.
-    sqlx::query("WITH delivered AS (
-        SELECT a.block_number,a.log_index,a.ordinal,
+    let former_buyers: Vec<String> = sqlx::query_scalar("WITH delivered AS (
+        SELECT a.block_number,a.log_index,a.ordinal,a.buyer AS previous_buyer,
           (SELECT n.to_address FROM shop.nft_event n WHERE n.network=a.network AND n.contract_address=a.contract_address
             AND n.token_id=a.token_id AND n.block_number=a.block_number AND n.kind='transfer' ORDER BY n.log_index DESC LIMIT 1) AS recipient
         FROM shop.sale_asset a JOIN shop.sale_execution e USING(network,block_number,log_index)
         WHERE a.network=$1 AND e.block_time/86400*86400=ANY($2) AND a.beneficiary=ANY($3))
-        UPDATE shop.sale_asset a SET buyer=d.recipient FROM delivered d WHERE a.network=$1
+        , changed AS (UPDATE shop.sale_asset a SET buyer=d.recipient FROM delivered d WHERE a.network=$1
           AND (a.block_number,a.log_index,a.ordinal)=(d.block_number,d.log_index,d.ordinal)
-          AND d.recipient IS NOT NULL AND a.buyer IS DISTINCT FROM d.recipient")
+          AND d.recipient IS NOT NULL AND a.buyer IS DISTINCT FROM d.recipient RETURNING d.previous_buyer) SELECT DISTINCT previous_buyer FROM changed")
         .bind(net.db_name()).bind(&days).bind(&["0xed038688ecf1193f8d9717eb3930f0bf0d745cb4","0xea749fd6ba492dbc14c24fe8a3d08769229b896c"][..])
-        .execute(&mut *tx).await?;
+        .fetch_all(&mut *tx).await?;
+    if !former_buyers.is_empty() {
+        // A later receipt can replace the checkout provider with the recipient.
+        // The old buyer may still have a later purchase of the same item.
+        sqlx::query("DELETE FROM shop.sale_first_purchase WHERE network=$1 AND buyer=ANY($2)")
+            .bind(net.db_name())
+            .bind(&former_buyers)
+            .execute(&mut *tx)
+            .await?;
+        sqlx::query("INSERT INTO shop.sale_first_purchase(network,currency,buyer,seller,contract_address,item_id,first_day)
+            SELECT a.network,a.currency,a.buyer,a.seller,a.contract_address,a.item_id,min(e.block_time)/86400*86400
+            FROM shop.sale_asset a JOIN shop.sale_execution e USING(network,block_number,log_index)
+            WHERE a.network=$1 AND a.buyer=ANY($2) AND a.seller IS NOT NULL AND a.price>0
+            GROUP BY a.network,a.currency,a.buyer,a.seller,a.contract_address,a.item_id")
+            .bind(net.db_name()).bind(&former_buyers).execute(&mut *tx).await?;
+    }
     rollups(&mut tx, net, &days).await?;
     let point = rpc.block_header(to as u64).await?;
     ensure!(point.hash == *hash, "sales prefix changed during fold");
@@ -381,6 +402,15 @@ pub(super) async fn pass(pool: &PgPool, rpc: &Rpc<'_>, net: ChainNet) -> anyhow:
         marker(&mut tx, net).await? == previous,
         "another sales fold committed"
     );
+    // Acknowledging the earliest affected block is atomic with replacing the
+    // suffix and recording the revisions. Owners use the same locked cursors.
+    sqlx::query(
+        "UPDATE shop.chain_cursor SET sale_dirty_from=NULL WHERE network=$1
+        AND indexer IN ('nft','sales','trade_events') AND sale_dirty_from IS NOT NULL",
+    )
+    .bind(net.db_name())
+    .execute(&mut *tx)
+    .await?;
     sqlx::query("INSERT INTO shop.sale_publication (network,block_number,block_hash,input_version,input_epochs,input_revisions,late_collections,published_at)
         VALUES ($1,$2,$3,$4,$5,$6,$7,$8) ON CONFLICT (network) DO UPDATE SET block_number=EXCLUDED.block_number,
         generation=CASE WHEN $9 THEN EXCLUDED.generation ELSE sale_publication.generation END,

@@ -330,6 +330,7 @@ fn call_tag(body: &Value) -> String {
         "eth_call" => "call".into(),
         "eth_getBlockByNumber" if p[0] == "finalized" => "finalized".into(),
         "eth_getBlockByNumber" => format!("header {}", hex_u64(&p[0])),
+        "eth_getLogs" if p[0]["blockHash"].is_string() => format!("logs at {}", p[0]["blockHash"]),
         "eth_getLogs" => {
             let f = &p[0];
             let addresses = match &f["address"] {
@@ -508,7 +509,18 @@ fn answer(chain: &FakeChain, body: &Value) -> Value {
         Some("eth_getLogs") => {
             chain.get_logs.fetch_add(1, Ordering::SeqCst);
             let f = &body["params"][0];
-            let (from, to) = (hex_u64(&f["fromBlock"]), hex_u64(&f["toBlock"]));
+            let (from, to) = if let Some(hash) = f["blockHash"].as_str() {
+                let Some(block) = hash.get(50..).and_then(|s| u64::from_str_radix(s, 16).ok())
+                else {
+                    return refuse("invalid block hash".into());
+                };
+                if chain.hash_of(block) != hash {
+                    return refuse("unknown block hash".into());
+                }
+                (block, block)
+            } else {
+                (hex_u64(&f["fromBlock"]), hex_u64(&f["toBlock"]))
+            };
             if chain.reorg_on_logs.swap(false, Ordering::SeqCst) {
                 chain
                     .forks
@@ -1717,6 +1729,7 @@ async fn estate_repair_reconciles_legacy_rows_and_recovers_an_old_writer_interva
             hash: chain.hash_of(j),
             timestamp: time_of(j),
         },
+        false,
     )
     .await
     .unwrap();
@@ -1770,6 +1783,7 @@ async fn estate_repair_reconciles_legacy_rows_and_recovers_an_old_writer_interva
             hash: chain.hash_of(j),
             timestamp: time_of(j),
         },
+        false,
     )
     .await
     .unwrap();
@@ -1879,6 +1893,7 @@ async fn estate_repair_recovers_after_a_legacy_bounded_rewind_to_the_same_tip() 
             hash: chain.hash_of(h),
             timestamp: time_of(h),
         },
+        false,
     )
     .await
     .unwrap();
@@ -4664,7 +4679,8 @@ async fn mana_sync_atomic_replay_and_reorg() {
                 number: 99,
                 hash: chain.hash_of(99),
                 timestamp: time_of(99)
-            }
+            },
+            false,
         )
         .await
         .is_err()

@@ -381,6 +381,7 @@ CREATE TABLE shop.chain_cursor (
     sale_covered_rewinds integer,
     sale_input_version integer,
     sale_verified_through bigint,
+    sale_dirty_from bigint,
     sale_history_revision bigint NOT NULL DEFAULT 0,
     full_history boolean NOT NULL,
     reorg_rewinds integer NOT NULL DEFAULT 0,
@@ -16903,11 +16904,13 @@ CREATE TABLE shop.sale_execution (
     receipt_read boolean NOT NULL DEFAULT false,
     receipt_attempted_at timestamp without time zone,
     creator_attempted_at timestamp without time zone,
+    creator_checked boolean NOT NULL DEFAULT false,
     block_time bigint NOT NULL,
     PRIMARY KEY (network, block_number, log_index)
 );
 CREATE INDEX sale_execution_tx ON shop.sale_execution (network, tx_hash, log_index);
 CREATE INDEX sale_execution_day ON shop.sale_execution (network, ((block_time / 86400) * 86400));
+CREATE INDEX sale_execution_pending_creator ON shop.sale_execution (network, creator_attempted_at NULLS FIRST, block_number) WHERE kind='store' AND NOT creator_checked;
 CREATE INDEX sale_execution_pending_receipt ON shop.sale_execution (network, receipt_attempted_at NULLS FIRST, block_number) WHERE NOT receipt_read;
 
 -- Issued items and transferred NFTs in venue order. A multi-asset trade
@@ -16932,7 +16935,8 @@ CREATE TABLE shop.sale_asset (
     FOREIGN KEY (network, block_number, log_index)
        REFERENCES shop.sale_execution ON DELETE CASCADE
 );
-CREATE INDEX sale_asset_token ON shop.sale_asset (network, contract_address, token_id, block_number);
+
+CREATE INDEX sale_asset_priced_buyer ON shop.sale_asset(network,buyer) WHERE price>0 AND seller IS NOT NULL;
 
 -- One row per consideration leg, including the explicit price of each
 -- store line. Source-proven gross can be available before payee attribution.
@@ -16958,7 +16962,7 @@ CREATE TABLE shop.sale_payout (
     log_index integer NOT NULL,
     payment_ordinal integer NOT NULL,
     ordinal integer NOT NULL,
-    role text NOT NULL CHECK (role IN ('seller','royalty','venue_fee','store_fee','name_fee','retained')),
+    role text NOT NULL CHECK (role IN ('seller','royalty','venue_fee','store_fee','name_fee','burn','retained')),
     recipient text NOT NULL,
     amount numeric(78,0) NOT NULL CHECK (amount >= 0),
     PRIMARY KEY (network, block_number, log_index, payment_ordinal, ordinal),
@@ -16989,6 +16993,7 @@ CREATE TABLE shop.sale_account_day (
     received numeric NOT NULL, royalties numeric NOT NULL, fees_received numeric NOT NULL,
     PRIMARY KEY(network, address, currency, day)
 );
+CREATE INDEX sale_account_day_by_day ON shop.sale_account_day(network,day);
 CREATE TABLE shop.sale_account_total (
     network text NOT NULL, currency text NOT NULL, address text NOT NULL,
     sales bigint NOT NULL, purchases bigint NOT NULL, spent numeric NOT NULL,
@@ -17005,7 +17010,7 @@ CREATE TABLE shop.sale_first_purchase (
     contract_address text NOT NULL, item_id numeric(78,0), first_day bigint NOT NULL,
     UNIQUE NULLS NOT DISTINCT (network,currency,buyer,seller,contract_address,item_id)
 );
-CREATE INDEX sale_first_seller ON shop.sale_first_purchase(network,currency,seller,first_day);
+CREATE INDEX sale_first_day ON shop.sale_first_purchase(network,first_day);
 
 -- One common source prefix per network. Capture each dependency's revision
 -- independently so that withdrawals invalidate reads at the same height.
@@ -17038,6 +17043,8 @@ CREATE TABLE shop.sale_fee_change (
 CREATE TABLE shop.store_sale_line (
     block_number bigint NOT NULL,
     bought_log integer NOT NULL,
+    block_time bigint NOT NULL,
+    issue_checked boolean NOT NULL DEFAULT false,
     ordinal integer NOT NULL CHECK (ordinal >= 0),
     tx_hash varchar(66) NOT NULL CHECK (tx_hash ~ '^0x[0-9a-f]{64}$'),
     contract_address varchar(42) NOT NULL,
@@ -17048,7 +17055,7 @@ CREATE TABLE shop.store_sale_line (
     PRIMARY KEY (block_number, bought_log, ordinal),
     UNIQUE (block_number, issue_log)
 );
-CREATE INDEX store_sale_unmatched ON shop.store_sale_line (block_number) WHERE issue_log IS NULL;
+CREATE INDEX store_sale_unmatched ON shop.store_sale_line (block_number) WHERE issue_log IS NULL AND NOT issue_checked;
 
 -- Fees paid at Ethereum's names controller, keyed by the log so one
 -- transaction may buy several names. The sales walk removes the suffix

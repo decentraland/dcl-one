@@ -42,7 +42,6 @@ pub fn validate_window(
                 .iter()
                 .any(|t| topic.eq_ignore_ascii_case(t)),
             INDEXER_SALES => [
-                sales_index::TOPIC_ISSUE,
                 sales_index::TOPIC_BID_ACCEPTED,
                 sales_index::TOPIC_BOUGHT,
                 ethereum_sales::TOPIC_NAME_BOUGHT,
@@ -72,10 +71,7 @@ pub fn validate_window(
                     "missing order parties"
                 );
             }
-            INDEXER_SALES
-                if topic.eq_ignore_ascii_case(sales_index::TOPIC_BID_ACCEPTED)
-                    || topic.eq_ignore_ascii_case(sales_index::TOPIC_ISSUE) =>
-            {
+            INDEXER_SALES if topic.eq_ignore_ascii_case(sales_index::TOPIC_BID_ACCEPTED) => {
                 sales_index::decode_log(log, time)?;
             }
             INDEXER_TRADE_EVENTS => {
@@ -104,7 +100,7 @@ pub async fn pending(pool: &PgPool, ix: &dyn ChainIndex) -> anyhow::Result<Optio
            CASE WHEN sale_input_version IS DISTINCT FROM $3 OR sale_covered_rewinds IS DISTINCT FROM reorg_rewinds OR sale_verified_through IS NULL THEN start_block
                 WHEN sale_verified_through < last_block THEN sale_verified_through + 1 END,
            CASE WHEN indexer = 'sales' AND network = 'matic' THEN
-                (SELECT min(block_number) FROM shop.store_sale_line WHERE issue_log IS NULL AND block_number <= last_block) END)
+                (SELECT min(block_number) FROM shop.store_sale_line WHERE issue_log IS NULL AND NOT issue_checked AND block_number <= last_block) END)
          FROM shop.chain_cursor WHERE indexer = $1 AND network = $2 AND full_history AND chain_id = $4
            AND last_block >= start_block AND last_block_hash IS NOT NULL AND quarantined_at IS NULL AND diverged_at IS NULL")
         .bind(ix.indexer()).bind(ix.net().db_name()).bind(VERSION).bind(ix.chain_id())
@@ -237,10 +233,36 @@ pub async fn repair(
     } else {
         ix.write(&mut tx, &window.logs, &times.value).await?;
     }
+    if owner.indexer == INDEXER_SALES && owner.net == ChainNet::Matic {
+        // These exact Bought logs and all the issuers they name were read on
+        // the same branch. A nonconforming collection need never emit Issue.
+        let mut blocks = Vec::new();
+        let mut indices = Vec::new();
+        let mut hashes = Vec::new();
+        for log in &window.logs {
+            if let Some((hash, _)) = sales_index::decode_bought(log)? {
+                let (block, index) = chain_walk::log_position(log);
+                blocks.push(block);
+                indices.push(i32::try_from(index)?);
+                hashes.push(hash);
+            }
+        }
+        sqlx::query(
+            "UPDATE shop.store_sale_line s SET issue_checked=true
+            FROM unnest($1::bigint[],$2::int[],$3::text[]) b(block,idx,hash)
+            WHERE (s.block_number,s.bought_log,s.tx_hash)=(b.block,b.idx,b.hash)
+              AND s.issue_log IS NULL AND NOT s.issue_checked",
+        )
+        .bind(blocks)
+        .bind(indices)
+        .bind(hashes)
+        .execute(&mut *tx)
+        .await?;
+    }
     let count = sqlx::query(
         "UPDATE shop.chain_cursor SET sale_input_version = $3,
           sale_verified_through = CASE WHEN sale_input_version IS DISTINCT FROM $3 OR sale_covered_rewinds IS DISTINCT FROM reorg_rewinds THEN $4 ELSE greatest(sale_verified_through, $4) END,
-          sale_covered_rewinds = reorg_rewinds, sale_history_revision = sale_history_revision + 1
+          sale_covered_rewinds = reorg_rewinds, sale_dirty_from = least(sale_dirty_from,$7), sale_history_revision = sale_history_revision + 1
          WHERE indexer = $1 AND network = $2 AND last_block = $5 AND last_block_hash = $6
            AND $7 <= CASE WHEN sale_input_version = $3 AND sale_covered_rewinds = reorg_rewinds THEN coalesce(sale_verified_through + 1,start_block) ELSE start_block END")
         .bind(owner.indexer).bind(owner.net.db_name()).bind(VERSION).bind(window.reached as i64)

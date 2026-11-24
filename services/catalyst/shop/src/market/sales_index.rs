@@ -500,7 +500,7 @@ impl ChainIndex for SalesIndex {
         }
         super::sale_terms::write(conn, self.net(), logs).await?;
         let lines = super::store_sales::pair(&mut rows, logs)?;
-        super::store_sales::write(conn, &lines).await?;
+        super::store_sales::write(conn, &lines, times).await?;
         Ok(insert_events(conn, self.net(), &rows).await?)
     }
 

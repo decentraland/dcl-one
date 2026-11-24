@@ -2,6 +2,8 @@
 //! before matching payments, and require every leg to conserve base units.
 use std::collections::{BTreeMap, BTreeSet};
 
+use std::sync::LazyLock;
+
 use alloy_primitives::U256;
 use alloy_sol_types::{SolType, sol_data};
 use anyhow::{Context, ensure};
@@ -271,6 +273,18 @@ fn store(rows: &[Payment], moves: &[Transfer]) -> Option<Vec<Split>> {
     )
 }
 
+static BURNERS: LazyLock<[String; 2]> = LazyLock::new(|| {
+    let addresses: serde_json::Value =
+        serde_json::from_slice(crate::evm::contracts::ADDRESSES_JSON)
+            .expect("bundled contract registry");
+    ["MANABurner", "BidMANABurner"].map(|name| {
+        addresses["mainnet"][name]
+            .as_str()
+            .expect("registered Ethereum MANA burner")
+            .to_ascii_lowercase()
+    })
+});
+
 fn classify(net: ChainNet, rows: &[Payment], moves: &[Transfer]) -> Option<Vec<Split>> {
     let first = rows.first()?;
     if first.kind == "store" {
@@ -288,7 +302,7 @@ fn classify(net: ChainNet, rows: &[Payment], moves: &[Transfer]) -> Option<Vec<S
     for p in rows {
         let gross = U256::from_str_radix(&p.gross, 10).ok()?;
         let payer = p.payer.as_ref()?;
-        let legs = match p.kind.as_str() {
+        let mut legs = match p.kind.as_str() {
             "trade" => {
                 let legs = trade_payout(net, p, gross)?;
                 for leg in legs.iter().filter(|l| l.role != "retained") {
@@ -316,6 +330,16 @@ fn classify(net: ChainNet, rows: &[Payment], moves: &[Transfer]) -> Option<Vec<S
             }
             _ => return None,
         };
+        if net == ChainNet::Ethereum {
+            for leg in &mut legs {
+                if (leg.role == "name_fee" && p.venue == ethereum_sales::BURNING_NAME_CONTROLLER)
+                    || (matches!(leg.role, "venue_fee" | "name_fee")
+                        && BURNERS.contains(&leg.recipient))
+                {
+                    leg.role = "burn";
+                }
+            }
+        }
         if legs
             .iter()
             .try_fold(U256::ZERO, |v, l| v.checked_add(l.amount))?
@@ -377,6 +401,32 @@ fn venue_event(net: ChainNet, log: &RpcLog) -> Option<&'static str> {
     }
 }
 
+// Optional Issue logs can come from any contract called during the fill.
+fn traded_issue(
+    l: &RpcLog,
+    venue: &str,
+    contracts: &BTreeSet<&str>,
+) -> Option<(String, String, String, String)> {
+    if l.topics.len() != 4 || !l.topics[0].eq_ignore_ascii_case(sales_index::TOPIC_ISSUE) {
+        return None;
+    }
+    let contract = l.address.to_ascii_lowercase();
+    if !contracts.contains(contract.as_str()) {
+        return None;
+    }
+    let data = hex::decode(l.data.strip_prefix("0x")?).ok()?;
+    let (_, caller) = <(sol_data::Uint<256>, sol_data::Address)>::abi_decode_params(&data).ok()?;
+    if format!("{caller:#x}") != venue {
+        return None;
+    }
+    Some((
+        contract,
+        chain_walk::topic_u256(&l.topics[3])?,
+        chain_walk::topic_address(&l.topics[1])?,
+        chain_walk::topic_u256(&l.topics[2])?,
+    ))
+}
+
 /// A Traded collection-item leg supplies an item id. Its matching Issue in
 /// this execution supplies the minted token id, including repeated copies.
 async fn issued_tokens(
@@ -397,34 +447,19 @@ async fn issued_tokens(
     if assets.is_empty() {
         return Ok(());
     }
-    let mut issues = Vec::new();
-    for l in logs {
-        if l.topics.len() != 4 || !l.topics[0].eq_ignore_ascii_case(sales_index::TOPIC_ISSUE) {
-            continue;
-        }
-        let data = hex::decode(l.data.trim_start_matches("0x"))?;
-        let (_, caller) = <(sol_data::Uint<256>, sol_data::Address)>::abi_decode_params(&data)?;
-        if format!("{caller:#x}") != p.venue {
-            continue;
-        }
-        issues.push((
-            l.address.to_ascii_lowercase(),
-            chain_walk::topic_u256(&l.topics[3]),
-            chain_walk::topic_address(&l.topics[1]),
-            chain_walk::topic_u256(&l.topics[2]),
-        ));
-    }
+    let contracts = assets
+        .iter()
+        .map(|(_, contract, _, _)| contract.as_str())
+        .collect();
+    let issues: Vec<_> = logs
+        .iter()
+        .filter_map(|l| traded_issue(l, &p.venue, &contracts))
+        .collect();
     if assets.len() != issues.len() {
         return Ok(());
     }
-    for ((_, contract, item, buyer), (issuer, minted, recipient, token)) in
-        assets.iter().zip(&issues)
-    {
-        if issuer != contract
-            || minted.as_ref() != Some(item)
-            || recipient.as_ref() != Some(buyer)
-            || token.is_none()
-        {
+    for ((_, contract, item, buyer), (issuer, minted, recipient, _)) in assets.iter().zip(&issues) {
+        if issuer != contract || minted != item || recipient != buyer {
             return Ok(());
         }
     }
@@ -592,6 +627,23 @@ mod tests {
     use alloy_primitives::Address;
     use alloy_sol_types::SolValue;
 
+    #[test]
+    fn sales_trade_ignores_unrelated_and_malformed_issue_logs() {
+        let collection = "0x1111111111111111111111111111111111111111";
+        let buyer = "0x2222222222222222222222222222222222222222";
+        let venue = "0x3333333333333333333333333333333333333333";
+        let contracts = BTreeSet::from([collection]);
+        let mut log =
+            sales_index::tests::issue_log(collection, buyer, U256::from(21), 3, venue, 100, 1);
+        assert_eq!(
+            traded_issue(&log, venue, &contracts),
+            Some((collection.into(), "3".into(), buyer.into(), "21".into()))
+        );
+        assert!(traded_issue(&log, venue, &BTreeSet::from([buyer])).is_none());
+        log.data = "0x01".into();
+        assert!(traded_issue(&log, venue, &contracts).is_none());
+    }
+
     fn payment(kind: &str) -> Payment {
         Payment {
             block: 1,
@@ -642,7 +694,7 @@ mod tests {
         let splits = classify(ChainNet::Ethereum, &[p], &moves).unwrap();
         let legs = &splits[0].legs;
         assert_eq!(legs[0].amount.to_string(), "1286999010000000000000000");
-        assert_eq!(legs[1].role, "venue_fee");
+        assert_eq!(legs[1].role, "burn");
         assert_eq!(
             legs[1].recipient,
             "0xadfeb1de7876fcabeaf87df5a6c566b70f970018"

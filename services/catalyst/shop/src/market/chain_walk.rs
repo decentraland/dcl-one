@@ -429,6 +429,7 @@ pub struct Owner {
     pub net: ChainNet,
     pub chain_id: i64,
     pub generation: i64,
+    verify_sales: bool,
     /// Whether this generation's walk touched its cursor at its start.
     pub started: Started,
 }
@@ -625,6 +626,9 @@ impl Holdings {
             net,
             chain_id,
             generation,
+            verify_sales: settings.sales_enabled
+                && super::sale_history::required(indexer)
+                && chain_id == net.chain_id(),
             started,
         })
     }
@@ -654,6 +658,7 @@ pub async fn advance(
     net: ChainNet,
     expected: (i64, Option<&str>),
     header: &BlockHeader,
+    verified_sales: bool,
 ) -> Result<(), sqlx::Error> {
     let updated = sqlx::query(
         "UPDATE shop.chain_cursor SET last_block = $5, last_block_hash = $6, last_block_time = $7, \
@@ -671,7 +676,7 @@ pub async fn advance(
     .bind(header.number as i64)
     .bind(&header.hash)
     .bind(header.timestamp)
-    .bind(super::sale_history::required(indexer))
+    .bind(verified_sales)
     .bind(super::sale_history::VERSION)
     .execute(&mut *conn)
     .await?;
@@ -735,7 +740,7 @@ pub async fn rewind(
              fold_through = NULL, folded_block = NULL, folded_at = NULL, diverged_at = NULL, \
              sale_covered_rewinds = CASE WHEN sale_covered_rewinds = reorg_rewinds THEN reorg_rewinds + 1 END, \
              sale_verified_through = CASE WHEN sale_verified_through IS NOT NULL THEN least(sale_verified_through, $5) END, \
-             sale_history_revision = sale_history_revision + 1, reorg_rewinds = reorg_rewinds + 1, updated_at = timezone('UTC', now()) \
+             sale_dirty_from = least(sale_dirty_from, $5::bigint + 1), sale_history_revision = sale_history_revision + 1, reorg_rewinds = reorg_rewinds + 1, updated_at = timezone('UTC', now()) \
          WHERE indexer = $1 AND network = $2 AND last_block = $3 AND last_block_hash IS NOT DISTINCT FROM $4 \
            AND last_block >= $5",
     )
@@ -1484,7 +1489,7 @@ async fn rebuild(
     }
     sqlx::query(
         "UPDATE shop.chain_cursor SET last_block = $3, last_block_hash = NULL, last_block_time = NULL, \
-             sale_input_version = NULL, sale_verified_through = NULL, sale_history_revision = sale_history_revision + 1, \
+             sale_input_epoch = gen_random_uuid(), sale_dirty_from = NULL, sale_input_version = NULL, sale_verified_through = NULL, sale_history_revision = sale_history_revision + 1, \
              fold_through = NULL, folded_block = NULL, folded_at = NULL, full_history = $4, chain_id = $5, \
              quarantined_at = NULL, quarantine_reason = NULL, rebuild_requested_at = NULL, diverged_at = NULL, \
              updated_at = timezone('UTC', now()) \
@@ -1914,13 +1919,20 @@ pub(crate) async fn commit_window(
     times: &HashMap<i64, i64>,
 ) -> anyhow::Result<usize> {
     let mut tx = pool.begin().await?;
-    if super::sale_history::required(ix.indexer()) {
+    if owner.verify_sales {
         super::sale_history::validate_window(ix, logs, times)?;
     }
     let written = ix.write(&mut tx, logs, times).await?;
-    advance(&mut tx, ix.indexer(), ix.net(), expected, header)
-        .await
-        .context("advancing the cursor")?;
+    advance(
+        &mut tx,
+        ix.indexer(),
+        ix.net(),
+        expected,
+        header,
+        owner.verify_sales,
+    )
+    .await
+    .context("advancing the cursor")?;
     ix.record_coverage(&mut tx, expected, header).await?;
     owner.check(&mut tx).await?;
     tx.commit().await?;

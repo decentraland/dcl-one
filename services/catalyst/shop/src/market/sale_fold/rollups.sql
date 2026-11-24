@@ -8,7 +8,7 @@ WITH execution AS MATERIALIZED (
 ), money AS MATERIALIZED (
     SELECT p.*,e.day,e.kind,e.venue FROM execution e JOIN shop.sale_payment p USING (network,block_number,log_index) WHERE p.consideration
 ), payout AS MATERIALIZED (
-    SELECT po.*,p.currency,p.day,p.kind FROM money p JOIN shop.sale_payout po
+    SELECT po.*,p.currency,p.day,p.kind,p.venue FROM money p JOIN shop.sale_payout po
       ON (p.network,p.block_number,p.log_index,p.ordinal)=(po.network,po.block_number,po.log_index,po.payment_ordinal)
 ), analytics AS (
     SELECT day,currency,count(*) AS sales,0::numeric AS volume,0::numeric AS names,0::numeric AS creator,
@@ -17,7 +17,7 @@ WITH execution AS MATERIALIZED (
     UNION ALL
     SELECT day,currency,0,coalesce(sum(gross) FILTER (WHERE kind<>'name_fee'),0),
         coalesce(sum(gross) FILTER (WHERE kind='name_fee'),0),0,0,0,
-        coalesce(sum(gross) FILTER (WHERE kind='name_fee' AND venue=$4),0),
+        coalesce(sum(gross) FILTER (WHERE kind='name_fee' AND venue=$3),0),
         count(*) FILTER (WHERE NOT settled),count(DISTINCT (p.block_number,p.log_index)) FILTER (
             WHERE kind='trade' AND NOT EXISTS (SELECT FROM priced a WHERE a.block_number=p.block_number AND a.log_index=p.log_index)
               AND gross>0)
@@ -28,7 +28,7 @@ WITH execution AS MATERIALIZED (
           (kind='store' OR (kind='trade' AND EXISTS (SELECT FROM priced a WHERE a.block_number=p.block_number AND a.log_index=p.log_index AND a.kind='mint'))))),0),
         coalesce(sum(amount) FILTER (WHERE role='venue_fee'),0),
         coalesce(sum(amount) FILTER (WHERE role='store_fee'),0),
-        coalesce(sum(amount) FILTER (WHERE network='ethereum' AND role IN ('venue_fee','name_fee') AND recipient=ANY($3)),0),0,0
+        coalesce(sum(amount) FILTER (WHERE role='burn' AND NOT (kind='name_fee' AND venue=$3)),0),0,0
     FROM payout p GROUP BY day,currency
 ), write_analytics AS (
     INSERT INTO shop.sale_analytics_day AS d (network,day,currency,sales,volume,name_fees,creator_earnings,venue_fees,store_fees,burn_fees,unknown_splits,unallocated_executions)
@@ -64,7 +64,7 @@ WITH execution AS MATERIALIZED (
     UNION ALL SELECT day,currency,recipient,0,0,0,0,0,0,amount,
         CASE WHEN role='royalty' THEN amount ELSE 0 END,
         CASE WHEN role IN ('venue_fee','store_fee') THEN amount ELSE 0 END
-    FROM payout WHERE role<>'retained'
+    FROM payout WHERE role NOT IN ('retained','burn')
 )
 INSERT INTO shop.sale_account_day (network,day,currency,address,sales,purchases,spent,gross_sold,net_sold,unknown_proceeds,received,royalties,fees_received)
 SELECT $1,day,currency,address,sum(sales),sum(purchases),sum(spent),sum(gross_sold),

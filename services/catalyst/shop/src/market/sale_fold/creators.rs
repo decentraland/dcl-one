@@ -33,8 +33,7 @@ pub(super) async fn write(
     let mints: Vec<Mint> = sqlx::query_as(
         "WITH pending AS (
            SELECT block_number,log_index FROM shop.sale_execution e WHERE network=$1 AND kind='store'
-             AND block_number<=$2 AND (creator_attempted_at IS NULL OR creator_attempted_at<timezone('UTC',now())-interval '5 minutes')
-             AND EXISTS (SELECT FROM shop.sale_asset a WHERE (a.network,a.block_number,a.log_index)=(e.network,e.block_number,e.log_index) AND seller IS NULL)
+             AND NOT creator_checked AND block_number<=$2 AND (creator_attempted_at IS NULL OR creator_attempted_at<timezone('UTC',now())-interval '5 minutes')
            ORDER BY creator_attempted_at NULLS FIRST,block_number LIMIT 32)
          SELECT a.block_number,a.log_index,a.ordinal,a.contract_address,l.issue_log
          FROM shop.sale_asset a JOIN shop.store_sale_line l ON (a.block_number,a.log_index,a.ordinal)=(l.block_number,l.bought_log,l.ordinal)
@@ -76,7 +75,7 @@ pub(super) async fn write(
                 "duplicate or invalid creator response"
             );
         }
-        for (i, g) in batch.iter().enumerate() {
+        'collection: for (i, g) in batch.iter().enumerate() {
             let m = &g[0];
             let hash = &headers[&(m.0 as u64)].hash;
             let Some(mut creator) = answers
@@ -84,40 +83,57 @@ pub(super) async fn write(
                 .and_then(|a| a["result"].as_str())
                 .and_then(chain_walk::topic_address)
             else {
+                tracing::warn!(block=m.0, collection=%m.3, "sales accounting: unavailable creator call");
                 continue;
             };
             let Some(changes) = answers
                 .get(&(2 * i + 1))
                 .and_then(|a| a["result"].as_array())
             else {
+                tracing::warn!(block=m.0, collection=%m.3, "sales accounting: unavailable creatorship logs");
                 continue;
             };
             let mut history = Vec::new();
             for value in changes {
-                let l: RpcLog = serde_json::from_value(value.clone())?;
+                let Ok(l) = serde_json::from_value::<RpcLog>(value.clone()) else {
+                    continue 'collection;
+                };
                 ensure!(
                     l.block_hash
                         .as_deref()
-                        .is_some_and(|h| hash.eq_ignore_ascii_case(h))
-                        && l.address.eq_ignore_ascii_case(&m.3)
-                        && l.topics.len() == 3
-                        && l.topics[0].eq_ignore_ascii_case(&CHANGED),
-                    "creator history mismatch"
+                        .is_some_and(|h| hash.eq_ignore_ascii_case(h)),
+                    "creator history on another branch"
                 );
-                history.push((
-                    hex_to_i64(&l.log_index).context("creator event index")?,
-                    chain_walk::topic_address(&l.topics[1]).context("previous creator")?,
-                    chain_walk::topic_address(&l.topics[2]).context("new creator")?,
-                ));
+                if !l.address.eq_ignore_ascii_case(&m.3)
+                    || l.topics.len() != 3
+                    || !l.topics[0].eq_ignore_ascii_case(&CHANGED)
+                {
+                    continue 'collection;
+                }
+                let (Some(at), Some(prev), Some(next)) = (
+                    hex_to_i64(&l.log_index),
+                    chain_walk::topic_address(&l.topics[1]),
+                    chain_walk::topic_address(&l.topics[2]),
+                ) else {
+                    continue 'collection;
+                };
+                history.push((at, prev, next));
             }
             history.sort_by_key(|(at, _, _)| *at);
+            // Reject inconsistent optional evidence before assigning any seller.
+            if history.last().is_some_and(|(_, _, next)| next != &creator)
+                || history
+                    .windows(2)
+                    .any(|pair| pair[0].0 == pair[1].0 || pair[0].2 != pair[1].1)
+            {
+                continue;
+            }
             for &(block, index, ordinal, _, issue) in g.iter().rev() {
                 while history
                     .last()
                     .is_some_and(|(at, _, _)| *at > i64::from(issue))
                 {
-                    let (_, prev, next) = history.pop().unwrap();
-                    ensure!(next == creator, "creator chain inconsistent");
+                    let (_, prev, _) = history.pop().unwrap();
                     creator = prev;
                 }
                 days.insert(block);
@@ -126,6 +142,12 @@ pub(super) async fn write(
             }
         }
     }
+    sqlx::query("UPDATE shop.sale_execution e SET creator_checked=true WHERE network=$1 AND kind='store'
+           AND NOT creator_checked AND (block_number=ANY($2) OR (block_number>$3 AND block_number<=$4))
+           AND NOT EXISTS (SELECT FROM shop.sale_asset a WHERE (a.network,a.block_number,a.log_index)=
+               (e.network,e.block_number,e.log_index) AND a.seller IS NULL)")
+        .bind(net.db_name()).bind(mints.iter().map(|m| m.0).collect::<BTreeSet<_>>().into_iter().collect::<Vec<_>>())
+        .bind(from).bind(to).execute(&mut *c).await?;
     Ok(sqlx::query_scalar("SELECT DISTINCT block_time/86400*86400 FROM shop.sale_execution WHERE network=$1 AND block_number=ANY($2)")
         .bind(net.db_name()).bind(days.into_iter().collect::<Vec<_>>()).fetch_all(&mut *c).await?)
 }

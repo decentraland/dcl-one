@@ -12,10 +12,8 @@ FROM shop.sale_event
 WHERE network = $1 AND block_number > $2 AND block_number <= $3
   AND kind = 'bid_accepted' AND emitter = $5
 UNION ALL
-SELECT $1, s.block_number, s.bought_log, s.tx_hash, $6, 'store', min(e.block_time)
+SELECT $1, s.block_number, s.bought_log, s.tx_hash, $6, 'store', min(s.block_time)
 FROM shop.store_sale_line s
-JOIN shop.sale_event e ON e.network = $1 AND e.block_number = s.block_number
- AND e.log_index = s.issue_log AND e.tx_hash = s.tx_hash AND e.kind = 'mint'
 WHERE $1 = 'matic' AND s.block_number > $2 AND s.block_number <= $3
 GROUP BY s.block_number, s.bought_log, s.tx_hash
 UNION ALL

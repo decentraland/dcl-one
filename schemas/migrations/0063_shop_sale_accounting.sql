@@ -10,4 +10,5 @@ ALTER TABLE IF EXISTS shop.chain_cursor
     ADD COLUMN IF NOT EXISTS sale_covered_rewinds integer,
     ADD COLUMN IF NOT EXISTS sale_input_version integer,
     ADD COLUMN IF NOT EXISTS sale_verified_through bigint,
+    ADD COLUMN IF NOT EXISTS sale_dirty_from bigint,
     ADD COLUMN IF NOT EXISTS sale_history_revision bigint NOT NULL DEFAULT 0;

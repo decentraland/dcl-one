@@ -1,5 +1,5 @@
 SELECT indexer, last_block, last_block_hash AS hash, folded_block, folded_at,
-       sale_input_epoch AS epoch, sale_history_revision AS revision
+       sale_input_epoch AS epoch, sale_history_revision AS revision, sale_dirty_from AS dirty_from
 FROM shop.chain_cursor
 WHERE network = $1 AND chain_id = $2 AND full_history
   AND quarantined_at IS NULL AND diverged_at IS NULL AND rebuild_requested_at IS NULL

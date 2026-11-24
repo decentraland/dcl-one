@@ -87,14 +87,18 @@ pub(super) fn pair(rows: &mut [SaleEvent], logs: &[RpcLog]) -> anyhow::Result<Ve
         .collect())
 }
 
-pub(super) async fn write(conn: &mut PgConnection, lines: &[StoreLine]) -> Result<(), sqlx::Error> {
+pub(super) async fn write(
+    conn: &mut PgConnection,
+    lines: &[StoreLine],
+    times: &HashMap<i64, i64>,
+) -> anyhow::Result<()> {
     for chunk in lines.chunks(1000) {
         sqlx::query(
             "INSERT INTO shop.store_sale_line
-               (block_number, bought_log, ordinal, tx_hash, contract_address, item_id, beneficiary, price, issue_log)
-             SELECT block, bought, ordinal, tx, contract, item::numeric, beneficiary, price::numeric, issue
-             FROM unnest($1::bigint[], $2::int[], $3::int[], $4::text[], $5::text[], $6::text[], $7::text[], $8::text[], $9::int[])
-               AS u(block, bought, ordinal, tx, contract, item, beneficiary, price, issue)
+               (block_number, bought_log, ordinal, tx_hash, contract_address, item_id, beneficiary, price, issue_log, block_time)
+             SELECT block, bought, ordinal, tx, contract, item::numeric, beneficiary, price::numeric, issue, block_time
+             FROM unnest($1::bigint[], $2::int[], $3::int[], $4::text[], $5::text[], $6::text[], $7::text[], $8::text[], $9::int[], $10::bigint[])
+               AS u(block, bought, ordinal, tx, contract, item, beneficiary, price, issue, block_time)
              ON CONFLICT (block_number, bought_log, ordinal) DO UPDATE SET issue_log = EXCLUDED.issue_log
              WHERE store_sale_line.tx_hash = EXCLUDED.tx_hash AND store_sale_line.issue_log IS NULL AND EXCLUDED.issue_log IS NOT NULL"
         )
@@ -107,6 +111,7 @@ pub(super) async fn write(conn: &mut PgConnection, lines: &[StoreLine]) -> Resul
         .bind(chunk.iter().map(|r| r.beneficiary.as_str()).collect::<Vec<_>>())
         .bind(chunk.iter().map(|r| r.price.as_str()).collect::<Vec<_>>())
         .bind(chunk.iter().map(|r| r.issue).collect::<Vec<_>>())
+        .bind(chunk.iter().map(|r| times.get(&r.block).copied().context("missing Bought timestamp")).collect::<anyhow::Result<Vec<_>>>()?)
         .execute(&mut *conn).await?;
     }
     Ok(())
