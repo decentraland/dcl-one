@@ -575,8 +575,9 @@ CREATE INDEX nft_order_open_idx ON shop.nft_order (network, contract_address, ex
 -- paid) or cancelled; a later OrderCreated on the same token, on either
 -- Marketplace of the network, cancels it unless one of those follows. The
 -- latest creation of an id is the order. `open` is the folded state: a
--- reader reports an open order whose seller no longer holds the token as
--- `transferred`, and keeps only the orders of contracts it serves.
+-- reader reports an open order as `transferred` unless the token's owner
+-- source proves its seller holds it, and keeps only the orders of
+-- contracts it serves.
 -- expires_at is milliseconds (the log's normalised value), the times unix
 -- seconds. Workload: one row per OrderCreated (`DATABASE.md` "Legacy
 -- Marketplace orders"); a fold rewrites the orders of the tokens an order

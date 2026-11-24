@@ -3764,9 +3764,12 @@ async fn a_sold_listing_stays_out_through_a_rewind_and_its_refill() {
 
 /// The legacy order book of a walking node is `shop.legacy_order` on one
 /// snapshot: only the orders of the contracts it serves (a collection, the
-/// LAND and Estate registries, names), an open order whose seller no longer
-/// holds the token reading `transferred` (its owner in `shop.nft`, or in
-/// `land_authz.token_right` for LAND), the unavailable envelope naming the
+/// LAND and Estate registries, names), and an open order `open` only while
+/// its owner source proves the seller holds the token (`shop.nft`, or
+/// `land_authz.token_right` for LAND and estates): another owner, a burned
+/// or dissolved token and a token with no row there all read
+/// `transferred`, in the page, the status filters and the totals alike;
+/// the unavailable envelope naming the
 /// nft index while it is not published on a network the read names, and
 /// the land-authz index's while it is not ready for a read that could
 /// answer an open LAND order.
@@ -3781,6 +3784,7 @@ async fn the_legacy_order_book_is_the_index_with_the_subgraph_statuses() {
     let t = tag();
     let (c, stray) = (contract_of(&t, 1), contract_of(&t, 2));
     let land = crate::land_authz::LAND_REGISTRY_MAINNET.to_lowercase();
+    let estate = crate::land_authz::ESTATE_REGISTRY_MAINNET.to_lowercase();
     let (m_eth, m_matic) = (
         super::nft_index::legacy_marketplaces(super::chain_walk::ChainNet::Ethereum)[0].0,
         super::nft_index::legacy_marketplaces(super::chain_walk::ChainNet::Matic)[1].0,
@@ -3829,8 +3833,10 @@ async fn the_legacy_order_book_is_the_index_with_the_subgraph_statuses() {
         }
     };
     // held: the seller still holds it; moved: the index holds it elsewhere;
-    // parcel / parcel_moved: LAND, checked on the land index; stray: a
-    // contract the node does not serve.
+    // burned: the index holds it with no owner; unheld: the index has no row
+    // for it; parcel / parcel_moved / parcel_unindexed / estate_dissolved:
+    // LAND and an estate, checked on the land index (the seller's, another
+    // owner's, no row, no owner); stray: a contract the node does not serve.
     order(
         "matic",
         m_matic,
@@ -3886,7 +3892,51 @@ async fn the_legacy_order_book_is_the_index_with_the_subgraph_statuses() {
         1_004,
     )
     .await;
-    for (issued, owner) in [(1, WALLET_A), (2, WALLET_B)] {
+    order(
+        "matic",
+        m_matic,
+        "burned",
+        c.clone(),
+        token(3, 4),
+        WALLET_A,
+        50,
+        1_005,
+    )
+    .await;
+    order(
+        "matic",
+        m_matic,
+        "unheld",
+        c.clone(),
+        token(3, 5),
+        WALLET_A,
+        60,
+        1_006,
+    )
+    .await;
+    order(
+        "ethereum",
+        m_eth,
+        "parcel_unindexed",
+        land.clone(),
+        "79".into(),
+        WALLET_A,
+        70,
+        1_007,
+    )
+    .await;
+    order(
+        "ethereum",
+        m_eth,
+        "estate_dissolved",
+        estate.clone(),
+        "500".into(),
+        WALLET_A,
+        80,
+        1_008,
+    )
+    .await;
+    for (issued, owner) in [(1, Some(WALLET_A)), (2, Some(WALLET_B)), (4, None)] {
         sqlx::query(
             "INSERT INTO shop.nft (network, contract_address, token_id, owner, item_id, issued_id, minted_block, minted_at, transferred_block, transferred_log, transferred_at) \
              VALUES ('matic', $1, $2::numeric, $3, 3, $4, 1, 1, 1, 0, 1)",
@@ -3934,11 +3984,13 @@ async fn the_legacy_order_book_is_the_index_with_the_subgraph_statuses() {
         ids(&body),
         vec![
             ("moved".to_string(), "transferred".to_string()),
-            ("held".to_string(), "open".to_string())
+            ("held".to_string(), "open".to_string()),
+            ("burned".to_string(), "transferred".to_string()),
+            ("unheld".to_string(), "transferred".to_string()),
         ],
-        "the stray contract is not served: {body}"
+        "the stray contract is not served; a burned or unindexed token is not proof of ownership: {body}"
     );
-    assert_eq!(body["total"], "2", "{body}");
+    assert_eq!(body["total"], "4", "{body}");
     assert_eq!(
         (
             body["data"][1]["issuedId"].as_str(),
@@ -3965,8 +4017,8 @@ async fn the_legacy_order_book_is_the_index_with_the_subgraph_statuses() {
         "INSERT INTO land_authz.index_cursor (network, land_registry, estate_registry, last_block, folded_block, folded_at, full_replay_started) \
          VALUES ('ethereum-mainnet', '{land}', '{estate}', 1, 1, timezone('UTC', now()), true); \
          INSERT INTO land_authz.token_right (token_address, token_id, x, y, owner, updated_block, updated_log) VALUES \
-            ('{land}', 77, 0, 77, '{WALLET_A}', 1, 0), ('{land}', 78, 0, 78, '{WALLET_B}', 1, 1)",
-        estate = crate::land_authz::ESTATE_REGISTRY_MAINNET.to_lowercase(),
+            ('{land}', 77, 0, 77, '{WALLET_A}', 1, 0), ('{land}', 78, 0, 78, '{WALLET_B}', 1, 1), \
+            ('{estate}', 500, NULL, NULL, NULL, 1, 2)",
     )))
     .execute(&pool)
     .await
@@ -3980,6 +4032,10 @@ async fn the_legacy_order_book_is_the_index_with_the_subgraph_statuses() {
             ("moved".to_string(), "transferred".to_string()),
             ("parcel".to_string(), "open".to_string()),
             ("parcel_moved".to_string(), "transferred".to_string()),
+            ("burned".to_string(), "transferred".to_string()),
+            ("unheld".to_string(), "transferred".to_string()),
+            ("parcel_unindexed".to_string(), "transferred".to_string()),
+            ("estate_dissolved".to_string(), "transferred".to_string()),
         ],
         "{body}"
     );
@@ -3999,10 +4055,32 @@ async fn the_legacy_order_book_is_the_index_with_the_subgraph_statuses() {
         ],
         "open, newest first, leaves out a listing whose seller lost the token: {body}"
     );
+    assert_eq!(
+        body["total"], "2",
+        "the total counts the page's status: {body}"
+    );
+    let (_, body) = get(app(), "/v1/orders?status=transferred&sortBy=oldest").await;
+    assert_eq!(
+        ids(&body),
+        vec![
+            ("moved".to_string(), "transferred".to_string()),
+            ("parcel_moved".to_string(), "transferred".to_string()),
+            ("burned".to_string(), "transferred".to_string()),
+            ("unheld".to_string(), "transferred".to_string()),
+            ("parcel_unindexed".to_string(), "transferred".to_string()),
+            ("estate_dissolved".to_string(), "transferred".to_string()),
+        ],
+        "{body}"
+    );
+    assert_eq!(body["total"], "6", "{body}");
     let (_, body) = get(app(), "/v1/orders?status=transferred&network=ETHEREUM").await;
     assert_eq!(
         ids(&body),
-        vec![("parcel_moved".to_string(), "transferred".to_string())],
+        vec![
+            ("estate_dissolved".to_string(), "transferred".to_string()),
+            ("parcel_unindexed".to_string(), "transferred".to_string()),
+            ("parcel_moved".to_string(), "transferred".to_string()),
+        ],
         "{body}"
     );
     let (_, body) = get(
@@ -4022,6 +4100,254 @@ async fn the_legacy_order_book_is_the_index_with_the_subgraph_statuses() {
         vec![("held".to_string(), "open".to_string())],
         "{body}"
     );
+    own.drop().await;
+}
+
+/// One event of a token's history, for the subgraph model below.
+#[derive(Clone, Copy, Debug)]
+enum TokenEvent {
+    /// `OrderCreated(id)` on Marketplace `market` (0 or 1) by `seller`.
+    Created(u8, usize, &'static str),
+    /// `Transfer` to `to`.
+    Transfer(&'static str),
+    /// `OrderSuccessful(id)` on `market` to `buyer`.
+    Sold(u8, usize, &'static str),
+    /// `OrderCancelled(id)` on `market`.
+    Cancelled(u8, usize),
+}
+
+/// The order statuses the collections graph leaves after `events`
+/// (`handlers/marketplace.ts`, `marketplaceV2.ts`, `modules/nft`:
+/// `cancelActiveOrder`, `updateNFTOrderProperties`, `handleTransferOrder`).
+fn subgraph_statuses(events: &[TokenEvent]) -> std::collections::BTreeMap<u8, &'static str> {
+    use std::collections::BTreeMap;
+    let mut orders: BTreeMap<u8, (&'static str, &'static str)> = BTreeMap::new();
+    // None: never set; Some(None): cleared (''); Some(Some(id)): active.
+    let mut active: Option<Option<u8>> = None;
+    for event in events {
+        match *event {
+            TokenEvent::Created(id, _, seller) => {
+                if let Some(Some(old)) = active
+                    && let Some(order) = orders.get_mut(&old)
+                    && matches!(order.0, "open" | "transferred")
+                {
+                    order.0 = "cancelled";
+                }
+                orders.insert(id, ("open", seller));
+                active = Some(Some(id));
+            }
+            TokenEvent::Sold(id, _, _) => {
+                if let Some(order) = orders.get_mut(&id) {
+                    order.0 = "sold";
+                    active = Some(None);
+                }
+            }
+            TokenEvent::Cancelled(id, _) => {
+                if let Some(order) = orders.get_mut(&id) {
+                    order.0 = "cancelled";
+                    active = Some(None);
+                }
+            }
+            TokenEvent::Transfer(to) => {
+                if let Some(Some(id)) = active
+                    && let Some(order) = orders.get_mut(&id)
+                {
+                    if order.0 == "open" {
+                        order.0 = "transferred";
+                    } else if order.0 == "transferred" && order.1 == to {
+                        order.0 = "open";
+                    }
+                }
+            }
+        }
+    }
+    orders
+        .into_iter()
+        .map(|(id, (status, _))| (id, status))
+        .collect()
+}
+
+/// The order book against the collections graph over the traces that
+/// decide `transferred`: a token sent away and back, away for good, relisted
+/// by its new owner, relisted by its seller, sold, cancelled then moved;
+/// every status agrees. The one known difference is pinned: an order
+/// superseded on the other Polygon Marketplace whose token is sold there
+/// and comes back to its seller reads `open` here (its seller holds the
+/// token and it is still executable on chain), where the graph, having
+/// cleared the token's active order with the sale, keeps it `transferred`.
+#[tokio::test]
+async fn the_order_book_agrees_with_the_subgraph_on_transfers_away_and_back() {
+    use TokenEvent::*;
+    let up = FakeGraph::new();
+    let url = serve_graph(up.clone()).await;
+    let Some((state, own)) = state_over_own(&url, true).await else {
+        return;
+    };
+    let pool = state.pool.clone();
+    let c = contract_of(&tag(), 4);
+    sqlx::query(
+        "INSERT INTO shop.collections (network, contract_address, chain_id, name, creator, owner, urn, is_completed, is_approved, is_editable, created_at, updated_at, reviewed_at, mirrored_at) \
+         SELECT 'matic', $1, 137, 'Trace', $2, $2, 'urn:decentraland:matic:collections-v2:' || $1, true, true, false, 1, 1, 1, timezone('UTC', now())",
+    )
+    .bind(&c)
+    .bind(CREATOR)
+    .execute(&pool)
+    .await
+    .unwrap();
+    super::owned_items::test_support::publish(
+        &pool,
+        &super::chain_walk::ChainNet::ALL,
+        false,
+        Duration::ZERO,
+    )
+    .await;
+    let markets = super::nft_index::legacy_marketplaces(super::chain_walk::ChainNet::Matic);
+    const S: &str = WALLET_A;
+    const B: &str = WALLET_B;
+    const X: &str = CREATOR;
+    let traces: Vec<(&str, Vec<TokenEvent>)> = vec![
+        (
+            "away and back",
+            vec![Created(1, 0, S), Transfer(B), Transfer(S)],
+        ),
+        (
+            "away for good",
+            vec![Created(2, 0, S), Transfer(B), Transfer(X)],
+        ),
+        (
+            "relisted by the new owner",
+            vec![Created(3, 0, S), Transfer(B), Created(4, 1, B)],
+        ),
+        (
+            "relisted by its seller",
+            vec![Created(5, 0, S), Created(6, 0, S)],
+        ),
+        ("sold", vec![Created(7, 1, S), Transfer(B), Sold(7, 1, B)]),
+        (
+            "cancelled, then away and back",
+            vec![Created(8, 0, S), Cancelled(8, 0), Transfer(B), Transfer(S)],
+        ),
+        (
+            "superseded, sold on the other Marketplace, back",
+            vec![
+                Created(9, 0, S),
+                Created(10, 1, S),
+                Transfer(X),
+                Sold(9, 0, X),
+                Transfer(S),
+            ],
+        ),
+    ];
+    let order_id = |n: u8| format!("0x{n:064x}");
+    let mut block = 100i64;
+    for (token, (_, events)) in traces.iter().enumerate() {
+        let mut owner = S;
+        for event in events {
+            block += 1;
+            let (kind, market, from, to, detail): (
+                &str,
+                &str,
+                Option<&str>,
+                Option<&str>,
+                Option<String>,
+            ) = match *event {
+                Created(id, m, seller) => (
+                    "order_created",
+                    markets[m].0,
+                    Some(seller),
+                    None,
+                    Some(order_id(id)),
+                ),
+                Transfer(to) => ("transfer", c.as_str(), Some(owner), Some(to), None),
+                Sold(id, m, buyer) => (
+                    "order_successful",
+                    markets[m].0,
+                    Some(owner),
+                    Some(buyer),
+                    Some(order_id(id)),
+                ),
+                Cancelled(id, m) => (
+                    "order_cancelled",
+                    markets[m].0,
+                    Some(owner),
+                    None,
+                    Some(order_id(id)),
+                ),
+            };
+            if let Transfer(to) = *event {
+                owner = to;
+            }
+            sqlx::query(
+                "INSERT INTO shop.nft_event (network, block_number, log_index, block_time, kind, emitter, contract_address, token_id, from_address, to_address, amount, expires_at, detail) \
+                 VALUES ('matic', $1, 0, $1, $2, $3, $4, $5::numeric, $6, $7, 1000, CASE WHEN $2 = 'order_created' THEN 4000000000000 END, $8)",
+            )
+            .bind(block)
+            .bind(kind)
+            .bind(market)
+            .bind(&c)
+            .bind(token.to_string())
+            .bind(from)
+            .bind(to)
+            .bind(detail)
+            .execute(&pool)
+            .await
+            .unwrap();
+        }
+        sqlx::query(
+            "INSERT INTO shop.nft (network, contract_address, token_id, owner, item_id, issued_id, minted_block, minted_at, transferred_block, transferred_log, transferred_at) \
+             VALUES ('matic', $1, $2::numeric, $3, 0, $2::numeric, 1, 1, $4, 0, $4)",
+        )
+        .bind(&c)
+        .bind(token.to_string())
+        .bind(owner)
+        .bind(block)
+        .execute(&pool)
+        .await
+        .unwrap();
+    }
+    let mut tx = pool.begin().await.unwrap();
+    super::legacy_orders::fold(&mut tx, super::chain_walk::ChainNet::Matic, -1)
+        .await
+        .unwrap();
+    tx.commit().await.unwrap();
+    for (token, (label, events)) in traces.iter().enumerate() {
+        let (status, body) = get(
+            market_router(state.clone()),
+            &format!("/v1/orders?contractAddress={c}&tokenId={token}&network=MATIC"),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{label}: {body}");
+        let ours: std::collections::BTreeMap<u8, String> = body["data"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|o| {
+                let id = o["id"].as_str().unwrap();
+                (
+                    u8::from_str_radix(id.trim_start_matches("0x"), 16).unwrap(),
+                    o["status"].as_str().unwrap().to_string(),
+                )
+            })
+            .collect();
+        let mut graph: std::collections::BTreeMap<u8, String> = subgraph_statuses(events)
+            .into_iter()
+            .map(|(id, status)| (id, status.to_string()))
+            .collect();
+        if *label == "superseded, sold on the other Marketplace, back" {
+            assert_eq!(
+                graph.get(&10).map(String::as_str),
+                Some("transferred"),
+                "{label}: the graph"
+            );
+            assert_eq!(
+                ours.get(&10).map(String::as_str),
+                Some("open"),
+                "{label}: the book"
+            );
+            graph.insert(10, "open".to_string());
+        }
+        assert_eq!(ours, graph, "{label}: {body}");
+    }
     own.drop().await;
 }
 

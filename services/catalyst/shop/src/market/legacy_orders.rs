@@ -17,8 +17,9 @@
 //! What the graphs folded from transfers (`handleTransferOrder`: an open
 //! order whose token leaves its seller reads `transferred`, and `open` again
 //! when it comes back) is not folded here: the reader derives it from the
-//! token's current owner on its own snapshot (`orders::legacy_leg`), which
-//! is the same answer without a second index in the fold.
+//! token's current owner on its own snapshot (`orders::book_status`), and
+//! reads an open order whose ownership that source does not prove (another
+//! owner, none, no row) as `transferred`.
 //!
 //! The fold runs in `nft_index::fold`'s transaction, so the order book is
 //! published with the ownership it is read beside. It rewrites every order

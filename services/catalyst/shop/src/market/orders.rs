@@ -9,10 +9,11 @@
 //! an open LAND or estate order could be answered; otherwise the route
 //! answers the unavailable envelope naming the index that is not. The
 //! legacy orders come from `shop.legacy_order` (`legacy_orders`): an open
-//! order whose seller no longer holds the token (its owner in `shop.nft`,
-//! or in `land_authz.token_right` for LAND and estates) reads
-//! `transferred`, as the subgraphs reported it, and only the orders of the
-//! collections, names, LAND and estates are served. The v3 listings pass
+//! order reads `open` only while the token's owner source (`shop.nft`, or
+//! `land_authz.token_right` for LAND and estates) proves the seller holds
+//! it, and `transferred` otherwise (another owner, none, or no row), as the
+//! subgraphs reported a moved token; only the orders of the collections,
+//! names, LAND and estates are served. The v3 listings pass
 //! the "signer still owns the nft" guard on the same index, so a listing
 //! whose signer no longer holds that exact token drops out, while a token
 //! the index does not hold (LAND, an estate) passes.
@@ -692,16 +693,24 @@ fn book_from(
     Some((sql, binds))
 }
 
-/// The status a legacy order reads: an open one whose token the index
-/// holds elsewhere (another owner, or burned) is `transferred`. A token no
-/// index holds keeps the folded status.
+/// The status a legacy order reads. An open order stays open only while its
+/// owner source proves the seller holds the token: `shop.nft` for the
+/// collections and names, `land_authz.token_right` for the LAND and Estate
+/// registries (`$1`, `$2` of [`book_from`]'s binds, joined only with
+/// `land`). Another owner, no owner (burned, dissolved) or no row at all
+/// reads `transferred`, so an order whose ownership cannot be proven is
+/// never served as open. Without `land` no open LAND or estate order is
+/// read ([`reads_land`]); one would read `transferred`, having no
+/// `shop.nft` row.
 fn book_status(land: bool) -> String {
-    let elsewhere = if land {
-        "((n.token_id IS NOT NULL AND n.owner IS DISTINCT FROM o.seller) OR (tr.token_id IS NOT NULL AND tr.owner IS DISTINCT FROM o.seller))"
+    let moved = if land {
+        "(CASE WHEN o.network = 'ethereum' AND o.contract_address IN ($1, $2) \
+               THEN tr.token_id IS NULL OR tr.owner IS DISTINCT FROM o.seller \
+               ELSE n.token_id IS NULL OR n.owner IS DISTINCT FROM o.seller END)"
     } else {
-        "(n.token_id IS NOT NULL AND n.owner IS DISTINCT FROM o.seller)"
+        "(n.token_id IS NULL OR n.owner IS DISTINCT FROM o.seller)"
     };
-    format!("(CASE WHEN o.status = 'open' AND {elsewhere} THEN 'transferred' ELSE o.status END)")
+    format!("(CASE WHEN o.status = 'open' AND {moved} THEN 'transferred' ELSE o.status END)")
 }
 
 /// The legacy leg's order for `sort_by`, ties by id as [`sort_merged`].
@@ -1309,7 +1318,9 @@ mod tests {
                 && sql.contains("LEFT JOIN land_authz.token_right tr")
                 && sql.contains("o.seller = $4")
                 && sql.contains("o.status = 'open' AND o.expires_at > $5::bigint")
-                && sql.contains("tr.owner IS DISTINCT FROM o.seller)) THEN 'transferred'"),
+                && sql.contains("THEN tr.token_id IS NULL OR tr.owner IS DISTINCT FROM o.seller")
+                && sql
+                    .contains("ELSE n.token_id IS NULL OR n.owner IS DISTINCT FROM o.seller END)"),
             "{sql}"
         );
         assert_eq!(

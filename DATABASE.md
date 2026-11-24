@@ -3911,8 +3911,11 @@ Invariants:
   follows restores the orders whose creation remains.
 - `transferred` is not stored: a reader derives it on its snapshot from the
   token's owner (`shop.nft`, or `land_authz.token_right` for LAND and
-  estates), and serves only the orders of a mirrored collection, the LAND
-  and Estate registries and the DCLRegistrar.
+  estates). An open order reads `open` only while that owner is its seller;
+  another owner, none (burned, dissolved) or no row reads `transferred`,
+  before the status filter, the total and the page. The reader serves only
+  the orders of a mirrored collection, the LAND and Estate registries and
+  the DCLRegistrar.
 - A database that predates the table fills it in the schema run that creates
   it: the seed statement after its `CREATE TABLE` (a follow-up, so it runs
   only then) applies the fold's rules to every token of both networks.
@@ -3964,16 +3967,16 @@ under 25 MB each).
 
 | Read (first = 100 unless noted) | Page | Capped total |
 |---|---|---|
-| no filter, newest first | 1.0 ms | 1.6 ms |
-| one owner (the activity leg) | 3.0 ms | 0.8 ms |
-| one buyer | 3.7 ms | |
-| one token (a LAND parcel) | 0.6 ms | |
+| no filter, newest first | 1.1 ms | 2.4 ms |
+| one owner (the activity leg) | 2.5 ms | 0.5 ms |
+| one buyer | 1.6 ms | |
+| one token (a LAND parcel) | 0.3 ms | |
 | a collection's open orders, cheapest (and open-by-items, 500) | 0.3 ms | |
-| every open order, cheapest | 71 ms | 0.87 s |
-| `status=sold`, recently updated | 4.6 ms | |
-| the deepest window (25,000), newest first | 208 ms | 4.6 ms |
+| every open order, cheapest | 65 ms | 0.86 s |
+| `status=sold`, recently updated | 1.6 ms | |
+| the deepest window (25,000), newest first | 128 ms | 7.4 ms |
 
 The capped total of every open order reads each open order's owner until it
-counts 5,000 live ones; in the synthetic data 97% of the open orders'
-tokens had moved, so it read all 130,050. Production row counts are
+counts 5,000 open ones; in the synthetic data 98% of the open orders' tokens
+had moved or had no owner row, so it read all 130,050. Production row counts are
 unmeasured.

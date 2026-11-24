@@ -28,8 +28,11 @@ The subgraphs also moved an open order to `transferred` when its token left
 the seller, and back to `open` when it returned. The reader derives that at
 read time from the token's current owner on its own snapshot (`shop.nft`
 for collections and names, `land_authz.token_right` for LAND and estates),
-so the fold reads one index and `status=open` never serves an order whose
-seller lost the token. The reader serves only the orders of the contracts
+so the fold reads one index. An open order reads `open` only while that
+source proves its seller holds the token: another owner, no owner (a burned
+token, a dissolved estate) or no row at all reads `transferred`, in the
+page, the status filters and the totals alike, so `status=open` never serves
+an order whose ownership is not proven. The reader serves only the orders of the contracts
 the subgraphs knew: a mirrored collection, the LAND and Estate registries,
 and the DCLRegistrar.
 
@@ -60,11 +63,14 @@ token), so no reader finds it empty under a published cursor.
 - While the nft index is not fresh, `/v1/orders` and
   `/v1/orders/open-by-items` answer 503. So does credits pricing, which reads
   the latter, and the activity feed leaves its orders out.
-- An order superseded on the other Polygon Marketplace and then sold there
-  reads `sold`, as in the subgraph. The superseding order reads `open`, or
-  `transferred` once the sale moved the token; it reads `open` again if the
-  token comes back to its seller, where the subgraph kept it `transferred`.
-  It is still executable on chain in that case.
+- A token sent away and back, away for good, relisted, sold or cancelled
+  leaves the statuses the subgraph left (a test replays those traces
+  against a model of its handlers). One trace differs: when an order is
+  superseded on the other Polygon Marketplace, sold there, and the token
+  comes back to the superseding order's seller, that order reads `open`,
+  where the subgraph, having cleared the token's active order with the
+  sale, kept it `transferred`. The order is still executable on chain in
+  that case.
 
 Known gaps, accepted: the legacy bids of `/v1/bids` still read the
 collections subgraphs, and Ethereum's ERC721Bid bids on LAND, estates and
