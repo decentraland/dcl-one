@@ -2691,6 +2691,13 @@ replicas round-robin without affinity, so the state lives in three
 `explore_api` tables (`schemas/11_explore_api.sql`) every replica reads and
 writes through the explore pool, as the upstream auth server keeps it in Redis.
 
+Socket.IO sessions hold the requests they create on the replica that owns
+the connection. The gateway consistently routes Engine.IO polling and
+upgrades by client address. While the replica has bound requests, it checks
+their live validation and outcome state through one primary-key batch query
+per 500 ms pass. The socket and HTTP poll share a row-locked outcome claim.
+If the socket cannot queue the event, the claim rolls back for HTTP pickup.
+
 Workload: a sign-in is one create, one or two recover reads, a validation mark
 at most, one outcome and a poll about once a second until the outcome lands;
 an identity is one create and one pickup. Rows are small (a challenge of a

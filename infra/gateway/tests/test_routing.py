@@ -90,6 +90,20 @@ class HostAliasTest(unittest.TestCase):
                 self.assertEqual(route(host + ".example.test", path), (f"/{host}{path}", path))
 
 
+    def test_auth_relay_socket_uses_the_affinity_upstream_for_both_mounts(self):
+        cfg = gateway.settings({"GATEWAY_RESOLVERS": "127.0.0.1", "GATEWAY_DOMAIN": "example.test"})
+        config = gateway.render(TABLE, cfg, "/mime.types")
+        prefixes = dict(re.findall(r"^location (?:\^~ )?(/\S*) \{\nproxy_pass http://(\w+);", config, re.M))
+        self.assertIn("location ^~ /auth-api/socket.io/ {", config)
+        for host, path in [("example.test", "/auth-api/socket.io/"),
+                           ("auth-api.example.test", "/socket.io/")]:
+            with self.subTest(host=host, path=path):
+                uri, _ = nginx_map.route(config, host, path + "?EIO=4&transport=polling")
+                match = max((prefix for prefix in prefixes if uri.startswith(prefix)), key=len)
+                self.assertEqual(match, "/auth-api/socket.io/")
+                self.assertEqual(prefixes[match], "auth_socket")
+
+
 class AccountHostTest(unittest.TestCase):
     def test_account_host_reaches_the_sites_confirmation_pages(self):
         root = Path(__file__).parents[3]
