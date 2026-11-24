@@ -271,7 +271,7 @@ pub fn update_fontsize(
     }
 }
 
-pub fn propagate_focus(
+fn propagate_focus(
     q: Query<(&TextEntry, &TextEntryEntity), With<Focus>>,
     mut activate: Query<(Entity, &mut TextInputInactive)>,
     mut input_manager: InputManager,
