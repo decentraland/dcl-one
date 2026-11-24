@@ -25,7 +25,7 @@ export const remoteCollection = {
 }
 
 export function jsonResponse(body: unknown, ok = true, status = 200) {
-  return { ok, status, json: () => Promise.resolve(body) }
+  return { ok, status, headers: new Headers(), json: () => Promise.resolve(body) }
 }
 
 export function okResponse(data: unknown) {

@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import './test/setup'
-import { describe, it, expect } from 'vitest'
+import { afterEach, describe, it, expect, vi } from 'vitest'
 import { decodeAbiParameters, parseAbiParameters, slice, zeroAddress, type Hex } from 'viem'
 import { config } from './config'
 import { ItemType, type Item } from './items'
@@ -93,6 +93,8 @@ describe('toInitializeItems', () => {
 })
 
 describe('buildCollectionInitializeData', () => {
+  afterEach(() => vi.unstubAllGlobals())
+
   it('encodes calldata that decodes back to the initialize arguments', () => {
     const collection = buildNewCollection('Pirate Hats', OWNER)
     const data = buildCollectionInitializeData(collection, [makeItem()], OWNER)
@@ -103,17 +105,18 @@ describe('buildCollectionInitializeData', () => {
     )
     expect(decoded[0]).toBe('Pirate Hats')
     expect(decoded[1]).toBe('DCL-PRTHTS')
-    expect(decoded[2]).toBe(config.get('ERC721_COLLECTION_BASE_URI'))
+    expect(decoded[2]).toBe(`${window.location.origin}/lambdas/collections/standard/erc721/`)
     expect(decoded[3].toLowerCase()).toBe(OWNER.toLowerCase())
-    expect(decoded[4]).toBe(true) // should complete
-    expect(decoded[5]).toBe(false) // is approved
+    expect(decoded[4]).toBe(true)
+    expect(decoded[5]).toBe(false)
     expect(decoded[6].toLowerCase()).toBe(config.get('RARITIES_WITH_ORACLE_ADDRESS').toLowerCase())
     expect(decoded[7]).toHaveLength(1)
     expect(decoded[7][0][0]).toBe('legendary')
     expect(decoded[7][0][3]).toBe('1:w:Pirate Hat:Yarr:hat:BaseMale')
   })
 
-  it('encodes the exact calldata builder-server derives the contract address from', () => {
+  it('encodes the exact calldata builder-server derives the contract address from on a Decentraland host', () => {
+    vi.stubGlobal('location', { ...window.location, host: 'decentraland.zone' })
     const collection = buildNewCollection('Pirate Hats', OWNER)
     expect(buildCollectionInitializeData(collection, [makeItem()], OWNER)).toBe(
       '0xd14fee77' +

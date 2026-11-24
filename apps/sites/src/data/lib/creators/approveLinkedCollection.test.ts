@@ -1,9 +1,10 @@
 // @vitest-environment node
 import './test/setup'
-import { describe, expect, it, vi } from 'vitest'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { generateTree, verifyProof } from '@dcl/content-hash-tree'
 import { MappingType } from '@dcl/schemas'
 import { ApprovalError } from './approveCollection'
+import { BuilderServerError } from './builder'
 import { computeLinkedItemContentHash } from './catalystEntity'
 import {
   deployLinkedItems,
@@ -156,6 +157,33 @@ describe('prepareLinkedApproval', () => {
     await expect(
       prepareLinkedApproval(collection, prepareDeps([drifted, item('2')], approvalData()))
     ).rejects.toMatchObject({ reason: 'changed' })
+  })
+
+  describe('when the node refuses the approval data because items changed since they were submitted', () => {
+    let deps: ReturnType<typeof prepareDeps>
+
+    beforeEach(() => {
+      deps = prepareDeps([item('1'), item('2')], approvalData())
+      deps.fetchApprovalData.mockRejectedValueOnce(
+        new BuilderServerError('The items changed since they were submitted for review', 409, {
+          id: collection.id,
+          itemIds: ['1']
+        })
+      )
+    })
+
+    it('should tell the curator only the creator can fix it', async () => {
+      await expect(prepareLinkedApproval(collection, deps)).rejects.toMatchObject({ reason: 'unsubmitted' })
+    })
+  })
+
+  describe('when the node refuses the approval data for another reason', () => {
+    it('should pass the refusal on', async () => {
+      const deps = prepareDeps([item('1'), item('2')], approvalData())
+      const refusal = new BuilderServerError('Collection is not Third Party', 409, { id: collection.id })
+      deps.fetchApprovalData.mockRejectedValueOnce(refusal)
+      await expect(prepareLinkedApproval(collection, deps)).rejects.toBe(refusal)
+    })
   })
 
   it('leaves out an approved hash the Catalyst does not hold, such as content saved while it was being approved', async () => {
@@ -450,7 +478,7 @@ describe('deployLinkedItems', () => {
     const form = vi.mocked(deps.deployEntity).mock.calls[0][0]
     expect(form.has('bafmodel1')).toBe(true)
     expect(form.has('bafthumb')).toBe(false)
-    expect(deps.approveItem).toHaveBeenCalledWith('1')
+    expect(deps.approveItem).toHaveBeenCalledWith('1', curatedHash(served.find(target => target.id === '1')!))
   })
 
   it('uploads exactly the content its metadata declares, generating no image for an item saved without one', async () => {
@@ -551,6 +579,28 @@ describe('deployLinkedItems', () => {
     })
     const result = await deployLinkedItems(collection, planFor([item('1')]), deps)
     expect(result.failed.map(({ item, stage }) => [item.id, stage])).toEqual([['1', 'curation']])
+  })
+
+  describe('when the server refuses the approval because the item changed', () => {
+    let deps: LinkedDeployDeps
+    let result: Awaited<ReturnType<typeof deployLinkedItems>>
+
+    beforeEach(async () => {
+      deps = deployDeps({
+        approveItem: vi.fn(async () => {
+          throw new BuilderServerError('The item changed since it was reviewed', 409)
+        })
+      })
+      result = await deployLinkedItems(collection, planFor([item('1')]), deps)
+    })
+
+    it('should send the item back to its creator as changed', () => {
+      expect(result.failed.map(({ item, stage }) => [item.id, stage])).toEqual([['1', 'changed']])
+    })
+
+    it('should not take back an approval that was never recorded', () => {
+      expect(deps.rejectItem).not.toHaveBeenCalled()
+    })
   })
 
   it('stops at once when the session cannot sign', async () => {

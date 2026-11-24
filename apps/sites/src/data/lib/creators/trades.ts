@@ -12,7 +12,9 @@ import {
 import { ContractName, getContract, getMarketplaceName } from './chain/contracts'
 import { numberToHex, zeroAddress } from 'viem'
 import { toBytes32 } from './bytes32'
+import { MARKET_PREFIX, catalystUrl } from '../catalyst/bases'
 import { config } from './config'
+import { isDecentralandHost } from './config/env'
 import { readContract, signedFetch, type ContractData, type TypedDataDomain, type TypedDataTypes } from './auth'
 
 export type UnsignedTrade = Omit<TradeCreation, 'signature'>
@@ -200,6 +202,10 @@ export async function readSignatureIndexes(contract: ContractData, signer: strin
   return { contractSignatureIndex: Number(contractIndex), signerSignatureIndex: Number(signerIndex) }
 }
 
+/** The marketplace-api: the environment's on a Decentraland host, else that of the node serving the page. */
+export const marketplaceUrl = (host = typeof window === 'undefined' ? '' : window.location.host) =>
+  isDecentralandHost(host) ? config.get('MARKETPLACE_SERVER_URL') : `${catalystUrl()}${MARKET_PREFIX}`
+
 /** The server retires an order (re-signing it as supply shrinks, or after it is cancelled), so a cached id can vanish. */
 export class TradeNotFoundError extends Error {
   constructor(tradeId: string) {
@@ -210,7 +216,7 @@ export class TradeNotFoundError extends Error {
 
 /** A stored order: GET /v1/trades/:id. */
 export async function fetchTrade(tradeId: string): Promise<Trade> {
-  const response = await fetch(`${config.get('MARKETPLACE_SERVER_URL')}/v1/trades/${encodeURIComponent(tradeId)}`)
+  const response = await fetch(`${marketplaceUrl()}/v1/trades/${encodeURIComponent(tradeId)}`)
   if (response.status === 404) {
     await response.body?.cancel()
     throw new TradeNotFoundError(tradeId)
@@ -233,7 +239,7 @@ export class TradeConflictError extends Error {
 export async function createTrade(address: string, trade: TradeCreation): Promise<string> {
   const response = await signedFetch(
     address,
-    config.get('MARKETPLACE_SERVER_URL'),
+    marketplaceUrl(),
     '/v1/trades',
     { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(trade) },
     TRADE_AUTH_METADATA

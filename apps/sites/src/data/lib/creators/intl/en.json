@@ -2251,6 +2251,10 @@
   "wallet_error": {
     "wrong_account": "Your wallet switched to another account or network. Switch it back to the account you signed in with and try again."
   },
+  "builder_refusal": {
+    "retry_in_seconds": "{reason}. Try again in {count, plural, one {# second} other {# seconds}}.",
+    "retry_in_minutes": "{reason}. Try again in {count, plural, one {# minute} other {# minutes}}."
+  },
   "item_thumbnail": {
     "generating": "Generating thumbnail…"
   },

@@ -183,7 +183,7 @@ export function AddItemsModal({ collection, address, files, prefill, onClose, up
     }
   }, [canProcess])
 
-  const { drafts, selectedId, view, failureReason, isUploading } = state
+  const { drafts, selectedId, view, failureReason, refusal, isUploading } = state
   const selected = useMemo(
     () => drafts.find(draft => draft.id === selectedId) ?? drafts[0] ?? null,
     [drafts, selectedId]
@@ -383,7 +383,8 @@ export function AddItemsModal({ collection, address, files, prefill, onClose, up
         dispatch({
           type: 'uploadFailed',
           failureReason: result.failureReason ?? 'generic',
-          failedDraftIds: result.failedDraftIds
+          failedDraftIds: result.failedDraftIds,
+          refusal: result.refusal
         })
       } else {
         onClose()
@@ -457,6 +458,7 @@ export function AddItemsModal({ collection, address, files, prefill, onClose, up
     return (
       <UploadErrorModal
         reason={failureReason ?? 'generic'}
+        refusal={refusal}
         onCancel={onClose}
         onRetry={() => dispatch({ type: 'retryRequested' })}
       />

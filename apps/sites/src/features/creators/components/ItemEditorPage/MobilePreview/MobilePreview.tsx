@@ -1,9 +1,8 @@
 import { useState, type ReactNode } from 'react'
 import type { BodyShape } from '@dcl/schemas'
 import { CloseIcon, DesktopWindowsOutlinedIcon as DesktopIcon } from '../../Icons'
-import { ItemThumbnail } from '../../ItemThumbnail'
+import { ItemFileThumbnail } from '../../ItemThumbnail'
 import { useTranslation } from '@/data/lib/creators/intl'
-import { getContentsStorageUrl } from '@/data/lib/creators/builder'
 import { hasRepresentationFor } from '@/data/lib/creators/itemEditor'
 import type { Item } from '@/data/lib/creators/items'
 import styles from '../ItemEditorPage.module.css'
@@ -70,7 +69,7 @@ export function MobilePreview({ items, selectedId, dressedIds, bodyShape, onTap,
               data-testid={`mobile-strip-item-${item.id}`}
               onClick={() => onTap(item)}
             >
-              <ItemThumbnail src={thumbnail ? getContentsStorageUrl(thumbnail) : null} rarity={item.rarity} />
+              <ItemFileThumbnail item={item} hash={thumbnail} rarity={item.rarity} />
             </button>
           )
         })}

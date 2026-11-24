@@ -1,10 +1,25 @@
 // Read-only client for the Catalyst content server: the deployed entity of a published item is the
 // version the world and the marketplace show, which the builder copy is compared against.
 import type { BodyShape, Entity, WearableCategory } from '@dcl/schemas'
+import { catalystUrl } from '../catalyst/bases'
 import { config } from './config'
+import { isDecentralandHost } from './config/env'
 import { getBaseWearableName, type BaseWearable } from './avatar'
 
-const contentUrl = () => `${config.get('PEER_URL')}/content`
+/** The catalyst peer: the environment's on a Decentraland host, else the node serving the page. */
+export const peerUrl = (host = typeof window === 'undefined' ? '' : window.location.host) =>
+  isDecentralandHost(host) ? config.get('PEER_URL') : catalystUrl()
+
+/**
+ * The token metadata base a standard collection is initialized with: the environment's on a Decentraland
+ * host, else the node's `/lambdas/collections/standard/erc721/`.
+ */
+export const erc721BaseUri = (host = typeof window === 'undefined' ? '' : window.location.host) =>
+  isDecentralandHost(host)
+    ? config.get('ERC721_COLLECTION_BASE_URI')
+    : `${catalystUrl()}/lambdas/collections/standard/erc721/`
+
+const contentUrl = () => `${peerUrl()}/content`
 
 /** The active entities deployed under the given pointers (item URNs). Pointers with no entity are simply absent. */
 export async function fetchEntitiesByPointers(pointers: string[]): Promise<Entity[]> {
@@ -72,7 +87,7 @@ type CatalystWearable = {
  */
 export async function fetchBaseWearables(): Promise<BaseWearable[]> {
   const response = await fetch(
-    `${config.get('PEER_URL')}/lambdas/collections/wearables?collectionId=${BASE_AVATARS_COLLECTION}`
+    `${peerUrl()}/lambdas/collections/wearables?collectionId=${BASE_AVATARS_COLLECTION}`
   )
   if (!response.ok) {
     await response.body?.cancel()

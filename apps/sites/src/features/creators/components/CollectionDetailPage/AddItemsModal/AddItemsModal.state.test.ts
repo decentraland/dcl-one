@@ -149,6 +149,19 @@ describe('review flow', () => {
     expect(retried.view).toBe('details')
     expect(retried.drafts).toHaveLength(1)
   })
+
+  it("a failed upload keeps the node's words for the error view, and Try again leaves them behind", () => {
+    const draft = readyDraft({ checked: true })
+    const refusal = { message: 'The upload is too large' }
+    const state = addItemsReducer(stateWith([draft]), {
+      type: 'uploadFailed',
+      failureReason: 'generic',
+      failedDraftIds: [draft.id],
+      refusal
+    })
+    expect(state.refusal).toEqual(refusal)
+    expect(addItemsReducer(state, { type: 'retryRequested' }).refusal).toBeNull()
+  })
 })
 
 describe('preview results', () => {

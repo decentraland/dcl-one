@@ -2,14 +2,13 @@ import { useState } from 'react'
 import { ChevronLeftIcon, ChevronRightIcon } from '../../../Icons'
 import type { ContractNetwork } from '@dcl/schemas'
 import { useTranslation } from '@/data/lib/creators/intl'
-import { getContentsStorageUrl } from '@/data/lib/creators/builder'
 import type { Collection } from '@/data/lib/creators/collections'
 import type { Item } from '@/data/lib/creators/items'
 import { getMappingLabels } from '@/data/lib/creators/mappings'
 import { Button } from '../../../Button'
 import { Checkbox } from '../../../Checkbox'
 import { CategoryIcon } from '../../../ItemIcons'
-import { ItemThumbnail } from '../../../ItemThumbnail'
+import { ItemFileThumbnail } from '../../../ItemThumbnail'
 import { cx } from '@/data/lib/creators/cx'
 import publishRow from './LinkedPublishRow.module.css'
 import publishModal from '../../PublishCollectionModal/PublishCollectionModal.module.css'
@@ -50,7 +49,7 @@ export function LinkedItemsStep({
         <div className={cx(publishRow.columns, publishRow.row)} key={item.id} data-testid={testId}>
           <span className={publishRow.name}>
             <span className={publishModal.thumb}>
-              <ItemThumbnail src={thumbnailHash ? getContentsStorageUrl(thumbnailHash) : null} rarity={item.rarity} />
+              <ItemFileThumbnail item={item} hash={thumbnailHash} rarity={item.rarity} />
             </span>
             <span title={item.name}>{item.name}</span>
           </span>

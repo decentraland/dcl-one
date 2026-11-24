@@ -7,9 +7,9 @@ import {
 } from '../Icons'
 import { Tooltip } from '../Tooltip'
 import { useTranslation } from '@/data/lib/creators/intl'
-import type { ItemType } from '@/data/lib/creators/items'
+import type { Item, ItemType } from '@/data/lib/creators/items'
 import { ValidationSeverity, type ValidationIssue } from '@/data/lib/creators/validation'
-import { ItemThumbnail } from '../ItemThumbnail'
+import { ItemFileThumbnail, ItemThumbnail } from '../ItemThumbnail'
 import styles from './ItemValidationCard.module.css'
 
 /** The item the results are about, shown above them. */
@@ -17,8 +17,8 @@ export type ValidationSubject = {
   name: string
   type: ItemType
   category?: string
-  /** Omitted (not null) when there is no artwork tile at all, e.g. a live preview. */
-  thumbnail?: string | null
+  /** Omitted (not null) when there is no artwork tile at all, e.g. a live preview; a saved item's names its stored file. */
+  thumbnail?: string | null | { item: Pick<Item, 'isPublished'>; hash: string }
   /** Tints the artwork tile like everywhere else the item shows. */
   rarity?: string | null
 }
@@ -77,8 +77,17 @@ export function ItemValidationCard({ subject, issues, onRerun, onSelect, testId 
               className={onSelect ? styles.subjectButton : styles.subject}
               {...(onSelect && { type: 'button' as const, 'data-testid': `${testId}-select`, onClick: onSelect })}
             >
-              {subject.thumbnail !== undefined && (
-                <ItemThumbnail className={styles.thumbnail} src={subject.thumbnail} rarity={subject.rarity} />
+              {typeof subject.thumbnail === 'object' && subject.thumbnail ? (
+                <ItemFileThumbnail
+                  className={styles.thumbnail}
+                  item={subject.thumbnail.item}
+                  hash={subject.thumbnail.hash}
+                  rarity={subject.rarity}
+                />
+              ) : (
+                subject.thumbnail !== undefined && (
+                  <ItemThumbnail className={styles.thumbnail} src={subject.thumbnail} rarity={subject.rarity} />
+                )
               )}
               <span className={styles.subjectText} data-testid={`${testId}-subject`}>
                 <span className={styles.subjectName}>{subject.name}</span>

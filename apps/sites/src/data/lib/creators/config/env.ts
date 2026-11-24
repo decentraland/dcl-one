@@ -26,6 +26,11 @@ function envOfHost(host: string): Env | undefined {
   return labels[labels.length - 2] === DOMAIN ? ENV_BY_NAME[tld] : undefined
 }
 
+/** Whether `host` is one of Decentraland's own domains (`.org`, `.today`, `.zone`). */
+export function isDecentralandHost(host: string): boolean {
+  return envOfHost(host) !== undefined
+}
+
 export function isProductionHost(host: string): boolean {
   return envOfHost(host) === Env.PRODUCTION
 }

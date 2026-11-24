@@ -1,11 +1,13 @@
 import { SparklesIcon } from '../Icons'
-import { ItemThumbnail } from '../ItemThumbnail'
+import { ItemFileThumbnail } from '../ItemThumbnail'
+import type { Item } from '@/data/lib/creators/items'
 import { useTranslation } from '@/data/lib/creators/intl'
 import { cx } from '@/data/lib/creators/cx'
 import styles from './ThumbnailMosaic.module.css'
 
 export type MosaicThumbnail = {
-  url: string
+  item: Pick<Item, 'isPublished'>
+  hash: string
   rarity?: string | null
 }
 
@@ -48,9 +50,9 @@ export function ThumbnailMosaic({
       ) : loading ? (
         <div className={cx(styles.loading, 'skeleton')} data-testid={`${testId}-loading`} aria-hidden />
       ) : (
-        urls.map(({ url, rarity }, index) => (
-          <div className={styles.cell} key={`${index}-${url}`} data-testid={`${testId}-cell`}>
-            <ItemThumbnail src={url} rarity={rarity} testId={`${testId}-thumbnail`} />
+        urls.map(({ item, hash, rarity }, index) => (
+          <div className={styles.cell} key={`${index}-${hash}`} data-testid={`${testId}-cell`}>
+            <ItemFileThumbnail item={item} hash={hash} rarity={rarity} testId={`${testId}-thumbnail`} />
           </div>
         ))
       )}
