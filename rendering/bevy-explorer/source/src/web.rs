@@ -627,14 +627,15 @@ pub fn engine_run(options: JsValue) -> Result<(), JsValue> {
         .ok()
         .and_then(|scope| scope.navigator().user_agent().ok())
         .unwrap_or_default();
-    let text_bindings = if user_agent.contains("Mac") {
+    let macos = user_agent.contains("Mac");
+    let text_bindings = if macos {
         bevy_simple_text_input::TextInputNavigationBindings::macos_default()
     } else {
         bevy_simple_text_input::TextInputNavigationBindings::non_macos_default()
     };
     app.insert_resource(text_bindings);
     // WebGPU on Metal misreads the GPU frame time (see `GpuFrameTimeUnreliable`)
-    if user_agent.contains("Mac") {
+    if macos {
         app.insert_resource(common::gpu_time::GpuFrameTimeUnreliable);
     }
 
