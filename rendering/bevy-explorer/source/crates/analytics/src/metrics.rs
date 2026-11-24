@@ -31,6 +31,7 @@ impl Plugin for MetricsPlugin {
         app.add_plugins((
             crate::page_events::PageEventsPlugin,
             crate::feature_flags::FeatureFlagsReportPlugin,
+            crate::settings_snapshot::SettingsSnapshotPlugin,
         ));
     }
 }

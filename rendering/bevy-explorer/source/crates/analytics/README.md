@@ -2,7 +2,8 @@
 
 The explorer's Segment events, one sender: the engine. Its own events (Performance Metrics,
 Explorer Error, Explorer Scene Load Times, Explorer Move To Parcel, System Info Report, Chat
-Message Sent, First Move In World, time_spent_in_world; `data_definition.rs`) and, on the web, the page's screens and clicks, which reach it
+Message Sent, First Move In World, time_spent_in_world, Feature Flags Resolved, Settings
+Snapshot; `data_definition.rs`) and, on the web, the page's screens and clicks, which reach it
 through the `/track` console command (`page_events.rs`: a base64 JSON array of
 `{event, properties, timestamp, messageId}`, queued as sent). The sender posts batches through
 Decentraland's Segment domain (`api.e.decentraland.org`) because browser ad blockers and DNS
@@ -70,6 +71,15 @@ the anonymous machine id and, natively, the `Referer` go only to a Decentraland 
 join to it on `session_id`. The
 web crash report carries `feature_flags` and `feature_flags_override` itself (`crash.rs`).
 `/feature_flags` and the debug panel's "Feature flags" section show the session's flags.
+
+Once per session, when the settings registry and the analytics config exist, the engine sends
+`Settings Snapshot` (`settings_snapshot.rs`): `changed`, the settings whose value differs from
+their default, keyed by the setting's name, and `changed_count`, the number of entries in it
+(0 and an empty `changed` when nothing differs, so adoption has a denominator). A setting with
+named variants reports the variant's name, any other the number; a setting still unset
+(negative) is left out. It reads the player's saved settings, not the host page's session
+overrides. `/settings_snapshot` and the debug panel's "Settings snapshot" section show the same
+result live.
 
 The loading screen is reported as mobile's funnel names it (`loading.rs`): `Screen Viewed`
 LOADING_START {position, realm, when: on_explorer_ready | on_changerealm | on_moveto} when it
