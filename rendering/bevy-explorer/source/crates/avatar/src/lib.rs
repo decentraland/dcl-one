@@ -1,6 +1,8 @@
 #![forbid(unsafe_code)]
 
 #[cfg(feature = "explorer")]
+use common::sync::MutexExt;
+#[cfg(feature = "explorer")]
 use std::path::PathBuf;
 use std::{collections::VecDeque, f32::consts::PI, time::Duration};
 
@@ -2493,7 +2495,7 @@ fn debug_dump_avatar(
             let count = std::sync::Arc::new(std::sync::Mutex::new((0, 0, 0)));
 
             for content_file in def.content.files() {
-                count.lock().unwrap().0 += 1;
+                count.lock_ignore_poison().0 += 1;
                 let ipfs_path = IpfsPath::new(IpfsType::new_content_file(
                     scene_hash.to_owned(),
                     content_file.to_owned(),
@@ -2508,7 +2510,7 @@ fn debug_dump_avatar(
                 let send = console_relay.send.clone();
                 tasks.push(IoTaskPool::get().spawn(async move {
                     let report = |fail: Option<String>| {
-                        let mut count = count.lock().unwrap();
+                        let mut count = count.lock_ignore_poison();
                         if let Some(fail) = fail {
                             count.2 += 1;
                             let _ = send.send(fail);

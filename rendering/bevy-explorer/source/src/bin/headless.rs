@@ -6,6 +6,7 @@
 //! uses. `--server-mode` makes `isServer()` return true to scene JS, so a scene's
 //! authoritative-server branch runs. Intended to replace hammurabi-headless.
 
+use common::sync::MutexExt;
 use std::{str::FromStr, sync::OnceLock, time::Duration};
 use webgpu_build::headless::{scene_stats_sample, EmittedSceneStats};
 
@@ -918,7 +919,7 @@ fn drain_control_commands(
         }
     };
 
-    let Ok(rx) = control.0.lock() else { return };
+    let rx = control.0.lock_ignore_poison();
     while let Ok(cmd) = rx.try_recv() {
         match cmd {
             ControlCommand::AddScene {
