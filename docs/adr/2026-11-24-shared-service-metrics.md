@@ -54,7 +54,7 @@ Before deploying, inventory queries and alerts using the old Stats, connector or
 
 Stage the private scrape targets in service discovery before the rollout. As each replica is upgraded, verify its target is up and a known HTTP request increments the new series. Switch its dashboards and alerts to the new job and remove its application scrape targets in the same rollout. The upgraded replica immediately stops serving `/social-rpc/metrics`, `/archipelago-ea-stats/metrics`, `/archipelago-ea-ws-connector/metrics`, `/camera-reel-service/metrics` and configured aliases.
 
-For Stats, connector and Camera Reel, migrate request counts from `http_requests_total{handler,code,method}` to `dcl_http_requests_total{component,route,status_code,method}`. Select `component="stats"`, `"connector"` or `"camera-reel"`. Use `dcl_http_request_duration_seconds` for latency and `dcl_http_request_declared_size_bytes` for requests carrying a valid Content-Length. Review bucket-based latency alerts, especially Camera Reel's former 60-second bucket. The new histogram's largest finite bound is 30 seconds. Social and Worlds continue to publish their existing HTTP families on the process scrape.
+For Stats, connector and Camera Reel, migrate request counts from `http_requests_total{handler,code,method}` to `dcl_http_requests_total{component,route,status_code,method}`. Select `component="stats"`, `"connector"` or `"camera-reel"`. Use `dcl_http_request_duration_seconds` for latency and `dcl_http_request_declared_size_bytes` for requests carrying a valid Content-Length. Review bucket-based latency alerts, especially Camera Reel's former 60-second bucket. The new histogram's largest finite bound is 30 seconds. Social and Worlds continue to publish their existing HTTP families on the process scrape. For Social WebSocket admission alerts, `dcl_ws_admission_rejections_total{reason="authentication"}` counts invalid credentials. Query `reason="unavailable"` for verifier outages.
 
 ## Recording and querying
 
@@ -76,7 +76,7 @@ Periodic workers report completed runs by outcome, duration, active passes and t
 | WebSocket transport counts, bytes, errors, active connections and lifetime | `library/dcl-metrics/src/ws.rs`, wrapped around each upgraded socket | Serve |
 | Operating-system measurements available on the host | `library/dcl-metrics/src/process.rs`, sampled when rendering the scrape | Each role |
 | Builder collection resolution, Shop profiles, Explore accounts and Socket.IO | `services/catalyst/{builder,shop,explore}/src`; the serve registry lists each declaration group | Serve |
-| Content synchronization, pruning and upload, storage spool and copy activity | `services/catalyst/{content,storage}/src` | Serve |
+| Content synchronization (including `content_sync_oversized_pointer_changes_total` and `content_sync_manifest_rejections_total{reason}`), pruning and upload, storage spool and copy activity | `services/catalyst/{content,storage}/src` | Serve |
 | Worlds deployments and uploads, Social RPC and other Social operations | `services/catalyst/worlds/src/core/metrics.rs`, `services/catalyst/social/src` | Serve |
 | Gatekeeper, presence, Archipelago connector and its cached diagnostics | `services/catalyst/comms/src/{gatekeeper,presence,archipelago}` | Serve |
 | Portal chain reads and supervised jobs | `services/catalyst/chain-index/src/portal`, `services/catalyst/jobs/src/instrumentation.rs` | The serve or index process executing the work |
