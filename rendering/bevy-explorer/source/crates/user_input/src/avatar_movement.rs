@@ -16,6 +16,7 @@ use common::{
         PLAYER_LANDED_THRESHOLD,
     },
     inputs::MOVE_SET,
+    movement_clip::ClipMotion,
     sets::{PostUpdateSets, SceneLoopSets, SceneSets},
     structs::{
         avatar_tilt_quat, AppConfig, AvatarDynamicState, EngineMovementControl, LocomotionSpeeds,
@@ -768,10 +769,16 @@ pub(crate) fn apply_movement(
     mut last_step: ResMut<LastMovementStep>,
     movement_control: Res<EngineMovementControl>,
     central: Res<CentralCollisions>,
+    mut last_clip: Local<Option<String>>,
 ) {
     let Ok((mut transform, mut dynamic_state, movement)) = player.single_mut() else {
         return;
     };
+    let jump_cue = JumpCue::of_step(
+        movement.component.animation.as_ref(),
+        &mut last_clip,
+        dynamic_state.velocity.y > 0.0,
+    );
     let requested = Some(movement.component.velocity)
         .filter(|velocity| velocity.is_finite())
         .unwrap_or(Vec3::ZERO);
@@ -785,7 +792,8 @@ pub(crate) fn apply_movement(
     if suppress || requested == Vec3::ZERO {
         dynamic_state.velocity = Vec3::ZERO;
         dynamic_state.ground_height = ground_height(&mut scenes, transform.translation);
-        end_jump_on_landing(&mut dynamic_state);
+        start_jump_on_take_off(&mut dynamic_state, jump_cue, time_res.elapsed_secs_f64());
+        end_jump_on_landing(&mut dynamic_state, jump_cue);
         *last_step = LastMovementStep {
             requested_velocity: Some(Vector3::world_vec_from_vec3(&requested)),
             actual_velocity: Some(Vector3::world_vec_from_vec3(&Vec3::ZERO)),
@@ -871,11 +879,10 @@ pub(crate) fn apply_movement(
     transform.translation = position.with_y(position.y.max(0.0));
 
     // for now we hack in the old dynamic state values for animations
-    let rose = dynamic_state.velocity.y > 0.0;
     dynamic_state.velocity = velocity;
     dynamic_state.ground_height = ground_height(&mut scenes, transform.translation);
-    start_jump_on_take_off(&mut dynamic_state, rose, time_res.elapsed_secs_f64());
-    end_jump_on_landing(&mut dynamic_state);
+    start_jump_on_take_off(&mut dynamic_state, jump_cue, time_res.elapsed_secs_f64());
+    end_jump_on_landing(&mut dynamic_state, jump_cue);
 }
 
 /// Zero for a step with no elapsed time, such as the first frame.
@@ -904,23 +911,67 @@ fn ground_height(scenes: &mut Query<(Entity, &mut SceneColliderData)>, feet: Vec
         })
 }
 
-/// Record the take-off time when the player rises off the ground, or starts rising again in the
-/// air (an air jump): off the ground is past [`PLAYER_LANDED_THRESHOLD`], where
-/// [`end_jump_on_landing`] stops. `rose` is whether the player rose on the previous frame. The
-/// rise, not its speed, marks the jump, so any jump height the movement scene uses counts.
-fn start_jump_on_take_off(dynamic_state: &mut AvatarDynamicState, rose: bool, now: f64) {
-    let rising = dynamic_state.velocity.y > 0.0;
-    let airborne = dynamic_state.ground_height >= PLAYER_LANDED_THRESHOLD;
-    if rising && airborne && (dynamic_state.jump_time <= 0.0 || !rose) {
+/// What marks the player's jumps on a movement step.
+#[derive(Clone, Copy, Debug)]
+enum JumpCue {
+    /// A scene drives the player's animation. `starts` is true on the step its clip changes to one
+    /// that a jump starts with, and `in_jump` while its clip is a jump on its way up.
+    Clip { starts: bool, in_jump: bool },
+    /// No scene drives the animation. `rose` is whether the player rose on the previous step.
+    Rise { rose: bool },
+}
+
+impl JumpCue {
+    /// `last_clip` holds the scene's clip of the previous step, and takes this step's.
+    fn of_step(
+        animation: Option<&MovementAnimation>,
+        last_clip: &mut Option<String>,
+        rose: bool,
+    ) -> Self {
+        let Some(animation) = animation else {
+            *last_clip = None;
+            return Self::Rise { rose };
+        };
+        let changed = last_clip.as_deref() != Some(animation.src.as_str());
+        if changed {
+            *last_clip = Some(animation.src.clone());
+        }
+        Self::Clip {
+            starts: changed && ClipMotion::starts_jump(&animation.src),
+            in_jump: ClipMotion::of_clip(&animation.src, animation.speed).is_jump(),
+        }
+    }
+}
+
+/// Record the take-off time of a jump. While a scene drives the player's animation, the clip a jump
+/// starts with marks it, so walking up a step is no jump and a jump of any height is one.
+/// Otherwise the player takes off when it rises off the ground, or starts rising again in the air
+/// (an air jump): off the ground is past [`PLAYER_LANDED_THRESHOLD`], where
+/// [`end_jump_on_landing`] stops.
+fn start_jump_on_take_off(dynamic_state: &mut AvatarDynamicState, cue: JumpCue, now: f64) {
+    let take_off = match cue {
+        JumpCue::Clip { starts, .. } => starts,
+        JumpCue::Rise { rose } => {
+            let rising = dynamic_state.velocity.y > 0.0;
+            let airborne = dynamic_state.ground_height >= PLAYER_LANDED_THRESHOLD;
+            rising && airborne && (dynamic_state.jump_time <= 0.0 || !rose)
+        }
+    };
+    if take_off {
         dynamic_state.jump_time = now;
     }
 }
 
 /// Forget the take-off time once the player is back on the ground and no longer rising, so that
 /// `jump_time` marks a jump in flight (`<= 0.0` for none): the animation's take-off window and the
-/// `jump_count` this client broadcasts both read it.
-fn end_jump_on_landing(dynamic_state: &mut AvatarDynamicState) {
-    if dynamic_state.ground_height < PLAYER_LANDED_THRESHOLD && dynamic_state.velocity.y <= 0.0 {
+/// `jump_count` this client broadcasts both read it. A scene's jump clip keeps it, because the clip
+/// can start before the feet leave the ground.
+fn end_jump_on_landing(dynamic_state: &mut AvatarDynamicState, cue: JumpCue) {
+    let jump_clip = matches!(cue, JumpCue::Clip { in_jump: true, .. });
+    if !jump_clip
+        && dynamic_state.ground_height < PLAYER_LANDED_THRESHOLD
+        && dynamic_state.velocity.y <= 0.0
+    {
         dynamic_state.jump_time = -1.0;
     }
 }
@@ -1840,6 +1891,12 @@ mod scene_reach_tests;
 mod jump_tests {
     use super::*;
 
+    /// No scene drives the player's animation, and the player did not rise on the previous step.
+    const NO_SCENE: JumpCue = JumpCue::Rise { rose: false };
+    const DT: f32 = 1.0 / 60.0;
+    /// The movement scene's deceleration of a jump's rise (`JUMP_RISE_DECEL`).
+    const RISE_DECEL: f32 = 40.0;
+
     fn state(ground_height: f32, vertical_velocity: f32) -> AvatarDynamicState {
         AvatarDynamicState {
             velocity: Vec3::new(0.0, vertical_velocity, 0.0),
@@ -1849,10 +1906,59 @@ mod jump_tests {
         }
     }
 
+    /// Movement steps at 60 frames a second, with the jump rules as `apply_movement` applies them.
+    #[derive(Default)]
+    struct Steps {
+        state: AvatarDynamicState,
+        last_clip: Option<String>,
+        frame: u32,
+    }
+
+    impl Steps {
+        /// One step at `vertical_velocity`, ending `ground_height` over the ground. `clip` is the
+        /// file name of the scene's clip, `None` when no scene drives the animation. Returns the
+        /// jump time after the step.
+        fn step(&mut self, clip: Option<&str>, vertical_velocity: f32, ground_height: f32) -> f64 {
+            self.frame += 1;
+            let animation = clip.map(|clip| MovementAnimation {
+                src: format!("assets/animations/{clip}"),
+                speed: 1.0,
+                ..default()
+            });
+            let cue = JumpCue::of_step(
+                animation.as_ref(),
+                &mut self.last_clip,
+                self.state.velocity.y > 0.0,
+            );
+            self.state.velocity.y = vertical_velocity;
+            self.state.ground_height = ground_height;
+            start_jump_on_take_off(&mut self.state, cue, f64::from(self.frame) * f64::from(DT));
+            end_jump_on_landing(&mut self.state, cue);
+            self.state.jump_time
+        }
+
+        /// The rise of a jump of `height` from the ground, as the movement scene launches it, with
+        /// `clip(n)` on its `n`th step. Returns the jump time after each step.
+        fn rise(&mut self, height: f32, clip: impl Fn(u32) -> Option<&'static str>) -> Vec<f64> {
+            let mut vertical_velocity = (2.0 * height * RISE_DECEL).sqrt();
+            let mut ground_height = 0.0;
+            let mut jump_times = vec![];
+            for n in 0.. {
+                if vertical_velocity <= 0.0 {
+                    break;
+                }
+                ground_height += vertical_velocity * DT;
+                jump_times.push(self.step(clip(n), vertical_velocity, ground_height));
+                vertical_velocity -= RISE_DECEL * DT;
+            }
+            jump_times
+        }
+    }
+
     #[test]
     fn landing_ends_the_jump_in_flight() {
         let mut landed = state(0.0, 0.0);
-        end_jump_on_landing(&mut landed);
+        end_jump_on_landing(&mut landed, NO_SCENE);
         assert!(landed.jump_time <= 0.0);
     }
 
@@ -1860,41 +1966,31 @@ mod jump_tests {
     fn the_take_off_frame_and_the_flight_keep_the_jump() {
         // still within the grounded height on the frame the jump starts, but rising
         let mut taking_off = state(0.1, 11.0);
-        end_jump_on_landing(&mut taking_off);
+        end_jump_on_landing(&mut taking_off, NO_SCENE);
         assert_eq!(taking_off.jump_time, 5.0);
 
         let mut airborne = state(1.5, -3.0);
-        end_jump_on_landing(&mut airborne);
+        end_jump_on_landing(&mut airborne, NO_SCENE);
         assert_eq!(airborne.jump_time, 5.0);
     }
 
-    /// The take-off time a jump of `height` records, rising from the ground at 60 frames a second
-    /// as the movement scene launches it, and checks that the rise keeps it.
+    /// The take-off time a jump of `height` records with no scene driving the animation, and checks
+    /// that the rise keeps it.
     fn take_off_of_a_jump(height: f32) -> f64 {
-        // the movement scene's deceleration of a jump's rise (`JUMP_RISE_DECEL`)
-        const RISE_DECEL: f32 = 40.0;
-        let dt = 1.0 / 60.0;
-        let mut dynamic_state = AvatarDynamicState::default();
-        let mut vertical_velocity = (2.0 * height * RISE_DECEL).sqrt();
-        let mut take_off = None;
-        for frame in 1..120 {
-            if vertical_velocity <= 0.0 {
-                break;
-            }
-            let rose = dynamic_state.velocity.y > 0.0;
-            dynamic_state.velocity.y = vertical_velocity;
-            dynamic_state.ground_height += vertical_velocity * dt;
-            start_jump_on_take_off(&mut dynamic_state, rose, f64::from(frame) * f64::from(dt));
-            end_jump_on_landing(&mut dynamic_state);
-            if dynamic_state.jump_time > 0.0 {
-                assert_eq!(
-                    *take_off.get_or_insert(dynamic_state.jump_time),
-                    dynamic_state.jump_time
-                );
-            }
-            vertical_velocity -= RISE_DECEL * dt;
-        }
-        take_off.expect("the jump records its take-off")
+        let jump_times = Steps::default().rise(height, |_| None);
+        let take_off = jump_times
+            .iter()
+            .copied()
+            .find(|&time| time > 0.0)
+            .expect("the jump records its take-off");
+        assert!(
+            jump_times
+                .iter()
+                .skip_while(|&&time| time <= 0.0)
+                .all(|&time| time == take_off),
+            "{jump_times:?}"
+        );
+        take_off
     }
 
     #[test]
@@ -1909,7 +2005,7 @@ mod jump_tests {
         // following the ground up a slope or a step
         let mut walking = state(0.0, 3.0);
         walking.jump_time = -1.0;
-        start_jump_on_take_off(&mut walking, true, 9.0);
+        start_jump_on_take_off(&mut walking, JumpCue::Rise { rose: true }, 9.0);
         assert!(walking.jump_time <= 0.0);
     }
 
@@ -1917,16 +2013,82 @@ mod jump_tests {
     fn an_air_jump_records_a_new_take_off() {
         // the air jump holds the height, then launches
         let mut hovering = state(1.5, 0.0);
-        start_jump_on_take_off(&mut hovering, false, 6.0);
+        start_jump_on_take_off(&mut hovering, NO_SCENE, 6.0);
         assert_eq!(hovering.jump_time, 5.0);
 
         let mut launched = state(1.5, 8.0);
-        start_jump_on_take_off(&mut launched, false, 6.2);
+        start_jump_on_take_off(&mut launched, NO_SCENE, 6.2);
         assert_eq!(launched.jump_time, 6.2);
 
         let mut rising = state(2.0, 6.0);
         rising.jump_time = 6.2;
-        start_jump_on_take_off(&mut rising, true, 6.3);
+        start_jump_on_take_off(&mut rising, JumpCue::Rise { rose: true }, 6.3);
         assert_eq!(rising.jump_time, 6.2);
+    }
+
+    #[test]
+    fn walking_up_a_step_under_a_scene_is_no_jump() {
+        // the feet measure to the floor below until they are over the 0.3 m step
+        let mut steps = Steps::default();
+        for n in 1..=6 {
+            let jump_time = steps.step(Some("Jog.glb"), 3.0, 0.05 * n as f32);
+            assert!(jump_time <= 0.0, "{n}: {jump_time}");
+        }
+        assert!(steps.step(Some("Jog.glb"), 0.0, 0.0) <= 0.0);
+    }
+
+    #[test]
+    fn a_scene_jump_records_its_take_off_with_its_start_clip_whatever_its_height() {
+        let clip = |n| {
+            Some(if n < 4 {
+                "Jump_Start.glb"
+            } else {
+                "Jump_Rise_Loop.glb"
+            })
+        };
+        // the default jump, a lower one, and one whose peak stays within the landed height
+        for height in [1.0, 0.5, 0.1] {
+            let mut steps = Steps::default();
+            steps.step(Some("Idle.glb"), 0.0, 0.0);
+            // the start clip can begin before the feet leave the ground
+            let take_off = steps.step(Some("Jump_Start.glb"), 0.0, 0.0);
+            assert!(take_off > 0.0, "{height}");
+            let jump_times = steps.rise(height, clip);
+            assert!(
+                jump_times.iter().all(|&time| time == take_off),
+                "{height}: {jump_times:?}"
+            );
+            // a low jump can land in its mid clip
+            assert_eq!(steps.step(Some("Jump_Mid.glb"), -2.0, 0.0), take_off);
+            assert!(
+                steps.step(Some("Jump_End.glb"), 0.0, 0.0) <= 0.0,
+                "{height}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_scene_air_jump_records_a_new_take_off_with_its_clip() {
+        let mut steps = Steps::default();
+        let first = steps.step(Some("Run_Jump_Start.glb"), 6.0, 0.1);
+        assert_eq!(steps.step(Some("Run_Jump_Rise_Loop.glb"), 3.0, 1.0), first);
+        assert_eq!(steps.step(Some("Run_Jump_Fall_Loop.glb"), -2.0, 1.2), first);
+        // the air jump holds the height, then launches
+        let second = steps.step(Some("DoubleJump_Run.glb"), 0.0, 1.2);
+        assert!(second > first);
+        assert_eq!(steps.step(Some("DoubleJump_Run.glb"), 8.0, 1.4), second);
+        assert_eq!(
+            steps.step(Some("Run_Jump_Fall_Loop.glb"), -3.0, 1.0),
+            second
+        );
+    }
+
+    #[test]
+    fn a_scene_jump_from_the_landing_of_a_low_one_records_a_new_take_off() {
+        let mut steps = Steps::default();
+        let first = steps.step(Some("Jump_Start.glb"), 2.0, 0.03);
+        steps.step(Some("Jump_Mid.glb"), -1.0, 0.0);
+        let second = steps.step(Some("Jump_Start.glb"), 2.0, 0.03);
+        assert!(second > first);
     }
 }
