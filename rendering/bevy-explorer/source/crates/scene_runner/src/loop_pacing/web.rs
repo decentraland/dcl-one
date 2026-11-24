@@ -314,7 +314,8 @@ fn warn_without_tail_diagnostics(world: &World) {
         .is_some_and(|store| store.get(&WAIT_HANDOFF).is_some());
     if !measured {
         bevy::log::warn!(
-            "no pipelined-rendering diagnostics (PipelinedRenderingDiagnosticsPlugin): the web              scene loop keeps the grid deadline"
+            "no pipelined-rendering diagnostics (PipelinedRenderingDiagnosticsPlugin): \
+             the web scene loop keeps the grid deadline"
         );
     }
 }
