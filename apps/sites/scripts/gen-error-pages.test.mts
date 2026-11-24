@@ -6,7 +6,7 @@ import { fileURLToPath } from "node:url";
 import { afterAll, beforeAll, expect, it } from "vitest";
 
 import { FRAGMENT_SHADER, VERTEX_SHADER } from "@dcl/one-ui/apps/sites/shared/AnimatedBackground/shaders";
-import { ART_FILES, isRetryable, STATIC_ERROR_STATUSES, statusCopy } from "@dcl/one-ui/apps/sites/status/statusCopy";
+import { ART_FILES, isRetryable, STATIC_ERROR_STATUSES, statusCopy } from "@web-core/status-copy";
 
 const SITES = fileURLToPath(new URL("../", import.meta.url));
 const SCRIPT = path.join(SITES, "scripts/gen-error-pages.mts");

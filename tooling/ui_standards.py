@@ -28,9 +28,14 @@ fails, because shared UI comes only from the `@dcl/one-ui` entry
 (docs/ui-standards.md, "Shared UI: library/ui"). Stylesheets (`.css`) keep their
 paths. The in-world Shop and HUD UI (`@dcl/one-ui/apps/shop/`, `apps/hud/`) are
 not exported yet: they resolve their host's aliases, which the entry cannot.
+A script under apps/ that imports a library/ui module by a relative path
+(`import`, `export ... from`, `import()`, `require()`, `vi.mock()`) fails the same
+way; stylesheets and the Node-only Figma review tooling listed in
+SHARED_RELATIVE_TOOLING keep their paths.
 """
 import argparse
 import json
+import posixpath
 import re
 import subprocess
 import sys
@@ -379,6 +384,45 @@ SHARED_IMPORT_PENDING = frozenset({
 })
 
 
+# library/ui files apps/ may import by relative path: Node-only Figma review tooling, not UI, which the entry does
+# not export (library/ui/package.json, "Node-only Figma tooling in figma/").
+SHARED_RELATIVE_TOOLING = frozenset({
+    'library/ui/figma/review/scripts/capture-browser.mjs',  # the headless browser launcher of the capture tests
+})
+STYLESHEET_SPECIFIER = re.compile(r'\.css(?:\?\S*)?$')
+
+
+def module_specifiers(text):
+    """The string literals in source text that name a module: import/export ... from, side-effect import, import(),
+    require() and vi.mock()/vi.doMock(). Comments are dropped and other strings (a path for fs, a test fixture) are
+    not specifiers."""
+    items = tokens(text)
+    found = []
+    for index, (kind, value) in enumerate(items):
+        if kind != 'string':
+            continue
+        before = [item[1] for item in items[max(0, index - 4):index]]
+        if before[-1:] in (['from'], ['import']):
+            found.append(value)
+        elif before[-1:] == ['('] and (before[-2:-1] in (['import'], ['require'])
+                                       or before[-4:-1] in (['vi', '.', 'mock'], ['vi', '.', 'doMock'])):
+            found.append(value)
+    return found
+
+
+def relative_shared_imports(name, text):
+    """The relative specifiers in a file's source that reach into library/ui for a module other than a stylesheet or
+    the listed tooling."""
+    found = []
+    for specifier in module_specifiers(text):
+        if not specifier.startswith(('./', '../')) or STYLESHEET_SPECIFIER.search(specifier):
+            continue
+        target = posixpath.normpath(posixpath.join(posixpath.dirname(name), specifier.split('?')[0]))
+        if (target == 'library/ui' or target.startswith('library/ui/')) and target not in SHARED_RELATIVE_TOOLING:
+            found.append(specifier)
+    return found
+
+
 def deep_shared_imports(text):
     """The @dcl/one-ui/<path> specifiers in source text that name shared code, comments excluded."""
     return [value for kind, value in tokens(text) if kind == 'string' and SHARED_UI_DEEP.match(value)]
@@ -389,10 +433,13 @@ def shared_import_issues(paths, read):
     issues = []
     for name in sorted(paths):
         if (not name.startswith(SHARED_IMPORT_ROOTS) or name.startswith('library/ui/')
-                or not name.endswith(SHARED_IMPORT_EXTENSIONS) or name in SHARED_IMPORT_PENDING):
+                or not name.endswith(SHARED_IMPORT_EXTENSIONS)):
             continue
         text = read(name)
-        if '@dcl/one-ui/' not in text:
+        if name.startswith('apps/') and 'library/ui' in text:
+            for specifier in relative_shared_imports(name, text):
+                issues.append(f"{name}: import {specifier!r} from '@dcl/one-ui' instead")
+        if name in SHARED_IMPORT_PENDING or '@dcl/one-ui/' not in text:
             continue
         for specifier in deep_shared_imports(text):
             issues.append(f"{name}: import {specifier!r} from '@dcl/one-ui' instead")

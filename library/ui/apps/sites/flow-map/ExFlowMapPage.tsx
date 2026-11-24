@@ -2,7 +2,12 @@ import type { ComponentType } from 'react'
 
 import FlowMapPage, { Hourglass } from './FlowMapPage'
 import type { LinkComponentProps } from './FlowMapPage'
-import { ASCII_SOURCE, MACHINE_PATHS, SECTIONS, STATS } from './exflowmapdata'
+import {
+  EXPLORER_ASCII_SOURCE as ASCII_SOURCE,
+  EXPLORER_MACHINE_PATHS as MACHINE_PATHS,
+  EXPLORER_SECTIONS as SECTIONS,
+  EXPLORER_STATS as STATS
+} from '../../../../web-core/flow-map'
 
 type ExFlowMapPageProps = {
   LinkComponent?: ComponentType<LinkComponentProps>
