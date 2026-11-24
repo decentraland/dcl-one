@@ -540,8 +540,10 @@ pub trait ProfileFaces: Send + Sync {
 ///
 /// Profiles and outfits read the index's NAMEs only in case 1, beside the
 /// items it vouches for; elsewhere they claim none without the subgraph.
-/// Case 3 serves the name owner route and the Admin Toolkit's lookup only:
-/// the authorizations of worlds and communities take
+/// Case 3 serves lookups: the name owner route, the Admin Toolkit's owner
+/// lookup, both user NAME list routes (`/lambdas/users/{a}/names`,
+/// `/v1/users/{a}/names`) and comms' display enrichment. It authorizes
+/// nothing: worlds and communities take
 /// [`MarketplaceState::authorizing_names`], cases 1 and 2, the sources their
 /// startup posture (`worlds_names_reader`) accepts.
 pub fn select_name_authority(
