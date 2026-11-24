@@ -205,6 +205,7 @@ fn gen_sdk_components() -> Result<()> {
         "Vector3",
         "PBAvatarBase",
         "PBAvatarEquippedData",
+        "PBAvatarEquippedData.EquippedWearable",
         "PBPointerEvents.Entry",
         "PBPointerEvents.Info",
     ];

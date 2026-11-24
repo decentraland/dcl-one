@@ -4,6 +4,15 @@ breaking:
     - WIRE_JSON
   ignore:
     - google
+  # AvatarEquippedData field 3 becomes `wearables`, as in decentraland/protocol's main, and
+  # `force_render` moves to 4. Delete these once main carries the change.
+  ignore_only:
+    FIELD_SAME_NAME:
+      - decentraland/sdk/components/avatar_equipped_data.proto
+    FIELD_SAME_JSON_NAME:
+      - decentraland/sdk/components/avatar_equipped_data.proto
+    FIELD_WIRE_JSON_COMPATIBLE_TYPE:
+      - decentraland/sdk/components/avatar_equipped_data.proto
 lint:
   use:
     - DIRECTORY_SAME_PACKAGE

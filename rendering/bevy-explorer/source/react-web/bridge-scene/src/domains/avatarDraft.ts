@@ -104,7 +104,7 @@ export async function deployLookAs(name: string | undefined, isCurrent: () => bo
       skinColor: look.skin,
       talking: null
     },
-    equip: { wearableUrns: look.wearables, emoteUrns: look.emotes, forceRender: look.forceRender }
+    equip: { wearableUrns: look.wearables, emoteUrns: look.emotes, wearables: [], forceRender: look.forceRender }
   })
   if (!isCurrent()) return
   deployed = look

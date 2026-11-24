@@ -19,6 +19,7 @@ describe('look deploy', () => {
     expect(lookDeploy(look({ wearables: ['urn:cap'] }), look()).equip).toEqual({
       wearableUrns: ['urn:cap'],
       emoteUrns: ['wave', '', '', '', '', '', '', '', '', ''],
+      wearables: [],
       forceRender: ['hair']
     })
   })
