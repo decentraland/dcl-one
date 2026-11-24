@@ -450,7 +450,7 @@ fn show_nametag(
 mod tests {
     use common::{
         rpc::RpcCallEvent,
-        structs::{CurrentRealm, NoRenderApp},
+        structs::{CurrentRealm, NoRenderApp, PreviewMode},
     };
     use comms::{
         chat_reaction::ChatReactionEvent,
@@ -458,7 +458,7 @@ mod tests {
             CrdtContexts, GlobalCrdtPlugin, GlobalCrdtState, NetworkUpdate, PlayerMessage,
             PlayerUpdate,
         },
-        scene_topics::SceneTopicTraffic,
+        scene_messages::SceneMessageTraffic,
         SceneRoomConnection, ServerSceneRooms, TransportType,
     };
     use dcl_component::proto_components::kernel::comms::rfc4;
@@ -472,9 +472,10 @@ mod tests {
         app.insert_resource(NoRenderApp)
             .init_resource::<Time>()
             .init_resource::<CurrentRealm>()
+            .init_resource::<PreviewMode>()
             .init_resource::<SceneRoomConnection>()
             .init_resource::<ServerSceneRooms>()
-            .init_resource::<SceneTopicTraffic>()
+            .init_resource::<SceneMessageTraffic>()
             .add_event::<RpcCallEvent>()
             .add_event::<ChatReactionEvent>()
             .add_event::<SystemApi>()
