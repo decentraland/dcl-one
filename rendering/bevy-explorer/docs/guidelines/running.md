@@ -329,8 +329,8 @@ State, in every build:
   `height` in logical pixels, `scale`). The scene is the one `/set_scene`
   picked, else the player's; the entity is as `/scene_entities` lists it. `--bounds` aims at the
   centre of its visible meshes instead of its origin.
-- `/scene_entities [component] [--labels] [--name <text>] [--limit N]`: the live entities of the
-  scene, one per line. With `--labels`, `--name` (alias `--filter`) or `--limit`, JSON: `scene`, `total`,
+- `/scene_entities [component] [--labels] [--name <text>] [--limit N]`, or `/scene_entities
+  --visible [--min-coverage F] [--limit N]`: the live entities of the scene, one per line. With `--labels`, `--name` (alias `--filter`) or `--limit`, JSON: `scene`, `total`,
   `matched`, `returned`, `truncated`, and `entities` by id, the first `--limit` of those matched
   (default 200, at most 2000), each `crdtEntityId` and `label`, what it shows from the
   scene's own state: `gltf <src>` (a `src` past 64 characters shows `…` and its last 64, which
@@ -340,7 +340,8 @@ State, in every build:
   when nothing describes it. `--name` keeps the labels holding the text, any case (`mesh box`,
   `hidden`, `gltf models/`) and is matched against the label as shown, so a long `src` is found
   by its end. Without `--name` only the listed entities are read.
-- `/visible_entities [--limit N] [--min-coverage F]`: JSON of the scene's entities that draw a
+  With `--visible`, which takes neither a component nor `--labels`, `--name` or `--panel`, JSON
+  of the scene's entities that draw a
   primitive mesh or a glTF (signs and boards, bare `TextShape`s, are not listed) whose meshes'
   world bounds meet the primary camera's frustum, sorted by `coverage`, largest first (default
   25, at most 200; `--min-coverage` 0 to 1 drops smaller ones): `crdtEntityId`, `label`,
@@ -442,14 +443,6 @@ The HUD and input:
   shorter than its frames plus 3, whatever `--timeout-frames` says.
   A blocked outcome is a resolved reply with `diagnosis` set, not a failure.
   [Interaction](interaction.md) has every option and reply field.
-- `/get_reticle` (`src/automation/reticle.rs`): what the pointer ray reaches now, read from the
-  pointer pipeline without pressing or hovering: `available`, `cursorLocked` (the window holds the
-  cursor), `rayFromScreenCenter`, `aimedByCommand` (a pointer command's aim steers the ray),
-  `pointerLocked` (the scene's lock), `cursor` (`x`, `y` in logical pixels, `normalized`,
-  `onScreen`), `screen`, `ray` (`origin`, `direction`), `kind` (`scene_entity`, `ui`, `avatar`,
-  `world` or `nothing`), `crdtEntityId`, `scene`, `hitPoint`, `distanceToPlayer`,
-  `distanceToCamera`, `hasPointerEvents`, `withinRange` (an entry the cursor reaches),
-  `hoverQualified` (a hover-enter entry within range), `hoverText` and the cursor `entries`.
 - `/raycast_stats` (JSON: the capped tier's `budgetMs`, `ran`, `deferred` and `spentMs`, and the
   uncapped tier's `uncappedRan` and `uncappedSpentMs`, each for its last frame with raycasts to
   cast) and `/raycast_budget [ms|auto]` (show the capped budget, a tenth of the target frame, or

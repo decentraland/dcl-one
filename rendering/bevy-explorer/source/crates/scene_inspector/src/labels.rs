@@ -2,7 +2,7 @@
 //! last 64 characters of a longer one, which hold the file name),
 //! `mesh <Box|Sphere|Cylinder|Plane|Gltf>`, `text "<first 24 characters>"`, `hidden`,
 //! `parent <id>`, joined by `, `; the reserved entities are `scene root`, `player` and `camera`.
-//! `/scene_entities --labels` and `/visible_entities` label with it.
+//! `/scene_entities --labels` and `--visible` label with it.
 
 use dcl_component::{
     proto_components::sdk::components::{
@@ -37,7 +37,7 @@ pub(crate) fn has(crdt: &CrdtStore, component: SceneComponentId, entity: SceneEn
         .is_some_and(|entry| entry.is_some)
 }
 
-/// Whether the entity draws a primitive mesh or a glTF: what `/visible_entities` lists.
+/// Whether the entity draws a primitive mesh or a glTF: what `/scene_entities --visible` lists.
 pub(crate) fn renders(crdt: &CrdtStore, entity: SceneEntityId) -> bool {
     has(crdt, SceneComponentId::MESH_RENDERER, entity)
         || has(crdt, SceneComponentId::GLTF_CONTAINER, entity)

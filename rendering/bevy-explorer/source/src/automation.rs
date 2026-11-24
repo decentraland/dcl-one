@@ -96,15 +96,11 @@ impl Plugin for AutomationPlugin {
                 PreUpdate,
                 input::play_input_script.before(bevy::input::InputSystem),
             );
-        app.add_plugins((
-            pointer::AutomationPointerPlugin,
-            reticle::AutomationReticlePlugin,
-        ));
+        app.add_plugins(pointer::AutomationPointerPlugin);
     }
 }
 
 pub(crate) mod pointer;
-pub(crate) mod reticle;
 
 pub(crate) mod input {
     use std::collections::VecDeque;

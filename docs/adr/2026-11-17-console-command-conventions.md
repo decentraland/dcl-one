@@ -39,8 +39,7 @@ does not have yet (durations, waits, refusals) is added here with its first comm
    `/entity_screen_position`) take logical pixels; `/click_at --normalized` takes the normalized
    form.
 3. **Names and ids.** Arguments and reply fields use the shared script's names. SDK entity ids are
-   the only id space: replies report them as `crdtEntityId` (`/visible_entities`, `/get_reticle`,
-   `/scene_entities --labels`), and keep `entity` where a reply already uses it.
+   the only id space: replies report them as `crdtEntityId` (`/scene_entities --labels` and `--visible`), and keep `entity` where a reply already uses it.
 
 ## Consequences
 

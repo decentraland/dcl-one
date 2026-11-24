@@ -129,18 +129,16 @@ describe('Explorer', () => {
     assert.deepEqual(await explorer.position(), { x: 8, y: 0.5, z: -3 })
   })
 
-  test('sceneEntityLabels, visibleEntities and getReticle compose their lines', async () => {
+  test('sceneEntityLabels and visibleEntities compose their lines', async () => {
     const fake = new FakeConsole({
-      scene_entities: '{"scene":"h","total":2,"matched":1,"returned":1,"truncated":false,"entities":[{"crdtEntityId":571,"label":"mesh Box"}]}',
-      visible_entities: '{"returned":0,"entities":[]}',
-      get_reticle: '{"available":true,"kind":"nothing"}'
+      scene_entities: '{"scene":"h","total":2,"matched":1,"returned":1,"truncated":false,"entities":[{"crdtEntityId":571,"label":"mesh Box"}]}'
     })
     const explorer = new Explorer(fake)
     assert.deepEqual((await explorer.sceneEntityLabels({ name: 'mesh box' })).entities, [{ crdtEntityId: 571, label: 'mesh Box' }])
     await explorer.sceneEntityLabels({ component: 'MeshRenderer', limit: 50 })
     await explorer.visibleEntities({ limit: 10, minCoverage: 0.01 })
-    assert.equal((await explorer.getReticle()).kind, 'nothing')
-    assert.deepEqual(fake.lines, ['/scene_entities --name "mesh box"', '/scene_entities MeshRenderer --labels --limit 50', '/visible_entities --limit 10 --min-coverage 0.01', '/get_reticle'])
+    await explorer.visibleEntities()
+    assert.deepEqual(fake.lines, ['/scene_entities --name "mesh box"', '/scene_entities MeshRenderer --labels --limit 50', '/scene_entities --visible --limit 10 --min-coverage 0.01', '/scene_entities --visible'])
   })
 
   test('quoteWord quotes what the engine would split or unquote, and escapes inside the quotes', () => {

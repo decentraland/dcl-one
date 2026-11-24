@@ -59,30 +59,6 @@ export interface PointerReport {
   diagnosis: string | null
 }
 
-/** What `/get_reticle` reports: what the pointer ray reaches now. */
-export interface ReticleReport {
-  available: boolean
-  cursorLocked: boolean
-  rayFromScreenCenter: boolean
-  /** a pointer command's aim steers the ray */
-  aimedByCommand: boolean
-  pointerLocked: boolean
-  cursor: { x: number; y: number; normalized: { x: number; y: number }; onScreen: boolean } | null
-  screen: { width: number; height: number; scale: number }
-  ray: { origin: { x: number; y: number; z: number }; direction: { x: number; y: number; z: number } } | null
-  kind: 'scene_entity' | 'ui' | 'avatar' | 'world' | 'nothing'
-  crdtEntityId: number | null
-  scene: string | null
-  hitPoint: { x: number; y: number; z: number } | null
-  distanceToPlayer: number | null
-  distanceToCamera: number | null
-  hasPointerEvents: boolean
-  withinRange: boolean
-  hoverQualified: boolean
-  hoverText: string | null
-  entries: { button: string; event: string; hoverText: string | null; enabled: boolean; tooFar: boolean }[]
-}
-
 /** One entity of `/scene_entities --labels`. */
 export interface LabelledEntity {
   crdtEntityId: number
@@ -101,7 +77,7 @@ export interface LabelledEntities {
   entities: LabelledEntity[]
 }
 
-/** One entity `/visible_entities` lists. */
+/** One entity `/scene_entities --visible` lists. */
 export interface VisibleEntity {
   crdtEntityId: number
   label: string | null
@@ -114,7 +90,7 @@ export interface VisibleEntity {
   renderers: number
 }
 
-/** `/visible_entities`: frustum and bounds only, occlusion is not evaluated. */
+/** `/scene_entities --visible`: frustum and bounds only, occlusion is not evaluated. */
 export interface VisibleEntities {
   scene: string
   screen: { width: number; height: number; scale: number }
@@ -1061,7 +1037,7 @@ export class Explorer {
 
   /** The scene's mesh and glTF entities in the camera's view, largest coverage first. */
   visibleEntities(options: { limit?: number; minCoverage?: number } = {}): Promise<VisibleEntities> {
-    return this.json<VisibleEntities>(`/visible_entities${options.limit === undefined ? '' : ` --limit ${options.limit}`}${options.minCoverage === undefined ? '' : ` --min-coverage ${options.minCoverage}`}`)
+    return this.json<VisibleEntities>(`/scene_entities --visible${options.limit === undefined ? '' : ` --limit ${options.limit}`}${options.minCoverage === undefined ? '' : ` --min-coverage ${options.minCoverage}`}`)
   }
 
   /** Point the scene commands (`/scene_entities`, `/inspect_component`, `/scene_logs`) at a scene
@@ -1146,11 +1122,6 @@ export class Explorer {
     if (options.event) line += ` --event ${options.event}`
     if (options.timeoutFrames !== undefined) line += ` --timeout-frames ${options.timeoutFrames}`
     return this.json<PointerReport>(line)
-  }
-
-  /** What the pointer ray reaches now; presses and hovers nothing. */
-  getReticle(): Promise<ReticleReport> {
-    return this.json<ReticleReport>('/get_reticle')
   }
 
   raycastStats(): Promise<RaycastStats> {

@@ -219,7 +219,11 @@ fn scene_logs_cmd(
 /// List live entities in the active scene, optionally filtered by component name. With `--labels`,
 /// `--name` or `--limit` the reply is JSON: `scene`, `total`, `matched`, `returned`, `truncated`, and
 /// `entities` (`crdtEntityId`, `label`: `gltf <src>`, `mesh <Box|Sphere|...>`, `text "<excerpt>"`,
-/// `hidden`, `parent <id>`, or null), by id, the first `--limit` of them.
+/// `hidden`, `parent <id>`, or null), by id, the first `--limit` of them. With `--visible` the
+/// reply is JSON of the entities that draw a mesh and whose bounds meet the camera's view, largest
+/// on screen first: `crdtEntityId`, `label`, `screenRect`, `center`, `coverage`, `distance`,
+/// `distanceToCamera`, `renderers`, with `screen`, `cameraPosition`, `candidates`, `inFrustum`,
+/// `returned`, `truncated` and `occlusion` (not evaluated).
 #[derive(clap::Parser, ConsoleCommand)]
 #[command(name = "/scene_entities")]
 struct SceneEntitiesCommand {
@@ -234,9 +238,17 @@ struct SceneEntitiesCommand {
     /// Keep the entities whose label holds this text, any case (implies --labels)
     #[arg(long, alias = "filter")]
     name: Option<String>,
-    /// Most labelled entities to list, lowest id first (1 to 2000, default 200; implies --labels)
+    /// Most labelled entities to list, lowest id first (1 to 2000, default 200; implies --labels).
+    /// With --visible, most entities to list, largest on screen first (1 to 200, default 25)
     #[arg(long, value_parser = clap::value_parser!(u32).range(1..=2000))]
     limit: Option<u32>,
+    /// Reply JSON with the entities of the active scene in the camera's view and where each is
+    /// on screen
+    #[arg(long, conflicts_with_all = ["panel", "component", "labels", "name"])]
+    visible: bool,
+    /// Least share of the screen (0 to 1) an entity must cover to be listed
+    #[arg(long, requires = "visible", default_value_t = 0.0)]
+    min_coverage: f32,
 }
 
 /// How many entities `/scene_entities --labels` lists unless `--limit` says otherwise
@@ -246,11 +258,19 @@ fn scene_entities_cmd(
     mut input: ConsoleCommand<SceneEntitiesCommand>,
     panel: Res<crate::panel::InspectionParcel>,
     resolver: SceneResolver,
+    view: crate::visible::View,
     registry: Res<ComponentNameRegistry>,
     mut pending: ResMut<PendingSnapshotRequests>,
     mut console_responses: ResMut<PendingConsoleResponses>,
 ) {
     if let Some(Ok(cmd)) = input.take() {
+        if cmd.visible {
+            match view.list(&resolver, &mut pending, cmd.limit, cmd.min_coverage) {
+                Ok(rx) => console_responses.push_oneshot(rx, |r| r, input.take_responder()),
+                Err(e) => input.reply_failed(e),
+            }
+            return;
+        }
         let filter_id: Option<SceneComponentId> = match &cmd.component {
             None => None,
             Some(name) => match registry.get_by_name(name) {
