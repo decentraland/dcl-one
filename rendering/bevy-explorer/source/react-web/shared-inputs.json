@@ -10003,11 +10003,11 @@
     },
     {
       "path": "library/ui/apps/hud/features/menu/MainMenuShell.module.css",
-      "sha256": "14888f01c31c6675d0a878baa442d884dc8b7f599d97c5c662f7acce83a64633"
+      "sha256": "f1acaa8ee792bf27c9b9dab45e3f4779c6c975b2d915027b97c687f107d2bfdf"
     },
     {
       "path": "library/ui/apps/hud/features/menu/MainMenuShell.tsx",
-      "sha256": "a2d757288bddb3f94d58ff88ea55478db1019beade58b3ede9291869ece054ff"
+      "sha256": "164be1018c56a9638c3e8f0259038289549f39fc8bd24b49a931de4715f60bb4"
     },
     {
       "path": "library/ui/apps/hud/features/menu/MenuBackdrop.module.css",
@@ -10191,7 +10191,7 @@
     },
     {
       "path": "library/ui/apps/hud/features/profile/Passport.tsx",
-      "sha256": "247b872acc380b3170c3c82231606573e79625e83b5a1231b8eeb09c5ce6deee"
+      "sha256": "e89dd72a4a7a6f97fab01b123dc12a4b01d0a5e63155a6569c3b399082329127"
     },
     {
       "path": "library/ui/apps/hud/features/profile/ProfileEditForm.module.css",
@@ -10211,7 +10211,7 @@
     },
     {
       "path": "library/ui/apps/hud/features/profile/ProfilePassport.module.css",
-      "sha256": "255f7160fadf3c3b6c86b157de8be9926bb2a527ff409ecc8f466b614a081f44"
+      "sha256": "f9a154c512ef0b6ea8fd00953c26d0298e8c1914f067a4bb5909081cd062be8d"
     },
     {
       "path": "library/ui/apps/hud/features/profile/ProfilePassport.tsx",
@@ -10539,7 +10539,7 @@
     },
     {
       "path": "library/ui/apps/hud/styles/tokens.css",
-      "sha256": "6db5d8eda817cb9e7c1530a5d5263c1747d9daefc9f16c089c7823d4b4a273eb"
+      "sha256": "5a3c58668bcaabdb483fb2ea12f4620d943c5a7de7e83da9406d039e3ae0062a"
     },
     {
       "path": "library/ui/apps/hud/test/armedButton.test.tsx",
@@ -10955,7 +10955,7 @@
     },
     {
       "path": "library/ui/apps/hud/test/hosted/passport.container.test.tsx",
-      "sha256": "74954fd0f3761c120a041ce0bd2bfc1cfd38a3d634c4b20be3bf31dcef274790"
+      "sha256": "e7973b9ae93910f281708ffa47e21cce6483c87c103511020f54ef45f74affd2"
     },
     {
       "path": "library/ui/apps/hud/test/hosted/permissions.test.tsx",
@@ -11099,7 +11099,7 @@
     },
     {
       "path": "library/ui/apps/hud/test/menu.clicks.test.tsx",
-      "sha256": "c793f5858e5293ab1331026a802ef64c841c99a77fad985920949e4178e695db"
+      "sha256": "08d593d3686cd7e9da76821284db320f32e5cfa4632be60a132f126e9840a131"
     },
     {
       "path": "library/ui/apps/hud/test/pageWindow.test.ts",
@@ -32166,6 +32166,21 @@
     },
     {
       "from": "library/ui/apps/hud/features/profile/Passport.tsx",
+      "to": "library/ui/apps/hud/features/profile/ProfilePassport.module.css",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/profile/Passport.tsx",
+      "to": "library/ui/apps/hud/features/profile/ProfilePassport.module.css",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/profile/Passport.tsx",
+      "to": "library/ui/apps/hud/features/profile/ProfilePassport.module.css",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/profile/Passport.tsx",
       "to": "library/ui/apps/hud/features/profile/ProfilePassport.tsx",
       "kind": "native:runtime"
     },
@@ -42591,6 +42606,21 @@
     },
     {
       "from": "library/ui/apps/hud/test/hosted/passport.container.test.tsx",
+      "to": "library/ui/apps/hud/features/profile/ProfilePassport.module.css",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/hosted/passport.container.test.tsx",
+      "to": "library/ui/apps/hud/features/profile/ProfilePassport.module.css",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/hosted/passport.container.test.tsx",
+      "to": "library/ui/apps/hud/features/profile/ProfilePassport.module.css",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/hosted/passport.container.test.tsx",
       "to": "library/ui/apps/hud/features/session/SessionContext.tsx",
       "kind": "native:runtime"
     },
@@ -44252,6 +44282,21 @@
     {
       "from": "library/ui/apps/hud/test/mapPins.test.tsx",
       "to": "library/ui/apps/hud/test/harness.tsx",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/menu.clicks.test.tsx",
+      "to": "library/ui/apps/hud/features/menu/MainMenuShell.module.css",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/menu.clicks.test.tsx",
+      "to": "library/ui/apps/hud/features/menu/MainMenuShell.module.css",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/menu.clicks.test.tsx",
+      "to": "library/ui/apps/hud/features/menu/MainMenuShell.module.css",
       "kind": "test:runtime"
     },
     {
