@@ -8,8 +8,8 @@ import {
   route,
   sep,
   state
-} from '../../../../web-core/flow-map'
-import type { FlowSection } from '../../../../web-core/flow-map'
+} from './model'
+import type { FlowSection } from './model'
 
 export const MACHINE_PATHS: Record<string, string> = {
   BootGate: 'catalyrst/ui3/src/app/BootGate.tsx',
@@ -933,7 +933,7 @@ export const SECTIONS: FlowSection[] = [
   }
 ]
 
-export const STATS = computeStats(SECTIONS)
+export const STATS = /* @__PURE__ */ computeStats(SECTIONS)
 
 export const ASCII_SOURCE = `# Explorer (/play) \u{2014} click/state sitemap
 

@@ -32,7 +32,7 @@ const formKeys: KeyElement[] = [
 
 /**
  * The AnimatedBackground behind both cards is a WebGL <canvas> animated over a static picture (sites: decentraland-ui2
- * AnimatedBackground; dcl-one: shop/discovery/components/animated-background), as on the landing page: both sides hide
+ * AnimatedBackground; dcl-one: library/ui/components/AnimatedBackground), as on the landing page: both sides hide
  * the canvas, so the static picture and the card over it are compared.
  */
 async function holdBackground(page: Page): Promise<void> {

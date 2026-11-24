@@ -1268,7 +1268,7 @@ impl PulseServer {
         .await?;
         tracing::info!(%bind, "catalyrst-pulse listening (enet)");
         let transports = Transports::enet_only(enet, ENET_CAPACITY as u32);
-        self.run_on(transports, tick_ms).await
+        self.serve(transports, tick_ms).await
     }
 
     pub async fn run_with_webtransport(
@@ -1277,13 +1277,24 @@ impl PulseServer {
         tick_ms: u64,
         wt: Option<WtConfig>,
     ) -> anyhow::Result<()> {
+        self.run_with_webtransport_until(bind, tick_ms, wt, std::future::pending())
+            .await
+    }
+
+    pub(crate) async fn run_with_webtransport_until(
+        self,
+        bind: SocketAddr,
+        tick_ms: u64,
+        wt: Option<WtConfig>,
+        shutdown: impl std::future::Future<Output = ()>,
+    ) -> anyhow::Result<()> {
         let enet = Host::bind(HostConfig {
             bind,
             max_peers: ENET_CAPACITY,
             channel_limit: 8,
         })
         .await?;
-        tracing::info!(%bind, "catalyrst-pulse listening (enet)");
+        tracing::info!(%bind, local = %enet.local_addr()?, "catalyrst-pulse listening (enet)");
         let transports = match wt {
             Some(cfg) => {
                 let wt_bind = cfg.bind_addr;
@@ -1295,15 +1306,13 @@ impl PulseServer {
             }
             None => Transports::enet_only(enet, ENET_CAPACITY as u32),
         };
-        self.run_on(transports, tick_ms).await
+        self.run_inspected(transports, tick_ms, None, shutdown)
+            .await
     }
 
     pub async fn serve(self, transports: Transports, tick_ms: u64) -> anyhow::Result<()> {
-        self.run_on(transports, tick_ms).await
-    }
-
-    async fn run_on(self, transports: Transports, tick_ms: u64) -> anyhow::Result<()> {
-        self.run_inspected(transports, tick_ms, None).await
+        self.run_inspected(transports, tick_ms, None, std::future::pending())
+            .await
     }
 
     pub async fn serve_with_inspection(
@@ -1312,7 +1321,7 @@ impl PulseServer {
         tick_ms: u64,
         requests: inspection::Requests,
     ) -> anyhow::Result<()> {
-        self.run_inspected(transports, tick_ms, Some(requests))
+        self.run_inspected(transports, tick_ms, Some(requests), std::future::pending())
             .await
     }
 
@@ -1321,7 +1330,9 @@ impl PulseServer {
         mut transports: Transports,
         tick_ms: u64,
         mut inspection: Option<inspection::Requests>,
+        shutdown: impl std::future::Future<Output = ()>,
     ) -> anyhow::Result<()> {
+        tokio::pin!(shutdown);
         let mut ticker = tokio::time::interval(std::time::Duration::from_millis(tick_ms));
         let mut cluster_ticker = tokio::time::interval(std::time::Duration::from_millis(
             self.clusters
@@ -1339,6 +1350,10 @@ impl PulseServer {
                 .as_ref()
                 .and_then(|relay| relay.next_renewal());
             tokio::select! {
+                _ = &mut shutdown => {
+                    transports.shutdown_enet(DisconnectReason::Graceful.code());
+                    return Ok(());
+                }
                 settings = async {
                     match self.flag_snapshots.as_mut() {
                         Some(rx) => { if rx.changed().await.is_err() { return None; } Some(rx.borrow_and_update().clone()) },

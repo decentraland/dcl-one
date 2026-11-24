@@ -1,4 +1,4 @@
-import { Button } from '@dcl/one-ui'
+import { Button } from '../../../components/Button/Button'
 import { useId, type ReactNode } from 'react'
 import decentralandLogo from '../assets/dcl-logo.svg'
 import styles from './EmailConfirmation.module.css'

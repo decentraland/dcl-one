@@ -50,10 +50,11 @@ def server_error(stderr):
 
 def dropped_connection(stderr):
     # A connection lost mid-request has no HTTP status, e.g. "stream error: stream ID 1; CANCEL; received from peer".
+    # A body cut short reads as gh's "unexpected end of JSON input" (seen right after a 502).
     # Auth, usage and offline (DNS, refused) errors match none of these and stay final.
     return not re.search(r'\bHTTP \d{3}\b', stderr) and re.search(
-        r'stream error: stream ID \d+|unexpected EOF|": EOF$|connection reset by peer|server sent GOAWAY|'
-        r'http2: client connection lost|TLS handshake timeout',
+        r'stream error: stream ID \d+|unexpected EOF|unexpected end of JSON input|": EOF$|connection reset by peer|'
+        r'server sent GOAWAY|http2: client connection lost|TLS handshake timeout',
         stderr)
 
 
