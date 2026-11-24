@@ -1,4 +1,3 @@
-use common::sync::MutexExt;
 use std::{
     path::{Path, PathBuf},
     sync::{Arc, Mutex},
@@ -12,7 +11,9 @@ use bevy::{
 };
 use bevy_console::{ConsoleCommand, PrintConsoleLine};
 use common::{
+    sets::SceneSets,
     structs::{PreviewCommand, PrimaryUser},
+    sync::MutexExt,
     util::{JoinRelativeExt, TaskExt},
 };
 use console::DoAddConsoleCommand;
@@ -55,7 +56,8 @@ impl Plugin for SceneUtilPlugin {
                     preview_model::remove_model,
                     preview_model::reload_model,
                 )
-                    .chain(),
+                    .chain()
+                    .before(SceneSets::PostLoop),
             ),
         );
     }
