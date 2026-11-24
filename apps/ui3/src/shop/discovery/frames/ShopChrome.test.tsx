@@ -54,6 +54,14 @@ describe("the Shop frame", () => {
     expect(shopTabs({ iap: true, eventLabel: "Halloween" }).map((t) => t.id)).toEqual(["overview", "event", "collectibles"]);
   });
 
+  it("omits an event section when the event label contains only whitespace", () => {
+    expect(shopTabs({ iap: false, eventLabel: "   " }).map((tab) => tab.id)).not.toContain("event");
+  });
+
+  it("keeps the accessible campaign label trimmed", () => {
+    expect(shopTabs({ iap: false, eventLabel: "  Autumn  " }).find((tab) => tab.id === "event")?.label).toBe("Autumn");
+  });
+
   it("renders the subnav; the cart shows its count and activity needs a session", async () => {
     shopCart.add({ asset: itemAsset(137, evmAddress("0x000000000000000000000000000000000000c011"), 7), display: { name: "Nacho Hat" }, quantity: 2 });
     await chrome("/shop/items/creator/0xabc", "web2");
@@ -82,6 +90,7 @@ describe("the Shop frame", () => {
   it("marks the cart page only through the cart button", async () => {
     await chrome("/shop/cart");
     expect(within(screen.getByTestId("subnav-tabs")).queryByRole("link", { name: "Cart" })).toBeNull();
+    expect(within(screen.getByRole("navigation", { name: "Shop sections" })).queryByRole("link", { current: "page" })).toBeNull();
     expect(screen.getByTestId("subnav-cart")).toBeTruthy();
   });
 

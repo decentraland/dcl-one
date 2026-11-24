@@ -48,6 +48,8 @@ export type ButtonProps = NativeProps &
     size?: 'xl' | 'lg' | 'md' | 'sm'
     /** Responsive uses the mobile dimensions below 768px or with a coarse primary pointer. */
     viewport?: 'desktop' | 'mobile' | 'responsive'
+    /** Marks a destructive primary or outlined action. */
+    tone?: 'danger'
     loading?: boolean
     leadingIcon?: ReactNode
     trailingIcon?: ReactNode
@@ -63,6 +65,7 @@ export function Button({
   label,
   variant = 'primary',
   size = 'xl',
+  tone,
   viewport = 'desktop',
   loading = false,
   leadingIcon,
@@ -116,6 +119,7 @@ export function Button({
   const common = {
     className: classes,
     'data-variant': appearance,
+    'data-tone': tone,
     'data-size': size,
     'data-viewport': viewport,
     'data-icon-only': compact || undefined,

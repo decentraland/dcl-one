@@ -53,6 +53,22 @@ describe('when a captured page composition owns route and control placement', ()
     })
   })
 
+  it('renders only the section links when the Shop host owns the controls', () => {
+    render(<TabsBar mode="navigation" page="shop" layout="links" items={items} activeId="overview" />)
+    const nav = screen.getByRole('navigation')
+    expect(nav.querySelector('[data-region="controls"]')).toBeNull()
+    expect(screen.getByRole('link', { name: 'Overview' })).toHaveAttribute('aria-current', 'page')
+  })
+
+  it('keeps a narrow-only route and a campaign label separate from the current link marker', () => {
+    const [overview, campaign] = items
+    render(<TabsBar mode="navigation" page="shop" layout="links" items={[
+      { ...overview!, mobileOnly: true }, { ...campaign!, accent: 'campaign' }
+    ]} activeId="campaign" />)
+    expect(screen.getByRole('link', { name: 'Overview' }).closest('li')).toHaveAttribute('data-mobile-only')
+    expect(screen.getByRole('link', { name: 'Campaign' }).closest('li')).toHaveAttribute('data-accent', 'campaign')
+  })
+
   describe('and the page is blog', () => {
     beforeEach(() => {
       render(
