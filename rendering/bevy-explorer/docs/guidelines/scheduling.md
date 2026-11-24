@@ -192,7 +192,9 @@ well, or its writes land a frame late. `crates/avatar/src/point_at_marker.rs` is
 - **`Startup`**: `SetupSets::Init` before `SetupSets::Main`. `Init` creates the resources and
   entities other setup depends on (cameras, UI roots, the system scene); `Main` is everything
   that needs them.
-- **`First`**: pumps for the comms and social tokio runtimes, sysinfo counters.
+- **`First`**: pumps for the comms and social tokio runtimes, sysinfo counters, and on the web
+  the scene loop's frame start (`web_frame_start`, `loop_pacing/web.rs`), unordered: a system
+  there that runs before it moves the frame's start, and the deadline mode's deadline, later.
 - **`PreUpdate`**: `UiActionSet` (system-UI actions; interact sounds before it, text links
   after), the web livekit page-event dispatch, media source serving, the headless supervisor.
   The input manager's readers (bindings, the system-action stream, native input) run after
