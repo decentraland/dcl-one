@@ -61,7 +61,7 @@ describe('itemToDefinition', () => {
     const definition = itemToDefinition(wearable)
     expect(definition.id).toBe('w1')
     expect('data' in definition && definition.data.representations[0].contents).toEqual([
-      { key: 'male/hat.glb', url: 'https://builder-api.decentraland.zone/v1/storage/contents/bafyglb' }
+      { key: 'male/hat.glb', url: 'http://localhost:3000/builder-api/v1/storage/contents/bafyglb' }
     ])
     expect('data' in definition && definition.data.hides).toEqual(['hair'])
   })

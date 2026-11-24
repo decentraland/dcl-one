@@ -10,6 +10,7 @@ import { getItemSizeLimit, isOverSizeLimit, type ItemSize } from '@/data/lib/cre
 import { BodyShapeType, ItemType, getMissingBodyShapeType, type Item, type ItemMetrics } from '@/data/lib/creators/items'
 import { applyPreviewResult, type PreviewResult } from '@/data/lib/creators/draftPreview'
 import type { UploadFailureReason } from '@/data/lib/creators/uploadItems'
+import type { BoundRefusal } from '@/data/lib/creators/builder'
 import type { AnimationMetrics } from '@/data/lib/creators/models'
 import { DEFAULT_RARITY } from '@/data/lib/creators/rarities'
 import { IMAGE_WEARABLE_CATEGORIES, hidesForCategory } from '@/data/lib/creators/wearableCategories'
@@ -74,6 +75,8 @@ export type AddItemsState = {
   selectedId: string | null
   view: AddItemsView
   failureReason: UploadFailureReason | null
+  /** The node's own words for the failed upload, when it refused at one of its bounds. */
+  refusal: BoundRefusal | null
   isUploading: boolean
 }
 
@@ -121,6 +124,7 @@ export function createInitialState(drafts: ItemDraft[]): AddItemsState {
     selectedId: drafts[0]?.id ?? null,
     view: 'details',
     failureReason: null,
+    refusal: null,
     isUploading: false
   }
 }
@@ -135,7 +139,12 @@ export type AddItemsAction =
   | { type: 'draftUpdated'; id: string; patch: Partial<ItemDraft> }
   | { type: 'draftChecked'; id: string }
   | { type: 'uploadStarted' }
-  | { type: 'uploadFailed'; failureReason: UploadFailureReason; failedDraftIds: string[] }
+  | {
+      type: 'uploadFailed'
+      failureReason: UploadFailureReason
+      failedDraftIds: string[]
+      refusal?: BoundRefusal | null
+    }
   | { type: 'retryRequested' }
 
 /** A wearable model whose issues were computed for another category than the one now picked. */
@@ -216,11 +225,12 @@ export function addItemsReducer(state: AddItemsState, action: AddItemsAction): A
         selectedId: drafts[0]?.id ?? null,
         view: 'error',
         failureReason: action.failureReason,
+        refusal: action.refusal ?? null,
         isUploading: false
       }
     }
     case 'retryRequested':
-      return { ...state, view: 'details', failureReason: null }
+      return { ...state, view: 'details', failureReason: null, refusal: null }
   }
 }
 

@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import './test/setup'
-import { describe, expect, it } from 'vitest'
+import { beforeEach, describe, expect, it } from 'vitest'
 import JSZip from 'jszip'
 import { manifest } from '@dcl-regenesislabs/wearable-validator'
 import { BodyShapeType } from './items'
@@ -690,6 +690,30 @@ describe('validateVideoFile', () => {
     } catch (error) {
       expect((error as ItemFileError).messageKey).toBe('video_too_big')
     }
+  })
+})
+
+describe('when a creator picks a video of the size the node caps uploads at', () => {
+  let atCap: File
+  let overCap: File
+
+  beforeEach(() => {
+    atCap = { name: 'clip.mp4', size: 250_000_000 } as File
+    overCap = { name: 'clip.mp4', size: 250_000_001 } as File
+  })
+
+  it('should accept the 250,000,000 bytes the node stores', () => {
+    expect(() => validateVideoFile(atCap)).not.toThrow()
+  })
+
+  it('should refuse one byte more before uploading it, saying the limit is 250MB', () => {
+    let refusal: unknown
+    try {
+      validateVideoFile(overCap)
+    } catch (error) {
+      refusal = error
+    }
+    expect(refusal).toMatchObject({ messageKey: 'video_too_big', messageParams: { size: 250 } })
   })
 })
 

@@ -19,7 +19,7 @@ import {
   waitForTransaction,
   type TypedDataTypes
 } from '.'
-import { waitForReceipt, watchTransaction } from './transactions'
+import { relayUrl, waitForReceipt, watchTransaction } from './transactions'
 import { OFFCHAIN_MARKETPLACE_TYPES, getTradeDomain } from '../trades'
 import { typedDataDigest } from '../test/chain'
 
@@ -224,7 +224,7 @@ describe('when sending a transaction from the wallet itself', () => {
 describe('when the wallet is on another chain than the contract', () => {
   const contract = getCollectionContract(80002, COLLECTION)
   const transfer = { contract, method: 'transferCreatorship', args: [OTHER] }
-  const RELAYER = 'https://transactions-api.decentraland.zone/v1/transactions'
+  const RELAYER = `${window.location.origin}/transactions-api/v1/transactions`
 
   /** The read node answering the nonce, and the relayer answering `relay`; returns what each was sent. */
   function nodeAndRelayer(relay: object = { ok: true, txHash: HASH }) {
@@ -556,5 +556,20 @@ describe('when watching a transaction until it settles', () => {
     await expect(watchTransaction(unknown.reader, HASH, { ...options, ...unknown.clock })).resolves.toBe('pending')
     const down = chain({ fail: true })
     await expect(watchTransaction(down.reader, HASH, { ...options, ...down.clock })).resolves.toBe('pending')
+  })
+})
+
+describe('relayUrl', () => {
+  describe('when the page is served by this deployment, as on localhost or its own domain', () => {
+    it("should be the transactions relay of the node behind the page's origin", () => {
+      expect(relayUrl()).toBe(`${window.location.origin}/transactions-api/v1`)
+      expect(relayUrl('dcl.example')).toBe(`${window.location.origin}/transactions-api/v1`)
+    })
+  })
+
+  describe('when the page is on a Decentraland host', () => {
+    it("should be that environment's transactions relay", () => {
+      expect(relayUrl('decentraland.zone')).toBe('https://transactions-api.decentraland.zone/v1')
+    })
   })
 })

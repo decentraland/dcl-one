@@ -3,6 +3,7 @@ import '@/data/lib/creators/test/setup'
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import type { ReactNode } from 'react'
 import { act, render, screen, waitFor } from '@testing-library/react'
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import userEvent from '@testing-library/user-event'
 import { TranslationProvider } from '@/data/lib/creators/intl'
 import type { Session } from '@/data/lib/creators/auth'
@@ -73,7 +74,11 @@ const item = {
   data: { category: 'hat', representations: [] }
 } as unknown as Item
 
-const wrapper = ({ children }: { children: ReactNode }) => <TranslationProvider>{children}</TranslationProvider>
+const wrapper = ({ children }: { children: ReactNode }) => (
+  <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
+    <TranslationProvider>{children}</TranslationProvider>
+  </QueryClientProvider>
+)
 
 async function goToPayment() {
   render(

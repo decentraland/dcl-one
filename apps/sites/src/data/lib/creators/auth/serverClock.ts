@@ -46,7 +46,6 @@ async function measureOffset(): Promise<number | null> {
   const receivedAt = Date.now()
   const body = (await response.json().catch(() => null)) as { currentTime?: unknown } | null
   if (!response.ok || typeof body?.currentTime !== 'number' || !Number.isFinite(body.currentTime)) return null
-  // The server read its clock somewhere during the round trip: its midpoint is the best estimate.
   return body.currentTime - (sentAt + receivedAt) / 2
 }
 

@@ -64,8 +64,8 @@ describe('local validator', () => {
       { type: ItemType.WEARABLE, category: 'hat', hides: ['hair'] }
     )
     expect(fetchMock.mock.calls.map(([url]) => url)).toEqual([
-      'https://builder-api.decentraland.zone/v1/storage/contents/bafyM',
-      'https://builder-api.decentraland.zone/v1/storage/contents/bafyF'
+      'http://localhost:3000/builder-api/v1/storage/contents/bafyM',
+      'http://localhost:3000/builder-api/v1/storage/contents/bafyF'
     ])
     const female = validate.mock.calls.find(([input]) => input.files.has('female/hat.glb'))!
     expect(female[0].metadata).toEqual({
@@ -252,7 +252,7 @@ describe('thumbnail validation', () => {
   it('loads a saved item thumbnail from storage', async () => {
     validate.mockResolvedValue({ findings: [], checks: [] })
     const result = await getValidator().validateThumbnail({ kind: 'item', item })
-    expect(fetchMock.mock.calls[0][0]).toBe('https://builder-api.decentraland.zone/v1/storage/contents/bafyThumb')
+    expect(fetchMock.mock.calls[0][0]).toBe('http://localhost:3000/builder-api/v1/storage/contents/bafyThumb')
     expect(result.issues).toEqual([])
   })
 })

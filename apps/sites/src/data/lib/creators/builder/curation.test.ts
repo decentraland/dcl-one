@@ -9,7 +9,8 @@ import {
   fetchCurations,
   fetchItemCurations,
   pushCollectionCuration,
-  updateCollectionCuration
+  updateCollectionCuration,
+  updateItemCuration
 } from './curation'
 import { ValidationLimitError } from './review'
 
@@ -155,6 +156,25 @@ describe('review requests under the automated review', () => {
       body: JSON.stringify({
         curation: { status: 'rejected', rejectionReasons: ['clipping'], rejectionMessage: 'Clips through the torso' }
       })
+    })
+  })
+})
+
+describe('when a committee member approves a linked item', () => {
+  let init: RequestInit
+
+  beforeEach(async () => {
+    signedFetchMock.mockResolvedValue(
+      okResponse({ id: 'k1', item_id: 'i1', status: 'approved', content_hash: 'c'.repeat(64) })
+    )
+    await updateItemCuration(ADDRESS, 'i1', 'approved', 'c'.repeat(64))
+    init = signedFetchMock.mock.calls[0][3]
+  })
+
+  it('should send the content hash it approves with the status', () => {
+    expect(init).toMatchObject({
+      method: 'PATCH',
+      body: JSON.stringify({ curation: { status: 'approved', contentHash: 'c'.repeat(64) } })
     })
   })
 })

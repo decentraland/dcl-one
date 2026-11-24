@@ -1,6 +1,6 @@
 import { useMemo } from 'react'
+import { ItemFileImage } from '../ItemThumbnail'
 import { useTranslation } from '@/data/lib/creators/intl'
-import { getContentsStorageUrl } from '@/data/lib/creators/builder'
 import { mergeBodyShapeFindings, type ValidationFinding, type ValidationItemResult } from '@/data/lib/creators/events'
 import type { Item } from '@/data/lib/creators/items'
 import { isWebUrl, openExternal } from '@/data/lib/creators/navigation'
@@ -111,7 +111,7 @@ export function ItemFindingsList({
             data-item-id={result.itemId}
           >
             <header className={styles.itemHead}>
-              {thumbnail && <img className={styles.itemThumb} src={getContentsStorageUrl(thumbnail)} alt="" />}
+              {item && thumbnail && <ItemFileImage className={styles.itemThumb} item={item} hash={thumbnail} />}
               <span>{item?.name ?? t('findings.unknown_item', { id: result.itemId.slice(0, 8) })}</span>
               {showStatus && passed !== undefined && (
                 <span className={styles.itemStatus} data-passed={String(passed)}>

@@ -4,9 +4,11 @@
 import {
   ALREADY_PUBLISHED_STATUS,
   BuilderServerError,
+  boundRefusal,
   COLLECTION_LOCKED_STATUS,
   fetchContentSize,
-  saveItem
+  saveItem,
+  type BoundRefusal
 } from './builder'
 import { ItemFileError, THUMBNAIL_PATH } from './itemFiles'
 import {
@@ -38,6 +40,8 @@ export type UploadResult = {
   savedDraftIds: string[]
   failedDraftIds: string[]
   failureReason: UploadFailureReason | null
+  /** The node's own words for the failure `failureReason` names, when it refused at one of its bounds. */
+  refusal: BoundRefusal | null
 }
 
 /** Drafts whose linked URN an earlier draft of the batch already takes: uploading both would overwrite or fail one. */
@@ -161,6 +165,7 @@ export async function executeUpload(
   const savedDraftIds: string[] = []
   const failedDraftIds: string[] = []
   let failureReason: UploadFailureReason | null = null
+  let refusal: BoundRefusal | null = null
 
   for (let i = 0; i < operations.length; i++) {
     const operation = operations[i]
@@ -170,7 +175,10 @@ export async function executeUpload(
       savedDraftIds.push(...operation.draftIds)
     } catch (error) {
       const reason = toFailureReason(error)
-      failureReason = failureReason === null || reason !== 'generic' ? reason : failureReason
+      if (failureReason === null || reason !== 'generic') {
+        failureReason = reason
+        refusal = boundRefusal(error)
+      }
       failedDraftIds.push(...operation.draftIds)
       if (ABORTING_REASONS.includes(reason)) {
         for (const remaining of operations.slice(i + 1)) {
@@ -181,5 +189,5 @@ export async function executeUpload(
     }
   }
 
-  return { savedDraftIds, failedDraftIds, failureReason }
+  return { savedDraftIds, failedDraftIds, failureReason, refusal }
 }

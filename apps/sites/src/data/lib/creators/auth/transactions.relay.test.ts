@@ -17,7 +17,7 @@ afterEach(() => {
 })
 
 // Expected values were produced by decentraland-transactions@3.3.0's sendMetaTransaction on this same harness.
-const RELAYER = 'https://transactions-api.decentraland.zone/v1/transactions'
+const RELAYER = `${window.location.origin}/transactions-api/v1/transactions`
 const COLLECTION = '0x00000000000000000000000000000000000000ee'
 const HASH = `0x${'ab'.repeat(32)}`
 const NONCE = `0x${'0'.repeat(62)}2a`

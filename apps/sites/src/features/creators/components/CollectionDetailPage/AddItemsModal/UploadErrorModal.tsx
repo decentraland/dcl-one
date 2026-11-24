@@ -2,25 +2,30 @@ import uploadErrorArt from '../../../assets/modal-error.png'
 import { ConfirmModal } from '../../ConfirmModal'
 import { useTranslation } from '@/data/lib/creators/intl'
 import type { UploadFailureReason } from '@/data/lib/creators/uploadItems'
+import type { BoundRefusal } from '@/data/lib/creators/builder'
+import { useRefusalText } from '../../../hooks/useRefusalText'
 
 type Props = {
   reason: UploadFailureReason
+  /** The node's own words for the failure, shown instead of the reason's description. */
+  refusal: BoundRefusal | null
   onCancel: () => void
   onRetry: () => void
 }
 
-/** Upload failure feedback. Generic failures offer TRY AGAIN (reopens the details modal with the failed items). */
-export function UploadErrorModal({ reason, onCancel, onRetry }: Props) {
+/**
+ * Upload failure feedback. Generic, oversized and duplicate failures offer TRY AGAIN (reopens the details modal with
+ * the failed items); locked, published and taken-URN failures, which the form can't fix, only GOT IT.
+ */
+export function UploadErrorModal({ reason, refusal, onCancel, onRetry }: Props) {
   const { t } = useTranslation()
-  // Locked/published collections can never be retried: they get a reason-specific title and a single acknowledge action.
-  // A taken URN comes from the zip's wearable.json, which the form can't change: retrying would fail the same way.
-  // Duplicates within the batch are fixed in the form, by removing or renaming one.
+  const refusalText = useRefusalText()
   const canRetry = reason === 'generic' || reason === 'too_big' || reason === 'duplicate_urn'
 
   return (
     <ConfirmModal
       title={t(`add_items_modal.error.title_${reason}`)}
-      description={t(`add_items_modal.error.description_${reason}`)}
+      description={refusalText(refusal) ?? t(`add_items_modal.error.description_${reason}`)}
       art={{ src: uploadErrorArt }}
       onClose={onCancel}
       cancel={

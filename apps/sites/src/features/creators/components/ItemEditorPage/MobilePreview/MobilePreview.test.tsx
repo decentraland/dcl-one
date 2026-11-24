@@ -2,6 +2,8 @@
 import '@/data/lib/creators/test/setup'
 import { describe, expect, it, vi } from 'vitest'
 import { render, screen } from '@testing-library/react'
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
+import type { ReactNode } from 'react'
 import userEvent from '@testing-library/user-event'
 import { BodyShape } from '@dcl/schemas'
 import { TranslationProvider } from '@/data/lib/creators/intl'
@@ -26,6 +28,12 @@ const make = (id: string, bodyShapes: BodyShape[]): Item => ({
 const hat = make('hat', [BodyShape.MALE, BodyShape.FEMALE])
 const dress = make('dress', [BodyShape.FEMALE])
 
+const wrapper = ({ children }: { children: ReactNode }) => (
+  <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
+    <TranslationProvider>{children}</TranslationProvider>
+  </QueryClientProvider>
+)
+
 describe('MobilePreview', () => {
   it('shows the preview with a thumbnail strip that switches the selection and a dismissible hint', async () => {
     const onTap = vi.fn()
@@ -39,7 +47,7 @@ describe('MobilePreview', () => {
       >
         <div data-testid="preview" />
       </MobilePreview>,
-      { wrapper: TranslationProvider }
+      { wrapper }
     )
     expect(screen.getByTestId('preview')).toBeInTheDocument()
     expect(screen.getByTestId('mobile-strip-item-hat')).toHaveAttribute('data-selected')
@@ -61,7 +69,7 @@ describe('MobilePreview', () => {
       >
         <div data-testid="preview" />
       </MobilePreview>,
-      { wrapper: TranslationProvider }
+      { wrapper }
     )
     expect(screen.getByRole('button', { name: 'Remove hat from the avatar' })).toHaveAttribute('data-dressed')
     const off = screen.getByRole('button', { name: 'Show dress on the avatar' })
