@@ -168,6 +168,22 @@ runs and incremental imports. `--step` cannot opt them back into `all`.
 `list`, `check` and `status` continue to include them. Explicitly naming a
 source is reserved for its separately planned service handover.
 
+The `builder-server` import's `collection` step also requires `FORUM_URL`,
+the forum origin builder-server is deployed with; see
+`sources/builder-server/MAPPING.md`. Run it while the node keeps creator
+writes closed, as often as you need (each run refreshes the node from
+upstream), then open them. It writes only into a node whose builder rows
+are exactly what it left there: each step refuses, before writing, a node
+that holds a builder row the import didn't write or changed or deleted one
+it did. Once writes are open, upstream is frozen for the node, the import
+refuses, and edits made upstream later are not carried over. A run doesn't
+carry upstream deletions or URN swaps: make the final sync a start-over
+(`sources/builder-server/start_over.sql`, which refuses a node that took
+builder writes and empties the builder tables, the import's ledger and its
+checkpoints in one transaction) followed by a run, with no storage GC in
+between (the run doesn't check the item-files tree for the copied files); see
+MAPPING.md "Start over".
+
 A configured `worlds-content-server` import also requires
 `--worlds-blocked-names blocked-names.json`: export its effective
 `BLOCKED_WORLD_NAMES` configuration as a JSON array. An explicit `[]` is
@@ -324,6 +340,7 @@ load = "place.load.sql"                           # SQL on the target, reads `st
 key = ["id"]                                      # unique, non-null in the extract
 watermark = "updated_at"                          # optional non-null timestamptz
 whole = false                                     # optional: true loads the full extract in one batch
+requires = "places"                               # optional: a source relation; without it the step reads nothing
 columns = [                                       # the extract's output, in order,
   { name = "id", type = "uuid" },                 # typed for the target
   { name = "updated_at", type = "timestamptz" },

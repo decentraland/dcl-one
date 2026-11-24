@@ -49,7 +49,6 @@ pub(super) fn install_metrics(raw: &str) -> anyhow::Result<()> {
 
 fn registry() -> anyhow::Result<dcl_metrics::Registry> {
     dcl_metrics::Registry::new(&[
-        crate::builder::handlers::collections::FAMILIES,
         jobs::FAMILIES,
         crate::storage::FAMILIES,
         crate::worlds::core::metrics::FAMILIES,

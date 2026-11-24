@@ -1,7 +1,8 @@
 //! The ONE blob store's collector. Every domain writes into the same
 //! hash-addressed store (content files and entities, world scenes and
 //! thumbnails, posters, satellite regions, world manifests, community
-//! thumbnails and federated post bodies, camera-reel photos, builder item uploads,
+//! thumbnails and federated post bodies, camera-reel photos, builder item uploads
+//! (in a tree of their own, [`Storage::item_files`], walked after the main one),
 //! player-report evidence, MLS commits and ciphertexts, snapshot files), so
 //! a file may go only when no domain names it. The store is walked once;
 //! its aged files (untouched for the age floor: at least an hour and the
@@ -15,8 +16,9 @@
 //! whose content list cannot be read exactly aborts the run, a candidate
 //! is re-checked (references and age) right before it is unlinked, under
 //! the exclusive store lock that content deploys (local and synced), world
-//! scene deploys and the writers committing a row naming a blob take shared
-//! ([`store_for_row`]; read-through copies refetch), an empty reference set with
+//! scene deploys, builder item uploads and the writers committing a row naming
+//! a blob take shared ([`store_for_row`]; read-through copies refetch), an
+//! empty reference set with
 //! candidates is refused unless asked for, and the dry run reports without
 //! deleting. A writer reclaiming the blobs it staged ([`scan_scenes`], then
 //! [`unlink_orphans_on`]) runs the same reference check under the same lock,
@@ -59,11 +61,11 @@ pub const STORE_LOCK_TIMEOUT: Duration = Duration::from_secs(30);
 /// answering 503, as a local content deploy does.
 pub const SHARED_LOCK_WAIT: Duration = Duration::from_secs(5);
 
-/// Taken by a local content deploy, the peer-sync flush, a world scene deploy and every writer
-/// that commits a row naming a blob it stored or found stored ([`store_for_row`]) before they
-/// check that the keys they name exist: an unlink batch re-checks references and unlinks under
-/// the exclusive lock, so either the writer sees the file gone or the batch sees the committed
-/// reference.
+/// Taken by a local content deploy, the peer-sync flush, a world scene deploy, a builder item
+/// upload and every writer that commits a row naming a blob it stored or found stored
+/// ([`store_for_row`]) before they check that the keys they name exist: an unlink batch re-checks
+/// references and unlinks under the exclusive lock, so either the writer sees the file gone or
+/// the batch sees the committed reference.
 pub async fn lock_store_shared(conn: &mut sqlx::PgConnection) -> Result<(), sqlx::Error> {
     sqlx::query("SELECT pg_advisory_xact_lock_shared($1)")
         .bind(STORE_LOCK_KEY)
@@ -196,12 +198,10 @@ pub const REFERENCE_SOURCES: &[&str] = &[
     "social.mls_commits.welcome_cid",
     "social.mls_message_refs.ciphertext_cid",
     "social.profile_images.blob_cid",
-    "builder.items.thumbnail",
     "builder.items.local_content_hash",
     "builder.items.content_hash",
     "builder.items.catalyst_content_hash",
     "builder.uploaded_contents.hash",
-    "builder.item_contents.hash",
     "camera_reel.images.image_hash",
     "camera_reel.images.thumbnail_hash",
     "shop.outfit_thumbnails.blob_cid",
@@ -209,6 +209,16 @@ pub const REFERENCE_SOURCES: &[&str] = &[
 
 /// Columns whose names look like store keys but are not, with the reason.
 pub const NOT_STORE_KEYS: &[(&str, &str)] = &[
+    (
+        "builder.items.thumbnail",
+        "the file name of an item's thumbnail, a key of its contents: \
+         builder.uploaded_contents.hash holds the reference to that file's bytes",
+    ),
+    (
+        "builder.item_contents.hash",
+        "a name an item gives a file: builder.uploaded_contents.hash holds the reference while an \
+         item names an uploaded file",
+    ),
     (
         "content.processed_snapshots.hash",
         "a peer snapshot processing receipt; the peer snapshot file is temporary",
@@ -292,6 +302,14 @@ pub const NOT_STORE_KEYS: &[(&str, &str)] = &[
         "an envelope digest",
     ),
     ("worlds.worlds.access_secret_hash", "a bcrypt hash"),
+    (
+        "builder.item_curations.content_hash",
+        "the keccak-256 digest of a reviewed third-party item",
+    ),
+    (
+        "builder.validation_requests.content_hashes",
+        "the entity hashes of the items a validator claim named: a record of what it judged",
+    ),
     ("shop.items.image", "a URL"),
     (
         "shop.items.content_hash",
@@ -883,9 +901,10 @@ pub async fn unlink_orphans_on(
     Ok(failed)
 }
 
-/// One collection pass: the store is walked in chunks of aged files, each
-/// checked against every domain's references; a candidate is re-checked
-/// right before it is unlinked (a deployment may reuse a stored blob).
+/// One collection pass: the store and its item-files tree are walked in chunks
+/// of aged files, each checked against every domain's references; a
+/// candidate is re-checked right before it is unlinked (a deployment may
+/// reuse a stored blob).
 pub async fn collect(
     pool: &PgPool,
     storage: &Storage,
@@ -903,40 +922,41 @@ pub async fn collect(
         min_age_seconds: options.min_age.as_secs(),
         ..GcReport::default()
     };
-    let mut orphans: Vec<String> = Vec::new();
-    let mut chunk: Vec<String> = Vec::with_capacity(CHUNK);
-    let mut ids = storage.all_file_ids(None);
-    loop {
-        let next = ids.next().await?;
-        if let Some(id) = &next {
-            report.scanned += 1;
-            if let Some(aged) = aged(storage, id, now, options.min_age).await? {
-                if aged && !fixed.contains(id) {
-                    chunk.push(id.clone());
-                } else if fixed.contains(id) {
-                    report.references += 1;
+    for tree in std::iter::once(storage).chain(storage.item_files().map(|tree| &**tree)) {
+        let mut orphans: Vec<String> = Vec::new();
+        let mut chunk: Vec<String> = Vec::with_capacity(CHUNK);
+        let mut ids = tree.all_file_ids(None);
+        loop {
+            let next = ids.next().await?;
+            if let Some(id) = &next {
+                report.scanned += 1;
+                if let Some(aged) = aged(tree, id, now, options.min_age).await? {
+                    if aged && !fixed.contains(id) {
+                        chunk.push(id.clone());
+                    } else if fixed.contains(id) {
+                        report.references += 1;
+                    }
                 }
             }
+            if chunk.len() >= CHUNK || (next.is_none() && !chunk.is_empty()) {
+                chunk.sort();
+                chunk.dedup();
+                let referenced =
+                    rows_among(&mut *pool.acquire().await?, &chunk, true, ALL_ROWS).await?;
+                report.references += referenced.len();
+                orphans.extend(chunk.drain(..).filter(|id| !referenced.contains(id)));
+            }
+            if next.is_none() {
+                break;
+            }
         }
-        if chunk.len() >= CHUNK || (next.is_none() && !chunk.is_empty()) {
-            chunk.sort();
-            chunk.dedup();
-            // The fixed references never enter a chunk.
-            let referenced =
-                rows_among(&mut *pool.acquire().await?, &chunk, true, ALL_ROWS).await?;
-            report.references += referenced.len();
-            orphans.extend(chunk.drain(..).filter(|id| !referenced.contains(id)));
+        report.candidates += orphans.len();
+        if refuse_empty && !orphans.is_empty() {
+            return Err(GcError::EmptyReferenceSet);
         }
-        if next.is_none() {
-            break;
+        if !options.dry_run {
+            unlink_collected(pool, tree, pins, &orphans, options.min_age, &mut report).await?;
         }
-    }
-    report.candidates = orphans.len();
-    if refuse_empty && !orphans.is_empty() {
-        return Err(GcError::EmptyReferenceSet);
-    }
-    if !options.dry_run {
-        unlink_collected(pool, storage, pins, &orphans, options.min_age, &mut report).await?;
     }
     tracing::info!(?report, "blob store collection finished");
     Ok(report)
@@ -1027,6 +1047,143 @@ mod tests {
             ]),
             vec!["bafyx"]
         );
+    }
+
+    #[tokio::test]
+    async fn a_name_in_an_item_protects_no_blob_and_an_upload_record_does() {
+        let Some(pool) = crate::db::scratch::pool(2).await else {
+            return;
+        };
+        let item = uuid::Uuid::new_v4();
+        let named = format!("bafkreinamed{}", item.simple());
+        let owner = "0x1111111111111111111111111111111111111111";
+        sqlx::query("INSERT INTO builder.items (id, eth_address, name, type) VALUES ($1, $2, 'Named', 'wearable')")
+            .bind(item)
+            .bind(owner)
+            .execute(&pool)
+            .await
+            .unwrap();
+        sqlx::query(
+            "INSERT INTO builder.item_contents (item_id, file, hash, named_by) VALUES ($1, 'model.glb', $2, $3)",
+        )
+        .bind(item)
+        .bind(&named)
+        .bind(owner)
+        .execute(&pool)
+        .await
+        .unwrap();
+        let referenced = async || {
+            let mut conn = pool.acquire().await.unwrap();
+            referenced_rows_among_on(&mut conn, std::slice::from_ref(&named))
+                .await
+                .unwrap()
+                .contains(&named)
+        };
+        assert!(!referenced().await, "a name alone keeps the blob");
+        sqlx::query(
+            "INSERT INTO builder.uploaded_contents (hash, size, uploaded_by) VALUES ($1, 1, $2)",
+        )
+        .bind(&named)
+        .bind(owner)
+        .execute(&pool)
+        .await
+        .unwrap();
+        assert!(referenced().await, "an upload record keeps the blob");
+        sqlx::query("DELETE FROM builder.items WHERE id = $1")
+            .bind(item)
+            .execute(&pool)
+            .await
+            .unwrap();
+        sqlx::query("DELETE FROM builder.uploaded_contents WHERE hash = $1")
+            .bind(&named)
+            .execute(&pool)
+            .await
+            .unwrap();
+    }
+
+    #[tokio::test]
+    async fn a_hash_named_as_an_items_thumbnail_protects_no_blob() {
+        let Some(pool) = crate::db::scratch::pool(2).await else {
+            return;
+        };
+        let item = uuid::Uuid::new_v4();
+        let named = format!("bafkreithumbnail{}", item.simple());
+        sqlx::query(
+            "INSERT INTO builder.items (id, eth_address, name, type, thumbnail) \
+             VALUES ($1, '0x1111111111111111111111111111111111111111', 'Named', 'wearable', $2)",
+        )
+        .bind(item)
+        .bind(&named)
+        .execute(&pool)
+        .await
+        .unwrap();
+        let mut conn = pool.acquire().await.unwrap();
+        let referenced = referenced_rows_among_on(&mut conn, std::slice::from_ref(&named))
+            .await
+            .unwrap();
+        drop(conn);
+        sqlx::query("DELETE FROM builder.items WHERE id = $1")
+            .bind(item)
+            .execute(&pool)
+            .await
+            .unwrap();
+        assert!(
+            !referenced.contains(&named),
+            "a thumbnail name alone keeps the blob"
+        );
+    }
+
+    #[tokio::test]
+    async fn an_items_kept_video_protects_its_blob_only_through_an_upload_record() {
+        let Some(pool) = crate::db::scratch::pool(2).await else {
+            return;
+        };
+        let item = uuid::Uuid::new_v4();
+        let video = format!("bafkreikeptvideo{}", item.simple());
+        let owner = "0x1111111111111111111111111111111111111111";
+        sqlx::query(
+            "INSERT INTO builder.items (id, eth_address, name, type, video, video_named_by) \
+             VALUES ($1, $2, 'Kept video', 'wearable', $3, $2)",
+        )
+        .bind(item)
+        .bind(owner)
+        .bind(&video)
+        .execute(&pool)
+        .await
+        .unwrap();
+        let referenced = async || {
+            let mut conn = pool.acquire().await.unwrap();
+            referenced_rows_among_on(&mut conn, std::slice::from_ref(&video))
+                .await
+                .unwrap()
+                .contains(&video)
+        };
+        assert!(
+            !referenced().await,
+            "a kept video's name alone keeps the blob"
+        );
+        sqlx::query(
+            "INSERT INTO builder.uploaded_contents (hash, size, uploaded_by) VALUES ($1, 1, $2)",
+        )
+        .bind(&video)
+        .bind(owner)
+        .execute(&pool)
+        .await
+        .unwrap();
+        assert!(
+            referenced().await,
+            "its writer's upload record keeps the blob"
+        );
+        sqlx::query("DELETE FROM builder.items WHERE id = $1")
+            .bind(item)
+            .execute(&pool)
+            .await
+            .unwrap();
+        sqlx::query("DELETE FROM builder.uploaded_contents WHERE hash = $1")
+            .bind(&video)
+            .execute(&pool)
+            .await
+            .unwrap();
     }
 
     /// Every hash/cid/entity/thumbnail/image column of the schema is either a
@@ -1306,10 +1463,6 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
     }
 
-    /// On a database of its own: an aged unreferenced file goes, a
-    /// referenced one (a content file, a poster, a scene's content, a global
-    /// scene) and a fresh one stay; the dry run deletes nothing; an empty
-    /// reference set is refused unless allowed.
     #[tokio::test]
     async fn only_aged_unreferenced_files_are_collected() {
         use sqlx::postgres::{PgConnectOptions, PgPoolOptions};
@@ -1355,6 +1508,14 @@ mod tests {
         let retired_file = put(b"retired scene file".to_vec()).await;
         let global_file = put(b"global file".to_vec()).await;
         let fresh = put(b"fresh".to_vec()).await;
+        let item_tree = storage.item_files().unwrap();
+        let put_item_file = |bytes: Vec<u8>| async move {
+            let key = crate::auth::hash::hash_bytes_v1(&bytes);
+            item_tree.store(&key, Bytes::from(bytes)).await.unwrap();
+            key
+        };
+        let forgotten_item_file = put_item_file(b"forgotten item file".to_vec()).await;
+        let uploaded_item_file = put_item_file(b"uploaded item file".to_vec()).await;
         let global = put(json!({ "content": [{ "file": "a", "hash": global_file }] })
             .to_string()
             .into_bytes())
@@ -1369,6 +1530,13 @@ mod tests {
             &global_file,
         ] {
             let path = storage.file_path(key).await.unwrap().unwrap();
+            std::fs::File::open(path)
+                .unwrap()
+                .set_times(std::fs::FileTimes::new().set_modified(two_hours_ago))
+                .unwrap();
+        }
+        for key in [&forgotten_item_file, &uploaded_item_file] {
+            let path = item_tree.file_path(key).await.unwrap().unwrap();
             std::fs::File::open(path)
                 .unwrap()
                 .set_times(std::fs::FileTimes::new().set_modified(two_hours_ago))
@@ -1415,8 +1583,17 @@ mod tests {
         .await
         .unwrap();
 
+        sqlx::query(
+            "INSERT INTO builder.uploaded_contents (hash, size, uploaded_by) \
+             VALUES ($1, 1, '0x1111111111111111111111111111111111111111')",
+        )
+        .bind(&uploaded_item_file)
+        .execute(&pool)
+        .await
+        .unwrap();
+
         let dry = collect(&pool, &storage, &globals, options).await.unwrap();
-        assert_eq!((dry.scanned, dry.candidates, dry.removed), (7, 1, 0));
+        assert_eq!((dry.scanned, dry.candidates, dry.removed), (9, 2, 0));
         assert!(
             storage.exist(&orphan).await.unwrap(),
             "the dry run deletes nothing"
@@ -1432,8 +1609,10 @@ mod tests {
         )
         .await
         .unwrap();
-        assert_eq!((wet.candidates, wet.removed, wet.failed), (1, 1, 0));
+        assert_eq!((wet.candidates, wet.removed, wet.failed), (2, 2, 0));
         assert!(!storage.exist(&orphan).await.unwrap());
+        assert!(!item_tree.exist(&forgotten_item_file).await.unwrap());
+        assert!(item_tree.exist(&uploaded_item_file).await.unwrap());
         for key in [
             &poster,
             &scene_file,
