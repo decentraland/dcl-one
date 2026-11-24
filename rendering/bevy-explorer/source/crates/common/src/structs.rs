@@ -2036,6 +2036,9 @@ pub struct PlayerTeleported {
 /// the scene or `in_world` changed). `scene`: `None` unresolved, `Some(None)` an empty parcel,
 /// `Some(Some(hash))` a scene. `in_world` is read with the parcel: false behind the loading
 /// screen ([`OutOfWorld`]).
+///
+/// A change of the scene alone is reported too: analytics cannot read the scene pointers, and a
+/// realm change at the same parcel lists another scene there.
 #[derive(Event, Clone, Debug, PartialEq)]
 pub struct PlayerParcelChanged {
     pub old: Option<IVec2>,
