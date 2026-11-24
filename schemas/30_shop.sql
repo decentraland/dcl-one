@@ -514,6 +514,10 @@ CREATE INDEX nft_item_idx ON shop.nft (network, contract_address, item_id) WHERE
 -- held tokens by minted_at DESC, walked per network (an incremental sort
 -- orders the ties by contract and token) instead of sorting every candidate.
 CREATE INDEX nft_mint_order_idx ON shop.nft (network, minted_at DESC) WHERE owner IS NOT NULL;
+-- A DCL NAME's holders by label, compared lowercased (the NAME source's owner
+-- read: worlds' owner and admission, the Admin Toolkit, the lambdas name
+-- owner): WHERE lower(ens_subdomain) = ANY($1).
+CREATE INDEX nft_ens_label_idx ON shop.nft (lower(ens_subdomain)) WHERE ens_subdomain IS NOT NULL;
 
 -- The legacy Marketplace order per token, folded: the latest order event
 -- decides (created = open, successful = sold, cancelled = cancelled); a

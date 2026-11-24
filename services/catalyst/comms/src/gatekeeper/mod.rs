@@ -432,6 +432,9 @@ crate::shared::send_sync_once! {
         pub marketplace: Option<Arc<crate::chain_index::ChainIndex>>,
         /// Shop's source-complete names owner reader for moderation writes.
         pub name_owners: Option<Arc<dyn crate::interfaces::NameOwnerReader>>,
+        /// The node's DCL NAME source, for the display names of the scene's
+        /// participants (`scene_policy::names_for`); `None` answers empty names.
+        pub name_authority: Option<Arc<dyn crate::chain_index::names::NameAuthority>>,
         /// The worlds permission core: world access, protected wallets and
         /// scene ownership; `serve` hands in the ONE instance the worlds routes
         /// share.
@@ -511,6 +514,7 @@ impl CommsState {
             settings,
             marketplace,
             name_owners: None,
+            name_authority: None,
             eip1654,
             caches: admission::scene::SceneCaches::default(),
             content_denylist: Arc::default(),
@@ -573,6 +577,15 @@ impl CommsState {
         reader: Arc<dyn crate::interfaces::NameOwnerReader>,
     ) -> Self {
         self.name_owners = Some(reader);
+        self
+    }
+
+    /// The node's DCL NAME source (selected once, by the shop).
+    pub fn with_name_authority(
+        mut self,
+        authority: Option<Arc<dyn crate::chain_index::names::NameAuthority>>,
+    ) -> Self {
+        self.name_authority = authority;
         self
     }
 
