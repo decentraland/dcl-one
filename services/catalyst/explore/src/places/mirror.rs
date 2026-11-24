@@ -722,7 +722,7 @@ pub async fn upsert_rows(pool: &PgPool, rows: &[MirrorRow]) -> Result<()> {
     if rows.is_empty() {
         return Ok(());
     }
-    sqlx::query(UPSERT)
+    let query = sqlx::query(UPSERT)
         .bind(rows.iter().map(|r| r.id.as_str()).collect::<Vec<_>>())
         .bind(
             rows.iter()
@@ -756,9 +756,15 @@ pub async fn upsert_rows(pool: &PgPool, rows: &[MirrorRow]) -> Result<()> {
         .bind(rows.iter().map(|r| r.deployed_at).collect::<Vec<_>>())
         .bind(rows.iter().map(|r| r.disabled).collect::<Vec<_>>())
         .bind(rows.iter().map(|r| r.highlighted).collect::<Vec<_>>())
-        .bind(rows.iter().map(|r| r.raw.clone()).collect::<Vec<_>>())
-        .execute(pool)
-        .await?;
+        .bind(rows.iter().map(|r| r.raw.clone()).collect::<Vec<_>>());
+    if rows.iter().any(|r| !r.raw["world_name"].is_null()) {
+        let mut tx = pool.begin().await?;
+        super::derive::lock_world_projection(&mut tx).await?;
+        query.execute(&mut *tx).await?;
+        tx.commit().await?;
+    } else {
+        query.execute(pool).await?;
+    }
     Ok(())
 }
 

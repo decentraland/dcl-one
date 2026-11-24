@@ -259,6 +259,9 @@ the [conventions ADR](../../../docs/adr/2026-11-17-console-command-conventions.m
 
 - State: `/world_state` (`inWorld`, `arrivals`, which grows on every return to the world, so a wait
   after a teleport reads it first; `keyboardClaimed`, true while a text field holds the keys),
+  `/teleport_state` (`pending`, the spawn point a landing under way looks for by name, and `last`:
+  the `name` the last such landing looked for and `found`, whether its scene had it;
+  `/teleport <x> <y> [realm] --spawn <name>` asks for such a landing),
   `/avatar_state [all|<address>]`, `/chat_history [count]`
   (Nearby only, as received: blocks and scene bans are not applied), `/dm_history <address|community:<id>> [count]` (a DM partner's or a community's
   stored lines), `/community_state` (community chat's router, channels and counters),
@@ -322,7 +325,11 @@ the [conventions ADR](../../../docs/adr/2026-11-17-console-command-conventions.m
   frame-rate target and session override, the sampling status, the latest 15 s performance
   snapshot and the frame-time breakdown independently of the panel; `/debug_memory`, and in a
   `performance-profiler` build `/render_state` and `/profile_top`, the rest
-  ([profiling](../docs/guidelines/profiling.md)).
+  ([profiling](../docs/guidelines/profiling.md)). On the web, `/scene_loop_state` reports the
+  scene loop's scheduling (mode, the last loop's deadline source and budget, the frame tail's
+  reserve, the waits' lateness and the scenes whose relays wake) and `/scene_loop_mode
+  <both|relay|deadline|legacy>` switches its mode without a reload
+  ([scheduling](../docs/guidelines/scheduling.md)).
 - `/auto_graphics_state`: Auto Graphics' reading (enabled, phase, rung, what it lowered: shadows, render
   scale, bloom, and the messages raised); `/auto_graphics_notice` raises a sample message (shadows off,
   70%) without changing any setting. The HUD shows each as a `status` named `Graphics lowered`, with

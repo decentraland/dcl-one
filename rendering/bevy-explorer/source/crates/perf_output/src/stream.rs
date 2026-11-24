@@ -7,12 +7,13 @@
 //! page's thread could not survive. The engine's frame drains the queues and hands the text to
 //! the page (`src/web.rs`). Built for every target, so the queues are tested on the desktop.
 
+use common::sync::MutexExt;
 use std::{
     io,
     sync::{
         atomic::{AtomicBool, Ordering},
         mpsc::{channel, Receiver, Sender},
-        Mutex, OnceLock, PoisonError, TryLockError,
+        Mutex, OnceLock,
     },
 };
 
@@ -107,10 +108,7 @@ impl io::Write for QueueSink {
 /// writer queues whole events (or ASCII), so the text is whole UTF-8.
 pub fn drain(stream: Stream) -> Option<String> {
     let queue = stream.queue()?;
-    let receiver = queue
-        .receiver
-        .lock()
-        .unwrap_or_else(PoisonError::into_inner);
+    let receiver = queue.receiver.lock_ignore_poison();
     take(&receiver)
 }
 
@@ -120,11 +118,7 @@ pub fn drain(stream: Stream) -> Option<String> {
 /// thread cannot block).
 pub fn try_drain(stream: Stream) -> Option<String> {
     let queue = stream.queue()?;
-    let receiver = match queue.receiver.try_lock() {
-        Ok(receiver) => receiver,
-        Err(TryLockError::Poisoned(poisoned)) => poisoned.into_inner(),
-        Err(TryLockError::WouldBlock) => return None,
-    };
+    let receiver = queue.receiver.try_lock_ignore_poison()?;
     take(&receiver)
 }
 
@@ -190,7 +184,7 @@ mod tests {
 
         // a drain in progress is not waited for: the lock is held, so nothing is taken
         log.write(b"held\n");
-        let held = LOG.get().unwrap().receiver.lock().unwrap();
+        let held = LOG.get().unwrap().receiver.lock_ignore_poison();
         assert_eq!(try_drain(Stream::Log), None);
         drop(held);
         assert_eq!(try_drain(Stream::Log).as_deref(), Some("held\n"));

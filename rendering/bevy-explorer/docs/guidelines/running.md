@@ -225,6 +225,11 @@ State, in every build:
   scene's) holds the keyboard: while it is true keys are typed and resolve no action, so a test
   waits for it to turn true after filling a field and false after leaving one (null where the
   client takes no input).
+- `/teleport_state`: the landings on a named spawn point as JSON, the Teleport debug section's
+  readout: `pending`, the name the landing under way looks for (or the realm change that has yet
+  to start one), and `last`, the `name` the player's last such landing looked for with `found`,
+  whether its scene had a spawn point of that name. `/teleport <x> <y> [realm] --spawn <name>`
+  asks for such a landing.
 - `/avatar_state [all|<address>]`: avatars as selected (body shape, wearables, emotes, forced
   slots), as rendered (built or not, wearables by category, hidden categories), the files it
   could not be built from (`loadFailures`: bodies and wearables its builds leave out, `noBody`
@@ -383,6 +388,17 @@ On the web only:
   (2000 by default; later waits double from it, 5 reopens at most) as `firstDelayMs` and
   `maxReopens`; with `ms`, sets it first for every source failing from then on. For tests that
   would otherwise wait the full 62 s schedule.
+- `/scene_loop_state`: the scene loop's scheduling as JSON, the Scene Loop debug section's
+  reading ([scheduling](scheduling.md)): `mode`; for the last loop, `deadline` (where its
+  deadline came from) and `budget` (ms from its start to its deadline); `handoffGap` (ms from
+  the last handoff to the render worker to the next frame's start); `tail` (the frame tail's
+  90th percentile and the reserve with its margin, ms) and `tailFrames` (frames measured, of
+  32); `lateness` (the 90th percentile of the last second's timed waits for replies, ms); and
+  `woken` (`count` and `scenes`, the titles of the scenes whose relays wake on the engine's send;
+  null in a mode that does not wake the relays). `unavailable` says why a reading is null.
+- `/scene_loop_mode <both|relay|deadline|legacy>`: switches the scheduling mode without a
+  reload, as `?sceneLoop=` sets it at load; the engine's loop takes it at its next frame and
+  each relay at its next step. The reply names the mode; an unknown name fails with the list.
 
 - `/auto_graphics_state`: Auto Graphics' reading (enabled, phase, rung, the shadows, render scale and bloom it
   lowered, and the messages raised). `/auto_graphics_notice` raises a sample message (shadows off, 70%)
@@ -527,7 +543,8 @@ of the contract.
   show-out-of-bounds on regardless of `--preview`. Point the client at the same preview server
   by LAN address, `--realm http://$(ipconfig getifaddr en0):<port>`. Colliders follow the same
   switch: a run that shows out-of-bounds geometry keeps its colliders on, and any other run turns
-  off a collider that leaves the bounds and counts it in the debug panel's Scene Content section.
+  off a collider that leaves the bounds and counts it in the debug panel's Scene Content section,
+  and cuts collider queries to the space each scene is drawn in.
   A local scene server is always a preview run, so it keeps those colliders on while a client
   pointed at the LAN address does not.
 - **The bridge scene's build output is not what the engine loads.** After any bridge-scene

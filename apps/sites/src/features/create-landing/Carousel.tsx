@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState, type FocusEvent, type KeyboardEvent, type MouseEvent, type ReactNode, type TouchEvent, type TransitionEvent } from "react";
 
 import styles from "./Carousel.module.css";
-import { useMediaQuery } from "@ui/data/hooks/useMediaQuery";
+import { useMediaQuery } from "../creators/hooks/useMediaQuery";
 
 // The sizes, thresholds and the two breakpoints are the reference's own (decentraland.org:
 // src/components/Carousel/Carousel.tsx), so the slider measures as it does there.

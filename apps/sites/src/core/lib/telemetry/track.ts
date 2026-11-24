@@ -13,6 +13,8 @@ export type TrackContext = {
   userId?: string;
   /** Unset means `sites`. */
   source?: TelemetrySource;
+  /** Incoming request's User-Agent for server tracking. Background reports have no request. */
+  requestUserAgent?: string | null;
   /**
    * A Sites conversion (a download) skips the bot and exempt-session gates, as the legacy site's
    * beacon did. The Shop suppressed every bot event, purchases included, so it is ignored there.
@@ -235,11 +237,19 @@ export type SegmentBody = SegmentTrackBody | SegmentPageBody | SegmentIdentifyBo
 type SegmentPage = { url: string; path: string; referrer: string; search: string; title: string };
 type SegmentCampaign = { name?: string; source?: string; medium?: string; term?: string; content?: string };
 
+/** The low-entropy `navigator.userAgentData` slice (Chromium only) the legacy beacon and analytics.js attach. */
+type SegmentUserAgentData = {
+  brands?: Array<{ brand: string; version: string }>;
+  mobile?: boolean;
+  platform?: string;
+};
+
 export type SegmentContext = {
   direct?: true;
   page?: SegmentPage;
   campaign?: SegmentCampaign;
   userAgent?: string;
+  userAgentData?: SegmentUserAgentData;
   locale?: string;
   timezone?: string;
   library: typeof LIBRARY;
@@ -329,17 +339,33 @@ function campaign(search: string): SegmentCampaign | undefined {
   return Object.keys(out).length > 0 ? out : undefined;
 }
 
+/** Read synchronously: high-entropy values would need an awaited `getHighEntropyValues`. */
+function userAgentData(): SegmentUserAgentData | undefined {
+  try {
+    const data = typeof navigator !== "undefined"
+      ? (navigator as Navigator & { userAgentData?: SegmentUserAgentData }).userAgentData
+      : undefined;
+    if (!data) return undefined;
+    const { brands, mobile, platform } = data;
+    return { brands, mobile, platform };
+  } catch {
+    return undefined;
+  }
+}
+
 /** Segment stamps `context.ip` only for a request marked `direct`, so the browser sets it and SSR does not. */
 function context(): SegmentContext {
   if (!isBrowser()) return { library: LIBRARY };
   const tz = timezone();
   const page = currentPage();
   const utm = campaign(page.search);
+  const uaData = userAgentData();
   return {
     direct: true,
     page,
     ...(utm ? { campaign: utm } : {}),
     userAgent: typeof navigator !== "undefined" ? navigator.userAgent : "",
+    ...(uaData ? { userAgentData: uaData } : {}),
     locale: typeof navigator !== "undefined" ? navigator.language : "",
     ...(tz ? { timezone: tz } : {}),
     library: LIBRARY,
@@ -423,7 +449,7 @@ function exemptSession(): boolean {
   return isAnalyticsExemptPath(initialPath());
 }
 
-type GateContext = Pick<TrackContext, "source" | "conversion" | "legacy">;
+type GateContext = Pick<TrackContext, "source" | "conversion" | "legacy" | "requestUserAgent">;
 
 /**
  * The browser gates: a bot, for every source; and, for Sites only, an exempt session, which holds
@@ -437,28 +463,78 @@ function suppressedInBrowser(body: SegmentBody, ctx: GateContext): boolean {
   return sites && legacyParity && exemptSession();
 }
 
-function sendToSegment(body: SegmentBody, ctx: GateContext): void {
+/** Sends `body` unless a gate holds it back; true when it left for Segment. */
+function sendToSegment(body: SegmentBody, ctx: GateContext): boolean {
   const writeKey = segmentWriteKey(ctx.source);
-  if (!writeKey) return;
-  if (isBrowser() && suppressedInBrowser(body, ctx)) return;
+  if (!writeKey) return false;
+  const browser = isBrowser();
+  if (browser) {
+    if (suppressedInBrowser(body, ctx)) return false;
+  } else {
+    if (ctx.requestUserAgent && isBotUserAgent(ctx.requestUserAgent)) return false;
+    if (body.type !== "track" || !serverBudgetAllows(body.event)) return false;
+  }
 
   const url = segmentApiUrl(body.type);
   const payload = JSON.stringify(buildSegmentPayload(body, writeKey));
 
-  if (isBrowser()) {
+  if (browser) {
     try {
       // text/plain keeps the request CORS-simple; application/json would preflight,
       // which is unsafe during unload.
       const beacon = navigator?.sendBeacon?.bind(navigator);
-      if (beacon && beacon(url, new Blob([payload], { type: "text/plain" }))) return;
+      if (beacon && beacon(url, new Blob([payload], { type: "text/plain" }))) return true;
     } catch {
     }
     postTelemetry(url, payload, "text/plain");
-    return;
+    return true;
   }
 
-  if (body.type !== "track" || !serverBudgetAllows(body.event)) return;
   postTelemetry(url, payload, "application/json");
+  return true;
+}
+
+/**
+ * The legacy site's `isInitialized`: analytics.js had loaded in this document. Its equivalent here is the
+ * document's first Sites page view leaving for Segment, which a bot or an exempt session never sends and
+ * which no page sends before it has hydrated. Decided per document, like the exempt-session gate.
+ */
+let legacyReady = false;
+let whenReady: Array<() => void> = [];
+
+export function legacyAnalyticsReady(): boolean {
+  return legacyReady;
+}
+
+/**
+ * Runs `fire` now when the document is ready, else once its first Sites page view is sent. A document that
+ * never sends one (a bot, an exempt session) never runs it. Returns a cancel for a registration still waiting:
+ * the legacy `useDeferredTrack` queue belonged to its component, so a caller scopes it with
+ * `useLegacyTrackScope` (`legacy-click.ts`) rather than leave it to the next route.
+ */
+export function whenLegacyAnalyticsReady(fire: () => void): () => void {
+  if (legacyReady) {
+    fire();
+    return () => {};
+  }
+  whenReady.push(fire);
+  // Cancels a registration still waiting; one that has run is gone already.
+  return () => {
+    whenReady = whenReady.filter((pending) => pending !== fire);
+  };
+}
+
+function markLegacyAnalyticsReady(): void {
+  if (legacyReady) return;
+  legacyReady = true;
+  const pending = whenReady;
+  whenReady = [];
+  for (const fire of pending) {
+    try {
+      fire();
+    } catch {
+    }
+  }
 }
 
 /** `AbortSignal.timeout` is Safari 16+: before it, an `AbortController` holds the deadline. */
@@ -532,7 +608,7 @@ function sanitizedPageProperties(properties: Record<string, unknown>): Record<st
 export function page(name: string, properties: Record<string, unknown>, ctx: TrackContext): void {
   try {
     if (!isBrowser()) return;
-    sendToSegment(
+    const sent = sendToSegment(
       {
         type: "page",
         name: withoutSensitivePath(name),
@@ -541,6 +617,7 @@ export function page(name: string, properties: Record<string, unknown>, ctx: Tra
       },
       ctx,
     );
+    if (sent && (ctx.source ?? "sites") === "sites") markLegacyAnalyticsReady();
   } catch {
   }
 }

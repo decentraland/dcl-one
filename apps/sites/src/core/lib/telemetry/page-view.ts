@@ -66,6 +66,19 @@ function useRootSession(): { sid: string; userId: string } {
 }
 
 /**
+ * The root loader's Segment `userId` (the server-verified wallet), "" for an anonymous visitor. Read it
+ * at the route and hand it to an event's context; check `trackedUserDropped()` at the moment of sending.
+ */
+export function useAnalyticsUserId(): string {
+  return useRootSession().userId;
+}
+
+/** The visitor's session id from the root loader, for a route whose own loader may not run (a `clientLoader`). */
+export function useAnalyticsSid(): string {
+  return useRootSession().sid;
+}
+
+/**
  * Sends `page(name, properties)` for `view` once per pathname, name and properties. A null view sends
  * nothing and forgets the last one, so leaving to an untracked page and coming back counts again.
  * A sign-out in progress leaves the account out at the moment of sending, whichever session (root's

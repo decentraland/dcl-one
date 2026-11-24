@@ -6,9 +6,10 @@
 //! grant can choose between requests. Requests queue per hash, so a key change re-ranks queues,
 //! not every waiting request, and a grant pops one queue's head.
 
+use common::sync::MutexExt;
 use std::{
     collections::{BTreeSet, HashMap, HashSet},
-    sync::{Arc, Mutex, MutexGuard, PoisonError, Weak},
+    sync::{Arc, Mutex, MutexGuard, Weak},
     time::Duration,
 };
 
@@ -282,7 +283,7 @@ impl PriorityGate {
     /// Recover a poisoned lock: refusing it would turn every later grant, release and
     /// destructor into another panic.
     fn state(&self) -> MutexGuard<'_, GateState> {
-        self.state.lock().unwrap_or_else(PoisonError::into_inner)
+        self.state.lock_ignore_poison()
     }
 
     /// Queue a request of `scene` (`None`: a request with no hash, ranked after every registered
@@ -332,7 +333,7 @@ impl PriorityGate {
 
     /// The ticket's slot, once it is its turn. A ticket is awaited once.
     pub async fn acquire(self: &Arc<Self>, ticket: Arc<Ticket>) -> Result<Permit, GateClosed> {
-        let slot = ticket.slot.lock().unwrap().take().ok_or(GateClosed)?;
+        let slot = ticket.slot.lock_ignore_poison().take().ok_or(GateClosed)?;
         slot.await.map_err(|_| GateClosed)
     }
 

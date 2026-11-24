@@ -2,7 +2,7 @@ import { useInfiniteQuery, useQuery } from "@tanstack/react-query";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useLocation, useNavigate } from "react-router";
 
-import { CommunityEventsList } from "@dcl/one-ui/apps/sites/social/CommunityLists";
+import { CommunityEventsList } from "@dcl/one-ui";
 
 import { useAuth } from "@/data/lib/auth/context";
 import { eventDetailQuery, readEventId } from "@/data/lib/catalyst/places/events-page";
@@ -144,7 +144,7 @@ export function CommunityEvents({ state }: { state: CommunityEventsState }) {
     <CommunityEventsList
       status={listStatus(query)}
       cards={events.map((event) => ({
-        ...upcomingCardProps(event, { href: eventHref(event.id), now, zone, origin, profiles }),
+        ...upcomingCardProps(event, { href: eventHref(event.id), now, zone, origin, pageOrigin: origin, profiles }),
         remind: remindControl(reminders.get(event.id)),
         onOpen: (click) => {
           if (!isPlainClick(click)) return;
@@ -170,6 +170,7 @@ export function CommunityEventDialog({ state, sid }: { state: CommunityEventsSta
       event={open}
       zone={viewer.zone}
       origin={viewer.origin}
+      pageOrigin={viewer.origin}
       jumpIn={(target) => eventJumpIn(target, detectPlatform(navigator.userAgent))}
       reminder={open.live ? undefined : reminders.get(open.id)}
       profiles={profiles}

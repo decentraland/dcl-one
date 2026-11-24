@@ -89,6 +89,21 @@ describe('BlogArticlePage', () => {
     })
   })
 
+  describe('when the post category is absent from the menu', () => {
+    beforeEach(() => {
+      renderArticle({ categories: [{ slug: 'announcements', title: 'Announcements' }] })
+    })
+
+    it('should leave every category link unmarked', () => {
+      const nav = screen.getByRole('navigation', { name: 'Blog categories' })
+      expect(
+        within(nav)
+          .getAllByRole('link')
+          .every((tab) => !tab.hasAttribute('aria-current'))
+      ).toBe(true)
+    })
+  })
+
   describe('when the link is copied', () => {
     let writeText: ReturnType<typeof vi.fn>
 

@@ -18,6 +18,11 @@
   mask-composite: exclude;
   -webkit-mask-composite: xor;
 }
+/* Covers the preview until the engine has drawn the avatar; outranks `.inModal .backdrop`. */
+.backdrop.backdropShut,
+.inModal .backdrop.backdropShut {
+  mask: none;
+}
 /* The drifting glow moves by transform, which the compositor runs without repainting the page. */
 .backdrop::before {
   content: '';

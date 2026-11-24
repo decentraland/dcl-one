@@ -15,6 +15,8 @@ interface SliderProps {
    *  rail: a navigation popover's 12px track with a 12x26 pin; `--slider-rail-track` sets the unfilled colour. */
   variant?: 'thin' | 'thick' | 'pin' | 'rail'
   'aria-label'?: string
+  /** Ids of elements that describe the control. */
+  'aria-describedby'?: string
 }
 
 export function Slider({
@@ -26,7 +28,8 @@ export function Slider({
   disabled = false,
   arrows = false,
   variant = 'thin',
-  'aria-label': ariaLabel
+  'aria-label': ariaLabel,
+  'aria-describedby': ariaDescribedBy
 }: SliderProps): React.JSX.Element {
   const pct = max > min ? ((value - min) / (max - min)) * 100 : 0
   const clamp = (v: number): number => Math.min(max, Math.max(min, v))
@@ -40,6 +43,7 @@ export function Slider({
       step={step}
       disabled={disabled}
       aria-label={ariaLabel}
+      aria-describedby={ariaDescribedBy}
       style={{ '--pct': `${pct}%`, '--frac': pct / 100 } as React.CSSProperties}
       onChange={(e) => onChange(Number(e.target.value))}
     />
