@@ -242,6 +242,41 @@ grants by entity id: after the release it refuses every admin, and a grant it wr
 `catalyst serve` refuses startup while a grant of an active deployment has the entity key.
 Keep the pre-migration database backup: rollback must restore the matching backup.
 
+This script and `schemas/releases/genesis-scene-ban-keys.sql` (`DATABASE.md` "Scene bans") move
+only entity-keyed rows, so no run of them changes the key of a grant or ban that is already on a
+parcel. A database that holds Genesis grants or bans on parcel keys
+when it takes this upgrade can hold them on a scene's least parcel while the scene's place is
+its declared base (`entity_metadata #>> '{v,scene,base}'`); no request of that scene reads such
+a row. Such a grant no longer admits its admin, and such a ban no longer refuses its wallet: the
+ban stops applying from the first request a new binary serves. After both scripts, before
+starting the new binaries, list them, and re-key every `scene_bans` row that was made for the
+listed scene before admitting players:
+
+```sql
+SELECT 'scene_admins' AS grants_table, d.entity_id, s.least AS keyed_on, s.place, a.admin_address AS wallet
+  FROM content.deployments d
+ CROSS JOIN LATERAL (SELECT social.scene_base_parcel(d.entity_pointers, NULL) AS least,
+                            social.scene_base_parcel(d.entity_pointers, d.entity_metadata #>> '{v,scene,base}') AS place) s
+  JOIN social.scene_admins a ON a.place_id = s.least AND a.active
+ WHERE d.entity_type = 'scene' AND d.deleter_deployment IS NULL AND s.place <> s.least
+UNION ALL
+SELECT 'scene_bans', d.entity_id, s.least, s.place, b.banned_address
+  FROM content.deployments d
+ CROSS JOIN LATERAL (SELECT social.scene_base_parcel(d.entity_pointers, NULL) AS least,
+                            social.scene_base_parcel(d.entity_pointers, d.entity_metadata #>> '{v,scene,base}') AS place) s
+  JOIN social.scene_bans b ON b.place_id = s.least
+ WHERE d.entity_type = 'scene' AND d.deleter_deployment IS NULL AND s.place <> s.least
+ ORDER BY 1, 3, 5;
+```
+
+A listed row can also be a grant or ban made for an earlier scene whose base was that parcel
+and that the place removal cleanup has not ended; the listed scene does not inherit it, so no
+script moves these rows. For each row that was made for the listed scene, set its key to the
+place:
+`UPDATE social.scene_admins SET place_id = '<place>' WHERE place_id = '<keyed_on>' AND admin_address = '<wallet>'`
+(`social.scene_bans` and `banned_address` for a ban). The update fails on the primary key when
+the wallet already has a row on the place: keep the row with the newer change and delete the other.
+
 Stream key upgrade: `catalyst schema migrate` creates five notification triggers on `worlds.world_scenes`, `worlds.worlds`, `worlds.world_permissions` and `worlds.world_permission_parcels`. Each `CREATE TRIGGER` takes a `SHARE ROW EXCLUSIVE` lock: writes to these four tables wait until the migrate transaction ends; reads continue.
 
 Cast upgrade:
