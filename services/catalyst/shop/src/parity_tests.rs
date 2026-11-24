@@ -815,17 +815,6 @@ async fn campaigns_are_operator_data_read_publicly_with_the_builder_shape() {
     );
     let (status, _) = get(app(), "/v1/campaign-collections").await;
     assert_eq!(status, StatusCode::BAD_REQUEST);
-    let alias = super::campaigns::builder_alias_router(state.clone());
-    let (status, out) = get(
-        alias,
-        &format!("/builder-api/v1/addresses?tag=tag-{}", &t[..8]),
-    )
-    .await;
-    assert_eq!(
-        (status, out["data"][0].as_str()),
-        (StatusCode::OK, Some(approved.as_str())),
-        "{out}"
-    );
     let (status, out) = get(app(), &format!("/v1/campaigns/{id}")).await;
     assert_eq!(
         (

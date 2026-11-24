@@ -47,7 +47,10 @@ The node already holds a copy of the Polygon collections subgraph. The shop's
     submitted for review.
 
   The node's own records make a collection published as soon as the node
-  publishes it, without waiting for the copy.
+  publishes it, without waiting for the copy. A deployment the client sends
+  itself becomes such a record through `POST /v1/collections/{id}/publish`:
+  once the copy, or else the Polygon RPC, holds the contract at the stored
+  address, each item gets the on-chain id of its place in creation order.
 - **Approved** is the copy's approval of the contract. A third-party
   collection has no contract and is never approved.
 - **Fail closed.** Every read starts with the copy's readiness:
@@ -78,18 +81,20 @@ The node already holds a copy of the Polygon collections subgraph. The shop's
   name the signer as the collection's creator. A request never sets the
   address. A draft can only map to a contract whose deployment names its own
   signer as creator, so it can't inherit another wallet's collection.
-- **A live check where the copy may lag.** An address-changing save needs
-  to know of a deployment the copy hasn't seen yet. It asks the Polygon RPC
-  (`BUILDER_POLYGON_RPC_URL`) at the stored
+- **A live check where the copy may lag.** An address-changing save, a
+  delete and a publish need to know of a deployment the copy hasn't seen
+  yet. They ask the Polygon RPC (`BUILDER_POLYGON_RPC_URL`) at the stored
   address: `eth_getCode` and the collection's `itemsCount()`, both at the
   finalized block. The address commits to the factory, the salt and the
   `initialize` calldata, so code there is this collection with its creator
   and items. One read per contract runs at a time and its answer is kept five
   seconds; a read never holds a database connection. When the RPC can't
-  tell, or the node has none, the save answers 503.
-- **The owner's lock.** A collection's stored lock, which the old builder
-  web sets right after it deploys, refuses for a day saves of the
-  collection, item saves and creations in it and item deletes (423).
+  tell, a save or a delete answers 503 and a publish answers "not published",
+  which the client retries.
+- **The owner's lock.** `POST /v1/collections/{id}/lock` stores the owner's
+  lock, which the old builder web sets right after it deploys. For a day it
+  refuses saves of the collection, item saves and creations in it, item
+  deletes and the collection's delete (423); uploads are never locked.
 - **Deployment.** The node that serves the builder runs the Polygon
   collections mirror (`MARKETPLACE_MIRRORS_ENABLED=true`,
   `MATIC_COLLECTIONS_SUBGRAPH_URL`), or shares a database with a node that
@@ -103,8 +108,8 @@ The node already holds a copy of the Polygon collections subgraph. The shop's
   subgraph's own lag. An edit that changes its name or calldata would give
   the row another computed address, so the row would no longer map to the
   deployed contract: the live check refuses it, and so does the lock while it
-  holds. A node without `BUILDER_POLYGON_RPC_URL` refuses every such change
-  (503). An approval or a role change shows after the same delay.
+  holds. A node without `BUILDER_POLYGON_RPC_URL` has only the lock. An
+  approval or a role change shows after the same delay.
 - **Saves need a fresh copy; an owner's own read doesn't.** Every standard
   draft holds a computed contract address, and anyone holding its salt and
   calldata can deploy it outside the node. So every save, of a standard or a

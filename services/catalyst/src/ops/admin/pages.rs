@@ -1063,8 +1063,8 @@ fn scene_cards(n: &mut usize) -> String {
 
 fn create_cards(n: &mut usize) -> String {
     card(
-        "Camera reel",
-        "Photo moderation (CREATE_WRITES_ENABLED).",
+        "Camera reel and builder",
+        "Photo moderation and item curation (CREATE_WRITES_ENABLED).",
         &[Form {
             confirm: "Review this photo?",
             extras: &[Extra(

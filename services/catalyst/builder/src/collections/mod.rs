@@ -178,6 +178,10 @@ impl CollectionRow {
         self.third_party_id.as_deref()
     }
 
+    pub(crate) fn contract_address(&self) -> Option<&str> {
+        self.contract_address.as_deref()
+    }
+
     pub(crate) fn out(
         self,
         network: &crate::network::Network,

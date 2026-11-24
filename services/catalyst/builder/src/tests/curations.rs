@@ -885,6 +885,37 @@ async fn curate(pool: &PgPool, item: Uuid, status: &str, at: &str) {
     .unwrap();
 }
 
+async fn statuses(pool: &PgPool, item: Uuid) -> Vec<String> {
+    sqlx::query_scalar(
+        "SELECT status FROM builder.item_curations WHERE item_id = $1 ORDER BY created_at",
+    )
+    .bind(item)
+    .fetch_all(pool)
+    .await
+    .unwrap()
+}
+
+#[tokio::test]
+async fn a_recorded_item_curation_is_the_items_newest_even_twice_in_one_transaction() {
+    let Some(pool) = scratch_pool(2).await else {
+        return;
+    };
+    let i = item(&pool, collection(&pool, true).await).await;
+    curate(&pool, i, "approved", "2999-01-01").await;
+    let mut tx = pool.begin().await.unwrap();
+    crate::curation::record_item_curation(&mut tx, i, "pending", &content_hash(), false)
+        .await
+        .unwrap();
+    crate::curation::record_item_curation(&mut tx, i, "rejected", &content_hash(), true)
+        .await
+        .unwrap();
+    tx.commit().await.unwrap();
+    assert_eq!(
+        statuses(&pool, i).await,
+        ["approved", "pending", "rejected"]
+    );
+}
+
 #[tokio::test]
 async fn a_collection_is_mapping_complete_only_while_no_item_curation_says_otherwise() {
     let Some(store) = super::support::scratch_component().await else {
@@ -1071,4 +1102,111 @@ async fn every_read_of_an_items_newest_curation_takes_the_last_created_one() {
         (serde_json::json!(false), Some(false)),
         "the collection and the item read the same newest curation"
     );
+}
+
+async fn created(pool: &PgPool, table: &str, key: &str, id: Uuid) -> Vec<chrono::NaiveDateTime> {
+    sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
+        "SELECT created_at FROM builder.{table} WHERE {key} = $1 AND updated_at >= created_at ORDER BY created_at"
+    )))
+    .bind(id)
+    .fetch_all(pool)
+    .await
+    .unwrap()
+}
+
+#[tokio::test]
+async fn collection_curations_recorded_together_are_each_newer_than_the_last() {
+    let Some(pool) = scratch_pool(4).await else {
+        return;
+    };
+    let c = collection(&pool, true).await;
+    let grant = crate::access::granted::third_party_publish(OWNER, c, PROVIDER);
+    accepted(
+        &pool,
+        &format!(
+            "INSERT INTO builder.collection_curations (id, collection_id, status, created_at, updated_at) \
+             VALUES ('{}', '{c}', 'approved', '2999-01-01', '2999-01-02')",
+            Uuid::new_v4()
+        ),
+    )
+    .await;
+    let mut tx = pool.begin().await.unwrap();
+    for status in ["pending", "pending", "rejected"] {
+        crate::curation::record_collection_curation(&mut tx, &grant, status, None)
+            .await
+            .unwrap();
+    }
+    tx.commit().await.unwrap();
+    let stamps = created(&pool, "collection_curations", "collection_id", c).await;
+    assert_eq!(stamps.len(), 4, "every row kept updated_at >= created_at");
+    let order: Vec<String> = sqlx::query_scalar(
+        "SELECT status FROM builder.collection_curations WHERE collection_id = $1 ORDER BY created_at",
+    )
+    .bind(c)
+    .fetch_all(&pool)
+    .await
+    .unwrap();
+    assert_eq!(order, ["approved", "pending", "pending", "rejected"]);
+}
+
+/// A second writer of `id`'s curations waits for the first's transaction and
+/// stamps its row after the first's.
+async fn writers_queue(
+    pool: &PgPool,
+    table: &str,
+    key: &str,
+    id: Uuid,
+    write: impl AsyncFn(&mut sqlx::PgConnection),
+) {
+    let mut first = pool.begin().await.unwrap();
+    write(&mut first).await;
+    let mut second = pool.begin().await.unwrap();
+    let waited =
+        tokio::time::timeout(std::time::Duration::from_millis(300), write(&mut second)).await;
+    assert!(
+        waited.is_err(),
+        "the second writer waits for the first's transaction"
+    );
+    drop(second);
+    let mut second = pool.begin().await.unwrap();
+    let pending = async {
+        write(&mut second).await;
+        second.commit().await.unwrap();
+    };
+    let commit_first = async {
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+        first.commit().await.unwrap();
+    };
+    tokio::join!(pending, commit_first);
+    let stamps = created(pool, table, key, id).await;
+    assert_eq!(stamps.len(), 2);
+    assert!(stamps[0] < stamps[1]);
+}
+
+#[tokio::test]
+async fn concurrent_writers_of_one_collections_curations_queue_behind_its_lock() {
+    let Some(pool) = scratch_pool(4).await else {
+        return;
+    };
+    let c = collection(&pool, true).await;
+    let grant = crate::access::granted::third_party_publish(OWNER, c, PROVIDER);
+    writers_queue(
+        &pool,
+        "collection_curations",
+        "collection_id",
+        c,
+        async |conn| {
+            crate::curation::record_collection_curation(conn, &grant, "pending", None)
+                .await
+                .unwrap();
+        },
+    )
+    .await;
+    let i = item(&pool, c).await;
+    writers_queue(&pool, "item_curations", "item_id", i, async |conn| {
+        crate::curation::record_item_curation(conn, i, "pending", &content_hash(), false)
+            .await
+            .unwrap();
+    })
+    .await;
 }

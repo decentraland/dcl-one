@@ -1,8 +1,9 @@
-//! `/admin/api/{camera-reel,create}/*`.
+//! `/admin/api/{camera-reel,builder,create}/*`.
 //!
-//! The camera reel's image delete and review are the module's own handlers
-//! with the bearer the node configured (`CATALYRST_CAMERA_REEL_ADMIN_TOKEN`),
-//! behind `CREATE_WRITES_ENABLED` through the module's gate predicate.
+//! The camera reel's image delete and review and the builder's curation
+//! status are the modules' own handlers with the bearer the node configured
+//! (`CATALYRST_CAMERA_REEL_ADMIN_TOKEN`, `CATALYRST_BUILDER_ADMIN_TOKEN`),
+//! behind `CREATE_WRITES_ENABLED` through each module's gate predicate.
 //!
 //! The asset-bundle registry's controls (`registry-reingest`,
 //! `flush-ab-cache`, `queues-*`, `denylist-*`) belong to abgen, a prebuilt
