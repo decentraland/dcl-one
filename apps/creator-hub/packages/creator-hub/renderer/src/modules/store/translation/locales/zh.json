@@ -211,7 +211,10 @@
         "rate_down": "回复不好",
         "menu_share_chat": "分享此对话",
         "menu_share_all": "分享所有对话",
-        "menu_chat_erased": "此对话已分享的内容已删除。"
+        "menu_chat_erased": "此对话已分享的内容已删除。",
+        "menu_chat_confirm": "停止分享这个聊天？它已分享的内容将被删除。",
+        "menu_chat_confirm_yes": "停止并删除",
+        "menu_chat_confirm_no": "继续分享"
       }
     },
     "publish": {

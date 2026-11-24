@@ -162,6 +162,17 @@
   line-height: 1.3;
 }
 
+.menuConfirm {
+  padding-bottom: 8px;
+}
+
+.menuConfirmActions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  padding: 0 10px;
+}
+
 .menuDivider {
   margin: 10px 0;
   border: none;

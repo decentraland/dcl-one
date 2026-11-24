@@ -211,7 +211,10 @@
         "rate_down": "Mala respuesta",
         "menu_share_chat": "Compartir este chat",
         "menu_share_all": "Compartir todos los chats",
-        "menu_chat_erased": "Lo que este chat compartió se borró."
+        "menu_chat_erased": "Lo que este chat compartió se borró.",
+        "menu_chat_confirm": "¿Dejar de compartir este chat? Se borrará lo que ya compartió.",
+        "menu_chat_confirm_yes": "Dejar y borrar",
+        "menu_chat_confirm_no": "Seguir compartiendo"
       }
     },
     "publish": {

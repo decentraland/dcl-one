@@ -211,7 +211,10 @@
         "rate_down": "Bad reply",
         "menu_share_chat": "Share this chat",
         "menu_share_all": "Share all chats",
-        "menu_chat_erased": "What this chat shared was deleted."
+        "menu_chat_erased": "What this chat shared was deleted.",
+        "menu_chat_confirm": "Stop sharing this chat? What it already shared will be deleted.",
+        "menu_chat_confirm_yes": "Stop and delete",
+        "menu_chat_confirm_no": "Keep sharing"
       }
     },
     "publish": {

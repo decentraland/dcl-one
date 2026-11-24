@@ -135,7 +135,7 @@ describe('when sharing is on', () => {
     expect(group.closest('[data-bare]')?.classList.contains(styles.menu)).toBe(false);
   });
 
-  it('should stop sharing this chat with its switch', () => {
+  it('should ask before stopping a chat that already shared, and erase only once confirmed', () => {
     const { onSetConversationShared } = renderBoth({
       status: 'on',
       conversationExcluded: false,
@@ -144,7 +144,42 @@ describe('when sharing is on', () => {
     openMenu();
     fireEvent.click(screen.getByRole('switch', { name: copy.menu_share_chat }));
 
-    expect(onSetConversationShared).toHaveBeenCalledWith(false);
+    expect(onSetConversationShared).not.toHaveBeenCalled();
+    expect(screen.getByRole('alertdialog').textContent).toContain(copy.menu_chat_confirm);
+
+    fireEvent.click(screen.getByRole('button', { name: copy.menu_chat_confirm_yes }));
+
+    expect(onSetConversationShared).toHaveBeenCalledExactlyOnceWith(false);
+    expect(screen.queryByRole('alertdialog')).toBeNull();
+  });
+
+  it('should keep sharing a chat when the creator cancels', () => {
+    const { onSetConversationShared } = renderBoth({
+      status: 'on',
+      conversationExcluded: false,
+      conversationHasShared: true,
+    });
+    openMenu();
+    const thisChat = screen.getByRole('switch', { name: copy.menu_share_chat });
+    fireEvent.click(thisChat);
+    fireEvent.click(screen.getByRole('button', { name: copy.menu_chat_confirm_no }));
+
+    expect(onSetConversationShared).not.toHaveBeenCalled();
+    expect(screen.queryByRole('alertdialog')).toBeNull();
+    expect(thisChat.getAttribute('aria-checked')).toBe('true');
+  });
+
+  it('should stop sharing a chat that shared nothing without asking', () => {
+    const { onSetConversationShared } = renderBoth({
+      status: 'on',
+      conversationExcluded: false,
+      conversationHasShared: false,
+    });
+    openMenu();
+    fireEvent.click(screen.getByRole('switch', { name: copy.menu_share_chat }));
+
+    expect(screen.queryByRole('alertdialog')).toBeNull();
+    expect(onSetConversationShared).toHaveBeenCalledExactlyOnceWith(false);
   });
 
   it('should say that what an unshared chat had shared was deleted', () => {

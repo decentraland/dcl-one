@@ -115,7 +115,8 @@ export function SharingConsentCard({ sharing, onShareDecision, onShareNotNow }: 
 
 /**
  * Always visible while sharing is on, so it is never on without the creator seeing it. Opens two
- * switches: this chat (off also erases what it already shared) and every chat (off withdraws).
+ * switches: this chat (off also erases what it already shared, so it asks first when there is
+ * something to erase) and every chat (off withdraws).
  */
 export function SharingStatusChip({
   sharing,
@@ -123,9 +124,18 @@ export function SharingStatusChip({
   onSetConversationShared,
 }: SharingProps) {
   const [anchor, setAnchor] = useState<HTMLElement | null>(null);
+  const [confirmingErase, setConfirmingErase] = useState(false);
+  const confirmId = useId();
   if (sharing?.status !== 'on') return null;
   const excluded = sharing.conversationExcluded;
-  const close = () => setAnchor(null);
+  const close = () => {
+    setAnchor(null);
+    setConfirmingErase(false);
+  };
+  const setThisChatShared = (shared: boolean) => {
+    if (!shared && sharing.conversationHasShared === true) setConfirmingErase(true);
+    else onSetConversationShared?.(shared);
+  };
   const label = excluded ? t('editor.ai.sharing.chip_excluded') : t('editor.ai.sharing.chip');
   return (
     <>
@@ -165,9 +175,43 @@ export function SharingStatusChip({
           <div className={styles.menuRow}>
             <MenuSwitch
               label={t('editor.ai.sharing.menu_share_chat')}
-              checked={!excluded}
-              onChange={checked => onSetConversationShared?.(checked)}
+              checked={!excluded && !confirmingErase}
+              onChange={setThisChatShared}
             />
+            {confirmingErase && (
+              <div
+                role="alertdialog"
+                aria-labelledby={`${confirmId}-text`}
+                className={styles.menuConfirm}
+              >
+                <p
+                  id={`${confirmId}-text`}
+                  className={styles.menuNote}
+                >
+                  {t('editor.ai.sharing.menu_chat_confirm')}
+                </p>
+                <div className={styles.menuConfirmActions}>
+                  <Button
+                    variant="secondary"
+                    tone="neutral"
+                    size="sm"
+                    onClick={() => setConfirmingErase(false)}
+                  >
+                    {t('editor.ai.sharing.menu_chat_confirm_no')}
+                  </Button>
+                  <Button
+                    size="sm"
+                    tone="danger"
+                    onClick={() => {
+                      setConfirmingErase(false);
+                      onSetConversationShared?.(false);
+                    }}
+                  >
+                    {t('editor.ai.sharing.menu_chat_confirm_yes')}
+                  </Button>
+                </div>
+              </div>
+            )}
             {excluded && sharing.conversationHasShared === true && (
               <p className={styles.menuNote}>{t('editor.ai.sharing.menu_chat_erased')}</p>
             )}
