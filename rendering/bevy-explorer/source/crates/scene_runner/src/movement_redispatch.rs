@@ -1,6 +1,7 @@
 //! Re-dispatches the movement controller scene on a late reply. A reply that lands after the
 //! frame's scene loop deadline leaves the scene in flight, so the next frame would skip its
-//! dispatch. On such a reply, the scene is dispatched again at once, ahead of the queue.
+//! dispatch. On such a reply, while the loop has time left for it, the scene is queued ahead of
+//! the others and dispatched again at the loop's next pass.
 //!
 //! The re-dispatch is sent the rotation that the late reply sets (`RedispatchRotation`), because
 //! the engine applies that rotation only after the scene loop. With the player's current rotation,

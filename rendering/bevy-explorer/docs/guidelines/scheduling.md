@@ -166,8 +166,9 @@ one frame. A scene that has not replied for ten seconds is marked broken and its
 The movement controller scene (`priority_scenes["movement_controller"]`) has one exception
 (`movement_redispatch`). A reply that lands after the frame's deadline is applied a frame late,
 and the scene, still in flight, would skip the next frame's dispatch. So when
-`receive_scene_updates` takes a late reply, it puts the scene at the front of the queue with an
-extra slot, and the loop's next pass dispatches it again with the current frame's input:
+`receive_scene_updates` takes a late reply at any poll and the loop has time left for it (below),
+it puts the scene at the front of the queue with an extra slot, and the loop's next pass
+dispatches it again with the current frame's input:
 
 - A late reply seen at the loop's first poll is answered while the loop has time left, because
   the re-dispatch leaves where the frame's regular dispatch would.
