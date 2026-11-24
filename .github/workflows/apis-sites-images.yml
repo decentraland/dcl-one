@@ -98,7 +98,7 @@ jobs:
           df -h /
           free -m
       - name: Fetch Sites media and shared fonts from Git LFS
-        run: git config --global lfs.fetchinclude 'apps/sites/content/**,library/ui/apps/sites/assets/**,library/ui/foundations/typography/fonts/**,apps/ui3/public/assets/invite/**'
+        run: git config --global lfs.fetchinclude 'apps/sites/content/**,library/ui/apps/sites/assets/**,library/ui/assets/**,library/ui/foundations/typography/fonts/**,apps/ui3/public/assets/invite/**'
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           lfs: true
@@ -137,16 +137,25 @@ jobs:
           # them, not inside them.
           key: ${{ steps.cache-keys.outputs.sites-app-key }}
           restore-keys: ${{ steps.cache-keys.outputs.sites-app-main-key }}
+      - name: Restore the compiled UI gallery
+        id: ui-gallery-cache
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: .cache/ui-gallery-nix
+          # The static gallery Sites serves under /ui-gallery/, built from library/ui alone.
+          key: ${{ steps.cache-keys.outputs.ui-gallery-key }}
+          restore-keys: ${{ steps.cache-keys.outputs.ui-gallery-main-key }}
       - name: Decide which dependency caches this build still needs
         id: compiled
         env:
           APIS: ${{ steps.cache-keys.outputs.apis-key }} ${{ steps.apis-cache.outputs.cache-matched-key }}
           SITES_APP: ${{ steps.cache-keys.outputs.sites-app-key }} ${{ steps.sites-app-cache.outputs.cache-matched-key }}
+          UI_GALLERY: ${{ steps.cache-keys.outputs.ui-gallery-key }} ${{ steps.ui-gallery-cache.outputs.cache-matched-key }}
         run: |
           # A compiled closure restored under its exact derivation digest leaves Nix nothing
           # to build for that package, so its dependency archive would only cost transfer time.
           exact() { [ -n "$2" ] && [ "${2##*-}" = "${1##*-}" ] && echo true || echo false; }
-          for group in APIS SITES_APP; do
+          for group in APIS SITES_APP UI_GALLERY; do
             read -r primary matched <<< "${!group}"
             name=${group,,}
             echo "${name//_/-}=$(exact "$primary" "$matched")" >> "$GITHUB_OUTPUT"
@@ -181,12 +190,13 @@ jobs:
           SITES: ${{ steps.cache-keys.outputs.sites-key }} ${{ steps.sites-cache.outputs.cache-matched-key }}
           APIS: ${{ steps.cache-keys.outputs.apis-key }} ${{ steps.apis-cache.outputs.cache-matched-key }}
           SITES_APP: ${{ steps.cache-keys.outputs.sites-app-key }} ${{ steps.sites-app-cache.outputs.cache-matched-key }}
+          UI_GALLERY: ${{ steps.cache-keys.outputs.ui-gallery-key }} ${{ steps.ui-gallery-cache.outputs.cache-matched-key }}
           # A dependency archive skipped for an exact compiled hit was neither restored nor built.
           SKIPPED: ${{ steps.compiled.outputs.apis == 'true' && 'CATALYST' || '' }} ${{ steps.compiled.outputs.sites-app == 'true' && 'SITES' || '' }}
         run: |
           # An entry is saved when the restored one, if any, is not this exact derivation set.
           saves() { [ "${2##*-}" != "${1##*-}" ] && echo true || echo false; }
-          for group in CATALYST SITES APIS SITES_APP; do
+          for group in CATALYST SITES APIS SITES_APP UI_GALLERY; do
             read -r primary matched <<< "${!group}"
             case " $SKIPPED " in
               *" $group "*) save=false ;;
@@ -198,7 +208,7 @@ jobs:
           cat "$GITHUB_OUTPUT"
       - name: Import cached store paths
         run: |
-          for cache in .cache/catalyst-nix .cache/sites-nix .cache/apis-nix .cache/sites-app-nix; do
+          for cache in .cache/catalyst-nix .cache/sites-nix .cache/apis-nix .cache/sites-app-nix .cache/ui-gallery-nix; do
             if [ -f "$cache/nix-cache-info" ]; then
               # Import canonical names; --all can enumerate hash-x aliases.
               shopt -s nullglob
@@ -217,7 +227,6 @@ jobs:
           df -h /
       - name: Build the complete Sites toolchain and dependencies
         if: steps.compiled.outputs.sites-app != 'true'
-        # runtime-deps, unlike the fixed-output sites-deps, rebuilds when the lockfile changes.
         run: nix build .#sites-toolchain .#sites-runtime-deps --no-link -L
       - name: Import the matching tested Bevy build for Sites
         timeout-minutes: 95
@@ -269,6 +278,19 @@ jobs:
             wait "$apis_load"
           fi
           df -h /
+      # Nothing is published with UI gallery bytes no key scan read: a successful scan of the head, or of the nearest
+      # ancestor whose scanned artifact holds the same bytes (tooling/ui-gallery-receipt.py).
+      - name: Require a key scan of the UI gallery the Sites image ships
+        # Every build that can publish: main pushes (through Bevy CI), tags, and manual runs on main asked to publish.
+        if: github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && inputs.publish && github.ref == 'refs/heads/main')
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          # The Sites package the image build above realised: evaluated, not built again.
+          sites=$(nix eval --impure --raw 'git+file:.?lfs=1#sites.outPath')
+          test -d "$sites/build/client/ui-gallery"
+          python3 tooling/ui-gallery-receipt.py --repo "$GITHUB_REPOSITORY" --head "$GITHUB_SHA" \
+            --gallery "$sites/build/client/ui-gallery"
       - name: Test the exact images before publication
         run: |
           python3 tooling/image-smoke.py --revision "$GITHUB_SHA"
@@ -282,16 +304,15 @@ jobs:
         run: |
           allowed=false
           if [ "$GITHUB_RUN_ATTEMPT" = 1 ]; then
-            ref=${GITHUB_REF#refs/}
-            expected=$GITHUB_SHA
-            if [ "$GITHUB_EVENT_NAME" = pull_request ]; then
-              ref=${ref%/merge}/head
-              expected=$PR_HEAD_SHA
-            fi
-            if [ -n "$expected" ] && current=$(gh api "repos/$GITHUB_REPOSITORY/git/ref/$ref" --jq .object.sha); then
-              if [ "$current" = "$expected" ]; then allowed=true; fi
-            else
-              echo '::warning::Cannot verify the current ref; skipping cache uploads'
+            if [ "$GITHUB_EVENT_NAME" = push ] && [ "$GITHUB_REF" = refs/heads/main ]; then
+              allowed=true
+            elif [ "$GITHUB_EVENT_NAME" = pull_request ]; then
+              ref=${GITHUB_REF#refs/}
+              if [ -n "$PR_HEAD_SHA" ] && current=$(gh api "repos/$GITHUB_REPOSITORY/git/ref/${ref%/merge}/head" --jq .object.sha); then
+                if [ "$current" = "$PR_HEAD_SHA" ]; then allowed=true; fi
+              else
+                echo '::warning::Cannot verify the current ref; skipping cache uploads'
+              fi
             fi
           fi
           echo "allowed=$allowed" >> "$GITHUB_OUTPUT"
@@ -343,6 +364,25 @@ jobs:
         with:
           path: .cache/apis-nix
           key: ${{ steps.cache-keys.outputs.apis-key }}
+      - name: Export the tested UI gallery
+        if: steps.cache-writer.outputs.allowed == 'true' && steps.cache-saves.outputs.ui-gallery == 'true'
+        run: |
+          cache_drv=$(nix eval --raw .#ui-gallery.drvPath)
+          image_drv=$(nix eval --raw --impure 'git+file:.?lfs=1#ui-gallery.drvPath')
+          if [ "$cache_drv" != "$image_drv" ]; then
+            echo '::error::UI gallery derivation differs between cache and image refs'
+            exit 1
+          fi
+          mkdir -p .cache/ui-gallery-nix
+          # Static files with no store references: the closure is the gallery alone.
+          nix copy --to "file://$PWD/.cache/ui-gallery-nix?compression=zstd&compression-level=3" .#ui-gallery
+          du -sh .cache/ui-gallery-nix
+      - name: Save the tested UI gallery
+        if: steps.cache-writer.outputs.allowed == 'true' && steps.cache-saves.outputs.ui-gallery == 'true'
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: .cache/ui-gallery-nix
+          key: ${{ steps.cache-keys.outputs.ui-gallery-key }}
       - name: Export the tested Sites app
         if: steps.cache-writer.outputs.allowed == 'true' && steps.cache-saves.outputs.sites-app == 'true'
         run: |

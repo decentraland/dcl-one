@@ -1,18 +1,20 @@
-import alanImage from "@dcl/one-ui/apps/sites/assets/catch_the_vibe/alan.webp";
-import alanVideo from "@dcl/one-ui/apps/sites/assets/catch_the_vibe/alan.mp4";
-import roustanImage from "@dcl/one-ui/apps/sites/assets/catch_the_vibe/roustan.webp";
-import roustanVideo from "@dcl/one-ui/apps/sites/assets/catch_the_vibe/roustan.mp4";
-import mondayMobile from "@dcl/one-ui/apps/sites/assets/weekly-rituals/mobile/Monday-Mobile.webp";
-import tuesdayMobile from "@dcl/one-ui/apps/sites/assets/weekly-rituals/mobile/Tuesday-Mobile.webp";
-import wednesdayMobile from "@dcl/one-ui/apps/sites/assets/weekly-rituals/mobile/Wednesday-Mobile.webp";
-import monday from "@dcl/one-ui/apps/sites/assets/weekly-rituals/monday.webp";
-import tuesday from "@dcl/one-ui/apps/sites/assets/weekly-rituals/tuesday.webp";
-import wednesday from "@dcl/one-ui/apps/sites/assets/weekly-rituals/wednesday.webp";
+import {
+  catchTheVibeAlanUrl as alanImage,
+  catchTheVibeAlanVideoUrl as alanVideo,
+  catchTheVibeRoustanUrl as roustanImage,
+  catchTheVibeRoustanVideoUrl as roustanVideo,
+  weeklyRitualsMobileMondayMobileUrl as mondayMobile,
+  weeklyRitualsMobileTuesdayMobileUrl as tuesdayMobile,
+  weeklyRitualsMobileWednesdayMobileUrl as wednesdayMobile,
+  weeklyRitualsMondayUrl as monday,
+  weeklyRitualsTuesdayUrl as tuesday,
+  weeklyRitualsWednesdayUrl as wednesday,
+  type SitesLocale,
+} from "@dcl/one-ui";
 import type { HomeContent } from "@/data/lib/catalyst/landings/home";
 import { VIBE_CREATORS } from "@/data/lib/catalyst/landings/vibe-creators";
 import { homeEventHref } from "./links";
 import { homeCopy } from "./locale";
-import type { SitesLocale } from "@ui/web/frames/sites-locale";
 
 // Home media and recurring events from decentraland/sites at cfdfa1a51216f9dc90c5b148686a95e7ee9c2862 (src/data/static-content.ts).
 

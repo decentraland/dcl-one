@@ -1,19 +1,36 @@
 import "@dcl/one-ui/foundations/foundations.css";
 import { useState } from "react";
-import {
-  useSearchParams,
-  type ShouldRevalidateFunctionArgs,
-} from "react-router";
+import { type ShouldRevalidateFunctionArgs } from "react-router";
 import { HydrationBoundary } from "@tanstack/react-query";
-import SitesChrome from "@ui/web/frames/SitesChrome";
-import type { SitesLocaleHandle } from "@ui/web/frames/sites-locale";
+import SitesLayout from "@/features/components/chrome/SitesLayout";
+import type { SitesLocaleHandle } from "@dcl/one-ui";
 
 import { detectPlatform } from "@/features/download/options";
 import { EventsLocaleProvider, useEventsFooterCopy } from "@/features/events/locale";
 import { EventsView } from "@/features/events/EventsView";
-import { TAB_PARAM } from "@/features/events/view";
-import EventManagement from "@/features/explorer/event-management/EventManagement";
+import { EventAdminTabs } from "@/features/explorer/event-management/EventAdminTabs";
+import type { JumpPlaceRecord } from "@/data/lib/catalyst/jump/jump";
+import type { Event } from "@/data/lib/catalyst/places/events";
+import {
+  dehydratedData,
+  eventsPageKeys,
+  readEventId,
+  readPlaceTarget,
+  type LiveNowData,
+} from "@/data/lib/catalyst/places/events-page";
+import {
+  EVENTS_SECTION,
+  destinationMeta,
+  eventCanonicalPath,
+  eventCard,
+  eventJsonLd,
+  eventsListingJsonLd,
+  parcelCard,
+  sectionCard,
+  worldCard,
+} from "../lib/destination-meta";
 import { loadEventsPage } from "../lib/events-loader";
+import { absoluteUrl, publicBase } from "../lib/social-meta";
 
 import type { Route } from "./+types/events";
 import type { AgentMarkdownHandle } from "@/data/lib/agent/markdown";
@@ -23,8 +40,38 @@ export const handle = {
   sitesLocalized: true,
 } satisfies AgentMarkdownHandle & SitesLocaleHandle;
 
-export function meta() {
-  return [{ title: "Events — Decentraland" }];
+/**
+ * The card of the event (`?id=`), World (`?world=`) or parcel (`?position=`) the link opens, from the
+ * reads the loader already made; the section card with its live and upcoming lists otherwise.
+ */
+export function meta({ loaderData, location, matches }: Route.MetaArgs) {
+  const base = publicBase(matches);
+  const params = new URLSearchParams(location.search);
+  const state = loaderData?.dehydratedState;
+  const eventId = readEventId(params);
+  const event = eventId ? dehydratedData<Event | null>(state, eventsPageKeys.detail(eventId)) : null;
+  if (event) {
+    const url = absoluteUrl(base, eventCanonicalPath(event.id));
+    const jsonLd = url ? eventJsonLd(event, url) : null;
+    return destinationMeta(eventCard(event), { url, jsonLd: jsonLd ? [jsonLd] : undefined });
+  }
+  const place = eventId ? null : readPlaceTarget(params);
+  if (place) {
+    const row = dehydratedData<JumpPlaceRecord | null>(state, eventsPageKeys.place(place));
+    return "world" in place
+      ? destinationMeta(worldCard(place.world, row), { url: absoluteUrl(base, `/events?world=${encodeURIComponent(place.world)}`) })
+      : destinationMeta(parcelCard(place.position.join(","), row), { url: absoluteUrl(base, `/events?position=${place.position.join(",")}`) });
+  }
+  const live = dehydratedData<LiveNowData>(state, eventsPageKeys.live());
+  const upcoming = dehydratedData<Event[]>(state, eventsPageKeys.upcoming());
+  const listing =
+    base && live && upcoming && !eventId
+      ? eventsListingJsonLd(base, [
+          { name: "Live now", events: live.events },
+          { name: "Upcoming in the next 24 hours", events: upcoming },
+        ])
+      : null;
+  return destinationMeta(sectionCard(EVENTS_SECTION), { url: absoluteUrl(base, "/events"), jsonLd: listing ? [listing] : undefined });
 }
 
 /**
@@ -64,7 +111,6 @@ export default function Events(props: Route.ComponentProps) {
 }
 
 function EventsRoute({ loaderData }: Route.ComponentProps) {
-  const [params] = useSearchParams();
   const footerCopy = useEventsFooterCopy();
   // A client navigation has no loader data: the session and device come from the browser instead.
   const [first] = useState(() => ({
@@ -77,20 +123,26 @@ function EventsRoute({ loaderData }: Route.ComponentProps) {
     origin:
       loaderData?.origin ??
       (typeof window === "undefined" ? "" : window.location.origin),
+    pageOrigin:
+      loaderData?.pageOrigin ??
+      (typeof window === "undefined" ? "" : window.location.origin),
     initial: loaderData
       ? { now: loaderData.now, unavailable: loaderData.unavailable }
       : null,
   }));
-  return params.get(TAB_PARAM) === "my" ? <EventManagement mode="mine" /> : (
+  // My Events (`?tab=my`) is a view of this page: EventsView swaps the All Events section for it.
+  return (
     <HydrationBoundary state={loaderData?.dehydratedState ?? undefined}>
-      <SitesChrome active="whatson" headerSurface="overlay" overlayNav footerCopy={footerCopy}>
+      <SitesLayout active="whatson" headerSurface="overlay" overlayNav footerCopy={footerCopy}>
+        <EventAdminTabs active="events" />
         <EventsView
           sid={first.sid}
           platform={first.platform}
           origin={first.origin}
+          pageOrigin={first.pageOrigin}
           initial={first.initial}
         />
-      </SitesChrome>
+      </SitesLayout>
     </HydrationBoundary>
   );
 }

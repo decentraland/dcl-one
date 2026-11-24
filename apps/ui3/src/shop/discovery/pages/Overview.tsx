@@ -22,7 +22,7 @@ import TopCreators from "../components/TopCreators";
 import { indexUnavailable } from "@shop/discovery/freshness";
 import { useMarketplace } from "../../market/access";
 import { listingTypeFor } from "@shop/market/access-rule";
-import { isIapMode, shopFlags } from "../flags";
+import { isIapMode, useShopFlags } from "../flags";
 import { useListingsFreshness, useSeo } from "../hooks";
 import { t } from "@shop/discovery/intl";
 import { useShopQuery } from "../query";
@@ -81,7 +81,7 @@ function Hero() {
 export default function Overview() {
   useSeo({ title: null });
   useHomeTitle();
-  const flags = shopFlags();
+  const flags = useShopFlags();
   // Trending lists resales too only for a visitor who sees the Marketplace (market/access.tsx).
   const listingType = listingTypeFor(useMarketplace());
 

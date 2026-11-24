@@ -4,7 +4,7 @@
 //! Series carry the `pulse_` prefix, not upstream's `dcl_`; keep every new one on it so a single
 //! exposition never needs two prefixes on one dashboard.
 
-use std::net::SocketAddr;
+use std::{net::SocketAddr, time::Duration};
 
 #[cfg(test)]
 use crate::metrics::prometheus_builder;
@@ -39,6 +39,12 @@ const RESYNC_SEQ_GAP: &str = "pulse_resync_seq_gap";
 const HANDSHAKES: &str = "pulse_handshakes_total";
 pub(crate) const ENET_SOCKET_ERRORS: &str = "pulse_enet_socket_errors_total";
 
+pub(crate) const SIMULATION_TICK_DURATION: &str = "pulse_simulation_tick_duration_seconds";
+pub(crate) const SIMULATION_TICK_DELAY: &str = "pulse_simulation_tick_delay_seconds";
+pub(crate) const SIMULATION_TICK_TIMING_BUCKETS: [f64; 13] = [
+    0.001, 0.0025, 0.005, 0.01, 0.02, 0.04, 0.05, 0.075, 0.1, 0.2, 0.5, 1.0, 5.0,
+];
+
 const CLUSTER_COUNT: &str = "pulse_clusters";
 const CLUSTER_PASSES: &str = "pulse_cluster_passes_total";
 const CLUSTER_PASS_DURATION_US: &str = "pulse_cluster_pass_duration_us_total";
@@ -68,6 +74,14 @@ pub fn recovery_capacity(retained: usize, refused: u64) {
     if refused > 0 {
         counter!("pulse_recovery_refused_total").increment(refused);
     }
+}
+
+/// Record the delay from the tick's scheduled start and the work done in that tick.
+pub(crate) fn simulation_tick(delay: Duration, duration: Duration, admitted: usize, pending: i64) {
+    histogram!(SIMULATION_TICK_DELAY).record(delay.as_secs_f64());
+    histogram!(SIMULATION_TICK_DURATION).record(duration.as_secs_f64());
+    gauge!("pulse_admitted_connections").set(admitted as f64);
+    gauge!("pulse_pending_auth_connections").set(pending as f64);
 }
 
 pub fn cluster_lookup_requested() {
@@ -241,6 +255,19 @@ mod tests {
             rendered.contains("pulse_nats_connected 0"),
             "the alert must arm from process start: `{rendered}`"
         );
+    }
+
+    #[test]
+    fn simulation_tick_observations_export_timing_histograms_and_connection_gauges() {
+        let rendered = render_recorded(|| {
+            simulation_tick(Duration::from_millis(10), Duration::from_millis(20), 3, 2)
+        });
+        assert!(rendered.contains("# TYPE pulse_simulation_tick_delay_seconds histogram"));
+        assert!(rendered.contains("pulse_simulation_tick_delay_seconds_sum 0.01"));
+        assert!(rendered.contains("# TYPE pulse_simulation_tick_duration_seconds histogram"));
+        assert!(rendered.contains("pulse_simulation_tick_duration_seconds_sum 0.02"));
+        assert!(rendered.contains("pulse_admitted_connections 3"));
+        assert!(rendered.contains("pulse_pending_auth_connections 2"));
     }
 
     #[test]

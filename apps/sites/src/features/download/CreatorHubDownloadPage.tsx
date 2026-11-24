@@ -1,8 +1,8 @@
 import { useEffect, useRef, useState } from "react";
 
-import { asset } from "@ui/asset";
-import logo from "@ui/atoms/assets/decentraland-logo.svg?url";
-import SitesChrome from "@ui/web/frames/SitesChrome";
+import { creatorHubBannerUrl as banner } from "@dcl/one-ui";
+import logo from "./creator-hub-download-logo.svg?url";
+import SitesLayout from "../components/chrome/SitesLayout";
 
 import type { DownloadOption, OsKey } from "@/data/lib/download/creator-hub.server";
 import { detectMacChip, isTouchMac, preferChip } from "@/data/lib/download/mac-chip";
@@ -18,6 +18,8 @@ const copy = { title: "Decentraland Creator Hub" };
 
 type Props = {
   sid: string;
+  /** The verified wallet, sent as the download Click's `userId`. */
+  userId?: string | null;
   version: string;
   /** The link named a system or a chip. */
   overridden: boolean;
@@ -33,6 +35,7 @@ type Props = {
 /** The Creator Hub download page: the installer for this system and the other builds under it. */
 export default function CreatorHubDownloadPage({
   sid,
+  userId,
   version,
   overridden,
   macChipUnknown,
@@ -42,7 +45,7 @@ export default function CreatorHubDownloadPage({
   secondary,
 }: Props) {
   const [offered, setOffered] = useState({ primary, others: secondary });
-  const onDownload = useCreatorHubDownloadClick(sid);
+  const onDownload = useCreatorHubDownloadClick({ sid, userId }, "download-page");
   const viewed = useRef<string | null>(null);
 
   useEffect(() => {
@@ -63,7 +66,7 @@ export default function CreatorHubDownloadPage({
 
   const main = offered.primary;
   return (
-    <SitesChrome active="create">
+    <SitesLayout active="create">
       <SubNav />
       <main className={styles.root} data-os={main?.osKey} data-arch={main?.arch} data-version={version}>
         <div className={styles.card}>
@@ -82,7 +85,7 @@ export default function CreatorHubDownloadPage({
 
           <img
             className={styles.banner}
-            src={asset("assets/creator-hub-banner.png")}
+            src={banner}
             width={752}
             height={500}
             alt="Decentraland Creator Hub"
@@ -94,6 +97,6 @@ export default function CreatorHubDownloadPage({
           </noscript>
         )}
       </main>
-    </SitesChrome>
+    </SitesLayout>
   );
 }

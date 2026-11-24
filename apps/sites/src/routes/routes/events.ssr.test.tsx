@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { SitesLocaleContext } from "@ui/web/frames/sites-locale";
+import { SitesLocaleContext } from "@dcl/one-ui";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { cleanup, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
@@ -19,7 +19,7 @@ vi.hoisted(() =>
   }),
 );
 
-vi.mock("@ui/web/frames/DclTopBar", () => ({
+vi.mock("@/features/components/chrome/SitesTopBar", () => ({
   default: () => null,
 }));
 vi.mock("@/data/lib/auth/context", () => ({
@@ -234,6 +234,53 @@ describe("the /events route, rendered on the server and hydrated", () => {
         await footer.findByRole(role);
         expect(email.value).toBe(remainingEmail);
       });
+    });
+  });
+
+  describe("and the public catalyst base differs from the page origin", () => {
+    const PAGE = "http://127.0.0.1:5321";
+    const CATALYST = "https://catalyst.example.org";
+    const POSTER = "/events-assets-099ac00/poster";
+
+    beforeEach(() => {
+      Object.assign(window, { __CATALYST_BASE__: CATALYST });
+      vi.mocked(fetchEvents).mockResolvedValue({
+        data: [
+          eventRecord({ id: "local", name: "Local cover", image: `${PAGE}${POSTER}/local.png` }),
+          eventRecord({ id: "catalyst", name: "Catalyst cover", image: `${CATALYST}${POSTER}/catalyst.png` }),
+        ],
+        total: 2,
+      });
+    });
+
+    afterEach(() => {
+      delete (window as Window & { __CATALYST_BASE__?: string }).__CATALYST_BASE__;
+    });
+
+    it("should hand over the request's origin as the page origin, apart from the share origin", async () => {
+      const data = (await loadEventsPage(new Request(`${PAGE}/events`), new RouterContextProvider())) as unknown as {
+        data: { origin: string; pageOrigin: string };
+      };
+      expect(data.data.origin).toBe(CATALYST);
+      expect(data.data.pageOrigin).toBe(PAGE);
+    });
+
+    it("should render an http cover on the page origin as its path and leave an https cover under the catalyst base unchanged", async () => {
+      const data = (await loadEventsPage(new Request(`${PAGE}/events`), new RouterContextProvider())) as unknown as Loaded;
+      const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+      const router = createMemoryRouter(
+        [{ id: "events", path: "/events", Component: Events as never }],
+        { initialEntries: ["/events"], hydrationData: { loaderData: { events: data.data } } },
+      );
+      render(
+        <QueryClientProvider client={client}>
+          <RouterProvider router={router} />
+        </QueryClientProvider>,
+      );
+      const covers = async (name: string) =>
+        (await screen.findAllByRole("link", { name })).map((link) => link.closest("li, article")?.querySelector("img")?.getAttribute("src"));
+      expect(new Set(await covers("Local cover"))).toEqual(new Set([`${POSTER}/local.png`]));
+      expect(new Set(await covers("Catalyst cover"))).toEqual(new Set([`${CATALYST}${POSTER}/catalyst.png`]));
     });
   });
 

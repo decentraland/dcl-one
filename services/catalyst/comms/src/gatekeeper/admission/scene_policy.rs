@@ -405,9 +405,6 @@ pub async fn scene_owner_or_admin_decision(
     signer: &Address,
 ) -> PermissionDecision {
     let place_id = place.place_id();
-    let Ok(scene) = SceneId::parse(place_id) else {
-        return PermissionDecision::refused(NOT_OWNER_OR_ADMIN_MSG);
-    };
     let place_row = match place.get().await {
         Ok(row) => row,
         Err(error) => {
@@ -433,10 +430,10 @@ pub async fn scene_owner_or_admin_decision(
     let scene_ref = match world.as_ref() {
         Some(world) => SceneRef::World {
             world,
-            scene: &scene,
+            place: place.admin_key(),
         },
         None => SceneRef::Genesis {
-            scene: &scene,
+            place: place.admin_key(),
             parcels: &parcels,
         },
     };

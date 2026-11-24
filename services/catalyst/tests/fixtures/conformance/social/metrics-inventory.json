@@ -161,7 +161,7 @@
       "candidate": [
         {
           "path": "services/catalyst/social/src/rpc/context.rs",
-          "line": 129,
+          "line": 131,
           "kind": "gauge",
           "scope": "production_file_inline_test_possible",
           "labels": [
@@ -170,7 +170,7 @@
         },
         {
           "path": "services/catalyst/social/src/rpc/context.rs",
-          "line": 233,
+          "line": 236,
           "kind": "gauge",
           "scope": "production_file_inline_test_possible",
           "labels": [
@@ -202,7 +202,7 @@
       "candidate": [
         {
           "path": "services/catalyst/social/src/rpc/context.rs",
-          "line": 141,
+          "line": 143,
           "kind": "histogram",
           "scope": "production_file_inline_test_possible",
           "labels": [
@@ -223,7 +223,7 @@
       "candidate": [
         {
           "path": "services/catalyst/social/src/rpc/stream.rs",
-          "line": 199,
+          "line": 178,
           "kind": "counter",
           "scope": "production_file_inline_test_possible",
           "labels": [
@@ -233,7 +233,7 @@
         },
         {
           "path": "services/catalyst/social/src/rpc/ws.rs",
-          "line": 215,
+          "line": 208,
           "kind": "counter",
           "scope": "production_file_inline_test_possible",
           "labels": [
@@ -294,14 +294,14 @@
       "candidate": [
         {
           "path": "services/catalyst/social/src/rpc/context.rs",
-          "line": 124,
+          "line": 126,
           "kind": "gauge",
           "scope": "production_file_inline_test_possible",
           "labels": []
         },
         {
           "path": "services/catalyst/social/src/rpc/context.rs",
-          "line": 235,
+          "line": 238,
           "kind": "gauge",
           "scope": "production_file_inline_test_possible",
           "labels": []
@@ -324,7 +324,7 @@
       "candidate": [
         {
           "path": "services/catalyst/social/src/rpc/context.rs",
-          "line": 224,
+          "line": 227,
           "kind": "counter",
           "scope": "production_file_inline_test_possible",
           "labels": []
@@ -368,14 +368,14 @@
         },
         {
           "path": "services/catalyst/social/src/rpc/ws.rs",
-          "line": 155,
+          "line": 154,
           "kind": "counter",
           "scope": "production_file_inline_test_possible",
           "labels": []
         },
         {
           "path": "services/catalyst/social/src/rpc/ws.rs",
-          "line": 156,
+          "line": 155,
           "kind": "counter",
           "scope": "production_file_inline_test_possible",
           "labels": []
@@ -432,7 +432,7 @@
       "candidate": [
         {
           "path": "services/catalyst/social/src/rpc/context.rs",
-          "line": 136,
+          "line": 138,
           "kind": "counter",
           "scope": "production_file_inline_test_possible",
           "labels": [
@@ -441,7 +441,7 @@
         },
         {
           "path": "services/catalyst/social/src/rpc/ws.rs",
-          "line": 83,
+          "line": 82,
           "kind": "counter",
           "scope": "production_file_inline_test_possible",
           "labels": [
@@ -484,7 +484,7 @@
       "candidate": [
         {
           "path": "services/catalyst/social/src/rpc/ws.rs",
-          "line": 221,
+          "line": 214,
           "kind": "counter",
           "scope": "production_file_inline_test_possible",
           "labels": [
@@ -546,7 +546,7 @@
       "candidate": [
         {
           "path": "services/catalyst/social/src/rpc/context.rs",
-          "line": 138,
+          "line": 140,
           "kind": "histogram",
           "scope": "production_file_inline_test_possible",
           "labels": []
@@ -699,7 +699,7 @@
       "candidate": [
         {
           "path": "services/catalyst/social/src/rpc/stream.rs",
-          "line": 709,
+          "line": 700,
           "kind": "counter",
           "scope": "production_file_inline_test_possible",
           "labels": [
@@ -708,7 +708,7 @@
         },
         {
           "path": "services/catalyst/social/src/rpc/stream.rs",
-          "line": 719,
+          "line": 710,
           "kind": "counter",
           "scope": "production_file_inline_test_possible",
           "labels": [
@@ -728,7 +728,7 @@
       "candidate": [
         {
           "path": "services/catalyst/social/src/rpc/stream.rs",
-          "line": 693,
+          "line": 684,
           "kind": "counter",
           "scope": "production_file_inline_test_possible",
           "labels": [
@@ -757,7 +757,7 @@
         },
         {
           "path": "services/catalyst/social/src/rpc/stream.rs",
-          "line": 501,
+          "line": 492,
           "kind": "counter",
           "scope": "production_file_inline_test_possible",
           "labels": [
@@ -766,7 +766,7 @@
         },
         {
           "path": "services/catalyst/social/src/rpc/stream.rs",
-          "line": 507,
+          "line": 498,
           "kind": "counter",
           "scope": "production_file_inline_test_possible",
           "labels": [
@@ -786,7 +786,7 @@
       "candidate": [
         {
           "path": "services/catalyst/social/src/rpc/stream.rs",
-          "line": 540,
+          "line": 531,
           "kind": "counter",
           "scope": "production_file_inline_test_possible",
           "labels": [
@@ -795,7 +795,7 @@
         },
         {
           "path": "services/catalyst/social/src/rpc/stream.rs",
-          "line": 609,
+          "line": 600,
           "kind": "counter",
           "scope": "production_file_inline_test_possible",
           "labels": [
@@ -815,7 +815,7 @@
       "candidate": [
         {
           "path": "services/catalyst/social/src/rpc/stream.rs",
-          "line": 256,
+          "line": 247,
           "kind": "counter",
           "scope": "production_file_inline_test_possible",
           "labels": [
@@ -887,7 +887,7 @@
       "candidate": [
         {
           "path": "services/catalyst/comms/src/metrics.rs",
-          "line": 162,
+          "line": 173,
           "kind": "histogram",
           "scope": "production_file_inline_test_possible",
           "labels": [
@@ -946,7 +946,7 @@
       "candidate": [
         {
           "path": "services/catalyst/social/src/rpc/context.rs",
-          "line": 316,
+          "line": 319,
           "kind": "gauge",
           "scope": "production_file_inline_test_possible",
           "labels": []
@@ -969,7 +969,7 @@
       "candidate": [
         {
           "path": "services/catalyst/social/src/rpc/context.rs",
-          "line": 317,
+          "line": 320,
           "kind": "gauge",
           "scope": "production_file_inline_test_possible",
           "labels": []
@@ -1026,7 +1026,7 @@
       "candidate": [
         {
           "path": "services/catalyst/social/src/rpc/service/mod.rs",
-          "line": 187,
+          "line": 188,
           "kind": "counter",
           "scope": "production_file_inline_test_possible",
           "labels": [

@@ -2,13 +2,24 @@
 .coverImage { object-fit: cover; max-width: 100%; }
 .cover :focus-visible { outline: 2px solid var(--ui-accent); outline-offset: 3px; }
 
+/* Pinned to the viewport while the form scrolls, as the production editor's fixed page background. */
 .authoring[data-editor] {
+  box-sizing: border-box;
   min-height: 100vh;
   padding: 98px 100px var(--dcl-space-32);
   background:
     radial-gradient(ellipse at 50% 80%, rgb(105 31 169 / 30%), transparent 60%),
     radial-gradient(52.86% 115.71% at 9.01% 25.79%, #7434b1 0%, #481c6c 37.11%, #2b1040 100%);
   background-attachment: fixed;
+}
+
+/* The editor's failed-read notice, with its retry under it. */
+.loadState {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--dcl-space-16);
+  padding: var(--dcl-space-24) 20px;
 }
 
 .authoring .editorHeader,
@@ -213,6 +224,20 @@
   opacity: 1;
 }
 
+/* The featured-asset search reads as one more field of the form, not a boxed group. */
+.authoring .picker { padding: 0; border: 0; }
+.authoring .picker > legend {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  overflow: hidden;
+  clip-path: inset(50%);
+}
+.authoring .picker { position: relative; }
+.authoring .associations { gap: var(--dcl-space-24); }
+.authoring .associations .fieldLabel { flex: initial; }
+
 .authoring .field:hover,
 .authoring .field:focus-visible {
   border-color: var(--dcl-neutrals-white);
@@ -244,14 +269,29 @@
 }
 
 .reviewBar svg { flex: none; }
-.cancel { padding: var(--dcl-space-12); color: inherit; font-weight: 600; text-decoration: none; }
-
-.reviewNotice {
-  margin: 0;
-  padding: var(--dcl-space-12);
+.delete {
+  display: flex;
+  align-items: center;
+  gap: var(--dcl-space-8);
+  margin-inline-end: auto;
+  height: 48px;
+  padding: var(--dcl-space-8) var(--dcl-space-12);
+  border: 0;
   border-radius: var(--dcl-radius-md);
-  background: var(--dcl-transparencies-white-10);
+  background: transparent;
+  color: var(--dcl-action-primary);
+  cursor: pointer;
+  font: inherit;
+  font-size: 14px;
+  font-weight: 600;
+  letter-spacing: 0.48px;
+  text-transform: uppercase;
 }
+
+.delete:hover { background: var(--dcl-feedback-error); color: var(--dcl-neutrals-white); }
+.delete:focus-visible { outline: 2px solid var(--dcl-action-primary); outline-offset: 2px; }
+
+.cancel { padding: var(--dcl-space-12); color: inherit; font-weight: 600; text-decoration: none; }
 
 .coverField,
 .dropZone {
@@ -328,6 +368,11 @@
   .sections h2 { font-size: 20px; line-height: 1.6; }
   .authoring .dropZone { aspect-ratio: auto; padding: var(--dcl-space-48) var(--dcl-space-12); }
   .authoring .dropZone strong { font-size: 16px; }
+}
+
+@media (max-width: 599px) {
+  .formActions { flex-wrap: wrap; }
+  .delete { order: 1; flex-basis: 100%; justify-content: center; margin-inline-end: 0; }
 }
 
 @media (max-width: 990px) {

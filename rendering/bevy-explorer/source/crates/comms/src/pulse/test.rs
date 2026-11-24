@@ -1478,7 +1478,7 @@ fn a_replaced_subject_leaves_no_resync_pending() {
 /// Once its last subject has left, a wallet is no longer held: it comes back as a first sighting,
 /// and a reset does not report it.
 #[test]
-fn a_wallet_that_left_is_no_longer_held() {
+fn reconnect_snapshot_for_a_wallet_that_left_is_discontinuous() {
     let mut decoder = PulseDecoder::new(PulseParcelGrid::default());
     decoder.handle(joined_home(SUBJECT, WALLET));
     decoder.handle(joined_home(SUBJECT + 1, OTHER));
@@ -1490,10 +1490,7 @@ fn a_wallet_that_left_is_no_longer_held() {
             events.as_slice(),
             [
                 PulseEvent::Joined { .. },
-                PulseEvent::Movement {
-                    teleport: false,
-                    ..
-                }
+                PulseEvent::Movement { teleport: true, .. }
             ]
         ),
         "{events:?}"

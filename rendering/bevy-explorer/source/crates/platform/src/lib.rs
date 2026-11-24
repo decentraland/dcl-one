@@ -46,11 +46,11 @@ pub fn default_color_grading() -> ColorGrading {
     }
 }
 
-/// The bloom's scatter setting, 0.3, as the lerp factor towards the coarser mip on each
+/// The bloom's scatter setting, 0.5, as the lerp factor towards the coarser mip on each
 /// upsample: `lerp(0.05, 0.95, scatter)`.
-pub const BLOOM_SCATTER: f32 = 0.05 + 0.9 * 0.3;
+pub const BLOOM_SCATTER: f32 = 0.05 + 0.9 * 0.5;
 
-/// The bloom of the High setting: threshold 1, intensity 1, scatter 0.3.
+/// The bloom of the High setting: threshold 1, intensity 1, scatter 0.5.
 ///
 /// A scatter bloom upsamples with `lerp(fine, coarse, SCATTER)` folded over the mip chain and
 /// adds the result once, so mip `i` weighs `(1 - s) s^i`. bevy's `Additive` mode adds each mip

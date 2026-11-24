@@ -102,6 +102,8 @@ pub use private::{
 };
 mod community;
 use community::community_status;
+#[cfg(test)]
+pub(super) use community::community_voice_action;
 pub use community::{
     BulkCommunityStatusBody, CommunityVoiceChatBody, CommunityVoiceChatStatusResponse,
     EndCommunityVoiceChatBody, MuteSpeakerBody, check_user_community_status,

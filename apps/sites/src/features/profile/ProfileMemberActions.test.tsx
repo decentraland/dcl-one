@@ -95,7 +95,7 @@ describe("a member's header actions, signed out", () => {
 
     await user.click(button("Add friend"));
 
-    expect(net.openSignIn).toHaveBeenCalledWith({ inPlace: true });
+    expect(net.openSignIn).toHaveBeenCalledWith();
     expect(await openMenu(user)).toEqual(["Share"]);
     expect(net.fetchFriendship).not.toHaveBeenCalled();
     expect(net.fetchBlocking).not.toHaveBeenCalled();

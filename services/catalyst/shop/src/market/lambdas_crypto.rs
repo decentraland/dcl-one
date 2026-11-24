@@ -223,7 +223,10 @@ fn unrecoverable_link(chain: &[AuthLink]) -> Option<&AuthLink> {
     chain.iter().skip(1).find(|link| {
         let signature = link.signature.as_deref().unwrap_or_default();
         match link.link_type {
-            AuthLinkType::SIGNER => false,
+            // Refused by the schema before any signature is read.
+            AuthLinkType::SIGNER
+            | AuthLinkType::EcdsaScopedEphemeral
+            | AuthLinkType::EcdsaEip1654ScopedEphemeral => false,
             AuthLinkType::EcdsaEphemeral => {
                 split_ephemeral_payload(&link.payload).is_ok_and(|(message, _, _)| {
                     recover_address(message.as_bytes(), signature).is_err()
@@ -511,6 +514,32 @@ mod tests {
             v,
             json!({ "error": "Bad request", "message": "Expected 'signedMessage' property to be set" })
         );
+    }
+
+    /// A scoped login (ADR-162) is not one of the schema's link types.
+    #[tokio::test]
+    async fn a_scoped_login_is_refused_by_the_schema() {
+        let (root, ephemeral) = (
+            crate::auth::Wallet::random().unwrap(),
+            crate::auth::Wallet::random().unwrap(),
+        );
+        let grants = [crate::auth::scoped_login::ScopedLoginGrant {
+            service: "lambdas".into(),
+            operation: "*".into(),
+            resource: None,
+        }];
+        let chain = crate::auth::create_scoped_auth_chain(
+            &root,
+            &ephemeral,
+            4_000_000_000_000,
+            &grants,
+            "hello",
+        )
+        .unwrap();
+        let (status, v) = post(json!({ "authChain": chain, "signedMessage": "hello" })).await;
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+        assert_eq!(v["data"][0]["instancePath"], "/authChain/1/type", "{v}");
+        assert_eq!(v["data"][0]["keyword"], "enum", "{v}");
     }
 
     /// `LP-28-single-signer-match.json`, `LP-28-single-signer-other.json`.

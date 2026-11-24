@@ -3,7 +3,9 @@
 // and took no sale kind; here the server's PurchaseOffer decides which methods exist (SHOP.md payment
 // table), balances only decide each option's state, and nothing ever moves a buyer to another method:
 // short credits mean an explicit top-up, a credits outage keeps credits as the (unavailable) main
-// action, and a restricted line never shows a credit price, a top-up or a credits+MANA option.
+// action, and a restricted line never shows a credit price, a top-up or a credits+MANA option. A NAME
+// registration, a USD-pegged listing or any line the server does not mark `splittable` never shows a credits+MANA
+// option either: the credits node authorizes a Credits part only for terms that fix the MANA the sale moves.
 
 import { assetKey } from "../model/asset";
 import {
@@ -44,8 +46,11 @@ export type OptionState =
    */
   | { kind: "unavailable"; missing: MissingFact | null; withheld?: boolean };
 
-/** Credits first, then MANA for the remainder: only ever inside the MANA option of an eligible line. */
-export type MixedPayment = { creditsCents: UsdCents; credits: number; manaWei: ManaWei };
+/**
+ * Credits first, then MANA for the remainder: only ever inside the MANA option of an eligible line. `priceCents` is the
+ * line's whole Credits quote, the price the credit is authorized against; `creditsCents` the part Credits pay.
+ */
+export type MixedPayment = { priceCents: UsdCents; creditsCents: UsdCents; credits: number; manaWei: ManaWei };
 
 export type PaymentOptionView = {
   method: PaymentMethod;
@@ -84,26 +89,26 @@ export type PaymentPresentation = {
   inconsistencies: Inconsistency[];
 };
 
-/**
- * Whether Credits and MANA may pay one line together (upstream's 'combined' rail: the MANA option's `mixed`). Off: this
- * deployment's credits node authorizes a line only at its whole quoted price and reserves that whole charge, so the
- * partial credit the split asks for is refused ("Price changed", or Insufficient when the balance is short) and the split
- * could never settle. It is offered again once the node authorizes a partial credit.
- */
-export const SPLIT_PAYMENT = false;
+// Tests of the split turn it on file-wide; nothing else may. Every render passes its own rollout (`PaymentContext.split`),
+// so no request or page can turn it on for another.
+let splitForTests = false;
 
-let splitOffered = SPLIT_PAYMENT;
-
-/** Turns the split on or off (tests of the split turn it on); returns the undo. */
-export function setSplitPayment(on: boolean): () => void {
-  const previous = splitOffered;
-  splitOffered = on;
+/** Tests only: offers the split as if every render's rollout were on. Returns the undo. */
+export function setSplitPaymentForTests(on: boolean): () => void {
+  const previous = splitForTests;
+  splitForTests = on;
   return () => {
-    splitOffered = previous;
+    splitForTests = previous;
   };
 }
 
 export type PaymentContext = {
+  /**
+   * Whether Credits and MANA may pay one line together here (upstream's 'combined' rail: the MANA option's `mixed`): the
+   * `dapps-shop-credits-mana-split` rollout as the render reading it holds the flags (discovery/lib/rolloutFlags.ts).
+   * Offered only with it on AND an offer the node marks `splittable`; absent, it is off.
+   */
+  split?: boolean;
   /** The buyer's spendable credit balance, when known. */
   creditsBalance?: UsdCents | null;
   /** The connected wallet's MANA on the settlement chain, when known. */
@@ -204,7 +209,8 @@ export function presentPayment(offer: PurchaseOffer, session: Session, ctx: Paym
 
   const manaOption = options.find((o) => o.method === "mana");
   const creditsQuote = options.find((o) => o.method === "credits")?.quote;
-  if (!manaOnly && splitOffered && manaOption?.quote?.method === "mana" && creditsQuote?.method === "credits") {
+  const splitOffered = ctx.split === true || splitForTests;
+  if (!manaOnly && splitOffered && offer.splittable === true && manaOption?.quote?.method === "mana" && creditsQuote?.method === "credits") {
     manaOption.mixed = mixedPayment(creditsQuote.quoted, manaOption.quote.amount, ctx);
   }
 
@@ -263,5 +269,5 @@ function mixedPayment(priceCents: UsdCents, priceWei: ManaWei, ctx: PaymentConte
   const manaWei = remainder === null ? null : manaForRemainder(remainder, priceCents, priceWei);
   if (manaWei === null) return null;
   if (ctx.manaBalance != null && ctx.manaBalance < manaWei) return null;
-  return { creditsCents: leg, credits: creditsFloor(leg), manaWei };
+  return { priceCents, creditsCents: leg, credits: creditsFloor(leg), manaWei };
 }

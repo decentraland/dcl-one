@@ -1,16 +1,18 @@
-import macosBraveStepOne from "@dcl/one-ui/apps/sites/assets/download-steps/macos-brave-step1.webp";
-import macosChromeStepOne from "@dcl/one-ui/apps/sites/assets/download-steps/macos-chrome-step1.webp";
-import macosFirefoxStepOne from "@dcl/one-ui/apps/sites/assets/download-steps/macos-firefox-step1.webp";
-import macosOperaStepOne from "@dcl/one-ui/apps/sites/assets/download-steps/macos-opera-step1.webp";
-import macosSafariStepOne from "@dcl/one-ui/apps/sites/assets/download-steps/macos-safari-step1.webp";
-import macosStepTwo from "@dcl/one-ui/apps/sites/assets/download-steps/macos-step2.webp";
-import stepThree from "@dcl/one-ui/apps/sites/assets/download-steps/step3.webp";
-import windowsBraveStepOne from "@dcl/one-ui/apps/sites/assets/download-steps/windows-brave-step1.webp";
-import windowsChromeStepOne from "@dcl/one-ui/apps/sites/assets/download-steps/windows-chrome-step1.webp";
-import windowsEdgeStepOne from "@dcl/one-ui/apps/sites/assets/download-steps/windows-edge-step1.webp";
-import windowsFirefoxStepOne from "@dcl/one-ui/apps/sites/assets/download-steps/windows-firefox-step1.webp";
-import windowsOperaStepOne from "@dcl/one-ui/apps/sites/assets/download-steps/windows-opera-step1.webp";
-import windowsStepTwo from "@dcl/one-ui/apps/sites/assets/download-steps/windows-step2.webp";
+import {
+  downloadStepsMacosBraveStep1Url as macosBraveStepOne,
+  downloadStepsMacosChromeStep1Url as macosChromeStepOne,
+  downloadStepsMacosFirefoxStep1Url as macosFirefoxStepOne,
+  downloadStepsMacosOperaStep1Url as macosOperaStepOne,
+  downloadStepsMacosSafariStep1Url as macosSafariStepOne,
+  downloadStepsMacosStep2Url as macosStepTwo,
+  downloadStepsStep3Url as stepThree,
+  downloadStepsWindowsBraveStep1Url as windowsBraveStepOne,
+  downloadStepsWindowsChromeStep1Url as windowsChromeStepOne,
+  downloadStepsWindowsEdgeStep1Url as windowsEdgeStepOne,
+  downloadStepsWindowsFirefoxStep1Url as windowsFirefoxStepOne,
+  downloadStepsWindowsOperaStep1Url as windowsOperaStepOne,
+  downloadStepsWindowsStep2Url as windowsStepTwo,
+} from "@dcl/one-ui";
 
 type DownloadOs = "windows" | "macos";
 

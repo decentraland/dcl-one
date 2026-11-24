@@ -2,7 +2,10 @@ import { act, fireEvent, render, screen, waitFor, within } from "@testing-librar
 import { beforeEach, describe, expect, it } from "vitest";
 
 import { marketplaceOn } from "../market/testing-flags";
+import { CHAIN } from "@shop/model/chain";
 import { BOOK } from "@shop/payment/fixtures";
+import { requireContracts } from "./chain/contracts";
+import { relayedApproval } from "./fakes";
 import { createDemo, DemoShell, type DemoScenario } from "./demo";
 import SettingsPage from "./SettingsPage";
 
@@ -81,6 +84,32 @@ describe("the settings page (authorizations)", () => {
     expect(demo.wallet.chainId).toBe(137);
     await act(async () => fireEvent.click(within(alert).getByRole("button", { name: "Switch to Ethereum" })));
     expect(demo.wallet.chainId).toBe(1);
+  });
+
+  it("never offers to grant the CreditsManager: it has no row while it holds no allowance", async () => {
+    renderSettings();
+    await waitFor(() => expect(rowOf(/CollectionStore/, "Polygon").textContent).toContain("Not authorized"));
+    expect(screen.getAllByTestId("authorization").some((r) => /CreditsManager/.test(r.textContent ?? ""))).toBe(false);
+  });
+
+  it("an allowance the CreditsManager holds from before is listed, and its switch only revokes it", async () => {
+    const manager = requireContracts(CHAIN.POLYGON).creditsManager!.address.toLowerCase();
+    const demo = createDemo({ session: "web3", handlers: { nfts: () => ({ data: [] }) } });
+    demo.chain.allowances.set(`137:${BOOK.buyer}:${manager}`, 10n ** 30n);
+    render(
+      <DemoShell demo={demo} path="/shop/settings">
+        <SettingsPage />
+      </DemoShell>,
+    );
+    const row = await waitFor(() => {
+      const r = rowOf(/CreditsManager contract/, "Polygon");
+      expect(r.textContent).toContain("Authorized");
+      return r;
+    });
+    expect(row.textContent).toContain("Purchases with Credits and MANA approve it only what each one needs");
+    await act(async () => fireEvent.click(within(row).getByRole("switch")));
+    await waitFor(() => expect(screen.getAllByTestId("authorization").some((r) => /CreditsManager contract/.test(r.textContent ?? ""))).toBe(false));
+    expect(demo.relay.posts.map(relayedApproval)).toEqual([{ owner: BOOK.buyer.toLowerCase(), spender: manager, amount: 0n }]);
   });
 
   it("a managed wallet sees them read-only", async () => {

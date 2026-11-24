@@ -4,7 +4,7 @@ import userEvent from '@testing-library/user-event'
 import { Chat } from '../../features/chat/Chat'
 import { SettingsPanel } from '../../features/settings/SettingsPanel'
 import type { ChatLine, ChatState } from '../../features/session/useEngineSession'
-import { TRANSLATE_URL, languageFromSettings, matchLanguage, resetTranslations, setAutoTranslate, setAutoTranslateDefault, splitForTranslation, systemLanguage, translateText } from '@explorer-core/features/chat/translation'
+import { TRANSLATE_URL, hasTranslatableText, languageFromSettings, matchLanguage, resetTranslations, setAutoTranslate, setAutoTranslateDefault, splitForTranslation, systemLanguage, translateText } from '@explorer-core/features/chat/translation'
 import { PREF, getPref } from '@explorer-core/lib/prefs'
 import { pingModeFor, resetPingPrefs, setPingDefault, setPingMode } from '../../features/chat/ping'
 import { fakeProfileState, fakeSession } from '../harness'
@@ -60,6 +60,30 @@ describe('splitting a message for translation', () => {
     const parts = splitForTranslation('hola @Ana 😀 ven a 10,20 https://x.org/a ok')
     expect(parts.filter((p) => p.translate).map((p) => p.value)).toEqual(['hola ', ' ', ' ven a ', ' ', ' ok'].filter((v) => /\p{L}/u.test(v)))
     expect(parts.map((p) => p.value).join('')).toBe('hola @Ana 😀 ven a 10,20 https://x.org/a ok')
+  })
+
+  it('keeps bold and italic tags back, around the words they style', () => {
+    expect(splitForTranslation('<b>hola</b> a <i>todos</i> <br>')).toEqual([
+      { value: '<b>', translate: false },
+      { value: 'hola', translate: true },
+      { value: '</b>', translate: false },
+      { value: ' a ', translate: true },
+      { value: '<i>', translate: false },
+      { value: 'todos', translate: true },
+      { value: '</i>', translate: false },
+      { value: ' <br>', translate: true }
+    ])
+  })
+
+  it('keeps back a tag shown as written, which alone is nothing to translate', () => {
+    expect(splitForTranslation('hola amigo</b> <b></b>')).toEqual([
+      { value: 'hola amigo', translate: true },
+      { value: '</b>', translate: false },
+      { value: ' ', translate: false },
+      { value: '<b>', translate: false },
+      { value: '</b>', translate: false }
+    ])
+    for (const text of ['</b>', '<b></b>', '<i x>']) expect(hasTranslatableText(text)).toBe(false)
   })
 
   it('a message of emoji and numbers has nothing to translate', async () => {

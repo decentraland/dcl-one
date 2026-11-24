@@ -13,10 +13,9 @@
 //! as an uncorrelated subquery; only a page past the end (or `limit` 0) falls
 //! back to a bare count.
 //!
-//! World galleries: the old service paged `PLACES_API_URL/api/places?names=`
-//! with a 5-minute memo; here it is a read of `explore.place_indexed` with
-//! the places listing's default predicates (`disabled IS FALSE` and the
-//! `show_in_places` clause of `explore::places::query`), memoised the same.
+//! World galleries resolve enabled scenes through `explore.place_indexed`,
+//! including scenes hidden from listings. The configured cache bounds and
+//! expiry apply to these world-name lookups.
 
 use std::time::Duration;
 
@@ -851,10 +850,11 @@ impl Database {
             .await
     }
 
-    /// The place ids of a world name (`name.dcl.eth`), the places listing's
-    /// `?names=` answer as a local read, memoised with the configured TTL:
-    /// the world's scenes, not its catalogue row (`id = lower(world_name)`),
-    /// which the places API leaves out of that answer too.
+    /// The enabled scene ids of a world name (`name.dcl.eth`), irrespective
+    /// of listing visibility, memoised with the configured TTL. Durable scene
+    /// identities govern eligibility through their live deployment binding;
+    /// eligible catalogue aliases retain their original spelling. The world's
+    /// aggregate catalogue row is not a scene.
     pub async fn world_place_ids(&self, world_name: &str) -> Result<Vec<String>, sqlx::Error> {
         // Cache identity follows the exact request, independently of the
         // case-insensitive catalogue lookup.
@@ -863,11 +863,42 @@ impl Database {
             return Ok(ids);
         }
         let ids: Vec<String> = sqlx::query_scalar(
-            "SELECT id FROM explore.place_indexed \
-             WHERE disabled IS FALSE AND world IS TRUE AND lower(world_name) = $1 \
-               AND id <> lower(world_name) \
-               AND (world IS FALSE OR COALESCE(NULLIF(raw->'show_in_places', 'null'::jsonb) = 'true'::jsonb, true) IS TRUE) \
-             ORDER BY id",
+            r#"WITH catalogue AS (
+                SELECT c.id,
+                       c.disabled OR COALESCE(m.disabled, false) AS disabled,
+                       CASE WHEN pg_input_is_valid(regexp_replace(c.id, '^urn:uuid:', '', 'i'), 'uuid')
+                            THEN regexp_replace(c.id, '^urn:uuid:', '', 'i')::uuid END AS identity
+                FROM explore.place_indexed c
+                LEFT JOIN explore.place_moderation m ON m.place_id = c.id
+                WHERE c.world IS TRUE AND lower(c.world_name) = $1
+            ), eligible_scenes AS (
+                SELECT p.identity
+                FROM explore.world_scene_place p
+                JOIN worlds.world_scenes s
+                  ON s.world_name = p.world_name AND s.entity_id = p.entity_id
+                JOIN worlds.worlds w ON w.name = p.world_name
+                LEFT JOIN explore.place_moderation m ON m.place_id = p.identity::text
+                LEFT JOIN explore.place_moderation wm ON wm.place_id = w.name
+                WHERE p.world_name = $1 AND p.active AND w.blocked_since IS NULL
+                  AND NOT COALESCE(m.disabled, false) AND NOT COALESCE(wm.disabled, false)
+                  AND NOT EXISTS (
+                      SELECT 1 FROM catalogue c
+                      WHERE c.disabled AND (c.id = $1 OR c.identity = p.identity)
+                  )
+            )
+            SELECT c.id FROM catalogue c
+            WHERE NOT c.disabled AND c.id <> $1
+              AND (
+                  NOT EXISTS (
+                      SELECT 1 FROM explore.world_scene_place p WHERE p.identity = c.identity
+                  )
+                  OR EXISTS (
+                      SELECT 1 FROM eligible_scenes e WHERE e.identity = c.identity
+                  )
+              )
+            UNION
+            SELECT identity::text AS id FROM eligible_scenes
+            ORDER BY id"#,
         )
         .bind(world_name.to_lowercase())
         .fetch_all(&self.pool)

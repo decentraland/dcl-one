@@ -2,10 +2,17 @@
 import { useEffect, useEffectEvent, useMemo, useRef, useState, type ChangeEvent, type ReactNode } from "react";
 import { useLocation, useNavigate, useSearchParams } from "react-router";
 
-import { Button, CheckboxLabel, InputWebCreatorTools, WebSelect, WebTextarea } from "@dcl/one-ui";
-import { AnimatedBackground } from "@dcl/one-ui/apps/sites/shared/AnimatedBackground/AnimatedBackground";
-import { GeneralClose, GeneralDecentralandColor } from "@dcl/one-ui/foundations/icons";
-import SitesChrome from "@ui/web/frames/SitesChrome";
+import {
+  AnimatedBackground,
+  Button,
+  CheckboxLabel,
+  GeneralClose,
+  GeneralDecentralandColor,
+  InputWebCreatorTools,
+  WebSelect,
+  WebTextarea,
+} from "@dcl/one-ui";
+import SitesLayout from "../../components/chrome/SitesLayout";
 
 import { track, type TrackContext } from "@/core/lib/telemetry/track";
 import { useAuth } from "@/data/lib/auth/context";
@@ -197,6 +204,16 @@ export default function ReportForm({ trackCtx }: { trackCtx: TrackContext }) {
   const [submitting, setSubmitting] = useState(false);
   const [failure, setFailure] = useState<string | null>(null);
 
+  const [draftSaveFailed, setDraftSaveFailed] = useState(false);
+  const [confirmingSignIn, setConfirmingSignIn] = useState(false);
+  const signInTrigger = useRef<HTMLElement | null>(null);
+  const resumeSignIn = useRef<(() => void) | null>(null);
+  const cancelSignIn = useRef<HTMLButtonElement>(null);
+  const discardConfirmed = useRef(false);
+  useEffect(() => {
+    if (confirmingSignIn) cancelSignIn.current?.focus();
+  }, [confirmingSignIn]);
+
   const lastReportedParam = useRef(reportedParam);
   useEffect(() => {
     if (lastReportedParam.current === reportedParam) return;
@@ -217,11 +234,41 @@ export default function ReportForm({ trackCtx }: { trackCtx: TrackContext }) {
     restoreSignInDraft();
   }, []);
 
-  const saveBrowserDraft = useEffectEvent((destination: string) => {
+  const saveBrowserDraft = useEffectEvent((destination: string, resume: () => void) => {
     if (destination !== returnTo) return;
-    saveSignInDraft(returnTo, { reportedAddress, reason, description, comments, hadEvidence: reattachEvidence || evidence.length > 0 });
+    if (evidence.length && !discardConfirmed.current) {
+      signInTrigger.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+      resumeSignIn.current = resume;
+      setConfirmingSignIn(true);
+      return false;
+    }
+    const hasText = Boolean(reportedAddress !== reportedParam || reason || description || comments);
+    const hadEvidence = reattachEvidence || evidence.length > 0;
+    if (!hasText && !hadEvidence) return;
+    if (!saveSignInDraft(returnTo, { reportedAddress, reason, description, comments, hadEvidence }) && hasText) {
+      setDraftSaveFailed(true);
+      return false;
+    }
   });
-  useEffect(() => onBeforeBrowserSignIn((destination) => saveBrowserDraft(destination)), []);
+  useEffect(() => onBeforeBrowserSignIn((destination, resume) => saveBrowserDraft(destination, resume)), []);
+
+  function keepEditing() {
+    resumeSignIn.current = null;
+    setConfirmingSignIn(false);
+    signInTrigger.current?.focus();
+  }
+
+  function continueSignIn() {
+    const resume = resumeSignIn.current;
+    resumeSignIn.current = null;
+    setConfirmingSignIn(false);
+    discardConfirmed.current = true;
+    try {
+      resume?.();
+    } finally {
+      discardConfirmed.current = false;
+    }
+  }
 
   const [startCtx] = useState(trackCtx);
   useEffect(() => {
@@ -289,7 +336,7 @@ export default function ReportForm({ trackCtx }: { trackCtx: TrackContext }) {
   };
 
   return (
-    <SitesChrome active="legal" overlayNav>
+    <SitesLayout active="legal" overlayNav>
       <main className={styles.page}>
         <AnimatedBackground />
         <div className={styles.content}>
@@ -329,6 +376,23 @@ export default function ReportForm({ trackCtx }: { trackCtx: TrackContext }) {
                   Sign In
                 </Button>
               </div>
+            )}
+
+            {confirmingSignIn && (
+              <div className={`${styles.signIn} ${styles.signInNotice}`}>
+                <span id="report-leave-evidence" role="status">Opening the sign-in page clears the attached files. You’ll need to attach them again after signing in.</span>
+                <div className={styles.signInActions}>
+                  <Button ref={cancelSignIn} aria-describedby="report-leave-evidence" variant="text" size="sm" className={styles.signInButton} onClick={keepEditing}>
+                    Cancel
+                  </Button>
+                  <Button variant="secondary" size="sm" onClick={continueSignIn}>Continue to sign in</Button>
+                </div>
+              </div>
+            )}
+            {draftSaveFailed && (
+              <p className={styles.error} role="alert">
+                Your browser couldn’t save your draft. Copy your text and clear the form before signing in.
+              </p>
             )}
 
             <Field number={2} label="Reported User Wallet" helper="This is the wallet address of the user you are reporting.">
@@ -471,6 +535,6 @@ export default function ReportForm({ trackCtx }: { trackCtx: TrackContext }) {
           </p>
         </div>
       </main>
-    </SitesChrome>
+    </SitesLayout>
   );
 }

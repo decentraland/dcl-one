@@ -4,10 +4,21 @@ use super::types::*;
 
 pub(super) fn should_validate_face_thumbnail(
     entity: &Entity,
-    files: &HashMap<String, bytes::Bytes>,
+    files: &HashMap<String, UploadedFile>,
+) -> bool {
+    validates_up_to_adr290_optionality(entity, files, adr_timestamps::ADR_45)
+}
+
+/// Upstream `validateUpToADR290OptionalityTimestamp(from, ..)`: from `from`
+/// until ADR-290 is optional, then in the optional window only for profiles
+/// that still carry content, uploads or snapshots.
+pub(super) fn validates_up_to_adr290_optionality(
+    entity: &Entity,
+    files: &HashMap<String, UploadedFile>,
+    from: Timestamp,
 ) -> bool {
     let ts = entity.timestamp;
-    if (adr_timestamps::ADR_45..adr_timestamps::ADR_290_OPTIONAL).contains(&ts) {
+    if (from..adr_timestamps::ADR_290_OPTIONAL).contains(&ts) {
         return true;
     }
     if (adr_timestamps::ADR_290_OPTIONAL..adr_timestamps::ADR_290_REJECTED).contains(&ts) {
@@ -94,8 +105,8 @@ pub(super) fn validate_profile_emote_urns(
                         }
                     }
 
-                    if let Some(slot) = emote.get("slot").and_then(|s| s.as_i64())
-                        && !(0..=9).contains(&slot)
+                    if let Some(slot) = emote.get("slot").and_then(|s| s.as_f64())
+                        && !(0.0..=9.0).contains(&slot)
                     {
                         return Err(format!(
                             "The slot {slot} of the emote must be a number between \
@@ -109,12 +120,30 @@ pub(super) fn validate_profile_emote_urns(
     Ok(())
 }
 
+/// A slot's identity in a uniqueness set: `1`, `1.0` and `1e0` are one slot.
+pub(super) fn slot_key(slot: f64) -> u64 {
+    (slot + 0.0).to_bits()
+}
+
 /// Whether `avatar.snapshots` is truthy as the reference reads it
 /// (`if (avatar.avatar?.snapshots)`): absent, `null`, `false`, `0` and `""`
 /// are not snapshots, so a profile that serializes `"snapshots": null` passes.
 pub(super) fn avatar_has_snapshots(avatar: &serde_json::Value) -> bool {
+    is_truthy(avatar.get("avatar").and_then(|a| a.get("snapshots")))
+}
+
+/// Whether `avatar.snapshots.face256` and `.body` are both truthy.
+pub(super) fn avatar_has_face_and_body(avatar: &serde_json::Value) -> bool {
+    let snapshots = avatar.get("avatar").and_then(|a| a.get("snapshots"));
+    ["face256", "body"]
+        .into_iter()
+        .all(|key| is_truthy(snapshots.and_then(|s| s.get(key))))
+}
+
+/// JS truthiness of an optional JSON value.
+fn is_truthy(value: Option<&serde_json::Value>) -> bool {
     use serde_json::Value;
-    match avatar.get("avatar").and_then(|a| a.get("snapshots")) {
+    match value {
         None | Some(Value::Null) | Some(Value::Bool(false)) => false,
         Some(Value::Number(n)) => n.as_f64().is_some_and(|f| f != 0.0 && !f.is_nan()),
         Some(Value::String(s)) => !s.is_empty(),
@@ -122,15 +151,47 @@ pub(super) fn avatar_has_snapshots(avatar: &serde_json::Value) -> bool {
     }
 }
 
+/// Upstream `profileHasEmotes`: some avatar's `emotes` is truthy, so
+/// `"emotes": null` on every avatar has none while `[]` counts.
 pub(super) fn profile_has_emotes(metadata: &serde_json::Value) -> bool {
-    if let Some(avatars) = metadata.get("avatars").and_then(|v| v.as_array()) {
-        for avatar in avatars {
-            if avatar.get("avatar").and_then(|a| a.get("emotes")).is_some() {
-                return true;
-            }
-        }
-    }
-    false
+    metadata
+        .get("avatars")
+        .and_then(|v| v.as_array())
+        .is_some_and(|avatars| {
+            avatars
+                .iter()
+                .any(|avatar| is_truthy(avatar.get("avatar").and_then(|a| a.get("emotes"))))
+        })
+}
+
+/// Upstream `correspondsToASnapshot`: the file name without its last
+/// extension (`/\.[^/.]+$/`) is a snapshot key of some avatar whose value is
+/// `hash`.
+pub(super) fn corresponds_to_a_snapshot(
+    file: &str,
+    hash: &str,
+    metadata: &serde_json::Value,
+) -> bool {
+    let name = match file.rfind('.') {
+        Some(dot) if dot + 1 < file.len() && !file[dot + 1..].contains('/') => &file[..dot],
+        _ => file,
+    };
+    metadata
+        .get("avatars")
+        .and_then(|v| v.as_array())
+        .is_some_and(|avatars| {
+            avatars.iter().any(|avatar| {
+                avatar
+                    .get("avatar")
+                    .and_then(|a| a.get("snapshots"))
+                    .and_then(|s| s.as_object())
+                    .is_some_and(|snapshots| {
+                        snapshots
+                            .get(name)
+                            .is_some_and(|v| v.as_str() == Some(hash))
+                    })
+            })
+        })
 }
 
 fn is_old_emote(s: &str) -> bool {
@@ -286,6 +347,8 @@ mod tests {
         assert!(!is_relative_thumbnail_path("thumb\u{0}nail.png"));
         assert!(!is_relative_thumbnail_path("thumb\u{1b}nail.png"));
         assert!(!is_relative_thumbnail_path("\u{feff}thumbnail.png"));
+        assert!(!is_relative_thumbnail_path("\u{a0}thumbnail.png"));
+        assert!(!is_relative_thumbnail_path("thumbnail.png\u{3000}"));
     }
 
     #[test]

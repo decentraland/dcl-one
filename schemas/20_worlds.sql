@@ -38,8 +38,10 @@
 -- is `timestamp without time zone` holding UTC (the pool pins TimeZone=UTC);
 -- the current time is a bind parameter, never an index predicate. No FK
 -- crosses a schema: the scene admins and bans a world scene is moderated by
--- are `social.scene_admins`/`social.scene_bans` keyed by the scene entity id
--- (src/worlds/policy.rs reads them; comms owns their writes).
+-- are `social.scene_admins`, keyed by the scene's place (its
+-- explore.world_scene_place identity, kept across a redeploy), and
+-- `social.scene_bans`, keyed by world and base parcel (src/worlds/policy.rs
+-- reads them; comms owns their writes).
 --
 -- The federation listing mirror of 0005/0006 (peers' public /worlds listings,
 -- a different protocol from the upstream /index catalogue) is the
@@ -133,6 +135,14 @@ CREATE TABLE worlds.worlds (
 -- stage-4 readers' lower(name) expression index went with their predicate,
 -- 2026-09-25).
 
+CREATE TABLE worlds.thumbnail_aliases (
+    legacy_sha256 text PRIMARY KEY CHECK (legacy_sha256 ~ '^[0-9a-f]{64}$'),
+    blob_cid text NOT NULL,
+    mirror_expires_at timestamp with time zone
+);
+
+CREATE INDEX thumbnail_aliases_blob_cid_idx ON worlds.thumbnail_aliases (blob_cid);
+
 CREATE TABLE worlds.world_scenes (
     world_name text NOT NULL,
     entity_id text NOT NULL,
@@ -223,6 +233,44 @@ CREATE TABLE worlds.world_permission_parcels (
     CONSTRAINT fk_world_permission_parcels_grant FOREIGN KEY (world_name, permission, address)
         REFERENCES worlds.world_permissions (world_name, permission, address) ON DELETE CASCADE
 );
+
+-- A write that can take a world's stream key from its holder announces
+-- `world:<name>` on the `world_authority` channel, for the comms gatekeeper's
+-- key check (DATABASE.md "Stream key notifications"): a local scene deployed
+-- or removed, an owner change, a grant removed or narrowed to parcels. The
+-- function reads the one column that holds the name; the payload is cut far
+-- below pg_notify's 8000 bytes, so it never fails the write.
+CREATE FUNCTION worlds.notify_world_authority() RETURNS trigger AS $$
+DECLARE
+    world text;
+BEGIN
+    IF TG_TABLE_NAME = 'worlds' THEN world := NEW.name;
+    ELSIF TG_OP = 'DELETE' THEN world := OLD.world_name;
+    ELSE world := NEW.world_name;
+    END IF;
+    PERFORM pg_notify('world_authority', 'world:' || left(world, 1000));
+    RETURN NULL;
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE TRIGGER world_scenes_deployed_authority_notify
+    AFTER INSERT ON worlds.world_scenes
+    FOR EACH ROW WHEN (NEW.mirror_source IS NULL)
+    EXECUTE FUNCTION worlds.notify_world_authority();
+CREATE TRIGGER world_scenes_removed_authority_notify
+    AFTER DELETE ON worlds.world_scenes
+    FOR EACH ROW WHEN (OLD.mirror_source IS NULL)
+    EXECUTE FUNCTION worlds.notify_world_authority();
+CREATE TRIGGER worlds_owner_authority_notify
+    AFTER UPDATE OF owner ON worlds.worlds
+    FOR EACH ROW WHEN (OLD.owner IS DISTINCT FROM NEW.owner)
+    EXECUTE FUNCTION worlds.notify_world_authority();
+CREATE TRIGGER world_permissions_authority_notify
+    AFTER DELETE ON worlds.world_permissions
+    FOR EACH ROW EXECUTE FUNCTION worlds.notify_world_authority();
+CREATE TRIGGER world_permission_parcels_authority_notify
+    AFTER INSERT ON worlds.world_permission_parcels
+    FOR EACH ROW EXECUTE FUNCTION worlds.notify_world_authority();
 
 -- The communities an allow-list world admits (the old access.communities).
 -- No FK to social.communities (different lifecycle); reconciled on read.

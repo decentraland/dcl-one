@@ -221,8 +221,8 @@ Console commands:
 
 A scene loaded as a portable experience whose scene.json also declares
 `isPortableExperience: true` can place map pins (`MapPin`); no other scene's pins are read. The
-HUD follows them through `getMapPinsStream` (`MapPinInfo`: the parcel, the title cut to 100
-characters, and an icon url resolved from a file of the scene's content) and draws them
+HUD follows them through `getMapPinsStream` (`MapPinInfo`: the parcel and the title cut to 100
+characters) and draws them, each as the default quest pin,
 on the full map and the minimap under the Layers panel's Quest Mini-Games switch.
 `/map_pins_state` (the debug panel's Map pins section) reports the scenes read, the pins read and
 ignored, and the list last sent to the HUD.
@@ -251,10 +251,17 @@ The console (`/help` lists it; `window.engine_console_command` in the app frame 
 client's agent surface, the same in every build: end-to-end tests and people's own agents drive the
 deployed clients through it, the HUD included, so nothing outside the client rebuilds the plumbing.
 Replies are JSON where the command says so; a failed command rejects (web) or answers `ok: false`
-(loopback), with no marker in the text. Arguments split on whitespace.
+(loopback), with no marker in the text. Arguments split on whitespace, and a double-quoted run is
+one argument (`/chat nearby "two words"`), in the chat input as over a transport; a command that
+takes JSON takes the rest of the line, split on whitespace alone. A reply with a screen position carries `screen` (`width`, `height` in logical pixels, `scale`);
+the [conventions ADR](../../../docs/adr/2026-11-17-console-command-conventions.md) has the rules
+(quoting, normalized coordinates).
 
 - State: `/world_state` (`inWorld`, `arrivals`, which grows on every return to the world, so a wait
   after a teleport reads it first; `keyboardClaimed`, true while a text field holds the keys),
+  `/teleport_state` (`pending`, the spawn point a landing under way looks for by name, and `last`:
+  the `name` the last such landing looked for and `found`, whether its scene had it;
+  `/teleport <x> <y> [realm] --spawn <name>` asks for such a landing),
   `/avatar_state [all|<address>]`, `/chat_history [count]`
   (Nearby only, as received: blocks and scene bans are not applied), `/dm_history <address|community:<id>> [count]` (a DM partner's or a community's
   stored lines), `/community_state` (community chat's router, channels and counters),
@@ -281,9 +288,12 @@ Replies are JSON where the command says so; a failed command rejects (web) or an
   scene moderation lists; Nearby chat and reactions from an address the scene room bans are
   dropped, and nearby voice is not subscribed from an address blocked either way or banned by the
   connected scene room, while calls still carry it; `/ban_block_refresh` re-checks the platform
-  ban), `/item_purchase_state` (the scene item purchase request in flight and how the last one
-  ended; `/item_purchase_cancel` drops the one in flight), `/entity_screen_position <entity>
-  [--bounds]`, `/photo_mode [on|off]` (the camera reel's in-world camera: its state, or open or
+  ban), `/scene_topics` (scene-room routing, topic traffic, rejection and CRDT-filter counters,
+  plus the binary payload limit), `/item_purchase_state` (the scene item purchase request in
+  flight and how the last one ended; `/item_purchase_cancel` drops the one in flight),
+  `/home_state` (the signed-in account's home and the home that applies at startup;
+  `/home_clear` takes that account's home back), `/entity_screen_position <entity>
+  [--bounds]` (pixels, `normalized` and `screen`), `/photo_mode [on|off]` (the camera reel's in-world camera: its state, or open or
   close it) and `/take_photo` (a photo, captured and uploaded; the reply is the state, a refusal
   names why), plus the older `/player_position`, `/get_user_data`, `/connected_players`, `/time`
   and the scene commands.
@@ -330,7 +340,8 @@ Replies are JSON where the command says so; a failed command rejects (web) or an
   that keeps its start page. `/hud_logout` signs the HUD out, the engine with it, so `/hud_login`
   can sign in again; the engine's `/logout` leaves the HUD signed in.
 - Input: `/press_key <code> [--state down|up]` (`KeyboardEvent.code` names) and
-  `/click_at <x> <y> [--button left|right|middle]`. Natively these and the HUD commands go through
+  `/click_at <x> <y> [--button left|right|middle] [--normalized]` (logical pixels, or 0 to 1 of the
+  window with `--normalized`; replies JSON `x`, `y`, `normalized`, `button`, `screen`). Natively these and the HUD commands go through
   CEF and the window's own input, always real. On the web the page needs a DevTools client to make
   them real (below); without one they fall back to DOM events and say `"input": "synthetic"`.
 - Portables and smart wearables: `/portables`, `/stop_portable <hash>`, `/smart_wearables`,
@@ -378,6 +389,13 @@ its modifier on every event until its `up`. The page waits 10 s for the answer, 
 command. Nothing else about the runner is part of the contract; `local-harness/web-driver/README.md`
 documents that runner (Node 24 and Chrome, no dependency), and the end-to-end suite in
 `apps/bevy-explorer/e2e` builds on it.
+
+**Driving a local scene by hand or by agent.** `pnpm run drive --scene <dir> [--position x,y]
+< commands.txt` in `apps/bevy-explorer/e2e` serves the web app and a loopback realm holding the
+built scene folders, boots a guest at the parcel (the first scene's base parcel by default), runs
+each console line read from stdin and prints one `{line, ok, reply, ms}` JSON line per command;
+it keeps the last frame as `final.png` when stdin closes. The e2e README's "Drive a scene by hand
+or by agent" has the flags.
 
 ## CI and release channels
 

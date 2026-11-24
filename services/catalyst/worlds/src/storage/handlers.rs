@@ -142,8 +142,16 @@ pub fn parse_pagination(params: &HashMap<String, String>) -> Pagination {
     }
 }
 
+/// As legacy's `!headers.get(...)`: missing or empty after Fetch's
+/// whitespace trim is a 400. Only the first value is read, so a repeated
+/// header whose first value is empty is refused (legacy joined the values).
 pub fn require_confirm_delete_all(headers: &HeaderMap) -> Result<(), ApiError> {
-    if headers.get(CONFIRM_DELETE_ALL_HEADER).is_none() {
+    let confirmed = headers.get(CONFIRM_DELETE_ALL_HEADER).is_some_and(|v| {
+        v.as_bytes()
+            .iter()
+            .any(|b| !matches!(b, b' ' | b'\t' | b'\r' | b'\n'))
+    });
+    if !confirmed {
         return Err(ApiError::bad_request(
             "Missing required header: X-Confirm-Delete-All",
         ));
@@ -864,6 +872,7 @@ pub async fn usage_env(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use axum::http::HeaderValue;
     use axum::response::IntoResponse;
 
     #[test]
@@ -939,6 +948,27 @@ mod tests {
         let err = check_content_length(&headers, 100).unwrap_err();
         assert!(matches!(err, ApiError::PayloadTooLarge(_)));
         assert_eq!(err.into_response().status(), StatusCode::PAYLOAD_TOO_LARGE);
+    }
+
+    #[test]
+    fn confirm_delete_all_requires_a_non_empty_header() {
+        let mut headers = HeaderMap::new();
+        let err = require_confirm_delete_all(&headers).unwrap_err();
+        assert_eq!(err.into_response().status(), StatusCode::BAD_REQUEST);
+
+        headers.insert(CONFIRM_DELETE_ALL_HEADER, HeaderValue::from_static(""));
+        let err = require_confirm_delete_all(&headers).unwrap_err();
+        assert_eq!(err.into_response().status(), StatusCode::BAD_REQUEST);
+
+        headers.insert(CONFIRM_DELETE_ALL_HEADER, HeaderValue::from_static(" \t "));
+        assert!(require_confirm_delete_all(&headers).is_err());
+
+        headers.insert(CONFIRM_DELETE_ALL_HEADER, HeaderValue::from_static("1"));
+        assert!(require_confirm_delete_all(&headers).is_ok());
+
+        headers.insert(CONFIRM_DELETE_ALL_HEADER, HeaderValue::from_static(""));
+        headers.append(CONFIRM_DELETE_ALL_HEADER, HeaderValue::from_static("1"));
+        assert!(require_confirm_delete_all(&headers).is_err());
     }
 
     #[tokio::test]
