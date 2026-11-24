@@ -3,8 +3,11 @@
 //!
 //! The variants base is `--bevy-variants-url`, `?bevyVariants=` or the `bevy_variants_url` config
 //! field, else the asset-bundle generator's CDN for the base domain (`https://abgen-cdn.<base>`);
-//! `off` in any of them turns the client off. For each scene, wearable and emote entity it loads, the
-//! explorer fetches
+//! `off` in any of them turns the client off. Without the launch option or the config field, the
+//! feature flag [`ENDPOINT_FLAG`] routes the session once the flags are read ([`flagged_base`]);
+//! until then, and when they cannot be read, the CDN serves. A new base applies to the entities
+//! asked for after it: a manifest keeps the base it was fetched from. For each scene, wearable
+//! and emote entity it loads, the explorer fetches
 //! `{base}/bevy/manifest/{entityId}.json` once; it maps original content CIDs to the
 //! paths of their variants, `bevy/{prefix}/{name}`, whose prefix letter is the variant's class
 //! (`t` a BC KTX2 texture, `m` a `glb-br` model, `g` a GLB). A content file read whose
@@ -66,7 +69,11 @@ use bevy::{
     render::renderer::RenderCapabilities,
     tasks::IoTaskPool,
 };
-use common::util::{TaskCompat, UrlLoopbackExt};
+use common::{
+    base_domain,
+    feature_flags::FlagVariant,
+    util::{TaskCompat, UrlLoopbackExt},
+};
 use serde::Deserialize;
 use tokio::sync::watch;
 use web_time::Duration;
@@ -264,8 +271,48 @@ impl Variant {
     }
 }
 
+/// The feature flag that routes the variants when no launch option or config field sets their
+/// base (`explorer-bevy-variants-endpoint` in Unleash).
+pub const ENDPOINT_FLAG: &str = "bevy-variants-endpoint";
+
+/// The variants base [`ENDPOINT_FLAG`] chooses, None for off. Its enabled variant decides: `off`
+/// turns the variants off, `on` keeps `default`, and any other carries the base as a `string`
+/// payload. Anything else keeps `default`: the flag disabled or unread, no enabled variant, or a
+/// payload that is not an `https` url on a Decentraland host, so a flag cannot send the
+/// variants' requests elsewhere.
+pub fn flagged_base(variant: Option<&FlagVariant>, default: &str) -> Option<String> {
+    let Some(variant) = variant.filter(|variant| variant.enabled) else {
+        return Some(default.to_owned());
+    };
+    match variant.name.as_str() {
+        "off" => return None,
+        "on" => return Some(default.to_owned()),
+        _ => (),
+    }
+    let url = variant
+        .payload
+        .as_ref()
+        .filter(|payload| payload.kind == "string")
+        .map(|payload| payload.value.trim());
+    match url {
+        Some(url) if base_domain::device_identifier_domain(url).is_some() && !url.contains('?') => {
+            Some(url.to_owned())
+        }
+        _ => {
+            warn!(
+                "bevy variants: the `{ENDPOINT_FLAG}` variant `{}` names no https Decentraland \
+                 url; keeping `{default}`",
+                variant.name
+            );
+            Some(default.to_owned())
+        }
+    }
+}
+
 #[derive(Debug)]
 pub struct Manifest {
+    /// The variants base the manifest was fetched from, which its paths are under.
+    pub base: String,
     /// The generation each variant class was built from (`texture` → `t2`, …), for the debug
     /// panel; the client does not act on it.
     pub lanes: BTreeMap<String, String>,
@@ -288,7 +335,7 @@ struct ManifestJson {
 /// kept for the debug panel. It is fetched at the entity's own url, so it names no entity. Paths
 /// that are not `bevy/{prefix}/{name}` with plain segments (a path becomes part of a url) or
 /// whose prefix letter names no class are dropped, and so is an original left with none.
-pub fn parse_manifest(bytes: &[u8]) -> Result<Manifest, String> {
+pub fn parse_manifest(base: &str, bytes: &[u8]) -> Result<Manifest, String> {
     let json: ManifestJson = serde_json::from_slice(bytes).map_err(|e| e.to_string())?;
     let files = json
         .files
@@ -309,7 +356,11 @@ pub fn parse_manifest(bytes: &[u8]) -> Result<Manifest, String> {
         .flatten()
         .filter_map(|(class, prefix)| Some((class.clone(), prefix.as_str()?.to_owned())))
         .collect();
-    Ok(Manifest { lanes, files })
+    Ok(Manifest {
+        base: base.to_owned(),
+        lanes,
+        files,
+    })
 }
 
 /// `bevy/{prefix}/{name}`: the prefix ASCII alphanumeric and not `manifest`, the name ASCII
@@ -479,7 +530,8 @@ impl Session {
 
 #[derive(Default)]
 pub struct BevyVariants {
-    base: OnceLock<String>,
+    /// None while variants are off.
+    base: Mutex<Option<String>>,
     /// The GPU's BC support, once the renderer has reported it.
     bc: OnceLock<bool>,
     manifests: Mutex<HashMap<String, watch::Receiver<ManifestState>>>,
@@ -491,14 +543,14 @@ pub struct BevyVariants {
 }
 
 impl BevyVariants {
-    fn base(&self) -> Option<&str> {
-        self.base.get().map(String::as_str)
+    fn base(&self) -> Option<String> {
+        self.base.lock_ignore_poison().clone()
     }
 
     /// The scene whose far LOD `remote` is ([`IpfsIo::bevy_far_lod`]'s url), if it is one.
     fn far_lod_scene<'a>(&self, remote: &'a str) -> Option<&'a str> {
         remote
-            .strip_prefix(self.base()?)?
+            .strip_prefix(self.base()?.as_str())?
             .strip_prefix(FAR_LOD_DIR)?
             .strip_suffix(FAR_LOD_SUFFIX)
     }
@@ -507,13 +559,19 @@ impl BevyVariants {
         self.bc.get().copied().unwrap_or(false)
     }
 
-    fn set_base(&self, url: &str) {
-        let url = url.trim();
+    fn set_base(&self, url: Option<&str>) {
+        let Some(url) = url.map(str::trim) else {
+            if self.base.lock_ignore_poison().take().is_some() {
+                info!("bevy variants: off");
+            }
+            return;
+        };
         match url::Url::parse(url) {
             Ok(parsed) if matches!(parsed.scheme(), "http" | "https") => {
                 // the serialised form, so a prefix match agrees with a re-serialised remote url
                 let url = parsed.as_str().trim_end_matches('/');
-                if self.base.set(url.to_owned()).is_ok() {
+                let previous = self.base.lock_ignore_poison().replace(url.to_owned());
+                if previous.as_deref() != Some(url) {
                     info!("bevy variants: on, from `{url}`");
                 }
             }
@@ -666,8 +724,9 @@ fn describe_fetch_error(error: &platform::FetchError<anyhow::Error>) -> String {
 }
 
 impl IpfsIo {
-    /// Turns the variants client on for the session. Startup only: a second call is ignored.
-    pub fn set_bevy_variants_base(&self, url: &str) {
+    /// Points the variants client at `url`, or turns it off with None. Entities asked for
+    /// earlier keep the base their manifest came from.
+    pub fn set_bevy_variants_base(&self, url: Option<&str>) {
         self.bevy_variants.set_base(url);
     }
 
@@ -834,7 +893,7 @@ impl IpfsIo {
     /// Asks abgen for an entity's manifest (a scene, wearable or emote), once per session. A
     /// no-op when variants are off.
     pub fn request_bevy_variants(self: &Arc<Self>, entity: &str) {
-        let Some(base) = self.bevy_variants.base().map(str::to_owned) else {
+        let Some(base) = self.bevy_variants.base() else {
             return;
         };
         let Some(sender) = self.bevy_variants.begin(entity) else {
@@ -875,7 +934,7 @@ impl IpfsIo {
         {
             Ok(response) => {
                 self.bevy_variants.transport_ok();
-                match parse_manifest(&response.body) {
+                match parse_manifest(base, &response.body) {
                     Ok(manifest) => ManifestState::Loaded(Arc::new(manifest)),
                     Err(e) => ManifestState::Failed(format!("invalid manifest: {e}")),
                 }
@@ -901,7 +960,8 @@ impl IpfsIo {
         path: &Path,
     ) -> Option<VariantRead> {
         let variants = &self.bevy_variants;
-        let base = variants.base()?;
+        // variants turned off stop every read, whichever base a manifest came from
+        variants.base()?;
         let (scene, file) = (ipfs_path.scene_hash()?, ipfs_path.content_path()?);
         if !could_have_variant(file) {
             return None;
@@ -984,9 +1044,9 @@ impl IpfsIo {
         // browser decodes; a `glb` variant's Brotli copy exists only when it is smaller, so its
         // own path is fetched and the server sends the copy to a client that accepts `br`
         let url = match decoded {
-            Decoded::BcTexture | Decoded::BcGlb => format!("{base}/{}", variant.path),
+            Decoded::BcTexture | Decoded::BcGlb => format!("{}/{}", manifest.base, variant.path),
             #[cfg(target_arch = "wasm32")]
-            Decoded::BrotliGlb => format!("{base}/{}.br", variant.path),
+            Decoded::BrotliGlb => format!("{}/{}.br", manifest.base, variant.path),
         };
         let key = CacheKey::Url(content_hash::url_cache_name(&url));
         let served = ServedVariant {

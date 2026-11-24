@@ -17,6 +17,7 @@ const VARIANT_CID: &str = "bafkreicojquuwmy7piqjti3zx3buxh47ya64i2vumxmzr5gwqpnf
 const OTHER_CID: &str = "bafkreihdwdcefgh4dqkjv67uzcmw7ojee6xedzdetojuzjevtenxquvyku";
 const ORIGINAL_CID: &str = "bafkreioriginaltexture";
 const SCENE: &str = "bafkreiscene";
+const BASE: &str = "https://abgen.example";
 
 fn variant_bytes() -> Vec<u8> {
     (0..1000).map(|i| (i % 251) as u8).collect()
@@ -75,7 +76,7 @@ fn parses_a_v3_manifest() {
             }}
         }}"#
     );
-    let manifest = parse_manifest(json.as_bytes()).unwrap();
+    let manifest = parse_manifest(BASE, json.as_bytes()).unwrap();
     assert_eq!(manifest.lanes["texture"], "t2");
     // only the well-formed paths of a known class survive, in order, and an original left with
     // none is dropped
@@ -115,7 +116,7 @@ fn reads_any_version_and_rejects_garbage() {
         format!(r#"{{"lanes": null, {listed}}}"#),
         format!(r#"{{"lanes": ["t4"], {listed}}}"#),
     ] {
-        let manifest = parse_manifest(manifest.as_bytes()).unwrap();
+        let manifest = parse_manifest(BASE, manifest.as_bytes()).unwrap();
         assert_eq!(
             manifest.files[ORIGINAL_CID][0].path,
             format!("bevy/t4/{VARIANT_CID}")
@@ -123,16 +124,16 @@ fn reads_any_version_and_rejects_garbage() {
     }
     // `lanes` is only shown: an entry that is not a string is left out, the rest stay
     let lanes = format!(r#"{{"lanes": {{"texture": 4, "mesh": "m2"}}, {listed}}}"#);
-    let manifest = parse_manifest(lanes.as_bytes()).unwrap();
+    let manifest = parse_manifest(BASE, lanes.as_bytes()).unwrap();
     assert_eq!(manifest.lanes.len(), 1);
     assert_eq!(manifest.lanes["mesh"], "m2");
     assert!(manifest.files.contains_key(ORIGINAL_CID));
     // the entries of the first manifests were objects, not paths: not a manifest
     let objects =
         format!(r#"{{"v": 2, "files": {{"{ORIGINAL_CID}": [{{"cid": "{VARIANT_CID}"}}]}}}}"#);
-    assert!(parse_manifest(objects.as_bytes()).is_err());
-    assert!(parse_manifest(b"<html>not found</html>").is_err());
-    assert!(parse_manifest(br#"{"error": "not found"}"#).is_err());
+    assert!(parse_manifest(BASE, objects.as_bytes()).is_err());
+    assert!(parse_manifest(BASE, b"<html>not found</html>").is_err());
+    assert!(parse_manifest(BASE, br#"{"error": "not found"}"#).is_err());
 }
 
 #[test]
@@ -273,7 +274,7 @@ async fn variants_are_off_by_default() {
 async fn preview_and_local_scenes_ask_for_no_manifest() {
     let (mut io, dir) = io_with_cache("preview");
     Arc::get_mut(&mut io).unwrap().is_preview = true;
-    io.set_bevy_variants_base("https://abgen.example");
+    io.set_bevy_variants_base(Some("https://abgen.example"));
     io.request_bevy_variants(SCENE);
     let mut state = io.bevy_variants.manifest(SCENE).unwrap();
     let state = state
@@ -289,7 +290,7 @@ async fn preview_and_local_scenes_ask_for_no_manifest() {
 async fn a_near_lod_descriptor_comes_from_the_variants_base() {
     let (io, dir) = io_with_cache("lod-descriptor");
     assert_eq!(io.bevy_lod_descriptor(SCENE), None);
-    io.set_bevy_variants_base("https://abgen.example/");
+    io.set_bevy_variants_base(Some("https://abgen.example/"));
     assert_eq!(
         io.bevy_lod_descriptor(SCENE),
         Some(format!(
@@ -307,7 +308,7 @@ async fn a_far_lod_is_offered_on_the_terms_of_a_manifest_and_bc() {
         io.bevy_far_lod(SCENE),
         FarLodSource::Unavailable("bevy variants off".to_owned())
     );
-    io.set_bevy_variants_base("https://abgen.example/");
+    io.set_bevy_variants_base(Some("https://abgen.example/"));
     assert_eq!(io.bevy_far_lod(SCENE), FarLodSource::NotYet);
     io.context.write().await.about = Some(ServerAbout {
         content: Some(EndpointConfig {
@@ -339,7 +340,7 @@ async fn a_far_lod_is_offered_on_the_terms_of_a_manifest_and_bc() {
 #[tokio::test]
 async fn a_missing_far_lod_is_remembered_and_failures_pause_far_lods() {
     let (io, dir) = io_with_cache("far-lod-health");
-    io.set_bevy_variants_base("https://abgen.example");
+    io.set_bevy_variants_base(Some("https://abgen.example"));
     io.context.write().await.about = Some(ServerAbout {
         content: Some(EndpointConfig {
             healthy: true,
@@ -505,13 +506,13 @@ async fn scene_with_variant_of(
         secret: None,
         spawn_parcel: None,
     }));
-    io.set_bevy_variants_base(base);
+    io.set_bevy_variants_base(Some(base));
     let _ = io.bevy_variants.bc.set(true);
     let manifest = format!(
         r#"{{"v": 3, "lanes": {{"texture": "t2", "mesh": "m1"}}, "files": {{"{ORIGINAL_CID}": ["{}"]}}}}"#,
         served_path_of(format, variant_cid)
     );
-    let variants = parse_manifest(manifest.as_bytes()).unwrap();
+    let variants = parse_manifest(base, manifest.as_bytes()).unwrap();
     assert_eq!(variants.files[ORIGINAL_CID][0].kind, kind);
     // the scene's own content server is loopback here, which `request_bevy_variants` refuses
     let (sender, receiver) = watch::channel(ManifestState::Loaded(Arc::new(variants)));
@@ -633,7 +634,7 @@ async fn a_wearable_entity_fetches_its_manifest_and_reads_its_variants() {
         secret: None,
         spawn_parcel: None,
     }));
-    io.set_bevy_variants_base(&base);
+    io.set_bevy_variants_base(Some(&base));
     let _ = io.bevy_variants.bc.set(true);
 
     io.request_bevy_variants(WEARABLE);
@@ -1058,8 +1059,104 @@ async fn files_wait_for_a_pending_manifest_only_until_its_deadline() {
         served_path(&cid)
     );
     sender.send_replace(ManifestState::Loaded(Arc::new(
-        parse_manifest(manifest.as_bytes()).unwrap(),
+        parse_manifest(&base, manifest.as_bytes()).unwrap(),
     )));
     assert_eq!(reading.await.unwrap(), ktx2);
+    std::fs::remove_dir_all(dir).unwrap();
+}
+
+#[test]
+fn the_endpoint_flag_routes_only_to_decentraland_hosts() {
+    use common::feature_flags::FlagPayload;
+    const DEFAULT: &str = "https://abgen-cdn.decentraland.org";
+    let variant = |name: &str, enabled: bool, payload: Option<(&str, &str)>| FlagVariant {
+        name: name.to_owned(),
+        enabled,
+        payload: payload.map(|(kind, value)| FlagPayload {
+            kind: kind.to_owned(),
+            value: value.to_owned(),
+        }),
+    };
+    let base = |v: Option<FlagVariant>| flagged_base(v.as_ref(), DEFAULT);
+    let staging = Some(("string", "https://abgen-cdn.decentraland.zone/"));
+
+    // unread, disabled or without an enabled variant: the default
+    assert_eq!(base(None).as_deref(), Some(DEFAULT));
+    assert_eq!(
+        base(Some(variant("disabled", false, None))).as_deref(),
+        Some(DEFAULT)
+    );
+    assert_eq!(
+        base(Some(variant("zone", false, staging))).as_deref(),
+        Some(DEFAULT)
+    );
+    // `off`, `on`, or the url its payload names
+    assert_eq!(base(Some(variant("off", true, staging))), None);
+    assert_eq!(
+        base(Some(variant("on", true, staging))).as_deref(),
+        Some(DEFAULT)
+    );
+    assert_eq!(
+        base(Some(variant("zone", true, staging))).as_deref(),
+        Some("https://abgen-cdn.decentraland.zone/")
+    );
+    // a payload that is not an https Decentraland base keeps the default
+    for payload in [
+        None,
+        Some(("json", "https://abgen-cdn.decentraland.zone")),
+        Some(("string", "http://abgen-cdn.decentraland.zone")),
+        Some(("string", "https://abgen.example")),
+        Some(("string", "https://decentraland.org.example")),
+        Some(("string", "https://abgen-cdn.decentraland.org/?x=1")),
+        Some(("string", "not a url")),
+    ] {
+        assert_eq!(
+            base(Some(variant("zone", true, payload))).as_deref(),
+            Some(DEFAULT),
+            "{payload:?}"
+        );
+    }
+}
+
+#[tokio::test]
+async fn a_new_base_applies_to_entities_asked_for_after_it() {
+    let (io, dir) = io_with_cache("base-switch");
+    io.set_bevy_variants_base(Some("https://abgen.example/"));
+    assert_eq!(
+        io.bevy_variants.base().as_deref(),
+        Some("https://abgen.example")
+    );
+    io.set_bevy_variants_base(Some("https://abgen-cdn.decentraland.zone"));
+    assert_eq!(
+        io.bevy_lod_descriptor(SCENE),
+        Some(format!(
+            "https://abgen-cdn.decentraland.zone/LOD/lods-unity/manifests/{}_InitialSceneState.json",
+            SCENE.to_lowercase()
+        ))
+    );
+    // an invalid url leaves the base as it was; None turns the variants off
+    io.set_bevy_variants_base(Some("ftp://abgen.example"));
+    assert_eq!(
+        io.bevy_variants.base().as_deref(),
+        Some("https://abgen-cdn.decentraland.zone")
+    );
+    io.set_bevy_variants_base(None);
+    assert_eq!(io.bevy_lod_descriptor(SCENE), None);
+    std::fs::remove_dir_all(dir).unwrap();
+}
+
+/// A variant read goes to the base its entity's manifest came from, whatever the base is now,
+/// and stops once the variants are off.
+#[tokio::test]
+async fn a_variant_is_read_from_its_manifests_base() {
+    let (io, dir) = io_with_cache("manifest-base");
+    let (ktx2, cid) = bc7_variant();
+    let variant_route = format!("/{}", served_path(&cid));
+    let (base, log) = serve(vec![(variant_route.clone(), ktx2.clone())]).await;
+    scene_with_variant(&io, &base, &cid).await;
+    io.set_bevy_variants_base(Some("https://abgen-cdn.decentraland.zone"));
+    let path = content_path("tex.png");
+    assert_eq!(read_all(&io, &path).await, ktx2);
+    assert_eq!(requests_for(&log, &variant_route), 1);
     std::fs::remove_dir_all(dir).unwrap();
 }

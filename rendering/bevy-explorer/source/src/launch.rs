@@ -115,16 +115,25 @@ pub fn apply_client(
     }
 
     // abgen's Bevy variants: the launch option, else the config, else the asset-bundle
-    // generator's CDN for this base domain; `off` in either turns them off
-    let bevy_variants_base = bevy_variants
+    // generator's CDN for this base domain, which the endpoint flag may replace once the flags
+    // are read; `off` in the option or the config turns them off
+    let pinned_base = bevy_variants
         .as_deref()
-        .or(config.bevy_variants_url.as_deref())
-        .map(str::to_owned)
-        .unwrap_or_else(|| common::base_domain::service(common::base_domain::Service::AbgenCdn));
+        .or(config.bevy_variants_url.as_deref());
+    let default_base = common::base_domain::service(common::base_domain::Service::AbgenCdn);
+    let bevy_variants_base = pinned_base.unwrap_or(&default_base);
     if !bevy_variants_base.trim().eq_ignore_ascii_case("off") {
         if let Some(ipfs) = app.world().get_resource::<ipfs::IpfsResource>() {
-            ipfs.set_bevy_variants_base(&bevy_variants_base);
+            ipfs.set_bevy_variants_base(Some(bevy_variants_base));
         }
+    }
+    if pinned_base.is_none() {
+        app.insert_resource(DefaultBevyVariantsBase(default_base))
+            .add_systems(
+                Update,
+                route_bevy_variants_by_flag
+                    .run_if(resource_changed::<common::feature_flags::FeatureFlags>),
+            );
     }
 
     let gpu_bytes_per_frame = gpu_bytes_per_frame.unwrap_or(config.graphics.gpu_bytes_per_frame);
@@ -132,5 +141,31 @@ pub fn apply_client(
         app.insert_resource(RenderAssetBytesPerFrame::new_with_priorities(
             gpu_bytes_per_frame,
         ));
+    }
+}
+
+/// The Bevy variants base the endpoint flag falls back to; present only while the flag may route.
+#[derive(Resource)]
+struct DefaultBevyVariantsBase(String);
+
+/// Once the flags are read, points the Bevy variants where their endpoint flag says, the default
+/// base when it says nothing.
+fn route_bevy_variants_by_flag(
+    mut commands: Commands,
+    flags: Res<common::feature_flags::FeatureFlags>,
+    default: Option<Res<DefaultBevyVariantsBase>>,
+    ipfs: Option<Res<ipfs::IpfsResource>>,
+) {
+    let Some(default) = default else {
+        return;
+    };
+    if flags.source() == common::feature_flags::FlagsSource::Pending {
+        return;
+    }
+    commands.remove_resource::<DefaultBevyVariantsBase>();
+    let variant = flags.variant(ipfs::bevy_variants::ENDPOINT_FLAG);
+    let base = ipfs::bevy_variants::flagged_base(variant.as_ref(), &default.0);
+    if let Some(ipfs) = ipfs {
+        ipfs.set_bevy_variants_base(base.as_deref());
     }
 }
