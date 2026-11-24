@@ -5400,3 +5400,192 @@ async fn a_walk_past_the_fold_without_authorization_events_keeps_answering() {
     assert!(can_deploy(&state, (1, 1), ALICE).await.is_ok());
     db.drop().await;
 }
+
+/// The Creator Hub's LAND list over a published index: each list filtered as
+/// the land-manager subgraph filtered it, estates with their parcels and
+/// data, the grantors' land per registry, the current authorizations, and
+/// the envelope while the index is not ready.
+#[tokio::test]
+async fn lands_access_answers_the_creator_hubs_lists_from_the_index() {
+    let Some(db) = ScratchDb::create().await else {
+        return;
+    };
+    let pool = &db.pool;
+    let app = router(state_over(pool.clone(), Settings::for_tests()));
+    let path = format!(
+        "/lambdas/users/{}/lands-access",
+        ALICE.to_uppercase().replace("0X", "0x")
+    );
+
+    let (status, _, body) = post_json(&app, &path, json!({})).await;
+    assert_eq!(
+        (status, body["source"].as_str()),
+        (StatusCode::SERVICE_UNAVAILABLE, Some("land-authz-index")),
+        "before the index is ready: {body}"
+    );
+
+    sqlx::query("INSERT INTO land_authz.index_cursor (network, land_registry, estate_registry, last_block, folded_block, folded_at, full_replay_started) VALUES ($1, $2, $3, 1, 1, timezone('UTC', now()), true)")
+        .bind(NETWORK_MAINNET).bind(LAND).bind(ESTATE)
+        .execute(pool).await.unwrap();
+    /// (x, y, owner, operator, update_operator)
+    type ParcelRow<'a> = (i32, i32, &'a str, Option<&'a str>, Option<&'a str>);
+    let parcels: [ParcelRow; 7] = [
+        (1, 1, ALICE, None, None),        // owned outright
+        (2, 2, ESTATE, None, None),       // in Alice's estate 500
+        (2, 3, ESTATE, None, Some(DANA)), // in Alice's estate 500
+        (3, 3, BOB, None, Some(ALICE)),   // Alice operates it
+        (4, 4, BOB, Some(ALICE), None),   // approved to Alice
+        (5, 5, BOB, None, None),          // Bob granted Alice on LAND
+        (6, 6, CARL, None, None),         // rented to Alice
+    ];
+    for (x, y, owner, operator, update_operator) in parcels {
+        sqlx::query("INSERT INTO land_authz.token_right (token_address, token_id, x, y, owner, operator, update_operator, updated_block, updated_log) VALUES ($1, $2::numeric, $3, $4, $5, $6, $7, 1, 0)")
+            .bind(LAND).bind(land_token(x, y)).bind(x).bind(y).bind(owner).bind(operator).bind(update_operator)
+            .execute(pool).await.unwrap();
+    }
+    for (estate, owner) in [("500", ALICE), ("600", CARL)] {
+        sqlx::query("INSERT INTO land_authz.token_right (token_address, token_id, owner, updated_block, updated_log) VALUES ($1, $2::numeric, $3, 1, 0)")
+            .bind(ESTATE).bind(estate).bind(owner)
+            .execute(pool).await.unwrap();
+    }
+    for (x, y) in [(2, 2), (2, 3)] {
+        sqlx::query("INSERT INTO land_authz.estate_land (land_token_id, estate_token_id, updated_block, updated_log) VALUES ($1::numeric, 500, 1, 0)")
+            .bind(land_token(x, y)).execute(pool).await.unwrap();
+    }
+    sqlx::query("INSERT INTO land_authz.estate_data_event (block_number, log_index, token_address, estate_id, name, description) VALUES (1, 9, $1, 500, 'Plaza', 'An estate')")
+        .bind(ESTATE).execute(pool).await.unwrap();
+    sqlx::query("INSERT INTO shop.land_data (token_address, token_id, name, description, updated_block, updated_log) VALUES ($1, $2::numeric, 'Corner', NULL, 1, 0)")
+        .bind(LAND).bind(land_token(1, 1)).execute(pool).await.unwrap();
+    // (registry, account, operator, kind, approved, block)
+    for (registry, account, operator, kind, approved, block) in [
+        (LAND, BOB, ALICE, "update_manager", true, 7_i64),
+        (ESTATE, CARL, ALICE, "approved_for_all", true, 8),
+        (ESTATE, OWNER, ALICE, "approved_for_all", false, 9),
+        (LAND, ALICE, DANA, "update_manager", true, 10),
+    ] {
+        sqlx::query("INSERT INTO land_authz.account_right (token_address, account, operator, kind, is_approved, updated_block, updated_log) VALUES ($1, $2, $3, $4, $5, $6, 2)")
+            .bind(registry).bind(account).bind(operator).bind(kind).bind(approved).bind(block)
+            .execute(pool).await.unwrap();
+    }
+    sqlx::query("INSERT INTO land_authz.authz_event (block_number, log_index, block_time, token_address, kind, account, operator, approved) VALUES (10, 2, 1700000000, $1, 'update_manager', $2, $3, true)")
+        .bind(LAND).bind(ALICE).bind(DANA).execute(pool).await.unwrap();
+
+    let (status, headers, body) = post_json(
+        &app,
+        &path,
+        json!({ "tenantTokenIds": [land_token(6, 6)], "lessorTokenIds": ["600"] }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(headers[SOURCE_HEADER], "land-authz-index");
+    let coords = |list: &str| -> Vec<String> {
+        body[list]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|p| format!("{},{}", p["x"].as_str().unwrap(), p["y"].as_str().unwrap()))
+            .collect()
+    };
+    let ids = |list: &str| -> Vec<&str> {
+        body[list]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|e| e["id"].as_str().unwrap())
+            .collect()
+    };
+    assert_eq!(
+        coords("ownerParcels"),
+        ["1,1"],
+        "estate parcels are not owned outright"
+    );
+    assert_eq!(
+        body["ownerParcels"][0]["data"],
+        json!({"name": "Corner", "description": null})
+    );
+    assert_eq!(body["ownerParcels"][0]["tokenId"], land_token(1, 1));
+    assert_eq!(body["ownerParcels"][0]["owner"]["address"], ALICE);
+    assert_eq!(ids("ownerEstates"), ["500"]);
+    let estate = &body["ownerEstates"][0];
+    assert_eq!(estate["size"], 2);
+    assert_eq!(
+        estate["data"],
+        json!({"name": "Plaza", "description": "An estate"})
+    );
+    assert_eq!(
+        estate["parcels"],
+        json!([
+            {"x": "2", "y": "2", "tokenId": land_token(2, 2), "updateOperator": null},
+            {"x": "2", "y": "3", "tokenId": land_token(2, 3), "updateOperator": DANA},
+        ])
+    );
+    assert_eq!(coords("updateOperatorParcels"), ["3,3"]);
+    assert_eq!(coords("approvedParcels"), ["4,4"]);
+    assert_eq!(
+        body["approvedParcels"][0]["data"],
+        Value::Null,
+        "no land data row"
+    );
+    assert_eq!(coords("tenantParcels"), ["6,6"]);
+    assert_eq!(ids("lessorEstates"), ["600"]);
+    assert_eq!(
+        coords("grantorParcels"),
+        ["3,3", "4,4", "5,5"],
+        "Bob's land, per the LAND grant"
+    );
+    assert_eq!(
+        ids("grantorEstates"),
+        ["600"],
+        "Carl's approved estates; a revoked grant gives none"
+    );
+    for list in [
+        "updateOperatorEstates",
+        "approvedEstates",
+        "tenantEstates",
+        "lessorParcels",
+    ] {
+        assert_eq!(body[list], json!([]), "{list}");
+    }
+    assert_eq!(
+        body["ownerAuthorizations"],
+        json!([{"type": "UpdateManager", "operator": DANA, "isApproved": true, "tokenAddress": LAND, "timestamp": "1700000000000002"}])
+    );
+    let grants: Vec<(String, String, bool)> = body["operatorAuthorizations"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|a| {
+            (
+                a["type"].as_str().unwrap().to_string(),
+                a["owner"]["address"].as_str().unwrap().to_string(),
+                a["isApproved"].as_bool().unwrap(),
+            )
+        })
+        .collect();
+    assert_eq!(
+        grants,
+        [
+            ("ApprovalForAll".to_string(), OWNER.to_string(), false),
+            ("ApprovalForAll".to_string(), CARL.to_string(), true),
+            ("UpdateManager".to_string(), BOB.to_string(), true),
+        ],
+        "every grant naming Alice, revoked ones included, so the client sees the latest state"
+    );
+
+    for (request, why) in [
+        (
+            json!({ "tenantTokenIds": ["12a"] }),
+            "a non-decimal token id",
+        ),
+        (
+            json!({ "lessorTokenIds": vec!["1"; 1001] }),
+            "too many token ids",
+        ),
+    ] {
+        let (status, _, _) = post_json(&app, &path, request).await;
+        assert_eq!(status, StatusCode::BAD_REQUEST, "{why}");
+    }
+    let (status, _, _) = post_json(&app, "/lambdas/users/0x123/lands-access", json!({})).await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "a bad address");
+    db.drop().await;
+}

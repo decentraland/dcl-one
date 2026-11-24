@@ -1,7 +1,7 @@
 //! The lambdas land routes over the index: the operators of a parcel (what
 //! comms' `COMMS_LAND_OPERATORS_URL` fetches), the reverse lookup of an
-//! update operator, the per-address permission flags (single and batch) and
-//! the index status. Each reads the index once it is ready and answers the
+//! update operator, the per-address permission flags (single and batch), the
+//! Creator Hub's LAND list ([`super::lands_access`]) and the index status. Each reads the index once it is ready and answers the
 //! unavailable envelope (`Source::LandAuthzIndex`) before that: no subgraph
 //! stands in for it.
 
@@ -45,6 +45,10 @@ pub fn router(state: SharedState) -> Router {
         .route(
             "/lambdas/users/{address}/parcels/permissions",
             post(parcels_permissions_batch).layer(DefaultBodyLimit::max(64 * 1024)),
+        )
+        .route(
+            "/lambdas/users/{address}/lands-access",
+            post(user_lands_access).layer(DefaultBodyLimit::max(256 * 1024)),
         )
         .route("/lambdas/land-authz/status", get(status))
         .layer(axum::middleware::from_fn(nul_guard::nul_guard_middleware))
@@ -257,6 +261,67 @@ async fn parcel_permissions(
 #[derive(Debug, serde::Deserialize)]
 pub struct BatchParcelPermissionsRequest {
     pub parcels: Vec<String>,
+}
+
+/// The token ids of the wallet's rentals, which the Creator Hub reads from
+/// the rentals source; both lists optional.
+#[derive(serde::Deserialize, Default)]
+#[serde(rename_all = "camelCase", default)]
+pub struct LandsAccessRequest {
+    pub tenant_token_ids: Vec<String>,
+    pub lessor_token_ids: Vec<String>,
+}
+
+/// A token id as the registries mint it: a decimal of at most 78 digits.
+fn is_token_id(raw: &str) -> bool {
+    !raw.is_empty() && raw.len() <= 78 && raw.bytes().all(|b| b.is_ascii_digit())
+}
+
+/// `POST /lambdas/users/{address}/lands-access`: the Creator Hub's LAND list
+/// ([`super::lands_access`]), every list read in one snapshot of the index;
+/// the envelope before it is ready.
+async fn user_lands_access(
+    State(state): State<SharedState>,
+    Path(address): Path<String>,
+    Json(body): Json<LandsAccessRequest>,
+) -> Response {
+    let address = address.to_lowercase();
+    if !is_address(&address) {
+        return bad_request("Address must be a valid Ethereum address");
+    }
+    for (field, ids) in [
+        ("tenantTokenIds", &body.tenant_token_ids),
+        ("lessorTokenIds", &body.lessor_token_ids),
+    ] {
+        if ids.len() > super::lands_access::MAX_RENTAL_TOKEN_IDS {
+            return bad_request(&format!(
+                "{field} holds more than {} token ids",
+                super::lands_access::MAX_RENTAL_TOKEN_IDS
+            ));
+        }
+        if let Some(bad) = ids.iter().find(|id| !is_token_id(id)) {
+            return bad_request(&format!("{field}: \"{bad}\" is not a token id"));
+        }
+    }
+    let Some(mut snapshot) = state.ready_snapshot_within(LAMBDAS_FOLD_WINDOW).await else {
+        return not_ready();
+    };
+    match super::lands_access::lands_access_on(
+        &mut snapshot.tx,
+        &state.settings.land_registry,
+        &state.settings.estate_registry,
+        &address,
+        &body.tenant_token_ids,
+        &body.lessor_token_ids,
+    )
+    .await
+    {
+        Ok(access) => with_source(Json(access).into_response(), "land-authz-index"),
+        Err(e) => {
+            tracing::error!(error = %e, "land-authz: lands-access read failed");
+            upstream_internal_error()
+        }
+    }
 }
 
 /// Per-entry rule is exactly `validate_coords` (integer parse plus the

@@ -3,8 +3,11 @@ import { fetch } from '/shared/fetch';
 import { chunk, retry } from '/shared/utils';
 import type { WorldDeployment } from './worlds';
 
-// TheGraph has a limit of a maximum of 1000 results per entity per query
-const MAX_RESULTS = 1000;
+/**
+ * The LAND list answers every parcel and estate of a wallet in one response; a
+ * large holder's runs to megabytes on a cold cache.
+ */
+const LANDS_ACCESS_TIMEOUT_MS = 30_000;
 
 /** A large estate can hold hundreds of parcels; the content server takes them in batches. */
 const MAX_POINTERS_PER_REQUEST = 100;
@@ -44,7 +47,7 @@ export const idToCoords = (id: string): [string | number, string | number] => {
 };
 
 /**
- * Who the Catalyst lets deploy, read off the subgraph. It mirrors the access check
+ * Who the Catalyst lets deploy, read off the LAND list. It mirrors the access check
  * every deployment goes through (`checkLAND` in decentraland/checker-contract,
  * `validations/access/subgraph/scenes.ts` in decentraland/content-validator): the
  * token's owner, its approved address, its update operator, or someone the owner
@@ -144,138 +147,9 @@ const fromEstate = (estate: EstateFields, role: RoleType, access: DeployAccess) 
   return result;
 };
 
-/** Whether any list of a page came back full, so another page may follow. */
-function isMax(result: Record<string, unknown[]>) {
-  return Object.values(result).some(value => value.length >= MAX_RESULTS);
-}
-
-/** Concatenates every list of `page` onto the matching list of `all`. */
-function appendPage<T extends Record<string, unknown[]>>(all: T, page: T): T {
-  for (const key of Object.keys(page) as (keyof T)[]) {
-    all[key] = [...(all[key] ?? []), ...page[key]] as T[keyof T];
-  }
-  return all;
-}
-
 function isZero(addr: string) {
   return /^0x(0)+$/.test(addr);
 }
-
-export const parcelFields = () => `
-  fragment parcelFields on Parcel {
-    x
-    y
-    tokenId
-    owner {
-      address
-    }
-    operator
-    updateOperator
-    data {
-      name
-      description
-    }
-  }
-`;
-
-export const estateFields = () => `
-  fragment estateFields on Estate {
-    id
-    owner {
-      address
-    }
-    operator
-    updateOperator
-    size
-    parcels(first: 1000) {
-      x
-      y
-      tokenId
-      updateOperator
-    }
-    data {
-      name
-      description
-    }
-  }
-`;
-
-/**
- * The authorization kinds that let an owner's counterparty deploy to the owner's
- * tokens on that registry: `UpdateManager` (`setUpdateManager`) and the two names
- * the subgraph gives `setApprovalForAll`.
- */
-const GRANTING_AUTHORIZATIONS = ['UpdateManager', 'ApprovalForAll', 'Operator'] as const;
-
-const getLandQuery = (skip = 0) => `
-  query Land($address: Bytes, $tenantTokenIds: [String!], $lessorTokenIds: [String!]) {
-    tenantParcels: parcels(first: ${MAX_RESULTS}, skip: ${skip}, where: { tokenId_in: $tenantTokenIds }) {
-      ...parcelFields
-    }
-    tenantEstates: estates(first: ${MAX_RESULTS}, skip: ${skip}, where: { id_in: $tenantTokenIds }) {
-      ...estateFields
-    }
-    lessorParcels: parcels(first: ${MAX_RESULTS}, skip: ${skip}, where: { tokenId_in: $lessorTokenIds }) {
-      ...parcelFields
-    }
-    lessorEstates: estates(first: ${MAX_RESULTS}, skip: ${skip}, where: { id_in: $lessorTokenIds }) {
-      ...estateFields
-    }
-    ownerParcels: parcels(first: ${MAX_RESULTS}, skip: ${skip}, where: { estate: null, owner: $address }) {
-      ...parcelFields
-    }
-    ownerEstates: estates(first: ${MAX_RESULTS}, skip: ${skip}, where: { owner: $address }) {
-      ...estateFields
-    }
-    updateOperatorParcels: parcels(first: ${MAX_RESULTS}, skip: ${skip}, where: { updateOperator: $address }) {
-      ...parcelFields
-    }
-    updateOperatorEstates: estates(first: ${MAX_RESULTS}, skip: ${skip}, where: { updateOperator: $address }) {
-      ...estateFields
-    }
-    approvedParcels: parcels(first: ${MAX_RESULTS}, skip: ${skip}, where: { operator: $address }) {
-      ...parcelFields
-    }
-    approvedEstates: estates(first: ${MAX_RESULTS}, skip: ${skip}, where: { operator: $address }) {
-      ...estateFields
-    }
-    ownerAuthorizations: authorizations(first: ${MAX_RESULTS}, skip: ${skip}, orderBy: timestamp, orderDirection: desc, where: { owner: $address, type: "UpdateManager" }) {
-      type
-      operator
-      isApproved
-      tokenAddress
-      timestamp
-    }
-    operatorAuthorizations: authorizations(first: ${MAX_RESULTS}, skip: ${skip}, orderBy: timestamp, orderDirection: desc, where: { operator: $address, type_in: ${JSON.stringify(GRANTING_AUTHORIZATIONS)} }) {
-      type
-      owner {
-        address
-      }
-      isApproved
-      tokenAddress
-      timestamp
-    }
-  }
-  ${parcelFields()}
-  ${estateFields()}
-`;
-
-// The land of owners who approved the wallet. Paginated on its own: nested under a paginated
-// authorization list, these lists would share its skip and lose an owner's first pages.
-const getGrantorLandQuery = (skip = 0) => `
-  query GrantorLand($parcelOwners: [String!], $estateOwners: [String!]) {
-    parcels(first: ${MAX_RESULTS}, skip: ${skip}, where: { estate: null, owner_in: $parcelOwners }) {
-      ...parcelFields
-    }
-    estates(first: ${MAX_RESULTS}, skip: ${skip}, where: { owner_in: $estateOwners }) {
-      ...estateFields
-    }
-  }
-  ${parcelFields()}
-  ${estateFields()}
-`;
-
-type GrantorLandQueryResult = { parcels: ParcelFields[]; estates: EstateFields[] };
 
 export enum LandType {
   PARCEL = 'parcel',
@@ -384,6 +258,9 @@ export type LandQueryResult = {
   approvedEstates: EstateFields[];
   ownerAuthorizations: AuthorizationEvent<{ operator: string }>[];
   operatorAuthorizations: AuthorizationEvent<{ owner: { address: string } }>[];
+  /** The land of every owner whose UpdateManager or ApprovalForAll grant to the wallet is in force, per registry. */
+  grantorParcels: ParcelFields[];
+  grantorEstates: EstateFields[];
 };
 
 type AuthorizationEvent<T> = T & {
@@ -395,9 +272,9 @@ type AuthorizationEvent<T> = T & {
 };
 
 /**
- * The subgraph keeps every authorization event, not the current state: a revoke is
- * a newer `isApproved: false` beside the original grant. Only the latest event per
- * counterparty, registry and kind is in force.
+ * Only the latest authorization per counterparty, registry and kind is in force. The
+ * index answers that state already (one row each); the reduction stays so a list
+ * that carries a grant beside its later revoke still reads as revoked.
  */
 function latestAuthorizations<T extends AuthorizationEvent<object>>(
   events: T[],
@@ -444,7 +321,6 @@ export const colorByRole: Record<RoleType, string> = {
 };
 
 export class Lands {
-  private subgraph = config.get('LAND_MANAGER_SUBGRAPH');
   private LAND_REGISTRY_ADDRESS = config.get('LAND_REGISTRY_ADDRESS');
   private ESTATE_REGISTRY_ADDRESS = config.get('ESTATE_REGISTRY_ADDRESS');
   private PEER_URL = config.get('PEER_URL');
@@ -453,40 +329,30 @@ export class Lands {
     return `${this.PEER_URL}/content/contents/${hash}`;
   }
 
-  private async query<T>(query: string, variables: Record<string, unknown>): Promise<T> {
-    const response: Response = await fetch(this.subgraph, {
-      method: 'POST',
-      body: JSON.stringify({ query, variables }),
-      headers: {
-        Accept: '*/*',
-        'Content-Type': 'application/json',
+  /**
+   * Every list the LAND page needs, from the content server's land-authz index
+   * (`POST /lambdas/users/{address}/lands-access`). A failed or unready read
+   * throws rather than answering an empty list of LAND.
+   */
+  private async fetchLandsAccess(
+    address: string,
+    tenantTokenIds: string[],
+    lessorTokenIds: string[],
+  ): Promise<LandQueryResult> {
+    const response: Response = await fetch(
+      `${this.PEER_URL}/lambdas/users/${address}/lands-access`,
+      {
+        method: 'POST',
+        body: JSON.stringify({ tenantTokenIds, lessorTokenIds }),
+        headers: { Accept: 'application/json', 'Content-Type': 'application/json' },
       },
-    });
-    const { data }: { data: T } = await response.json();
-    return data;
-  }
-
-  /** Every page of `pageQuery`, merged list by list. */
-  private async queryAllPages<T extends Record<string, unknown[]>>(
-    pageQuery: (skip: number) => string,
-    variables: Record<string, unknown>,
-  ): Promise<T> {
-    let all = {} as T;
-    for (let skip = 0; ; skip += MAX_RESULTS) {
-      const page = await this.query<T>(pageQuery(skip), variables);
-      all = appendPage(all, page);
-      if (!isMax(page)) return all;
+      LANDS_ACCESS_TIMEOUT_MS,
+    );
+    if (!response.ok) {
+      await response.body?.cancel().catch(() => undefined);
+      throw new Error(`Failed to fetch the LAND list: ${response.status}`);
     }
-  }
-
-  private fetchGrantorLand(parcelOwners: string[], estateOwners: string[]) {
-    if (parcelOwners.length === 0 && estateOwners.length === 0) {
-      return Promise.resolve<GrantorLandQueryResult>({ parcels: [], estates: [] });
-    }
-    return this.queryAllPages<GrantorLandQueryResult>(getGrantorLandQuery, {
-      parcelOwners,
-      estateOwners,
-    });
+    return response.json();
   }
 
   fetchLand = async (
@@ -496,13 +362,7 @@ export class Lands {
   ): Promise<[Land[], Authorization[]]> => {
     const address = _address.toLowerCase();
 
-    // Every page before any reduction: the latest authorization event of a kind can sit on
-    // a later page than the event it supersedes.
-    const data = await this.queryAllPages<LandQueryResult>(getLandQuery, {
-      address,
-      tenantTokenIds,
-      lessorTokenIds,
-    });
+    const data = await this.fetchLandsAccess(address, tenantTokenIds, lessorTokenIds);
 
     const lands: Land[] = [];
     const landUpdateManagers = new Set<string>();
@@ -523,10 +383,7 @@ export class Lands {
       landGrantors: grantorsOn(this.LAND_REGISTRY_ADDRESS),
       estateGrantors: grantorsOn(this.ESTATE_REGISTRY_ADDRESS),
     };
-    const grantorLand = await this.fetchGrantorLand(
-      [...access.landGrantors],
-      [...access.estateGrantors],
-    );
+    const grantorLand = { parcels: data.grantorParcels, estates: data.grantorEstates };
 
     // parcels and estates that I own
     for (const parcel of data.ownerParcels) {

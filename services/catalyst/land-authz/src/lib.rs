@@ -64,6 +64,7 @@ pub(crate) use dcl_http as http;
 
 pub mod events;
 pub mod indexer;
+pub mod lands_access;
 pub mod resolve;
 pub mod routes;
 
