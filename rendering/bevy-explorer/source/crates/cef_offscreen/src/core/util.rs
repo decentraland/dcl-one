@@ -77,9 +77,11 @@ pub fn v8_value_to_json(v8: &cef::V8Value) -> Option<serde_json::Value> {
             v8.int_value(),
         )))
     } else if v8.is_double().is_positive() {
-        Some(serde_json::Value::Number(
-            serde_json::Number::from_f64(v8.double_value()).unwrap(),
-        ))
+        // NaN and the infinities have no JSON number, so they map to null
+        Some(
+            serde_json::Number::from_f64(v8.double_value())
+                .map_or(serde_json::Value::Null, serde_json::Value::Number),
+        )
     } else if v8.is_string().is_positive() {
         Some(serde_json::Value::String(v8.string_value().into_string()))
     } else if v8.is_null().is_positive() || v8.is_undefined().is_positive() {

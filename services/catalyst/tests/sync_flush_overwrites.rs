@@ -39,7 +39,7 @@ fn entity_json(
 }
 
 fn deployer(pool: &PgPool) -> LiveSyncDeployer {
-    LiveSyncDeployer::new(
+    LiveSyncDeployer::without_store(
         pool.clone(),
         DEFAULT_FLUSH_CONCURRENCY,
         catalyst::content::sync_deployer::SyncValidation::AuthChainOnly,

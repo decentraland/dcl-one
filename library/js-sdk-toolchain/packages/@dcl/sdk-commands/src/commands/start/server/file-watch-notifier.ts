@@ -1,7 +1,9 @@
 import { sdk } from '@dcl/schemas'
+import type { Stats } from 'fs'
 import path from 'path'
 import { WebSocket } from 'ws'
 import chokidar from 'chokidar'
+import ignore, { Ignore } from 'ignore'
 import { getDCLIgnorePatterns } from '../../../logic/dcl-ignore'
 import { PreviewComponents } from '../types'
 import { sceneUpdateClients } from './routes'
@@ -22,13 +24,15 @@ export async function wireFileWatcherToWebSockets(
   projectRoot: string,
   projectKind: ProjectUnion['kind']
 ) {
-  const ignored = await getDCLIgnorePatterns(components, projectRoot)
+  const root = path.resolve(projectRoot)
+  // The .dclignore patterns, read as the deployment reads them (project-files.ts).
+  const ig = ignore().add(await getDCLIgnorePatterns(components, projectRoot))
   const sceneId = b64HashingFunction(projectRoot)
 
   chokidar
-    .watch(path.resolve(projectRoot), {
+    .watch(root, {
       atomic: false,
-      ignored,
+      ignored: dclIgnored(root, ig),
       ignoreInitial: false,
       cwd: projectRoot
     })
@@ -44,6 +48,18 @@ export async function wireFileWatcherToWebSockets(
         __LEGACY__updateScene(projectRoot, sceneUpdateClients, projectKind)
       }, 800)
     )
+}
+
+/** The watcher's `ignored` test: true for a path in the project that `.dclignore` names. */
+export function dclIgnored(root: string, ig: Ignore) {
+  return (file: string, stats?: Stats) => {
+    const relative = path.relative(root, path.resolve(root, file))
+    if (!relative || relative === '..' || relative.startsWith('..' + path.sep) || path.isAbsolute(relative)) {
+      return false
+    }
+    const name = relative.split(path.sep).join('/')
+    return ig.ignores(stats?.isDirectory() ? name + '/' : name)
+  }
 }
 
 function isGLTFModel(file: string) {

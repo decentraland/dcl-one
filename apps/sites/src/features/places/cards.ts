@@ -1,11 +1,10 @@
-import type { PlaceCardData } from "@dcl/one-ui/apps/sites/places/cards/types";
-import type { JumpInModalPlace } from "@dcl/one-ui/apps/sites/places/JumpInModal";
+import type { PlaceCardData, JumpInModalPlace } from "@dcl/one-ui";
 
 import { FOUNDATION_CONTACT_NAME } from "@/data/lib/catalyst/jump/jump";
 import type { Destination } from "@/data/lib/catalyst/places/destinations";
 import { placeCreatorAddress, type PlaceCreatorProfile } from "@/data/lib/catalyst/places/discover";
 import { sceneTravelHref } from "@/data/lib/catalyst/places/world-scenes";
-import { getAvatarBackgroundColor, getDisplayName, syntheticAvatar } from "@ui/shop/discovery/lib/avatarColor";
+import { getAvatarBackgroundColor, getDisplayName, syntheticAvatar } from "@web-core/profile/avatarColor";
 
 import type { DetectedPlatform } from "../download/options";
 import { jumpInFor, mobileLaunch } from "../jump/mobileLaunch";

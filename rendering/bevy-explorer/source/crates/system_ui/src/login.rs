@@ -18,7 +18,7 @@ use common::{
         ActiveDialog, AppConfig, ChainLink, CurrentRealm, PreviewMode, PreviousLogin,
         RequestClientWindowFocus, SystemAudio, WorldHold, ZOrder, TERMS_VERSION,
     },
-    util::{TaskCompat, TaskExt},
+    util::{AsH160, TaskCompat, TaskExt},
 };
 use comms::profile::{
     get_default_look, get_remote_profile, CurrentUserProfile, UserProfile, DEFAULT_LOOKS,
@@ -278,7 +278,15 @@ fn update_profile_for_realm(
 
     if let Some(mut t) = task.take() {
         match t.complete() {
-            Some(Ok(Some(profile))) => current_profile.adopt_server_profile(profile),
+            Some(Ok(Some(mut profile))) => {
+                if wallet
+                    .address()
+                    .is_some_and(|address| profile.content.eth_address.as_h160() == Some(address))
+                {
+                    mark_account(&mut profile, wallet.is_guest_account());
+                    current_profile.adopt_server_profile(profile);
+                }
+            }
             Some(Ok(None)) | Some(Err(_)) => {
                 // keep existing profile
             }
@@ -395,11 +403,19 @@ async fn login_profile(
     }
 }
 
+/// Records in the profile whether the account is a guest's, whatever an earlier deploy said: a
+/// guest account has not connected web3. True when a guest account's saved copy said otherwise
+/// (one made before the flag was kept), so the login saves it again and other clients see a guest.
+fn mark_account(profile: &mut UserProfile, guest_account: bool) -> bool {
+    let resave = guest_account && profile.content.has_connected_web3 != Some(false);
+    profile.content.has_connected_web3 = Some(!guest_account);
+    resave
+}
+
 fn new_profile(address: Address, ipfs: &IpfsIo) -> UserProfile {
     UserProfile {
         version: 0,
         content: SerializedProfile {
-            has_connected_web3: Some(true),
             eth_address: format!("{address:#x}"),
             user_id: Some(format!("{address:#x}")),
             ..Default::default()
@@ -678,8 +694,19 @@ fn process_login_bridge(
                             }
                         };
 
-                    let local_wallet =
-                        PrivateKeySigner::from_bytes(&B256::from_slice(&ephemeral_key)).unwrap();
+                    // the stored key must be exactly 32 bytes
+                    let local_wallet = match B256::try_from(ephemeral_key.as_slice())
+                        .map_err(|e| e.to_string())
+                        .and_then(|key| {
+                            PrivateKeySigner::from_bytes(&key).map_err(|e| e.to_string())
+                        }) {
+                        Ok(local_wallet) => local_wallet,
+                        Err(e) => {
+                            rpc_result_sender
+                                .send(Err(format!("Previous login has an invalid key: {e}")));
+                            return Err(());
+                        }
+                    };
 
                     Ok((
                         previous_login.root_address,
@@ -836,7 +863,7 @@ fn process_login_bridge(
                 });
                 current_profile.is_deployed = true;
                 current_profile.deploy_held = false;
-                current_profile.revert_to = None;
+                current_profile.reset_saves();
             }
             SystemApi::LoginCancel => {
                 *login_task = None;
@@ -848,7 +875,7 @@ fn process_login_bridge(
                 segment_config.reset_identity();
                 current_profile.profile = None;
                 current_profile.deploy_held = false;
-                current_profile.revert_to = None;
+                current_profile.reset_saves();
             }
             SystemApi::ForgetLogin if forget_login(&mut config) => {
                 platform::write_config_file(&*config);
@@ -892,15 +919,21 @@ fn process_login_bridge(
                 login_events.completed(&wallet);
                 segment_config
                     .update_identity(format!("{:#x}", wallet.address().unwrap()), guest_account);
-                let (profile, deployed) = match profile {
+                let (mut profile, deployed) = match profile {
                     LoginProfile::Deployed(profile) => (profile, true),
                     LoginProfile::New(profile) => (profile, false),
                 };
+                let resave = mark_account(&mut profile, guest_account);
                 current_profile.profile = Some(profile);
                 current_profile.is_deployed = deployed;
                 // held, the host shows its welcome page, which deploys the new profile
                 current_profile.deploy_held = !deployed && world_hold.is_some();
-                current_profile.revert_to = None;
+                current_profile.reset_saves();
+                if deployed && resave {
+                    // as any deploying edit: peers hear the saved version number (already marked
+                    // as a guest's here) until the re-save lands, and a failed one goes back to it
+                    current_profile.queue_guest_resave();
+                }
 
                 sender.send(Ok(()));
             }
@@ -914,6 +947,20 @@ fn process_login_bridge(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_guest_account_is_marked_and_an_old_copy_saved_again() {
+        let mut old = UserProfile::default();
+        old.content.has_connected_web3 = Some(true);
+        assert!(mark_account(&mut old, true));
+        assert_eq!(old.content.has_connected_web3, Some(false));
+        // already marked: nothing to save
+        assert!(!mark_account(&mut old, true));
+        // a signed-in account is marked as connected and never saved for it
+        let mut account = UserProfile::default();
+        assert!(!mark_account(&mut account, false));
+        assert_eq!(account.content.has_connected_web3, Some(true));
+    }
 
     #[test]
     fn guest_names_are_valid_unclaimed_names() {

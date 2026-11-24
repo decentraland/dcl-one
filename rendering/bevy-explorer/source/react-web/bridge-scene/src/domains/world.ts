@@ -31,6 +31,11 @@ function pushSystem(ctx: Ctx, message: string): void {
   ctx.send({ kind: 'chat', chat: { sender: '', message, channel: 'Nearby', messageId: '' } })
 }
 
+// The engine's teleportTo also reads `spawnPoint`, the name (compared in lowercase) of the spawn
+// point of the scene landed in to use; the SDK's request type does not carry it yet.
+type TeleportRequest = Parameters<typeof teleportTo>[0] & { spawnPoint?: string }
+const teleport = (request: TeleportRequest): Promise<unknown> => teleportTo(request)
+
 export function registerWorld(ctx: Ctx): void {
   ctx.on('getHomeScene', async () => {
     const home = await BevyApi.getHomeScene()
@@ -39,6 +44,11 @@ export function registerWorld(ctx: Ctx): void {
 
   ctx.on('setHomeScene', async (msg) => {
     await BevyApi.setHomeScene({ realm: msg.realm, parcel: msg.parcel })
+    ctx.send({ kind: 'homeScene', ...(await BevyApi.getHomeScene()) })
+  })
+
+  ctx.on('clearHomeScene', async () => {
+    await BevyApi.clearHomeScene()
     ctx.send({ kind: 'homeScene', ...(await BevyApi.getHomeScene()) })
   })
 
@@ -55,29 +65,24 @@ export function registerWorld(ctx: Ctx): void {
         if (travelId != null) ctx.send({ kind: 'travelResult', travelId, realm, ok: true })
       },
       (e: unknown) => {
-        console.error('[world] realm change failed', e)
+        console.error('[world] travel failed', e)
         const message = e instanceof Error ? e.message : String(e)
         if (travelId != null) ctx.send({ kind: 'travelResult', travelId, realm, ok: false, message })
       }
     )
   }
 
+  // A teleport inside the realm answers too when the page gave it an id (chat's /goto does).
   ctx.on('teleport', (msg) => {
-    const request = teleportTo({ worldCoordinates: { x: msg.x, y: msg.y }, realm: msg.realm })
-    if (msg.realm != null) {
-      travel(msg.realm, msg.travelId, request)
-      return
-    }
-    request.catch((e: unknown) => {
-      console.error('[world] teleport failed', e)
-    })
+    const request = teleport({ worldCoordinates: { x: msg.x, y: msg.y }, realm: msg.realm, spawnPoint: msg.spawnPoint })
+    travel(msg.realm ?? '', msg.travelId, request)
   })
 
   // Travel to a world/realm (e.g. boedo.dcl.eth), landing on its default spawn: a teleport with a
   // realm and no parcel (changeRealm is deprecated). The engine auto-grants ChangeRealm for our
   // super-user scene, so the React HUD owns the confirmation prompt.
   ctx.on('changeRealm', (msg) => {
-    travel(msg.realm, msg.travelId, teleportTo({ realm: msg.realm }))
+    travel(msg.realm, msg.travelId, teleport({ realm: msg.realm, spawnPoint: msg.spawnPoint }))
   })
 
   // `/reload` — reload the scene the player is standing in, resolved by parcel from liveSceneInfo;
@@ -200,6 +205,21 @@ export function registerWorld(ctx: Ctx): void {
         sceneLookup.reset()
       })
       .catch(() => undefined)
+  })
+
+  // Deep-zoom satellite detail tiles for the full-screen map: the engine decodes the KTX2 file to
+  // a JPEG. Every outcome answers the request, so the page never waits on a failure.
+  ctx.on('getSatelliteTile', async (msg) => {
+    if (BevyApi.getSatelliteTile == null) {
+      ctx.send({ kind: 'satelliteTile', requestId: msg.requestId, ok: false, error: 'unsupported' })
+      return
+    }
+    try {
+      const data = await BevyApi.getSatelliteTile(msg.path)
+      ctx.send({ kind: 'satelliteTile', requestId: msg.requestId, ok: true, data })
+    } catch (e) {
+      ctx.send({ kind: 'satelliteTile', requestId: msg.requestId, ok: false, error: String(e) })
+    }
   })
 
   // Current scene title → the minimap header. Resolved by parcel from liveSceneInfo (the same

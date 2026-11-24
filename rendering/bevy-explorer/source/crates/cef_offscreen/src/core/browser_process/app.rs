@@ -26,7 +26,7 @@ impl BrowserProcessAppBuilder {
 impl Clone for BrowserProcessAppBuilder {
     fn clone(&self) -> Self {
         let object = unsafe {
-            let rc_impl = &mut *self.object;
+            let rc_impl = &*self.object;
             rc_impl.interface.add_ref();
             self.object
         };
@@ -69,6 +69,9 @@ impl ImplApp for BrowserProcessAppBuilder {
         // that helper failed to launch outright on some setups (error_code=1002 ×3 →
         // FATAL "GPU process isn't usable. Goodbye." kills the app).
         command_line.append_switch(Some(&"in-process-gpu".into()));
+        // The embedded HUD has no use for Chromium's own background services. This cuts most of
+        // their start-up traffic; one GCM registration attempt still goes out.
+        command_line.append_switch(Some(&"disable-background-networking".into()));
     }
 
     fn browser_process_handler(&self) -> Option<BrowserProcessHandler> {

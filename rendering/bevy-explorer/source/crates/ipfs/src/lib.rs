@@ -1,3 +1,5 @@
+#![forbid(unsafe_code)]
+
 mod batch_sizes;
 pub mod bevy_variants;
 pub mod cache_heal;
@@ -406,6 +408,24 @@ impl IpfsAssetServer<'_, '_> {
             .load_with_settings(PathBuf::from(&ipfs_path), settings))
     }
 
+    /// A content file loaded for its colliders only ([`ipfs_path::COLLIDERS_PART`]): the same
+    /// file, downloaded and cached once with the whole file's loads, under an asset path of its
+    /// own, so these settings never reach the whole file's asset.
+    pub fn load_content_file_colliders<T: Asset, S: Settings>(
+        &self,
+        file_path: &str,
+        content_hash: &str,
+        settings: impl Fn(&mut S) + Send + Sync + 'static,
+    ) -> Handle<T> {
+        let ipfs_path = IpfsPath::new(IpfsType::new_content_file(
+            content_hash.to_owned(),
+            file_path.to_owned(),
+        ))
+        .with_keyvalue(IpfsKey::Part, ipfs_path::COLLIDERS_PART.to_owned());
+        self.server
+            .load_with_settings(PathBuf::from(&ipfs_path), settings)
+    }
+
     pub fn load_urn<T: IpfsAsset>(&self, urn: &str) -> Result<Handle<T>, anyhow::Error> {
         let ext = T::ext();
         let ipfs_path = IpfsPath::new_from_urn::<T>(urn)?;
@@ -547,14 +567,9 @@ pub struct ServerScenes {
     total: usize,
 }
 
-// This replicates the structure of a `scene.json`, maybe extend if needed, but
-// for multi-scene worlds, only `entity_id` is needed
-#[expect(dead_code)]
+// A world's scene entry: for multi-scene worlds, only `entity_id` is needed
 #[derive(Debug, Clone, Deserialize)]
 pub struct ServerScene {
-    #[serde(rename = "worldName")]
-    world_name: String,
-    deployer: String,
     #[serde(rename = "entityId")]
     entity_id: String,
 }
@@ -648,7 +663,7 @@ impl Plugin for IpfsIoPlugin {
             app.register_diagnostic(Diagnostic::new(path));
         }
         app.insert_resource(IpfsResource { inner: ipfs_io });
-        app.insert_resource(RealmInitialLocation::Base);
+        app.insert_resource(RealmInitialLocation::BASE);
 
         #[cfg(feature = "hot_reload")]
         app.register_asset_source(
@@ -716,12 +731,24 @@ impl Plugin for IpfsIoPlugin {
     }
 }
 
+/// Where the player lands in a realm being changed to. `spawn_point` is the name of the spawn
+/// point to be placed on there, which the landing hands to `OutOfWorld`.
 #[derive(Resource, PartialEq, Debug)]
 pub enum RealmInitialLocation {
     None,
-    Base,
+    Base {
+        spawn_point: Option<String>,
+    },
     /// Land on this parcel of the new realm (a teleport that named its realm).
-    Parcel(IVec2),
+    Parcel {
+        parcel: IVec2,
+        spawn_point: Option<String>,
+    },
+}
+
+impl RealmInitialLocation {
+    /// The realm's own spawn, on its default spawn points.
+    pub const BASE: Self = Self::Base { spawn_point: None };
 }
 
 /// Switch to a new realm
@@ -739,7 +766,7 @@ fn change_realm_command(
     mut pending: ResMut<PendingConsoleResponses>,
 ) {
     if let Some(Ok(command)) = input.take() {
-        *target = RealmInitialLocation::Base;
+        *target = RealmInitialLocation::BASE;
         debug!("change realm command -> base");
         let (response, rx) = RpcResultSender::channel();
         let realm = command.new_realm.clone();
@@ -902,6 +929,8 @@ pub fn change_realm(
             for request in change_realm_requests.read() {
                 request.response.send(Err(DISABLED.to_owned()));
             }
+            // as for a change that failed: the landing asked for is not kept for a later change
+            *target = RealmInitialLocation::None;
         } else {
             let mut requests = change_realm_requests.read().collect::<Vec<_>>();
             let request = requests.pop().unwrap();
@@ -1965,12 +1994,10 @@ impl IpfsIo {
         about: &ServerAbout,
         new_realm: &str,
     ) -> Result<Option<IVec2>, anyhow::Error> {
-        let has_scene_urns = about.configurations.as_ref().is_some_and(|config| {
-            config
-                .scenes_urn
-                .as_ref()
-                .is_some_and(|urns| !urns.is_empty())
-        });
+        let has_scene_urns = about
+            .configurations
+            .as_ref()
+            .is_some_and(ServerConfiguration::lists_scenes);
         if !has_scene_urns {
             return Ok(None);
         }
@@ -2059,6 +2086,13 @@ impl IpfsIo {
                     return Ok(data);
                 }
             };
+
+            // an image a colliders-part glTF references is never sampled: no request
+            if ipfs_path.is_collider_texture() {
+                return Ok(Box::new(VecReader::new(
+                    ipfs_path::COLLIDER_TEXTURE_PNG.to_vec(),
+                )));
+            }
 
             #[cfg(target_arch = "wasm32")]
             if let Some(indexdb_path) = ipfs_path.to_indexdb() {
@@ -2297,9 +2331,7 @@ where
         cx: &mut std::task::Context<'_>,
         offset: u64,
     ) -> std::task::Poll<std::io::Result<u64>> {
-        let mut pinned = unsafe { self.map_unchecked_mut(|slf| &mut slf.0) };
-        pinned
-            .as_mut()
+        std::pin::Pin::new(&mut self.get_mut().0)
             .poll_seek(cx, std::io::SeekFrom::Current(offset as i64))
     }
 }
@@ -2313,8 +2345,7 @@ where
         cx: &mut std::task::Context<'_>,
         buf: &mut [u8],
     ) -> std::task::Poll<std::io::Result<usize>> {
-        let mut pinned = unsafe { self.map_unchecked_mut(|slf| &mut slf.0) };
-        pinned.as_mut().poll_read(cx, buf)
+        std::pin::Pin::new(&mut self.get_mut().0).poll_read(cx, buf)
     }
 }
 

@@ -129,6 +129,26 @@ impl Sources {
     }
 }
 
+/// The realm document's `comms.adapter`. `COMMS_ADAPTER` when it names one;
+/// left at its offline default while `COMMS_FIXED_ADAPTER` is set, the
+/// adapter this node's `/about` derives from that one setting
+/// (`content::about_comms::build_comms_config`), as upstream's realm provider
+/// derives its own from the connector URL alone. Otherwise the two documents
+/// of one node disagree and a client reading `adapter` first joins no room.
+fn realm_comms_adapter(adapter: &str, fixed_adapter: Option<&str>) -> String {
+    const OFFLINE: &str = "offline:offline";
+    let adapter = value_or(adapter, OFFLINE.into());
+    let fixed = value_or(fixed_adapter.unwrap_or_default(), String::new());
+    let fixed = fixed.as_str();
+    if adapter != OFFLINE || fixed.is_empty() || fixed == OFFLINE {
+        adapter
+    } else if fixed.starts_with("archipelago:") {
+        format!("archipelago:{fixed}")
+    } else {
+        format!("fixed-adapter:{fixed}")
+    }
+}
+
 fn value_or(value: &str, default: String) -> String {
     let v = value.trim().trim_end_matches('/');
     if v.is_empty() { default } else { v.to_string() }
@@ -170,6 +190,9 @@ pub struct Settings {
     /// `MAP_EXTERNAL_BASE_URL`: the marketplace the metadata's `external_url`
     /// links to; unset yields no link rather than one to production.
     pub map_external_base_url: Option<String>,
+    /// `MAP_DISSOLVED_ESTATE_IMAGE_URL`: where an estate's `map.png`
+    /// redirects when the grid holds none of its parcels.
+    pub map_dissolved_estate_image_url: String,
     /// The LAND and Estate registries of `ETH_NETWORK`, lowercase (the
     /// `/v2/contracts/{address}/tokens/{id}` dispatch and `external_url`).
     pub land_contract_address: String,
@@ -231,7 +254,10 @@ impl Settings {
                 .unwrap_or("main")
                 .to_string(),
             network_id: network_id(&config.node.eth_network),
-            comms_adapter: value_or(&config.explore.comms_adapter, "offline:offline".into()),
+            comms_adapter: realm_comms_adapter(
+                &config.explore.comms_adapter,
+                config.explore.comms_fixed_adapter.as_deref(),
+            ),
             comms_fixed_adapter: value_or(
                 config.explore.comms_fixed_adapter.as_deref().unwrap_or(""),
                 "offline:offline".into(),
@@ -248,6 +274,7 @@ impl Settings {
             mirrors_enabled: config.explore.explorer_mirrors_enabled,
             map_image_base_url: format!("{public_url}/api/v1"),
             map_external_base_url: None,
+            map_dissolved_estate_image_url: config.ab_cdn.map_dissolved_estate_image_url.clone(),
             land_contract_address: land.land_registry,
             estate_contract_address: land.estate_registry,
             ab_cdn_enabled: true,
@@ -339,6 +366,7 @@ impl Settings {
             mirrors_enabled: true,
             map_image_base_url: "http://localhost/api/v1".into(),
             map_external_base_url: None,
+            map_dissolved_estate_image_url: "http://localhost/dissolved_estate.png".into(),
             land_contract_address: crate::land_authz::LAND_REGISTRY_MAINNET.into(),
             estate_contract_address: crate::land_authz::ESTATE_REGISTRY_MAINNET.into(),
             ab_cdn_enabled: true,
@@ -500,6 +528,12 @@ pub struct State {
     pub registry_denylist: registry::LocalDenylist,
     /// The ONE EIP-1654 validator, attached after construction (`attach_eip1654`).
     pub eip1654: std::sync::OnceLock<Arc<dyn crate::auth::eip1654::Eip1654Validator>>,
+    /// The auth relay's budget of contract-wallet (`isValidSignature`) calls,
+    /// per network and per replica.
+    pub contract_checks: auth_api::ContractChecks,
+    /// The LAND index, attached after construction (`attach_land_authz`):
+    /// the Estate metadata of estates the grid no longer holds.
+    pub land_authz: std::sync::OnceLock<Arc<crate::land_authz::LandAuthzState>>,
 }
 
 pub type Shared = Arc<State>;
@@ -532,6 +566,7 @@ impl State {
             denylist: Arc::default(),
             flags: Arc::new(feature_flags::Snapshot::from_document(
                 feature_flags::embedded_document(),
+                false,
             )),
             map: map::MapState::new(),
             ab_cdn,
@@ -543,6 +578,8 @@ impl State {
             onboarding,
             registry_denylist: Default::default(),
             eip1654: std::sync::OnceLock::new(),
+            contract_checks: Default::default(),
+            land_authz: std::sync::OnceLock::new(),
         });
         state
             .denylist
@@ -796,6 +833,16 @@ impl State {
     ) -> bool {
         validator.is_some_and(|v| self.eip1654.set(v).is_ok())
     }
+
+    /// The attached EIP-1654 validator, if any.
+    pub fn eip1654_validator(&self) -> Option<&dyn crate::auth::eip1654::Eip1654Validator> {
+        self.eip1654.get().map(|v| &**v)
+    }
+
+    /// Attaches the LAND index; `false` if one was attached already.
+    pub fn attach_land_authz(&self, land: Arc<crate::land_authz::LandAuthzState>) -> bool {
+        self.land_authz.set(land).is_ok()
+    }
 }
 
 pub(crate) fn json_error(status: StatusCode, message: impl Into<String>) -> Response {
@@ -827,4 +874,35 @@ pub(crate) mod tests_support {
     }
 
     pub(crate) use super::tests::{ScratchDb, scratch_database};
+}
+
+#[cfg(test)]
+mod realm_comms_adapter_tests {
+    use super::realm_comms_adapter;
+
+    #[test]
+    fn the_realm_adapter_follows_the_fixed_adapter_when_only_that_is_set() {
+        let derived = |adapter, fixed| realm_comms_adapter(adapter, fixed);
+        assert_eq!(derived("offline:offline", None), "offline:offline");
+        assert_eq!(derived("", Some("  ")), "offline:offline");
+        assert_eq!(
+            derived("offline:offline", Some("archipelago:wss://node.example/ws")),
+            "archipelago:archipelago:wss://node.example/ws"
+        );
+        assert_eq!(
+            derived(
+                "offline:offline",
+                Some("livekit:wss://sfu.example?access_token=t")
+            ),
+            "fixed-adapter:livekit:wss://sfu.example?access_token=t"
+        );
+        // An adapter that names one is advertised as set.
+        assert_eq!(
+            derived(
+                "fixed-adapter:archipelago:wss://node.example/ws",
+                Some("archipelago:wss://node.example/ws")
+            ),
+            "fixed-adapter:archipelago:wss://node.example/ws"
+        );
+    }
 }

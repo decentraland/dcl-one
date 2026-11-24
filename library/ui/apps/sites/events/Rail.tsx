@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react'
 import { GeneralLeftArrow, GeneralRightArrow } from '../../../foundations/icons'
+import { useEventsCopy } from './locale'
 import styles from './Rail.module.css'
 
 // TODO(figma-ds): a minimal paged scroller. `../shared/Carousel` shows one looping slide at a time;
@@ -60,15 +61,20 @@ function PageDots({
   label: string
   onSelect: (page: number) => void
 }) {
+  const { text } = useEventsCopy()
   if (pages <= 1) return null
   return (
-    <div className={styles.dots} role="group" aria-label={`${label} pages`}>
+    <div
+      className={styles.dots}
+      role="group"
+      aria-label={text('{section} pages', { section: label })}
+    >
       {Array.from({ length: pages }, (_, page) => (
         <button
           key={page}
           type="button"
           className={styles.dot}
-          aria-label={`Page ${page + 1} of ${pages}`}
+          aria-label={text('Page {page} of {pages}', { page: page + 1, pages })}
           aria-current={page === active ? 'true' : undefined}
           onClick={() => onSelect(page)}
         />
@@ -80,12 +86,16 @@ function PageDots({
 /** A horizontal rail with previous and next controls from desktop and page dots below. */
 function Rail({
   label,
+  previousLabel = `Show previous ${label}`,
+  nextLabel = `Show next ${label}`,
   count,
   className,
   trackClassName,
   children
 }: {
   label: string
+  previousLabel?: string
+  nextLabel?: string
   count: number
   className?: string
   trackClassName?: string
@@ -99,7 +109,7 @@ function Rail({
           <button
             type="button"
             className={`${styles.chevron} ${styles.previous}`}
-            aria-label={`Show previous ${label}`}
+            aria-label={previousLabel}
             onClick={() => goTo(active - 1)}
           >
             <GeneralLeftArrow size={24} aria-hidden="true" />
@@ -112,7 +122,7 @@ function Rail({
           <button
             type="button"
             className={`${styles.chevron} ${styles.next}`}
-            aria-label={`Show next ${label}`}
+            aria-label={nextLabel}
             onClick={() => goTo(active + 1)}
           >
             <GeneralRightArrow size={24} aria-hidden="true" />

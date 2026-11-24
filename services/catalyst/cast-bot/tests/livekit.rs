@@ -348,6 +348,21 @@ async fn the_bot_publishes_slides_and_carries_data_both_ways() {
     };
     assert_eq!(count, 0);
 
+    // A second bot is no audience: neither bot counts the other.
+    let mut other = Bot::start();
+    let second = token("presentation-bot:scene-room:access:2", true);
+    other
+        .send(json!({"type": "init", "url": url, "token": second}))
+        .await;
+    assert_eq!(other.answer().await["participantCount"], 0);
+    let count = loop {
+        let line = bot.next().await;
+        if line["type"] == "participantCount" {
+            break line["count"].clone();
+        }
+    };
+    assert_eq!(count, 0);
+
     assert_eq!(
         bot.command(json!({"type": "shutdown"})).await["type"],
         "ack"

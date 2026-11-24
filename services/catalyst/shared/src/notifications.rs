@@ -165,6 +165,14 @@ pub struct NewNotification {
     pub occurred_at: NaiveDateTime,
 }
 
+/// An exact previous notice identity that can carry a source's stable key.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct NotificationAlias {
+    pub legacy_id: Uuid,
+    pub daily_id: Uuid,
+    pub kind: &'static str,
+}
+
 impl NewNotification {
     pub fn now(address: Address, kind: &str, metadata: Json) -> Self {
         Self {
@@ -194,14 +202,57 @@ where
 /// Event delivery opts into in-app preferences without silently changing the
 /// established behavior of other producers. Hidden rows are already read so
 /// they never enter the bell's partial unread index; email remains independent.
-pub async fn insert_event_notifications<'e, E>(
-    executor: E,
+/// Call once with the transaction's complete event batch to keep bucket-lock
+/// acquisition ordered across the transaction.
+pub async fn insert_event_notifications(
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
     batch: &[NewNotification],
-) -> Result<u64, sqlx::Error>
-where
-    E: sqlx::Executor<'e, Database = sqlx::Postgres>,
-{
-    insert_batch(executor, batch, true).await
+) -> Result<u64, sqlx::Error> {
+    if batch.is_empty() {
+        return Ok(0);
+    }
+    let mut addresses: Vec<&str> = batch.iter().map(|n| n.address.as_str()).collect();
+    addresses.sort_unstable();
+    addresses.dedup();
+    // The import uses this same namespace and ordered set of 256 buckets.
+    // Whole-transaction imports retain a bounded lock set regardless of audience size.
+    sqlx::query(
+        "SELECT pg_advisory_xact_lock(1163284052, bucket)
+         FROM (SELECT DISTINCT (hashtextextended(address, 0) & 255)::integer AS bucket
+               FROM unnest($1::text[]) AS wallets(address) ORDER BY bucket) buckets",
+    )
+    .bind(&addresses)
+    .execute(&mut **tx)
+    .await?;
+    let kinds: Vec<&str> = batch.iter().map(|n| n.kind.as_str()).collect();
+    let recipients: Vec<&str> = batch.iter().map(|n| n.address.as_str()).collect();
+    let events: Vec<Option<&str>> = batch
+        .iter()
+        .map(|n| n.metadata.get("eventId").and_then(Json::as_str))
+        .collect();
+    // Adopt history before inserting. Keeping its ID retains visibility, reads
+    // and delivery evidence even after the intent and outbox have been pruned.
+    sqlx::query(
+        "WITH notices AS (
+             SELECT DISTINCT address,kind,event_id,'event-notice:' || kind || ':' || event_id AS key
+             FROM unnest($1::text[],$2::text[],$3::text[]) n(address,kind,event_id)
+             WHERE event_id IS NOT NULL
+         ), carriers AS (
+             SELECT n.key,(SELECT old.id FROM social.notifications old
+                           WHERE old.address=n.address AND old.type=n.kind
+                             AND old.metadata->>'eventId'=n.event_id AND old.broadcast_key IS NULL
+                           ORDER BY old.created_at,old.id LIMIT 1) AS id
+             FROM notices n WHERE NOT EXISTS (
+                 SELECT 1 FROM social.notifications keyed
+                 WHERE keyed.address=n.address AND keyed.broadcast_key=n.key)
+         ) UPDATE social.notifications t SET broadcast_key=c.key FROM carriers c WHERE t.id=c.id",
+    )
+    .bind(&recipients)
+    .bind(&kinds)
+    .bind(&events)
+    .execute(&mut **tx)
+    .await?;
+    insert_batch(&mut **tx, batch, true).await
 }
 
 /// One notification deduplicated per `(address, broadcast_key)` (the
@@ -241,6 +292,62 @@ where
     Ok(inserted as u64)
 }
 
+/// Inserts a notice and delivery once per source identity. Exact previous
+/// identities keep their row, payload and delivery; only their key is attached.
+/// The caller must retain the transaction through the source's own write.
+pub async fn insert_keyed_notification_once(
+    transaction: &mut sqlx::PgConnection,
+    notification: &NewNotification,
+    aliases: &[NotificationAlias],
+) -> Result<u64, sqlx::Error> {
+    sqlx::query("SELECT pg_advisory_xact_lock(hashtextextended($1, 0))")
+        .bind(format!(
+            "notifications.user:{}",
+            notification.address.as_str()
+        ))
+        .execute(&mut *transaction)
+        .await?;
+    for alias in aliases {
+        sqlx::query(
+            "UPDATE social.notifications SET broadcast_key=$4
+             WHERE id=$1 AND address=$2 AND type=$3 AND broadcast_key IS NULL
+               AND NOT EXISTS (
+                   SELECT 1 FROM social.notifications
+                   WHERE address=$2 AND (broadcast_key=$4 OR id=$5)
+               )",
+        )
+        .bind(alias.legacy_id)
+        .bind(&notification.address)
+        .bind(alias.kind)
+        .bind(format!("user-notification:{}", alias.daily_id))
+        .bind(alias.daily_id)
+        .execute(&mut *transaction)
+        .await?;
+    }
+    let sql = format!(
+        r#"
+        WITH ups AS (
+            INSERT INTO social.notifications (id, address, type, metadata, broadcast_key, occurred_at)
+            VALUES ($1, $2, $3, $4, $5, $6)
+            ON CONFLICT DO NOTHING
+            RETURNING id, address, type, true AS inserted
+        ),
+        {tail}
+        "#,
+        tail = *UPSERT_TAIL
+    );
+    let inserted: i64 = sqlx::query_scalar(sqlx::AssertSqlSafe(sql))
+        .bind(notification.id)
+        .bind(&notification.address)
+        .bind(&notification.kind)
+        .bind(&notification.metadata)
+        .bind(format!("user-notification:{}", notification.id))
+        .bind(notification.occurred_at)
+        .fetch_one(transaction)
+        .await?;
+    Ok(inserted as u64)
+}
+
 async fn insert_batch<'e, E>(
     executor: E,
     batch: &[NewNotification],
@@ -252,11 +359,34 @@ where
     if batch.is_empty() {
         return Ok(0);
     }
-    // DO UPDATE may touch a row once per statement: the last of a repeated id
-    // wins; id order keeps overlapping batches locking rows in one order.
+    // Each statement touches one identity once: the newest source event or
+    // the last ordinary producer entry. ID order keeps row locking consistent.
     let mut seen = std::collections::HashSet::new();
-    let mut unique: Vec<&NewNotification> =
-        batch.iter().rev().filter(|n| seen.insert(n.id)).collect();
+    let mut unique: Vec<&NewNotification> = if event_preferences {
+        let mut keyed = std::collections::BTreeMap::new();
+        for notice in batch {
+            let event = notice
+                .metadata
+                .get("eventId")
+                .and_then(Json::as_str)
+                .map(str::to_owned)
+                .unwrap_or_else(|| notice.id.to_string());
+            let key = (notice.address.as_str(), notice.kind.as_str(), event);
+            let source_time = |n: &NewNotification| {
+                n.metadata
+                    .get("occurredAt")
+                    .and_then(Json::as_str)
+                    .and_then(|s| chrono::DateTime::parse_from_rfc3339(s).ok())
+            };
+            let current = keyed.entry(key).or_insert(notice);
+            if source_time(notice) > source_time(current) {
+                *current = notice;
+            }
+        }
+        keyed.into_values().collect()
+    } else {
+        batch.iter().rev().filter(|n| seen.insert(n.id)).collect()
+    };
     unique.sort_by_key(|n| n.id);
     let batch = unique;
     let ids: Vec<Uuid> = batch.iter().map(|n| n.id).collect();
@@ -264,11 +394,25 @@ where
     let kinds: Vec<&str> = batch.iter().map(|n| n.kind.as_str()).collect();
     let metadata: Vec<Json> = batch.iter().map(|n| n.metadata.clone()).collect();
     let occurred: Vec<NaiveDateTime> = batch.iter().map(|n| n.occurred_at).collect();
+    let conflict = if event_preferences {
+        "ON CONFLICT (address,broadcast_key) WHERE broadcast_key IS NOT NULL DO UPDATE
+         SET metadata=EXCLUDED.metadata,occurred_at=EXCLUDED.occurred_at
+         WHERE t.type=EXCLUDED.type AND
+             COALESCE(CASE WHEN pg_input_is_valid(EXCLUDED.metadata->>'occurredAt','timestamp with time zone')
+                           THEN (EXCLUDED.metadata->>'occurredAt')::timestamptz END,'-infinity'::timestamptz)
+             > COALESCE(CASE WHEN pg_input_is_valid(t.metadata->>'occurredAt','timestamp with time zone')
+                           THEN (t.metadata->>'occurredAt')::timestamptz END,'-infinity'::timestamptz)"
+    } else {
+        "ON CONFLICT (id) DO UPDATE
+         SET metadata=EXCLUDED.metadata,occurred_at=EXCLUDED.occurred_at
+         WHERE t.address=EXCLUDED.address AND t.type=EXCLUDED.type"
+    };
     let sql = format!(
         r#"
         WITH ups AS (
-            INSERT INTO social.notifications AS t (id, address, type, metadata, occurred_at, in_app, read, read_at)
-            SELECT n.*, v.visible, NOT v.visible,
+            INSERT INTO social.notifications AS t (id, address, type, metadata, occurred_at, broadcast_key, in_app, read, read_at)
+            SELECT n.*, CASE WHEN $6::boolean THEN 'event-notice:' || n.type || ':' || COALESCE(n.metadata->>'eventId',n.id::text) END,
+                   v.visible, NOT v.visible,
                    CASE WHEN NOT v.visible THEN timezone('UTC', now()) END
             FROM UNNEST($1::uuid[], $2::text[], $3::text[], $4::jsonb[], $5::timestamp[])
                 AS n(id,address,type,metadata,occurred_at)
@@ -280,9 +424,7 @@ where
                 ) AS visible
             ) v
             ORDER BY n.id
-            ON CONFLICT (id) DO UPDATE
-                SET metadata = EXCLUDED.metadata, occurred_at = EXCLUDED.occurred_at
-                WHERE t.address = EXCLUDED.address AND t.type = EXCLUDED.type
+            {conflict}
             RETURNING id, address, type, (xmax = 0) AS inserted
         ),
         {tail}

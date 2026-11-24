@@ -43,6 +43,39 @@ describe('createSceneRunBridge', () => {
     expect(bridge.isRunning()).toBe(false);
   });
 
+  describe('when the scene is played, paused and stopped', () => {
+    it('should be stopped only before the first Play and after Stop', () => {
+      expect(bridge.isStopped()).toBe(true);
+      bridge.setRunning(true);
+      expect(bridge.isStopped()).toBe(false);
+      bridge.setRunning(false);
+      expect(bridge.isStopped()).toBe(false);
+      bridge.reset();
+      expect(bridge.isStopped()).toBe(true);
+    });
+  });
+
+  describe('when the engine restarts the scene outside a Stop', () => {
+    it('should be stopped again if paused, and not while running', () => {
+      bridge.setRunning(true);
+      bridge.setRunning(false);
+      bridge.markRestarted();
+      expect(bridge.isStopped()).toBe(true);
+
+      bridge.setRunning(true);
+      bridge.markRestarted();
+      expect(bridge.isStopped()).toBe(false);
+    });
+  });
+
+  describe('when a Play waits on a reset', () => {
+    it('should not be stopped once the reset completes', () => {
+      bridge.reset();
+      bridge.markRunPending();
+      expect(bridge.isStopped()).toBe(false);
+    });
+  });
+
   it('should post reset-scene when reset (Stop)', () => {
     bridge.reset();
     expect(posted).toEqual([{ to: 'scene', msg: { kind: 'reset-scene' } }]);

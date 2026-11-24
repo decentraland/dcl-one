@@ -3,11 +3,8 @@
 // keeps its status; the CTA is a plain link to /whats-on, the What's On page.
 import { Link } from "react-router";
 
-import { Button } from "@dcl/one-ui";
-import { asset } from "@ui/asset";
-import AnimatedBackground from "@ui/shop/discovery/components/animated-background/AnimatedBackground";
+import { AnimatedBackground, Button, errorsNotFoundAvatarUrl as notFoundAvatar, GeneralDecentralandColor } from "@dcl/one-ui";
 
-import { GeneralDecentralandColor } from "@dcl/one-ui/foundations/icons";
 import styles from "./NotFoundPage.module.css";
 
 export default function NotFoundPage() {
@@ -35,7 +32,7 @@ export default function NotFoundPage() {
         </Button>
       </div>
       <div className={styles.graphic}>
-        <img className={styles.avatar} src={asset("assets/errors/not-found-avatar.webp")} width={801} height={698} alt="" />
+        <img className={styles.avatar} src={notFoundAvatar} width={801} height={698} alt="" />
       </div>
     </main>
   );

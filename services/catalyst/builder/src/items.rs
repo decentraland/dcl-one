@@ -149,13 +149,19 @@ impl ItemsComponent {
         &self.pool
     }
 
-    pub async fn collection_owner(&self, collection_id: &Uuid) -> Result<Option<String>, ApiError> {
-        let row: Option<(String,)> =
-            sqlx::query_as("SELECT eth_address FROM builder.collections WHERE id = $1")
-                .bind(collection_id)
-                .fetch_optional(&self.pool)
-                .await?;
-        Ok(row.map(|(addr,)| addr))
+    /// Moves a published collection and its items to `creator` in one
+    /// statement when the stored owner differs.
+    pub async fn sync_collection_owner(&self, id: &Uuid, creator: &str) -> Result<(), ApiError> {
+        sqlx::query(
+            "WITH moved AS (UPDATE builder.collections SET eth_address = $2 \
+               WHERE id = $1 AND contract_address IS NOT NULL AND eth_address <> $2 RETURNING id) \
+             UPDATE builder.items SET eth_address = $2 WHERE collection_id IN (SELECT id FROM moved)",
+        )
+        .bind(id)
+        .bind(creator)
+        .execute(&self.pool)
+        .await?;
+        Ok(())
     }
 
     pub async fn collection_by_id(
@@ -230,6 +236,10 @@ impl ItemsComponent {
             _ => (None, None),
         };
 
+        let mut tx = self.pool.begin().await?;
+        sqlx::query("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY")
+            .execute(&mut *tx)
+            .await?;
         let rows = sqlx::query_as::<_, ItemDbRow>(
             r#"
             SELECT
@@ -253,10 +263,22 @@ impl ItemsComponent {
         .bind(q.name.as_deref())
         .bind(limit)
         .bind(offset)
-        .fetch_all(&self.pool)
+        .fetch_all(&mut *tx)
         .await?;
 
-        let total = rows.first().map(|r| r.total_count).unwrap_or(0);
+        let total = if let Some(row) = rows.first() {
+            row.total_count
+        } else {
+            sqlx::query_scalar(
+                "SELECT count(*) FROM builder.items i WHERE i.collection_id = $1
+                 AND ($2::text IS NULL OR i.name ILIKE '%' || $2 || '%')",
+            )
+            .bind(collection_id)
+            .bind(q.name.as_deref())
+            .fetch_one(&mut *tx)
+            .await?
+        };
+        tx.commit().await?;
         let items = rows.into_iter().map(ItemDbRow::into_row).collect();
         Ok((items, total))
     }
@@ -340,6 +362,13 @@ pub struct CollectionMetaRow {
     pub is_approved: bool,
     pub created_at: NaiveDateTime,
     pub updated_at: NaiveDateTime,
+}
+
+impl CollectionMetaRow {
+    /// A published standard collection: its owner is its on-chain creator.
+    pub fn follows_chain(&self) -> bool {
+        self.contract_address.is_some() && self.third_party_id.is_none()
+    }
 }
 
 #[derive(Debug, Serialize)]

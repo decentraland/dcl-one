@@ -397,6 +397,10 @@
   font-size: 0.9375rem;
 }
 
+.recordingChip {
+  max-width: 100%;
+}
+
 .attachmentRemove.attachmentRemove {
   flex-shrink: 0;
   padding: 0;
@@ -427,6 +431,14 @@
 
 .attachButton.attachButton:disabled {
   color: var(--ctl-disabled-ink);
+}
+
+/* The Record button beside Send (or the turn's Stop). */
+.composerActions {
+  display: inline-flex;
+  flex-shrink: 0;
+  align-items: center;
+  gap: 6px;
 }
 
 .setupBox {

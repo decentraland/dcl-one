@@ -233,7 +233,7 @@ mod tests {
         app.world_mut().spawn((
             PrimaryUser::default(),
             Transform::from_xyz(8.0, 0.0, -24.0),
-            OutOfWorld,
+            OutOfWorld::default(),
         ));
         // Startup registers the command with the console
         app.update();
@@ -317,9 +317,9 @@ mod tests {
         app.add_plugins(ArrivalsPlugin);
         let player = app
             .world_mut()
-            .spawn((PrimaryUser::default(), OutOfWorld))
+            .spawn((PrimaryUser::default(), OutOfWorld::default()))
             .id();
-        let other = app.world_mut().spawn(OutOfWorld).id();
+        let other = app.world_mut().spawn(OutOfWorld::default()).id();
         app.update();
 
         app.world_mut().entity_mut(other).remove::<OutOfWorld>();
@@ -328,7 +328,9 @@ mod tests {
 
         // out of world and back between two frames: only the removal is left
         app.world_mut().entity_mut(player).remove::<OutOfWorld>();
-        app.world_mut().entity_mut(player).insert(OutOfWorld);
+        app.world_mut()
+            .entity_mut(player)
+            .insert(OutOfWorld::default());
         app.world_mut().entity_mut(player).remove::<OutOfWorld>();
         app.update();
         assert_eq!(app.world().resource::<Arrivals>().0, 2);

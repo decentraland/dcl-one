@@ -986,11 +986,15 @@ pub enum SettlementOperation {
     /// or batch `/credits/authorize`); the group's lines are the plan. The
     /// contract lets the buyer spend whatever part of `value` a call leaves in
     /// later `useCredits` calls until it expires, so the rule bounds it by the
-    /// group's own quoted need (`sizing`).
+    /// group's own quoted need (`sizing`). `leg` is the Credits part in cents
+    /// of a one-line purchase whose rest the buyer pays in MANA: the bound is
+    /// then that part's share of the line's MANA price, with no buffer
+    /// (`policy::partial_credit_cap`).
     AuthorizeCredit {
         chain_id: ChainId,
         value: ManaWei,
         sizing: CreditSizing,
+        leg: Option<UsdCents>,
     },
     /// `CreditsManager.useCredits`, submitted directly or relayed as a
     /// meta-transaction. `max_uncredited` above zero is a mixed payment.

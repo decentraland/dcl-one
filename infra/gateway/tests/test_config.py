@@ -4,6 +4,7 @@ from pathlib import Path
 import re
 import tempfile
 import unittest
+from unittest import mock
 
 import nginx_map
 
@@ -105,7 +106,7 @@ class ConfigurationTest(unittest.TestCase):
         ]), ["/_x", "/a$b", "/api/marketplace-screen", "/api/screens", "/download", "/download_success",
              "/internal", "/places", "/play", "/profile", "/robots.txt"])
 
-    def test_sites_route_files_claim_no_landings_prefix(self):
+    def test_sites_route_files_cover_public_pages_without_claiming_landings(self):
         # The same file list package.nix hands the gateway.
         routes = Path(__file__).parents[3] / "apps" / "sites" / "src" / "routes" / "routes"
         files = [path.name for path in routes.iterdir() if path.is_file()
@@ -113,6 +114,13 @@ class ConfigurationTest(unittest.TestCase):
         prefixes = gateway.site_prefixes(files)
         self.assertNotIn("/landings", prefixes)
         self.assertIn("/communities", prefixes)
+        cfg = gateway.settings({"GATEWAY_RESOLVERS": "127.0.0.1"})
+        table = {"sites": files, "internal": [], "node": [], "deploy": [], "aliases": []}
+        text = gateway.render(table, cfg, "/mime.types")
+        for location in ("= /press", "/press/"):
+            with self.subTest(location=location):
+                self.assertTrue(f"location {location} {{\nproxy_pass http://sites;" in text)
+        self.assertNotIn("location /press {", text)
 
     def test_sites_cannot_claim_internal_api_paths(self):
         cfg = gateway.settings({"GATEWAY_RESOLVERS": "127.0.0.1"})
@@ -147,7 +155,7 @@ class ConfigurationTest(unittest.TestCase):
         table = {"sites": [], "internal": ["/metrics"], "node": [], "aliases": [],
                  "deploy": ["/entities", "/content/entities"]}
         text = gateway.render(table, cfg, "/mime.types")
-        deploy = re.search(r'location ~\* "([^"]+)" \{\n[^}]*client_max_body_size 248m;', text)[1]
+        deploy = re.search(rf'location ~\* "([^"]+)" \{{\n[^}}]*client_max_body_size {gateway.CONTENT_DEPLOY_CAP};', text)[1]
         for path in ["/entities", "/content/entities", "/content/Entities", "/ENTITIES/"]:
             with self.subTest(path=path):
                 # ~* matches ignoring case, as the content server's rewrite does.
@@ -286,25 +294,43 @@ class ConfigurationTest(unittest.TestCase):
         root = Path(__file__).parents[3] / "services/catalyst"
         source = (root / "content/src/create_entity.rs").read_text()
         consts = dict(re.findall(r"const (\w+): usize = ([^;]+);", source))
-
-        def value(name):
-            expr = consts[name]
-            for ref in re.findall(r"[A-Z_]{2,}", expr):
-                expr = expr.replace(ref, f"({value(ref)})")
-            self.assertRegex(expr, r"^[\d\s()*+]+$")
-            return eval(expr)
-
-        formula = re.search(r"fn max_deployment_body_bytes\(max_fields: usize\) -> usize \{\s*([^}]+?)\s*\}",
-                            source)[1]
-        self.assertEqual(formula, "MAX_DEPLOYMENT_BYTES + (MAX_DEPLOY_FILES + max_fields + 1) * "
-                                  "MULTIPART_PART_FRAMING_BYTES")
+        framing = consts["MULTIPART_PART_FRAMING_BYTES"]
+        self.assertRegex(framing, r"^[\d\s*+]+$")
+        formula = re.search(r"fn multipart_body_limit\(max_total: usize, max_files: usize, max_fields: usize\) "
+                            r"-> usize \{\s*([^}]+?)\s*\}", source)[1]
+        self.assertEqual(re.sub(r"\s+", "", formula),
+                         "max_total.saturating_add((max_files.saturating_add(max_fields).saturating_add(1))"
+                         ".saturating_mul(MULTIPART_PART_FRAMING_BYTES),)")
         config = (root / "config/src/content.rs").read_text()
-        fields = eval(re.search(r'env = "MAX_UPLOAD_FIELD_COUNT", default_value_t = ([\d\s*+]+)\)', config)[1])
-        route_limit = (value("MAX_DEPLOYMENT_BYTES")
-                       + (value("MAX_DEPLOY_FILES") + fields + 1) * value("MULTIPART_PART_FRAMING_BYTES"))
+
+        def default(env):
+            found = re.search(rf'env = "{env}",?\s*default_value_t = ([\d\s*+]+?),?\s*\)', config)
+            self.assertIsNotNone(found, env)
+            return eval(found[1])
+
+        route_limit = (default("MAX_UPLOAD_TOTAL_SIZE")
+                       + (default("MAX_UPLOAD_FILE_COUNT") + default("MAX_UPLOAD_FIELD_COUNT") + 1) * eval(framing))
+        self.assertEqual(route_limit, 2 * 1024 ** 3 + (3000 + 32 + 1) * (16 * 1024 + 128))
         cap = int(gateway.CONTENT_DEPLOY_CAP.removesuffix("m")) * 1024 * 1024
+        # The app warns at startup when its limits pass the cap it ships with.
+        self.assertEqual(eval(consts["SHIPPED_GATEWAY_DEPLOY_CAP_BYTES"]), cap)
         self.assertGreaterEqual(cap, route_limit)
         self.assertLess(cap - route_limit, 1024 * 1024, "rounded up to the next MiB")
+
+    def test_content_deploys_stream_to_the_app_unbuffered(self):
+        # The app spools the body under its own budgets and timeout; buffered here, a body of up
+        # to CONTENT_DEPLOY_CAP would land in the gateway's temp space (a tmpfs in the documented
+        # run) before the app could answer.
+        cfg = gateway.settings({"GATEWAY_RESOLVERS": "127.0.0.1"})
+        table = {"sites": [], "internal": ["/metrics"], "node": [], "aliases": [],
+                 "deploy": ["/entities", "/content/entities"]}
+        text = gateway.render(table, cfg, "/mime.types")
+        content = re.search(rf'location ~\* "[^"]+" \{{\n([^}}]*client_max_body_size '
+                            rf'{gateway.CONTENT_DEPLOY_CAP};[^}}]*)\}}', text)[1]
+        self.assertIn("proxy_request_buffering off;", content)
+        worlds = re.search(r'location ~ "\^/worlds-content-server/entities/\*\$" \{\n([^}]*)\}', text)[1]
+        self.assertNotIn("proxy_request_buffering", worlds)
+        self.assertEqual(text.count("proxy_request_buffering"), 1)
 
     def test_deploy_routes_cap_concurrent_uploads_per_address(self):
         cfg = gateway.settings({"GATEWAY_RESOLVERS": "127.0.0.1"})
@@ -328,6 +354,9 @@ class ConfigurationTest(unittest.TestCase):
         self.assertNotIn("Cache-Control", body)
         self.assertIn("add_header Access-Control-Expose-Headers "
                       "$upstream_http_access_control_expose_headers always;", body)
+        # A blob opened as a page runs sandboxed behind the redirect too.
+        self.assertIn("add_header Content-Security-Policy "
+                      "$upstream_http_content_security_policy always;", body)
         # Ranges the app does not answer itself get the whole file, as upstream.
         self.assertIn("max_ranges 0;", body)
 
@@ -371,6 +400,59 @@ class ConfigurationTest(unittest.TestCase):
             with self.subTest(path=path):
                 self.assertFalse(any(gateway.CAST_PRESENTATION_CAP in body
                                      for regex, body in regexes if regex.search(path)))
+
+    def test_camera_reel_upload_cap_admits_the_multipart_limit(self):
+        root = Path(__file__).parents[3] / "services/catalyst"
+        source = (root / "camera-reel/src/handlers/images.rs").read_text()
+        image = re.search(r"pub const MAX_MULTIPART_IMAGE_BYTES: usize = ([^;]+);", source)[1]
+        memory = re.search(r"const MAX_MULTIPART_MEMORY_BYTES: usize = ([^;]+);", source)[1]
+        expr = memory.replace("MAX_MULTIPART_IMAGE_BYTES", f"({image})")
+        self.assertRegex(expr, r"^[\d\s*+()]+$")
+        self.assertEqual(gateway.CAMERA_REEL_UPLOAD_CAP, f"{eval(expr) // (1024 * 1024) + 1}m")
+        cap = f"client_max_body_size {gateway.CAMERA_REEL_UPLOAD_CAP};"
+        _, regexes = self.worlds_locations()
+        for path in ["/camera-reel-service/api/images", "/camera-reel-service/api/images/"]:
+            with self.subTest(path=path):
+                body = next(body for regex, body in regexes if regex.search(path))
+                self.assertIn("proxy_pass http://apis;", body)
+                self.assertIn(cap, body)
+                self.assertIn("limit_conn deploy_uploads", body)
+        for path in ["/camera-reel-service/api/images-json", "/camera-reel-service/api/images/1",
+                     "/x/camera-reel-service/api/images"]:
+            with self.subTest(path=path):
+                self.assertFalse(any(cap in body for regex, body in regexes if regex.search(path)))
+        # The root alias keeps its prefix location; only the upload path is exact.
+        cfg = gateway.settings({"GATEWAY_RESOLVERS": "127.0.0.1"})
+        table = self.production_table()
+        row = next(row for row in table["aliases"] if row["key"] == gateway.CAMERA_REEL_ALIAS)
+        config = gateway.render(table, cfg, "/mime.types")
+        prefix = re.search(r"location \^~ /camera-reel/ \{\n(.*?)\n\}", config, re.S)[1]
+        self.assertIn(f"rewrite {row['rewrite']} break;", prefix)
+        self.assertNotIn(cap, prefix)
+        for path in ["/camera-reel/api/images", "/camera-reel/api/images/"]:
+            with self.subTest(path=path):
+                alias = re.search(rf"location = {re.escape(path)} \{{\n(.*?)\n\}}", config, re.S)[1]
+                self.assertIn(f"rewrite {row['rewrite']} break;", alias)
+                self.assertIn("proxy_pass http://apis;", alias)
+                self.assertIn(cap, alias)
+
+    def test_table_without_the_camera_reel_alias_is_rejected(self):
+        table = self.production_table()
+        gateway.check_table(table)
+        table["aliases"] = [row for row in table["aliases"] if row["key"] != gateway.CAMERA_REEL_ALIAS]
+        with self.assertRaisesRegex(ValueError, "camera-reel"):
+            gateway.check_table(table)
+        # The entrypoint refuses to start nginx on such a table.
+        with tempfile.TemporaryDirectory() as folder:
+            path = Path(folder) / "routes.json"
+            path.write_text(json.dumps(table))
+            argv = ["gateway.py", "--table", str(path), "--nginx", "/bin/false", "--mime", "/mime.types", "--check"]
+            with (mock.patch("sys.argv", argv), mock.patch.dict("os.environ", {"GATEWAY_RESOLVERS": "127.0.0.1"}),
+                  mock.patch.object(gateway.subprocess, "run") as run, mock.patch("sys.stderr"),
+                  self.assertRaises(SystemExit) as exit):
+                gateway.main()
+        self.assertEqual(exit.exception.code, 2)
+        run.assert_not_called()
 
     def worlds_locations(self):
         cfg = gateway.settings({"GATEWAY_RESOLVERS": "127.0.0.1", "GATEWAY_DOMAIN": "example.test"})
@@ -542,6 +624,22 @@ class ConfigurationTest(unittest.TestCase):
                     (kind, prefix) for kind, prefix in sites_locations
                     if (path == prefix if kind == "= " else path.startswith(prefix)) and prefix != "/"
                 ])
+
+    def test_ui_gallery_routes_to_sites_before_any_regex(self):
+        # Static files with no route file: `^~` keeps every gallery path on Sites ahead of the
+        # regex locations, and the exact form lets Sites redirect /ui-gallery to /ui-gallery/.
+        root = Path(__file__).parents[3]
+        sites = sorted(path.name for path in (root / "apps/sites/src/routes/routes").iterdir())
+        self.assertNotIn("/ui-gallery", gateway.site_prefixes(sites))
+        table = {"sites": sites, "internal": [], "aliases": [], "node": [], "deploy": []}
+        config = gateway.render(table, gateway.settings({"GATEWAY_RESOLVERS": "127.0.0.1"}), "/mime.types")
+        self.assertIn("location = /ui-gallery {\nproxy_pass http://sites;", config)
+        self.assertIn("location ^~ /ui-gallery/ {\nproxy_pass http://sites;", config)
+
+    def test_a_sites_route_cannot_claim_the_ui_gallery(self):
+        table = {"sites": ["ui-gallery.tsx"], "internal": [], "aliases": [], "node": [], "deploy": []}
+        with self.assertRaisesRegex(ValueError, "Two locations have the name = /ui-gallery"):
+            gateway.render(table, gateway.settings({"GATEWAY_RESOLVERS": "127.0.0.1"}), "/mime.types")
 
     def test_robots_txt_routes_to_sites(self):
         root = Path(__file__).parents[3]

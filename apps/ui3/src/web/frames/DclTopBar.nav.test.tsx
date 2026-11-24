@@ -3,8 +3,14 @@ import { act, cleanup, fireEvent, render, screen } from "@testing-library/react"
 
 import DclTopBar from "./DclTopBar";
 import ChromeShell from "../../components/ChromeShell";
-import { ChromeNavContext, chromeLinkProps, isSameDocumentHref, type ChromeNavigate } from "./chrome-nav";
-import { ChromeAuthContext, type ChromeAuth } from "./chrome-auth";
+import {
+  ChromeNavContext,
+  chromeLinkProps,
+  isSameDocumentHref,
+  type ChromeNavigate,
+  ChromeAuthContext,
+  type ChromeAuth,
+} from "@dcl/one-ui";
 import { getJSON } from "../../data/catalyst/client";
 
 vi.mock("../../data/catalyst/client", async importOriginal => ({
@@ -78,10 +84,10 @@ describe("top bar links hand same-document hrefs to the chrome navigator", () =>
     const navigate = vi.fn<ChromeNavigate>(() => true);
     mountBar(navigate);
     const shop = screen.getAllByRole("link", { name: "Shop" })[0]!;
-    expect(shop).toHaveAttribute("href", "/shop");
+    expect(shop).toHaveAttribute("href", "/shop/overview");
     expect(shop).toHaveAttribute("data-discover", "true");
     const notPrevented = fireEvent.click(shop);
-    expect(navigate).toHaveBeenCalledWith("/shop");
+    expect(navigate).toHaveBeenCalledWith("/shop/overview");
     expect(notPrevented).toBe(false);
   });
 

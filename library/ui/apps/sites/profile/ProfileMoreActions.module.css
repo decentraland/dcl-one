@@ -1,0 +1,61 @@
+.root {
+  position: relative;
+  display: inline-flex;
+}
+
+/* The raised surface of the shared Dropdown's list. It ends at the button's right edge. */
+.menu {
+  position: absolute;
+  top: calc(100% + var(--dcl-space-4));
+  right: 0;
+  z-index: 10;
+  display: flex;
+  flex-direction: column;
+  box-sizing: border-box;
+  width: max-content;
+  min-width: 160px;
+  max-width: calc(100vw - 32px);
+  padding: var(--dcl-space-8);
+  border-radius: var(--dcl-radius-md);
+  background: var(--dcl-neutrals-snow);
+  color: var(--dcl-neutrals-shadow);
+  transform: translateX(var(--menu-shift, 0px));
+}
+
+.item {
+  display: flex;
+  align-items: center;
+  gap: var(--dcl-space-8);
+  min-height: 40px;
+  padding: var(--dcl-space-8) var(--dcl-space-12);
+  border: 0;
+  border-radius: var(--dcl-radius-sm);
+  background: none;
+  color: inherit;
+  font: inherit;
+  font-size: var(--dcl-font-size-body-sm);
+  font-weight: 600;
+  text-align: start;
+  cursor: pointer;
+}
+
+.item:not(:disabled):hover,
+.item:focus-visible {
+  background: var(--dcl-neutrals-pearl);
+}
+
+.item:focus-visible {
+  outline: 2px solid var(--dcl-neutrals-shadow);
+  outline-offset: -2px;
+}
+
+.item:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+@media (forced-colors: active) {
+  .menu {
+    border: 1px solid ButtonText;
+  }
+}

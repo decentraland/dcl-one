@@ -13,7 +13,9 @@ import { CHAIN } from "@shop/model/chain";
 import { BOOK, ITEM, TOKEN } from "@shop/payment/fixtures";
 import { AGGREGATOR_ABI, ERC20_ABI, ERC721_ABI, MARKETPLACE_ABI, NATIVE_META_TX_ABI, OFFCHAIN_META_TX_ABI } from "@shop/checkout/chain/abi";
 import type { ChainReader, TxReceipt } from "./chain/rpc";
-import { ASSET_TYPE, type SignedTrade } from "./purchase/encoding";
+import { encodeExecuteMetaTransaction } from "./chain/metatx";
+import { ASSET_TYPE, encodeUseCredits, idToSalt, type SignedTrade } from "./purchase/encoding";
+import type { SplitSale } from "./purchase/splitEvidence";
 
 export type FakeRequest = {
   name: EndpointName;
@@ -128,17 +130,22 @@ export function resaleTrade(overrides: Partial<SignedTrade> = {}): SignedTrade {
 export type FakeChain = ChainReader & {
   /** Receipts by hash; a hash with no entry has none (pending). */
   receipts: Map<string, TxReceipt["status"]>;
+  /** Transactions by hash (lowercase), as `transaction` answers them; a hash with no entry is unknown. */
+  transactions: Map<string, { from: string | null; to: string | null; input: Hex }>;
   nonces: Map<string, bigint>;
   allowances: Map<string, bigint>;
   /** `${chainId}:${collection}:${owner}:${operator}` -> approved. */
   approvals: Map<string, boolean>;
   manaBalances: Map<string, bigint>;
   calls: { chainId: number; to: string; data: Hex }[];
+  /** The finalized block's time (unix seconds) `finalizedTime` answers; this moment's, unless a test sets it. */
+  chainTime: number | null;
 };
 
 /** A chain that answers the reads the rails make: getNonce, allowance, balanceOf, the MANA oracle. */
 export function createFakeChain(opts: { rate?: bigint; decimals?: number } = {}): FakeChain {
   const receipts = new Map<string, TxReceipt["status"]>();
+  const transactions: FakeChain["transactions"] = new Map();
   const nonces = new Map<string, bigint>();
   const allowances = new Map<string, bigint>();
   const manaBalances = new Map<string, bigint>();
@@ -147,11 +154,16 @@ export function createFakeChain(opts: { rate?: bigint; decimals?: number } = {})
   const nowSeconds = () => BigInt(Math.floor(Date.now() / 1000));
   return {
     receipts,
+    transactions,
     nonces,
     allowances,
     approvals,
     manaBalances,
     calls,
+    chainTime: null,
+    async finalizedTime() {
+      return this.chainTime ?? Math.floor(Date.now() / 1000);
+    },
     async call(chainId, to, data) {
       calls.push({ chainId, to, data });
       const selector = data.slice(0, 10);
@@ -188,6 +200,7 @@ export function createFakeChain(opts: { rate?: bigint; decimals?: number } = {})
     },
     balance: async () => 10n ** 18n,
     code: async () => "0x",
+    transaction: async (_chainId, txHash) => transactions.get(txHash.toLowerCase()) ?? null,
   };
 }
 
@@ -195,8 +208,11 @@ export type FakeWallet = Eip1193Provider & {
   chainId: number;
   account: string;
   requests: { method: string; params?: unknown[] }[];
-  /** What the next signature/transaction request does. */
-  next: "ok" | "reject" | "fail";
+  /**
+   * What the next signature/transaction request does. `lost` is for the next transaction (signatures pass it by): sent (it
+   * is in `sent`), then failing without its hash, as a wallet that disconnects after broadcasting (4900).
+   */
+  next: "ok" | "reject" | "fail" | "lost";
   sent: { to: string; data: Hex }[];
   emit(event: string, ...args: unknown[]): void;
 };
@@ -222,13 +238,16 @@ export function createFakeWallet(opts: { chainId?: number; account?: string; onS
       }
       if (method === "eth_signTypedData_v4" || method === "eth_sendTransaction") {
         const mode = wallet.next;
+        if (mode === "lost" && method === "eth_signTypedData_v4") return `0x${"11".repeat(64)}1b`;
         wallet.next = "ok";
         if (mode === "reject") throw Object.assign(new Error("User rejected the request."), { code: 4001 });
         if (mode === "fail") throw new Error("The wallet could not sign");
         if (method === "eth_signTypedData_v4") return `0x${"11".repeat(64)}1b`;
         const tx = (params![0] as { to: string; data: Hex });
         wallet.sent.push({ to: tx.to, data: tx.data });
-        return opts.onSend?.(tx) ?? (`0x${(++n).toString(16).padStart(64, "0")}` as Hex);
+        const hash = opts.onSend?.(tx) ?? (`0x${(++n).toString(16).padStart(64, "0")}` as Hex);
+        if (mode === "lost") throw Object.assign(new Error("The wallet disconnected."), { code: 4900 });
+        return hash;
       }
       throw Object.assign(new Error(`unsupported ${method}`), { code: 4200 });
     },
@@ -248,6 +267,49 @@ export function createFakeWallet(opts: { chainId?: number; account?: string; onS
   return wallet;
 }
 
+/**
+ * The relayed meta-transaction a split's sale lands as, carrying exactly `sale`'s terms (purchase/splitEvidence.ts reads it
+ * back as that sale), signed by `user` (the buyer unless said) with `signature` (one fixed one unless said): what a test
+ * puts on the fake chain for a hash. Another signature is the same terms in another envelope.
+ */
+export function splitSaleTransaction(sale: SplitSale, over: { user?: string; signature?: Hex } = {}): { from: null; to: string; input: Hex } {
+  const never = 4_102_444_800n;
+  const call = encodeUseCredits({
+    credits: [{ value: BigInt(sale.creditWei), expiresAt: never, salt: idToSalt(sale.creditId) }],
+    creditsSignatures: [`0x${"cc".repeat(65)}`],
+    externalCall: { target: sale.target as Hex, selector: sale.selector, data: sale.callData, expiresAt: never, salt: `0x${"00".repeat(32)}` },
+    customExternalCallSignature: "0x",
+    maxUncreditedValue: BigInt(sale.gapWei),
+    maxCreditedValue: BigInt(sale.creditWei),
+  });
+  return { from: null, to: sale.manager, input: encodeExecuteMetaTransaction("functionData", over.user ?? sale.buyer, call, over.signature ?? `0x${"11".repeat(65)}`) };
+}
+
+/**
+ * The Web Locks of one browser, shared by every dialog (tab) given the same one: a lock asked `ifAvailable` while another
+ * holds it is refused. Waiting for one is not modeled. With `freesAfterMs`, a released lock stays taken that long, as a
+ * real browser frees one a turn after its release: a page asking again at once for a lock it just let go is refused.
+ */
+export function createFakeLocks(config: { freesAfterMs?: number } = {}): LockManager & { held: Set<string> } {
+  const held = new Set<string>();
+  const request = async (name: string, options: LockOptions | LockGrantedCallback<unknown>, callback?: LockGrantedCallback<unknown>) => {
+    const opts = typeof options === "function" ? {} : options;
+    const granted = (typeof options === "function" ? options : callback)!;
+    if (held.has(name)) {
+      if (opts.ifAvailable) return granted(null);
+      throw new Error("fake locks: waiting for a held lock is not modeled");
+    }
+    held.add(name);
+    try {
+      return await granted({ name, mode: "exclusive" } as Lock);
+    } finally {
+      if (config.freesAfterMs == null) held.delete(name);
+      else setTimeout(() => held.delete(name), config.freesAfterMs);
+    }
+  };
+  return { held, request, query: async () => ({ held: [...held].map((name) => ({ name, mode: "exclusive" })), pending: [] }) } as unknown as LockManager & { held: Set<string> };
+}
+
 /** The MANA approve a relayed NativeMetaTransaction carries, if any: (owner, spender, amount). */
 export function relayedApproval(body: unknown): { owner: string; spender: string; amount: bigint } | null {
   const data = (body as { transactionData?: { params?: [string, Hex] } })?.transactionData?.params?.[1];
@@ -261,7 +323,8 @@ export function relayedApproval(body: unknown): { owner: string; spender: string
 
 /**
  * A relay endpoint (POST {base}/transactions): hashes in order, or the refusal/outage asked for. With a
- * `chain`, a relayed MANA approve raises that allowance and every relayed hash gets the receipt `confirm`.
+ * `chain`, a relayed MANA approve runs (it sets that allowance and spends the owner's meta-transaction nonce at the
+ * token) and every other relayed hash gets the receipt `confirm`.
  * `refuse` answers a refusal before any send, as `refuseStatus`: 400 by default (a reverted gas
  * estimate), 503 for fees above the cap. It carries the relay's evidence that nothing was sent
  * (`"not_sent": true`) unless `refuseEvidence` is false, as from a relay of another version.
@@ -273,6 +336,8 @@ export function createFakeRelay(
     mode?: "ok" | "refuse" | "down" | "fail-after-send";
     refuseStatus?: number;
     refuseEvidence?: boolean;
+    /** Fields the refusal answers with over its defaults (its `error`, a quota's `retryAt` and `quota`). */
+    refuseBody?: Record<string, unknown>;
     failStatus?: number;
     failBody?: unknown;
     onRelay?: (hash: Hex, body: unknown) => void; chain?: FakeChain; confirm?: TxReceipt["status"] | "none"; chainId?: number } = {},
@@ -284,6 +349,7 @@ export function createFakeRelay(
     confirm: opts.confirm ?? "success",
     refuseStatus: opts.refuseStatus ?? 400,
     refuseEvidence: opts.refuseEvidence ?? true,
+    refuseBody: opts.refuseBody ?? {},
     failStatus: opts.failStatus ?? 504,
     failBody: opts.failBody ?? ({ ok: false, error: "unknown", message: "Unknown error" } as unknown),
   };
@@ -294,13 +360,19 @@ export function createFakeRelay(
     if (state.mode === "refuse") {
       const error = state.refuseStatus === 503 ? "high_congestion" : "invalid_transaction";
       const evidence = state.refuseEvidence ? { not_sent: true } : {};
-      return new Response(JSON.stringify({ ok: false, error, message: "execution reverted", ...evidence }), { status: state.refuseStatus });
+      return new Response(JSON.stringify({ ok: false, error, message: "execution reverted", ...evidence, ...state.refuseBody }), { status: state.refuseStatus });
     }
     const hash = `0x${"f".repeat(56)}${(++n).toString(16).padStart(8, "0")}` as Hex;
     if (opts.chain) {
+      // What the relay sends on chain: its own transaction to the target, carrying the signed execution.
+      const params = (body as { transactionData?: { params?: [string, Hex] } })?.transactionData?.params;
+      if (params) opts.chain.transactions.set(hash.toLowerCase(), { from: null, to: params[0], input: params[1] });
       const approval = relayedApproval(body);
       if (approval) {
         opts.chain.allowances.set(`${opts.chainId ?? CHAIN.POLYGON}:${approval.owner}:${approval.spender}`, approval.amount);
+        const token = (body as { transactionData: { params: [string, Hex] } }).transactionData.params[0].toLowerCase();
+        const nonce = `${token}:${approval.owner}`;
+        opts.chain.nonces.set(nonce, (opts.chain.nonces.get(nonce) ?? 0n) + 1n);
         opts.chain.receipts.set(hash.toLowerCase(), "success");
       } else if (state.confirm !== "none") opts.chain.receipts.set(hash.toLowerCase(), state.confirm);
     }

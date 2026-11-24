@@ -24,6 +24,12 @@ import { killAllRealms } from '/@/modules/bevy-realm';
 import { stopAllProjectWatchers } from '/@/modules/project-watcher';
 import { killInspectorServer } from '/@/modules/inspector';
 import { aiStop } from '/@/modules/ai';
+import {
+  abort as abortRecording,
+  abortTranscription,
+  waitForPendingStops,
+} from '/@/modules/recording';
+import { pruneOldSessions, sweepLeftovers } from '/@/modules/recording/retention';
 import { stopSceneMcpServer } from '/@/modules/scene-mcp';
 import {
   clearMcpDiscovery,
@@ -167,6 +173,7 @@ app
     });
     log.info('[IPC] Ready');
     void initMcpDiscovery();
+    void pruneOldSessions().then(sweepLeftovers);
     await restoreOrCreateMainWindow();
     log.info('[BrowserWindow] Ready');
     await addEditorsPathsToConfig();
@@ -193,6 +200,7 @@ export function setSkipBeforeQuitCleanup() {
 // survived the graceful signal. On Windows this lands on the 2 s NSIS close window.
 const QUIT_CLEANUP_TIMEOUT_MS = FORCE_KILL_TIMEOUT_MS + 1500;
 const TELEMETRY_FLUSH_TIMEOUT_MS = 1000;
+const PENDING_STOP_TIMEOUT_MS = QUIT_CLEANUP_TIMEOUT_MS;
 const SKIP_CLEANUP_REARM_MS = 5000;
 
 export async function killAll() {
@@ -207,6 +215,9 @@ export async function killAll() {
   }
   killInspectorServer();
   aiStop(); // reap any in-flight AI CLI turn (synchronous kill of its process group)
+  abortRecording('the app was closed');
+  abortTranscription();
+  promises.push(waitForPendingStops(PENDING_STOP_TIMEOUT_MS));
   stopSceneMcpServer(); // close the localhost MCP server
   stopWatchingAccessRequests();
   clearMcpDiscovery(); // and stop advertising it to outside agents

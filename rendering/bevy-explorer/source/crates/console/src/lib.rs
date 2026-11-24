@@ -12,6 +12,8 @@ use std::sync::Mutex;
 
 mod debug_panel;
 pub use debug_panel::{AddDebugSection, DebugInput, DebugInputKind, DebugSection};
+pub mod line;
+pub mod reply;
 
 pub trait DoAddConsoleCommand {
     fn add_console_command<T: Command, U>(

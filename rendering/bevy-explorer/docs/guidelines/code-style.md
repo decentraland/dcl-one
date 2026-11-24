@@ -5,6 +5,12 @@ the code. The one idea behind most of it: lean into the ECS. Bevy already gives 
 change tracking, ownership and cleanup. Code that reinvents those in a resource, a `Local` or a
 side map is not allowed and will fail a review.
 
+Unused code is deleted, used, or gated with `#[cfg]` to the builds that use it. No `allow`,
+`expect` or `warn` covers `dead_code`, `unused` or `warnings`, except the ShaderType derive's
+never-called check fns: a module that holds only `use` items and ShaderType-derived structs
+takes `#![expect(dead_code, reason = …)]` with the reason that
+`tooling/bevy-dead-code-check.py` accepts. Their `impl` blocks and constants live outside it.
+
 ## State lives on the entity it describes
 
 - A fact about an entity is a component on that entity. Not a `HashMap<Entity, T>` in a
@@ -75,7 +81,9 @@ side map is not allowed and will fail a review.
 ## Async work
 
 - IO goes on `IoTaskPool`; the result comes back through a channel or a `Task<T>` polled from
-  a system, and lands in a component. Systems never block.
+  a system, and lands in a component. Systems never block. The scene loop is the one exception:
+  it paces the frame, and sleeps for a bounded wait between passes (see
+  [the scene loop](scheduling.md#the-scene-loop)).
 - The worker that knows the outcome reports it, per item and structured: `Vec<Result<T, E>>`
   in request order with a small named error enum. The caller relays; it does not re-derive
   failures by diffing what it asked for against what came back.

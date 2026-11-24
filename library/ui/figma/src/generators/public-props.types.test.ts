@@ -5,7 +5,7 @@
 import { readFileSync, readdirSync, statSync } from 'node:fs'
 import path from 'node:path'
 import ts from 'typescript'
-import { beforeAll, describe, expect, it } from 'vitest'
+import { beforeAll, beforeEach, describe, expect, it } from 'vitest'
 import { viewKey } from '../../review/src/components/figma-view-state.js'
 
 const review = path.resolve(import.meta.dirname, '../../review')
@@ -137,6 +137,7 @@ const NAV_BAR_JSX: { text: string; compiles: boolean; why: string }[] = [
 let fixtures: Fixture[] = []
 let failing = new Set<number>()
 
+// One TypeScript program over the whole Review project takes seconds, so it is built once and read by every test.
 beforeAll(() => {
   const config = ts.readConfigFile(path.join(review, 'tsconfig.json'), ts.sys.readFile)
   const parsed = ts.parseJsonConfigFileContent(config.config, ts.sys, review)
@@ -203,23 +204,33 @@ beforeAll(() => {
 }, 120_000)
 
 describe('generated props at the real public boundary', () => {
-  it.each(SPARSE)(
-    '%s: every prop object compiles exactly when it defaults to a drawn view',
-    (name) => {
-      const own = fixtures.filter((item) => item.component === name && item.why === 'enumerated')
+  describe.each(SPARSE)('when the %s prop objects are compiled', (name) => {
+    let own: Fixture[]
+
+    beforeEach(() => {
+      own = fixtures.filter((item) => item.component === name && item.why === 'enumerated')
+    })
+
+    it('should compile exactly the prop objects that default to a drawn view', () => {
       const mismatches = own
         .filter((item) => item.compiles === failing.has(item.line))
         .map((item) => item.text)
       expect(mismatches).toEqual([])
-      expect(own.some((item) => item.compiles) && own.some((item) => !item.compiles)).toBe(true)
-    }
-  )
+    })
 
-  it.each(NAV_BAR_JSX.map((item) => [item.why, item.compiles] as const))(
-    'NavBar JSX: %s should %s',
-    (why, compiles) => {
+    it('should enumerate both drawn and undrawn prop objects', () => {
+      expect(own.some((item) => item.compiles) && own.some((item) => !item.compiles)).toBe(true)
+    })
+  })
+
+  describe('when the NavBar JSX fixtures are compiled', () => {
+    it.each(
+      NAV_BAR_JSX.map(
+        (item) => [item.compiles ? 'accept' : 'reject', item.why, item.compiles] as const
+      )
+    )('should %s %s', (_, why, compiles) => {
       const item = fixtures.find((entry) => entry.why === why)!
       expect(!failing.has(item.line)).toBe(compiles)
-    }
-  )
+    })
+  })
 })

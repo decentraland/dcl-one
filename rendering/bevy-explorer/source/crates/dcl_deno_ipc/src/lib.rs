@@ -335,7 +335,13 @@ pub async fn renderer_ipc_in(mut stream: RecvHalf) {
             warn!("renderer_ipc_in exit on truncated message: {e}");
             break;
         }
-        let msg: SceneToEngine = rmp_serde::from_slice(&buffer).unwrap();
+        let msg: SceneToEngine = match rmp_serde::from_slice(&buffer) {
+            Ok(msg) => msg,
+            Err(e) => {
+                error!("renderer_ipc_in exit on undecodable message: {e}");
+                break;
+            }
+        };
 
         match msg {
             SceneToEngine::SceneResponse(id, scene_response) => RENDERER_SENDER.with(|sender| {

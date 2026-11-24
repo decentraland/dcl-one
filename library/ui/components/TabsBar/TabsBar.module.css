@@ -14,6 +14,11 @@
     box-shadow: inset 0 -1px 0 0 var(--dcl-transparencies-white-20);
   }
 
+  .compact {
+    composes: underline;
+    background: transparent;
+  }
+
   .pill {
     flex-wrap: wrap;
     gap: var(--dcl-space-16);
@@ -27,6 +32,10 @@
   @media (min-width: 1024px) {
     .insetContent {
       padding-inline: var(--dcl-space-32);
+    }
+
+    .compact.insetContent {
+      padding-inline: 0;
     }
   }
 
@@ -198,6 +207,35 @@
     }
     .routeActions {
       gap: var(--dcl-space-8);
+    }
+  }
+
+  .routeRoot[data-page='blog'] {
+    flex-direction: row;
+    align-items: center;
+    gap: var(--dcl-space-24);
+  }
+
+  .routeRoot[data-page='blog'] .routeNavigation {
+    flex: 1 1 0;
+    width: auto;
+  }
+
+  .routeRoot[data-page='blog'] .routeControls {
+    flex: none;
+    max-width: none;
+    width: auto;
+    padding-block: var(--dcl-space-12);
+  }
+
+  .routeRoot[data-page='blog'] .routeSearch {
+    flex: none;
+    width: auto;
+  }
+
+  @media (max-width: 767px) {
+    .routeRoot[data-page='blog'] .routeControls {
+      display: none;
     }
   }
 }

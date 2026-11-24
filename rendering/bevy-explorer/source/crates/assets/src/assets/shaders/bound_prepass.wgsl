@@ -10,7 +10,7 @@
 #import bevy_render::globals::Globals;
 
 #import "embedded://shaders/simplex.wgsl"::simplex_noise_3d
-#import "embedded://shaders/bound_material_effect.wgsl"::{discard_dither, reveal_discard}
+#import "embedded://shaders/bound_material_effect.wgsl"::{camera_dither, reveal_discard}
 #import "embedded://shaders/scene_bounds.wgsl"::{scene_bounds, scene_outside_amount, SCENE_DITHER_CAPSULE}
 
 @group(0) @binding(1) var<uniform> globals: Globals;
@@ -40,9 +40,7 @@ fn fragment(
     let is_front_m = is_front;
 #endif
 
-    if (mesh_tag & (#{NO_DITHERING_MESH_TAG} | #{OUTLINE_RED_MESH_TAG})) == 0 {
-        discard_dither(in.position.xy, in.world_position.xyz, view.user_value, (mesh_tag & #{CONE_ONLY_DITHER_MESH_TAG}) == 0, scene_bounds.base_opacity, mesh_functions::get_world_from_local(in.instance_index)[3].xyz, (scene_bounds.flags & SCENE_DITHER_CAPSULE) != 0u);
-    }
+    camera_dither(mesh_tag, in.position.xy, in.world_position.xyz, in.instance_index, scene_bounds.base_opacity, (scene_bounds.flags & SCENE_DITHER_CAPSULE) != 0u);
 
 #ifdef NORMAL_PREPASS
     out.normal = vec4(in.world_normal * 0.5 + vec3(0.5), 1.0);

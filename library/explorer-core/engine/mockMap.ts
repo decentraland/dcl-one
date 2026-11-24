@@ -117,8 +117,8 @@ export const MOCK_PEERS: Peer[] = [
 ]
 
 export const MOCK_MAP_PINS: MapPinInfo[] = [
-  { id: 'bafymockpx:512', x: 3, y: 2, title: 'Memory Grid', icon: null },
-  { id: 'bafymockpx:513', x: -4, y: 5, title: 'Tile Tally', icon: 'https://content.invalid/images/icons/tile_tally.png' }
+  { id: 'bafymockpx:512', x: 3, y: 2, title: 'Memory Grid' },
+  { id: 'bafymockpx:513', x: -4, y: 5, title: 'Tile Tally' }
 ]
 
 /** Players the mock engine holds near the player, in world metres. */

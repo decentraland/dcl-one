@@ -17,6 +17,7 @@ use boimp::bake::{
     ImposterBakeMaterial, ImposterBakeMaterialExtension, ImposterBakeMaterialPlugin,
 };
 use common::{
+    sky_preset::{ambient_trilight, LIGHT_UNIT_LUX},
     structs::{PreviewMode, ShowOutOfBounds},
     util::InvertedScaleExt,
 };
@@ -31,10 +32,11 @@ pub const SCENE_MATERIAL_NO_DITHERING_MESH_TAG: u32 = 0x02000000;
 pub const SCENE_MATERIAL_CONE_ONLY_DITHER_MESH_TAG: u32 = 0x04000000;
 // cel-shade this mesh (avatars) instead of standard PBR — see toon.wgsl
 pub const SCENE_MATERIAL_TOON_MESH_TAG: u32 = 0x08000000;
-pub const SCENE_MATERIAL_OUTLINE_MESH_TAGS: u32 = 0xF0000000;
-pub const SCENE_MATERIAL_OUTLINE_BLACK_MESH_TAG: u32 = 0x10000000;
-pub const SCENE_MATERIAL_OUTLINE_RED_MESH_TAG: u32 = 0x20000000;
-pub const SCENE_MATERIAL_OUTLINE_BLUE_MESH_TAG: u32 = 0x80000000;
+// the tone-on-tone avatar outline (bound_material.wgsl, mask_material.wgsl)
+pub const SCENE_MATERIAL_OUTLINE_MESH_TAG: u32 = 0x10000000;
+// an avatar's eyes, eyebrows or mouth: lit by the ambient light alone (toon.wgsl's
+// facial_feature_lighting) instead of the toon bands
+pub const SCENE_MATERIAL_FACIAL_FEATURE_MESH_TAG: u32 = 0x20000000;
 /// an avatar being revealed bottom-up from its ghost: the shaders discard fragments above the
 /// reveal height, carried in the tag's low byte: 0 is no reveal, and 1..=255 span the range from
 /// `SCENE_MATERIAL_REVEAL_HIDE_HEIGHT` to `SCENE_MATERIAL_REVEAL_FULL_HEIGHT` above the mesh
@@ -63,6 +65,48 @@ pub fn reveal_mesh_tag(tag: u32, height: f32) -> u32 {
 /// `tag` with no reveal
 pub fn unrevealed_mesh_tag(tag: u32) -> u32 {
     tag & !SCENE_MATERIAL_REVEAL_MESH_TAG_MASK
+}
+
+/// the tag bits an avatar's style is read from (the camera dither, the toon lighting and the
+/// outline) and the toon values derived here, for the pipeline of every shader that styles an
+/// avatar's meshes: bound_material.wgsl and mask_material.wgsl. A def carries only integers, so
+/// each `f32` travels as its bit pattern and the shader reads it with `bitcast<f32>(#{NAME}u)`:
+/// - `TOON_LIGHT_UNIT_LUX`, the light unit;
+/// - `TOON_FACIAL_FLAT_AMBIENT_R/G/B`, the ambient light, in light units, that lights the eyes,
+///   eyebrows and mouth in a view without the sky environment map (the Backpack preview, a photo
+///   booth): the noon Trilight's equator colour, about what the sky gives a surface facing the
+///   horizon at noon. Such a view's flat ambient is set to light the body flat, far above any
+///   sky, so it is not read there.
+pub fn avatar_style_shader_defs() -> Vec<ShaderDefVal> {
+    [
+        (
+            "NO_DITHERING_MESH_TAG",
+            SCENE_MATERIAL_NO_DITHERING_MESH_TAG,
+        ),
+        (
+            "CONE_ONLY_DITHER_MESH_TAG",
+            SCENE_MATERIAL_CONE_ONLY_DITHER_MESH_TAG,
+        ),
+        ("TOON_MESH_TAG", SCENE_MATERIAL_TOON_MESH_TAG),
+        ("OUTLINE_MESH_TAG", SCENE_MATERIAL_OUTLINE_MESH_TAG),
+        (
+            "FACIAL_FEATURE_MESH_TAG",
+            SCENE_MATERIAL_FACIAL_FEATURE_MESH_TAG,
+        ),
+    ]
+    .into_iter()
+    .map(|(name, tag)| ShaderDefVal::UInt(name.to_owned(), tag))
+    .chain({
+        let flat = ambient_trilight(0.5)[1];
+        [
+            ("TOON_LIGHT_UNIT_LUX", LIGHT_UNIT_LUX),
+            ("TOON_FACIAL_FLAT_AMBIENT_R", flat.x),
+            ("TOON_FACIAL_FLAT_AMBIENT_G", flat.y),
+            ("TOON_FACIAL_FLAT_AMBIENT_B", flat.z),
+        ]
+        .map(|(name, value)| ShaderDefVal::UInt(name.to_owned(), value.to_bits()))
+    })
+    .collect()
 }
 
 /// the reveal encoding, for the pipeline of every shader that imports `reveal_discard`
@@ -121,6 +165,10 @@ pub struct SceneBound {
     pub data: SceneBoundData,
     #[cfg_attr(not(feature = "webgl2"), storage(101, read_only, visibility(fragment)))]
     pub cells: Handle<ShaderStorageBuffer>,
+    /// Read only with `SCENE_ALPHA_TEXTURE` set.
+    #[texture(102)]
+    #[sampler(103)]
+    pub alpha_texture: Option<Handle<Image>>,
     /// Meshes that have 1 or 3 negative scale axis require special handling
     /// of the face culling
     pub inverted_scale: bool,
@@ -134,6 +182,7 @@ impl SceneBound {
                 ..bounds.data
             },
             cells: bounds.cells.clone(),
+            alpha_texture: None,
             inverted_scale: false,
         }
     }
@@ -151,12 +200,38 @@ impl SceneBound {
         self.data.flags |= SCENE_DITHER_CAPSULE;
         self
     }
+
+    pub fn with_plain_emissive(mut self) -> Self {
+        self.data.flags |= SCENE_PLAIN_EMISSIVE;
+        self
+    }
+
+    pub fn with_alpha_texture(mut self, alpha_texture: Handle<Image>) -> Self {
+        self.data.flags |= SCENE_ALPHA_TEXTURE;
+        self.alpha_texture = Some(alpha_texture);
+        self
+    }
+
+    /// the material's own rules (emissive, alpha texture) stay
+    pub fn rebind(&mut self, bounds: &SceneBounds, distance: f32) {
+        let rules = self.data.flags & (SCENE_PLAIN_EMISSIVE | SCENE_ALPHA_TEXTURE);
+        self.data = SceneBoundData {
+            distance,
+            flags: bounds.data.flags | rules,
+            ..bounds.data
+        };
+        self.cells = bounds.cells.clone();
+    }
 }
 
 pub const SCENE_BOUNDED: u32 = 1;
 pub const SCENE_FULL_RECT: u32 = 2;
 /// an avatar: the camera-to-player dither fades it as a whole, by its capsule
 pub const SCENE_DITHER_CAPSULE: u32 = 4;
+/// an SDK material's emissive rules (bound_material.wgsl)
+pub const SCENE_PLAIN_EMISSIVE: u32 = 8;
+/// the alpha texture is bound
+pub const SCENE_ALPHA_TEXTURE: u32 = 16;
 /// scenes with a larger bounding box fall back to the bounding box itself
 const MAX_SCENE_CELLS: u64 = 1 << 20;
 /// empty cell table for unbounded and full-rect scenes, which never read it
@@ -216,21 +291,14 @@ impl SceneBounds {
     /// no regions = unbounded. without `buffers` (or for huge extents) an irregular scene falls
     /// back to its bounding box.
     pub fn new(regions: &[BoundRegion], buffers: Option<&mut Assets<ShaderStorageBuffer>>) -> Self {
-        let [first, rest @ ..] = regions else {
+        let Some(((min, max), max_height)) = BoundRegion::enclosing(regions) else {
             return Self::unbounded();
         };
-        if rest.is_empty() {
-            return Self::rect(first);
+        if let [region] = regions {
+            return Self::rect(region);
         }
 
-        let (min, max) = regions
-            .iter()
-            .map(BoundRegion::cells)
-            .fold((IVec2::MAX, IVec2::MIN), |(min, max), (rmin, rmax)| {
-                (min.min(rmin), max.max(rmax))
-            });
         let size = (max - min + IVec2::ONE).as_uvec2();
-        let max_height = regions.iter().fold(0.0f32, |h, r| h.max(r.height));
         let cell_count = size.x as u64 * size.y as u64;
         let Some(buffers) = buffers.filter(|_| cell_count <= MAX_SCENE_CELLS) else {
             if cell_count > MAX_SCENE_CELLS {
@@ -299,8 +367,10 @@ impl SceneBounds {
 }
 
 mod decl {
-    // temporary for ShaderType macro, remove in future
-    #![allow(dead_code)]
+    #![expect(
+        dead_code,
+        reason = "the ShaderType derive emits a never-called check fn per field"
+    )]
 
     use bevy::{
         math::{IVec2, UVec2},
@@ -328,14 +398,44 @@ mod decl {
 }
 pub use decl::*;
 
+/// The height limit, in metres, of a scene in a World: the parcel-count limit of the largest
+/// scene a World allows, 300 × 300 parcels (log2(90001) × 20 = 329.15 m), rounded up.
+pub const FIXED_SCENE_HEIGHT: f32 = 330.0;
+
 impl BoundRegion {
     pub fn new(min: IVec2, max: IVec2, parcel_count: u32) -> Self {
         Self {
             min: ((min.x as i16 as u16 as u32) << 16) | (-(max.y + 1) as i16 as u16 as u32),
             max: (((max.x + 1) as i16 as u16 as u32) << 16) | (-min.y as i16 as u16 as u32),
-            height: f32::log2(parcel_count as f32 + 1.0) * 20.0,
+            height: Self::height_for_parcels(parcel_count),
             parcel_count,
         }
+    }
+
+    /// the region with this height limit, in metres, in place of its parcel count's
+    pub fn with_height(self, height: f32) -> Self {
+        Self { height, ..self }
+    }
+
+    /// The height limit, in metres, over `parcel_count` parcels.
+    pub fn height_for_parcels(parcel_count: u32) -> f32 {
+        f32::log2(parcel_count as f32 + 1.0) * 20.0
+    }
+
+    /// The rectangle of cells around `regions` (inclusive, as [`Self::cells`] gives them) and
+    /// the highest of their height limits. None without regions.
+    pub fn enclosing(regions: &[BoundRegion]) -> Option<((IVec2, IVec2), f32)> {
+        let (first, rest) = regions.split_first()?;
+        Some(rest.iter().fold(
+            (first.cells(), first.height),
+            |((min, max), height), region| {
+                let (region_min, region_max) = region.cells();
+                (
+                    (min.min(region_min), max.max(region_max)),
+                    height.max(region.height),
+                )
+            },
+        ))
     }
 }
 
@@ -449,34 +549,7 @@ impl MaterialExtension for SceneBound {
                 "SHOW_OUTSIDE_BOUNDS_MESH_TAG".to_owned(),
                 SCENE_MATERIAL_SHOW_OUTSIDE_BOUNDS_MESH_TAG,
             ));
-            fragment.shader_defs.push(ShaderDefVal::UInt(
-                "NO_DITHERING_MESH_TAG".to_owned(),
-                SCENE_MATERIAL_NO_DITHERING_MESH_TAG,
-            ));
-            fragment.shader_defs.push(ShaderDefVal::UInt(
-                "CONE_ONLY_DITHER_MESH_TAG".to_owned(),
-                SCENE_MATERIAL_CONE_ONLY_DITHER_MESH_TAG,
-            ));
-            fragment.shader_defs.push(ShaderDefVal::UInt(
-                "TOON_MESH_TAG".to_owned(),
-                SCENE_MATERIAL_TOON_MESH_TAG,
-            ));
-            fragment.shader_defs.push(ShaderDefVal::UInt(
-                "OUTLINE_MESH_TAGS".to_owned(),
-                SCENE_MATERIAL_OUTLINE_MESH_TAGS,
-            ));
-            fragment.shader_defs.push(ShaderDefVal::UInt(
-                "OUTLINE_BLACK_MESH_TAG".to_owned(),
-                SCENE_MATERIAL_OUTLINE_BLACK_MESH_TAG,
-            ));
-            fragment.shader_defs.push(ShaderDefVal::UInt(
-                "OUTLINE_RED_MESH_TAG".to_owned(),
-                SCENE_MATERIAL_OUTLINE_RED_MESH_TAG,
-            ));
-            fragment.shader_defs.push(ShaderDefVal::UInt(
-                "OUTLINE_BLUE_MESH_TAG".to_owned(),
-                SCENE_MATERIAL_OUTLINE_BLUE_MESH_TAG,
-            ));
+            fragment.shader_defs.extend(avatar_style_shader_defs());
             fragment.shader_defs.extend(reveal_shader_defs());
             // the material has no cell table (`webgl2`), so scene_bounds.wgsl leaves it out too
             if cfg!(feature = "webgl2") {
@@ -670,8 +743,9 @@ mod test {
     use bevy::math::{IVec2, Vec2, Vec3, Vec3Swizzles};
 
     use crate::{
-        reveal_mesh_tag, unrevealed_mesh_tag, BoundRegion, SCENE_MATERIAL_REVEAL_FULL_HEIGHT,
-        SCENE_MATERIAL_REVEAL_HIDE_HEIGHT, SCENE_MATERIAL_REVEAL_MESH_TAG_MASK,
+        reveal_mesh_tag, unrevealed_mesh_tag, BoundRegion, FIXED_SCENE_HEIGHT,
+        SCENE_MATERIAL_REVEAL_FULL_HEIGHT, SCENE_MATERIAL_REVEAL_HIDE_HEIGHT,
+        SCENE_MATERIAL_REVEAL_MESH_TAG_MASK,
     };
 
     /// the reveal height a shader reads back from a tag (reveal_discard in
@@ -724,6 +798,42 @@ mod test {
     }
 
     #[test]
+    fn a_rebound_material_keeps_its_rules() {
+        use bevy::{asset::Handle, math::UVec2};
+
+        use crate::{
+            SceneBound, SceneBounds, EMPTY_SCENE_CELLS, SCENE_ALPHA_TEXTURE, SCENE_BOUNDED,
+            SCENE_FULL_RECT, SCENE_PLAIN_EMISSIVE,
+        };
+
+        let region = BoundRegion::new(IVec2::new(3, -2), IVec2::new(3, -2), 1);
+        let bounds = SceneBounds::rect(&region);
+
+        let mut sdk = SceneBound::new_unbounded()
+            .with_plain_emissive()
+            .with_alpha_texture(Handle::default())
+            .with_capsule_dither()
+            .with_base_opacity(0.5);
+        sdk.rebind(&bounds, 1.5);
+        assert_eq!(
+            sdk.data.flags,
+            SCENE_BOUNDED | SCENE_FULL_RECT | SCENE_PLAIN_EMISSIVE | SCENE_ALPHA_TEXTURE
+        );
+        let (min, _) = region.cells();
+        assert_eq!(sdk.data.origin, min);
+        assert_eq!(sdk.data.size, UVec2::ONE);
+        assert_eq!(sdk.data.rect_height, region.height);
+        assert_eq!(sdk.data.distance, 1.5);
+        assert_eq!(sdk.data.base_opacity, 0.0);
+        assert!(sdk.alpha_texture.is_some());
+        assert_eq!(sdk.cells, EMPTY_SCENE_CELLS);
+
+        let mut gltf = SceneBound::new_unbounded();
+        gltf.rebind(&bounds, 1.5);
+        assert_eq!(gltf.data, SceneBound::new(&bounds, 1.5).data);
+    }
+
+    #[test]
     fn test_bounds() {
         for x in [-10, 0, 10] {
             for y in [-10, 0, 10] {
@@ -750,6 +860,183 @@ mod test {
                 assert_eq!(region.parcel_max(), IVec2::new(x, y));
             }
         }
+    }
+
+    /// The imposter bake (`bound_material_baker.wgsl`) follows the forward shader on an SDK
+    /// material: the alpha texture's brightness scales the alpha, and a plain emissive colour is
+    /// not tinted by the base colour. Bakes four quads in one tile and reads the tile back. Needs
+    /// a GPU, so `#[ignore]`d and skipped by CI:
+    ///
+    /// ```text
+    /// cargo test -p scene_material bake_follows_the_sdk_rules -- --ignored --nocapture
+    /// ```
+    #[test]
+    #[ignore = "needs a GPU; run with --ignored"]
+    fn bake_follows_the_sdk_rules() {
+        use std::{
+            sync::{Arc, Mutex},
+            time::{Duration, Instant},
+        };
+
+        use bevy::{
+            asset::RenderAssetUsages,
+            prelude::*,
+            render::{
+                render_resource::{Extent3d, TextureDimension, TextureFormat},
+                storage::ShaderStorageBuffer,
+            },
+        };
+        use boimp::{
+            bake::ImposterBakeMaterialPlugin, ImposterBakeBundle, ImposterBakeCamera,
+            ImposterBakePlugin,
+        };
+        use pipeline_test::{compile_pipelines, fragment_pipelines, headless_app};
+
+        use crate::{BoundRegion, SceneBound, SceneBounds, SceneMaterial, EMPTY_SCENE_CELLS};
+
+        const TILE: u32 = 64;
+
+        let mut app = headless_app();
+        app.add_plugins((
+            ImposterBakePlugin,
+            MaterialPlugin::<SceneMaterial>::default(),
+            ImposterBakeMaterialPlugin::<SceneMaterial>::default(),
+        ));
+        app.finish();
+        app.cleanup();
+
+        let world = app.world_mut();
+        // the unbounded scene's cell table, as SceneBoundPlugin inserts it
+        world.resource_mut::<Assets<ShaderStorageBuffer>>().insert(
+            EMPTY_SCENE_CELLS.id(),
+            ShaderStorageBuffer::new(&[0; 8], RenderAssetUsages::RENDER_WORLD),
+        );
+
+        let mut images = world.resource_mut::<Assets<Image>>();
+        let mut texel = |rgba: [u8; 4]| {
+            images.add(Image::new_fill(
+                Extent3d::default(),
+                TextureDimension::D2,
+                &rgba,
+                TextureFormat::Rgba8UnormSrgb,
+                RenderAssetUsages::RENDER_WORLD,
+            ))
+        };
+        let (black, white) = (texel([0, 0, 0, 255]), texel([255, 255, 255, 255]));
+
+        // the quads reach 0.9 m outside this region, within the distance
+        let rebound = |mut extension: SceneBound| {
+            let region = BoundRegion::new(IVec2::ZERO, IVec2::ZERO, 1);
+            extension.rebind(&SceneBounds::rect(&region), 1.0);
+            extension
+        };
+
+        // as `MaterialDefinition` builds them: an SDK unlit material with an alpha texture blends
+        let unlit = |alpha_texture: Handle<Image>| SceneMaterial {
+            base: StandardMaterial {
+                unlit: true,
+                alpha_mode: AlphaMode::Blend,
+                ..Default::default()
+            },
+            extension: rebound(SceneBound::new_unbounded().with_alpha_texture(alpha_texture)),
+        };
+        let emissive = |extension: SceneBound| SceneMaterial {
+            base: StandardMaterial {
+                base_color: Color::linear_rgb(1.0, 0.0, 0.0),
+                emissive: LinearRgba::rgb(0.4, 0.4, 0.4),
+                ..Default::default()
+            },
+            extension: rebound(extension),
+        };
+        let mut materials = world.resource_mut::<Assets<SceneMaterial>>();
+        let quads = [
+            (Vec2::new(-0.5, 0.5), materials.add(unlit(black))),
+            (Vec2::new(0.5, 0.5), materials.add(unlit(white))),
+            (
+                Vec2::new(-0.5, -0.5),
+                materials.add(emissive(SceneBound::new_unbounded().with_plain_emissive())),
+            ),
+            (
+                Vec2::new(0.5, -0.5),
+                materials.add(emissive(SceneBound::new_unbounded())),
+            ),
+        ];
+        let quads_at = quads.each_ref().map(|(position, _)| *position);
+        let quad = world
+            .resource_mut::<Assets<Mesh>>()
+            .add(Rectangle::new(0.8, 0.8));
+        for (position, material) in quads {
+            world.spawn((
+                Mesh3d(quad.clone()),
+                MeshMaterial3d(material),
+                Transform::from_translation(position.extend(0.0)),
+            ));
+        }
+
+        // one view, facing the quads: the tile spans x and y from -1 to 1
+        let baked = Arc::new(Mutex::new(None));
+        let mut camera = ImposterBakeCamera {
+            radius: 1.0,
+            grid_size: 1,
+            tile_size: TILE,
+            multisample: 1,
+            manual_camera_transforms: Some(vec![GlobalTransform::from(
+                Transform::from_xyz(0.0, 0.0, 1.0).looking_at(Vec3::ZERO, Vec3::Y),
+            )]),
+            ..Default::default()
+        };
+        camera.set_callback({
+            let baked = baked.clone();
+            move |image| *baked.lock().unwrap() = Some(image)
+        });
+        world.spawn(ImposterBakeBundle {
+            camera,
+            ..Default::default()
+        });
+
+        compile_pipelines(&mut app);
+        assert!(
+            fragment_pipelines(&app, "embedded://shaders/bound_material_baker.wgsl") >= 1,
+            "no bound_material_baker.wgsl pipeline compiled"
+        );
+
+        let started = Instant::now();
+        let image = loop {
+            app.update();
+            if let Some(image) = baked.lock().unwrap().take() {
+                break image;
+            }
+            assert!(
+                started.elapsed() < Duration::from_secs(120),
+                "the bake never finished"
+            );
+            std::thread::sleep(Duration::from_millis(5));
+        };
+
+        // the first word of a texel, as boimp's shared.wgsl packs it: 5 bits each of red, green,
+        // blue and alpha from bit 0, and the flags (1 unlit, 2 emissive) from bit 28
+        let data = image.data.as_ref().unwrap();
+        let texel = |position: Vec2| {
+            let pixel = ((position * Vec2::new(1.0, -1.0) + 1.0) * 0.5 * TILE as f32).as_uvec2();
+            let offset = ((pixel.y * TILE + pixel.x) * 8) as usize;
+            let word = u32::from_le_bytes(data[offset..offset + 4].try_into().unwrap());
+            let channel = |shift: u32| (word >> shift) & 31;
+            (
+                [channel(0), channel(5), channel(10)],
+                channel(15),
+                word >> 28,
+            )
+        };
+        let [cut, kept, plain, tinted] = quads_at.map(texel);
+
+        assert_eq!(cut.1, 0, "a black alpha texture leaves nothing: {cut:?}");
+        assert_eq!(kept, ([31; 3], 31, 1), "a white alpha texture keeps it all");
+        assert_eq!(plain, ([31; 3], 31, 2), "an SDK emissive colour is its own");
+        assert_eq!(
+            tinted,
+            ([31, 0, 0], 31, 2),
+            "a glTF emissive factor takes the base colour"
+        );
     }
 
     // cpu ports of scene_bounds.wgsl (new) and the previous per-rect loop (old)
@@ -858,6 +1145,21 @@ mod test {
     }
 
     #[test]
+    fn enclosing_is_the_rectangle_around_the_regions_and_their_highest_limit() {
+        assert!(BoundRegion::enclosing(&[]).is_none());
+
+        // parcels (0, 0) and (2, 3), each a region of its own, the second with the higher limit
+        let regions = [
+            BoundRegion::new(IVec2::ZERO, IVec2::ZERO, 1),
+            BoundRegion::new(IVec2::new(2, 3), IVec2::new(2, 3), 3),
+        ];
+        let ((min, max), height) = BoundRegion::enclosing(&regions).unwrap();
+        // cells are world xz / 16, so parcel (x, y) is cell (x, -y - 1)
+        assert_eq!((min, max), (IVec2::new(0, -4), IVec2::new(2, -1)));
+        assert_eq!(height, BoundRegion::height_for_parcels(3));
+    }
+
+    #[test]
     fn parcel_index_matches_rect_loop() {
         use common::bounds_calc::scene_regions;
 
@@ -910,5 +1212,142 @@ mod test {
                 }
             }
         }
+    }
+
+    #[test]
+    fn bounds_clip_at_the_height_their_regions_carry() {
+        use common::bounds_calc::scene_regions;
+
+        // one parcel (a single rectangle), and an L with a parcel apart (the cell table)
+        let shapes = [
+            vec![IVec2::ZERO],
+            vec![IVec2::ZERO, IVec2::X, IVec2::Y, IVec2::splat(5)],
+        ];
+
+        for parcels in shapes {
+            let regions = scene_regions(parcels.iter().copied())
+                .into_iter()
+                .map(|r| BoundRegion::new(r.min, r.max, r.count).with_height(FIXED_SCENE_HEIGHT))
+                .collect::<Vec<_>>();
+            let mut buffers = bevy::asset::Assets::<super::ShaderStorageBuffer>::default();
+            let bounds = super::SceneBounds::new(&regions, Some(&mut buffers));
+
+            for parcel in parcels {
+                let centre = Vec3::new(
+                    parcel.x as f32 * 16.0 + 8.0,
+                    0.0,
+                    -parcel.y as f32 * 16.0 - 8.0,
+                );
+                let below = centre.with_y(FIXED_SCENE_HEIGHT - 1.0);
+                let above = centre.with_y(FIXED_SCENE_HEIGHT + 1.0);
+                assert_eq!(new_amount(&bounds, &buffers, 0.0, below), 0.0, "{parcel}");
+                assert_eq!(new_amount(&bounds, &buffers, 0.0, above), 1.0, "{parcel}");
+            }
+        }
+    }
+
+    /// The forward shader (`bound_material.wgsl`) compiles with a normal map where it reads its
+    /// normal from the prepass: a mesh with uvs and tangents, in front of a camera with a normal
+    /// prepass and no MSAA, as the player's camera is while the avatar outline is on. Needs a
+    /// GPU, so `#[ignore]`d and skipped by CI:
+    ///
+    /// ```text
+    /// cargo test -p scene_material normal_map_compiles_with_prepass_normals -- --ignored --nocapture
+    /// ```
+    #[test]
+    #[ignore = "needs a GPU; run with --ignored"]
+    fn normal_map_compiles_with_prepass_normals() {
+        use bevy::{
+            asset::RenderAssetUsages,
+            core_pipeline::prepass::{DepthPrepass, NormalPrepass},
+            prelude::*,
+            render::{
+                camera::RenderTarget,
+                render_resource::{
+                    CachedPipelineState, Extent3d, PipelineCache, PipelineDescriptor,
+                    TextureDimension, TextureFormat,
+                },
+                storage::ShaderStorageBuffer,
+                RenderApp,
+            },
+        };
+        use pipeline_test::{compile_pipelines, headless_app, render_target};
+
+        use crate::{SceneBound, SceneMaterial, EMPTY_SCENE_CELLS};
+
+        let mut app = headless_app();
+        app.add_plugins(MaterialPlugin::<SceneMaterial>::default());
+        app.finish();
+        app.cleanup();
+
+        let target = render_target(&mut app);
+        let world = app.world_mut();
+        // the unbounded scene's cell table, as SceneBoundPlugin inserts it
+        world.resource_mut::<Assets<ShaderStorageBuffer>>().insert(
+            EMPTY_SCENE_CELLS.id(),
+            ShaderStorageBuffer::new(&[0; 8], RenderAssetUsages::RENDER_WORLD),
+        );
+
+        let normal_map = world.resource_mut::<Assets<Image>>().add(Image::new_fill(
+            Extent3d::default(),
+            TextureDimension::D2,
+            &[128, 128, 255, 255],
+            TextureFormat::Rgba8Unorm,
+            RenderAssetUsages::RENDER_WORLD,
+        ));
+        let mut cube = Mesh::from(Cuboid::new(0.5, 0.5, 0.5));
+        cube.generate_tangents().unwrap();
+        let cube = world.resource_mut::<Assets<Mesh>>().add(cube);
+        let material = world
+            .resource_mut::<Assets<SceneMaterial>>()
+            .add(SceneMaterial {
+                base: StandardMaterial {
+                    normal_map_texture: Some(normal_map),
+                    ..Default::default()
+                },
+                extension: SceneBound::new_unbounded(),
+            });
+
+        world.spawn((
+            Camera3d::default(),
+            Camera {
+                target: RenderTarget::Image(target.into()),
+                ..default()
+            },
+            Msaa::Off,
+            DepthPrepass,
+            NormalPrepass,
+            Transform::from_xyz(0.0, 0.0, 4.0).looking_at(Vec3::ZERO, Vec3::Y),
+        ));
+        world.spawn((Mesh3d(cube), MeshMaterial3d(material)));
+
+        compile_pipelines(&mut app);
+
+        let shader = app
+            .world()
+            .resource::<AssetServer>()
+            .get_handle::<Shader>("embedded://shaders/bound_material.wgsl")
+            .expect("bound_material.wgsl never loaded")
+            .id();
+        let cache = app.sub_app(RenderApp).world().resource::<PipelineCache>();
+        let compiled = cache.pipelines().any(|pipeline| {
+            let PipelineDescriptor::RenderPipelineDescriptor(descriptor) = &pipeline.descriptor
+            else {
+                return false;
+            };
+            let Some(fragment) = &descriptor.fragment else {
+                return false;
+            };
+            let has = |def: &str| fragment.shader_defs.iter().any(|d| *d == def.into());
+            fragment.shader.id() == shader
+                && matches!(pipeline.state, CachedPipelineState::Ok(_))
+                && has("LOAD_PREPASS_NORMALS")
+                && has("VERTEX_TANGENTS")
+                && has("STANDARD_MATERIAL_NORMAL_MAP")
+        });
+        assert!(
+            compiled,
+            "no bound_material.wgsl pipeline compiled with a normal map and prepass normals"
+        );
     }
 }

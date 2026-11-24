@@ -1,4 +1,4 @@
-import { fireEvent, render, screen } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen } from '@testing-library/react';
 import { flatten } from '/@/modules/store/translation/flatten';
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { captureException } from '@sentry/electron/renderer';
@@ -8,7 +8,9 @@ import type { Project } from '/shared/types/projects';
 import { en } from '/@/modules/store/translation/locales';
 import { setCurrentLocale } from '/@/modules/store/translation/utils';
 
+import { tracked } from '../../../../tests/utils/analytics';
 import { PublishProject } from './component';
+import type { Props } from './types';
 
 const crash = { enabled: true };
 
@@ -22,11 +24,17 @@ vi.mock('./PublishModal', () => ({
 }));
 vi.mock('/@/hooks/useAuth', () => ({ useAuth: () => ({ wallet: undefined }) }));
 vi.mock('./steps/Initial', () => ({
-  Initial: () => {
+  Initial: ({ onStep, onClose }: Props) => {
     if (crash.enabled) {
       throw new Error('step failed');
     }
-    return <p>Initial step</p>;
+    return (
+      <>
+        <p>Initial step</p>
+        <button onClick={() => onStep('publish-to-world')}>To a World</button>
+        <button onClick={onClose}>Close the dialog</button>
+      </>
+    );
   },
 }));
 
@@ -37,7 +45,7 @@ vi.mock('./steps/Deploy', () => ({ Deploy: () => null }));
 
 const project = { id: 'project-1', title: 'My Scene' } as Project;
 
-function renderModal(onClose = vi.fn()) {
+function renderModal(onClose = vi.fn(), initialStep?: Props['initialStep']) {
   const result = render(
     <TestProviders>
       <p>Editor behind the modal</p>
@@ -45,6 +53,7 @@ function renderModal(onClose = vi.fn()) {
         open
         project={project}
         onClose={onClose}
+        initialStep={initialStep}
       />
     </TestProviders>,
   );
@@ -133,6 +142,80 @@ describe('PublishProject error boundary', () => {
       rerender(modal(true));
 
       expect(screen.getByText('Initial step')).toBeTruthy();
+    });
+  });
+});
+
+describe('PublishProject analytics', () => {
+  beforeAll(() => {
+    setCurrentLocale('en', flatten(en));
+  });
+
+  beforeEach(() => {
+    crash.enabled = false;
+    vi.clearAllMocks();
+  });
+
+  afterEach(() => {
+    cleanup();
+  });
+
+  describe('when the dialog opens', () => {
+    beforeEach(() => {
+      renderModal();
+    });
+
+    it('should track the opening with its first step and the sign-in state', () => {
+      expect(tracked('Publish Modal Opened')).toEqual([
+        { project_id: 'project-1', initial_step: 'initial', signed_in: false },
+      ]);
+    });
+
+    it('should track the first step as viewed', () => {
+      expect(tracked('Publish Step Viewed')).toEqual([
+        { project_id: 'project-1', step: 'initial' },
+      ]);
+    });
+
+    describe('and the creator picks a destination', () => {
+      beforeEach(() => {
+        fireEvent.click(screen.getByRole('button', { name: 'To a World' }));
+      });
+
+      it('should track the step it leads to', () => {
+        expect(tracked('Publish Step Viewed')).toContainEqual({
+          project_id: 'project-1',
+          step: 'publish-to-world',
+        });
+      });
+    });
+
+    describe('and the creator closes it', () => {
+      beforeEach(() => {
+        fireEvent.click(screen.getByRole('button', { name: 'Close the dialog' }));
+      });
+
+      it('should track the step it was closed on', () => {
+        expect(tracked('Publish Modal Closed')).toEqual([
+          { project_id: 'project-1', step: 'initial' },
+        ]);
+      });
+    });
+  });
+
+  describe('when the dialog reopens on the deploy step', () => {
+    beforeEach(() => {
+      renderModal(vi.fn(), 'deploy');
+    });
+
+    it('should track the opening with the step it opened on', () => {
+      expect(tracked('Publish Modal Opened')).toEqual([
+        { project_id: 'project-1', initial_step: 'deploy', signed_in: false },
+      ]);
+    });
+
+    it('should not count the deploy step as viewed again', () => {
+      expect(tracked('Publish Step Viewed')).toEqual([]);
     });
   });
 });

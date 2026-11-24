@@ -82,7 +82,7 @@ pub fn default_eip1654_validator() -> Option<&'static RpcEip1654Validator> {
             .find(|v| !v.is_empty())?;
         Some(RpcEip1654Validator::with_timeout(
             url,
-            reqwest::Client::new(),
+            dcl_auth::rpc_client().ok()?,
             EIP1654_RPC_TIMEOUT,
         ))
     })

@@ -51,30 +51,33 @@ pub struct PulseParcelGrid {
     min_x: i32,
     min_z: i32,
     width: i32,
+    height: i32,
     parcel_size: i32,
 }
 
 impl PulseParcelGrid {
     /// Takes the server's full `ParcelEncoder` option set (1:1) so deployments can be configured
-    /// straight from the instance's `appsettings`. `max_parcel_z` only bounds index *validity* on
-    /// the server (`width * height`); the decode itself needs only `width`, so it's accepted but
-    /// unused here — we trust server-issued indices.
+    /// straight from the instance's `appsettings`. `max_parcel_z` bounds what we encode, as it bounds
+    /// index validity on the server (`width * height`); decoding trusts server-issued indices.
     pub fn new(
         min_parcel_x: i32,
         min_parcel_z: i32,
         max_parcel_x: i32,
-        _max_parcel_z: i32,
+        max_parcel_z: i32,
         padding: i32,
         parcel_size: i32,
     ) -> Self {
         let min_x = min_parcel_x - padding;
         let min_z = min_parcel_z - padding;
         let max_x = max_parcel_x + padding;
+        let max_z = max_parcel_z + padding;
         let width = max_x - min_x + 1;
+        let height = max_z - min_z + 1;
         Self {
             min_x,
             min_z,
             width,
+            height,
             parcel_size,
         }
     }
@@ -93,16 +96,51 @@ impl PulseParcelGrid {
 
     /// Inverse of [`Self::decode_to_world`]: a world position (DCL convention) → the server's
     /// `parcel_index` plus the in-parcel local offset, matching the server's `ParcelEncoder.Encode`
-    /// + relative-position split. Used to build our own `TeleportRequest`.
-    pub fn encode_to_parcel(&self, world: Vec3) -> (i32, Vec3) {
-        let parcel = self.parcel_coords(world);
+    /// plus relative-position split. Used to build our own `TeleportRequest` and inputs. `None` outside
+    /// the grid, where the server refuses the index for good and an x past the edge would wrap into
+    /// the next row.
+    pub fn encode_to_parcel(&self, world: Vec3) -> Option<(i32, Vec3)> {
+        if !world.is_finite() {
+            return None;
+        }
+        let size = self.parcel_size as f32;
+        let (x, z) = ((world.x / size).floor(), (world.z / size).floor());
+        // Checked as floats so a huge coordinate can't saturate into range.
+        let in_range = |value: f32, min: i32, len: i32| {
+            value >= min as f32 && value < (min as i64 + len as i64) as f32
+        };
+        if !in_range(x, self.min_x, self.width) || !in_range(z, self.min_z, self.height) {
+            return None;
+        }
+        let parcel = IVec2::new(x as i32, z as i32);
         let parcel_index = (parcel.x - self.min_x) + (parcel.y - self.min_z) * self.width;
         let local = Vec3::new(
             world.x - (parcel.x * self.parcel_size) as f32,
             world.y,
             world.z - (parcel.y * self.parcel_size) as f32,
         );
-        (parcel_index, local)
+        Some((parcel_index, local))
+    }
+
+    /// [`Self::encode_to_parcel`] for the nearest point inside the grid: a position past an edge
+    /// moves onto it. `None` only for a non-finite position.
+    pub fn encode_clamped(&self, world: Vec3) -> Option<(i32, Vec3)> {
+        if !world.is_finite() {
+            return None;
+        }
+        let size = self.parcel_size as f32;
+        // Just inside the far edge, so the floor lands on the last parcel.
+        let clamp = |value: f32, min: i32, len: i32| {
+            let low = min as f32 * size;
+            let high = (min as i64 + len as i64) as f32 * size - 0.01;
+            value.clamp(low, high)
+        };
+        let clamped = Vec3::new(
+            clamp(world.x, self.min_x, self.width),
+            world.y,
+            clamp(world.z, self.min_z, self.height),
+        );
+        self.encode_to_parcel(clamped)
     }
 
     /// The parcel a world position (DCL convention) stands in, as `(x, z)` coordinates rather than
@@ -564,8 +602,9 @@ impl PulseDecoder {
         };
 
         // The server has handed the id to another wallet: the subject that held it is gone.
-        let mut events = match self.subjects.get(&full.subject_id) {
-            Some(held) if held.wallet != address => self.on_left(full.subject_id),
+        let held_wallet = self.subjects.get(&full.subject_id).map(|held| held.wallet);
+        let mut events = match held_wallet {
+            Some(wallet) if wallet != address => self.on_left(full.subject_id),
             _ => Vec::new(),
         };
         // A newer session of a wallet held under another id: that subject's session is already
@@ -623,8 +662,9 @@ impl PulseDecoder {
                 address,
                 movement: Box::new(movement),
                 realm: realm.clone(),
-                // the avatar jumps from wherever the subject it replaces left it
-                teleport: replaced.is_some(),
+                // A newly observed subject starts a fresh pose even if a room kept this
+                // wallet's avatar entity through the Pulse departure.
+                teleport: held_wallet != Some(address),
                 timestamp: joined_at,
             },
         ]);
@@ -1109,16 +1149,20 @@ fn signed_angle(deg: f32) -> f32 {
 /// bool fields are folded back into `state_flags`; head yaw/pitch and point-at ride only when their
 /// enable flag is set (matching Unity's `WritePlayerState`). Fields with no Pulse equivalent
 /// (`is_jumping`, `is_emoting`, `scene_driven_animation`) are dropped — animation stays on LiveKit.
+/// `None` outside the parcel grid: the server would refuse the input for good.
 pub(crate) fn from_movement(
     movement: &rfc4::Movement,
     grid: &PulseParcelGrid,
-) -> pulse::PlayerState {
+) -> Option<pulse::PlayerState> {
     let world = Vec3::new(
         movement.position_x,
         movement.position_y,
         movement.position_z,
     );
-    let (parcel_index, local) = grid.encode_to_parcel(world);
+    let Some((parcel_index, local)) = grid.encode_to_parcel(world) else {
+        warn_out_of_grid(OutOfGrid::Input, world);
+        return None;
+    };
 
     let mut state_flags = 0u32;
     let mut set = |on: bool, f: pulse::PlayerAnimationFlags| {
@@ -1145,7 +1189,7 @@ pub(crate) fn from_movement(
     );
 
     use pulse::PlayerState as P;
-    pulse::PlayerState {
+    Some(pulse::PlayerState {
         parcel_index,
         position_x: P::position_x_quantized(local.x),
         position_y: P::position_y_quantized(local.y),
@@ -1176,6 +1220,45 @@ pub(crate) fn from_movement(
         point_at_z: movement
             .is_pointing_at
             .then(|| P::point_at_z_quantized(movement.point_at_z)),
+    })
+}
+
+/// How often a skipped out-of-grid send is logged.
+const OUT_OF_GRID_LOG_INTERVAL: Duration = Duration::from_secs(10);
+
+/// What a skipped out-of-grid send was; each kind is rate-limited on its own, so a stream of
+/// skipped inputs never hides a skipped teleport.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum OutOfGrid {
+    Input,
+    Teleport,
+}
+
+/// When each kind of skipped send was last logged.
+#[derive(Default)]
+pub(crate) struct OutOfGridLog([Option<Instant>; 2]);
+
+impl OutOfGridLog {
+    /// Whether a skip of `kind` at `now` is logged: at most once per [`OUT_OF_GRID_LOG_INTERVAL`].
+    pub(crate) fn should_log(&mut self, kind: OutOfGrid, now: Instant) -> bool {
+        let last = &mut self.0[kind as usize];
+        if last.is_some_and(|last| now.duration_since(last) < OUT_OF_GRID_LOG_INTERVAL) {
+            return false;
+        }
+        *last = Some(now);
+        true
+    }
+}
+
+/// Log a send skipped because `world` (DCL convention) is outside the parcel grid, at most once per
+/// [`OUT_OF_GRID_LOG_INTERVAL`] for each kind: a player standing outside skips one every tick.
+pub(crate) fn warn_out_of_grid(kind: OutOfGrid, world: Vec3) {
+    static LOG: std::sync::Mutex<OutOfGridLog> = std::sync::Mutex::new(OutOfGridLog([None; 2]));
+    let Ok(mut log) = LOG.lock() else {
+        return;
+    };
+    if log.should_log(kind, Instant::now()) {
+        bevy::log::warn!("pulse: {kind:?} at {world} is outside the parcel grid; not sent as is");
     }
 }
 

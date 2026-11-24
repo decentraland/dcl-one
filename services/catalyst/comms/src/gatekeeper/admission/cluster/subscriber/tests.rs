@@ -1239,25 +1239,52 @@ async fn the_wallet_is_taken_from_the_subject_and_lower_cased() {
     assert_eq!(h.delivered()[0].wallet, mixed.to_lowercase());
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "current_thread")]
 async fn a_banned_wallet_is_skipped_entirely() {
+    let recorder = metrics_exporter_prometheus::PrometheusBuilder::new().build_recorder();
+    let series = recorder.handle();
+    let _recording = metrics::set_default_local_recorder(&recorder);
     let h = harness();
     h.gateway.denied.lock().unwrap().insert(WALLET.into());
     h.feed(WALLET, &change("c1", SESSION_A)).await;
     assert!(h.gateway.minted().is_empty());
     assert!(h.delivered().is_empty());
+    let rendered = series.render();
+    assert_eq!(
+        metric_value(&rendered, "comms_cluster_banned_skipped_total"),
+        Some(1.0)
+    );
+    assert_eq!(
+        metric_value(&rendered, "comms_cluster_access_check_failed_total"),
+        None
+    );
 }
 
-#[tokio::test]
-async fn an_access_check_failure_lets_the_peer_through() {
+/// An undecided ban lookup defers the assignment; the next hint after the store recovers mints.
+#[tokio::test(flavor = "current_thread")]
+async fn an_access_check_failure_defers_the_assignment() {
+    let recorder = metrics_exporter_prometheus::PrometheusBuilder::new().build_recorder();
+    let series = recorder.handle();
+    let _recording = metrics::set_default_local_recorder(&recorder);
     let h = harness();
     h.gateway.deny_error.store(true, Ordering::Relaxed);
     h.feed(WALLET, &change("c1", SESSION_A)).await;
+    assert!(h.gateway.minted().is_empty());
+    assert!(h.delivered().is_empty());
+    let rendered = series.render();
     assert_eq!(
-        h.gateway.minted().len(),
-        1,
-        "the gate fails open: a background feed has nobody to report the error to"
+        metric_value(&rendered, "comms_cluster_access_check_failed_total"),
+        Some(1.0)
     );
+    assert_eq!(
+        metric_value(&rendered, "comms_cluster_banned_skipped_total"),
+        None
+    );
+
+    h.gateway.deny_error.store(false, Ordering::Relaxed);
+    h.feed(WALLET, &change("c1", SESSION_A)).await;
+    assert_eq!(h.gateway.minted().len(), 1);
+    assert_eq!(delivered_to(&h.delivered()[0]), (WALLET, SESSION_A));
 }
 
 #[tokio::test]
@@ -3170,16 +3197,12 @@ async fn liveness_isolated_pool() -> (sqlx::PgPool, sqlx::PgPool, String) {
         .await
         .unwrap();
     let name = format!("dcl_liveness_{}", uuid::Uuid::new_v4().simple());
-    sqlx::query(sqlx::AssertSqlSafe(format!("CREATE DATABASE \"{name}\"")))
-        .execute(&admin)
-        .await
-        .unwrap();
+    crate::db::scratch::create_database_with_schema(&admin, &name).await;
     let pool = sqlx::postgres::PgPoolOptions::new()
         .max_connections(8)
         .connect_with(base.connect_options().as_ref().clone().database(&name))
         .await
         .unwrap();
-    crate::db::apply_schema(&pool).await.unwrap();
     (pool, admin, name)
 }
 async fn liveness_drop_pool(pool: &sqlx::PgPool, admin: &sqlx::PgPool, name: &str) {

@@ -151,9 +151,10 @@ impl PlacesComponent {
         ));
         let columns = "id, base_position, title, description, creator_address, content_rating, categories, likes, dislikes, favorites, deployed_at, disabled, highlighted, raw, world_name, world, like_score_num, like_rate_num, ranking_num, skybox_time_num, user_count_num, user_visits_num, settings_version_num, created_at_ts, updated_at_ts, disabled_at_ts, textsearch";
         let local = crate::copies::origin::world_scene_rows_sql();
+        let shadowed = super::scene_identity::is_scene_id_sql("explore.place_indexed.id");
         super::ListSource {
             prefix: format!(
-                "WITH scene_catalogue AS (SELECT {columns}, false AS canonical_scene FROM explore.place_indexed WHERE NOT EXISTS (SELECT 1 FROM explore.world_scene_place p WHERE p.identity = CASE WHEN pg_input_is_valid(regexp_replace(explore.place_indexed.id, '^urn:uuid:', '', 'i'), 'uuid') THEN regexp_replace(explore.place_indexed.id, '^urn:uuid:', '', 'i')::uuid END) UNION ALL SELECT {columns}, true AS canonical_scene FROM ({rows}) scene_rows WHERE true {local}) "
+                "WITH scene_catalogue AS (SELECT {columns}, false AS canonical_scene FROM explore.place_indexed WHERE NOT {shadowed} UNION ALL SELECT {columns}, true AS canonical_scene FROM ({rows}) scene_rows WHERE true {local}) "
             ),
             relation: "scene_catalogue AS place_indexed",
             scene_projection: true,
@@ -449,18 +450,12 @@ mod tests {
             .await
             .unwrap();
         let database = format!("dcl_scene_discovery_{}", uuid::Uuid::new_v4().simple());
-        sqlx::query(sqlx::AssertSqlSafe(format!(
-            "CREATE DATABASE \"{database}\""
-        )))
-        .execute(&admin)
-        .await
-        .unwrap();
+        crate::db::scratch::create_database_with_schema(&admin, &database).await;
         let pool = sqlx::postgres::PgPoolOptions::new()
             .max_connections(4)
             .connect_with(options.database(&database))
             .await
             .unwrap();
-        crate::db::apply_schema(&pool).await.unwrap();
         (admin, pool, database)
     }
 

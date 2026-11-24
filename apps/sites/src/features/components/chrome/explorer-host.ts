@@ -1,5 +1,5 @@
-import { CREATOR_HUB_HOME, CREATOR_HUB_SCOPE, creatorHubHost, type CreatorHubHost } from "@ui/creatorhub/explorer-host";
-import { embedEscapeHref, installEmbedGuards } from "@ui/web/frames/embed";
+import { CREATOR_HUB_HOME, CREATOR_HUB_SCOPE, creatorHubHost, type CreatorHubHost } from "@web-core/creator-hub-host";
+import { embedEscapeHref, installEmbedGuards } from "@/core/lib/embed";
 
 import { claimWalletCookieOnUse, setHostIdentity } from "@/data/lib/auth/session";
 import type { AuthIdentity } from "@/data/lib/auth/types";
@@ -102,12 +102,6 @@ export function hubLocationKeeper(host: CreatorHubHost): (location: HubLocation,
     host.openLink(new URL(href, base).href);
     return last ?? CREATOR_HUB_HOME;
   };
-}
-
-/** A link the hub opens in a new tab; framed by the Explorer, the Explorer takes it (its /play links jump in). */
-export function openHubLink(url: string): void {
-  if (adopted) adopted.openLink(new URL(url, window.location.href).href);
-  else window.open(url, "_blank", "noopener,noreferrer");
 }
 
 /**
