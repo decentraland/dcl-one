@@ -5,13 +5,14 @@
 import { engine, PlayerIdentityData, PointerLock } from '@dcl/sdk/ecs'
 import { getPlayer } from '@dcl/sdk/players'
 import { getPlayerData } from '~system/Players'
-import { BevyApi, type AvatarModifierState } from '../bevy-api'
+import { BevyApi } from '../bevy-api'
+import type { AvatarModifierSnapshot } from '../avatar-modifiers'
 import { httpOrUndef, profileKey } from './profile'
-import { relay, singleFlight, throttleByDt } from '../system-helpers'
+import { relay, throttleByDt } from '../system-helpers'
 import type { Ctx } from '../bridge'
 import type { NearbyMember } from '@explorer-core/engine/protocol'
 
-export function registerChat(ctx: Ctx): void {
+export function registerChat(ctx: Ctx, avatarModifiers: () => AvatarModifierSnapshot): void {
   // React → engine.
   ctx.on('sendChat', (msg) => {
     BevyApi.sendChat(msg.message, msg.channel)
@@ -63,7 +64,8 @@ export function registerChat(ctx: Ctx): void {
     if (pl != null) pl.isPointerLocked = false
   })
 
-  // Scene identity includes room-only peers. Nearby lists peers with a Pulse pose.
+  // Scene identity includes room-only peers. Nearby uses the last known Pulse membership.
+  // Rebuild about every three seconds and publish on change.
   // Faces come from the engine's profile cache, which already holds every nearby player's profile
   // for their nametag: one RPC per address, answered once the engine has resolved it. An address
   // it couldn't resolve is dropped, so the next tick asks again.
@@ -77,21 +79,8 @@ export function registerChat(ctx: Ctx): void {
     if (faces.has(key)) stale.add(key)
   })
   let lastKey = ''
-  let modifierSnapshot: AvatarModifierState[] | undefined
-  const pollModifiers = throttleByDt(3, singleFlight(async () => {
-    try {
-      modifierSnapshot = await BevyApi.getAvatarModifiers()
-    } catch {
-      modifierSnapshot = undefined
-    }
-  }))
-  ctx.push((dt) => {
-    pollModifiers(dt)
-    if (modifierSnapshot === undefined) return
-    // Consume the result in the bridge's guarded frame system.
-    const modifiers = modifierSnapshot
-    modifierSnapshot = undefined
-    const pulseAbsent = new Set(modifiers.filter((state) => state.pulseAbsent).map((state) => profileKey(state.userId)))
+  ctx.push(throttleByDt(3, () => {
+    const { pulseAbsent } = avatarModifiers()
     const members: NearbyMember[] = []
     for (const [, data] of engine.getEntitiesWith(PlayerIdentityData)) {
       const address = data.address
@@ -131,5 +120,5 @@ export function registerChat(ctx: Ctx): void {
     if (key === lastKey) return
     lastKey = key
     ctx.send({ kind: 'members', members })
-  })
+  }))
 }

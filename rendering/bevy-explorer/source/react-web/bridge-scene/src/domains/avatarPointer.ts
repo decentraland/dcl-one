@@ -4,39 +4,17 @@
 // opens the ProfileCard anchored at the cursor.
 import { engine, pointerEventsSystem, InputAction, PlayerIdentityData, type Entity } from '@dcl/sdk/ecs'
 import { getPlayer } from '@dcl/sdk/players'
-import { BevyApi } from '../bevy-api'
+import type { AvatarModifierSnapshot } from '../avatar-modifiers'
 import type { Ctx } from '../bridge'
-import { throttleByDt, singleFlight } from '../system-helpers'
+import { throttleByDt } from '../system-helpers'
 
-export function registerAvatarPointer(ctx: Ctx): void {
+export function registerAvatarPointer(ctx: Ctx, avatarModifiers: () => AvatarModifierSnapshot): void {
   const registered = new Set<Entity>()
-  // Addresses (lowercased) currently hide_profile per an AvatarModifierArea's DISABLE_PASSPORTS
-  // (the old scene's avatar-tracker — isProfileBlocked — respected this too), or hide per
-  // HIDE_AVATARS — the engine only hides the mesh (the collider stays live), so without this an
-  // invisible avatar would still show "Show Profile" over empty space and leak who's there. A
-  // disabled avatar is treated as absent in the rescan, so its pointer-down (and the hover) is
-  // removed within a poll cycle; the click-time check stays as a belt-and-braces for that stale window.
-  let passportDisabled = new Set<string>()
-
-  // Two independent dt-throttled systems, mirroring bevy-ui-scene's avatar-tracker (two separate
-  // engine.addSystem timers): the privacy-modifier RPC is polled on its own slow beat (single-flight
-  // so a slow engine can't stack overlapping calls), while the local entity rescan runs more often.
-  ctx.push(
-    throttleByDt(
-      1.0,
-      singleFlight(async () => {
-        const mods = await BevyApi.getAvatarModifiers().catch(() => [])
-        passportDisabled = new Set(
-          mods.filter((m) => m.hideProfile || m.hideAvatar).map((m) => m.userId.toLowerCase())
-        )
-      })
-    )
-  )
-
-  // Avatars enter/leave constantly; rescan ~2×/s (PlayerIdentityData is the engine's source of
-  // truth, same as nametags) and diff against what already has a handler.
+  // Rescan identities twice per second and remove handlers for avatars hidden by a scene
+  // modifier or with passports disabled. Scene trigger areas still use the avatar collider.
   ctx.push(
     throttleByDt(0.5, () => {
+      const { passportDisabled } = avatarModifiers()
       // Never attach our own avatar — PlayerIdentityData is written for the local player too (profile
       // sync), unlike most foreign-only ECS data.
       const me = getPlayer()?.userId?.toLowerCase()
@@ -52,7 +30,8 @@ export function registerAvatarPointer(ctx: Ctx): void {
           () => {
             const address = PlayerIdentityData.getOrNull(entity)?.address
             if (address == null || address === '') return
-            if (passportDisabled.has(address.toLowerCase())) return // privacy area: passports disabled
+            // Read the latest snapshot in case the rescan has yet to remove this handler.
+            if (avatarModifiers().passportDisabled.has(address.toLowerCase())) return
             // Only the address travels — React resolves the name (nearby roster) and the card's
             // anchor (live DOM cursor) itself.
             ctx.send({ kind: 'avatarClick', address })

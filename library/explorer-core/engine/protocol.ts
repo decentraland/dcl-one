@@ -396,7 +396,7 @@ export interface FocusChatMessage {
   kind: 'focusChat'
 }
 
-/** A nearby player (from the scene's PlayerIdentityData set). */
+/** A player from the scene's PlayerIdentityData set. The roster filters remote players by last known Pulse membership. */
 export interface NearbyMember {
   address: string
   name: string
