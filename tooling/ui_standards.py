@@ -35,12 +35,13 @@ SHARED_RELATIVE_TOOLING keep their paths.
 
 `--kit-ceiling` is a check: for every component kit under KIT_PATHS (app-owned
 kits whose consumers can already import library/ui/components) it fails when the
-number of tracked component files differs from what tooling/ui-kit-ceiling.json
+number of tracked component files is above what tooling/ui-kit-ceiling.json
 records, and when that file records a higher ceiling than the base revision's
-(`--base`, default: the merge base with origin/main). A kit may only shrink, and
-a smaller kit lowers its ceiling in the same change: `--write-kit-ceiling`
-records the current counts and refuses one above the recorded or the base
-ceiling (docs/adr/2026-11-24-library-ui-single-source.md).
+(`--base`, default: the merge base with origin/main). A kit may only shrink.
+After removing a component, `--write-kit-ceiling` records the current counts;
+it refuses one above the recorded or the base ceiling. A count below the ceiling
+passes, so two changes that lower the same ceiling cannot fail the default
+branch together (docs/adr/2026-11-24-library-ui-single-source.md).
 """
 import argparse
 import json
@@ -636,8 +637,9 @@ def base_kit_ceiling(base):
 
 
 def kit_issues(ceiling, current):
-    """Each kit that grew above its ceiling, each kit that shrank without lowering it, and each ceiling
-    entry that names no kit."""
+    """Each kit that grew above its ceiling and each ceiling entry that names no kit. A kit below its
+    ceiling passes: two changes that each remove a component record the same lower ceiling, and the tree
+    they leave together is below it."""
     issues = [f'{name}: the ceiling records a kit that is not in KIT_PATHS; run --write-kit-ceiling'
               for name in sorted(ceiling.keys() - current.keys())]
     for name, count in sorted(current.items()):
@@ -645,9 +647,6 @@ def kit_issues(ceiling, current):
         if count > recorded:
             issues.append(f'{name}: {count} component files, the ceiling is {recorded}; '
                           'add shared components to library/ui/components instead')
-        elif count < recorded:
-            issues.append(f'{name}: {count} component files, the ceiling is {recorded}; '
-                          'lower it with --write-kit-ceiling')
     return issues
 
 

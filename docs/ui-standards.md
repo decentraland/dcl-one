@@ -214,7 +214,7 @@ migration. Do not rewrite unrelated components or tokens in the same change.
   still accepts the in-world Shop and HUD UI (`@dcl/one-ui/apps/shop/`,
   `@dcl/one-ui/apps/hud/`), which resolve their host's aliases and are not in
   the entry yet.
-- `make check` and CI also run `tooling/ui_standards.py --kit-ceiling`. For each app-owned component kit whose consumers can already import `library/ui/components` (the `KIT_PATHS` of the script: `apps/ui3/src/components` and `library/ui/apps/sites/shared`) it fails when the number of tracked component files differs from the count in `tooling/ui-kit-ceiling.json`, and when that file records a higher ceiling than the base revision's. A kit may only shrink ([ADR](adr/2026-11-24-library-ui-single-source.md)); after removing a component from one, run `python3 tooling/ui_standards.py --write-kit-ceiling` and commit the file with the change. The writer refuses a count above the recorded or the base ceiling.
+- `make check` and CI also run `tooling/ui_standards.py --kit-ceiling`. For each app-owned component kit whose consumers can already import `library/ui/components` (the `KIT_PATHS` of the script: `apps/ui3/src/components` and `library/ui/apps/sites/shared`) it fails when the number of tracked component files is above the count in `tooling/ui-kit-ceiling.json`, and when that file records a higher ceiling than the base revision's. It counts files, so a pass does not prove that no component was added in place of a removed one. A kit may only shrink ([ADR](adr/2026-11-24-library-ui-single-source.md)); after removing a component from one, run `python3 tooling/ui_standards.py --write-kit-ceiling` and commit the file with the change. The writer refuses a count above the recorded or the base ceiling.
 - Report checks that could not run or failed. Documentation-only changes need
   link, structure and content checks, not an application build.
 
@@ -226,7 +226,7 @@ the shared foundations and components. The app itself, under `apps/<app>`,
 keeps its pages, routes and data wiring and imports its UI from there. Until
 `library/ui` is implemented, app-specific UI stays where it is in the app.
 
-Sites composes its views in route modules or in `apps/sites/src/pages/<domain>/` when a screen needs app-level wiring. Its visual components and styles belong in `library/ui/apps/sites/<domain>/`. See [Sites page components](adr/2026-11-20-sites-pages.md).
+Sites composes its views in route modules or in `apps/sites/src/pages/<domain>/` when a screen needs app-level wiring. Its visual components and styles belong in `library/ui/apps/sites/<domain>/`. A component that several Sites domains share goes to `library/ui/components`, not to `library/ui/apps/sites/shared`, which only shrinks. See [Sites page components](adr/2026-11-20-sites-pages.md).
 
 Until `library/ui` is implemented, Sites imports some UI source through the
 `@ui/*` alias (`apps/sites/tsconfig.json`, resolving to `apps/ui3/src`). Verify the
