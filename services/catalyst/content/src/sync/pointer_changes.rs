@@ -24,14 +24,9 @@ pub struct PointerChangesOptions<'a> {
     pub entity_type_filter: Option<&'a HashSet<String>>,
 }
 
-/// The peers a scheduled entity's files may be downloaded from; read per entity, so a running
-/// stream follows a changed peer list.
-pub type PeerUrls = std::sync::RwLock<std::sync::Arc<[String]>>;
-
 /// Where a stream hands its deployments and how their acknowledgement is tracked.
 pub struct ScheduleTarget<'a> {
     pub deployer: &'a BatchDeployer,
-    pub content_servers: &'a PeerUrls,
     pub report: &'a std::sync::Arc<DeploymentReport>,
 }
 
@@ -284,11 +279,8 @@ async fn deploy_pointer_pages<S, const PAGE_LIMIT: usize>(
 where
     S: Fn() -> bool,
 {
-    let ScheduleTarget {
-        deployer,
-        content_servers,
-        report,
-    } = target;
+    let ScheduleTarget { deployer, report } = target;
+    let advertisers = [server.to_owned()];
     let entity_type_filter = options.entity_type_filter;
     let mut last_beat: Option<std::time::Instant> = None;
     let mut last_persisted = options.from_timestamp;
@@ -399,9 +391,8 @@ where
             }
 
             delivered.record_delivered(&deployment);
-            let servers = content_servers.read().unwrap().clone();
             deployer
-                .schedule_entity_deployment(deployment, &servers, Some(report))
+                .schedule_entity_deployment(deployment, &advertisers, Some(report))
                 .await?;
         }
 
@@ -801,6 +792,7 @@ mod tests {
             Arc::new(LiveFailedDeploymentsStore::new(pool.clone())),
             BloomFilter::with_capacity(100),
         );
+        batch.set_peers(vec![base.to_owned()]).await;
         let report = Arc::new(DeploymentReport::default());
         let progress = std::sync::atomic::AtomicI64::new(0);
         let confirmed = deploy_entities_from_pointer_changes(
@@ -813,7 +805,6 @@ mod tests {
             },
             ScheduleTarget {
                 deployer: &batch,
-                content_servers: &PeerUrls::new(std::sync::Arc::from(vec![base.to_owned()])),
                 report: &report,
             },
             None,
@@ -1014,7 +1005,6 @@ mod tests {
             },
             ScheduleTarget {
                 deployer: &batch,
-                content_servers: &PeerUrls::new(Arc::from(vec![base.clone()])),
                 report: &Arc::new(DeploymentReport::default()),
             },
             None,
