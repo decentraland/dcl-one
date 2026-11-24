@@ -3078,7 +3078,12 @@ a successful lookup returning zero or multiple candidates records
 `source_context`. Such canonical World notices complete for independently
 established owner and permission holders plus preserved recipients, skipping
 local-admin enrichment so parcel overlap cannot select another incarnation.
-SQL errors and timeouts remain retryable instead. The
+SQL errors and timeouts remain retryable instead. Before the place-context
+or binding lookup, preparation freezes the `social.scene_admins` [admin,
+granter] pairs of each candidate key (the saved key, or else those same
+historical and active identities) in `source_context.admin_grant_candidates`;
+the retry keeps the pairs of the key it settles on, so a re-grant in between
+cannot replace the original granter. The
 schema object pass installs this new table, function and trigger; imports
 retain facts through the same trigger. Production insert and retention costs
 are unmeasured.

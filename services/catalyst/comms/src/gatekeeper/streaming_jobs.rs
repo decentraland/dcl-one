@@ -234,24 +234,42 @@ pub(super) async fn prepare(
             .is_some();
     let mut binding_unresolvable = false;
     let mut admin_grants: Option<Vec<(String, String)>> = None;
+    let mut grant_candidates: Option<GrantCandidates> = None;
     let event = if let Some(kind) = command.notification() {
         let result = tokio::time::timeout(Duration::from_secs(5), async {
-            // Keep the original context even if binding recovery fails or times out.
-            context = RemovedPlaces::new(state.pool.clone())
-                .place(&place_id)
-                .await?;
-            if binding_pending {
-                admin_place_key = notification_admin_key(&state.pool, id, room.as_deref()).await?;
-                binding_unresolvable = admin_place_key.is_none();
-                binding_pending = false;
-            }
+            // Freeze the admins with their granters alongside the place context
+            // and binding lookups, so neither waits on the other: a re-grant
+            // before a retry overwrites both on the row. A failed freeze leaves
+            // the retry to capture them, as before.
+            let saved_key = admin_place_key.clone();
+            let freeze = async {
+                match scene_grant_candidates(&state.pool, saved_key.as_deref(), room.as_deref(), at).await {
+                    Ok(candidates) => grant_candidates = candidates,
+                    Err(error) => tracing::warn!(access_id=%id,%error,"stream notification admins not frozen; the retry captures them"),
+                }
+            };
+            let capture = async {
+                // Keep the original context even if binding recovery fails or times out.
+                context = RemovedPlaces::new(state.pool.clone())
+                    .place(&place_id)
+                    .await?;
+                if binding_pending {
+                    admin_place_key = notification_admin_key(&state.pool, id, room.as_deref()).await?;
+                    binding_unresolvable = admin_place_key.is_none();
+                    binding_pending = false;
+                }
+                Ok::<_, ApiError>(())
+            };
+            let ((), captured) = tokio::join!(freeze, capture);
+            captured?;
             let context = context
                 .as_ref()
                 .ok_or_else(|| ApiError::http(503, "stream notification context unavailable"))?;
-            // Freeze the scene's admins with their granters before any external
-            // lookup: a re-grant before a retry overwrites both on the row.
             if let Some(key) = admin_place_key.as_deref().filter(|_| context.world) {
-                admin_grants = Some(scene_grants(&state.pool, key, at).await?);
+                admin_grants = Some(match grant_candidates.as_ref().and_then(|c| c.get(key)) {
+                    Some(frozen) => frozen.clone(),
+                    None => scene_grants(&state.pool, key, at).await?,
+                });
             }
             let owner = super::notifications::owner(state, context).await?;
             recipients = key_recipients(
@@ -297,6 +315,10 @@ pub(super) async fn prepare(
     evidence["notification_at"] = serde_json::json!(at);
     if let Some(grants) = admin_grants {
         evidence["admin_grants"] = serde_json::json!(grants);
+    } else if let Some(candidates) = grant_candidates {
+        // The scene or its place context is not settled yet: the retry keeps
+        // the pairs of the scene place it settles on.
+        evidence["admin_grant_candidates"] = serde_json::json!(candidates);
     }
     let context = Some(evidence);
     Ok(Some(Prepared {
@@ -314,6 +336,7 @@ pub(super) async fn prepare(
 /// saved or recovered scene place decides its scene admins, so they survive
 /// the scene's retirement; a definitively unresolvable binding tells none;
 /// with neither, the room's live scene does.
+#[allow(clippy::too_many_arguments)]
 async fn key_recipients(
     state: &CommsState,
     context: &PlaceContext,
@@ -352,6 +375,53 @@ async fn scene_grants(
     .bind(at)
     .fetch_all(pool)
     .await
+}
+
+/// Frozen [admin, granter] pairs by scene place key.
+type GrantCandidates = std::collections::BTreeMap<String, Vec<(String, String)>>;
+
+/// The grant pairs (`scene_grants`) that stood at `at` on each scene place a
+/// key notice may settle on: the credential's saved key, or else the bindings
+/// `notification_admin_key` weighs for its room's World scene. Every key is listed,
+/// empty when it had no grants. `None` when there is neither.
+async fn scene_grant_candidates(
+    pool: &PgPool,
+    key: Option<&str>,
+    room: Option<&str>,
+    at: NaiveDateTime,
+) -> Result<Option<GrantCandidates>, sqlx::Error> {
+    let binding = room.and_then(crate::rooms::decode_world_scene_room);
+    if key.is_none() && binding.is_none() {
+        return Ok(None);
+    }
+    let (world, scene) = binding
+        .as_ref()
+        .map(|(world, scene)| (Some(world.key()), Some(scene.as_str())))
+        .unwrap_or((None, None));
+    let rows: Vec<(String, Option<String>, Option<String>)> = sqlx::query_as(
+        "WITH keys AS (SELECT $1::text AS key WHERE $1::text IS NOT NULL \
+           UNION (SELECT identity::text FROM explore.world_scene_binding WHERE $1::text IS NULL AND world_name=$2 AND entity_id=$3 LIMIT 2) \
+           UNION SELECT identity::text FROM explore.world_scene_place WHERE $1::text IS NULL AND world_name=$2 AND entity_id=$3 AND active) \
+         SELECT k.key, lower(btrim(a.admin_address)), lower(btrim(a.added_by)) FROM keys k \
+         LEFT JOIN social.scene_admins a ON a.place_id = k.key AND a.added_at <= $4 AND (a.active OR a.removed_at >= $4) \
+         ORDER BY 1, 2, 3",
+    )
+    .bind(key)
+    .bind(world)
+    .bind(scene)
+    .bind(at)
+    .fetch_all(pool)
+    .await?;
+    let mut candidates = GrantCandidates::new();
+    for (key, admin, granter) in rows {
+        let pairs = candidates.entry(key).or_default();
+        if let (Some(admin), Some(granter)) = (admin, granter)
+            && pairs.last() != Some(&(admin.clone(), granter.clone()))
+        {
+            pairs.push((admin, granter));
+        }
+    }
+    Ok(Some(candidates))
 }
 
 /// Runtime notification lookup takes no publication locks and never writes a credential.
@@ -703,11 +773,19 @@ async fn notify(state: &CommsState, row: &Cleanup, token: Uuid) -> Result<(), Ap
             saved_context["admin_place_key"] = serde_json::json!(admin_key);
             saved_context["admin_binding_pending"] = serde_json::json!(false);
             saved_context["admin_binding_unresolvable"] = serde_json::json!(binding_unresolvable);
-            // Pairs frozen at preparation win; otherwise freeze them now, once.
+            // Pairs frozen at preparation win, those of the settled scene place
+            // among the candidates next; otherwise freeze them now, once.
             if saved_context.get("admin_grants").is_none()
                 && let Some(key) = admin_key.as_deref().filter(|_| context.world)
             {
-                let grants = scene_grants(&state.pool, key, row.occurred_at).await?;
+                let frozen = saved_context
+                    .get("admin_grant_candidates")
+                    .and_then(|candidates| candidates.get(key))
+                    .map(|pairs| super::notifications::grant_pairs(Some(pairs)));
+                let grants = match frozen {
+                    Some(grants) => grants,
+                    None => scene_grants(&state.pool, key, row.occurred_at).await?,
+                };
                 saved_context["admin_grants"] = serde_json::json!(grants);
             }
             let grants = super::notifications::grant_pairs(saved_context.get("admin_grants"));
@@ -1722,6 +1800,74 @@ mod tests {
         sqlx::query("UPDATE social.scene_admins SET added_by=$2,added_at=timezone('UTC',now())+interval '1 second',active=true,removed_at=NULL WHERE admin_address=$1")
             .bind(wallet(2)).bind(wallet(12)).execute(&state.pool).await.unwrap();
         cleanup_access(&state, id).await.unwrap();
+        let actual: std::collections::BTreeSet<_> = directory
+            .streaming_notifications
+            .lock()
+            .unwrap()
+            .iter()
+            .map(|notice| notice.recipient.clone())
+            .collect();
+        assert_eq!(
+            actual,
+            (1..=4).map(wallet).collect(),
+            "the admin granted by the owner at the event is still told"
+        );
+    }
+
+    #[tokio::test]
+    async fn streaming_fanout_unprepared_key_notice_keeps_admins_granted_at_the_event() {
+        unprepared_regrant(true).await;
+    }
+
+    #[tokio::test]
+    async fn streaming_fanout_unbound_key_notice_keeps_admins_granted_at_the_event() {
+        unprepared_regrant(false).await;
+    }
+
+    /// Preparation cannot read the place context, so the recipients are
+    /// resolved on a retry, after a wallet without authority re-granted
+    /// wallet(2). `saved_key`: the credential already names its scene place;
+    /// otherwise the retry recovers it from the room.
+    async fn unprepared_regrant(saved_key: bool) {
+        let Some((state, directory, place)) = fanout_fixture(true).await else {
+            return;
+        };
+        let name = format!("{place}.dcl.eth");
+        sqlx::query("INSERT INTO worlds.worlds(name) VALUES ($1)")
+            .bind(&name)
+            .execute(&state.pool)
+            .await
+            .unwrap();
+        let room = crate::rooms::worlds_service_scene_room(
+            &crate::world_identity::WorldName::parse(&name).unwrap(),
+            &crate::world_identity::SceneId::parse("fanout-scene").unwrap(),
+        );
+        let id = Uuid::new_v4();
+        sqlx::query("INSERT INTO social.scene_stream_access(id,place_id,room_id,streaming_url,streaming_key,generated_by,admin_place_key) VALUES ($1,$2,$3,'rtmp://example.invalid/live','test','test',CASE WHEN $4 THEN (SELECT identity::text FROM explore.world_scene_place WHERE world_name=$5 AND entity_id='fanout-scene') END)")
+            .bind(id).bind(&place).bind(&room).bind(saved_key).bind(&name).execute(&state.pool).await.unwrap();
+        let mut locked = state.pool.begin().await.unwrap();
+        sqlx::query("LOCK explore.place IN ACCESS EXCLUSIVE MODE")
+            .execute(&mut *locked)
+            .await
+            .unwrap();
+        let result = tokio::time::timeout(
+            Duration::from_secs(12),
+            enqueue(&state, id, CleanupCommand::Revoke),
+        )
+        .await;
+        locked.rollback().await.unwrap();
+        assert!(result.expect("preparation has a deadline").unwrap());
+        let resolved: bool = sqlx::query_scalar(
+            "SELECT recipients_resolved FROM social.scene_stream_cleanup WHERE access_id=$1",
+        )
+        .bind(id)
+        .fetch_one(&state.pool)
+        .await
+        .unwrap();
+        assert!(!resolved, "the place context was unavailable");
+        sqlx::query("UPDATE social.scene_admins SET added_by=$2,added_at=timezone('UTC',now())+interval '1 second',active=true,removed_at=NULL WHERE admin_address=$1")
+            .bind(wallet(2)).bind(wallet(12)).execute(&state.pool).await.unwrap();
+        let _ = cleanup_access(&state, id).await;
         let actual: std::collections::BTreeSet<_> = directory
             .streaming_notifications
             .lock()

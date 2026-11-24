@@ -29,9 +29,12 @@ and safety cleanup adds the pairs of the grants it ends. A re-grant overwrites
 the row's granter and lifts its `removed_at`, and a retired scene no longer
 lists its admins, so resolution reads the frozen pairs as well as the live and
 ended grants, and checks every granter's world-wide authority. Key notices do
-the same: preparation saves the key scene's admins with their granters in the
-notice's context before any external lookup, and a deferred resolution saves
-them once if preparation could not. Notification-only enrichment runs after that
+the same: preparation first saves the admins with their granters in the
+notice's context, before the place context, binding or any external lookup.
+When the scene place is not known yet it saves them for every retained or
+active binding it weighs for the credential's World scene, and the retry keeps
+those of the place it settles on. A deferred resolution reads them live only
+when that first save failed. Notification-only enrichment runs after that
 commit. Resolve every permission surface before marking the snapshot complete
 (an unreadable surface retries, never shrinks the set), and checkpoint each
 Social acceptance. Retries keep the event identity, original context and
