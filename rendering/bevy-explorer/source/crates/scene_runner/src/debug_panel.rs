@@ -814,25 +814,9 @@ mod tests {
             .priority_scenes
             .insert(crate::MOVEMENT_CONTROLLER, scene);
         updates.loop_end_time = at + std::time::Duration::from_secs(1);
-        let previous_loop_end = updates.previous_loop_end;
-        let loop_end = updates.loop_end_time;
         // an on-time reply, then a late one, which is dispatched again
-        assert!(!updates.movement_ticks.redispatch_due(
-            &context,
-            &reply(6, 6),
-            true,
-            1.0,
-            previous_loop_end,
-            loop_end
-        ));
-        assert!(updates.movement_ticks.redispatch_due(
-            &context,
-            &reply(6, 7),
-            true,
-            1.0,
-            previous_loop_end,
-            loop_end
-        ));
+        assert!(!updates.movement_redispatch_due(&context, &reply(6, 6), true, 1.0));
+        assert!(updates.movement_redispatch_due(&context, &reply(6, 7), true, 1.0));
         updates
             .movement_ticks
             .record_staged_rotation(Quat::from_rotation_y(30f32.to_radians()));
@@ -854,14 +838,7 @@ mod tests {
             .unwrap();
         context.state = crate::renderer_context::SceneState::Broken;
         let mut updates = app.world_mut().resource_mut::<SceneUpdates>();
-        assert!(!updates.movement_ticks.redispatch_due(
-            &context,
-            &reply(7, 8),
-            true,
-            2.0,
-            previous_loop_end,
-            loop_end
-        ));
+        assert!(!updates.movement_redispatch_due(&context, &reply(7, 8), true, 2.0));
         assert_eq!(updates.movement_ticks.redispatches, 1);
     }
 

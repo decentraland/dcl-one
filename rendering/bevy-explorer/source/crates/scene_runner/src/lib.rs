@@ -1991,17 +1991,12 @@ fn receive_scene_updates(
                                         frame: frame.0,
                                     });
                                 if Some(root) == movement_scene {
-                                    let previous_loop_end = updates.previous_loop_end;
-                                    let loop_end = updates.loop_end_time;
                                     redispatch = updates
-                                        .movement_ticks
-                                        .redispatch_due(
+                                        .movement_redispatch_due(
                                             &context,
                                             &tick_timing,
                                             first_poll,
                                             time.elapsed_secs_f64(),
-                                            previous_loop_end,
-                                            loop_end,
                                         )
                                         .then_some(root);
                                 }

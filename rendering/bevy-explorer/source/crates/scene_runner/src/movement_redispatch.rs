@@ -11,7 +11,10 @@ use std::{collections::VecDeque, time::Duration};
 
 use web_time::Instant;
 
-use crate::renderer_context::{RendererSceneContext, SceneTickTiming, SCENE_FIRST_UPDATE_TICK};
+use crate::{
+    renderer_context::{RendererSceneContext, SceneTickTiming, SCENE_FIRST_UPDATE_TICK},
+    SceneUpdates,
+};
 
 /// Ticks the percentile is taken over.
 const TICK_SAMPLES: usize = 32;
@@ -66,28 +69,30 @@ impl MovementTickTimes {
     fn redispatch_fits(&self, left: Duration, first_poll: bool) -> bool {
         !left.is_zero() && (first_poll || self.p90().is_none_or(|p90| left >= p90))
     }
+}
 
-    /// Records the tick that just replied. Returns whether to dispatch the scene again now.
-    pub(crate) fn redispatch_due(
+impl SceneUpdates {
+    /// Records the movement scene's tick that just replied. Returns whether to dispatch the scene
+    /// again now.
+    pub(crate) fn movement_redispatch_due(
         &mut self,
         context: &RendererSceneContext,
         tick_timing: &SceneTickTiming,
         first_poll: bool,
         now: f64,
-        previous_loop_end: Instant,
-        loop_end: Instant,
     ) -> bool {
         let Some(reply) = tick_timing.reply else {
             return false;
         };
         let late = reply.late();
-        self.record(tick_time(
+        let ticks = &mut self.movement_ticks;
+        ticks.record(tick_time(
             reply.sent.at,
             reply.at,
             first_poll && late,
-            previous_loop_end,
+            self.previous_loop_end,
         ));
-        self.late_replies += u64::from(late);
+        ticks.late_replies += u64::from(late);
         if !late
             || context.sender().is_none()
             || context.last_sent >= now
@@ -96,9 +101,9 @@ impl MovementTickTimes {
         {
             return false;
         }
-        let left = loop_end.saturating_duration_since(Instant::now());
-        let due = self.redispatch_fits(left, first_poll);
-        self.redispatches += u64::from(due);
+        let left = self.loop_end_time.saturating_duration_since(Instant::now());
+        let due = ticks.redispatch_fits(left, first_poll);
+        ticks.redispatches += u64::from(due);
         due
     }
 }
