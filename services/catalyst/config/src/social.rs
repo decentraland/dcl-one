@@ -888,6 +888,14 @@ pub struct SocialConfig {
     #[arg(long, env = "MEDIA_CONVERT_REMOTE_SOURCES", default_value_t = false, action = clap::ArgAction::Set)]
     pub media_convert_remote_sources: bool,
 
+    /// Metamorph endpoint for native event posters on nodes that allow remote media.
+    #[arg(
+        long,
+        env = "MEDIA_POSTER_CONVERTER_URL",
+        default_value = "https://metamorph-api.decentraland.org/convert"
+    )]
+    pub media_poster_converter_url: url::Url,
+
     // social/profile_images: avatar face/body images from the profile
     // entity's own files, the renderer and the upstream service as gated
     // fallbacks. Rendered and fetched images are blobs in the ONE store

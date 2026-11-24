@@ -6,6 +6,15 @@ The exact `/places/place?position=...` and `/places/world?name=...` endpoints, i
 
 The exact `/events/assets/event-default.webp` path serves Catalyst's bundled event image. Event uploads and mirrored posters use the node's `PUBLIC_URL` plus the `/events-assets-099ac00` mount. The bundled image uses the `/events` mount; `EVENTS_BASE_URL` remains the legacy website origin used by sitemaps, world-event default posters and Slack links. Notification page links use the independent `EVENTS_SITE_URL` Sites origin (default `https://decentraland.org`).
 
+On mirrors with `PUBLIC_URL` and `MEDIA_CONVERT_REMOTE_SOURCES=true`, a
+no-width `GET` or `HEAD /metamorph-api/convert` for a public event poster checks
+`MEDIA_POSTER_CONVERTER_URL` (default `https://metamorph-api.decentraland.org/convert`).
+The first request queues conversion on a miss. While the artifact is pending or
+unavailable, the node returns the poster with `Cache-Control: no-store`, rendering
+WebP and GIF as JPEG or transparent PNG. Once published, the same URL serves the
+validated `image/ktx2` artifact. The web tier uses `/media/convert` for original
+bytes and an explicit `width` for resized images.
+
 Referral quotas, the `POST /entities` burst limit and daily quota, the
 `/auth-api` pending sign-in caps and the
 `/contents` rate limit use the backend TCP peer by default. Configure

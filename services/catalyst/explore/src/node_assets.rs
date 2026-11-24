@@ -67,6 +67,29 @@ fn mounted_path(path: &str) -> Option<&str> {
     path.strip_prefix('/')?.strip_prefix(HOST_PREFIX)
 }
 
+/// Public event artwork that a mirror can submit to its texture converter.
+pub fn public_event_poster(image: &str, node: &Url) -> Option<Url> {
+    let (url, path) = parse_asset_url(image)?;
+    if url.query().is_some() {
+        return None;
+    }
+    let path = if url.origin() == node.origin() {
+        let relative = path.strip_prefix(node.path().trim_end_matches('/'))?;
+        if relative.strip_prefix("/events") == Some(DEFAULT_EVENT_IMAGE) {
+            return Some(url);
+        }
+        mounted_path(relative)?
+    } else if url.scheme() == "https"
+        && url.port().is_none()
+        && url.host_str() == Some(POSTER_BUCKET)
+    {
+        path
+    } else {
+        return None;
+    };
+    poster_path(path).map(|_| url)
+}
+
 /// Parses authoring inputs using the same poster keys and mount as the read projection.
 pub(crate) fn event_poster_input<'a>(
     image: &'a str,
@@ -246,6 +269,33 @@ mod tests {
     use super::{node_asset_url, node_page_url, to_node};
 
     const D: &str = "https://node.example";
+
+    #[test]
+    fn native_conversion_only_submits_public_poster_keys() {
+        let base = url::Url::parse("https://node.example/base").unwrap();
+        for path in [
+            "https://node.example/base/events-assets-099ac00/poster/night.webp",
+            "https://node.example/base/events-assets-099ac00/poster-vertical/art.png",
+            "https://node.example/base/events/assets/event-default.webp",
+            "https://events-assets-099ac00.decentraland.org/poster/night.webp",
+        ] {
+            assert_eq!(
+                super::public_event_poster(path, &base).unwrap().as_str(),
+                path
+            );
+        }
+        for path in [
+            "https://other.example/base/events-assets-099ac00/poster/night.webp",
+            "https://node.example/events-assets-099ac00/poster/night.webp",
+            "https://node.example/base/events-assets-099ac00/private/night.webp",
+            "https://node.example/base/events-assets-099ac00/assets/event-default.webp",
+            "https://node.example/base/events-assets-099ac00/poster/a%2Fb.webp",
+            "https://node.example/base/events-assets-099ac00/poster/night.webp?signature=1",
+            "https://user@node.example/base/events-assets-099ac00/poster/night.webp",
+        ] {
+            assert!(super::public_event_poster(path, &base).is_none(), "{path}");
+        }
+    }
 
     #[test]
     fn poster_projection_uses_inputs_the_upload_policy_recognizes() {

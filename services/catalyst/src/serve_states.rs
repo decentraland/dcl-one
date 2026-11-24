@@ -852,6 +852,12 @@ pub(super) fn social_states(
         )
         .with_convert_sources(media::ConvertSources {
             remote: config.social.media_convert_remote_sources,
+            poster_converter: config
+                .node
+                .public_url
+                .as_deref()
+                .filter(|url| !url.trim().is_empty())
+                .map(|_| config.social.media_poster_converter_url.clone()),
             own_url: Some(
                 url::Url::parse(&config.node.own_url()).context("PUBLIC_URL is not a URL")?,
             ),

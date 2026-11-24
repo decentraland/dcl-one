@@ -50,6 +50,7 @@ multer.workspace = true
 unicode-normalization.workspace = true
 icu_properties.workspace = true
 image.workspace = true
+ktx2 = "0.5"
 openmls.workspace = true
 openmls_rust_crypto.workspace = true
 openmls_traits.workspace = true

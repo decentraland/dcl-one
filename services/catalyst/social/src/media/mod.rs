@@ -13,14 +13,14 @@
 //! the old service; `TRANSLATE_CACHE_TTL_DAYS` bounds it with a periodic
 //! prune ([`MediaState::spawn_jobs`]), 0 keeping the old forever.
 //!
-//! `GET /convert` and `/media/convert` ([`convert`]) are the old crate's
-//! stand-in for `metamorph-api.decentraland.org`: a proxy-and-resize of
-//! public http(s) URLs through the guarded client, which the web tier's
-//! image derivatives call.
+//! Native event posters on a mirror use Metamorph for published KTX2 textures
+//! and a local preview while conversion is pending. The web tier's
+//! `/media/convert` and explicit thumbnail sizes use the local renderer.
 
 pub mod backend;
 pub mod cache;
 pub mod convert;
+mod poster_texture;
 pub mod translate;
 
 use std::sync::Arc;
@@ -201,6 +201,7 @@ pub struct MediaState {
     /// The guarded client `/convert` fetches user-named URLs through.
     pub http: Outbound,
     pub convert_cache: crate::shared::cache::TtlMap<String, convert::Converted>,
+    poster_flights: poster_texture::Flights,
     pub convert_slots: convert::Slots,
     pub convert_sources: ConvertSources,
 }
@@ -212,6 +213,8 @@ pub struct ConvertSources {
     /// Any public URL, through the guarded client
     /// (`MEDIA_CONVERT_REMOTE_SOURCES`, set by the mirror posture alone).
     pub remote: bool,
+    /// Metamorph's /convert endpoint for public event posters when remote reads are enabled.
+    pub poster_converter: Option<url::Url>,
     /// This node's own origin (`PUBLIC_URL`): `<own>/content/contents/<hash>`
     /// is read from `storage`, whatever `remote` says, and never fetched.
     pub own_url: Option<url::Url>,
@@ -261,6 +264,7 @@ impl MediaState {
             backend,
             http,
             convert_cache: convert::cache(),
+            poster_flights: Default::default(),
             convert_slots: convert::slots(),
             convert_sources: ConvertSources::default(),
         }
@@ -274,6 +278,7 @@ impl MediaState {
             backend,
             http: Outbound::for_tests(),
             convert_cache: convert::cache(),
+            poster_flights: Default::default(),
             convert_slots: convert::slots(),
             convert_sources: ConvertSources::default(),
         }
@@ -337,7 +342,8 @@ impl MediaState {
 pub fn router(state: SharedState) -> Router {
     let converter = common_middleware(
         Router::new()
-            .route("/convert", get(convert::convert))
+            .route("/convert", get(poster_texture::convert))
+            .route("/metamorph-api/convert", get(poster_texture::convert))
             .route("/media/convert", get(convert::convert)),
     )
     .layer(axum::middleware::map_response(convert::response_headers));

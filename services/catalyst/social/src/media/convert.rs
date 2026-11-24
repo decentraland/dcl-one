@@ -40,7 +40,7 @@ use crate::shared::cache::TtlMap;
 use super::{ConvertSources, SharedState};
 
 const MAX_BODY_BYTES: usize = 64 * 1024 * 1024;
-const MAX_THUMBNAIL_SOURCE_BYTES: usize = 8 * 1024 * 1024;
+pub(super) const MAX_THUMBNAIL_SOURCE_BYTES: usize = 8 * 1024 * 1024;
 pub const CONVERT_CACHE_TTL: Duration = Duration::from_secs(300);
 pub const CONVERT_CACHE_MAX_BODY: usize = 2 * 1024 * 1024;
 const CONVERT_CACHE_MAX_ENTRIES: usize = 256;
@@ -244,12 +244,12 @@ impl Slots {
     }
 
     /// A place in line; `None` when the slots and the line are full.
-    fn admit(&self) -> Option<SemaphorePermit<'_>> {
+    pub(super) fn admit(&self) -> Option<SemaphorePermit<'_>> {
         self.admitted.try_acquire().ok()
     }
 
     /// A slot, waited for at most `wait`.
-    async fn slot(&self, wait: Duration) -> Option<SemaphorePermit<'_>> {
+    pub(super) async fn slot(&self, wait: Duration) -> Option<SemaphorePermit<'_>> {
         tokio::time::timeout(wait, self.slots.acquire())
             .await
             .ok()?
@@ -266,7 +266,7 @@ impl Slots {
     }
 }
 
-fn busy_response() -> Response {
+pub(super) fn busy_response() -> Response {
     (
         StatusCode::SERVICE_UNAVAILABLE,
         [(header::RETRY_AFTER, HeaderValue::from_static("1"))],
@@ -275,7 +275,7 @@ fn busy_response() -> Response {
         .into_response()
 }
 
-fn cached_response((status, content_type, body): Converted) -> Response {
+pub(super) fn cached_response((status, content_type, body): Converted) -> Response {
     build_response(
         StatusCode::from_u16(status).unwrap_or(StatusCode::OK),
         &content_type,
@@ -444,7 +444,7 @@ async fn read_stored(
 
 /// The source's final answer, its body not yet read: a 429 or 503 is asked
 /// again ([`UPSTREAM_RETRIES`]).
-async fn send_remote(
+pub(super) async fn send_remote(
     state: &super::MediaState,
     source: reqwest::Url,
 ) -> Result<reqwest::Response, Response> {
@@ -479,7 +479,7 @@ async fn send_remote(
     Ok(upstream)
 }
 
-async fn read_remote(
+pub(super) async fn read_remote(
     upstream: reqwest::Response,
     max_bytes: usize,
 ) -> Result<(StatusCode, String, Bytes), Response> {
@@ -809,6 +809,131 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn native_converter_is_mounted_at_the_players_gateway_path() {
+        let (base, _) = source().await;
+        let app = app(crate::http::Outbound::for_tests());
+        let uri = format!(
+            "/metamorph-api/convert?width=80&url={}",
+            q(&format!("{base}/img.png"))
+        );
+        let (status, headers, body) = get(&app, &uri).await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(headers[header::CONTENT_TYPE], "image/jpeg");
+        assert_eq!(image::load_from_memory(&body).unwrap().width(), 80);
+    }
+
+    #[tokio::test]
+    async fn native_poster_rechecks_after_a_cold_preview_and_only_caches_the_artifact() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let base = format!("http://{}", listener.local_addr().unwrap());
+        let source = format!("{base}/events-assets-099ac00/poster/night.webp");
+        let calls = Arc::new(AtomicUsize::new(0));
+        let mut encoded = std::io::Cursor::new(Vec::new());
+        image::RgbaImage::from_pixel(24, 12, image::Rgba([172, 42, 28, 128]))
+            .write_to(&mut encoded, image::ImageFormat::WebP)
+            .unwrap();
+        let webp = Bytes::from(encoded.into_inner());
+        let ktx = Bytes::from_static(include_bytes!(concat!(
+            env!("DCL_ONE_ROOT"),
+            "/rendering/bevy-explorer/source/crates/image_processing/testdata/uastc_8.ktx2"
+        )));
+        let stub = Router::new()
+            .route(
+                "/metamorph",
+                axum::routing::get({
+                    let calls = calls.clone();
+                    let source = source.clone();
+                    move |Query(params): Query<ConvertParams>| {
+                        assert_eq!(params.url, source);
+                        let location = match calls.fetch_add(1, Ordering::SeqCst) {
+                            0 => source.clone(),
+                            1 => "/unpublished".into(),
+                            2 => "/offline".into(),
+                            _ => "/artifact".into(),
+                        };
+                        async move {
+                            tokio::task::yield_now().await;
+                            axum::response::Redirect::temporary(&location)
+                        }
+                    }
+                }),
+            )
+            .route(
+                "/events-assets-099ac00/poster/night.webp",
+                axum::routing::get({
+                    let webp = webp.clone();
+                    move || {
+                        let body = webp.clone();
+                        async move { ([(header::CONTENT_TYPE, "image/webp")], body) }
+                    }
+                }),
+            )
+            .route(
+                "/unpublished",
+                axum::routing::get({
+                    let truncated = ktx.slice(..ktx.len() - 1);
+                    move || {
+                        let body = truncated.clone();
+                        async move { ([(header::CONTENT_TYPE, "image/ktx2")], body) }
+                    }
+                }),
+            )
+            .route(
+                "/artifact",
+                axum::routing::get({
+                    let ktx = ktx.clone();
+                    move || {
+                        let body = ktx.clone();
+                        async move { ([(header::CONTENT_TYPE, "image/ktx2")], body) }
+                    }
+                }),
+            );
+        tokio::spawn(async move { axum::serve(listener, stub).await.unwrap() });
+        let app = app_reading(
+            crate::http::Outbound::for_tests(),
+            ConvertSources {
+                remote: true,
+                own_url: Some(base.parse().unwrap()),
+                poster_converter: Some(format!("{base}/metamorph").parse().unwrap()),
+                ..Default::default()
+            },
+        );
+        let url = q(&source);
+        let uri = format!("/convert?url={url}");
+        let (cold, concurrent) = tokio::join!(get(&app, &uri), get(&app, &uri));
+        assert_eq!(calls.load(Ordering::SeqCst), 1);
+        let invalid_artifact = get(&app, &uri).await;
+        let unavailable = get(&app, &uri).await;
+        for (status, headers, body) in [cold, concurrent, invalid_artifact, unavailable] {
+            assert_eq!(status, StatusCode::OK);
+            assert_eq!(headers[header::CACHE_CONTROL], "no-store");
+            assert_eq!(headers[header::CONTENT_TYPE], "image/png");
+            let image = image::load_from_memory(&body).unwrap().into_rgba8();
+            assert_eq!(image.dimensions(), (24, 12));
+            assert_eq!(image.get_pixel(0, 0).0, [172, 42, 28, 128]);
+        }
+        for route in ["/convert", "/metamorph-api/convert"] {
+            let (status, headers, body) = get(&app, &format!("{route}?url={url}")).await;
+            assert_eq!(status, StatusCode::OK);
+            assert_eq!(headers[header::CONTENT_TYPE], "image/ktx2");
+            assert_eq!(headers[header::CACHE_CONTROL], "public, max-age=86400");
+            assert_eq!(body, ktx);
+        }
+        let (_, headers, body) = request(&app, "HEAD", &uri).await;
+        assert_eq!(headers[header::CONTENT_TYPE], "image/ktx2");
+        assert!(body.is_empty());
+        assert_eq!(
+            get(&app, &format!("/media/convert?url={url}")).await.2,
+            webp
+        );
+        assert_ne!(
+            get(&app, &format!("{uri}&width=80")).await.1[header::CONTENT_TYPE],
+            "image/ktx2"
+        );
+        assert_eq!(calls.load(Ordering::SeqCst), 4);
+    }
+
+    #[tokio::test]
     async fn a_source_is_proxied_resized_memoized_and_its_errors_sanitized() {
         let (base, hits) = source().await;
         let app = app(crate::http::Outbound::for_tests());
@@ -1134,6 +1259,7 @@ mod tests {
             crate::http::Outbound::for_tests(),
             ConvertSources {
                 remote: false,
+                poster_converter: None,
                 own_url: Some(url::Url::parse(own).unwrap()),
                 storage: Some(storage),
                 read_through: None,

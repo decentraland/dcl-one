@@ -307,7 +307,7 @@ async fn serve_variant(
         .into_response())
 }
 
-fn resize(bytes: Bytes, width: u32) -> Result<(&'static str, Bytes), String> {
+fn resize(bytes: Bytes, width: u32, allow_webp: bool) -> Result<(&'static str, Bytes), String> {
     let mut reader = ImageReader::new(Cursor::new(&bytes))
         .with_guessed_format()
         .map_err(|_| "Unrecognized image")?;
@@ -329,16 +329,18 @@ fn resize(bytes: Bytes, width: u32) -> Result<(&'static str, Bytes), String> {
         image
             .write_to(&mut Cursor::new(&mut output), ImageFormat::Png)
             .map_err(|_| "Thumbnail encoding failed")?;
-        let mut webp = Cursor::new(Vec::new());
-        image
-            .write_to(&mut webp, ImageFormat::WebP)
-            .map_err(|_| "Thumbnail encoding failed")?;
-        if webp.get_ref().len() < output.len() {
-            output = webp.into_inner();
-            "image/webp"
-        } else {
-            "image/png"
+        let mut kind = "image/png";
+        if allow_webp {
+            let mut webp = Cursor::new(Vec::new());
+            image
+                .write_to(&mut webp, ImageFormat::WebP)
+                .map_err(|_| "Thumbnail encoding failed")?;
+            if webp.get_ref().len() < output.len() {
+                output = webp.into_inner();
+                kind = "image/webp";
+            }
         }
+        kind
     } else {
         JpegEncoder::new_with_quality(&mut output, 80)
             .encode_image(&image.to_rgb8())
@@ -355,13 +357,26 @@ pub async fn render(bytes: Bytes, width: u32) -> Result<(&'static str, Bytes), S
     if !valid_width(width) {
         return Err("width must be 80, 160, 320, 640 or 960".into());
     }
+    render_bounded(bytes, width, true).await
+}
+
+/// Unity's built-in decoder accepts JPEG and PNG, including PNG with transparency.
+pub async fn render_poster_preview(bytes: Bytes) -> Result<(&'static str, Bytes), String> {
+    render_bounded(bytes, 960, false).await
+}
+
+async fn render_bounded(
+    bytes: Bytes,
+    width: u32,
+    allow_webp: bool,
+) -> Result<(&'static str, Bytes), String> {
     let permit = RESIZERS
         .acquire()
         .await
         .map_err(|_| "Thumbnail service unavailable")?;
     tokio::task::spawn_blocking(move || {
         let _permit = permit;
-        resize(bytes, width)
+        resize(bytes, width, allow_webp)
     })
     .await
     .map_err(|_| "Thumbnail task failed")?
@@ -515,7 +530,7 @@ mod tests {
         let image = image::RgbaImage::from_pixel(1600, 900, image::Rgba([32, 64, 96, 128]));
         let mut bytes = Cursor::new(Vec::new());
         image.write_to(&mut bytes, ImageFormat::Png).unwrap();
-        let (kind, output) = resize(Bytes::from(bytes.into_inner()), 320).unwrap();
+        let (kind, output) = resize(Bytes::from(bytes.into_inner()), 320, true).unwrap();
         let decoded = image::load_from_memory(&output).unwrap();
         assert!(matches!(kind, "image/png" | "image/webp"));
         assert_eq!((decoded.width(), decoded.height()), (320, 180));
@@ -527,14 +542,14 @@ mod tests {
         let image = image::RgbImage::from_pixel(228, 160, image::Rgb([32, 64, 96]));
         let mut bytes = Cursor::new(Vec::new());
         image.write_to(&mut bytes, ImageFormat::Tiff).unwrap();
-        let (kind, output) = resize(Bytes::from(bytes.into_inner()), 640).unwrap();
+        let (kind, output) = resize(Bytes::from(bytes.into_inner()), 640, true).unwrap();
         assert_eq!(kind, "image/jpeg");
         assert_eq!(image::load_from_memory(&output).unwrap().width(), 228);
     }
 
     #[test]
     fn invalid_images_and_unbounded_sizes_are_rejected() {
-        assert!(resize(Bytes::from_static(b"<svg></svg>"), 320).is_err());
+        assert!(resize(Bytes::from_static(b"<svg></svg>"), 320, true).is_err());
         assert!(valid_width(80) && valid_width(160) && valid_width(640));
         assert!(!valid_width(0) && !valid_width(8192));
     }
@@ -545,12 +560,25 @@ mod tests {
             let image = image::RgbaImage::from_pixel(1600, 900, image::Rgba([32, 64, 96, 255]));
             let mut bytes = Cursor::new(Vec::new());
             image.write_to(&mut bytes, format).unwrap();
-            let (kind, output) = resize(Bytes::from(bytes.into_inner()), 320).unwrap();
+            let (kind, output) = resize(Bytes::from(bytes.into_inner()), 320, true).unwrap();
             let decoded = image::load_from_memory(&output).unwrap();
             assert_eq!(kind, "image/jpeg");
             assert_eq!((decoded.width(), decoded.height()), (320, 180));
             assert!(output.len() < 10_000);
         }
+    }
+
+    #[tokio::test]
+    async fn native_poster_preview_decodes_the_first_gif_frame() {
+        let image = image::RgbaImage::from_pixel(12, 8, image::Rgba([10, 120, 20, 255]));
+        let mut input = Cursor::new(Vec::new());
+        image.write_to(&mut input, ImageFormat::Gif).unwrap();
+        let (mime, bytes) = render_poster_preview(Bytes::from(input.into_inner()))
+            .await
+            .unwrap();
+        assert_eq!(mime, "image/jpeg");
+        let preview = image::load_from_memory(&bytes).unwrap();
+        assert_eq!((preview.width(), preview.height()), (12, 8));
     }
 
     #[tokio::test]
