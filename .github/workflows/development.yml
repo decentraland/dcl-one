@@ -244,8 +244,10 @@ jobs:
           fi
           df -h /
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - name: Fetch the embedded error-page images and fonts
-        run: git lfs pull --include="$ERROR_PAGE_LFS" --exclude=''
+      # foundation-dev's web-install task reads the HUD's input graph, which lists every Sites asset the
+      # shared UI entry reaches.
+      - name: Fetch the embedded error-page images and fonts, and the shared UI's assets
+        run: git lfs pull --include="$ERROR_PAGE_LFS,library/ui/apps/sites/assets/**" --exclude=''
       - uses: cachix/install-nix-action@3dc140bfc76c49fbd4dd958429132e3746bcb086 # v31.11.5
       - uses: nix-community/cache-nix-action@7df957e333c1e5da7721f60227dbba6d06080569 # v7.0.2
         with:

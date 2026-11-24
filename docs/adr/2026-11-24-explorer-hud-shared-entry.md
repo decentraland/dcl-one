@@ -20,7 +20,7 @@ The checked input graph stays the source of the HUD's source selection, fingerpr
 
 ## Consequences
 
-- With one `Skeleton` import the graph grows from 1181 to 1639 files: the shared components, the Sites UI the entry exports, six `library/web-core` modules and 61 Git LFS assets. A component the HUD does not render is compiled and fingerprinted, and left out of the bundle.
+- With one `Skeleton` import the graph grows from 1181 to 1639 files: the shared components, the Sites UI the entry exports, six `library/web-core` modules and 61 Git LFS assets. A component the HUD does not render is compiled and fingerprinted, and its code and styles are left out of the bundle. Vite still emits the images and videos such a component imports, so the HUD build removes the shared library's emitted media that no chunk, stylesheet or page names (`dropUnusedSharedAssets` in `react-web/vite.config.ts`): with the `Skeleton` import alone the web build is 10 MB and 147 files, and 30 MB and 217 files without that step.
 - A change to any file the entry reaches, including a Sites view, changes the HUD's fingerprint and selects the Explorer's CI jobs.
 - A HUD copy of a shared component is replaced by the shared one in a change that covers that component and its HUD consumers; `react-web`'s agent instructions say to import the shared component when one exists.
 - `Modal`, `Toast` and `Dropdown` position against the viewport and need to account for the HUD's runtime scale before the HUD adopts them.
