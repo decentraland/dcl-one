@@ -778,7 +778,7 @@ class SelectionTest(unittest.TestCase):
                 selected = ci.select(before, self.commit())
                 self.assertEqual({lane for lane in (*ci.LANES, 'native-matrix', 'scenes') if selected[lane]}, lanes)
 
-    def test_library_ui_outside_the_hud_entries_selects_nothing(self):
+    def test_library_ui_files_outside_the_checked_graph_select_nothing(self):
         for name in ('library/ui/figma/src/cli.ts', 'library/ui/index.ts', 'library/ui/index.tsx',
                      'library/ui/components/NavBar/NavBar.tsx',
                      'library/ui/components/NavBar/NavBar.module.css', 'library/ui/upstream.lock.json'):

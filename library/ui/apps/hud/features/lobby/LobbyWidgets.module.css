@@ -133,13 +133,9 @@
 .skeleton_photo {
   gap: 11px;
 }
+/* The shared Skeleton paints the bone; these rules place and size it. */
 .bone {
   flex: none;
-  box-sizing: border-box;
-  border: 1.5px solid var(--lobby-white-10);
-  background: var(--lobby-black-60) linear-gradient(90deg, transparent 0%, var(--lobby-white-40) 50%, transparent 100%) no-repeat;
-  background-size: 200% 100%;
-  animation: shimmer 1.4s linear infinite;
 }
 .skeleton_friend .bone {
   width: 103px;
@@ -154,14 +150,7 @@
 .skeleton_photo .bone {
   width: 256px;
   height: 146px;
-}
-@keyframes shimmer {
-  from {
-    background-position: 150% 0;
-  }
-  to {
-    background-position: -50% 0;
-  }
+  border-radius: 0;
 }
 
 .banner {

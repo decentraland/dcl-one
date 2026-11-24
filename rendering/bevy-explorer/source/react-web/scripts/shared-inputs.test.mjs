@@ -7,7 +7,14 @@ import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 import { afterEach, beforeEach, describe, it } from 'node:test'
-import { BINDINGS, generateSharedInputs, readSharedPaths, WEB, MANIFEST } from './shared-inputs.mjs'
+import {
+  BINDINGS,
+  composedSpecifiers,
+  generateSharedInputs,
+  readSharedPaths,
+  WEB,
+  MANIFEST
+} from './shared-inputs.mjs'
 const here = path.dirname(fileURLToPath(import.meta.url)),
   repository = path.resolve(here, '../../../../..')
 let root, web
@@ -861,44 +868,62 @@ describe('the actual compiler and Vite shared-source contract', () => {
     assert(first.files.some((entry) => entry.path === 'library/catalyst-api/nested.css'))
     assert.deepEqual(JSON.parse(await generateSharedInputs({ root })), first)
   })
-  for (const property of ['composes', 'compose-with', 'COMPOSES'])
-    it(
-      'refuses unsupported ' +
-        property +
-        ' through the actual processor without replacing the manifest',
-      async () => {
-        await save()
-        const original = readFileSync(path.join(root, MANIFEST))
-        put(
-          'library/catalyst-api/model.ts',
-          "import './model.module.css';export type Datum={id:number};"
+  for (const property of ['composes'])
+    it('records the stylesheet a module names with ' + property + ' as its input', async () => {
+      put(
+        'library/catalyst-api/model.ts',
+        "import './model.module.css';export type Datum={id:number};"
+      )
+      put(
+        'library/catalyst-api/model.module.css',
+        '.model{' +
+          property +
+          ":base from './composed.module.css';background:url('./type-pixel.svg')}"
+      )
+      put('library/catalyst-api/composed.module.css', '.base{color:purple}')
+      git('add', '.')
+      const first = await save()
+      assert(first.files.some((entry) => entry.path === 'library/catalyst-api/composed.module.css'))
+      for (const mode of ['production', 'native', 'test'])
+        assert(
+          first.edges.some(
+            (edge) =>
+              edge.from === 'library/catalyst-api/model.module.css' &&
+              edge.to === 'library/catalyst-api/composed.module.css' &&
+              edge.kind === mode + ':composes'
+          ),
+          mode
         )
-        put(
-          'library/catalyst-api/model.module.css',
-          '.model{' +
-            property +
-            ":base from './composed.module.css';background:url('./type-pixel.svg')}"
-        )
-        put('library/catalyst-api/composed.module.css', '.base{color:purple}')
-        git('add', '.')
-        await assert.rejects(
-          generateSharedInputs({ root }),
-          /Unsupported HUD CSS Modules composition/
-        )
-        assert.throws(
-          () =>
-            execFileSync(
-              process.execPath,
-              [path.join(web, 'scripts/shared-inputs.mjs'), '--write'],
-              { cwd: root, stdio: 'pipe' }
-            ),
-          (error) =>
-            error.status === 1 &&
-            error.stderr.toString().includes('Upstream dependency reporting is required')
-        )
-        assert.deepEqual(readFileSync(path.join(root, MANIFEST)), original)
-      }
+      put('library/catalyst-api/composed.module.css', '.base{color:teal}')
+      git('add', '.')
+      assert.notDeepEqual(JSON.parse(await generateSharedInputs({ root })), first)
+    })
+  it('walks a composed stylesheet for the stylesheets it composes in turn', async () => {
+    put('library/catalyst-api/model.ts', "import './model.module.css';export type Datum={id:number};")
+    put('library/catalyst-api/model.module.css', ".model{composes:base from './composed.module.css'}")
+    put('library/catalyst-api/composed.module.css', ".base{composes:root from './deep.module.css'}")
+    put('library/catalyst-api/deep.module.css', '.root{color:purple}')
+    git('add', '.')
+    const manifest = await save()
+    assert(manifest.files.some((entry) => entry.path === 'library/catalyst-api/deep.module.css'))
+    assert(
+      manifest.edges.some(
+        (edge) =>
+          edge.from === 'library/catalyst-api/composed.module.css' &&
+          edge.to === 'library/catalyst-api/deep.module.css' &&
+          edge.kind === 'production:composes'
+      )
     )
+  })
+  it('reads composed files outside comments and ignores local and global composition', () => {
+    assert.deepEqual(
+      composedSpecifiers(
+        ".a{composes:x from './b.css';COMPOSES:y z from \"@pkg/t.css\"}/* composes:q from './no.css' */" +
+          '.c{composes:local}.d{compose-with:k from global}'
+      ),
+      ['./b.css', '@pkg/t.css']
+    )
+  })
   for (const change of ['hud', 'new-root', 'config', 'lock'])
     it(
       'loads the actual Vite configuration after a local ' +

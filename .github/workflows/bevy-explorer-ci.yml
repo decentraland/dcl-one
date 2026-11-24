@@ -947,6 +947,11 @@ jobs:
       contents: read
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Fetch the shared UI's Git LFS assets
+        # The HUD's checked input graph (react-web/shared-inputs.json) holds the images and videos the
+        # @dcl/one-ui entry reaches, and its generator and validator refuse an unmaterialized pointer.
+        working-directory: .
+        run: git lfs pull --include "library/ui/assets/**,library/ui/apps/sites/assets/**"
       - name: Identify compiled engine inputs
         id: engine-inputs
         working-directory: .
@@ -1386,6 +1391,11 @@ jobs:
       contents: read
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Fetch the shared UI's Git LFS assets
+        # The HUD's checked input graph (react-web/shared-inputs.json) holds the images and videos the
+        # @dcl/one-ui entry reaches, and its generator and validator refuse an unmaterialized pointer.
+        working-directory: .
+        run: git lfs pull --include "library/ui/assets/**,library/ui/apps/sites/assets/**"
       - name: Identify compiled engine inputs
         id: engine-inputs
         working-directory: .

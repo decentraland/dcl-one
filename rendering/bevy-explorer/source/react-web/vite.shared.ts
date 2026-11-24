@@ -21,6 +21,8 @@ export const SHARED_SOURCES: Record<string, string> = {
   '@dcl/one-ui/foundations.css': resolve(here, '../../../../library/ui/foundations/foundations.css'),
   '@dcl/one-ui/text-styles.module.css': resolve(here, '../../../../library/ui/foundations/typography/text-styles.module.css'),
   '@dcl/one-ui/foundations': resolve(here, '../../../../library/ui/foundations/index.ts'),
+  // The public entry: the shared components the HUD imports. Last of the package's entries, for the same reason.
+  '@dcl/one-ui': resolve(here, '../../../../library/ui/index.ts'),
   '@hud': resolve(here, '../../../../library/ui/apps/hud'),
   // The Explorer page's core both HUD hosts share: engine contract, drivers, sign-in, server reads.
   '@explorer-core': resolve(here, '../../../../library/explorer-core'),

@@ -26,10 +26,21 @@ describe('Skeleton', () => {
     })
   })
 
+  describe('when the tone is overlay', () => {
+    it('adds the overlay class, keeps the consumer class and stays hidden from assistive technology', () => {
+      const { container } = render(<Skeleton tone="overlay" className="bone" />)
+      const node = container.firstElementChild as HTMLElement
+      expect(node.className).toMatch(/overlay/)
+      expect(node.className).not.toMatch(/neutral/)
+      expect(node.className).toMatch(/bone/)
+      expect(node).toHaveAttribute('aria-hidden', 'true')
+    })
+  })
+
   describe('when no tone is given', () => {
-    it('does not add the neutral class', () => {
+    it('adds neither tone class', () => {
       const { container } = render(<Skeleton />)
-      expect(container.firstElementChild?.className).not.toMatch(/neutral/)
+      expect(container.firstElementChild?.className).not.toMatch(/neutral|overlay/)
     })
   })
 })

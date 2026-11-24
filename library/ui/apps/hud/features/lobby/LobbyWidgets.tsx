@@ -8,6 +8,7 @@ import galleryBanner from '../../assets/lobby/gallery-banner-image.png'
 import goIcon from '../../assets/lobby/jump-in-rounded.png'
 import locationIcon from '../../assets/lobby/location-icn.png'
 import warningIcon from '../../assets/map/panel/warning.png'
+import { Skeleton as SharedSkeleton } from '@dcl/one-ui'
 import { MaskIcon, Spinner } from '../../design'
 import { userColor } from '@explorer-core/lib/identity'
 import { isDestination } from '@explorer-core/features/lobby/goto'
@@ -85,7 +86,7 @@ function Skeleton({ bones, kind }: { bones: number; kind: 'friend' | 'card' | 'p
   return (
     <div className={cx(styles.skeleton, styles[`skeleton_${kind}`])} aria-busy="true" aria-label="Loading">
       {Array.from({ length: bones }, (_, i) => (
-        <span key={i} className={styles.bone} />
+        <SharedSkeleton key={i} tone="overlay" className={styles.bone} />
       ))}
     </div>
   )

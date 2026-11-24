@@ -515,7 +515,7 @@ class PlayImportTests(unittest.TestCase):
                 contract.pack(self.build, self.root)
                 play.install(self.build)
 
-    def test_root_ui_exports_and_components_are_not_hud_inputs(self):
+    def test_library_ui_files_the_hud_does_not_import_are_not_hud_inputs(self):
         def git(*args):
             return subprocess.check_output(['git', '-c', 'user.name=CI', '-c', 'user.email=ci@example.invalid',
                                             *args], cwd=self.root, text=True).strip()
@@ -1825,13 +1825,18 @@ class PlayImportTests(unittest.TestCase):
 class HudSharedSourcesTests(unittest.TestCase):
     """The checked resolver graph supplies all consumers without a second import parser."""
 
-    def test_checked_graph_contains_only_foundations_for_the_ui_consumer(self):
+    def test_checked_graph_contains_the_shared_entry_and_the_components_the_hud_imports(self):
         root = Path(__file__).resolve().parents[2]
         manifest = contract.shared_inputs.read_manifest(root)
         paths = {row['path'] for row in manifest['files']}
         self.assertTrue(any(p.startswith('library/ui/foundations/') for p in paths))
-        self.assertNotIn('library/ui/index.ts', paths)
-        self.assertFalse(any(p.startswith('library/ui/components/') for p in paths))
+        self.assertIn('library/ui/index.ts', paths)
+        self.assertIn('library/ui/components/Skeleton/Skeleton.tsx', paths)
+        # A composed stylesheet is an input of the stylesheet that composes it.
+        composed = {(edge['from'], edge['to']) for edge in manifest['edges'] if edge['kind'].endswith(':composes')}
+        self.assertIn(('library/ui/components/JumpInCTA/JumpInCTA.module.css',
+                       'library/ui/foundations/typography/text-styles.module.css'), composed)
+        self.assertFalse(any(p.startswith('library/ui/figma/') for p in paths))
 
     def test_native_and_nix_consume_the_checked_graph(self):
         root = Path(__file__).resolve().parents[2]

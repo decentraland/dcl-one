@@ -35,6 +35,17 @@
     content: none;
   }
 
+  /* Not in Figma: the Explorer HUD's placeholder, translucent black with a white sheen, over a scene or a backdrop. */
+  .overlay {
+    border: 1.5px solid var(--dcl-transparencies-white-10);
+    background: var(--dcl-transparencies-black-60);
+  }
+
+  .overlay::after {
+    background: linear-gradient(90deg, transparent 0%, var(--dcl-transparencies-white-40) 50%, transparent 100%);
+    animation-duration: 1400ms;
+  }
+
   @media (prefers-reduced-motion: reduce) {
     .root::after {
       animation: none;
