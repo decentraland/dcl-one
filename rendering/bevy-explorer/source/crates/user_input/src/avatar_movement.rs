@@ -1,4 +1,4 @@
-use std::{f32::consts::TAU, marker::PhantomData, ops::DerefMut};
+use std::{f32::consts::TAU, marker::PhantomData};
 
 use bevy::{
     diagnostic::FrameCount,
@@ -527,39 +527,41 @@ impl<C: Component + Clone + FromConfig> ActivePlayerComponent<C> {
             return;
         };
 
-        choose_latest_frame(
-            &mut current_choice,
+        if let Some(choice) = choose_latest_frame(
+            &current_choice,
             q.iter(),
             &scenes,
             &containing_scenes.get(player_res.0),
             &config,
-        );
+        ) {
+            *current_choice = choice;
+        }
     }
 }
 
 /// The choice of [`ActivePlayerComponent::pick_latest_frame_only_by_priority`], shared with
-/// [`NextMovementPick`]. `changed` holds the components changed since the last pick.
+/// [`NextMovementPick`]: what replaces `current_choice`, if anything. `changed` holds the
+/// components changed since the last pick.
 fn choose_latest_frame<'a, C: Component + Clone + FromConfig>(
-    current_choice: &mut impl DerefMut<Target = ActivePlayerComponent<C>>,
+    current_choice: &ActivePlayerComponent<C>,
     changed: impl Iterator<Item = (Entity, &'a C, &'a SceneEntity)>,
     scenes: &Query<&RendererSceneContext>,
     containing_scenes: &HashSet<Entity>,
     config: &AppConfig,
-) {
+) -> Option<ActivePlayerComponent<C>> {
     // clear current choice if we left the scene or it has updated
     let current_choice_valid = containing_scenes.contains(&current_choice.scene)
         && scenes
             .get(current_choice.scene)
             .is_ok_and(|ctx| ctx.last_update_frame == current_choice.scene_last_update);
 
-    if !current_choice_valid {
-        **current_choice = FromConfig::from_config(config);
-    }
+    let mut choice = (!current_choice_valid).then(|| FromConfig::from_config(config));
 
     // find best choice: parcel first, then portables by most-recently spawned
     for (entity, update, scene_ent) in changed.filter(|(_, _, scene_ent)| {
         scene_ent.id == SceneEntityId::PLAYER && containing_scenes.contains(&scene_ent.root)
     }) {
+        let current_choice = choice.as_ref().unwrap_or(current_choice);
         // prioritise parcel scenes
         if !current_choice.scene_is_portable {
             continue;
@@ -574,7 +576,7 @@ fn choose_latest_frame<'a, C: Component + Clone + FromConfig>(
             continue;
         }
 
-        **current_choice = ActivePlayerComponent {
+        choice = Some(ActivePlayerComponent {
             scene: scene_ent.root,
             entity,
             scene_last_update: ctx.last_update_frame,
@@ -582,10 +584,11 @@ fn choose_latest_frame<'a, C: Component + Clone + FromConfig>(
             scene_is_portable: ctx.is_portable,
             initiated_at: ctx.reply_sent,
             component: update.clone(),
-        };
+        });
 
         debug!("{} chose {}", std::any::type_name::<C>(), ctx.title);
     }
+    choice
 }
 
 pub fn apply_impulses(
@@ -693,7 +696,6 @@ impl NextMovementPick<'_, '_> {
         &self,
         current: &ActivePlayerComponent<AvatarMovement>,
     ) -> ActivePlayerComponent<AvatarMovement> {
-        let mut choice = current.clone();
         let changed = self
             .movements
             .iter()
@@ -704,13 +706,13 @@ impl NextMovementPick<'_, '_> {
             })
             .map(|(entity, movement, scene_entity)| (entity, movement.into_inner(), scene_entity));
         choose_latest_frame(
-            &mut &mut choice,
+            current,
             changed,
             &self.scenes,
             &self.containing_scenes.get(self.player.0),
             &self.config,
-        );
-        choice
+        )
+        .unwrap_or_else(|| current.clone())
     }
 }
 
