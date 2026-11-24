@@ -921,6 +921,18 @@ ends in "we don't do that", so the next person doesn't have to rediscover it.
   lookup and the photo camera are not cut. Neither is collider data without bounds: portables,
   the terrain, and scenes in a run that draws out-of-bounds geometry. The whole-collider test
   (below) still turns off a collider that leaves the scene's rectangle.
+- **A scene's `AvatarNametag` plate is bounded before it is laid out.** unity-explorer draws
+  the label and the colours as the scene wrote them. Here the label is cut to its first 128
+  characters, a control character in it reads as a space, and a colour channel is kept between
+  0 and 1 (one that is not a number reads 0), so no scene sets the cost of shaping its label or
+  draws outside the tag. Do not pass them through to match.
+- **One scene entity plates an avatar.** In unity-explorer two entities can ask for a plate on
+  the same avatar: the last write shows, and the plate goes when either entity does. Here a
+  scene has one entity for each player id and only the scene the local player stands in plates
+  anyone, so the case does not arise.
+- **A plate stands clear of the mention ring.** The plate floats 2 units over the name's box,
+  as in unity-explorer, and the ring of a mention reaches 3 units out of that box. While the
+  ring shows, the plate rises by the ring's width, so it never covers the ring's top edge.
 
 ## Deliberate choices that look like mistakes
 

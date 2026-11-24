@@ -68,10 +68,12 @@ scene draws none.
   over the name's box and stays there while a bubble opens under it. An avatar with no name
   (a scene avatar with a blank one) shows the plate alone, standing on the anchor. Only the
   scene on the parcel the local player stands on plates avatars, and it plates another player
-  only while they stand in it too; a portable experience plates no one. The plates are worked
-  out every frame from what that scene holds, so a plate goes with its component, its entity,
-  its scene or the player who leaves, and an entity id handed to another player takes the plate
-  to them. The label is one line, cut with an ellipsis at the plate's widest; colours the scene
+  only while they stand in it too; a portable experience plates no one. While any scene asks
+  for a plate, the plates are worked out every frame from what the local player's scene holds,
+  so a plate goes with its component, its entity, its scene or the player who leaves; the other
+  players' places are read only when that scene plates one of them. A plate is for the player
+  it was written for: an entity id freed by a player who left comes back as a new generation.
+  While a mention's ring shows, the plate stands clear of it. The label is one line, cut with an ellipsis at the plate's widest; colours the scene
   leaves out are the tag's own, and a border left out takes the fill's.
 - **The anchor on the CPU, the rest in the vertex shader.** After the avatar's bones are final,
   the tag's translation is set to the player's name-tag anchor: the highest of the head, toes and

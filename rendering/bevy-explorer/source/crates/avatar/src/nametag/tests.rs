@@ -5,6 +5,10 @@ use common::{
 };
 
 use dcl_component::{proto_components::common::Color3, SceneEntityId};
+use scene_runner::{
+    initialize_scene::{LiveScenes, PointerResult, PortableScenes, PortableSource, ScenePointers},
+    parcel_to_vec3, ContainingScene, OutOfWorld,
+};
 
 use super::*;
 
@@ -1175,30 +1179,37 @@ fn scene_plate(label: &str) -> AvatarNametag {
     })
 }
 
-/// What the scene the local player stands in is, and who stands in it.
-#[derive(Resource, Default)]
-struct Stage {
-    current: Option<Entity>,
-    players: bevy::platform::collections::HashMap<SceneEntityId, Entity>,
-}
+/// Another player, by the id a scene knows them by.
+#[derive(Component)]
+struct Visitor(SceneEntityId);
 
+/// The plates, worked out from where the scenes and the players are.
 fn plate_app() -> App {
+    let mut pointers = ScenePointers::default();
+    pointers.set_realm(IVec2::splat(-8), IVec2::splat(8));
     let mut app = App::new();
     app.add_plugins(MinimalPlugins)
-        .init_resource::<Stage>()
+        .insert_resource(pointers)
+        .init_resource::<LiveScenes>()
+        .init_resource::<PortableScenes>()
         .add_systems(
             Update,
             |mut commands: Commands,
-             stage: Res<Stage>,
+             containing_scene: ContainingScene,
+             local: Query<Entity, With<PrimaryUser>>,
+             others: Query<(Entity, &Visitor)>,
              plated: plate::Plated,
              holders: Query<(Entity, &NametagPlate)>,
+             mut players: Local<bevy::platform::collections::HashMap<SceneEntityId, Entity>>,
              mut owners: Local<HashSet<Entity>>| {
-                plate::apply_plates(
+                plate::plate_avatars(
                     &mut commands,
-                    stage.current,
-                    &stage.players,
+                    &containing_scene,
+                    local.single().ok(),
+                    others.iter().map(|(player, visitor)| (player, visitor.0)),
                     &plated,
                     &holders,
+                    &mut players,
                     &mut owners,
                 );
             },
@@ -1206,10 +1217,51 @@ fn plate_app() -> App {
     app
 }
 
+const HOME: IVec2 = IVec2::ZERO;
+const NEXT_DOOR: IVec2 = IVec2::new(1, 0);
+/// A parcel no scene is on.
+const EMPTY: IVec2 = IVec2::new(4, 4);
+
 const FIRST_VISITOR: SceneEntityId = SceneEntityId {
     id: 32,
     generation: 0,
 };
+
+/// A scene on `parcel`.
+fn scene_on(app: &mut App, parcel: IVec2) -> Entity {
+    let scene = app.world_mut().spawn_empty().id();
+    let hash = format!("scene {parcel}");
+    app.world_mut().resource_mut::<ScenePointers>().insert(
+        parcel,
+        PointerResult::Exists {
+            hash: hash.clone(),
+            urn: None,
+        },
+    );
+    app.world_mut()
+        .resource_mut::<LiveScenes>()
+        .scenes
+        .insert(hash, scene);
+    scene
+}
+
+fn stand_on(app: &mut App, who: Entity, parcel: IVec2) {
+    app.world_mut()
+        .entity_mut(who)
+        .insert(GlobalTransform::from_translation(parcel_to_vec3(parcel)));
+}
+
+fn local_on(app: &mut App, parcel: IVec2) -> Entity {
+    let local = app.world_mut().spawn(PrimaryUser::default()).id();
+    stand_on(app, local, parcel);
+    local
+}
+
+fn visitor_on(app: &mut App, id: SceneEntityId, parcel: IVec2) -> Entity {
+    let visitor = app.world_mut().spawn(Visitor(id)).id();
+    stand_on(app, visitor, parcel);
+    visitor
+}
 
 /// A scene's entity `id` asking for a plate that reads `label`.
 fn ask_for_plate(app: &mut App, root: Entity, id: SceneEntityId, label: &str) -> Entity {
@@ -1229,14 +1281,6 @@ fn plate_of(app: &App, avatar: Entity) -> Option<String> {
     app.world()
         .get::<NametagPlate>(avatar)
         .map(|plate| plate.label.clone())
-}
-
-fn stand_in(app: &mut App, id: SceneEntityId, player: Option<Entity>) {
-    let mut stage = app.world_mut().resource_mut::<Stage>();
-    match player {
-        Some(player) => stage.players.insert(id, player),
-        None => stage.players.remove(&id),
-    };
 }
 
 #[test]
@@ -1302,55 +1346,59 @@ fn a_scenes_label_and_colours_are_bounded() {
 #[test]
 fn a_scene_plates_the_local_player_and_the_players_standing_in_it() {
     let mut app = plate_app();
-    let scene = app.world_mut().spawn_empty().id();
-    let local = app.world_mut().spawn_empty().id();
-    let visitor = app.world_mut().spawn_empty().id();
-    app.world_mut().resource_mut::<Stage>().current = Some(scene);
-    stand_in(&mut app, SceneEntityId::PLAYER, Some(local));
+    let scene = scene_on(&mut app, HOME);
+    let local = local_on(&mut app, HOME);
+    let visitor = visitor_on(&mut app, FIRST_VISITOR, EMPTY);
     ask_for_plate(&mut app, scene, SceneEntityId::PLAYER, "Host");
     let asked = ask_for_plate(&mut app, scene, FIRST_VISITOR, "Guest");
     app.update();
     assert_eq!(plate_of(&app, local).as_deref(), Some("Host"));
-    // written before the visitor arrived
+    // written while the visitor stands outside
     assert_eq!(plate_of(&app, visitor), None);
 
-    stand_in(&mut app, FIRST_VISITOR, Some(visitor));
+    stand_on(&mut app, visitor, HOME);
     app.update();
     assert_eq!(plate_of(&app, visitor).as_deref(), Some("Guest"));
 
     // out of the scene the plate goes, and what the scene wrote stays for their return
-    stand_in(&mut app, FIRST_VISITOR, None);
+    stand_on(&mut app, visitor, NEXT_DOOR);
     app.update();
     assert_eq!(plate_of(&app, visitor), None);
     assert!(app.world().entity(asked).contains::<AvatarNametag>());
-    stand_in(&mut app, FIRST_VISITOR, Some(visitor));
+    stand_on(&mut app, visitor, HOME);
     app.update();
     assert_eq!(plate_of(&app, visitor).as_deref(), Some("Guest"));
 }
 
 #[test]
-fn a_plate_follows_its_id_to_the_player_who_holds_it_next() {
+fn a_plate_stays_with_the_player_it_was_written_for() {
     let mut app = plate_app();
-    let scene = app.world_mut().spawn_empty().id();
-    let first = app.world_mut().spawn_empty().id();
-    let next = app.world_mut().spawn_empty().id();
-    app.world_mut().resource_mut::<Stage>().current = Some(scene);
-    stand_in(&mut app, FIRST_VISITOR, Some(first));
+    let scene = scene_on(&mut app, HOME);
+    local_on(&mut app, HOME);
+    let first = visitor_on(&mut app, FIRST_VISITOR, HOME);
     ask_for_plate(&mut app, scene, FIRST_VISITOR, "Guest");
     app.update();
     assert_eq!(plate_of(&app, first).as_deref(), Some("Guest"));
 
-    stand_in(&mut app, FIRST_VISITOR, Some(next));
+    // a freed id comes back as a new generation: the next player is not the one plated
+    app.world_mut().entity_mut(first).despawn();
+    let next = visitor_on(
+        &mut app,
+        SceneEntityId {
+            id: FIRST_VISITOR.id,
+            generation: 1,
+        },
+        HOME,
+    );
     app.update();
-    assert_eq!(plate_of(&app, first), None);
-    assert_eq!(plate_of(&app, next).as_deref(), Some("Guest"));
+    assert_eq!(plate_of(&app, next), None);
 }
 
 #[test]
 fn a_scene_plates_its_own_avatars_once_they_are_built() {
     let mut app = plate_app();
-    let scene = app.world_mut().spawn_empty().id();
-    app.world_mut().resource_mut::<Stage>().current = Some(scene);
+    let scene = scene_on(&mut app, HOME);
+    local_on(&mut app, HOME);
     let id = SceneEntityId {
         id: 600,
         generation: 0,
@@ -1391,9 +1439,8 @@ fn a_scene_plates_its_own_avatars_once_they_are_built() {
 #[test]
 fn an_entity_that_stands_for_a_player_plates_the_player_alone() {
     let mut app = plate_app();
-    let scene = app.world_mut().spawn_empty().id();
-    let visitor = app.world_mut().spawn_empty().id();
-    app.world_mut().resource_mut::<Stage>().current = Some(scene);
+    let scene = scene_on(&mut app, HOME);
+    local_on(&mut app, HOME);
     // a restyled player: the entity carries a shape and its body
     let asked = ask_for_plate(&mut app, scene, FIRST_VISITOR, "Guest");
     let restyle = shape("visitor", Some("Visitor"));
@@ -1405,7 +1452,7 @@ fn an_entity_that_stands_for_a_player_plates_the_player_alone() {
     app.update();
     assert_eq!(plate_of(&app, asked), None);
 
-    stand_in(&mut app, FIRST_VISITOR, Some(visitor));
+    let visitor = visitor_on(&mut app, FIRST_VISITOR, HOME);
     app.update();
     assert_eq!(plate_of(&app, asked), None);
     assert_eq!(plate_of(&app, visitor).as_deref(), Some("Guest"));
@@ -1414,38 +1461,73 @@ fn an_entity_that_stands_for_a_player_plates_the_player_alone() {
 #[test]
 fn only_the_scene_the_local_player_stands_in_plates_anyone() {
     let mut app = plate_app();
-    let scene = app.world_mut().spawn_empty().id();
-    let elsewhere = app.world_mut().spawn_empty().id();
-    let local = app.world_mut().spawn_empty().id();
-    stand_in(&mut app, SceneEntityId::PLAYER, Some(local));
+    let scene = scene_on(&mut app, HOME);
+    let next_door = scene_on(&mut app, NEXT_DOOR);
+    let local = local_on(&mut app, EMPTY);
+    let visitor = visitor_on(&mut app, FIRST_VISITOR, HOME);
     ask_for_plate(&mut app, scene, SceneEntityId::PLAYER, "Host");
+    ask_for_plate(&mut app, scene, FIRST_VISITOR, "Guest");
     app.update();
+    // the local player stands in no scene: no one is plated, not even who stands in one
     assert_eq!(plate_of(&app, local), None);
+    assert_eq!(plate_of(&app, visitor), None);
 
-    app.world_mut().resource_mut::<Stage>().current = Some(scene);
+    stand_on(&mut app, local, HOME);
     app.update();
     assert_eq!(plate_of(&app, local).as_deref(), Some("Host"));
+    assert_eq!(plate_of(&app, visitor).as_deref(), Some("Guest"));
 
     // walked into another scene, which writes its own
-    app.world_mut().resource_mut::<Stage>().current = Some(elsewhere);
+    stand_on(&mut app, local, NEXT_DOOR);
     app.update();
     assert_eq!(plate_of(&app, local), None);
-    ask_for_plate(&mut app, elsewhere, SceneEntityId::PLAYER, "Stranger");
+    assert_eq!(plate_of(&app, visitor), None);
+    ask_for_plate(&mut app, next_door, SceneEntityId::PLAYER, "Stranger");
     app.update();
     assert_eq!(plate_of(&app, local).as_deref(), Some("Stranger"));
 
-    app.world_mut().resource_mut::<Stage>().current = Some(scene);
+    stand_on(&mut app, local, HOME);
+    app.update();
+    assert_eq!(plate_of(&app, local).as_deref(), Some("Host"));
+
+    // held out of the world while a scene loads
+    app.world_mut().entity_mut(local).insert(OutOfWorld);
+    app.update();
+    assert_eq!(plate_of(&app, local), None);
+    assert_eq!(plate_of(&app, visitor), None);
+    app.world_mut().entity_mut(local).remove::<OutOfWorld>();
     app.update();
     assert_eq!(plate_of(&app, local).as_deref(), Some("Host"));
 }
 
 #[test]
+fn a_portable_experience_plates_no_one() {
+    let mut app = plate_app();
+    scene_on(&mut app, HOME);
+    let local = local_on(&mut app, HOME);
+    let visitor = visitor_on(&mut app, FIRST_VISITOR, HOME);
+    // live everywhere, on no parcel
+    let portable = app.world_mut().spawn_empty().id();
+    app.world_mut()
+        .resource_mut::<LiveScenes>()
+        .scenes
+        .insert("portable".to_owned(), portable);
+    app.world_mut().resource_mut::<PortableScenes>().insert(
+        "portable".to_owned(),
+        PortableSource::new("portable".to_owned(), None, None, false),
+    );
+    ask_for_plate(&mut app, portable, SceneEntityId::PLAYER, "Host");
+    ask_for_plate(&mut app, portable, FIRST_VISITOR, "Guest");
+    app.update();
+    assert_eq!(plate_of(&app, local), None);
+    assert_eq!(plate_of(&app, visitor), None);
+}
+
+#[test]
 fn a_plate_follows_what_the_scene_writes_and_goes_with_it() {
     let mut app = plate_app();
-    let scene = app.world_mut().spawn_empty().id();
-    let local = app.world_mut().spawn_empty().id();
-    app.world_mut().resource_mut::<Stage>().current = Some(scene);
-    stand_in(&mut app, SceneEntityId::PLAYER, Some(local));
+    let scene = scene_on(&mut app, HOME);
+    let local = local_on(&mut app, HOME);
     let asked = ask_for_plate(&mut app, scene, SceneEntityId::PLAYER, "Student");
     app.update();
     assert_eq!(plate_of(&app, local).as_deref(), Some("Student"));
@@ -1628,6 +1710,27 @@ fn a_plate_is_drawn_over_the_name_and_alone_when_the_name_is_hidden() {
     advance(&mut app, SHOWN);
     assert!(!app.world().entity(ada).contains::<ChatBubble>());
     assert_eq!(reach(&app, ada), named);
+}
+
+#[test]
+fn a_name_that_went_leaves_the_plate_none_of_its_glyphs() {
+    let mut app = build_app();
+    let ada = spawn_player(&mut app, "Ada", 10.0);
+    app.world_mut().entity_mut(ada).insert(scene_plate("VIP").0);
+    settle(&mut app, ada);
+    let tag = tag_of(&app, ada).unwrap();
+    assert!(app.world().get::<Nametag>(tag).unwrap().name.is_some());
+
+    // only hidden: it may come back
+    app.world_mut().entity_mut(ada).insert(HiddenNametag);
+    settle(&mut app, ada);
+    assert!(app.world().get::<Nametag>(tag).unwrap().name.is_some());
+
+    app.world_mut().entity_mut(ada).remove::<NametagContent>();
+    settle(&mut app, ada);
+    let nametag = app.world().get::<Nametag>(tag).unwrap();
+    assert!(nametag.name.is_none() && nametag.plate.is_some());
+    assert!(built(&app, ada).content.is_none() && built(&app, ada).plate.is_some());
 }
 
 #[test]

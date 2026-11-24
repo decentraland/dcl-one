@@ -45,15 +45,16 @@ pub const DM_TAG_SIZE: Vec2 = Vec2::new(31.0, 21.0);
 const MESSAGE_MARGIN_TOP: f32 = 10.0;
 
 /// A scene's plate: its label's size, its border's width and its corner radius.
-pub const PLATE_FONT_SIZE: f32 = 14.0;
-pub const PLATE_BORDER: f32 = 1.5;
-pub const PLATE_RADIUS: f32 = 11.0;
+pub(super) const PLATE_FONT_SIZE: f32 = 14.0;
+pub(super) const PLATE_BORDER: f32 = 1.5;
+pub(super) const PLATE_RADIUS: f32 = 11.0;
 const PLATE_MIN_WIDTH: f32 = 22.0;
 const PLATE_MAX_WIDTH: f32 = 300.0;
 /// Between the border and the label, across and up.
 const PLATE_PADDING: Vec2 = Vec2::new(6.0, 1.0);
 /// The widest a plate's label gets: a longer one is cut to it.
-pub const PLATE_MAX_LABEL_WIDTH: f32 = PLATE_MAX_WIDTH - 2.0 * (PLATE_PADDING.x + PLATE_BORDER);
+pub(super) const PLATE_MAX_LABEL_WIDTH: f32 =
+    PLATE_MAX_WIDTH - 2.0 * (PLATE_PADDING.x + PLATE_BORDER);
 /// How far a plate floats over the name's box.
 const PLATE_GAP: f32 = 2.0;
 
@@ -276,16 +277,16 @@ pub fn layout(header: &Header, progress: &BubbleProgress) -> TagLayout {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
-pub struct PlateLayout {
+pub(super) struct PlateLayout {
     /// The plate's box: the border fills it.
-    pub rect: Rect,
+    pub(super) rect: Rect,
     /// The label's top left.
-    pub label: Vec2,
+    pub(super) label: Vec2,
 }
 
 /// Where a scene's plate with a label of `label` size goes: over the name's box `name`, or
 /// standing on the anchor in its place when the name does not show.
-pub fn plate(label: Vec2, name: Option<Rect>) -> PlateLayout {
+pub(super) fn plate(label: Vec2, name: Option<Rect>) -> PlateLayout {
     let inset = PLATE_PADDING + Vec2::splat(PLATE_BORDER);
     // a plate with nothing written on it is as tall as one line
     let line = label.y.max(PLATE_FONT_SIZE * LINE_HEIGHT);
