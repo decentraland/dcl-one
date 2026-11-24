@@ -15,3 +15,7 @@ allowBuilds:
   '@dcl/sdk-commands': false
   esbuild: false
   protobufjs: false
+patchedDependencies:
+  # This SDK reads AvatarEquippedData.force_render at field 3; the engine writes it at 4 (field 3 is
+  # `wearables`). Drop the patch when the scene moves to an SDK generated from library/protocol.
+  '@dcl/ecs@7.28.1-34901226656.commit-44656ea': patches/@dcl__ecs@7.28.1-34901226656.commit-44656ea.patch

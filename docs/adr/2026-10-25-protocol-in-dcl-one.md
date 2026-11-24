@@ -31,6 +31,14 @@ source in this repository.
   it alone still carried went with #123).
 - The protocol's wire-compatibility check (`buf breaking`) compares against this
   repository's `main`, so every change to `proto/` is additive or explicitly reserved.
+- One change is not additive: `PBAvatarEquippedData` field 3 is `wearables`, as
+  `decentraland/protocol`'s `main` defined it after this snapshot and published in
+  `@dcl/protocol@next`, and `force_render`, which held 3 here and in `experimental-bevy`, is field
+  4. `proto/buf.yaml` exempts that file from the three rules the renumbering trips; the exemption
+  goes once `main` carries the change. With it, every definition in `@dcl/protocol@next` exists
+  here under the same number, name and type. The bridge scene builds against a published SDK that
+  reads `force_render` at 3, so its `@dcl/ecs` is patched to read 4. Field 4 is not reserved in
+  `decentraland/protocol`, so the same collision can recur until it is.
 - `tooling/proto-source-check.py` (run by `structure.yml`) fails on a `decentraland.*`
   proto anywhere else. Every Rust consumer (`dcl_component`, `comms`, `social`,
   `dcl-scene-authoring`, `dcl-scene-cli`) compiles from `library/protocol/proto` at build

@@ -179,13 +179,16 @@ overrides:
   '@dcl/sdk-commands>esbuild': 0.28.1
   extract-zip: file:../../../../../apps/creator-hub/packages/zip-extract
 
+patchedDependencies:
+  '@dcl/ecs@7.28.1-34901226656.commit-44656ea': e0e19b113a45162807851f5924ab6c3d08e903930316efb0d8ec8416b697cbb4
+
 importers:
 
   .:
     devDependencies:
       '@dcl/ecs':
         specifier: 7.28.1-34901226656.commit-44656ea
-        version: 7.28.1-34901226656.commit-44656ea
+        version: 7.28.1-34901226656.commit-44656ea(patch_hash=e0e19b113a45162807851f5924ab6c3d08e903930316efb0d8ec8416b697cbb4)
       '@dcl/hashing':
         specifier: workspace:*
         version: link:../../../../../library/hashing
@@ -1509,9 +1512,9 @@ snapshots:
       '@babel/helper-string-parser': 7.29.7
       '@babel/helper-validator-identifier': 7.29.7
 
-  '@dcl/asset-packs@2.21.0(@dcl/ecs@7.28.1-34901226656.commit-44656ea)':
+  '@dcl/asset-packs@2.21.0(@dcl/ecs@7.28.1-34901226656.commit-44656ea(patch_hash=e0e19b113a45162807851f5924ab6c3d08e903930316efb0d8ec8416b697cbb4))':
     dependencies:
-      '@dcl/ecs': 7.28.1-34901226656.commit-44656ea
+      '@dcl/ecs': 7.28.1-34901226656.commit-44656ea(patch_hash=e0e19b113a45162807851f5924ab6c3d08e903930316efb0d8ec8416b697cbb4)
       '@types/glob': 8.1.0
       glob: 11.1.0
       mitt: 3.0.1
@@ -1543,7 +1546,7 @@ snapshots:
 
   '@dcl/ecs-math@2.1.0': {}
 
-  '@dcl/ecs@7.28.1-34901226656.commit-44656ea': {}
+  '@dcl/ecs@7.28.1-34901226656.commit-44656ea(patch_hash=e0e19b113a45162807851f5924ab6c3d08e903930316efb0d8ec8416b697cbb4)': {}
 
   '@dcl/ecs@7.33.0': {}
 
@@ -1553,10 +1556,10 @@ snapshots:
 
   '@dcl/gltf-validator-ts@1.0.14': {}
 
-  '@dcl/inspector@7.36.3(@dcl/ecs@7.28.1-34901226656.commit-44656ea)':
+  '@dcl/inspector@7.36.3(@dcl/ecs@7.28.1-34901226656.commit-44656ea(patch_hash=e0e19b113a45162807851f5924ab6c3d08e903930316efb0d8ec8416b697cbb4))':
     dependencies:
       '@babel/parser': 7.28.5
-      '@dcl/asset-packs': 2.21.0(@dcl/ecs@7.28.1-34901226656.commit-44656ea)
+      '@dcl/asset-packs': 2.21.0(@dcl/ecs@7.28.1-34901226656.commit-44656ea(patch_hash=e0e19b113a45162807851f5924ab6c3d08e903930316efb0d8ec8416b697cbb4))
       ts-deepmerge: 7.0.3
     transitivePeerDependencies:
       - '@dcl/ecs'
@@ -1617,7 +1620,7 @@ snapshots:
 
   '@dcl/react-ecs@7.28.1-34901226656.commit-44656ea':
     dependencies:
-      '@dcl/ecs': 7.28.1-34901226656.commit-44656ea
+      '@dcl/ecs': 7.28.1-34901226656.commit-44656ea(patch_hash=e0e19b113a45162807851f5924ab6c3d08e903930316efb0d8ec8416b697cbb4)
       react: 18.3.1
       react-reconciler: 0.29.2(react@18.3.1)
 
@@ -1668,10 +1671,10 @@ snapshots:
   '@dcl/sdk-commands@7.28.1-34901226656.commit-44656ea(@well-known-components/interfaces@1.5.2)':
     dependencies:
       '@dcl/crypto': 3.7.0
-      '@dcl/ecs': 7.28.1-34901226656.commit-44656ea
+      '@dcl/ecs': 7.28.1-34901226656.commit-44656ea(patch_hash=e0e19b113a45162807851f5924ab6c3d08e903930316efb0d8ec8416b697cbb4)
       '@dcl/gltf-validator-ts': 1.0.14
       '@dcl/hashing': link:../../../../../library/hashing
-      '@dcl/inspector': 7.36.3(@dcl/ecs@7.28.1-34901226656.commit-44656ea)
+      '@dcl/inspector': 7.36.3(@dcl/ecs@7.28.1-34901226656.commit-44656ea(patch_hash=e0e19b113a45162807851f5924ab6c3d08e903930316efb0d8ec8416b697cbb4))
       '@dcl/linker-dapp': 0.15.2
       '@dcl/mini-comms': 1.0.1-20230216163137.commit-a4c75be
       '@dcl/protocol': 1.0.0-34875307214.commit-1ca8fa7
@@ -1741,7 +1744,7 @@ snapshots:
 
   '@dcl/sdk@7.28.1-34901226656.commit-44656ea(@well-known-components/interfaces@1.5.2)':
     dependencies:
-      '@dcl/ecs': 7.28.1-34901226656.commit-44656ea
+      '@dcl/ecs': 7.28.1-34901226656.commit-44656ea(patch_hash=e0e19b113a45162807851f5924ab6c3d08e903930316efb0d8ec8416b697cbb4)
       '@dcl/ecs-math': 2.1.0
       '@dcl/js-runtime': 7.28.1-34901226656.commit-44656ea
       '@dcl/react-ecs': 7.28.1-34901226656.commit-44656ea

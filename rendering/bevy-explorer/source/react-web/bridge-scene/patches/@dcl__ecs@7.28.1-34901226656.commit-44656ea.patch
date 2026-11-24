@@ -1,0 +1,48 @@
+diff --git a/dist/components/generated/pb/decentraland/sdk/components/avatar_equipped_data.gen.js b/dist/components/generated/pb/decentraland/sdk/components/avatar_equipped_data.gen.js
+index 1321d6407bd796b6c408a97a2619a5e90e67a856..23cccacdce0ee7f3848d78f3f67f2a6cff83fd6d 100644
+--- a/dist/components/generated/pb/decentraland/sdk/components/avatar_equipped_data.gen.js
++++ b/dist/components/generated/pb/decentraland/sdk/components/avatar_equipped_data.gen.js
+@@ -17,7 +17,7 @@ export var PBAvatarEquippedData;
+             writer.uint32(18).string(v);
+         }
+         for (const v of message.forceRender) {
+-            writer.uint32(26).string(v);
++            writer.uint32(34).string(v);
+         }
+         return writer;
+     }
+@@ -41,8 +41,8 @@ export var PBAvatarEquippedData;
+                     }
+                     message.emoteUrns.push(reader.string());
+                     continue;
+-                case 3:
+-                    if (tag !== 26) {
++                case 4:
++                    if (tag !== 34) {
+                         break;
+                     }
+                     message.forceRender.push(reader.string());
+diff --git a/dist-cjs/components/generated/pb/decentraland/sdk/components/avatar_equipped_data.gen.js b/dist-cjs/components/generated/pb/decentraland/sdk/components/avatar_equipped_data.gen.js
+index 8f26a9a0b236a76a332622b9527cf814592e9f0b..d46f97479508fbe01a9ac901b412ade3829c26db 100644
+--- a/dist-cjs/components/generated/pb/decentraland/sdk/components/avatar_equipped_data.gen.js
++++ b/dist-cjs/components/generated/pb/decentraland/sdk/components/avatar_equipped_data.gen.js
+@@ -23,7 +23,7 @@ var PBAvatarEquippedData;
+             writer.uint32(18).string(v);
+         }
+         for (const v of message.forceRender) {
+-            writer.uint32(26).string(v);
++            writer.uint32(34).string(v);
+         }
+         return writer;
+     }
+@@ -47,8 +47,8 @@ var PBAvatarEquippedData;
+                     }
+                     message.emoteUrns.push(reader.string());
+                     continue;
+-                case 3:
+-                    if (tag !== 26) {
++                case 4:
++                    if (tag !== 34) {
+                         break;
+                     }
+                     message.forceRender.push(reader.string());
