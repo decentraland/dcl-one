@@ -152,6 +152,139 @@ pub async fn reel_image_review(
     .await
 }
 
+async fn builder_for(
+    state: &SharedState,
+    session: &AdminSession,
+) -> Result<(crate::builder::SharedState, axum::http::HeaderMap), Response> {
+    let Some(bs) = state.domains.builder.clone() else {
+        return Err(not_configured("builder"));
+    };
+    if !bs.settings.writes_enabled {
+        return Err(refused(crate::builder::writes::disabled_response()).await);
+    }
+    let Some(token) = configured(bs.settings.admin_token.as_deref()) else {
+        return Err(token_missing("builder"));
+    };
+    Ok((bs.clone(), service_headers(Some(token), session.address())))
+}
+
+/// `POST /admin/api/builder/item-status` `{collection_id, item_id, status}`.
+pub async fn builder_item_status(
+    session: AdminSession,
+    State(state): State<SharedState>,
+    Json(body): Json<Value>,
+) -> Response {
+    let (collection_id, item_id) = match (
+        segment_field(&body, "collection_id", "collection-id"),
+        segment_field(&body, "item_id", "item-id"),
+    ) {
+        (Ok(c), Ok(i)) => (c, i),
+        (Err(resp), _) | (_, Err(resp)) => return resp,
+    };
+    let (bs, headers) = match builder_for(&state, &session).await {
+        Ok(v) => v,
+        Err(resp) => return resp,
+    };
+    let status = json!({ "status": str_field(&body, "status").unwrap_or_default() });
+    let typed = match body_as::<crate::builder::handlers::curation::ItemStatusBody>(status.clone())
+    {
+        Ok(b) => b,
+        Err(resp) => return resp,
+    };
+    let path = format!("/v1/collections/{collection_id}/items/{item_id}/status");
+    let answer = match crate::builder::auth::Admin::check(
+        &bs,
+        &headers,
+        "patch",
+        &crate::builder::auth::SignedPath::local(path),
+    )
+    .await
+    {
+        Ok(admin) => crate::builder::handlers::curation::patch_item_status(
+            State(bs),
+            admin,
+            Path((collection_id, item_id.clone())),
+            Json(typed),
+        )
+        .await
+        .into_response(),
+        Err(refusal) => refusal.into_response(),
+    };
+    finish(
+        &state,
+        Call::new(&session, "create", "builder.item.status")
+            .target(item_id)
+            .detail(status),
+        answer,
+    )
+    .await
+}
+
+/// `POST /admin/api/builder/items-status` `{collection_id, status, itemIds}`
+/// (`itemIds` an array, or `item_ids` a comma-separated string).
+pub async fn builder_items_status(
+    session: AdminSession,
+    State(state): State<SharedState>,
+    Json(body): Json<Value>,
+) -> Response {
+    let collection_id = match segment_field(&body, "collection_id", "collection-id") {
+        Ok(c) => c,
+        Err(resp) => return resp,
+    };
+    let (bs, headers) = match builder_for(&state, &session).await {
+        Ok(v) => v,
+        Err(resp) => return resp,
+    };
+    let item_ids: Vec<String> = match (body.get("itemIds"), str_field(&body, "item_ids")) {
+        (Some(Value::Array(ids)), _) => ids
+            .iter()
+            .filter_map(Value::as_str)
+            .map(str::to_string)
+            .collect(),
+        (_, Some(csv)) => csv
+            .split(',')
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .map(str::to_string)
+            .collect(),
+        _ => Vec::new(),
+    };
+    let request =
+        json!({ "status": str_field(&body, "status").unwrap_or_default(), "itemIds": item_ids });
+    let typed =
+        match body_as::<crate::builder::handlers::curation::BulkItemStatusBody>(request.clone()) {
+            Ok(b) => b,
+            Err(resp) => return resp,
+        };
+    let path = format!("/v1/collections/{collection_id}/items/status");
+    let answer = match crate::builder::auth::Admin::check(
+        &bs,
+        &headers,
+        "patch",
+        &crate::builder::auth::SignedPath::local(path),
+    )
+    .await
+    {
+        Ok(admin) => crate::builder::handlers::curation::patch_items_status_bulk(
+            State(bs),
+            admin,
+            Path(collection_id.clone()),
+            Json(typed),
+        )
+        .await
+        .into_response(),
+        Err(refusal) => refusal.into_response(),
+    };
+    finish(
+        &state,
+        Call::new(&session, "create", "builder.items.status")
+            .target(collection_id)
+            .detail(request),
+        answer,
+    )
+    .await
+}
+
 /// The abgen runtime's admin endpoint: a loopback base URL, its bearer and
 /// the ONE client's pooled connection.
 #[derive(Clone)]

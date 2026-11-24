@@ -4,6 +4,7 @@
 
 pub(crate) mod support;
 
+mod access_matrix;
 mod cells;
 mod chain_state;
 mod collection_writes;
@@ -24,6 +25,7 @@ mod publication_preparation;
 mod publication_transactions;
 mod review_flow;
 mod small_reads;
+mod third_party_matrix;
 mod third_party_publish;
 mod upstream_routes;
 mod validator;

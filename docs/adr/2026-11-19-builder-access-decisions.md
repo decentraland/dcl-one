@@ -142,7 +142,7 @@ source is down.
   asked only when no role answers: while the committee can't tell, the
   committee's curation listing and every decision only the committee
   can make answer 503, never a narrower view. Which status change each caller may make is
-  one table; a write asks it again
+  one table (`builder/src/curation/transitions.rs`); a write asks it again
   inside its transaction, with the collection row locked. There it also
   reads the committee again: a curator the committee admitted, and the
   assignee a write names, must still be members (401 otherwise). A review comment, appeal or retry asks the committee
@@ -195,7 +195,9 @@ source is down.
   the write's transaction reads the committee; a committee member who also holds a
   role reads and writes as that role until the table asks for the
   committee.
-- A new role or source is one change to `access.rs`.
+- A new role or source is one change to `access.rs`, which the authorization
+  matrix test (`builder/src/tests/access_matrix.rs`) covers for every routed
+  operation.
 
 ## Alternatives considered
 

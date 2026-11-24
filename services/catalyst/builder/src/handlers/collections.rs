@@ -52,6 +52,20 @@ pub async fn get_collection_items(
     )))
 }
 
+/// Whether a listing's `status` filter and MOST_RELEVANT sort read the
+/// review flow as on: only a listing that filters by status or sorts by
+/// relevance asks.
+pub(crate) async fn review_flow_asked(
+    state: &SharedState,
+    q: &ListQuery,
+) -> Result<bool, ApiError> {
+    if q.all("status").is_empty() && q.all("sort") != ["MOST_RELEVANT"] {
+        return Ok(false);
+    }
+    let mut conn = state.items.pool().acquire().await?;
+    crate::review::enabled(&mut conn, state).await
+}
+
 /// builder-server's `HTTPError('Unauthorized', { eth_address }, 401)`: a
 /// listing refusal names the wallet the request was about (the path's
 /// address, the signer's, `""` anonymously).
@@ -100,6 +114,7 @@ async fn list_collections(
     if let Some(signer) = &signer {
         crate::limits::spend_wallet(state, signer.as_str(), &axum::http::Method::GET)?;
     }
+    let review_flow = review_flow_asked(state, &q).await?;
     let committee = match (&signer, q.is_public_search()) {
         (Some(signer), true) => access::known_committee_member(state, signer).await,
         (Some(signer), false) => Some(access::committee(state, signer).await?),
@@ -110,11 +125,11 @@ async fn list_collections(
         Some(member) => {
             state
                 .items
-                .committee_collections(&CommitteeListing::new(&member, &q)?, state)
+                .committee_collections(&CommitteeListing::new(&member, &q, review_flow)?, state)
                 .await?
         }
         None => {
-            let search = PublicSearch::new(&q)?.ok_or_else(|| unauthorized_for(""))?;
+            let search = PublicSearch::new(&q, review_flow)?.ok_or_else(|| unauthorized_for(""))?;
             let found = state.items.public_collections(&search, state).await?;
             crate::limits::charge(
                 state,

@@ -883,32 +883,3 @@ async fn a_standard_collection_this_node_published_waits_in_the_committees_queue
         assert_eq!(ids, expected, "{status}");
     }
 }
-
-#[tokio::test]
-async fn the_committee_cannot_filter_by_an_automated_review_the_node_does_not_run() {
-    let Some(pool) = super::validator::own_pool().await else {
-        return;
-    };
-    let member = super::validator::address(OWNER_KEY);
-    let committee =
-        super::support::committee_index(&super::support::FakeCommittee::with(&[&member])).await;
-    let app = super::limits::app_over(pool, |state| {
-        state.market = Some(committee);
-        state.limits = crate::limits::Limits::unbounded();
-    })
-    .await;
-    let (code, body, _) = super::limits::send(
-        &app,
-        &super::limits::Call {
-            key: Some(OWNER_KEY),
-            ..super::limits::Call::get("/v1/collections?status=auto_reviewing&page=1&limit=50")
-        },
-    )
-    .await;
-    let answer: Value = serde_json::from_str(&body).unwrap();
-    assert_eq!(
-        (code, answer["error"].as_str(), &answer["data"]["status"]),
-        (400, Some("Invalid status"), &json!("auto_reviewing")),
-        "{body}"
-    );
-}

@@ -1437,10 +1437,17 @@ collection 133 ms; the status counts of the owner of 1,542 collections
 probes each row once; no index serves the ordering.
 
 The committee listing's `status` and `assignee` filters read each
-collection's newest curation (`collection_curations_collection_created_key`)
-and its pending item curations. Measured on a scratch copy of the fresh schema with 8,298
-collections, 4,149 on chain and two curations each (count; a page of 12 by
-creation, JIT off): `to_review` 18 ms, `pending` 15 ms, `under_review` 6 ms. The cost grows with the
+collection's newest curation (`collection_curations_collection_created_key`),
+its pending item curations and, for `auto_reviewing` while the review flow is
+on, its open validation request (`validation_requests_open_key`) and the
+timeline events since that request started
+(`collection_events_collection_created_idx`). A collection is in an automated
+review while its newest curation is pending and it has an open request no
+curator decided after; the flow's switch is read only for a listing that
+filters by status or sorts by relevance. Measured on a scratch copy of the fresh schema with 8,298
+collections, 4,149 on chain, two curations each and 794 open requests (count;
+a page of 12 by creation, JIT off): `to_review` 18 ms, `pending` 15 ms,
+`under_review` 6 ms, `auto_reviewing` 6 ms. The cost grows with the
 collections the other filters leave. At the reference scale (51,745
 collections, 38,211 item curations and 4,755 collection curations imported, 5,575
 collections in the copy, JIT off) a committee page reads every collection in a
@@ -2004,6 +2011,161 @@ Upgrade: the schema's object pass creates `builder.virtual_third_parties`
 and its constraints; no step. The import's `virtual_third_party` step
 copies upstream's rows (`tooling/migration/sources/builder-server/MAPPING.md`).
 
+## Builder curations workload
+
+The builder keeps builder-server's review records
+(`services/catalyst/builder/src/curation/mod.rs`): a collection's reviews,
+an item's submissions for review, a collection's review events and the slot
+cheques of a third-party publication. Each row is its own state: an item's
+curation status is the status of its newest item curation, read where it is
+needed, and no flag on `builder.items` or `builder.collections` copies it.
+A third-party item is published once it has an item curation, whatever its
+status, and a collection is published once an item of it has one
+(`curation::ITEM_CURATED`, `curation::COLLECTION_ITEMS_CURATED`, part of
+`chain_state`'s published rule).
+
+Sizes at the reference data (May 2025): 4,755 collection curations over 3,502
+collections (at most 11 per collection), 38,211 item curations over 34,974
+third-party items (at most 13 per item), 34 cheques over 23 collections, no
+events. Every review adds about five events.
+
+Tables and what they hold:
+
+- `builder.collection_curations`: one row per review request of a
+  collection: `status` (`pending`, `approved`, `rejected`), `assignee` (a
+  committee member's lowercased address), `reviewed_by` (a lowercased
+  address or `validator`), `rejection_reasons` (one or more of the twelve
+  reasons builder-server accepts), `rejection_message` (1 to 3,000
+  characters). A decision updates the newest row in place; a resubmission,
+  a retry or an appeal inserts a new one. `(collection_id, created_at)` is
+  unique, so the newest row is one row.
+- `builder.item_curations`: one row per submission of a third-party item:
+  `status`, `content_hash` (the keccak-256 digest of the reviewed item, 64
+  lowercase hex digits, not a blob key) and `is_mapping_complete`.
+  `(item_id, created_at)` is unique. Every insert goes through
+  `curation::record_item_curation`, which stamps the row after the item's
+  newest one, so the newest row is the last written.
+- `builder.collection_events`: append-only, one row per review step:
+  `type` (twelve values), `actor` (`creator`, `curator`, `validator`,
+  `system`), `actor_address`, `payload` (a JSON object). Read newest first
+  by `(created_at, id)`. One verdict per validation: the partial unique
+  index on `(collection_id, type, payload->>'validationId',
+  COALESCE(payload->>'reason', ''))` over the four verdict types.
+- `builder.slot_usage_cheques`: one row per signed slot cheque of a
+  third-party publication: `third_party_id`, `signature` (0x and 130 hex
+  digits, `v` 27 or 28), `salt` (0x and 64 hex digits, unique per
+  provider), `qty` (positive). Never updated by a route. A deleted
+  collection's cheques stay with `collection_id` NULL (the foreign key sets
+  it), so a spent salt stays spent; step
+  `0093_builder_slot_cheques_outlive_collections` drops the column's
+  `NOT NULL` and recreates the key with `ON DELETE SET NULL` on a database
+  that has the table.
+- `builder.collections.forum_link` (an `http(s)` URL without spaces, at
+  most 2,048 characters) and `forum_id` (the forum post, only with a
+  link). These columns are the one source of a collection's forum link.
+  The node builds a new link under `FORUM_URL`; it never fetches the stored
+  link. `forum_claimed_at` is a pending topic attempt, only without a link.
+  Claiming locks the collection, checks access again (and a standard
+  collection's publication), and commits before the forum call. A claim
+  holds for 60 seconds and an attempt ends within 45. A stored link is the
+  only proof of a topic: when the forum made one whose link was not
+  stored, the next attempt after the claim asks the forum again. Recording
+  the link clears the claim and keeps a link already stored.
+
+Deletes: an item's curations and a collection's curations and events go
+with them (`ON DELETE CASCADE`); the node refuses to delete a third-party
+collection or item once curated. A cheque keeps its collection
+(`ON DELETE NO ACTION`): a delete that reaches a collection with a cheque
+fails.
+
+Statements:
+
+| Request | Statement | Index |
+| --- | --- | --- |
+| a collection's newest curation, a decision, a listing row's `curation_status` and last activity | `collection_id = $1 ORDER BY created_at DESC LIMIT 1` | `collection_curations_collection_created_key` |
+| the committee's listing by assignee and status | the newest curation per collection (`DISTINCT ON (collection_id) ... ORDER BY collection_id, created_at DESC`), filtered | sequential read of the table (4,755 rows) |
+| `GET /v1/curations` for the committee | the newest curation per collection, at most 20,000 rows | sequential read of the table and a sort |
+| `GET /v1/curations` for another wallet | the newest curation of the collections whose chain copy row names it as creator, manager or minter, and of its providers' collections | `collections_contract_address_key`, `collections_third_party_urn_idx`, then the sequential read above |
+| `GET /v1/collections/:id/itemCurations` | each item of the collection joined to its curations, the newest per item, at most 20,000 rows | `items_collection_created_idx`, a hash join with the item curations |
+| `GET /v1/collections/:id/items` with `synced`, a third-party `status` or `mappingStatus=unpublished_mapping` | each item of the collection with its newest curation (`LATERAL ... LIMIT 1`) | `items_collection_created_idx`, `item_curations_item_created_key`, backward |
+| a curator's decision: the collection's newest `review.approved` or `review.rejected` | `collection_id = $1 AND type IN (...) ORDER BY created_at DESC, id DESC LIMIT 1` | `collection_events_collection_created_idx` |
+| an item's newest curation (`curation::newest_item_curation`, the one definition: the last created), once per listed item | `item_id = $1 ORDER BY created_at DESC LIMIT 1` | `item_curations_item_created_key`, backward |
+| the newest curation of each item of a collection | items by `collection_id`, each item's newest curation | `items_collection_created_idx`, `item_curations_item_created_key` |
+| an item is curated: the file rule, by-id reads, saves, deletes, slots | `EXISTS (... WHERE item_id = i.id)` | `item_curations_item_created_key` |
+| a collection has a curated item or a pending one | items by `collection_id` joined to their curations | `items_collection_created_idx`, `item_curations_item_created_key` |
+| a third-party collection's body: its first curated item's newest curation, `is_mapping_complete` | items by `collection_id` in id order, their newest curation | `items_collection_created_idx`, `item_curations_item_created_key` |
+| the public search's published collections | third-party collections with a curated item | `collections_third_party_urn_idx`, `items_collection_created_idx`, `item_curations_item_created_key` |
+| a collection's events page and its newest event | `collection_id = $1 ORDER BY created_at DESC, id DESC` | `collection_events_collection_created_idx` |
+| the validator sweep's started runs in a window | `type = 'review.automated_started' AND created_at` in range | `collection_events_automated_started_idx` |
+| a verdict recorded once | `INSERT ... ON CONFLICT DO NOTHING` | `collection_events_verdict_validation_idx` |
+| a collection's newest cheque (`approvalData`) | `collection_id = $1 ORDER BY created_at DESC LIMIT 1` | `slot_usage_cheques_collection_created_idx` |
+| a third-party publish's free slots | the distinct items with a curation of the provider's collections | `collections_linked_contract_key` (leading `third_party_id`), `items_collection_created_idx`, `item_curations_item_created_key` |
+| a third-party publish's named items | `id = ANY($1) ... FOR UPDATE`, at most 20,000 ids | `items_pkey` |
+| a third-party publish's pending check | the collection's items joined to their curations, `status = 'pending'` | `items_collection_created_idx`, `item_curations_item_created_key` |
+| a cheque whose salt the provider used | `INSERT ... ON CONFLICT (third_party_id, salt) DO NOTHING` | `slot_usage_cheques_third_party_salt_key` |
+| a third-party publish's item curations | one `INSERT ... SELECT` over the named items, each stamped after its newest curation | `item_curations_item_created_key` |
+| `approvalData`'s content hashes | each curated item of the collection, its newest curation | `items_collection_created_idx`, `item_curations_item_created_key` |
+
+Measured at the reference size, events synthesized at five per review: the
+newest curation of each of the 12,665 items of the largest collection in
+20 ms; that collection's body in 10 ms; the bodies of a 1,000-row
+collection listing page in 82 ms; the slot count of its provider in 9 ms;
+the committee listing's newest curations in 3 ms; every other statement
+under 1 ms. An item list reads each listed item's newest curation with one
+index probe (about 6 µs a row) and never the collection's other items: the
+unpaged bodies of the largest collection's 12,665 items take 742 ms, most of
+it the `id = ANY(...)` lookup of the rows, and the largest owner's 12,669
+items 99 ms. Only an item read by itself reads the collection's first
+curated item (7 ms in the largest collection). The committee's
+`GET /v1/curations` reads its rows in 1.3 ms; `GET
+/v1/collections/:id/itemCurations` of the largest collection in 169 ms; that
+collection's `synced=true` page in 120 ms and its pending `status` page in
+8 ms.
+
+Invariants code upholds:
+
+- Every insert of a curation goes through `curation::record_item_curation`
+  or `curation::record_collection_curation` (which takes a
+  `CurationGrant`): each locks the collection row until the transaction
+  ends and stamps the row 1 µs after the newest of its item or collection
+  when that is later than now. A writer that changes a row sets
+  `updated_at` to `GREATEST(updated_at, now)`.
+- A writer of events stamps `created_at` after the collection's newest
+  event, under the collection lock.
+- A cheque's `third_party_id` is its collection's provider.
+- A third-party publish (`collections/publish_third_party.rs`) runs in one
+  transaction: the collection row `FOR UPDATE`, then the provider's
+  advisory lock (`builder.virtual_third_parties:<id>`, the key every write
+  of the provider takes, always after a collection row), then the access
+  decision again, the free slots, the named items `FOR UPDATE`, the cheque,
+  the item curations (`curation::record_item_curations`) and one new
+  pending collection curation. Two publishes of one provider spend its free
+  slots one after the other. A cheque is stored lowercase with a 65-byte
+  signature (a 64-byte compact one is expanded, `v` 0 and 1 stored as 27
+  and 28); a salt the provider already used refuses the publish with 400
+  and nothing is written. No registry, forum or Slack call runs while it
+  holds the connection.
+- A curation write (`curation::writes`) locks the collection row, decides
+  again who may write, reads the newest curation and asks the transition
+  table, all in one transaction; a committee write adds its
+  `ops.admin_audit` row (domain `create`) in it. A collection's approval
+  also sets each smart wearable's `items.video` to the `video.mp4` hash its
+  contents name, in the same transaction.
+
+Upgrade: the object pass creates the four tables; step
+`0088_builder_collection_forum` adds the forum columns and their checks. The
+import's `collection_curation`, `item_curation`, `collection_event` and
+`slot_usage_cheque` steps copy upstream's rows
+(`tooling/migration/sources/builder-server/MAPPING.md`).
+
+Step `0089_builder_collection_forum_claim` adds the claim timestamp and copies
+any linked publication's retained forum link into its collection before
+writes resume. It preserves an existing collection link. With writers
+stopped and a verified backup, run
+`schemas/releases/builder-linked-forum-retired.sql` to remove the linked
+publication's extra column; this release repeats safely and never replaces
+a collection link. Fresh databases have only the collection's columns.
+
 ## Builder forum workload
 
 Each collection can create one forum topic, whose body describes at most
@@ -2018,6 +2180,138 @@ For a standard collection's creator name, builder reads, never writes,
 (`entity_id`, `entity_type`, `entity_metadata`): the active profile's first
 avatar supplies a nonempty claimed name; otherwise the address is shortened.
 The pointer key and deployment entity index serve this bounded lookup.
+
+## Builder validation requests workload
+
+The builder records the wearable validator's work in
+`builder.validation_requests` and refuses replayed validator calls with
+`builder.validator_seen_signatures`
+(`services/catalyst/builder/src/validator.rs`, `validator/claims.rs`,
+`handlers/validator.rs`; decided in
+[the validator ADR](docs/adr/2026-11-21-builder-validator-pulls-reviews.md)).
+The object pass creates both tables. Step
+`0092_builder_validation_retry` widens `validation_requests_trigger_check`
+to the trigger `retry` on a database that has the table; the object pass
+creates it with that check where it doesn't.
+
+Writers and readers:
+
+- A standard collection's first publication, a creator's changes
+  submission and, with the review flow on, a creator's retry insert a
+  request in their own transaction, under the collection's row lock: a count of the collection's requests that UTC day
+  (`validation_requests_collection_created_idx`), the open one settled
+  `superseded` (`validation_requests_open_key`), then the insert.
+- A claim takes the oldest open request with claims left whose lease isn't
+  held and whose collection's lock doesn't hold
+  (`validation_requests_open_created_idx` joined to the collection's primary
+  key, `FOR UPDATE OF r SKIP LOCKED`, `LIMIT 1`), reads its items, and writes
+  its claim, lease and `content_hashes` in one transaction.
+- A lease extension and a verdict update one request by primary key, with
+  its `claim_id` in the predicate.
+- The leased `builder-validation-requests` job, every 10 minutes while
+  creator writes are on: abandons and expires open requests (both over
+  `validation_requests_open_key`), deletes requests settled more than 30
+  days ago (`validation_requests_settled_idx`) and seen signatures whose
+  window has passed (`validator_seen_signatures_expires_idx`).
+- Each validator call whose signature verifies inserts its signature
+  (`ON CONFLICT DO NOTHING` on the primary key); a call that inserts nothing
+  is a replay.
+
+A changes submission also reads `shop.items.content_hash` for the
+collection's contract on `matic`, by the copy's `(network,
+contract_address)` key, after `chain_state` says the copy holds the
+contract ("Builder chain state workload"). The feature switch reads, never
+writes, `explore_api.feature_flags` (`app`, `document`) and
+`explore_api.feature_flags_local` (`app`, `name`, `value`) for app
+`builder` on the caller's connection, each by its primary key (or its
+prefix), once per publication, submission and validator call, and decides
+with `shared::feature_flags` (on only for the boolean `true`); Explore's
+flags mirror writes the `builder` document.
+
+Invariants:
+
+- At most one open request per collection
+  (`validation_requests_open_key`, unique, `WHERE settled_at IS NULL`).
+- A request names 1 to 50 items, has at most three claims, and its claim
+  id, claim time and lease are set together; `settled_at` and `outcome` are
+  set together.
+- Only the open request's current claim, within its lease, settles it.
+- Requests die with their collection (`ON DELETE CASCADE`).
+
+Size and bounds, measured at the reference data: about one request a day,
+at most 28 in a day. Open requests are bounded by one per collection and by
+the seven-day expiry; settled ones by the 30-day retention, so the table
+holds a few hundred rows. A seen signature is inserted only after its HMAC
+verifies, at most 60 calls a minute per source, and lives five minutes past
+its timestamp, so the table holds at most a few hundred rows. `EXPLAIN
+ANALYZE` with 17,000 collections, 1,000 requests (200 open) and 600 seen
+signatures: the claim is an index scan of
+`validation_requests_open_created_idx` with one primary-key probe of
+`builder.collections` per candidate, under `LockRows`; the daily count an
+index-only scan of `validation_requests_collection_created_idx`; supersede,
+abandon and expire scan `validation_requests_open_key` (199 open rows);
+retention a bitmap scan of `validation_requests_settled_idx`; the
+seen-signature sweep an index scan of
+`validator_seen_signatures_expires_idx`.
+
+## Builder review timeline workload
+
+With the review flow on
+([the review flow ADR](docs/adr/2026-11-21-builder-review-flow.md)), the
+builder writes a collection's review timeline in
+`builder.collection_events` beside its curator decisions
+(`services/catalyst/builder/src/review.rs`, `curation/events.rs`,
+`handlers/review.rs`). No other table is added.
+
+Writers, each under the collection's row lock in its own transaction:
+
+- Recording a validation request writes its start; a first publication
+  also writes the publication; a changes submission writes the submitted
+  item ids, or an appeal when nothing changed since a rejection.
+- A verdict from the current claim writes its event once
+  (`ON CONFLICT DO NOTHING` on `collection_events_verdict_validation_idx`)
+  and, through the transition table, rejects or reopens the newest
+  collection curation in the transaction that settles its request; that
+  transaction locks the collection row before the request row, as every
+  request writer does.
+- A comment and an appeal take a transaction advisory lock on the writing
+  wallet, count that wallet's comments or appeals of the UTC day across
+  collections and the collection's own, and insert one event.
+- The leased `builder-validation-requests` job writes the give-up error of
+  each request it abandons or expires in the statement that settles it.
+- A third-party publication writes its curator hand-off once.
+
+Each insert stamps its row after the collection's newest event, so the
+timeline's order is the order of the writes.
+
+Readers: a timeline page (a count and at most 200 rows newest first, by
+`collection_events_collection_created_idx`); the newest start, a
+validation's verdict, a curator decision after a start, the newest event
+that isn't a comment and the judged content hashes of the last 50 verdicts,
+each over the collection's events; the wallet's daily count over the
+partial index `collection_events_creator_text_idx (actor_address,
+created_at)` on comments and appeals.
+
+Invariants:
+
+- One verdict event per validation and reason.
+- A collection takes at most 200 comments and five appeals in a UTC day; a
+  wallet writes at most 200 comments and 20 appeals in a UTC day.
+- The validator's curation writes set `reviewed_by = 'validator'` and are
+  audited in `ops.admin_audit` with the actor `validator`.
+
+Size: the reference data holds no events. A review writes about five
+events, comments and appeals are bounded per day, so a collection's
+timeline stays in the hundreds. `EXPLAIN ANALYZE` with 17,000 collections
+and 300,000 events: a page and its count are bitmap scans of
+`collection_events_collection_created_idx` (0.14 ms); the collection's daily
+count an index scan of it and the wallet's an index scan of
+`collection_events_creator_text_idx` (0.12 ms together); the judged hashes a
+bitmap-or of `collection_events_verdict_validation_idx` (0.12 ms); the
+newest start, the decision check, the newest event that isn't a comment and
+the stamp index scans of `collection_events_collection_created_idx` (under
+0.03 ms); a validation's verdict an index scan of
+`collection_events_verdict_validation_idx` (0.01 ms).
 
 ## Notification writer
 

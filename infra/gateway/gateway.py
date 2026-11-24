@@ -31,6 +31,8 @@ CAST_PRESENTATION_CAP = "101m"
 CAMERA_REEL_UPLOAD_CAP = "7m"
 # The root alias whose upload path takes CAMERA_REEL_UPLOAD_CAP.
 CAMERA_REEL_ALIAS = "^~ /camera-reel/"
+BUILDER_VIDEO_CAP = "251048576"
+BUILDER_LARGE_BODY_CAP = "2m"
 # The content server's `POST /entities` route limit at the default
 # `MAX_UPLOAD_*` values (`max_deployment_body_bytes`: 2 GiB of files and
 # fields plus multipart framing), rounded up, so its own 413 is the one a
@@ -390,8 +392,13 @@ def render(table, cfg, mime):
     locations += location('~ "^/badges/assets/.+$"', proxy("apis",
         f"client_max_body_size {BADGES_ASSET_CAP}; "
         f"limit_conn badge_asset_uploads {DEPLOY_CONNECTIONS_PER_ADDRESS};"))
+    locations += location("~ ^(/builder-api)?/v1/collections/[^/]+(/(tos|publish))?/*$",
+                          proxy("apis", f"client_max_body_size {BUILDER_LARGE_BODY_CAP};"))
     locations += location("~ ^(/builder-api)?/v1/items/[^/]+/files/*$",
-                          proxy("apis", "client_max_body_size 21m;"))
+                          proxy("apis", f"client_max_body_size 21m; {uploads}"))
+    locations += location("~ ^(/builder-api)?/v1/items/[^/]+/videos/*$", proxy("apis",
+        f"client_max_body_size {BUILDER_VIDEO_CAP}; proxy_request_buffering off; client_body_timeout 30s; "
+        f"proxy_send_timeout 30s; {uploads}"))
     locations += location('~ "^/explorer/0x[0-9a-fA-F]{40}/(wearables|emotes)$"', proxy("apis"))
     locations += pair("/auth-api/socket.io", "auth_socket", True)
     # Keep the Sites .data regex after every API regex.
@@ -488,9 +495,12 @@ http {{
     geo $admin_gate {{ default ""; {admin_geo} }}
     map $http_upgrade $connection_keepalive {{ default upgrade; "" ""; }}
     # The sign-in relay controls CORS on both the auth-api host and path.
-    map "$uri:$upstream_http_access_control_allow_origin" $cors_fallback {{
-        "~^/auth-api(/|:)" "";
-        "~:$" "*";
+    map "$uri|$upstream_http_access_control_allow_origin" $cors_fallback {{
+        "~^/auth-api(/|[|])" "";
+        "~^/builder-api/" "";
+        "~^/v1/(addresses|collections|committee|curations|drafts|info|newsletter|published-collections|rarities|storage|thirdParties|validator)(/|[|])" "";
+        "~^/v1/0x[0-9a-fA-F]{{40}}/(collections|items)[|]" "";
+        "~[|]$" "*";
         default "";
     }}
     map $upstream_http_cross_origin_opener_policy $coop_fallback {{

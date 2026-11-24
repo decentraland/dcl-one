@@ -22,6 +22,7 @@ use crate::http::{ApiError, Subject};
 use crate::items::listing::ItemsOut;
 use crate::items::save::forget_unnamed;
 use crate::limits::Listing;
+use crate::validator;
 
 const CHAIN_UNKNOWN: &str = "The collection's chain state is not available. Try again later.";
 
@@ -189,6 +190,7 @@ struct Snapshot {
     items: Vec<(Uuid, Option<String>)>,
     published: bool,
     copy: Option<BTreeSet<u64>>,
+    approved: bool,
 }
 
 async fn snapshot(conn: &mut sqlx::PgConnection, id: Uuid) -> Result<Snapshot, ApiError> {
@@ -229,6 +231,7 @@ async fn snapshot(conn: &mut sqlx::PgConnection, id: Uuid) -> Result<Snapshot, A
         items,
         published,
         copy,
+        approved: facts.is_some_and(|facts| facts.is_approved),
     })
 }
 
@@ -267,6 +270,7 @@ pub async fn publish(
         None
     };
     let mut first_publication = false;
+    let mut validation = None;
     if missing {
         for (place, (item, _)) in before.items.iter().enumerate() {
             let place = place as u64;
@@ -312,6 +316,9 @@ pub async fn publish(
         .bind(state.settings.network.item_urn(&contract, ""))
         .execute(&mut *tx)
         .await?;
+        if first && !now.approved {
+            validation = validator::on_publish(&mut tx, state, id, &items, sync.signer()).await?;
+        }
         tx.commit().await?;
         first_publication = first;
     }
@@ -328,6 +335,11 @@ pub async fn publish(
                 items: before.items.len(),
             },
         );
+    }
+    if let Some(notice) = validation {
+        state
+            .notices
+            .send(&state.guarded, id, name, sync.signer(), notice);
     }
     let items = state
         .items

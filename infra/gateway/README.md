@@ -40,9 +40,12 @@ client to the other per-client limits and IP bindings) and therefore buckets
 traffic behind a non-loopback gateway under that gateway's peer address: every
 deployer then shares one deploy limit. For an untrusted private or loopback
 peer, the contract-wallet budget counts nothing, and `/auth-api` skips its
-per-network cap and keeps only its global cap. The API logs one warning when an untrusted private peer forwards
-`X-Real-IP`, and `/auth-api` one the first time it sees an untrusted private or
-loopback peer. Missing or malformed X-Real-IP from a trusted peer
+per-network cap and keeps only its global cap. The API also reads
+`x-original-path` only from a trusted peer, so behind an unlisted gateway every
+signed request on a path the gateway rewrote is refused with 401. The API logs
+one warning when an untrusted private peer forwards `X-Real-IP`, one when it
+forwards `x-original-path`, and `/auth-api` one the first time it sees an
+untrusted private or loopback peer. Missing or malformed X-Real-IP from a trusted peer
 fails closed. This API-side setting is separate from
 `GATEWAY_TRUSTED_PROXY_CIDRS`, which controls the gateway's upstream CDN trust.
 Verify the deployed trust chain and client bucket separation before cutover:
@@ -83,7 +86,8 @@ docker run --rm --network dcl-one --read-only --cap-drop ALL --security-opt no-n
 - Publish only port 8080; keep APIs and Sites private; terminate TLS before it.
 - Operator paths (`/admin`, `/server`, `/metabase`, telemetry admin, and an `admin` segment directly under an API mount or its `/v1` or `/api`, such as `/rpc/admin` or `/shop-api/v1/admin`, and the worlds `/worlds-content-server/gc` and `/reprocess-ab`) are gated on the normalized path; an allowed network does not authenticate.
 - Never trust arbitrary client networks as proxies; a trusted proxy must set `X-Forwarded-For` and `X-Forwarded-Proto`.
-- The gateway overwrites client IP, forwarding, `X-Catalyst-Admin-Gate` and `x-original-path` headers and removes `True-Client-IP`.
+- The gateway overwrites client IP, forwarding, `X-Catalyst-Admin-Gate` and `x-original-path` headers and removes `True-Client-IP`. The API reads `x-original-path` only from a loopback peer or one in `HTTP_TRUSTED_PROXY_CIDRS` and drops it from any other, so a signed request on a path the gateway rewrote is refused unless the gateway's network is listed there.
+- CORS: the gateway adds `Access-Control-Allow-Origin: *` to an answer that carries none, except the builder's: under `/builder-api/` (the `builder-api.<domain>` host) and its routes the node also serves at the root (`/v1/collections`, `/v1/storage`, `/v1/thirdParties`, an address's `/v1/<address>/collections` and `/v1/<address>/items`, and the rest of the builder's `/v1` paths but `/v1/items`, which the apex host gives to the marketplace alias), the API's `CORS_ORIGIN` allow-list alone decides which origin may read the answer.
 - `/internal/pulse`, `/internal/message-router` and `/metrics` are not public; internal callers use the APIs' private address.
 - Limits: bodies 1 MiB (content deployments 2,096, worlds deployments 360, world settings 12, world storage 529,408 bytes (the service's largest body plus slack), builder 21, report evidence 5; `/_scene` is the node's and keeps the 1 MiB default); 100 r/s per client with a burst of 300 (`GATEWAY_READ_RATE`, `GATEWAY_READ_BURST`; content 100, worlds writes and admin routes 30, Segment webhooks under `/events-notifier` 300 with a burst of 600, deployments 5 with a burst of 200 for content and 4 for worlds); 10 deployment or report evidence uploads in flight per client, then 429; `%3F` in paths returns 400, except in a `/world-storage` path forwarded unrewritten.
 - Request bodies are buffered in `/tmp/gateway` before the APIs see them, except content deployments, which stream to the APIs, where they are spooled to the storage disk. With `--tmpfs /tmp` as above, that buffer is memory, and a body that does not fit fails with nginx's own 500. Size the tmpfs for the buffered uploads in flight (10 per client, worlds deployments up to 360 MiB each), or mount a disk volume at `/tmp`.
