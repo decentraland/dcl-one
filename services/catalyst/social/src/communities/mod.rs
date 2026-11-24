@@ -14,8 +14,9 @@
 //! `fed` (over `crate::fed`). A member who leaves, is banned or is kicked from a
 //! private community leaves its voice room ([`State::evict_from_private_community_voice`]
 //! through the [`VoiceEviction`] the comms module attaches in `main`). The
-//! `onlyOnline` member filter reads the Pulse wallet topology the social RPC's
-//! connectivity stream reads, attached in `serve` ([`State::set_topology`]).
+//! `onlyOnline` member filter reads the wallet topology (Pulse islands and World
+//! rooms) the social RPC's connectivity stream reads, attached in `serve`
+//! ([`State::set_topology`]).
 //!
 //! Mount it twice: at the root (the old `social-api.decentraland.org` host
 //! paths) and nested under `/social-api` (the gateway prefix); the
@@ -165,8 +166,8 @@ pub struct State {
     pub eip1654: Option<Arc<dyn Eip1654Validator>>,
     pub profiles: ProfilesCache,
     pub referral: referral::Referral,
-    /// The Pulse wallet topology, attached with the social RPC's (`serve`):
-    /// who `onlyOnline` counts as online. Unattached, no one is.
+    /// The wallet topology (Pulse islands and World rooms), attached with the
+    /// social RPC's (`serve`): who `onlyOnline` counts as online. Unattached, no one is.
     pub topology: std::sync::OnceLock<Arc<crate::comms::topology::Topology>>,
     /// One DAPPS document shared by moderator, compliance and referral decisions.
     pub flags: Arc<crate::explore::api::feature_flags::Snapshot>,
@@ -394,7 +395,7 @@ impl State {
         let _ = self.worlds.set(worlds);
     }
 
-    /// Attaches the Pulse wallet topology (once).
+    /// Attaches the wallet topology (once).
     pub fn set_topology(&self, topology: Arc<crate::comms::topology::Topology>) {
         let _ = self.topology.set(topology);
     }
@@ -413,9 +414,9 @@ impl State {
         let _ = self.updates.set(updates);
     }
 
-    /// A join (`online`) or a leave, kick or ban reaches the community's
-    /// members on open community-member connectivity streams and the member
-    /// itself (upstream's `COMMUNITY_MEMBER_STATUS_UPDATES_CHANNEL`).
+    /// A join or removal reaches the affected member as a membership change.
+    /// Co-members on open connectivity streams see the corresponding roster change
+    /// when membership and topology agree with it.
     pub async fn member_status_changed(
         &self,
         community_id: CommunityId,

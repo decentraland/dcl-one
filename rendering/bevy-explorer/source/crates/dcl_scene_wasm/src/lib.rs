@@ -95,6 +95,8 @@ fn init_scene(init: RelayInit) -> bool {
         super_user,
         scene_origin,
         kill_flag: kill_flag.clone(),
+        // the relay reads the engine's flag; this one is never set
+        wake: Default::default(),
         ipc_close: CancellationToken::new(),
     });
 

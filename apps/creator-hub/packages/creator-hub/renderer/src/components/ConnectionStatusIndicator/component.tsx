@@ -1,6 +1,6 @@
 import { useState, useCallback } from 'react';
 import IconButton from '@ui/atoms/IconButton';
-import { Tooltip } from '@dcl/one-ui/components/Tooltip/Tooltip';
+import { Tooltip } from '@dcl/one-ui';
 import { SignalWifiOffIcon } from '@ui/atoms/icons-material';
 
 import { useConnectionStatus } from '/@/hooks/useConnectionStatus';

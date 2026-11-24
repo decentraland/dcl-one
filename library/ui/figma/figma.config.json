@@ -218,6 +218,7 @@
     "Hidding": "hiding"
   },
   "componentNames": {
+    "button": "Button",
     "Button-Contained-Text": "Button",
     "Button-Contained-Text-Icon": "ButtonWithIcon",
     "Button-Multiple-Options": "SplitButton",

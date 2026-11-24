@@ -3,7 +3,7 @@ import { VscQuestion as QuestionIcon } from 'react-icons/vsc';
 import { AiOutlineInfoCircle as InfoIcon } from 'react-icons/ai';
 import { FiAlertTriangle as WarningIcon } from 'react-icons/fi';
 import { cx } from '../../../lib/utils/cx';
-import { Tooltip } from '@dcl/one-ui/components/Tooltip/Tooltip';
+import { Tooltip } from '../Tooltip';
 
 import type { Position, Props } from './types';
 

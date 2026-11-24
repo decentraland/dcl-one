@@ -292,7 +292,8 @@ describe('passport photos', () => {
     remove: vi.fn(async () => ({ ok: true })),
     metas: {},
     loadPhoto: vi.fn(),
-    onTeleport: vi.fn(() => true)
+    loadWearables: vi.fn(async () => []),
+    onJumpIn: vi.fn(() => true)
   })
   async function openPhotos(isSelf: boolean, a = actions()): Promise<PassportPhotoActions> {
     const fetcher = vi.fn(async (_address: string, offset: number, limit: number) => ({ ok: true, photos: reel.slice(offset, offset + limit), total: reel.length, max: 500 }))
@@ -316,10 +317,10 @@ describe('passport photos', () => {
     expect(screen.queryByRole('button', { name: 'Photo options' })).toBeNull()
   })
 
-  it('the photo viewer covers the passport panel', async () => {
+  it('the photo viewer opens outside the passport panel', async () => {
     await openPhotos(false)
     await userEvent.click(screen.getAllByRole('button', { name: 'Open photo' })[0])
-    expect(screen.getByRole('dialog', { name: 'Photo' }).parentElement).toHaveAttribute('data-tab', 'photos')
+    expect(screen.getByRole('dialog', { name: 'Photo' }).closest('[data-tab]')).toBeNull()
   })
 
   it.each([

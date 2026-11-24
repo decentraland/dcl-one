@@ -26,16 +26,22 @@ const config = {
   root: PACKAGE_ROOT,
   envDir: PACKAGE_DIR,
   resolve: {
-    alias: {
-      '/@/': join(PACKAGE_ROOT, 'src').replaceAll('\\', '/') + '/',
-      '/shared/': join(PACKAGE_ROOT, '../shared').replaceAll('\\', '/') + '/',
-      '/assets/': join(PACKAGE_ROOT, 'assets').replaceAll('\\', '/') + '/',
-      '#store': join(PACKAGE_ROOT, 'src', 'modules', 'store').replaceAll('\\', '/') + '/',
-      '@ui': UI3_SRC,
-      '@shop': SHOP_SRC,
-      '@web-core': WEB_CORE_SRC,
-      '@dcl/one-ui': ONE_UI_SRC,
-    },
+    alias: [
+      { find: '/@/', replacement: join(PACKAGE_ROOT, 'src').replaceAll('\\', '/') + '/' },
+      {
+        find: '/shared/',
+        replacement: join(PACKAGE_ROOT, '../shared').replaceAll('\\', '/') + '/',
+      },
+      { find: '/assets/', replacement: join(PACKAGE_ROOT, 'assets').replaceAll('\\', '/') + '/' },
+      {
+        find: '#store',
+        replacement: join(PACKAGE_ROOT, 'src', 'modules', 'store').replaceAll('\\', '/') + '/',
+      },
+      { find: '@ui', replacement: UI3_SRC },
+      { find: '@shop', replacement: SHOP_SRC },
+      { find: '@web-core', replacement: WEB_CORE_SRC },
+      { find: /^@dcl\/one-ui$/, replacement: join(ONE_UI_SRC, 'index.ts') },
+    ],
     // The ui3 sources sit outside this workspace and must use the React installed here.
     dedupe: ['react', 'react-dom'],
   },

@@ -4,7 +4,7 @@ import {
   GridViewOutlinedIcon as GridIcon,
 } from '@ui/atoms/icons-material';
 import IconButton from '@ui/atoms/IconButton';
-import { Tooltip } from '@dcl/one-ui/components/Tooltip/Tooltip';
+import { Tooltip } from '@dcl/one-ui';
 
 import type { LandScene } from '/@/modules/store/management/utils';
 import { t } from '/@/modules/store/translation/utils';

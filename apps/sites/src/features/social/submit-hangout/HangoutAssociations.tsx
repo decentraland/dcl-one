@@ -1,5 +1,4 @@
-import { useEventsCopy } from "@dcl/one-ui/apps/sites/events/locale";
-import { Notice } from "@dcl/one-ui/apps/sites/events/Notice";
+import { useEventsCopy, Notice } from "@dcl/one-ui";
 import type { HangoutDraft } from "@/data/lib/catalyst/landings/submit-hangout";
 import type { HangoutOptions } from "@/data/lib/catalyst/landings/hangout-options";
 import styles from "./HangoutAssociations.module.css";
@@ -20,7 +19,7 @@ export default function HangoutAssociations({ draft, options, canChangeCommunity
         {options?.communities.map((community) => <option value={community.id} key={community.id}>{community.name}</option>)}
       </select>
     </label>
-    {!options && <p role="status">{text("Loading communities and schedules…")}</p>}
+    {!options && <p role="status">{text("Loading communities…")}</p>}
     {options?.communitiesError && <Notice tone="error">{text("Could not load your communities: {error}", { error: options.communitiesError })}</Notice>}
     {!canChangeCommunity && draft.communityId && <p className="submit-hangout__hint">{text("Community owners and moderators can change this association.")}</p>}
     <FeaturedAssetPicker value={draft.featuredItem ?? ""} onChange={(featuredItem) => onEdit({ featuredItem })} />

@@ -1,6 +1,6 @@
 import { useEffect, useLayoutEffect, useRef, useState, type CSSProperties } from 'react';
 import IconButton from '@ui/atoms/IconButton';
-import { Tooltip } from '@dcl/one-ui/components/Tooltip/Tooltip';
+import { Tooltip } from '@dcl/one-ui';
 
 import closeIcon from '/assets/images/recording/close-thick.svg';
 import sendIcon from '/assets/images/recording/send.svg';

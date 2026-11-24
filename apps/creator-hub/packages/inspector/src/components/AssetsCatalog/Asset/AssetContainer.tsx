@@ -1,7 +1,6 @@
 import React, { useEffect, useCallback, useMemo, useState, useRef } from 'react';
 
 import DclLogomark from '@ui/atoms/DclLogomark';
-import { Tooltip } from '@dcl/one-ui/components/Tooltip/Tooltip';
 
 import {
   getBuiltInEmote,
@@ -11,6 +10,7 @@ import {
 } from '../../../lib/logic/catalog';
 import { getConfig } from '../../../lib/logic/config';
 import { InfoTooltip } from '../../ui';
+import { Tooltip } from '../../ui/Tooltip';
 import Asset from './Asset';
 
 import './AssetContainer.css';

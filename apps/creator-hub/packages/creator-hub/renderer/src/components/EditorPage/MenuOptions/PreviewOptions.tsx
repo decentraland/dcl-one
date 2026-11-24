@@ -4,7 +4,7 @@ import { ChevronRightIcon } from '@ui/atoms/icons-material';
 import Checkbox from '@ui/atoms/Checkbox';
 import Radio from '@ui/atoms/Radio';
 import Text from '@ui/atoms/Text';
-import { Tooltip } from '@dcl/one-ui/components/Tooltip/Tooltip';
+import { Tooltip } from '@dcl/one-ui';
 
 import { scene } from '#preload';
 

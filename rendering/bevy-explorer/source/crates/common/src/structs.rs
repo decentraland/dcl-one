@@ -1096,6 +1096,9 @@ impl AppConfig {
     }
 }
 
+/// The `fps_target` meaning no cap (Max).
+pub const UNCAPPED_FPS: usize = 999;
+
 #[derive(Serialize, Deserialize, Clone)]
 #[serde(default)]
 pub struct GraphicsSettings {
@@ -1168,7 +1171,7 @@ impl Default for GraphicsSettings {
             // FXAA, not MSAA, so depth of field stays on (see `DofSetting::apply_to_camera`)
             msaa: AaSetting::FxaaHigh,
             fps_target: 60,
-            // one 4096 cascade (`visuals`), so a short distance keeps its texels small
+            // one cascade on the 2048 map (`visuals`), so a short distance keeps its texels small
             shadow_distance: 20.0,
             // one cascade
             shadow_settings: ShadowSetting::Low,
@@ -1242,9 +1245,9 @@ impl SessionGraphics {
 
     /// The frame rate the explorer paces to: the session's target, else the player's, and with
     /// VSync on no faster than the monitor. VSync only removes tearing, so a lower target still
-    /// applies, and Max (999) means the monitor's rate. `refresh_hz`, when known, is the monitor's
-    /// rate rounded up past it (60 Hz gives 61), so at the monitor's rate VSync, not the pacer's
-    /// sleep, sets the frame time.
+    /// applies, and Max ([`UNCAPPED_FPS`]) means the monitor's rate. `refresh_hz`, when known, is
+    /// the monitor's rate rounded up past it (60 Hz gives 61), so at the monitor's rate VSync, not
+    /// the pacer's sleep, sets the frame time.
     pub fn paced_fps(
         session: Option<&Self>,
         config: &AppConfig,
@@ -1305,6 +1308,8 @@ pub struct AudioSettings {
     pub scene: i32,
     pub system: i32,
     pub avatar: i32,
+    /// Whether [`Self::microphone_focus`] passes the client window's focus through.
+    pub mute_mic_in_background: bool,
 }
 
 impl Default for AudioSettings {
@@ -1316,11 +1321,20 @@ impl Default for AudioSettings {
             scene: 100,
             system: 100,
             avatar: 100,
+            mute_mic_in_background: true,
         }
     }
 }
 
 impl AudioSettings {
+    /// `focus` while `mute_mic_in_background` is on, `Focused` while it is off.
+    pub const fn microphone_focus(&self, focus: ClientWindowFocus) -> ClientWindowFocus {
+        if self.mute_mic_in_background {
+            focus
+        } else {
+            ClientWindowFocus::Focused
+        }
+    }
     pub fn voice(&self) -> f32 {
         (self.voice * self.master) as f32 / 10_000.0
     }
@@ -1352,6 +1366,9 @@ pub const SUN_CASCADE_4_SPLITS: [f32; 3] = [0.102, 0.282, 0.474];
 /// How far from the player a spot light can cast shadows, in metres.
 pub const SPOT_SHADOW_MAX_DISTANCE: f32 = 20.0;
 pub const MIN_CASCADE: f32 = 0.1;
+/// How far Low's one cascade reaches, in metres, whatever the shadow distance: past it the
+/// 2048 map's texels are too large to hold an avatar's shadow (see decisions.md).
+pub const SUN_LOW_MAX_DISTANCE: f32 = 40.0;
 
 /// A light with its own cascades (the lobby stage's key light): the shadow settings only turn its
 /// shadows on or off.
@@ -1368,7 +1385,8 @@ pub struct ShadowlessLight;
 #[derive(Component)]
 pub struct StageCamera;
 
-/// The sun's cascades for a quality and a shadow distance, `None` when it casts no shadows.
+/// The sun's cascades for a quality and a shadow distance, `None` when it casts no shadows. Low's
+/// one cascade stops at `SUN_LOW_MAX_DISTANCE`.
 pub fn sun_cascades(setting: ShadowSetting, distance: f32) -> Option<CascadeShadowConfig> {
     if distance <= 0.0 {
         return None;
@@ -1376,7 +1394,7 @@ pub fn sun_cascades(setting: ShadowSetting, distance: f32) -> Option<CascadeShad
     let far = distance.max(MIN_CASCADE + f32::EPSILON);
     let bounds = match setting {
         ShadowSetting::Off => return None,
-        ShadowSetting::Low => vec![far],
+        ShadowSetting::Low => vec![far.min(SUN_LOW_MAX_DISTANCE)],
         ShadowSetting::High => {
             let mut previous = MIN_CASCADE;
             SUN_CASCADE_4_SPLITS
@@ -2016,8 +2034,13 @@ pub struct PlayerTeleported {
 /// Marks the local player as behind the loading screen — teleported or spawning, with a provisional
 /// position — until the destination scene resolves and they're placed in-world. Lives here (rather
 /// than `scene_runner`) so lower-level crates like `comms` can read it; `scene_runner` re-exports it.
-#[derive(Component)]
-pub struct OutOfWorld;
+#[derive(Component, Default, Debug)]
+pub struct OutOfWorld {
+    /// The name of the spawn point of the destination scene to be placed on, compared in
+    /// lowercase. Without one, or when the scene has none of that name, the scene's default spawn
+    /// points are used.
+    pub spawn_point: Option<String>,
+}
 
 /// The primary camera is the camera reel's free photo camera: the player camera systems leave its
 /// transform and projection alone until it is removed.
@@ -2775,8 +2798,15 @@ mod tests {
         let high = sun_cascades(ShadowSetting::High, 100.0).unwrap();
         assert_eq!(high.bounds, vec![10.2, 28.2, 47.4, 100.0]);
         assert_eq!(high.minimum_distance, MIN_CASCADE);
-        let medium = sun_cascades(ShadowSetting::Low, 60.0).unwrap();
-        assert_eq!(medium.bounds, vec![60.0]);
+        let medium = sun_cascades(ShadowSetting::Low, 20.0).unwrap();
+        assert_eq!(medium.bounds, vec![20.0]);
+        // Low's one cascade stops at 40 m; High's four reach the whole distance
+        for distance in [40.0, 60.0, 300.0] {
+            let low = sun_cascades(ShadowSetting::Low, distance).unwrap();
+            assert_eq!(low.bounds, vec![SUN_LOW_MAX_DISTANCE]);
+        }
+        let far = sun_cascades(ShadowSetting::High, 300.0).unwrap();
+        assert_eq!(far.bounds.last(), Some(&300.0));
         assert!(sun_cascades(ShadowSetting::Off, 60.0).is_none());
         assert!(sun_cascades(ShadowSetting::High, 0.0).is_none());
         // a distance under the minimum still yields a strictly increasing config
@@ -2799,7 +2829,22 @@ mod tests {
                 scene: 30,
                 system: 20,
                 avatar: 10,
+                mute_mic_in_background: true,
             }
+        );
+    }
+
+    #[test]
+    fn the_mic_follows_the_window_focus_only_while_it_mutes_in_the_background() {
+        let mut audio = AudioSettings::default();
+        assert_eq!(
+            audio.microphone_focus(ClientWindowFocus::NoFocus),
+            ClientWindowFocus::NoFocus
+        );
+        audio.mute_mic_in_background = false;
+        assert_eq!(
+            audio.microphone_focus(ClientWindowFocus::NoFocus),
+            ClientWindowFocus::Focused
         );
     }
 
@@ -2971,10 +3016,10 @@ mod tests {
         assert_eq!(paced(&config, None, Some(61)), 61);
         assert_eq!(paced(&config, Some(&thirty), Some(144)), 30);
         assert_eq!(paced(&config, None, None), 60);
-        config.graphics.fps_target = 999;
+        config.graphics.fps_target = UNCAPPED_FPS;
         assert_eq!(paced(&config, None, Some(144)), 144);
         config.graphics.vsync = false;
-        assert_eq!(paced(&config, None, Some(144)), 999);
+        assert_eq!(paced(&config, None, Some(144)), UNCAPPED_FPS);
         assert_eq!(paced(&config, Some(&thirty), Some(144)), 30);
     }
 
@@ -2983,15 +3028,15 @@ mod tests {
         let mut config = AppConfig::default();
         let shown = |config: &AppConfig, refresh| SessionGraphics::shown_fps(None, config, refresh);
         config.graphics.vsync = true;
-        config.graphics.fps_target = 999;
+        config.graphics.fps_target = UNCAPPED_FPS;
         assert_eq!(shown(&config, Some(61)), 60);
-        assert_eq!(shown(&config, None), 999);
+        assert_eq!(shown(&config, None), UNCAPPED_FPS);
         config.graphics.fps_target = 60;
         assert_eq!(shown(&config, Some(61)), 60);
         assert_eq!(shown(&config, Some(145)), 60);
         config.graphics.vsync = false;
-        config.graphics.fps_target = 999;
-        assert_eq!(shown(&config, Some(61)), 999);
+        config.graphics.fps_target = UNCAPPED_FPS;
+        assert_eq!(shown(&config, Some(61)), UNCAPPED_FPS);
     }
 
     #[test]

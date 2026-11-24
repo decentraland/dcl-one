@@ -56,19 +56,6 @@ vi.mock("@/data/lib/catalyst/social/badges", () => ({ fetchUserBadges: () => Pro
 vi.mock("@/core/lib/telemetry/track", () => ({ track: net.track }));
 vi.mock("@/data/lib/auth/index", () => ({ useAuth: () => auth.state }));
 
-// The tabs still on ui3 pages; these stand-ins show what the route hands them.
-const { stub } = vi.hoisted(() => ({
-  stub: (tab: string) => ({
-    default: (props: { profile: { name: string }; isOwnProfile?: boolean }) => (
-      <section data-tab={tab}>
-        <h2>{props.profile.name}</h2>
-        <p>{props.isOwnProfile ? "own" : "member"}</p>
-      </section>
-    ),
-  }),
-}));
-vi.mock("@ui/web/pages/StProfileOverviewTab", () => stub("overview"));
-
 import { CatalystError } from "@/data/lib/catalyst/client";
 import { mapProfile, type ProfileVM } from "@/data/lib/catalyst/social/profile";
 import { profileKeys, profileQuery } from "@/data/lib/profile/queries";

@@ -1,5 +1,5 @@
 import type { ComponentProps } from "react";
-import StCastNotFound from "@dcl/one-ui/apps/sites/cast/StCastNotFound";
+import { StCastNotFound } from "@dcl/one-ui";
 
 import { track, type TrackContext } from "@/core/lib/telemetry/track";
 

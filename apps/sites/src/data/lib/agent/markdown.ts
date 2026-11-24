@@ -1,5 +1,10 @@
-import { blogHref } from "@dcl/one-ui/apps/sites/blog/blogLinks";
-import { blogPostHref, type BlogArticle, type BlogCard, type BlogRichTextNode } from "@dcl/one-ui/apps/sites/blog/blogModel";
+import {
+  blogHref,
+  blogPostHref,
+  type BlogArticle,
+  type SitesBlogCard as BlogCard,
+  type BlogRichTextNode,
+} from "@dcl/one-ui";
 import type { Place } from "../catalyst/schema";
 import { playUrl } from "../catalyst/bases";
 import { eventOccurrence, eventCoords, formatEventWhen, type Event } from "../catalyst/places/events";

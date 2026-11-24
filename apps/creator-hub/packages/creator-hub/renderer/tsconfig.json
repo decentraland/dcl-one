@@ -15,6 +15,7 @@
       "/@/*": ["./src/*"],
       "/shared/*": ["../shared/*"],
       "@ui/*": ["../../../../ui3/src/*"],
+      "@dcl/one-ui": ["../../../../../library/ui/index.ts"],
       "@dcl/one-ui/*": ["../../../../../library/ui/*"]
     },
     "lib": ["ESNext", "dom", "dom.iterable"],

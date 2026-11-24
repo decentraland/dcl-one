@@ -2,7 +2,7 @@
 
 ## Public URLs and image paths
 
-Set `PUBLIC_URL` to the externally reachable node base URL, including its port and any deployment prefix. Stored poster keys use the `/events-assets-099ac00` mount on the configured public base. The bind address is used for local serving. An unset `PUBLIC_URL` leaves mounted poster links relative for same-origin clients. `EVENTS_BASE_URL` identifies the events website for sitemaps and does not select the backend asset origin.
+Set `PUBLIC_URL` to the externally reachable node base URL, including its port and any deployment prefix. Stored poster keys use the `/events-assets-099ac00` mount on the configured public base. The bind address is used for local serving. An unset `PUBLIC_URL` leaves mounted poster links relative for same-origin clients. `EVENTS_SITE_URL` selects the Sites origin for notification page links (`/events`, `/events?tab=my` and `/events/edit-event/<id>`), defaulting to `https://decentraland.org`. `EVENTS_BASE_URL` retains the legacy event website origin for sitemaps, world-event default posters and Slack links, defaulting to `https://events.decentraland.org`. Neither selects the backend asset origin. Reminder, start and approval jump links keep `JUMP_IN_SITE_URL`.
 
 An event created without a poster gets the old service's default (`createEvent.ts:209-224`): the parcel map `https://api.decentraland.org/v1/parcels/<x>/<y>/map.png` (the estate map `/v1/estates/<id>/map.png` once the scene's estate is known) for a land event, `EVENTS_BASE_URL/images/event-default.jpg` for a world event. The default is regenerated when the event moves and when a world event's poster is cleared; an organizer's own poster is never replaced. A row whose image is the local default `/assets/event-default.webp` expands it to `PUBLIC_URL/events/assets/event-default.webp` in responses and notifications.
 
@@ -71,7 +71,7 @@ With `EVENTS_MIRROR_UPSTREAM=true` the `events-mirror` job copies the old events
 
 The old events service ran four cron jobs (`Event/cron.ts`) and posted Slack notices inline (`Slack/utils.ts`). This node runs them as leased periodic jobs over the same database; the texts, links and audiences are the old service's, the delivery is durable.
 
-- **Reminders** (`notifyUpcomingEvents`, `cron.ts:51-83`): the social `event-notifications` job (every 60 s) queues one `events_starts_soon` intent per approved occurrence starting within the next hour that has a local RSVP (`going`), and delivers it to those attendees as "Event starts in an hour" / "The event <name> starts in an hour." with the link `JUMP_IN_SITE_URL/events?id=<id>&position=<x>,<y>[&realm=<server>]` (`Notifications/index.ts:30-68`). The old service's window was `[last run + 1 h, now + 1 h)` over a cursor; here the occurrence key is the checkpoint, so an occurrence is reminded once and a crash loses nothing. Difference kept: an event approved with less than an hour to go is still reminded once (the old service's cursor skipped it).
+- **Reminders** (`notifyUpcomingEvents`, `cron.ts:51-83`): the social `event-notifications` job (every 60 s) queues one `events_starts_soon` intent per approved occurrence starting within the next hour that has a local RSVP (`going`), and delivers it to those attendees as "Event starts in an hour" / "The event <name> starts in an hour." with the link `JUMP_IN_SITE_URL/events?id=<id>&position=<x>,<y>[&realm=<server>]` (`Notifications/index.ts:30-68`). The old service's window was `[last run + 1 h, now + 1 h)` over a cursor; here the occurrence key is the checkpoint, so occurrence scanning is durable across retries. Difference kept: an event approved with less than an hour to go is still reminded once (the old service's cursor skipped it).
 - **Started** (`notifyStartedEvents`, `cron.ts:85-148`): `events_started` to the attendees ("Event started" / "The event <name> has begun!") and, for a local event of a local community, to its members ("Community Event starting" / "A <community> event is about to start."), deduplicated; same link. A mirrored event notifies its local RSVPs only.
 - **Ended** (`notifyEndedEvents`, `cron.ts:150-192`): the old service published an `EVENT_ENDED` message with `totalAttendees` and the `communityId`; its consumer kept the community event metrics. Here the durable `social.event_ended_occurrences` row is that message (event, occurrence, attendees = current RSVPs, community) and `social.community_event_metrics` is updated in the same commit; each ending is also logged (`event ended`, `total_attendees`). Local events only.
 - **Foundation names** (`refreshFoundationAddresses`, `modules/decentralandFoundationAddresses.ts`): every five minutes the events reads refresh the `events-decentraland-foundation-addresses` flag payload from the mirrored feature flags and answer "Decentraland Foundation" as `user_name` for those wallets.
@@ -79,7 +79,11 @@ The old events service ran four cron jobs (`Event/cron.ts`) and posted Slack not
 
 Slack moderation notices (`SLACK_WEBHOOK`, only with `OPS_WRITES_ENABLED`) are captured in the authoring transaction as rows of the moderation outbox `explore.moderation_hooks` (channel `events`; the places moderation notices of `PLACES_MODERATION_WEBHOOK` share the table on channel `places`) and posted by the `moderation-hook` job (every 60 s, at least once, six attempts with backoff, 30-day retention). While the database has the table `explore.event_moderation_hooks`, every pass of the job first moves its due pending rows into the outbox (`adopt_legacy_rows`, one `to_regclass` check per pass; a row an older worker claimed waits for its retry minute, so a notice in flight is not posted twice). The release `schemas/releases/explore-retired-hook-tables.sql` moves the pending rows the same way, then drops that table, its activation row and the unused `explore.event_upcoming_hooks`; run it once with `psql` after every replica runs this binary and `catalyst schema migrate` recorded step `0029_explore_parity`. The messages are the old service's: `:tada: New event submitted` with the review link `EVENTS_BASE_URL/whats-on/admin/pending-events?id=<id>`, the poster and the place line (`Slack/utils.ts:33-81`); `:white_check_mark: new event approved`, `:x: new event rejected` (with the reason) and `:wastebasket: event deleted by admin` with their actor and the self-moderation suffix (`:83-188`); `:pencil2: user <name> just edited his event`, at most once per minute per event (`:190-220`); `:runner: <id> is about to start` with the reminder count, queued by the reminder job only with `EVENTS_UPCOMING_SUMMARIES_ENABLED` (`:222-257`, `cron.ts:76`; below); `:magic_wand: user <wallet> has new permissions` with the permission names (`:322-358`). The edit and upcoming links are `EVENTS_BASE_URL/whats-on/edit-hangout/<id>?openPreview` (the old service hard-coded `https://decentraland.org` there). User content is Slack-escaped in `mrkdwn` blocks. The old service's `notifyEventError` had no caller and is not ported. A dcl-one extra: edits are also capped at two notices per minute per creator.
 
-Email is a dcl-one extra: every event notice also enters `social.notification_deliveries` for the `email` channel, governed by the recipient's social subscription (`ignore_all_email`, per-type settings, community opt-outs), not by the legacy `notify_by_email` profile flag; the old service's own email and web-push code was dead. See `docs/adr/2026-11-01-event-notification-delivery.md`.
+Reminder, start, community-created, approval, rejection and deletion notices each keep one inbox row per event, type and recipient. A newer occurrence or moderation transition refreshes that row; an older source timestamp cannot overwrite it, and equal source times keep the first payload. Email is queued only on the first insertion, including for approval and rejection. Intent cleanup and email-delivery pruning do not permit another email. Native history keeps its existing ID when adopted; existing historical duplicates are not consolidated.
+
+Event rows honor in-app preferences at their first insertion. A hidden row is read and stays hidden after later moderation or occurrences, even if the recipient turns in-app back on; a visible row stays visible after in-app is turned off. Email preferences remain independent. Imported RSVPs use the same attendance table and reminder eligibility as locally recorded RSVPs. The import reconciles upstream cancellations only for rows whose imported values remain unchanged; later local cancellations and re-RSVPs take precedence. See the Events import mapping for the historical cutover requirements.
+
+Every newly stored event notice also enters `social.notification_deliveries` for the `email` channel, governed by the recipient's social subscription (`ignore_all_email`, per-type settings, community opt-outs), not by the legacy `notify_by_email` profile flag; the old service's own email and web-push code was dead. See `docs/adr/2026-11-01-event-notification-delivery.md`.
 
 ## Conditional repair for an early staging default
 
@@ -134,3 +138,27 @@ queues one notice for the occurrence, with the count of its local `going` RSVPs,
 transaction that finishes the reminders, so an occurrence is announced at most once and
 a crash repeats neither. Delivery, retries and retention are the outbox's
 (`moderation-hook` job). Off, the reminders still go out and no Slack notice is queued.
+
+## Activation with imported event history
+
+Keep event jobs stopped on every target process until imported notification
+identity has been checked and repaired. Keep target `catalyst serve` processes
+stopped, or configure every target process with `FLEET_JOBS_ENABLED=false` during
+the cutover; this stands down all fleet jobs, not only event notifications.
+Disabling Social writes alone does not establish this prerequisite.
+
+The deployment owner must confirm whether the database previously imported
+notification history or attendance without event identity or import provenance.
+For notification history, freeze source writers and run a full
+`run notifications-workers --step notification --restart` import before enabling
+jobs. An incremental import cannot repair older rows outside its watermark.
+Verify that affected event rows carry their exact event identity. Complete the
+Events attendance import and reconciliation against the authoritative source,
+retaining later local changes.
+
+If required source records no longer exist, an earlier authoritative export is
+needed to identify the exact historical rows. The current database alone cannot
+prove that coverage. Keep jobs stopped until that evidence is reconciled or the
+deployment owner explicitly accepts the remaining historical limitation. A
+database that never ran the legacy import does not require an import repair.
+This prerequisite is operational; the worker does not enforce an import marker.

@@ -3,6 +3,7 @@ use crate::{
     ipfs_path::IpfsType, ContentMap, EndpointConfig, IpfsEntity, RealmConfig, ServerAbout,
 };
 use bevy::asset::io::Reader;
+use common::sync::MutexExt;
 
 /// A 2-level BC7 KTX2 variant and its CID.
 fn bc7_variant() -> (Vec<u8>, String) {
@@ -261,7 +262,7 @@ fn io_with_cache(label: &str) -> (Arc<IpfsIo>, PathBuf) {
 async fn variants_are_off_by_default() {
     let (io, dir) = io_with_cache("off");
     io.request_bevy_variants(SCENE);
-    assert!(io.bevy_variants.manifests.lock().unwrap().is_empty());
+    assert!(io.bevy_variants.manifests.lock_ignore_poison().is_empty());
     let path = content_path("tex.png");
     let ipfs_path = IpfsPath::new_from_path(&path).unwrap().unwrap();
     assert!(io.read_bevy_variant(&ipfs_path, &path).await.is_none());
@@ -443,7 +444,7 @@ async fn serve(routes: Vec<(String, Vec<u8>)>) -> (String, Arc<Mutex<Vec<String>
                         break;
                     }
                 }
-                seen.lock().unwrap().push(path.clone());
+                seen.lock_ignore_poison().push(path.clone());
                 let response = match routes.iter().find(|(route, _)| *route == path) {
                     Some((_, body)) => [
                         format!(
@@ -517,8 +518,7 @@ async fn scene_with_variant_of(
     drop(sender);
     io.bevy_variants
         .manifests
-        .lock()
-        .unwrap()
+        .lock_ignore_poison()
         .insert(SCENE.to_owned(), receiver);
 }
 
@@ -530,7 +530,10 @@ async fn read_all(io: &Arc<IpfsIo>, path: &Path) -> Vec<u8> {
 }
 
 fn requests_for(log: &Mutex<Vec<String>>, path: &str) -> usize {
-    log.lock().unwrap().iter().filter(|p| *p == path).count()
+    log.lock_ignore_poison()
+        .iter()
+        .filter(|p| *p == path)
+        .count()
 }
 
 #[tokio::test]
@@ -563,7 +566,7 @@ async fn a_texture_variant_is_served_as_its_ktx2_and_cached_under_its_url() {
 
     assert_eq!(requests_for(&log, &variant_route), 1);
     assert_eq!(requests_for(&log, &original_route), 0);
-    let session = io.bevy_variants.session.lock().unwrap();
+    let session = io.bevy_variants.session.lock_ignore_poison();
     assert_eq!(
         (session.downloaded, session.cached, session.fallbacks),
         (1, 1, 0)
@@ -678,7 +681,7 @@ async fn a_texture_variant_whose_header_names_no_bc_format_falls_back_to_the_ori
     assert!(!dir.join(&name).exists());
     assert!(!dir.join(ORIGINAL_CID).exists());
     {
-        let session = io.bevy_variants.session.lock().unwrap();
+        let session = io.bevy_variants.session.lock_ignore_poison();
         assert_eq!(session.fallbacks, 1);
         assert!(session.recent[0].reason.contains("vkFormat 146"));
         assert!(session.bad.contains(&served_path(VARIANT_CID)));
@@ -708,7 +711,7 @@ async fn a_variant_that_is_no_ktx2_falls_back_to_the_original() {
     let name = cache_name(&base, &served_path(VARIANT_CID));
     assert!(!dir.join(&name).exists());
     {
-        let session = io.bevy_variants.session.lock().unwrap();
+        let session = io.bevy_variants.session.lock_ignore_poison();
         assert!(session.recent[0].reason.starts_with("invalid KTX2"));
         assert!(session.bad.contains(&served_path(VARIANT_CID)));
     }
@@ -725,7 +728,7 @@ async fn a_missing_variant_falls_back_to_the_original() {
     scene_with_variant(&io, &base, VARIANT_CID).await;
     let path = content_path("tex.png");
     assert_eq!(read_all(&io, &path).await, b"original png");
-    let session = io.bevy_variants.session.lock().unwrap();
+    let session = io.bevy_variants.session.lock_ignore_poison();
     assert_eq!(session.fallbacks, 1);
     assert!(session.recent[0].reason.starts_with("fetch:"));
     drop(session);
@@ -766,7 +769,7 @@ async fn a_glb_variant_is_read_as_served() {
 
     assert_eq!(requests_for(&log, &variant_route), 1);
     assert_eq!(requests_for(&log, &original_route), 0);
-    let session = io.bevy_variants.session.lock().unwrap();
+    let session = io.bevy_variants.session.lock_ignore_poison();
     assert_eq!(session.served_by_format.get("glb"), Some(&[1, 1]));
     drop(session);
     std::fs::remove_dir_all(dir).unwrap();
@@ -794,7 +797,7 @@ async fn a_glb_variant_that_is_not_a_glb_falls_back_to_the_original() {
     let name = cache_name(&base, &served_path_of("glb", &cid));
     assert!(!dir.join(&name).exists());
     {
-        let session = io.bevy_variants.session.lock().unwrap();
+        let session = io.bevy_variants.session.lock_ignore_poison();
         assert!(session.recent[0].reason.starts_with("invalid glb variant"));
         assert_eq!(session.fallbacks_by_format.get("glb"), Some(&1));
         assert!(session.bad.contains(&served_path_of("glb", &cid)));
@@ -840,7 +843,7 @@ fn a_glb_model_that_fails_to_load_is_reloaded_from_the_original() {
     );
     assert!(!variants.is_served(&path));
     assert!(variants.is_bad(&served_path_of("glb", VARIANT_CID)));
-    let session = variants.session.lock().unwrap();
+    let session = variants.session.lock_ignore_poison();
     assert_eq!(session.fallbacks_by_format.get("glb"), Some(&1));
     assert!(session.recent[0]
         .reason
@@ -1002,14 +1005,12 @@ async fn files_wait_for_a_pending_manifest_only_until_its_deadline() {
     let (sender, receiver) = watch::channel(ManifestState::Pending);
     io.bevy_variants
         .manifests
-        .lock()
-        .unwrap()
+        .lock_ignore_poison()
         .insert(SCENE.to_owned(), receiver);
     let requested = |ago: Duration| {
         io.bevy_variants
             .requested_at
-            .lock()
-            .unwrap()
+            .lock_ignore_poison()
             .insert(SCENE.to_owned(), web_time::Instant::now() - ago);
     };
     let path = content_path("tex.png");
@@ -1029,7 +1030,7 @@ async fn files_wait_for_a_pending_manifest_only_until_its_deadline() {
     assert!(io.read_bevy_variant(&ipfs_path, &path).await.is_none());
     assert!(began.elapsed() < Duration::from_millis(100));
     {
-        let session = io.bevy_variants.session.lock().unwrap();
+        let session = io.bevy_variants.session.lock_ignore_poison();
         assert_eq!(session.fallbacks, 2);
         assert!(session.recent[0].reason.contains("manifest was not there"));
         assert!(session.bad.is_empty());
@@ -1045,8 +1046,7 @@ async fn files_wait_for_a_pending_manifest_only_until_its_deadline() {
     let (sender, receiver) = watch::channel(ManifestState::Pending);
     io.bevy_variants
         .manifests
-        .lock()
-        .unwrap()
+        .lock_ignore_poison()
         .insert(SCENE.to_owned(), receiver);
     requested(Duration::ZERO);
     let io2 = io.clone();

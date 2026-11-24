@@ -1,5 +1,5 @@
 import Text from '@ui/atoms/Text';
-import { Tooltip } from '@dcl/one-ui/components/Tooltip/Tooltip';
+import { Tooltip } from '@dcl/one-ui';
 
 import { InfoOutlinedIcon } from '@ui/atoms/icons-material';
 

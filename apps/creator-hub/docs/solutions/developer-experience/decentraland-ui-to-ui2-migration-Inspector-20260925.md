@@ -7,7 +7,7 @@ The Inspector no longer depends on `decentraland-ui` v6 (the Semantic UI library
 | Before (`decentraland-ui`) | Now |
 | --- | --- |
 | `Loader`, `Dimmer` | The ui3 `Spinner` (`@ui/atoms/Spinner`), wrapped by `components/Loading`. |
-| `Popup`, `PopupContent` | The shared `Tooltip` (`@dcl/one-ui/components/Tooltip/Tooltip`). |
+| `Popup`, `PopupContent` | The shared `Tooltip` (`@dcl/one-ui`). |
 | `WearablePreview` | `components/WearablePreview`, a local component. |
 | `lib/styles.css`, `lib/dark-theme.css` | `theme/base.css` and seven custom properties in `theme/vars.css`. |
 | `AlertColor` (type, from `decentraland-ui2`) | A local union in `hooks/useSnackbar.ts`. |

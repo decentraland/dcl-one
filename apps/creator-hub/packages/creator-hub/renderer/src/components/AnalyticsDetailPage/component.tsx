@@ -4,7 +4,7 @@ import Button from '@ui/atoms/Button';
 import { SelectOption } from '@ui/atoms/Select';
 import { Tab, Tabs } from '@ui/atoms/Tabs';
 import Text from '@ui/atoms/Text';
-import { Tooltip } from '@dcl/one-ui/components/Tooltip/Tooltip';
+import { Tooltip } from '@dcl/one-ui';
 
 import { FileDownloadOutlinedIcon as DownloadIcon } from '@ui/atoms/icons-material';
 

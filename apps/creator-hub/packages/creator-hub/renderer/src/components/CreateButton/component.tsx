@@ -1,7 +1,7 @@
 import { useCallback, useRef, useState } from 'react';
 import Button from '@ui/atoms/Button';
 import { Menu, MenuItem } from '@ui/atoms/Menu';
-import { Tooltip } from '@dcl/one-ui/components/Tooltip/Tooltip';
+import { Tooltip } from '@dcl/one-ui';
 import { AddIcon, FileDownloadOutlinedIcon } from '@ui/atoms/icons-material';
 
 import arrowDown from '/assets/images/arrow-down.svg';

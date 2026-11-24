@@ -870,7 +870,7 @@ describe('PayoutsTab', () => {
         expect(api.postEmailVerification).toHaveBeenCalledTimes(1);
         expect(api.putEnrollment).not.toHaveBeenCalled();
         expect(within(dialog).getByText('jane.doe@example.com').tagName).toBe('B');
-        expect(document.activeElement).toBe(within(dialog).getByLabelText('Digit 1 of 6'));
+        await focusOn(within(dialog).getByLabelText('Digit 1 of 6'));
         const resend = within(dialog).getByText('Resend code');
         await waitFor(() => expect(resend.getAttribute('aria-disabled')).toBe('true'));
         expect(within(dialog).getByText('Verify').hasAttribute('disabled')).toBe(true);

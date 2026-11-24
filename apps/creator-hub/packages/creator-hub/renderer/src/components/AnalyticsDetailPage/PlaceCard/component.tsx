@@ -1,7 +1,7 @@
 import { useCallback, useState } from 'react';
 import Button from '@ui/atoms/Button';
 import Text from '@ui/atoms/Text';
-import { Tooltip } from '@dcl/one-ui/components/Tooltip/Tooltip';
+import { Tooltip } from '@dcl/one-ui';
 
 import {
   ArrowForwardIcon,

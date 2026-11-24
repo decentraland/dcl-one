@@ -500,6 +500,7 @@ CREATE TABLE social.scene_stream_access (
     streaming_key text NOT NULL,
     ingress_id text,
     room_id text,
+    admin_place_key text,
     generated_by text NOT NULL,
     created_at timestamp without time zone NOT NULL DEFAULT timezone('UTC', now()),
     expiration_time timestamp without time zone,
@@ -536,7 +537,10 @@ CREATE TABLE social.scene_stream_cleanup (
  occurred_at timestamp without time zone NOT NULL, due_at timestamp without time zone NOT NULL,
  claim_token uuid, claim_until timestamp without time zone,
  attempts integer NOT NULL DEFAULT 0 CHECK (attempts >= 0), ingress_deleted boolean NOT NULL DEFAULT false,
- recipient text, metadata jsonb, source_context jsonb
+ recipient text, metadata jsonb, source_context jsonb,
+ recipients text[] NOT NULL DEFAULT '{}', recipients_resolved boolean NOT NULL DEFAULT false,
+ recipient_cursor integer NOT NULL DEFAULT 0 CHECK (recipient_cursor >= 0),
+ notification_started boolean NOT NULL DEFAULT false
 );
 -- Bounded ordered cleanup retries.
 CREATE INDEX scene_stream_cleanup_due_idx ON social.scene_stream_cleanup (due_at, access_id);
@@ -743,6 +747,11 @@ CREATE INDEX notifications_address_time_idx
 -- partial predicate, and carries the keyset tie-breaker).
 CREATE INDEX notifications_unread_idx
     ON social.notifications (address, occurred_at DESC, id DESC) WHERE NOT read;
+-- Event history adoption probes one wallet/type/event in created order.
+-- Keyed carriers leave this index; other producers without an eventId do not enter it.
+CREATE INDEX notifications_event_history_idx
+    ON social.notifications (address, type, (metadata->>'eventId'), created_at, id)
+    WHERE broadcast_key IS NULL AND metadata->>'eventId' IS NOT NULL;
 -- A re-run broadcast is idempotent per recipient.
 CREATE UNIQUE INDEX notifications_broadcast_uidx
     ON social.notifications (address, broadcast_key) WHERE broadcast_key IS NOT NULL;

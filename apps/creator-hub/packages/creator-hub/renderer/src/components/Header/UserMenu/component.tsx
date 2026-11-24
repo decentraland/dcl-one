@@ -2,7 +2,7 @@ import { useCallback, useState } from 'react';
 import AvatarFace from '@ui/atoms/AvatarFace';
 import Button from '@ui/atoms/Button';
 import { Menu, MenuItem } from '@ui/atoms/Menu';
-import { Tooltip } from '@dcl/one-ui/components/Tooltip/Tooltip';
+import { Tooltip } from '@dcl/one-ui';
 import { t } from '/@/modules/store/translation/utils';
 import type { Props } from './types';
 

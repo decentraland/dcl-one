@@ -3,7 +3,7 @@ import { cleanup, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import type { ComponentProps } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi, type Mock } from "vitest";
-import { DayCard, UpcomingCard } from "@dcl/one-ui/apps/sites/events/cards";
+import { DayCard, UpcomingCard } from "@dcl/one-ui";
 vi.hoisted(() =>
   Object.assign(window, {
     __vite_plugin_react_preamble_installed__: true,

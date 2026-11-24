@@ -3,7 +3,7 @@ import { cx } from '/@/lib/cx';
 
 import Button from '@ui/atoms/Button';
 import { Select, SelectOption } from '@ui/atoms/Select';
-import { Tooltip } from '@dcl/one-ui/components/Tooltip/Tooltip';
+import { Tooltip } from '@dcl/one-ui';
 
 import type { CreatorFundPlace, PlaceReason } from '/shared/types/creator-fund';
 

@@ -1,4 +1,4 @@
-import type { WhatsOnCardData } from "@dcl/one-ui/apps/sites/home/WhatsOn";
+import type { WhatsOnCardData } from "@dcl/one-ui";
 import {
   getAvatarBackgroundColor,
   getDisplayName,

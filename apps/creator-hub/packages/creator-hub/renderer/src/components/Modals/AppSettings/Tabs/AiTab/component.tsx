@@ -6,7 +6,7 @@ import IconButton from '@ui/atoms/IconButton';
 import Spinner from '@ui/atoms/Spinner';
 import Text from '@ui/atoms/Text';
 import TextField from '@ui/atoms/TextField';
-import { Tooltip } from '@dcl/one-ui/components/Tooltip/Tooltip';
+import { Tooltip } from '@dcl/one-ui';
 
 import { ai, misc } from '#preload';
 

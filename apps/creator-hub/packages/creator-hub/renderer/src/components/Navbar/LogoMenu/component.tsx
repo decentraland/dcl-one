@@ -1,6 +1,6 @@
 import { useCallback, useRef, useState, type MouseEvent } from 'react';
 import { Menu, MenuItem } from '@ui/atoms/Menu';
-import { Tooltip } from '@dcl/one-ui/components/Tooltip/Tooltip';
+import { Tooltip } from '@dcl/one-ui';
 import { ArrowRightIcon } from '@ui/atoms/icons-material';
 
 import { misc } from '#preload';
