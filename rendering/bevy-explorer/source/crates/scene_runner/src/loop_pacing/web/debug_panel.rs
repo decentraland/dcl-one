@@ -1,8 +1,9 @@
 //! The web scene loop's section in the runtime debug panel ("Scene Loop"): the scheduling mode,
 //! which the tester switches without a reload (`/scene_loop_mode`, as `?sceneLoop=` sets it at
-//! load), where the last loop's deadline came from and its budget, the frame tail's reserve, the
-//! lateness of the loop's timed waits for replies and the scenes whose relays wake on the engine's
-//! send (`/scene_loop_state`).
+//! load), where the last loop's deadline came from and its budget, the time from the previous
+//! frame's handoff to this frame's start, the frame tail's reserve, the lateness of the loop's
+//! timed waits for replies and the scenes whose relays wake on the engine's send
+//! (`/scene_loop_state`).
 
 use std::time::Duration;
 
@@ -69,12 +70,14 @@ fn state(
         "mode": mode.name,
         "deadline": deadline,
         "budget": pacing.budget.map(ms),
+        "handoffGap": pacing.handoff_gap.map(ms),
         "tail": reserve.zip(pacing.tail.p90()).map(|(reserve, p90)| [ms(p90), ms(reserve)]),
         "tailFrames": pacing.tail.len,
         "lateness": lateness.map(ms),
         "woken": {"count": woken.len(), "scenes": woken},
         "unavailable": {
             "budget": "No scene loop has run yet.",
+            "handoffGap": "No frame has handed over to the render worker after a scene loop yet.",
             "tail": tail_reason,
             "lateness": lateness_reason,
         },
@@ -115,6 +118,10 @@ mod commands {
                 fields: &[
                     ("Deadline from", "deadline"),
                     ("Last loop budget (ms)", "budget"),
+                    (
+                        "Handoff to the next frame's start, last frame (ms)",
+                        "handoffGap",
+                    ),
                     (
                         "Frame tail reserve (ms) (90th percentile / with margin)",
                         "tail",
@@ -242,6 +249,7 @@ mod tests {
             pacing.tail.push(dur(3.0));
         }
         pacing.budget = Some(dur(7.25));
+        pacing.handoff_gap = Some(dur(0.4));
         pacing.wait_lateness.push(now, dur(1.5));
         let state = state(
             &pacing,
@@ -253,6 +261,7 @@ mod tests {
         );
         assert_eq!(state["deadline"], "Frame start");
         assert_eq!(state["budget"], 7.25);
+        assert_eq!(state["handoffGap"], 0.4);
         // 3 ms and 6 % of the frame target
         assert_eq!(state["tail"], json!([3.0, 4.0]));
         assert_eq!(state["tailFrames"], 32);

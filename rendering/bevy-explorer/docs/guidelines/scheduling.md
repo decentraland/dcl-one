@@ -106,7 +106,10 @@ keep its timed waits clear of the deadline by their lateness (below). `legacy` u
 these. The runtime debug panel's "Scene Loop" section (web) switches the mode without a reload
 (`/scene_loop_mode`) and shows where the last loop's deadline came from, its budget, the tail
 reserve, the waits' lateness and the scenes whose relays wake (`/scene_loop_state`,
-`loop_pacing/web/debug_panel.rs`).
+`loop_pacing/web/debug_panel.rs`). It also shows the time from a frame's handoff to the next
+frame's start: the engine worker runs unpaced after the handoff (the render worker's animation
+frame paces it inside the handoff), so that time is the runner's and its event loop's work
+between frames, which the reserve does not cover.
 
 Each pass of the loop runs four chained sets (`SceneLoopSets`):
 

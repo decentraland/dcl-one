@@ -168,6 +168,9 @@ pub struct LoopPacing {
     loop_end: Option<Instant>,
     // the last loop's, from its start to its deadline, for the debug panel
     budget: Option<Duration>,
+    // from the previous frame's handoff to this frame's start, for the debug panel: the engine
+    // worker's work between frames (the runner, its event loop's tasks), which no reserve covers
+    handoff_gap: Option<Duration>,
     tail: TailEstimate,
     wait_lateness: WaitLateness,
 }
@@ -180,6 +183,7 @@ impl LoopPacing {
         if let (Some(handoff), Some(loop_end)) = (handoff, self.loop_end.take()) {
             if let Some(tail) = frame_tail(loop_end, handoff, waits) {
                 self.tail.push(tail);
+                self.handoff_gap = Some(now.saturating_duration_since(handoff));
             }
         }
     }
@@ -425,6 +429,8 @@ mod tests {
         assert_eq!(pacing.frame_start, Some(s + T));
         assert_eq!(pacing.tail.len, 1);
         assert!(close(pacing.tail.ring[0], ms(3.0)));
+        // and from that handoff to this frame's start
+        assert!(close(pacing.handoff_gap.unwrap(), T - ms(14.0)));
         // each loop end closes one tail; a frame without a new one pushes none
         pacing.frame_started(s + 2 * T, Some(s + ms(20.0)), Duration::ZERO);
         assert_eq!(pacing.tail.len, 1);
