@@ -25,6 +25,7 @@ fn options(case: &str) -> ReportOptions {
         pr: None,
         change: None,
         base: None,
+        release: None,
         run_url: None,
         expected_runs: 3,
         expected_labels: Vec::new(),
@@ -125,6 +126,66 @@ fn ok_the_whole_report_with_its_header() {
 
     let expected = std::fs::read_to_string(fixture("ok.md")).unwrap();
     assert_eq!(report.markdown, expected.replace("\r\n", "\n"));
+}
+
+#[test]
+fn release_each_machine_also_compares_the_change_with_the_latest_release() {
+    let mut options = options("release");
+    options.release = Some("`0.1.0-80.commit-9999999`".into());
+    let report = build(&options);
+    assert!(report.has_data);
+    has_line(
+        &report,
+        "**Overall: 🟢 CPU average improved on Apple M1 (Chrome), Intel Core i5 (Chrome)**",
+    );
+    has_line(
+        &report,
+        "**Against the latest release: 🟢 CPU average improved on Apple M1 (Chrome), Intel Core i5 (Chrome)**",
+    );
+    assert!(report
+        .markdown
+        .contains("latest release: `0.1.0-80.commit-9999999`"));
+
+    // the release runs are the baseline's, so the release table repeats its frame-time rows
+    let apple = section(&report, "Apple M1 (Chrome)");
+    let table = apple
+        .iter()
+        .position(|l| *l == "**Against the latest release**")
+        .unwrap_or_else(|| panic!("no release table\n{apple:#?}"));
+    assert_eq!(
+        &apple[table + 2..table + 11],
+        &[
+            "| Metric | Release | Change | Δ | Result |",
+            "| --- | ---: | ---: | ---: | :--- |",
+            "| Samples | 10 (×3) | 10 (×3) | | |",
+            "| CPU average | 23.0 ms (22.9–23.1) | 21.0 ms (20.9–21.1) | -2.0 ms | 🟢 9% faster |",
+            "| CPU 1% worst | 32.0 ms (31.4–32.6) | 30.0 ms (29.0–31.0) | -2.0 ms | 🟢 6% faster |",
+            "| CPU 0.1% worst | 32.0 ms (31.4–32.6) | 30.0 ms (29.0–31.0) | -2.0 ms | — informational |",
+            "| GPU average | 6.4 ms (6.3–6.5) | 6.4 ms (6.3–6.5) | 0.0 ms | ⚪ within noise |",
+            "| GPU 1% worst | 10.0 ms (9.0–11.0) | 10.0 ms (9.0–11.0) | 0.0 ms | ⚪ within noise |",
+            "| GPU 0.1% worst | 10.0 ms (9.0–11.0) | 10.0 ms (9.0–11.0) | 0.0 ms | — informational |",
+        ]
+    );
+}
+
+#[test]
+fn release_a_release_without_runs_is_said_and_the_base_comparison_stays() {
+    let mut options = options("ok");
+    options.release = Some("`0.1.0-80.commit-9999999`".into());
+    let report = build(&options);
+    has_line(
+        &report,
+        "**Overall: 🟢 CPU average improved on Apple M1 (Chrome), Intel Core i5 (Chrome)**",
+    );
+    has_line(
+        &report,
+        "**Against the latest release: ⚠️ nothing was compared — no Release run produced data**",
+    );
+    assert!(!report.markdown.contains("**Against the latest release**"));
+
+    // without a release, no release line at all
+    let report = report_of("ok");
+    assert!(!report.markdown.contains("Against the latest release:"));
 }
 
 #[test]

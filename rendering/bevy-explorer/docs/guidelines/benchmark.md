@@ -1,9 +1,10 @@
 # Benchmark
 
 The bare-metal A/B benchmark of the web explorer. On self-hosted laptops, Chrome runs a pull
-request's web app against main's, interleaved, and the report goes into the *Performance* section
-of the pull request's CI status comment: samples, CPU and GPU frame time (average, 1% and 0.1%
-worst) and exceptions per run, with a verdict for each. It has three parts:
+request's web app against main's and the latest release's, interleaved, and the report goes into
+the *Performance* section of the pull request's CI status comment: samples, CPU and GPU frame time
+(average, 1% and 0.1% worst) and exceptions per run against main, and the frame times against the
+latest release, with a verdict for each. It has three parts:
 
 - the explorer's unattended run (`--autopilot`, `?autopilot` on the web), which writes a CSV and a
   log ([Launch options](#launch-options), [The run](#the-run), [Files](#files));
@@ -59,16 +60,19 @@ Each enabled laptop of [the fleet](#the-fleet) runs one leg, a job on its self-h
 (*Chrome*, in `bevy-explorer-benchmark-leg.yml`), labelled `<runner label>-chrome`, for example
 `intel-i5-chrome`. The job checks nothing out:
 
-1. It removes an earlier session's files: the runner, both web app folders, `runs_on.txt` and every
-   run file (`runner`, `runs_on.txt`, `change_build*`, `base_build*`). A file it cannot remove,
-   one that a leftover process holds, fails the job.
-2. It downloads the `benchmark` runner for the laptop's operating system and the change and base
-   web apps from their CI runs, and puts the runner on the PATH.
+1. It removes an earlier session's files: the runner, the web app folders, `runs_on.txt` and every
+   run file (`runner`, `runs_on.txt`, `change_build*`, `base_build*`, `release_build*`). A file it
+   cannot remove, one that a leftover process holds, fails the job.
+2. It downloads the `benchmark` runner for the laptop's operating system and the change, base and
+   latest release web apps from their CI runs, and puts the runner on the PATH. Without a release
+   artifact ([The latest release](#the-latest-release)) the leg measures the change and the base
+   only.
 3. It warms each build up (`benchmark warmup`): the run signs in, arrives in world and ends,
    measuring nothing. The first warm-up on a laptop creates the guest that every later run reuses.
-4. `benchmark measure` runs change, base, change, base ..., `RUNS` times each (3 by default), with
-   a 15 s settle after each run. Each run's files become `change_build_<i>.csv/.log` and
-   `base_build_<i>.csv/.log`; `runs_on.txt`, holding the label, comes last.
+4. `benchmark measure` runs change, base, release, change, base, release ..., `RUNS` times each (3
+   by default), with a 15 s settle after each run. Each run's files become
+   `change_build_<i>.csv/.log`, `base_build_<i>.csv/.log` and `release_build_<i>.csv/.log`;
+   `runs_on.txt`, holding the label, comes last.
 5. It uploads `benchmark-result-<label>`: `runs_on.txt` and every run's `.csv`, `.csv.partial`
    and `.log`, kept 7 days. It does so after a failed or cut-off `measure` too, so the runs that
    finished can be looked at in the artifact, but not when `measure` never started. The report
@@ -79,7 +83,7 @@ Each enabled laptop of [the fleet](#the-fleet) runs one leg, a job on its self-h
 Every run is the explorer's unattended session ([The run](#the-run)) in the live
 `supportteam.dcl.eth`: sign in as the local guest, wait until in world, stand at the spawn point
 for 90 s recording each frame's CPU and GPU time, then quit. The character does not move: the
-smallest, most repeatable workload. Both builds are measured fresh in one session, interleaved,
+smallest, most repeatable workload. The builds are measured fresh in one session, interleaved,
 so they see the same world content, thermal state and background load, and a drift of the
 machine or the world between sessions cannot read as a regression.
 
@@ -88,9 +92,9 @@ builds of a leg see the same content, so an edit gives no false verdict, but it 
 absolute number: do not edit it casually, and never during a run.
 
 Limits: a measured run 480 s (`RUN_TIMEOUT_SECONDS`), a warm-up 300 s (`WARMUP_TIMEOUT_SECONDS`,
-a backstop), each warm-up step 10 minutes, the `measure` step 60 minutes, the job 90 minutes.
-Closing Chrome takes up to 30 s and the settle 15 s, so `runs` × 2 × (480 + 45) must stay under
-3600: setup refuses more than 3 runs.
+a backstop), each warm-up step 10 minutes, the `measure` step 90 minutes, the job 135 minutes.
+Closing Chrome takes up to 30 s and the settle 15 s, so `runs` × 3 builds × (480 + 45) must stay
+under 5400: setup refuses more than 3 runs.
 
 ## The report
 
@@ -102,11 +106,16 @@ comment ([The workflow](#the-workflow)).
   label: a fleet leg's `<runner label>-chrome` is `<machine> (Chrome)`, for example
   `intel-i5-chrome` is *Intel Core i5 (Chrome)* ([The fleet](#the-fleet) has the names); any other
   label, such as the by-hand default `local-chrome`, is shown as it is. A section reads each
-  `change_build_<i>.csv` and `base_build_<i>.csv` with the `.log` of the same name; with no base
-  runs its table has one column and a note says so.
-- **Layout.** `## <title>`, a line naming the pull request, the change and base builds and the run,
-  the **Overall** headline when a section has data, a collapsed *How to read this table*, the
-  sections in path order, and a line for every expected label that left no results:
+  `change_build_<i>.csv`, `base_build_<i>.csv` and `release_build_<i>.csv` with the `.log` of the
+  same name; with no base runs its table has one column and a note says so.
+- **Against the latest release.** A section with release runs has a second table, *Against the
+  latest release*: samples and the six frame-time metrics of the release and the change, Δ (change
+  minus release) and the same verdicts as against the base. Release runs that crashed or were
+  excluded get the same notes, named *Release*.
+- **Layout.** `## <title>`, a line naming the pull request, the change, base and release builds and
+  the run, the **Overall** headline when a section has data, the **Against the latest release**
+  headline when the legs measured the release, a collapsed *How to read this table*, the sections
+  in path order, and a line for every expected label that left no results:
   "*name* produced no results (its job failed, timed out or was skipped)".
 - **Exit code.** 0 when a section has data; 2 when none has, after writing the file anyway; 64 for
   a `--pr` or `--expected-runs` that is not a whole number, with no file written.
@@ -169,6 +178,10 @@ run whose top 30 leave the scope out counts as 0.
   more laptops, or by 10% or more on one: with about five verdict rows on each of up to five
   laptops, one modest 🟢 or 🔴 cell turns up by chance now and then, so a single cell is never a
   conclusion. An exceptions verdict needs two laptops.
+- The **Against the latest release** headline picks the release table's frame-time verdicts by the
+  same rules; when the report was told of a release (`--release`) and no section has release runs,
+  it says "⚠️ nothing was compared — no Release run produced data". The badge reads the **Overall**
+  line only.
 
 Treat small GPU differences with caution: in this scene the GPU average is a few milliseconds
 (measurements (evidence supplied for the task)), near the noise floor, so most GPU changes rightly stay ⚪.
@@ -198,7 +211,7 @@ query or fragment.
 The native client is measured by hand; the fleet runs only the web app. Per build, one warm-up
 launch without `--csv`, then the measured launches interleaved with the other build's, 15 s apart:
 `<exe> --log-file <dir>/<build>_<i>.log --autopilot --csv <dir>/<build>_<i>.csv --realm
-supportteam.dcl.eth`, where `<build>` is `change_build` or `base_build`. Then write a label into
+supportteam.dcl.eth`, where `<build>` is `change_build`, `base_build` or `release_build`. Then write a label into
 `<dir>/runs_on.txt` and run `benchmark report <dir>` ([The runner](#the-runner)). A run that
 leaves no CSV counts as crashed.
 
@@ -437,16 +450,16 @@ ready for review.
 | `run` | One run of a web app (a folder holding `index.html`, a `.zip` or the URL of one): serves it from `http://localhost:18742`, opens Chrome, stores `<build>.csv` and `<build>.log` in `--out`, closes Chrome on `end` or at the timeout (480 s): it asks Chrome to exit and kills it after 20 s, or after 3 s when the run is interrupted, so a cancelled job leaves none. |
 | `warmup` | `run` for a warm-up: no `perfCsv`, a 300 s backstop, exit 0 whatever the run's outcome (130 when interrupted, 64 and 70 as for `run`). |
 | `fetch` | Downloads or unpacks a web app (a folder, a `.zip` or the URL of one) into `--dir`. Under Actions only a folder or a `.zip` on the machine: an address or a network path (`\\host\share`, `//host/share`) is refused. |
-| `measure` | Change, base, change, base ... (`--runs` 3, `--settle` 15 s); each run's files become `change_build_<i>.csv/.log` and `base_build_<i>.csv/.log`, then `runs_on.txt` holds `--label`. Before its first run, `measure` removes `runs_on.txt` and every `change_build_<n>` and `base_build_<n>` `.csv`, `.csv.partial` and `.log` an earlier session left in `--out` (the warm-ups' `<build>.log` and the app folders stay), and before each run its own three files, so a run that crashes is never reported with an earlier session's files. |
-| `leg` | `fetch` both builds, warm both up, `measure`: the whole leg by hand. Its label is `local-chrome` unless `--label` gives one. |
-| `report [DIR]` | The report ([The report](#the-report)) of every folder under `DIR` (the working directory by default) that holds a `runs_on.txt`, written to `--out` (`summary.md` by default). The header takes `--title` (`Benchmark` by default), `--pr`, `--change` and `--base` (how it names the two builds) and `--run-url`; `--expected-runs` (3 by default: fewer CSVs mean crashed runs) and `--expected-labels` (comma-separated: one without results gets a line) shape the notes. |
+| `measure` | Change, base, release, change, base, release ... (`--runs` 3, `--settle` 15 s); the base (`--base-dir`) and the release (`--release-dir`) are each optional. Each run's files become `change_build_<i>.csv/.log`, `base_build_<i>.csv/.log` and `release_build_<i>.csv/.log`, then `runs_on.txt` holds `--label`. Before its first run, `measure` removes `runs_on.txt` and every `change_build_<n>`, `base_build_<n>` and `release_build_<n>` `.csv`, `.csv.partial` and `.log` an earlier session left in `--out` (the warm-ups' `<build>.log` and the app folders stay), and before each run its own three files, so a run that crashes is never reported with an earlier session's files. |
+| `leg` | `fetch` the builds (`--change`, and optionally `--base` and `--release`), warm each up, `measure`: the whole leg by hand. Its label is `local-chrome` unless `--label` gives one. |
+| `report [DIR]` | The report ([The report](#the-report)) of every folder under `DIR` (the working directory by default) that holds a `runs_on.txt`, written to `--out` (`summary.md` by default). The header takes `--title` (`Benchmark` by default), `--pr`, `--change`, `--base` and `--release` (how it names the builds) and `--run-url`; `--expected-runs` (3 by default: fewer CSVs mean crashed runs) and `--expected-labels` (comma-separated: one without results gets a line) shape the notes. |
 
-Every option but four has an environment variable (`benchmark <command> --help` lists them), so a
+Every option but five has an environment variable (`benchmark <command> --help` lists them), so a
 workflow step needs no shell-specific syntax: `--keep-service-worker` (by hand only), `leg`'s
-`--change` and `--base` and `fetch`'s `--source` have none. `--chrome-arg` takes its flags from
+`--change`, `--base` and `--release` and `fetch`'s `--source` have none. `--chrome-arg` takes its flags from
 `CHROME_EXTRA_ARGS`, space-separated, which `--help` does not list. `report` reads
 `GITHUB_STEP_SUMMARY`, `RUN_NAME`, `PR_NUMBER`, `CHANGE_DESCRIPTION`, `BASE_DESCRIPTION`,
-`RUN_URL`, `EXPECTED_RUNS` and `EXPECTED_LABELS`; its `DIR` is an argument.
+`RELEASE_DESCRIPTION`, `RUN_URL`, `EXPECTED_RUNS` and `EXPECTED_LABELS`; its `DIR` is an argument.
 
 `run` exits 0 when the page ended the run with exit code 0, 1 when it ended with another code or
 an incomplete stream, 2 at the timeout, 3 when Chrome exited first, 130 when interrupted; 64 is a
@@ -470,7 +483,8 @@ cargo build -p benchmark --release
 ```
 
 `--base` is optional: without it the section shows the change build alone, with the "No Baseline
-run produced data" note.
+run produced data" note. `--release <folder|zip|url>` adds the latest release as a third build and
+its table.
 
 **The server** listens on `127.0.0.1` and `::1` only. The port is fixed (`--port`, `PERF_PORT`):
 the Chrome profile keeps the local guest per origin. Every response carries the isolation headers
@@ -551,7 +565,7 @@ They use `GITHUB_TOKEN` only, with no permission at the top and each job's own:
 
 | Job | Runs on | Permissions | Does |
 | --- | --- | --- | --- |
-| *Inputs* (`setup`) | GitHub-hosted | read contents, actions, pull requests | Runs [`tooling/benchmark-inputs.py`](../../../../tooling/benchmark-inputs.py) on the event: decides whether the benchmark runs and finds the builds, the runners and the legs. |
+| *Inputs* (`setup`) | GitHub-hosted | read contents, actions, deployments, pull requests | Runs [`tooling/benchmark-inputs.py`](../../../../tooling/benchmark-inputs.py) on the event: decides whether the benchmark runs and finds the builds, the latest release, the runners and the legs. |
 | *Notice* | GitHub-hosted | write pull requests | When nothing runs and setup left notes, writes them into the performance section (*Not run*). |
 | *Running* | GitHub-hosted | write pull requests | When the benchmark runs, sets the performance section to *Running* with the run, the builds and the legs. |
 | *Queue watchdog* | GitHub-hosted | write actions, pull requests | Cancels the run when a leg never starts, saying so in the performance section ([The fleet](#the-fleet)). |
@@ -586,11 +600,35 @@ its merge commit.
   from the change run when it has one, so a pull request that changes the runner is measured with
   its own, else from main's runs, searched as for the base. A laptop whose operating system has no
   runner is left out, with a note in the report; without a Linux runner nothing runs.
+- **The latest release** ([The latest release](#the-latest-release)).
 - **The legs:** the fleet's laptops that `BENCHMARK_ENABLED_RUNNERS` enables, each with its runner
-  and both web apps; their labels, which the report expects; and the runs per build.
+  and the web apps; their labels, which the report expects; and the runs per build.
+
+### The latest release
+
+The latest release is the web app every player gets at decentraland.org/play. *Bevy Explorer /
+Manual CDN rollout* (`bevy-explorer-rollout-manual.yml`) records each rollout as a GitHub deployment
+to the `org` environment, whose payload names the package `@dcl-regenesislabs/bevy-explorer-web`,
+the rollout percentage and the npm version, `0.1.0-<CI run id>.commit-<short sha>`. Setup resolves
+it in four steps:
+
+1. Among the newest 30 `org` deployments, the first of that package at 100% whose latest status is
+   *success*: a partial rollout or a failed one is not the release.
+2. Its version names the *Bevy Explorer / CI* run that stamped and published the package: setup reads
+   that run and requires it to be a passed `push` or `workflow_dispatch` run of this repository
+   whose commit starts with the short sha.
+3. That run's `bevy-explorer-web-<sha>` artifact is the release build, and its `build-info.json`
+   must say the engine is optimized, as for the change and the base.
+4. Each leg gets the artifact and its run; the report header names the version and the commit.
+
+When any step fails (no rollout yet, a version that names no run, an expired artifact after the
+90 days main keeps it, an unoptimized build) or the release is the base build itself, the legs
+measure the change and the base only, and a note in the report says why the release was not
+compared.
 
 **The report job** runs `benchmark report results` with `PR_NUMBER`, `CHANGE_DESCRIPTION`
-(`#<pr> at <commit>`), `BASE_DESCRIPTION` (`main at <commit>`), `RUN_URL`, `EXPECTED_RUNS` and
+(`#<pr> at <commit>`), `BASE_DESCRIPTION` (`main at <commit>`), `RELEASE_DESCRIPTION`
+(`<version> at <commit>`, empty without a release), `RUN_URL`, `EXPECTED_RUNS` and
 `EXPECTED_LABELS`, appends setup's notes, copies the result to the job summary and uploads it, with
 the report's exit code as a job output. The post job then puts a badge above it, read from the
 **Overall** line (*Regression*, *Improved*, *No change*, *Not compared*; *No data* on exit 2), and

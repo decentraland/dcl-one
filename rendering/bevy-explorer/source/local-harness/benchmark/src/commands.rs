@@ -16,7 +16,7 @@ use tokio_util::sync::CancellationToken;
 use crate::app_source;
 use crate::cli::{
     flag, given, whole_number, Command, FetchArgs, LegArgs, MeasureArgs, ReportArgs, RunArgs,
-    Settings, WarmupArgs, BASE_BUILD, CHANGE_BUILD,
+    Settings, WarmupArgs, BASE_BUILD, CHANGE_BUILD, RELEASE_BUILD,
 };
 use crate::failure::Failure;
 use crate::out;
@@ -167,20 +167,18 @@ fn measure(args: MeasureArgs, ctx: &Context) -> Result<i32, Failure> {
     let settle = Duration::from_secs(whole_number("settle", &args.settle, 15)?);
 
     let change = app_source::find_app_root(&std::path::absolute(change_dir)?)?;
-    let baseline = match given(&args.base_dir) {
-        Some(dir) => Some(app_source::find_app_root(&std::path::absolute(dir)?)?),
-        None => None,
+    let app_root = |dir: &Option<String>| -> Result<Option<PathBuf>, Failure> {
+        match given(dir) {
+            Some(dir) => Ok(Some(app_source::find_app_root(&std::path::absolute(dir)?)?)),
+            None => Ok(None),
+        }
     };
+    let others = [
+        (BASE_BUILD, app_root(&args.base_dir)?),
+        (RELEASE_BUILD, app_root(&args.release_dir)?),
+    ];
 
-    measure_loop(
-        ctx,
-        &settings,
-        &change,
-        baseline.as_deref(),
-        runs,
-        settle,
-        label,
-    )?;
+    measure_loop(ctx, &settings, &change, &others, runs, settle, label)?;
     Ok(0)
 }
 
@@ -194,29 +192,29 @@ fn leg(args: LegArgs, ctx: &Context) -> Result<i32, Failure> {
 
     let change_root =
         app_source::provision(change, &settings.out_dir.join(CHANGE_BUILD), &ctx.cancel)?;
-    let base_root = match given(&args.baseline) {
-        Some(baseline) => Some(app_source::provision(
-            baseline,
-            &settings.out_dir.join(BASE_BUILD),
-            &ctx.cancel,
-        )?),
-        None => None,
+    let provision = |source: &Option<String>, build: &str| -> Result<Option<PathBuf>, Failure> {
+        match given(source) {
+            Some(source) => Ok(Some(app_source::provision(
+                source,
+                &settings.out_dir.join(build),
+                &ctx.cancel,
+            )?)),
+            None => Ok(None),
+        }
     };
+    let others = [
+        (BASE_BUILD, provision(&args.baseline, BASE_BUILD)?),
+        (RELEASE_BUILD, provision(&args.release, RELEASE_BUILD)?),
+    ];
 
     warm_up(ctx, &settings, &change_root, CHANGE_BUILD)?;
-    if let Some(base_root) = &base_root {
-        warm_up(ctx, &settings, base_root, BASE_BUILD)?;
+    for (build, root) in &others {
+        if let Some(root) = root {
+            warm_up(ctx, &settings, root, build)?;
+        }
     }
 
-    measure_loop(
-        ctx,
-        &settings,
-        &change_root,
-        base_root.as_deref(),
-        runs,
-        settle,
-        label,
-    )?;
+    measure_loop(ctx, &settings, &change_root, &others, runs, settle, label)?;
     Ok(0)
 }
 
@@ -233,6 +231,7 @@ fn write_report(args: ReportArgs) -> Result<i32, Failure> {
         pr,
         change: given(&args.change).map(String::from),
         base: given(&args.baseline).map(String::from),
+        release: given(&args.release).map(String::from),
         run_url: given(&args.run_url).map(String::from),
         expected_runs: whole_number("expected-runs", &args.expected_runs, 3)?,
         expected_labels: given(&args.expected_labels)
@@ -273,13 +272,14 @@ fn warm_up(ctx: &Context, settings: &Settings, root: &Path, build: &str) -> Resu
     ctx.check()
 }
 
-/// The interleaved loop: change, base, change, base ..., a settle pause after each launch, every
-/// run's files renamed to <build>_<i>.csv/.log; then the runner label the report keys on.
+/// The interleaved loop: change, then each other build given (base, release), and again, a settle
+/// pause after each launch, every run's files renamed to <build>_<i>.csv/.log; then the runner
+/// label the report keys on.
 fn measure_loop(
     ctx: &Context,
     settings: &Settings,
     change_root: &Path,
-    base_root: Option<&Path>,
+    others: &[(&str, Option<PathBuf>)],
     runs: u64,
     settle: Duration,
     label: &str,
@@ -289,9 +289,11 @@ fn measure_loop(
         measure_one(ctx, settings, change_root, CHANGE_BUILD, i)?;
         ctx.pause(settle)?;
 
-        if let Some(base_root) = base_root {
-            measure_one(ctx, settings, base_root, BASE_BUILD, i)?;
-            ctx.pause(settle)?;
+        for (build, root) in others {
+            if let Some(root) = root {
+                measure_one(ctx, settings, root, build, i)?;
+                ctx.pause(settle)?;
+            }
         }
     }
 
@@ -335,8 +337,8 @@ pub fn clear_run_files(settings: &Settings, build: &str, i: u64) -> Result<(), F
 
 /// Removes what an earlier session into the same `--out` left for the report: `runs_on.txt` and
 /// every run's `<build>_<n>.csv`, `.csv.partial` and `.log`, including runs this session does not
-/// repeat (it measures fewer runs, or no base build). The warm-ups' `<build>.log` and the app
-/// folders stay.
+/// repeat (it measures fewer runs, or no base or release build). The warm-ups' `<build>.log` and
+/// the app folders stay.
 pub fn clear_earlier_session(settings: &Settings) -> Result<(), Failure> {
     let entries = match fs::read_dir(&settings.out_dir) {
         Ok(entries) => entries,
@@ -364,18 +366,20 @@ pub fn clear_earlier_session(settings: &Settings) -> Result<(), Failure> {
     Ok(())
 }
 
-/// `<build>_<n>.csv`, `<build>_<n>.csv.partial` or `<build>_<n>.log`, for either build.
+/// `<build>_<n>.csv`, `<build>_<n>.csv.partial` or `<build>_<n>.log`, for any build.
 fn is_run_file(name: &str) -> bool {
-    [CHANGE_BUILD, BASE_BUILD].iter().any(|build| {
-        name.strip_prefix(build)
-            .and_then(|rest| rest.strip_prefix('_'))
-            .and_then(|rest| rest.split_once('.'))
-            .is_some_and(|(run, extension)| {
-                !run.is_empty()
-                    && run.bytes().all(|b| b.is_ascii_digit())
-                    && matches!(extension, "csv" | "csv.partial" | "log")
-            })
-    })
+    [CHANGE_BUILD, BASE_BUILD, RELEASE_BUILD]
+        .iter()
+        .any(|build| {
+            name.strip_prefix(build)
+                .and_then(|rest| rest.strip_prefix('_'))
+                .and_then(|rest| rest.split_once('.'))
+                .is_some_and(|(run, extension)| {
+                    !run.is_empty()
+                        && run.bytes().all(|b| b.is_ascii_digit())
+                        && matches!(extension, "csv" | "csv.partial" | "log")
+                })
+        })
 }
 
 /// A run that streamed no CSV or log leaves no file; there is then nothing to move. Whatever the

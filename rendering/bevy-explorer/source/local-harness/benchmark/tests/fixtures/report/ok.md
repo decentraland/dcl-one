@@ -8,6 +8,7 @@ PR #12 · change: `abc1234` · base: `main` at `def5678` · [run](https://github
 
 - Each build is measured **3 times**, interleaved with the other build (change, baseline, change, baseline, ...) in the same session, so both see the same world content and machine state. The values are the **median**, and **(min–max)** is the lowest and highest of those runs.
 - **Δ** is Change minus Baseline (a negative Δ means Change is faster).
+- **Against the latest release** — when the legs also measured the build every player gets at decentraland.org/play, interleaved as a third build (change, baseline, release, ...), a second table compares the frame times with it under the same rules; Δ is then Change minus Release. The **Overall** line stays the comparison with the baseline.
 - **🟢 faster / 🔴 slower** — a difference that passed every check: the runs are fully separated (every run of one build faster than every run of the other), and the median difference is at least **3%** and at least **0.5 ms**.
 - **⚪ within noise** — the builds' runs overlap, or the difference is tiny; it cannot be told apart from random variation. Treat it as no change.
 - **— informational** — the 0.1% worst metrics average only the few worst frames of a run, so a single OS hiccup swings them by a lot; they are shown for context and never earn a verdict.

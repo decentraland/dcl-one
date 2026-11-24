@@ -21,6 +21,8 @@ REPO = 'example/project'
 HEAD = 'a' * 40
 MERGE = 'b' * 40
 MAIN = ('c' * 40, 'd' * 40, 'e' * 40)
+RELEASE = '9' * 40
+RELEASE_VERSION = f'0.1.0-80.commit-{RELEASE[:7]}'
 RUNNERS = ('windows-amd64', 'macos-arm64', 'linux-amd64')
 
 
@@ -45,6 +47,15 @@ class GitHub:
         self.main_runs = [ci_run(90 - n, sha, event='push', branch='main') for n, sha in enumerate(MAIN)]
         # A PR run's artifacts carry the merge commit it built; a main run's its own commit.
         self.artifacts = {100: artifacts(MERGE), **{run['id']: artifacts(run['head_sha']) for run in self.main_runs}}
+        # The latest release: run 80 on main, rolled out to decentraland.org; newest first.
+        self.release_run = ci_run(80, RELEASE, event='push', branch='main')
+        self.artifacts[80] = artifacts(RELEASE)
+        self.deployments = [
+            {'id': 3, 'payload': {'prefix': inputs.PACKAGE, 'percentage': 10, 'version': '0.1.0-81.commit-1111111'}},
+            {'id': 2, 'payload': {'prefix': inputs.PACKAGE, 'percentage': 100, 'version': '0.1.0-82.commit-2222222'}},
+            {'id': 1, 'payload': {'prefix': inputs.PACKAGE, 'percentage': 100, 'version': RELEASE_VERSION}},
+        ]
+        self.deployment_states = {3: 'success', 2: 'failure', 1: 'success'}
         self.expired = set()
         # build-info.json per web app, an optimized engine unless given here; None leaves it out.
         self.build_info = {}
@@ -64,6 +75,15 @@ class GitHub:
         self.calls.append(path)
         if path == f'repos/{REPO}/pulls/7':
             return self.pr
+        if path == f'repos/{REPO}/deployments?environment=org&per_page=30':
+            return self.deployments
+        if match := re.fullmatch(rf'repos/{REPO}/deployments/([0-9]+)/statuses\?per_page=1', path):
+            return [{'state': self.deployment_states[int(match.group(1))]}]
+        if match := re.fullmatch(rf'repos/{REPO}/actions/runs/([0-9]+)', path):
+            run_id = int(match.group(1))
+            if run_id == self.release_run['id']:
+                return self.release_run
+            return next(run for run in self.main_runs if run['id'] == run_id)
         if match := re.fullmatch(rf'repos/{REPO}/actions/runs/([0-9]+)/artifacts\?per_page=100', path):
             names = self.artifacts.get(int(match.group(1)), [])
             rows = [{'id': self.ids.setdefault(name, len(self.ids) + 1), 'name': name,
@@ -117,11 +137,61 @@ class ResolverTest(unittest.TestCase):
             'label': 'apple-m1-chrome', 'runs_on': 'apple-m1', 'os': 'macos',
             'runner_artifact': f'bevy-explorer-benchmark-macos-arm64-{MERGE}', 'runner_run_id': '100',
             'change_artifact': f'bevy-explorer-web-{MERGE}', 'change_run_id': '100',
-            'base_artifact': f'bevy-explorer-web-{MAIN[0]}', 'base_run_id': '90'})
+            'base_artifact': f'bevy-explorer-web-{MAIN[0]}', 'base_run_id': '90',
+            'release_artifact': f'bevy-explorer-web-{RELEASE}', 'release_run_id': '80'})
+        self.assertEqual((result['release_sha'], result['release_version']), (RELEASE, RELEASE_VERSION))
         self.assertEqual((result['report_runner_artifact'], result['report_runner_run_id']),
                          (f'bevy-explorer-benchmark-linux-amd64-{MERGE}', '100'))
         self.assertEqual(result['notes'], '')
-        self.assertEqual(self.github.zips_read(), [f'bevy-explorer-web-{MERGE}', f'bevy-explorer-web-{MAIN[0]}'])
+        self.assertEqual(self.github.zips_read(), sorted([f'bevy-explorer-web-{MERGE}', f'bevy-explorer-web-{MAIN[0]}',
+                                                          f'bevy-explorer-web-{RELEASE}']))
+
+    def test_a_release_that_cannot_be_measured_leaves_a_note_and_the_base_is_still_compared(self):
+        def no_rollout(github):
+            github.deployments = []
+
+        def unnamed_run(github):
+            github.deployments[2]['payload']['version'] = '1.2.3'
+
+        def other_commit(github):
+            github.release_run['head_sha'] = 'f' * 40
+
+        def failed_run(github):
+            github.release_run['conclusion'] = 'failure'
+
+        def is_base(github):
+            github.release_run['head_sha'] = MAIN[0]
+            github.deployments[2]['payload']['version'] = f'0.1.0-80.commit-{MAIN[0][:7]}'
+
+        def expired(github):
+            github.expired = {f'bevy-explorer-web-{RELEASE}'}
+
+        def unoptimized(github):
+            github.build_info = {f'bevy-explorer-web-{RELEASE}': {'engine': {'optimized': False}}}
+
+        def no_api(github):
+            github.deployments = None
+
+        for change, note in ((no_rollout, 'No successful rollout'), (unnamed_run, 'does not name the CI run'),
+                             (other_commit, 'is not a successful'), (failed_run, 'is not a successful'),
+                             (is_base, 'is the base build'), (expired, 'has expired'),
+                             (unoptimized, 'is not optimized'), (no_api, 'did not answer')):
+            with self.subTest(change=change.__name__):
+                self.github = GitHub()
+                change(self.github)
+                with patch.object(inputs, 'api', side_effect=self.github):
+                    if change is no_api:
+                        with patch.object(inputs, 'latest_release',
+                                          side_effect=subprocess.CalledProcessError(1, 'gh')):
+                            result = self.resolve()
+                    else:
+                        result = self.resolve()
+                self.assertTrue(result['run'])
+                self.assertEqual((result['release_sha'], result['release_version']), ('', ''))
+                self.assertEqual({(leg['release_artifact'], leg['release_run_id']) for leg in result['legs']},
+                                 {('', '')})
+                self.assertIn('Not compared with the latest release', result['notes'])
+                self.assertIn(note, result['notes'])
 
     def test_an_unoptimized_change_build_is_not_measured_and_the_pr_is_told_how_to_get_one(self):
         for info in ({'engine': {'optimized': False}}, {'engine': {}}, None):
@@ -242,7 +312,7 @@ class ResolverTest(unittest.TestCase):
             with self.subTest(bad=bad), self.assertRaises(ValueError):
                 self.resolve('workflow_dispatch', {'inputs': {'pr': '7', **bad}})
 
-    def test_the_runs_stay_within_the_legs_hour_and_reach_the_report_as_a_plain_integer(self):
+    def test_the_runs_stay_within_the_legs_90_minutes_and_reach_the_report_as_a_plain_integer(self):
         self.assertEqual(inputs.MAX_RUNS, 3)
         for given, expected in (('2', '2'), (' 2 ', '2'), ('02', '2'), ('', '3')):
             with self.subTest(given=given):
@@ -266,7 +336,8 @@ class OutputTest(unittest.TestCase):
                 self.assertEqual(inputs.main(), 0)
             values = dict(line.split('=', 1) for line in (folder / 'output').read_text().splitlines())
             self.assertIn('Benchmark runs', (folder / 'summary').read_text())
-        for name in ('run', 'pr', 'change_sha', 'base_sha', 'runs', 'legs', 'expected_labels',
+        for name in ('run', 'pr', 'change_sha', 'base_sha', 'release_sha', 'release_version', 'runs', 'legs',
+                     'expected_labels',
                      'report_runner_artifact', 'report_runner_run_id', 'notes'):
             self.assertIn(name, values)
         self.assertEqual(values['run'], 'true')

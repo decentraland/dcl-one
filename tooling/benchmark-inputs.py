@@ -5,6 +5,11 @@ Reads the triggering event (GITHUB_EVENT_NAME, GITHUB_EVENT_PATH) and writes the
 .github/workflows/bevy-explorer-benchmark.yml. A trigger that does not apply (a fork, a failed CI
 run, a CI run that built no web app because the PR changes no web input) skips silently; an unfit
 build skips with notes, which the workflow writes into the PR's CI status comment.
+
+The latest release is the web package of the newest successful rollout of every player at
+decentraland.org/play (a GitHub deployment to `org` at 100%); its version, 0.1.0-<CI run>.commit-<sha>,
+names the CI run whose web app is measured beside the change and the base. A release that cannot be
+measured leaves a note, and the PR is still compared with its base.
 """
 import io
 import json
@@ -27,10 +32,14 @@ FLEET = (
 # The runner build each operating system takes; Linux writes the report.
 PLATFORMS = {'windows': 'windows-amd64', 'macos': 'macos-arm64', 'linux': 'linux-amd64'}
 WEB = 'bevy-explorer-web'
+PACKAGE = '@dcl-regenesislabs/bevy-explorer-web'
+# The deployment environment of decentraland.org (bevy-explorer-rollout-manual.yml).
+RELEASE_ENVIRONMENT = 'org'
+RELEASE_VERSION = re.compile(r'[0-9]+\.[0-9]+\.[0-9]+-([0-9]+)\.commit-([0-9a-f]{7,40})')
 RUNNER = 'bevy-explorer-benchmark-'
-# A leg's Test builds step is cut off after 60 minutes, so runs x 2 x (the 480 s run timeout + 45 s
-# to close Chrome and settle) must stay under 3600 (bevy-explorer-benchmark-leg.yml).
-MAX_RUNS = (3600 - 1) // (2 * (480 + 45))
+# A leg's Test builds step is cut off after 90 minutes, so runs x 3 builds x (the 480 s run timeout
+# + 45 s to close Chrome and settle) must stay under 5400 (bevy-explorer-benchmark-leg.yml).
+MAX_RUNS = (5400 - 1) // (3 * (480 + 45))
 SHA = re.compile(r'[0-9a-f]{40}')
 
 
@@ -113,6 +122,44 @@ def base_runs(repo, base_sha):
     return [run for run in runs if ci_run(run, repo, ('push',)) and run['head_branch'] == 'main']
 
 
+def latest_release(repo):
+    """The version of the newest successful rollout to every player of decentraland.org, or None."""
+    deployments = api(f'repos/{repo}/deployments?environment={RELEASE_ENVIRONMENT}&per_page=30')
+    for deployment in deployments:
+        payload = deployment.get('payload')
+        if not isinstance(payload, dict) or PACKAGE not in (payload.get('prefix'), payload.get('packageName')):
+            continue
+        if str(payload.get('percentage', '100')) != '100':
+            continue
+        statuses = api(f"repos/{repo}/deployments/{deployment['id']}/statuses?per_page=1")
+        if statuses and statuses[0].get('state') == 'success':
+            return str(payload.get('version') or '')
+    return None
+
+
+def release_build(repo, base_sha):
+    """The latest release's web app: ({'version', 'sha', 'artifact', 'run_id'}, None), or (None, why not)."""
+    version = latest_release(repo)
+    if version is None:
+        return None, f'No successful rollout of {PACKAGE} to every player of decentraland.org was found.'
+    match = RELEASE_VERSION.fullmatch(version)
+    if not match:
+        return None, f'The latest release {version!r} does not name the CI run that built it.'
+    run_id, short_sha = match.groups()
+    run = api(f'repos/{repo}/actions/runs/{run_id}')
+    if not ci_run(run, repo, ('push', 'workflow_dispatch')) or not run['head_sha'].startswith(short_sha):
+        return None, f'CI run {run_id} is not a successful Bevy Explorer / CI run of the latest release ({version}).'
+    if run['head_sha'] == base_sha:
+        return None, f'The latest release ({version}) is the base build.'
+    names = artifacts(repo, run['id'])
+    web = named(names, WEB)
+    if not web:
+        return None, f'The web app of the latest release ({version}, CI run {run_id}) has expired.'
+    if not optimized(repo, names[web]):
+        return None, f'The web build of the latest release ({version}, CI run {run_id}) is not optimized.'
+    return {'version': version, 'sha': run['head_sha'], 'artifact': web, 'run_id': str(run['id'])}, None
+
+
 def resolve(event_name, event, repo, enabled='', runs=''):
     inputs = {}
     if event_name == 'workflow_run':
@@ -147,10 +194,11 @@ def resolve(event_name, event, repo, enabled='', runs=''):
     # The legs' RUNS and the report's EXPECTED_RUNS: a plain integer, which the report requires.
     runs = (inputs.get('runs') or '').strip() or (runs or '').strip() or '3'
     if not re.fullmatch(r'[0-9]+', runs) or not 1 <= int(runs) <= MAX_RUNS:
-        raise ValueError(f'runs must be a whole number from 1 to {MAX_RUNS}; the leg is cut off after an hour')
+        raise ValueError(f'runs must be a whole number from 1 to {MAX_RUNS}; the leg is cut off after 90 minutes')
     runs = str(int(runs))
 
-    result = {'run': False, 'pr': str(number), 'change_sha': change_sha, 'base_sha': '', 'runs': runs,
+    result = {'run': False, 'pr': str(number), 'change_sha': change_sha, 'base_sha': '', 'release_sha': '',
+              'release_version': '', 'runs': runs,
               'legs': [], 'expected_labels': '', 'report_runner_artifact': '', 'report_runner_run_id': '',
               'notes': ''}
     candidates = api(f'repos/{repo}/{RUNS_PATH}?head_sha={change_sha}&status=success&per_page=100')['workflow_runs']
@@ -206,6 +254,14 @@ def resolve(event_name, event, repo, enabled='', runs=''):
                             f'nor {base_where} has one.')
     report_name, report_run = runners[PLATFORMS['linux']]
     notes = []
+    try:
+        release, why_not = release_build(repo, base['head_sha'])
+    except subprocess.CalledProcessError:
+        release, why_not = None, 'the GitHub API did not answer.'
+    if release:
+        result['release_sha'], result['release_version'] = release['sha'], release['version']
+    else:
+        notes.append(f'Not compared with the latest release: {why_not}')
     for label, system in fleet:
         if PLATFORMS[system] not in runners:
             notes.append(f'{label}-chrome did not run: neither the change run nor {base_where} has a benchmark '
@@ -217,13 +273,16 @@ def resolve(event_name, event, repo, enabled='', runs=''):
             'runner_artifact': runner_name, 'runner_run_id': str(runner_run['id']),
             'change_artifact': change_web, 'change_run_id': str(change['id']),
             'base_artifact': base_web, 'base_run_id': str(base['id']),
+            'release_artifact': release['artifact'] if release else '',
+            'release_run_id': release['run_id'] if release else '',
         })
     if not result['legs']:
         return stop(result, 'No laptop can run the benchmark.', notes)
     labels = [leg['label'] for leg in result['legs']]
     return {**result, 'run': True, 'expected_labels': ','.join(labels), 'notes': ' '.join(notes),
             'report_runner_artifact': report_name, 'report_runner_run_id': str(report_run['id']),
-            'reason': f"#{number} at {change_sha} against main at {base['head_sha']} on {', '.join(labels)}"}
+            'reason': f"#{number} at {change_sha} against main at {base['head_sha']}"
+                      f"{' and release ' + release['version'] if release else ''} on {', '.join(labels)}"}
 
 
 def write_outputs(values):

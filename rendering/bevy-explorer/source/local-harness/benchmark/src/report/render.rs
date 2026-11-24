@@ -1,7 +1,7 @@
 //! The report's Markdown: the header, the headline, the legend, a section per runner and a line
 //! for each runner without results. The headline, the legend, the tables and the notes are
 //! `ProduceSummary.cs`'s words, with every number formatted as .NET formats it, but for the note
-//! and headline for missing baseline runs.
+//! and headline for missing baseline runs and the comparison with the latest release.
 
 use std::fmt::Write;
 
@@ -41,7 +41,7 @@ pub fn display_name(label: &str) -> String {
     }
 }
 
-/// The title, and what was compared: the PR, the two builds and the run.
+/// The title, and what was compared: the PR, the builds and the run.
 pub fn header(options: &ReportOptions) -> String {
     let mut out = format!("## {}\n\n", options.title);
     let mut parts = Vec::new();
@@ -53,6 +53,9 @@ pub fn header(options: &ReportOptions) -> String {
     }
     if let Some(base) = &options.base {
         parts.push(format!("base: {base}"));
+    }
+    if let Some(release) = &options.release {
+        parts.push(format!("latest release: {release}"));
     }
     if let Some(url) = &options.run_url {
         parts.push(format!("[run]({url})"));
@@ -81,6 +84,19 @@ pub fn headline(regressions: &[(&str, Vec<&str>)], improvements: &[(&str, Vec<&s
     }
 }
 
+/// The **Against the latest release** line: its frame-time regressions when there are any, else
+/// its improvements, picked as the **Overall** line picks them.
+pub fn release_headline(
+    regressions: &[(&str, Vec<&str>)],
+    improvements: &[(&str, Vec<&str>)],
+) -> String {
+    headline(regressions, improvements).replacen("**Overall:", "**Against the latest release:", 1)
+}
+
+/// The release line when the legs measured the latest release but no release run produced data.
+pub const NOTHING_COMPARED_WITH_RELEASE: &str =
+    "**Against the latest release: ⚠️ nothing was compared — no Release run produced data**\n\n";
+
 /// The **Overall** line when sections have data but none had baseline runs to compare with.
 pub const NOTHING_COMPARED: &str =
     "**Overall: ⚠️ nothing was compared — no Baseline run produced data**\n\n";
@@ -92,6 +108,7 @@ pub fn legend(expected_runs: u64) -> String {
          \n\
          - Each build is measured **{expected_runs} times**, interleaved with the other build (change, baseline, change, baseline, ...) in the same session, so both see the same world content and machine state. The values are the **median**, and **(min–max)** is the lowest and highest of those runs.\n\
          - **Δ** is Change minus Baseline (a negative Δ means Change is faster).\n\
+         - **Against the latest release** — when the legs also measured the build every player gets at decentraland.org/play, interleaved as a third build (change, baseline, release, ...), a second table compares the frame times with it under the same rules; Δ is then Change minus Release. The **Overall** line stays the comparison with the baseline.\n\
          - **🟢 faster / 🔴 slower** — a difference that passed every check: the runs are fully separated (every run of one build faster than every run of the other), and the median difference is at least **{lambda:.0}%** and at least **{min_ms} ms**.\n\
          - **⚪ within noise** — the builds' runs overlap, or the difference is tiny; it cannot be told apart from random variation. Treat it as no change.\n\
          - **— informational** — the 0.1% worst metrics average only the few worst frames of a run, so a single OS hiccup swings them by a lot; they are shown for context and never earn a verdict.\n\
@@ -210,6 +227,29 @@ pub fn runner_section(section: &RunnerSection) -> String {
                     peak_memory_cell(change)
                 );
             }
+        }
+    }
+
+    if let Some(comparison) = &section.release_comparison {
+        out += "\n**Against the latest release**\n\n";
+        out += "| Metric | Release | Change | Δ | Result |\n";
+        out += "| --- | ---: | ---: | ---: | :--- |\n";
+        let release = &comparison.release;
+        let _ = writeln!(
+            out,
+            "| Samples | {} | {} | | |",
+            samples(release),
+            samples(change)
+        );
+        for (m, name) in FRAME_TIME_METRICS.iter().enumerate() {
+            let delta = change.frame_time_ms[m].median - release.frame_time_ms[m].median;
+            let _ = writeln!(
+                out,
+                "| {name} | {} | {} | {delta:.1} ms | {} |",
+                frame_time_cell(&release.frame_time_ms[m]),
+                frame_time_cell(&change.frame_time_ms[m]),
+                frame_time_verdict_text(comparison.frame_time_verdicts[m])
+            );
         }
     }
 
@@ -616,6 +656,14 @@ mod tests {
         assert_eq!(
             headline(&[], &[]),
             "**Overall: ✅ no significant changes**\n\n"
+        );
+        assert_eq!(
+            release_headline(&down, &up),
+            "**Against the latest release: 🔴 GPU average regressed on A; CPU 1% worst regressed on B**\n\n"
+        );
+        assert_eq!(
+            release_headline(&[], &[]),
+            "**Against the latest release: ✅ no significant changes**\n\n"
         );
     }
 

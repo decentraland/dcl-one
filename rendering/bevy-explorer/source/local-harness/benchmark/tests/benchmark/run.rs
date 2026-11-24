@@ -580,11 +580,14 @@ fn a_new_session_clears_every_run_an_earlier_session_left_and_nothing_else() {
         "change_build_4.csv.partial",
         "change_build_12.log",
         "base_build_3.csv",
+        "release_build_2.csv.partial",
+        "release_build_1.log",
         "runs_on.txt",
     ];
     let stays = [
         "change_build.log",
         "base_build.csv",
+        "release_build.log",
         "change_build_x.csv",
         "change_build_1.txt",
         "notes.txt",
