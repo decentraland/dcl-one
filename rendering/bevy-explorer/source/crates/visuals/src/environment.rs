@@ -466,7 +466,7 @@ mod tests {
             CloudCover, FogDensity, ShadowBiasOverride,
         };
         use bevy_atmosphere::prelude::AtmosphereModel;
-        use common::structs::{AppConfig, FogSetting, SceneGlobalLight};
+        use common::structs::{AppConfig, FogSetting, SceneGlobalLight, SessionGraphics};
         let mut app = App::new();
         let mut time = Time::<()>::default();
         time.advance_by(std::time::Duration::from_secs(1));
@@ -474,6 +474,7 @@ mod tests {
         config.graphics.fog = FogSetting::On;
         app.insert_resource(time)
             .insert_resource(config)
+            .init_resource::<SessionGraphics>()
             .insert_resource(TimeOfDay { time: 43200.0 })
             .init_resource::<FogDensity>()
             .init_resource::<SkyAmbient>()

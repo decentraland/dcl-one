@@ -88,6 +88,8 @@ pub struct LobbyStagePlugin;
 impl Plugin for LobbyStagePlugin {
     fn build(&self, app: &mut App) {
         add_materials(app);
+        // the shadow setting in effect (`sync_stage`)
+        app.init_resource::<SessionGraphics>();
         app.add_systems(
             Update,
             (take_requests, sync_stage)

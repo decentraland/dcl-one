@@ -64,6 +64,8 @@ pub struct VisualsPlugin {
 
 impl Plugin for VisualsPlugin {
     fn build(&self, app: &mut App) {
+        // the shadow setting in effect (`apply_global_light`)
+        app.init_resource::<SessionGraphics>();
         app.add_plugins(debug_panel::VisualsDebugPanelPlugin);
         // texels per cascade, for every shadow setting (see decisions.md); never resized, since a
         // resize reallocates every cascade's map

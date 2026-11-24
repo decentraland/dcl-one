@@ -44,6 +44,8 @@ pub struct LightsPlugin;
 
 impl Plugin for LightsPlugin {
     fn build(&self, app: &mut App) {
+        // the shadow setting in effect (`manage_shadow_casters`)
+        app.init_resource::<SessionGraphics>();
         app.insert_resource(LightSwitches {
             lights: true,
             shadows: true,
