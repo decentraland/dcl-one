@@ -133,6 +133,7 @@ pub(super) fn performance_state(
                 &config,
                 scene_loop.and_then(|timing| timing.refresh_hz),
             ),
+            "vsync": config.graphics.vsync,
             "overrideFps": session.fps_target,
             "limit30": session.fps_target == Some(30),
             "gpuFrameMs": gpu_ms.map(tenths),

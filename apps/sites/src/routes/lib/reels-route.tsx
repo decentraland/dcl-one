@@ -1,6 +1,6 @@
 import { isRouteErrorResponse, useRevalidator, useRouteError } from "react-router";
 
-import { ReelsEmpty, ReelsPage } from "@dcl/one-ui/apps/sites/reels/ReelsPage";
+import { ReelsEmpty, ReelsPage } from "@dcl/one-ui";
 
 export const REELS_TITLE = "Decentraland Reels";
 

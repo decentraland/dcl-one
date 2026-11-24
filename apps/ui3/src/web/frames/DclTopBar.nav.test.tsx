@@ -3,8 +3,14 @@ import { act, cleanup, fireEvent, render, screen } from "@testing-library/react"
 
 import DclTopBar from "./DclTopBar";
 import ChromeShell from "../../components/ChromeShell";
-import { ChromeNavContext, chromeLinkProps, isSameDocumentHref, type ChromeNavigate } from "@dcl/one-ui/components/AppChrome/chrome-nav";
-import { ChromeAuthContext, type ChromeAuth } from "@dcl/one-ui/components/AppChrome/chrome-auth";
+import {
+  ChromeNavContext,
+  chromeLinkProps,
+  isSameDocumentHref,
+  type ChromeNavigate,
+  ChromeAuthContext,
+  type ChromeAuth,
+} from "@dcl/one-ui";
 import { getJSON } from "../../data/catalyst/client";
 
 vi.mock("../../data/catalyst/client", async importOriginal => ({
@@ -111,6 +117,16 @@ describe("top bar links hand same-document hrefs to the chrome navigator", () =>
     const shop = screen.getAllByRole("link", { name: "Shop" })[0]!;
     expect(shop).not.toHaveAttribute("data-discover");
     expect(fireEvent.click(shop)).toBe(true);
+  });
+
+  test("a chrome that names this bar as its own renderer keeps the standalone bar instead of recursing", () => {
+    render(
+      <ChromeNavContext.Provider value={{ TopBar: DclTopBar }}>
+        <DclTopBar />
+      </ChromeNavContext.Provider>,
+    );
+    expect(screen.getByRole("banner")).toBeTruthy();
+    expect(screen.getByLabelText("Toggle navigation menu")).toBeTruthy();
   });
 
   test("ChromeShell tabs read the same navigator", () => {

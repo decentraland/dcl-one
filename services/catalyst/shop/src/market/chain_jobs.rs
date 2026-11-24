@@ -1395,31 +1395,52 @@ pub(crate) fn panic_message(payload: &(dyn std::any::Any + Send)) -> String {
 
 /// The projections `state` enables on `net`, each with its endpoint, as the
 /// switches and endpoints configure them; `rentals` is the rentals index's
-/// switch (`None`: on wherever a chain-1 endpoint is configured).
+/// switch (`None`: on for each configured Ethereum endpoint).
 pub fn projections(
     state: &Arc<MarketplaceState>,
     net: ChainNet,
     rentals: Option<bool>,
 ) -> Vec<Projection> {
+    let mut out = Vec::new();
+    visit_projections(state, net, rentals, |job, url, make, gate, cfg| {
+        if let Some(url) = url {
+            out.push(Projection {
+                lease: lease_name(job, net),
+                url,
+                cfg,
+                make,
+                gate,
+            });
+        }
+    });
+    out
+}
+
+/// Includes explicitly enabled projections even when their RPC is missing.
+pub fn expected_cursors(
+    state: &Arc<MarketplaceState>,
+    net: ChainNet,
+    rentals: Option<bool>,
+) -> Vec<(Arc<dyn ChainIndex>, Option<String>)> {
+    let mut out = Vec::new();
+    visit_projections(state, net, rentals, |_, url, make, _, _| {
+        out.push((make(), url))
+    });
+    out
+}
+
+fn visit_projections(
+    state: &Arc<MarketplaceState>,
+    net: ChainNet,
+    rentals: Option<bool>,
+    mut add: impl FnMut(&str, Option<String>, MakeIndex, Option<Gate>, PeriodicCfg),
+) {
     let settings = &state.settings.market.indexes;
     let market_cfg = || {
         PeriodicCfg::every(settings.interval)
             .with_jitter(Duration::from_secs(1))
             .with_error_backoff(Duration::from_secs(30))
     };
-    let mut out = Vec::new();
-    let mut add =
-        |job: &str, url: Option<String>, make: MakeIndex, gate: Option<Gate>, cfg: PeriodicCfg| {
-            if let Some(url) = url {
-                out.push(Projection {
-                    lease: lease_name(job, net),
-                    url,
-                    cfg,
-                    make,
-                    gate,
-                });
-            }
-        };
     if settings.nft_enabled {
         let gate: Gate = {
             let state = state.clone();
@@ -1485,11 +1506,20 @@ pub fn projections(
             market_cfg(),
         );
     }
-    if settings.committee_enabled {
+    if settings.committee_enabled && net == ChainNet::Matic {
         add(
             "committee-index",
-            state.committee_rpc_url(net),
+            state.polygon_mainnet_rpc_url(),
             Arc::new(|| Arc::new(super::committee_index::CommitteeIndex)),
+            None,
+            market_cfg(),
+        );
+    }
+    if settings.third_party_registry_enabled && net == ChainNet::Matic {
+        add(
+            "third-party-registry-index",
+            state.polygon_mainnet_rpc_url(),
+            Arc::new(|| Arc::new(super::third_party_registry::ThirdPartyRegistryIndex)),
             None,
             market_cfg(),
         );
@@ -1503,19 +1533,34 @@ pub fn projections(
             market_cfg(),
         );
     }
-    // The rentals venue is mainnet's: off mainnet ETH_RPC_URL serves another chain.
     if net == ChainNet::Ethereum && rentals != Some(false) {
-        add(
-            "rentals-index",
-            state.venue_rpc_url(1),
-            Arc::new(|| Arc::new(crate::rentals::index::RentalsIndex::mainnet())),
-            None,
+        use crate::rentals::index::RentalsIndex;
+        let rentals_cfg = || {
             PeriodicCfg::every(settings.interval)
                 .with_jitter(Duration::from_secs(20))
-                .with_error_backoff(Duration::from_secs(1800)),
-        );
+                .with_error_backoff(Duration::from_secs(1800))
+        };
+        let mainnet_url = state.venue_rpc_url(1);
+        if rentals.unwrap_or(mainnet_url.is_some()) {
+            add(
+                "rentals-index",
+                mainnet_url,
+                Arc::new(|| Arc::new(RentalsIndex::mainnet())),
+                None,
+                rentals_cfg(),
+            );
+        }
+        // A Sepolia endpoint opts the worker into the separate testnet history.
+        if let Some(url) = state.sepolia_rentals_rpc_url() {
+            add(
+                "rentals-index-sepolia",
+                Some(url),
+                Arc::new(|| Arc::new(RentalsIndex::sepolia())),
+                None,
+                rentals_cfg(),
+            );
+        }
     }
-    out
 }
 
 /// Spawns `chain-walk-ethereum` and `chain-walk-matic` for the projections
@@ -1657,10 +1702,16 @@ fn log_switches(state: &Arc<MarketplaceState>, rentals: Option<bool>) {
             job = "committee-index",
             "committee index off: builder's committee routes admit only BUILDER_ADMIN_ADDRESSES"
         );
-    } else if state.committee_rpc_url(ChainNet::Matic).is_none() {
+    } else if state.polygon_mainnet_rpc_url().is_none() {
         tracing::warn!(
             job = "committee-index",
             "committee index enabled but no Polygon JSON-RPC endpoint is configured (TRADE_RPC_URLS 137=, or RPC_ENDPOINT_POLYGON on mainnet): it stays off"
+        );
+    }
+    if settings.third_party_registry_enabled && state.polygon_mainnet_rpc_url().is_none() {
+        tracing::warn!(
+            job = "third-party-registry-index",
+            "third-party registry index enabled but no Polygon JSON-RPC endpoint is configured (TRADE_RPC_URLS 137=, or RPC_ENDPOINT_POLYGON on mainnet): it stays off"
         );
     }
     if rentals == Some(false) {

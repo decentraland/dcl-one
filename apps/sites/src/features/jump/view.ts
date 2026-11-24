@@ -1,4 +1,4 @@
-import type { JumpCardProps } from "@dcl/one-ui/apps/sites/jump/JumpCard";
+import type { JumpCardProps } from "@dcl/one-ui";
 
 import {
   eventHasEnded,

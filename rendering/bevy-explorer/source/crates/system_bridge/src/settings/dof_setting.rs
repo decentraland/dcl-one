@@ -51,6 +51,11 @@ impl AppSetting for DofSetting {
         config.graphics.dof
     }
 
+    /// MSAA turns depth of field off (`apply_to_camera`).
+    fn is_disabled(config: &AppConfig) -> bool {
+        config.graphics.msaa.is_msaa()
+    }
+
     fn apply_to_camera(
         &self,
         config: &SystemParamItem<Self::Param>,

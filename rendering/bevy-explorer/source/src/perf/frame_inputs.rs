@@ -17,7 +17,7 @@ use common::{
     perf::{HudMainThreadCostDataPoint, JsHeapDataPoint, SamplingPausedReason},
     structs::{
         AppConfig, ClientWindowFocus, CurrentRealm, OutOfWorld, PrimaryUser, SessionGraphics,
-        WorldHold,
+        WorldHold, UNCAPPED_FPS,
     },
 };
 use scene_runner::{renderer_context::RendererSceneContext, SceneLoopTiming};
@@ -186,7 +186,7 @@ pub fn effective_target_fps(
     refresh_hz: Option<usize>,
 ) -> Option<f32> {
     let fps = SessionGraphics::paced_fps(session, config, refresh_hz);
-    (fps > 0 && fps < 999).then_some(fps as f32)
+    (fps > 0 && fps < UNCAPPED_FPS).then_some(fps as f32)
 }
 
 /// Every running scene's reported heap, summed; `None` when no scene reports one.

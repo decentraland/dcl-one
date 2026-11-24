@@ -14,7 +14,7 @@ use serde_json::Value;
 use sqlx::PgPool;
 
 use crate::auth::is_canonical_cid;
-use crate::deploy_remote_entity::{ByteBudget, DownloadPolicy, download_file};
+use crate::deploy_remote_entity::{ByteBudget, DownloadPeers, DownloadPolicy, download_file};
 use crate::http::CheckedRedirectClient;
 use crate::storage::Storage;
 
@@ -104,6 +104,7 @@ pub async fn repair(
 ) -> anyhow::Result<RepairReport> {
     let mut report = RepairReport::default();
     let budget = ByteBudget::new(REPAIR_INFLIGHT_BYTES);
+    let servers = DownloadPeers::fixed(servers);
     let mut after = 0i32;
     loop {
         let profiles: Vec<(i32, Option<Value>)> = sqlx::query_as(
@@ -153,7 +154,7 @@ pub async fn repair(
         let budget = &budget;
         let fetches = held.iter().filter(|(_, held)| !**held).map(|(hash, _)| {
             let policy = DownloadPolicy::BestEffort;
-            download_file(client, storage, hash, servers, Some(budget), policy)
+            download_file(client, storage, hash, &servers, Some(budget), policy)
         });
         let fetched: Vec<bool> = futures::stream::iter(fetches)
             .buffer_unordered(REPAIR_FETCH_CONCURRENCY)

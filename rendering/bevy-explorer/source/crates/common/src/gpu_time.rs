@@ -20,9 +20,9 @@ pub const GPU_FRAME_TIME: DiagnosticPath = DiagnosticPath::const_new("gpu/frame_
 
 /// Present where [`GPU_FRAME_TIME`] is known to misread: in a browser on macOS (WebGPU on Metal)
 /// a run can sit on one near-constant value or read a fraction of a millisecond for a frame that
-/// takes several. The diagnostic, the system info panel, the benchmark CSV and `gpuFrameMs` in
-/// `/performance_state` keep the readings; the performance sample, the benchmark summary and the
-/// frame's bottleneck take none.
+/// takes several. The diagnostic, the system info panel, the benchmark CSV and, in
+/// `/performance_state`, `gpuFrameMs` and the GPU element of `frameTimeBreakdown` keep the
+/// readings; the performance sample, the benchmark summary and the frame's bottleneck take none.
 #[derive(Resource, Clone, Copy, Debug, Default)]
 pub struct GpuFrameTimeUnreliable;
 

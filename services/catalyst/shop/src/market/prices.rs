@@ -201,12 +201,19 @@ pub async fn prices(
     Ok(histogram_from(&value))
 }
 
-/// The answer to a failed nft leg: the land-authz index that stopped being
-/// ready after the gate answers its unavailable envelope, as `/v1/nfts`
-/// does; anything else is an internal error.
+/// The answer to a failed nft leg, as `/v1/nfts` answers the same state: a
+/// land-authz index, nft index or items mirror that stopped being ready
+/// after the gate answers its unavailable envelope, a statement cancelled
+/// by the read bound the bound's 503; anything else is an internal error.
 pub(crate) fn nft_prices_error(e: String) -> Response {
     if e == super::nft_reads::NFT_PRICES_LAND_UNAVAILABLE {
         return super::nft_reads::land_unavailable();
+    }
+    if e == super::nft_reads::NFT_PRICES_TIMED_OUT {
+        return super::nft_reads::timed_out();
+    }
+    if let Some((source, message)) = super::nft_reads::nft_prices_not_ready(&e) {
+        return super::unavailable(source, message);
     }
     ApiError::internal(e).into_response()
 }

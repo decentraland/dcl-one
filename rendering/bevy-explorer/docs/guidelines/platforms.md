@@ -195,9 +195,10 @@ Explorer's wgpu (upstream `v24.0.5` plus the series in `rendering/bevy-explorer/
   holds no work does not write its end timestamp, so each bracket pass dispatches one workgroup
   of a shader that does nothing; with it samples arrive, but some frames still read back an end
   earlier than their begin and a run can sit on one value. A web build on macOS therefore marks
-  the GPU frame time unreliable (`common::gpu_time::GpuFrameTimeUnreliable`): the panel, the CSV
-  and `gpuFrameMs` keep the readings, and the performance snapshot, the analytics event built
-  from it, the benchmark summary and the bottleneck take none.
+  the GPU frame time unreliable (`common::gpu_time::GpuFrameTimeUnreliable`): the panel, the CSV,
+  `gpuFrameMs` and the GPU element of `frameTimeBreakdown` keep the readings, and the
+  performance snapshot, the analytics event built from it, the benchmark summary and the
+  bottleneck take none.
 - **Chrome quantises timestamps** unless its "WebGPU Developer Features" flag is on
   (`chrome://flags/#enable-webgpu-developer-features`;
   [Chrome's WebGPU 121 notes](https://developer.chrome.com/blog/new-in-webgpu-121) give 100 µs).
