@@ -205,12 +205,18 @@ fn gen_sdk_components() -> Result<()> {
         "Vector3",
         "PBAvatarBase",
         "PBAvatarEquippedData",
+        "PBAvatarEquippedData.EquippedWearable",
         "PBPointerEvents.Entry",
         "PBPointerEvents.Info",
     ];
     for component in ts_components {
         config.type_attribute(component, "#[derive(ts_rs::TS)]");
     }
+    // The engine writes this list and ignores it on input, so a setAvatar may leave it out.
+    config.field_attribute(
+        "PBAvatarEquippedData.wearables",
+        "#[serde(default)]\n#[ts(optional = nullable)]",
+    );
 
     let hash_components = [
         "PBMaterial",

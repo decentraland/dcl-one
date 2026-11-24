@@ -323,13 +323,20 @@ impl LiveProcessedSnapshotStore {
         Self { pool }
     }
 
-    pub async fn filter_processed(&self, hashes: &[String]) -> Result<HashSet<String>, SyncError> {
-        let rows: Vec<String> =
-            sqlx::query_scalar("SELECT hash FROM content.processed_snapshots WHERE hash = ANY($1)")
-                .bind(hashes)
-                .fetch_all(&self.pool)
-                .await
-                .map_err(|e| SyncError::Storage(e.to_string()))?;
+    async fn filter_processed(
+        &self,
+        hashes: &[String],
+        entity_types: Option<&[String]>,
+    ) -> Result<HashSet<String>, SyncError> {
+        let rows: Vec<String> = sqlx::query_scalar(
+            "SELECT hash FROM content.processed_snapshots
+             WHERE hash = ANY($1) AND (entity_types IS NULL OR entity_types @> $2::text[])",
+        )
+        .bind(hashes)
+        .bind(entity_types)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|e| SyncError::Storage(e.to_string()))?;
         Ok(rows.into_iter().collect())
     }
 
@@ -339,18 +346,26 @@ impl LiveProcessedSnapshotStore {
     pub async fn filter_processed_in_chunks(
         &self,
         hashes: impl IntoIterator<Item = String>,
+        entity_types: Option<&HashSet<String>>,
     ) -> Result<HashSet<String>, SyncError> {
+        let entity_types = entity_types.map(|types| types.iter().cloned().collect::<Vec<_>>());
         let mut processed = HashSet::new();
         let mut chunk: Vec<String> = Vec::with_capacity(PROCESSED_SNAPSHOT_LOOKUP_CHUNK_SIZE);
         for hash in hashes {
             chunk.push(hash);
             if chunk.len() == PROCESSED_SNAPSHOT_LOOKUP_CHUNK_SIZE {
-                processed.extend(self.filter_processed(&chunk).await?);
+                processed.extend(
+                    self.filter_processed(&chunk, entity_types.as_deref())
+                        .await?,
+                );
                 chunk.clear();
             }
         }
         if !chunk.is_empty() {
-            processed.extend(self.filter_processed(&chunk).await?);
+            processed.extend(
+                self.filter_processed(&chunk, entity_types.as_deref())
+                    .await?,
+            );
         }
         Ok(processed)
     }
@@ -377,21 +392,30 @@ impl LiveProcessedSnapshotStore {
         Ok(rows.into_iter().collect())
     }
 
-    pub async fn mark_processed(&self, hash: &str) -> Result<(), SyncError> {
-        self.mark_processed_many(std::slice::from_ref(&hash.to_string()))
-            .await
-    }
-
-    pub async fn mark_processed_many(&self, hashes: &[String]) -> Result<(), SyncError> {
+    /// Record coverage per hash. NULL means every entity type, while an empty
+    /// legacy receipt has no known coverage. Concurrent passes can only add coverage.
+    pub async fn mark_processed_many(
+        &self,
+        hashes: &[String],
+        entity_types: Option<&HashSet<String>>,
+    ) -> Result<(), SyncError> {
         if hashes.is_empty() {
             return Ok(());
         }
+        let entity_types = entity_types.map(|types| types.iter().cloned().collect::<Vec<_>>());
         sqlx::query(
-            "INSERT INTO content.processed_snapshots (hash, process_time)
-             SELECT h, timezone('UTC', now()) FROM unnest($1::text[]) AS h
-             ON CONFLICT DO NOTHING",
+            "INSERT INTO content.processed_snapshots AS saved (hash, process_time, entity_types)
+             SELECT DISTINCT h, timezone('UTC', now()), $2::text[] FROM unnest($1::text[]) AS h
+             ON CONFLICT (hash) DO UPDATE SET
+                 process_time = EXCLUDED.process_time,
+                 entity_types = CASE WHEN EXCLUDED.entity_types IS NULL THEN NULL
+                     ELSE ARRAY(SELECT DISTINCT t FROM unnest(saved.entity_types || EXCLUDED.entity_types) AS t ORDER BY t)
+                 END
+             WHERE saved.entity_types IS NOT NULL
+               AND (EXCLUDED.entity_types IS NULL OR NOT saved.entity_types @> EXCLUDED.entity_types)",
         )
         .bind(hashes)
+        .bind(entity_types)
         .execute(&self.pool)
         .await
         .map_err(|e| SyncError::Storage(e.to_string()))?;
@@ -887,12 +911,21 @@ mod tests {
         let store = LiveProcessedSnapshotStore::new(pool.clone());
         let tag = unique();
         let hashes: Vec<String> = (0..2_005).map(|i| format!("snap-{tag}-{i}")).collect();
-        store.mark_processed_many(&hashes[..1_500]).await.unwrap();
-        store.mark_processed(&hashes[1_500]).await.unwrap();
-        store.mark_processed(&hashes[1_500]).await.unwrap();
+        store
+            .mark_processed_many(&hashes[..1_500], None)
+            .await
+            .unwrap();
+        store
+            .mark_processed_many(&hashes[1_500..1_501], None)
+            .await
+            .unwrap();
+        store
+            .mark_processed_many(&hashes[1_500..1_501], None)
+            .await
+            .unwrap();
 
         let processed = store
-            .filter_processed_in_chunks(hashes.iter().cloned())
+            .filter_processed_in_chunks(hashes.iter().cloned(), None)
             .await
             .unwrap();
         assert_eq!(processed.len(), 1_501);
@@ -901,6 +934,59 @@ mod tests {
 
         sqlx::query("DELETE FROM content.processed_snapshots WHERE hash LIKE $1")
             .bind(format!("snap-{tag}-%"))
+            .execute(&pool)
+            .await
+            .unwrap();
+    }
+
+    #[tokio::test]
+    async fn snapshot_receipts_skip_only_covered_entity_types() {
+        let Some(pool) = test_pool(2).await else {
+            return;
+        };
+        let store = LiveProcessedSnapshotStore::new(pool.clone());
+        let hash = format!("snap-scope-{}", unique());
+        let hashes = std::slice::from_ref(&hash);
+        let scene = HashSet::from(["scene".to_string()]);
+        let profile = HashSet::from(["profile".to_string()]);
+        let widened = HashSet::from(["scene".to_string(), "profile".to_string()]);
+        sqlx::query(
+            "INSERT INTO content.processed_snapshots (hash, process_time) VALUES ($1, now())",
+        )
+        .bind(&hash)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        let covered = |scope| store.filter_processed_in_chunks(hashes.iter().cloned(), scope);
+        assert!(covered(Some(&scene)).await.unwrap().is_empty());
+        assert!(covered(None).await.unwrap().is_empty());
+
+        store
+            .mark_processed_many(hashes, Some(&scene))
+            .await
+            .unwrap();
+        assert!(covered(Some(&scene)).await.unwrap().contains(&hash));
+        assert!(covered(Some(&widened)).await.unwrap().is_empty());
+        assert!(covered(None).await.unwrap().is_empty());
+
+        store
+            .mark_processed_many(hashes, Some(&profile))
+            .await
+            .unwrap();
+        assert!(covered(Some(&widened)).await.unwrap().contains(&hash));
+        assert!(covered(None).await.unwrap().is_empty());
+
+        store.mark_processed_many(hashes, None).await.unwrap();
+        store
+            .mark_processed_many(hashes, Some(&scene))
+            .await
+            .unwrap();
+        assert!(covered(Some(&widened)).await.unwrap().contains(&hash));
+        assert!(covered(None).await.unwrap().contains(&hash));
+
+        sqlx::query("DELETE FROM content.processed_snapshots WHERE hash = $1")
+            .bind(&hash)
             .execute(&pool)
             .await
             .unwrap();

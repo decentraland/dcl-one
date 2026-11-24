@@ -232,7 +232,7 @@ Example (upstream, one owned outfit, one name):
 }
 ```
 
-**Data dependency**: the outfits entity (content DB, or the read-through when configured); owned wearables with token ids (collections subgraphs; dcl-one reads its nft index, `owned_items::owned_tokens`); TP ownership (`third_party.rs`); names (marketplace subgraph, present).
+**Data dependency**: the outfits entity (content DB, or the read-through when configured); owned wearables with token ids (collections subgraphs; dcl-one reads its nft index, `owned_items::owned_tokens`); TP ownership (`third_party.rs`); names (dcl-one: the nft index in the items' snapshot on a node that walks it, else the marketplace subgraph; present).
 
 ## 6. GET /lambdas/status
 
@@ -386,7 +386,7 @@ LP-05. **Profiles: response is `{timestamp, avatars}` with the entity timestamp.
 LP-06. **Profiles: `hasClaimedName` is always computed.**
 - Status: MATCH, no work.
 - Upstream: `hasClaimedName = ownedNames.has(avatar.name)`, `false` for default profiles. `decentraland/lamb2:src/adapters/profiles.ts:197,261`.
-- dcl-one: always set from the owned names, `false` for default profiles and when no `MARKETPLACE_SUBGRAPH_URL` is configured (no name is proven) `services/catalyst/shop/src/market/profiles.rs:215-229,460-467`. Requiring a names reader at startup is LP-07.
+- dcl-one: always set from the owned names, `false` for default profiles and on a node that neither walks the nft index nor has `MARKETPLACE_SUBGRAPH_URL` (no name is proven) (`apply_claimed_name`, `process_profiles_observed` in `services/catalyst/shop/src/market/profiles.rs`). A walking node reads the names in the items' snapshot, Ethereum always, and files the profile under that publication. Requiring a names reader at startup is LP-07.
 - Severity: none (closed).
 
 LP-07. **Profiles: serving without ownership readers.**

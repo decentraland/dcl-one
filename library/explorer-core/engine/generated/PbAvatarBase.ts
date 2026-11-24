@@ -4,4 +4,8 @@ import type { Color3 } from "./Color3";
 /**
  * AvatarBase sets all modifiers over the avatar's apparence.
  */
-export type PbAvatarBase = { skinColor: Color3 | null, eyesColor: Color3 | null, hairColor: Color3 | null, bodyShapeUrn: string, name: string, talking: boolean | null, };
+export type PbAvatarBase = { skinColor: Color3 | null, eyesColor: Color3 | null, hairColor: Color3 | null, bodyShapeUrn: string, name: string, 
+/**
+ * true while the player is speaking in voice chat; unset when the engine does not report voice activity
+ */
+talking: boolean | null, };
