@@ -8,7 +8,9 @@ The exact `/events/assets/event-default.webp` path serves Catalyst's bundled eve
 
 ## Event poster conversion
 
-A native player requests an event poster through `/metamorph-api/convert` without a width. For the configured node's poster mounts, its bundled default and the canonical event bucket, the gateway serves a final JPEG or PNG on the first and repeat requests. JPEG and PNG sources retain their original bytes. WebP and GIF sources produce a still image with a longest side of up to 960 pixels. The browser converter `/media/convert` accepts an explicit width of 80, 160, 320, 640 or 960. Direct asset requests return the original artwork.
+A native player requests an event poster through `/metamorph-api/convert` without a width. For the configured node's poster mounts, its bundled default and the canonical event bucket, JPEG and PNG sources retain their original bytes on the first and repeat requests. WebP and GIF sources produce a still image with a longest side of up to 960 pixels. Opaque stills use JPEG. Stills with transparency use PNG and are resized once more to fit within 640 × 640 pixels if the first PNG exceeds 2 MiB. Other image formats, including AVIF, return HTTP 415 on this native route.
+
+The browser converter `/media/convert` accepts an explicit width of 80, 160, 320, 640 or 960. Direct asset requests return the original artwork.
 
 Set `node_base` to the public node URL, including any deployment prefix. These examples inspect the response headers for the same bundled poster.
 

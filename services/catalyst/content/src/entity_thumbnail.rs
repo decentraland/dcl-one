@@ -698,6 +698,26 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn noisy_opaque_poster_fits_the_output_limit_at_full_size() {
+        use rand::{RngExt, SeedableRng, rngs::StdRng};
+
+        let mut rng = StdRng::seed_from_u64(2062);
+        let pixels = image::RgbImage::from_fn(960, 960, |_, _| {
+            let channels = rng.random::<[bool; 3]>();
+            image::Rgb(channels.map(|high| if high { 255 } else { 0 }))
+        });
+        let mut source = Cursor::new(Vec::new());
+        pixels.write_to(&mut source, ImageFormat::WebP).unwrap();
+        let (mime, body) = render_event_poster(source.into_inner().into())
+            .await
+            .unwrap();
+        assert_eq!(mime, "image/jpeg");
+        assert!(body.len() <= 2 * 1024 * 1024);
+        let frame = image::load_from_memory(&body).unwrap();
+        assert_eq!((frame.width(), frame.height()), (960, 960));
+    }
+
+    #[tokio::test]
     async fn noisy_translucent_poster_fits_the_output_limit_as_png() {
         use rand::{RngExt, SeedableRng, rngs::StdRng};
 
