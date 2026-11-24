@@ -1,6 +1,6 @@
 # websocket
 
-The websocket transport is one of the island messaging transports supported by the Decentraland comms protocol. Clients should use it when they receive an appropriate connection string from their realm's [Archipelago](/docs/contributor/communications/archipelago/) service, or if it's indiciated as a fixed transport.
+The `ws-room:` WebSocket transport relays messages in a room. Use it when the realm supplies a `ws-room:` connection string.
 
 In the context of the websocket transport, an island is referred to as a _room_. Either name indicates the same thing: a group of nearby players that exchange updates and chat.
 
@@ -31,7 +31,7 @@ All messages from the websocket transport are serialized using the [`WsPacket`](
 
 ### Authentication
 
-Before they can start relaying messages to others, clients must authenticate by signing a challenge string. This is required even when the transport URI was obtained from [Archipelago](/docs/contributor/communications/archipelago/) after a previous round of authentication.
+Before they can start relaying messages to others, clients must authenticate by signing a challenge string. This is required even when the transport URI was obtained from the [Realm WebSocket connector](/docs/contributor/communications/archipelago/) after a previous round of authentication.
 
 The first message a client sends when joining an island is [`WsIdentification`](https://github.com/decentraland/protocol/blob/c48ea0aa00d8173084571552463a6a05a7f49636/proto/decentraland/kernel/comms/rfc5/ws_comms.proto#L64), which contains a public address. It will be responded with [`WsChallengeRequired`](/docs/contributor/communications/transport-types/websocket/#wschallengerequired), and clients send a [`WsSignedChallenge`](/docs/contributor/communications/transport-types/websocket/#wssignedchallenge) in reply.
 

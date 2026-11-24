@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import type { PlaceDetailProps } from "@dcl/one-ui/apps/sites/places/PlaceDetail";
+import type { PlaceDetailProps } from "@dcl/one-ui";
 import { renderToString } from "react-dom/server";
 import { createMemoryRouter, RouterProvider } from "react-router";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -14,7 +14,8 @@ import PlaceDetailRoute from "./places_.$id";
 
 const seen: { props: PlaceDetailProps | null } = { props: null };
 
-vi.mock("@dcl/one-ui/apps/sites/places/PlaceDetail", () => ({
+vi.mock("@dcl/one-ui", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@dcl/one-ui")>()),
   PlaceDetail: (props: PlaceDetailProps) => {
     seen.props = props;
     return null;
@@ -57,7 +58,7 @@ function renderRoute(travel: PlaceTravel = { playBase: "/play/", jumpHref: "/pla
     [{ id: "place", path: "/places/:id", Component: PlaceDetailRoute as never }],
     { initialEntries: [`/places/${PLACE_ID}`], hydrationData: { loaderData: { place: loaderData } } },
   );
-  const client = new QueryClient();
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   renderToString(<QueryClientProvider client={client}><RouterProvider router={router} /></QueryClientProvider>);
   return seen.props!;
 }

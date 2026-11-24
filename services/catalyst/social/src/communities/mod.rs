@@ -14,8 +14,9 @@
 //! `fed` (over `crate::fed`). A member who leaves, is banned or is kicked from a
 //! private community leaves its voice room ([`State::evict_from_private_community_voice`]
 //! through the [`VoiceEviction`] the comms module attaches in `main`). The
-//! `onlyOnline` member filter reads the Pulse wallet topology the social RPC's
-//! connectivity stream reads, attached in `serve` ([`State::set_topology`]).
+//! `onlyOnline` member filter reads the wallet topology (Pulse islands and World
+//! rooms) the social RPC's connectivity stream reads, attached in `serve`
+//! ([`State::set_topology`]).
 //!
 //! Mount it twice: at the root (the old `social-api.decentraland.org` host
 //! paths) and nested under `/social-api` (the gateway prefix); the
@@ -96,7 +97,9 @@ pub struct Settings {
     pub restricted_names: Vec<String>,
     /// `COMMUNITIES_CDN_URL` (the old `CDN_URL`), default `PUBLIC_URL`: the
     /// base of `thumbnailUrl`; this node serves the thumbnail at
-    /// `/social/communities/{id}/raw-thumbnail.png` under it.
+    /// `/social/communities/{id}/raw-thumbnail.png` under it. Emitted URLs
+    /// carry `?v=<hash>`, so a caching CDN must key on `v` only and strip
+    /// other query parameters.
     pub cdn_url: String,
     /// Where profile pictures are served (`profiles::FaceUrls`).
     pub faces: profiles::FaceUrls,
@@ -163,8 +166,8 @@ pub struct State {
     pub eip1654: Option<Arc<dyn Eip1654Validator>>,
     pub profiles: ProfilesCache,
     pub referral: referral::Referral,
-    /// The Pulse wallet topology, attached with the social RPC's (`serve`):
-    /// who `onlyOnline` counts as online. Unattached, no one is.
+    /// The wallet topology (Pulse islands and World rooms), attached with the
+    /// social RPC's (`serve`): who `onlyOnline` counts as online. Unattached, no one is.
     pub topology: std::sync::OnceLock<Arc<crate::comms::topology::Topology>>,
     /// One DAPPS document shared by moderator, compliance and referral decisions.
     pub flags: Arc<crate::explore::api::feature_flags::Snapshot>,
@@ -320,7 +323,7 @@ impl State {
         method: &str,
         path: &SignedPath,
     ) -> Result<Address, CommError> {
-        Ok(auth::require_signer(headers, method, path, self.eip1654.as_deref()).await?)
+        Ok(auth::require_signer(headers, method, path, self.eip1654.as_ref()).await?)
     }
 
     pub async fn optional_signer(
@@ -329,7 +332,7 @@ impl State {
         method: &str,
         path: &SignedPath,
     ) -> Option<Address> {
-        auth::try_extract_signer(headers, method, path, self.eip1654.as_deref()).await
+        auth::try_extract_signer(headers, method, path, self.eip1654.as_ref()).await
     }
 
     pub fn admin_bearer(&self, headers: &HeaderMap) -> bool {
@@ -346,6 +349,11 @@ impl State {
 
     pub fn thumbnail_url(&self, id: CommunityId) -> String {
         thumbnail_url(&self.settings.cdn_url, &id.to_string())
+    }
+
+    /// The thumbnail URL versioned by the stored hash (bare when none).
+    pub fn versioned_thumbnail_url(&self, id: CommunityId, hash: Option<&str>) -> String {
+        versioned_thumbnail_url(&self.settings.cdn_url, &id.to_string(), hash)
     }
 
     /// Attaches the comms module's voice-room kick (once).
@@ -387,7 +395,7 @@ impl State {
         let _ = self.worlds.set(worlds);
     }
 
-    /// Attaches the Pulse wallet topology (once).
+    /// Attaches the wallet topology (once).
     pub fn set_topology(&self, topology: Arc<crate::comms::topology::Topology>) {
         let _ = self.topology.set(topology);
     }
@@ -406,9 +414,9 @@ impl State {
         let _ = self.updates.set(updates);
     }
 
-    /// A join (`online`) or a leave, kick or ban reaches the community's
-    /// members on open community-member connectivity streams and the member
-    /// itself (upstream's `COMMUNITY_MEMBER_STATUS_UPDATES_CHANNEL`).
+    /// A join or removal reaches the affected member as a membership change.
+    /// Co-members on open connectivity streams see the corresponding roster change
+    /// when membership and topology agree with it.
     pub async fn member_status_changed(
         &self,
         community_id: CommunityId,
@@ -497,26 +505,27 @@ impl State {
         extra: serde_json::Value,
         audience: crate::notifications::community::Audience<'_>,
     ) {
-        let name: Option<String> = match sqlx::query_scalar(
-            "SELECT name FROM social.communities WHERE id = $1",
+        let row: Option<(String, Option<String>)> = match sqlx::query_as(
+            "SELECT c.name, t.thumbnail_hash FROM social.communities c \
+             LEFT JOIN social.community_thumbnails t ON t.community_id = c.id WHERE c.id = $1",
         )
         .bind(community_id)
         .fetch_optional(&self.pool)
         .await
         {
-            Ok(name) => name,
+            Ok(row) => row,
             Err(error) => {
                 tracing::warn!(%error, %community_id, kind, "community notification: name lookup failed");
                 None
             }
         };
-        let Some(name) = name else {
+        let Some((name, hash)) = row else {
             return;
         };
         let mut metadata = serde_json::json!({
             "communityId": community_id.as_uuid(),
             "communityName": name,
-            "thumbnailUrl": self.thumbnail_url(community_id),
+            "thumbnailUrl": self.versioned_thumbnail_url(community_id, hash.as_deref()),
         });
         if let (Some(m), serde_json::Value::Object(extra)) = (metadata.as_object_mut(), extra) {
             m.extend(extra);
@@ -576,6 +585,21 @@ pub fn thumbnail_url(cdn: &str, id: &str) -> String {
         cdn.trim_end_matches('/'),
         id
     )
+}
+
+/// The query parameter that versions a thumbnail URL by its content hash.
+pub const THUMBNAIL_VERSION_PARAM: &str = "v";
+
+/// `thumbnail_url` plus `?v=<hash>`, so an update changes the URL; a hash
+/// that is not URL-safe leaves it bare.
+pub fn versioned_thumbnail_url(cdn: &str, id: &str, hash: Option<&str>) -> String {
+    let url = thumbnail_url(cdn, id);
+    match hash {
+        Some(h) if !h.is_empty() && h.bytes().all(|b| b.is_ascii_alphanumeric()) => {
+            format!("{url}?{THUMBNAIL_VERSION_PARAM}={h}")
+        }
+        _ => url,
+    }
 }
 
 /// The request's own path (the gateway prefix included when nested) beside

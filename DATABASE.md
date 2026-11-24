@@ -128,13 +128,62 @@ deploys (`POST /entities` and partial publication) and world scene deploys
 take that lock's shared side in their write transaction and re-check every
 file they name, so an unlink batch never removes a file such a deployment
 references; a content deploy waits at most 5 s for it and answers 503 past
-that. Synced content writes do not take it and rely on the collector's age
-floor.
+that. The peer-sync flush (read-through's too) takes the shared side in its
+batch transaction and probes the batch's distinct files there; an entity
+whose file is gone is left out and recorded in `content.failed_deployments`
+for the retry worker, and the rest commits. So the unlinks that skip the age
+floor never remove a file a content deployment commits: the history prune
+and content's partial-upload cleanup, which deletes up to 20 expired
+uploads' `content.pending_deployments` rows and unlinks the files they wrote
+(`pending_deployment_files.written`) that no reference names in one
+transaction under the exclusive lock. It reads the world scenes' content
+lists before taking the lock and, under it, only the rows written since; a
+lock still busy after 30 s ends the run, and uploads that wrote no file go
+without it. An upload a newer deployment overtook is released the same way
+within its request, which takes the lock only if it is free and otherwise
+marks the upload expired for the cleanup's next run. Builder's item file and
+project blob uploads also take the shared side (waiting at most 5 s, then
+503) before checking whether a blob is stored and hold it until the `builder.uploaded_contents` row (and, for an
+item file, the `builder.item_contents` row) naming it commits. The other
+writers that commit a row naming a blob do the same through
+`gc::store_for_row` (the shared side, at most 5 s, then the blob stored
+unless present, in the row's transaction): the asset-pack catalogue build
+(which re-checks every walked file and stores a removed one again), the
+camera-reel import, community thumbnails and contents, MLS blobs, cached
+profile images, worlds settings thumbnails, event posters and outfit
+thumbnails. A worlds mirror pass re-checks the blobs its rows name under
+the shared side and fails when one is gone, for the next pass to fetch
+again. Camera-reel uploads and player report evidence commit their row
+before storing the blob, so an unlink batch's reference read keeps it.
+
+`worlds.thumbnail_aliases` records one immutable SHA-256-to-CID mapping for
+each distinct mirrored thumbnail that the raw-leaf CID cannot name, including
+images larger than one 256 KiB chunk. The mirror checks the SHA-256 digest
+before inserting the mapping under the same store lock as the settings write.
+The mirror and the cutover importer record aliases even when the world keeps
+its local settings. The importer uses the verified blob inventory. Legacy
+hex reads probe the primary key after a raw-leaf miss. The collector uses
+the alias CID index to protect imported aliases and aliases that predate
+expiry tracking. Other aliases protect their blobs for 30 days after
+renewal. The mirror renews an alias at most once a day while the source
+still publishes it, including when local settings take precedence. A
+world's current thumbnail also has its own reference. Once an alias
+expires, the blob is collectable if no other reference keeps it. The
+hash-to-CID mapping remains, and the content denylist can withhold the bytes.
+
+Read-through copies (explore's satellite, manifest and poster mirrors, the
+asset catalogue pull) take no lock: a removed blob is fetched again on its
+next read.
 
 Genesis storage management requires LAND rights at the requested parcel, using
 the published LAND manager index or its configured document source. Without a
 document source, only ownership at that parcel grants authority; scene-admin
 roles do not grant storage authority.
+
+Adding a Genesis place to a community reads the same LAND state: the place
+belongs to the owner of its base parcel (or of the estate that holds it), never
+to the owner its scene metadata names
+([decision](docs/adr/2026-11-21-community-genesis-place-owner.md)).
 
 Storage collaborators are wallets in an active local world deployment's or
 active Genesis deployment's `metadata.logsPermissions`; Genesis deployments
@@ -250,13 +299,42 @@ scenes in that world (expected up to a few hundred).
 World quotas and usage exclude recorded retired identities, and exclude the
 parked legacy `world` bucket once that world has an active identity; unknown
 other legacy scopes still count. Storage rows remain retained and inaccessible
-through new scene scopes. Verify migration and recovery limits and measure quota-query costs before acceptance.
+through new scene scopes.
+
+The partial `world_scene_place_retired_identity_idx` on
+`(world_name, (identity::text)) WHERE NOT active` bounds the quota exclusion to
+retired identities in the requested world. It keeps the UUID-to-text comparison:
+legacy namespaces need not parse as UUIDs. The object pass blocks writes to the table until the migration transaction
+commits. For a concurrent build ahead of migration, use the definition from
+`schemas/21_world_scene_places.sql` and verify both `pg_index.indisvalid` and
+`pg_get_indexdef(indexrelid)`. Migration, bootstrap and status check only the
+name. Drop and rebuild any invalid or mismatched index before migration.
+See the [quota plan measurements](METRICS.md#wallet-presence-and-world-quota-lookups).
 
 The world discovery listing remains one aggregate per world. Scene listings and
 place detail read the shared identities joined to active deployments; neither
 adds scene rows to the aggregate catalogue. Upstream mirrored catalogue IDs
-remain external IDs, never storage authority. The old
-`worlds.world_scene_identity` table is a frozen upgrade source only: creating
+remain external IDs, never storage authority.
+
+World publication, undeployment, settings (including spawn), access and block
+edits, and owner reconciliation mark one row in `explore.world_place_updates`
+in the source transaction.
+This relation holds at most one pending row per changed world. Coalescing takes
+the pending row's lock without losing its original queue position, so a worker
+cannot consume a mark before its source update commits. The leased
+`places-derive` job takes up to 64 oldest entries with `SKIP LOCKED`.
+Full batches are followed immediately by another check. Partial or empty
+batches resume the two-second interval. The update or removal of the
+aggregate and the consumption of its mark commit together. The worker reads
+world and scene rows without taking row locks. A failed refresh rolls back
+both effects. Consecutive refresh failures back off to at most 30 seconds.
+A full reconciliation runs at its configured interval and can
+delay processing queued edits while it runs. The local projection and mirror
+upserts of worlds share an advisory transaction lock. The mirror checks for
+local authority after acquiring the lock, so it cannot reinsert a world
+displaced by the local projection. The lock also orders work during lease changes.
+
+The old `worlds.world_scene_identity` table is a frozen upgrade source only: creating
 the new Places relation copies its UUIDs and retained records during object
 creation. This is once per creation, not once for the lifetime of a database:
 never drop/recreate the authoritative relation to recover it, because that
@@ -518,6 +596,26 @@ contention. Community opt-out UUIDs are canonicalized on write and lookup;
 event and community delivery recognize existing non-canonical UUID scopes too.
 Lookup binds optional UUID parameters parsed in Rust, preserving opaque legacy
 scope IDs without relying on guarded casts of SQL parameters.
+All six event notice kinds use one `(address, broadcast_key)` per event and
+type. A repeated notice refreshes only when `metadata.occurredAt` is strictly
+newer; equal source times keep the first payload. Visibility and read state stay
+as first stored, and only a new row creates a delivery. Notification rows remain
+the durable deduplication evidence after intent and terminal delivery cleanup.
+Runtime and the notification import hold the same transaction locks through
+historical identity adoption and upsert. Each wallet maps to one of 256 buckets:
+`(1163284052, (hashtextextended(address, 0) & 255)::integer)` in PostgreSQL's
+two-integer advisory namespace. Distinct buckets are locked in numeric order,
+bounding retained event locks at 256 even during whole-transaction dry runs. An existing keyed carrier
+wins; otherwise the earliest exact native event match retains its ID. Existing
+historical duplicates are not deleted. The import also recognizes exact source
+IDs, retains event keys and never creates email deliveries.
+
+History adoption performs up to 100 wallet/type/event probes per recipient page.
+`notifications_event_history_idx` indexes only unkeyed rows with an eventId, in
+wallet/type/event and creation order. New carriers leave the partial index;
+unrelated notices without that field do not enter it. The index is a new object
+installed by the schema object pass on existing databases, without a reset.
+
 Catalogue-scale capacity is not established by
 bounded result sizes alone. See the
 [event notification ADR](docs/adr/2026-11-01-event-notification-delivery.md).
@@ -535,6 +633,17 @@ The read projection materializes the normalized preview once per event row and
 excludes SQL-null preview entries. Local membership probes retain the
 `event_attendance_local` primary-key lookup; cancellation and going deltas share
 that preview instead of expanding its JSON separately for every local RSVP.
+
+The Events import records the exact timestamp and payload it wrote in
+`dcl_migration.event_attendance_loaded`, keyed by event and signer. Its whole-set
+attendance reconciliation deletes an upstream-missing row only while it still
+has that imported `going` state, timestamp and payload. Later local changes and
+unrecorded local rows are retained; an empty source requires explicit approval
+through the importer's `--allow-empty` option. Pre-ledger imported rows already
+missing upstream require an earlier authoritative export before activation;
+current rows alone do not establish their origin. The notification import needs
+a full restart from retained source history to repair older missing event keys.
+Missing source notice identities likewise require earlier export evidence.
 
 Event authoring distinguishes generated posters from explicit images and clears
 inside the existing event document. Generated images may follow location
@@ -583,15 +692,19 @@ stored client-supplied sale category never establishes eligibility.
 The anonymous Registry `GET /denylist` feed reads `content.denylist` through the
 existing content pool: `id`, `added_by` and `added_at`, ordered newest first.
 Expected lists contain hundreds of rows; the read checks overflow at 100,001 rows
-and refuses lists above 100,000. The shared Explore API state retains local
-rows for five seconds and coalesces concurrent refreshes. Database failures are
-retained for the same interval and return 500; a failed refresh never serves an
-expired successful list. Operator edits become visible on the next read after
-expiry, and process restart rebuilds on demand. Source moderation responses are
-validated on every request and never cached here. Merge and serialization remain
-per-request work; the cache bounds table-read frequency, not total endpoint CPU
-or response bytes. No table, index or pool is added. The public feed intentionally
-publishes every local id kind and `added_by` as the operator's `created_by` wallet.
+and refuses lists above 100,000. Besides console edits, one bulk write fills the
+table: the one-off `catalyst content import-denylist` of the old content
+server's denylist file at cutover, which writes one batched insert and one
+batched `ops.admin_audit` insert under a table lock that refuses to pass 100,000
+rows. The shared Explore API state retains local rows for five seconds and
+coalesces concurrent refreshes. Database failures are retained for the same
+interval and return 500; a failed refresh never serves an expired successful
+list. Operator edits become visible on the next read after expiry, and process
+restart rebuilds on demand. Source moderation responses are validated on every
+request and never cached here. Merge and serialization remain per-request work;
+the cache bounds table-read frequency, not total endpoint CPU or response bytes.
+No table, index or pool is added. The public feed intentionally publishes every
+local id kind and `added_by` as the operator's `created_by` wallet.
 
 The public What's On calendar caches completed, parsed catalogue responses
 for 30 seconds in each Sites process. Its key is the catalogue base, search,
@@ -832,13 +945,36 @@ Peer sync is not a backup of local state: a node taking local writes holds the o
 `shared::notifications` (`services/catalyst/shared/src/notifications.rs`) is the
 one writer of `social.notifications` and its `social.notification_deliveries`
 email row, for every producer: Social's own and Shop's sale, royalty, transfer,
-rental, tip, favorite-discount, credits and goal notices. Each batch is one statement on the
-producer's executor, so the notice commits with the producer's transaction: an
-upsert by `id` (or by `(address, broadcast_key)` for keyed notices) and, for new
-rows only, a `pending` delivery row, or `skipped` with the reason when the type has
-no template or the recipient cannot receive it. Social owns both tables, reads
-them and delivers the email; `with_emailable_kinds!` is the one list of templated
-types the writer and Social's templates share.
+rental, on-chain bid (`bid_received`, `shop/src/market/bid_notices.rs`), tip,
+favorite-discount, credits and goal notices. Writes use the producer's executor,
+so the notice commits with the producer's transaction. Ordinary batches use one
+statement and upsert by `id` (or by `(address, broadcast_key)` for keyed notices),
+refreshing metadata and occurrence time. Worlds' three quota kinds
+(`worlds_missing_resources`, `worlds_access_restricted`, `worlds_access_restored`)
+carry an explicit producer persistence policy: one first notice per wallet,
+kind and UTC date of block creation, including restoration on a later day.
+Social sorts quota notices by wallet; for each notice, the shared writer takes
+that wallet's transaction-scoped notification lock before aliasing and
+inserting. The locks remain held until transaction completion, in a namespace
+distinct from Worlds' quota locks. The writer links the
+three exact native notice IDs derived from the block's full creation timestamp
+to daily `broadcast_key` values where no daily carrier already exists before
+inserting the current notice. A linked row keeps its ID, metadata, occurrence
+time, read state and email delivery records; a new daily notice uses the
+canonical daily ID. Repeated daily keys leave that first row unchanged.
+Aliasing and insertion use the mutation's
+transaction and existing notification keys; no table or index is added.
+Only a new notification gets a `pending` delivery row, or `skipped` with the
+reason when the type has no template or the recipient cannot receive it.
+Social owns both tables, reads them and delivers the email;
+`with_emailable_kinds!` is the one list of templated types the writer and
+Social's templates share.
+
+The [quota notice identity decision](docs/adr/2026-11-21-world-quota-notice-identity.md)
+retains a cutover boundary: already closed native blocks or imported rows that
+cannot be linked from exact creation facts can overlap with the first daily
+notice. This writer does not reconstruct missing timestamps or consolidate all
+historical duplicates.
 
 ## Social realtime notification workload
 
@@ -893,11 +1029,14 @@ they do not establish equal latency with the source's combined lookup.
 Community ranking reads current membership, posts, places and thumbnail facts in
 pages of 100 communities. Five lifetime counters on `social.communities` retain
 photos, ended events, event attendees, ended streams and ended voice chats. The
-ranking job updates local authoritative communities only. Mirrored ranking scores
+ranking job updates scores for local authoritative communities and preserves their
+`updated_at` timestamps for import conflict resolution. Mirrored ranking scores
 remain upstream facts. `ranking_tracking_since` bounds local event occurrences
-eligible for collection; zero counter defaults do not reconstruct history. An
-authoritative cutover must import the lifetime counters, collection watermark and
-local producer receipts together before enabling local ranking ownership.
+eligible for collection; zero counter defaults do not reconstruct history. The
+social-service-ea import copies the lifetime counters and moves
+`ranking_tracking_since` to the moment it read them, so the collector counts only
+occurrences that end later; it imports no producer receipts. See "Community ranking"
+in `tooling/migration/sources/social-service-ea/MAPPING.md`.
 
 The existing leased event collector keeps a scalar source-key cursor and a
 recurrence ordinal window. It selects 100 event keys through the existing primary
@@ -1000,6 +1139,27 @@ credentials and compliance metric outcomes. Delayed DNS, combined network phases
 and deployed providers remain unverified; the probes do not establish exhaustive
 provider equivalence.
 
+## Community place ids
+
+`social.community_places.place_id` holds a places catalogue id or a world name,
+lowercased on every write (REST add, community create and edit, federated add)
+because explore keys both lowercased. Until the release below runs, a row written
+before this rule still answers: an add skips a place held in another case, removal
+and the edit's held-place diff match `lower(place_id)`, and an edit lowercases the
+places it keeps in place (adder and time kept) in the same transaction as its
+removals and inserts.
+
+The release script `schemas/releases/community-place-ids-lowercase.sql` collapses
+case variants of one id in a community to one row (the lowercase spelling, else
+the earliest added) and lowercases the survivor. It also adds the check
+`community_places_place_id_lowercase` (`place_id = lower(place_id)`, declared in
+`schemas/40_social.sql` for a new database) as `NOT VALID` when missing and
+validates it after the merge, so no later writer stores another case. Run it after the updated
+binaries replace every old replica: an old replica's mixed-case write fails once
+the check exists. It needs no maintenance window, sets a 10 s `lock_timeout`,
+holds an exclusive lock on the table while its first run adds the check, and is
+rerunnable. Rollback needs the matching backup.
+
 ## Shared social registry profile facts
 
 RPC and community profile readers share `social.registry_profile_cache` through
@@ -1100,6 +1260,20 @@ traffic is low-rate two-wallet writes and indexed existence probes, with at most
 one pending per normalized wallet; retained media depends on its connection and
 cleanup lifecycle. Capacity and production latency are not established by the
 functional tests.
+
+Wallet-scoped media probes use `private_voice_chat_participants_address_idx`
+and `community_voice_chat_users_address_idx`, both nonunique B-trees on
+`address`. These are separate from the pending-call party indexes. They retain
+every status so expiry predicates can use their existing timestamps without
+time-dependent partial indexes. See the [wallet probe measurements](METRICS.md#wallet-presence-and-world-quota-lookups).
+
+The object pass builds missing wallet indexes in the migration transaction,
+blocking writes to the indexed tables until the transaction commits. To build
+ahead, run each definition from `schemas/40_social.sql` with `CREATE INDEX
+CONCURRENTLY` outside a transaction. Migration, bootstrap and schema status
+check the index name only. Before migrating, verify `pg_index.indisvalid` and
+compare `pg_get_indexdef(indexrelid)` with the schema. Drop and rebuild an
+invalid or mismatched index before relying on it.
 
 Community detail, listing and member-request reads fetch voice status separately
 through the existing comms `VoiceDb` on the same pool and presence configuration.
@@ -1301,8 +1475,8 @@ Pending expiry remains effective while a media writer waits for a wallet.
 
 ### Durable world admission edits and stable bans
 
-World scene bans use `<world>:<base parcel>` keys. Genesis bans keep their entity
-keys. The release script `schemas/releases/world-scene-ban-keys.sql` consolidates active and retained
+World scene bans use `<world>:<base parcel>` keys; Genesis bans use the place
+("Scene bans" below). The release script `schemas/releases/world-scene-ban-keys.sql` consolidates active and retained
 world scene keys, keeping the newest ban when aliases overlap. It removes mapped
 legacy aliases so an unban cannot leave a hidden effective ban. Unmapped rows are
 retained. The existing retired-scene table supplies mappings during its configured
@@ -1333,7 +1507,7 @@ deadline. This does not add a cross-caller world ceiling.
 For rollout, stop all old API and scene-host replicas before running `catalyst schema migrate` and then applying
 `schemas/releases/world-scene-ban-keys.sql` with the administrative database role, then start the updated binaries. `catalyst serve` refuses startup while active or retained
 world scenes still have mapped entity-id bans awaiting this conversion; fresh databases and
-unmapped or Genesis bans do not require it. Old binaries cannot enforce the
+unmapped bans do not require it, and Genesis bans have their own release ("Scene bans"). Old binaries cannot enforce the
 new stable ban keys. A binary-only rollback is not supported after rekeying;
 restore the matching pre-migration database backup. Do not reset a database.
 
@@ -1635,6 +1809,126 @@ The object pass creates only objects the database lacks, so it then skips the
 index. A failed concurrent build leaves an invalid index of that name: drop it
 before retrying.
 
+## Camera reel World gallery lookup
+
+World gallery requests resolve a name to scene IDs before reading public photos.
+On a cache miss, Camera Reel reads enabled scene rows from
+`explore.place_indexed` and active `explore.world_scene_place` identities joined
+to their exact `(world_name, entity_id)` deployment in `worlds.world_scenes`
+and their parent in `worlds.worlds`. A known identity takes precedence over a
+catalogue row bearing its UUID, including a retired identity. Eligible identities
+also resolve to their original catalogue IDs in the requested World, preserving
+uppercase and `urn:uuid:` spellings for photos whose `place_id` retains them.
+An alias cannot bypass the identity's eligibility checks. The World-name
+aggregate is not a scene. Listing visibility does not control photo eligibility.
+Canonical scene resolution excludes blocked Worlds and disabled scenes or
+parents through `explore.place_moderation` and catalogue state.
+
+These are read-only shared SQL edges through the existing pool. The active
+identity index's World-name prefix, deployment key and moderation primary keys
+serve the lookup; no extra projection or index is maintained. The result is a
+sorted, deduplicated ID list held under the configured cache capacity and TTL,
+so changes to scene eligibility may remain cached until expiry. GET and batch
+POST use the same resolver; photo privacy, review and deletion filters apply
+after resolution. Production lookup rates and latency have not been measured.
+
+## Rental listing status workload
+
+`signatures.rentals.status` (`schemas/32_signatures.sql`) has three writers.
+The `rentals` index fold (`shop/src/rentals/index.rs`, run by `catalyst index`
+after each pass over `shop.rental_event`) moves listings to `executed`,
+`claimed`, `cancelled` with `cancel_reason = 'nonce'`, or back to `open` on a
+rebuild. The leased `rental-listing-status` job (`shop/src/rentals/status.rs`,
+every minute on the fleet-jobs process) cancels open listings for three
+reasons. It writes `expired` when `expiration` is past the bound clock. It
+writes `transferred` when the land-authz index shows that the owner has
+changed since the listing was created. It writes `dissolved` for an estate
+without parcels once the index head is newer than the listing. The index
+reads run only on a published land-authz snapshot. The refresh route
+(`PATCH /v1/rentals-listings/{id}`) applies the fold and the same cancellation
+rules to one listing, using the asset row that the marketplace subgraph reader
+returned when that row is newer than `rental_assets.nft_updated_at`. The
+route then writes the row to `signatures.rental_assets` only when it is no
+older than the stored one, so a lagging reader replaces no metadata.
+
+Workload: mainnet holds thousands of listings, of which hundreds are open
+(an estimate, not a measurement). Each pass does the following:
+
+- One `UPDATE` over the open rows. The partial `rentals_open_asset_key`
+  enumerates them, so no new index is needed.
+- One snapshot select over the open rows of the LAND and Estate registries,
+  with one primary-key probe into `land_authz.token_right` per row, one
+  `authz_event_ownership_idx` probe for the latest transfer, one
+  `estate_land_estate_idx` probe per estate and, while the `rentals` index is
+  published, one `rental_event_asset_idx` probe for the asset's latest rent.
+- One batched `UPDATE` by id, guarded by `status = 'open'`.
+
+Invariants:
+
+- `cancel_reason` is NULL unless the status is `cancelled` (a row `CHECK`).
+- The routes never move `rental_assets.nft_updated_at` backwards, and a
+  reader row older than the stored one replaces no asset detail. The refresh
+  route skips such a row. The create route still creates the listing, and
+  its upsert keeps the stored category, search text, distance to plaza, road
+  adjacency, estate size, `fetched_at` and time; a row that is not older
+  replaces them. A reader that answers from an older block
+  and then from a less old one therefore cannot pass the refresh route's
+  newer-row test. The signatures-server import writes the upstream time as
+  it is.
+- A cancellation with no recorded cause keeps NULL. Rows imported from
+  signatures-server, which records no cause, are of this kind.
+- A reopening never makes a second open listing of an asset
+  (`rentals_open_asset_key`). The fold writes reopenings after its other
+  verdicts, reopens only the newest listing of an asset, and only while no
+  other listing of that asset is open. A blocked listing keeps its stored
+  status and reason.
+- The fold reopens a cancelled listing only when its reason is `nonce` and
+  its `expiration` is not before the fold's clock, the job's expiry test. An
+  expired one keeps `cancelled` with `nonce`, and the asset's newest
+  unexpired nonce cancellation reopens in its place. Any
+  reason gives way to a rent of the listing: an incremental fold also
+  revisits a cancelled listing whose own `rented` log is past its block. The
+  fold reads the distinct signatures of the venue's `rented` rows past that
+  block once and joins the venue's listings to them. On the measured data
+  both custom and generic plans chose a hash join, so the leg cost one read
+  of the range's rents plus one pass over the venue's listings, which the
+  fold already scans, with no event lookup per cancelled listing. A set
+  larger than the session's hash memory spilled to disk in batches and
+  stayed linear. No test pins that plan; a statistics or planner change
+  can choose another join. A rebuild and the refresh route never read that set. The refresh
+  route, which folds one listing over every block, makes one
+  `rental_event_signature_idx` probe for that listing's signature instead.
+- The fold's `cancelled` verdict never rewrites a listing that is already
+  cancelled. The fold reads its verdicts before it writes them, so a listing
+  the job cancelled in between keeps the job's reason and stays closed on a
+  rebuild. An `executed` or `claimed` verdict still applies.
+- A cancellation that is not a nonce move is never undone, so an unknown never
+  cancels. No published index, no indexed token, or an indexed transfer older
+  than the listing all leave the listing open.
+- A token the Rentals contract owns keeps its listing unless an indexed rent
+  shows that the contract holds it for another lessor. The asset's latest
+  `rented` row in `shop.rental_event` counts only when it is no older than
+  the token's arrival in the contract, because an older rent means the
+  `rentals` index has not reached the rent the token arrived under (an
+  accepted offer, for example). The job requires the rent's `block_number` to
+  be at or after that of the latest folded `transfer` in
+  `land_authz.authz_event`: both indexes commit whole blocks of the same
+  chain, and a rent either moves the token in its own transaction or finds
+  it already in the contract. The refresh route has no chain position for the
+  subgraph's asset row, so it requires the rent's `block_time` to be at or
+  after the row's `updatedAt`. When that row was updated again after the
+  rent, the route decides nothing and the job's block comparison decides.
+  While the `rentals` index is not published, neither path reads custody.
+- The signatures-server import keeps a node reason only while upstream also
+  says `cancelled`, and clears it otherwise. It skips an upstream row older
+  than the stored one, except that an upstream `executed` or `claimed`
+  replaces a `cancelled` row of any age; the row then takes the upstream
+  `updated_at`, which can be older than the cancellation's. Its load SQL is
+  `tooling/migration/sources/signatures-server/rentals.load.sql`.
+
+Step `0056_signatures_rental_cancel_reason` adds the nullable column and its
+two checks without a rewrite.
+
 ## Camera reel photo events workload
 
 `camera_reel.photo_events` (`schemas/50_create.sql`) is the append-only outbox
@@ -1749,6 +2043,52 @@ withheld on `/contents/{hash}` after its next start; its reel route answers
 404 within the servable memo's minute. The bootstrap defines the table; an
 existing database gains it from the object pass, so no step exists.
 
+## Profile snapshot repair workload
+
+A profile may name avatar renders in `metadata.avatars[].avatar.snapshots`
+that its `content[]` omits. Sync fetches them when a source has them and writes
+a `content.content_files` row for each stored one (`{name}.png`, the reference
+catalyst's key, for the names `face`, `face128`, `face256` and `body` only) in
+the flush that writes the deployment; once that row commits, the blob
+collector and the history prune keep the render. A render no source served
+leaves no row, whether every source answered 404 or one failed (an error
+status, a timeout), until a later version of the profile or the repair below
+fetches it; with a single `SYNC_SOURCE`, one failed request is enough. Once
+the entity is verified and holds its flush-backlog slot, each stored render
+has its modified time set to now and is buffered with it, so the collector's
+age floor covers it until that flush commits. A render the process may not
+touch (a blob another uid owns) gets no row, with a `warn`. The history prune
+has no age floor and the flush takes no store lock, so a render named only by
+a pruned earlier version can be unlinked between the touch and the commit,
+as a `content[]` file can, and the row then names a missing blob.
+
+Any signed profile can name any stored hash among its snapshots, and the row
+it gets keeps that blob from the collector while the profile is active, as the
+reference catalyst's content-files fixer does. At most four rows per profile
+come from snapshots, and the denylist still decides what is served.
+
+`catalyst content repair-profile-snapshots` (`content::profile_snapshots::repair`)
+adds those rows to profiles stored without them. Inputs: active profiles
+(`entity_type = 'profile' AND deleter_deployment IS NULL`) read by `id` keyset
+in pages of `--batch` (default 500), and their `content_files` rows by
+`deployment = ANY` (served by the `(deployment, key)` unique index). No index
+covers `(entity_type, id)` and no partial index holds the active profiles, so a
+page either walks the primary key from the last `id`, reading every deployment
+of every type, superseded ones included, until it has `--batch` active
+profiles, or reads all profiles through `deployments_entity_type_index` and
+sorts them. With the first plan a whole pass reads every row of
+`content.deployments` once; the plan the server picks and the pass's duration
+on a production-sized table are unmeasured. Per page, the renders the store
+lacks are fetched from `SYNC_SOURCE`, at most 8 at once and within 64 MiB of
+decoded bodies (a larger body downloads alone). Writes: per page, one
+transaction that takes the store's shared lock, re-checks the blobs and
+row-locks the page's deployments that are still active (`FOR KEY SHARE`, so a
+concurrent history prune skips them or has already deleted them) and inserts
+a row for each stored render of those, with `ON CONFLICT (deployment, key) DO
+NOTHING`. A pass can be repeated
+or interrupted; a render no source served is tried again on the next pass, and
+a store fault ends the pass with an error.
+
 ## Badges catalog and progress workload
 
 The catalog (`social.badge_definitions`, `badge_tiers`, `presence_badges`;
@@ -1819,8 +2159,8 @@ default, and social writes are), each a reader of tables other areas own, with o
   entity or `shop.items`;
 - `shop.sale_event` (`mint`, `bid_accepted`), `shop.trade_event` (`traded`)
   and `shop.nft_event` (`order_successful`) on Polygon by (block, log index),
-  each up to the block its index published in `shop.chain_cursor`
-  (emotionista, fashionista; one step per transaction hash, a legacy order
+  each up to the block its index published in `shop.chain_cursor`, a
+  cursor bound to chain 137 and out of quarantine (emotionista, fashionista; one step per transaction hash, a legacy order
   indexed before `nft_event.tx_hash` was recorded counted by its chain
   position until a re-index fills the hash). An off-chain good counts for
   its `beneficiary` in `trade_event.assets`; a legacy order bought by a fiat
@@ -1930,14 +2270,36 @@ storage order (a local deploy may be signed up to 15 minutes ahead, a synced
 one long before), and a cursor on it would skip every profile stored after
 one signed later and every tie past a page edge. Its first pass starts at the
 head. A batch seeds baselines and claims first wears (`social.worn_history`)
-in the transaction that advances the cursor, and notifies after it commits,
-so a restart never re-notifies a claim. Its batch is
+and stores their notification obligations in `social.first_wear_outbox`
+in the transaction that advances the cursor. The queue retains the wearer
+name and URN independently of deployment retention. Its batch is
 `BADGES_PROCESSOR_BATCH_SIZE` deployments, its gap grace the id cursors'
 (600 s), and it publishes the same lag and gap gauges under its source. A profile the
 node stored more than 24 hours after its entity timestamp is history a
 syncing node caught up on and is passed without effect; the lag is measured
 at storage, so a stalled producer still works through its backlog.
 `social.first_wear_cursor` is no longer read.
+
+First-wear intake pauses at 5,000 queued obligations. A final deployment batch
+can cross this threshold. The queue continues to drain when intake is paused or
+fails. The worker claims up to 16 due wears in one statement, ordered by
+`(retry_at, address, urn)`. A two-minute reservation makes interrupted work
+eligible again. It starts at most 50 pages and stops starting items after one
+minute per drain. Each item's marketplace lookup has a 20-second timeout.
+Losing the job lease cancels the pass.
+
+Failed transport or timed-out lookups retry after the notification delivery
+backoff (30 seconds, doubling per failure). The fifth failure ends the
+obligation. Each drain expires obligations 24 hours after the wear's signed timestamp
+or enqueue time, whichever came first. The worker logs expiry counts and pauses
+in intake. Two consecutive transient failures on one network pause lookups on
+that network for the rest of the drain, leaving the other network eligible. Invalid reader URLs,
+invalid subgraph responses, missing readers, unknown or unbuyable items,
+no active friends and suppressed recipients also complete without a notice.
+The wear stays in history after completion. External reads run outside the
+completion transaction. A transaction advisory lock serializes recipient rate
+checks with notice insertion, delivery intents and removal of the obligation.
+The foreign key cascades removal of a history row to its obligation.
 
 ### Presence badges flow
 
@@ -2079,6 +2441,221 @@ each publication or archive transition appends a row to
 `social.badge_catalog_audit`; `badge_admin_audit` keeps per-wallet grants and
 revokes, whose `address` a catalog write does not have.
 
+## Market chain index cursors
+
+`shop.chain_cursor` holds one row per projection: an index (`nft`,
+`trade_events`, `rentals`, `mana_transfers`, `sales`, `committee`) on one
+network (`ethereum`, `matic`). A window commit writes it once, and so do a
+fold record, a publish and a rewind; the table stays at a dozen rows.
+`shop.chain_checkpoint` holds each projection's recovery points (see
+"Reorgs").
+
+**Ownership.** Each network has a supervisor job, `chain-walk-ethereum` and
+`chain-walk-matic`, in the process that runs the indexes. It walks each
+projection that process enables under the projection's own lease,
+`<index job>-<network>` (`nft-index-matic`, `trade-events-index-matic`,
+`rentals-index-ethereum`), so
+processes with different projections enabled share a network. Each
+projection keeps its own cadence and backoff, though one that reached the
+target may join a due companion's shared walk ahead of its own turn, so
+projections walking together go at the faster cadence. A process that runs no fleet
+jobs (`FLEET_JOBS_ENABLED=false`) takes no lease and walks nothing.
+
+The projections a supervisor holds that read the same endpoint and stand at
+the same checkpoint (block, hash, whole history) walk their windows
+together: each window is read once for all of them, and each projection
+takes the logs its own filters take and commits them with its own cursor
+advance, in its own fenced transaction, nft before sales. Each closes (folds
+and publishes) on its own. A window read they share that fails sends each
+back to its own checkpoint, alone, with what is left of its budget, and its
+walk after that is alone too, on a whole budget. A read they all need first
+(the chain id, the checkpoint's header, the head and the finalized block) is
+tried again once after half a second; if it still fails, each one's attempt
+fails and waits out its own backoff.
+
+The supervisor claims a projection on the session that holds its lease. The
+claim raises `owner_generation` in one bounded transaction
+(`statement_timeout` 2 s, `lock_timeout` 1.5 s) and creates the row when
+there is none. The supervisor keeps that generation for the lease
+acquisition. A lost lease ends the projection's pass at once, even inside a
+fold; transactions it had already committed stay, and the generation fences
+any later one.
+
+Every transaction that writes the projection ends by locking the row
+(`SELECT … FOR UPDATE`) and comparing that generation, the chain binding and
+the quarantine. On a mismatch it rolls back, so a job that lost the
+projection commits nothing. This covers:
+- the window's rows with the cursor advance (which also requires the
+  checkpoint it read, height and hash);
+- a reorg rewind, and the withdrawal of a diverged checkpoint's publication;
+- the nft backfill lane;
+- each fold, including each trade-events digest batch;
+- the fold record, the publish and its withdrawal.
+
+The lock is taken last, so it lasts only as long as the commit. A writer
+that also moves the notification producers' cursors (a rewind, a rebuild,
+the nft lane) moves them before it locks this row. A fenced
+job drops its generation, and its next pass claims again, which only works
+while it still holds the lease.
+
+**Binding.** `chain_id` is the chain the history was read from, as the
+source proved it at the claim. The walk checks the source's chain every
+pass; a source of another chain fails that projection's pass alone, which
+backs off on its own. A row from before the binding (`chain_id` NULL) is
+adopted at the start of a pass, before any lane, rewind, fold or publish,
+in two cases:
+- it has no history yet;
+- its stored last-block hash equals the source's hash at that height.
+
+Adoption is a compare-and-set on the generation and the checkpoint.
+
+**Quarantine.** A history that cannot be proven is set apart, with a
+reason, and its publication withdrawn:
+- a hash that differs;
+- history with no stored hash;
+- a binding to another chain.
+
+A source that does not answer decides nothing: the pass fails and is
+retried. A row in quarantine is not walked, rewound or published.
+
+**Readiness.** Readers trust a projection only when all of these hold:
+- the history is whole and `folded_block = last_block`;
+- `folded_at` is within 30 minutes;
+- it is bound to the chain the reader expects and is out of quarantine.
+
+Every index but `trade_events` reads mainnet only, so its readers expect
+chain 1 or 137. The readers of `trade_events` expect the chain the node
+configures (`MARKETPLACE_INDEX_CHAIN_ID_*`): the Rust readers and the
+notification producers pass it, and its verdict fragments in the listing
+SQL read the chains the process serves (`catalog::served_chains`). The
+transfer notices match the nft and trade-events indexes at the same
+heights, so they run only when both read Polygon mainnet. The tips' global
+cap evicts by the MANA index's newest block only while that cursor is bound
+and out of quarantine.
+
+**Reorgs.** Each window is read inside a bracket: the header at its end
+(`to`) before and after its logs, and between them the header at the block
+the window actually reached (an endpoint may narrow it) and the header at
+the checkpoint it extends. The walk assumes an endpoint that answers from
+one branch between two equal answers for the header at `to`. Under that
+assumption, the reached block's hash names the branch the logs came from,
+and the predecessor proves the window extends what was committed; a hash
+cannot attest logs from an endpoint that mixes branches. The nft backfill
+lanes read below the cursor, each read bracketed by the cursor block's
+header, which must stay its stored hash; each lane window's closing read
+opens the next. A window that extends a hashed checkpoint costs one header
+read more for its predecessor, and N lane windows in a pass cost N + 1
+header reads besides the pass's own check of the cursor block.
+
+Each advance records the block it reached, with its hash and time, in
+`shop.chain_checkpoint`, keeping the newest 64 per projection: per
+committed window, one delete of the points past the checkpoint it extends,
+one upsert and one delete below the newest 64; a few hundred rows in all,
+read only once a reorg is seen.
+
+A pass checks the cursor block's hash first. When it differs, or when a
+window's predecessor or a lane's bracket stands still on another branch
+than the stored hash, the publication is withdrawn at once, in a fenced
+transaction of its own on that exact checkpoint, and `diverged_at` is set;
+the rows, the recovery points and the notification cursors stay. Readers
+that use a cursor's height without its publication skip a diverged one, in
+the statement that reads its rows: the sales fold infers no seller from the
+nft walk's transfers, and the tips' global cap evicts no other sender's
+claim against the MANA index. The rewind clears `diverged_at`; when the
+chain flipped back before any rewind, the next pass that finds the cursor
+block on its stored hash clears it. The pass then reads the headers
+of the recovery points below the cursor, newest first and outside any
+transaction, and rewinds to the newest one still on the chain, keeping its
+hash and time. With none recorded, or every one compared and none on the
+chain, it rewinds to `start_block - 1`. A header read that fails rewinds
+nothing, and the next pass searches again. The search's reads count in the
+pass, but its budget does not cut them. A shared walk never searches: a
+member that diverged withdraws and recovers in a pass alone, which runs
+under no member deadline, and walks with others again once its checkpoint
+matches theirs.
+
+The rewind is one transaction: the notification producers' replay plan,
+the projection's own cleanup past the point, the producers' moves, the
+cursor's compare-and-set from the checkpoint it read, the pruning of the
+recovery points past the point, then the owner check. The next fold is a
+rebuild, as after any rewind.
+
+A sales fold may have inferred a bid's seller from an nft transfer before
+the nft walk saw the fork. So the nft walk's rewind on Polygon (also a
+rebuild) records its point in `shop.bid_seller_recheck`, in the rewind's
+transaction, with the deletion of the transfers past it: a fold that reads
+the row also reads the rewound transfers. The next bids fold reads those
+rows, infers again the seller of every bid created past the lowest point (a
+seller a sale event names stays), then deletes the rows it read; a row
+recorded meanwhile waits for the next fold. The table holds one row per nft
+rewind until a sales fold runs. After a rebuild the point is the start, so
+every seller inferred from a transfer is unset and comes back as the nft
+walk passes its bid again; nothing outside the bids fold reads
+`nft_bid.seller`.
+
+A database that gains the table starts with no recovery points. A search
+reads only the points below the cursor, and the first advance's point is
+the cursor itself, so a reorg seen before the second advance rewinds to the
+start, as after a bootstrap or a rebuild. The history it holds is trusted
+as found: the bracket certifies what is walked from then on, not rows
+already written. Each advance also drops the points past the checkpoint it
+extends, which no proven prefix holds.
+
+**Operator procedures.** Run each as one statement. Both raise the
+generation, which fences the current owner's writes in flight; its next
+pass claims the projection again and acts.
+
+- *Revalidate*, after a wrong endpoint was fixed. The history is kept and
+  the next pass proves it again:
+
+  ```sql
+  UPDATE shop.chain_cursor SET quarantined_at = NULL, quarantine_reason = NULL, chain_id = NULL,
+         owner_generation = owner_generation + 1
+   WHERE indexer = '<indexer>' AND network = '<network>' AND quarantined_at IS NOT NULL;
+  ```
+
+- *Rebuild*, a history that cannot be proven. The publication is withdrawn
+  at once. In one transaction, the owner's next pass:
+  1. plans the notification producers' replay from the state before the
+     cleanup;
+  2. runs the projection's own cleanup down to `start_block - 1`;
+  3. restarts the cursor there, bound to the chain it proved and out of
+     quarantine, and drops the projection's recovery points.
+
+  It then walks and folds again; the other network and the other
+  projections are untouched. Trade events also drop their derived verdict
+  rows, so every digest is recomputed from the stored trades.
+
+  A rebuild keeps the projection's chain and start block. It is refused in
+  three cases: the cursor's history is from another chain; it starts at
+  another block than this node's walk; or it has no binding and its
+  checkpoint hash is not the source's at that height. Then the cursor stays
+  in quarantine with the reason, and nothing is deleted, not even the
+  notification producers' positions. A source that does not answer decides
+  nothing. A database for another chain begins empty:
+
+  ```sql
+  UPDATE shop.chain_cursor SET rebuild_requested_at = timezone('UTC', now()),
+         folded_block = NULL, folded_at = NULL, owner_generation = owner_generation + 1
+   WHERE indexer = '<indexer>' AND network = '<network>';
+  ```
+
+**Deploys.** A binary from before step `0054_shop_chain_cursor_ownership`
+does not check `owner_generation`, and one from before the per-network
+supervisors takes leases named after the index alone (`nft-index`), which do
+not exclude the new ones. Stop the process that runs the indexes
+(`catalyst index`) before starting a newer one, and before rolling back. A
+deployment that runs the index process as one replica replaced with the
+`Recreate` strategy already does this. A binary from before
+`shop.chain_checkpoint` neither records nor drops recovery points, and its
+rewinds and walks can leave a point whose hash names a branch other than
+the rows below it. After running one, and before a newer binary starts
+again, clear them: `DELETE FROM shop.chain_checkpoint;`. (A newer binary's
+advance drops only the points past the checkpoint it extends, which does not
+cover a point below the cursor.) Such a binary also leaves `diverged_at` as
+it finds it; the newer binary's next pass that finds the cursor block on its
+stored hash clears it.
+
 ## Curation committee
 
 Builder's committee routes (the drafts and items of every wallet, another
@@ -2092,7 +2669,9 @@ once the endpoint answers chain id 137 (tens of rows, appended with the cursor a
 deleted past a reorg rewind). Builder reads, never writes, both tables by
 shared SQL in one statement: `shop.committee_event` (`network`,
 `block_number`, `log_index`, `member`, `is_member`) and `shop.chain_cursor`
-(`indexer`, `network`, `full_history`, `folded_block`, `folded_at`). A
+(`indexer`, `network`, `full_history`, `chain_id`, `quarantined_at`,
+`folded_block`, `folded_at`); the cursor must be bound to chain 137 and out
+of quarantine (see "Market chain index cursors"). A
 wallet is a member when its latest event (block, log index) at or below the
 published block (`folded_block`) set it, so rows a pass adds before its
 publish wait for it. Unlike the shop routes' readiness rule, it does not
@@ -2281,9 +2860,12 @@ that scene storage uses.
 Workload: one primary-key read for each scene-signed gatekeeper request of a
 wallet that is not the owner (`Policy::is_admin`: `/scene-admin`, `/scene-bans`,
 `/scene-stream-access`, `/cast/*`, the stream key recheck), and one read of a
-place's rows (tens at most) for `GET /scene-admin` and for a room metadata
-refresh. Writes are rare: one row for `POST` or `DELETE /scene-admin`, and the
-place removal cleanup.
+place's rows (tens at most) for `GET /scene-admin`, for a room metadata
+refresh and for each streaming notice (a Genesis place's base parcel, the
+place of a world key's scene or, for a world removal, of each active scene,
+with the grants a place removal ended at its `removed_at` on any scene of
+the world). Writes are rare:
+one row for `POST` or `DELETE /scene-admin`, and the place removal cleanup.
 
 Invariants:
 
@@ -2301,7 +2883,8 @@ Invariants:
   world-scene identity is not bound to a deployment again, so no request
   reads its grants.
 - The release script `schemas/releases/scene-admin-place-keys.sql` moves the
-  grants of active deployments from the entity id to the place. Stop all old
+  grants of active deployments (a world scene's active identity, a Genesis
+  deployment that is not deleted) from the entity id to the place. Stop all old
   API replicas before `catalyst schema migrate`, apply the script with the
   administrative database role, then start the updated binaries: an old
   binary reads and writes grants by entity id. `catalyst serve` refuses
@@ -2323,6 +2906,60 @@ Invariants:
   (`ParcelSet::effective_base`). The release script and the import loads of
   scene admins and scene bans call it; `the_sql_base_parcel_is_the_resolvers`
   compares the two.
+
+## Scene bans
+
+`social.scene_bans` (`schemas/40_social.sql`) holds the bans of a scene, one
+row for each `(place_id, banned_address)`, under a key stable across redeploys
+(`ResolvedRoom::ban_key`): `<world>:<base parcel>` for a world scene (above),
+the place of a Genesis scene, the canonical base parcel its admins use. A
+Genesis room name carries no deployment; `ResolvedRoom::resolve_ban_key` reads
+it for the relay and Cast checks, and refuses a room no deployment stands
+behind (an overwritten scene) instead of reading its entity id. The scene-state
+socket and its sweep read the key from the deployment they host.
+
+Workload: one primary-key read for each scene join (`/get-scene-adapter`, a
+relay admission, a Cast watcher, a scene-state socket and its sweep) and
+moderation request; each Genesis relay admission and Cast watcher check adds
+one resolver lookup of the deployment (`content.deployments` by entity id);
+one read of a
+place's rows for a room metadata refresh and a ban listing
+(`scene_bans_place_time_idx`). Writes are rare: `POST` or `DELETE
+/scene-bans`, and the place removal cleanup.
+
+Invariants:
+
+- A redeploy writes no row. A Genesis redeploy on the same base parcel keeps
+  every ban; a scene on another base parcel has none.
+- The cleanup of a removed place deletes the bans made before the removal
+  (`banned_at`), in the transaction that revokes its admin grants: the rows on
+  the place id, the `<world>:<base>` rows of the world (any base, so replaced
+  scenes too), or the rows on the base parcel of a Genesis place when no
+  enabled `explore.place` row has that base.
+- The release script `schemas/releases/genesis-scene-ban-keys.sql` moves the
+  bans of Genesis deployments that are not deleted (`deleter_deployment IS
+  NULL`, as the resolver reads them, unpublished ones too) from the entity id
+  to the base parcel (`social.scene_base_parcel`), keeping the newest ban of a
+  wallet when two entities name one place, also against a row the place has.
+  The cutover import keeps the newest ban of aliases too. Stop all old
+  API replicas before `catalyst schema migrate`, then, with the
+  administrative database role, re-run
+  `schemas/releases/scene-admin-place-keys.sql` (idempotent: it moves only
+  the entity rows left and keeps the newest change of a wallet) and apply
+  `genesis-scene-ban-keys.sql`, then start the updated binaries. The re-run
+  is needed on a database that ran the admin release before it counted
+  unpublished deployments: `ensure_scene_admin_place_release` now refuses
+  their entity-keyed grants. `catalyst serve` refuses startup while a ban of
+  an active Genesis deployment has the entity key
+  (`ensure_genesis_scene_ban_release`). An unpublished deployment's grants
+  and bans move to its base parcel, so they apply to whichever scene later
+  stands on that parcel. A binary-only rollback is
+  not supported after the move; restore the matching backup. A row of an
+  entity that is not deployed, or has no parcel that parses, keeps its key,
+  and no request reads it. A local preview scene, which has no deployment,
+  keeps its entity id.
+- A kick intent queued before the release names the entity id; the removal
+  job reads its ban again on the scene's place (`legacy_ban_key`).
 
 ## Stream key notifications
 
@@ -2573,3 +3210,67 @@ in its own memory with the same rules, like the places reads fall back to the
 API; that mode serves one process only, so a deployment with several Sites
 replicas sets the database URL. The bootstrap defines the table; an existing
 database gains it from the object pass, so no step exists.
+
+## Shop reconciliation and availability sweeps
+
+The broker purchase, NAME transfer and escrow-action receipt workers read up
+to 100 unsettled rows per chain and pass, the escrow release worker 50 due
+grants, the credit-revocation worker 20 unfinished revocations per chain,
+and the availability watcher 500 distinct pending item keys. A pending
+receipt, malformed grant or unknown mirrored item remains an obligation;
+it must not permanently occupy a bounded query's first page.
+
+`shop.worker_progress` stores each worker's position and a frozen upper key
+for its current sweep, scoped by chain where applicable. The workers use
+indexed bigint ids, credit hashes, or `(contract_address, item_id)` pairs
+without converting indexed columns to another type. Selection and cursor
+advance share a short transaction under the progress row's lock. Chain
+calls, release attempts and item observations run after that transaction
+commits. A crash after selection defers that page until the next sweep;
+it does not delete work, spend an attempt or mark a receipt successful.
+The item watcher also freezes the largest request identity and excludes
+later request ids even if their item keys sort inside the lexical range.
+Revocations freeze a database clock cutoff and exclude rows created after
+it; their sole enqueue path uses the database `created_at` default and does
+not backdate new work. A transaction already open at that cutoff can still
+commit an earlier-dated row, which is revisited on wrap if its key was
+passed. Newly started transactions cannot extend the cohort. New arrivals
+outside these bounds wait for the next sweep, so continuous arrivals
+cannot indefinitely delay retry of a blocked prefix. Rows that
+commit or become due behind the position are also revisited after wrap.
+The existing status, attempt limits, settlement grace and observation
+timestamps keep their meanings. Existing idempotent writes and job leases
+still govern effects; the sweep cursor is not an external-call lease.
+
+The table has no foreign keys to individual obligations: completed or
+deleted source rows may disappear between pages. An empty remainder ends
+the cohort and starts another. Its size is one row per worker and chain,
+not one row per obligation. The schema object pass installs the new table
+from the bootstrap definition. The credit worker uses `credits.revocations_chain_hash_idx`
+on `(chain_id, credit_hash)` for both its upper bound and each hash-ordered
+page. If new arrivals greatly outnumber rows eligible for an ongoing sweep,
+the page query can instead use `credits.revocations_due_idx` to select just
+the rows created on or before the sweep's fixed start time, then sort those
+hashes. Both indexes contain only pending and sent rows. The partial index adds write
+work when revocations enter or leave those states. See [the measured query
+plans](METRICS.md#credit-revocation-sweep).
+
+The object pass creates the index in the migration transaction, which blocks
+writes to `credits.revocations` until commit. On a busy database it can be
+built before migration using the schema definition:
+
+```sql
+CREATE INDEX CONCURRENTLY revocations_chain_hash_idx ON credits.revocations
+    (chain_id, credit_hash) WHERE status IN ('pending', 'sent');
+```
+
+Verify the definition and `pg_index.indisvalid` before running migrate.
+The object pass checks its name. Drop an invalid index before retrying.
+
+Escrow reconciliation applies its missing-grant `NOT EXISTS` predicate
+before `LIMIT 500`. Any grant with that reference satisfies the check. Catalogue
+and rental pages count their filtered set independently of page offset in
+the same SQL statement. The count remains present even
+when the page is empty. Both sides therefore use one snapshot and one
+filter definition. Production query latencies and cardinalities for these
+repairs remain unmeasured.

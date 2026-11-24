@@ -115,15 +115,31 @@ pub async fn get_world_settings(
 /// name's holder (a collaborator's edit is the holder's too; `None` when the
 /// holder is unknown, and the mirror then takes the holder of its next pass),
 /// so the mirror keeps those settings while that holder holds the name
-/// ([`mirror_keeps_local`]). Returns the row and the previous spawn.
+/// ([`mirror_keeps_local`]). A new thumbnail's bytes (`thumbnail`, the blob
+/// `input.thumbnail_hash` names) are stored in the same transaction under the
+/// store lock's shared side (`gc::store_for_row`), so an unlink batch either
+/// ran before the store or sees the row. Returns the row and the previous
+/// spawn.
 pub async fn update_world_settings(
     pool: &PgPool,
     world: &WorldName,
     owner: &Address,
     set_by: Option<&Address>,
     input: &WorldSettingsUpdate,
+    thumbnail: Option<(&catalyst_storage::Storage, bytes::Bytes)>,
 ) -> Result<(WorldSettingsRow, Option<String>), ApiError> {
     let mut tx = pool.begin().await?;
+    if let Some((storage, bytes)) = thumbnail {
+        let hash = crate::auth::hash_bytes_v1(&bytes);
+        catalyst_storage::gc::store_for_row(&mut tx, storage, &hash, bytes)
+            .await
+            .map_err(|e| match e {
+                catalyst_storage::gc::GcError::LockTimeout => ApiError::service_unavailable(
+                    "The content store is being collected; retry shortly",
+                ),
+                e => ApiError::internal(format!("failed to store thumbnail: {e}")),
+            })?;
+    }
     let locked = sqlx::query(
         r#"SELECT w.spawn_coordinates, br.min_x, br.max_x, br.min_y, br.max_y
            FROM worlds.worlds w
@@ -240,6 +256,7 @@ pub async fn update_world_settings(
     .fetch_one(&mut *tx)
     .await?;
 
+    crate::explore::places::derive::mark_world_dirty(&mut tx, world.key()).await?;
     tx.commit().await?;
     Ok((settings_from_row(&row), old_spawn))
 }

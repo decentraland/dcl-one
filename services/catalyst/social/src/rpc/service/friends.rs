@@ -97,6 +97,13 @@ pub(crate) async fn apply_friendship_action(
         .await;
     if action == Action::Accept {
         announce_accepted_connectivity(ctx, me, other).await;
+        // Subscribers on other replicas hear the accept through their own topology.
+        ctx.pubsub()
+            .forward_mutation(crate::rpc::fanout::Event::FriendshipAccepted {
+                actor: me.to_lowercase(),
+                friend: other.to_lowercase(),
+            })
+            .await;
     }
     notify_friendship_action(ctx, action, action_id, me, other, message).await;
     Ok((id, created_ms))
@@ -107,10 +114,13 @@ pub(crate) async fn apply_friendship_action(
 /// current ONLINE peers; the stream's existing relationship and topology
 /// guards recheck them before delivery. A wallet the profile source holds no
 /// profile for is skipped, as upstream's live loop skips it.
-async fn announce_accepted_connectivity(ctx: &Context, me: &str, other: &str) {
-    let snapshot = ctx.topology().snapshot();
+pub(crate) async fn announce_accepted_connectivity(ctx: &Context, me: &str, other: &str) {
     for (recipient, friend) in [(other, me), (me, other)] {
-        if !snapshot.is_online(friend) {
+        let (online, generation) = {
+            let snapshot = ctx.topology().snapshot();
+            (snapshot.is_online(friend), snapshot.generation)
+        };
+        if !online {
             continue;
         }
         let Some(profile) = ctx.profiles().existing_friend_profile(friend).await else {
@@ -119,7 +129,7 @@ async fn announce_accepted_connectivity(ctx: &Context, me: &str, other: &str) {
         let mut friend_profile = profile;
         friend_profile.address = friend.to_string();
         ctx.topology()
-            .deliver_if_current(snapshot.generation, friend, true, || {
+            .deliver_if_current(generation, friend, true, || {
                 ctx.pubsub().publish(
                     recipient,
                     SocialEvent::TopologyFriendConnectivity(
@@ -128,7 +138,7 @@ async fn announce_accepted_connectivity(ctx: &Context, me: &str, other: &str) {
                             friend: Some(friend_profile),
                             status: ConnectivityStatus::Online as i32,
                         },
-                        snapshot.generation,
+                        generation,
                     ),
                 );
             });

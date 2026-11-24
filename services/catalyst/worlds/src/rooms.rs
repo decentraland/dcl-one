@@ -101,7 +101,6 @@ pub async fn ensure_scene_admin_place_release(pool: &PgPool) -> anyhow::Result<(
            EXISTS (SELECT 1 FROM explore.world_scene_place i WHERE i.active AND i.entity_id = a.place_id) \
            OR EXISTS (SELECT 1 FROM content.deployments d \
                       WHERE d.entity_id = a.place_id AND d.entity_type = 'scene' AND d.deleter_deployment IS NULL \
-                        AND EXISTS (SELECT 1 FROM content.active_pointers ap WHERE ap.entity_id = d.entity_id) \
                         AND social.scene_base_parcel(d.entity_pointers, d.entity_metadata #>> '{scene,base}') IS NOT NULL))",
     )
     .fetch_one(pool)
@@ -110,6 +109,27 @@ pub async fn ensure_scene_admin_place_release(pool: &PgPool) -> anyhow::Result<(
         !pending,
         "scene admin grants require release conversion before serving: stop old replicas, \
          back up the database, and run schemas/releases/scene-admin-place-keys.sql \
+         with the administrative database role; then restart"
+    );
+    Ok(())
+}
+
+/// Refuse serving while a Genesis scene ban of an active deployment still has
+/// the entity id for its key: requests read bans by place, so that ban would
+/// be lost. `schemas/releases/genesis-scene-ban-keys.sql` moves them.
+pub async fn ensure_genesis_scene_ban_release(pool: &PgPool) -> anyhow::Result<()> {
+    let pending: bool = sqlx::query_scalar(
+        "SELECT EXISTS (SELECT 1 FROM social.scene_bans b WHERE EXISTS (\
+           SELECT 1 FROM content.deployments d \
+            WHERE d.entity_id = b.place_id AND d.entity_type = 'scene' AND d.deleter_deployment IS NULL \
+              AND social.scene_base_parcel(d.entity_pointers, d.entity_metadata #>> '{scene,base}') IS NOT NULL))",
+    )
+    .fetch_one(pool)
+    .await?;
+    anyhow::ensure!(
+        !pending,
+        "Genesis scene bans require release conversion before serving: stop old replicas, \
+         back up the database, and run schemas/releases/genesis-scene-ban-keys.sql \
          with the administrative database role; then restart"
     );
     Ok(())
@@ -355,14 +375,15 @@ pub async fn resolve(
     }
 }
 
-/// Complete world identity is read in one statement snapshot. Legacy matches
-/// participate in collisions but can never be returned as canonical scenes.
+/// Complete world identity is read in one statement snapshot. Legacy scene
+/// spellings participate in collision checks and resolve for public presence.
 pub async fn classify_room(
     pool: &PgPool,
     room: &str,
 ) -> Result<crate::comms::rooms::RoomClassification, ResolveError> {
     use crate::comms::rooms::{
-        ParsedRoom, RoomClassification as C, RoomRefusal as R, refused_room,
+        LEGACY_WORLD_SCENE_ROOM_PREFIX, ParsedRoom, RoomClassification as C, RoomRefusal as R,
+        WORLD_ROOM_PREFIX, refused_room,
     };
     if room.starts_with(crate::comms::rooms::SCENE_ROOM_PREFIX) {
         let Some((world, scene)) = crate::comms::rooms::decode_world_scene_room(room) else {
@@ -386,9 +407,13 @@ pub async fn classify_room(
     if let Some(ParsedRoom::Local(resolved)) = &parsed {
         return Ok(C::Canonical(resolved.clone()));
     }
-    let lobby = room.strip_prefix("world-");
-    let scene = room.strip_prefix("scene-");
-    if lobby.is_none() && scene.is_none() {
+    let lobby = room.strip_prefix(WORLD_ROOM_PREFIX);
+    let legacy_names = [
+        room.strip_prefix(LEGACY_WORLD_SCENE_ROOM_PREFIX),
+        room.strip_prefix("scene-"),
+        lobby,
+    ];
+    if legacy_names.iter().all(Option::is_none) {
         return Ok(if room.starts_with("scene:") {
             refused_room(room, R::Malformed)
         } else {
@@ -398,58 +423,66 @@ pub async fn classify_room(
     if room.to_lowercase() != room {
         return Ok(refused_room(room, R::Noncanonical));
     }
-    if parsed.is_none() {
-        return Ok(refused_room(room, R::Malformed));
-    }
-    let rest = lobby.or(scene).unwrap();
-    let world = lobby.and_then(|raw| WorldName::parse(raw).ok());
-    let candidates: Vec<String> = rest
-        .match_indices('-')
-        .filter_map(|(at, _)| {
-            let world = WorldName::parse(&rest[..at]).ok()?;
-            SceneId::parse(&rest[at + 1..]).ok()?;
-            Some(world.key().to_owned())
+    let world = lobby.and_then(|raw| {
+        WorldName::parse(raw)
+            .ok()
+            .filter(|world| raw == world.key())
+    });
+    let candidates: Vec<String> = legacy_names
+        .into_iter()
+        .flatten()
+        .flat_map(|rest| {
+            rest.match_indices('-').filter_map(move |(at, _)| {
+                let world = WorldName::parse(&rest[..at]).ok()?;
+                SceneId::parse(&rest[at + 1..]).ok()?;
+                Some(world.key().to_owned())
+            })
         })
         .collect();
-    let rows = tokio::time::timeout(std::time::Duration::from_secs(2), sqlx::query(concat!(
-        "SELECT name AS world_name, NULL::text AS entity_id, NULL::text[] AS parcels, NULL::text AS base, NULL::text AS title, NULL::text AS mirror_source, NULL::uuid AS identity \
-         FROM worlds.worlds WHERE $3 AND name = $4 AND 'world-' || name = $2 \
-         UNION ALL SELECT world_name, entity_id, parcels, entity #>> '{metadata,scene,base}' AS base, entity #>> '{metadata,display,title}' AS title, mirror_source, ",
-        identity_column!(),
-        " FROM worlds.world_scenes s WHERE world_name = ANY($1) \
-         AND (CASE WHEN $3 THEN 'world-' ELSE 'scene-' END) || world_name || '-' || lower(entity_id) = $2 LIMIT 2"
-    )).bind(candidates).bind(room).bind(lobby.is_some()).bind(world.as_ref().map(WorldName::key)).fetch_all(pool)).await
-        .map_err(|_| ResolveError::Db(sqlx::Error::PoolTimedOut))??;
+    if world.is_none() && candidates.is_empty() {
+        return Ok(refused_room(room, R::Malformed));
+    }
+    // The world and the candidate scene worlds use the existing primary-key
+    // prefixes. Keeping both branches in one read also catches lobby collisions.
+    let rows = tokio::time::timeout(
+        std::time::Duration::from_secs(2),
+        sqlx::query(
+            "SELECT name AS world_name, NULL::text AS entity_id \
+             FROM worlds.worlds WHERE name = $3 \
+             UNION ALL SELECT world_name, entity_id FROM worlds.world_scenes \
+             WHERE world_name = ANY($1) AND $2 IN ( \
+                 'world-' || world_name || '-' || lower(entity_id), \
+                 'scene-' || world_name || '-' || lower(entity_id), \
+                 $4 || world_name || '-' || lower(entity_id) \
+             ) LIMIT 2",
+        )
+        .bind(candidates)
+        .bind(room)
+        .bind(world.as_ref().map(WorldName::key))
+        .bind(LEGACY_WORLD_SCENE_ROOM_PREFIX)
+        .fetch_all(pool),
+    )
+    .await
+    .map_err(|_| ResolveError::Db(sqlx::Error::PoolTimedOut))??;
     if rows.len() > 1 {
         return Ok(refused_room(room, R::Ambiguous));
     }
     let Some(row) = rows.first() else {
-        return Ok(refused_room(
-            room,
-            if parsed.is_none() {
-                R::Malformed
-            } else {
-                R::Unresolved
-            },
-        ));
+        return Ok(refused_room(room, R::Unresolved));
     };
     let world = WorldName::parse(row.get::<&str, _>("world_name"))
         .map_err(|error| ResolveError::Db(sqlx::Error::Protocol(error.to_string())))?;
-    if lobby.is_some() {
-        if row.get::<Option<String>, _>("entity_id").is_some() {
-            return Ok(refused_room(room, R::Legacy));
-        }
-        return Ok(C::Canonical(ResolvedRoom {
+    match row.get::<Option<String>, _>("entity_id") {
+        Some(entity) => match SceneId::parse(&entity) {
+            Ok(scene) => Ok(C::LegacyWorldScene { world, scene }),
+            Err(_) => Ok(refused_room(room, R::Malformed)),
+        },
+        None => Ok(C::Canonical(ResolvedRoom {
             realm: RealmId::World(world),
             scene_id: None,
             deployment: None,
             room: room.to_owned(),
-        }));
-    }
-    match world_row(&world, row) {
-        Ok(dep) => Ok(C::Canonical(resolved(RealmId::World(world), dep))),
-        Err(ResolveError::NoParcels { .. }) => Ok(refused_room(room, R::Malformed)),
-        Err(error) => Err(error),
+        })),
     }
 }
 
@@ -591,6 +624,13 @@ mod tests {
         ));
         let retired = format!("scene-{}-casehash", world.key());
         assert!(matches!(
+            classify_room(&pool, &retired).await.unwrap(),
+            crate::comms::rooms::RoomClassification::RelevantRefused {
+                reason: crate::comms::rooms::RoomRefusal::Ambiguous,
+                ..
+            }
+        ));
+        assert!(matches!(
             resolve(&pool, RoomRequest::NamedWorldScene { room: &retired }).await,
             Err(ResolveError::UnresolvedRoom(_))
         ));
@@ -665,6 +705,12 @@ mod tests {
         };
         assert_eq!(lobby.scene_id, None);
         assert_eq!(lobby.room, room);
+        for alias in [format!("{room} "), format!("world- {}", full.key())] {
+            assert!(matches!(
+                classify_room(&pool, &alias).await.unwrap(),
+                C::RelevantRefused { .. }
+            ));
+        }
         assert_eq!(
             resolve(&pool, RoomRequest::WorldLobby { world: &full })
                 .await
@@ -688,13 +734,20 @@ mod tests {
             .execute(&pool)
             .await
             .unwrap();
-        assert!(matches!(
-            classify_room(&pool, &room).await.unwrap(),
-            C::RelevantRefused {
-                reason: R::Legacy,
-                ..
-            }
-        ));
+        for prefix in ["world-", "scene-", "world-scene-room-"] {
+            let raw = format!("{prefix}{}-scene", short.key());
+            assert_eq!(
+                classify_room(&pool, &raw).await.unwrap(),
+                C::LegacyWorldScene {
+                    world: short.clone(),
+                    scene: scene("Scene"),
+                }
+            );
+            assert!(matches!(
+                resolve(&pool, RoomRequest::NamedWorldScene { room: &raw }).await,
+                Err(ResolveError::UnresolvedRoom(_))
+            ));
+        }
         assert!(matches!(
             classify_room(&pool, &format!("world-{}-Scene", short.key()))
                 .await
@@ -1299,6 +1352,109 @@ mod tests {
         places.extend([p2, p3, p4, no_parcel, "bafyGone".to_string()]);
         places.sort();
         assert_eq!(keys, places);
+    }
+
+    /// The release that moves Genesis scene bans from the scene entity to its
+    /// place: a ban of an active deployment is read where the resolver keys
+    /// it, two entities of one place keep the newest ban of a wallet, and a
+    /// ban on an entity that is not deployed, or has no parcel, stays. The
+    /// node does not serve before the release ran.
+    #[tokio::test]
+    async fn the_genesis_ban_release_moves_the_bans_of_active_deployments() {
+        const RELEASE: &str = include_str!(concat!(
+            env!("DCL_ONE_ROOT"),
+            "/schemas/releases/genesis-scene-ban-keys.sql"
+        ));
+        let Some(pool) = crate::db::scratch::isolated_pool(4).await else {
+            return;
+        };
+        let wallet = || format!("0x{:040x}", Uuid::new_v4().as_u128());
+        let (banned, other) = (wallet(), wallet());
+        let ban = async |place: &str, who: &str, by: &str, days: i32| {
+            sqlx::query(
+                "INSERT INTO social.scene_bans (place_id, banned_address, banned_by, banned_at) \
+                 VALUES ($1, $2, $3, timezone('UTC', now()) - make_interval(days => $4))",
+            )
+            .bind(place)
+            .bind(who)
+            .bind(by)
+            .bind(days)
+            .execute(&pool)
+            .await
+            .unwrap();
+        };
+        let [p1, p2, p3] = ["9,7", "9,8", "9,9"].map(str::to_owned);
+        // Two active entities of the base "9,8".
+        let first = deploy_genesis(&pool, &[&p1, &p2], " 09 , 08 ").await;
+        let second = deploy_genesis(&pool, &[&p2], &p2).await;
+        sqlx::query(
+            "UPDATE content.deployments SET deleter_deployment = NULL WHERE entity_id = $1",
+        )
+        .bind(&first)
+        .execute(&pool)
+        .await
+        .unwrap();
+        let no_parcel = deploy_genesis(&pool, &[&"none".to_string()], "junk").await;
+        let third = deploy_genesis(&pool, &[&p3], &p3).await;
+        ban(&first, &banned, "older", 9).await;
+        ban(&second, &banned, "newer", 2).await;
+        ban(&first, &other, "first", 5).await;
+        ban(&no_parcel, &banned, "kept", 1).await;
+        ban("bafyGone", &banned, "kept", 1).await;
+        // Rows the place has: a newer moved ban wins, a newer place row stays.
+        ban(&third, &banned, "moved", 1).await;
+        ban(&p3, &banned, "stale", 4).await;
+        ban(&third, &other, "older-move", 6).await;
+        ban(&p3, &other, "place-newer", 3).await;
+
+        let unmoved = ensure_genesis_scene_ban_release(&pool).await.unwrap_err();
+        assert!(
+            unmoved.to_string().contains("genesis-scene-ban-keys.sql"),
+            "{unmoved}"
+        );
+        for _ in 0..2 {
+            sqlx::raw_sql(RELEASE).execute(&pool).await.unwrap();
+        }
+        ensure_genesis_scene_ban_release(&pool).await.unwrap();
+
+        let realm = RealmId::parse("main").unwrap();
+        for parcel in [&p1, &p3] {
+            let resolved = resolve(
+                &pool,
+                RoomRequest::Parcel {
+                    realm: &realm,
+                    parcel: Parcel::parse(parcel).unwrap(),
+                },
+            )
+            .await
+            .unwrap();
+            let key = resolved.ban_key().unwrap();
+            let banned_here: bool = sqlx::query_scalar(
+                "SELECT EXISTS (SELECT 1 FROM social.scene_bans WHERE place_id = $1 AND banned_address = $2)",
+            )
+            .bind(key.as_str())
+            .bind(&banned)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+            assert!(banned_here, "{parcel}: {}", key.as_str());
+        }
+        let mut rows: Vec<(String, String, String)> =
+            sqlx::query_as("SELECT place_id, banned_address, banned_by FROM social.scene_bans")
+                .fetch_all(&pool)
+                .await
+                .unwrap();
+        rows.sort();
+        let mut expected = vec![
+            (p2.clone(), banned.clone(), "newer".to_owned()),
+            (p2.clone(), other.clone(), "first".to_owned()),
+            (p3.clone(), banned.clone(), "moved".to_owned()),
+            (p3.clone(), other.clone(), "place-newer".to_owned()),
+            (no_parcel.clone(), banned.clone(), "kept".to_owned()),
+            ("bafyGone".to_owned(), banned.clone(), "kept".to_owned()),
+        ];
+        expected.sort();
+        assert_eq!(rows, expected);
     }
 
     #[tokio::test]

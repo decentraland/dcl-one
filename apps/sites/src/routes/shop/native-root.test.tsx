@@ -92,7 +92,7 @@ describe("when Explorer mounts the real native Shop without a Sites document pro
 
   it("should render the Shop chrome with a query client", () => {
     expect(screen.queryByText(/No QueryClient set/)).toBeNull();
-    expect(screen.getByRole("navigation", { name: "Main" })).toBeTruthy();
+    expect(screen.getByTestId("subnav-tabs").closest("[data-site-layout]")?.querySelector("[data-site-layout-navigation]")).toBeNull();
   });
 
   it("should provide the agreed query defaults", () => {

@@ -4,15 +4,34 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { destination } from "@/data/lib/catalyst/places/destination.fixture";
 import { fetchDestinations } from "@/data/lib/catalyst/places/destinations";
+import { resetDappsFlags } from "@/data/lib/feature-flags.server";
 
-import { clientLoader, loader } from "./places";
+import { loader } from "./places";
 
 vi.mock("@/data/lib/catalyst/places/destinations", async (original) => ({
   ...(await original<typeof import("@/data/lib/catalyst/places/destinations")>()),
   fetchDestinations: vi.fn(),
 }));
 
-type Payload = { sid: string; platform: { kind: string }; dehydratedState: DehydratedState; unavailable: boolean };
+type Payload = { sid: string; platform: { kind: string }; dehydratedState: DehydratedState; unavailable: boolean; liveMinUsers: number | null };
+
+const FLAG = "dapps-places-live-min-user";
+
+/** decentraland.org's dapps.json as the feature-flags service answers it. */
+function flagsFile(on: boolean, variant?: { enabled: boolean; value?: string }) {
+  const payload = variant?.value === undefined ? {} : { type: "string", value: variant.value };
+  return { flags: { [FLAG]: on }, variants: variant ? { [FLAG]: { name: "min_users", enabled: variant.enabled, payload } } : {} };
+}
+
+function serveFlags(answer: () => Promise<Response>) {
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async (url: string) => {
+      if (!String(url).endsWith("/dapps.json")) throw new Error(`unexpected fetch ${url}`);
+      return answer();
+    }),
+  );
+}
 
 async function run(url: string, userAgent = "Mozilla/5.0 (Macintosh; Intel Mac OS X 14_0)") {
   const request = new Request(url, { headers: { "user-agent": userAgent } });
@@ -24,6 +43,15 @@ function keys(state: DehydratedState) {
   return state.queries.map((query) => query.queryKey);
 }
 
+beforeEach(() => {
+  resetDappsFlags();
+  serveFlags(async () => Response.json(flagsFile(true, { enabled: true, value: "0" })));
+});
+
+afterEach(() => {
+  vi.resetAllMocks();
+  vi.unstubAllGlobals();
+});
 const EMPTY = { data: [], total: 0, received: 0, copy: null };
 
 describe("when the /places document loads", () => {
@@ -167,8 +195,38 @@ describe("when the visitor disconnects during the document read", () => {
   });
 });
 
-describe("when navigating to /places in the browser", () => {
-  it("should hand no data from the client loader", async () => {
-    await expect(clientLoader()).resolves.toBeNull();
+describe("when the document reads Live Now's head count", () => {
+  it("should hand the flag's variant to the page", async () => {
+    serveFlags(async () => Response.json(flagsFile(true, { enabled: true, value: "5" })));
+    vi.mocked(fetchDestinations).mockResolvedValue({ data: [], total: 0, received: 0, copy: null });
+    const { payload } = await run("http://localhost/places");
+    expect(payload.liveMinUsers).toBe(5);
+  });
+
+  it.each([
+    ["the variant is 0", flagsFile(true, { enabled: true, value: "0" })],
+    ["the flag is missing", { flags: {}, variants: {} }],
+    ["the flag is off", flagsFile(false, { enabled: true, value: "5" })],
+    ["the variant is disabled", flagsFile(true, { enabled: false, value: "5" })],
+    ["the variant carries no value", flagsFile(true, { enabled: true })],
+    ["the variant is malformed", flagsFile(true, { enabled: true, value: "1.5" })],
+  ])("should hand 0 when %s", async (_case, file) => {
+    serveFlags(async () => Response.json(file));
+    vi.mocked(fetchDestinations).mockResolvedValue({ data: [], total: 0, received: 0, copy: null });
+    const { payload } = await run("http://localhost/places");
+    expect(payload.liveMinUsers).toBe(0);
+  });
+
+  it.each([
+    ["answers 500", async () => new Response("down", { status: 500 })],
+    ["is unreachable", async (): Promise<Response> => Promise.reject(new Error("ECONNREFUSED"))],
+  ])("should hand no head count and still render Live Now when the flag service %s", async (_case, answer) => {
+    serveFlags(answer);
+    vi.mocked(fetchDestinations).mockResolvedValue({ data: [destination()], total: 1, received: 1, copy: null });
+    const { payload, status } = await run("http://localhost/places");
+    expect(status).toBe(200);
+    // Not a read: the browser reads the flags on its first client navigation instead of keeping 0.
+    expect(payload.liveMinUsers).toBeNull();
+    expect(keys(payload.dehydratedState)).toEqual(expect.arrayContaining([["places", "live"]]));
   });
 });

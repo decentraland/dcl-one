@@ -1,4 +1,5 @@
 """Sites accepts only matching, intact builds from the permitted producer."""
+from datetime import datetime
 import hashlib
 import importlib.util
 import io
@@ -92,6 +93,93 @@ class GitHubReadTests(unittest.TestCase):
                 play.api('actions/runs/42', deadline=500)
             self.assertEqual([call.args[0] for call in sleep.call_args_list], [60, 120, 240, 80])
             self.assertEqual(clock[0], 500)
+        # A long wait for a Bevy build does not become a wait for the token budget: five tries, then fail.
+        for failure in limited:
+            clock = [0]
+            with self.subTest(failure=failure.stderr), \
+                    patch.object(play.subprocess, 'check_output', side_effect=failure) as get, \
+                    patch.object(play.time, 'monotonic', side_effect=lambda: clock[0]), \
+                    patch.object(play.time, 'sleep',
+                                 side_effect=lambda delay: clock.__setitem__(0, clock[0] + delay)) as sleep, \
+                    patch('sys.stderr', new_callable=io.StringIO) as stderr:
+                with self.assertRaises(subprocess.CalledProcessError):
+                    play.api('actions/runs/42', deadline=5400)
+                self.assertEqual(get.call_count, 5)
+                self.assertEqual([call.args[0] for call in sleep.call_args_list], [60, 120, 240, 240])
+                self.assertEqual(clock[0], 660)
+                self.assertIn('rerun this job once its API budget resets', stderr.getvalue())
+
+    def test_a_rate_limit_keeps_its_own_retries_after_transient_failures(self):
+        limited = subprocess.CalledProcessError(1, ['gh', 'api'], stderr='gh: API rate limit exceeded (HTTP 403)\n')
+        clock = [0]
+        with patch.object(play.subprocess, 'check_output', side_effect=[self.error(503)] * 4 + [limited] * 5) as get, \
+                patch.object(play.time, 'monotonic', side_effect=lambda: clock[0]), \
+                patch.object(play.time, 'sleep',
+                             side_effect=lambda delay: clock.__setitem__(0, clock[0] + delay)) as sleep, \
+                patch('sys.stderr', new_callable=io.StringIO) as stderr:
+            with self.assertRaises(subprocess.CalledProcessError):
+                play.api('actions/runs/42', deadline=5400)
+        self.assertEqual(get.call_count, 9)
+        self.assertEqual([call.args[0] for call in sleep.call_args_list], [2, 4, 8, 16, 60, 120, 240, 240])
+        self.assertIn('rerun this job once its API budget resets', stderr.getvalue())
+
+    def test_a_truncated_response_is_retried(self):
+        truncated = subprocess.CalledProcessError(1, ['gh', 'api'], stderr='unexpected end of JSON input\n')
+        with patch.object(play.subprocess, 'check_output', side_effect=[truncated, '{"jobs": []}']) as get, \
+                patch.object(play.time, 'sleep') as sleep, patch('sys.stderr', new_callable=io.StringIO):
+            self.assertEqual(play.api('actions/runs/42/jobs'), {'jobs': []})
+        self.assertEqual(get.call_count, 2)
+        sleep.assert_called_once_with(2)
+
+    def test_an_unread_error_status_gets_four_retries_even_inside_a_wait(self):
+        # gh hides the status of an unparseable JSON error body, which may be a 4xx: never retried to the deadline.
+        truncated = subprocess.CalledProcessError(1, ['gh', 'api'], stderr='unexpected end of JSON input\n')
+        clock = [0]
+        with patch.object(play.subprocess, 'check_output', side_effect=truncated) as get, \
+                patch.object(play.time, 'monotonic', side_effect=lambda: clock[0]), \
+                patch.object(play.time, 'sleep',
+                             side_effect=lambda delay: clock.__setitem__(0, clock[0] + delay)) as sleep, \
+                patch('sys.stderr', new_callable=io.StringIO):
+            with self.assertRaises(subprocess.CalledProcessError):
+                play.api('actions/runs/42', deadline=5400)
+        self.assertEqual(get.call_count, 5)
+        self.assertEqual([call.args[0] for call in sleep.call_args_list], [2, 4, 8, 16])
+
+    def test_rate_limit_and_unread_status_retries_are_counted_apart_inside_a_wait(self):
+        truncated = subprocess.CalledProcessError(1, ['gh', 'api'], stderr='unexpected end of JSON input\n')
+        limited = subprocess.CalledProcessError(1, ['gh', 'api'], stderr='gh: API rate limit exceeded (HTTP 403)\n')
+        clock = [0]
+        with patch.object(play.subprocess, 'check_output', side_effect=[truncated] * 2 + [limited] * 5) as get, \
+                patch.object(play.time, 'monotonic', side_effect=lambda: clock[0]), \
+                patch.object(play.time, 'sleep',
+                             side_effect=lambda delay: clock.__setitem__(0, clock[0] + delay)) as sleep, \
+                patch('sys.stderr', new_callable=io.StringIO):
+            with self.assertRaises(subprocess.CalledProcessError):
+                play.api('actions/runs/42', deadline=5400)
+        self.assertEqual(get.call_count, 7)
+        self.assertEqual([call.args[0] for call in sleep.call_args_list], [2, 4, 60, 120, 240, 240])
+
+    def test_without_a_wait_rate_limit_backoff_still_follows_every_retry(self):
+        limited = subprocess.CalledProcessError(1, ['gh', 'api'], stderr='gh: API rate limit exceeded (HTTP 403)\n')
+        with patch.object(play.subprocess, 'check_output', side_effect=[self.error(503)] * 2 + [limited] * 3) as get, \
+                patch.object(play.time, 'sleep') as sleep, patch('sys.stderr', new_callable=io.StringIO):
+            with self.assertRaises(subprocess.CalledProcessError):
+                play.api('actions/runs/42')
+        self.assertEqual(get.call_count, 5)
+        self.assertEqual([call.args[0] for call in sleep.call_args_list], [2, 4, 240, 240])
+
+    def test_artifact_download_gives_up_after_its_two_tries(self):
+        temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(temporary.cleanup)
+        for stderr, pause in ((b'gh: HTTP 503\n', 2), (b'gh: API rate limit exceeded (HTTP 403)\n', 60)):
+            failure = subprocess.CalledProcessError(1, ['gh', 'api'], stderr=stderr)
+            with self.subTest(stderr=stderr), \
+                    patch.object(play.subprocess, 'run', side_effect=failure) as gh, \
+                    patch.object(play.time, 'sleep') as sleep, patch('sys.stderr', new_callable=io.StringIO), \
+                    self.assertRaises(subprocess.CalledProcessError):
+                play.download({'id': 9}, Path(temporary.name) / 'web.zip')
+            self.assertEqual(gh.call_count, 2)
+            sleep.assert_called_once_with(pause)
 
     def test_invalid_json_does_not_retry_or_become_a_successful_read(self):
         with patch.object(play.subprocess, 'check_output', return_value='not JSON') as get, \
@@ -140,6 +228,16 @@ class GitHubReadTests(unittest.TestCase):
             self.assertEqual(play.api('actions/runs/42/jobs'), {'jobs': []})
         sleep.assert_called_once_with(2)
 
+    def test_a_body_cut_short_after_a_server_error_is_retried_again(self):
+        # Seen in CI: a 502, then a retry whose body ended early, then the answer.
+        failures = [subprocess.CalledProcessError(1, ['gh', 'api'], stderr='gh: Server Error (HTTP 502)\n'),
+                    subprocess.CalledProcessError(1, ['gh', 'api'], stderr='unexpected end of JSON input\n')]
+        with patch.object(play.subprocess, 'check_output', side_effect=[*failures, '{"jobs": []}']) as get, \
+                patch.object(play.time, 'sleep') as sleep:
+            self.assertEqual(play.api('actions/runs/42/jobs?per_page=100'), {'jobs': []})
+        self.assertEqual(get.call_count, 3)
+        self.assertEqual([c.args[0] for c in sleep.call_args_list], [2, 4])
+
     def test_a_dropped_connection_retries_and_a_statusless_hard_error_does_not(self):
         dropped = ['stream error: stream ID 1; CANCEL; received from peer\n',
                    'error reading response body: unexpected EOF\n',
@@ -147,7 +245,8 @@ class GitHubReadTests(unittest.TestCase):
                    'http2: server sent GOAWAY and closed the connection\n',
                    'net/http: TLS handshake timeout\n',
                    'Get "https://api.github.com/repos/o/r/actions/runs/42/jobs": EOF\n',
-                   'http2: client connection lost\n']
+                   'http2: client connection lost\n',
+                   'unexpected end of JSON input\n']
         for text in dropped:
             failure = subprocess.CalledProcessError(1, ['gh', 'api'], stderr=text)
             with self.subTest(stderr=text), \
@@ -362,8 +461,8 @@ class PlayImportTests(unittest.TestCase):
     def test_the_in_tree_crates_are_engine_inputs_in_git_and_in_the_nix_contract(self):
         bevy = 'rendering/bevy-explorer/patches/bevy/series/0001-scene-spawner.patch'
         self.write(bevy, 'fn spawn() {}\n')
-        crate = 'rendering/bevy-explorer/vendor/boimp/src/lib.rs'
-        self.write(crate, 'pub fn import() {}\n')
+        crate = 'rendering/bevy-explorer/vendor/bevy_dui/src/lib.rs'
+        self.write(crate, 'pub fn layout() {}\n')
         def git(*args):
             return subprocess.check_output(['git', '-c', 'user.name=CI', '-c', 'user.email=ci@example.invalid',
                                             *args], cwd=self.root, text=True).strip()
@@ -386,13 +485,13 @@ class PlayImportTests(unittest.TestCase):
         self.assertEqual(key, contract.engine_inputs(filtered))
         self.write(bevy, 'fn spawn_sliced() {}\n')
         self.assertEqual(key, contract.engine_inputs(self.root))
-        self.write(crate, 'pub fn import_sliced() {}\n')
+        self.write(crate, 'pub fn layout_sliced() {}\n')
         self.assertNotEqual(key, contract.engine_inputs(self.root))
 
     def test_an_in_tree_crate_edit_invalidates_the_artifact(self):
-        # bevy_dui, boimp and rpc-rust are compiled from tracked bytes. No .git here: the walk Nix's
+        # bevy_dui and rpc-rust are compiled from tracked bytes. No .git here: the walk Nix's
         # filtered contract takes.
-        name = 'rendering/bevy-explorer/vendor/boimp/src/lib.rs'
+        name = 'rendering/bevy-explorer/vendor/bevy_dui/src/lib.rs'
         key = contract.engine_inputs(self.root)
         self.write(name, name + ' changed\n')
         self.assertNotEqual(key, contract.engine_inputs(self.root))
@@ -513,6 +612,10 @@ class PlayImportTests(unittest.TestCase):
             'http://sites:5212/play/bridge/about': json.dumps({'configurations': {
                 'scenesUrn': [f'urn:decentraland:entity:{entity}?=&baseUrl='
                              'http://sites:5212/play/bridge-scene/static/']}}).encode(),
+            'http://sites:5212/ui-gallery/': b'<meta name="robots" content="noindex" />'
+                                             b'<script type="module" crossorigin src="./assets/index-a1.js">',
+            'http://sites:5212/ui-gallery/assets/index-a1.js': b'fixture',
+            'http://sites:5212/ui-gallery/hud.html': b'fixture',
         })
         requested = []
         bootstraps = 0
@@ -528,19 +631,42 @@ class PlayImportTests(unittest.TestCase):
                 url, mode = args[-2:]
                 requested.append(url)
                 data = responses[url]
+                if data is None:
+                    return subprocess.CompletedProcess(args, 1, '', '')
                 stdout = json.dumps({'bytes': len(data), 'sha256': contract.digest(data),
-                                     'body': json.loads(data) if mode == 'json' else None})
+                                     'body': json.loads(data) if mode == 'json'
+                                     else data.decode() if mode == 'text' else None})
             elif args[-2:] == ('schema', 'apply'):
                 bootstraps += 1
                 status = int(bootstraps > 1)
             elif args[-1] == 'SELECT value FROM public.image_smoke':
                 stdout = 'preserved\n'
             return subprocess.CompletedProcess(args, status, stdout, '')
-        output = io.StringIO()
-        with patch.object(smoke, 'ROOT', self.root), patch.object(smoke, 'docker', docker), \
-                patch('sys.argv', ['image-smoke', '--play', str(self.build)]), \
-                patch('sys.stdout', output):
-            smoke.main()
+        def run():
+            nonlocal bootstraps
+            bootstraps = 0
+            output = io.StringIO()
+            with patch.object(smoke, 'ROOT', self.root), patch.object(smoke, 'docker', docker), \
+                    patch('sys.argv', ['image-smoke', '--play', str(self.build)]), \
+                    patch('sys.stdout', output):
+                smoke.main()
+            return output
+        # The gallery must answer, keep its noindex page and serve its assets and HUD canvas.
+        gallery = {url: responses[url] for url in responses if '/ui-gallery/' in url}
+        for url, broken, message in (
+                ('http://sites:5212/ui-gallery/', None, 'serve the UI gallery'),
+                ('http://sites:5212/ui-gallery/', b'<script type="module" src="./assets/index-a1.js">', 'serve the UI gallery'),
+                ('http://sites:5212/ui-gallery/assets/index-a1.js', None, 'assets must resolve'),
+                ('http://sites:5212/ui-gallery/hud.html', None, 'HUD canvas')):
+            with self.subTest(url=url, broken=broken), self.assertRaisesRegex(AssertionError, message):
+                responses.update(gallery)
+                responses[url] = broken
+                run()
+        responses.update(gallery)
+        requested.clear()
+        output = run()
+        for url in gallery:
+            self.assertIn(url, requested)
         self.assertIn('/nix/store/fixture-cast-bot/bin/cast-bot', requested)
         self.assertIn('http://sites:5212/play/bridge/about', requested)
         self.assertIn(f'http://sites:5212/play/bridge-scene/static/{entity}', requested)
@@ -655,13 +781,13 @@ class PlayImportTests(unittest.TestCase):
         fingerprints = {None: 'ours', 'b' * 40: 'ours'}
         with patch.object(play.subprocess, 'run', return_value=subprocess.CompletedProcess([], 0)), \
                 patch.object(contract, 'inputs', side_effect=lambda root, revision=None: fingerprints[revision]):
-            self.assertFalse(play.engine_changed(pr))
+            self.assertFalse(play.engine_changed(pr, play.inputs_at(pr['base'])))
             fingerprints['b' * 40] = 'theirs'
-            self.assertTrue(play.engine_changed(pr))
-        self.assertTrue(play.engine_changed(None))
-        self.assertTrue(play.engine_changed({'number': 7, 'head': SHA, 'merge': 'c' * 40}))
+            self.assertTrue(play.engine_changed(pr, play.inputs_at(pr['base'])))
+        self.assertTrue(play.engine_changed(None, None))
+        self.assertTrue(play.engine_changed({'number': 7, 'head': SHA, 'merge': 'c' * 40}, None))
         with patch.object(play.subprocess, 'run', side_effect=OSError):
-            self.assertTrue(play.engine_changed(pr))
+            self.assertTrue(play.engine_changed(pr, play.inputs_at(pr['base'])))
 
     def test_pr_base_is_the_main_tip_the_merge_commit_was_built_on(self):
         tip, head, stale, merge = 'd' * 40, 'e' * 40, 'f' * 40, 'c' * 40
@@ -698,8 +824,9 @@ class PlayImportTests(unittest.TestCase):
         # each is fingerprinted at its own commit (fetched if absent) and verified against it.
         self.assertEqual([call.args[0]['id'] for call in download.call_args_list], [45, 44])
         self.assertEqual([call.kwargs['producer'] for call in download.call_args_list], [SHA, 'd' * 40])
-        self.assertEqual(inputs.call_count, 3)
-        self.assertEqual([call.args[0][:2] for call in git.call_args_list], [['git', 'cat-file']] * 2)
+        self.assertEqual(inputs.call_count, 4)  # The tree, the base (read once in fetch) and two producer revisions.
+        self.assertEqual([call.args[0][:2] for call in git.call_args_list],
+                         [['git', 'cat-file'], ['git', 'log']] + [['git', 'cat-file']] * 2)
 
     def test_inputs_at_fingerprints_a_present_commit_and_gives_none_for_a_missing_one(self):
         git = ['git', '-c', 'user.name=t', '-c', 'user.email=t@example.com', '-c', 'commit.gpgsign=false']
@@ -825,6 +952,7 @@ class PlayImportTests(unittest.TestCase):
         with patch.object(play, 'api', return_value={'workflow_runs': [own, other]}), \
                 patch.object(play, 'current_pr', return_value=pr), \
                 patch.object(play, 'engine_changed', return_value=True), \
+                patch.object(play, 'inputs_at', return_value='base inputs'), \
                 patch.object(contract, 'inputs', return_value='ours'), \
                 patch.object(play, 'download_run') as download, \
                 self.assertRaisesRegex(RuntimeError, r'did not succeed: 51 \(failure\)\. Rerun it, then this job') as failure:
@@ -881,6 +1009,7 @@ class PlayImportTests(unittest.TestCase):
         with patch.object(play, 'api', return_value={'workflow_runs': candidates}), \
                 patch.object(play, 'current_pr', return_value=pr), \
                 patch.object(play, 'engine_changed', return_value=False), \
+                patch.object(play, 'inputs_at', return_value='ours'), \
                 patch.object(contract, 'inputs', return_value='ours'), \
                 patch.object(play, 'download_run') as download, \
                 self.assertRaisesRegex(RuntimeError, 'No successful matching'):
@@ -895,7 +1024,7 @@ class PlayImportTests(unittest.TestCase):
                     patch.object(play, 'current_pr', return_value=pr), \
                     patch.object(play, 'engine_changed', return_value=True) as changed, \
                     patch.object(play.subprocess, 'run', return_value=subprocess.CompletedProcess([], 0)), \
-                    patch.object(contract, 'inputs', side_effect=['ours', 'theirs']), \
+                    patch.object(contract, 'inputs', side_effect=lambda root, revision=None: 'theirs' if revision else 'ours'), \
                     patch.object(play, 'download_run') as download, \
                     self.assertRaisesRegex(RuntimeError, 'No successful matching'):
                 play.fetch(production=production)
@@ -1200,7 +1329,7 @@ class PlayImportTests(unittest.TestCase):
                     patch.object(play, 'download_run') as download, \
                     self.assertRaisesRegex(RuntimeError, 'No successful matching'):
                 play.fetch(wait=60)
-            self.assertEqual(api.call_count, 1)
+            self.assertEqual(api.call_count, 2)
             download.assert_not_called()
 
     def test_production_download_requires_the_complete_successful_main_run(self):
@@ -1210,20 +1339,237 @@ class PlayImportTests(unittest.TestCase):
                 self.assertIsNone(play.download_run(candidate, production=True))
             api.assert_not_called()
 
-    def test_search_reaches_retained_main_build_beyond_a_thousand_newer_runs(self):
-        # PR traffic and integrity-only main runs must not hide a retained producer.
-        pages = [{'workflow_runs': [run(id=page * 100 + n, head_branch='dev') for n in range(100)]}
-                 for page in range(10)]
-        pages.append({'workflow_runs': [run(id=1001), run(id=1002)]})
-        with patch.object(play, 'api', side_effect=pages) as api, \
+    def test_a_main_build_comes_from_main_runs_newest_first(self):
+        with patch.object(play, 'api', return_value={'workflow_runs': [run(id=1001), run(id=1002)]}) as api, \
                 patch.object(play.subprocess, 'run'), \
                 patch.object(contract, 'inputs', return_value='match'), \
                 patch.object(play, 'download_run', side_effect=[None, self.build]) as download:
             self.assertEqual(play.fetch(production=True), self.build)
-        self.assertEqual(api.call_count, 11)
-        self.assertEqual(api.call_args.args[0],
-                         'actions/workflows/bevy-explorer-ci.yml/runs?per_page=100&page=11')
+        api.assert_called_once_with('actions/workflows/bevy-explorer-ci.yml/runs?per_page=100&branch=main&page=1', None)
         self.assertEqual([call.args[0]['id'] for call in download.call_args_list], [1001, 1002])
+
+    def test_history_reads_at_most_ten_main_pages(self):
+        def response(path, deadline):
+            page = int(path.rsplit('=', 1)[1])
+            self.assertLessEqual(page, 10)
+            return {'workflow_runs': [run(id=page * 1000 + n, conclusion='failure') for n in range(100)]}
+
+        with patch.object(play, 'api', side_effect=response) as api, \
+                patch.object(contract, 'inputs', return_value='match'), \
+                patch.object(play, 'download_run') as download, \
+                self.assertRaisesRegex(RuntimeError, 'No successful matching'):
+            play.fetch(production=True)
+        self.assertEqual(api.call_count, 10)
+        download.assert_not_called()
+
+    def test_a_pr_finds_its_own_run_without_reading_main(self):
+        pr = {'number': 7, 'head': SHA, 'base': 'b' * 40, 'merge': 'c' * 40}
+        own = run(event='pull_request', head_branch='feature', pull_requests=[{'number': 7}])
+        # Without a readable base, main is still searched, but only after the own run gives no build.
+        for base in ('base inputs', None):
+            with self.subTest(base=base), \
+                    patch.object(play, 'api', return_value={'workflow_runs': [own]}) as api, \
+                    patch.object(play, 'current_pr', return_value=pr), \
+                    patch.object(play, 'inputs_at', side_effect=lambda revision: base if revision == 'b' * 40 else 'match'), \
+                    patch.object(contract, 'inputs', return_value='match'), \
+                    patch.object(play, 'download_run', return_value=self.build) as download:
+                self.assertEqual(play.fetch(), self.build)
+            api.assert_called_once_with(f'actions/workflows/bevy-explorer-ci.yml/runs?per_page=100&head_sha={SHA}', None)
+            download.assert_called_once()
+
+    def engine_pr(self, own, base_inputs, **fetch):
+        pr = {'number': 7, 'head': SHA, 'base': 'b' * 40, 'merge': 'c' * 40}
+        clock = [0]
+        with patch.object(play, 'api', return_value={'workflow_runs': own}) as api, \
+                patch.object(play, 'current_pr', return_value=pr), \
+                patch.object(play, 'engine_changed', return_value=True), \
+                patch.object(play, 'inputs_at', return_value=base_inputs) as inputs_at, \
+                patch.object(play.time, 'monotonic', side_effect=lambda: clock[0]), \
+                patch.object(play.time, 'sleep', side_effect=lambda delay: clock.__setitem__(0, clock[0] + delay)), \
+                self.assertRaises(RuntimeError) as failure:
+            play.fetch(**fetch)
+        return str(failure.exception), [call.args[0] for call in api.call_args_list], \
+            [call.args[0] for call in inputs_at.call_args_list]
+
+    def test_an_engine_pr_whose_own_run_failed_fails_without_reading_main(self):
+        failed = run(id=70, event='pull_request', head_branch='feature', pull_requests=[{'number': 7}],
+                     conclusion='failure')
+        error, reads, revisions = self.engine_pr([failed], 'base inputs', wait=600)
+        self.assertIn('The Bevy CI run of this commit did not succeed: 70', error)
+        self.assertNotIn('Refresh main', error)
+        self.assertNotIn('No trusted Bevy CI run', error)
+        self.assertEqual(reads, [f'actions/workflows/bevy-explorer-ci.yml/runs?per_page=100&head_sha={SHA}'])
+        self.assertEqual(revisions, ['b' * 40])
+
+    def test_an_engine_pr_without_its_own_run_says_so(self):
+        error, reads, _ = self.engine_pr([], 'base inputs')
+        self.assertIn("No trusted Bevy CI run of this PR's head uploaded a usable build of these inputs", error)
+        self.assertIn("Start or rerun this PR's Bevy CI, then this job.", error)
+        self.assertNotIn('newest 1,000 runs', error)
+        self.assertEqual(len(reads), 1)
+
+    def test_an_engine_pr_with_an_unreadable_base_still_searches_main(self):
+        error, reads, _ = self.engine_pr([], None)
+        self.assertIn('Refresh main', error)
+        self.assertEqual(reads[1], 'actions/workflows/bevy-explorer-ci.yml/runs?per_page=100&branch=main&page=1')
+
+    def test_the_base_is_read_once_for_both_decisions(self):
+        # Two reads could disagree: an unreadable one makes engine_changed() guess, a readable one limits the search.
+        pr = {'number': 7, 'head': SHA, 'base': 'b' * 40, 'merge': 'c' * 40}
+        failed = run(id=70, event='pull_request', head_branch='feature', pull_requests=[{'number': 7}],
+                     conclusion='failure')
+        for base, reads, error in (('base inputs', 1, 'did not succeed: 70'), (None, 2, 'Refresh main')):
+            with self.subTest(base=base), \
+                    patch.object(play, 'api', return_value={'workflow_runs': [failed]}) as api, \
+                    patch.object(play, 'current_pr', return_value=pr), \
+                    patch.object(play, 'inputs_at', return_value=base) as inputs_at, \
+                    patch.object(contract, 'inputs', return_value='ours'), \
+                    self.assertRaisesRegex(RuntimeError, error):
+                play.fetch()
+            self.assertEqual([call.args[0] for call in inputs_at.call_args_list], ['b' * 40])
+            self.assertEqual(api.call_count, reads)
+
+    def test_an_engine_pr_waiting_for_its_own_run_ignores_main_runs(self):
+        pr = {'number': 7, 'head': SHA, 'base': 'b' * 40, 'merge': 'c' * 40}
+        own = run(id=70, event='pull_request', head_branch='feature', pull_requests=[{'number': 7}],
+                  status='in_progress', conclusion=None)
+        recent = 'actions/workflows/bevy-explorer-ci.yml/runs?per_page=100&page=1'
+        history = {f'actions/workflows/bevy-explorer-ci.yml/runs?per_page=100&head_sha={SHA}': [own],
+                   recent: [run(id=80, head_sha='9' * 40), own]}
+        clock = [0]
+        with patch.object(play, 'api', side_effect=lambda path, deadline: {'workflow_runs': history[path]}), \
+                patch.object(play, 'current_pr', return_value=pr), \
+                patch.object(play, 'engine_changed', return_value=True), \
+                patch.object(play, 'inputs_at', side_effect=lambda revision: 'base inputs' if revision == 'b' * 40 else 'match') as inputs_at, \
+                patch.object(contract, 'inputs', return_value='match'), \
+                patch.object(play, 'download_run', side_effect=[None, self.build]) as download, \
+                patch.object(play.time, 'monotonic', side_effect=lambda: clock[0]), \
+                patch.object(play.time, 'sleep', side_effect=lambda delay: clock.__setitem__(0, clock[0] + delay)):
+            self.assertEqual(play.fetch(wait=600), self.build)
+        self.assertEqual([call.args[0] for call in inputs_at.call_args_list], ['b' * 40, 'c' * 40])
+        self.assertEqual([call.args[0]['id'] for call in download.call_args_list], [70, 70])
+
+    def test_a_short_wait_still_checks_several_times(self):
+        for wait, pauses in ((60, [15, 30, 15]), (7, [2, 4, 1])):
+            clock = [0]
+            with self.subTest(wait=wait), \
+                    patch.object(play, 'api', return_value={'workflow_runs': [run(status='in_progress', conclusion=None)]}) as api, \
+                    patch.object(play.subprocess, 'run'), \
+                    patch.object(contract, 'inputs', return_value='match'), \
+                    patch.object(play.time, 'monotonic', side_effect=lambda: clock[0]), \
+                    patch.object(play.time, 'sleep', side_effect=lambda delay: clock.__setitem__(0, clock[0] + delay)) as sleep, \
+                    self.assertRaisesRegex(RuntimeError, f'after the {wait} s wait'):
+                play.fetch(wait=wait, production=True)
+            self.assertEqual([call.args[0] for call in sleep.call_args_list], pauses)
+            self.assertEqual(api.call_count, 1 + len(pauses))
+
+    def test_a_run_without_a_head_repository_is_not_trusted(self):
+        self.assertFalse(play.trusted(run(head_repository=None)))
+
+    # Main builds made before and after the PR's base commit (BASE_TIME).
+    BASE_TIME = datetime.fromisoformat('2026-11-23T12:00:00Z').timestamp()
+    OLDER, NEWER = '2026-11-23T10:00:00Z', '2026-11-23T14:00:00Z'
+
+    def non_engine_pr(self, main, download_run, based=BASE_TIME, **fetch):
+        pr = {'number': 7, 'head': SHA, 'base': 'b' * 40, 'merge': 'c' * 40}
+        history = {f'actions/workflows/bevy-explorer-ci.yml/runs?per_page=100&head_sha={SHA}': [],
+                   'actions/workflows/bevy-explorer-ci.yml/runs?per_page=100&branch=main&page=1': main}
+        with patch.object(play, 'api', side_effect=lambda path, deadline: {'workflow_runs': history[path]}), \
+                patch.object(play, 'current_pr', return_value=pr), \
+                patch.object(play, 'engine_changed', return_value=False), \
+                patch.object(play, 'commit_time', return_value=based), \
+                patch.object(play.subprocess, 'run', return_value=subprocess.CompletedProcess([], 0)), \
+                patch.object(contract, 'inputs', side_effect=lambda root, revision=None: 'theirs' if revision else 'ours'), \
+                patch.object(play, 'download_run', side_effect=download_run) as download:
+            try:
+                result = play.fetch(**fetch)
+            except RuntimeError as error:
+                result = error
+            return result, [call.args[0]['id'] for call in download.call_args_list]
+
+    def test_non_engine_pr_stops_after_five_rejected_builds_older_than_its_base(self):
+        main = [run(id=60 - n, head_sha=f'{n}' * 40, created_at=self.OLDER) for n in range(6)]
+        error, downloads = self.non_engine_pr(main, ValueError('Explorer build inputs differ'))
+        self.assertIn("None of the 5 newest main web builds older than this PR's base could be used", str(error))
+        self.assertNotIn('newest 1,000 runs', str(error))
+        self.assertEqual(downloads, [60, 59, 58, 57, 56])
+
+    def test_an_unreadable_base_time_leaves_the_walk_uncapped(self):
+        main = [run(id=60 - n, head_sha=f'{n}' * 40, created_at=self.OLDER) for n in range(7)]
+        result, downloads = self.non_engine_pr(main, [ValueError('Explorer build inputs differ')] * 6 + [self.build],
+                                               based=None)
+        self.assertEqual(result, self.build)
+        self.assertEqual(downloads, [60, 59, 58, 57, 56, 55, 54])
+
+    def test_commit_time_reads_the_committer_time_of_a_commit(self):
+        env = {**os.environ, 'GIT_AUTHOR_DATE': '2026-11-20T00:00:00Z', 'GIT_COMMITTER_DATE': '2026-11-23T12:00:00Z'}
+        git = ['git', '-c', 'user.name=CI', '-c', 'user.email=ci@example.invalid', '-c', 'commit.gpgsign=false']
+        subprocess.run(['git', 'init', '-q'], cwd=self.root, check=True)
+        subprocess.run(git + ['commit', '-q', '--allow-empty', '-m', 'fixture'], cwd=self.root, check=True, env=env)
+        head = subprocess.check_output(['git', 'rev-parse', 'HEAD'], cwd=self.root, text=True).strip()
+        self.assertEqual(play.commit_time(head), self.BASE_TIME)
+        self.assertIsNone(play.commit_time('f' * 40))
+
+    def test_rejected_builds_newer_than_the_base_do_not_stop_the_walk(self):
+        # Main changed after the PR's base: its newer builds fail, and the one before the change fits.
+        main = [run(id=60 - n, head_sha=f'{n}' * 40, created_at=self.NEWER) for n in range(6)]
+        fits = run(id=40, head_sha='9' * 40, created_at=self.OLDER)
+        rejected = ValueError('Sites engine bindings differ from this build')
+        result, downloads = self.non_engine_pr([*main, fits], [rejected] * 6 + [self.build])
+        self.assertEqual(result, self.build)
+        self.assertEqual(downloads, [60, 59, 58, 57, 56, 55, 40])
+
+    def test_an_unreadable_listing_is_not_counted_as_a_rejected_build(self):
+        main = [run(id=60 - n, head_sha=f'{n}' * 40, created_at=self.OLDER) for n in range(6)]
+        failures = [json.JSONDecodeError('Expecting value', '', 0)] + [ValueError('Explorer build inputs differ')] * 4
+        result, downloads = self.non_engine_pr(main, failures + [self.build])
+        self.assertEqual(result, self.build)
+        self.assertEqual(downloads, [60, 59, 58, 57, 56, 55])
+
+    def test_a_poll_round_is_not_cut_short_by_the_rejection_cap(self):
+        pr = {'number': 7, 'head': SHA, 'base': 'b' * 40, 'merge': 'c' * 40}
+        under_way = run(id=60, head_sha='1' * 40, status='in_progress', conclusion=None, created_at=self.OLDER)
+        recent = 'actions/workflows/bevy-explorer-ci.yml/runs?per_page=100&page=1'
+        history = {f'actions/workflows/bevy-explorer-ci.yml/runs?per_page=100&head_sha={SHA}': [],
+                   'actions/workflows/bevy-explorer-ci.yml/runs?per_page=100&branch=main&page=1':
+                       [under_way, *(run(id=55 - n, head_sha=f'{n + 2}' * 40, created_at=self.OLDER) for n in range(4))],
+                   recent: [run(id=70, head_sha='9' * 40, created_at=self.OLDER), under_way]}
+        uploads = iter([None, self.build])
+
+        def download_run(candidate, *args, **kwargs):
+            if candidate['id'] == 60:
+                return next(uploads)
+            raise ValueError('Explorer build inputs differ')
+
+        clock = [0]
+        with patch.object(play, 'api', side_effect=lambda path, deadline: {'workflow_runs': history[path]}), \
+                patch.object(play, 'current_pr', return_value=pr), \
+                patch.object(play, 'engine_changed', return_value=False), \
+                patch.object(play, 'commit_time', return_value=self.BASE_TIME), \
+                patch.object(play.subprocess, 'run', return_value=subprocess.CompletedProcess([], 0)), \
+                patch.object(contract, 'inputs', side_effect=lambda root, revision=None: 'theirs' if revision else 'ours'), \
+                patch.object(play, 'download_run', side_effect=download_run) as downloads, \
+                patch.object(play.time, 'monotonic', side_effect=lambda: clock[0]), \
+                patch.object(play.time, 'sleep', side_effect=lambda delay: clock.__setitem__(0, clock[0] + delay)):
+            self.assertEqual(play.fetch(wait=600), self.build)
+        self.assertEqual([call.args[0]['id'] for call in downloads.call_args_list], [60, 55, 54, 53, 52, 70, 60])
+
+    def test_wait_polls_at_most_every_two_minutes(self):
+        queued = run(status='queued', conclusion=None)
+        polls = iter([queued] * 6 + [run()])
+        clock = [0]
+
+        def response(path, deadline):
+            return {'workflow_runs': [queued if 'branch=main' in path else next(polls)]}
+
+        with patch.object(play, 'api', side_effect=response), \
+                patch.object(play.subprocess, 'run'), \
+                patch.object(contract, 'inputs', return_value='match'), \
+                patch.object(play, 'download_run', return_value=self.build), \
+                patch.object(play.time, 'monotonic', side_effect=lambda: clock[0]), \
+                patch.object(play.time, 'sleep', side_effect=lambda delay: clock.__setitem__(0, clock[0] + delay)) as sleep:
+            self.assertEqual(play.fetch(wait=1200, production=True), self.build)
+        self.assertEqual([call.args[0] for call in sleep.call_args_list], [60, 120, 120, 120, 120, 120, 120])
 
     def test_failed_and_mismatched_runs_do_not_supply_a_build(self):
         candidates = [run(conclusion='failure'), run(id=43, head_sha='b' * 40)]
@@ -1235,15 +1581,15 @@ class PlayImportTests(unittest.TestCase):
         download.assert_not_called()
 
     def test_wait_scans_history_once_and_refreshes_old_pending_run_by_id(self):
-        pages = [[run(id=100 + page * 100 + n, head_branch='dev') for n in range(100)]
-                 for page in range(10)]
+        pages = [[run(id=1000 + page * 100 + n, conclusion='failure') for n in range(100)]
+                 for page in range(3)]
         pages.append([run(status='in_progress', conclusion=None)])
         refreshes = iter([run(status='in_progress', conclusion=None),
                           run(status='in_progress', conclusion=None), run()])
         clock = [0]
 
         def response(path, deadline):
-            self.assertEqual(deadline, 180)
+            self.assertEqual(deadline, 600)
             if path == 'actions/runs/42':
                 return next(refreshes)
             return {'workflow_runs': pages[int(path.rsplit('=', 1)[1]) - 1]}
@@ -1254,22 +1600,35 @@ class PlayImportTests(unittest.TestCase):
                 patch.object(play, 'download_run', return_value=self.build) as download, \
                 patch.object(play.time, 'monotonic', side_effect=lambda: clock[0]), \
                 patch.object(play.time, 'sleep', side_effect=lambda delay: clock.__setitem__(0, clock[0] + delay)) as sleep:
-            self.assertEqual(play.fetch(wait=180, production=True), self.build)
+            self.assertEqual(play.fetch(wait=600, production=True), self.build)
         requests = [call.args[0] for call in api.call_args_list]
-        self.assertEqual(len(requests), 17)  # 11 initial pages + 3 * (recent page + pending ID).
-        for page in range(2, 12):
+        self.assertEqual(len(requests), 10)  # 4 main pages + 3 * (recent page + pending ID).
+        for page in range(2, 5):
             self.assertEqual(requests.count(
-                f'actions/workflows/bevy-explorer-ci.yml/runs?per_page=100&page={page}'), 1)
+                f'actions/workflows/bevy-explorer-ci.yml/runs?per_page=100&branch=main&page={page}'), 1)
         self.assertEqual(requests.count('actions/runs/42'), 3)
         self.assertEqual(inputs.call_count, 2)  # Current input key and one producer revision.
         git.assert_called_once()
-        download.assert_called_once_with(run(), None, True, None, 180, producer=None)
-        self.assertEqual([call.args[0] for call in sleep.call_args_list], [2, 4, 8])
-        self.assertEqual(clock[0], 14)
+        download.assert_called_once_with(run(), None, True, None, 600, producer=None)
+        self.assertEqual([call.args[0] for call in sleep.call_args_list], [60, 120, 120])
+        self.assertEqual(clock[0], 300)
+
+    def test_a_pr_head_already_on_main_is_read_once(self):
+        pr = {'number': 7, 'head': SHA, 'base': 'b' * 40, 'merge': 'c' * 40}
+        under_way = run(status='in_progress', conclusion=None)
+        with patch.object(play, 'api', return_value={'workflow_runs': [under_way]}), \
+                patch.object(play, 'current_pr', return_value=pr), \
+                patch.object(play, 'engine_changed', return_value=True), \
+                patch.object(play.subprocess, 'run', return_value=subprocess.CompletedProcess([], 0)), \
+                patch.object(contract, 'inputs', return_value='match'), \
+                patch.object(play, 'download_run', return_value=None) as download, \
+                self.assertRaisesRegex(RuntimeError, 'has not uploaded its web build'):
+            play.fetch()
+        download.assert_called_once()
 
     def history(self, first, older):
-        # Page one: `first`, then 99 runs of other branches. Page two: `older`.
-        return [[first] + [run(id=900 + n, head_branch='dev') for n in range(99)], older]
+        # Page one: `first`, then 99 failed main runs. Page two: `older`.
+        return [[first] + [run(id=900 + n, head_sha='f' * 40, conclusion='failure') for n in range(99)], older]
 
     def test_wait_polls_a_matching_run_under_way_before_it_reads_older_history(self):
         # The consumer of an engine change: its own run is the newest, and its build is not uploaded yet.
@@ -1293,7 +1652,7 @@ class PlayImportTests(unittest.TestCase):
             self.assertEqual(play.fetch(wait=600, production=True), self.build)
         self.assertEqual([call.args[0].rsplit('=', 1)[1] for call in api.call_args_list], ['1', '1', '1'])
         self.assertEqual([call.args[0] for call in inputs_at.call_args_list], [SHA])  # no older commit fetched
-        self.assertEqual([call.args[0] for call in sleep.call_args_list], [2, 4])
+        self.assertEqual([call.args[0] for call in sleep.call_args_list], [60, 120])
         download.assert_called_once_with(run(id=60), None, True, None, ANY, producer=None)
 
     def test_history_goes_on_when_the_run_under_way_gives_no_build(self):
@@ -1315,7 +1674,7 @@ class PlayImportTests(unittest.TestCase):
                 patch.object(play.time, 'sleep') as sleep:
             self.assertEqual(play.fetch(wait=600, production=True), self.build)
         self.assertEqual(requests, ['1', '1', '2'])
-        sleep.assert_called_once_with(2)
+        sleep.assert_called_once_with(60)
         download.assert_called_once_with(older, None, True, None, ANY, producer=None)
 
     def test_an_import_without_a_wait_reads_older_history_past_a_run_under_way(self):
@@ -1370,7 +1729,8 @@ class PlayImportTests(unittest.TestCase):
                 patch.object(play.time, 'sleep'):
             self.assertEqual(play.fetch(wait=60, production=True), self.build)
         self.assertEqual([call.args[0] for call in api.call_args_list], [
-            'actions/workflows/bevy-explorer-ci.yml/runs?per_page=100&page=1'] * 2)
+            'actions/workflows/bevy-explorer-ci.yml/runs?per_page=100&branch=main&page=1',
+            'actions/workflows/bevy-explorer-ci.yml/runs?per_page=100&page=1'])
 
     def test_wait_discovers_a_new_successful_producer_after_cancellation(self):
         foreign = run(id=43, head_repository={'full_name': 'other/project'})
@@ -1407,14 +1767,14 @@ class PlayImportTests(unittest.TestCase):
                                      side_effect=lambda r, *_, **__: self.build if r['run_attempt'] == 2 else None) as download, \
                         patch.object(play.time, 'monotonic', side_effect=lambda: clock[0]), \
                         patch.object(play.time, 'sleep', side_effect=lambda delay: clock.__setitem__(0, clock[0] + delay)) as sleep:
-                    self.assertEqual(play.fetch(wait=180, production=True), self.build)
+                    self.assertEqual(play.fetch(wait=600, production=True), self.build)
                 attempts = [call.args[0]['run_attempt'] for call in download.call_args_list]
                 self.assertEqual(attempts, [1, 2] if conclusion == 'success' else [2])
-                download.assert_called_with(retry, None, True, None, 180, producer=None)
+                download.assert_called_with(retry, None, True, None, 600, producer=None)
                 self.assertEqual(api.call_count, 4)
                 self.assertEqual(inputs.call_count, 2)
-                self.assertEqual([call.args[0] for call in sleep.call_args_list], [2, 4, 8])
-                self.assertEqual(clock[0], 14)
+                self.assertEqual([call.args[0] for call in sleep.call_args_list], [60, 120, 120])
+                self.assertEqual(clock[0], 300)
 
     def test_a_new_attempt_still_requires_a_trusted_run(self):
         with patch.object(play, 'api', side_effect=[
@@ -1452,13 +1812,13 @@ class PlayImportTests(unittest.TestCase):
                 patch.object(play, 'download_run') as download, \
                 patch.object(play.time, 'monotonic', side_effect=lambda: clock[0]), \
                 patch.object(play.time, 'sleep', side_effect=lambda delay: clock.__setitem__(0, clock[0] + delay)) as sleep, \
-                self.assertRaisesRegex(RuntimeError, r'Bevy CI run 42 has not passed after the 60 s wait\. '
+                self.assertRaisesRegex(RuntimeError, r'Bevy CI run 42 has not passed after the 330 s wait\. '
                                        'Rerun this job when it has') as failure:
-            play.fetch(wait=60, production=True)
+            play.fetch(wait=330, production=True)
         self.assertNotIn('Refresh main with:', str(failure.exception))  # a second main run is no help
-        self.assertEqual(api.call_count, 6)
-        self.assertEqual([call.args[0] for call in sleep.call_args_list], [2, 4, 8, 16, 30])
-        self.assertEqual(clock[0], 60)
+        self.assertEqual(api.call_count, 5)
+        self.assertEqual([call.args[0] for call in sleep.call_args_list], [60, 120, 120, 30])
+        self.assertEqual(clock[0], 330)
         download.assert_not_called()
 
 

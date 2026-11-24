@@ -2,10 +2,17 @@ import { redirect } from "react-router";
 
 import { loadLatestRelease, resolveDownload } from "@/data/lib/download/creator-hub.server";
 import { sidLoader } from "@/core/lib/telemetry/page-loader";
+import { useAnalyticsUserId } from "@/core/lib/telemetry/page-view";
 import CreatorHubDownloadPage from "@/features/download/CreatorHubDownloadPage";
 import { successPath } from "@/features/download/creator-hub-click";
 
+import { publicBase } from "../lib/social-meta";
+import { staticPageMeta } from "../lib/static-page-meta";
 import type { Route } from "./+types/download_.creator-hub";
+
+export function meta({ matches }: Route.MetaArgs) {
+  return staticPageMeta("/download/creator-hub", publicBase(matches));
+}
 
 export async function loader({ request, context }: Route.LoaderArgs) {
   const url = new URL(request.url);
@@ -38,5 +45,6 @@ export async function loader({ request, context }: Route.LoaderArgs) {
 }
 
 export default function CreatorHubDownloadRoute({ loaderData }: Route.ComponentProps) {
-  return <CreatorHubDownloadPage {...loaderData} />;
+  const userId = useAnalyticsUserId();
+  return <CreatorHubDownloadPage {...loaderData} userId={userId} />;
 }

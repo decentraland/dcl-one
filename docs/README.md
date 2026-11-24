@@ -1,6 +1,7 @@
 # Engineering references
 
 - [Development](development.md)
+- [PR merge verification](pr-merge-verification.md)
 - [UI standards](ui-standards.md)
 - [UI component adoption](ui-components.md)
 - [Web app architecture standards](web-app-standards.md)
@@ -13,12 +14,14 @@
 ## Architecture decisions
 
 - [Organizing library and services](adr/2026-10-19-organizing-library-services-folders.md)
+- [`comms-e2e`, a tool crate beside the Catalyst domain crates](adr/2026-11-19-comms-e2e-tool-crate.md)
 - [Protocol in dcl-one](adr/2026-10-25-protocol-in-dcl-one.md)
 - [SDK in dcl-one](adr/2026-10-26-sdk-in-dcl-one.md)
 - [Creator Hub in dcl-one](adr/2026-11-09-creator-hub-in-dcl-one.md)
 - [Creator Hub ships as the desktop app only](adr/2026-11-19-creator-hub-desktop-only.md)
 - [Creators collections in Sites](adr/2026-11-19-creators-collections-in-sites.md)
 - [Shared Pulse and Explorer ENet](adr/2026-10-28-shared-pulse-enet.md)
+- [Pulse ENet interop evidence](adr/2026-11-23-pulse-enet-csharp-interop-evidence.md) (evidence)
 - [Explorer tests through the console](adr/2026-10-29-explorer-tests-through-the-console.md)
 - [Vendored Basis Universal transcoder](adr/2026-11-04-vendored-basisu.md)
 - [Opt-in UASTC texture upload](adr/2026-11-06-opt-in-uastc-texture-upload.md)
@@ -31,6 +34,7 @@
 - [Explorer patched sources as git commits](adr/2026-11-15-explorer-patched-sources-as-git-commits.md)
 - [Explorer patched sources published by CI](adr/2026-11-17-explorer-patched-sources-published-by-ci.md)
 - [Community chat message router](adr/2026-11-18-community-chat-message-router.md)
+- [World presence counts as online](adr/2026-11-21-world-presence-counts-as-online.md)
 - [Explorer avatar spring bones (proposed)](adr/2026-11-16-explorer-avatar-spring-bones.md)
 - [Dormant schema release definitions (proposed)](adr/2026-11-04-dormant-schema-release-definitions.md)
 - [Referral trusted proxy ingress (proposed)](adr/2026-11-04-referral-trusted-proxy-ingress.md)

@@ -8,6 +8,7 @@ use bevy::{
     winit::{UpdateMode, WinitSettings},
 };
 use bevy_console::ConsoleConfiguration;
+use common::sync::MutexExt;
 use common::{
     perf::{HudMainThreadCostDataPoint, LongAnimationFrameSums, ReactCommitSums},
     rpc::RpcResultSender,
@@ -89,7 +90,7 @@ pub fn engine_set_hud_main_thread_cost(
             style_and_layout_time_sum_ms,
         }),
     };
-    let Ok(mut stored) = HUD_MAIN_THREAD_COST_WINDOW.try_lock() else {
+    let Some(mut stored) = HUD_MAIN_THREAD_COST_WINDOW.try_lock_ignore_poison() else {
         return false;
     };
     match stored.as_mut() {
@@ -382,19 +383,24 @@ async fn read_config_file() -> Option<String> {
     None
 }
 
-/// The persisted home scene — the pinned realm (null = none pinned: the HUD substitutes its own
-/// default realm, since this runs before `engine_run` latches the base domain the engine would
-/// compose one from) + "x,y" parcel — as a JSON string. Valid after [`engine_init`] (it reads the
+/// The home that applies at startup (the stored sign-in's account's, else the last account's) —
+/// the pinned realm (null = none pinned: the HUD substitutes its own default realm, since this
+/// runs before `engine_run` latches the base domain the engine would compose one from), the
+/// "x,y" parcel and whether a home is pinned — as a JSON string. Valid after [`engine_init`] (it reads the
 /// loaded config); exposed so the HUD's places picker can target home from "Skip" BEFORE the
 /// engine is launched.
 #[wasm_bindgen]
 pub fn engine_home_scene() -> String {
-    let (realm, parcel) = INIT_DATA
-        .get()
-        .map(|config| (config.home_realm.clone(), config.home_location()))
-        .unwrap_or_else(|| (None, AppConfig::default().home_location()));
-    serde_json::json!({ "realm": realm, "parcel": format!("{},{}", parcel.x, parcel.y) })
-        .to_string()
+    let home = INIT_DATA.get().and_then(|config| config.startup_home());
+    let parcel = home
+        .as_ref()
+        .map_or(bevy::math::IVec2::ZERO, |home| home.location);
+    serde_json::json!({
+        "realm": home.as_ref().map(|home| &home.realm),
+        "parcel": format!("{},{}", parcel.x, parcel.y),
+        "pinned": home.is_some(),
+    })
+    .to_string()
 }
 
 /// Whether the terms are accepted on this install (the loaded config), so the HUD can launch a
@@ -821,10 +827,7 @@ pub(crate) fn viewport_active() -> bool {
 /// Takes the HUD cost windows the page stored since the last take, summed; `None` when none
 /// arrived.
 pub(crate) fn take_hud_main_thread_cost_window() -> Option<HudMainThreadCostDataPoint> {
-    HUD_MAIN_THREAD_COST_WINDOW
-        .lock()
-        .unwrap_or_else(|poison| poison.into_inner())
-        .take()
+    HUD_MAIN_THREAD_COST_WINDOW.lock_ignore_poison().take()
 }
 
 fn update_text_focus(priorities: Res<InputPriorities>, mut prev: Local<bool>, _js: JsThread) {

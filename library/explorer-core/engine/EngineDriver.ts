@@ -159,7 +159,7 @@ export class EngineDriver implements LoginDriver {
     attachEngine((line) => this.rpc.command(line))
   }
 
-  homeScene(): { realm: string | null; parcel: string } | null {
+  homeScene(): { realm: string | null; parcel: string; pinned: boolean } | null {
     return this.rpc.homeScene()
   }
 

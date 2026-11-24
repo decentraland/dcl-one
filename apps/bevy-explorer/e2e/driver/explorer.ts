@@ -392,6 +392,8 @@ export interface BanBlockState {
     scope: 'platform' | 'world' | 'scene' | null
     message: string | null
     sceneId: string | null
+    /** Known refusals in this wallet/realm session; retryDue is elapsed engine seconds. */
+    retainedRefusals: { sceneId: string; scope: 'world' | 'scene'; retryDue: number }[]
   }
   sceneRoom: {
     state: 'not_connected' | 'connected'

@@ -225,6 +225,11 @@ State, in every build:
   scene's) holds the keyboard: while it is true keys are typed and resolve no action, so a test
   waits for it to turn true after filling a field and false after leaving one (null where the
   client takes no input).
+- `/teleport_state`: the landings on a named spawn point as JSON, the Teleport debug section's
+  readout: `pending`, the name the landing under way looks for (or the realm change that has yet
+  to start one), and `last`, the `name` the player's last such landing looked for with `found`,
+  whether its scene had a spawn point of that name. `/teleport <x> <y> [realm] --spawn <name>`
+  asks for such a landing.
 - `/teleport x y [realm] --wait [--timeout-seconds S]`: teleports, then answers JSON once the
   player has landed (`arrived`) and the parcel's scene is ready and drawn: `sceneReady`,
   `sceneHash`, `title`, `sceneState`, `ticksWaited` (scene ticks during the wait),
@@ -328,6 +333,13 @@ State, in every build:
   (the same per format: `ktx2-bc`, `glb`, and `glb-br` on web), `fallbacks` (files that loaded
   their original instead), `fallbacksByFormat` (those whose chosen variant failed, per format)
   and `recentFallbacks` (the last 20, with the file, its entity and the reason).
+- `/scene_topics`: the **Scene messages** debug section's routing, topic-traffic and policy
+  readings. `sceneRooms`, `room`, `running`, `isolated` and `subscribedScenes` describe routing.
+  `published`, `publishDropped`, `received` and `receiveDropped` count topic packets, including
+  rejected banned senders in both received and dropped. `bannedSenderDrops`, `filteredInboundCrdt`,
+  `filteredOutboundCrdt` and `invalidMessages` cover the engine's message policy across channels;
+  `binaryPayloadLimit` is 13,269 bytes on egress. Counters are cumulative since startup, and
+  filtering counts packets whose CRDT records changed.
 - `/item_purchase_state`: the scene item purchase (`openExplorerUi` with `EU_ITEM_PURCHASE`) as
   JSON, the Scene item purchase debug section's source: `hudListeners` (HUDs subscribed to
   requests; with none, a request is answered `REJECTED_FEATURE_DISABLED`), `active` (the request
@@ -337,12 +349,24 @@ State, in every build:
   `closed` event is still to come; such a scene's next request is `WAS_ALREADY_OPEN`). No price,
   balance, wallet or scene-written text appears. `/item_purchase_cancel` drops the request in flight: an open one reports
   `Dismissed` to its scene, and the HUD's confirmation stays up with its later reports ignored.
+- `/home_state`: the home as JSON, the Home debug section's source: `account` (the signed-in
+  wallet address, the key of its home; `null` before sign-in and for a guest with no account),
+  `pinned` (that account's home as
+  `<realm> x,y`; `null` when it has none), `startup` (the home the engine starts in: the stored
+  sign-in's account's, else the last account's), `lastAccount` (the account a home was last read
+  for) and `unadopted` (true while the config still holds a home kept for no account, which the
+  first account to sign in takes). Reading it writes nothing. `/home_clear` takes the signed-in
+  account's home back, and refuses when no account is signed in or the account has no home. The
+  HUD is not told: its home pin and Set as Home stay on until it reads the home again (the lobby
+  opening, a Set as Home press, a reload).
 - `/ban_block_state [address]`: the ban and block status as JSON: the local user's address, the
   social blocks (`state` live or unavailable with its `reason`, `blocked`, `blockedBy`), the
   platform ban (`state` unknown, checked or failed, `isBanned`, `source`, `reason`,
   `matchedOn` for a record the gatekeeper withheld, `customMessage`, `expiresAt`,
   `checkedAgoSecs`, `error`), the local user's scene admission
-  (`state` unknown, allowed or refused, `scope` platform, world or scene, `message`, `sceneId`),
+  (`state` unknown, allowed or refused, `scope` platform, world or scene, `message`, `sceneId`,
+  `retainedRefusals`: scene id, scope and `retryDue` in elapsed engine seconds, from the active
+  room or its saved deadline while away),
   the scene room's lists (`state`, `sceneId`, `bannedAddresses`, `sceneAdmins`, while the room is
   connected) and, with an address, its `lookup` (`isBlockedEitherWay`, `direction`,
   `bannedInScene`, `adminPermissions`). Every `null` reading has its reason in `unavailable`,
@@ -530,7 +554,8 @@ of the contract.
   show-out-of-bounds on regardless of `--preview`. Point the client at the same preview server
   by LAN address, `--realm http://$(ipconfig getifaddr en0):<port>`. Colliders follow the same
   switch: a run that shows out-of-bounds geometry keeps its colliders on, and any other run turns
-  off a collider that leaves the bounds and counts it in the debug panel's Scene Content section.
+  off a collider that leaves the bounds and counts it in the debug panel's Scene Content section,
+  and cuts collider queries to the space each scene is drawn in.
   A local scene server is always a preview run, so it keeps those colliders on while a client
   pointed at the LAN address does not.
 - **The bridge scene's build output is not what the engine loads.** After any bridge-scene

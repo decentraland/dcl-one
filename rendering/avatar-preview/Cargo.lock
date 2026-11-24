@@ -669,9 +669,6 @@ name = "arbitrary"
 version = "1.4.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c3d036a3c4ab069c7b410a2ce876bd74808d2d0888a82667669f8e783a898bf1"
-dependencies = [
- "derive_arbitrary",
-]
 
 [[package]]
 name = "arg_enum_proc_macro"
@@ -1282,7 +1279,7 @@ dependencies = [
 [[package]]
 name = "bevy"
 version = "0.16.1"
-source = "git+https://github.com/decentraland/dcl-one?rev=4f230b98e8f99a5c87b5571f9fd487f222a4faff#4f230b98e8f99a5c87b5571f9fd487f222a4faff"
+source = "git+https://github.com/decentraland/dcl-one?rev=f31e04be7408ecf312599d056feb7f9d18b2ab03#f31e04be7408ecf312599d056feb7f9d18b2ab03"
 dependencies = [
  "bevy_internal",
 ]
@@ -1290,7 +1287,7 @@ dependencies = [
 [[package]]
 name = "bevy_a11y"
 version = "0.16.1"
-source = "git+https://github.com/decentraland/dcl-one?rev=4f230b98e8f99a5c87b5571f9fd487f222a4faff#4f230b98e8f99a5c87b5571f9fd487f222a4faff"
+source = "git+https://github.com/decentraland/dcl-one?rev=f31e04be7408ecf312599d056feb7f9d18b2ab03#f31e04be7408ecf312599d056feb7f9d18b2ab03"
 dependencies = [
  "accesskit",
  "bevy_app",
@@ -1303,7 +1300,7 @@ dependencies = [
 [[package]]
 name = "bevy_animation"
 version = "0.16.1"
-source = "git+https://github.com/decentraland/dcl-one?rev=4f230b98e8f99a5c87b5571f9fd487f222a4faff#4f230b98e8f99a5c87b5571f9fd487f222a4faff"
+source = "git+https://github.com/decentraland/dcl-one?rev=f31e04be7408ecf312599d056feb7f9d18b2ab03#f31e04be7408ecf312599d056feb7f9d18b2ab03"
 dependencies = [
  "bevy_app",
  "bevy_asset",
@@ -1336,7 +1333,7 @@ dependencies = [
 [[package]]
 name = "bevy_app"
 version = "0.16.1"
-source = "git+https://github.com/decentraland/dcl-one?rev=4f230b98e8f99a5c87b5571f9fd487f222a4faff#4f230b98e8f99a5c87b5571f9fd487f222a4faff"
+source = "git+https://github.com/decentraland/dcl-one?rev=f31e04be7408ecf312599d056feb7f9d18b2ab03#f31e04be7408ecf312599d056feb7f9d18b2ab03"
 dependencies = [
  "bevy_derive",
  "bevy_ecs",
@@ -1358,7 +1355,7 @@ dependencies = [
 [[package]]
 name = "bevy_asset"
 version = "0.16.1"
-source = "git+https://github.com/decentraland/dcl-one?rev=4f230b98e8f99a5c87b5571f9fd487f222a4faff#4f230b98e8f99a5c87b5571f9fd487f222a4faff"
+source = "git+https://github.com/decentraland/dcl-one?rev=f31e04be7408ecf312599d056feb7f9d18b2ab03#f31e04be7408ecf312599d056feb7f9d18b2ab03"
 dependencies = [
  "async-broadcast",
  "async-fs",
@@ -1397,7 +1394,7 @@ dependencies = [
 [[package]]
 name = "bevy_asset_macros"
 version = "0.16.1"
-source = "git+https://github.com/decentraland/dcl-one?rev=4f230b98e8f99a5c87b5571f9fd487f222a4faff#4f230b98e8f99a5c87b5571f9fd487f222a4faff"
+source = "git+https://github.com/decentraland/dcl-one?rev=f31e04be7408ecf312599d056feb7f9d18b2ab03#f31e04be7408ecf312599d056feb7f9d18b2ab03"
 dependencies = [
  "bevy_macro_utils",
  "proc-macro2",
@@ -1408,7 +1405,7 @@ dependencies = [
 [[package]]
 name = "bevy_color"
 version = "0.16.2"
-source = "git+https://github.com/decentraland/dcl-one?rev=4f230b98e8f99a5c87b5571f9fd487f222a4faff#4f230b98e8f99a5c87b5571f9fd487f222a4faff"
+source = "git+https://github.com/decentraland/dcl-one?rev=f31e04be7408ecf312599d056feb7f9d18b2ab03#f31e04be7408ecf312599d056feb7f9d18b2ab03"
 dependencies = [
  "bevy_math",
  "bevy_reflect",
@@ -1448,7 +1445,7 @@ dependencies = [
 [[package]]
 name = "bevy_core_pipeline"
 version = "0.16.1"
-source = "git+https://github.com/decentraland/dcl-one?rev=4f230b98e8f99a5c87b5571f9fd487f222a4faff#4f230b98e8f99a5c87b5571f9fd487f222a4faff"
+source = "git+https://github.com/decentraland/dcl-one?rev=f31e04be7408ecf312599d056feb7f9d18b2ab03#f31e04be7408ecf312599d056feb7f9d18b2ab03"
 dependencies = [
  "bevy_app",
  "bevy_asset",
@@ -1477,7 +1474,7 @@ dependencies = [
 [[package]]
 name = "bevy_derive"
 version = "0.16.1"
-source = "git+https://github.com/decentraland/dcl-one?rev=4f230b98e8f99a5c87b5571f9fd487f222a4faff#4f230b98e8f99a5c87b5571f9fd487f222a4faff"
+source = "git+https://github.com/decentraland/dcl-one?rev=f31e04be7408ecf312599d056feb7f9d18b2ab03#f31e04be7408ecf312599d056feb7f9d18b2ab03"
 dependencies = [
  "bevy_macro_utils",
  "proc-macro2",
@@ -1488,7 +1485,7 @@ dependencies = [
 [[package]]
 name = "bevy_diagnostic"
 version = "0.16.1"
-source = "git+https://github.com/decentraland/dcl-one?rev=4f230b98e8f99a5c87b5571f9fd487f222a4faff#4f230b98e8f99a5c87b5571f9fd487f222a4faff"
+source = "git+https://github.com/decentraland/dcl-one?rev=f31e04be7408ecf312599d056feb7f9d18b2ab03#f31e04be7408ecf312599d056feb7f9d18b2ab03"
 dependencies = [
  "bevy_app",
  "bevy_ecs",
@@ -1504,7 +1501,7 @@ dependencies = [
 [[package]]
 name = "bevy_ecs"
 version = "0.16.1"
-source = "git+https://github.com/decentraland/dcl-one?rev=4f230b98e8f99a5c87b5571f9fd487f222a4faff#4f230b98e8f99a5c87b5571f9fd487f222a4faff"
+source = "git+https://github.com/decentraland/dcl-one?rev=f31e04be7408ecf312599d056feb7f9d18b2ab03#f31e04be7408ecf312599d056feb7f9d18b2ab03"
 dependencies = [
  "arrayvec",
  "bevy_ecs_macros",
@@ -1531,7 +1528,7 @@ dependencies = [
 [[package]]
 name = "bevy_ecs_macros"
 version = "0.16.1"
-source = "git+https://github.com/decentraland/dcl-one?rev=4f230b98e8f99a5c87b5571f9fd487f222a4faff#4f230b98e8f99a5c87b5571f9fd487f222a4faff"
+source = "git+https://github.com/decentraland/dcl-one?rev=f31e04be7408ecf312599d056feb7f9d18b2ab03#f31e04be7408ecf312599d056feb7f9d18b2ab03"
 dependencies = [
  "bevy_macro_utils",
  "proc-macro2",
@@ -1542,7 +1539,7 @@ dependencies = [
 [[package]]
 name = "bevy_encase_derive"
 version = "0.16.1"
-source = "git+https://github.com/decentraland/dcl-one?rev=4f230b98e8f99a5c87b5571f9fd487f222a4faff#4f230b98e8f99a5c87b5571f9fd487f222a4faff"
+source = "git+https://github.com/decentraland/dcl-one?rev=f31e04be7408ecf312599d056feb7f9d18b2ab03#f31e04be7408ecf312599d056feb7f9d18b2ab03"
 dependencies = [
  "bevy_macro_utils",
  "encase_derive_impl",
@@ -1551,7 +1548,7 @@ dependencies = [
 [[package]]
 name = "bevy_gilrs"
 version = "0.16.1"
-source = "git+https://github.com/decentraland/dcl-one?rev=4f230b98e8f99a5c87b5571f9fd487f222a4faff#4f230b98e8f99a5c87b5571f9fd487f222a4faff"
+source = "git+https://github.com/decentraland/dcl-one?rev=f31e04be7408ecf312599d056feb7f9d18b2ab03#f31e04be7408ecf312599d056feb7f9d18b2ab03"
 dependencies = [
  "bevy_app",
  "bevy_ecs",
@@ -1567,7 +1564,7 @@ dependencies = [
 [[package]]
 name = "bevy_gizmos"
 version = "0.16.1"
-source = "git+https://github.com/decentraland/dcl-one?rev=4f230b98e8f99a5c87b5571f9fd487f222a4faff#4f230b98e8f99a5c87b5571f9fd487f222a4faff"
+source = "git+https://github.com/decentraland/dcl-one?rev=f31e04be7408ecf312599d056feb7f9d18b2ab03#f31e04be7408ecf312599d056feb7f9d18b2ab03"
 dependencies = [
  "bevy_app",
  "bevy_asset",
@@ -1591,7 +1588,7 @@ dependencies = [
 [[package]]
 name = "bevy_gizmos_macros"
 version = "0.16.1"
-source = "git+https://github.com/decentraland/dcl-one?rev=4f230b98e8f99a5c87b5571f9fd487f222a4faff#4f230b98e8f99a5c87b5571f9fd487f222a4faff"
+source = "git+https://github.com/decentraland/dcl-one?rev=f31e04be7408ecf312599d056feb7f9d18b2ab03#f31e04be7408ecf312599d056feb7f9d18b2ab03"
 dependencies = [
  "bevy_macro_utils",
  "proc-macro2",
@@ -1602,7 +1599,7 @@ dependencies = [
 [[package]]
 name = "bevy_gltf"
 version = "0.16.1"
-source = "git+https://github.com/decentraland/dcl-one?rev=4f230b98e8f99a5c87b5571f9fd487f222a4faff#4f230b98e8f99a5c87b5571f9fd487f222a4faff"
+source = "git+https://github.com/decentraland/dcl-one?rev=f31e04be7408ecf312599d056feb7f9d18b2ab03#f31e04be7408ecf312599d056feb7f9d18b2ab03"
 dependencies = [
  "base64 0.22.1",
  "bevy_animation",
@@ -1637,7 +1634,7 @@ dependencies = [
 [[package]]
 name = "bevy_image"
 version = "0.16.1"
-source = "git+https://github.com/decentraland/dcl-one?rev=4f230b98e8f99a5c87b5571f9fd487f222a4faff#4f230b98e8f99a5c87b5571f9fd487f222a4faff"
+source = "git+https://github.com/decentraland/dcl-one?rev=f31e04be7408ecf312599d056feb7f9d18b2ab03#f31e04be7408ecf312599d056feb7f9d18b2ab03"
 dependencies = [
  "bevy_app",
  "bevy_asset",
@@ -1665,7 +1662,7 @@ dependencies = [
 [[package]]
 name = "bevy_input"
 version = "0.16.1"
-source = "git+https://github.com/decentraland/dcl-one?rev=4f230b98e8f99a5c87b5571f9fd487f222a4faff#4f230b98e8f99a5c87b5571f9fd487f222a4faff"
+source = "git+https://github.com/decentraland/dcl-one?rev=f31e04be7408ecf312599d056feb7f9d18b2ab03#f31e04be7408ecf312599d056feb7f9d18b2ab03"
 dependencies = [
  "bevy_app",
  "bevy_ecs",
@@ -1683,7 +1680,7 @@ dependencies = [
 [[package]]
 name = "bevy_input_focus"
 version = "0.16.1"
-source = "git+https://github.com/decentraland/dcl-one?rev=4f230b98e8f99a5c87b5571f9fd487f222a4faff#4f230b98e8f99a5c87b5571f9fd487f222a4faff"
+source = "git+https://github.com/decentraland/dcl-one?rev=f31e04be7408ecf312599d056feb7f9d18b2ab03#f31e04be7408ecf312599d056feb7f9d18b2ab03"
 dependencies = [
  "bevy_app",
  "bevy_ecs",
@@ -1698,7 +1695,7 @@ dependencies = [
 [[package]]
 name = "bevy_internal"
 version = "0.16.1"
-source = "git+https://github.com/decentraland/dcl-one?rev=4f230b98e8f99a5c87b5571f9fd487f222a4faff#4f230b98e8f99a5c87b5571f9fd487f222a4faff"
+source = "git+https://github.com/decentraland/dcl-one?rev=f31e04be7408ecf312599d056feb7f9d18b2ab03#f31e04be7408ecf312599d056feb7f9d18b2ab03"
 dependencies = [
  "bevy_a11y",
  "bevy_animation",
@@ -1754,7 +1751,7 @@ dependencies = [
 [[package]]
 name = "bevy_log"
 version = "0.16.1"
-source = "git+https://github.com/decentraland/dcl-one?rev=4f230b98e8f99a5c87b5571f9fd487f222a4faff#4f230b98e8f99a5c87b5571f9fd487f222a4faff"
+source = "git+https://github.com/decentraland/dcl-one?rev=f31e04be7408ecf312599d056feb7f9d18b2ab03#f31e04be7408ecf312599d056feb7f9d18b2ab03"
 dependencies = [
  "android_log-sys",
  "bevy_app",
@@ -1770,7 +1767,7 @@ dependencies = [
 [[package]]
 name = "bevy_macro_utils"
 version = "0.16.1"
-source = "git+https://github.com/decentraland/dcl-one?rev=4f230b98e8f99a5c87b5571f9fd487f222a4faff#4f230b98e8f99a5c87b5571f9fd487f222a4faff"
+source = "git+https://github.com/decentraland/dcl-one?rev=f31e04be7408ecf312599d056feb7f9d18b2ab03#f31e04be7408ecf312599d056feb7f9d18b2ab03"
 dependencies = [
  "parking_lot",
  "proc-macro2",
@@ -1782,7 +1779,7 @@ dependencies = [
 [[package]]
 name = "bevy_math"
 version = "0.16.1"
-source = "git+https://github.com/decentraland/dcl-one?rev=4f230b98e8f99a5c87b5571f9fd487f222a4faff#4f230b98e8f99a5c87b5571f9fd487f222a4faff"
+source = "git+https://github.com/decentraland/dcl-one?rev=f31e04be7408ecf312599d056feb7f9d18b2ab03#f31e04be7408ecf312599d056feb7f9d18b2ab03"
 dependencies = [
  "approx",
  "bevy_reflect",
@@ -1801,7 +1798,7 @@ dependencies = [
 [[package]]
 name = "bevy_mesh"
 version = "0.16.1"
-source = "git+https://github.com/decentraland/dcl-one?rev=4f230b98e8f99a5c87b5571f9fd487f222a4faff#4f230b98e8f99a5c87b5571f9fd487f222a4faff"
+source = "git+https://github.com/decentraland/dcl-one?rev=f31e04be7408ecf312599d056feb7f9d18b2ab03#f31e04be7408ecf312599d056feb7f9d18b2ab03"
 dependencies = [
  "bevy_asset",
  "bevy_derive",
@@ -1825,7 +1822,7 @@ dependencies = [
 [[package]]
 name = "bevy_mikktspace"
 version = "0.16.1"
-source = "git+https://github.com/decentraland/dcl-one?rev=4f230b98e8f99a5c87b5571f9fd487f222a4faff#4f230b98e8f99a5c87b5571f9fd487f222a4faff"
+source = "git+https://github.com/decentraland/dcl-one?rev=f31e04be7408ecf312599d056feb7f9d18b2ab03#f31e04be7408ecf312599d056feb7f9d18b2ab03"
 dependencies = [
  "glam",
 ]
@@ -1833,7 +1830,7 @@ dependencies = [
 [[package]]
 name = "bevy_pbr"
 version = "0.16.1"
-source = "git+https://github.com/decentraland/dcl-one?rev=4f230b98e8f99a5c87b5571f9fd487f222a4faff#4f230b98e8f99a5c87b5571f9fd487f222a4faff"
+source = "git+https://github.com/decentraland/dcl-one?rev=f31e04be7408ecf312599d056feb7f9d18b2ab03#f31e04be7408ecf312599d056feb7f9d18b2ab03"
 dependencies = [
  "bevy_app",
  "bevy_asset",
@@ -1866,7 +1863,7 @@ dependencies = [
 [[package]]
 name = "bevy_picking"
 version = "0.16.1"
-source = "git+https://github.com/decentraland/dcl-one?rev=4f230b98e8f99a5c87b5571f9fd487f222a4faff#4f230b98e8f99a5c87b5571f9fd487f222a4faff"
+source = "git+https://github.com/decentraland/dcl-one?rev=f31e04be7408ecf312599d056feb7f9d18b2ab03#f31e04be7408ecf312599d056feb7f9d18b2ab03"
 dependencies = [
  "bevy_app",
  "bevy_asset",
@@ -1888,7 +1885,7 @@ dependencies = [
 [[package]]
 name = "bevy_platform"
 version = "0.16.1"
-source = "git+https://github.com/decentraland/dcl-one?rev=4f230b98e8f99a5c87b5571f9fd487f222a4faff#4f230b98e8f99a5c87b5571f9fd487f222a4faff"
+source = "git+https://github.com/decentraland/dcl-one?rev=f31e04be7408ecf312599d056feb7f9d18b2ab03#f31e04be7408ecf312599d056feb7f9d18b2ab03"
 dependencies = [
  "cfg-if",
  "critical-section",
@@ -1905,12 +1902,12 @@ dependencies = [
 [[package]]
 name = "bevy_ptr"
 version = "0.16.1"
-source = "git+https://github.com/decentraland/dcl-one?rev=4f230b98e8f99a5c87b5571f9fd487f222a4faff#4f230b98e8f99a5c87b5571f9fd487f222a4faff"
+source = "git+https://github.com/decentraland/dcl-one?rev=f31e04be7408ecf312599d056feb7f9d18b2ab03#f31e04be7408ecf312599d056feb7f9d18b2ab03"
 
 [[package]]
 name = "bevy_reflect"
 version = "0.16.1"
-source = "git+https://github.com/decentraland/dcl-one?rev=4f230b98e8f99a5c87b5571f9fd487f222a4faff#4f230b98e8f99a5c87b5571f9fd487f222a4faff"
+source = "git+https://github.com/decentraland/dcl-one?rev=f31e04be7408ecf312599d056feb7f9d18b2ab03#f31e04be7408ecf312599d056feb7f9d18b2ab03"
 dependencies = [
  "assert_type_match",
  "bevy_platform",
@@ -1936,7 +1933,7 @@ dependencies = [
 [[package]]
 name = "bevy_reflect_derive"
 version = "0.16.1"
-source = "git+https://github.com/decentraland/dcl-one?rev=4f230b98e8f99a5c87b5571f9fd487f222a4faff#4f230b98e8f99a5c87b5571f9fd487f222a4faff"
+source = "git+https://github.com/decentraland/dcl-one?rev=f31e04be7408ecf312599d056feb7f9d18b2ab03#f31e04be7408ecf312599d056feb7f9d18b2ab03"
 dependencies = [
  "bevy_macro_utils",
  "proc-macro2",
@@ -1948,7 +1945,7 @@ dependencies = [
 [[package]]
 name = "bevy_render"
 version = "0.16.1"
-source = "git+https://github.com/decentraland/dcl-one?rev=4f230b98e8f99a5c87b5571f9fd487f222a4faff#4f230b98e8f99a5c87b5571f9fd487f222a4faff"
+source = "git+https://github.com/decentraland/dcl-one?rev=f31e04be7408ecf312599d056feb7f9d18b2ab03#f31e04be7408ecf312599d056feb7f9d18b2ab03"
 dependencies = [
  "async-channel 2.5.0",
  "bevy_app",
@@ -2001,7 +1998,7 @@ dependencies = [
 [[package]]
 name = "bevy_render_macros"
 version = "0.16.1"
-source = "git+https://github.com/decentraland/dcl-one?rev=4f230b98e8f99a5c87b5571f9fd487f222a4faff#4f230b98e8f99a5c87b5571f9fd487f222a4faff"
+source = "git+https://github.com/decentraland/dcl-one?rev=f31e04be7408ecf312599d056feb7f9d18b2ab03#f31e04be7408ecf312599d056feb7f9d18b2ab03"
 dependencies = [
  "bevy_macro_utils",
  "proc-macro2",
@@ -2012,7 +2009,7 @@ dependencies = [
 [[package]]
 name = "bevy_scene"
 version = "0.16.1"
-source = "git+https://github.com/decentraland/dcl-one?rev=4f230b98e8f99a5c87b5571f9fd487f222a4faff#4f230b98e8f99a5c87b5571f9fd487f222a4faff"
+source = "git+https://github.com/decentraland/dcl-one?rev=f31e04be7408ecf312599d056feb7f9d18b2ab03#f31e04be7408ecf312599d056feb7f9d18b2ab03"
 dependencies = [
  "bevy_app",
  "bevy_asset",
@@ -2032,7 +2029,7 @@ dependencies = [
 [[package]]
 name = "bevy_sprite"
 version = "0.16.1"
-source = "git+https://github.com/decentraland/dcl-one?rev=4f230b98e8f99a5c87b5571f9fd487f222a4faff#4f230b98e8f99a5c87b5571f9fd487f222a4faff"
+source = "git+https://github.com/decentraland/dcl-one?rev=f31e04be7408ecf312599d056feb7f9d18b2ab03#f31e04be7408ecf312599d056feb7f9d18b2ab03"
 dependencies = [
  "bevy_app",
  "bevy_asset",
@@ -2059,7 +2056,7 @@ dependencies = [
 [[package]]
 name = "bevy_state"
 version = "0.16.1"
-source = "git+https://github.com/decentraland/dcl-one?rev=4f230b98e8f99a5c87b5571f9fd487f222a4faff#4f230b98e8f99a5c87b5571f9fd487f222a4faff"
+source = "git+https://github.com/decentraland/dcl-one?rev=f31e04be7408ecf312599d056feb7f9d18b2ab03#f31e04be7408ecf312599d056feb7f9d18b2ab03"
 dependencies = [
  "bevy_app",
  "bevy_ecs",
@@ -2074,7 +2071,7 @@ dependencies = [
 [[package]]
 name = "bevy_state_macros"
 version = "0.16.1"
-source = "git+https://github.com/decentraland/dcl-one?rev=4f230b98e8f99a5c87b5571f9fd487f222a4faff#4f230b98e8f99a5c87b5571f9fd487f222a4faff"
+source = "git+https://github.com/decentraland/dcl-one?rev=f31e04be7408ecf312599d056feb7f9d18b2ab03#f31e04be7408ecf312599d056feb7f9d18b2ab03"
 dependencies = [
  "bevy_macro_utils",
  "proc-macro2",
@@ -2085,7 +2082,7 @@ dependencies = [
 [[package]]
 name = "bevy_tasks"
 version = "0.16.1"
-source = "git+https://github.com/decentraland/dcl-one?rev=4f230b98e8f99a5c87b5571f9fd487f222a4faff#4f230b98e8f99a5c87b5571f9fd487f222a4faff"
+source = "git+https://github.com/decentraland/dcl-one?rev=f31e04be7408ecf312599d056feb7f9d18b2ab03#f31e04be7408ecf312599d056feb7f9d18b2ab03"
 dependencies = [
  "async-channel 2.5.0",
  "async-executor",
@@ -2108,7 +2105,7 @@ dependencies = [
 [[package]]
 name = "bevy_text"
 version = "0.16.1"
-source = "git+https://github.com/decentraland/dcl-one?rev=4f230b98e8f99a5c87b5571f9fd487f222a4faff#4f230b98e8f99a5c87b5571f9fd487f222a4faff"
+source = "git+https://github.com/decentraland/dcl-one?rev=f31e04be7408ecf312599d056feb7f9d18b2ab03#f31e04be7408ecf312599d056feb7f9d18b2ab03"
 dependencies = [
  "bevy_app",
  "bevy_asset",
@@ -2137,7 +2134,7 @@ dependencies = [
 [[package]]
 name = "bevy_time"
 version = "0.16.1"
-source = "git+https://github.com/decentraland/dcl-one?rev=4f230b98e8f99a5c87b5571f9fd487f222a4faff#4f230b98e8f99a5c87b5571f9fd487f222a4faff"
+source = "git+https://github.com/decentraland/dcl-one?rev=f31e04be7408ecf312599d056feb7f9d18b2ab03#f31e04be7408ecf312599d056feb7f9d18b2ab03"
 dependencies = [
  "bevy_app",
  "bevy_ecs",
@@ -2151,7 +2148,7 @@ dependencies = [
 [[package]]
 name = "bevy_transform"
 version = "0.16.1"
-source = "git+https://github.com/decentraland/dcl-one?rev=4f230b98e8f99a5c87b5571f9fd487f222a4faff#4f230b98e8f99a5c87b5571f9fd487f222a4faff"
+source = "git+https://github.com/decentraland/dcl-one?rev=f31e04be7408ecf312599d056feb7f9d18b2ab03#f31e04be7408ecf312599d056feb7f9d18b2ab03"
 dependencies = [
  "bevy_app",
  "bevy_ecs",
@@ -2168,7 +2165,7 @@ dependencies = [
 [[package]]
 name = "bevy_ui"
 version = "0.16.1"
-source = "git+https://github.com/decentraland/dcl-one?rev=4f230b98e8f99a5c87b5571f9fd487f222a4faff#4f230b98e8f99a5c87b5571f9fd487f222a4faff"
+source = "git+https://github.com/decentraland/dcl-one?rev=f31e04be7408ecf312599d056feb7f9d18b2ab03#f31e04be7408ecf312599d056feb7f9d18b2ab03"
 dependencies = [
  "accesskit",
  "bevy_a11y",
@@ -2203,7 +2200,7 @@ dependencies = [
 [[package]]
 name = "bevy_utils"
 version = "0.16.1"
-source = "git+https://github.com/decentraland/dcl-one?rev=4f230b98e8f99a5c87b5571f9fd487f222a4faff#4f230b98e8f99a5c87b5571f9fd487f222a4faff"
+source = "git+https://github.com/decentraland/dcl-one?rev=f31e04be7408ecf312599d056feb7f9d18b2ab03#f31e04be7408ecf312599d056feb7f9d18b2ab03"
 dependencies = [
  "bevy_platform",
  "thread_local",
@@ -2212,7 +2209,7 @@ dependencies = [
 [[package]]
 name = "bevy_window"
 version = "0.16.1"
-source = "git+https://github.com/decentraland/dcl-one?rev=4f230b98e8f99a5c87b5571f9fd487f222a4faff#4f230b98e8f99a5c87b5571f9fd487f222a4faff"
+source = "git+https://github.com/decentraland/dcl-one?rev=f31e04be7408ecf312599d056feb7f9d18b2ab03#f31e04be7408ecf312599d056feb7f9d18b2ab03"
 dependencies = [
  "android-activity",
  "bevy_app",
@@ -2231,7 +2228,7 @@ dependencies = [
 [[package]]
 name = "bevy_winit"
 version = "0.16.1"
-source = "git+https://github.com/decentraland/dcl-one?rev=4f230b98e8f99a5c87b5571f9fd487f222a4faff#4f230b98e8f99a5c87b5571f9fd487f222a4faff"
+source = "git+https://github.com/decentraland/dcl-one?rev=f31e04be7408ecf312599d056feb7f9d18b2ab03#f31e04be7408ecf312599d056feb7f9d18b2ab03"
 dependencies = [
  "accesskit",
  "accesskit_winit",
@@ -2500,6 +2497,7 @@ dependencies = [
 [[package]]
 name = "boimp"
 version = "0.1.1"
+source = "git+https://github.com/decentraland/dcl-one?rev=fb8df51cf64664a8e3987b0ae585f68d80f4b3ff#fb8df51cf64664a8e3987b0ae585f68d80f4b3ff"
 dependencies = [
  "anyhow",
  "async-channel 2.5.0",
@@ -3381,17 +3379,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "derive_arbitrary"
-version = "1.4.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1e567bd82dcff979e4b03460c307b3cdc9e96fde3d73bed1496d2bc75d9dd62a"
-dependencies = [
- "proc-macro2",
- "quote",
- "syn 2.0.117",
-]
-
-[[package]]
 name = "derive_more"
 version = "1.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4201,11 +4188,13 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0de51e6874e94e7bf76d726fc5d13ba782deca734ff60d5bb2fb2607c7406555"
 dependencies = [
  "cfg-if",
+ "js-sys",
  "libc",
  "r-efi 6.0.0",
  "rand_core 0.10.0",
  "wasip2",
  "wasip3",
+ "wasm-bindgen",
 ]
 
 [[package]]
@@ -8669,6 +8658,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9ea3136b675547379c4bd395ca6b938e5ad3c3d20fad76e7fe85f9e0d011419c"
 
 [[package]]
+name = "typed-path"
+version = "0.13.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "9ce898823d8cd0f028662d2f349694b1af0a5cc9be83f1d213a00d3147445e1e"
+
+[[package]]
 name = "typeid"
 version = "1.0.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -9951,17 +9946,17 @@ dependencies = [
 
 [[package]]
 name = "zip"
-version = "2.4.2"
+version = "9.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "fabe6324e908f85a1c52063ce7aa26b68dcb7eb6dbc83a2d148403c9bc3eba50"
+checksum = "2886b00003a72c4ccee3f42cfc34908d33b2508a74d827dc2a4244706475c704"
 dependencies = [
- "arbitrary",
  "crc32fast",
- "crossbeam-utils",
- "displaydoc",
+ "getrandom 0.4.2",
  "indexmap 2.13.0",
  "memchr",
- "thiserror 2.0.18",
+ "nix",
+ "typed-path",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
