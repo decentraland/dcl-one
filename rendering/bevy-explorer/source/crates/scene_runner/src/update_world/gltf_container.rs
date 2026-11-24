@@ -812,8 +812,9 @@ pub struct SceneResourceLookup {
 pub(crate) struct SharedMeshes {
     /// random for the process and hashed in first, so no scene can make a mesh whose hash
     /// matches another scene's mesh and have that scene draw it and collide with it.
-    /// `getrandom` has an entropy source on web too, where std's hash keys do not
-    hash_salt: [u8; 16],
+    /// `getrandom` has an entropy source on web too, where std's hash keys do not. Without one,
+    /// each scene reuses only the meshes it converted or used itself
+    hash_salt: Option<[u8; 16]>,
     by_hash: HashMap<(u64, bool), CachedMeshData>,
     /// a mesh asset's hash, taken before conversion changes the mesh
     hash_by_id: HashMap<AssetId<Mesh>, u64>,
@@ -821,10 +822,14 @@ pub(crate) struct SharedMeshes {
 
 impl Default for SharedMeshes {
     fn default() -> Self {
-        let mut hash_salt = [0; 16];
-        if let Err(e) = getrandom::fill(&mut hash_salt) {
-            error!("no random salt for mesh hashes, which other scenes can then match: {e}");
-        }
+        let mut salt = [0; 16];
+        let hash_salt = match getrandom::fill(&mut salt) {
+            Ok(()) => Some(salt),
+            Err(e) => {
+                error!("no random salt for mesh hashes, so scenes do not share meshes: {e}");
+                None
+            }
+        };
         Self {
             hash_salt,
             by_hash: HashMap::default(),
@@ -1133,6 +1138,10 @@ impl NodeProcessing<'_, '_> {
             // try and get existing mesh/collider data from hash, converted by any scene for a
             // part that draws as this one does
             let existing_data = maybe_hash
+                .filter(|hash| {
+                    shared_meshes.hash_salt.is_some()
+                        || resource_lookup.mesh_ids_by_hash.contains_key(hash)
+                })
                 .and_then(|hash| shared_meshes.by_hash.get(&(hash, visuals)))
                 .and_then(|data| asset_server.get_id_handle(data.mesh_id).map(|h| (h, data)));
 
