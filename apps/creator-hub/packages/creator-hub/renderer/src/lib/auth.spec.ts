@@ -28,6 +28,7 @@ function fakeSocket(outcome: object | undefined) {
     },
     off: vi.fn(),
     disconnect: vi.fn(),
+    timeout: vi.fn().mockReturnThis(),
     emitWithAck: vi.fn(async () => ({
       requestId: 'req-1',
       expiration: new Date(Date.now() + 50).toISOString(),
@@ -87,6 +88,42 @@ describe('AuthServerProvider.request', () => {
   describe('when there is a live identity', () => {
     beforeEach(() => {
       getIdentityMock.mockReturnValue({ authChain: AUTH_CHAIN });
+    });
+
+    describe('and the socket never connects', () => {
+      let socket: ReturnType<typeof fakeSocket>;
+
+      beforeEach(() => {
+        vi.useFakeTimers();
+        socket = fakeSocket(undefined);
+        socket.on = vi.fn();
+        ioMock.mockReturnValue(socket);
+      });
+
+      afterEach(() => vi.useRealTimers());
+
+      it('should stop waiting and disconnect', async () => {
+        const rejected = expect(sendTransaction()).rejects.toMatchObject({ reason: 'unavailable' });
+        await vi.advanceTimersByTimeAsync(15_000);
+        await rejected;
+        expect(socket.disconnect).toHaveBeenCalledOnce();
+      });
+    });
+
+    describe('and the acknowledgement times out', () => {
+      let socket: ReturnType<typeof fakeSocket>;
+
+      beforeEach(() => {
+        socket = fakeSocket(undefined);
+        socket.emitWithAck.mockRejectedValueOnce(new Error('operation has timed out'));
+        ioMock.mockReturnValue(socket);
+      });
+
+      it('should disconnect and report the relay as unavailable', async () => {
+        await expect(sendTransaction()).rejects.toMatchObject({ reason: 'unavailable' });
+        expect(socket.timeout).toHaveBeenCalledWith(15_000);
+        expect(socket.disconnect).toHaveBeenCalledOnce();
+      });
     });
 
     describe('and the wallet returns a hash', () => {
