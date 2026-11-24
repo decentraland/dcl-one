@@ -769,7 +769,7 @@ fn prune_player_map<V>(
 }
 
 /// The movement state a movement packet announces, `None` when it announces none.
-fn remote_move_kind(
+pub(crate) fn remote_move_kind(
     glide_state: rfc4::movement::GlideState,
     jump_count: i32,
     jumping: bool,

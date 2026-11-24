@@ -96,18 +96,22 @@ impl ClipMotion {
     }
 }
 
-/// Jumps since the avatar last stood on the ground.
+/// Whether the avatar has jumped since it last stood on the ground.
 #[derive(Debug, Default, Clone, Copy)]
-pub struct JumpCount(u32);
+pub struct JumpCount {
+    jumped: bool,
+}
 
 impl JumpCount {
+    /// The `jump_count` to send: 2 while the clip shows the air jump or the glide, else 1 after a
+    /// jump until the ground. Receivers play a double jump for as long as the count stays at 2, so
+    /// the fall after it, or a glider closed in the air, counts 1.
     pub fn update(&mut self, grounded: bool, motion: ClipMotion, jump_in_flight: bool) -> u32 {
         if grounded {
-            self.0 = 0;
+            self.jumped = false;
         }
-        let engine_jumps = u32::from(!grounded && jump_in_flight);
-        self.0 = self.0.max(motion.jumps()).max(engine_jumps);
-        self.0
+        self.jumped |= motion.jumps() > 0 || (!grounded && jump_in_flight);
+        motion.jumps().max(u32::from(self.jumped))
     }
 }
 
@@ -204,7 +208,8 @@ mod tests {
         assert_eq!(count.update(false, ClipMotion::None, false), 1);
         assert_eq!(count.update(false, ClipMotion::DoubleJump, false), 2);
         assert_eq!(count.update(false, ClipMotion::Gliding, false), 2);
-        assert_eq!(count.update(false, ClipMotion::GlideClosing, false), 2);
+        // a glider closed in the air is the jump again
+        assert_eq!(count.update(false, ClipMotion::GlideClosing, false), 1);
         assert_eq!(count.update(true, ClipMotion::GlideClosing, false), 0);
         // walking off a ledge is no jump
         assert_eq!(count.update(false, ClipMotion::None, false), 0);
@@ -219,6 +224,45 @@ mod tests {
         assert_eq!(count.update(true, ClipMotion::None, true), 0);
         // falling without a jump
         assert_eq!(count.update(false, ClipMotion::None, false), 0);
+    }
+
+    #[test]
+    fn the_fall_after_a_double_jump_reaches_receivers_as_no_double_jump() {
+        let received = |count: &mut JumpCount, motion, jump_in_flight| {
+            let jumps = count.update(false, motion, jump_in_flight);
+            let wire = wire_animation(Vec3::new(0.0, -4.0, 6.0), &GAITS, false, motion, jumps);
+            crate::global_crdt::remote_move_kind(
+                wire.glide_state(),
+                wire.jump_count,
+                wire.is_jumping || wire.is_long_jump,
+                wire.is_grounded,
+            )
+        };
+        for jump_in_flight in [false, true] {
+            let mut count = JumpCount::default();
+            received(&mut count, ClipMotion::Jump, jump_in_flight);
+            assert_eq!(
+                received(&mut count, ClipMotion::DoubleJump, jump_in_flight),
+                Some(MoveKind::DoubleJump)
+            );
+            // the fall loop ends the double jump: the receiver plays the jump in flight, which falls
+            assert_eq!(
+                received(&mut count, ClipMotion::None, jump_in_flight),
+                Some(MoveKind::Jump)
+            );
+        }
+        let mut count = JumpCount::default();
+        received(&mut count, ClipMotion::Jump, false);
+        received(&mut count, ClipMotion::DoubleJump, false);
+        received(&mut count, ClipMotion::Gliding, false);
+        assert_eq!(
+            received(&mut count, ClipMotion::GlideClosing, false),
+            Some(MoveKind::Glide)
+        );
+        assert_eq!(
+            received(&mut count, ClipMotion::None, false),
+            Some(MoveKind::Jump)
+        );
     }
 
     #[test]
