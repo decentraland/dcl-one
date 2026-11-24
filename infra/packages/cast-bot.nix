@@ -46,6 +46,15 @@ let
   crane = if stdenv.hostPlatform.isLinux
     then craneLib.overrideScope (_: _: { stdenvSelector = _: pkgs.llvmPackages_21.stdenv; })
     else craneLib;
+  # Shared with message-router.nix (passthru.libwebrtc), so both build against one libwebrtc.
+  checkWebrtcTag = ''
+    grep -q 'WEBRTC_TAG: &str = "${webrtcTag}"' ${sdk}/webrtc-sys/build/src/lib.rs \
+      || { echo "the patched SDK downloads another libwebrtc than ${webrtcTag}: update cast-bot.nix" >&2; exit 1; }
+  '';
+  installWebrtcNotices = pname: ''
+    removeReferencesToVendoredSources "$out" "${webrtc}"
+    install -Dm644 ${webrtc}/LICENSE.md $out/share/doc/${pname}/libwebrtc-LICENSE.md
+  '';
 
   common = {
     src = lib.fileset.toSource {
@@ -62,10 +71,7 @@ let
     # capture, which cast-bot does not use.
     buildInputs = lib.optionals stdenv.hostPlatform.isLinux [ pkgs.glib ];
     LK_CUSTOM_WEBRTC = "${webrtc}";
-    preBuild = ''
-      grep -q 'WEBRTC_TAG: &str = "${webrtcTag}"' ${sdk}/webrtc-sys/build/src/lib.rs \
-        || { echo "the patched SDK downloads another libwebrtc than ${webrtcTag}: update cast-bot.nix" >&2; exit 1; }
-    '';
+    preBuild = checkWebrtcTag;
   };
   cargoVendorDir = crane.vendorCargoDeps (common // {
     overrideVendorGitCheckout = packages: fetched:
@@ -106,10 +112,10 @@ in crane.buildPackage (common // {
   # The bridge keeps libwebrtc's header paths (__FILE__ in its checks); the 1 GB archive stays out
   # of the runtime closure, as crane keeps the vendored sources out. libwebrtc's notices, which a
   # binary distribution reproduces, go beside the binary.
-  postInstall = ''
-    removeReferencesToVendoredSources "$out" "${webrtc}"
-    install -Dm644 ${webrtc}/LICENSE.md $out/share/doc/cast-bot/libwebrtc-LICENSE.md
-  '';
-  passthru = { inherit cargoArtifacts cargoVendorDir webrtc webrtcTag sdk sdkSource tests; };
+  postInstall = installWebrtcNotices "cast-bot";
+  passthru = {
+    inherit cargoArtifacts cargoVendorDir webrtc sdk sdkSource tests;
+    libwebrtc = { inherit crane; preBuild = checkWebrtcTag; postInstall = installWebrtcNotices; };
+  };
   meta.mainProgram = "cast-bot";
 })

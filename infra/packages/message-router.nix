@@ -1,17 +1,14 @@
 # `catalyst-message-router`, the community chat message router's LiveKit participant
 # (services/catalyst/message-router, docs/adr/2026-11-18-community-chat-message-router.md). A
 # member of the catalyst workspace built apart from `catalyst`, so a libwebrtc problem never
-# breaks the node. Like cast-bot.nix it compiles the Explorer's patched LiveKit SDK against the
-# prebuilt libwebrtc of the SDK's WEBRTC_TAG, with clang 21 on Linux; it takes that archive,
-# the patched tree and the tag check from cast-bot, and the workspace source from catalyst.
-{ pkgs, craneLib, catalyst, cast-bot }:
+# breaks the node. It takes cast-bot's libwebrtc build (archive, patched SDK, clang 21 crane, tag
+# check, notices) and catalyst's workspace source.
+{ pkgs, catalyst, cast-bot, ... }:
 let
   inherit (pkgs) lib stdenv;
-  inherit (cast-bot) webrtc webrtcTag sdk sdkSource;
+  inherit (cast-bot) webrtc sdk sdkSource;
+  inherit (cast-bot.libwebrtc) crane;
   patchedSource = import ./patched-source.nix { inherit pkgs; };
-  crane = if stdenv.hostPlatform.isLinux
-    then craneLib.overrideScope (_: _: { stdenvSelector = _: pkgs.llvmPackages_21.stdenv; })
-    else craneLib;
 
   common = catalyst.workspace // {
     pname = "catalyst-message-router";
@@ -24,13 +21,11 @@ let
     nativeBuildInputs = [ pkgs.pkg-config pkgs.cmake ];
     buildInputs = lib.optionals stdenv.hostPlatform.isLinux [ pkgs.glib ];
     LK_CUSTOM_WEBRTC = "${webrtc}";
-    preBuild = ''
-      grep -q 'WEBRTC_TAG: &str = "${webrtcTag}"' ${sdk}/webrtc-sys/build/src/lib.rs \
-        || { echo "the patched SDK downloads another libwebrtc than ${webrtcTag}: update cast-bot.nix" >&2; exit 1; }
-    '';
+    inherit (cast-bot.libwebrtc) preBuild;
   };
   # The lock's git source fetched by catalyst's hash; its crates come from the tree the patch
-  # series builds, checked against that rev, as cast-bot vendors them.
+  # series builds, checked against that rev, as cast-bot vendors them. Assumes the workspace's
+  # only git dependency is the patched SDK; another one throws here.
   cargoVendorDir = crane.vendorCargoDeps (common // {
     inherit (catalyst.vendorGit) outputHashes;
     overrideVendorGitCheckout = packages: fetched:
@@ -42,10 +37,7 @@ let
 in crane.buildPackage (common // {
   inherit cargoArtifacts cargoVendorDir;
   # As cast-bot: libwebrtc stays out of the runtime closure and its notices go beside the binary.
-  postInstall = ''
-    removeReferencesToVendoredSources "$out" "${webrtc}"
-    install -Dm644 ${webrtc}/LICENSE.md $out/share/doc/catalyst-message-router/libwebrtc-LICENSE.md
-  '';
+  postInstall = cast-bot.libwebrtc.postInstall "catalyst-message-router";
   passthru = { inherit cargoArtifacts cargoVendorDir; };
   meta.mainProgram = "catalyst-message-router";
 })

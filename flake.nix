@@ -27,7 +27,8 @@
           revision = self.rev or self.dirtyRev or "unversioned";
         })) // {
           # The tool environments: the macOS CI legs take ffmpeg from here. `cast-bot` too, for a
-          # local node's CAST_BOT_BIN, and the message router for a local node's community chat.
+          # local node's CAST_BOT_BIN, and the message router for a local node's community chat
+          # (not built in CI).
           aarch64-darwin = let
             darwin = rustPackages "aarch64-darwin";
             catalyst = import ./infra/packages/catalyst.nix darwin;

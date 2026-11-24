@@ -2,7 +2,7 @@
 let
   catalyst = import ./catalyst.nix { inherit pkgs craneLib; };
   cast-bot = import ./cast-bot.nix { inherit pkgs craneLib; };
-  message-router = import ./message-router.nix { inherit pkgs craneLib catalyst cast-bot; };
+  message-router = import ./message-router.nix { inherit pkgs catalyst cast-bot; };
   scene-cli = import ./scene-cli.nix { inherit pkgs craneLib; inherit (catalyst) vendorGit; };
   playWeb = pkgs.callPackage ./play.nix { };
   sites = pkgs.callPackage ./sites.nix { inherit playWeb; };
