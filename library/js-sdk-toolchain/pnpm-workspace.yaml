@@ -21,6 +21,9 @@ overrides:
   "test-exclude": "^7.0.1"
   "glob@10": "^13.0.6"
 minimumReleaseAge: 1440
+minimumReleaseAgeExclude:
+  - '@dcl/asset-packs'
+  - '@dcl/inspector'
 allowBuilds:
   '@dcl/sdk-commands': false
   esbuild: false

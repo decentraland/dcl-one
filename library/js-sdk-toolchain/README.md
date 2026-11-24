@@ -74,7 +74,8 @@ make build
 ([SDK publishing](../../docs/adr/2026-11-24-sdk-publishing.md)):
 
 - every merge publishes a `next` snapshot;
-- a merge that bumps `@dcl/inspector` in `@dcl/sdk-commands` releases a patch to `latest`;
+- a merge that bumps `@dcl/inspector` in `@dcl/sdk-commands` releases a patch to `latest`; each
+  Inspector release opens that bump as a pull request (`SDK / Inspector bump`);
 - a manual run with `release` set to `patch`, `minor` or `major` releases to `latest`, following
   the [version guidelines](https://docs.decentraland.org/creator/releases/version-agreement/).
 

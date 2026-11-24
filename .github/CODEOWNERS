@@ -58,6 +58,7 @@
 # UNASSIGNED /library/js-sdk-toolchain/
 # UNASSIGNED /library/hashing/
 # UNASSIGNED /.github/workflows/sdk.yml
+# UNASSIGNED /.github/workflows/sdk-inspector-bump.yml
 
 # database
 /schemas/ @decentraland/apis

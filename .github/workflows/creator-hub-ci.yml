@@ -162,6 +162,14 @@ jobs:
       asset_packs_s3_bucket_key: ${{ needs.asset-packs.outputs.s3_bucket_key }}
       asset_packs_version: ${{ needs.asset-packs.outputs.version }}
       asset_packs_changed: ${{ needs.asset-packs.outputs.changed == 'true' }}
+  sdk-inspector-bump:
+    needs: [ inspector ]
+    if: github.ref == 'refs/heads/main' && needs.inspector.outputs.changed == 'true'
+    uses: ./.github/workflows/sdk-inspector-bump.yml
+    secrets:
+      NIXPKGS_UPDATE_APP_PRIVATE_KEY: ${{ secrets.NIXPKGS_UPDATE_APP_PRIVATE_KEY }}
+    with:
+      inspector_version: ${{ needs.inspector.outputs.version }}
   creator-hub:
     needs: [ changes, inspector ]
     # The macOS, Windows and Linux builds, and the test builds they attach to a pull request.

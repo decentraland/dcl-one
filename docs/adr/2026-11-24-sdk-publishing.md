@@ -24,6 +24,15 @@ npm trusted publishing (workflow `sdk.yml`, environment `sdk-release`, `main` on
   - `latest` with a patch bump for a `main` push that changes the `@dcl/inspector` pin in
     `packages/@dcl/sdk-commands/package.json`. Merging an Inspector bump releases the SDK.
   - `next` for every other `main` push, as `<X.Y.Z+1>-<run id>.commit-<sha7>`.
+- **Inspector bump.** When Creator Hub CI publishes `@dcl/inspector` on `main`,
+  `.github/workflows/sdk-inspector-bump.yml` opens or refreshes the pull request on
+  `bot/sdk-inspector-bump`. It pins that version in `@dcl/sdk-commands`, with the newest
+  `@dcl/asset-packs` its range accepts (the dependency and the workspace override). A person
+  reviews it, and merging it releases the SDK. A GitHub App opens it, because a pull request opened
+  with the workflow token runs no checks. It reuses `nixpkgs-update.yml`'s app
+  (`NIXPKGS_UPDATE_APP_ID`), installed here with contents and pull-request write access. The SDK
+  workspace exempts both packages from `minimumReleaseAge`, since the bump runs minutes after they
+  publish. A manual run pins any version, npm `latest` by default.
 - **Version.** It counts from the highest `@dcl/sdk@X.Y.Z` tag. A `main` publish without one
   fails instead of starting from 0.0.0. A `latest` release tags `@dcl/sdk@X.Y.Z` with release notes
   for `library/js-sdk-toolchain`, `library/protocol` and `library/hashing` once every package is on
