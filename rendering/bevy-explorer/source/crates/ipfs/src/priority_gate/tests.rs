@@ -807,3 +807,22 @@ fn a_reader_from_the_players_scene_lifts_a_held_download() {
         .unwrap();
     assert!(granted(ticket).is_some());
 }
+
+#[test]
+fn held_and_current_holds_only_while_every_scene_ranks_as_given() {
+    let gate = PriorityGate::new(1);
+    register(
+        &gate,
+        &[
+            ("player-scene", LoadPriority::TOP),
+            ("neighbour", key(1, false, 100.0)),
+        ],
+    );
+    let scenes = [("player-scene", true), ("neighbour", false)];
+    assert!(!gate.held_and_current(scenes));
+
+    gate.hold_from(Some(Tier::Avatar));
+    assert!(gate.held_and_current(scenes));
+    // the player walks into the neighbour: its key is stale until the next publish
+    assert!(!gate.held_and_current([("player-scene", false), ("neighbour", true)]));
+}

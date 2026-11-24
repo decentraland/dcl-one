@@ -64,6 +64,9 @@ a dense area grows the engine until the platform kills it.
 
 - Neighbouring scenes stall half-loaded and other avatars keep what they had while the refusal
   lasts; both resume when it ends, the held scenes spawning in the usual loading waves.
+- The owner is part of the asset path, so a profile picture shown both in the player's UI and
+  by scenes is decoded once per owner. The pictures are small; one shared path would let a
+  neighbour's requests ride on the player's rank.
 - The player's URL loads rank with the player's scenes at all times, ahead of other avatars and
   neighbouring scenes even when memory is fine; they are few and small.
 - When the refusal ends, the free slots go out at once on the keys of the last publish, which

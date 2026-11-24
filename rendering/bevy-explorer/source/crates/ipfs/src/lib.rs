@@ -1304,6 +1304,15 @@ impl IpfsIo {
         self.request_slots.held_from()
     }
 
+    /// Whether downloads are held and each `(scene hash, is_player_scene)` already ranks as it
+    /// should, so a publish would change nothing that a grant reads.
+    pub fn downloads_held_and_current<'a>(
+        &self,
+        scenes: impl IntoIterator<Item = (&'a str, bool)>,
+    ) -> bool {
+        self.request_slots.held_and_current(scenes)
+    }
+
     pub fn scene_priority(&self, scene: &str) -> Option<LoadPriority> {
         self.request_slots.scene_priority(scene)
     }

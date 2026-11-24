@@ -137,9 +137,10 @@ pub fn update_scene_partitions(
 /// only on a frame in which a download waits for or holds a slot: a grant that chooses between
 /// downloads happens at an enqueue while others wait or at a release, so it reads this frame's
 /// keys unless the gate was idle when the frame began, and the steady state costs nothing.
-/// While engine memory is full, held requests keep the gate busy; then it publishes only when the
-/// player's scenes change, the one change that moves a hash across the hold (the player's own
-/// avatar and previews rank from their registration). Other keys only order held requests.
+/// While engine memory is full, held requests keep the gate busy; then it publishes only when a
+/// scene's key disagrees with whether it is one of the player's scenes, the one change that moves
+/// a hash across the hold (the player's own avatar and previews rank from their registration).
+/// Other keys only order held requests.
 pub fn publish_download_priorities(
     scenes: Query<(Entity, &SceneHash, Option<&Partition>)>,
     partitioned: Query<(
@@ -168,11 +169,11 @@ pub fn publish_download_priorities(
         .unwrap_or_default();
     // under a hold, publish only when a scene's place among the player's scenes differs from
     // the key the gate holds for it
-    if ipfs.downloads_held_from().is_some()
-        && scenes.iter().all(|(entity, hash, _)| {
-            active.contains(&entity) == (ipfs.scene_priority(&hash.0) == Some(LoadPriority::TOP))
-        })
-    {
+    if ipfs.downloads_held_and_current(
+        scenes
+            .iter()
+            .map(|(entity, hash, _)| (hash.0.as_str(), active.contains(&entity))),
+    ) {
         return;
     }
     let scene_keys = scenes.iter().map(|(entity, hash, partition)| {

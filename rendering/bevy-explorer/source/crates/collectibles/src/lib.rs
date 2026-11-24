@@ -61,7 +61,7 @@ fn release_idle_data<T: CollectibleType>(
     mut collectibles: ResMut<Collectibles<T>>,
     frame: Res<FrameCount>,
 ) {
-    if refusal.refusing && frame.0 % RETAIN_TICKS == 0 {
+    if refusal.refusing && frame.0.is_multiple_of(RETAIN_TICKS) {
         collectibles.release_idle_data(frame.0);
     }
 }

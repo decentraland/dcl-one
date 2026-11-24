@@ -474,6 +474,17 @@ impl PriorityGate {
         self.state().held_from
     }
 
+    /// Whether a hold is on and each `(hash, is_player_scene)` already ranks as it should: at
+    /// the player's scenes' key exactly when it is one of them. Checked under one lock.
+    pub fn held_and_current<'a>(&self, scenes: impl IntoIterator<Item = (&'a str, bool)>) -> bool {
+        let state = self.state();
+        state.held_from.is_some()
+            && scenes.into_iter().all(|(hash, is_player_scene)| {
+                is_player_scene
+                    == (state.keys.get(hash).map(|entry| entry.key) == Some(LoadPriority::TOP))
+            })
+    }
+
     /// Whether any request waits for a slot.
     pub fn has_waiters(&self) -> bool {
         let state = self.state();
