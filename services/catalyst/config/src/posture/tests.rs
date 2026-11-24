@@ -316,53 +316,72 @@ fn a_mirror_walks_the_chain_every_30_seconds() {
     assert_eq!(own.marketplace.marketplace_index_interval_secs, 5);
 }
 
-/// O-1: a mirror lists the approved third-party providers from lamb2's
-/// default registry and may not blank it; island and journey name none.
 #[test]
-fn a_mirror_reads_the_third_party_registry() {
-    const KEY: &str = "THIRD_PARTY_REGISTRY_L2_SUBGRAPH_URL";
-    const TPR: &str = "https://subgraph.decentraland.org/tpr-matic-mainnet";
-    assert_eq!(expanded(Posture::Mirror, &[])[KEY], TPR);
-    for posture in [Posture::Island, Posture::Journey] {
-        assert_eq!(expanded(posture, &[])[KEY], "");
-    }
+fn a_mirror_indexes_the_third_party_registry_without_a_subgraph() {
+    const SWITCH: &str = "MARKETPLACE_THIRD_PARTY_REGISTRY_INDEX_ENABLED";
+    const URL: &str = "THIRD_PARTY_REGISTRY_L2_SUBGRAPH_URL";
     let db = ("DATABASE_URL", "postgres:///catalyst");
     let c = parsed(&[db, (ENV, "mirror")]);
-    assert_eq!(
-        c.validator.third_party_registry_l2_subgraph_url.as_deref(),
-        Some(TPR)
-    );
-    let check_of = |pairs: &[(&str, &str)]| {
-        let c = parsed(pairs);
-        let map = env(pairs);
-        check(&c, &lookup(&map))
-    };
-    for blank in ["", " "] {
-        let err = check_of(&[db, (ENV, "mirror"), (KEY, blank)])
-            .unwrap_err()
-            .to_string();
-        assert!(err.contains(&format!("{KEY} is empty: unset it")), "{err}");
+    assert!(c.marketplace.marketplace_third_party_registry_index_enabled);
+    assert_eq!(c.validator.third_party_registry_l2_subgraph_url, None);
+    for posture in [Posture::Island, Posture::Journey] {
+        assert_eq!(expanded(posture, &[])[SWITCH], "false");
     }
-    check_of(&[db, (ENV, "island")]).unwrap();
-
-    // Held in its credential file, the URL is out of the expansion's and the
-    // check's sight; it is checked once `resolve_secret_files` reads it.
-    let file = (
-        "THIRD_PARTY_REGISTRY_L2_SUBGRAPH_URL_FILE",
-        "/run/credentials/tpr",
-    );
-    let pairs = [db, (ENV, "mirror"), file];
+    for blank in ["", " "] {
+        let pairs = [db, (ENV, "mirror"), (URL, blank)];
+        check(&parsed(&pairs), &lookup(&env(&pairs))).unwrap();
+    }
+    let pairs = [
+        db,
+        (ENV, "mirror"),
+        (
+            "THIRD_PARTY_REGISTRY_L2_SUBGRAPH_URL_FILE",
+            "/run/credentials/tpr",
+        ),
+    ];
     let mut c = parsed_with_files(&pairs);
     assert_eq!(c.validator.third_party_registry_l2_subgraph_url, None);
-    check(&c, &lookup(&env(&pairs))).unwrap();
-    // `resolve_secret_files`'s steps before its last one.
+    // `resolve_secret_files`'s steps before its last one: a mirror's
+    // effective TRADE_RPC_URLS must name chain 137 (`refuse_unwalkable_polygon`).
     c.default_rpc_urls();
     c.derive_trade_rpc_urls();
-    let err = refuse_remote_secrets(&mut c).unwrap_err().to_string();
-    assert!(err.contains(&format!("{KEY}_FILE holds no URL")), "{err}");
-    c.validator.third_party_registry_l2_subgraph_url =
-        Some("https://tpr.example.org/subgraph".into());
     refuse_remote_secrets(&mut c).unwrap();
+}
+
+#[test]
+fn a_sepolia_mirror_keeps_its_polygon_registry_subgraph_during_index_catch_up() {
+    const URL: &str = "THIRD_PARTY_REGISTRY_L2_SUBGRAPH_URL";
+    let pairs = [
+        ("DATABASE_URL", "postgres:///catalyst"),
+        (ENV, "mirror"),
+        ("ETH_NETWORK", "sepolia"),
+    ];
+    let config = parsed(&pairs);
+    assert!(
+        config
+            .marketplace
+            .marketplace_third_party_registry_index_enabled
+    );
+    assert_eq!(
+        config
+            .validator
+            .third_party_registry_l2_subgraph_url
+            .as_deref(),
+        Some("https://subgraph.decentraland.org/tpr-matic-mainnet")
+    );
+    let custom = parsed(&[
+        pairs[0],
+        pairs[1],
+        pairs[2],
+        (URL, "https://registry.example"),
+    ]);
+    assert_eq!(
+        custom
+            .validator
+            .third_party_registry_l2_subgraph_url
+            .as_deref(),
+        Some("https://registry.example")
+    );
 }
 
 /// Escrow leases are a dcl-one extension: the explorer backpack lists them

@@ -195,6 +195,19 @@
   --dur-photo-hud: 200ms; /* photo mode: its HUD fades in and out */
   --ease-in-out: cubic-bezier(0.45, 0, 0.55, 1);
 
+  /* ---- photo detail (the camera reel's viewer) ---- */
+  --dur-photo-panel: 500ms; /* the info panel slides in and out */
+  --photo-close: rgba(0, 0, 0, 0.031); /* the close and info buttons at rest */
+  --photo-close-hover: rgba(255, 255, 255, 0.051);
+  --photo-avatar-ring: rgba(255, 255, 255, 0.2); /* a person's picture */
+  --photo-tag: rgba(255, 255, 255, 0.298); /* an unclaimed name's #tag */
+  --photo-empty: rgba(255, 255, 255, 0.698); /* "No collectibles equipped…" */
+  --photo-buy-radius: 11px;
+  --photo-buy-pressed: #ee274d;
+  --photo-skeleton: rgba(255, 255, 255, 0.02); /* the info panel's loading shapes */
+  --photo-skeleton-band: #6a6a6a; /* ...and the band that sweeps them */
+  --photo-download-path: #40a0ff; /* the download toast's folder */
+
   /* ---- menu pages (1920×1080 reference canvas) ----
      Alphas here are sRGB equivalents of overlays designed for linear-space blending, which reads
      lighter: 50% black ≈ 29%, 40% ≈ 22%, 10% white ≈ 26%. */

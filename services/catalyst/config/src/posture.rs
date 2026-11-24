@@ -141,6 +141,10 @@ fn mainnet(lookup: &Lookup) -> bool {
     lookup("ETH_NETWORK").is_none_or(|n| n.trim().is_empty() || n.trim() == "mainnet")
 }
 
+fn third_party_registry_subgraph(lookup: &Lookup) -> Option<String> {
+    (!mainnet(lookup)).then(|| "https://subgraph.decentraland.org/tpr-matic-mainnet".into())
+}
+
 fn credits_manager(lookup: &Lookup) -> Option<String> {
     mainnet(lookup).then(|| CREDITS_MANAGER_MAINNET.to_string())
 }
@@ -313,12 +317,17 @@ const ROWS: &[Row] = &[
         "NFT_WORKER_BASE_URL",
         "https://nfts.decentraland.org",
     ),
-    // The approved third-party providers, lamb2's and the catalyst's default
-    // registry on Polygon mainnet.
-    upstream(
+    // Mirrors configured for testnet can read the Polygon registry before
+    // they have a separate mainnet RPC and a published registry index.
+    row(
         "mirrors",
         "THIRD_PARTY_REGISTRY_L2_SUBGRAPH_URL",
-        "https://subgraph.decentraland.org/tpr-matic-mainnet",
+        From(
+            "Polygon registry subgraph when ETH_NETWORK is a testnet",
+            third_party_registry_subgraph,
+        ),
+        Is(""),
+        Is(""),
     ),
     // lamb2's explorer backpack lists chain-owned tokens only; listing this
     // node's escrow grants too stays an operator's opt-in under every posture,
@@ -339,6 +348,7 @@ const ROWS: &[Row] = &[
     mirrored("indexes", "MARKETPLACE_TRADE_EVENTS_INDEX_ENABLED"),
     mirrored("indexes", "MARKETPLACE_SALES_INDEX_ENABLED"),
     mirrored("indexes", "MARKETPLACE_COMMITTEE_INDEX_ENABLED"),
+    mirrored("indexes", "MARKETPLACE_THIRD_PARTY_REGISTRY_INDEX_ENABLED"),
     // The MANA transfer walk stays an operator's opt-in under every posture.
     same(
         "indexes",
@@ -744,7 +754,7 @@ pub fn check(config: &Config, env: &Lookup) -> anyhow::Result<()> {
         refuse_third_party_secrets(posture, env)?;
     }
     if posture == Posture::Mirror {
-        refuse_chain_read_third_party(config, env)?;
+        refuse_blank_nft_worker(config)?;
     }
     Ok(())
 }
@@ -938,43 +948,12 @@ fn refuse_followers(posture: Posture, env: &Lookup) -> anyhow::Result<()> {
     Ok(())
 }
 
-/// A mirror serves the public third-party routes, which lamb2 answers from
-/// the registry subgraph and the NFT worker: without
-/// `THIRD_PARTY_REGISTRY_L2_SUBGRAPH_URL` every route lists no provider, and
-/// without `NFT_WORKER_BASE_URL` the chain path leaves an open mapping's
-/// tokens out, so a mirror may blank neither. A registry URL held in its
-/// `_FILE` is read after this check, so `refuse_blank_registry_file` checks it.
-fn refuse_chain_read_third_party(config: &Config, env: &Lookup) -> anyhow::Result<()> {
-    if set(env, REGISTRY_FILE).is_none()
-        && Config::non_empty(&config.validator.third_party_registry_l2_subgraph_url).is_none()
-    {
-        anyhow::bail!(
-            "{ENV}=mirror lists the approved third-party providers from the registry subgraph, \
-             as lamb2 does, but {REGISTRY} is empty: unset it to read Decentraland's registry"
-        );
-    }
+/// A mirror needs the NFT worker to include tokens from open mappings.
+fn refuse_blank_nft_worker(config: &Config) -> anyhow::Result<()> {
     if Config::non_empty(&config.market_upstreams.nft_worker_base_url).is_none() {
         anyhow::bail!(
             "{ENV}=mirror answers the third-party wearables from the NFT worker, as lamb2 does, \
              but NFT_WORKER_BASE_URL is empty: unset it to read Decentraland's worker"
-        );
-    }
-    Ok(())
-}
-
-/// The third-party registry a mirror may not blank, and the credential file
-/// that may hold it.
-const REGISTRY: &str = "THIRD_PARTY_REGISTRY_L2_SUBGRAPH_URL";
-const REGISTRY_FILE: &str = "THIRD_PARTY_REGISTRY_L2_SUBGRAPH_URL_FILE";
-
-/// The mirror's registry check once the secret files are read: a
-/// `THIRD_PARTY_REGISTRY_L2_SUBGRAPH_URL_FILE` with no URL in it.
-fn refuse_blank_registry_file(config: &Config) -> anyhow::Result<()> {
-    if Config::non_empty(&config.validator.third_party_registry_l2_subgraph_url).is_none() {
-        anyhow::bail!(
-            "{ENV}=mirror lists the approved third-party providers from the registry subgraph, \
-             as lamb2 does, but {REGISTRY_FILE} holds no URL: put the registry URL in it, or \
-             unset it and {REGISTRY} to read Decentraland's registry"
         );
     }
     Ok(())
@@ -1183,8 +1162,7 @@ fn outside_host(posture: Posture, key: &str, host: &str) -> anyhow::Error {
 }
 
 /// The same refusal over the secrets, once their `<NAME>_FILE`s are read: an
-/// RPC endpoint or token URL held in a credential file. A mirror instead
-/// checks the third-party registry its `_FILE` may hold.
+/// RPC endpoint or token URL held in a credential file.
 pub fn refuse_remote_secrets(config: &mut Config) -> anyhow::Result<()> {
     let Some(posture) = config
         .node
@@ -1195,7 +1173,6 @@ pub fn refuse_remote_secrets(config: &mut Config) -> anyhow::Result<()> {
         return Ok(());
     };
     if posture == Posture::Mirror {
-        refuse_blank_registry_file(config)?;
         return refuse_unwalkable_polygon(config);
     }
     let own = own_hosts(config);

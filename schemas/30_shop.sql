@@ -399,7 +399,7 @@ CREATE TABLE shop.chain_cursor (
     -- Readers of the height without the publication skip it meanwhile.
     diverged_at timestamp without time zone,
     PRIMARY KEY (indexer, network),
-    CONSTRAINT chain_cursor_indexer_known CHECK (indexer IN ('nft', 'trade_events', 'rentals', 'mana_transfers', 'sales', 'committee')),
+    CONSTRAINT chain_cursor_indexer_known CHECK (indexer IN ('nft', 'trade_events', 'rentals', 'mana_transfers', 'sales', 'committee', 'rentals_sepolia', 'third_party_registry')),
     CONSTRAINT chain_cursor_network_known CHECK (network IN ('ethereum', 'matic')),
     CONSTRAINT chain_cursor_fold_within_indexed CHECK (fold_through IS NULL OR fold_through <= last_block),
     CONSTRAINT chain_cursor_folded_within_indexed CHECK (folded_block IS NULL OR folded_block <= last_block),
@@ -17000,3 +17000,18 @@ CREATE TABLE shop.worker_progress (
     CHECK (position >= 0 AND ceiling >= position),
     CHECK (cardinality(key_position) <= 2 AND cardinality(key_ceiling) <= 2)
 );
+
+-- Provider state after each Polygon registry event. Keep previous versions
+-- for readers on the published cursor and for rewind.
+CREATE TABLE shop.third_party_registry_event (
+    block_number bigint NOT NULL,
+    log_index integer NOT NULL,
+    block_time bigint NOT NULL,
+    provider_id text NOT NULL,
+    state jsonb NOT NULL,
+    receipt jsonb,
+    PRIMARY KEY (block_number, log_index)
+);
+
+CREATE INDEX third_party_registry_provider_version_idx ON shop.third_party_registry_event
+    (provider_id, block_number DESC, log_index DESC);
