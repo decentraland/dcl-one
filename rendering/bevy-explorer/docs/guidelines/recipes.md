@@ -152,9 +152,9 @@ because CI has no GPU. The `pipeline_test` crate holds the setup these tests sha
 4. `compile_pipelines(&mut app)` updates until the `RenderApp`'s `PipelineCache` has nothing
    pending and panics on a pipeline in an error state. `fragment_pipelines(&app, path)` counts
    the compiled pipelines whose fragment stage is one shader.
-5. For a pipeline or bind group built on the device, outside the `PipelineCache`:
-   `gpu_errors(&app)` before the frames, and an assertion that it stayed empty after frames
-   that draw with it.
+5. For bind groups the cache does not check, such as those a render graph node builds each
+   frame: `gpu_errors(&app)` before the frames, and an assertion that it stayed empty after
+   frames that draw with them.
 
 A crate with such a test takes `pipeline_test` and `naga_oil` as dev-dependencies, the latter
 only to enable its `override_any` feature for the crate. Run with

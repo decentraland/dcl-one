@@ -19,10 +19,32 @@ index 825110c66cfd43f24de1d224718991f15a4e9286..2744b732182ce26ce40effc204d1d541
  
      fn finish(&self, app: &mut App) {
 diff --git a/crates/bevy_pbr/src/render/mesh.rs b/crates/bevy_pbr/src/render/mesh.rs
-index 0bf95882b27eaed974ddb4111e72cfd854c853e1..1b65c9d69c20b9cf49cdc7f17d0a820b23cd7fb9 100644
+index 0bf95882b27eaed974ddb4111e72cfd854c853e1..d2f5f705befd7b2f8ed7e145c1ca76b275ebd8e8 100644
 --- a/crates/bevy_pbr/src/render/mesh.rs
 +++ b/crates/bevy_pbr/src/render/mesh.rs
-@@ -3217,11 +3217,10 @@ fn prepare_mesh_bind_groups_for_phase(
+@@ -61,7 +61,7 @@ use crate::{
+             extract_morphs, no_automatic_morph_batching, prepare_morphs, MorphIndices,
+             MorphUniforms,
+         },
+-        skin::no_automatic_skin_batching,
++        skin::{no_automatic_skin_batching, SKIN_MATRICES_SHADER_HANDLE},
+     },
+     *,
+ };
+@@ -164,6 +164,12 @@ impl Plugin for MeshRenderPlugin {
+         );
+         load_internal_asset!(app, MESH_SHADER_HANDLE, "mesh.wgsl", Shader::from_wgsl);
+         load_internal_asset!(app, SKINNING_HANDLE, "skinning.wgsl", Shader::from_wgsl);
++        load_internal_asset!(
++            app,
++            SKIN_MATRICES_SHADER_HANDLE,
++            "skin_matrices.wgsl",
++            Shader::from_wgsl
++        );
+         load_internal_asset!(app, MORPH_HANDLE, "morph.wgsl", Shader::from_wgsl);
+         load_internal_asset!(
+             app,
+@@ -3217,11 +3223,10 @@ fn prepare_mesh_bind_groups_for_phase(
  
      // Create the skinned mesh bind group with the current and previous buffers
      // (the latter being for motion vector computation).
@@ -37,7 +59,7 @@ index 0bf95882b27eaed974ddb4111e72cfd854c853e1..1b65c9d69c20b9cf49cdc7f17d0a820b
      });
  
      // Create the morphed bind groups just like we did for the skinned bind
-@@ -3231,7 +3230,6 @@ fn prepare_mesh_bind_groups_for_phase(
+@@ -3231,7 +3236,6 @@ fn prepare_mesh_bind_groups_for_phase(
          for (id, gpu_mesh) in meshes.iter() {
              if let Some(targets) = gpu_mesh.morph_targets.as_ref() {
                  let bind_group_pair = if is_skinned(&gpu_mesh.layout) {
@@ -45,7 +67,7 @@ index 0bf95882b27eaed974ddb4111e72cfd854c853e1..1b65c9d69c20b9cf49cdc7f17d0a820b
                      MeshBindGroupPair {
                          motion_vectors: layouts.morphed_skinned_motion(
                              render_device,
-@@ -3241,7 +3239,6 @@ fn prepare_mesh_bind_groups_for_phase(
+@@ -3241,7 +3245,6 @@ fn prepare_mesh_bind_groups_for_phase(
                              targets,
                              prev_skin,
                              prev_weights,
@@ -53,7 +75,7 @@ index 0bf95882b27eaed974ddb4111e72cfd854c853e1..1b65c9d69c20b9cf49cdc7f17d0a820b
                          ),
                          no_motion_vectors: layouts.morphed_skinned(
                              render_device,
-@@ -3249,7 +3246,6 @@ fn prepare_mesh_bind_groups_for_phase(
+@@ -3249,7 +3252,6 @@ fn prepare_mesh_bind_groups_for_phase(
                              skin,
                              weights,
                              targets,
@@ -367,10 +389,15 @@ index e8094af6897b61fbebee717071cb434d49eac348..6381a743253ce7e58e6c9a31178874e8
 +    SkinMatricesLabel, SkinMatricesNode, SkinUniforms, MAX_JOINTS,
  };
 diff --git a/crates/bevy_pbr/src/render/skin.rs b/crates/bevy_pbr/src/render/skin.rs
-index 96dd66dfa69093dd7ee56655a6dd67912bd708ca..2c3712547001ae40d3af665f4a2df5a9b23dc3fc 100644
+index 96dd66dfa69093dd7ee56655a6dd67912bd708ca..0bf13d3be0dd5cec60a07bd1b6bf163064ad301f 100644
 --- a/crates/bevy_pbr/src/render/skin.rs
 +++ b/crates/bevy_pbr/src/render/skin.rs
-@@ -6,7 +6,14 @@ use bevy_asset::{prelude::AssetChanged, Assets};
+@@ -2,11 +2,18 @@ use core::mem::{self, size_of};
+ use core::ops::Range;
+ use std::sync::OnceLock;
+ 
+-use bevy_asset::{prelude::AssetChanged, Assets};
++use bevy_asset::{prelude::AssetChanged, weak_handle, Assets, Handle};
  use bevy_ecs::prelude::*;
  use bevy_math::Mat4;
  use bevy_platform::collections::hash_map::Entry;
@@ -379,8 +406,8 @@ index 96dd66dfa69093dd7ee56655a6dd67912bd708ca..2c3712547001ae40d3af665f4a2df5a9
 +use bevy_render::render_resource::{
 +    binding_types::{storage_buffer_read_only_sized, storage_buffer_sized},
 +    BindGroupEntries, BindGroupLayout, BindGroupLayoutEntries, Buffer, BufferDescriptor,
-+    ComputePassDescriptor, ComputePipeline, PipelineLayoutDescriptor,
-+    RawComputePipelineDescriptor, ShaderModuleDescriptor, ShaderSource, ShaderStages,
++    CachedComputePipelineId, ComputePassDescriptor, ComputePipelineDescriptor, PipelineCache,
++    Shader, ShaderStages,
 +};
 +use bevy_render::renderer::RenderContext;
  use bevy_render::sync_world::{MainEntity, MainEntityHashMap, MainEntityHashSet};
@@ -427,8 +454,8 @@ index 96dd66dfa69093dd7ee56655a6dd67912bd708ca..2c3712547001ae40d3af665f4a2df5a9
  
 +        let [skin_matrices_buffer, prev_skin_matrices_buffer] =
 +            new_skin_matrices_buffers(device, MAX_JOINTS as u64 * size_of::<Mat4>() as u64);
-+        let skin_matrices_pipeline =
-+            (!use_uniform_buffers).then(|| SkinMatricesPipeline::new(device));
++        let skin_matrices_pipeline = (!use_uniform_buffers)
++            .then(|| SkinMatricesPipeline::new(device, world.resource::<PipelineCache>()));
 +
          Self {
              // With storage buffers, slot 0 is reserved as the identity.
@@ -444,7 +471,7 @@ index 96dd66dfa69093dd7ee56655a6dd67912bd708ca..2c3712547001ae40d3af665f4a2df5a9
              use_uniform_buffers,
              allocator: Allocator::new(MAX_TOTAL_JOINTS),
              skin_uniform_info: MainEntityHashMap::default(),
-@@ -207,12 +238,156 @@ impl SkinUniforms {
+@@ -207,12 +238,160 @@ impl SkinUniforms {
          })
      }
  
@@ -477,30 +504,37 @@ index 96dd66dfa69093dd7ee56655a6dd67912bd708ca..2c3712547001ae40d3af665f4a2df5a9
 +    })
 +}
 +
-+/// Invocations per row of the skin matrices dispatch. Must match `ROW` in
-+/// `skin_matrices.wgsl`.
-+const SKIN_MATRICES_ROW: u32 = 65536;
++/// The shader of the skin matrices compute pass.
++pub(crate) const SKIN_MATRICES_SHADER_HANDLE: Handle<Shader> =
++    weak_handle!("3d0b5b2e-8f43-4c1e-9a57-2f6c1d7e4b90");
 +
-+/// Invocations per workgroup of the skin matrices dispatch.
++/// Invocations per workgroup of the skin matrices dispatch, the
++/// `@workgroup_size` of `skin_matrices.wgsl`.
 +const SKIN_MATRICES_WORKGROUP: u32 = 64;
 +
++/// Workgroups per row of the skin matrices dispatch. The shader derives the
++/// row length from the dispatch, so only this side chooses it.
++const SKIN_MATRICES_GROUPS_PER_ROW: u32 = 1024;
++
 +/// The workgroups, in x and y, that cover `count` skin joints: rows of
-+/// [`SKIN_MATRICES_ROW`] invocations.
++/// [`SKIN_MATRICES_GROUPS_PER_ROW`] workgroups.
 +fn skin_matrices_workgroups(count: u32) -> (u32, u32) {
 +    let groups = count.div_ceil(SKIN_MATRICES_WORKGROUP);
-+    let groups_per_row = SKIN_MATRICES_ROW / SKIN_MATRICES_WORKGROUP;
-+    (groups.min(groups_per_row), groups.div_ceil(groups_per_row))
++    (
++        groups.min(SKIN_MATRICES_GROUPS_PER_ROW),
++        groups.div_ceil(SKIN_MATRICES_GROUPS_PER_ROW),
++    )
 +}
 +
 +/// The compute pipeline that multiplies each joint's world matrix by each
-+/// skin's inverse bindpose.
++/// skin's inverse bindpose, queued in the [`PipelineCache`].
 +struct SkinMatricesPipeline {
 +    layout: BindGroupLayout,
-+    pipeline: ComputePipeline,
++    id: CachedComputePipelineId,
 +}
 +
 +impl SkinMatricesPipeline {
-+    fn new(device: &RenderDevice) -> Self {
++    fn new(device: &RenderDevice, pipeline_cache: &PipelineCache) -> Self {
 +        let layout = device.create_bind_group_layout(
 +            "skin matrices layout",
 +            &BindGroupLayoutEntries::sequential(
@@ -512,27 +546,16 @@ index 96dd66dfa69093dd7ee56655a6dd67912bd708ca..2c3712547001ae40d3af665f4a2df5a9
 +                ),
 +            ),
 +        );
-+        let shader = device.create_and_validate_shader_module(ShaderModuleDescriptor {
-+            label: Some("skin matrices shader"),
-+            source: ShaderSource::Wgsl(include_str!("skin_matrices.wgsl").into()),
++        let id = pipeline_cache.queue_compute_pipeline(ComputePipelineDescriptor {
++            label: Some("skin matrices pipeline".into()),
++            layout: vec![layout.clone()],
++            push_constant_ranges: vec![],
++            shader: SKIN_MATRICES_SHADER_HANDLE,
++            shader_defs: vec![],
++            entry_point: "main".into(),
++            zero_initialize_workgroup_memory: false,
 +        });
-+        let pipeline_layout =
-+            device
-+                .wgpu_device()
-+                .create_pipeline_layout(&PipelineLayoutDescriptor {
-+                    label: Some("skin matrices pipeline layout"),
-+                    bind_group_layouts: &[&*layout],
-+                    push_constant_ranges: &[],
-+                });
-+        let pipeline = device.create_compute_pipeline(&RawComputePipelineDescriptor {
-+            label: Some("skin matrices pipeline"),
-+            layout: Some(&pipeline_layout),
-+            module: &shader,
-+            entry_point: Some("main"),
-+            compilation_options: Default::default(),
-+            cache: None,
-+        });
-+        Self { layout, pipeline }
++        Self { layout, id }
 +    }
 +}
 +
@@ -543,7 +566,8 @@ index 96dd66dfa69093dd7ee56655a6dd67912bd708ca..2c3712547001ae40d3af665f4a2df5a9
 +/// Runs before the cameras: writes the skinning matrix of every joint of every
 +/// skin into [`SkinUniforms::skin_matrices_buffer`], so that every pass that
 +/// draws skinned meshes reads one matrix per joint. Does nothing where skins
-+/// use uniform buffers.
++/// use uniform buffers, or while its pipeline compiles: skinned meshes then
++/// draw nothing, like any mesh whose pipeline is still compiling.
 +pub struct SkinMatricesNode;
 +
 +impl Node for SkinMatricesNode {
@@ -559,7 +583,14 @@ index 96dd66dfa69093dd7ee56655a6dd67912bd708ca..2c3712547001ae40d3af665f4a2df5a9
 +        let Some(pipeline) = &uniforms.skin_matrices_pipeline else {
 +            return Ok(());
 +        };
-+        let count = uniforms.storage.skin_joints_staging.len() as u32;
++        let Some(compute_pipeline) = world
++            .resource::<PipelineCache>()
++            .get_compute_pipeline(pipeline.id)
++        else {
++            return Ok(());
++        };
++        // Entries past the last live skin belong to removed skins.
++        let count = uniforms.storage.live_end as u32;
 +        if count == 0 {
 +            return Ok(());
 +        }
@@ -589,7 +620,7 @@ index 96dd66dfa69093dd7ee56655a6dd67912bd708ca..2c3712547001ae40d3af665f4a2df5a9
 +                    label: Some("skin matrices"),
 +                    timestamp_writes: None,
 +                });
-+        pass.set_pipeline(&pipeline.pipeline);
++        pass.set_pipeline(compute_pipeline);
 +        for target in core::iter::once(&current).chain(&prev) {
 +            pass.set_bind_group(0, target, &[]);
 +            pass.dispatch_workgroups(x, y, 1);
@@ -601,7 +632,50 @@ index 96dd66dfa69093dd7ee56655a6dd67912bd708ca..2c3712547001ae40d3af665f4a2df5a9
  /// The skin joints entries and joint matrix slots of the skins that use
  /// storage buffers.
  ///
-@@ -474,6 +649,14 @@ pub fn prepare_skins(
+@@ -234,6 +413,10 @@ struct StorageSkins {
+     pending_joints: MainEntityHashMap<SmallVec<[MainEntity; 1]>>,
+     /// The entries of each skin.
+     skins: MainEntityHashMap<StorageSkin>,
++    /// The end, in matrices, of the entries of the live skin that ends last.
++    /// [`Self::skin_joints_staging`] keeps the entries of removed skins past
++    /// it, which the compute pass skips.
++    live_end: usize,
+ }
+ 
+ /// The joints of one skin that uses storage buffers.
+@@ -248,6 +431,13 @@ struct StorageSkin {
+     held: Vec<bool>,
+ }
+ 
++impl StorageSkin {
++    /// The end, in matrices, of the skin's entries.
++    fn end(&self) -> usize {
++        self.offset + self.joints.len()
++    }
++}
++
+ impl StorageSkins {
+     /// Writes the entries of a skin at `offset` (in matrices) and takes a
+     /// reference to the slot of each joint that has an inverse bindpose and a
+@@ -281,6 +471,7 @@ impl StorageSkins {
+             self.write_entry(matrices, skin, &mut state, joint_index, &world);
+         }
+         self.mark_dirty(offset..offset + state.joints.len());
++        self.live_end = self.live_end.max(state.end());
+         self.skins.insert(skin, state);
+     }
+ 
+@@ -330,6 +521,9 @@ impl StorageSkins {
+                 self.remove_pending(joint, skin);
+             }
+         }
++        if state.end() == self.live_end {
++            self.live_end = self.skins.values().map(StorageSkin::end).max().unwrap_or(0);
++        }
+     }
+ 
+     /// Writes the new world matrix of a joint into its slot. Every skin that
+@@ -474,6 +668,14 @@ pub fn prepare_skins(
  
      // Grow the skin joints buffer if necessary and upload what changed.
      if !uniform.use_uniform_buffers {
@@ -616,7 +690,7 @@ index 96dd66dfa69093dd7ee56655a6dd67912bd708ca..2c3712547001ae40d3af665f4a2df5a9
          let staging_len = uniform.storage.skin_joints_staging.len();
          let mut upload = uniform.storage.take_dirty();
          let needed_size = staging_len as u64 * size_of::<Mat4>() as u64;
-@@ -491,6 +674,14 @@ pub fn prepare_skins(
+@@ -491,6 +693,14 @@ pub fn prepare_skins(
              });
              // The new buffer is empty, so upload everything.
              upload = Some(0..staging_len);
@@ -631,13 +705,13 @@ index 96dd66dfa69093dd7ee56655a6dd67912bd708ca..2c3712547001ae40d3af665f4a2df5a9
          }
          if let Some(range) = upload {
              render_queue.write_buffer(
-@@ -995,6 +1186,17 @@ mod tests {
+@@ -995,6 +1205,17 @@ mod tests {
          entry
      }
  
 +    #[test]
 +    fn the_skin_matrices_dispatch_covers_every_joint_in_rows() {
-+        let row = SKIN_MATRICES_ROW;
++        let row = SKIN_MATRICES_GROUPS_PER_ROW * SKIN_MATRICES_WORKGROUP;
 +        assert_eq!(skin_matrices_workgroups(1), (1, 1));
 +        assert_eq!(skin_matrices_workgroups(64), (1, 1));
 +        assert_eq!(skin_matrices_workgroups(65), (2, 1));
@@ -649,9 +723,44 @@ index 96dd66dfa69093dd7ee56655a6dd67912bd708ca..2c3712547001ae40d3af665f4a2df5a9
      /// The joint matrices with slot 0 as the identity.
      fn matrices() -> Vec<Mat4> {
          vec![Mat4::IDENTITY]
+@@ -1224,6 +1445,34 @@ mod tests {
+         assert_eq!(storage.free_slots.len(), 1);
+     }
+ 
++    #[test]
++    fn the_live_end_follows_the_skin_that_ends_last() {
++        let (skin_a, skin_b, skin_c) = (entity(100), entity(101), entity(102));
++        let joints = [entity(1), entity(2)];
++        let world: HashMap<_, _> = [(joints[0], world_matrix(0)), (joints[1], world_matrix(1))]
++            .into_iter()
++            .collect();
++        let mut storage = StorageSkins::default();
++        let mut matrices = matrices();
++        add(&mut storage, &mut matrices, skin_a, 0, &joints, &world);
++        add(&mut storage, &mut matrices, skin_b, 4, &joints, &world);
++        add(&mut storage, &mut matrices, skin_c, 8, &joints, &world);
++        assert_eq!(storage.live_end, 10);
++
++        // A skin below the end leaves it where it is.
++        storage.remove_skin(skin_b);
++        assert_eq!(storage.live_end, 10);
++
++        // The skin that ends last moves it down to the next live skin, while
++        // the staging keeps the removed entries.
++        storage.remove_skin(skin_c);
++        assert_eq!(storage.live_end, 2);
++        assert!(storage.skin_joints_staging.len() >= 10);
++
++        storage.remove_skin(skin_a);
++        assert_eq!(storage.live_end, 0);
++    }
++
+     #[test]
+     fn removing_a_skin_with_a_pending_joint_balances_everything() {
+         let (skin_a, skin_b) = (entity(100), entity(101));
 diff --git a/crates/bevy_pbr/src/render/skin_matrices.wgsl b/crates/bevy_pbr/src/render/skin_matrices.wgsl
 new file mode 100644
-index 0000000000000000000000000000000000000000..9facf2e205c887a60c0b16eba73e7b4413926209
+index 0000000000000000000000000000000000000000..631ad7400265c68032e3cb1da7371f566a96a743
 --- /dev/null
 +++ b/crates/bevy_pbr/src/render/skin_matrices.wgsl
 @@ -0,0 +1,31 @@
@@ -666,13 +775,13 @@ index 0000000000000000000000000000000000000000..9facf2e205c887a60c0b16eba73e7b44
 +// Per skin joint: the skinning matrix the vertex shader reads.
 +@group(0) @binding(2) var<storage, read_write> skin_matrices: array<mat4x4<f32>>;
 +
-+// Invocations per row of the dispatch. Must match `SKIN_MATRICES_ROW` in
-+// `skin.rs`.
-+const ROW: u32 = 65536u;
-+
++// The dispatch covers the entries in rows of `num_workgroups.x` workgroups.
 +@compute @workgroup_size(64)
-+fn main(@builtin(global_invocation_id) id: vec3<u32>) {
-+    let index = id.y * ROW + id.x;
++fn main(
++    @builtin(global_invocation_id) id: vec3<u32>,
++    @builtin(num_workgroups) num_workgroups: vec3<u32>,
++) {
++    let index = id.y * num_workgroups.x * 64u + id.x;
 +    if index >= arrayLength(&skin_joints) || index >= arrayLength(&skin_matrices) {
 +        return;
 +    }

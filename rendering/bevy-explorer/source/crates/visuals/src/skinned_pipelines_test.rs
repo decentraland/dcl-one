@@ -183,6 +183,17 @@ fn skinned_meshes_draw_with_computed_skin_matrices() {
     assert_eq!(grown_sizes.0, grown_sizes.1);
 
     let cache = app.sub_app(RenderApp).world().resource::<PipelineCache>();
+    assert!(
+        cache.pipelines().any(|pipeline| {
+            matches!(pipeline.state, CachedPipelineState::Ok(_))
+                && matches!(
+                    &pipeline.descriptor,
+                    PipelineDescriptor::ComputePipelineDescriptor(descriptor)
+                        if descriptor.label.as_deref() == Some("skin matrices pipeline")
+                )
+        }),
+        "the skin matrices pipeline did not compile in the pipeline cache"
+    );
     let compiled_with = |defs: &[&str]| {
         cache
             .pipelines()

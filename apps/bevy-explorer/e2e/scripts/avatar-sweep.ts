@@ -191,8 +191,9 @@ try {
   if (values.out) await writeFile(values.out, '')
   await run(`/avatar_demo layout ${values.layout}`)
   await run(`/avatar_demo seed ${seed}`.trim())
+  // cleared on every run, so a sweep without --wearables never inherits a catalog set earlier
+  await run('/avatar_demo catalog')
   if (values.wearables != null) {
-    await run('/avatar_demo catalog')
     for (let i = 0; i < catalog.length; i += CATALOG_BATCH) {
       await run(`/avatar_demo catalog ${catalog.slice(i, i + CATALOG_BATCH).join(',')}`)
     }
