@@ -440,10 +440,11 @@ fn settled(state: &MarketplaceState) -> Result<Result<Readiness, NotReady>, Stri
 fn marker_verdict(
     state: &MarketplaceState,
     completed_at: Option<NaiveDateTime>,
+    now: DateTime<Utc>,
 ) -> Result<Readiness, NotReady> {
     pass_verdict(
         completed_at,
-        Utc::now(),
+        now,
         max_age(state.settings.trades_sync_interval),
     )
     .map(|()| Readiness::Mirrored)
@@ -467,15 +468,17 @@ pub async fn readiness(state: &MarketplaceState) -> Result<Readiness, NotReady> 
         })
         .await
         .map_err(NotReady::Database)?;
-    marker_verdict(state, completed)
+    marker_verdict(state, completed, Utc::now())
 }
 
-/// [`readiness`] with the pass marker read on `conn`, uncached: a reader
-/// that runs its reads in one snapshot (the explorer map's LAND listings,
-/// `land_map`) decides on the marker that snapshot sees.
+/// [`readiness`] with the pass marker read on `conn`, uncached, at `now`: a
+/// reader that runs its reads in one snapshot (the explorer map's LAND
+/// listings, `land_map`) decides on the marker that snapshot sees, on that
+/// snapshot's clock.
 pub async fn readiness_on(
     state: &MarketplaceState,
     conn: &mut sqlx::PgConnection,
+    now: DateTime<Utc>,
 ) -> Result<Readiness, NotReady> {
     let upstream = match settled(state) {
         Ok(decided) => return decided,
@@ -487,7 +490,7 @@ pub async fn readiness_on(
         .await
         .map(Option::flatten)
         .map_err(NotReady::Database)?;
-    marker_verdict(state, completed)
+    marker_verdict(state, completed, now)
 }
 
 /// The gate every route over `shop.trades` passes first.

@@ -5,7 +5,7 @@
 //!
 //! Every input is read in one REPEATABLE READ, READ ONLY snapshot, the one
 //! the land-authz index opens once it finds itself published
-//! (`LandAuthzState::ready_snapshot`), so the LAND facts, Shop's index
+//! (`indexer::ready_snapshot`), so the LAND facts, Shop's index
 //! cursors and Shop's rows are one state of the database:
 //!
 //! - **LAND and estates** ([`read_land`]): every LAND token with its
@@ -39,9 +39,12 @@
 //!
 //! Known differences from the atlas: an order whose seller no longer owns
 //! the token shows no price (the subgraph keeps a transferred order as the
-//! token's `activeOrder`, and the atlas prices it until it expires); a bid
-//! does not move `updatedAt`; rental listings are this node's own
-//! (`signatures.*`), not another signatures server's.
+//! token's `activeOrder`, and the atlas prices it until it expires); a
+//! trade priced in USD-pegged MANA prices nothing (Shop reads MANA prices
+//! only); a bid does not move `updatedAt`; rental listings are this node's
+//! own (`signatures.*`), not another signatures server's, and are not
+//! checked against the token's current owner (Shop's `rental-listing-status`
+//! job cancels a listing whose asset left its lessor).
 
 use std::collections::{BTreeMap, HashMap};
 use std::sync::OnceLock;
@@ -176,11 +179,10 @@ struct EstateRead {
     name: Option<String>,
 }
 
-/// What [`read_land`] read, and the block the index had published.
+/// What [`read_land`] read.
 pub struct LandSnapshot {
     pub lands: Vec<LandRow>,
     pub estates: HashMap<String, EstateRow>,
-    pub folded_block: i64,
 }
 
 #[derive(Debug, Clone, Copy, Deserialize)]
@@ -556,13 +558,11 @@ WHERE e.token_address = $1
 
 /// Every LAND token of `land_registry` and every estate of
 /// `estate_registry` holding one, on `conn`: the published snapshot of the
-/// land-authz index (`LandAuthzState::ready_snapshot`), whose cursor
-/// published `folded_block`.
+/// land-authz index (`indexer::ready_snapshot`).
 pub async fn read_land(
     conn: &mut PgConnection,
     land_registry: &str,
     estate_registry: &str,
-    folded_block: i64,
 ) -> anyhow::Result<LandSnapshot> {
     use anyhow::Context as _;
     let lands: Vec<LandRow> = sqlx::query_as(LANDS_SQL)
@@ -590,7 +590,6 @@ pub async fn read_land(
                 )
             })
             .collect(),
-        folded_block,
     })
 }
 
@@ -664,7 +663,6 @@ mod tests {
                 },
             )]
             .into(),
-            folded_block: 1,
         }
     }
 
@@ -923,7 +921,6 @@ mod tests {
                 },
             )]
             .into(),
-            folded_block: 1,
         };
         let tiles = compose(LAND, ESTATE, &land, &LandMarketSnapshot::default(), NOW_MS);
         let t = &tiles["0,10"];

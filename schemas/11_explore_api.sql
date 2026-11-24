@@ -74,8 +74,7 @@ CREATE TABLE explore_api.feature_flags_local (
 -- workload") and gzip-compressed as one row so a restart renders map.png
 -- before the first pass; the row is the grid's revision: last_updated_at
 -- is the /v2/tiles/info stamp, moved only when the body changes; etag is the
--- hex SHA-256 of the stored body (a row the replaced mirror wrote holds the
--- upstream's ETag); fetched_at is the build time.
+-- hex SHA-256 of the stored body; fetched_at is the build time.
 CREATE TABLE explore_api.map_grid (
     id smallint PRIMARY KEY CHECK (id = 1),
     last_updated_at bigint NOT NULL,

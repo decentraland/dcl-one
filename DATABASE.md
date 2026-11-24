@@ -2858,13 +2858,12 @@ first `CreateEstate` block.
 `explore_api.map_grid` (`schemas/11_explore_api.sql`) holds the tile grid
 behind the explorer map routes (`/api/v{1,2}/tiles`, `/api/v2/tiles/info`,
 `map.png`, the minimaps and the parcel and estate metadata). The node
-builds it from its own indexes. It no longer copies api.decentraland.org's
-grid, and `EXPLORER_MAP_SOURCE_URL` and `EXPLORER_MAP_MIN_REFRESH_SECS` are
-gone.
+builds it from its own indexes.
 
 - **Job:** `explorer-map-grid` (`explore/src/api/map/mod.rs`, `run_pass`),
-  leased, every 60 s with 10 s of jitter. A failed pass backs off up to
-  5 minutes. It runs whatever `EXPLORER_MIRRORS_ENABLED` says. Its pass
+  leased, every 60 s with 10 s of jitter, started once the land-authz index
+  and Shop's reader are attached. A failed pass backs off up to 5 minutes.
+  It runs whatever `EXPLORER_MIRRORS_ENABLED` says. Its pass
   marker is `map-grid` in `explore_api.mirror_passes` (`GET /mirrors`).
   Every process also runs `explorer-map-grid-reload` every 60 s (`follow`):
   one primary-key read of the row's stamp, a reload only when another
@@ -2873,7 +2872,11 @@ gone.
 - **One snapshot:** every read below runs in one REPEATABLE READ, READ ONLY
   transaction, the one the land-authz index opens once it finds itself
   published for the configured registries
-  (`LandAuthzState::ready_snapshot`). Shop's readiness checks and rows run
+  (`indexer::ready_snapshot`; a database error fails the pass as itself,
+  not as an unpublished index). The build's clock is that snapshot's
+  `now()`, the clock the index cursors are written on, so a fold committed
+  just before the snapshot is never in its future. Shop's readiness checks
+  and rows run
   on the same connection, which `serve` hands to Shop through
   `src/serve_adapters.rs` (Shop sits above Explore). The LAND facts, the
   index cursors and Shop's rows are therefore one state of the database: a
@@ -2891,7 +2894,8 @@ gone.
   with the `shop.nft_event` row their `(updated_block, updated_log)` names,
   by primary key. The open `public_nft_order` trades that sell a token of
   either registry (`catalog::unified_trades_cte_of` scoped to the two
-  contracts, `idx_trade_assets_sent_contract`). The open, unexpired
+  contracts, `idx_trade_assets_sent_contract`), priced in MANA (received
+  asset type 1; a USD-pegged price is not a MANA amount). The open, unexpired
   `signatures.rentals` rows of both registries signed for the grid's chain
   and its Rentals contract, with their periods.
 - **Readiness:** the land-authz index published for the configured
@@ -2915,16 +2919,22 @@ gone.
   the row (or its absence) in its input snapshot, as the revision its
   inputs follow, and compares its body with that revision, not with what
   its process holds. An equal body writes nothing, and a process holding an
-  older grid reloads the row. A different body is gzipped and written with
-  an `UPDATE` guarded on that revision's stamp and `etag` (an `INSERT ...
+  older grid reloads the row. A different body waits until that revision
+  was built 5 minutes earlier (`fetched_at`, `MIN_PUBLISH_INTERVAL`), so a
+  token relisted every
+  minute does not write a 4.4 MB row and make every process reload it every
+  minute. Then it is gzipped and written with an `UPDATE` guarded on that
+  revision's stamp and `etag` (an `INSERT ...
   ON CONFLICT DO NOTHING` when it saw none), stamped with the current time
-  in milliseconds and at least one second past it. If another publisher
+  in milliseconds and at least one second past it. A builder whose lease
+  went during the pass writes nothing. If another publisher
   stored a revision after the snapshot began, the write stores nothing and
   the build is discarded: a pass never overwrites a revision published
   since its snapshot. A process serves a grid only if its stamp
   is newer than the one it holds, decided under its grid lock, so a slow
   reload never brings back an older revision. An order or rental that
-  expires changes the body on the next pass. A PNG answer takes one grid
+  expires changes the body on the next pass, published under the same
+  5-minute floor. A PNG answer takes one grid
   for its validators, cache key and body, and for an estate's
   dissolved-estate redirect.
 - **Rules:** atlas-server's `buildTile`, `addSpecialTiles`,
@@ -2933,7 +2943,11 @@ gone.
   `build.rs` module docs. An order whose seller no longer owns the token
   shows no price, while the atlas still prices it until it expires: 19 of
   the 412 tiles the atlas priced by a legacy order on 2026-11-24. Bids do
-  not move `updatedAt`. Rental listings are this node's own.
+  not move `updatedAt`. Rental listings are this node's own, and a listing
+  is not checked against the token's current owner: the
+  `rental-listing-status` job cancels one whose asset left its lessor.
+  While a source is not ready, the held grid keeps its prices and listings,
+  including ones that expire meanwhile, until a pass builds again.
 - **Volume and cost:** mainnet holds 92,598 LAND, 65,086 of them in about
   2,700 estates. On a synthetic database of that size (1.02M rights
   events, 30,866 orders, 69,448 names among 1.07M `nft_event` rows, 52,000
@@ -2941,14 +2955,14 @@ gone.
   LAND snapshot read takes 0.47 s, the estates 16 ms, the orders 10 ms, the
   names 34 ms and the trades 16 ms. Composing the grid takes 0.14 s,
   serializing it 0.19 s (a 36.5 MB body) and gzip 0.04 s (4.4 MB stored).
-- **Deploy:** no schema step. An environment that still sets
-  `EXPLORER_MAP_SOURCE_URL` or `EXPLORER_MAP_MIN_REFRESH_SECS` starts: the
-  binary and the posture checks read neither. The first pass after the
-  upgrade replaces the row the mirror left, whose `etag` is the upstream's
-  and matches no build. Until the sources publish, the mirror's last copy
-  keeps serving. A node without the land-authz index,
-  the nft index (`MARKETPLACE_NFT_INDEX_ENABLED`, mainnet only) or a trades
-  source never builds a grid, and its map routes answer the envelope.
+- **Deploy:** no schema step. Stop every process of a binary that runs
+  the `explorer-map-mirror` job before this one's first build: that job
+  rewrites the row's stamp without a guard. An environment that still sets
+  `EXPLORER_MAP_SOURCE_URL` or `EXPLORER_MAP_MIN_REFRESH_SECS` starts, as
+  the binary and the posture checks read neither. A node without the
+  land-authz index, the nft index (`MARKETPLACE_NFT_INDEX_ENABLED`, mainnet
+  only) or a trades source never builds a grid, and its map routes answer
+  the envelope.
 
 ## Place removal feed
 

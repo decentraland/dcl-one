@@ -1841,11 +1841,11 @@ struct FixedLandMarket(Mutex<Result<map::LandMarketSnapshot, crate::chain_index:
 impl map::LandMarket for FixedLandMarket {
     fn snapshot<'a>(
         &'a self,
-        _conn: &'a mut sqlx::PgConnection,
+        conn: &'a mut sqlx::PgConnection,
         chain_id: i64,
         _land: &'a str,
         _estate: &'a str,
-        _now: chrono::DateTime<chrono::Utc>,
+        now: chrono::DateTime<chrono::Utc>,
     ) -> futures::future::BoxFuture<'a, Result<map::LandMarketSnapshot, map::LandMarketError>> {
         assert_eq!(chain_id, 1, "the test LAND index is mainnet's");
         let answer = match &*self.0.lock() {
@@ -1855,7 +1855,16 @@ impl map::LandMarket for FixedLandMarket {
                 "fixture not published".into(),
             )),
         };
-        Box::pin(async move { answer })
+        Box::pin(async move {
+            // The build's clock is the snapshot's own, never the process's.
+            let on_snapshot_clock: bool = sqlx::query_scalar("SELECT now() = $1")
+                .bind(now)
+                .fetch_one(&mut *conn)
+                .await
+                .unwrap();
+            assert!(on_snapshot_clock, "the build's now is the snapshot's now()");
+            answer
+        })
     }
 }
 
@@ -2418,12 +2427,16 @@ async fn map_grid_revisions_follow_the_stored_row_not_the_process() {
 
     // A write guarded on a revision another publisher replaced stores nothing.
     let stored = map::stored_revision(&db.pool).await.unwrap().unwrap();
-    let stale_rev = (y.last_updated_at, Some(digest(&y)));
+    let stale_rev = map::Revision {
+        stamp: y.last_updated_at,
+        etag: Some(digest(&y)),
+        built_at: stored.built_at,
+    };
     assert!(
         !map::store_guarded(
             &db.pool,
             Some(&stale_rev),
-            stored.0 + 5000,
+            stored.stamp + 5000,
             "overtaken",
             1,
             b"",
@@ -2555,6 +2568,79 @@ async fn an_older_build_never_replaces_a_newer_publication() {
         Some(1500.0)
     );
 
+    jobs.shutdown(Duration::from_secs(1)).await;
+    db.teardown().await;
+}
+
+/// A builder whose lease goes while it reads stores nothing, and a changed
+/// grid waits until the stored revision is the publication floor old.
+#[tokio::test]
+async fn a_cancelled_or_too_early_build_stores_nothing() {
+    let Some(db) = scratch_database().await else {
+        return;
+    };
+    let (jobs, ctx) = job_ctx().await;
+    let settings = crate::land_authz::Settings::for_tests();
+    seed_land(&db.pool, &settings).await;
+    publish_land(&db.pool, &settings).await;
+    let priced = |mana| map::LandMarketSnapshot {
+        orders: vec![estate_order(&settings, mana)],
+        ..Default::default()
+    };
+    let mut floored = Settings::for_tests(Sources::defaults());
+    floored.map_min_publish_interval = Duration::from_secs(3600);
+    let a = node_with_db(floored, db.pool.clone()).await;
+    a.state.attach_land_authz(land_authz_on(&db.pool));
+    let market = Arc::new(GatedLandMarket {
+        answer: Mutex::new(priced(1000)),
+        gate: Mutex::new(None),
+    });
+    a.state.attach_land_market(market.clone());
+    let row = || async { stored_grid(&db.pool).await.unwrap() };
+
+    // The first grid has no revision to wait for.
+    map::run_pass(&a.state, &ctx).await.unwrap();
+    let first = row().await;
+
+    // A changed grid inside the floor is held back; the stored one stays.
+    *market.answer.lock() = priced(1500);
+    map::run_pass(&a.state, &ctx).await.unwrap();
+    assert_eq!(row().await, first, "held back by the floor");
+    assert_eq!(a.state.map.last_updated_at(), first.0);
+    assert_eq!(
+        a.state.map.snapshot().unwrap().tiles["11,13"].price,
+        Some(1000.0)
+    );
+
+    // Without the floor, a builder that loses its lease mid-read stores
+    // nothing; the next one publishes.
+    let b = node_with_db(Settings::for_tests(Sources::defaults()), db.pool.clone()).await;
+    b.state.attach_land_authz(land_authz_on(&db.pool));
+    b.state.attach_land_market(market.clone());
+    let (pinned, release) = (
+        Arc::new(tokio::sync::Notify::new()),
+        Arc::new(tokio::sync::Notify::new()),
+    );
+    *market.gate.lock() = Some((pinned.clone(), release.clone()));
+    let (lease_jobs, lease) = job_ctx().await;
+    let paused = {
+        let (state, lease) = (b.state.clone(), lease.clone());
+        tokio::spawn(async move { map::run_pass(&state, &lease).await })
+    };
+    pinned.notified().await;
+    lease.cancel.cancel();
+    release.notify_one();
+    let err = paused.await.unwrap().unwrap_err();
+    assert!(err.to_string().contains("cancelled"), "{err}");
+    assert_eq!(row().await, first, "a cancelled build stores nothing");
+    map::run_pass(&b.state, &ctx).await.unwrap();
+    assert!(row().await.0 > first.0);
+    assert_eq!(
+        b.state.map.snapshot().unwrap().tiles["11,13"].price,
+        Some(1500.0)
+    );
+
+    lease_jobs.shutdown(Duration::from_secs(1)).await;
     jobs.shutdown(Duration::from_secs(1)).await;
     db.teardown().await;
 }

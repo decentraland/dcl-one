@@ -470,7 +470,6 @@ pub async fn serve(
     .await
     .context("starting the explorer-api readers and mirrors")?;
     explorer_api.attach_eip1654(eip1654.clone());
-    explorer_api.spawn_jobs(&jobs);
     // An island's /about advertises its own minimap once the grid it draws is loaded.
     let grid = Arc::downgrade(&explorer_api);
     content.attach_parcel_grid(Arc::new(move || {
@@ -587,6 +586,9 @@ pub async fn serve(
     explore.places.set_land_authz(land.clone());
     explorer_api.attach_land_authz(land.clone());
     explorer_api.attach_land_market(Arc::new(adapters::ShopLandMarket(market.clone())));
+    // Its jobs start once the tile grid's sources are attached, so the first
+    // build does not record them as missing.
+    explorer_api.spawn_jobs(&jobs);
 
     // The content server's local write path (src/content/{create_entity,
     // unpublish_scene,land_publish}): the write deployer over the ONE pool

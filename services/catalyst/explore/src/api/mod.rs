@@ -164,6 +164,9 @@ pub struct Settings {
     pub bff_url: String,
     /// The one app whose flags document is mirrored (`explorer`).
     pub feature_flags_app: String,
+    /// The least age of a stored tile grid revision before a changed one
+    /// replaces it ([`map::MIN_PUBLISH_INTERVAL`]; none in tests).
+    pub map_min_publish_interval: Duration,
     pub version: String,
     pub commit_hash: String,
     /// Tests only: lets a loopback mock stand in for an upstream. Never set
@@ -258,6 +261,7 @@ impl Settings {
             ),
             bff_url: value_or(&config.explore.bff_url, "/bff".into()),
             feature_flags_app: "explorer".into(),
+            map_min_publish_interval: map::MIN_PUBLISH_INTERVAL,
             version: env!("CARGO_PKG_VERSION").to_string(),
             commit_hash: config.commit_hash().unwrap_or_default(),
             allow_private_sources: false,
@@ -350,6 +354,7 @@ impl Settings {
             comms_fixed_adapter: "offline:offline".into(),
             bff_url: "/bff".into(),
             feature_flags_app: "explorer".into(),
+            map_min_publish_interval: Duration::ZERO,
             version: "test".into(),
             commit_hash: String::new(),
             allow_private_sources: true,

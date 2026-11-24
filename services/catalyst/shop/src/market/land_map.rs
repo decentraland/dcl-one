@@ -14,7 +14,9 @@
 //! database. A rewind that withdraws a publication and deletes rows after
 //! the snapshot began is invisible to it; the next build sees it whole.
 //!
-//! Readiness, the stage-5 rule ([`check_ready`]): the grid's chain must be
+//! Readiness, the stage-5 rule (`check_ready`), on the caller's clock (the
+//! snapshot's, so a fold committed just before it is not in its future):
+//! the grid's chain must be
 //! Ethereum mainnet (the nft index walks only it), the nft index published
 //! on Ethereum (it folds the orders and the names; `chain_walk::ready_sql`,
 //! the cursor bound to chain 1) and `shop.trades` readable
@@ -22,8 +24,9 @@
 //! names the source and the grid is not built. The trades' chain verdicts
 //! (`shop.trade_chain_state`) close sold and cancelled listings while the
 //! trade-events index is published on Ethereum, as they do for the Shop.
-//! Rental listings are the ones signed for the grid's chain and its Rentals
-//! contract.
+//! Trades count only when priced in MANA (received asset type 1): a price
+//! in USD-pegged MANA is not a MANA amount. Rental listings are the ones
+//! signed for the grid's chain and its Rentals contract.
 
 use chrono::{DateTime, NaiveDateTime, Utc};
 use sqlx::{PgConnection, Row};
@@ -123,15 +126,16 @@ WHERE r.status = 'open' AND r.contract_address = ANY($1) AND r.expiration >= $2
   AND r.chain_id = $3 AND lower(r.rental_contract_address) = $4
   AND EXISTS (SELECT 1 FROM signatures.rental_periods p WHERE p.rental_id = r.id)";
 
-/// The open trades of the LAND and Estate registries on Ethereum: `$1`
-/// now, `$2` the trades floor (`trades::mirrored_since`), `$3` the two
-/// registries.
+/// The open trades of the LAND and Estate registries on Ethereum priced in
+/// MANA: `$1` now, `$2` the trades floor (`trades::mirrored_since`), `$3`
+/// the two registries.
 fn trades_sql() -> String {
     format!(
         "WITH {} SELECT u.id::text AS id, u.contract_address_sent, u.token_id, u.signer, \
            u.amount_received::text AS price, (EXTRACT(EPOCH FROM u.created_at) * 1000)::bigint AS created_at_ms \
          FROM unified_trades u \
-         WHERE u.type = 'public_nft_order' AND u.token_id IS NOT NULL AND lower(u.network) = 'ethereum'",
+         WHERE u.type = 'public_nft_order' AND u.token_id IS NOT NULL AND lower(u.network) = 'ethereum' \
+           AND u.received_asset_type = 1",
         super::catalog::unified_trades_cte_of("$1", "$2", Some("$3"))
     )
 }
@@ -152,7 +156,7 @@ pub async fn land_market(
 }
 
 /// The stage-5 gate of [`land_market`], on `conn`.
-pub(crate) async fn check_ready(
+async fn check_ready(
     state: &MarketplaceState,
     conn: &mut PgConnection,
     chain_id: i64,
@@ -183,7 +187,7 @@ pub(crate) async fn check_ready(
                 .into(),
         ));
     }
-    match super::trades::readiness_on(state, conn).await {
+    match super::trades::readiness_on(state, conn, now).await {
         Ok(_) => Ok(()),
         Err(super::trades::NotReady::Refused(why)) => {
             Err(LandMarketError::Unready(Source::TradesMirror, why))
@@ -192,8 +196,8 @@ pub(crate) async fn check_ready(
     }
 }
 
-/// The rows of [`land_market`], on `conn`, once [`check_ready`] passed there.
-pub(crate) async fn read(
+/// The rows of [`land_market`], on `conn`, once `check_ready` passed there.
+async fn read(
     state: &MarketplaceState,
     conn: &mut PgConnection,
     chain_id: i64,
@@ -376,6 +380,21 @@ mod tests {
         mana: u64,
         expires_in: &str,
     ) {
+        priced_trade(pool, tag, contract, token, signer, mana, expires_in, 1).await;
+    }
+
+    /// [`trade`] received as asset type `received` (1 MANA, 2 USD-pegged MANA).
+    #[allow(clippy::too_many_arguments)]
+    async fn priced_trade(
+        pool: &sqlx::PgPool,
+        tag: &str,
+        contract: &str,
+        token: &str,
+        signer: &str,
+        mana: u64,
+        expires_in: &str,
+        received: i16,
+    ) {
         let id: uuid::Uuid = sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
             "INSERT INTO shop.trades (network, chain_id, signature, hashed_signature, checks, signer, type, expires_at, effective_since, contract) \
              VALUES ('ETHEREUM', 1, $1, $2, '{{\"uses\": 1}}', $3, 'public_nft_order', \
@@ -403,11 +422,12 @@ mod tests {
             .await
             .unwrap();
         let received: uuid::Uuid = sqlx::query_scalar(
-            "INSERT INTO shop.trade_assets (trade_id, direction, asset_type, contract_address, beneficiary) VALUES ($1, 'received', 1, $2, $3) RETURNING id",
+            "INSERT INTO shop.trade_assets (trade_id, direction, asset_type, contract_address, beneficiary) VALUES ($1, 'received', $4, $2, $3) RETURNING id",
         )
         .bind(id)
         .bind(addr('8'))
         .bind(signer)
+        .bind(received)
         .fetch_one(pool)
         .await
         .unwrap();
@@ -523,6 +543,8 @@ mod tests {
         trade(&db.pool, "land", LAND, "5", &addr('a'), 42, "1 day").await;
         trade(&db.pool, "expired", LAND, "5", &addr('a'), 41, "-1 hour").await;
         trade(&db.pool, "other", &addr('6'), "5", &addr('a'), 40, "1 day").await;
+        // A LAND trade priced in USD-pegged MANA: not a MANA price.
+        priced_trade(&db.pool, "usd", LAND, "6", &addr('a'), 39, "1 day", 2).await;
         // Rentals: the estate's open mainnet listing; an expired one; one of
         // the same LAND contract signed for Sepolia; one naming another
         // Rentals contract on mainnet.
@@ -615,7 +637,7 @@ mod tests {
                     "42000000000000000000".into()
                 ),
             ],
-            "the open trades of the two registries only"
+            "the open MANA trades of the two registries only"
         );
         assert!(m.trades.iter().all(|t| t.created_at_ms > 0));
         assert_eq!(

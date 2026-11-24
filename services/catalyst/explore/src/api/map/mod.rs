@@ -52,6 +52,11 @@ pub const JOB: &str = "explorer-map-grid";
 pub const RELOAD_JOB: &str = "explorer-map-grid-reload";
 /// Pause between two builds.
 pub const BUILD_INTERVAL: Duration = Duration::from_secs(60);
+/// The least age of a stored revision before a changed grid replaces it
+/// (`Settings::map_min_publish_interval`): each revision is a ~4.4 MB row
+/// every process reloads, so a token relisted every minute does not cost
+/// that every minute.
+pub const MIN_PUBLISH_INTERVAL: Duration = Duration::from_secs(300);
 const RESPONSE_CACHE_TTL: Duration = Duration::from_secs(120);
 const PNG_CACHE_ENTRIES: usize = 256;
 const TILES_CACHE_ENTRIES: usize = 512;
@@ -64,8 +69,7 @@ pub struct Grid {
     /// The grid's stamp (`/v2/tiles/info`'s `lastUpdatedAt`, ms): it moves
     /// only when the body changes.
     pub last_updated_at: i64,
-    /// When the stored body was built (or, for a row the old mirror wrote,
-    /// downloaded).
+    /// When the stored body was built.
     pub fetched_at: NaiveDateTime,
     /// SHA-256 of [`build::canonical_body`], the body's identity: a stored
     /// revision carries it, in hex, as its `etag`.
@@ -88,16 +92,27 @@ struct TilesDocument {
 }
 
 impl Grid {
-    /// Parses a stored `{ok, data: {"x,y": tile}}` document.
+    /// Parses a stored `{ok, data: {"x,y": tile}}` document. Its digest is
+    /// the row's `etag` when that is one (a build stored it), else the
+    /// SHA-256 of `body` as stored, never a re-serialization of the grid.
     pub fn from_json(
         body: &[u8],
         last_updated_at: i64,
         fetched_at: NaiveDateTime,
+        etag: Option<&str>,
     ) -> anyhow::Result<Self> {
         let doc: TilesDocument = serde_json::from_slice(body).context("tiles document")?;
         anyhow::ensure!(doc.ok, "tiles document has ok=false");
         anyhow::ensure!(!doc.data.is_empty(), "tiles document has no tiles");
-        Ok(Self::from_tiles(doc.data, last_updated_at, fetched_at))
+        let digest = etag
+            .and_then(|e| <[u8; 32]>::try_from(hex::decode(e).ok()?).ok())
+            .unwrap_or_else(|| Sha256::digest(body).into());
+        Ok(Self::from_parts(
+            doc.data,
+            last_updated_at,
+            fetched_at,
+            digest,
+        ))
     }
 
     pub fn from_tiles(
@@ -355,7 +370,8 @@ impl MapState {
             .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     }
 
-    /// Serves `grid`, whatever is held (tests, and a node's first grid).
+    /// Serves `grid`, whatever is held.
+    #[cfg(test)]
     pub fn set(&self, grid: Grid) {
         *self.grid.write() = Some(Arc::new(grid));
         self.png_cache.clear();
@@ -418,13 +434,13 @@ impl MapState {
 
 /// The stored grid, inflated and parsed; `None` before the first build.
 pub async fn fetch_stored(pool: &PgPool) -> anyhow::Result<Option<Grid>> {
-    let row: Option<(i64, Vec<u8>, NaiveDateTime)> = sqlx::query_as(
-        "SELECT last_updated_at, body_gzip, fetched_at FROM explore_api.map_grid WHERE id = 1",
+    let row: Option<(i64, Option<String>, Vec<u8>, NaiveDateTime)> = sqlx::query_as(
+        "SELECT last_updated_at, etag, body_gzip, fetched_at FROM explore_api.map_grid WHERE id = 1",
     )
     .fetch_optional(pool)
     .await
     .context("reading explore_api.map_grid")?;
-    let Some((last_updated_at, body_gzip, fetched_at)) = row else {
+    let Some((last_updated_at, etag, body_gzip, fetched_at)) = row else {
         return Ok(None);
     };
     let grid = tokio::task::spawn_blocking(move || -> anyhow::Result<Grid> {
@@ -432,7 +448,7 @@ pub async fn fetch_stored(pool: &PgPool) -> anyhow::Result<Option<Grid>> {
         flate2::read::GzDecoder::new(body_gzip.as_slice())
             .read_to_end(&mut body)
             .context("inflating the stored grid")?;
-        Grid::from_json(&body, last_updated_at, fetched_at)
+        Grid::from_json(&body, last_updated_at, fetched_at, etag.as_deref())
     })
     .await
     .context("grid load task")??;
@@ -445,18 +461,27 @@ pub fn gzip(body: &[u8]) -> anyhow::Result<Vec<u8>> {
     Ok(enc.finish()?)
 }
 
-/// A stored revision: its stamp and its `etag`.
-pub(super) type Revision = (i64, Option<String>);
+/// A stored revision of the grid.
+#[derive(Debug, Clone, PartialEq, Eq, sqlx::FromRow)]
+pub(super) struct Revision {
+    /// `last_updated_at`: the stamp, which only grows.
+    pub stamp: i64,
+    /// The hex SHA-256 of the body a build stored ([`build::canonical_body`]).
+    pub etag: Option<String>,
+    /// `fetched_at`: when it was built, on the database clock; its age is
+    /// what the publication floor measures (a stamp can run ahead of it).
+    pub built_at: NaiveDateTime,
+}
 
-/// The stored revision: its stamp and its `etag`, the hex SHA-256 of the
-/// body a build stored ([`build::canonical_body`]); a row the old mirror
-/// left carries the upstream's ETag, which no build matches. Read on
-/// `executor`: the pool, or a build's input snapshot.
+/// The stored revision, read on `executor`: the pool, or a build's input
+/// snapshot.
 pub(super) async fn stored_revision<'e, E>(executor: E) -> anyhow::Result<Option<Revision>>
 where
     E: sqlx::PgExecutor<'e>,
 {
-    sqlx::query_as("SELECT last_updated_at, etag FROM explore_api.map_grid WHERE id = 1")
+    sqlx::query_as(
+        "SELECT last_updated_at AS stamp, etag, fetched_at AS built_at FROM explore_api.map_grid WHERE id = 1",
+    )
         .fetch_optional(executor)
         .await
         .context("reading explore_api.map_grid's revision")
@@ -488,7 +513,7 @@ pub(super) async fn store_guarded(
             .execute(pool)
             .await?
         }
-        Some((prev_stamp, prev_etag)) => {
+        Some(prev) => {
             sqlx::query(
                 "UPDATE explore_api.map_grid
                  SET last_updated_at = $1, etag = $2, tile_count = $3, body_gzip = $4, fetched_at = $5
@@ -499,8 +524,8 @@ pub(super) async fn store_guarded(
             .bind(tile_count as i32)
             .bind(body_gzip)
             .bind(built_at)
-            .bind(prev_stamp)
-            .bind(prev_etag.as_deref())
+            .bind(prev.stamp)
+            .bind(prev.etag.as_deref())
             .execute(pool)
             .await?
         }
@@ -514,7 +539,7 @@ pub(super) async fn store_guarded(
 /// newer grid ([`MapState::install_newer`]).
 pub async fn reload_if_newer(state: &Shared) -> anyhow::Result<bool> {
     let stored = stored_revision(&state.pool).await?;
-    if stored.is_none_or(|(s, _)| s <= state.map.last_updated_at()) {
+    if stored.is_none_or(|r| r.stamp <= state.map.last_updated_at()) {
         return Ok(false);
     }
     Ok(fetch_stored(&state.pool)
@@ -527,15 +552,47 @@ pub async fn reload_if_newer(state: &Shared) -> anyhow::Result<bool> {
 /// `explore_api.mirror_passes` records it, so a process that does not hold
 /// the build's lease names the same source while no grid exists.
 pub async fn follow(state: &Shared) -> anyhow::Result<()> {
-    reload_if_newer(state).await?;
-    let last_error: Option<Option<String>> =
-        sqlx::query_scalar("SELECT last_error FROM explore_api.mirror_passes WHERE mirror = $1")
-            .bind(MIRROR)
-            .fetch_optional(&state.pool)
-            .await
-            .context("reading the map-grid pass marker")?;
-    *state.map.waiting.lock() = last_error.flatten().as_deref().and_then(recorded_wait);
-    Ok(())
+    // Each half runs whatever the other did; the first failure is reported.
+    let reloaded = reload_if_newer(state).await;
+    let marker = sqlx::query_scalar::<_, Option<String>>(
+        "SELECT last_error FROM explore_api.mirror_passes WHERE mirror = $1",
+    )
+    .bind(MIRROR)
+    .fetch_optional(&state.pool)
+    .await
+    .context("reading the map-grid pass marker");
+    if let Ok(last_error) = &marker {
+        *state.map.waiting.lock() = last_error
+            .clone()
+            .flatten()
+            .as_deref()
+            .and_then(recorded_wait);
+    }
+    reloaded?;
+    marker.map(|_| ())
+}
+
+/// [`reload_if_newer`] for a pass that has nothing of its own to store: a
+/// failure is logged, never the pass's.
+async fn reload_quietly(state: &Shared) {
+    if let Err(e) = reload_if_newer(state).await {
+        tracing::warn!(error = %e, "reloading the stored tile grid failed; the next reload retries");
+    }
+}
+
+/// The outcome of a pass that serves a revision it did not build: the tile
+/// count and stamp of the one grid this process serves.
+fn served(state: &Shared) -> mirror::PassOutcome {
+    match state.map.snapshot() {
+        Some(g) => mirror::PassOutcome {
+            items: g.tiles.len() as i64,
+            cursor: Some(g.last_updated_at.to_string()),
+        },
+        None => mirror::PassOutcome {
+            items: 0,
+            cursor: None,
+        },
+    }
 }
 
 /// The source and reason a failed build recorded (`"<source> not ready:
@@ -565,8 +622,10 @@ fn next_stamp(stored: Option<i64>, now_ms: i64) -> i64 {
 /// as the one these inputs follow. The grid is composed and its body
 /// compared with that revision, not this process's grid: an equal body
 /// writes nothing (and a process holding an older grid reloads the stored
-/// one); a different one is stored with a write guarded on that revision,
-/// and served only if newer than what this process holds. A build whose
+/// one); a different one waits until that revision is
+/// [`MIN_PUBLISH_INTERVAL`] old, then is stored with a write guarded on it
+/// and served only if newer than what this process holds. The build's clock
+/// is the snapshot's (`now()`), the clock the index cursors were written on. A build whose
 /// revision another publisher replaced after its snapshot began is
 /// discarded: a pass never overwrites a revision published since its
 /// snapshot.
@@ -574,7 +633,6 @@ fn next_stamp(stored: Option<i64>, now_ms: i64) -> i64 {
 /// `lastError`) and keeps the held grid; no partial grid is built.
 pub async fn run_pass(state: &Shared, ctx: &JobContext) -> anyhow::Result<()> {
     mirror::run(&state.pool, MIRROR, ctx, || async {
-        let now = chrono::Utc::now();
         let (land, market) = match (state.land_authz.get(), state.land_market.get()) {
             (Some(land), Some(market)) => (land.clone(), market.clone()),
             (None, _) => {
@@ -596,7 +654,17 @@ pub async fn run_pass(state: &Shared, ctx: &JobContext) -> anyhow::Result<()> {
             .with_context(|| format!("no chain is known for LAND network {}", land.settings.network))?;
         let land_registry = land.settings.land_registry.to_ascii_lowercase();
         let estate_registry = land.settings.estate_registry.to_ascii_lowercase();
-        let Some(mut snapshot) = land.ready_snapshot().await else {
+        // The published snapshot, or why not: a database error is the
+        // pass's own failure, never read as the index being unpublished.
+        let snapshot = crate::land_authz::indexer::ready_snapshot(
+            &land.pool,
+            &land.settings.network,
+            &land.settings.land_registry,
+            &land.settings.estate_registry,
+        )
+        .await
+        .context("opening the land-authz snapshot")?;
+        let Some(mut snapshot) = snapshot else {
             return waiting(
                 state,
                 Source::LandAuthzIndex,
@@ -604,9 +672,15 @@ pub async fn run_pass(state: &Shared, ctx: &JobContext) -> anyhow::Result<()> {
                     .into(),
             );
         };
+        // The build's clock is the snapshot's: the index cursors were written
+        // on the database clock, so a fold committed just before the snapshot
+        // is never in its future; expiry and the stamp follow the same clock.
+        let now: chrono::DateTime<chrono::Utc> = sqlx::query_scalar("SELECT now()")
+            .fetch_one(&mut *snapshot.tx)
+            .await
+            .context("reading the snapshot's clock")?;
         let expected = stored_revision(&mut *snapshot.tx).await?;
-        let folded_block = snapshot.cursor.folded_block.unwrap_or(snapshot.cursor.last_block);
-        let land_rows = build::read_land(&mut snapshot.tx, &land_registry, &estate_registry, folded_block).await?;
+        let land_rows = build::read_land(&mut snapshot.tx, &land_registry, &estate_registry).await?;
         let listings = match market
             .snapshot(&mut snapshot.tx, chain_id, &land_registry, &estate_registry, now)
             .await
@@ -630,7 +704,7 @@ pub async fn run_pass(state: &Shared, ctx: &JobContext) -> anyhow::Result<()> {
         })
         .await
         .context("grid build task")?;
-        publish(state, expected, tiles, body, digest, now).await
+        publish(state, ctx, expected, tiles, body, digest, now).await
     })
     .await
 }
@@ -639,6 +713,7 @@ pub async fn run_pass(state: &Shared, ctx: &JobContext) -> anyhow::Result<()> {
 /// snapshot saw ([`run_pass`]).
 async fn publish(
     state: &Shared,
+    ctx: &JobContext,
     expected: Option<Revision>,
     tiles: HashMap<String, Tile>,
     body: Vec<u8>,
@@ -646,26 +721,39 @@ async fn publish(
     now: chrono::DateTime<chrono::Utc>,
 ) -> anyhow::Result<mirror::PassOutcome> {
     let digest_hex = hex::encode(digest);
-    // A pass that serves another revision than its own build reports that
-    // revision's tile count and stamp together, from the one grid it serves.
-    let served = |state: &Shared| {
-        state.map.snapshot().map(|g| mirror::PassOutcome {
-            items: g.tiles.len() as i64,
-            cursor: Some(g.last_updated_at.to_string()),
-        })
-    };
-    if let Some((_, Some(etag))) = &expected
+    if let Some(Revision {
+        etag: Some(etag), ..
+    }) = &expected
         && *etag == digest_hex
     {
         // The revision these inputs follow is this body: nothing to write;
         // serve the newest stored one.
-        reload_if_newer(state).await?;
-        return served(state).context("a stored revision is served after its reload");
+        reload_quietly(state).await;
+        return Ok(served(state));
     }
-    let stamp = next_stamp(expected.as_ref().map(|(s, _)| *s), now.timestamp_millis());
+    let floor = chrono::Duration::from_std(state.settings.map_min_publish_interval)
+        .unwrap_or(chrono::Duration::MAX);
+    if let Some(prev) = &expected
+        && now.naive_utc()
+            < prev
+                .built_at
+                .checked_add_signed(floor)
+                .unwrap_or(NaiveDateTime::MAX)
+    {
+        // A revision younger than the floor stays: a pass after it publishes.
+        ctx.progress(format!(
+            "{MIRROR}: changed grid held back until the stored revision is {} s old",
+            state.settings.map_min_publish_interval.as_secs()
+        ));
+        reload_quietly(state).await;
+        return Ok(served(state));
+    }
+    let stamp = next_stamp(expected.as_ref().map(|r| r.stamp), now.timestamp_millis());
     let gz = tokio::task::spawn_blocking(move || gzip(&body))
         .await
         .context("grid gzip task")??;
+    // A builder whose lease went meanwhile stores nothing.
+    anyhow::ensure!(!ctx.is_cancelled(), "cancelled before storing the grid");
     let built_at = now.naive_utc();
     let stored_it = store_guarded(
         &state.pool,
@@ -683,8 +771,8 @@ async fn publish(
         // began: its grid is served and this build discarded; the next pass
         // reads its inputs after it.
         tracing::warn!("another process stored a tile grid during this build; serving it instead");
-        reload_if_newer(state).await?;
-        return served(state).context("a stored revision is served after its reload");
+        reload_quietly(state).await;
+        return Ok(served(state));
     }
     tracing::info!(
         tiles = tiles.len(),

@@ -49,52 +49,94 @@ impl explore::api::map::LandMarket for ShopLandMarket {
                     }
                     land_map::LandMarketError::Failed(e) => build::LandMarketError::Failed(e),
                 })?;
+            // Every field named on both sides: one added to either fails to build.
+            let land_map::LandMarket {
+                orders,
+                trades,
+                rentals,
+                data,
+            } = m;
             Ok(build::LandMarketSnapshot {
-                orders: m
-                    .orders
+                orders: orders
                     .into_iter()
-                    .map(|o| build::LandOrder {
-                        contract_address: o.contract_address,
-                        token_id: o.token_id,
-                        open: o.open,
-                        seller: o.seller,
-                        price: o.price,
-                        expires_at_ms: o.expires_at_ms,
-                        created_at: o.created_at,
-                        updated_at: o.updated_at,
+                    .map(|o| {
+                        let land_map::LandOrder {
+                            contract_address,
+                            token_id,
+                            open,
+                            seller,
+                            price,
+                            expires_at_ms,
+                            created_at,
+                            updated_at,
+                        } = o;
+                        build::LandOrder {
+                            contract_address,
+                            token_id,
+                            open,
+                            seller,
+                            price,
+                            expires_at_ms,
+                            created_at,
+                            updated_at,
+                        }
                     })
                     .collect(),
-                trades: m
-                    .trades
+                trades: trades
                     .into_iter()
-                    .map(|t| build::LandTrade {
-                        id: t.id,
-                        contract_address: t.contract_address,
-                        token_id: t.token_id,
-                        signer: t.signer,
-                        price: t.price,
-                        created_at_ms: t.created_at_ms,
+                    .map(|t| {
+                        let land_map::LandTrade {
+                            id,
+                            contract_address,
+                            token_id,
+                            signer,
+                            price,
+                            created_at_ms,
+                        } = t;
+                        build::LandTrade {
+                            id,
+                            contract_address,
+                            token_id,
+                            signer,
+                            price,
+                            created_at_ms,
+                        }
                     })
                     .collect(),
-                rentals: m
-                    .rentals
+                rentals: rentals
                     .into_iter()
-                    .map(|r| build::LandRental {
-                        contract_address: r.contract_address,
-                        token_id: r.token_id,
-                        expiration_ms: r.expiration_ms,
-                        updated_at_ms: r.updated_at_ms,
-                        periods: r.periods,
+                    .map(|r| {
+                        let land_map::LandRental {
+                            contract_address,
+                            token_id,
+                            expiration_ms,
+                            updated_at_ms,
+                            periods,
+                        } = r;
+                        build::LandRental {
+                            contract_address,
+                            token_id,
+                            expiration_ms,
+                            updated_at_ms,
+                            periods,
+                        }
                     })
                     .collect(),
-                data: m
-                    .data
+                data: data
                     .into_iter()
-                    .map(|d| build::LandData {
-                        contract_address: d.contract_address,
-                        token_id: d.token_id,
-                        name: d.name,
-                        updated_at: d.updated_at,
+                    .map(|d| {
+                        let land_map::LandData {
+                            contract_address,
+                            token_id,
+                            name,
+                            updated_at,
+                        } = d;
+                        build::LandData {
+                            contract_address,
+                            token_id,
+                            name,
+                            updated_at,
+                        }
                     })
                     .collect(),
             })
