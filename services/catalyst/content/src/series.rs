@@ -1,7 +1,9 @@
-//! The content server's Prometheus families, under the names, label names, label values and
-//! histogram buckets the content server's dashboards and alerts read
-//! (`docs/metrics/content.md` maps each one to where it is observed; the sync series are
-//! in `docs/metrics/sync.md`). `catalyst serve` lists [`FAMILIES`] in its registry, which
+//! The content server's Prometheus families that keep a legacy content server series: the
+//! names, label names, label values and histogram buckets the content server's dashboards and
+//! alerts read (`docs/metrics/content.md` maps each one to where it is observed; the sync
+//! series are in `docs/metrics/sync.md`). The families under dcl-one's own names, those that
+//! replace a legacy series included, are in [`crate::metrics`]; keeping the two apart keeps
+//! this list the legacy contract. `catalyst serve` lists both `FAMILIES` in its registry, which
 //! applies the declared buckets.
 //!
 //! Every label value comes from a closed set: an entity type a client or a peer names goes
@@ -14,12 +16,11 @@ use std::time::Instant;
 
 use dcl_metrics::{CounterFamily, Descriptor, GaugeFamily, HistogramFamily, SharedString};
 
-/// The Prometheus client's default buckets, for the histograms declared without their own.
-const DEFAULT_BUCKETS: &[f64] = &[
-    0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0, 10.0,
-];
+/// The buckets of a legacy histogram declared without its own.
+pub(crate) const DEFAULT_BUCKETS: &[f64] = dcl_metrics::PROM_CLIENT_DEFAULT_BUCKETS;
 
-const fn counter<const N: usize>(
+/// A counter family with no unit.
+pub(crate) const fn counter<const N: usize>(
     name: &'static str,
     help: &'static str,
     keys: &'static [&'static str; N],
@@ -27,7 +28,8 @@ const fn counter<const N: usize>(
     CounterFamily::new(name, help, None, keys)
 }
 
-const fn gauge<const N: usize>(
+/// A gauge family with no unit.
+pub(crate) const fn gauge<const N: usize>(
     name: &'static str,
     help: &'static str,
     keys: &'static [&'static str; N],
@@ -256,7 +258,8 @@ pub const FAMILIES: &[Descriptor] = &[
 ];
 
 /// The entity types a label may name.
-pub const ENTITY_TYPES: [&str; 6] = ["scene", "profile", "wearable", "store", "emote", "outfits"];
+pub(crate) const ENTITY_TYPES: [&str; 6] =
+    ["scene", "profile", "wearable", "store", "emote", "outfits"];
 
 /// `entity_type` as a label value: one of [`ENTITY_TYPES`], else `unknown`.
 pub fn entity_type(entity_type: &str) -> &'static str {
@@ -288,16 +291,15 @@ pub fn build_info(version: &str, commit_hash: Option<&str>, eth_network: &str) {
         .set(1.0);
 }
 
-/// One snapshot window written (`result` success) or not (error), `interval_size` its window
-/// (`day`, `week`, `month`, `year`, else `unknown`), `reason` why it was generated.
-pub fn snapshot_generated(started: Instant, ok: bool, interval_size: &str, reason: &'static str) {
-    let interval_size = match interval_size {
-        "day" => "day",
-        "week" => "week",
-        "month" => "month",
-        "year" => "year",
-        _ => "unknown",
-    };
+/// One snapshot `window` written (`result` success) or not (error), `reason` why it was
+/// generated.
+pub fn snapshot_generated(
+    started: Instant,
+    ok: bool,
+    window: &crate::wire_types::TimeRange,
+    reason: &'static str,
+) {
+    let interval_size = crate::time_range::interval_size_label(window);
     SNAPSHOT_GENERATION_TIME
         .handle([if ok { "success" } else { "error" }, interval_size, reason])
         .record(seconds_since(started));
@@ -385,6 +387,28 @@ pub fn partial_stage(stage: &'static str, started: Instant) {
         .record(seconds_since(started));
 }
 
+/// Times a partial upload stage until dropped, so a stage that fails or is cancelled is timed
+/// too.
+pub struct StageTimer {
+    stage: &'static str,
+    started: Instant,
+}
+
+impl StageTimer {
+    pub fn start(stage: &'static str) -> Self {
+        Self {
+            stage,
+            started: Instant::now(),
+        }
+    }
+}
+
+impl Drop for StageTimer {
+    fn drop(&mut self) {
+        partial_stage(self.stage, self.started);
+    }
+}
+
 pub fn partial_metadata_checks(hashes: usize) {
     PARTIAL_METADATA_CHECKS.handle([]).increment(hashes as u64);
 }
@@ -430,18 +454,40 @@ pub fn partial_cleanup_failures(reason: &'static str, uploads: usize) {
         .increment(uploads as u64);
 }
 
-pub fn upload_budget_capacity(budget: &'static str, bytes: u64) {
-    UPLOAD_BUDGET_CAPACITY.handle([budget]).set(bytes as f64);
+/// An upload budget's series, bound once so a reservation that grows with every received chunk
+/// only stores into them.
+pub struct UploadBudgetSeries {
+    reserved: dcl_metrics::Gauge,
+    active: dcl_metrics::Gauge,
+    rejected: dcl_metrics::Counter,
 }
 
-/// A budget's reserved bytes and the uploads holding a share of it.
-pub fn upload_budget_usage(budget: &'static str, reserved: u64, active: u64) {
-    UPLOAD_BUDGET_RESERVED.handle([budget]).set(reserved as f64);
-    UPLOAD_BUDGET_ACTIVE.handle([budget]).set(active as f64);
+impl UploadBudgetSeries {
+    /// The series of `budget` (`memory` or `disk`), its capacity set and nothing reserved.
+    pub fn new(budget: &'static str, capacity: u64) -> Self {
+        UPLOAD_BUDGET_CAPACITY.handle([budget]).set(capacity as f64);
+        let series = Self {
+            reserved: UPLOAD_BUDGET_RESERVED.handle([budget]),
+            active: UPLOAD_BUDGET_ACTIVE.handle([budget]),
+            rejected: UPLOAD_BUDGET_REJECTIONS.handle([budget, "bytes"]),
+        };
+        series.usage(0, 0);
+        series
+    }
+
+    /// The bytes reserved and the uploads holding some of them.
+    pub fn usage(&self, reserved: u64, active: u64) {
+        self.reserved.set(reserved as f64);
+        self.active.set(active as f64);
+    }
+
+    pub fn rejected(&self) {
+        self.rejected.increment(1);
+    }
 }
 
-/// An upload shed: `budget` `memory`/`disk` with reason `bytes`, or `source` with
-/// `source_bytes`/`source_concurrency`.
+/// An upload shed: `budget` `source` with `source_bytes`/`source_concurrency` (a byte budget
+/// counts through [`UploadBudgetSeries`]).
 pub fn upload_budget_rejected(budget: &'static str, reason: &'static str) {
     UPLOAD_BUDGET_REJECTIONS
         .handle([budget, reason])
@@ -540,6 +586,14 @@ pub(crate) mod test_support {
 mod tests {
     use super::test_support::{recorder, sample};
     use super::*;
+    use crate::time_range::{MS_PER_DAY, MS_PER_WEEK};
+
+    fn window(size_ms: i64) -> crate::wire_types::TimeRange {
+        crate::wire_types::TimeRange {
+            init_timestamp: 0,
+            end_timestamp: size_ms,
+        }
+    }
 
     fn render(record: impl FnOnce()) -> String {
         let recorder = recorder();
@@ -570,7 +624,12 @@ mod tests {
             ),
         ];
         let rendered = render(|| {
-            snapshot_generated(Instant::now(), true, "day", "cover_time_range");
+            snapshot_generated(
+                Instant::now(),
+                true,
+                &window(MS_PER_DAY),
+                "cover_time_range",
+            );
             partial_completed(chrono::Utc::now().timestamp_millis(), 2);
             partial_stage("hash", Instant::now());
         });
@@ -594,7 +653,12 @@ mod tests {
     fn label_values_stay_in_their_closed_sets() {
         let rendered = render(|| {
             deployment_stored("a-peer-chosen-type", "SYNCED");
-            snapshot_generated(Instant::now(), true, "fortnight", "cover_time_range");
+            snapshot_generated(
+                Instant::now(),
+                true,
+                &window(2 * MS_PER_WEEK),
+                "cover_time_range",
+            );
             build_info("1.2.3", None, "sepolia");
         });
         assert_eq!(
@@ -619,6 +683,25 @@ mod tests {
             Some(1.0)
         );
         assert!(rendered.contains("# TYPE dcl_content_server_build_info gauge"));
+    }
+
+    #[test]
+    fn a_stage_left_early_is_still_timed() {
+        let failed = || -> Result<(), ()> {
+            let _timer = StageTimer::start("progress");
+            Err(())
+        };
+        let rendered = render(|| {
+            let _ = failed();
+        });
+        assert_eq!(
+            sample(
+                &rendered,
+                &format!("{}_count", PARTIAL_STAGE_DURATION.descriptor.name),
+                &[("stage", "progress")]
+            ),
+            Some(1.0)
+        );
     }
 
     #[test]

@@ -48,10 +48,10 @@ const MAX_QUOTA_SOURCES: usize = 100_000;
 
 /// Bytes reserved by in-flight deploys out of a fixed capacity.
 pub struct UploadBudget {
-    /// The `budget` label of its series: `memory` or `disk`.
-    label: &'static str,
+    series: crate::series::UploadBudgetSeries,
     capacity: u64,
-    /// The bytes reserved and the reservations holding them.
+    /// The bytes reserved and the reservations holding some of them: a request admitted with
+    /// nothing held (memory, while its body arrives) is not active until it grows.
     reserved: Mutex<(u64, u64)>,
 }
 
@@ -62,22 +62,21 @@ pub struct Reservation<'a> {
 }
 
 impl UploadBudget {
+    /// `label` is the `budget` label of its series: `memory` or `disk`.
     pub fn new(label: &'static str, capacity: u64) -> Self {
-        crate::series::upload_budget_capacity(label, capacity);
-        crate::series::upload_budget_usage(label, 0, 0);
         Self {
-            label,
+            series: crate::series::UploadBudgetSeries::new(label, capacity),
             capacity,
             reserved: Mutex::new((0, 0)),
         }
     }
 
     fn refuse(&self) {
-        crate::series::upload_budget_rejected(self.label, "bytes");
+        self.series.rejected();
     }
 
     fn report(&self, reserved: (u64, u64)) {
-        crate::series::upload_budget_usage(self.label, reserved.0, reserved.1);
+        self.series.usage(reserved.0, reserved.1);
     }
 
     /// Reserves `bytes` (at least [`MIN_UPLOAD_RESERVATION_BYTES`]); `None`
@@ -111,7 +110,7 @@ impl UploadBudget {
             return None;
         }
         reserved.0 += hold;
-        reserved.1 += 1;
+        reserved.1 += u64::from(hold > 0);
         self.report(*reserved);
         Some(Reservation {
             budget: self,
@@ -134,6 +133,7 @@ impl Reservation<'_> {
             return false;
         }
         reserved.0 += more;
+        reserved.1 += u64::from(self.bytes == 0);
         self.budget.report(*reserved);
         self.bytes = bytes;
         true
@@ -162,7 +162,7 @@ impl Drop for Reservation<'_> {
     fn drop(&mut self) {
         let mut reserved = self.budget.reserved.lock();
         reserved.0 -= self.bytes;
-        reserved.1 -= 1;
+        reserved.1 -= u64::from(self.bytes > 0);
         self.budget.report(*reserved);
     }
 }
@@ -465,6 +465,35 @@ mod tests {
                 "{labels:?}"
             );
         }
+    }
+
+    /// As upstream's memory budget, a request admitted while its body arrives holds no share
+    /// and is not active until the read form takes one.
+    #[test]
+    fn a_reservation_is_active_only_while_it_holds_bytes() {
+        use crate::series::{UPLOAD_BUDGET_ACTIVE, test_support::sample};
+        let recorder = crate::series::test_support::recorder();
+        let active = || {
+            sample(
+                &recorder.handle().render(),
+                UPLOAD_BUDGET_ACTIVE.descriptor.name,
+                &[("budget", "memory")],
+            )
+        };
+        dcl_metrics::with_local_recorder(&recorder, || {
+            let memory = UploadBudget::new("memory", 4 * MIN_UPLOAD_RESERVATION_BYTES);
+            let mut receiving = memory.try_admit(MIN_UPLOAD_RESERVATION_BYTES, 0).unwrap();
+            assert_eq!(active(), Some(0.0), "receiving its body");
+            assert!(receiving.grow(MIN_UPLOAD_RESERVATION_BYTES));
+            assert_eq!(active(), Some(1.0), "holding its share");
+            assert!(receiving.grow(2 * MIN_UPLOAD_RESERVATION_BYTES));
+            assert_eq!(active(), Some(1.0), "counted once");
+            drop(receiving);
+            assert_eq!(active(), Some(0.0));
+            drop(memory.try_admit(MIN_UPLOAD_RESERVATION_BYTES, 0).unwrap());
+            assert_eq!(active(), Some(0.0), "never held, never counted");
+            assert_eq!(memory.reserved(), 0);
+        });
     }
 
     #[test]

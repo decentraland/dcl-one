@@ -708,6 +708,8 @@ async fn an_account_over_its_upload_cap_waits() {
         ..Limits::default()
     };
     require_test_db!(Some(node) = Node::new("account-cap", limits).await);
+    let recorder = crate::series::test_support::recorder();
+    let _metrics = dcl_metrics::set_default_local_recorder(&recorder);
     let router = node.router();
     let signer = PrivateKeySigner::random();
     let first = make_scene(&signer, &[b"cap-a"], "scene").await;
@@ -722,6 +724,32 @@ async fn an_account_over_its_upload_cap_waits() {
         "Too many partial uploads in progress for this account (max 1). Complete an upload or wait for expired uploads to be cleaned up."
     );
     assert!(headers.contains_key(header::RETRY_AFTER));
+    assert_throttled(&recorder, "uploads_per_account");
+}
+
+/// One 429 counted in the staging counter as `throttled` and in
+/// `dcl_partial_upload_throttled_total` by `reason`.
+fn assert_throttled(recorder: &dcl_metrics::PrometheusRecorder, reason: &str) {
+    use crate::series::{PARTIAL_STAGING, PARTIAL_THROTTLED, test_support::sample};
+    let rendered = recorder.handle().render();
+    assert_eq!(
+        sample(
+            &rendered,
+            PARTIAL_STAGING.descriptor.name,
+            &[("kind", "throttled")]
+        ),
+        Some(1.0),
+        "{rendered}"
+    );
+    assert_eq!(
+        sample(
+            &rendered,
+            PARTIAL_THROTTLED.descriptor.name,
+            &[("reason", reason)]
+        ),
+        Some(1.0),
+        "{rendered}"
+    );
 }
 
 /// The status of a GET and a HEAD of `/contents/{hash}`.
@@ -1283,6 +1311,13 @@ async fn a_busy_store_lock_ends_the_cleanup_run() {
         .collect();
     insert_expired(&pool, &ids).await;
     insert_written(&pool, &storage, &ids).await;
+    sqlx::query(
+        "UPDATE content.pending_deployments SET reserved_bytes = 10 WHERE entity_id = ANY($1)",
+    )
+    .bind(&ids)
+    .execute(&pool)
+    .await
+    .unwrap();
     let limits = Limits {
         store_lock_wait: Duration::from_millis(300),
         ..Limits::default()
@@ -1310,6 +1345,17 @@ async fn a_busy_store_lock_ends_the_cleanup_run() {
     assert_eq!(cleaned.unwrap(), 0);
     assert_eq!(attempts.len(), 1, "one exclusive attempt: {attempts:?}");
     assert_eq!(pending_among(&pool, &ids).await, ids.len() as i64);
+    let held = (10 * ids.len()) as f64;
+    for name in [
+        crate::series::PARTIAL_RESERVED.descriptor.name,
+        crate::series::PARTIAL_CLEANUP_BACKLOG.descriptor.name,
+    ] {
+        assert_eq!(
+            crate::series::test_support::sample(&recorder.handle().render(), name, &[]),
+            Some(held),
+            "{name}: the expired uploads still hold their bytes"
+        );
+    }
 
     deploy.commit().await.unwrap();
     assert_eq!(
@@ -1348,6 +1394,11 @@ async fn a_busy_store_lock_ends_the_cleanup_run() {
     );
     assert_eq!(
         sample(PARTIAL_PENDING.descriptor.name, &[("state", "expired")]),
+        Some(0.0)
+    );
+    assert_eq!(sample(PARTIAL_RESERVED.descriptor.name, &[]), Some(0.0));
+    assert_eq!(
+        sample(PARTIAL_CLEANUP_BACKLOG.descriptor.name, &[]),
         Some(0.0)
     );
     assert!(sample(PARTIAL_CLEANUP_LAST_SUCCESS.descriptor.name, &[]).is_some_and(|t| t > 0.0));
@@ -1864,6 +1915,8 @@ async fn an_account_over_its_byte_rate_waits() {
         ..Limits::default()
     };
     require_test_db!(Some(node) = Node::new("byte-rate", limits).await);
+    let recorder = crate::series::test_support::recorder();
+    let _metrics = dcl_metrics::set_default_local_recorder(&recorder);
     let router = node.router();
     let signer = PrivateKeySigner::random();
     let scene = make_scene(&signer, &[b"rate-a"], "scene").await;
@@ -1890,6 +1943,7 @@ async fn an_account_over_its_byte_rate_waits() {
         "{body}"
     );
     assert!(headers.contains_key(header::RETRY_AFTER));
+    assert_throttled(&recorder, "bytes_per_minute");
 }
 
 /// Every replica reads the last cleanup run from the database.

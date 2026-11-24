@@ -45,6 +45,32 @@ const SEED: &str = include_str!("fixtures/snapshots/seed.sql");
 const GOLDEN: &str = include_str!("fixtures/snapshots/old-generator.json");
 const DAY: i64 = 86_400_000;
 
+/// A recorder with the content server's declared series, made the test thread's default.
+fn content_recorder() -> dcl_metrics::PrometheusRecorder {
+    dcl_metrics::Registry::new(&[catalyst::content::series::FAMILIES])
+        .unwrap()
+        .builder(dcl_metrics::PrometheusBuilder::new())
+        .unwrap()
+        .build_recorder()
+}
+
+/// The windows `dcl_content_server_snapshot_generation_time` counted with `labels`, summed
+/// over the labels left out.
+fn generations(recorder: &dcl_metrics::PrometheusRecorder, labels: &[(&str, &str)]) -> f64 {
+    recorder
+        .handle()
+        .render()
+        .lines()
+        .filter(|line| line.starts_with("dcl_content_server_snapshot_generation_time_count{"))
+        .filter(|line| {
+            labels
+                .iter()
+                .all(|(k, v)| line.contains(&format!("{k}=\"{v}\"")))
+        })
+        .filter_map(|line| line.rsplit_once(' ')?.1.parse::<f64>().ok())
+        .sum()
+}
+
 fn temp_dir(tag: &str) -> std::path::PathBuf {
     std::env::temp_dir().join(format!(
         "catalyst-snapgen-{tag}-{}-{}",
@@ -374,6 +400,8 @@ async fn generation_matches_the_old_generator_golden() {
     let root = temp_dir("golden");
     let state = content_state(&db.pool, &root).await;
     let generator = SnapshotGenerator::new(state.clone(), false, settings(1000));
+    let recorder = content_recorder();
+    let _metrics = dcl_metrics::set_default_local_recorder(&recorder);
 
     let (end1, golden1) = golden_pass(0);
     let (rows, summary) = generator.generate(end1).await.unwrap();
@@ -396,6 +424,15 @@ async fn generation_matches_the_old_generator_golden() {
         (5, 2, 3, 0)
     );
     assert_matches_golden(&state, &rows, &golden2).await;
+    assert_eq!(
+        generations(
+            &recorder,
+            &[("result", "success"), ("reason", "cover_time_range")]
+        ),
+        6.0,
+        "every window written had no saved window covering it"
+    );
+    assert_eq!(generations(&recorder, &[("interval_size", "year")]), 1.0);
     let day = &golden1[3].hash;
     assert!(
         state.storage.exist(day).await.unwrap(),
@@ -628,7 +665,17 @@ async fn a_month_old_window_listing_an_overwritten_entity_is_regenerated() {
     assert_eq!(year_row(&rows), kept);
 
     // Over a month old with fewer active entities than it lists: regenerated.
+    let recorder = content_recorder();
+    let metrics = dcl_metrics::set_default_local_recorder(&recorder);
     let (rows, _) = generator.generate(generated + month + DAY).await.unwrap();
+    drop(metrics);
+    assert_eq!(
+        generations(
+            &recorder,
+            &[("interval_size", "year"), ("reason", "inactive_entities")]
+        ),
+        1.0
+    );
     let rebuilt = year_row(&rows);
     assert_eq!(rebuilt.number_of_entities, golden[0].entities - 1);
     assert_ne!(rebuilt.hash, kept.hash);

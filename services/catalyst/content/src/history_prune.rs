@@ -285,8 +285,7 @@ async fn unlink_unreferenced(
 /// the start, each select bounded to its window; a full batch continues
 /// inside the window, a short one moves on. The token fires and the report
 /// covers what ran. `Ok` with `skipped` set when the options refuse the run.
-/// A pass that ran counts as a collection run (`dcl_content_garbage_collection_*`):
-/// `deferred` when the exclusive store lock stayed busy, `error` on any other failure.
+/// A pass that ran counts as a collection run (`dcl_content_garbage_collection_*`).
 async fn run(
     pool: &PgPool,
     storage: &Storage,
@@ -295,16 +294,22 @@ async fn run(
 ) -> anyhow::Result<PruneReport> {
     let started = Instant::now();
     let result = pass(pool, storage, opts, cancel, started).await;
-    if result.as_ref().is_ok_and(|report| report.skipped.is_some()) {
-        return result;
+    let cancelled = cancel.is_some_and(CancellationToken::is_cancelled);
+    if let Some(outcome) = run_outcome(&result, cancelled) {
+        crate::series::gc_run(outcome);
     }
-    let outcome = match &result {
-        Ok(_) => "success",
-        Err(e) if matches!(e.downcast_ref(), Some(gc::GcError::LockTimeout)) => "deferred",
-        Err(_) => "error",
-    };
-    crate::series::gc_run(outcome);
     result
+}
+
+/// How a pass counts: `success`, `deferred` when the exclusive store lock stayed busy, `error`
+/// on any other failure; a pass the options refused or that stopped for shutdown, not at all.
+fn run_outcome(result: &anyhow::Result<PruneReport>, cancelled: bool) -> Option<&'static str> {
+    match result {
+        Ok(report) if report.skipped.is_some() || cancelled => None,
+        Ok(_) => Some("success"),
+        Err(e) if matches!(e.downcast_ref(), Some(gc::GcError::LockTimeout)) => Some("deferred"),
+        Err(_) => Some("error"),
+    }
 }
 
 async fn pass(
@@ -442,6 +447,33 @@ mod tests {
     use super::*;
     use bytes::Bytes;
     use sqlx::postgres::{PgConnectOptions, PgPoolOptions};
+
+    #[test]
+    fn a_pass_counts_by_how_it_ended() {
+        let ran = || Ok(PruneReport::default());
+        assert_eq!(run_outcome(&ran(), false), Some("success"));
+        assert_eq!(run_outcome(&ran(), true), None, "stopped for shutdown");
+        let refused = Ok(PruneReport {
+            skipped: Some("off".into()),
+            ..PruneReport::default()
+        });
+        assert_eq!(run_outcome(&refused, false), None);
+        let busy = Err(anyhow::Error::from(gc::GcError::LockTimeout));
+        assert_eq!(run_outcome(&busy, false), Some("deferred"));
+        let failed = Err(anyhow::anyhow!("database gone"));
+        assert_eq!(run_outcome(&failed, true), Some("error"));
+
+        let recorder = crate::series::test_support::recorder();
+        dcl_metrics::with_local_recorder(&recorder, || crate::series::gc_run("deferred"));
+        assert_eq!(
+            crate::series::test_support::sample(
+                &recorder.handle().render(),
+                crate::series::GC_RUNS.descriptor.name,
+                &[("outcome", "deferred")]
+            ),
+            Some(1.0)
+        );
+    }
 
     /// A pass prunes the whole table, so the per-process scratch database the
     /// other lib tests share is off limits: a database of its own on the

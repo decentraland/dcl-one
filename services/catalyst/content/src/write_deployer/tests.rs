@@ -603,6 +603,45 @@ async fn two_concurrent_deploys_of_one_entity_both_answer_its_stored_timestamp()
     let _ = std::fs::remove_dir_all(&tmp);
 }
 
+/// A deploy to a pointer its window still holds is refused and counted by the
+/// window that refused it.
+#[tokio::test]
+async fn a_rate_limited_deploy_is_counted_by_its_window() {
+    let Some(pool) = test_pool(4).await else {
+        return;
+    };
+    let recorder = crate::series::test_support::recorder();
+    let _metrics = dcl_metrics::set_default_local_recorder(&recorder);
+    let (storage, tmp) = temp_storage("rate-limited-count").await;
+    let deployer =
+        WriteDeployer::with_partial_validation_for_tests(pool, storage, Some(Arc::new(NoEip1654)));
+    let pointers = Scope::new().pointers(&["9,9"]);
+    let now_ms = chrono::Utc::now().timestamp_millis();
+    let (bytes, id, chain) = signed_scene(&pointers, now_ms).await;
+    deployer
+        .deploy_entity(vec![bytes], &id, chain, "LOCAL")
+        .await
+        .unwrap();
+    let (bytes, id, chain) = signed_scene(&pointers, now_ms + 1).await;
+    let err = deployer
+        .deploy_entity(vec![bytes], &id, chain, "LOCAL")
+        .await
+        .unwrap_err();
+    assert!(
+        matches!(err, DeployFailure::Rejected(RejectionKind::RateLimited, _)),
+        "{err:?}"
+    );
+    assert_eq!(
+        crate::series::test_support::sample(
+            &recorder.handle().render(),
+            crate::series::RATE_LIMITED.descriptor.name,
+            &[("entity_type", "scene"), ("reason", "ttl")]
+        ),
+        Some(1.0)
+    );
+    let _ = std::fs::remove_dir_all(&tmp);
+}
+
 /// The first deploy holds its pointer from validation to its write (here a database that
 /// accepts the write's connection and never answers), so a concurrent deploy to that pointer
 /// is refused with upstream's in-flight text, unqueued; a cancelled deploy lets its pointers
@@ -935,7 +974,21 @@ fn is_content_unchanged_metadata_compare() {
 
 #[test]
 fn rate_limiter_per_type_defaults() {
-    let rl = DeployRateLimiter::with_reference_defaults();
+    let recorder = crate::series::test_support::recorder();
+    let rl =
+        dcl_metrics::with_local_recorder(&recorder, DeployRateLimiter::with_reference_defaults);
+    let rendered = recorder.handle().render();
+    for &(etype, _, max) in REFERENCE_RATE_LIMITS.iter() {
+        assert_eq!(
+            crate::series::test_support::sample(
+                &rendered,
+                crate::series::RATE_LIMITER_MAX_SIZE.descriptor.name,
+                &[("entity_type", etype)]
+            ),
+            Some(max as f64),
+            "{etype}"
+        );
+    }
     let ptrs = vec!["0,0".to_string()];
     assert!(!rl.is_rate_limited("scene", &ptrs));
     rl.record("scene", &ptrs);
