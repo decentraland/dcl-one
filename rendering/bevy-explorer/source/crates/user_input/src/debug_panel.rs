@@ -227,9 +227,9 @@ mod tests {
 
     #[test]
     fn a_moving_step_reports_its_actual_velocity_after_the_next_broadcast() {
-        use crate::avatar_movement::{apply_movement, broadcast_movement_info, CentralCollisions};
+        use crate::avatar_movement::{apply_movement, CentralCollisions};
         use bevy::time::{TimePlugin, TimeUpdateStrategy};
-        use common::structs::{EngineMovementControl, SceneDrivenAnimationFeedback};
+        use common::structs::EngineMovementControl;
 
         let mut app = App::new();
         app.add_plugins(TimePlugin)
@@ -241,13 +241,20 @@ mod tests {
             .init_resource::<AvatarMovementInfo>()
             .init_resource::<LastMovementStep>()
             .init_resource::<CentralCollisions>()
-            .init_resource::<SceneDrivenAnimationFeedback>()
             .insert_resource(EngineMovementControl {
                 // accept the test's movement, initiated at time zero
                 accept_movement_after: -1.0,
                 ..default()
             })
-            .add_systems(Update, (broadcast_movement_info, movement_state).chain())
+            // the broadcast to the scenes clears the movement info
+            .add_systems(
+                Update,
+                (
+                    |mut info: ResMut<AvatarMovementInfo>| info.0 = default(),
+                    movement_state,
+                )
+                    .chain(),
+            )
             .add_systems(PostUpdate, apply_movement);
         let mut movement = ActivePlayerComponent::<AvatarMovement>::from_config(&default());
         // 2 m/s east, 1 m/s north: bevy's z points south

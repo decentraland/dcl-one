@@ -1268,7 +1268,7 @@ fn resolve_collisions(
     }
 }
 
-pub(crate) fn broadcast_movement_info(
+fn broadcast_movement_info(
     mut info: ResMut<AvatarMovementInfo>,
     active_components: Query<
         (
