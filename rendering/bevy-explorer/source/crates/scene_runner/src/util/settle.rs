@@ -561,7 +561,7 @@ mod tests {
             .query_filtered::<Entity, With<PrimaryUser>>()
             .single(app.world())
             .unwrap();
-        app.world_mut().entity_mut(player).insert(OutOfWorld);
+        app.world_mut().entity_mut(player).insert(OutOfWorld::default());
         let mut rx =
             app.world_mut()
                 .resource_mut::<SceneWaits>()
