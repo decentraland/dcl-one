@@ -109,8 +109,12 @@ pub fn report_scene_load_times(
         }
     }
 
-    if let Some((_, arrival)) = timing.arrival {
-        if !timing.reported && first_ring_complete {
+    if let Some((scene, arrival)) = timing.arrival {
+        // a scene despawned before it was ready (a realm change during the landing) ends the
+        // arrival unreported
+        if scenes.get(scene).is_err() {
+            timing.arrival = None;
+        } else if !timing.reported && first_ring_complete {
             info!(
                 target: LOG_TARGET,
                 "{FIRST_RING_READY} {} ms after the scene spawned",

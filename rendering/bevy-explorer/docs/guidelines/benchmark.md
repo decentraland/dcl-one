@@ -313,7 +313,9 @@ and `AutopilotPhase`.
     autopilot's `phase Measuring at <s> s` (category `autopilot`, the real time since the app
     started, `src/autopilot.rs`) and the first `player's scene and first ring ready <ms> ms after the
     scene spawned` (category `scene_timing`, `crates/scene_runner/src/load_timing.rs`): the spawn
-    arrival, timed while the player waits behind the loading screen for the spawn scene. A log
+    arrival, timed while the player waits behind the loading screen for the spawn scene. The
+    ring is taken around the parcel the player waits on, which in a large spawn scene can differ
+    from the spawn point the player is then placed on. A log
     without one gets no row for it.
 - Both formats live once in `crates/perf_output/src/format.rs`; the desktop sinks and the page's
   stream take its bytes unchanged. The log layer first replaces every credential in a message or

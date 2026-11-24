@@ -159,6 +159,25 @@ fn landing_behind_the_loading_screen_times_the_destination_scene() {
 }
 
 #[test]
+fn an_arrival_whose_scene_despawns_is_not_reported() {
+    let mut world = world();
+    let home = scene(&mut world, "home", &[IVec2::ZERO], 2);
+
+    world.run_system_once(report_scene_load_times).unwrap();
+    assert!(world.resource::<FirstRingTiming>().arrival.is_some());
+
+    // a realm change purges the scene and its pointers before it is ready
+    world.despawn(home);
+    world.resource_mut::<LiveScenes>().scenes.clear();
+    world.insert_resource(ScenePointers::default());
+    world.run_system_once(report_scene_load_times).unwrap();
+
+    let timing = world.resource::<FirstRingTiming>();
+    assert!(timing.arrival.is_none());
+    assert!(!timing.reported);
+}
+
+#[test]
 fn arriving_at_a_scene_that_is_already_ready_reports_nothing() {
     let mut world = world();
     scene(&mut world, "home", &[IVec2::ZERO], 7);
