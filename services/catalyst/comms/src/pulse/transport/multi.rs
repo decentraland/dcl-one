@@ -115,12 +115,9 @@ impl Transports {
         }
     }
 
-    pub fn set_relay_timeout(&mut self, peer: u32, relay: bool, sends_input: bool) {
-        if peer < self.enet_capacity {
-            self.enet.set_relay_timeout(peer as u16, relay);
-        } else if self.owns_wt(peer) {
-            self.silence
-                .watch(peer, relay && sends_input, Instant::now());
+    pub fn watch_relay_silence(&mut self, peer: u32, watched: bool) {
+        if self.owns_wt(peer) {
+            self.silence.watch(peer, watched, Instant::now());
         }
     }
 
@@ -136,6 +133,10 @@ impl Transports {
     /// WebTransport sends dispatch immediately over their mpsc channel; only ENet batches.
     pub fn flush(&mut self) {
         self.enet.flush();
+    }
+
+    pub(crate) fn shutdown_enet(&mut self, reason: u32) {
+        self.enet.disconnect_connected(reason);
     }
 
     pub async fn disconnect(&mut self, peer: u32, reason: u32) -> std::io::Result<()> {
@@ -254,9 +255,9 @@ mod tests {
         runtime.block_on(async move {
             let (mut transports, connected) = testing::connect(listening, 2).await;
             let (quiet, talking) = (connected[0].0, connected[1].0);
-            transports.set_relay_timeout(quiet, true, true);
-            transports.set_relay_timeout(talking, true, true);
-            transports.set_relay_timeout(0, true, true);
+            transports.watch_relay_silence(quiet, true);
+            transports.watch_relay_silence(talking, true);
+            transports.watch_relay_silence(0, true);
             let (mut send, _recv) = connected[1].1.open_bi().await.unwrap();
             let before = Instant::now();
             send.write_all(&stream_frame(b"input")).await.unwrap();
@@ -275,7 +276,7 @@ mod tests {
                 transports.silent_relay_peers(heard + RELAY_SILENCE),
                 vec![quiet, talking]
             );
-            transports.set_relay_timeout(quiet, true, false);
+            transports.watch_relay_silence(quiet, false);
             assert_eq!(
                 transports.silent_relay_peers(heard + RELAY_SILENCE),
                 vec![talking]

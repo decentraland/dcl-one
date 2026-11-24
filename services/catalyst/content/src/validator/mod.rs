@@ -297,13 +297,94 @@ impl ExternalCalls for Sources {
         auth_chain: &AuthChain,
         timestamp: types::Timestamp,
     ) -> Result<(), AuthError> {
-        crate::auth::verify_auth_chain_async(
+        verify_local_entity_chain(
             auth_chain,
             entity_id,
-            Some(timestamp),
-            self.eip1654.as_deref(),
+            timestamp,
+            self.eip1654(),
+            Some(&self.access),
         )
         .await
+    }
+}
+
+/// A local entity's chain: a contract-wallet link refused at latest is asked again at the
+/// L1 block `@dcl/crypto` selects for the entity timestamp, found by the access checks'
+/// search when `access` is given.
+pub(crate) async fn verify_local_entity_chain(
+    auth_chain: &AuthChain,
+    entity_id: &str,
+    timestamp_ms: i64,
+    eip1654: Option<&dyn Eip1654Validator>,
+    access: Option<&onchain::OnChainAccess>,
+) -> Result<(), AuthError> {
+    let at_entity_time = eip1654.zip(access).map(|(inner, access)| AtEntityTime {
+        inner,
+        access,
+        without_l1: WithoutL1::Delegate,
+    });
+    let eip1654 = match &at_entity_time {
+        Some(v) => Some(v as &dyn Eip1654Validator),
+        None => eip1654,
+    };
+    crate::auth::verify_entity_auth_chain(auth_chain, entity_id, timestamp_ms, eip1654).await
+}
+
+/// What [`AtEntityTime`] does when the node has no L1 RPC.
+#[derive(Clone, Copy)]
+pub(crate) enum WithoutL1 {
+    /// Ask the inner validator's own selector (local deploys).
+    Delegate,
+    /// Undecidable (synced entities).
+    Undecidable,
+}
+
+/// The node's EIP-1654 validator, its historical block taken from the access checks' L1
+/// search ([`onchain::OnChainAccess::l1_verification_block`]). A failed search is undecidable.
+/// The block is chosen even when the inner validator's own selector answers `None`: an inner
+/// validator without history then fails the call there (undecidable) instead of its latest
+/// refusal standing.
+pub(crate) struct AtEntityTime<'a> {
+    pub(crate) inner: &'a dyn Eip1654Validator,
+    pub(crate) access: &'a onchain::OnChainAccess,
+    pub(crate) without_l1: WithoutL1,
+}
+
+#[async_trait]
+impl Eip1654Validator for AtEntityTime<'_> {
+    async fn validate_signature(
+        &self,
+        contract_address: &str,
+        hash: &[u8],
+        signature: &[u8],
+    ) -> Result<bool, AuthError> {
+        self.inner
+            .validate_signature(contract_address, hash, signature)
+            .await
+    }
+
+    async fn validate_signature_at_block(
+        &self,
+        contract_address: &str,
+        hash: &[u8],
+        signature: &[u8],
+        block: u64,
+    ) -> Result<bool, AuthError> {
+        self.inner
+            .validate_signature_at_block(contract_address, hash, signature, block)
+            .await
+    }
+
+    async fn verification_time_block(&self, timestamp_ms: i64) -> Result<Option<u64>, AuthError> {
+        match self.access.l1_verification_block(timestamp_ms).await {
+            Ok(block) => Ok(Some(block)),
+            Err(ValidatorError::Unconfigured(_))
+                if matches!(self.without_l1, WithoutL1::Delegate) =>
+            {
+                self.inner.verification_time_block(timestamp_ms).await
+            }
+            Err(e) => Err(AuthError::Eip1654ValidationFailed(e.to_string())),
+        }
     }
 }
 

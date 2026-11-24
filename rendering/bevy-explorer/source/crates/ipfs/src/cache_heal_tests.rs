@@ -8,6 +8,7 @@ use bevy::asset::{
     io::{AssetReaderError, AssetSource, AssetSourceId, Reader},
     AssetLoader, LoadContext, UnapprovedPathMode,
 };
+use common::sync::MutexExt;
 use std::{path::PathBuf, sync::Arc};
 
 const SCENE: &str = "bafkreiscene";
@@ -118,7 +119,7 @@ async fn serve(routes: Vec<(String, Vec<u8>)>) -> (String, Arc<std::sync::Mutex<
                         break;
                     }
                 }
-                seen.lock().unwrap().push(path.clone());
+                seen.lock_ignore_poison().push(path.clone());
                 let response = match routes.iter().find(|(route, _)| *route == path) {
                     Some((_, body)) => [
                         format!(
@@ -311,7 +312,7 @@ async fn a_url_keyed_copy_is_dropped_once_and_downloaded_again() {
     std::fs::write(dir.join(&name), b"<html>not a picture</html>").unwrap();
 
     assert_eq!(read_all(&io, &path).await, b"<html>not a picture</html>");
-    assert!(log.lock().unwrap().is_empty());
+    assert!(log.lock_ignore_poison().is_empty());
 
     assert_eq!(
         io.drop_bad_cached_entry(&path).await,
@@ -319,7 +320,7 @@ async fn a_url_keyed_copy_is_dropped_once_and_downloaded_again() {
     );
     assert!(!dir.join(&name).exists());
     assert_eq!(read_all(&io, &path).await, b"a picture");
-    let requests = log.lock().unwrap().clone();
+    let requests = log.lock_ignore_poison().clone();
     assert_eq!(requests, vec!["/pic.png".to_owned()]);
 
     // the entry had its check: a later failure on it is that check's
@@ -454,7 +455,7 @@ impl AssetLoader for RecordingLoader {
     ) -> Result<Self::Asset, Self::Error> {
         let mut bytes = Vec::new();
         reader.read_to_end(&mut bytes).await?;
-        self.0.lock().unwrap().push((bytes.clone(), *settings));
+        self.0.lock_ignore_poison().push((bytes.clone(), *settings));
         if bytes == b"good" {
             Ok(SettingsTest)
         } else {
@@ -515,11 +516,14 @@ async fn a_healed_asset_loads_again_with_the_settings_it_was_first_loaded_with()
     }
 
     assert_eq!(
-        *loads.lock().unwrap(),
+        *loads.lock_ignore_poison(),
         vec![(b"bad".to_vec(), Level(7)), (b"good".to_vec(), Level(7))]
     );
     assert_eq!(io.cache_heals.counts(), (1, 1));
-    assert_eq!(*log.lock().unwrap(), vec!["/model.settingstest".to_owned()]);
+    assert_eq!(
+        *log.lock_ignore_poison(),
+        vec!["/model.settingstest".to_owned()]
+    );
     std::fs::remove_dir_all(dir).unwrap();
 }
 

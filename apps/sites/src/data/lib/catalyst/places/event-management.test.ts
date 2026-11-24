@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 vi.mock("../client", async (original) => ({ ...await original<typeof import("../client")>(), postJSON: vi.fn(), signedGetJSON: vi.fn() }));
 import { CatalystError, postJSON, signedGetJSON } from "../client";
-import { eventAdminKeys, loadAllOwnedEvents, loadEventAccess, loadEventProfile, loadEventProfileSettings, loadModerationEvents, loadOwnedEvents, moderateEvent, saveEventPermissions } from "./event-management";
+import { eventAdminKeys, loadAllOwnedEvents, loadEventAccess, loadEventGrants, loadEventProfile, loadEventProfileSettings, loadModerationEvents, loadOwnedEvents, moderateEvent, saveEventPermissions } from "./event-management";
 import type { AuthIdentity } from "../../auth/types";
 import type { ManagedEvent } from "./event-management";
 
@@ -199,30 +199,31 @@ describe("when managing authenticated hangouts", () => {
         path === "/events/api/profiles/me/settings" ? { ok: true, data: { user: identity.signer, permissions } } : list());
     };
 
-    it("should not read other accounts without the profile permission", async () => {
-      answer(["approve_any_event"], () => { throw new Error("unexpected"); });
-      await expect(loadEventAccess(identity)).resolves.toEqual({ profile: { user: identity.signer, permissions: ["approve_any_event"] }, profiles: null });
+    it("should read only the account's own grants, even with the profile permission", async () => {
+      answer(["edit_any_profile"], () => { throw new CatalystError("Unavailable", "list", 503); });
+      await expect(loadEventAccess(identity)).resolves.toEqual({ profile: { user: identity.signer, permissions: ["edit_any_profile"] } });
       expect(signedGetJSON).toHaveBeenCalledTimes(1);
     });
 
     it("should read every account's grants for a moderator", async () => {
       answer(["edit_any_profile"], () => ({ ok: true, data: [{ user: identity.signer, permissions: ["edit_any_profile"] }] }));
-      await expect(loadEventAccess(identity)).resolves.toMatchObject({ profiles: [{ user: identity.signer }] });
+      await expect(loadEventGrants(identity)).resolves.toMatchObject([{ user: identity.signer }]);
     });
 
     it("should treat a refused list as no user administration", async () => {
       answer(["edit_any_profile"], () => { throw new CatalystError("Forbidden", "list", 403); });
-      await expect(loadEventAccess(identity)).resolves.toMatchObject({ profiles: null });
+      await expect(loadEventGrants(identity)).resolves.toBeNull();
     });
 
     it("should fail on any other list failure", async () => {
       answer(["edit_any_profile"], () => { throw new CatalystError("Unavailable", "list", 503); });
-      await expect(loadEventAccess(identity)).rejects.toThrow("Unavailable");
+      await expect(loadEventGrants(identity)).rejects.toThrow("Unavailable");
     });
 
     it("should keep each account's admin reads under its own private key", () => {
       expect(eventAdminKeys.access("0xABC")).toEqual(["private", "0xabc", "event-admin", "access"]);
       expect(eventAdminKeys.queue("0xABC")).toEqual(["private", "0xabc", "event-admin", "queue"]);
+      expect(eventAdminKeys.grants("0xABC")).toEqual(["private", "0xabc", "event-admin", "grants"]);
     });
   });
 });

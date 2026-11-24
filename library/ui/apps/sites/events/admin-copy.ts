@@ -24,6 +24,7 @@ export const adminCopy = {
     by: 'By',
     loading: 'Loading…',
     loadError: 'The pending events could not be loaded.',
+    notListed: 'That event is no longer waiting for review.',
     retry: 'Retry'
   },
   users: {

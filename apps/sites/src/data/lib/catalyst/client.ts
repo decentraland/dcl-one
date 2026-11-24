@@ -228,16 +228,24 @@ export async function signedGetJSON<T>(
 }
 
 /** An unsigned JSON `POST` for the node's public batch reads (`/lambdas/profiles`, `/content/entities/active`). */
-export async function postPublicJSON(path: string, body: unknown, opts: GetOptions = {}): Promise<unknown> {
+export async function postPublicJSON(
+  path: string,
+  body: unknown,
+  opts: GetOptions & { allowEmpty?: boolean } = {},
+): Promise<unknown> {
   const url = `${catalystBase(opts.base)}${path}`;
-  const res = await (opts.fetchImpl ?? fetch)(url, {
-    method: "POST",
-    headers: { accept: "application/json", "content-type": "application/json" },
-    body: JSON.stringify(body),
-    signal: opts.signal,
-  });
-  if (!res.ok) throw await errorFromResponse(res, url);
-  return res.json();
+  const { text } = await fetchText(
+    url,
+    {
+      method: "POST",
+      headers: { accept: "application/json", "content-type": "application/json" },
+      body: JSON.stringify(body),
+      signal: opts.signal,
+    },
+    opts.fetchImpl ?? fetch,
+    true,
+  );
+  return opts.allowEmpty && !text ? undefined : JSON.parse(text);
 }
 
 export async function postJSON<T>(

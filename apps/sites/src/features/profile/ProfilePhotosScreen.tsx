@@ -2,9 +2,6 @@ import { useQueryClient } from "@tanstack/react-query";
 import { useEffect, useState } from "react";
 import { useRouteLoaderData, useSearchParams } from "react-router";
 
-import { Button, JumpInCTA } from "@dcl/one-ui";
-import { GeneralGallery, GeneralImage, GeneralLock, GeneralPublic } from "@dcl/one-ui/foundations/icons";
-
 import {
   CollectiblesItem,
   CollectiblesPanel,
@@ -12,10 +9,18 @@ import {
   useFocusNewRows,
   type CategoryOption,
   type CollectiblesState,
-} from "@dcl/one-ui/apps/sites/profile/collectibles";
-import { EmptyMessage } from "@dcl/one-ui/apps/sites/profile/EmptyMessage";
-import { PhotoViewer } from "@dcl/one-ui/apps/sites/profile/PhotoViewer";
-import { PhotoTile, PrivatePhotosNotice } from "@dcl/one-ui/apps/sites/profile/PhotoTile";
+  EmptyMessage,
+  PhotoViewer,
+  PhotoTile,
+  PrivatePhotosNotice,
+  GeneralGallery,
+  GeneralImage,
+  GeneralLock,
+  GeneralPublic,
+  Button,
+  JumpInCTA,
+} from "@dcl/one-ui";
+
 
 import { useAuth } from "@/data/lib/auth/index";
 import { playUrl } from "@/data/lib/catalyst/bases";

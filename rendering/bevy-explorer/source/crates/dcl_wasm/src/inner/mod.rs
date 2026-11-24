@@ -12,7 +12,7 @@ use common::{rpc::CancellationToken, structs::GlobalCrdtStateUpdate};
 use dcl_js::{CommunicatedWithRenderer, CrdtSendsThisTick, KillFlag, SuperUserScene};
 use dcl_types::{
     interface::{crdt_context::CrdtContext, CrdtComponentInterfaces, CrdtStore},
-    RendererResponse, SceneElapsedTime, SceneResponseSender,
+    RendererResponse, SceneElapsedTime, SceneResponseSender, SceneWake,
 };
 use gotham_state::GothamState;
 use once_cell::sync::OnceCell;
@@ -37,6 +37,8 @@ pub struct SceneInitializationData {
     pub super_user: Option<tokio::sync::mpsc::UnboundedSender<SystemApi>>,
     pub scene_origin: bevy::prelude::Vec3,
     pub kill_flag: KillFlag,
+    /// Whether the engine wakes the scene's relay on its send (`relay_wake`).
+    pub wake: SceneWake,
     /// Cancelled by the engine when it drops the scene: closes every rpc channel the relay
     /// decoded from it, whether or not the worker gets to clean up.
     pub ipc_close: CancellationToken,
@@ -75,6 +77,7 @@ pub fn spawn_scene(
     _inspect: bool,
     super_user: Option<tokio::sync::mpsc::UnboundedSender<SystemApi>>,
     scene_origin: bevy::prelude::Vec3,
+    wake: SceneWake,
 ) -> (
     UnboundedSender<RendererResponse>,
     Option<tokio::sync::oneshot::Sender<()>>,
@@ -106,6 +109,7 @@ pub fn spawn_scene(
                     super_user,
                     scene_origin,
                     kill_flag: kill_flag.clone(),
+                    wake,
                     ipc_close: ipc_close.clone(),
                 });
 

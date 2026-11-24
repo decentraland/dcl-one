@@ -72,4 +72,18 @@ describe('when Sites serves the hosted gallery', () => {
       nix.steps.some((step) => step.run === "nix build 'git+file:.?lfs=1#ui-gallery' --no-link -L")
     ).toBe(true)
   })
+
+  it('should fetch from Git LFS every directory the Nix build refuses as LFS pointers', () => {
+    const nix = readFileSync(path.join(repository, 'infra/packages/ui-gallery.nix'), 'utf8')
+    const guarded = nix
+      .match(/grep -rIl '\^version https:\/\/git-lfs\.github\.com\/spec\/v1\$' ([^;]+);/)![1]!
+      .trim()
+      .split(/\s+/)
+    const pull = steps('ui-gallery-nix')
+      .find((step) => step.run?.startsWith('git lfs pull'))!
+      .run!.match(/--include "([^"]+)"/)![1]!
+      .split(',')
+    expect(guarded).toEqual(expect.arrayContaining(['foundations/typography/fonts', 'assets']))
+    for (const dir of guarded) expect(pull).toContain(`library/ui/${dir}/**`)
+  })
 })

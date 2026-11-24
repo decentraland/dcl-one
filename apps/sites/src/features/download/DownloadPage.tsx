@@ -1,13 +1,19 @@
 import { lazy, Suspense, useEffect, useRef, useState } from "react";
 
-import { Button } from "@dcl/one-ui";
-import logo from "@dcl/one-ui/apps/sites/assets/dcl-logo.svg?url";
-import googlePlayBadge from "@dcl/one-ui/apps/sites/assets/google_play_cta.svg?url";
-import { VerifiedIcon } from "@dcl/one-ui/apps/sites/download/VerifiedIcon";
-import { useChromeAuth } from "@dcl/one-ui/components/AppChrome/chrome-auth";
+import {
+  dclLogoUrl as logo,
+  googlePlayCtaUrl as googlePlayBadge,
+  VerifiedIcon,
+  useChromeAuth,
+  Button,
+} from "@dcl/one-ui";
 import SitesLayout from "../components/chrome/SitesLayout";
 
 import { successHref, type Installer } from "@/data/lib/download/installers";
+
+import { trackDownloadClick, type DownloadClick } from "./download-click";
+import { useLegacyTrackScope } from "@/core/lib/telemetry/legacy-click";
+import { googlePlayHref } from "./google-play";
 
 import appleLogo from "./assets/apple-logo.svg?url";
 import appStoreBadge from "./assets/download-on-the-app-store.svg?url";
@@ -26,9 +32,6 @@ const WearablePreview = lazy(() => import("@ui/wearable-preview/WearablePreview"
 const TITLE = "Download Decentraland\nand Come Hang Out!";
 const EPIC_URL = "https://store.epicgames.com/en-US/p/decentraland-b692fb";
 const APP_STORE_URL = "https://apps.apple.com/app/apple-store/id6478403840?pt=126284288&ct=Decentraland%20Home%20iOS&mt=8";
-// The Google Play listing, with the campaign parameters decentraland.org sends.
-const GOOGLE_PLAY_URL =
-  "https://play.google.com/store/apps/details?id=org.decentraland.godotexplorer&utm_org=dclrgl&utm_source=fdn&utm_medium=qr&utm_campaign=dclpage&utm_content=android&referrer=utm_org%3Ddclrgl%26utm_source%3Dfdn%26utm_medium%3Dqr%26utm_campaign%3Ddclpage%26utm_content%3Dandroid";
 
 const OS_LABEL: Record<Installer["os"], string> = { windows: "Windows", macos: "macOS" };
 const OS_IMAGE: Record<Installer["os"], string> = { windows: microsoftLogo, macos: appleLogo };
@@ -40,10 +43,30 @@ export type DownloadPageProps = {
   android: boolean;
   /** The Explorer's download total ("+438K"), or null when unknown: then no total line (DownloadOptions). */
   downloads: string | null;
+  /** The visitor's anonymous id, for the download clicks. */
+  sid: string;
+  /** The verified wallet, sent as the download clicks' `userId`. */
+  userId?: string | null;
+  /** The Google Play listing tagged with this visitor's campaign (`googlePlayHref`); the site's own tag by default. */
+  googlePlay?: string;
 };
 
-function DownloadOptions({ primary, secondary, downloads }: Pick<DownloadPageProps, "primary" | "secondary" | "downloads">) {
+// The legacy /download page's attributes per control (decentraland/sites `DownloadOptions/DownloadOptions.tsx`,
+// `Layout/DownloadLayout.tsx`). The main button's place is `Download`, every other control's `download-page`.
+const CLICKS = {
+  primary: { place: "Download", event: "Download", download_target: "desktop_installer" },
+  epic: { place: "download-page", event: "Download", download_target: "epic" },
+  secondary: { place: "download-page", event: "Download", download_target: "desktop_installer" },
+  appStore: { place: "download-page", event: "Download", download_target: "app_store", os: "iOS" },
+  googlePlay: { place: "download-page", event: "Download", download_target: "google_play", os: "Android" },
+} satisfies Record<string, DownloadClick>;
+
+type OptionsProps = Pick<DownloadPageProps, "primary" | "secondary" | "downloads" | "sid" | "userId"> & { googlePlay: string };
+
+function DownloadOptions({ primary, secondary, downloads, sid, userId, googlePlay }: OptionsProps) {
+  const scope = useLegacyTrackScope();
   if (!primary?.url) return null;
+  const send = (click: DownloadClick) => () => trackDownloadClick(click, { sid, userId, scope });
   return (
     <div className={styles.actions}>
       <div className={styles.buttons}>
@@ -51,6 +74,7 @@ function DownloadOptions({ primary, secondary, downloads }: Pick<DownloadPagePro
           className={styles.download}
           // The link is /download_success, the page that starts this installer: a plain link, so a new tab works too.
           href={successHref(primary)}
+          onClick={send(CLICKS.primary)}
           aria-label={`Download for ${OS_LABEL[primary.os]}`}
           trailingIcon={<img src={OS_IMAGE[primary.os]} alt={OS_LABEL[primary.os]} width={32} height={32} />}
         >
@@ -62,6 +86,7 @@ function DownloadOptions({ primary, secondary, downloads }: Pick<DownloadPagePro
           href={EPIC_URL}
           target="_blank"
           rel="noopener noreferrer"
+          onClick={send(CLICKS.epic)}
           aria-label="Download on Epic Games"
           trailingIcon={<img src={epicIcon} alt="Epic Games" width={32} height={32} />}
         >
@@ -77,14 +102,14 @@ function DownloadOptions({ primary, secondary, downloads }: Pick<DownloadPagePro
         )}
         <div className={styles.alternativeButtons}>
           {secondary.url && (
-            <a className={styles.alternative} href={successHref(secondary)} aria-label={OS_LABEL[secondary.os]}>
+            <a className={styles.alternative} href={successHref(secondary)} onClick={send(CLICKS.secondary)} aria-label={OS_LABEL[secondary.os]}>
               <img src={OS_IMAGE[secondary.os]} alt="" />
             </a>
           )}
-          <a className={styles.alternative} href={APP_STORE_URL} target="_blank" rel="noopener noreferrer" aria-label="iOS">
+          <a className={styles.alternative} href={APP_STORE_URL} target="_blank" rel="noopener noreferrer" onClick={send(CLICKS.appStore)} aria-label="iOS">
             <img src={iosLogo} alt="" />
           </a>
-          <a className={styles.alternative} href={GOOGLE_PLAY_URL} target="_blank" rel="noopener noreferrer" aria-label="Google Play">
+          <a className={styles.alternative} href={googlePlay} target="_blank" rel="noopener noreferrer" onClick={send(CLICKS.googlePlay)} aria-label="Google Play">
             <img src={googlePlayIcon} alt="" />
           </a>
         </div>
@@ -118,7 +143,16 @@ function AvatarPreview({ account }: { account: string }) {
   );
 }
 
-export default function DownloadPage({ primary, secondary, android, downloads }: DownloadPageProps) {
+export default function DownloadPage({
+  primary,
+  secondary,
+  android,
+  downloads,
+  sid,
+  userId,
+  googlePlay = googlePlayHref(),
+}: DownloadPageProps) {
+  const scope = useLegacyTrackScope();
   const auth = useChromeAuth();
   const signedIn = auth.signedIn && !!auth.account;
   const page = (
@@ -152,14 +186,20 @@ export default function DownloadPage({ primary, secondary, android, downloads }:
             )}
             {/* The page's one heading: CSS shows this title on wide viewports and the one below on narrow ones, never both. */}
             <h1 className={styles.title}>{TITLE}</h1>
-            <DownloadOptions primary={primary} secondary={secondary} downloads={downloads} />
+            <DownloadOptions primary={primary} secondary={secondary} downloads={downloads} sid={sid} userId={userId} googlePlay={googlePlay} />
           </div>
         </div>
         <h1 className={styles.mobileTitle}>{TITLE}</h1>
         {signedIn && <AvatarPreview account={auth.account} />}
       </div>
       <div className={styles.share}>
-        <a className={styles.storeButton} href={android ? GOOGLE_PLAY_URL : APP_STORE_URL} target="_blank" rel="noopener noreferrer">
+        <a
+          className={styles.storeButton}
+          href={android ? googlePlay : APP_STORE_URL}
+          target="_blank"
+          rel="noopener noreferrer"
+          onClick={() => trackDownloadClick(android ? CLICKS.googlePlay : CLICKS.appStore, { sid, userId, scope })}
+        >
           <img className={styles.storeBadge} src={android ? googlePlayBadge : appStoreBadge} alt={android ? "Get it on Google Play" : "Download on the App Store"} />
         </a>
       </div>

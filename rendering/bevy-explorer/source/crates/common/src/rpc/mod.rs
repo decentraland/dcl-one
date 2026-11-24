@@ -244,6 +244,10 @@ pub enum RpcCall {
         to: Option<IVec2>,
         /// The realm `to` belongs to: a realm change (a full reconnect, as for `ChangeRealm`) happens first.
         realm: Option<String>,
+        /// The name of the spawn point of the scene landed in to use, compared in lowercase. The
+        /// scene's default spawn points are used without it, and when the scene has none of that
+        /// name.
+        spawn_point: Option<String>,
         response: RpcResultSender<Result<(), String>>,
     },
     MoveCamera {

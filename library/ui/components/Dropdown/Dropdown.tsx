@@ -39,7 +39,7 @@ export type DropdownSingleProps<T extends string> = DropdownCommon<T> & {
 export type DropdownMultipleProps<T extends string> = DropdownCommon<T> & {
   multiple: true
   value: readonly T[]
-  /** Called with the chosen values in the order of `options`. */
+  /** Selected options follow list order. Selected values absent from the list keep their order at the end. */
   onChange: (value: T[]) => void
   valueText?: (chosen: readonly DropdownOption<T>[]) => string
 }
@@ -105,7 +105,7 @@ function useInViewport(
   }, [open, popup, anchor])
 }
 
-function Help({ id, text, label }: { id: string; text: string; label: string }) {
+function Help({ id, text, label, onActivate }: { id: string; text: string; label: string; onActivate: () => void }) {
   const [open, setOpen] = useState(false)
   const root = useRef<HTMLSpanElement>(null)
   const button = useRef<HTMLButtonElement>(null)
@@ -127,7 +127,10 @@ function Help({ id, text, label }: { id: string; text: string; label: string }) 
         aria-label={label}
         aria-expanded={open}
         aria-controls={id}
-        onClick={() => setOpen((now) => !now)}
+        onClick={() => {
+          onActivate()
+          setOpen((now) => !now)
+        }}
       >
         <GeneralInfoButton size={18} aria-hidden="true" focusable="false" />
       </button>
@@ -197,10 +200,13 @@ export function Dropdown<T extends string = string>(props: DropdownProps<T>) {
     const picked = options[index]?.value
     if (disabled || picked === undefined || !enabled(index)) return
     if (multiple) {
-      const next = options
-        .filter((option) => (option.value === picked ? !chosen.includes(picked) : chosen.includes(option.value)))
-        .map((option) => option.value)
-      onChange(next)
+      const remaining = new Set(chosen)
+      if (!remaining.delete(picked)) remaining.add(picked)
+      const visible: T[] = []
+      for (const option of options) {
+        if (remaining.delete(option.value)) visible.push(option.value)
+      }
+      onChange([...visible, ...remaining])
     } else {
       if (picked !== value) onChange(picked)
       close()
@@ -224,6 +230,7 @@ export function Dropdown<T extends string = string>(props: DropdownProps<T>) {
   const keyDown = (event: KeyboardEvent<HTMLButtonElement>) => {
     if (event.ctrlKey || event.metaKey || event.nativeEvent.isComposing) return
     const { key } = event
+    if (key === 'Shift') return
     if (event.altKey) {
       if (key === 'ArrowDown' || key === 'ArrowUp') {
         event.preventDefault()
@@ -265,16 +272,12 @@ export function Dropdown<T extends string = string>(props: DropdownProps<T>) {
       ref={root}
       className={[styles.root, className].filter(Boolean).join(' ')}
       data-disabled={disabled || undefined}
-      onBlur={(event) => {
-        if (!root.current?.contains(event.relatedTarget)) close()
-        rest.onBlur?.(event)
-      }}
     >
       <span className={labelHidden && !help ? styles.hidden : styles.header}>
         <span id={labelId} className={labelHidden ? styles.hidden : styles.label} onClick={() => trigger.current?.focus()}>
           {label}
         </span>
-        {help && <Help id={`${id}-bubble`} text={help} label={helpLabel} />}
+        {help && <Help id={`${id}-bubble`} text={help} label={helpLabel} onActivate={close} />}
       </span>
       {help && (
         <span id={helpId} className={styles.hidden}>
@@ -298,6 +301,7 @@ export function Dropdown<T extends string = string>(props: DropdownProps<T>) {
           if (open) close()
           else show()
         }}
+        onBlur={close}
         onKeyDown={keyDown}
       >
         <span className={styles.value} data-placeholder={text === '' || undefined}>
