@@ -238,10 +238,12 @@ impl RetryFailedDeployments {
     /// Exports `dcl_content_server_failed_deployments` while this process retries: counted now,
     /// as the legacy content server did at its start, then once per cycle, and zeroed when the
     /// guard drops (the lease moved or the process stops), so only the process that retries
-    /// reports the rows and a fleet `sum()` counts them once.
+    /// reports the rows and a fleet `sum()` counts them once. A guard from an earlier worker of
+    /// this process that drops later leaves the gauge alone.
     pub async fn export_failed_deployments(&self) -> crate::sync::metrics::FailedDeploymentsExport {
+        let export = crate::sync::metrics::FailedDeploymentsExport::start();
         self.count_failed_deployments().await;
-        crate::sync::metrics::FailedDeploymentsExport
+        export
     }
 
     /// One cycle: `now` is fixed once, so a record re-reported during the cycle (deadline moved

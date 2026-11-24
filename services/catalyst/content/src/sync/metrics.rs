@@ -477,14 +477,55 @@ pub fn failed_deployments(rows: u64) {
     FAILED_DEPLOYMENTS.handle([]).set(rows as f64);
 }
 
-/// Zeroes `dcl_content_server_failed_deployments` when dropped: the retry worker of this process
-/// stopped, and the process that took over reports the rows.
+/// Zeroes `dcl_content_server_failed_deployments` when dropped, unless a newer retry worker of
+/// this process started since: the worker stopped, and the process that took over reports the
+/// rows. A worker that lost the lease mid-cycle can outlive the one this process started when it
+/// took the lease back, and its late drop must not zero the newer worker's count.
 #[must_use = "the gauge is zeroed when this drops"]
-pub struct FailedDeploymentsExport;
+pub struct FailedDeploymentsExport {
+    generation: u64,
+}
+
+impl FailedDeploymentsExport {
+    /// Starts an export newer than every live one, before the first count is set.
+    pub fn start() -> Self {
+        export_generation(|current| {
+            *current += 1;
+            Self {
+                generation: *current,
+            }
+        })
+    }
+}
 
 impl Drop for FailedDeploymentsExport {
     fn drop(&mut self) {
-        failed_deployments(0);
+        export_generation(|current| {
+            if *current == self.generation {
+                failed_deployments(0);
+            }
+        });
+    }
+}
+
+/// The generation of the latest [`FailedDeploymentsExport`], held while the guard reads or bumps
+/// it so a drop cannot zero the gauge after a newer export started. Process-wide, like the
+/// gauge; per thread under test, like [`local_recorder`], so parallel tests don't see each
+/// other's exports.
+fn export_generation<R>(f: impl FnOnce(&mut u64) -> R) -> R {
+    #[cfg(not(test))]
+    {
+        static GENERATION: std::sync::Mutex<u64> = std::sync::Mutex::new(0);
+        f(&mut GENERATION
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner))
+    }
+    #[cfg(test)]
+    {
+        thread_local! {
+            static GENERATION: std::cell::RefCell<u64> = const { std::cell::RefCell::new(0) };
+        }
+        GENERATION.with_borrow_mut(f)
     }
 }
 

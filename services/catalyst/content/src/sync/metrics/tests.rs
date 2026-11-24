@@ -234,3 +234,20 @@ fn only_a_synced_node_reports_state_one() {
         assert_samples(&rendered, &[("dcl_content_server_sync_state", value)]);
     }
 }
+
+#[test]
+fn a_stale_retry_worker_dropping_last_keeps_the_newer_workers_count() {
+    let (_guard, handle) = local_recorder();
+    let rows = || sample(&handle.render(), "dcl_content_server_failed_deployments");
+
+    // A worker that lost the lease mid-cycle, then the worker started when the lease came back.
+    let older = FailedDeploymentsExport::start();
+    failed_deployments(3);
+    let newer = FailedDeploymentsExport::start();
+    failed_deployments(5);
+
+    drop(older);
+    assert_eq!(rows(), Some(5.0));
+    drop(newer);
+    assert_eq!(rows(), Some(0.0));
+}
