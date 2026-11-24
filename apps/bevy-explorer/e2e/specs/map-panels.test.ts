@@ -35,6 +35,8 @@ const CARD = /^(.+?)\s+(?:created by |👍|👤)/u
 /** A search result: the title and a base parcel, or the world's name and WORLD. */
 const RESULT = /\s-?\d+,-?\d+$|\sWORLD$/
 const CONTROL_TIMEOUT_MS = 20_000
+/** The search bar's ×, which also closes a category's list. */
+const CLEAR_SEARCH = { name: 'Clear search', role: 'button' } as const
 /** The search waits out its debounce and the places and worlds queries before it shows results. */
 const SEARCH_SETTLE_TIMEOUT_MS = 10_000
 
@@ -57,10 +59,9 @@ scenario("a category chip opens its side list with the three sorts and the categ
     const cards = await until(() => placeCards(explorer), (found) => found.length > 0, { timeoutMs: CONTROL_TIMEOUT_MS, what: `places in the ${chip} list` }).catch(() => [])
     if (cards.length === 0) continue
     t.diagnostic(`${chip} lists ${cards.length} places`)
-    // The side list's Close is the second on the page: the top bar's comes first.
-    const closes = (await explorer.hud.list('button')).filter((entry) => entry.name === 'Close').length
-    assert.ok(closes >= 2, 'the side list should have its own Close button beside the top bar')
-    await explorer.hud.click({ name: 'Close', role: 'button', index: closes - 1 })
+    // The category's list is the search bar's: its Clear search closes it (map/panel/SearchBar.tsx).
+    assert.ok(await explorer.hud.isVisible(CLEAR_SEARCH), 'the side list should offer Clear search')
+    await explorer.hud.click(CLEAR_SEARCH)
     await explorer.hud.waitHidden({ name: SORTS[0], role: 'button' }, CONTROL_TIMEOUT_MS)
     await closePage(explorer, 'map')
     return

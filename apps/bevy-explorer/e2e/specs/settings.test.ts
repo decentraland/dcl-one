@@ -8,8 +8,8 @@
 // | Checklist case          | Here                                                                      | Class   |
 // | Graphics                | the Graphics and Performance tabs list the case's settings; an `increase` | Partial |
 // |                         | on Ambient Brightness reaches the engine (`/debug_settings Graphics`)     |         |
-// | Sound                   | the Audio tab lists Master, Scene, Avatar, Voice and System; a `decrease` | Port    |
-// |                         | on Master Volume reaches the engine (`/debug_settings Audio`)             |         |
+// | Sound                   | the Sounds tab lists Master, Scene, Avatar, Voice and System; a `decrease` | Port    |
+// |                         | on Master Volume reaches the engine (`/debug_settings Audio`)              |         |
 // | Controls                | the Controls tab lists the sensitivities; an `increase` on Camera         | Partial |
 // |                         | Sensitivity reaches the engine (`/debug_settings Controls`)               |         |
 // | Chat                    | the Chat tab lists Notification Ping, Receive direct messages from and    | Partial |
@@ -142,9 +142,9 @@ scenario('the Graphics and Performance tabs list the graphics settings, and a ch
     select('Shadow settings'),
     select('Anti-aliasing'),
     select('Bloom'),
-    select('Fog'),
+    toggle('Fog'),
     select('Depth of Field'),
-    toggle('Avatar Cel Shading'),
+    toggle('Jiggle Bones'),
     toggle('Avatar Outline'),
     toggle('Avatar Ghosts'),
     select('Distant Scene Rendering')
@@ -159,11 +159,12 @@ scenario('the Graphics and Performance tabs list the graphics settings, and a ch
   ], 'Performance tab')
 })
 
-scenario('the Audio tab lists the volume channels, and Master Volume reaches the engine', async ({ explorer, restore }) => {
+// The engine's Audio category; the HUD labels its tab Sounds (SettingsPanel.tsx TAB_LABEL).
+scenario('the Sounds tab lists the volume channels, and Master Volume reaches the engine', async ({ explorer, restore }) => {
   restore(() => closeSettings(explorer))
   await openSettings(explorer)
-  await showTab(explorer, 'Audio', slider('Master Volume'))
-  await assertControls(explorer, ['Scene Volume', 'Avatar Volume', 'Voice Volume', 'System Volume', 'Voice Chat Volume'].map(slider), 'Audio tab')
+  await showTab(explorer, 'Sounds', slider('Master Volume'))
+  await assertControls(explorer, ['Scene Volume', 'Avatar Volume', 'Voice Volume', 'System Volume', 'Voice Chat Volume'].map(slider), 'Sounds tab')
   await stepReachesEngine(explorer, restore, 'Audio', 'Master Volume', 'decrease')
 })
 

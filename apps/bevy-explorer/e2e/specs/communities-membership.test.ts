@@ -155,7 +155,7 @@ scenario("the create form keeps CREATE disabled until it is filled, and CANCEL d
   await closePage(explorer, 'communities')
 })
 
-scenario("joining a public community makes the account a member and adds the community's chat", async ({ explorer, restore }) => {
+scenario("joining a public community makes the account a member and adds the community's chat", async ({ explorer, restore, t }) => {
   await openFromRail(explorer, 'communities')
   const card = await cardMatching(explorer, JOIN_CARD)
   assert.ok(card !== undefined, 'the browse grid should offer a public community to join')
@@ -166,10 +166,20 @@ scenario("joining a public community makes the account a member and adds the com
   await explorer.hud.wait(JOINED, { timeoutMs: CONTROL_TIMEOUT_MS })
   assert.ok(await explorer.hud.isVisible(OPEN_CHAT), 'a member should be offered Open chat')
   await closeDetail(explorer)
-  await until(() => buttons(explorer), (names) => names.some((name) => MEMBER_CARD.test(name) && keyOf(name) === key), {
-    timeoutMs: CONTROL_TIMEOUT_MS,
-    what: `the card of "${key}" to say View`
-  })
+  const saysView = (names: string[]): boolean => names.some((name) => MEMBER_CARD.test(name) && keyOf(name) === key)
+  // The grid can keep the cards it loaded (My Communities lists the new one at once): a reopened
+  // page reads them again.
+  const shown = await until(() => buttons(explorer), saysView, { timeoutMs: CONTROL_TIMEOUT_MS / 2, what: `the card of "${key}" to say View` }).then(
+    () => true,
+    () => false
+  )
+  if (!shown) {
+    t.diagnostic(`the card of "${key}" still said Join after the join: reopening the page`)
+    await closePage(explorer, 'communities')
+    await openFromRail(explorer, 'communities')
+    if (await explorer.hud.isVisible(VIEW_ALL)) await explorer.hud.click(VIEW_ALL)
+    await until(() => buttons(explorer), saysView, { timeoutMs: CONTROL_TIMEOUT_MS, what: `the card of "${key}" to say View once the page reopened` })
+  }
   await closePage(explorer, 'communities')
 
   // the chat's conversations list the community without opening it from the card

@@ -7,7 +7,7 @@
 // emoji, and a pick is inserted into the input at the caret (Chat.tsx `insertAtCaret`).
 //
 // | Suite case                | Here                                                                       | Class   |
-// | Open/Close chat           | T opens the panel; after Escape leaves the input, T closes it (the rail and Enter are chat.test.ts) | Port    |
+// | Open/Close chat           | none here: T is the microphone since #1327; Enter and the rail open the chat (chat.test.ts) | Gap     |
 // | Chat Functionalities      | the Emoji button inserts a searched emoji into the input (links: chat.test.ts; coordinates: teleport.test.ts) | Partial |
 // | Chat Functionalities      | an @mention of a nearby user renders as a button                           | Gap     |
 // | Chat Functionalities      | bold and italic text                                                       | Gap     |
@@ -23,9 +23,8 @@
 // for a second client. The HUD applies no bold or italic markup (Notion U3). The suite's reaction bar
 // beside the input sends a reaction to the scene; the Bevy composer has no such bar, only the Emoji
 // button (reactions on a message are chat.test.ts).
-import assert from 'node:assert/strict'
 import { spec, until } from '../driver/index.ts'
-import { CLOSE_CHAT, CONTROL_TIMEOUT_MS, EMOJI, INPUT_FOCUSED, TEXT_TIMEOUT_MS, closeChat, openChat } from './chat.ts'
+import { EMOJI, INPUT_FOCUSED, TEXT_TIMEOUT_MS, closeChat, openChat } from './chat.ts'
 
 const scenario = spec(import.meta.url)
 
@@ -34,18 +33,8 @@ const PICKER_SEARCH = { name: 'Search emoji', role: 'textbox' } as const
 /** The rocket: one code point, no variation selector, so the input holds exactly this text. */
 const ROCKET = String.fromCodePoint(0x1f680)
 
-scenario('T opens the chat panel and, once Escape leaves the input, T closes it', async ({ explorer }) => {
-  await closeChat(explorer)
-  await explorer.key('KeyT')
-  await explorer.hud.wait(CLOSE_CHAT, { timeoutMs: CONTROL_TIMEOUT_MS })
-  // An input holding the keys would type the next T instead of closing the panel.
-  if ((await explorer.worldState()).keyboardClaimed === true) {
-    await explorer.escape()
-    await explorer.keyboardReleased()
-  }
-  assert.ok(await explorer.hud.isVisible(CLOSE_CHAT), 'leaving the input should keep the chat panel open')
-  await explorer.key('KeyT')
-  await explorer.hud.waitHidden(CLOSE_CHAT, CONTROL_TIMEOUT_MS)
+scenario('T opens the chat panel and, once Escape leaves the input, T closes it', async () => {}, {
+  todo: 'T is the microphone key since #1327 (inputs.rs: ChatPanel is unbound); Enter and the rail open the chat, in chat.test.ts'
 })
 
 scenario("the composer's Emoji button inserts a searched emoji into the input", async ({ explorer }) => {

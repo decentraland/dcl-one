@@ -10,7 +10,8 @@
 // | Permissions popover           | the rail's Scene permissions opens the popover and closes it again | Partial |
 // | Open Create                   | the rail's Create opens the Create page over the world; Close      | Partial |
 // |                               | returns to it                                                      |         |
-// | Cel shading / Avatar outline  | each switch flips and the engine takes it (`/debug_settings`)      | Partial |
+// | Cel shading                   | none: the setting was replaced by Jiggle Bones (#1079)             | Gap     |
+// | Avatar outline                | the switch flips and the engine takes it (`/debug_settings`)       | Partial |
 // | Avatar ghosts                 | the switch flips and the engine takes it                           | Partial |
 // | Imposters                     | Distant Scene Rendering goes to Off and the engine takes it        | Partial |
 // | Parcel grass                  | Empty Parcel Props goes to another density and the engine takes it | Partial |
@@ -161,7 +162,11 @@ scenario("the rail's Create opens the Create page, and its Close returns to the 
   await explorer.hud.wait(RAIL_NAVIGATION, { timeoutMs: PAGE_TIMEOUT_MS })
 })
 
-for (const name of ['Avatar Cel Shading', 'Avatar Outline', 'Avatar Ghosts']) {
+scenario('the Avatar Cel Shading switch flips and the engine takes it', async () => {}, {
+  todo: 'the Graphics tab has no Avatar Cel Shading since #1079: its setting became Jiggle Bones (spring bones)'
+})
+
+for (const name of ['Avatar Outline', 'Avatar Ghosts']) {
   scenario(`the ${name} switch flips and the engine takes it`, async ({ explorer, restore }) => {
     const control: Selector = { name, role: 'switch' }
     restore(() => closeMenuPage(explorer, SETTINGS_HEADING))
@@ -208,7 +213,9 @@ scenario("/world to a world that does not exist is refused, and the player stays
   const dialog: Selector = { name: "Can't travel there", role: 'dialog' }
   const before = await explorer.worldState()
   assert.ok(before.position, 'the player should have a position')
-  const missing = `e2e-no-such-world-${Date.now().toString(36)}.dcl.eth`
+  // a `.dcl.eth` name is letters and digits only (lobby/goto.ts WORLD): the grammar answers
+  // anything else with its usage, before any destination check
+  const missing = `e2enosuchworld${Date.now().toString(36)}.dcl.eth`
   restore(async () => {
     if (await explorer.hud.isVisible(dialog)) await explorer.hud.click({ name: 'OK', role: 'button' })
     if (await explorer.hud.isVisible(CLOSE_CHAT)) await closeChat(explorer)

@@ -59,6 +59,9 @@ const target = readTarget()
 const CONTROL_TIMEOUT_MS = 20_000
 const LOBBY_TIMEOUT_MS = 30_000
 const TRAVEL_TIMEOUT_MS = 120_000
+/** The first entry into the world from the startup Lobby loads every scene around the landing:
+ *  on CI it has taken more than two minutes. */
+const FIRST_ENTRY_TIMEOUT_MS = 240_000
 const PARCEL_METERS = 16
 
 /** The page the top bar's Lobby button sits on: any menu page has it; Settings opens from the rail. */
@@ -311,7 +314,7 @@ scenario('a sign-in with no destination lands in the Lobby, and its landing card
   // the Jump ins are disabled until the sign-in has finished
   await explorer.hud.wait(landing, { state: 'actionable', timeoutMs: LOBBY_TIMEOUT_MS })
   await explorer.hud.click(landing)
-  const arrived = await explorer.waitInWorld(TRAVEL_TIMEOUT_MS)
+  const arrived = await explorer.waitInWorld(FIRST_ENTRY_TIMEOUT_MS)
   t.diagnostic(`entered ${arrived.realmName || arrived.realm} at ${parcelOf(arrived)?.join(',')}`)
   await explorer.hud.waitHidden(WELCOME, CONTROL_TIMEOUT_MS)
-}, { session: STARTUP, noEscape: true, closeSession: true, timeoutMs: 300_000 })
+}, { session: STARTUP, noEscape: true, closeSession: true, timeoutMs: 420_000 })

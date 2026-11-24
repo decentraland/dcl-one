@@ -31,7 +31,17 @@ export async function ownAddress(explorer: Explorer): Promise<string> {
  *  connected to chat"), so a conversation an earlier scenario left selected gives way to Nearby. */
 export async function openChat(explorer: Explorer): Promise<void> {
   if (!(await explorer.hud.get(RAIL_CHAT)).checked) await explorer.hud.click(RAIL_CHAT)
-  await explorer.hud.wait(CLOSE_CHAT, { timeoutMs: CONTROL_TIMEOUT_MS })
+  // After a realm change the rail's Chat can read pressed while only the messages show, with no
+  // panel (no Close chat): a press then closes that, and the next opens the panel.
+  for (let press = 0; ; press++) {
+    const open = await explorer.hud.wait(CLOSE_CHAT, { timeoutMs: press === 0 ? CONTROL_TIMEOUT_MS / 2 : CONTROL_TIMEOUT_MS / 4 }).then(
+      () => true,
+      () => false
+    )
+    if (open) break
+    assert.ok(press < 2, "the rail's Chat should open the chat panel")
+    await explorer.hud.click(RAIL_CHAT)
+  }
   const nearby = await explorer.hud.find(NEARBY_CHAT)
   if (nearby && !nearby.checked) {
     await explorer.hud.click(NEARBY_CHAT)

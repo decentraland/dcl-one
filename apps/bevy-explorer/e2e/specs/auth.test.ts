@@ -27,6 +27,8 @@ const LOBBY_TIMEOUT_MS = 30_000
 const NAME = 'e2esignout'
 
 const WELCOME: Selector = { name: 'Welcome', role: 'heading', exact: false }
+/** The signed-out start screen's heading (startup/GuestOrSignUp.tsx). */
+const START_SCREEN: Selector = { name: 'Welcome to Decentraland!', role: 'heading' }
 /** The profile chip's menu row (LobbyProfile.tsx), and the confirmation it asks for first. */
 const SIGN_OUT: Selector = { name: 'Sign Out', role: 'menuitem' }
 const CONFIRM: Selector = { name: 'Sign out?', role: 'dialog' }
@@ -59,12 +61,13 @@ scenario('the startup Lobby\'s profile chip signs out of the engine and the HUD'
   await press(explorer, CONFIRM_SIGN_OUT).catch((error: unknown) => {
     if (!(error instanceof DocumentGoneError)) throw error
   })
-  await explorer.hud.waitHidden(WELCOME, LOBBY_TIMEOUT_MS)
   const after = await until(() => explorer.worldState(), (state) => !state.signedIn || state.address?.toLowerCase() !== reply.address.toLowerCase(), {
     timeoutMs: LOBBY_TIMEOUT_MS,
     what: 'the engine to sign the account out'
   })
   assert.notEqual(after.address?.toLowerCase(), reply.address.toLowerCase(), 'the engine should no longer carry the signed-out account')
+  // the HUD is back on its start screen (GuestOrSignUp.tsx), whose heading also starts with Welcome
+  await explorer.hud.wait(START_SCREEN, { timeoutMs: LOBBY_TIMEOUT_MS })
 }, { session: { signIn: 'unsigned-guest' }, noEscape: true, closeSession: true, timeoutMs: 240_000 })
 
 scenario('reopening the client keeps the account signed in', async () => {}, {

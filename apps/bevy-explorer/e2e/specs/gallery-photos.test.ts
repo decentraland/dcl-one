@@ -5,12 +5,12 @@
 // W/S/A/D move the camera, R/F raise and lower it, Q/E tilt it, U hides the HUD. The Gallery
 // (library/ui/apps/hud/features/gallery) shows each photo as `Open photo`, with a `Photo options`
 // button that opens the `Photo options` menu: `Set as Public` (a toggle, `menuitemcheckbox`),
-// `Share on X`, `Copy Link`, `Download` and `Delete`; the opened photo (`Photo` dialog) offers
-// Download, Copy link, Share and Delete, and its Close (Escape does not close it). A public photo shows in the own passport's PHOTOS tab.
+// `Share on X`, `Copy Link`, `Download` and `Delete`; the opened photo (`Photo` dialog, PhotoDetail.tsx)
+// offers the same Share on X, Copy Link, Download and Delete, and its Close (Escape does not close it). A public photo shows in the own passport's PHOTOS tab.
 //
 // | QA case            | Here                                                                       | Class   |
 // | Camera Shortcuts   | in photo mode W moves the camera, R raises and F lowers it, Q tilts it, U hides and shows the HUD | Partial |
-// | Photo Properties   | a photo's options menu lists Set as Public, Share on X, Copy Link, Download and Delete; the opened photo offers Download, Copy link, Share and Delete | Partial |
+// | Photo Properties   | a photo's options menu lists Set as Public, Share on X, Copy Link, Download and Delete; the opened photo offers Share on X, Copy Link, Download and Delete | Partial |
 // | Publish Photos     | Set as Public on a new photo, then the own passport's PHOTOS tab shows it  | Port    |
 //
 // Partial: Camera Shortcuts does not check the drag to move, the wheel's zoom, Shift's speed or N's
@@ -38,7 +38,7 @@ const OPTIONS_MENU: Selector = { name: 'Photo options', role: 'menu' }
 const SET_PUBLIC: Selector = { name: 'Set as Public', role: 'menuitemcheckbox' }
 const MENU_ACTIONS = ['Share on X', 'Copy Link', 'Download', 'Delete']
 const VIEWER: Selector = { name: 'Photo', role: 'dialog' }
-const VIEWER_ACTIONS = ['Download', 'Copy link', 'Share', 'Delete']
+const VIEWER_ACTIONS = ['Share on X', 'Copy Link', 'Download', 'Delete']
 const PASSPORT: Selector = { name: 'Passport sections', role: 'tablist' }
 const PHOTOS_TAB: Selector = { name: 'PHOTOS', role: 'tab' }
 /** The passport's photos load behind this spinner (PassportPhotos.tsx), with no `aria-busy`. */

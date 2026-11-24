@@ -344,7 +344,7 @@ Each new file's header classes its cases as above. The chat helpers the chat spe
 
 | Section | Case | Spec | Class |
 | --- | --- | --- | --- |
-| Chat | Open/Close chat | `chat` (rail, Enter), `chat-composer` (T) | Port |
+| Chat | Open/Close chat (rail, Enter; T is the microphone since #1327) | `chat` | Port |
 | Chat | Chat Functionalities | `chat` (link), `teleport` (coordinates), `chat-composer` (emoji) | Partial |
 | Chat | Chat Functionalities: mentions, bold and italic | `chat-composer` | Gap |
 | Chat | In-chat navbar | `chat` (Nearby); a DM tab in `chat-composer` | Partial, Gap |
@@ -398,8 +398,8 @@ cases as above.
 | Auth | Login (auto login), Guest login persists (the web driver neither reloads a page nor keeps a browser profile) | `auth` | Gap |
 | General: Settings | Sound, Translate Option | `settings` | Port |
 | General: Settings | Graphics, Controls, Chat | `settings` | Partial |
-| Bevy Only | Untrusted link parameters, Permissions popover, Open Create, Cel shading / Avatar outline, Avatar ghosts, Imposters, Parcel grass, Crash modal (an unreachable world) | `bevy-only` | Partial |
-| Bevy Only | FPS meter (`aria-hidden`) | `bevy-only` | Gap |
+| Bevy Only | Untrusted link parameters, Permissions popover, Open Create, Avatar outline, Avatar ghosts, Imposters, Parcel grass, Crash modal (an unreachable world) | `bevy-only` | Partial |
+| Bevy Only | FPS meter (`aria-hidden`), Cel shading (replaced by Jiggle Bones, #1079) | `bevy-only` | Gap |
 | High End: Communities | Join a community | `communities-membership` | Port |
 | High End: Communities | Create a Community (the form, never submitted), Private community, Join a Private Community, Community interaction | `communities-membership` | Partial |
 | High End: Friends | Open Friends Panel | `friends` | Port |

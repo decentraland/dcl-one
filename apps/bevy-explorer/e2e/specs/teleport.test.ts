@@ -114,6 +114,9 @@ scenario(
     )
     const before = (await explorer.worldState()).arrivals
     await explorer.hud.click({ name: coordinate, role: 'button', index: buttons.length - 1 })
+    // the coordinate asks first, naming the place (chatLinkPrompts.tsx); its Jump in travels
+    await explorer.hud.wait(JUMP_PROMPT, { timeoutMs: CONTROL_TIMEOUT_MS })
+    await explorer.hud.click({ name: 'Jump in', role: 'button' })
     await waitArrivalAt(explorer, before, target)
     await closeChat(explorer)
   },
@@ -156,6 +159,9 @@ scenario(
   { timeoutMs: SCENARIO_TIMEOUT_MS }
 )
 
+/** The question a chat coordinate asks before it travels. */
+const JUMP_PROMPT = { name: 'Jump to this location?', role: 'dialog' } as const
+
 // The Map's category chips (MapPage.tsx CATEGORIES), tried in order until one lists a place.
 const CATEGORY_CHIPS = ['Art', 'Social', 'Game', 'Music', 'Fashion'] as const
 /** A sidebar card is a button named by its whole text, its text nodes joined by spaces: the title,
@@ -184,9 +190,8 @@ scenario(
     const { state } = await startingPoint(explorer, restore)
     await openWithKey(explorer, 'map')
     const title = await firstListedPlace(explorer)
-    // The category's side list covers the search field: closed with its own Close, after the top bar's.
-    const closes = (await explorer.hud.list('button')).filter((entry) => entry.name === 'Close').length
-    await explorer.hud.click({ name: 'Close', role: 'button', index: closes - 1 })
+    // The category's list holds the search field (read-only): the bar's Clear search closes it.
+    await explorer.hud.click({ name: 'Clear search', role: 'button' })
     await explorer.hud.wait(PAGES.map.marker, { state: 'actionable', timeoutMs: CONTROL_TIMEOUT_MS })
     // The search lists places once it holds two characters; the place's longest word finds it.
     const query = title.split(/\s+/).sort((a, b) => b.length - a.length)[0]!
