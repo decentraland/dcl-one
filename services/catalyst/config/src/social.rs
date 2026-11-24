@@ -889,8 +889,8 @@ pub struct SocialConfig {
     pub media_convert_remote_sources: bool,
 
     /// Metamorph endpoint for native event posters on nodes that allow remote media.
-    #[arg(long, env = "MEDIA_POSTER_CONVERTER_URL", default_value = "")]
-    pub media_poster_converter_url: String,
+    #[arg(long, env = "MEDIA_POSTER_CONVERTER_URL")]
+    pub media_poster_converter_url: Option<String>,
 
     // social/profile_images: avatar face/body images from the profile
     // entity's own files, the renderer and the upstream service as gated
