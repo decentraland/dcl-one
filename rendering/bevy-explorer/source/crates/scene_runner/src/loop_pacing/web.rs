@@ -299,8 +299,6 @@ impl LoopPacing {
                 deadline
             },
             replies_seen: waits_for_replies.then_some(0),
-            mode_name: mode.name(),
-            tail_reserve: frame.and_then(|frame| self.tail.reserve(frame)),
         }
     }
 
@@ -322,10 +320,6 @@ pub struct PacedLoop {
     /// When a reply ends the loop's waits, the replies counted before the pass; None in
     /// `legacy`, which sleeps instead.
     replies_seen: Option<u32>,
-    /// MEASUREMENT ONLY (tick_stages): the loop's mode, and what the deadline mode leaves for the
-    /// frame's tail ([`TailEstimate::reserve`]) whichever the mode; None until measured
-    pub mode_name: &'static str,
-    pub tail_reserve: Option<Duration>,
 }
 
 #[cfg(target_arch = "wasm32")]

@@ -189,18 +189,12 @@ mod commands {
     #[derive(clap::Parser, ConsoleCommand)]
     #[command(name = "/scene_loop_mode")]
     struct SceneLoopModeCommand {
-        // MEASUREMENT ONLY: optional, so a bare `/scene_loop_mode` prints the mode for the
-        // measurement driver
-        mode: Option<String>,
+        mode: String,
     }
 
     fn set_scene_loop_mode(mut input: ConsoleCommand<SceneLoopModeCommand>) {
         if let Some(Ok(command)) = input.take() {
-            let Some(name) = command.mode else {
-                input.reply_ok(format!("scene loop mode {}", scene_loop_mode::get().name()));
-                return;
-            };
-            match SceneLoopMode::parse(&name) {
+            match SceneLoopMode::parse(&command.mode) {
                 Some(mode) => {
                     scene_loop_mode::set(mode);
                     input.reply_ok(format!("scene loop mode {}", mode.name()));
