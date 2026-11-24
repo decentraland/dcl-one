@@ -31,7 +31,7 @@ import { splitEvents } from '@explorer-core/features/lobby/lobbyEvents'
 import { parseGotoTarget, randomParcel, worldName } from '@explorer-core/features/lobby/goto'
 import * as lobbyAnalytics from '@explorer-core/features/lobby/lobbyAnalytics'
 import type { Community, EventData, Friend } from '@explorer-core/engine/protocol'
-import { clip } from '../backpack/BackpackModal'
+import { modalHole } from '../backpack/BackpackModal'
 import { EngineViewport } from '../engine/EngineViewport'
 import { DEGREES_PER_PX } from '../engine/AvatarDragSurface'
 import { openCommunityModal } from '../communities/CommunityModal'
@@ -60,6 +60,7 @@ import type { EngineViewportRegion } from '@explorer-core/engine/protocol'
 
 const cx = (...names: Array<string | false | null | undefined>): string => names.filter(Boolean).join(' ')
 
+const RAIL_MAX_CARDS = 10
 /** Pixels a press on the avatar travels before it turns the avatar instead of opening the Backpack. */
 const DRAG_THRESHOLD = 8
 /** Pixels from the pointer. */
@@ -70,16 +71,18 @@ const CROWD_ERROR = 'The most crowded place could not be found. Please try again
 const FRIEND_UNKNOWN = 'Your friend’s location could not be found. Please try again.'
 
 // The Backpack's preview runs past its modal's edge; only the part inside the modal is a hole.
-function clipToModal(rect: Rect | null): { x: number; y: number; width: number; height: number } | null {
-  const frame = document.querySelector('[role="dialog"][aria-label="Backpack"]')?.getBoundingClientRect()
-  return rect == null || frame == null ? rect : clip({ x: rect.x, y: rect.y, width: rect.width, height: rect.height }, frame)
+function clipToModal(rect: Rect | null): ReturnType<typeof modalHole> {
+  if (rect == null) return null
+  const frame = document.querySelector<HTMLElement>('[role="dialog"][aria-label="Backpack"]')
+  const whole = { x: rect.x, y: rect.y, width: rect.width, height: rect.height }
+  return frame == null ? { rect: whole, round: { topLeft: 0, topRight: 0, bottomRight: 0, bottomLeft: 0 } } : modalHole(whole, frame)
 }
 
 /** Until the engine has drawn the stage, so the lobby never shows an empty or half-loaded centre. */
-export function StandInStage({ hidden, instant, body, preset }: { hidden: boolean; instant?: boolean; body?: string; preset?: string }): React.JSX.Element {
+export function StandInStage({ hidden, body, preset }: { hidden: boolean; body?: string; preset?: string }): React.JSX.Element {
   const backdrop = STAGE_BACKDROPS[lobbyStagePreset(preset).id]
   return (
-    <div className={cx(styles.standIn, hidden && styles.standInHidden, instant && styles.standInInstant)} aria-hidden="true">
+    <div className={cx(styles.standIn, hidden && styles.standInHidden)} aria-hidden="true">
       <img className={styles.standInBackdrop} src={backdrop} alt="" />
       <div className={styles.standInFloor} />
       {body && <img className={styles.standInAvatar} src={body} alt="" draggable={false} />}
@@ -338,8 +341,8 @@ export function LobbyHome({
     friendsLoading: session.friends.loading,
     totalFriends: session.friends.list.length,
     locations,
-    communities: session.lobbyData.communitiesLoaded ? session.communities.list : null,
-    photos: reel.loaded ? reel.photos.slice(0, 10) : null,
+    communities: session.lobbyData.communitiesLoaded ? session.communities.list.slice(0, RAIL_MAX_CARDS) : null,
+    photos: reel.loaded ? reel.photos.slice(0, RAIL_MAX_CARDS) : null,
     busy,
     friendsAt,
     onFriendHover: (friend, e) => {
@@ -446,28 +449,20 @@ export function LobbyHome({
     }
   }
 
-  // The stand-in covers the stage under the Backpack, which the engine keeps as it is: the Backpack
-  // opening or closing shows or hides it at once; only the stage coming up fades it out.
-  const [standInFade, setStandInFade] = useState(true)
-  const [readyBefore, setReadyBefore] = useState(session.lobbyStageReady)
-  const [backpackBefore, setBackpackBefore] = useState(session.backpack.open)
-  if (session.backpack.open !== backpackBefore) {
-    setBackpackBefore(session.backpack.open)
-    setStandInFade(false)
-  }
-  if (session.lobbyStageReady !== readyBefore) {
-    setReadyBefore(session.lobbyStageReady)
-    setStandInFade(true)
-  }
-
-  // Under the Backpack modal the lobby shows, with a hole where the engine draws the Backpack's avatar.
-  const hole = session.backpack.open ? clipToModal(session.avatarPreviewRect) : null
+  // Under the Backpack modal the lobby shows, with a hole where the engine draws the Backpack's avatar, once drawn.
+  const hole = session.backpack.open && session.avatarPreviewReady ? clipToModal(session.avatarPreviewRect) : null
   const canvasScale = (): number => {
     const el = rootRef.current
     return el != null ? el.getBoundingClientRect().width / (el.offsetWidth || 1) || 1 : 1
   }
   const holeScale = hole == null ? 1 : canvasScale()
-  const backpackHole = hole == null ? undefined : holeClip({ x: hole.x / holeScale, y: hole.y / holeScale, width: hole.width / holeScale, height: hole.height / holeScale })
+  const backpackHole =
+    hole == null
+      ? undefined
+      : holeClip(
+          { x: hole.rect.x / holeScale, y: hole.rect.y / holeScale, width: hole.rect.width / holeScale, height: hole.rect.height / holeScale },
+          { topLeft: hole.round.topLeft / holeScale, topRight: hole.round.topRight / holeScale, bottomRight: hole.round.bottomRight / holeScale, bottomLeft: hole.round.bottomLeft / holeScale }
+        )
 
   const placeAt = (el: HTMLElement | null, at: { x: number; y: number }): void => {
     if (el == null) return
@@ -534,7 +529,8 @@ export function LobbyHome({
       <div className={styles.stage}>
         <EngineViewport region="lobby" report={setEngineViewport} />
       </div>
-      <StandInStage hidden={session.lobbyStageReady && !session.backpack.open} instant={!standInFade} body={stored.body} preset={session.lobbyStage.preset} />
+      {/* under the Backpack the engine keeps the stage's last frame */}
+      <StandInStage hidden={session.lobbyStageReady} body={stored.body} preset={session.lobbyStage.preset} />
       <div className={styles.gradient} />
       <div className={styles.overlay} />
 

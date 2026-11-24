@@ -120,8 +120,40 @@ pub enum SyncError {
     #[error("Sync stopped")]
     Stopped,
 
+    /// A failed entity a newer active entity overtook on one of its pointers: with history
+    /// pruning on, the retry discards it instead of storing it as a superseded row.
+    #[error("Entity {entity_id} was overtaken by a newer deployment")]
+    Overtaken { entity_id: String },
+    /// A peer answered 404 for a content file.
+    #[error("{0}")]
+    NotFound(String),
+
     #[error("{0}")]
     Other(String),
+}
+
+impl From<crate::http::SendError> for SyncError {
+    fn from(e: crate::http::SendError) -> Self {
+        match e {
+            crate::http::SendError::Http(e) => Self::Http(e),
+            refused @ crate::http::SendError::Refused(_) => Self::Other(refused.to_string()),
+        }
+    }
+}
+
+/// `resp`, or an error naming `what` when it is a redirect: the sync client
+/// follows none, and a JSON read refuses it instead of parsing its body.
+pub(crate) fn refuse_redirect(
+    resp: reqwest::Response,
+    what: &str,
+) -> Result<reqwest::Response, SyncError> {
+    if resp.status().is_redirection() {
+        return Err(SyncError::Other(format!(
+            "{what}: refusing to follow a {} redirect",
+            resp.status()
+        )));
+    }
+    Ok(resp)
 }
 
 impl SyncError {

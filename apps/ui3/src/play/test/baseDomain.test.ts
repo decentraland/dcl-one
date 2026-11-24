@@ -57,6 +57,20 @@ describe('engineServiceOptions', () => {
     // not through the gateway yet (#631): Decentraland's public host, never one built from the
     // page's own host and port
     expect(options.abgenCdn).toBe('https://abgen-cdn.decentraland.org')
+    // each player's engine asks the flags service itself, for its own A/B group
+    expect(options.featureFlags).toBe('https://feature-flags.decentraland.org')
+    // the node's own imposter store, not the engine's built-in default
+    expect(options.imposterSource).toBe(`${window.location.origin}/bvimposters`)
+  })
+
+  it('behind the gateway: an entry ?imposterSource= is left to the url', async () => {
+    window.history.replaceState(null, '', '/?imposterSource=https://imposters.example.test')
+    try {
+      const m = await load(true)
+      expect(m.engineServiceOptions().imposterSource).toBeUndefined()
+    } finally {
+      window.history.replaceState(null, '', '/')
+    }
   })
 
   it('upstream: only the base domain, which the engine composes every service from', async () => {

@@ -119,7 +119,10 @@ export function InputField({
         </div>
       ) : null}
       <div className={styles.fieldRow}>
-        <div className={styles.field} data-invalid={!!errorId || undefined}>
+        <div
+          className={surface === 'web' ? `${styles.field} ${styles.webField}` : styles.field}
+          data-invalid={!!errorId || undefined}
+        >
           {hasRenderableContent(leadingIcon) ? (
             <span className={styles.icon} aria-hidden="true">
               {leadingIcon}

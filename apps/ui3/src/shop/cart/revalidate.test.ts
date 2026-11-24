@@ -4,7 +4,7 @@ import { describe, expect, it, vi } from "vitest";
 import { usdCents } from "@shop/model/money";
 import type { CartLine, PurchaseOffer } from "@shop/model/purchase";
 import { parcelResale, storeMint, web2, web3 } from "@shop/payment/fixtures";
-import { diffLine, useCartRevalidation, type OfferFetcher } from "./revalidate";
+import { diffLine, SEEN_RECENT_MS, seenRecently, useCartRevalidation, type OfferFetcher } from "./revalidate";
 
 function lineFor(offer: PurchaseOffer, over: Partial<CartLine> = {}): CartLine {
   return {
@@ -81,5 +81,68 @@ describe("useCartRevalidation", () => {
     const { result } = renderHook(() => useCartRevalidation(lines, s, () => Promise.reject(new Error("503"))));
     await waitFor(() => expect(result.current.status).toBe("failed"));
     expect(result.current.canConfirm).toBe(false);
+  });
+});
+
+describe("a recent offer the buyer saw", () => {
+  /** A fetcher that answers only when the test says so. */
+  function held() {
+    let answer: (offers: Record<string, PurchaseOffer | null>) => void = () => {};
+    const fetchOffers = vi.fn<OfferFetcher>(() => new Promise((resolve) => (answer = resolve)));
+    return { fetchOffers, answer: (offers: Record<string, PurchaseOffer | null>) => answer(offers) };
+  }
+
+  it("is one quoted in the last moments, on either side of the clock", () => {
+    const offer = { ...storeMint(web3()), quotedAt: 1_000_000 };
+    expect(seenRecently(lineFor(offer), 1_000_000 + SEEN_RECENT_MS)).toBe(true);
+    expect(seenRecently(lineFor(offer), 1_000_000 - SEEN_RECENT_MS)).toBe(true);
+    expect(seenRecently(lineFor(offer), 1_000_001 + SEEN_RECENT_MS)).toBe(false);
+    expect(seenRecently(lineFor(offer, { seen: null }), 1_000_000)).toBe(false);
+  });
+
+  it("stands while the check runs, and confirmation still waits for the check", async () => {
+    const s = web3();
+    const offer = { ...storeMint(s), quotedAt: Date.now() };
+    const { fetchOffers, answer } = held();
+    const lines = [lineFor(offer)];
+    const { result } = renderHook(() => useCartRevalidation(lines, s, fetchOffers, { revision: "137" }));
+    await waitFor(() => expect(fetchOffers).toHaveBeenCalledTimes(1));
+    expect(result.current.status).toBe("checking");
+    expect(result.current.seenRecently).toBe(true);
+    expect(result.current.canConfirm).toBe(false);
+    await act(async () => answer({ l0: { ...offer, quotes: [{ method: "credits", quoted: usdCents(130) }, offer.quotes[1]!] } }));
+    expect(result.current.status).toBe("changed");
+    expect(result.current.seenRecently).toBe(false);
+    expect(result.current.canConfirm).toBe(false);
+  });
+
+  it("an old offer, or a session or wallet switch, waits for the server", async () => {
+    const s = web3();
+    const old = [lineFor({ ...storeMint(s), quotedAt: Date.now() - SEEN_RECENT_MS - 1_000 })];
+    const first = held();
+    const stale = renderHook(() => useCartRevalidation(old, s, first.fetchOffers));
+    await waitFor(() => expect(first.fetchOffers).toHaveBeenCalledTimes(1));
+    expect(stale.result.current.status).toBe("checking");
+    expect(stale.result.current.seenRecently).toBe(false);
+
+    const lines = [lineFor({ ...storeMint(s), quotedAt: Date.now() })];
+    const next = held();
+    const { result, rerender } = renderHook(({ revision }) => useCartRevalidation(lines, s, next.fetchOffers, { revision }), { initialProps: { revision: "137" } });
+    await waitFor(() => expect(result.current.seenRecently).toBe(true));
+    rerender({ revision: "1" });
+    await waitFor(() => expect(next.fetchOffers).toHaveBeenCalledTimes(2));
+    expect(result.current.status).toBe("checking");
+    expect(result.current.seenRecently).toBe(false);
+  });
+
+  it("a check the buyer asks for again waits for the server", async () => {
+    const s = web3();
+    const lines = [lineFor({ ...storeMint(s), quotedAt: Date.now() })];
+    const { fetchOffers } = held();
+    const { result } = renderHook(() => useCartRevalidation(lines, s, fetchOffers));
+    await waitFor(() => expect(result.current.seenRecently).toBe(true));
+    act(() => result.current.revalidate());
+    await waitFor(() => expect(fetchOffers).toHaveBeenCalledTimes(2));
+    expect(result.current.seenRecently).toBe(false);
   });
 });

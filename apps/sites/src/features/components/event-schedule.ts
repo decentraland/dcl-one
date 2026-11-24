@@ -1,5 +1,4 @@
-import { eventText, type EventsLocale } from "@dcl/one-ui/apps/sites/events/locale";
-import type { EventCardTime } from "@dcl/one-ui/apps/sites/events/types";
+import { eventText, type EventsLocale, type EventCardTime } from "@dcl/one-ui";
 
 import { eventOccurrence, type Event } from "@/data/lib/catalyst/places/events";
 

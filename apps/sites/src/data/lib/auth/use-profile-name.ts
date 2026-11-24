@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { getAvatarBackgroundColor, getDisplayName } from "@ui/shop/discovery/lib/avatarColor";
+import { getAvatarBackgroundColor, getDisplayName } from "@web-core/profile/avatarColor";
 
 import { profileFaceUrl, profileSnapshotUrl } from "./profile-face-url";
 import { isProfileOfAddress, profileDisplayName } from "./profile-label";
@@ -53,11 +53,4 @@ export function useProfileIdentity(
   }, [isConnected, address]);
 
   return isConnected && address?.toLowerCase() === identity.address ? identity : EMPTY;
-}
-
-export function useProfileName(
-  address: string | null | undefined,
-  isConnected: boolean,
-): string {
-  return useProfileIdentity(address, isConnected).name;
 }

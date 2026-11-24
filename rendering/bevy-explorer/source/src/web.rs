@@ -8,6 +8,7 @@ use bevy::{
     winit::{UpdateMode, WinitSettings},
 };
 use bevy_console::ConsoleConfiguration;
+use common::sync::MutexExt;
 use common::{
     perf::{HudMainThreadCostDataPoint, LongAnimationFrameSums, ReactCommitSums},
     rpc::RpcResultSender,
@@ -89,7 +90,7 @@ pub fn engine_set_hud_main_thread_cost(
             style_and_layout_time_sum_ms,
         }),
     };
-    let Ok(mut stored) = HUD_MAIN_THREAD_COST_WINDOW.try_lock() else {
+    let Some(mut stored) = HUD_MAIN_THREAD_COST_WINDOW.try_lock_ignore_poison() else {
         return false;
     };
     match stored.as_mut() {
@@ -154,13 +155,6 @@ extern "C" {
     /// leave keys alone while the user types into scene UI.
     #[wasm_bindgen(js_name = "__setEngineTextFocus")]
     fn set_engine_text_focus(focused: bool);
-
-    /// Shows or hides the page's `#shader-compiling` indicator (the HUD's `renderBusy` probe)
-    /// while gpu_cache.js compiles pipelines asynchronously on the render worker; boot.js
-    /// defines it, gpu_cache.js calls the relay directly.
-    #[allow(dead_code)]
-    #[wasm_bindgen(js_name = "__setShaderCompiling")]
-    fn set_shader_compiling(on: bool);
 
     /// The render worker's gpu cache is warm (`engine_render_setup` done): boot.js completes
     /// the loading bar's gpu step.
@@ -389,19 +383,24 @@ async fn read_config_file() -> Option<String> {
     None
 }
 
-/// The persisted home scene — the pinned realm (null = none pinned: the HUD substitutes its own
-/// default realm, since this runs before `engine_run` latches the base domain the engine would
-/// compose one from) + "x,y" parcel — as a JSON string. Valid after [`engine_init`] (it reads the
+/// The home that applies at startup (the stored sign-in's account's, else the last account's) —
+/// the pinned realm (null = none pinned: the HUD substitutes its own default realm, since this
+/// runs before `engine_run` latches the base domain the engine would compose one from), the
+/// "x,y" parcel and whether a home is pinned — as a JSON string. Valid after [`engine_init`] (it reads the
 /// loaded config); exposed so the HUD's places picker can target home from "Skip" BEFORE the
 /// engine is launched.
 #[wasm_bindgen]
 pub fn engine_home_scene() -> String {
-    let (realm, parcel) = INIT_DATA
-        .get()
-        .map(|config| (config.home_realm.clone(), config.home_location()))
-        .unwrap_or_else(|| (None, AppConfig::default().home_location()));
-    serde_json::json!({ "realm": realm, "parcel": format!("{},{}", parcel.x, parcel.y) })
-        .to_string()
+    let home = INIT_DATA.get().and_then(|config| config.startup_home());
+    let parcel = home
+        .as_ref()
+        .map_or(bevy::math::IVec2::ZERO, |home| home.location);
+    serde_json::json!({
+        "realm": home.as_ref().map(|home| &home.realm),
+        "parcel": format!("{},{}", parcel.x, parcel.y),
+        "pinned": home.is_some(),
+    })
+    .to_string()
 }
 
 /// Whether the terms are accepted on this install (the loaded config), so the HUD can launch a
@@ -668,28 +667,18 @@ pub fn engine_run(options: JsValue) -> Result<(), JsValue> {
 }
 
 /// Send a console command to the engine from JavaScript.
-/// `command_line` is the full command string, e.g. `"/teleport 10 20"`.
+/// `command_line` is the full command string, e.g. `"/teleport 10 20"`, split as
+/// `console::line` says (`"two words"` is one argument).
 /// Returns a Promise that resolves with the command output or rejects with an error message.
 #[wasm_bindgen]
 pub async fn engine_console_command(command_line: String) -> Result<JsValue, JsValue> {
-    let mut parts = command_line.split_whitespace();
-    let Some(cmd) = parts.next() else {
-        return Err(JsValue::from_str("empty command"));
-    };
-    let cmd = if cmd.starts_with('/') {
-        cmd.to_string()
-    } else {
-        format!("/{cmd}")
-    };
-    let args: Vec<String> = parts.map(String::from).collect();
-
     let Some(sender) = CONSOLE_BRIDGE_SENDER.get() else {
         return Err(JsValue::from_str("engine not initialized"));
     };
 
     let (sx, rx) = RpcResultSender::channel();
     sender
-        .send(SystemApi::ConsoleCommand(cmd, args, sx))
+        .send(SystemApi::ConsoleLine(command_line, sx))
         .map_err(|_| JsValue::from_str("engine channel closed"))?;
 
     rx.await
@@ -704,17 +693,18 @@ fn extract_js_api(config: Res<ConsoleConfiguration>, _js: JsThread) {
         .commands
         .iter()
         .map(|(name, cmd)| {
-            let trailing = cmd.is_trailing_var_arg_set();
+            // the predicate the engine splits the line by: the page sends such a command's words
+            // unquoted
+            let rest = console::line::takes_rest(cmd);
             let positional: Vec<_> = cmd
                 .get_arguments()
                 .filter(|a| a.get_long().is_none() && a.get_short().is_none())
                 .collect();
-            let last_id = positional.last().map(|a| a.get_id().as_str());
             let args: Vec<serde_json::Value> = positional
                 .iter()
                 .map(|arg| {
                     let id = arg.get_id().as_str();
-                    let kind = if (trailing && Some(id) == last_id) || id == "json" {
+                    let kind = if id == "json" {
                         "json"
                     } else if id == "entity" {
                         "entity"
@@ -732,7 +722,7 @@ fn extract_js_api(config: Res<ConsoleConfiguration>, _js: JsThread) {
                     arg_json
                 })
                 .collect();
-            let mut cmd_json = serde_json::json!({ "cmd": name, "args": args });
+            let mut cmd_json = serde_json::json!({ "cmd": name, "args": args, "rest": rest });
             if let Some(about) = cmd.get_about() {
                 cmd_json["help"] = serde_json::Value::String(about.to_string());
             }
@@ -837,10 +827,7 @@ pub(crate) fn viewport_active() -> bool {
 /// Takes the HUD cost windows the page stored since the last take, summed; `None` when none
 /// arrived.
 pub(crate) fn take_hud_main_thread_cost_window() -> Option<HudMainThreadCostDataPoint> {
-    HUD_MAIN_THREAD_COST_WINDOW
-        .lock()
-        .unwrap_or_else(|poison| poison.into_inner())
-        .take()
+    HUD_MAIN_THREAD_COST_WINDOW.lock_ignore_poison().take()
 }
 
 fn update_text_focus(priorities: Res<InputPriorities>, mut prev: Local<bool>, _js: JsThread) {

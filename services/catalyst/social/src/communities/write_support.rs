@@ -328,6 +328,12 @@ pub async fn validate_like_unlike_access(
             tracing::error!(error = %e, %community_id, "community privacy lookup failed");
             Box::new(super::http::database_error(e).into_response())
         })?;
+    let Some(private) = private else {
+        return Err(Box::new(
+            super::http::CommError::not_found(format!("Community not found: {community_id}"))
+                .into_response(),
+        ));
+    };
     let standing = load_client_standing(state, community_id, signer).await?;
     if private && standing.tier() == CommunityStanding::NotAMember {
         return Err(refuse(

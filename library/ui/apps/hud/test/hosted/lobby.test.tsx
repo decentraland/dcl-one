@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { PopupHost, ToastHost, resetPopups } from '../../design'
 import { BackpackModal } from '../../features/backpack/BackpackModal'
 import modalStyles from '../../features/backpack/BackpackModal.module.css'
+import lobbyStyles from '../../features/lobby/LobbyHome.module.css'
 import { LobbyHome } from '../../features/lobby/LobbyHome'
 import type { EventData } from '@explorer-core/engine/protocol'
 import type { QueryStatus } from '../../features/events/eventsStore'
@@ -109,7 +110,7 @@ describe('lobby controls', () => {
     const { rerender } = render(lobby(session))
     expect(screen.getByRole('button', { name: 'Jump In' })).toBeDisabled()
     expect(fetchLandingPlace).not.toHaveBeenCalled()
-    session.homeScene = () => ({ realm: 'my-home.dcl.eth', parcel: '12,-7' })
+    session.homeScene = () => ({ realm: 'my-home.dcl.eth', parcel: '12,-7', pinned: true })
     rerender(lobby(session))
     await waitFor(() => expect(fetchLandingPlace).toHaveBeenCalledWith({ world: 'my-home.dcl.eth', parcel: { x: 12, y: -7 } }))
     await waitFor(() => expect(screen.getByRole('button', { name: 'Jump In' })).toBeEnabled())
@@ -121,12 +122,12 @@ describe('lobby controls', () => {
 
   it("drops the old home's card when the home changes, even when the new one cannot be read", async () => {
     const session = fakeSession()
-    session.homeScene = () => ({ realm: null, parcel: '1,1' })
+    session.homeScene = () => ({ realm: null, parcel: '1,1', pinned: true })
     const old: LobbyPlace = { id: 'old', title: 'Old Home', description: '', image: '', positions: ['1,1'], owner: '', world: false }
     vi.mocked(fetchLandingPlace).mockResolvedValueOnce(old).mockRejectedValueOnce(new Error('down'))
     const { rerender } = render(lobby(session))
     expect(await screen.findByText('Old Home')).toBeInTheDocument()
-    session.homeScene = () => ({ realm: 'new-home.dcl.eth', parcel: '0,0' })
+    session.homeScene = () => ({ realm: 'new-home.dcl.eth', parcel: '0,0', pinned: true })
     rerender(lobby(session))
     expect(screen.queryByText('Old Home')).toBeNull()
     expect(await screen.findByText('new-home.dcl.eth')).toBeInTheDocument()
@@ -174,6 +175,24 @@ describe('lobby controls', () => {
     expect(screen.getByRole('dialog', { name: 'Plaza' })).toBeInTheDocument()
   })
 
+  it('keeps the engine stage under the Backpack: the stand-in shows only until the stage is drawn', () => {
+    const session = fakeSession()
+    const view = (): React.JSX.Element => (
+      <SessionProvider value={session}>
+        <LobbyHome onPick={session.pickDestination} setEngineViewport={session.setEngineViewport} />
+      </SessionProvider>
+    )
+    const { container, rerender } = render(view())
+    const standIn = (): Element => container.querySelector(`.${lobbyStyles.standIn}`)!
+    expect(standIn()).not.toHaveClass(lobbyStyles.standInHidden)
+    session.lobbyStageReady = true
+    rerender(view())
+    expect(standIn()).toHaveClass(lobbyStyles.standInHidden)
+    session.backpack.open = true
+    rerender(view())
+    expect(standIn()).toHaveClass(lobbyStyles.standInHidden)
+  })
+
   it('leaves the avatar cutout outside both overlay hit regions and keeps Close clickable', async () => {
     const sheet = document.createElement('style')
     const css = readFileSync(join(__dirname, '../../features/backpack/BackpackModal.module.css'), 'utf8')
@@ -198,6 +217,11 @@ describe('lobby controls', () => {
       const frame = screen.getByRole('dialog', { name: 'Backpack' })
       const dim = frame.previousElementSibling as HTMLElement
       const page = screen.getByRole('button', { name: 'Customize' }).parentElement!
+      // shut until the engine has drawn the avatar: until then the lobby's stage or the world is under it
+      expect(dim.style.clipPath).toBe('')
+      expect(page.style.clipPath).toBe('')
+      session.avatarPreviewReady = true
+      rerender(view())
       expect(getComputedStyle(frame.parentElement!).pointerEvents).toBe('none')
       expect(getComputedStyle(frame).pointerEvents).toBe('none')
       expect(dim.style.clipPath).toMatch(/^polygon\(evenodd,/)
@@ -719,7 +743,7 @@ describe('lobby go to', () => {
     const session = fakeSession()
     session.friends.loading = false
     session.friends.list = [{ address: '0xf1', name: 'Mojito', status: 'online' }]
-    session.homeScene = () => ({ realm: null, parcel: '1,1' })
+    session.homeScene = () => ({ realm: null, parcel: '1,1', pinned: true })
     vi.mocked(session.pickDestination).mockReturnValue(false)
     vi.mocked(fetchWhereabouts).mockResolvedValue(new Map([['0xf1', { kind: 'genesis', parcel: { x: 4, y: 5 } }]]))
     render(lobby(session))
@@ -799,6 +823,16 @@ describe('lobby layout editor', () => {
     expect(vi.mocked(openCommunityModal)).toHaveBeenCalledWith('c1', expect.any(Function))
     fireEvent.click(screen.getByRole('button', { name: 'View Builders' }))
     expect(vi.mocked(openCommunityModal)).toHaveBeenCalledTimes(2)
+  })
+
+  it('lists ten communities at most', () => {
+    setPref(PREF.lobbyLayout, JSON.stringify({ Version: 1, Entries: [{ Corner: 'BottomLeft', Widget: 'Communities7By2', X: 0, Y: 0 }] }))
+    const session = fakeSession()
+    session.communities.list = Array.from({ length: 12 }, (_, i) => ({ id: `c${i}`, name: `Club ${i}`, description: '', membersCount: 3, role: 'member' as const, ownerName: 'o' }))
+    render(lobby(session))
+    const rail = screen.getByRole('group', { name: 'My Communities' })
+    expect(within(rail).getAllByRole('button', { name: /^View Club / })).toHaveLength(10)
+    expect(within(rail).getAllByRole('button', { name: /^Page / })).toHaveLength(4)
   })
 
   it('lists only the widgets off the grids and places one on a click', () => {

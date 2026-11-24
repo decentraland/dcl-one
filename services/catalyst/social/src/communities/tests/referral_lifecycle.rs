@@ -338,7 +338,7 @@ async fn login_metadata_case(wallet: &Wallet, metadata: Value) -> Case {
         AuthLink {
             link_type: AuthLinkType::SIGNER,
             payload: wallet.address.to_string(),
-            signature: None,
+            signature: Some(String::new()),
         },
         AuthLink {
             link_type: AuthLinkType::EcdsaSignedEntity,

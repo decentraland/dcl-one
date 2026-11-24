@@ -1,5 +1,5 @@
 // Home copy from decentraland/sites at dd905b2a98d3450d73c8f8c562881ad45ff3c83c.
-import type { SitesLocale } from "@ui/web/frames/sites-locale";
+import type { SitesLocale } from "@dcl/one-ui";
 
 const en = {
   hero: {
@@ -35,14 +35,6 @@ const en = {
     next: "Next slide",
     goTo: "Go to slide",
     position: "Slide {current} of {total}",
-  },
-  account: {
-    userId: "User ID",
-    copyUserId: "Copy user ID",
-    userIdCopied: "User ID copied",
-    addressCopied: "Address copied!",
-    walletNetwork: "Wallet network",
-    copyUserIdError: "Could not copy user ID",
   },
   download: {
     forPlatform: "DOWNLOAD FOR",
@@ -90,14 +82,6 @@ export const homeCopy = {
       goTo: "Ir a la diapositiva",
       position: "Diapositiva {current} de {total}",
     },
-    account: {
-      userId: "ID de usuario",
-      copyUserId: "Copiar ID de usuario",
-      userIdCopied: "ID de usuario copiado",
-      addressCopied: "¡Dirección copiada!",
-      walletNetwork: "Red de la billetera",
-      copyUserIdError: "No se pudo copiar el ID de usuario",
-    },
     download: {
       forPlatform: "DOWNLOAD FOR",
       onStore: "DOWNLOAD ON",
@@ -138,14 +122,6 @@ export const homeCopy = {
       next: "Diapositive suivante",
       goTo: "Aller à la diapositive",
       position: "Diapositive {current} sur {total}",
-    },
-    account: {
-      userId: "Identifiant utilisateur",
-      copyUserId: "Copier l’identifiant utilisateur",
-      userIdCopied: "Identifiant utilisateur copié",
-      addressCopied: "Adresse copiée !",
-      walletNetwork: "Réseau du portefeuille",
-      copyUserIdError: "Impossible de copier l’identifiant utilisateur",
     },
     download: {
       forPlatform: "DOWNLOAD FOR",
@@ -188,14 +164,6 @@ export const homeCopy = {
       goTo: "前往幻灯片",
       position: "第 {current} 张，共 {total} 张",
     },
-    account: {
-      userId: "用户 ID",
-      copyUserId: "复制用户 ID",
-      userIdCopied: "已复制用户 ID",
-      addressCopied: "地址已复制！",
-      walletNetwork: "钱包网络",
-      copyUserIdError: "无法复制用户 ID",
-    },
     download: {
       forPlatform: "DOWNLOAD FOR",
       onStore: "DOWNLOAD ON",
@@ -237,14 +205,6 @@ export const homeCopy = {
       goTo: "슬라이드로 이동",
       position: "슬라이드 {current}/{total}",
     },
-    account: {
-      userId: "사용자 ID",
-      copyUserId: "사용자 ID 복사",
-      userIdCopied: "사용자 ID를 복사했습니다",
-      addressCopied: "주소가 복사되었습니다!",
-      walletNetwork: "지갑 네트워크",
-      copyUserIdError: "사용자 ID를 복사할 수 없습니다",
-    },
     download: {
       forPlatform: "DOWNLOAD FOR",
       onStore: "DOWNLOAD ON",
@@ -285,14 +245,6 @@ export const homeCopy = {
       next: "次のスライド",
       goTo: "スライドへ移動",
       position: "全 {total} 枚中 {current} 枚目",
-    },
-    account: {
-      userId: "ユーザーID",
-      copyUserId: "ユーザーIDをコピー",
-      userIdCopied: "ユーザーIDをコピーしました",
-      addressCopied: "アドレスをコピーしました！",
-      walletNetwork: "ウォレットネットワーク",
-      copyUserIdError: "ユーザーIDをコピーできませんでした",
     },
     download: {
       forPlatform: "DOWNLOAD FOR",

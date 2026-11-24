@@ -6,6 +6,7 @@ import {
   serializeVerifiedWalletCookie,
 } from "@/core/lib/telemetry/session";
 import { useAuth } from "@/data/lib/auth/context";
+import { postAuthCallback } from "@/data/lib/auth/session-change";
 import { getWalletForToken } from "@/data/lib/auth/thirdweb/index";
 import MagicCallback from "@/features/auth/login/MagicCallback";
 import { safeRedirectTarget } from "@/features/auth/login/redirect";
@@ -125,11 +126,8 @@ function InAppCallback() {
         walletAddress: address,
       });
       if (identity) {
-        await fetch(window.location.pathname, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ token }),
-        }).catch(() => null);
+        // Sets the verified-wallet cookie; the navigation that follows reloads root's data with it.
+        await postAuthCallback({ token });
         navigate(next, { replace: true });
       } else {
         setError(auth.error ?? "Couldn't finish signing you in.");

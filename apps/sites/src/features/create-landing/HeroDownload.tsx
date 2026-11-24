@@ -1,11 +1,10 @@
 import { useEffect, useState } from "react";
 
-import Tooltip from "@ui/atoms/Tooltip";
-
 import type { HeroDownloads } from "@/data/lib/download/creator-hub.server";
+import { useLegacyTrackScope } from "@/core/lib/telemetry/legacy-click";
 import { detectMacChip, isTouchMac, preferChip } from "@/data/lib/download/mac-chip";
-import { useCreatorHubDownloadClick } from "../download/creator-hub-click";
-import OtherBuilds, { downloadFor, OsIcon } from "../download/OtherBuilds";
+import { trackCreatorHubClick, useCreatorHubDownloadClick } from "../download/creator-hub-click";
+import CreatorHubDownload from "../download/CreatorHubDownload";
 
 import { copy } from "./content";
 import styles from "./CreateLanding.module.css";
@@ -22,42 +21,35 @@ type Props = {
   /** The installers for the visitor's system; null where there is none to offer in place. */
   downloads: HeroDownloads | null;
   sid: string;
+  /** The verified wallet, sent as the download Click's `userId`. */
+  userId?: string | null;
 };
 
 /** The hero's desktop call to action: the Creator Hub installer for this system, and the other builds under it. */
-export default function HeroDownload({ downloads, sid }: Props) {
+export default function HeroDownload({ downloads, sid, userId }: Props) {
   const [offered, setOffered] = useState(downloads);
   useEffect(() => setOffered(downloads && forThisDevice(downloads)), [downloads]);
-  const onDownload = useCreatorHubDownloadClick(sid);
+  const onDownload = useCreatorHubDownloadClick({ sid, userId }, "create-hero");
+  const scope = useLegacyTrackScope();
 
   if (!offered) {
     return (
-      <a className={`${styles.cta} ${styles.ctaDesktop}`} href={CREATOR_HUB_DOWNLOAD}>
+      <a
+        className={`${styles.cta} ${styles.ctaDesktop}`}
+        href={CREATOR_HUB_DOWNLOAD}
+        onClick={() => trackCreatorHubClick("create-hero", { sid, userId, scope })}
+      >
         <span className={styles.ctaLabel}>{copy.downloadCreatorHub}</span>
       </a>
     );
   }
 
-  const { primary, others } = offered;
   return (
-    <>
-      <Tooltip label={downloadFor(primary)} side="top" className={styles.desktopOnly}>
-        <a
-          className={`${styles.cta} ${styles.ctaDesktop}`}
-          href={primary.url}
-          data-os={primary.osKey}
-          data-arch={primary.arch}
-          onClick={(event) => onDownload(primary, "primary", event)}
-        >
-          <span className={styles.ctaLabel}>{copy.downloadCreatorHub}</span>
-          <OsIcon os={primary.osKey} className={styles.osIcon} />
-        </a>
-      </Tooltip>
-      <OtherBuilds
-        options={others}
-        className={styles.desktopOnly}
-        onDownload={(option, event) => onDownload(option, "secondary", event)}
-      />
-    </>
+    <CreatorHubDownload
+      primary={offered.primary}
+      others={offered.others}
+      onDownload={onDownload}
+      className={styles.desktopOnly}
+    />
   );
 }

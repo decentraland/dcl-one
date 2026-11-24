@@ -486,25 +486,7 @@ impl ReleaseWorker {
         if !self.broker.configured() {
             return Ok(0);
         }
-        let due: Vec<DueGrant> = sqlx::query(
-            "SELECT id, grantee_address, urn, token_id, collection \
-             FROM shop.usage_grants \
-             WHERE status = 'active' AND unlock_at <= $1 \
-             ORDER BY id LIMIT $2",
-        )
-        .bind(now())
-        .bind(RELEASE_BATCH_LIMIT)
-        .fetch_all(&self.credits.pool)
-        .await?
-        .into_iter()
-        .map(|r| DueGrant {
-            id: r.get("id"),
-            buyer: r.get("grantee_address"),
-            urn: r.get("urn"),
-            token_id: r.get("token_id"),
-            collection: r.get("collection"),
-        })
-        .collect();
+        let due = release_batch(&self.credits.pool, now()).await?;
 
         let mut released = 0usize;
         for g in due {
@@ -662,5 +644,71 @@ mod tests {
             .await
             .unwrap_err();
         assert!(matches!(err, ApiError::NotImplemented(_)), "{err:?}");
+    }
+}
+
+async fn release_batch(
+    pool: &sqlx::PgPool,
+    clock: chrono::NaiveDateTime,
+) -> Result<Vec<DueGrant>, sqlx::Error> {
+    let mut sweep = crate::worker_progress::Sweep::begin(pool, "escrow_release", 0).await?;
+    let mut rows = Vec::new();
+    for _ in 0..2 {
+        if sweep.position >= sweep.ceiling {
+            sweep.position = 0;
+            sweep.ceiling = sqlx::query_scalar("SELECT COALESCE(max(id), 0) FROM shop.usage_grants WHERE status = 'active' AND unlock_at <= $1")
+                .bind(clock).fetch_one(&mut *sweep.tx).await?;
+        }
+        rows = sqlx::query("SELECT id, grantee_address, urn, token_id, collection FROM shop.usage_grants WHERE status = 'active' AND unlock_at <= $1 AND id > $2 AND id <= $3 ORDER BY id LIMIT $4")
+            .bind(clock).bind(sweep.position).bind(sweep.ceiling).bind(RELEASE_BATCH_LIMIT).fetch_all(&mut *sweep.tx).await?;
+        if let Some(last) = rows.last() {
+            sweep.position = last.get("id");
+            break;
+        }
+        sweep.position = sweep.ceiling;
+    }
+    sweep.commit().await?;
+    Ok(rows
+        .into_iter()
+        .map(|r| DueGrant {
+            id: r.get("id"),
+            buyer: r.get("grantee_address"),
+            urn: r.get("urn"),
+            token_id: r.get("token_id"),
+            collection: r.get("collection"),
+        })
+        .collect())
+}
+
+#[cfg(test)]
+mod progress_tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn release_sweep_reaches_ready_tail_and_retries_after_continuous_arrivals() {
+        let Some(db) = crate::test_db::OwnDatabase::create("release_sweep").await else {
+            return;
+        };
+        sqlx::query("INSERT INTO shop.usage_grants (grantee_address, urn, category, unlock_at, token_id, collection) SELECT '0x0000000000000000000000000000000000000001', 'urn:' || n, 'wearable', timezone('UTC', now()) - interval '1 hour', CASE WHEN n = 51 THEN '1' END, '0x0000000000000000000000000000000000000001' FROM generate_series(1, 51) n").execute(&db.pool).await.unwrap();
+        let first = release_batch(&db.pool, now()).await.unwrap();
+        assert_eq!(first.len(), 50);
+        assert!(first.iter().all(|g| g.token_id.is_none()));
+        // Selection committed, process died before attempting the prefix.
+        // New arrivals must not keep pushing its retry horizon away.
+        for expected in [51, 1, 51] {
+            sqlx::query("INSERT INTO shop.usage_grants (grantee_address, urn, category, unlock_at) SELECT '0x0000000000000000000000000000000000000001', 'new:' || n, 'wearable', timezone('UTC', now()) - interval '1 hour' FROM generate_series(1, 60) n").execute(&db.pool).await.unwrap();
+            let next = release_batch(&db.pool, now()).await.unwrap();
+            assert_eq!(next[0].id, expected);
+            if expected == 51 {
+                assert_eq!(next[0].token_id.as_deref(), Some("1"));
+            }
+        }
+        let count: i64 =
+            sqlx::query_scalar("SELECT count(*) FROM shop.usage_grants WHERE status = 'active'")
+                .fetch_one(&db.pool)
+                .await
+                .unwrap();
+        assert_eq!(count, 231, "selection must retain every pending obligation");
+        db.drop().await;
     }
 }

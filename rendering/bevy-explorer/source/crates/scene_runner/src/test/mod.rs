@@ -1,6 +1,5 @@
-use std::{path::PathBuf, sync::Mutex, time::Instant};
-
-use std::{collections::BTreeMap, fs::File, io::Write};
+use common::sync::MutexExt;
+use std::{collections::BTreeMap, sync::Mutex, time::Instant};
 
 use bevy::{
     app::{PluginGroupBuilder, ScheduleRunnerPlugin},
@@ -69,7 +68,7 @@ impl PluginGroup for TestPlugins {
     fn build(self) -> PluginGroupBuilder {
         let builder = PluginGroupBuilder::start::<Self>();
 
-        let mut log_added = LOG_ADDED.lock().unwrap();
+        let mut log_added = LOG_ADDED.lock_ignore_poison();
         let builder = if !*log_added {
             *log_added = true;
             builder.add(LogPlugin::default())
@@ -259,8 +258,10 @@ macro_rules! assert_output_eq {
 }
 
 // write output to file
-#[allow(dead_code)]
+#[cfg(feature = "gen-tests")]
 fn write_expected(expected: String, filename: &str) {
+    use std::{fs::File, io::Write, path::PathBuf};
+
     let mut path = PathBuf::from(file!());
     path.pop();
     path.push(filename);

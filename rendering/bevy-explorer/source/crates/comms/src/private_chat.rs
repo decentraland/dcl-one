@@ -230,7 +230,7 @@ fn connect_private_chat_room(
     }
     let url = common::base_domain::url(Service::CommsGatekeeper, "/private-messages/token");
     let mut metadata = serde_json::json!({"signer": "dcl:explorer"});
-    if crate::adapter::allows_device_identifier(&url) {
+    if common::base_domain::device_identifier_domain(&url).is_some() {
         metadata["deviceIdentifier"] = serde_json::json!(config.user_id);
     }
     commands.spawn((
@@ -944,6 +944,7 @@ mod tests {
                 .spawn(crate::global_crdt::GlobalCrdtState::new(None));
             app.world_mut().send_event(crate::SetCurrentScene {
                 realm_name: "realm".into(),
+                realm_about_url: about_url.into(),
                 scene_id: scene_id.into(),
             });
             app.update();

@@ -31,9 +31,6 @@
 .standInHidden {
   opacity: 0;
 }
-.standInInstant {
-  transition: none;
-}
 .standInBackdrop {
   position: absolute;
   inset: 0;
@@ -47,11 +44,12 @@
   inset: 0;
   background: linear-gradient(to bottom, transparent 55%, var(--lobby-black-80) 100%);
 }
-/* The snapshot stands where the engine draws the avatar: centred, feet at ~83% of the height. */
+/* The snapshot stands where the engine draws the avatar: centred, its feet (above the snapshot's own
+   margin) at ~80% of the height. */
 .standInAvatar {
   position: absolute;
   left: 50%;
-  bottom: 17%;
+  bottom: 12%;
   height: 66%;
   transform: translateX(-50%);
 }
@@ -91,10 +89,10 @@
 .avatarHit:disabled {
   cursor: default;
 }
+/* the avatar is the whole middle of the lobby: no ring is drawn over it */
+.avatarHit:focus,
 .avatarHit:focus-visible {
-  outline: 2px solid var(--lobby-snow);
-  outline-offset: -2px;
-  border-radius: var(--r-xl);
+  outline: none;
 }
 
 .header {

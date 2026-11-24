@@ -8,7 +8,7 @@ import { Fragment, memo, useCallback, useEffect, useLayoutEffect, useMemo, useRe
 import type { ChatLine, ChatState, Conversation } from '../session/useEngineSession'
 import type { DmUserState, MessageReaction, NearbyMember } from '@explorer-core/engine/protocol'
 import { Avatar, ControlButton, DclLogo, MaskIcon, Tooltip, Translate, VerifiedBadge, VoiceBars } from '../../design'
-import { EmojiPicker } from './EmojiPicker'
+import { EmojiPicker, useCloseEmojiPanelOnOutsidePress } from './EmojiPicker'
 import { EmojiButton } from './EmojiButton'
 import { EmojiSuggestList, emojiSuggestionAt, moveSelection, tokenAtCaret } from './EmojiSuggestList'
 import { ConversationMenu, MENU_LAYER } from './ConversationMenu'
@@ -16,6 +16,7 @@ import { HeartIcon } from './ChatIcons'
 import { ConversationRail } from './ConversationRail'
 import { CommunityHeader } from './CommunityHeader'
 import { clearPingMode } from './ping'
+import { buttonSoundHandlers } from './buttonSounds'
 import { roleLabel } from '@explorer-core/features/communities/roles'
 import { displaySender, isSystem, memberLabel, senderColor, shortAddr, splitName, usePartner } from './chatIdentity'
 import { EMOJI_BY_CODE, EMOJI_BY_GLYPH, QUICK_REACTIONS, loadRecents, type Emoji } from './emojiData'
@@ -178,7 +179,7 @@ function NewSeparator(): React.JSX.Element {
   )
 }
 
-const MSG_STYLES = { url: styles.url, mention: styles.mention, location: styles.location, world: styles.world }
+const MSG_STYLES = { url: styles.url, mention: styles.mention, location: styles.location, world: styles.world, bold: styles.bold, italic: styles.italic }
 
 /** "Ana, Bo and you reacted with :fire:" — who reacted with one emoji, for its pill's tooltip. */
 export function reactionLabel(reaction: MessageReaction, me?: string): string {
@@ -258,6 +259,7 @@ export const ChatBubble = memo(function ChatBubble({
   onOpenProfile,
   onLocation,
   onVisitWorld,
+  onOpenUrl,
   onReact,
   onToggleReaction,
   onReactionHover,
@@ -294,6 +296,8 @@ export const ChatBubble = memo(function ChatBubble({
   onLocation?: (x: number, y: number) => void
   /** A world name (e.g. boedo.dcl.eth) in the message was clicked → prompt to jump there. */
   onVisitWorld?: (name: string) => void
+  /** A URL in the message was clicked. */
+  onOpenUrl?: (url: string) => void
 }): React.JSX.Element {
   // Resolved from the profile store for as long as the line is on screen: a sender who has since
   // left keeps their name and face, and a name change reaches every line they sent.
@@ -338,7 +342,7 @@ export const ChatBubble = memo(function ChatBubble({
   return (
     <div className={`${styles.entry} ${own ? styles.own : ''} ${arrive ? styles.arrive : ''}`.trim()}>
       {clickable ? (
-        <button type="button" className={styles.avatarBtn} aria-label={`View ${base}`} onClick={openSender} onContextMenu={openSender}>
+        <button type="button" className={styles.avatarBtn} aria-label={`View ${base}`} data-ui-sound="press" onClick={openSender} onContextMenu={openSender}>
           {avatar}
         </button>
       ) : (
@@ -347,7 +351,7 @@ export const ChatBubble = memo(function ChatBubble({
       <div className={`${styles.bubble} ${highlight ? styles.mentionMe : ''}`.trim()}>
         <div className={styles.content}>
           {clickable ? (
-            <button type="button" className={styles.name} style={{ color }} onClick={openSender} onContextMenu={openSender}>
+            <button type="button" className={styles.name} style={{ color }} data-ui-sound="press" onClick={openSender} onContextMenu={openSender}>
               {nameRow}
             </button>
           ) : (
@@ -356,7 +360,7 @@ export const ChatBubble = memo(function ChatBubble({
             </span>
           )}
           <span className={styles.text}>
-            <MessageText text={text} members={members} styles={MSG_STYLES} onMention={onMention} onLocation={(x, y) => onLocation?.(x, y)} onWorld={onVisitWorld} />
+            <MessageText text={text} members={members} styles={MSG_STYLES} onMention={onMention} onLocation={(x, y) => onLocation?.(x, y)} onWorld={onVisitWorld} onUrl={onOpenUrl} />
           </span>
           <span className={styles.time}>
             {formatTime(line.ts)}
@@ -369,7 +373,7 @@ export const ChatBubble = memo(function ChatBubble({
         <span className={styles.spacer} aria-hidden="true" />
       </div>
       {translatable && onTranslate != null && (translation == null || translation.status === 'failed') && (
-        <button type="button" className={styles.translateBtn} aria-label="Translate" title="Translate" onClick={() => onTranslate(line)}>
+        <button type="button" className={styles.translateBtn} aria-label="Translate" title="Translate" data-ui-sound="press" onClick={() => onTranslate(line)}>
           <Translate size={16} />
         </button>
       )}
@@ -379,6 +383,7 @@ export const ChatBubble = memo(function ChatBubble({
           className={`${styles.reactBtn} ${reacting ? styles.reactBtnOn : ''}`.trim()}
           aria-label="React"
           aria-pressed={reacting}
+          data-ui-sound="soft"
           onClick={(e) => onReact(line, e.currentTarget)}
         />
       )}
@@ -418,6 +423,7 @@ function ReactionBar({
       type="button"
       className={`${styles.barEmoji} ${isMine(emoji) ? styles.barEmojiOn : ''}`.trim()}
       title={EMOJI_BY_GLYPH.get(emoji)?.expression}
+      data-ui-sound="press"
       onClick={() => onPick(emoji)}
     >
       {emoji}
@@ -525,7 +531,7 @@ function MembersOverlay({
           <MaskIcon src={playersIcon} size={16} />
           <span className={styles.countNum}>{members.length}</span> Online
         </span>
-        <ControlButton variant="dark" className={styles.close} aria-label="Close chat" onClick={onClose}>
+        <ControlButton variant="dark" className={styles.close} aria-label="Close chat" onClick={onClose} data-ui-sound="soft">
           <MaskIcon src={closeIcon} size={10} />
         </ControlButton>
       </header>
@@ -631,6 +637,7 @@ export function Chat({
   me,
   onTeleport,
   onVisitWorld,
+  onOpenUrl,
   onOpenSettings
 }: {
   chat: ChatState
@@ -641,6 +648,8 @@ export function Chat({
   onTeleport?: (x: number, y: number) => void
   /** A world name (e.g. boedo.dcl.eth) in a message was clicked → prompt to jump there. */
   onVisitWorld?: (name: string) => void
+  /** A URL in a message was clicked; unset, the link is a plain anchor. */
+  onOpenUrl?: (url: string) => void
   /** The blocked-input "DM settings" link. */
   onOpenSettings?: () => void
 }): React.JSX.Element | null {
@@ -855,13 +864,15 @@ export function Chat({
     openProfileCard(user.address, x, y, { onClose: () => setCardOpen(false) })
   }, [])
   // The HUD passes fresh arrows each render; read them through refs so bubbles stay memoized.
-  const handlers = useRef({ onTeleport, onVisitWorld })
+  const handlers = useRef({ onTeleport, onVisitWorld, onOpenUrl })
   useEffect(() => {
-    handlers.current = { onTeleport, onVisitWorld }
+    handlers.current = { onTeleport, onVisitWorld, onOpenUrl }
   })
   const teleport = useCallback((x: number, y: number) => handlers.current.onTeleport?.(x, y), [])
   const visitWorld = useCallback((name: string) => handlers.current.onVisitWorld?.(name), [])
   const hasVisitWorld = onVisitWorld != null
+  const openUrl = useCallback((url: string) => handlers.current.onOpenUrl?.(url), [])
+  const hasOpenUrl = onOpenUrl != null
 
   // Reactions: picking an emoji the local user already reacted with takes it back.
   const chatRef = useRef(chat)
@@ -1032,6 +1043,7 @@ export function Chat({
     })
   }
   const accept = (s: Suggestions, i: number): void => {
+    chat.playSound('chatEmoji')
     if (s.kind === 'emoji') replaceRange(s.start, s.end, s.items[i].emoji)
     else {
       const m = s.items[i]
@@ -1044,6 +1056,13 @@ export function Chat({
     const end = el?.selectionEnd ?? draft.length
     replaceRange(start, end, glyph)
   }
+
+  // The emoji panel opening sounds; its closing does not.
+  useEffect(() => {
+    if (picker) chat.playSound('chatEmoji')
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [picker])
+  const buttonSounds = useMemo(() => buttonSoundHandlers(chat.playSound), [chat.playSound])
 
   const send = (): void => {
     if (!draft.trim()) return
@@ -1073,17 +1092,8 @@ export function Chat({
     }
   }
 
-  // The emoji panel closes on a press outside it (the emoji button toggles it itself).
-  useEffect(() => {
-    if (!picker) return
-    const onDown = (e: PointerEvent): void => {
-      const t = e.target as HTMLElement
-      if (pickerRef.current?.contains(t) || t.closest('[aria-label="Emoji"]')) return
-      setPicker(false)
-    }
-    document.addEventListener('pointerdown', onDown, true)
-    return () => document.removeEventListener('pointerdown', onDown, true)
-  }, [picker])
+  const emojiRef = useRef<HTMLButtonElement>(null)
+  useCloseEmojiPanelOnOutsidePress(picker, pickerRef, emojiRef, () => setPicker(false))
 
   // A click anywhere in the panel that isn't a control focuses the input — unless it selected text to copy.
   const focusFromPanel = (e: React.MouseEvent): void => {
@@ -1107,6 +1117,7 @@ export function Chat({
       ref={setRoot}
       className={`${styles.root} ${open ? styles.open : ''} ${active ? styles.active : ''} ${focused ? styles.focused : ''} ${active && showMembers ? styles.membersOpen : ''} ${hasRail ? styles.withRail : ''}`.trim()}
       onClick={focusFromPanel}
+      {...buttonSounds}
       onMouseEnter={() => setHovered(true)}
       onMouseLeave={() => setHovered(false)}
       onFocus={syncWithin}
@@ -1193,6 +1204,7 @@ export function Chat({
                   onOpenProfile={openProfile}
                   onLocation={teleport}
                   onVisitWorld={hasVisitWorld ? visitWorld : undefined}
+                  onOpenUrl={hasOpenUrl ? openUrl : undefined}
                   onReact={openReactionBar}
                   onToggleReaction={toggleReaction}
                   onReactionHover={hoverReaction}
@@ -1211,7 +1223,10 @@ export function Chat({
       {active && picker && (
         <div ref={pickerRef} className={styles.pickerWrap}>
           <EmojiPicker
-            onPick={insertAtCaret}
+            onPick={(glyph) => {
+              chat.playSound('chatEmoji')
+              insertAtCaret(glyph)
+            }}
             onClose={() => {
               setPicker(false)
               inputRef.current?.focus()
@@ -1275,7 +1290,12 @@ export function Chat({
           rows={1}
           className={styles.input}
           value={draft}
-          onChange={(e) => updateDraft(e.target.value, e.target.selectionStart ?? e.target.value.length)}
+          onChange={(e) => {
+            // the user's own edits sound (typing, a paste, a cut); a text change the chat makes
+            // (a send's clearing, an emoji or suggestion dropped in) has that action's sound
+            chat.playSound('chatInput')
+            updateDraft(e.target.value, e.target.selectionStart ?? e.target.value.length)
+          }}
           onSelect={(e) => {
             const el = e.currentTarget
             if (el.selectionStart === el.selectionEnd && sug?.end !== el.selectionStart) suggestAt(el.value, el.selectionStart ?? el.value.length)
@@ -1292,7 +1312,7 @@ export function Chat({
         )}
         {focused && draft.length > 0 && <CharRing len={draft.length} />}
         {!bare && blockedState == null && (
-          <EmojiButton className={styles.emojiBtn} open={picker} onToggle={toggleEmoji} />
+          <EmojiButton ref={emojiRef} className={styles.emojiBtn} open={picker} onToggle={toggleEmoji} />
         )}
       </form>
 

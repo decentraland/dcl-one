@@ -191,7 +191,14 @@ describe("the detail reads", () => {
 
   it("maps item metadata: utility trimmed, supply from a string, gender from body shapes", async () => {
     const meta = await fetchItemMeta(COLLECTION, ITEM_ID, { client: catalogClient(), creatorSales: OFF });
-    expect(meta).toMatchObject({ utility: "Glows at night", available: 10, gender: "unisex", wearableCategory: "hat", creator: CREATOR });
+    expect(meta).toMatchObject({ utility: "Glows at night", available: 10, gender: "unisex", wearableCategory: "hat", creator: CREATOR, description: "A hat for the discerning nacho." });
+  });
+
+  it("reads an emote's description from its metadata, and none as empty", async () => {
+    const row = (data: unknown) => catalogClient("ok", { "/v1/items": { data: [{ name: "Wave", data }], total: 1 } });
+    const emote = await fetchItemMeta(COLLECTION, ITEM_ID, { client: row({ emote: { description: " A friendly wave. ", category: "greetings" } }), creatorSales: OFF });
+    expect(emote).toMatchObject({ description: "A friendly wave.", wearableCategory: "greetings" });
+    expect(await fetchItemMeta(COLLECTION, ITEM_ID, { client: row({ wearable: { category: "hat" } }), creatorSales: OFF })).toMatchObject({ description: "" });
   });
 
   it("finds a token only when the row matches it, and counts ownership softly", async () => {

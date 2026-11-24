@@ -2,7 +2,7 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 
-import { generateEphemeralKey, type AuthIdentity } from "../../data/auth/identity";
+import { generateEphemeralKey, type AuthIdentity } from "@web-core/auth/identity";
 import { createShopApi, creditsDisabled, insufficientCredits, ShopApiError, tooManyLiveCredits } from "@shop/api/client";
 import { ENDPOINTS } from "@shop/api/endpoints";
 import { setupServer } from "msw/node";

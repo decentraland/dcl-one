@@ -94,6 +94,8 @@ impl CommsState {
                         tracing::error!(%error,%address,"operator-block removal intent was not accepted; worlds write is already committed");
                         return;
                     }
+                    let wallet = super::streaming::cast::Keys::Minter(address.as_str());
+                    super::streaming::cast::recheck_keys(&state, wallet).await;
                 }
             }
             tracing::info!(

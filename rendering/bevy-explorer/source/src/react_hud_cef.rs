@@ -65,6 +65,8 @@ pub struct ReactHudCefPlugin {
     /// --guest: injected into the page URL as ?guest=1, the page's own auto guest-login boot flag
     /// (parity with ?guest=1 on web).
     pub guest: bool,
+    /// --debug-panel: shows the corner launcher through the HUD's debugPanel query switch.
+    pub debug_panel: bool,
     /// --autopilot: injected as ?autopilot, which takes the page through its sign-in and
     /// destination without a person (always as the local guest; a stored login is never used).
     pub autopilot: bool,
@@ -76,6 +78,7 @@ struct ReactHudOptions {
     server: Option<String>,
     position: Option<String>,
     guest: bool,
+    debug_panel: bool,
     autopilot: bool,
 }
 
@@ -85,6 +88,7 @@ impl Plugin for ReactHudCefPlugin {
             server: self.server.clone(),
             position: self.position.clone(),
             guest: self.guest,
+            debug_panel: self.debug_panel,
             autopilot: self.autopilot,
         });
         // Needed to read engine fps for the perf overlay; may already be added by --log-fps/preview.
@@ -229,6 +233,10 @@ fn spawn_hud(
     if options.guest {
         url.push_str(if url.contains('?') { "&" } else { "?" });
         url.push_str("guest=1");
+    }
+    if options.debug_panel {
+        url.push_str(if url.contains('?') { "&" } else { "?" });
+        url.push_str("debugPanel=1");
     }
     if options.autopilot {
         url.push_str(if url.contains('?') { "&" } else { "?" });
@@ -623,27 +631,10 @@ fn on_page_envelope(
     {
         let id = env.get("id").and_then(|i| i.as_u64()).unwrap_or_default();
         let line = env.get("line").and_then(|l| l.as_str()).unwrap_or("");
-        let mut parts = line.split_whitespace();
-        let Some(cmd) = parts.next() else {
-            console_reply(
-                &mut commands,
-                state.hud,
-                id,
-                Err("empty command".to_owned()),
-            );
-            return;
-        };
-        let cmd = if cmd.starts_with('/') {
-            cmd.to_owned()
-        } else {
-            format!("/{cmd}")
-        };
         let (sx, rx) = RpcResultSender::channel();
-        let _ = bridge.sender.send(SystemApi::ConsoleCommand(
-            cmd,
-            parts.map(String::from).collect(),
-            sx,
-        ));
+        let _ = bridge
+            .sender
+            .send(SystemApi::ConsoleLine(line.to_owned(), sx));
         state.pending_console.push((id, rx));
         return;
     }

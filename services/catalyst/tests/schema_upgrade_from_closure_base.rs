@@ -11,7 +11,7 @@ use sqlx::postgres::{PgConnectOptions, PgPool, PgPoolOptions};
 use catalyst::schema_migrate::{self, MigrateError};
 
 /// The steps a prepared version-2 database has not recorded.
-const PREPARED_PENDING_STEPS: [&str; 29] = [
+const PREPARED_PENDING_STEPS: [&str; 37] = [
     "0018_event_hook_compatibility",
     "0019_event_hook_admin_priority",
     "0023_social_referral_pending_reward",
@@ -41,6 +41,14 @@ const PREPARED_PENDING_STEPS: [&str; 29] = [
     "0048_broker_purchases_write_ahead",
     "0049_land_authz_cursor_block_hash",
     "0050_explore_poster_avif",
+    "0051_explore_auth_identity_request_id",
+    "0052_shop_committee_index",
+    "0053_shop_bid_received_producer",
+    "0054_shop_chain_cursor_ownership",
+    "0055_shop_chain_cursor_divergence",
+    "0056_signatures_rental_cancel_reason",
+    "0057_worlds_thumbnail_alias_expiry",
+    "0058_streaming_notification_recipients",
 ];
 type LedgerRow = (String, String, bool, chrono::NaiveDateTime);
 /// id, category, is_tier, criteria_steps, published, created_at
@@ -1560,6 +1568,38 @@ async fn world_admission_object_upgrade_and_explicit_ban_release_preserve_existi
     catalyst::worlds::rooms::ensure_world_scene_ban_release(pool)
         .await
         .expect("a fresh upgraded catalogue does not need a release conversion");
+    let notifications: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM pg_trigger t JOIN pg_proc f ON f.oid = t.tgfoid \
+         WHERE f.oid = 'worlds.notify_world_authority'::regproc AND NOT t.tgisinternal",
+    )
+    .fetch_one(pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        notifications, 5,
+        "the object pass adds the stream key triggers"
+    );
+    // The scene admin release runs after the migrate, which creates what it reads.
+    sqlx::raw_sql(include_str!(concat!(
+        env!("DCL_ONE_ROOT"),
+        "/schemas/releases/scene-admin-place-keys.sql"
+    )))
+    .execute(pool)
+    .await
+    .unwrap();
+    catalyst::worlds::rooms::ensure_scene_admin_place_release(pool)
+        .await
+        .unwrap();
+    sqlx::raw_sql(include_str!(concat!(
+        env!("DCL_ONE_ROOT"),
+        "/schemas/releases/genesis-scene-ban-keys.sql"
+    )))
+    .execute(pool)
+    .await
+    .unwrap();
+    catalyst::worlds::rooms::ensure_genesis_scene_ban_release(pool)
+        .await
+        .unwrap();
     // The previous main has the same schema version and throttle relation,
     // but not this additive queue. Only this test-owned database is changed.
     sqlx::query("DROP TABLE social.world_access_rechecks")

@@ -116,7 +116,10 @@ pub(crate) mod support {
     /// rows: a configured reader that truly has nothing.
     pub async fn serve_empty_graph() -> String {
         use axum::routing::post;
-        let app = Router::new().route("/", post(|| async { axum::Json(json!({ "data": {} })) }));
+        let app = Router::new().route(
+            "/",
+            post(|| async { axum::Json(json!({ "data": { "nfts": [] } })) }),
+        );
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let addr = listener.local_addr().unwrap();
         tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
@@ -2245,5 +2248,36 @@ async fn the_venues_read_eth_rpc_url_on_mainnet_only() {
     assert_eq!(
         sepolia.venue_rpc_url(1).as_deref(),
         Some("https://mainnet.example/")
+    );
+}
+
+#[tokio::test]
+async fn the_committee_walk_reads_polygon_on_mainnet_when_trade_rpc_urls_has_no_137_entry() {
+    use super::chain_walk::ChainNet;
+    let settings = |network: &str, trade: Option<&str>| {
+        let mut s = Settings::for_tests();
+        s.eth_network = network.to_string();
+        s.eth_rpc_url = Some("https://eth.example/".into());
+        s.polygon_rpc_url = Some("https://polygon.example/".into());
+        s.market.trade_rpc_urls = super::listings::RpcEndpoints::from_env(trade);
+        support::state_without_db_settings(s)
+    };
+    let fallback = settings("mainnet", None);
+    assert_eq!(
+        fallback.committee_rpc_url(ChainNet::Matic).as_deref(),
+        Some("https://polygon.example/")
+    );
+    assert_eq!(fallback.chain_rpc_url(ChainNet::Matic), None);
+    assert_eq!(fallback.committee_rpc_url(ChainNet::Ethereum), None);
+    let listed = settings("mainnet", Some("137=https://matic.example/"));
+    assert_eq!(
+        listed.committee_rpc_url(ChainNet::Matic).as_deref(),
+        Some("https://matic.example/")
+    );
+    let sepolia = settings("sepolia", None);
+    assert_eq!(
+        sepolia.committee_rpc_url(ChainNet::Matic),
+        None,
+        "off mainnet RPC_ENDPOINT_POLYGON is another chain"
     );
 }

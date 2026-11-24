@@ -7,6 +7,9 @@ pub mod content_hash;
 mod debug_panel;
 mod download;
 mod failed_remotes;
+use common::sync::MutexExt;
+#[cfg(not(target_arch = "wasm32"))]
+use common::sync::RwLockExt;
 use download::{InFlightDownloads, RequestMetrics};
 use failed_remotes::{FailedRemotes, Repeat};
 mod priority_gate;
@@ -564,14 +567,9 @@ pub struct ServerScenes {
     total: usize,
 }
 
-// This replicates the structure of a `scene.json`, maybe extend if needed, but
-// for multi-scene worlds, only `entity_id` is needed
-#[expect(dead_code)]
+// A world's scene entry: for multi-scene worlds, only `entity_id` is needed
 #[derive(Debug, Clone, Deserialize)]
 pub struct ServerScene {
-    #[serde(rename = "worldName")]
-    world_name: String,
-    deployer: String,
     #[serde(rename = "entityId")]
     entity_id: String,
 }
@@ -665,7 +663,7 @@ impl Plugin for IpfsIoPlugin {
             app.register_diagnostic(Diagnostic::new(path));
         }
         app.insert_resource(IpfsResource { inner: ipfs_io });
-        app.insert_resource(RealmInitialLocation::Base);
+        app.insert_resource(RealmInitialLocation::BASE);
 
         #[cfg(feature = "hot_reload")]
         app.register_asset_source(
@@ -733,12 +731,24 @@ impl Plugin for IpfsIoPlugin {
     }
 }
 
+/// Where the player lands in a realm being changed to. `spawn_point` is the name of the spawn
+/// point to be placed on there, which the landing hands to `OutOfWorld`.
 #[derive(Resource, PartialEq, Debug)]
 pub enum RealmInitialLocation {
     None,
-    Base,
+    Base {
+        spawn_point: Option<String>,
+    },
     /// Land on this parcel of the new realm (a teleport that named its realm).
-    Parcel(IVec2),
+    Parcel {
+        parcel: IVec2,
+        spawn_point: Option<String>,
+    },
+}
+
+impl RealmInitialLocation {
+    /// The realm's own spawn, on its default spawn points.
+    pub const BASE: Self = Self::Base { spawn_point: None };
 }
 
 /// Switch to a new realm
@@ -756,7 +766,7 @@ fn change_realm_command(
     mut pending: ResMut<PendingConsoleResponses>,
 ) {
     if let Some(Ok(command)) = input.take() {
-        *target = RealmInitialLocation::Base;
+        *target = RealmInitialLocation::BASE;
         debug!("change realm command -> base");
         let (response, rx) = RpcResultSender::channel();
         let realm = command.new_realm.clone();
@@ -919,6 +929,8 @@ pub fn change_realm(
             for request in change_realm_requests.read() {
                 request.response.send(Err(DISABLED.to_owned()));
             }
+            // as for a change that failed: the landing asked for is not kept for a later change
+            *target = RealmInitialLocation::None;
         } else {
             let mut requests = change_realm_requests.read().collect::<Vec<_>>();
             let request = requests.pop().unwrap();
@@ -1206,7 +1218,7 @@ impl IpfsIo {
     /// Allow `file://` reads under `root` (canonical). See `allowed_file_roots`.
     #[cfg(not(target_arch = "wasm32"))]
     pub fn add_allowed_file_root(&self, root: PathBuf) {
-        let mut roots = self.allowed_file_roots.write().unwrap();
+        let mut roots = self.allowed_file_roots.write_ignore_poison();
         if !roots.contains(&root) {
             roots.push(root);
         }
@@ -1982,12 +1994,10 @@ impl IpfsIo {
         about: &ServerAbout,
         new_realm: &str,
     ) -> Result<Option<IVec2>, anyhow::Error> {
-        let has_scene_urns = about.configurations.as_ref().is_some_and(|config| {
-            config
-                .scenes_urn
-                .as_ref()
-                .is_some_and(|urns| !urns.is_empty())
-        });
+        let has_scene_urns = about
+            .configurations
+            .as_ref()
+            .is_some_and(ServerConfiguration::lists_scenes);
         if !has_scene_urns {
             return Ok(None);
         }
@@ -2163,8 +2173,7 @@ impl IpfsIo {
                     .ok()
                     .filter(|canonical| {
                         self.allowed_file_roots
-                            .read()
-                            .unwrap()
+                            .read_ignore_poison()
                             .iter()
                             .any(|root| canonical.starts_with(root))
                     })
@@ -2224,8 +2233,7 @@ impl IpfsIo {
             let repeat = {
                 let mut failed = self
                     .failed_remotes
-                    .lock()
-                    .unwrap_or_else(std::sync::PoisonError::into_inner);
+                    .lock_ignore_poison();
                 if self.is_preview {
                     failed.forget(&remote);
                     None

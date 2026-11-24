@@ -30,7 +30,10 @@ use chrono::{DateTime, Duration as ChronoDuration, NaiveDateTime, Utc};
 use serde_json::{Value, json};
 use sqlx::{PgConnection, PgPool};
 
-use super::events::{ALL_TOPICS, AuthzEvent, DecodeError, decode_log};
+use super::events::{
+    ALL_TOPICS, AuthzEvent, DecodeError, EstateDataEvent, decode_estate_data, decode_log,
+    is_data_topic,
+};
 use super::{KIND_ADD_LAND, KIND_REMOVE_LAND, LandAuthzState, Settings};
 use crate::jobs::JobContext;
 
@@ -42,7 +45,7 @@ impl From<RpcError> for IndexError {
         match error {
             RpcError::Budget { upper, requests } => Self::Budget { upper, requests },
             RpcError::Transport(message) => Self::Transport(message),
-            RpcError::Rpc(message) => Self::Rpc(message),
+            RpcError::Rpc(message) | RpcError::Malformed(message) => Self::Rpc(message),
         }
     }
 }
@@ -189,6 +192,10 @@ pub fn decode_logs(logs: &[RpcLog]) -> Result<Vec<AuthzEvent>, IndexError> {
             .ok_or_else(|| {
                 IndexError::Rpc(format!("missing or invalid block timestamp at {block}"))
             })?;
+        // data documents are read by [`decode_estate_data_logs`]
+        if log.topics.first().is_some_and(|t| is_data_topic(t)) {
+            continue;
+        }
         match decode_log(&log.address, &log.topics, &log.data, block, index, time) {
             Ok(ev) => events.push(ev),
             Err(DecodeError::UnhandledTopic(t)) => {
@@ -204,6 +211,66 @@ pub fn decode_logs(logs: &[RpcLog]) -> Result<Vec<AuthzEvent>, IndexError> {
         }
     }
     Ok(events)
+}
+
+/// The Estate registry's data documents among `logs`
+/// ([`decode_estate_data`]); every other log, and a document that does not
+/// parse, is skipped.
+pub fn decode_estate_data_logs(logs: &[RpcLog], estate_registry: &str) -> Vec<EstateDataEvent> {
+    logs.iter()
+        .filter_map(|log| {
+            decode_estate_data(
+                estate_registry,
+                &log.address,
+                &log.topics,
+                &log.data,
+                hex_to_i64(&log.block_number)?,
+                hex_to_i64(&log.log_index)? as i32,
+            )
+        })
+        .collect()
+}
+
+/// Whether a log of the range is kept: a data document only from the
+/// Estate registry (the LAND registry's parcel `Update` shares its topic).
+fn kept_log(log: &RpcLog, estate_registry: &str) -> bool {
+    !log.topics.first().is_some_and(|t| is_data_topic(t))
+        || log.address.eq_ignore_ascii_case(estate_registry)
+}
+
+/// Appends Estate data documents; a row already kept stays.
+pub async fn insert_estate_data(
+    conn: &mut PgConnection,
+    events: &[EstateDataEvent],
+) -> Result<usize, sqlx::Error> {
+    let mut written = 0usize;
+    for chunk in events.chunks(INSERT_CHUNK) {
+        let blocks: Vec<i64> = chunk.iter().map(|e| e.block_number).collect();
+        let indexes: Vec<i32> = chunk.iter().map(|e| e.log_index).collect();
+        let addrs: Vec<&str> = chunk.iter().map(|e| e.token_address.as_str()).collect();
+        let estates: Vec<&str> = chunk.iter().map(|e| e.estate_id.as_str()).collect();
+        let names: Vec<Option<&str>> = chunk.iter().map(|e| e.name.as_deref()).collect();
+        let descriptions: Vec<Option<&str>> =
+            chunk.iter().map(|e| e.description.as_deref()).collect();
+        written += sqlx::query(
+            "INSERT INTO land_authz.estate_data_event \
+                 (block_number, log_index, token_address, estate_id, name, description) \
+             SELECT b, i, a, e::numeric, n, d \
+             FROM UNNEST($1::bigint[], $2::int[], $3::text[], $4::text[], $5::text[], $6::text[]) \
+                  AS u(b, i, a, e, n, d) \
+             ON CONFLICT (block_number, log_index) DO NOTHING",
+        )
+        .bind(&blocks)
+        .bind(&indexes)
+        .bind(&addrs)
+        .bind(&estates)
+        .bind(&names)
+        .bind(&descriptions)
+        .execute(&mut *conn)
+        .await?
+        .rows_affected() as usize;
+    }
+    Ok(written)
 }
 
 fn valid_header_time(time: i64) -> bool {
@@ -488,12 +555,24 @@ pub async fn ready_snapshot(
     land_registry: &str,
     estate_registry: &str,
 ) -> Result<Option<ReadySnapshot>, sqlx::Error> {
+    ready_snapshot_within(pool, network, land_registry, estate_registry, READY_WINDOW).await
+}
+
+pub(crate) async fn ready_snapshot_within(
+    pool: &PgPool,
+    network: &str,
+    land_registry: &str,
+    estate_registry: &str,
+    max_age: ChronoDuration,
+) -> Result<Option<ReadySnapshot>, sqlx::Error> {
     let mut tx = pool.begin().await?;
     sqlx::query("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ, READ ONLY")
         .execute(&mut *tx)
         .await?;
     Ok(match cursor_observed(&mut *tx, network).await? {
-        Some(observation) if observation_ready(&observation, land_registry, estate_registry) => {
+        Some(observation)
+            if observation_ready_within(&observation, land_registry, estate_registry, max_age) =>
+        {
             Some(ReadySnapshot {
                 cursor: observation.cursor,
                 tx,
@@ -824,13 +903,17 @@ pub async fn mark_folded(
 /// is recent. Production passes the database observation time; unit tests
 /// can inject a clock without affecting production readiness authority.
 pub fn index_ready(cursor: &Cursor, now: DateTime<Utc>) -> bool {
+    index_ready_within(cursor, now, READY_WINDOW)
+}
+
+fn index_ready_within(cursor: &Cursor, now: DateTime<Utc>, max_age: ChronoDuration) -> bool {
     let Some(folded_at) = cursor.folded_at else {
         return false;
     };
     let age = now.naive_utc().signed_duration_since(folded_at);
     cursor.folded_block == Some(cursor.last_block)
         && age >= ChronoDuration::zero()
-        && age <= READY_WINDOW
+        && age <= max_age
 }
 
 /// Whether a reader of `land_registry` and `estate_registry` may answer from
@@ -846,9 +929,22 @@ pub fn observation_ready(
     land_registry: &str,
     estate_registry: &str,
 ) -> bool {
+    observation_ready_within(observation, land_registry, estate_registry, READY_WINDOW)
+}
+
+pub(crate) fn observation_ready_within(
+    observation: &CursorObservation,
+    land_registry: &str,
+    estate_registry: &str,
+    max_age: ChronoDuration,
+) -> bool {
     observation.cursor.land_registry == land_registry
         && observation.cursor.estate_registry == estate_registry
-        && index_ready(&observation.cursor, observation.observed_at.and_utc())
+        && index_ready_within(
+            &observation.cursor,
+            observation.observed_at.and_utc(),
+            max_age,
+        )
 }
 
 /// `Some(cursor)` when the local index of these registries may answer on the
@@ -1185,6 +1281,9 @@ pub async fn sync_range(
             }
             Err(error) => return Err(error),
         };
+        // The LAND registry's parcel data documents are not indexed: drop
+        // them before their timestamps are fetched.
+        logs.retain(|log| kept_log(log, &state.settings.estate_registry));
         // Cap hydration at one batch and commit only that verified prefix.
         // If log retries used the budget, keep their narrowed hint for the
         // next pass; no cursor advance can outrun its mandatory timestamps.
@@ -1227,6 +1326,7 @@ pub async fn sync_range(
             logs.retain(|log| hex_to_i64(&log.block_number).is_some_and(|n| n < unresolved as i64));
         }
         let events = decode_logs(&logs)?;
+        let documents = decode_estate_data_logs(&logs, &state.settings.estate_registry);
         // The cursor block's hash, recorded with the advance: the next pass
         // compares it with the chain ([`check_cursor_block`]). A changed
         // last block, or a log of the cursor block from another fork, means
@@ -1256,6 +1356,7 @@ pub async fn sync_range(
         }
         let mut tx = state.pool.begin().await?;
         let written = insert_events(&mut tx, &events).await?;
+        insert_estate_data(&mut tx, &documents).await?;
         set_cursor(&mut tx, &state.settings, reached as i64, Some(&header.hash)).await?;
         tx.commit().await?;
         outcome.events_written += written;
@@ -1428,6 +1529,13 @@ pub async fn rewind_reorg(
         .bind(&settings.estate_registry)
         .execute(&mut *tx)
         .await?;
+    sqlx::query(
+        "DELETE FROM land_authz.estate_data_event WHERE block_number > $1 AND token_address = $2",
+    )
+    .bind(to)
+    .bind(&settings.estate_registry)
+    .execute(&mut *tx)
+    .await?;
     sqlx::query(
         "UPDATE land_authz.index_cursor SET last_block = $2, last_block_hash = $3, \
              checkpoint_block = NULL, checkpoint_hash = NULL, \

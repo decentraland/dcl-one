@@ -1,4 +1,4 @@
-import type { CopyStamp } from "@ui/data/copyAsOf";
+import type { CopyStamp } from "@web-core/freshness/copyAsOf";
 import type { GetOptions } from "./client";
 import type { Place, Category } from "./schema";
 

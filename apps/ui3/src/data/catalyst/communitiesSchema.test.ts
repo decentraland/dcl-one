@@ -61,5 +61,11 @@ describe("normalizeCommunity thumbnailUrl", () => {
         "example.org",
       ),
     ).toBe(`${serviceBase("communitiesCdn")}/social/communities/${ID}/raw-thumbnail.png`);
+    expect(
+      normalizeCommunityThumbnail(
+        `https://assets-cdn.example.org/social/communities/${ID}/raw-thumbnail.png?v=bafkreiabc`,
+        "example.org",
+      ),
+    ).toBe(`${serviceBase("communitiesCdn")}/social/communities/${ID}/raw-thumbnail.png?v=bafkreiabc`);
   });
 });
