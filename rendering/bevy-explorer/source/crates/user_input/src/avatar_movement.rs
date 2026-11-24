@@ -640,6 +640,9 @@ pub fn apply_movement(
             scenes
                 .iter_mut()
                 .fold(transform.translation.y, |gh, (_, mut collider_data)| {
+                    if !collider_data.grounds_avatar(transform.translation.as_dvec3()) {
+                        return gh;
+                    }
                     gh.min(
                         collider_data
                             .get_ground(transform.translation)
@@ -679,7 +682,7 @@ pub fn apply_movement(
         let mut contact_normal = DVec3::ZERO;
         if movement_control.suppress_clipping.is_empty() {
             for (e, mut collider_data) in scenes.iter_mut() {
-                if let Some(hit) = collider_data.cast_avatar_nearest(
+                if let Some(hit) = collider_data.cast_avatar_nearest_in_scene(
                     position,
                     velocity,
                     step_time,
@@ -732,6 +735,9 @@ pub fn apply_movement(
         scenes
             .iter_mut()
             .fold(transform.translation.y, |gh, (_, mut collider_data)| {
+                if !collider_data.grounds_avatar(transform.translation.as_dvec3()) {
+                    return gh;
+                }
                 gh.min(
                     collider_data
                         .get_ground(transform.translation)
@@ -782,6 +788,9 @@ fn record_ground_collider(
         let Ok(mut collider_data) = scenes.get_mut(scene) else {
             continue;
         };
+        if !collider_data.grounds_avatar(transform.translation.as_dvec3()) {
+            continue;
+        }
 
         if let Some((height, collider_id)) = collider_data.get_ground(transform.translation) {
             if height < best_height {
@@ -893,10 +902,13 @@ fn resolve_collisions(
     {
         prev = current_offset;
 
+        let position = transform.translation.as_dvec3() + current_offset;
         for (_, mut collider_data) in scenes.iter_mut() {
+            if !collider_data.reaches_avatar(position) {
+                continue;
+            }
             // Note: collisions that intersect the avatar central segment are automatically excluded here
-            let (scene_min, scene_max) =
-                collider_data.avatar_constraints(transform.translation.as_dvec3() + current_offset);
+            let (scene_min, scene_max) = collider_data.avatar_constraints(position);
 
             constraint_min = constraint_min.max(scene_min + current_offset);
             constraint_max = constraint_max.min(scene_max + current_offset);
@@ -961,6 +973,7 @@ fn resolve_collisions(
 
     central.0 = scenes
         .iter_mut()
+        .filter(|(_, collider_data)| collider_data.reaches_avatar(transform.translation.as_dvec3()))
         .flat_map(|(scene, mut collider_data)| {
             let results = collider_data.avatar_central_collisions(transform.translation.as_dvec3());
             if results.is_empty() {
@@ -1130,6 +1143,9 @@ mod tests {
         );
     }
 }
+
+#[cfg(test)]
+mod scene_reach_tests;
 
 #[cfg(test)]
 mod jump_tests {

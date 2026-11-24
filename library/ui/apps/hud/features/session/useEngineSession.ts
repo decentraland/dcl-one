@@ -986,6 +986,31 @@ const MAX_REVEAL_MS = 1500
 // and the next starting. Revealing the world in that gap flashes the HUD (chat + sidebar) in and
 // out, so we only drop the loader once loading has been stably clear for this long.
 const REVEAL_DEBOUNCE_MS = 600
+// The longest the Backpack's preview stays shut waiting for the engine's avatarPreviewReady: a bridge
+// that never sends it must not hide the preview for good.
+const AVATAR_PREVIEW_READY_TIMEOUT_MS = 3000
+
+/** A timeout started and cleared at will, and cleared on unmount. */
+function useFallbackTimer(ms: number): { start: (fire: () => void) => void; clear: () => void } {
+  const timer = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const control = useMemo(() => {
+    const clear = (): void => {
+      if (timer.current != null) clearTimeout(timer.current)
+      timer.current = null
+    }
+    const start = (fire: () => void): void => {
+      clear()
+      timer.current = setTimeout(() => {
+        timer.current = null
+        fire()
+      }, ms)
+    }
+    return { start, clear }
+  }, [ms])
+  useEffect(() => control.clear, [control])
+  return control
+}
+
 // how long, back from the auth site, the stored sign-in waits for the catalyst to have the profile
 // How long Verifying waits for a sign-in before giving up.
 const VERIFY_TIMEOUT_MS = 15_000
@@ -1146,6 +1171,9 @@ export interface EngineSession {
   lobbyData: LobbyDataState
   /** The Backpack avatar preview's on-screen rect (CSS px), while it is open. */
   avatarPreviewRect: { x: number; y: number; width: number; height: number } | null
+  /** The engine has drawn the Backpack's avatar in its preview, so the page can open its hole onto it
+   *  (or the wait for it ran out). False while the preview is closed. */
+  avatarPreviewReady: boolean
   /** The persisted home destination the lobby's landing card shows (null before the engine knows). */
   homeScene: () => { realm: string | null; parcel: string; pinned: boolean } | null
   /** Post-jump-in Places picker: choose where to spawn (or null to skip → Genesis Plaza). False
@@ -1231,7 +1259,8 @@ export interface EngineSession {
     region: EngineViewportRegion,
     rect: { x: number; y: number; width: number; height: number } | null,
     dpr?: number,
-    focus?: { x: number; y: number; width: number; height: number }
+    focus?: { x: number; y: number; width: number; height: number },
+    clip?: { x: number; y: number; width: number; height: number }
   ) => void
   /** Report the screen area the persistent HUD occupies (see lib/hudInset.ts). */
   setInteractableArea: (area: InteractableArea) => void
@@ -1351,6 +1380,9 @@ export function useEngineSession(createDriver: () => LoginDriver, host: SessionH
   const [lobbyStageReady, setLobbyStageReady] = useState(false)
   const [communitiesLoaded, setCommunitiesLoaded] = useState(false)
   const [signinStageReady, setSigninStageReady] = useState(false)
+  const [avatarPreviewReady, setAvatarPreviewReady] = useState(false)
+  const previewOpen = useRef(false)
+  const previewReadyFallback = useFallbackTimer(AVATAR_PREVIEW_READY_TIMEOUT_MS)
   lobbyRef.current = lobby
   // The welcome page: asked of the engine after each sign-in, null until it answers (or once accepted).
   const [welcome, setWelcome] = useState<{ terms: boolean; newProfile: boolean } | null>(null)
@@ -2566,6 +2598,10 @@ export function useEngineSession(createDriver: () => LoginDriver, host: SessionH
           break
         case 'signinStageReady':
           setSigninStageReady(true)
+          break
+        case 'avatarPreviewReady':
+          previewReadyFallback.clear()
+          if (previewOpen.current) setAvatarPreviewReady(true)
           break
         case 'welcome': {
           // an answer to an ask from before a sign-out is the signed-out account's: no page of a
@@ -4559,8 +4595,27 @@ export function useEngineSession(createDriver: () => LoginDriver, host: SessionH
   const lobbyStageOptions = useRef({ preset: lobbyStagePreset(getPref(PREF.lobbyStagePreset)).id as string, idleEmotes: false })
   const lastLobbyReport = useRef<{ rect: { x: number; y: number; width: number; height: number } | null; dpr?: number } | null>(null)
   const setEngineViewport = useCallback(
-    (region: EngineViewportRegion, rect: { x: number; y: number; width: number; height: number } | null, dpr?: number, focus?: { x: number; y: number; width: number; height: number }) => {
-      if (region === 'avatarPreview') setAvatarPreviewRect(rect)
+    (
+      region: EngineViewportRegion,
+      rect: { x: number; y: number; width: number; height: number } | null,
+      dpr?: number,
+      focus?: { x: number; y: number; width: number; height: number },
+      clip?: { x: number; y: number; width: number; height: number }
+    ) => {
+      if (region === 'avatarPreview') {
+        setAvatarPreviewRect(rect)
+        if (rect == null) {
+          previewOpen.current = false
+          previewReadyFallback.clear()
+          setAvatarPreviewReady(false)
+        } else if (!previewOpen.current) {
+          previewOpen.current = true
+          setAvatarPreviewReady(false)
+          previewReadyFallback.start(() => {
+            if (previewOpen.current) setAvatarPreviewReady(true)
+          })
+        }
+      }
       // a closed sign-in stage is drawn again from scratch: the page keeps its background until then
       if (region === 'signin' && rect == null) setSigninStageReady(false)
       // likewise the lobby's, which the bridge announces again to the next report
@@ -4571,9 +4626,9 @@ export function useEngineSession(createDriver: () => LoginDriver, host: SessionH
         driverRef.current?.send({ kind: 'engineViewport', region, rect, dpr, stagePreset: preset, idleEmotes })
         return
       }
-      driverRef.current?.send({ kind: 'engineViewport', region, rect, dpr, ...(focus != null && rect != null ? { focus } : {}) })
+      driverRef.current?.send({ kind: 'engineViewport', region, rect, dpr, ...(focus != null && rect != null ? { focus } : {}), ...(clip != null && rect != null ? { clip } : {}) })
     },
-    []
+    [previewReadyFallback]
   )
   const setLobbyStage = useCallback((options: { preset?: string; idleEmotes?: boolean }) => {
     lobbyStageOptions.current = { ...lobbyStageOptions.current, ...options }
@@ -5317,6 +5372,7 @@ export function useEngineSession(createDriver: () => LoginDriver, host: SessionH
     lobbyData: { warm: warmLobby, communitiesLoaded, covered: anyPanelOpenExceptLobby },
     homeScene,
     avatarPreviewRect,
+    avatarPreviewReady,
     pickDestination,
     welcome: {
       terms: welcome?.terms ?? false,
