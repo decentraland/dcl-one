@@ -38,6 +38,5 @@ tests/shop/main.rs	test	0
 tests/sockets_1.rs	test	49
 tests/sockets_2.rs	test	33
 tests/sockets_3.rs	test	50
-tests/stats_metrics_engine.rs	test	2
 worlds/src/lib.rs	lib	29
 message-router/src/lib.rs	lib	2

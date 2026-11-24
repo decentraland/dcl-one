@@ -701,7 +701,7 @@ fn dispatch_close(
     i: usize,
     slot: &mut Slot,
     out: PassOutcome,
-    fold_since: Option<i64>,
+    close_options: chain_walk::Close,
     tasks: &mut JoinSet<Done>,
     running: &mut HashMap<tokio::task::Id, Running>,
 ) {
@@ -718,10 +718,16 @@ fn dispatch_close(
     let handle = tasks.spawn(async move {
         let close = async {
             let projection = &sup.projections[i];
-            let source = chain_walk::RpcSource::new(crate::chain_index::rpc::Rpc::at(
-                &sup.http,
-                &projection.url,
-            ));
+            let source = Shadowed::new(
+                AdmittedPortal::new(
+                    chain_walk::RpcSource::new(crate::chain_index::rpc::Rpc::at(
+                        &sup.http,
+                        &projection.url,
+                    )),
+                    sup.portal.as_deref(),
+                ),
+                sup.shadow.as_deref(),
+            );
             let owner = holdings
                 .owner(&sup.pool, lease.as_ref(), index.as_ref(), &sup.settings)
                 .await?;
@@ -732,7 +738,7 @@ fn dispatch_close(
                 index.as_ref(),
                 &sup.settings,
                 &owner,
-                fold_since,
+                close_options,
                 &mut out,
             )
             .await;

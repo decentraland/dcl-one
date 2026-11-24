@@ -18,14 +18,109 @@ use std::{
     time::Duration,
 };
 
+const SOURCE_OBSERVED: dcl_metrics::GaugeFamily<2> = dcl_metrics::GaugeFamily::new(
+    "catalyst_index_source_observed",
+    "Whether the latest sample observed this source.",
+    None,
+    &["source", "network"],
+);
+const LAG_LIMIT_BLOCKS: dcl_metrics::GaugeFamily<2> = dcl_metrics::GaugeFamily::new(
+    "catalyst_index_lag_limit_blocks",
+    "Configured lag threshold in blocks.",
+    None,
+    &["source", "network"],
+);
+const HELD_AT_STOP: dcl_metrics::GaugeFamily<2> = dcl_metrics::GaugeFamily::new(
+    "catalyst_index_held_at_stop",
+    "Whether the cursor has reached its configured stop.",
+    None,
+    &["source", "network"],
+);
+const PUBLICATION_EXPECTED: dcl_metrics::GaugeFamily<2> = dcl_metrics::GaugeFamily::new(
+    "catalyst_index_publication_expected",
+    "Whether the cursor is expected to publish.",
+    None,
+    &["source", "network"],
+);
+const LAG_BLOCKS: dcl_metrics::GaugeFamily<2> = dcl_metrics::GaugeFamily::new(
+    "catalyst_index_lag_blocks",
+    "Chain head minus the persisted last block.",
+    None,
+    &["source", "network"],
+);
+const LAST_BLOCK: dcl_metrics::GaugeFamily<2> = dcl_metrics::GaugeFamily::new(
+    "catalyst_index_last_block",
+    "Last persisted block height.",
+    None,
+    &["source", "network"],
+);
+const FOLDED_BLOCK: dcl_metrics::GaugeFamily<2> = dcl_metrics::GaugeFamily::new(
+    "catalyst_index_folded_block",
+    "Last published block height.",
+    None,
+    &["source", "network"],
+);
+const FOLD_AGE_SECONDS: dcl_metrics::GaugeFamily<2> = dcl_metrics::GaugeFamily::new(
+    "catalyst_index_fold_age_seconds",
+    "Elapsed time since the last fold.",
+    Some(dcl_metrics::Unit::Seconds),
+    &["source", "network"],
+);
+const QUARANTINED: dcl_metrics::GaugeFamily<2> = dcl_metrics::GaugeFamily::new(
+    "catalyst_index_quarantined",
+    "Whether the cursor is quarantined.",
+    None,
+    &["source", "network"],
+);
+const MIRROR_AGE_LIMIT_SECONDS: dcl_metrics::GaugeFamily<2> = dcl_metrics::GaugeFamily::new(
+    "catalyst_index_mirror_age_limit_seconds",
+    "Configured mirror freshness threshold.",
+    Some(dcl_metrics::Unit::Seconds),
+    &["source", "network"],
+);
+const MIRROR_AGE_SECONDS: dcl_metrics::GaugeFamily<2> = dcl_metrics::GaugeFamily::new(
+    "catalyst_index_mirror_age_seconds",
+    "Age of the latest mirror update.",
+    Some(dcl_metrics::Unit::Seconds),
+    &["source", "network"],
+);
+const MIRROR_PAGES: dcl_metrics::GaugeFamily<2> = dcl_metrics::GaugeFamily::new(
+    "catalyst_index_mirror_pages",
+    "Recorded mirror page count.",
+    None,
+    &["source", "network"],
+);
+const SAMPLE_TIMESTAMP_SECONDS: dcl_metrics::GaugeFamily<0> = dcl_metrics::GaugeFamily::new(
+    "catalyst_index_sample_timestamp_seconds",
+    "Unix timestamp of the latest monitoring pass.",
+    Some(dcl_metrics::Unit::Seconds),
+    &[],
+);
+pub(super) const FAMILIES: &[dcl_metrics::Descriptor] = &[
+    SOURCE_OBSERVED.descriptor,
+    LAG_LIMIT_BLOCKS.descriptor,
+    HELD_AT_STOP.descriptor,
+    PUBLICATION_EXPECTED.descriptor,
+    LAG_BLOCKS.descriptor,
+    LAST_BLOCK.descriptor,
+    FOLDED_BLOCK.descriptor,
+    FOLD_AGE_SECONDS.descriptor,
+    QUARANTINED.descriptor,
+    MIRROR_AGE_LIMIT_SECONDS.descriptor,
+    MIRROR_AGE_SECONDS.descriptor,
+    MIRROR_PAGES.descriptor,
+    SAMPLE_TIMESTAMP_SECONDS.descriptor,
+];
+
 struct Target {
     source: &'static str,
     network: String,
 }
 
 impl Target {
-    fn set(&self, name: &'static str, value: f64) {
-        metrics::gauge!(name, "source" => self.source, "network" => self.network.clone())
+    fn set(&self, family: dcl_metrics::GaugeFamily<2>, value: f64) {
+        family
+            .handle_owned([self.source.into(), self.network.clone().into()])
             .set(value);
     }
 }
@@ -237,7 +332,8 @@ impl Monitor {
             });
             m.report(row, now);
         }
-        metrics::gauge!("catalyst_index_sample_timestamp_seconds")
+        SAMPLE_TIMESTAMP_SECONDS
+            .handle([])
             .set(now.and_utc().timestamp() as f64);
         Ok(())
     }
@@ -256,33 +352,27 @@ impl CursorTarget {
                 self.target.source == "land_authz" || r.chain_id == Some(self.chain_id as i64)
             })
             .map(|(h, r)| (h as i128 - i128::from(r.last_block)).max(0) as f64);
-        t.set("catalyst_index_source_observed", f64::from(lag.is_some()));
-        t.set("catalyst_index_lag_limit_blocks", self.lag_limit as f64);
+        t.set(SOURCE_OBSERVED, f64::from(lag.is_some()));
+        t.set(LAG_LIMIT_BLOCKS, self.lag_limit as f64);
         let held = self
             .stop_block
             .zip(row)
             .is_some_and(|(stop, row)| i128::from(row.last_block) >= i128::from(stop));
-        t.set("catalyst_index_held_at_stop", f64::from(held));
+        t.set(HELD_AT_STOP, f64::from(held));
         t.set(
-            "catalyst_index_publication_expected",
+            PUBLICATION_EXPECTED,
             f64::from(row.is_some_and(|r| r.full_history) && !held),
         );
-        t.set("catalyst_index_lag_blocks", lag.unwrap_or(f64::NAN));
+        t.set(LAG_BLOCKS, lag.unwrap_or(f64::NAN));
+        t.set(LAST_BLOCK, row.map_or(f64::NAN, |r| r.last_block as f64));
         t.set(
-            "catalyst_index_last_block",
-            row.map_or(f64::NAN, |r| r.last_block as f64),
-        );
-        t.set(
-            "catalyst_index_folded_block",
+            FOLDED_BLOCK,
             row.and_then(|r| r.folded_block)
                 .map_or(f64::NAN, |b| b as f64),
         );
+        t.set(FOLD_AGE_SECONDS, age(now, row.and_then(|r| r.folded_at)));
         t.set(
-            "catalyst_index_fold_age_seconds",
-            age(now, row.and_then(|r| r.folded_at)),
-        );
-        t.set(
-            "catalyst_index_quarantined",
+            QUARANTINED,
             row.map_or(f64::NAN, |r| f64::from(r.quarantined)),
         );
     }
@@ -291,19 +381,10 @@ impl CursorTarget {
 impl MirrorTarget {
     fn report(&self, row: Option<&Mirror>, now: NaiveDateTime) {
         let t = &self.target;
-        t.set("catalyst_index_source_observed", f64::from(row.is_some()));
-        t.set(
-            "catalyst_index_mirror_age_limit_seconds",
-            self.max_age.as_secs_f64(),
-        );
-        t.set(
-            "catalyst_index_mirror_age_seconds",
-            age(now, row.and_then(|r| r.completed)),
-        );
-        t.set(
-            "catalyst_index_mirror_pages",
-            row.map_or(f64::NAN, |r| r.pages as f64),
-        );
+        t.set(SOURCE_OBSERVED, f64::from(row.is_some()));
+        t.set(MIRROR_AGE_LIMIT_SECONDS, self.max_age.as_secs_f64());
+        t.set(MIRROR_AGE_SECONDS, age(now, row.and_then(|r| r.completed)));
+        t.set(MIRROR_PAGES, row.map_or(f64::NAN, |r| r.pages as f64));
     }
 }
 
@@ -381,7 +462,7 @@ mod tests {
             .unwrap()
             .build_recorder();
         let handle = recorder.handle();
-        let _recording = metrics::set_default_local_recorder(&recorder);
+        let _recording = dcl_metrics::set_default_local_recorder(&recorder);
         without_land_rpc.sample(&pool, &http).await.unwrap();
         let incomplete = handle.render();
         assert_eq!(
