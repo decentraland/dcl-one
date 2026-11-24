@@ -1,11 +1,7 @@
-use std::{f32::consts::TAU, marker::PhantomData};
+use std::f32::consts::TAU;
 
 use bevy::{
     diagnostic::FrameCount,
-    ecs::{
-        component::Tick,
-        system::{SystemChangeTick, SystemParam},
-    },
     math::DVec3,
     platform::collections::{HashMap, HashSet},
     prelude::*,
@@ -44,7 +40,7 @@ use ipfs::{
 
 use scene_runner::{
     initialize_scene::{PortableScenes, PARCEL_SIZE},
-    renderer_context::{RedispatchRotation, RendererSceneContext, SceneTickTiming},
+    renderer_context::RendererSceneContext,
     update_world::{
         avatar_modifier_area::InputModifier,
         mesh_collider::{
@@ -83,27 +79,28 @@ impl Plugin for AvatarMovementPlugin {
         app.init_resource::<CollisionPush>();
         app.init_resource::<CentralCollisions>();
         app.init_resource::<SceneDrivenAnimationFeedback>();
-        app.init_resource::<LatestFramePick<AvatarMovement>>();
 
         app.add_systems(Update, broadcast_movement_info.in_set(SceneSets::Init));
         app.world_mut()
             .resource_mut::<SceneLoopSchedule>()
-            .add_systems(stage_redispatch_rotation.after(SceneLoopSets::UpdateWorld));
+            .add_systems(
+                (
+                    ActivePlayerComponent::<AvatarMovement>::pick_latest_frame_only_by_priority,
+                    apply_rotation_on_reply,
+                )
+                    .chain()
+                    .after(SceneLoopSets::UpdateWorld),
+            );
 
         app.add_systems(
             Update,
             (
-                ActivePlayerComponent::<AvatarMovement>::pick_latest_frame_only_by_priority,
                 ActivePlayerComponent::<AvatarLocomotionSettings>::pick_by_priority,
                 ActivePlayerComponent::<InputModifier>::pick_by_priority,
                 update_locomotion_speeds
                     .after(ActivePlayerComponent::<AvatarLocomotionSettings>::pick_by_priority),
-                update_priority_scene.after(
-                    ActivePlayerComponent::<AvatarMovement>::pick_latest_frame_only_by_priority,
-                ),
-                update_scene_driven_animation.after(
-                    ActivePlayerComponent::<AvatarMovement>::pick_latest_frame_only_by_priority,
-                ),
+                update_priority_scene,
+                update_scene_driven_animation,
                 start_movement_periods,
             )
                 .in_set(SceneSets::PostLoop),
@@ -342,7 +339,9 @@ impl From<PbAvatarMovement> for AvatarMovement {
 pub struct ActivePlayerComponent<C: Component> {
     scene: Entity,
     entity: Entity,
-    scene_last_update: u32,
+    /// The scene's `tick_number` when `component` was picked. A later reply of the scene, even in
+    /// the same frame, ends a latest-frame choice.
+    scene_last_tick: u32,
     scene_start_tick: u32,
     scene_is_portable: bool,
     /// Engine dispatch time (`RendererSceneContext::reply_sent`) of the scene tick
@@ -374,7 +373,7 @@ impl<C: Component + FromConfig> FromConfig for ActivePlayerComponent<C> {
         Self {
             scene: Entity::PLACEHOLDER,
             entity: Entity::PLACEHOLDER,
-            scene_last_update: 0,
+            scene_last_tick: 0,
             scene_start_tick: 0,
             scene_is_portable: true,
             initiated_at: 0.0,
@@ -494,7 +493,7 @@ impl<C: Component + Clone + FromConfig> ActivePlayerComponent<C> {
             *current_choice = ActivePlayerComponent {
                 scene: scene_ent.root,
                 entity,
-                scene_last_update: ctx.last_update_frame,
+                scene_last_tick: ctx.tick_number,
                 scene_start_tick: ctx.start_tick,
                 scene_is_portable: ctx.is_portable,
                 initiated_at: ctx.reply_sent,
@@ -505,8 +504,8 @@ impl<C: Component + Clone + FromConfig> ActivePlayerComponent<C> {
         }
     }
 
-    // pick based on priority, only from scenes that updated the component
-    // in the last available scene-tick response
+    // pick based on priority, only from scenes that updated the component in the scene-tick
+    // responses taken since the last pick. Runs in each pass of the scene loop
     fn pick_latest_frame_only_by_priority(
         mut commands: Commands,
         q: Query<(Entity, &C, &SceneEntity), Changed<C>>,
@@ -515,10 +514,7 @@ impl<C: Component + Clone + FromConfig> ActivePlayerComponent<C> {
         mut player: Query<&mut ActivePlayerComponent<C>, With<PrimaryUser>>,
         player_res: Res<PrimaryPlayerRes>,
         config: Res<AppConfig>,
-        ticks: SystemChangeTick,
-        mut picked: ResMut<LatestFramePick<C>>,
     ) {
-        picked.tick = ticks.this_run();
         let Ok(mut current_choice) = player.single_mut() else {
             commands
                 .entity(player_res.0)
@@ -538,9 +534,8 @@ impl<C: Component + Clone + FromConfig> ActivePlayerComponent<C> {
     }
 }
 
-/// The choice of [`ActivePlayerComponent::pick_latest_frame_only_by_priority`], shared with
-/// [`NextMovementPick`]: what replaces `current_choice`, if anything. `changed` holds the
-/// components changed since the last pick.
+/// The choice of [`ActivePlayerComponent::pick_latest_frame_only_by_priority`]: what replaces
+/// `current_choice`, if anything. `changed` holds the components changed since the last pick.
 fn choose_latest_frame<'a, C: Component + Clone + FromConfig>(
     current_choice: &ActivePlayerComponent<C>,
     changed: impl Iterator<Item = (Entity, &'a C, &'a SceneEntity)>,
@@ -548,11 +543,11 @@ fn choose_latest_frame<'a, C: Component + Clone + FromConfig>(
     containing_scenes: &HashSet<Entity>,
     config: &AppConfig,
 ) -> Option<ActivePlayerComponent<C>> {
-    // clear current choice if we left the scene or it has updated
+    // clear current choice if we left the scene or it has replied since
     let current_choice_valid = containing_scenes.contains(&current_choice.scene)
         && scenes
             .get(current_choice.scene)
-            .is_ok_and(|ctx| ctx.last_update_frame == current_choice.scene_last_update);
+            .is_ok_and(|ctx| ctx.tick_number == current_choice.scene_last_tick);
 
     let mut choice = (!current_choice_valid).then(|| FromConfig::from_config(config));
 
@@ -578,7 +573,7 @@ fn choose_latest_frame<'a, C: Component + Clone + FromConfig>(
         choice = Some(ActivePlayerComponent {
             scene: scene_ent.root,
             entity,
-            scene_last_update: ctx.last_update_frame,
+            scene_last_tick: ctx.tick_number,
             scene_start_tick: ctx.start_tick,
             scene_is_portable: ctx.is_portable,
             initiated_at: ctx.reply_sent,
@@ -660,98 +655,24 @@ pub fn apply_rotation(
     }
 }
 
-/// The change tick of the last run of [`ActivePlayerComponent::pick_latest_frame_only_by_priority`]
-/// for `C`. Its next run sees only the `C` changed after this tick.
-#[derive(Resource)]
-struct LatestFramePick<C> {
-    tick: Tick,
-    component: PhantomData<C>,
-}
-
-impl<C> Default for LatestFramePick<C> {
-    fn default() -> Self {
-        Self {
-            tick: Tick::default(),
-            component: PhantomData,
-        }
-    }
-}
-
-/// Predicts, during the scene loop, the [`AvatarMovement`] that
-/// [`ActivePlayerComponent::pick_latest_frame_only_by_priority`] will choose after the loop.
-#[derive(SystemParam)]
-struct NextMovementPick<'w, 's> {
-    movements: Query<'w, 's, (Entity, Ref<'static, AvatarMovement>, &'static SceneEntity)>,
-    picked: Res<'w, LatestFramePick<AvatarMovement>>,
-    ticks: SystemChangeTick,
-    scenes: Query<'w, 's, &'static RendererSceneContext>,
-    containing_scenes: ContainingScene<'w, 's>,
-    player: Res<'w, PrimaryPlayerRes>,
-    config: Res<'w, AppConfig>,
-}
-
-impl NextMovementPick<'_, '_> {
-    fn choose(
-        &self,
-        current: &ActivePlayerComponent<AvatarMovement>,
-    ) -> ActivePlayerComponent<AvatarMovement> {
-        let changed = self
-            .movements
-            .iter()
-            .filter(|(_, movement, _)| {
-                movement
-                    .last_changed()
-                    .is_newer_than(self.picked.tick, self.ticks.this_run())
-            })
-            .map(|(entity, movement, scene_entity)| (entity, movement.into_inner(), scene_entity));
-        choose_latest_frame(
-            current,
-            changed,
-            &self.scenes,
-            &self.containing_scenes.get(self.player.0),
-            &self.config,
-        )
-        .unwrap_or_else(|| current.clone())
-    }
-}
-
-/// Stages on the movement scene the rotation that [`apply_rotation`] will set this frame, for the
-/// re-dispatch that answers a late reply landing in this frame. Stages once per frame, after the
-/// loop pass that applies the late reply, because the next pass sends the re-dispatch. Stages
-/// nothing when [`movement_suppressed`] holds, so the re-dispatch gets the player's rotation. A
-/// staged rotation stays only on the scene that drives the player, in its late reply's frame.
-fn stage_redispatch_rotation(
-    mut commands: Commands,
-    player: Query<&ActivePlayerComponent<AvatarMovement>, With<PrimaryUser>>,
-    tick_timings: Query<&SceneTickTiming>,
-    staged: Query<Entity, With<RedispatchRotation>>,
-    next_pick: NextMovementPick,
+/// Sets the player's rotation as soon as the scene loop picks a new movement, so a scene dispatched
+/// later in the frame is sent it. The movement scene's re-dispatch on a late reply then continues
+/// from the rotation that reply sets: with the rotation from before the reply, every other frame
+/// would continue a different chain of replies, and the avatar would alternate between two
+/// rotations. [`apply_rotation`] sets the same rotation after the loop.
+fn apply_rotation_on_reply(
+    mut player: Query<
+        (&mut Transform, Ref<ActivePlayerComponent<AvatarMovement>>),
+        With<PrimaryUser>,
+    >,
     movement_control: Res<EngineMovementControl>,
-    frame: Res<FrameCount>,
-    mut staged_in: Local<Option<u32>>,
 ) {
-    let late = player.single().ok().filter(|active| {
-        tick_timings
-            .get(active.scene())
-            .is_ok_and(|timing| timing.late_reply_in(frame.0))
-    });
-    for scene in &staged {
-        if late.is_none_or(|active| active.scene() != scene) {
-            commands.entity(scene).try_remove::<RedispatchRotation>();
-        }
-    }
-    let Some(active) = late else {
+    let Ok((mut transform, movement)) = player.single_mut() else {
         return;
     };
-    if staged_in.replace(frame.0) == Some(frame.0) {
-        return;
-    }
-    let choice = next_pick.choose(active);
-    let mut scene = commands.entity(active.scene());
-    if movement_suppressed(&movement_control, choice.initiated_at) {
-        scene.try_remove::<RedispatchRotation>();
-    } else {
-        scene.try_insert(RedispatchRotation(choice.component.rotation()));
+
+    if movement.is_changed() && !movement_suppressed(&movement_control, movement.initiated_at) {
+        transform.rotation = movement.component.rotation();
     }
 }
 
@@ -1516,17 +1437,15 @@ mod tests {
             ..default()
         })
         .init_resource::<AppConfig>()
-        .init_resource::<LatestFramePick<AvatarMovement>>()
-        .insert_resource(FrameCount(0))
-        .add_systems(Update, stage_redispatch_rotation)
         .add_systems(
-            PostUpdate,
+            Update,
             (
                 ActivePlayerComponent::<AvatarMovement>::pick_latest_frame_only_by_priority,
-                apply_rotation,
+                apply_rotation_on_reply,
             )
                 .chain(),
-        );
+        )
+        .add_systems(PostUpdate, apply_rotation);
         add_scene_resources(&mut app);
         let player = app
             .world_mut()
@@ -1579,7 +1498,8 @@ mod tests {
         (scene, scene_player)
     }
 
-    /// `None` sets no movement. The engine clock reads 1 s at frame 0 and advances 1 s a frame.
+    /// The reply to a tick dispatched in frame `sent`, taken in frame `frame`. `None` sets no
+    /// movement. The engine clock reads 1 s at frame 0 and advances 1 s a frame.
     fn land_reply(
         app: &mut App,
         (scene, scene_player): (Entity, Entity),
@@ -1587,8 +1507,6 @@ mod tests {
         frame: u32,
         orientation: Option<f32>,
     ) {
-        use scene_runner::renderer_context::{ReplyTiming, SentTiming};
-
         let world = app.world_mut();
         if let Some(orientation) = orientation {
             world.entity_mut(scene_player).insert(AvatarMovement {
@@ -1596,39 +1514,24 @@ mod tests {
                 ..default()
             });
         }
-        let at = web_time::Instant::now();
-        let sent = SentTiming { at, frame: sent };
-        world.get_mut::<SceneTickTiming>(scene).unwrap().reply =
-            Some(ReplyTiming { sent, at, frame });
         let mut context = world.get_mut::<RendererSceneContext>(scene).unwrap();
-        context.reply_sent = f64::from(sent.frame) + 1.0;
+        context.reply_sent = f64::from(sent) + 1.0;
         context.last_update_frame = frame;
+        context.tick_number += 1;
     }
 
-    /// The staged rotation in the frame of a late reply, else the player's rotation.
-    fn rotation_to_send(world: &World, scene: Entity, player: Entity, frame: u32) -> Quat {
-        world
-            .get::<RedispatchRotation>(scene)
-            .filter(|_| {
-                world
-                    .get::<SceneTickTiming>(scene)
-                    .unwrap()
-                    .late_reply_in(frame)
-            })
-            .map_or(world.get::<Transform>(player).unwrap().rotation, |staged| {
-                staged.0
-            })
+    /// The yaw of the player, which a dispatch is sent.
+    fn player_yaw(app: &App, player: Entity) -> f32 {
+        yaw(app.world().get::<Transform>(player).unwrap().rotation)
     }
 
-    /// Returns the yaw that a dispatch of `scene` in `frame` is sent, and the player's yaw after
-    /// the frame.
-    fn run_frame(app: &mut App, frame: u32, scene: Entity, player: Entity) -> (f32, f32) {
-        app.insert_resource(FrameCount(frame));
+    /// Runs a frame whose loop pass takes the replies landed before it. Returns the yaw that a
+    /// dispatch after that pass is sent, and the player's yaw after the frame.
+    fn run_frame(app: &mut App, player: Entity) -> (f32, f32) {
         app.world_mut().run_schedule(Update);
-        let sent = rotation_to_send(app.world(), scene, player, frame);
+        let sent = player_yaw(app, player);
         app.world_mut().run_schedule(PostUpdate);
-        let applied = app.world().get::<Transform>(player).unwrap().rotation;
-        (yaw(sent), yaw(applied))
+        (sent, player_yaw(app, player))
     }
 
     /// Each reply of the movement scene lands a frame late and is re-dispatched in that frame.
@@ -1655,7 +1558,7 @@ mod tests {
             if let Some(orientation) = in_flight.take() {
                 land_reply(&mut app, scene, frame - 1, frame, Some(orientation));
             }
-            let (sent, applied) = run_frame(&mut app, frame, scene.0, player);
+            let (sent, applied) = run_frame(&mut app, player);
             in_flight = Some(if frame < turning {
                 sent + (90.0 - sent).clamp(-10.0, 10.0)
             } else {
@@ -1668,17 +1571,17 @@ mod tests {
 
     /// A parcel scene takes over at 70 degrees, then something else turns the player to 40.
     #[test]
-    fn a_scene_no_longer_driving_the_player_is_not_sent_its_staged_rotation() {
+    fn a_scene_no_longer_driving_the_player_is_sent_the_players_rotation() {
         let (mut app, player) = rotation_app(0.0);
         let movement = add_scene(&mut app, "movement", Some(1));
         let parcel = add_scene(&mut app, "parcel", None);
         land_reply(&mut app, movement, 0, 0, Some(10.0));
-        run_frame(&mut app, 0, movement.0, player);
+        run_frame(&mut app, player);
 
         land_reply(&mut app, movement, 0, 1, Some(30.0));
         land_reply(&mut app, parcel, 1, 1, Some(70.0));
-        let (staged, _) = run_frame(&mut app, 1, movement.0, player);
-        assert!((staged - 70.0).abs() < 1e-3, "staged {staged}");
+        let (sent, _) = run_frame(&mut app, player);
+        assert!((sent - 70.0).abs() < 1e-3, "sent {sent}");
         assert_eq!(
             app.world()
                 .get::<ActivePlayerComponent<AvatarMovement>>(player)
@@ -1692,7 +1595,7 @@ mod tests {
             .rotation = Quat::from_rotation_y(40f32.to_radians());
 
         land_reply(&mut app, movement, 1, 2, None);
-        let (sent, _) = run_frame(&mut app, 2, movement.0, player);
+        let (sent, _) = run_frame(&mut app, player);
         assert!((sent - 40.0).abs() < 1e-3, "sent {sent}");
     }
 
@@ -1702,11 +1605,11 @@ mod tests {
         let movement = add_scene(&mut app, "movement", Some(1));
         let parcel = add_scene(&mut app, "parcel", None);
         land_reply(&mut app, movement, 0, 0, Some(10.0));
-        run_frame(&mut app, 0, movement.0, player);
+        run_frame(&mut app, player);
 
         land_reply(&mut app, movement, 0, 1, Some(30.0));
         land_reply(&mut app, parcel, 1, 1, Some(70.0));
-        let (sent, applied) = run_frame(&mut app, 1, movement.0, player);
+        let (sent, applied) = run_frame(&mut app, player);
         assert!((applied - 70.0).abs() < 1e-3, "applied {applied}");
         assert!(
             (sent - applied).abs() < 1e-3,
@@ -1720,14 +1623,14 @@ mod tests {
         let (mut app, player) = rotation_app(0.0);
         let movement = add_scene(&mut app, "movement", Some(1));
         land_reply(&mut app, movement, 0, 0, Some(10.0));
-        run_frame(&mut app, 0, movement.0, player);
+        run_frame(&mut app, player);
         app.world_mut()
             .get_mut::<Transform>(player)
             .unwrap()
             .rotation = Quat::from_rotation_y(40f32.to_radians());
 
         land_reply(&mut app, movement, 0, 1, None);
-        let (sent, applied) = run_frame(&mut app, 1, movement.0, player);
+        let (sent, applied) = run_frame(&mut app, player);
         assert!((applied - 40.0).abs() < 1e-3, "applied {applied}");
         assert!(
             (sent - applied).abs() < 1e-3,
@@ -1750,6 +1653,21 @@ mod tests {
         );
     }
 
+    /// The tick of frame 0 turns 10 degrees, and its reply lands in frame 1. The player turns in
+    /// the loop pass that takes the reply, so the re-dispatch is sent the turn, and later replies
+    /// neither turn it again nor back.
+    #[test]
+    fn a_late_reply_turns_the_player_once_in_the_pass_that_takes_it() {
+        let frames = late_replies(1, 6, None);
+        for (frame, (sent, applied)) in frames.iter().enumerate() {
+            let turned = if frame == 0 { 0.0 } else { 10.0 };
+            assert!(
+                (sent - turned).abs() < 1e-3 && (applied - turned).abs() < 1e-3,
+                "frame {frame}: {frames:?}"
+            );
+        }
+    }
+
     /// As [`late_replies`], but the reply to tick `k` lands `schedule[k % schedule.len()]` frames
     /// after its dispatch. Returns the (sent, replied) yaw of each tick, and the player's yaw
     /// after each frame.
@@ -1770,7 +1688,6 @@ mod tests {
         let mut ticks = Vec::new();
         let mut applied = Vec::new();
         for frame in 0..frames {
-            app.insert_resource(FrameCount(frame));
             if let Some((sent, _, orientation)) =
                 in_flight.take_if(|&mut (_, lands, _)| lands == frame)
             {
@@ -1778,7 +1695,7 @@ mod tests {
             }
             app.world_mut().run_schedule(Update);
             if in_flight.is_none() {
-                let sent = yaw(rotation_to_send(app.world(), scene.0, player, frame));
+                let sent = player_yaw(&app, player);
                 let orientation = if ticks.len() < turning {
                     sent + (90.0 - sent).clamp(-10.0, 10.0)
                 } else {
@@ -1787,13 +1704,15 @@ mod tests {
                 let lands = frame + schedule[ticks.len() % schedule.len()];
                 ticks.push((sent, orientation));
                 if lands == frame {
+                    // taken by a later pass of the frame's loop
                     land_reply(&mut app, scene, frame, frame, Some(orientation));
+                    app.world_mut().run_schedule(Update);
                 } else {
                     in_flight = Some((frame, lands, orientation));
                 }
             }
             app.world_mut().run_schedule(PostUpdate);
-            applied.push(yaw(app.world().get::<Transform>(player).unwrap().rotation));
+            applied.push(player_yaw(&app, player));
         }
         (ticks, applied)
     }

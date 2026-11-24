@@ -409,9 +409,9 @@ Movement:
 - `/movement_state`: the active locomotion settings, the last completed movement step's
   `requested`, `actual` and `external` velocities in SDK axes, whether the player is on the ground
   and its height over it (the debug panel's Locomotion section).
-- `/movement_redispatch_state`: the movement scene, its late replies, re-dispatches and staged
-  rotations since startup, and the 90th percentile of its recent tick times (the debug panel's
-  Movement Re-dispatch section).
+- `/movement_redispatch_state`: the movement scene, its late replies and re-dispatches since
+  startup, the player's yaw sent with the last re-dispatch, and the 90th percentile of its recent
+  tick times (the debug panel's Movement Re-dispatch section).
 
 The HUD and input:
 

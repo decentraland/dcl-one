@@ -186,23 +186,7 @@ impl SceneTickTiming {
         self.reply
             .is_some_and(|reply| reply.frame == frame && reply.late())
     }
-
-    /// Only a re-dispatch in the frame of a late reply sends the `staged` rotation.
-    pub(crate) fn staged_rotation(
-        &self,
-        staged: Option<&RedispatchRotation>,
-        frame: u32,
-    ) -> Option<Quat> {
-        staged
-            .filter(|_| self.late_reply_in(frame))
-            .map(|staged| staged.0)
-    }
 }
-
-/// The player's rotation once the movement scene's late reply is applied after the scene loop. The
-/// re-dispatch is sent this rotation instead of the player's current one.
-#[derive(Component, Debug, Clone, Copy)]
-pub struct RedispatchRotation(pub Quat);
 
 /// Block reason used by /freeze_scene and /tick_scene.
 pub const FROZEN_BLOCK: &str = "frozen";

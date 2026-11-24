@@ -1566,7 +1566,6 @@ fn send_scene_updates(
         Entity,
         &mut RendererSceneContext,
         &mut renderer_context::SceneTickTiming,
-        Option<&renderer_context::RedispatchRotation>,
         &GlobalTransform,
         Has<SuperUserScene>,
         Option<&mut scene_traffic::SceneTraffic>,
@@ -1660,7 +1659,7 @@ fn send_scene_updates(
 
     updates.scene_queue.pop_front();
 
-    let (_, mut context, mut tick_timing, redispatch_rotation, scene_transform, is_super, traffic) =
+    let (_, mut context, mut tick_timing, scene_transform, is_super, traffic) =
         scenes.get_mut(ent).unwrap();
 
     // only live scenes are queued, so this only fails if the scene broke this frame. The queue
@@ -1673,11 +1672,7 @@ fn send_scene_updates(
     // collect components
 
     // generate updates for camera and player
-    let mut player_transform = player.single().copied().unwrap_or_default();
-    let staged_rotation = tick_timing.staged_rotation(redispatch_rotation, engine_info.frame.0);
-    if let Some(staged) = staged_rotation {
-        player_transform.rotation = staged;
-    }
+    let player_transform = player.single().copied().unwrap_or_default();
     for (mut affine, id, is_player) in [
         (
             player_transform.compute_affine(),
@@ -1848,8 +1843,12 @@ fn send_scene_updates(
     } else {
         context.set_in_flight(true);
         context.last_sent = now;
-        if let Some(staged) = staged_rotation {
-            updates.movement_ticks.record_staged_rotation(staged);
+        if tick_timing.late_reply_in(engine_info.frame.0)
+            && updates.priority_scenes.get(MOVEMENT_CONTROLLER) == Some(&ent)
+        {
+            updates
+                .movement_ticks
+                .record_redispatch_rotation(player_transform.rotation);
         }
         tick_timing.sent = Some(renderer_context::SentTiming {
             at: Instant::now(),

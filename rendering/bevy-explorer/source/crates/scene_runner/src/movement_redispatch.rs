@@ -3,10 +3,8 @@
 //! dispatch. On such a reply, while the loop has time left for it, the scene is queued ahead of
 //! the others and dispatched again at the loop's next pass.
 //!
-//! The re-dispatch is sent the rotation that the late reply sets (`RedispatchRotation`), because
-//! the engine applies that rotation only after the scene loop. With the player's current rotation,
-//! every other frame would continue a different chain of replies, and the avatar would alternate
-//! between two rotations.
+//! The re-dispatch is sent the player's rotation, which the loop pass that takes the late reply
+//! has already set from it (`user_input`'s `apply_rotation_on_reply`).
 
 use std::{collections::VecDeque, time::Duration};
 
@@ -29,10 +27,8 @@ pub(crate) struct MovementTickTimes {
     pub(crate) late_replies: u64,
     /// Re-dispatches queued on a late reply.
     pub(crate) redispatches: u64,
-    /// Re-dispatches sent the rotation staged from the late reply instead of the player's.
-    pub(crate) staged_rotations: u64,
-    /// The yaw (degrees) of the last staged rotation sent.
-    pub(crate) last_staged_yaw: Option<f32>,
+    /// The player's yaw (degrees) sent with the last re-dispatch.
+    pub(crate) last_redispatch_yaw: Option<f32>,
 }
 
 impl MovementTickTimes {
@@ -47,9 +43,9 @@ impl MovementTickTimes {
         self.samples.len()
     }
 
-    pub(crate) fn record_staged_rotation(&mut self, rotation: bevy::math::Quat) {
-        self.staged_rotations += 1;
-        self.last_staged_yaw = Some(rotation.to_euler(bevy::math::EulerRot::YXZ).0.to_degrees());
+    pub(crate) fn record_redispatch_rotation(&mut self, rotation: bevy::math::Quat) {
+        self.last_redispatch_yaw =
+            Some(rotation.to_euler(bevy::math::EulerRot::YXZ).0.to_degrees());
     }
 
     /// Nearest rank. `None` before the first tick.
@@ -130,7 +126,7 @@ fn tick_time(
 mod tests {
     use super::*;
 
-    use crate::renderer_context::{RedispatchRotation, ReplyTiming, SceneTickTiming, SentTiming};
+    use crate::renderer_context::{ReplyTiming, SceneTickTiming, SentTiming};
 
     fn ms(v: u64) -> Duration {
         Duration::from_millis(v)
@@ -210,14 +206,8 @@ mod tests {
         assert!(replied(6, 7).late_reply_in(7));
         // frame 8's dispatch is not a re-dispatch
         assert!(!replied(6, 7).late_reply_in(8));
-        // a reply two frames late also makes a re-dispatch, and only that dispatch gets the staged
-        // rotation
+        // a reply two frames late also makes a re-dispatch
         assert!(replied(5, 7).late_reply_in(7));
-        let staged = RedispatchRotation(bevy::math::Quat::from_rotation_y(1.0));
-        let two_late = replied(5, 7);
-        assert_eq!(two_late.staged_rotation(Some(&staged), 7), Some(staged.0));
-        assert_eq!(two_late.staged_rotation(Some(&staged), 8), None);
-        assert_eq!(two_late.staged_rotation(None, 7), None);
         // a reply in its own frame is not late
         assert!(!replied(7, 7).late_reply_in(7));
         assert!(!SceneTickTiming::default().late_reply_in(7));

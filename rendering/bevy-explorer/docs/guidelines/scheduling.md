@@ -128,8 +128,9 @@ Each pass of the loop runs four chained sets (`SceneLoopSets`):
    into a bevy component (`C: TryFrom<D>`) on the matching entity. Registration is
    `add_crdt_lww_component` or `add_crdt_go_component` in `update_world`; the registration adds
    the system. Only transforms and text shapes have hand-written loop systems.
-   After them, `stage_redispatch_rotation` (`user_input`) stages the rotation for the movement
-   scene's re-dispatch.
+   After them, `user_input` picks the scene that drives the player's movement
+   (`pick_latest_frame_only_by_priority`) and turns the player to a newly picked movement
+   (`apply_rotation_on_reply`).
 
 The loop runs at least once per frame, then repeats while time remains and there are eligible
 scenes or replies outstanding. When no scene can be started (none is queued, or the next queued
@@ -179,14 +180,14 @@ dispatches it again with the current frame's input:
 - At most one tick is in flight, so a re-dispatch happens at most once per frame, and the loop
   still ends at its deadline. A late reply to a re-dispatch is applied in the next frame.
 
-The re-dispatch is sent the rotation that the frame's movement will set
-(`stage_redispatch_rotation`, the scene's `RedispatchRotation`), staged once, after the pass that
-takes the late reply. The engine applies the reply's orientation only in `PostUpdate`
-(`apply_rotation`), and the scene turns from the rotation it is sent. With the player's current
-rotation, every other frame would continue a different chain of replies. The staging predicts
-the pick in `PostLoop` (`choose_latest_frame`), so a scene that takes over in the frame gives its
-rotation. The re-dispatch gets the player's current rotation when the reply changes no movement,
-when the movement scene no longer drives the player, or when a `movePlayerTo` facing holds.
+The re-dispatch is sent the player's rotation, and the pass that takes the late reply has already
+set it: the movement pick runs in each pass, and a newly picked movement turns the player at once
+(`apply_rotation_on_reply`), so a scene that takes over in the frame gives its rotation. A choice
+lasts until its scene's next reply (`tick_number`), so the reply to a re-dispatch that lands in
+the same frame is picked too. The scene turns from the rotation it is sent; were the reply's
+orientation applied only in `PostUpdate` (`apply_rotation`, which sets it again there), every
+other frame would continue a different chain of replies. The player keeps its rotation when the
+reply changes no movement or when a `movePlayerTo` facing holds.
 
 Everything downstream of the loop reads bevy components. A system that needs scene data never
 reads the CRDT store directly; it queries the component the `UpdateWorld` system wrote.

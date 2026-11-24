@@ -189,10 +189,9 @@ impl Plugin for SceneDebugPanelPlugin {
                     ("Late replies since startup", "lateReplies"),
                     ("Re-dispatches since startup", "redispatches"),
                     (
-                        "Re-dispatches sent the frame's staged rotation",
-                        "stagedRotations",
+                        "Last re-dispatch's player yaw (degrees)",
+                        "lastRedispatchYaw",
                     ),
-                    ("Last staged rotation sent (yaw degrees)", "lastStagedYaw"),
                     ("Tick time p90 (ms)", "p90"),
                     ("Ticks in the p90", "samples"),
                 ],
@@ -202,7 +201,7 @@ impl Plugin for SceneDebugPanelPlugin {
     }
 }
 
-/// Read the movement scene's late replies, re-dispatches and staged rotations.
+/// Read the movement scene's late replies and re-dispatches, and the yaw the last re-dispatch sent.
 #[derive(clap::Parser, ConsoleCommand)]
 #[command(name = "/movement_redispatch_state")]
 struct MovementRedispatchState;
@@ -226,13 +225,12 @@ fn movement_redispatch_state(
             "scene": scene,
             "lateReplies": ticks.late_replies,
             "redispatches": ticks.redispatches,
-            "stagedRotations": ticks.staged_rotations,
-            "lastStagedYaw": ticks.last_staged_yaw,
+            "lastRedispatchYaw": ticks.last_redispatch_yaw,
             "p90": ticks.p90().map(|p90| p90.as_secs_f64() * 1000.0),
             "samples": ticks.samples(),
             "unavailable": {
                 "scene": "No scene drives the player's movement.",
-                "lastStagedYaw": "No re-dispatch has been sent a staged rotation.",
+                "lastRedispatchYaw": "No re-dispatch has been sent.",
                 "p90": "No movement scene tick recorded.",
             },
         })
@@ -751,7 +749,7 @@ mod tests {
     }
 
     #[test]
-    fn the_movement_redispatch_reading_counts_late_replies_redispatches_and_staged_rotations() {
+    fn the_movement_redispatch_reading_counts_late_replies_and_redispatches() {
         use crate::{
             renderer_context::{ReplyTiming, SceneTickTiming, SentTiming, SCENE_FIRST_UPDATE_TICK},
             scene_spawn_slice::tests::{scene_updates, SIXTY_FPS},
@@ -819,15 +817,14 @@ mod tests {
         assert!(updates.movement_redispatch_due(&context, &reply(6, 7), true, 1.0));
         updates
             .movement_ticks
-            .record_staged_rotation(Quat::from_rotation_y(30f32.to_radians()));
+            .record_redispatch_rotation(Quat::from_rotation_y(30f32.to_radians()));
         app.world_mut().entity_mut(scene).insert(context);
 
         let report = read_command(&mut app, "/movement_redispatch_state");
         assert_eq!(report["scene"], "movement");
         assert_eq!(report["lateReplies"], 1);
         assert_eq!(report["redispatches"], 1);
-        assert_eq!(report["stagedRotations"], 1);
-        assert!((report["lastStagedYaw"].as_f64().unwrap() - 30.0).abs() < 1e-3);
+        assert!((report["lastRedispatchYaw"].as_f64().unwrap() - 30.0).abs() < 1e-3);
         assert_eq!(report["samples"], 2);
 
         // a late reply from a scene that has broken since is not dispatched again
