@@ -3,8 +3,9 @@
 //! engine's scene loop from the frame's start (scene_runner `loop_pacing`). For diagnostics,
 //! `relay` and `deadline` do one of the two and `legacy` neither. Every mode but `legacy` also
 //! ends the scene loop's wait for replies when one arrives (`scene_replies`).
-//! Only the relays of the scenes the engine wakes ([`wakes_scene`]: the scenes the player is in,
-//! portable experiences among them) wait for its send; any other scene's relay keeps the poll.
+//! Only the relays of the scenes the engine wakes (each scene's `dcl_types::SceneWake`: the scene
+//! the player is in, portable experiences and the named priority scenes) wait for its send; any
+//! other scene's relay keeps the poll.
 //! Set from the page (`?sceneLoop=`); the relays read it from engine memory each step, so a
 //! change reaches every scene worker without a message. Outside the wasm-only module so the host
 //! tests cover the names; nothing reads it natively.
@@ -82,29 +83,6 @@ pub fn set(mode: SceneLoopMode) {
     MODE.store(mode.to_u8(), std::sync::atomic::Ordering::Relaxed);
 }
 
-// The scenes whose relays wait for the engine's send in a mode that wakes relays (their scene
-// ids' bits), as the engine last published them. Neither side waits for the lock: a busy lock
-// leaves the engine's set for its next frame, and a relay's answer as it was.
-static WAKE_SCENES: std::sync::Mutex<Vec<u64>> = std::sync::Mutex::new(Vec::new());
-
-/// Engine, each frame: the scenes whose relays wake on its send (scene_runner `wake_scenes`: the
-/// scene under the player, portable experiences and the named priority scenes).
-pub fn set_wake_scenes(scenes: impl IntoIterator<Item = u64>) {
-    if let Ok(mut wake) = WAKE_SCENES.try_lock() {
-        wake.clear();
-        wake.extend(scenes);
-    }
-}
-
-/// Relay: whether the engine wakes its scene; None while the engine is publishing.
-#[cfg(any(target_arch = "wasm32", test))]
-pub(crate) fn wakes_scene(scene: u64) -> Option<bool> {
-    WAKE_SCENES
-        .try_lock()
-        .ok()
-        .map(|wake| wake.contains(&scene))
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -128,15 +106,5 @@ mod tests {
         assert!(SceneLoopMode::Deadline.loop_waits_for_replies());
         assert!(!SceneLoopMode::Legacy.loop_waits_for_replies());
         assert_eq!(SceneLoopMode::default(), SceneLoopMode::Both);
-    }
-
-    #[test]
-    fn only_the_published_scenes_wake() {
-        set_wake_scenes([3, 7]);
-        assert_eq!(wakes_scene(7), Some(true));
-        assert_eq!(wakes_scene(5), Some(false));
-        set_wake_scenes([5]);
-        assert_eq!(wakes_scene(7), Some(false));
-        assert_eq!(wakes_scene(5), Some(true));
     }
 }

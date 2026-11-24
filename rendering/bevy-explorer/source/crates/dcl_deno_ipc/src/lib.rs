@@ -399,6 +399,8 @@ pub fn spawn_scene(
     inspect: bool,
     super_user: Option<tokio::sync::mpsc::UnboundedSender<SystemApi>>,
     scene_origin: bevy::prelude::Vec3,
+    // the web relay wakes on the engine's send; the native scene host needs no flag for it
+    _wake: dcl_types::SceneWake,
 ) -> (
     tokio::sync::mpsc::UnboundedSender<RendererResponse>,
     Option<tokio::sync::oneshot::Sender<()>>,

@@ -94,9 +94,10 @@ movement controller) wait on a word in engine memory with `Atomics.waitAsync`. T
 the word and notifies it when it sends that scene something, so a tick sent early in the loop
 can be answered within the same frame. Every wait is at most 1 ms; the
 timeout still covers global updates, the kill flag and the scene's own replies. Other scenes'
-relays poll their channels between 1 ms sleeps. `update_scene_priority` publishes the set of
-woken scenes each frame, before the frame's dispatch (`wake_scenes`,
-`dcl_wasm::scene_loop_mode::set_wake_scenes`).
+relays poll their channels between 1 ms sleeps. Each running scene's engine handle carries a
+flag the relay shares (`dcl_types::SceneWake`): `update_scene_priority` sets it each frame,
+before the frame's dispatch, from the same lookup of the player's position that ranks the
+player's scenes first (`player_scenes`), and the relay reads it before each pump.
 
 The page parameter `?sceneLoop=` selects the web scheduling for diagnostics: `both`, the
 default, applies both of the above; `relay` keeps only the relay wake; `deadline` keeps only the

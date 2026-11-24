@@ -23,7 +23,7 @@ use common::{
     structs::GlobalCrdtStateUpdate,
 };
 use dcl_js::KillFlag;
-use dcl_types::{RendererResponse, SceneId, SceneResponse, SceneResponseSender};
+use dcl_types::{RendererResponse, SceneId, SceneResponse, SceneResponseSender, SceneWake};
 use system_bridge::SystemApi;
 use tokio::sync::{broadcast, mpsc};
 use wasm_bindgen::prelude::*;
@@ -94,7 +94,10 @@ struct Relay {
     testing: bool,
     // set when the scene broke a relay limit; the worker then tears the scene down
     ended: bool,
-    // registered on the engine channels when the scene loop mode wakes relays
+    // whether the engine wakes this scene, as it sets it each frame
+    scene_wake: SceneWake,
+    // registered on the engine channels when the scene loop mode wakes relays and the engine wakes
+    // this scene
     wake: Arc<RelayWake>,
     waker: Waker,
 }
@@ -271,6 +274,7 @@ pub fn relay_init() -> u32 {
         scene_origin,
         super_user,
         kill_flag,
+        wake: scene_wake,
         ipc_close,
         ..
     } = data;
@@ -313,6 +317,7 @@ pub fn relay_init() -> u32 {
         snapshot_requests: 0,
         allocation_requests: VecDeque::new(),
         ended: false,
+        scene_wake,
         wake: wake.clone(),
         waker: Waker::from(wake),
     };
@@ -362,11 +367,9 @@ pub fn relay_wake_ptr() -> u32 {
 #[wasm_bindgen]
 pub fn relay_wake_mode() -> u32 {
     with_relay(|relay| {
-        let scene = relay.scene_id.0.to_bits();
-        let waits = relay.wake.update_waits(scene_loop_mode::get(), || {
-            scene_loop_mode::wakes_scene(scene)
-        });
-        waits as u32
+        relay
+            .wake
+            .update_waits(scene_loop_mode::get(), relay.scene_wake.get()) as u32
     })
     .unwrap_or(0)
 }

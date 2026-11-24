@@ -34,7 +34,7 @@ use dcl_component::{
 };
 use dcl_types::{
     interface::{crdt_context::CrdtContext, CrdtComponentInterfaces, CrdtStore, CrdtType},
-    SceneElapsedTime, SceneId, SceneResponse, SceneResponseSender,
+    SceneElapsedTime, SceneId, SceneResponse, SceneResponseSender, SceneWake,
 };
 use ipfs::{
     ipfs_path::IpfsPath, ActiveEntityTask, EntityDefinition, IpfsAssetServer, RealmInitialLocation,
@@ -771,6 +771,7 @@ pub(crate) fn initialize_scene(
             scene_context.platform = Some("mobile".to_owned());
         }
 
+        let wake = SceneWake::default();
         let (main_sx, kill_guard) = spawn_scene(
             context.crdt_store.clone(),
             scene_context,
@@ -783,6 +784,7 @@ pub(crate) fn initialize_scene(
             inspected,
             super_user.map(|_| su_bridge.sender.clone()),
             scene_origin,
+            wake.clone(),
         );
 
         context.inspected = inspected;
@@ -794,6 +796,7 @@ pub(crate) fn initialize_scene(
             handle: SceneThreadHandle {
                 sender: main_sx,
                 kill_guard,
+                wake,
             },
             in_flight: true,
         };

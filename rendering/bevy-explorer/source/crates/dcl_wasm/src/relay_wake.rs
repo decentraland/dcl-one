@@ -1,11 +1,11 @@
 //! How a sandbox worker's relay (`inner::relay`) wakes on the engine's send instead of its 1 ms
 //! poll. The worker waits on a word in engine memory between pumps when the scene loop mode wakes
-//! relays (scene_loop_mode `relay_wake`) and the engine wakes its scene (`wakes_scene`: the scenes
-//! the player is in and portable experiences): the engine bumps the word and notifies when it
-//! sends the scene something, through the waker the relay registers on its engine channels. The
-//! worker reads the word's address (`relay_wake_ptr`) and only loads and waits on it; the engine
-//! alone writes it. An Arc keeps the word alive while a channel still holds the waker, after the
-//! relay is dropped.
+//! relays (scene_loop_mode `relay_wake`) and the engine wakes its scene (the scene's
+//! `dcl_types::SceneWake`, which the engine sets each frame): the engine bumps the word and
+//! notifies when it sends the scene something, through the waker the relay registers on its
+//! engine channels. The worker reads the word's address (`relay_wake_ptr`) and only loads and
+//! waits on it; the engine alone writes it. An Arc keeps the word alive while a channel still
+//! holds the waker, after the relay is dropped.
 //! The notify is passed in, so the host tests check the send, the bump and the notify without a
 //! browser; on the web it is [`engine_notify`]. Outside the wasm-only module for those tests.
 
@@ -51,14 +51,9 @@ impl RelayWake {
     }
 
     /// Decides, before a pump, whether the worker waits for the engine's send: in a mode that
-    /// wakes relays, for a scene the engine wakes. `wakes_scene` is None while the engine
-    /// publishes the set; the relay then keeps its last answer.
-    pub fn update_waits(
-        &self,
-        mode: SceneLoopMode,
-        wakes_scene: impl FnOnce() -> Option<bool>,
-    ) -> bool {
-        let waits = mode.relay_wake() && wakes_scene().unwrap_or_else(|| self.waits());
+    /// wakes relays, for a scene the engine wakes (`wakes_scene`).
+    pub fn update_waits(&self, mode: SceneLoopMode, wakes_scene: bool) -> bool {
+        let waits = mode.relay_wake() && wakes_scene;
         self.waits.store(waits, Ordering::SeqCst);
         waits
     }
@@ -163,7 +158,7 @@ mod tests {
     fn the_engine_send_bumps_the_word_and_notifies_a_woken_scene() {
         let (wake, notified, waker) = counted();
         let mut cx = Context::from_waker(&waker);
-        assert!(wake.update_waits(SceneLoopMode::Both, || Some(true)));
+        assert!(wake.update_waits(SceneLoopMode::Both, true));
         let (tx, mut rx) = mpsc::unbounded_channel();
 
         // the pump finds the channel empty and registers the waker
@@ -187,7 +182,7 @@ mod tests {
     fn a_scene_the_engine_does_not_wake_registers_no_waker() {
         let (wake, notified, waker) = counted();
         let mut cx = Context::from_waker(&waker);
-        assert!(!wake.update_waits(SceneLoopMode::Both, || Some(false)));
+        assert!(!wake.update_waits(SceneLoopMode::Both, false));
         let (tx, mut rx) = mpsc::unbounded_channel();
 
         assert_eq!(next(&mut rx, wake.waits(), &mut cx), None);
@@ -203,7 +198,7 @@ mod tests {
         for mode in [SceneLoopMode::Legacy, SceneLoopMode::Deadline] {
             let (wake, notified, waker) = counted();
             let mut cx = Context::from_waker(&waker);
-            assert!(!wake.update_waits(mode, || Some(true)), "{mode:?}");
+            assert!(!wake.update_waits(mode, true), "{mode:?}");
             let (tx, mut rx) = mpsc::unbounded_channel();
 
             assert_eq!(next(&mut rx, wake.waits(), &mut cx), None);
@@ -218,33 +213,38 @@ mod tests {
     fn a_waker_left_after_the_wait_turns_off_bumps_without_a_notify() {
         let (wake, notified, waker) = counted();
         let mut cx = Context::from_waker(&waker);
-        assert!(wake.update_waits(SceneLoopMode::Both, || Some(true)));
+        assert!(wake.update_waits(SceneLoopMode::Both, true));
         let (tx, mut rx) = mpsc::unbounded_channel();
         assert_eq!(next(&mut rx, wake.waits(), &mut cx), None);
 
         // the player leaves the scene before the engine sends
-        assert!(!wake.update_waits(SceneLoopMode::Both, || Some(false)));
+        assert!(!wake.update_waits(SceneLoopMode::Both, false));
         engine_send(tx, 7);
         assert_eq!(wake.word().load(Ordering::SeqCst), 1);
         assert_eq!(notified.load(Ordering::SeqCst), 0);
     }
 
+    /// The engine's per-scene flag, as the relay reads it before each pump: set from the engine's
+    /// thread, it turns the wait on and off from the next pump; the mode decides first.
     #[test]
-    fn while_the_engine_publishes_the_relay_keeps_its_last_answer() {
+    fn the_relay_follows_the_engines_flag_for_its_scene() {
         let (wake, _, _) = counted();
-        assert!(wake.update_waits(SceneLoopMode::Both, || Some(true)));
-        assert!(wake.update_waits(SceneLoopMode::Both, || None));
-        assert!(!wake.update_waits(SceneLoopMode::Both, || Some(false)));
-        assert!(!wake.update_waits(SceneLoopMode::Both, || None));
-        // the mode decides first: legacy never waits, whatever the last answer
-        assert!(wake.update_waits(SceneLoopMode::Both, || Some(true)));
-        assert!(!wake.update_waits(SceneLoopMode::Legacy, || None));
+        let flag = dcl_types::SceneWake::default();
+        let engine = flag.clone();
+        assert!(!wake.update_waits(SceneLoopMode::Both, flag.get()));
+        thread::spawn(move || engine.set(true)).join().unwrap();
+        assert!(wake.update_waits(SceneLoopMode::Both, flag.get()));
+        assert!(!wake.update_waits(SceneLoopMode::Legacy, flag.get()));
+        let engine = flag.clone();
+        thread::spawn(move || engine.set(false)).join().unwrap();
+        assert!(!wake.update_waits(SceneLoopMode::Both, flag.get()));
     }
 }
 
 // In headless Chrome (the Bevy Explorer CI job "Relay wake in the browser"), as a worker waits:
-// the notify on the engine's send ends the worker's `Atomics.waitAsync` with "ok". The wait's
-// timeout is long, so only a missing notify reaches it; nothing here measures time.
+// the notify on the engine's send ends the worker's `Atomics.waitAsync` with "ok". A wait that
+// expects the notify has a long timeout, so only a missing notify reaches it; the one for a scene
+// the engine does not wake expects its timeout. Nothing here measures time.
 #[cfg(all(test, target_arch = "wasm32"))]
 mod browser {
     use std::task::Waker;
@@ -262,10 +262,14 @@ mod browser {
     // under the test runner's own 20 s limit, so a missing notify fails the assertion
     const WAIT_MS: f64 = 5_000.0;
 
-    // a relay step as the worker takes it: decide, load the word, pump (the empty channel
-    // registers the waker)
-    fn step(wake: &Arc<RelayWake>, rx: &mut mpsc::UnboundedReceiver<u32>) -> i32 {
-        assert!(wake.update_waits(SceneLoopMode::Both, || Some(true)));
+    // a relay step as the worker takes it: decide from the engine's flag for the scene, load the
+    // word, pump (when it waits, the empty channel registers the waker)
+    fn step(
+        wake: &Arc<RelayWake>,
+        flag: &dcl_types::SceneWake,
+        rx: &mut mpsc::UnboundedReceiver<u32>,
+    ) -> i32 {
+        wake.update_waits(SceneLoopMode::Both, flag.get());
         let seen = wake.word().load(Ordering::SeqCst);
         let waker = Waker::from(wake.clone());
         let mut cx = Context::from_waker(&waker);
@@ -273,11 +277,18 @@ mod browser {
         seen
     }
 
+    // the engine wakes the scene
+    fn woken() -> dcl_types::SceneWake {
+        let flag = dcl_types::SceneWake::default();
+        flag.set(true);
+        flag
+    }
+
     #[wasm_bindgen_test]
     async fn the_engine_send_ends_the_workers_wait_with_ok() {
         let wake = RelayWake::new(Box::new(engine_notify));
         let (tx, mut rx) = mpsc::unbounded_channel();
-        let seen = step(&wake, &mut rx);
+        let seen = step(&wake, &woken(), &mut rx);
 
         let wait =
             Atomics::wait_async_with_timeout(&word_view(wake.word()), 0, seen, WAIT_MS).unwrap();
@@ -297,7 +308,7 @@ mod browser {
     fn a_send_between_the_load_and_the_wait_is_not_missed() {
         let wake = RelayWake::new(Box::new(engine_notify));
         let (tx, mut rx) = mpsc::unbounded_channel();
-        let seen = step(&wake, &mut rx);
+        let seen = step(&wake, &woken(), &mut rx);
 
         tx.send(7).unwrap();
         let wait =
@@ -306,6 +317,29 @@ mod browser {
         assert_eq!(
             field(&wait, "value").as_string().as_deref(),
             Some("not-equal")
+        );
+    }
+
+    /// A scene the engine does not wake registers no waker: its send leaves the word as it was,
+    /// so a wait on it can only time out, and the relay finds the message on its poll.
+    #[wasm_bindgen_test]
+    async fn a_scene_the_engine_does_not_wake_is_not_notified() {
+        let wake = RelayWake::new(Box::new(engine_notify));
+        let (tx, mut rx) = mpsc::unbounded_channel();
+        let seen = step(&wake, &dcl_types::SceneWake::default(), &mut rx);
+        assert!(!wake.waits());
+
+        tx.send(7).unwrap();
+        let wait =
+            Atomics::wait_async_with_timeout(&word_view(wake.word()), 0, seen, 50.0).unwrap();
+        assert_eq!(field(&wait, "async"), JsValue::TRUE);
+        let outcome = JsFuture::from(field(&wait, "value").unchecked_into::<Promise>())
+            .await
+            .unwrap();
+        assert_eq!(outcome.as_string().as_deref(), Some("timed-out"));
+        assert_eq!(
+            next(&mut rx, false, &mut Context::from_waker(Waker::noop())),
+            Some(7)
         );
     }
 }
