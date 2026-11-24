@@ -255,6 +255,9 @@ pub fn index_for(indexer: &str, net: ChainNet) -> anyhow::Result<Box<dyn ChainIn
         (chain_walk::INDEXER_COMMITTEE, ChainNet::Matic) => {
             Box::new(super::committee_index::CommitteeIndex)
         }
+        (chain_walk::INDEXER_COLLECTIONS, ChainNet::Matic) => {
+            Box::new(super::collections_index::CollectionsIndex::new())
+        }
         (chain_walk::INDEXER_THIRD_PARTY_REGISTRY, ChainNet::Matic) => {
             Box::new(super::third_party_registry::ThirdPartyRegistryIndex)
         }
