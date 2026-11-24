@@ -47,8 +47,10 @@ pub fn ops(super_user: bool) -> Vec<OpDecl> {
             op_live_scene_info(),
             op_get_home_scene(),
             op_set_home_scene(),
+            op_clear_home_scene(),
             op_set_lobby_stage(),
             op_get_service_urls(),
+            op_get_official_wallets(),
             op_get_welcome(),
             op_accept_terms(),
             op_get_satellite_view(),
@@ -323,6 +325,14 @@ pub async fn op_get_service_urls(
 
 #[op2(async)]
 #[serde]
+pub async fn op_get_official_wallets(
+    state: Rc<RefCell<OpState>>,
+) -> Result<Vec<String>, anyhow::Error> {
+    dcl_js::system_api::op_get_official_wallets(state).await
+}
+
+#[op2(async)]
+#[serde]
 pub async fn op_get_welcome(state: Rc<RefCell<OpState>>) -> Result<WelcomeState, anyhow::Error> {
     dcl_js::system_api::op_get_welcome(state).await
 }
@@ -370,6 +380,11 @@ pub fn op_set_home_scene(
     #[serde] parcel: Vector2,
 ) {
     dcl_js::system_api::op_set_home_scene(state, realm, parcel);
+}
+
+#[op2(fast)]
+pub fn op_clear_home_scene(state: Rc<RefCell<OpState>>) {
+    dcl_js::system_api::op_clear_home_scene(state);
 }
 
 #[op2(async)]

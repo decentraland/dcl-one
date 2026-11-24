@@ -801,6 +801,58 @@ mod tests {
         );
     }
     #[tokio::test]
+    async fn mirror_batches_preserve_finite_scope_and_unlimited_name_filters() {
+        let Some(pool) = crate::db::scratch::pool(2).await else {
+            return;
+        };
+        let prefix = format!("batch-{}", uuid::Uuid::new_v4().simple());
+        let names: Vec<String> = (0..6).map(|n| format!("{prefix}-{n}.eth")).collect();
+        sqlx::query("INSERT INTO worlds.remote_worlds (world_name,source,scene_ids) SELECT name,'https://up.example',ARRAY['scene'] FROM unnest($1::text[]) name")
+            .bind(&names).execute(&pool).await.unwrap();
+        let mut settings = MirrorSettings::for_tests("https://up.example");
+        settings.names = names.clone();
+        settings.concurrency = 2;
+        let rows = due_batch(&pool, &settings, &names[3]).await.unwrap();
+        assert_eq!(
+            rows.iter().map(|r| &r.0).collect::<Vec<_>>(),
+            vec![&names[4], &names[5]]
+        );
+        settings.limit = Some(3);
+        assert!(
+            due_batch(&pool, &settings, &names[3])
+                .await
+                .unwrap()
+                .is_empty()
+        );
+        assert_eq!(
+            due_batch(&pool, &settings, &names[1]).await.unwrap()[0].0,
+            names[2]
+        );
+        settings.limit = None;
+        settings.names = vec![names[1].clone(), names[4].clone()];
+        assert_eq!(
+            due_batch(&pool, &settings, &names[1]).await.unwrap()[0].0,
+            names[4]
+        );
+        sqlx::query("UPDATE worlds.remote_worlds SET unlisted_at=now() WHERE world_name=$1")
+            .bind(&names[4])
+            .execute(&pool)
+            .await
+            .unwrap();
+        assert!(
+            due_batch(&pool, &settings, &names[1])
+                .await
+                .unwrap()
+                .is_empty()
+        );
+        sqlx::query("DELETE FROM worlds.remote_worlds WHERE world_name=ANY($1)")
+            .bind(&names)
+            .execute(&pool)
+            .await
+            .unwrap();
+    }
+
+    #[tokio::test]
     async fn unlisting_locks_the_world_before_scenes_and_cannot_retire_a_concurrent_publish() {
         let Some(pool) = crate::db::scratch::pool(4).await else {
             return;

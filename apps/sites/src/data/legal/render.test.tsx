@@ -5,7 +5,7 @@ import { fileURLToPath } from "node:url";
 import { afterEach, beforeEach, describe, expect, it, vi, type Mock } from "vitest";
 import { renderToString } from "react-dom/server";
 import { fireEvent, render, cleanup } from "@testing-library/react";
-import { LegalPageLayout } from "@dcl/one-ui/apps/sites/legal/LegalPageLayout";
+import { LegalPageLayout } from "@dcl/one-ui";
 import {
   canonicalLegalTree,
   withoutCurrentMarks,

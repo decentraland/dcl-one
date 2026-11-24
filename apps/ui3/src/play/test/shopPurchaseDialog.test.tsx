@@ -410,6 +410,16 @@ describe('the purchase dialog', () => {
         expect(h.onPay).toHaveBeenCalledWith('split')
       })
 
+      it('says why the split changed over the options, as a status, and nothing when it wasn’t read anew', () => {
+        const notice = 'Your Credits balance changed, so the split was updated.'
+        const { rerender } = render(<ShopPurchaseDialog view={{ step: 'method', items: [item], credits: short, mana: enough, split }} onClose={vi.fn()} />)
+        expect(screen.queryByRole('status')).toBeNull()
+        rerender(<ShopPurchaseDialog view={{ step: 'method', items: [item], credits: short, mana: enough, split, notice }} onClose={vi.fn()} />)
+        expect(screen.getByRole('status').textContent).toBe(notice)
+        // Over the options, so it is read before them.
+        expect(screen.getByRole('status').compareDocumentPosition(box(/^Credits/)) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+      })
+
       it('ticks each box on its own: Credits alone that can’t pay holds BUY, MANA alone pays its whole price', () => {
         vi.useFakeTimers()
         const h = show({ step: 'method', items: [item], credits: short, mana: enough, split })

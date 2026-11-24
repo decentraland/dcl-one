@@ -1,6 +1,6 @@
 import { Form, Link } from "react-router";
 
-import type { BlogFormProps, BlogLinkProps, BlogRouting } from "@dcl/one-ui/apps/sites/blog";
+import type { BlogFormProps, BlogLinkProps, BlogRouting } from "@dcl/one-ui";
 
 /** The blog's links and search form through React Router: client-side once hydrated, plain `<a>`/GET `<form>` before. */
 export const blogRouting: BlogRouting = {

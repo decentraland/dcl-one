@@ -256,6 +256,7 @@ pub async fn update_world_settings(
     .fetch_one(&mut *tx)
     .await?;
 
+    crate::explore::places::derive::mark_world_dirty(&mut tx, world.key()).await?;
     tx.commit().await?;
     Ok((settings_from_row(&row), old_spawn))
 }

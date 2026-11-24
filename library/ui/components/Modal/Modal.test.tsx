@@ -176,6 +176,19 @@ describe('Modal', () => {
     })
   })
 
+  describe('when the backdrop does not close it', () => {
+    it('stays open on a press on the backdrop, and Escape and the close button still close it', () => {
+      const onClose = vi.fn()
+      render(<Modal title="Replay" closeOnBackdrop={false} onClose={onClose} />)
+      const dialog = screen.getByRole('dialog')
+      pressBackdrop(dialog)
+      expect(onClose).not.toHaveBeenCalled()
+      fireEvent.keyDown(dialog, { key: 'Escape' })
+      fireEvent.click(within(dialog).getByRole('button', { name: 'Close' }))
+      expect(onClose).toHaveBeenCalledTimes(2)
+    })
+  })
+
   describe('when it must stay open', () => {
     it('ignores Escape, the cancel request and the backdrop, and disables the close button', () => {
       const onClose = vi.fn()

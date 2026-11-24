@@ -34,5 +34,8 @@ camera_reel = 12
 shop = 13
 presence = 15
 ops = 16
+# end-to-end scenarios against a running comms stack: a tool above every module, so the
+# check refuses any module that would use it
+comms_e2e = 17
 
 [allow]

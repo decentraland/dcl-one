@@ -15,7 +15,7 @@ import { openSignIn } from "@/features/components/auth/signin-store";
 import { primeRemoteFlags } from "@dcl/one-ui/apps/shop/remote-flags";
 
 import Places, { clientLoader, resetPlacesFlagsRead } from "./places";
-import { track } from "@/core/lib/telemetry/track";
+import { page, track } from "@/core/lib/telemetry/track";
 
 vi.hoisted(() =>
   Object.assign(window, {
@@ -27,7 +27,7 @@ vi.hoisted(() =>
 const auth = vi.hoisted(() => ({ current: { isConnected: false, identity: null as null | { signer: string } } }));
 vi.mock("@/data/lib/auth/context", () => ({ useAuth: () => auth.current }));
 vi.mock("@/features/components/auth/signin-store", () => ({ openSignIn: vi.fn() }));
-vi.mock("@/core/lib/telemetry/track", () => ({ track: vi.fn() }));
+vi.mock("@/core/lib/telemetry/track", () => ({ track: vi.fn(), page: vi.fn() }));
 vi.mock("@/features/components/chrome/SitesLayout", () => ({ default: ({ children }: { children: ReactNode }) => <>{children}</> }));
 vi.mock("@/data/lib/catalyst/places/destinations", async (original) => ({
   ...(await original<typeof import("@/data/lib/catalyst/places/destinations")>()),
@@ -171,6 +171,11 @@ describe("Places page", () => {
 
       it("should retain the existing root session for click analytics", () => {
         expect(track).toHaveBeenCalledWith("place_card_clicked", expect.anything(), { sid: "root-session", story: "misc/browse-places" });
+      });
+
+      it("should send the legacy Places page view once with the root session", () => {
+        expect(page).toHaveBeenCalledTimes(1);
+        expect(page).toHaveBeenCalledWith("Places — Decentraland", {}, { sid: "root-session" });
       });
     });
 
