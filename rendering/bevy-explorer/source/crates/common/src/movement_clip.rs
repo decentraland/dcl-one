@@ -2,23 +2,37 @@
 
 use crate::structs::MoveKind;
 
-/// The phases of a hard landing's stun, by file name prefix.
-const STUN_CLIPS: [&str; 3] = [
-    "hard_landing_enter",
-    "hard_landing_loop",
-    "hard_landing_exit",
-];
+/// The phases of a hard landing's stun, by word of the file name.
+const STUN_PHASES: [&str; 3] = ["enter", "loop", "exit"];
 
-/// The file name of a clip, lowercase, without folder and extension.
-fn clip_name(src: &str) -> String {
+/// The lowercase words of a clip's file name, without folder and extension. Words break at
+/// anything but a letter or digit, and where a capital follows a lowercase letter or digit:
+/// `Gliding_AvatarStartRig` is `gliding avatar start rig`.
+fn clip_words(src: &str) -> Vec<String> {
     let file = src.rsplit(['/', '\\']).next().unwrap_or(src);
-    file.rsplit_once('.')
-        .map_or(file, |(stem, _)| stem)
-        .to_lowercase()
+    let stem = file.rsplit_once('.').map_or(file, |(stem, _)| stem);
+    let mut words = Vec::new();
+    let mut word = String::new();
+    let mut after_lower = false;
+    for c in stem.chars() {
+        let breaks = !c.is_alphanumeric() || (after_lower && c.is_uppercase());
+        if breaks && !word.is_empty() {
+            words.push(std::mem::take(&mut word));
+        }
+        if c.is_alphanumeric() {
+            word.extend(c.to_lowercase());
+        }
+        after_lower = c.is_lowercase() || c.is_numeric();
+    }
+    if !word.is_empty() {
+        words.push(word);
+    }
+    words
 }
 
-/// What the file name of a movement clip says about the avatar's motion. Matched
-/// case-insensitively on the file name, without folder and extension.
+/// What the file name of a movement clip says about the avatar's motion, read from the words of
+/// the name (see [`clip_words`]), so `Avatar_DoubleJump`, `double_jump` and `doublejump` all
+/// name the air jump.
 ///
 /// - The fall loops are not jumps, so walking off a ledge is not a jump.
 /// - The stun clips count only at speed 1 or slower, because the scene speeds up the Exit clip as
@@ -39,25 +53,28 @@ pub enum ClipMotion {
 
 impl ClipMotion {
     pub fn of_clip(src: &str, speed: f32) -> Self {
-        let name = clip_name(src);
-        if name.starts_with("doublejump") {
+        Self::of_words(&clip_words(src), speed)
+    }
+
+    fn of_words(words: &[String], speed: f32) -> Self {
+        let has = |word: &str| words.iter().any(|w| w == word);
+        if has("doublejump") || words.windows(2).any(|w| w[0] == "double" && w[1] == "jump") {
             Self::DoubleJump
-        } else if name.starts_with("hard_landing") && name.contains("glider") {
-            Self::GlideClosing
-        } else if name.starts_with("glid") {
-            if name.contains("start") {
+        } else if words.iter().any(|w| w.starts_with("glid")) {
+            if has("start") || has("open") {
                 Self::GlideOpening
-            } else if name.contains("end") {
+            } else if has("end") || has("close") || has("landing") {
                 Self::GlideClosing
             } else {
                 Self::Gliding
             }
-        } else if ["jump_start", "jump_rise_loop", "jump_mid"]
-            .iter()
-            .any(|phase| name.ends_with(phase))
-        {
+        } else if has("jump") && !has("fall") && !has("end") {
             Self::Jump
-        } else if speed <= 1.0 && STUN_CLIPS.iter().any(|phase| name.starts_with(phase)) {
+        } else if speed <= 1.0
+            && has("hard")
+            && has("landing")
+            && STUN_PHASES.iter().any(|phase| has(phase))
+        {
             Self::HardLanding
         } else {
             Self::None
@@ -89,9 +106,10 @@ impl ClipMotion {
 
     /// True for a clip that a jump starts with: a jump's start clip, or an air jump's clip.
     pub fn starts_jump(src: &str) -> bool {
-        match Self::of_clip(src, 1.0) {
+        let words = clip_words(src);
+        match Self::of_words(&words, 1.0) {
             Self::DoubleJump => true,
-            Self::Jump => clip_name(src).ends_with("start"),
+            Self::Jump => words.iter().any(|w| w == "start"),
             _ => false,
         }
     }
@@ -111,12 +129,26 @@ mod tests {
             ("Run.glb", ClipMotion::None),
             ("Jog_Stop.glb", ClipMotion::None),
             ("Jump_Start.glb", ClipMotion::Jump),
-            ("Jog_Jump_Rise_Loop.glb", ClipMotion::Jump),
-            ("Run_Jump_Mid.glb", ClipMotion::Jump),
+            ("Jump_Rise_Loop.glb", ClipMotion::Jump),
+            ("Jump_Mid.glb", ClipMotion::Jump),
             ("Jump_Fall_Loop.glb", ClipMotion::None),
+            ("Jump_End.glb", ClipMotion::None),
+            ("Jog_Jump_Start.glb", ClipMotion::Jump),
+            ("Jog_Jump_Rise_Loop.glb", ClipMotion::Jump),
+            ("Jog_Jump_Mid.glb", ClipMotion::Jump),
+            ("Jog_Jump_Fall_Loop.glb", ClipMotion::None),
+            ("Jog_Jump_End.glb", ClipMotion::None),
+            ("Run_Jump_Start.glb", ClipMotion::Jump),
+            ("Run_Jump_Rise_Loop.glb", ClipMotion::Jump),
+            ("Run_Jump_Mid.glb", ClipMotion::Jump),
+            ("Run_Jump_Fall_Loop.glb", ClipMotion::None),
             ("Run_Jump_End.glb", ClipMotion::None),
             ("Long_Fall_Loop.glb", ClipMotion::None),
             ("DoubleJump_Base.glb", ClipMotion::DoubleJump),
+            ("DoubleJump_Base_Right.glb", ClipMotion::DoubleJump),
+            ("DoubleJump_Jog.glb", ClipMotion::DoubleJump),
+            ("DoubleJump_Jog_Right.glb", ClipMotion::DoubleJump),
+            ("DoubleJump_Run.glb", ClipMotion::DoubleJump),
             ("DoubleJump_Run_Right.glb", ClipMotion::DoubleJump),
             ("Gliding_AvatarStartRig.glb", ClipMotion::GlideOpening),
             ("Gliding_AvatarForwardRig.glb", ClipMotion::Gliding),
@@ -125,6 +157,7 @@ mod tests {
             ("Hard_Landing_GliderRig.glb", ClipMotion::GlideClosing),
             ("Hard_Landing_Enter.glb", ClipMotion::HardLanding),
             ("Hard_Landing_Loop.glb", ClipMotion::HardLanding),
+            ("Hard_Landing_Exit.glb", ClipMotion::HardLanding),
             // a big drop that does not stun plays the plain clip at full speed
             ("Hard_Landing.glb", ClipMotion::None),
         ] {
@@ -144,12 +177,27 @@ mod tests {
             ClipMotion::of_clip("assets/animations/Hard_Landing_Exit.glb", 1.2),
             ClipMotion::None
         );
-        // case, folder and extension do not matter
-        assert_eq!(ClipMotion::of_clip("GLIDE", 1.0), ClipMotion::Gliding);
-        assert_eq!(
-            ClipMotion::of_clip("a\\doublejump.gltf", 1.0),
-            ClipMotion::DoubleJump
-        );
+    }
+
+    #[test]
+    fn other_clip_names_match_by_word_whatever_the_case() {
+        for (clip, motion) in [
+            ("Avatar_DoubleJump.glb", ClipMotion::DoubleJump),
+            ("double_jump", ClipMotion::DoubleJump),
+            ("a\\doublejump.gltf", ClipMotion::DoubleJump),
+            ("DOUBLEJUMP", ClipMotion::DoubleJump),
+            ("player_glide.glb", ClipMotion::Gliding),
+            ("GLIDE", ClipMotion::Gliding),
+            // `end` inside a word closes nothing
+            ("Gliding_Descend.glb", ClipMotion::Gliding),
+            ("Glider_Open.glb", ClipMotion::GlideOpening),
+            ("Glider_Close.glb", ClipMotion::GlideClosing),
+            ("avatar_jump.glb", ClipMotion::Jump),
+            ("Jump_Fall.glb", ClipMotion::None),
+            ("Doubled.glb", ClipMotion::None),
+        ] {
+            assert_eq!(ClipMotion::of_clip(clip, 1.0), motion, "{clip}");
+        }
     }
 
     #[test]
@@ -159,12 +207,15 @@ mod tests {
             ("Jump_Start.glb", true),
             ("Jog_Jump_Start.glb", true),
             ("Run_Jump_Start.glb", true),
+            ("JumpStart.glb", true),
             ("DoubleJump_Base.glb", true),
             ("DoubleJump_Jog_Right.glb", true),
             ("Jump_Rise_Loop.glb", false),
             ("Run_Jump_Mid.glb", false),
             ("Jump_Fall_Loop.glb", false),
             ("Jog_Jump_End.glb", false),
+            // `start` inside a word starts nothing
+            ("Jump_Restart.glb", false),
             ("Gliding_AvatarStartRig.glb", false),
             ("Walk.glb", false),
         ] {

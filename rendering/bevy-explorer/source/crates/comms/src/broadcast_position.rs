@@ -2,6 +2,7 @@ use bevy::prelude::*;
 
 use common::{
     dynamics::PLAYER_LANDED_THRESHOLD,
+    movement_clip::ClipMotion,
     structs::{
         AvatarDynamicState, HeadSync, LocomotionSpeeds, MoveKind, PointAtSync, PrimaryUser,
         SceneDrivenAnim,
@@ -16,7 +17,7 @@ use wallet::Wallet;
 use crate::{
     anim_announce::{Announcement, ClipAnnouncer},
     broadcast, broadcast_to,
-    movement_animation::{wire_animation, ClipMotion, JumpCount},
+    movement_animation::{wire_animation, JumpCount},
     pulse::movement_pacing::{Change, MovementPacer},
     BroadcastTarget,
 };
