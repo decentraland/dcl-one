@@ -5,12 +5,12 @@ import type { TrackContext } from "@/core/lib/telemetry/track";
 import {
   validateSpec,
   type MpLaunchRequest,
-} from "@ui/creatorhub/mp/rules";
+} from "@web-core/multiplayer-test/rules";
 import {
   normalizeReplayOutcome,
   type MpReplayOutcome,
   type MpRunPhase,
-} from "@ui/creatorhub/mp/types";
+} from "@web-core/multiplayer-test/types";
 
 export type MpTrackFn = (
   event: string,

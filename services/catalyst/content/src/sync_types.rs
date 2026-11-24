@@ -128,6 +128,9 @@ pub enum SyncError {
     #[error("{0}")]
     NotFound(String),
 
+    #[error("content hash mismatch for {hash} from {server}")]
+    ContentHashMismatch { hash: String, server: String },
+
     #[error("{0}")]
     Other(String),
 }

@@ -25,3 +25,6 @@ bevy = { workspace = true }
 bevy_console = { workspace = true }
 rapier3d-f64 = { workspace = true }
 clap = { workspace = true }
+
+[dev-dependencies]
+scene_material = { workspace = true }

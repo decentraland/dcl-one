@@ -27,7 +27,7 @@ struct Cli {
 enum Command {
     /// Verify the schema, attach the workers and serve HTTP.
     Serve(Box<Config>),
-    /// Run chain indexes and marketplace mirrors without an HTTP listener.
+    /// Run chain indexes and marketplace mirrors. INDEX_METRICS_BIND enables a loopback metrics listener.
     Index(Box<Config>),
     /// Administrative schema operations.
     Schema {
@@ -178,7 +178,7 @@ enum ShopCommand {
         database_url: String,
         #[arg(long, value_parser = ["ethereum", "matic"])]
         net: String,
-        #[arg(long, value_parser = ["nft", "sales", "trade_events", "committee", "mana_transfers", "rentals"])]
+        #[arg(long, value_parser = ["nft", "sales", "trade_events", "committee", "mana_transfers", "rentals", "third_party_registry"])]
         indexer: String,
         #[arg(long)]
         from: u64,

@@ -3,8 +3,7 @@ import { cleanup, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 
 import CreatorHubChrome from "./CreatorHubChrome";
-import { ChromeAuthContext, type ChromeAuth } from "@dcl/one-ui/components/AppChrome/chrome-auth";
-import { ChromeNavContext } from "@dcl/one-ui/components/AppChrome/chrome-nav";
+import { ChromeAuthContext, type ChromeAuth, ChromeNavContext } from "@dcl/one-ui";
 
 const ACCOUNT = "0x4d02aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa7bf2";
 

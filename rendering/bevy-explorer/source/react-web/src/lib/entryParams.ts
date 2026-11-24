@@ -55,6 +55,8 @@ const INTERNAL_PARAMS = [
   'bundled',
   'simerror',
   'simhover',
+  // the engine's scene loop scheduling mode (deploy/web/engine/boot.js)
+  'sceneLoop',
   // the mock bridge's own switches, the same in both hosts
   ...MOCK_SWITCHES,
   'perm',

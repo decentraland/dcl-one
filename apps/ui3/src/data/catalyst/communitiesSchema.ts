@@ -1,5 +1,5 @@
 import { getJSON, sendSignedJSON, serviceBase, type RequestOpts } from "./client";
-import { field, hasId, isRecord, keepRows } from "./rows";
+import { field, hasId, isRecord, keepRows } from "@web-core/catalyst/rows";
 import {
   CommunityEventSchema,
   CommunityMemberSchema,

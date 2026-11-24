@@ -4,7 +4,7 @@ import Spinner from "../../atoms/Spinner";
 import Tabs from "../components/Tabs";
 import { Avatar } from "../../atoms/primitives";
 import { sendBridge } from "../../overlay/bridge";
-import { hexToColor3 } from "../../data/catalyst/backpack";
+import { hexToColor3 } from "@web-core/catalyst/backpack";
 import { serviceBase, signedFetch } from "../../data/catalyst/client";
 import Lightbox from "../components/Lightbox";
 import WalletAddress from "../components/WalletAddress";

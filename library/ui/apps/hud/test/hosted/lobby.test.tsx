@@ -2,9 +2,10 @@ import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { PopupHost, ToastHost, resetPopups } from '../../design'
+import { PopupHost, ToastHost, closeTopPopup, resetPopups } from '../../design'
 import { BackpackModal } from '../../features/backpack/BackpackModal'
 import modalStyles from '../../features/backpack/BackpackModal.module.css'
+import lobbyStyles from '../../features/lobby/LobbyHome.module.css'
 import { LobbyHome } from '../../features/lobby/LobbyHome'
 import type { EventData } from '@explorer-core/engine/protocol'
 import type { QueryStatus } from '../../features/events/eventsStore'
@@ -174,6 +175,24 @@ describe('lobby controls', () => {
     expect(screen.getByRole('dialog', { name: 'Plaza' })).toBeInTheDocument()
   })
 
+  it('keeps the engine stage under the Backpack: the stand-in shows only until the stage is drawn', () => {
+    const session = fakeSession()
+    const view = (): React.JSX.Element => (
+      <SessionProvider value={session}>
+        <LobbyHome onPick={session.pickDestination} setEngineViewport={session.setEngineViewport} />
+      </SessionProvider>
+    )
+    const { container, rerender } = render(view())
+    const standIn = (): Element => container.querySelector(`.${lobbyStyles.standIn}`)!
+    expect(standIn()).not.toHaveClass(lobbyStyles.standInHidden)
+    session.lobbyStageReady = true
+    rerender(view())
+    expect(standIn()).toHaveClass(lobbyStyles.standInHidden)
+    session.backpack.open = true
+    rerender(view())
+    expect(standIn()).toHaveClass(lobbyStyles.standInHidden)
+  })
+
   it('leaves the avatar cutout outside both overlay hit regions and keeps Close clickable', async () => {
     const sheet = document.createElement('style')
     const css = readFileSync(join(__dirname, '../../features/backpack/BackpackModal.module.css'), 'utf8')
@@ -198,6 +217,11 @@ describe('lobby controls', () => {
       const frame = screen.getByRole('dialog', { name: 'Backpack' })
       const dim = frame.previousElementSibling as HTMLElement
       const page = screen.getByRole('button', { name: 'Customize' }).parentElement!
+      // shut until the engine has drawn the avatar: until then the lobby's stage or the world is under it
+      expect(dim.style.clipPath).toBe('')
+      expect(page.style.clipPath).toBe('')
+      session.avatarPreviewReady = true
+      rerender(view())
       expect(getComputedStyle(frame.parentElement!).pointerEvents).toBe('none')
       expect(getComputedStyle(frame).pointerEvents).toBe('none')
       expect(dim.style.clipPath).toMatch(/^polygon\(evenodd,/)
@@ -502,9 +526,7 @@ describe('lobby VIEW ALL of Communities and Gallery', () => {
     await openFirstPhoto()
     const photo = screen.getByRole('dialog', { name: 'Photo' })
     expect(screen.getByRole('dialog', { name: 'Gallery' })).not.toContainElement(photo)
-    act(() => {
-      expect(dispatchCancelLayer()).toBe(true)
-    })
+    act(() => closeTopPopup())
     expect(screen.queryByRole('dialog', { name: 'Photo' })).toBeNull()
     expect(screen.getByRole('dialog', { name: 'Gallery' })).toBeInTheDocument()
   })
@@ -515,14 +537,14 @@ describe('lobby VIEW ALL of Communities and Gallery', () => {
     viewAll('Gallery')
     await openFirstPhoto()
     fireEvent.click(screen.getByRole('button', { name: /Jump In/i }))
-    expect(session.map.teleport).toHaveBeenCalledWith(-9, 14)
+    expect(session.map.teleportToPlace).toHaveBeenCalledWith(-9, 14)
     expect(screen.queryByRole('dialog', { name: 'Photo' })).toBeNull()
     expect(screen.queryByRole('dialog', { name: 'Gallery' })).toBeNull()
   })
 
   it('keeps the photo and the modal when the jump is refused', async () => {
     const session = withWidgets()
-    vi.mocked(session.map.teleport).mockReturnValue('refused')
+    vi.mocked(session.map.teleportToPlace).mockReturnValue('refused')
     render(lobbyWithPopups(session))
     viewAll('Gallery')
     await openFirstPhoto()

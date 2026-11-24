@@ -14,6 +14,10 @@
     "Click": {
       "loose": false,
       "props": {
+        "card": {
+          "kind": "string",
+          "optional": true
+        },
         "click_id": {
           "kind": "string",
           "optional": true
@@ -31,7 +35,7 @@
             "epic",
             "google_play"
           ],
-          "optional": false
+          "optional": true
         },
         "event": {
           "kind": "enum-string",
@@ -63,10 +67,20 @@
           "kind": "enum-string",
           "values": [
             "Creator Hub Success Footer",
+            "Creators Blog",
+            "Creators Connect",
+            "Creators Create",
+            "Creators Faqs",
             "Creators Hero",
+            "Creators Learn",
+            "Creators Live Scenes",
+            "Creators Why",
             "Download",
+            "Landing Catch The Vibe",
             "Landing Come Hang Out",
+            "Landing Explore",
             "Landing Hero",
+            "Landing Weekly Rituals",
             "come-hang-out",
             "come-hang-out-platform-switch",
             "download-page",
@@ -74,6 +88,18 @@
             "landing-hero-platform-switch"
           ],
           "optional": false
+        },
+        "section": {
+          "kind": "string",
+          "optional": true
+        },
+        "tab": {
+          "kind": "string",
+          "optional": true
+        },
+        "title": {
+          "kind": "string",
+          "optional": true
         },
         "track_called_at": {
           "kind": "number",
@@ -110,6 +136,40 @@
         "utm_term": {
           "kind": "string",
           "optional": true
+        }
+      }
+    },
+    "Section Viewed": {
+      "loose": false,
+      "props": {
+        "mobile": {
+          "kind": "boolean",
+          "optional": false
+        },
+        "section_viewed": {
+          "kind": "enum-string",
+          "values": [
+            "Creators Blog",
+            "Creators Connect",
+            "Creators Create",
+            "Creators Faqs",
+            "Creators Learn",
+            "Creators Live Scenes",
+            "Creators Why"
+          ],
+          "optional": false
+        },
+        "track_called_at": {
+          "kind": "number",
+          "optional": false
+        },
+        "track_deferred": {
+          "kind": "boolean",
+          "optional": false
+        },
+        "track_delivered_at": {
+          "kind": "number",
+          "optional": false
         }
       }
     },
@@ -3096,46 +3156,9 @@
       "props": {
         "community_id": {
           "kind": "string",
-          "optional": true
-        },
-        "stub": {
-          "kind": "unknown",
           "optional": false
         }
       }
-    },
-    "lp_community_gate_viewed": {
-      "loose": false,
-      "props": {}
-    },
-    "lp_community_review_reached": {
-      "loose": false,
-      "props": {
-        "places": {
-          "kind": "number",
-          "optional": false
-        },
-        "privacy": {
-          "kind": "enum-string",
-          "values": [
-            "private",
-            "public"
-          ],
-          "optional": false
-        },
-        "visibility": {
-          "kind": "enum-string",
-          "values": [
-            "all",
-            "unlisted"
-          ],
-          "optional": false
-        }
-      }
-    },
-    "lp_community_started": {
-      "loose": false,
-      "props": {}
     },
     "lp_community_submit_attempted": {
       "loose": false,
@@ -3163,7 +3186,7 @@
       "props": {
         "error": {
           "kind": "string",
-          "optional": true
+          "optional": false
         }
       }
     },

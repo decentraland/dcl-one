@@ -10,6 +10,24 @@ export const ACCOUNT_COPY = {
   checking: "Checking your session…",
   signedOut: "Sign in to manage your account",
   signIn: "Sign In",
+  magicDeletion: {
+    action: "Delete Magic account",
+    title: "Delete your Magic account?",
+    description: "This permanently removes Magic access to your wallet. Export your wallet key before continuing to keep access to your assets.",
+    cancel: "Cancel",
+    signInAgain: "Sign in again to delete this account.",
+    magicSignIn: "Sign in with your Magic account again to continue.",
+    forbidden: "Magic could not verify this deletion request. Sign in with Magic again before retrying.",
+    originRefused: "Account deletion isn't available from this site.",
+    walletMismatch: "Your Magic wallet doesn't match the signed-in account. Sign in with the same account and try again.",
+    reused: "This deletion request was already sent. Check your Magic account before submitting another request.",
+    rateLimited: "Too many deletion requests right now. Try again later.",
+    unavailable: "Account deletion isn't available right now.",
+    support: "Contact support",
+    supportHref: "/help",
+    unknown: "The outcome of your deletion request is unknown. Check your Magic account before submitting another request.",
+    failed: "Magic could not complete the deletion.",
+  },
 } as const;
 
 export const NOTIFICATIONS_COPY = {
@@ -33,7 +51,8 @@ export const NOTIFICATIONS_COPY = {
       "Enter your email, then check your inbox for an email with the confirmation link. After confirming, you will be able to customize the notifications below.",
     withEmail:
       "If you'd like to update your email address, edit it below. Make sure to check for the confirmation email in your inbox afterwards!",
-    pendingApproval: "Confirmation email sent, check your inbox.",
+    pendingApproval: "This email address is awaiting confirmation.",
+    confirmationSent: "Confirmation email sent, check your inbox.",
     confirmedDescription: "Your email has been confirmed.",
     submit: "Submit",
     resend: "Resend",

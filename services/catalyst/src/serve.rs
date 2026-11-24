@@ -133,6 +133,7 @@ mod metrics_tests {
             "comms_cluster_work_running 0",
             "comms_cluster_work_queued 0",
             "comms_cluster_work_rejected_total{reason=\"wallet_full\"} 0",
+            "worlds_allowance_read_failures_total 0",
         ] {
             assert!(rendered.contains(sample), "missing {sample}: {rendered}");
         }
@@ -152,6 +153,9 @@ pub async fn serve(
     if let Ok(Some(warning)) = catalyst_config::posture::worlds_names_reader(&config) {
         tracing::warn!("{warning}");
     }
+    if let Some(warning) = catalyst_config::posture::unchecked_profile_items(&config) {
+        tracing::warn!("{warning}");
+    }
     config.resolve_secret_files()?;
     config.content.eth_rpc_url()?;
     let sync_settings = SyncSettings::from_config(&config)?;
@@ -168,6 +172,9 @@ pub async fn serve(
     worlds::rooms::ensure_world_scene_ban_release(&pool).await?;
     worlds::rooms::ensure_scene_admin_place_release(&pool).await?;
     worlds::rooms::ensure_genesis_scene_ban_release(&pool).await?;
+    if config.writes.social_writes_enabled {
+        comms::gatekeeper::streaming::backfill_admin_place_keys(&pool).await?;
+    }
 
     let storage_root = Path::new(&config.node.storage_root_folder);
     let storage = Arc::new(
@@ -946,7 +953,8 @@ pub async fn serve(
             .with_land_authz(Some(land.clone()))
             .with_max_parcels(config.worlds.max_parcels)
             .with_ens(ens, i64::from(config.worlds.ens_max_size) * 1024 * 1024)
-            .with_name_deny_list(worlds.names.clone()),
+            .with_name_deny_list(worlds.names.clone())
+            .with_name_authority(market.authorizing_names.clone()),
     );
     worlds.attach_policy(policy.clone());
     // A world read-through holds each mirrored scene's signer to this policy and shares the
@@ -1146,7 +1154,11 @@ pub async fn serve(
     social
         .communities
         .set_voice_eviction(comms_stage.gatekeeper.clone());
-    social.communities.set_chain_index(market.index.clone());
+    // The shop selected the node's DCL NAME source once; without one that
+    // may authorize, a community creation or ownership transfer answers 503.
+    if let Some(names) = market.authorizing_names.clone() {
+        social.communities.set_name_authority(names);
+    }
     social
         .communities
         .set_explorer_flags(explorer_api.flags.clone());
@@ -1463,15 +1475,21 @@ pub async fn serve(
 }
 
 /// The base of `/hot-scenes` thumbnails, the server the scenes are read from, as
-/// upstream Stats uses one URL for both. An operator's `CONTENT_URL` is kept as
-/// written, since upstream concatenates `${url}/contents/` literally. This node's
-/// own `/content/` loses its trailing slash, so `{base}/contents/{hash}` is a
-/// route the node serves (the nested `/content` route does not match `//`).
+/// upstream Stats uses one URL for both. Trailing slashes are stripped from
+/// `CONTENT_URL` and this node's own `/content/` alike, as upstream does since
+/// archipelago-workers#141, so `{base}/contents/{hash}` never holds `//` (the nested
+/// `/content` route does not match it). Unlike upstream, whitespace is trimmed and
+/// an all-slash `CONTENT_URL` falls back to this node's `/content`.
 fn stats_content_url(configured: Option<&str>, content_public_url: &str) -> String {
-    match configured.map(str::trim).filter(|url| !url.is_empty()) {
-        Some(url) => url.to_string(),
-        None => content_public_url.trim_end_matches('/').to_string(),
-    }
+    let strip = |url: &str| {
+        url.trim()
+            .trim_end_matches(|c: char| c == '/' || c.is_whitespace())
+            .to_string()
+    };
+    configured
+        .map(strip)
+        .filter(|url| !url.is_empty())
+        .unwrap_or_else(|| strip(content_public_url))
 }
 
 #[cfg(test)]
@@ -1479,7 +1497,7 @@ mod stats_content_url_tests {
     use super::stats_content_url;
 
     #[test]
-    fn the_node_default_names_a_served_route_and_an_operator_value_is_kept() {
+    fn trailing_slashes_are_stripped_from_the_node_default_and_the_operator_value() {
         assert_eq!(
             stats_content_url(None, "https://node.example/content/"),
             "https://node.example/content"
@@ -1489,11 +1507,36 @@ mod stats_content_url_tests {
             "https://node.example/content"
         );
         assert_eq!(
+            stats_content_url(Some("/"), "https://node.example/content/"),
+            "https://node.example/content"
+        );
+        assert_eq!(
             stats_content_url(
                 Some("https://cdn.example/content/"),
-                "https://cdn.example/content/"
+                "https://node.example/content/"
             ),
-            "https://cdn.example/content/"
+            "https://cdn.example/content"
+        );
+        assert_eq!(
+            stats_content_url(
+                Some("https://cdn.example/content/// "),
+                "https://node.example/content/"
+            ),
+            "https://cdn.example/content"
+        );
+        assert_eq!(
+            stats_content_url(
+                Some("https://cdn.example/content/ /"),
+                "https://node.example/"
+            ),
+            "https://cdn.example/content"
+        );
+        assert_eq!(
+            stats_content_url(
+                Some("https://cdn.example/content"),
+                "https://node.example/content/"
+            ),
+            "https://cdn.example/content"
         );
     }
 }
@@ -2014,5 +2057,97 @@ mod referral_settings_tests {
             trusted.iter().map(ToString::to_string).collect::<Vec<_>>(),
             ["10.0.0.0/8", "2001:db8::/32"]
         );
+    }
+}
+
+#[cfg(test)]
+mod name_source_wiring_tests {
+    use crate::config::Config;
+    use crate::worlds::policy::{PersonalWorldsPolicy, Policy};
+
+    /// A `serve` that neither walks the nft index nor reads the subgraph,
+    /// with chain checks skipped so it starts (personal worlds only), over a
+    /// database another process published a NAME into: the Admin Toolkit's
+    /// lookup reads that publication, and the worlds policy, built from the
+    /// source `serve` hands it, owns no DCL NAME world with it.
+    #[tokio::test]
+    async fn a_shared_database_reader_serves_lookups_and_authorizes_no_world() {
+        let Some(pool) = crate::db::scratch::pool(4).await else {
+            return;
+        };
+        let config = Config::parse_env_for_tests([
+            ("DATABASE_URL", "postgres:///catalyst"),
+            ("WORLDS_WRITES_ENABLED", "true"),
+            ("MARKETPLACE_NFT_INDEX_ENABLED", "false"),
+            ("MARKETPLACE_SUBGRAPH_URL", ""),
+            ("IGNORE_BLOCKCHAIN_ACCESS_CHECKS", "true"),
+        ])
+        .unwrap();
+        assert!(
+            catalyst_config::posture::worlds_names_reader(&config)
+                .unwrap()
+                .is_some(),
+            "starts with the personal-worlds warning"
+        );
+        let label = format!("w{}", &uuid::Uuid::new_v4().simple().to_string()[..12]);
+        let holder = crate::shared::identity::Address::parse(&format!(
+            "0x{}",
+            &uuid::Uuid::new_v4().simple().to_string().repeat(2)[..40]
+        ))
+        .unwrap();
+        sqlx::query(
+            "INSERT INTO shop.chain_cursor (indexer, network, start_block, last_block, folded_block, folded_at, full_history, chain_id) \
+             VALUES ('nft', 'ethereum', 1, 100, 100, timezone('UTC', now()), true, 1) \
+             ON CONFLICT (indexer, network) DO UPDATE SET last_block = 100, folded_block = 100, \
+                 folded_at = EXCLUDED.folded_at, full_history = true, chain_id = 1, quarantined_at = NULL",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        let token =
+            i64::from_str_radix(&uuid::Uuid::new_v4().simple().to_string()[..12], 16).unwrap();
+        sqlx::query(
+            "INSERT INTO shop.nft (network, contract_address, token_id, owner, ens_subdomain, minted_block, minted_at, transferred_block, transferred_log, transferred_at) \
+             VALUES ('ethereum', $1, $2, $3, $4, 1, 1, 1, 0, 1)",
+        )
+        .bind(crate::shop::market::nft_index::DCL_REGISTRAR)
+        .bind(token)
+        .bind(holder.as_str())
+        .bind(&label)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        let market = crate::shop::market::MarketplaceState::new(
+            pool.clone(),
+            crate::http::Outbound::for_tests(),
+            crate::settings::market_settings(&config, &[]).unwrap(),
+        );
+        assert_eq!(
+            market.name_owner(&label).await.unwrap(),
+            Some(holder.clone())
+        );
+        assert!(market.authorizing_names.is_none());
+        // As `serve` builds it.
+        let policy = Policy::new(
+            pool.clone(),
+            PersonalWorldsPolicy::disabled(),
+            Some(market.index.clone()),
+        )
+        .with_name_authority(market.authorizing_names.clone());
+        let world =
+            crate::comms::world_identity::WorldName::parse(&format!("{label}.dcl.eth")).unwrap();
+        let refused = policy
+            .is_owner(&world, &holder)
+            .await
+            .into_result()
+            .unwrap_err();
+        assert_eq!(refused.http_status(), 403, "{refused}");
+        sqlx::query("DELETE FROM shop.nft WHERE contract_address = $1 AND token_id = $2")
+            .bind(crate::shop::market::nft_index::DCL_REGISTRAR)
+            .bind(token)
+            .execute(&pool)
+            .await
+            .unwrap();
     }
 }

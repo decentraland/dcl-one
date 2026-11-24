@@ -3,13 +3,12 @@ use dcl_component::{
     component_name_registry::{derive_component_name, make_proto_closures},
     proto_components::sdk::components::{
         PbAudioAnalysis, PbAudioEvent, PbAvatarBase, PbAvatarEmoteCommand, PbAvatarEquippedData,
-        PbAvatarMovementInfo, PbAvatarNametag, PbCameraMode, PbEngineInfo,
-        PbExplorerItemPurchaseResult, PbExplorerUiEventsResult, PbGltfContainerLoadingState,
-        PbGltfNodeState, PbPlayerIdentityData, PbPointerEventsResult, PbPointerLock,
-        PbPrimaryPointerInfo, PbRaycastResult, PbRealmInfo, PbTouchScreenControls,
-        PbTriggerAreaResult, PbTweenSequence, PbTweenState, PbUiCanvasInformation,
-        PbUiDropdownResult, PbUiInputBinding, PbUiInputResult, PbUiLayoutFeedback,
-        PbUiScrollResult, PbVideoEvent,
+        PbAvatarMovementInfo, PbCameraMode, PbEngineInfo, PbExplorerItemPurchaseResult,
+        PbExplorerUiEventsResult, PbGltfContainerLoadingState, PbGltfNodeState,
+        PbPlayerIdentityData, PbPointerEventsResult, PbPointerLock, PbPrimaryPointerInfo,
+        PbRaycastResult, PbRealmInfo, PbTouchScreenControls, PbTriggerAreaResult, PbTweenSequence,
+        PbTweenState, PbUiCanvasInformation, PbUiDropdownResult, PbUiInputBinding, PbUiInputResult,
+        PbUiLayoutFeedback, PbUiScrollResult, PbVideoEvent,
     },
     ComponentNameRegistry, CrdtType, SceneComponentId,
 };
@@ -222,12 +221,6 @@ impl Plugin for EngineComponentsPlugin {
             rw
         );
         reg!(
-            PbAvatarNametag,
-            SceneComponentId::AVATAR_NAMETAG,
-            CrdtType::LWW_ANY,
-            rw
-        );
-        reg!(
             PbExplorerItemPurchaseResult,
             SceneComponentId::EXPLORER_ITEM_PURCHASE_RESULT,
             CrdtType::GO_ANY,
@@ -334,7 +327,6 @@ mod tests {
             (SceneComponentId::TWEEN_SEQUENCE, "TweenSequence", true),
             (SceneComponentId::AUDIO_ANALYSIS, "AudioAnalysis", false),
             (SceneComponentId::UI_INPUT_BINDING, "UiInputBinding", true),
-            (SceneComponentId::AVATAR_NAMETAG, "AvatarNametag", true),
             (
                 SceneComponentId::EXPLORER_ITEM_PURCHASE_RESULT,
                 "ExplorerItemPurchaseResult",

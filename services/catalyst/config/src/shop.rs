@@ -16,11 +16,13 @@ pub struct MarketUpstreamsConfig {
     #[arg(long, env = "MATIC_COLLECTIONS_SUBGRAPH_URL")]
     pub matic_collections_subgraph_url: Option<String>,
 
-    /// L1 marketplace subgraph (names, and LAND before the indexes publish);
-    /// `NODE_POSTURE=mirror` sets lamb2's default. Unset, `/lambdas` names
-    /// and lands answer the 503 envelope; profiles and outfits claim no name.
-    /// It is also the DCL NAME world owner reader: `WORLDS_WRITES_ENABLED=true`
-    /// refuses to start without it unless `IGNORE_BLOCKCHAIN_ACCESS_CHECKS=true`.
+    /// L1 marketplace subgraph (LAND before the indexes publish, and DCL
+    /// NAMEs on a node that does not walk the nft index);
+    /// `NODE_POSTURE=mirror` sets lamb2's default. A node that walks the
+    /// index reads its NAMEs there and never asks it. Without either, the
+    /// NAME routes answer the 503 envelope, profiles and outfits claim no
+    /// name, and `WORLDS_WRITES_ENABLED=true` refuses to start unless
+    /// `IGNORE_BLOCKCHAIN_ACCESS_CHECKS=true`.
     #[arg(long, env = "MARKETPLACE_SUBGRAPH_URL")]
     pub marketplace_subgraph_url: Option<String>,
 
@@ -75,8 +77,8 @@ pub struct MarketUpstreamsConfig {
 
     /// Take this node's extended filters on `/lambdas/collections/wearables`
     /// (`collectionType`, `category`, `rarity`, `name`, `orderBy`,
-    /// `direction`). lamb2 ignores them, so the mirror posture turns it off.
-    #[arg(long, env = "LAMBDAS_CATALOG_EXTENSIONS_ENABLED", default_value_t = true, action = clap::ArgAction::Set)]
+    /// `direction`). Off by default to match lamb2.
+    #[arg(long, env = "LAMBDAS_CATALOG_EXTENSIONS_ENABLED", default_value_t = false, action = clap::ArgAction::Set)]
     pub lambdas_catalog_extensions_enabled: bool,
 }
 
@@ -161,8 +163,12 @@ pub struct MarketplaceConfig {
     #[arg(long, env = "MARKETPLACE_COMMITTEE_INDEX_ENABLED", default_value_t = false, action = clap::ArgAction::Set)]
     pub marketplace_committee_index_enabled: bool,
 
+    /// Walk the Polygon Third Party Registry for approved providers and publishing slots.
+    #[arg(long, env = "MARKETPLACE_THIRD_PARTY_REGISTRY_INDEX_ENABLED", default_value_t = false, action = clap::ArgAction::Set)]
+    pub marketplace_third_party_registry_index_enabled: bool,
+
     /// Pause between the end of one pass and the start of the next, for the nft, trade-events,
-    /// MANA transfers, sales, committee and rentals walks (30 under the mirror posture).
+    /// MANA transfers, sales, committee, third-party registry and rentals walks (30 under mirror).
     #[arg(long, env = "MARKETPLACE_INDEX_INTERVAL_SECS", default_value_t = 5)]
     pub marketplace_index_interval_secs: u64,
 
@@ -754,7 +760,8 @@ mod tests {
             !c.marketplace.marketplace_nft_index_enabled
                 && !c.marketplace.marketplace_trade_events_index_enabled
                 && !c.marketplace.marketplace_sales_index_enabled
-                && !c.marketplace.marketplace_committee_index_enabled,
+                && !c.marketplace.marketplace_committee_index_enabled
+                && !c.marketplace.marketplace_third_party_registry_index_enabled,
             "the chain indexes are opt-in"
         );
         assert_eq!(
