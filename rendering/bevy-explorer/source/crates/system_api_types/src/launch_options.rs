@@ -70,6 +70,13 @@ pub struct LaunchOptions {
     #[arg(long, value_name = "url", help_heading = DEBUG)]
     pub content_server: Option<String>,
 
+    /// Route first-party HTTP APIs through this gateway base url (a `gateway.` host: service
+    /// aliases and forwarded signing paths; any other host: direct paths); explicit service urls
+    /// win, and Pulse, the WebSocket RPCs, storage, abgen's CDN and the auth/reels pages keep
+    /// their own destinations
+    #[arg(long, value_name = "url", help_heading = SERVICES)]
+    pub gateway: Option<String>,
+
     /// Per-service url overrides (`services.rs`): flags natively, keys of the `engine_run`
     /// object on web (the page resolves the same overrides for its own fetches first).
     #[serde(flatten)]
@@ -204,6 +211,7 @@ impl EngineRunOptions {
             &mut self.launch.position,
             &mut self.launch.content_server,
             &mut self.launch.base_domain,
+            &mut self.launch.gateway,
             &mut self.launch.portables,
             &mut self.client.system_scene,
             &mut self.client.imposter_source,

@@ -87,7 +87,7 @@ fn delivery(field: &str) -> Delivery {
         | "autopilot"
         | "ff" => Launch,
         "editor" | "hold_world" | "session_id" | "campaign_anon_user_id" => Host,
-        "base_domain" => Resolved,
+        "base_domain" | "gateway" => Resolved,
         other => {
             panic!("launch option `{other}` has no web delivery — add it to web_params::delivery")
         }

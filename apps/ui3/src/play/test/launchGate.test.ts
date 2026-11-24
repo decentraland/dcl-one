@@ -57,3 +57,21 @@ describe('the launch gate behind the gateway', () => {
     expect(m.untrustedLaunchParams({ native: false })).toEqual([])
   })
 })
+
+describe('the gateway option', () => {
+  it("gates a foreign gateway and passes Decentraland's own or this page's host", async () => {
+    const foreign = await load(false, '/?gateway=https://gateway.example.test')
+    const [p, ...rest] = foreign.untrustedLaunchParams({ native: false })
+    expect(rest).toEqual([])
+    expect(p.name).toBe('gateway')
+    expect(p.value).toBe('https://gateway.example.test')
+    expect(foreign.untrustedLaunchParams({ native: true })).toEqual([])
+
+    for (const gateway of ['https://gateway.decentraland.org', window.location.origin]) {
+      const m = await load(false, `/?gateway=${encodeURIComponent(gateway)}`)
+      expect(m.untrustedLaunchParams({ native: false }), gateway).toEqual([])
+    }
+    const plain = await load(false, '/?gateway=http://gateway.decentraland.org')
+    expect(plain.untrustedLaunchParams({ native: false }).map((p) => p.name)).toEqual(['gateway'])
+  })
+})

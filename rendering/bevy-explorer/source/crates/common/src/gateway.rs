@@ -33,6 +33,27 @@ impl Gateway {
         })
     }
 
+    /// A gateway a `decentraland://` link may select: https, on one of Decentraland's own
+    /// deployments. A link reaches the native client with no prompt, so any other gateway takes
+    /// `--gateway`.
+    pub fn parse_link(raw: &str) -> Result<Self, String> {
+        let gateway = Self::parse(raw)?;
+        if !gateway.prefix.starts_with("https://")
+            || crate::base_domain::decentraland_domain(&gateway.prefix).is_none()
+        {
+            return Err(format!(
+                "a link's gateway must be an https url under {}; pass --gateway for `{raw}`",
+                crate::base_domain::DECENTRALAND_DOMAINS.join(" or ")
+            ));
+        }
+        Ok(gateway)
+    }
+
+    /// The base url, without a trailing slash.
+    pub fn prefix(&self) -> &str {
+        &self.prefix
+    }
+
     // API vhosts use their service host label. Direct origins expose the peer at
     // the root, preview on the main gatekeeper, and community thumbnails through social.
     fn segment(&self, service: Service) -> Option<&'static str> {
@@ -358,6 +379,25 @@ mod gateway_tests {
                 .unwrap(),
             None
         );
+    }
+
+    #[test]
+    fn a_link_selects_only_an_https_decentraland_gateway() {
+        for raw in [
+            "https://gateway.decentraland.org",
+            "https://decentraland.zone/mount/",
+        ] {
+            assert_eq!(Gateway::parse_link(raw), Gateway::parse(raw), "{raw}");
+        }
+        for raw in [
+            "http://gateway.decentraland.org",
+            "https://gateway.example.test",
+            "https://decentraland.org.example.test",
+            "https://evil-decentraland.org",
+            "https://user@gateway.decentraland.org",
+        ] {
+            assert!(Gateway::parse_link(raw).is_err(), "{raw}");
+        }
     }
 
     #[test]

@@ -27,6 +27,12 @@ export const WEB_PARAMS: WebParam[] = [
     "doc": "The base domain for all services (comms, profiles, etc); absent = the hosting origin (on web), or decentraland.org"
   },
   {
+    "name": "gateway",
+    "kind": "string",
+    "delivery": "resolved",
+    "doc": "Route first-party HTTP APIs through this gateway base url (a `gateway.` host: service aliases and forwarded signing paths; any other host: direct paths); explicit service urls win, and Pulse, the WebSocket RPCs, storage, abgen's CDN and the auth/reels pages keep their own destinations"
+  },
+  {
     "name": "realmProvider",
     "kind": "string",
     "delivery": "resolved",

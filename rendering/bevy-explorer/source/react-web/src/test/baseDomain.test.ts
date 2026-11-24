@@ -2,7 +2,7 @@
 // backend hosts to. The trust side (isTrustedBaseDomain + the launch gate) is covered in
 // systemScene.test.tsx.
 
-import { describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { hostBaseDomain, normaliseBaseDomain } from '../lib/baseDomain'
 
 describe('hostBaseDomain', () => {
@@ -31,5 +31,22 @@ describe('normaliseBaseDomain', () => {
     for (const bad of [null, '', 'https://x.io', 'x.io/path', 'x.io:443', 'x io', 'localhost', '.x.io', 'x.io.', 'x..io', 'münchen.de']) {
       expect(normaliseBaseDomain(bad)).toBe(null)
     }
+  })
+})
+
+describe('?gateway=', () => {
+  afterEach(() => {
+    window.history.replaceState(null, '', '/')
+  })
+
+  it("routes the APIs the engine's gateway routes and gates a gateway outside Decentraland's deployments", async () => {
+    window.history.replaceState(null, '', '/?gateway=https://gateway.example.test&places=https://places.decentraland.org')
+    vi.resetModules()
+    const m = await import('../lib/baseDomain')
+    expect(m.serviceUrl('events')).toBe('https://gateway.example.test/events')
+    expect(m.serviceUrl('places')).toBe('https://places.decentraland.org')
+    expect(m.serviceUrl('storage')).toBe('https://storage.decentraland.org')
+    const { untrustedLaunchParams } = await import('../lib/launchGate')
+    expect(untrustedLaunchParams({ native: false }).map((p) => p.name)).toEqual(['gateway'])
   })
 })

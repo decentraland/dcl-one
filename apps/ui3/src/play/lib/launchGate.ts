@@ -4,7 +4,7 @@
 // scene, this app trusts its bundled bridge scene and Decentraland's own deployments.
 
 import { SERVICES, type ServiceDef } from '@explorer-core/engine/generated'
-import { BASE_DOMAIN, derivedServiceUrl, entryServiceUrl, hostBaseDomain, isTrustedBaseDomain } from './baseDomain'
+import { BASE_DOMAIN, GATEWAY, derivedServiceUrl, entryServiceUrl, hostBaseDomain, isTrustedBaseDomain } from './baseDomain'
 import { bootMode } from './bootMode'
 import { isTrustedSystemScene } from './systemScene'
 import { webParam } from '@explorer-core/lib/webParams'
@@ -40,6 +40,15 @@ const GATES: Record<string, Gate> = {
     read: (native) => (native ? null : BASE_DOMAIN),
     isTrusted: isTrustedBaseDomain
   },
+  // Routes every first-party API, signed requests included, through one server. Read normalised,
+  // like the base domain; native is exempt the same way (its link may name only a Decentraland
+  // gateway). Trusted: an https gateway under Decentraland's own deployments, or this page's host.
+  gateway: {
+    warning:
+      'Sends sign-in, profiles, comms admission and every other Decentraland API request through this server. Whoever runs it would see your signed requests and choose the answers.',
+    read: (native) => (native ? null : (GATEWAY?.prefix ?? null)),
+    isTrusted: isTrustedGateway
+  },
   // Repoints every scene and asset fetch at one server while everything else looks normal.
   contentServer: {
     warning:
@@ -58,6 +67,12 @@ const GATES: Record<string, Gate> = {
     // `off` only turns the default (the asset-bundle generator's CDN) off
     isTrusted: (url) => url.trim().toLowerCase() === 'off' || isTrustedContentServer(url)
   }
+}
+
+/** An https gateway under one of Decentraland's own deployments, or one on this page's own host. */
+function isTrustedGateway(prefix: string): boolean {
+  const url = new URL(prefix)
+  return url.host === location.host || (url.protocol === 'https:' && hostBaseDomain(url.hostname) != null)
 }
 
 /** A content server under one of Decentraland's own deployments. */

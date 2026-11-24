@@ -71,10 +71,19 @@ the intended storage origin explicitly. The authentication page and public Reels
 also keep their configured destinations, set with `--auth-page https://example.org/auth`
 and `--reels https://example.org/reels` when needed.
 
+The web client takes the same gateway as `?gateway=<url>`. Both HUD hosts route their own requests
+with the engine's mapping (`library/explorer-core/lib/gateway.ts`) and hand the gateway to the
+engine, which signs the forwarded paths. A link with a gateway outside `decentraland.org` and
+`decentraland.zone` over HTTPS stops on the untrusted-launch prompt; on `/play`, the page's own
+host is trusted too. A `decentraland://` link selects one with `gateway=<url>`. The native client
+accepts only an HTTPS gateway under `decentraland.org` or `decentraland.zone` from a link, since a
+link reaches it without a prompt. An explicit `--gateway` takes precedence over the link's.
+
 With Python 3 and Node.js 24 installed, run
 `cargo test --locked -p common gateway_routes_match_deployment -- --ignored` from the
 Explorer workspace to compare its resolved routes with the HUD resolver and the rendered nginx maps.
-This also checks signature paths and the intentionally separate RPC and storage defaults.
+This also checks signature paths, the intentionally separate RPC and storage defaults, and that
+the HUD's `?gateway=` resolves to the same endpoints as `--gateway`.
 
 To package, follow the [desktop workflow](../../../../.github/workflows/bevy-explorer-desktop.yml):
 pinned Rust, protoc, CEF and platform libraries, including `CEF_PATH`. With those installed:

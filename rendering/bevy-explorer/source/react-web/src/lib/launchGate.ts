@@ -4,7 +4,7 @@
 // scene, this app trusts its bundled bridge scene and Decentraland's own deployments.
 
 import { SERVICES, type ServiceDef } from '@explorer-core/engine/generated'
-import { BASE_DOMAIN, hostBaseDomain, isTrustedBaseDomain, normaliseServiceUrl } from './baseDomain'
+import { BASE_DOMAIN, GATEWAY, hostBaseDomain, isTrustedBaseDomain, normaliseServiceUrl } from './baseDomain'
 import { bootMode } from './bootMode'
 import { isTrustedSystemScene } from './systemScene'
 import { webParam } from '@explorer-core/lib/webParams'
@@ -39,6 +39,15 @@ const GATES: Record<string, Gate> = {
       'Points every backend service — sign-in, content, comms — at servers under this domain. Whoever runs them would see your session and control what you play.',
     read: (native) => (native ? null : BASE_DOMAIN),
     isTrusted: isTrustedBaseDomain
+  },
+  // Routes every first-party API, signed requests included, through one server. Read normalised,
+  // like the base domain; native is exempt the same way (its link may name only a Decentraland
+  // gateway). Trusted: an https gateway under Decentraland's own deployments.
+  gateway: {
+    warning:
+      'Sends sign-in, profiles, comms admission and every other Decentraland API request through this server. Whoever runs it would see your signed requests and choose the answers.',
+    read: (native) => (native ? null : (GATEWAY?.prefix ?? null)),
+    isTrusted: (prefix) => prefix.startsWith('https://') && hostBaseDomain(new URL(prefix).hostname) != null
   },
   // Repoints every scene and asset fetch at one server while everything else looks normal.
   contentServer: {

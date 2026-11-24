@@ -18,6 +18,7 @@
 // url sync exactly as the HUD does.
 
 import { SERVICES, type ServiceDef } from '@explorer-core/engine/generated'
+import { gatewayServiceUrl, parseGateway } from '@explorer-core/lib/gateway'
 
 // Decentraland's own deployments — the hosting origins we derive from, and the only domains a
 // LINK may point the session at without the UntrustedLaunchGate (lib/launchGate.ts).
@@ -176,6 +177,12 @@ export function normaliseServiceUrl(s: ServiceDef, raw: string | null): string |
   }
 }
 
+/**
+ * The entry url's ?gateway=, as the engine's --gateway routes it: every first-party HTTP API it
+ * maps, ahead of the deployment's own composition; an explicit ?<service>= still wins.
+ */
+export const GATEWAY = parseGateway(new URLSearchParams(window.location.search).get('gateway'))
+
 /** The entry url's override; a `pulseServer` equal to this page's host is a stale engine write-back once Pulse is named. */
 export function entryServiceUrl(s: ServiceDef): string | null {
   const url = normaliseServiceUrl(s, new URLSearchParams(window.location.search).get(s.name))
@@ -206,6 +213,8 @@ export function serviceUrl(name: string): string {
  */
 export function derivedServiceUrl(name: string): string {
   const s = service(name)
+  const routed = GATEWAY == null ? null : gatewayServiceUrl(GATEWAY, s)
+  if (routed != null) return routed
   if (BASE_DOMAIN === ONE_GATEWAY_HOST && !NOT_THROUGH_GATEWAY.has(s.sub)) {
     const prefix = GATEWAY_PREFIXES[s.sub]
     if (prefix == null) throw new Error(`serviceUrl: '${name}' (${s.sub}) has no gateway prefix`)
@@ -233,13 +242,15 @@ window.__serviceUrl = serviceUrl
 export function engineServiceOptions(): Record<string, string> {
   const options: Record<string, string> = {}
   if (BASE_DOMAIN === ONE_GATEWAY_HOST) {
-    for (const s of SERVICES) options[s.name] = serviceUrl(s.name)
+    // the engine routes the services the gateway maps from the `gateway` option itself
+    for (const s of SERVICES) if (GATEWAY == null || gatewayServiceUrl(GATEWAY, s) == null) options[s.name] = serviceUrl(s.name)
     // the node's own imposter store, not the engine's built-in one; an entry ?imposterSource= wins
     if (!new URLSearchParams(window.location.search).get('imposterSource')) {
       options.imposterSource = `${window.location.origin}${IMPOSTER_PREFIX}`
     }
   }
   Object.assign(options, SERVICE_OVERRIDES)
+  if (GATEWAY != null) options.gateway = GATEWAY.prefix
   const bare = normaliseBaseDomain(BASE_DOMAIN)
   if (bare != null) options.baseDomain = bare
   return options

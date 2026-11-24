@@ -255,13 +255,13 @@ fn decentraland_app_arguments() -> Result<DecentralandArguments, UserError> {
         args.launch.realm = args.launch.realm.take().or(place.realm);
         args.launch.position = args.launch.position.take().or(place.position);
         args.launch.base_domain = args.launch.base_domain.take().or(place.base_domain);
-    }
-
-    if let Some(gateway) = &args.gateway {
-        common::base_domain::set_gateway(gateway).map_err(|e| {
-            error!("{e}");
-            UserError(USAGE_ERROR)
-        })?;
+        if let Some(gateway) = &place.gateway {
+            common::gateway::Gateway::parse_link(gateway).map_err(|e| {
+                error!("{link}: {e}");
+                UserError(USAGE_ERROR)
+            })?;
+        }
+        args.launch.gateway = args.launch.gateway.take().or(place.gateway);
     }
 
     webgpu_build::launch::latch(&args.launch).map_err(|e| {
@@ -460,13 +460,7 @@ mod tests {
     }
 
     #[test]
-    fn gateway_requires_a_native_flag() {
-        let link = DecentralandArguments::try_parse_from([
-            "explorer",
-            "decentraland://?position=1,2&gateway=https://other.test",
-        ])
-        .unwrap();
-        assert!(link.gateway.is_none());
+    fn gateway_is_a_launch_option() {
         let args = DecentralandArguments::try_parse_from([
             "explorer",
             "--gateway",
@@ -476,7 +470,7 @@ mod tests {
         ])
         .unwrap();
         assert_eq!(
-            args.gateway.as_deref(),
+            args.launch.gateway.as_deref(),
             Some("https://gateway.example.test")
         );
         assert_eq!(

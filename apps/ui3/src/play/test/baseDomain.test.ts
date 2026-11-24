@@ -169,3 +169,24 @@ describe('the site a link opens', () => {
     expect(m.checkoutSiteUrl('/shop/credits')).toBe(m.siteUrl('/shop/credits'))
   })
 })
+
+describe('?gateway=', () => {
+  afterEach(() => {
+    window.history.replaceState(null, '', '/')
+  })
+
+  it("routes the APIs the engine's gateway routes, hands the engine the gateway, and an explicit service wins", async () => {
+    window.history.replaceState(null, '', '/?gateway=https://gateway.example.test/&places=https://places.example.test')
+    vi.resetModules()
+    const m = await import('../lib/baseDomain')
+    expect(m.serviceUrl('events')).toBe('https://gateway.example.test/events')
+    expect(m.serviceUrl('catalyst')).toBe('https://gateway.example.test/peer')
+    expect(m.serviceUrl('places')).toBe('https://places.example.test')
+    expect(m.serviceUrl('storage')).toBe('https://storage.decentraland.org')
+    expect(m.engineServiceOptions()).toEqual({
+      places: 'https://places.example.test',
+      gateway: 'https://gateway.example.test',
+      baseDomain: 'decentraland.org'
+    })
+  })
+})

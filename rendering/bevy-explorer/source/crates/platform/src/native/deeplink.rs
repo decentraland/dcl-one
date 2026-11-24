@@ -5,8 +5,8 @@
 //! file and waits for the consumer to delete it. We read that same file, so a sign-in link
 //! reaches us whether the OS handed it to the launcher or to ourselves (registered on
 //! windows/linux only when nothing else claims the scheme). Either way the explorer receives
-//! the raw link as its first argument; a place link (`realm`, `position`, `dclenv`) becomes
-//! launch options.
+//! the raw link as its first argument; a place link (`realm`, `position`, `dclenv`, `gateway`)
+//! becomes launch options.
 
 use std::{path::PathBuf, time::Duration};
 
@@ -49,12 +49,14 @@ enum Handler {
     Other,
 }
 
-/// A place link's launch options: `decentraland://open?realm=…&position=x,y&dclenv=org|zone`.
+/// A place link's launch options:
+/// `decentraland://open?realm=…&position=x,y&dclenv=org|zone&gateway=<url>`.
 #[derive(Default, Debug, PartialEq)]
 pub struct PlaceLink {
     pub realm: Option<String>,
     pub position: Option<String>,
     pub base_domain: Option<String>,
+    pub gateway: Option<String>,
 }
 
 /// Make sure a `decentraland://` link opened from the browser can reach us: either something
@@ -132,6 +134,7 @@ pub fn parse_place_link(link: &str) -> Result<PlaceLink, anyhow::Error> {
         match key.as_str() {
             "realm" => place.realm = Some(value),
             "position" => place.position = Some(value),
+            "gateway" => place.gateway = Some(value),
             "dclenv" => {
                 place.base_domain = Some(match value.as_str() {
                     "org" => "decentraland.org".to_owned(),
@@ -222,15 +225,20 @@ mod test {
             PlaceLink {
                 realm: Some("http://127.0.0.1:8000".into()),
                 position: Some("0,0".into()),
-                base_domain: None
+                base_domain: None,
+                gateway: None
             }
         );
         assert_eq!(
-            parse_place_link("decentraland:///?position=139,-40&dclenv=zone").unwrap(),
+            parse_place_link(
+                "decentraland:///?position=139,-40&dclenv=zone&gateway=https%3A%2F%2Fgateway.decentraland.zone"
+            )
+            .unwrap(),
             PlaceLink {
                 realm: None,
                 position: Some("139,-40".into()),
-                base_domain: Some("decentraland.zone".into())
+                base_domain: Some("decentraland.zone".into()),
+                gateway: Some("https://gateway.decentraland.zone".into())
             }
         );
         assert!(parse_place_link("decentraland://open?dclenv=prod").is_err());

@@ -18,6 +18,7 @@
 // url sync exactly as the HUD does.
 
 import { SERVICES, type ServiceDef } from '@explorer-core/engine/generated'
+import { gatewayProfileImage, gatewayServiceUrl, parseGateway } from '@explorer-core/lib/gateway'
 import { isNativeHud } from './bootMode'
 
 // Decentraland's own deployments — the hosting origins we derive from, and the only domains a
@@ -48,6 +49,12 @@ export const DEFAULT_BASE_DOMAIN = hostBaseDomain(window.location.hostname) ?? '
 export const BASE_DOMAIN =
   normaliseBaseDomain(new URLSearchParams(window.location.search).get('baseDomain')) ?? DEFAULT_BASE_DOMAIN
 
+/**
+ * The entry url's ?gateway=, as the engine's --gateway routes it: every first-party HTTP API it
+ * maps, ahead of the base domain's composition; an explicit ?<service>= still wins.
+ */
+export const GATEWAY = parseGateway(new URLSearchParams(window.location.search).get('gateway'))
+
 /** Only the native CEF document receives this image base from its engine. Apply it at
  * display time, leaving the profile, scene HTTP and all other service URLs untouched. */
 const cef = (window as Window & { cef?: { emit?: unknown; listen?: unknown } }).cef
@@ -56,6 +63,7 @@ const nativeHostParams = isNativeHud() && typeof cef?.emit === 'function' && typ
   : null
 const nativeImageBase = nativeHostParams?.get('nativeProfileImageBase')
 export function nativeProfileImage(raw: string | undefined): string | undefined {
+  if (GATEWAY != null && raw != null && !nativeImageBase) return gatewayProfileImage(GATEWAY, raw, BASE_DOMAIN) ?? raw
   if (!nativeImageBase || raw == null) return raw
   const authority = /^https:\/\/([^/?#]+)/i.exec(raw)?.[1]
   if (authority?.toLowerCase() !== `profile-images.${BASE_DOMAIN}`) return raw
@@ -125,11 +133,13 @@ export const SERVICE_OVERRIDES: Readonly<Record<string, string>> = {}
 
 /**
  * A service's base url (an authority service: its host) by its table name: the entry url's
- * override, else composed from the base domain, e.g. serviceUrl('places') →
+ * override, else its ?gateway= route, else composed from the base domain, e.g. serviceUrl('places') →
  * "https://places.decentraland.org".
  */
 export function serviceUrl(name: string): string {
   const s = service(name)
+  const routed = SERVICE_OVERRIDES[name] ?? (GATEWAY == null ? null : gatewayServiceUrl(GATEWAY, s))
+  if (routed != null) return routed
   const host = s.sub === '' ? BASE_DOMAIN : `${s.sub}.${BASE_DOMAIN}`
   return SERVICE_OVERRIDES[name] ?? (s.value === 'authority' ? host : `${s.scheme}://${host}${s.path}`)
 }

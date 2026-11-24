@@ -12,29 +12,71 @@ from urllib.parse import urlsplit
 from test_routing import route
 
 
-def check(rows, root):
+HUD = """
+    import { registerHooks } from 'node:module';
+    import { pathToFileURL } from 'node:url';
+    import { resolve } from 'node:path';
+    const [root, page, sites] = process.argv.slice(1);
+    const play = resolve(root, 'apps/ui3/src/play');
+    const core = resolve(root, 'library/explorer-core');
+    registerHooks({ resolve(specifier, context, next) {
+        if (specifier === '@explorer-core/engine/generated') {
+            return { url: pathToFileURL(resolve(core, 'engine/generated/serviceTable.ts')).href, shortCircuit: true };
+        }
+        if (specifier.startsWith('@explorer-core/')) {
+            const path = resolve(core, specifier.slice('@explorer-core/'.length) + '.ts');
+            return { url: pathToFileURL(path).href, shortCircuit: true };
+        }
+        return next(specifier, context);
+    }});
+    globalThis.window = { location: new URL(page), ...(sites === 'sites' ? { __DCL_PUBLIC__: {} } : {}) };
+    const hud = await import(pathToFileURL(resolve(play, 'lib/baseDomain.ts')));
+    const { SERVICES } = await import(pathToFileURL(resolve(core, 'engine/generated/serviceTable.ts')));
+    const urls = Object.fromEntries(SERVICES.map((s) => [s.name, hud.serviceUrl(s.name)]));
+    console.log(JSON.stringify({ services: SERVICES, options: hud.engineServiceOptions(), urls }));
+"""
+
+
+def run_hud(root, page, sites):
     # Only the browser location and the generated barrel import need a harness. Both the
     # service table and serviceUrl/engineServiceOptions execute their production source.
-    result = subprocess.run(["node", "--input-type=module", "-e", """
-        import { registerHooks } from 'node:module';
-        import { pathToFileURL } from 'node:url';
-        import { resolve } from 'node:path';
-        const root = process.argv[1];
-        const play = resolve(root, 'apps/ui3/src/play');
-        const generated = resolve(root, 'library/explorer-core/engine/generated');
-        registerHooks({ resolve(specifier, context, next) {
-            if (specifier === '@explorer-core/engine/generated') {
-                return { url: pathToFileURL(resolve(generated, 'serviceTable.ts')).href, shortCircuit: true };
-            }
-            return next(specifier, context);
-        }});
-        globalThis.window = { location: new URL('https://example.test/play'), __DCL_PUBLIC__: {} };
-        const hud = await import(pathToFileURL(resolve(play, 'lib/baseDomain.ts')));
-        const { SERVICES } = await import(pathToFileURL(resolve(generated, 'serviceTable.ts')));
-        console.log(JSON.stringify({ services: SERVICES, options: hud.engineServiceOptions() }));
-    """, str(root)], text=True, capture_output=True)
+    result = subprocess.run(
+        ["node", "--input-type=module", "-e", HUD, str(root), page, "sites" if sites else ""],
+        text=True,
+        capture_output=True,
+    )
     assert result.returncode == 0, result.stderr
-    hud = json.loads(result.stdout)
+    return json.loads(result.stdout)
+
+
+def check_gateway_option(rows, root):
+    """The page's ?gateway= reaches the endpoints the engine's --gateway does. The engine takes
+    the gateway itself; a service the gateway leaves keeps the page's own destination, which a
+    dcl-one page hands its engine explicitly."""
+    for gateway, key in (("https://gateway.example.test", "vhost"), ("https://example.test", "direct")):
+        hud = run_hud(root, f"https://play.decentraland.org/play?gateway={gateway}", False)
+        assert hud["options"] == {"gateway": gateway, "baseDomain": "decentraland.org"}, hud["options"]
+        for row in rows:
+            if row["web"]:
+                expected = row[key] if row[key] is not None else row["fallback"]
+                assert hud["urls"][row["name"]] == expected, (gateway, row["name"], hud["urls"][row["name"]], expected)
+
+        node = run_hud(root, f"https://node.example.test/play?gateway={gateway}", True)
+        assert node["options"]["gateway"] == gateway, node["options"]
+        for row in rows:
+            if not row["web"]:
+                continue
+            name = row["name"]
+            if row[key] is not None:
+                assert node["urls"][name] == row[key], (gateway, name, node["urls"][name])
+                assert name not in node["options"], (gateway, name)
+            else:
+                assert node["options"][name] == node["urls"][name], (gateway, name)
+
+
+def check(rows, root):
+    check_gateway_option(rows, root)
+    hud = run_hud(root, "https://example.test/play", True)
     web = {row["name"]: row for row in hud["services"]}
     assert set(web) == {row["name"] for row in rows if row["web"]}, "HUD service table is stale"
     # Not served by the gateway yet, so the engine and the web page both reach the public host

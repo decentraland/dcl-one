@@ -18,11 +18,22 @@ static BASE_DOMAIN: OnceLock<String> = OnceLock::new();
 static SERVICES: OnceLock<HashMap<Service, String>> = OnceLock::new();
 static GATEWAY: OnceLock<crate::gateway::Gateway> = OnceLock::new();
 
-/// Only the native CLI installs a gateway. Deep links and web options cannot set it.
+/// Latch the gateway (`--gateway` / `?gateway=` / a link's `gateway=`), once, before anything
+/// composes a service url. Re-latching the same gateway is fine, like [`set`].
 pub fn set_gateway(raw: &str) -> Result<(), String> {
-    GATEWAY
-        .set(crate::gateway::Gateway::parse(raw)?)
-        .map_err(|_| "--gateway already configured".to_owned())
+    let gateway = crate::gateway::Gateway::parse(raw)?;
+    match GATEWAY.get() {
+        Some(latched) if *latched == gateway => Ok(()),
+        Some(_) => Err("--gateway already configured".to_owned()),
+        None => GATEWAY
+            .set(gateway)
+            .map_err(|_| "--gateway already configured".to_owned()),
+    }
+}
+
+/// The latched gateway's base url, without a trailing slash.
+pub fn gateway() -> Option<&'static str> {
+    GATEWAY.get().map(crate::gateway::Gateway::prefix)
 }
 
 fn endpoint_override(service: Service) -> Option<String> {

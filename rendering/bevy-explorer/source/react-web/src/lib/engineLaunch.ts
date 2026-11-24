@@ -4,7 +4,7 @@
 // overrode it), and the benchmark's switches where they count.
 import type { EngineLaunch } from '@explorer-core/hostContract'
 import { launchOptionsFromUrl, type LaunchOptions } from '@explorer-core/lib/webParams'
-import { BASE_DOMAIN, SERVICE_OVERRIDES } from './baseDomain'
+import { BASE_DOMAIN, GATEWAY, SERVICE_OVERRIDES } from './baseDomain'
 import { benchmarkSwitchesHonoured, bootMode } from './bootMode'
 import { perfStreamPath } from './entryParams'
 import { PAGE_DIR } from './publicUrl'
@@ -33,7 +33,13 @@ export function seedBridgeSession(): void {}
 export function engineLaunch(params: URLSearchParams): EngineLaunch {
   const { launch, perfStream } = entryEngineOptions(params)
   return {
-    options: { ...launch, ...SERVICE_OVERRIDES, baseDomain: BASE_DOMAIN, systemScene: bootMode().systemScene ?? SYSTEM_SCENE },
+    options: {
+      ...launch,
+      ...SERVICE_OVERRIDES,
+      ...(GATEWAY != null ? { gateway: GATEWAY.prefix } : {}),
+      baseDomain: BASE_DOMAIN,
+      systemScene: bootMode().systemScene ?? SYSTEM_SCENE
+    },
     // pkg/ fetch base: the versioned CDN in prod builds (BASE_URL), the served engine dir otherwise.
     engineDir: new URL('engine', new URL(import.meta.env.BASE_URL, PAGE_DIR)).href,
     // The performance harness's browser run: a page switch, handed on by boot.js.
