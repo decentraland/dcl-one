@@ -2444,8 +2444,7 @@ revokes, whose `address` a catalog write does not have.
 ## Market chain index cursors
 
 `shop.chain_cursor` holds one row per projection: an index (`nft`,
-`trade_events`, `rentals`, `mana_transfers`, `sales`, `committee`,
-`third_party_registry`) on one
+`trade_events`, `rentals`, `mana_transfers`, `sales`, `committee`) on one
 network (`ethereum`, `matic`). A window commit writes it once, and so do a
 fold record, a publish and a rewind; the table stays at a dozen rows.
 `shop.chain_checkpoint` holds each projection's recovery points (see
@@ -2684,7 +2683,8 @@ and the AGENTS.md "Ownership" entry in the same change.
 
 ## Third-party registry
 
-The Polygon registry walk appends one version to
+The Polygon registry walk uses the `third_party_registry` cursor on `matic`
+and appends one version to
 `shop.third_party_registry_event` per registry event that changes a known
 provider. The state holds the event's provider metadata, linked contracts,
 approval, root, resolver, managers and slot counts. A consumption event also
