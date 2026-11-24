@@ -12,12 +12,13 @@
 //! for quota.
 
 use bevy::diagnostic::DiagnosticPath;
+use common::sync::MutexExt;
 use serde::Deserialize;
 use std::{
     collections::HashSet,
     sync::{
         atomic::{AtomicUsize, Ordering},
-        Mutex, PoisonError,
+        Mutex,
     },
 };
 
@@ -352,7 +353,7 @@ impl UsedKeys {
     /// Notes `key`, unless the worker would drop it; true when the set is full and should be
     /// flushed.
     fn note(&self, key: &str) -> bool {
-        let mut keys = self.keys.lock().unwrap_or_else(PoisonError::into_inner);
+        let mut keys = self.keys.lock_ignore_poison();
         if key.len() <= USED_KEY_MAX && !keys.contains(key) {
             keys.insert(key.to_owned());
             self.pending.store(keys.len(), Ordering::Relaxed);
@@ -361,7 +362,7 @@ impl UsedKeys {
     }
 
     fn take(&self) -> Vec<String> {
-        let mut keys = self.keys.lock().unwrap_or_else(PoisonError::into_inner);
+        let mut keys = self.keys.lock_ignore_poison();
         let taken = keys.drain().collect();
         self.pending.store(0, Ordering::Relaxed);
         taken
@@ -369,12 +370,7 @@ impl UsedKeys {
 
     /// The keys waiting, which stay waiting.
     fn waiting(&self) -> Vec<String> {
-        self.keys
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-            .iter()
-            .cloned()
-            .collect()
+        self.keys.lock_ignore_poison().iter().cloned().collect()
     }
 
     fn len(&self) -> usize {

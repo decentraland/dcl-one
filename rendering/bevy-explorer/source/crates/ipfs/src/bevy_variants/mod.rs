@@ -743,7 +743,7 @@ impl IpfsIo {
         }
         let scene = scene.to_lowercase();
         {
-            let mut health = self.bevy_variants.far_lods.lock().unwrap();
+            let mut health = self.bevy_variants.far_lods.lock_ignore_poison();
             if health.is_missing(&scene) {
                 return FarLodSource::Unavailable("the server has none for the scene".to_owned());
             }
@@ -765,7 +765,7 @@ impl IpfsIo {
             return;
         };
         let change = {
-            let mut health = self.bevy_variants.far_lods.lock().unwrap();
+            let mut health = self.bevy_variants.far_lods.lock_ignore_poison();
             // only a url this client named is a far LOD: a scene can make up any other
             if !health.is_named(scene) {
                 return;
@@ -798,8 +798,7 @@ impl IpfsIo {
         }
         self.bevy_variants
             .far_lods
-            .lock()
-            .unwrap()
+            .lock_ignore_poison()
             .may_request(web_time::Instant::now())
     }
 
@@ -807,7 +806,12 @@ impl IpfsIo {
     pub(crate) fn is_named_far_lod(&self, remote: &str) -> bool {
         self.bevy_variants
             .far_lod_scene(remote)
-            .is_some_and(|scene| self.bevy_variants.far_lods.lock().unwrap().is_named(scene))
+            .is_some_and(|scene| {
+                self.bevy_variants
+                    .far_lods
+                    .lock_ignore_poison()
+                    .is_named(scene)
+            })
     }
 
     /// Whether no far LOD can be offered this session: no variants base, variants turned off,
@@ -823,8 +827,7 @@ impl IpfsIo {
     pub fn far_lod_status(&self) -> FarLodStatus {
         self.bevy_variants
             .far_lods
-            .lock()
-            .unwrap()
+            .lock_ignore_poison()
             .status(web_time::Instant::now())
     }
 

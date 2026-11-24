@@ -24,6 +24,7 @@ use std::time::Duration;
 use alloy_core::primitives::Address;
 use bevy::math::{IVec2, Vec3};
 use bevy::platform::time::Instant;
+use common::sync::MutexExt;
 use dcl_component::proto_components::{kernel::comms::rfc4, pulse};
 
 pub(crate) mod movement_pacing;
@@ -1254,9 +1255,7 @@ impl OutOfGridLog {
 /// [`OUT_OF_GRID_LOG_INTERVAL`] for each kind: a player standing outside skips one every tick.
 pub(crate) fn warn_out_of_grid(kind: OutOfGrid, world: Vec3) {
     static LOG: std::sync::Mutex<OutOfGridLog> = std::sync::Mutex::new(OutOfGridLog([None; 2]));
-    let Ok(mut log) = LOG.lock() else {
-        return;
-    };
+    let mut log = LOG.lock_ignore_poison();
     if log.should_log(kind, Instant::now()) {
         bevy::log::warn!("pulse: {kind:?} at {world} is outside the parcel grid; not sent as is");
     }
