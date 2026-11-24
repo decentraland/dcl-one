@@ -58,6 +58,8 @@ NavBar integration follow-ups: consolidate the legacy notification inbox cache w
 
 The Events detail modal uses the public [Button](../library/ui/components/Button/Button.tsx) for Remind me. The inactive state uses `variant="secondaryLight"` at the medium size and the active state uses `primary`. When Remind me is available, it and the neighboring Calendar and Copy actions use `viewport="responsive"`, which selects mobile dimensions on narrow screens and with a coarse primary pointer. While a reminder is saving, the control keeps keyboard focus and ignores repeated activation. After a failed save it can be retried from the same button. Physical touch and screen readers remain unverified.
 
+The web and native Shop routes use [ShopCartDrawer](../library/ui/apps/shop/ShopCartDrawer.tsx) for cart lines, quantities, totals and dismissal. The Shop supplies the store and checkout links. The in-world HUD uses its own Shop cart.
+
 ## Review-only components
 
 The [local review manifest](../library/ui/figma/review/src/generated/components/manifest.ts) owns preview names, node identities, variants and `needsManual` flags. It is not an application import surface. Do not duplicate its records here or infer visual parity from a passing build.

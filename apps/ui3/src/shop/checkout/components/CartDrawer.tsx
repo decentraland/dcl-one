@@ -12,7 +12,7 @@ import { DetailCreator } from "../../detail/components/DetailBadges";
 import CategoryFlap from "../../discovery/components/CategoryFlap";
 import { CreditsAmount } from "../../discovery/components/PriceTag";
 import { categoryIcon } from "../../discovery/lib/itemIcons";
-import { rarityCardPalette } from "@shop/discovery/lib/rarity";
+import Icon from "../../discovery/components/Icon";
 import { creditsCeil } from "@shop/model/money";
 import { offerQuote, type CartLine } from "@shop/model/purchase";
 import { SHOP_BASE } from "../../routes";
@@ -48,15 +48,13 @@ export default function CartDrawer({ cart = shopCart, drawer = shopCartDrawer }:
     const viewLines: ShopCartDrawerLine[] = lines.map((line) => {
       const stock = lineStock(line);
       const unit = drawerUnitCredits(line);
-      const palette = rarityCardPalette(line.display.rarity);
       const { name, thumbnail, creator, category, wearableCategory, rarity } = line.display;
       const flapItem = category ? { category, wearableCategory, rarity: rarity ?? "" } : null;
       return {
         id: line.id,
         name,
         thumbnail,
-        background: palette.background,
-        stroke: palette.stroke,
+        rarity,
         quantity: line.quantity,
         flap: flapItem && categoryIcon(flapItem) ? <CategoryFlap item={flapItem} size="sm" testId="cart-flap" /> : null,
         creator: creator ? (className) => <DetailCreator address={creator} size="sm" className={className} /> : undefined,
@@ -91,6 +89,7 @@ export default function CartDrawer({ cart = shopCart, drawer = shopCartDrawer }:
       itemsHref={`${SHOP_BASE}/items`}
       onCartPage={pathname === `${SHOP_BASE}/cart`}
       Link={Link}
+      icons={{ close: <Icon name="close" size={18} />, remove: <Icon name="trash" size={24} /> }}
       emptyArt={cartEmptyIllustration}
       close={() => drawer.close()}
     />

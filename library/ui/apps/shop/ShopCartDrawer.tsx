@@ -9,7 +9,7 @@ import {
   type ComponentType
 } from 'react'
 import { createPortal } from 'react-dom'
-import { GeneralClose, GeneralDelete } from '../../foundations/icons/general'
+import { rarityCardPalette } from '../../../shop/discovery/lib/rarity'
 import styles from './ShopCartDrawer.module.css'
 
 export type ShopCartDrawerLinkProps = {
@@ -25,8 +25,7 @@ export type ShopCartDrawerLine = {
   id: string
   name: string
   thumbnail?: string | null
-  background: string
-  stroke: string
+  rarity?: string | null
   flap: ReactNode
   creator?: (className: string | undefined) => ReactNode
   price: number | null
@@ -35,7 +34,7 @@ export type ShopCartDrawerLine = {
   remove: () => void
 }
 
-type ShopCartDrawerProps = {
+export type ShopCartDrawerProps = {
   open: boolean
   justAdded: number
   getContents: () => { count: number; lines: ShopCartDrawerLine[]; total: number | null }
@@ -49,6 +48,7 @@ type ShopCartDrawerProps = {
   itemsHref: string
   onCartPage: boolean
   Link: ComponentType<ShopCartDrawerLinkProps>
+  icons: { close: ReactNode; remove: ReactNode }
   emptyArt: string
   close: () => void
 }
@@ -69,7 +69,7 @@ const CheckCircle = () => (
     <circle cx="10" cy="10" r="10" fill="#1ea672" />
     <path
       d="M5.8 10.3l2.7 2.7 5.7-6"
-      stroke="var(--dcl-neutrals-white)"
+      stroke="currentColor"
       strokeWidth="1.8"
       strokeLinecap="round"
       strokeLinejoin="round"
@@ -82,18 +82,23 @@ const CheckCircle = () => (
 // existing token is unique, so it has no stepper.
 function DrawerLine({
   line,
-  credits
+  credits,
+  removeIcon
 }: {
   line: ShopCartDrawerLine
+  removeIcon: ReactNode
   credits: ShopCartDrawerProps['credits']
 }) {
   const { quantity, stepper } = line
+  const palette = rarityCardPalette(line.rarity)
   return (
     <li className={styles.card} data-testid="cart-drawer-line">
       <div
         className={styles.thumb}
         data-thumb
-        style={{ '--tile-bg': line.background, '--tile-stroke': line.stroke } as CSSProperties}
+        style={
+          { '--tile-bg': palette.background, '--tile-stroke': palette.stroke } as CSSProperties
+        }
       >
         {line.thumbnail ? <img src={line.thumbnail} alt={line.name} /> : null}
         {line.flap}
@@ -139,7 +144,7 @@ function DrawerLine({
         aria-label={`Remove ${line.name}`}
         title="Remove"
       >
-        <GeneralDelete aria-hidden="true" size={24} />
+        {removeIcon}
       </button>
     </li>
   )
@@ -158,12 +163,7 @@ function hide(dialog: HTMLDialogElement) {
   else dialog.removeAttribute('open')
 }
 
-// Go to cart preloads the cart page's code once the panel has slid in (a cancelled slide counts), so the slide keeps
-// the main thread and the network. Root's data does not reload between Shop pages either (shouldRevalidate in
-// apps/sites/src/routes/root.tsx), so the click waits for no server request. The in-world HUD's router has no
-// preload, so there it stays a plain link. Go to cart only navigates: the drawer closes when the page changes, so
-// the click does not wait for the dialog's close either. On the cart page the link changes no page, so there the
-// click closes the drawer.
+// Deferring prefetch keeps route loading off the opening animation. On the cart page the link only closes the drawer.
 function DrawerCtas({
   panel,
   onClose,
@@ -209,6 +209,7 @@ export function ShopCartDrawer({
   cartHref,
   onCartPage,
   Link,
+  icons,
   emptyArt,
   close
 }: ShopCartDrawerProps) {
@@ -254,7 +255,7 @@ export function ShopCartDrawer({
         <header className={styles.head}>
           <h2 className={styles.title}>{`Shopping Cart (${count})`}</h2>
           <button type="button" className={styles.close} onClick={close} aria-label="Close">
-            <GeneralClose aria-hidden="true" size={18} />
+            {icons.close}
           </button>
         </header>
 
@@ -286,7 +287,7 @@ export function ShopCartDrawer({
 
           <ul className={styles.list}>
             {lines.map((line) => (
-              <DrawerLine key={line.id} line={line} credits={credits} />
+              <DrawerLine key={line.id} line={line} credits={credits} removeIcon={icons.remove} />
             ))}
           </ul>
         </div>

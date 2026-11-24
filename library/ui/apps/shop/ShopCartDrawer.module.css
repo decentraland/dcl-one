@@ -187,6 +187,7 @@
 }
 
 .bannerCheck {
+  color: var(--dcl-neutrals-white);
   flex: none;
   width: 20px;
   height: 20px;

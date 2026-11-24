@@ -37,6 +37,7 @@ async function press(point: Point) {
 }
 
 async function escape() {
+  // Chrome on macOS opens its Help tab when Escape also carries native key code 27.
   const key = { key: "Escape", code: "Escape", windowsVirtualKeyCode: 27 };
   await session!.send("Input.dispatchKeyEvent", { type: "rawKeyDown", ...key });
   await session!.send("Input.dispatchKeyEvent", { type: "keyUp", ...key });
