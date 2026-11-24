@@ -3,6 +3,7 @@
 pub mod avatar_movement;
 pub mod camera;
 mod debug_panel;
+pub use debug_panel::PlayerPose;
 pub mod point_at;
 
 use bevy::{app::Propagate, ecs::query::Has, prelude::*, render::view::RenderLayers};

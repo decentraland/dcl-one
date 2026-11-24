@@ -353,8 +353,8 @@ the [conventions ADR](../../../docs/adr/2026-11-17-console-command-conventions.m
   (`modifierActive`, `modifier`); a walk that cannot start is refused with `{"refused", "cause"}`,
   as is `--ignore-input-modifiers` outside preview.
   `/player_state` reads the player's pose, `parcel`, velocity, `grounded`, the camera's mode and
-  pose, `modeChangeAllowed` and `pointerLocked` in one reply. `/gesture_state` reads the running
-  gestures, for the debug panel. `docs/guidelines/running.md` has the details.
+  pose, `modeChangeAllowed`, `pointerLocked` and, under `gestures`, the running walk, in one
+  reply; the debug panel reads the gestures from it. `docs/guidelines/running.md` has the details.
 - Raycasts: `/raycast_stats` (the capped tier's `budgetMs`, `ran`, `deferred`, `spentMs` and the
   uncapped tier's `uncappedRan`, `uncappedSpentMs`) and `/raycast_budget [ms|auto]` (override the
   capped budget, a tenth of the target frame, from 0 to 10 ms). On the web, these and the two pointer commands go

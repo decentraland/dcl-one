@@ -89,7 +89,8 @@ export interface WalkReport {
  *  the yaw clockwise from north, `z` the roll. */
 export type Euler = Position
 
-/** What `/player_state` reports. Positions and velocity are Decentraland world coordinates. */
+/** What `/player_state` reports: the player's and the camera's pose, and the running automation
+ *  gestures. Positions and velocity are Decentraland world coordinates. */
 export interface PlayerState {
   position: Position
   rotationEuler: Euler
@@ -112,6 +113,14 @@ export interface PlayerState {
   } | null
   /** the pointer is locked to the camera */
   pointerLocked: boolean
+  /** what the automation commands are doing to the player */
+  gestures: {
+    /** the running `/walk` under `walk`, with its stage and its keys, such as
+     *  `holding ShiftLeft KeyW`; empty when no walk runs */
+    running: { walk?: string }
+    /** a walk with `ignoreInputModifiers` is running */
+    inputModifierWithheld: boolean
+  }
 }
 
 /** `/raycast_stats`: the capped tier's budget and last pass, and the uncapped tier's last pass. */
@@ -1135,7 +1144,7 @@ export class Explorer {
     return this.json<WalkReport>(line)
   }
 
-  /** The player's and the camera's pose in one read. */
+  /** The player's and the camera's pose and the running automation gestures in one read. */
   playerState(): Promise<PlayerState> {
     return this.json<PlayerState>('/player_state')
   }

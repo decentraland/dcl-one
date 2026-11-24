@@ -453,7 +453,8 @@ describe('Explorer', () => {
         modeChangeAllowed: true,
         pointerLocked: false
       },
-      pointerLocked: false
+      pointerLocked: false,
+      gestures: { running: { walk: 'holding KeyW' }, inputModifierWithheld: false }
     }
     const fake = new FakeConsole({ hover_entity: report, click_entity: report, walk: JSON.stringify(walked), player_state: JSON.stringify(pose), raycast_stats: JSON.stringify({ budgetMs: 1.67, ran: 1, deferred: 0, spentMs: 0.1, uncappedRan: 2, uncappedSpentMs: 0.2 }), raycast_budget: 'raycast budget: 0.00 ms (override)', scene_logs: '[1.00] Info: a\n[2.00] Info: b' })
     const explorer = new Explorer(fake)

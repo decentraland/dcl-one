@@ -1,4 +1,4 @@
-use bevy::prelude::*;
+use bevy::{ecs::system::SystemParam, prelude::*};
 use bevy_console::ConsoleCommand;
 use common::structs::{
     AvatarDynamicState, CameraView, CursorLocks, OutOfWorld, PhotoMode, PrimaryCamera, PrimaryUser,
@@ -21,7 +21,6 @@ impl Plugin for InputDebugPanelPlugin {
     fn build(&self, app: &mut App) {
         app.add_console_command::<CameraState, _>(camera_state)
             .add_console_command::<MovementState, _>(movement_state)
-            .add_console_command::<PlayerState, _>(player_state)
             .add_preview_console_command::<CameraSensitivity, _>(camera_sensitivity)
             .add_preview_debug_inputs(DebugSection {
                 title: "Camera",
@@ -161,16 +160,6 @@ fn movement_state(
     }).to_string());
 }
 
-/// Read the player's and the camera's pose as JSON: position, rotationEuler, parcel, velocity,
-/// grounded (null while out of the world), outOfWorld, pointerLocked and camera {mode, position,
-/// rotationEuler, fov, modeChangeAllowed, pointerLocked}. Positions and the velocity are in
-/// Decentraland world coordinates; euler angles are Decentraland's, in degrees from 0 to 360 (x
-/// the pitch, looking down positive; y the yaw clockwise from north; z the roll).
-/// /player_position, /camera_state and /movement_state read one part each
-#[derive(clap::Parser, ConsoleCommand)]
-#[command(name = "/player_state")]
-struct PlayerState;
-
 /// A bevy rotation as Decentraland euler angles, `{"x", "y", "z"}` in degrees from 0 to 360.
 /// Decentraland mirrors bevy's z axis, which turns a yaw or a pitch the other way and keeps a roll.
 fn dcl_euler(rotation: Quat) -> Value {
@@ -197,50 +186,62 @@ fn mode_name(camera: &PrimaryCamera, photo: bool) -> &'static str {
     }
 }
 
+/// The player's and the camera's pose, read for `/player_state`.
+#[derive(SystemParam)]
 #[allow(clippy::type_complexity)]
-fn player_state(
-    mut cmd: ConsoleCommand<PlayerState>,
+pub struct PlayerPose<'w, 's> {
     player: Query<
+        'w,
+        's,
         (
-            &GlobalTransform,
-            Option<&AvatarDynamicState>,
+            &'static GlobalTransform,
+            Option<&'static AvatarDynamicState>,
             Has<OutOfWorld>,
         ),
         With<PrimaryUser>,
     >,
-    camera: Query<(
-        &GlobalTransform,
-        &PrimaryCamera,
-        &Projection,
-        Has<PhotoMode>,
-    )>,
-    locks: Res<CursorLocks>,
-) {
-    let Some(Ok(_)) = cmd.take() else { return };
-    let Ok((transform, dynamics, out_of_world)) = player.single() else {
-        cmd.reply_failed("no player");
-        return;
-    };
-    let (_, rotation, position) = transform.to_scale_rotation_translation();
-    let parcel = vec3_to_parcel(position);
-    let velocity = Vector3::world_vec_from_vec3(&dynamics.map_or(Vec3::ZERO, |d| d.velocity));
-    let pointer_locked = locks.0.contains("camera");
-    let camera = camera
-        .single()
-        .ok()
-        .map(|(transform, camera, projection, photo)| {
-            let (_, rotation, position) = transform.to_scale_rotation_translation();
-            json!({
-                "mode": mode_name(camera, photo),
-                "position": reply::xyz(DclTranslation::from_bevy_translation(position).0),
-                "rotationEuler": dcl_euler(rotation),
-                "fov": lens(projection).1.map(reply::round),
-                "modeChangeAllowed": camera.scene_override.is_none(),
-                "pointerLocked": pointer_locked,
-            })
-        });
-    cmd.reply_ok(
-        json!({
+    camera: Query<
+        'w,
+        's,
+        (
+            &'static GlobalTransform,
+            &'static PrimaryCamera,
+            &'static Projection,
+            Has<PhotoMode>,
+        ),
+    >,
+    locks: Res<'w, CursorLocks>,
+}
+
+impl PlayerPose<'_, '_> {
+    /// The pose as JSON, or `None` when there is no player: position, rotationEuler, parcel,
+    /// velocity, grounded (null while out of the world), outOfWorld, pointerLocked and camera
+    /// {mode, position, rotationEuler, fov, modeChangeAllowed, pointerLocked}. Positions and the
+    /// velocity are in Decentraland world coordinates; euler angles are Decentraland's, in degrees
+    /// from 0 to 360 (x the pitch, looking down positive; y the yaw clockwise from north; z the
+    /// roll).
+    pub fn read(&self) -> Option<Value> {
+        let (transform, dynamics, out_of_world) = self.player.single().ok()?;
+        let (_, rotation, position) = transform.to_scale_rotation_translation();
+        let parcel = vec3_to_parcel(position);
+        let velocity = Vector3::world_vec_from_vec3(&dynamics.map_or(Vec3::ZERO, |d| d.velocity));
+        let pointer_locked = self.locks.0.contains("camera");
+        let camera = self
+            .camera
+            .single()
+            .ok()
+            .map(|(transform, camera, projection, photo)| {
+                let (_, rotation, position) = transform.to_scale_rotation_translation();
+                json!({
+                    "mode": mode_name(camera, photo),
+                    "position": reply::xyz(DclTranslation::from_bevy_translation(position).0),
+                    "rotationEuler": dcl_euler(rotation),
+                    "fov": lens(projection).1.map(reply::round),
+                    "modeChangeAllowed": camera.scene_override.is_none(),
+                    "pointerLocked": pointer_locked,
+                })
+            });
+        Some(json!({
             "position": reply::xyz(DclTranslation::from_bevy_translation(position).0),
             "rotationEuler": dcl_euler(rotation),
             "parcel": [parcel.x, parcel.y],
@@ -253,18 +254,24 @@ fn player_state(
             "outOfWorld": out_of_world,
             "camera": camera,
             "pointerLocked": pointer_locked,
-        })
-        .to_string(),
-    );
+        }))
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::avatar_movement::{AvatarMovement, FromConfig};
+    use bevy::ecs::system::RunSystemOnce;
     use bevy_console::{ConsoleCommandEntered, PrintConsoleLine};
     use common::structs::AvatarDynamicState;
     use std::sync::{mpsc, Arc};
+
+    fn read(app: &mut App) -> Option<Value> {
+        app.world_mut()
+            .run_system_once(|pose: PlayerPose| pose.read())
+            .unwrap()
+    }
 
     #[test]
     fn stationary_controller_reports_its_velocities_when_sdk_feedback_is_omitted() {
@@ -307,12 +314,9 @@ mod tests {
     }
 
     #[test]
-    fn the_player_state_reads_the_pose_the_parcel_and_the_camera() {
+    fn the_player_pose_reads_the_pose_the_parcel_and_the_camera() {
         let mut app = App::new();
-        app.add_event::<ConsoleCommandEntered>()
-            .add_event::<PrintConsoleLine>()
-            .init_resource::<CursorLocks>()
-            .add_systems(Update, player_state);
+        app.init_resource::<CursorLocks>();
         // Decentraland (24.5, 1, 40): bevy's z is mirrored
         let at = Transform::from_xyz(24.5, 1.0, -40.0);
         app.world_mut().spawn((
@@ -324,15 +328,7 @@ mod tests {
                 ..default()
             },
         ));
-        let (tx, rx) = mpsc::channel();
-        app.world_mut().send_event(ConsoleCommandEntered {
-            command_name: "/player_state".into(),
-            args: vec![],
-            responder: Some(Arc::new(move |result| tx.send(result).unwrap())),
-        });
-        app.update();
-        let reply = rx.try_recv().unwrap().unwrap();
-        let report: serde_json::Value = serde_json::from_str(&reply).unwrap();
+        let report = read(&mut app).unwrap();
         assert_eq!(report["position"], json!({"x": 24.5, "y": 1.0, "z": 40.0}));
         assert_eq!(report["parcel"], json!([1, 2]));
         assert_eq!(report["velocity"], json!({"x": 1.0, "y": 0.0, "z": 2.0}));
@@ -345,25 +341,15 @@ mod tests {
     #[test]
     fn grounded_is_unknown_while_the_player_is_out_of_the_world() {
         let mut app = App::new();
-        app.add_event::<ConsoleCommandEntered>()
-            .add_event::<PrintConsoleLine>()
-            .init_resource::<CursorLocks>()
-            .add_systems(Update, player_state);
+        app.init_resource::<CursorLocks>();
+        assert!(read(&mut app).is_none(), "no player, no pose");
         app.world_mut().spawn((
             PrimaryUser::default(),
             GlobalTransform::IDENTITY,
             AvatarDynamicState::default(),
             OutOfWorld,
         ));
-        let (tx, rx) = mpsc::channel();
-        app.world_mut().send_event(ConsoleCommandEntered {
-            command_name: "/player_state".into(),
-            args: vec![],
-            responder: Some(Arc::new(move |result| tx.send(result).unwrap())),
-        });
-        app.update();
-        let reply = rx.try_recv().unwrap().unwrap();
-        let report: serde_json::Value = serde_json::from_str(&reply).unwrap();
+        let report = read(&mut app).unwrap();
         assert!(report["grounded"].is_null());
         assert_eq!(report["outOfWorld"], true);
     }

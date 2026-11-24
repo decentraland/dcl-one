@@ -443,24 +443,24 @@ The HUD and input:
   camera-relative and the third-person camera sits beside and behind the avatar, so with the
   camera aimed at a near point a walk runs a few degrees off the avatar's line to that point; aim
   it at a far point on the line to walk straight.
-- `/player_state` (`crates/user_input/src/debug_panel.rs`): JSON `position`, `rotationEuler`,
+- `/player_state` (`src/automation/state.rs`, the pose read from `user_input`'s `PlayerPose`): JSON `position`, `rotationEuler`,
   `parcel`, `velocity` (Decentraland axes), `grounded` (within 0.2 m of the ground; `null` while the
   player is out of the world), `outOfWorld`, `camera` (`mode`: `first_person`,
   `third_person`, `cinematic` under a scene's camera, `free` in photo mode; `position`,
   `rotationEuler`, `fov` in degrees, `modeChangeAllowed`: false while a scene holds the camera;
-  `pointerLocked`) and `pointerLocked` (the scene's pointer lock). Euler angles are
+  `pointerLocked`), `pointerLocked` (the scene's pointer lock) and `gestures` (below). Euler angles are
   Decentraland's, as a scene reads them: degrees 0 to 360, `x` the pitch with looking down
   positive, `y` the yaw clockwise from north. It is one read of what `/player_position`,
   `/camera_state` and `/movement_state` each report a part of, rounded to hundredths; `velocity`
   is the engine's own (`AvatarDynamicState`), where `/movement_state` reports what the movement
   scene sent back.
-- `/gesture_state` (`src/automation/walk.rs`): JSON `running` (the running `/walk`, under
-  `walk`, with its stage and its keys, the gait key first: the keys queued while `pressing`, down
-  while `holding`, going up while `releasing`, none while `settling`, such as
+  `gestures` is what the automation commands are doing to the player: `running` (the running
+  `/walk`, under `walk`, with its stage and its keys, the gait key first: the keys queued while
+  `pressing`, down while `holding`, going up while `releasing`, none while `settling`, such as
   `{"walk": "holding ShiftLeft KeyW"}`; empty when no walk runs; a running `/hover_entity` or
   `/click_entity` is not listed) and `inputModifierWithheld` (a walk with
   `--ignore-input-modifiers` is running). The debug panel's "Automation gestures" section reads
-  it.
+  `gestures` from this reply. The command fails with `no player` when there is none.
 - `/raycast_stats` (JSON: the capped tier's `budgetMs`, `ran`, `deferred` and `spentMs`, and the
   uncapped tier's `uncappedRan` and `uncappedSpentMs`, each for its last frame with raycasts to
   cast) and `/raycast_budget [ms|auto]` (show the capped budget, a tenth of the target frame, or

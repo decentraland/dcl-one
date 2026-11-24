@@ -12,8 +12,8 @@
 //!
 //! A walk that cannot start (one is running, the HUD holds a key, a gamepad binding, no player or
 //! one out of the world, `--ignore-input-modifiers` outside preview) is refused before a key is
-//! pressed: `{"refused", "cause"}`. `/gesture_state` and the debug panel's "Automation gestures"
-//! section read the running walk from `WalkJob`.
+//! pressed: `{"refused", "cause"}`. `/player_state` reads the running walk from `WalkJob` under
+//! `gestures`, and so does the debug panel's "Automation gestures" section.
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -27,7 +27,7 @@ use common::{
 };
 use console::{
     reply::{self, refusal},
-    AddDebugSection, DebugSection, DoAddConsoleCommand, PendingConsoleResponses,
+    DoAddConsoleCommand, PendingConsoleResponses,
 };
 use dcl_component::{
     proto_components::sdk::components::{pb_input_modifier::Mode, PbInputModifier},
@@ -44,7 +44,7 @@ use super::{
     pointer::{binding_error, binding_step},
 };
 
-/// The walk's name in `/gesture_state`, as the holder a second walk is refused with, and as its
+/// The walk's name under `/player_state`'s `gestures`, as the holder a second walk is refused with, and as its
 /// reason in `EngineMovementControl::suppress_input_modifier`.
 const WALK: &str = "walk";
 
@@ -67,20 +67,6 @@ impl Plugin for AutomationWalkPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<WalkJob>()
             .add_console_command::<WalkCommand, _>(walk_cmd)
-            .add_console_command::<GestureStateCommand, _>(gesture_state_cmd)
-            .add_debug_section(DebugSection {
-                title: "Automation gestures",
-                query: "/gesture_state",
-                fields: &[
-                    ("Walk", "running.walk"),
-                    (
-                        "InputModifier withheld from the movement info",
-                        "inputModifierWithheld",
-                    ),
-                ],
-                actions: &[],
-                inputs: &[],
-            })
             .add_systems(Update, drive_walk.in_set(SceneSets::PostLoop));
     }
 }
@@ -220,7 +206,7 @@ struct Walk {
 }
 
 impl Walk {
-    /// What the walk is doing, for `/gesture_state`: its stage and its keys, which are queued while
+    /// What the walk is doing, for `/player_state`'s `gestures`: its stage and its keys, which are queued while
     /// pressing, down while holding and going up while releasing.
     fn status(&self) -> String {
         let down = match self.stage {
@@ -244,7 +230,7 @@ fn key_name(binding: &InputIdentifier) -> String {
 
 /// The walk that is running, if any: a second one is refused until it has answered.
 #[derive(Resource, Default)]
-struct WalkJob(Option<Walk>);
+pub(super) struct WalkJob(Option<Walk>);
 
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -537,30 +523,14 @@ fn walk_reply(walk: &Walk, end: Vec3, held: f64, settled: bool) -> String {
     .unwrap_or_default()
 }
 
-/// Read the running /walk, as JSON: running (walk, with its stage and its keys: the ones queued
-/// while pressing, down while holding, going up while releasing; empty when no walk runs) and
-/// inputModifierWithheld (the walk keeps the InputModifier out of the avatar movement info)
-#[derive(clap::Parser, ConsoleCommand)]
-#[command(name = "/gesture_state")]
-struct GestureStateCommand;
-
-fn gesture_state_cmd(
-    mut input: ConsoleCommand<GestureStateCommand>,
-    job: Res<WalkJob>,
-    movement_control: Res<EngineMovementControl>,
-) {
-    let Some(Ok(_)) = input.take() else {
-        return;
-    };
-    input.reply_ok(gesture_state(&job, &movement_control).to_string());
-}
-
-fn gesture_state(job: &WalkJob, movement_control: &EngineMovementControl) -> Value {
+/// The `gestures` section of `/player_state`: `running` (the walk, with its stage and its keys;
+/// empty when no walk runs) and `inputModifierWithheld` (the walk keeps the `InputModifier` out of
+/// the avatar movement info).
+pub(super) fn gesture_state(job: &WalkJob, movement_control: &EngineMovementControl) -> Value {
     let running: BTreeMap<&str, String> = job.0.iter().map(|walk| (WALK, walk.status())).collect();
     json!({
         "running": running,
         "inputModifierWithheld": movement_control.suppress_input_modifier.contains(WALK),
-        "unavailable": { "running.walk": "No walk is running." },
     })
 }
 
@@ -569,13 +539,15 @@ mod tests {
     use std::time::Duration;
 
     use bevy::{
-        ecs::system::SystemState,
+        ecs::system::{RunSystemOnce, SystemState},
         input::{keyboard::KeyboardInput, mouse::MouseButtonInput},
     };
+    use common::structs::CursorLocks;
     use dcl_component::proto_components::sdk::components::pb_input_modifier::StandardInput;
     use input_manager::{CumulativeAxisData, InputPriorities, InputType};
+    use user_input::PlayerPose;
 
-    use super::super::input::play_input_script;
+    use super::super::{input::play_input_script, state::player_state};
     use super::*;
 
     /// A frame of the test app, in seconds: exact in binary, so the stage times compare exactly.
@@ -739,6 +711,36 @@ mod tests {
             )["running"],
             json!({})
         );
+    }
+
+    #[test]
+    fn the_player_state_carries_the_running_walk_under_gestures() {
+        let (mut app, _) = app();
+        app.init_resource::<CursorLocks>();
+        let state = |app: &mut App| {
+            app.world_mut()
+                .run_system_once(
+                    |pose: PlayerPose, job: Res<WalkJob>, control: Res<EngineMovementControl>| {
+                        player_state(&pose, &job, &control)
+                    },
+                )
+                .unwrap()
+                .expect("there is a player")
+        };
+        let idle = state(&mut app);
+        assert_eq!(idle["gestures"]["running"], json!({}));
+        assert_eq!(idle["gestures"]["inputModifierWithheld"], false);
+        assert!(idle["unavailable"]["gestures.running.walk"].is_string());
+        assert!(idle["position"].is_object());
+
+        let mut walk = command(1.0);
+        walk.ignore_input_modifiers = true;
+        let _rx = start(&mut app, &walk, true).unwrap();
+        frame(&mut app);
+        let walking = state(&mut app);
+        assert_eq!(walking["gestures"]["running"]["walk"], "holding KeyW");
+        assert_eq!(walking["gestures"]["inputModifierWithheld"], true);
+        assert_eq!(walking["outOfWorld"], false);
     }
 
     #[test]
