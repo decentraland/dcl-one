@@ -1,8 +1,7 @@
 import { useState } from "react";
 import { Link } from "react-router";
 
-import { Button, JumpInCTA, type PlaceCardCreator, type PlaceCardLinkProps } from "@dcl/one-ui";
-import { GeneralFavorites } from "@dcl/one-ui/foundations/icons";
+import { GeneralFavorites, Button, JumpInCTA, type PlaceCardCreator, type PlaceCardLinkProps } from "@dcl/one-ui";
 
 import {
   OWNER_EMPTY_TITLE,

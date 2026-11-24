@@ -1,16 +1,16 @@
 import { useId, type ComponentType } from "react";
 import { Link } from "react-router";
 
-import { useChromeAuth } from "@dcl/one-ui/components/AppChrome/chrome-auth";
-
 import {
+  useChromeAuth,
   GeneralGift,
   GeneralLogout,
   GeneralRightArrow,
   GeneralWallet,
   MenusNotifications,
   type IconProps,
-} from "@dcl/one-ui/foundations/icons";
+} from "@dcl/one-ui";
+
 
 import { shortAddress } from "@/data/lib/catalyst/format/address";
 import { CopyAddress } from "@dcl/one-ui/apps/sites/CopyAddress";

@@ -26,6 +26,14 @@ export type {
   DecentralandNavigationSectionId
 } from './components/NavBar/NavBar.navigation'
 
+export * from './components/AppChrome/chrome-auth'
+export * from './components/AppChrome/chrome-nav'
+export * from './components/AppChrome/thumbnail-public-base'
+export { default as ChromeBody } from './components/AppChrome/ChromeBody'
+export { default as ChromeLink } from './components/AppChrome/ChromeLink'
+export { default as SiteLayout, useSiteLayout } from './components/AppChrome/SiteLayout'
+export type { SiteLayoutProps } from './components/AppChrome/SiteLayout'
+
 export { Button } from './components/Button/Button'
 export type { ButtonProps } from './components/Button/Button'
 
