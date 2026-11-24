@@ -116,7 +116,11 @@ pub async fn run_from_env() -> anyhow::Result<()> {
     )
     .await?;
     let authority = HeldPulseGeneration::acquire(pool.clone(), audience.trim().into()).await?;
-    let pulse = crate::comms::pulse::env::run_from_env_with_generation(Some(authority.clone()));
+    let shutdown = crate::serve::shutdown_signal();
+    let pulse = crate::comms::pulse::env::run_from_env_with_generation_until(
+        Some(authority.clone()),
+        shutdown,
+    );
     tokio::pin!(pulse);
     let result = tokio::select! {
         result = &mut pulse => result,

@@ -22,14 +22,14 @@ let
   pnpmDeps = fetchPnpmDeps (pnpmDepsArgs // { pname = "foundation-ui-gallery-${pnpmDepsKey}"; });
   # What the hosted gallery compiles: the package's runtime sources, the HUD it draws and the Explorer core the HUD
   # imports. library/ui's figma/, test/, templates/ and apps/sites stay out, so changes there keep this build's
-  # identity. The directories it takes whole (components, foundations, apps/hud, explorer-core) hold their own tests,
+  # identity. The directories it takes whole (components, foundations, assets, apps/hud, explorer-core) hold their own tests,
   # so a change to one of those tests still changes it.
   src = lib.fileset.toSource {
     inherit root;
     fileset = lib.fileset.unions ((map (p: ui + p) [
       /package.json /pnpm-lock.yaml /pnpm-workspace.yaml /tsconfig.json
       /index.ts /css-modules.d.ts /content.helpers.ts /link.helpers.ts /text-styles.ts
-      /components /foundations /apps/hud
+      /components /foundations /assets /apps/hud
       /gallery/index.html /gallery/frame.html /gallery/hud.html /gallery/vite.config.ts
       /gallery/tsconfig.json /gallery/src /gallery/scripts/hosted-digest.mjs
     ]) ++ [ (root + /library/explorer-core) ]);
@@ -43,13 +43,13 @@ in stdenv.mkDerivation {
   allowedReferences = [ ];
   buildPhase = ''
     runHook preBuild
-    if grep -rIl '^version https://git-lfs.github.com/spec/v1$' foundations/typography/fonts; then
-      echo "The shared fonts contain Git LFS pointers. Run git lfs pull and build git+file:.?lfs=1#image-sites." >&2
+    if grep -rIl '^version https://git-lfs.github.com/spec/v1$' foundations/typography/fonts assets; then
+      echo "The shared fonts or images contain Git LFS pointers. Run git lfs pull and build git+file:.?lfs=1#image-sites." >&2
       exit 1
     else
       status=$?
       if [ "$status" -ne 1 ]; then
-        echo "Unable to inspect the shared fonts." >&2
+        echo "Unable to inspect the shared fonts and images." >&2
         exit "$status"
       fi
     fi

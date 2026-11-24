@@ -602,8 +602,9 @@ impl PulseDecoder {
         };
 
         // The server has handed the id to another wallet: the subject that held it is gone.
-        let mut events = match self.subjects.get(&full.subject_id) {
-            Some(held) if held.wallet != address => self.on_left(full.subject_id),
+        let held_wallet = self.subjects.get(&full.subject_id).map(|held| held.wallet);
+        let mut events = match held_wallet {
+            Some(wallet) if wallet != address => self.on_left(full.subject_id),
             _ => Vec::new(),
         };
         // A newer session of a wallet held under another id: that subject's session is already
@@ -661,8 +662,9 @@ impl PulseDecoder {
                 address,
                 movement: Box::new(movement),
                 realm: realm.clone(),
-                // the avatar jumps from wherever the subject it replaces left it
-                teleport: replaced.is_some(),
+                // A newly observed subject starts a fresh pose even if a room kept this
+                // wallet's avatar entity through the Pulse departure.
+                teleport: held_wallet != Some(address),
                 timestamp: joined_at,
             },
         ]);

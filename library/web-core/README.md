@@ -1,6 +1,6 @@
 # `library/web-core`
 
-The browser logic the web apps share, with no UI ([ADR](../../docs/adr/2026-11-18-shared-web-logic-library.md)). Sites and ui3 import it as `@web-core/*`; ui3 may import it, it never imports an app.
+The browser logic the web apps share, with no UI ([ADR](../../docs/adr/2026-11-18-shared-web-logic-library.md)). Sites and ui3 import it as `@web-core/*`; ui3 may import it, it never imports an app. The app-scoped UI in `library/ui/apps/` (the Sites flow map, and the in-world Shop session and wallet account) imports it too; `library/ui/components/` and `library/ui/foundations/` do not.
 
 | Path | What |
 | --- | --- |
@@ -20,7 +20,8 @@ The browser logic the web apps share, with no UI ([ADR](../../docs/adr/2026-11-1
 | `shop-chain-env.ts` | The Shop's chain selection from the build environment, with page overrides in development builds only |
 | `place-view.ts` | Whether a place has a thumbnail of its own, and the viewer's relation to a place |
 | `freshness/` | How old a cached copy is: its stamp, the older of two copies, a coarse duration and the per-section freshness model |
-| `flow-map.ts` | The node, edge and section model of the flow map and its statistics |
+| `flow-map/` | The node, edge and section model of the flow map and its statistics, and the Explorer's (`/play`) map built on it |
+| `status-copy.ts` | The copy and art of the HTTP error screens, shared by the Sites status page and the static error pages |
 | `creator-hub-host.ts` | The Creator Hub host contract: its paths, scope and the installed host |
 
 ## Rules

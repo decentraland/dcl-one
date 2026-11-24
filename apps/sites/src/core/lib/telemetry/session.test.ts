@@ -32,6 +32,23 @@ describe("telemetry session cookies", () => {
     expect(new Set(Array.from({ length: 100 }, () => createSid())).size).toBe(100);
   });
 
+  it("adopts the legacy analytics.js anonymous id when there is no sid yet, and an existing sid wins", () => {
+    const withCookie = (cookie: string) => new Request("https://sites.example.org/", { headers: { cookie } });
+    const uuid = "0b7f4c2e-1d3a-4e5f-9a8b-7c6d5e4f3a2b";
+    expect(ensureSid(withCookie(`ajs_anonymous_id=${uuid}`))).toEqual({ sid: uuid, created: true });
+    expect(ensureSid(withCookie(`ajs_anonymous_id=${encodeURIComponent(`"${uuid}"`)}`))).toEqual({ sid: uuid, created: true });
+    expect(ensureSid(withCookie(`ajs_anonymous_id="${uuid}"`))).toEqual({ sid: uuid, created: true });
+    expect(ensureSid(withCookie("ajs_anonymous_id=custom-id-42"))).toEqual({ sid: "custom-id-42", created: true });
+    expect(ensureSid(withCookie(`sid=current; ajs_anonymous_id=${uuid}`))).toEqual({ sid: "current", created: false });
+
+    for (const invalid of ["short", "has space here", "<script>alert(1)</script>", "a".repeat(65), '""', "%E0%A4%A"]) {
+      const created = ensureSid(withCookie(`ajs_anonymous_id=${invalid}`));
+      expect(created.created).toBe(true);
+      expect(created.sid).not.toBe(invalid);
+      expect(created.sid).toMatch(/^[0-9a-f-]{32,36}$/);
+    }
+  });
+
   it("serializes secure SID cookies and expires them with matching attributes", () => {
     const cookie = serializeSidCookie("s-1");
     expect(cookie).toContain("sid=s-1");
