@@ -12,13 +12,13 @@ const UPTIME_SECONDS: GaugeFamily<0> = GaugeFamily::new(
 );
 const PEERS: GaugeFamily<0> = GaugeFamily::new(
     "dcl_connector_peers",
-    "Peers in the published statistics snapshot.",
+    "Peers in the shared statistics snapshot. Use max across serve replicas in each fleet.",
     None,
     &[],
 );
 const ISLANDS: GaugeFamily<0> = GaugeFamily::new(
     "dcl_connector_islands",
-    "Public islands in the statistics snapshot.",
+    "Public islands in the shared statistics snapshot. Use max across serve replicas in each fleet.",
     None,
     &[],
 );

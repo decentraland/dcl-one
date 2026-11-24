@@ -27,7 +27,7 @@ const DURATION: HistogramFamily<1> = HistogramFamily::new(
 const MESSAGE_LABELS: &[&str; 3] = &["protocol", "direction", "outcome"];
 const MESSAGES: CounterFamily<3> = CounterFamily::new(
     "dcl_ws_messages_total",
-    "Application WebSocket messages by transport outcome.",
+    "Inbound application messages and outbound messages presented to start_send, by transport outcome.",
     None,
     MESSAGE_LABELS,
 );
@@ -39,7 +39,7 @@ const BYTES: CounterFamily<3> = CounterFamily::new(
 );
 const ERRORS: CounterFamily<2> = CounterFamily::new(
     "dcl_ws_transport_errors_total",
-    "WebSocket transport errors by operation.",
+    "WebSocket transport errors by operation, including readiness failures before a message is presented.",
     None,
     &["protocol", "operation"],
 );
@@ -217,6 +217,28 @@ mod tests {
     use super::*;
     use futures::{SinkExt, StreamExt, executor::block_on, sink, stream};
     use metrics_exporter_prometheus::PrometheusBuilder;
+
+    #[test]
+    fn readiness_failure_counts_only_the_payload_already_presented_to_the_sink() {
+        let recorder = PrometheusBuilder::new().build_recorder();
+        metrics::with_local_recorder(&recorder, || {
+            block_on(async {
+                let (sender, receiver) = futures::channel::mpsc::channel(2);
+                let mut socket = Socket::new(sender, "test");
+                socket.feed(Message::text("prior")).await.unwrap();
+                drop(receiver);
+                assert!(socket.send(Message::text("unseen payload")).await.is_err());
+            })
+        });
+        let scrape = recorder.handle().render();
+        for expected in [
+            "dcl_ws_transport_errors_total{protocol=\"test\",operation=\"ready\"} 1",
+            "dcl_ws_messages_total{protocol=\"test\",direction=\"out\",outcome=\"failed\"} 1",
+            "dcl_ws_message_bytes_total{protocol=\"test\",direction=\"out\",outcome=\"failed\"} 5",
+        ] {
+            assert!(scrape.lines().any(|line| line == expected), "{scrape}");
+        }
+    }
 
     #[test]
     fn counts_only_application_data_and_records_the_final_write_outcome() {

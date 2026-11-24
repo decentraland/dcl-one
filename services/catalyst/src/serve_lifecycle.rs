@@ -11,7 +11,31 @@ pub(super) fn register_metrics() {
     crate::worlds::core::metrics::register_series();
 }
 
+fn warn_retired_metrics_settings() {
+    let mut configured = Vec::new();
+    for name in [
+        "WKC_METRICS_PUBLIC_PATH",
+        "WKC_METRICS_BEARER_TOKEN",
+        "WKC_METRICS_COLLECT_DEFAULT",
+        "WKC_METRICS_RESET_AT_NIGHT",
+        "CAMERA_REEL_METRICS_BEARER_TOKEN",
+    ] {
+        for key in [name.to_owned(), format!("{name}_FILE")] {
+            if std::env::var_os(&key).is_some() {
+                configured.push(key);
+            }
+        }
+    }
+    if !configured.is_empty() {
+        tracing::warn!(
+            settings = %configured.join(", "),
+            "remove these retired metrics settings and scrape /metrics at the address configured by SERVE_METRICS_BIND"
+        );
+    }
+}
+
 pub(super) fn install_metrics(raw: &str) -> anyhow::Result<()> {
+    warn_retired_metrics_settings();
     let bind = comms::metrics::serve_metrics_bind(raw)?;
     let registry = registry()?;
     registry.listen(dcl_metrics::PrometheusBuilder::new(), bind)?;

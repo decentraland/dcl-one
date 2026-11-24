@@ -225,7 +225,15 @@ impl Registry {
         let listener = std::net::TcpListener::bind(bind)
             .with_context(|| format!("binding metrics listener on {bind}"))?;
         listener.set_nonblocking(true)?;
-        let listener = tokio::net::TcpListener::from_std(listener)?;
+        // Keep the bound socket so restarting the server preserves its port (including
+        // an OS-assigned one) and clients can queue while a replacement starts.
+        let bound_addr = listener.local_addr()?;
+        let open_socket = move || {
+            listener
+                .try_clone()
+                .and_then(tokio::net::TcpListener::from_std)
+        };
+        let mut first = Some(open_socket()?);
         let handle = self.install(builder)?;
         let scrape_handle = handle.clone();
         let app = axum::Router::new()
@@ -234,18 +242,33 @@ impl Registry {
                 "/metrics",
                 axum::routing::get(move || render(scrape_handle.clone())),
             );
-        let upkeep_handle = handle.clone();
-        runtime.spawn(async move {
-            tokio::select! {
-                _ = upkeep(upkeep_handle) => {},
-                result = axum::serve(listener, app).into_future() => {
-                    if let Err(error) = result {
-                        eprintln!("metrics listener stopped: {error}");
-                    }
-                }
-            }
-        });
+        runtime.spawn(upkeep(handle.clone()));
+        runtime.spawn(supervise_listener(bound_addr, move || {
+            let socket = first.take().map(Ok).unwrap_or_else(&open_socket);
+            let app = app.clone();
+            async move { axum::serve(socket?, app).await }
+        }));
         Ok(handle)
+    }
+}
+
+/// Axum retries TCP accept errors internally. If a serve attempt itself terminates,
+/// retry on the retained socket without interrupting recorder upkeep.
+async fn supervise_listener<F, Fut>(bind: SocketAddr, mut serve: F)
+where
+    F: FnMut() -> Fut,
+    Fut: Future<Output = std::io::Result<()>>,
+{
+    loop {
+        match serve().await {
+            Ok(()) => {
+                tracing::error!(%bind, "metrics listener exited unexpectedly; restarting in one second")
+            }
+            Err(error) => {
+                tracing::error!(%bind, %error, "metrics listener failed; restarting in one second")
+            }
+        }
+        tokio::time::sleep(std::time::Duration::from_secs(1)).await;
     }
 }
 
@@ -284,6 +307,37 @@ pub fn loopback_bind(setting: &str, raw: &str) -> anyhow::Result<SocketAddr> {
 #[cfg(test)]
 mod registry_tests {
     use super::*;
+
+    #[tokio::test(start_paused = true)]
+    async fn listener_retries_errors_and_unexpected_clean_exits_with_backoff() {
+        let start = tokio::time::Instant::now();
+        let (timestamps, mut attempts) = tokio::sync::mpsc::unbounded_channel();
+        let mut outcomes = [
+            Err(std::io::Error::other("injected listener failure")),
+            Ok(()),
+        ]
+        .into_iter();
+        let task = tokio::spawn(supervise_listener(
+            "127.0.0.1:5006".parse().unwrap(),
+            move || {
+                timestamps.send(tokio::time::Instant::now()).unwrap();
+                let result = outcomes.next();
+                async move {
+                    match result {
+                        Some(result) => result,
+                        None => std::future::pending().await,
+                    }
+                }
+            },
+        ));
+        for seconds in 0..3 {
+            assert_eq!(
+                attempts.recv().await.unwrap() - start,
+                std::time::Duration::from_secs(seconds)
+            );
+        }
+        task.abort();
+    }
 
     const LAG: HistogramFamily<1> = HistogramFamily::new(
         "consumer_lag_seconds",

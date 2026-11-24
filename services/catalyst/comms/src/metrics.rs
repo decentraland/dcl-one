@@ -1,4 +1,4 @@
-//! Recorder configuration used by Pulse and the source-compatible local Stats view.
+//! Pulse recorder setup and Prometheus builder for compatibility tests.
 pub use dcl_metrics::PrometheusHandle;
 use dcl_metrics::{PrometheusBuilder, Registry};
 use std::net::SocketAddr;

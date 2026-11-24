@@ -171,12 +171,8 @@ fn stream_paths() -> Vec<String> {
 /// The verdict, counted per protocol when refused.
 fn counted(verdict: Result<Address, SocketAuthError>) -> Result<String, SocketAuthError> {
     if let Err(e) = &verdict {
-        let kind = if e.is_unavailable() {
-            "server_error"
-        } else {
-            "client_rejected"
-        };
-        dcl_metrics::ws::rejected("social_stream", "authentication");
+        let (reason, kind) = e.rejection_labels();
+        dcl_metrics::ws::rejected("social_stream", reason);
         dcl_metrics::counter!(
             "ws_auth_errors_by_protocol",
             "protocol" => Protocol::Stream.label(),

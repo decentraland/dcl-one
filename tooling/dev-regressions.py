@@ -208,7 +208,8 @@ MANDATORY_ARCHIPELAGO = {
         "presence::tests::module_sources::selected_sql_archive_observes_shared_content_policy",
     ],
     ("node_2", "test"): [
-        "stats_metrics_startup::removed_stats_matcher_settings_do_not_interfere_with_startup",
+        "stats_metrics_startup::cli_preflight_precedes_role_startup",
+        "stats_metrics_startup::serve_warns_once_with_only_the_names_of_retired_metrics_settings",
         "comms_v4_assignment_fence::selected_identity_domains_survive_production_assignment_json_postgres_roundtrip",
         "comms_v4_assignment_fence::selected_realm_ownership_tracks_native_without_ws_and_borrows_external_rows_read_only",
         "comms_v4_assignment_fence::lost_selected_claim_and_publication_acknowledgments_reconcile_without_restoring_a_predecessor",

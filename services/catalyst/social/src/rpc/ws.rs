@@ -200,12 +200,8 @@ async fn auth_handshake(
     match verdict {
         Ok(address) => Some(address),
         Err(err) => {
-            let kind = if err.is_unavailable() {
-                "server_error"
-            } else {
-                "client_rejected"
-            };
-            dcl_metrics::ws::rejected("social_rpc", "authentication");
+            let (reason, kind) = err.rejection_labels();
+            dcl_metrics::ws::rejected("social_rpc", reason);
             dcl_metrics::counter!(
                 "ws_auth_errors_by_protocol",
                 "protocol" => Protocol::Rpc.label(),
