@@ -1867,6 +1867,61 @@ Invariants:
   published collections, never a draft's precomputed contract.
 - Every value from the path or the query reaches SQL as a bound parameter.
 
+## Builder collection lifecycle workload
+
+The builder's lifecycle routes (`services/catalyst/builder/src/collections/lifecycle.rs`,
+`services/catalyst/builder/src/terms.rs`) are rare writes by a collection's
+owner or managers: a lock and a terms acceptance per publication, a delete
+per abandoned draft, and the old builder web's publish call every five
+seconds until the chain holds the collection.
+
+Tables and what they hold:
+
+- `builder.collections.lock`: the owner's last lock, set by `POST
+  /v1/collections/{id}/lock` with the node's clock to the millisecond. It
+  holds for a day from that instant; while it holds, saves of the
+  collection, item saves and creations in it, item deletes and the
+  collection's delete answer 423. Uploads are never locked.
+- `builder.terms_acceptances`: one row per collection, signer and event,
+  with the body the warehouse receives, the email address included; an
+  acceptance names at most as many hashes as its collection has items, each
+  at most 64 ASCII letters and digits. A new acceptance deletes the row the
+  warehouse already took and merges into the one it hasn't (its hashes, then
+  the new ones it lacks, the newest 40,000 kept), so no acceptance is lost
+  before it is forwarded. A delivery marks the row forwarded only while its
+  body is still the one sent. Only the terms route inserts, updates and
+  deletes its rows, and only its forward reads and updates them; no other
+  statement reads it, no route answers it, and an operator reads it with
+  SQL.
+  A delete of the collection keeps the rows (no foreign key). The schema has
+  no role that narrows who reads it beyond those statements.
+
+Statements:
+
+| Request | Statements | Index |
+| --- | --- | --- |
+| lock | the collection row `FOR UPDATE`, the decision, one update | `collections_pkey` |
+| delete | the collection row, then its items `FOR UPDATE ORDER BY id`; the decision; the items' contents, the items and the row deleted; the upload records no item names any more | `collections_pkey`, `items_collection_created_idx`, `item_contents_pkey`, `item_contents_hash_idx` |
+| publish | the collection's items in creation order, the copy's row and item ids for its contract; to assign ids, the rows locked as for a delete and one update per item | `items_collection_created_idx`, `shop.collections` and `shop.items` primary keys |
+| terms | the collection's item count; one delete of the signer's forwarded row of the event; one read of its waiting row; one insert or update of it; one update when the forward succeeds | `items_collection_created_idx`, `terms_acceptances_collection_signer_event_idx`, `terms_acceptances_pkey` |
+| terms forward pass | claims at most 50 due rows `FOR UPDATE SKIP LOCKED`, one update per delivered row | `terms_acceptances_due_idx` |
+
+Invariants:
+
+- One transaction per write, holding the collection row before its items
+  (the order of the item writes and the publications), with the decision
+  made again inside it.
+- A Polygon RPC read (`eth_getCode` and `itemsCount()` at the finalized
+  block, kept five seconds per contract, one read at a time) runs before the
+  transaction and never holds a connection.
+- A delete leaves no upload record that no item names, and touches no row
+  of another collection.
+- The forward is at least once: at most six attempts, the wait doubling from
+  a minute; a row the warehouse took is never claimed again.
+
+Upgrade: step `0087_builder_collection_lock` adds `collections.lock`; the
+schema's object pass creates `builder.terms_acceptances` and its indexes.
+
 ## Builder third parties workload
 
 The builder's third-party routes (`services/catalyst/builder/src/third_parties.rs`,
@@ -1919,6 +1974,21 @@ Invariants:
 Upgrade: the schema's object pass creates `builder.virtual_third_parties`
 and its constraints; no step. The import's `virtual_third_party` step
 copies upstream's rows (`tooling/migration/sources/builder-server/MAPPING.md`).
+
+## Builder forum workload
+
+Each collection can create one forum topic, whose body describes at most
+20 items in creation order. Claims and link writes use the collection's
+primary key; item descriptions use `items_collection_created_idx`. No
+additional index or table is needed. A committee reply reads only its
+collection's forum post id and resolves the topic through the configured
+forum API. Calls hold no database connection.
+
+For a standard collection's creator name, builder reads, never writes,
+`content.active_pointers` (`pointer`, `entity_id`) and `content.deployments`
+(`entity_id`, `entity_type`, `entity_metadata`): the active profile's first
+avatar supplies a nonempty claimed name; otherwise the address is shortened.
+The pointer key and deployment entity index serve this bounded lookup.
 
 ## Notification writer
 
