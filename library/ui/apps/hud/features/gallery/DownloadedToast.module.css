@@ -1,13 +1,18 @@
 .folder {
-  display: block;
-  margin: 2px auto 0;
+  display: inline-block;
+  max-width: 260px;
+  margin-left: 2px;
   padding: 0;
   border: 0;
   background: none;
-  color: var(--chat-link);
+  color: var(--photo-download-path);
   font: inherit;
+  font-weight: var(--fw-semibold);
   text-decoration: underline;
-  overflow-wrap: anywhere;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  vertical-align: bottom;
   cursor: pointer;
   /* the toast host lets clicks through to the world */
   pointer-events: auto;
@@ -16,6 +21,6 @@
   cursor: default;
 }
 .folder:focus-visible {
-  outline: 2px solid var(--chat-link);
+  outline: 2px solid var(--photo-download-path);
   outline-offset: 2px;
 }

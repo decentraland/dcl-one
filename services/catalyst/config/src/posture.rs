@@ -1127,6 +1127,7 @@ const THIRD_PARTY_SECRETS: &[(&str, Option<&str>, &str)] = &[
         "SendGrid's mail API",
     ),
     ("SLACK_BOT_TOKEN", None, "Slack Web API"),
+    ("MAGIC_SECRET_KEY", None, "Magic account deletion API"),
     (
         "ANALYTICS_API_TOKEN",
         Some("ANALYTICS_API_URL"),

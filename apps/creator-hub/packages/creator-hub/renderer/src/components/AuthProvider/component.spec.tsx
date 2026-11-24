@@ -33,6 +33,7 @@ vi.mock('/@/lib/auth', () => ({
   SignInError: class extends Error {},
   AuthServerProvider: class {
     static setAuthServerUrl = vi.fn();
+    static setIdentityFetcher = vi.fn();
     static setAuthDappUrl = vi.fn();
     static hasValidIdentity = vi.fn();
     static getAccount = vi.fn();

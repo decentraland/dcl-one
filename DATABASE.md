@@ -2717,6 +2717,13 @@ replicas round-robin without affinity, so the state lives in three
 `explore_api` tables (`schemas/11_explore_api.sql`) every replica reads and
 writes through the explore pool, as the upstream auth server keeps it in Redis.
 
+Socket.IO sessions hold the requests they create on the replica that owns
+the connection. The gateway consistently routes Engine.IO polling and
+upgrades by client address. While the replica has bound requests, it checks
+their live validation and outcome state through one primary-key batch query
+per 500 ms pass. The socket and HTTP poll share a row-locked outcome claim.
+If the socket cannot queue the event, the claim rolls back for HTTP pickup.
+
 Workload: a sign-in is one create, one or two recover reads, a validation mark
 at most, one outcome and a poll about once a second until the outcome lands;
 an identity is one create and one pickup. Rows are small (a challenge of a
@@ -2733,8 +2740,8 @@ identities (100 per network). No production rate is measured.
   WHERE status = 'signed' FOR UPDATE) RETURNING` moves it to `fulfilled` and
   clears `outcome`, `params` and `challenge`, so a concurrent poller on any
   replica waits on the row, finds it fulfilled and answers 410. A request
-  expires 5 minutes after its creation; the read that finds it expired
-  deletes it and answers 410, and the sweep drops the rest 5 minutes later.
+  expires 5 minutes after its creation. Reads answer 404 after expiry, and
+  the periodic sweep deletes expired rows.
 - `auth_identities`: one row per parked identity, keyed by its UUID, holding
   the identity document with its ephemeral private key for at most an hour.
   The key is stored in clear, as the upstream auth server keeps it in Redis:
@@ -2772,10 +2779,24 @@ per table (`hashtextextended('explore_api.auth_requests:admission', 0)` and the
 identities' twin), counts the live rows and those of its network in one pass
 and inserts in the same transaction, so concurrent creates on every replica
 admit one at a time and never overshoot. A full request table first drops
-requests past their grace, then the oldest delivered ones, just enough to admit
+expired requests, then the oldest delivered ones, just enough to admit
 one more. The count scans the table, bounded by the caps to about 10,000 rows;
 sign-in creates are rare enough that serializing them on the lock costs nothing
 measurable.
+
+Magic account deletion inserts one short-lived row per verified request into
+`explore_api.magic_deletion_attempts`. A digest of the wallet address and Magic
+token ID is the unique key. An advisory transaction lock serializes the
+one-use claim across replicas. The default hourly caps allow 3 attempts per
+wallet, 20 per network and 120 globally. A network is one IPv4 address or an
+IPv6 /48. Requests with no trusted source share a network bucket. A refused
+request writes nothing and counts in
+`explore_magic_deletion_rate_limited_total` by the cap it hit. Admission counts the preceding hour
+through the requested-at index, which also serves the one-day expiry sweep.
+The row stores the wallet and source digests and the outcome category. A row
+still marked requested can represent an interrupted operation. The table
+holds neither DID tokens nor Magic response payloads. The relay sweeper
+also prunes these rows when Magic deletion is configured.
 
 Contract-wallet budget: contract-wallet calls (`isValidSignature`, including
 those of the signed-fetch chain on `POST /identities`) are budgeted in process
@@ -2795,14 +2816,16 @@ once per window when that happens. During an RPC outage, after 20 failed calls
 minute.
 
 Expiry compares the stored instant with the handling replica's clock, so
-replicas need synchronized clocks (NTP); a second of skew moves the 410 by a
-second. The periodic `auth-api-identity-sweep` job runs on every replica
-every 30 seconds: three idempotent `DELETE`s by expiry (requests past their
-grace, identities past their hour, tombstones past 14 days), so replicas
-sweeping at once delete each row once. The expiry indexes
+replicas need synchronized clocks (NTP). The periodic
+`auth-api-identity-sweep` job runs on every replica every 30 seconds. It
+deletes expired requests, expired identities, tombstones older than 14
+days and, when Magic deletion is configured, Magic deletion attempts older
+than a day. Each row is deleted once across replicas. The expiry indexes
 (`auth_requests_expiration_idx`, `auth_identities_expiration_idx`,
-`auth_identity_tombstones_created_idx`) serve those deletes; every other read
-and write is by primary key. Nothing references these rows and they
+`auth_identity_tombstones_created_idx`,
+`magic_deletion_attempts_requested_idx`) serve those deletes. The Magic
+admission's hourly count reads that last index too. Every other read and
+write is by primary key. Nothing references these rows and they
 reference nothing: no FK. The bootstrap defines the tables; an existing
 database gains them from the object pass, so no step exists. A restart of
 every replica keeps the relay's state.

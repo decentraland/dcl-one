@@ -25,6 +25,7 @@
 - [Explorer tests through the console](adr/2026-10-29-explorer-tests-through-the-console.md)
 - [Vendored Basis Universal transcoder](adr/2026-11-04-vendored-basisu.md)
 - [Opt-in UASTC texture upload](adr/2026-11-06-opt-in-uastc-texture-upload.md)
+- [Event posters for native players](adr/2026-11-24-event-poster-raster-delivery.md)
 - [Shared UI library](adr/2026-10-30-shared-ui-library.md)
 - [Shared UI import name](adr/2026-11-09-shared-ui-import-name.md)
 - [Hand-written mappings are checked against a tracked manifest](adr/2026-11-20-figma-mapping-manifest.md)
