@@ -13,6 +13,8 @@ use super::{Channel, Command, Shared};
 /// Reliable, unreliable sequenced, unreliable unsequenced: the three channels Pulse uses.
 const CHANNEL_COUNT: usize = 3;
 const SERVICE_TICK: Duration = Duration::from_millis(1);
+/// The Pulse server's ENet-CSharp host drops datagrams over 1280 bytes.
+const PULSE_MTU: u16 = 1280;
 
 /// Movement goes on channel 1 past the local sender throttle, as the native client and Pulse send
 /// it: a throttled drop of the last input of a walk is never repaired, so observers keep the step
@@ -59,6 +61,9 @@ fn run(socket: UdpSocket, target: SocketAddr, shared: Arc<Shared>, commands: Rec
         Ok(host) => host,
         Err(error) => return shared.transport_failed(format!("ENet host: {error:?}")),
     };
+    if let Err(error) = host.set_mtu(PULSE_MTU) {
+        return shared.transport_failed(format!("ENet MTU: {error:?}"));
+    }
     let peer = match host.connect(target, CHANNEL_COUNT, 0) {
         Ok(peer) => peer.id(),
         Err(error) => return shared.transport_failed(format!("ENet connect: {error:?}")),

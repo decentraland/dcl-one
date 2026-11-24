@@ -52,6 +52,26 @@ const MAX_HELD_RELIABLE: usize = 65_536;
 /// connection fails alike.
 const MAX_HELD_BYTES: usize = 16 * 1024 * 1024;
 
+/// The Pulse server's ENet-CSharp host drops datagrams over 1280 bytes.
+const PULSE_MTU: u16 = 1280;
+
+/// The driver's host: one peer (the server), three channels, no compressor/checksum
+/// (`HostSettings` defaults), and the server's MTU, set before `connect` copies it to the peer.
+fn pulse_host<S: enet::Socket>(socket: S) -> Result<enet::Host<S>, String> {
+    let mut host = enet::Host::new(
+        socket,
+        enet::HostSettings {
+            peer_limit: 1,
+            channel_limit: CHANNEL_COUNT,
+            ..Default::default()
+        },
+    )
+    .map_err(|err| format!("enet host create failed: {err}"))?;
+    host.set_mtu(PULSE_MTU)
+        .map_err(|err| format!("enet set mtu failed: {err}"))?;
+    Ok(host)
+}
+
 pub(super) fn spawn(
     config: PulseTransportConfig,
     channels: PulseDriverChannels,
@@ -292,17 +312,9 @@ async fn drive(
         Err(err) => return fail(channels, format!("udp bind failed: {err}")),
     };
 
-    // One peer (the server), three channels, no compressor/checksum (`HostSettings` defaults).
-    let mut host = match enet::Host::new(
-        socket,
-        enet::HostSettings {
-            peer_limit: 1,
-            channel_limit: CHANNEL_COUNT,
-            ..Default::default()
-        },
-    ) {
+    let mut host = match pulse_host(socket) {
         Ok(host) => host,
-        Err(err) => return fail(channels, format!("enet host create failed: {err}")),
+        Err(message) => return fail(channels, message),
     };
 
     let peer = match host.connect(address, CHANNEL_COUNT, 0) {
@@ -426,7 +438,7 @@ fn packet_for_frame(frame: &PulseFrame) -> (u8, enet::Packet) {
 /// Queue one outbound [`PulseFrame`] onto the peer. Channel and packet kind together reproduce the
 /// server's `ENetChannel` wire commands: reliable → `SEND_RELIABLE`, unreliable-sequenced →
 /// `SEND_UNRELIABLE`, unreliable-unsequenced → `SEND_UNSEQUENCED`.
-fn queue_frame(host: &mut enet::Host<PulseSocket>, peer: enet::PeerID, frame: &PulseFrame) {
+fn queue_frame<S: enet::Socket>(host: &mut enet::Host<S>, peer: enet::PeerID, frame: &PulseFrame) {
     let (channel_id, packet) = packet_for_frame(frame);
     if let Err(err) = host.peer_mut(peer).send(channel_id, &packet) {
         bevy::log::warn!("pulse: peer send failed: {err}");

@@ -93,15 +93,22 @@ fn holding_past_the_byte_cap_is_an_error() {
 
 /// A host on a loopback socket of its own, with the driver's settings.
 fn loopback_host() -> enet::Host<std::net::UdpSocket> {
-    enet::Host::new(
-        std::net::UdpSocket::bind("127.0.0.1:0").unwrap(),
-        enet::HostSettings {
-            peer_limit: 1,
-            channel_limit: CHANNEL_COUNT,
-            ..Default::default()
-        },
-    )
-    .unwrap()
+    pulse_host(std::net::UdpSocket::bind("127.0.0.1:0").unwrap()).unwrap()
+}
+
+/// Service both hosts until each reports its side of the connection up.
+fn connect_pair<S: enet::Socket, C: enet::Socket>(
+    server: &mut enet::Host<S>,
+    client: &mut enet::Host<C>,
+) {
+    let deadline = Instant::now() + Duration::from_secs(5);
+    let (mut client_up, mut server_up) = (false, false);
+    while !(client_up && server_up) {
+        assert!(Instant::now() < deadline, "the connection never came up");
+        client_up |= matches!(client.service(), Ok(Some(enet::Event::Connect { .. })));
+        server_up |= matches!(server.service(), Ok(Some(enet::Event::Connect { .. })));
+        thread::sleep(Duration::from_millis(1));
+    }
 }
 
 /// A driver that gives up on a connected peer, its inbound backlog over a cap or ENet's service
@@ -114,14 +121,7 @@ fn abandoning_a_connection_tells_the_server_at_once() {
     let mut client = loopback_host();
     let address = server.socket().local_addr().unwrap();
     let peer = client.connect(address, CHANNEL_COUNT, 0).unwrap().id();
-    let deadline = Instant::now() + Duration::from_secs(5);
-    let (mut client_up, mut server_up) = (false, false);
-    while !(client_up && server_up) {
-        assert!(Instant::now() < deadline, "the connection never came up");
-        client_up |= matches!(client.service(), Ok(Some(enet::Event::Connect { .. })));
-        server_up |= matches!(server.service(), Ok(Some(enet::Event::Connect { .. })));
-        thread::sleep(Duration::from_millis(1));
-    }
+    connect_pair(&mut server, &mut client);
 
     let (mut link, mut channels) = pulse_channels(1);
     abandon(&mut client, peer, &mut channels, "gave up".to_owned());
@@ -139,6 +139,77 @@ fn abandoning_a_connection_tells_the_server_at_once() {
         link.status.try_recv(),
         Ok(PulseStatus::Failed(message)) if message == "gave up"
     ));
+}
+
+/// A server socket that drops every datagram over 1280 bytes, as the Pulse server does.
+struct DropsOver1280(std::net::UdpSocket);
+
+impl enet::Socket for DropsOver1280 {
+    type Address = SocketAddr;
+    type Error = io::Error;
+
+    fn init(&mut self, options: enet::SocketOptions) -> io::Result<()> {
+        enet::Socket::init(&mut self.0, options)
+    }
+
+    fn send(&mut self, address: SocketAddr, buffer: &[u8]) -> io::Result<usize> {
+        enet::Socket::send(&mut self.0, address, buffer)
+    }
+
+    fn receive(
+        &mut self,
+        buffer: &mut [u8; enet::MTU_MAX],
+    ) -> io::Result<Option<(SocketAddr, enet::PacketReceived)>> {
+        loop {
+            match enet::Socket::receive(&mut self.0, buffer)? {
+                Some((_, enet::PacketReceived::Complete(len))) if len > 1280 => continue,
+                received => return Ok(received),
+            }
+        }
+    }
+}
+
+/// A reliable message larger than one datagram reaches a server that drops datagrams over
+/// 1280 bytes. The server keeps ENet's default MTU, so the driver's own setting decides.
+#[test]
+fn a_fragmented_reliable_message_reaches_a_server_capped_at_1280_bytes() {
+    let mut server = enet::Host::new(
+        DropsOver1280(std::net::UdpSocket::bind("127.0.0.1:0").unwrap()),
+        enet::HostSettings {
+            peer_limit: 1,
+            channel_limit: CHANNEL_COUNT,
+            ..Default::default()
+        },
+    )
+    .unwrap();
+    let mut client = loopback_host();
+    let address = server.socket().0.local_addr().unwrap();
+    let peer = client.connect(address, CHANNEL_COUNT, 0).unwrap().id();
+    connect_pair(&mut server, &mut client);
+
+    let frame = PulseFrame {
+        bytes: (0..11_223u32).map(|i| i as u8).collect(),
+        reliability: PulseReliability::Reliable,
+        kind: crate::pulse::transport::FrameKind::Control,
+    };
+    queue_frame(&mut client, peer, &frame);
+
+    let deadline = Instant::now() + Duration::from_secs(3);
+    let received = loop {
+        assert!(
+            Instant::now() < deadline,
+            "the message never reached the server"
+        );
+        let _ = client.service();
+        if let Ok(Some(enet::Event::Receive {
+            channel_id, packet, ..
+        })) = server.service()
+        {
+            break (channel_id, packet.data().to_vec());
+        }
+        thread::sleep(Duration::from_millis(1));
+    };
+    assert_eq!(received, (CHANNEL_RELIABLE, frame.bytes));
 }
 
 #[test]
