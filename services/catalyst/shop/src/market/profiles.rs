@@ -1,16 +1,20 @@
 //! `/lambdas/profiles`: the profile entity comes from `content.deployments`
 //! (peer sync), every wearable and emote it names is checked against the
-//! collections subgraphs (token ids included, re-emitted `<urn>:<tokenId>`
-//! as `ENSURE_ERC_721` does), its third-party wearables against their
+//! `nft` index (`owned_items`: token ids included, re-emitted
+//! `<urn>:<tokenId>` as `ENSURE_ERC_721` does, the newest transfer first
+//! when the profile names no token), its third-party wearables against their
 //! mappings and the chain (`third_party::sanitize_third_party_urns`,
 //! appended after the others as the old lambdas did) and `hasClaimedName`
 //! against the marketplace subgraph. The answer is decentraland/lamb2's
-//! `{ timestamp, avatars }`, the timestamp the entity's. With no collections
-//! subgraph the items are served as deployed (a node with no ownership
-//! source, such as an island); a reader that is configured but unreachable
-//! fails the request closed (503) rather than serving cosmetics nobody
-//! proved. The one exception is a linked third-party item whose chain read
-//! failed: only that profile's linked items are left out.
+//! `{ timestamp, avatars }`, the timestamp the entity's. A node that does
+//! not walk the index (`owned_items::walks_here`: an island, a journey, a
+//! testnet) serves the items as deployed. One that walks it reads the
+//! networks the items name once their index is complete
+//! (`owned_items::Rule::Complete`: an index published once since its last
+//! rewind, however long ago); before that the request fails closed (503)
+//! rather than serving cosmetics nobody proved or stripping items their
+//! owners hold. The one exception is a linked third-party item whose chain
+//! read failed: only that profile's linked items are left out.
 //!
 //! `POST /lambdas/profiles/metadata` serves the compact projection of the same
 //! processed profiles, as asset-bundle-registry's `/profiles/metadata`.
@@ -29,6 +33,7 @@ use serde_json::{Value, json};
 use crate::content::queries::{active_entity_docs_by_pointers, retain_non_denylisted};
 
 use super::graph;
+use super::owned_items::{self, Rule};
 use super::third_party;
 use super::{MarketplaceState, SharedState, bad_request, lambdas_internal_error, not_found};
 
@@ -140,7 +145,7 @@ fn collect_ownership_urns(metadata: &Value) -> Vec<String> {
 /// An owned item as `profiles.ts` re-emits it: `<owned urn>:<the named token
 /// id, or the first one held>`; `None` when the URN is not held or the named
 /// token is not among the held ones. The URN must equal the inventory's
-/// exactly, as lamb2's `Map` lookup does: the subgraphs spell L1 `ethereum`,
+/// exactly, as lamb2's `Map` lookup does: the index spells L1 `ethereum`,
 /// so a `mainnet` spelling is not owned.
 fn owned_item(item: &str, owned: &OwnedTokens) -> Option<String> {
     let (urn, token_id) = split_urn_and_token_id(item);
@@ -155,8 +160,8 @@ fn owned_item(item: &str, owned: &OwnedTokens) -> Option<String> {
     })
 }
 
-/// Keeps the base items and the owned ones (`owned: None`, no collections
-/// reader: every item as deployed). An owned emote becomes exactly
+/// Keeps the base items and the owned ones (`owned: None`, no ownership
+/// source: every item as deployed). An owned emote becomes exactly
 /// `{ urn, slot }`. `emotes` is always present, `[]` when not deployed.
 fn filter_avatars_by_ownership(avatars: &mut [Value], owned: Option<&OwnedTokens>) {
     for avatar_val in avatars.iter_mut() {
@@ -442,7 +447,21 @@ pub async fn process_profiles_positional(
     state: &MarketplaceState,
     entities: &[Value],
 ) -> Result<Vec<Option<Value>>, String> {
-    let collections = graph::any_collections_reader(&state.index);
+    Ok(process_profiles_observed(state, entities)
+        .await?
+        .into_iter()
+        .map(|(profile, _)| profile)
+        .collect())
+}
+
+/// [`process_profiles_positional`], each profile with the publications its
+/// chunk's ownership read observed (`None`: the chunk named no on-chain
+/// item, so nothing was read and the profile does not depend on the index).
+async fn process_profiles_observed(
+    state: &MarketplaceState,
+    entities: &[Value],
+) -> Result<Vec<(Option<Value>, Option<owned_items::Publications>)>, String> {
+    let collections = owned_items::walks_here(state);
     state.warm_faces(
         entities
             .iter()
@@ -469,6 +488,7 @@ pub async fn process_profiles_positional(
             }
         }
         let mut owned: HashMap<String, OwnedTokens> = HashMap::new();
+        let mut observed: Option<owned_items::Publications> = None;
         let mut names_by_address: HashMap<String, Vec<String>> = HashMap::new();
         let mut third_party_by_address: HashMap<String, Vec<String>> = HashMap::new();
         if !addresses.is_empty() {
@@ -498,9 +518,11 @@ pub async fn process_profiles_positional(
             let (owned_res, names, third_party) = tokio::join!(
                 async {
                     if collections && !requested.is_empty() {
-                        graph::owned_tokens(&state.index, &requested).await
+                        owned_items::owned_tokens_observed(&state.pool, &requested, Rule::Complete)
+                            .await
+                            .map_err(|e| e.to_string())
                     } else {
-                        Ok(HashMap::new())
+                        Ok((HashMap::new(), None))
                     }
                 },
                 futures::future::join_all(names_futs),
@@ -508,7 +530,9 @@ pub async fn process_profiles_positional(
                     .buffer_unordered(THIRD_PARTY_CONCURRENCY)
                     .collect::<HashMap<String, Vec<String>>>()
             );
-            owned = owned_res?;
+            let (read, seen) = owned_res?;
+            owned = read;
+            observed = seen.map(|seen| seen.publications);
             for (address, names) in addresses.iter().zip(names) {
                 names_by_address.insert(
                     address.clone(),
@@ -548,7 +572,7 @@ pub async fn process_profiles_positional(
             apply_claimed_name(metadata, names);
         }
         profiles.extend(chunk.iter().zip(prepared).map(|(entity, p)| {
-            p.map(|(_, mut metadata)| {
+            let profile = p.map(|(_, mut metadata)| {
                 json!({
                     "timestamp": entity.get("timestamp").cloned().unwrap_or(Value::Null),
                     "avatars": metadata
@@ -557,7 +581,8 @@ pub async fn process_profiles_positional(
                         .map(Value::take)
                         .unwrap_or_else(|| json!([])),
                 })
-            })
+            });
+            (profile, observed)
         }));
     }
     Ok(profiles)
@@ -584,20 +609,28 @@ pub(super) async fn active_entities(
     Ok(docs.iter().filter_map(|d| d.to_value()).collect())
 }
 
-/// Processes a batch and fills the per-id cache (`Null` for absent pointers).
-async fn process_and_cache_profiles(
+/// Processes a batch and fills the per-id cache (`Null` for absent
+/// pointers). A profile whose items were checked is filed under the
+/// publications that check observed; one that named no on-chain item, and
+/// an absent pointer, under `looked_up` (the key read before, which they do
+/// not depend on).
+pub(super) async fn process_and_cache_profiles(
     state: &MarketplaceState,
     pointers: &[String],
     entities: &[Value],
+    looked_up: owned_items::Publications,
 ) -> Result<Vec<(String, Value)>, String> {
-    let processed = process_profiles_positional(state, entities).await?;
+    let processed = process_profiles_observed(state, entities).await?;
     let mut out = Vec::with_capacity(entities.len());
     let mut filled: HashSet<String> = Default::default();
-    for (entity, profile) in entities.iter().zip(processed) {
+    for (entity, (profile, observed)) in entities.iter().zip(processed) {
         let key = entity_eth_address(entity).unwrap_or_default();
         let profile = profile.unwrap_or(Value::Null);
         if !key.is_empty() && filled.insert(key.clone()) {
-            state.profile_cache.insert(key.clone(), profile.clone());
+            state.profile_cache.insert(
+                (key.clone(), observed.unwrap_or(looked_up)),
+                profile.clone(),
+            );
         }
         if !profile.is_null() {
             out.push((key, profile));
@@ -605,7 +638,9 @@ async fn process_and_cache_profiles(
     }
     for pointer in pointers {
         if filled.insert(pointer.clone()) {
-            state.profile_cache.insert(pointer.clone(), Value::Null);
+            state
+                .profile_cache
+                .insert((pointer.clone(), looked_up), Value::Null);
         }
     }
     Ok(out)
@@ -639,10 +674,18 @@ async fn profiles_via_cache(
     pointers: &[String],
 ) -> Result<Vec<(String, Value)>, Failure> {
     let wanted = unique_pointers(pointers);
+    // The key of every hit and fill: a profile read under another
+    // publication of the nft index is never served.
+    let publications = owned_items::Publications::current(state)
+        .await
+        .map_err(|_| Failure::Db)?;
     let mut found: HashMap<String, Value> = Default::default();
     let mut missing: Vec<String> = Vec::new();
     for pointer in &wanted {
-        match state.profile_cache.get_fresh(pointer) {
+        match state
+            .profile_cache
+            .get_fresh(&(pointer.clone(), publications))
+        {
             Some(v) => {
                 found.insert(pointer.clone(), v);
             }
@@ -653,7 +696,7 @@ async fn profiles_via_cache(
         let entities = active_entities(state, &missing)
             .await
             .map_err(|()| Failure::Db)?;
-        for (key, profile) in process_and_cache_profiles(state, &missing, &entities)
+        for (key, profile) in process_and_cache_profiles(state, &missing, &entities, publications)
             .await
             .map_err(Failure::Reader)?
         {
@@ -679,11 +722,14 @@ async fn processed_profiles(
     if pointers.len() <= PROFILE_BATCH_MAX {
         return profiles_via_cache(state, pointers).await;
     }
+    let publications = owned_items::Publications::current(state)
+        .await
+        .map_err(|_| Failure::Db)?;
     let entities = active_entities(state, pointers)
         .await
         .map_err(|()| Failure::Db)?;
     let mut by_pointer: HashMap<String, Value> = HashMap::new();
-    for (pointer, profile) in process_and_cache_profiles(state, pointers, &entities)
+    for (pointer, profile) in process_and_cache_profiles(state, pointers, &entities, publications)
         .await
         .map_err(Failure::Reader)?
     {
@@ -702,27 +748,14 @@ async fn fetch_profile_for_id(
     state: &MarketplaceState,
     id: &str,
 ) -> Result<Option<Value>, Failure> {
+    // Through the per-id cache, so a fill is filed under the publications its
+    // ownership read observed (`process_and_cache_profiles`).
     let key = id.to_lowercase();
-    let cached = state
-        .profile_cache
-        .get_or_fetch(key.clone(), || async {
-            let entities = active_entities(state, std::slice::from_ref(&key))
-                .await
-                .map_err(|()| Failure::Db)?;
-            let Some(entity) = entities.into_iter().next() else {
-                return Ok(Value::Null);
-            };
-            let processed = process_profiles_positional(state, std::slice::from_ref(&entity))
-                .await
-                .map_err(Failure::Reader)?;
-            Ok(processed
-                .into_iter()
-                .next()
-                .flatten()
-                .unwrap_or(Value::Null))
-        })
-        .await?;
-    Ok(if cached.is_null() { None } else { Some(cached) })
+    Ok(profiles_via_cache(state, std::slice::from_ref(&key))
+        .await?
+        .into_iter()
+        .next()
+        .map(|(_, profile)| profile))
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -832,6 +865,13 @@ pub async fn profiles(
             }
         };
     }
+    let publications = match owned_items::Publications::current(&state).await {
+        Ok(publications) => publications,
+        Err(_) => {
+            count_lookup_failure("lambdas_profiles", Failure::Db.layer());
+            return Json(json!([])).into_response();
+        }
+    };
     let entities = match active_entities(&state, &pointers).await {
         Ok(e) => e,
         Err(()) => {
@@ -846,7 +886,7 @@ pub async fn profiles(
         return StatusCode::NOT_MODIFIED.into_response();
     }
 
-    match process_and_cache_profiles(&state, &pointers, &entities).await {
+    match process_and_cache_profiles(&state, &pointers, &entities, publications).await {
         Ok(profiles) => {
             let profiles: Vec<Value> = profiles.into_iter().map(|(_, profile)| profile).collect();
             Json(Value::Array(profiles)).into_response()

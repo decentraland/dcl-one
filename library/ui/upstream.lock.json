@@ -605,7 +605,7 @@
       },
       "files": {
         "library/ui/figma/MAINTENANCE.md": {
-          "sha256": "82555a9334f21354fee8b4220547406993042eaf7f35acdbf0e3551975ea4f2c",
+          "sha256": "7368ba2514bd4e9f065f58ccd00362d3c6126f63c55274eee1ba06250634ef25",
           "fds": null,
           "deviation": [
             "live-access-removed",
@@ -2510,7 +2510,7 @@
           ]
         },
         "library/ui/figma/src/cli.ts": {
-          "sha256": "d1a59fba14af4f2f7f6570ae303c98caccd318d0fc131146f406170b444c8d4b",
+          "sha256": "3f4459bb8f839652d19a153f6f8342114732a19217b89ea19199c9e527ac70bc",
           "fds": {
             "path": "dcl-mcp-figma/src/cli.ts",
             "sha256": "e90f73241aaa4750f564e48c836d169a903a24cbcc53fb2b2d55952aa5b9eda4"
@@ -2660,14 +2660,14 @@
           ]
         },
         "library/ui/figma/src/contract/manifest-refresh.test.ts": {
-          "sha256": "faa97cffd3d7024cb5ae2400811a33cf9b8e02f775222598ee093097e5cbe5dd",
+          "sha256": "a4dd2042a94e6ab0b3cce2a0c8fc9f9ee3d1bd67c70ffecd79cff0b09e790167",
           "fds": null,
           "deviation": [
             "mapping-manifest"
           ]
         },
         "library/ui/figma/src/contract/manifest-refresh.ts": {
-          "sha256": "63933bb37e7c1b5a79d16b33b16fb96af5f5ea6600ccc657229395f8655700b1",
+          "sha256": "7391ab333a864faaf66bec1236ef98398a56f8a9b265821be56d225b15908080",
           "fds": null,
           "deviation": [
             "mapping-manifest"

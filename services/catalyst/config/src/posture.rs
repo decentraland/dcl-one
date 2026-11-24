@@ -726,7 +726,7 @@ pub fn check(config: &Config, env: &Lookup) -> anyhow::Result<()> {
         return Ok(());
     };
     if posture == Posture::Mirror {
-        refuse_unfiltered_profiles(config)?;
+        refuse_unfiltered_profiles(config, env)?;
     }
     if posture != Posture::Mirror {
         let name = posture.name();
@@ -782,36 +782,114 @@ pub fn worlds_names_reader(config: &Config) -> anyhow::Result<Option<&'static st
     ))
 }
 
-/// A mirror replaces a Catalyst whose lambdas always check the profiles'
-/// items and names against their owner: the collections and marketplace
-/// subgraphs the posture names may not be blanked (an island, with no
-/// ownership source, serves the items as deployed).
-fn refuse_unfiltered_profiles(config: &Config) -> anyhow::Result<()> {
+/// Wearable and emote ownership is read from the nft index alone, which a
+/// node walks with `MARKETPLACE_NFT_INDEX_ENABLED` on mainnet. A node that
+/// names a collections subgraph and does not walk the index gets the
+/// warning returned here: the subgraph checks no ownership.
+pub fn unchecked_profile_items(config: &Config) -> Option<&'static str> {
+    let walks = config.marketplace.marketplace_nft_index_enabled
+        && config.node.eth_network.trim() == "mainnet";
     let upstreams = &config.market_upstreams;
-    let blank: Vec<&str> = [
-        (
-            "ETH_COLLECTIONS_SUBGRAPH_URL",
-            &upstreams.eth_collections_subgraph_url,
-        ),
-        (
-            "MATIC_COLLECTIONS_SUBGRAPH_URL",
-            &upstreams.matic_collections_subgraph_url,
-        ),
-        (
-            "MARKETPLACE_SUBGRAPH_URL",
-            &upstreams.marketplace_subgraph_url,
-        ),
-    ]
-    .into_iter()
-    .filter_map(|(key, value)| Config::non_empty(value).is_none().then_some(key))
-    .collect();
-    if !blank.is_empty() {
+    let subgraph = Config::non_empty(&upstreams.eth_collections_subgraph_url).is_some()
+        || Config::non_empty(&upstreams.matic_collections_subgraph_url).is_some();
+    (subgraph && !walks).then_some(
+        "a collections subgraph URL is set, but this node does not walk the nft index \
+         (MARKETPLACE_NFT_INDEX_ENABLED off, or ETH_NETWORK other than mainnet): the subgraphs check \
+         no ownership, so profiles and outfits are served as deployed and the owned wearable and \
+         emote routes answer the nft-index unavailable envelope",
+    )
+}
+
+/// A mirror replaces a Catalyst whose lambdas always check the profiles'
+/// items and names against their owner. The names read the marketplace
+/// subgraph, which may not be blanked; the wearables and emotes read the
+/// nft index, so on mainnet (the chains the walk reads) the index stays on
+/// with a JSON-RPC endpoint for chain 137 (`TRADE_RPC_URLS`; chain 1 falls
+/// back to `ETH_RPC_URL`, which a mirror always has). An island, with no
+/// ownership source, and a testnet mirror serve the items as deployed.
+fn refuse_unfiltered_profiles(config: &Config, env: &Lookup) -> anyhow::Result<()> {
+    if Config::non_empty(&config.market_upstreams.marketplace_subgraph_url).is_none() {
         anyhow::bail!(
-            "{ENV}=mirror checks every profile's wearables, emotes and names against their owner, \
-             but {} {} empty: unset {} to read Decentraland's subgraphs",
-            blank.join(", "),
-            if blank.len() == 1 { "is" } else { "are" },
-            if blank.len() == 1 { "it" } else { "them" },
+            "{ENV}=mirror checks every profile's names against their owner, but \
+             MARKETPLACE_SUBGRAPH_URL is empty: unset it to read Decentraland's subgraph"
+        );
+    }
+    if config.node.eth_network.trim() != "mainnet" {
+        return Ok(());
+    }
+    if !config.marketplace.marketplace_nft_index_enabled {
+        anyhow::bail!(
+            "{ENV}=mirror checks every profile's wearables and emotes against the nft index, but \
+             MARKETPLACE_NFT_INDEX_ENABLED is off: unset it to walk the index"
+        );
+    }
+    // The walk takes its contracts from the collections mirror and starts on
+    // a network once that mirror completed a pass there, so a node that fills
+    // its own catalogue reads both collections subgraphs. One whose catalogue
+    // another writer fills (MARKETPLACE_MIRRORS_ENABLED=false) reads its tables.
+    if config.marketplace.marketplace_mirrors_enabled {
+        let upstreams = &config.market_upstreams;
+        for (key, url) in [
+            (
+                "ETH_COLLECTIONS_SUBGRAPH_URL",
+                &upstreams.eth_collections_subgraph_url,
+            ),
+            (
+                "MATIC_COLLECTIONS_SUBGRAPH_URL",
+                &upstreams.matic_collections_subgraph_url,
+            ),
+        ] {
+            if Config::non_empty(url).is_none() {
+                anyhow::bail!(
+                    "{ENV}=mirror walks the nft index over the contracts its collections mirror finds, \
+                     but {key} is empty: that network's mirror has nothing to read and its ownership \
+                     never publishes. Unset it to read Decentraland's subgraph, or set \
+                     MARKETPLACE_MIRRORS_ENABLED=false on a node whose catalogue another node fills"
+                );
+            }
+        }
+    }
+    // The list a mirror derives from its own endpoints, or the explicit
+    // one; a `_FILE` is read after this check, and
+    // [`refuse_unwalkable_polygon`] checks what it held.
+    let from_file = env("TRADE_RPC_URLS_FILE").is_some_and(|v| !v.trim().is_empty());
+    if let Some(raw) = config.marketplace.trade_rpc_urls.as_deref()
+        && !from_file
+        && !names_polygon(raw)
+    {
+        anyhow::bail!(
+            "{ENV}=mirror walks the nft index on chains 1 and 137, but TRADE_RPC_URLS names no \
+             137= endpoint: add one, or unset it to use RPC_ENDPOINT_POLYGON"
+        );
+    }
+    Ok(())
+}
+
+/// Whether a `TRADE_RPC_URLS` list names a chain 137 endpoint.
+fn names_polygon(raw: &str) -> bool {
+    raw.split(',').any(|entry| {
+        entry
+            .split_once('=')
+            .is_some_and(|(chain, url)| chain.trim() == "137" && !url.trim().is_empty())
+    })
+}
+
+/// The chain 137 check of [`refuse_unfiltered_profiles`] on the list this
+/// node will use, once the secret files are read and the list derived
+/// (`Config::resolve_secret_files` runs this last): a `TRADE_RPC_URLS_FILE`
+/// naming chain 1 alone, or no list at all, would leave the Polygon walk
+/// without an endpoint, and Polygon ownership never published.
+fn refuse_unwalkable_polygon(config: &Config) -> anyhow::Result<()> {
+    if config.node.eth_network.trim() != "mainnet"
+        || !config.marketplace.marketplace_nft_index_enabled
+    {
+        return Ok(());
+    }
+    if !names_polygon(config.marketplace.trade_rpc_urls.as_deref().unwrap_or("")) {
+        anyhow::bail!(
+            "{ENV}=mirror walks the nft index on chains 1 and 137, but the TRADE_RPC_URLS it read \
+             (TRADE_RPC_URLS_FILE included) names no 137= endpoint: add one, or unset both to use \
+             RPC_ENDPOINT_POLYGON"
         );
     }
     Ok(())
@@ -1095,7 +1173,7 @@ pub fn refuse_remote_secrets(config: &mut Config) -> anyhow::Result<()> {
         return Ok(());
     };
     if posture == Posture::Mirror {
-        return Ok(());
+        return refuse_unwalkable_polygon(config);
     }
     let own = own_hosts(config);
     let values: Vec<(&'static str, String)> = config

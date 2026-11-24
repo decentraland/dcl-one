@@ -16,7 +16,9 @@
 //! measurement window) never publishes, and neither does one held short by
 //! `MARKETPLACE_INDEX_STOP_BLOCK_*`. Readers trust an index through
 //! [`is_ready`]: `folded_block = last_block` and `folded_at` at most
-//! [`READY_WINDOW`] old at the caller's clock. Accepting work that waits on
+//! [`READY_WINDOW`] old at the caller's clock. The `nft` index's readers use
+//! the publish marker alone (`owned_items::Rule`): every pass advances
+//! `last_block` before it folds and publishes. Accepting work that waits on
 //! an index (tip claims) uses the liveness view [`is_walked`] instead: ready,
 //! or a full-history walk advancing near the head, bound to its chain and out
 //! of quarantine.
@@ -1126,8 +1128,11 @@ pub trait ChainIndex: Send + Sync {
         self.rewind(conn, to).await
     }
     /// Folds the keys touched past `since` (`None`: rebuild) up to `upto`;
-    /// whether the result may be published (nothing still owed). Every
-    /// transaction it commits ends with `owner.check`.
+    /// whether the result may be published (nothing still owed). A fold
+    /// that may not be published clears its cursor's `folded_block` in the
+    /// transaction that commits its rows: the pass clears it only after it
+    /// reads the head again, and that read can fail. Every transaction it
+    /// commits ends with `owner.check`.
     async fn fold(
         &self,
         pool: &PgPool,

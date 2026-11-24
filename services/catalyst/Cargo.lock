@@ -1846,6 +1846,7 @@ dependencies = [
  "regex",
  "reqwest 0.13.5",
  "rustls",
+ "rustls-native-certs",
  "rustls-pemfile",
  "rustls-pki-types",
  "rusty_enet",
