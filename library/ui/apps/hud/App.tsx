@@ -489,7 +489,7 @@ function Hud({ integratedGpu, host }: { integratedGpu: GpuAdapterInfo | null; ho
             <NotificationsPanel notifications={session.notifications} friends={session.friends} voiceChat={session.voiceChat} anchor="lobby" />
           </SurfaceBoundary>
           <SurfaceBoundary name="Backpack" open={session.backpack.open} onCrash={session.closeAllPanels}>
-            <BackpackPage backpack={session.backpack} emotes={session.emotes} profile={session.profile} onNavigate={goToMenuPage} setEngineViewport={session.setEngineViewport} initialTab={backpackTab} modal />
+            <BackpackPage backpack={session.backpack} emotes={session.emotes} profile={session.profile} onNavigate={goToMenuPage} setEngineViewport={session.setEngineViewport} previewReady={session.avatarPreviewReady} initialTab={backpackTab} modal />
           </SurfaceBoundary>
           {discoveryPages}
         </>
@@ -550,7 +550,7 @@ function Hud({ integratedGpu, host }: { integratedGpu: GpuAdapterInfo | null; ho
             />
           </SurfaceBoundary>
           <SurfaceBoundary name="Backpack" open={session.backpack.open} onCrash={session.closeAllPanels}>
-            <BackpackPage backpack={session.backpack} emotes={session.emotes} profile={session.profile} onNavigate={goToMenuPage} setEngineViewport={session.setEngineViewport} initialTab={backpackTab} modal={session.lobbyPage.open} />
+            <BackpackPage backpack={session.backpack} emotes={session.emotes} profile={session.profile} onNavigate={goToMenuPage} setEngineViewport={session.setEngineViewport} previewReady={session.avatarPreviewReady} initialTab={backpackTab} modal={session.lobbyPage.open} />
           </SurfaceBoundary>
           {discoveryPages}
           <SurfaceBoundary

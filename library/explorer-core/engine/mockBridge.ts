@@ -1399,6 +1399,7 @@ export function startMockBridge(opts: Partial<MockOptions> = {}): () => void {
     }
     if (msg.kind === 'engineViewport') {
       // No engine in mock mode — nothing to render into the cutout.
+      if (msg.region === 'avatarPreview' && msg.rect != null) reply({ kind: 'avatarPreviewReady' })
       return
     }
     if (msg.kind === 'interactableArea') return
