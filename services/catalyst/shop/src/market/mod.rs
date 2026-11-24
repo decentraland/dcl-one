@@ -39,7 +39,8 @@
 //! complete pass per configured network. Readers (`readers.rs`: first ≤ 100,
 //! skip ≤ 5000, id-keyset counts capped at 5000, per-route TTL buckets):
 //! the LAND, estate and name pages of `/v1/nfts`, the legacy legs of
-//! `/v1/orders` and `/v1/bids`, `/v1/sales`, `/v1/owners`, `/v1/accounts`,
+//! `/v1/orders` and `/v1/bids` (Polygon's bids come from the sales index on
+//! a node that walks it, `bids.rs`), `/v1/sales`, `/v1/owners`, `/v1/accounts`,
 //! `/v1/rankings`, `/v1/volume`, the sales signal of the trending and
 //! creators rails, and the `/v1/users` names over `graph.rs`. Wearable and
 //! emote ownership (`/v1/nfts`, `/v1/users`, the `/v1/orders` owner guard,

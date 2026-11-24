@@ -2711,8 +2711,10 @@ seller a sale event names stays), then deletes the rows it read; a row
 recorded meanwhile waits for the next fold. The table holds one row per nft
 rewind until a sales fold runs. After a rebuild the point is the start, so
 every seller inferred from a transfer is unset and comes back as the nft
-walk passes its bid again; nothing outside the bids fold reads
-`nft_bid.seller`.
+walk passes its bid again. The bid book of `/v1/bids` (see "Polygon legacy
+bids") reads a pending row too: it sets aside the stored seller of a bid
+the next fold will infer again and reads it from the rewound log, as that
+fold will.
 
 A database that gains the table starts with no recovery points. A search
 reads only the points below the cursor, and the first advance's point is
@@ -3919,3 +3921,47 @@ CREATE INDEX CONCURRENTLY nft_ens_label_idx
 ```
 
 Its size and the lookup time on production data are unmeasured.
+
+## Polygon legacy bids
+
+On a node that walks the nft and sales indexes, `/v1/bids` and the activity
+feed's bids legs read Polygon's legacy bids (ERC721BidV2) from
+`shop.nft_bid`, the sales fold's table, in
+`services/catalyst/shop/src/market/bids.rs`. Ethereum's legacy bids still
+come from the collections subgraph reader.
+
+Each read runs on one `REPEATABLE READ, READ ONLY` snapshot. Each statement
+is bounded by the `/v1/nfts` statement timeout. The snapshot checks:
+
+- the Polygon `sales` cursor is published: its whole history, a fold
+  within 30 minutes, bound to chain 137, out of quarantine. Otherwise the
+  read answers the `sales-index` envelope. `folded_block` is not compared
+  with `last_block`, as for the nft index's readers: a pass advances the
+  latter before it folds;
+- the nft index is fresh on Polygon (otherwise the `nft-index` envelope);
+- every bid in the request's scope (its filters but the seller's) has a
+  seller.
+
+A bid's seller is the one the fold stored, unless an nft rewind the fold
+has not rechecked yet (`shop.bid_seller_recheck`) lies before the bid and
+no acceptance named it. Otherwise it is the token's latest transfer before
+the bid in `shop.nft_event`, when the nft walk's log reaches the bid's block.
+A bid with neither fails the read closed with the `nft-index` envelope,
+rather than being served without its seller or left out of a `seller`
+filter. That happens while the sales walk is ahead of the nft walk.
+
+Statuses are the subgraph's: an acceptance reads `sold`, and a bid the
+contract dropped when another bid on its token was accepted reads
+`cancelled`.
+
+Measured on 60,000 synthetic bids over 2,000 contracts with 2M transfers
+(PostgreSQL 17, warm cache), no index added:
+
+| Read (first = 100) | Time |
+|---|---|
+| the unresolved-seller check (`nft_bid_seller_unknown_idx`) | 0.5 ms; 40 ms with a pending recheck reaching half the bids |
+| no filter, newest first / its capped total | 22 ms / 0.6 ms |
+| one bidder (the activity leg) | 4.3 ms |
+| one seller (the activity leg), page and total | 5.4 ms and 5.3 ms |
+| one token | 0.3 ms |
+| open, most expensive | 9.9 ms |

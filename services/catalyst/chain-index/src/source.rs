@@ -32,6 +32,8 @@ pub enum Source {
     NftIndex,
     /// `shop.trade_event` after a published fold (`trade_events`).
     TradeEventsIndex,
+    /// `shop.sale_event` and `shop.nft_bid` after a published fold (`sales_index`).
+    SalesIndex,
     /// `shop.rental_event` after a published fold (`rentals::index`).
     RentalsIndex,
     /// The Polygon third-party registry after a published fold.
@@ -56,6 +58,7 @@ impl Source {
             Self::LandAuthzIndex => "land-authz-index",
             Self::NftIndex => "nft-index",
             Self::TradeEventsIndex => "trade-events-index",
+            Self::SalesIndex => "sales-index",
             Self::RentalsIndex => "rentals-index",
             Self::ThirdPartyRegistryIndex => "third-party-registry-index",
             Self::CouponManager => "coupon-manager",
@@ -81,6 +84,7 @@ impl Source {
             Self::LandAuthzIndex => Some("LAND_AUTHZ_INDEX_ENABLED"),
             Self::NftIndex => Some("MARKETPLACE_NFT_INDEX_ENABLED"),
             Self::TradeEventsIndex => Some("MARKETPLACE_TRADE_EVENTS_INDEX_ENABLED"),
+            Self::SalesIndex => Some("MARKETPLACE_SALES_INDEX_ENABLED"),
             Self::RentalsIndex => Some("SHOP_RENTALS_INDEX_ENABLED"),
             Self::ThirdPartyRegistryIndex => Some("MARKETPLACE_THIRD_PARTY_REGISTRY_INDEX_ENABLED"),
             Self::CouponManager => Some("TRADE_RPC_URLS"),

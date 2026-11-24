@@ -3835,3 +3835,262 @@ async fn shop_feed_totals_survive_exact_and_past_end_offsets() {
     }
     db.drop().await;
 }
+
+/// A walking node with the sales index on, over its own database: Polygon's
+/// legacy bids come from `shop.nft_bid`.
+async fn state_with_the_bid_book(url: &str) -> Option<(SharedState, super::tests::support::OwnDb)> {
+    let own = super::tests::support::OwnDb::create("bid_book").await?;
+    let eth_url = serve_empty_graph().await;
+    let settings = super::owned_items::test_support::walking(market_settings(url, &eth_url, true));
+    let market = MarketSettings {
+        indexes: super::chain_walk::IndexSettings {
+            sales_enabled: true,
+            ..settings.market.indexes.clone()
+        },
+        ..settings.market.clone()
+    };
+    let state = Arc::new(super::MarketplaceState::new(
+        own.pool.clone(),
+        crate::http::Outbound::for_tests(),
+        settings.with_market(market),
+    ));
+    state.test_allow_loopback.store(true, Ordering::Relaxed);
+    Some((state, own))
+}
+
+/// Polygon's legacy bids on a node that walks the nft and sales indexes come
+/// from `shop.nft_bid` with the subgraph's wire shape and statuses (a bid
+/// another acceptance dropped reads `cancelled`), behind the sales index's
+/// and the nft index's envelopes. A bid the fold left without a seller is
+/// served with the token's owner at the bid once the nft walk's log reaches
+/// its block; until then any read whose scope holds it fails closed, even
+/// with both cursors fresh and the sales one ahead, and a read whose filters
+/// leave it out answers.
+#[tokio::test]
+async fn polygon_bids_come_from_the_bid_book_and_never_without_their_seller() {
+    let up = FakeGraph::new();
+    let url = serve_graph(up.clone()).await;
+    let Some((state, own)) = state_with_the_bid_book(&url).await else {
+        return;
+    };
+    assert!(super::bids::polygon_book_here(&state));
+    let pool = state.pool.clone();
+    let c = contract_of(&tag(), 5);
+    const CARL: &str = "0xdddddddddddddddddddddddddddddddddddddddd";
+    let now_s = chrono::Utc::now().timestamp();
+    let bid = |token: i64,
+               bidder: &'static str,
+               seller: Option<&'static str>,
+               status: &'static str,
+               price: i64,
+               block: i64,
+               expires: i64| {
+        let (pool, c) = (pool.clone(), c.clone());
+        async move {
+            sqlx::query(
+                "INSERT INTO shop.nft_bid (network, contract_address, token_id, bidder, bid_id, seller, price, expires_at, status, \
+                     created_block, created_log_index, created_at, updated_block, updated_log_index, updated_at) \
+                 VALUES ('matic', $1, $2, $3, '0x' || lpad(to_hex($2 * 100 + $6), 64, '0'), $4, $5, $7, $8, $6, 0, $6, $6 + 1, 0, $6 + 1)",
+            )
+            .bind(&c)
+            .bind(token)
+            .bind(bidder)
+            .bind(seller)
+            .bind(price)
+            .bind(block)
+            .bind(expires)
+            .bind(status)
+            .execute(&pool)
+            .await
+            .unwrap();
+        }
+    };
+    let later = now_s + 86_400;
+    bid(1, WALLET_B, Some(WALLET_A), "open", 100, 10, later).await;
+    bid(2, WALLET_B, Some(WALLET_A), "accepted", 200, 11, later).await;
+    bid(3, WALLET_B, Some(WALLET_A), "cancelled", 300, 12, later).await;
+    bid(4, WALLET_B, Some(WALLET_A), "invalidated", 400, 13, later).await;
+    bid(5, WALLET_B, Some(WALLET_A), "open", 500, 14, now_s - 10).await;
+    // The fold met these before the nft walk reached them.
+    bid(6, CARL, None, "open", 600, 50, later).await;
+    bid(7, CARL, None, "open", 700, 150, later).await;
+    for (token, block) in [(6, 40), (7, 140)] {
+        sqlx::query(
+            "INSERT INTO shop.nft_event (network, block_number, log_index, block_time, kind, emitter, contract_address, token_id, from_address, to_address) \
+             VALUES ('matic', $1, 0, $1, 'transfer', $2, $2, $3, '0x0000000000000000000000000000000000000000', $4)",
+        )
+        .bind(block)
+        .bind(&c)
+        .bind(token)
+        .bind(CREATOR)
+        .execute(&pool)
+        .await
+        .unwrap();
+    }
+    let set_cursor = |indexer: &'static str, last: i64| {
+        let pool = pool.clone();
+        async move {
+            sqlx::query(
+                "INSERT INTO shop.chain_cursor (indexer, network, start_block, last_block, last_block_hash, fold_through, folded_block, folded_at, full_history, chain_id) \
+                 VALUES ($1, 'matic', 1, $2, '0x' || repeat('0', 64), $2, $2, timezone('UTC', now()), true, 137) \
+                 ON CONFLICT (indexer, network) DO UPDATE SET last_block = $2, fold_through = $2, folded_block = $2, folded_at = EXCLUDED.folded_at, full_history = true, chain_id = 137",
+            )
+            .bind(indexer)
+            .bind(last)
+            .execute(&pool)
+            .await
+            .unwrap();
+        }
+    };
+    let app = || market_router(state.clone());
+    let ids = |body: &Value| -> Vec<(String, String, String)> {
+        body["data"]["results"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|b| {
+                (
+                    b["tokenId"].as_str().unwrap().to_string(),
+                    b["status"].as_str().unwrap().to_string(),
+                    b["seller"].as_str().unwrap().to_string(),
+                )
+            })
+            .collect()
+    };
+    let polygon = "/v1/bids?network=MATIC&sortBy=most_expensive";
+    let (status, body) = get(app(), polygon).await;
+    assert_eq!(
+        (status, body["source"].as_str()),
+        (StatusCode::SERVICE_UNAVAILABLE, Some("sales-index")),
+        "{body}"
+    );
+    set_cursor("sales", 200).await;
+    let (status, body) = get(app(), polygon).await;
+    assert_eq!(
+        (status, body["source"].as_str()),
+        (StatusCode::SERVICE_UNAVAILABLE, Some("nft-index")),
+        "{body}"
+    );
+    // Both fresh, the sales walk ahead: bid 7 (block 150) has no seller yet.
+    set_cursor("nft", 100).await;
+    let (status, body) = get(app(), polygon).await;
+    assert_eq!(
+        (status, body["source"].as_str()),
+        (StatusCode::SERVICE_UNAVAILABLE, Some("nft-index")),
+        "an unresolved seller in scope fails the read closed: {body}"
+    );
+    let (status, body) = get(app(), &format!("{polygon}&seller={CREATOR}")).await;
+    assert_eq!(
+        status,
+        StatusCode::SERVICE_UNAVAILABLE,
+        "a seller filter cannot tell whether bid 7 is its: {body}"
+    );
+    let (status, body) = get(app(), &format!("{polygon}&bidder={WALLET_B}")).await;
+    assert_eq!(status, StatusCode::OK, "bid 7 is out of this scope: {body}");
+    assert_eq!(
+        ids(&body),
+        vec![
+            ("4".into(), "cancelled".into(), WALLET_A.into()),
+            ("3".into(), "cancelled".into(), WALLET_A.into()),
+            ("2".into(), "sold".into(), WALLET_A.into()),
+            ("1".into(), "open".into(), WALLET_A.into()),
+        ],
+        "the expired bid is left out: {body}"
+    );
+    assert_eq!(body["data"]["total"], 4, "{body}");
+    let first = &body["data"]["results"][3];
+    assert_eq!(
+        (
+            first["id"].as_str().map(str::to_string),
+            first["bidAddress"].as_str(),
+            first["blockchainId"].as_str().map(str::to_string),
+            first["blockNumber"].as_str(),
+            first["fingerprint"].as_str(),
+            first["price"].as_str(),
+            first["createdAt"].as_i64(),
+            first["updatedAt"].as_i64(),
+            first["expiresAt"].as_i64(),
+            first["chainId"].as_i64(),
+        ),
+        (
+            Some(format!("{c}-1-{WALLET_B}")),
+            Some(super::sales_index::BID_V2_MATIC),
+            Some(format!("0x{:064x}", 110)),
+            Some("11"),
+            Some(""),
+            Some("100"),
+            Some(10_000),
+            Some(11_000),
+            Some(later * 1000),
+            Some(137),
+        ),
+        "{body}"
+    );
+    // The nft walk reaches block 150: bid 7's seller is the owner at its block.
+    set_cursor("nft", 200).await;
+    let (status, body) = get(app(), polygon).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(
+        ids(&body)[..2].to_vec(),
+        vec![
+            ("7".into(), "open".into(), CREATOR.into()),
+            ("6".into(), "open".into(), CREATOR.into()),
+        ],
+        "{body}"
+    );
+    let (_, body) = get(app(), &format!("{polygon}&seller={CREATOR}&status=open")).await;
+    assert_eq!(body["data"]["total"], 2, "{body}");
+    let (_, body) = get(app(), "/v1/bids?network=MATIC&status=cancelled").await;
+    assert_eq!(
+        body["data"]["total"], 2,
+        "a dropped bid counts as cancelled: {body}"
+    );
+    // An nft rewind the sales fold has not rechecked yet: the stored seller
+    // of an open bid created past it is set aside and read again from the
+    // rewound log, as the next fold will; an acceptance's seller stands.
+    bid(8, WALLET_B, Some(WALLET_A), "open", 800, 60, later).await;
+    bid(9, WALLET_B, Some(WALLET_A), "accepted", 900, 61, later).await;
+    sqlx::query(
+        "INSERT INTO shop.nft_event (network, block_number, log_index, block_time, kind, emitter, contract_address, token_id, from_address, to_address) \
+         VALUES ('matic', 55, 0, 55, 'transfer', $1, $1, 8, '0x0000000000000000000000000000000000000000', $2)",
+    )
+    .bind(&c)
+    .bind(CREATOR)
+    .execute(&pool)
+    .await
+    .unwrap();
+    sqlx::query("INSERT INTO shop.bid_seller_recheck (network, from_block) VALUES ('matic', 50)")
+        .execute(&pool)
+        .await
+        .unwrap();
+    for (token, seller) in [(8, CREATOR), (9, WALLET_A)] {
+        let (status, body) = get(
+            app(),
+            &format!("/v1/bids?network=MATIC&contractAddress={c}&tokenId={token}"),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        assert_eq!(
+            body["data"]["results"][0]["seller"], seller,
+            "{token}: {body}"
+        );
+    }
+    sqlx::query("DELETE FROM shop.nft_bid WHERE network = 'matic' AND token_id IN (8, 9)")
+        .execute(&pool)
+        .await
+        .unwrap();
+    // Ethereum's legacy bids still read the collections subgraph.
+    let (status, body) = get(app(), "/v1/bids?network=ETHEREUM").await;
+    assert_eq!(
+        (status, body["data"]["total"].as_i64()),
+        (StatusCode::OK, Some(0)),
+        "{body}"
+    );
+    let (status, body) = get(app(), "/v1/bids").await;
+    assert_eq!(
+        (status, body["data"]["total"].as_i64()),
+        (StatusCode::OK, Some(6)),
+        "{body}"
+    );
+    own.drop().await;
+}

@@ -1,0 +1,53 @@
+# Polygon legacy bids from the sales index
+
+- Status: Accepted
+- Date: 2026-11-24
+
+## Decision
+
+On a node that walks the nft and sales indexes, `/v1/bids` and the
+activity feed's bids legs read Polygon's legacy bids (ERC721BidV2) from
+`shop.nft_bid`, the sales fold's table. They no longer query the
+collections subgraph for them. Ethereum's legacy bids, and every legacy bid
+on a node that does not walk the indexes, keep the collections subgraph
+reader.
+
+The wire shape is the subgraph's: the id is `<contract>-<token>-<bidder>`,
+`blockchainId` the bid id, `blockNumber` the bid's last event,
+`bidAddress` the bid contract, and `fingerprint` empty. An acceptance reads
+`sold`. A bid the contract dropped when another bid on its token was
+accepted reads `cancelled`: the contract emits nothing for it, and the
+subgraph kept it `open`, but it can no longer be accepted.
+
+Each read runs on one `REPEATABLE READ, READ ONLY` snapshot that checks:
+
+- the Polygon sales cursor is published: its whole history, a fold within
+  30 minutes, chain 137, out of quarantine. As for the nft index's
+  readers, `folded_block` is not compared with `last_block`, which every
+  pass advances before it folds;
+- the nft index is fresh on Polygon;
+- every bid in the request's scope (its filters but the seller's) has a
+  seller.
+
+A bid's seller is the owner of its token when the bid was placed. The fold
+infers it from the nft walk's transfers, and the sales walk can publish a
+bid before the nft walk reaches its block. So the reader takes the stored
+seller only while no nft rewind the fold has not rechecked yet lies before
+the bid, or when an acceptance named it. Otherwise it reads the token's
+latest transfer before the bid from the nft log, when the log reaches the
+bid's block. A bid with neither fails the read closed with the `nft-index`
+envelope, rather than being served without its seller or left out of a
+`seller` filter.
+
+## Consequences
+
+- Polygon's bid book no longer depends on a hosted subgraph per request.
+- While the sales walk is ahead of the nft walk, a read whose scope holds a
+  bid placed past the nft walk answers 503 until the nft walk catches up.
+  So does every `seller=` read, whose scope is every bid.
+- A bid dropped by another acceptance reads `cancelled` where the subgraph
+  kept it `open`.
+
+Known gap, accepted: Ethereum's ERC721Bid bids (v1 wearables, LAND, estates
+and names) are not indexed yet, so Ethereum's legacy bids still read the
+subgraph.
