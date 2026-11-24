@@ -130,7 +130,6 @@ impl Projection {
             denylist: String::new(),
             feature_flags: String::new(),
             registry: String::new(),
-            map: String::new(),
             ab_cdn: String::new(),
         };
         let mut settings = catalyst::explore::api::Settings::for_tests(sources);
