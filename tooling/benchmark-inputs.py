@@ -35,10 +35,14 @@ RUNNER = 'bevy-explorer-benchmark-'
 # to close Chrome and settle) must stay under 3600 (bevy-explorer-benchmark-leg.yml).
 MAX_RUNS = (3600 - 1) // (2 * (480 + 45))
 SHA = re.compile(r'[0-9a-f]{40}')
-# The latest release is the newest rollout of the web package to decentraland.org: the GitHub
-# deployment that bevy-explorer-rollout-manual.yml records for that environment.
+# The latest release is the newest complete, successful rollout of the web package to
+# decentraland.org: a GitHub deployment that bevy-explorer-rollout-manual.yml records. Its own commit
+# is where the rollout was dispatched from; the build is the CI run named in its version,
+# <semver>-<CI run ID>.commit-<short commit>.
 RELEASE_ENVIRONMENT = 'org'
 RELEASE_PACKAGE = '@dcl-regenesislabs/bevy-explorer-web'
+RELEASE_VERSION = re.compile(r'.+-([0-9]+)\.commit-([0-9a-f]{7,40})')
+MAIN_ISSUE = 'Bevy Explorer: frame-time regression on main against the latest release'
 # Days a run keeps its leg results and report: a pull request's for its review, main's as history.
 RETENTION_DAYS = {'pr': '7', 'main': '90'}
 NO_LAPTOP = 'BENCHMARK_ENABLED_RUNNERS enables no laptop of the fleet.'
@@ -124,12 +128,21 @@ def base_runs(repo, base_sha):
 
 
 def release(repo):
-    """The newest rollout of the web package to the release environment: (commit, version), or None."""
+    """The newest complete, successful rollout of the web package: (version, CI run ID, short commit), or None."""
     rows = api(f'repos/{repo}/deployments?environment={RELEASE_ENVIRONMENT}&per_page=100')
     for row in rows:
         payload = row.get('payload')
-        if isinstance(payload, dict) and payload.get('packageName') == RELEASE_PACKAGE and SHA.fullmatch(row['sha']):
-            return row['sha'], str(payload.get('version') or '')
+        if not isinstance(payload, dict):
+            continue
+        # set-rollout-action names the package `prefix`; cdn-deploy names it `packageName`.
+        package = payload.get('prefix') or payload.get('packageName')
+        version = str(payload.get('version') or '')
+        match = RELEASE_VERSION.fullmatch(version)
+        if package != RELEASE_PACKAGE or not match or str(payload.get('percentage', 100)) != '100':
+            continue
+        statuses = api(f"repos/{repo}/deployments/{row['id']}/statuses?per_page=1")
+        if statuses and statuses[0].get('state') == 'success':
+            return version, int(match.group(1)), match.group(2)
     return None
 
 
@@ -252,21 +265,34 @@ def resolve_main(inputs, repo, enabled, runs):
     result['change_description'] = change_description
 
     if base_sha:
+        found = search(repo, base_runs(repo, base_sha), [WEB])
+        if WEB not in found:
+            return stop(result, f'No successful main CI run of {base_sha} still has a web app to compare with.')
+        base_web, base, base_web_id = found[WEB]
         base_description = base_sha
     else:
         latest = release(repo)
         if not latest:
-            return stop(result, f'No {RELEASE_PACKAGE} rollout to {RELEASE_ENVIRONMENT} is recorded as a deployment.')
-        base_sha, version = latest
-        base_description = f'release {version} at {base_sha}' if version else f'release at {base_sha}'
-    if base_sha == result['change_sha']:
-        return skip(f'{base_sha} is both the change and the base: main has no newer web build')
-    found = search(repo, base_runs(repo, base_sha), [WEB])
-    if WEB not in found:
-        return stop(result, f'No successful main CI run of {base_sha} still has a web app to compare with.')
-    base_web, base, base_web_id = found[WEB]
-    result['base_sha'] = base_sha
+            return stop(result, f'No complete, successful {RELEASE_PACKAGE} rollout to {RELEASE_ENVIRONMENT} is '
+                                'recorded as a deployment.')
+        version, run_id, short = latest
+        base = api(f'repos/{repo}/actions/runs/{run_id}')
+        if not ci_run(base, repo, ('push', 'workflow_dispatch')) or not base['head_sha'].startswith(short):
+            return stop(result, f'Release {version} names CI run {run_id}, which is not a passed Bevy Explorer / CI '
+                                f'run of commit {short}.')
+        base_names = artifacts(repo, run_id)
+        base_web = named(base_names, WEB)
+        if not base_web:
+            return stop(result, f'The web app of release {version} (CI run {run_id}) has expired.')
+        base_web_id = base_names[base_web]
+        base_description = f"release {version} at {base['head_sha']}"
+    if base['head_sha'] == result['change_sha']:
+        return skip(f"{base['head_sha']} is both the change and the base: main has no newer web build")
+    result['base_sha'] = base['head_sha']
     result['base_description'] = base_description
+    # The issue a regression opens or updates: main's one issue, or one per overridden comparison.
+    result['issue_title'] = (MAIN_ISSUE if not change_sha and not base_sha else
+                             f"Bevy Explorer: frame-time regression of {change_description} against {base_description}")
 
     if not fleet(enabled):
         return stop(result, NO_LAPTOP)
@@ -283,7 +309,8 @@ def resolve_main(inputs, repo, enabled, runs):
 def outcome(pr, change_sha, runs, kind):
     return {'run': False, 'pr': pr, 'change_sha': change_sha, 'base_sha': '', 'runs': runs, 'legs': [],
             'expected_labels': '', 'report_runner_artifact': '', 'report_runner_run_id': '', 'notes': '',
-            'change_description': '', 'base_description': '', 'retention_days': RETENTION_DAYS[kind]}
+            'change_description': '', 'base_description': '', 'retention_days': RETENTION_DAYS[kind],
+            'issue_title': ''}
 
 
 def fleet(enabled):

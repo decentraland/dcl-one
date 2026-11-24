@@ -45,18 +45,23 @@ permissions: {}
 # a CI run of no PR or not started by a pull_request event, such as a manual one on the PR's
 # branch) get the run's own group, so they cancel nothing. A passed CI re-run of an older commit of
 # the PR still joins: it cancels a run in progress, then the resolver skips it. A PR given by URL
-# to a manual run forms a group of its own. A scheduled run cancels the previous night's.
+# to a manual run forms a group of its own. Runs of main, nightly or manual without a PR, share
+# one group and queue rather than cancel, so they never share the laptops; GitHub keeps only the
+# newest waiting one.
 concurrency:
   group: >-
     bevy-explorer-benchmark-${{
-      (github.event_name == 'schedule' && 'main') ||
+      ((github.event_name == 'schedule' ||
+        (github.event_name == 'workflow_dispatch' && github.event.inputs.pr == '')) && 'main') ||
       (github.event_name == 'workflow_run' && github.event.workflow_run.event == 'pull_request' &&
        github.event.workflow_run.conclusion == 'success' &&
        github.event.workflow_run.head_repository.full_name == github.repository &&
        github.event.workflow_run.pull_requests[0].number) ||
       (github.event_name == 'workflow_dispatch' && github.event.inputs.pr) ||
       format('run-{0}', github.run_id) }}
-  cancel-in-progress: true
+  cancel-in-progress: >-
+    ${{ !(github.event_name == 'schedule' ||
+          (github.event_name == 'workflow_dispatch' && github.event.inputs.pr == '')) }}
 jobs:
   setup:
     name: Inputs
@@ -88,6 +93,7 @@ jobs:
       change_description: ${{ steps.inputs.outputs.change_description }}
       base_description: ${{ steps.inputs.outputs.base_description }}
       retention_days: ${{ steps.inputs.outputs.retention_days }}
+      issue_title: ${{ steps.inputs.outputs.issue_title }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -103,6 +109,16 @@ jobs:
           BENCHMARK_ENABLED_RUNNERS: ${{ vars.BENCHMARK_ENABLED_RUNNERS }}
           BENCHMARK_RUNS: ${{ vars.BENCHMARK_RUNS }}
         run: python3 tooling/benchmark-inputs.py
+      # A PR is told in its performance section; a run of main that cannot measure fails instead,
+      # so a nightly never stays green without measuring. Main unchanged since the release has no
+      # notes and passes.
+      - name: Fail a run of main that cannot measure
+        if: steps.inputs.outputs.pr == '' && steps.inputs.outputs.run == 'false' && steps.inputs.outputs.notes != ''
+        env:
+          NOTES: ${{ steps.inputs.outputs.notes }}
+        run: |
+          echo "::error::$NOTES"
+          exit 1
   # A PR whose builds are unfit (an unoptimized web build, no base build, no runner, no laptop)
   # is told why in the performance section; a run of main says why in the Inputs summary.
   notice:
@@ -378,7 +394,8 @@ jobs:
           echo "::error::No leg produced data; the report says why"
           exit 1
   # A run of main keeps one open issue for a regression against the release: the newest regressed
-  # report replaces its body, and each later regressed run adds a comment. It reads only report.md.
+  # report replaces its body, and each later regressed run adds a comment. A manual run that names
+  # change_sha or base_sha keeps an issue of its own comparison. It reads only report.md.
   regression:
     name: Regression issue
     needs: [setup, gather]
@@ -390,7 +407,7 @@ jobs:
     env:
       GH_TOKEN: ${{ github.token }}
       GH_REPO: ${{ github.repository }}
-      TITLE: 'Bevy Explorer: frame-time regression on main against the latest release'
+      TITLE: ${{ needs.setup.outputs.issue_title }}
     steps:
       - name: Download the report
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
@@ -410,7 +427,7 @@ jobs:
             exit 0
           fi
           {
-            printf 'The benchmark of main measured a regression of %s against %s ([run](%s)). Each run that regresses again comments here and replaces the report below; close the issue once main is back within the threshold.\n\n' \
+            printf 'The benchmark measured a regression of %s against %s ([run](%s)). Each run that regresses again comments here and replaces the report below; close the issue once main is back within the threshold.\n\n' \
               "$CHANGE_DESCRIPTION" "$BASE_DESCRIPTION" "$RUN_URL"
             if [ "$(wc -c < report/report.md)" -le 60000 ]; then
               cat report/report.md

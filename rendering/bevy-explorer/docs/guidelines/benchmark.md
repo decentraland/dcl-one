@@ -53,7 +53,12 @@ CI* run, whose artifacts hold the builds ([The workflow](#the-workflow)).
   change or base build, no passed main run that still has a web app, no Linux runner to write the
   report, or no laptop enabled; by hand, also no passed CI run of the commit yet, or no web app in
   it (CI built none, or the artifact expired).
-- **One nightly run.** A scheduled run cancels the previous night's run if it is still going.
+- **Runs of main queue.** Nightly and manual runs of main share one concurrency group: a new one
+  waits for the running one, so they never share the laptops, and GitHub keeps only the newest
+  waiting run.
+- **A run of main that cannot measure fails** with setup's notes as the error (no release rollout,
+  an expired release build, no runner, no laptop, an unoptimized build), so a nightly never stays
+  green without measuring. Main unchanged since the release skips and passes.
 - **One run per pull request.** The next run for the same pull request cancels one in progress:
   any passed CI run of it that a `pull_request` event started (a re-run of an older commit's
   included, which then skips), or a manual run naming it by number (one naming it by URL is a
@@ -591,11 +596,13 @@ its merge commit.
   100; with `base_sha`, a passed main run of that commit. For main, the change is that newest main
   build and the base the latest release's.
 - **The latest release:** <a id="the-latest-release"></a>the newest GitHub deployment to the
-  `org` environment whose payload names `@dcl-regenesislabs/bevy-explorer-web`, the record
+  `org` environment whose payload names `@dcl-regenesislabs/bevy-explorer-web` (`prefix`) at 100%
+  and whose latest status is `success`: the record
   [`bevy-explorer-rollout-manual.yml`](../../../../.github/workflows/bevy-explorer-rollout-manual.yml)
-  writes when it rolls a version out to decentraland.org; its commit's passed main run supplies the
-  web app, which main keeps for 90 days. Setup reads the deployment's `version` for the report's
-  header.
+  writes when it rolls a version out to decentraland.org. The deployment's own commit is where the
+  rollout was dispatched from, not the build: the build is the CI run its `version` names
+  (`<semver>-<CI run ID>.commit-<short commit>`), which must be a passed run of that commit and
+  supplies the web app, kept 90 days on main.
 - **The runners,** for each operating system the legs need and for Linux, which writes the report:
   from the change run when it has one, so a pull request that changes the runner is measured with
   its own, else from main's runs, searched as for the base (for main, its newest runs, never the
@@ -620,7 +627,8 @@ run wrote.
 **The regression issue.** For a run of main, a report whose **Overall** line is 🔴 (the
 [verdict](#reading-the-results) threshold) opens the one open issue titled *Bevy Explorer:
 frame-time regression on main against the latest release*, or, when it is open, replaces its body
-with the newest report and comments with the run. Close it once main is back within the threshold;
+with the newest report and comments with the run. A manual run that names `change_sha` or
+`base_sha` uses an issue titled after its own comparison instead. Close it once main is back within the threshold;
 the next regression opens a new one. A report longer than an issue holds points to the run's
 `benchmark-report` artifact instead.
 
