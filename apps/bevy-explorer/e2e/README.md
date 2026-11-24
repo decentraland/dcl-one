@@ -114,8 +114,10 @@ pnpm run drive --scene <scene dir> [--scene <dir> ...] [--position x,y] [--repor
 
 It builds each scene folder with `buildScene` (`scene.json`, the `main` bundle, `main.crdt`,
 `assets/`), serves them with `serveRealm` on `DCL_E2E_REALM_PORT` and the web app (`--web-app`,
-else `DCL_E2E_WEB_APP`), signs in a guest and arrives at `--position` (the first scene's base
-parcel by default). The paths of `--scene`, `--report` and `--web-app` are read from the folder
+else `DCL_E2E_WEB_APP`), opens the client in scene preview as a guest (`?preview&guest=1` on the
+web, `--preview` for the standalone) and arrives at `--position` (the first scene's base parcel
+by default). Preview is what registers the preview-only commands, such as `/move_player_to`, and
+lets `/walk --ignore-input-modifiers` through. The paths of `--scene`, `--report` and `--web-app` are read from the folder
 the command was started in, as the shell reads `< commands.txt`. Each stdin line is one console
 line; blank lines and `#` lines are skipped, and the lines run one after the other. stdout gets
 one JSON line per command, `{"line", "ok", "reply", "ms"}` (`ok:false` carries the command's

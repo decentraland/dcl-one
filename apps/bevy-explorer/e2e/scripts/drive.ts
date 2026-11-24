@@ -1,5 +1,5 @@
 // Drives one client by hand or by agent: serves the web app and a loopback realm holding the
-// given scenes, boots a guest there, then runs each console line read from stdin.
+// given scenes, boots a guest there in scene preview, then runs each console line read from stdin.
 //
 //   node scripts/drive.ts --scene <dir> [--scene <dir> ...] [--position x,y] [--report <dir>] [--web-app <dir>] < commands.txt
 //
@@ -176,7 +176,7 @@ async function main(): Promise<void> {
   process.stdout.on('error', () => ending.end(1, 'stdout closed'))
   console.error(`[drive] realm ${realm.realm}: ${scenes.map((scene) => scene.entity.pointers[0]).join(' ')}`)
   try {
-    const { explorer } = await openSession({ realm: realm.realm, position, signIn: 'guest', signal: boot.signal }, target)
+    const { explorer } = await openSession({ realm: realm.realm, position, signIn: 'guest', preview: true, signal: boot.signal }, target)
     console.error(`[drive] in world at ${position}; reading commands from stdin`)
     const results = await runLines(createInterface({ input: process.stdin, crlfDelay: Infinity }), explorer, (result) => {
       if (ending.ended) return

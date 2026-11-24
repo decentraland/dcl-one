@@ -31,6 +31,12 @@ export interface OpenOptions {
   position?: string
   windowSize?: [number, number]
   signIn?: SignIn
+  /** Open the client as a scene preview of the realm, which is what registers the engine's
+   *  preview-only commands (`/move_player_to`, `/avatar_demo`) and lets `/walk` ignore a scene's
+   *  input modifiers. On the web the page is opened at `?preview&guest=1` with the realm and the
+   *  position, so the engine starts there at once as its own guest and `signIn` is not used; the
+   *  standalone is started with `--preview` and signs in as `signIn` says. */
+  preview?: boolean
   /** The first login's profile name (1 to 15 alphanumerics) and curated look. */
   firstLogin?: { name?: string; look?: number }
   /** More arguments for the standalone this session starts, which make it a separate client;
@@ -63,7 +69,7 @@ function message(error: unknown): string {
 
 function key(target: Target, options: OpenOptions): string {
   const size = options.windowSize ?? target.windowSize
-  return [options.realm ?? target.realm, options.position ?? target.position, size.join('x'), options.signIn ?? 'account', ...(options.nativeArgs ?? [])].join('|')
+  return [options.realm ?? target.realm, options.position ?? target.position, size.join('x'), options.signIn ?? 'account', options.preview ? 'preview' : '', ...(options.nativeArgs ?? [])].join('|')
 }
 
 /** The client for these options, booted on first use. The harness closes every session once the
@@ -168,7 +174,7 @@ async function boot(options: OpenOptions, target: Target): Promise<Session> {
   let console_: Console
   let url: string | undefined
   if (target.transport === 'native') {
-    console_ = await nativeConsole(target, realm, position, options.nativeArgs)
+    console_ = await nativeConsole(target, realm, position, options.preview ? [...(options.nativeArgs ?? []), '--preview'] : options.nativeArgs)
   } else {
     if (options.nativeArgs?.length) throw new Error('nativeArgs need DCL_E2E_TRANSPORT=native: the web client takes no service override')
     const base = target.webUrl ?? (await serveApp(target)).url
@@ -180,6 +186,14 @@ async function boot(options: OpenOptions, target: Target): Promise<Session> {
     // with no session, holding the world; `/hud_login` then signs in through the HUD and goes to
     // the realm and the parcel from the lobby, as a link's destination would.
     page.searchParams.set('baseDomain', target.baseDomain)
+    if (options.preview) {
+      // a preview is the exception: with `guest=1` the engine starts at the url's destination
+      // with no sign-in to wait for
+      page.searchParams.set('preview', '')
+      page.searchParams.set('guest', '1')
+      page.searchParams.set('realm', realm)
+      page.searchParams.set('position', position)
+    }
     url = page.toString()
     console_ = await WebConsole.launch({
       url,
@@ -196,8 +210,10 @@ async function boot(options: OpenOptions, target: Target): Promise<Session> {
   signal?.addEventListener('abort', abandon, { once: true })
   try {
     if (signal?.aborted) throw new Error(BOOT_ABANDONED)
-    await signIn(explorer, target, options.signIn ?? 'account', options.firstLogin, { realm, position })
-    if (target.transport === 'web' && options.signIn !== 'unsigned-guest') {
+    const webPreview = target.transport === 'web' && options.preview === true
+    if (webPreview) await explorer.waitInWorld(WORLD_TIMEOUT_MS)
+    else await signIn(explorer, target, options.signIn ?? 'account', options.firstLogin, { realm, position })
+    if (target.transport === 'web' && (webPreview || options.signIn !== 'unsigned-guest')) {
       // the HUD's travel lands there; a realm that ignores the parcel (a world) is corrected by console
       await arrive(explorer, realm, position)
       // the engine is in the world before the HUD has put up its own (the rail, and the chat,
