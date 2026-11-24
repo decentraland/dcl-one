@@ -748,14 +748,15 @@ def probe(env, request=answer, sleep=time.sleep):
 # --- comment --------------------------------------------------------------------------------------------------------
 
 # No response header keeps a page from a wallet extension, so the comment itself warns the reviewer.
-WALLET_WARNING = "Preview only: this pull request's code runs here, so never connect a wallet or sign anything."
+WALLET_WARNING = ("Preview only: it runs this pull request's code on a host outside Decentraland's sites, so never "
+                  'connect a wallet or sign anything there.')
 BUTTON = 'https://img.shields.io/badge/UI_gallery-Open_preview-ff2d55?style=for-the-badge'
 
 
 def render(url, head, expires):
     return (f'<p align="center">\n<a href="{html.escape(url)}"><img alt="Open the UI gallery" src="{BUTTON}"></a>\n'
             f'<br><sub>Built from <code>{head[:7]}</code> · available until {expires} (UTC)</sub>\n'
-            f'<br><sub>⚠️ {WALLET_WARNING}</sub>\n</p>\n\n{MARKER}\n')
+            f'<br>⚠️ {WALLET_WARNING}\n</p>\n\n{MARKER}\n')
 
 
 def comment(env, github=None):

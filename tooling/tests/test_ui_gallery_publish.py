@@ -572,15 +572,15 @@ class CommentTest(unittest.TestCase):
             publish.comment(env, github)
         return [call for call in github.calls if call[0] in ('POST', 'PATCH')]
 
-    def test_creates_one_comment_that_opens_the_gallery_on_its_first_line(self):
+    def test_creates_one_comment_with_a_centered_button_that_opens_the_gallery(self):
         [(method, path, fields)] = self.comment()
         self.assertEqual((method, path), ('POST', f'repos/{REPO}/issues/{PULL}/comments'))
         lines = [line for line in fields['body'].splitlines() if line and not line.startswith('<!--')]
         self.assertEqual(lines, ['<p align="center">',
                                  f'<a href="{PAGE}"><img alt="Open the UI gallery" src="{publish.BUTTON}"></a>',
                                  '<br><sub>Built from <code>aaaaaaa</code> · available until 2026-11-25 (UTC)</sub>',
-                                 f'<br><sub>⚠️ {publish.WALLET_WARNING}</sub>', '</p>'])
-        self.assertIn('never connect a wallet or sign anything', publish.WALLET_WARNING)
+                                 f'<br>⚠️ {publish.WALLET_WARNING}', '</p>'])
+        self.assertIn("on a host outside Decentraland's sites, so never connect a wallet or sign anything there", ' '.join(publish.WALLET_WARNING.split()))
         self.assertIn(publish.MARKER, fields['body'])
 
     def test_escapes_the_preview_url_in_the_link(self):
