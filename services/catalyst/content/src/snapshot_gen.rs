@@ -432,17 +432,19 @@ impl SnapshotGenerator {
                             warn!(error = %e, "outdated probe failed; regenerating the window");
                             true
                         });
+                // An outdated window is rebuilt anyway, so it is not counted:
+                // its label is `is_outdated` even when it also holds inactive
+                // entities (upstream counts both and names `inactive_entities`).
                 // A failed count keeps the window: rebuilding every month-old
                 // window while the database struggles is the heaviest work at
-                // the worst time, and the next pass counts again. An outdated
-                // window is rebuilt anyway; it is counted for its label, which
-                // names inactive entities first as upstream's does.
-                why.inactive = has_inactive_entities(pool, candidate, end_ms)
-                    .await
-                    .unwrap_or_else(|e| {
-                        warn!(error = %e, "inactive-entities count failed; keeping the window until the next pass");
-                        false
-                    });
+                // the worst time, and the next pass counts again.
+                why.inactive = !why.outdated
+                    && has_inactive_entities(pool, candidate, end_ms)
+                        .await
+                        .unwrap_or_else(|e| {
+                            warn!(error = %e, "inactive-entities count failed; keeping the window until the next pass");
+                            false
+                        });
                 if !why.outdated && !why.inactive {
                     match self.reusable(candidate).await {
                         Reuse::Verified => {
