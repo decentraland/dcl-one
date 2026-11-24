@@ -87,6 +87,8 @@ export type PhotoViewerProps = {
   onNext?: () => void
   actions?: PhotoViewerActions
   events?: PhotoViewerEvents
+  /** Shows the first person's wearables list open at first, as decentraland.org's Reels page did. */
+  firstWearablesOpen?: boolean
   linkComponent: ComponentType<PlaceCardLinkProps>
 } & ({ variant: 'page'; onClose?: never } | { variant: 'dialog'; onClose: () => void })
 
@@ -100,6 +102,7 @@ export function PhotoViewer({
   download,
   actions,
   events,
+  firstWearablesOpen = false,
   onPrevious,
   onNext,
   onClose,
@@ -336,7 +339,7 @@ export function PhotoViewer({
                         {person.isGuest ? <span className={styles.guest}>guest</span> : null}
                       </div>
                       {person.wearables ? (
-                        <details>
+                        <details open={(firstWearablesOpen && index === 0) || undefined}>
                           <summary
                             className={styles.wearableSummary}
                             onClick={(event) => {

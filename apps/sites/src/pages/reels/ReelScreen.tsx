@@ -50,6 +50,7 @@ export function ReelScreen({ photo, origin }: { photo: ProfilePhoto; origin?: st
         details={details}
         actions={actions}
         events={events.viewer}
+        firstWearablesOpen
         linkComponent={CollectibleLink}
       />
     </ReelsPage>

@@ -139,6 +139,30 @@ describe('Reels', () => {
       expect(events.onDetailsToggle.mock.calls).toEqual([[false]])
     })
 
+    it("should open only the first person's wearables when asked to", () => {
+      render(
+        <PhotoViewer
+          variant="page"
+          imageUrl="/photo.jpg"
+          alt="Plaza"
+          label="Photo at the Plaza"
+          details={{
+            place: { label: 'Plaza' },
+            people: [
+              { name: 'Ann', isGuest: false, wearables: [{ id: 'cap', label: 'Cap' }] },
+              { name: 'Bob', isGuest: false, wearables: [{ id: 'hat', label: 'Hat' }] }
+            ]
+          }}
+          firstWearablesOpen
+          linkComponent={Link}
+        />
+      )
+      const lists = screen
+        .getAllByText('Collectible wearables')
+        .map((summary) => (summary.parentElement as HTMLDetailsElement).open)
+      expect(lists).toEqual([true, false])
+    })
+
     it('should report the opened gallery photo by its id', async () => {
       const onPhotoClick = vi.fn()
       const block = (event: MouseEvent) => event.preventDefault()

@@ -167,15 +167,19 @@ describe("a Reels photo page, legacy events (decentraland/sites components/Reels
     ]);
   });
 
-  it("should send Reels Show Wearables, then Reels Hide Wearables, as a person's wearables are toggled", async () => {
+  it("should show the first person's wearables open, as decentraland.org did", () => {
+    expect((screen.getByText("Collectible wearables").parentElement as HTMLDetailsElement).open).toBe(true);
+  });
+
+  it("should send Reels Hide Wearables on the first toggle, then Reels Show Wearables", async () => {
     const summary = screen.getByText("Collectible wearables");
     await user.click(summary);
-    // jsdom does not run a summary's activation: open the list as the browser would have.
-    (summary.parentElement as HTMLDetailsElement).open = true;
+    // jsdom does not run a summary's activation: close the list as the browser would have.
+    (summary.parentElement as HTMLDetailsElement).open = false;
     await user.click(summary);
     expect(sent()).toEqual([
-      ["Reels Show Wearables", { userAddress: PERSON }],
       ["Reels Hide Wearables", { userAddress: PERSON }],
+      ["Reels Show Wearables", { userAddress: PERSON }],
     ]);
   });
 

@@ -109,3 +109,39 @@ export async function loadCommunity(
   }
 }
 
+/** decentraland.org's Communities tab read one page of this many communities. */
+const DIRECTORY_LIMIT = 200;
+
+/** A row of the communities list: only what a card shows is required. */
+const DirectoryCommunitySchema = CommunitySchema.pick({
+  id: true,
+  name: true,
+  description: true,
+  ownerName: true,
+  thumbnailUrl: true,
+  membersCount: true,
+}).extend({ privacy: CommunitySchema.shape.privacy.catch("public") });
+export type DirectoryCommunity = z.infer<typeof DirectoryCommunitySchema>;
+
+/**
+ * The communities list of `/places/communities` (decentraland/sites `DiscoverCommunitiesPage`): one page of up to
+ * 200, matching `search` when given, most members first. A row that does not read as a community is left out.
+ */
+export async function fetchCommunityDirectory(
+  search: string,
+  opts: Pick<GetOptions, "signal"> = {},
+): Promise<DirectoryCommunity[]> {
+  const term = search.trim();
+  const raw = await getJSON<unknown>("/v1/communities", {
+    signal: opts.signal,
+    query: { limit: DIRECTORY_LIMIT, offset: 0, ...(term ? { search: term } : {}) },
+  });
+  const rows = unwrapResults(raw);
+  if (!rows) throw new Error("the response did not have the communities shape");
+  const communities = rows.flatMap((row) => {
+    const parsed = DirectoryCommunitySchema.safeParse(row);
+    return parsed.success ? [parsed.data] : [];
+  });
+  // A stable sort keeps the service's order among equal counts, as the reference's did.
+  return communities.sort((a, b) => (b.membersCount ?? 0) - (a.membersCount ?? 0));
+}
