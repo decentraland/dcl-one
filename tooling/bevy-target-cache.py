@@ -126,7 +126,8 @@ def remove(path, removed):
 
 
 def is_profile(directory):
-    return directory.is_dir() and any((directory / name).is_dir() for name in KEEP_IN_PROFILE)
+    # A link is never walked: whatever it points at lies outside the target.
+    return directory.is_dir() and not directory.is_symlink() and any((directory / name).is_dir() for name in KEEP_IN_PROFILE)
 
 
 def prune_profile(profile, removed):
@@ -140,7 +141,7 @@ def prune_target(target, removed):
     for entry in target.iterdir():
         if is_profile(entry):
             prune_profile(entry, removed)
-        elif entry.is_dir() and any(is_profile(child) for child in entry.iterdir()):
+        elif entry.is_dir() and not entry.is_symlink() and any(is_profile(child) for child in entry.iterdir()):
             prune_target(entry, removed)
         elif entry.name not in KEEP_IN_TARGET:
             remove(entry, removed)
@@ -220,7 +221,8 @@ def prune_generations(target, live, removed):
             failed.append(f'{entry}: {error}')
 
     def entries(name):
-        return [entry for profile in profiles(target) if (profile / name).is_dir() for entry in (profile / name).iterdir()]
+        folders = [profile / name for profile in profiles(target)]
+        return [entry for folder in folders if folder.is_dir() and not folder.is_symlink() for entry in folder.iterdir()]
 
     for entry in entries('deps') + entries('build'):
         found = UNIT_HASH.search(entry.name)
@@ -229,7 +231,7 @@ def prune_generations(target, live, removed):
             drop(entry)
     # Only the hashes of removed entries: a path cdylib's and an MSVC executable's fingerprint carry one no message names.
     for entry in entries('.fingerprint'):
-        found = re.fullmatch(r'.+-([0-9a-f]{16})', entry.name)
+        found = UNIT_HASH.search(entry.name)
         if found and found.group(1) in stale:
             drop(entry)
     return freed, failed

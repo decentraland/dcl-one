@@ -386,6 +386,20 @@ class GenerationTest(unittest.TestCase):
                 for name in self.KEPT + self.STALE_ENTRIES:
                     self.assertTrue((self.target / name).exists(), name)
 
+    def test_the_prune_follows_no_link_out_of_the_target(self):
+        outside = self.target.parent / 'elsewhere'
+        kept = (outside / f'profile/deps/libbevy_ecs-{self.STALE}.rlib', outside / f'profile/.fingerprint/bevy_ecs-{self.STALE}/lib',
+                outside / f'deps/libbevy_ecs-{self.STALE}.rmeta')
+        for path in kept:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text('x')
+        os.symlink(outside / 'profile', self.target / 'linked', target_is_directory=True)
+        self.write('linked-deps/.fingerprint/bevy-mtimes.json', '{}')
+        os.symlink(outside / 'deps', self.target / 'linked-deps/deps', target_is_directory=True)
+        self.prune(map(json.dumps, self.messages))
+        for path in kept:
+            self.assertTrue(path.exists(), path)
+
     def test_an_entry_that_cannot_be_removed_stays_and_is_reported(self):
         stale = self.target / f'release/deps/libbevy_ecs-{self.STALE}.rlib'
         remove = cache.remove
@@ -452,8 +466,8 @@ class WorkflowTest(unittest.TestCase):
                 self.assertEqual(job.count(self.GUARD), 2)
                 self.assertEqual(job.count(self.PATHS), 2)
 
-    # A Cargo call in shell or in a script's argument list, aliases included; `metadata` builds nothing.
-    CALL = re.compile(r"""\bcargo['"]?,?\s*['"]?(\+\S+\s+)?(build|test|check|clippy|run|doc|nextest|rustc|bench|[btcrd])\b""")
+    # A Cargo call in shell or in a script's argument list, with global flags and aliases; `metadata` builds nothing.
+    CALL = re.compile(r"""\bcargo['"]?,?\s*['"]?(\+\S+\s+)?(-\S+\s+([^-\s]\S*\s+)?)*(build|test|check|clippy|run|doc|nextest|rustc|bench|[btcrd])\b""")
     # Scripts the native jobs run that call Cargo, and why their units are still named.
     CARGO_SCRIPTS = {'apps/bevy-explorer/build-headless.py': 'writes CARGO_MESSAGES',
                      'tooling/dev-regressions.py': 'runs no Cargo with --bevy-artifacts'}
@@ -489,7 +503,9 @@ class WorkflowTest(unittest.TestCase):
                         if re.search(r'(^|[;&|]\s*)[A-Za-z_]\w*=|\b(export|unset)\s+[A-Za-z_]', line.strip()):
                             listed = None
                         continue
-                    writes = '--message-format=json-render-diagnostics' in line and '> target/cargo-messages/' in line
+                    # Standard output only: `2>` or `&>` would send the JSON elsewhere or mix in the diagnostics.
+                    writes = ('--message-format=json-render-diagnostics' in line
+                              and re.search(r'(?<![0-9&])> target/cargo-messages/', line))
                     with self.subTest(job=name, line=line.strip()):
                         self.assertTrue(writes or units(line) == listed)
                     if writes and '--no-run' in line:
