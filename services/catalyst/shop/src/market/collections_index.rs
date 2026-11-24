@@ -638,10 +638,12 @@ fn answer_of(envelope: &Value) -> Answer {
 
 /// The answers of `calls` (to, data) at `block`, in their order, in JSON-RPC
 /// batches of at most [`CALLS_PER_BATCH`]. A batch the endpoint refuses (a
-/// transport error or a status) is halved and sent again; a single call it
-/// refuses as a batch is sent as a plain request, whose failure fails the
-/// read. A batch answered with no element at all (an endpoint that does not
-/// take batches) is sent call by call.
+/// transport error, a status, or an answer that lacks some of its calls, as
+/// geth answers a batch past its limit) is halved and sent again; a single
+/// call it refuses as a batch is sent as a plain request, whose failure
+/// fails the read. A batch answered with no element at all (an endpoint that
+/// does not take batches) is sent call by call. A call the endpoint answers
+/// with an error, inside a batch answered whole, keeps its code.
 pub async fn eth_calls(
     rpc: &Rpc<'_>,
     calls: &[(String, Vec<u8>)],
@@ -657,7 +659,7 @@ pub async fn eth_calls(
         let body: Vec<Value> = (start..start + len)
             .map(|i| call_request(i, &calls[i].0, &calls[i].1, block))
             .collect();
-        match rpc.batch(&body).await {
+        let refused = match rpc.batch(&body).await {
             Ok(answers) if answers.is_empty() => {
                 for (i, request) in (start..).zip(&body) {
                     let envelope = rpc
@@ -666,30 +668,43 @@ pub async fn eth_calls(
                         .map_err(|e| anyhow::anyhow!("eth_call: {e}"))?;
                     out[i] = answer_of(&envelope);
                 }
+                false
             }
             Ok(answers) => {
-                for answer in answers {
+                let mut got: Vec<Option<Answer>> = vec![None; len];
+                for answer in &answers {
                     let Some(id) = answer.get("id").and_then(Value::as_u64) else {
                         continue;
                     };
                     let id = id as usize;
                     if (start..start + len).contains(&id) {
-                        out[id] = answer_of(&answer);
+                        got[id - start] = Some(answer_of(answer));
                     }
                 }
+                // A batch an endpoint answers in part was refused whole: a
+                // batch past geth's limit is answered by one -32600 error
+                // with the first request's id.
+                if got.iter().all(Option::is_some) {
+                    for (i, answer) in (start..).zip(got) {
+                        out[i] = answer.expect("checked above");
+                    }
+                    false
+                } else {
+                    true
+                }
             }
-            Err(_) if len > 1 => {
-                let half = len / 2;
-                todo.push((start + half, len - half));
-                todo.push((start, half));
-            }
-            Err(_) => {
-                let envelope = rpc
-                    .call("eth_call", body[0]["params"].clone())
-                    .await
-                    .map_err(|e| anyhow::anyhow!("eth_call: {e}"))?;
-                out[start] = answer_of(&envelope);
-            }
+            Err(_) => true,
+        };
+        if refused && len > 1 {
+            let half = len / 2;
+            todo.push((start + half, len - half));
+            todo.push((start, half));
+        } else if refused {
+            let envelope = rpc
+                .call("eth_call", body[0]["params"].clone())
+                .await
+                .map_err(|e| anyhow::anyhow!("eth_call: {e}"))?;
+            out[start] = answer_of(&envelope);
         }
     }
     Ok(out)
@@ -767,10 +782,12 @@ pub async fn refresh_hints(
     let mut finals_to_read = Vec::new();
     for (factory, final_size, _) in &lists {
         let have: HashSet<i32> = sqlx::query_scalar(
-            "SELECT idx FROM shop.collection_hint WHERE network = $1 AND factory = $2 AND finalized",
+            "SELECT idx FROM shop.collection_hint \
+             WHERE network = $1 AND factory = $2 AND finalized AND idx < $3",
         )
         .bind(net.db_name())
         .bind(factory)
+        .bind(*final_size as i32)
         .fetch_all(pool)
         .await?
         .into_iter()
@@ -1796,9 +1813,19 @@ mod tests {
         assert_eq!(created, 17);
     }
 
-    /// The fake endpoint's `max_batch` for one that answers every JSON array
-    /// with a 400 and takes plain requests.
-    const REFUSES_ARRAYS: usize = usize::MAX;
+    /// How the fake endpoint takes a JSON-RPC batch.
+    #[derive(Clone, Copy, Debug)]
+    enum Batches {
+        /// Up to this many calls; a 413 past it.
+        Upto(usize),
+        /// None: an error object, with a 200 (an endpoint that takes none).
+        Refused,
+        /// None: a 400 (plain requests only).
+        BadRequest,
+        /// Up to this many calls; past it, geth's answer: one -32600 error
+        /// with the first request's id.
+        Geth(usize),
+    }
 
     /// The fake endpoint's `eth_call` answers by (to, data hex, block): a
     /// hex result, or `error:<code>` for a refusal.
@@ -1806,13 +1833,11 @@ mod tests {
 
     /// A JSON-RPC endpoint for the gate: chain 137, finalized block 100, and
     /// `calls` answering `eth_call`; "0x" otherwise (no contract there). It
-    /// answers a batch longer than `max_batch` with a 413, every batch with
-    /// an error object when `max_batch` is 0 (an endpoint that takes none),
-    /// and every batch with a 400 when it is [`REFUSES_ARRAYS`]. `seen`
-    /// counts the `eth_call`s it answered.
+    /// takes batches as `batches` says. `seen` counts the `eth_call`s it
+    /// answered.
     async fn fake_rpc(
         calls: Answers,
-        max_batch: usize,
+        batches: Batches,
         seen: Arc<std::sync::atomic::AtomicUsize>,
     ) -> String {
         use axum::http::StatusCode;
@@ -1850,28 +1875,34 @@ mod tests {
             };
             json!({ "jsonrpc": "2.0", "id": id, "result": result })
         }
-        type Shared = (Answers, usize, Arc<std::sync::atomic::AtomicUsize>);
+        type Shared = (Answers, Batches, Arc<std::sync::atomic::AtomicUsize>);
         async fn handle(
-            State((calls, max_batch, seen)): State<Shared>,
+            State((calls, batches, seen)): State<Shared>,
             Json(body): Json<Value>,
         ) -> axum::response::Response {
             let calls = calls.lock().unwrap().clone();
-            match body {
-                Value::Array(_) if max_batch == 0 => Json(json!({
+            match (body, batches) {
+                (Value::Array(_), Batches::Refused) => Json(json!({
                     "jsonrpc": "2.0", "id": null, "error": { "code": -32600, "message": "batches are not supported" }
                 }))
                 .into_response(),
-                Value::Array(_) if max_batch == REFUSES_ARRAYS => StatusCode::BAD_REQUEST.into_response(),
-                Value::Array(reqs) if reqs.len() > max_batch => StatusCode::PAYLOAD_TOO_LARGE.into_response(),
-                Value::Array(reqs) => {
+                (Value::Array(_), Batches::BadRequest) => StatusCode::BAD_REQUEST.into_response(),
+                (Value::Array(reqs), Batches::Upto(max)) if reqs.len() > max => {
+                    StatusCode::PAYLOAD_TOO_LARGE.into_response()
+                }
+                (Value::Array(reqs), Batches::Geth(max)) if reqs.len() > max => Json(json!([{
+                    "jsonrpc": "2.0", "id": reqs[0]["id"], "error": { "code": -32600, "message": "batch too large" }
+                }]))
+                .into_response(),
+                (Value::Array(reqs), _) => {
                     Json(Value::Array(reqs.iter().map(|r| answer(&calls, r, &seen)).collect())).into_response()
                 }
-                one => Json(answer(&calls, &one, &seen)).into_response(),
+                (one, _) => Json(answer(&calls, &one, &seen)).into_response(),
             }
         }
         let app = axum::Router::new()
             .route("/", post(handle))
-            .with_state((calls, max_batch, seen));
+            .with_state((calls, batches, seen));
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let addr = listener.local_addr().unwrap();
         tokio::spawn(async move {
@@ -1944,7 +1975,7 @@ mod tests {
         }
         let calls = Arc::new(std::sync::Mutex::new(calls));
         let seen = Arc::new(std::sync::atomic::AtomicUsize::new(0));
-        let url = fake_rpc(calls.clone(), 100, seen.clone()).await;
+        let url = fake_rpc(calls.clone(), Batches::Upto(100), seen.clone()).await;
         let http = crate::http::Outbound::for_tests();
         let rpc = Rpc::at(&http, &url);
         let hints = || async {
@@ -2064,7 +2095,7 @@ mod tests {
         }
         calls.insert(call_key(v2, nth(450), "0x64"), "error:-32005".into());
         let calls = Arc::new(std::sync::Mutex::new(calls));
-        let url = fake_rpc(calls.clone(), 100, Arc::default()).await;
+        let url = fake_rpc(calls.clone(), Batches::Upto(100), Arc::default()).await;
         let http = crate::http::Outbound::for_tests();
         let rpc = Rpc::at(&http, &url);
         let count = || async {
@@ -2122,7 +2153,12 @@ mod tests {
                 }
             }
             let seen = Arc::new(std::sync::atomic::AtomicUsize::new(0));
-            let url = fake_rpc(Arc::new(std::sync::Mutex::new(calls)), 100, seen.clone()).await;
+            let url = fake_rpc(
+                Arc::new(std::sync::Mutex::new(calls)),
+                Batches::Upto(100),
+                seen.clone(),
+            )
+            .await;
             let http = crate::http::Outbound::for_tests();
             let started = std::time::Instant::now();
             let err = refresh_hints(&pool, &Rpc::at(&http, &url), 100)
@@ -2173,7 +2209,12 @@ mod tests {
                 addr(&format!("0x{:040x}", 0x1000 + i)),
             );
         }
-        let url = fake_rpc(Arc::new(std::sync::Mutex::new(calls)), 100, Arc::default()).await;
+        let url = fake_rpc(
+            Arc::new(std::sync::Mutex::new(calls)),
+            Batches::Upto(100),
+            Arc::default(),
+        )
+        .await;
         let http = crate::http::Outbound::for_tests();
         let rpc = Rpc::at(&http, &url);
         let first = refresh_hints(&pool, &rpc, 100).await.unwrap();
@@ -2207,6 +2248,53 @@ mod tests {
         assert_eq!(seeded, 0, "no code anywhere: nothing seeded");
     }
 
+    /// Holes are counted below the finalized size the endpoint answers now:
+    /// a final row stored past it (read through an endpoint that was ahead)
+    /// does not hide a hole below it.
+    #[tokio::test]
+    async fn a_lagging_endpoint_still_reads_the_holes_below_its_size() {
+        let Some(pool) = crate::db::scratch::isolated_pool(1).await else {
+            return;
+        };
+        let (v2, v3) = (FACTORIES[0].0, FACTORIES[1].0);
+        sqlx::query(
+            "INSERT INTO shop.collection_hint (network, factory, idx, address, finalized) \
+             VALUES ('matic', $1, 1, '0x00000000000000000000000000000000000000b1', true)",
+        )
+        .bind(v2)
+        .execute(&pool)
+        .await
+        .unwrap();
+        let size = Factory::collectionsSizeCall {}.abi_encode();
+        let a = "0x00000000000000000000000000000000000000a0";
+        let mut calls = HashMap::new();
+        for block in ["0x64", "latest"] {
+            calls.insert(call_key(v2, size.clone(), block), word(U256::from(1)));
+            calls.insert(call_key(v3, size.clone(), block), word(U256::ZERO));
+        }
+        calls.insert(call_key(v2, nth(0), "0x64"), addr(a));
+        let url = fake_rpc(
+            Arc::new(std::sync::Mutex::new(calls)),
+            Batches::Upto(100),
+            Arc::default(),
+        )
+        .await;
+        let http = crate::http::Outbound::for_tests();
+        let refreshed = refresh_hints(&pool, &Rpc::at(&http, &url), 100)
+            .await
+            .unwrap();
+        assert_eq!((refreshed.added, refreshed.remaining), (1, 0));
+        let read: bool = sqlx::query_scalar(
+            "SELECT finalized FROM shop.collection_hint WHERE factory = $1 AND idx = 0 AND address = $2",
+        )
+        .bind(v2)
+        .bind(a)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert!(read);
+    }
+
     /// An endpoint that does not take batches is asked each call alone; one
     /// that refuses a large batch is sent halves; a call refused with an
     /// error keeps its code, a call that returned nothing is no answer.
@@ -2236,9 +2324,15 @@ mod tests {
         .into_iter()
         .map(|d| (to.to_string(), d.clone()))
         .collect();
-        for max_batch in [0, 2, 100, REFUSES_ARRAYS] {
+        for batches in [
+            Batches::Refused,
+            Batches::Upto(2),
+            Batches::Upto(100),
+            Batches::BadRequest,
+            Batches::Geth(2),
+        ] {
             let seen = Arc::new(std::sync::atomic::AtomicUsize::new(0));
-            let url = fake_rpc(answers.clone(), max_batch, seen.clone()).await;
+            let url = fake_rpc(answers.clone(), batches, seen.clone()).await;
             let got = eth_calls(&Rpc::at(&http, &url), &calls, "latest")
                 .await
                 .unwrap();
@@ -2246,7 +2340,7 @@ mod tests {
             assert_eq!(
                 got,
                 vec![alpha.clone(), Err(-32005), alpha.clone(), alpha, Ok(None)],
-                "batches of {max_batch}"
+                "{batches:?}"
             );
             assert_eq!(
                 seen.load(std::sync::atomic::Ordering::SeqCst),

@@ -2887,10 +2887,12 @@ A size past 1,000,000 fails the refresh before any index is read. The
 indexes to read are found from the stored rows, so a refresh's work is
 bounded by the table and the budget whatever an endpoint answers. If any
 index does not answer, the refresh fails the attempt, so no window walks on
-a list that was not read whole. A JSON-RPC batch the endpoint refuses is
-halved and sent again; a single call it refuses as a batch goes as a plain
-request, and an endpoint that answers batches with nothing gets single
-calls. A window that walks a `ProxyCreated` of an address outside its
+a list that was not read whole. A JSON-RPC batch the endpoint refuses, or
+answers only in part (geth answers a batch past its limit with one error),
+is halved and sent again; a single call it refuses as a batch goes as a
+plain request, and an endpoint that answers batches with nothing gets single
+calls. Holes are counted below the finalized size the endpoint answers, so a
+final row stored past it does not hide one. A window that walks a `ProxyCreated` of an address outside its
 filter fails before it commits, and the next attempt reads the lists again.
 Every pass reads the hints from the table again, alone or shared. A
 hint is only a filter: a collection exists for the index once its
