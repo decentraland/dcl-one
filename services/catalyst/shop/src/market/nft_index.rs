@@ -4,8 +4,8 @@
 //! not), the DCLRegistrar's names and `NameRegistered` subdomains, the
 //! legacy Marketplace orders (`OrderCreated`/`OrderSuccessful`/
 //! `OrderCancelled`, both chains) and the LAND and Estate registries'
-//! `Update` data (names and descriptions). LAND and estate ownership and
-//! estate membership are not walked again: they are land_authz's facts
+//! `CreateEstate` and `Update` data (names and descriptions). LAND and estate
+//! ownership and estate membership are land_authz's facts
 //! (`land_authz.token_right`, `estate_land`) and the readers join them.
 //!
 //! Identity is (network, contract, token) throughout; a v2 token id decodes
@@ -14,10 +14,9 @@
 //! the chain's position, appended with its cursor advance
 //! (`chain_walk::run_pass`), and folded into `shop.nft` (owner = the
 //! latest transfer's `to`, the mint the first), `nft_order` (the latest
-//! legacy order event per token) and `land_data` (the latest Update per
-//! token), each a deterministic function of the log: a touched key is
-//! refolded over its whole history (for `land_data` the window is enough: a
-//! touched token's latest Update is in it), `since = None` rebuilds.
+//! legacy order event per token) and `land_data` (the latest parcel Update or latest
+//! valid estate document). The LAND fold reads the window.
+//! The other folds read each touched key's whole history. `since = None` rebuilds.
 //!
 //! The address set grows with the mirror. A collection enters the walk at
 //! the first window whose end its `created_at` may precede (an upper bound
@@ -28,17 +27,21 @@
 //! with no backfill owed, and a fold that still owes one clears the publish
 //! marker in the transaction that commits its rows.
 
+mod estate_repair;
+
 use crate::market::chain_walk::{topic_address, topic_u256};
 use std::collections::{HashMap, HashSet};
 use std::sync::Mutex;
 
 use alloy_sol_types::{SolType, sol_data};
 use anyhow::Context;
+use futures::TryStreamExt;
 use serde_json::json;
 use sqlx::{PgConnection, PgPool, Row};
 
 use super::chain_walk::{self, ChainIndex, ChainNet, INDEXER_NFT, LogGroup};
 use crate::chain_index::rpc::RpcLog;
+use crate::land_authz::events::{TOPIC_CREATE_ESTATE, parse_estate_data};
 use crate::land_authz::{ESTATE_REGISTRY_MAINNET, LAND_REGISTRY_MAINNET, LAND_START_BLOCK_MAINNET};
 
 pub const TOPIC_TRANSFER: &str =
@@ -299,12 +302,25 @@ pub fn decode_log(log: &RpcLog, block_time: i64) -> Result<Option<NftEvent>, Dec
                 ..base(KIND_ORDER_CANCELLED, format!("{nft:#x}"), token)
             }
         }
-        TOPIC_LAND_UPDATE => {
-            let token = topic_u256(topic(1, "Update assetId")?)
-                .ok_or_else(|| err("Update", "bad asset".into()))?;
+        TOPIC_LAND_UPDATE | TOPIC_CREATE_ESTATE => {
+            let (event, id_topic) = if topic0 == TOPIC_CREATE_ESTATE {
+                ("CreateEstate", 2)
+            } else {
+                ("Update", 1)
+            };
+            let token = topic_u256(topic(id_topic, event)?)
+                .ok_or_else(|| err(event, "bad asset".into()))?;
             let (raw,) = <(sol_data::String,)>::abi_decode_params(&data)
-                .map_err(|e| err("Update", e.to_string()))?;
+                .map_err(|e| err(event, e.to_string()))?;
             NftEvent {
+                to_address: if topic0 == TOPIC_CREATE_ESTATE {
+                    Some(
+                        topic_address(topic(1, "CreateEstate owner")?)
+                            .ok_or_else(|| err(event, "bad owner".into()))?,
+                    )
+                } else {
+                    None
+                },
                 detail: Some(raw.replace('\0', "")),
                 ..base(KIND_LAND_DATA, emitter.clone(), token)
             }
@@ -314,7 +330,7 @@ pub fn decode_log(log: &RpcLog, block_time: i64) -> Result<Option<NftEvent>, Dec
     Ok(Some(event))
 }
 
-/// The registries' data CSV (`0,"name","description",...`): the version
+/// The LAND registry's parcel data CSV (`0,"name","description",...`): the version
 /// must be `0` (squid `buildData`), fields may be quoted with `""` escapes.
 pub fn parse_land_data(raw: &str) -> Option<(Option<String>, Option<String>)> {
     let csv = raw.replace('\0', "");
@@ -628,23 +644,33 @@ pub async fn fold(
 /// Materialized so the per-token order does not shape the window's scan.
 pub(super) const LAND_DATA_SQL: &str = "WITH w AS MATERIALIZED (\
     SELECT contract_address, token_id, detail, block_number, log_index FROM shop.nft_event \
-    WHERE network = 'ethereum' AND kind = 'land_data' AND block_number > $1) \
-SELECT DISTINCT ON (w.contract_address, w.token_id) w.contract_address, w.token_id::text AS token_id, w.detail, w.block_number, w.log_index \
+    WHERE network = 'ethereum' AND kind = 'land_data' AND block_number > $1 AND ($2::text IS NULL OR contract_address = $2) \
+      AND (to_address IS NULL OR block_number > COALESCE((SELECT ceiling FROM shop.worker_progress \
+           WHERE worker='nft_estate_creations' AND scope=1 AND position < ceiling), -1))) \
+SELECT w.contract_address, w.token_id::text AS token_id, w.detail, w.block_number, w.log_index \
 FROM w ORDER BY w.contract_address, w.token_id, w.block_number DESC, w.log_index DESC";
 
-/// The latest Update per touched LAND/estate token, parsed in Rust (the CSV
+/// The latest parcel Update or valid estate document per touched token, parsed in Rust (the CSV
 /// has quoting SQL would re-implement badly) and upserted.
 async fn fold_land_data(conn: &mut PgConnection, since: i64) -> anyhow::Result<u64> {
+    fold_registry_data(conn, since, None).await
+}
+
+async fn fold_registry_data(
+    conn: &mut PgConnection,
+    since: i64,
+    registry: Option<&str>,
+) -> anyhow::Result<u64> {
     // The cross-chain `block_number` misestimate (see `NESTED_LOOP_TOUCHED_MAX`) makes custom plans scan the table.
     if since >= 0 {
         sqlx::query("SET LOCAL enable_seqscan = off")
             .execute(&mut *conn)
             .await?;
     }
-    let rows = sqlx::query(LAND_DATA_SQL)
+    let mut rows = sqlx::query(LAND_DATA_SQL)
         .bind(since)
-        .fetch_all(&mut *conn)
-        .await?;
+        .bind(registry)
+        .fetch(&mut *conn);
     type Columns = (
         Vec<String>,
         Vec<String>,
@@ -654,19 +680,31 @@ async fn fold_land_data(conn: &mut PgConnection, since: i64) -> anyhow::Result<u
         Vec<i32>,
     );
     let mut cols: Columns = Default::default();
-    for r in &rows {
-        let (name, description) = r
-            .get::<Option<String>, _>("detail")
-            .as_deref()
-            .and_then(parse_land_data)
-            .unwrap_or((None, None));
-        cols.0.push(r.get("contract_address"));
-        cols.1.push(r.get("token_id"));
+    while let Some(r) = rows.try_next().await? {
+        let contract: String = r.get("contract_address");
+        let token: String = r.get("token_id");
+        // Newest first within each token. Rejected estate documents leave the last valid one in force.
+        if cols.0.last() == Some(&contract) && cols.1.last() == Some(&token) {
+            continue;
+        }
+        let raw = r.get::<Option<&str>, _>("detail");
+        let (name, description) = if contract == ESTATE_REGISTRY_MAINNET {
+            let Some(fields) = raw.and_then(parse_estate_data) else {
+                continue;
+            };
+            fields
+        } else {
+            // A malformed parcel Update clears both fields at its own position.
+            raw.and_then(parse_land_data).unwrap_or_default()
+        };
+        cols.0.push(contract);
+        cols.1.push(token);
         cols.2.push(name);
         cols.3.push(description);
         cols.4.push(r.get("block_number"));
         cols.5.push(r.get("log_index"));
     }
+    drop(rows);
     let mut written = 0;
     for start in (0..cols.0.len()).step_by(1_000) {
         let end = (start + 1_000).min(cols.0.len());
@@ -876,11 +914,12 @@ impl ChainIndex for NftIndex {
         }];
         if self.net == ChainNet::Ethereum {
             groups.push(LogGroup {
-                addresses: vec![
-                    LAND_REGISTRY_MAINNET.to_string(),
-                    ESTATE_REGISTRY_MAINNET.to_string(),
-                ],
+                addresses: vec![LAND_REGISTRY_MAINNET.to_string()],
                 topics: json!([[TOPIC_LAND_UPDATE]]),
+            });
+            groups.push(LogGroup {
+                addresses: vec![ESTATE_REGISTRY_MAINNET.to_string()],
+                topics: json!([[TOPIC_CREATE_ESTATE, TOPIC_LAND_UPDATE]]),
             });
         }
         Ok(groups)
@@ -938,6 +977,18 @@ impl ChainIndex for NftIndex {
         Ok(written)
     }
 
+    async fn record_coverage(
+        &self,
+        conn: &mut PgConnection,
+        previous: (i64, Option<&str>),
+        end: &crate::chain_index::rpc::BlockHeader,
+    ) -> anyhow::Result<()> {
+        if self.net == ChainNet::Ethereum {
+            estate_repair::record(conn, previous, (end.number as i64, Some(&end.hash))).await?;
+        }
+        Ok(())
+    }
+
     async fn rewind(&self, conn: &mut PgConnection, to: i64) -> anyhow::Result<()> {
         // The deleted rows' tokens are refolded from what remains; a token
         // whose only transfers were reorged out loses its row.
@@ -968,10 +1019,11 @@ impl ChainIndex for NftIndex {
         .execute(&mut *conn)
         .await?;
         // LAND data is keyed by (token_address, token_id) and folded only for
-        // keys with a remaining Update: a key whose Updates were all reorged
+        // keys with a remaining document: a key whose documents were all reorged
         // out would otherwise keep a row past the cursor. The rebuild below
         // restores the rows of every key that still has one.
         if self.net == ChainNet::Ethereum {
+            estate_repair::rewind(conn, to).await?;
             sqlx::query(
                 "DELETE FROM shop.land_data l USING UNNEST($1::text[], $2::text[]) AS g(c, t) \
                  WHERE l.token_address = g.c AND l.token_id = g.t::numeric",
@@ -1019,6 +1071,21 @@ impl ChainIndex for NftIndex {
             "nft index: folded"
         );
         Ok(counts.backfills_owed == 0)
+    }
+
+    async fn after_publish(
+        &self,
+        pool: &PgPool,
+        source: &dyn chain_walk::LogSource,
+        owner: &chain_walk::Owner,
+        window_blocks: u64,
+        remaining: usize,
+    ) -> anyhow::Result<usize> {
+        if self.net == ChainNet::Ethereum {
+            estate_repair::step(pool, source, owner, window_blocks, remaining).await
+        } else {
+            Ok(0)
+        }
     }
 
     async fn lanes(
@@ -1444,8 +1511,8 @@ pub(crate) mod tests {
             (KIND_LAND_DATA, ESTATE_REGISTRY_MAINNET, "5750")
         );
         assert_eq!(
-            parse_land_data(ev.detail.as_deref().unwrap()),
-            Some((Some("1x2 Estate".to_string()), None))
+            parse_estate_data(ev.detail.as_deref().unwrap()),
+            Some((Some("1x2 Estate".to_string()), Some(String::new())))
         );
     }
 

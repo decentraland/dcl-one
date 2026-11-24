@@ -2503,7 +2503,59 @@ fold record, a publish and a rewind; the table stays at a dozen rows.
 `shop.chain_checkpoint` holds each projection's recovery points (see
 "Reorgs").
 
-Each index process reads these bounded cursor
+`shop.land_data` stores the latest parcel Update and the latest valid estate
+document. A malformed parcel Update clears the fields at its log position.
+The Ethereum NFT walk reads estate names at creation and on update. After
+an upgrade, a published cursor can already be past creations that the old
+walk skipped.
+Using spare log budget after publication, each pass reads one window of
+`CreateEstate` from the Estate registry, starting at deployment block 6,236,547.
+The `nft_estate_creations` row in `shop.worker_progress` records the last
+repaired block, its hash, and the original cursor height. Each archive window
+is checked against the published cursor and the hashes of its creation logs.
+The marker also records the forward NFT checkpoint and the cursor's rewind
+count. In its worker_progress arrays, key_ceiling[1] and [2] hold the
+forward block and hash; key_position[1] and [2] hold the archive predecessor
+hash and the rewind count. An upgraded writer moves both in its fenced cursor
+transactions.
+
+The repair intentionally writes shop.land_data even though land_authz also
+stores estate documents. Existing estate and parcel readers consume the
+published NFT projection from shop.land_data; using land_authz here would
+require changing those readers and would leave the historical gap dependent
+on an operator replay. The repair instead self-heals that projection after
+publication without delaying ownership or profile reads.
+
+Historical names keep their existing values until the final window rebuilds
+the estate rows by block and log index. Estate documents with valid empty
+fields are stored as empty strings, including descriptions; rejected
+documents do not clear the previous valid estate data. Estates with only
+rejected documents then have no row. Ownership and profiles remain available
+during the repair. A rewind removes orphaned events and shortens the repair
+range before the walk resumes. If the rewind removes the remaining archive
+windows, it reconciles the retained estates in its own fenced transaction.
+Migration 0062 installs a reset trigger for the repair marker. It invalidates
+the marker only when the Ethereum NFT cursor completes a full rebuild reset to
+its start block; ordinary reorg rewinds preserve the repaired prefix and are
+reconciled by the walker.
+
+The default window is at most 10,000 blocks. The historical prefix is roughly
+17 million blocks, so it takes at least about 1,700 successful repair passes;
+archive retries and dense creation blocks can extend that time. A pass runs
+one archive window only when its log budget has room, and uses the remaining
+budget to cap extra per-creation block-header reads. The safety bracket still
+uses the chain id and up to eight header/window reads, so a repair can exceed
+the leftover log budget by that bounded amount. A provider may internally
+split one eth_getLogs window into several RPC requests as well. Failed or
+timed-out repair attempts are retried and omitted from the pass request count.
+
+An operator can see completion when the marker's position equals its ceiling:
+SELECT position, ceiling FROM shop.worker_progress
+WHERE worker = 'nft_estate_creations' AND scope = 1;
+The final registry replacement commits in the same transaction that reaches
+equality. A missing marker means the next published pass must initialize or
+reopen the repair.
+With `INDEX_METRICS_BIND` set, each index process reads these bounded cursor
 tables once per minute. It samples the height, stored history mode, fold
 publication and quarantine from `shop.chain_cursor` and the height, replay
 mode and fold from `land_authz.index_cursor` for its configured registries
@@ -2716,6 +2768,14 @@ advance drops only the points past the checkpoint it extends, which does not
 cover a point below the cursor.) Such a binary also leaves `diverged_at` as
 it finds it; the newer binary's next pass that finds the cursor block on its
 stored hash clears it.
+
+The schema migration object pass adds the Ethereum NFT cursor's estate
+repair trigger. It clears the marker when a writer completes a requested
+rebuild by resetting the cursor to its start. During a reorg the upgraded
+writer shortens the archived prefix and records the new rewind count.
+An older writer can advance past missing creations, or rewind and replay
+to the very same height and hash. On upgrade, a checkpoint or rewind-count
+mismatch automatically reopens the historical prefix through that tip.
 
 ## Curation committee
 
@@ -3102,7 +3162,7 @@ builds it from its own indexes.
   (about 7 ms for land-authz and 27 ms for Shop, under 25 s of database
   time an hour) and at most 60 single-row `checked_at` updates an hour,
   which leave the stored body untouched.
-- **Deploy:** one additive step, `0062_map_grid_change_marks` (the
+- **Deploy:** one additive step, `0063_map_grid_change_marks` (the
   `rewrites`, `rebuilds` and `checked_at` columns). Stop every process of a binary that runs
   the `explorer-map-mirror` job before this one's first build: that job
   rewrites the row's stamp without a guard. An environment that still sets
