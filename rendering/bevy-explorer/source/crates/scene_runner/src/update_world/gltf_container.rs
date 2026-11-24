@@ -76,6 +76,11 @@ use super::{
     AddCrdtInterfaceExt, ComponentTracker,
 };
 
+mod instance_pool;
+
+use instance_pool::GltfPoolable;
+pub use instance_pool::{GltfInstancePool, GltfInstancePoolStats, GLTF_INSTANCE_POOL_BUDGET_BYTES};
+
 pub struct GltfDefinitionPlugin;
 
 #[derive(SystemSet, Debug, PartialEq, Eq, Hash, Clone)]
@@ -195,7 +200,9 @@ impl Plugin for GltfDefinitionPlugin {
         );
 
         app.init_resource::<GltfNameCache>();
+        app.init_resource::<GltfInstancePool>();
         app.add_systems(Update, update_gltf.in_set(SceneSets::PostLoop));
+        app.add_systems(Update, instance_pool::drop_gone_scenes);
         app.add_systems(
             Update,
             retry_repaired_gltfs
@@ -263,6 +270,7 @@ pub(crate) struct GltfProcessing {
     /// Collider indices handed out so far, per collider name.
     collider_counter: HashMap<Option<String>, u32>,
     has_animations: bool,
+    has_lights: bool,
     named_nodes: HashMap<String, Entity>,
 }
 
@@ -309,22 +317,44 @@ pub(crate) struct StandInContent(pub String);
 #[derive(Component, Deref)]
 pub struct GltfReady(pub(super) InstanceId);
 
+/// The nodes of a [`GltfReady`] instance taken from the [`GltfInstancePool`], which the scene
+/// spawner no longer tracks.
+#[derive(Component)]
+struct GltfPooledNodes(Vec<Entity>);
+
+/// The model a container shows goes to the instance pool when it may be pooled, and is
+/// despawned otherwise.
 fn clear_stale_instance(
     trigger: Trigger<OnReplace, GltfReady>,
     mut commands: Commands,
-    gltf_readys: Query<&GltfReady>,
+    gltf_readys: Query<(
+        &GltfReady,
+        Option<&GltfPooledNodes>,
+        Option<&GltfPoolable>,
+        Option<&SceneEntity>,
+    )>,
     mut scene_spawner: ResMut<SceneSpawner>,
 ) {
-    let entity = trigger.target();
-    let Ok(gltf_ready) = gltf_readys.get(entity) else {
+    let container = trigger.target();
+    let Ok((gltf_ready, pooled_nodes, poolable, scene_entity)) = gltf_readys.get(container) else {
         unreachable!("Infallible query");
     };
 
-    despawn_instance_non_recursive(
-        &mut commands,
-        scene_spawner.iter_instance_entities(**gltf_ready),
-    );
-    scene_spawner.unregister_instance(**gltf_ready);
+    let instance = **gltf_ready;
+    let nodes = match pooled_nodes {
+        Some(GltfPooledNodes(nodes)) => nodes.clone(),
+        None => scene_spawner.iter_instance_entities(instance).collect(),
+    };
+    scene_spawner.unregister_instance(instance);
+    match poolable.zip(scene_entity) {
+        Some((poolable, scene_entity)) => {
+            let (root, key) = (scene_entity.root, poolable.clone());
+            commands.queue(move |world: &mut World| {
+                instance_pool::release(world, container, root, instance, nodes, key);
+            });
+        }
+        None => despawn_instance_non_recursive(&mut commands, nodes.into_iter()),
+    }
 }
 
 fn despawn_instance_non_recursive(commands: &mut Commands, entities: impl Iterator<Item = Entity>) {
@@ -357,6 +387,8 @@ fn on_gltf_container_removed(
         GltfProcessed,
         GltfProcessing,
         GltfReady,
+        GltfPooledNodes,
+        GltfPoolable,
         GltfAssetFailed,
         GltfSource,
     )>();
@@ -412,7 +444,13 @@ fn update_gltf(
         Changed<GltfDefinition>,
     >,
     unprocessed_gltfs: Query<
-        (Entity, &SceneEntity, &GltfHandle, &GltfDefinition),
+        (
+            Entity,
+            &SceneEntity,
+            &GltfHandle,
+            &GltfDefinition,
+            Option<&GltfPart>,
+        ),
         (With<GltfDefinition>, Without<GltfLoaded>),
     >,
     scene_contents: Query<(
@@ -427,6 +465,7 @@ fn update_gltf(
         ResMut<Assets<StandardMaterial>>,
     ),
     mut scene_spawner: ResMut<SceneSpawner>,
+    mut instance_pool: ResMut<GltfInstancePool>,
     mut contexts: Query<(Entity, &mut RendererSceneContext, Has<SceneResourceLookup>)>,
     containing_scenes: ContainingScene,
     oow_player: Query<Entity, (With<OutOfWorld>, With<PrimaryUser>)>,
@@ -532,9 +571,13 @@ fn update_gltf(
             Err(e) => {
                 warn!("gltf content file not found: {e}");
                 set_state(scene_ent, LoadingState::NotFound);
-                commands
-                    .entity(ent)
-                    .try_remove::<(GltfLoaded, GltfReady, GltfHandle)>();
+                commands.entity(ent).try_remove::<(
+                    GltfLoaded,
+                    GltfReady,
+                    GltfPooledNodes,
+                    GltfPoolable,
+                    GltfHandle,
+                )>();
                 continue;
             }
         };
@@ -546,7 +589,7 @@ fn update_gltf(
             .remove::<GltfLoaded>();
     }
 
-    for (ent, scene_ent, h_gltf, def) in unprocessed_gltfs.iter() {
+    for (ent, scene_ent, h_gltf, def, part) in unprocessed_gltfs.iter() {
         match ipfas.load_state(h_gltf.0.id()) {
             bevy::asset::LoadState::Loaded => (),
             bevy::asset::LoadState::Failed(e) => {
@@ -573,6 +616,17 @@ fn update_gltf(
             continue;
         };
         let gltf_scene_handle = gltf.default_scene.as_ref();
+
+        // a pooled instance of this model in this scene is shown instead of a new one
+        if part.is_none() {
+            if let Some(pooled) = instance_pool.take(scene_ent.root, &def.0, h_gltf.0.id()) {
+                let (root, container_id) = (scene_ent.root, scene_ent.id);
+                commands.queue(move |world: &mut World| {
+                    instance_pool::rebind(world, ent, root, container_id, pooled);
+                });
+                continue;
+            }
+        }
 
         // validate texture types
         for h_mat in gltf.materials.iter() {
@@ -653,6 +707,8 @@ fn retry_repaired_gltfs(
             GltfProcessed,
             GltfProcessing,
             GltfReady,
+            GltfPooledNodes,
+            GltfPoolable,
             GltfAssetFailed,
         )>();
 
@@ -818,6 +874,10 @@ impl NodeProcessing<'_, '_> {
             maybe_spot,
         )) = gltf_spawned_entities.get(spawned_ent)
         {
+            if maybe_directional.is_some() || maybe_point.is_some() || maybe_spot.is_some() {
+                progress.has_lights = true;
+            }
+
             // remove directional lights
             if maybe_directional.is_some() {
                 commands.entity(spawned_ent).despawn();
@@ -1330,7 +1390,7 @@ pub(crate) fn update_ready_gltfs(
                 commands
                     .entity(bevy_scene_entity)
                     .try_insert(GltfProcessed::default())
-                    .try_remove::<(GltfReady, GltfProcessing)>();
+                    .try_remove::<(GltfReady, GltfPooledNodes, GltfPoolable, GltfProcessing)>();
                 continue;
             };
             // a model in progress was ready when its processing started
@@ -1343,7 +1403,7 @@ pub(crate) fn update_ready_gltfs(
                 commands
                     .entity(bevy_scene_entity)
                     .try_insert(GltfProcessed::default())
-                    .try_remove::<(GltfReady, GltfProcessing)>();
+                    .try_remove::<(GltfReady, GltfPooledNodes, GltfPoolable, GltfProcessing)>();
                 error!("gltf was unloaded mysteriously. this shouldn't happen and things will be broken as a result.");
                 reveal(&mut commands, instance);
                 continue;
@@ -1425,6 +1485,12 @@ pub(crate) fn update_ready_gltfs(
                 .try_remove::<GltfProcessing>();
             let named_nodes = std::mem::take(&mut processing.named_nodes);
             let has_animations = processing.has_animations;
+            let poolable = (part.is_none() && !processing.has_lights && gltf.animations.is_empty())
+                .then(|| GltfPoolable {
+                    source: definition.0.clone(),
+                    gltf: h_gltf.0.id(),
+                    named_nodes: named_nodes.clone(),
+                });
 
             if part == Some(GltfPart::Colliders) {
                 // its colliders hold their shapes and collider meshes: the glTF, with every
@@ -1486,6 +1552,13 @@ pub(crate) fn update_ready_gltfs(
                 },
                 GltfReady(instance),
             ));
+            // the instance this one replaces went with the key and nodes it was shown with
+            commands
+                .entity(bevy_scene_entity)
+                .try_remove::<(GltfPooledNodes, GltfPoolable)>();
+            if let Some(poolable) = poolable {
+                commands.entity(bevy_scene_entity).try_insert(poolable);
+            }
             reveal(&mut commands, instance);
             if has_animations && !gltf.animations.is_empty() {
                 let mut graph = AnimationGraph::new();
@@ -1748,7 +1821,12 @@ impl From<PbGltfNodeModifiers> for GltfNodeModifiers {
 fn debug_modifiers(
     mut commands: Commands,
     q: Query<
-        (&GltfNodeModifiers, &GltfProcessed, Option<&GltfDefinition>),
+        (
+            Entity,
+            &GltfNodeModifiers,
+            &GltfProcessed,
+            Option<&GltfDefinition>,
+        ),
         Or<(Changed<GltfNodeModifiers>, Changed<GltfProcessed>)>,
     >,
     child_nodes: Query<
@@ -1805,7 +1883,9 @@ fn debug_modifiers(
         ]
     }
 
-    for (modifiers, processed, def) in q {
+    for (container, modifiers, processed, def) in q {
+        // its nodes keep what the modifiers change
+        commands.entity(container).try_remove::<GltfPoolable>();
         let node_paths = processed
             .named_nodes
             .iter()
@@ -2084,6 +2164,8 @@ fn expose_gltfs(
                         if already_linked.get(t).is_ok() {
                             break GltfLinkState::Failed("duplicate node name requested");
                         }
+                        // its nodes keep what the link changes
+                        commands.entity(parent).try_remove::<GltfPoolable>();
 
                         // make sure the new linked node is a child of the gltf parent (if any)
                         let gltf_node_parent = if let Some((parent_path, ..)) =

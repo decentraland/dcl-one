@@ -15,7 +15,7 @@ use crate::{
     renderer_context::RendererSceneContext,
     scene_traffic::{Batch, SceneTraffic, Tick},
     update_world::{
-        gltf_container::{GltfLoadingCount, SceneResourceLookup},
+        gltf_container::{GltfInstancePool, GltfLoadingCount, SceneResourceLookup},
         mesh_collider::SceneColliderData,
     },
     vec3_to_parcel, ContainerEntity, ContainingScene,
@@ -32,6 +32,7 @@ impl Plugin for SceneDebugPanelPlugin {
             .add_console_command::<SceneContent, _>(scene_content)
             .add_console_command::<LoadingState, _>(loading_state)
             .add_console_command::<TextureState, _>(texture_state)
+            .add_console_command::<InstancePoolState, _>(instance_pool_state)
             .add_debug_section(DebugSection {
                 title: "Current Scene",
                 query: "/current_scene_state",
@@ -176,6 +177,18 @@ impl Plugin for SceneDebugPanelPlugin {
                 fields: &[
                     ("Resident image assets", "count"),
                     ("Retained image bytes (CPU)", "bytes"),
+                ],
+                actions: &[],
+                inputs: &[],
+            })
+            .add_debug_section(DebugSection {
+                title: "glTF Instance Pool",
+                query: "/gltf_instance_pool_state",
+                fields: &[
+                    ("Pooled instances", "instances"),
+                    ("Pooled nodes", "nodes"),
+                    ("Component bytes (held / budget)", "bytes"),
+                    ("Instances (reused / released / evicted)", "counts"),
                 ],
                 actions: &[],
                 inputs: &[],
@@ -644,6 +657,25 @@ fn texture_state(mut input: ConsoleCommand<TextureState>, images: Res<Assets<Ima
             .map(Vec::len)
             .sum();
         input.reply_ok(json!({"count":images.len(),"bytes":bytes}).to_string());
+    }
+}
+
+#[derive(clap::Parser, ConsoleCommand)]
+#[command(name = "/gltf_instance_pool_state")]
+struct InstancePoolState;
+
+fn instance_pool_state(mut input: ConsoleCommand<InstancePoolState>, pool: Res<GltfInstancePool>) {
+    if input.take().is_some() {
+        let stats = pool.stats();
+        input.reply_ok(
+            json!({
+                "instances": stats.instance_count,
+                "nodes": stats.node_count,
+                "bytes": [stats.bytes_sum, stats.budget_bytes],
+                "counts": [stats.reused_count, stats.released_count, stats.evicted_count],
+            })
+            .to_string(),
+        );
     }
 }
 

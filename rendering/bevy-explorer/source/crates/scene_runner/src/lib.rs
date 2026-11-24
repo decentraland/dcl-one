@@ -2059,7 +2059,11 @@ fn process_scene_entity_lifecycle(
                     "despawned {:?} -> {:?}",
                     deleted_scene_entity, deleted_bevy_entity
                 );
-                commands.entity(deleted_bevy_entity).despawn();
+                // its model goes to the glTF instance pool while the entity is still there
+                commands
+                    .entity(deleted_bevy_entity)
+                    .try_remove::<update_world::gltf_container::GltfDefinition>()
+                    .despawn();
             }
             context.set_dead(*deleted_scene_entity);
         }
