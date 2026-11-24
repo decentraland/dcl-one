@@ -61,10 +61,11 @@ CI* run, whose artifacts hold the builds ([The workflow](#the-workflow)).
   failed: that night is not measured and nothing reports it. A manual run of main takes `pr`
   empty; a `pr` of spaces is refused.
 - **A run of main that cannot measure fails** with setup's notes as the error (no release rollout,
-  an expired release build, no runner, no enabled laptop, an unoptimized build), so a nightly
+  a release version that names no CI run, an expired release build, no runner, no enabled laptop,
+  an unoptimized build, a manual run that names the same commit on both sides), so a nightly
   never stays green without measuring. It skips and passes when main is unchanged since the
   release, when main's newest passed web build predates the release's CI run (a release whose run
-  failed a guard), or when `BENCHMARK_ENABLED_RUNNERS` is `none`. A report in which nothing was
+  failed a guard), or when `BENCHMARK_ENABLED_RUNNERS` is `none` (any letter case). A report in which nothing was
   compared (no base leg produced data), or one without a known **Overall** line, fails the
   regression job too. The one quiet case is the [queue watchdog](#the-fleet): a laptop that never
   starts its leg leaves the run *cancelled*, which GitHub does not notify; the watchdog's job
@@ -612,13 +613,16 @@ its merge commit.
   [`bevy-explorer-rollout-manual.yml`](../../../../.github/workflows/bevy-explorer-rollout-manual.yml)
   writes when it rolls a version out to decentraland.org. The deployment's own commit is where the
   rollout was dispatched from, not the build: the build is the CI run its `version` names
-  (`<semver>-<CI run ID>.commit-<short commit>`), which must be a completed run of that commit and
-  supplies the web app, kept 90 days on main. Its conclusion does not matter: on main a failed guard
-  does not stop the web package from being published.
+  (`<semver>-<CI run ID>.commit-<short commit>`; a newest release without that suffix fails the
+  run rather than fall back to an older one), which must be a CI run of that commit in this
+  repository and supplies the web app, kept 90 days on main. Neither its status nor its conclusion
+  matters: a release may roll out while its run is still going, and on main a failed guard does not
+  stop the web package from being published.
 - **The runners,** for each operating system the legs need and for Linux, which writes the report:
   from the change run when it has one, so a pull request that changes the runner is measured with
-  its own, else from main's runs, searched as for the base (for main, its newest runs, never the
-  release's: the runner reads both builds' files). A laptop whose operating system has no
+  its own, else from main's runs, searched as for the base (for main, main's newest push run that
+  has it, which may be the release's; a given `change_sha`'s run is never searched: the runner reads
+  both builds' files). A laptop whose operating system has no
   runner is left out, with a note in the report; without a Linux runner nothing runs.
 - **The legs:** the fleet's laptops that `BENCHMARK_ENABLED_RUNNERS` enables, each with its runner
   and both web apps; their labels, which the report expects; and the runs per build.
@@ -636,11 +640,12 @@ data (exit 2) is written, then fails the post job. A cancelled run, by the watch
 run of the pull request, writes no report, so the section keeps what the watchdog or the newer
 run wrote.
 
-**The regression issue.** For a run of main, a report whose **Overall** line is 🔴 (the
+<a id="the-regression-issue"></a>**The regression issue.** For a run of main, a report whose **Overall** line is 🔴 (the
 [verdict](#reading-the-results) threshold) opens the one open issue titled *Bevy Explorer:
 performance regression on main against the latest release* that this workflow opened (an issue of
 the same title opened by anyone else is ignored), or, when it is open, replaces its body
-with the newest report and comments with the run. A manual run that names `change_sha` or
+with the newest report and comments with the run. A run that measures the same pair of commits
+again, a nightly while main has no new web build, replaces the report without a comment. A manual run that names `change_sha` or
 `base_sha` uses an issue titled after its own comparison instead. Close it once main is back within the threshold;
 the next regression opens a new one. A report longer than an issue holds points to the run's
 `benchmark-report` artifact instead.

@@ -77,7 +77,10 @@ class GitHub:
         if match := re.fullmatch(rf'repos/{REPO}/deployments/([0-9]+)/statuses\?per_page=100', path):
             return [{'state': state} for state in self.statuses.get(int(match.group(1)), ['success'])]
         if match := re.fullmatch(rf'repos/{REPO}/actions/runs/([0-9]+)', path):
-            return next(run for run in self.main_runs + self.change_runs if run['id'] == int(match.group(1)))
+            runs = [run for run in self.main_runs + self.change_runs if run['id'] == int(match.group(1))]
+            if not runs:
+                raise subprocess.CalledProcessError(1, ['gh', 'api', path])
+            return runs[0]
         if path == f'repos/{REPO}/pulls/7':
             return self.pr
         if match := re.fullmatch(rf'repos/{REPO}/actions/runs/([0-9]+)/artifacts\?per_page=100', path):
@@ -333,9 +336,10 @@ class MainTest(Fixture):
         self.assertEqual(self.resolve('schedule', {})['base_sha'], MAIN[1])
 
     def test_the_fleet_switched_off_skips_while_no_enabled_laptop_fails(self):
-        result = self.resolve('schedule', {}, enabled='none')
-        self.assert_skipped(result)
-        self.assertIn('fleet is off', result['reason'])
+        for enabled in ('none', ' None '):
+            result = self.resolve('schedule', {}, enabled=enabled)
+            self.assert_skipped(result)
+            self.assertIn('fleet is off', result['reason'])
         self.assertEqual(self.resolve('schedule', {}, enabled='nothing-online')['notes'], inputs.NO_LAPTOP)
 
     def test_main_older_than_a_release_whose_guard_failed_is_not_measured_backwards(self):
@@ -361,7 +365,25 @@ class MainTest(Fixture):
         self.assertFalse(result['run'])
         self.assertIn('has expired', result['notes'])
         self.github.deployments = [rollout(2, inputs.RELEASE_PACKAGE, '0.1.0-88.commit-ddddddd')]
-        self.assertIn('not a completed Bevy Explorer / CI run', self.resolve('schedule', {})['notes'])
+        self.assertIn('not a Bevy Explorer / CI run', self.resolve('schedule', {})['notes'])
+        # A run of another repository is not found.
+        self.github.deployments = [rollout(2, inputs.RELEASE_PACKAGE, '0.1.0-12345.commit-eeeeeee')]
+        self.assertIn('not a Bevy Explorer / CI run', self.resolve('schedule', {})['notes'])
+
+    def test_the_newest_release_whose_version_names_no_run_fails_instead_of_an_older_base(self):
+        self.github.deployments.insert(1, rollout(4, inputs.RELEASE_PACKAGE, '0.2.0'))
+        with self.assertRaisesRegex(ValueError, 'names no CI run'):
+            self.resolve('schedule', {})
+
+    def test_a_release_whose_ci_run_is_still_going_is_measured_from_its_web_app(self):
+        self.github.main_runs[2].update(status='in_progress', conclusion=None)
+        self.assertEqual(self.resolve('schedule', {})['base_sha'], RELEASE)
+
+    def test_a_manual_run_with_the_same_commit_on_both_sides_fails_with_a_note(self):
+        event = {'inputs': {'pr': '', 'base_sha': MAIN[0]}}
+        result = self.resolve('workflow_dispatch', event)
+        self.assertFalse(result['run'])
+        self.assertIn('nothing to compare', result['notes'])
 
     def test_a_manual_run_measures_any_built_commit_against_a_given_base(self):
         self.github.change_runs = [ci_run(100, HEAD)]
@@ -379,11 +401,27 @@ class MainTest(Fixture):
         self.github.artifacts[100] = artifacts(MERGE, web=False)
         self.assertIn('no successful Bevy Explorer / CI run', self.resolve('workflow_dispatch', event)['notes'])
 
-    def test_a_runner_main_lacks_comes_from_its_newest_run_that_has_it_not_from_the_release(self):
+    def test_a_runner_main_lacks_comes_from_mains_newest_push_run_that_has_it(self):
         self.github.artifacts[90] = artifacts(MAIN[0], runners=('linux-amd64',))
         result = self.resolve('schedule', {})
         self.assertEqual({leg['runner_run_id'] for leg in result['legs']}, {'89'})
         self.assertEqual(result['report_runner_run_id'], '90')
+
+    def test_a_given_commits_run_is_not_named_as_a_runner_source(self):
+        for run in self.github.main_runs:
+            self.github.artifacts[run['id']] = artifacts(run['head_sha'], runners=('linux-amd64',))
+        event = {'inputs': {'pr': '', 'change_sha': HEAD}}
+        notes = self.resolve('workflow_dispatch', event)['notes']
+        self.assertIn('main has no run with a benchmark runner for windows-amd64', notes)
+        self.assertNotIn('change run', notes)
+
+    def test_the_cache_holds_only_during_a_resolve(self):
+        self.resolve('schedule', {})
+        self.assertIsNone(inputs.CACHE)
+        inputs.base_runs(REPO, '')
+        inputs.base_runs(REPO, '')
+        listing = f'repos/{REPO}/{inputs.RUNS_PATH}?branch=main&event=push&status=success&per_page=100'
+        self.assertEqual(self.github.calls.count(listing), 3)
 
 class OutputTest(unittest.TestCase):
     def test_the_step_writes_every_output_the_workflow_reads_on_one_line_each(self):
@@ -531,6 +569,7 @@ class RegressionIssueTest(unittest.TestCase):
             gh.chmod(0o755)
             environment = dict(os.environ, PATH=f'{folder}{os.pathsep}{os.environ["PATH"]}', FIXTURE=str(folder),
                                TITLE='Main issue', CHANGE_DESCRIPTION='main at c', BASE_DESCRIPTION='release at e',
+                               CHANGE_SHA='c' * 40, BASE_SHA='e' * 40,
                                RUN_URL='https://example.test/run', GITHUB_STEP_SUMMARY=str(folder / 'summary'),
                                FAIL_LIST='1' if fail_list else '')
             # As GitHub runs a step with `shell: bash`.
@@ -569,9 +608,16 @@ class RegressionIssueTest(unittest.TestCase):
         self.assertEqual(calls[1][:4], ['issue', 'create', '--title', 'Main issue'])
         self.assertIn(report, written)
 
-        result, calls, _ = self.step(report, [{'number': 3, 'title': 'Main issue'}])
+        result, calls, _ = self.step(report, [{'number': 3, 'title': 'Main issue', 'body': 'older pair'}])
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual([call[:3] for call in calls[1:]], [['issue', 'edit', '3'], ['issue', 'comment', '3']])
+
+    def test_the_same_pair_regressed_again_updates_the_report_without_a_comment(self):
+        report = '**Overall: 🔴 GPU average regressed on A**\n'
+        _, _, written = self.step(report)
+        result, calls, _ = self.step(report, [{'number': 3, 'title': 'Main issue', 'body': written}])
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual([call[:3] for call in calls[1:]], [['issue', 'edit', '3']])
 
     def test_a_failed_issue_search_opens_no_second_issue(self):
         result, calls, _ = self.step('**Overall: 🔴 CPU average regressed on A**\n', fail_list=True)

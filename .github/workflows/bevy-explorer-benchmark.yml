@@ -418,13 +418,16 @@ jobs:
           path: report
       # An issue body holds 65536 characters; a longer report stays in the run's artifact.
       # `shell: bash` adds pipefail: a failed issue search must not read as "no issue" and open a
-      # second one.
+      # second one. The body names the measured commits, so a nightly that measures the same pair
+      # again replaces the report without a comment.
       - name: Open or update the regression issue
         if: needs.gather.outputs.status != '2'
         shell: bash
         env:
           CHANGE_DESCRIPTION: ${{ needs.setup.outputs.change_description }}
           BASE_DESCRIPTION: ${{ needs.setup.outputs.base_description }}
+          CHANGE_SHA: ${{ needs.setup.outputs.change_sha }}
+          BASE_SHA: ${{ needs.setup.outputs.base_sha }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         run: |
           if grep -q '^\*\*Overall: ⚠️' report/report.md; then
@@ -439,7 +442,9 @@ jobs:
             echo "::error::The report has no Overall line this job knows; its format may have changed"
             exit 1
           fi
+          pair="<!-- benchmark pair: $CHANGE_SHA $BASE_SHA -->"
           {
+            printf '%s\n\n' "$pair"
             printf 'The benchmark measured a regression of %s against %s ([run](%s)). Each run that regresses again comments here and replaces the report below; close the issue once main is back within the threshold.\n\n' \
               "$CHANGE_DESCRIPTION" "$BASE_DESCRIPTION" "$RUN_URL"
             if [ "$(wc -c < report/report.md)" -le 60000 ]; then
@@ -449,10 +454,16 @@ jobs:
             fi
           } > body.md
           # Only an issue this workflow opened: anyone can open one with the same title.
-          number=$(gh issue list --state open --author app/github-actions --search "in:title \"$TITLE\"" --json number,title \
-            | jq -r --arg title "$TITLE" 'map(select(.title == $title)) | first | .number // empty')
+          found=$(gh issue list --state open --author app/github-actions --search "in:title \"$TITLE\"" --json number,title,body \
+            | jq -r --arg title "$TITLE" --arg pair "$pair" \
+              'map(select(.title == $title)) | first | if . == null then "" else "\(.number) \(.body | contains($pair))" end')
+          read -r number same <<< "$found"
           if [ -n "$number" ]; then
             gh issue edit "$number" --body-file body.md
+            if [ "$same" = true ]; then
+              echo "Issue #$number already reports this pair; replaced its report." >> "$GITHUB_STEP_SUMMARY"
+              exit 0
+            fi
             gh issue comment "$number" --body "Regressed again: $CHANGE_DESCRIPTION against $BASE_DESCRIPTION ([run]($RUN_URL))."
             echo "Updated issue #$number." >> "$GITHUB_STEP_SUMMARY"
           else

@@ -79,17 +79,27 @@ def ci_run(run, repo, events):
 
 
 # One resolve reads each list once: the web app and the runners are searched in the same runs.
-CACHE = {}
+# None outside resolve, so other callers always read the API.
+CACHE = None
 
 
 def artifacts(repo, run_id):
     """A run's artifacts that have not expired: {name: artifact ID}."""
-    key = ('artifacts', repo, run_id)
+    return cached(('artifacts', repo, run_id), lambda: list_artifacts(repo, run_id))
+
+
+def list_artifacts(repo, run_id):
+    data = api(f'repos/{repo}/actions/runs/{run_id}/artifacts?per_page=100')
+    if data['total_count'] != len(data['artifacts']):
+        raise ValueError(f'run {run_id} has more artifacts than one page lists')
+    return {row['name']: row['id'] for row in data['artifacts'] if not row['expired']}
+
+
+def cached(key, read):
+    if CACHE is None:
+        return read()
     if key not in CACHE:
-        data = api(f'repos/{repo}/actions/runs/{run_id}/artifacts?per_page=100')
-        if data['total_count'] != len(data['artifacts']):
-            raise ValueError(f'run {run_id} has more artifacts than one page lists')
-        CACHE[key] = {row['name']: row['id'] for row in data['artifacts'] if not row['expired']}
+        CACHE[key] = read()
     return CACHE[key]
 
 
@@ -126,10 +136,7 @@ def search(repo, runs, prefixes):
 
 def base_runs(repo, base_sha):
     """Successful main runs, newest first: base_sha's when given, else every push."""
-    key = ('runs', repo, base_sha)
-    if key not in CACHE:
-        CACHE[key] = list_base_runs(repo, base_sha)
-    return CACHE[key]
+    return cached(('runs', repo, base_sha), lambda: list_base_runs(repo, base_sha))
 
 
 def list_base_runs(repo, base_sha):
@@ -142,7 +149,8 @@ def list_base_runs(repo, base_sha):
 
 
 def release(repo):
-    """The newest complete, successful rollout of the web package: (version, CI run ID, short commit), or None."""
+    """The newest complete, successful rollout of the web package: (version, CI run ID, short commit),
+    or None. A version that names no CI run raises: an older release must not become the base."""
     rows = api(f'repos/{repo}/deployments?environment={RELEASE_ENVIRONMENT}&per_page=100')
     for row in rows:
         payload = row.get('payload')
@@ -150,12 +158,16 @@ def release(repo):
             continue
         # set-rollout-action names the package `prefix`; cdn-deploy names it `packageName`.
         package = payload.get('prefix') or payload.get('packageName')
+        if package != RELEASE_PACKAGE or str(payload.get('percentage', 100)) != '100':
+            continue
+        if not released(api(f"repos/{repo}/deployments/{row['id']}/statuses?per_page=100")):
+            continue
         version = str(payload.get('version') or '')
         match = RELEASE_VERSION.fullmatch(version)
-        if package != RELEASE_PACKAGE or not match or str(payload.get('percentage', 100)) != '100':
-            continue
-        if released(api(f"repos/{repo}/deployments/{row['id']}/statuses?per_page=100")):
-            return version, int(match.group(1)), match.group(2)
+        if not match:
+            raise ValueError(f'The latest release, {version or "a rollout without a version"}, names no CI run: '
+                             'its version lacks the -<CI run ID>.commit-<short commit> suffix.')
+        return version, int(match.group(1)), match.group(2)
     return None
 
 
@@ -172,8 +184,9 @@ def released(statuses):
 
 
 def released_by(run, repo, short):
-    """Whether a completed CI run of this repository built the commit a release version names."""
-    return (run['path'] == WORKFLOW and run['status'] == 'completed' and run['event'] in ('push', 'workflow_dispatch')
+    """Whether a CI run of this repository built the commit a release version names. Not its status:
+    a release can roll out while its run is still going, and its web app is checked next."""
+    return (run['path'] == WORKFLOW and run['event'] in ('push', 'workflow_dispatch')
             and (run.get('head_repository') or {}).get('full_name') == repo
             and SHA.fullmatch(run['head_sha']) and run['head_sha'].startswith(short))
 
@@ -196,7 +209,15 @@ def commits(inputs):
 
 
 def resolve(event_name, event, repo, enabled='', runs=''):
-    CACHE.clear()
+    global CACHE
+    CACHE = {}
+    try:
+        return resolve_event(event_name, event, repo, enabled, runs)
+    finally:
+        CACHE = None
+
+
+def resolve_event(event_name, event, repo, enabled, runs):
     inputs = {}
     if event_name == 'schedule':
         return resolve_main({}, repo, enabled, runs)
@@ -277,8 +298,9 @@ def resolve_main(inputs, repo, enabled, runs):
     """Main's newest web build, or a given commit's, against the latest release or a given base."""
     change_sha, base_sha = commits(inputs)
     runs = run_count(inputs, runs)
-    # The fleet switched off on purpose is not a failure of main's nightly.
-    if (enabled or '').strip() == 'none':
+    # The fleet switched off on purpose is not a failure of main's nightly. As the workflow's
+    # `vars.BENCHMARK_ENABLED_RUNNERS == 'none'`, case does not matter.
+    if (enabled or '').strip().lower() == 'none':
         return skip('BENCHMARK_ENABLED_RUNNERS is none: the fleet is off')
     result = outcome('', change_sha, runs, 'main')
     if change_sha:
@@ -313,11 +335,15 @@ def resolve_main(inputs, repo, enabled, runs):
             return stop(result, f'No complete, successful {RELEASE_PACKAGE} rollout to {RELEASE_ENVIRONMENT} is '
                                 'recorded as a deployment.')
         version, run_id, short = latest
-        base = api(f'repos/{repo}/actions/runs/{run_id}')
+        not_ci = (f'Release {version} names CI run {run_id}, which is not a Bevy Explorer / CI run of commit '
+                  f'{short} in {repo}.')
+        try:
+            base = api(f'repos/{repo}/actions/runs/{run_id}')
+        except subprocess.CalledProcessError:
+            return stop(result, not_ci)
         # Not its conclusion: on main a failed guard does not stop the build from being published.
         if not released_by(base, repo, short):
-            return stop(result, f'Release {version} names CI run {run_id}, which is not a completed Bevy Explorer / '
-                                f'CI run of commit {short}.')
+            return stop(result, not_ci)
         base_names = artifacts(repo, run_id)
         base_web = named(base_names, WEB)
         if not base_web:
@@ -325,6 +351,8 @@ def resolve_main(inputs, repo, enabled, runs):
         base_web_id = base_names[base_web]
         base_description = f"release {version} at {base['head_sha']}"
     if base['head_sha'] == result['change_sha']:
+        if change_sha or base_sha:
+            return stop(result, f"{base['head_sha']} is both the change and the base: there is nothing to compare.")
         return skip(f"{base['head_sha']} is both the change and the base: main has no newer web build")
     # Run IDs grow with time: main's newest passed web build may predate a release whose CI run
     # failed a guard, and measuring it against the release would read backwards.
@@ -343,9 +371,8 @@ def resolve_main(inputs, repo, enabled, runs):
         return stop(result, f"The change web build (CI run {change['id']}) is not optimized.")
     if not optimized(repo, base_web_id):
         return stop(result, f"The base web build ({base['head_sha']}, CI run {base['id']}) is not optimized.")
-    # The runner comes from main's newest run that has it, which reads files of the newest format;
-    # from the change run only when that is a main push run, so a given commit's runner never
-    # writes the report.
+    # The runner comes from main's newest push run that has it, which reads files of the newest
+    # format; a given commit's run is never searched, so its runner never writes the report.
     own = change['event'] == 'push' and change['head_branch'] == 'main'
     return measure(repo, result, enabled, (change, change_names if own else {}, change_web), (base, base_web),
                    base_runs(repo, ''), 'main', change_description)
@@ -378,15 +405,15 @@ def measure(repo, result, enabled, change_build, base_build, runner_runs, runner
         for prefix, (name, run, _) in search(repo, runner_runs, wanted).items():
             runners[prefix[len(RUNNER):]] = (name, run)
 
+    # A change run whose artifacts were not given was not searched, so the notes leave it out.
+    lacking = f'neither the change run nor {runner_where} has' if change_names else f'{runner_where} has no run with'
     if PLATFORMS['linux'] not in runners:
-        return stop(result, 'No benchmark runner for linux-amd64 to write the report: neither the change run '
-                            f'nor {runner_where} has one.')
+        return stop(result, f'No benchmark runner for linux-amd64 to write the report: {lacking} one.')
     report_name, report_run = runners[PLATFORMS['linux']]
     notes = []
     for label, system in laptops:
         if PLATFORMS[system] not in runners:
-            notes.append(f'{label}-chrome did not run: neither the change run nor {runner_where} has a benchmark '
-                         f'runner for {PLATFORMS[system]}.')
+            notes.append(f'{label}-chrome did not run: {lacking} a benchmark runner for {PLATFORMS[system]}.')
             continue
         runner_name, runner_run = runners[PLATFORMS[system]]
         result['legs'].append({
