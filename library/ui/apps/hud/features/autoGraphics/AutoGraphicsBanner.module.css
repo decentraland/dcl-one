@@ -1,0 +1,59 @@
+/* Top-centre, under the toast stack: only the card takes the pointer. */
+.host {
+  position: fixed;
+  top: calc(64px * var(--ui-scale, 1));
+  left: 50%;
+  z-index: var(--z-popup);
+  transform: translateX(-50%) scale(var(--ui-scale, 1));
+  transform-origin: top center;
+  width: min(560px, 92vw);
+  pointer-events: none;
+}
+.banner {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 20px 24px;
+  border: 1px solid var(--accent);
+  border-radius: var(--r-panel);
+  background: var(--panel);
+  box-shadow: var(--shadow-modal);
+  color: var(--text);
+  font-family: var(--font-family);
+  pointer-events: auto;
+  animation: bannerIn var(--dur-fast) ease-out;
+}
+.title {
+  font-size: var(--type-24);
+  font-weight: var(--fw-semibold);
+  line-height: 1.2;
+}
+.summary {
+  margin: 0;
+  font-size: var(--type-18);
+  font-weight: var(--fw-semibold);
+  color: var(--accent);
+}
+.note {
+  margin: 0;
+  font-size: var(--type-14);
+  line-height: 18px;
+  color: var(--text-dim);
+}
+.actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+  margin-top: 8px;
+}
+@keyframes bannerIn {
+  from {
+    opacity: 0;
+    transform: translateY(-8px);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .banner {
+    animation: none;
+  }
+}

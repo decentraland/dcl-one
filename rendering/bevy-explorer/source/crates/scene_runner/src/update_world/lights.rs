@@ -17,8 +17,8 @@ use common::{
         LIGHT_INTENSITY_BY_TIME, LIGHT_UNIT_LUX,
     },
     structs::{
-        AppConfig, PrimaryUser, SceneGlobalLight, TimeOfDay, PRIMARY_AVATAR_LIGHT_LAYER,
-        SPOT_SHADOW_MAX_DISTANCE,
+        AppConfig, PrimaryUser, SceneGlobalLight, SessionGraphics, TimeOfDay,
+        PRIMARY_AVATAR_LIGHT_LAYER, SPOT_SHADOW_MAX_DISTANCE,
     },
     util::TryPushChildrenEx,
 };
@@ -816,7 +816,7 @@ fn manage_shadow_casters(
     parent_visibility: Query<&InheritedVisibility>,
     player: Single<(Entity, &GlobalTransform), With<PrimaryUser>>,
     containing_scene: ContainingScene,
-    config: Res<AppConfig>,
+    (config, session): (Res<AppConfig>, Res<SessionGraphics>),
     switches: Res<LightSwitches>,
     mut lights: Local<Vec<(Entity, bool, FloatOrd, bool, LightKind, f32)>>,
 ) {
@@ -865,7 +865,7 @@ fn manage_shadow_casters(
     } else {
         0
     };
-    let mut max_casters = match config.graphics.shadow_settings {
+    let mut max_casters = match session.shadow_setting(&config) {
         common::structs::ShadowSetting::Off => 0,
         _ => config.graphics.shadow_caster_count,
     };

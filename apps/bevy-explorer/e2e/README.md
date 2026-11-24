@@ -276,6 +276,7 @@ Explorer. The chat scenarios in `specs/chat.test.ts` also check that a slash key
 `specs/ban-block-state.test.ts` reads the engine's ban and block status (`/ban_block_state`), blocks
 and unblocks a second configured account through `/block_user` and `/unblock_user`, and checks the
 "Bans and blocks" debug section is registered. With one account key the blocking scenario is a todo.
+`specs/auto-graphics.test.ts` raises the sample Auto Graphics message (`/auto_graphics_notice`) and reads the HUD's `status` named `Graphics lowered`, then closes it with `OK`.
 `specs/platform-ban.test.ts` reads the platform-ban check against zone, then, on the standalone only,
 boots a second client with `--comms-gatekeeper` pointed at `driver/gatekeeper-stub.ts` (a loopback
 gatekeeper answering as scripted, `DCL_E2E_GATEKEEPER_PORT`, 18745 by default, one shared by

@@ -8,7 +8,7 @@ import type { LoginDriver, NewAccountPick } from '@explorer-core/engine/driver'
 import type { LaunchHostOptions } from '@explorer-core/engine/engineRpc'
 import { recordVisit } from '@explorer-core/features/lobby/lobbyApi'
 import { answerItemPurchase, type PurchaseSceneItem } from '../itemPurchase/answer'
-import type { PlatformBanNotice, PortableInfo, PortableState, SatelliteView, WorldAccessVerdict } from '@explorer-core/engine/generated'
+import type { AutoGraphicsNotice, PlatformBanNotice, PortableInfo, PortableState, SatelliteView, WorldAccessVerdict } from '@explorer-core/engine/generated'
 import type { AvatarLook } from '@explorer-core/engine/avatarEquip'
 import { PLATFORM_BANNED_REFUSAL, type UiSound, type EngineViewportRegion, type GiftingPageMessage, type GiftingQueryRequest, type PhotoModeSnapshot, type PhotoModeSource, type PreviewFocus } from '@explorer-core/engine/protocol'
 import { clickButton, screenViewed, sessionId, track } from '@explorer-core/lib/analytics'
@@ -1163,6 +1163,9 @@ export interface EngineSession {
   /** The signed-in wallet's known platform ban (null when not banned, unknown or failed), and
    *  whether the last travel was refused for it. */
   platformBan: { notice: PlatformBanNotice | null; travelRefused: boolean; dismissTravelRefused: () => void }
+  /** What Auto Graphics last lowered. `id` goes up with each notice, so one with the same content
+   *  shows again. Null after sign-out or `dismiss`. */
+  autoGraphics: { notice: (AutoGraphicsNotice & { id: number }) | null; dismiss: () => void }
   /** The realm a HUD-requested travel is heading to, until the engine reports the outcome. The
    *  loader shows meanwhile. */
   travellingTo: string | null
@@ -1423,6 +1426,9 @@ export function useEngineSession(createDriver: () => LoginDriver, host: SessionH
   const [travelError, setTravelError] = useState<string | null>(null)
   const [platformBan, setPlatformBan] = useState<PlatformBanNotice | null>(null)
   const [banRefusedTravel, setBanRefusedTravel] = useState(false)
+  const [autoGraphicsNotice, setAutoGraphicsNotice] = useState<(AutoGraphicsNotice & { id: number }) | null>(null)
+  const autoGraphicsSeq = useRef(0)
+  const dismissAutoGraphics = useCallback(() => setAutoGraphicsNotice(null), [])
   const [editorMode, setEditorModeState] = useState<EditorHudMode>('off')
   const [playerReady, setPlayerReady] = useState(false)
   // Ref twin of playerReady: the destination pick runs in a callback that would close over a
@@ -2722,6 +2728,9 @@ export function useEngineSession(createDriver: () => LoginDriver, host: SessionH
           break
         case 'platformBan':
           setPlatformBan(msg.ban.banned ? msg.ban : null)
+          break
+        case 'autoGraphics':
+          setAutoGraphicsNotice({ ...msg.notice, id: ++autoGraphicsSeq.current })
           break
         case 'portables': {
           const before = portableStates.current
@@ -4433,6 +4442,7 @@ export function useEngineSession(createDriver: () => LoginDriver, host: SessionH
     // clears the ban and the refused travel, and retires the travel id and loader in flight
     setPlatformBan(null)
     setBanRefusedTravel(false)
+    setAutoGraphicsNotice(null)
     travelSeq.current++
     setTravellingTo(null)
   }, [closeAllPanels, resetEvents])
@@ -5230,6 +5240,7 @@ export function useEngineSession(createDriver: () => LoginDriver, host: SessionH
     travelError,
     dismissTravelError,
     platformBan: { notice: platformBan, travelRefused: banRefusedTravel, dismissTravelRefused: dismissBanRefusedTravel },
+    autoGraphics: { notice: autoGraphicsNotice, dismiss: dismissAutoGraphics },
     travellingTo,
     fatalError,
     reload: () => location.reload(),

@@ -8,6 +8,7 @@
 // forward SystemApi results verbatim.
 
 import type {
+  AutoGraphicsNotice,
   Color3,
   CommunityVoiceStatus,
   ConnectivitySnapshot,
@@ -1190,6 +1191,13 @@ export const PLATFORM_BANNED_REFUSAL = 'You are banned from Decentraland'
 export interface PlatformBanMessage {
   kind: 'platformBan'
   ban: PlatformBanNotice
+}
+
+/** What Auto Graphics lowered for the session, once each time it settles on lower graphics
+ *  (scene → page). Not repeated on `hello`. */
+export interface AutoGraphicsMessage {
+  kind: 'autoGraphics'
+  notice: AutoGraphicsNotice
 }
 
 /** The engine no longer needs the password prompt answered (its realm change is over). */
@@ -2658,6 +2666,7 @@ export type SceneToPage =
   | WorldPasswordWithdrawnMessage
   | ItemPurchaseRequestMessage
   | PlatformBanMessage
+  | AutoGraphicsMessage
   | EditorSceneResultMessage
   | PortablesMessage
   | MapPinsMessage

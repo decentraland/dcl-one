@@ -1,4 +1,5 @@
 export * from './AnalyticsEvent'
+export * from './AutoGraphicsNotice'
 export * from './AvatarModifierState'
 export * from './BlockUpdateData'
 export * from './BlockedUserData'

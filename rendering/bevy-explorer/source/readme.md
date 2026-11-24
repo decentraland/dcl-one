@@ -323,6 +323,10 @@ the [conventions ADR](../../../docs/adr/2026-11-17-console-command-conventions.m
   snapshot and the frame-time breakdown independently of the panel; `/debug_memory`, and in a
   `performance-profiler` build `/render_state` and `/profile_top`, the rest
   ([profiling](../docs/guidelines/profiling.md)).
+- `/auto_graphics_state`: Auto Graphics' reading (enabled, phase, rung, what it lowered: shadows, render
+  scale, bloom, and the messages raised); `/auto_graphics_notice` raises a sample message (shadows off,
+  70%) without changing any setting. The HUD shows each as a `status` named `Graphics lowered`, with
+  `Settings` and `OK` buttons, closing itself after 15 s.
 - The HUD, by role and accessible name (`library/explorer-core/lib/hudAutomation.ts`): `/hud_list [role]`,
   `/hud_read`, `/hud_click`, `/hud_fill` (`{"name", "text"}`), `/hud_wait` (`"state"`: `visible`,
   `hidden`, `enabled`, `actionable`, `ready`; `"timeout"` ms). A selector is the name or JSON

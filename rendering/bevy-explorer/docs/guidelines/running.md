@@ -384,6 +384,10 @@ On the web only:
   `maxReopens`; with `ms`, sets it first for every source failing from then on. For tests that
   would otherwise wait the full 62 s schedule.
 
+- `/auto_graphics_state`: Auto Graphics' reading (enabled, phase, rung, the shadows, render scale and bloom it
+  lowered, and the messages raised). `/auto_graphics_notice` raises a sample message (shadows off, 70%)
+  without changing any setting, to check the HUD's `Graphics lowered` banner.
+
 The HUD and input:
 
 - `/hud_list [role]`, `/hud_read`, `/hud_click`, `/hud_fill`, `/hud_wait`: a HUD control by role

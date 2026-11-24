@@ -8,16 +8,16 @@ use dcl_js::system_api::{JsBindingsData, PermissionTypeDetail};
 use deno_core::{anyhow, error::AnyError, op2, OpDecl, OpState};
 use std::{cell::RefCell, rc::Rc};
 use system_bridge::{
-    settings::SettingInfo, AnalyticsEvent, AvatarModifierState, BlockUpdateData, BlockedUserData,
-    BlockingStatusData, ChatMessage, ChatReactionData, CommunityMemberConnectivityData,
-    CommunityVoiceUpdate, ConnectivitySnapshot, DmHistoryEntryData, DmUserStateData,
-    FriendConnectivityEvent, FriendData, FriendRequestData, FriendStatusData,
-    FriendshipEventUpdate, HomeScene, HoverEvent, ItemPurchaseRequest, ItemPurchaseState,
-    ListenedCommunity, LiveSceneInfo, LobbyStage, MapPinInfo, OutfitsData, PermanentPermissionItem,
-    PermissionRequestEvent, PhotoModeState, PlatformBanNotice, PortableInfo, ProfileChangedEvent,
-    ProximityEvent, SatelliteView, SceneLoadingUi, SetAvatarData, SetAvatarResult,
-    TextureOptimizationStatus, VoiceChatAction, VoiceChatState, VoiceMessage, WelcomeState,
-    WorldAccessEvent, WorldAccessVerdict,
+    settings::SettingInfo, AnalyticsEvent, AutoGraphicsNotice, AvatarModifierState,
+    BlockUpdateData, BlockedUserData, BlockingStatusData, ChatMessage, ChatReactionData,
+    CommunityMemberConnectivityData, CommunityVoiceUpdate, ConnectivitySnapshot,
+    DmHistoryEntryData, DmUserStateData, FriendConnectivityEvent, FriendData, FriendRequestData,
+    FriendStatusData, FriendshipEventUpdate, HomeScene, HoverEvent, ItemPurchaseRequest,
+    ItemPurchaseState, ListenedCommunity, LiveSceneInfo, LobbyStage, MapPinInfo, OutfitsData,
+    PermanentPermissionItem, PermissionRequestEvent, PhotoModeState, PlatformBanNotice,
+    PortableInfo, ProfileChangedEvent, ProximityEvent, SatelliteView, SceneLoadingUi,
+    SetAvatarData, SetAvatarResult, TextureOptimizationStatus, VoiceChatAction, VoiceChatState,
+    VoiceMessage, WelcomeState, WorldAccessEvent, WorldAccessVerdict,
 };
 
 // list of op declarations
@@ -103,6 +103,8 @@ pub fn ops(super_user: bool) -> Vec<OpDecl> {
             op_read_world_access_stream(),
             op_get_platform_ban_stream(),
             op_read_platform_ban_stream(),
+            op_get_auto_graphics_stream(),
+            op_read_auto_graphics_stream(),
             op_set_world_password(),
             op_get_portables_stream(),
             op_read_portables_stream(),
@@ -727,6 +729,20 @@ pub async fn op_read_platform_ban_stream(
     rid: u32,
 ) -> Result<Option<PlatformBanNotice>, deno_core::anyhow::Error> {
     dcl_js::system_api::op_read_platform_ban_stream(state, rid).await
+}
+
+#[op2(async)]
+pub async fn op_get_auto_graphics_stream(state: Rc<RefCell<OpState>>) -> u32 {
+    dcl_js::system_api::op_get_auto_graphics_stream(state).await
+}
+
+#[op2(async)]
+#[serde]
+pub async fn op_read_auto_graphics_stream(
+    state: Rc<RefCell<OpState>>,
+    rid: u32,
+) -> Result<Option<AutoGraphicsNotice>, deno_core::anyhow::Error> {
+    dcl_js::system_api::op_read_auto_graphics_stream(state, rid).await
 }
 
 #[op2]

@@ -58,6 +58,7 @@ use volume_settings::{
 
 pub mod aa_settings;
 pub mod ambient_brightness_setting;
+pub mod auto_graphics_setting;
 pub mod avatar_ghosts_setting;
 pub mod avatar_outline_setting;
 pub mod bloom_settings;
@@ -130,12 +131,13 @@ impl Plugin for SettingBridgePlugin {
         fn apply_to_camera<S: AppSetting>(
             mut commands: Commands,
             config: Res<AppConfig>,
+            session: Res<SessionGraphics>,
             mut new_camera_events: EventReader<NewCameraEvent>,
             param: StaticSystemParam<S::Param>,
         ) {
             let param = param.into_inner();
             for ev in new_camera_events.read() {
-                let setting = S::load(&config);
+                let setting = S::effective(&config, &session);
                 setting.apply_to_camera(&param, commands.reborrow(), ev.0);
             }
         }
@@ -236,6 +238,12 @@ impl Plugin for SettingBridgePlugin {
             &mut schedule,
             &config,
         );
+        add_enum_setting::<auto_graphics_setting::AutoGraphicsSetting>(
+            app,
+            &mut settings,
+            &mut schedule,
+            &config,
+        );
         add_int_setting::<SceneThreadsSetting>(app, &mut settings, &mut schedule, &config);
         add_int_setting::<MaxAvatarsSetting>(app, &mut settings, &mut schedule, &config);
         add_int_setting::<MasterVolumeSetting>(app, &mut settings, &mut schedule, &config);
@@ -280,7 +288,9 @@ impl Plugin for SettingBridgePlugin {
             Update,
             (
                 record_cameras,
-                apply_settings.run_if(resource_changed::<AppConfig>),
+                // the session's lowered settings (Auto Graphics) apply like the player's own
+                apply_settings
+                    .run_if(resource_changed::<AppConfig>.or(resource_changed::<SessionGraphics>)),
                 refresh_settings.run_if(resource_changed::<AppConfig>),
                 apply_session_grass,
             )
@@ -317,6 +327,13 @@ pub trait AppSetting: Eq + Send + Sync + 'static {
     fn description(&self) -> String;
     fn category() -> SettingCategory;
     fn load(config: &AppConfig) -> Self;
+    /// The value in effect: the player's, unless the session lowered it (`SessionGraphics`).
+    fn effective(config: &AppConfig, _session: &SessionGraphics) -> Self
+    where
+        Self: Sized,
+    {
+        Self::load(config)
+    }
     fn save(&self, config: &mut AppConfig);
     fn apply(
         &self,
@@ -556,11 +573,12 @@ impl ActiveCameras {
 fn apply_setting<S: AppSetting>(
     params: StaticSystemParam<S::Param>,
     config: Res<AppConfig>,
+    session: Res<SessionGraphics>,
     mut commands: Commands,
     mut cameras: ResMut<ActiveCameras>,
     mut applied: Local<Option<S>>,
 ) {
-    let setting = S::load(&config);
+    let setting = S::effective(&config, &session);
     if applied.as_ref() == Some(&setting) {
         return;
     }

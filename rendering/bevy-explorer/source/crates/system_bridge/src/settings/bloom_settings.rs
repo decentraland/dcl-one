@@ -1,6 +1,6 @@
 use super::SettingCategory;
 use bevy::{core_pipeline::bloom::Bloom, ecs::system::SystemParamItem, prelude::*};
-use common::structs::{scatter_bloom, AppConfig, BloomSetting, StageCamera};
+use common::structs::{scatter_bloom, AppConfig, BloomSetting, SessionGraphics, StageCamera};
 
 use super::{AppSetting, EnumAppSetting};
 
@@ -45,6 +45,10 @@ impl AppSetting for BloomSetting {
 
     fn load(config: &AppConfig) -> Self {
         config.graphics.bloom
+    }
+
+    fn effective(config: &AppConfig, session: &SessionGraphics) -> Self {
+        session.bloom(config)
     }
 
     fn apply_to_camera(

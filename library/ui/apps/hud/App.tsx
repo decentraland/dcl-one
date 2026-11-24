@@ -47,6 +47,7 @@ import { StartupFlow } from './features/startup/StartupFlow'
 import { useBeforeWorld, useLoginMusic } from './features/startup/useLoginMusic'
 import { SceneLoadingOverlay } from './features/session/SceneLoadingOverlay'
 import { openTravelError } from './features/session/TravelError'
+import { AutoGraphicsBanner } from './features/autoGraphics/AutoGraphicsBanner'
 import { usePlatformBanNotices } from './features/session/PlatformBanDialog'
 import { useEngineSession, type EngineSession } from './features/session/useEngineSession'
 import { useWindowKeyDown } from './lib/useWindowKeyDown'
@@ -583,6 +584,7 @@ function Hud({ integratedGpu, host }: { integratedGpu: GpuAdapterInfo | null; ho
           — the world <ProfileCard> — can read useSession(). */}
       <PopupHost />
       <ToastHost />
+      <AutoGraphicsBanner notice={session.autoGraphics.notice} dismiss={session.autoGraphics.dismiss} settingsOpen={session.settings.open} openSettings={session.settings.toggle} />
       <ConnectivityFeedback state={session.connectivity.state} retry={session.connectivity.retry} exit={session.logout} />
       <NotificationToastHost notifications={session.notifications} friends={session.friends} voiceChat={session.voiceChat} chat={session.chat} />
       <VoiceChatToasts />

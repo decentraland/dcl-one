@@ -1128,6 +1128,9 @@ pub struct GraphicsSettings {
     /// share of the window's device pixels the world renders at, upscaled to the window with FSR
     /// (`visuals::upscale`); the UI stays at full resolution
     pub render_scale: f32,
+    /// let the explorer lower shadows, the render scale and bloom for the session while that
+    /// shortens a frame over its target (`visuals::auto_graphics`); never saved into the others
+    pub auto_graphics: bool,
     /// draw the lens flare of the sun by day and of the moon at night (`visuals::lens_flare`)
     pub lens_flare: bool,
 }
@@ -1189,6 +1192,7 @@ impl Default for GraphicsSettings {
             spring_bones: false,
             gpu_bytes_per_frame: 10_000_000,
             render_scale: 1.0,
+            auto_graphics: false,
             lens_flare: true,
         }
     }
@@ -1224,6 +1228,39 @@ pub struct SessionGraphics {
     pub render_scale: Option<f32>,
     /// Set by the preview's `/avatar_demo cap`, which takes values past the setting's range.
     pub max_avatars: Option<usize>,
+    /// What Auto Graphics has lowered; a host's own value above wins over it.
+    pub auto: AutoGraphics,
+}
+
+/// The settings Auto Graphics (`visuals::auto_graphics`) has lowered for the session, each one
+/// `None` while the player's own setting is in effect.
+#[derive(Default, Debug, Clone, Copy, PartialEq)]
+pub struct AutoGraphics {
+    pub shadows: Option<ShadowSetting>,
+    pub render_scale: Option<f32>,
+    pub bloom: Option<BloomSetting>,
+}
+
+impl AutoGraphics {
+    pub fn is_adjusted(&self) -> bool {
+        *self != Self::default()
+    }
+}
+
+/// Each time Auto Graphics settles on lower graphics than it has announced, `count` goes up and
+/// `adjusted` holds what is lowered; the HUD shows a message for each (`system_bridge`'s auto
+/// graphics stream).
+#[derive(Resource, Default, Debug, Clone, Copy, PartialEq)]
+pub struct AutoGraphicsNotices {
+    pub count: u32,
+    pub adjusted: AutoGraphics,
+}
+
+impl AutoGraphicsNotices {
+    pub fn raise(&mut self, adjusted: AutoGraphics) {
+        self.count = self.count.wrapping_add(1);
+        self.adjusted = adjusted;
+    }
 }
 
 impl SessionGraphics {
@@ -1281,7 +1318,17 @@ impl SessionGraphics {
     }
 
     pub fn render_scale(&self, config: &AppConfig) -> f32 {
-        self.render_scale.unwrap_or(config.graphics.render_scale)
+        self.render_scale
+            .or(self.auto.render_scale)
+            .unwrap_or(config.graphics.render_scale)
+    }
+
+    pub fn shadow_setting(&self, config: &AppConfig) -> ShadowSetting {
+        self.auto.shadows.unwrap_or(config.graphics.shadow_settings)
+    }
+
+    pub fn bloom(&self, config: &AppConfig) -> BloomSetting {
+        self.auto.bloom.unwrap_or(config.graphics.bloom)
     }
 }
 

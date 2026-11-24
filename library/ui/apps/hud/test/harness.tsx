@@ -216,6 +216,7 @@ export function fakeSession(): EngineSession {
     travelError: null,
     dismissTravelError: vi.fn(),
     platformBan: { notice: null, travelRefused: false, dismissTravelRefused: vi.fn() },
+    autoGraphics: { notice: null, dismiss: vi.fn() },
     travellingTo: null,
     fatalError: null,
     reload: vi.fn(),

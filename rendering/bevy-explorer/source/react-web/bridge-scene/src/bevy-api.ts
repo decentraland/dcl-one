@@ -37,6 +37,7 @@ import type {
   PermissionRequestEvent,
   PhotoModeState,
   PlatformBanNotice,
+  AutoGraphicsNotice,
   PortableInfo,
   ProfileChangedEvent,
   ProximityEvent,
@@ -235,6 +236,9 @@ export type BevyApiInterface = {
   /** The signed-in wallet's platform ban: now, then again on every change. Optional: absent on
    *  runtimes whose SystemApi predates it. */
   getPlatformBanStream?: () => Promise<AsyncIterable<PlatformBanNotice>>
+  /** What Auto Graphics lowered, once each time it settles on lower graphics. Optional: absent on
+   *  runtimes whose SystemApi predates it. */
+  getAutoGraphicsStream?: () => Promise<AsyncIterable<AutoGraphicsNotice>>
   /** Answer a password prompt; `password: null` = the player gave up. */
   setWorldPassword?: (body: { password: string | null }) => void
   setPermanentPermission: (body: SetPermanentPermissionBody) => void
