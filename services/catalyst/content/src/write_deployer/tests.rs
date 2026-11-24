@@ -1501,7 +1501,7 @@ async fn deploy_entity_persists_a_signed_local_scene_end_to_end() {
 async fn a_local_scene_deploy_without_a_land_rights_source_is_undecidable_never_accepted() {
     let (storage, tmp) = temp_storage("land-source").await;
     // The index cannot be read (no cluster) and no marketplace subgraph is
-    // attached: `can_deploy_batch` answers `Unavailable::NoSource`.
+    // attached: `can_deploy_batch` answers `Unavailable::NotReady`.
     let land = Arc::new(LandAuthzState::new(
         lazy_pool(),
         crate::http::Outbound::new(crate::http::HttpClientCfg::default()).unwrap(),
