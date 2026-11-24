@@ -76,7 +76,7 @@ pub fn matches_content_hash(hash: &str, bytes: &[u8]) -> bool {
 
 /// True when `hash` has the form of a deployment's content hash: it names immutable bytes,
 /// whichever scene's content map holds it.
-pub fn is_content_hash(hash: &str) -> bool {
+pub(crate) fn is_content_hash(hash: &str) -> bool {
     kind(hash).is_some()
 }
 

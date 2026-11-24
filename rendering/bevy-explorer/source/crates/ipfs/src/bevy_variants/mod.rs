@@ -572,6 +572,78 @@ impl BevyVariants {
         self.session.lock_ignore_poison().bad.contains(variant)
     }
 
+    /// The variant `manifest` gives `file`, whose original is `original`, with how it is decoded
+    /// and the url it is read from; else the original is read, and why when that is worth
+    /// reporting.
+    fn choose(
+        &self,
+        base: &str,
+        manifest: &Manifest,
+        original: &str,
+        file: &str,
+    ) -> Result<(Variant, Decoded, String), Option<String>> {
+        let options = manifest.files.get(original).ok_or(None)?;
+        if self.disabled().is_some() {
+            return Err(None);
+        }
+        let bc = self.bc();
+        if !options.iter().any(|variant| supports(variant, file, bc)) {
+            let formats: Vec<_> = options.iter().map(|v| v.format.as_str()).collect();
+            // a format this file type would take on a GPU with BC textures
+            let wants_bc = !bc && options.iter().any(|variant| supports(variant, file, true));
+            return Err(Some(if wants_bc {
+                "the GPU has no BC texture support (or has not reported it yet)".to_owned()
+            } else {
+                format!(
+                    "no variant format this file type takes ({})",
+                    formats.join(", ")
+                )
+            }));
+        }
+        let variant = select_variant(options, file, bc, |path| self.is_bad(path))
+            .ok_or(None)?
+            .clone();
+        let decoded = supported_format(&variant).ok_or(None)?.decoded;
+        // a `glb-br` variant is fetched as its Brotli copy, asked for by name, which the
+        // browser decodes; a `glb` variant's Brotli copy exists only when it is smaller, so its
+        // own path is fetched and the server sends the copy to a client that accepts `br`
+        let url = match decoded {
+            Decoded::BcTexture | Decoded::BcGlb => format!("{base}/{}", variant.path),
+            #[cfg(target_arch = "wasm32")]
+            Decoded::BrotliGlb => format!("{base}/{}.br", variant.path),
+        };
+        Ok((variant, decoded, url))
+    }
+
+    /// The url of the variant a read of `ipfs_path`, whose original is `original`, would take
+    /// now: `Some(None)` when it would read the original, `None` while it would wait for its
+    /// entity's manifest.
+    fn planned_url(&self, ipfs_path: &IpfsPath, original: &str) -> Option<Option<String>> {
+        let (Some(base), Some(scene), Some(file)) = (
+            self.base(),
+            ipfs_path.scene_hash(),
+            ipfs_path.content_path(),
+        ) else {
+            return Some(None);
+        };
+        if !could_have_variant(file) {
+            return Some(None);
+        }
+        let Some(manifest) = self.manifest(scene) else {
+            return Some(None);
+        };
+        let state = manifest.borrow().clone();
+        match state {
+            ManifestState::Pending if !self.manifest_wait_left(scene).is_zero() => None,
+            ManifestState::Loaded(manifest) => Some(
+                self.choose(base, &manifest, original, file)
+                    .ok()
+                    .map(|(_, _, url)| url),
+            ),
+            _ => Some(None),
+        }
+    }
+
     fn fail(&self, scene: &str, file: &str, variant: Option<&Variant>, reason: String) {
         let mut session = self.session.lock_ignore_poison();
         if let Some(variant) = variant {
@@ -697,15 +769,36 @@ impl IpfsIo {
             return Some(url);
         }
         let ipfs_path = IpfsPath::new_from_path(path).ok()??;
-        let context = self.context.blocking_read();
-        if !ipfs_path
-            .hash(&context)
-            .is_some_and(|hash| crate::content_hash::is_content_hash(&hash))
-        {
-            return None;
+        self.immutable_original_url(&ipfs_path).map(|(_, url)| url)
+    }
+
+    /// [`Self::immutable_source_url`] of a read of the content file at asset `path` that has not
+    /// happened yet: the variant its entity's manifest picks now, else the original's url. None
+    /// while that manifest is pending, as the read would wait for it.
+    ///
+    /// Blocking: reads the context.
+    pub fn planned_source_url(&self, path: &Path) -> Option<String> {
+        if let Some(url) = self.bevy_variants.served_url(path) {
+            return Some(url);
         }
+        let ipfs_path = IpfsPath::new_from_path(path).ok()??;
+        let (original, url) = self.immutable_original_url(&ipfs_path)?;
+        Some(
+            self.bevy_variants
+                .planned_url(&ipfs_path, &original)?
+                .unwrap_or(url),
+        )
+    }
+
+    /// The content hash of the file at `ipfs_path` and its original's url, when a content hash
+    /// names it and the server is not loopback.
+    fn immutable_original_url(&self, ipfs_path: &IpfsPath) -> Option<(String, String)> {
+        let context = self.context.blocking_read();
+        let hash = ipfs_path
+            .hash(&context)
+            .filter(|hash| crate::content_hash::is_content_hash(hash))?;
         let url = ipfs_path.to_url(&context).ok()?;
-        (!common::util::is_loopback_url(&url)).then_some(url)
+        (!common::util::is_loopback_url(&url)).then_some((hash, url))
     }
 
     /// Whether the model at `path`, which failed to load, is about to load again from its
@@ -985,40 +1078,17 @@ impl IpfsIo {
             .collection
             .hash(file)?
             .into_owned();
-        let options = manifest.files.get(&original)?;
-        if variants.disabled().is_some() {
-            return None;
-        }
-        let bc = variants.bc();
-        if !options.iter().any(|variant| supports(variant, file, bc)) {
-            let formats: Vec<_> = options.iter().map(|v| v.format.as_str()).collect();
-            // a format this file type would take on a GPU with BC textures
-            let wants_bc = !bc && options.iter().any(|variant| supports(variant, file, true));
-            let reason = if wants_bc {
-                "the GPU has no BC texture support (or has not reported it yet)".to_owned()
-            } else {
-                format!(
-                    "no variant format this file type takes ({})",
-                    formats.join(", ")
-                )
-            };
-            variants.fail(scene, file, None, reason);
-            return None;
-        }
-        let variant = select_variant(options, file, bc, |path| variants.is_bad(path))?.clone();
-
-        let decoded = supported_format(&variant)?.decoded;
-
+        let (variant, decoded, url) = match variants.choose(base, &manifest, &original, file) {
+            Ok(chosen) => chosen,
+            Err(reason) => {
+                if let Some(reason) = reason {
+                    variants.fail(scene, file, None, reason);
+                }
+                return None;
+            }
+        };
         // the manifest names no hash for a variant, so its bytes are cached under a digest of
         // the url they came from, never under a content hash
-        // a `glb-br` variant is fetched as its Brotli copy, asked for by name, which the
-        // browser decodes; a `glb` variant's Brotli copy exists only when it is smaller, so its
-        // own path is fetched and the server sends the copy to a client that accepts `br`
-        let url = match decoded {
-            Decoded::BcTexture | Decoded::BcGlb => format!("{base}/{}", variant.path),
-            #[cfg(target_arch = "wasm32")]
-            Decoded::BrotliGlb => format!("{base}/{}.br", variant.path),
-        };
         let key = CacheKey::Url(content_hash::url_cache_name(&url));
         let served = ServedVariant {
             scene: scene.to_owned(),

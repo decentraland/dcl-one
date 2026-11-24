@@ -492,9 +492,9 @@ fn scene_content(
     if let Some(resources) = resources {
         geometry.extend(
             resources
-                .meshes_by_hash
+                .mesh_ids_by_hash
                 .values()
-                .map(|mesh| mesh.mesh_id)
+                .copied()
                 .filter(|id| meshes.contains(*id)),
         );
         material_ids.extend(

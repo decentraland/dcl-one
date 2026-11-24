@@ -685,7 +685,7 @@ fn two_scenes_with_the_same_mesh_draw_one_copy() {
     assert_eq!(app.world().resource::<SharedMeshes>().meshes(), 1);
     for root in roots {
         let lookup = app.world().get::<SceneResourceLookup>(root).unwrap();
-        assert_eq!(lookup.meshes_by_hash.len(), 1);
+        assert_eq!(lookup.mesh_ids_by_hash.len(), 1);
     }
 }
 

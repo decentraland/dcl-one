@@ -149,14 +149,19 @@ impl GltfNames {
 #[derive(Resource, Default)]
 pub struct GltfNameCache(HashMap<AssetId<Gltf>, GltfNames>);
 
-/// Keep the name cache honest across asset lifetime changes. `Modified` needs care: dropping
-/// the source is itself a mutation and fires it, so only a reload — which repopulates
-/// `source` — invalidates the entry.
-fn maintain_gltf_name_cache(
+/// Keep the name cache and the shared models honest across asset lifetime changes: an asset
+/// that is gone, or read again, leaves both. A reload of a variant that failed to decode reads
+/// its original, which may reference other files, so it is no longer shared. `Modified` needs
+/// care: dropping the source is itself a mutation and fires it, so only a reload — which
+/// repopulates `source` — invalidates the entry. Runs before `update_gltf`, so no container
+/// takes a reloaded model.
+fn maintain_gltf_caches(
     mut events: EventReader<AssetEvent<Gltf>>,
     mut cache: ResMut<GltfNameCache>,
+    mut shared: ResMut<SharedGltfs>,
     gltfs: Res<Assets<Gltf>>,
 ) {
+    let mut gone = HashSet::default();
     for ev in events.read() {
         match ev {
             // deliberately not `Unused`: an unused asset can be resurrected by a fresh
@@ -164,16 +169,21 @@ fn maintain_gltf_name_cache(
             // would leave the next container with no names at all. `AssetId` is
             // generational, so an entry kept until `Removed` can never match a later asset.
             AssetEvent::Removed { id } => {
-                cache.0.remove(id);
+                gone.insert(*id);
             }
             AssetEvent::Modified { id }
                 if gltfs.get(*id).is_some_and(|gltf| gltf.source.is_some()) =>
             {
-                cache.0.remove(id);
+                gone.insert(*id);
             }
             _ => (),
         }
     }
+    if gone.is_empty() {
+        return;
+    }
+    cache.0.retain(|id, _| !gone.contains(id));
+    shared.0.retain(|_, id| !gone.contains(id));
 }
 
 impl Plugin for GltfDefinitionPlugin {
@@ -199,18 +209,11 @@ impl Plugin for GltfDefinitionPlugin {
         app.add_systems(Update, update_gltf.in_set(SceneSets::PostLoop));
         app.add_systems(
             Update,
-            retry_repaired_gltfs
+            (retry_repaired_gltfs, maintain_gltf_caches)
                 .in_set(SceneSets::PostLoop)
                 .before(update_gltf),
         );
-        app.add_systems(
-            Update,
-            (
-                maintain_gltf_name_cache,
-                maintain_shared_gltfs,
-                maintain_shared_meshes,
-            ),
-        );
+        app.add_systems(Update, maintain_shared_meshes);
         app.add_systems(SpawnScene, update_ready_gltfs.after(scene_spawner_system));
         app.add_systems(Update, check_gltfs_ready.in_set(SceneSets::PostInit));
         app.add_systems(
@@ -341,32 +344,6 @@ fn references_no_file(gltf: &Gltf) -> bool {
 fn uris_in_file<'a>(uris: impl IntoIterator<Item = Option<&'a str>>) -> bool {
     uris.into_iter()
         .all(|uri| uri.is_none_or(|uri| uri.starts_with("data:")))
-}
-
-/// Forgets the shared models whose asset is gone, or was read again (a variant that failed to
-/// decode reloads its original, which may reference other files). Dropping the source after
-/// processing also marks the asset modified, so only a modification that brings a source back
-/// counts as a reload.
-fn maintain_shared_gltfs(
-    mut events: EventReader<AssetEvent<Gltf>>,
-    mut shared: ResMut<SharedGltfs>,
-    gltfs: Res<Assets<Gltf>>,
-) {
-    let gone = events
-        .read()
-        .filter_map(|event| match event {
-            AssetEvent::Removed { id } => Some(*id),
-            AssetEvent::Modified { id }
-                if gltfs.get(*id).is_some_and(|gltf| gltf.source.is_some()) =>
-            {
-                Some(*id)
-            }
-            _ => None,
-        })
-        .collect::<HashSet<_>>();
-    if !gone.is_empty() {
-        shared.0.retain(|_, id| !gone.contains(id));
-    }
 }
 
 /// The bounds the materials of a root's glTF containers clip to, on a root with no
@@ -819,7 +796,8 @@ pub struct CachedMeshData {
 #[derive(Component, Default)]
 pub struct SceneResourceLookup {
     pub materials: HashMap<Handle<StandardMaterial>, Handle<SceneMaterial>>,
-    pub meshes_by_hash: HashMap<u64, CachedMeshData>,
+    /// the meshes it uses, by the hash of their data
+    pub mesh_ids_by_hash: HashMap<u64, AssetId<Mesh>>,
 }
 
 /// The converted meshes of every scene, by the hash of their data and whether they are drawn: a
@@ -1128,8 +1106,8 @@ impl NodeProcessing<'_, '_> {
                 )
             };
 
-            // try and get existing mesh/collider data from hash, converted for this scene or
-            // another part that draws as this one does
+            // try and get existing mesh/collider data from hash, converted by any scene for a
+            // part that draws as this one does
             let existing_data = maybe_hash
                 .and_then(|hash| shared_meshes.by_hash.get(&(hash, visuals)))
                 .and_then(|data| asset_server.get_id_handle(data.mesh_id).map(|h| (h, data)));
@@ -1240,8 +1218,8 @@ impl NodeProcessing<'_, '_> {
             }
             if let Some(hash) = maybe_hash {
                 if resource_lookup
-                    .meshes_by_hash
-                    .insert(hash, data.clone())
+                    .mesh_ids_by_hash
+                    .insert(hash, data.mesh_id)
                     .is_none()
                 {
                     *tracker.0.entry("Unique Meshes").or_default() += 1;
@@ -1705,9 +1683,9 @@ pub(crate) fn update_ready_gltfs(
                 ));
             }
             *tracker.0.entry("Live Meshes").or_default() = resource_lookup
-                .meshes_by_hash
-                .iter()
-                .filter(|(_, data)| node_processing.meshes.get(data.mesh_id).is_some())
+                .mesh_ids_by_hash
+                .values()
+                .filter(|id| node_processing.meshes.get(**id).is_some())
                 .count();
         }
     }
@@ -1722,7 +1700,7 @@ pub(crate) fn update_ready_gltfs(
 
     // now that nothing borrows `gltfs`, release the parsed documents + GLB blobs whose
     // names we just cached. `get_mut` marks the asset Modified; nothing listens for that
-    // on Gltf, and maintain_gltf_name_cache distinguishes it from a real reload.
+    // on Gltf, and maintain_gltf_caches distinguishes it from a real reload.
     for id in drop_sources {
         if let Some(gltf) = gltfs.get_mut(id) {
             gltf.source = None;
