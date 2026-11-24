@@ -5,8 +5,6 @@
 //! `shop.committee_event` with the cursor advance. A wallet is a member
 //! when its latest event across the chain's contracts (chain order) set it,
 //! as the collections subgraph's `Account.isCommitteeMember` folds them.
-//! Builder reads the membership by shared SQL once the cursor is published,
-//! bound to the chain its `ETH_NETWORK` pairs.
 
 use std::collections::HashMap;
 
@@ -90,8 +88,7 @@ fn decode(contracts: &[&str], log: &RpcLog) -> anyhow::Result<MemberSet> {
     })
 }
 
-/// Polygon only: the committee builder authorizes against, on the chain
-/// its RPC serves.
+/// Polygon only: the curation committee, on the chain its RPC serves.
 pub struct CommitteeIndex {
     pub chain_id: i64,
 }

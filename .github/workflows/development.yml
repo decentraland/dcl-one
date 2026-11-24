@@ -21,8 +21,6 @@ on:
       - '.cargo/**'
       - 'apps/sites/**'
       - 'apps/ui3/**'
-      # the editor scene's install copies it (apps/ui3/editor-scene/pnpm-workspace.yaml)
-      - 'apps/creator-hub/packages/zip-extract/**'
       - 'schemas/**'
       - 'Makefile'
       - '.github/workflows/development.yml'
