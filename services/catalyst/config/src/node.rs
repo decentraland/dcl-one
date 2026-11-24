@@ -52,6 +52,10 @@ pub struct NodeConfig {
     #[arg(long, env = "SERVE_METRICS_BIND", default_value = "127.0.0.1:5006")]
     pub serve_metrics_bind: String,
 
+    /// Loopback Prometheus scrape listener for the index process. Unset disables the listener.
+    #[arg(long, env = "INDEX_METRICS_BIND")]
+    pub index_metrics_bind: Option<String>,
+
     #[arg(
         long,
         env = "STORAGE_ROOT_FOLDER",
@@ -96,6 +100,30 @@ pub struct NodeConfig {
     /// ONBOARDING_API_KEY_FILE); unset, both answer 401.
     #[arg(long, env = "ONBOARDING_API_KEY", hide_env_values = true)]
     pub onboarding_api_key: Option<String>,
+
+    /// Magic application audience for account deletion.
+    #[arg(long, env = "MAGIC_CLIENT_ID")]
+    pub magic_client_id: Option<String>,
+
+    /// Magic admin credential for account deletion, or MAGIC_SECRET_KEY_FILE.
+    #[arg(long, env = "MAGIC_SECRET_KEY", hide_env_values = true)]
+    pub magic_secret_key: Option<String>,
+
+    /// Exact browser origins authorized to request Magic account deletion. Empty refuses all origins.
+    #[arg(long, env = "ACCOUNT_DELETION_ALLOWED_ORIGINS", value_delimiter = ';')]
+    pub account_deletion_allowed_origins: Vec<String>,
+
+    /// Hourly Magic deletion attempt limit (wallet).
+    #[arg(long, env = "ACCOUNT_DELETION_WALLET_LIMIT", default_value_t = 3)]
+    pub account_deletion_wallet_limit: u32,
+
+    /// Hourly Magic deletion attempt limit (network).
+    #[arg(long, env = "ACCOUNT_DELETION_NETWORK_LIMIT", default_value_t = 20)]
+    pub account_deletion_network_limit: u32,
+
+    /// Hourly Magic deletion attempt limit (global).
+    #[arg(long, env = "ACCOUNT_DELETION_GLOBAL_LIMIT", default_value_t = 120)]
+    pub account_deletion_global_limit: u32,
 
     /// The map service `/lambdas/users/{address}/lands` points its parcel and
     /// estate images at (`<base>/v1/parcels/{x}/{y}/map.png`); empty is this

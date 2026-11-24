@@ -1,9 +1,6 @@
 import { catalystBase } from "../catalyst/client";
 
-const PROFILE_IMAGE_HOSTS = new Set([
-  "profile-images.decentraland.org",
-  "profile-images-bucket-43d0c58.s3.us-east-1.amazonaws.com",
-]);
+const PROFILE_IMAGE_HOST = /^(?:profile-images\.decentraland\.org|profile-images-bucket-[a-z0-9]+\.s3\.[a-z0-9-]+\.amazonaws\.com)$/;
 
 /**
  * A profile snapshot (`face.png` or `body.png`) through the local image cache, instead of the
@@ -19,7 +16,7 @@ export function profileSnapshotUrl(
     try {
       const url = new URL(value);
       const path = url.pathname.match(/^\/(?:v1\/)?entities\/([a-zA-Z0-9]+)\/(face|body)\.png$/);
-      if (PROFILE_IMAGE_HOSTS.has(url.hostname)) {
+      if (PROFILE_IMAGE_HOST.test(url.hostname)) {
         return path && `${path[2]}.png` === file
           ? `${base}/profile-images/entities/${path[1]}/${file}`
           : "";

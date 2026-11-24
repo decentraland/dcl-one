@@ -1,9 +1,9 @@
 import type { QueryClient } from "@tanstack/react-query";
-import { loadBackpack, loadBackpackEmotes, loadOutfits, normalizeAddress } from "../catalyst/backpack";
-import { fetchEvents } from "../catalyst/events";
-import { fetchPlaces } from "../catalyst/placesSchema";
+import { loadBackpack, loadBackpackEmotes, loadOutfits, normalizeAddress } from "@web-core/catalyst/backpack";
+import { fetchEvents } from "@web-core/catalyst/events";
+import { fetchPlaces } from "@web-core/catalyst/placesSchema";
 import { qk } from "../queryKeys";
-import { PLAY_EVENTS_PARAMS, PLAY_UPCOMING_PARAMS, PLAY_FEATURED_PARAMS, PLAY_PLACES_PARAMS, type PlayScreen, type PlaySectionName, type PlaySectionData } from "./play";
+import { PLAY_EVENTS_PARAMS, PLAY_UPCOMING_PARAMS, PLAY_FEATURED_PARAMS, PLAY_PLACES_PARAMS, type PlayScreen, type PlaySectionName, type PlaySectionData } from "@web-core/screens/play";
 
 import { readPlayStream } from "./play-stream";
 import { publicFreshnessKey } from "../hooks/usePublicResult";

@@ -1,8 +1,9 @@
-import { useEffect, useId, useReducer, useState, useSyncExternalStore, type CSSProperties, type KeyboardEvent, type ReactNode } from "react";
+import { createContext, useCallback, useContext, useEffect, useId, useMemo, useReducer, useRef, useState, useSyncExternalStore, type CSSProperties, type KeyboardEvent, type ReactNode } from "react";
 import { Link } from "react-router";
 import { useQuery } from "@tanstack/react-query";
 
 import { docsUrl } from "@web-core/docs";
+import { trackLegacyClick, trackSectionViewed, useLegacyTrackScope, type LegacyClick, type LegacySectionViewed, type LegacySession } from "@/core/lib/telemetry/legacy-click";
 import { latestPostsQuery, type BlogPostSummary } from "@/data/lib/create-landing/blog-posts";
 import { liveScenesQuery, selectLiveScenes, type HotScene } from "@/data/lib/create-landing/live-scenes";
 
@@ -21,7 +22,7 @@ import {
   type ConnectCardData,
   type CreateCardData,
 } from "./content";
-import { useMediaQuery } from "@ui/data/hooks/useMediaQuery";
+import { useMediaQuery } from "../creators/hooks/useMediaQuery";
 import discordIcon from "./assets/discord.svg?url";
 import dclLogo from "./assets/dcl-logo.svg?url";
 import styles from "./CreateLanding.module.css";
@@ -37,19 +38,69 @@ type CreateLandingProps = {
 };
 
 export default function CreateLanding({ downloads = null, sid = "", userId = "" }: CreateLandingProps) {
+  const session = useMemo(() => ({ sid, userId }), [sid, userId]);
   return (
-    <main className={styles.landing}>
-      <Hero downloads={downloads} sid={sid} userId={userId} />
-      <Why />
-      <Possibilities />
-      <LiveScenes />
-      <Connect />
-      <Learn />
-      <Blog />
-      <Faqs />
-    </main>
+    <SessionContext.Provider value={session}>
+      <main className={styles.landing}>
+        <Hero downloads={downloads} sid={sid} userId={userId} />
+        <Why />
+        <Possibilities />
+        <LiveScenes />
+        <Connect />
+        <Learn />
+        <Blog />
+        <Faqs />
+      </main>
+    </SessionContext.Provider>
   );
 }
+
+const SessionContext = createContext<Omit<LegacySession, "scope">>({ sid: "" });
+
+/**
+ * Sends a control's legacy `Click` (decentraland/sites `useTrackClick` on the reference's `Create/*` sections),
+ * deferred in this component's scope as the legacy hook's queue was.
+ */
+function useClick(): (click: LegacyClick) => void {
+  const session = useContext(SessionContext);
+  const scope = useLegacyTrackScope();
+  return useCallback((click: LegacyClick) => trackLegacyClick(click, { ...session, scope }), [session, scope]);
+}
+
+/**
+ * The legacy `Section Viewed`: once, the first time a tenth of the section is in the viewport (the reference's
+ * `AnimatedSection`, `react-intersection-observer` with `triggerOnce` and threshold 0.1). A browser without
+ * IntersectionObserver sends nothing, as the reference could not either.
+ */
+function useSectionViewed(section: LegacySectionViewed) {
+  const session = useContext(SessionContext);
+  const scope = useLegacyTrackScope();
+  const latest = useRef({ ...session, scope });
+  latest.current = { ...session, scope };
+  const sent = useRef(false);
+  const observer = useRef<IntersectionObserver | null>(null);
+  return useCallback(
+    (node: HTMLElement | null) => {
+      observer.current?.disconnect();
+      observer.current = null;
+      if (!node || sent.current || typeof IntersectionObserver === "undefined") return;
+      const watch = new IntersectionObserver(
+        (entries) => {
+          if (sent.current || !entries.some((entry) => entry.isIntersecting && entry.intersectionRatio >= SECTION_THRESHOLD)) return;
+          sent.current = true;
+          watch.disconnect();
+          trackSectionViewed(section, latest.current);
+        },
+        { threshold: SECTION_THRESHOLD },
+      );
+      watch.observe(node);
+      observer.current = watch;
+    },
+    [section],
+  );
+}
+
+const SECTION_THRESHOLD = 0.1;
 
 /** A section heading with one highlighted run. `title` follows the highlight after its own space text node, as the
  * reference writes `<span>{highlight}</span> {title}`; `before`/`after` join the highlight with no extra node. */
@@ -83,9 +134,9 @@ function useTypingWord(words: readonly string[], still: boolean): string {
   return still ? words[0]! : words[state.word]!.slice(0, state.letter + 1);
 }
 
-function ViewAll({ to, children }: { to: string; children: string }) {
+function ViewAll({ to, children, onClick }: { to: string; children: string; onClick: () => void }) {
   return (
-    <Link className={styles.viewAll} to={to}>
+    <Link className={styles.viewAll} to={to} onClick={onClick}>
       {children}
       <svg className={styles.chevronRight} viewBox="0 0 24 24" aria-hidden="true" focusable="false" data-testid="ChevronRightIcon">
         <path d="M10 6 8.59 7.41 13.17 12l-4.58 4.59L10 18l6-6z" />
@@ -102,6 +153,7 @@ function useHydrated(): boolean {
 }
 
 function Hero({ downloads, sid, userId }: Required<CreateLandingProps>) {
+  const click = useClick();
   const isMobile = useMediaQuery("(max-width: 767px)");
   // The server cannot know the viewport: the video mounts after hydration, when isMobile is known, so each
   // viewport requests only its own file (as the reference's client-rendered Hero.tsx does).
@@ -128,13 +180,16 @@ function Hero({ downloads, sid, userId }: Required<CreateLandingProps>) {
           <p className={styles.heroSubtitle}>{heroData.subtitle}</p>
           <div className={styles.heroActions}>
             <HeroDownload downloads={downloads} sid={sid} userId={userId} />
-            <a className={`${styles.cta} ${styles.ctaMobile}`} href={docsUrl("creator")}>
+            <a className={`${styles.cta} ${styles.ctaMobile}`} href={docsUrl("creator")} onClick={() => click({ place: "Creators Hero" })}>
               <span className={styles.ctaLabel}>{copy.heroMobileCta}</span>
             </a>
           </div>
         </div>
       </section>
-      <button type="button" className={styles.scroll} aria-label={copy.heroScrollLabel} onClick={() => window.scrollBy({ top: window.innerHeight, behavior: "smooth" })}>
+      <button type="button" className={styles.scroll} aria-label={copy.heroScrollLabel} onClick={() => {
+        click({ place: "Creators Hero", title: "scroll-to-why" });
+        window.scrollBy({ top: window.innerHeight, behavior: "smooth" });
+      }}>
         <svg className={styles.chevron} xmlns="http://www.w3.org/2000/svg" width="21" height="14" viewBox="0 0 21 14" aria-hidden="true">
           <path fillRule="evenodd" clipRule="evenodd" d="M0.585815 3.41424L3.41424 0.585815L10.5 7.6716L17.5858 0.585815L20.4142 3.41424L10.5 13.3285L0.585815 3.41424Z" />
         </svg>
@@ -144,12 +199,13 @@ function Hero({ downloads, sid, userId }: Required<CreateLandingProps>) {
 }
 
 function Why() {
+  const click = useClick();
   return (
-    <section className={styles.why}>
+    <section className={styles.why} ref={useSectionViewed("Creators Why")}>
       <Title highlight={copy.why.highlight} title={copy.why.title} />
       <div className={styles.whyGrid}>
         {whyCards.map((card) => (
-          <a key={card.id} className={`${styles.whyCard} ${styles[`why_${card.id}`] ?? ""}`} href={card.url} target="_blank" rel="noopener noreferrer">
+          <a key={card.id} className={`${styles.whyCard} ${styles[`why_${card.id}`] ?? ""}`} href={card.url} target="_blank" rel="noopener noreferrer" onClick={() => click({ place: "Creators Why", title: card.title })}>
             <div className={styles.whyInner}>
               <div className={styles.whyImage}>
                 <img src={card.image} alt="" />
@@ -168,6 +224,7 @@ function Why() {
 }
 
 function CreateCard({ card }: { card: CreateCardData }) {
+  const click = useClick();
   const [active, setActive] = useState(card.tabs[0]!.title);
   const index = Math.max(0, card.tabs.findIndex((t) => t.title === active));
   const tab = card.tabs[index]!;
@@ -204,7 +261,10 @@ function CreateCard({ card }: { card: CreateCardData }) {
                   aria-controls={`${id}-panel`}
                   tabIndex={i === index ? 0 : -1}
                   className={styles.tab}
-                  onClick={() => setActive(t.title)}
+                  onClick={() => {
+                    click({ place: "Creators Create", card: card.id, tab: t.title });
+                    setActive(t.title);
+                  }}
                   onKeyDown={onTabKey}
                 >
                   {t.title}
@@ -235,6 +295,7 @@ function CreateCard({ card }: { card: CreateCardData }) {
                   href={link.url}
                   target="_blank"
                   rel="noopener noreferrer"
+                  onClick={() => click({ place: "Creators Create", card: card.id, tab: tab.title, title: link.label })}
                 >
                   {link.label}
                 </a>
@@ -250,7 +311,7 @@ function CreateCard({ card }: { card: CreateCardData }) {
 
 function Possibilities() {
   return (
-    <section className={styles.create}>
+    <section className={styles.create} ref={useSectionViewed("Creators Create")}>
       <Title before={copy.create.before} highlight={copy.create.highlight} after={copy.create.after} />
       <Carousel label={`${copy.create.before}${copy.create.highlight}${copy.create.after}`} items={createCards} renderItem={(card) => <CreateCard card={card} />} keyOf={(card) => card.id} slideWidth={1200} autoplayDelay={0} />
     </section>
@@ -258,9 +319,10 @@ function Possibilities() {
 }
 
 function SceneCard({ scene }: { scene: HotScene }) {
+  const click = useClick();
   const coordinates = `${scene.baseCoords[0]},${scene.baseCoords[1]}`;
   return (
-    <Link className={styles.scene} to={`/places/place/${coordinates}`}>
+    <Link className={styles.scene} to={`/places/place/${coordinates}`} onClick={() => click({ place: "Creators Live Scenes", title: scene.name })}>
       <div className={styles.sceneImage}>
         {scene.thumbnail ? <img src={scene.thumbnail} alt="" loading="lazy" /> : null}
         <span className={styles.sceneBadge}>{copy.liveScenes.online(scene.usersTotalCount)}</span>
@@ -274,23 +336,26 @@ function SceneCard({ scene }: { scene: HotScene }) {
 }
 
 function LiveScenes() {
+  const click = useClick();
+  const ref = useSectionViewed("Creators Live Scenes");
   const { data } = useQuery(liveScenesQuery());
   const scenes = selectLiveScenes(data ?? []);
   if (scenes.length === 0) return null;
   return (
-    <section className={styles.live}>
+    <section className={styles.live} ref={ref}>
       <Title highlight={copy.liveScenes.highlight} title={copy.liveScenes.title} />
       <div className={styles.rail}>
         {scenes.map((scene) => (
           <SceneCard key={scene.id} scene={scene} />
         ))}
       </div>
-      <ViewAll to="/places">{copy.liveScenes.viewAll}</ViewAll>
+      <ViewAll to="/places" onClick={() => click({ place: "Creators Live Scenes", title: "view-all" })}>{copy.liveScenes.viewAll}</ViewAll>
     </section>
   );
 }
 
 function ConnectCard({ card }: { card: ConnectCardData }) {
+  const click = useClick();
   const body = (
     <>
       <p className={styles.connectQuote}>&ldquo;{card.description}&rdquo;</p>
@@ -303,7 +368,7 @@ function ConnectCard({ card }: { card: ConnectCardData }) {
     </>
   );
   return card.url ? (
-    <a className={styles.connectCard} href={card.url} target="_blank" rel="noopener noreferrer" draggable={false}>
+    <a className={styles.connectCard} href={card.url} target="_blank" rel="noopener noreferrer" draggable={false} onClick={() => click({ place: "Creators Connect", title: card.name })}>
       {body}
     </a>
   ) : (
@@ -312,11 +377,12 @@ function ConnectCard({ card }: { card: ConnectCardData }) {
 }
 
 function Connect() {
+  const click = useClick();
   return (
-    <section className={styles.connect}>
+    <section className={styles.connect} ref={useSectionViewed("Creators Connect")}>
       <Title highlight={copy.connect.highlight} title={copy.connect.title} />
       <Carousel label={`${copy.connect.highlight} ${copy.connect.title}`} items={connectCards} renderItem={(card) => <ConnectCard card={card} />} keyOf={(card) => card.id} slideWidth={500} autoplayDelay={5000} alignItems="center" />
-      <a className={styles.discord} href={copy.discordUrl} target="_blank" rel="noopener noreferrer">
+      <a className={styles.discord} href={copy.discordUrl} target="_blank" rel="noopener noreferrer" onClick={() => click({ place: "Creators Connect", title: "join-discord" })}>
         <span className={styles.discordTitle}>{copy.connect.join}</span>
         <span className={styles.discordIcon}>
           <img src={discordIcon} alt="Discord" />
@@ -356,12 +422,13 @@ function PlayIcon() {
 }
 
 function Learn() {
+  const click = useClick();
   return (
-    <section className={styles.learn}>
+    <section className={styles.learn} ref={useSectionViewed("Creators Learn")}>
       <Title highlight={copy.learn.highlight} title={copy.learn.title} />
       <div className={styles.rail}>
         {learnCards.map((card) => (
-          <a key={card.id} className={styles.learnCard} href={card.url} target="_blank" rel="noopener noreferrer">
+          <a key={card.id} className={styles.learnCard} href={card.url} target="_blank" rel="noopener noreferrer" onClick={() => click({ place: "Creators Learn", title: card.title })}>
             <div className={styles.learnVideo}>
               <img src={card.image} alt="" />
               <PlayIcon />
@@ -384,13 +451,13 @@ function Learn() {
       <div className={styles.learnExtra}>
         <div className={`${styles.learnExtraBlock} ${styles.learnExtraFirst}`}>
           {copy.learn.watchMore}
-          <a className={`${styles.button} ${styles.buttonPrimary}`} href={copy.learn.watchMoreUrl} target="_blank" rel="noopener noreferrer">
+          <a className={`${styles.button} ${styles.buttonPrimary}`} href={copy.learn.watchMoreUrl} target="_blank" rel="noopener noreferrer" onClick={() => click({ place: "Creators Learn", title: "watch-more" })}>
             {copy.learn.watchMoreButton}
           </a>
         </div>
         <div className={`${styles.learnExtraBlock} ${styles.learnExtraSecond}`}>
           {copy.learn.yourTutorial}
-          <a className={`${styles.button} ${styles.buttonLight}`} href={copy.learn.yourTutorialUrl} target="_blank" rel="noopener noreferrer">
+          <a className={`${styles.button} ${styles.buttonLight}`} href={copy.learn.yourTutorialUrl} target="_blank" rel="noopener noreferrer" onClick={() => click({ place: "Creators Learn", title: "submit-tutorial" })}>
             {copy.learn.yourTutorialButton}
           </a>
         </div>
@@ -406,8 +473,9 @@ function longDate(value: string): string {
 }
 
 function BlogCard({ post }: { post: BlogPostSummary }) {
+  const click = useClick();
   return (
-    <Link className={styles.blogCard} to={post.url}>
+    <Link className={styles.blogCard} to={post.url} onClick={() => click({ place: "Creators Blog", title: post.title })}>
       <div className={styles.blogImage}>{post.image ? <img src={post.image.url} alt="" loading="lazy" /> : null}</div>
       <div className={styles.blogInfo}>
         <div className={styles.blogMeta}>
@@ -422,18 +490,20 @@ function BlogCard({ post }: { post: BlogPostSummary }) {
 
 /** The newest posts of the blog, as the reference reads them from the CMS. */
 function Blog() {
+  const click = useClick();
+  const ref = useSectionViewed("Creators Blog");
   const { data } = useQuery(latestPostsQuery());
   const posts = data ?? [];
   if (posts.length === 0) return null;
   return (
-    <section className={styles.blog}>
+    <section className={styles.blog} ref={ref}>
       <Title highlight={copy.blog.highlight} title={copy.blog.title} />
       <div className={styles.blogCards}>
         {posts.map((post) => (
           <BlogCard key={post.id} post={post} />
         ))}
       </div>
-      <ViewAll to="/blog">{copy.blog.viewAll}</ViewAll>
+      <ViewAll to="/blog" onClick={() => click({ place: "Creators Blog", title: "view-all" })}>{copy.blog.viewAll}</ViewAll>
     </section>
   );
 }
@@ -472,19 +542,25 @@ function Faq({ question, children, index, open, onToggle }: { question: string; 
 }
 
 function Faqs() {
+  const click = useClick();
   const [expanded, setExpanded] = useState<number | null>(null);
+  // Only opening a question was a Click in the reference; closing one sent nothing.
+  const toggle = (index: number, question: string) => {
+    if (expanded !== index) click({ place: "Creators Faqs", title: question });
+    setExpanded(expanded === index ? null : index);
+  };
   return (
-    <section className={styles.faqs} aria-label="Frequently Asked Questions">
+    <section className={styles.faqs} aria-label="Frequently Asked Questions" ref={useSectionViewed("Creators Faqs")}>
       <div className={styles.faqsBorder}>
         <div className={styles.faqsContainer}>
           <p className={styles.faqsSubtitle}>{copy.faqs.subtitle}</p>
           <h2 className={`${styles.sectionTitle} ${styles.faqsTitle}`}>{copy.faqs.title}</h2>
           {faqItems.map((faq, index) => (
-            <Faq key={faq.question} question={faq.question} index={index} open={expanded === index} onToggle={() => setExpanded(expanded === index ? null : index)}>
+            <Faq key={faq.question} question={faq.question} index={index} open={expanded === index} onToggle={() => toggle(index, faq.question)}>
               {faq.answer}
             </Faq>
           ))}
-          <a className={styles.faqsCta} href={copy.faqs.ctaUrl}>
+          <a className={styles.faqsCta} href={copy.faqs.ctaUrl} onClick={() => click({ place: "Creators Faqs", title: "faqs-cta" })}>
             {copy.faqs.cta}
           </a>
         </div>

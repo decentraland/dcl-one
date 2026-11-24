@@ -1,4 +1,5 @@
-import { Button, textClasses } from '@dcl/one-ui'
+import { Button } from '../../../components/Button/Button'
+import { textClasses } from '../../../text-styles'
 import decentralandLogo from '../assets/dcl-logo.svg'
 import styles from './PressKit.module.css'
 

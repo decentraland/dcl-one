@@ -7,6 +7,7 @@ import {
   getIdentity,
   getServerSnapshot,
   hostOwnsSession,
+  setBrowserWalletIdentity,
   setIdentity,
   subscribe,
 } from "./session";
@@ -20,7 +21,7 @@ import { hasThirdwebClientId } from "./thirdweb/config";
 import type { ThirdwebAuthResult } from "./thirdweb/api";
 import type { WalletConnectSession } from "./walletconnect";
 import type { AuthIdentity, SignedFetchMetadata } from "./types";
-import { detectWallets, hasWallet, selectWallet, type DetectedWallet } from "./wallet";
+import { detectWallets, hasWallet, selectedWalletRdns, selectWallet, type DetectedWallet } from "./wallet";
 import { beginSignOut, postAuthCallback } from "./session-change";
 
 async function identityFromInApp(
@@ -106,9 +107,9 @@ export function useAuth(): UseAuth {
       try {
         if (opts?.walletRdns) selectWallet(opts.walletRdns);
         const { createIdentity } = await import("./identity");
+        const walletRdns = selectedWalletRdns();
         const next = await createIdentity(opts);
-        recordSignIn(next.signer, "web3");
-        setIdentity(next);
+        setBrowserWalletIdentity(next, walletRdns);
         return next;
       } catch (err) {
         setError((err as Error)?.message ?? "Failed to connect wallet.");

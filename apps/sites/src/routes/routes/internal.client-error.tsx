@@ -120,7 +120,7 @@ function recordClientError(report: ClientErrorReport, request: Request, context:
         ua: report.ua,
         client_ts: report.ts,
       },
-      { sid, story: STORY },
+      { sid, story: STORY, requestUserAgent: request.headers.get("user-agent") },
     );
   } catch {
   }

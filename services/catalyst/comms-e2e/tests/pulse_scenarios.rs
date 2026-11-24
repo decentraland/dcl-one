@@ -8,7 +8,7 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use catalyst_comms::pulse::PulseServer;
-use catalyst_comms::pulse::hardening::{DisconnectReason, GameplayRateLimiter, PreAuthAdmission};
+use catalyst_comms::pulse::hardening::{DisconnectReason, GameplayRateLimiter};
 use catalyst_comms_e2e::engine::{Outcome, RunOptions, Scenario, ScenarioResult, run_scenarios};
 use catalyst_comms_e2e::identity::Identity;
 use catalyst_comms_e2e::pulse::{HandshakeOutcome, PulseBot};
@@ -54,16 +54,24 @@ fn assert_passed(result: &ScenarioResult) {
             repeat,
             timeline,
         } => {
-            let tail: Vec<String> = timeline
+            let tail_start = timeline.len().saturating_sub(25);
+            let lines = |entries: Vec<String>| entries.join("\n");
+            let earlier = timeline[..tail_start]
                 .iter()
-                .filter(|entry| entry.actor == "scenario")
-                .chain(timeline.iter().rev().take(25).rev())
+                .filter(|entry| entry.actor == "scenario" || entry.kind == "transport failed")
+                .map(|entry| format!("{entry:?}"))
+                .collect();
+            let last = timeline[tail_start..]
+                .iter()
                 .map(|entry| format!("{entry:?}"))
                 .collect();
             panic!(
-                "{} failed on repeat {repeat} (seed {seed}): {expectation}\n--- last entries\n{}",
+                "{} failed on repeat {repeat} (seed {seed}): {expectation}\n\
+                 --- earlier scenario and transport failure entries\n{}\n\
+                 --- last entries\n{}",
                 result.name,
-                tail.join("\n")
+                lines(earlier),
+                lines(last)
             );
         }
         Outcome::Skipped { reason } => panic!("{} was skipped: {reason}", result.name),
@@ -262,8 +270,7 @@ async fn handshake_swarm_passes() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 8)]
 async fn handshake_swarm_fails_against_a_server_without_a_per_address_budget() {
-    let mut server = PulseServer::new();
-    server.pre_auth_enet = PreAuthAdmission::new(0, 0);
+    let server = PulseServer::new().with_pre_auth_limits(0, 0);
     let failure = failure_of(&run(server, &HANDSHAKE_SWARM, 1).await);
     assert!(failure.contains("allowed"), "{failure}");
     assert!(failure.contains("accepted"), "{failure}");
@@ -271,8 +278,7 @@ async fn handshake_swarm_fails_against_a_server_without_a_per_address_budget() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 8)]
 async fn handshake_swarm_fails_against_a_server_that_refuses_within_the_budget() {
-    let mut server = PulseServer::new();
-    server.pre_auth_enet = PreAuthAdmission::new(4, 512);
+    let server = PulseServer::new().with_pre_auth_limits(4, 512);
     let failure = failure_of(&run(server, &HANDSHAKE_SWARM, 1).await);
     assert!(failure.contains("within the budget"), "{failure}");
     assert!(failure.contains("PreAuthIpLimitExhausted"), "{failure}");
@@ -533,8 +539,7 @@ async fn webtransport_handshake_swarm_passes() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 8)]
 async fn webtransport_handshake_swarm_fails_against_a_server_without_a_per_address_budget() {
-    let mut server = PulseServer::new();
-    server.pre_auth_wt = PreAuthAdmission::new(0, 0);
+    let server = PulseServer::new().with_pre_auth_limits(0, 0);
     let failure =
         failure_of(&run_webtransport_on(server, |_| {}, &HANDSHAKE_SWARM, options(1)).await);
     assert!(failure.contains("allowed"), "{failure}");
@@ -543,8 +548,7 @@ async fn webtransport_handshake_swarm_fails_against_a_server_without_a_per_addre
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 8)]
 async fn webtransport_handshake_swarm_fails_against_a_server_that_refuses_within_the_budget() {
-    let mut server = PulseServer::new();
-    server.pre_auth_wt = PreAuthAdmission::new(4, 512);
+    let server = PulseServer::new().with_pre_auth_limits(4, 512);
     let failure =
         failure_of(&run_webtransport_on(server, |_| {}, &HANDSHAKE_SWARM, options(1)).await);
     assert!(failure.contains("within the budget"), "{failure}");
