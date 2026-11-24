@@ -21,20 +21,24 @@ and main-thread time each frame there is spare time, whether or not the player c
   (`FAR_SCENE_TICK_RATE`). Distance is the partition's, from the player to the nearest point of
   the scene's nearest parcel.
 - **Behind the camera, at most once a second** (`BEHIND_SCENE_TICK_RATE`).
-- **The farthest band keeps a slow tick.** A scene reads its global CRDT and scene comms
-  channels only while ticking, and both drop messages when full (1,000 and 1,024 entries) with
-  no resynchronization. A scene that never ticked would lose player joins, leaves and avatar
-  updates and show ghost or missing players when the player returns. Two seconds keeps those
-  channels drained.
+- **The farthest band keeps a slow tick, and a global CRDT backlog overrides every cap.** A
+  scene reads its global CRDT channel only while ticking, and the channel drops its oldest
+  updates past 1,000 (`GLOBAL_CRDT_SCENE_CAPACITY`) with no resynchronization: a lost join or
+  leave shows a missing or ghost player when the player returns. A busy island can send more
+  than 500 updates in two seconds, so a rate alone does not bound the backlog. While any crdt
+  context's slowest reader is half its capacity behind (`GlobalCrdtState::backlog`,
+  `GLOBAL_CRDT_BACKLOG_DUE`), every capped scene is due. The slow tick keeps a scene's other
+  channels, such as scene comms, moving between backlogs.
 - **A rate is a minimum interval.** `update_scene_priority` leaves a capped scene out of the
   frame's queue until `1 / rate` seconds have passed since it was last sent. A scene that is due
   is ordered by the existing key, so the cap only removes ticks. Age grows a frame at a time, so
-  the interval counts as passed within half a frame of it; without that, frame jitter misses the
-  interval about half the time.
+  the interval counts as passed within a quarter of a frame of it: jitter cannot miss an
+  interval of whole frames, and one of a frame and a half always waits for the second frame.
 - **Full rate.** The player's scenes, the scenes at the player's position while out of world,
   portable and global scenes, the named priority scenes, the system scene, a scene under the
-  inspector, the scene being baked into an imposter, and every scene before `SCENE_LOADED_TICK` (so loading, which waits on a
-  scene's first ticks, never stalls on a frozen band).
+  inspector, the scene being baked into an imposter, and every scene before
+  `SCENE_LOADED_TICK` (so loading, which waits on a scene's first ticks, never stalls on a slow
+  band).
 - **Only where a camera renders.** Without a `PrimaryCamera` that has a `Camera`, as on the
   headless authoritative server, no scene is capped.
 - **Inspectable.** Each scene's context holds its current cap (`tick_rate_cap`), and

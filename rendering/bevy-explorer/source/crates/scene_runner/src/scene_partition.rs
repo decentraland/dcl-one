@@ -62,8 +62,9 @@ pub(crate) const SCENE_TICK_RATE_BANDS: [(f32, f32); 5] = [
     (80.0, 5.0),
 ];
 
-/// The ticks a second of a scene beyond the last band: enough to drain the global CRDT and
-/// scene comms channels it reads only while ticking, which drop messages when full.
+/// The ticks a second of a scene beyond the last band, so it keeps reading the channels it
+/// reads only while ticking. A global CRDT backlog makes it due sooner
+/// (`GLOBAL_CRDT_BACKLOG_DUE`).
 pub(crate) const FAR_SCENE_TICK_RATE: f32 = 0.5;
 
 /// The most ticks a second of a scene behind the camera.
@@ -86,10 +87,16 @@ pub(crate) fn scene_tick_rate(partition: &PartitionData) -> f32 {
 
 /// Whether a scene ticking at most `rate` times a second, last sent `age` seconds ago, may tick
 /// in a frame of `frame` seconds. `age` grows a frame at a time, so the interval counts as
-/// passed within half a frame of it; otherwise frame jitter would miss it about half the time.
+/// passed within a quarter of a frame of it: frame jitter then cannot miss an interval of whole
+/// frames, and an interval of one and a half frames always waits for the second.
 pub(crate) fn tick_rate_allows(rate: f32, age: f64, frame: f64) -> bool {
-    rate > 0.0 && (age + frame * 0.5) * rate as f64 >= 1.0
+    (age + frame * 0.25) * rate as f64 >= 1.0
 }
+
+/// A global CRDT backlog, in updates the slowest scene has not read, from which every capped
+/// scene is due: half its receiver's capacity, so it reads them before any is dropped.
+pub(crate) const GLOBAL_CRDT_BACKLOG_DUE: usize =
+    comms::global_crdt::GLOBAL_CRDT_SCENE_CAPACITY / 2;
 
 /// Where partitions are measured from: distance from the player, facing from the rendering
 /// camera (a `PrimaryCamera` with a `Camera`). Without one, as on the headless server whose

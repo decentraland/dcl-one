@@ -61,7 +61,7 @@ use crate::{
     initialize_scene::{CurrentImposterScene, SuperUserScene},
     scene_partition::{
         publish_download_priorities, scene_tick_rate, tick_rate_allows, update_scene_partitions,
-        Partition, BEHIND_SCENE_TICK_PENALTY,
+        Partition, BEHIND_SCENE_TICK_PENALTY, GLOBAL_CRDT_BACKLOG_DUE,
     },
 };
 use common::partition::PartitionData;
@@ -600,6 +600,7 @@ fn update_scene_priority(
     >,
     player: Query<Entity, With<PrimaryUser>>,
     rendering_camera: Query<(), (With<PrimaryCamera>, With<Camera>)>,
+    crdt_contexts: Query<&GlobalCrdtState>,
     imposter_scene: Res<CurrentImposterScene>,
     live_scenes: Res<LiveScenes>,
     mut updates: ResMut<SceneUpdates>,
@@ -624,6 +625,11 @@ fn update_scene_priority(
     // the distance bands cap tick rates only where a camera renders: the headless server ticks
     // every scene it runs
     let rate_capped = !rendering_camera.is_empty();
+    // a scene reads the global CRDT channel only while ticking: once the slowest reader falls
+    // half its capacity behind, capped scenes tick so none drops an update
+    let crdt_backlog_due = crdt_contexts
+        .iter()
+        .any(|crdt| crdt.backlog() >= GLOBAL_CRDT_BACKLOG_DUE);
     let imposter_scene = match &imposter_scene.0 {
         Some((PointerResult::Exists { hash, .. }, _)) => live_scenes.scenes.get(hash).copied(),
         _ => None,
@@ -710,9 +716,10 @@ fn update_scene_priority(
                 return None;
             }
             let age = time.elapsed_secs_f64() - context.last_sent;
-            if context
-                .tick_rate_cap
-                .is_some_and(|rate| !tick_rate_allows(rate, age, time.delta_secs_f64()))
+            if !crdt_backlog_due
+                && context
+                    .tick_rate_cap
+                    .is_some_and(|rate| !tick_rate_allows(rate, age, time.delta_secs_f64()))
             {
                 skipped_rate_capped += 1;
                 return None;
@@ -1291,6 +1298,17 @@ mod player_scenes_tests {
         );
 
         frame(&mut world, 2.0);
+        assert!(queued(&world).contains(&east));
+
+        // dispatched this frame: the next tick waits its interval from here
+        let sent = world.resource::<Time>().elapsed_secs_f64();
+        world
+            .get_mut::<RendererSceneContext>(east)
+            .unwrap()
+            .last_sent = sent;
+        frame(&mut world, 1.0);
+        assert!(!queued(&world).contains(&east));
+        frame(&mut world, 1.0);
         assert!(queued(&world).contains(&east));
     }
 

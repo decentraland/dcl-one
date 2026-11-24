@@ -163,13 +163,13 @@ one frame. A scene that has not replied for ten seconds is marked broken and its
 
 ### Tick rate bands
 
-On top of the queue, each scene has a maximum tick rate from its partition
-(`scene_tick_rate`, `crates/scene_runner/src/scene_partition.rs`): `update_scene_priority`
-leaves it out of the frame's queue until `1 / rate` seconds have passed since it was last sent.
-The time since it was last sent grows a frame at a time, so the interval counts as passed
-within half a frame of it (`tick_rate_allows`). The effective rate is a whole number of frames
-per tick: at 60 fps the 40 and 30 bands both tick every other frame, 30 times a second; at
-30 fps or below they tick every frame.
+On top of the queue, each scene has a maximum tick rate from its partition (`scene_tick_rate`,
+`crates/scene_runner/src/scene_partition.rs`): `update_scene_priority` leaves it out of the
+frame's queue until `1 / rate` seconds have passed since it was last sent. The time since it was
+last sent grows a frame at a time, so the interval counts as passed within a quarter of a frame
+of it (`tick_rate_allows`). The effective rate is a whole number of frames per tick: at 60 fps
+the 40 and 30 bands both tick every other frame, 30 times a second; at 30 fps or below they tick
+every frame.
 
 | Distance from the player to the scene's nearest parcel | Ticks a second, in front | Behind the camera |
 |---|---|---|
@@ -181,15 +181,16 @@ per tick: at 60 fps the 40 and 30 bands both tick every other frame, 30 times a 
 | 80 m on | 0.5 | 0.5 |
 
 The table is `SCENE_TICK_RATE_BANDS`, `BEHIND_SCENE_TICK_RATE` and `FAR_SCENE_TICK_RATE`. The
-farthest band keeps a slow tick because a scene drains its global CRDT and scene comms
-channels only while ticking, and a full channel drops messages. A scene keeps the full rate
-while it is one of the player's scenes, at the player's position while they are out of world, a
-portable or global scene, a named priority scene, the system scene, a scene under the inspector
-or the scene being baked into an imposter, and until it reaches `SCENE_LOADED_TICK`, since
-loading waits on a scene's first ticks. Without a rendering camera (headless) nothing is capped. The runtime debug panel's
-"Scene Tick Rates" section (`/scene_tick_rate_state`) counts the scenes at each cap and the
-scene-frames the cap has skipped. See the
-[ADR](../../../../docs/adr/2026-11-24-explorer-scene-tick-rate-bands.md).
+farthest band keeps a slow tick because a scene drains its channels only while ticking, and a
+full channel drops messages. For the global CRDT channel a rate is not enough: while its slowest
+reader is half its capacity behind (`GLOBAL_CRDT_BACKLOG_DUE`), every capped scene is due. A
+scene keeps the full rate while it is one of the player's scenes, at the player's position while
+they are out of world, a portable or global scene, a named priority scene, the system scene, a
+scene under the inspector or the scene being baked into an imposter, and until it reaches
+`SCENE_LOADED_TICK`, since loading waits on a scene's first ticks. Without a rendering camera
+(headless) nothing is capped. The runtime debug panel's "Scene Tick Rates" section
+(`/scene_tick_rate_state`) counts the scenes at each cap and the scene-frames the cap has
+skipped. See the [ADR](../../../../docs/adr/2026-11-24-explorer-scene-tick-rate-bands.md).
 
 Everything downstream of the loop reads bevy components. A system that needs scene data never
 reads the CRDT store directly; it queries the component the `UpdateWorld` system wrote.

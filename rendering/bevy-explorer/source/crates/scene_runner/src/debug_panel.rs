@@ -166,10 +166,7 @@ impl Plugin for SceneDebugPanelPlugin {
                 query: "/scene_tick_rate_state",
                 fields: &[
                     ("Scenes at the full rate", "full"),
-                    (
-                        "Scenes capped at ticks a second (40 / 30 / 15 / 10 / 5 / 1 / 0.5)",
-                        "capped",
-                    ),
+                    (CAPPED_LABEL, "capped"),
                     ("Scene-frames skipped by the cap", "skipped"),
                 ],
                 actions: &[],
@@ -571,7 +568,10 @@ fn scene_content(
 #[command(name = "/scene_tick_rate_state")]
 struct TickRateState;
 
-/// Every rate `scene_tick_rate` gives, in the order of the section's `capped` label.
+/// The `capped` field's label: its components are `CAPPED_RATES`, in order.
+const CAPPED_LABEL: &str = "Scenes capped at ticks a second (40 / 30 / 15 / 10 / 5 / 1 / 0.5)";
+
+/// Every rate `scene_tick_rate` gives, in the order of `CAPPED_LABEL`.
 const CAPPED_RATES: [f32; 7] = [
     SCENE_TICK_RATE_BANDS[0].1,
     SCENE_TICK_RATE_BANDS[1].1,
@@ -586,7 +586,8 @@ const CAPPED_RATES: [f32; 7] = [
 /// (`scene_tick_rate`), and the scene-frames the cap has skipped since startup.
 fn tick_rate_state(
     mut input: ConsoleCommand<TickRateState>,
-    scenes: Query<&RendererSceneContext>,
+    // the scenes the scene loop schedules
+    scenes: Query<&RendererSceneContext, Without<SceneLoading>>,
     rendering_camera: Query<(), (With<PrimaryCamera>, With<Camera>)>,
     updates: Res<SceneUpdates>,
 ) {
@@ -721,6 +722,12 @@ mod tests {
     use dcl_component::{DclReader, SceneComponentId, SceneCrdtTimestamp, SceneEntityId};
     use dcl_types::interface::{CrdtStore, CrdtType};
     use std::sync::{Arc, Mutex};
+
+    #[test]
+    fn the_capped_label_names_every_capped_rate_in_order() {
+        let rates = CAPPED_RATES.map(|rate| rate.to_string()).join(" / ");
+        assert!(CAPPED_LABEL.ends_with(&format!("({rates})")));
+    }
 
     fn scene_state_app() -> App {
         let mut app = App::new();

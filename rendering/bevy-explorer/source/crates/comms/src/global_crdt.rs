@@ -315,10 +315,13 @@ pub struct GlobalCrdtState {
     localizers: HashMap<SceneComponentId, Localizer>,
 }
 
+/// Updates a scene's receiver holds before the oldest are dropped.
+pub const GLOBAL_CRDT_SCENE_CAPACITY: usize = 1000;
+
 impl GlobalCrdtState {
     pub fn new(room: Option<String>) -> Self {
         let (ext_sender, ext_receiver) = mpsc::channel(1000);
-        let (int_sender, _) = broadcast::channel(1000);
+        let (int_sender, _) = broadcast::channel(GLOBAL_CRDT_SCENE_CAPACITY);
         Self {
             room,
             ext_receiver,
@@ -453,6 +456,11 @@ impl GlobalCrdtState {
         }
 
         (store, self.int_sender.subscribe())
+    }
+
+    /// The updates sent that the slowest scene has not read yet.
+    pub fn backlog(&self) -> usize {
+        self.int_sender.len()
     }
 
     pub fn set_bounds(&mut self, min: IVec2, max: IVec2) {

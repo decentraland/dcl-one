@@ -73,8 +73,16 @@ fn a_capped_scene_ticks_once_its_interval_has_passed() {
 }
 
 #[test]
-fn an_interval_within_half_a_frame_counts_as_passed() {
+fn an_interval_of_whole_frames_survives_jitter() {
     // two 60 fps frames that came in just under 1/30 s
     assert!(tick_rate_allows(30.0, 0.0332, 1.0 / 60.0));
     assert!(!tick_rate_allows(30.0, 0.0166, 1.0 / 60.0));
+}
+
+#[test]
+fn an_interval_between_frames_waits_for_the_later_frame() {
+    // 40 a second is 1.5 frames at 60 fps: one frame is never enough, jitter or not
+    assert!(!tick_rate_allows(40.0, 1.0 / 60.0, 1.0 / 60.0));
+    assert!(!tick_rate_allows(40.0, 0.0168, 0.0168));
+    assert!(tick_rate_allows(40.0, 2.0 / 60.0, 1.0 / 60.0));
 }
