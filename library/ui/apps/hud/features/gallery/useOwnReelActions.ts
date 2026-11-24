@@ -1,4 +1,4 @@
-import { useCallback } from 'react'
+import { useCallback, useRef } from 'react'
 import type { GalleryPhoto } from '@explorer-core/engine/protocol'
 import type { ReelWrite } from '../session/useEngineSession'
 import type { ReelList } from './useReelList'
@@ -27,18 +27,30 @@ export function useOwnReelActions(
   const { setPublic: write, remove: del } = writes
   const { remove: drop, restore, setPublic: mark, setStorage } = list
 
+  // A photo's writes go one at a time, so the service takes them in the order asked.
+  const lastWrite = useRef(new Map<string, Promise<boolean>>())
   const setPublic = useCallback(
-    async (photo: GalleryPhoto, isPublic: boolean): Promise<boolean> => {
+    (photo: GalleryPhoto, isPublic: boolean): Promise<boolean> => {
       const at = publicOnly && !isPublic ? drop(photo.id) : -1
-      const r = await write(photo.id, isPublic)
-      if (!r.ok) {
-        if (at >= 0) restore(photo, at)
-        reelToast(REEL_MESSAGES.failure, 'error')
-        return false
+      const run = async (): Promise<boolean> => {
+        const r = await write(photo.id, isPublic)
+        if (!r.ok) {
+          if (at >= 0) restore(photo, at)
+          reelToast(REEL_MESSAGES.failure, 'error')
+          return false
+        }
+        mark(photo.id, isPublic)
+        reelToast(REEL_MESSAGES.updated)
+        return true
       }
-      mark(photo.id, isPublic)
-      reelToast(REEL_MESSAGES.updated)
-      return true
+      const writes = lastWrite.current
+      const result = (writes.get(photo.id) ?? Promise.resolve(true)).then(run, run)
+      writes.set(photo.id, result)
+      const done = (): void => {
+        if (writes.get(photo.id) === result) writes.delete(photo.id)
+      }
+      void result.then(done, done)
+      return result
     },
     [publicOnly, write, drop, restore, mark]
   )

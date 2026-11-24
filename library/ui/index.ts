@@ -111,6 +111,8 @@ export type { ModalProps } from './components/Modal/Modal'
 
 export { Toast } from './components/Toast/Toast'
 export type { ToastProps, ToastVariant } from './components/Toast/Toast'
+export { Tooltip } from './components/Tooltip/Tooltip'
+export type { TooltipAlign, TooltipProps, TooltipSide } from './components/Tooltip/Tooltip'
 
 export { ProgressBar } from './components/ProgressBar/ProgressBar'
 export type { ProgressBarProps } from './components/ProgressBar/ProgressBar'

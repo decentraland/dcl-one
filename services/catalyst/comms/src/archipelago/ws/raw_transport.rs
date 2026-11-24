@@ -402,7 +402,6 @@ mod tests {
             state.clone(),
             true,
             Default::default(),
-            crate::stats::http::test_support::matcher(),
             Arc::new(crate::content::Denylist::default()),
         );
         let (capture, signals) = tokio::sync::mpsc::channel(4);

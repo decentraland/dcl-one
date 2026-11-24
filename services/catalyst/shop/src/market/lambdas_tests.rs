@@ -107,25 +107,14 @@ async fn serve_graph(answer: fn(&str) -> Value) -> String {
     .await
 }
 
+/// The collections subgraphs answer nothing: ownership is the nft index's
+/// (`seed_indexes`), and a query for it here is a test failure.
 fn matic_collections(query: &str) -> Value {
-    if query.contains("urn_in") {
-        // The ownership document of the profiles: the owner holds the hat, token 10.
-        let mut data = empty_owner_aliases(query);
-        data["o0"] = json!([{ "urn": format!("urn:decentraland:matic:collections-v2:{COFFEE}:1"), "tokenId": "10" }]);
-        data
-    } else if query.contains("category: \"wearable\"") {
-        json!({ "nfts": [
-            { "id": "a1", "urn": format!("urn:decentraland:matic:collections-v2:{COFFEE}:1"), "tokenId": "10", "itemType": "wearable_v2", "transferredAt": "200",
-              "item": { "rarity": "epic", "price": "5" }, "metadata": { "wearable": { "name": "Hat", "category": "hat" } } },
-            { "id": "a2", "urn": format!("urn:decentraland:matic:collections-v2:{COFFEE}:1"), "tokenId": "11", "itemType": "wearable_v2", "transferredAt": "300",
-              "item": { "rarity": "epic", "price": "5" }, "metadata": { "wearable": { "name": "Hat", "category": "hat" } } },
-            // An item no deployed entity describes.
-            { "id": "a3", "urn": format!("urn:decentraland:matic:collections-v2:{COFFEE}:9"), "tokenId": "12", "itemType": "wearable_v2", "transferredAt": "100",
-              "item": { "rarity": "common", "price": "1" }, "metadata": { "wearable": { "name": "Orphan", "category": "hat" } } }
-        ] })
-    } else {
-        json!({ "nfts": [] })
-    }
+    assert!(
+        !query.contains("urn_in") && !query.contains("owner:"),
+        "an ownership query reached the collections subgraph: {query}"
+    );
+    json!({ "nfts": [] })
 }
 
 fn eth_collections(query: &str) -> Value {
@@ -480,6 +469,12 @@ async fn seed(pool: &PgPool) {
     )
     .await;
 
+    seed_mirrors(pool).await;
+}
+
+/// The collections and items mirrors' rows and complete passes, without
+/// the content entities [`seed`] deploys.
+async fn seed_mirrors(pool: &PgPool) {
     sqlx::query(
         "INSERT INTO shop.collections (network, contract_address, chain_id, name, creator, owner, urn, is_completed, is_approved, is_editable, \
              created_at, updated_at, reviewed_at, mirrored_at) \
@@ -491,14 +486,16 @@ async fn seed(pool: &PgPool) {
     .execute(pool)
     .await
     .unwrap();
-    for (item, kind, name, cat, rarity) in [
-        ("1", "wearable_v2", "Hat", "hat", "epic"),
-        ("2", "emote_v1", "Dance", "dance", "rare"),
+    for (item, kind, name, cat, rarity, price) in [
+        ("1", "wearable_v2", "Hat", "hat", "epic", 5),
+        ("2", "emote_v1", "Dance", "dance", "rare", 5),
+        // An item no deployed entity describes.
+        ("9", "wearable_v2", "Orphan", "hat", "common", 1),
     ] {
         sqlx::query(
             "INSERT INTO shop.items (network, contract_address, item_id, chain_id, item_type, urn, creator, rarity, total_supply, max_supply, \
                  available, price, name, category, created_at, updated_at, reviewed_at, mirrored_at) \
-             VALUES ('matic', $1, $2::numeric, 137, $3, $4, $5, $6, 1, 10, 9, 5, $7, $8, 1, 1, 1, timezone('UTC', now()))",
+             VALUES ('matic', $1, $2::numeric, 137, $3, $4, $5, $6, 1, 10, 9, $9, $7, $8, 1, 1, 1, timezone('UTC', now()))",
         )
         .bind(COFFEE)
         .bind(item)
@@ -508,6 +505,7 @@ async fn seed(pool: &PgPool) {
         .bind(rarity)
         .bind(name)
         .bind(cat)
+        .bind(price)
         .execute(pool)
         .await
         .unwrap();
@@ -614,6 +612,30 @@ async fn seed_indexes(pool: &PgPool) {
     .execute(pool)
     .await
     .unwrap();
+    // The owner's copies: two of the hat (token 11 the newest transfer),
+    // one of the orphan item.
+    for (token, item, block, at) in [(10, 1, 20, 200), (11, 1, 30, 300), (12, 9, 10, 100)] {
+        sqlx::query(
+            "INSERT INTO shop.nft (network, contract_address, token_id, owner, item_id, issued_id, minted_block, minted_at, transferred_block, transferred_log, transferred_at) \
+             VALUES ('matic', $1, $2, $3, $4, $2, $5, $6, $5, 0, $6)",
+        )
+        .bind(COFFEE)
+        .bind(token as i64)
+        .bind(OWNER)
+        .bind(item as i64)
+        .bind(block as i64)
+        .bind(at as i64)
+        .execute(pool)
+        .await
+        .unwrap();
+    }
+    super::owned_items::test_support::publish(
+        pool,
+        &super::chain_walk::ChainNet::ALL,
+        false,
+        std::time::Duration::ZERO,
+    )
+    .await;
 }
 
 #[tokio::test]
@@ -635,6 +657,7 @@ async fn the_g1_lambdas_answer_from_the_mirrors_indexes_and_readers() {
         },
         ..Settings::for_tests()
     };
+    let settings = super::owned_items::test_support::walking(settings);
     let state = Arc::new(MarketplaceState::new(
         db.pool.clone(),
         crate::http::Outbound::for_tests(),
@@ -667,8 +690,14 @@ async fn the_g1_lambdas_answer_from_the_mirrors_indexes_and_readers() {
             json!({ "elements": [], "totalAmount": 0, "pageNum": 1, "pageSize": 100 })
         )
     );
-    let (status, _) = get(&state, "/lambdas/names/alice/owner").await;
-    assert_eq!(status, StatusCode::NOT_FOUND);
+    // This node walks the nft index, so its NAMEs read the index alone:
+    // unpublished, the name owner is its envelope, never the subgraph's.
+    let (status, body) = get(&state, "/lambdas/names/alice/owner").await;
+    assert_eq!(
+        (status, body["source"].as_str()),
+        (StatusCode::SERVICE_UNAVAILABLE, Some("nft-index")),
+        "{body}"
+    );
     let (status, body) = get(&state, "/lambdas/collections/emotes?textSearch=nothing").await;
     assert_eq!(
         (status, body["emotes"].as_array().map(Vec::len)),
@@ -821,7 +850,8 @@ async fn the_g1_lambdas_answer_from_the_mirrors_indexes_and_readers() {
 
     let (status, body) = get(&state, &format!("/lambdas/outfits/{OWNER}")).await;
     assert_eq!(status, StatusCode::OK, "{body}");
-    assert_eq!(body["metadata"]["namesForExtraSlots"], json!(["alice"]));
+    // The NAME as minted (the index's `Alice`), as the subgraph listed it.
+    assert_eq!(body["metadata"]["namesForExtraSlots"], json!(["Alice"]));
     let hat = format!("urn:decentraland:matic:collections-v2:{COFFEE}:1");
     assert_eq!(
         body["metadata"]["outfits"],
@@ -1108,11 +1138,11 @@ async fn the_g1_lambdas_answer_from_the_mirrors_indexes_and_readers() {
         body["avatars"][0]["avatar"]["wearables"],
         json!([
             "urn:decentraland:off-chain:base-avatars:eyes_00",
-            format!("{hat}:10"),
+            format!("{hat}:11"),
             TP_URN,
             linked(2)
         ]),
-        "the held token is appended (ENSURE_ERC_721); token 3 is mapped but not held, token 9 is not mapped: {body}"
+        "the newest held token is appended (ENSURE_ERC_721); token 3 is mapped but not held, token 9 is not mapped: {body}"
     );
 
     // An entity a remote list (`DENYLIST_URLS`) names is left out of the
@@ -1267,8 +1297,8 @@ async fn the_g1_lambdas_answer_from_the_mirrors_indexes_and_readers() {
         .await
         .unwrap();
 
-    // The registry and the collections subgraphs down: lamb2's 502
-    // FetcherError, never an empty list or a 503.
+    // The registry and the collections subgraphs down: the third-party
+    // reads answer lamb2's 502 FetcherError, never an empty list or a 503.
     let mut dark_settings = state.settings.clone();
     dark_settings.third_party_registry_subgraph_url = Some(down.clone());
     dark_settings.eth_collections_subgraph_url = Some(down.clone());
@@ -1290,10 +1320,6 @@ async fn the_g1_lambdas_answer_from_the_mirrors_indexes_and_readers() {
             "/lambdas/collections/wearables-by-owner/{OWNER}?collectionId=urn:decentraland:matic:collections-thirdparty:tp"
         ),
         format!("/explorer/{OWNER}/wearables?collectionType=third-party"),
-        format!("/lambdas/users/{OWNER}/wearables"),
-        format!("/lambdas/users/{OWNER}/emotes"),
-        format!("/lambdas/collections/wearables-by-owner/{OWNER}"),
-        format!("/lambdas/collections/emotes-by-owner/{OWNER}"),
     ] {
         let (status, body) = get(&dark_state, &uri).await;
         assert_eq!(
@@ -1301,6 +1327,17 @@ async fn the_g1_lambdas_answer_from_the_mirrors_indexes_and_readers() {
             (StatusCode::BAD_GATEWAY, fetcher_error.clone()),
             "{uri}"
         );
+    }
+    // Wearable and emote ownership never asks the collections subgraphs.
+    for uri in [
+        format!("/lambdas/users/{OWNER}/wearables"),
+        format!("/lambdas/users/{OWNER}/emotes"),
+        format!("/lambdas/collections/wearables-by-owner/{OWNER}"),
+        format!("/lambdas/collections/emotes-by-owner/{OWNER}"),
+        format!("/explorer/{OWNER}/wearables?collectionType=on-chain"),
+    ] {
+        let (status, body) = get(&dark_state, &uri).await;
+        assert_eq!(status, StatusCode::OK, "{uri}: {body}");
     }
     let (status, body) = get(&dark_state, "/lambdas/third-party-integrations").await;
     assert_eq!(
@@ -1317,7 +1354,7 @@ async fn the_g1_lambdas_answer_from_the_mirrors_indexes_and_readers() {
         body["avatars"][0]["avatar"]["wearables"],
         json!([
             "urn:decentraland:off-chain:base-avatars:eyes_00",
-            format!("{hat}:10"),
+            format!("{hat}:11"),
             TP_URN
         ]),
         "the v1 item needs no check: {body}"
@@ -1729,7 +1766,7 @@ async fn assert_lambdas_profile_dependency_failure(state: &SharedState, layer: &
     let recorder = crate::comms::metrics::prometheus_builder()
         .unwrap()
         .build_recorder();
-    let _recording = metrics::set_default_local_recorder(&recorder);
+    let _recording = dcl_metrics::set_default_local_recorder(&recorder);
     let app = router(state.clone());
     for modified_since in [None, Some("Wed, 21 Oct 2015 07:28:00 GMT")] {
         let mut request = Request::post("/lambdas/profiles");
@@ -1784,11 +1821,15 @@ async fn assert_lambdas_profile_dependency_failure(state: &SharedState, layer: &
 
 #[tokio::test]
 async fn catalogue_and_user_pages_fail_when_the_content_read_fails() {
-    let state = crate::market::tests::support::state_without_db_settings(Settings {
-        eth_collections_subgraph_url: Some(serve_graph(eth_collections).await),
-        matic_collections_subgraph_url: Some(serve_graph(matic_items).await),
-        ..Settings::for_tests()
-    });
+    // A node that walks the nft index: the user pages read their owner's
+    // copies from the same closed pool first, and answer the same 500.
+    let state = crate::market::tests::support::state_without_db_settings(
+        super::owned_items::test_support::walking(Settings {
+            eth_collections_subgraph_url: Some(serve_graph(eth_collections).await),
+            matic_collections_subgraph_url: Some(serve_graph(matic_items).await),
+            ..Settings::for_tests()
+        }),
+    );
     state.pool.close().await;
     state
         .test_allow_loopback
@@ -1830,6 +1871,10 @@ async fn user_item_entities_and_definitions_look_up_missing_pointers_on_peers() 
     let eth = serve_graph(eth_collections).await;
     let matic = serve_graph(matic_collections).await;
     let mut requests = requests;
+    // The owner's copies come from the nft index (hat tokens 10 and 11, the
+    // orphan 12) and their items from the mirror; no entity is deployed here.
+    seed_mirrors(&pool).await;
+    seed_indexes(&pool).await;
 
     for flag in ["includeDefinitions", "includeEntities"] {
         // A separate read-through allows both flags to be tested before a
@@ -1847,11 +1892,11 @@ async fn user_item_entities_and_definitions_look_up_missing_pointers_on_peers() 
             MarketplaceState::new(
                 pool.clone(),
                 crate::http::Outbound::for_tests(),
-                Settings {
+                super::owned_items::test_support::walking(Settings {
                     eth_collections_subgraph_url: Some(eth.clone()),
                     matic_collections_subgraph_url: Some(matic.clone()),
                     ..Settings::for_tests()
-                },
+                }),
             )
             .with_read_through(Some(read_through)),
         );
@@ -2324,5 +2369,650 @@ async fn nft_prices_answer_the_land_index_envelope_when_it_stops_being_ready_aft
     assert_eq!(body["source"], "land-authz-index", "{body}");
     let (status, body) = answer("statement timeout".into()).await;
     assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR, "{body}");
+    db.drop().await;
+}
+
+/// The nft leg of `/v1/prices` keeps the 503s `/v1/nfts` answers through
+/// the prices memo: an nft index withdrawn between the gate and the read
+/// answers its envelope, and a statement the read bound cancelled the
+/// bound's 503, not a 500.
+#[tokio::test]
+async fn nft_prices_keep_the_index_envelope_and_the_read_bound() {
+    let Some(db) = ScratchDb::create().await else {
+        return;
+    };
+    seed_mirrors(&db.pool).await;
+    seed_indexes(&db.pool).await;
+    let state = Arc::new(MarketplaceState::new(
+        db.pool.clone(),
+        crate::http::Outbound::for_tests(),
+        Settings::for_tests(),
+    ));
+    let wearables = super::nfts::NftFilters {
+        category: Some(super::wire::NftCategory::Wearable),
+        ..Default::default()
+    };
+    let read = super::nft_reads::nft_prices(&state, &wearables).await;
+    assert!(read.is_ok(), "{read:?}");
+    let answer = |e: String| async move {
+        let response = super::prices::nft_prices_error(e);
+        let status = response.status();
+        let bytes = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        (status, serde_json::from_slice::<Value>(&bytes).unwrap())
+    };
+
+    // A rewind withdraws the Polygon publication after the gate passed.
+    set_nft_cursor(&db.pool, "matic", None).await;
+    let refused = super::nft_reads::nft_prices(&state, &wearables)
+        .await
+        .unwrap_err();
+    let (status, body) = answer(refused).await;
+    assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE, "{body}");
+    assert_eq!(body["source"], "nft-index", "{body}");
+    assert!(
+        body["message"]
+            .as_str()
+            .is_some_and(|m| m.contains("matic")),
+        "{body}"
+    );
+
+    let (status, body) = answer(super::nft_reads::NFT_PRICES_TIMED_OUT.to_string()).await;
+    assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE, "{body}");
+    assert!(
+        body["message"]
+            .as_str()
+            .is_some_and(|m| m.contains("statement bound")),
+        "{body}"
+    );
+    let (status, body) = answer("another failure".into()).await;
+    assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR, "{body}");
+    db.drop().await;
+}
+
+/// A collections subgraph that counts every request: the ownership routes
+/// must never call it.
+async fn serve_counting_graph() -> (String, Arc<std::sync::atomic::AtomicUsize>) {
+    let calls = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let counted = calls.clone();
+    let url = serve(Router::new().route(
+        "/",
+        axum::routing::post(move || {
+            let counted = counted.clone();
+            async move {
+                counted.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                axum::Json(json!({ "data": { "nfts": [] } }))
+            }
+        }),
+    ))
+    .await;
+    (url, calls)
+}
+
+/// The profile, inventory and outfits fixture of the ownership tests: the
+/// owner's profile wears the hat (token 10) and the dance (token 20), both
+/// in the nft index, with a node that does not walk it (`off`) and one that
+/// does (`walking`), and a collections subgraph that counts its requests.
+struct OwnershipFixture {
+    db: ScratchDb,
+    off: Arc<MarketplaceState>,
+    walking: Arc<MarketplaceState>,
+    calls: Arc<std::sync::atomic::AtomicUsize>,
+    hat: String,
+}
+
+async fn ownership_fixture() -> Option<OwnershipFixture> {
+    let db = ScratchDb::create().await?;
+    seed(&db.pool).await;
+    let hat = format!("urn:decentraland:matic:collections-v2:{COFFEE}:1");
+    let dance = format!("urn:decentraland:matic:collections-v2:{COFFEE}:2");
+    deploy(
+        &db.pool,
+        "bafyprofile",
+        "profile",
+        OWNER,
+        json!({ "avatars": [{ "name": "alice", "avatar": { "bodyShape": "urn:decentraland:off-chain:base-avatars:BaseFemale",
+            "wearables": ["urn:decentraland:off-chain:base-avatars:eyes_00", hat],
+            "emotes": [{ "slot": 0, "urn": dance }] } }] }),
+        &[],
+    )
+    .await;
+    for (token, item) in [(10i64, 1i64), (20, 2)] {
+        sqlx::query(
+            "INSERT INTO shop.nft (network, contract_address, token_id, owner, item_id, issued_id, minted_block, minted_at, transferred_block, transferred_log, transferred_at) \
+             VALUES ('matic', $1, $2, $3, $4, 1, 5, 5, 5, 0, 5)",
+        )
+        .bind(COFFEE)
+        .bind(token)
+        .bind(OWNER)
+        .bind(item)
+        .execute(&db.pool)
+        .await
+        .unwrap();
+    }
+    let (graph, calls) = serve_counting_graph().await;
+    let rpc = serve_rpc().await;
+    let settings = Settings {
+        eth_collections_subgraph_url: Some(graph.clone()),
+        matic_collections_subgraph_url: Some(graph),
+        marketplace_subgraph_url: Some(serve_graph(marketplace_graph).await),
+        third_party_registry_subgraph_url: Some(serve_graph(registry_graph).await),
+        eth_rpc_url: Some(rpc.clone()),
+        polygon_rpc_url: Some(rpc.clone()),
+        market: MarketSettings {
+            trade_rpc_urls: RpcEndpoints::from_env(Some(&format!("137={rpc}"))),
+            ..MarketSettings::default()
+        },
+        ..Settings::for_tests()
+    };
+    let state_of = |settings: Settings| {
+        let state = Arc::new(MarketplaceState::new(
+            db.pool.clone(),
+            crate::http::Outbound::for_tests(),
+            settings,
+        ));
+        state
+            .test_allow_loopback
+            .store(true, std::sync::atomic::Ordering::Relaxed);
+        state
+    };
+    let off = state_of(settings.clone());
+    let walking = state_of(super::owned_items::test_support::walking(settings));
+    Some(OwnershipFixture {
+        db,
+        off,
+        walking,
+        calls,
+        hat,
+    })
+}
+
+/// Publishes the nft cursor of `network` `published` minutes ago, or
+/// withdraws it (`None`), as a pass and a rewind do.
+async fn set_nft_cursor(pool: &PgPool, network: &str, published: Option<i64>) {
+    sqlx::query(
+        "INSERT INTO shop.chain_cursor (indexer, network, start_block, last_block, folded_block, folded_at, full_history, chain_id) \
+         VALUES ('nft', $1, 1, 100, CASE WHEN $2::bigint IS NULL THEN NULL ELSE 100 END, \
+                 timezone('UTC', now()) - make_interval(mins => $2::int), true, \
+                 CASE $1 WHEN 'ethereum' THEN 1 ELSE 137 END) \
+         ON CONFLICT (indexer, network) DO UPDATE SET folded_block = EXCLUDED.folded_block, folded_at = EXCLUDED.folded_at",
+    )
+    .bind(network)
+    .bind(published)
+    .execute(pool)
+    .await
+    .unwrap();
+}
+
+/// A walking node reads a profile's `hasClaimedName` from the Ethereum
+/// index, in the items' snapshot, and files the profile under that
+/// publication: once a pass publishes the NAME's transfer, the cached
+/// profile is not served again. The marketplace subgraph (whose fake still
+/// lists the NAME) is never the source.
+#[tokio::test]
+async fn a_claimed_name_follows_the_ethereum_publication() {
+    let Some(OwnershipFixture { db, walking, .. }) = ownership_fixture().await else {
+        return;
+    };
+    // The deployed avatar's name, as minted.
+    sqlx::query(
+        "INSERT INTO shop.nft (network, contract_address, token_id, owner, ens_subdomain, minted_block, minted_at, transferred_block, transferred_log, transferred_at) \
+         VALUES ('ethereum', $1, 77, $2, 'alice', 1, 1, 1, 0, 1)",
+    )
+    .bind(super::nft_index::DCL_REGISTRAR)
+    .bind(OWNER)
+    .execute(&db.pool)
+    .await
+    .unwrap();
+    set_nft_cursor(&db.pool, "ethereum", Some(0)).await;
+    set_nft_cursor(&db.pool, "matic", Some(0)).await;
+    let claimed = || async {
+        let (status, body) = get(&walking, &format!("/lambdas/profiles/{OWNER}")).await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        body["avatars"][0]["hasClaimedName"].clone()
+    };
+    assert_eq!(claimed().await, json!(true));
+
+    sqlx::query("UPDATE shop.nft SET owner = '0xbbbb000000000000000000000000000000000002' WHERE contract_address = $1 AND token_id = 77")
+        .bind(super::nft_index::DCL_REGISTRAR)
+        .execute(&db.pool)
+        .await
+        .unwrap();
+    sqlx::query(
+        "UPDATE shop.chain_cursor SET last_block = 101, folded_block = 101, folded_at = timezone('UTC', now()) \
+         WHERE indexer = 'nft' AND network = 'ethereum'",
+    )
+    .execute(&db.pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        claimed().await,
+        json!(false),
+        "the profile filed under the former publication is not served"
+    );
+    db.drop().await;
+}
+
+/// Every ownership route against each state of the nft index: switched off
+/// (profiles and outfits as deployed, the rest the envelope), walked but
+/// incomplete (everything fails closed: a direct profile read 503s and a
+/// Registry batch is an error the batch leaves out), complete but published
+/// an hour ago (profiles serve, the strict routes answer the envelope), only
+/// Polygon published (the emotes serve; the wearables need Ethereum too, and
+/// so do a profile and its outfits, whose DCL NAMEs the Ethereum index
+/// holds), and published. No route asks the collections subgraphs.
+#[tokio::test]
+async fn each_ownership_route_follows_the_nft_index_state() {
+    let Some(OwnershipFixture {
+        db,
+        off,
+        walking,
+        calls,
+        hat,
+    }) = ownership_fixture().await
+    else {
+        return;
+    };
+    let dance = format!("urn:decentraland:matic:collections-v2:{COFFEE}:2");
+    let set_cursor = |network: &'static str, published: Option<i64>| {
+        let pool = db.pool.clone();
+        async move { set_nft_cursor(&pool, network, published).await }
+    };
+    let entity = || async {
+        super::profiles::active_entities(&walking, &[OWNER.to_string()])
+            .await
+            .unwrap()
+    };
+    struct Expect {
+        profile: Option<Value>,
+        wearables: StatusCode,
+        emotes: StatusCode,
+        outfits: StatusCode,
+        nfts: StatusCode,
+        nfts_matic: StatusCode,
+    }
+    let unavailable = StatusCode::SERVICE_UNAVAILABLE;
+    let ok = StatusCode::OK;
+    let owned_profile = json!([
+        "urn:decentraland:off-chain:base-avatars:eyes_00",
+        format!("{hat}:10")
+    ]);
+    for (label, state, eth, matic, expect) in [
+        (
+            "switched off",
+            &off,
+            None,
+            None,
+            Expect {
+                profile: Some(json!([
+                    "urn:decentraland:off-chain:base-avatars:eyes_00",
+                    hat.clone()
+                ])),
+                wearables: unavailable,
+                emotes: unavailable,
+                outfits: ok,
+                nfts: unavailable,
+                nfts_matic: unavailable,
+            },
+        ),
+        (
+            "incomplete",
+            &walking,
+            Some(None),
+            Some(None),
+            Expect {
+                profile: None,
+                wearables: unavailable,
+                emotes: unavailable,
+                outfits: unavailable,
+                nfts: unavailable,
+                nfts_matic: unavailable,
+            },
+        ),
+        (
+            "complete, published an hour ago",
+            &walking,
+            Some(Some(60)),
+            Some(Some(60)),
+            Expect {
+                profile: Some(owned_profile.clone()),
+                wearables: unavailable,
+                emotes: unavailable,
+                outfits: unavailable,
+                nfts: unavailable,
+                nfts_matic: unavailable,
+            },
+        ),
+        (
+            "only Polygon published",
+            &walking,
+            Some(None),
+            Some(Some(0)),
+            Expect {
+                profile: None,
+                wearables: unavailable,
+                emotes: ok,
+                outfits: unavailable,
+                nfts: unavailable,
+                nfts_matic: ok,
+            },
+        ),
+        (
+            "published",
+            &walking,
+            Some(Some(0)),
+            Some(Some(0)),
+            Expect {
+                profile: Some(owned_profile.clone()),
+                wearables: ok,
+                emotes: ok,
+                outfits: ok,
+                nfts: ok,
+                nfts_matic: ok,
+            },
+        ),
+    ] {
+        for (network, published) in [("ethereum", eth), ("matic", matic)] {
+            if let Some(published) = published {
+                set_cursor(network, published).await;
+            }
+        }
+        state.profile_cache.clear();
+        let (status, body) = get(state, &format!("/lambdas/profiles/{OWNER}")).await;
+        let batch = super::profiles::process_profiles_positional(state, &entity().await).await;
+        match &expect.profile {
+            Some(wearables) => {
+                assert_eq!(status, ok, "{label}: {body}");
+                assert_eq!(
+                    &body["avatars"][0]["avatar"]["wearables"], wearables,
+                    "{label}: {body}"
+                );
+                let batch = batch.unwrap();
+                assert_eq!(
+                    &batch[0].as_ref().unwrap()["avatars"][0]["avatar"]["wearables"],
+                    wearables,
+                    "{label}: the Registry batch"
+                );
+            }
+            None => {
+                // A failed lookup answers lamb2's 404, never the profile
+                // stripped of the items the index cannot vouch for.
+                assert_eq!(
+                    (status, body["message"].as_str()),
+                    (StatusCode::NOT_FOUND, Some("Profile not found")),
+                    "{label}: a direct read fails closed: {body}"
+                );
+                assert!(
+                    batch.is_err(),
+                    "{label}: the Registry batch leaves the profile out"
+                );
+            }
+        }
+        for (uri, want) in [
+            (
+                format!("/lambdas/users/{OWNER}/wearables"),
+                expect.wearables,
+            ),
+            (
+                format!("/lambdas/collections/wearables-by-owner/{OWNER}"),
+                expect.wearables,
+            ),
+            (
+                format!("/explorer/{OWNER}/wearables?collectionType=on-chain"),
+                expect.wearables,
+            ),
+            (format!("/lambdas/users/{OWNER}/emotes"), expect.emotes),
+            (format!("/lambdas/outfits/{OWNER}"), expect.outfits),
+        ] {
+            let (status, body) = get(state, &uri).await;
+            assert_eq!(status, want, "{label}: {uri}: {body}");
+            if status == unavailable {
+                assert_eq!(body["source"], "nft-index", "{label}: {uri}: {body}");
+            }
+        }
+        for (uri, want) in [
+            (format!("/v1/users/{OWNER}/wearables"), expect.wearables),
+            (
+                format!("/v1/nfts?owner={OWNER}&category=wearable"),
+                expect.nfts,
+            ),
+            (
+                format!("/v1/nfts?owner={OWNER}&category=wearable&network=MATIC"),
+                expect.nfts_matic,
+            ),
+        ] {
+            let (status, body) = get_via(super::market_router(state.clone()), &uri).await;
+            assert_eq!(status, want, "{label}: {uri}: {body}");
+            if status == unavailable {
+                assert_eq!(body["source"], "nft-index", "{label}: {uri}: {body}");
+            }
+        }
+        // The open listings' leg never fails the order book on the index:
+        // it is empty until the networks it reads are published, and
+        // unguarded on a node that does not walk the index.
+        for network in [None, Some(super::wire::Network::Matic)] {
+            let f = super::orders::OrderFilters {
+                status: Some("open".into()),
+                network,
+                ..Default::default()
+            };
+            assert!(
+                super::orders::trades_leg(state, &f).await.is_ok(),
+                "{label}: the orders leg on {network:?}"
+            );
+        }
+    }
+    let (_, body) = get(&walking, &format!("/lambdas/users/{OWNER}/wearables")).await;
+    assert_eq!(body["elements"][0]["urn"], hat, "{body}");
+    let (_, body) = get_via(
+        super::market_router(walking.clone()),
+        &format!("/v1/nfts?owner={OWNER}&category=emote"),
+    )
+    .await;
+    assert_eq!(body["data"][0]["nft"]["urn"], dance, "{body}");
+    assert_eq!(
+        calls.load(std::sync::atomic::Ordering::SeqCst),
+        0,
+        "an ownership route asked the collections subgraph"
+    );
+    db.drop().await;
+}
+
+/// The memos of every ownership answer follow the nft index's publication,
+/// with no cache cleared in between: a warm profile, inventory list,
+/// backpack page and outfits entity stop serving when a rewind withdraws
+/// the publication (the reads fail closed), and once the refill publishes
+/// the hat's transfer to another address, none of the old answers comes
+/// back.
+#[tokio::test]
+async fn ownership_memos_follow_the_index_publication() {
+    let Some(OwnershipFixture {
+        db, walking, hat, ..
+    }) = ownership_fixture().await
+    else {
+        return;
+    };
+    let state = &walking;
+    let ok = StatusCode::OK;
+    for network in ["ethereum", "matic"] {
+        set_nft_cursor(&db.pool, network, Some(2)).await;
+    }
+    let profile = format!("/lambdas/profiles/{OWNER}");
+    let inventories = [
+        format!("/lambdas/users/{OWNER}/wearables"),
+        format!("/lambdas/collections/wearables-by-owner/{OWNER}"),
+        format!("/explorer/{OWNER}/wearables?collectionType=on-chain"),
+        format!("/lambdas/outfits/{OWNER}"),
+    ];
+    let holds_hat = |body: &Value| body.to_string().contains(&hat);
+
+    // Warm: every answer names the hat, and a second read is a memo hit.
+    for _ in 0..2 {
+        let (status, body) = get(state, &profile).await;
+        assert_eq!(status, ok, "{body}");
+        assert_eq!(
+            body["avatars"][0]["avatar"]["wearables"],
+            json!([
+                "urn:decentraland:off-chain:base-avatars:eyes_00",
+                format!("{hat}:10")
+            ])
+        );
+        for uri in &inventories {
+            let (status, body) = get(state, uri).await;
+            assert_eq!(status, ok, "{uri}: {body}");
+            assert!(holds_hat(&body), "{uri}: {body}");
+        }
+    }
+
+    // A rewind withdraws the Polygon publication: no warm answer is served.
+    set_nft_cursor(&db.pool, "matic", None).await;
+    let (status, body) = get(state, &profile).await;
+    assert_eq!(
+        (status, body["message"].as_str()),
+        (StatusCode::NOT_FOUND, Some("Profile not found")),
+        "the warm profile is not served once withdrawn: {body}"
+    );
+    for uri in &inventories {
+        let (status, body) = get(state, uri).await;
+        assert_eq!(
+            (status, body["source"].as_str()),
+            (StatusCode::SERVICE_UNAVAILABLE, Some("nft-index")),
+            "{uri}: the warm answer is not served once withdrawn: {body}"
+        );
+    }
+
+    // The refill folds the hat's transfer to another address and publishes
+    // again, right away: the old branch's answers stay out of every memo.
+    sqlx::query(
+        "UPDATE shop.nft SET owner = '0xbbbb000000000000000000000000000000000002' \
+         WHERE network = 'matic' AND contract_address = $1 AND token_id = 10",
+    )
+    .bind(COFFEE)
+    .execute(&db.pool)
+    .await
+    .unwrap();
+    set_nft_cursor(&db.pool, "matic", Some(0)).await;
+    let (status, body) = get(state, &profile).await;
+    assert_eq!(status, ok, "{body}");
+    assert_eq!(
+        body["avatars"][0]["avatar"]["wearables"],
+        json!(["urn:decentraland:off-chain:base-avatars:eyes_00"]),
+        "the hat left with its token"
+    );
+    for uri in &inventories {
+        let (status, body) = get(state, uri).await;
+        assert_eq!(status, ok, "{uri}: {body}");
+        assert!(
+            !holds_hat(&body),
+            "{uri}: an old-branch answer came back: {body}"
+        );
+    }
+    db.drop().await;
+}
+
+/// A fill is filed under the publications its own ownership read observed,
+/// not under the key looked up before it: the lookup sees Polygon withdrawn,
+/// Polygon publishes before the profile and outfits fills read ownership,
+/// and once Polygon is withdrawn again (the same key as the lookup) neither
+/// answer comes back from its memo.
+#[tokio::test]
+async fn a_fill_is_filed_under_the_publication_its_read_observed() {
+    let Some(OwnershipFixture {
+        db, walking, hat, ..
+    }) = ownership_fixture().await
+    else {
+        return;
+    };
+    let state = &walking;
+    set_nft_cursor(&db.pool, "ethereum", Some(2)).await;
+    set_nft_cursor(&db.pool, "matic", None).await;
+    let looked_up = super::owned_items::Publications::current(state)
+        .await
+        .unwrap();
+    assert_eq!(looked_up.matic, None);
+    set_nft_cursor(&db.pool, "matic", Some(2)).await;
+
+    let owner = OWNER.to_string();
+    let entities = super::profiles::active_entities(state, std::slice::from_ref(&owner))
+        .await
+        .unwrap();
+    let filled = super::profiles::process_and_cache_profiles(
+        state,
+        std::slice::from_ref(&owner),
+        &entities,
+        looked_up,
+    )
+    .await
+    .unwrap();
+    assert!(filled[0].1.to_string().contains(&hat), "{filled:?}");
+    let outfits = super::lambdas_catalog::fill_outfits(state, OWNER, looked_up)
+        .await
+        .unwrap_or_else(|_| panic!("the outfits fill reads"));
+    assert!(outfits.to_string().contains(&hat), "{outfits}");
+
+    set_nft_cursor(&db.pool, "matic", None).await;
+    assert_eq!(
+        super::owned_items::Publications::current(state)
+            .await
+            .unwrap(),
+        looked_up,
+        "the lookup key recurs"
+    );
+    let (status, body) = get(state, &format!("/lambdas/profiles/{OWNER}")).await;
+    assert_eq!(
+        (status, body["message"].as_str()),
+        (StatusCode::NOT_FOUND, Some("Profile not found")),
+        "{body}"
+    );
+    let (status, body) = get(state, &format!("/lambdas/outfits/{OWNER}")).await;
+    assert_eq!(
+        (status, body["source"].as_str()),
+        (StatusCode::SERVICE_UNAVAILABLE, Some("nft-index")),
+        "{body}"
+    );
+    db.drop().await;
+}
+
+/// A warm outfits answer lasts only while the networks it needed are fresh:
+/// Polygon published 3 s short of the freshness window answers, then, with
+/// no publication in between, the same memo is not served past the window.
+/// Profiles keep the complete rule and still answer.
+#[tokio::test]
+async fn a_warm_outfit_expires_with_the_freshness_of_its_networks() {
+    let Some(OwnershipFixture {
+        db, walking, hat, ..
+    }) = ownership_fixture().await
+    else {
+        return;
+    };
+    let state = &walking;
+    set_nft_cursor(&db.pool, "ethereum", Some(2)).await;
+    let window = super::chain_walk::READY_WINDOW.num_seconds();
+    sqlx::query(
+        "INSERT INTO shop.chain_cursor (indexer, network, start_block, last_block, folded_block, folded_at, full_history, chain_id) \
+         VALUES ('nft', 'matic', 1, 100, 100, timezone('UTC', now()) - make_interval(secs => $1), true, 137) \
+         ON CONFLICT (indexer, network) DO UPDATE SET folded_block = 100, folded_at = EXCLUDED.folded_at",
+    )
+    .bind((window - 3) as f64)
+    .execute(&db.pool)
+    .await
+    .unwrap();
+    let outfits = format!("/lambdas/outfits/{OWNER}");
+    for _ in 0..2 {
+        let (status, body) = get(state, &outfits).await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        assert!(body.to_string().contains(&hat), "{body}");
+    }
+    tokio::time::sleep(std::time::Duration::from_secs(4)).await;
+    let (status, body) = get(state, &outfits).await;
+    assert_eq!(
+        (status, body["source"].as_str()),
+        (StatusCode::SERVICE_UNAVAILABLE, Some("nft-index")),
+        "a warm answer past the freshness window: {body}"
+    );
+    let (status, body) = get(state, &format!("/lambdas/profiles/{OWNER}")).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert!(body.to_string().contains(&hat), "{body}");
     db.drop().await;
 }

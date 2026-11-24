@@ -13,6 +13,7 @@
 //! read becomes a note, as do the expected labels that left no section.
 
 mod exceptions;
+mod fleet;
 mod perf_summary;
 mod render;
 mod stats;
@@ -480,7 +481,7 @@ fn compare_builds(
         if let Some(incomparable) = incomparable.filter(|_| !base_says_so) {
             caveats.push(RunnerCaveat::ReleaseSessionsNotComparable(incomparable));
         }
-        let frame_time_verdicts = frame_time_verdicts(&change, &release, incomparable);
+        let frame_time_verdicts = frame_time_verdicts(&label, &change, &release, incomparable);
         ReleaseComparison {
             release,
             frame_time_verdicts,
@@ -505,7 +506,7 @@ fn compare_builds(
             caveats.push(RunnerCaveat::NewExceptionKinds(new_kinds));
         }
 
-        let frame_time_verdicts = frame_time_verdicts(&change, &base, incomparable);
+        let frame_time_verdicts = frame_time_verdicts(&label, &change, &base, incomparable);
         let exceptions_per_run_verdict = stats::incidents_per_run_verdict(
             change.exceptions_per_run,
             base.exceptions_per_run,
@@ -571,18 +572,25 @@ fn sessions_not_comparable(
 /// The change's frame-time verdicts against another build, in the order of
 /// [`stats::FRAME_TIME_METRICS`].
 fn frame_time_verdicts(
+    label: &str,
     change: &BuildBenchmarkRunsStatistics,
     other: &BuildBenchmarkRunsStatistics,
     incomparable: Option<SessionsNotComparable>,
 ) -> [FrameTimeVerdict; 6] {
-    let gpu_broken = stats::gpu_timing_broken(&change.frame_time_ms, &other.frame_time_ms);
+    let gpu_withheld = if stats::gpu_timing_broken(&change.frame_time_ms, &other.frame_time_ms) {
+        Some(stats::GPU_TIMING_BROKEN)
+    } else if fleet::gpu_timing_unreliable(label) {
+        Some(stats::GPU_TIMING_UNRELIABLE)
+    } else {
+        None
+    };
     std::array::from_fn(|m| {
         stats::frame_time_verdict(
             m,
             &change.frame_time_ms[m],
             &other.frame_time_ms[m],
             incomparable,
-            gpu_broken,
+            gpu_withheld,
         )
     })
 }
@@ -901,6 +909,51 @@ mod tests {
             comparison.peak_memory_verdict,
             PeakMemoryVerdict::MoreMemory(_)
         ));
+    }
+
+    #[test]
+    fn a_fleet_leg_in_chrome_on_macos_gets_no_gpu_verdict() {
+        let run = |cpu: f32, gpu: f32| BuildBenchmarkRun {
+            sample_count: 1000,
+            frame_time_ms: [cpu, cpu, cpu, gpu, gpu, gpu],
+            exception_count: 0,
+            exception_kinds: ExceptionKindCounts::default(),
+            perf_summary: None,
+        };
+        // the change's runs are all slower than the baseline's, on the CPU and on the GPU
+        let verdicts = |label: &str| {
+            let change = vec![run(30.0, 18.0), run(30.5, 18.2), run(31.0, 18.4)];
+            let base = vec![run(20.0, 9.0), run(20.5, 9.2), run(21.0, 9.4)];
+            compare_builds(
+                label.to_owned(),
+                change,
+                base,
+                Vec::new(),
+                3,
+                ReleaseExpectation::NotGiven,
+            )
+            .baseline_comparison
+            .unwrap()
+            .frame_time_verdicts
+        };
+        let unreliable = FrameTimeVerdict::Withheld(stats::GPU_TIMING_UNRELIABLE);
+        let on_macos = verdicts("apple-m1-chrome");
+        assert!(matches!(on_macos[0], FrameTimeVerdict::Slower(_)));
+        assert!(matches!(on_macos[1], FrameTimeVerdict::Slower(_)));
+        assert_eq!(on_macos[3], unreliable);
+        assert_eq!(on_macos[4], unreliable);
+        assert_eq!(on_macos[5], FrameTimeVerdict::Informational);
+        for label in ["intel-i5-chrome", "local-chrome", "apple-m1"] {
+            let elsewhere = verdicts(label);
+            assert!(
+                matches!(elsewhere[3], FrameTimeVerdict::Slower(_)),
+                "{label}"
+            );
+            assert!(
+                matches!(elsewhere[4], FrameTimeVerdict::Slower(_)),
+                "{label}"
+            );
+        }
     }
 
     #[test]

@@ -60,7 +60,6 @@ the player report routes under the gatekeeper's own mount (the intake is the
 | `gatekeeper::events::RoomEventSink` | `worlds::core::CoreState` | worlds' join/leave access log |
 | `gatekeeper::events::RoomEventStore` | `social::badges::presence::EventSink` | every verified join/leave, stored before the webhook answers (503 on failure) |
 | `interfaces::PulseGeneration` | root `pulse_generation`, using `jobs::Leases` | immutable committed audience/epoch/source UUID and local lease-loss cancellation; no assignment persistence |
-| `stats::http::MetricsMatcher` | root `metrics_matcher` | fallible configured route evaluation on the pinned embedded engine; one async permit retained inside each submitted blocking operation |
 
 | Comms offers | Consumers |
 |---|---|
@@ -294,6 +293,19 @@ private address), `MESSAGE_ROUTER_KEY` or `MESSAGE_ROUTER_KEY_FILE`, and optiona
 Build it with `cargo build -p catalyst-message-router --features livekit`; without the
 feature the crate's library and tests build without libwebrtc.
 
+The APIs image carries it at `/bin/catalyst-message-router` (`nix build .#message-router`,
+`infra/packages/message-router.nix`). `serve` never starts it. A deployment runs one container
+of the APIs digest with that entrypoint and no command, one replica (the Explorer addresses
+replica 0 only), restarted on every exit, after `schema` has run:
+
+- router: `DATABASE_URL`, `MESSAGE_ROUTER_TOKEN_URL` (serve's private address; a host name
+  other than `localhost` needs https), `MESSAGE_ROUTER_KEY` or `MESSAGE_ROUTER_KEY_FILE`,
+  `MESSAGE_ROUTER_REPLICA=0`, `MESSAGE_ROUTER_LIVEKIT_URL` for the SFU's private address, and
+  `MESSAGE_ROUTER_METRICS_BIND=0.0.0.0:5007` when a probe outside the container reads
+  `/health/ready`;
+- `serve`: the same `MESSAGE_ROUTER_KEY`, and `MESSAGE_ROUTER_IDENTITY_PREFIX`
+  `message-router-prd` on decentraland.org or `message-router-dev` elsewhere.
+
 ## Statistics ownership and runtime
 
 Pulse owns a separate legacy statistics population. Authenticated decoded positions enter a
@@ -329,13 +341,7 @@ encoding is outside it. Overflow or failed publication discards the pending pref
 and checkpoint in favor of a new complete recovery. Sequential encoding awaits do
 not prevent an already-started blocking encode from outliving publisher cancellation.
 
-Stats and connector hosts have separate real request registries, bearer-protected scrapes,
-optional operating-system collectors, and reset after the first successful scrape strictly
-past the previous reset's local midnight plus 24 hours. Histogram maintenance runs
-at each recording boundary, independent of successful scrapes. Readiness reports
-the original `server` check from the actual listener lifecycle;
-NATS and content add no probes. Rust exposes actual available process measurements rather than
-invented Node/V8 series. Node-specific default runtime metrics remain a compatibility gap.
+Stats and connector requests use the shared HTTP metrics on the serve process's private `/metrics` endpoint. Readiness reports the `server` check from the listener lifecycle. Serve samples connector diagnostics every 15 seconds. Pulse registers simulation and cluster metrics in its own process. See the [scrape addresses and recording conventions](../../../../docs/adr/2026-11-24-shared-service-metrics.md).
 
 ## Bus messages
 
@@ -688,4 +694,4 @@ as `authoritative-server`):
 
 Read the architecture decisions, divergence findings and readiness evidence supplied for the task before planning or claiming deployment. Record missing implementation, measured capacity, live-client verification and required private security review there. Public ownership guidance does not itself establish readiness.
 
-Default process metrics use actual OS data: fractional user/system/total CPU, process start time and resident bytes on Windows and Linux; Linux additionally exposes virtual/data-segment bytes and open/max file descriptors. The Linux CPU source has kernel clock-tick resolution. Unavailable measurements are omitted; Node/V8 runtime measurements are not synthesized. `WKC_METRICS_COLLECT_DEFAULT=false` disables these collectors.
+Default process metrics use actual OS data: fractional user/system/total CPU, process start time and resident bytes on Windows and Linux; Linux additionally exposes virtual/data-segment bytes and open/max file descriptors. The Linux CPU source has kernel clock-tick resolution. Unavailable measurements are omitted; Node/V8 runtime measurements are not synthesized. The private process scrape samples the OS once per request.

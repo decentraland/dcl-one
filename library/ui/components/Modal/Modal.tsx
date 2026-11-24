@@ -37,6 +37,11 @@ export type ModalProps = Omit<
    * and a press on the backdrop then do nothing. Defaults to `true`.
    */
   dismissible?: boolean
+  /**
+   * `false` keeps the dialog open on a press on the backdrop, so a stray click does not discard a
+   * form; Escape and the close button still close it. Defaults to `true`.
+   */
+  closeOnBackdrop?: boolean
   /** Shows the close button in the corner. Defaults to `true`; without it an action must close the dialog. */
   closeButton?: boolean
   closeLabel?: string
@@ -82,6 +87,7 @@ export function Modal({
   divider = false,
   onClose,
   dismissible = true,
+  closeOnBackdrop = true,
   closeButton = true,
   closeLabel = 'Close',
   returnFocusRef,
@@ -175,7 +181,7 @@ export function Modal({
         // Only a press and a release both on the backdrop: a drag out of the dialog keeps it open.
         const fromOutside = pressedOutside.current
         pressedOutside.current = false
-        if (event.target !== event.currentTarget || !fromOutside) return
+        if (!closeOnBackdrop || event.target !== event.currentTarget || !fromOutside) return
         if (isOutside(event.currentTarget, event.clientX, event.clientY)) dismiss()
       }}
     >

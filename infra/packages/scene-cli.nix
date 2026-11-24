@@ -66,6 +66,7 @@ let
       app
       (root + /library/dcl-auth)
       (root + /library/dcl-http)
+      (root + /library/dcl-metrics)
       (root + /library/dcl-livekit-token)
       (root + /library/dcl-preview-tunnel)
       (root + /library/dcl-preview-tunnel-protocol)

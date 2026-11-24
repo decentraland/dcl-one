@@ -559,7 +559,7 @@ pub fn uint_or_null(expr: &str) -> String {
 
 /// `unified_trades`: the open off-chain listings of `shop.trades` as
 /// one row per trade with its sent asset resolved to `(contract, item_id,
-/// token_id)` and its received amount. Open = effective, not expired at
+/// token_id)` and its received amount, asset type and token contract. Open = effective, not expired at
 /// `now_p` (a bound timestamp, never `now()`), not in `trade_cancellations`,
 /// and not closed on chain (`trade_events`: sold or cancelled there) while
 /// that network's trade-events index is published; and counted at
@@ -584,6 +584,7 @@ pub fn unified_trades_cte_of(now_p: &str, since_p: &str, contracts_p: Option<&st
                   COALESCE({item_num}, div({token_num}, {shift}::numeric)) AS item_id, \
                   sent_erc721.token_id AS token_id, \
                   recv.asset_type::int4 AS received_asset_type, \
+                  recv.contract_address AS received_contract, \
                   recv_erc20.amount AS amount_received, \
                   recv.beneficiary AS beneficiary \
            FROM shop.trades t \

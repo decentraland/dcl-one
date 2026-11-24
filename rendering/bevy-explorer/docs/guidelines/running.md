@@ -269,11 +269,15 @@ State, in every build:
   stands in turns nearby voice off) and, in LiveKit builds, each voice room's state
   and the addresses speaking.
 - `/nametag_state`: the nametags, as JSON: `visible` (the `/nametags [bool]` toggle), `shown`,
-  `sceneAvatars` (of those shown, the tags over a scene's avatars) and `hidden` (the tags that
+  `sceneAvatars` (of those shown, the tags over a scene's avatars), `plates` (of those shown, the
+  tags with a scene's `AvatarNametag` plate) and `hidden` (the tags that
   don't show), `atlas` (the glyph atlas' distance-field and colour page sizes, in
   pixels), `bubbles` (the chat bubble setting) and `tags`, one per shown tag: `player` (an
   address, `local`, or null for an avatar with no wallet), `sceneAvatar` (the tag is over an
-  avatar a scene made with `AvatarShape`), `name`, `suffix`, `verified`,
+  avatar a scene made with `AvatarShape`), `nameShown` (false for a tag that is its plate alone:
+  the avatar has no name, or a scene's area hides it), `plate` (null, or the plate's `label` and
+  its `labelColor`, `backgroundColor` and `borderColor` as `#RRGGBB`), `name` and `suffix` (empty
+  for an avatar with no name), `verified`,
   `official`, `voice` (`off`, `idle`, `speaking`, `hushed`), `distance` from the camera in metres,
   `opacity`, `scale` (metres per tag unit), `position` (all four as the shader works them out), `headOffset` (metres over the head bone for
   an avatar at a scale of one; null until the avatar is built) and `bubble` (null, or its `kind`,

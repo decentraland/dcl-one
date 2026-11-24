@@ -109,7 +109,8 @@ async fn reseeding_a_world_moves_its_name_to_the_new_owner() {
         Some(crate::chain_index::graph::test_support::index_reading(
             NAMES.clone(),
         )),
-    );
+    )
+    .with_subgraph_names();
     assert!(matches!(
         policy.is_owner(&world, &current).await,
         crate::shared::identity::PermissionDecision::Allowed
@@ -240,13 +241,16 @@ async fn grant(
 }
 
 fn state_with(pool: &PgPool, settings: Settings) -> SharedState {
-    let policy = Arc::new(Policy::new(
-        pool.clone(),
-        PersonalWorldsPolicy::disabled(),
-        Some(crate::chain_index::graph::test_support::index_reading(
-            NAMES.clone(),
-        )),
-    ));
+    let policy = Arc::new(
+        Policy::new(
+            pool.clone(),
+            PersonalWorldsPolicy::disabled(),
+            Some(crate::chain_index::graph::test_support::index_reading(
+                NAMES.clone(),
+            )),
+        )
+        .with_subgraph_names(),
+    );
     Arc::new(StorageState::new(pool.clone(), policy, settings, None))
 }
 
@@ -2569,7 +2573,7 @@ async fn seed_genesis_scene(pool: &PgPool) -> (String, String, String, i32) {
          VALUES ('0x0', 'v3', 'scene', $1, $2::json, timezone('UTC', now()), $3, timezone('UTC', now()), '[]'::json) RETURNING id",
     )
     .bind(&id)
-    .bind(json!({ "scene": { "base": p2 } }))
+    .bind(json!({ "v": { "scene": { "base": p2 } } }))
     .bind(vec![p1.clone(), p2.clone()])
     .fetch_one(pool)
     .await
@@ -2586,7 +2590,7 @@ async fn seed_genesis_scene(pool: &PgPool) -> (String, String, String, i32) {
 }
 
 async fn remove_genesis_scene(pool: &PgPool, id: &str, dep_id: i32) {
-    sqlx::query("DELETE FROM social.scene_admins WHERE place_id = (SELECT entity_metadata #>> '{scene,base}' FROM content.deployments WHERE id = $1)")
+    sqlx::query("DELETE FROM social.scene_admins WHERE place_id = (SELECT entity_metadata #>> '{v,scene,base}' FROM content.deployments WHERE id = $1)")
         .bind(dep_id)
         .execute(pool)
         .await
@@ -2988,11 +2992,14 @@ async fn genesis_land_ownership_counts_only_at_the_request_parcel() {
         },
     );
     market.allow_loopback_for_tests();
-    let policy = Arc::new(Policy::new(
-        pool.clone(),
-        PersonalWorldsPolicy::disabled(),
-        Some(Arc::new(market)),
-    ));
+    let policy = Arc::new(
+        Policy::new(
+            pool.clone(),
+            PersonalWorldsPolicy::disabled(),
+            Some(Arc::new(market)),
+        )
+        .with_subgraph_names(),
+    );
     let app = router(Arc::new(StorageState::new(
         pool.clone(),
         policy,
@@ -3729,7 +3736,7 @@ async fn seed_genesis(
          VALUES ('0x0', 'v3', 'scene', $1, $2::json, timezone('UTC', now()), $3, timezone('UTC', now()), '[]'::json) RETURNING id",
     )
     .bind(id)
-    .bind(json!({ "scene": { "base": pointers[0] }, "display": { "title": "Genesis" }, "logsPermissions": logs }))
+    .bind(json!({ "v": { "scene": { "base": pointers[0] }, "display": { "title": "Genesis" }, "logsPermissions": logs } }))
     .bind(pointers)
     .fetch_one(pool)
     .await

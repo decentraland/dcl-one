@@ -357,37 +357,50 @@ pub(crate) async fn try_get_lease_holders_for_parcels(
     Ok(holders)
 }
 
-/// ENS display names for a bounded set of wallets through the marketplace
-/// names reader (the old crate read the squid `ens` table). Unconfigured or
-/// failing reads answer `""`, as before.
+/// DCL NAME display names for a bounded set of wallets through the node's
+/// NAME source (the old crate read the squid `ens` table). No source or a
+/// failing read answers `""`, as before; a failure is never memoized. An
+/// answer of the nft index is read each time: the memo keeps no
+/// publication, so it could serve a name the index has since moved.
 pub async fn names_for(
     state: &CommsState,
     addresses: &[String],
 ) -> std::collections::HashMap<String, String> {
+    use crate::chain_index::names::Purpose;
     let mut out = std::collections::HashMap::new();
-    let Some(market) = state.marketplace.as_ref() else {
+    let Some(names) = state.name_authority.as_ref() else {
         for addr in addresses {
             out.insert(addr.to_lowercase(), String::new());
         }
         return out;
     };
+    // Best-effort display enrichment: a source that cannot answer shows no
+    // name (never an authorization).
+    let read = |addr: String| async move {
+        match names.owned_names(&addr, Purpose::Display).await {
+            Ok(answer) => Ok(answer
+                .value
+                .first()
+                .map(|n| n.name.clone())
+                .unwrap_or_default()),
+            Err(e) => {
+                tracing::warn!(error = %e, "names resolve failed; falling back to an empty name");
+                Err(())
+            }
+        }
+    };
     for addr in addresses {
         let addr = addr.to_lowercase();
-        let name = state
-            .caches
-            .names
-            .get_or_fetch(addr.clone(), || async {
-                match crate::chain_index::graph::owned_names(market, &addr).await {
-                    Ok(names) => Ok::<String, ()>(names.first().map(|n| n.name.clone()).unwrap_or_default()),
-                    Err(e) => {
-                        tracing::warn!(error = %e, "names resolve failed; falling back to an empty name");
-                        Ok(String::new())
-                    }
-                }
-            })
-            .await
-            .unwrap_or_default();
-        out.insert(addr, name);
+        let name = if names.observes() {
+            read(addr.clone()).await
+        } else {
+            state
+                .caches
+                .names
+                .get_or_fetch(addr.clone(), || read(addr.clone()))
+                .await
+        };
+        out.insert(addr, name.unwrap_or_default());
     }
     out
 }

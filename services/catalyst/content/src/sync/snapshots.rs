@@ -1,6 +1,6 @@
 //! A peer's `/snapshots` list and the snapshot files it names: validated
 //! metadata, the processed/replaced decision, the hash-verified download
-//! into the snapshot tree, and the line-by-line hand-off of every entity to
+//! into a temporary file, and the line-by-line hand-off of every entity to
 //! the batch deployer.
 
 use std::collections::HashSet;
@@ -13,7 +13,8 @@ use futures::StreamExt;
 use reqwest::Client;
 use sha2::Digest;
 use tokio::io::AsyncWriteExt;
-use tracing::{debug, info, warn};
+use tokio_util::sync::CancellationToken;
+use tracing::{info, warn};
 
 use super::pointer_changes::is_usable_timestamp;
 use super::{SnapshotMetadata, SyncDeployment, SyncError, TimeRange, Timestamp};
@@ -30,9 +31,10 @@ const MAX_SNAPSHOT_LIST_BYTES: usize = 16 * 1024 * 1024;
 
 const MAX_DECOMPRESSED_SNAPSHOT_BYTES: u64 = 4 * 1024 * 1024 * 1024;
 
-/// Longest snapshot line read before it is dropped as unreadable and the reader skips to the
-/// next newline; a real line is an entity's id, pointers and auth chain, kilobytes.
-const MAX_SNAPSHOT_LINE_BYTES: usize = 16 * 1024 * 1024;
+/// The maximum number of bytes in a snapshot line, excluding its newline.
+const MAX_SNAPSHOT_LINE_BYTES: usize = 10 * 1024 * 1024;
+
+const MAX_SNAPSHOT_LINE_ERROR_LOGS: u64 = 100;
 
 /// Records parsed ahead of the deployer per batch: what one scheduling round holds in memory
 /// (an entity's pointers and auth chain each) instead of a snapshot's every line.
@@ -79,53 +81,32 @@ fn open_snapshot_reader<R: Read + 'static>(mut raw: R) -> std::io::Result<Box<dy
     })
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum LineRead {
-    Line,
-    Overlong,
-    Eof,
-}
-
-/// The next line of `reader` into `buf` (newline included; the last line may lack one), or
-/// `Overlong` once it passes `max_line`, in which case the rest of it is consumed and `buf`
-/// comes back empty: the whole-file `lines()` this replaces had no bound on one line's size.
+/// Read the next line, including its newline. Return false at EOF, or fail as
+/// soon as a line exceeds the cap.
 fn read_line_capped<R: BufRead>(
     reader: &mut R,
     buf: &mut Vec<u8>,
     max_line: usize,
-) -> std::io::Result<LineRead> {
+) -> std::io::Result<bool> {
     buf.clear();
-    let mut overlong = false;
     loop {
         let available = reader.fill_buf()?;
         if available.is_empty() {
-            return Ok(if overlong {
-                LineRead::Overlong
-            } else if buf.is_empty() {
-                LineRead::Eof
-            } else {
-                LineRead::Line
-            });
+            return Ok(!buf.is_empty());
         }
-        let (used, done) = match available.iter().position(|&b| b == b'\n') {
-            Some(i) => (i + 1, true),
-            None => (available.len(), false),
-        };
-        if !overlong {
-            if buf.len() + used > max_line {
-                overlong = true;
-                buf.clear();
-            } else {
-                buf.extend_from_slice(&available[..used]);
-            }
+        let newline = available.iter().position(|&b| b == b'\n');
+        let line_bytes = newline.unwrap_or(available.len());
+        if buf.len() + line_bytes > max_line {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                format!("snapshot line exceeds {max_line} bytes"),
+            ));
         }
+        let used = line_bytes + usize::from(newline.is_some());
+        buf.extend_from_slice(&available[..used]);
         reader.consume(used);
-        if done {
-            return Ok(if overlong {
-                LineRead::Overlong
-            } else {
-                LineRead::Line
-            });
+        if newline.is_some() {
+            return Ok(true);
         }
     }
 }
@@ -298,6 +279,7 @@ pub async fn fetch_snapshots(
         {
             Ok(resp) => {
                 if resp.status().is_success() {
+                    // The 15 s request timeout covers this body read.
                     let body = read_body_capped(resp, MAX_SNAPSHOT_LIST_BYTES)
                         .await
                         .map_err(|e| {
@@ -337,46 +319,6 @@ pub async fn fetch_snapshots(
             server, max_retries
         ))
     }))
-}
-
-pub async fn download_snapshot_files(
-    client: &crate::http::CheckedRedirectClient,
-    storage: Arc<Storage>,
-    snapshots: &[(String, HashSet<String>)],
-    max_retries: u32,
-    retry_wait_ms: u64,
-) {
-    let mut tasks: tokio::task::JoinSet<()> = tokio::task::JoinSet::new();
-
-    for (hash, servers) in snapshots {
-        let client = client.clone();
-        let storage = storage.clone();
-        let hash = hash.clone();
-        let servers = servers.clone();
-
-        tasks.spawn(async move {
-            if let Err(e) = download_snapshot_file(
-                &client,
-                storage.as_ref(),
-                &hash,
-                &servers,
-                max_retries,
-                retry_wait_ms,
-            )
-            .await
-            {
-                warn!(snapshot_hash = %hash, error = %e, "Failed to pre-download snapshot");
-            } else {
-                info!(snapshot_hash = %hash, "Snapshot pre-downloaded");
-            }
-        });
-    }
-
-    while let Some(result) = tasks.join_next().await {
-        if let Err(e) = result {
-            warn!(error = %e, "Snapshot download task panicked");
-        }
-    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -482,7 +424,7 @@ fn usable_snapshot_line(deployment: &SyncDeployment, now_ms: Timestamp) -> bool 
 
 pub struct SnapshotSource<'a> {
     pub snapshot_hash: &'a str,
-    pub servers: &'a HashSet<String>,
+    pub advertisers: &'a [(&'a str, &'a CancellationToken)],
     pub max_retries: u32,
     pub retry_wait_ms: u64,
 }
@@ -531,17 +473,29 @@ struct SnapshotLineFilter {
 impl SnapshotLineFilter {
     fn skip(&mut self, message: &str, error: Option<String>) {
         self.stats.parse_errors += 1;
-        if self.stats.parse_errors <= 5 {
+        if self.stats.parse_errors <= MAX_SNAPSHOT_LINE_ERROR_LOGS {
             warn!(
                 snapshot_hash = %self.snapshot_hash,
                 error = error.as_deref().unwrap_or(""),
                 "{message}"
             );
+            if self.stats.parse_errors == MAX_SNAPSHOT_LINE_ERROR_LOGS {
+                warn!(snapshot_hash = %self.snapshot_hash, "Suppressing further invalid snapshot lines");
+            }
         }
     }
 
     fn parse(&mut self, line: &[u8]) -> Option<SyncDeployment> {
-        let text = String::from_utf8_lossy(line);
+        let text = match std::str::from_utf8(line) {
+            Ok(text) => text,
+            Err(e) => {
+                self.skip(
+                    "Skipping snapshot line with invalid UTF-8",
+                    Some(e.to_string()),
+                );
+                return None;
+            }
+        };
         let trimmed = text.trim();
         if !(trimmed.starts_with('{') && trimmed.ends_with('}')) {
             if !(trimmed.is_empty() || trimmed.starts_with("###")) {
@@ -557,6 +511,13 @@ impl SnapshotLineFilter {
                 return None;
             }
         };
+        if let Err(reason) = deployment
+            .validate_shape()
+            .and_then(|()| deployment.validate_auth_chain())
+        {
+            self.skip("Skipping invalid snapshot entry", Some(reason.into()));
+            return None;
+        }
         if !usable_snapshot_line(&deployment, self.now_ms) {
             self.skip("Skipping snapshot line with implausible timestamp", None);
             return None;
@@ -594,23 +555,21 @@ fn read_snapshot_records(
     let mut line = Vec::with_capacity(16 * 1024);
     let mut batch = Vec::with_capacity(SNAPSHOT_BATCH_RECORDS);
     loop {
-        match read_line_capped(&mut reader, &mut line, MAX_SNAPSHOT_LINE_BYTES)
+        if tx.is_closed() {
+            return Ok(filter.stats);
+        }
+        if !read_line_capped(&mut reader, &mut line, MAX_SNAPSHOT_LINE_BYTES)
             .map_err(|e| format!("reading {}: {e}", path.display()))?
         {
-            LineRead::Eof => break,
-            LineRead::Overlong => filter.skip("Skipping overlong snapshot line", None),
-            LineRead::Line => {
-                if let Some(record) = filter.parse(&line) {
-                    batch.push(record);
-                    if batch.len() >= SNAPSHOT_BATCH_RECORDS {
-                        let full = std::mem::replace(
-                            &mut batch,
-                            Vec::with_capacity(SNAPSHOT_BATCH_RECORDS),
-                        );
-                        if tx.blocking_send(full).is_err() {
-                            return Ok(filter.stats);
-                        }
-                    }
+            break;
+        }
+        if let Some(record) = filter.parse(&line) {
+            batch.push(record);
+            if batch.len() >= SNAPSHOT_BATCH_RECORDS {
+                let full =
+                    std::mem::replace(&mut batch, Vec::with_capacity(SNAPSHOT_BATCH_RECORDS));
+                if tx.blocking_send(full).is_err() {
+                    return Ok(filter.stats);
                 }
             }
         }
@@ -725,11 +684,10 @@ pub async fn deploy_entities_from_snapshot(
     filter: SnapshotFilter<'_>,
     scheduling: SnapshotScheduling,
     report: &Arc<DeploymentReport>,
-    should_stop: impl Fn() -> bool,
 ) -> Result<(), SyncError> {
     let SnapshotSource {
         snapshot_hash,
-        servers,
+        advertisers,
         max_retries,
         retry_wait_ms,
     } = source;
@@ -737,25 +695,35 @@ pub async fn deploy_entities_from_snapshot(
         genesis_timestamp,
         entity_type_filter,
     } = filter;
-    let server_list: Vec<String> = servers.iter().cloned().collect();
+    let server_list: Vec<String> = advertisers
+        .iter()
+        .map(|(url, _)| (*url).to_string())
+        .collect();
+    let should_stop = || advertisers.iter().all(|(_, cancel)| cancel.is_cancelled());
+    let cancelled = async {
+        for (_, cancel) in advertisers {
+            cancel.cancelled().await;
+        }
+    };
 
-    download_snapshot_file(
-        client,
-        storage,
-        snapshot_hash,
-        servers,
-        max_retries,
-        retry_wait_ms,
-    )
-    .await?;
-
-    let path =
-        storage
-            .file_path(snapshot_hash)
-            .await?
-            .ok_or_else(|| SyncError::EntityNotFound {
-                entity_id: snapshot_hash.to_string(),
-            })?;
+    tokio::pin!(cancelled);
+    let file = tokio::select! {
+        biased;
+        _ = &mut cancelled => return Err(SyncError::Stopped),
+        result = download_snapshot_file(
+            client,
+            storage,
+            snapshot_hash,
+            advertisers,
+            max_retries,
+            retry_wait_ms,
+        ) => result?,
+    };
+    if storage.withholds(snapshot_hash) {
+        return Err(SyncError::EntityNotFound {
+            entity_id: snapshot_hash.to_string(),
+        });
+    }
 
     let nonscene_concurrency = scheduling.nonscene_concurrency.max(1);
     let scene_concurrency = scheduling.scene_concurrency.max(1);
@@ -768,10 +736,25 @@ pub async fn deploy_entities_from_snapshot(
         stats: ParseStats::default(),
     };
     let (tx, mut rx) = tokio::sync::mpsc::channel::<Vec<SyncDeployment>>(1);
-    let reader = tokio::task::spawn_blocking(move || read_snapshot_records(path, line_filter, tx));
+    let reader = tokio::task::spawn_blocking(move || {
+        let result = read_snapshot_records(file.path().to_path_buf(), line_filter, tx);
+        drop(file);
+        result
+    });
 
     let mut outcome = ScheduleOutcome::default();
-    while let Some(batch) = rx.recv().await {
+    loop {
+        let next_batch = tokio::select! {
+            biased;
+            _ = &mut cancelled => {
+                outcome.stopped = true;
+                break;
+            }
+            batch = rx.recv() => batch,
+        };
+        let Some(batch) = next_batch else {
+            break;
+        };
         if should_stop() {
             outcome.stopped = true;
             break;
@@ -781,8 +764,13 @@ pub async fn deploy_entities_from_snapshot(
             .partition(|deployment| deployment.entity_type == "scene");
         for (records, concurrency) in [(others, nonscene_concurrency), (scenes, scene_concurrency)]
         {
-            outcome.absorb(
-                schedule_records(
+            let scheduled = tokio::select! {
+                biased;
+                _ = &mut cancelled => {
+                    outcome.stopped = true;
+                    break;
+                }
+                result = schedule_records(
                     deployer,
                     records,
                     concurrency,
@@ -790,9 +778,9 @@ pub async fn deploy_entities_from_snapshot(
                     report,
                     snapshot_hash,
                     &should_stop,
-                )
-                .await,
-            );
+                ) => result,
+            };
+            outcome.absorb(scheduled);
             if outcome.stopped {
                 break;
             }
@@ -871,32 +859,13 @@ impl DecodedSink for SnapshotSpool {
     }
 }
 
-/// A snapshot body streamed into the store's own staging file for its hash (the path
-/// `Storage::store` writes through, `<id>.<pid>.<seq>.tmp` beside the final one, which the
-/// startup sweep reclaims after a crash), transfer decoding undone and the CID computed on the
-/// way, so a file of hundreds of megabytes never sits in memory. Dropped uncommitted, the
-/// staging file goes with it ([`StagingGuard`]).
+/// A snapshot body streamed into a staging file and hashed as it is decoded.
+/// The reader owns the guard, which unlinks the file when reading ends. The
+/// store's startup sweep reclaims abandoned staging files after a crash.
 struct SpooledSnapshot {
     guard: StagingGuard,
-    final_path: PathBuf,
     stats: BodyStats,
     digest: String,
-}
-
-impl SpooledSnapshot {
-    /// The store's commit step: rename into place, then the directory entry to disk.
-    async fn commit(mut self) -> Result<(), SyncError> {
-        tokio::fs::rename(self.guard.path(), &self.final_path)
-            .await
-            .map_err(|e| SyncError::Storage(format!("committing snapshot: {e}")))?;
-        self.guard.disarm();
-        if let Some(parent) = self.final_path.parent()
-            && let Ok(dir) = tokio::fs::File::open(parent).await
-        {
-            let _ = dir.sync_all().await;
-        }
-        Ok(())
-    }
 }
 
 async fn spool_snapshot(
@@ -913,19 +882,22 @@ async fn spool_snapshot(
             .map_err(|e| format!("creating {}: {e}", dir.display()))?;
     }
     let seq = SPOOL_SEQ.fetch_add(1, Ordering::Relaxed);
-    let (file, guard) = create_staging_file(staging_path(&final_path, "snapshot", seq))
-        .await
-        .map_err(|e| e.to_string())?;
+    let (file, guard) = create_staging_file(staging_path(
+        &final_path.with_file_name("peer-snapshot"),
+        "peer-snapshot",
+        seq,
+    ))
+    .await
+    .map_err(|e| e.to_string())?;
     let mut sink = SnapshotSpool { file, hasher };
     let stats = stream_body(resp, MAX_BODY_BYTES, &mut sink).await?;
-    let SnapshotSpool { file, hasher } = sink;
-    file.sync_all()
+    let SnapshotSpool { mut file, hasher } = sink;
+    file.flush()
         .await
-        .map_err(|e| format!("syncing snapshot to disk: {e}"))?;
+        .map_err(|e| format!("flushing snapshot to disk: {e}"))?;
     drop(file);
     Ok(SpooledSnapshot {
         guard,
-        final_path,
         stats,
         digest: hasher.finish(),
     })
@@ -935,107 +907,56 @@ async fn download_snapshot_file(
     client: &crate::http::CheckedRedirectClient,
     storage: &Storage,
     snapshot_hash: &str,
-    servers: &HashSet<String>,
+    advertisers: &[(&str, &CancellationToken)],
     max_retries: u32,
     retry_wait_ms: u64,
-) -> Result<(), SyncError> {
-    if storage.exist(snapshot_hash).await? {
-        debug!(snapshot_hash, "Snapshot already in storage");
-        return Ok(());
+) -> Result<StagingGuard, SyncError> {
+    if storage.withholds(snapshot_hash) {
+        return Err(SyncError::EntityNotFound {
+            entity_id: snapshot_hash.to_string(),
+        });
     }
 
-    let server_list: Vec<&String> = servers.iter().collect();
-    if server_list.is_empty() {
+    if advertisers.is_empty() {
         return Err(SyncError::NoServers);
     }
 
+    let mut next = 0;
+    let mut retry = 0;
     let mut last_error = None;
-    for retry in 0..max_retries {
-        let server = server_list[retry as usize % server_list.len()];
-        let url = format!("{}/contents/{}", server, snapshot_hash);
-
-        match crate::http::get_following_checked_redirects(
-            client,
-            &url,
-            crate::deploy_remote_entity::MAX_FILE_REDIRECTS,
-        )
-        .await
-        {
-            Ok(resp) => {
-                if resp.status().is_success() {
-                    let expected_len = resp.content_length();
-                    match spool_snapshot(storage, snapshot_hash, resp).await {
-                        Ok(spooled) => {
-                            if let Some(len) = expected_len
-                                && spooled.stats.wire_len < len
-                            {
-                                warn!(
-                                    snapshot_hash,
-                                    %server,
-                                    retry,
-                                    got = spooled.stats.wire_len,
-                                    expected = len,
-                                    "Snapshot download TRUNCATED (short read), trying next server"
-                                );
-                                last_error = Some(SyncError::Other(format!(
-                                    "snapshot {} from {} truncated: got {} of {} bytes",
-                                    snapshot_hash, server, spooled.stats.wire_len, len
-                                )));
-                            } else if spooled.digest != snapshot_hash {
-                                warn!(
-                                    snapshot_hash,
-                                    %server,
-                                    retry,
-                                    bytes = spooled.stats.decoded_len,
-                                    "Snapshot content failed hash verification, trying next server"
-                                );
-                                last_error = Some(SyncError::Other(format!(
-                                    "snapshot hash mismatch for {} from {}",
-                                    snapshot_hash, server
-                                )));
-                            } else {
-                                let bytes = spooled.stats.decoded_len;
-                                spooled.commit().await?;
-                                info!(snapshot_hash, bytes, "Snapshot downloaded");
-                                return Ok(());
-                            }
-                        }
-                        Err(reason) => {
-                            warn!(
-                                snapshot_hash,
-                                %server,
-                                retry,
-                                %reason,
-                                "Snapshot body could not be spooled to disk, trying next server"
-                            );
-                            last_error = Some(SyncError::Other(format!(
-                                "snapshot {} from {}: {}",
-                                snapshot_hash, server, reason
-                            )));
-                        }
-                    }
-                } else {
-                    let status = resp.status();
-                    warn!(snapshot_hash, %server, %status, retry, "Snapshot download failed");
-                    last_error = Some(SyncError::Other(format!(
-                        "HTTP {} downloading snapshot {} from {}",
-                        status, snapshot_hash, server
-                    )));
-                }
-            }
-            Err(e) => {
-                warn!(snapshot_hash, %server, error = %e, retry, "Snapshot download request failed");
-                last_error = Some(SyncError::from(e));
+    while retry < max_retries {
+        let Some(index) = (0..advertisers.len())
+            .map(|offset| (next + offset) % advertisers.len())
+            .find(|&index| !advertisers[index].1.is_cancelled())
+        else {
+            return Err(SyncError::Stopped);
+        };
+        let (server, cancel) = advertisers[index];
+        next = (index + 1) % advertisers.len();
+        let result = tokio::select! {
+            biased;
+            _ = cancel.cancelled() => continue,
+            result = download_snapshot_attempt(client, storage, snapshot_hash, server) => result,
+        };
+        match result {
+            Ok(file) => return Ok(file),
+            Err(error) => {
+                warn!(snapshot_hash, server, retry, %error, "Snapshot download failed");
+                last_error = Some(error);
             }
         }
 
+        // Retirement is not a failed attempt and bypasses any delay before the next peer.
         if retry + 1 < max_retries {
-            // Doubles to four times the wait, as the list fetch above.
-            tokio::time::sleep(std::time::Duration::from_millis(
+            let delay = std::time::Duration::from_millis(
                 retry_wait_ms.saturating_mul(1u64 << retry.min(2)),
-            ))
-            .await;
+            );
+            tokio::select! {
+                _ = cancel.cancelled() => {},
+                _ = tokio::time::sleep(delay) => {},
+            }
         }
+        retry += 1;
     }
 
     Err(last_error.unwrap_or_else(|| {
@@ -1044,6 +965,51 @@ async fn download_snapshot_file(
             snapshot_hash, max_retries
         ))
     }))
+}
+
+async fn download_snapshot_attempt(
+    client: &crate::http::CheckedRedirectClient,
+    storage: &Storage,
+    snapshot_hash: &str,
+    server: &str,
+) -> Result<StagingGuard, SyncError> {
+    let response = crate::http::get_following_checked_redirects(
+        client,
+        &format!("{server}/contents/{snapshot_hash}"),
+        crate::deploy_remote_entity::MAX_FILE_REDIRECTS,
+    )
+    .await?;
+    if !response.status().is_success() {
+        return Err(SyncError::Other(format!(
+            "HTTP {} downloading snapshot {snapshot_hash} from {server}",
+            response.status()
+        )));
+    }
+    let expected_len = response.content_length();
+    let spooled = spool_snapshot(storage, snapshot_hash, response)
+        .await
+        .map_err(|reason| {
+            SyncError::Other(format!("snapshot {snapshot_hash} from {server}: {reason}"))
+        })?;
+    if let Some(len) = expected_len
+        && spooled.stats.wire_len < len
+    {
+        return Err(SyncError::Other(format!(
+            "snapshot {snapshot_hash} from {server} truncated: got {} of {len} bytes",
+            spooled.stats.wire_len
+        )));
+    }
+    if spooled.digest != snapshot_hash {
+        return Err(SyncError::Other(format!(
+            "snapshot hash mismatch for {snapshot_hash} from {server}"
+        )));
+    }
+    info!(
+        snapshot_hash,
+        bytes = spooled.stats.decoded_len,
+        "Snapshot downloaded"
+    );
+    Ok(spooled.guard)
 }
 
 #[cfg(test)]
@@ -1057,6 +1023,19 @@ mod tests {
     const GOOD_HASH: &str = "QmYwAPJzv5CZsnA625s3Xf2nemtYgPpHdWEz79ojWnPbdG";
     const GOOD_HASH_2: &str = "QmYwAPJzv5CZsnA625s3Xf2nemtYgPpHdWEz79ojWnPbdH";
     const GOOD_HASH_3: &str = "QmYwAPJzv5CZsnA625s3Xf2nemtYgPpHdWEz79ojWnPbdJ";
+
+    fn staged_files(storage: &Storage, hash: &str) -> Vec<PathBuf> {
+        let blob = resolve_file_path(storage.root(), hash).unwrap();
+        let dir = blob.parent().unwrap();
+        match std::fs::read_dir(dir) {
+            Ok(entries) => entries
+                .map(|entry| entry.unwrap().path())
+                .filter(|path| path.extension().is_some_and(|ext| ext == "tmp"))
+                .collect(),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Vec::new(),
+            Err(error) => panic!("could not read snapshot staging directory: {error}"),
+        }
+    }
 
     #[test]
     fn a_long_invalid_entry_preview_is_cut_on_a_character_boundary() {
@@ -1199,31 +1178,35 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn gzip_labeled_snapshot_decodes_then_hashes_and_stores_decoded() {
+    async fn gzip_labeled_snapshot_decodes_and_leaves_only_a_temporary_file() {
         const PAYLOAD: &[u8] = b"### Decentraland json snapshot\n{\"entityId\":\"Qm1\"}\n";
         let cid = hash_bytes_v1(PAYLOAD);
         let wire = gzip(PAYLOAD);
         let (base, server) = spawn_content_server(wire, Some("gzip")).await;
         let (storage, tmp) = temp_storage("snap-gzip").await;
-        let servers: HashSet<String> = [base].into_iter().collect();
+        let cancel = CancellationToken::new();
 
-        download_snapshot_file(
+        let spool = download_snapshot_file(
             &crate::sync::test_sync_client(Client::new()),
             &storage,
             &cid,
-            &servers,
+            &[(base.as_str(), &cancel)],
             1,
             0,
         )
         .await
         .expect("a gzip-labeled snapshot whose decoded bytes match the CID must be accepted");
 
-        let stored = storage.retrieve(&cid).await.unwrap().unwrap();
+        let path = spool.path().to_owned();
+        let stored = tokio::fs::read(&path).await.unwrap();
         assert_eq!(
             &stored[..],
             PAYLOAD,
-            "the stored bytes must be the decoded representation"
+            "the temporary bytes must be the decoded representation"
         );
+        assert!(!storage.exist(&cid).await.unwrap());
+        drop(spool);
+        assert!(!path.exists());
 
         server.abort();
         let _ = tokio::fs::remove_dir_all(&tmp).await;
@@ -1237,22 +1220,88 @@ mod tests {
         let wire = gzip(OTHER);
         let (base, server) = spawn_content_server(wire, Some("gzip")).await;
         let (storage, tmp) = temp_storage("snap-corrupt").await;
-        let servers: HashSet<String> = [base].into_iter().collect();
+        let cancel = CancellationToken::new();
 
         let err = download_snapshot_file(
             &crate::sync::test_sync_client(Client::new()),
             &storage,
             &cid,
-            &servers,
+            &[(base.as_str(), &cancel)],
             1,
             0,
         )
         .await
-        .expect_err("decoded bytes that mismatch the CID must still be rejected");
+        .err()
+        .expect("decoded bytes that mismatch the CID must still be rejected");
         assert!(err.to_string().contains("snapshot hash mismatch"), "{err}");
         assert!(!storage.exist(&cid).await.unwrap());
+        assert!(staged_files(&storage, &cid).is_empty());
 
         server.abort();
+        let _ = tokio::fs::remove_dir_all(&tmp).await;
+    }
+
+    #[tokio::test]
+    async fn a_retired_snapshot_advertiser_does_not_spend_the_remaining_attempt() {
+        const PAYLOAD: &[u8] = b"### Decentraland json snapshot\n";
+        let cid = hash_bytes_v1(PAYLOAD);
+        let body_stalled = Arc::new(tokio::sync::Notify::new());
+        let notify_stalled = body_stalled.clone();
+        let app = axum::Router::new().route(
+            "/contents/{hash}",
+            axum::routing::get(move || {
+                let notify_stalled = notify_stalled.clone();
+                async move {
+                    let first = futures::stream::iter([Ok::<_, std::convert::Infallible>(
+                        bytes::Bytes::from_static(b"partial snapshot"),
+                    )]);
+                    let remaining = futures::stream::once(async move {
+                        notify_stalled.notify_one();
+                        std::future::pending().await
+                    });
+                    axum::body::Body::from_stream(first.chain(remaining))
+                }
+            }),
+        );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let retired_url = format!("http://{}", listener.local_addr().unwrap());
+        let retired_server = tokio::spawn(async move {
+            axum::serve(listener, app).await.unwrap();
+        });
+        let (current_url, current_server) = spawn_content_server(PAYLOAD.to_vec(), None).await;
+        let (storage, tmp) = temp_storage("snap-retired").await;
+        let retired = CancellationToken::new();
+        let current = CancellationToken::new();
+        let advertisers = [
+            (retired_url.as_str(), &retired),
+            (current_url.as_str(), &current),
+        ];
+        let client = crate::sync::test_sync_client(Client::new());
+        let retire_peer = async {
+            body_stalled.notified().await;
+            while staged_files(&storage, &cid).is_empty() {
+                tokio::task::yield_now().await;
+            }
+            retired.cancel();
+        };
+
+        let (result, ()) = tokio::time::timeout(std::time::Duration::from_secs(5), async {
+            tokio::join!(
+                download_snapshot_file(&client, &storage, &cid, &advertisers, 1, 0),
+                retire_peer
+            )
+        })
+        .await
+        .expect("retirement must release the stalled response");
+        let spool = result.expect("the current peer keeps the one download attempt");
+        assert_eq!(tokio::fs::read(spool.path()).await.unwrap(), PAYLOAD);
+        assert_eq!(staged_files(&storage, &cid), [spool.path().to_path_buf()]);
+        drop(spool);
+        assert!(staged_files(&storage, &cid).is_empty());
+
+        for server in [retired_server, current_server] {
+            server.abort();
+        }
         let _ = tokio::fs::remove_dir_all(&tmp).await;
     }
 
@@ -1299,45 +1348,66 @@ mod tests {
     }
 
     #[test]
-    fn the_capped_line_reader_skips_overlong_lines_and_keeps_an_unterminated_last_one() {
-        let text = b"short\nxxxxxxxxxxxxxxxxxxxxxxxx\n\nlast";
+    fn the_capped_line_reader_stops_at_an_overlong_line() {
+        let text = b"short\nxxxxxxxxxxxxxxxxxxxxxxxx\n";
         let mut reader = std::io::BufReader::with_capacity(4, &text[..]);
         let mut buf = Vec::new();
-        let mut seen = Vec::new();
-        loop {
-            match read_line_capped(&mut reader, &mut buf, 8).unwrap() {
-                LineRead::Eof => break,
-                LineRead::Overlong => seen.push("<overlong>".to_string()),
-                LineRead::Line => seen.push(String::from_utf8(buf.clone()).unwrap()),
-            }
-        }
-        assert_eq!(seen, vec!["short\n", "<overlong>", "\n", "last"]);
+        assert!(read_line_capped(&mut reader, &mut buf, 5).unwrap());
+        assert_eq!(buf, b"short\n");
+        assert!(read_line_capped(&mut reader, &mut buf, 5).is_err());
     }
 
-    /// 2,503 deployable lines in a gzip snapshot with a header, blank lines, junk, an unparseable
-    /// entry, an implausible timestamp, a pre-genesis line and a filtered-out type reach the
-    /// receiver as batches of at most [`SNAPSHOT_BATCH_RECORDS`], with the counts the old
-    /// whole-file pass reported.
     #[test]
-    fn snapshot_records_arrive_in_bounded_batches_with_the_old_counts() {
-        let line = |i: usize, entity_type: &str, ts: i64| {
-            format!(
-                "{{\"entityId\":\"Qm{i}\",\"entityType\":\"{entity_type}\",\"pointers\":[\"{i},0\"],\"authChain\":[],\"entityTimestamp\":{ts}}}\n"
-            )
+    fn the_capped_line_reader_accepts_an_unterminated_last_line() {
+        let mut reader = std::io::BufReader::with_capacity(4, &b"\nlast"[..]);
+        let mut buf = Vec::new();
+        assert!(read_line_capped(&mut reader, &mut buf, 4).unwrap());
+        assert_eq!(buf, b"\n");
+        assert!(read_line_capped(&mut reader, &mut buf, 4).unwrap());
+        assert_eq!(buf, b"last");
+        assert!(!read_line_capped(&mut reader, &mut buf, 4).unwrap());
+    }
+
+    #[test]
+    fn snapshot_records_arrive_in_bounded_batches_and_malformed_lines_are_counted() {
+        let record = |i: usize, kind: &str, timestamp: i64| {
+            serde_json::json!({
+                "entityId": hash_bytes_v1(&i.to_be_bytes()),
+                "entityType": kind,
+                "pointers": [format!("{i},0")],
+                "authChain": [{"type": "SIGNER", "payload": "0x0000000000000000000000000000000000000001"}],
+                "entityTimestamp": timestamp,
+            })
         };
-        let mut text = String::from("### Decentraland json snapshot\n\n");
-        for i in 0..2_503 {
-            text.push_str(&line(
+        let records = (0..2_503).map(|i| {
+            record(
                 i,
                 if i % 5 == 0 { "scene" } else { "profile" },
                 1_600_000_000_000,
-            ));
+            )
+        });
+        let mut text = String::from("### Decentraland json snapshot\n\n");
+        for row in records {
+            text.push_str(&format!("{row}\n"));
         }
         text.push_str("this is not json\n");
         text.push_str("{\"entityId\":1}\n");
-        text.push_str(&line(9_001, "scene", 253_402_300_800_000));
-        text.push_str(&line(9_002, "scene", 5));
-        text.push_str(&line(9_003, "wearable", 1_600_000_000_000));
+        for row in [
+            record(9_001, "scene", 253_402_300_800_000),
+            record(9_002, "scene", 5),
+            record(9_003, "wearable", 1_600_000_000_000),
+        ] {
+            text.push_str(&format!("{row}\n"));
+        }
+        for (field, value) in [
+            ("entityId", serde_json::json!("not-a-cid")),
+            ("pointers", serde_json::json!([])),
+            ("authChain", serde_json::json!([])),
+        ] {
+            let mut row = record(9_004, "scene", 1_600_000_000_000);
+            row[field] = value;
+            text.push_str(&format!("{row}\n"));
+        }
         let dir = std::env::temp_dir().join(format!("catalyst-snapshot-lines-{}", unique()));
         std::fs::create_dir_all(&dir).unwrap();
         let path = dir.join("snapshot.gz");
@@ -1372,8 +1442,8 @@ mod tests {
         assert_eq!(
             stats,
             ParseStats {
-                total: 2_503 + 4,
-                parse_errors: 3,
+                total: 2_503 + 7,
+                parse_errors: 6,
                 skipped_by_filter: 1
             }
         );

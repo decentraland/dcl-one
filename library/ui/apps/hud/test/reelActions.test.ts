@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { render, screen } from '@testing-library/react'
+import { act, render, renderHook, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import type { ReactElement } from 'react'
 import { expectConsoleOutput } from '@explorer-core/test/console'
@@ -9,6 +9,7 @@ vi.mock('@hud-host', async (original) => ({ ...(await original<object>()), isNat
 vi.mock('../design', async (original) => ({ ...(await original<object>()), showToast }))
 
 const { REEL_MESSAGES, downloadReel, shareReelToX, shareToXUrl } = await import('../features/gallery/reelActions')
+const { useOwnReelActions } = await import('../features/gallery/useOwnReelActions')
 
 type Listener = (payload: unknown) => void
 // The page subscribes once for its lifetime, so the listeners outlive each test.
@@ -114,5 +115,42 @@ describe('downloadReel', () => {
       await done
       expect(toasts()).toEqual([REEL_MESSAGES.failure])
     })
+  })
+})
+
+describe('visibility writes', () => {
+  const photo = (id: string): { id: string; url: string; dateTime: string } => ({ id, url: `https://img/${id}.jpg`, dateTime: '1709856000' })
+  function setup(): { asked: Array<{ id: string; isPublic: boolean; settle: (ok: boolean) => void }>; mark: ReturnType<typeof vi.fn>; setPublic: ReturnType<typeof useOwnReelActions>['setPublic'] } {
+    const asked: Array<{ id: string; isPublic: boolean; settle: (ok: boolean) => void }> = []
+    const write = (id: string, isPublic: boolean): Promise<{ ok: boolean }> => new Promise((r) => asked.push({ id, isPublic, settle: (ok) => r({ ok }) }))
+    const mark = vi.fn()
+    const list = { remove: vi.fn(() => -1), restore: vi.fn(), setPublic: mark, setStorage: vi.fn() }
+    const { result } = renderHook(() => useOwnReelActions({ setPublic: write, remove: vi.fn(async () => ({ ok: true })) }, list))
+    return { asked, mark, setPublic: result.current.setPublic }
+  }
+
+  it("asks for a photo's writes one at a time, in the order they were made", async () => {
+    const { asked, mark, setPublic } = setup()
+    const first = setPublic(photo('a'), true)
+    const second = setPublic(photo('a'), false)
+    await act(async () => {})
+    expect(asked.map((w) => w.isPublic)).toEqual([true])
+    asked[0].settle(false)
+    expect(await first).toBe(false)
+    await act(async () => {})
+    expect(asked.map((w) => w.isPublic)).toEqual([true, false])
+    asked[1].settle(true)
+    expect(await second).toBe(true)
+    expect(mark.mock.calls).toEqual([['a', false]])
+    expect(toasts()).toEqual([REEL_MESSAGES.failure, REEL_MESSAGES.updated])
+  })
+
+  it('does not hold one photo for another', async () => {
+    const { asked, setPublic } = setup()
+    void setPublic(photo('a'), true)
+    void setPublic(photo('b'), true)
+    await act(async () => {})
+    expect(asked.map((w) => w.id)).toEqual(['a', 'b'])
+    asked.forEach((w) => w.settle(true))
   })
 })
