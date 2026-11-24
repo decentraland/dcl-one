@@ -83,6 +83,7 @@ pub mod visible_content_bytes;
 /// Region decomposition, in `common` so `comms` can reach it too; re-exported here because this is
 /// where it has always lived for callers.
 pub use common::bounds_calc;
+pub mod genesis_occupancy;
 pub mod gltf_resolver;
 pub mod initialize_scene;
 pub mod load_timing;

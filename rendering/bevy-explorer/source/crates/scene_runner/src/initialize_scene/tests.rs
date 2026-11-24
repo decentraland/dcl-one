@@ -1055,3 +1055,67 @@ fn a_realm_change_refused_in_a_preview_leaves_no_landing_for_the_next_one() {
     assert_eq!(landing_spawn_point(&app, player), Some(None));
     assert_eq!(landing_position(&app, player), None);
 }
+
+/// A 2x2 Genesis occupancy from parcel (0, 0): rows y = 0 then y = 1.
+fn genesis_occupancy(cells: [u8; 4]) -> GenesisOccupancy {
+    let mut bytes = b"OCC1".to_vec();
+    for value in [0i32, 0, 2, 2] {
+        bytes.extend_from_slice(&value.to_le_bytes());
+    }
+    bytes.extend_from_slice(&cells);
+    GenesisOccupancy::parse(bytes.leak()).unwrap()
+}
+
+#[test]
+fn a_resolved_pointer_overrides_the_genesis_occupancy() {
+    let mut pointers = ScenePointers::default();
+    pointers.set_realm(IVec2::splat(-10), IVec2::splat(10));
+    pointers.set_genesis_occupancy(Some(genesis_occupancy([1, 2, 0, 1])));
+
+    assert_eq!(pointers.occupancy(IVec2::new(0, 0)), Occupancy::Empty);
+    assert_eq!(pointers.occupancy(IVec2::new(1, 0)), Occupancy::Occupied);
+    // unlisted, and outside the snapshot
+    assert_eq!(pointers.occupancy(IVec2::new(0, 1)), Occupancy::Unknown);
+    assert_eq!(pointers.occupancy(IVec2::new(5, 5)), Occupancy::Unknown);
+    // outside the realm
+    assert_eq!(pointers.occupancy(IVec2::new(20, 0)), Occupancy::Empty);
+
+    pointers.insert(
+        IVec2::new(0, 0),
+        PointerResult::Exists {
+            hash: "scene".to_owned(),
+            urn: None,
+        },
+    );
+    pointers.insert(IVec2::new(1, 0), PointerResult::Nothing);
+    assert_eq!(pointers.occupancy(IVec2::new(0, 0)), Occupancy::Occupied);
+    assert_eq!(pointers.occupancy(IVec2::new(1, 0)), Occupancy::Empty);
+}
+
+#[test]
+fn without_a_genesis_occupancy_unresolved_parcels_are_unknown() {
+    let mut pointers = ScenePointers::default();
+    pointers.set_realm(IVec2::splat(-10), IVec2::splat(10));
+
+    assert_eq!(pointers.occupancy(IVec2::new(0, 0)), Occupancy::Unknown);
+    pointers.insert(IVec2::new(0, 0), PointerResult::Nothing);
+    assert_eq!(pointers.occupancy(IVec2::new(0, 0)), Occupancy::Empty);
+}
+
+#[test]
+fn the_terrain_takes_its_bounds_from_the_genesis_occupancy() {
+    let mut pointers = ScenePointers::default();
+    pointers.set_realm(IVec2::splat(-10), IVec2::splat(10));
+    pointers.reset_terrain(false);
+    pointers.resolve_terrain();
+    assert_eq!(pointers.terrain().bounds(), None);
+
+    // one occupied parcel at (1, 0), padded by the border on every side
+    pointers.set_genesis_occupancy(Some(genesis_occupancy([1, 2, 1, 1])));
+    assert_eq!(pointers.resolve_terrain(), Some(TerrainChange::Full));
+    let padding = IVec2::splat(BORDER_PADDING);
+    assert_eq!(
+        pointers.terrain().bounds(),
+        Some((IVec2::new(1, 0) - padding, IVec2::new(1, 0) + padding))
+    );
+}

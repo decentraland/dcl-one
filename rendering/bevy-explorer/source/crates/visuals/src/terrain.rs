@@ -24,14 +24,14 @@ use common::{
     sets::PostUpdateSets,
     structs::{CurrentRealm, EngineMovementControl, LandscapeDistance, PrimaryUser},
     terrain::{
-        height, texel_value, uv_size, PlayerTerrainHeight, TerrainChange, TerrainTargets,
-        MAX_STEPS, ZERO,
+        height, texel_value, uv_size, Occupancy, PlayerTerrainHeight, TerrainChange,
+        TerrainTargets, MAX_STEPS, ZERO,
     },
 };
 use dcl_component::SceneEntityId;
 use ipfs::{ipfs_path::IpfsPath, EntityDefinition};
 use scene_runner::{
-    initialize_scene::{PointerResult, ScenePointers},
+    initialize_scene::ScenePointers,
     update_world::mesh_collider::{ColliderId, GlobalGroundCollider, SceneColliderData},
     vec3_to_parcel,
 };
@@ -730,7 +730,8 @@ pub(crate) fn add_player_floor(app: &mut App) {
     );
 }
 
-/// Keep the player on or above the terrain of an empty parcel, as movement already floors at
+/// Keep the player on or above the terrain of an empty parcel (by the same occupancy the terrain
+/// is built from), as movement already floors at
 /// zero. The avatar then rides rising ground up instead of fighting
 /// it through collision; the heightfield collider stays for scene raycasts.
 fn floor_player(
@@ -746,12 +747,7 @@ fn floor_player(
         return;
     };
     let position = transform.translation;
-    if !position.is_finite()
-        || !matches!(
-            pointers.get(vec3_to_parcel(position)),
-            Some(PointerResult::Nothing)
-        )
-    {
+    if !position.is_finite() || pointers.occupancy(vec3_to_parcel(position)) != Occupancy::Empty {
         return;
     }
     let height = surface.cell_height_at(position);

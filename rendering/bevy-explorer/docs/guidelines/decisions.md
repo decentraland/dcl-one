@@ -895,13 +895,19 @@ ends in "we don't do that", so the next person doesn't have to rediscover it.
   (`source/react-web/bridge-scene/src/domains/settings.ts`) assumes the engine defaults are its Low
   preset, and the default here is Unity's 1000 m, so mapping it would show every fresh install as
   Custom.
+- **Genesis City's occupancy is embedded, not downloaded.** Unity downloads the
+  `WorldManifest.json` Decentraland's places pipeline publishes (`WorldManifestProvider`) and
+  builds the whole city's occupancy from its `occupied` list before the terrain and trees appear.
+  That bucket answers CORS for `play.decentraland.org` only, so the web build cannot read it. A
+  snapshot per environment is embedded instead (`source/crates/scene_runner/src/genesis_occupancy/`,
+  written by `source/crates/assets/landscape_tools/genesis_occupancy.py`): decentraland.zone's for a
+  realm there, decentraland.org's for any other city realm. The terrain, the trees and the
+  player's floor read it for every parcel whose pointer has not resolved; a resolved pointer
+  overrides it, so a scene deployed after the snapshot counts as occupied once its pointer
+  resolves near the player. Rerun the script to refresh the snapshots.
 - **The baked trees, bushes and stones** keep unity-explorer's layouts (Genesis City's and the
-  Worlds'), prototypes, scale ranges, footprints, first level of detail, collider shapes and
-  material values, and differ in these ways.
-  - They stand only on parcels whose pointers have resolved empty near the player; unknown and
-    occupied parcels and parcels outside the terrain count as occupied. Unity reads a static
-    occupancy map of the whole city, so inside the city, beyond the resolved parcels, it has trees
-    where bevy has none.
+  Worlds'), prototypes, scale ranges, footprints, first level of detail, collider shapes, material
+  values and occupancy rule, and differ in these ways.
   - Each instance is an entity, spawned when it is within the Landscape Distance of the player
     (horizontally) and checked again when the player changes parcel; bevy batches the shared
     meshes. Unity hands the whole layout to a GPU instancing package that culls by distance.

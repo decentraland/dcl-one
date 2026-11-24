@@ -1,7 +1,8 @@
 //! Trees, bushes and stones from unity-explorer's baked layout, so they stand where Unity's do.
 //!
-//! Only parcels confirmed empty carry them: a parcel that is unknown, occupied or outside the
-//! terrain counts as occupied, and an instance whose footprint reaches such a parcel is hidden.
+//! Only empty parcels carry them, as the realm's resolved pointers or, before those, Genesis City's
+//! published occupancy say: a parcel that is unknown, occupied or outside the terrain counts as
+//! occupied, and an instance whose footprint reaches such a parcel is hidden.
 //! They stand within the Landscape Distance of the player, on the terrain.
 
 use bevy::{
@@ -17,12 +18,10 @@ use common::{
     partition::PARCEL_SIZE,
     sets::RealmLifecycle,
     structs::{LandscapeDistance, PrimaryUser},
+    terrain::Occupancy,
 };
 use console::DoAddConsoleCommand;
-use scene_runner::{
-    initialize_scene::{PointerResult, ScenePointers},
-    vec3_to_parcel,
-};
+use scene_runner::{initialize_scene::ScenePointers, vec3_to_parcel};
 use serde_json::json;
 
 use crate::{
@@ -426,9 +425,10 @@ fn update_trees(
     if let (true, Some(layout)) = (state.pending, layout) {
         state.centre = Some(centre);
         state.pending = false;
-        // unknown parcels stay clear until the realm confirms they are empty
+        // unknown parcels stay clear until the realm or Genesis City's published occupancy says
+        // they are empty
         let mut desired = desired_trees(layout, position, distance.0, |parcel| {
-            surface.contains(parcel) && matches!(pointers.get(parcel), Some(PointerResult::Nothing))
+            surface.contains(parcel) && pointers.occupancy(parcel) == Occupancy::Empty
         });
         // after a switch the old trees are already going
         if !switched {
