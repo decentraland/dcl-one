@@ -168,7 +168,14 @@ impl Config {
     /// makes the list. An explicit value, empty included, wins; off mainnet
     /// the chain ids name other chains, so nothing is derived.
     pub fn derive_trade_rpc_urls(&mut self) {
-        if self.node.node_posture.as_deref() != Some("mirror")
+        // Read as the posture checks read it (trimmed), so a padded value
+        // derives the list the checks then require.
+        let mirror = self
+            .node
+            .node_posture
+            .as_deref()
+            .is_some_and(|p| crate::posture::Posture::parse(p).ok() == Some(Mirror));
+        if !mirror
             || self.marketplace.trade_rpc_urls.is_some()
             || self.node.eth_network.trim() != "mainnet"
         {

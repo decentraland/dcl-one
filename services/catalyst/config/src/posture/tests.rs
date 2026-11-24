@@ -216,21 +216,26 @@ fn a_mirror_refuses_blank_profile_ownership_readers() {
             assert!(e.to_string().contains("names no 137= endpoint"), "{e}");
         }
     }
-    // ETH_NETWORK is read trimmed everywhere: "mainnet " still derives the
-    // node's own 1= and 137= list, which passes; a list that never derived
-    // is refused, as an empty one is.
+    // ETH_NETWORK and NODE_POSTURE are read trimmed everywhere: padded
+    // values still derive the node's own 1= and 137= list, which passes; a
+    // list that never derived is refused, as an empty one is.
+    for padded in [("ETH_NETWORK", "mainnet "), (ENV, "mirror ")] {
+        let mut c = parsed(&[db, (ENV, "mirror"), padded]);
+        c.default_rpc_urls();
+        c.derive_trade_rpc_urls();
+        assert!(
+            c.marketplace
+                .trade_rpc_urls
+                .as_deref()
+                .is_some_and(|l| l.contains("137=")),
+            "{padded:?}: {:?}",
+            c.marketplace.trade_rpc_urls
+        );
+        refuse_remote_secrets(&mut c).unwrap();
+    }
     let mut c = parsed(&[db, (ENV, "mirror"), ("ETH_NETWORK", "mainnet ")]);
     c.default_rpc_urls();
     c.derive_trade_rpc_urls();
-    assert!(
-        c.marketplace
-            .trade_rpc_urls
-            .as_deref()
-            .is_some_and(|l| l.contains("137=")),
-        "{:?}",
-        c.marketplace.trade_rpc_urls
-    );
-    refuse_remote_secrets(&mut c).unwrap();
     c.marketplace.trade_rpc_urls = None;
     let err = refuse_remote_secrets(&mut c).unwrap_err().to_string();
     assert!(err.contains("names no 137= endpoint"), "{err}");
