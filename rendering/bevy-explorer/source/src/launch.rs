@@ -123,7 +123,7 @@ pub fn apply_client(
         .unwrap_or_else(|| common::base_domain::service(common::base_domain::Service::AbgenCdn));
     if !bevy_variants_base.trim().eq_ignore_ascii_case("off") {
         if let Some(ipfs) = app.world().get_resource::<ipfs::IpfsResource>() {
-            ipfs.set_bevy_variants_base(&bevy_variants_base);
+            ipfs.init_bevy_variants_base(&bevy_variants_base);
         }
     }
 

@@ -4,7 +4,10 @@ use common::sync::MutexExt;
 use console::{AddDebugSection, DebugSection, DoAddConsoleCommand};
 use serde_json::{json, Value};
 
-use super::{BevyVariants, ManifestState};
+use super::{
+    ContentFileVariantManifests, ContentFileVariantSession, ContentFileVariantsConfig,
+    ManifestState,
+};
 use crate::IpfsResource;
 
 pub(super) struct BevyVariantsDebugPanelPlugin;
@@ -46,15 +49,27 @@ struct BevyVariantsCommand;
 
 fn bevy_variants_state(mut input: ConsoleCommand<BevyVariantsCommand>, ipfs: Res<IpfsResource>) {
     if let Some(Ok(_)) = input.take() {
-        input.reply_ok(snapshot(&ipfs.bevy_variants).to_string());
+        input.reply_ok(
+            snapshot(
+                &ipfs.content_file_variants_config,
+                &ipfs.content_file_variant_manifests,
+                &ipfs.content_file_variant_session,
+            )
+            .to_string(),
+        );
     }
 }
 
-pub(super) fn snapshot(variants: &BevyVariants) -> Value {
+pub(super) fn snapshot(
+    config: &ContentFileVariantsConfig,
+    manifests: &ContentFileVariantManifests,
+    session: &ContentFileVariantSession,
+) -> Value {
     let mut counts = [0u64; 5];
-    let mut manifests: Vec<String> = variants
-        .manifests
+    let mut manifests: Vec<String> = manifests
+        .0
         .lock_ignore_poison()
+        .states
         .iter()
         .map(|(entity, state)| {
             let (slot, text) = match &*state.borrow() {
@@ -83,8 +98,8 @@ pub(super) fn snapshot(variants: &BevyVariants) -> Value {
         .collect();
     manifests.sort();
 
-    let session = variants.session.lock_ignore_poison();
-    let state = match (variants.base(), &session.disabled, variants.bc.get()) {
+    let session = session.lock();
+    let state = match (config.base_url(), &session.disabled, config.reported_bc()) {
         (None, _, _) => "off".to_owned(),
         (Some(_), Some(reason), _) => format!("off for this session: {reason}"),
         (Some(_), None, None) => "on, waiting for the renderer's texture formats".to_owned(),
@@ -105,7 +120,7 @@ pub(super) fn snapshot(variants: &BevyVariants) -> Value {
         })
         .collect();
     json!({
-        "base": variants.base().map(|base| base.as_str()),
+        "base": config.base_url().map(|base| base.as_str()),
         "state": state,
         "formats": super::taken_formats(),
         "manifestCounts": counts,
