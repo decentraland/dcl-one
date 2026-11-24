@@ -925,16 +925,15 @@ async fn sales_count_each_transaction_once_per_category() {
         return;
     };
     let p = pass(&pool);
-    for (log, indexer) in [(Log::Sale, "sales"), (Log::Trade, "trade_events")] {
-        assert_eq!(
-            sales::batch(&p, log).await.unwrap(),
-            (0, false),
-            "not published"
-        );
-        chain_ready(&pool, indexer, 100).await;
-        sales::batch(&p, log).await.unwrap();
-        assert_eq!(cursor(&pool, log.source()).await, Some((100, i32::MAX)));
-    }
+    chain_ready(&pool, "sales", 100).await;
+    assert_eq!(sales::batch(&p, Log::Sale).await.unwrap(), (0, false));
+    assert_eq!(cursor(&pool, Log::Sale.source()).await, None);
+    chain_ready(&pool, "nft", 200).await;
+    sales::batch(&p, Log::Sale).await.unwrap();
+    assert_eq!(
+        cursor(&pool, Log::Sale.source()).await,
+        Some((100, i32::MAX))
+    );
     let c = contract();
     let creator = fresh_address();
     item(&pool, &c, 1, "emote_v1", creator.as_str()).await;
@@ -943,15 +942,17 @@ async fn sales_count_each_transaction_once_per_category() {
     let b = buyer.as_str();
     let tx1 = format!("0x{}", "1".repeat(64));
     let tx2 = format!("0x{}", "2".repeat(64));
-    for (block, log, item_id, tx) in [
-        (101, 0, 1, &tx1),
-        (101, 1, 1, &tx1),
-        (101, 2, 2, &tx1),
-        (102, 0, 1, &tx2),
+    let free_tx = format!("0x{}", "0".repeat(64));
+    for (block, log, item_id, tx, price) in [
+        (101, 0, 1, &tx1, 1_i64),
+        (101, 1, 1, &tx1, 1),
+        (101, 2, 2, &tx1, 1),
+        (101, 3, 1, &free_tx, 0),
+        (102, 0, 1, &tx2, 1),
     ] {
         sqlx::query(
-            "INSERT INTO shop.sale_event (network, block_number, log_index, block_time, kind, emitter, contract_address, token_id, item_id, buyer, tx_hash) \
-             VALUES ('matic', $1, $2, 1700000000, 'mint', $3, $3, 1, $4, $5, $6)",
+            "INSERT INTO shop.sale_event (network, block_number, log_index, block_time, kind, emitter, contract_address, token_id, item_id, buyer, tx_hash, price) \
+             VALUES ('matic', $1, $2, 1700000000, 'mint', $3, $3, 1, $4, $5, $6, $7)",
         )
         .bind(block)
         .bind(log)
@@ -959,6 +960,7 @@ async fn sales_count_each_transaction_once_per_category() {
         .bind(item_id)
         .bind(b)
         .bind(tx)
+        .bind(price)
         .execute(&pool)
         .await
         .unwrap();
@@ -987,7 +989,7 @@ async fn sales_count_each_transaction_once_per_category() {
         .execute(&pool)
         .await
         .unwrap();
-    assert_eq!(sales::batch(&p, Log::Sale).await.unwrap().0, 4);
+    assert_eq!(sales::batch(&p, Log::Sale).await.unwrap().0, 5);
     assert_eq!(cursor(&pool, Log::Sale.source()).await, Some((102, 0)));
     let emotes = progress(&pool, b, "emotionista").await.unwrap();
     assert_eq!(emotes.0, 2, "two transactions");
@@ -1000,25 +1002,6 @@ async fn sales_count_each_transaction_once_per_category() {
     );
     assert_eq!(progress(&pool, b, "fashionista").await.unwrap().0, 1);
 
-    // an off-chain listing: the caller buys a wearable
-    let seller = fresh_address();
-    let tx3 = format!("0x{}", "3".repeat(64));
-    sqlx::query(
-        "INSERT INTO shop.trade_event (network, block_number, log_index, block_time, marketplace_address, kind, caller, hashed_signature, signer, assets, tx_hash) \
-         VALUES ('matic', 103, 0, 1700000100, '0xm', 'traded', $1, '0xsig', $2, $3, $4)",
-    )
-    .bind(b)
-    .bind(seller.as_str())
-    .bind(json!({"sent": [{"assetType": 4, "contractAddress": c, "value": "2"}],
-                 "received": [{"assetType": 1, "contractAddress": "0xmana", "value": "5"}]}))
-    .bind(&tx3)
-    .execute(&pool)
-    .await
-    .unwrap();
-    chain_ready(&pool, "trade_events", 103).await;
-    assert_eq!(sales::batch(&p, Log::Trade).await.unwrap().0, 1);
-    assert_eq!(progress(&pool, b, "fashionista").await.unwrap().0, 2);
-    assert_eq!(progress(&pool, seller.as_str(), "fashionista").await, None);
     assert_eq!(
         granted(&pool, b).await,
         ["Emotionista Starter", "Fashionista Starter"]
@@ -1026,13 +1009,13 @@ async fn sales_count_each_transaction_once_per_category() {
 }
 
 #[tokio::test]
-async fn off_chain_goods_are_credited_to_their_beneficiaries() {
+async fn off_chain_multi_asset_trades_are_excluded_from_purchase_badges() {
     let Some(pool) = private_pool("badges_sales_beneficiary").await else {
         return;
     };
     let p = pass(&pool);
     chain_ready(&pool, "trade_events", 100).await;
-    sales::batch(&p, Log::Trade).await.unwrap();
+    sales::run(&p).await.unwrap();
     let c = contract();
     let creator = fresh_address();
     item(&pool, &c, 1, "emote_v1", creator.as_str()).await;
@@ -1060,23 +1043,8 @@ async fn off_chain_goods_are_credited_to_their_beneficiaries() {
     .await
     .unwrap();
     chain_ready(&pool, "trade_events", 101).await;
-    assert_eq!(sales::batch(&p, Log::Trade).await.unwrap().0, 1);
-    assert_eq!(
-        progress(&pool, alice.as_str(), "emotionista")
-            .await
-            .unwrap()
-            .0,
-        1
-    );
-    assert_eq!(progress(&pool, alice.as_str(), "fashionista").await, None);
-    assert_eq!(
-        progress(&pool, bob.as_str(), "fashionista")
-            .await
-            .unwrap()
-            .0,
-        1
-    );
-    for other in [&credits, &seller] {
+    assert_eq!(sales::run(&p).await.unwrap(), 0);
+    for other in [&credits, &seller, &alice, &bob] {
         assert_eq!(progress(&pool, other.as_str(), "emotionista").await, None);
         assert_eq!(progress(&pool, other.as_str(), "fashionista").await, None);
     }
@@ -1107,134 +1075,171 @@ async fn forward(
     .unwrap();
 }
 
-#[allow(clippy::too_many_arguments)]
-async fn nft_event(
-    pool: &PgPool,
-    block: i64,
-    log: i32,
-    kind: &str,
-    contract: &str,
-    item_id: i64,
-    to: &str,
-    tx_hash: Option<&str>,
-) {
-    sqlx::query(
-        "INSERT INTO shop.nft_event (network, block_number, log_index, block_time, kind, emitter, contract_address, token_id, to_address, tx_hash) \
-         VALUES ('matic', $1, $2, 1700000000, $3, $4, $4, $5::numeric * 105312291668557186697918027683670432318895095400549111254310977536 + 1, $6, $7)",
-    )
-    .bind(block)
-    .bind(log)
-    .bind(kind)
-    .bind(contract)
-    .bind(item_id)
-    .bind(to)
-    .bind(tx_hash)
-    .execute(pool)
-    .await
-    .unwrap();
-}
-
 #[tokio::test]
-async fn legacy_orders_count_per_transaction_and_resolve_relays() {
+async fn indexed_orders_count_paid_transactions_and_resolve_only_the_two_payment_relays() {
     let Some(pool) = private_pool("badges_sales_orders").await else {
         return;
     };
     let p = pass(&pool);
-    chain_ready(&pool, "nft", 100).await;
-    sales::batch(&p, Log::Order).await.unwrap();
-    let (c, other) = (contract(), contract());
-    let creator = fresh_address();
-    item(&pool, &c, 1, "emote_v1", creator.as_str()).await;
-    item(&pool, &other, 1, "emote_v1", creator.as_str()).await;
-    let buyer = fresh_address();
-    let b = buyer.as_str();
-    let tx1 = format!("0x{}", "a".repeat(64));
-    // two orders in one transaction, then one indexed without its hash
-    nft_event(&pool, 101, 0, "order_successful", &c, 1, b, Some(&tx1)).await;
-    nft_event(&pool, 101, 1, "order_successful", &other, 1, b, Some(&tx1)).await;
-    nft_event(&pool, 102, 3, "order_successful", &c, 1, b, None).await;
-    // a relay buys (the seller's transfer to it precedes the order), then
-    // hands the token to the user in the same block
-    let relay = "0xed038688ecf1193f8d9717eb3930f0bf0d745cb4";
-    let user = fresh_address();
-    let tx2 = format!("0x{}", "b".repeat(64));
-    nft_event(&pool, 103, 0, "transfer", &other, 1, relay, None).await;
-    nft_event(
-        &pool,
-        103,
-        1,
-        "order_successful",
-        &other,
-        1,
-        relay,
-        Some(&tx2),
-    )
-    .await;
-    forward(&pool, 103, 2, &other, 1, relay, user.as_str()).await;
-    // a relay buys and forwards the token only in a later block: nobody counts
-    let tx3 = format!("0x{}", "c".repeat(64));
-    nft_event(&pool, 104, 0, "transfer", &c, 1, relay, None).await;
-    nft_event(&pool, 104, 1, "order_successful", &c, 1, relay, Some(&tx3)).await;
-    forward(&pool, 105, 0, &c, 1, relay, user.as_str()).await;
-    chain_ready(&pool, "nft", 105).await;
-    assert_eq!(sales::batch(&p, Log::Order).await.unwrap().0, 5);
-    let emotes = progress(&pool, b, "emotionista").await.unwrap();
-    assert_eq!(emotes.0, 2, "one transaction and one chain position");
-    assert_eq!(
-        emotes.1["transactions_emotes_purchase"],
-        json!([
-            {"transactionHash": tx1, "saleAt": 1_700_000_000_000_i64},
-            {"transactionHash": "nft_event:matic:102:3", "saleAt": 1_700_000_000_000_i64}
-        ])
-    );
-    let resolved = progress(&pool, user.as_str(), "emotionista").await.unwrap();
-    assert_eq!(
-        resolved.1["transactions_emotes_purchase"],
-        json!([{"transactionHash": tx2, "saleAt": 1_700_000_000_000_i64}])
-    );
-    assert_eq!(progress(&pool, relay, "emotionista").await, None);
-}
-
-#[tokio::test]
-async fn credits_manager_legacy_orders_credit_the_credits_user() {
-    let Some(pool) = private_pool("badges_sales_credits_manager").await else {
-        return;
-    };
-    let p = pass(&pool);
-    chain_ready(&pool, "nft", 100).await;
+    let block = 30_000_000_i64;
+    chain_ready(&pool, "nft", block - 1).await;
     sales::batch(&p, Log::Order).await.unwrap();
     let c = contract();
     item(&pool, &c, 1, "wearable_v2", fresh_address().as_str()).await;
-    // useCredits: the order pays the seller and hands the token to the
-    // CreditsManager, which forwards it to the user later in the transaction
-    let credits_manager = "0x8b3a40ca1b6f5cafc99d112a4d02e897d1fd8cc5";
+    let seller = fresh_address();
     let user = fresh_address();
-    let tx = format!("0x{}", "d".repeat(64));
-    nft_event(&pool, 101, 0, "transfer", &c, 1, credits_manager, None).await;
-    nft_event(
+    let friend = fresh_address();
+    let relay = "0xed038688ecf1193f8d9717eb3930f0bf0d745cb4";
+    let credits = "0x8b3a40ca1b6f5cafc99d112a4d02e897d1fd8cc5";
+    let market = "0x480a0f4e360e8964e68858dd231c2922f1df45ef";
+    let tx = format!("0x{}", "a".repeat(64));
+    let tx2 = format!("0x{}", "b".repeat(64));
+    let free_tx = format!("0x{}", "c".repeat(64));
+    forward(
         &pool,
-        101,
-        1,
-        "order_successful",
+        block - 1,
+        0,
         &c,
         1,
-        credits_manager,
-        Some(&tx),
+        "0x0000000000000000000000000000000000000000",
+        seller.as_str(),
     )
     .await;
-    forward(&pool, 101, 2, &c, 1, credits_manager, user.as_str()).await;
-    // the user hands it on in the same block: the gift earns nothing
-    let friend = fresh_address();
-    forward(&pool, 101, 3, &c, 1, user.as_str(), friend.as_str()).await;
-    chain_ready(&pool, "nft", 101).await;
-    sales::batch(&p, Log::Order).await.unwrap();
-    let bought = progress(&pool, user.as_str(), "fashionista").await.unwrap();
+    for (log, kind, id, buyer, hash, amount) in [
+        (0, "order_created", "A", None, None, None),
+        (
+            2,
+            "order_successful",
+            "A",
+            Some(relay),
+            Some(tx.as_str()),
+            Some(5_i64),
+        ),
+        (5, "order_created", "B", None, None, None),
+        (6, "order_successful", "B", Some(credits), None, Some(5)),
+        (7, "order_created", "C", None, None, None),
+        (
+            8,
+            "order_successful",
+            "C",
+            Some(seller.as_str()),
+            Some(free_tx.as_str()),
+            Some(0),
+        ),
+        (
+            9,
+            "order_successful",
+            "missing",
+            Some(seller.as_str()),
+            Some(free_tx.as_str()),
+            Some(7),
+        ),
+    ] {
+        sqlx::query(
+            "INSERT INTO shop.nft_event
+                (network, block_number, log_index, block_time, kind, emitter, contract_address,
+                 token_id, to_address, detail, tx_hash, amount)
+             VALUES ('matic', $1, $2, 1700000000, $3, $4, $5,
+                105312291668557186697918027683670432318895095400549111254310977537, $6, $7, $8, $9)",
+        )
+        .bind(block)
+        .bind(log)
+        .bind(kind)
+        .bind(market)
+        .bind(&c)
+        .bind(buyer)
+        .bind(id)
+        .bind(hash)
+        .bind(amount)
+        .execute(&pool)
+        .await
+        .unwrap();
+    }
+    forward(&pool, block, 1, &c, 1, seller.as_str(), relay).await;
+    forward(&pool, block, 3, &c, 1, relay, user.as_str()).await;
+    forward(&pool, block, 4, &c, 1, user.as_str(), friend.as_str()).await;
+    chain_ready(&pool, "nft", block).await;
+    assert_eq!(sales::batch(&p, Log::Order).await.unwrap().0, 1);
+    assert_eq!(cursor(&pool, Log::Order.source()).await, Some((block, 2)));
     assert_eq!(
-        bought.1["transactions_wearable_purchase"],
-        json!([{"transactionHash": tx, "saleAt": 1_700_000_000_000_i64}])
+        progress(&pool, friend.as_str(), "fashionista")
+            .await
+            .unwrap()
+            .0,
+        1
     );
-    assert_eq!(progress(&pool, credits_manager, "fashionista").await, None);
-    assert_eq!(progress(&pool, friend.as_str(), "fashionista").await, None);
+    assert_eq!(progress(&pool, user.as_str(), "fashionista").await, None);
+    sqlx::query("UPDATE shop.nft_event SET tx_hash = $2 WHERE network = 'matic' AND block_number = $1 AND log_index = 6")
+        .bind(block).bind(&tx2).execute(&pool).await.unwrap();
+    assert_eq!(sales::batch(&p, Log::Order).await.unwrap().0, 3);
+    assert_eq!(progress(&pool, credits, "fashionista").await.unwrap().0, 1);
+    assert_eq!(progress(&pool, seller.as_str(), "fashionista").await, None);
+}
+
+#[tokio::test]
+async fn accepted_bids_require_an_indexed_bid_for_an_existing_nft() {
+    let Some(pool) = private_pool("badges_sales_bids").await else {
+        return;
+    };
+    let p = pass(&pool);
+    let block = 30_000_000_i64;
+    chain_ready(&pool, "sales", block - 1).await;
+    chain_ready(&pool, "nft", block).await;
+    sales::batch(&p, Log::Sale).await.unwrap();
+    let c = contract();
+    let buyer = fresh_address();
+    let seller = fresh_address();
+    item(&pool, &c, 1, "emote_v1", seller.as_str()).await;
+    forward(
+        &pool,
+        block,
+        1,
+        &c,
+        1,
+        "0x0000000000000000000000000000000000000000",
+        seller.as_str(),
+    )
+    .await;
+    for (log, kind, id, price) in [
+        (0, "bid_created", "before-mint", 5_i64),
+        (2, "bid_accepted", "before-mint", 5),
+        (3, "bid_accepted", "unknown", 5),
+        (4, "bid_created", "paid", 5),
+        (5, "bid_accepted", "event-id", 0),
+        (6, "bid_created", "free", 0),
+        (7, "bid_accepted", "paid", 5),
+    ] {
+        sqlx::query(
+            "INSERT INTO shop.sale_event
+                (network, block_number, log_index, block_time, kind, emitter, contract_address,
+                 token_id, bid_id, buyer, seller, price, expires_at, tx_hash)
+             VALUES ('matic', $1, $2, 1700000000, $3, '0xb96697fa4a3361ba35b774a42c58daccaad1b8e1', $4,
+                 105312291668557186697918027683670432318895095400549111254310977537,
+                 $5, $6, $7, $8, 2000000000, $9)",
+        )
+        .bind(block)
+        .bind(log)
+        .bind(kind)
+        .bind(&c)
+        .bind(id)
+        .bind(buyer.as_str())
+        .bind(seller.as_str())
+        .bind(price)
+        .bind(format!("0x{log:064x}"))
+        .execute(&pool)
+        .await
+        .unwrap();
+    }
+    chain_ready(&pool, "sales", block).await;
+    assert_eq!(sales::batch(&p, Log::Sale).await.unwrap().0, 4);
+    let earned = progress(&pool, buyer.as_str(), "emotionista")
+        .await
+        .unwrap();
+    assert_eq!(earned.0, 1);
+    assert_eq!(
+        earned.1["transactions_emotes_purchase"][0]["transactionHash"],
+        format!("0x{:064x}", 5)
+    );
 }
 
 async fn mirror_ready(pool: &PgPool, mirror: &str) {
@@ -1419,6 +1424,7 @@ async fn a_sale_of_an_unmirrored_item_holds_until_the_item_or_a_later_pass() {
         return;
     };
     let p = pass(&pool);
+    chain_ready(&pool, "nft", 200).await;
     chain_ready(&pool, "sales", 100).await;
     sales::batch(&p, Log::Sale).await.unwrap();
     let c = contract();
@@ -1431,8 +1437,8 @@ async fn a_sale_of_an_unmirrored_item_holds_until_the_item_or_a_later_pass() {
         let c = c.clone();
         async move {
             sqlx::query(
-                "INSERT INTO shop.sale_event (network, block_number, log_index, block_time, kind, emitter, contract_address, token_id, item_id, buyer, tx_hash) \
-                 VALUES ('matic', $1, 0, $2, 'mint', $3, $3, 1, $4, $5, $6)",
+                "INSERT INTO shop.sale_event (network, block_number, log_index, block_time, kind, emitter, contract_address, token_id, item_id, buyer, tx_hash, price) \
+                 VALUES ('matic', $1, 0, $2, 'mint', $3, $3, 1, $4, $5, $6, 1)",
             )
             .bind(block)
             .bind(sale_at)

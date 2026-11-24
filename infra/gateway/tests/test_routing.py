@@ -48,7 +48,7 @@ class HostAliasTest(unittest.TestCase):
         # are prefixed on this host too. The node root aliases only the
         # wallet reads (root-aliases.nix).
         for path in ["/badges", "/badges/traveler", "/badges/traveler/tiers",
-                     "/badges/halloweeks_2026/backfill", "/categories", "/status",
+                     "/badges/halloweeks_2026/backfill", "/badges/health", "/health/ready", "/categories", "/status",
                      "/users/0x1234567890abcdef1234567890abcdef12345678/preview"]:
             with self.subTest(path=path):
                 self.assertEqual(route("badges.example.test", path), ("/badges" + path, path))
@@ -58,7 +58,7 @@ class HostAliasTest(unittest.TestCase):
         # A second segment the badges router mounts is taken as the /badges
         # mount, never as a badge id.
         for path in ["/badges/badges", "/badges/badges/traveler/tiers", "/badges/categories",
-                     "/badges/status", "/badges/assets/traveler/2d.png",
+                     "/badges/status", "/badges/health/ready", "/badges/assets/traveler/2d.png",
                      "/badges/users/0x1234567890abcdef1234567890abcdef12345678/badges"]:
             with self.subTest(path=path):
                 self.assertEqual(route("badges.example.test", path), (path, path))

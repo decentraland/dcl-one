@@ -147,7 +147,23 @@ impl AvatarRenderer {
             .stderr(Stdio::piped())
             .kill_on_drop(true);
         #[cfg(unix)]
-        cmd.process_group(0);
+        {
+            cmd.process_group(0);
+            // SAFETY: the child only sets its own resource limit before exec.
+            // setrlimit is a system call and needs no allocation or locks.
+            unsafe {
+                cmd.pre_exec(|| {
+                    let limit = libc::rlimit {
+                        rlim_cur: 0,
+                        rlim_max: 0,
+                    };
+                    if libc::setrlimit(libc::RLIMIT_CORE, &limit) != 0 {
+                        return Err(std::io::Error::last_os_error());
+                    }
+                    Ok(())
+                });
+            }
+        }
         if let Some(display) = &self.cfg.display {
             cmd.env("DISPLAY", display);
         }

@@ -92,6 +92,85 @@ fn app_state(pool: PgPool, storage: Arc<Storage>, settings: Settings) -> (Router
     (router(state.clone()), state)
 }
 
+#[tokio::test]
+async fn monitoring_probes_serve_the_prefixed_status_contracts() {
+    let scratch = Scratch::default();
+    let (_, profiles) = app_state(
+        lazy_pool(),
+        scratch.storage("monitoring").await,
+        Settings::for_tests(scratch.temp("cache")),
+    );
+    let app = crate::monitoring::routes(Some("1.2"), Some("abc"), profiles);
+    for prefix in [
+        "badges",
+        "badges-processor",
+        "notifications",
+        "events-notifier",
+        "profile-images",
+    ] {
+        for probe in ["ready", "startup"] {
+            let path = format!("/{prefix}/health/{probe}");
+            let (status, ct, _, body) = get_image(&app, &path).await;
+            assert_eq!(status, StatusCode::OK, "{path}");
+            assert_eq!(
+                ct.as_deref(),
+                Some("application/health+json; charset=utf-8")
+            );
+            assert_eq!(
+                &body[..],
+                crate::shared::health::SERVER_PASS.as_bytes(),
+                "{path}"
+            );
+        }
+    }
+    let (status, _, _, body) = get_image(&app, "/badges-processor/status").await;
+    assert_eq!(status, StatusCode::OK);
+    let body: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(body["commitHash"], "abc");
+    assert_eq!(body["version"], "1.2");
+    assert!(body["currentTime"].as_i64().unwrap() > 0);
+    let (status, _, _, body) = get_image(&app, "/profile-images/status").await;
+    assert_eq!(status, StatusCode::OK);
+    let body: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    for name in ["queue", "dlQueue"] {
+        assert_eq!(
+            body["queues"][name],
+            json!({
+            "ApproximateNumberOfMessages":"0", "ApproximateNumberOfMessagesNotVisible":"0",
+            "ApproximateNumberOfMessagesDelayed":"0"})
+        );
+    }
+    assert_eq!(get_image(&app, "/status").await.0, StatusCode::NOT_FOUND);
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn monitoring_probes_renderer_child_has_zero_core_limits() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let scratch = Scratch::default();
+    let dir = scratch.temp("core-limits");
+    std::fs::create_dir_all(&dir).unwrap();
+    let binary = dir.join("renderer");
+    std::fs::write(&binary, "#!/bin/sh\nulimit -Sc > soft\nulimit -Hc > hard\n").unwrap();
+    std::fs::set_permissions(&binary, std::fs::Permissions::from_mode(0o700)).unwrap();
+    let settings = Settings::parse(RawSettings {
+        render_enabled: true,
+        avatar_render_bin: binary.to_string_lossy().into_owned(),
+        ..Default::default()
+    })
+    .unwrap();
+    let renderer = super::render::AvatarRenderer::new(settings.render.unwrap());
+    let result = renderer.render("entity", &json!({}), "", &dir).await;
+    assert!(matches!(
+        result,
+        Err(super::render::RenderError::OutputMissing { .. })
+    ));
+    for file in ["soft", "hard"] {
+        assert_eq!(std::fs::read_to_string(dir.join(file)).unwrap().trim(), "0");
+    }
+}
+
 fn count(counter: &std::sync::atomic::AtomicU64) -> u64 {
     counter.load(Ordering::SeqCst)
 }

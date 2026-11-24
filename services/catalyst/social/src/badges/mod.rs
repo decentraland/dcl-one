@@ -70,9 +70,7 @@ pub const ADMIN_TOKEN_ENV: &str = "CATALYRST_BADGES_ADMIN_TOKEN";
 pub struct Settings {
     /// `CATALYRST_BADGES_ADMIN_TOKEN`: bearer of the admin routes; unset refuses them.
     pub admin_token: Option<String>,
-    /// `BADGES_PUBLIC_ASSET_BASE_URL`: the base every catalog asset path
-    /// resolves against (default: upstream's CDN, so the URLs are
-    /// upstream's). `<node>/badges/assets` serves `assets_dir` instead.
+    /// Public base for catalog art and notification images.
     pub public_asset_base_url: String,
     /// `BADGES_ASSETS_DIR`: the mirrored art `/assets/{path}` serves.
     pub assets_dir: Option<PathBuf>,
