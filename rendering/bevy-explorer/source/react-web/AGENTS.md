@@ -36,6 +36,7 @@ Design source of truth: the checked-in tokens and design primitives, together wi
   `Icon`, not a bespoke `<button>` + CSS for something a primitive already
   covers (close/back/menu/toggle buttons, nav controls, cards, popovers).
 
+- **Pull the shared UI's Git LFS assets once per clone**: `git lfs pull --include "library/ui/assets/**,library/ui/apps/sites/assets/**"`. The HUD's input graph lists them, and `pnpm dev`, the tests and the native build refuse a pointer.
 - **Use the shared component when one exists.** Import it from `@dcl/one-ui` (`library/ui/components`); do not add a HUD copy of a component the library already has. A look the HUD needs is a variant on the shared component (`docs/ui-standards.md`).
 - **If a primitive doesn't exist, CREATE it** in `library/ui/apps/hud/design/` — don't inline custom CSS
   for a pattern that will recur. A new primitive must:

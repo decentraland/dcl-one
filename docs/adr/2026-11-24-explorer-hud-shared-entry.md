@@ -16,11 +16,11 @@ The checked input graph stays the source of the HUD's source selection, fingerpr
 
 - The generator resolves each `composes ... from` target itself, relative to the stylesheet or through the build's aliases, records it as a `composes` edge and walks the target as a stylesheet too. A target that does not resolve fails generation. Vite's pipeline still does not report these reads; the contract no longer depends on it.
 - `library/web-core` is a source domain of the graph, in the generator, `tooling/hud_shared_inputs.py` and `infra/packages/hud-shared-inputs.nix`.
-- The graph records the Git LFS images and videos the entry reaches. The CI jobs that generate or validate the graph from a working tree fetch `library/ui/assets` and `library/ui/apps/sites/assets` with `git lfs pull --include`, not the repository's whole LFS content.
+- The graph records the Git LFS images and videos the entry reaches. Every reader of the graph from a working tree refuses an unmaterialized pointer, so the CI jobs that build, package or verify the HUD fetch `library/ui/assets` and `library/ui/apps/sites/assets` with `git lfs pull --include`, not the repository's whole LFS content, and a local clone needs the same two folders pulled before `pnpm dev`, the tests or a native build. A reader at a Git revision accepts the pointers.
 
 ## Consequences
 
-- With one `Skeleton` import the graph grows from 1179 to 1639 files: the shared components, the Sites UI the entry exports, six `library/web-core` modules and 61 Git LFS assets. A component the HUD does not render is compiled and fingerprinted, and left out of the bundle.
+- With one `Skeleton` import the graph grows from 1181 to 1639 files: the shared components, the Sites UI the entry exports, six `library/web-core` modules and 61 Git LFS assets. A component the HUD does not render is compiled and fingerprinted, and left out of the bundle.
 - A change to any file the entry reaches, including a Sites view, changes the HUD's fingerprint and selects the Explorer's CI jobs.
 - A HUD copy of a shared component is replaced by the shared one in a change that covers that component and its HUD consumers; `react-web`'s agent instructions say to import the shared component when one exists.
 - `Modal`, `Toast` and `Dropdown` position against the viewport and need to account for the HUD's runtime scale before the HUD adopts them.

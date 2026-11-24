@@ -417,8 +417,3 @@
   white-space: nowrap;
 }
 
-@media (prefers-reduced-motion: reduce) {
-  .bone {
-    animation: none;
-  }
-}

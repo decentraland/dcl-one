@@ -1827,7 +1827,8 @@ class HudSharedSourcesTests(unittest.TestCase):
 
     def test_checked_graph_contains_the_shared_entry_and_the_components_the_hud_imports(self):
         root = Path(__file__).resolve().parents[2]
-        manifest = contract.shared_inputs.read_manifest(root)
+        # At the revision, so a checkout without the graph's Git LFS assets still reads it.
+        manifest = contract.shared_inputs.read_manifest(root, 'HEAD')
         paths = {row['path'] for row in manifest['files']}
         self.assertTrue(any(p.startswith('library/ui/foundations/') for p in paths))
         self.assertIn('library/ui/index.ts', paths)

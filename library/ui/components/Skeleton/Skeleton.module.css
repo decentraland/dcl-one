@@ -41,9 +41,12 @@
     background: var(--dcl-transparencies-black-60);
   }
 
+  /* The band is twice the block's width and crosses it once in 1400 ms. */
   .overlay::after {
+    inset: 0 -50%;
     background: linear-gradient(90deg, transparent 0%, var(--dcl-transparencies-white-40) 50%, transparent 100%);
-    animation-duration: 1400ms;
+    transform: translateX(-50%);
+    animation: overlay-sheen 1400ms linear infinite;
   }
 
   @media (prefers-reduced-motion: reduce) {
@@ -61,6 +64,12 @@
 @keyframes pulse {
   50% {
     opacity: 0.4;
+  }
+}
+
+@keyframes overlay-sheen {
+  to {
+    transform: translateX(50%);
   }
 }
 
