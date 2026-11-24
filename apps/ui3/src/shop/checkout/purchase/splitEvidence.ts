@@ -28,7 +28,10 @@ export interface SplitEvidenceReader {
  */
 export type SplitTransaction = { to: string | null; input: Hex; from?: string | null }
 
-/** A split's sale as kept before it was signed: what an execution must carry to count as this purchase. */
+/**
+ * A sale paid with Credits as kept before it was signed: what an execution must carry to count as this purchase. A split's
+ * (Credits and MANA together), or a Credits part's whose credits pay it all (`CreditSale`, with `creditValueWei`).
+ */
 export interface SplitSale {
   buyer: string
   chainId: number
@@ -38,6 +41,11 @@ export interface SplitSale {
   /** The credit's exact value C and the MANA gap G, in wei. */
   creditWei: string
   gapWei: string
+  /**
+   * The credit's own value, in wei, where it isn't the signed cap `creditWei`: a Credits group paid by its credits (one
+   * credit, the node's value with its headroom, under the cap the node signed). A split's credit is exactly its cap.
+   */
+  creditValueWei?: string
   /** The external call as reviewed: its venue (`target`), its function (`selector`) and its data (price, coupon, buyer). */
   target: string
   selector: Hex
@@ -68,11 +76,16 @@ export interface SplitSale {
  * - `foreign`: provably not this purchase (its hash is no sale's own), and nothing of where this credit went: a useCredits
  *   by another account or of other credits (a record that points at it is wrong, not proof), or the buyer's call of this
  *   credit on other terms that isn't seen to succeed (reverted, it spent nothing; not mined yet, it proves nothing);
- * - `unknown`: nothing that says either way: no transaction or receipt yet, a read that failed, a transaction whose
- *   wrapper or target this page can't read (its destination alone says nothing about where the credit went), or a revert
- *   of these terms in bytes other than the ones dispatched (or with none kept to compare).
+ * - `unreadable`: a transaction read, whose wrapper or target this page can't read as a useCredits at the manager (a smart
+ *   wallet's call to itself, a bundle through an EntryPoint): its destination alone says nothing about where the credit
+ *   went, so it is no answer either way, as `unknown` is; a caller may tell the two apart (a Credits part's node record);
+ * - `unknown`: nothing that says either way: no transaction or receipt yet, a read that failed, or a revert of these terms
+ *   in bytes other than the ones dispatched (or with none kept to compare).
  */
-export type SplitOutcome = 'bought' | 'reverted' | 'other' | 'foreign' | 'unknown'
+export type SplitOutcome = 'bought' | 'reverted' | 'other' | 'foreign' | 'unreadable' | 'unknown'
+
+/** A Credits part's sale as kept before it was signed (no MANA gap): the same terms a split's are read by. */
+export type CreditSale = SplitSale
 
 const lower = (v: unknown): string => (typeof v === 'string' ? v.toLowerCase() : '')
 
@@ -96,6 +109,7 @@ export function isSplitSale(v: unknown): v is SplitSale {
     s.creditId.length > 0 &&
     digits(s.creditWei) &&
     digits(s.gapWei) &&
+    (s.creditValueWei === undefined || digits(s.creditValueWei)) &&
     hex(s.target) &&
     hex(s.selector) &&
     hex(s.callData) &&
@@ -144,7 +158,7 @@ export function readSale(tx: SplitTransaction, sale: SplitSale): 'match' | 'othe
   const same =
     args.credits.length === 1 &&
     credit !== undefined &&
-    credit.value === creditWei &&
+    credit.value === BigInt(sale.creditValueWei ?? sale.creditWei) &&
     args.maxCreditedValue === creditWei &&
     args.maxUncreditedValue === BigInt(sale.gapWei) &&
     args.customExternalCallSignature === '0x' &&
@@ -186,7 +200,7 @@ export async function splitExecution(
   }
   if (!tx) return 'unknown'
   const read = readSale(tx, sale)
-  if (read === 'unreadable') return 'unknown'
+  if (read === 'unreadable') return 'unreadable'
   if (read === 'foreign') return 'foreign'
   // Its credit spent on another purchase needs that call to have run: a receipt that it succeeded. Without one, it is only
   // not this sale.

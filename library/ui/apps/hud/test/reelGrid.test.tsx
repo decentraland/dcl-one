@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, afterEach } from 'vitest'
-import { render, screen } from '@testing-library/react'
+import { act, fireEvent, render, screen } from '@testing-library/react'
+import userEvent from '@testing-library/user-event'
 import { anchoredMenuPosition } from '../design'
 import { ReelGrid, buildReelRows, type ReelGridLayout } from '../features/gallery/ReelGrid'
 import { reelFileName, shareToXUrl } from '../features/gallery/reelActions'
@@ -75,6 +76,41 @@ describe('ReelGrid virtualization', () => {
     expect(tiles.length).toBeGreaterThan(0)
     // Rows 1-4 start within 800 px (30 + 42 + 3 x 234 = 774): photos 0-23.
     expect(onVisibleIndex).toHaveBeenLastCalledWith(23)
+  })
+})
+
+describe('the photo menu', () => {
+  afterEach(() => vi.restoreAllMocks())
+
+  it("shows the photo's value again after the writes it asked for are refused", async () => {
+    vi.spyOn(HTMLElement.prototype, 'clientHeight', 'get').mockReturnValue(800)
+    vi.spyOn(HTMLElement.prototype, 'clientWidth', 'get').mockReturnValue(1900)
+    const settle: Array<(ok: boolean) => void> = []
+    const onSetPublic = vi.fn(() => new Promise<boolean>((r) => settle.push(r)))
+    render(<ReelGrid photos={reel(3)} layout={LAYOUT} menu={{ showDelete: false, onSetPublic }} onOpen={vi.fn()} onVisibleIndex={vi.fn()} />)
+    for (const b of screen.getAllByRole('button', { name: 'Open photo' })) fireEvent.load(b.querySelector('img') as HTMLImageElement)
+    await userEvent.click(screen.getAllByRole('button', { name: 'Photo options' })[0])
+    const toggle = screen.getByRole('menuitemcheckbox', { name: 'Set as Public' })
+    expect(toggle).toHaveAttribute('aria-checked', 'false')
+    await userEvent.click(toggle)
+    await userEvent.click(toggle)
+    expect(onSetPublic.mock.calls.map((c) => (c as unknown[])[1])).toEqual([true, false])
+    await act(async () => settle[0](false))
+    await act(async () => settle[1](false))
+    expect(toggle).toHaveAttribute('aria-checked', 'false')
+  })
+
+  it('goes back when a write is refused', async () => {
+    vi.spyOn(HTMLElement.prototype, 'clientHeight', 'get').mockReturnValue(800)
+    vi.spyOn(HTMLElement.prototype, 'clientWidth', 'get').mockReturnValue(1900)
+    const onSetPublic = vi.fn(async () => false)
+    render(<ReelGrid photos={reel(3)} layout={LAYOUT} menu={{ showDelete: false, onSetPublic }} onOpen={vi.fn()} onVisibleIndex={vi.fn()} />)
+    for (const b of screen.getAllByRole('button', { name: 'Open photo' })) fireEvent.load(b.querySelector('img') as HTMLImageElement)
+    await userEvent.click(screen.getAllByRole('button', { name: 'Photo options' })[0])
+    const toggle = screen.getByRole('menuitemcheckbox', { name: 'Set as Public' })
+    await userEvent.click(toggle)
+    await act(async () => {})
+    expect(toggle).toHaveAttribute('aria-checked', 'false')
   })
 })
 

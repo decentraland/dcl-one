@@ -10,6 +10,7 @@
 pub mod host;
 pub mod plugin;
 
+use common::sync::MutexExt;
 use std::sync::{
     Mutex,
     atomic::{AtomicU32, Ordering},
@@ -167,7 +168,7 @@ pub fn spawn_av(
         url,
         has_video,
     });
-    NEW_SOURCES.lock().unwrap().push(source);
+    NEW_SOURCES.lock_ignore_poison().push(source);
     retry_receiver
 }
 
@@ -183,6 +184,6 @@ pub fn adopt_video(
     let (retry_sender, _) = tokio::sync::watch::channel(MediaRetryStatus::default());
     let source = AvSource::new(commands, video, state_sender, retry_sender, Some(image));
     let id = source.id;
-    NEW_SOURCES.lock().unwrap().push(source);
+    NEW_SOURCES.lock_ignore_poison().push(source);
     id
 }

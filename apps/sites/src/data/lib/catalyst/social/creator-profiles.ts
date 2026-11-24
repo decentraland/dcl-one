@@ -2,7 +2,7 @@ import { queryOptions } from "@tanstack/react-query";
 import { z } from "zod";
 
 import { profileFaceUrl } from "../../auth/profile-face-url";
-import { catalystBase } from "../client";
+import { postPublicJSON } from "../client";
 
 /**
  * Creator by-lines: the name and face of a batch of wallets, read with one `POST /lambdas/profiles`.
@@ -42,19 +42,9 @@ export async function fetchCreatorProfiles(
   signal?: AbortSignal,
 ): Promise<CreatorProfiles> {
   if (!addresses.length) return {};
-  const res = await fetch(`${catalystBase()}/lambdas/profiles`, {
-    method: "POST",
-    headers: { accept: "application/json", "content-type": "application/json" },
-    body: JSON.stringify({ ids: addresses }),
-    signal,
-  });
-  if (!res.ok) {
-    // Release the connection before failing: an unread body keeps it busy.
-    await res.body?.cancel().catch(() => undefined);
-    throw new Error(`Profiles returned ${res.status}`);
-  }
+  const rows = await postPublicJSON("/lambdas/profiles", { ids: addresses }, { signal });
   const out: CreatorProfiles = {};
-  for (const entry of ProfilesEnvelope.parse(await res.json())) {
+  for (const entry of ProfilesEnvelope.parse(rows)) {
     const avatar = entry.avatars[0];
     if (!avatar) continue;
     const face = profileFaceUrl(avatar.avatar?.snapshots?.face256);

@@ -486,9 +486,12 @@ pub fn build_shop_listings_sql(
         ],
     );
     b.push(&format!(
-        "SELECT sub.*, CEIL(sub.usd_wei / {USD_WEI_PER_CREDIT}::numeric)::bigint AS price_credits, {compare_at} AS compare_at_credits, COUNT(*) OVER() AS total \
-         FROM ({inner}) sub {where_clause} {order} LIMIT {limit_p} OFFSET {offset_p}",
+        ", filtered AS (SELECT sub.*, CEIL(sub.usd_wei / {USD_WEI_PER_CREDIT}::numeric)::bigint AS price_credits, {compare_at} AS compare_at_credits \
+         FROM ({inner}) sub {where_clause}) \
+         SELECT page.*, counted.total FROM (SELECT count(*) AS total FROM filtered) counted \
+         LEFT JOIN LATERAL (SELECT sub.*, true AS page_present FROM filtered sub {order} LIMIT {limit_p} OFFSET {offset_p}) page ON true {page_order}",
         compare_at = compare_at_credits_expr("sub"),
+        page_order = order.replace("sub.", "page."),
     ));
     b
 }
@@ -528,7 +531,7 @@ pub fn build_legacy_listings_sql(
     };
     let limit_p = b.bind_i64(shop_clamp_first(f.first));
     let offset_p = b.bind_i64(shop_clamp_skip(f.skip));
-    b.push(&format!("SELECT sub.*, COUNT(*) OVER() AS total FROM ({inner}) sub {order}, sub.trade_id LIMIT {limit_p} OFFSET {offset_p}"));
+    b.push(&format!(", filtered AS (SELECT sub.* FROM ({inner}) sub) SELECT page.*, counted.total FROM (SELECT count(*) AS total FROM filtered) counted LEFT JOIN LATERAL (SELECT sub.*, true AS page_present FROM filtered sub {order}, sub.trade_id LIMIT {limit_p} OFFSET {offset_p}) page ON true {page_order}, page.trade_id", page_order = order.replace("sub.", "page.")));
     b
 }
 
@@ -574,9 +577,12 @@ pub fn build_unified_listings_sql(
         ],
     );
     b.push(&format!(
-        "SELECT sub.*, CEIL(sub.usd_wei / {USD_WEI_PER_CREDIT}::numeric)::bigint AS price_credits, {compare_at} AS compare_at_credits, COUNT(*) OVER() AS total \
-         FROM ({inner}) sub {where_clause} {order} LIMIT {limit_p} OFFSET {offset_p}",
+        ", filtered AS (SELECT sub.*, CEIL(sub.usd_wei / {USD_WEI_PER_CREDIT}::numeric)::bigint AS price_credits, {compare_at} AS compare_at_credits \
+         FROM ({inner}) sub {where_clause}) \
+         SELECT page.*, counted.total FROM (SELECT count(*) AS total FROM filtered) counted \
+         LEFT JOIN LATERAL (SELECT sub.*, true AS page_present FROM filtered sub {order} LIMIT {limit_p} OFFSET {offset_p}) page ON true {page_order}",
         compare_at = compare_at_credits_expr("sub"),
+        page_order = order.replace("sub.", "page."),
     ));
     b
 }
@@ -605,7 +611,7 @@ pub fn build_unified_items_sql(
     let core = item_unified_core(&mut b, f, rate);
     let (where_clause, order, limit_p, offset_p) =
         outer_page_clauses(&mut b, "d", &f.base, vec!["d.usd_wei > 0".to_string()]);
-    b.push(&format!("SELECT d.*, COUNT(*) OVER() AS total FROM ({core}) d {where_clause} {order} LIMIT {limit_p} OFFSET {offset_p}"));
+    b.push(&format!(", filtered AS (SELECT d.* FROM ({core}) d {where_clause}) SELECT page.*, counted.total FROM (SELECT count(*) AS total FROM filtered) counted LEFT JOIN LATERAL (SELECT d.*, true AS page_present FROM filtered d {order} LIMIT {limit_p} OFFSET {offset_p}) page ON true {page_order}", page_order = order.replace("d.", "page.")));
     b
 }
 

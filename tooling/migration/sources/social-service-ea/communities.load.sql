@@ -2,8 +2,9 @@
 -- is the upstream the communities mirror copies from, so a community the
 -- mirror already holds is taken over (origin flips to 'local') and loses its
 -- mirror provenance row, which would otherwise add upstream's member count
--- on top of the members imported next. The node's own axes (suspension,
--- ranking_score) are kept; a local edit newer than upstream is kept.
+-- on top of the members imported next. Suspension and the ranking columns are
+-- left to the node and the community_ranking_metrics step; a local edit newer
+-- than upstream is kept.
 INSERT INTO social.communities AS t
     (id, name, description, owner_address, private, active, unlisted, editors_choice,
      created_at, updated_at, origin)

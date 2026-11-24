@@ -10,7 +10,7 @@
 // components/Table/{TableContainer,TableContent}/*.tsx; icons vendored from webapp/src/images into landbranch-assets/.
 // Copyright 2020 Metaverse Holdings Ltd. (marketplace), Apache-2.0.
 
-import { useContext, useMemo, useRef, useState, type ReactNode } from "react";
+import { useContext, useMemo, useState, type ReactNode } from "react";
 import { Link } from "react-router";
 import { QueryClientContext } from "@tanstack/react-query";
 
@@ -39,6 +39,7 @@ import { useShopWallet } from "../../wallet/context";
 import LegacyOrderBuy from "./LegacyOrderBuy";
 import LandAtlas from "./LandAtlas";
 import LandTradeBuy from "./LandTradeBuy";
+import { useReadOnClose } from "../lib/useReadOnClose";
 import backIcon from "./landbranch-assets/onBack.png";
 import pinIcon from "./landbranch-assets/pin-land.svg";
 import jumpIcon from "./landbranch-assets/jump_in.svg";
@@ -352,17 +353,12 @@ function SaleRentBox({ result, land, account, onSignIn, onChanged }: SaleRentBox
   const maxPrice = rental ? maxPriceOfPeriods(rental) : null;
   const [view, setView] = useState<"sale" | "rent">(!!order || !rentalOpen ? "sale" : "rent");
   const [buying, setBuying] = useState(false);
-  // A sale still confirming has this LAND and its order read again once its dialog closes, not while it shows: a
-  // read empties the page until it answers (refetch drops the token), and would take the dialog and its notice with it.
-  const salePending = useRef(false);
-  const markSalePending = () => {
-    salePending.current = true;
-  };
+  // A sale that went out (confirmed, or still confirming) has this LAND and its order read again once its dialog
+  // closes, or this box unmounts, not while it shows (refetch drops the token and would take the dialog with it).
+  const { arm: readAgainOnClose, fire: readIfBought } = useReadOnClose(onChanged);
   const closeBuy = () => {
     setBuying(false);
-    if (!salePending.current) return;
-    salePending.current = false;
-    onChanged();
+    readIfBought();
   };
   const [period, setPeriod] = useState<number | null>(null);
   const partOfEstate = land.kind === "parcel" && !!land.estate;
@@ -490,10 +486,10 @@ function SaleRentBox({ result, land, account, onSignIn, onChanged }: SaleRentBox
           name={nft.name}
           tradeId={order.tradeId}
           quoted={priceWei as ManaWei}
-          land={{ contractAddress: nft.contractAddress, tokenId: nft.tokenId }}
+          land={{ contractAddress: nft.contractAddress.toLowerCase(), tokenId: nft.tokenId }}
           onClose={closeBuy}
-          onDone={() => onChanged()}
-          onPending={markSalePending}
+          onDone={readAgainOnClose}
+          onPending={readAgainOnClose}
         />
       ) : null}
       {buying && order && priceWei && !order.tradeId ? (
@@ -504,8 +500,8 @@ function SaleRentBox({ result, land, account, onSignIn, onChanged }: SaleRentBox
           order={{ id: order.id, marketplaceAddress: order.marketplaceAddress, price: order.price, chainId: order.chainId }}
           quoted={priceWei as ManaWei}
           onClose={closeBuy}
-          onDone={() => onChanged()}
-          onPending={markSalePending}
+          onDone={readAgainOnClose}
+          onPending={readAgainOnClose}
         />
       ) : null}
     </div>

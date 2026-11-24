@@ -1,20 +1,19 @@
 import { useQueryClient } from "@tanstack/react-query";
 import { useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore } from "react";
 import { useLocation, useNavigate, useSearchParams } from "react-router";
-import { useEventsCopy } from "@dcl/one-ui/apps/sites/events/locale";
+import { useEventsCopy, Notice, SubmitHangoutView as LdSubmitHangoutView, type SitesLocaleHandle } from "@dcl/one-ui";
 import { rejectedNotice } from "@/features/social/submit-hangout/review-notice";
 import { EventsLocaleProvider, useEventsFooterCopy } from "@/features/events/locale";
-import { SubmitHangoutView as LdSubmitHangoutView } from "@dcl/one-ui/apps/sites/events/SubmitHangoutView";
 
 import { fetchEventCategories, type EventCategory } from "@/data/lib/catalyst/places/events";
 import { invalidateEventsAfterWrite } from "@/data/lib/catalyst/places/events-page";
+import { ownedEventsKeys } from "@/data/lib/catalyst/places/event-management";
 import { buildHangoutSubmit, deleteHangout, emptyDraft, eventToDraft, loadEditableHangout, uploadHangoutPoster, type EditableHangout } from "@/data/lib/catalyst/landings/submit-hangout";
 import { loadHangoutOptions, type HangoutOptions } from "@/data/lib/catalyst/landings/hangout-options";
 import { useAuth } from "@/data/lib/auth/context";
 import { CatalystError } from "@/data/lib/catalyst/client";
 import { getIdentity } from "@/data/lib/auth/session";
 import { SitesLayoutMaybe } from "@/features/components/chrome/SitesLayout";
-import type { SitesLocaleHandle } from "@dcl/one-ui/apps/sites/chrome/sites-locale";
 import { openSignIn } from "@/features/components/auth/signin-store";
 import { useSignInRequired } from "@/features/components/auth/useSignInRequired";
 import { parseUuidParam } from "@/data/lib/creators/ids";
@@ -25,7 +24,8 @@ import SubmitHangout, {
   SubmitHangoutLoading,
   type CategoryOption,
 } from "@/features/social/submit-hangout/SubmitHangout";
-import DeleteEventDialog from "@/features/social/submit-hangout/DeleteEventDialog";
+import DeleteEventDialog, { type DeleteEventError } from "@/features/social/submit-hangout/DeleteEventDialog";
+import { useHangoutSignInDraft } from "@/features/social/submit-hangout/sign-in-draft";
 
 import type { Route } from "./+types/events_.new-event";
 import type { StoryId } from "@/core/lib/telemetry/story-id";
@@ -117,9 +117,24 @@ function SubmitHangoutForm({ loaderData }: Route.ComponentProps) {
   const [loaded, setLoaded] = useState<{ account: string; id: string; event?: EditableHangout; error?: string; status?: number } | null>(null);
   const [attempt, setAttempt] = useState(0);
   const [confirmingDelete, setConfirmingDelete] = useState(false);
-  const [deleteFailed, setDeleteFailed] = useState(false);
+  const [deleteError, setDeleteError] = useState<DeleteEventError | null>(null);
   const [deleting, setDeleting] = useState(false);
   const [optionsRead, setOptionsRead] = useState<{ account: string; options?: HangoutOptions; error?: string } | null>(null);
+  // The account the editor was opened for. A sign-out or an expired session keeps the editor, its draft
+  // and the event read for that account behind the editor's own sign-in gate, until another account signs in.
+  const [editorAccount, setEditorAccount] = useState<string | null>(null);
+  useEffect(() => {
+    if (auth.address) setEditorAccount(auth.address.toLowerCase());
+  }, [auth.address]);
+  const account = auth.address?.toLowerCase() ?? editorAccount;
+  const held = !auth.isConnected && editorAccount !== null;
+  const returnTo = location.pathname + location.search + location.hash;
+  const mounted = useRef(true);
+  useEffect(() => {
+    // StrictMode runs this setup again after a cleanup, so the flag is restored here, not only at creation.
+    mounted.current = true;
+    return () => { mounted.current = false; };
+  }, []);
   useEffect(() => {
     if (!auth.identity) return;
     const controller = new AbortController();
@@ -130,7 +145,7 @@ function SubmitHangoutForm({ loaderData }: Route.ComponentProps) {
     );
     return () => controller.abort();
   }, [auth.identity, attempt]);
-  const optionsResult = optionsRead?.account === auth.address ? optionsRead : null;
+  const optionsResult = optionsRead?.account.toLowerCase() === account ? optionsRead : null;
   const options = optionsResult?.options ?? null;
   const optionsRef = useRef(options);
   optionsRef.current = options;
@@ -145,9 +160,11 @@ function SubmitHangoutForm({ loaderData }: Route.ComponentProps) {
     );
     return () => controller.abort();
   }, [d.mode, d.eventId, auth.identity, attempt]);
-  const current = loaded?.account === auth.address && loaded?.id === d.eventId ? loaded : null;
+  const current = loaded?.account.toLowerCase() === account && loaded?.id === d.eventId ? loaded : null;
   const original = current?.event;
-  const owner = Boolean(original && original.user?.toLowerCase() === auth.address?.toLowerCase());
+  const baseDraft = original ? eventToDraft(original) : { ...emptyDraft(), communityId: d.communityId };
+  const signInDraft = useHangoutSignInDraft(returnTo, account, baseDraft, held);
+  const owner = Boolean(original && account && original.user?.toLowerCase() === account);
   const canEditAny = options?.profile?.permissions.includes("edit_any_event") ?? false;
   const canEdit = d.mode === "create" || Boolean(original && (owner || canEditAny));
   const canChangeCommunity = d.mode === "create" || owner;
@@ -156,7 +173,7 @@ function SubmitHangoutForm({ loaderData }: Route.ComponentProps) {
   // A signed-out visitor goes straight to sign-in and comes back to this same editor: creating needs an
   // account, and an edit link (a rejection email, say) names an event only its owner or a moderator edits.
   const signedOut = !auth.isConnected && (d.mode === "create" || Boolean(d.eventId));
-  useSignInRequired(signedOut && hydrated, auth.isConnected);
+  useSignInRequired(signedOut && hydrated && !held, auth.isConnected);
   // As decentraland.org: an edit link that is missing its event, refused or not found, or definitely not
   // this account's to edit goes back to the Events page instead of showing an error.
   const editDenied = d.mode === "edit" && (
@@ -178,20 +195,30 @@ function SubmitHangoutForm({ loaderData }: Route.ComponentProps) {
   }, [editReady, d.eventId, location.hash]);
 
   async function removeHangout() {
+    if (!original || !canEdit) return;
     const identity = getIdentity();
-    if (!identity || !original || !canEdit || identity.signer.toLowerCase() !== auth.address?.toLowerCase()) return;
+    // The session ended or another account signed in elsewhere: deleting with it would act for someone else.
+    if (!identity || !auth.isConnected || identity.signer.toLowerCase() !== account) {
+      setDeleteError("session");
+      return;
+    }
     setDeleting(true);
-    setDeleteFailed(false);
+    setDeleteError(null);
     try {
       await deleteHangout(identity, original.id);
-      void invalidateEventsAfterWrite(queryClient);
-      setConfirmingDelete(false);
-      void navigate("/events?tab=my");
     } catch {
-      setDeleteFailed(true);
-    } finally {
+      setDeleteError("failed");
       setDeleting(false);
+      return;
     }
+    // My Events opens on a fresh read, never on a cached list that still holds the deleted event: it is
+    // not mounted here, so an invalidation alone would only mark it stale.
+    if (account) queryClient.removeQueries({ queryKey: ownedEventsKeys.mine(account) });
+    await invalidateEventsAfterWrite(queryClient);
+    if (!mounted.current) return;
+    setDeleting(false);
+    setConfirmingDelete(false);
+    void navigate("/events?tab=my");
   }
 
   const submit = buildHangoutSubmit(getIdentity, original, () => optionsRef.current?.profile?.permissions.includes("edit_any_event") ?? false);
@@ -199,13 +226,14 @@ function SubmitHangoutForm({ loaderData }: Route.ComponentProps) {
   return (
     <SitesLayoutMaybe active="whatson" headerSurface={inline ? "overlay" : "solid"} overlayNav={inline} footerCopy={footerCopy}>
     <LdSubmitHangoutView>
+      {signInDraft.saveFailed && <Notice tone="error">{text("Your browser couldn't keep your draft for sign-in. Copy what you wrote, then choose Sign In again to continue without it.")}</Notice>}
       {/* Signed out (and on the server, which renders anonymously) the page only waits: sign-in opens on its own. */}
-      {signedOut || (d.mode === "edit" && !editReady) ? <SubmitHangoutLoading
+      {(signedOut && !held) || (d.mode === "edit" && !editReady) ? <SubmitHangoutLoading
         mode={d.mode}
         error={signedOut ? null : editFailed}
         onRetry={() => { setLoaded(null); setOptionsRead(null); setAttempt((previous) => previous + 1); }}
       /> : <SubmitHangout
-        key={`${auth.address ?? "signed-out"}:${d.eventId ?? "new"}`}
+        key={`${account ?? "signed-out"}:${d.eventId ?? "new"}:${signInDraft.restored ? "restored" : "fresh"}`}
         trackCtx={{
           sid: d.sid,
           story: STORY,
@@ -221,10 +249,12 @@ function SubmitHangoutForm({ loaderData }: Route.ComponentProps) {
         categories={d.categories}
         categoriesError={d.categoriesError}
         mode={d.mode}
-        draft={original ? eventToDraft(original) : { ...emptyDraft(), communityId: d.communityId }}
+        draft={signInDraft.restored ?? baseDraft}
+        onDraftChange={signInDraft.remember}
         originalSchedule={original}
         submit={async (input) => {
           const result = await submit(input);
+          signInDraft.forget();
           void invalidateEventsAfterWrite(queryClient);
           return result;
         }}
@@ -233,7 +263,7 @@ function SubmitHangoutForm({ loaderData }: Route.ComponentProps) {
         options={options}
         privateFieldsEditable={d.mode === "create" || owner}
         canChangeCommunity={canChangeCommunity}
-        onDelete={editReady ? () => { setDeleteFailed(false); setConfirmingDelete(true); } : undefined}
+        onDelete={editReady ? () => { setDeleteError(null); setConfirmingDelete(true); } : undefined}
         upload={(file, vertical, signal) => {
           const identity = getIdentity();
           if (!identity) return Promise.reject(new Error(text("Sign in to upload an image.")));
@@ -243,7 +273,7 @@ function SubmitHangoutForm({ loaderData }: Route.ComponentProps) {
       {confirmingDelete && editReady && (
         <DeleteEventDialog
           busy={deleting}
-          error={deleteFailed}
+          error={deleteError}
           onCancel={() => setConfirmingDelete(false)}
           onConfirm={() => { void removeHangout(); }}
         />
