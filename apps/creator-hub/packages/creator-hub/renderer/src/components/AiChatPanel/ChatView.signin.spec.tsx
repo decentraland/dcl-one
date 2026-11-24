@@ -1,4 +1,4 @@
-import { cleanup, render, screen } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { ai } from '#preload';
 
@@ -47,6 +47,13 @@ function renderWith(provider: Partial<ChatViewProps['providers'][number]>) {
       <ChatView {...props} />
     </TestProviders>,
   );
+  return props;
+}
+
+function type(command: string) {
+  const composer = screen.getByRole('textbox');
+  fireEvent.change(composer, { target: { value: command } });
+  fireEvent.keyDown(composer, { key: 'Enter' });
 }
 
 describe('AI chat panel', () => {
@@ -70,7 +77,7 @@ describe('AI chat panel', () => {
   });
 
   describe('when an agent the app signed in to asks to sign in again', () => {
-    it('should point at Settings instead of terminal commands', () => {
+    it('should point at /login instead of terminal commands', () => {
       renderWith({ id: 'codex', label: 'Codex', managedSignIn: true, needsLogin: true });
       expect(screen.getByText('editor.ai.setup.needs_login_managed_help')).toBeTruthy();
       expect(screen.queryByText('editor.ai.setup.needs_login_help')).toBeNull();
@@ -94,6 +101,93 @@ describe('AI chat panel', () => {
     it('should not show the sign-in hint', () => {
       renderWith({});
       expect(screen.queryByText('editor.ai.setup.needs_login_title')).toBeNull();
+    });
+  });
+});
+
+describe('AI chat panel account actions', () => {
+  afterEach(() => {
+    cleanup();
+    vi.restoreAllMocks();
+  });
+
+  describe('when the app signed in to the agent', () => {
+    it('should sign out from the chat menu and detect the agents again', async () => {
+      const signOut = vi.spyOn(ai, 'signOutCli').mockResolvedValue();
+      const props = renderWith({ managedSignIn: true });
+
+      fireEvent.click(screen.getByRole('button', { name: 'editor.ai.new_chat' }));
+      fireEvent.click(screen.getByRole('menuitem', { name: /editor\.ai\.account\.sign_out/ }));
+
+      expect(signOut).toHaveBeenCalledWith('claude');
+      await waitFor(() => expect(props.onRecheck).toHaveBeenCalled());
+    });
+
+    it('should sign out on /logout without sending it to the agent', async () => {
+      const signOut = vi.spyOn(ai, 'signOutCli').mockResolvedValue();
+      const props = renderWith({ managedSignIn: true });
+
+      type('/logout');
+
+      expect(signOut).toHaveBeenCalledWith('claude');
+      expect(props.onSend).not.toHaveBeenCalled();
+      await waitFor(() => expect(props.onRecheck).toHaveBeenCalled());
+    });
+
+    it('should sign out and start a new sign-in on /login', async () => {
+      const signOut = vi.spyOn(ai, 'signOutCli').mockResolvedValue();
+      const signIn = vi.spyOn(ai, 'signInCli').mockReturnValue(new Promise(() => {}));
+      const props = renderWith({ managedSignIn: true });
+
+      type('/login');
+
+      expect(signOut).toHaveBeenCalledWith('claude');
+      await waitFor(() => expect(signIn).toHaveBeenCalledWith('claude', expect.any(Function)));
+      expect(props.onSend).not.toHaveBeenCalled();
+    });
+
+    it('should show why the sign-out failed', async () => {
+      vi.spyOn(ai, 'signOutCli').mockRejectedValue(new Error('claude sign-out timed out'));
+      renderWith({ managedSignIn: true });
+
+      type('/logout');
+
+      expect(await screen.findByText('claude sign-out timed out')).toBeTruthy();
+    });
+  });
+
+  describe('when the agent signs in from its own terminal', () => {
+    it('should offer no sign-out in the chat menu', () => {
+      renderWith({});
+
+      fireEvent.click(screen.getByRole('button', { name: 'editor.ai.new_chat' }));
+
+      expect(screen.queryByRole('menuitem', { name: /editor\.ai\.account\.sign_out/ })).toBeNull();
+    });
+
+    it('should show the terminal steps on /logout instead of sending it to the agent', () => {
+      const signOut = vi.spyOn(ai, 'signOutCli');
+      const props = renderWith({});
+
+      type('/logout');
+
+      expect(screen.getByText('editor.ai.account.terminal')).toBeTruthy();
+      expect(screen.getAllByText(/^claude auth/).map(e => e.textContent)).toEqual([
+        'claude auth logout',
+        'claude auth login',
+      ]);
+      expect(signOut).not.toHaveBeenCalled();
+      expect(props.onSend).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('when a message only mentions /login', () => {
+    it('should send it to the agent', () => {
+      const props = renderWith({ managedSignIn: true });
+
+      type('how does /login work?');
+
+      expect(props.onSend).toHaveBeenCalledWith('how does /login work?', undefined);
     });
   });
 });

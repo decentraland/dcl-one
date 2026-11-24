@@ -6,8 +6,8 @@ import { CloseIcon, InfoOutlinedIcon } from "./icons-material";
 import stylesheet from "./icons-material.module.css?raw";
 
 describe("material icons", () => {
-  test("the file exports the 64 icons the Creator Hub uses", () => {
-    expect(Object.keys(icons)).toHaveLength(64);
+  test("the file exports the 65 icons the Creator Hub uses", () => {
+    expect(Object.keys(icons)).toHaveLength(65);
   });
 
   test("an icon is decorative by default", () => {

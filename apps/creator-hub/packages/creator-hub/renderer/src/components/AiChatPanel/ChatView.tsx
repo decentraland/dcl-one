@@ -17,6 +17,7 @@ import {
   ContentCopyIcon,
   OpenInNewIcon,
   DeleteOutlineIcon,
+  LogoutIcon,
 } from '@ui/atoms/icons-material';
 import { cx } from '/@/lib/cx';
 import Markdown, { type MarkdownToJSX } from 'markdown-to-jsx';
@@ -358,6 +359,12 @@ function recordingChipLabel(recording: AiPendingRecording): string {
   return t(key, values);
 }
 
+type AccountNotice =
+  | { kind: 'signing_out' }
+  | { kind: 'error'; message: string }
+  // The agent signs in from its own CLI, so the panel can only show the terminal steps.
+  | { kind: 'terminal' };
+
 function ClearMentionButton({ label, onClick }: { label: string; onClick: () => void }) {
   return (
     <Tooltip
@@ -525,6 +532,27 @@ export function ChatView(props: ChatViewProps) {
     submitCode: handleSubmitSignInCode,
   } = useCliSignIn(provider, onRecheck);
 
+  // Switching accounts is sign out, then sign in. The agent's own /login and /logout don't run
+  // behind the panel (each turn is a one-shot `-p` run), so the composer handles both words.
+  const [account, setAccount] = useState<AccountNotice | null>(null);
+  useEffect(() => setAccount(null), [provider]);
+  const signOut = useCallback(
+    async (thenSignIn: boolean) => {
+      setAccount({ kind: 'signing_out' });
+      try {
+        await aiPreload.signOutCli(provider);
+      } catch (e) {
+        setAccount({ kind: 'error', message: e instanceof Error ? e.message : String(e) });
+        onRecheck();
+        return;
+      }
+      setAccount(null);
+      onRecheck();
+      if (thenSignIn) void handleSignIn();
+    },
+    [provider, onRecheck, handleSignIn],
+  );
+
   useEffect(() => {
     const el = transcriptRef.current;
     if (el !== null) el.scrollTop = el.scrollHeight;
@@ -600,10 +628,17 @@ export function ChatView(props: ChatViewProps) {
     if (busy) return;
     const text = input.trim();
     if (text === '' && attachments.length === 0 && recording === null) return;
+    const command = text.toLowerCase();
+    if (attachments.length === 0 && (command === '/login' || command === '/logout')) {
+      setInput('');
+      if (currentProvider?.managedSignIn === true) void signOut(command === '/login');
+      else setAccount({ kind: 'terminal' });
+      return;
+    }
     onSend(text, attachments.length > 0 ? attachments : undefined);
     setInput('');
     setAttachments([]);
-  }, [busy, input, attachments, recording, onSend]);
+  }, [busy, input, attachments, recording, onSend, currentProvider, signOut]);
 
   useEffect(() => {
     if (!autoSend || busy) return;
@@ -1085,6 +1120,29 @@ export function ChatView(props: ChatViewProps) {
                 </IconButton>
               </div>
             ))}
+            {available && currentProvider?.managedSignIn === true && (
+              <>
+                <MenuSeparator />
+                <MenuItem
+                  className={styles.menuItem}
+                  disabled={busy || account?.kind === 'signing_out'}
+                  onClick={() => {
+                    setChatMenuAnchor(null);
+                    void signOut(false);
+                  }}
+                >
+                  <LogoutIcon className={styles.menuIcon} />
+                  <span className={styles.sessionText}>
+                    <span>
+                      {t('editor.ai.account.sign_out', { provider: currentProvider.label })}
+                    </span>
+                    <span className={styles.sessionWhen}>
+                      {t('editor.ai.account.sign_out_hint')}
+                    </span>
+                  </span>
+                </MenuItem>
+              </>
+            )}
           </Menu>
           {providers.length > 1 && (
             <Select
@@ -1252,6 +1310,54 @@ export function ChatView(props: ChatViewProps) {
               />
             </div>
           ))}
+
+        {account !== null && (
+          <div
+            className={styles.accountNotice}
+            role="status"
+          >
+            {account.kind === 'signing_out' && (
+              <>
+                <Spinner
+                  ring="wide"
+                  size={16}
+                  role="progressbar"
+                />
+                <span>
+                  {t('editor.ai.account.signing_out', {
+                    provider: currentProvider?.label ?? provider,
+                  })}
+                </span>
+              </>
+            )}
+            {account.kind === 'error' && (
+              <div className={cx(styles.errorRow, styles.accountBody)}>{account.message}</div>
+            )}
+            {account.kind === 'terminal' && (
+              <div className={cx(styles.signInHintBody, styles.accountBody)}>
+                <span>
+                  {t('editor.ai.account.terminal', {
+                    provider: currentProvider?.label ?? provider,
+                  })}
+                </span>
+                {cmds.relogin.map(step => (
+                  <pre
+                    className={styles.commandLine}
+                    key={step}
+                  >
+                    {step}
+                  </pre>
+                ))}
+              </div>
+            )}
+            {account.kind !== 'signing_out' && (
+              <ClearMentionButton
+                label={t('editor.ai.account.dismiss')}
+                onClick={() => setAccount(null)}
+              />
+            )}
+          </div>
+        )}
 
         <div
           className={styles.composer}

@@ -178,8 +178,15 @@
         "needs_login_status": "Inicio de sesión necesario",
         "needs_login_title": "{provider} te pidió que inicies sesión",
         "needs_login_help": "Puede que su sesión guardada haya caducado, aunque aparezca como conectado. Cierra sesión y vuelve a iniciarla: ejecuta esto en una terminal, un comando a la vez, y termina en tu navegador. Luego vuelve a enviar tu mensaje:",
-        "needs_login_managed_help": "Puede que su inicio de sesión guardado haya caducado, aunque apareciera como conectado. En Configuración → IA, haz clic en Cerrar sesión y luego en Iniciar sesión, y vuelve a enviar tu mensaje.",
+        "needs_login_managed_help": "Puede que su inicio de sesión guardado haya caducado, aunque apareciera como conectado. Escribe /login para volver a iniciar sesión y vuelve a enviar tu mensaje.",
         "api_key_alternative": "O usa una clave de API: define {envVar} y activa \"{setting}\" en Configuración → IA."
+      },
+      "account": {
+        "sign_out": "Cerrar sesión en {provider}",
+        "sign_out_hint": "Para cambiar de cuenta, cierra sesión y vuelve a iniciarla.",
+        "signing_out": "Cerrando sesión en {provider}…",
+        "terminal": "{provider} inicia sesión desde su propia terminal. Para cerrar sesión o cambiar de cuenta, ejecuta estos comandos uno por uno:",
+        "dismiss": "Cerrar"
       },
       "recording": {
         "chip": "Grabación de sesión · {duration} · {actions} {actions, plural, one {acción} other {acciones}}",
