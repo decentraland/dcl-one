@@ -1491,7 +1491,9 @@ fn only_the_scene_the_local_player_stands_in_plates_anyone() {
     assert_eq!(plate_of(&app, local).as_deref(), Some("Host"));
 
     // held out of the world while a scene loads
-    app.world_mut().entity_mut(local).insert(OutOfWorld);
+    app.world_mut()
+        .entity_mut(local)
+        .insert(OutOfWorld::default());
     app.update();
     assert_eq!(plate_of(&app, local), None);
     assert_eq!(plate_of(&app, visitor), None);
