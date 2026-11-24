@@ -46,17 +46,18 @@ name: Bevy Explorer / Benchmark
         default: false
 permissions: {}
 # A newer CI run of the same PR makes a run in progress obsolete, so it cancels it, as does adding
-# the suite label. The PR's group takes only the events setup's condition lets through; the others
-# (a fork's PR, a failed CI run, a CI run of no PR or not started by a pull_request event, such as
-# a manual one on the PR's branch, any other label) get the run's own group, so they cancel nothing. A passed CI re-run of an older commit of
-# the PR still joins: it cancels a run in progress, then the resolver skips it. A PR given by URL
-# to a manual run forms a group of its own.
+# the suite label. The PR's group takes only the events setup's condition lets through, and of CI
+# runs only one of the PR's head; the others (a fork's PR, a failed CI run, a re-run of an older
+# commit, a CI run of no PR or not started by a pull_request event, such as a manual one on the
+# PR's branch, any other label) get the run's own group, so they cancel nothing: a suite holds
+# the laptops for hours. A PR given by URL to a manual run forms a group of its own.
 concurrency:
   group: >-
     bevy-explorer-benchmark-${{
       (github.event_name == 'workflow_run' && github.event.workflow_run.event == 'pull_request' &&
        github.event.workflow_run.conclusion == 'success' &&
        github.event.workflow_run.head_repository.full_name == github.repository &&
+       github.event.workflow_run.head_sha == github.event.workflow_run.pull_requests[0].head.sha &&
        github.event.workflow_run.pull_requests[0].number) ||
       (github.event_name == 'workflow_dispatch' && github.event.inputs.pr) ||
       (github.event_name == 'pull_request_target' && github.event.label.name == 'performance-suite' &&
@@ -180,16 +181,18 @@ jobs:
           github-token: ${{ github.token }}
           body-file: section.md
   # A leg sent to an offline, stuck or busy laptop sits queued for 24 hours with no message;
-  # timeout-minutes only counts once a job starts. A laptop runs its legs one after another, so
-  # the wait is per laptop: one with a leg still to start that has run none of this run's legs
-  # for the timeout cancels the run. The timeout is generous because a laptop busy with another
-  # job is the likeliest cause. It ends when every leg has started, so it has no timeout of its
-  # own.
+  # timeout-minutes only counts once a job starts. A laptop runs one job at a time, a suite's legs
+  # one after another, so the wait is per laptop: one with a leg of this run still to start that
+  # has run no benchmark job, of this run or another, for the timeout cancels the run. The timeout
+  # is generous because a laptop busy with another repository's job is the likeliest cause. The
+  # job ends when every leg has started, or stops watching, with a warning, before GitHub's six
+  # hours would end it as a failure.
   watchdog:
     name: Queue watchdog
     needs: setup
     if: needs.setup.outputs.run == 'true'
     runs-on: ubuntu-26.04
+    timeout-minutes: 360
     permissions:
       contents: read
       actions: write
@@ -200,6 +203,7 @@ jobs:
       PR_NUMBER: ${{ needs.setup.outputs.pr }}
       LEGS: ${{ needs.setup.outputs.legs }}
       QUEUE_TIMEOUT_MINUTES: ${{ vars.BENCHMARK_QUEUE_TIMEOUT_MINUTES || 60 }}
+      WATCH_LIMIT_MINUTES: '340'
       RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -214,21 +218,34 @@ jobs:
           source "$GITHUB_WORKSPACE/.github/actions/bevy-explorer-ci-status/retry.sh"
           : "${LEGS:?Expected benchmark legs are required}"
           timeout=$((60 * QUEUE_TIMEOUT_MINUTES))
+          limit=$((60 * ${WATCH_LIMIT_MINUTES:-340}))
           started=$SECONDS
-          # Each laptop with a leg still to start: the time it was last seen running one of this
-          # run's legs, or first seen waiting. A leg's job is "<label> (<scenario>) / Chrome".
+          # Each laptop with a leg still to start: the time it was last seen running a benchmark
+          # job, or first seen waiting. A leg's job is "<label> (<scenario>) / Chrome".
           waiting='{}'
           QUEUE_INITIAL_DELAY_SECONDS=5
           QUEUE_MAX_DELAY_SECONDS=60
           attempt=1
           while :; do
+            # the runner labels of every benchmark job in progress, this run's or another's: a
+            # laptop running one is busy, not stuck
+            busy='[]'
+            if runs=$(gh api "repos/$GITHUB_REPOSITORY/actions/workflows/bevy-explorer-benchmark.yml/runs?status=in_progress&per_page=100") &&
+              ids=$(jq -r '.workflow_runs[].id' <<< "$runs"); then
+              busy=$(for id in $ids; do
+                  gh api "repos/$GITHUB_REPOSITORY/actions/runs/$id/jobs?per_page=100" |
+                    jq -r '.jobs[] | select(.status == "in_progress") | .labels[]' || true
+                done | jq -Rsc 'split("\n") | map(select(. != "")) | unique')
+            fi
             if jobs=$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID/jobs?per_page=100") &&
-              next=$(jq -c --argjson legs "$LEGS" --argjson waiting "$waiting" --argjson now "$SECONDS" '
+              next=$(jq -c --argjson legs "$LEGS" --argjson waiting "$waiting" --argjson busy "$busy" \
+                --argjson now "$SECONDS" '
                 .jobs as $jobs |
                 [$legs[] | (.label + " (" + .scenario + ") / Chrome") as $name |
                   {laptop: .label,
                    started: any($jobs[]; .name == $name and (.status == "in_progress" or .status == "completed")),
-                   running: any($jobs[]; .name == $name and .status == "in_progress")}] |
+                   running: (any($jobs[]; .name == $name and .status == "in_progress") or
+                             (.runs_on as $runner | $busy | index([$runner]) != null))}] |
                 [group_by(.laptop)[] | select(any(.[]; .started | not)) |
                   {key: .[0].laptop,
                    value: (if any(.[]; .running) then $now else ($waiting[.[0].laptop] // $now) end)}] |
@@ -241,6 +258,11 @@ jobs:
             if [ -n "$queued" ]; then break; fi
             # no usable answer yet: the run's own start counts
             if [ "$waiting" = '{}' ] && [ $((SECONDS - started)) -ge "$timeout" ]; then break; fi
+            if [ $((SECONDS - started)) -ge "$limit" ]; then
+              echo "::warning::Stopped watching after $WATCH_LIMIT_MINUTES minutes with legs still to start; their own timeouts apply"
+              echo "The queue watchdog stopped watching after $WATCH_LIMIT_MINUTES minutes with legs still to start." >> "$GITHUB_STEP_SUMMARY"
+              exit 0
+            fi
             delay=$(backoff_delay "$attempt" "$QUEUE_MAX_DELAY_SECONDS" "$QUEUE_INITIAL_DELAY_SECONDS")
             sleep_for "$delay" "$timeout"
             attempt=$((attempt + 1))

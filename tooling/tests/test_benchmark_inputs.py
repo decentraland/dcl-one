@@ -354,18 +354,30 @@ class OutputTest(unittest.TestCase):
 
 
 class QueueWatchdogTest(unittest.TestCase):
-    def queue(self, states, timeout=1, expire_after_sleep=False, scenarios=('still',)):
+    def queue(self, states, timeout=1, expire_after_sleep=False, scenarios=('still',), others=None, limit=''):
+        """Runs the watchdog's step: `states` answer this run's jobs read by read, `others` the
+        jobs of the other benchmark runs in progress, by run ID."""
         source = (Path(__file__).parents[2] / '.github/workflows/bevy-explorer-benchmark.yml').read_text()
         step = source.split('      - name: Wait for every leg to start\n', 1)[1]
         body = step.split('        run: |\n', 1)[1].split('      - name:', 1)[0]
         with tempfile.TemporaryDirectory() as temporary:
             folder = Path(temporary)
             (folder / 'states.json').write_text(json.dumps(states))
+            (folder / 'others.json').write_text(json.dumps(others or {}))
             gh = folder / 'gh'
             gh.write_text(f'#!{sys.executable}\n' + textwrap.dedent("""\
-                import json, os
+                import json, os, re, sys
                 from pathlib import Path
                 folder = Path(os.environ['QUEUE_FIXTURE'])
+                path = sys.argv[2]
+                others = json.loads((folder / 'others.json').read_text())
+                if '/workflows/' in path:
+                    print(json.dumps({'workflow_runs': [{'id': int(run)} for run in others]}))
+                    raise SystemExit
+                run = re.search(r'/runs/([0-9]+)/jobs', path).group(1)
+                if run != '42':
+                    print(json.dumps({'jobs': others[run]}))
+                    raise SystemExit
                 counter = folder / 'calls'
                 call = int(counter.read_text()) if counter.exists() else 0
                 counter.write_text(str(call + 1))
@@ -377,9 +389,10 @@ class QueueWatchdogTest(unittest.TestCase):
             environment = dict(os.environ, PATH=f'{folder}{os.pathsep}{os.environ["PATH"]}',
                                QUEUE_FIXTURE=str(folder), GITHUB_WORKSPACE=str(Path(__file__).parents[2]),
                                QUEUE_EXPIRE_AFTER_SLEEP='1' if expire_after_sleep else '',
-                               LEGS=json.dumps([{'label': label, 'scenario': scenario}
+                               WATCH_LIMIT_MINUTES=str(limit),
+                               LEGS=json.dumps([{'label': f'{runner}-chrome', 'runs_on': runner, 'scenario': scenario}
                                                 for scenario in scenarios
-                                                for label in ('first-chrome', 'second-chrome')]),
+                                                for runner in ('first', 'second')]),
                                QUEUE_TIMEOUT_MINUTES=str(timeout), GITHUB_REPOSITORY=REPO,
                                GITHUB_RUN_ID='42', RUN_URL='https://example.test/run',
                                GITHUB_STEP_SUMMARY=str(folder / 'summary'), GITHUB_OUTPUT=str(folder / 'output'))
@@ -449,6 +462,27 @@ class QueueWatchdogTest(unittest.TestCase):
         self.assertEqual((calls, output), (2, 'stuck=true\n'))
         self.assertIn('**second-chrome**', summary)
         self.assertNotIn('first-chrome', summary)
+
+    def test_a_laptop_busy_with_another_benchmark_run_is_not_stuck(self):
+        mine = {'jobs': [
+            {'name': 'first-chrome (still) / Chrome', 'status': 'in_progress', 'labels': ['first']},
+            {'name': 'second-chrome (still) / Chrome', 'status': 'queued', 'labels': ['second']},
+        ]}
+        started = {'jobs': [{**job, 'status': 'in_progress'} for job in mine['jobs']]}
+        # another PR's suite holds the second laptop for the first two polls, an hour apart
+        suite = {'7': [{'name': 'second-chrome (walk) / Chrome', 'status': 'in_progress', 'labels': ['second']},
+                       {'name': 'Report', 'status': 'queued', 'labels': ['ubuntu-26.04']}]}
+        calls, _, output, _ = self.queue([mine, mine, started], expire_after_sleep=True, others=suite)
+        self.assertEqual((calls, output), (3, ''))
+
+    def test_the_watchdog_stops_watching_before_the_job_limit(self):
+        queued = {'jobs': [
+            {'name': 'first-chrome (still) / Chrome', 'status': 'in_progress'},
+            {'name': 'second-chrome (still) / Chrome', 'status': 'queued'},
+        ]}
+        calls, sleeps, output, summary = self.queue([queued], timeout=600, limit=0)
+        self.assertEqual((calls, sleeps, output), (1, [], ''))
+        self.assertIn('stopped watching after 0 minutes', summary)
 
     def test_final_unusable_response_preserves_the_last_queued_runner(self):
         queued = {'jobs': [

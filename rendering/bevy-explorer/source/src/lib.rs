@@ -683,9 +683,19 @@ impl DecentralandApp {
                 None => (),
             }
             match arguments.client.autopilot_avatars {
-                Some(count) if measure => {
-                    app.insert_resource(common::autopilot::AutopilotCrowd { count });
-                }
+                Some(count) if measure => match system_api_types::launch_options::crowd(count) {
+                    Ok(count) => {
+                        app.insert_resource(common::autopilot::AutopilotCrowd { count });
+                    }
+                    // the web's value skips the native flag's check; a smaller crowd than asked
+                    // would be measured as the one asked for
+                    Err(reason) => {
+                        error!(target: common::autopilot::LOG_TARGET, "autopilot crowd: {reason}");
+                        app.insert_resource(common::autopilot::AutopilotPhase::Ending {
+                            exit_code: 1,
+                        });
+                    }
+                },
                 Some(_) => warn!(
                     "--autopilot-avatars has no effect without --csv: the run ends once it arrives"
                 ),

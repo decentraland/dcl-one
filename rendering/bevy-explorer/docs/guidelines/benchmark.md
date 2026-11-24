@@ -55,9 +55,10 @@ CI* run, whose artifacts hold the builds ([The workflow](#the-workflow)).
   report, or no laptop enabled; by hand, also no passed CI run of the commit yet, or no web app in
   it (CI built none, or the artifact expired).
 - **One run per pull request.** The next run for the same pull request cancels one in progress:
-  any passed CI run of it that a `pull_request` event started (a re-run of an older commit's
-  included, which then skips), adding the suite label, or a manual run naming it by number (one
-  naming it by URL is a group of its own). A manual CI run on its branch cancels nothing.
+  a passed CI run of its head that a `pull_request` event started, adding the suite label, or a
+  manual run naming it by number (one naming it by URL is a group of its own). A manual CI run on
+  its branch and a CI re-run of an older commit cancel nothing, so a re-run never throws away a
+  suite's hours.
 
 ## What a leg runs
 
@@ -121,11 +122,11 @@ arrives, `autopilotWalkTo` a walk-in, `autopilotAvatars` a crowd of demo avatars
 | --- | --- |
 | `spawn` | Standing at the spawn point of `supportteam.dcl.eth`: the smallest, most repeatable workload. |
 | `genesis-walk` | Arriving on an empty parcel west of Genesis Plaza and walking in, so the plaza's scenes load during play ([walk-in](#launch-options)). |
-| `avatars-100`, `avatars-400` | 100 or 400 demo avatars spawned in front of the player as measuring starts: building them, then drawing them, every one shown. |
+| `avatars-100`, `avatars-400` | 100 or 400 demo avatars spawned in front of the player as measuring starts: building them, then drawing them, with no Max Avatars cap. |
 
 Every scenario runs about as long as `spawn` (warm-ups, then `RUNS` × 2 measured runs), so the
 suite's length grows with the list; the same per-run limits hold. The *Queue watchdog* job runs
-until each laptop has started its last leg, within a GitHub-hosted job's six hours: keep the list
+until each laptop has started its last leg, and stops watching after 340 minutes: keep the list
 short enough that a laptop reaches its last scenario in that time. Setup refuses the list when a
 scenario breaks a rule above, so a broken edit fails the *Inputs* job, not a leg.
 
@@ -277,7 +278,9 @@ A walk-in measures content that loads during play instead of behind the loading 
 A crowd measures avatars: with `--autopilot-avatars <n>` (`?autopilotAvatars=<n>` on the web),
 on the first measured frame the run spawns `n` demo avatars (at most 1024) in the grid in front of
 the player that `/avatar_demo` uses, each with the same seeded look in every run and build, and
-lifts the Max Avatars cap for the session, so every one is built and drawn. The measured 90 s
+lifts the Max Avatars cap for the session, so every one is built and drawn, as is every other
+avatar in the realm. A count outside 1 to 1024 is refused natively and fails a web run (exit
+code 1). The measured 90 s
 include loading and building them, then drawing the whole crowd (`spawn_autopilot_crowd` in
 `crates/avatar/src/debug_avatars.rs`). It needs no scene preview mode. Without a CSV destination
 (the warm-up) neither the walk nor the crowd happens.
@@ -704,11 +707,16 @@ system in `FLEET` (`tooling/benchmark-inputs.py`) and its name in `MACHINES`
 - `BENCHMARK_QUEUE_TIMEOUT_MINUTES`: the watchdog's limit, 60 when unset.
 
 **The watchdog.** A leg sent to an offline, stuck or busy laptop waits in the queue, and a job's
-timeout counts only once it starts. A laptop runs its legs one after another, so the watchdog
-waits per laptop: the *Queue watchdog* job reads the run's jobs every minute, and when a laptop
-with a leg still to start has run none of this run's legs for `BENCHMARK_QUEUE_TIMEOUT_MINUTES`
-(since it was last seen running one, or since the watchdog first saw it waiting), it sets the
-performance section to *Cancelled* with a message naming the laptop and cancels the run. The message says the laptop is
+timeout counts only once it starts. A laptop runs one job at a time, a suite's legs one after
+another, so the watchdog waits per laptop: the *Queue watchdog* job reads every minute the jobs
+of this run and of every other benchmark run in progress, and when a laptop with a leg of this
+run still to start has run no benchmark job, of this run or another (a suite of another pull
+request included), for `BENCHMARK_QUEUE_TIMEOUT_MINUTES` (since it was last seen running one, or
+since the watchdog first saw it waiting), it sets the performance section to *Cancelled* with a
+message naming the laptop and cancels the run. A job of the other repository that uses the fleet
+is not visible to it, so it counts against the limit. After 340 minutes the watchdog stops
+watching with a warning instead of reaching GitHub's six-hour job limit, and the legs' own
+timeouts apply. The message says the laptop is
 offline, stuck or busy with another job, and suggests *Re-run
 failed jobs* once it is free, which keeps the legs that finished and their results, raising
 `BENCHMARK_QUEUE_TIMEOUT_MINUTES`, or leaving the laptop out of `BENCHMARK_ENABLED_RUNNERS`. It

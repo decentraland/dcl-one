@@ -541,24 +541,25 @@ const AUTOPILOT_CROWD_SEED: u64 = 1;
 
 /// The benchmark crowd ([`AutopilotCrowd`]): on the first `Measuring` frame, `count` demo avatars
 /// with seeded looks in the grid in front of the player, and no Max Avatars cap for the session,
-/// so every one of them is built and drawn.
+/// so every one of them is built and drawn (and every other avatar in the realm is shown too).
+/// The resource goes once they are spawned, which ends the system.
 fn spawn_autopilot_crowd(
     mut commands: Commands,
     crowd: Res<AutopilotCrowd>,
     phase: Option<Res<AutopilotPhase>>,
     player: Query<&GlobalTransform, With<PrimaryUser>>,
     mut session: ResMut<SessionGraphics>,
-    mut spawned: Local<bool>,
 ) {
-    if *spawned || phase.is_none_or(|phase| *phase != AutopilotPhase::Measuring) {
+    if phase.is_none_or(|phase| *phase != AutopilotPhase::Measuring) {
         return;
     }
     let Ok(player) = player.single() else {
         return;
     };
-    *spawned = true;
+    commands.remove_resource::<AutopilotCrowd>();
     session.max_avatars = Some(UNCAPPED);
-    let count = crowd.count.min(MAX_DEMOS);
+    // the launch option allows no more than the demo population's ceiling
+    let count = crowd.count;
     for index in 0..count as u64 {
         let (male, wearables) = random_look(
             &mut StdRng::seed_from_u64(look_seed(AUTOPILOT_CROWD_SEED, index)),

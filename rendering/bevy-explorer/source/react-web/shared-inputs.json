@@ -6186,11 +6186,11 @@
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/src/lib/bootMode.ts",
-      "sha256": "731a0deaceed906883a5785ffb19f5dc9b25ebbe5fb0afb2b1270d05ea0d5a3f"
+      "sha256": "190e47afb30693bacdaa1638972f0fd7986986dfe8c803d52f6e42bdcdd7c37f"
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/src/lib/engineLaunch.ts",
-      "sha256": "3ac514c6e866a99955bae55a3b5b4e59205feec33bb8a2ef41552b6db17dd3e7"
+      "sha256": "ab7c18a77488877ff44c9942aa89e374e727a5b85aa358def792f657af871d9b"
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/src/lib/entryParams.ts",
@@ -6254,7 +6254,7 @@
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/src/test/benchmarkSwitches.test.tsx",
-      "sha256": "8e915c54cb9af10d6e06e8f774f1bf7a10b0400e3a0dfce73b390be8e8dc0470"
+      "sha256": "132250dcc7deaa1137d5b63a6e004ee866e4bcbd7b1115d008e624c716e40ca2"
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/src/test/bootWatchdog.test.ts",
@@ -7107,7 +7107,7 @@
     },
     {
       "path": "library/explorer-core/lib/webParams.ts",
-      "sha256": "d99c6f7298dcb5bac95c664809ae19965d2ebdfb5fc839d36e42d3ca2379f3c9"
+      "sha256": "ed1bba7b0ca35430ed53b6c3f640c8dcaaf45028732afb68626a7a90fe098861"
     },
     {
       "path": "library/explorer-core/shell/emailLogin.ts",
@@ -45450,6 +45450,21 @@
       "kind": "test:runtime"
     },
     {
+      "from": "rendering/bevy-explorer/source/react-web/src/lib/bootMode.ts",
+      "to": "library/explorer-core/lib/webParams.ts",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "rendering/bevy-explorer/source/react-web/src/lib/bootMode.ts",
+      "to": "library/explorer-core/lib/webParams.ts",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "rendering/bevy-explorer/source/react-web/src/lib/bootMode.ts",
+      "to": "library/explorer-core/lib/webParams.ts",
+      "kind": "test:runtime"
+    },
+    {
       "from": "rendering/bevy-explorer/source/react-web/src/lib/engineLaunch.ts",
       "to": "library/explorer-core/lib/webParams.ts",
       "kind": "native:runtime"
@@ -45802,6 +45817,11 @@
     {
       "from": "rendering/bevy-explorer/source/react-web/src/test/benchmarkSwitches.test.tsx",
       "to": "library/explorer-core/engine/engineRpc.ts",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "rendering/bevy-explorer/source/react-web/src/test/benchmarkSwitches.test.tsx",
+      "to": "library/explorer-core/lib/webParams.ts",
       "kind": "test:runtime"
     },
     {

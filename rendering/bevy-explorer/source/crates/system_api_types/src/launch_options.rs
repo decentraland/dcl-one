@@ -142,9 +142,10 @@ pub struct ClientOptions {
     pub autopilot_walk_to: Option<String>,
 
     /// Benchmark crowd (`autopilot` with a CSV): once measuring starts, spawn this many demo
-    /// avatars, the same looks every run, in a grid in front of the player, every one shown
-    /// whatever the Max Avatars setting; the measured time includes building them
-    #[arg(long, value_name = "n", help_heading = DEBUG)]
+    /// avatars (1 to 1024), the same looks every run, in a grid in front of the player, with the
+    /// Max Avatars cap lifted for the session, so every avatar in the realm is shown; the measured
+    /// time includes building them
+    #[arg(long, value_name = "n", value_parser = parse_crowd, help_heading = DEBUG)]
     pub autopilot_avatars: Option<usize>,
 
     /// Embedded in a scene editor (creator hub). Set by editor front-ends.
@@ -185,6 +186,28 @@ pub struct ClientOptions {
 pub fn parcel(value: &str) -> Option<(i32, i32)> {
     let (x, y) = value.split_once(',')?;
     Some((x.trim().parse().ok()?, y.trim().parse().ok()?))
+}
+
+/// The most demo avatars `--autopilot-avatars` spawns: the demo population's ceiling.
+pub const AUTOPILOT_MAX_AVATARS: usize = 1024;
+
+/// A crowd of 1 to [`AUTOPILOT_MAX_AVATARS`] avatars.
+pub fn crowd(count: usize) -> Result<usize, String> {
+    if (1..=AUTOPILOT_MAX_AVATARS).contains(&count) {
+        Ok(count)
+    } else {
+        Err(format!(
+            "expected 1 to {AUTOPILOT_MAX_AVATARS} avatars, got {count}"
+        ))
+    }
+}
+
+/// `--autopilot-avatars`'s check: a [`crowd`].
+fn parse_crowd(value: &str) -> Result<usize, String> {
+    value
+        .parse::<usize>()
+        .map_err(|_| format!("expected a number of avatars, got '{value}'"))
+        .and_then(crowd)
 }
 
 /// `--autopilot-walk-to`'s check: a [`parcel`], kept as the text it was given.
@@ -312,6 +335,23 @@ mod tests {
             assert_eq!(parcel(bad), None, "{bad}");
             assert!(
                 Cli::try_parse_from(["x", "--autopilot-walk-to", bad]).is_err(),
+                "{bad}"
+            );
+        }
+    }
+
+    #[test]
+    fn the_crowd_is_1_to_1024_avatars() {
+        let cli = Cli::try_parse_from(["x", "--autopilot-avatars", "1024"]).unwrap();
+        assert_eq!(cli.client.autopilot_avatars, Some(AUTOPILOT_MAX_AVATARS));
+        for bad in ["0", "1025", "-1", "many"] {
+            assert!(parse_crowd(bad).is_err(), "{bad}");
+            assert!(
+                !bad.parse().is_ok_and(|count| crowd(count).is_ok()),
+                "{bad}"
+            );
+            assert!(
+                Cli::try_parse_from(["x", "--autopilot-avatars", bad]).is_err(),
                 "{bad}"
             );
         }
