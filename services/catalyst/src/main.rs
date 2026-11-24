@@ -27,7 +27,7 @@ struct Cli {
 enum Command {
     /// Verify the schema, attach the workers and serve HTTP.
     Serve(Box<Config>),
-    /// Run chain indexes and marketplace mirrors without an HTTP listener.
+    /// Run chain indexes and marketplace mirrors with a private metrics listener.
     Index(Box<Config>),
     /// Administrative schema operations.
     Schema {
@@ -178,7 +178,7 @@ enum ShopCommand {
         database_url: String,
         #[arg(long, value_parser = ["ethereum", "matic"])]
         net: String,
-        #[arg(long, value_parser = ["nft", "sales", "trade_events", "committee", "mana_transfers", "rentals"])]
+        #[arg(long, value_parser = ["nft", "sales", "trade_events", "committee", "mana_transfers", "rentals", "third_party_registry"])]
         indexer: String,
         #[arg(long)]
         from: u64,
@@ -555,7 +555,7 @@ fn main() -> anyhow::Result<()> {
     posture::apply_to_process_env()?;
     // The complete clap tree exceeds the default Windows debug stack. This
     // parser-only thread returns plain values and finishes before V8 or runtime
-    // initialization; it never owns engine state or serves matcher work.
+    // initialization.
     let parsed = std::thread::Builder::new()
         .name("cli-parser".into())
         .stack_size(64 << 20)
@@ -568,37 +568,27 @@ fn main() -> anyhow::Result<()> {
         .join()
         .map_err(|_| anyhow::anyhow!("CLI parser thread panicked"))?;
     let (mut cli, matches) = parsed.unwrap_or_else(|error| error.exit());
-    let prepared = match &mut cli.command {
+    match &mut cli.command {
         Command::Serve(config) => {
             if let Some(arguments) = matches.subcommand_matches("serve") {
                 config.refuse_argv_secrets(arguments)?;
             }
             serve_preflight(config, &|key: &str| std::env::var(key).ok())?;
             catalyst::worlds::scene_state::jsruntime::ensure_v8_initialized();
-            // SAFETY: This startup thread performs the first common initialization.
-            // All runtime/blocking workers descend from it afterwards. Prepared
-            // state never escapes this runtime; its drop joins canceled blocking
-            // work, and final handles are destroyed within this permitted subtree.
-            Some(unsafe {
-                catalyst::metrics_matcher::prepare(
-                    catalyst::comms::stats::http::Settings::from_env(),
-                )?
-            })
         }
         Command::Index(config) => {
             if let Some(arguments) = matches.subcommand_matches("index") {
                 config.refuse_argv_secrets(arguments)?;
             }
             check_posture(config)?;
-            None
         }
-        _ => None,
-    };
+        _ => {}
+    }
     tokio::runtime::Builder::new_multi_thread()
         .enable_all()
         .build()
         .context("building the tokio runtime")?
-        .block_on(run(cli, prepared))
+        .block_on(run(cli))
 }
 
 /// The refusals of [`posture::check`] against this process's environment.
@@ -614,16 +604,9 @@ fn serve_preflight(config: &Config, env: &posture::Lookup) -> anyhow::Result<()>
     Ok(())
 }
 
-async fn run(
-    cli: Cli,
-    prepared: Option<catalyst::metrics_matcher::PreparedStats>,
-) -> anyhow::Result<()> {
+async fn run(cli: Cli) -> anyhow::Result<()> {
     match cli.command {
-        Command::Serve(config) => {
-            let prepared =
-                prepared.context("serve metrics must be prepared before runtime creation")?;
-            catalyst::serve::serve(*config, prepared).await
-        }
+        Command::Serve(config) => catalyst::serve::serve(*config).await,
         Command::Index(config) => catalyst::index::run(*config).await,
         Command::Schema {
             command: SchemaCommand::Apply { database_url },

@@ -6,7 +6,7 @@ import { dispatchCancelLayer } from '@explorer-core/lib/cancelLayers'
 import type { GalleryState, ProfileState, ReelPage } from '../../features/session/useEngineSession'
 import { fakeProfileState } from '../harness'
 import type { GalleryPhoto } from '@explorer-core/engine/protocol'
-import { PopupHost } from '../../design'
+import { PopupHost, closeTopPopup, hasOpenPopup, openPopup } from '../../design'
 
 const profile: ProfileState = fakeProfileState({
   data: { address: '0xme', name: 'Mojito', hasClaimedName: true, isGuest: false }
@@ -29,6 +29,7 @@ function gallery(reel: GalleryPhoto[], over: Partial<GalleryState> = {}): Galler
     ),
     metas: {},
     loadPhoto: vi.fn(),
+    loadWearables: vi.fn(async () => []),
     setPublic: vi.fn(async () => ({ ok: true })),
     remove: vi.fn(async () => ({ ok: true, current: reel.length - 1, max: 500 })),
     ...over
@@ -42,7 +43,7 @@ function renderPage(g: GalleryState, props: Partial<Parameters<typeof GalleryPag
         gallery={g}
         profile={profile}
         onNavigate={vi.fn()}
-        onTeleport={props.onTeleport ?? vi.fn()}
+        onJumpIn={props.onJumpIn ?? vi.fn()}
         onViewProfile={props.onViewProfile ?? vi.fn()}
       />
       <PopupHost />
@@ -185,7 +186,7 @@ describe('GalleryPage', () => {
     const rerender = (open: boolean): void =>
       view.rerender(
         <>
-          <GalleryPage gallery={{ ...g, open }} profile={profile} onNavigate={vi.fn()} onTeleport={vi.fn()} onViewProfile={vi.fn()} />
+          <GalleryPage gallery={{ ...g, open }} profile={profile} onNavigate={vi.fn()} onJumpIn={vi.fn()} onViewProfile={vi.fn()} />
           <PopupHost />
         </>
       )
@@ -229,24 +230,38 @@ describe('GalleryPage', () => {
     expect(screen.queryByRole('dialog', { name: 'Photo' })).toBeNull()
   })
 
-  it('the open lightbox is a cancel layer: one Cancel dispatch closes it, none registered after', async () => {
+  it('the open photo is a popup of its own: one Cancel closes it and leaves none', async () => {
     renderPage(gallery(photos))
     const [first] = await loadThumbnails()
     await userEvent.click(first)
-    act(() => {
-      expect(dispatchCancelLayer()).toBe(true)
-    })
+    expect(hasOpenPopup()).toBe(true)
+    act(() => closeTopPopup())
     expect(screen.queryByRole('dialog', { name: 'Photo' })).toBeNull()
-    expect(dispatchCancelLayer()).toBe(false)
+    expect(hasOpenPopup()).toBe(false)
   })
 
-  it('Jump In teleports to the photo parcel from its metadata', async () => {
-    const onTeleport = vi.fn()
-    renderPage(gallery(photos, { metas: { 'p-feb': { sceneName: 'Genesis Plaza', x: -9, y: 14 } } }), { onTeleport })
+  it('the arrow keys leave the photo alone while another popup is over it', async () => {
+    renderPage(gallery(photos))
+    const [first] = await loadThumbnails()
+    await userEvent.click(first)
+    let close = (): void => undefined
+    act(() => {
+      close = openPopup(() => <div />)
+    })
+    fireEvent.keyDown(window, { key: 'ArrowRight' })
+    expect(screen.queryByRole('button', { name: 'Previous photo' })).toBeNull()
+    act(() => close())
+    fireEvent.keyDown(window, { key: 'ArrowRight' })
+    expect(screen.getByRole('button', { name: 'Previous photo' })).toBeInTheDocument()
+  })
+
+  it('Jump In travels to where the photo was taken, from its metadata', async () => {
+    const onJumpIn = vi.fn(() => 'sent' as const)
+    renderPage(gallery(photos, { metas: { 'p-feb': { sceneName: 'Genesis Plaza', x: -9, y: 14, realm: 'main' } } }), { onJumpIn })
     const [first] = await loadThumbnails()
     await userEvent.click(first)
     await userEvent.click(screen.getByRole('button', { name: /Jump In/i }))
-    expect(onTeleport).toHaveBeenCalledWith(-9, 14)
+    expect(onJumpIn).toHaveBeenCalledWith({ realm: 'main', x: -9, y: 14 })
   })
 
   describe('photo options menu', () => {

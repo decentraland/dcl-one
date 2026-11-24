@@ -65,11 +65,10 @@ mod tests {
             settings,
             None,
             None,
-            Arc::new(Policy::new(
-                pool.clone(),
-                PersonalWorldsPolicy::disabled(),
-                market,
-            )),
+            Arc::new(
+                Policy::new(pool.clone(), PersonalWorldsPolicy::disabled(), market)
+                    .with_subgraph_names(),
+            ),
             Arc::new(SceneResolver::new(pool)),
             Arc::new(catalyst::comms::presence::Presence::new()),
             Arc::new(catalyst::comms::interfaces::test_support::StubDirectory::default()),
@@ -199,11 +198,10 @@ mod tests {
             Settings::for_tests(),
             Some(market.clone()),
             None,
-            Arc::new(Policy::new(
-                pool.clone(),
-                PersonalWorldsPolicy::disabled(),
-                Some(market),
-            )),
+            Arc::new(
+                Policy::new(pool.clone(), PersonalWorldsPolicy::disabled(), Some(market))
+                    .with_subgraph_names(),
+            ),
             Arc::new(SceneResolver::new(pool)),
             Arc::new(catalyst::comms::presence::Presence::new()),
             Arc::new(catalyst::comms::interfaces::test_support::StubDirectory::default()),
@@ -1076,7 +1074,7 @@ mod stream_access {
              WHERE old.entity_id IN (SELECT entity_id FROM content.active_pointers WHERE pointer = ANY($3))",
         )
         .bind(entity_id)
-        .bind(sqlx::types::Json(serde_json::json!({ "scene": { "base": parcel, "parcels": [parcel] } })))
+        .bind(sqlx::types::Json(serde_json::json!({ "v": { "scene": { "base": parcel, "parcels": [parcel] } } })))
         .bind(vec![parcel.to_string()])
         .execute(pool)
         .await
@@ -1766,11 +1764,10 @@ mod stream_access {
             settings,
             None,
             None,
-            Arc::new(Policy::new(
-                pool.clone(),
-                PersonalWorldsPolicy::disabled(),
-                Some(market),
-            )),
+            Arc::new(
+                Policy::new(pool.clone(), PersonalWorldsPolicy::disabled(), Some(market))
+                    .with_subgraph_names(),
+            ),
             Arc::new(SceneResolver::new(pool.clone())),
             Arc::new(catalyst::comms::presence::Presence::new()),
             Arc::new(catalyst::comms::interfaces::test_support::StubDirectory::default()),
@@ -2192,11 +2189,10 @@ mod stream_access {
             settings,
             None,
             None,
-            Arc::new(Policy::new(
-                pool.clone(),
-                PersonalWorldsPolicy::disabled(),
-                Some(market),
-            )),
+            Arc::new(
+                Policy::new(pool.clone(), PersonalWorldsPolicy::disabled(), Some(market))
+                    .with_subgraph_names(),
+            ),
             Arc::new(SceneResolver::new(pool.clone())),
             Arc::new(catalyst::comms::presence::Presence::new()),
             Arc::new(catalyst::comms::interfaces::test_support::StubDirectory::default()),
@@ -3275,7 +3271,7 @@ mod relay_authority_policy {
              timezone('UTC', now()), '[]'::json)",
         )
         .bind(&scene)
-        .bind(sqlx::types::Json(serde_json::json!({ "scene": { "base": parcel } })))
+        .bind(sqlx::types::Json(serde_json::json!({ "v": { "scene": { "base": parcel } } })))
         .bind(vec![parcel.clone()])
         .execute(&pool)
         .await

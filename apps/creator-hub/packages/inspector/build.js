@@ -12,10 +12,11 @@ const PRODUCTION = process.argv.includes('--production');
 
 const externalModulesArray = getNotBundledModules();
 
-// The shared ui3 components are bundled from source. Their files sit outside this
+// The shared ui3 and library/ui components are bundled from source. Their files sit outside this
 // workspace, so `react` is pinned to the copy installed here: one React per bundle.
 const UI3_ALIAS = {
   '@ui': path.resolve(__dirname, '../../../ui3/src'),
+  '@dcl/one-ui': path.resolve(__dirname, '../../../../library/ui'),
   react: path.dirname(require.resolve('react/package.json')),
   'react-dom': path.dirname(require.resolve('react-dom/package.json')),
 };
