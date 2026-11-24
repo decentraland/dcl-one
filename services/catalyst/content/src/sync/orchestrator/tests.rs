@@ -1,5 +1,8 @@
 use super::SnapshotPassVerdict::*;
 use super::*;
+use serde_json::{Value, json};
+use std::sync::atomic::AtomicUsize;
+use tokio::sync::watch;
 
 fn snapshot(hash: &str, end: Timestamp) -> SnapshotMetadata {
     SnapshotMetadata {
@@ -141,6 +144,20 @@ fn allowlist_defines_what_a_complete_pass_is() {
         Some(&set(&["profile"])),
         Some(&set(&["scene", "profile"]))
     ));
+}
+
+#[test]
+fn snapshot_resync_and_poll_defaults_match_the_fetcher() {
+    let config = SyncOrchestratorConfig::default();
+    assert_eq!(
+        config.snapshot_resync_initial_delay,
+        Duration::from_secs(3_600)
+    );
+    assert_eq!(
+        config.snapshot_resync_interval,
+        Duration::from_secs(14 * 86_400)
+    );
+    assert_eq!(config.pointer_changes_wait_time_ms, 5_000);
 }
 
 #[test]
@@ -380,6 +397,10 @@ struct TestPeer {
     url: String,
     http: tokio::task::JoinHandle<()>,
     down: Arc<AtomicBool>,
+    snapshots: watch::Sender<Value>,
+    files: Arc<StdMutex<HashMap<String, Vec<u8>>>>,
+    snapshot_gate: RequestGate,
+    content_gate: RequestGate,
 }
 
 impl Drop for TestPeer {
@@ -388,44 +409,108 @@ impl Drop for TestPeer {
     }
 }
 
+impl TestPeer {
+    async fn advertise_snapshot(&self, timestamp: Timestamp) -> String {
+        let (id, entity, deployment) = test_entity("scene", timestamp).await;
+        let snapshot = serde_json::to_vec(&deployment).unwrap();
+        let hash = crate::auth::hash_bytes_v1(&snapshot);
+        self.files
+            .lock()
+            .unwrap()
+            .extend([(id.clone(), entity), (hash.clone(), snapshot)]);
+        self.snapshots.send_replace(json!([{
+            "hash": hash,
+            "timeRange": {
+                "initTimestamp": timestamp,
+                "endTimestamp": timestamp,
+            },
+            "numberOfEntities": 1,
+            "generationTimestamp": timestamp,
+        }]));
+        id
+    }
+}
+
+#[derive(Clone)]
+struct RequestGate {
+    requests: Arc<AtomicUsize>,
+    held: watch::Sender<bool>,
+}
+
+impl Default for RequestGate {
+    fn default() -> Self {
+        Self {
+            requests: Arc::default(),
+            held: watch::channel(false).0,
+        }
+    }
+}
+
+impl RequestGate {
+    async fn enter(&self) {
+        self.requests.fetch_add(1, SeqCst);
+        let mut held = self.held.subscribe();
+        let _ = held.wait_for(|held| !held).await;
+    }
+
+    fn calls(&self) -> usize {
+        self.requests.load(SeqCst)
+    }
+}
+
+async fn test_entity(kind: &str, timestamp: Timestamp) -> (String, Vec<u8>, Value) {
+    let pointer = format!("{kind}-{}", crate::sync_test_support::unique());
+    let bytes = serde_json::to_vec(&json!({
+        "version": "v3", "type": kind, "timestamp": timestamp,
+        "pointers": [pointer], "content": [], "metadata": {}
+    }))
+    .unwrap();
+    let id = crate::auth::hash_bytes_v1(&bytes);
+    let chain = crate::sync_test_support::signed_chain(&id).await;
+    let deployment = json!({
+        "entityId": id, "entityType": kind, "entityTimestamp": timestamp,
+        "localTimestamp": timestamp, "authChain": serde_json::to_value(chain).unwrap(),
+        "pointers": [pointer]
+    });
+    (id, bytes, deployment)
+}
+
 /// One signed entity per `(kind, timestamp)`, each on its own fresh pointer; returns the peer
 /// and the entity ids in order.
 async fn spawn_test_peer(
     entities: &[(&str, Timestamp)],
-    snapshots: serde_json::Value,
+    snapshots: Value,
     down: bool,
 ) -> (TestPeer, Vec<String>) {
-    use axum::extract::{Path, Query, State};
+    use axum::extract::{Path, Query};
     use axum::response::IntoResponse;
     use axum::routing::get;
     use axum::{Json, Router};
-    use serde_json::json;
 
     let mut files = HashMap::new();
     let mut deltas = Vec::new();
     let mut ids = Vec::new();
     for (kind, timestamp) in entities {
-        let pointer = format!("{kind}-{}", crate::sync_test_support::unique());
-        let bytes = serde_json::to_vec(&json!({
-            "version": "v3", "type": kind, "timestamp": timestamp,
-            "pointers": [pointer], "content": [], "metadata": {}
-        }))
-        .unwrap();
-        let id = crate::auth::hash_bytes_v1(&bytes);
-        let chain = crate::sync_test_support::signed_chain(&id).await;
+        let (id, bytes, deployment) = test_entity(kind, *timestamp).await;
         files.insert(id.clone(), bytes);
-        deltas.push(json!({
-            "entityId": id, "entityType": kind, "entityTimestamp": timestamp,
-            "localTimestamp": timestamp, "authChain": serde_json::to_value(chain).unwrap(),
-            "pointers": [pointer]
-        }));
+        deltas.push(deployment);
         ids.push(id);
     }
+    let files = Arc::new(StdMutex::new(files));
+    let (snapshots, listed) = watch::channel(snapshots);
+    let snapshot_gate = RequestGate::default();
+    let content_gate = RequestGate::default();
     let down = Arc::new(AtomicBool::new(down));
     let app = {
         let down = down.clone();
         Router::new()
-            .route("/snapshots", get(move || async move { Json(snapshots) }))
+            .route("/snapshots", {
+                let gate = snapshot_gate.clone();
+                get(move || async move {
+                    gate.enter().await;
+                    Json(listed.borrow().clone())
+                })
+            })
             .route(
                 "/pointer-changes",
                 get(move |Query(query): Query<HashMap<String, String>>| {
@@ -440,19 +525,19 @@ async fn spawn_test_peer(
                     }
                 }),
             )
-            .route(
-                "/contents/{id}",
-                get(
-                    |State(files): State<Arc<HashMap<String, Vec<u8>>>>,
-                     Path(id): Path<String>| async move {
-                        files
-                            .get(&id)
-                            .cloned()
-                            .ok_or(axum::http::StatusCode::NOT_FOUND)
-                    },
-                ),
-            )
-            .with_state(Arc::new(files))
+            .route("/contents/{id}", {
+                let files = files.clone();
+                let gate = content_gate.clone();
+                get(move |Path(id): Path<String>| async move {
+                    gate.enter().await;
+                    files
+                        .lock()
+                        .unwrap()
+                        .get(&id)
+                        .cloned()
+                        .ok_or(axum::http::StatusCode::NOT_FOUND)
+                })
+            })
             .layer(axum::middleware::from_fn(
                 move |request: axum::extract::Request, next: axum::middleware::Next| {
                     let down = down.load(SeqCst);
@@ -471,7 +556,18 @@ async fn spawn_test_peer(
     let http = tokio::spawn(async move {
         axum::serve(listener, app).await.unwrap();
     });
-    (TestPeer { url, http, down }, ids)
+    (
+        TestPeer {
+            url,
+            http,
+            down,
+            snapshots,
+            files,
+            snapshot_gate,
+            content_gate,
+        },
+        ids,
+    )
 }
 
 /// An orchestrator over the test database, wired as the sync leader wires it.
@@ -663,5 +759,285 @@ async fn an_unreachable_peer_does_not_hold_the_node_in_bootstrap() {
     assert!(
         good_cursor_after >= good_cursor,
         "the reachable peer's cursor survived the restart"
+    );
+}
+
+#[tokio::test]
+async fn a_peer_added_mid_bootstrap_does_not_restart_the_retained_peers_pass() {
+    let Some(pool) = crate::sync_test_support::test_pool(8).await else {
+        return;
+    };
+    let (retained, _) = spawn_test_peer(&[], json!([]), false).await;
+    let (added, _) = spawn_test_peer(&[], json!([]), false).await;
+    retained.snapshot_gate.held.send_replace(true);
+    let (orchestrator, repo, temp) = test_orchestrator(
+        &pool,
+        SyncOrchestratorConfig {
+            phased_sync: false,
+            ..fast_config()
+        },
+    )
+    .await;
+    orchestrator
+        .sync_with_servers(HashSet::from([retained.url.clone()]))
+        .await
+        .unwrap();
+    wait_until("the retained peer's snapshot request", async || {
+        retained.snapshot_gate.calls() == 1
+    })
+    .await;
+
+    orchestrator
+        .sync_with_servers(HashSet::from([retained.url.clone(), added.url.clone()]))
+        .await
+        .unwrap();
+    retained.snapshot_gate.held.send_replace(false);
+    wait_until("the added peer's cursor", async || {
+        repo.get_server_sync_cursor(&added.url)
+            .await
+            .unwrap()
+            .is_some()
+    })
+    .await;
+    orchestrator.stop().await;
+    let _ = std::fs::remove_dir_all(temp);
+    assert_eq!(retained.snapshot_gate.calls(), 1);
+    assert_eq!(added.snapshot_gate.calls(), 1);
+}
+
+#[tokio::test]
+async fn removing_a_peer_cancels_its_stalled_snapshot_download() {
+    let Some(pool) = crate::sync_test_support::test_pool(8).await else {
+        return;
+    };
+    let (removed, _) = spawn_test_peer(&[], json!([]), false).await;
+    let (added, _) = spawn_test_peer(&[], json!([]), false).await;
+    added.snapshot_gate.held.send_replace(true);
+    let timestamp = chrono::Utc::now().timestamp_millis() - 1_000;
+    let id = removed.advertise_snapshot(timestamp).await;
+    removed.content_gate.held.send_replace(true);
+    let (orchestrator, repo, temp) = test_orchestrator(
+        &pool,
+        SyncOrchestratorConfig {
+            phased_sync: false,
+            ..fast_config()
+        },
+    )
+    .await;
+    orchestrator
+        .sync_with_servers(HashSet::from([removed.url.clone()]))
+        .await
+        .unwrap();
+    wait_until("the stalled snapshot download", async || {
+        removed.content_gate.calls() == 1
+    })
+    .await;
+
+    orchestrator
+        .sync_with_servers(HashSet::from([added.url.clone()]))
+        .await
+        .unwrap();
+    wait_until("the replacement peer's snapshot request", async || {
+        added.snapshot_gate.calls() == 1
+    })
+    .await;
+    assert_eq!(orchestrator.state(), SyncState::Bootstrapping);
+    added.snapshot_gate.held.send_replace(false);
+    wait_until(
+        "the added peer's cursor while the removed peer is stalled",
+        async || {
+            repo.get_server_sync_cursor(&added.url)
+                .await
+                .unwrap()
+                .is_some()
+        },
+    )
+    .await;
+    wait_until(
+        "readiness after the replacement peer completes",
+        async || orchestrator.state() == SyncState::Syncing,
+    )
+    .await;
+    orchestrator.stop().await;
+    let _ = std::fs::remove_dir_all(temp);
+    assert_eq!(deployed(&pool, &[id]).await, 0);
+    assert_eq!(
+        repo.get_server_sync_cursor(&removed.url).await.unwrap(),
+        None
+    );
+}
+
+#[tokio::test]
+async fn a_peer_readded_during_bootstrap_only_publishes_from_its_new_membership() {
+    let Some(pool) = crate::sync_test_support::test_pool(8).await else {
+        return;
+    };
+    let (peer, _) = spawn_test_peer(&[], json!([]), false).await;
+    peer.snapshot_gate.held.send_replace(true);
+    let (orchestrator, repo, temp) = test_orchestrator(
+        &pool,
+        SyncOrchestratorConfig {
+            phased_sync: false,
+            ..fast_config()
+        },
+    )
+    .await;
+    let _cleanup = crate::sync_test_support::RemoveOnDrop(temp);
+    let peers = HashSet::from([peer.url.clone()]);
+    orchestrator.sync_with_servers(peers.clone()).await.unwrap();
+    wait_until("the original snapshot request", async || {
+        peer.snapshot_gate.calls() == 1
+    })
+    .await;
+
+    orchestrator
+        .sync_with_servers(HashSet::new())
+        .await
+        .unwrap();
+    orchestrator.sync_with_servers(peers).await.unwrap();
+    wait_until("the readded peer's snapshot request", async || {
+        peer.snapshot_gate.calls() == 2
+    })
+    .await;
+    assert_eq!(orchestrator.state(), SyncState::Bootstrapping);
+    assert_eq!(repo.get_server_sync_cursor(&peer.url).await.unwrap(), None);
+
+    peer.snapshot_gate.held.send_replace(false);
+    wait_until("the new membership bootstraps", async || {
+        orchestrator.state() == SyncState::Syncing
+    })
+    .await;
+    assert!(
+        repo.get_server_sync_cursor(&peer.url)
+            .await
+            .unwrap()
+            .is_some()
+    );
+    orchestrator.stop().await;
+}
+
+#[tokio::test]
+async fn periodic_snapshot_sync_deploys_missed_entities_and_keeps_the_stream_cursor() {
+    let Some(pool) = crate::sync_test_support::test_pool(8).await else {
+        return;
+    };
+    let (peer, _) = spawn_test_peer(&[], json!([]), false).await;
+    let (orchestrator, repo, temp) = test_orchestrator(
+        &pool,
+        SyncOrchestratorConfig {
+            phased_sync: false,
+            snapshot_resync_initial_delay: Duration::from_millis(100),
+            snapshot_resync_interval: Duration::from_millis(100),
+            ..fast_config()
+        },
+    )
+    .await;
+    let handle = orchestrator
+        .sync_with_servers(HashSet::from([peer.url.clone()]))
+        .await
+        .unwrap();
+    handle.bootstrap_signal().wait_settled().await;
+    let cursor = repo.get_server_sync_cursor(&peer.url).await.unwrap();
+    let id = peer
+        .advertise_snapshot(chrono::Utc::now().timestamp_millis() - 1_000)
+        .await;
+    wait_until("the snapshot-only entity", async || {
+        deployed(&pool, std::slice::from_ref(&id)).await == 1
+    })
+    .await;
+    wait_until("at least two post-bootstrap snapshots checks", async || {
+        peer.snapshot_gate.calls() >= 3
+    })
+    .await;
+    orchestrator.stop().await;
+    let _ = std::fs::remove_dir_all(temp);
+    assert_eq!(orchestrator.state(), SyncState::Syncing);
+    assert_eq!(
+        repo.get_server_sync_cursor(&peer.url).await.unwrap(),
+        cursor
+    );
+}
+
+#[tokio::test]
+async fn concurrent_stop_callers_wait_for_scheduled_deployments_to_flush() {
+    let Some(pool) = crate::sync_test_support::test_pool(8).await else {
+        return;
+    };
+    let timestamp = chrono::Utc::now().timestamp_millis() - 1_000;
+    let (peer, ids) = spawn_test_peer(&[("scene", timestamp)], json!([]), false).await;
+    peer.content_gate.held.send_replace(true);
+    let (orchestrator, _, temp) = test_orchestrator(
+        &pool,
+        SyncOrchestratorConfig {
+            phased_sync: false,
+            ..fast_config()
+        },
+    )
+    .await;
+    orchestrator
+        .sync_with_servers(HashSet::from([peer.url.clone()]))
+        .await
+        .unwrap();
+    wait_until("the scheduled deployment's entity download", async || {
+        peer.content_gate.calls() == 1
+    })
+    .await;
+
+    let shutdown = async {
+        tokio::join!(orchestrator.stop(), orchestrator.stop());
+    };
+    tokio::pin!(shutdown);
+    assert!(futures::poll!(&mut shutdown).is_pending());
+    assert!(orchestrator.inner.is_stopped());
+    assert_eq!(deployed(&pool, &ids).await, 0);
+    peer.content_gate.held.send_replace(false);
+    tokio::time::timeout(Duration::from_secs(20), shutdown)
+        .await
+        .unwrap();
+    let _ = std::fs::remove_dir_all(temp);
+    assert_eq!(deployed(&pool, &ids).await, 1);
+}
+
+#[tokio::test]
+async fn stop_cancels_a_stalled_deployment_after_the_drain_budget() {
+    let Some(pool) = crate::sync_test_support::test_pool(8).await else {
+        return;
+    };
+    let timestamp = chrono::Utc::now().timestamp_millis() - 1_000;
+    let (peer, ids) = spawn_test_peer(&[("scene", timestamp)], json!([]), false).await;
+    peer.content_gate.held.send_replace(true);
+    let (orchestrator, repo, temp) = test_orchestrator(
+        &pool,
+        SyncOrchestratorConfig {
+            phased_sync: false,
+            ..fast_config()
+        },
+    )
+    .await;
+    let _cleanup = crate::sync_test_support::RemoveOnDrop(temp);
+    orchestrator
+        .sync_with_servers(HashSet::from([peer.url.clone()]))
+        .await
+        .unwrap();
+    wait_until("the stalled entity download", async || {
+        peer.content_gate.calls() == 1
+    })
+    .await;
+    let cursor = repo.get_server_sync_cursor(&peer.url).await.unwrap();
+
+    tokio::time::timeout(
+        DEPLOYMENT_DRAIN_TIMEOUT + Duration::from_secs(3),
+        orchestrator.stop(),
+    )
+    .await
+    .expect("stop must finish while the peer is stalled");
+    wait_until("the cancelled deployment releases its slot", async || {
+        orchestrator.inner.deployer.in_flight() == 0
+    })
+    .await;
+    assert_eq!(deployed(&pool, &ids).await, 0);
+    assert_eq!(
+        repo.get_server_sync_cursor(&peer.url).await.unwrap(),
+        cursor
     );
 }

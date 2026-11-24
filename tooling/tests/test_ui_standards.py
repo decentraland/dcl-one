@@ -77,6 +77,16 @@ class UiStandardsTest(unittest.TestCase):
                           'library/shop/cart.ts', 'tooling/shop-parity/page.mts'])
         self.assertIn("from '@dcl/one-ui' instead", issues[0])
 
+    def test_inspector_tooltip_import_is_limited_to_its_adapter_and_component(self):
+        adapter = 'apps/creator-hub/packages/inspector/src/components/ui/Tooltip.ts'
+        shop = 'apps/ui3/src/shop/detail/ItemDetail.tsx'
+        tooltip = 'export { Tooltip } from "@dcl/one-ui/components/Tooltip/Tooltip"'
+        button = 'export { Button } from "@dcl/one-ui/components/Button/Button"'
+        sources = {adapter: tooltip, shop: tooltip}
+        self.assertEqual([issue.split(':')[0] for issue in ui_standards.shared_import_issues(
+            sources, sources.__getitem__)], [shop])
+        self.assertTrue(ui_standards.shared_import_issues([adapter], {adapter: button}.__getitem__))
+
     def test_relative_shared_imports(self):
         found = ui_standards.relative_shared_imports('apps/sites/scripts/check.mts', (
             'import { SECTIONS } from "../../../library/ui/apps/sites/flow-map/exflowmapdata"\n'

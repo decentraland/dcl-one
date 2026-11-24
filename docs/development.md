@@ -19,11 +19,11 @@ RTMP Ingress and Valkey, NATS and Pulse that outlive the shell and reload on edi
 
 Ports, from base 5210 (`FOUNDATION_DEV_PORT` on first use; saved in
 `.cache/dev/settings.json`): API and `/ws` +0, its metrics +1, Sites and Pulse WebTransport +2,
-PostgreSQL +3, LiveKit +4..+6, Pulse ENet and `/metrics` +7, NATS +8, its
+PostgreSQL +3, LiveKit +4..+6, index metrics on TCP +6, Pulse ENet and `/metrics` +7, NATS +8, its
 monitor +9. Behind a [public origin](#serving-over-https) Pulse's ENet is UDP 7777 instead.
 The ingress takes the first free block 10000 above the base (`ingress_port`):
-Valkey +0, RTMP +1 (every interface), the ingress relay +2 and health +3. An occupied
-saved port fails startup.
+Valkey +0, RTMP +1 (every interface), the ingress relay +2, health +3 and the message
+router's `/metrics` and `/health` +4. An occupied saved port fails startup.
 
 A stream key from `/scene-stream-access` streams to the `rtmp://…/x` URL it comes with
 (`foundation-dev status` prints it). Behind a public origin that URL names the origin's
@@ -51,6 +51,27 @@ and shows no other avatars:
 "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" --user-data-dir="$(mktemp -d)" \
   --webtransport-developer-mode --ignore-certificate-errors-spki-list=<hash from status>
 ```
+
+Community chat needs the message router, which the stack runs only when
+`.cache/dev/settings.json` names its binary:
+
+```sh
+(cd services/catalyst && cargo build -p catalyst-message-router --features livekit --bin catalyst-message-router)
+# settings.json: "message_router_bin": "<checkout>/services/catalyst/target/debug/catalyst-message-router"
+foundation-dev down && foundation-dev up
+```
+
+The `message-router` task then starts after LiveKit and the API, restarts
+whenever it exits with an error (as Pulse does), and is ready once its
+`/health/ready` on `ingress_port + 4` answers. It signs its token requests with the generated
+`MESSAGE_ROUTER_KEY`, and the API mints its LiveKit identity. That identity is
+`message-router-prd-0` on loopback or behind an origin with a port, and
+`message-router-dev-0` behind a bare host. Those are the identities `/play`'s
+Explorer trusts. A native Explorer trusts `-dev-0` only when started with a
+`--base-domain` other than decentraland.org. With `public_origin` on a bare host,
+chat routes only from the page at that origin: `foundation-dev desktop` and a
+browser on the loopback URL keep decentraland.org and look for `-prd-0`. A path
+that is not executable only prints a warning.
 
 `/about` answers 503 while Pulse is down. Pulse exits when it loses its generation lease (a PostgreSQL
 restart, or a keepalive slower than the lease after sleep or under load), and the supervisor starts it
@@ -102,7 +123,7 @@ Status values:
 | Asset-bundle CDN `ab-cdn` (`/{key}`). `ABGEN_UPSTREAM_AB_CDN`. Status: mirror | `explore/src/api/ab_cdn.rs` | `@decentraland/apis` | Empty: every object comes from this node's cache and abgen (`config/src/explore.rs`) |
 | Imposter CDN `bevy-imposters.dclregenesislabs.xyz` (`/imposters/realms/{realm}/{level}/{x},{y}.{crc}.zip`). `BVIMPOSTERS_UPSTREAM_URL`, `BVIMPOSTERS_UPSTREAM_REALM`. Status: mirror | `explore/src/imposters/mod.rs` | `@decentraland/apis` | Temporary. Removed once bake-on-miss (`BVIMPOSTERS_BAKE_ENABLED`) runs with the `impost` renderer shipped in the node (#1711) |
 | Marketplace trades `marketplace-api` (`/v1/trades`, `/v1/trades/{id}`). `TRADES_SYNC_UPSTREAM_URL`. Status: mirror | `services/catalyst/shop/src/market/trades.rs` | `@decentraland/apis` | No target yet |
-| Subgraphs `subgraph` (`collections-ethereum-mainnet`, `collections-matic-mainnet`, `marketplace`, `land-manager`). `ETH_COLLECTIONS_SUBGRAPH_URL`, `MATIC_COLLECTIONS_SUBGRAPH_URL`, `MARKETPLACE_SUBGRAPH_URL`, `LAND_SUBGRAPH_URL` (not set in dev). Status: mirror | `chain-index/src/graph.rs`, `chain-index/src/land_graph.rs`, `builder/src/onchain.rs` | `@decentraland/apis` | LAND and permissions read the local land-authz and marketplace indexes once they are published (`config/src/shop.rs`); collections still use the subgraphs |
+| Subgraphs `subgraph` (`collections-ethereum-mainnet`, `collections-matic-mainnet`, `marketplace`, `land-manager`). `ETH_COLLECTIONS_SUBGRAPH_URL`, `MATIC_COLLECTIONS_SUBGRAPH_URL`, `MARKETPLACE_SUBGRAPH_URL`, `LAND_SUBGRAPH_URL` (not set in dev). Status: mirror | `chain-index/src/graph.rs`, `chain-index/src/land_graph.rs`, `builder/src/onchain.rs` | `@decentraland/apis` | LAND and permissions read the local land-authz and marketplace indexes once they are published (`config/src/shop.rs`); DCL NAMEs read the nft index on a node that walks it (`chain-index/src/names.rs`); collections still use the subgraphs |
 | Third Party Registry (Polygon mainnet). `MARKETPLACE_THIRD_PARTY_REGISTRY_INDEX_ENABLED` is on under the mirror posture. | `shop/src/market/third_party_registry.rs`, `shop/src/market/third_party.rs` | `@decentraland/apis`, `/create` | The local index supplies approved providers and on-chain slot counts. When indexed reads are unavailable, the existing provider routes can use `THIRD_PARTY_REGISTRY_L2_SUBGRAPH_URL`. Testnet mirrors supply the Polygon registry subgraph by default. Builder still accounts for pending item reservations. |
 | NFT worker `nfts` (`/wallets/{owner}/networks/{network}/nfts`). `NFT_WORKER_BASE_URL`; mirror refuses to start without it. Status: mirror | `shop/src/market/third_party.rs` | `@decentraland/apis` | No target yet. When it is unset, holdings are read over JSON-RPC |
 | OpenSea fallback `opensea` (`/api/v2/chain/{chain}/contract/{contract}/nfts/{id}`). `OPENSEA_FALLBACK_URL`. Status: mirror | `explore/src/opensea.rs` | `@decentraland/apis` | No target yet |

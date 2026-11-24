@@ -6,6 +6,7 @@
 use std::fmt::Write;
 
 use super::exceptions::ExceptionKindCounts;
+use super::fleet;
 use super::stats::{
     self, FrameTimeVerdict, IncidentsPerRunVerdict, MedianAndRange, PeakMemoryVerdict,
     SessionsNotComparable, CPU_HICCUPS_METRIC, EXCEPTIONS_METRIC, FRAME_TIME_METRICS,
@@ -13,30 +14,11 @@ use super::stats::{
 };
 use super::{BuildBenchmarkRunsStatistics, ReportOptions, RunnerCaveat, RunnerSection};
 
-/// The fleet's runner labels and the machines they name (`ProduceSummary.cs`'s
-/// `labelDisplayNames`).
-const MACHINES: [(&str, &str); 5] = [
-    ("apple-m1", "Apple M1"),
-    ("amd-ryzen-3", "AMD Ryzen 3"),
-    ("intel-i3", "Intel Core i3"),
-    ("intel-i5", "Intel Core i5"),
-    ("framework-13-i7", "Framework 13 i7"),
-];
-
-/// A leg in Chrome on a machine is labelled `<runner label>-chrome`.
-const CHROME: &str = "-chrome";
-
 /// `intel-i5-chrome` is "Intel Core i5 (Chrome)": the parentheses keep the headline's ", " list
 /// readable. Any other label is shown as it is.
 pub fn display_name(label: &str) -> String {
-    let machine = label.strip_suffix(CHROME).and_then(|runner| {
-        MACHINES
-            .iter()
-            .find(|(known, _)| *known == runner)
-            .map(|(_, name)| *name)
-    });
-    match machine {
-        Some(name) => format!("{name} (Chrome)"),
+    match fleet::machine_in_chrome(label) {
+        Some(machine) => format!("{} (Chrome)", machine.name),
         None => label.to_string(),
     }
 }

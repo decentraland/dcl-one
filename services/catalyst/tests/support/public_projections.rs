@@ -105,7 +105,6 @@ impl Projection {
             state.clone(),
             true,
             Default::default(),
-            catalyst::comms::stats::http::test_support::matcher(),
             content.denylist.clone(),
         )
         .stats

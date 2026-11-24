@@ -28,9 +28,7 @@ use crate::shared::query_params::{
 use super::definitions::{
     extract_emote_definition, extract_wearable_definition, locale_cmp, rarity_rank,
 };
-use super::graph;
 use super::owned_items::{self, OwnedCopy};
-use super::readers;
 use super::third_party::collection_provider;
 use super::{MarketplaceState, SharedState, bad_request};
 
@@ -357,12 +355,14 @@ pub async fn user_emotes(
 }
 
 /// Names page: a `pageSize` over 1000 answers lamb2's 400 (`max allowed
-/// pageSize is 1000`), a non-positive page or size clamps to 1. A failed
-/// reader answers the owner's last good list fetched within lamb2's 120 s
-/// (`graph::owned_names_or_stale`), else lamb2's 502 `FetcherError`. A
-/// string that is not an
-/// address owns nothing: an empty page, as lamb2's fallback answers it,
-/// without a reader call.
+/// pageSize is 1000`), a non-positive page or size clamps to 1. The NAMEs
+/// come from the node's NAME source (a display read): the nft index answers
+/// its unavailable envelope while not published; the subgraph is read as
+/// lamb2 read it, walked to the end, with the owner's last good list served
+/// for lamb2's 120 s on an outage (this route's alone). A failed read is
+/// lamb2's 502 `FetcherError`; no source at all, the unavailable envelope. A
+/// string that is not an address owns nothing: an empty page, as lamb2's
+/// fallback answers it, without a source read.
 pub async fn user_names(
     State(state): State<SharedState>,
     Path(address): Path<String>,
@@ -380,17 +380,36 @@ pub async fn user_names(
         Ok(p) => p,
         Err(msg) => return bad_request(&msg),
     };
-    if let Err(envelope) = readers::require_marketplace(&state) {
-        return envelope;
-    }
     let names = if !super::is_valid_eth_address(&address) {
         Default::default()
     } else {
-        match graph::owned_names_or_stale(&state.index, &address).await {
-            Ok(n) => n,
+        use crate::chain_index::names::{NamesError, Purpose};
+        let authority = match state.names() {
+            Ok(authority) => authority,
             Err(e) => {
-                tracing::warn!(error = %e, address, "names reader failed");
-                return fetcher_error(&requested);
+                return super::unavailable(state.name_source(), &e.to_string());
+            }
+        };
+        if authority.observes() {
+            match authority.owned_names(&address, Purpose::Display).await {
+                Ok(answer) => answer.value,
+                Err(NamesError::NotEstablished(message)) => {
+                    return super::unavailable(super::Source::NftIndex, &message);
+                }
+                Err(NamesError::Failed(e)) => {
+                    tracing::warn!(error = %e, address, "names source failed");
+                    return fetcher_error(&requested);
+                }
+            }
+        } else {
+            // The subgraph, as lamb2 read it: the whole walk, and on an
+            // outage the last good list for its 120 s.
+            match crate::chain_index::graph::owned_names_or_stale(&state.index, &address).await {
+                Ok(names) => names,
+                Err(e) => {
+                    tracing::warn!(error = %e, address, "names reader failed");
+                    return fetcher_error(&requested);
+                }
             }
         }
     };

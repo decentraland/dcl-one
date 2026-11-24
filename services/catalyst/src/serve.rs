@@ -97,10 +97,11 @@ mod metrics_tests {
         let bind = reserved.local_addr().unwrap();
         drop(reserved);
         super::install_metrics(&bind.to_string()).unwrap();
-        let response = reqwest::Client::builder()
+        let client = reqwest::Client::builder()
             .timeout(std::time::Duration::from_secs(2))
             .build()
-            .unwrap()
+            .unwrap();
+        let response = client
             .get(format!("http://{bind}/metrics"))
             .send()
             .await
@@ -110,6 +111,23 @@ mod metrics_tests {
         for sample in ["comms_nats_connected 0", "comms_cluster_work_running 0"] {
             assert!(rendered.contains(sample), "missing {sample}: {rendered}");
         }
+        for path in ["/", "/metrics/", "/social-rpc/metrics", "/custom"] {
+            let response = client
+                .get(format!("http://{bind}{path}"))
+                .send()
+                .await
+                .unwrap();
+            assert_eq!(response.status(), reqwest::StatusCode::NOT_FOUND, "{path}");
+        }
+        assert_eq!(
+            client
+                .post(format!("http://{bind}/metrics"))
+                .send()
+                .await
+                .unwrap()
+                .status(),
+            reqwest::StatusCode::METHOD_NOT_ALLOWED
+        );
         let reserved = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
         let failed_bind = reserved.local_addr().unwrap();
         drop(reserved);
@@ -125,7 +143,7 @@ mod metrics_tests {
             .unwrap()
             .build_recorder();
         let handle = recorder.handle();
-        metrics::with_local_recorder(&recorder, super::register_metrics);
+        dcl_metrics::with_local_recorder(&recorder, super::register_metrics);
         let rendered = handle.render();
         for sample in [
             "comms_nats_connected 0",
@@ -140,15 +158,9 @@ mod metrics_tests {
     }
 }
 
-/// Run with Stats prepared before creating workers. The unsafe preparation
-/// contract applies through every route clone, canceled blocking operation and
-/// final isolate teardown; an arbitrary preexisting runtime is not supported.
-pub async fn serve(
-    mut config: Config,
-    mut prepared: crate::metrics_matcher::PreparedStats,
-) -> anyhow::Result<()> {
+pub async fn serve(mut config: Config) -> anyhow::Result<()> {
     config.node.init_tracing();
-    let metrics_handle = install_metrics(&config.node.serve_metrics_bind)?;
+    install_metrics(&config.node.serve_metrics_bind)?;
     tracing::info!("{}", catalyst_config::posture::startup_line(&config));
     if let Ok(Some(warning)) = catalyst_config::posture::worlds_names_reader(&config) {
         tracing::warn!("{warning}");
@@ -196,11 +208,13 @@ pub async fn serve(
         storage.clone(),
         sync_status.clone(),
     ));
-    prepared.settings.commit_hash = Some(config.commit_hash().unwrap_or_default());
-    prepared.settings.content_url = stats_content_url(
-        config.node.content_url.as_deref(),
-        &content.settings.content_public_url,
-    );
+    let statistics_settings = comms::stats::http::Settings {
+        commit_hash: Some(config.commit_hash().unwrap_or_default()),
+        content_url: stats_content_url(
+            config.node.content_url.as_deref(),
+            &content.settings.content_public_url,
+        ),
+    };
 
     // ONE outbound client: every mirror and upstream reader goes through the
     // guard; peer sync (`content::sync::sync_http_client`) and the RPC
@@ -876,7 +890,6 @@ pub async fn serve(
             max_images_per_user: config.create.camera_reel_max_images_per_user,
             admin_token: Config::non_empty(&config.create.catalyrst_camera_reel_admin_token),
             writes_enabled: config.create.create_writes_enabled,
-            metrics_bearer_token: config.create.camera_reel_metrics_bearer_token.clone(),
             places_cache_ttl_seconds: config.create.camera_reel_places_cache_ttl_seconds,
             places_cache_max_size: config.create.camera_reel_places_cache_max_size,
         },
@@ -956,7 +969,8 @@ pub async fn serve(
             .with_land_authz(Some(land.clone()))
             .with_max_parcels(config.worlds.max_parcels)
             .with_ens(ens, i64::from(config.worlds.ens_max_size) * 1024 * 1024)
-            .with_name_deny_list(worlds.names.clone()),
+            .with_name_deny_list(worlds.names.clone())
+            .with_name_authority(market.authorizing_names.clone()),
     );
     worlds.attach_policy(policy.clone());
     // A world read-through holds each mirrored scene's signer to this policy and shares the
@@ -1124,7 +1138,6 @@ pub async fn serve(
         eip1654,
         &explore,
         explorer_api.onboarding.clone(),
-        metrics_handle,
     )?;
     social
         .rpc
@@ -1156,7 +1169,11 @@ pub async fn serve(
     social
         .communities
         .set_voice_eviction(comms_stage.gatekeeper.clone());
-    social.communities.set_chain_index(market.index.clone());
+    // The shop selected the node's DCL NAME source once; without one that
+    // may authorize, a community creation or ownership transfer answers 503.
+    if let Some(names) = market.authorizing_names.clone() {
+        social.communities.set_name_authority(names);
+    }
     social
         .communities
         .set_explorer_flags(explorer_api.flags.clone());
@@ -1211,7 +1228,7 @@ pub async fn serve(
                 pool: pool.clone(),
                 denylist: content.denylist.clone(),
             }),
-            prepared.settings.content_url.clone(),
+            statistics_settings.content_url.clone(),
             comms_stage.gatekeeper.clone(),
             stage5.core.clone(),
         ),
@@ -1437,7 +1454,7 @@ pub async fn serve(
     let connector_lifecycle = comms_stage.archipelago.clone();
     let app = build_routes(
         &config,
-        prepared,
+        statistics_settings,
         primary,
         Routes {
             content,
@@ -2055,5 +2072,97 @@ mod referral_settings_tests {
             trusted.iter().map(ToString::to_string).collect::<Vec<_>>(),
             ["10.0.0.0/8", "2001:db8::/32"]
         );
+    }
+}
+
+#[cfg(test)]
+mod name_source_wiring_tests {
+    use crate::config::Config;
+    use crate::worlds::policy::{PersonalWorldsPolicy, Policy};
+
+    /// A `serve` that neither walks the nft index nor reads the subgraph,
+    /// with chain checks skipped so it starts (personal worlds only), over a
+    /// database another process published a NAME into: the Admin Toolkit's
+    /// lookup reads that publication, and the worlds policy, built from the
+    /// source `serve` hands it, owns no DCL NAME world with it.
+    #[tokio::test]
+    async fn a_shared_database_reader_serves_lookups_and_authorizes_no_world() {
+        let Some(pool) = crate::db::scratch::pool(4).await else {
+            return;
+        };
+        let config = Config::parse_env_for_tests([
+            ("DATABASE_URL", "postgres:///catalyst"),
+            ("WORLDS_WRITES_ENABLED", "true"),
+            ("MARKETPLACE_NFT_INDEX_ENABLED", "false"),
+            ("MARKETPLACE_SUBGRAPH_URL", ""),
+            ("IGNORE_BLOCKCHAIN_ACCESS_CHECKS", "true"),
+        ])
+        .unwrap();
+        assert!(
+            catalyst_config::posture::worlds_names_reader(&config)
+                .unwrap()
+                .is_some(),
+            "starts with the personal-worlds warning"
+        );
+        let label = format!("w{}", &uuid::Uuid::new_v4().simple().to_string()[..12]);
+        let holder = crate::shared::identity::Address::parse(&format!(
+            "0x{}",
+            &uuid::Uuid::new_v4().simple().to_string().repeat(2)[..40]
+        ))
+        .unwrap();
+        sqlx::query(
+            "INSERT INTO shop.chain_cursor (indexer, network, start_block, last_block, folded_block, folded_at, full_history, chain_id) \
+             VALUES ('nft', 'ethereum', 1, 100, 100, timezone('UTC', now()), true, 1) \
+             ON CONFLICT (indexer, network) DO UPDATE SET last_block = 100, folded_block = 100, \
+                 folded_at = EXCLUDED.folded_at, full_history = true, chain_id = 1, quarantined_at = NULL",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        let token =
+            i64::from_str_radix(&uuid::Uuid::new_v4().simple().to_string()[..12], 16).unwrap();
+        sqlx::query(
+            "INSERT INTO shop.nft (network, contract_address, token_id, owner, ens_subdomain, minted_block, minted_at, transferred_block, transferred_log, transferred_at) \
+             VALUES ('ethereum', $1, $2, $3, $4, 1, 1, 1, 0, 1)",
+        )
+        .bind(crate::shop::market::nft_index::DCL_REGISTRAR)
+        .bind(token)
+        .bind(holder.as_str())
+        .bind(&label)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        let market = crate::shop::market::MarketplaceState::new(
+            pool.clone(),
+            crate::http::Outbound::for_tests(),
+            crate::settings::market_settings(&config, &[]).unwrap(),
+        );
+        assert_eq!(
+            market.name_owner(&label).await.unwrap(),
+            Some(holder.clone())
+        );
+        assert!(market.authorizing_names.is_none());
+        // As `serve` builds it.
+        let policy = Policy::new(
+            pool.clone(),
+            PersonalWorldsPolicy::disabled(),
+            Some(market.index.clone()),
+        )
+        .with_name_authority(market.authorizing_names.clone());
+        let world =
+            crate::comms::world_identity::WorldName::parse(&format!("{label}.dcl.eth")).unwrap();
+        let refused = policy
+            .is_owner(&world, &holder)
+            .await
+            .into_result()
+            .unwrap_err();
+        assert_eq!(refused.http_status(), 403, "{refused}");
+        sqlx::query("DELETE FROM shop.nft WHERE contract_address = $1 AND token_id = $2")
+            .bind(crate::shop::market::nft_index::DCL_REGISTRAR)
+            .bind(token)
+            .execute(&pool)
+            .await
+            .unwrap();
     }
 }

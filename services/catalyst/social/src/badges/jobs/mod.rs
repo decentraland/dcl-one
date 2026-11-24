@@ -467,9 +467,9 @@ pub(crate) async fn report_id_lag(pool: &PgPool, source: &IdSource) {
     match id_lag(pool, source).await {
         Ok(Some((lag, gaps, oldest))) => {
             report_lag(source.name, lag);
-            metrics::gauge!("badges_processor_cursor_gaps", "source" => source.name)
+            dcl_metrics::gauge!("badges_processor_cursor_gaps", "source" => source.name)
                 .set(gaps as f64);
-            metrics::gauge!("badges_processor_cursor_oldest_gap_seconds", "source" => source.name)
+            dcl_metrics::gauge!("badges_processor_cursor_oldest_gap_seconds", "source" => source.name)
                 .set(oldest.unwrap_or(0.0).max(0.0));
         }
         Ok(None) => {}
@@ -498,7 +498,7 @@ pub(crate) async fn id_lag(
 
 /// `badges_processor_cursor_lag` of `source`, in its own unit (ids, blocks).
 pub(crate) fn report_lag(source: &'static str, lag: i64) {
-    metrics::gauge!("badges_processor_cursor_lag", "source" => source).set(lag.max(0) as f64);
+    dcl_metrics::gauge!("badges_processor_cursor_lag", "source" => source).set(lag.max(0) as f64);
 }
 
 /// The cursor of `source`, locked for this transaction; `None` when the

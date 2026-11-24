@@ -16,11 +16,13 @@ pub struct MarketUpstreamsConfig {
     #[arg(long, env = "MATIC_COLLECTIONS_SUBGRAPH_URL")]
     pub matic_collections_subgraph_url: Option<String>,
 
-    /// L1 marketplace subgraph (names, and LAND before the indexes publish);
-    /// `NODE_POSTURE=mirror` sets lamb2's default. Unset, `/lambdas` names
-    /// and lands answer the 503 envelope; profiles and outfits claim no name.
-    /// It is also the DCL NAME world owner reader: `WORLDS_WRITES_ENABLED=true`
-    /// refuses to start without it unless `IGNORE_BLOCKCHAIN_ACCESS_CHECKS=true`.
+    /// L1 marketplace subgraph (LAND before the indexes publish, and DCL
+    /// NAMEs on a node that does not walk the nft index);
+    /// `NODE_POSTURE=mirror` sets lamb2's default. A node that walks the
+    /// index reads its NAMEs there and never asks it. Without either, the
+    /// NAME routes answer the 503 envelope, profiles and outfits claim no
+    /// name, and `WORLDS_WRITES_ENABLED=true` refuses to start unless
+    /// `IGNORE_BLOCKCHAIN_ACCESS_CHECKS=true`.
     #[arg(long, env = "MARKETPLACE_SUBGRAPH_URL")]
     pub marketplace_subgraph_url: Option<String>,
 

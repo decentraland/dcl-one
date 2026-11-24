@@ -33,7 +33,7 @@ uuid.workspace = true
 tokio-util.workspace = true
 dashmap.workspace = true
 ipnet.workspace = true
-metrics.workspace = true
+dcl-metrics.workspace = true
 parking_lot.workspace = true
 hex.workspace = true
 libc.workspace = true
@@ -58,7 +58,6 @@ ts = ["dep:ts-rs", "catalyst-shared/ts", "catalyst-config/ts", "catalyst-storage
 test-support = ["catalyst-fed/test-support", "catalyst-shared/test-support", "catalyst-config/test-support", "catalyst-storage/test-support", "catalyst-content/test-support", "catalyst-land-authz/test-support"]
 
 [dev-dependencies]
-metrics-exporter-prometheus.workspace = true
 catalyst-shared = { path = "../shared", features = ["test-support"] }
 catalyst-config = { path = "../config", features = ["test-support"] }
 catalyst-storage = { path = "../storage", features = ["test-support"] }
