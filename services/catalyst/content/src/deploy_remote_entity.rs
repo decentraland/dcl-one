@@ -7,7 +7,7 @@ use std::collections::{HashMap, HashSet};
 use std::io::Write;
 use std::sync::{Arc, OnceLock};
 
-use crate::http::CheckedRedirectClient;
+use crate::http::{CheckedRedirectClient, TransferRateGuard};
 use futures::StreamExt;
 use tokio::sync::{OwnedSemaphorePermit, Semaphore};
 use tracing::{debug, warn};
@@ -162,7 +162,12 @@ pub(crate) async fn stream_body<S: DecodedSink>(
     };
     let mut run: Vec<u8> = Vec::new();
     let mut stream = resp.bytes_stream();
-    while let Some(chunk) = stream.next().await {
+    let mut rate = TransferRateGuard::default();
+    loop {
+        let read_started = tokio::time::Instant::now();
+        let Some(chunk) = stream.next().await else {
+            break;
+        };
         // A body error names the URL, which is stripped as `SendError` strips it from a
         // transport error.
         let chunk = chunk.map_err(|e| e.without_url().to_string())?;
@@ -170,6 +175,8 @@ pub(crate) async fn stream_body<S: DecodedSink>(
         if stats.wire_len > cap as u64 {
             return Err(format!("response body exceeds the {cap} byte cap"));
         }
+        rate.check(stats.wire_len, read_started.elapsed())
+            .map_err(|e| e.to_string())?;
         for piece in chunk.chunks(decoder.input_step()) {
             // `run` holds decoded bytes not yet counted in `decoded_len`.
             let left = (cap as u64).saturating_sub(stats.decoded_len) as usize;
@@ -1891,6 +1898,48 @@ mod tests {
             .await
             .expect_err("a compression bomb must not outgrow the caller's cap");
         assert!(err.contains("exceeds 100 byte cap"), "{err}");
+        server.abort();
+    }
+
+    #[tokio::test]
+    async fn a_slow_gzip_stream_fails_even_when_no_decoded_bytes_reach_the_sink() {
+        use axum::{Router, body::Body, http::header, response::IntoResponse, routing::get};
+        use std::time::Duration;
+
+        let (tx, rx) = tokio::sync::mpsc::channel::<Vec<u8>>(1);
+        let rx = Arc::new(tokio::sync::Mutex::new(Some(rx)));
+        let app = Router::new().route(
+            "/",
+            get(move || async move {
+                let rx = rx.lock().await.take().unwrap();
+                let chunks = futures::stream::unfold(rx, |mut rx| async {
+                    rx.recv()
+                        .await
+                        .map(|chunk| (Ok::<_, std::convert::Infallible>(chunk), rx))
+                });
+                (
+                    [(header::CONTENT_ENCODING, "gzip")],
+                    Body::from_stream(chunks),
+                )
+                    .into_response()
+            }),
+        );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let url = format!("http://{}", listener.local_addr().unwrap());
+        let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+        tx.send(gzip(b"")).await.unwrap();
+        let resp = reqwest::Client::new().get(url).send().await.unwrap();
+
+        tokio::time::pause();
+        let mut sink = LargestRun(0, 0);
+        let mut transfer = Box::pin(stream_body(resp, 1024, &mut sink));
+        assert!(futures::poll!(&mut transfer).is_pending());
+        tokio::time::advance(Duration::from_secs(61)).await;
+        tx.send(gzip(b"")).await.unwrap();
+        drop(tx);
+        let err = transfer.await.unwrap_err();
+        assert!(err.contains("fell below 4096 bytes/s"), "{err}");
+        assert_eq!(sink.1, 0);
         server.abort();
     }
 

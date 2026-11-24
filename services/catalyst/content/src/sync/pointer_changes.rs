@@ -13,6 +13,7 @@ use super::repository::LiveDeploymentRepository;
 /// MB); the cap stops a misbehaving peer from growing the buffer without
 /// limit, as every other reader's does.
 const MAX_PAGE_BYTES: usize = 64 * 1024 * 1024;
+const MAX_PAGES_PER_POLL: usize = 10_000;
 use super::{SyncDeployment, SyncError, Timestamp};
 use crate::batch_deployer::{BatchDeployer, DeploymentReport};
 
@@ -193,7 +194,7 @@ async fn fetch_page(
 ) -> Result<(Vec<serde_json::Value>, bool), SyncError> {
     let resp = client.get(url).send().await?.error_for_status()?;
     let resp = crate::sync_types::refuse_redirect(resp, &format!("pointer-changes page {url}"))?;
-    let body = crate::http::read_body_capped(resp, MAX_PAGE_BYTES)
+    let body = crate::http::read_peer_body_capped(resp, MAX_PAGE_BYTES)
         .await
         .map_err(|e| SyncError::Other(format!("pointer-changes page {url}: {e}")))?;
     let page: PointerChangesPage = serde_json::from_slice(&body)?;
@@ -274,34 +275,34 @@ where
     let mut confirmed_timestamp = options.from_timestamp;
     let mut rejected_logged: u64 = 0;
     let mut delivered = DeliveredWindow::default();
-    let mut url = format!(
-        "{}/pointer-changes?sortingOrder=ASC&sortingField=local_timestamp&from={}",
-        server, options.from_timestamp
-    );
-
-    let spawn_fetch = |u: String| {
+    let first_page = |from| {
+        format!(
+            "{server}/pointer-changes?sortingOrder=ASC&sortingField=local_timestamp&from={from}"
+        )
+    };
+    let spawn_fetch = |in_flight: &mut tokio::task::JoinSet<_>, u: String| {
         let c = client.clone();
-        tokio::spawn(async move { fetch_page(&c, &u).await })
+        in_flight.spawn(async move { fetch_page(&c, &u).await });
     };
 
     let mut poll_started = std::time::Instant::now();
-    let mut in_flight = Some(spawn_fetch(url.clone()));
+    // Dropping the stream also cancels its page fetch.
+    let mut in_flight = tokio::task::JoinSet::new();
+    spawn_fetch(&mut in_flight, first_page(options.from_timestamp));
     let mut previous_page: HashSet<String> = HashSet::new();
+    let mut pages_fetched = 0;
 
     loop {
         if should_stop() {
-            if let Some(h) = in_flight.take() {
-                h.abort();
-            }
             return Ok(confirmed_timestamp);
         }
 
-        let (items, more) = match in_flight.take() {
-            Some(h) => h
-                .await
-                .map_err(|e| SyncError::Other(format!("pointer-changes prefetch join: {e}")))??,
-            None => fetch_page(client, &url).await?,
-        };
+        let (items, more) = in_flight
+            .join_next()
+            .await
+            .expect("one pointer-changes page is queued on every iteration")
+            .map_err(|e| SyncError::Other(format!("pointer-changes prefetch join: {e}")))??;
+        pages_fetched += 1;
         let span = poll_started.elapsed();
 
         if let Some(repo) = &heartbeat_repo
@@ -336,17 +337,15 @@ where
             None
         };
 
-        if let Some(next) = &next {
-            in_flight = Some(spawn_fetch(next.clone()));
-            url = next.clone();
+        if let Some(next) = &next
+            && pages_fetched < MAX_PAGES_PER_POLL
+        {
+            spawn_fetch(&mut in_flight, next.clone());
         }
 
         let now_ms = chrono::Utc::now().timestamp_millis();
         for item in items {
             if should_stop() {
-                if let Some(h) = in_flight.take() {
-                    h.abort();
-                }
                 return Ok(confirmed_timestamp);
             }
 
@@ -375,6 +374,12 @@ where
             deployer
                 .schedule_entity_deployment(deployment, &servers, Some(report))
                 .await?;
+        }
+
+        if next.is_some() && pages_fetched == MAX_PAGES_PER_POLL {
+            return Err(SyncError::Other(format!(
+                "pointer-changes poll for {server} exceeded {MAX_PAGES_PER_POLL} pages"
+            )));
         }
 
         if next.is_none() {
@@ -415,12 +420,9 @@ where
             tokio::time::sleep(std::time::Duration::from_millis(options.wait_time_ms)).await;
             delivered.begin_poll(confirmed_timestamp);
             previous_page.clear();
-            url = format!(
-                "{}/pointer-changes?sortingOrder=ASC&sortingField=local_timestamp&from={}",
-                server, confirmed_timestamp
-            );
             poll_started = std::time::Instant::now();
-            in_flight = Some(spawn_fetch(url.clone()));
+            pages_fetched = 0;
+            spawn_fetch(&mut in_flight, first_page(confirmed_timestamp));
         }
     }
 
@@ -901,5 +903,93 @@ mod tests {
             "the cursor settles the overlap behind the newest row: {confirmed}"
         );
         assert_eq!((report.scheduled(), report.lost()), (2, 0));
+    }
+
+    #[tokio::test]
+    async fn a_poll_exceeding_the_page_cap_never_fetches_the_next_page_or_confirms_progress() {
+        use crate::batch_deployer::BatchDeployerConfig;
+        use crate::bloom_filter::BloomFilter;
+        use crate::failed_deployments_store::LiveFailedDeploymentsStore;
+        use crate::sync_deployer::LiveSyncDeployer;
+        use std::sync::{
+            Arc,
+            atomic::{AtomicI64, AtomicU64, AtomicUsize, Ordering},
+        };
+
+        let rows: Vec<_> = scenes("page-cap", 0, &[0, 0])
+            .await
+            .into_iter()
+            .map(|(row, _, _)| row)
+            .collect();
+        let hits = Arc::new(AtomicUsize::new(0));
+        let served = hits.clone();
+        let app = axum::Router::new().route(
+            "/pointer-changes",
+            axum::routing::get(move || {
+                let page = served.fetch_add(1, Ordering::Relaxed);
+                let mut row = rows[page % rows.len()].clone();
+                row["localTimestamp"] = serde_json::json!(1_000_000 + page);
+                async move {
+                    axum::Json(serde_json::json!({
+                        "deltas": [row],
+                        "pagination": {"moreData": true}
+                    }))
+                }
+            }),
+        );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let base = format!("http://{}", listener.local_addr().unwrap());
+        let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+
+        let pool = sqlx::postgres::PgPoolOptions::new()
+            .connect_lazy("postgres://localhost/postgres")
+            .unwrap();
+        let (storage, tmp) = crate::sync_test_support::temp_storage("pointer-page-cap").await;
+        let _cleanup = crate::sync_test_support::RemoveOnDrop(tmp);
+        let client = reqwest::Client::new();
+        let batch = BatchDeployer::new(
+            BatchDeployerConfig::default(),
+            crate::sync::test_sync_client(client.clone()),
+            storage.clone(),
+            pool.clone(),
+            Arc::new(LiveSyncDeployer::new(
+                pool.clone(),
+                storage,
+                2,
+                crate::sync_deployer::SyncValidation::AuthChainOnly,
+            )),
+            Arc::new(LiveFailedDeploymentsStore::new(pool)),
+            BloomFilter::with_capacity(10),
+        );
+        let progress = AtomicI64::new(0);
+        let settled_polls = AtomicU64::new(0);
+        let result = deploy_entities_from_pointer_changes(
+            &client,
+            &base,
+            &PointerChangesOptions {
+                from_timestamp: 0,
+                wait_time_ms: 0,
+                entity_type_filter: Some(&HashSet::new()),
+            },
+            ScheduleTarget {
+                deployer: &batch,
+                content_servers: &PeerUrls::new(Arc::from(vec![base.clone()])),
+                report: &Arc::new(DeploymentReport::default()),
+            },
+            None,
+            &progress,
+            &settled_polls,
+            || false,
+        )
+        .await;
+
+        server.abort();
+        assert!(
+            matches!(&result, Err(SyncError::Other(e)) if e.contains("exceeded 10000 pages")),
+            "{result:?}"
+        );
+        assert_eq!(hits.load(Ordering::Relaxed), MAX_PAGES_PER_POLL);
+        assert_eq!(progress.load(Ordering::Relaxed), 0);
+        assert_eq!(settled_polls.load(Ordering::Relaxed), 0);
     }
 }
