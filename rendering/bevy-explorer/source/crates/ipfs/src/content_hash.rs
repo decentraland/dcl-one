@@ -31,7 +31,7 @@ pub(crate) enum Check {
 }
 
 /// The content hashes this module computes, told apart by their form.
-enum Kind {
+enum ContentHashKind {
     /// `Qm…`
     V0,
     /// `bafkrei…`
@@ -40,44 +40,68 @@ enum Kind {
     File,
 }
 
-fn kind(hash: &str) -> Option<Kind> {
-    match hash.len() {
-        46 if hash.starts_with("Qm") => Some(Kind::V0),
-        59 if hash.starts_with("bafkrei") => Some(Kind::Raw),
-        59 if hash.starts_with("bafybei") => Some(Kind::File),
-        _ => None,
+/// A name without the form of a content hash this module computes.
+#[derive(Debug)]
+pub(crate) struct NotAContentHash;
+
+impl TryFrom<&str> for ContentHashKind {
+    type Error = NotAContentHash;
+
+    // base58 of a sha-256 multihash, and base32 of a sha-256 CIDv1 behind its `b` prefix
+    fn try_from(hash: &str) -> Result<Self, Self::Error> {
+        match hash.len() {
+            46 if hash.starts_with("Qm") => Ok(Self::V0),
+            59 if hash.starts_with("bafkrei") => Ok(Self::Raw),
+            59 if hash.starts_with("bafybei") => Ok(Self::File),
+            _ => Err(NotAContentHash),
+        }
+    }
+}
+
+/// A name with the form of a deployment's content hash: it names immutable bytes, whichever
+/// scene's content map holds it.
+pub(crate) struct ContentHashView<'a> {
+    hash: &'a str,
+    kind: ContentHashKind,
+}
+
+impl<'a> TryFrom<&'a str> for ContentHashView<'a> {
+    type Error = NotAContentHash;
+
+    fn try_from(hash: &'a str) -> Result<Self, Self::Error> {
+        Ok(Self {
+            hash,
+            kind: ContentHashKind::try_from(hash)?,
+        })
+    }
+}
+
+impl ContentHashView<'_> {
+    /// True when the hash names `bytes`.
+    pub(crate) fn matches(&self, bytes: &[u8]) -> bool {
+        let computed = match self.kind {
+            ContentHashKind::V0 => {
+                let mut multihash = vec![0x12, 0x20];
+                multihash.extend(sha256(bytes));
+                base58(&multihash)
+            }
+            ContentHashKind::Raw => format!("b{}", base32(&cid(RAW, bytes))),
+            ContentHashKind::File => format!("b{}", base32(&file_cid(bytes))),
+        };
+        self.hash == computed
     }
 }
 
 pub(crate) fn check_content_hash(hash: &str, bytes: &[u8]) -> Check {
-    // base58 of a sha-256 multihash, and base32 of a sha-256 CIDv1 behind its `b` prefix
-    let Some(kind) = kind(hash) else {
-        return Check::Unknown;
-    };
-    let computed = match kind {
-        Kind::V0 => {
-            let mut multihash = vec![0x12, 0x20];
-            multihash.extend(sha256(bytes));
-            base58(&multihash)
-        }
-        Kind::Raw => format!("b{}", base32(&cid(RAW, bytes))),
-        Kind::File => format!("b{}", base32(&file_cid(bytes))),
-    };
-    if hash == computed {
-        Check::Matches
-    } else {
-        Check::Differs
+    match ContentHashView::try_from(hash) {
+        Ok(view) if view.matches(bytes) => Check::Matches,
+        Ok(_) => Check::Differs,
+        Err(NotAContentHash) => Check::Unknown,
     }
 }
 
 pub fn matches_content_hash(hash: &str, bytes: &[u8]) -> bool {
     check_content_hash(hash, bytes) == Check::Matches
-}
-
-/// True when `hash` has the form of a deployment's content hash: it names immutable bytes,
-/// whichever scene's content map holds it.
-pub(crate) fn is_content_hash(hash: &str) -> bool {
-    kind(hash).is_some()
 }
 
 /// The raw-leaf CIDv1 (`bafkrei…`) of `bytes`, for fixtures that need a matching hash.
@@ -324,7 +348,7 @@ mod tests {
             "bafybeiexg2oqkfnj56l7fcmawswqbijt5shq4b5rg6a546uwpkqqzwjioi",
             "QmTcHsGD2NnEbei2GLnpWibHQf7VFbCCh8BwwDsCbizyEc",
         ] {
-            assert!(is_content_hash(hash), "{hash}");
+            assert!(ContentHashView::try_from(hash).is_ok(), "{hash}");
         }
         for name in [
             "b64-L1VzZXJz",
@@ -332,7 +356,7 @@ mod tests {
             "models/tree.glb",
             "",
         ] {
-            assert!(!is_content_hash(name), "{name}");
+            assert!(ContentHashView::try_from(name).is_err(), "{name}");
         }
     }
 

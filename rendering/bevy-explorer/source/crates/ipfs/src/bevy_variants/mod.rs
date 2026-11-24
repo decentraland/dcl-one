@@ -796,7 +796,7 @@ impl IpfsIo {
         let context = self.context.blocking_read();
         let hash = ipfs_path
             .hash(&context)
-            .filter(|hash| crate::content_hash::is_content_hash(hash))?;
+            .filter(|hash| crate::content_hash::ContentHashView::try_from(hash.as_str()).is_ok())?;
         let url = ipfs_path.to_url(&context).ok()?;
         (!common::util::is_loopback_url(&url)).then_some((hash, url))
     }
