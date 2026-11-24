@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 
-import type { BlogSearchSuggestions } from "@dcl/one-ui/apps/sites/blog/blogModel";
+import type { BlogSearchSuggestions } from "@dcl/one-ui";
 
 import { parseBlogQuery, SEARCH_MIN_LENGTH } from "@/data/lib/blog/normalize";
 import { blogSuggestionsQuery } from "@/data/lib/blog/search-suggestions-query";

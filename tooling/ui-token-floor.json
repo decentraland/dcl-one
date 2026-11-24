@@ -471,10 +471,6 @@
     "primitives": 0,
     "tokens": 9
   },
-  "apps/ui3/src/web/components/itemcard.css": {
-    "primitives": 19,
-    "tokens": 0
-  },
   "apps/ui3/src/web/frames/accountmenu.css": {
     "primitives": 8,
     "tokens": 11
@@ -502,10 +498,6 @@
   "apps/ui3/src/web/pages/stinvite.css": {
     "primitives": 0,
     "tokens": 37
-  },
-  "apps/ui3/src/web/pages/stprofileoverviewtab.css": {
-    "primitives": 12,
-    "tokens": 0
   },
   "apps/ui3/src/web/pages/stprofilereferralrewardstab.css": {
     "primitives": 16,
@@ -757,7 +749,7 @@
   },
   "library/ui/components/TabsBar/TabsBar.module.css": {
     "primitives": 0,
-    "tokens": 31
+    "tokens": 33
   },
   "library/ui/components/Tag/Tag.module.css": {
     "primitives": 0,

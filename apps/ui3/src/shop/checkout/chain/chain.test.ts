@@ -31,7 +31,7 @@ import {
   SignatureDeclinedError,
 } from "./metatx";
 import { createRpcReader, defaultSleep, waitForReceipt, type ChainReader } from "./rpc";
-import { sendAndConfirm, TxPendingError, TxRevertedError } from "./wallet";
+import { accountCodeKind, isWalletRefusal, sendAndConfirm, TxPendingError, TxRevertedError } from "./wallet";
 
 const FIXTURES = join(__dirname, "../../../../../../services/catalyst/tests/fixtures/shop");
 const read = (p: string) => readFileSync(join(FIXTURES, p), "utf8");
@@ -222,6 +222,20 @@ function fakeReader(over: Partial<ChainReader> = {}): ChainReader {
 describe("relaying a meta-transaction", () => {
   const target = { ...requireContracts(CHAIN.POLYGON).creditsManager!, metaTx: "functionData" as const };
   const from = "0x3f6b1d01b6823ab235fc343069b62b6472774cd1";
+
+  it("is refused as a contract account only for bytecode, whole bytes of it; anything else is tried as ever", async () => {
+    const provider = { request: async () => `0x${"22".repeat(64)}01` };
+    const fetchImpl = (async () => new Response(JSON.stringify({ ok: true, txHash: `0x${"ab".repeat(32)}` }), { status: 200 })) as unknown as typeof fetch;
+    const relay = (code: ChainReader["code"]) =>
+      relayMetaTransaction({ provider, reader: fakeReader({ code }), target, from, functionData: "0x12", relayerUrl: "https://node.example/transactions-api/v1", fetchImpl });
+    await expect(relay(async () => "0x6080604052" as Hex)).rejects.toMatchObject({ reason: "contract-account" });
+    for (const code of ["0x", "0x0", "0x608", "not-bytecode", ""] as Hex[]) await expect(relay(async () => code)).resolves.toMatchObject({ nonce: 7n });
+    await expect(
+      relay(async () => {
+        throw new Error("rpc down");
+      }),
+    ).resolves.toMatchObject({ nonce: 7n });
+  });
 
   it("signs against the contract's nonce and posts the transactions-server shape", async () => {
     const signed: unknown[] = [];
@@ -438,6 +452,27 @@ describe("relaying a meta-transaction", () => {
     await expect(relay(answering(400, { ok: false, error: "invalid_transaction", message: "transaction reverted: execution reverted" }))).rejects.toMatchObject({
       reason: "relayer-unreachable",
     });
+  });
+});
+
+describe("a request the buyer turned down in the wallet", () => {
+  it("is the request's own 4001, ACTION_REJECTED or WalletConnect's 5000; never a cause under another error", () => {
+    for (const code of [4001, "ACTION_REJECTED", 5000]) {
+      expect(isWalletRefusal({ code })).toBe(true);
+      expect(isWalletRefusal({ code: 4900, cause: { code } })).toBe(false);
+      expect(isWalletRefusal({ code: -32603, cause: { code } })).toBe(false);
+    }
+    for (const e of [{ code: 4900 }, { code: 4100 }, { name: "AbortError" }, new Error("User rejected the request"), null, undefined]) {
+      expect(isWalletRefusal(e)).toBe(false);
+    }
+  });
+});
+
+describe("what an account is by its bytecode", () => {
+  it("is an EOA only for exactly 0x, a contract for whole bytes of hex, and unknown for anything else", () => {
+    expect(accountCodeKind("0x")).toBe("eoa");
+    for (const code of ["0x60", "0xAB", "0x6080604052"]) expect(accountCodeKind(code)).toBe("contract");
+    for (const code of ["0x0", "0x608", "not-bytecode", "", "0xzz", null, undefined, 96]) expect(accountCodeKind(code)).toBe("unknown");
   });
 });
 

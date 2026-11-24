@@ -1047,6 +1047,17 @@ export interface PreviewNametagMessage {
   anchor: { x: number; y: number } | null
 }
 
+/** The Backpack's avatar preview has drawn the avatar (scene → page), so the page can open its hole onto it. */
+export interface AvatarPreviewReadyMessage {
+  kind: 'avatarPreviewReady'
+}
+
+/** The minimap's Camera style is drawing its top-down view (scene → page), so the page can open the
+ *  map's hole onto it. Sent again for every camera the scene creates. */
+export interface MinimapReadyMessage {
+  kind: 'minimapReady'
+}
+
 export interface SceneInfoMessage {
   kind: 'sceneInfo'
   title: string
@@ -1086,8 +1097,11 @@ export interface TeleportRequest {
    *  a full reconnect, as for changeRealm, even to the realm the player is in. Omitted: a parcel of
    *  the realm the player is in. */
   realm?: string
-  /** Set with `realm`: the scene answers with a `travelResult` carrying this id. */
+  /** The scene answers with a `travelResult` carrying this id. */
   travelId?: number
+  /** Land on the destination scene's spawn point of this name (compared in lowercase); its default
+   *  spawn without one, or when the scene has none of that name. */
+  spawnPoint?: string
 }
 
 /** Change to a world/realm (page → scene → changeRealm). `realm` is a world name
@@ -1097,10 +1111,13 @@ export interface ChangeRealmRequest {
   realm: string
   /** The scene answers with a `travelResult` carrying this id. */
   travelId?: number
+  /** As for a teleport: the spawn point to land on, by name. */
+  spawnPoint?: string
 }
 
-/** How a realm change the page asked for ended (scene → page). On failure the engine kept the
- *  player in the realm they were in; `message` is the engine's reason. */
+/** How a realm change or a teleport the page asked for ended (scene → page). On failure the engine
+ *  kept the player in the realm they were in; `message` is the engine's reason. `realm` is empty
+ *  for a teleport inside the realm. */
 export interface TravelResultMessage {
   kind: 'travelResult'
   travelId: number
@@ -1316,6 +1333,9 @@ export interface EngineViewportRequest {
   /** Avatar preview region only: the part of `rect` (same units) the avatar is framed in, as it
    *  would be in a rect of that height centred there. The backdrop still fills `rect`. Absent: all of it. */
   focus?: { x: number; y: number; width: number; height: number }
+  /** Avatar preview region only: the box (same units) the page shows the preview in; the scene draws none
+   *  of the preview outside it. Absent: all of `rect`. */
+  clip?: { x: number; y: number; width: number; height: number }
   /** A `LOBBY_STAGE_PRESETS` id; lobby region only. */
   stagePreset?: string
   /** Lobby region only: the pages that borrow the stage leave the avatar still. */
@@ -2662,6 +2682,8 @@ export type SceneToPage =
   | LobbyStageReadyMessage
   | SigninStageReadyMessage
   | PreviewNametagMessage
+  | AvatarPreviewReadyMessage
+  | MinimapReadyMessage
   | GalleryMessage
   | MapPlayersMessage
   | GalleryPhotoMessage

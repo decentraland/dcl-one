@@ -15,7 +15,11 @@ import { magicApiKey } from "./magic-config";
 
 type Eip1193 = { request(args: { method: string; params?: unknown[] }): Promise<unknown> };
 export type MagicClient = {
-  user: { isLoggedIn(): Promise<boolean>; logout(): Promise<unknown> };
+  user: {
+    isLoggedIn(): Promise<boolean>;
+    logout(): Promise<unknown>;
+    getIdToken(options: { lifespan: number }): Promise<string>;
+  };
   oauth2: {
     loginWithRedirect(config: { provider: string; redirectURI: string; customData?: string }): Promise<unknown>;
     getRedirectResult(): Promise<{ oauth?: { userInfo?: { email?: string } } }>;
@@ -24,6 +28,14 @@ export type MagicClient = {
 };
 
 const MARKER = "dcl:auth:magic-session";
+
+export function hasMagicSession(): boolean {
+  try {
+    return localStorage.getItem(MARKER) !== null;
+  } catch {
+    return false;
+  }
+}
 
 export async function magicClient(apiKey: string): Promise<MagicClient> {
   const [{ Magic }, { OAuthExtension }] = await Promise.all([import("magic-sdk"), import("@magic-ext/oauth2")]);
@@ -41,14 +53,8 @@ export function markMagicSession(): void {
 
 /** Ends Magic's session if this browser signed in through it; resolves once Magic has logged out (or could not). */
 export async function endMagicSession(): Promise<void> {
-  let marked = false;
-  try {
-    marked = localStorage.getItem(MARKER) !== null;
-  } catch {
-    return;
-  }
   const key = magicApiKey();
-  if (!marked || !key) return;
+  if (!hasMagicSession() || !key) return;
   try {
     await (await magicClient(key)).user.logout();
   } catch {

@@ -258,7 +258,9 @@ fn behind_the_loading_backdrop_every_primitive_is_attached() {
         .query_filtered::<Entity, With<PrimaryUser>>()
         .single(app.world())
         .unwrap();
-    app.world_mut().entity_mut(player).insert(OutOfWorld);
+    app.world_mut()
+        .entity_mut(player)
+        .insert(OutOfWorld::default());
     let boxes = spawn_boxes(&mut app, root, fit(PRIMITIVE_COST) + 100);
 
     app.update();
@@ -419,7 +421,9 @@ fn waiting_primitives_are_attached_when_the_player_goes_behind_the_backdrop() {
         .query_filtered::<Entity, With<PrimaryUser>>()
         .single(app.world())
         .unwrap();
-    app.world_mut().entity_mut(player).insert(OutOfWorld);
+    app.world_mut()
+        .entity_mut(player)
+        .insert(OutOfWorld::default());
     preset_charges(&mut app, Duration::from_millis(10));
     app.update();
 

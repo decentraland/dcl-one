@@ -184,6 +184,22 @@ tag (name, badges, distance, opacity, scale) and `/nametag_bubble` shows a test 
       Your **own** tag shows above your head in third person and is hidden in first person.
 - [ ] **Crosshair** shows when the camera is locked (mouse hidden) and hides when the cursor is free.
 - [ ] **Hover / proximity prompts** ("Press E…") show on interactables and sit on the right entity.
+- [ ] **`/goto` and `/goto-local`**: `/goto x,y` teleports inside the realm the player is in, Genesis City or a
+      world, within that realm's bounds; `/goto world` and `world/x,y` travel; `genesis` and `main` are Genesis City, at Genesis Plaza when no parcel is named;
+      `random` and `crowd` are Genesis City places from any realm; `/goto-local x,y` never changes realm. Each answers once in chat when the
+      engine does (`🟢 You teleported to x,y.`, `🟢 Welcome to the … world!`, `🟢 Welcome to Genesis
+      City!`), a failure in chat alone with no travel notice beside it, a parcel out of bounds or a
+      bad destination at once. In a scene preview `/goto x,y` moves inside the preview, and
+      `random` and `crowd` answer the engine's refusal to change realm. A `/goto` typed while a
+      travel is under way is read against the realm travelled to; a travel it replaces answers
+      `🔴 Error: The operation was canceled!`. A place inside the realm travelled to
+      (`/goto world/x,y` on the way to that world, `/goto-local x,y`) is that travel asked for
+      again, so a travel that fails moves nobody. A `/goto crowd` still reading the busiest scene
+      gives way to a `/goto` typed after it. A destination ending in `/name` lands on the scene's
+      spawn point of that name (the debug panel's Teleport section shows the name looked for and
+      whether the scene had it). Tests: `library/ui/apps/hud/test/hosted/chatGoto.test.tsx` (the
+      session), `library/explorer-core/features/chat/chatCommands.test.ts` (the destinations),
+      `src/test/bridgeTravel.test.ts` (the bridge).
 - [ ] **Chat bubbles**: a message opens its author's tag into a bubble with a tail for 5 s (a new
       message restarts it); a long message wraps and is cut at 100 characters with an ellipsis; a message that @-mentions you has a pink-to-purple
       ring. A message said in a **community** chat by a player standing nearby shows the community's
@@ -205,8 +221,16 @@ tag (name, badges, distance, opacity, scale) and `/nametag_bubble` shows a test 
       dust and vignette around the live avatar, which waves, plays an idle emote every 8–20 s and
       turns when dragged. Settings → Lobby, in the full page or the lobby's compact Settings, switches
       the look at once (Halloween 2026, Game World).
-      Customize opens the Backpack modal with the avatar through its hole and hands the stage back on
-      close; Jump In loads the world (the hold is released) and a failed trip returns to the lobby.
+      Customize opens the Backpack modal: the lobby around it keeps the stage's last frame, the
+      preview stays the Backpack's purple until the engine reports `avatarPreviewReady`, then shows
+      the avatar on its podium, with nothing of the lobby stage or the world in between and nothing
+      of the preview outside the modal; closing hands the live stage back. Jump In loads the world
+      (the hold is released) and a failed trip returns to the lobby.
+- [ ] **Minimap Camera style** (`bridge-scene/src/domains/minimap.tsx`, map region): picking Camera in
+      Minimap settings, expanding the minimap in that style and entering a World each show the map
+      square black until the engine reports `minimapReady`, then the top-down view, with nothing of
+      the player's own view in the square in between. Switching back to Satellite or Parcel atlas
+      shows the tiles at once.
 - [ ] **Lobby page** (`features/lobby`): the widgets sit on the four corner grids as the stored layout
       says; edit mode (the pencil) frames them, drags them with the others making room, lists the
       ones off the grids in Customize Lobby, and Save keeps the layout across a reload while Cancel,
@@ -232,6 +256,12 @@ tag (name, badges, distance, opacity, scale) and `/nametag_bubble` shows a test 
       between a catalogue page and NAMEs: the tag follows the avatar, never left behind. Play an emote,
       and stop it: the tag settles at the head's height once it ends. Leaving NAMEs, or closing the Shop,
       takes the tag away at once. Mock has no engine, so the tag keeps the design's place.
+- [ ] **Full-screen view entrance** (`features/menu/MainMenuShell`): opening Map, Backpack or any other
+      menu page from the world darkens the world to black, then reveals the page, in 0.2 s; the
+      Backpack's engine-drawn avatar appears only after the black frame. Switching between menu pages
+      plays no black frame, nor does a first open of Create from another page when its code loads
+      within 0.2 s; a menu closed and reopened within 0.2 s appears with no entrance. With reduced motion
+      on, the page fades in without it.
 
 ---
 

@@ -401,10 +401,19 @@ async fn lake_at(lake: Lake) -> (Arc<Portal>, String) {
 }
 
 fn admission(origin: &str, rps: f64, cooldown: Duration) -> Admission {
+    admission_within(origin, rps, cooldown, DEADLINE)
+}
+
+/// The deadline of the tests that read two batches of 10 000 addresses:
+/// their pages take longer than [`DEADLINE`] on a loaded machine, and none of
+/// them is about the deadline.
+const BATCHES_DEADLINE: Duration = Duration::from_secs(30);
+
+fn admission_within(origin: &str, rps: f64, cooldown: Duration, deadline: Duration) -> Admission {
     Admission::with_cooldown(
         PortalReader::new(origin, "polygon-mainnet", None, rps).unwrap(),
         "matic",
-        DEADLINE,
+        deadline,
         cooldown,
     )
 }
@@ -560,7 +569,7 @@ async fn a_revision_change_on_the_second_batch_admits_the_window_again() {
     let after = after.log(110, 0, A, &[T0]);
     let (portal, origin) = lake_at(before).await;
     *portal.swap.lock().unwrap() = Some((1, after));
-    let adm = admission(&origin, 1_000.0, COOLDOWN);
+    let adm = admission_within(&origin, 1_000.0, COOLDOWN, BATCHES_DEADLINE);
     let rpc = FakeRpc {
         logs: vec![rpc_log(130, 0, X, &[T1])],
         ..Default::default()
@@ -975,7 +984,7 @@ async fn one_block_with_two_times_reads_the_window_from_the_rpc() {
     let lake = lake.log(110, 0, A, &[T0]).log(110, 1, X, &[T1]);
     let (portal, origin) = lake_at(lake).await;
     *portal.skew_page.lock().unwrap() = Some(2);
-    let adm = admission(&origin, 1_000.0, COOLDOWN);
+    let adm = admission_within(&origin, 1_000.0, COOLDOWN, BATCHES_DEADLINE);
     let rpc = FakeRpc {
         logs: vec![rpc_log(110, 0, A, &[T0]), rpc_log(110, 1, X, &[T1])],
         ..Default::default()

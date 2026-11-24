@@ -326,15 +326,8 @@ const ROWS: &[Row] = &[
     // with `CONTENT_ESCROW_LEASE_OWNERSHIP_ENABLED=true`.
     same("lambdas", "EXPLORER_ESCROW_GRANTS_ENABLED", "false"),
     // lamb2's `/collections/wearables` takes `collectionId`, `wearableId`
-    // and `textSearch` only: a mirror answers the same; island and journey
-    // also take this node's extended filters.
-    row(
-        "lambdas",
-        "LAMBDAS_CATALOG_EXTENSIONS_ENABLED",
-        Is("false"),
-        Is("true"),
-        Is("true"),
-    ),
+    // and `textSearch` by default; operators can opt in to extended filters.
+    same("lambdas", "LAMBDAS_CATALOG_EXTENSIONS_ENABLED", "false"),
     // lamb2's LAND subgraph: parcel operators and permissions until the
     // land-authz index is published.
     upstream(
@@ -1156,6 +1149,7 @@ const THIRD_PARTY_SECRETS: &[(&str, Option<&str>, &str)] = &[
         "SendGrid's mail API",
     ),
     ("SLACK_BOT_TOKEN", None, "Slack Web API"),
+    ("MAGIC_SECRET_KEY", None, "Magic account deletion API"),
     (
         "ANALYTICS_API_TOKEN",
         Some("ANALYTICS_API_URL"),
