@@ -52,6 +52,10 @@ serve Account Settings, for example
 `https://decentraland.org;https://account.decentraland.org;https://play.decentraland.org`
 for those production front ends.
 
+Set the same hourly limits on all API replicas. `ACCOUNT_DELETION_WALLET_LIMIT`
+defaults to 3, `ACCOUNT_DELETION_NETWORK_LIMIT` to 20 and
+`ACCOUNT_DELETION_GLOBAL_LIMIT` to 120. A zero limit refuses all attempts.
+
 ## Sites Explorer build input
 
 Sites bundles our Bevy web build under `/play/`; no other engine is used.

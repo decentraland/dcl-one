@@ -134,22 +134,22 @@ describe("DeleteMagicAccount", () => {
       });
 
       const failures = [
-        { status: 403, error: "Origin not allowed", message: copy.originRefused, support: false },
-        { status: 403, error: "Magic DID token is too old", message: copy.forbidden, support: false },
-        { status: 403, error: "Magic DID token was already used", message: copy.reused, support: false },
-        { status: 403, error: "Magic wallet does not match the request signer", message: copy.walletMismatch, support: false },
+        { status: 403, code: "origin_not_allowed", error: "Updated server wording", message: copy.originRefused, support: false },
+        { status: 403, code: "token_too_old", error: "Updated server wording", message: copy.forbidden, support: false },
+        { status: 403, code: "token_reused", error: "Updated server wording", message: copy.reused, support: false },
+        { status: 403, code: "wallet_mismatch", error: "Updated server wording", message: copy.walletMismatch, support: false },
         { status: 403, error: "Account deletion requires a valid signed request", message: copy.signInAgain, support: false },
         { status: 429, error: "Account deletion is busy", message: copy.rateLimited, support: true },
         { status: 502, error: "The outcome of the Magic deletion request is unknown", message: copy.unknown, support: false },
         { status: 504, error: "Gateway Timeout", message: copy.unknown, support: false },
         { status: 503, error: "Account deletion is unavailable", message: copy.unavailable, support: true },
       ];
-      for (const { status, error, message, support } of failures) {
-        describe(`and the relay responds with ${status} "${error}"`, () => {
+      for (const { status, code, error, message, support } of failures) {
+        describe(`and the relay responds with ${status} "${code ?? error}"`, () => {
           let response: Response;
 
           beforeEach(() => {
-            response = new Response(JSON.stringify({ error }), { status });
+            response = new Response(JSON.stringify({ code, error }), { status });
             fetchMock.mockResolvedValueOnce(response);
           });
 

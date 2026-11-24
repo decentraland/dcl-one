@@ -18,17 +18,22 @@ use crate::shared::signed_fetch::{self, AUTH_METADATA_HEADER, PayloadPolicy, Sig
 const MAX_AGE_SECONDS: i64 = 120;
 const CLOCK_SKEW_SECONDS: i64 = 30;
 const ADMISSION_LOCK: &str = "explore_api.magic_deletion_attempts:admission";
-const ADDRESS_LIMIT: i64 = 3;
-const NETWORK_LIMIT: i64 = 20;
-const GLOBAL_LIMIT: i64 = 120;
 const RATE_LIMITED: &str = "explore_magic_deletion_rate_limited_total";
 const API_URL: &str = "https://api.magic.link/v1/admin/user/deletion/request";
+
+#[derive(Clone, Copy)]
+struct Limits {
+    wallet: i64,
+    network: i64,
+    global: i64,
+}
 
 #[derive(Clone)]
 pub(crate) struct MagicDeletion {
     audience: String,
     secret: String,
     origins: Vec<String>,
+    limits: Limits,
     #[cfg(test)]
     test_url: Option<String>,
 }
@@ -58,6 +63,11 @@ impl MagicDeletion {
             audience: audience.clone(),
             secret: secret.clone(),
             origins: config.node.account_deletion_allowed_origins.clone(),
+            limits: Limits {
+                wallet: config.node.account_deletion_wallet_limit.into(),
+                network: config.node.account_deletion_network_limit.into(),
+                global: config.node.account_deletion_global_limit.into(),
+            },
             #[cfg(test)]
             test_url: None,
         })
@@ -132,6 +142,7 @@ impl Cap {
 }
 
 async fn claim_attempt(
+    limits: Limits,
     pool: &sqlx::PgPool,
     token_key: &[u8; 32],
     address: &str,
@@ -158,11 +169,11 @@ async fn claim_attempt(
     if reused {
         return Ok(Attempt::Reused);
     }
-    let cap = if address >= ADDRESS_LIMIT {
+    let cap = if address >= limits.wallet {
         Some(Cap::Address)
-    } else if network >= NETWORK_LIMIT {
+    } else if network >= limits.network {
         Some(Cap::Network)
-    } else if global >= GLOBAL_LIMIT {
+    } else if global >= limits.global {
         Some(Cap::Global)
     } else {
         None
@@ -191,6 +202,14 @@ pub(super) async fn sweep_attempts(conn: &mut sqlx::PgConnection) -> sqlx::Resul
     Ok(())
 }
 
+fn forbidden(code: &str, message: &str) -> Response {
+    (
+        StatusCode::FORBIDDEN,
+        Json(json!({ "code": code, "error": message })),
+    )
+        .into_response()
+}
+
 pub(super) async fn delete_account(
     State(state): State<AppState>,
     peer: Option<Extension<ConnectInfo<SocketAddr>>>,
@@ -214,7 +233,7 @@ pub(super) async fn delete_account(
                     .any(|allowed| origin.eq_ignore_ascii_case(allowed))
         });
     if !allowed {
-        return json_error(StatusCode::FORBIDDEN, "Origin not allowed");
+        return forbidden("origin_not_allowed", "Origin not allowed");
     }
 
     let metadata: Option<Value> = headers
@@ -232,13 +251,13 @@ pub(super) async fn delete_account(
         match verify_token(token, &magic.audience, chrono::Utc::now().timestamp()) {
             Ok(token) => token,
             Err(StatusCode::FORBIDDEN) => {
-                return json_error(StatusCode::FORBIDDEN, "Magic DID token is too old");
+                return forbidden("token_too_old", "Magic DID token is too old");
             }
             Err(_) => return json_error(StatusCode::UNAUTHORIZED, "Invalid Magic DID token"),
         };
     if signed_fetch::auth_chain_claimed_address(&headers).as_deref() != Some(address.as_str()) {
-        return json_error(
-            StatusCode::FORBIDDEN,
+        return forbidden(
+            "wallet_mismatch",
             "Magic wallet does not match the request signer",
         );
     }
@@ -259,8 +278,8 @@ pub(super) async fn delete_account(
     match signer {
         Ok(signer) if signer.as_str() == address => {}
         Ok(_) => {
-            return json_error(
-                StatusCode::FORBIDDEN,
+            return forbidden(
+                "wallet_mismatch",
                 "Magic wallet does not match the request signer",
             );
         }
@@ -277,10 +296,18 @@ pub(super) async fn delete_account(
     }
 
     // Persist the one-use claim before dispatching the external deletion request.
-    match claim_attempt(&state.pool, &token_key, &address, source.as_deref()).await {
+    match claim_attempt(
+        magic.limits,
+        &state.pool,
+        &token_key,
+        &address,
+        source.as_deref(),
+    )
+    .await
+    {
         Ok(Attempt::Claimed) => {}
         Ok(Attempt::Reused) => {
-            return json_error(StatusCode::FORBIDDEN, "Magic DID token was already used");
+            return forbidden("token_reused", "Magic DID token was already used");
         }
         Ok(Attempt::RateLimited(cap)) => {
             metrics::counter!(RATE_LIMITED, "cap" => cap.label()).increment(1);
@@ -376,6 +403,12 @@ mod tests {
     use super::*;
     use alloy_signer::SignerSync;
 
+    const TEST_LIMITS: Limits = Limits {
+        wallet: 3,
+        network: 5,
+        global: 8,
+    };
+
     fn signed_token(now: i64, issued: i64, token_id: &str) -> String {
         let wallet = crate::shared::signed_fetch::test_support::wallet();
         let address = format!("{:#x}", wallet.address());
@@ -429,12 +462,12 @@ mod tests {
         let other = db.second_pool().await;
         let key = [13u8; 32];
         let (a, b) = tokio::join!(
-            claim_attempt(&db.pool, &key, "wallet", Some("network")),
-            claim_attempt(&other, &key, "wallet", Some("network"))
+            claim_attempt(TEST_LIMITS, &db.pool, &key, "wallet", Some("network")),
+            claim_attempt(TEST_LIMITS, &other, &key, "wallet", Some("network"))
         );
         assert_ne!(a.unwrap(), b.unwrap());
         assert_eq!(
-            claim_attempt(&other, &key, "wallet", Some("network"))
+            claim_attempt(TEST_LIMITS, &other, &key, "wallet", Some("network"))
                 .await
                 .unwrap(),
             Attempt::Reused
@@ -455,46 +488,76 @@ mod tests {
             key[..2].copy_from_slice(&next_id.to_be_bytes());
             key
         };
-        for _ in 0..ADDRESS_LIMIT {
+        for _ in 0..TEST_LIMITS.wallet {
             assert_eq!(
-                claim_attempt(&db.pool, &key(), "wallet", Some("network"))
+                claim_attempt(TEST_LIMITS, &db.pool, &key(), "wallet", Some("network"))
                     .await
                     .unwrap(),
                 Attempt::Claimed
             );
         }
         assert_eq!(
-            claim_attempt(&db.pool, &key(), "wallet", Some("another-network"))
-                .await
-                .unwrap(),
+            claim_attempt(
+                TEST_LIMITS,
+                &db.pool,
+                &key(),
+                "wallet",
+                Some("another-network")
+            )
+            .await
+            .unwrap(),
             Attempt::RateLimited(Cap::Address)
         );
-        for wallet in ADDRESS_LIMIT..NETWORK_LIMIT {
+        for wallet in TEST_LIMITS.wallet..TEST_LIMITS.network {
             assert_eq!(
-                claim_attempt(&db.pool, &key(), &wallet.to_string(), Some("network"))
-                    .await
-                    .unwrap(),
+                claim_attempt(
+                    TEST_LIMITS,
+                    &db.pool,
+                    &key(),
+                    &wallet.to_string(),
+                    Some("network")
+                )
+                .await
+                .unwrap(),
                 Attempt::Claimed
             );
         }
         assert_eq!(
-            claim_attempt(&db.pool, &key(), "different-wallet", Some("network"))
-                .await
-                .unwrap(),
+            claim_attempt(
+                TEST_LIMITS,
+                &db.pool,
+                &key(),
+                "different-wallet",
+                Some("network")
+            )
+            .await
+            .unwrap(),
             Attempt::RateLimited(Cap::Network)
         );
-        for i in NETWORK_LIMIT..GLOBAL_LIMIT {
+        for i in TEST_LIMITS.network..TEST_LIMITS.global {
             assert_eq!(
-                claim_attempt(&db.pool, &key(), &i.to_string(), Some(&i.to_string()))
-                    .await
-                    .unwrap(),
+                claim_attempt(
+                    TEST_LIMITS,
+                    &db.pool,
+                    &key(),
+                    &i.to_string(),
+                    Some(&i.to_string())
+                )
+                .await
+                .unwrap(),
                 Attempt::Claimed
             );
         }
         assert_eq!(
-            claim_attempt(&db.pool, &key(), "new-wallet", Some("new-network"))
-                .await
-                .unwrap(),
+            claim_attempt(
+                TEST_LIMITS,
+                &db.pool,
+                &key(),
+                "new-wallet",
+                Some("new-network")
+            )
+            .await
+            .unwrap(),
             Attempt::RateLimited(Cap::Global)
         );
         let rows: i64 =
@@ -502,7 +565,7 @@ mod tests {
                 .fetch_one(&db.pool)
                 .await
                 .unwrap();
-        assert_eq!(rows, GLOBAL_LIMIT);
+        assert_eq!(rows, TEST_LIMITS.global);
         db.teardown().await;
     }
 
@@ -511,11 +574,12 @@ mod tests {
         let Some(db) = crate::api::tests_support::scratch_database().await else {
             return;
         };
-        for i in 0..NETWORK_LIMIT {
+        for i in 0..TEST_LIMITS.network {
             let mut key = [7u8; 32];
             key[..8].copy_from_slice(&i.to_be_bytes());
             assert_eq!(
                 claim_attempt(
+                    TEST_LIMITS,
                     &db.pool,
                     &key,
                     &format!("wallet-{i}"),
@@ -527,15 +591,27 @@ mod tests {
             );
         }
         assert_eq!(
-            claim_attempt(&db.pool, &[8u8; 32], "other", Some("2001:db8:1:ffff::/64"))
-                .await
-                .unwrap(),
+            claim_attempt(
+                TEST_LIMITS,
+                &db.pool,
+                &[8u8; 32],
+                "other",
+                Some("2001:db8:1:ffff::/64")
+            )
+            .await
+            .unwrap(),
             Attempt::RateLimited(Cap::Network)
         );
         assert_eq!(
-            claim_attempt(&db.pool, &[9u8; 32], "other", Some("2001:db8:2::/64"))
-                .await
-                .unwrap(),
+            claim_attempt(
+                TEST_LIMITS,
+                &db.pool,
+                &[9u8; 32],
+                "other",
+                Some("2001:db8:2::/64")
+            )
+            .await
+            .unwrap(),
             Attempt::Claimed
         );
         db.teardown().await;
@@ -553,7 +629,7 @@ mod tests {
                     sha256(('n' || i)::bytea), statement_timestamp()
              FROM generate_series(1, $1) AS i",
         )
-        .bind(GLOBAL_LIMIT as i32)
+        .bind(TEST_LIMITS.global as i32)
         .execute(&db.pool)
         .await
         .unwrap();
@@ -580,15 +656,13 @@ mod tests {
         let settings = with_magic(None);
         let app = crate::api::router(crate::api::tests::node_without_db_state(settings).await);
         let owner = crate::shared::signed_fetch::test_support::wallet();
-        assert_eq!(
-            call(&app, "https://unlisted.example", "one", &owner)
-                .await
-                .0,
-            StatusCode::FORBIDDEN
-        );
+        let (status, body) = call(&app, "https://unlisted.example", "one", &owner).await;
+        assert_eq!(status, StatusCode::FORBIDDEN);
+        assert_eq!(body["code"], "origin_not_allowed");
         let other = alloy_signer_local::PrivateKeySigner::random();
         let (status, body) = call(&app, ORIGIN, "one", &other).await;
         assert_eq!(status, StatusCode::FORBIDDEN);
+        assert_eq!(body["code"], "wallet_mismatch");
         assert_eq!(
             body["error"],
             "Magic wallet does not match the request signer"
@@ -636,10 +710,9 @@ mod tests {
             call(&app, ORIGIN, "one", &owner).await.0,
             StatusCode::TOO_MANY_REQUESTS
         );
-        assert_eq!(
-            call(&app, ORIGIN, "one", &owner).await.0,
-            StatusCode::FORBIDDEN
-        );
+        let (status, body) = call(&app, ORIGIN, "one", &owner).await;
+        assert_eq!(status, StatusCode::FORBIDDEN);
+        assert_eq!(body["code"], "token_reused");
         let (status, body) = call(&app, ORIGIN, "two", &owner).await;
         assert_eq!(status, StatusCode::BAD_GATEWAY);
         assert_eq!(
@@ -663,12 +736,19 @@ mod tests {
 
     fn with_magic(test_url: Option<String>) -> crate::api::Settings {
         let mut settings = crate::api::Settings::for_tests(crate::api::Sources::defaults());
-        settings.magic_deletion = Some(MagicDeletion {
-            audience: "decentraland".into(),
-            secret: "dummy-key".into(),
-            origins: vec![ORIGIN.into()],
-            test_url,
-        });
+        let config = crate::config::Config::parse_env_for_tests([
+            ("DATABASE_URL", "postgres:///catalyst"),
+            ("MAGIC_CLIENT_ID", "decentraland"),
+            ("MAGIC_SECRET_KEY", "dummy-key"),
+            ("ACCOUNT_DELETION_ALLOWED_ORIGINS", ORIGIN),
+            ("ACCOUNT_DELETION_WALLET_LIMIT", "3"),
+            ("ACCOUNT_DELETION_NETWORK_LIMIT", "5"),
+            ("ACCOUNT_DELETION_GLOBAL_LIMIT", "8"),
+        ])
+        .unwrap();
+        let mut magic = MagicDeletion::from_config(&config).unwrap();
+        magic.test_url = test_url;
+        settings.magic_deletion = Some(magic);
         settings
     }
 

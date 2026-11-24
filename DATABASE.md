@@ -2726,10 +2726,9 @@ measurable.
 Magic account deletion inserts one short-lived row per verified request into
 `explore_api.magic_deletion_attempts`. A digest of the wallet address and Magic
 token ID is the unique key. An advisory transaction lock serializes the
-one-use claim across replicas. In the preceding hour, at most 3 attempts per
-wallet, 20 per network and 120 globally can reach Magic. A network is an
-IPv4 address or an IPv6 /48, so one allocation cannot fill the global cap
-alone. Requests with no trusted source share a network bucket. A refused
+one-use claim across replicas. The default hourly caps allow 3 attempts per
+wallet, 20 per network and 120 globally. A network is one IPv4 address or an
+IPv6 /48. Requests with no trusted source share a network bucket. A refused
 request writes nothing and counts in
 `explore_magic_deletion_rate_limited_total` by the cap it hit. Admission counts the preceding hour
 through the requested-at index, which also serves the one-day expiry sweep.

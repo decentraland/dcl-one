@@ -109,6 +109,18 @@ pub struct NodeConfig {
     #[arg(long, env = "ACCOUNT_DELETION_ALLOWED_ORIGINS", value_delimiter = ';')]
     pub account_deletion_allowed_origins: Vec<String>,
 
+    /// Hourly Magic deletion attempt limit (wallet).
+    #[arg(long, env = "ACCOUNT_DELETION_WALLET_LIMIT", default_value_t = 3)]
+    pub account_deletion_wallet_limit: u32,
+
+    /// Hourly Magic deletion attempt limit (network).
+    #[arg(long, env = "ACCOUNT_DELETION_NETWORK_LIMIT", default_value_t = 20)]
+    pub account_deletion_network_limit: u32,
+
+    /// Hourly Magic deletion attempt limit (global).
+    #[arg(long, env = "ACCOUNT_DELETION_GLOBAL_LIMIT", default_value_t = 120)]
+    pub account_deletion_global_limit: u32,
+
     /// The map service `/lambdas/users/{address}/lands` points its parcel and
     /// estate images at (`<base>/v1/parcels/{x}/{y}/map.png`); empty is this
     /// node's own `<PUBLIC_URL>/api`. `NODE_POSTURE=mirror` sets

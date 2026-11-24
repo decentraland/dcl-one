@@ -1,7 +1,6 @@
 import { useEffect, useState } from "react";
 
-import { Button, Modal } from "@dcl/one-ui";
-import { GeneralDelete } from "@dcl/one-ui/foundations/icons";
+import { Button, GeneralDelete, Modal } from "@dcl/one-ui";
 import { useMutation } from "@tanstack/react-query";
 
 import { magicApiKey } from "@/data/lib/auth/magic-config";
@@ -20,18 +19,18 @@ class DeletionError extends Error {
   }
 }
 
-/** The relay's 403s share a status, so its `error` field tells them apart. */
+/** The relay's 403s share a status, so its `code` field tells them apart. */
 const FORBIDDEN = new Map<unknown, string>([
-  ["Origin not allowed", copy.originRefused],
-  ["Magic DID token is too old", copy.forbidden],
-  ["Magic DID token was already used", copy.reused],
-  ["Magic wallet does not match the request signer", copy.walletMismatch],
+  ["origin_not_allowed", copy.originRefused],
+  ["token_too_old", copy.forbidden],
+  ["token_reused", copy.reused],
+  ["wallet_mismatch", copy.walletMismatch],
 ]);
 
-function deletionError(status: number, error: unknown): DeletionError {
+function deletionError(status: number, code: unknown): DeletionError {
   switch (status) {
     case 401: return new DeletionError(copy.signInAgain);
-    case 403: return new DeletionError(FORBIDDEN.get(error) ?? copy.signInAgain);
+    case 403: return new DeletionError(FORBIDDEN.get(code) ?? copy.signInAgain);
     case 429: return new DeletionError(copy.rateLimited, true);
     case 502:
     case 504: return new DeletionError(copy.unknown);
@@ -40,9 +39,9 @@ function deletionError(status: number, error: unknown): DeletionError {
   }
 }
 
-async function errorField(response: Response): Promise<unknown> {
+async function errorCode(response: Response): Promise<unknown> {
   const body: unknown = await response.json().catch(() => null);
-  return body && typeof body === "object" ? (body as { error?: unknown }).error : undefined;
+  return body && typeof body === "object" ? (body as { code?: unknown }).code : undefined;
 }
 
 export function DeleteMagicAccount({ address, onSignOut }: { address: string; onSignOut: () => void }) {
@@ -72,7 +71,7 @@ function DeleteMagicAccountAction({ address, onSignOut }: { address: string; onS
       const response = await fetch(url, { method: "DELETE", headers }).catch(() => {
         throw new DeletionError(copy.unknown);
       });
-      if (!response.ok) throw deletionError(response.status, await errorField(response));
+      if (!response.ok) throw deletionError(response.status, await errorCode(response));
       await response.body?.cancel().catch(() => {});
     },
     onSuccess: () => {
