@@ -1,7 +1,7 @@
 // TODO
 // - gltf collider flags
-// - clean up of cached colliders (when mesh is unloaded?)
 use std::{
+    borrow::Cow,
     collections::BTreeMap,
     f32::consts::{PI, TAU},
     hash::{Hash, Hasher},
@@ -65,7 +65,7 @@ use dcl_component::{
     SceneComponentId, SceneEntityId,
 };
 use dcl_types::interface::{ComponentPosition, CrdtType};
-use ipfs::{EntityDefinition, IpfsAssetServer};
+use ipfs::{content_hash::is_content_hash, EntityDefinition, IpfsAssetServer};
 use scene_material::{SceneBound, SceneBounds, SceneMaterial};
 
 use super::{
@@ -194,7 +194,9 @@ impl Plugin for GltfDefinitionPlugin {
             ComponentPosition::EntityOnly,
         );
 
-        app.init_resource::<GltfNameCache>();
+        app.init_resource::<GltfNameCache>()
+            .init_resource::<SharedGltfs>()
+            .init_resource::<SharedMeshes>();
         app.add_systems(Update, update_gltf.in_set(SceneSets::PostLoop));
         app.add_systems(
             Update,
@@ -202,7 +204,14 @@ impl Plugin for GltfDefinitionPlugin {
                 .in_set(SceneSets::PostLoop)
                 .before(update_gltf),
         );
-        app.add_systems(Update, maintain_gltf_name_cache);
+        app.add_systems(
+            Update,
+            (
+                maintain_gltf_name_cache,
+                maintain_shared_gltfs,
+                maintain_shared_meshes,
+            ),
+        );
         app.add_systems(SpawnScene, update_ready_gltfs.after(scene_spawner_system));
         app.add_systems(Update, check_gltfs_ready.in_set(SceneSets::PostInit));
         app.add_systems(
@@ -278,6 +287,62 @@ fn extras_collider_mask(extras: &str) -> Option<u32> {
 
 #[derive(Component)]
 pub struct GltfHandle(Handle<Gltf>);
+
+/// The content hash of a container's file, when its model may be shared across scenes
+/// ([`SharedGltfs`]).
+#[derive(Component)]
+struct GltfContentHash(String);
+
+/// The glTF assets shared across scenes, by their file's content hash. A file that references
+/// no other file holds the same model in every scene, so the first scene's asset serves the
+/// others: one copy of its meshes, materials and textures. A file that references others by uri
+/// resolves them in its own scene's content map, so each scene keeps its own asset of it.
+#[derive(Resource, Default)]
+pub struct SharedGltfs(HashMap<String, AssetId<Gltf>>);
+
+impl SharedGltfs {
+    /// The number of models shared across scenes.
+    pub fn models(&self) -> usize {
+        self.0.len()
+    }
+}
+
+/// True when the glTF's file references no other file: every buffer and image is in the file
+/// or in a `data:` uri. False once its source is dropped.
+fn references_no_file(gltf: &Gltf) -> bool {
+    gltf.source.as_ref().is_some_and(|source| {
+        let json = source.as_json();
+        uris_in_file(
+            json.buffers
+                .iter()
+                .map(|buffer| buffer.uri.as_deref())
+                .chain(json.images.iter().map(|image| image.uri.as_deref())),
+        )
+    })
+}
+
+/// True when each uri is absent (the data is in the file) or a `data:` uri.
+fn uris_in_file<'a>(uris: impl IntoIterator<Item = Option<&'a str>>) -> bool {
+    uris.into_iter()
+        .all(|uri| uri.is_none_or(|uri| uri.starts_with("data:")))
+}
+
+/// Forgets the shared models whose asset is gone.
+fn maintain_shared_gltfs(
+    mut events: EventReader<AssetEvent<Gltf>>,
+    mut shared: ResMut<SharedGltfs>,
+) {
+    let removed = events
+        .read()
+        .filter_map(|event| match event {
+            AssetEvent::Removed { id } => Some(*id),
+            _ => None,
+        })
+        .collect::<HashSet<_>>();
+    if !removed.is_empty() {
+        shared.0.retain(|_, id| !removed.contains(id));
+    }
+}
 
 /// The bounds the materials of a root's glTF containers clip to, on a root with no
 /// `RendererSceneContext`: a scene's stand-in (`scene_lod`), whose containers this path loads and
@@ -412,7 +477,13 @@ fn update_gltf(
         Changed<GltfDefinition>,
     >,
     unprocessed_gltfs: Query<
-        (Entity, &SceneEntity, &GltfHandle, &GltfDefinition),
+        (
+            Entity,
+            &SceneEntity,
+            &GltfHandle,
+            &GltfDefinition,
+            Option<&GltfContentHash>,
+        ),
         (With<GltfDefinition>, Without<GltfLoaded>),
     >,
     scene_contents: Query<(
@@ -431,6 +502,7 @@ fn update_gltf(
     containing_scenes: ContainingScene,
     oow_player: Query<Entity, (With<OutOfWorld>, With<PrimaryUser>)>,
     no_render_app: Option<Res<NoRenderApp>>,
+    mut shared_gltfs: ResMut<SharedGltfs>,
 ) {
     let immediate_scene = oow_player
         .single()
@@ -489,16 +561,21 @@ fn update_gltf(
 
         // a value that cannot load leaves no handle behind: the previous model's would spawn it
         // again
-        let content_hash = match scene_contents.get(scene_ent.root) {
+        let (content_hash, file_hash) = match scene_contents.get(scene_ent.root) {
             Ok((Some(h_scene_def), _)) => {
                 let Some(scene_def) = scene_defs.get(h_scene_def.0.id()) else {
                     warn!("scene definition not loaded, can't process file request");
                     commands.entity(ent).try_remove::<GltfHandle>();
                     continue;
                 };
-                scene_def.id.as_str()
+                let file_hash = scene_def
+                    .content
+                    .hash(&gltf.0.src)
+                    .filter(|hash| is_content_hash(hash))
+                    .map(Cow::into_owned);
+                (scene_def.id.as_str(), file_hash)
             }
-            Ok((None, Some(content))) => content.0.as_str(),
+            Ok((None, Some(content))) => (content.0.as_str(), None),
             _ => {
                 warn!("no scene definition found, can't process file request");
                 commands.entity(ent).try_remove::<GltfHandle>();
@@ -511,6 +588,12 @@ fn update_gltf(
         } else {
             RenderAssetTransferPriority::Priority(0)
         };
+        // a colliders part loads under an asset path of its own and keeps no source to check
+        let file_hash = file_hash.filter(|_| part != Some(&GltfPart::Colliders));
+        let shared = file_hash
+            .as_ref()
+            .and_then(|hash| shared_gltfs.0.get(hash))
+            .and_then(|id| ipfas.asset_server().get_id_handle(*id));
         let h_gltf = if part == Some(&GltfPart::Colliders) {
             Ok(
                 ipfas.load_content_file_colliders::<Gltf, GltfLoaderSettings>(
@@ -519,6 +602,8 @@ fn update_gltf(
                     collider_gltf_loader_settings,
                 ),
             )
+        } else if let Some(h_gltf) = shared {
+            Ok(h_gltf)
         } else {
             ipfas.load_content_file_with_settings::<Gltf, GltfLoaderSettings>(
                 &gltf.0.src,
@@ -540,13 +625,17 @@ fn update_gltf(
         };
 
         set_state(scene_ent, LoadingState::Loading);
-        commands
-            .entity(ent)
+        let mut container = commands.entity(ent);
+        container
             .try_insert(GltfHandle(h_gltf))
             .remove::<GltfLoaded>();
+        match file_hash {
+            Some(hash) => container.try_insert(GltfContentHash(hash)),
+            None => container.try_remove::<GltfContentHash>(),
+        };
     }
 
-    for (ent, scene_ent, h_gltf, def) in unprocessed_gltfs.iter() {
+    for (ent, scene_ent, h_gltf, def, file_hash) in unprocessed_gltfs.iter() {
         match ipfas.load_state(h_gltf.0.id()) {
             bevy::asset::LoadState::Loaded => (),
             bevy::asset::LoadState::Failed(e) => {
@@ -574,26 +663,45 @@ fn update_gltf(
         };
         let gltf_scene_handle = gltf.default_scene.as_ref();
 
-        // validate texture types
+        // the first scene to load a file that references no other serves it to the rest
+        if let Some(GltfContentHash(hash)) = file_hash {
+            if references_no_file(gltf) {
+                let id = h_gltf.0.id();
+                shared_gltfs
+                    .0
+                    .entry(hash.clone())
+                    .and_modify(|shared| {
+                        if !gltfs.contains(*shared) {
+                            *shared = id;
+                        }
+                    })
+                    .or_insert(id);
+            }
+        }
+
+        // validate texture types. Read first: a mutable borrow marks the material changed, which
+        // sends a shared model's material to the gpu again for each container
         for h_mat in gltf.materials.iter() {
-            let Some(mat) = base_mats.get_mut(h_mat) else {
-                continue;
-            };
-
-            if let Some(h_base) = mat.base_color_texture.as_ref() {
-                if let Some(LoadState::Loading) = ipfas.asset_server().get_load_state(h_base) {
-                    continue;
-                }
-
-                if let Some(texture) = images.get(h_base) {
-                    if texture.texture_descriptor.format.sample_type(None, None)
+            let invalid = base_mats
+                .get(h_mat)
+                .and_then(|mat| mat.base_color_texture.as_ref())
+                .filter(|h_base| {
+                    !matches!(
+                        ipfas.asset_server().get_load_state(*h_base),
+                        Some(LoadState::Loading)
+                    )
+                })
+                .and_then(|h_base| images.get(h_base))
+                .is_some_and(|texture| {
+                    texture.texture_descriptor.format.sample_type(None, None)
                         != Some(bevy::render::render_resource::TextureSampleType::Float {
                             filterable: true,
                         })
-                    {
-                        warn!("invalid format for base color texture, disabling");
-                        mat.base_color_texture = None;
-                    }
+                });
+            if invalid {
+                warn!("invalid format for base color texture, disabling");
+                if let Some(mat) = base_mats.get_mut(h_mat) {
+                    mat.base_color_texture = None;
                 }
             }
         }
@@ -681,13 +789,56 @@ pub struct CachedMeshData {
     /// and left `None` by a visuals part until a part that may make colliders reuses the mesh
     pub shape: Option<SharedShape>,
     pub maybe_collider: Option<Handle<Mesh>>,
+    /// on the gpu: converted for a part that draws. A colliders part's meshes stay in main-world
+    /// memory
+    pub drawn: bool,
 }
 
+/// The meshes and materials a scene uses: its view of [`SharedMeshes`], and the scene materials
+/// made from its glTFs' materials, which clip to its bounds.
 #[derive(Component, Default)]
 pub struct SceneResourceLookup {
     pub materials: HashMap<Handle<StandardMaterial>, Handle<SceneMaterial>>,
     pub meshes_by_hash: HashMap<u64, CachedMeshData>,
-    pub mesh_hashes_by_id: HashMap<AssetId<Mesh>, u64>,
+}
+
+/// The converted meshes of every scene, by the hash of their data: a mesh converted for one
+/// scene serves each other scene with the same data, with one copy on the gpu and one collision
+/// shape.
+#[derive(Resource, Default)]
+pub struct SharedMeshes {
+    by_hash: HashMap<u64, CachedMeshData>,
+    /// a mesh asset's hash, taken before conversion changes the mesh
+    hash_by_id: HashMap<AssetId<Mesh>, u64>,
+}
+
+impl SharedMeshes {
+    /// The number of converted meshes.
+    pub fn meshes(&self) -> usize {
+        self.by_hash.len()
+    }
+}
+
+/// Forgets the meshes whose asset is gone.
+fn maintain_shared_meshes(
+    mut events: EventReader<AssetEvent<Mesh>>,
+    mut shared: ResMut<SharedMeshes>,
+) {
+    for event in events.read() {
+        let AssetEvent::Removed { id } = event else {
+            continue;
+        };
+        let Some(hash) = shared.hash_by_id.remove(id) else {
+            continue;
+        };
+        if shared
+            .by_hash
+            .get(&hash)
+            .is_some_and(|data| data.mesh_id == *id)
+        {
+            shared.by_hash.remove(&hash);
+        }
+    }
 }
 
 /// A loaded glTF container `update_ready_gltfs` has not finished processing.
@@ -725,6 +876,7 @@ pub(crate) struct NodeProcessing<'w, 's> {
     base_mats: Res<'w, Assets<StandardMaterial>>,
     bound_mats: ResMut<'w, Assets<SceneMaterial>>,
     meshes: ResMut<'w, Assets<Mesh>>,
+    shared_meshes: ResMut<'w, SharedMeshes>,
     asset_server: Res<'w, AssetServer>,
     config: Res<'w, AppConfig>,
 }
@@ -772,6 +924,7 @@ impl NodeProcessing<'_, '_> {
             base_mats,
             bound_mats,
             meshes,
+            shared_meshes,
             asset_server,
             config,
         } = self;
@@ -919,8 +1072,8 @@ impl NodeProcessing<'_, '_> {
                 None
             } else {
                 Some(
-                    *resource_lookup
-                        .mesh_hashes_by_id
+                    *shared_meshes
+                        .hash_by_id
                         .entry(h_gltf_mesh.id())
                         .or_insert_with(|| {
                             let hasher = &mut std::hash::DefaultHasher::new();
@@ -952,9 +1105,11 @@ impl NodeProcessing<'_, '_> {
                 )
             };
 
-            // try and get existing mesh/collider data from hash
+            // try and get existing mesh/collider data from hash, converted for this scene or
+            // another. A part that draws needs a mesh on the gpu
             let existing_data = maybe_hash
-                .and_then(|hash| resource_lookup.meshes_by_hash.get(&hash))
+                .and_then(|hash| shared_meshes.by_hash.get(&hash))
+                .filter(|data| data.drawn || !visuals)
                 .and_then(|data| asset_server.get_id_handle(data.mesh_id).map(|h| (h, data)));
 
             let (h_mesh, data) = if let Some((h_mesh, cached_data)) = existing_data {
@@ -1033,31 +1188,35 @@ impl NodeProcessing<'_, '_> {
                     is_skinned,
                     shape,
                     maybe_collider,
+                    drawn: visuals,
                 };
 
                 if let Some(hash) = maybe_hash {
                     // and store it for next time
-                    resource_lookup.meshes_by_hash.insert(hash, data.clone());
+                    shared_meshes.by_hash.insert(hash, data.clone());
                 }
                 *tracker.0.entry("Unique Meshes").or_default() += 1;
                 (h_gltf_mesh.0.clone(), data)
             };
 
-            // a lookup shared by a visuals part and a colliders part (none is today) can hold a
-            // mesh a visuals part cached without a shape: build it for a part that may make
+            // a mesh a visuals part cached has no shape: build it for a part that may make
             // colliders, once, and keep it in the cache
             let mut data = data;
             if colliders && data.shape.is_none() {
                 if let Some(mesh_data) = meshes.get(h_mesh.id()) {
                     data.shape = Some(collider_shape(mesh_data));
-                    if let Some(cached) =
-                        maybe_hash.and_then(|hash| resource_lookup.meshes_by_hash.get_mut(&hash))
+                    if let Some(cached) = maybe_hash
+                        .and_then(|hash| shared_meshes.by_hash.get_mut(&hash))
+                        .filter(|cached| cached.mesh_id == data.mesh_id)
                     {
                         cached.shape = data.shape.clone();
                     }
                 } else {
                     warn!("mesh for colliders is gone from the assets; its colliders are dropped");
                 }
+            }
+            if let Some(hash) = maybe_hash {
+                resource_lookup.meshes_by_hash.insert(hash, data.clone());
             }
 
             *tracker.0.entry("Total Meshes").or_default() += 1;

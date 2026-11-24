@@ -27,6 +27,7 @@ fn app() -> App {
         .init_asset::<Mesh>()
         .init_resource::<AppConfig>()
         .init_resource::<GltfNameCache>()
+        .init_resource::<SharedMeshes>()
         .init_resource::<ProcessingDeadline>()
         .init_resource::<SlowestProcessing>()
         .register_type::<Transform>()
@@ -648,4 +649,42 @@ fn a_skinned_mesh_under_a_node_with_other_extras_gets_no_collider() {
     assert_eq!(processed_collider_mask::<CtCollider>(&mut app, root), None);
     // processed as a skinned mesh, which is what leaves it without a collider
     assert!(app.world().get::<NoFrustumCulling>(primitive).is_some());
+}
+
+#[test]
+fn a_file_with_its_data_inside_references_no_file() {
+    assert!(uris_in_file([None, Some("data:image/png;base64,AAAA")]));
+    assert!(uris_in_file([]));
+    assert!(!uris_in_file([None, Some("textures/wood.png")]));
+    assert!(!uris_in_file([Some("model.bin")]));
+}
+
+#[test]
+fn two_scenes_with_the_same_mesh_draw_one_copy() {
+    let mut app = app();
+    let roots = [scene_root(&mut app), scene_root(&mut app)];
+    let primitives = ["primitive_a", "primitive_b"];
+    for (root, primitive) in roots.into_iter().zip(primitives) {
+        spawn_container(&mut app, root, &["top", primitive]);
+        app.update();
+        // tracked by the asset server, as a loaded glTF's meshes are
+        let mesh = app.world().resource::<AssetServer>().add(triangle());
+        let node = node(&mut app, primitive);
+        app.world_mut().entity_mut(node).insert(Mesh3d(mesh));
+    }
+    for root in roots {
+        give_context(&mut app, root);
+    }
+    app.update();
+
+    let [a, b] = primitives.map(|primitive| {
+        let node = node(&mut app, primitive);
+        app.world().get::<Mesh3d>(node).expect("a mesh").id()
+    });
+    assert_eq!(a, b);
+    assert_eq!(app.world().resource::<SharedMeshes>().meshes(), 1);
+    for root in roots {
+        let lookup = app.world().get::<SceneResourceLookup>(root).unwrap();
+        assert_eq!(lookup.meshes_by_hash.len(), 1);
+    }
 }

@@ -15,7 +15,7 @@ use crate::{
     renderer_context::RendererSceneContext,
     scene_traffic::{Batch, SceneTraffic, Tick},
     update_world::{
-        gltf_container::{GltfLoadingCount, SceneResourceLookup},
+        gltf_container::{GltfLoadingCount, SceneResourceLookup, SharedGltfs, SharedMeshes},
         mesh_collider::SceneColliderData,
     },
     vec3_to_parcel, ContainerEntity, ContainingScene,
@@ -135,6 +135,8 @@ impl Plugin for SceneDebugPanelPlugin {
                     ("Material textures", "textures"),
                     ("Colliders", "colliders"),
                     ("Colliders off outside scene bounds", "collidersOutOfBounds"),
+                    ("Models shared across scenes (all scenes)", "sharedModels"),
+                    ("Converted meshes (all scenes)", "sharedMeshes"),
                 ],
                 actions: &[],
                 inputs: &[],
@@ -455,6 +457,8 @@ fn scene_content(
     )>,
     meshes: Res<Assets<Mesh>>,
     materials: Res<Assets<SceneMaterial>>,
+    shared_gltfs: Option<Res<SharedGltfs>>,
+    shared_meshes: Option<Res<SharedMeshes>>,
 ) {
     if input.take().is_none() {
         return;
@@ -548,7 +552,9 @@ fn scene_content(
         "geometries": geometry.len(), "visibleGeometries": visible_geometry.len(), "materials": material_ids.len(),
         "visibleMaterials": visible_materials.len(), "textures": textures.len(),
         "colliders": colliders.map_or(0, SceneColliderData::collider_count),
-        "collidersOutOfBounds": colliders.map_or(0, SceneColliderData::out_of_bounds_count)}).to_string());
+        "collidersOutOfBounds": colliders.map_or(0, SceneColliderData::out_of_bounds_count),
+        "sharedModels": shared_gltfs.map_or(0, |shared| shared.models()),
+        "sharedMeshes": shared_meshes.map_or(0, |shared| shared.meshes())}).to_string());
 }
 
 #[derive(clap::Parser, ConsoleCommand)]

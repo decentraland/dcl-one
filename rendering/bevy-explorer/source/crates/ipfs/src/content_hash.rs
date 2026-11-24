@@ -53,6 +53,16 @@ pub fn matches_content_hash(hash: &str, bytes: &[u8]) -> bool {
     check_content_hash(hash, bytes) == Check::Matches
 }
 
+/// True when `hash` has the form of a deployment's content hash: it names immutable bytes,
+/// whichever scene's content map holds it.
+pub fn is_content_hash(hash: &str) -> bool {
+    match hash.len() {
+        46 => hash.starts_with("Qm"),
+        59 => hash.starts_with("bafkrei") || hash.starts_with("bafybei"),
+        _ => false,
+    }
+}
+
 /// The raw-leaf CIDv1 (`bafkrei…`) of `bytes`, for fixtures that need a matching hash.
 #[cfg(test)]
 pub(crate) fn raw_cid(bytes: &[u8]) -> String {
@@ -288,6 +298,25 @@ mod tests {
         // not a content hash: the url digests of `IpfsType::UrlCached`, preview's `b64-` ids
         assert!(!matches_content_hash("b64-L1VzZXJz", &bytes));
         assert!(!matches_content_hash("", &bytes));
+    }
+
+    #[test]
+    fn content_hashes_are_told_from_other_names() {
+        for hash in [
+            "bafkreicojquuwmy7piqjti3zx3buxh47ya64i2vumxmzr5gwqpnfgsd6nu",
+            "bafybeiexg2oqkfnj56l7fcmawswqbijt5shq4b5rg6a546uwpkqqzwjioi",
+            "QmTcHsGD2NnEbei2GLnpWibHQf7VFbCCh8BwwDsCbizyEc",
+        ] {
+            assert!(is_content_hash(hash), "{hash}");
+        }
+        for name in [
+            "b64-L1VzZXJz",
+            "https://example.com/model.glb",
+            "models/tree.glb",
+            "",
+        ] {
+            assert!(!is_content_hash(name), "{name}");
+        }
     }
 
     #[test]
