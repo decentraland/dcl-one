@@ -610,22 +610,17 @@ CREATE TABLE shop.legacy_order (
 -- fold's rules (legacy_orders::FOLD_SQL) over every token of both networks.
 INSERT INTO shop.legacy_order (network, marketplace_address, order_id, contract_address, token_id, seller, buyer, price, expires_at, status,
     created_block, created_log, created_at, updated_block, updated_log, updated_at)
-WITH events AS (
-    SELECT network, contract_address, token_id, block_number, log_index, block_time, kind, emitter, detail, from_address, to_address, amount, expires_at
-    FROM shop.nft_event
-    WHERE kind IN ('order_created', 'order_successful', 'order_cancelled') AND detail IS NOT NULL
-), created AS (
+WITH created AS (
     SELECT DISTINCT ON (c.network, c.emitter, c.detail) c.*
     FROM (
-        SELECT e.*, lead(e.block_number) OVER w AS next_block, lead(e.log_index) OVER w AS next_log, lead(e.block_time) OVER w AS next_time
-        FROM events e WHERE e.kind = 'order_created'
+        SELECT e.network, e.contract_address, e.token_id, e.block_number, e.log_index, e.block_time, e.emitter, e.detail,
+               e.from_address, e.amount, e.expires_at,
+               lead(e.block_number) OVER w AS next_block, lead(e.log_index) OVER w AS next_log, lead(e.block_time) OVER w AS next_time
+        FROM shop.nft_event e
+        WHERE e.kind = 'order_created' AND e.detail IS NOT NULL
         WINDOW w AS (PARTITION BY e.network, e.contract_address, e.token_id ORDER BY e.block_number, e.log_index)
     ) c
     ORDER BY c.network, c.emitter, c.detail, c.block_number DESC, c.log_index DESC
-), terminal AS (
-    SELECT DISTINCT ON (e.network, e.emitter, e.detail) e.network, e.emitter, e.detail, e.kind, e.to_address, e.amount, e.block_number, e.log_index, e.block_time
-    FROM events e WHERE e.kind <> 'order_created'
-    ORDER BY e.network, e.emitter, e.detail, e.block_number DESC, e.log_index DESC
 )
 SELECT c.network, c.emitter, c.detail, c.contract_address, c.token_id,
        COALESCE(c.from_address, '0x0000000000000000000000000000000000000000'),
@@ -636,21 +631,32 @@ SELECT c.network, c.emitter, c.detail, c.contract_address, c.token_id,
        c.block_number, c.log_index, c.block_time,
        COALESCE(t.block_number, c.next_block, c.block_number), COALESCE(t.log_index, c.next_log, c.log_index), COALESCE(t.block_time, c.next_time, c.block_time)
 FROM created c
-LEFT JOIN terminal t ON (t.network, t.emitter, t.detail) = (c.network, c.emitter, c.detail)
-    AND (t.block_number, t.log_index) > (c.block_number, c.log_index);
+LEFT JOIN LATERAL (
+    SELECT t.kind, t.to_address, t.amount, t.block_number, t.log_index, t.block_time
+    FROM shop.nft_event t
+    WHERE t.network = c.network AND t.contract_address = c.contract_address AND t.token_id = c.token_id
+      AND t.kind IN ('order_successful', 'order_cancelled') AND t.emitter = c.emitter AND t.detail = c.detail
+      AND (t.block_number, t.log_index) > (c.block_number, c.log_index)
+    ORDER BY t.block_number DESC, t.log_index DESC
+    LIMIT 1
+) t ON true;
 
 -- A token's orders: the fold's and the rewind's per-token rewrite, and
--- /v1/orders?contractAddress=&tokenId=.
-CREATE INDEX legacy_order_token_idx ON shop.legacy_order (network, contract_address, token_id);
+-- /v1/orders?contractAddress=&tokenId= (which names no network).
+CREATE INDEX legacy_order_token_idx ON shop.legacy_order (contract_address, token_id);
 -- An owner's orders, newest first (/v1/orders?owner=, the activity orders leg).
 CREATE INDEX legacy_order_seller_idx ON shop.legacy_order (seller, created_at DESC);
 -- The orders a buyer filled (/v1/orders?buyer=, the activity orders leg).
 CREATE INDEX legacy_order_buyer_idx ON shop.legacy_order (buyer) WHERE buyer IS NOT NULL;
--- The newest-first window over every order (/v1/orders without a filter).
+-- The newest-first and recently-updated windows over every order
+-- (/v1/orders without a filter, sortBy=recently_updated).
 CREATE INDEX legacy_order_created_idx ON shop.legacy_order (created_at DESC);
--- A contract's open orders cheapest first (/v1/orders/open-by-items and
--- /v1/orders?contractAddress=&status=open).
+CREATE INDEX legacy_order_updated_idx ON shop.legacy_order (updated_at DESC);
+-- Open orders cheapest first: a contract's (/v1/orders/open-by-items,
+-- /v1/orders?contractAddress=&status=open) and every contract's
+-- (/v1/orders?status=open&sortBy=cheapest).
 CREATE INDEX legacy_order_open_idx ON shop.legacy_order (contract_address, price) WHERE status = 'open';
+CREATE INDEX legacy_order_open_price_idx ON shop.legacy_order (price) WHERE status = 'open';
 
 -- LAND and estate names and descriptions from Update and CreateEstate.
 -- The latest parcel Update or the latest valid estate document supplies both fields.

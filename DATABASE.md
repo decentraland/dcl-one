@@ -3930,8 +3930,50 @@ the `/v1/nfts` statement timeout:
 - open-by-items: per contract, its open orders cheapest first
   (`legacy_order_open_idx`), up to `perContract`.
 
-Indexes: `legacy_order_token_idx` (the fold's and the rewind's per-token
-rewrite, a token filter), `legacy_order_seller_idx` (an owner's orders
-newest first), `legacy_order_buyer_idx` (the orders a buyer filled),
-`legacy_order_created_idx` (the newest-first window with no filter) and
-`legacy_order_open_idx` (a contract's open orders by price).
+Indexes: `legacy_order_token_idx` (`(contract_address, token_id)`: the
+fold's and the rewind's per-token rewrite, and a token filter, which names
+no network), `legacy_order_seller_idx` (an owner's orders newest first),
+`legacy_order_buyer_idx` (the orders a buyer filled),
+`legacy_order_created_idx` and `legacy_order_updated_idx` (the newest-first
+and recently-updated windows with no filter), `legacy_order_open_idx` (a
+contract's open orders by price) and `legacy_order_open_price_idx` (every
+open order by price).
+
+The fold finds the event that ends each order with one backward probe of
+`nft_event_token_idx` per order (`LATERAL ... LIMIT 1`). As a join of the
+created orders with the ending events, the planner estimated both at one
+row and rescanned every order per order: an Ethereum rebuild of 300,000
+orders did not finish in ten minutes.
+
+Measured on a synthetic upper bound (PostgreSQL 17, warm cache): 5M
+Polygon transfers, 700,000 Polygon orders over 400,000 tokens of 2,000
+collections and 300,000 Ethereum orders over LAND, estates and names, a
+quarter sold and 30% cancelled by id, 130,050 left open:
+
+| Operation | Time |
+|---|---|
+| the seed in the schema run (1M orders from 6.6M log rows) | 16.5 s, plus 2.8 s for the seven indexes |
+| a rebuild over a filled table (no row changes): Polygon / Ethereum | 11.1 s / 7.7 s |
+| a rebuild of Polygon from an empty table (after a rewind) | 25.5 s |
+| a steady pass (the last 1,000 Polygon blocks, nested loops) | 6.6 ms |
+| a catch-up pass (the last 200,000 Polygon blocks) | 0.87 s |
+
+The table holds 719 MB at that bound (346 MB heap, the primary key 145 MB,
+`legacy_order_token_idx` 98 MB, `legacy_order_seller_idx` 74 MB, the rest
+under 25 MB each).
+
+| Read (first = 100 unless noted) | Page | Capped total |
+|---|---|---|
+| no filter, newest first | 1.0 ms | 1.6 ms |
+| one owner (the activity leg) | 3.0 ms | 0.8 ms |
+| one buyer | 3.7 ms | |
+| one token (a LAND parcel) | 0.6 ms | |
+| a collection's open orders, cheapest (and open-by-items, 500) | 0.3 ms | |
+| every open order, cheapest | 71 ms | 0.87 s |
+| `status=sold`, recently updated | 4.6 ms | |
+| the deepest window (25,000), newest first | 208 ms | 4.6 ms |
+
+The capped total of every open order reads each open order's owner until it
+counts 5,000 live ones; in the synthetic data 97% of the open orders'
+tokens had moved, so it read all 130,050. Production row counts are
+unmeasured.

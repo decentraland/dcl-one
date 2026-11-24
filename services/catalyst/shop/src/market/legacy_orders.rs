@@ -35,28 +35,26 @@ use super::chain_walk::ChainNet;
 
 /// The fold of one network (`$1`): the tokens with an order event past
 /// `$2`, every order of each refolded over the token's history. An
-/// unchanged order is left alone.
+/// unchanged order is left alone. The event that ends an order is one
+/// backward probe of `nft_event_token_idx` per order (`LATERAL ... LIMIT
+/// 1`), not a join of two derived sets: the planner estimates those at one
+/// row each, and as a join it rescanned every order per order (a rebuild of
+/// 300,000 orders did not finish in ten minutes).
 const FOLD_SQL: &str = "
 WITH touched AS (
     SELECT DISTINCT contract_address, token_id FROM shop.nft_event
     WHERE network = $1 AND block_number > $2 AND kind IN ('order_created', 'order_successful', 'order_cancelled')
-), events AS (
-    SELECT e.network, e.contract_address, e.token_id, e.block_number, e.log_index, e.block_time, e.kind, e.emitter, e.detail,
-           e.from_address, e.to_address, e.amount, e.expires_at
-    FROM shop.nft_event e JOIN touched t ON (t.contract_address, t.token_id) = (e.contract_address, e.token_id)
-    WHERE e.network = $1 AND e.kind IN ('order_created', 'order_successful', 'order_cancelled') AND e.detail IS NOT NULL
 ), created AS (
     SELECT DISTINCT ON (c.network, c.emitter, c.detail) c.*
     FROM (
-        SELECT e.*, lead(e.block_number) OVER w AS next_block, lead(e.log_index) OVER w AS next_log, lead(e.block_time) OVER w AS next_time
-        FROM events e WHERE e.kind = 'order_created'
-        WINDOW w AS (PARTITION BY e.network, e.contract_address, e.token_id ORDER BY e.block_number, e.log_index)
+        SELECT e.network, e.contract_address, e.token_id, e.block_number, e.log_index, e.block_time, e.emitter, e.detail,
+               e.from_address, e.amount, e.expires_at,
+               lead(e.block_number) OVER w AS next_block, lead(e.log_index) OVER w AS next_log, lead(e.block_time) OVER w AS next_time
+        FROM shop.nft_event e JOIN touched k ON (k.contract_address, k.token_id) = (e.contract_address, e.token_id)
+        WHERE e.network = $1 AND e.kind = 'order_created' AND e.detail IS NOT NULL
+        WINDOW w AS (PARTITION BY e.contract_address, e.token_id ORDER BY e.block_number, e.log_index)
     ) c
     ORDER BY c.network, c.emitter, c.detail, c.block_number DESC, c.log_index DESC
-), terminal AS (
-    SELECT DISTINCT ON (e.network, e.emitter, e.detail) e.network, e.emitter, e.detail, e.kind, e.to_address, e.amount, e.block_number, e.log_index, e.block_time
-    FROM events e WHERE e.kind <> 'order_created'
-    ORDER BY e.network, e.emitter, e.detail, e.block_number DESC, e.log_index DESC
 )
 INSERT INTO shop.legacy_order (network, marketplace_address, order_id, contract_address, token_id, seller, buyer, price, expires_at, status,
     created_block, created_log, created_at, updated_block, updated_log, updated_at)
@@ -69,8 +67,15 @@ SELECT c.network, c.emitter, c.detail, c.contract_address, c.token_id,
        c.block_number, c.log_index, c.block_time,
        COALESCE(t.block_number, c.next_block, c.block_number), COALESCE(t.log_index, c.next_log, c.log_index), COALESCE(t.block_time, c.next_time, c.block_time)
 FROM created c
-LEFT JOIN terminal t ON (t.network, t.emitter, t.detail) = (c.network, c.emitter, c.detail)
-    AND (t.block_number, t.log_index) > (c.block_number, c.log_index)
+LEFT JOIN LATERAL (
+    SELECT t.kind, t.to_address, t.amount, t.block_number, t.log_index, t.block_time
+    FROM shop.nft_event t
+    WHERE t.network = c.network AND t.contract_address = c.contract_address AND t.token_id = c.token_id
+      AND t.kind IN ('order_successful', 'order_cancelled') AND t.emitter = c.emitter AND t.detail = c.detail
+      AND (t.block_number, t.log_index) > (c.block_number, c.log_index)
+    ORDER BY t.block_number DESC, t.log_index DESC
+    LIMIT 1
+) t ON true
 ON CONFLICT (network, marketplace_address, order_id) DO UPDATE SET
     contract_address = EXCLUDED.contract_address, token_id = EXCLUDED.token_id, seller = EXCLUDED.seller,
     buyer = EXCLUDED.buyer, price = EXCLUDED.price, expires_at = EXCLUDED.expires_at, status = EXCLUDED.status,
