@@ -1,0 +1,128 @@
+/* The replay form and its outcome sit in the shared Modal: its title, close button, actions and
+ * surface. The body reads as a form, so it is aligned to the start, unlike the Modal's centered
+ * message text. */
+.body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--dcl-space-16);
+  width: 100%;
+  text-align: start;
+}
+
+.tiers {
+  display: flex;
+  flex-direction: column;
+  gap: var(--dcl-space-12);
+}
+
+.tier {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: var(--dcl-space-4);
+  padding: var(--dcl-space-12) var(--dcl-space-16);
+  border: 1px solid var(--dcl-border-subtle);
+  border-radius: var(--dcl-radius-md);
+  cursor: pointer;
+}
+
+.tier:has(input:checked) {
+  border-color: var(--dcl-action-primary);
+  background: var(--dcl-action-primary-subtle);
+}
+
+.tier:has(input:focus-visible) {
+  outline: 2px solid var(--dcl-text-primary);
+  outline-offset: 2px;
+}
+
+.tier input {
+  position: absolute;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.tierTitle {
+  font-size: var(--dcl-font-size-body-md);
+  font-weight: 600;
+}
+
+.tierCopy {
+  font-size: var(--dcl-font-size-body-sm);
+  line-height: 1.5;
+  color: var(--dcl-text-secondary-on-brand);
+}
+
+.fields {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--dcl-space-12);
+}
+
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: var(--dcl-space-4);
+  font-size: var(--dcl-font-size-body-sm);
+  color: var(--dcl-text-secondary);
+}
+
+.field select,
+.field input {
+  min-width: 140px;
+  padding: var(--dcl-space-8) var(--dcl-space-12);
+  /* --dcl-border-default is about 1.2:1 on the brand surface; control edges need 3:1. */
+  border: 1px solid var(--dcl-text-secondary);
+  border-radius: var(--dcl-radius-sm);
+  background: var(--dcl-transparencies-white-10);
+  color: var(--dcl-text-primary);
+  /* The native option list and spinner follow the dark surface, not white on white. */
+  color-scheme: dark;
+  font: inherit;
+  font-size: var(--dcl-font-size-body-md);
+}
+
+.field select:focus-visible,
+.field input:focus-visible {
+  outline: 2px solid var(--dcl-text-primary);
+  outline-offset: 2px;
+}
+
+.error {
+  margin: 0;
+  padding: var(--dcl-space-8) var(--dcl-space-12);
+  border-radius: var(--dcl-radius-sm);
+  background: var(--dcl-feedback-error-subtle);
+  /* The error red on its light tint is about 2.6:1; dark ink keeps the tint and reads at 11:1. */
+  color: var(--dcl-neutrals-charcoal);
+  font-size: var(--dcl-font-size-body-sm);
+}
+
+.resultTitle {
+  margin: 0;
+  font-size: var(--dcl-font-size-body-lg);
+  font-weight: 600;
+}
+
+.row {
+  display: flex;
+  align-items: baseline;
+  gap: var(--dcl-space-12);
+  font-size: var(--dcl-font-size-body-sm);
+}
+
+.row code {
+  padding: var(--dcl-space-4) var(--dcl-space-8);
+  border: 1px solid var(--dcl-border-subtle);
+  border-radius: var(--dcl-radius-sm);
+  background: var(--dcl-transparencies-white-10);
+  font-family: monospace;
+  font-size: var(--dcl-font-size-body-xs);
+  word-break: break-all;
+}
+
+.note {
+  margin: 0;
+  font-size: var(--dcl-font-size-body-xs);
+  color: var(--dcl-text-secondary);
+}
