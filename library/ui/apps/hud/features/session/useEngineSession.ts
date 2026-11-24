@@ -36,6 +36,7 @@ import { portableKey, toastPortableChanges } from '../portables/portableToasts'
 import { showTextureOptimization } from '../preview/textureOptimizationToast'
 import { bootMode, IN_WORLD_SHOP, unattendedRun } from '@hud-host'
 import { notificationTimeMs } from '@explorer-core/lib/notificationTime'
+import { showHideUiToast, type UiHidden } from '../hideUi/hideUiToast'
 import { getBindingsSnapshot, isCancelKey, isEditableTarget, keyHintFor, setBindingsSnapshot, useBindingsSnapshot } from '../../lib/bindingLabels'
 import { dispatchCancelLayer } from '@explorer-core/lib/cancelLayers'
 import { isInputLocked, subscribeInputLock } from '@explorer-core/lib/inputLock'
@@ -1276,7 +1277,7 @@ export interface EngineSession {
   logout: () => void
   /** A full scene menu page is open → the React HUD (sidebar + chat) hides. */
   menuOpen: boolean
-  /** The HideUi key (U) hid the Explorer HUD; the world and the scene's own UI stay on screen. */
+  /** The HideUi key (U) hid the Explorer HUD (its first press; the second hides the scene UI too). */
   hudHidden: boolean
   closeAllPanels: () => void
 }
@@ -1574,7 +1575,9 @@ export function useEngineSession(createDriver: () => LoginDriver, host: SessionH
   }, [])
   const [pendingMention, setPendingMention] = useState<string | null>(null)
   const [menuOpen, setMenuOpen] = useState(false)
-  const [hudHidden, setHudHidden] = useState(false)
+  // The HideUi cycle: everything shown → Explorer HUD hidden → scene UI hidden too → shown.
+  const [uiHidden, setUiHiddenState] = useState<UiHidden>('none')
+  const uiHiddenRef = useRef<UiHidden>('none')
   const [friendsData, setFriendsData] = useState<{
     available: boolean
     friends: Friend[]
@@ -3757,6 +3760,18 @@ export function useEngineSession(createDriver: () => LoginDriver, host: SessionH
     ownConsoleCommands.current.push([command, ...args].join(' '))
     driverRef.current?.send({ kind: 'consoleCommand', command, args })
   }, [])
+  // The scene UI is the engine's: its hiding goes through the engine's `show_ui all` command.
+  const setUiHidden = useCallback(
+    (next: UiHidden) => {
+      const prev = uiHiddenRef.current
+      if (prev === next) return
+      uiHiddenRef.current = next
+      setUiHiddenState(next)
+      if ((prev === 'all') !== (next === 'all')) ownConsoleCommand('show_ui', ['all', next === 'all' ? 'false' : 'true'])
+      showHideUiToast(next, keyHintFor(getBindingsSnapshot(), 'HideUi') ?? 'U')
+    },
+    [ownConsoleCommand]
+  )
   const stopPortable = useCallback((hash: string) => ownConsoleCommand('stop_portable', [hash]), [ownConsoleCommand])
   const restartSmartWearable = useCallback((urn: string) => ownConsoleCommand('smart_wearable', ['restart', urn]), [ownConsoleCommand])
   const resolveWorldPassword = useCallback((password: string | null) => {
@@ -5342,11 +5357,8 @@ export function useEngineSession(createDriver: () => LoginDriver, host: SessionH
       if (emote) playEmote(emote.urn)
       return
     }
-    // HideUi hides the Explorer HUD and leaves the scene's UI (drawn by the engine) on screen.
     if (action === 'HideUi') {
-      const hide = !hudHidden
-      setHudHidden(hide)
-      if (hide) showToast(`Explorer UI hidden. Press ${keyHintFor(getBindingsSnapshot(), 'HideUi') ?? 'U'} to show it again.`)
+      setUiHidden(uiHiddenRef.current === 'none' ? 'explorer' : uiHiddenRef.current === 'explorer' ? 'all' : 'none')
       return
     }
     switch (action) {
@@ -5368,8 +5380,8 @@ export function useEngineSession(createDriver: () => LoginDriver, host: SessionH
       // 'Chat' (Enter) is NOT handled here: the bridge's chat domain turns it into the
       // dedicated 'focusChat' message (releasing the engine pointer lock scene-side too).
     }
-    // a panel shortcut brings the HUD back with the panel it opens
-    setHudHidden(false)
+    // a panel shortcut brings the whole UI back with the panel it opens
+    setUiHidden('none')
   }
 
   // Stable slices let memoized surfaces (the minimap) skip HUD re-renders they don't depend on.
@@ -5593,7 +5605,7 @@ export function useEngineSession(createDriver: () => LoginDriver, host: SessionH
     setInteractableArea,
     logout,
     menuOpen,
-    hudHidden,
+    hudHidden: uiHidden !== 'none',
     closeAllPanels,
     login: {
       status,

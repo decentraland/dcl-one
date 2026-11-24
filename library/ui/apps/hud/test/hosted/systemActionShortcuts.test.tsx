@@ -4,7 +4,7 @@
 import { describe, it, expect, afterEach, vi } from 'vitest'
 import { act, render, screen, waitFor } from '@testing-library/react'
 import { renderSession, enterAsGuest, type Harness } from '../harness'
-import { hasOpenPopup, openPopup, resetPopups, PopupHost } from '../../design'
+import { hasOpenPopup, openPopup, resetPopups, PopupHost, ToastHost } from '../../design'
 import { setBindingsSnapshot } from '../../lib/bindingLabels'
 import { registerCancelLayer } from '@explorer-core/lib/cancelLayers'
 import { lockInput } from '@explorer-core/lib/inputLock'
@@ -90,16 +90,31 @@ describe('system-action menu shortcuts', () => {
     expect(h.session().places.open).toBe(true)
   })
 
-  it('HideUi toggles the Explorer HUD, and a panel shortcut brings it back', async () => {
+  it('HideUi cycles: Explorer HUD hidden, then the scene UI too, then everything back', async () => {
     const h = await world()
+    render(<ToastHost />)
+    const showUi = (): string[][] => h.driver.sentOf('consoleCommand').filter((m) => m.command === 'show_ui').map((m) => m.args)
     h.driver.emit(action('HideUi'))
     expect(h.session().hudHidden).toBe(true)
+    expect(showUi()).toEqual([])
+    expect(screen.getByText(/to hide the scene UI/)).toBeInTheDocument()
+    h.driver.emit(action('HideUi'))
+    expect(h.session().hudHidden).toBe(true)
+    expect(showUi()).toEqual([['all', 'false']])
+    expect(screen.getByText(/to show the UI again/)).toBeInTheDocument()
     h.driver.emit(action('HideUi'))
     expect(h.session().hudHidden).toBe(false)
+    expect(showUi()).toEqual([['all', 'false'], ['all', 'true']])
+  })
+
+  it('a panel shortcut brings the whole UI back with its panel', async () => {
+    const h = await world()
+    h.driver.emit(action('HideUi'))
     h.driver.emit(action('HideUi'))
     h.driver.emit(action('Map'))
     expect(h.session().hudHidden).toBe(false)
     expect(h.session().map.open).toBe(true)
+    expect(h.driver.sentOf('consoleCommand').filter((m) => m.command === 'show_ui').map((m) => m.args).at(-1)).toEqual(['all', 'true'])
   })
 
   it('ignores release edges', async () => {
