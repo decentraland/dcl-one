@@ -1,7 +1,4 @@
-import {
-  EmailConfirmation,
-  type EmailConfirmationState,
-} from "@dcl/one-ui/apps/sites/account/EmailConfirmation";
+import { EmailConfirmation, type EmailConfirmationState } from "@dcl/one-ui";
 import { useCallback, useEffect, useRef, useState } from "react";
 
 import {

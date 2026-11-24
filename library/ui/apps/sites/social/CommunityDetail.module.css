@@ -1,0 +1,383 @@
+/* The community page, as decentraland.org's: brand gradient, the community card, then members and
+ * events. Its breakpoints are the source's: 768px (the card's image goes beside its details), 991px
+ * (members and events side by side instead of tabs; the larger image) and 1024px (wider padding).
+ * The design system has no community card, avatar or privacy badge, so they are drawn here from the
+ * shared tokens. The source's own colours have no token; the nearest stand in: its radial gradient
+ * (#7434B1 -> #481C6C -> #2B1040) takes the brand purples and the web background, its 34px title the
+ * 32px heading, its 0.3 black card the 0.2 transparency, and off-scale spacings (40px, 60px) sums of
+ * spacing tokens. */
+.root {
+  position: relative;
+  isolation: isolate;
+  box-sizing: border-box;
+  width: 100%;
+  min-height: 100vh;
+  /* The top bar overlays the page, so the content starts below it. */
+  padding-top: var(--site-header-h, 64px);
+  padding-bottom: var(--dcl-space-64);
+  background: radial-gradient(
+    103.89% 95.21% at 95.21% 9.85%,
+    var(--dcl-brand-purple) 0%,
+    var(--dcl-brand-purple-dark) 37.11%,
+    var(--dcl-background-web-dark) 100%
+  );
+  color: var(--dcl-text-primary);
+}
+
+.content {
+  display: flex;
+  flex-direction: column;
+  box-sizing: border-box;
+  width: 100%;
+}
+
+/* The community card. A grid, so the description can sit beside the image (from 991px), under the
+ * image row (768px to 991px) or under the details (a phone) without rendering it twice. */
+.info {
+  display: grid;
+  grid-template-areas:
+    'image'
+    'heading'
+    'description';
+  grid-template-columns: minmax(0, 1fr);
+  row-gap: var(--dcl-space-24);
+  box-sizing: border-box;
+  width: 100%;
+  padding-bottom: var(--dcl-space-32);
+  border-radius: var(--dcl-radius-lg);
+  background: var(--dcl-transparencies-black-20);
+}
+
+.thumbnail {
+  grid-area: image;
+  position: relative;
+  display: flex;
+  flex-shrink: 0;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+  box-sizing: border-box;
+  width: 210px;
+  height: 210px;
+  border-radius: var(--dcl-radius-xl);
+  background: radial-gradient(
+    123.58% 82% at 9.01% 25.79%,
+    var(--dcl-brand-purple) 0%,
+    var(--dcl-brand-purple-dark) 60%,
+    var(--dcl-background-web-dark) 100%
+  );
+}
+
+.thumbnailImage {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.thumbnailFallback {
+  color: var(--dcl-transparencies-white-40);
+}
+
+.heading {
+  grid-area: heading;
+  display: flex;
+  flex-direction: column;
+  gap: var(--dcl-space-12);
+  min-width: 0;
+}
+
+.eyebrow {
+  margin: 0;
+  color: var(--dcl-text-secondary);
+  font-size: var(--dcl-font-size-body-xs);
+  letter-spacing: 1px;
+  line-height: 1;
+  text-transform: uppercase;
+}
+
+.titleBlock {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.title {
+  margin: 0;
+  color: var(--dcl-text-primary);
+  font-size: var(--dcl-font-size-heading-1);
+  font-weight: 500;
+  line-height: 1.24;
+  /* A long unbroken name wraps inside the column instead of overflowing it. */
+  overflow-wrap: anywhere;
+}
+
+.meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--dcl-space-4);
+  margin: 0;
+  color: var(--dcl-text-primary);
+  font-size: var(--dcl-font-size-body-md);
+  line-height: 1.75;
+}
+
+.privacy {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--dcl-space-4);
+  color: var(--dcl-text-secondary-on-brand);
+}
+
+.divider {
+  width: 1px;
+  height: 13px;
+  background: var(--dcl-transparencies-white-20);
+}
+
+.owner {
+  display: flex;
+  align-items: center;
+  gap: var(--dcl-space-8);
+  margin: 0;
+  color: var(--dcl-text-primary);
+  font-size: var(--dcl-font-size-body-md);
+  line-height: 1.5;
+}
+
+.ownerAvatar {
+  display: inline-flex;
+  box-sizing: border-box;
+  flex-shrink: 0;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border: 2px solid var(--dcl-transparencies-white-20);
+  border-radius: var(--dcl-radius-full);
+  background: var(--dcl-system-green);
+  color: var(--dcl-neutrals-white);
+  font-size: var(--dcl-font-size-body-xs);
+  font-weight: 600;
+  object-fit: cover;
+}
+
+.ownerName {
+  color: var(--dcl-action-primary);
+}
+
+.actions {
+  display: flex;
+  flex-direction: column;
+  gap: var(--dcl-space-12);
+  padding-top: var(--dcl-space-12);
+}
+
+/* The source's call to action is at least 140px wide, and spans the column below 991px. */
+.cta {
+  width: 100%;
+  min-width: 140px;
+}
+
+.error {
+  margin: 0;
+  color: var(--dcl-feedback-error);
+  font-size: var(--dcl-font-size-body-sm);
+}
+
+.description {
+  grid-area: description;
+  margin: 0;
+  color: var(--dcl-text-primary);
+  font-size: var(--dcl-font-size-body-md);
+  line-height: 1.75;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.deciding {
+  display: flex;
+  justify-content: center;
+  padding: var(--dcl-space-48) 0;
+}
+
+/* A private community, to someone who is not a member. */
+.private {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--dcl-space-24);
+  box-sizing: border-box;
+  padding: var(--dcl-space-32);
+  border-top: 1px solid var(--dcl-transparencies-white-20);
+  text-align: center;
+}
+
+.privateIcon {
+  color: var(--dcl-brand-melon);
+}
+
+.privateTitle {
+  margin: 0;
+  color: var(--dcl-text-primary);
+  font-size: var(--dcl-font-size-body-md);
+  font-weight: 600;
+}
+
+.privateText {
+  max-width: 550px;
+  margin: 0;
+  color: var(--dcl-text-primary);
+  font-size: var(--dcl-font-size-body-sm);
+}
+
+.sections {
+  display: flex;
+  flex-direction: column;
+  gap: var(--dcl-space-12);
+  padding: var(--dcl-space-24) 0 var(--dcl-space-16);
+}
+
+.columns {
+  display: flex;
+  flex-direction: column;
+  gap: var(--dcl-space-32);
+  padding: 0 var(--dcl-space-16);
+}
+
+.panel {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+/* Below 768px the image stacks above the details, centred in the card. */
+@media (max-width: 767.98px) {
+  .thumbnail {
+    justify-self: center;
+  }
+}
+
+/* A phone: the image spans the card from 391px down, as source. */
+@media (max-width: 390.98px) {
+  .thumbnail {
+    width: 100%;
+    height: 300px;
+    border-radius: 0;
+  }
+}
+
+/* Below 991px the tabs show one section at a time, and the details keep a 16px inset. */
+@media (max-width: 990.98px) {
+  .inactive {
+    display: none;
+  }
+
+  .heading,
+  .info > .description {
+    padding: 0 var(--dcl-space-16);
+  }
+}
+
+@media (min-width: 768px) {
+  .info {
+    grid-template-areas:
+      'image heading'
+      'description description';
+    grid-template-columns: auto minmax(0, 1fr);
+    column-gap: var(--dcl-space-24);
+    row-gap: var(--dcl-space-32);
+    align-items: start;
+    padding: var(--dcl-space-32) var(--dcl-space-24);
+  }
+
+  .info > .description {
+    padding: 0;
+  }
+
+  .heading {
+    padding: 0 var(--dcl-space-16);
+  }
+
+  .columns {
+    padding: 0 var(--dcl-space-24);
+  }
+}
+
+@media (min-width: 991px) {
+  .info {
+    grid-template-areas:
+      'image heading'
+      'image description';
+    grid-template-rows: auto 1fr;
+    column-gap: calc(var(--dcl-space-48) + var(--dcl-space-12));
+    row-gap: var(--dcl-space-24);
+  }
+
+  .heading {
+    padding: 0;
+  }
+
+  .thumbnail {
+    width: 320px;
+    height: 320px;
+  }
+
+  .actions {
+    flex-direction: row;
+    flex-wrap: wrap;
+  }
+
+  .cta {
+    width: auto;
+  }
+
+  .tabs {
+    display: none;
+  }
+
+  .columns {
+    flex-direction: row;
+    gap: var(--dcl-space-32);
+  }
+
+  .members {
+    flex: 0 0 320px;
+    max-width: 320px;
+  }
+
+  .events {
+    flex: 2 0 0;
+  }
+
+  .private {
+    min-height: 571px;
+    justify-content: flex-start;
+    padding: var(--dcl-space-48) var(--dcl-space-96) 0;
+  }
+}
+
+@media (min-width: 1024px) {
+  .root {
+    padding-top: calc(var(--site-header-h, 92px) + var(--dcl-space-4));
+  }
+
+  .info {
+    column-gap: calc(var(--dcl-space-48) + var(--dcl-space-12));
+    padding: calc(var(--dcl-space-32) + var(--dcl-space-8)) var(--dcl-space-32) var(--dcl-space-32);
+  }
+
+  .columns {
+    gap: calc(var(--dcl-space-32) + var(--dcl-space-8));
+    padding: 0 var(--dcl-space-32);
+  }
+}
+
+/* The source narrows the image gap to 40px between 1280px and 1500px. */
+@media (min-width: 1280px) and (max-width: 1499.98px) {
+  .info {
+    column-gap: calc(var(--dcl-space-32) + var(--dcl-space-8));
+  }
+}

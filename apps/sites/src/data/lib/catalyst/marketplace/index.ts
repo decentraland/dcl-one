@@ -25,6 +25,7 @@ export type FetchCatalogParams = {
   search?: string;
   network?: string;
   minPrice?: string;
+  ids?: readonly string[];
 };
 
 export async function fetchCatalog(
@@ -36,6 +37,7 @@ export async function fetchCatalog(
       ...opts,
       query: {
         first: params.first,
+        id: params.ids,
         skip: params.skip,
         category: params.category,
         rarity: params.rarity,

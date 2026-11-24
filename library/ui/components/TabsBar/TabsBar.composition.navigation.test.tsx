@@ -53,6 +53,33 @@ describe('when a captured page composition owns route and control placement', ()
     })
   })
 
+  describe('and the page is blog', () => {
+    beforeEach(() => {
+      render(
+        <TabsBar
+          mode="navigation"
+          page="blog"
+          label="Blog categories"
+          items={items}
+          activeId="overview"
+          search={<input type="search" aria-label="Search articles" />}
+        />
+      )
+    })
+
+    it('should show the caller search field', () => {
+      expect(screen.getByRole('searchbox', { name: 'Search articles' })).toBeInTheDocument()
+    })
+
+    it('should omit the actions region', () => {
+      expect(
+        screen
+          .getByRole('navigation', { name: 'Blog categories' })
+          .querySelector('[data-region="actions"]')
+      ).toBeNull()
+    })
+  })
+
   describe('and a route is hidden on mobile', () => {
     let rendered: RenderResult
 

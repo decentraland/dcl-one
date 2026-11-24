@@ -481,6 +481,7 @@ pub struct BroadcastBody {
     /// The idempotency key of this broadcast (`notifications_broadcast_uidx`):
     /// a retried POST with the same id reaches no recipient twice. Absent, the
     /// server mints a uuid per request, as the old admin route did.
+    /// The `event-notice:` prefix is reserved for event delivery.
     #[serde(rename = "broadcastId", default)]
     pub broadcast_id: Option<String>,
 }
@@ -532,6 +533,11 @@ pub async fn post_broadcast(
     };
     let broadcast_id = match body.broadcast_id.as_deref().map(str::trim) {
         None => Uuid::new_v4().to_string(),
+        Some(id) if id.starts_with("event-notice:") => {
+            return Err(
+                ApiError::bad_request("broadcastId prefix event-notice: is reserved").into(),
+            );
+        }
         Some(id) if !id.is_empty() && id.chars().count() <= MAX_BROADCAST_ID_CHARS => {
             id.to_string()
         }

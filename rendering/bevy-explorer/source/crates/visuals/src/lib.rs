@@ -64,7 +64,9 @@ pub struct VisualsPlugin {
 impl Plugin for VisualsPlugin {
     fn build(&self, app: &mut App) {
         app.add_plugins(debug_panel::VisualsDebugPanelPlugin);
-        app.insert_resource(DirectionalLightShadowMap { size: 4096 })
+        // texels per cascade, for every shadow setting (see decisions.md); never resized, since a
+        // resize reallocates every cascade's map
+        app.insert_resource(DirectionalLightShadowMap { size: 2048 })
             .init_resource::<SceneGlobalLight>()
             .init_resource::<FogDensity>()
             .insert_resource(CloudCover {
