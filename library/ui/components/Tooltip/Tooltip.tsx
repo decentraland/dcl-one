@@ -289,6 +289,7 @@ export function Tooltip({
     if (!floating || !open) return
     // An open tip always reports its dismissal, also when the parent opened it with no hover.
     const close = () => {
+      hovered.current = false
       wanted.current = true
       request(false)
     }

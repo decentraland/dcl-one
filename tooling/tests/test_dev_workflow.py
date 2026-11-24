@@ -550,21 +550,34 @@ class DevelopmentWorkflowTest(unittest.TestCase):
         ci = CREATOR_HUB.read_text()
         push_patterns = re.findall(r"^      - '([^']+)'$", ci, re.M)
         pr_pattern = re.search(r"grep -qE '([^']+)'", ci)[1]
-        shared = ['library/ui/components/Tooltip/Tooltip.module.css',
-                  'library/ui/index.ts', 'library/ui/package.json']
-        for path in shared:
+        shared_filter = {'library/ui/components/Tooltip/**', 'library/ui/package.json'}
+        def ui_paths(paths):
+            return {path for path in paths if path.startswith('library/ui/')}
+
+        self.assertEqual(ui_paths(push_patterns), shared_filter)
+        for path in ['library/ui/components/Tooltip/Tooltip.tsx',
+                     'library/ui/components/Tooltip/Tooltip.module.css', 'library/ui/package.json']:
             with self.subTest(path=path):
                 self.assertTrue(any(fnmatch.fnmatch(path, pattern) for pattern in push_patterns))
                 self.assertRegex(path, pr_pattern)
-        self.assertNotRegex('docs/ui-components.md', pr_pattern)
+        for unrelated in ['docs/ui-components.md', 'library/ui/components/Button/Button.tsx',
+                          'library/ui/index.ts', 'library/ui/pnpm-lock.yaml']:
+            self.assertNotRegex(unrelated, pr_pattern)
 
-        inspector = CREATOR_HUB.with_name('creator-hub-inspector.yml').read_text()
-        version_paths = re.search(r'change_path: "([^"]+)"', inspector)[1].split()
-        note_paths = re.search(r"paths: '([^']+)'", inspector)[1].split(',')
-        sections = re.search(r"section_names: '([^']+)'", inspector)[1].split(',')
-        self.assertEqual(set(version_paths), set(note_paths))
-        self.assertEqual(len(note_paths), len(sections))
-        self.assertIn('library/ui/components/Tooltip', version_paths)
+        for workflow in ['build', 'e2e']:
+            source = CREATOR_HUB.with_name(f'creator-hub-{workflow}.yml').read_text()
+            cached = re.findall(r"'(library/ui/[^']+)'", source)
+            self.assertEqual(set(cached), shared_filter, workflow)
+        sources = {path.removesuffix('/**') for path in shared_filter}
+        for workflow in ['inspector', 'desktop']:
+            source = CREATOR_HUB.with_name(f'creator-hub-{workflow}.yml').read_text()
+            version_paths = re.search(r'change_path: "([^"]+)"', source)[1].split()
+            self.assertEqual(ui_paths(version_paths), sources, workflow)
+            if workflow == 'inspector':
+                note_paths = re.search(r"paths: '([^']+)'", source)[1].split(',')
+                sections = re.search(r"section_names: '([^']+)'", source)[1].split(',')
+                self.assertEqual(set(version_paths), set(note_paths))
+                self.assertEqual(len(note_paths), len(sections))
 
     def test_creator_hub_desktop_builds_need_the_label_on_pull_requests(self):
         source = CREATOR_HUB.read_text().split('jobs:\n', 1)[1]

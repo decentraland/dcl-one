@@ -10,7 +10,7 @@ const PACKAGE_DIR = join(PACKAGE_ROOT, '..');
 const UI3_SRC = join(PACKAGE_ROOT, '../../../../ui3/src').replaceAll('\\', '/');
 const SHOP_SRC = join(PACKAGE_ROOT, '../../../../../library/shop').replaceAll('\\', '/');
 const WEB_CORE_SRC = join(PACKAGE_ROOT, '../../../../../library/web-core').replaceAll('\\', '/');
-const ONE_UI_SRC = join(PACKAGE_ROOT, '../../../../../library/ui').replaceAll('\\', '/');
+const TOOLTIP_SRC = join(PACKAGE_ROOT, '../../../../../library/ui/components/Tooltip').replaceAll('\\', '/');
 
 // The renderer tests run in UTC, so a date that code makes in local time does not depend on the
 // zone of the machine. This file runs before Vitest starts a worker, which is where Vitest says to
@@ -40,7 +40,7 @@ const config = {
       { find: '@ui', replacement: UI3_SRC },
       { find: '@shop', replacement: SHOP_SRC },
       { find: '@web-core', replacement: WEB_CORE_SRC },
-      { find: /^@dcl\/one-ui$/, replacement: join(ONE_UI_SRC, 'index.ts') },
+      { find: /^@dcl\/one-ui$/, replacement: join(TOOLTIP_SRC, 'Tooltip.tsx') },
     ],
     // The ui3 sources sit outside this workspace and must use the React installed here.
     dedupe: ['react', 'react-dom'],
@@ -49,7 +49,7 @@ const config = {
   server: {
     fs: {
       strict: true,
-      allow: [searchForWorkspaceRoot(PACKAGE_ROOT), UI3_SRC, SHOP_SRC, WEB_CORE_SRC, ONE_UI_SRC],
+      allow: [searchForWorkspaceRoot(PACKAGE_ROOT), UI3_SRC, SHOP_SRC, WEB_CORE_SRC, TOOLTIP_SRC],
     },
   },
   build: {
