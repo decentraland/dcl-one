@@ -306,15 +306,17 @@ describe('fetchThirdPartyPrice', () => {
 function thirdPartyRecord({
   root = zeroHash,
   maxItems = 0n,
+  consumedSlots = 0n,
   registered = 0n,
   metadata = ''
 }: {
   root?: string
   maxItems?: bigint
+  consumedSlots?: bigint
   registered?: bigint
   metadata?: string
 }) {
-  return [false, root, maxItems, 0n, registered, metadata, '']
+  return [false, root, maxItems, consumedSlots, registered, metadata, '']
 }
 
 describe('fetchRegisteredContracts', () => {
@@ -358,11 +360,12 @@ describe('fetchRegisteredThirdParty', () => {
     vi.mocked(readContract).mockImplementation(async (_contract, method, args) => {
       expect(method).toBe('thirdParties')
       expect(args).toEqual([THIRD_PARTY_ID])
-      return thirdPartyRecord({ registered: 1n, maxItems: 12n, root })
+      return thirdPartyRecord({ registered: 1n, maxItems: 12n, consumedSlots: 4n, root })
     })
     await expect(fetchRegisteredThirdParty(CHAIN_ID, THIRD_PARTY_ID)).resolves.toEqual({
       registered: true,
       maxItems: 12,
+      consumedSlots: 4,
       root
     })
   })
@@ -372,6 +375,7 @@ describe('fetchRegisteredThirdParty', () => {
     await expect(fetchRegisteredThirdParty(CHAIN_ID, THIRD_PARTY_ID)).resolves.toEqual({
       registered: false,
       maxItems: 0,
+      consumedSlots: 0,
       root: ''
     })
   })

@@ -19,13 +19,12 @@ import {
   SiteLayout,
   ChromeAuthContext,
   type ChromeAuth,
-  ChromeNavContext,
 } from "@dcl/one-ui";
-import DclTopBar from "@ui/web/frames/DclTopBar";
 import { forgetSignIn, recordSignIn } from "@/data/lib/auth/signin-kind";
 import { setIdentity } from "@/data/lib/auth/session";
 import { primeRemoteFlags } from "@dcl/one-ui/apps/shop/remote-flags";
 import ChromeNavBridge from "./ChromeNavBridge";
+import SitesTopBar from "./SitesTopBar";
 
 vi.hoisted(() => {
   Object.assign(window, {
@@ -44,7 +43,7 @@ vi.mock("@ui/shop/checkout/lib/mana", async (importOriginal) => ({
 let baseAuth: ChromeAuth;
 function Host({
   auth = baseAuth,
-  children = <DclTopBar active="shop" />,
+  children = <SitesTopBar active="shop" />,
   pathname = "/shop",
   locale = "en",
 }: {
@@ -345,7 +344,7 @@ describe("Sites native chrome integration", () => {
 
     beforeEach(() => {
       render(
-        <Host pathname="/events" children={<DclTopBar active="events" />} />,
+        <Host pathname="/events" children={<SitesTopBar active="events" />} />,
       );
       fireEvent.click(screen.getByRole("button", { name: "Open menu" }));
       menu = within(screen.getByRole("dialog", { name: "Menu" }));
@@ -373,7 +372,7 @@ describe("Sites native chrome integration", () => {
           <Host
             pathname="/places"
             auth={{ ...baseAuth, signedIn, account: signedIn ? "0xa" : "" }}
-            children={<DclTopBar active="explore" />}
+            children={<SitesTopBar active="explore" />}
           />,
         );
         fireEvent.click(screen.getByRole("button", { name: "Open menu" }));
@@ -415,7 +414,7 @@ describe("Sites native chrome integration", () => {
                 </button>
               )}
               navigation={
-                <DclTopBar
+                <SitesTopBar
                   balances={<a href="/shop/credits">Real credits</a>}
                   accountControl={<button>Host account</button>}
                 />
@@ -543,28 +542,6 @@ describe("Sites native chrome integration", () => {
       });
     });
   });
-
-  describe("when the standalone chrome is its own nav renderer", () => {
-    beforeEach(() => {
-      render(
-        <MemoryRouter>
-          <ChromeNavContext.Provider value={{ TopBar: DclTopBar }}>
-            <DclTopBar />
-          </ChromeNavContext.Provider>
-        </MemoryRouter>,
-      );
-    });
-
-    it("should keep the standalone banner", () => {
-      expect(screen.getByRole("banner")).toBeTruthy();
-    });
-
-    it("should refuse the self-recursive renderer and keep the standalone navigation toggle", () => {
-      expect(
-        screen.getByRole("button", { name: "Toggle navigation menu" }),
-      ).toBeTruthy();
-    });
-  });
 });
 
 describe("when a Sites page reports its area", () => {
@@ -576,7 +553,7 @@ describe("when a Sites page reports its area", () => {
     "and the area is %s on %s",
     (area, path, item, other) => {
       beforeEach(() => {
-        render(<Host pathname={path} children={<DclTopBar active={area} />} />);
+        render(<Host pathname={path} children={<SitesTopBar active={area} />} />);
         const discover = screen.getByRole("button", { name: "Discover" });
         fireEvent.click(discover);
       });
@@ -598,7 +575,7 @@ describe("when a Sites page reports its area", () => {
   describe("and the area is outside the navigation", () => {
     beforeEach(() => {
       render(
-        <Host pathname="/social/" children={<DclTopBar active="social" />} />,
+        <Host pathname="/social/" children={<SitesTopBar active="social" />} />,
       );
     });
 

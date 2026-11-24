@@ -168,9 +168,16 @@ impl Config {
     /// makes the list. An explicit value, empty included, wins; off mainnet
     /// the chain ids name other chains, so nothing is derived.
     pub fn derive_trade_rpc_urls(&mut self) {
-        if self.node.node_posture.as_deref() != Some("mirror")
+        // Read as the posture checks read it (trimmed), so a padded value
+        // derives the list the checks then require.
+        let mirror = self
+            .node
+            .node_posture
+            .as_deref()
+            .is_some_and(|p| crate::posture::Posture::parse(p).ok() == Some(Mirror));
+        if !mirror
             || self.marketplace.trade_rpc_urls.is_some()
-            || self.node.eth_network != "mainnet"
+            || self.node.eth_network.trim() != "mainnet"
         {
             return;
         }
@@ -277,7 +284,7 @@ impl Config {
         Ok(())
     }
 
-    pub(crate) fn secret_slots(&mut self) -> [(&'static str, &mut Option<String>); 86] {
+    pub(crate) fn secret_slots(&mut self) -> [(&'static str, &mut Option<String>); 87] {
         [
             ("SEGMENT_SIGNING_KEY", &mut self.social.segment_signing_key),
             ("ETH_RPC_URL", &mut self.content.eth_rpc_url),
@@ -513,6 +520,7 @@ impl Config {
                 &mut self.validator.third_party_registry_l2_subgraph_url,
             ),
             ("ONBOARDING_API_KEY", &mut self.node.onboarding_api_key),
+            ("MAGIC_SECRET_KEY", &mut self.node.magic_secret_key),
             (
                 "PLACES_ADMIN_AUTH_TOKEN",
                 &mut self.explore.places_admin_auth_token,
@@ -814,6 +822,7 @@ mod tests {
         "ANALYTICS_API_TOKEN",
         "OPEN_AI_API_KEY",
         "SENDGRID_API_KEY",
+        "MAGIC_SECRET_KEY",
         "SIGNING_KEY",
         "SLACK_WEBHOOK",
         "PLACES_MODERATION_WEBHOOK",

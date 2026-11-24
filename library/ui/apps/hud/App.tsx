@@ -28,12 +28,14 @@ import { SceneVoiceChatBanner } from './features/voiceChat/SceneVoiceChatBanner'
 import { VoiceChatToasts } from './features/voiceChat/voiceChatToasts'
 import { NearbyVoiceRefusals } from './features/voice/NearbyVoiceRefusals'
 import { GalleryPage } from './features/gallery/GalleryPage'
+import { travelToPhoto } from './features/gallery/reelActions'
 import { Sidebar } from './features/sidebar/Sidebar'
 import { Pointer } from './features/pointer/Pointer'
 import { PhotoModeOverlay } from './features/photoMode/PhotoModeOverlay'
 import { openPassport } from './features/profile/Passport'
 import type { PassportTab } from './features/profile/ProfilePassport'
 import { openWorldVisit } from './components/WorldVisitModal'
+import { confirmOpenLink, confirmTeleport } from './features/chat/chatLinkPrompts'
 import { openPermissionDialog } from './features/permissions/PermissionDialog'
 import { openWorldPasswordDialog } from './features/worldAccess/WorldPasswordDialog'
 import { PopupHost, ToastHost, showDialog } from './design'
@@ -440,7 +442,7 @@ function Hud({ integratedGpu, host }: { integratedGpu: GpuAdapterInfo | null; ho
         <EventsPage events={session.events} profile={session.profile} friends={session.friends} onNavigate={goToMenuPage} />
       </SurfaceBoundary>
       <SurfaceBoundary name="Gallery" open={session.gallery.open} onCrash={session.closeAllPanels}>
-        <GalleryPage gallery={session.gallery} profile={session.profile} onNavigate={goToMenuPage} onTeleport={(x, y) => session.map.teleport(x, y)} onViewProfile={(u) => openPassport(u.address)} />
+        <GalleryPage gallery={session.gallery} profile={session.profile} onNavigate={goToMenuPage} onJumpIn={(place) => travelToPhoto(place, session.map)} onViewProfile={(u) => openPassport(u.address)} />
       </SurfaceBoundary>
     </>
   )
@@ -524,8 +526,9 @@ function Hud({ integratedGpu, host }: { integratedGpu: GpuAdapterInfo | null; ho
             chat={session.chat}
             hidden={session.friends.open || !chrome}
             me={session.profile.data}
-            onTeleport={(x, y) => session.map.teleport(x, y)}
+            onTeleport={(x, y) => void confirmTeleport(x, y, session.minimap.linkRealm, session.map.teleport)}
             onVisitWorld={(name) => openWorldVisit({ worldName: name, onConfirm: () => session.map.changeRealm(name) })}
+            onOpenUrl={(url) => void confirmOpenLink(url, session.openExternalUrl)}
             onOpenSettings={session.settings.toggle}
           />
           <SurfaceBoundary name="Friends" open={session.friends.open} onCrash={session.closeAllPanels}>

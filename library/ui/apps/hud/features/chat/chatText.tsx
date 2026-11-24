@@ -13,7 +13,8 @@ export function MessageText({
   styles,
   onMention,
   onLocation,
-  onWorld
+  onWorld,
+  onUrl
 }: {
   text: string
   members: NearbyMember[]
@@ -24,6 +25,8 @@ export function MessageText({
   onLocation: (x: number, y: number) => void
   /** A world name (e.g. boedo.dcl.eth) was clicked → prompt to jump to that realm. */
   onWorld?: (name: string) => void
+  /** A URL was activated; when set, the link opens only through it. */
+  onUrl?: (url: string) => void
 }): React.JSX.Element {
   const index = buildNameIndex(members)
   // An opening tag styles everything up to its closing tag, or to the message's end without one.
@@ -41,8 +44,32 @@ export function MessageText({
           return null
         }
         if (t.type === 'url') {
+          if (!onUrl) {
+            return (
+              <a key={i} className={styled(styles.url)} href={t.value} target="_blank" rel="noreferrer noopener">
+                {t.value}
+              </a>
+            )
+          }
+          // An anchor keeps a long URL flowing inline; every browser way to open it (click, middle-click,
+          // context menu, drag) is taken over, so it opens only through onUrl.
           return (
-            <a key={i} className={styled(styles.url)} href={t.value} target="_blank" rel="noreferrer noopener">
+            <a
+              key={i}
+              className={styled(styles.url)}
+              href={t.value}
+              draggable={false}
+              onClick={(e) => {
+                e.preventDefault()
+                onUrl(t.value)
+              }}
+              onAuxClick={(e) => {
+                e.preventDefault()
+                if (e.button === 1) onUrl(t.value)
+              }}
+              onContextMenu={(e) => e.preventDefault()}
+              onDragStart={(e) => e.preventDefault()}
+            >
               {t.value}
             </a>
           )

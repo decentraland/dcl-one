@@ -1084,6 +1084,7 @@ button.avatarBtn {
 .url {
   color: var(--chat-link);
   text-decoration: none;
+  -webkit-touch-callout: none; /* no long-press link preview: a chat link opens through its prompt */
 }
 .location,
 .mention,

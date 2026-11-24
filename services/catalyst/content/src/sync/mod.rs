@@ -125,9 +125,7 @@ pub fn names_a_source(raw: &str) -> bool {
         .any(|entry| !normalize_source(entry).is_empty())
 }
 
-/// The `SYNC_ENTITY_TYPES` allowlist: `None` (empty) means every type. The
-/// existing implementation marks snapshots processed for the configured subset,
-/// so widening this later needs explicit replay/resync handling.
+/// The `SYNC_ENTITY_TYPES` allowlist: `None` (empty) means every type.
 pub fn parse_entity_types(raw: &str) -> Result<Option<HashSet<String>>, SyncConfigError> {
     let mut set = HashSet::new();
     for t in raw.split(',').map(str::trim).filter(|s| !s.is_empty()) {

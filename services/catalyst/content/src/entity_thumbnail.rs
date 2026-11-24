@@ -23,6 +23,7 @@ use axum::http::{HeaderMap, Method, StatusCode, header};
 use axum::response::{IntoResponse, Response};
 use bytes::Bytes;
 use image::codecs::jpeg::JpegEncoder;
+use image::metadata::Orientation;
 use image::{ImageFormat, ImageReader, Limits};
 use serde_json::Value;
 use tokio::sync::{Mutex as AsyncMutex, Semaphore};
@@ -307,7 +308,33 @@ async fn serve_variant(
         .into_response())
 }
 
-fn resize(bytes: Bytes, width: u32) -> Result<(&'static str, Bytes), String> {
+#[derive(Clone, Copy)]
+enum Rendition {
+    Thumbnail(u32),
+    EventPoster,
+}
+
+/// Borrows the EXIF chunk from the bounded source; no metadata buffer is allocated.
+fn webp_orientation(bytes: &[u8]) -> Option<Orientation> {
+    let riff = bytes.strip_prefix(b"RIFF")?;
+    let (size, payload) = riff.split_first_chunk::<4>()?;
+    let mut chunks = payload
+        .get(..u32::from_le_bytes(*size) as usize)?
+        .strip_prefix(b"WEBP")?;
+    while !chunks.is_empty() {
+        let (tag, rest) = chunks.split_first_chunk::<4>()?;
+        let (size, rest) = rest.split_first_chunk::<4>()?;
+        let size = u32::from_le_bytes(*size) as usize;
+        let (data, rest) = rest.split_at_checked(size)?;
+        if tag == b"EXIF" {
+            return Orientation::from_exif_chunk(data.strip_prefix(b"Exif\0\0").unwrap_or(data));
+        }
+        chunks = rest.get(size % 2..)?;
+    }
+    None
+}
+
+fn resize(bytes: Bytes, rendition: Rendition) -> Result<(&'static str, Bytes), String> {
     let mut reader = ImageReader::new(Cursor::new(&bytes))
         .with_guessed_format()
         .map_err(|_| "Unrecognized image")?;
@@ -316,12 +343,24 @@ fn resize(bytes: Bytes, width: u32) -> Result<(&'static str, Bytes), String> {
     limits.max_image_height = Some(8192);
     limits.max_alloc = Some(128 * 1024 * 1024);
     reader.limits(limits);
-    let image = reader
-        .decode()
-        .map_err(|_| "Image could not be decoded within limits")?;
+    const DECODE_ERROR: &str = "Image could not be decoded within limits";
+    let (width, orientation) = match rendition {
+        Rendition::Thumbnail(width) => {
+            // GIF decoding is enabled for native poster stills only.
+            if reader.format() == Some(ImageFormat::Gif) {
+                return Err(DECODE_ERROR.into());
+            }
+            (width, None)
+        }
+        Rendition::EventPoster => (960, webp_orientation(&bytes)),
+    };
+    let image = reader.decode().map_err(|_| DECODE_ERROR)?;
     // Never enlarge small source images: larger encoded files add no detail.
     let bound = width.min(image.width().max(image.height()));
-    let image = image.thumbnail(bound, bound);
+    let mut image = image.thumbnail(bound, bound);
+    if let Some(orientation) = orientation {
+        image.apply_orientation(orientation);
+    }
     let mut output = Vec::new();
     let transparent =
         image.color().has_alpha() && image.to_rgba8().pixels().any(|pixel| pixel.0[3] < 255);
@@ -329,23 +368,35 @@ fn resize(bytes: Bytes, width: u32) -> Result<(&'static str, Bytes), String> {
         image
             .write_to(&mut Cursor::new(&mut output), ImageFormat::Png)
             .map_err(|_| "Thumbnail encoding failed")?;
-        let mut webp = Cursor::new(Vec::new());
-        image
-            .write_to(&mut webp, ImageFormat::WebP)
-            .map_err(|_| "Thumbnail encoding failed")?;
-        if webp.get_ref().len() < output.len() {
-            output = webp.into_inner();
-            "image/webp"
-        } else {
-            "image/png"
+        let mut kind = "image/png";
+        if matches!(rendition, Rendition::Thumbnail(_)) {
+            let mut webp = Cursor::new(Vec::new());
+            image
+                .write_to(&mut webp, ImageFormat::WebP)
+                .map_err(|_| "Thumbnail encoding failed")?;
+            if webp.get_ref().len() < output.len() {
+                output = webp.into_inner();
+                kind = "image/webp";
+            }
         }
+        kind
     } else {
         JpegEncoder::new_with_quality(&mut output, 80)
             .encode_image(&image.to_rgb8())
             .map_err(|_| "Thumbnail encoding failed")?;
         "image/jpeg"
     };
-    if output.len() > 2 * 1024 * 1024 {
+    const MAX_OUTPUT_BYTES: usize = 2 * 1024 * 1024;
+    if output.len() > MAX_OUTPUT_BYTES && transparent && matches!(rendition, Rendition::EventPoster)
+    {
+        // A 640 × 640 RGBA8 still fits below 2 MiB even before PNG compression.
+        output.clear();
+        image
+            .thumbnail(640, 640)
+            .write_to(&mut Cursor::new(&mut output), ImageFormat::Png)
+            .map_err(|_| "Thumbnail encoding failed")?;
+    }
+    if output.len() > MAX_OUTPUT_BYTES {
         return Err("Thumbnail output too large".into());
     }
     Ok((kind, Bytes::from(output)))
@@ -355,13 +406,25 @@ pub async fn render(bytes: Bytes, width: u32) -> Result<(&'static str, Bytes), S
     if !valid_width(width) {
         return Err("width must be 80, 160, 320, 640 or 960".into());
     }
+    render_bounded(bytes, Rendition::Thumbnail(width)).await
+}
+
+/// Encodes the first frame of an event cover as a JPEG or alpha-preserving PNG for native readers.
+pub async fn render_event_poster(bytes: Bytes) -> Result<(&'static str, Bytes), String> {
+    render_bounded(bytes, Rendition::EventPoster).await
+}
+
+async fn render_bounded(
+    bytes: Bytes,
+    rendition: Rendition,
+) -> Result<(&'static str, Bytes), String> {
     let permit = RESIZERS
         .acquire()
         .await
         .map_err(|_| "Thumbnail service unavailable")?;
     tokio::task::spawn_blocking(move || {
         let _permit = permit;
-        resize(bytes, width)
+        resize(bytes, rendition)
     })
     .await
     .map_err(|_| "Thumbnail task failed")?
@@ -515,7 +578,8 @@ mod tests {
         let image = image::RgbaImage::from_pixel(1600, 900, image::Rgba([32, 64, 96, 128]));
         let mut bytes = Cursor::new(Vec::new());
         image.write_to(&mut bytes, ImageFormat::Png).unwrap();
-        let (kind, output) = resize(Bytes::from(bytes.into_inner()), 320).unwrap();
+        let (kind, output) =
+            resize(Bytes::from(bytes.into_inner()), Rendition::Thumbnail(320)).unwrap();
         let decoded = image::load_from_memory(&output).unwrap();
         assert!(matches!(kind, "image/png" | "image/webp"));
         assert_eq!((decoded.width(), decoded.height()), (320, 180));
@@ -527,14 +591,21 @@ mod tests {
         let image = image::RgbImage::from_pixel(228, 160, image::Rgb([32, 64, 96]));
         let mut bytes = Cursor::new(Vec::new());
         image.write_to(&mut bytes, ImageFormat::Tiff).unwrap();
-        let (kind, output) = resize(Bytes::from(bytes.into_inner()), 640).unwrap();
+        let (kind, output) =
+            resize(Bytes::from(bytes.into_inner()), Rendition::Thumbnail(640)).unwrap();
         assert_eq!(kind, "image/jpeg");
         assert_eq!(image::load_from_memory(&output).unwrap().width(), 228);
     }
 
     #[test]
     fn invalid_images_and_unbounded_sizes_are_rejected() {
-        assert!(resize(Bytes::from_static(b"<svg></svg>"), 320).is_err());
+        assert!(
+            resize(
+                Bytes::from_static(b"<svg></svg>"),
+                Rendition::Thumbnail(320)
+            )
+            .is_err()
+        );
         assert!(valid_width(80) && valid_width(160) && valid_width(640));
         assert!(!valid_width(0) && !valid_width(8192));
     }
@@ -545,12 +616,126 @@ mod tests {
             let image = image::RgbaImage::from_pixel(1600, 900, image::Rgba([32, 64, 96, 255]));
             let mut bytes = Cursor::new(Vec::new());
             image.write_to(&mut bytes, format).unwrap();
-            let (kind, output) = resize(Bytes::from(bytes.into_inner()), 320).unwrap();
+            let (kind, output) =
+                resize(Bytes::from(bytes.into_inner()), Rendition::Thumbnail(320)).unwrap();
             let decoded = image::load_from_memory(&output).unwrap();
             assert_eq!(kind, "image/jpeg");
             assert_eq!((decoded.width(), decoded.height()), (320, 180));
             assert!(output.len() < 10_000);
         }
+    }
+
+    #[tokio::test]
+    async fn poster_applies_webp_orientation_and_preserves_translucent_pixels() {
+        use image::ImageEncoder;
+        use image::codecs::webp::WebPEncoder;
+
+        let mut bytes = Vec::new();
+        let mut encoder = WebPEncoder::new_lossless(&mut bytes);
+        // Little-endian TIFF with one SHORT orientation entry (6 = rotate 90 degrees).
+        encoder
+            .set_exif_metadata(vec![
+                0x49, 0x49, 42, 0, 8, 0, 0, 0, 1, 0, 0x12, 1, 3, 0, 1, 0, 0, 0, 6, 0, 0, 0, 0, 0,
+                0, 0,
+            ])
+            .unwrap();
+        let pixels = image::RgbaImage::from_fn(12, 4, |x, _| {
+            if x < 6 {
+                image::Rgba([10, 24, 200, 128])
+            } else {
+                image::Rgba([188, 4, 10, 255])
+            }
+        });
+        encoder
+            .write_image(pixels.as_raw(), 12, 4, image::ExtendedColorType::Rgba8)
+            .unwrap();
+        assert_eq!(webp_orientation(&bytes[..bytes.len() - 1]), None);
+        let (mime, body) = render_event_poster(bytes.into()).await.unwrap();
+        assert_eq!(mime, "image/png");
+        let rendered = image::load_from_memory(&body).unwrap().into_rgba8();
+        assert_eq!(rendered.dimensions(), (4, 12));
+        assert_eq!(rendered.get_pixel(0, 0), pixels.get_pixel(0, 3));
+        assert_eq!(rendered.get_pixel(3, 11), pixels.get_pixel(11, 0));
+    }
+
+    #[tokio::test]
+    async fn poster_renders_the_first_gif_frame_within_the_cover_size() {
+        use image::codecs::gif::GifEncoder;
+
+        let mut bytes = Vec::new();
+        let frames = [[220, 30, 10, 255], [10, 30, 220, 255]].map(|color| {
+            image::Frame::new(image::RgbaImage::from_pixel(20, 1000, image::Rgba(color)))
+        });
+        GifEncoder::new(&mut bytes).encode_frames(frames).unwrap();
+        let source = Bytes::from(bytes);
+        assert!(render(source.clone(), 320).await.is_err());
+        let (mime, body) = render_event_poster(source).await.unwrap();
+        assert_eq!(mime, "image/jpeg");
+        let rendered = image::load_from_memory(&body).unwrap().into_rgb8();
+        assert_eq!(rendered.height(), 960);
+        assert!(rendered.width().abs_diff(19) <= 1);
+        let [red, _, blue] = rendered.get_pixel(0, 0).0;
+        assert!(red > 200 && blue < 30);
+    }
+
+    #[tokio::test]
+    async fn poster_renders_the_first_animated_webp_frame() {
+        use base64::Engine;
+
+        // Two opaque 2 × 2 lossless frames, red followed by blue.
+        let animation = base64::engine::general_purpose::STANDARD
+            .decode(concat!(
+                "UklGRoQAAABXRUJQVlA4WAoAAAACAAAAAQAAAQAAQU5JTQYAAAAAAAAAAABBTk1GKAAAAAAAAAAA",
+                "AAEAAAEAAGQAAAJWUDhMDwAAAC8BQAAABxD9j/4HIqL/AQBBTk1GKAAAAAAAAAAAAAEAAAEAAGQA",
+                "AABWUDhMDwAAAC8BQAAABxDR//4HIqL/AQA="
+            ))
+            .unwrap();
+        let (mime, body) = render_event_poster(animation.into()).await.unwrap();
+        let frame = image::load_from_memory(&body).unwrap().to_rgb8();
+        assert_eq!(mime, "image/jpeg");
+        assert_eq!(frame.dimensions(), (2, 2));
+        assert!(frame.pixels().all(|p| p[0] > 200 && p[2] < 30));
+    }
+
+    #[tokio::test]
+    async fn noisy_opaque_poster_fits_the_output_limit_at_full_size() {
+        use rand::{RngExt, SeedableRng, rngs::StdRng};
+
+        let mut rng = StdRng::seed_from_u64(2062);
+        let pixels = image::RgbImage::from_fn(960, 960, |_, _| {
+            let channels = rng.random::<[bool; 3]>();
+            image::Rgb(channels.map(|high| if high { 255 } else { 0 }))
+        });
+        let mut source = Cursor::new(Vec::new());
+        pixels.write_to(&mut source, ImageFormat::WebP).unwrap();
+        let (mime, body) = render_event_poster(source.into_inner().into())
+            .await
+            .unwrap();
+        assert_eq!(mime, "image/jpeg");
+        assert!(body.len() <= 2 * 1024 * 1024);
+        let frame = image::load_from_memory(&body).unwrap();
+        assert_eq!((frame.width(), frame.height()), (960, 960));
+    }
+
+    #[tokio::test]
+    async fn noisy_translucent_poster_fits_the_output_limit_as_png() {
+        use rand::{RngExt, SeedableRng, rngs::StdRng};
+
+        let mut rng = StdRng::seed_from_u64(2062);
+        let pixels = image::RgbaImage::from_fn(960, 960, |_, _| {
+            let [r, g, b] = rng.random::<[u8; 3]>();
+            image::Rgba([r, g, b, 128])
+        });
+        let mut source = Cursor::new(Vec::new());
+        pixels.write_to(&mut source, ImageFormat::WebP).unwrap();
+        let (mime, body) = render_event_poster(source.into_inner().into())
+            .await
+            .unwrap();
+        assert_eq!(mime, "image/png");
+        assert!(body.len() <= 2 * 1024 * 1024);
+        let frame = image::load_from_memory(&body).unwrap().to_rgba8();
+        assert_eq!(frame.dimensions(), (640, 640));
+        assert_eq!(frame.get_pixel(320, 320)[3], 128);
     }
 
     #[tokio::test]

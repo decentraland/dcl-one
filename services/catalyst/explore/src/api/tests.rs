@@ -409,6 +409,7 @@ async fn node_on_pool(settings: Settings, pool: PgPool) -> Node {
         registry_denylist: Default::default(),
         eip1654: std::sync::OnceLock::new(),
         contract_checks: Default::default(),
+        auth_sockets: Default::default(),
         land_authz: std::sync::OnceLock::new(),
     });
     Node { state, _tmp: tmp }
@@ -2210,6 +2211,7 @@ async fn spawn_jobs_registers_every_explorer_job_and_stops_with_the_registry() {
         [
             "ab-cdn-maintenance",
             "auth-api-identity-sweep",
+            "auth-api-socket-push",
             "explorer-denylist-mirror",
             "explorer-denylist-reload",
             "explorer-flags-mirror",

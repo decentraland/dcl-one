@@ -169,8 +169,6 @@ pub const REFERENCE_SOURCES: &[&str] = &[
     "content.active_pointers.entity_id",
     "content.local_entities.entity_id",
     "content.snapshots.hash",
-    "content.processed_snapshots.hash",
-    "content.failed_deployments.snapshot_hash",
     "content.failed_deployments.entity_id",
     "content.pending_deployments.entity_id",
     "content.pending_deployment_files.hash",
@@ -213,6 +211,14 @@ pub const NOT_STORE_KEYS: &[(&str, &str)] = &[
          item names an uploaded file",
     ),
     (
+        "content.processed_snapshots.hash",
+        "a peer snapshot processing receipt; the peer snapshot file is temporary",
+    ),
+    (
+        "content.failed_deployments.snapshot_hash",
+        "the provenance of a failed deployment; retries fetch the entity by its own id",
+    ),
+    (
         "content.snapshots.replaced_hashes",
         "the snapshot files a newer snapshot replaced: garbage for this collector",
     ),
@@ -235,6 +241,11 @@ pub const NOT_STORE_KEYS: &[(&str, &str)] = &[
         "explore.world_scene_place.entity_id",
         "a non-owning deployment link: worlds.world_scenes holds the blob reference; \
          retiring a place clears the link, while its UUID and storage remain",
+    ),
+    (
+        "explore.world_scene_binding.entity_id",
+        "retained evidence of which scene UUID a deployment held, for stream notice \
+         recovery; worlds.world_scenes and retired_world_scenes hold the blob references",
     ),
     (
         "explore.place_indexed.image_url",

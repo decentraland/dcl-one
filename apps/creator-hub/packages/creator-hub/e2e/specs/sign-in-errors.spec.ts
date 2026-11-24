@@ -11,7 +11,7 @@ import {
 } from '../helpers/auth-mocks';
 import { Auth } from '../pages/Auth';
 
-const IDENTITY_ID = 'e2e-identity-id';
+const IDENTITY_ID = '4ddc4369-5f09-4b47-b43d-b5d48354ddcd';
 const ERROR_SNACKBAR = '[data-testid="snackbar-generic-error"]';
 
 const DEEPLINK_FAILURES: {
@@ -75,7 +75,7 @@ test.describe('sign in failures', { tag: '@offline' }, () => {
   for (const failure of DEEPLINK_FAILURES) {
     test(`surfaces an error on ${failure.name}`, async () => {
       const errorSaying = (text: string) => page.locator(ERROR_SNACKBAR).filter({ hasText: text });
-      await setIdentityResponse(page, failure.identityResponse);
+      await setIdentityResponse(electronApp, failure.identityResponse);
 
       const openCalls = await captureOpenExternal(electronApp);
       await auth.clickSignIn();

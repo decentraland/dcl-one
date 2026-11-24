@@ -18,6 +18,8 @@
 // With --hosted, <dist> is the hosted pull request preview (`vite build --mode hosted`): the gallery alone at its root,
 // opened as <prefix>index.html the way the bucket serves it, listing no generated page; check 6 becomes a Figma
 // reference link that answers with a note and loads nothing from the generated Review.
+// With --csp, every response carries that Content-Security-Policy, as the preview host sends it, and a violation the
+// browser reports fails the check.
 // It runs the built files it is given, so only run it on an unprivileged build.
 import { readFile, stat } from 'node:fs/promises'
 import { createServer } from 'node:http'
@@ -44,6 +46,10 @@ const TYPES = {
   '.webp': 'image/webp'
 }
 const TIMEOUT = 20_000
+// Where the browser posts Content-Security-Policy violations; outside every prefix the check serves.
+const CSP_REPORTS = '/.csp-reports'
+// A report is posted after the load that caused it, so the last page gets this long to send its own.
+const CSP_REPORT_WAIT = 500
 const BROWSERS = [
   process.env.BROWSER_PATH,
   process.env.CHROME_PATH,
@@ -59,12 +65,31 @@ function normalizePrefix(prefix) {
   return prefix.endsWith('/') ? prefix : `${prefix}/`
 }
 
-/** Serves `dist` under `prefix` on the loopback interface and records every request with its status. */
-async function serve(dist, prefix) {
+/**
+ * Serves `dist` under `prefix` on the loopback interface and records every request with its status. With `csp`, every
+ * file carries that policy and the violations the browser reports are recorded too.
+ */
+async function serve(dist, prefix, csp) {
   const requests = []
+  const violations = []
+  const headers = csp ? { 'content-security-policy': `${csp}; report-uri ${CSP_REPORTS}` } : {}
   const server = createServer((request, response) => {
     void (async () => {
       const url = new URL(request.url ?? '/', 'http://127.0.0.1')
+      if (csp && request.method === 'POST' && url.pathname === CSP_REPORTS) {
+        let body = ''
+        for await (const chunk of request) body += chunk
+        let report = {}
+        try {
+          report = JSON.parse(body)['csp-report'] ?? {}
+        } catch {
+          // An unreadable report is still a violation.
+        }
+        const directive = report['effective-directive'] ?? 'a directive'
+        const blocked = report['blocked-uri'] || 'inline content'
+        violations.push(`${directive} blocked ${blocked} in ${report['document-uri'] ?? 'a page'}`)
+        return void response.writeHead(204).end()
+      }
       const record = (status) =>
         url.pathname !== '/favicon.ico' && requests.push({ path: url.pathname, status })
       if (!url.pathname.startsWith(prefix)) {
@@ -88,6 +113,7 @@ async function serve(dist, prefix) {
         const body = await readFile(file)
         record(200)
         response.writeHead(200, {
+          ...headers,
           'content-type': TYPES[path.extname(file)] ?? 'application/octet-stream'
         })
         response.end(body)
@@ -101,6 +127,7 @@ async function serve(dist, prefix) {
   return {
     origin: `http://127.0.0.1:${server.address().port}`,
     requests,
+    violations,
     close: () =>
       new Promise((resolve, reject) => {
         server.close((error) => (error ? reject(error) : resolve()))
@@ -292,19 +319,26 @@ async function checkLayout(session, page) {
 }
 
 /** Runs the checks. Resolves with a summary; rejects naming the first failed check. */
-async function checkGallery({ dist, prefix = '/', hosted = false, browser } = {}) {
+async function checkGallery({ dist, prefix = '/', hosted = false, csp, browser } = {}) {
   const base = normalizePrefix(prefix)
-  const server = await serve(path.resolve(dist), base)
+  const server = await serve(path.resolve(dist), base, csp)
   const gallery = `${server.origin}${base}${hosted ? 'index.html' : 'gallery/'}`
   let session
   let summary
   let failure
+  const violation = () =>
+    server.violations.length
+      ? new Error(`Content-Security-Policy violation: ${server.violations[0]}`)
+      : undefined
   try {
     session = await openSession(browser ?? (await findBrowser(BROWSERS)))
     const checkRequests = () => {
+      const blocked = violation()
+      if (blocked) throw blocked
       for (const request of session.requests) {
         const url = new URL(request.url)
         if (url.protocol === 'data:' && request.type !== 'Document') continue
+        if (csp && url.origin === server.origin && url.pathname === CSP_REPORTS) continue
         if (url.origin === server.origin && url.pathname === '/favicon.ico') continue
         if (url.origin !== server.origin || !url.pathname.startsWith(base))
           throw new Error(`a request left the expected origin or prefix: ${request.url}`)
@@ -535,6 +569,7 @@ async function checkGallery({ dist, prefix = '/', hosted = false, browser } = {}
         `the hosted preview requested the generated Review: ${reviewRequests[0].path}`
       )
 
+    if (csp) await delay(CSP_REPORT_WAIT)
     checkRequests()
     const failed = server.requests.filter((request) => request.status >= 400)
     if (failed.length)
@@ -555,7 +590,8 @@ async function checkGallery({ dist, prefix = '/', hosted = false, browser } = {}
       requests: server.requests.length
     }
   } catch (error) {
-    failure = { error }
+    // A check that fails under the policy names what the policy blocked, which is its cause.
+    failure = { error: violation() ?? error }
   }
   for (const step of [() => session?.close(), () => server.close()]) {
     try {
@@ -569,7 +605,7 @@ async function checkGallery({ dist, prefix = '/', hosted = false, browser } = {}
 }
 
 function usage() {
-  process.stderr.write('Usage: check-build <dist> [--prefix <path>] [--hosted]\n')
+  process.stderr.write('Usage: check-build <dist> [--prefix <path>] [--hosted] [--csp <policy>]\n')
   return 2
 }
 
@@ -578,15 +614,17 @@ async function main(argv) {
   const [dist, ...rest] = argv
   let prefix = '/'
   let hosted = false
+  let csp
   for (let at = 0; at < rest.length; at += 1) {
     if (rest[at] === '--hosted') hosted = true
     else if (rest[at] === '--prefix' && at + 1 < rest.length) prefix = rest[(at += 1)]
+    else if (rest[at] === '--csp' && rest[at + 1]?.trim()) csp = rest[(at += 1)]
     else return usage()
   }
   if (!dist || dist.startsWith('--')) return usage()
   try {
     process.stdout.write(
-      `${JSON.stringify(await checkGallery({ dist, prefix, hosted }), null, 2)}\n`
+      `${JSON.stringify(await checkGallery({ dist, prefix, hosted, csp }), null, 2)}\n`
     )
     return 0
   } catch (error) {

@@ -14,10 +14,15 @@ use super::{Channel, Command, Shared};
 const CHANNEL_COUNT: usize = 3;
 const SERVICE_TICK: Duration = Duration::from_millis(1);
 
+/// Movement goes on channel 1 past the local sender throttle, as the native client and Pulse send
+/// it: a throttled drop of the last input of a walk is never repaired, so observers keep the step
+/// before it.
 fn packet(channel: Channel, bytes: &[u8]) -> enet::Packet {
     match channel {
         Channel::Reliable => enet::Packet::reliable(bytes),
-        Channel::UnreliableSequenced => enet::Packet::unreliable(bytes),
+        Channel::UnreliableSequenced => {
+            enet::Packet::new_unthrottled(bytes, enet::PacketKind::Unreliable { sequenced: true })
+        }
         Channel::UnreliableUnsequenced => enet::Packet::unreliable_unsequenced(bytes),
     }
 }
@@ -105,5 +110,22 @@ fn run(socket: UdpSocket, target: SocketAddr, shared: Arc<Shared>, commands: Rec
             }
         }
         std::thread::sleep(SERVICE_TICK);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn only_sequenced_movement_bypasses_the_sender_throttle() {
+        let movement = packet(Channel::UnreliableSequenced, &[1]);
+        assert!(movement.is_unthrottled());
+        assert_eq!(
+            movement.kind(),
+            enet::PacketKind::Unreliable { sequenced: true }
+        );
+        assert!(!packet(Channel::Reliable, &[1]).is_unthrottled());
+        assert!(!packet(Channel::UnreliableUnsequenced, &[1]).is_unthrottled());
     }
 }

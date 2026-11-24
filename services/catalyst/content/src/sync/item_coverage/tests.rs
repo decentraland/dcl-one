@@ -189,7 +189,7 @@ impl Fixture {
         &self.db.pool
     }
 
-    fn replay(&self, entity_types: &[&str], history_floor_ms: i64) -> ItemHistoryReplay {
+    async fn replay(&self, entity_types: &[&str], history_floor_ms: i64) -> ItemHistoryReplay {
         let pool = self.pool().clone();
         let deployer = Arc::new(LiveSyncDeployer::new(
             pool.clone(),
@@ -197,17 +197,19 @@ impl Fixture {
             2,
             SyncValidation::AuthChainOnly,
         ));
+        let batch = Arc::new(BatchDeployer::new(
+            BatchDeployerConfig::default(),
+            crate::sync::test_sync_client(reqwest::Client::new()),
+            self.storage.clone(),
+            pool.clone(),
+            deployer,
+            Arc::new(LiveFailedDeploymentsStore::new(pool.clone())),
+            BloomFilter::with_capacity(100),
+        ));
+        batch.set_peers(vec![self.base.clone()]).await;
         ItemHistoryReplay {
             client: crate::sync::test_sync_client(reqwest::Client::new()),
-            deployer: Arc::new(BatchDeployer::new(
-                BatchDeployerConfig::default(),
-                crate::sync::test_sync_client(reqwest::Client::new()),
-                self.storage.clone(),
-                pool.clone(),
-                deployer,
-                Arc::new(LiveFailedDeploymentsStore::new(pool.clone())),
-                BloomFilter::with_capacity(100),
-            )),
+            deployer: batch,
             pool,
             peers: self.peers.subscribe(),
             entity_types: entity_types.iter().map(|t| t.to_string()).collect(),
@@ -309,7 +311,7 @@ async fn a_leader_recovers_items_behind_its_cursors_and_a_reader_gets_covered() 
         Coverage::Unknown(Unknown::NoRecord)
     );
 
-    let mut replay = f.replay(&["wearable", "emote"], 0);
+    let mut replay = f.replay(&["wearable", "emote"], 0).await;
     let pass = replay
         .pass(&CancellationToken::new())
         .await
@@ -375,6 +377,7 @@ async fn a_reader_gets_unknown_for_every_unproven_pass() {
     };
     f.peer.offer("wearable", 1, 1_000, true).await;
     f.replay(&["wearable", "emote"], 0)
+        .await
         .pass(&CancellationToken::new())
         .await
         .unwrap()
@@ -468,14 +471,14 @@ async fn a_process_without_the_sync_lease_records_nothing() {
         return;
     };
     f.peer.offer("wearable", 1, 1_000, true).await;
-    let mut replay = f.replay(&["wearable"], 0);
+    let mut replay = f.replay(&["wearable"], 0).await;
     replay.owner.pid += 1;
     assert!(matches!(
         replay.pass(&CancellationToken::new()).await,
         Err(ReplayError::Lost)
     ));
     f.guard.take().unwrap().release().await;
-    let mut replay = f.replay(&["wearable"], 0);
+    let mut replay = f.replay(&["wearable"], 0).await;
     assert!(matches!(
         replay.pass(&CancellationToken::new()).await,
         Err(ReplayError::Lost)
@@ -501,7 +504,7 @@ async fn an_item_the_node_cannot_accept_keeps_coverage_unknown_until_accepted() 
     };
     f.peer.offer("wearable", 1, 1_000, true).await;
     let missing = f.peer.offer("emote", 2, 2_000, false).await;
-    let mut replay = f.replay(&["wearable", "emote"], 0);
+    let mut replay = f.replay(&["wearable", "emote"], 0).await;
     let pass = replay
         .pass(&CancellationToken::new())
         .await
@@ -558,7 +561,7 @@ async fn a_restarted_leader_resumes_its_pass_where_it_stopped() {
             .await;
     }
     let cancel = CancellationToken::new();
-    let mut first = f.replay(&["wearable"], 0);
+    let mut first = f.replay(&["wearable"], 0).await;
     let running = tokio::spawn({
         let cancel = cancel.clone();
         async move { first.pass(&cancel).await }
@@ -592,6 +595,7 @@ async fn a_restarted_leader_resumes_its_pass_where_it_stopped() {
     f.peer.failing.store(false, Ordering::SeqCst);
     let pass = f
         .replay(&["wearable"], 0)
+        .await
         .pass(&CancellationToken::new())
         .await
         .unwrap()
@@ -614,7 +618,7 @@ async fn an_operator_stops_the_replay_and_nothing_more_is_fetched() {
     f.peer.offer("wearable", 1, 1_000, true).await;
     f.sql("INSERT INTO content.item_history_replay (stopped) VALUES (true)")
         .await;
-    let mut replay = f.replay(&["wearable"], 0);
+    let mut replay = f.replay(&["wearable"], 0).await;
     let running = tokio::spawn(async move { replay.pass(&CancellationToken::new()).await });
     tokio::time::sleep(Duration::from_millis(400)).await;
     assert!(
@@ -642,6 +646,7 @@ async fn a_leader_with_another_floor_types_or_peers_never_reuses_coverage() {
     };
     f.peer.offer("wearable", 1, 1_000, true).await;
     f.replay(&["wearable", "emote"], 0)
+        .await
         .pass(&CancellationToken::new())
         .await
         .unwrap()
@@ -651,7 +656,7 @@ async fn a_leader_with_another_floor_types_or_peers_never_reuses_coverage() {
         Coverage::Covered { .. }
     ));
 
-    let mut floor = f.replay(&["wearable", "emote"], 500);
+    let mut floor = f.replay(&["wearable", "emote"], 500).await;
     floor
         .pass(&CancellationToken::new())
         .await
@@ -662,7 +667,7 @@ async fn a_leader_with_another_floor_types_or_peers_never_reuses_coverage() {
         Coverage::Unknown(Unknown::HistoryFloor)
     );
 
-    let mut wearables = f.replay(&["wearable", "scene"], 0);
+    let mut wearables = f.replay(&["wearable", "scene"], 0).await;
     wearables
         .pass(&CancellationToken::new())
         .await
@@ -699,7 +704,7 @@ async fn a_leader_with_another_floor_types_or_peers_never_reuses_coverage() {
     cancel.cancel();
     assert!(running.await.unwrap().unwrap().is_none());
 
-    let mut none = f.replay(&["scene"], 0);
+    let mut none = f.replay(&["scene"], 0).await;
     assert!(
         none.pass(&CancellationToken::new())
             .await
@@ -731,7 +736,7 @@ async fn a_leader_that_loses_the_lease_mid_pass_writes_nothing_more() {
             }
             peer.failing.store(true, Ordering::SeqCst);
         });
-        let mut replay = f.replay(&["wearable"], 0);
+        let mut replay = f.replay(&["wearable"], 0).await;
         replay.pacing.page_pause = Duration::from_millis(200);
         let running = tokio::spawn(async move { replay.pass(&CancellationToken::new()).await });
         hold.await.unwrap();
@@ -795,7 +800,7 @@ async fn a_peer_set_change_mid_pass_records_no_coverage_for_the_old_set() {
             .offer("wearable", n, 1_000 + i64::from(n), true)
             .await;
     }
-    let mut replay = f.replay(&["wearable"], 0);
+    let mut replay = f.replay(&["wearable"], 0).await;
     replay.pacing.page_pause = Duration::from_millis(300);
     let running = tokio::spawn(async move { replay.pass(&CancellationToken::new()).await });
     let deadline = std::time::Instant::now() + Duration::from_secs(20);
@@ -827,7 +832,7 @@ async fn a_late_write_from_a_stale_checkpoint_changes_nothing() {
     let Some(f) = fixture().await else {
         return;
     };
-    let mut replay = f.replay(&["wearable"], 0);
+    let mut replay = f.replay(&["wearable"], 0).await;
     let scope = replay.scope();
     let at = replay.begin(&scope).await.unwrap();
     let next = Checkpoint {
@@ -1036,6 +1041,9 @@ async fn start_leader(f: &mut Fixture, interval: Option<Duration>) -> Arc<crate:
             connections_max_idle: 2,
             snapshot_concurrency: 1,
             snapshot_scheduling: crate::sync::snapshots::SnapshotScheduling::default(),
+            snapshot_resync_initial_delay: Duration::from_secs(3_600),
+            snapshot_resync_interval: Duration::from_secs(14 * 86_400),
+            pointer_changes_wait_time_ms: 5_000,
             flush_concurrency: 1,
             bloom_expected_elements: 100,
             profile_max_age_ms: 31_536_000_000,
@@ -1065,7 +1073,7 @@ async fn an_operator_pausing_sync_holds_the_replay() {
         return;
     };
     f.peer.offer("wearable", 1, 1_000, true).await;
-    let mut replay = f.replay(&["wearable"], 0);
+    let mut replay = f.replay(&["wearable"], 0).await;
     let control = replay.control.clone();
     control.pause();
     let running = tokio::spawn(async move { replay.pass(&CancellationToken::new()).await });

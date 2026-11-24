@@ -12,7 +12,7 @@ import {
   prefetchPassport,
   resolveSelfAddress,
 } from "../../data/hooks/useProfile";
-import { baseItemUrn, color3ToHex, hexToColor3 } from "../../data/catalyst/backpack";
+import { baseItemUrn, color3ToHex, hexToColor3 } from "@web-core/catalyst/backpack";
 import { catalystBase } from "../../data/catalyst/client";
 import { normalizeAddress } from "../../data/catalyst/profile";
 import { useOwnedWearables } from "../../data/hooks/useOwnedItems";

@@ -17,6 +17,8 @@ interface SelectProps {
   /** dark (default, on dark panels) or light (white field, e.g. Settings). */
   variant?: 'dark' | 'light'
   'aria-label'?: string
+  /** Ids of elements that describe the control. */
+  'aria-describedby'?: string
   /** Shown in the field while no option has the value (a picker that adds rather than selects). */
   placeholder?: string
 }
@@ -52,6 +54,7 @@ export function Select({
   disabled = false,
   variant = 'dark',
   'aria-label': ariaLabel,
+  'aria-describedby': ariaDescribedBy,
   placeholder
 }: SelectProps): React.JSX.Element {
   const [open, setOpen] = useState(false)
@@ -76,6 +79,7 @@ export function Select({
         className={`${styles.field} ${variant === 'light' ? styles.light : ''}`.trim()}
         disabled={disabled}
         aria-label={ariaLabel}
+        aria-describedby={ariaDescribedBy}
         aria-haspopup="listbox"
         aria-expanded={open}
         onClick={() => {

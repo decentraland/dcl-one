@@ -336,6 +336,37 @@ describe("NotificationsSettings", () => {
       await loaded();
     });
 
+    it("should show the pending address without claiming an email was sent", () => {
+      expect(screen.getByText("This email address is awaiting confirmation.")).toBeTruthy();
+      expect(screen.queryByText("Confirmation email sent, check your inbox.")).toBeNull();
+    });
+
+    describe("and the resend fails", () => {
+      beforeEach(async () => {
+        api.putEmail.mockRejectedValueOnce(new Error("send failed"));
+        await user.click(screen.getByRole("button", { name: "Resend" }));
+        await screen.findByText("We couldn't save your email. Please try again.");
+      });
+
+      it("should keep the address pending and offer a retry without claiming delivery", () => {
+        expect(screen.getByText("pending approval")).toBeTruthy();
+        expect(screen.queryByText("Confirmation email sent, check your inbox.")).toBeNull();
+        expect((screen.getByRole("button", { name: "Resend" }) as HTMLButtonElement).disabled).toBe(false);
+      });
+
+      describe("and the next resend succeeds", () => {
+        beforeEach(async () => {
+          api.putEmail.mockResolvedValueOnce(undefined);
+          await user.click(screen.getByRole("button", { name: "Resend" }));
+        });
+
+        it("should confirm the send and clear the failure", async () => {
+          expect(await screen.findByText("Confirmation email sent, check your inbox.")).toBeTruthy();
+          expect(screen.queryByText("We couldn't save your email. Please try again.")).toBeNull();
+        });
+      });
+    });
+
     it("should hide the master switch", () => {
       expect(screen.queryByRole("switch", { name: "All email notifications" })).toBeNull();
     });
@@ -431,8 +462,7 @@ describe("NotificationsSettings", () => {
       });
 
       it("should say the confirmation was sent and offer to resend it", async () => {
-        await screen.findByText("pending approval");
-        expect(screen.getByText("Confirmation email sent, check your inbox.")).toBeTruthy();
+        expect(await screen.findByText("Confirmation email sent, check your inbox.")).toBeTruthy();
         expect((screen.getByRole("button", { name: "Resend" }) as HTMLButtonElement).disabled).toBe(false);
       });
     });

@@ -269,11 +269,15 @@ State, in every build:
   stands in turns nearby voice off) and, in LiveKit builds, each voice room's state
   and the addresses speaking.
 - `/nametag_state`: the nametags, as JSON: `visible` (the `/nametags [bool]` toggle), `shown`,
-  `sceneAvatars` (of those shown, the tags over a scene's avatars) and `hidden` (the tags that
+  `sceneAvatars` (of those shown, the tags over a scene's avatars), `plates` (of those shown, the
+  tags with a scene's `AvatarNametag` plate) and `hidden` (the tags that
   don't show), `atlas` (the glyph atlas' distance-field and colour page sizes, in
   pixels), `bubbles` (the chat bubble setting) and `tags`, one per shown tag: `player` (an
   address, `local`, or null for an avatar with no wallet), `sceneAvatar` (the tag is over an
-  avatar a scene made with `AvatarShape`), `name`, `suffix`, `verified`,
+  avatar a scene made with `AvatarShape`), `nameShown` (false for a tag that is its plate alone:
+  the avatar has no name, or a scene's area hides it), `plate` (null, or the plate's `label` and
+  its `labelColor`, `backgroundColor` and `borderColor` as `#RRGGBB`), `name` and `suffix` (empty
+  for an avatar with no name), `verified`,
   `official`, `voice` (`off`, `idle`, `speaking`, `hushed`), `distance` from the camera in metres,
   `opacity`, `scale` (metres per tag unit), `position` (all four as the shader works them out), `headOffset` (metres over the head bone for
   an avatar at a scale of one; null until the avatar is built) and `bubble` (null, or its `kind`,
@@ -388,6 +392,17 @@ On the web only:
   (2000 by default; later waits double from it, 5 reopens at most) as `firstDelayMs` and
   `maxReopens`; with `ms`, sets it first for every source failing from then on. For tests that
   would otherwise wait the full 62 s schedule.
+- `/scene_loop_state`: the scene loop's scheduling as JSON, the Scene Loop debug section's
+  reading ([scheduling](scheduling.md)): `mode`; for the last loop, `deadline` (where its
+  deadline came from) and `budget` (ms from its start to its deadline); `handoffGap` (ms from
+  the last handoff to the render worker to the next frame's start); `tail` (the frame tail's
+  90th percentile and the reserve with its margin, ms) and `tailFrames` (frames measured, of
+  32); `lateness` (the 90th percentile of the last second's timed waits for replies, ms); and
+  `woken` (`count` and `scenes`, the titles of the scenes whose relays wake on the engine's send;
+  null in a mode that does not wake the relays). `unavailable` says why a reading is null.
+- `/scene_loop_mode <both|relay|deadline|legacy>`: switches the scheduling mode without a
+  reload, as `?sceneLoop=` sets it at load; the engine's loop takes it at its next frame and
+  each relay at its next step. The reply names the mode; an unknown name fails with the list.
 
 The HUD and input:
 

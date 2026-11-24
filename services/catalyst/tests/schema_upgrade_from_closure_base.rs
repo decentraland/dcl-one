@@ -11,7 +11,7 @@ use sqlx::postgres::{PgConnectOptions, PgPool, PgPoolOptions};
 use catalyst::schema_migrate::{self, MigrateError};
 
 /// The steps a prepared version-2 database has not recorded.
-const PREPARED_PENDING_STEPS: [&str; 52] = [
+const PREPARED_PENDING_STEPS: [&str; 38] = [
     "0018_event_hook_compatibility",
     "0019_event_hook_admin_priority",
     "0023_social_referral_pending_reward",
@@ -48,22 +48,8 @@ const PREPARED_PENDING_STEPS: [&str; 52] = [
     "0055_shop_chain_cursor_divergence",
     "0056_signatures_rental_cancel_reason",
     "0057_worlds_thumbnail_alias_expiry",
-    "0058_builder_scenes_retired",
-    "0059_shop_items_content_hash",
-    "0060_builder_collection_flags_retired",
-    "0061_builder_collection_listings",
-    "0062_builder_item_contents_order",
-    "0063_builder_item_contents_named_by",
-    "0064_builder_item_video_named_by",
-    "0065_builder_collection_lock",
-    "0066_builder_collection_forum",
-    "0067_builder_collection_forum_claim",
-    "0068_builder_linked_publications_retired",
-    "0069_builder_uploaded_video_size",
-    "0070_builder_validation_retry",
-    "0071_builder_slot_cheques_outlive_collections",
-    "0072_builder_uploaded_video_checked",
-    "0073_builder_collection_contract_lowercase",
+    "0058_streaming_notification_recipients",
+    "0059_shop_sepolia_rentals_index",
 ];
 type LedgerRow = (String, String, bool, chrono::NaiveDateTime);
 /// id, category, is_tier, criteria_steps, published, created_at
@@ -85,8 +71,34 @@ async fn step_ledger(pool: &PgPool) -> Vec<LedgerRow> {
     .unwrap()
 }
 
+fn expected_pending_steps() -> Vec<&'static str> {
+    PREPARED_PENDING_STEPS
+        .into_iter()
+        .chain([
+            "0060_shop_third_party_registry_index",
+            "0061_content_processed_snapshot_types",
+            "0062_builder_scenes_retired",
+            "0063_shop_items_content_hash",
+            "0064_builder_collection_flags_retired",
+            "0065_builder_collection_listings",
+            "0066_builder_item_contents_order",
+            "0067_builder_item_contents_named_by",
+            "0068_builder_item_video_named_by",
+            "0069_builder_collection_lock",
+            "0070_builder_collection_forum",
+            "0071_builder_collection_forum_claim",
+            "0072_builder_linked_publications_retired",
+            "0073_builder_uploaded_video_size",
+            "0074_builder_validation_retry",
+            "0075_builder_slot_cheques_outlive_collections",
+            "0076_builder_uploaded_video_checked",
+            "0077_builder_collection_contract_lowercase",
+        ])
+        .collect()
+}
+
 fn assert_only_pending_steps_added(before: &[LedgerRow], after: &[LedgerRow]) {
-    assert_eq!(after.len(), before.len() + PREPARED_PENDING_STEPS.len());
+    assert_eq!(after.len(), before.len() + expected_pending_steps().len());
     for row in before {
         assert!(
             after.contains(row),
@@ -96,7 +108,7 @@ fn assert_only_pending_steps_added(before: &[LedgerRow], after: &[LedgerRow]) {
     let added: Vec<_> = after.iter().filter(|row| !before.contains(row)).collect();
     assert_eq!(
         added.iter().map(|row| row.0.as_str()).collect::<Vec<_>>(),
-        PREPARED_PENDING_STEPS
+        expected_pending_steps()
     );
     let steps = schema_migrate::parse_steps(catalyst::db::MIGRATIONS_SQL);
     for row in added {
@@ -657,16 +669,56 @@ async fn a_database_stamped_with_the_closure_base_upgrades_to_head_with_its_rows
     .execute(pool)
     .await
     .unwrap();
+    assert!(!has_column(pool, "content.processed_snapshots", "entity_types").await);
+    let legacy_snapshot = catalyst::auth::hash_bytes_v1(b"legacy processed snapshot");
+    sqlx::query("INSERT INTO content.processed_snapshots (hash, process_time) VALUES ($1, now())")
+        .bind(&legacy_snapshot)
+        .execute(pool)
+        .await
+        .unwrap();
 
     let done =
         schema_migrate::migrate(pool, catalyst::db::SCHEMA_SQL, catalyst::db::MIGRATIONS_SQL)
             .await
             .unwrap();
     assert_eq!(
-        done.steps, PREPARED_PENDING_STEPS,
+        done.steps,
+        expected_pending_steps(),
         "only steps the prepared capture lacks run; historical steps never replay"
     );
     assert_only_pending_steps_added(&historical_ledger, &step_ledger(pool).await);
+    let snapshots = catalyst::content::sync::LiveProcessedSnapshotStore::new(pool.clone());
+    let hashes = [legacy_snapshot];
+    let recorded_coverage: Vec<String> =
+        sqlx::query_scalar("SELECT entity_types FROM content.processed_snapshots WHERE hash = $1")
+            .bind(&hashes[0])
+            .fetch_one(pool)
+            .await
+            .unwrap();
+    assert!(recorded_coverage.is_empty());
+    let scenes = std::collections::HashSet::from(["scene".to_string()]);
+    for filter in [None, Some(&scenes)] {
+        assert!(
+            snapshots
+                .filter_processed_in_chunks(hashes.clone(), filter)
+                .await
+                .unwrap()
+                .is_empty(),
+            "a migrated receipt must leave the snapshot eligible for replay"
+        );
+    }
+    snapshots
+        .mark_processed_many(&hashes, Some(&scenes))
+        .await
+        .unwrap();
+    assert!(
+        snapshots
+            .filter_processed_in_chunks(hashes.clone(), Some(&scenes))
+            .await
+            .unwrap()
+            .contains(&hashes[0]),
+        "a replay proves coverage for the current filter"
+    );
     let captcha_after:(serde_json::Value,chrono::NaiveDateTime)=sqlx::query_as("SELECT to_jsonb(c)-'generated_at',generated_at FROM credits.captcha_challenges c WHERE id=$1").bind(captcha_id).fetch_one(pool).await.unwrap();
     assert_eq!(
         captcha_after.0, captcha_before,
@@ -1365,7 +1417,8 @@ async fn composed_voice_release_rolls_back_connection_loss_at_each_boundary_then
                 .await
                 .unwrap();
         assert_eq!(
-            applied.steps, PREPARED_PENDING_STEPS,
+            applied.steps,
+            expected_pending_steps(),
             "only new main event-hook steps apply; historical 0020 never re-adds retired columns"
         );
         catalyst::db::bootstrap(pool).await.unwrap();
@@ -1962,7 +2015,7 @@ async fn uploads(pool: &PgPool) -> Vec<String> {
         .unwrap()
 }
 
-const BUILDER_SCENES_STEP: &str = "0058_builder_scenes_retired";
+const BUILDER_SCENES_STEP: &str = "0062_builder_scenes_retired";
 
 async fn assert_release_refused(pool: &PgPool, release: &str, why: &str) {
     assert!(release_result(pool, release).await.is_err(), "{why}");
@@ -2116,7 +2169,7 @@ const BUILDER_COLLECTION_FLAGS_RETIRED: &str = include_str!(concat!(
     "/schemas/releases/builder-collection-flags-retired.sql"
 ));
 
-const BUILDER_COLLECTION_FLAGS_STEP: &str = "0060_builder_collection_flags_retired";
+const BUILDER_COLLECTION_FLAGS_STEP: &str = "0064_builder_collection_flags_retired";
 
 fn linked_forum_release() -> String {
     include_str!(concat!(
@@ -2330,7 +2383,7 @@ const BUILDER_ITEM_DOCUMENTS_AND_UPLOADERS: &str = include_str!(concat!(
     "/schemas/releases/builder-item-documents-and-uploaders.sql"
 ));
 
-const BUILDER_ITEM_CONTENTS_STEP: &str = "0062_builder_item_contents_order";
+const BUILDER_ITEM_CONTENTS_STEP: &str = "0066_builder_item_contents_order";
 
 fn scenes_release() -> String {
     BUILDER_SCENES_RETIRED.replace("\\set ON_ERROR_STOP on\n", "")
@@ -2482,7 +2535,7 @@ async fn the_builder_item_documents_release_waits_for_its_step_then_retypes_them
     old.drop().await;
 }
 
-const BUILDER_NAMED_BY_STEP: &str = "0063_builder_item_contents_named_by";
+const BUILDER_NAMED_BY_STEP: &str = "0067_builder_item_contents_named_by";
 
 #[tokio::test]
 async fn the_builder_named_by_step_attributes_each_name_to_the_writer_the_file_routes_counted() {
@@ -2501,7 +2554,7 @@ async fn the_builder_named_by_step_attributes_each_name_to_the_writer_the_file_r
     sqlx::raw_sql(
         "ALTER TABLE builder.item_contents DROP CONSTRAINT item_contents_named_by_check; \
          ALTER TABLE builder.item_contents DROP COLUMN named_by; \
-         DELETE FROM meta.schema_steps WHERE step = '0063_builder_item_contents_named_by'; \
+         DELETE FROM meta.schema_steps WHERE step = '0067_builder_item_contents_named_by'; \
          INSERT INTO builder.collections (id, name, eth_address, contract_address) VALUES \
            ('11111111-1111-4111-8111-000000000101', 'On chain', '0x' || repeat('0', 39) || '1', '0x' || repeat('c', 40)); \
          INSERT INTO builder.collections (id, name, eth_address, third_party_id, urn_suffix) VALUES \
@@ -2559,7 +2612,7 @@ async fn the_builder_named_by_step_attributes_each_name_to_the_writer_the_file_r
     assert_eq!(steps, [BUILDER_NAMED_BY_STEP]);
 }
 
-const BUILDER_VIDEO_NAMED_BY_STEP: &str = "0064_builder_item_video_named_by";
+const BUILDER_VIDEO_NAMED_BY_STEP: &str = "0068_builder_item_video_named_by";
 
 #[tokio::test]
 async fn the_builder_video_named_by_step_attributes_each_kept_video_to_its_entrys_writer() {
@@ -2579,7 +2632,7 @@ async fn the_builder_video_named_by_step_attributes_each_kept_video_to_its_entry
         "ALTER TABLE builder.items DROP CONSTRAINT items_video_named_by_check; \
          DROP INDEX builder.items_video_idx; \
          ALTER TABLE builder.items DROP COLUMN video_named_by; \
-         DELETE FROM meta.schema_steps WHERE step = '0064_builder_item_video_named_by'; \
+         DELETE FROM meta.schema_steps WHERE step = '0068_builder_item_video_named_by'; \
          INSERT INTO builder.items (id, eth_address, name, type, video) VALUES \
            ('33333333-3333-4333-8333-000000000101', '0x' || repeat('0', 39) || '1', 'Named', 'wearable', 'bafkvideo'), \
            ('33333333-3333-4333-8333-000000000102', '0x' || repeat('0', 39) || '1', 'Unnamed', 'wearable', 'bafkkept'), \
@@ -2630,7 +2683,7 @@ const BUILDER_ITEM_CURATION_RETIRED: &str = include_str!(concat!(
     "/schemas/releases/builder-item-curation-retired.sql"
 ));
 
-const BUILDER_COLLECTION_FORUM_STEP: &str = "0066_builder_collection_forum";
+const BUILDER_COLLECTION_FORUM_STEP: &str = "0070_builder_collection_forum";
 
 fn item_curation_release() -> String {
     let stop_on_error = "\\set ON_ERROR_STOP on\n";

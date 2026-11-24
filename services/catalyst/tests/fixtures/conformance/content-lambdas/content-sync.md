@@ -1055,14 +1055,20 @@ catalyst list and its `/about` is healthy.
       (case-insensitive, with or without `/content`) is this node. Until a read succeeds, or when it
       lists no other server, the node syncs from `SYNC_SOURCE` (under mirror the three Decentraland
       peers); a later failure keeps the current list. A changed list goes to the running orchestrator
-      at any time (`sync/orchestrator.rs` `run_sync_job`): a new peer bootstraps from its snapshots
-      while the node keeps its state, a dropped peer's stream stops, running streams download from the
-      new list, and the failed-deployments retry fetches from it. Read-through keeps `SYNC_SOURCE`.
+      at any time (`sync/orchestrator.rs` `run_sync_job`). Added peers bootstrap while retained
+      peers keep their progress, and removed peers' streams stop. Deployments try the advertising
+      peer first, then other current peers. Failed-deployment retries use the current peer list.
+      Read-through keeps `SYNC_SOURCE`.
+    - Steady-state peers poll pointer changes every five seconds by default. Set
+      `SYNC_POINTER_CHANGES_POLL_INTERVAL_SECS` to at least one second to change it.
+      The orchestrator revisits snapshot lists one hour after bootstrap and then every
+      14 days by default. Both `SYNC_SNAPSHOT_RESYNC_INITIAL_DELAY_SECS` and
+      `SYNC_SNAPSHOT_RESYNC_INTERVAL_SECS` require at least 60 seconds.
       Tests: `sync::dao::tests`, `tests/sync_peer_changes.rs`.
     - Left: without `ETH_RPC_URL`, or on a network other than mainnet and sepolia, the node syncs from
       `SYNC_SOURCE` only; `lastSyncWithDAO` stays the sync heartbeat (CS-15). Difference: upstream
-      applies a changed list only after the bootstrap; dcl-one also applies it during the bootstrap
-      (which restarts from the persisted cursors). As upstream
+      applies a changed list only after the bootstrap; dcl-one also applies it during the bootstrap.
+      As upstream
       (`decentraland/catalyst:src/logic/sync-orchestrator/component.ts:45-60`,
       `decentraland/snapshots-fetcher@53e9c07a:src/synchronizer.ts:708-740`), a peer that never answers does not
       hold the node in `Bootstrapping`: the node leaves it once a bootstrap pass over every listed

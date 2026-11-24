@@ -8,7 +8,7 @@ use sqlx::{
 };
 const STEP: &str = "0020_social_voice_notifications";
 /// The steps a prepared version-2 database has not recorded.
-const PREPARED_PENDING_STEPS: [&str; 52] = [
+const PREPARED_PENDING_STEPS: [&str; 38] = [
     "0018_event_hook_compatibility",
     "0019_event_hook_admin_priority",
     "0023_social_referral_pending_reward",
@@ -45,22 +45,8 @@ const PREPARED_PENDING_STEPS: [&str; 52] = [
     "0055_shop_chain_cursor_divergence",
     "0056_signatures_rental_cancel_reason",
     "0057_worlds_thumbnail_alias_expiry",
-    "0058_builder_scenes_retired",
-    "0059_shop_items_content_hash",
-    "0060_builder_collection_flags_retired",
-    "0061_builder_collection_listings",
-    "0062_builder_item_contents_order",
-    "0063_builder_item_contents_named_by",
-    "0064_builder_item_video_named_by",
-    "0065_builder_collection_lock",
-    "0066_builder_collection_forum",
-    "0067_builder_collection_forum_claim",
-    "0068_builder_linked_publications_retired",
-    "0069_builder_uploaded_video_size",
-    "0070_builder_validation_retry",
-    "0071_builder_slot_cheques_outlive_collections",
-    "0072_builder_uploaded_video_checked",
-    "0073_builder_collection_contract_lowercase",
+    "0058_streaming_notification_recipients",
+    "0059_shop_sepolia_rentals_index",
 ];
 const PREPARED_V2: &str = include_str!(concat!(
     env!("DCL_ONE_ROOT"),
@@ -251,11 +237,34 @@ async fn populated_voice_notification_upgrade_preserves_facts_and_replays_its_le
         .execute(pool)
         .await
         .unwrap();
+    let expected_steps: Vec<_> = PREPARED_PENDING_STEPS
+        .into_iter()
+        .chain([
+            "0060_shop_third_party_registry_index",
+            "0061_content_processed_snapshot_types",
+            "0062_builder_scenes_retired",
+            "0063_shop_items_content_hash",
+            "0064_builder_collection_flags_retired",
+            "0065_builder_collection_listings",
+            "0066_builder_item_contents_order",
+            "0067_builder_item_contents_named_by",
+            "0068_builder_item_video_named_by",
+            "0069_builder_collection_lock",
+            "0070_builder_collection_forum",
+            "0071_builder_collection_forum_claim",
+            "0072_builder_linked_publications_retired",
+            "0073_builder_uploaded_video_size",
+            "0074_builder_validation_retry",
+            "0075_builder_slot_cheques_outlive_collections",
+            "0076_builder_uploaded_video_checked",
+            "0077_builder_collection_contract_lowercase",
+        ])
+        .collect();
     let done = schema_migrate::migrate(pool, SCHEMA_SQL, MIGRATIONS_SQL)
         .await
         .unwrap();
     assert_eq!(
-        done.steps, PREPARED_PENDING_STEPS,
+        done.steps, expected_steps,
         "only steps the prepared capture lacks run; recorded historical steps never replay"
     );
     let after: String = sqlx::query_scalar(facts_sql).fetch_one(pool).await.unwrap();
@@ -280,7 +289,7 @@ async fn populated_voice_notification_upgrade_preserves_facts_and_replays_its_le
     );
     let ledger: Vec<(String, String, bool, chrono::NaiveDateTime)> =
         sqlx::query_as(ledger_sql).fetch_all(pool).await.unwrap();
-    assert_eq!(ledger.len(), before.len() + PREPARED_PENDING_STEPS.len());
+    assert_eq!(ledger.len(), before.len() + expected_steps.len());
     for row in &before {
         assert!(
             ledger.contains(row),
@@ -290,7 +299,7 @@ async fn populated_voice_notification_upgrade_preserves_facts_and_replays_its_le
     let added: Vec<_> = ledger.iter().filter(|row| !before.contains(row)).collect();
     assert_eq!(
         added.iter().map(|row| row.0.as_str()).collect::<Vec<_>>(),
-        PREPARED_PENDING_STEPS
+        expected_steps
     );
     let embedded = schema_migrate::parse_steps(MIGRATIONS_SQL);
     for row in added {

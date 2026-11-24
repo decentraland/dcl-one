@@ -101,6 +101,7 @@ import type {
   GalleryPhoto,
   GalleryPhotoMeta,
   GalleryWriteMessage,
+  GalleryWearablesMessage,
   ExternalUrlOpenedMessage,
   SatelliteTileMessage,
   PlaceMessage,
@@ -525,6 +526,9 @@ export interface MinimapState {
   /** Relay the current style/rotation/zoom to the scene. Only the Camera style needs the
    *  engine; on the DOM styles the scene disposes its TextureCamera. */
   setConfig: (config: { style: MinimapStyle; rotation: MinimapRotation; visibleMeters: number }) => void
+  /** The engine is drawing the Camera style's view. Until then the map stays covered: its hole would
+   *  show the player's own view. */
+  cameraReady: boolean
   /** Reload the scene the player stands in, as the `/reload` chat command does. */
   reloadScene: () => void
 }
@@ -629,6 +633,8 @@ export interface GalleryState {
   metas: Record<string, GalleryPhotoMeta | null | undefined>
   /** Fetch one photo's full metadata (populates `metas`). */
   loadPhoto: (id: string) => void
+  /** Resolve the wearables a person in a photo had on (urns from its metadata); null on failure. */
+  loadWearables: (urns: string[]) => Promise<Wearable[] | null>
   setPublic: (id: string, isPublic: boolean) => Promise<ReelWrite>
   remove: (id: string) => Promise<ReelWrite>
 }
@@ -989,6 +995,8 @@ const REVEAL_DEBOUNCE_MS = 600
 // The longest the Backpack's preview stays shut waiting for the engine's avatarPreviewReady: a bridge
 // that never sends it must not hide the preview for good.
 const AVATAR_PREVIEW_READY_TIMEOUT_MS = 3000
+// Likewise the minimap's Camera style, waiting for minimapReady.
+const MINIMAP_CAMERA_READY_TIMEOUT_MS = 3000
 
 /** A timeout started and cleared at will, and cleared on unmount. */
 function useFallbackTimer(ms: number): { start: (fire: () => void) => void; clear: () => void } {
@@ -1030,7 +1038,7 @@ export const SIGNING_IN_PICK = 'Still signing in. Try again in a moment.'
 // camera-reel-service deletes the photo and its thumbnail from S3 in turn, up to 15 s each.
 export const GALLERY_DELETE_TIMEOUT_MS = 60_000
 
-type BridgeReply = GalleryMessage | GalleryWriteMessage | ExternalUrlOpenedMessage | SatelliteTileMessage | PlaceMessage | WorldAccessMessage | GiftingPageMessage
+type BridgeReply = GalleryMessage | GalleryWriteMessage | GalleryWearablesMessage | ExternalUrlOpenedMessage | SatelliteTileMessage | PlaceMessage | WorldAccessMessage | GiftingPageMessage
 
 export type LoginStatus =
   | 'loading'
@@ -1383,6 +1391,24 @@ export function useEngineSession(createDriver: () => LoginDriver, host: SessionH
   const [avatarPreviewReady, setAvatarPreviewReady] = useState(false)
   const previewOpen = useRef(false)
   const previewReadyFallback = useFallbackTimer(AVATAR_PREVIEW_READY_TIMEOUT_MS)
+  const [minimapCameraReady, setMinimapCameraReady] = useState(false)
+  const minimapCamera = useRef({ rect: false, style: false, expected: false })
+  const minimapReadyFallback = useFallbackTimer(MINIMAP_CAMERA_READY_TIMEOUT_MS)
+  const expectMinimapCamera = useCallback(
+    (change: { rect?: boolean; style?: boolean }) => {
+      const camera = minimapCamera.current
+      Object.assign(camera, change)
+      const expected = camera.rect && camera.style
+      if (expected === camera.expected) return
+      camera.expected = expected
+      setMinimapCameraReady(false)
+      if (!expected) return minimapReadyFallback.clear()
+      minimapReadyFallback.start(() => {
+        if (minimapCamera.current.expected) setMinimapCameraReady(true)
+      })
+    },
+    [minimapReadyFallback]
+  )
   lobbyRef.current = lobby
   // The welcome page: asked of the engine after each sign-in, null until it answers (or once accepted).
   const [welcome, setWelcome] = useState<{ terms: boolean; newProfile: boolean } | null>(null)
@@ -2603,6 +2629,10 @@ export function useEngineSession(createDriver: () => LoginDriver, host: SessionH
           previewReadyFallback.clear()
           if (previewOpen.current) setAvatarPreviewReady(true)
           break
+        case 'minimapReady':
+          minimapReadyFallback.clear()
+          if (minimapCamera.current.expected) setMinimapCameraReady(true)
+          break
         case 'welcome': {
           // an answer to an ask from before a sign-out is the signed-out account's: no page of a
           // sign-in since, even one already submitted, and none of its pick. One from a bridge
@@ -2735,6 +2765,7 @@ export function useEngineSession(createDriver: () => LoginDriver, host: SessionH
           break
         case 'gallery':
         case 'galleryWrite':
+        case 'galleryWearables':
         case 'externalUrlOpened':
         case 'satelliteTile':
         case 'place':
@@ -3548,6 +3579,13 @@ export function useEngineSession(createDriver: () => LoginDriver, host: SessionH
     },
     [bridgeCall]
   )
+  const loadGalleryWearables = useCallback(
+    async (urns: string[]): Promise<Wearable[] | null> => {
+      const msg = await bridgeCall('galleryWearables', (requestId) => ({ kind: 'getGalleryWearables', requestId, urns }))
+      return msg?.ok === true ? msg.wearables : null
+    },
+    [bridgeCall]
+  )
   const setGalleryPhotoPublic = useCallback(
     async (id: string, isPublic: boolean): Promise<ReelWrite> =>
       (await bridgeCall('galleryWrite', (requestId) => ({ kind: 'setGalleryPhotoPublic', requestId, id, isPublic }))) ?? { ok: false },
@@ -3626,9 +3664,10 @@ export function useEngineSession(createDriver: () => LoginDriver, host: SessionH
   )
   const setMinimapConfig = useCallback(
     (config: { style: MinimapStyle; rotation: MinimapRotation; visibleMeters: number }) => {
+      expectMinimapCamera({ style: config.style === 'imposters' })
       driverRef.current?.send({ kind: 'minimapConfig', ...config })
     },
-    []
+    [expectMinimapCamera]
   )
   const loadPermissionRules = useCallback(() => {
     const scene = currentScene.current
@@ -4616,6 +4655,7 @@ export function useEngineSession(createDriver: () => LoginDriver, host: SessionH
           })
         }
       }
+      if (region === 'map') expectMinimapCamera({ rect: rect != null })
       // a closed sign-in stage is drawn again from scratch: the page keeps its background until then
       if (region === 'signin' && rect == null) setSigninStageReady(false)
       // likewise the lobby's, which the bridge announces again to the next report
@@ -4628,7 +4668,7 @@ export function useEngineSession(createDriver: () => LoginDriver, host: SessionH
       }
       driverRef.current?.send({ kind: 'engineViewport', region, rect, dpr, ...(focus != null && rect != null ? { focus } : {}), ...(clip != null && rect != null ? { clip } : {}) })
     },
-    [previewReadyFallback]
+    [previewReadyFallback, expectMinimapCamera]
   )
   const setLobbyStage = useCallback((options: { preset?: string; idleEmotes?: boolean }) => {
     lobbyStageOptions.current = { ...lobbyStageOptions.current, ...options }
@@ -5357,9 +5397,10 @@ export function useEngineSession(createDriver: () => LoginDriver, host: SessionH
       donatePlace: donatePlaceKey ? (JSON.parse(donatePlaceKey) as DonatePlace) : null,
       linkRealm,
       setConfig: setMinimapConfig,
+      cameraReady: minimapCameraReady,
       reloadScene
     }),
-    [satelliteView, sceneTitle, mic.sceneBlocked, donatePlaceKey, linkRealm, setMinimapConfig, reloadScene]
+    [satelliteView, sceneTitle, mic.sceneBlocked, donatePlaceKey, linkRealm, setMinimapConfig, minimapCameraReady, reloadScene]
   )
 
   return {
@@ -5508,6 +5549,7 @@ export function useEngineSession(createDriver: () => LoginDriver, host: SessionH
       fetchPage: fetchGalleryPage,
       metas: galleryMetas,
       loadPhoto: loadGalleryPhoto,
+      loadWearables: loadGalleryWearables,
       setPublic: setGalleryPhotoPublic,
       remove: removeGalleryPhoto
     },

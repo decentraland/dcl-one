@@ -37,8 +37,6 @@ export type HangoutDraft = {
   imagePreviewUrl: string | null;
   verticalImagePreviewUrl: string | null;
   featuredItem?: string;
-  scheduleIds?: string[];
-  joinUrl?: string;
 };
 
 const RECURRENCE_FREQUENCIES: Record<string, string> = {
@@ -67,8 +65,6 @@ export function emptyDraft(): HangoutDraft {
     imagePreviewUrl: null,
     verticalImagePreviewUrl: null,
     featuredItem: "",
-    scheduleIds: [],
-    joinUrl: "",
   };
 }
 
@@ -108,12 +104,8 @@ export function toEventSchedule(draft: HangoutDraft, original?: EventScheduleSou
   };
 }
 
-export function toCreateEventBody(draft: HangoutDraft, original?: EditableHangout, signer?: string, privileged = false) {
+export function toCreateEventBody(draft: HangoutDraft, original?: EditableHangout, signer?: string) {
   const own = Boolean(signer && original?.user?.toLowerCase() === signer.toLowerCase());
-  const scheduleIds = draft.scheduleIds ?? original?.schedules ?? [];
-  const joinUrl = draft.joinUrl?.trim() || null;
-  const originalJoinUrl = original ? customJoinUrl(original) || null : null;
-  const schedulesChanged = !original || JSON.stringify([...scheduleIds].sort()) !== JSON.stringify([...original.schedules].sort());
   return {
     name: draft.name.trim(),
     description: draft.description.trim(),
@@ -129,8 +121,6 @@ export function toCreateEventBody(draft: HangoutDraft, original?: EditableHangou
     image_vertical: draft.verticalImagePreviewUrl,
     ...(!original || own ? { contact: draft.contact.trim() || null, details: draft.details.trim() || null } : {}),
     featured_item: draft.featuredItem?.trim() || null,
-    ...(privileged && schedulesChanged ? { schedules: scheduleIds } : {}),
-    ...(privileged && (!original || joinUrl !== originalJoinUrl) ? { url: joinUrl } : {}),
     // As decentraland.org's editor (useCreateEventForm): the owner saving a rejected event asks to send it
     // back to review. The response says whether the event is still rejected.
     ...(own && original?.rejected ? { rejected: false } : {}),
@@ -144,21 +134,6 @@ export async function loadEditableHangout(identity: AuthIdentity, id: string, si
   return EventEnvelope.parse(await signedGetJSON(`/events/api/events/${encodeURIComponent(id)}`, { identity, signal })).data;
 }
 
-// Match only the exact canonical or legacy target recognized by metadata::refresh_target.
-// Other play links may be deliberate custom destinations and must remain editable.
-function customJoinUrl(event: EditableHangout): string {
-  if (!event.url) return "";
-  const server = event.world && event.server ? event.server : null;
-  const encodedWorld = server
-    ? encodeURIComponent(server).replace(/[!'()*]/g, (character) => `%${character.charCodeAt(0).toString(16).toUpperCase()}`)
-    : null;
-  const generated = server
-    ? `https://decentraland.org/play/?realm=${encodedWorld}`
-    : `https://decentraland.org/play/?position=${event.x}%2C${event.y}`;
-  const legacy = server ? `https://decentraland.org/play/?realm=${server}` : null;
-  return event.url === generated || event.url === legacy ? "" : event.url;
-}
-
 export function eventToDraft(event: EditableHangout): HangoutDraft {
   const start = event.start_at ? new Date(event.start_at).toISOString() : "";
   return {
@@ -168,7 +143,7 @@ export function eventToDraft(event: EditableHangout): HangoutDraft {
     recurrence: Object.entries(RECURRENCE_FREQUENCIES).find(([, frequency]) => frequency === event.recurrent_frequency)?.[0] ?? event.recurrent_frequency ?? "every_week",
     recurrentUntil: event.recurrent_until?.slice(0, 10) ?? "", recurrentCount: event.recurrent_count, category: event.categories[0] ?? "", communityId: event.community_id ?? "",
     imagePreviewUrl: event.image, verticalImagePreviewUrl: event.image_vertical,
-    contact: event.contact ?? "", details: event.details ?? "", featuredItem: event.featured_item ?? "", scheduleIds: event.schedules, joinUrl: customJoinUrl(event),
+    contact: event.contact ?? "", details: event.details ?? "", featuredItem: event.featured_item ?? "",
   };
 }
 
@@ -182,7 +157,7 @@ export function buildHangoutSubmit(identitySource: () => AuthIdentity | null, or
       if (!isStepValid(step, draft)) throw new Error("Complete the hangout details, location and schedule before submitting.");
     }
     const path = original ? `/events/api/events/${encodeURIComponent(original.id)}` : "/events/api/events";
-    const response = await postJSON(path, toCreateEventBody(draft, original, identity.signer, privileged), { identity, method: original ? "PATCH" : "POST", signal });
+    const response = await postJSON(path, toCreateEventBody(draft, original, identity.signer), { identity, method: original ? "PATCH" : "POST", signal });
     return apiOkOf(SubmitResultSchema).parse(response).data;
   };
 }
