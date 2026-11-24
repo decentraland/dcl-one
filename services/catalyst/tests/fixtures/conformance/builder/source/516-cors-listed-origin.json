@@ -1,0 +1,33 @@
+{
+  "description": "GET /committee without a signature, from an origin CORS_ORIGIN lists. Recorded from github.com/decentraland/builder-server at 98897af by tooling/builder-server-capture.cjs.",
+  "request": {
+    "method": "GET",
+    "path": "/v1/committee",
+    "query": {},
+    "headers": {
+      "origin": "https://create.decentraland.example"
+    },
+    "body": null
+  },
+  "response": {
+    "status": 200,
+    "headers": {
+      "content-type": "application/json; charset=utf-8",
+      "access-control-allow-origin": "https://create.decentraland.example",
+      "access-control-expose-headers": "ETag,Cache-Control,Content-Language,Content-Type,Expires,Last-Modified,Pragma",
+      "vary": "Origin"
+    },
+    "body_json": {
+      "ok": true,
+      "data": [
+        {
+          "id": "0x01eba3f0e992f53debaf51ed3738dc2f23e09aee",
+          "address": "0x01eba3f0e992f53debaf51ed3738dc2f23e09aee"
+        }
+      ]
+    }
+  },
+  "captured_from": "github.com/decentraland/builder-server@98897af692f26063a088aebb2ea5bb3f683168a2",
+  "captured_at": "2026-01-01T00:00:00.000Z",
+  "volatile_paths": []
+}

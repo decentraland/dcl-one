@@ -1,0 +1,37 @@
+{
+  "description": "GET /addresses unsigned, the first page of two published collections. Recorded from github.com/decentraland/builder-server at 98897af by tooling/builder-server-capture.cjs.",
+  "request": {
+    "method": "GET",
+    "path": "/v1/addresses",
+    "query": {
+      "is_published": "true",
+      "page": "1",
+      "limit": "2"
+    },
+    "headers": {},
+    "body": null
+  },
+  "response": {
+    "status": 200,
+    "headers": {
+      "content-type": "application/json; charset=utf-8",
+      "cache-control": "public,max-age=300,s-maxage=300"
+    },
+    "body_json": {
+      "ok": true,
+      "data": {
+        "total": 5,
+        "limit": 2,
+        "pages": 3,
+        "page": 1,
+        "results": [
+          "0x5eed000000000000000000000000000000000006",
+          "0x5eed000000000000000000000000000000000102"
+        ]
+      }
+    }
+  },
+  "captured_from": "github.com/decentraland/builder-server@98897af692f26063a088aebb2ea5bb3f683168a2",
+  "captured_at": "2026-01-01T00:00:00.000Z",
+  "volatile_paths": []
+}

@@ -1,0 +1,148 @@
+{
+  "description": "GET /collections/{id}/items signed by an ADMIN_ADDRESSES wallet with no other role on a draft collection. Recorded from github.com/decentraland/builder-server at 98897af by tooling/builder-server-capture.cjs.",
+  "request": {
+    "method": "GET",
+    "path": "/v1/collections/c011ec71-0000-4000-8000-000000000301/items",
+    "query": {},
+    "headers": {
+      "x-identity-auth-chain-0": "{\"type\":\"SIGNER\",\"payload\":\"0x88ae2a86476409cadaac10a4af1cbd5f5d7f858e\",\"signature\":\"\"}",
+      "x-identity-auth-chain-1": "{\"type\":\"ECDSA_EPHEMERAL\",\"payload\":\"Decentraland Login\\nEphemeral address: 0xE6315E1742e2FAfE28D5f33130475246260BdAC9\\nExpiration: 2026-01-01T01:00:00.000Z\",\"signature\":\"0xb9365692da945acf90856f78259147b43dc3520403221db0ff71f0d99ca9fa34252fd15ce3315e1c2766b8cdf877a57a63e85da6fe97b7c3ec72ff5ae54cfb361b\"}",
+      "x-identity-auth-chain-2": "{\"type\":\"ECDSA_SIGNED_ENTITY\",\"payload\":\"get:/v1/collections/c011ec71-0000-4000-8000-000000000301/items:1767225600000:{}\",\"signature\":\"0xf107065168d9ae7188c59a2a584078681e2a07f927192efaeaceb804db03524b63a5e49e7c9d2d6ab9e1f8b3040fae1f16dd5e643838db2a6818e0c40e08afcb1b\"}",
+      "x-identity-metadata": "{}",
+      "x-identity-timestamp": "1767225600000"
+    },
+    "body": null
+  },
+  "response": {
+    "status": 200,
+    "headers": {
+      "content-type": "application/json; charset=utf-8"
+    },
+    "body_json": {
+      "ok": true,
+      "data": [
+        {
+          "id": "c011ec71-0000-4000-8000-0000000003d1",
+          "name": "Draft hat",
+          "description": null,
+          "eth_address": "0xc1aba94a79ca07d9d15a62ff5c9b382777e0c70e",
+          "collection_id": "c011ec71-0000-4000-8000-000000000301",
+          "blockchain_item_id": null,
+          "price": null,
+          "beneficiary": null,
+          "rarity": "common",
+          "type": "wearable",
+          "data": {
+            "category": "hat",
+            "hides": [],
+            "replaces": [],
+            "representations": [
+              {
+                "bodyShapes": [
+                  "urn:decentraland:off-chain:base-avatars:BaseMale"
+                ],
+                "contents": [
+                  "model.glb"
+                ],
+                "mainFile": "model.glb",
+                "overrideHides": [],
+                "overrideReplaces": []
+              }
+            ],
+            "tags": [
+              "conformance"
+            ]
+          },
+          "created_at": "2025-12-12T00:00:00.000Z",
+          "updated_at": "2025-12-12T00:00:00.000Z",
+          "metrics": {
+            "bodies": 1,
+            "entities": 1,
+            "materials": 1,
+            "meshes": 1,
+            "textures": 1,
+            "triangles": 100
+          },
+          "thumbnail": "thumbnail.png",
+          "contents": {
+            "model.glb": "bafkreigl2ikuvlnqi45jrzwowmv4uqdjd6oopfwal3usjqi5fiiwm4yqei",
+            "thumbnail.png": "bafkreicjyysmiyonyudrmq6ejc6b7m42uma5fcnqoy6h4frcmugd7jtfma"
+          },
+          "total_supply": 0,
+          "local_content_hash": null,
+          "video": null,
+          "utility": null,
+          "mappings": null,
+          "urn": null,
+          "in_catalyst": false,
+          "is_approved": false,
+          "is_published": false,
+          "content_hash": null,
+          "catalyst_content_hash": null
+        },
+        {
+          "id": "c011ec71-0000-4000-8000-0000000003d2",
+          "name": "Draft cap",
+          "description": null,
+          "eth_address": "0xc1aba94a79ca07d9d15a62ff5c9b382777e0c70e",
+          "collection_id": "c011ec71-0000-4000-8000-000000000301",
+          "blockchain_item_id": null,
+          "price": null,
+          "beneficiary": null,
+          "rarity": "common",
+          "type": "wearable",
+          "data": {
+            "category": "hat",
+            "hides": [],
+            "replaces": [],
+            "representations": [
+              {
+                "bodyShapes": [
+                  "urn:decentraland:off-chain:base-avatars:BaseMale"
+                ],
+                "contents": [
+                  "model.glb"
+                ],
+                "mainFile": "model.glb",
+                "overrideHides": [],
+                "overrideReplaces": []
+              }
+            ],
+            "tags": [
+              "conformance"
+            ]
+          },
+          "created_at": "2025-12-13T00:00:00.000Z",
+          "updated_at": "2025-12-13T00:00:00.000Z",
+          "metrics": {
+            "bodies": 1,
+            "entities": 1,
+            "materials": 1,
+            "meshes": 1,
+            "textures": 1,
+            "triangles": 100
+          },
+          "thumbnail": "thumbnail.png",
+          "contents": {
+            "model.glb": "bafkreigl2ikuvlnqi45jrzwowmv4uqdjd6oopfwal3usjqi5fiiwm4yqei",
+            "thumbnail.png": "bafkreicjyysmiyonyudrmq6ejc6b7m42uma5fcnqoy6h4frcmugd7jtfma"
+          },
+          "total_supply": 0,
+          "local_content_hash": null,
+          "video": null,
+          "utility": null,
+          "mappings": null,
+          "urn": null,
+          "in_catalyst": false,
+          "is_approved": false,
+          "is_published": false,
+          "content_hash": null,
+          "catalyst_content_hash": null
+        }
+      ]
+    }
+  },
+  "captured_from": "github.com/decentraland/builder-server@98897af692f26063a088aebb2ea5bb3f683168a2",
+  "captured_at": "2026-01-01T00:00:00.000Z",
+  "volatile_paths": []
+}

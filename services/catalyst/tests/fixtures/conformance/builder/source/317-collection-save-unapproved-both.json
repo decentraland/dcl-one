@@ -1,0 +1,74 @@
+{
+  "description": "PUT /collections/{id} signed by a wallet the registry lists unapproved and the virtual third party lists too, creating a collection under the provider. Recorded from github.com/decentraland/builder-server at 98897af by tooling/builder-server-capture.cjs.",
+  "request": {
+    "method": "PUT",
+    "path": "/v1/collections/c011ec71-0000-4000-8000-000000000306",
+    "query": {},
+    "headers": {
+      "content-type": "application/json",
+      "x-identity-auth-chain-0": "{\"type\":\"SIGNER\",\"payload\":\"0x05bb381a642d932037707c4a626f93fb009696b2\",\"signature\":\"\"}",
+      "x-identity-auth-chain-1": "{\"type\":\"ECDSA_EPHEMERAL\",\"payload\":\"Decentraland Login\\nEphemeral address: 0x422212cB25b99a75e4745bf88BEdc92E38fc28e7\\nExpiration: 2026-01-01T01:00:00.000Z\",\"signature\":\"0x20886dc7fab75a52aafd6dfbc2bdd4a222de3a11422cd16c65da707ab913e7c5067db0df5cf1de71e3541cc77fcbfebec9cf95a7e2677c4ee8a094ee2cc3e6c31c\"}",
+      "x-identity-auth-chain-2": "{\"type\":\"ECDSA_SIGNED_ENTITY\",\"payload\":\"put:/v1/collections/c011ec71-0000-4000-8000-000000000306:1767225600000:{}\",\"signature\":\"0x75fccfb2576caf9d1f1595c29e24362df2a639980db5622ba2b8617cd28494a052cef404efb33f946d14311099ec3d310b79652e68dbdc492cd6c26b3b81a3301c\"}",
+      "x-identity-metadata": "{}",
+      "x-identity-timestamp": "1767225600000"
+    },
+    "body": {
+      "collection": {
+        "id": "c011ec71-0000-4000-8000-000000000306",
+        "name": "Claimed hats",
+        "eth_address": "0x05bb381a642d932037707c4a626f93fb009696b2",
+        "salt": null,
+        "contract_address": null,
+        "is_published": false,
+        "is_approved": false,
+        "minters": [],
+        "managers": [],
+        "urn": "urn:decentraland:matic:collections-thirdparty:claimed:hats"
+      },
+      "data": ""
+    }
+  },
+  "response": {
+    "status": 200,
+    "headers": {
+      "content-type": "application/json; charset=utf-8"
+    },
+    "body_json": {
+      "ok": true,
+      "data": {
+        "id": "c011ec71-0000-4000-8000-000000000306",
+        "name": "Claimed hats",
+        "eth_address": "",
+        "salt": "",
+        "contract_address": null,
+        "is_published": false,
+        "created_at": "<<VOLATILE>>",
+        "updated_at": "<<VOLATILE>>",
+        "managers": [],
+        "minters": [],
+        "is_approved": false,
+        "reviewed_at": null,
+        "forum_link": null,
+        "lock": null,
+        "forum_id": null,
+        "linked_contract_address": null,
+        "linked_contract_network": null,
+        "is_mapping_complete": true,
+        "item_count": "0",
+        "urn": "urn:decentraland:matic:collections-thirdparty:claimed:hats"
+      }
+    }
+  },
+  "captured_from": "github.com/decentraland/builder-server@98897af692f26063a088aebb2ea5bb3f683168a2",
+  "captured_at": "2026-01-01T00:00:00.000Z",
+  "volatile_paths": [
+    "data.created_at",
+    "data.updated_at"
+  ],
+  "volatile_equal": [
+    [
+      "data.created_at",
+      "data.updated_at"
+    ]
+  ]
+}

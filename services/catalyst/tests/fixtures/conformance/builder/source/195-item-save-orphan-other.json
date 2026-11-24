@@ -1,0 +1,88 @@
+{
+  "description": "PUT /items/{id} signed by another wallet on an item with no collection. Recorded from github.com/decentraland/builder-server at 98897af by tooling/builder-server-capture.cjs.",
+  "request": {
+    "method": "PUT",
+    "path": "/v1/items/c011ec71-0000-4000-8000-0000000003a1",
+    "query": {},
+    "headers": {
+      "content-type": "application/json",
+      "x-identity-auth-chain-0": "{\"type\":\"SIGNER\",\"payload\":\"0xcd6884d4258edc833f31ac773e24affe6a7d3154\",\"signature\":\"\"}",
+      "x-identity-auth-chain-1": "{\"type\":\"ECDSA_EPHEMERAL\",\"payload\":\"Decentraland Login\\nEphemeral address: 0x69455f42De452C9B6425b41cC3a24d4BAADa6e0b\\nExpiration: 2026-01-01T01:00:00.000Z\",\"signature\":\"0xe05d23ed680bbb5276dda6c8326e083b07776128b856b5fa8a3e21bb47a9c4117a5131a2c3677da49f6db82b3dd5addef76231a5c6137042c88c069c03d42d651c\"}",
+      "x-identity-auth-chain-2": "{\"type\":\"ECDSA_SIGNED_ENTITY\",\"payload\":\"put:/v1/items/c011ec71-0000-4000-8000-0000000003a1:1767225600000:{}\",\"signature\":\"0xc5e989be0fa31a284b889167f9498c8b4ae343291e4c9d82a3295b2f93548871240ccf1cb892a2c0c11cb10c8190a1f2248262f1901d04889d115a12923648e91c\"}",
+      "x-identity-metadata": "{}",
+      "x-identity-timestamp": "1767225600000"
+    },
+    "body": {
+      "item": {
+        "beneficiary": null,
+        "blockchain_item_id": null,
+        "collection_id": null,
+        "contents": {
+          "model.glb": "bafkreigl2ikuvlnqi45jrzwowmv4uqdjd6oopfwal3usjqi5fiiwm4yqei",
+          "thumbnail.png": "bafkreicjyysmiyonyudrmq6ejc6b7m42uma5fcnqoy6h4frcmugd7jtfma"
+        },
+        "data": {
+          "category": "hat",
+          "hides": [],
+          "replaces": [],
+          "representations": [
+            {
+              "bodyShapes": [
+                "urn:decentraland:off-chain:base-avatars:BaseMale"
+              ],
+              "contents": [
+                "model.glb"
+              ],
+              "mainFile": "model.glb",
+              "overrideHides": [],
+              "overrideReplaces": []
+            }
+          ],
+          "tags": [
+            "conformance"
+          ]
+        },
+        "description": "",
+        "eth_address": "0xcd6884d4258edc833f31ac773e24affe6a7d3154",
+        "id": "c011ec71-0000-4000-8000-0000000003a1",
+        "is_approved": false,
+        "is_published": false,
+        "mappings": null,
+        "metrics": {
+          "bodies": 1,
+          "entities": 1,
+          "materials": 1,
+          "meshes": 1,
+          "textures": 1,
+          "triangles": 100
+        },
+        "name": "Taken orphan",
+        "price": null,
+        "rarity": "common",
+        "thumbnail": "thumbnail.png",
+        "total_supply": 0,
+        "type": "wearable",
+        "urn": null,
+        "utility": null,
+        "video": null
+      }
+    }
+  },
+  "response": {
+    "status": 401,
+    "headers": {
+      "content-type": "application/json; charset=utf-8"
+    },
+    "body_json": {
+      "ok": false,
+      "data": {
+        "id": "c011ec71-0000-4000-8000-0000000003a1",
+        "eth_address": "0xcd6884d4258edc833f31ac773e24affe6a7d3154"
+      },
+      "error": "The user is unauthorized to upsert the collection."
+    }
+  },
+  "captured_from": "github.com/decentraland/builder-server@98897af692f26063a088aebb2ea5bb3f683168a2",
+  "captured_at": "2026-01-01T00:00:00.000Z",
+  "volatile_paths": []
+}

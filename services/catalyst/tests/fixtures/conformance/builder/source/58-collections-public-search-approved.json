@@ -1,0 +1,48 @@
+{
+  "description": "GET /collections unsigned, as the marketplace searches approved collections. Recorded from github.com/decentraland/builder-server at 98897af by tooling/builder-server-capture.cjs.",
+  "request": {
+    "method": "GET",
+    "path": "/v1/collections",
+    "query": {
+      "q": "listing",
+      "is_published": "true",
+      "status": "approved",
+      "limit": "5"
+    },
+    "headers": {},
+    "body": null
+  },
+  "response": {
+    "status": 200,
+    "headers": {
+      "content-type": "application/json; charset=utf-8"
+    },
+    "body_json": {
+      "ok": true,
+      "data": [
+        {
+          "name": "Listing approved",
+          "eth_address": "0x05bb381a642d932037707c4a626f93fb009696b2",
+          "contract_address": "0x5eed000000000000000000000000000000000103",
+          "is_published": true,
+          "created_at": "2025-12-10T00:00:00.000Z",
+          "updated_at": "2025-12-11T00:00:00.000Z",
+          "managers": [],
+          "minters": [
+            "0xc1eba15006e9d7f629bcad7a7dd41285f012b949"
+          ],
+          "is_approved": true,
+          "reviewed_at": "2025-12-11T00:00:00.000Z",
+          "linked_contract_address": null,
+          "linked_contract_network": null,
+          "item_count": "1",
+          "is_mapping_complete": false,
+          "urn": "urn:decentraland:matic:collections-v2:0x5eed000000000000000000000000000000000103"
+        }
+      ]
+    }
+  },
+  "captured_from": "github.com/decentraland/builder-server@98897af692f26063a088aebb2ea5bb3f683168a2",
+  "captured_at": "2026-01-01T00:00:00.000Z",
+  "volatile_paths": []
+}

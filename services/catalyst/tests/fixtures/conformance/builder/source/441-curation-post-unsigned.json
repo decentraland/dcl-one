@@ -1,0 +1,32 @@
+{
+  "description": "POST /collections/{id}/curation/post without a signature. Recorded from github.com/decentraland/builder-server at 98897af by tooling/builder-server-capture.cjs.",
+  "request": {
+    "method": "POST",
+    "path": "/v1/collections/c011ec71-0000-4000-8000-000000000401/curation/post",
+    "query": {},
+    "headers": {
+      "content-type": "application/json"
+    },
+    "body": {
+      "forumPost": {
+        "raw": "The collection has been assigned to <a target=\"_blank\" href=\"https://market.example.org/accounts/0x01eba3f0e992f53debaf51ed3738dc2f23e09aee\">Curator</a>"
+      }
+    }
+  },
+  "response": {
+    "status": 401,
+    "headers": {
+      "content-type": "application/json; charset=utf-8"
+    },
+    "body_json": {
+      "ok": false,
+      "data": {
+        "message": "\"verify\" method failed with error: Invalid Auth Chain. \"validateSignature\" method failed with error: ERROR: Invalid final authority. Expected: post:/collections/c011ec71-0000-4000-8000-000000000401/curation/post. Current ."
+      },
+      "error": "Unauthenticated"
+    }
+  },
+  "captured_from": "github.com/decentraland/builder-server@98897af692f26063a088aebb2ea5bb3f683168a2",
+  "captured_at": "2026-01-01T00:00:00.000Z",
+  "volatile_paths": []
+}

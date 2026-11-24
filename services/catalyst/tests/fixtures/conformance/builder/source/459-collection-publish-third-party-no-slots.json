@@ -1,0 +1,43 @@
+{
+  "description": "POST /collections/{id}/publish of a third-party collection signed by its provider's manager naming more items than the provider has slots. Recorded from github.com/decentraland/builder-server at 98897af by tooling/builder-server-capture.cjs.",
+  "request": {
+    "method": "POST",
+    "path": "/v1/collections/c011ec71-0000-4000-8000-000000000405/publish",
+    "query": {},
+    "headers": {
+      "content-type": "application/json",
+      "x-identity-auth-chain-0": "{\"type\":\"SIGNER\",\"payload\":\"0x1257bf35fafebbfc08ea47903e1f7c36ecda48c0\",\"signature\":\"\"}",
+      "x-identity-auth-chain-1": "{\"type\":\"ECDSA_EPHEMERAL\",\"payload\":\"Decentraland Login\\nEphemeral address: 0x5672Df71369356f13Ae7E2bC6B530c65C0864Ccd\\nExpiration: 2026-01-01T01:00:00.000Z\",\"signature\":\"0x2e24a6d9762021b78f11900935ea35c5bfade2266b1e0398f97bacd9618abb95234c3261558ae7813c47ddb69c7cb08e4c553bbef76ab317e740d438c96773d41b\"}",
+      "x-identity-auth-chain-2": "{\"type\":\"ECDSA_SIGNED_ENTITY\",\"payload\":\"post:/v1/collections/c011ec71-0000-4000-8000-000000000405/publish:1767225600000:{}\",\"signature\":\"0x36c5ac80099cbc0c9e45f9db08c134a6946d304efa992823f0910c14cd88d8007d85134dbe6ccaf97514cf07b59be5bd8067d91baab5ca7638a24d601cca69e41c\"}",
+      "x-identity-metadata": "{}",
+      "x-identity-timestamp": "1767225600000"
+    },
+    "body": {
+      "itemIds": [
+        "c011ec71-0000-4000-8000-0000000004d1",
+        "c011ec71-0000-4000-8000-0000000004d2"
+      ],
+      "cheque": {
+        "qty": 2,
+        "salt": "0xe8e8e8e8e8e8e8e8e8e8e8e8e8e8e8e8e8e8e8e8e8e8e8e8e8e8e8e8e8e8e8e8",
+        "signature": "0xadfc25ad4ddb03f9ed55eb632bae5ca2e05e43f40c58e7b7ccd557614f3bbfd7494a5f4fe08c0fab01ab233b727b4936918faf3d663002895edd3b07b1508d671c"
+      }
+    }
+  },
+  "response": {
+    "status": 409,
+    "headers": {
+      "content-type": "application/json; charset=utf-8"
+    },
+    "body_json": {
+      "ok": false,
+      "data": {
+        "id": "c011ec71-0000-4000-8000-000000000405"
+      },
+      "error": "The amount of items to publish exceeds the available slots."
+    }
+  },
+  "captured_from": "github.com/decentraland/builder-server@98897af692f26063a088aebb2ea5bb3f683168a2",
+  "captured_at": "2026-01-01T00:00:00.000Z",
+  "volatile_paths": []
+}

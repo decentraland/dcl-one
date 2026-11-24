@@ -1,0 +1,1578 @@
+{
+  "wallets": {
+    "owner": "0xc1aba94a79ca07d9d15a62ff5c9b382777e0c70e",
+    "stranger": "0xcd6884d4258edc833f31ac773e24affe6a7d3154",
+    "committee": "0x01eba3f0e992f53debaf51ed3738dc2f23e09aee",
+    "manager": "0x1257bf35fafebbfc08ea47903e1f7c36ecda48c0",
+    "creator": "0x05bb381a642d932037707c4a626f93fb009696b2",
+    "minter": "0xc1eba15006e9d7f629bcad7a7dd41285f012b949",
+    "admin": "0x88ae2a86476409cadaac10a4af1cbd5f5d7f858e",
+    "provider": "0x043b83d2010ee75cc3c0419348327eb9c6da7268"
+  },
+  "third_parties": [
+    {
+      "id": "urn:decentraland:matic:collections-thirdparty:conformance",
+      "name": "Conformance provider",
+      "managers": [
+        "owner"
+      ]
+    },
+    {
+      "id": "urn:decentraland:matic:collections-thirdparty:listing",
+      "name": "Listing provider",
+      "managers": [
+        "creator"
+      ]
+    },
+    {
+      "id": "urn:decentraland:matic:collections-thirdparty:pending",
+      "name": "Pending virtual",
+      "managers": [
+        "creator"
+      ]
+    },
+    {
+      "id": "urn:decentraland:matic:collections-thirdparty:claimed",
+      "name": "Claimed virtual",
+      "managers": [
+        "creator"
+      ]
+    }
+  ],
+  "collections": [
+    {
+      "id": "c011ec71-0000-4000-8000-000000000001",
+      "name": "Conformance draft",
+      "owner": "owner",
+      "salt": "0x72d18e0bfa67ba8dce8e9463c8953dce9bd7e4bd88f9149e54b63f974fabefea",
+      "contract_address": "0x00cc1666ebe7da593c2a77d5bb9686e923f44e26",
+      "created_at": "2025-12-01T00:00:00.000Z",
+      "updated_at": "2025-12-01T00:00:00.000Z"
+    },
+    {
+      "id": "c011ec71-0000-4000-8000-000000000006",
+      "name": "Chain unapproved",
+      "owner": "owner",
+      "salt": "0x6c2f0e5b1f5d4a8e9b3c7d1e2f3a4b5c6d7e8f90a1b2c3d4e5f60718293a4b5c",
+      "contract_address": "0x5eed000000000000000000000000000000000006",
+      "created_at": "2025-12-02T00:00:00.000Z",
+      "updated_at": "2025-12-02T00:00:00.000Z"
+    },
+    {
+      "id": "c011ec71-0000-4000-8000-000000000007",
+      "name": "Chain approved",
+      "owner": "owner",
+      "salt": "0x7d3a1f6c2e6e5b9fac4d8e2f3a4b5c6d7e8f90a1b2c3d4e5f60718293a4b5c6d",
+      "contract_address": "0x5eed000000000000000000000000000000000007",
+      "created_at": "2025-12-02T00:00:00.000Z",
+      "updated_at": "2025-12-02T00:00:00.000Z"
+    },
+    {
+      "id": "c011ec71-0000-4000-8000-000000000008",
+      "name": "Conformance linked A",
+      "owner": "owner",
+      "salt": "0x8e4b2a7d3c6f5e9a1b0c2d3e4f5a6b7c8d9e0f1a2b3c4d5e6f708192a3b4c5d6",
+      "contract_address": null,
+      "third_party_id": "urn:decentraland:matic:collections-thirdparty:conformance",
+      "urn_suffix": "linked-a",
+      "created_at": "2025-12-04T00:00:00.000Z",
+      "updated_at": "2025-12-04T00:00:00.000Z"
+    },
+    {
+      "id": "c011ec71-0000-4000-8000-000000000009",
+      "name": "Conformance linked B",
+      "owner": "owner",
+      "salt": "0x9f5c3b8e4d7a6f0b2c1d3e4f5a6b7c8d9e0f1a2b3c4d5e6f708192a3b4c5d6e7",
+      "contract_address": null,
+      "third_party_id": "urn:decentraland:matic:collections-thirdparty:conformance",
+      "urn_suffix": "linked-b",
+      "created_at": "2025-12-04T00:00:00.000Z",
+      "updated_at": "2025-12-04T00:00:00.000Z"
+    },
+    {
+      "id": "c011ec71-0000-4000-8000-000000000101",
+      "name": "Listing draft",
+      "owner": "creator",
+      "salt": "0x1011011011011011011011011011011011011011011011011011011011011011",
+      "contract_address": "0x5eed000000000000000000000000000000000101",
+      "created_at": "2025-12-10T00:00:00.000Z",
+      "updated_at": "2025-12-10T00:00:00.000Z"
+    },
+    {
+      "id": "c011ec71-0000-4000-8000-000000000102",
+      "name": "Listing pending",
+      "owner": "creator",
+      "salt": "0x1021021021021021021021021021021021021021021021021021021021021021",
+      "contract_address": "0x5eed000000000000000000000000000000000102",
+      "created_at": "2025-12-10T01:00:00.000Z",
+      "updated_at": "2025-12-10T01:00:00.000Z"
+    },
+    {
+      "id": "c011ec71-0000-4000-8000-000000000103",
+      "name": "Listing approved",
+      "owner": "creator",
+      "salt": "0x1031031031031031031031031031031031031031031031031031031031031031",
+      "contract_address": "0x5eed000000000000000000000000000000000103",
+      "created_at": "2025-12-10T02:00:00.000Z",
+      "updated_at": "2025-12-11T00:00:00.000Z"
+    },
+    {
+      "id": "c011ec71-0000-4000-8000-000000000104",
+      "name": "Listing disabled",
+      "owner": "creator",
+      "salt": "0x1041041041041041041041041041041041041041041041041041041041041041",
+      "contract_address": "0x5eed000000000000000000000000000000000104",
+      "created_at": "2025-12-10T03:00:00.000Z",
+      "updated_at": "2025-12-10T03:00:00.000Z"
+    },
+    {
+      "id": "c011ec71-0000-4000-8000-000000000105",
+      "name": "Listing linked",
+      "owner": "creator",
+      "salt": "0x1051051051051051051051051051051051051051051051051051051051051051",
+      "contract_address": null,
+      "created_at": "2025-12-11T00:00:00.000Z",
+      "updated_at": "2025-12-11T00:00:00.000Z",
+      "third_party_id": "urn:decentraland:matic:collections-thirdparty:listing",
+      "urn_suffix": "listing-linked",
+      "linked_contract_address": "0x5eed00000000000000000000000000000000c0de",
+      "linked_contract_network": "mainnet"
+    },
+    {
+      "id": "c011ec71-0000-4000-8000-000000000106",
+      "name": "Listing transferred",
+      "owner": "creator",
+      "salt": "0x1061061061061061061061061061061061061061061061061061061061061061",
+      "contract_address": "0x5eed000000000000000000000000000000000106",
+      "created_at": "2025-12-10T04:00:00.000Z",
+      "updated_at": "2025-12-10T04:00:00.000Z"
+    },
+    {
+      "id": "c011ec71-0000-4000-8000-000000000301",
+      "name": "Items draft",
+      "owner": "owner",
+      "salt": "0x3013013013013013013013013013013013013013013013010000000000000000",
+      "contract_address": "0x5eed000000000000000000000000000000000301",
+      "created_at": "2025-12-10T00:00:00.000Z",
+      "updated_at": "2025-12-10T00:00:00.000Z"
+    },
+    {
+      "id": "c011ec71-0000-4000-8000-000000000302",
+      "name": "Items on chain",
+      "owner": "owner",
+      "salt": "0x3023023023023023023023023023023023023023023023020000000000000000",
+      "contract_address": "0x5eed000000000000000000000000000000000302",
+      "created_at": "2025-12-10T00:00:00.000Z",
+      "updated_at": "2025-12-10T00:00:00.000Z"
+    },
+    {
+      "id": "c011ec71-0000-4000-8000-000000000303",
+      "name": "Items approved",
+      "owner": "owner",
+      "salt": "0x3033033033033033033033033033033033033033033033030000000000000000",
+      "contract_address": "0x5eed000000000000000000000000000000000303",
+      "created_at": "2025-12-10T00:00:00.000Z",
+      "updated_at": "2025-12-10T00:00:00.000Z"
+    },
+    {
+      "id": "c011ec71-0000-4000-8000-000000000304",
+      "name": "Items linked",
+      "owner": "owner",
+      "salt": "0x3043043043043043043043043043043043043043043043040000000000000000",
+      "contract_address": null,
+      "created_at": "2025-12-10T00:00:00.000Z",
+      "updated_at": "2025-12-10T00:00:00.000Z",
+      "third_party_id": "urn:decentraland:matic:collections-thirdparty:conformance",
+      "urn_suffix": "items-linked"
+    },
+    {
+      "id": "c011ec71-0000-4000-8000-000000000305",
+      "name": "Items locked",
+      "owner": "owner",
+      "salt": "0x3053053053053053053053053053053053053053053053050000000000000000",
+      "contract_address": "0x5eed000000000000000000000000000000000305",
+      "created_at": "2025-12-10T00:00:00.000Z",
+      "updated_at": "2025-12-10T00:00:00.000Z"
+    },
+    {
+      "id": "c011ec71-0000-4000-8000-000000000401",
+      "name": "Forum hats",
+      "owner": "provider",
+      "salt": "0x4014014014014014014014014014014014014014014014010000000000000000",
+      "contract_address": "0x5eed000000000000000000000000000000000401",
+      "forum_link": "https://forum.example.org/t/forum-hats/401",
+      "forum_id": 401,
+      "created_at": "2025-12-20T00:00:00.000Z",
+      "updated_at": "2025-12-20T00:00:00.000Z"
+    },
+    {
+      "id": "c011ec71-0000-4000-8000-000000000402",
+      "name": "Curated wearables",
+      "owner": "provider",
+      "salt": "0x4024024024024024024024024024024024024024024024020000000000000000",
+      "contract_address": null,
+      "third_party_id": "urn:decentraland:matic:collections-thirdparty:curated",
+      "urn_suffix": "curated-wearables",
+      "created_at": "2025-12-20T00:00:00.000Z",
+      "updated_at": "2025-12-20T00:00:00.000Z"
+    },
+    {
+      "id": "c011ec71-0000-4000-8000-000000000403",
+      "name": "Publishable wearables",
+      "owner": "manager",
+      "salt": "0x4034034034034034034034034034034034034034034034030000000000000000",
+      "contract_address": null,
+      "third_party_id": "urn:decentraland:matic:collections-thirdparty:registered",
+      "urn_suffix": "publishable",
+      "created_at": "2025-12-23T00:00:00.000Z",
+      "updated_at": "2025-12-23T00:00:00.000Z"
+    },
+    {
+      "id": "c011ec71-0000-4000-8000-000000000404",
+      "name": "Consumed wearables",
+      "owner": "manager",
+      "salt": "0x4044044044044044044044044044044044044044044044040000000000000000",
+      "contract_address": null,
+      "third_party_id": "urn:decentraland:matic:collections-thirdparty:registered",
+      "urn_suffix": "consumed",
+      "created_at": "2025-12-24T00:00:00.000Z",
+      "updated_at": "2025-12-24T00:00:00.000Z"
+    },
+    {
+      "id": "c011ec71-0000-4000-8000-000000000405",
+      "name": "Scarce wearables",
+      "owner": "manager",
+      "salt": "0x4054054054054054054054054054054054054054054054050000000000000000",
+      "contract_address": null,
+      "third_party_id": "urn:decentraland:matic:collections-thirdparty:scarce",
+      "urn_suffix": "scarce-hats",
+      "created_at": "2025-12-25T00:00:00.000Z",
+      "updated_at": "2025-12-25T00:00:00.000Z"
+    },
+    {
+      "id": "c011ec71-0000-4000-8000-000000000406",
+      "name": "Reused wearables",
+      "owner": "manager",
+      "salt": "0x4064064064064064064064064064064064064064064064060000000000000000",
+      "contract_address": null,
+      "third_party_id": "urn:decentraland:matic:collections-thirdparty:registered",
+      "urn_suffix": "reused",
+      "created_at": "2025-12-26T00:00:00.000Z",
+      "updated_at": "2025-12-26T00:00:00.000Z"
+    },
+    {
+      "id": "c011ec71-0000-4000-8000-000000000501",
+      "name": "Requested old",
+      "owner": "admin",
+      "salt": "0x5015015015015015015015015015015015015015015015010000000000000000",
+      "contract_address": null,
+      "third_party_id": "urn:decentraland:matic:collections-thirdparty:requested",
+      "urn_suffix": "requested-a",
+      "created_at": "2026-01-02T00:00:00.000Z",
+      "updated_at": "2026-01-02T00:00:00.000Z"
+    },
+    {
+      "id": "c011ec71-0000-4000-8000-000000000502",
+      "name": "Requested assigned",
+      "owner": "admin",
+      "salt": "0x5025025025025025025025025025025025025025025025020000000000000000",
+      "contract_address": null,
+      "third_party_id": "urn:decentraland:matic:collections-thirdparty:requested",
+      "urn_suffix": "requested-b",
+      "created_at": "2026-01-03T00:00:00.000Z",
+      "updated_at": "2026-01-03T00:00:00.000Z"
+    },
+    {
+      "id": "c011ec71-0000-4000-8000-000000000503",
+      "name": "Requested approved",
+      "owner": "admin",
+      "salt": "0x5035035035035035035035035035035035035035035035030000000000000000",
+      "contract_address": null,
+      "third_party_id": "urn:decentraland:matic:collections-thirdparty:requested",
+      "urn_suffix": "requested-c",
+      "created_at": "2026-01-04T00:00:00.000Z",
+      "updated_at": "2026-01-04T00:00:00.000Z"
+    },
+    {
+      "id": "c011ec71-0000-4000-8000-000000000504",
+      "name": "Requested rejected",
+      "owner": "admin",
+      "salt": "0x5045045045045045045045045045045045045045045045040000000000000000",
+      "contract_address": null,
+      "third_party_id": "urn:decentraland:matic:collections-thirdparty:requested",
+      "urn_suffix": "requested-d",
+      "created_at": "2026-01-05T00:00:00.000Z",
+      "updated_at": "2026-01-05T00:00:00.000Z"
+    }
+  ],
+  "items": [
+    {
+      "id": "c011ec71-0000-4000-8000-0000000000a1",
+      "name": "Conformance orphan",
+      "owner": "owner",
+      "collection_id": null,
+      "created_at": "2025-12-05T00:00:00.000Z",
+      "updated_at": "2025-12-05T00:00:00.000Z",
+      "blockchain_item_id": null,
+      "thumbnail": "thumbnail.png",
+      "data": {
+        "category": "hat",
+        "tags": [],
+        "replaces": [],
+        "hides": [],
+        "representations": []
+      },
+      "metrics": {}
+    },
+    {
+      "id": "c011ec71-0000-4000-8000-0000000000a2",
+      "name": "Conformance linked hat",
+      "owner": "owner",
+      "collection_id": "c011ec71-0000-4000-8000-000000000008",
+      "created_at": "2025-12-05T00:00:00.000Z",
+      "updated_at": "2025-12-05T00:00:00.000Z",
+      "blockchain_item_id": null,
+      "thumbnail": "thumbnail.png",
+      "data": {
+        "category": "hat",
+        "tags": [],
+        "replaces": [],
+        "hides": [],
+        "representations": []
+      },
+      "metrics": {}
+    },
+    {
+      "id": "c011ec71-0000-4000-8000-0000000000a3",
+      "name": "Conformance linked cap",
+      "owner": "owner",
+      "collection_id": "c011ec71-0000-4000-8000-000000000009",
+      "created_at": "2025-12-05T00:00:00.000Z",
+      "updated_at": "2025-12-05T00:00:00.000Z",
+      "blockchain_item_id": null,
+      "thumbnail": "thumbnail.png",
+      "data": {
+        "category": "hat",
+        "tags": [],
+        "replaces": [],
+        "hides": [],
+        "representations": []
+      },
+      "metrics": {}
+    },
+    {
+      "id": "c011ec71-0000-4000-8000-0000000000b1",
+      "name": "Chain hat",
+      "owner": "owner",
+      "collection_id": "c011ec71-0000-4000-8000-000000000006",
+      "blockchain_item_id": "0",
+      "created_at": "2025-12-05T00:00:00.000Z",
+      "updated_at": "2025-12-05T00:00:00.000Z",
+      "thumbnail": "thumbnail.png",
+      "data": {
+        "category": "hat",
+        "tags": [],
+        "replaces": [],
+        "hides": [],
+        "representations": []
+      },
+      "metrics": {}
+    },
+    {
+      "id": "c011ec71-0000-4000-8000-0000000001b2",
+      "name": "Listing pending hat",
+      "owner": "creator",
+      "collection_id": "c011ec71-0000-4000-8000-000000000102",
+      "blockchain_item_id": "0",
+      "created_at": "2025-12-10T00:00:00.000Z",
+      "updated_at": "2025-12-10T00:00:00.000Z",
+      "thumbnail": "thumbnail.png",
+      "data": {
+        "category": "hat",
+        "tags": [
+          "Conformance",
+          "Hat"
+        ],
+        "replaces": [],
+        "hides": [],
+        "representations": []
+      },
+      "metrics": {}
+    },
+    {
+      "id": "c011ec71-0000-4000-8000-0000000001b3",
+      "name": "Listing approved hat",
+      "owner": "creator",
+      "collection_id": "c011ec71-0000-4000-8000-000000000103",
+      "blockchain_item_id": "0",
+      "created_at": "2025-12-10T00:00:00.000Z",
+      "updated_at": "2025-12-11T00:00:00.000Z",
+      "thumbnail": "thumbnail.png",
+      "data": {
+        "category": "hat",
+        "tags": [],
+        "replaces": [],
+        "hides": [],
+        "representations": []
+      },
+      "metrics": {}
+    },
+    {
+      "id": "c011ec71-0000-4000-8000-0000000003a1",
+      "name": "Items orphan",
+      "owner": "owner",
+      "collection_id": null,
+      "blockchain_item_id": null,
+      "created_at": "2025-12-11T00:00:00.000Z",
+      "updated_at": "2025-12-11T00:00:00.000Z",
+      "thumbnail": "thumbnail.png",
+      "rarity": "common",
+      "contents": {
+        "model.glb": "bafkreigl2ikuvlnqi45jrzwowmv4uqdjd6oopfwal3usjqi5fiiwm4yqei",
+        "thumbnail.png": "bafkreicjyysmiyonyudrmq6ejc6b7m42uma5fcnqoy6h4frcmugd7jtfma"
+      },
+      "data": {
+        "category": "hat",
+        "hides": [],
+        "replaces": [],
+        "representations": [
+          {
+            "bodyShapes": [
+              "urn:decentraland:off-chain:base-avatars:BaseMale"
+            ],
+            "contents": [
+              "model.glb"
+            ],
+            "mainFile": "model.glb",
+            "overrideHides": [],
+            "overrideReplaces": []
+          }
+        ],
+        "tags": [
+          "conformance"
+        ]
+      },
+      "metrics": {
+        "bodies": 1,
+        "entities": 1,
+        "materials": 1,
+        "meshes": 1,
+        "textures": 1,
+        "triangles": 100
+      }
+    },
+    {
+      "id": "c011ec71-0000-4000-8000-0000000003a2",
+      "name": "Stranger orphan",
+      "owner": "stranger",
+      "collection_id": null,
+      "blockchain_item_id": null,
+      "created_at": "2025-12-11T00:00:00.000Z",
+      "updated_at": "2025-12-11T00:00:00.000Z",
+      "thumbnail": "thumbnail.png",
+      "rarity": "common",
+      "contents": {
+        "model.glb": "bafkreigl2ikuvlnqi45jrzwowmv4uqdjd6oopfwal3usjqi5fiiwm4yqei",
+        "thumbnail.png": "bafkreicjyysmiyonyudrmq6ejc6b7m42uma5fcnqoy6h4frcmugd7jtfma"
+      },
+      "data": {
+        "category": "hat",
+        "hides": [],
+        "replaces": [],
+        "representations": [
+          {
+            "bodyShapes": [
+              "urn:decentraland:off-chain:base-avatars:BaseMale"
+            ],
+            "contents": [
+              "model.glb"
+            ],
+            "mainFile": "model.glb",
+            "overrideHides": [],
+            "overrideReplaces": []
+          }
+        ],
+        "tags": [
+          "conformance"
+        ]
+      },
+      "metrics": {
+        "bodies": 1,
+        "entities": 1,
+        "materials": 1,
+        "meshes": 1,
+        "textures": 1,
+        "triangles": 100
+      }
+    },
+    {
+      "id": "c011ec71-0000-4000-8000-0000000003d1",
+      "name": "Draft hat",
+      "owner": "owner",
+      "collection_id": "c011ec71-0000-4000-8000-000000000301",
+      "blockchain_item_id": null,
+      "created_at": "2025-12-12T00:00:00.000Z",
+      "updated_at": "2025-12-12T00:00:00.000Z",
+      "thumbnail": "thumbnail.png",
+      "rarity": "common",
+      "contents": {
+        "model.glb": "bafkreigl2ikuvlnqi45jrzwowmv4uqdjd6oopfwal3usjqi5fiiwm4yqei",
+        "thumbnail.png": "bafkreicjyysmiyonyudrmq6ejc6b7m42uma5fcnqoy6h4frcmugd7jtfma"
+      },
+      "data": {
+        "category": "hat",
+        "hides": [],
+        "replaces": [],
+        "representations": [
+          {
+            "bodyShapes": [
+              "urn:decentraland:off-chain:base-avatars:BaseMale"
+            ],
+            "contents": [
+              "model.glb"
+            ],
+            "mainFile": "model.glb",
+            "overrideHides": [],
+            "overrideReplaces": []
+          }
+        ],
+        "tags": [
+          "conformance"
+        ]
+      },
+      "metrics": {
+        "bodies": 1,
+        "entities": 1,
+        "materials": 1,
+        "meshes": 1,
+        "textures": 1,
+        "triangles": 100
+      }
+    },
+    {
+      "id": "c011ec71-0000-4000-8000-0000000003d2",
+      "name": "Draft cap",
+      "owner": "owner",
+      "collection_id": "c011ec71-0000-4000-8000-000000000301",
+      "blockchain_item_id": null,
+      "created_at": "2025-12-13T00:00:00.000Z",
+      "updated_at": "2025-12-13T00:00:00.000Z",
+      "thumbnail": "thumbnail.png",
+      "rarity": "common",
+      "contents": {
+        "model.glb": "bafkreigl2ikuvlnqi45jrzwowmv4uqdjd6oopfwal3usjqi5fiiwm4yqei",
+        "thumbnail.png": "bafkreicjyysmiyonyudrmq6ejc6b7m42uma5fcnqoy6h4frcmugd7jtfma"
+      },
+      "data": {
+        "category": "hat",
+        "hides": [],
+        "replaces": [],
+        "representations": [
+          {
+            "bodyShapes": [
+              "urn:decentraland:off-chain:base-avatars:BaseMale"
+            ],
+            "contents": [
+              "model.glb"
+            ],
+            "mainFile": "model.glb",
+            "overrideHides": [],
+            "overrideReplaces": []
+          }
+        ],
+        "tags": [
+          "conformance"
+        ]
+      },
+      "metrics": {
+        "bodies": 1,
+        "entities": 1,
+        "materials": 1,
+        "meshes": 1,
+        "textures": 1,
+        "triangles": 100
+      }
+    },
+    {
+      "id": "c011ec71-0000-4000-8000-0000000003b1",
+      "name": "Minted hat",
+      "owner": "owner",
+      "collection_id": "c011ec71-0000-4000-8000-000000000302",
+      "blockchain_item_id": "0",
+      "created_at": "2025-12-14T00:00:00.000Z",
+      "updated_at": "2025-12-14T00:00:00.000Z",
+      "thumbnail": "thumbnail.png",
+      "rarity": "common",
+      "contents": {
+        "model.glb": "bafkreigl2ikuvlnqi45jrzwowmv4uqdjd6oopfwal3usjqi5fiiwm4yqei",
+        "thumbnail.png": "bafkreicjyysmiyonyudrmq6ejc6b7m42uma5fcnqoy6h4frcmugd7jtfma"
+      },
+      "data": {
+        "category": "hat",
+        "hides": [],
+        "replaces": [],
+        "representations": [
+          {
+            "bodyShapes": [
+              "urn:decentraland:off-chain:base-avatars:BaseMale"
+            ],
+            "contents": [
+              "model.glb"
+            ],
+            "mainFile": "model.glb",
+            "overrideHides": [],
+            "overrideReplaces": []
+          }
+        ],
+        "tags": [
+          "conformance"
+        ]
+      },
+      "metrics": {
+        "bodies": 1,
+        "entities": 1,
+        "materials": 1,
+        "meshes": 1,
+        "textures": 1,
+        "triangles": 100
+      }
+    },
+    {
+      "id": "c011ec71-0000-4000-8000-0000000003b2",
+      "name": "Unminted cap",
+      "owner": "owner",
+      "collection_id": "c011ec71-0000-4000-8000-000000000302",
+      "blockchain_item_id": null,
+      "created_at": "2025-12-15T00:00:00.000Z",
+      "updated_at": "2025-12-15T00:00:00.000Z",
+      "thumbnail": "thumbnail.png",
+      "rarity": "common",
+      "contents": {
+        "model.glb": "bafkreigl2ikuvlnqi45jrzwowmv4uqdjd6oopfwal3usjqi5fiiwm4yqei",
+        "thumbnail.png": "bafkreicjyysmiyonyudrmq6ejc6b7m42uma5fcnqoy6h4frcmugd7jtfma"
+      },
+      "data": {
+        "category": "hat",
+        "hides": [],
+        "replaces": [],
+        "representations": [
+          {
+            "bodyShapes": [
+              "urn:decentraland:off-chain:base-avatars:BaseMale"
+            ],
+            "contents": [
+              "model.glb"
+            ],
+            "mainFile": "model.glb",
+            "overrideHides": [],
+            "overrideReplaces": []
+          }
+        ],
+        "tags": [
+          "conformance"
+        ]
+      },
+      "metrics": {
+        "bodies": 1,
+        "entities": 1,
+        "materials": 1,
+        "meshes": 1,
+        "textures": 1,
+        "triangles": 100
+      }
+    },
+    {
+      "id": "c011ec71-0000-4000-8000-0000000003b3",
+      "name": "Approved hat",
+      "owner": "owner",
+      "collection_id": "c011ec71-0000-4000-8000-000000000303",
+      "blockchain_item_id": "0",
+      "created_at": "2025-12-16T00:00:00.000Z",
+      "updated_at": "2025-12-16T00:00:00.000Z",
+      "thumbnail": "thumbnail.png",
+      "rarity": "common",
+      "contents": {
+        "model.glb": "bafkreigl2ikuvlnqi45jrzwowmv4uqdjd6oopfwal3usjqi5fiiwm4yqei",
+        "thumbnail.png": "bafkreicjyysmiyonyudrmq6ejc6b7m42uma5fcnqoy6h4frcmugd7jtfma"
+      },
+      "data": {
+        "category": "hat",
+        "hides": [],
+        "replaces": [],
+        "representations": [
+          {
+            "bodyShapes": [
+              "urn:decentraland:off-chain:base-avatars:BaseMale"
+            ],
+            "contents": [
+              "model.glb"
+            ],
+            "mainFile": "model.glb",
+            "overrideHides": [],
+            "overrideReplaces": []
+          }
+        ],
+        "tags": [
+          "conformance"
+        ]
+      },
+      "metrics": {
+        "bodies": 1,
+        "entities": 1,
+        "materials": 1,
+        "meshes": 1,
+        "textures": 1,
+        "triangles": 100
+      }
+    },
+    {
+      "id": "c011ec71-0000-4000-8000-0000000003c1",
+      "name": "Linked hat one",
+      "owner": "owner",
+      "collection_id": "c011ec71-0000-4000-8000-000000000304",
+      "blockchain_item_id": null,
+      "created_at": "2025-12-17T00:00:00.000Z",
+      "updated_at": "2025-12-17T00:00:00.000Z",
+      "thumbnail": "thumbnail.png",
+      "rarity": null,
+      "contents": {
+        "model.glb": "bafkreigl2ikuvlnqi45jrzwowmv4uqdjd6oopfwal3usjqi5fiiwm4yqei",
+        "thumbnail.png": "bafkreicjyysmiyonyudrmq6ejc6b7m42uma5fcnqoy6h4frcmugd7jtfma"
+      },
+      "data": {
+        "category": "hat",
+        "hides": [],
+        "replaces": [],
+        "representations": [
+          {
+            "bodyShapes": [
+              "urn:decentraland:off-chain:base-avatars:BaseMale"
+            ],
+            "contents": [
+              "model.glb"
+            ],
+            "mainFile": "model.glb",
+            "overrideHides": [],
+            "overrideReplaces": []
+          }
+        ],
+        "tags": [
+          "conformance"
+        ]
+      },
+      "metrics": {
+        "bodies": 1,
+        "entities": 1,
+        "materials": 1,
+        "meshes": 1,
+        "textures": 1,
+        "triangles": 100
+      },
+      "urn_suffix": "hat-1"
+    },
+    {
+      "id": "c011ec71-0000-4000-8000-0000000003c2",
+      "name": "Linked cap two",
+      "owner": "owner",
+      "collection_id": "c011ec71-0000-4000-8000-000000000304",
+      "blockchain_item_id": null,
+      "created_at": "2025-12-18T00:00:00.000Z",
+      "updated_at": "2025-12-18T00:00:00.000Z",
+      "thumbnail": "thumbnail.png",
+      "rarity": null,
+      "contents": {
+        "model.glb": "bafkreigl2ikuvlnqi45jrzwowmv4uqdjd6oopfwal3usjqi5fiiwm4yqei",
+        "thumbnail.png": "bafkreicjyysmiyonyudrmq6ejc6b7m42uma5fcnqoy6h4frcmugd7jtfma"
+      },
+      "data": {
+        "category": "hat",
+        "hides": [],
+        "replaces": [],
+        "representations": [
+          {
+            "bodyShapes": [
+              "urn:decentraland:off-chain:base-avatars:BaseMale"
+            ],
+            "contents": [
+              "model.glb"
+            ],
+            "mainFile": "model.glb",
+            "overrideHides": [],
+            "overrideReplaces": []
+          }
+        ],
+        "tags": [
+          "conformance"
+        ]
+      },
+      "metrics": {
+        "bodies": 1,
+        "entities": 1,
+        "materials": 1,
+        "meshes": 1,
+        "textures": 1,
+        "triangles": 100
+      },
+      "urn_suffix": "cap-2"
+    },
+    {
+      "id": "c011ec71-0000-4000-8000-0000000003f1",
+      "name": "Locked hat",
+      "owner": "owner",
+      "collection_id": "c011ec71-0000-4000-8000-000000000305",
+      "blockchain_item_id": null,
+      "created_at": "2025-12-19T00:00:00.000Z",
+      "updated_at": "2025-12-19T00:00:00.000Z",
+      "thumbnail": "thumbnail.png",
+      "rarity": "common",
+      "contents": {
+        "model.glb": "bafkreigl2ikuvlnqi45jrzwowmv4uqdjd6oopfwal3usjqi5fiiwm4yqei",
+        "thumbnail.png": "bafkreicjyysmiyonyudrmq6ejc6b7m42uma5fcnqoy6h4frcmugd7jtfma"
+      },
+      "data": {
+        "category": "hat",
+        "hides": [],
+        "replaces": [],
+        "representations": [
+          {
+            "bodyShapes": [
+              "urn:decentraland:off-chain:base-avatars:BaseMale"
+            ],
+            "contents": [
+              "model.glb"
+            ],
+            "mainFile": "model.glb",
+            "overrideHides": [],
+            "overrideReplaces": []
+          }
+        ],
+        "tags": [
+          "conformance"
+        ]
+      },
+      "metrics": {
+        "bodies": 1,
+        "entities": 1,
+        "materials": 1,
+        "meshes": 1,
+        "textures": 1,
+        "triangles": 100
+      }
+    },
+    {
+      "id": "c011ec71-0000-4000-8000-0000000004a1",
+      "name": "Curated cap",
+      "owner": "provider",
+      "collection_id": "c011ec71-0000-4000-8000-000000000402",
+      "blockchain_item_id": null,
+      "created_at": "2025-12-20T00:00:00.000Z",
+      "updated_at": "2025-12-20T00:00:00.000Z",
+      "thumbnail": "thumbnail.png",
+      "rarity": null,
+      "data": {
+        "category": "hat",
+        "hides": [],
+        "replaces": [],
+        "representations": [],
+        "tags": []
+      },
+      "metrics": {},
+      "urn_suffix": "cap-1",
+      "local_content_hash": "58a676c64c6c0010d9508e3dee5fb677bd576ecd2cb3a7a575b506e4011546ce"
+    },
+    {
+      "id": "c011ec71-0000-4000-8000-0000000004a2",
+      "name": "Curated helmet",
+      "owner": "provider",
+      "collection_id": "c011ec71-0000-4000-8000-000000000402",
+      "blockchain_item_id": null,
+      "created_at": "2025-12-20T00:00:00.000Z",
+      "updated_at": "2025-12-20T00:00:00.000Z",
+      "thumbnail": "thumbnail.png",
+      "rarity": null,
+      "data": {
+        "category": "hat",
+        "hides": [],
+        "replaces": [],
+        "representations": [],
+        "tags": []
+      },
+      "metrics": {},
+      "urn_suffix": "helmet-2",
+      "local_content_hash": "ff3aa92c422bb9b16117152e435263cf070822e175c9647c83ceca46d8b9919b"
+    },
+    {
+      "id": "c011ec71-0000-4000-8000-0000000004a3",
+      "name": "Uncurated mask",
+      "owner": "provider",
+      "collection_id": "c011ec71-0000-4000-8000-000000000402",
+      "blockchain_item_id": null,
+      "created_at": "2025-12-20T00:00:00.000Z",
+      "updated_at": "2025-12-20T00:00:00.000Z",
+      "thumbnail": "thumbnail.png",
+      "rarity": null,
+      "data": {
+        "category": "hat",
+        "hides": [],
+        "replaces": [],
+        "representations": [],
+        "tags": []
+      },
+      "metrics": {},
+      "urn_suffix": "mask-3",
+      "local_content_hash": "7e8f778897f448ea9eb00d252ebf7a052e611f0f440e37d6675a0d477d258950"
+    },
+    {
+      "id": "c011ec71-0000-4000-8000-0000000004b1",
+      "name": "Publishable hat",
+      "owner": "manager",
+      "collection_id": "c011ec71-0000-4000-8000-000000000403",
+      "blockchain_item_id": null,
+      "created_at": "2025-12-23T00:00:00.000Z",
+      "updated_at": "2025-12-23T00:00:00.000Z",
+      "thumbnail": "thumbnail.png",
+      "rarity": null,
+      "data": {
+        "category": "hat",
+        "hides": [],
+        "replaces": [],
+        "representations": [],
+        "tags": []
+      },
+      "metrics": {},
+      "urn_suffix": "hat-1",
+      "local_content_hash": "b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1"
+    },
+    {
+      "id": "c011ec71-0000-4000-8000-0000000004b2",
+      "name": "Publishable cap",
+      "owner": "manager",
+      "collection_id": "c011ec71-0000-4000-8000-000000000403",
+      "blockchain_item_id": null,
+      "created_at": "2025-12-23T00:00:00.000Z",
+      "updated_at": "2025-12-23T00:00:00.000Z",
+      "thumbnail": "thumbnail.png",
+      "rarity": null,
+      "data": {
+        "category": "hat",
+        "hides": [],
+        "replaces": [],
+        "representations": [],
+        "tags": []
+      },
+      "metrics": {},
+      "urn_suffix": "cap-2",
+      "local_content_hash": "b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2"
+    },
+    {
+      "id": "c011ec71-0000-4000-8000-0000000004c1",
+      "name": "Consumed hat",
+      "owner": "manager",
+      "collection_id": "c011ec71-0000-4000-8000-000000000404",
+      "blockchain_item_id": null,
+      "created_at": "2025-12-24T00:00:00.000Z",
+      "updated_at": "2025-12-24T00:00:00.000Z",
+      "thumbnail": "thumbnail.png",
+      "rarity": null,
+      "data": {
+        "category": "hat",
+        "hides": [],
+        "replaces": [],
+        "representations": [],
+        "tags": []
+      },
+      "metrics": {},
+      "urn_suffix": "hat-1",
+      "local_content_hash": "c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1"
+    },
+    {
+      "id": "c011ec71-0000-4000-8000-0000000004d1",
+      "name": "Scarce hat",
+      "owner": "manager",
+      "collection_id": "c011ec71-0000-4000-8000-000000000405",
+      "blockchain_item_id": null,
+      "created_at": "2025-12-25T00:00:00.000Z",
+      "updated_at": "2025-12-25T00:00:00.000Z",
+      "thumbnail": "thumbnail.png",
+      "rarity": null,
+      "data": {
+        "category": "hat",
+        "hides": [],
+        "replaces": [],
+        "representations": [],
+        "tags": []
+      },
+      "metrics": {},
+      "urn_suffix": "hat-1",
+      "local_content_hash": "d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1"
+    },
+    {
+      "id": "c011ec71-0000-4000-8000-0000000004d2",
+      "name": "Scarce cap",
+      "owner": "manager",
+      "collection_id": "c011ec71-0000-4000-8000-000000000405",
+      "blockchain_item_id": null,
+      "created_at": "2025-12-25T00:00:00.000Z",
+      "updated_at": "2025-12-25T00:00:00.000Z",
+      "thumbnail": "thumbnail.png",
+      "rarity": null,
+      "data": {
+        "category": "hat",
+        "hides": [],
+        "replaces": [],
+        "representations": [],
+        "tags": []
+      },
+      "metrics": {},
+      "urn_suffix": "cap-2",
+      "local_content_hash": "d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2"
+    },
+    {
+      "id": "c011ec71-0000-4000-8000-0000000004e1",
+      "name": "Reused hat",
+      "owner": "manager",
+      "collection_id": "c011ec71-0000-4000-8000-000000000406",
+      "blockchain_item_id": null,
+      "created_at": "2025-12-26T00:00:00.000Z",
+      "updated_at": "2025-12-26T00:00:00.000Z",
+      "thumbnail": "thumbnail.png",
+      "rarity": null,
+      "data": {
+        "category": "hat",
+        "hides": [],
+        "replaces": [],
+        "representations": [],
+        "tags": []
+      },
+      "metrics": {},
+      "urn_suffix": "hat-1",
+      "local_content_hash": "e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1"
+    },
+    {
+      "id": "c011ec71-0000-4000-8000-0000000005aa",
+      "name": "Requested old hat",
+      "owner": "admin",
+      "collection_id": "c011ec71-0000-4000-8000-000000000501",
+      "blockchain_item_id": null,
+      "created_at": "2026-01-02T00:00:00.000Z",
+      "updated_at": "2026-01-02T00:00:00.000Z",
+      "thumbnail": "thumbnail.png",
+      "rarity": null,
+      "data": {
+        "category": "hat",
+        "hides": [],
+        "replaces": [],
+        "representations": [],
+        "tags": []
+      },
+      "metrics": {},
+      "urn_suffix": "hat-a",
+      "local_content_hash": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+    },
+    {
+      "id": "c011ec71-0000-4000-8000-0000000005ab",
+      "name": "Requested assigned hat",
+      "owner": "admin",
+      "collection_id": "c011ec71-0000-4000-8000-000000000502",
+      "blockchain_item_id": null,
+      "created_at": "2026-01-03T00:00:00.000Z",
+      "updated_at": "2026-01-03T00:00:00.000Z",
+      "thumbnail": "thumbnail.png",
+      "rarity": null,
+      "data": {
+        "category": "hat",
+        "hides": [],
+        "replaces": [],
+        "representations": [],
+        "tags": []
+      },
+      "metrics": {},
+      "urn_suffix": "hat-b",
+      "local_content_hash": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+    },
+    {
+      "id": "c011ec71-0000-4000-8000-0000000005ac",
+      "name": "Requested approved hat",
+      "owner": "admin",
+      "collection_id": "c011ec71-0000-4000-8000-000000000503",
+      "blockchain_item_id": null,
+      "created_at": "2026-01-04T00:00:00.000Z",
+      "updated_at": "2026-01-04T00:00:00.000Z",
+      "thumbnail": "thumbnail.png",
+      "rarity": null,
+      "data": {
+        "category": "hat",
+        "hides": [],
+        "replaces": [],
+        "representations": [],
+        "tags": []
+      },
+      "metrics": {},
+      "urn_suffix": "hat-c",
+      "local_content_hash": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+    },
+    {
+      "id": "c011ec71-0000-4000-8000-0000000005ad",
+      "name": "Requested rejected hat",
+      "owner": "admin",
+      "collection_id": "c011ec71-0000-4000-8000-000000000504",
+      "blockchain_item_id": null,
+      "created_at": "2026-01-05T00:00:00.000Z",
+      "updated_at": "2026-01-05T00:00:00.000Z",
+      "thumbnail": "thumbnail.png",
+      "rarity": null,
+      "data": {
+        "category": "hat",
+        "hides": [],
+        "replaces": [],
+        "representations": [],
+        "tags": []
+      },
+      "metrics": {},
+      "urn_suffix": "hat-d",
+      "local_content_hash": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+    }
+  ],
+  "chain": {
+    "committee": [
+      "committee"
+    ],
+    "collections": [
+      {
+        "contract_address": "0x5eed000000000000000000000000000000000006",
+        "name": "Chain unapproved",
+        "creator": "owner",
+        "owner": "owner",
+        "is_approved": false,
+        "managers": [
+          "manager"
+        ],
+        "minters": [],
+        "created_at": 1764720000,
+        "updated_at": 1764720000,
+        "reviewed_at": 0
+      },
+      {
+        "contract_address": "0x5eed000000000000000000000000000000000007",
+        "name": "Chain approved",
+        "creator": "owner",
+        "owner": "owner",
+        "is_approved": true,
+        "managers": [],
+        "minters": [],
+        "created_at": 1764720000,
+        "updated_at": 1764806400,
+        "reviewed_at": 1764806400
+      },
+      {
+        "contract_address": "0x5eed000000000000000000000000000000000102",
+        "name": "Listing pending",
+        "creator": "creator",
+        "owner": "creator",
+        "is_approved": false,
+        "managers": [
+          "manager"
+        ],
+        "minters": [],
+        "created_at": 1765324800,
+        "updated_at": 1765324800,
+        "reviewed_at": 1765324800
+      },
+      {
+        "contract_address": "0x5eed000000000000000000000000000000000103",
+        "name": "Listing approved",
+        "creator": "creator",
+        "owner": "creator",
+        "is_approved": true,
+        "managers": [],
+        "minters": [
+          "minter"
+        ],
+        "created_at": 1765324800,
+        "updated_at": 1765411200,
+        "reviewed_at": 1765411200
+      },
+      {
+        "contract_address": "0x5eed000000000000000000000000000000000104",
+        "name": "Listing disabled",
+        "creator": "creator",
+        "owner": "creator",
+        "is_approved": false,
+        "managers": [],
+        "minters": [],
+        "created_at": 1765324800,
+        "updated_at": 1765324800,
+        "reviewed_at": 1765411200
+      },
+      {
+        "contract_address": "0x5eed000000000000000000000000000000000106",
+        "name": "Listing transferred",
+        "creator": "stranger",
+        "owner": "stranger",
+        "is_approved": false,
+        "managers": [],
+        "minters": [],
+        "created_at": 1765324800,
+        "updated_at": 1765324800,
+        "reviewed_at": 1765324800
+      },
+      {
+        "contract_address": "0x5eed000000000000000000000000000000000302",
+        "name": "Items on chain",
+        "creator": "owner",
+        "owner": "owner",
+        "is_approved": false,
+        "managers": [
+          "manager"
+        ],
+        "minters": [
+          "minter"
+        ],
+        "created_at": 1765411200,
+        "updated_at": 1765411200,
+        "reviewed_at": 0
+      },
+      {
+        "contract_address": "0x5eed000000000000000000000000000000000303",
+        "name": "Items approved",
+        "creator": "owner",
+        "owner": "owner",
+        "is_approved": true,
+        "managers": [],
+        "minters": [],
+        "created_at": 1765411200,
+        "updated_at": 1765497600,
+        "reviewed_at": 1765497600
+      },
+      {
+        "contract_address": "0x5eed000000000000000000000000000000000401",
+        "name": "Forum hats",
+        "creator": "provider",
+        "owner": "provider",
+        "is_approved": false,
+        "managers": [],
+        "minters": [],
+        "created_at": 1766188800,
+        "updated_at": 1766188800,
+        "reviewed_at": 0
+      }
+    ],
+    "items": [
+      {
+        "contract_address": "0x5eed000000000000000000000000000000000006",
+        "blockchain_id": "0",
+        "name": "Chain hat",
+        "category": "hat",
+        "rarity": "common",
+        "price": "1000000000000000000",
+        "beneficiary": "owner",
+        "total_supply": "0",
+        "content_hash": "bafkreichainunapprovedhat"
+      },
+      {
+        "contract_address": "0x5eed000000000000000000000000000000000007",
+        "blockchain_id": "0",
+        "name": "Chain cap",
+        "category": "hat",
+        "rarity": "common",
+        "price": "1000000000000000000",
+        "beneficiary": "owner",
+        "total_supply": "1",
+        "content_hash": "bafkreichainapprovedcap"
+      },
+      {
+        "contract_address": "0x5eed000000000000000000000000000000000302",
+        "blockchain_id": "0",
+        "name": "Minted hat",
+        "category": "hat",
+        "rarity": "rare",
+        "price": "2000000000000000000",
+        "beneficiary": "manager",
+        "total_supply": "3",
+        "content_hash": "bafkreiitemsmintedhatonchain"
+      },
+      {
+        "contract_address": "0x5eed000000000000000000000000000000000303",
+        "blockchain_id": "0",
+        "name": "Approved hat",
+        "category": "hat",
+        "rarity": "common",
+        "price": "0",
+        "beneficiary": "owner",
+        "total_supply": "0",
+        "content_hash": "bafkreiitemsapprovedhatonchain"
+      },
+      {
+        "contract_address": "0x5eed000000000000000000000000000000000302",
+        "blockchain_id": "1",
+        "name": "Unminted cap",
+        "category": "hat",
+        "rarity": "common",
+        "price": "0",
+        "beneficiary": "owner",
+        "total_supply": "0",
+        "content_hash": "bafkreiitemsunmintedcaponchain"
+      }
+    ],
+    "rarities": [
+      {
+        "name": "common",
+        "price": "10000000000000000000",
+        "max_supply": "100000",
+        "mana_price": "4000000000000000000"
+      },
+      {
+        "name": "epic",
+        "price": "60000000000000000000",
+        "max_supply": "1000",
+        "mana_price": "24000000000000000000"
+      }
+    ]
+  },
+  "registry": [
+    {
+      "id": "urn:decentraland:matic:collections-thirdparty:registered",
+      "name": "Registered provider",
+      "managers": [
+        "manager",
+        "minter"
+      ]
+    },
+    {
+      "id": "urn:decentraland:matic:collections-thirdparty:programmatic",
+      "name": "Programmatic provider",
+      "managers": [
+        "manager"
+      ],
+      "programmatic": true
+    },
+    {
+      "id": "urn:decentraland:matic:collections-thirdparty:pending",
+      "name": "Pending provider",
+      "managers": [
+        "manager"
+      ],
+      "approved": false
+    },
+    {
+      "id": "urn:decentraland:matic:collections-thirdparty:claimed",
+      "name": "Claimed provider",
+      "managers": [
+        "creator",
+        "minter"
+      ],
+      "approved": false
+    },
+    {
+      "id": "urn:decentraland:matic:collections-thirdparty:curated",
+      "name": "Curated provider",
+      "managers": [
+        "provider"
+      ]
+    },
+    {
+      "id": "urn:decentraland:matic:collections-thirdparty:scarce",
+      "name": "Scarce provider",
+      "managers": [
+        "manager"
+      ],
+      "max_items": "1"
+    },
+    {
+      "id": "urn:decentraland:matic:collections-thirdparty:requested",
+      "name": "Requested provider",
+      "managers": [
+        "admin"
+      ]
+    }
+  ],
+  "collection_curations": [
+    {
+      "id": "c011ec71-0000-4000-8000-0000000004c1",
+      "collection_id": "c011ec71-0000-4000-8000-000000000401",
+      "status": "pending",
+      "assignee": "committee",
+      "created_at": "2025-12-24T00:00:00.000Z",
+      "updated_at": "2025-12-24T00:00:00.000Z"
+    },
+    {
+      "id": "c011ec71-0000-4000-8000-0000000004c2",
+      "collection_id": "c011ec71-0000-4000-8000-000000000402",
+      "status": "approved",
+      "assignee": null,
+      "created_at": "2025-12-24T01:00:00.000Z",
+      "updated_at": "2025-12-24T02:00:00.000Z"
+    },
+    {
+      "id": "c011ec71-0000-4000-8000-0000000005cb",
+      "collection_id": "c011ec71-0000-4000-8000-000000000502",
+      "status": "pending",
+      "assignee": "committee",
+      "created_at": "2026-02-02T00:00:00.000Z",
+      "updated_at": "2026-02-02T00:00:00.000Z"
+    },
+    {
+      "id": "c011ec71-0000-4000-8000-0000000005cc",
+      "collection_id": "c011ec71-0000-4000-8000-000000000503",
+      "status": "approved",
+      "assignee": null,
+      "created_at": "2026-01-21T00:00:00.000Z",
+      "updated_at": "2026-01-21T00:00:00.000Z"
+    },
+    {
+      "id": "c011ec71-0000-4000-8000-0000000005cd",
+      "collection_id": "c011ec71-0000-4000-8000-000000000504",
+      "status": "rejected",
+      "assignee": null,
+      "created_at": "2026-02-11T00:00:00.000Z",
+      "updated_at": "2026-02-11T00:00:00.000Z"
+    }
+  ],
+  "item_curations": [
+    {
+      "id": "c011ec71-0000-4000-8000-0000000004d1",
+      "item_id": "c011ec71-0000-4000-8000-0000000004a1",
+      "status": "approved",
+      "content_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "is_mapping_complete": true,
+      "created_at": "2025-12-21T00:00:00.000Z",
+      "updated_at": "2025-12-21T06:00:00.000Z"
+    },
+    {
+      "id": "c011ec71-0000-4000-8000-0000000004d2",
+      "item_id": "c011ec71-0000-4000-8000-0000000004a2",
+      "status": "approved",
+      "content_hash": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "is_mapping_complete": true,
+      "created_at": "2025-12-22T00:00:00.000Z",
+      "updated_at": "2025-12-22T00:00:00.000Z"
+    },
+    {
+      "id": "c011ec71-0000-4000-8000-0000000004d3",
+      "item_id": "c011ec71-0000-4000-8000-0000000004a2",
+      "status": "pending",
+      "content_hash": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+      "is_mapping_complete": false,
+      "created_at": "2025-12-23T00:00:00.000Z",
+      "updated_at": "2025-12-23T00:00:00.000Z"
+    },
+    {
+      "id": "c011ec71-0000-4000-8000-0000000005e1",
+      "item_id": "c011ec71-0000-4000-8000-0000000005aa",
+      "status": "approved",
+      "content_hash": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+      "is_mapping_complete": true,
+      "created_at": "2026-01-10T00:00:00.000Z",
+      "updated_at": "2026-01-10T00:00:00.000Z"
+    },
+    {
+      "id": "c011ec71-0000-4000-8000-0000000005e2",
+      "item_id": "c011ec71-0000-4000-8000-0000000005aa",
+      "status": "pending",
+      "content_hash": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+      "is_mapping_complete": true,
+      "created_at": "2026-02-20T00:00:00.000Z",
+      "updated_at": "2026-02-20T00:00:00.000Z"
+    },
+    {
+      "id": "c011ec71-0000-4000-8000-0000000005e3",
+      "item_id": "c011ec71-0000-4000-8000-0000000005ab",
+      "status": "pending",
+      "content_hash": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+      "is_mapping_complete": true,
+      "created_at": "2026-02-01T00:00:00.000Z",
+      "updated_at": "2026-02-01T00:00:00.000Z"
+    },
+    {
+      "id": "c011ec71-0000-4000-8000-0000000005e4",
+      "item_id": "c011ec71-0000-4000-8000-0000000005ac",
+      "status": "approved",
+      "content_hash": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+      "is_mapping_complete": true,
+      "created_at": "2026-01-20T00:00:00.000Z",
+      "updated_at": "2026-01-20T00:00:00.000Z"
+    },
+    {
+      "id": "c011ec71-0000-4000-8000-0000000005e5",
+      "item_id": "c011ec71-0000-4000-8000-0000000005ad",
+      "status": "rejected",
+      "content_hash": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+      "is_mapping_complete": true,
+      "created_at": "2026-02-10T00:00:00.000Z",
+      "updated_at": "2026-02-10T00:00:00.000Z"
+    }
+  ],
+  "receipts": [
+    {
+      "provider": "urn:decentraland:matic:collections-thirdparty:registered",
+      "qty": 1,
+      "salt": "0xc0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0",
+      "signer": "manager"
+    }
+  ],
+  "entities": [
+    {
+      "entity_id": "bafkreientitymaskthreeuncurated",
+      "type": "wearable",
+      "pointer": "urn:decentraland:matic:collections-thirdparty:curated:curated-wearables:mask-3",
+      "metadata": {
+        "id": "urn:decentraland:matic:collections-thirdparty:curated:curated-wearables:mask-3",
+        "name": "mask-3",
+        "merkleProof": {
+          "index": 0,
+          "proof": [],
+          "hashingKeys": [
+            "id",
+            "name"
+          ],
+          "entityHash": "3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a"
+        }
+      }
+    },
+    {
+      "entity_id": "bafkreientitycaponecurated",
+      "type": "wearable",
+      "pointer": "urn:decentraland:matic:collections-thirdparty:curated:curated-wearables:cap-1",
+      "metadata": {
+        "id": "urn:decentraland:matic:collections-thirdparty:curated:curated-wearables:cap-1",
+        "name": "cap-1",
+        "merkleProof": {
+          "index": 0,
+          "proof": [],
+          "hashingKeys": [
+            "id",
+            "name"
+          ],
+          "entityHash": "1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c"
+        }
+      }
+    },
+    {
+      "entity_id": "bafkreientityheldfourwithoutitem",
+      "type": "wearable",
+      "pointer": "urn:decentraland:matic:collections-thirdparty:curated:curated-wearables:held-4",
+      "metadata": {
+        "id": "urn:decentraland:matic:collections-thirdparty:curated:curated-wearables:held-4",
+        "name": "held-4",
+        "merkleProof": {
+          "index": 0,
+          "proof": [],
+          "hashingKeys": [
+            "id",
+            "name"
+          ],
+          "entityHash": "4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d"
+        }
+      }
+    },
+    {
+      "entity_id": "bafkreientitychainhatminted",
+      "type": "wearable",
+      "pointer": "urn:decentraland:matic:collections-v2:0x5eed000000000000000000000000000000000006:0",
+      "metadata": {
+        "id": "urn:decentraland:matic:collections-v2:0x5eed000000000000000000000000000000000006:0",
+        "name": "Chain hat"
+      }
+    }
+  ]
+}

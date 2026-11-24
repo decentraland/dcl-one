@@ -1,0 +1,33 @@
+{
+  "description": "GET /collections/{id}/curation signed by an ADMIN_ADDRESSES wallet with no other role, a collection on chain under review. Recorded from github.com/decentraland/builder-server at 98897af by tooling/builder-server-capture.cjs.",
+  "request": {
+    "method": "GET",
+    "path": "/v1/collections/c011ec71-0000-4000-8000-000000000401/curation",
+    "query": {},
+    "headers": {
+      "x-identity-auth-chain-0": "{\"type\":\"SIGNER\",\"payload\":\"0x88ae2a86476409cadaac10a4af1cbd5f5d7f858e\",\"signature\":\"\"}",
+      "x-identity-auth-chain-1": "{\"type\":\"ECDSA_EPHEMERAL\",\"payload\":\"Decentraland Login\\nEphemeral address: 0xE6315E1742e2FAfE28D5f33130475246260BdAC9\\nExpiration: 2026-01-01T01:00:00.000Z\",\"signature\":\"0xb9365692da945acf90856f78259147b43dc3520403221db0ff71f0d99ca9fa34252fd15ce3315e1c2766b8cdf877a57a63e85da6fe97b7c3ec72ff5ae54cfb361b\"}",
+      "x-identity-auth-chain-2": "{\"type\":\"ECDSA_SIGNED_ENTITY\",\"payload\":\"get:/v1/collections/c011ec71-0000-4000-8000-000000000401/curation:1767225600000:{}\",\"signature\":\"0x2e655ba9ef3884eb8d2c965c1b2f33efbdba0c34a45840ffcf81dbea855845e22a1a1c8666c6c4420bb6f33dc19258195bdb6081367ff0cbf67c944f46031ec41c\"}",
+      "x-identity-metadata": "{}",
+      "x-identity-timestamp": "1767225600000"
+    },
+    "body": null
+  },
+  "response": {
+    "status": 401,
+    "headers": {
+      "content-type": "application/json; charset=utf-8"
+    },
+    "body_json": {
+      "ok": false,
+      "data": {
+        "id": "c011ec71-0000-4000-8000-000000000401",
+        "ethAddress": "0x88ae2a86476409cadaac10a4af1cbd5f5d7f858e"
+      },
+      "error": "Unauthorized"
+    }
+  },
+  "captured_from": "github.com/decentraland/builder-server@98897af692f26063a088aebb2ea5bb3f683168a2",
+  "captured_at": "2026-01-01T00:00:00.000Z",
+  "volatile_paths": []
+}

@@ -1,0 +1,47 @@
+{
+  "description": "PUT /collections/{id} signed by a manager of the provider, clearing the linked contract of its collection. Recorded from github.com/decentraland/builder-server at 98897af by tooling/builder-server-capture.cjs.",
+  "request": {
+    "method": "PUT",
+    "path": "/v1/collections/c011ec71-0000-4000-8000-000000000105",
+    "query": {},
+    "headers": {
+      "content-type": "application/json",
+      "x-identity-auth-chain-0": "{\"type\":\"SIGNER\",\"payload\":\"0x05bb381a642d932037707c4a626f93fb009696b2\",\"signature\":\"\"}",
+      "x-identity-auth-chain-1": "{\"type\":\"ECDSA_EPHEMERAL\",\"payload\":\"Decentraland Login\\nEphemeral address: 0x422212cB25b99a75e4745bf88BEdc92E38fc28e7\\nExpiration: 2026-01-01T01:00:00.000Z\",\"signature\":\"0x20886dc7fab75a52aafd6dfbc2bdd4a222de3a11422cd16c65da707ab913e7c5067db0df5cf1de71e3541cc77fcbfebec9cf95a7e2677c4ee8a094ee2cc3e6c31c\"}",
+      "x-identity-auth-chain-2": "{\"type\":\"ECDSA_SIGNED_ENTITY\",\"payload\":\"put:/v1/collections/c011ec71-0000-4000-8000-000000000105:1767225600000:{}\",\"signature\":\"0x2c0c596e11ea280057072a18eb9120412a2c2d19adc7296feba88570971cc5104531968a83d5a7732992757ae076ced77471e64132595651d7eac1423fa157791c\"}",
+      "x-identity-metadata": "{}",
+      "x-identity-timestamp": "1767225600000"
+    },
+    "body": {
+      "collection": {
+        "id": "c011ec71-0000-4000-8000-000000000105",
+        "name": "Listing linked",
+        "eth_address": "0x05bb381a642d932037707c4a626f93fb009696b2",
+        "salt": null,
+        "contract_address": null,
+        "is_published": false,
+        "is_approved": false,
+        "minters": [],
+        "managers": [],
+        "urn": "urn:decentraland:matic:collections-thirdparty:listing:listing-renamed",
+        "linked_contract_address": null,
+        "linked_contract_network": null
+      },
+      "data": ""
+    }
+  },
+  "response": {
+    "status": 200,
+    "headers": {
+      "content-type": "application/json; charset=utf-8"
+    },
+    "body_json": {
+      "ok": false,
+      "data": {},
+      "error": "Columns linked_contract_address, linked_contract_network cannot be set to null if they were previously not null"
+    }
+  },
+  "captured_from": "github.com/decentraland/builder-server@98897af692f26063a088aebb2ea5bb3f683168a2",
+  "captured_at": "2026-01-01T00:00:00.000Z",
+  "volatile_paths": []
+}

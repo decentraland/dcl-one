@@ -1,0 +1,53 @@
+{
+  "description": "POST /collections/{id}/validation-result signed by the validator with the review flow on, rejecting the running review. Recorded from github.com/decentraland/builder-server at 98897af by tooling/builder-server-capture.cjs.",
+  "request": {
+    "method": "POST",
+    "path": "/v1/collections/c011ec71-0000-4000-8000-000000000302/validation-result",
+    "query": {},
+    "headers": {
+      "content-type": "application/json",
+      "x-wearable-validator-signature": "sha256=60c14ff0846eb70bbcb86cbe4fbb71fee220140a4e91e5609a38da75a2e5d8f3",
+      "x-wearable-validator-timestamp": "1767225600000"
+    },
+    "body": {
+      "validationId": "c011ec71-0000-4000-8000-0000000005a2",
+      "collectionId": "c011ec71-0000-4000-8000-000000000302",
+      "verdict": "rejected",
+      "rulesVersion": "1.4.0",
+      "items": [
+        {
+          "itemId": "c011ec71-0000-4000-8000-0000000003b1",
+          "contentHash": "bafkreibk2rcaifdobrjwlon5bbyrn6immanlsfy5yjsa4lisz6mh6rw4dm",
+          "passed": false,
+          "findings": [
+            {
+              "rule": "M-01",
+              "check": "triangles",
+              "severity": "error",
+              "message": "Too many triangles",
+              "measured": 15000,
+              "limit": 10000
+            }
+          ]
+        },
+        {
+          "itemId": "c011ec71-0000-4000-8000-0000000003b2",
+          "contentHash": "bafkreidvdvwrg5c75hsxt7ubcmfb5ppjvtkg7wun5abdakvchcujopqhi4",
+          "passed": true,
+          "findings": []
+        }
+      ]
+    }
+  },
+  "response": {
+    "status": 204,
+    "headers": {},
+    "body_bytes_b64": ""
+  },
+  "captured_from": "github.com/decentraland/builder-server@98897af692f26063a088aebb2ea5bb3f683168a2",
+  "captured_at": "2026-01-01T00:00:00.000Z",
+  "volatile_paths": [],
+  "validator_sign": {},
+  "review_flow": true,
+  "validation_of": "c011ec71-0000-4000-8000-000000000302"
+}
