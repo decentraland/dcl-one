@@ -9700,6 +9700,10 @@
       "sha256": "5e5ee24b29fb41067b72e1ba1ed5c714f8f6c4d2d40303af818fd7b1428a7bd2"
     },
     {
+      "path": "rendering/bevy-explorer/source/react-web/src/test/sharedAssets.test.ts",
+      "sha256": "d4b98fe3b03ec6b4d8830fa80ce1838947eeb29da74516c7d1529f6cfb944407"
+    },
+    {
       "path": "rendering/bevy-explorer/source/react-web/src/test/sharedUi.test.tsx",
       "sha256": "e2336faaaa277e059e980e7b586ce1f64634667f3e393faecb147cab06fcab63"
     },
@@ -9745,7 +9749,7 @@
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/vite.config.ts",
-      "sha256": "7ae429f59fb2fc2fb07536be574975f5ad2d11d67187b383dbc5868c68bded73"
+      "sha256": "ee5799605db08b55663865654fffbe4d1c125b8f4e554e979ac3c8657faebd6a"
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/vite.shared.ts",
@@ -9833,6 +9837,7 @@
     "rendering/bevy-explorer/source/react-web/src/test/serviceWorkerContentCache.test.ts",
     "rendering/bevy-explorer/source/react-web/src/test/session.test.tsx",
     "rendering/bevy-explorer/source/react-web/src/test/setup.ts",
+    "rendering/bevy-explorer/source/react-web/src/test/sharedAssets.test.ts",
     "rendering/bevy-explorer/source/react-web/src/test/sharedUi.test.tsx",
     "rendering/bevy-explorer/source/react-web/src/test/shellLogin.test.ts",
     "rendering/bevy-explorer/source/react-web/src/test/shopQueries.test.tsx",
@@ -74160,27 +74165,7 @@
     {
       "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
       "to": "library/ui/apps/sites/assets/avatar_face.webp",
-      "kind": "native:asset"
-    },
-    {
-      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
-      "to": "library/ui/apps/sites/assets/avatar_face.webp",
-      "kind": "production:asset"
-    },
-    {
-      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
-      "to": "library/ui/apps/sites/assets/avatar_face.webp",
       "kind": "test:asset"
-    },
-    {
-      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
-      "to": "library/ui/apps/sites/assets/catch_the_vibe/alan.mp4",
-      "kind": "native:asset"
-    },
-    {
-      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
-      "to": "library/ui/apps/sites/assets/catch_the_vibe/alan.mp4",
-      "kind": "production:asset"
     },
     {
       "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
@@ -74190,27 +74175,7 @@
     {
       "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
       "to": "library/ui/apps/sites/assets/catch_the_vibe/alan.webp",
-      "kind": "native:asset"
-    },
-    {
-      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
-      "to": "library/ui/apps/sites/assets/catch_the_vibe/alan.webp",
-      "kind": "production:asset"
-    },
-    {
-      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
-      "to": "library/ui/apps/sites/assets/catch_the_vibe/alan.webp",
       "kind": "test:asset"
-    },
-    {
-      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
-      "to": "library/ui/apps/sites/assets/catch_the_vibe/roustan.mp4",
-      "kind": "native:asset"
-    },
-    {
-      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
-      "to": "library/ui/apps/sites/assets/catch_the_vibe/roustan.mp4",
-      "kind": "production:asset"
     },
     {
       "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
@@ -74220,27 +74185,7 @@
     {
       "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
       "to": "library/ui/apps/sites/assets/catch_the_vibe/roustan.webp",
-      "kind": "native:asset"
-    },
-    {
-      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
-      "to": "library/ui/apps/sites/assets/catch_the_vibe/roustan.webp",
-      "kind": "production:asset"
-    },
-    {
-      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
-      "to": "library/ui/apps/sites/assets/catch_the_vibe/roustan.webp",
       "kind": "test:asset"
-    },
-    {
-      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
-      "to": "library/ui/apps/sites/assets/come_hang_out_background.webp",
-      "kind": "native:asset"
-    },
-    {
-      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
-      "to": "library/ui/apps/sites/assets/come_hang_out_background.webp",
-      "kind": "production:asset"
     },
     {
       "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
@@ -74250,27 +74195,7 @@
     {
       "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
       "to": "library/ui/apps/sites/assets/creator-hub-banner.png",
-      "kind": "native:asset"
-    },
-    {
-      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
-      "to": "library/ui/apps/sites/assets/creator-hub-banner.png",
-      "kind": "production:asset"
-    },
-    {
-      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
-      "to": "library/ui/apps/sites/assets/creator-hub-banner.png",
       "kind": "test:asset"
-    },
-    {
-      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
-      "to": "library/ui/apps/sites/assets/dcl-logo.svg",
-      "kind": "native:asset"
-    },
-    {
-      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
-      "to": "library/ui/apps/sites/assets/dcl-logo.svg",
-      "kind": "production:asset"
     },
     {
       "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
@@ -74280,27 +74205,7 @@
     {
       "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
       "to": "library/ui/apps/sites/assets/dcl_name.svg",
-      "kind": "native:asset"
-    },
-    {
-      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
-      "to": "library/ui/apps/sites/assets/dcl_name.svg",
-      "kind": "production:asset"
-    },
-    {
-      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
-      "to": "library/ui/apps/sites/assets/dcl_name.svg",
       "kind": "test:asset"
-    },
-    {
-      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
-      "to": "library/ui/apps/sites/assets/download-on-the-app-store.svg",
-      "kind": "native:asset"
-    },
-    {
-      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
-      "to": "library/ui/apps/sites/assets/download-on-the-app-store.svg",
-      "kind": "production:asset"
     },
     {
       "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
@@ -74310,27 +74215,7 @@
     {
       "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
       "to": "library/ui/apps/sites/assets/download-steps/external-link-icon.svg",
-      "kind": "native:asset"
-    },
-    {
-      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
-      "to": "library/ui/apps/sites/assets/download-steps/external-link-icon.svg",
-      "kind": "production:asset"
-    },
-    {
-      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
-      "to": "library/ui/apps/sites/assets/download-steps/external-link-icon.svg",
       "kind": "test:asset"
-    },
-    {
-      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
-      "to": "library/ui/apps/sites/assets/download-steps/highlight-icon.webp",
-      "kind": "native:asset"
-    },
-    {
-      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
-      "to": "library/ui/apps/sites/assets/download-steps/highlight-icon.webp",
-      "kind": "production:asset"
     },
     {
       "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
@@ -74340,27 +74225,7 @@
     {
       "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
       "to": "library/ui/apps/sites/assets/download-steps/macos-brave-step1.webp",
-      "kind": "native:asset"
-    },
-    {
-      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
-      "to": "library/ui/apps/sites/assets/download-steps/macos-brave-step1.webp",
-      "kind": "production:asset"
-    },
-    {
-      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
-      "to": "library/ui/apps/sites/assets/download-steps/macos-brave-step1.webp",
       "kind": "test:asset"
-    },
-    {
-      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
-      "to": "library/ui/apps/sites/assets/download-steps/macos-chrome-step1.webp",
-      "kind": "native:asset"
-    },
-    {
-      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
-      "to": "library/ui/apps/sites/assets/download-steps/macos-chrome-step1.webp",
-      "kind": "production:asset"
     },
     {
       "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
@@ -74370,27 +74235,7 @@
     {
       "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
       "to": "library/ui/apps/sites/assets/download-steps/macos-firefox-step1.webp",
-      "kind": "native:asset"
-    },
-    {
-      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
-      "to": "library/ui/apps/sites/assets/download-steps/macos-firefox-step1.webp",
-      "kind": "production:asset"
-    },
-    {
-      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
-      "to": "library/ui/apps/sites/assets/download-steps/macos-firefox-step1.webp",
       "kind": "test:asset"
-    },
-    {
-      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
-      "to": "library/ui/apps/sites/assets/download-steps/macos-opera-step1.webp",
-      "kind": "native:asset"
-    },
-    {
-      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
-      "to": "library/ui/apps/sites/assets/download-steps/macos-opera-step1.webp",
-      "kind": "production:asset"
     },
     {
       "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
@@ -74400,27 +74245,7 @@
     {
       "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
       "to": "library/ui/apps/sites/assets/download-steps/macos-safari-step1.webp",
-      "kind": "native:asset"
-    },
-    {
-      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
-      "to": "library/ui/apps/sites/assets/download-steps/macos-safari-step1.webp",
-      "kind": "production:asset"
-    },
-    {
-      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
-      "to": "library/ui/apps/sites/assets/download-steps/macos-safari-step1.webp",
       "kind": "test:asset"
-    },
-    {
-      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
-      "to": "library/ui/apps/sites/assets/download-steps/macos-step2.webp",
-      "kind": "native:asset"
-    },
-    {
-      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
-      "to": "library/ui/apps/sites/assets/download-steps/macos-step2.webp",
-      "kind": "production:asset"
     },
     {
       "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
@@ -74430,27 +74255,7 @@
     {
       "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
       "to": "library/ui/apps/sites/assets/download-steps/step3.webp",
-      "kind": "native:asset"
-    },
-    {
-      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
-      "to": "library/ui/apps/sites/assets/download-steps/step3.webp",
-      "kind": "production:asset"
-    },
-    {
-      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
-      "to": "library/ui/apps/sites/assets/download-steps/step3.webp",
       "kind": "test:asset"
-    },
-    {
-      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
-      "to": "library/ui/apps/sites/assets/download-steps/windows-brave-step1.webp",
-      "kind": "native:asset"
-    },
-    {
-      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
-      "to": "library/ui/apps/sites/assets/download-steps/windows-brave-step1.webp",
-      "kind": "production:asset"
     },
     {
       "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
@@ -74460,27 +74265,7 @@
     {
       "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
       "to": "library/ui/apps/sites/assets/download-steps/windows-chrome-step1.webp",
-      "kind": "native:asset"
-    },
-    {
-      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
-      "to": "library/ui/apps/sites/assets/download-steps/windows-chrome-step1.webp",
-      "kind": "production:asset"
-    },
-    {
-      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
-      "to": "library/ui/apps/sites/assets/download-steps/windows-chrome-step1.webp",
       "kind": "test:asset"
-    },
-    {
-      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
-      "to": "library/ui/apps/sites/assets/download-steps/windows-edge-step1.webp",
-      "kind": "native:asset"
-    },
-    {
-      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
-      "to": "library/ui/apps/sites/assets/download-steps/windows-edge-step1.webp",
-      "kind": "production:asset"
     },
     {
       "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
@@ -74490,27 +74275,7 @@
     {
       "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
       "to": "library/ui/apps/sites/assets/download-steps/windows-firefox-step1.webp",
-      "kind": "native:asset"
-    },
-    {
-      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
-      "to": "library/ui/apps/sites/assets/download-steps/windows-firefox-step1.webp",
-      "kind": "production:asset"
-    },
-    {
-      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
-      "to": "library/ui/apps/sites/assets/download-steps/windows-firefox-step1.webp",
       "kind": "test:asset"
-    },
-    {
-      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
-      "to": "library/ui/apps/sites/assets/download-steps/windows-opera-step1.webp",
-      "kind": "native:asset"
-    },
-    {
-      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
-      "to": "library/ui/apps/sites/assets/download-steps/windows-opera-step1.webp",
-      "kind": "production:asset"
     },
     {
       "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
@@ -74520,27 +74285,7 @@
     {
       "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
       "to": "library/ui/apps/sites/assets/download-steps/windows-step2.webp",
-      "kind": "native:asset"
-    },
-    {
-      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
-      "to": "library/ui/apps/sites/assets/download-steps/windows-step2.webp",
-      "kind": "production:asset"
-    },
-    {
-      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
-      "to": "library/ui/apps/sites/assets/download-steps/windows-step2.webp",
       "kind": "test:asset"
-    },
-    {
-      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
-      "to": "library/ui/apps/sites/assets/download_background.webp",
-      "kind": "native:asset"
-    },
-    {
-      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
-      "to": "library/ui/apps/sites/assets/download_background.webp",
-      "kind": "production:asset"
     },
     {
       "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
@@ -74550,27 +74295,7 @@
     {
       "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
       "to": "library/ui/apps/sites/assets/ellipse_gradient.webp",
-      "kind": "native:asset"
-    },
-    {
-      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
-      "to": "library/ui/apps/sites/assets/ellipse_gradient.webp",
-      "kind": "production:asset"
-    },
-    {
-      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
-      "to": "library/ui/apps/sites/assets/ellipse_gradient.webp",
       "kind": "test:asset"
-    },
-    {
-      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
-      "to": "library/ui/apps/sites/assets/epic_icon.svg",
-      "kind": "native:asset"
-    },
-    {
-      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
-      "to": "library/ui/apps/sites/assets/epic_icon.svg",
-      "kind": "production:asset"
     },
     {
       "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
@@ -74580,27 +74305,7 @@
     {
       "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
       "to": "library/ui/apps/sites/assets/errors/crew.webp",
-      "kind": "native:asset"
-    },
-    {
-      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
-      "to": "library/ui/apps/sites/assets/errors/crew.webp",
-      "kind": "production:asset"
-    },
-    {
-      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
-      "to": "library/ui/apps/sites/assets/errors/crew.webp",
       "kind": "test:asset"
-    },
-    {
-      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
-      "to": "library/ui/apps/sites/assets/errors/locked.webp",
-      "kind": "native:asset"
-    },
-    {
-      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
-      "to": "library/ui/apps/sites/assets/errors/locked.webp",
-      "kind": "production:asset"
     },
     {
       "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
@@ -74610,27 +74315,7 @@
     {
       "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
       "to": "library/ui/apps/sites/assets/errors/lost.webp",
-      "kind": "native:asset"
-    },
-    {
-      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
-      "to": "library/ui/apps/sites/assets/errors/lost.webp",
-      "kind": "production:asset"
-    },
-    {
-      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
-      "to": "library/ui/apps/sites/assets/errors/lost.webp",
       "kind": "test:asset"
-    },
-    {
-      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
-      "to": "library/ui/apps/sites/assets/errors/not-found-avatar.webp",
-      "kind": "native:asset"
-    },
-    {
-      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
-      "to": "library/ui/apps/sites/assets/errors/not-found-avatar.webp",
-      "kind": "production:asset"
     },
     {
       "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
@@ -74640,27 +74325,7 @@
     {
       "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
       "to": "library/ui/apps/sites/assets/errors/wave.webp",
-      "kind": "native:asset"
-    },
-    {
-      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
-      "to": "library/ui/apps/sites/assets/errors/wave.webp",
-      "kind": "production:asset"
-    },
-    {
-      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
-      "to": "library/ui/apps/sites/assets/errors/wave.webp",
       "kind": "test:asset"
-    },
-    {
-      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
-      "to": "library/ui/apps/sites/assets/events/host_avatar.webp",
-      "kind": "native:asset"
-    },
-    {
-      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
-      "to": "library/ui/apps/sites/assets/events/host_avatar.webp",
-      "kind": "production:asset"
     },
     {
       "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
@@ -74670,27 +74335,7 @@
     {
       "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
       "to": "library/ui/apps/sites/assets/events/host_scene.webp",
-      "kind": "native:asset"
-    },
-    {
-      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
-      "to": "library/ui/apps/sites/assets/events/host_scene.webp",
-      "kind": "production:asset"
-    },
-    {
-      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
-      "to": "library/ui/apps/sites/assets/events/host_scene.webp",
       "kind": "test:asset"
-    },
-    {
-      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
-      "to": "library/ui/apps/sites/assets/events/top_background.webp",
-      "kind": "native:asset"
-    },
-    {
-      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
-      "to": "library/ui/apps/sites/assets/events/top_background.webp",
-      "kind": "production:asset"
     },
     {
       "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
@@ -74700,27 +74345,7 @@
     {
       "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
       "to": "library/ui/apps/sites/assets/flags/1f1e8-1f1f3.svg",
-      "kind": "native:asset"
-    },
-    {
-      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
-      "to": "library/ui/apps/sites/assets/flags/1f1e8-1f1f3.svg",
-      "kind": "production:asset"
-    },
-    {
-      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
-      "to": "library/ui/apps/sites/assets/flags/1f1e8-1f1f3.svg",
       "kind": "test:asset"
-    },
-    {
-      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
-      "to": "library/ui/apps/sites/assets/flags/1f1ea-1f1f8.svg",
-      "kind": "native:asset"
-    },
-    {
-      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
-      "to": "library/ui/apps/sites/assets/flags/1f1ea-1f1f8.svg",
-      "kind": "production:asset"
     },
     {
       "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
@@ -74730,27 +74355,7 @@
     {
       "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
       "to": "library/ui/apps/sites/assets/flags/1f1eb-1f1f7.svg",
-      "kind": "native:asset"
-    },
-    {
-      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
-      "to": "library/ui/apps/sites/assets/flags/1f1eb-1f1f7.svg",
-      "kind": "production:asset"
-    },
-    {
-      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
-      "to": "library/ui/apps/sites/assets/flags/1f1eb-1f1f7.svg",
       "kind": "test:asset"
-    },
-    {
-      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
-      "to": "library/ui/apps/sites/assets/flags/1f1ec-1f1e7.svg",
-      "kind": "native:asset"
-    },
-    {
-      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
-      "to": "library/ui/apps/sites/assets/flags/1f1ec-1f1e7.svg",
-      "kind": "production:asset"
     },
     {
       "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
@@ -74760,27 +74365,7 @@
     {
       "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
       "to": "library/ui/apps/sites/assets/flags/1f1ef-1f1f5.svg",
-      "kind": "native:asset"
-    },
-    {
-      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
-      "to": "library/ui/apps/sites/assets/flags/1f1ef-1f1f5.svg",
-      "kind": "production:asset"
-    },
-    {
-      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
-      "to": "library/ui/apps/sites/assets/flags/1f1ef-1f1f5.svg",
       "kind": "test:asset"
-    },
-    {
-      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
-      "to": "library/ui/apps/sites/assets/flags/1f1f0-1f1f7.svg",
-      "kind": "native:asset"
-    },
-    {
-      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
-      "to": "library/ui/apps/sites/assets/flags/1f1f0-1f1f7.svg",
-      "kind": "production:asset"
     },
     {
       "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
@@ -74790,27 +74375,7 @@
     {
       "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
       "to": "library/ui/apps/sites/assets/genesis-plaza.webp",
-      "kind": "native:asset"
-    },
-    {
-      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
-      "to": "library/ui/apps/sites/assets/genesis-plaza.webp",
-      "kind": "production:asset"
-    },
-    {
-      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
-      "to": "library/ui/apps/sites/assets/genesis-plaza.webp",
       "kind": "test:asset"
-    },
-    {
-      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
-      "to": "library/ui/apps/sites/assets/google_play_cta.svg",
-      "kind": "native:asset"
-    },
-    {
-      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
-      "to": "library/ui/apps/sites/assets/google_play_cta.svg",
-      "kind": "production:asset"
     },
     {
       "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
@@ -74820,27 +74385,7 @@
     {
       "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
       "to": "library/ui/apps/sites/assets/google_play_icon.svg",
-      "kind": "native:asset"
-    },
-    {
-      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
-      "to": "library/ui/apps/sites/assets/google_play_icon.svg",
-      "kind": "production:asset"
-    },
-    {
-      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
-      "to": "library/ui/apps/sites/assets/google_play_icon.svg",
       "kind": "test:asset"
-    },
-    {
-      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
-      "to": "library/ui/apps/sites/assets/help/help_girl.webp",
-      "kind": "native:asset"
-    },
-    {
-      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
-      "to": "library/ui/apps/sites/assets/help/help_girl.webp",
-      "kind": "production:asset"
     },
     {
       "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
@@ -74850,27 +74395,7 @@
     {
       "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
       "to": "library/ui/apps/sites/assets/hero_desktop.webp",
-      "kind": "native:asset"
-    },
-    {
-      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
-      "to": "library/ui/apps/sites/assets/hero_desktop.webp",
-      "kind": "production:asset"
-    },
-    {
-      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
-      "to": "library/ui/apps/sites/assets/hero_desktop.webp",
       "kind": "test:asset"
-    },
-    {
-      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
-      "to": "library/ui/apps/sites/assets/hero_mobile.webp",
-      "kind": "native:asset"
-    },
-    {
-      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
-      "to": "library/ui/apps/sites/assets/hero_mobile.webp",
-      "kind": "production:asset"
     },
     {
       "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
@@ -74880,27 +74405,7 @@
     {
       "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
       "to": "library/ui/apps/sites/assets/hero_tablet.webp",
-      "kind": "native:asset"
-    },
-    {
-      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
-      "to": "library/ui/apps/sites/assets/hero_tablet.webp",
-      "kind": "production:asset"
-    },
-    {
-      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
-      "to": "library/ui/apps/sites/assets/hero_tablet.webp",
       "kind": "test:asset"
-    },
-    {
-      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
-      "to": "library/ui/apps/sites/assets/ios-logo.svg",
-      "kind": "native:asset"
-    },
-    {
-      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
-      "to": "library/ui/apps/sites/assets/ios-logo.svg",
-      "kind": "production:asset"
     },
     {
       "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
@@ -74910,27 +74415,7 @@
     {
       "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
       "to": "library/ui/apps/sites/assets/jump/card-creator-placeholder.webp",
-      "kind": "native:asset"
-    },
-    {
-      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
-      "to": "library/ui/apps/sites/assets/jump/card-creator-placeholder.webp",
-      "kind": "production:asset"
-    },
-    {
-      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
-      "to": "library/ui/apps/sites/assets/jump/card-creator-placeholder.webp",
       "kind": "test:asset"
-    },
-    {
-      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
-      "to": "library/ui/apps/sites/assets/jump/card-events-placeholder.webp",
-      "kind": "native:asset"
-    },
-    {
-      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
-      "to": "library/ui/apps/sites/assets/jump/card-events-placeholder.webp",
-      "kind": "production:asset"
     },
     {
       "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
@@ -74940,27 +74425,7 @@
     {
       "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
       "to": "library/ui/apps/sites/assets/jump/card-places-placeholder.webp",
-      "kind": "native:asset"
-    },
-    {
-      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
-      "to": "library/ui/apps/sites/assets/jump/card-places-placeholder.webp",
-      "kind": "production:asset"
-    },
-    {
-      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
-      "to": "library/ui/apps/sites/assets/jump/card-places-placeholder.webp",
       "kind": "test:asset"
-    },
-    {
-      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
-      "to": "library/ui/apps/sites/assets/notifications-empty.webp",
-      "kind": "native:asset"
-    },
-    {
-      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
-      "to": "library/ui/apps/sites/assets/notifications-empty.webp",
-      "kind": "production:asset"
     },
     {
       "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
@@ -74970,27 +74435,7 @@
     {
       "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
       "to": "library/ui/apps/sites/assets/notifications/AccessRestored.svg",
-      "kind": "native:asset"
-    },
-    {
-      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
-      "to": "library/ui/apps/sites/assets/notifications/AccessRestored.svg",
-      "kind": "production:asset"
-    },
-    {
-      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
-      "to": "library/ui/apps/sites/assets/notifications/AccessRestored.svg",
       "kind": "test:asset"
-    },
-    {
-      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
-      "to": "library/ui/apps/sites/assets/notifications/AccessRestricted.svg",
-      "kind": "native:asset"
-    },
-    {
-      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
-      "to": "library/ui/apps/sites/assets/notifications/AccessRestricted.svg",
-      "kind": "production:asset"
     },
     {
       "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
@@ -75000,27 +74445,7 @@
     {
       "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
       "to": "library/ui/apps/sites/assets/notifications/BidAccepted.svg",
-      "kind": "native:asset"
-    },
-    {
-      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
-      "to": "library/ui/apps/sites/assets/notifications/BidAccepted.svg",
-      "kind": "production:asset"
-    },
-    {
-      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
-      "to": "library/ui/apps/sites/assets/notifications/BidAccepted.svg",
       "kind": "test:asset"
-    },
-    {
-      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
-      "to": "library/ui/apps/sites/assets/notifications/Coauthor.svg",
-      "kind": "native:asset"
-    },
-    {
-      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
-      "to": "library/ui/apps/sites/assets/notifications/Coauthor.svg",
-      "kind": "production:asset"
     },
     {
       "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
@@ -75030,27 +74455,7 @@
     {
       "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
       "to": "library/ui/apps/sites/assets/notifications/Credits.svg",
-      "kind": "native:asset"
-    },
-    {
-      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
-      "to": "library/ui/apps/sites/assets/notifications/Credits.svg",
-      "kind": "production:asset"
-    },
-    {
-      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
-      "to": "library/ui/apps/sites/assets/notifications/Credits.svg",
       "kind": "test:asset"
-    },
-    {
-      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
-      "to": "library/ui/apps/sites/assets/notifications/CreditsCompleteYourGoalsReminder.svg",
-      "kind": "native:asset"
-    },
-    {
-      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
-      "to": "library/ui/apps/sites/assets/notifications/CreditsCompleteYourGoalsReminder.svg",
-      "kind": "production:asset"
     },
     {
       "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
@@ -75060,27 +74465,7 @@
     {
       "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
       "to": "library/ui/apps/sites/assets/notifications/CreditsExpireSoonReminder.svg",
-      "kind": "native:asset"
-    },
-    {
-      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
-      "to": "library/ui/apps/sites/assets/notifications/CreditsExpireSoonReminder.svg",
-      "kind": "production:asset"
-    },
-    {
-      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
-      "to": "library/ui/apps/sites/assets/notifications/CreditsExpireSoonReminder.svg",
       "kind": "test:asset"
-    },
-    {
-      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
-      "to": "library/ui/apps/sites/assets/notifications/EventApproved.svg",
-      "kind": "native:asset"
-    },
-    {
-      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
-      "to": "library/ui/apps/sites/assets/notifications/EventApproved.svg",
-      "kind": "production:asset"
     },
     {
       "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
@@ -75090,27 +74475,7 @@
     {
       "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
       "to": "library/ui/apps/sites/assets/notifications/EventDeleted.svg",
-      "kind": "native:asset"
-    },
-    {
-      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
-      "to": "library/ui/apps/sites/assets/notifications/EventDeleted.svg",
-      "kind": "production:asset"
-    },
-    {
-      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
-      "to": "library/ui/apps/sites/assets/notifications/EventDeleted.svg",
       "kind": "test:asset"
-    },
-    {
-      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
-      "to": "library/ui/apps/sites/assets/notifications/EventRejected.svg",
-      "kind": "native:asset"
-    },
-    {
-      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
-      "to": "library/ui/apps/sites/assets/notifications/EventRejected.svg",
-      "kind": "production:asset"
     },
     {
       "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
@@ -75120,27 +74485,7 @@
     {
       "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
       "to": "library/ui/apps/sites/assets/notifications/EventStarted.svg",
-      "kind": "native:asset"
-    },
-    {
-      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
-      "to": "library/ui/apps/sites/assets/notifications/EventStarted.svg",
-      "kind": "production:asset"
-    },
-    {
-      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
-      "to": "library/ui/apps/sites/assets/notifications/EventStarted.svg",
       "kind": "test:asset"
-    },
-    {
-      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
-      "to": "library/ui/apps/sites/assets/notifications/EventStartsSoon.svg",
-      "kind": "native:asset"
-    },
-    {
-      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
-      "to": "library/ui/apps/sites/assets/notifications/EventStartsSoon.svg",
-      "kind": "production:asset"
     },
     {
       "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
@@ -75150,27 +74495,7 @@
     {
       "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
       "to": "library/ui/apps/sites/assets/notifications/Gift.svg",
-      "kind": "native:asset"
-    },
-    {
-      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
-      "to": "library/ui/apps/sites/assets/notifications/Gift.svg",
-      "kind": "production:asset"
-    },
-    {
-      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
-      "to": "library/ui/apps/sites/assets/notifications/Gift.svg",
       "kind": "test:asset"
-    },
-    {
-      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
-      "to": "library/ui/apps/sites/assets/notifications/Governance.svg",
-      "kind": "native:asset"
-    },
-    {
-      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
-      "to": "library/ui/apps/sites/assets/notifications/Governance.svg",
-      "kind": "production:asset"
     },
     {
       "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
@@ -75180,27 +74505,7 @@
     {
       "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
       "to": "library/ui/apps/sites/assets/notifications/ItemSold.svg",
-      "kind": "native:asset"
-    },
-    {
-      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
-      "to": "library/ui/apps/sites/assets/notifications/ItemSold.svg",
-      "kind": "production:asset"
-    },
-    {
-      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
-      "to": "library/ui/apps/sites/assets/notifications/ItemSold.svg",
       "kind": "test:asset"
-    },
-    {
-      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
-      "to": "library/ui/apps/sites/assets/notifications/LandRented.svg",
-      "kind": "native:asset"
-    },
-    {
-      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
-      "to": "library/ui/apps/sites/assets/notifications/LandRented.svg",
-      "kind": "production:asset"
     },
     {
       "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
@@ -75210,27 +74515,7 @@
     {
       "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
       "to": "library/ui/apps/sites/assets/notifications/ManaMainnet.svg",
-      "kind": "native:asset"
-    },
-    {
-      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
-      "to": "library/ui/apps/sites/assets/notifications/ManaMainnet.svg",
-      "kind": "production:asset"
-    },
-    {
-      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
-      "to": "library/ui/apps/sites/assets/notifications/ManaMainnet.svg",
       "kind": "test:asset"
-    },
-    {
-      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
-      "to": "library/ui/apps/sites/assets/notifications/ManaPolygon.svg",
-      "kind": "native:asset"
-    },
-    {
-      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
-      "to": "library/ui/apps/sites/assets/notifications/ManaPolygon.svg",
-      "kind": "production:asset"
     },
     {
       "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
@@ -75240,27 +74525,7 @@
     {
       "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
       "to": "library/ui/apps/sites/assets/notifications/MissingResources.svg",
-      "kind": "native:asset"
-    },
-    {
-      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
-      "to": "library/ui/apps/sites/assets/notifications/MissingResources.svg",
-      "kind": "production:asset"
-    },
-    {
-      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
-      "to": "library/ui/apps/sites/assets/notifications/MissingResources.svg",
       "kind": "test:asset"
-    },
-    {
-      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
-      "to": "library/ui/apps/sites/assets/notifications/NewComment.svg",
-      "kind": "native:asset"
-    },
-    {
-      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
-      "to": "library/ui/apps/sites/assets/notifications/NewComment.svg",
-      "kind": "production:asset"
     },
     {
       "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
@@ -75270,27 +74535,7 @@
     {
       "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
       "to": "library/ui/apps/sites/assets/notifications/PermissionGranted.svg",
-      "kind": "native:asset"
-    },
-    {
-      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
-      "to": "library/ui/apps/sites/assets/notifications/PermissionGranted.svg",
-      "kind": "production:asset"
-    },
-    {
-      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
-      "to": "library/ui/apps/sites/assets/notifications/PermissionGranted.svg",
       "kind": "test:asset"
-    },
-    {
-      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
-      "to": "library/ui/apps/sites/assets/notifications/PermissionRevoked.svg",
-      "kind": "native:asset"
-    },
-    {
-      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
-      "to": "library/ui/apps/sites/assets/notifications/PermissionRevoked.svg",
-      "kind": "production:asset"
     },
     {
       "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
@@ -75300,27 +74545,7 @@
     {
       "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
       "to": "library/ui/apps/sites/assets/notifications/Pitch.svg",
-      "kind": "native:asset"
-    },
-    {
-      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
-      "to": "library/ui/apps/sites/assets/notifications/Pitch.svg",
-      "kind": "production:asset"
-    },
-    {
-      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
-      "to": "library/ui/apps/sites/assets/notifications/Pitch.svg",
       "kind": "test:asset"
-    },
-    {
-      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
-      "to": "library/ui/apps/sites/assets/notifications/ProjectEnacted.svg",
-      "kind": "native:asset"
-    },
-    {
-      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
-      "to": "library/ui/apps/sites/assets/notifications/ProjectEnacted.svg",
-      "kind": "production:asset"
     },
     {
       "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
@@ -75330,27 +74555,7 @@
     {
       "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
       "to": "library/ui/apps/sites/assets/notifications/ProposalFinished.svg",
-      "kind": "native:asset"
-    },
-    {
-      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
-      "to": "library/ui/apps/sites/assets/notifications/ProposalFinished.svg",
-      "kind": "production:asset"
-    },
-    {
-      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
-      "to": "library/ui/apps/sites/assets/notifications/ProposalFinished.svg",
       "kind": "test:asset"
-    },
-    {
-      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
-      "to": "library/ui/apps/sites/assets/notifications/ReferralInviteFriends.svg",
-      "kind": "native:asset"
-    },
-    {
-      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
-      "to": "library/ui/apps/sites/assets/notifications/ReferralInviteFriends.svg",
-      "kind": "production:asset"
     },
     {
       "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
@@ -75360,27 +74565,7 @@
     {
       "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
       "to": "library/ui/apps/sites/assets/notifications/ReferralInvitedUserAccepted.svg",
-      "kind": "native:asset"
-    },
-    {
-      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
-      "to": "library/ui/apps/sites/assets/notifications/ReferralInvitedUserAccepted.svg",
-      "kind": "production:asset"
-    },
-    {
-      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
-      "to": "library/ui/apps/sites/assets/notifications/ReferralInvitedUserAccepted.svg",
       "kind": "test:asset"
-    },
-    {
-      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
-      "to": "library/ui/apps/sites/assets/notifications/RentPeriodEnding.svg",
-      "kind": "native:asset"
-    },
-    {
-      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
-      "to": "library/ui/apps/sites/assets/notifications/RentPeriodEnding.svg",
-      "kind": "production:asset"
     },
     {
       "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
@@ -75390,27 +74575,7 @@
     {
       "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
       "to": "library/ui/apps/sites/assets/notifications/Reward.svg",
-      "kind": "native:asset"
-    },
-    {
-      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
-      "to": "library/ui/apps/sites/assets/notifications/Reward.svg",
-      "kind": "production:asset"
-    },
-    {
-      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
-      "to": "library/ui/apps/sites/assets/notifications/Reward.svg",
       "kind": "test:asset"
-    },
-    {
-      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
-      "to": "library/ui/apps/sites/assets/notifications/Streaming.svg",
-      "kind": "native:asset"
-    },
-    {
-      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
-      "to": "library/ui/apps/sites/assets/notifications/Streaming.svg",
-      "kind": "production:asset"
     },
     {
       "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
@@ -75420,27 +74585,7 @@
     {
       "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
       "to": "library/ui/apps/sites/assets/notifications/Tender.svg",
-      "kind": "native:asset"
-    },
-    {
-      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
-      "to": "library/ui/apps/sites/assets/notifications/Tender.svg",
-      "kind": "production:asset"
-    },
-    {
-      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
-      "to": "library/ui/apps/sites/assets/notifications/Tender.svg",
       "kind": "test:asset"
-    },
-    {
-      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
-      "to": "library/ui/apps/sites/assets/notifications/Tip.svg",
-      "kind": "native:asset"
-    },
-    {
-      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
-      "to": "library/ui/apps/sites/assets/notifications/Tip.svg",
-      "kind": "production:asset"
     },
     {
       "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
@@ -75450,27 +74595,7 @@
     {
       "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
       "to": "library/ui/apps/sites/assets/notifications/VotingEnded.svg",
-      "kind": "native:asset"
-    },
-    {
-      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
-      "to": "library/ui/apps/sites/assets/notifications/VotingEnded.svg",
-      "kind": "production:asset"
-    },
-    {
-      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
-      "to": "library/ui/apps/sites/assets/notifications/VotingEnded.svg",
       "kind": "test:asset"
-    },
-    {
-      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
-      "to": "library/ui/apps/sites/assets/referrals/logo-with-pointer.webp",
-      "kind": "native:asset"
-    },
-    {
-      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
-      "to": "library/ui/apps/sites/assets/referrals/logo-with-pointer.webp",
-      "kind": "production:asset"
     },
     {
       "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
@@ -75480,27 +74605,7 @@
     {
       "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
       "to": "library/ui/apps/sites/assets/referrals/referral-envelope.webp",
-      "kind": "native:asset"
-    },
-    {
-      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
-      "to": "library/ui/apps/sites/assets/referrals/referral-envelope.webp",
-      "kind": "production:asset"
-    },
-    {
-      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
-      "to": "library/ui/apps/sites/assets/referrals/referral-envelope.webp",
       "kind": "test:asset"
-    },
-    {
-      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
-      "to": "library/ui/apps/sites/assets/referrals/sports-medal.webp",
-      "kind": "native:asset"
-    },
-    {
-      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
-      "to": "library/ui/apps/sites/assets/referrals/sports-medal.webp",
-      "kind": "production:asset"
     },
     {
       "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
@@ -75510,27 +74615,7 @@
     {
       "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
       "to": "library/ui/apps/sites/assets/referrals/tier_1.webp",
-      "kind": "native:asset"
-    },
-    {
-      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
-      "to": "library/ui/apps/sites/assets/referrals/tier_1.webp",
-      "kind": "production:asset"
-    },
-    {
-      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
-      "to": "library/ui/apps/sites/assets/referrals/tier_1.webp",
       "kind": "test:asset"
-    },
-    {
-      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
-      "to": "library/ui/apps/sites/assets/referrals/tier_2.webp",
-      "kind": "native:asset"
-    },
-    {
-      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
-      "to": "library/ui/apps/sites/assets/referrals/tier_2.webp",
-      "kind": "production:asset"
     },
     {
       "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
@@ -75540,27 +74625,7 @@
     {
       "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
       "to": "library/ui/apps/sites/assets/referrals/tier_3.webp",
-      "kind": "native:asset"
-    },
-    {
-      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
-      "to": "library/ui/apps/sites/assets/referrals/tier_3.webp",
-      "kind": "production:asset"
-    },
-    {
-      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
-      "to": "library/ui/apps/sites/assets/referrals/tier_3.webp",
       "kind": "test:asset"
-    },
-    {
-      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
-      "to": "library/ui/apps/sites/assets/referrals/tier_4.webp",
-      "kind": "native:asset"
-    },
-    {
-      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
-      "to": "library/ui/apps/sites/assets/referrals/tier_4.webp",
-      "kind": "production:asset"
     },
     {
       "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
@@ -75570,27 +74635,7 @@
     {
       "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
       "to": "library/ui/apps/sites/assets/referrals/tier_5.webp",
-      "kind": "native:asset"
-    },
-    {
-      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
-      "to": "library/ui/apps/sites/assets/referrals/tier_5.webp",
-      "kind": "production:asset"
-    },
-    {
-      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
-      "to": "library/ui/apps/sites/assets/referrals/tier_5.webp",
       "kind": "test:asset"
-    },
-    {
-      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
-      "to": "library/ui/apps/sites/assets/referrals/tier_6.webp",
-      "kind": "native:asset"
-    },
-    {
-      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
-      "to": "library/ui/apps/sites/assets/referrals/tier_6.webp",
-      "kind": "production:asset"
     },
     {
       "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
@@ -75600,27 +74645,7 @@
     {
       "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
       "to": "library/ui/apps/sites/assets/referrals/tier_7.webp",
-      "kind": "native:asset"
-    },
-    {
-      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
-      "to": "library/ui/apps/sites/assets/referrals/tier_7.webp",
-      "kind": "production:asset"
-    },
-    {
-      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
-      "to": "library/ui/apps/sites/assets/referrals/tier_7.webp",
       "kind": "test:asset"
-    },
-    {
-      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
-      "to": "library/ui/apps/sites/assets/referrals/tier_8.webp",
-      "kind": "native:asset"
-    },
-    {
-      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
-      "to": "library/ui/apps/sites/assets/referrals/tier_8.webp",
-      "kind": "production:asset"
     },
     {
       "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
@@ -75630,27 +74655,7 @@
     {
       "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
       "to": "library/ui/apps/sites/assets/referrals/tier_9.webp",
-      "kind": "native:asset"
-    },
-    {
-      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
-      "to": "library/ui/apps/sites/assets/referrals/tier_9.webp",
-      "kind": "production:asset"
-    },
-    {
-      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
-      "to": "library/ui/apps/sites/assets/referrals/tier_9.webp",
       "kind": "test:asset"
-    },
-    {
-      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
-      "to": "library/ui/apps/sites/assets/video_landing.mp4",
-      "kind": "native:asset"
-    },
-    {
-      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
-      "to": "library/ui/apps/sites/assets/video_landing.mp4",
-      "kind": "production:asset"
     },
     {
       "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
@@ -75660,27 +74665,7 @@
     {
       "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
       "to": "library/ui/apps/sites/assets/video_landing.webm",
-      "kind": "native:asset"
-    },
-    {
-      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
-      "to": "library/ui/apps/sites/assets/video_landing.webm",
-      "kind": "production:asset"
-    },
-    {
-      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
-      "to": "library/ui/apps/sites/assets/video_landing.webm",
       "kind": "test:asset"
-    },
-    {
-      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
-      "to": "library/ui/apps/sites/assets/weekly-rituals/mobile/Monday-Mobile.webp",
-      "kind": "native:asset"
-    },
-    {
-      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
-      "to": "library/ui/apps/sites/assets/weekly-rituals/mobile/Monday-Mobile.webp",
-      "kind": "production:asset"
     },
     {
       "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
@@ -75690,27 +74675,7 @@
     {
       "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
       "to": "library/ui/apps/sites/assets/weekly-rituals/mobile/Tuesday-Mobile.webp",
-      "kind": "native:asset"
-    },
-    {
-      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
-      "to": "library/ui/apps/sites/assets/weekly-rituals/mobile/Tuesday-Mobile.webp",
-      "kind": "production:asset"
-    },
-    {
-      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
-      "to": "library/ui/apps/sites/assets/weekly-rituals/mobile/Tuesday-Mobile.webp",
       "kind": "test:asset"
-    },
-    {
-      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
-      "to": "library/ui/apps/sites/assets/weekly-rituals/mobile/Wednesday-Mobile.webp",
-      "kind": "native:asset"
-    },
-    {
-      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
-      "to": "library/ui/apps/sites/assets/weekly-rituals/mobile/Wednesday-Mobile.webp",
-      "kind": "production:asset"
     },
     {
       "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
@@ -75720,27 +74685,7 @@
     {
       "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
       "to": "library/ui/apps/sites/assets/weekly-rituals/monday.webp",
-      "kind": "native:asset"
-    },
-    {
-      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
-      "to": "library/ui/apps/sites/assets/weekly-rituals/monday.webp",
-      "kind": "production:asset"
-    },
-    {
-      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
-      "to": "library/ui/apps/sites/assets/weekly-rituals/monday.webp",
       "kind": "test:asset"
-    },
-    {
-      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
-      "to": "library/ui/apps/sites/assets/weekly-rituals/tuesday.webp",
-      "kind": "native:asset"
-    },
-    {
-      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
-      "to": "library/ui/apps/sites/assets/weekly-rituals/tuesday.webp",
-      "kind": "production:asset"
     },
     {
       "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
@@ -75750,27 +74695,7 @@
     {
       "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
       "to": "library/ui/apps/sites/assets/weekly-rituals/wednesday.webp",
-      "kind": "native:asset"
-    },
-    {
-      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
-      "to": "library/ui/apps/sites/assets/weekly-rituals/wednesday.webp",
-      "kind": "production:asset"
-    },
-    {
-      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
-      "to": "library/ui/apps/sites/assets/weekly-rituals/wednesday.webp",
       "kind": "test:asset"
-    },
-    {
-      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
-      "to": "library/ui/apps/sites/places/foundation.svg",
-      "kind": "native:asset"
-    },
-    {
-      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
-      "to": "library/ui/apps/sites/places/foundation.svg",
-      "kind": "production:asset"
     },
     {
       "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
@@ -75780,27 +74705,7 @@
     {
       "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
       "to": "library/ui/assets/custom-welcome-background.webp",
-      "kind": "native:asset"
-    },
-    {
-      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
-      "to": "library/ui/assets/custom-welcome-background.webp",
-      "kind": "production:asset"
-    },
-    {
-      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
-      "to": "library/ui/assets/custom-welcome-background.webp",
       "kind": "test:asset"
-    },
-    {
-      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
-      "to": "library/ui/assets/logo-pattern.webp",
-      "kind": "native:asset"
-    },
-    {
-      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
-      "to": "library/ui/assets/logo-pattern.webp",
-      "kind": "production:asset"
     },
     {
       "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
