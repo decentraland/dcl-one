@@ -61,7 +61,8 @@ Each enabled laptop of [the fleet](#the-fleet) runs one leg, a job on its self-h
 `intel-i5-chrome`. The job checks nothing out:
 
 1. It removes an earlier session's files: the runner, the web app folders, `runs_on.txt` and every
-   run file (`runner`, `runs_on.txt`, `change_build*`, `base_build*`, `release_build*`). A file it
+   run file (`runner`, `runs_on.txt`, `release_not_measured.txt`, `change_build*`, `base_build*`,
+   `release_build*`). A file it
    cannot remove, one that a leftover process holds, fails the job.
 2. It downloads the `benchmark` runner for the laptop's operating system and the change, base and
    latest release web apps from their CI runs, and puts the runner on the PATH. Without a release
@@ -112,7 +113,9 @@ comment ([The workflow](#the-workflow)).
   latest release*: samples and the six frame-time metrics of the release and the change, Δ (change
   minus release) and the same verdicts as against the base. Release runs that crashed or were
   excluded get the same notes, named *Release*; when the legs measured the release and none of a
-  section's release runs produced data, the section says "No Release run produced data".
+  section's release runs produced data, the section says "No Release run produced data"; when the
+  leg could not download or warm the release up (`release_not_measured.txt`), it says the release
+  was not measured on that laptop.
 - **Layout.** `## <title>`, a line naming the pull request, the change, base and release builds and
   the run, the **Overall** headline when a section has data, the **Against the latest release**
   headline when the legs measured the release, a collapsed *How to read this table*, the sections
@@ -452,7 +455,7 @@ ready for review.
 | `run` | One run of a web app (a folder holding `index.html`, a `.zip` or the URL of one): serves it from `http://localhost:18742`, opens Chrome, stores `<build>.csv` and `<build>.log` in `--out`, closes Chrome on `end` or at the timeout (480 s): it asks Chrome to exit and kills it after 20 s, or after 3 s when the run is interrupted, so a cancelled job leaves none. |
 | `warmup` | `run` for a warm-up: no `perfCsv`, a 300 s backstop, exit 0 whatever the run's outcome (130 when interrupted, 64 and 70 as for `run`). |
 | `fetch` | Downloads or unpacks a web app (a folder, a `.zip` or the URL of one) into `--dir`. Under Actions only a folder or a `.zip` on the machine: an address or a network path (`\\host\share`, `//host/share`) is refused. |
-| `measure` | Change, base, release, change, base, release ... (`--runs` 3, `--settle` 15 s); the base (`--base-dir`) and the release (`--release-dir`) are each optional. Each run's files become `change_build_<i>.csv/.log`, `base_build_<i>.csv/.log` and `release_build_<i>.csv/.log`, then `runs_on.txt` holds `--label`. Before its first run, `measure` removes `runs_on.txt` and every `change_build_<n>`, `base_build_<n>` and `release_build_<n>` `.csv`, `.csv.partial` and `.log` an earlier session left in `--out` (the warm-ups' `<build>.log` and the app folders stay), and before each run its own three files, so a run that crashes is never reported with an earlier session's files. |
+| `measure` | Change, base, release, change, base, release ... (`--runs` 3, `--settle` 15 s); the base (`--base-dir`) and the release (`--release-dir`) are each optional, and `--release-not-measured` writes `release_not_measured.txt` for a release the leg could not run. Each run's files become `change_build_<i>.csv/.log`, `base_build_<i>.csv/.log` and `release_build_<i>.csv/.log`, then `runs_on.txt` holds `--label`. Before its first run, `measure` removes `runs_on.txt`, `release_not_measured.txt` and every `change_build_<n>`, `base_build_<n>` and `release_build_<n>` `.csv`, `.csv.partial` and `.log` an earlier session left in `--out` (the warm-ups' `<build>.log` and the app folders stay), and before each run its own three files, so a run that crashes is never reported with an earlier session's files. |
 | `leg` | `fetch` the builds (`--change`, and optionally `--base` and `--release`), warm each up, `measure`: the whole leg by hand. Its label is `local-chrome` unless `--label` gives one. |
 | `report [DIR]` | The report ([The report](#the-report)) of every folder under `DIR` (the working directory by default) that holds a `runs_on.txt`, written to `--out` (`summary.md` by default). The header takes `--title` (`Benchmark` by default), `--pr`, `--change`, `--base` and `--release` (how it names the builds) and `--run-url`; `--expected-runs` (3 by default: fewer CSVs mean crashed runs) and `--expected-labels` (comma-separated: one without results gets a line) shape the notes. |
 
@@ -614,9 +617,10 @@ to the `org` environment, whose payload names the package `@dcl-regenesislabs/be
 (`prefix`), the path (`play`), the rollout percentage and the npm version,
 `0.1.0-<CI run id>.commit-<short sha>`. Setup resolves it in four steps:
 
-1. Among the newest 100 `org` deployments, the first of that package at `play` and 100% whose
-   latest status is *success*: a partial rollout, a failed one or one still in progress is not the
-   release.
+1. Among the newest 100 `org` deployments, the first of that package at `play` and 100% that
+   `github-actions[bot]` created (the rollout workflow's token) and whose latest status is
+   *success*: a partial rollout, a failed one, one still in progress or a record made by hand is
+   not the release.
 2. Its version names the *Bevy Explorer / CI* run that stamped and published the package: setup reads
    that run and requires it to be a passed `push` or `workflow_dispatch` run of this repository
    whose commit starts with the short sha.
@@ -629,7 +633,9 @@ main build's web app 90 days and a branch build's 7, an unoptimized build, a Git
 the release is the base build itself, the legs
 measure the change and the base only, and a note in the report says why the release was not
 compared. On a laptop, a release download or warm-up that fails drops the release from that leg
-only, and the report notes "No Release run produced data" in its section.
+only: `benchmark measure` gets `RELEASE_NOT_MEASURED` and writes `release_not_measured.txt`, and
+the report says in that section that the release was not measured there. Setup downloads up to
+three web app zips (change, base, release) and has 20 minutes.
 
 **The report job** runs `benchmark report results` with `PR_NUMBER`, `CHANGE_DESCRIPTION`
 (`#<pr> at <commit>`), `BASE_DESCRIPTION` (`main at <commit>`), `RELEASE_DESCRIPTION`

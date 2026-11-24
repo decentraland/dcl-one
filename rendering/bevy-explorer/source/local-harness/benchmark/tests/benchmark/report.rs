@@ -212,6 +212,43 @@ fn release_a_machine_without_release_runs_says_so_beside_one_with_some() {
 }
 
 #[test]
+fn release_a_leg_that_could_not_run_the_release_says_so_instead_of_no_data() {
+    // the release-partial results, with the Intel leg's marker that its release never ran
+    let dir = scratch("report-release-not-measured");
+    for entry in std::fs::read_dir(fixture("release-partial")).unwrap() {
+        let leg = entry.unwrap().path();
+        let to = dir.join(leg.file_name().unwrap());
+        std::fs::create_dir_all(&to).unwrap();
+        for file in std::fs::read_dir(&leg).unwrap() {
+            let file = file.unwrap().path();
+            std::fs::copy(&file, to.join(file.file_name().unwrap())).unwrap();
+        }
+    }
+    std::fs::write(
+        dir.join("benchmark-result-intel-i5-chrome")
+            .join("release_not_measured.txt"),
+        "",
+    )
+    .unwrap();
+
+    let mut options = options("release-partial");
+    options.dir = dir;
+    options.release = Some("`0.1.0-80.commit-9999999`".into());
+    let report = build(&options);
+    let intel = section(&report, "Intel Core i5 (Chrome)");
+    assert!(
+        intel.contains(
+            &"> ⚠️ The latest release was not measured on this laptop: its download or warm-up failed."
+        ),
+        "{intel:#?}"
+    );
+    assert!(
+        !intel.iter().any(|line| line.contains("No Release run")),
+        "{intel:#?}"
+    );
+}
+
+#[test]
 fn release_a_release_without_runs_is_said_and_the_base_comparison_stays() {
     let mut options = options("ok");
     options.release = Some("`0.1.0-80.commit-9999999`".into());

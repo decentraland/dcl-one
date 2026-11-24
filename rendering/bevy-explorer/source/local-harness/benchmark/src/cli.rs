@@ -18,6 +18,8 @@ pub const DEFAULT_PORT: u16 = 18742;
 pub const CHANGE_BUILD: &str = "change_build";
 pub const BASE_BUILD: &str = "base_build";
 pub const RELEASE_BUILD: &str = "release_build";
+/// Written by `measure` when the leg was given the latest release but could not run it.
+pub const RELEASE_NOT_MEASURED: &str = "release_not_measured.txt";
 
 /// The measured run: arriving in world is bounded by 300 s and the measuring window is 90 s,
 /// plus boot.
@@ -152,6 +154,15 @@ pub struct MeasureArgs {
     /// The latest release's web app folder
     #[arg(long = "release-dir", env = "RELEASE_BUILD_DIR")]
     pub release_dir: Option<String>,
+    /// The leg was given the latest release but could not download or warm it up: writes
+    /// release_not_measured.txt, so the report says so
+    #[arg(
+        long = "release-not-measured",
+        env = "RELEASE_NOT_MEASURED",
+        num_args = 0..=1,
+        default_missing_value = "true"
+    )]
+    pub release_not_measured: Option<String>,
     /// The runner label that names the report section (runs_on.txt)
     #[arg(long, env = "RUNS_ON_LABEL")]
     pub label: Option<String>,

@@ -582,6 +582,7 @@ fn a_new_session_clears_every_run_an_earlier_session_left_and_nothing_else() {
         "base_build_3.csv",
         "release_build_2.csv.partial",
         "release_build_1.log",
+        "release_not_measured.txt",
         "runs_on.txt",
     ];
     let stays = [

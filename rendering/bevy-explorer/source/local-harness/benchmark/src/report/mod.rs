@@ -22,7 +22,7 @@ use std::fs;
 use std::io::{self, BufRead};
 use std::path::{Path, PathBuf};
 
-use crate::cli::{BASE_BUILD, CHANGE_BUILD, RELEASE_BUILD};
+use crate::cli::{BASE_BUILD, CHANGE_BUILD, RELEASE_BUILD, RELEASE_NOT_MEASURED};
 use crate::failure::Failure;
 use crate::out;
 
@@ -134,6 +134,8 @@ enum RunnerCaveat {
     /// The legs measured the latest release, and none of this section's release runs produced
     /// data: it has no release table.
     NoReleaseData,
+    /// The leg was given the latest release but could not download or warm it up.
+    ReleaseNotMeasured,
     /// The change and release sessions cannot be compared: the release table has no verdicts.
     ReleaseSessionsNotComparable(SessionsNotComparable),
 }
@@ -297,10 +299,7 @@ pub fn build_report(options: &ReportOptions) -> Result<BenchmarkReport, Failure>
     } else if has_data && options.release.is_some() {
         markdown += render::NOTHING_COMPARED_WITH_RELEASE;
     }
-    markdown += &render::legend(
-        options.expected_runs,
-        options.release.is_some() || release_compared,
-    );
+    markdown += &render::legend(options.expected_runs, release_compared);
     markdown += &sections;
     Ok(BenchmarkReport {
         markdown,
@@ -335,6 +334,17 @@ fn read_label(folder: &Path) -> Result<String, String> {
     Ok(text.trim_start_matches('\u{FEFF}').trim_end().to_string())
 }
 
+/// What a section without release runs says.
+#[derive(Clone, Copy, PartialEq)]
+enum ReleaseExpectation {
+    /// No release was given: nothing.
+    NotGiven,
+    /// The legs were given the latest release: none of its runs produced data.
+    Measured,
+    /// The leg could not download or warm it up (`release_not_measured.txt`).
+    NotMeasured,
+}
+
 /// `expected_release`: the legs were given the latest release, so a section without its runs
 /// says so.
 fn read_section(
@@ -349,6 +359,13 @@ fn read_section(
     }
     let base = read_runs(folder, BASE_BUILD)?;
     let release = read_runs(folder, RELEASE_BUILD)?;
+    let expected_release = if folder.join(RELEASE_NOT_MEASURED).is_file() {
+        ReleaseExpectation::NotMeasured
+    } else if expected_release {
+        ReleaseExpectation::Measured
+    } else {
+        ReleaseExpectation::NotGiven
+    };
     Ok(compare_builds(
         label,
         change,
@@ -407,7 +424,7 @@ fn compare_builds(
     base: Vec<BuildBenchmarkRun>,
     release: Vec<BuildBenchmarkRun>,
     expected_runs: u64,
-    expected_release: bool,
+    expected_release: ReleaseExpectation,
 ) -> RunnerSection {
     let mut caveats = Vec::new();
     let change = build_benchmark_runs_statistics(&exclude_outlier_runs(
@@ -431,15 +448,23 @@ fn compare_builds(
     if base.run_count == 0 {
         caveats.push(RunnerCaveat::NoBaselineData);
     }
-    if expected_release && release.run_count == 0 {
-        caveats.push(RunnerCaveat::NoReleaseData);
+    if release.run_count == 0 {
+        match expected_release {
+            ReleaseExpectation::NotGiven => {}
+            ReleaseExpectation::Measured => caveats.push(RunnerCaveat::NoReleaseData),
+            ReleaseExpectation::NotMeasured => caveats.push(RunnerCaveat::ReleaseNotMeasured),
+        }
     }
 
     // the frame-time verdicts alone, as against the base; a session the release cannot be
     // compared with withholds them, and a note says why
     let release_comparison = (release.run_count > 0).then(|| {
         let incomparable = sessions_not_comparable(&change, &release);
-        if let Some(incomparable) = incomparable {
+        // too few change runs is already the base table's note
+        let base_says_so = incomparable == Some(SessionsNotComparable::TooFewRuns)
+            && change.run_count < 2
+            && base.run_count > 0;
+        if let Some(incomparable) = incomparable.filter(|_| !base_says_so) {
             caveats.push(RunnerCaveat::ReleaseSessionsNotComparable(incomparable));
         }
         let frame_time_verdicts = frame_time_verdicts(&change, &release, incomparable);
@@ -723,7 +748,7 @@ mod tests {
             vec![run(), run(), run()],
             vec![run()],
             3,
-            true,
+            ReleaseExpectation::Measured,
         );
         let comparison = section.release_comparison.as_ref().unwrap();
         assert!(comparison
@@ -738,6 +763,24 @@ mod tests {
             .caveats
             .iter()
             .any(|caveat| matches!(caveat, RunnerCaveat::SessionsNotComparable(_))));
+
+        // one change run: the base's note says it once, the release adds none
+        let section = compare_builds(
+            "apple-m1".to_owned(),
+            vec![run()],
+            vec![run(), run(), run()],
+            vec![run(), run(), run()],
+            3,
+            ReleaseExpectation::Measured,
+        );
+        let too_few = |caveat: &&RunnerCaveat| {
+            matches!(
+                caveat,
+                RunnerCaveat::SessionsNotComparable(SessionsNotComparable::TooFewRuns)
+                    | RunnerCaveat::ReleaseSessionsNotComparable(SessionsNotComparable::TooFewRuns)
+            )
+        };
+        assert_eq!(section.caveats.iter().filter(too_few).count(), 1);
     }
 
     #[test]
@@ -757,9 +800,16 @@ mod tests {
             })
         };
         let compare = |change, base| {
-            compare_builds("apple-m1".to_owned(), change, base, Vec::new(), 3, false)
-                .baseline_comparison
-                .unwrap()
+            compare_builds(
+                "apple-m1".to_owned(),
+                change,
+                base,
+                Vec::new(),
+                3,
+                ReleaseExpectation::NotGiven,
+            )
+            .baseline_comparison
+            .unwrap()
         };
         // three runs a build, the summary in one change run only
         let comparison = compare(

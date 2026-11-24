@@ -16,7 +16,7 @@ use tokio_util::sync::CancellationToken;
 use crate::app_source;
 use crate::cli::{
     flag, given, whole_number, Command, FetchArgs, LegArgs, MeasureArgs, ReportArgs, RunArgs,
-    Settings, WarmupArgs, BASE_BUILD, CHANGE_BUILD, RELEASE_BUILD,
+    Settings, WarmupArgs, BASE_BUILD, CHANGE_BUILD, RELEASE_BUILD, RELEASE_NOT_MEASURED,
 };
 use crate::failure::Failure;
 use crate::out;
@@ -179,6 +179,10 @@ fn measure(args: MeasureArgs, ctx: &Context) -> Result<i32, Failure> {
     ];
 
     measure_loop(ctx, &settings, &change, &others, runs, settle, label)?;
+    if flag(&args.release_not_measured) {
+        fs::write(settings.out_dir.join(RELEASE_NOT_MEASURED), "")?;
+        out::log(format!("wrote {RELEASE_NOT_MEASURED}"));
+    }
     Ok(0)
 }
 
@@ -335,7 +339,8 @@ pub fn clear_run_files(settings: &Settings, build: &str, i: u64) -> Result<(), F
     Ok(())
 }
 
-/// Removes what an earlier session into the same `--out` left for the report: `runs_on.txt` and
+/// Removes what an earlier session into the same `--out` left for the report: `runs_on.txt`,
+/// `release_not_measured.txt` and
 /// every run's `<build>_<n>.csv`, `.csv.partial` and `.log`, including runs this session does not
 /// repeat (it measures fewer runs, or no base or release build). The warm-ups' `<build>.log` and
 /// the app folders stay.
@@ -354,7 +359,7 @@ pub fn clear_earlier_session(settings: &Settings) -> Result<(), Failure> {
         let Some(name) = name.to_str() else {
             continue;
         };
-        if name != "runs_on.txt" && !is_run_file(name) {
+        if name != "runs_on.txt" && name != RELEASE_NOT_MEASURED && !is_run_file(name) {
             continue;
         }
         match fs::remove_file(entry.path()) {

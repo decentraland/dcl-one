@@ -36,6 +36,8 @@ PACKAGE = '@dcl-regenesislabs/bevy-explorer-web'
 # The deployment environment of decentraland.org (bevy-explorer-rollout-manual.yml).
 RELEASE_ENVIRONMENT = 'org'
 RELEASE_PATH = 'play'
+# The rollout workflow creates the deployment with GITHUB_TOKEN; a record made by hand is not a release.
+RELEASE_CREATOR = 'github-actions[bot]'
 RELEASE_VERSION = re.compile(r'[0-9]+\.[0-9]+\.[0-9]+-([0-9]+)\.commit-([0-9a-f]{7,40})')
 RUNNER = 'bevy-explorer-benchmark-'
 # A leg's Test builds step is cut off after 90 minutes, so runs x 3 builds x (the 480 s run timeout
@@ -131,6 +133,8 @@ def latest_release(repo):
         if not isinstance(payload, dict) or payload.get('prefix') != PACKAGE or payload.get('path') != RELEASE_PATH:
             continue
         if str(payload.get('percentage')) != '100':
+            continue
+        if (deployment.get('creator') or {}).get('login') != RELEASE_CREATOR:
             continue
         statuses = api(f"repos/{repo}/deployments/{deployment['id']}/statuses?per_page=1")
         if statuses and statuses[0].get('state') == 'success':

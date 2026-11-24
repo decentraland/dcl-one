@@ -52,6 +52,7 @@ class GitHub:
         self.artifacts[80] = artifacts(RELEASE)
         rollout = {'prefix': inputs.PACKAGE, 'path': 'play', 'percentage': 100}
         self.deployments = [
+            {'id': 9, 'creator': {'login': 'someone'}, 'payload': {**rollout, 'version': '0.1.0-89.commit-9999990'}},
             {'id': 8, 'payload': {**rollout, 'version': '0.1.0-88.commit-8888888'}},
             {'id': 7, 'payload': {**rollout, 'prefix': '@dcl/other', 'version': '0.1.0-87.commit-7777777'}},
             {'id': 6, 'payload': {**rollout, 'path': 'other', 'version': '0.1.0-86.commit-6666666'}},
@@ -61,8 +62,10 @@ class GitHub:
             {'id': 2, 'payload': {**rollout, 'version': '0.1.0-82.commit-2222222'}},
             {'id': 1, 'payload': {**rollout, 'version': RELEASE_VERSION}},
         ]
-        # 8 is still in progress, 2 failed; only the newest status of each counts
-        self.deployment_states = {8: 'queued', 7: 'success', 6: 'success', 5: 'success', 4: 'success',
+        for deployment in self.deployments[1:]:
+            deployment['creator'] = {'login': 'github-actions[bot]'}
+        # 9 was made by hand, 8 is still in progress, 2 failed; only the newest status of each counts
+        self.deployment_states = {9: 'success', 8: 'queued', 7: 'success', 6: 'success', 5: 'success', 4: 'success',
                                   3: 'success', 2: 'failure', 1: 'success'}
         self.expired = set()
         # build-info.json per web app, an optimized engine unless given here; None leaves it out.
