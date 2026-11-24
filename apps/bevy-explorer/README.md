@@ -106,8 +106,15 @@ of the compiled engine's cache key, so that build recompiles the WASM.
 manual Explorer dispatch select all engine checks. Image-only edits reuse a matching completed
 web producer and do not select native compilation. On main, non-Linux headless packages build
 alongside Headless Smoke; its stripped, tested Linux binaries also supply the Linux npm package.
+*Relay wake in the browser* runs the `dcl_wasm` crate's wasm tests in headless Chrome: a scene
+worker's `Atomics.waitAsync` ends on the engine's send. It runs when that crate, the workspace and
+vendored crates it reaches by path, the protocol, the Bevy fork's patch series, the workspace's
+Cargo files, the web tools, the build cache tools or this workflow change; on main it compares with
+the web build's latest successful main execution. Integration guards compare its list of crate
+directories with `Cargo.lock`, so a new path dependency fails there until the list names it. The
+Test Suite runs the same crate's host tests.
 
-The build jobs (*Test Suite*, *Headless Smoke*, *Clippy*, the web build) start beside *Integration guards* and the
+The build jobs (*Test Suite*, *Headless Smoke*, *Clippy*, *Relay wake in the browser*, the web build) start beside *Integration guards* and the
 format checks. When one of those checks fails on a pull request from this repository, the *Stop the build jobs*
 job cancels the run; a pull request from a fork runs to the end, because its token cannot cancel a run.
 

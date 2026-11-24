@@ -21,14 +21,14 @@ import { invalidateEventsAfterWrite } from "@/data/lib/catalyst/places/events-pa
 import {
   editEventHref, eventAdminKeys, eventOccurrence, eventReviewStatus, moderateEvent, moderationQueueQuery, type ManagedEvent,
 } from "@/data/lib/catalyst/places/event-management";
-import { useEventsFooterCopy } from "../../events/locale";
-import { eventImage } from "../../events/view";
-import { openSignIn } from "../../components/auth/signin-store";
-import SitesLayout from "../../components/chrome/SitesLayout";
-import { AdminAccessGate } from "./AdminAccessGate";
-import { EventAdminTabs } from "./EventAdminTabs";
-import { useEventAdmin, type EventAdminAccess } from "./useEventAdmin";
-import { useToast } from "./useToast";
+import { useEventsFooterCopy } from "@/features/events/locale";
+import { eventImage } from "@/features/events/view";
+import { openSignIn } from "@/features/components/auth/signin-store";
+import SitesLayout from "@/features/components/chrome/SitesLayout";
+import { AdminAccessGate } from "@/features/explorer/event-management/AdminAccessGate";
+import { EventAdminTabs } from "@/features/explorer/event-management/EventAdminTabs";
+import { useEventAdmin, type EventAdminAccess } from "@/features/explorer/event-management/useEventAdmin";
+import { useToast } from "@/features/explorer/event-management/useToast";
 import styles from "./PendingEventsPage.module.css";
 
 /** The Users and Pending pages render in English, as decentraland.org's (its admin copy has no translations). */
@@ -90,6 +90,24 @@ function PendingQueue({ access }: { access: EventAdminAccess }) {
   if (closing !== null && openId !== closing) setClosing(null);
   const review = openId && openId !== closing ? [...pending, ...recentlyApproved].find((event) => event.id === openId) ?? null : null;
   const now = new Date();
+  // A link (a notification, a shared URL) can name an event another moderator has handled since, or one
+  // this account does not review: once a read made for this page answers without it, say so and drop the
+  // id. A cached queue may predate the event, so it decides nothing until that read settles.
+  const unlisted = Boolean(openId) && openId !== closing && queue.isSuccess && queue.isFetchedAfterMount && !queue.isFetching && review === null;
+  const cachedWithout = Boolean(openId) && openId !== closing && queue.isSuccess && !queue.isFetchedAfterMount && !queue.isFetching && review === null;
+  const refetchQueue = queue.refetch;
+  useEffect(() => {
+    if (cachedWithout) void refetchQueue();
+  }, [cachedWithout, refetchQueue]);
+  useEffect(() => {
+    if (!unlisted) return;
+    setToast({ message: adminCopy.pending.notListed, tone: "error" });
+    setParams((current) => {
+      const next = new URLSearchParams(current);
+      next.delete("id");
+      return next;
+    }, { replace: true, preventScrollReset: true });
+  }, [unlisted, setParams, setToast]);
 
   function select(id: string | null) {
     setError(null);

@@ -12,6 +12,8 @@ interface ToggleProps {
   /** light: the switch sits on a light panel, so its off track is dark. */
   surface?: 'dark' | 'light'
   'aria-label'?: string
+  /** Ids of elements that describe the control. */
+  'aria-describedby'?: string
 }
 
 export function Toggle({
@@ -20,7 +22,8 @@ export function Toggle({
   disabled = false,
   size = 'md',
   surface = 'dark',
-  'aria-label': ariaLabel
+  'aria-label': ariaLabel,
+  'aria-describedby': ariaDescribedBy
 }: ToggleProps): React.JSX.Element {
   return (
     <button
@@ -28,6 +31,7 @@ export function Toggle({
       role="switch"
       aria-checked={checked}
       aria-label={ariaLabel}
+      aria-describedby={ariaDescribedBy}
       disabled={disabled}
       className={`${styles.track} ${size === 'sm' ? styles.sm : ''} ${surface === 'light' ? styles.onLight : ''} ${checked ? styles.on : ''}`.trim()}
       onClick={() => onChange(!checked)}
