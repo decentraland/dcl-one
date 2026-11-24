@@ -84,6 +84,17 @@ pub struct GltfLinkSet;
 #[derive(Component, Debug)]
 pub struct GltfDefinition(PbGltfContainer);
 
+/// Used to keep track of the generation of
+/// a [`GltfDefinition`] while in preview.
+///
+/// The generation is incremented on [`PreviewCommand::ReloadModel`]
+/// or [`PreviewCommand::RemoveModel`].
+///
+/// [`PreviewCommand::ReloadModel`]: common::structs::PreviewCommand::ReloadModel
+/// [`PreviewCommand::RemoveModel`]: common::structs::PreviewCommand::RemoveModel
+#[derive(Default, Component, Deref)]
+pub struct GltfDefinitionGeneration(pub(crate) usize);
+
 impl From<PbGltfContainer> for GltfDefinition {
     fn from(value: PbGltfContainer) -> Self {
         Self(value)
@@ -222,6 +233,7 @@ impl Plugin for GltfDefinitionPlugin {
 
         app.add_observer(clear_stale_instance);
         app.add_observer(on_gltf_container_removed);
+        app.add_observer(new_gltf_container);
     }
 }
 
@@ -370,6 +382,7 @@ fn on_gltf_container_removed(
         GltfReady,
         GltfAssetFailed,
         GltfSource,
+        GltfDefinitionGeneration,
     )>();
 }
 
@@ -2705,6 +2718,12 @@ fn update_gltf_linked_visibility(
             *target_vis = *vis;
         }
     }
+}
+
+fn new_gltf_container(trigger: Trigger<OnInsert, GltfDefinition>, mut commands: Commands) {
+    commands
+        .entity(trigger.target())
+        .insert(GltfDefinitionGeneration::default());
 }
 
 #[cfg(test)]

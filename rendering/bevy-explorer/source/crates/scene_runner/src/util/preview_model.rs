@@ -11,7 +11,8 @@ use ipfs::ipfs_path::content_file_path;
 
 use crate::{
     update_world::gltf_container::{
-        reload_gltf_container, GltfDefinition, GltfHandle, SceneResourceLookup,
+        reload_gltf_container, GltfDefinition, GltfDefinitionGeneration, GltfHandle,
+        SceneResourceLookup,
     },
     SceneEntity,
 };
@@ -32,7 +33,10 @@ pub(super) struct RemoveModel {
 
 /// A container whose file is being loaded again: it loads its value again once the asset is.
 #[derive(Component, Debug, PartialEq)]
-pub(super) struct ModelReloadPending(AssetId<Gltf>);
+pub(super) struct ModelReloadPending {
+    asset_id: AssetId<Gltf>,
+    generation: usize,
+}
 
 /// The scene names a file as its content map does, which ignores case and a leading separator.
 fn same_file(a: &str, b: &str) -> bool {
@@ -70,13 +74,19 @@ pub(super) fn remove_model(
 pub(super) fn reload_model(
     mut commands: Commands,
     mut events: EventReader<ReloadModel>,
-    containers: Query<(Entity, &SceneEntity, &GltfDefinition, Option<&GltfHandle>)>,
+    mut containers: Query<(
+        Entity,
+        &SceneEntity,
+        &GltfDefinition,
+        &mut GltfDefinitionGeneration,
+        Option<&GltfHandle>,
+    )>,
     asset_server: Res<AssetServer>,
 ) {
     let mut reloading = HashSet::new();
     for ReloadModel { scene, src } in events.read() {
         debug!("reloading model {src} in {scene}");
-        for (entity, scene_ent, definition, h_gltf) in &containers {
+        for (entity, scene_ent, definition, mut definition_generation, h_gltf) in &mut containers {
             if !shows(scene_ent, definition, *scene, src) {
                 continue;
             }
@@ -93,7 +103,11 @@ pub(super) fn reload_model(
                 asset_server.reload(path.into_owned());
                 reloading.insert(id);
             }
-            commands.entity(entity).try_insert(ModelReloadPending(id));
+            definition_generation.0 += 1;
+            commands.entity(entity).try_insert(ModelReloadPending {
+                asset_id: id,
+                generation: **definition_generation,
+            });
         }
     }
 }
@@ -105,7 +119,12 @@ pub(super) fn finish_model_reloads(
     mut commands: Commands,
     mut asset_events: EventReader<AssetEvent<Gltf>>,
     mut failures: EventReader<AssetLoadFailedEvent<Gltf>>,
-    pending: Query<(Entity, &SceneEntity, &ModelReloadPending)>,
+    pending: Query<(
+        Entity,
+        &SceneEntity,
+        &GltfDefinitionGeneration,
+        &ModelReloadPending,
+    )>,
     gltfs: Res<Assets<Gltf>>,
     gltf_meshes: Res<Assets<GltfMesh>>,
     mut lookups: Query<&mut SceneResourceLookup>,
@@ -128,18 +147,30 @@ pub(super) fn finish_model_reloads(
     }
 
     let mut forgotten = HashSet::new();
-    for (entity, scene_ent, ModelReloadPending(id)) in &pending {
-        if !done.contains(id) {
-            continue;
-        }
-        if forgotten.insert((scene_ent.root, *id)) {
-            if let (Some(gltf), Ok(mut lookup)) = (gltfs.get(*id), lookups.get_mut(scene_ent.root))
-            {
-                lookup.forget_gltf(gltf, &gltf_meshes);
+    for (
+        entity,
+        scene_ent,
+        definition_generation,
+        ModelReloadPending {
+            asset_id: id,
+            generation,
+        },
+    ) in &pending
+    {
+        if **definition_generation == *generation {
+            if !done.contains(id) {
+                continue;
             }
+            if forgotten.insert((scene_ent.root, *id)) {
+                if let (Some(gltf), Ok(mut lookup)) =
+                    (gltfs.get(*id), lookups.get_mut(scene_ent.root))
+                {
+                    lookup.forget_gltf(gltf, &gltf_meshes);
+                }
+            }
+            reload_gltf_container(&mut commands, entity);
         }
         commands.entity(entity).try_remove::<ModelReloadPending>();
-        reload_gltf_container(&mut commands, entity);
     }
 }
 
