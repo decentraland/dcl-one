@@ -133,16 +133,6 @@ class EngineCacheTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, 'build variables'):
                 artifact.restore_engine(self.cache, self.root)
 
-    # A pull request compiles the debug tools in: its engine never stands in for main's, and an
-    # empty value (main's) keys like an unset one.
-    def test_debug_tools_miss_the_engine_cache(self):
-        with patch.dict(os.environ, {name: '' for name in artifact.BUILD_ENV}):
-            cache_key = artifact.engine_cache_key(self.root)
-            os.environ.pop('BEVY_DEBUG_TOOLS')
-            self.assertEqual(cache_key, artifact.engine_cache_key(self.root))
-            with patch.dict(os.environ, {'BEVY_DEBUG_TOOLS': '1'}):
-                self.assertNotEqual(cache_key, artifact.engine_cache_key(self.root))
-
     def test_headless_packaging_changes_do_not_invalidate_web_artifacts(self):
         engine_key, full_key = artifact.engine_inputs(self.root), artifact.inputs(self.root)
         self.pack()

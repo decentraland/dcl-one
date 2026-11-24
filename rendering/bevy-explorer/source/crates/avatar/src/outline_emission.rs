@@ -22,19 +22,6 @@ use scene_material::{
     SCENE_MATERIAL_OUTLINE_MESH_TAG, SCENE_MATERIAL_TOON_MESH_TAG,
 };
 
-fn f16_to_f32(h: u16) -> f32 {
-    let s = if h & 0x8000 != 0 { -1.0 } else { 1.0 };
-    let e = ((h >> 10) & 0x1f) as i32;
-    let m = (h & 0x3ff) as f32;
-    if e == 0 {
-        s * m * 2f32.powi(-24)
-    } else if e == 31 {
-        f32::INFINITY
-    } else {
-        s * (1.0 + m / 1024.0) * 2f32.powi(e - 15)
-    }
-}
-
 /// Renders the shield's particle material (toon, undithered, as on the player's avatar) on a 4 mm
 /// quad 15 mm in front of an outlined backdrop, with and without the outline, and reads back the
 /// HDR pixels. Needs a GPU, so `#[ignore]`d and skipped by CI:
@@ -159,7 +146,7 @@ fn outlined_particle_keeps_its_glow() {
     let px = |x: u32, y: u32| {
         let i = ((y * w + x) * 8) as usize;
         (0..4)
-            .map(|c| f16_to_f32(u16::from_le_bytes([bytes[i + c * 2], bytes[i + c * 2 + 1]])))
+            .map(|c| half::f16::from_le_bytes([bytes[i + c * 2], bytes[i + c * 2 + 1]]).to_f32())
             .collect::<Vec<_>>()
     };
     // the particles stand 0.1 m either side of the centre, 1.485 m from the camera; the default

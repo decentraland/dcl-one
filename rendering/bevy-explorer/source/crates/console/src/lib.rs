@@ -15,29 +15,6 @@ pub use debug_panel::{AddDebugSection, DebugInput, DebugInputKind, DebugSection}
 pub mod line;
 pub mod reply;
 
-/// Whether this build carries the debug tools that must never reach production (`/wear`). CI
-/// builds with `BEVY_DEBUG_TOOLS=1` for pull requests and for desktop builds of a ref other than
-/// main or a tag (apps/bevy-explorer/README.md); a local build opts in the same way.
-pub const DEBUG_TOOLS: bool = debug_tools(option_env!("BEVY_DEBUG_TOOLS"));
-
-/// Empty counts as unset: CI exports an undefined variable as "".
-const fn debug_tools(value: Option<&str>) -> bool {
-    match value {
-        Some(value) => !value.is_empty(),
-        None => false,
-    }
-}
-
-#[cfg(test)]
-mod debug_tools_tests {
-    #[test]
-    fn debug_tools_needs_a_non_empty_value() {
-        assert!(!super::debug_tools(None));
-        assert!(!super::debug_tools(Some("")));
-        assert!(super::debug_tools(Some("1")));
-    }
-}
-
 pub trait DoAddConsoleCommand {
     fn add_console_command<T: Command, U>(
         &mut self,

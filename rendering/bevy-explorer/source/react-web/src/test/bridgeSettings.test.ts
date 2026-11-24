@@ -69,9 +69,10 @@ describe('graphics presets', () => {
     expect(target(nativeDefaults(), 2, 'Anti-aliasing')).toBe(2)
   })
 
-  it('Medium and High use the High bloom', () => {
-    expect(target(nativeDefaults(), 1, 'Bloom')).toBe(2)
-    expect(target(nativeDefaults(), 2, 'Bloom')).toBe(2)
+  it('every preset uses the default bloom', () => {
+    for (const preset of [0, 1, 2]) {
+      expect(target(nativeDefaults(), preset, 'Bloom')).toBe(2)
+    }
   })
 
   it('Low turns off the costly features', () => {
@@ -81,7 +82,6 @@ describe('graphics presets', () => {
       VSync: 0,
       'Render Resolution': 50,
       'Anti-aliasing': 0,
-      Bloom: 1,
       'Shadow settings': 0,
       'Light Count': 0,
       'Lens Flare': 0

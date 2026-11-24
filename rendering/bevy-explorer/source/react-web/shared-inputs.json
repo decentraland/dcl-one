@@ -6050,7 +6050,7 @@
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/bridge-scene/src/domains/graphicsPresets.ts",
-      "sha256": "d1e5c1cdb6da429b97fb565c89d0e70d0205057e1670af8eb2ce9a6ef152912b"
+      "sha256": "5b968d8035bdbcda826db18e1773105b0bf25d3912b4fc9f9832957951c74034"
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/bridge-scene/src/domains/itemPurchase.ts",
@@ -6358,7 +6358,7 @@
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/src/test/bridgeSettings.test.ts",
-      "sha256": "827329e524909c11e1fec6bfb670b225ba506b6ddef0aa8083758c491d4a9a18"
+      "sha256": "9a2b9b20bcca01e4c5d4b5600733253f6896e22de2a014ffacb7d8d377ffb341"
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/src/test/bridgeTextureOptimization.test.ts",

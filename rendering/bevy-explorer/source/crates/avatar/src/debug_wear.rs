@@ -1,6 +1,6 @@
 //! `/wear`: put any wearable on the local player, for comparing how wearables render. Only this
 //! client's rendering changes: the profile, the passport and what other players see stay as they
-//! are. Built only into debug-tool builds (`console::DEBUG_TOOLS`).
+//! are. A preview-mode command, registered with the other avatar debug tools (`debug_avatars`).
 //!
 //! The forced wearables lead the player's shape, so each wins its category over the shape's own
 //! (the renderer keeps the first wearable of each category). A scene that replaces the player's
@@ -22,7 +22,7 @@ pub(super) struct DebugWearPlugin;
 
 impl Plugin for DebugWearPlugin {
     fn build(&self, app: &mut App) {
-        app.add_console_command::<WearCommand, _>(wear_command)
+        app.add_preview_console_command::<WearCommand, _>(wear_command)
             .add_systems(
                 Update,
                 apply_forced_wearables

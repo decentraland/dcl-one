@@ -872,9 +872,9 @@ ends in "we don't do that", so the next person doesn't have to rediscover it.
   carry Unity's values for the frame rate, VSync, render scale, avatar outline, jiggle bones, sun
   shadow quality, the Low and High shadow distances and scene lights; Medium is the default and
   the one every saved config migrates to, except jiggle bones, which stay off by default (see the
-  spring bones ADR). Anti-aliasing and depth of field differ (next entry). Medium and High use the
-  High bloom, the one that matches Unity's; the Low preset keeps the Low bloom where Unity turns
-  bloom off. Medium's sun shadow distance is 20 m, not 60 m: Medium
+  spring bones ADR). Anti-aliasing and depth of field differ (next entry). Every preset uses the
+  default bloom, High, the one that matches Unity's on Medium and High; Unity turns bloom off on
+  Low. Medium's sun shadow distance is 20 m, not 60 m: Medium
   has one cascade (above), which stops at 40 m, and at 20 m its texels are half as large as at
   40 m. The presets leave out Unity's scene distance (in parcels, where far scenes load as
   LODs; here imposters draw them and the load distance stays the player's), the landscape

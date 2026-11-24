@@ -194,13 +194,11 @@ impl Plugin for AvatarRenderPlugin {
         app.add_plugins(spring_bones::SpringBonesPlugin);
         app.init_resource::<AssetCache<AvatarMatKey, SceneMaterial>>();
         app.init_resource::<AssetCache<AvatarMaskKey, MaskMaterial>>();
-        app.init_resource::<EmissiveStrengths>();
         app.add_systems(
             PostUpdate,
             (
                 clean_asset_cache::<AvatarMatKey, SceneMaterial>,
                 clean_asset_cache::<AvatarMaskKey, MaskMaterial>,
-                forget_emissive_strengths,
             ),
         );
         app.add_systems(
@@ -239,9 +237,6 @@ impl Plugin for AvatarPlugin {
         app.add_plugins(HeadIkPlugin);
         app.add_plugins(ik_debug::IkDebugPlugin);
         app.add_plugins(debug_avatars::DebugAvatarsPlugin);
-        if console::DEBUG_TOOLS {
-            app.add_plugins(debug_wear::DebugWearPlugin);
-        }
         app.add_plugins(PointAtIkPlugin);
         app.add_plugins(PointAtMarkerPlugin);
         app.add_plugins(pause_hidden::PauseHiddenAvatarsPlugin);
@@ -1265,17 +1260,9 @@ pub struct AvatarLoaded {
     wearable_instances: Vec<Option<InstanceId>>,
     skin_materials: HashSet<Handle<StandardMaterial>>,
     hair_materials: HashSet<Handle<StandardMaterial>>,
-    /// the emissive strengths of the avatar's materials that have one (EmissiveStrengths)
-    emissive_strengths: HashMap<AssetId<StandardMaterial>, f32>,
 }
 #[derive(Component)]
 pub struct AvatarProcessed;
-
-/// The KHR_materials_emissive_strength of every wearable material that has one other than 1. The
-/// glTF loader multiplies the emissive by it; avatars do not take that extension, so it is divided
-/// back out. Read from each wearable's glTF source, which is then dropped.
-#[derive(Resource, Default)]
-struct EmissiveStrengths(HashMap<AssetId<StandardMaterial>, f32>);
 
 /// The suffix the glTF loader adds to a material's label for the copy it makes for a mirrored
 /// (negative-scale) node, whose faces wind the other way.
@@ -1305,12 +1292,14 @@ fn material_and_mirrored(
     std::iter::once(material.clone_weak()).chain(mirrored.map(|handle| handle.clone_weak()))
 }
 
-/// Reads a loaded wearable glTF's emissive strengths into `strengths` and drops its source, the
-/// document and binary chunk the loader kept for this. A glTF already read has no source left.
-fn take_emissive_strengths(
+/// Divides the KHR_materials_emissive_strength out of a loaded wearable glTF's materials: the glTF
+/// loader multiplies the emissive by it, and avatars do not take that extension. The strengths
+/// come from the glTF's source, the document and binary chunk the loader kept for this, which is
+/// then dropped: a glTF already divided has no source left.
+fn drop_emissive_strengths(
     gltfs: &mut Assets<Gltf>,
     id: AssetId<Gltf>,
-    strengths: &mut EmissiveStrengths,
+    materials: &mut Assets<StandardMaterial>,
     asset_server: &AssetServer,
 ) {
     if gltfs.get(id).is_none_or(|gltf| gltf.source.is_none()) {
@@ -1328,20 +1317,24 @@ fn take_emissive_strengths(
             .emissive_strength()
             .filter(|s| *s > 0.0 && *s != 1.0)
         {
-            for material in material_and_mirrored(handle, asset_server) {
-                strengths.0.insert(material.id(), strength);
-            }
+            divide_emissive(materials, handle, strength, asset_server);
         }
     }
 }
 
-fn forget_emissive_strengths(
-    mut events: EventReader<AssetEvent<StandardMaterial>>,
-    mut strengths: ResMut<EmissiveStrengths>,
+/// Divides `strength` out of a glTF material's emissive colour, and out of its mirrored copy's.
+fn divide_emissive(
+    materials: &mut Assets<StandardMaterial>,
+    material: &Handle<StandardMaterial>,
+    strength: f32,
+    asset_server: &AssetServer,
 ) {
-    for event in events.read() {
-        if let AssetEvent::Removed { id } = event {
-            strengths.0.remove(id);
+    for handle in material_and_mirrored(material, asset_server) {
+        if let Some(material) = materials.get_mut(&handle) {
+            // the alpha is the exposure weight, not part of the colour
+            material.emissive.red /= strength;
+            material.emissive.green /= strength;
+            material.emissive.blue /= strength;
         }
     }
 }
@@ -1358,7 +1351,7 @@ fn spawn_scenes(
     >,
     asset_server: Res<AssetServer>,
     mut gltfs: ResMut<Assets<Gltf>>,
-    mut emissive_strengths: ResMut<EmissiveStrengths>,
+    mut standard_materials: ResMut<Assets<StandardMaterial>>,
     mut scene_spawner: ResMut<SceneSpawner>,
     // absent without the asset pipeline (tests): nothing reloads
     ipfs: Option<Res<IpfsResource>>,
@@ -1402,27 +1395,19 @@ fn spawn_scenes(
             continue;
         }
 
-        let models = || {
-            def.body.model.iter().chain(
-                def.wearables
-                    .iter()
-                    .flat_map(|(_, wearable)| wearable.model.as_ref()),
-            )
-        };
-        for model in models() {
-            take_emissive_strengths(
+        let models = def.body.model.iter().chain(
+            def.wearables
+                .iter()
+                .flat_map(|(_, wearable)| wearable.model.as_ref()),
+        );
+        for model in models {
+            drop_emissive_strengths(
                 &mut gltfs,
                 model.gltf.id(),
-                &mut emissive_strengths,
+                &mut standard_materials,
                 &asset_server,
             );
         }
-        let avatar_emissive_strengths: HashMap<_, _> = models()
-            .filter_map(|model| gltfs.get(&model.gltf))
-            .flat_map(|gltf| &gltf.materials)
-            .flat_map(|h| material_and_mirrored(h, &asset_server))
-            .filter_map(|h| Some((h.id(), *emissive_strengths.0.get(&h.id())?)))
-            .collect();
 
         let Some(gltf) = def
             .body
@@ -1546,7 +1531,6 @@ fn spawn_scenes(
                 wearable_instances: instances.collect(),
                 skin_materials,
                 hair_materials,
-                emissive_strengths: avatar_emissive_strengths,
             },
             Visibility::Hidden,
         ));
@@ -2272,19 +2256,14 @@ fn derived_scene_material(
         mat.base_color
     };
 
-    // the glTF emissive factor alone: the loader's KHR_materials_emissive_strength divided out
-    let strength = loaded_avatar
-        .emissive_strengths
-        .get(&h_mat.0.id())
-        .copied()
-        .unwrap_or(1.0);
+    // the emissive is the glTF factor alone (drop_emissive_strengths)
     let emissive_color_specified =
         mat.emissive.red != 0.0 || mat.emissive.green != 0.0 || mat.emissive.blue != 0.0;
     let emissive = if emissive_color_specified {
         LinearRgba {
-            red: avatar_emission(mat.emissive.red / strength),
-            green: avatar_emission(mat.emissive.green / strength),
-            blue: avatar_emission(mat.emissive.blue / strength),
+            red: avatar_emission(mat.emissive.red),
+            green: avatar_emission(mat.emissive.green),
+            blue: avatar_emission(mat.emissive.blue),
             alpha: mat.emissive.alpha,
         }
     } else {

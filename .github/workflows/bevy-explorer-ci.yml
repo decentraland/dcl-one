@@ -934,9 +934,6 @@ jobs:
       # The Segment source the engine reports to (crates/analytics); unset, the shared key. Part
       # of the compiled engine's cache key (tooling/play-artifact.py engine-cache-key).
       BEVY_SEGMENT_WRITE_KEY: ${{ vars.BEVY_SEGMENT_WRITE_KEY }}
-      # The debug tools that never reach production (console::DEBUG_TOOLS): a PR build only. Part
-      # of the engine cache key, so a PR never reuses main's engine nor main a PR's.
-      BEVY_DEBUG_TOOLS: ${{ github.event_name == 'pull_request' && '1' || '' }}
       # Bevy Explorer / Benchmark refuses unoptimized web apps; while its fleet is off ('none'),
       # nothing measures a PR's, so PR builds skip wasm-opt.
       BEVY_WEB_OPT: ${{ github.event_name == 'pull_request' && vars.BENCHMARK_ENABLED_RUNNERS == 'none' && 'unoptimized' || 'optimized' }}
@@ -1385,8 +1382,6 @@ jobs:
     runs-on: ${{ vars.RUNNER_LINUX_X86_UBUNTU_24_04_16CORE || 'ubuntu-24.04-16core' }}
     env:
       BEVY_SEGMENT_WRITE_KEY: ${{ vars.BEVY_SEGMENT_WRITE_KEY }}
-      # as a PR build compiles; this job publishes nothing
-      BEVY_DEBUG_TOOLS: '1'
     permissions:
       contents: read
     steps:

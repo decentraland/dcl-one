@@ -715,7 +715,6 @@ pub(crate) fn app_with_avatar_scenes() -> App {
         .init_asset::<AnimationGraph>()
         .init_resource::<AssetCache<AvatarMatKey, SceneMaterial>>()
         .init_resource::<AssetCache<AvatarMaskKey, MaskMaterial>>()
-        .init_resource::<EmissiveStrengths>()
         .init_resource::<crate::processing_timing::AvatarProcessingRun>();
     app.finish();
     app.cleanup();
@@ -1173,74 +1172,50 @@ fn render_definition(avatar_outline: bool, disable_dither: bool) -> AvatarRender
 }
 
 /// a wearable material derives an avatar material that culls its back faces, double-sided or
-/// not, and whose emissive is the glTF factor without its emissive strength
+/// not, and emits 12.5 times its emissive factor
 #[test]
-fn derived_materials_cull_back_faces_and_drop_the_emissive_strength() {
+fn derived_materials_cull_back_faces_and_emit_their_factor() {
     let mut standard_materials = Assets::<StandardMaterial>::default();
     let mut scene_materials = Assets::<SceneMaterial>::default();
     let mut mat_cache = AssetCache::<AvatarMatKey, SceneMaterial>::default();
     let def = render_definition(true, false);
-
-    let derive = |strength: Option<f32>,
-                  standard_materials: &mut Assets<StandardMaterial>,
-                  scene_materials: &mut Assets<SceneMaterial>,
-                  mat_cache: &mut AssetCache<AvatarMatKey, SceneMaterial>| {
-        // as the glTF loader builds it: the factor 0.25 times the strength, double-sided
-        let mat = StandardMaterial {
-            emissive: LinearRgba::rgb(0.25, 0.25, 0.25) * strength.unwrap_or(1.0),
-            double_sided: true,
-            cull_mode: None,
-            ..default()
-        };
-        let h_mat = MeshMaterial3d(standard_materials.add(mat.clone()));
-        let loaded = AvatarLoaded {
-            body_instance: SceneSpawner::default().spawn(Handle::default()),
-            wearable_instances: Vec::new(),
-            skin_materials: default(),
-            hair_materials: default(),
-            emissive_strengths: strength
-                .map(|strength| (h_mat.0.id(), strength))
-                .into_iter()
-                .collect(),
-        };
-        let handle = derived_scene_material(
-            &mat,
-            &h_mat,
-            &def,
-            &loaded,
-            0.0,
-            &bounds_bits(&def.bounds),
-            0.0,
-            mat_cache,
-            scene_materials,
-        );
-        scene_materials.get(&handle).unwrap().base.clone()
+    let mat = StandardMaterial {
+        emissive: LinearRgba::rgb(0.25, 0.25, 0.25),
+        double_sided: true,
+        cull_mode: None,
+        ..default()
     };
-
-    for strength in [None, Some(4.0)] {
-        let base = derive(
-            strength,
-            &mut standard_materials,
-            &mut scene_materials,
-            &mut mat_cache,
-        );
-        assert_eq!(base.cull_mode, Some(Face::Back), "{strength:?}");
-        assert!(!base.double_sided, "{strength:?}");
-        assert_eq!(
-            base.emissive.to_vec3(),
-            Vec3::splat(avatar_emission(0.25)),
-            "{strength:?}"
-        );
-    }
+    let h_mat = MeshMaterial3d(standard_materials.add(mat.clone()));
+    let loaded = AvatarLoaded {
+        body_instance: SceneSpawner::default().spawn(Handle::default()),
+        wearable_instances: Vec::new(),
+        skin_materials: default(),
+        hair_materials: default(),
+    };
+    let handle = derived_scene_material(
+        &mat,
+        &h_mat,
+        &def,
+        &loaded,
+        0.0,
+        &bounds_bits(&def.bounds),
+        0.0,
+        &mut mat_cache,
+        &mut scene_materials,
+    );
+    let base = &scene_materials.get(&handle).unwrap().base;
+    assert_eq!(base.cull_mode, Some(Face::Back));
+    assert!(!base.double_sided);
+    assert_eq!(base.emissive.to_vec3(), Vec3::splat(3.125));
 }
 
-/// the glTF loader's copy of a material for a mirrored node is found from the material, culls its
-/// front-wound faces and has its emissive strength divided out like the material it copies
+/// the glTF loader's copy of a material for a mirrored node is found from the material, has its
+/// emissive strength divided out with it and culls its front-wound faces
 #[test]
 fn a_mirrored_copy_culls_front_faces_and_drops_the_emissive_strength() {
     use bevy::gltf::GltfAssetLabel;
 
-    let app = app_with_avatar_scenes();
+    let mut app = app_with_avatar_scenes();
     let asset_server = app.world().resource::<AssetServer>().clone();
     let label = |is_scale_inverted| GltfAssetLabel::Material {
         index: 0,
@@ -1261,71 +1236,49 @@ fn a_mirrored_copy_culls_front_faces_and_drops_the_emissive_strength() {
     assert_eq!(ids(&material), vec![material.id(), mirrored.id()]);
     assert_eq!(ids(&lone), vec![lone.id()]);
 
-    let mut scene_materials = Assets::<SceneMaterial>::default();
-    let mut mat_cache = AssetCache::<AvatarMatKey, SceneMaterial>::default();
     let def = render_definition(true, false);
     let loaded = AvatarLoaded {
         body_instance: SceneSpawner::default().spawn(Handle::default()),
         wearable_instances: Vec::new(),
         skin_materials: default(),
         hair_materials: default(),
-        emissive_strengths: [(material.id(), 4.0), (mirrored.id(), 4.0)]
-            .into_iter()
-            .collect(),
     };
-    for (handle, cull, double_sided) in [
-        (&material, Face::Back, false),
-        (&material, Face::Back, true),
-        (&mirrored, Face::Front, false),
-        (&mirrored, Face::Front, true),
-    ] {
-        // as the glTF loader builds it: the factor 0.25 times the strength 4
-        let mat = StandardMaterial {
-            emissive: LinearRgba::rgb(1.0, 1.0, 1.0),
-            double_sided,
-            cull_mode: match (double_sided, cull) {
-                (true, _) => None,
-                (false, cull) => Some(cull),
-            },
-            ..default()
-        };
-        let derived = derived_scene_material(
-            &mat,
-            &MeshMaterial3d(handle.clone()),
-            &def,
-            &loaded,
-            0.0,
-            &bounds_bits(&def.bounds),
-            0.0,
-            &mut mat_cache,
-            &mut scene_materials,
-        );
-        let base = &scene_materials.get(&derived).unwrap().base;
-        let case = format!("{:?} double-sided {double_sided}", handle.path());
-        assert_eq!(base.cull_mode, Some(cull), "{case}");
-        assert_eq!(
-            base.emissive.to_vec3(),
-            Vec3::splat(avatar_emission(0.25)),
-            "{case}"
-        );
-    }
-}
+    let copies = [(&material, Face::Back), (&mirrored, Face::Front)];
+    for double_sided in [false, true] {
+        let mut materials = app.world_mut().resource_mut::<Assets<StandardMaterial>>();
+        for (handle, cull) in copies {
+            // as the glTF loader builds it: the factor 0.25 times the strength 4
+            materials.insert(
+                handle.id(),
+                StandardMaterial {
+                    emissive: LinearRgba::rgb(1.0, 1.0, 1.0),
+                    double_sided,
+                    cull_mode: (!double_sided).then_some(cull),
+                    ..default()
+                },
+            );
+        }
+        divide_emissive(&mut materials, &material, 4.0, &asset_server);
 
-/// the emission is linear in the factor: 12.5 at a factor of 1, nothing below 0
-#[test]
-fn avatar_emission_is_linear_in_the_factor() {
-    for (factor, expected) in [
-        (-0.5, 0.0),
-        (0.0, 0.0),
-        (0.1, 1.25),
-        (0.25, 3.125),
-        (1.0, 12.5),
-    ] {
-        let got = avatar_emission(factor);
-        assert!(
-            (got - expected).abs() < 0.01 * expected.max(1.0),
-            "{factor}: {got}"
-        );
+        let mut scene_materials = Assets::<SceneMaterial>::default();
+        let mut mat_cache = AssetCache::<AvatarMatKey, SceneMaterial>::default();
+        for (handle, cull) in copies {
+            let derived = derived_scene_material(
+                materials.get(handle).unwrap(),
+                &MeshMaterial3d(handle.clone()),
+                &def,
+                &loaded,
+                0.0,
+                &bounds_bits(&def.bounds),
+                0.0,
+                &mut mat_cache,
+                &mut scene_materials,
+            );
+            let base = &scene_materials.get(&derived).unwrap().base;
+            let case = format!("{:?} double-sided {double_sided}", handle.path());
+            assert_eq!(base.cull_mode, Some(cull), "{case}");
+            assert_eq!(base.emissive.to_vec3(), Vec3::splat(3.125), "{case}");
+        }
     }
 }
 
