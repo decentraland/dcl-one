@@ -423,6 +423,12 @@ async fn fetch_and_convert(
         Output::EventPoster if matches!(content_type.as_str(), "image/webp" | "image/gif") => {
             crate::content::entity_thumbnail::render_event_poster(body).await
         }
+        Output::EventPoster
+            if content_type.starts_with("image/")
+                && !matches!(content_type.as_str(), "image/jpeg" | "image/png") =>
+        {
+            return Err(StatusCode::UNSUPPORTED_MEDIA_TYPE.into_response());
+        }
         _ => return cacheable(status, &content_type, body),
     };
     let (kind, bytes) =

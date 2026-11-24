@@ -206,6 +206,46 @@ async fn denied_and_invalid_native_posters_do_not_populate_the_cache() {
 }
 
 #[tokio::test]
+async fn poster_limits_reject_oversized_bodies_and_dimensions() {
+    for (source, expected) in [
+        (
+            Bytes::from(vec![0; MAX_THUMBNAIL_SOURCE_BYTES + 1]),
+            StatusCode::PAYLOAD_TOO_LARGE,
+        ),
+        (webp(8193, 2, 255), StatusCode::UNPROCESSABLE_ENTITY),
+    ] {
+        let (base, hits) = poster_source(webp(24, 12, 255), Some(source)).await;
+        let app = app_reading(crate::http::Outbound::for_tests(), sources(&base, true));
+        let uri = format!("{NATIVE}?url={}", q(&format!("{base}{LANDSCAPE}")));
+        let (status, headers, _) = get(&app, &uri).await;
+        assert_eq!(status, expected);
+        assert_eq!(headers[header::CACHE_CONTROL], "no-store");
+        let (status, _, bytes) = get(&app, &uri).await;
+        assert_eq!(status, StatusCode::OK);
+        assert_jpeg(&bytes, (24, 12));
+        assert_eq!(hits.load(Ordering::SeqCst), 2);
+    }
+}
+
+#[tokio::test]
+async fn unsupported_poster_image_is_rejected_only_on_the_native_route() {
+    let avif = Bytes::from(ftyp(b"avif", &[*b"mif1"]));
+    let (base, hits) = poster_source(avif.clone(), None).await;
+    let app = app_reading(crate::http::Outbound::for_tests(), sources(&base, true));
+    let url = q(&format!("{base}{LANDSCAPE}"));
+    let (status, headers, body) = get(&app, &format!("{BROWSER}?url={url}")).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(headers[header::CONTENT_TYPE], "image/avif");
+    assert_eq!(body, avif);
+    for method in ["GET", "HEAD"] {
+        let (status, headers, _) = request(&app, method, &format!("{NATIVE}?url={url}")).await;
+        assert_eq!(status, StatusCode::UNSUPPORTED_MEDIA_TYPE);
+        assert_eq!(headers[header::CACHE_CONTROL], "no-store");
+    }
+    assert_eq!(hits.load(Ordering::SeqCst), 3);
+}
+
+#[tokio::test]
 async fn native_poster_burst_shares_one_fetch_and_warm_hits_skip_a_full_queue() {
     let (base, hits) = poster_source(webp(160, 80, 255), None).await;
     let settings = Settings::for_tests(BackendKind::Disabled);

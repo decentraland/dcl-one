@@ -24,7 +24,7 @@ use axum::response::{IntoResponse, Response};
 use bytes::Bytes;
 use image::codecs::jpeg::JpegEncoder;
 use image::metadata::Orientation;
-use image::{DynamicImage, ImageDecoder, ImageFormat, ImageReader, Limits};
+use image::{ImageFormat, ImageReader, Limits};
 use serde_json::Value;
 use tokio::sync::{Mutex as AsyncMutex, Semaphore};
 
@@ -314,6 +314,26 @@ enum Rendition {
     EventPoster,
 }
 
+/// Borrows the EXIF chunk from the bounded source; no metadata buffer is allocated.
+fn webp_orientation(bytes: &[u8]) -> Option<Orientation> {
+    let riff = bytes.strip_prefix(b"RIFF")?;
+    let (size, payload) = riff.split_first_chunk::<4>()?;
+    let mut chunks = payload
+        .get(..u32::from_le_bytes(*size) as usize)?
+        .strip_prefix(b"WEBP")?;
+    while !chunks.is_empty() {
+        let (tag, rest) = chunks.split_first_chunk::<4>()?;
+        let (size, rest) = rest.split_first_chunk::<4>()?;
+        let size = u32::from_le_bytes(*size) as usize;
+        let (data, rest) = rest.split_at_checked(size)?;
+        if tag == b"EXIF" {
+            return Orientation::from_exif_chunk(data.strip_prefix(b"Exif\0\0").unwrap_or(data));
+        }
+        chunks = rest.get(size % 2..)?;
+    }
+    None
+}
+
 fn resize(bytes: Bytes, rendition: Rendition) -> Result<(&'static str, Bytes), String> {
     let mut reader = ImageReader::new(Cursor::new(&bytes))
         .with_guessed_format()
@@ -322,40 +342,25 @@ fn resize(bytes: Bytes, rendition: Rendition) -> Result<(&'static str, Bytes), S
     limits.max_image_width = Some(8192);
     limits.max_image_height = Some(8192);
     limits.max_alloc = Some(128 * 1024 * 1024);
-    reader.limits(limits.clone());
+    reader.limits(limits);
     const DECODE_ERROR: &str = "Image could not be decoded within limits";
-    let decode_error = |_| DECODE_ERROR;
-    let (image, width, orientation) = match rendition {
+    let (width, orientation) = match rendition {
         Rendition::Thumbnail(width) => {
             // GIF decoding is enabled for native poster stills only.
             if reader.format() == Some(ImageFormat::Gif) {
                 return Err(DECODE_ERROR.into());
             }
-            (
-                reader.decode().map_err(decode_error)?,
-                width,
-                Orientation::NoTransforms,
-            )
+            (width, None)
         }
-        Rendition::EventPoster => {
-            let mut decoder = reader.into_decoder().map_err(decode_error)?;
-            // Reserve the output buffer from the decoder's budget as ImageReader::decode does.
-            limits
-                .reserve(decoder.total_bytes())
-                .map_err(decode_error)?;
-            decoder.set_limits(limits).map_err(decode_error)?;
-            let orientation = decoder.orientation().map_err(decode_error)?;
-            (
-                DynamicImage::from_decoder(decoder).map_err(decode_error)?,
-                960,
-                orientation,
-            )
-        }
+        Rendition::EventPoster => (960, webp_orientation(&bytes)),
     };
+    let image = reader.decode().map_err(|_| DECODE_ERROR)?;
     // Never enlarge small source images: larger encoded files add no detail.
     let bound = width.min(image.width().max(image.height()));
     let mut image = image.thumbnail(bound, bound);
-    image.apply_orientation(orientation);
+    if let Some(orientation) = orientation {
+        image.apply_orientation(orientation);
+    }
     let mut output = Vec::new();
     let transparent =
         image.color().has_alpha() && image.to_rgba8().pixels().any(|pixel| pixel.0[3] < 255);
@@ -634,6 +639,7 @@ mod tests {
         encoder
             .write_image(pixels.as_raw(), 12, 4, image::ExtendedColorType::Rgba8)
             .unwrap();
+        assert_eq!(webp_orientation(&bytes[..bytes.len() - 1]), None);
         let (mime, body) = render_event_poster(bytes.into()).await.unwrap();
         assert_eq!(mime, "image/png");
         let rendered = image::load_from_memory(&body).unwrap().into_rgba8();
