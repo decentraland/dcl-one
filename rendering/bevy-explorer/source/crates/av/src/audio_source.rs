@@ -35,7 +35,7 @@ pub(crate) fn clip_seconds(clip: &bevy_kira_audio::AudioSource) -> f64 {
 }
 
 /// What the backend is doing with a sounding emitter: written while the backend has an instance
-/// of its clip, and removed when it stops or while the clip is not started yet, so `/audio_state` reads the same state on native and on the web.
+/// of its clip, and removed when it stops or while the clip is not started yet, so `/media_state --audio` reads the same state on native and on the web.
 #[derive(Component, Debug, Clone, Copy, PartialEq)]
 pub(crate) struct EmitterPlayback {
     /// Seconds into the clip.
@@ -46,7 +46,7 @@ pub(crate) struct EmitterPlayback {
 }
 
 /// The backend saw the emitter's clip play to its end. It stays while the scene still asks for
-/// the clip and goes when the scene stops asking or the clip starts again, so `/audio_state` can
+/// the clip and goes when the scene stops asking or the clip starts again, so `/media_state --audio` can
 /// tell a clip that ended from one the backend has not started yet.
 #[derive(Component, Debug)]
 pub(crate) struct EmitterEnded;

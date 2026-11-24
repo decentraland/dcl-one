@@ -357,7 +357,8 @@ State, in every build:
   `retryAttempt` (reopens since its last 5 s of playback), `retryFailures` (failures since the
   source was created), `retryDelaySeconds` (the wait before the scheduled one, else null),
   `retryGaveUp` and `lastError`.
-- `/audio_state [--only-playing]`: JSON of the sound of the scene under the player (an error
+- `/media_state --audio [--only-playing]`: a different reply, the JSON of the sound of the scene
+  under the player (an error
   `No scene world found at the current parcel.` off every scene): `scene` (`hash`, `title`,
   base `parcel`), `sceneIsCurrent` (`false` while the player arrives and the scene is not shown yet) and `note`
   (why its emitters are muted, else `null`),
@@ -376,8 +377,9 @@ State, in every build:
   `none` (no clip). A stream or video adds `scheduled` (chosen to play: one per scene, nearest)
   and its player's last reported state (`playing`, `loading`, `paused`, `error`, ...) with
   `currentTime` and `duration` for a video; without a playback backend it stays `none`.
-  `--only-playing` keeps the sounding ones. It reads the streams and videos through the walk
-  `/media_state` uses, which lists every scene's players with their backend detail.
+  `--only-playing`, which needs `--audio`, keeps the sounding ones. The streams and videos are
+  read through the same walk as the reply without `--audio`, which lists every scene's players
+  with their backend detail and is unchanged.
 
 On the web only:
 

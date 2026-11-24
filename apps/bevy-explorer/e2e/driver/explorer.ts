@@ -89,7 +89,7 @@ export interface MediaState {
   players: MediaPlayerRow[]
 }
 
-/** One emitter, stream or video `/audio_state` lists. */
+/** One emitter, stream or video `/media_state --audio` lists. */
 export interface AudioEntry {
   kind: 'audio_source' | 'audio_stream' | 'video_player'
   crdtEntityId: number
@@ -112,7 +112,7 @@ export interface AudioEntry {
   position: { x: number; y: number; z: number } | null
 }
 
-/** `/audio_state`: the sound of the scene under the player, nearest first. */
+/** `/media_state --audio`: the sound of the scene under the player, nearest first. */
 export interface AudioState {
   scene: { hash: string; title: string; parcel: { x: number; y: number } }
   /** `false` while the player arrives and is not in the scene yet; `note` then says its emitters are muted */
@@ -1116,7 +1116,7 @@ export class Explorer {
 
   /** The emitters, streams and videos of the scene under the player, nearest first. */
   audioState(options: { onlyPlaying?: boolean } = {}): Promise<AudioState> {
-    return this.json<AudioState>(options.onlyPlaying ? '/audio_state --only-playing' : '/audio_state')
+    return this.json<AudioState>(options.onlyPlaying ? '/media_state --audio --only-playing' : '/media_state --audio')
   }
 
   /** The wait before a failed web media source's first reopen; with `ms`, sets it first. */

@@ -456,7 +456,7 @@ describe('Explorer', () => {
     assert.deepEqual(fake.lines, ['/media_state', '/media_retry_delay 100', '/media_retry_delay'])
   })
 
-  test('audioState passes its filter', async () => {
+  test('audioState reads the audio reply of /media_state and passes its filter', async () => {
     const reply = {
       scene: { hash: 'bafkreiscene', title: 'Sound check', parcel: { x: 10, y: -4 } },
       sceneIsCurrent: true,
@@ -470,14 +470,14 @@ describe('Explorer', () => {
         { kind: 'video_player', crdtEntityId: 513, source: 'media/intro.webm', state: 'loading', playing: false, requested: true, loop: false, spatial: false, volume: { authored: 0.5, live: null }, scheduled: true, currentTime: null, duration: null, distance: null, position: null }
       ]
     } satisfies AudioState
-    const fake = new FakeConsole({ audio_state: JSON.stringify(reply) })
+    const fake = new FakeConsole({ media_state: JSON.stringify(reply) })
     const explorer = new Explorer(fake)
     const state = await explorer.audioState()
     assert.deepEqual(state, reply)
     assert.deepEqual(state.entries.map((entry) => entry.kind), ['audio_source', 'video_player'])
     assert.equal(state.entries[0]!.volume.live, 0.42)
     await explorer.audioState({ onlyPlaying: true })
-    assert.deepEqual(fake.lines, ['/audio_state', '/audio_state --only-playing'])
+    assert.deepEqual(fake.lines, ['/media_state --audio', '/media_state --audio --only-playing'])
   })
 
   test("profileDeployWindow waits out the catalyst's window after the own profile changed, and only then", async () => {

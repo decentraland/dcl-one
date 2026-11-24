@@ -57,7 +57,7 @@ fn media_retry_delay(mut cmd: ConsoleCommand<MediaRetryDelay>) {
     );
 }
 
-/// One scene media player as `/media_state` and `/audio_state` read it.
+/// One scene media player as `/media_state` reads it, with or without `--audio`.
 pub(crate) struct MediaRead<'a, T: AVPlayer> {
     pub(crate) entity: &'a SceneEntity,
     pub(crate) player: &'a T,
@@ -72,7 +72,7 @@ pub(crate) struct MediaRead<'a, T: AVPlayer> {
 }
 
 /// The loaded media players of one kind (`VideoPlayer` or `AudioStream`), each with its backend
-/// sinks: the one walk `/media_state` and `/audio_state` share.
+/// sinks: the one walk both replies of `/media_state` share.
 #[derive(SystemParam)]
 pub(crate) struct MediaPlayers<'w, 's, T: AVPlayer> {
     players: Query<
@@ -113,11 +113,21 @@ impl<T: AVPlayer> MediaPlayers<'_, '_, T> {
     }
 }
 
-/// Inspect scene media players and their requested and scheduled playback states.
+/// Inspect scene media players and their requested and scheduled playback states. With
+/// `--audio`, reply instead with the sound of the scene under the player: its `AudioSource`
+/// emitters, audio streams and video players, nearest first.
 #[derive(clap::Parser, ConsoleCommand)]
 #[command(name = "/media_state")]
-struct MediaState;
+struct MediaState {
+    /// Reply with the sound of the scene under the player instead of the loaded players.
+    #[arg(long)]
+    audio: bool,
+    /// With --audio, list only the entries that are sounding; `summary` still counts the scene.
+    #[arg(long, requires = "audio")]
+    only_playing: bool,
+}
 
+#[allow(clippy::too_many_arguments)]
 fn media_state(
     mut cmd: ConsoleCommand<MediaState>,
     video: MediaPlayers<VideoPlayer>,
@@ -125,9 +135,26 @@ fn media_state(
     scenes: Query<&RendererSceneContext>,
     player: Query<Entity, With<PrimaryUser>>,
     containing: ContainingScene,
+    emitters: crate::audio_state::Emitters,
     #[cfg(any(feature = "ffmpeg", feature = "html"))] images: Res<Assets<Image>>,
 ) {
-    let Some(Ok(_)) = cmd.take() else { return };
+    let Some(Ok(command)) = cmd.take() else {
+        return;
+    };
+    if command.audio {
+        match crate::audio_state::audio_state(
+            &emitters,
+            &containing,
+            &scenes,
+            &audio,
+            &video,
+            command.only_playing,
+        ) {
+            Ok(reply) => cmd.reply_ok(reply),
+            Err(reason) => cmd.reply_failed(reason),
+        }
+        return;
+    }
     let mut rows = Vec::new();
     let parcel = player.single().ok().and_then(|e| containing.get_parcel(e));
     let scene = parcel.and_then(|e| scenes.get(e).ok()).map(|s| &s.title);

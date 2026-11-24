@@ -1,7 +1,6 @@
-use bevy::{asset::LoadState, prelude::*};
-use bevy_console::ConsoleCommand;
+use bevy::{asset::LoadState, ecs::system::SystemParam, prelude::*};
 use common::structs::{AudioEmitter, PrimaryUser};
-use console::{reply::round, DoAddConsoleCommand};
+use console::reply::round;
 use dcl_component::transform_and_parent::DclTranslation;
 use ipfs::IpfsAssetServer;
 use scene_runner::{renderer_context::RendererSceneContext, ContainingScene, SceneEntity};
@@ -15,59 +14,56 @@ use crate::{
 #[cfg(any(feature = "ffmpeg", feature = "html"))]
 use dcl_component::proto_components::sdk::components::VideoState;
 
-pub(crate) struct AudioStatePlugin;
-
-impl Plugin for AudioStatePlugin {
-    fn build(&self, app: &mut App) {
-        app.add_console_command::<AudioStateCommand, _>(audio_state);
-    }
+/// What the sound read needs beyond the media players `/media_state` already walks: the player
+/// as the listener and the scene's `AudioSource` emitters with their clips.
+#[derive(SystemParam)]
+#[allow(clippy::type_complexity)]
+pub(crate) struct Emitters<'w, 's> {
+    player: Query<'w, 's, (Entity, &'static GlobalTransform), With<PrimaryUser>>,
+    sources: Query<
+        'w,
+        's,
+        (
+            &'static SceneEntity,
+            &'static AudioSource,
+            Option<&'static AudioEmitter>,
+            Option<&'static EmitterPlayback>,
+            Has<EmitterEnded>,
+            Option<&'static GlobalTransform>,
+        ),
+    >,
+    clips: Res<'w, Assets<bevy_kira_audio::AudioSource>>,
+    ipfas: IpfsAssetServer<'w, 's>,
 }
 
-/// The sound of the scene under the player: its `AudioSource` emitters, audio streams and video
-/// players, nearest first, with what the scene asked for (`requested`, `volume.authored`) and what
-/// the engine is playing (`playing`, `state`, `volume.live`, `currentTime`).
-#[derive(clap::Parser, ConsoleCommand)]
-#[command(name = "/audio_state")]
-struct AudioStateCommand {
-    /// List only the entries that are sounding; `summary` still counts the whole scene.
-    #[arg(long)]
+/// `/media_state --audio`: the sound of the scene under the player, as JSON. Its `AudioSource`
+/// emitters, audio streams and video players, nearest first, with what the scene asked for
+/// (`requested`, `volume.authored`) and what the engine is playing (`playing`, `state`,
+/// `volume.live`, `currentTime`). `only_playing` lists only the entries that are sounding;
+/// `summary` still counts the whole scene. The error says why there is nothing to read.
+pub(crate) fn audio_state(
+    emitters: &Emitters,
+    containing: &ContainingScene,
+    scenes: &Query<&RendererSceneContext>,
+    streams: &MediaPlayers<AudioStream>,
+    videos: &MediaPlayers<VideoPlayer>,
     only_playing: bool,
-}
-
-#[allow(clippy::type_complexity, clippy::too_many_arguments)]
-fn audio_state(
-    mut cmd: ConsoleCommand<AudioStateCommand>,
-    player: Query<(Entity, &GlobalTransform), With<PrimaryUser>>,
-    containing: ContainingScene,
-    scenes: Query<&RendererSceneContext>,
-    sources: Query<(
-        &SceneEntity,
-        &AudioSource,
-        Option<&AudioEmitter>,
-        Option<&EmitterPlayback>,
-        Has<EmitterEnded>,
-        Option<&GlobalTransform>,
-    )>,
-    clips: Res<Assets<bevy_kira_audio::AudioSource>>,
-    ipfas: IpfsAssetServer,
-    streams: MediaPlayers<AudioStream>,
-    videos: MediaPlayers<VideoPlayer>,
-) {
-    let Some(Ok(command)) = cmd.take() else {
-        return;
-    };
+) -> Result<String, &'static str> {
+    let Emitters {
+        player,
+        sources,
+        clips,
+        ipfas,
+    } = emitters;
     let Ok((player, player_gt)) = player.single() else {
-        cmd.reply_failed("there is no player");
-        return;
+        return Err("there is no player");
     };
     // the scene at the player's parcel, also while the player arrives and is kept out of world
     let Some(scene) = containing.get_parcel_oow(player) else {
-        cmd.reply_failed("No scene world found at the current parcel.");
-        return;
+        return Err("No scene world found at the current parcel.");
     };
     let Ok(ctx) = scenes.get(scene) else {
-        cmd.reply_failed("No scene world found at the current parcel.");
-        return;
+        return Err("No scene world found at the current parcel.");
     };
     // the audio backends mute a scene's emitters unless the player stands in it, which an
     // arriving player does not yet
@@ -85,7 +81,7 @@ fn audio_state(
     let mut entries = Vec::new();
     let mut counts = [0usize; 3];
 
-    for (entity, source, emitter, playback, ended, gt) in &sources {
+    for (entity, source, emitter, playback, ended, gt) in sources {
         if entity.root != scene {
             continue;
         }
@@ -154,13 +150,12 @@ fn audio_state(
         let d = |e: &Value| e["distance"].as_f64().unwrap_or(f64::INFINITY);
         d(a).total_cmp(&d(b))
     });
-    if command.only_playing {
+    if only_playing {
         entries.retain(|e| e["playing"] == true);
     }
 
     let listener = DclTranslation::from_bevy_translation(listener).0;
-    cmd.reply_ok(
-        json!({
+    Ok(json!({
             "scene": { "hash": &*ctx.hash, "title": &ctx.title, "parcel": { "x": ctx.base.x, "y": ctx.base.y } },
             "sceneIsCurrent": is_current,
             "note": (!is_current).then_some(
@@ -174,12 +169,11 @@ fn audio_state(
                 "streams": counts[1],
                 "videos": counts[2],
             },
-            "onlyPlaying": command.only_playing,
+            "onlyPlaying": only_playing,
             "returned": entries.len(),
             "entries": entries,
         })
-        .to_string(),
-    );
+        .to_string())
 }
 
 /// A stream's or a video's entry: what the scene asked of the player and, with a playback
