@@ -7,7 +7,7 @@
 //! byte pipe driven by repeated [`Client::service`] calls; framing and sequencing are the
 //! caller's ([`super::framing`]).
 
-use std::net::{IpAddr, SocketAddr};
+use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr};
 use std::sync::Arc;
 use std::sync::mpsc::{Receiver, Sender};
 use std::time::Duration;
@@ -15,7 +15,7 @@ use std::time::Duration;
 use bytes::Bytes;
 use tokio::runtime::Runtime;
 use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender, unbounded_channel};
-use web_transport_quinn::Session;
+use web_transport_quinn::{Session, SessionError, WebTransportError, quinn};
 
 /// Buffer size for a single reliable-stream read. Raw chunks are forwarded as-is.
 const STREAM_READ_BUF: usize = 16 * 1024;
@@ -39,6 +39,8 @@ pub enum ClientError {
     Config(String),
     /// The connection (TLS / WebTransport handshake / stream open) failed.
     Connect(String),
+    /// The peer sent a WebTransport close during connection setup.
+    Closed { code: u32, reason: String },
 }
 
 impl std::fmt::Display for ClientError {
@@ -46,6 +48,9 @@ impl std::fmt::Display for ClientError {
         match self {
             ClientError::Config(m) => write!(f, "config error: {m}"),
             ClientError::Connect(m) => write!(f, "connect error: {m}"),
+            ClientError::Closed { code, reason } => {
+                write!(f, "session closed with {code}: {reason}")
+            }
         }
     }
 }
@@ -96,52 +101,50 @@ impl Client {
 
     /// [`Client::connect_within`] from a chosen local address: the server counts its per-address
     /// limits by the source address of a connection. Needs `server_cert_hash` (a client bound to
-    /// an address does not use the system trust store).
+    /// an address does not use the system trust store). Without `local`, a pinned IPv4 loopback
+    /// URL binds `127.0.0.1`; `[::1]`, `localhost` and unpinned URLs use a dual-stack socket.
     pub fn connect_within_from(
         config: ClientConfig,
         timeout: Option<Duration>,
         local: Option<IpAddr>,
     ) -> Result<Client, ClientError> {
         let runtime = tokio::runtime::Builder::new_multi_thread()
+            // Each test client drives just one connection. A swarm creates many clients.
+            .worker_threads(1)
             .enable_all()
             .build()
             .map_err(|e| ClientError::Connect(e.to_string()))?;
 
         let url = url::Url::parse(&config.url).map_err(|e| ClientError::Config(e.to_string()))?;
         let cert_hash = config.server_cert_hash;
+        // Match the socket family of pinned IPv4 loopback servers.
+        let local = local.or_else(|| match url.host() {
+            Some(url::Host::Ipv4(ip)) if ip.is_loopback() && cert_hash.is_some() => {
+                Some(Ipv4Addr::LOCALHOST.into())
+            }
+            _ => None,
+        });
 
-        let connecting = async move {
-            let client = match (local, cert_hash) {
-                (Some(local), Some(hash)) => bound_client(local, hash)?,
-                (Some(_), None) => {
-                    return Err(ClientError::Config(
-                        "a client bound to a local address needs a certificate hash".to_owned(),
-                    ));
-                }
-                (None, Some(hash)) => web_transport_quinn::ClientBuilder::new()
-                    .with_server_certificate_hashes(vec![hash])
-                    .map_err(|e| ClientError::Connect(e.to_string()))?,
-                (None, None) => web_transport_quinn::ClientBuilder::new()
-                    .with_system_roots()
-                    .map_err(|e| ClientError::Connect(e.to_string()))?,
-            };
-
-            let session = client
-                .connect(url)
-                .await
-                .map_err(|e| ClientError::Connect(e.to_string()))?;
+        let stage = std::cell::Cell::new("establishing the WebTransport session");
+        let connecting = async {
+            let session = connect_session(url, local, cert_hash).await?;
+            stage.set("opening the reliable stream");
             // Client opens the reliable bidi stream; the server accepts it (server `accept_bi`).
             let (send, recv) = session
                 .open_bi()
                 .await
-                .map_err(|e| ClientError::Connect(e.to_string()))?;
+                .map_err(|error| closed_or(Some(&error), || error.to_string()))?;
             Ok::<_, ClientError>((session, send, recv))
         };
-        let (session, send, recv) = runtime.block_on(async move {
+        let (session, send, recv) = runtime.block_on(async {
             match timeout {
-                Some(limit) => tokio::time::timeout(limit, connecting)
-                    .await
-                    .map_err(|_| ClientError::Connect(format!("no session within {limit:?}")))?,
+                Some(limit) => match tokio::time::timeout(limit, connecting).await {
+                    Ok(result) => result,
+                    Err(_) => Err(ClientError::Connect(format!(
+                        "timed out after {limit:?} while {}",
+                        stage.get()
+                    ))),
+                },
                 None => connecting.await,
             }
         })?;
@@ -253,39 +256,115 @@ async fn stream_writer(
 async fn disconnect_monitor(session: Session, events_tx: Sender<ClientEvent>) {
     // The code the server closed the session with; 0 when the session ended some other way
     // (idle timeout, lost connection, local close).
-    let reason = match session.closed().await {
-        web_transport_quinn::SessionError::WebTransportError(
-            web_transport_quinn::WebTransportError::Closed(code, _),
-        ) => code,
-        _ => 0,
-    };
+    let reason = peer_close(&session.closed().await).map_or(0, |(code, _)| code);
     let _ = events_tx.send(ClientEvent::Disconnected { reason });
 }
 
-/// A client whose QUIC endpoint is bound to `local` (any port) and that trusts the one server
-/// certificate with SHA-256 `hash`: what the builder does, except for the local address, which the
-/// builder does not let a caller choose.
-fn bound_client(local: IpAddr, hash: Vec<u8>) -> Result<web_transport_quinn::Client, ClientError> {
-    use web_transport_quinn::quinn;
+/// The code and reason the peer closed the session with, if it did.
+fn peer_close(error: &SessionError) -> Option<(u32, &str)> {
+    match error {
+        SessionError::WebTransportError(WebTransportError::Closed(code, reason)) => {
+            Some((*code, reason))
+        }
+        _ => None,
+    }
+}
+
+/// [`ClientError::Closed`] for a peer close, otherwise [`ClientError::Connect`].
+fn closed_or(error: Option<&SessionError>, message: impl FnOnce() -> String) -> ClientError {
+    match error.and_then(peer_close) {
+        Some((code, reason)) => ClientError::Closed {
+            code,
+            reason: reason.to_owned(),
+        },
+        None => ClientError::Connect(message()),
+    }
+}
+
+async fn connect_session(
+    url: url::Url,
+    local: Option<IpAddr>,
+    cert_hash: Option<Vec<u8>>,
+) -> Result<Session, ClientError> {
+    let endpoint = client_endpoint(local, cert_hash)?;
+    let port = url.port().unwrap_or(443);
+    let (server_name, remote) = match url.host() {
+        Some(url::Host::Domain(host)) => {
+            let remote = tokio::net::lookup_host((host, port))
+                .await
+                .map_err(|error| ClientError::Connect(error.to_string()))?
+                .next()
+                .ok_or_else(|| ClientError::Connect(format!("no address for {host}")))?;
+            (host.to_owned(), remote)
+        }
+        Some(url::Host::Ipv4(ip)) => (ip.to_string(), SocketAddr::new(ip.into(), port)),
+        Some(url::Host::Ipv6(ip)) => (ip.to_string(), SocketAddr::new(ip.into(), port)),
+        None => return Err(ClientError::Config("URL has no host".to_owned())),
+    };
+
+    let connection = endpoint
+        .connect(remote, &server_name)
+        .map_err(|error| ClientError::Connect(error.to_string()))?
+        .await
+        .map_err(|error| {
+            closed_or(Some(&SessionError::from(error.clone())), || {
+                error.to_string()
+            })
+        })?;
+    Session::connect(connection.clone(), url)
+        .await
+        .map_err(|error| {
+            // A failed CONNECT response can discard the underlying stream error.
+            // The connection still holds the peer's QUIC application close reason.
+            let close = connection.close_reason().map(SessionError::from);
+            closed_or(close.as_ref(), || error.to_string())
+        })
+}
+
+fn client_endpoint(
+    local: Option<IpAddr>,
+    cert_hash: Option<Vec<u8>>,
+) -> Result<quinn::Endpoint, ClientError> {
     let fail = |error: &dyn std::fmt::Display| ClientError::Connect(error.to_string());
     let provider = super::tls_provider();
-    let mut crypto = rustls::ClientConfig::builder_with_provider(provider.clone())
+    let builder = rustls::ClientConfig::builder_with_provider(provider.clone())
         .with_protocol_versions(&[&rustls::version::TLS13])
-        .map_err(|e| fail(&e))?
-        .dangerous()
-        .with_custom_certificate_verifier(Arc::new(PinnedCertificate { provider, hash }))
-        .with_no_client_auth();
-    crypto.alpn_protocols = vec![web_transport_quinn::ALPN.as_bytes().to_vec()];
-    let quic =
-        web_transport_quinn::crypto::QuicClientConfig::try_from(crypto).map_err(|e| fail(&e))?;
-    let socket = std::net::UdpSocket::bind(SocketAddr::new(local, 0)).map_err(|e| fail(&e))?;
-    let runtime = quinn::default_runtime().ok_or_else(|| fail(&"no async runtime found"))?;
-    let endpoint = quinn::Endpoint::new(quinn::EndpointConfig::default(), None, socket, runtime)
         .map_err(|e| fail(&e))?;
-    Ok(web_transport_quinn::Client::new(
-        endpoint,
-        quinn::ClientConfig::new(Arc::new(quic)),
-    ))
+    let mut crypto = match cert_hash {
+        Some(hash) => builder
+            .dangerous()
+            .with_custom_certificate_verifier(Arc::new(PinnedCertificate { provider, hash })),
+        None if local.is_some() => {
+            return Err(ClientError::Config(
+                "a client bound to a local address needs a certificate hash".to_owned(),
+            ));
+        }
+        None => {
+            let mut roots = rustls::RootCertStore::empty();
+            let native = rustls_native_certs::load_native_certs();
+            for error in native.errors {
+                tracing::warn!(%error, "failed to load root cert");
+            }
+            for cert in native.certs {
+                if let Err(error) = roots.add(cert) {
+                    tracing::warn!(%error, "failed to add root cert");
+                }
+            }
+            builder.with_root_certificates(roots)
+        }
+    }
+    .with_no_client_auth();
+    crypto.alpn_protocols = vec![web_transport_quinn::ALPN.as_bytes().to_vec()];
+    let config =
+        web_transport_quinn::crypto::QuicClientConfig::try_from(crypto).map_err(|e| fail(&e))?;
+    let bind = SocketAddr::new(local.unwrap_or(Ipv6Addr::UNSPECIFIED.into()), 0);
+    let socket = std::net::UdpSocket::bind(bind).map_err(|e| fail(&e))?;
+    let runtime = quinn::default_runtime().ok_or_else(|| fail(&"no async runtime found"))?;
+    let mut endpoint =
+        quinn::Endpoint::new(quinn::EndpointConfig::default(), None, socket, runtime)
+            .map_err(|e| fail(&e))?;
+    endpoint.set_default_client_config(quinn::ClientConfig::new(Arc::new(config)));
+    Ok(endpoint)
 }
 
 /// Accepts the one certificate whose SHA-256 is `hash` (the WebTransport

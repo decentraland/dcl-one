@@ -53,6 +53,7 @@ web-transport-quinn.workspace = true
 # `ServerConfig::with_crypto`), the same provider as the transport's TLS.
 quinn = { version = "0.11", default-features = false, features = ["aws-lc-rs"] }
 rustls = { workspace = true, features = ["aws-lc-rs"] }
+rustls-native-certs = { workspace = true, optional = true }
 rustls-pemfile.workspace = true
 rustls-pki-types.workspace = true
 async-nats.workspace = true
@@ -72,7 +73,7 @@ protox.workspace = true
 
 [features]
 ts = ["dep:ts-rs", "catalyst-shared/ts", "catalyst-config/ts", "catalyst-chain-index/ts", "catalyst-content/ts"]
-test-support = ["catalyst-shared/test-support", "catalyst-config/test-support", "catalyst-chain-index/test-support", "catalyst-content/test-support"]
+test-support = ["dep:rustls-native-certs", "catalyst-shared/test-support", "catalyst-config/test-support", "catalyst-chain-index/test-support", "catalyst-content/test-support"]
 
 [dev-dependencies]
 catalyst-shared = { path = "../shared", features = ["test-support"] }
