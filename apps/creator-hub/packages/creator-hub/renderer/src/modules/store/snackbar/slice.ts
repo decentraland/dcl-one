@@ -14,7 +14,7 @@ import { actions as managementActions } from '../management';
 import { actions as placeAnalyticsActions } from '../placeAnalytics';
 import { actions as workspaceActions } from '../workspace';
 import { shouldNotifyUpdates } from '../workspace/utils';
-import { settleRequest } from '../requests';
+import { settleRequest, settleRequestAndOlder } from '../requests';
 import { createCustomNotification, createGenericNotification, sanitizePreviewError } from './utils';
 import type { Notification } from './types';
 
@@ -31,16 +31,18 @@ export type SnackbarState = {
   notifications: Notification[];
   /** Wallet-scoped requests in flight for the current account; only their failures are shown. */
   accountRequestIds: string[];
+  /** LAND list requests in flight, oldest first. Newer lists supersede older warnings. */
+  landRequestIds: string[];
 };
 
 export const initialState: SnackbarState = {
   notifications: [],
   accountRequestIds: [],
+  landRequestIds: [],
 };
 
 const accountRequests = [
   ensActions.fetchENSList,
-  landActions.fetchLandList,
   managementActions.fetchManagedProjectsFiltered,
 ] as const;
 
@@ -61,6 +63,8 @@ export const slice = createSlice({
     builder
       .addCase(accountChanged, state => {
         state.accountRequestIds = [];
+        state.landRequestIds = [];
+        state.notifications = state.notifications.filter($ => $.requestId !== 'fetchLandList');
       })
       .addCase(workspaceActions.getWorkspace.fulfilled, (state, action) => {
         if (action.payload.missing.length > 0) {
@@ -348,8 +352,23 @@ export const slice = createSlice({
           }),
         );
       })
+      .addCase(landActions.fetchLandList.pending, (state, action) => {
+        state.landRequestIds.push(action.meta.requestId);
+      })
+      .addCase(landActions.fetchLandList.fulfilled, (state, action) => {
+        if (!settleRequestAndOlder(state.landRequestIds, action.meta.requestId)) return;
+        state.notifications = state.notifications.filter($ => $.requestId !== 'fetchLandList');
+        if (action.payload.rentalsUnavailable) {
+          state.notifications.push(
+            createGenericNotification('warning', t('snackbar.generic.fetch_rentals_list_failed'), {
+              duration: 5000,
+              requestId: 'fetchLandList',
+            }),
+          );
+        }
+      })
       .addCase(landActions.fetchLandList.rejected, (state, action) => {
-        if (!settleRequest(state.accountRequestIds, action.meta.requestId)) return;
+        if (!settleRequest(state.landRequestIds, action.meta.requestId)) return;
         state.notifications = state.notifications.filter($ => $.requestId !== 'fetchLandList');
         state.notifications.push(
           createGenericNotification('error', t('snackbar.generic.fetch_land_list_failed'), {

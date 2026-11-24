@@ -736,6 +736,7 @@ export class Rentals {
     url.searchParams.set('chainId', this.chainId);
     const response = await fetch(url);
     if (!response.ok) {
+      await response.body?.cancel().catch(() => {});
       throw new Error(`Could not load LAND rentals (HTTP ${response.status})`);
     }
 

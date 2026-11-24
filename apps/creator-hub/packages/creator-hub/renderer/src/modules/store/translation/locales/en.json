@@ -941,6 +941,7 @@
       "update_world_settings_failed": "Failed to update world settings. Please try again.",
       "fetch_ens_list_failed": "Failed to fetch your NAMEs list",
       "fetch_land_list_failed": "Failed to fetch your LANDs list",
+      "fetch_rentals_list_failed": "LAND rentals are temporarily unavailable.",
       "fetch_world_permissions_failed": "Failed to fetch world permissions. Please try again.",
       "fetch_world_scenes_failed": "Failed to fetch world scenes. Please try again.",
       "unpublish_world_scene_failed": "Failed to unpublish scene from world. Please try again.",

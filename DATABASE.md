@@ -1843,9 +1843,17 @@ rent events. Each result contains one row per asset and role. There is no new
 projection table or response cache. Production lookup rates and latency
 have not been measured.
 
+The missing-objects step of `schema migrate` builds
+`rental_event_lessor_idx` and `rental_event_tenant_idx` non-concurrently.
+It holds a SHARE lock on `shop.rental_event` until the migration commits,
+so chain index writes wait. To keep writes moving during an index build on
+a large history, prebuild both indexes with `CREATE INDEX CONCURRENTLY`
+using the definitions in `schemas/30_shop.sql`.
+
 The read stops at the published block. A stale or unpublished cursor
-returns 503. The latest rent or claim is evaluated before checking the
-current participants. A rent stays in the lessor's list until claim, and in
+returns 503. If the rentals request fails, Creator Hub loads owned and
+operated LAND and shows a rentals warning. The latest rent or claim is
+evaluated before checking the current participants. A rent stays in the lessor's list until claim, and in
 the tenant's list until expiry. Extensions add to the end of the original
 period, as the Rentals contract does. The route returns the operator on the
 latest rent event. Creator Hub resolves deployment access from the current

@@ -941,6 +941,7 @@
       "update_world_settings_failed": "Error al actualizar la configuración del mundo. Por favor, inténtalo de nuevo.",
       "fetch_ens_list_failed": "Error al cargar tu lista de Nombres",
       "fetch_land_list_failed": "Error al cargar tu lista de Tierras",
+      "fetch_rentals_list_failed": "El alquiler de Tierras no está disponible temporalmente.",
       "fetch_world_permissions_failed": "Error al cargar los permisos del mundo. Por favor, inténtalo de nuevo.",
       "fetch_world_scenes_failed": "Error al cargar las escenas del mundo. Por favor, inténtalo de nuevo.",
       "unpublish_world_scene_failed": "Error al despublicar la escena del mundo. Por favor, inténtalo de nuevo.",

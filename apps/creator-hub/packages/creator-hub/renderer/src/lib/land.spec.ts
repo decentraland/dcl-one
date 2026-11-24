@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import type { Coords } from './land';
+import type { Coords, Rental } from './land';
 
 const fetchMock = vi.fn();
 
@@ -15,7 +15,7 @@ vi.mock('/@/config', () => ({
   config: { get: (key: string) => CONFIG[key] ?? 'https://peer.example.org' },
 }));
 
-const { Lands, RoleType } = await import('./land');
+const { Lands, LandType, RoleType } = await import('./land');
 
 const ok = (scenes: Array<{ id: string }>) => ({
   ok: true,
@@ -204,6 +204,66 @@ const grantedBy = (tokenAddress: string, isApproved: boolean, timestamp = '100')
 describe('Lands.fetchLand', () => {
   beforeEach(() => {
     fetchMock.mockReset();
+  });
+
+  describe('when a rented LAND parcel and Estate share a token ID', () => {
+    let client: InstanceType<typeof Lands>;
+    let tenantRentals: Rental[];
+    let lessorRentals: Rental[];
+
+    beforeEach(() => {
+      client = new Lands();
+      const rental = {
+        tokenId: '7',
+        operator: null,
+        startedAt: 1_700_000_000_000,
+        endsAt: 1_800_000_000_000,
+      };
+      tenantRentals = [
+        {
+          ...rental,
+          id: 'rented-in',
+          type: LandType.PARCEL,
+          lessor: '0xowner',
+          tenant: '0xme',
+        },
+      ];
+      lessorRentals = [
+        {
+          ...rental,
+          id: 'rented-out',
+          type: LandType.ESTATE,
+          lessor: '0xme',
+          tenant: '0xother',
+        },
+      ];
+      const parcel = { ...parcelFields(2, 2), tokenId: rental.tokenId };
+      const estate = estateFields(rental.tokenId, [null]);
+      // The subgraph will return either token wherever its registry's filter selects it.
+      fetchMock.mockImplementationOnce((_url: string, init: { body: string }) => {
+        const { query, variables } = JSON.parse(init.body);
+        const data: Record<string, unknown> = {};
+        const filters =
+          /((?:tenant|lessor)(?:Parcels|Estates)): (parcels|estates)\([^\n]*_in: \$(\w+)/g;
+        for (const [, field, registry, variable] of String(query).matchAll(filters)) {
+          if (variables[variable]?.includes(rental.tokenId)) {
+            data[field] = registry === 'parcels' ? [parcel] : [estate];
+          }
+        }
+        return Promise.resolve(landQuery(data));
+      });
+    });
+
+    it('should assign each asset its own rental role', async () => {
+      const [lands] = await client.fetchLand('0xme', tenantRentals, lessorRentals);
+
+      expect(
+        Object.fromEntries(lands.map(({ type, tokenId, roles }) => [type, { tokenId, roles }])),
+      ).toEqual({
+        [LandType.PARCEL]: { tokenId: '7', roles: [RoleType.TENANT] },
+        [LandType.ESTATE]: { tokenId: '7', roles: [RoleType.LESSOR] },
+      });
+    });
   });
 
   describe('when it asks the subgraph for UpdateManager authorizations', () => {

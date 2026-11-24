@@ -1,8 +1,10 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi, type MockInstance } from 'vitest';
 import { isPlain } from '@reduxjs/toolkit';
 
-import type { Authorization, Land, Rental } from '/@/lib/land';
-import { LandType } from '/@/lib/land';
+import type { Authorization, Land, LandQueryResult, Rental } from '/@/lib/land';
+import { LandType, RoleType } from '/@/lib/land';
+import { AuthServerProvider } from '/@/lib/auth';
+import { createTestStore, type TestStore } from '../../../../tests/utils/testStore';
 import { accountChanged } from '../account';
 import { fetchLandList, fetchTiles, initialState, reducer } from './slice';
 
@@ -149,5 +151,93 @@ describe('land reducer', () => {
     it('should keep the land list loading', () => {
       expect(state.status).toBe('loading');
     });
+  });
+});
+
+describe('when the LAND rentals request returns 503', () => {
+  let store: TestStore;
+  let fetchMock: MockInstance<typeof globalThis.fetch>;
+
+  beforeEach(async () => {
+    vi.spyOn(AuthServerProvider, 'getAccount').mockReturnValue(ARGS.address);
+    fetchMock = vi.spyOn(globalThis, 'fetch');
+    fetchMock.mockResolvedValueOnce(new Response('rentals unavailable', { status: 503 }));
+    fetchMock.mockResolvedValueOnce(
+      Response.json({
+        data: {
+          tenantParcels: [],
+          tenantEstates: [],
+          lessorParcels: [],
+          lessorEstates: [],
+          ownerEstates: [],
+          updateOperatorEstates: [],
+          approvedParcels: [],
+          approvedEstates: [],
+          ownerAuthorizations: [],
+          operatorAuthorizations: [],
+          ownerParcels: [
+            {
+              x: '1',
+              y: '2',
+              tokenId: '10',
+              owner: { address: ARGS.address },
+              updateOperator: null,
+              data: null,
+            },
+          ],
+          updateOperatorParcels: [
+            {
+              x: '3',
+              y: '4',
+              tokenId: '20',
+              owner: { address: '0xother' },
+              updateOperator: ARGS.address,
+              data: null,
+            },
+          ],
+        } satisfies LandQueryResult,
+      }),
+    );
+
+    store = createTestStore();
+    await store.dispatch(fetchLandList(ARGS)).unwrap();
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it('should keep owned and operated LAND available', () => {
+    expect(store.getState().land.data.map(({ id, role }) => [id, role])).toEqual([
+      ['1,2', RoleType.OWNER],
+      ['3,4', RoleType.OPERATOR],
+    ]);
+  });
+
+  it('should show a warning about the unavailable rentals', () => {
+    expect(store.getState().snackbar.notifications).toEqual([
+      expect.objectContaining({
+        severity: 'warning',
+        message: 'LAND rentals are temporarily unavailable.',
+      }),
+    ]);
+  });
+});
+
+describe('when an older LAND request with unavailable rentals arrives after a newer list', () => {
+  let store: TestStore;
+
+  beforeEach(() => {
+    store = createTestStore();
+    store.dispatch(fetchLandList.pending('older', ARGS));
+    store.dispatch(fetchLandList.pending('newer', ARGS));
+    store.dispatch(fetchLandList.fulfilled(listOf('newer'), 'newer', ARGS));
+    store.dispatch(
+      fetchLandList.fulfilled({ ...listOf('older'), rentalsUnavailable: true }, 'older', ARGS),
+    );
+  });
+
+  it('should keep the warning from the stale response out of the snackbar', () => {
+    expect(store.getState().snackbar.notifications).toEqual([]);
   });
 });

@@ -563,12 +563,21 @@ describe('Rentals.fetchRentalTokenIds', () => {
   });
 
   describe('when the rentals index is not ready', () => {
+    let cancel: ReturnType<typeof vi.fn>;
+
     beforeEach(() => {
-      fetchMock.mockResolvedValueOnce({ ok: false, status: 503 });
+      cancel = vi.fn().mockResolvedValueOnce(undefined);
+      fetchMock.mockResolvedValueOnce({ ok: false, status: 503, body: { cancel } });
     });
 
     it('should surface the unavailable response to the LAND loader', async () => {
       await expect(client.fetchRentalTokenIds(ME)).rejects.toThrow('HTTP 503');
+    });
+
+    it('should cancel the unsuccessful response body', async () => {
+      await client.fetchRentalTokenIds(ME).catch(() => {});
+
+      expect(cancel).toHaveBeenCalledOnce();
     });
   });
 });
