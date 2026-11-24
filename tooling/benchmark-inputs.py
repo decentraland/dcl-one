@@ -256,8 +256,8 @@ def resolve(event_name, event, repo, enabled='', runs=''):
     notes = []
     try:
         release, why_not = release_build(repo, base['head_sha'])
-    except subprocess.CalledProcessError:
-        release, why_not = None, 'the GitHub API did not answer.'
+    except (subprocess.CalledProcessError, subprocess.TimeoutExpired, ValueError):
+        release, why_not = None, 'it could not be read from the GitHub API.'
     if release:
         result['release_sha'], result['release_version'] = release['sha'], release['version']
     else:

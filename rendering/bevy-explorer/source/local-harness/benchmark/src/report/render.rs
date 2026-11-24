@@ -68,20 +68,7 @@ pub fn header(options: &ReportOptions) -> String {
 
 /// The **Overall** line: the regressions when there are any, else the improvements.
 pub fn headline(regressions: &[(&str, Vec<&str>)], improvements: &[(&str, Vec<&str>)]) -> String {
-    let list = |groups: &[(&str, Vec<&str>)], moved: &str| {
-        groups
-            .iter()
-            .map(|(metric, runners)| format!("{metric} {moved} on {}", runners.join(", ")))
-            .collect::<Vec<_>>()
-            .join("; ")
-    };
-    if !regressions.is_empty() {
-        format!("**Overall: 🔴 {}**\n\n", list(regressions, "regressed"))
-    } else if !improvements.is_empty() {
-        format!("**Overall: 🟢 {}**\n\n", list(improvements, "improved"))
-    } else {
-        "**Overall: ✅ no significant changes**\n\n".to_string()
-    }
+    labelled_headline("Overall", regressions, improvements)
 }
 
 /// The **Against the latest release** line: its frame-time regressions when there are any, else
@@ -90,7 +77,28 @@ pub fn release_headline(
     regressions: &[(&str, Vec<&str>)],
     improvements: &[(&str, Vec<&str>)],
 ) -> String {
-    headline(regressions, improvements).replacen("**Overall:", "**Against the latest release:", 1)
+    labelled_headline("Against the latest release", regressions, improvements)
+}
+
+fn labelled_headline(
+    label: &str,
+    regressions: &[(&str, Vec<&str>)],
+    improvements: &[(&str, Vec<&str>)],
+) -> String {
+    let list = |groups: &[(&str, Vec<&str>)], moved: &str| {
+        groups
+            .iter()
+            .map(|(metric, runners)| format!("{metric} {moved} on {}", runners.join(", ")))
+            .collect::<Vec<_>>()
+            .join("; ")
+    };
+    if !regressions.is_empty() {
+        format!("**{label}: 🔴 {}**\n\n", list(regressions, "regressed"))
+    } else if !improvements.is_empty() {
+        format!("**{label}: 🟢 {}**\n\n", list(improvements, "improved"))
+    } else {
+        format!("**{label}: ✅ no significant changes**\n\n")
+    }
 }
 
 /// The release line when the legs measured the latest release but no release run produced data.
@@ -102,13 +110,25 @@ pub const NOTHING_COMPARED: &str =
     "**Overall: ⚠️ nothing was compared — no Baseline run produced data**\n\n";
 
 /// How to read the tables, for someone with no context on the method.
-pub fn legend(expected_runs: u64) -> String {
+/// `release`: the legs measured the latest release, so its table and line are explained.
+pub fn legend(expected_runs: u64, release: bool) -> String {
+    let (interleaving, release_bullet) = if release {
+        (
+            "the other builds (change, baseline, release, change, baseline, release, ...) in the same session, so all see",
+            "- **Against the latest release** — the build every player gets at decentraland.org/play: a second table compares the frame times with it under the same rules, and Δ there is Change minus Release. The **Overall** line stays the comparison with the baseline.\n",
+        )
+    } else {
+        (
+            "the other build (change, baseline, change, baseline, ...) in the same session, so both see",
+            "",
+        )
+    };
     format!(
         "<details><summary>How to read this table</summary>\n\
          \n\
-         - Each build is measured **{expected_runs} times**, interleaved with the other build (change, baseline, change, baseline, ...) in the same session, so both see the same world content and machine state. The values are the **median**, and **(min–max)** is the lowest and highest of those runs.\n\
+         - Each build is measured **{expected_runs} times**, interleaved with {interleaving} the same world content and machine state. The values are the **median**, and **(min–max)** is the lowest and highest of those runs.\n\
          - **Δ** is Change minus Baseline (a negative Δ means Change is faster).\n\
-         - **Against the latest release** — when the legs also measured the build every player gets at decentraland.org/play, interleaved as a third build (change, baseline, release, ...), a second table compares the frame times with it under the same rules; Δ is then Change minus Release. The **Overall** line stays the comparison with the baseline.\n\
+         {release_bullet}\
          - **🟢 faster / 🔴 slower** — a difference that passed every check: the runs are fully separated (every run of one build faster than every run of the other), and the median difference is at least **{lambda:.0}%** and at least **{min_ms} ms**.\n\
          - **⚪ within noise** — the builds' runs overlap, or the difference is tiny; it cannot be told apart from random variation. Treat it as no change.\n\
          - **— informational** — the 0.1% worst metrics average only the few worst frames of a run, so a single OS hiccup swings them by a lot; they are shown for context and never earn a verdict.\n\
@@ -145,16 +165,7 @@ pub fn runner_section(section: &RunnerSection) -> String {
                 samples(base),
                 samples(change)
             );
-            for (m, name) in FRAME_TIME_METRICS.iter().enumerate() {
-                let delta = change.frame_time_ms[m].median - base.frame_time_ms[m].median;
-                let _ = writeln!(
-                    out,
-                    "| {name} | {} | {} | {delta:.1} ms | {} |",
-                    frame_time_cell(&base.frame_time_ms[m]),
-                    frame_time_cell(&change.frame_time_ms[m]),
-                    frame_time_verdict_text(comparison.frame_time_verdicts[m])
-                );
-            }
+            frame_time_rows(&mut out, base, change, &comparison.frame_time_verdicts);
             let _ = writeln!(
                 out,
                 "| {EXCEPTIONS_METRIC} | {} | {} | {} | {} |",
@@ -241,16 +252,7 @@ pub fn runner_section(section: &RunnerSection) -> String {
             samples(release),
             samples(change)
         );
-        for (m, name) in FRAME_TIME_METRICS.iter().enumerate() {
-            let delta = change.frame_time_ms[m].median - release.frame_time_ms[m].median;
-            let _ = writeln!(
-                out,
-                "| {name} | {} | {} | {delta:.1} ms | {} |",
-                frame_time_cell(&release.frame_time_ms[m]),
-                frame_time_cell(&change.frame_time_ms[m]),
-                frame_time_verdict_text(comparison.frame_time_verdicts[m])
-            );
-        }
+        frame_time_rows(&mut out, release, change, &comparison.frame_time_verdicts);
     }
 
     let base_scopes = section
@@ -352,6 +354,25 @@ pub fn runner_section(section: &RunnerSection) -> String {
     out
 }
 
+/// A comparison table's frame-time rows: the other build, the change, Δ and the verdict.
+fn frame_time_rows(
+    out: &mut String,
+    other: &BuildBenchmarkRunsStatistics,
+    change: &BuildBenchmarkRunsStatistics,
+    verdicts: &[FrameTimeVerdict; 6],
+) {
+    for (m, name) in FRAME_TIME_METRICS.iter().enumerate() {
+        let delta = change.frame_time_ms[m].median - other.frame_time_ms[m].median;
+        let _ = writeln!(
+            out,
+            "| {name} | {} | {} | {delta:.1} ms | {} |",
+            frame_time_cell(&other.frame_time_ms[m]),
+            frame_time_cell(&change.frame_time_ms[m]),
+            frame_time_verdict_text(verdicts[m])
+        );
+    }
+}
+
 /// A section whose files could not be read.
 pub fn failure(name: &str, message: &str) -> String {
     format!("> ⚠️ Could not gather the results of {name}: {message}\n\n")
@@ -398,6 +419,10 @@ fn caveat_text(note: &RunnerCaveat) -> String {
             "⚠️ No verdicts: the builds produced wildly different sample counts per run ({base} baseline vs {change} change, {:.0}% apart) — far beyond any plausible performance difference, so one of them likely did not run the full session and their frame times cannot be compared.",
             (ratio - 1.0) * 100.0
         ),
+        RunnerCaveat::NoReleaseData => {
+            "⚠️ No Release run produced data — the change is not compared with the latest release here."
+                .to_string()
+        }
         RunnerCaveat::NoBaselineData => {
             "⚠️ No Baseline run produced data — the change is shown alone, with no verdicts."
                 .to_string()

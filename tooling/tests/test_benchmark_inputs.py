@@ -170,19 +170,28 @@ class ResolverTest(unittest.TestCase):
             github.build_info = {f'bevy-explorer-web-{RELEASE}': {'engine': {'optimized': False}}}
 
         def no_api(github):
-            github.deployments = None
+            """release_build raises; see failures below."""
+
+        def slow_zip(github):
+            """release_build raises; see failures below."""
+
+        def too_many_artifacts(github):
+            """release_build raises; see failures below."""
 
         for change, note in ((no_rollout, 'No successful rollout'), (unnamed_run, 'does not name the CI run'),
                              (other_commit, 'is not a successful'), (failed_run, 'is not a successful'),
                              (is_base, 'is the base build'), (expired, 'has expired'),
-                             (unoptimized, 'is not optimized'), (no_api, 'did not answer')):
+                             (unoptimized, 'is not optimized'), (no_api, 'could not be read'),
+                             (slow_zip, 'could not be read'), (too_many_artifacts, 'could not be read')):
             with self.subTest(change=change.__name__):
                 self.github = GitHub()
                 change(self.github)
                 with patch.object(inputs, 'api', side_effect=self.github):
-                    if change is no_api:
-                        with patch.object(inputs, 'latest_release',
-                                          side_effect=subprocess.CalledProcessError(1, 'gh')):
+                    failures = {no_api: subprocess.CalledProcessError(1, 'gh'),
+                                slow_zip: subprocess.TimeoutExpired('gh', 300),
+                                too_many_artifacts: ValueError('run 80 has more artifacts than one page lists')}
+                    if change in failures:
+                        with patch.object(inputs, 'release_build', side_effect=failures[change]):
                             result = self.resolve()
                     else:
                         result = self.resolve()

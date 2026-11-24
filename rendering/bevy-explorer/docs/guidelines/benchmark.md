@@ -111,7 +111,8 @@ comment ([The workflow](#the-workflow)).
 - **Against the latest release.** A section with release runs has a second table, *Against the
   latest release*: samples and the six frame-time metrics of the release and the change, Δ (change
   minus release) and the same verdicts as against the base. Release runs that crashed or were
-  excluded get the same notes, named *Release*.
+  excluded get the same notes, named *Release*; when the legs measured the release and none of a
+  section's release runs produced data, the section says "No Release run produced data".
 - **Layout.** `## <title>`, a line naming the pull request, the change, base and release builds and
   the run, the **Overall** headline when a section has data, the **Against the latest release**
   headline when the legs measured the release, a collapsed *How to read this table*, the sections
@@ -423,8 +424,9 @@ the reset page's two (`reset`, `reset-done`) under `/__perf/`:
   traps the engine, and the page can still finish the run; the page never calls into the engine
   to scrub after a trap.
 - The bytes equal what the desktop writes to `--csv` and `--log-file`.
-- One runner serves both builds of a leg, and their web apps come from different commits: a
-  change to this protocol keeps the receiver accepting the baseline's sender.
+- One runner serves every build of a leg, and their web apps come from different commits: a
+  change to this protocol keeps the receiver accepting the oldest sender it measures, the latest
+  release's, which can be weeks older than main ([The latest release](#the-latest-release)).
 - Serve with `Cross-Origin-Opener-Policy: same-origin`, `Cross-Origin-Embedder-Policy:
   require-corp` and `Cross-Origin-Resource-Policy: cross-origin`, as set by the benchmark
   runner in `local-harness/benchmark/src/server.rs`, in a visible Chrome window: a hidden
@@ -621,8 +623,9 @@ it in four steps:
    must say the engine is optimized, as for the change and the base.
 4. Each leg gets the artifact and its run; the report header names the version and the commit.
 
-When any step fails (no rollout yet, a version that names no run, an expired artifact after the
-90 days main keeps it, an unoptimized build) or the release is the base build itself, the legs
+When any step fails (no rollout yet, a version that names no run, an expired artifact: CI keeps a
+main build's web app 90 days and a branch build's 7, an unoptimized build, a GitHub API error) or
+the release is the base build itself, the legs
 measure the change and the base only, and a note in the report says why the release was not
 compared.
 

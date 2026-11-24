@@ -169,6 +169,38 @@ fn release_each_machine_also_compares_the_change_with_the_latest_release() {
 }
 
 #[test]
+fn release_a_machine_without_release_runs_says_so_beside_one_with_them() {
+    let mut options = options("release-partial");
+    options.release = Some("`0.1.0-80.commit-9999999`".into());
+    let report = build(&options);
+    let note =
+        "> ⚠️ No Release run produced data — the change is not compared with the latest release here.";
+
+    let apple = section(&report, "Apple M1 (Chrome)");
+    assert!(
+        apple.contains(&"**Against the latest release**"),
+        "{apple:#?}"
+    );
+    assert!(!apple.contains(&note), "{apple:#?}");
+
+    let intel = section(&report, "Intel Core i5 (Chrome)");
+    assert!(
+        !intel.contains(&"**Against the latest release**"),
+        "{intel:#?}"
+    );
+    assert!(intel.contains(&note), "{intel:#?}");
+
+    // one machine is below the headline's 10%, so nothing is named
+    has_line(
+        &report,
+        "**Against the latest release: ✅ no significant changes**",
+    );
+    assert!(report
+        .markdown
+        .contains("interleaved with the other builds (change, baseline, release"));
+}
+
+#[test]
 fn release_a_release_without_runs_is_said_and_the_base_comparison_stays() {
     let mut options = options("ok");
     options.release = Some("`0.1.0-80.commit-9999999`".into());
@@ -183,9 +215,10 @@ fn release_a_release_without_runs_is_said_and_the_base_comparison_stays() {
     );
     assert!(!report.markdown.contains("**Against the latest release**"));
 
-    // without a release, no release line at all
+    // without a release, no release line, note or legend bullet at all
     let report = report_of("ok");
-    assert!(!report.markdown.contains("Against the latest release:"));
+    assert!(!report.markdown.contains("Against the latest release"));
+    assert!(!report.markdown.contains("No Release run"));
 }
 
 #[test]
