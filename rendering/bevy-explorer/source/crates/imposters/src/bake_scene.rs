@@ -19,7 +19,7 @@ use boimp::{
     GridMode, ImposterBakePlugin,
 };
 use common::{
-    memory::LoadRefusal,
+    memory::EngineMemoryPressureMode,
     sets::SceneSets,
     structs::{AppConfig, CurrentRealm, DebugInfo, PrimaryUser, SceneImposterBake},
 };
@@ -58,7 +58,7 @@ impl Plugin for DclImposterBakeScenePlugin {
         app.add_plugins(ImposterBakePlugin)
             .init_resource::<ImposterBakeList>()
             .init_resource::<CurrentImposterImposter>()
-            .init_resource::<LoadRefusal>()
+            .init_resource::<EngineMemoryPressureMode>()
             .add_systems(
                 Update,
                 (
@@ -110,7 +110,7 @@ fn make_scene_oven(
     materials: Res<Assets<SceneMaterial>>,
     asset_server: Res<AssetServer>,
     gltf_state: Query<(Has<GltfDefinition>, Has<GltfProcessed>)>,
-    load_refusal: Res<LoadRefusal>,
+    memory_pressure_mode: Res<EngineMemoryPressureMode>,
 ) {
     if !baking.is_empty() {
         return;
@@ -121,7 +121,7 @@ fn make_scene_oven(
     };
 
     // while loads wait for memory the countdown to a dummy oven starts afresh
-    if load_refusal.refusing
+    if memory_pressure_mode.is_refusing()
         || start_tick
             .as_ref()
             .is_none_or(|(start_tick_hash, _)| hash != start_tick_hash)

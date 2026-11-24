@@ -17,7 +17,7 @@ use bevy::{
     prelude::*,
 };
 
-use common::{memory::LoadRefusal, util::TaskExt};
+use common::{memory::EngineMemoryPressureMode, util::TaskExt};
 pub use emotes::*;
 use ipfs::{
     ipfs_path::{IpfsPath, IpfsType},
@@ -48,7 +48,7 @@ impl<T: CollectibleType> Plugin for CollectiblesTypePlugin<T> {
         app.init_resource::<Collectibles<T>>()
             .init_asset::<Collectible<T>>()
             .init_asset::<CollectibleData<T>>()
-            .init_resource::<LoadRefusal>()
+            .init_resource::<EngineMemoryPressureMode>()
             .add_systems(Update, (request_collectibles::<T>, release_idle_data::<T>));
     }
 }
@@ -56,11 +56,11 @@ impl<T: CollectibleType> Plugin for CollectiblesTypePlugin<T> {
 /// While loads wait for memory, drop the metadata (name, thumbnail, flags) of collectibles no
 /// one has asked for in the last few frames. Runs once per retention period.
 fn release_idle_data<T: CollectibleType>(
-    refusal: Res<LoadRefusal>,
+    memory_pressure_mode: Res<EngineMemoryPressureMode>,
     mut collectibles: ResMut<Collectibles<T>>,
     frame: Res<FrameCount>,
 ) {
-    if refusal.refusing && frame.0.is_multiple_of(RETAIN_TICKS) {
+    if memory_pressure_mode.is_refusing() && frame.0.is_multiple_of(RETAIN_TICKS) {
         collectibles.release_idle_data(frame.0);
     }
 }

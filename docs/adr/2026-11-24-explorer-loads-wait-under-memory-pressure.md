@@ -14,9 +14,9 @@ a dense area grows the engine until the platform kills it.
 
 ## Decision
 
-- **One latch.** `LoadRefusal` turns on at Full. It holds through Warning for at most
-  `WARNING_HOLD` (30 s) after the last Full reading, and turns off at Normal, Abundance or when
-  there is no reading. The gap between the thresholds keeps a reading at the full threshold from
+- **One latch.** `EngineMemoryPressureMode` becomes `RefusalDueFull { full_at }` at Full. It
+  holds through Warning for at most `WARNING_HOLD` (30 s) after `full_at`, the last Full reading,
+  and returns to `Normal` at Normal, Abundance or when there is no reading. The gap between the thresholds keeps a reading at the full threshold from
   admitting and refusing on alternate samples; the time limit keeps memory that stays resident
   after it is freed from holding loads for the rest of the session.
 - **Scenes.** While refusing, the scene lifecycle spawns only the scene the player stands in,

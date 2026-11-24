@@ -128,33 +128,36 @@ impl MemoryStatus {
 
 /// Whether new loads wait because engine memory is full.
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Resource)]
-pub struct LoadRefusal {
-    pub refusing: bool,
-    /// When the reading was last `Full`, on the clock `next` is given.
-    pub full_at: Duration,
+pub enum EngineMemoryPressureMode {
+    /// Loads are admitted.
+    #[default]
+    Normal,
+    /// New loads wait.
+    RefusalDueFull {
+        /// When the reading was last `Full`, on the clock `next` is given.
+        full_at: Duration,
+    },
 }
 
-impl LoadRefusal {
+impl EngineMemoryPressureMode {
     /// How long a refusal outlasts the last `Full` reading while the reading stays in `Warning`.
     pub const WARNING_HOLD: Duration = Duration::from_secs(30);
 
-    /// On at `Full`; held through `Warning` for up to [`Self::WARNING_HOLD`] after the last `Full`
-    /// reading; off at `Normal`, `Abundance` or with no reading.
+    pub fn is_refusing(self) -> bool {
+        matches!(self, Self::RefusalDueFull { .. })
+    }
+
+    /// Refusing at `Full`; held through `Warning` for up to [`Self::WARNING_HOLD`] after the last
+    /// `Full` reading; `Normal` at `Normal`, `Abundance` or with no reading.
     pub fn next(self, reading: Option<MemoryReading>, now: Duration) -> Self {
-        match reading.map(|reading| reading.pressure()) {
-            Some(MemoryPressure::Full) => Self {
-                refusing: true,
-                full_at: now,
-            },
-            Some(MemoryPressure::Warning)
-                if now.saturating_sub(self.full_at) < Self::WARNING_HOLD =>
+        match (self, reading.map(|reading| reading.pressure())) {
+            (_, Some(MemoryPressure::Full)) => Self::RefusalDueFull { full_at: now },
+            (Self::RefusalDueFull { full_at }, Some(MemoryPressure::Warning))
+                if now.saturating_sub(full_at) < Self::WARNING_HOLD =>
             {
                 self
             }
-            _ => Self {
-                refusing: false,
-                ..self
-            },
+            _ => Self::Normal,
         }
     }
 }

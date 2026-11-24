@@ -1,6 +1,6 @@
 use bevy::prelude::*;
 use common::{
-    memory::{LoadRefusal, MemoryPressure, MemorySample, MemoryStatus},
+    memory::{EngineMemoryPressureMode, MemoryPressure, MemorySample, MemoryStatus},
     partition::Tier,
     structs::NoRenderApp,
 };
@@ -19,51 +19,51 @@ impl Plugin for MemoryStatusPlugin {
         #[cfg(not(target_arch = "wasm32"))]
         app.init_resource::<NativeSampler>();
         app.init_resource::<MemoryStatus>()
-            .init_resource::<LoadRefusal>()
+            .init_resource::<EngineMemoryPressureMode>()
             .add_systems(
                 PreUpdate,
                 (
                     sample_memory,
                     // the headless scene server's reading spans every tenant scene; holding them
                     // would leave its colliders behind its clients'
-                    update_load_refusal.run_if(not(resource_exists::<NoRenderApp>)),
+                    update_engine_memory_pressure_mode.run_if(not(resource_exists::<NoRenderApp>)),
                 )
                     .chain(),
             );
     }
 }
 
-/// Advances [`LoadRefusal`] from the reading and, when refusal starts or ends, holds or releases
-/// every download but the player's.
-fn update_load_refusal(
+/// Advances [`EngineMemoryPressureMode`] from the reading and, when refusal starts or ends,
+/// holds or releases every download but the player's.
+fn update_engine_memory_pressure_mode(
     status: Res<MemoryStatus>,
     time: Res<Time<Real>>,
-    mut refusal: ResMut<LoadRefusal>,
+    mut memory_pressure_mode: ResMut<EngineMemoryPressureMode>,
     ipfs: Option<Res<IpfsResource>>,
 ) {
     let reading = status.reading();
-    let next = refusal.next(reading, time.elapsed());
-    if next.refusing == refusal.refusing {
-        refusal.set_if_neq(next);
+    let next = memory_pressure_mode.next(reading, time.elapsed());
+    if next.is_refusing() == memory_pressure_mode.is_refusing() {
+        memory_pressure_mode.set_if_neq(next);
         return;
     }
     match reading {
-        Some(reading) if next.refusing => warn!(
+        Some(reading) if next.is_refusing() => warn!(
             "engine memory full ({} of {} MiB): new scenes and other players' loads wait",
             reading.used_bytes >> 20,
             reading.cap_mib
         ),
         Some(reading) if reading.pressure() == MemoryPressure::Warning => info!(
             "engine memory not full for {} s: loads resume",
-            LoadRefusal::WARNING_HOLD.as_secs()
+            EngineMemoryPressureMode::WARNING_HOLD.as_secs()
         ),
         Some(_) => info!("engine memory below the warning threshold: loads resume"),
         None => info!("engine memory reading unavailable: loads resume"),
     }
     if let Some(ipfs) = ipfs {
-        ipfs.hold_downloads_from(next.refusing.then_some(HELD_FROM));
+        ipfs.hold_downloads_from(next.is_refusing().then_some(HELD_FROM));
     }
-    *refusal = next;
+    *memory_pressure_mode = next;
 }
 
 #[cfg(not(target_arch = "wasm32"))]

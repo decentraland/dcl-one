@@ -3,7 +3,7 @@
 use bevy::prelude::*;
 use bevy_console::ConsoleCommand;
 use common::{
-    memory::{GpuMemoryBudget, LoadRefusal, MemoryStatus},
+    memory::{EngineMemoryPressureMode, GpuMemoryBudget, MemoryStatus},
     structs::PrimaryUser,
 };
 use console::{AddDebugSection, DebugInput, DebugInputKind, DebugSection, DoAddConsoleCommand};
@@ -108,7 +108,11 @@ fn debug_memory(
     meshes: Res<Assets<Mesh>>,
     materials: Res<Assets<SceneMaterial>>,
     images: Res<Assets<Image>>,
-    (refusal, refused_scenes, ipfs): (Res<LoadRefusal>, Res<RefusedScenes>, Res<IpfsResource>),
+    (memory_pressure_mode, refused_scenes, ipfs): (
+        Res<EngineMemoryPressureMode>,
+        Res<RefusedScenes>,
+        Res<IpfsResource>,
+    ),
 ) {
     let Some(Ok(args)) = cmd.take() else { return };
     if let Some(simulate) = args.simulate {
@@ -196,7 +200,7 @@ fn debug_memory(
         ])),
         "textures": current_scene_content.map(|c| count_and_mib(c.texture_count, c.texture_bytes_sum)),
         "meshes": current_scene_content.map(|c| count_and_mib(c.mesh_count, c.mesh_bytes_sum)),
-        "refusing": refusal.refusing,
+        "refusing": memory_pressure_mode.is_refusing(),
         "refusedScenes": refused_scenes.0,
         "heldFrom": ipfs.downloads_held_from().map_or("none".to_owned(), |tier| format!("{tier:?}")),
         "unavailable": {

@@ -16,7 +16,7 @@ fn setup_lifecycle(world: &mut World) {
     world.init_resource::<Events<LoadSceneEvent>>();
     world.init_resource::<CurrentImposterScene>();
     world.init_resource::<RefusedScenes>();
-    world.init_resource::<LoadRefusal>();
+    world.init_resource::<EngineMemoryPressureMode>();
     world.init_resource::<PreviewMode>();
     world.init_resource::<CurrentSceneLoading>();
     world.init_resource::<CurrentRealm>();
@@ -150,16 +150,15 @@ fn live_scene_is_kept_through_the_unload_margin() {
 fn full_memory_spawns_no_new_neighbour_until_it_ends() {
     let mut world = lifecycle_world();
     spawn_current_scene(&mut world, SceneLoading::Failed);
-    world.insert_resource(LoadRefusal {
-        refusing: true,
-        ..Default::default()
+    world.insert_resource(EngineMemoryPressureMode::RefusalDueFull {
+        full_at: Duration::ZERO,
     });
 
     world.run_system_once(process_scene_lifecycle).unwrap();
     assert!(spawned_hashes(&world).is_empty());
     assert_eq!(world.resource::<RefusedScenes>().0, 1);
 
-    world.insert_resource(LoadRefusal::default());
+    world.insert_resource(EngineMemoryPressureMode::Normal);
     world.run_system_once(process_scene_lifecycle).unwrap();
     assert_eq!(spawned_hashes(&world), vec!["neighbour".to_owned()]);
     assert_eq!(world.resource::<RefusedScenes>().0, 0);
@@ -169,9 +168,8 @@ fn full_memory_spawns_no_new_neighbour_until_it_ends() {
 fn full_memory_spawns_the_players_scene_and_keeps_a_spawned_neighbour() {
     let mut world = lifecycle_world();
     let neighbour = spawn_live_neighbour(&mut world);
-    world.insert_resource(LoadRefusal {
-        refusing: true,
-        ..Default::default()
+    world.insert_resource(EngineMemoryPressureMode::RefusalDueFull {
+        full_at: Duration::ZERO,
     });
 
     world.run_system_once(process_scene_lifecycle).unwrap();
@@ -488,9 +486,8 @@ fn full_memory_still_spawns_a_portable() {
             },
         },
     );
-    world.insert_resource(LoadRefusal {
-        refusing: true,
-        ..Default::default()
+    world.insert_resource(EngineMemoryPressureMode::RefusalDueFull {
+        full_at: Duration::ZERO,
     });
 
     world.run_system_once(process_scene_lifecycle).unwrap();
