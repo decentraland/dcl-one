@@ -165,9 +165,9 @@ pub struct ReplyTiming {
 }
 
 impl ReplyTiming {
-    /// Frames from the dispatch to the frame the reply was applied in (0: the same frame).
-    pub fn frames(&self) -> u32 {
-        self.frame.wrapping_sub(self.sent.frame)
+    /// The reply landed in a later frame than its dispatch.
+    pub(crate) fn late(&self) -> bool {
+        self.frame != self.sent.frame
     }
 }
 
@@ -184,7 +184,7 @@ impl SceneTickTiming {
     /// `frame` is then a re-dispatch.
     pub fn late_reply_in(&self, frame: u32) -> bool {
         self.reply
-            .is_some_and(|reply| reply.frame == frame && reply.frames() > 0)
+            .is_some_and(|reply| reply.frame == frame && reply.late())
     }
 
     /// Only a re-dispatch in the frame of a late reply sends the `staged` rotation.

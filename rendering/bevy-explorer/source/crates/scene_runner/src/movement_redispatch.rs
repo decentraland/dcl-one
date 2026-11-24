@@ -80,7 +80,7 @@ impl MovementTickTimes {
         let Some(reply) = tick_timing.reply else {
             return false;
         };
-        let late = reply.frame != reply.sent.frame;
+        let late = reply.late();
         self.record(tick_time(
             reply.sent.at,
             reply.at,
