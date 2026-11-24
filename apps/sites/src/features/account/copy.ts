@@ -51,7 +51,8 @@ export const NOTIFICATIONS_COPY = {
       "Enter your email, then check your inbox for an email with the confirmation link. After confirming, you will be able to customize the notifications below.",
     withEmail:
       "If you'd like to update your email address, edit it below. Make sure to check for the confirmation email in your inbox afterwards!",
-    pendingApproval: "Confirmation email sent, check your inbox.",
+    pendingApproval: "This email address is awaiting confirmation.",
+    confirmationSent: "Confirmation email sent, check your inbox.",
     confirmedDescription: "Your email has been confirmed.",
     submit: "Submit",
     resend: "Resend",

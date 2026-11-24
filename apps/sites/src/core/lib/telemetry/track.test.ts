@@ -212,6 +212,50 @@ describe("track (fetch mocked)", () => {
     }
   });
 
+  describe("when server events carry the incoming request's user agent", () => {
+    const botContext = { ...CTX, requestUserAgent: "curl/8.6.0" };
+    const visitorContext = { ...CTX, requestUserAgent: BROWSER_UA };
+    const notFound = { path: "/visitor", referrer: "", ua: BROWSER_UA };
+    const landing = { item_id: "item", nid: "notification", on_sale: false };
+    let minute = 0;
+
+    beforeEach(() => {
+      vi.stubEnv("SEGMENT_WRITE_KEY", "sites-key");
+      vi.stubEnv("SHOP_SEGMENT_WRITE_KEY", "shop-key");
+      vi.useFakeTimers();
+      vi.setSystemTime(Date.UTC(2031, 0, 1, 0, minute++));
+    });
+
+    afterEach(() => {
+      vi.unstubAllEnvs();
+      vi.useRealTimers();
+    });
+
+    it("should suppress recognized bots for Sites and Shop", () => {
+      track("ffw_shop_landing", landing, botContext);
+      track("ffw_shop_landing", landing, { ...botContext, source: "shop" });
+      expect(fetchMock).not.toHaveBeenCalled();
+    });
+
+    it("should send human events even after enough bot requests to exhaust the budget", () => {
+      for (let i = 0; i < 60; i += 1) track("page_not_found", { ...notFound, path: "/bot", ua: botContext.requestUserAgent }, botContext);
+      track("page_not_found", notFound, visitorContext);
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+      expect(trackedProperties()).toMatchObject({ path: "/visitor" });
+    });
+
+    it("should keep requests without a user agent and independent operational reports", () => {
+      track("page_not_found", { ...notFound, ua: "" }, { ...CTX, requestUserAgent: null });
+      track("catalyst_schema_drift", { kind: "test", issues_count: 1 }, CTX);
+      expect(fetchMock).toHaveBeenCalledTimes(2);
+    });
+
+    function trackedProperties(): unknown {
+      const [, init] = fetchMock.mock.calls[0] as unknown as [string, RequestInit];
+      return JSON.parse(init.body as string).properties;
+    }
+  });
+
   it("opens a new window when the clock is behind the window's start", async () => {
     process.env.SEGMENT_WRITE_KEY = "key-1";
     vi.useFakeTimers();

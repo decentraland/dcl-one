@@ -297,7 +297,7 @@ const STATUS_LABEL = { pending: 'Pending', approved: 'Approved', rejected: 'Reje
 
 /**
  * My Events: the day card without actions, opening the event's editor. Its review status sits over the
- * cover, and an event still in review is dimmed, as source.
+ * cover, and the cover of an event still in review is dimmed.
  */
 function MyEventCard({ title, image, href, creator, time, status }: MyEventCardProps) {
   const { text } = useEventsCopy()
@@ -312,6 +312,7 @@ function MyEventCard({ title, image, href, creator, time, status }: MyEventCardP
         creator={creatorOf(creator)}
         byLabel={text('By')}
         time={time}
+        dimmed={status === 'pending'}
       />
     </div>
   )

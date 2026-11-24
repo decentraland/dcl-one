@@ -28,9 +28,9 @@ type EmailCardProps = {
   onToggleAll: (enabled: boolean) => void;
 };
 
-function emailDescription(email: string, unconfirmed: string): string {
+function emailDescription(email: string, unconfirmed: string, confirmationSent: boolean): string {
   if (!email && !unconfirmed) return COPY.email.withoutEmail;
-  if (unconfirmed) return COPY.email.pendingApproval;
+  if (unconfirmed) return confirmationSent ? COPY.email.confirmationSent : COPY.email.pendingApproval;
   return COPY.email.confirmedDescription;
 }
 
@@ -48,6 +48,11 @@ function EmailCard({ identity, email, unconfirmedEmail, details, loading, onTogg
   const trimmed = value.trim();
 
   const confirmed = !!email && !unconfirmedEmail;
+  const confirmationSent =
+    setEmail.isSuccess &&
+    setEmail.variables.identity.signer === identity.signer &&
+    setEmail.variables.email === unconfirmedEmail &&
+    trimmed === unconfirmedEmail;
   const label = !upstream
     ? COPY.email.submit
     : unconfirmedEmail && unconfirmedEmail === trimmed
@@ -88,7 +93,7 @@ function EmailCard({ identity, email, unconfirmedEmail, details, loading, onTogg
           />
         ) : null}
       </div>
-      <p className={styles.cardDescription}>{emailDescription(email, unconfirmedEmail)}</p>
+      <p className={styles.cardDescription}>{emailDescription(email, unconfirmedEmail, confirmationSent)}</p>
       <form className={styles.emailForm} onSubmit={submit} noValidate>
         <InputWebCreatorTools
           label={COPY.email.label}

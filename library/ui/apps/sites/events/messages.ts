@@ -752,12 +752,12 @@ const messages = {
     '현재 커뮤니티',
     '現在のコミュニティ'
   ],
-  'Loading communities and schedules…': [
-    'Cargando comunidades y horarios…',
-    'Chargement des communautés et des horaires…',
-    '正在加载社区和日程…',
-    '커뮤니티와 일정을 불러오는 중…',
-    'コミュニティとスケジュールを読み込み中…'
+  'Loading communities…': [
+    'Cargando comunidades…',
+    'Chargement des communautés…',
+    '正在加载社区…',
+    '커뮤니티를 불러오는 중…',
+    'コミュニティを読み込み中…'
   ],
   'Could not load your communities: {error}': [
     'No se pudieron cargar tus comunidades: {error}',
@@ -845,6 +845,21 @@ const messages = {
     '이벤트를 삭제하지 못했습니다. 다시 시도해 주세요.',
     'イベントを削除できませんでした。もう一度お試しください。'
   ],
+  'Your session changed. Sign in again to delete this event.': [
+    'Tu sesión cambió. Volvé a iniciar sesión para eliminar este evento.',
+    'Votre session a changé. Reconnectez-vous pour supprimer cet événement.',
+    '你的登录状态已更改。请重新登录以删除此活动。',
+    '세션이 변경되었습니다. 이 이벤트를 삭제하려면 다시 로그인해 주세요.',
+    'セッションが変更されました。このイベントを削除するには、もう一度ログインしてください。'
+  ],
+  "Your browser couldn't keep your draft for sign-in. Copy what you wrote, then choose Sign In again to continue without it.":
+    [
+      'Tu navegador no pudo guardar tu borrador para iniciar sesión. Copiá lo que escribiste y elegí Iniciar sesión otra vez para continuar sin él.',
+      'Votre navigateur n’a pas pu conserver votre brouillon pour la connexion. Copiez ce que vous avez écrit, puis choisissez à nouveau Se connecter pour continuer sans lui.',
+      '你的浏览器无法为登录保留草稿。请复制你写的内容，然后再次选择登录，不保留草稿继续。',
+      '브라우저가 로그인하는 동안 초안을 보관하지 못했습니다. 작성한 내용을 복사한 다음 다시 로그인을 선택하면 초안 없이 계속합니다.',
+      'ブラウザがログイン用に下書きを保持できませんでした。書いた内容をコピーしてから、もう一度ログインを選ぶと下書きなしで続行します。'
+    ],
   'Check access again': [
     'Volver a verificar el acceso',
     'Vérifier à nouveau l’accès',

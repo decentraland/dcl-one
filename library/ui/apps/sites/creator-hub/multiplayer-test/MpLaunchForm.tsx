@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useMemo, useState } from 'react'
 
 import {
   DEFAULT_THRESHOLDS,
@@ -18,132 +18,141 @@ import {
   type MpRunSpec,
   type MpScenario,
   type MpSourceKind,
-  type MpThresholds,
-} from "./rules";
+  type MpThresholds
+} from '../../../../../web-core/multiplayer-test/rules'
 
-import "./mplaunchform.css";
+import './mplaunchform.css'
 
-type PeerOverride = { peer: string; latency_ms: string; loss_pct: string };
-type ScheduleRow = { at_ms: string; peer: string; duration_ms: string };
+type PeerOverride = { peer: string; latency_ms: string; loss_pct: string }
+type ScheduleRow = { at_ms: string; peer: string; duration_ms: string }
 
 type MpLaunchFormProps = {
-  presets: string[];
-  profiles: string[];
-  disabled?: boolean;
-  error?: string | null;
-  onLaunch: (req: MpLaunchRequest) => void;
-};
+  presets: string[]
+  profiles: string[]
+  disabled?: boolean
+  error?: string | null
+  onLaunch: (req: MpLaunchRequest) => void
+}
 
 const THRESHOLD_FIELDS: Array<{ key: keyof MpThresholds; label: string }> = [
-  { key: "max_diverged_final", label: "Max diverged (final)" },
-  { key: "max_converge_ms", label: "Max converge (ms)" },
-  { key: "min_synced_pct", label: "Min synced (%)" },
-  { key: "max_never_synced", label: "Max never-synced" },
-];
+  { key: 'max_diverged_final', label: 'Max diverged (final)' },
+  { key: 'max_converge_ms', label: 'Max converge (ms)' },
+  { key: 'min_synced_pct', label: 'Min synced (%)' },
+  { key: 'max_never_synced', label: 'Max never-synced' }
+]
 
 export default function MpLaunchForm({
   presets,
   profiles,
   disabled = false,
   error = null,
-  onLaunch,
+  onLaunch
 }: MpLaunchFormProps) {
-  const [lane, setLane] = useState<MpLane>("protocol");
-  const [sourceKind, setSourceKind] = useState<MpSourceKind>("fixture");
-  const [fixture, setFixture] = useState<string>(SYNC_FIXTURE);
-  const [sourceRef, setSourceRef] = useState("");
-  const [bots, setBots] = useState("2");
-  const [mode, setMode] = useState<MpScenario>("burst");
-  const [windowSecs, setWindowSecs] = useState(String(WINDOW_LIMITS.fallback));
-  const [profile, setProfile] = useState("");
-  const [preset, setPreset] = useState("");
-  const [seed, setSeed] = useState("");
+  const [lane, setLane] = useState<MpLane>('protocol')
+  const [sourceKind, setSourceKind] = useState<MpSourceKind>('fixture')
+  const [fixture, setFixture] = useState<string>(SYNC_FIXTURE)
+  const [sourceRef, setSourceRef] = useState('')
+  const [bots, setBots] = useState('2')
+  const [mode, setMode] = useState<MpScenario>('burst')
+  const [windowSecs, setWindowSecs] = useState(String(WINDOW_LIMITS.fallback))
+  const [profile, setProfile] = useState('')
+  const [preset, setPreset] = useState('')
+  const [seed, setSeed] = useState('')
   const [thresholds, setThresholds] = useState<Record<keyof MpThresholds, string>>({
     max_diverged_final: String(DEFAULT_THRESHOLDS.max_diverged_final),
     max_converge_ms: String(DEFAULT_THRESHOLDS.max_converge_ms),
     min_synced_pct: String(DEFAULT_THRESHOLDS.min_synced_pct),
-    max_never_synced: String(DEFAULT_THRESHOLDS.max_never_synced),
-  });
-  const [advancedOpen, setAdvancedOpen] = useState(false);
-  const [peerRows, setPeerRows] = useState<PeerOverride[]>([]);
-  const [scheduleRows, setScheduleRows] = useState<ScheduleRow[]>([]);
+    max_never_synced: String(DEFAULT_THRESHOLDS.max_never_synced)
+  })
+  const [advancedOpen, setAdvancedOpen] = useState(false)
+  const [peerRows, setPeerRows] = useState<PeerOverride[]>([])
+  const [scheduleRows, setScheduleRows] = useState<ScheduleRow[]>([])
 
-  const profileNames = profiles.length ? profiles : FALLBACK_PROFILES;
-  const activeProfile = profile || profileNames[0];
-  const fixtures = fixturesForLane(lane);
-  const caps = LANE_CAPS[lane];
+  const profileNames = profiles.length ? profiles : FALLBACK_PROFILES
+  const activeProfile = profile || profileNames[0]
+  const fixtures = fixturesForLane(lane)
+  const caps = LANE_CAPS[lane]
 
   const pickLane = (next: MpLane) => {
-    setLane(next);
-    if (sourceKind === "fixture" && !fixturesForLane(next).includes(fixture)) {
-      setFixture(SYNC_FIXTURE);
+    setLane(next)
+    if (sourceKind === 'fixture' && !fixturesForLane(next).includes(fixture)) {
+      setFixture(SYNC_FIXTURE)
     }
-  };
+  }
 
   const request: MpLaunchRequest = useMemo(() => {
-    if (preset) return { preset };
-    const peers: Record<string, Record<string, number>> = {};
+    if (preset) return { preset }
+    const peers: Record<string, Record<string, number>> = {}
     for (const row of peerRows) {
-      if (!row.peer.trim()) continue;
-      const o: Record<string, number> = {};
-      if (row.latency_ms.trim()) o.latency_ms = Number(row.latency_ms);
-      if (row.loss_pct.trim()) o.loss_pct = Number(row.loss_pct);
-      if (Object.keys(o).length) peers[row.peer.trim()] = o;
+      if (!row.peer.trim()) continue
+      const o: Record<string, number> = {}
+      if (row.latency_ms.trim()) o.latency_ms = Number(row.latency_ms)
+      if (row.loss_pct.trim()) o.loss_pct = Number(row.loss_pct)
+      if (Object.keys(o).length) peers[row.peer.trim()] = o
     }
     const schedule = scheduleRows
       .filter((r) => r.peer.trim() && r.at_ms.trim())
       .map((r) => ({
         at_ms: Number(r.at_ms),
         peer: r.peer.trim(),
-        partition: { duration_ms: Number(r.duration_ms || "10000") },
-      }));
+        partition: { duration_ms: Number(r.duration_ms || '10000') }
+      }))
     const spec: MpRunSpec = {
       lane,
       scene:
-        sourceKind === "fixture"
-          ? { kind: "fixture", ref: fixture }
+        sourceKind === 'fixture'
+          ? { kind: 'fixture', ref: fixture }
           : { kind: sourceKind, ref: sourceRef.trim() },
       bots: Number(bots),
       mode,
       window: Number(windowSecs) || WINDOW_LIMITS.fallback,
       shape: {
-        profile: profile || profileNames[0] || "",
+        profile: profile || profileNames[0] || '',
         ...(Object.keys(peers).length ? { peers } : {}),
         ...(schedule.length ? { schedule } : {}),
-        ...(seed.trim() ? { seed: Number(seed) } : {}),
+        ...(seed.trim() ? { seed: Number(seed) } : {})
       },
       thresholds: {
         max_diverged_final: Number(thresholds.max_diverged_final),
         max_converge_ms: Number(thresholds.max_converge_ms),
         min_synced_pct: Number(thresholds.min_synced_pct),
-        max_never_synced: Number(thresholds.max_never_synced),
-      },
-    };
-    return spec;
+        max_never_synced: Number(thresholds.max_never_synced)
+      }
+    }
+    return spec
   }, [
-    preset, lane, sourceKind, fixture, sourceRef, bots, mode, windowSecs,
-    profile, profileNames, seed, thresholds, peerRows, scheduleRows,
-  ]);
+    preset,
+    lane,
+    sourceKind,
+    fixture,
+    sourceRef,
+    bots,
+    mode,
+    windowSecs,
+    profile,
+    profileNames,
+    seed,
+    thresholds,
+    peerRows,
+    scheduleRows
+  ])
 
-  const check = validateSpec(request);
+  const check = validateSpec(request)
 
   return (
     <form
       className="mp-launch"
       data-mp-form="launch"
       onSubmit={(e) => {
-        e.preventDefault();
-        if (!disabled && check.ok) onLaunch(request);
+        e.preventDefault()
+        if (!disabled && check.ok) onLaunch(request)
       }}
     >
       <fieldset className="mp-launch__group">
         <legend className="mp-launch__legend">Lane</legend>
         <div className="mp-launch__lanes" role="radiogroup" aria-label="Lane">
           {LANES.map((l) => (
-            <label
-              key={l}
-              className={"mp-launch__lane" + (lane === l ? " is-selected" : "")}
-            >
+            <label key={l} className={'mp-launch__lane' + (lane === l ? ' is-selected' : '')}>
               <input
                 type="radio"
                 name="mp-lane"
@@ -191,7 +200,7 @@ export default function MpLaunchForm({
             <option value="dir">Project scene dir</option>
             <option value="realm">Realm URL</option>
           </select>
-          {sourceKind === "fixture" ? (
+          {sourceKind === 'fixture' ? (
             <select
               name="mp-fixture"
               value={fixture}
@@ -210,17 +219,14 @@ export default function MpLaunchForm({
               name="mp-source-ref"
               value={sourceRef}
               onChange={(e) => setSourceRef(e.target.value)}
-              placeholder={
-                sourceKind === "dir" ? "/path/to/scene" : "https://realm\u{2026}/about"
-              }
-              aria-label={sourceKind === "dir" ? "Scene dir" : "Realm URL"}
+              placeholder={sourceKind === 'dir' ? '/path/to/scene' : 'https://realm\u{2026}/about'}
+              aria-label={sourceKind === 'dir' ? 'Scene dir' : 'Realm URL'}
             />
           )}
         </div>
-        {lane !== "protocol" && (
+        {lane !== 'protocol' && (
           <p className="mp-launch__hint">
-            Game fixtures are protocol-lane only for now; {SYNC_FIXTURE} works in
-            every lane.
+            Game fixtures are protocol-lane only for now; {SYNC_FIXTURE} works in every lane.
           </p>
         )}
       </fieldset>
@@ -289,7 +295,7 @@ export default function MpLaunchForm({
             />
           </label>
         </div>
-        {!check.ok && check.field === "bots" && (
+        {!check.ok && check.field === 'bots' && (
           <p className="mp-launch__error" role="alert" data-mp-error="bots-cap">
             {check.error}
           </p>
@@ -307,9 +313,7 @@ export default function MpLaunchForm({
                 name={`mp-threshold-${key}`}
                 min={0}
                 value={thresholds[key]}
-                onChange={(e) =>
-                  setThresholds((t) => ({ ...t, [key]: e.target.value }))
-                }
+                onChange={(e) => setThresholds((t) => ({ ...t, [key]: e.target.value }))}
               />
             </label>
           ))}
@@ -333,7 +337,7 @@ export default function MpLaunchForm({
                 aria-label="Peer"
                 onChange={(e) =>
                   setPeerRows((rs) =>
-                    rs.map((r, j) => (j === i ? { ...r, peer: e.target.value } : r)),
+                    rs.map((r, j) => (j === i ? { ...r, peer: e.target.value } : r))
                   )
                 }
               />
@@ -344,9 +348,7 @@ export default function MpLaunchForm({
                 aria-label="Latency ms"
                 onChange={(e) =>
                   setPeerRows((rs) =>
-                    rs.map((r, j) =>
-                      j === i ? { ...r, latency_ms: e.target.value } : r,
-                    ),
+                    rs.map((r, j) => (j === i ? { ...r, latency_ms: e.target.value } : r))
                   )
                 }
               />
@@ -357,9 +359,7 @@ export default function MpLaunchForm({
                 aria-label="Loss percent"
                 onChange={(e) =>
                   setPeerRows((rs) =>
-                    rs.map((r, j) =>
-                      j === i ? { ...r, loss_pct: e.target.value } : r,
-                    ),
+                    rs.map((r, j) => (j === i ? { ...r, loss_pct: e.target.value } : r))
                   )
                 }
               />
@@ -376,9 +376,7 @@ export default function MpLaunchForm({
           <button
             type="button"
             className="mp-launch__add"
-            onClick={() =>
-              setPeerRows((rs) => [...rs, { peer: "", latency_ms: "", loss_pct: "" }])
-            }
+            onClick={() => setPeerRows((rs) => [...rs, { peer: '', latency_ms: '', loss_pct: '' }])}
           >
             + peer override
           </button>
@@ -394,7 +392,7 @@ export default function MpLaunchForm({
                 aria-label="At ms"
                 onChange={(e) =>
                   setScheduleRows((rs) =>
-                    rs.map((r, j) => (j === i ? { ...r, at_ms: e.target.value } : r)),
+                    rs.map((r, j) => (j === i ? { ...r, at_ms: e.target.value } : r))
                   )
                 }
               />
@@ -405,7 +403,7 @@ export default function MpLaunchForm({
                 aria-label="Peer"
                 onChange={(e) =>
                   setScheduleRows((rs) =>
-                    rs.map((r, j) => (j === i ? { ...r, peer: e.target.value } : r)),
+                    rs.map((r, j) => (j === i ? { ...r, peer: e.target.value } : r))
                   )
                 }
               />
@@ -416,9 +414,7 @@ export default function MpLaunchForm({
                 aria-label="Partition duration ms"
                 onChange={(e) =>
                   setScheduleRows((rs) =>
-                    rs.map((r, j) =>
-                      j === i ? { ...r, duration_ms: e.target.value } : r,
-                    ),
+                    rs.map((r, j) => (j === i ? { ...r, duration_ms: e.target.value } : r))
                   )
                 }
               />
@@ -426,9 +422,7 @@ export default function MpLaunchForm({
                 type="button"
                 className="mp-launch__remove"
                 aria-label="Remove schedule entry"
-                onClick={() =>
-                  setScheduleRows((rs) => rs.filter((_, j) => j !== i))
-                }
+                onClick={() => setScheduleRows((rs) => rs.filter((_, j) => j !== i))}
               >
                 &#x2715;
               </button>
@@ -438,7 +432,7 @@ export default function MpLaunchForm({
             type="button"
             className="mp-launch__add"
             onClick={() =>
-              setScheduleRows((rs) => [...rs, { at_ms: "", peer: "", duration_ms: "" }])
+              setScheduleRows((rs) => [...rs, { at_ms: '', peer: '', duration_ms: '' }])
             }
           >
             + schedule entry
@@ -446,7 +440,7 @@ export default function MpLaunchForm({
         </div>
       </details>
 
-      {!check.ok && check.field !== "bots" && (
+      {!check.ok && check.field !== 'bots' && (
         <p className="mp-launch__error" role="alert" data-mp-error={check.field}>
           {check.error}
         </p>
@@ -466,5 +460,5 @@ export default function MpLaunchForm({
         Launch test
       </button>
     </form>
-  );
+  )
 }
