@@ -72,9 +72,10 @@ CREATE TABLE explore_api.feature_flags_local (
 -- The explorer map's tile grid (about 92k tiles, 37 MB of JSON), built from
 -- the land-authz and marketplace indexes (DATABASE.md "Map grid build
 -- workload") and gzip-compressed as one row so a restart renders map.png
--- before the first pass; last_updated_at is the /v2/tiles/info stamp, moved
--- only when the body changes; etag is NULL (the column of the mirror the
--- builder replaced); fetched_at is the build time.
+-- before the first pass; the row is the grid's revision: last_updated_at
+-- is the /v2/tiles/info stamp, moved only when the body changes; etag is the
+-- hex SHA-256 of the stored body (a row the replaced mirror wrote holds the
+-- upstream's ETag); fetched_at is the build time.
 CREATE TABLE explore_api.map_grid (
     id smallint PRIMARY KEY CHECK (id = 1),
     last_updated_at bigint NOT NULL,

@@ -3,13 +3,18 @@
 //! `buildTile`, `addSpecialTiles`, `getEstateFlags` and `applyTrades` over
 //! the indexes that replace its marketplace subgraph and squid reads:
 //!
-//! - **LAND and estates** ([`read_land`]): one REPEATABLE READ snapshot of
-//!   the land-authz index (`LandAuthzState::ready_snapshot`): every LAND
-//!   token with its coordinates and owner (`token_right`), its estate
-//!   (`estate_land`), the estate's owner and the name of its latest data
-//!   document (`estate_data_event`). A LAND in an estate takes the estate's
-//!   owner and name, as the atlas does.
-//! - **Listings, names and rentals** ([`LandMarket`]): Shop's readers,
+//! Every input is read in one REPEATABLE READ, READ ONLY snapshot, the one
+//! the land-authz index opens once it finds itself published
+//! (`LandAuthzState::ready_snapshot`), so the LAND facts, Shop's index
+//! cursors and Shop's rows are one state of the database:
+//!
+//! - **LAND and estates** ([`read_land`]): every LAND token with its
+//!   coordinates and owner (`token_right`), its estate (`estate_land`), the
+//!   estate's owner and the name of its latest data document
+//!   (`estate_data_event`). A LAND in an estate takes the estate's owner
+//!   and name, as the atlas does.
+//! - **Listings, names and rentals** ([`LandMarket`], given the snapshot's
+//!   connection and the grid's chain): Shop's readers,
 //!   handed in by `serve` (Shop sits above Explore): the legacy order of
 //!   each LAND and Estate token (`shop.nft_order`), the open off-chain
 //!   `public_nft_order` trades that sell one (`shop.trades` under Shop's
@@ -43,10 +48,11 @@ use std::sync::OnceLock;
 
 use futures::future::BoxFuture;
 use serde::Deserialize;
+use sqlx::PgConnection;
 
 use super::tiles::{RentalPeriod, Tile, TileRentalListing, TileType, coords_to_id};
+use crate::chain_index::registries::{NETWORK_MAINNET, NETWORK_SEPOLIA};
 use crate::chain_index::source::Source;
-use crate::land_authz::LandAuthzState;
 
 /// The legacy Marketplace order of a LAND or Estate token: `shop.nft_order`,
 /// the token's latest order event folded, whatever its status.
@@ -116,15 +122,28 @@ pub enum LandMarketError {
 
 /// Shop's LAND and Estate listings, names and rentals; `serve` implements it
 /// over Shop's readers (`src/serve_adapters.rs`), as Shop sits above
-/// Explore. `land` and `estate` are the lowercase registry addresses; `now`
-/// is the build's clock, which decides expiry.
+/// Explore. Every read, readiness included, runs on `conn`, the build's
+/// snapshot. `chain_id` is the chain the LAND facts are of; `land` and
+/// `estate` its lowercase registry addresses; `now` the build's clock, which
+/// decides expiry.
 pub trait LandMarket: Send + Sync {
     fn snapshot<'a>(
         &'a self,
+        conn: &'a mut PgConnection,
+        chain_id: i64,
         land: &'a str,
         estate: &'a str,
         now: chrono::DateTime<chrono::Utc>,
     ) -> BoxFuture<'a, Result<LandMarketSnapshot, LandMarketError>>;
+}
+
+/// The chain of a land-authz network (`index_cursor.network`).
+pub fn land_chain_id(network: &str) -> Option<i64> {
+    match network {
+        NETWORK_MAINNET => Some(1),
+        NETWORK_SEPOLIA => Some(11_155_111),
+        _ => None,
+    }
 }
 
 /// A LAND token as the land-authz index holds it.
@@ -225,9 +244,11 @@ fn non_empty(s: Option<&String>) -> Option<String> {
 }
 
 /// An order's expiry in seconds, rounded as the atlas rounds a
-/// millisecond `expiresAt`.
+/// millisecond `expiresAt`; the nft index saturates a far expiry at
+/// `i64::MAX`, which rounds without overflowing.
 fn expires_secs(order: &LandOrder) -> i64 {
-    (order.expires_at_ms + 500).div_euclid(1000)
+    let ms = order.expires_at_ms;
+    ms.div_euclid(1000) + i64::from(ms.rem_euclid(1000) >= 500)
 }
 
 /// The order when it is live at `now_s`: open, unexpired (the atlas's
@@ -533,36 +554,27 @@ LEFT JOIN LATERAL (
 WHERE e.token_address = $1
   AND EXISTS (SELECT 1 FROM land_authz.estate_land el WHERE el.estate_token_id = e.token_id)";
 
-/// Every LAND token and every estate holding one, on one published
-/// snapshot of the land-authz index; `Err(Unready)` while it is not
-/// published for the configured registries.
-pub async fn read_land(land: &LandAuthzState) -> Result<LandSnapshot, LandMarketError> {
-    let Some(mut snapshot) = land.ready_snapshot().await else {
-        return Err(LandMarketError::Unready(
-            Source::LandAuthzIndex,
-            "the land-authz index has not published a recent fold of the configured LAND and Estate registries"
-                .into(),
-        ));
-    };
-    let failed = |e: sqlx::Error, what: &str| {
-        LandMarketError::Failed(anyhow::Error::new(e).context(what.to_string()))
-    };
+/// Every LAND token of `land_registry` and every estate of
+/// `estate_registry` holding one, on `conn`: the published snapshot of the
+/// land-authz index (`LandAuthzState::ready_snapshot`), whose cursor
+/// published `folded_block`.
+pub async fn read_land(
+    conn: &mut PgConnection,
+    land_registry: &str,
+    estate_registry: &str,
+    folded_block: i64,
+) -> anyhow::Result<LandSnapshot> {
+    use anyhow::Context as _;
     let lands: Vec<LandRow> = sqlx::query_as(LANDS_SQL)
-        .bind(&land.settings.land_registry)
-        .fetch_all(&mut *snapshot.tx)
+        .bind(land_registry)
+        .fetch_all(&mut *conn)
         .await
-        .map_err(|e| failed(e, "reading the LAND tokens"))?;
+        .context("reading the LAND tokens")?;
     let estates: Vec<EstateRead> = sqlx::query_as(ESTATES_SQL)
-        .bind(&land.settings.estate_registry)
-        .fetch_all(&mut *snapshot.tx)
+        .bind(estate_registry)
+        .fetch_all(&mut *conn)
         .await
-        .map_err(|e| failed(e, "reading the estates"))?;
-    let folded_block = snapshot
-        .cursor
-        .folded_block
-        .unwrap_or(snapshot.cursor.last_block);
-    // A read-only snapshot: nothing to commit.
-    drop(snapshot);
+        .context("reading the estates")?;
     Ok(LandSnapshot {
         lands,
         estates: estates
@@ -793,6 +805,36 @@ mod tests {
             tiles["10,13"].price, None,
             "the order its seller left behind when moving the parcel into the estate"
         );
+    }
+
+    #[test]
+    fn a_saturated_expiry_rounds_without_overflow() {
+        let far = LandOrder {
+            expires_at_ms: i64::MAX,
+            ..order(LAND, "1", "0xaaa", 1, 0)
+        };
+        assert_eq!(expires_secs(&far), i64::MAX / 1000 + 1);
+        let at = |ms| {
+            expires_secs(&LandOrder {
+                expires_at_ms: ms,
+                ..order(LAND, "1", "0xaaa", 1, 0)
+            })
+        };
+        assert_eq!((at(1_499), at(1_500), at(0)), (1, 2, 0));
+        let market = LandMarketSnapshot {
+            orders: vec![LandOrder {
+                expires_at_ms: i64::MAX,
+                ..order(LAND, "103", "0xaaa", 7, 0)
+            }],
+            ..Default::default()
+        };
+        let tiles = compose(LAND, ESTATE, &land(), &market, NOW_MS);
+        assert_eq!(
+            tiles["10,14"].price,
+            Some(7.0),
+            "a never-expiring order is live"
+        );
+        assert_eq!(tiles["10,14"].expires_at, Some(i64::MAX / 1000 + 1));
     }
 
     #[test]

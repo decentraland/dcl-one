@@ -202,6 +202,12 @@ fn renderer_busy() -> Box<Response> {
     )
 }
 
+/// The render cache's key of `key` on `grid`: a body rendered from one grid
+/// is never served for another.
+fn png_cache_key(grid: &Grid, key: &str) -> String {
+    format!("{key}@{:016x}", grid.content_tag)
+}
+
 async fn cached_png_render<F>(
     state: &Shared,
     headers: &HeaderMap,
@@ -213,15 +219,18 @@ async fn cached_png_render<F>(
 where
     F: FnOnce(&Grid) -> Result<Vec<u8>, Box<Response>> + Send + 'static,
 {
-    // Without a grid, the envelope as it is: never a 304 for a stamp no grid carries.
-    if !state.map.is_ready() {
+    // One grid for the validators, the cache key and the body, so a swap
+    // cannot pair one grid's body with another's validators. Without a grid,
+    // the envelope as it is: never a 304 for a stamp no grid carries.
+    let Some(grid) = state.map.snapshot() else {
         return state.map.unavailable();
-    }
-    let last = state.map.last_updated_at();
+    };
+    let last = grid.last_updated_at;
     let etag = http_cache::etag_for(last, &key);
     if let Some(r) = http_cache::not_modified_etag(headers, last, &etag, max_age, swr) {
         return r;
     }
+    let key = png_cache_key(&grid, &key);
     let flight;
     let mut _rendering = None;
     if state.map.cached_png(&key).is_none() {
@@ -243,9 +252,6 @@ where
     let bytes = match state.map.cached_png(&key) {
         Some(b) => b,
         None => {
-            let Some(grid) = state.map.snapshot() else {
-                return state.map.unavailable();
-            };
             match render_blocking(grid, render).await {
                 Ok(b) => {
                     let b = Arc::new(b);
@@ -280,7 +286,7 @@ pub async fn map_png(
     Query(q): Query<HashMap<String, String>>,
 ) -> Response {
     let p = extract_params(&q);
-    let key = format!("map:{}:{}", state.map.content_tag(), p.key_suffix());
+    let key = format!("map:{}", p.key_suffix());
     cached_png_render(
         &state,
         &headers,
@@ -304,13 +310,7 @@ pub async fn parcel_map_png(
         y: y.parse().unwrap_or(0),
     });
     let selected = vec![center];
-    let key = format!(
-        "parcel:{},{}:{}:{}",
-        center.x,
-        center.y,
-        state.map.content_tag(),
-        p.key_suffix()
-    );
+    let key = format!("parcel:{},{}:{}", center.x, center.y, p.key_suffix());
     cached_png_render(
         &state,
         &headers,
@@ -341,11 +341,7 @@ pub async fn estate_map_png(
     }
     let dissolved = state.settings.map_dissolved_estate_image_url.clone();
     let p = extract_params(&q);
-    let key = format!(
-        "estate:{estate_id}:{}:{}",
-        state.map.content_tag(),
-        p.key_suffix()
-    );
+    let key = format!("estate:{estate_id}:{}", p.key_suffix());
     cached_png_render(
         &state,
         &headers,
@@ -600,7 +596,7 @@ mod tests {
         let state = crate::api::tests_support::state_without_db().await;
         state.map.set(small_grid());
         let key = "busy-test".to_string();
-        let flight = render_flight(&key);
+        let flight = render_flight(&png_cache_key(&state.map.snapshot().unwrap(), &key));
         let _held = flight.lock().await;
         let resp = cached_png_render(&state, &HeaderMap::new(), key, 60, 60, |_| Ok(vec![1])).await;
         assert_eq!(resp.status(), StatusCode::SERVICE_UNAVAILABLE);
@@ -613,7 +609,8 @@ mod tests {
         let state = crate::api::tests_support::state_without_db().await;
         state.map.set(small_grid());
         let key = "stored-meanwhile".to_string();
-        let flight = render_flight(&key);
+        let cache_key = png_cache_key(&state.map.snapshot().unwrap(), &key);
+        let flight = render_flight(&cache_key);
         let held = flight.lock().await;
         let waiter = {
             let state = state.clone();
@@ -623,7 +620,7 @@ mod tests {
             })
         };
         tokio::task::yield_now().await;
-        state.map.store_png(key, Arc::new(vec![7]));
+        state.map.store_png(cache_key, Arc::new(vec![7]));
         let resp = waiter.await.unwrap();
         drop(held);
         assert_eq!(resp.status(), StatusCode::OK);
@@ -642,10 +639,8 @@ mod tests {
             .await
             .unwrap();
         let body: serde_json::Value = serde_json::from_slice(&body).unwrap();
-        assert_eq!(
-            body["source"], "land-authz-index",
-            "the unavailable envelope"
-        );
+        assert_eq!(body["source"], "map-grid", "the unavailable envelope");
+        assert!(body.get("configure").is_none(), "no source is vouched for");
     }
 
     #[tokio::test]

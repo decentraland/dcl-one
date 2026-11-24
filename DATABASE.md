@@ -2866,44 +2866,63 @@ gone.
   leased, every 60 s with 10 s of jitter. A failed pass backs off up to
   5 minutes. It runs whatever `EXPLORER_MIRRORS_ENABLED` says. Its pass
   marker is `map-grid` in `explore_api.mirror_passes` (`GET /mirrors`).
-  Every process also runs `explorer-map-grid-reload` every 60 s: one
-  primary-key read of `last_updated_at`, and a reload of the row only when
-  another process stored a newer grid.
-- **LAND reads:** one REPEATABLE READ, READ ONLY snapshot of the land-authz
-  index (`LandAuthzState::ready_snapshot`), so the publication check and
-  the reads see one state (`explore/src/api/map/build.rs`). It reads every
-  LAND `token_right` row with coordinates, its `estate_land` row and the
-  `authz_event` row its `(updated_block, updated_log)` names, by primary
-  key, for the time of its last rights event. It reads every Estate
-  `token_right` row that holds LAND, with the same event join and the name
-  of its latest `estate_data_event` (`estate_data_event_estate_idx`, one
-  probe per estate).
-- **Shop reads** (`shop/src/market/land_map.rs`, which `serve` hands to
-  Explore through `src/serve_adapters.rs`, as Shop sits above Explore):
-  the Ethereum `shop.nft_order` rows of the LAND and Estate registries,
-  whatever their status (primary-key range). The `shop.land_data` rows of
-  both registries, with the `shop.nft_event` row their
-  `(updated_block, updated_log)` names, by primary key. The open
-  `public_nft_order` trades that sell a token of either registry
-  (`catalog::unified_trades_cte_of` scoped to the two contracts,
-  `idx_trade_assets_sent_contract`). The open, unexpired `signatures.rentals`
-  rows of both registries with their periods.
+  Every process also runs `explorer-map-grid-reload` every 60 s (`follow`):
+  one primary-key read of the row's stamp, a reload only when another
+  process stored a newer grid, and one read of the pass marker for what the
+  build waits for.
+- **One snapshot:** every read below runs in one REPEATABLE READ, READ ONLY
+  transaction, the one the land-authz index opens once it finds itself
+  published for the configured registries
+  (`LandAuthzState::ready_snapshot`). Shop's readiness checks and rows run
+  on the same connection, which `serve` hands to Shop through
+  `src/serve_adapters.rs` (Shop sits above Explore). The LAND facts, the
+  index cursors and Shop's rows are therefore one state of the database: a
+  rewind committed during the build, a withdrawn publication or deleted
+  rows, is invisible to it, and the next pass sees it whole.
+- **LAND reads** (`explore/src/api/map/build.rs`): every LAND `token_right`
+  row with coordinates, its `estate_land` row and the `authz_event` row its
+  `(updated_block, updated_log)` names, by primary key, for the time of its
+  last rights event. Every Estate `token_right` row that holds LAND, with
+  the same event join and the name of its latest `estate_data_event`
+  (`estate_data_event_estate_idx`, one probe per estate).
+- **Shop reads** (`shop/src/market/land_map.rs`): the Ethereum
+  `shop.nft_order` rows of the LAND and Estate registries, whatever their
+  status (primary-key range). The `shop.land_data` rows of both registries,
+  with the `shop.nft_event` row their `(updated_block, updated_log)` names,
+  by primary key. The open `public_nft_order` trades that sell a token of
+  either registry (`catalog::unified_trades_cte_of` scoped to the two
+  contracts, `idx_trade_assets_sent_contract`). The open, unexpired
+  `signatures.rentals` rows of both registries signed for the grid's chain
+  and its Rentals contract, with their periods.
 - **Readiness:** the land-authz index published for the configured
-  registries, the nft index published on Ethereum (`shop.chain_cursor`),
-  and `shop.trades` readable (a recent complete trades-mirror pass, or local
-  authority). The trade-events verdicts (`shop.trade_chain_state`) close a
-  sold or cancelled trade while that index is published on Ethereum, as in
-  the Shop's own listings. A source that is not ready fails the pass,
-  naming it, and nothing is built. The held grid keeps serving. Until a
-  grid exists, the map routes answer the unavailable envelope (503,
-  `Retry-After: 60`, `no-store`), naming the source the last pass waited
-  for.
-- **Write:** the pass hashes the canonical JSON body (the tiles in key
-  order). Only a body that differs from the held one is gzipped and upserted
-  into the one row, with `etag` NULL, `fetched_at` the build time and
-  `last_updated_at` the current time in milliseconds, at least one second
-  past the held stamp. An unchanged pass writes nothing. An order or rental
-  that expires changes the body on the next pass.
+  registries; the grid's chain being Ethereum mainnet, the only chain the
+  nft index walks (a Sepolia LAND index reports the nft index as not
+  ready); the nft index published on Ethereum and bound to chain 1
+  (`shop.chain_cursor`, `chain_walk::ready_sql`); and `shop.trades`
+  readable (a recent complete trades-mirror pass read in the snapshot, or
+  local authority). The trade-events verdicts (`shop.trade_chain_state`)
+  close a sold or cancelled trade while that index is published on
+  Ethereum, as in the Shop's own listings. A source that is not ready fails
+  the pass, naming it in the marker's `last_error`, and nothing is built.
+  The held grid keeps serving. Until a grid exists, every map route answers
+  the unavailable envelope (503, `Retry-After: 60`, `no-store`, no
+  validators, even to a conditional request), naming the source the build
+  recorded, or the grid itself (`map-grid`, no `configure`) before any
+  build has.
+- **Write:** the stored row is the grid's revision. `etag` holds the hex
+  SHA-256 of the body a build stored (the canonical JSON, tiles in key
+  order), and `last_updated_at` its stamp, which only grows. A pass
+  compares its body with the row, not with what its process holds. An equal
+  body writes nothing, and a process holding an older grid reloads the row.
+  A different body is gzipped and written with an `UPDATE` guarded on the
+  stamp and `etag` it compared against (an `INSERT ... ON CONFLICT DO
+  NOTHING` before the first), stamped with the current time in
+  milliseconds and at least one second past the row's. A write another
+  publisher overtook stores nothing, and that build is discarded. A
+  process serves a grid only if its stamp is newer than the one it holds,
+  decided under its grid lock, so a slow reload never brings back an older
+  revision. An order or rental that expires changes the body on the next
+  pass. A PNG answer takes one grid for its validators, cache key and body.
 - **Rules:** atlas-server's `buildTile`, `addSpecialTiles`,
   `getEstateFlags` and `applyTrades`, with its roads and plazas vendored
   (`special_tiles.json`). The rules and the known differences are in the
@@ -2921,8 +2940,9 @@ gone.
 - **Deploy:** no schema step. An environment that still sets
   `EXPLORER_MAP_SOURCE_URL` or `EXPLORER_MAP_MIN_REFRESH_SECS` starts: the
   binary and the posture checks read neither. The first pass after the
-  upgrade replaces the row the mirror left, whose body differs. Until the sources publish, the
-  mirror's last copy keeps serving. A node without the land-authz index,
+  upgrade replaces the row the mirror left, whose `etag` is the upstream's
+  and matches no build. Until the sources publish, the mirror's last copy
+  keeps serving. A node without the land-authz index,
   the nft index (`MARKETPLACE_NFT_INDEX_ENABLED`, mainnet only) or a trades
   source never builds a grid, and its map routes answer the envelope.
 

@@ -415,41 +415,79 @@ pub async fn ready(state: &MarketplaceState) -> Result<Readiness, Response> {
     })
 }
 
-/// [`ready`]'s verdict without the HTTP answer, for a reader that is not a
-/// route (the explorer map's LAND listings, `land_map`).
-pub async fn readiness(state: &MarketplaceState) -> Result<Readiness, NotReady> {
+/// The marker of a configured upstream's last complete pass.
+const PASS_SQL: &str =
+    "SELECT completed_at FROM shop.trades_mirror WHERE id = 1 AND upstream_url = $1";
+
+/// What [`ready`] decides from the settings alone, or `Err(upstream)`: the
+/// upstream whose pass marker decides.
+fn settled(state: &MarketplaceState) -> Result<Result<Readiness, NotReady>, String> {
     let Some(upstream) = state.settings.trades_sync_upstream_url.clone() else {
         if state.settings.data_writes_enabled {
-            return Ok(Readiness::LocalAuthority);
+            return Ok(Ok(Readiness::LocalAuthority));
         }
-        return Err(NotReady::Refused(
+        return Ok(Err(NotReady::Refused(
             "no trades upstream is configured and this node accepts no local trades (DATA_WRITES_ENABLED=false), so shop.trades has no source".to_string(),
-        ));
+        )));
     };
     if state.settings.trades_serve_partial {
         // TRADES_SERVE_PARTIAL: a development stack reads what has arrived.
-        return Ok(Readiness::Mirrored);
+        return Ok(Ok(Readiness::Mirrored));
     }
-    let completed = state
-        .trades_ready
-        .get_or_fetch((), || async move {
-            sqlx::query_scalar::<_, Option<NaiveDateTime>>(
-                "SELECT completed_at FROM shop.trades_mirror WHERE id = 1 AND upstream_url = $1",
-            )
-            .bind(upstream)
-            .fetch_optional(&state.pool)
-            .await
-            .map(Option::flatten)
-        })
-        .await
-        .map_err(NotReady::Database)?;
+    Err(upstream)
+}
+
+fn marker_verdict(
+    state: &MarketplaceState,
+    completed_at: Option<NaiveDateTime>,
+) -> Result<Readiness, NotReady> {
     pass_verdict(
-        completed,
+        completed_at,
         Utc::now(),
         max_age(state.settings.trades_sync_interval),
     )
     .map(|()| Readiness::Mirrored)
     .map_err(NotReady::Refused)
+}
+
+/// [`ready`]'s verdict without the HTTP answer, the pass marker cached 10 s.
+pub async fn readiness(state: &MarketplaceState) -> Result<Readiness, NotReady> {
+    let upstream = match settled(state) {
+        Ok(decided) => return decided,
+        Err(upstream) => upstream,
+    };
+    let completed = state
+        .trades_ready
+        .get_or_fetch((), || async move {
+            sqlx::query_scalar::<_, Option<NaiveDateTime>>(PASS_SQL)
+                .bind(upstream)
+                .fetch_optional(&state.pool)
+                .await
+                .map(Option::flatten)
+        })
+        .await
+        .map_err(NotReady::Database)?;
+    marker_verdict(state, completed)
+}
+
+/// [`readiness`] with the pass marker read on `conn`, uncached: a reader
+/// that runs its reads in one snapshot (the explorer map's LAND listings,
+/// `land_map`) decides on the marker that snapshot sees.
+pub async fn readiness_on(
+    state: &MarketplaceState,
+    conn: &mut sqlx::PgConnection,
+) -> Result<Readiness, NotReady> {
+    let upstream = match settled(state) {
+        Ok(decided) => return decided,
+        Err(upstream) => upstream,
+    };
+    let completed = sqlx::query_scalar::<_, Option<NaiveDateTime>>(PASS_SQL)
+        .bind(upstream)
+        .fetch_optional(conn)
+        .await
+        .map(Option::flatten)
+        .map_err(NotReady::Database)?;
+    marker_verdict(state, completed)
 }
 
 /// The gate every route over `shop.trades` passes first.

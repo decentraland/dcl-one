@@ -29,6 +29,8 @@ pub(super) struct ShopLandMarket(pub(super) Arc<shop::market::MarketplaceState>)
 impl explore::api::map::LandMarket for ShopLandMarket {
     fn snapshot<'a>(
         &'a self,
+        conn: &'a mut sqlx::PgConnection,
+        chain_id: i64,
         land: &'a str,
         estate: &'a str,
         now: chrono::DateTime<chrono::Utc>,
@@ -39,7 +41,7 @@ impl explore::api::map::LandMarket for ShopLandMarket {
         use explore::api::map::build;
         use shop::market::land_map;
         Box::pin(async move {
-            let m = land_map::land_market(&self.0, land, estate, now)
+            let m = land_map::land_market(&self.0, conn, chain_id, land, estate, now)
                 .await
                 .map_err(|e| match e {
                     land_map::LandMarketError::Unready(source, why) => {

@@ -654,7 +654,7 @@ impl State {
                 .after_first_interval(),
             move |_ctx| {
                 let s = s.clone();
-                async move { map::reload_if_newer(&s).await.map(|_| ()) }
+                async move { map::follow(&s).await }
             },
         );
         if self.settings.ab_cdn_enabled {
@@ -824,8 +824,11 @@ pub fn router(state: Shared) -> Router {
 
 /// The unavailable envelope (`marketplace::unavailable`'s shape) for a
 /// static whose mirror has not landed a copy yet: 503 with `Retry-After`.
-pub(crate) fn unavailable(source: &str, configure: &str, message: &str) -> Response {
-    let body = json!({ "error": "Service Unavailable", "message": message, "source": source, "configure": configure });
+pub(crate) fn unavailable(source: &str, configure: Option<&str>, message: &str) -> Response {
+    let mut body = json!({ "error": "Service Unavailable", "message": message, "source": source });
+    if let Some(configure) = configure {
+        body["configure"] = json!(configure);
+    }
     (
         StatusCode::SERVICE_UNAVAILABLE,
         [

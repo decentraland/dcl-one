@@ -6,14 +6,15 @@
 //! routes and the probes ([`meta`]), and `/satellite/{z}/{x}/{y}` painted
 //! over this grid (`super::satellite`). The grid is ~92k tiles, 38 MB of
 //! JSON: the leased `explorer-map-grid` job rebuilds it every minute
-//! ([`run_pass`]) and stores it, gzipped, as the one row of
-//! `explore_api.map_grid` only when its body changed, with a new stamp
-//! (`lastUpdatedAt`). The row is loaded at startup, so a restart serves the
-//! last grid before its first pass, and every process reloads it when
-//! another one stored a newer grid ([`reload_if_newer`]). A pass whose sources are not all
-//! published builds nothing and keeps the held grid; until a grid exists
-//! the map routes answer the unavailable envelope naming the source the
-//! last pass waited for.
+//! ([`run_pass`]), reading every input in one snapshot of the database, and
+//! stores it, gzipped, as the one row of `explore_api.map_grid`, the grid's
+//! revision, only when its body differs from the stored one, with a new
+//! stamp (`lastUpdatedAt`). The row is loaded at startup, so a restart serves
+//! the last grid before its first pass, and every process reloads it when
+//! another one stored a newer grid ([`follow`]); a process only ever moves to
+//! a newer revision. A pass whose sources are not all published builds
+//! nothing and keeps the held grid; until a grid exists the map routes answer
+//! the unavailable envelope naming the source the build waits for.
 
 pub mod build;
 pub mod http_cache;
@@ -66,8 +67,8 @@ pub struct Grid {
     /// When the stored body was built (or, for a row the old mirror wrote,
     /// downloaded).
     pub fetched_at: NaiveDateTime,
-    /// SHA-256 of [`build::canonical_body`]: a pass compares it to decide
-    /// whether anything changed.
+    /// SHA-256 of [`build::canonical_body`], the body's identity: a stored
+    /// revision carries it, in hex, as its `etag`.
     pub digest: [u8; 32],
     /// Mixed into ETags and cache keys, so two grids with one stamp still differ.
     pub content_tag: u64,
@@ -307,9 +308,10 @@ impl MapState {
     }
 
     /// The unavailable envelope a map route answers while no grid is held:
-    /// the source the last pass waited for, else the land-authz index (the
-    /// first source a build reads). `no-store`, so no cache in front keeps
-    /// it past the first grid.
+    /// the source the last build waited for (this process's, or the one the
+    /// build recorded in `explore_api.mirror_passes`, [`follow`]); with none
+    /// known, the grid itself, without naming a source it cannot vouch for.
+    /// `no-store`, so no cache in front keeps it past the first grid.
     pub fn unavailable(&self) -> Response {
         let waiting = self.waiting.lock().clone();
         let mut resp = match waiting {
@@ -317,10 +319,12 @@ impl MapState {
                 source,
                 &format!("the tile grid has not been built yet: {why}"),
             ),
-            None => unavailable(
-                Source::LandAuthzIndex,
+            None => super::unavailable(
+                MIRROR,
+                None,
                 "the tile grid has not been built yet: it is built from the land-authz index and Shop's \
-                 marketplace indexes once they are published",
+                 marketplace indexes once they are published; GET /mirrors (map-grid) shows what its \
+                 build waits for",
             ),
         };
         resp.headers_mut().insert(
@@ -351,14 +355,29 @@ impl MapState {
             .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     }
 
-    pub fn content_tag(&self) -> u64 {
-        self.grid.read().as_ref().map_or(0, |g| g.content_tag)
-    }
-
+    /// Serves `grid`, whatever is held (tests, and a node's first grid).
     pub fn set(&self, grid: Grid) {
         *self.grid.write() = Some(Arc::new(grid));
         self.png_cache.clear();
         self.tiles_cache.clear();
+    }
+
+    /// Serves `grid` only if its stamp is newer than the held one's, decided
+    /// under the grid lock, so a slow reload of an older revision never
+    /// replaces a newer one installed meanwhile. `true` when installed.
+    pub fn install_newer(&self, grid: Grid) -> bool {
+        let mut held = self.grid.write();
+        if held
+            .as_ref()
+            .is_some_and(|h| h.last_updated_at >= grid.last_updated_at)
+        {
+            return false;
+        }
+        *held = Some(Arc::new(grid));
+        drop(held);
+        self.png_cache.clear();
+        self.tiles_cache.clear();
+        true
     }
 
     pub fn cached_png(&self, key: &str) -> Option<Arc<Vec<u8>>> {
@@ -377,37 +396,47 @@ impl MapState {
         self.tiles_cache.insert(key, body);
     }
 
-    /// The persisted grid, if a pass ever stored one.
+    /// The persisted grid, if a pass ever stored one, unless a newer one is held.
     pub async fn load(&self, pool: &PgPool) -> anyhow::Result<()> {
-        let row: Option<(i64, Vec<u8>, NaiveDateTime)> = sqlx::query_as(
-            "SELECT last_updated_at, body_gzip, fetched_at FROM explore_api.map_grid WHERE id = 1",
-        )
-        .fetch_optional(pool)
-        .await
-        .context("reading explore_api.map_grid")?;
-        let Some((last_updated_at, body_gzip, fetched_at)) = row else {
+        let Some(grid) = fetch_stored(pool).await? else {
             tracing::info!(
                 "no tile grid stored yet; map routes answer 503 until the first map-grid build"
             );
             return Ok(());
         };
-        let grid = tokio::task::spawn_blocking(move || -> anyhow::Result<Grid> {
-            let mut body = Vec::new();
-            flate2::read::GzDecoder::new(body_gzip.as_slice())
-                .read_to_end(&mut body)
-                .context("inflating the stored grid")?;
-            Grid::from_json(&body, last_updated_at, fetched_at)
-        })
-        .await
-        .context("grid load task")??;
-        tracing::info!(
-            tiles = grid.tiles.len(),
-            last_updated_at,
-            "tile grid loaded from the database"
-        );
-        self.set(grid);
+        let (tiles, stamp) = (grid.tiles.len(), grid.last_updated_at);
+        if self.install_newer(grid) {
+            tracing::info!(
+                tiles,
+                last_updated_at = stamp,
+                "tile grid loaded from the database"
+            );
+        }
         Ok(())
     }
+}
+
+/// The stored grid, inflated and parsed; `None` before the first build.
+pub async fn fetch_stored(pool: &PgPool) -> anyhow::Result<Option<Grid>> {
+    let row: Option<(i64, Vec<u8>, NaiveDateTime)> = sqlx::query_as(
+        "SELECT last_updated_at, body_gzip, fetched_at FROM explore_api.map_grid WHERE id = 1",
+    )
+    .fetch_optional(pool)
+    .await
+    .context("reading explore_api.map_grid")?;
+    let Some((last_updated_at, body_gzip, fetched_at)) = row else {
+        return Ok(None);
+    };
+    let grid = tokio::task::spawn_blocking(move || -> anyhow::Result<Grid> {
+        let mut body = Vec::new();
+        flate2::read::GzDecoder::new(body_gzip.as_slice())
+            .read_to_end(&mut body)
+            .context("inflating the stored grid")?;
+        Grid::from_json(&body, last_updated_at, fetched_at)
+    })
+    .await
+    .context("grid load task")??;
+    Ok(Some(grid))
 }
 
 pub fn gzip(body: &[u8]) -> anyhow::Result<Vec<u8>> {
@@ -416,60 +445,125 @@ pub fn gzip(body: &[u8]) -> anyhow::Result<Vec<u8>> {
     Ok(enc.finish()?)
 }
 
-/// Stores the built grid as the one row; `etag` is NULL (a column of the
-/// mirror this builder replaced).
-pub async fn store(
+/// The stored revision: its stamp and its `etag`, the hex SHA-256 of the
+/// body a build stored ([`build::canonical_body`]); a row the old mirror
+/// left carries the upstream's ETag, which no build matches.
+pub(super) async fn stored_revision(
     pool: &PgPool,
-    last_updated_at: i64,
+) -> anyhow::Result<Option<(i64, Option<String>)>> {
+    sqlx::query_as("SELECT last_updated_at, etag FROM explore_api.map_grid WHERE id = 1")
+        .fetch_optional(pool)
+        .await
+        .context("reading explore_api.map_grid's revision")
+}
+
+/// Stores a built grid as the one row, guarded on the revision the build
+/// compared against (`prev`, `None` for no row): `false`, writing nothing,
+/// when another publisher stored a revision meanwhile.
+pub(super) async fn store_guarded(
+    pool: &PgPool,
+    prev: Option<&(i64, Option<String>)>,
+    stamp: i64,
+    digest_hex: &str,
     tile_count: i64,
     body_gzip: &[u8],
     built_at: NaiveDateTime,
-) -> sqlx::Result<()> {
-    sqlx::query(
-        "INSERT INTO explore_api.map_grid (id, last_updated_at, etag, tile_count, body_gzip, fetched_at)
-         VALUES (1, $1, NULL, $2, $3, $4)
-         ON CONFLICT (id) DO UPDATE
-         SET last_updated_at = EXCLUDED.last_updated_at, etag = NULL,
-             tile_count = EXCLUDED.tile_count, body_gzip = EXCLUDED.body_gzip,
-             fetched_at = EXCLUDED.fetched_at",
-    )
-    .bind(last_updated_at)
-    .bind(tile_count as i32)
-    .bind(body_gzip)
-    .bind(built_at)
-    .execute(pool)
-    .await?;
-    Ok(())
+) -> sqlx::Result<bool> {
+    let written = match prev {
+        None => {
+            sqlx::query(
+                "INSERT INTO explore_api.map_grid (id, last_updated_at, etag, tile_count, body_gzip, fetched_at)
+                 VALUES (1, $1, $2, $3, $4, $5) ON CONFLICT (id) DO NOTHING",
+            )
+            .bind(stamp)
+            .bind(digest_hex)
+            .bind(tile_count as i32)
+            .bind(body_gzip)
+            .bind(built_at)
+            .execute(pool)
+            .await?
+        }
+        Some((prev_stamp, prev_etag)) => {
+            sqlx::query(
+                "UPDATE explore_api.map_grid
+                 SET last_updated_at = $1, etag = $2, tile_count = $3, body_gzip = $4, fetched_at = $5
+                 WHERE id = 1 AND last_updated_at = $6 AND etag IS NOT DISTINCT FROM $7",
+            )
+            .bind(stamp)
+            .bind(digest_hex)
+            .bind(tile_count as i32)
+            .bind(body_gzip)
+            .bind(built_at)
+            .bind(prev_stamp)
+            .bind(prev_etag.as_deref())
+            .execute(pool)
+            .await?
+        }
+    };
+    Ok(written.rows_affected() == 1)
 }
 
 /// Reloads the stored grid when its stamp is newer than the held one: the
 /// build job runs in one process of the fleet and the routes in every one.
-/// One primary-key read when nothing changed; `true` when it reloaded.
+/// One primary-key read when nothing changed; `true` when it installed a
+/// newer grid ([`MapState::install_newer`]).
 pub async fn reload_if_newer(state: &Shared) -> anyhow::Result<bool> {
-    let stored: Option<i64> =
-        sqlx::query_scalar("SELECT last_updated_at FROM explore_api.map_grid WHERE id = 1")
-            .fetch_optional(&state.pool)
-            .await
-            .context("reading explore_api.map_grid's stamp")?;
-    if stored.is_none_or(|s| s <= state.map.last_updated_at()) {
+    let stored = stored_revision(&state.pool).await?;
+    if stored.is_none_or(|(s, _)| s <= state.map.last_updated_at()) {
         return Ok(false);
     }
-    state.map.load(&state.pool).await?;
-    Ok(true)
+    Ok(fetch_stored(&state.pool)
+        .await?
+        .is_some_and(|grid| state.map.install_newer(grid)))
+}
+
+/// The `explorer-map-grid-reload` job's pass, in every process: a newer
+/// stored grid ([`reload_if_newer`]), and what the last build waits for, as
+/// `explore_api.mirror_passes` records it, so a process that does not hold
+/// the build's lease names the same source while no grid exists.
+pub async fn follow(state: &Shared) -> anyhow::Result<()> {
+    reload_if_newer(state).await?;
+    let last_error: Option<Option<String>> =
+        sqlx::query_scalar("SELECT last_error FROM explore_api.mirror_passes WHERE mirror = $1")
+            .bind(MIRROR)
+            .fetch_optional(&state.pool)
+            .await
+            .context("reading the map-grid pass marker")?;
+    *state.map.waiting.lock() = last_error.flatten().as_deref().and_then(recorded_wait);
+    Ok(())
+}
+
+/// The source and reason a failed build recorded (`"<source> not ready:
+/// <why>"`, [`waiting`]); `None` for any other failure.
+fn recorded_wait(last_error: &str) -> Option<(Source, String)> {
+    let (name, why) = last_error.split_once(" not ready: ")?;
+    [
+        Source::LandAuthzIndex,
+        Source::NftIndex,
+        Source::TradesMirror,
+    ]
+    .into_iter()
+    .find(|s| s.name() == name)
+    .map(|s| (s, why.to_string()))
 }
 
 /// The stamp a changed grid takes: now, and at least a second past the
-/// held one, so `lastUpdatedAt` and `Last-Modified` always move forward.
-fn next_stamp(held: Option<i64>, now_ms: i64) -> i64 {
-    held.map_or(now_ms, |h| now_ms.max(h + 1000))
+/// stored one, so `lastUpdatedAt` and `Last-Modified` always move forward.
+fn next_stamp(stored: Option<i64>, now_ms: i64) -> i64 {
+    stored.map_or(now_ms, |h| now_ms.max(h.saturating_add(1000)))
 }
 
-/// One pass ([`build`]): the land-authz snapshot and Shop's listings, the
-/// grid composed, and the body stored and swapped in only when it differs
-/// from the held one. A source that is not published fails the pass naming
-/// it (`/mirrors`' `lastError`) and keeps the held grid; no partial grid is
-/// built. The pass is complete either way once a grid is built or found
-/// unchanged, with the grid's stamp as its cursor.
+/// One pass ([`build`]). Every input is read in one REPEATABLE READ, READ
+/// ONLY snapshot that the land-authz index opens once it is published, Shop's
+/// readiness and rows included, so no rewind committed meanwhile mixes into
+/// it. The grid is composed and its body compared with the stored revision,
+/// not this process's: an unchanged body writes nothing (and a process
+/// holding an older grid reloads the stored one); a changed one is stored
+/// with a write guarded on the revision it compared against, and served only
+/// if newer than what this process holds. A build another publisher
+/// overtook is discarded. A source that is not published fails the pass
+/// naming it (`/mirrors`' `lastError`) and keeps the held grid; no partial
+/// grid is built.
 pub async fn run_pass(state: &Shared, ctx: &JobContext) -> anyhow::Result<()> {
     mirror::run(&state.pool, MIRROR, ctx, || async {
         let now = chrono::Utc::now();
@@ -490,74 +584,106 @@ pub async fn run_pass(state: &Shared, ctx: &JobContext) -> anyhow::Result<()> {
                 );
             }
         };
+        let chain_id = build::land_chain_id(&land.settings.network)
+            .with_context(|| format!("no chain is known for LAND network {}", land.settings.network))?;
         let land_registry = land.settings.land_registry.to_ascii_lowercase();
         let estate_registry = land.settings.estate_registry.to_ascii_lowercase();
-        let snapshot = match build::read_land(&land).await {
-            Ok(s) => s,
-            Err(LandMarketError::Unready(source, why)) => return waiting(state, source, why),
-            Err(LandMarketError::Failed(e)) => return Err(e),
+        let Some(mut snapshot) = land.ready_snapshot().await else {
+            return waiting(
+                state,
+                Source::LandAuthzIndex,
+                "the land-authz index has not published a recent fold of the configured LAND and Estate registries"
+                    .into(),
+            );
         };
-        let listings = match market.snapshot(&land_registry, &estate_registry, now).await {
+        let folded_block = snapshot.cursor.folded_block.unwrap_or(snapshot.cursor.last_block);
+        let land_rows = build::read_land(&mut snapshot.tx, &land_registry, &estate_registry, folded_block).await?;
+        let listings = match market
+            .snapshot(&mut snapshot.tx, chain_id, &land_registry, &estate_registry, now)
+            .await
+        {
             Ok(m) => m,
             Err(LandMarketError::Unready(source, why)) => return waiting(state, source, why),
             Err(LandMarketError::Failed(e)) => {
                 return Err(e.context("reading Shop's LAND listings"));
             }
         };
+        // A read-only snapshot: nothing to commit.
+        drop(snapshot);
         anyhow::ensure!(!ctx.is_cancelled(), "cancelled before the grid build");
+        *state.map.waiting.lock() = None;
         let now_ms = now.timestamp_millis();
-        let held = state.map.snapshot();
-        let held_digest = held.as_ref().map(|g| g.digest);
-        let built = tokio::task::spawn_blocking(move || -> anyhow::Result<Option<Built>> {
-            let tiles = build::compose(
-                &land_registry,
-                &estate_registry,
-                &snapshot,
-                &listings,
-                now_ms,
-            );
+        let (tiles, body, digest) = tokio::task::spawn_blocking(move || {
+            let tiles = build::compose(&land_registry, &estate_registry, &land_rows, &listings, now_ms);
             let body = build::canonical_body(&tiles);
             let digest: [u8; 32] = Sha256::digest(&body).into();
-            if held_digest == Some(digest) {
-                return Ok(None);
-            }
-            Ok(Some((tiles, digest, gzip(&body)?)))
+            (tiles, body, digest)
         })
         .await
-        .context("grid build task")??;
-        *state.map.waiting.lock() = None;
-        let Some((tiles, digest, gz)) = built else {
-            let grid = held.context("an unchanged grid is a held one")?;
-            return Ok(mirror::PassOutcome {
-                items: grid.tiles.len() as i64,
-                cursor: Some(grid.last_updated_at.to_string()),
-            });
-        };
-        let stamp = next_stamp(held.as_ref().map(|g| g.last_updated_at), now_ms);
-        let built_at = now.naive_utc();
-        store(&state.pool, stamp, tiles.len() as i64, &gz, built_at)
-            .await
-            .context("storing explore_api.map_grid")?;
-        tracing::info!(
-            tiles = tiles.len(),
-            gzip_bytes = gz.len(),
-            last_updated_at = stamp,
-            "tile grid built"
-        );
-        let grid = Grid::from_parts(tiles, stamp, built_at, digest);
-        let out = mirror::PassOutcome {
-            items: grid.tiles.len() as i64,
-            cursor: Some(stamp.to_string()),
-        };
-        state.map.set(grid);
-        Ok(out)
+        .context("grid build task")?;
+        publish(state, tiles, body, digest, now).await
     })
     .await
 }
 
-/// A grid whose body differs from the held one: the tiles, the body's
-/// digest and the gzipped body to store.
-type Built = (HashMap<String, Tile>, [u8; 32], Vec<u8>);
+/// Stores and serves a built grid against the stored revision ([`run_pass`]).
+async fn publish(
+    state: &Shared,
+    tiles: HashMap<String, Tile>,
+    body: Vec<u8>,
+    digest: [u8; 32],
+    now: chrono::DateTime<chrono::Utc>,
+) -> anyhow::Result<mirror::PassOutcome> {
+    let digest_hex = hex::encode(digest);
+    let stored = stored_revision(&state.pool).await?;
+    let outcome = |stamp: i64| mirror::PassOutcome {
+        items: tiles.len() as i64,
+        cursor: Some(stamp.to_string()),
+    };
+    if let Some((stamp, Some(etag))) = &stored
+        && *etag == digest_hex
+    {
+        // The stored revision is this body: nothing to write.
+        reload_if_newer(state).await?;
+        return Ok(outcome(*stamp));
+    }
+    let stamp = next_stamp(stored.as_ref().map(|(s, _)| *s), now.timestamp_millis());
+    let gz = tokio::task::spawn_blocking(move || gzip(&body))
+        .await
+        .context("grid gzip task")??;
+    let built_at = now.naive_utc();
+    let stored_it = store_guarded(
+        &state.pool,
+        stored.as_ref(),
+        stamp,
+        &digest_hex,
+        tiles.len() as i64,
+        &gz,
+        built_at,
+    )
+    .await
+    .context("storing explore_api.map_grid")?;
+    if !stored_it {
+        // Another publisher stored a revision after this build compared: its
+        // grid is served and this build discarded; the next pass compares
+        // against it.
+        tracing::warn!("another process stored a tile grid during this build; serving it instead");
+        reload_if_newer(state).await?;
+        let current = stored_revision(&state.pool).await?.map_or(0, |(s, _)| s);
+        return Ok(outcome(current));
+    }
+    tracing::info!(
+        tiles = tiles.len(),
+        gzip_bytes = gz.len(),
+        last_updated_at = stamp,
+        "tile grid built"
+    );
+    let out = outcome(stamp);
+    state
+        .map
+        .install_newer(Grid::from_parts(tiles, stamp, built_at, digest));
+    Ok(out)
+}
 
 /// Records what the pass waits for and fails it, naming the source.
 fn waiting(state: &Shared, source: Source, why: String) -> anyhow::Result<mirror::PassOutcome> {
