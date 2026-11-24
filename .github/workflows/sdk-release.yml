@@ -29,6 +29,7 @@ permissions:
   contents: read
 env:
   SDK_PACKAGES: ecs js-runtime react-ecs sdk-commands sdk
+  PNPM: corepack pnpm@12.21.0
 jobs:
   check:
     name: Decide what to publish
@@ -130,11 +131,10 @@ jobs:
           done
           # a rerun repeats the version, so packages already on npm are skipped
           for name in $SDK_PACKAGES; do
-            if npm view "@dcl/$name@$version" version > /dev/null 2>&1; then
+            if [ -n "$($PNPM view "@dcl/$name@$version" version 2> /dev/null)" ]; then
               echo "@dcl/$name@$version is already on npm; skipping"
             else
-              # ./ keeps npm from reading dist/<file> as a GitHub owner/repo shorthand
-              npm publish "./dist/dcl-$name-$version.tgz" --access public --tag "$tag" --registry https://registry.npmjs.org
+              $PNPM publish "./dist/dcl-$name-$version.tgz" --provenance --access public --tag "$tag" --no-git-checks --registry https://registry.npmjs.org
             fi
           done
           echo "version=$version" >> "$GITHUB_OUTPUT"

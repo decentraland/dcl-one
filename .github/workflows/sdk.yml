@@ -36,6 +36,7 @@ env:
   # What the packed sdk-commands names for the hashing library it links: the version on npm whose
   # hashV1, the one function it uses, returns what library/hashing does. Move it when that changes.
   HASHING_VERSION: 1.1.3
+  PNPM: corepack pnpm@12.21.0
 jobs:
   lint:
     name: Lint
@@ -128,7 +129,7 @@ jobs:
           BRANCH_NAME: ${{ github.head_ref }}
       - name: Stamp the release version into @dcl/sdk
         if: inputs.version != ''
-        run: cd packages/@dcl/sdk && npm pkg set version="$VERSION"
+        run: cd packages/@dcl/sdk && pnpm pkg set version="$VERSION"
         env:
           VERSION: ${{ inputs.version }}
       - name: Name the PR's packages as previews
@@ -136,7 +137,7 @@ jobs:
         if: github.event_name == 'pull_request'
         run: |
           for name in $SDK_PACKAGES; do
-            (cd "packages/@dcl/$name" && npm pkg set name="$PREVIEW_SCOPE/$name")
+            (cd "packages/@dcl/$name" && pnpm pkg set name="$PREVIEW_SCOPE/$name")
           done
       - name: Prepare releasable packages
         run: make prepare
@@ -192,11 +193,10 @@ jobs:
           done
           # a rerun repeats the version, so packages already on npm are skipped
           for name in $SDK_PACKAGES; do
-            if npm view "$PREVIEW_SCOPE/$name@$version" version > /dev/null 2>&1; then
+            if [ -n "$($PNPM view "$PREVIEW_SCOPE/$name@$version" version 2> /dev/null)" ]; then
               echo "$PREVIEW_SCOPE/$name@$version is already on npm; skipping"
             else
-              # ./ keeps npm from reading dist/<file> as a GitHub owner/repo shorthand
-              npm publish "./dist/${PREVIEW_SCOPE#@}-$name-$version.tgz" --access public --tag pr --registry https://registry.npmjs.org
+              $PNPM publish "./dist/${PREVIEW_SCOPE#@}-$name-$version.tgz" --provenance --access public --tag pr --no-git-checks --registry https://registry.npmjs.org
             fi
           done
           echo "version=$version" >> "$GITHUB_OUTPUT"
@@ -209,14 +209,15 @@ jobs:
           VERSION: ${{ steps.publish.outputs.version }}
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
         run: |
-          # npm aliases, so scenes keep importing @dcl/sdk
+          # npm aliases, so scenes keep importing @dcl/sdk; a creator's project installs with npm
+          cli=npm
           {
             echo '![SDK](https://img.shields.io/badge/SDK-Published-brightgreen?logo=npm&logoColor=white&style=for-the-badge)'
             echo
             echo "SDK packages for $HEAD_SHA:"
             echo
             echo '```'
-            echo "npm install @dcl/sdk@npm:$PREVIEW_SCOPE/sdk@$VERSION @dcl/sdk-commands@npm:$PREVIEW_SCOPE/sdk-commands@$VERSION"
+            echo "$cli install @dcl/sdk@npm:$PREVIEW_SCOPE/sdk@$VERSION @dcl/sdk-commands@npm:$PREVIEW_SCOPE/sdk-commands@$VERSION"
             echo '```'
             echo
             echo 'The pr dist-tag points at the last PR preview published, so prefer the exact version.'
