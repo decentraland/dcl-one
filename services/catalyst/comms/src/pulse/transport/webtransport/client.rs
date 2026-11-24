@@ -7,7 +7,7 @@
 //! byte pipe driven by repeated [`Client::service`] calls; framing and sequencing are the
 //! caller's ([`super::framing`]).
 
-use std::net::{IpAddr, Ipv4Addr, SocketAddr};
+use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr};
 use std::sync::Arc;
 use std::sync::mpsc::{Receiver, Sender};
 use std::time::Duration;
@@ -39,7 +39,7 @@ pub enum ClientError {
     Config(String),
     /// The connection (TLS / WebTransport handshake / stream open) failed.
     Connect(String),
-    /// The peer closed the session before the reliable stream was ready.
+    /// The peer sent a WebTransport close during connection setup.
     Closed { code: u32, reason: String },
 }
 
@@ -102,7 +102,7 @@ impl Client {
     /// [`Client::connect_within`] from a chosen local address: the server counts its per-address
     /// limits by the source address of a connection. Needs `server_cert_hash` (a client bound to
     /// an address does not use the system trust store). Without `local`, a pinned IPv4 loopback
-    /// URL binds `127.0.0.1`; `[::1]`, `localhost` and unpinned URLs use the dual-stack builder.
+    /// URL binds `127.0.0.1`; `[::1]`, `localhost` and unpinned URLs use a dual-stack socket.
     pub fn connect_within_from(
         config: ClientConfig,
         timeout: Option<Duration>,
@@ -127,34 +127,7 @@ impl Client {
 
         let stage = std::cell::Cell::new("establishing the WebTransport session");
         let connecting = async {
-            let client = match (local, cert_hash) {
-                (Some(local), Some(hash)) => bound_client(local, hash)?,
-                (Some(_), None) => {
-                    return Err(ClientError::Config(
-                        "a client bound to a local address needs a certificate hash".to_owned(),
-                    ));
-                }
-                (None, Some(hash)) => web_transport_quinn::ClientBuilder::new()
-                    .with_server_certificate_hashes(vec![hash])
-                    .map_err(|e| ClientError::Connect(e.to_string()))?,
-                (None, None) => web_transport_quinn::ClientBuilder::new()
-                    .with_system_roots()
-                    .map_err(|e| ClientError::Connect(e.to_string()))?,
-            };
-
-            let session = client.connect(url).await.map_err(|error| {
-                let lost = match &error {
-                    web_transport_quinn::ClientError::Connection(lost)
-                    | web_transport_quinn::ClientError::ReadError(
-                        quinn::ReadError::ConnectionLost(lost),
-                    )
-                    | web_transport_quinn::ClientError::WriteError(
-                        quinn::WriteError::ConnectionLost(lost),
-                    ) => Some(SessionError::from(lost.clone())),
-                    _ => None,
-                };
-                closed_or(lost.as_ref(), || error.to_string())
-            })?;
+            let session = connect_session(url, local, cert_hash).await?;
             stage.set("opening the reliable stream");
             // Client opens the reliable bidi stream; the server accepts it (server `accept_bi`).
             let (send, recv) = session
@@ -308,25 +281,85 @@ fn closed_or(error: Option<&SessionError>, message: impl FnOnce() -> String) -> 
     }
 }
 
-/// A client whose QUIC endpoint is bound to `local` (any port) and that trusts the one server
-/// certificate with SHA-256 `hash`: what the builder does, except for the local address, which the
-/// builder does not let a caller choose.
-fn bound_client(local: IpAddr, hash: Vec<u8>) -> Result<web_transport_quinn::Client, ClientError> {
+async fn connect_session(
+    url: url::Url,
+    local: Option<IpAddr>,
+    cert_hash: Option<Vec<u8>>,
+) -> Result<Session, ClientError> {
+    let endpoint = client_endpoint(local, cert_hash)?;
+    let port = url.port().unwrap_or(443);
+    let (server_name, remote) = match url.host() {
+        Some(url::Host::Domain(host)) => {
+            let remote = tokio::net::lookup_host((host, port))
+                .await
+                .map_err(|error| ClientError::Connect(error.to_string()))?
+                .next()
+                .ok_or_else(|| ClientError::Connect(format!("no address for {host}")))?;
+            (host.to_owned(), remote)
+        }
+        Some(url::Host::Ipv4(ip)) => (ip.to_string(), SocketAddr::new(ip.into(), port)),
+        Some(url::Host::Ipv6(ip)) => (ip.to_string(), SocketAddr::new(ip.into(), port)),
+        None => return Err(ClientError::Config("URL has no host".to_owned())),
+    };
+
+    let connection = endpoint
+        .connect(remote, &server_name)
+        .map_err(|error| ClientError::Connect(error.to_string()))?
+        .await
+        .map_err(|error| {
+            closed_or(Some(&SessionError::from(error.clone())), || {
+                error.to_string()
+            })
+        })?;
+    Session::connect(connection.clone(), url)
+        .await
+        .map_err(|error| {
+            // A failed CONNECT response can discard the underlying stream error.
+            // The connection still holds the peer's QUIC application close reason.
+            let close = connection.close_reason().map(SessionError::from);
+            closed_or(close.as_ref(), || error.to_string())
+        })
+}
+
+fn client_endpoint(
+    local: Option<IpAddr>,
+    cert_hash: Option<Vec<u8>>,
+) -> Result<quinn::Endpoint, ClientError> {
     let fail = |error: &dyn std::fmt::Display| ClientError::Connect(error.to_string());
     let provider = web_transport_quinn::crypto::default_provider();
-    let mut crypto = rustls::ClientConfig::builder_with_provider(provider.clone())
+    let builder = rustls::ClientConfig::builder_with_provider(provider.clone())
         .with_protocol_versions(&[&rustls::version::TLS13])
-        .map_err(|e| fail(&e))?
-        .dangerous()
-        .with_custom_certificate_verifier(Arc::new(PinnedCertificate { provider, hash }))
-        .with_no_client_auth();
+        .map_err(|e| fail(&e))?;
+    let mut crypto = match cert_hash {
+        Some(hash) => builder
+            .dangerous()
+            .with_custom_certificate_verifier(Arc::new(PinnedCertificate { provider, hash })),
+        None if local.is_some() => {
+            return Err(ClientError::Config(
+                "a client bound to a local address needs a certificate hash".to_owned(),
+            ));
+        }
+        None => {
+            let mut roots = rustls::RootCertStore::empty();
+            let native = rustls_native_certs::load_native_certs();
+            for error in native.errors {
+                tracing::warn!(%error, "failed to load root cert");
+            }
+            for cert in native.certs {
+                if let Err(error) = roots.add(cert) {
+                    tracing::warn!(%error, "failed to add root cert");
+                }
+            }
+            builder.with_root_certificates(roots)
+        }
+    }
+    .with_no_client_auth();
     crypto.alpn_protocols = vec![web_transport_quinn::ALPN.as_bytes().to_vec()];
-    let quic = quinn::crypto::rustls::QuicClientConfig::try_from(crypto).map_err(|e| fail(&e))?;
-    let endpoint = quinn::Endpoint::client(SocketAddr::new(local, 0)).map_err(|e| fail(&e))?;
-    Ok(web_transport_quinn::Client::new(
-        endpoint,
-        quinn::ClientConfig::new(Arc::new(quic)),
-    ))
+    let config = quinn::crypto::rustls::QuicClientConfig::try_from(crypto).map_err(|e| fail(&e))?;
+    let bind = SocketAddr::new(local.unwrap_or(Ipv6Addr::UNSPECIFIED.into()), 0);
+    let mut endpoint = quinn::Endpoint::client(bind).map_err(|e| fail(&e))?;
+    endpoint.set_default_client_config(quinn::ClientConfig::new(Arc::new(config)));
+    Ok(endpoint)
 }
 
 /// Accepts the one certificate whose SHA-256 is `hash` (the WebTransport

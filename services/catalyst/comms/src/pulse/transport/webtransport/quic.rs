@@ -496,6 +496,17 @@ mod tests {
     #[cfg(feature = "test-support")]
     #[tokio::test]
     async fn client_reports_a_refusal_while_opening_its_reliable_stream() {
+        check_client_refusal(false).await;
+    }
+
+    #[cfg(feature = "test-support")]
+    #[tokio::test]
+    async fn client_reports_a_refusal_before_the_connect_response() {
+        check_client_refusal(true).await;
+    }
+
+    #[cfg(feature = "test-support")]
+    async fn check_client_refusal(close_before_response: bool) {
         use super::super::client::{Client, ClientConfig, ClientError};
         use crate::pulse::hardening::DisconnectReason;
 
@@ -519,23 +530,30 @@ mod tests {
                 },
                 Some(timeout),
             )
+            .err()
         });
 
         let request = tokio::time::timeout(timeout, server.accept())
             .await
             .expect("client should send CONNECT")
             .unwrap();
-        let session = request.ok().await.unwrap();
         let refusal = DisconnectReason::PreAuthIpLimitExhausted.code();
-        session.close(refusal, b"");
+        let _session = if close_before_response {
+            let code = web_transport_quinn::proto::error_to_http3(refusal);
+            request.conn().close(code.try_into().unwrap(), b"refused");
+            None
+        } else {
+            let session = request.ok().await.unwrap();
+            session.close(refusal, b"");
+            Some(session)
+        };
         match dialing.await.unwrap() {
-            Err(ClientError::Closed { code, .. }) => assert_eq!(code, refusal),
-            Err(error) => panic!("expected the server refusal, got {error}"),
-            Ok(client) => {
-                // Dropping the client here would shut its runtime down inside this async test.
-                std::mem::forget(client);
-                panic!("client opened a stream despite the stream limit")
+            Some(ClientError::Closed { code, reason }) => {
+                assert_eq!(code, refusal);
+                assert_eq!(reason, if close_before_response { "refused" } else { "" });
             }
+            Some(error) => panic!("expected the server refusal, got {error}"),
+            None => panic!("client opened a stream despite the server refusal"),
         }
     }
 
