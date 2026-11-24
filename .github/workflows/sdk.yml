@@ -159,7 +159,7 @@ jobs:
     needs: [lint, build-test]
     # fork PRs publish nothing
     if: github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository
-    runs-on: ${{ vars.RUNNER_LINUX_X86 || 'ubuntu-26.04' }}
+    runs-on: ubuntu-26.04
     timeout-minutes: 15
     permissions:
       pull-requests: write

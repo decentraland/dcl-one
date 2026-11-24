@@ -90,7 +90,7 @@ jobs:
     concurrency:
       group: sdk-publish-${{ github.event_name }}
       cancel-in-progress: false
-    runs-on: ${{ vars.RUNNER_LINUX_X86 || 'ubuntu-26.04' }}
+    runs-on: ubuntu-26.04
     timeout-minutes: 15
     environment: npm-release
     permissions:
@@ -142,7 +142,7 @@ jobs:
     name: Create the tag and the release
     needs: publish
     if: github.event_name == 'workflow_dispatch'
-    runs-on: ${{ vars.RUNNER_LINUX_X86 || 'ubuntu-26.04' }}
+    runs-on: ubuntu-26.04
     timeout-minutes: 10
     permissions:
       contents: write
