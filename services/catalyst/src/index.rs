@@ -12,12 +12,7 @@ pub async fn run(mut config: Config) -> anyhow::Result<()> {
     config.resolve_secret_files()?;
     let metrics_bind =
         dcl_metrics::loopback_bind("INDEX_METRICS_BIND", &config.node.index_metrics_bind)?;
-    dcl_metrics::Registry::new(&[
-        crate::jobs::FAMILIES,
-        crate::chain_index::portal::FAMILIES,
-        metrics::FAMILIES,
-    ])?
-    .listen(dcl_metrics::PrometheusBuilder::new(), metrics_bind)?;
+    registry()?.listen(dcl_metrics::PrometheusBuilder::new(), metrics_bind)?;
     tracing::info!(%metrics_bind, "index /metrics listening");
     let pool = db::connect_pool(
         &config.node.database_url,
@@ -61,4 +56,50 @@ pub async fn run(mut config: Config) -> anyhow::Result<()> {
     }
     pool.close().await;
     Ok(())
+}
+
+/// The index process's families. Its mirrors and readers query subgraphs
+/// through `chain_index::graph`, so it declares the `subgraph_*` series too.
+fn registry() -> anyhow::Result<dcl_metrics::Registry> {
+    dcl_metrics::Registry::new(&[
+        crate::jobs::FAMILIES,
+        crate::chain_index::portal::FAMILIES,
+        crate::chain_index::graph::FAMILIES,
+        metrics::FAMILIES,
+    ])
+}
+
+#[cfg(test)]
+pub(crate) mod tests {
+    use serde_json::json;
+
+    /// A subgraph query recorded through `registry` renders the `subgraph_*`
+    /// series, the duration as a histogram with its declared buckets: without
+    /// the declaration it would render as a summary.
+    pub(crate) async fn assert_registry_renders_subgraph_series(registry: dcl_metrics::Registry) {
+        let recorder = registry
+            .builder(dcl_metrics::PrometheusBuilder::new())
+            .unwrap()
+            .build_recorder();
+        let handle = recorder.handle();
+        let _recording = dcl_metrics::set_default_local_recorder(&recorder);
+        let (index, _) = crate::chain_index::graph::test_support::index_with_names().await;
+        let url = index.settings.marketplace_subgraph_url.clone().unwrap();
+        crate::chain_index::graph::graph_query(&index, &url, "{ nfts { id } }", json!({}))
+            .await
+            .unwrap();
+        let rendered = handle.render();
+        for line in [
+            "# TYPE subgraph_query_duration_seconds histogram".to_string(),
+            format!("subgraph_query_duration_seconds_bucket{{url=\"{url}\",le=\"60\"}} 1"),
+            format!("subgraph_ok_total{{url=\"{url}\"}} 1"),
+        ] {
+            assert!(rendered.contains(&line), "missing {line}:\n{rendered}");
+        }
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn the_index_registry_renders_the_subgraph_series() {
+        assert_registry_renders_subgraph_series(super::registry().unwrap()).await;
+    }
 }

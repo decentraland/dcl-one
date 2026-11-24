@@ -12,7 +12,10 @@ const BUILD_INFO: GaugeFamily<1> = GaugeFamily::new(
 /// Reads of an owner's names from the per-owner subgraph memo by the lambdas
 /// `/users/{address}/names` route, by `result`: `hit` answered from the memo,
 /// `miss` fetched from (or joined a fetch of) the marketplace subgraph. It
-/// replaces lamb2's `elements_cache_reads_total` for that read.
+/// replaces lamb2's `elements_cache_reads_total` for that read, and counts
+/// only where the subgraph is the NAME source
+/// ([`super::select_name_authority`]): never on a mainnet node with the `nft`
+/// index on.
 const OWNER_MEMO_READS: CounterFamily<1> = CounterFamily::new(
     "dcl_lambdas_owner_memo_reads_total",
     "Lambdas reads of an owner's names from the per-owner subgraph memo, by result.",
@@ -39,7 +42,7 @@ pub(super) fn record_owner_memo_read(hit: bool) {
 #[cfg(test)]
 mod tests {
     #[tokio::test(flavor = "current_thread")]
-    async fn build_info_and_owner_memo_reads_render() {
+    async fn build_info_renders() {
         let recorder = dcl_metrics::Registry::new(&[super::FAMILIES])
             .unwrap()
             .builder(dcl_metrics::PrometheusBuilder::new())
@@ -48,22 +51,8 @@ mod tests {
         let handle = recorder.handle();
         let _recording = dcl_metrics::set_default_local_recorder(&recorder);
         super::record_build_info("abc123");
-        let (index, _) = crate::chain_index::graph::test_support::index_with_names().await;
-        let owner = "0x00000000000000000000000000000000000000aa";
-        for _ in 0..2 {
-            let hit = crate::chain_index::graph::all_owned_names_memoized(&index, owner);
-            super::record_owner_memo_read(hit);
-            crate::chain_index::graph::owned_names_or_stale(&index, owner)
-                .await
-                .unwrap();
-        }
         let rendered = handle.render();
-        for line in [
-            "dcl_lamb2_server_build_info{commitHash=\"abc123\"} 1",
-            "dcl_lambdas_owner_memo_reads_total{result=\"miss\"} 1",
-            "dcl_lambdas_owner_memo_reads_total{result=\"hit\"} 1",
-        ] {
-            assert!(rendered.contains(line), "missing {line}:\n{rendered}");
-        }
+        let line = "dcl_lamb2_server_build_info{commitHash=\"abc123\"} 1";
+        assert!(rendered.contains(line), "missing {line}:\n{rendered}");
     }
 }

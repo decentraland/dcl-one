@@ -130,4 +130,10 @@ mod tests {
     fn all_serve_metric_declarations_can_share_one_recorder() {
         super::registry().unwrap();
     }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn the_serve_registry_renders_the_subgraph_series() {
+        crate::index::tests::assert_registry_renders_subgraph_series(super::registry().unwrap())
+            .await;
+    }
 }

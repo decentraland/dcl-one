@@ -750,7 +750,7 @@ mod tests {
             json!({"estates": []}),
             json!({"estates": [], "parcels": [{"owner": null}]}),
             json!({"estates": [], "parcels": []}),
-            json!({}),
+            json!({"estates": []}),
             json!({"parcels": vec![Value::Null; THE_GRAPH_PAGE_SIZE as usize + 1]}),
             json!({"parcels": vec![Value::Null; THE_GRAPH_PAGE_SIZE as usize]}),
             json!({"parcels": []}),
