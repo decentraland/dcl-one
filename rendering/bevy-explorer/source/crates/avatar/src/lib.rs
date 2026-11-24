@@ -1275,12 +1275,41 @@ pub struct AvatarProcessed;
 #[derive(Resource, Default)]
 struct EmissiveStrengths(HashMap<AssetId<StandardMaterial>, f32>);
 
+/// The suffix the glTF loader adds to a material's label for the copy it makes for a mirrored
+/// (negative-scale) node, whose faces wind the other way.
+const MIRRORED_MATERIAL_SUFFIX: &str = " (inverted)";
+
+/// Whether `material` is the glTF loader's copy of a material for a mirrored node.
+fn is_mirrored_material(material: &Handle<StandardMaterial>) -> bool {
+    material
+        .path()
+        .and_then(|path| path.label())
+        .is_some_and(|label| label.ends_with(MIRRORED_MATERIAL_SUFFIX))
+}
+
+/// A glTF material and, when a mirrored node uses it, the loader's mirrored copy, which
+/// `Gltf::materials` does not list.
+fn material_and_mirrored(
+    material: &Handle<StandardMaterial>,
+    asset_server: &AssetServer,
+) -> impl Iterator<Item = Handle<StandardMaterial>> {
+    let mirrored = material.path().and_then(|path| {
+        let label = path.label()?;
+        let mirrored = path
+            .clone()
+            .with_label(format!("{label}{MIRRORED_MATERIAL_SUFFIX}"));
+        asset_server.get_handle::<StandardMaterial>(mirrored)
+    });
+    std::iter::once(material.clone_weak()).chain(mirrored.map(|handle| handle.clone_weak()))
+}
+
 /// Reads a loaded wearable glTF's emissive strengths into `strengths` and drops its source, the
 /// document and binary chunk the loader kept for this. A glTF already read has no source left.
 fn take_emissive_strengths(
     gltfs: &mut Assets<Gltf>,
     id: AssetId<Gltf>,
     strengths: &mut EmissiveStrengths,
+    asset_server: &AssetServer,
 ) {
     if gltfs.get(id).is_none_or(|gltf| gltf.source.is_none()) {
         return;
@@ -1297,7 +1326,9 @@ fn take_emissive_strengths(
             .emissive_strength()
             .filter(|s| *s > 0.0 && *s != 1.0)
         {
-            strengths.0.insert(handle.id(), strength);
+            for material in material_and_mirrored(handle, asset_server) {
+                strengths.0.insert(material.id(), strength);
+            }
         }
     }
 }
@@ -1377,11 +1408,17 @@ fn spawn_scenes(
             )
         };
         for model in models() {
-            take_emissive_strengths(&mut gltfs, model.gltf.id(), &mut emissive_strengths);
+            take_emissive_strengths(
+                &mut gltfs,
+                model.gltf.id(),
+                &mut emissive_strengths,
+                &asset_server,
+            );
         }
         let avatar_emissive_strengths: HashMap<_, _> = models()
             .filter_map(|model| gltfs.get(&model.gltf))
             .flat_map(|gltf| &gltf.materials)
+            .flat_map(|h| material_and_mirrored(h, &asset_server))
             .filter_map(|h| Some((h.id(), *emissive_strengths.0.get(&h.id())?)))
             .collect();
 
@@ -1446,14 +1483,14 @@ fn spawn_scenes(
             gltf.named_materials
                 .iter()
                 .filter(|(name, _)| name.to_lowercase().contains("skin"))
-                .map(|(_, h)| h.clone_weak()),
+                .flat_map(|(_, h)| material_and_mirrored(h, &asset_server)),
         );
 
         hair_materials.extend(
             gltf.named_materials
                 .iter()
                 .filter(|(name, _)| name.to_lowercase().contains("hair"))
-                .map(|(_, h)| h.clone_weak()),
+                .flat_map(|(_, h)| material_and_mirrored(h, &asset_server)),
         );
 
         let body_instance = scene_spawner.spawn_as_child(h_scene.clone(), ent);
@@ -1485,13 +1522,13 @@ fn spawn_scenes(
                     gltf.named_materials
                         .iter()
                         .filter(|(name, _)| name.to_lowercase().contains("skin"))
-                        .map(|(_, h)| h.clone_weak()),
+                        .flat_map(|(_, h)| material_and_mirrored(h, &asset_server)),
                 );
                 hair_materials.extend(
                     gltf.named_materials
                         .iter()
                         .filter(|(name, _)| name.to_lowercase().contains("hair"))
-                        .map(|(_, h)| h.clone_weak()),
+                        .flat_map(|(_, h)| material_and_mirrored(h, &asset_server)),
                 );
 
                 Some(
@@ -2268,8 +2305,13 @@ fn derived_scene_material(
             depth_bias,
             // every avatar material culls its back faces, double-sided in the glTF or not: a
             // blended skirt does not show its inside through its front, and a mesh modelled with
-            // back-to-back faces draws one layer, not two
-            cull_mode: Some(Face::Back),
+            // back-to-back faces draws one layer, not two. A mirrored node's faces wind the other
+            // way, so its copy of the material culls the front-wound ones
+            cull_mode: Some(if is_mirrored_material(&h_mat.0) {
+                Face::Front
+            } else {
+                Face::Back
+            }),
             double_sided: false,
             ..mat.clone()
         },
