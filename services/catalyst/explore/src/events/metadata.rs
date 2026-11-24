@@ -220,7 +220,6 @@ mod tests {
             pool.clone(),
             crate::http::Outbound::for_tests(),
             settings.clone(),
-            None,
         )));
         let mut tx = pool.begin().await.unwrap();
         let id = uuid::Uuid::new_v4().to_string();

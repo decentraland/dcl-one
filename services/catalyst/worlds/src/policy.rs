@@ -1641,39 +1641,26 @@ impl Policy {
         }
     }
 
-    /// LAND ownership at any of `coords`, directly or through the estate.
+    /// LAND ownership at any of `coords`, directly or through the estate,
+    /// from the land-authz index: undetermined while it has no published
+    /// fold, refused with no LAND source attached. No subgraph stands in.
     async fn owns_land_at(&self, coords: &[(i32, i32)], actor: &Address) -> PermissionDecision {
         if coords.is_empty() {
             return PermissionDecision::refused(NOT_OWNER_OR_ADMIN_MSG);
         }
-        if let Some(land) = self.land_authz.as_ref() {
-            return match land_authz::owns_land_at(land, actor.as_str(), coords).await {
-                Ok(true) => PermissionDecision::Allowed,
-                Ok(false) => PermissionDecision::refused(NOT_OWNER_OR_ADMIN_MSG),
-                Err(land_authz::Unavailable::NoSource) => {
-                    tracing::warn!(
-                        "scene authz: no LAND rights source (index not ready, no marketplace subgraph); refusing without LAND ownership evidence"
-                    );
-                    PermissionDecision::refused(NOT_OWNER_OR_ADMIN_MSG)
-                }
-                Err(e) => PermissionDecision::Refused(reader_unavailable(
-                    "LAND rights source",
-                    &e.to_string(),
-                )),
-            };
-        }
-        let Some(market) = self.marketplace.as_ref() else {
+        let Some(land) = self.land_authz.as_ref() else {
             tracing::warn!(
-                "scene authz: no marketplace LAND reader; refusing without LAND ownership evidence"
+                "scene authz: no LAND rights source attached; refusing without LAND ownership evidence"
             );
             return PermissionDecision::refused(NOT_OWNER_OR_ADMIN_MSG);
         };
-        match crate::chain_index::graph::owns_land_at(market, actor.as_str(), coords).await {
+        match land_authz::owns_land_at(land, actor.as_str(), coords).await {
             Ok(true) => PermissionDecision::Allowed,
             Ok(false) => PermissionDecision::refused(NOT_OWNER_OR_ADMIN_MSG),
-            Err(e) => {
-                PermissionDecision::Refused(reader_unavailable("marketplace LAND reader", &e))
-            }
+            Err(e) => PermissionDecision::Refused(reader_unavailable(
+                "LAND rights source",
+                &e.to_string(),
+            )),
         }
     }
 

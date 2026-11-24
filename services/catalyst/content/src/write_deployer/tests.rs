@@ -1506,7 +1506,6 @@ async fn a_local_scene_deploy_without_a_land_rights_source_is_undecidable_never_
         lazy_pool(),
         crate::http::Outbound::new(crate::http::HttpClientCfg::default()).unwrap(),
         crate::land_authz::Settings::for_tests(),
-        None,
     ));
     let deployer = WriteDeployer::with_partial_validation_for_tests(
         lazy_pool(),

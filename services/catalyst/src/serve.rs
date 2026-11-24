@@ -585,7 +585,6 @@ pub async fn serve(
         pool.clone(),
         http_client.clone(),
         land_settings,
-        Some(market.index.clone()),
     ));
     explore.places.set_land_authz(land.clone());
     explorer_api.attach_land_authz(land.clone());

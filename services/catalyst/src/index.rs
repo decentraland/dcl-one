@@ -39,7 +39,6 @@ pub async fn run(mut config: Config) -> anyhow::Result<()> {
         pool.clone(),
         http,
         land_settings(&config)?,
-        Some(market.index.clone()),
     ));
     land.spawn_jobs(&jobs);
     if metrics_bind.is_some() {
