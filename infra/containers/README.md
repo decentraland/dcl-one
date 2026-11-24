@@ -233,7 +233,10 @@ only entity-keyed rows, so no run of them changes the key of a grant or ban that
 parcel. A database that holds Genesis grants or bans on parcel keys
 when it takes this upgrade can hold them on a scene's least parcel while the scene's place is
 its declared base (`entity_metadata #>> '{v,scene,base}'`); no request of that scene reads such
-a row. After both scripts, list them:
+a row. Such a grant no longer admits its admin, and such a ban no longer refuses its wallet: the
+ban stops applying from the first request a new binary serves. After both scripts, before
+starting the new binaries, list them, and re-key every `scene_bans` row that was made for the
+listed scene before admitting players:
 
 ```sql
 SELECT 'scene_admins' AS grants_table, d.entity_id, s.least AS keyed_on, s.place, a.admin_address AS wallet

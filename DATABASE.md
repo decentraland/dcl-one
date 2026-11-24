@@ -3074,7 +3074,9 @@ Invariants:
   and no request reads it. A local preview scene, which has no deployment,
   keeps its entity id. A ban on a scene's least parcel while the scene's
   place is another declared base stays where it is, as an admin grant does
-  ("Scene admin grants"); the same operator check lists it.
+  ("Scene admin grants"), and no longer refuses its wallet; the same operator
+  check lists it, and the upgrade re-keys it before players are admitted
+  (`infra/containers/README.md`, "Scene admin upgrade").
 - A kick intent queued before the release names the entity id; the removal
   job reads its ban again on the scene's place (`legacy_ban_key`).
 
