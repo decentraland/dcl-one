@@ -59,18 +59,36 @@ const GENESIS_BOUNDS: ReadonlyArray<readonly [number, number, number, number]> =
 /** The worlds server's bound on a deployment's parcels. */
 const WORLD_PARCEL_LIMIT = 150
 
+/** A world's name as `worldName` completes it: `name`, `name.dcl.eth` or an ENS `name.eth`. */
+export function isWorldName(name: string): boolean {
+  return WORLD.test(name) || WORLD_SHORT_NAME.test(name)
+}
+
+/** The world a realm is, lowercased, from the realm's own name (`name.dcl.eth`) or its address on
+ *  a worlds server (`…/world/name.dcl.eth`); null for a realm that is no world. A short name is
+ *  not enough here: other realms have one too. */
+export function worldOfRealm(realm: string): string | null {
+  const name = /\/world\/([^/?#]+)\/?$/.exec(realm)?.[1] ?? realm
+  return WORLD.test(name) ? name.toLowerCase() : null
+}
+
 export function isGenesisParcel(x: number, y: number): boolean {
   return GENESIS_BOUNDS.some(([minX, minY, maxX, maxY]) => x >= minX && x < maxX && y >= minY && y < maxY)
+}
+
+/** Whether a world may have this parcel. */
+export function isWorldParcel(x: number, y: number): boolean {
+  return Math.abs(x) <= WORLD_PARCEL_LIMIT && Math.abs(y) <= WORLD_PARCEL_LIMIT
 }
 
 export function isDestination(text: string): boolean {
   const t = parseGotoTarget(text)
   if (t.random || t.crowd) return true
   if (t.spawnPoint != null) return false
-  if (t.world != null && !WORLD.test(t.world) && !WORLD_SHORT_NAME.test(t.world)) return false
+  if (t.world != null && !isWorldName(t.world)) return false
   if (t.parcel != null) {
     const { x, y } = t.parcel
-    const inside = t.world != null ? Math.abs(x) <= WORLD_PARCEL_LIMIT && Math.abs(y) <= WORLD_PARCEL_LIMIT : isGenesisParcel(x, y)
+    const inside = t.world != null ? isWorldParcel(x, y) : isGenesisParcel(x, y)
     if (!inside) return false
   }
   return t.world != null || t.parcel != null

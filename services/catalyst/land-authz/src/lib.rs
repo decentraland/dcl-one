@@ -54,10 +54,16 @@
 //! The publish rule is the old one: a reader uses this index only after
 //! `index_cursor.folded_block` is set (a completed full replay, folded within
 //! 25 blocks of the confirmed head, which trails the chain head by
-//! `LAND_AUTHZ_CONFIRMATIONS`) and `folded_at` is at most 30 minutes old;
-//! until then the marketplace subgraph reader (`marketplace::graph::parcels_at`,
-//! `owns_land_at`) answers the owner leg for the write paths and the
-//! land-manager subgraph answers the read routes above. The job runs only
+//! `LAND_AUTHZ_CONFIRMATIONS`, 12 by default). The fold job runs every
+//! `LAND_AUTHZ_INDEX_INTERVAL_SECS` (120 by default). The public LAND Lambdas
+//! routes use folds up to ten minutes old on the database clock;
+//! `/lambdas/land-authz/status` reports their window and the fold's age.
+//! Outside that window, the routes use their configured subgraph fallback
+//! or return an error. The LAND subgraph can lag the chain, and this node
+//! memoizes its per-parcel response for five seconds.
+//! Deploy authorization and its batch permissions preview use the 30-minute
+//! fold window and fall back to the marketplace
+//! subgraph's owner leg. The job runs only
 //! with `LAND_AUTHZ_INDEX_ENABLED=true` and `ETH_RPC_URL`; off, the readers
 //! keep using the fallbacks.
 
@@ -86,6 +92,17 @@ use sqlx::PgPool;
 use crate::chain_index::ChainIndex;
 use crate::jobs::{Jobs, PeriodicCfg};
 pub use indexer::{Cursor, HEAD_LAG_BLOCKS, READY_WINDOW, index_ready};
+
+// Public reads allow ten minutes. At the maximum configured interval,
+// 240 seconds to the first pass and two retries capped at 150 seconds
+// leave one minute for pass execution. Sustained failures age out the fold.
+const LAMBDAS_FOLD_WINDOW: chrono::Duration = chrono::Duration::minutes(10);
+
+fn index_schedule(interval: Duration) -> PeriodicCfg {
+    PeriodicCfg::every(interval)
+        .with_jitter(Duration::from_secs(15))
+        .with_error_backoff(Duration::from_secs(150))
+}
 pub use resolve::{LandRightLeg, ParcelPermissionFlags, ParcelRights, Store};
 
 pub const SCHEMA: &str = "land_authz";
@@ -391,11 +408,19 @@ impl LandAuthzState {
     /// registries' rows. A database error reads as not ready (the fallback,
     /// never a grant).
     pub async fn ready_snapshot(&self) -> Option<indexer::ReadySnapshot> {
-        match indexer::ready_snapshot(
+        self.ready_snapshot_within(READY_WINDOW).await
+    }
+
+    async fn ready_snapshot_within(
+        &self,
+        max_age: chrono::Duration,
+    ) -> Option<indexer::ReadySnapshot> {
+        match indexer::ready_snapshot_within(
             &self.pool,
             &self.settings.network,
             &self.settings.land_registry,
             &self.settings.estate_registry,
+            max_age,
         )
         .await
         {
@@ -499,9 +524,7 @@ impl LandAuthzState {
         let state = self.clone();
         jobs.spawn_periodic_leased(
             "land-authz-index",
-            PeriodicCfg::every(self.settings.interval)
-                .with_jitter(Duration::from_secs(15))
-                .with_error_backoff(Duration::from_secs(3600)),
+            index_schedule(self.settings.interval),
             move |ctx| {
                 let state = state.clone();
                 async move { indexer::run_pass(&state, &ctx).await.map(|_| ()) }

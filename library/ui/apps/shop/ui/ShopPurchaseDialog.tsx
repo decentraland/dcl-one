@@ -117,9 +117,17 @@ export type ShopPurchaseStep =
   /**
    * Buy Item with its payment options. `initial`: the buyer's earlier pick (the step shown again after a failure),
    * picked again while it still pays. `split`: where offered, both options may be ticked together, and then pay it
-   * together.
+   * together. `notice`: a sentence over the options, saying why they changed (a split read anew).
    */
-  | { step: 'method'; items: ShopPurchaseItem[]; credits: ShopCreditsChoice; mana: ShopManaChoice; split?: ShopSplitChoice; initial?: ShopPaymentMethod }
+  | {
+      step: 'method'
+      items: ShopPurchaseItem[]
+      credits: ShopCreditsChoice
+      mana: ShopManaChoice
+      split?: ShopSplitChoice
+      initial?: ShopPaymentMethod
+      notice?: string
+    }
   /**
    * Authorize MANA. `venue`: what the allowance is for, named ("the Marketplace"); `network`: its chain, named;
    * `required`: the MANA this purchase needs, in wei. `waiting`: the wallet or the chain is confirming it; `failed`:
@@ -794,6 +802,11 @@ function MethodStep({
         <Balance credits={credits.balance} mana={mana.balance} />
       </ShopModalHeader>
       <ItemList items={view.items} />
+      {view.notice && (
+        <p className={styles.message} role="status">
+          {view.notice}
+        </p>
+      )}
       <PaymentOptions credits={credits} mana={mana} split={split} ticked={ticked} onPick={(m) => setTicked((t) => tick(t, m, split != null))} />
       {count > 1 && <OrderSummary count={count} credits={method === 'mana' ? null : credits.price} mana={method === 'mana' ? mana.price : null} />}
     </ShopModal>

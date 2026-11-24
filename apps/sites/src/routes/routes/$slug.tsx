@@ -1,7 +1,7 @@
 import { useEffect, useRef, type MouseEvent } from "react";
 import { redirect, useNavigate } from "react-router";
 import SitesLayout from "@/features/components/chrome/SitesLayout";
-import { LegalPageLayout } from "@dcl/one-ui/apps/sites/legal/LegalPageLayout";
+import { LegalPageLayout } from "@dcl/one-ui";
 import { LEGAL_DOCS, type LegalKey } from "@/data/legal";
 import { LEGAL_SIDEBAR, legalPath, resolveLegalKey } from "@/data/legal/nav";
 import type { AgentMarkdownHandle } from "@/data/lib/agent/markdown";

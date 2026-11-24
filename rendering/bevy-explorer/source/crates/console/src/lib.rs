@@ -6,6 +6,7 @@ use bevy_console::{
     ConsoleSet, PrintConsoleLine,
 };
 use clap::Parser;
+use common::sync::MutexExt;
 use common::{rpc::RpcResultReceiver, sets::SceneSets};
 use std::sync::Mutex;
 
@@ -270,7 +271,7 @@ impl PendingConsoleResponses {
         let receiver = Mutex::new(receiver);
         self.0.push(PendingResponse {
             poll: Box::new(move || {
-                let mut guard = receiver.lock().unwrap();
+                let mut guard = receiver.lock_ignore_poison();
                 match guard.poll_once() {
                     Ok(Some(val)) => Some(map(val)),
                     Ok(None) => None,
@@ -294,7 +295,7 @@ impl PendingConsoleResponses {
         let receiver = Mutex::new(receiver);
         self.0.push(PendingResponse {
             poll: Box::new(move || {
-                let mut guard = receiver.lock().unwrap();
+                let mut guard = receiver.lock_ignore_poison();
                 match guard.try_recv() {
                     Ok(val) => Some(map(val)),
                     Err(tokio::sync::oneshot::error::TryRecvError::Empty) => None,

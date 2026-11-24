@@ -1,8 +1,9 @@
-import { useState } from 'react'
+import { useRef, useState } from 'react'
 import {
   BackpackUpperBody,
   BlogBanner,
   BlogCard,
+  Button,
   CardActionButton,
   CommunityCard,
   EventCard,
@@ -52,13 +53,71 @@ function SelectableShopCard() {
   const [selected, setSelected] = useState(false)
   return (
     <ShopCard
-      name="Selectable hoodie"
+      name="Selectable gloves"
       image={covers.wearable}
       rarity="rare"
       selected={selected}
       onSelect={() => setSelected((value) => !value)}
       price={<ShopCardPrice kind="credits" amount="120" />}
     />
+  )
+}
+
+const blogPosts = [
+  {
+    title: "What's new in Decentraland this season",
+    cover: covers.blog,
+    category: 'Announcements',
+    date: 'Jan 2, 2026'
+  },
+  {
+    title: 'A walk through Genesis Plaza',
+    cover: covers.plaza,
+    category: 'Guides',
+    date: 'Dec 18, 2025'
+  },
+  {
+    title: 'Career Mondays: meet the builders',
+    cover: covers.festival,
+    category: 'Events',
+    date: 'Dec 4, 2025'
+  }
+]
+
+// A title that takes two lines in every grid column, from a phone to the widest desktop: what a loading card reserves.
+const loadedTitle = 'Creator Fund: rewards for indie game creators'
+
+// Keyboard focus draws the card's hover treatment. The page never moves focus on its own: the reviewer asks for it, as
+// keyboard users reach the card by Tab.
+function FocusedBlogCard() {
+  const card = useRef<HTMLUListElement>(null)
+  return (
+    <div className={layout.blogGrids}>
+      <div className={layout.row}>
+        <Button
+          variant="secondary"
+          size="sm"
+          label="Focus the card"
+          onClick={() =>
+            card.current
+              ?.querySelector<HTMLAnchorElement>('h3 a')
+              ?.focus({ preventScroll: true, focusVisible: true } as FocusOptions)
+          }
+        />
+      </div>
+      <ul ref={card} className={layout.blogIndex}>
+        <li>
+          <BlogCard
+            title="Focused like a hovered card"
+            href="#post"
+            cover={<img src={covers.gallery} alt="" />}
+            category="Events"
+            metadata="Nov 20, 2025"
+            author={people.grace.name}
+          />
+        </li>
+      </ul>
+    </div>
   )
 }
 
@@ -308,7 +367,7 @@ export const cardEntries: GalleryEntry[] = [
             {rarities.map((rarity) => (
               <ShopCard
                 key={rarity}
-                name={`${rarity} hoodie`}
+                name={`${rarity} gloves`}
                 image={covers.wearable}
                 rarity={rarity}
                 categoryIcon={<BackpackUpperBody size={16} aria-hidden="true" />}
@@ -357,7 +416,7 @@ export const cardEntries: GalleryEntry[] = [
           <div className={layout.cards}>
             <ShopCard
               variant="catalogue"
-              name="Catalogue hoodie"
+              name="Catalogue gloves"
               image={covers.wearable}
               rarity="uncommon"
               creator={people.grace}
@@ -387,28 +446,108 @@ export const cardEntries: GalleryEntry[] = [
     components: ['BlogCard'],
     examples: [
       {
-        id: 'variants',
-        title: 'Standard and related',
+        id: 'index',
+        title: 'Blog index grid',
+        note: "In the Blog index's grid: three columns up to 1312px, two below 1024px, one below 768px. Hover a card with a pointer at 768px or wider.",
         render: () => (
-          <div className={layout.cards}>
-            <BlogCard
-              title="What's new in Decentraland"
-              href="#post"
-              cover={<img src={covers.blog} alt="" />}
-              category="Announcements"
-              metadata="Jan 2, 2026"
-              author={people.ada.name}
-            />
-            <BlogCard
-              variant="related"
-              title="A related post"
-              href="#post"
-              cover={<img src={covers.plaza} alt="" />}
-              category="Guides"
-            />
-            <BlogCard title="Without a cover" href="#post" metadata="5 min read" />
+          <ul className={layout.blogIndex}>
+            {blogPosts.map((post) => (
+              <li key={post.title}>
+                <BlogCard
+                  title={post.title}
+                  href="#post"
+                  cover={<img src={post.cover} alt="" />}
+                  category={post.category}
+                  metadata={post.date}
+                  author={people.ada.name}
+                />
+              </li>
+            ))}
+          </ul>
+        )
+      },
+      {
+        id: 'related',
+        title: 'Related posts',
+        note: 'variant="related" in an article\'s related grid, up to 1180px.',
+        render: () => (
+          <ul className={layout.blogRelated}>
+            {blogPosts.map((post) => (
+              <li key={post.title}>
+                <BlogCard
+                  variant="related"
+                  title={post.title}
+                  href="#post"
+                  cover={<img src={post.cover} alt="" />}
+                  category={post.category}
+                  metadata={post.date}
+                />
+              </li>
+            ))}
+          </ul>
+        )
+      },
+      {
+        id: 'no-cover',
+        title: 'Without a cover',
+        render: () => (
+          <ul className={layout.blogIndex}>
+            <li>
+              <BlogCard title="Release notes" href="#post" metadata="5 min read" />
+            </li>
+          </ul>
+        )
+      },
+      {
+        id: 'loading',
+        title: 'Loading',
+        note: 'loading draws a busy skeleton sized for a post with a two-line title and a 24px category badge, as Sites cards carry; the loaded card beside it has that content, so the two match.',
+        render: () => (
+          <div className={layout.blogGrids}>
+            <ul className={layout.blogIndex}>
+              <li>
+                <BlogCard
+                  title={loadedTitle}
+                  href="#post"
+                  cover={<img src={blogPosts[0]!.cover} alt="" />}
+                  category={<span className={layout.blogBadge}>Announcements</span>}
+                  metadata={blogPosts[0]!.date}
+                  author={people.ada.name}
+                />
+              </li>
+              <li>
+                <BlogCard loading loadingLabel="Loading a post" />
+              </li>
+              <li>
+                <BlogCard loading loadingLabel="Loading a post" />
+              </li>
+            </ul>
+            <ul className={layout.blogRelated}>
+              <li>
+                <BlogCard
+                  variant="related"
+                  title={loadedTitle}
+                  href="#post"
+                  cover={<img src={blogPosts[1]!.cover} alt="" />}
+                  category={<span className={layout.blogBadge}>Guides</span>}
+                  metadata={blogPosts[1]!.date}
+                />
+              </li>
+              <li>
+                <BlogCard variant="related" loading loadingLabel="Loading a related post" />
+              </li>
+              <li>
+                <BlogCard variant="related" loading loadingLabel="Loading a related post" />
+              </li>
+            </ul>
           </div>
         )
+      },
+      {
+        id: 'focus',
+        title: 'Hover and keyboard focus',
+        note: 'At 768px or wider, hover or keyboard focus raises the card, strengthens its border and underlines the title. Focus the card shows it through keyboard focus, without a pointer.',
+        render: () => <FocusedBlogCard />
       }
     ]
   },

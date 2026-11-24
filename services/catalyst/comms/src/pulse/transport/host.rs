@@ -15,7 +15,7 @@ const NATIVE_RECEIVE_POLICY: enet::ReceivePolicy = enet::ReceivePolicy {
     maximum_queued_bytes: 65536,
     maximum_queued_commands: 256,
 };
-pub(crate) const RELAY_TIMEOUT_MS: u32 = 5000;
+const ENET_PEER_TIMEOUT_MS: u32 = 5000;
 /// How often the socket warns about the datagrams errors cost it; the metric counts every one.
 const SOCKET_ERROR_WARNING_INTERVAL: Duration = Duration::from_secs(10);
 /// Receive errors one `receive` call skips before it hands the service loop back.
@@ -388,6 +388,12 @@ impl Host {
                 kind,
             })),
             Some(enet::EventNoRef::Connect { peer, .. }) => {
+                // Apply both bounds on every connect, including when ENet recycles the slot.
+                self.inner.peer_mut(peer).set_timeout(
+                    0,
+                    ENET_PEER_TIMEOUT_MS,
+                    ENET_PEER_TIMEOUT_MS,
+                );
                 self.application_peers.remove(&(peer.0 as PeerId));
                 Ok(Some(Event::Connect {
                     peer: peer.0 as PeerId,
@@ -438,6 +444,13 @@ impl Host {
             self.inner.flush();
         }
         Ok(())
+    }
+
+    pub(super) fn disconnect_connected(&mut self, reason: u32) {
+        for peer in self.inner.connected_peers_mut() {
+            // ENet sends this notice immediately, so closing the socket doesn't strand it.
+            peer.disconnect_now(reason);
+        }
     }
 
     pub async fn send(&mut self, peer: PeerId, packet: Packet) -> std::io::Result<()> {
@@ -496,13 +509,6 @@ impl Host {
             .map_err(|error| std::io::Error::other(format!("application send: {error:?}")))
     }
 
-    pub fn set_relay_timeout(&mut self, peer: PeerId, relay: bool) {
-        let bound = if relay { RELAY_TIMEOUT_MS } else { 0 };
-        if let Some(p) = self.inner.get_peer_mut(to_enet_peer(peer)) {
-            p.set_timeout(0, bound, bound);
-        }
-    }
-
     #[cfg(test)]
     pub(crate) fn peer_timeout(&mut self, peer: PeerId) -> Option<(u32, u32)> {
         let debug = format!("{:?}", self.inner.get_peer_mut(to_enet_peer(peer))?);
@@ -530,6 +536,67 @@ mod tests {
 
     fn loopback() -> SocketAddr {
         "127.0.0.1:0".parse().unwrap()
+    }
+
+    #[tokio::test]
+    async fn enet_timeout_retires_a_silent_peer_on_each_use_of_a_slot() {
+        let config = HostConfig {
+            bind: loopback(),
+            max_peers: 1,
+            channel_limit: 3,
+        };
+        let clock = ManualClock::new();
+        let mut server = Host::bind_with_clock(config.clone(), clock.clone())
+            .await
+            .unwrap();
+        let address = server.local_addr().unwrap();
+
+        for _ in 0..2 {
+            let mut client = Host::bind(config.clone()).await.unwrap();
+            client.connect(address, 3).unwrap();
+            let peer = tokio::time::timeout(Duration::from_secs(2), async {
+                loop {
+                    if let Some(Event::Connect { peer, .. }) = server.service().await.unwrap() {
+                        break peer;
+                    }
+                    if let Some(Event::Connect { .. }) = client.service().await.unwrap() {
+                        // A nonzero RTT keeps the default retransmission-count timeout from
+                        // triggering at five seconds and masking a missing flat deadline.
+                        clock.advance(Duration::from_millis(120));
+                    }
+                }
+            })
+            .await
+            .expect("ENet handshake did not complete");
+            assert_eq!(peer, 0);
+            drop(client);
+
+            // Keep a reliable packet unacknowledged. Native ENet checks the deadline on retransmit.
+            let silent_since = clock.now();
+            server
+                .send(peer, Packet::reliable(0, vec![1]))
+                .await
+                .unwrap();
+            server.flush();
+            loop {
+                clock.advance(Duration::from_millis(50));
+                let elapsed = clock.now() - silent_since;
+                assert!(
+                    elapsed <= Duration::from_secs(8),
+                    "silent ENet peer kept past {elapsed:?}"
+                );
+                if let Some(Event::Disconnect { peer: disconnected }) =
+                    server.service().await.unwrap()
+                {
+                    assert_eq!(disconnected, peer);
+                    assert!(
+                        elapsed >= Duration::from_secs(5),
+                        "peer timed out after {elapsed:?}"
+                    );
+                    break;
+                }
+            }
+        }
     }
 
     #[tokio::test]
