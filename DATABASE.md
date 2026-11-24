@@ -1847,9 +1847,17 @@ without parcels once the index head is newer than the listing. The index
 reads run only on a published land-authz snapshot. The refresh route
 (`PATCH /v1/rentals-listings/{id}`) applies the fold and the same cancellation
 rules to one listing, using the asset row from the published land-authz
-snapshot when that row is newer than `rental_assets.nft_updated_at`. The
+snapshot. A transfer is actionable only when its own block time is newer
+than the stored asset time. Dissolution uses the latest observed LAND event time. The
 route then writes the row to `signatures.rental_assets` only when it is no
 older than the stored one, so a lagging reader replaces no metadata.
+
+Create and refresh bind the asset read to the signed or stored listing chain.
+They read the NFT index publication and LAND rights in one database snapshot.
+Incomplete mint or transfer times, an unavailable publication, or a document
+beyond the LAND fold returns the unavailable envelope. A transfer beyond the
+NFT publication also waits for metadata to catch up. The NFT index publishes
+Ethereum mainnet metadata.
 
 Workload: mainnet holds thousands of listings, of which hundreds are open
 (an estimate, not a measurement). Each pass does the following:
@@ -1914,9 +1922,8 @@ Invariants:
   be at or after that of the latest folded `transfer` in
   `land_authz.authz_event`: both indexes commit whole blocks of the same
   chain, and a rent either moves the token in its own transaction or finds
-  it already in the contract. The refresh route requires the rent's `block_time` to be at
-  or after the asset row's indexed update time. When that row was updated again after the
-  rent, the route decides nothing and the job's block comparison decides.
+  it already in the contract. The refresh route compares the rent's block time to that of the
+  latest indexed transfer into custody.
   While the `rentals` index is not published, neither path reads custody.
 - The signatures-server import keeps a node reason only while upstream also
   says `cancelled`, and clears it otherwise. It skips an upstream row older

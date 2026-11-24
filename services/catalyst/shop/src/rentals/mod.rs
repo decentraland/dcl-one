@@ -149,12 +149,17 @@ impl State {
 
     pub(crate) async fn nft(
         &self,
+        chain_id: i64,
         contract_address: &str,
         token_id: &str,
     ) -> Result<Option<nft::LandNft>, nft::NftReadError> {
+        if chain_id != crate::market::catalog::served_chains().0 {
+            return Err(nft::NftReadError::Unavailable);
+        }
         nft::nft_by_contract_token(
             self.db.pool(),
             self.market.as_ref().and_then(|m| m.land_network()),
+            chain_id,
             contract_address,
             token_id,
         )

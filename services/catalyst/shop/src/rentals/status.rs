@@ -20,7 +20,7 @@
 //! contract whose rent the rentals index has not reached: the latest indexed rent names who the
 //! contract holds the token for only when it is no older than the token's
 //! arrival there (the job compares blocks, the refresh route the rent's
-//! block time with the asset row's `updated_at`). Every write is guarded by
+//! block time with the latest transfer time). Every write is guarded by
 //! `status = 'open'`, so a rent the fold recorded meanwhile wins.
 
 use std::sync::Arc;
@@ -93,7 +93,7 @@ macro_rules! latest_rent_sql {
 /// The lessor the Rentals contract (`$1`) holds the asset (`$2`, `$3`) for,
 /// the legacy `isAssetControlledByLessor` read: the lessor of the latest
 /// indexed rent, or no row when that rent is older than the asset row the
-/// route read (`$4`, its `updated_at`). A transfer into the contract stamps
+/// route read (`$4`, its latest transfer time). A transfer into the contract stamps
 /// that row, and a rent lands in the block of its transfer or later, so an
 /// older rent means the rentals index has not reached the one the contract
 /// holds the asset under.
@@ -262,9 +262,8 @@ pub async fn run_pass(
 /// first (while the rentals index is published), then, if it is still
 /// open, expiry and the asset row the route has just read (`nft`; `None`
 /// when the reader found no such token, which decides nothing). The asset
-/// row counts only when its `updated_at` is newer than the stored
-/// `rental_assets.nft_updated_at`, which the route then raises to it and
-/// never lowers (`refresh_metadata_for_rental`).
+/// must have newer LAND evidence than the stored asset time to establish
+/// a transfer, custody change or dissolved estate.
 pub async fn sync_listing(
     pool: &PgPool,
     id: Uuid,
@@ -302,24 +301,27 @@ pub async fn sync_listing(
         return Ok(());
     }
     let lessor: String = row.get("lessor");
-    // The asset row decides only when it is newer than the stored one: a
-    // reader answering from an older block must not close the listing.
+    // Date each cancellation decision from the LAND fold that established it.
     let stored_at: i64 = row.get("stored_at");
-    let nft = nft.filter(|n| n.updated_at > stored_at);
-    let owner = nft.map(|n| n.owner_address.as_str());
-    let custody: Option<String> = match nft {
+    let transfer = nft.filter(|n| n.transferred_at > stored_at);
+    let owner = transfer.map(|n| n.owner_address.as_str());
+    let custody: Option<String> = match transfer {
         Some(n) if rentals_ready && n.owner_address.eq_ignore_ascii_case(&venue) => {
             sqlx::query_scalar(CUSTODY_SQL)
                 .bind(&venue)
                 .bind(row.get::<String, _>("contract_address"))
                 .bind(row.get::<String, _>("token_id"))
-                .bind(n.updated_at)
+                .bind(n.transferred_at)
                 .fetch_optional(pool)
                 .await?
         }
         _ => None,
     };
-    let dissolved = nft.is_some_and(|n| n.category == "estate" && n.estate_size == Some(0));
+    let dissolved = nft.is_some_and(|n| {
+        n.category == "estate"
+            && n.estate_size == Some(0)
+            && n.membership_checked_at.is_some_and(|at| at > stored_at)
+    });
     if let Some(reason) = cancel_reason(
         row.get("expired"),
         dissolved,
@@ -571,6 +573,8 @@ mod tests {
             created_at: 0,
             // Newer than the seeded `nft_updated_at`.
             updated_at: Utc::now().timestamp() + 60,
+            transferred_at: Utc::now().timestamp() + 60,
+            membership_checked_at: Some(Utc::now().timestamp() + 60),
         };
         let now = Utc::now();
 
@@ -587,6 +591,7 @@ mod tests {
         );
         let older = LandNft {
             updated_at: 1_600_000_000,
+            transferred_at: 1_600_000_000,
             ..row(OTHER, "parcel", None)
         };
         sync_listing(pool, held, Some(&older), now).await.unwrap();
@@ -919,6 +924,8 @@ mod tests {
             estate_size: None,
             created_at: 0,
             updated_at: arrived,
+            transferred_at: arrived,
+            membership_checked_at: None,
         };
         publish_rentals_index(pool).await;
 

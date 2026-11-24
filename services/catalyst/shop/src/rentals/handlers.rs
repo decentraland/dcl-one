@@ -172,6 +172,12 @@ pub async fn get_rentals_listings(
 }
 
 fn reader_unavailable(err: NftReadError) -> Response {
+    if matches!(err, NftReadError::MetadataUnavailable) {
+        return unavailable(
+            Source::NftIndex,
+            "The NFT index has not published the listing asset metadata",
+        );
+    }
     if let NftReadError::Database(e) = err {
         tracing::warn!(error = %e, "failed to read the indexed rental asset");
     }
@@ -289,7 +295,10 @@ pub async fn create_rentals_listing(
         ));
     }
 
-    let nft = match state.nft(&body.contract_address, &body.token_id).await {
+    let nft = match state
+        .nft(body.chain_id, &body.contract_address, &body.token_id)
+        .await
+    {
         Ok(Some(nft)) => nft,
         Ok(None) => return Err(ApiError::not_found("NFT not found")),
         Err(e) => return Ok(reader_unavailable(e)),
@@ -359,11 +368,12 @@ pub async fn refresh_rentals_listing(
     Path(id): Path<String>,
 ) -> Result<Response, ApiError> {
     let not_found = || ApiError::not_found("Rental listing was not found");
-    let (contract_address, token_id) = state.db.listing_asset(&id).await?.ok_or_else(not_found)?;
+    let (chain_id, contract_address, token_id) =
+        state.db.listing_asset(&id).await?.ok_or_else(not_found)?;
 
     let clock = chrono::Utc::now();
     let now = clock.naive_utc();
-    let nft = state.nft(&contract_address, &token_id).await;
+    let nft = state.nft(chain_id, &contract_address, &token_id).await;
     if let (Ok(nft), Ok(uuid)) = (&nft, uuid::Uuid::parse_str(&id)) {
         super::status::sync_listing(state.db.pool(), uuid, nft.as_ref(), clock).await?;
     }

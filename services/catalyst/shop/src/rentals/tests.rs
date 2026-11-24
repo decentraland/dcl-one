@@ -207,7 +207,7 @@ async fn refresh_updates_metadata_and_returns_the_listing() {
 
     assert_eq!(
         db.listing_asset(&listing.id).await.unwrap(),
-        Some((LAND.to_string(), token.clone()))
+        Some((1, LAND.to_string(), token.clone()))
     );
     assert_eq!(db.listing_asset("not-a-uuid").await.unwrap(), None);
     assert_eq!(
@@ -273,6 +273,8 @@ async fn publish_land(pool: &sqlx::PgPool) {
     sqlx::query("INSERT INTO land_authz.index_cursor (network, land_registry, estate_registry, last_block, folded_block, folded_at, full_replay_started)
                  VALUES ('ethereum-mainnet', $1, $2, 100, 100, timezone('UTC', now()), true)")
         .bind(LAND).bind(ESTATE).execute(pool).await.unwrap();
+    sqlx::query("INSERT INTO shop.chain_cursor (indexer, network, start_block, last_block, folded_block, folded_at, full_history, chain_id)
+        VALUES ('nft', 'ethereum', 0, 100, 100, timezone('UTC', now()), true, 1)").execute(pool).await.unwrap();
 }
 
 async fn transfer(
@@ -572,6 +574,27 @@ async fn create_refresh_and_list_from_the_published_land_index() {
 
     // The lessor's own parcel: 201, then 409 on the second open listing.
     transfer(&pool, LAND, &token, &w.address, 3, 1_700_000_000).await;
+    // Legacy LAND cursors can be published before the transfer times are repaired.
+    sqlx::query("UPDATE land_authz.authz_event SET block_time=0 WHERE block_number=1")
+        .execute(&pool)
+        .await
+        .unwrap();
+    let (code, _, out) = send(
+        app(),
+        "POST",
+        path,
+        signed_headers(&w, "post", path).await,
+        Some(doc.clone()),
+    )
+    .await;
+    assert_eq!(code, StatusCode::SERVICE_UNAVAILABLE, "{out}");
+    assert_eq!(out["source"], "land-authz-index");
+    assert_eq!(counts(&pool, &token).await, (0, 0, 0, 0));
+    sqlx::query("UPDATE land_authz.authz_event SET block_time=1600000000 WHERE block_number=1")
+        .execute(&pool)
+        .await
+        .unwrap();
+
     let (status, _, out) = send(
         app(),
         "POST",
@@ -828,6 +851,48 @@ async fn create_refresh_and_list_from_the_published_land_index() {
         "signed over the route-local path behind the proxy's x-original-path: {out}"
     );
 
+    // A metadata rebuild must leave the stored name intact, even at equal asset times.
+    sqlx::raw_sql(
+        "UPDATE shop.chain_cursor SET folded_block=NULL WHERE indexer='nft';
+                   DELETE FROM shop.land_data",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+    sqlx::query("UPDATE signatures.rental_assets SET nft_updated_at=to_timestamp(1700000000) AT TIME ZONE 'UTC'
+        WHERE contract_address=$1 AND token_id=$2::numeric").bind(LAND).bind(&token).execute(&pool).await.unwrap();
+    let patch = format!("/v1/rentals-listings/{id}");
+    let (code, _, out) = send(app(), "PATCH", &patch, vec![], None).await;
+    assert_eq!(code, StatusCode::SERVICE_UNAVAILABLE, "{out}");
+    assert_eq!(out["source"], "nft-index");
+    assert_eq!(
+        state
+            .db
+            .get_listing_by_id(&id)
+            .await
+            .unwrap()
+            .unwrap()
+            .search_text,
+        "-10,-140,renamed plaza"
+    );
+    sqlx::query("UPDATE shop.chain_cursor SET folded_block=last_block WHERE indexer='nft'")
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query("UPDATE signatures.rentals SET chain_id=11155111 WHERE id=$1::text::uuid")
+        .bind(&id)
+        .execute(&pool)
+        .await
+        .unwrap();
+    let (code, _, out) = send(app(), "PATCH", &patch, vec![], None).await;
+    assert_eq!(code, StatusCode::SERVICE_UNAVAILABLE, "{out}");
+    assert_eq!(out["source"], "land-authz-index");
+    sqlx::query("UPDATE signatures.rentals SET chain_id=1 WHERE id=$1::text::uuid")
+        .bind(&id)
+        .execute(&pool)
+        .await
+        .unwrap();
+
     // Refresh after a transfer: a newer reader row with another owner
     // cancels the listing, and the route answers the synced status.
     transfer(&pool, LAND, &token, LESSOR, 5, 1_700_000_100).await;
@@ -898,6 +963,26 @@ async fn a_stale_refresh_keeps_the_stored_asset_row_and_the_listing() {
         .unwrap();
         assert_eq!((stored_at, search_text.as_str()), (t5, "-10,20"), "{label}");
     }
+    // The name is newer than the stored asset, but the previous owner's transfer is older.
+    sqlx::query(
+        "INSERT INTO shop.land_data (token_address,token_id,name,updated_block,updated_log)
+        VALUES ($1,$2::numeric,'New document',3,0)",
+    )
+    .bind(LAND)
+    .bind(&token)
+    .execute(&pool)
+    .await
+    .unwrap();
+    sqlx::query("INSERT INTO shop.nft_event (network,block_number,log_index,block_time,kind,emitter,contract_address,token_id)
+        VALUES ('ethereum',3,0,$3,'land_data',$1,$1,$2::numeric)").bind(LAND).bind(&token).bind(t5+100).execute(&pool).await.unwrap();
+    let patch = format!("/v1/rentals-listings/{}", listing.id);
+    let (code, _, out) = send(router(state.clone()), "PATCH", &patch, vec![], None).await;
+    assert_eq!(code, StatusCode::OK, "{out}");
+    assert_eq!(out["data"]["status"], "open");
+    transfer(&pool, LAND, &token, &previous_owner, 4, t5 + 200).await;
+    let (code, _, out) = send(router(state), "PATCH", &patch, vec![], None).await;
+    assert_eq!(code, StatusCode::OK, "{out}");
+    assert_eq!(out["data"]["status"], "cancelled");
     cleanup(&pool, &[token]).await;
 }
 
@@ -1087,6 +1172,60 @@ async fn a_relisting_at_the_stored_asset_time_replaces_the_details() {
 }
 
 #[tokio::test]
+async fn a_signed_mainnet_listing_cannot_use_sepolia_registry_rights() {
+    use crate::land_authz::LAND_SEPOLIA;
+    let Some(pool) = crate::db::scratch::isolated_pool(4).await else {
+        return;
+    };
+    publish_land(&pool).await;
+    sqlx::query(
+        "UPDATE land_authz.index_cursor SET network=$1, land_registry=$2, estate_registry=$3",
+    )
+    .bind(LAND_SEPOLIA.network)
+    .bind(LAND_SEPOLIA.land_registry)
+    .bind(LAND_SEPOLIA.estate_registry)
+    .execute(&pool)
+    .await
+    .unwrap();
+    let w = wallet();
+    let mut body = creation("17", "");
+    body.contract_address = LAND_SEPOLIA.land_registry.into();
+    body.signature = sign_listing(&w, &body).await;
+    transfer(&pool, &body.contract_address, "17", &w.address, 1, 100).await;
+    let mut settings = crate::market::Settings::for_tests();
+    settings.eth_network = "sepolia".into();
+    let market = Arc::new(MarketplaceState::new(
+        pool.clone(),
+        crate::http::Outbound::for_tests(),
+        settings,
+    ));
+    let app = router(state_over(pool.clone(), Some(market), true));
+    let path = "/v1/rentals-listings";
+    let (code, _, out) = send(
+        app,
+        "POST",
+        path,
+        signed_headers(&w, "post", path).await,
+        Some(creation_json(&body)),
+    )
+    .await;
+    assert_eq!(code, StatusCode::SERVICE_UNAVAILABLE, "{out}");
+    assert_eq!(out["source"], "land-authz-index");
+    // Matching Sepolia rights cannot borrow the published mainnet NFT metadata.
+    assert!(matches!(
+        super::nft::nft_by_contract_token(
+            &pool,
+            Some(LAND_SEPOLIA),
+            11155111,
+            &body.contract_address,
+            "17"
+        )
+        .await,
+        Err(super::nft::NftReadError::MetadataUnavailable)
+    ));
+}
+
+#[tokio::test]
 async fn an_estate_reads_its_members_size_and_proximity() {
     let Some(pool) = crate::db::scratch::isolated_pool(4).await else {
         return;
@@ -1101,7 +1240,7 @@ async fn an_estate_reads_its_members_size_and_proximity() {
         SELECT token_address,token_id,'Estate Name',1,1 FROM land_authz.token_right WHERE token_id=1;")
         .execute(&pool).await.unwrap();
     let state = state_over(pool, Some(market()), true);
-    let nft = state.nft(ESTATE, "1").await.unwrap().unwrap();
+    let nft = state.nft(1, ESTATE, "1").await.unwrap().unwrap();
     assert_eq!(nft.owner_address, LESSOR);
     assert_eq!(nft.search_text, "estate name");
     assert_eq!(

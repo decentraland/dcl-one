@@ -220,12 +220,15 @@ impl Database {
         Self::conflict(err) == Some(Conflict::OpenListing)
     }
 
-    pub async fn listing_asset(&self, id: &str) -> Result<Option<(String, String)>, sqlx::Error> {
+    pub async fn listing_asset(
+        &self,
+        id: &str,
+    ) -> Result<Option<(i64, String, String)>, sqlx::Error> {
         let Ok(uuid) = Uuid::parse_str(id) else {
             return Ok(None);
         };
         sqlx::query_as(
-            "SELECT contract_address, token_id::text FROM signatures.rentals WHERE id = $1",
+            "SELECT chain_id::bigint, contract_address, token_id::text FROM signatures.rentals WHERE id = $1",
         )
         .bind(uuid)
         .fetch_optional(&self.pool)
