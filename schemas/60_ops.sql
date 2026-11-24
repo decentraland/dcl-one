@@ -499,8 +499,11 @@ CREATE TABLE credits.revocations (
     CONSTRAINT revocations_attempts_check CHECK (attempts >= 0)
 );
 
--- The job's due set: unfinished revocations, oldest first.
+-- Creation-time range of unfinished revocations.
 CREATE INDEX revocations_due_idx ON credits.revocations (created_at) WHERE status IN ('pending', 'sent');
+
+-- Each chain's unfinished credit hashes, in worker sweep order.
+CREATE INDEX revocations_chain_hash_idx ON credits.revocations (chain_id, credit_hash) WHERE status IN ('pending', 'sent');
 
 -- Slider captchas: GET reuses a live answer and refreshes its two-hour TTL
 -- and generated_at; POST consumes the challenge, requires a solve after one

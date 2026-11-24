@@ -1,12 +1,12 @@
 // The reel is read unsigned, so even your own passport lists only PUBLIC photos.
 
 import { useCallback, useState } from 'react'
-import { createPortal } from 'react-dom'
 import { EmptyState, Spinner } from '../../design'
-import type { GalleryPhotoMeta } from '@explorer-core/engine/protocol'
+import type { GalleryPhotoMeta, Wearable } from '@explorer-core/engine/protocol'
 import type { ReelWrite } from '../session/useEngineSession'
 import type { ChatUser } from '../chat/ProfileCardPresentation'
-import { PhotoDetail } from './PhotoDetail'
+import { usePhotoViewer } from './usePhotoViewer'
+import type { PhotoPlace } from './reelActions'
 import { fetchPublicReelPage } from './publicReels'
 import { ReelGrid, type ReelGridLayout, type ReelGridMenu } from './ReelGrid'
 import { useReelList } from './useReelList'
@@ -32,8 +32,9 @@ export interface PassportPhotoActions {
   remove: (id: string) => Promise<ReelWrite>
   metas: Record<string, GalleryPhotoMeta | null | undefined>
   loadPhoto: (id: string) => void
+  loadWearables: (urns: string[]) => Promise<Wearable[] | null>
   /** False when the travel is refused: the photo stays open. */
-  onTeleport: (x: number, y: number) => boolean
+  onJumpIn: (place: PhotoPlace) => boolean
   onViewPerson?: (user: ChatUser) => void
 }
 
@@ -41,16 +42,13 @@ export function PassportPhotos({
   address,
   isSelf,
   actions,
-  empty,
-  viewerHost
+  empty
 }: {
   address: string
   isSelf: boolean
   actions?: PassportPhotoActions
   /** Shown for a reel with no public photos. */
   empty: React.ReactNode
-  /** The passport panel: the photo viewer covers it, not only the tab's own area. */
-  viewerHost: HTMLElement | null
 }): React.JSX.Element {
   const key = address.toLowerCase()
   const fetchPage = useCallback((offset: number, limit: number) => fetchPublicReelPage(key, offset, limit), [key])
@@ -60,7 +58,38 @@ export function PassportPhotos({
   const menu: ReelGridMenu | null =
     isSelf && actions != null ? { showDelete: true, onSetPublic: writes.setPublic, onDelete: (photo) => void writes.remove(photo) } : null
 
+  // A photo made private leaves this public-only list: show the next one, wrapping, or close when none are left.
+  if (index != null && list.loaded && index >= list.photos.length) setIndex(list.photos.length > 0 ? index % list.photos.length : null)
   const selected = index != null ? list.photos[index] : null
+  usePhotoViewer(
+    selected != null && index != null
+      ? {
+          photos: list.photos,
+          index,
+          meta: actions?.metas[selected.id],
+          canEdit: menu != null,
+          onIndex: (i) => {
+            setIndex(i)
+            list.loadMore(i)
+          },
+          onLoadMeta: actions?.loadPhoto ?? noop,
+          loadWearables: actions?.loadWearables ?? noWearables,
+          onClose: () => setIndex(null),
+          onSetPublic: menu != null ? writes.setPublic : undefined,
+          onJumpIn: (place) => {
+            if (actions?.onJumpIn(place)) setIndex(null)
+          },
+          onDelete:
+            menu != null
+              ? (photo) =>
+                  void writes.remove(photo).then((removed) => {
+                    if (removed) setIndex(null)
+                  })
+              : undefined,
+          onViewPerson: actions?.onViewPerson
+        }
+      : null
+  )
 
   return (
     <section className={styles.section}>
@@ -83,37 +112,11 @@ export function PassportPhotos({
           aria-label="Photos"
         />
       )}
-      {selected != null && index != null && viewerHost != null && createPortal(
-        <PhotoDetail
-          photos={list.photos}
-          index={index}
-          meta={actions?.metas[selected.id]}
-          isSelf={isSelf}
-          onIndex={(i) => {
-            setIndex(i)
-            list.loadMore(i)
-          }}
-          onLoadMeta={actions?.loadPhoto ?? noop}
-          onClose={() => setIndex(null)}
-          onTeleport={(x, y) => {
-            if (actions?.onTeleport(x, y)) setIndex(null)
-          }}
-          onDelete={
-            menu != null
-              ? (photo) =>
-                  void writes.remove(photo).then((removed) => {
-                    if (removed) setIndex(null)
-                  })
-              : undefined
-          }
-          onViewPerson={actions?.onViewPerson}
-        />,
-        viewerHost
-      )}
     </section>
   )
 }
 
 const noop = (): void => {}
+const noWearables = async (): Promise<null> => null
 // Never called: without `actions` there is no menu.
 const NO_WRITES: ReelWrites = { setPublic: async () => ({ ok: false }), remove: async () => ({ ok: false }) }

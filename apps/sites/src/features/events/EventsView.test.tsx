@@ -69,13 +69,13 @@ let calendar: Event[];
 let upcoming: Event[];
 let live: { events: Event[]; places: ReturnType<typeof placeRecord>[] };
 
-function setup(path: string, platform: DetectedPlatform = DESKTOP) {
+function setup(path: string, platform: DetectedPlatform = DESKTOP, pageOrigin = "https://example.org") {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   const router = createMemoryRouter(
     [
       {
         path: "/events",
-        element: <EventsView sid="sid" platform={platform} origin="https://example.org" initial={null} />,
+        element: <EventsView sid="sid" platform={platform} origin="https://example.org" pageOrigin={pageOrigin} initial={null} />,
       },
     ],
     { initialEntries: [path] },
@@ -692,12 +692,27 @@ describe("when /events opens My Events", () => {
       expect(within(items[0]!).getByText("Pending")).toBeTruthy();
       expect(within(items[1]!).getByText("Rejected")).toBeTruthy();
       expect(within(items[2]!).getByText("Approved")).toBeTruthy();
+      // Only the cover of an event still in review fades; its title and status keep their contrast.
+      expect(items[0]!.querySelector("[data-dimmed]")?.contains(within(items[0]!).getByRole("link", { name: "Draft Night" }))).toBe(false);
+      expect(items[0]!.querySelector("[data-dimmed]")).toBeTruthy();
+      expect(items[2]!.querySelector("[data-dimmed]")).toBeNull();
       expect(screen.getByRole("tab", { name: "My Events" }).getAttribute("aria-selected")).toBe("true");
       expect(screen.queryByRole("navigation", { name: "Event days" })).toBeNull();
       expect(screen.getByRole("heading", { name: "Upcoming" })).toBeTruthy();
       expect(vi.mocked(loadAllOwnedEvents)).toHaveBeenCalledWith(auth.identity, expect.anything());
       await waitFor(() => expect(scrolled).toHaveBeenCalledOnce());
       expect(scrolled.mock.contexts[0]).toBe(document.getElementById("all-events"));
+    });
+
+    it("should show an uploaded cover the page's own http origin serves", async () => {
+      const poster = "/events-assets-099ac00/poster/abc.png";
+      vi.mocked(loadAllOwnedEvents).mockResolvedValue([
+          owned({ id: "covered", name: "Covered", image: `http://127.0.0.1:5254${poster}`, start_at: at(5), finish_at: at(6), next_start_at: at(5), next_finish_at: at(6) }),
+        ]);
+      setup("/events?tab=my", DESKTOP, "http://127.0.0.1:5254");
+      const panel = await screen.findByRole("tabpanel", { name: "My Events" });
+      const card = (await within(panel).findByRole("link", { name: "Covered" })).closest("li")!;
+      expect(card.querySelector("img")?.getAttribute("src")).toBe(poster);
     });
 
     it("should count a recurring event by its next occurrence", async () => {
@@ -769,6 +784,19 @@ describe("when /events opens My Events", () => {
       await waitFor(() => expect(router.state.location.search).toBe("?day=1"));
       expect(await screen.findByRole("heading", { name: "All Events" })).toBeTruthy();
       expect(signIn.openSignIn).not.toHaveBeenCalled();
+    });
+
+    it("should ask to sign in when a later link opens My Events after the sign-out", async () => {
+      vi.mocked(loadAllOwnedEvents).mockResolvedValue([]);
+      signIn.openSignIn.mockImplementation(() => {});
+      const { router } = setup("/events?tab=my");
+      await screen.findByText("You don't have any event created");
+      auth.identity = null;
+      await act(() => router.navigate("/events?tab=my&day=1"));
+      await waitFor(() => expect(router.state.location.search).toBe("?day=1"));
+      await act(() => router.navigate("/events?tab=my"));
+      await waitFor(() => expect(signIn.openSignIn).toHaveBeenCalledWith({ redirectTo: "/events?tab=my" }));
+      expect(router.state.location.search).toBe("?tab=my");
     });
   });
 

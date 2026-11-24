@@ -18,7 +18,7 @@
 # Endpoints omit the leading slash so Git Bash (MSYS) does not rewrite them into Windows paths
 # when the script is run locally.
 #
-# Usage: RUN_ID=<id> REPO=owner/name [WAIT_SECONDS=0] [POLL_SECONDS=5] bash explorer-run-selected.sh
+# Usage: RUN_ID=<id> REPO=owner/name [WAIT_SECONDS=0] [POLL_SECONDS=30] bash explorer-run-selected.sh
 #
 # WAIT_SECONDS is for the `requested` caller, which asks before *Changes* has run: 0 (the default)
 # answers from the run's current state, which is all a `completed` caller needs. A run whose
@@ -30,7 +30,8 @@ source "$(dirname "${BASH_SOURCE[0]}")/retry.sh"
 : "${RUN_ID:?RUN_ID is required}"
 : "${REPO:?REPO is required}"
 WAIT_SECONDS="${WAIT_SECONDS:-0}"
-POLL_SECONDS="${POLL_SECONDS:-5}"
+# Every read spends the repository's GITHUB_TOKEN budget of 1,000 requests an hour.
+POLL_SECONDS="${POLL_SECONDS:-30}"
 
 # The job that selects the explorer jobs. Renaming it in bevy-explorer-ci.yml without updating
 # this breaks the probe, so a completed run that has jobs but not this one is a hard error rather
@@ -97,7 +98,7 @@ while :; do
   fi
 
   remaining=$((deadline - now))
-  delay=$(backoff_delay "$attempt" "$POLL_SECONDS")
+  delay=$(backoff_delay "$attempt" "$POLL_SECONDS" 10)
   sleep_for "$delay" "$remaining"
   attempt=$((attempt + 1))
 done

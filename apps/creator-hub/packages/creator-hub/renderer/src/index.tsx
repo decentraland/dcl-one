@@ -16,6 +16,7 @@ import {
 import { TranslationProvider } from '/@/components/TranslationProvider';
 
 import { AuthProvider } from '/@/components/AuthProvider';
+import { PageViewTracker } from '/@/components/PageViewTracker';
 import { AiSharingUploader } from '/@/hooks/useAiSharingUploader';
 
 import { AiChatWindow } from '/@/components/AiChatWindow';
@@ -120,6 +121,7 @@ if (isAiChatWindow || isConsoleWindow) {
             <main className="Main">
               <Router>
                 <ScrollToTop />
+                <PageViewTracker />
                 <AuthProvider>
                   <AiSharingUploader />
                   <RouteErrorBoundary>

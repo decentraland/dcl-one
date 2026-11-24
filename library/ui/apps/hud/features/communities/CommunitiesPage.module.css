@@ -424,7 +424,7 @@
 .compact .head {
   height: 68px;
   margin-bottom: 0;
-  padding-right: 62px;
+  padding-right: 82px;
 }
 .compact .grid {
   grid-template-columns: repeat(4, minmax(0, 1fr));

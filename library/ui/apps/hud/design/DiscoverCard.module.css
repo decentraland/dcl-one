@@ -224,8 +224,24 @@
 }
 
 .grid {
+  --discover-gap: 18px;
+
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(400px, 1fr));
-  gap: 18px;
+  /* min(…, 100%): a window narrower than one card holds one card, not a track wider than the window. */
+  grid-template-columns: repeat(auto-fill, minmax(min(400px, 100%), 1fr));
+  gap: var(--discover-gap);
   align-content: start;
+}
+/* At most --discover-columns tracks, each at least 240px wide (a title and its location pill stay readable). */
+.grid[data-columns] {
+  grid-template-columns: repeat(
+    auto-fill,
+    minmax(
+      max(
+        min(240px, 100%),
+        calc((100% - (var(--discover-columns) - 1) * var(--discover-gap)) / var(--discover-columns))
+      ),
+      1fr
+    )
+  );
 }

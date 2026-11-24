@@ -107,9 +107,10 @@ async function deliverNow(
 /** The answer on the card or the Settings switch, for the signed-in wallet. */
 export const decide = createAsyncThunk(
   'aiSharing/decide',
-  async (granted: boolean, { getState, dispatch }) => {
+  /** Resolves with whether a decision was saved: there is none to save while signed out. */
+  async (granted: boolean, { getState, dispatch }): Promise<boolean> => {
     const wallet = currentWallet();
-    if (wallet === null) return;
+    if (wallet === null) return false;
     const consent: AiSharingConsent = {
       consent: granted ? 'granted' : 'denied',
       version: AI_SHARING_CONSENT_VERSION,
@@ -127,6 +128,7 @@ export const decide = createAsyncThunk(
     const delivered = await deliver(getState, dispatch, wallet, consent);
     dispatch(actions.setSyncedWallet(delivered ? wallet : null));
     await refreshShownQueue(getState, dispatch);
+    return true;
   },
 );
 

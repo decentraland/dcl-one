@@ -123,7 +123,7 @@ pub(super) async fn create_identity(
     peer: Option<axum::Extension<axum::extract::ConnectInfo<std::net::SocketAddr>>>,
     axum::extract::OriginalUri(uri): axum::extract::OriginalUri,
     headers: HeaderMap,
-    Json(body): Json<IdentityRequestBody>,
+    super::RelayJson(body): super::RelayJson<IdentityRequestBody>,
 ) -> Response {
     let source = super::request_source(
         &headers,

@@ -1,7 +1,7 @@
 .root {
   /* The heights the pages offset against: Sites' top bar, and the tabs under it. */
   --nav-h: var(--site-header-h, 92px);
-  --sub-nav-h: 56px;
+  --sub-nav-h: 44px;
 
   display: flex;
   flex-direction: column;
@@ -20,7 +20,7 @@
   font-family: var(--creators-font);
   -webkit-font-smoothing: antialiased;
 
-  @media (min-width: 1024px) {
+  @media (min-width: 768px) {
     --sub-nav-h: 64px;
   }
 

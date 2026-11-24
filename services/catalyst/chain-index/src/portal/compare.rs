@@ -199,23 +199,30 @@ pub struct Fetched {
     pub common_upper: Option<u64>,
     /// Each block a line carried: its hash and time.
     pub headers: BTreeMap<u64, (String, u64)>,
-    /// Heights two lines gave different hashes.
+    /// Heights two lines gave different hashes, or one hash with different
+    /// times.
     pub hash_conflicts: BTreeSet<u64>,
     pub logs: BTreeMap<(u64, u32), PortalLog>,
     pub log_conflicts: BTreeSet<(u64, u32)>,
     pub bytes: usize,
     pub stopped: Option<Stop>,
+    /// The revision every complete page named (chain-lake's
+    /// [`super::REVISION_HEADER`]), `None` for a page that named none.
+    pub revisions: BTreeSet<Option<String>>,
 }
 
 impl Fetched {
     fn absorb(&mut self, page: Page) -> Result<(), PortalError> {
+        self.revisions.insert(page.revision.clone());
         self.bytes += page.bytes;
         if self.bytes > MAX_BODY_BYTES {
             return Err(PortalError::TooLarge("sample bytes"));
         }
         for h in page.headers {
             match self.headers.get(&h.number) {
-                Some((hash, _)) if *hash != h.hash => {
+                // Another hash, or the same block with another time: either
+                // would reach rows as the block's.
+                Some((hash, time)) if *hash != h.hash || *time != h.timestamp => {
                     self.hash_conflicts.insert(h.number);
                 }
                 Some(_) => {}
@@ -450,13 +457,16 @@ pub fn filters(groups: &[LogGroup]) -> Result<Vec<Filter>, PortalError> {
     groups.iter().map(Filter::from_group).collect()
 }
 
-enum Kept {
+pub(crate) enum Kept {
     Match,
     ArityOnly,
     No,
 }
 
-fn kept(filters: &[Filter], log: &PortalLog) -> Kept {
+/// Whether `eth_getLogs` with `filters` returns `log` (`Match`); a log the
+/// portal returned only because its query cannot express a trailing
+/// wildcard position (`ArityOnly`, expected and dropped); or drift (`No`).
+pub(crate) fn kept(filters: &[Filter], log: &PortalLog) -> Kept {
     if filters.iter().any(|f| f.matches(&log.address, &log.topics)) {
         return Kept::Match;
     }

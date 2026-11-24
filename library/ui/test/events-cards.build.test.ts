@@ -209,7 +209,7 @@ describe('when Events cards reveal their controls', () => {
       })
     })
 
-    it('should keep the future hover highlight inset with the card partly clipped by the column', async () => {
+    it('should show the future hover state with the card partly clipped by the column, without a line around it', async () => {
       await evaluate(`(() => {
         const column = document.querySelector('${column}')
         column.scrollIntoView({block:'center'})
@@ -227,8 +227,16 @@ describe('when Events cards reveal their controls', () => {
       await evaluate(`new Promise(resolve => setTimeout(resolve, 250))`)
       expect(await rect(future)).toEqual(before)
       expect(
-        await evaluate(`getComputedStyle(document.querySelector('${future}')).boxShadow`)
-      ).toContain('inset')
+        await evaluate(`(() => {
+          const card = document.querySelector('${future}')
+          return {
+            hovered: card.matches(':hover'),
+            actions: getComputedStyle(card.querySelector('[class*="_actions_"]')).opacity,
+            shadow: getComputedStyle(card).boxShadow,
+            outline: getComputedStyle(card).outlineStyle
+          }
+        })()`)
+      ).toEqual({ hovered: true, actions: '1', shadow: 'none', outline: 'none' })
       expect(
         await evaluate(`getComputedStyle(document.querySelector('${column}')).overflowY`)
       ).toBe('auto')

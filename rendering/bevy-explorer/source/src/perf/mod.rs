@@ -68,6 +68,7 @@ impl Plugin for PerformanceMonitoringPlugin {
                     ("Frame duration (ms)", "frameMs"),
                     ("GPU frame time (ms)", "gpuFrameMs"),
                     ("Target frame rate (FPS)", "targetFps"),
+                    ("VSync", "vsync"),
                     ("Sampling", "sampling.status"),
                     ("Sampling paused because", "sampling.pausedReason"),
                     ("Sampled seconds in progress", "inProgressSample.sampledSeconds"),

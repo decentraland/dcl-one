@@ -32,7 +32,7 @@ describe("when an edited event is saved", () => {
 
     describe("and someone who may edit any event saves it", () => {
       it("should leave its review state out of the change", () => {
-        expect(toCreateEventBody(eventToDraft(original), original, EDITOR, true)).not.toHaveProperty("rejected");
+        expect(toCreateEventBody(eventToDraft(original), original, EDITOR)).not.toHaveProperty("rejected");
       });
     });
 

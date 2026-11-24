@@ -64,13 +64,15 @@ export interface PlaceActions {
   /** A World's access for the signed-in wallet; a parcel is always allowed. */
   access: WorldAccess | 'checking'
   isHome: boolean
+  /** Whether this session keeps a home; without one the home button is not shown. */
+  canPinHome: boolean
   /** The signed-in wallet, the referrer of a shared link. */
   referrer: string | null
   signingIn: boolean
   like: () => void
   dislike: () => void
   favorite: () => void
-  setHome: () => void
+  toggleHome: () => void
 }
 
 // A list of cards asks once per World and wallet for a while, not each time it shows again; one
@@ -220,8 +222,8 @@ export function usePlaceActions(place: DetailPlace, { readSigned: read = true, s
 
   const home = homeOf(session.homeScene())
   const isHome = isPlacePanelHome(home, place, null)
-  const setHome = (): void => {
-    if (isHome) return
+  const toggleHome = (): void => {
+    if (isHome) return session.map.clearHome()
     const target = placeHomeTarget(place, null)
     // `placeHomeTarget` reads a World with no name as a Genesis City parcel
     if (target == null || (world && target.realm == null)) return
@@ -236,12 +238,13 @@ export function usePlaceActions(place: DetailPlace, { readSigned: read = true, s
     counts,
     access,
     isHome,
+    canPinHome: session.map.canPinHome,
     referrer: wallet,
     signingIn: session.login.busy,
     like: () => vote(votes.like ? null : true, LIKE_ERROR),
     dislike: () => vote(votes.dislike ? null : false, DISLIKE_ERROR),
     favorite,
-    setHome
+    toggleHome
   }
 }
 
@@ -302,7 +305,7 @@ export function PlaceActionButtons({ actions, iconSize = 24, toggle, share }: { 
       <Toggle label="Like" on={votes.like} iconOn={likeSolid} iconOff={likeOutline} size={iconSize} className={toggle} disabled={busy.vote} onClick={actions.like} />
       <Toggle label="Dislike" on={votes.dislike} iconOn={dislikeSolid} iconOff={dislikeOutline} size={iconSize} className={toggle} disabled={busy.vote} onClick={actions.dislike} />
       <Toggle label="Favorite" on={votes.favorite} iconOn={favouriteSolid} iconOff={favouriteOutline} size={iconSize} className={toggle} disabled={busy.favorite} onClick={actions.favorite} />
-      <Toggle label="Set as Home" on={isHome} iconOn={homeSolid} iconOff={homeOutline} size={iconSize} className={toggle} onClick={actions.setHome} />
+      {actions.canPinHome && <Toggle label="Set as Home" on={isHome} iconOn={homeSolid} iconOff={homeOutline} size={iconSize} className={toggle} onClick={actions.toggleHome} />}
       <Button size="bare" radius="md" variant="faint" className={share} aria-label="Share" aria-haspopup="menu" onClick={(e) => openShareMenu(e.currentTarget, place, referrer)}>
         <MaskIcon src={shareIcon} size={iconSize} />
       </Button>

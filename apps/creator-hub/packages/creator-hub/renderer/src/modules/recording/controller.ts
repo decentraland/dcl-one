@@ -1,9 +1,10 @@
-import { misc, recording as recordingPreload } from '#preload';
+import { analytics, misc, recording as recordingPreload } from '#preload';
 import type { AiRecorderState } from '/shared/types/ai';
 import { MAX_RECORDING_MS, type RecordingToolsStatus } from '/shared/types/recording';
 
 import { store } from '/@/modules/store';
 import { actions as aiActions } from '/@/modules/store/ai';
+import { describeError } from '/@/modules/store/analytics/describe';
 import { actions as snackbarActions } from '/@/modules/store/snackbar';
 import type { Severity } from '/@/modules/store/snackbar/types';
 import { createGenericNotification } from '/@/modules/store/snackbar/utils';
@@ -30,6 +31,8 @@ export type ConsentPrompt = { downloadMb: number };
 
 type Active = {
   sessionId: string;
+  /** The project recorded, kept because the editor may have moved on by the time it ends. */
+  projectId: string;
   microphone: Microphone | null;
   deviceLost: boolean;
   stopHubDom: () => void;
@@ -173,6 +176,7 @@ export async function startRecording(): Promise<void> {
     setActiveRecordingSession(id);
     active = {
       sessionId: id,
+      projectId: project.id,
       microphone: null,
       deviceLost: false,
       stopHubDom: startHubDomRecorder(),
@@ -194,12 +198,14 @@ export async function startRecording(): Promise<void> {
     await applyInspectorRecording(true);
     if (!isCurrentAttempt(token)) return;
     patch({ status: 'recording' });
+    void analytics.track('Session Recording Started', { project_id: project.id });
     if (active.deviceLost) void stopRecording('device');
   } catch (error) {
     if (!isCurrentAttempt(token)) {
       microphone?.stop();
       return;
     }
+    trackFailure(project.id, 'start', error);
     const current = active;
     active = null;
     if (current) release(current);
@@ -243,6 +249,14 @@ export async function stopRecording(
   const finishing = recordingPreload.stop(current.sessionId);
   try {
     const result = await finishing;
+    void analytics.track('Session Recording Finished', {
+      project_id: current.projectId,
+      reason,
+      ended_with: endedWith,
+      duration_ms: result.durationMs,
+      action_count: result.actionCount,
+      transcribed: !result.transcriptionError && !!result.transcript,
+    });
     if (!isCurrentAttempt(token) || !stillTheSameEditor(projectPath)) return;
     store.dispatch(
       aiActions.addRecording({
@@ -261,6 +275,7 @@ export async function stopRecording(
       notify('warning', t('editor.recording.no_transcript'), result.transcriptionError);
     }
   } catch (error) {
+    trackFailure(current.projectId, 'stop', error);
     if (isCurrentAttempt(token)) fail(error);
   } finally {
     if (stoppingSessionId === current.sessionId) stoppingSessionId = null;
@@ -286,6 +301,15 @@ export function cancelRecording(): void {
   void applyInspectorRecording(false);
   void recordingPreload.cancel(current.sessionId).catch(fail);
   store.dispatch(aiActions.setRecorderState(IDLE));
+  void analytics.track('Session Recording Cancelled', { project_id: current.projectId });
+}
+
+function trackFailure(projectId: string, stage: 'start' | 'stop', error: unknown) {
+  void analytics.track('Session Recording Failed', {
+    project_id: projectId,
+    stage,
+    error: describeError(error instanceof Error ? error : { message: String(error) }),
+  });
 }
 
 /** Synchronous teardown for unmount, a project change or the assistant being turned off. */

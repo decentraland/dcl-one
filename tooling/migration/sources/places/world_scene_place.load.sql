@@ -1,3 +1,5 @@
+-- Identity changes also retain exact displaced bindings through the schema
+-- trigger; replay preserves that recovery evidence without duplicating facts.
 -- Identities keep their upstream UUID. A binding another identity already
 -- holds on the node (world_scene_place_deployment_idx) stays with it: this
 -- row lands retired. A re-run moves an imported identity only while the
