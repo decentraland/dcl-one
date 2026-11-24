@@ -181,7 +181,8 @@ pub struct LandMarketMarks {
 /// two registries, `$4` the trades floor, `$5` the MANA token, `$6` the
 /// chain, `$7` its Rentals contract. The nft index's orders and names are
 /// marked by the cursor's rewrite counts (`reorg_rewinds`, `rebuilds`, each
-/// raised in the statement that rewrites rows in place) and their newest
+/// raised in the transaction that rewrites rows in place: a rewind, a
+/// rebuild, the estate repair's refold) and their newest
 /// positions and counts: between two rewrites the walk only appends events
 /// and the fold stamps each row with the event it applies, so a change moves
 /// a position or a count. The open orders are counted at `$1`, so one that

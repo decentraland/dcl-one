@@ -2527,7 +2527,8 @@ on an operator replay. The repair instead self-heals that projection after
 publication without delaying ownership or profile reads.
 
 Historical names keep their existing values until the final window rebuilds
-the estate rows by block and log index. Estate documents with valid empty
+the estate rows by block and log index, raising the nft cursor's `rebuilds`
+in the same transaction (the explorer map's build watches it). Estate documents with valid empty
 fields are stored as empty strings, including descriptions; rejected
 documents do not clear the previous valid estate data. Estates with only
 rejected documents then have no row. Ownership and profiles remain available
@@ -3021,7 +3022,7 @@ builds it from its own indexes.
   that cannot be read move nothing. So a failing read or pass backs off
   instead of building every 5 s. The marks are read before the pass, so a
   change during it moves them for the next one.
-  Each mark is a durable counter raised in the statement that rewrites
+  Each mark is a durable counter raised in the transaction that rewrites
   rows in place, a position in an append-only log, or a digest of the very
   rows the build reads, so equal marks mean equal inputs:
   - The land-authz marks (`LAND_MARKS_SQL`): the cursor's readiness, its
@@ -3037,8 +3038,9 @@ builds it from its own indexes.
   - Shop's marks (`land_map::land_market_marks`, one statement on the
     same connection and database clock): the nft, trade-events and trades
     readiness; the Ethereum nft cursor's `reorg_rewinds` and `rebuilds`
-    (`shop.chain_cursor`, each raised in the statement of its rewrite); the
-    two registries' live orders at that clock and their newest order
+    (`shop.chain_cursor`, raised in the transaction of a rewind, of the
+    rebuild that clears the projection and of the estate repair's refold);
+    the two registries' live orders at that clock and their newest order
     event; their names' count and newest document; and the SHA-256 of the
     open MANA trades and of the open rental listings exactly as the build
     reads them at the clock (the trades after the trade-events verdicts).
