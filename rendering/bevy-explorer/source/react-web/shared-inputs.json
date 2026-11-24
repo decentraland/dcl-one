@@ -136,6 +136,14 @@
         {
           "name": "requestIds.ts",
           "kind": "regular"
+        },
+        {
+          "name": "sceneRestrictions.test.ts",
+          "kind": "regular"
+        },
+        {
+          "name": "sceneRestrictions.ts",
+          "kind": "regular"
         }
       ]
     },
@@ -5974,7 +5982,7 @@
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/bridge-scene/src/bevy-api.ts",
-      "sha256": "3ff2c2d735e48309e20caf9d80fccded911eaf653b2b4e4c2ed6e5f3fbd3dbfb"
+      "sha256": "5cbfa218706a91fa19e9728216a7809bce191ed529d11f92639a55f097e16059"
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/bridge-scene/src/bridge.ts",
@@ -6075,6 +6083,10 @@
     {
       "path": "rendering/bevy-explorer/source/react-web/bridge-scene/src/domains/randomizer.ts",
       "sha256": "b2b36c52251a261b7a492f34d9a7da404b7fcc6318f723058b147503720e13ee"
+    },
+    {
+      "path": "rendering/bevy-explorer/source/react-web/bridge-scene/src/domains/sceneRestrictions.ts",
+      "sha256": "70997cf339ac2e61d8a8cf5d2690edad0b2e0c429c64bf4da7009757a8255a8e"
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/bridge-scene/src/domains/session.ts",
@@ -6341,6 +6353,10 @@
       "sha256": "48c81a65c30bd3ef01ac099db7f074a7371964711a001c41adcbfc9e0369a265"
     },
     {
+      "path": "rendering/bevy-explorer/source/react-web/src/test/bridgeSceneRestrictions.test.ts",
+      "sha256": "af520e066506cebda7a8ccf49571a8cf313de3edeb55f12be47a1cb3d2675feb"
+    },
+    {
       "path": "rendering/bevy-explorer/source/react-web/src/test/bridgeSession.test.ts",
       "sha256": "d23e0dcdd485a6d30a20e41e71f99470d7ba1444df70be189b4f19800633b336"
     },
@@ -6478,7 +6494,7 @@
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/src/test/world.test.tsx",
-      "sha256": "823fcabefadfe0ddd13966909eb8a0c276ae22e8b288ae25783a0f13899f1fd5"
+      "sha256": "c3d3f5c1e35792006836d06683bd531dd35560e101bc41a4ee23c3fb035075cd"
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/src/vite-env.d.ts",
@@ -6486,7 +6502,7 @@
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/tsconfig.json",
-      "sha256": "9c4f5d0869c78a357dcc1812a3deb8cac0da334fd7c994c225f919c3d8bf9dae"
+      "sha256": "93627a9217b766c68be0b6da1cbe9bfaa967d0922608a91c17663d6d780536c4"
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/vite.config.ts",
@@ -6551,6 +6567,7 @@
     "rendering/bevy-explorer/source/react-web/src/test/bridgeRandomizerTokens.test.ts",
     "rendering/bevy-explorer/source/react-web/src/test/bridgeRelay.test.ts",
     "rendering/bevy-explorer/source/react-web/src/test/bridgeSceneLookup.test.ts",
+    "rendering/bevy-explorer/source/react-web/src/test/bridgeSceneRestrictions.test.ts",
     "rendering/bevy-explorer/source/react-web/src/test/bridgeSession.test.ts",
     "rendering/bevy-explorer/source/react-web/src/test/bridgeSettings.test.ts",
     "rendering/bevy-explorer/source/react-web/src/test/bridgeTextureOptimization.test.ts",
@@ -6639,7 +6656,7 @@
     },
     {
       "path": "library/explorer-core/engine/mockBridge.ts",
-      "sha256": "75adb25f8d75eebb214d5c3c7d79bcab0d529ff3bf536c45baa17879e58defda"
+      "sha256": "093424bc952c9d482548f322eddcd68043185bae3f277c5d4540546d1bcc2302"
     },
     {
       "path": "library/explorer-core/engine/mockEvents.ts",
@@ -6651,7 +6668,7 @@
     },
     {
       "path": "library/explorer-core/engine/mockSwitches.ts",
-      "sha256": "a5d884dbb337003c8a30d535d091744fcb33d25c64f4a9a7be6121ad1692c08d"
+      "sha256": "fc889facd6b14ee160d1ff807db7a623ec3ca95cb1eb660cbe9bdea1d320eccc"
     },
     {
       "path": "library/explorer-core/engine/nameColor.test.ts",
@@ -6679,11 +6696,19 @@
     },
     {
       "path": "library/explorer-core/engine/protocol.ts",
-      "sha256": "3e7b0c19d846b2d9066e272ea4d735c76ab94ab1f5398ba6e96b04e0a363858e"
+      "sha256": "2272443cf934e0f918d2e676a66272bd8b96ec5b53230d06b905793a4dcd0f8d"
     },
     {
       "path": "library/explorer-core/engine/requestIds.ts",
       "sha256": "f93d2a0f67daea1802917c0591fb2440d8a3861d7bd1094af79342d93c11c1eb"
+    },
+    {
+      "path": "library/explorer-core/engine/sceneRestrictions.test.ts",
+      "sha256": "1228678a60b095dfa920ff80239f52598c39c9fd133f79bc5f6c7169e76f2b89"
+    },
+    {
+      "path": "library/explorer-core/engine/sceneRestrictions.ts",
+      "sha256": "0d842d20bb7613f70e0d78ad178772ea72c5f5473de53edd5c1fd7bf93fba0ab"
     },
     {
       "path": "library/explorer-core/features/auth/authReturn.ts",
@@ -9135,7 +9160,7 @@
     },
     {
       "path": "library/ui/apps/hud/design/Showcase.tsx",
-      "sha256": "9dd8e4bd0874257710125b7dcaafb802db7fcd0bf9c715e4faad10a2e85c9309"
+      "sha256": "5895e9eb2053efa258c15bb68734e95b1e12e8a7dc85e4545f276547c174e2e6"
     },
     {
       "path": "library/ui/apps/hud/design/ShowcaseIndex.ts",
@@ -9231,11 +9256,11 @@
     },
     {
       "path": "library/ui/apps/hud/design/Tooltip.module.css",
-      "sha256": "cfde7a0f39330c7c7862e2597ced5b70e2a3a89058607a1cf36d01f7dcf34533"
+      "sha256": "28d06dca02d18588bf3c70750ddce1efbc3922a6ba6bb71e2850f7ab2673396f"
     },
     {
       "path": "library/ui/apps/hud/design/Tooltip.tsx",
-      "sha256": "b39585c2844a1dcf4c7f7765bb08724a86a6092faaf63f5e4e4f1eb1cfa434ca"
+      "sha256": "e30c3698a86bb5f70b7673bbf12be8ae924474fcafa6407f73edd8854ff3a999"
     },
     {
       "path": "library/ui/apps/hud/design/VoiceBars.module.css",
@@ -10031,11 +10056,11 @@
     },
     {
       "path": "library/ui/apps/hud/features/minimap/SceneRestrictions.module.css",
-      "sha256": "7db8b252b71265bcaeb99c039c2c75a4c9d1f872f9a00ccf619a186910d9ce11"
+      "sha256": "9eef7beec1a64f17add1e374dab7f7849d2f0d18e7529b2e6dfaa118f7d9bd25"
     },
     {
       "path": "library/ui/apps/hud/features/minimap/SceneRestrictions.tsx",
-      "sha256": "20b10c2a7d2df7a2a082e58b7c5c009bbb35a728705765b4c36c21889393cbff"
+      "sha256": "509630417ad537d06a32ab7d36431491ab8993bd0df32815f4289a2a9a7b0ee9"
     },
     {
       "path": "library/ui/apps/hud/features/minimap/icons.tsx",
@@ -10243,7 +10268,7 @@
     },
     {
       "path": "library/ui/apps/hud/features/session/useEngineSession.ts",
-      "sha256": "5f29ffa03ddf9b3ba2c616f9f8550fba30f442783c6d58b4b907418f4da744ba"
+      "sha256": "12b556c1532a9caf953a849ff6019a61a216750b832fb6b64602720c4135d33d"
     },
     {
       "path": "library/ui/apps/hud/features/settings/KeyBindingsTab.module.css",
@@ -10343,7 +10368,7 @@
     },
     {
       "path": "library/ui/apps/hud/features/skybox/SkyboxMenu.tsx",
-      "sha256": "ebf3a64b2ec6b28cb2035aa5b960a655e4044868fdbcf0a1f22b37785c1660a1"
+      "sha256": "cdb68ef85f618a6ac9baf22d10cd5f3bd366cf46239723fffbe41d1a5dc2c279"
     },
     {
       "path": "library/ui/apps/hud/features/startup/GuestOrSignUp.module.css",
@@ -10591,7 +10616,7 @@
     },
     {
       "path": "library/ui/apps/hud/test/harness.tsx",
-      "sha256": "d8a89b3e198475b2e6afcb360c50ea623aefb6eba5d0f8893346c18ca7e01f42"
+      "sha256": "b7c2244440f0c8195e8f6ee33c1b135b4f2a2c8a8dfc3f3ac31e7dcf44e0d1c2"
     },
     {
       "path": "library/ui/apps/hud/test/host.ts",
@@ -10883,7 +10908,7 @@
     },
     {
       "path": "library/ui/apps/hud/test/hosted/minimap.render.test.tsx",
-      "sha256": "ade044372f6f984e81efb58901b23fefc4802633a5c5e45223265775391e94c5"
+      "sha256": "aab0a86ee08989476c6681ec09c25bbf52eadfae582caf655f56f4181d8e90e1"
     },
     {
       "path": "library/ui/apps/hud/test/hosted/minimapCamera.session.test.tsx",
@@ -11011,7 +11036,7 @@
     },
     {
       "path": "library/ui/apps/hud/test/hosted/skybox.test.tsx",
-      "sha256": "38db3d4beec64802b3263c1a9fa03709cbd52efe4e337cff463a111f2d55292d"
+      "sha256": "b4f22eca8089de0d2f1e37cc4a66acd77cb552bebf4fa6b771f984309d6d4337"
     },
     {
       "path": "library/ui/apps/hud/test/hosted/systemActionShortcuts.test.tsx",
@@ -11621,6 +11646,21 @@
       "kind": "test:runtime"
     },
     {
+      "from": "library/explorer-core/engine/sceneRestrictions.test.ts",
+      "to": "library/explorer-core/engine/sceneRestrictions.ts",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/explorer-core/engine/sceneRestrictions.test.ts",
+      "to": "library/explorer-core/engine/sceneRestrictions.ts",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/explorer-core/engine/sceneRestrictions.test.ts",
+      "to": "library/explorer-core/engine/sceneRestrictions.ts",
+      "kind": "test:runtime"
+    },
+    {
       "from": "library/explorer-core/features/auth/guest.ts",
       "to": "library/explorer-core/features/auth/guestWalletParam.ts",
       "kind": "native:runtime"
@@ -33188,6 +33228,21 @@
     {
       "from": "library/ui/apps/hud/features/session/useEngineSession.ts",
       "to": "library/explorer-core/engine/requestIds.ts",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/session/useEngineSession.ts",
+      "to": "library/explorer-core/engine/sceneRestrictions.ts",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/session/useEngineSession.ts",
+      "to": "library/explorer-core/engine/sceneRestrictions.ts",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/session/useEngineSession.ts",
+      "to": "library/explorer-core/engine/sceneRestrictions.ts",
       "kind": "test:runtime"
     },
     {
@@ -46023,6 +46078,16 @@
     {
       "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
       "to": "library/explorer-core/engine/requestIds.ts",
+      "kind": "type"
+    },
+    {
+      "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
+      "to": "library/explorer-core/engine/sceneRestrictions.test.ts",
+      "kind": "type"
+    },
+    {
+      "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
+      "to": "library/explorer-core/engine/sceneRestrictions.ts",
       "kind": "type"
     },
     {
