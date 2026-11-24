@@ -246,7 +246,7 @@ export const WEB_PARAMS: WebParam[] = [
     "name": "autopilotAvatars",
     "kind": "number",
     "delivery": "launch",
-    "doc": "Benchmark crowd (`autopilot` with a CSV): once measuring starts, spawn this many demo avatars (1 to 1024), the same looks every run, in a grid in front of the player, with the Max Avatars cap lifted for the session, so every avatar in the realm is shown; the measured time includes building them"
+    "doc": "Benchmark crowd (`autopilot` with a CSV): once measuring starts, spawn this many demo avatars (1 to 1024), the same looks every run, in a grid in front of where the player faces, with the Max Avatars cap lifted for the session, so every avatar in the realm is shown; the measured time includes building them"
   },
   {
     "name": "editor",

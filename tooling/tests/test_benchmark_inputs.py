@@ -371,6 +371,10 @@ class QueueWatchdogTest(unittest.TestCase):
                 folder = Path(os.environ['QUEUE_FIXTURE'])
                 path = sys.argv[2]
                 others = json.loads((folder / 'others.json').read_text())
+                if others == 'refused':
+                    if '/workflows/' in path:
+                        raise SystemExit('API rate limit exceeded')
+                    others = {}
                 if '/workflows/' in path:
                     print(json.dumps({'workflow_runs': [{'id': int(run)} for run in others]}))
                     raise SystemExit
@@ -475,6 +479,18 @@ class QueueWatchdogTest(unittest.TestCase):
         calls, _, output, _ = self.queue([mine, mine, started], expire_after_sleep=True, others=suite)
         self.assertEqual((calls, output), (3, ''))
 
+    def test_a_refused_read_of_the_other_runs_moves_no_laptop_toward_the_timeout(self):
+        queued = {'jobs': [
+            {'name': 'first-chrome (still) / Chrome', 'status': 'in_progress'},
+            {'name': 'second-chrome (still) / Chrome', 'status': 'queued'},
+        ]}
+        started = {'jobs': [{**job, 'status': 'in_progress'} for job in queued['jobs']]}
+        for mine in (queued, 'malformed JSON'):
+            with self.subTest(mine=mine):
+                calls, _, output, _ = self.queue([queued, mine, mine, started], expire_after_sleep=True,
+                                                 others='refused')
+                self.assertEqual((calls, output), (4, ''))
+
     def test_the_watchdog_stops_watching_before_the_job_limit(self):
         queued = {'jobs': [
             {'name': 'first-chrome (still) / Chrome', 'status': 'in_progress'},
@@ -497,6 +513,71 @@ class QueueWatchdogTest(unittest.TestCase):
                 self.assertEqual(output, 'stuck=true\n')
                 self.assertIn('**second-chrome**', summary)
                 self.assertNotIn('**a leg**', summary)
+
+
+class ReportStepTest(unittest.TestCase):
+    """The report job's shell under bash -e, against a stand-in report runner."""
+
+    RUNNER = textwrap.dedent("""\
+        #!/bin/bash
+        # benchmark report DIR --out FILE: a section per leg folder, a machine line each
+        dir=$2
+        legs=$(ls "$dir")
+        if [ -z "$legs" ]; then printf '## %s\\n\\nno data\\n\\n' "$RUN_NAME" > part.md; exit 2; fi
+        printf '## %s\\n\\n**Overall: 🔴 CPU average regressed on A**\\n\\n' "$RUN_NAME" > part.md
+        for leg in $legs; do
+          label=${leg#benchmark-result-*--}
+          printf '%s\\t%s name\\t🔴 CPU average 6%% slower<br>🟢 Peak memory 9%% less\\n' "$label" "$label" >> "$REPORT_MACHINES"
+        done
+        """)
+
+    def report(self, suite, scenarios, legs):
+        source = (Path(__file__).parents[2] / '.github/workflows/bevy-explorer-benchmark.yml').read_text()
+        step = source.split('      - name: Write the report\n', 1)[1]
+        body = step.split('        run: |\n', 1)[1].split('      - name:', 1)[0]
+        with tempfile.TemporaryDirectory() as temporary:
+            folder = Path(temporary)
+            (folder / 'runner').mkdir()
+            runner = folder / 'runner' / 'benchmark'
+            runner.write_text(self.RUNNER)
+            for leg in legs:
+                (folder / 'results' / f'benchmark-result-{leg}').mkdir(parents=True)
+            environment = dict(os.environ, PR_NUMBER='7', CHANGE_SHA=HEAD, BASE_SHA=MAIN[0],
+                               RUN_URL='https://example.test/run', EXPECTED_RUNS='3',
+                               EXPECTED_LABELS='a-chrome,b-chrome,c-chrome', SUITE=suite,
+                               NOTES='c-chrome did not run.', SCENARIOS=json.dumps(scenarios),
+                               GITHUB_STEP_SUMMARY=str(folder / 'summary'), GITHUB_OUTPUT=str(folder / 'output'))
+            result = subprocess.run(['bash', '-e', '-c', textwrap.dedent(body)], cwd=folder, env=environment,
+                                    capture_output=True, text=True, timeout=30)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            return ((folder / 'output').read_text(), (folder / 'report.md').read_text(),
+                    (folder / 'comment.md').read_text())
+
+    SCENARIOS = [{'name': 'still', 'title': 'Standing still', 'heading': 'Benchmark: Standing still'},
+                 {'name': 'still-more', 'title': 'Standing longer', 'heading': 'Benchmark: Standing longer'},
+                 {'name': 'none', 'title': 'Nothing ran', 'heading': 'Benchmark: Nothing ran'}]
+
+    def test_a_suite_comments_a_table_of_every_scenario_on_every_laptop(self):
+        output, report, comment = self.report('true', self.SCENARIOS,
+                                              ['still--a-chrome', 'still-more--a-chrome', 'still-more--b-chrome'])
+        self.assertEqual(output, 'status=0\n')
+        self.assertEqual([line for line in report.splitlines() if line.startswith('## ')],
+                         ['## Benchmark: Standing still', '## Benchmark: Standing longer', '## Benchmark: Nothing ran'])
+        cell = '🔴 CPU average 6% slower<br>🟢 Peak memory 9% less'
+        self.assertIn('| Scenario | Overall | a-chrome name | b-chrome name | c-chrome |', comment)
+        # a scenario's name that starts another's does not take that one's legs
+        self.assertIn(f'| Standing still | 🔴 CPU average regressed on A | {cell} | ⚠️ no results | ⚠️ no results |',
+                      comment)
+        self.assertIn(f'| Standing longer | 🔴 CPU average regressed on A | {cell} | {cell} | ⚠️ no results |', comment)
+        self.assertIn('| Nothing ran | ⚠️ no data | ⚠️ no results | ⚠️ no results | ⚠️ no results |', comment)
+        self.assertTrue(comment.rstrip().endswith('c-chrome did not run.'))
+
+    def test_one_scenario_comments_its_report_and_no_data_is_status_2(self):
+        output, report, comment = self.report('false', self.SCENARIOS[:1], ['still--a-chrome'])
+        self.assertEqual((output, comment), ('status=0\n', report))
+        output, _, comment = self.report('false', self.SCENARIOS[2:], [])
+        self.assertEqual(output, 'status=2\n')
+        self.assertIn('no data', comment)
 
 
 if __name__ == '__main__':

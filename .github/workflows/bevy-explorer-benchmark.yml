@@ -223,19 +223,29 @@ jobs:
           # Each laptop with a leg still to start: the time it was last seen running a benchmark
           # job, or first seen waiting. A leg's job is "<label> (<scenario>) / Chrome".
           waiting='{}'
+          # every few minutes at most: each read costs a call per benchmark run in progress
           QUEUE_INITIAL_DELAY_SECONDS=5
-          QUEUE_MAX_DELAY_SECONDS=60
+          QUEUE_MAX_DELAY_SECONDS=180
           attempt=1
           while :; do
-            # the runner labels of every benchmark job in progress, this run's or another's: a
-            # laptop running one is busy, not stuck
-            busy='[]'
+            # The runner labels of every benchmark job in progress, this run's or another's: a
+            # laptop running one is busy, not stuck. `null` when any read failed: with no
+            # evidence that a laptop is idle, none moves toward the timeout.
+            busy=null
             if runs=$(gh api "repos/$GITHUB_REPOSITORY/actions/workflows/bevy-explorer-benchmark.yml/runs?status=in_progress&per_page=100") &&
               ids=$(jq -r '.workflow_runs[].id' <<< "$runs"); then
-              busy=$(for id in $ids; do
-                  gh api "repos/$GITHUB_REPOSITORY/actions/runs/$id/jobs?per_page=100" |
-                    jq -r '.jobs[] | select(.status == "in_progress") | .labels[]' || true
-                done | jq -Rsc 'split("\n") | map(select(. != "")) | unique')
+              labels=''
+              for id in $ids; do
+                if ! run_jobs=$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$id/jobs?per_page=100") ||
+                  ! run_labels=$(jq -r '.jobs[] | select(.status == "in_progress") | .labels[]' <<< "$run_jobs"); then
+                  labels=failed
+                  break
+                fi
+                labels+=$'\n'"$run_labels"
+              done
+              if [ "$labels" != failed ]; then
+                busy=$(jq -Rsc 'split("\n") | map(select(. != "")) | unique' <<< "$labels")
+              fi
             fi
             if jobs=$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID/jobs?per_page=100") &&
               next=$(jq -c --argjson legs "$LEGS" --argjson waiting "$waiting" --argjson busy "$busy" \
@@ -244,7 +254,7 @@ jobs:
                 [$legs[] | (.label + " (" + .scenario + ") / Chrome") as $name |
                   {laptop: .label,
                    started: any($jobs[]; .name == $name and (.status == "in_progress" or .status == "completed")),
-                   running: (any($jobs[]; .name == $name and .status == "in_progress") or
+                   running: (any($jobs[]; .name == $name and .status == "in_progress") or $busy == null or
                              (.runs_on as $runner | $busy | index([$runner]) != null))}] |
                 [group_by(.laptop)[] | select(any(.[]; .started | not)) |
                   {key: .[0].laptop,
@@ -252,6 +262,13 @@ jobs:
                 from_entries' <<< "$jobs"); then
               if [ "$next" = '{}' ]; then exit 0; fi
               waiting=$next
+            else
+              # this run's jobs unread: the laptops seen busy, or every one when that read failed
+              # too, still count as active now
+              waiting=$(jq -c --argjson legs "$LEGS" --argjson busy "$busy" --argjson now "$SECONDS" '
+                with_entries(.key as $laptop |
+                  if $busy == null or any($legs[]; .label == $laptop and (.runs_on as $runner | $busy | index([$runner]) != null))
+                  then .value = $now else . end)' <<< "$waiting")
             fi
             queued=$(jq -r --argjson now "$SECONDS" --argjson timeout "$timeout" \
               '[to_entries[] | select($now - .value >= $timeout) | .key] | join(", ")' <<< "$waiting")

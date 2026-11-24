@@ -95,6 +95,10 @@ pub fn apply_client(
         // the app assembly (lib.rs) inserts `common::autopilot::Autopilot`: only it knows the
         // CSV destination, a native flag or a web page param
         autopilot: _,
+        // the app assembly (lib.rs) inserts `AutopilotWalk` and `AutopilotCrowd` with the autopilot,
+        // in a measured run only
+        autopilot_walk_to: _,
+        autopilot_avatars: _,
         ff,
     } = client;
 

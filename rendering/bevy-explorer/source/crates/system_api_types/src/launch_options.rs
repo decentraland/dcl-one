@@ -142,9 +142,9 @@ pub struct ClientOptions {
     pub autopilot_walk_to: Option<String>,
 
     /// Benchmark crowd (`autopilot` with a CSV): once measuring starts, spawn this many demo
-    /// avatars (1 to 1024), the same looks every run, in a grid in front of the player, with the
-    /// Max Avatars cap lifted for the session, so every avatar in the realm is shown; the measured
-    /// time includes building them
+    /// avatars (1 to 1024), the same looks every run, in a grid in front of where the player faces,
+    /// with the Max Avatars cap lifted for the session, so every avatar in the realm is shown; the
+    /// measured time includes building them
     #[arg(long, value_name = "n", value_parser = parse_crowd, help_heading = DEBUG)]
     pub autopilot_avatars: Option<usize>,
 
@@ -188,8 +188,9 @@ pub fn parcel(value: &str) -> Option<(i32, i32)> {
     Some((x.trim().parse().ok()?, y.trim().parse().ok()?))
 }
 
-/// The most demo avatars `--autopilot-avatars` spawns: the demo population's ceiling.
-pub const AUTOPILOT_MAX_AVATARS: usize = 1024;
+/// The most demo avatars `--autopilot-avatars` spawns: the demo population's ceiling
+/// (`MAX_DEMOS` in the avatar crate, whose crowd fails the run past its own).
+const AUTOPILOT_MAX_AVATARS: usize = 1024;
 
 /// A crowd of 1 to [`AUTOPILOT_MAX_AVATARS`] avatars.
 pub fn crowd(count: usize) -> Result<usize, String> {

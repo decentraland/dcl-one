@@ -536,45 +536,97 @@ fn spawn_demo(
     }
 }
 
-/// The seed of the benchmark crowd's looks, so every run and build measures the same crowd.
+/// The seed of the benchmark crowd's looks.
 const AUTOPILOT_CROWD_SEED: u64 = 1;
 
+/// The benchmark crowd's look at `index`: whether it is male and eight base wearables, drawn by
+/// SplitMix64 rather than a `rand` generator, whose algorithm a version bump may change: the
+/// change and base builds of a comparison must dress the same crowd.
+fn crowd_look(index: u64) -> (bool, Vec<String>) {
+    let mut state = look_seed(AUTOPILOT_CROWD_SEED, index);
+    let mut next = move || {
+        state = state.wrapping_add(0x9E37_79B9_7F4A_7C15);
+        let mut z = state;
+        z = (z ^ (z >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
+        z = (z ^ (z >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
+        z ^ (z >> 31)
+    };
+    let male = next() & 1 == 0;
+    let mut catalog: Vec<_> = base_wearables::base_wearable_urns()
+        .into_iter()
+        .skip(2)
+        .collect();
+    let mut wearables = Vec::with_capacity(8);
+    while wearables.len() < 8 && !catalog.is_empty() {
+        let pick = (next() % catalog.len() as u64) as usize;
+        wearables.push(catalog.swap_remove(pick).to_string());
+    }
+    (male, wearables)
+}
+
 /// The benchmark crowd ([`AutopilotCrowd`]): on the first `Measuring` frame, `count` demo avatars
-/// with seeded looks in the grid in front of the player, and no Max Avatars cap for the session,
-/// so every one of them is built and drawn (and every other avatar in the realm is shown too).
-/// The resource goes once they are spawned, which ends the system.
+/// with seeded looks in the grid in front of where the player faces, and no Max Avatars cap for
+/// the session, so every one of them is built and drawn (and every other avatar in the realm is
+/// shown too). The resource goes once they are spawned, which ends the system. A crowd past the
+/// demo population's ceiling fails the run instead of measuring a smaller one.
 fn spawn_autopilot_crowd(
     mut commands: Commands,
     crowd: Res<AutopilotCrowd>,
-    phase: Option<Res<AutopilotPhase>>,
+    mut phase: ResMut<AutopilotPhase>,
     player: Query<&GlobalTransform, With<PrimaryUser>>,
     mut session: ResMut<SessionGraphics>,
 ) {
-    if phase.is_none_or(|phase| *phase != AutopilotPhase::Measuring) {
+    if *phase != AutopilotPhase::Measuring {
         return;
     }
     let Ok(player) = player.single() else {
         return;
     };
     commands.remove_resource::<AutopilotCrowd>();
-    session.max_avatars = Some(UNCAPPED);
-    // the launch option allows no more than the demo population's ceiling
-    let count = crowd.count;
-    for index in 0..count as u64 {
-        let (male, wearables) = random_look(
-            &mut StdRng::seed_from_u64(look_seed(AUTOPILOT_CROWD_SEED, index)),
-            false,
+    if crowd.count > MAX_DEMOS {
+        error!(
+            target: common::autopilot::LOG_TARGET,
+            "a crowd of {} is more than the {MAX_DEMOS} demo avatars", crowd.count
         );
+        *phase = AutopilotPhase::Ending { exit_code: 1 };
+        return;
+    }
+    session.max_avatars = Some(UNCAPPED);
+    // the grid stands in front of where the player faces, so the camera sees it whatever the
+    // realm's spawn heading
+    let (yaw, _, _) = player.rotation().to_euler(EulerRot::YXZ);
+    let facing = Quat::from_rotation_y(yaw);
+    for index in 0..crowd.count as u64 {
+        let (male, wearables) = crowd_look(index);
         spawn_demo(
             &mut commands,
             index,
             male,
             wearables,
-            player.translation() + demo_offset(DemoLayout::Grid, index),
+            player.translation() + facing * demo_offset(DemoLayout::Grid, index),
             None,
         );
     }
-    info!(target: common::autopilot::LOG_TARGET, "spawned a crowd of {count} demo avatars");
+    info!(target: common::autopilot::LOG_TARGET, "spawned a crowd of {} demo avatars", crowd.count);
+}
+
+#[cfg(test)]
+mod crowd_tests {
+    use super::*;
+
+    #[test]
+    fn a_crowd_look_is_the_same_every_time_and_wears_distinct_base_wearables() {
+        for index in [0, 1, 511, 1023] {
+            let (male, wearables) = crowd_look(index);
+            assert_eq!(crowd_look(index), (male, wearables.clone()));
+            assert_eq!(wearables.len(), 8);
+            let mut distinct = wearables.clone();
+            distinct.sort();
+            distinct.dedup();
+            assert_eq!(distinct.len(), 8, "{wearables:?}");
+        }
+        assert_ne!(crowd_look(0), crowd_look(1));
+    }
 }
 
 /// Temporarily render a fetched profile's appearance on the local player.

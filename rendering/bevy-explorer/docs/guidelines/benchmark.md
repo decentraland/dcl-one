@@ -124,6 +124,10 @@ arrives, `autopilotWalkTo` a walk-in, `autopilotAvatars` a crowd of demo avatars
 | `genesis-walk` | Arriving on an empty parcel west of Genesis Plaza and walking in, so the plaza's scenes load during play ([walk-in](#launch-options)). |
 | `avatars-100`, `avatars-400` | 100 or 400 demo avatars spawned in front of the player as measuring starts: building them, then drawing them, with no Max Avatars cap. |
 
+A scenario that needs a launch option newer than main's build is not a comparison until main has
+it: the base build ignores the option and measures something else. So is a manual run whose
+`base_sha` predates the option.
+
 Every scenario runs about as long as `spawn` (warm-ups, then `RUNS` × 2 measured runs), so the
 suite's length grows with the list; the same per-run limits hold. The *Queue watchdog* job runs
 until each laptop has started its last leg, and stops watching after 340 minutes: keep the list
@@ -276,11 +280,12 @@ A walk-in measures content that loads during play instead of behind the loading 
   walk on the web, at the default load distance.
 
 A crowd measures avatars: with `--autopilot-avatars <n>` (`?autopilotAvatars=<n>` on the web),
-on the first measured frame the run spawns `n` demo avatars (at most 1024) in the grid in front of
-the player that `/avatar_demo` uses, each with the same seeded look in every run and build, and
+on the first measured frame the run spawns `n` demo avatars (at most 1024) in the grid that
+`/avatar_demo` uses, turned to stand in front of where the player faces, each with the same
+seeded look in every run and build (SplitMix64, independent of the `rand` version), and
 lifts the Max Avatars cap for the session, so every one is built and drawn, as is every other
-avatar in the realm. A count outside 1 to 1024 is refused natively and fails a web run (exit
-code 1). The measured 90 s
+avatar in the realm. A count of 0 or over 1024 is refused natively and fails a web run (exit
+code 1); a web value that is not a number fails the page's launch of the engine instead. The measured 90 s
 include loading and building them, then drawing the whole crowd (`spawn_autopilot_crowd` in
 `crates/avatar/src/debug_avatars.rs`). It needs no scene preview mode. Without a CSV destination
 (the warm-up) neither the walk nor the crowd happens.
@@ -714,9 +719,13 @@ run still to start has run no benchmark job, of this run or another (a suite of 
 request included), for `BENCHMARK_QUEUE_TIMEOUT_MINUTES` (since it was last seen running one, or
 since the watchdog first saw it waiting), it sets the performance section to *Cancelled* with a
 message naming the laptop and cancels the run. A job of the other repository that uses the fleet
-is not visible to it, so it counts against the limit. After 340 minutes the watchdog stops
-watching with a warning instead of reaching GitHub's six-hour job limit, and the legs' own
-timeouts apply. The message says the laptop is
+is not visible to it, so it counts against the limit. A read that fails (the token's rate limit,
+say) moves no laptop toward the limit, and the reads come at most every three minutes, as each
+costs a call per benchmark run in progress. After 340 minutes the watchdog stops watching with a
+warning instead of reaching GitHub's six-hour job limit, and the legs' own timeouts apply.
+Cancelling the run stops every leg, the healthy laptops' included, and writes no report: in a
+suite, what the other laptops measured so far is lost, and the cancelled message says to re-run
+the failed jobs once the laptop is free. The message says the laptop is
 offline, stuck or busy with another job, and suggests *Re-run
 failed jobs* once it is free, which keeps the legs that finished and their results, raising
 `BENCHMARK_QUEUE_TIMEOUT_MINUTES`, or leaving the laptop out of `BENCHMARK_ENABLED_RUNNERS`. It

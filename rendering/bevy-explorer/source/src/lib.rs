@@ -697,7 +697,7 @@ impl DecentralandApp {
                     }
                 },
                 Some(_) => warn!(
-                    "--autopilot-avatars has no effect without --csv: the run ends once it arrives"
+                    "--autopilot-avatars has no effect without --csv: no crowd spawns in a warm-up"
                 ),
                 None => (),
             }
