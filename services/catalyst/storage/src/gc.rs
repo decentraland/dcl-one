@@ -232,6 +232,11 @@ pub const NOT_STORE_KEYS: &[(&str, &str)] = &[
          retiring a place clears the link, while its UUID and storage remain",
     ),
     (
+        "explore.world_scene_binding.entity_id",
+        "retained evidence of which scene UUID a deployment held, for stream notice \
+         recovery; worlds.world_scenes and retired_world_scenes hold the blob references",
+    ),
+    (
         "explore.place_indexed.image_url",
         "a URL (the view over the place tables)",
     ),
