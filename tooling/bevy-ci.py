@@ -114,16 +114,19 @@ HEADLESS_JOBS = {
     'Headless packages / build (windows-amd64, win32-x64, windows-2025, x86_64-pc-windows-msvc)',
 }
 # What the browser test of the relay wake (job "Relay wake in the browser") compiles and runs with:
-# its crate and the workspace crates it depends on, the protocol that dcl_component's build script
-# compiles, the Bevy fork's patch series (its web_worker crate; Cargo.toml and Cargo.lock name the
-# fork's revision), the workspace's manifests and Cargo configuration, the tools and the workflow.
-# It is not a lane: on main it follows the web lane's baseline.
-RELAY_WAKE_CRATES = ('dcl_wasm', 'common', 'console', 'dcl_component', 'dcl_js', 'dcl_types', 'platform',
-                     'system_api_types', 'system_bridge')
-RELAY_WAKE_INPUTS = (*(SOURCE + 'crates/' + crate + '/' for crate in RELAY_WAKE_CRATES), 'library/protocol/proto/',
+# its crate and every path dependency it reaches, in the workspace or vendored (the selection tests
+# derive this list from Cargo.lock), the protocol that dcl_component's build script compiles, the
+# Bevy fork's patch series (its web_worker crate; Cargo.toml and Cargo.lock name the fork's
+# revision), the workspace's manifests and Cargo configuration, the tools, the cache tools that
+# restore the build and its file times before Cargo runs, and the workflow. It is not a lane: on
+# main it follows the web lane's baseline.
+RELAY_WAKE_CRATES = (*(SOURCE + 'crates/' + crate + '/' for crate in (
+    'dcl_wasm', 'common', 'console', 'dcl_component', 'dcl_js', 'dcl_types', 'platform', 'system_api_types',
+    'system_bridge')), 'rendering/bevy-explorer/vendor/rpc-rust/rpc/')
+RELAY_WAKE_INPUTS = (*RELAY_WAKE_CRATES, 'library/protocol/proto/',
                      PATCHES + '/bevy/', SOURCE + 'Cargo.toml', SOURCE + 'Cargo.lock', SOURCE + '.cargo/',
                      '.cargo/', 'apps/bevy-explorer/install-web-tools.py', 'apps/bevy-explorer/install-tools.sh',
-                     'tooling/bevy-target-cache.py', WORKFLOW, *TOOLS_INPUTS)
+                     'tooling/bevy-target-cache.py', 'tooling/bevy-mtimes.py', WORKFLOW, *TOOLS_INPUTS)
 # Unknown app inputs remain conservative. Only named integration boundaries narrow work.
 APP_INPUTS = {
     'README.md': (),

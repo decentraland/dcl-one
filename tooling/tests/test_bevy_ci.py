@@ -28,6 +28,53 @@ def producers(outcome='success'):
     return [{'name': name, 'status': 'completed', 'conclusion': outcome} for name in ci.PRODUCERS.values()]
 
 
+def path_packages(source):
+    """{package name: directory} of each manifest the workspace at `source` reaches: its members and
+    every path that a dependency, a workspace dependency or a patch names, followed in turn."""
+    workspace = tomllib.loads((source / 'Cargo.toml').read_text(encoding='utf-8'))['workspace']
+    queue = [source, *(path for member in workspace.get('members', ()) for path in source.glob(member))]
+    found, seen = {}, set()
+    while queue:
+        directory = queue.pop().resolve()
+        if directory in seen or not (directory / 'Cargo.toml').is_file():
+            continue
+        seen.add(directory)
+        manifest = tomllib.loads((directory / 'Cargo.toml').read_text(encoding='utf-8'))
+        if 'package' in manifest:
+            found[manifest['package']['name']] = directory
+        tables = [manifest.get('workspace', {}).get('dependencies', {}), *manifest.get('patch', {}).values()]
+        for section in (manifest, *manifest.get('target', {}).values()):
+            tables += [section.get(kind, {}) for kind in ('dependencies', 'dev-dependencies', 'build-dependencies')]
+        queue += [directory / spec['path'] for table in tables for spec in table.values()
+                  if isinstance(spec, dict) and 'path' in spec]
+    return found
+
+
+def locked_path_dependencies(source, crate, root):
+    """The directories, relative to `root`, of `crate` and of each package without a registry or git
+    source that it reaches in `source`'s Cargo.lock: its path dependencies, for every target and
+    feature the lock resolved, a path patch included."""
+    packages = tomllib.loads((source / 'Cargo.lock').read_text(encoding='utf-8'))['package']
+
+    def locked(dependency):
+        # Cargo.lock names a dependency `name`, `name version` or `name version (source)`.
+        name, *rest = dependency.split(' ', 2)
+        match = [package for package in packages if package['name'] == name
+                 and rest[:1] in ([], [package['version']]) and rest[1:] in ([], [f'({package.get("source")})'])]
+        assert len(match) == 1, dependency
+        return match[0]
+
+    reached, queue = set(), [locked(crate)]
+    while queue:
+        package = queue.pop()
+        if 'source' not in package and package['name'] not in reached:
+            reached.add(package['name'])
+            queue += map(locked, package.get('dependencies', ()))
+    directories = path_packages(source)
+    assert reached <= directories.keys(), f'no manifest found for {sorted(reached - directories.keys())}'
+    return {directories[name].relative_to(root).as_posix() + '/' for name in reached}
+
+
 class WorkflowTest(unittest.TestCase):
 
     def test_avatar_preview_boot_contract_is_selected_for_its_inputs(self):
@@ -1156,6 +1203,7 @@ class SelectionTest(unittest.TestCase):
             'rendering/bevy-explorer/source/crates/platform/src/lib.rs': True,
             'rendering/bevy-explorer/source/crates/system_api_types/src/lib.rs': True,
             'rendering/bevy-explorer/source/crates/system_bridge/src/lib.rs': True,
+            'rendering/bevy-explorer/vendor/rpc-rust/rpc/src/lib.rs': True,
             'library/protocol/proto/decentraland/sdk/components/transform.proto': True,
             'rendering/bevy-explorer/patches/bevy/series/0080-web-worker.patch': True,
             'rendering/bevy-explorer/patches/bevy/source.toml': True,
@@ -1164,10 +1212,12 @@ class SelectionTest(unittest.TestCase):
             'apps/bevy-explorer/install-web-tools.py': True,
             'apps/bevy-explorer/install-tools.sh': True,
             'tooling/bevy-target-cache.py': True,
+            'tooling/bevy-mtimes.py': True,
             'flake.lock': True,
             ci.WORKFLOW: True,
             'rendering/bevy-explorer/source/crates/scene_runner/src/lib.rs': False,
             'rendering/bevy-explorer/source/crates/dcl_deno/src/lib.rs': False,
+            'rendering/bevy-explorer/vendor/bevy_dui/src/lib.rs': False,
             'rendering/bevy-explorer/patches/wgpu/source.toml': False,
             'rendering/bevy-explorer/source/deploy/web/engine/sandbox_worker.js': False,
             'apps/bevy-explorer/build-web.py': False,
@@ -1348,6 +1398,41 @@ class SelectionTest(unittest.TestCase):
         selected = ci.select(self.base, self.commit())
         self.assertTrue(selected['scenes'])
         self.assertFalse(any(selected[lane] for lane in (*ci.LANES, 'native-matrix')))
+
+
+class RelayWakeCratesTest(unittest.TestCase):
+    """RELAY_WAKE_CRATES lists by hand the crates the relay wake browser test compiles. A path
+    dependency that dcl_wasm gains, directly or through another crate, must fail here until the list
+    names it."""
+
+    def test_the_list_names_dcl_wasm_and_every_path_dependency_it_reaches(self):
+        self.assertEqual(sorted(locked_path_dependencies(ci.ROOT / ci.SOURCE, 'dcl_wasm', ci.ROOT.resolve())),
+                         sorted(ci.RELAY_WAKE_CRATES))
+
+    def test_a_transitive_vendored_or_patched_path_dependency_is_found(self):
+        files = {
+            'source/Cargo.toml': '[workspace]\nmembers = ["crates/*"]\n'
+                                 '[workspace.dependencies]\na = { path = "crates/a" }\nb = { path = "../vendor/b" }\n'
+                                 '[patch.crates-io]\nc = { path = "../vendor/c" }\n',
+            'source/crates/top/Cargo.toml': '[package]\nname = "top"\n[dependencies]\na = { workspace = true }\n',
+            'source/crates/a/Cargo.toml': '[package]\nname = "a"\n'
+                                          "[target.'cfg(target_arch = \"wasm32\")'.dependencies]\nb = { workspace = true }\n",
+            'source/crates/other/Cargo.toml': '[package]\nname = "other"\n',
+            'vendor/b/Cargo.toml': '[package]\nname = "b"\n[dependencies]\nc = "1"\n',
+            'vendor/c/Cargo.toml': '[package]\nname = "c"\n',
+            'source/Cargo.lock': ''.join(
+                f'[[package]]\nname = "{name}"\nversion = "{version}"\n{extra}\n' for name, version, extra in (
+                    ('top', '0.1.0', 'dependencies = ["a", "serde"]'), ('a', '0.1.0', 'dependencies = ["b"]'),
+                    ('b', '0.1.0', 'dependencies = ["c 1.0.0"]'), ('c', '1.0.0', ''), ('other', '0.1.0', ''),
+                    ('serde', '1.0.0', 'source = "registry+https://github.com/rust-lang/crates.io-index"'))),
+        }
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory).resolve()
+            for path, text in files.items():
+                (root / path).parent.mkdir(parents=True, exist_ok=True)
+                (root / path).write_text(text, encoding='utf-8')
+            self.assertEqual(locked_path_dependencies(root / 'source', 'top', root),
+                             {'source/crates/top/', 'source/crates/a/', 'vendor/b/', 'vendor/c/'})
 
 
 class SceneSuiteTest(unittest.TestCase):
