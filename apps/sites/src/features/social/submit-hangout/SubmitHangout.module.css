@@ -272,6 +272,9 @@
 /* Placement only: the library Button draws the action. */
 .delete { margin-inline-end: auto; }
 
+/* The sign-in gate's button keeps its own width inside the column of controls. */
+.signIn { align-self: flex-start; }
+
 .cancel { padding: var(--dcl-space-12); color: inherit; font-weight: 600; text-decoration: none; }
 
 .coverField,

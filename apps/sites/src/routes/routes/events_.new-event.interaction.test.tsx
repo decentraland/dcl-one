@@ -207,11 +207,12 @@ describe("when editing a hangout through its route", () => {
         vi.mocked(loadHangoutOptions).mockResolvedValue(options);
         await act(async () => resolveOptions(options));
         await user.type(screen.getByRole("textbox", { name: "Event Name" }), "Draft party");
+        await user.type(screen.getByRole("textbox", { name: "Event Description" }), "Draft notes");
         await signAs(null);
       });
 
       it("should keep the editor behind its sign-in gate instead of leaving the page", () => {
-        expect(screen.getByRole("button", { name: "Sign In to continue" })).toBeTruthy();
+        expect(screen.getByRole("button", { name: "Sign In to continue" }).dataset).toMatchObject({ variant: "primary", size: "md" });
         expect(screen.queryByRole("textbox", { name: "Event Name" })).toBeNull();
         expect(screen.queryByRole("progressbar")).toBeNull();
         expect(openSignIn).not.toHaveBeenCalled();
@@ -230,6 +231,66 @@ describe("when editing a hangout through its route", () => {
       it("should start another account on an empty editor", async () => {
         await signAs(OTHER);
         expect(await screen.findByRole("textbox", { name: "Event Name" })).toHaveProperty("value", "");
+      });
+
+      it("should keep no copy of the draft once the same account is back in this editor", async () => {
+        await signAs(identity.signer);
+        expect(sessionStorage.length).toBe(0);
+      });
+
+      describe("and the page reloads before they sign in again", () => {
+        beforeEach(() => {
+          router.dispose();
+          cleanup();
+          mount(CREATE_PATH);
+        });
+
+        it("should send the visitor to sign-in with the draft still kept for this editor", () => {
+          expect(openSignIn).toHaveBeenCalledWith({ redirectTo: CREATE_PATH });
+          expect(sessionStorage.length).toBe(1);
+        });
+
+        it("should give the same account its draft back when it signs in", async () => {
+          await signAs(identity.signer);
+          expect(await screen.findByRole("textbox", { name: "Event Name" })).toHaveProperty("value", "Draft party");
+          expect(screen.getByRole("textbox", { name: "Event Description" })).toHaveProperty("value", "Draft notes");
+        });
+
+        it("should start another account on an empty editor and drop the draft", async () => {
+          await signAs(OTHER);
+          expect(await screen.findByRole("textbox", { name: "Event Name" })).toHaveProperty("value", "");
+          expect(sessionStorage.length).toBe(0);
+        });
+      });
+    });
+
+    describe("and the session ends before they write anything", () => {
+      beforeEach(async () => {
+        vi.mocked(loadHangoutOptions).mockResolvedValue(options);
+        await act(async () => resolveOptions(options));
+        await signAs(null);
+      });
+
+      it("should keep nothing for the tab and open the same account on an empty editor", async () => {
+        expect(sessionStorage.length).toBe(0);
+        await signAs(identity.signer);
+        expect(await screen.findByRole("textbox", { name: "Event Name" })).toHaveProperty("value", "");
+      });
+    });
+
+    describe("and the session ends while the browser refuses to store anything", () => {
+      beforeEach(async () => {
+        vi.mocked(loadHangoutOptions).mockResolvedValue(options);
+        await act(async () => resolveOptions(options));
+        await user.type(screen.getByRole("textbox", { name: "Event Name" }), "Draft party");
+        vi.spyOn(Storage.prototype, "setItem").mockImplementation(() => { throw new DOMException("denied", "QuotaExceededError"); });
+        await signAs(null);
+      });
+
+      it("should keep the editor behind its gate and give the same account its draft back", async () => {
+        expect(screen.getByRole("button", { name: "Sign In to continue" })).toBeTruthy();
+        await signAs(identity.signer);
+        expect(screen.getByRole("textbox", { name: "Event Name" })).toHaveProperty("value", "Draft party");
       });
     });
   });

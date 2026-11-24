@@ -166,7 +166,7 @@ function SubmitHangoutForm({ loaderData }: Route.ComponentProps) {
   const current = loaded?.account.toLowerCase() === account && loaded?.id === d.eventId ? loaded : null;
   const original = current?.event;
   const baseDraft = original ? eventToDraft(original) : { ...emptyDraft(), communityId: d.communityId };
-  const signInDraft = useHangoutSignInDraft(returnTo, account, baseDraft);
+  const signInDraft = useHangoutSignInDraft(returnTo, account, baseDraft, held);
   const owner = Boolean(original && account && original.user?.toLowerCase() === account);
   const canEditAny = options?.profile?.permissions.includes("edit_any_event") ?? false;
   const canEdit = d.mode === "create" || Boolean(original && (owner || canEditAny));

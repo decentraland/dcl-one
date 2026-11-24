@@ -44,12 +44,14 @@ export const saveHangoutSignInDraft = (returnTo: string, kept: KeptHangoutDraft)
 export const takeHangoutSignInDraft = (returnTo: string): KeptHangoutDraft | null => store.take(returnTo);
 
 /**
- * The editor's draft across a browser sign-in. `remember` follows the draft on screen; when sign-in leaves
- * for this editor's URL, a draft that differs from `initial` is saved for `account`. Storage that refuses
- * the save stops that first sign-in and sets `saveFailed`, so the writer can copy the text; the next sign-in
- * goes ahead. `restored` is the draft kept for this URL, offered only while `account` is the one that wrote it.
+ * The editor's draft across a sign-in. `remember` follows the draft on screen. It is saved for `account` when
+ * the session ends while the editor stays open (`sessionEnded`), so a reload before the same account signs in
+ * again keeps it, and when sign-in leaves for this editor's URL; either way only a draft that differs from
+ * `initial`. Storage that refuses the save on leaving stops that first sign-in and sets `saveFailed`, so the
+ * writer can copy the text; the next sign-in goes ahead. `restored` is the draft kept for this URL, read once an
+ * account is known and offered only while `account` is the one that wrote it.
  */
-export function useHangoutSignInDraft(returnTo: string, account: string | null, initial: HangoutDraft) {
+export function useHangoutSignInDraft(returnTo: string, account: string | null, initial: HangoutDraft, sessionEnded = false) {
   const [kept, setKept] = useState<KeptHangoutDraft | null>(null);
   const [saveFailed, setSaveFailed] = useState(false);
   const latest = useRef<HangoutDraft | null>(null);
@@ -60,10 +62,29 @@ export function useHangoutSignInDraft(returnTo: string, account: string | null, 
     initialRef.current = initial;
     accountRef.current = account;
   });
+  const read = useRef<string | null>(null);
+  // Read only once an account is known: a signed-out page leaves for sign-in and must leave the draft for the return.
   useEffect(() => {
+    if (!account || read.current === returnTo) return;
+    read.current = returnTo;
     const found = takeHangoutSignInDraft(returnTo);
     if (found) setKept(found);
-  }, [returnTo]);
+  }, [returnTo, account]);
+  // The editor's draft lives in memory: the session ending keeps a copy in the tab until an account signs in again
+  // here, which drops it (this editor still holds the draft, and another account must never get it).
+  const ended = useRef(false);
+  useEffect(() => {
+    if (sessionEnded === ended.current) return;
+    ended.current = sessionEnded;
+    if (!sessionEnded) {
+      takeHangoutSignInDraft(returnTo);
+      return;
+    }
+    const draft = latest.current;
+    const owner = accountRef.current;
+    if (!draft || !owner || JSON.stringify(draft) === JSON.stringify(initialRef.current)) return;
+    saveHangoutSignInDraft(returnTo, { account: owner, draft });
+  }, [sessionEnded, returnTo]);
   // Another account signing in drops the kept draft for good, so it never comes back to anyone.
   useEffect(() => {
     if (kept && account && account !== kept.account) setKept(null);
