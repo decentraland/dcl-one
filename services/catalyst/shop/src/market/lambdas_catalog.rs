@@ -54,7 +54,11 @@ pub struct Caches {
     /// The on-chain URN leg from the subgraphs, per query, while the mirror has no pass.
     catalog_urns: TtlMap<String, Arc<Vec<String>>>,
     base_wearables: TtlMap<(), Arc<Vec<BaseWearable>>>,
-    outfits: TtlMap<String, Value>,
+    /// `(address, publications)` -> the sanitized outfits entity, filed
+    /// under the publications its ownership read observed, and when the
+    /// networks it needed stop being fresh (a hit past it reads again).
+    outfits:
+        TtlMap<(String, super::owned_items::Publications), (Value, Option<chrono::NaiveDateTime>)>,
 }
 
 impl Default for Caches {
@@ -1138,46 +1142,88 @@ pub async fn nfts_collections(State(state): State<SharedState>) -> Response {
 /// bare 500, a failed ownership or names read its 502 `FetcherError`.
 pub async fn outfits(State(state): State<SharedState>, Path(id): Path<String>) -> Response {
     let address = id.to_lowercase();
-    let st = state.clone();
-    let cached = state
+    let looked_up = match super::owned_items::Publications::current(&state).await {
+        Ok(publications) => publications,
+        Err(e) => {
+            tracing::error!(error = %e, "outfits: the nft index's publications could not be read");
+            return super::lambdas_internal_error();
+        }
+    };
+    let answer = |v: Value| {
+        if v.is_null() {
+            not_found("Outfits not found")
+        } else {
+            Json(v).into_response()
+        }
+    };
+    let now = chrono::Utc::now().naive_utc();
+    if let Some((v, fresh_until)) = state
         .lambdas
         .outfits
-        .get_or_fetch(address.clone(), || async move {
-            let pointer = format!("{address}:outfits");
-            let entities = super::profiles::active_entities(&st, std::slice::from_ref(&pointer))
-                .await
-                .map_err(|()| super::lambdas_internal_error())?;
-            let Some(mut entity) = entities.into_iter().next() else {
-                return Ok::<Value, Response>(Value::Null);
-            };
-            let has_outfits = entity
-                .pointer("/metadata/outfits")
-                .and_then(Value::as_array)
-                .is_some_and(|o| !o.is_empty());
-            if !has_outfits {
-                return Ok(entity);
-            }
-            // `owned_names` answers empty without a marketplace subgraph or
-            // for an id that is not an address.
-            let (sanitized, names) = tokio::join!(
-                sanitize_outfits(&st, &address, &mut entity),
-                super::graph::owned_names(&st.index, &address)
-            );
-            sanitized?;
-            let owned_names: Vec<String> = names
-                .map_err(|e| super::third_party::fetch_error(&address, &e))?
-                .iter()
-                .map(|n| n.name.clone())
-                .collect();
-            apply_names(&mut entity, &owned_names);
-            Ok(entity)
-        })
-        .await;
-    match cached {
-        Ok(v) if !v.is_null() => Json(v).into_response(),
-        Ok(_) => not_found("Outfits not found"),
+        .get_fresh(&(address.clone(), looked_up))
+        && fresh_until.is_none_or(|until| now <= until)
+    {
+        return answer(v);
+    }
+    match fill_outfits(&state, &address, looked_up).await {
+        Ok(v) => answer(v),
         Err(resp) => resp,
     }
+}
+
+/// Reads the address's outfits and files them under what the ownership
+/// read observed, else (nothing checked) under `looked_up`, the key read
+/// before, which they do not depend on. Never under `looked_up` when the
+/// read observed another publication: a withdrawn network's key recurs.
+pub(super) async fn fill_outfits(
+    state: &MarketplaceState,
+    address: &str,
+    looked_up: super::owned_items::Publications,
+) -> Result<Value, Response> {
+    let (v, observed) = read_outfits(state, address).await?;
+    let key = observed.map_or(looked_up, |o| o.publications);
+    let fresh_until = observed.and_then(|o| o.fresh_until);
+    state
+        .lambdas
+        .outfits
+        .insert((address.to_string(), key), (v.clone(), fresh_until));
+    Ok(v)
+}
+
+/// The address's outfits entity, sanitized and named (`Null`: none), and
+/// what its ownership read observed (`None`: nothing was checked).
+async fn read_outfits(
+    state: &MarketplaceState,
+    address: &str,
+) -> Result<(Value, Option<super::owned_items::Observed>), Response> {
+    let pointer = format!("{address}:outfits");
+    let entities = super::profiles::active_entities(state, std::slice::from_ref(&pointer))
+        .await
+        .map_err(|()| super::lambdas_internal_error())?;
+    let Some(mut entity) = entities.into_iter().next() else {
+        return Ok((Value::Null, None));
+    };
+    let has_outfits = entity
+        .pointer("/metadata/outfits")
+        .and_then(Value::as_array)
+        .is_some_and(|o| !o.is_empty());
+    if !has_outfits {
+        return Ok((entity, None));
+    }
+    // `owned_names` answers empty without a marketplace subgraph or for an
+    // id that is not an address.
+    let (sanitized, names) = tokio::join!(
+        sanitize_outfits(state, address, &mut entity),
+        super::graph::owned_names(&state.index, address)
+    );
+    let observed = sanitized?;
+    let owned_names: Vec<String> = names
+        .map_err(|e| super::third_party::fetch_error(address, &e))?
+        .iter()
+        .map(|n| n.name.clone())
+        .collect();
+    apply_names(&mut entity, &owned_names);
+    Ok((entity, observed))
 }
 
 /// Drops every outfit with a wearable the address does not own, as
@@ -1188,25 +1234,28 @@ pub async fn outfits(State(state): State<SharedState>, Path(id): Path<String>) -
 /// are lowercased. The upstream walk stops at the first wearable not owned,
 /// and its third-party check then decides alone for the items seen so far:
 /// an outfit `[owned third-party, not owned]` is kept with the first only.
-/// Without a collections subgraph nothing is checked, as profiles do. A
-/// failed ownership read answers the old lambdas' 502 `FetcherError`; a
+/// Ownership is the `nft` index's (`owned_items`, published and recent, the
+/// newest transfer first): a node that does not walk it checks nothing, as
+/// profiles do, and one whose index is not published answers the
+/// unavailable envelope. A failed ownership read answers the old lambdas'
+/// 502 `FetcherError`; a
 /// failed third-party check lamb2's bare 500, as its checker's error is not
 /// one `errorHandler` maps.
 async fn sanitize_outfits(
     state: &MarketplaceState,
     address: &str,
     entity: &mut Value,
-) -> Result<(), Response> {
+) -> Result<Option<super::owned_items::Observed>, Response> {
     let Some(outfits) = entity
         .pointer_mut("/metadata/outfits")
         .and_then(Value::as_array_mut)
     else {
-        return Ok(());
+        return Ok(None);
     };
     if outfits.is_empty() {
-        return Ok(());
+        return Ok(None);
     }
-    if !graph::any_collections_reader(&state.index) {
+    if !super::owned_items::walks_here(state) {
         for outfit in outfits.iter_mut() {
             if let Some(wearables) = outfit
                 .pointer_mut("/outfit/wearables")
@@ -1219,18 +1268,40 @@ async fn sanitize_outfits(
                 }
             }
         }
-        return Ok(());
+        return Ok(None);
     }
-    let copies = graph::owned_copies(&state.index, address, "wearable")
-        .await
-        .map_err(|e| super::third_party::fetch_error(address, &e))?;
-    let mut tokens: HashMap<&str, Vec<&str>> = HashMap::new();
-    for c in copies.iter() {
-        tokens
-            .entry(c.urn.as_str())
-            .or_default()
-            .push(c.token_id.as_str());
-    }
+    let owner = address.to_lowercase();
+    let requested: HashSet<(String, String)> = outfits
+        .iter()
+        .filter_map(|outfit| {
+            outfit
+                .pointer("/outfit/wearables")
+                .and_then(Value::as_array)
+        })
+        .flatten()
+        .filter_map(Value::as_str)
+        .filter(|w| {
+            !w.contains("off-chain")
+                && !w.contains("base-avatars")
+                && !super::third_party::is_third_party_urn(w)
+        })
+        .map(|w| {
+            let (urn, _) = super::profiles::split_urn_and_token_id(w);
+            (owner.clone(), urn.to_string())
+        })
+        .collect();
+    let (mut owned, observed) = super::owned_items::owned_tokens_observed(
+        &state.pool,
+        &requested,
+        super::owned_items::Rule::Fresh,
+    )
+    .await
+    .map_err(|e| e.into_response(|m| super::third_party::fetch_error(address, m)))?;
+    let held = owned.remove(&owner).unwrap_or_default();
+    let tokens: HashMap<&str, Vec<&str>> = held
+        .iter()
+        .map(|(urn, ts)| (urn.as_str(), ts.iter().map(String::as_str).collect()))
+        .collect();
 
     // Per outfit: the wearables kept, the third-party ones among them, and
     // whether every other one was owned.
@@ -1308,7 +1379,7 @@ async fn sanitize_outfits(
         })
         .collect();
     *outfits = kept;
-    Ok(())
+    Ok(observed)
 }
 
 /// lamb2's metadata: `{ outfits, namesForExtraSlots }` only, the slots 0-4

@@ -1,14 +1,11 @@
-//! The subgraph readers: owned wearables/emotes and per-owner ownership checks
-//! from the L1/L2 collections subgraphs, ENS names from the marketplace
-//! subgraph. The old handlers read these from the squid mirror
-//! (`squid_marketplace.nft`, `mv.owned_nft`) and had no subgraph path for
-//! them; these queries are the ones the reference lambdas ran against the
-//! same subgraphs. Every call goes through the shared client with the SSRF
-//! guard, the retry ladder for 429/5xx and an 8 MiB body cap; answers are
-//! memoized per owner for [`OWNED_TTL`] so a profile burst costs one round
-//! trip per network.
+//! The subgraph readers: ENS names, LAND parcels and their owners from the
+//! marketplace subgraph, and the collections subgraph client the builder's
+//! catalogue reads. Wearable and emote ownership is the shop's, read from
+//! its `nft` index (`shop::market::owned_items`). Every call goes through
+//! the shared client with the SSRF guard, the retry ladder for 429/5xx and
+//! an 8 MiB body cap; answers are memoized per owner for [`OWNED_TTL`].
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -23,18 +20,9 @@ use crate::shared::identity::is_valid_eth_address;
 use super::ChainIndex;
 
 pub const THE_GRAPH_PAGE_SIZE: i64 = 1000;
-/// Pages walked per owner before the ownership reads (comms admission, the
-/// worlds NAME owner, profiles and outfits) and the parcel lookups are cut off.
+/// Pages walked per owner before the name reads (comms admission, the
+/// worlds NAME owner, the profiles' claimed names) and the parcel lookups are cut off.
 const MAX_PAGES: usize = 10;
-/// The owned wearables or emotes walk reads every page, as lamb2's subgraph
-/// fallback does (decentraland/lamb2:src/logic/fetch-elements/fetch-elements.ts:13-46).
-/// This is only a runaway guard: 1,000 pages is 1,000,000 tokens on one
-/// network, past which the read fails (502) rather than answer a truncated
-/// list. Each page is one subgraph request (at most 1,000 copies, a few
-/// hundred KiB), sequential per network, both networks in parallel, the
-/// result memoized [`OWNED_TTL`] per owner and category: an owner of `n`
-/// tokens on a network costs `n / 1000 + 1` requests there.
-const OWNED_MAX_PAGES: usize = 1000;
 /// Pages walked for the lambdas `/names` and `/lands` lists, which lamb2
 /// walks to the end (`fetchAllNFTs`): a guard against a subgraph that never
 /// answers a short page (1,000,000 rows), not a cut-off. Each page is one
@@ -52,8 +40,6 @@ pub const OWNED_TTL: Duration = Duration::from_secs(30);
 /// maxStaleAge` (`elements-fetcher.ts`, `ELEMENTS_CACHE_DEFAULTS`).
 pub const NAMES_STALE_MAX_AGE: Duration = Duration::from_secs(120);
 const OWNED_CACHE_MAX_ENTRIES: usize = 20_000;
-/// Owners folded into one aliased ownership document.
-const OWNERS_PER_QUERY: usize = 20;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum Network {
@@ -94,21 +80,6 @@ impl Network {
             _ => None,
         }
     }
-}
-
-/// One owned copy of a collection item, the columns the old owner queries projected.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct OwnedCopy {
-    pub urn: String,
-    pub token_id: String,
-    pub transferred_at: i64,
-    pub price: String,
-    pub rarity: String,
-    pub name: String,
-    pub category: String,
-    /// The subgraph's `itemType` (`wearable_v1`, `wearable_v2`,
-    /// `smart_wearable_v1`, `emote_v1`); empty when unknown.
-    pub item_type: String,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, serde::Serialize)]
@@ -155,8 +126,6 @@ pub struct OwnedLand {
 }
 
 pub struct Caches {
-    /// `(owner, category)` -> every copy the owner holds across both networks.
-    owned: TtlMap<(String, String), Arc<Vec<OwnedCopy>>>,
     /// `owner` -> the complete ENS names read within [`MAX_PAGES`].
     pub names: TtlMap<String, Arc<Vec<OwnedName>>>,
     /// `owner` -> every ENS name the owner holds ([`FULL_WALK_PAGES`]).
@@ -183,7 +152,6 @@ impl Caches {
 impl Default for Caches {
     fn default() -> Self {
         Self {
-            owned: TtlMap::bounded(OWNED_TTL, OWNED_CACHE_MAX_ENTRIES),
             names: TtlMap::bounded(OWNED_TTL, OWNED_CACHE_MAX_ENTRIES),
             all_names: TtlMap::bounded(OWNED_TTL, OWNED_CACHE_MAX_ENTRIES),
             land: TtlMap::bounded(OWNED_TTL, OWNED_CACHE_MAX_ENTRIES),
@@ -304,63 +272,8 @@ pub async fn graph_query_classified(
         .ok_or_else(|| GraphQueryError::Invalid(format!("subgraph response without data: {body}")))
 }
 
-const QUERY_OWNED: &str = r#"
-query owned($owner: String!, $idFrom: ID!, $first: Int!) {
-  nfts(where: { owner: $owner, category: "CATEGORY", id_gt: $idFrom }, orderBy: id, orderDirection: asc, first: $first) {
-    id
-    urn
-    tokenId
-    itemType
-    transferredAt
-    item { rarity price }
-    metadata { wearable { name category } emote { name category } }
-  }
-}"#;
-
 fn str_of(v: &Value, key: &str) -> String {
     v.get(key).and_then(Value::as_str).unwrap_or("").to_string()
-}
-
-fn int_of(v: &Value, key: &str) -> i64 {
-    match v.get(key) {
-        Some(Value::String(s)) => s.parse().unwrap_or(0),
-        Some(Value::Number(n)) => n.as_i64().unwrap_or(0),
-        _ => 0,
-    }
-}
-
-pub(crate) fn parse_owned_copies(data: &Value, category: &str) -> Vec<OwnedCopy> {
-    let meta_key = if category == "emote" {
-        "emote"
-    } else {
-        "wearable"
-    };
-    data.get("nfts")
-        .and_then(Value::as_array)
-        .into_iter()
-        .flatten()
-        .filter_map(|nft| {
-            let urn = nft.get("urn").and_then(Value::as_str)?;
-            let item = nft.get("item").filter(|i| !i.is_null());
-            let meta = nft
-                .get("metadata")
-                .and_then(|m| m.get(meta_key))
-                .filter(|m| !m.is_null());
-            Some(OwnedCopy {
-                urn: normalize_urn(urn),
-                token_id: str_of(nft, "tokenId"),
-                transferred_at: int_of(nft, "transferredAt"),
-                price: item
-                    .map(|i| str_of(i, "price"))
-                    .filter(|p| !p.is_empty())
-                    .unwrap_or_else(|| "0".into()),
-                rarity: item.map(|i| str_of(i, "rarity")).unwrap_or_default(),
-                name: meta.map(|m| str_of(m, "name")).unwrap_or_default(),
-                category: meta.map(|m| str_of(m, "category")).unwrap_or_default(),
-                item_type: str_of(nft, "itemType"),
-            })
-        })
-        .collect()
 }
 
 fn last_id(data: &Value) -> Option<String> {
@@ -388,180 +301,11 @@ fn next_nft_cursor(data: &Value, previous: &str) -> Result<Option<String>, Strin
     }
 }
 
-async fn owned_on_network(
-    state: &ChainIndex,
-    network: Network,
-    owner: &str,
-    category: &str,
-) -> Result<Vec<OwnedCopy>, String> {
-    let Some(url) = network.url(state) else {
-        return Ok(Vec::new());
-    };
-    let query = QUERY_OWNED.replace("CATEGORY", category);
-    let pages = walk_owned_pages(OWNED_MAX_PAGES, |id_from| {
-        graph_query(
-            state,
-            url,
-            &query,
-            json!({ "owner": owner, "idFrom": id_from, "first": THE_GRAPH_PAGE_SIZE }),
-        )
-    })
-    .await
-    .map_err(|e| format!("{network:?} owned {category}s of {owner}: {e}"))?;
-    Ok(pages
-        .iter()
-        .flat_map(|data| parse_owned_copies(data, category))
-        .collect())
-}
-
-/// The `id_gt` walk: every page until a short one, or an error once
-/// `max_pages` full pages leave more to read.
-async fn walk_owned_pages<F, Fut>(max_pages: usize, mut page: F) -> Result<Vec<Value>, String>
-where
-    F: FnMut(String) -> Fut,
-    Fut: std::future::Future<Output = Result<Value, String>>,
-{
-    let mut out = Vec::new();
-    let mut id_from = String::new();
-    for _ in 0..max_pages {
-        let data = page(id_from.clone()).await?;
-        let next = next_nft_cursor(&data, &id_from)?;
-        out.push(data);
-        match next {
-            Some(id) => id_from = id,
-            None => return Ok(out),
-        }
-    }
-    Err(format!(
-        "more than {max_pages} pages of {THE_GRAPH_PAGE_SIZE}"
-    ))
-}
-
-/// Every copy of `category` (`wearable` | `emote`) the owner holds on both
-/// networks, newest transfer first. `Ok(empty)` when no subgraph is configured.
-pub async fn owned_copies(
-    state: &ChainIndex,
-    owner: &str,
-    category: &str,
-) -> Result<Arc<Vec<OwnedCopy>>, String> {
-    let owner = owner.to_lowercase();
-    let key = (owner.clone(), category.to_string());
-    state
-        .graph
-        .owned
-        .get_or_fetch(key, || async move {
-            let (eth, matic) = tokio::join!(
-                owned_on_network(state, Network::Ethereum, &owner, category),
-                owned_on_network(state, Network::Matic, &owner, category),
-            );
-            let mut all = eth?;
-            all.extend(matic?);
-            all.sort_by(|a, b| {
-                b.transferred_at
-                    .cmp(&a.transferred_at)
-                    .then_with(|| a.token_id.cmp(&b.token_id))
-                    .then_with(|| a.price.cmp(&b.price))
-            });
-            Ok::<_, String>(Arc::new(all))
-        })
-        .await
-}
-
+/// Whether a collections subgraph is configured: the builder's on-chain
+/// catalogue and the lambdas catalogue fallback read it (never ownership).
 pub fn any_collections_reader(state: &ChainIndex) -> bool {
     state.settings.eth_collections_subgraph_url.is_some()
         || state.settings.matic_collections_subgraph_url.is_some()
-}
-
-fn alias(i: usize) -> String {
-    format!("o{i}")
-}
-
-/// One aliased document per network and chunk of owners: `oN: nfts(where:
-/// {owner, urn_in}) { urn tokenId }`. Owners are validated hex addresses and
-/// the URNs are JSON-encoded, so the inlined literals cannot break the document.
-fn ownership_document(chunk: &[(&str, &[String])]) -> String {
-    let mut doc = String::from("query {");
-    for (i, (owner, urns)) in chunk.iter().enumerate() {
-        let urns = serde_json::to_string(urns).unwrap_or_else(|_| "[]".to_string());
-        doc.push_str(&format!(
-            " {}: nfts(first: 1000, where: {{ owner: \"{}\", urn_in: {} }}) {{ urn tokenId }}",
-            alias(i),
-            owner,
-            urns
-        ));
-    }
-    doc.push_str(" }");
-    doc
-}
-
-/// Which of the requested `(owner, urn)` pairs the subgraphs confirm: the
-/// answer maps each owner to the normalized URNs it holds. Third-party and
-/// off-chain URNs have no reader and never come back owned. An owner whose
-/// address is not hex is skipped (nothing owned).
-pub async fn owned_urns(
-    state: &ChainIndex,
-    requested: &HashSet<(String, String)>,
-) -> Result<HashMap<String, HashSet<String>>, String> {
-    Ok(owned_tokens(state, requested)
-        .await?
-        .into_iter()
-        .map(|(owner, urns)| (owner, urns.into_keys().collect()))
-        .collect())
-}
-
-/// [`owned_urns`] with the token ids held of each URN, in subgraph order
-/// (by NFT id, as the reference lambdas' subgraph fallback lists them).
-pub async fn owned_tokens(
-    state: &ChainIndex,
-    requested: &HashSet<(String, String)>,
-) -> Result<HashMap<String, HashMap<String, Vec<String>>>, String> {
-    let mut by_network: HashMap<Network, HashMap<String, Vec<String>>> = HashMap::new();
-    for (owner, urn) in requested {
-        if !is_valid_eth_address(owner) {
-            continue;
-        }
-        let Some(network) = Network::of_urn(urn) else {
-            continue;
-        };
-        by_network
-            .entry(network)
-            .or_default()
-            .entry(owner.to_lowercase())
-            .or_default()
-            .push(normalize_urn(urn));
-    }
-    let mut owned: HashMap<String, HashMap<String, Vec<String>>> = HashMap::new();
-    for (network, owners) in by_network {
-        let Some(url) = network.url(state) else {
-            continue;
-        };
-        let mut owners: Vec<(&str, &[String])> = owners
-            .iter()
-            .map(|(o, u)| (o.as_str(), u.as_slice()))
-            .collect();
-        owners.sort();
-        for chunk in owners.chunks(OWNERS_PER_QUERY) {
-            let data = graph_query(state, url, &ownership_document(chunk), json!({})).await?;
-            for (i, (owner, _)) in chunk.iter().enumerate() {
-                let held = owned.entry((*owner).to_string()).or_default();
-                let key = alias(i);
-                let rows = data
-                    .get(&key)
-                    .and_then(Value::as_array)
-                    .ok_or_else(|| format!("subgraph response without {key} ownership rows"))?;
-                for nft in rows {
-                    let Some(urn) = nft.get("urn").and_then(Value::as_str) else {
-                        continue;
-                    };
-                    let tokens = held.entry(normalize_urn(urn)).or_default();
-                    if let Some(token) = nft.get("tokenId").and_then(Value::as_str) {
-                        tokens.push(token.to_string());
-                    }
-                }
-            }
-        }
-    }
-    Ok(owned)
 }
 
 const QUERY_NAMES: &str = r#"
@@ -1151,44 +895,6 @@ mod tests {
     }
 
     #[test]
-    fn owned_copies_parse_the_item_and_metadata_legs() {
-        let data = json!({ "nfts": [
-            { "id": "0xc0ffee-1", "urn": "urn:decentraland:matic:collections-v2:0xc0ffee:1", "tokenId": "7",
-              "itemType": "smart_wearable_v1", "transferredAt": "100", "item": { "rarity": "epic", "price": "10" },
-              "metadata": { "wearable": { "name": "Hat", "category": "hat" }, "emote": null } },
-            { "id": "0xold-1", "urn": "urn:decentraland:mainnet:collections-v1:oldies:hat", "tokenId": "1",
-              "transferredAt": 50, "item": null, "metadata": null },
-            { "id": "no-urn", "tokenId": "2" }
-        ]});
-        let copies = parse_owned_copies(&data, "wearable");
-        assert_eq!(copies.len(), 2, "a copy without a urn is dropped");
-        assert_eq!(copies[0].name, "Hat");
-        assert_eq!(copies[0].category, "hat");
-        assert_eq!(copies[0].rarity, "epic");
-        assert_eq!(copies[0].price, "10");
-        assert_eq!(copies[0].transferred_at, 100);
-        assert_eq!(copies[0].item_type, "smart_wearable_v1");
-        assert_eq!(copies[1].item_type, "", "an unknown type is empty");
-        assert_eq!(
-            copies[1].urn,
-            "urn:decentraland:ethereum:collections-v1:oldies:hat"
-        );
-        assert_eq!(copies[1].price, "0", "no item row means price 0");
-        assert_eq!(
-            (copies[1].name.as_str(), copies[1].rarity.as_str()),
-            ("", "")
-        );
-        assert_eq!(last_id(&data).as_deref(), Some("no-urn"));
-
-        let data = json!({ "nfts": [ { "id": "e", "urn": "urn:decentraland:matic:collections-v2:0xc0ffee:3",
-            "tokenId": "1", "transferredAt": "400", "item": { "rarity": "rare", "price": "5" },
-            "metadata": { "wearable": null, "emote": { "name": "Dance", "category": "dance" } } } ]});
-        let emotes = parse_owned_copies(&data, "emote");
-        assert_eq!(emotes[0].name, "Dance");
-        assert_eq!(emotes[0].category, "dance");
-    }
-
-    #[test]
     fn names_parse_the_active_order_price_when_present() {
         let data = json!({ "nfts": [
             { "id": "1", "name": "alice", "contractAddress": "0xens", "tokenId": "11", "activeOrder": { "price": "1000" } },
@@ -1203,148 +909,6 @@ mod tests {
             serde_json::to_value(&names[1]).unwrap(),
             json!({ "name": "bob", "contractAddress": "0xens", "tokenId": "22" })
         );
-    }
-
-    #[test]
-    fn ownership_document_aliases_each_owner_with_json_encoded_urns() {
-        let a = vec!["urn:decentraland:matic:collections-v2:0xa:1".to_string()];
-        let b = vec!["urn:x\"y".to_string(), "urn:z".to_string()];
-        let doc = ownership_document(&[("0xaaaa", &a), ("0xbbbb", &b)]);
-        assert!(doc.starts_with("query { o0: nfts(first: 1000, where: { owner: \"0xaaaa\", urn_in: [\"urn:decentraland:matic:collections-v2:0xa:1\"] }) { urn tokenId }"), "{doc}");
-        assert!(doc.contains(" o1: nfts(first: 1000, where: { owner: \"0xbbbb\", urn_in: [\"urn:x\\\"y\",\"urn:z\"] }) { urn tokenId }"), "{doc}");
-        assert!(doc.ends_with(" }"));
-    }
-
-    fn page_of(start: usize, n: usize) -> Value {
-        let nfts: Vec<Value> = (start..start + n)
-            .map(|i| json!({ "id": format!("0xc-{i:08}"), "urn": format!("urn:x:{i}") }))
-            .collect();
-        json!({ "nfts": nfts })
-    }
-
-    #[tokio::test]
-    async fn incomplete_pages_cannot_establish_ownership_or_enter_the_name_cache() {
-        use std::collections::VecDeque;
-        use std::sync::Mutex;
-        let wallet = format!("0x{}", "1".repeat(40));
-        let urn = "urn:decentraland:matic:collections-v2:0xc0ffee:1";
-        let input = HashSet::from([(wallet.clone(), urn.to_string())]);
-        let labels = vec!["alice".to_string()];
-        let replies = Arc::new(Mutex::new(VecDeque::from([
-            page_of(0, THE_GRAPH_PAGE_SIZE as usize),
-            json!({"nfts": []}),
-            json!({}),
-            json!({"nfts": [{"searchText": "alice"}]}),
-            json!({"nfts": []}),
-            json!({}),
-            json!({}),
-            json!({}),
-            json!({"o0": []}),
-        ])));
-        let captured = replies.clone();
-        let app = axum::Router::new().route(
-            "/",
-            axum::routing::post(move || {
-                let data = captured.lock().unwrap().pop_front().unwrap();
-                async move { axum::Json(json!({"data": data})) }
-            }),
-        );
-        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let url = format!("http://{}/", listener.local_addr().unwrap());
-        let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
-        let state = ChainIndex::new(
-            crate::http::Outbound::for_tests(),
-            crate::IndexSettings {
-                matic_collections_subgraph_url: Some(url.clone()),
-                marketplace_subgraph_url: Some(url),
-                ..Default::default()
-            },
-        );
-        state.allow_loopback_for_tests();
-        assert_eq!(
-            walk_names(&state, &state.graph.names, &wallet, 1)
-                .await
-                .unwrap_err(),
-            "no terminal NFT page after 1 pages"
-        );
-        assert!(owned_names(&state, &wallet).await.unwrap().is_empty());
-        assert_eq!(
-            name_owners(&state, &labels).await.unwrap_err(),
-            "subgraph response without nfts"
-        );
-        assert_eq!(
-            name_owners(&state, &labels).await.unwrap_err(),
-            "name owner row without name or holder"
-        );
-        assert_eq!(name_owners(&state, &labels).await.unwrap()["alice"], None);
-        assert_eq!(
-            parcels_at(&state, &[(1, 2)]).await.unwrap_err(),
-            "subgraph response without nfts"
-        );
-        assert_eq!(
-            owned_lands(&state, &wallet).await.unwrap_err(),
-            "subgraph response without nfts"
-        );
-        assert_eq!(
-            owned_tokens(&state, &input).await.unwrap_err(),
-            "subgraph response without o0 ownership rows"
-        );
-        assert!(owned_tokens(&state, &input).await.unwrap()[&wallet].is_empty());
-        assert!(replies.lock().unwrap().is_empty());
-        server.abort();
-    }
-
-    #[test]
-    fn nft_cursor_rejects_missing_rows_and_broken_continuations() {
-        assert!(next_nft_cursor(&json!({}), "").is_err());
-        let n = THE_GRAPH_PAGE_SIZE as usize;
-        assert!(next_nft_cursor(&json!({"nfts": vec![Value::Null; n]}), "").is_err());
-        assert!(next_nft_cursor(&page_of(0, n), "z").is_err());
-        assert!(next_nft_cursor(&page_of(0, n + 1), "").is_err());
-        assert_eq!(next_nft_cursor(&json!({"nfts":[]}), "").unwrap(), None);
-    }
-
-    #[tokio::test]
-    async fn owned_walk_reads_every_page_and_fails_past_the_cap() {
-        let full = THE_GRAPH_PAGE_SIZE as usize;
-        let asked = std::sync::Mutex::new(Vec::new());
-        let pages = walk_owned_pages(3, |from| {
-            asked.lock().unwrap().push(from.clone());
-            let start = asked.lock().unwrap().len() - 1;
-            let n = if start == 2 { 7 } else { full };
-            async move { Ok(page_of(start * full, n)) }
-        })
-        .await
-        .unwrap();
-        assert_eq!(pages.len(), 3, "a short third page ends the walk");
-        assert_eq!(
-            *asked.lock().unwrap(),
-            vec![
-                String::new(),
-                format!("0xc-{:08}", full - 1),
-                format!("0xc-{:08}", 2 * full - 1)
-            ],
-            "each page starts after the previous page's last id"
-        );
-
-        let calls = std::sync::atomic::AtomicUsize::new(0);
-        let err = walk_owned_pages(3, |_| {
-            let i = calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-            async move { Ok(page_of(i * full, full)) }
-        })
-        .await
-        .unwrap_err();
-        assert_eq!(calls.load(std::sync::atomic::Ordering::SeqCst), 3);
-        assert_eq!(
-            err,
-            format!("more than 3 pages of {full}"),
-            "never a truncated list"
-        );
-
-        let err = walk_owned_pages(3, |_| async { Err::<Value, _>("boom".to_string()) })
-            .await
-            .unwrap_err();
-        assert_eq!(err, "boom");
     }
 
     #[tokio::test]

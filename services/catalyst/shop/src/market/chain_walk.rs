@@ -16,7 +16,9 @@
 //! measurement window) never publishes, and neither does one held short by
 //! `MARKETPLACE_INDEX_STOP_BLOCK_*`. Readers trust an index through
 //! [`is_ready`]: `folded_block = last_block` and `folded_at` at most
-//! [`READY_WINDOW`] old at the caller's clock. Accepting work that waits on
+//! [`READY_WINDOW`] old at the caller's clock. The `nft` index's readers use
+//! the publish marker alone (`owned_items::Rule`): every pass advances
+//! `last_block` before it folds and publishes. Accepting work that waits on
 //! an index (tip claims) uses the liveness view [`is_walked`] instead: ready,
 //! or a full-history walk advancing near the head, bound to its chain and out
 //! of quarantine.
@@ -48,6 +50,7 @@ pub const INDEXER_COMMITTEE: &str = "committee";
 pub const INDEXER_NFT: &str = "nft";
 pub const INDEXER_SALES: &str = "sales";
 pub const INDEXER_TRADE_EVENTS: &str = "trade_events";
+pub const INDEXER_THIRD_PARTY_REGISTRY: &str = "third_party_registry";
 
 /// How old a publish may be before readers stop trusting it (a stopped job).
 pub const READY_WINDOW: ChronoDuration = ChronoDuration::minutes(30);
@@ -137,6 +140,8 @@ pub struct IndexSettings {
     pub sales_enabled: bool,
     /// `MARKETPLACE_COMMITTEE_INDEX_ENABLED`: the Polygon curation committee.
     pub committee_enabled: bool,
+    /// `MARKETPLACE_THIRD_PARTY_REGISTRY_INDEX_ENABLED`: Polygon providers and slots.
+    pub third_party_registry_enabled: bool,
     /// `MARKETPLACE_INDEX_INTERVAL_SECS` (5; 30 under the mirror posture): pause between passes.
     pub interval: Duration,
     /// `MARKETPLACE_INDEX_REQUESTS_PER_PASS` (100): `eth_getLogs` calls one
@@ -174,6 +179,7 @@ impl Default for IndexSettings {
             trade_events_enabled: false,
             sales_enabled: false,
             committee_enabled: false,
+            third_party_registry_enabled: false,
             interval: Duration::from_secs(5),
             requests_per_pass: 100,
             window_blocks: 10_000,
@@ -1122,8 +1128,11 @@ pub trait ChainIndex: Send + Sync {
         self.rewind(conn, to).await
     }
     /// Folds the keys touched past `since` (`None`: rebuild) up to `upto`;
-    /// whether the result may be published (nothing still owed). Every
-    /// transaction it commits ends with `owner.check`.
+    /// whether the result may be published (nothing still owed). A fold
+    /// that may not be published clears its cursor's `folded_block` in the
+    /// transaction that commits its rows: the pass clears it only after it
+    /// reads the head again, and that read can fail. Every transaction it
+    /// commits ends with `owner.check`.
     async fn fold(
         &self,
         pool: &PgPool,

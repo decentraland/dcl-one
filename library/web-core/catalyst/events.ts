@@ -1,5 +1,5 @@
-import { getJSON, sendSignedJSON, type RequestOpts } from "./client";
-import { noteCopy } from "../copyAsOf";
+import { getJSON, type RequestOpts } from "./client";
+import { noteCopy } from "../freshness/copyAsOf";
 import { publicImageUrl } from "../publicImage";
 import { hasId, isRecord } from "./rows";
 import { EventAttendeeSchema, EventCategorySchema, EventSchema } from "./schemas/events";
@@ -124,7 +124,7 @@ function parseEventAttendee(raw: unknown): EventAttendee | null {
   return hasAttendeeUser(r.data) ? normalizeEventAttendee(r.data) : null;
 }
 
-function parseEventAttendees(raw?: unknown[]): EventAttendee[] {
+export function parseEventAttendees(raw?: unknown[]): EventAttendee[] {
   const out: EventAttendee[] = [];
   for (const item of raw ?? []) {
     const parsed = parseEventAttendee(item);
@@ -149,17 +149,6 @@ export async function fetchEventAttendees(
   const env = await getJSON<{ data?: unknown[] }>(
     `/api/events/${encodeURIComponent(id)}/attendees`,
     { service: "events", ...opts },
-  );
-  return parseEventAttendees(env?.data ?? []);
-}
-
-export async function setEventAttendance(
-  id: string,
-  interested: boolean,
-): Promise<EventAttendee[]> {
-  const env = await sendSignedJSON<{ data?: unknown[] }>(
-    `/api/events/${encodeURIComponent(id)}/attendees`,
-    { service: "events", method: interested ? "POST" : "DELETE" },
   );
   return parseEventAttendees(env?.data ?? []);
 }

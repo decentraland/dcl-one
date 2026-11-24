@@ -1,24 +1,9 @@
 .subnav {
   position: sticky;
-  /* Under Sites' top bar. Keep the heights in sync with --sub-nav-h in CreatorsShell.module.css. */
+  /* Under Sites' top bar. */
   top: var(--site-header-h, 92px);
   z-index: 10;
-  display: flex;
-  align-items: center;
-  box-sizing: border-box;
-  height: 56px;
-  padding: 0 16px;
-  background: var(--color-subnav-overlay);
   backdrop-filter: saturate(180%) blur(20px);
-  -webkit-backdrop-filter: saturate(180%) blur(20px);
-  border-top: 1px solid rgba(255, 255, 255, 0.08);
-  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
-
-  @media (min-width: 1024px) {
-    height: 64px;
-    padding: 0 64px;
-  }
-
 }
 
 /* On the landing, Sites' top bar overlays the page. The section's violet field fills the room of the two bars
@@ -28,12 +13,12 @@
   top: 0;
   right: 0;
   left: 0;
-  height: calc(var(--site-header-h, 92px) + 56px);
+  height: calc(var(--site-header-h, 92px) + 44px);
   /* Figma "Radial BG" page field, sized to the viewport so the bars match the section's other pages. */
   background: radial-gradient(61.64% 109.58% at 50% 54.49%, #952dc6 0%, #7c27a8 25%, #642089 50%, #4b1a6b 75%, #32134c 100%);
   background-size: 100% 100vh;
 
-  @media (min-width: 1024px) {
+  @media (min-width: 768px) {
     height: calc(var(--site-header-h, 92px) + 64px);
   }
 }
@@ -45,52 +30,4 @@
 /* The landing's hero leaves the top bar's height above itself. The tabs already hold that room, so it is taken back. */
 .heroOffset {
   margin-bottom: calc(-1 * var(--site-header-h, 92px));
-}
-
-.tabs {
-  display: flex;
-  gap: 40px;
-  height: 100%;
-  /* The links are nowrap, so without min-width: 0 the strip's min-content width is rigid and pushes
-     the page into horizontal overflow on narrow viewports. It scrolls instead: the mask on its right
-     edge is what tells you there is more to reach, since the scrollbar is hidden. */
-  min-width: 0;
-  overflow-x: auto;
-  scrollbar-width: none;
-
-  &::-webkit-scrollbar {
-    display: none;
-  }
-
-  & a {
-    display: flex;
-    align-items: center;
-    box-sizing: border-box;
-    height: 100%;
-    white-space: nowrap;
-    text-transform: uppercase;
-    letter-spacing: 0.03em;
-    font-size: 15px;
-    font-weight: 600;
-    color: var(--dcl-neutrals-silver);
-    text-decoration: none;
-    border-bottom: 4px solid transparent;
-  }
-  & a:hover {
-    color: var(--dcl-neutrals-white);
-  }
-  & a[aria-current="page"] {
-    color: var(--dcl-neutrals-white);
-    border-bottom-color: var(--dcl-brand-orange);
-  }
-
-  @media (max-width: 768px) {
-    gap: 16px;
-    mask-image: linear-gradient(to right, #000 calc(100% - 24px), transparent);
-
-    & a {
-      font-size: 12px;
-      letter-spacing: 0.038em;
-    }
-  }
 }
