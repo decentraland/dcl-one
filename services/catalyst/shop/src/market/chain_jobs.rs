@@ -1401,25 +1401,46 @@ pub fn projections(
     net: ChainNet,
     rentals: Option<bool>,
 ) -> Vec<Projection> {
+    let mut out = Vec::new();
+    visit_projections(state, net, rentals, |job, url, make, gate, cfg| {
+        if let Some(url) = url {
+            out.push(Projection {
+                lease: lease_name(job, net),
+                url,
+                cfg,
+                make,
+                gate,
+            });
+        }
+    });
+    out
+}
+
+/// Includes explicitly enabled projections even when their RPC is missing.
+pub fn expected_cursors(
+    state: &Arc<MarketplaceState>,
+    net: ChainNet,
+    rentals: Option<bool>,
+) -> Vec<(Arc<dyn ChainIndex>, Option<String>)> {
+    let mut out = Vec::new();
+    visit_projections(state, net, rentals, |_, url, make, _, _| {
+        out.push((make(), url))
+    });
+    out
+}
+
+fn visit_projections(
+    state: &Arc<MarketplaceState>,
+    net: ChainNet,
+    rentals: Option<bool>,
+    mut add: impl FnMut(&str, Option<String>, MakeIndex, Option<Gate>, PeriodicCfg),
+) {
     let settings = &state.settings.market.indexes;
     let market_cfg = || {
         PeriodicCfg::every(settings.interval)
             .with_jitter(Duration::from_secs(1))
             .with_error_backoff(Duration::from_secs(30))
     };
-    let mut out = Vec::new();
-    let mut add =
-        |job: &str, url: Option<String>, make: MakeIndex, gate: Option<Gate>, cfg: PeriodicCfg| {
-            if let Some(url) = url {
-                out.push(Projection {
-                    lease: lease_name(job, net),
-                    url,
-                    cfg,
-                    make,
-                    gate,
-                });
-            }
-        };
     if settings.nft_enabled {
         let gate: Gate = {
             let state = state.clone();
@@ -1522,10 +1543,11 @@ pub fn projections(
         );
     }
     // The rentals venue is mainnet's: off mainnet ETH_RPC_URL serves another chain.
-    if net == ChainNet::Ethereum && rentals != Some(false) {
+    let rentals_url = state.venue_rpc_url(1);
+    if net == ChainNet::Ethereum && rentals.unwrap_or(rentals_url.is_some()) {
         add(
             "rentals-index",
-            state.venue_rpc_url(1),
+            rentals_url,
             Arc::new(|| Arc::new(crate::rentals::index::RentalsIndex::mainnet())),
             None,
             PeriodicCfg::every(settings.interval)
@@ -1533,7 +1555,6 @@ pub fn projections(
                 .with_error_backoff(Duration::from_secs(1800)),
         );
     }
-    out
 }
 
 /// Spawns `chain-walk-ethereum` and `chain-walk-matic` for the projections

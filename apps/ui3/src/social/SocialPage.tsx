@@ -8,8 +8,8 @@ import ConfirmDialog from "../explorer/components/ConfirmDialog";
 import CommunityRequests, { type CommunityRequest, type RequestDecision } from "./CommunityRequests";
 import CommunityPosts from "./CommunityPosts";
 import CommunityMemberActions from "./CommunityMemberActions";
-import { eventXY, fetchEvents } from "../data/catalyst/events";
-import { PLAY_EVENTS_PARAMS } from "../data/screens/play";
+import { eventXY, fetchEvents } from "@web-core/catalyst/events";
+import { PLAY_EVENTS_PARAMS } from "@web-core/screens/play";
 import { publicThumbnail, useThumbnailPublicBase } from "../data/thumbnail";
 import "./social-page.css";
 
