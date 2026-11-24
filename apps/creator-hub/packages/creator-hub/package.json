@@ -105,7 +105,7 @@
     "typecheck:e2e": "tsc --noEmit -p e2e/tsconfig.json",
     "typecheck:main": "tsc --noEmit -p main/tsconfig.json",
     "typecheck:preload": "tsc --noEmit -p preload/tsconfig.json",
-    "typecheck:renderer": "tsc -p renderer/tsconfig.ui3.json && tsc --noEmit -p renderer/tsconfig.json",
+    "typecheck:renderer": "pnpm --dir ../../../../library/ui install --frozen-lockfile --ignore-scripts && tsc -p renderer/tsconfig.ui3.json && tsc --noEmit -p renderer/tsconfig.json",
     "typecheck:scripts": "tsc -p scripts/assistant-manifest/tsconfig.json",
     "watch": "node scripts/watch.js"
   },
