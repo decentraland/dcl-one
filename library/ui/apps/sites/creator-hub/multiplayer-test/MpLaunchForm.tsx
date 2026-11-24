@@ -19,7 +19,7 @@ import {
   type MpScenario,
   type MpSourceKind,
   type MpThresholds
-} from '@web-core/multiplayer-test/rules'
+} from '../../../../../web-core/multiplayer-test/rules'
 
 import './mplaunchform.css'
 
