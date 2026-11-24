@@ -25,7 +25,7 @@ const READY = "xpath=//h1[contains(normalize-space(),' invited you to join')][//
 
 /**
  * Both heroes draw a WebGL <canvas> animated over a static picture (sites: decentraland-ui2 AnimatedBackground;
- * dcl-one: shop/discovery/components/animated-background): both sides hide the canvas, so the static fallback
+ * dcl-one: library/ui/components/AnimatedBackground): both sides hide the canvas, so the static fallback
  * and the text over it are compared. The second hero plays the same looping clip on both sides (sites:
  * data/inviteContent.ts through cms-videos.decentraland.org; dcl-one: assets/invite/referral.webm, the same
  * bytes): both sides hold it paused at 0 s once it can show its first frame. A clip that shows no first frame or

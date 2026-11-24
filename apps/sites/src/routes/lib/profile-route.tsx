@@ -1,7 +1,7 @@
 import { HydrationBoundary } from "@tanstack/react-query";
 import { useParams, useRouteError, useRouteLoaderData } from "react-router";
 
-import { ProfileError } from "@dcl/one-ui/apps/sites/profile/ProfileError";
+import { ProfileError } from "@dcl/one-ui";
 
 import { normalizeAddress } from "@/data/lib/catalyst/social/profile";
 import { profileKeys } from "@/data/lib/profile/queries";

@@ -1,5 +1,4 @@
-import { readRejectionReason } from "@dcl/one-ui/apps/sites/events/admin-copy";
-import { eventText, type EventsLocale } from "@dcl/one-ui/apps/sites/events/locale";
+import { readRejectionReason, eventText, type EventsLocale } from "@dcl/one-ui";
 
 /**
  * The rejected event's notice: its known reasons as one list ("A and B"), the request to fix them, then

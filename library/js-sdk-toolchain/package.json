@@ -4,32 +4,30 @@
   "version": "7.0.0",
   "author": "",
   "bugs": "https://github.com/decentraland/js-sdk-toolchain/issues",
-  "dependencies": {
+  "devDependencies": {
     "@babel/plugin-transform-dynamic-import": "^7.27.1",
     "@babel/plugin-transform-modules-commonjs": "^7.28.5",
     "@babel/plugin-transform-react-jsx": "^7.28.5",
     "@babel/preset-typescript": "^7.28.5",
+    "@dcl/eslint-config": "^3.1.0",
+    "@dcl/hashing": "workspace:*",
     "@dcl/protocol": "link:../protocol",
     "@dcl/quickjs-emscripten": "^0.21.0-3680274614.commit-1808aa1",
     "@dcl/ts-proto": "1.153.0",
     "@types/fs-extra": "^9.0.12",
     "@types/jest": "^28.1.8",
+    "@types/node": "^24.10.1",
     "fs-extra": "^10.0.0",
     "jest": "^30.4.2",
     "jest-matcher-deep-close-to": "^3.0.2",
-    "source-map": "^0.7.4",
-    "tslib": "^2.5.0",
-    "typescript": "5.0.4"
-  },
-  "devDependencies": {
-    "@dcl/eslint-config": "^3.1.0",
-    "@dcl/hashing": "workspace:*",
-    "@types/node": "^24.10.1",
     "npm-package-arg": "^12.0.2",
     "prettier": "3.9.5",
+    "source-map": "^0.7.4",
     "syncpack": "^13.0.4",
+    "tslib": "^2.5.0",
     "tsx": "4.23.15",
-    "typedoc": "^0.23.28"
+    "typedoc": "^0.23.28",
+    "typescript": "5.0.4"
   },
   "engines": {
     "node": ">=24.16"

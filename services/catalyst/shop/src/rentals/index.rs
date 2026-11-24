@@ -9,13 +9,15 @@
 //! - `executed` when an `AssetRented` carries the listing's own signature
 //!   (its tenant, start and days come from that event);
 //! - `claimed` when the lessor's `AssetClaimed` follows that rent;
-//! - `cancelled` when a signed nonce moved: the contract index
-//!   (`ContractIndexUpdated`), the lessor's signer index
+//! - `cancelled` (reason `nonce`) when a signed nonce moved: the contract
+//!   index (`ContractIndexUpdated`), the lessor's signer index
 //!   (`SignerIndexUpdated`) or the lessor's index over the asset
 //!   (`AssetIndexUpdated`, which `bumpAssetIndex` and every rent emit)
 //!   above the one the listing signed; a rent of the same listing wins over
 //!   the index bump it emits;
-//! - `open` otherwise; expiry stays a read-time rule.
+//! - `open` otherwise, except that a listing cancelled for another reason
+//!   (a transfer, a dissolved estate, expiry: [`super::status`], or an
+//!   unknown one) stays cancelled unless a rent of it appears.
 //!
 //! Readers trust the statuses only while the cursor is published
 //! (`chain_walk::is_ready`); before that a listing is `open` as posted, and
@@ -289,16 +291,41 @@ pub async fn insert_events(
 /// The verdict of every touched listing of the venue: the listings whose
 /// asset, lessor or contract index saw an event past `$1` (every listing of
 /// the venue when `$1 < 0`, the rebuild, which also revisits closed rows so
-/// a reorg's rewind restores what the remaining log says). `$2` is the
-/// Rentals address, lowercase; the nonces are `[contract, signer, asset]`.
+/// a reorg's rewind restores what the remaining log says). An incremental
+/// fold also revisits a cancelled listing whose own rent is past `$1`: a
+/// rent indexed after an expiry or transfer cancellation still executes it.
+/// The fold reads the distinct signatures of the venue's rents past `$1`
+/// once (`new_rent`) and joins the venue's listings to them. On the
+/// measured data both custom and generic plans chose a hash join, so the
+/// leg cost one read of the range's rents and one pass over the venue's
+/// listings, with no event lookup per cancelled listing. No test pins
+/// that plan. `new_rent` is empty and its
+/// rents are never read for a rebuild or a one-listing read; the
+/// one-listing read probes `rental_event_signature_idx` for its own
+/// signature instead. `$2` is the Rentals address, lowercase; the nonces
+/// are `[contract, signer, asset]`.
+/// `$3`, when set, narrows it to one listing (the refresh route).
 const VERDICT_SQL: &str = "
-WITH listing AS (
+WITH new_rent AS (
+    SELECT DISTINCT e.signature FROM shop.rental_event e
+    WHERE $3::uuid IS NULL AND $1 >= 0 AND e.kind = 'rented'
+      AND e.network = 'ethereum' AND e.rentals_address = $2 AND e.block_number > $1
+),
+listing AS (
     SELECT r.id, r.contract_address, r.token_id, lower(r.signature) AS signature, r.status::text AS status,
+           r.cancel_reason,
            r.nonces[1]::numeric AS contract_nonce, r.nonces[2]::numeric AS signer_nonce, r.nonces[3]::numeric AS asset_nonce,
            l.lessor, l.tenant
     FROM signatures.rentals r JOIN signatures.rental_listings l ON l.id = r.id
+    LEFT JOIN new_rent nr ON nr.signature = lower(r.signature)
     WHERE upper(r.network) = 'ETHEREUM' AND r.rental_contract_address = $2
-      AND ($1 < 0 OR r.status IN ('open', 'executed'))
+      AND ($1 < 0 OR r.status IN ('open', 'executed')
+           OR (r.status = 'cancelled' AND CASE WHEN $3::uuid IS NULL
+               THEN nr.signature IS NOT NULL
+               ELSE EXISTS (
+                   SELECT 1 FROM shop.rental_event e WHERE e.signature = lower(r.signature) AND e.kind = 'rented'
+                     AND e.network = 'ethereum' AND e.rentals_address = $2 AND e.block_number > $1) END))
+      AND ($3::uuid IS NULL OR r.id = $3)
 ),
 touched AS (
     SELECT l.* FROM listing l
@@ -310,7 +337,7 @@ touched AS (
        OR EXISTS (SELECT 1 FROM shop.rental_event e WHERE e.network = 'ethereum' AND e.rentals_address = $2 AND e.block_number > $1
                     AND e.kind = 'contract_index_updated')
 )
-SELECT t.id, t.status, rented.block_time AS rented_at, rented.tenant AS rented_tenant, rented.rental_days,
+SELECT t.id, t.status, t.cancel_reason, rented.block_time AS rented_at, rented.tenant AS rented_tenant, rented.rental_days,
        (rented.block_number IS NOT NULL AND EXISTS (
             SELECT 1 FROM shop.rental_event c WHERE c.network = 'ethereum' AND c.rentals_address = $2 AND c.kind = 'claimed'
               AND c.contract_address = t.contract_address AND c.token_id = t.token_id
@@ -327,6 +354,9 @@ LEFT JOIN LATERAL (
     ORDER BY e.block_number, e.log_index LIMIT 1
 ) rented ON true";
 
+/// The reason the fold stores on the listings it cancels.
+pub const CANCEL_NONCE: &str = "nonce";
+
 /// One listing's new state, as the fold writes it.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Verdict {
@@ -335,6 +365,13 @@ pub struct Verdict {
     pub started_at: Option<i64>,
     pub tenant: Option<String>,
     pub rented_days: Option<i32>,
+}
+
+impl Verdict {
+    /// `nonce` on a cancellation, NULL on every other status.
+    pub fn cancel_reason(&self) -> Option<&'static str> {
+        (self.status == "cancelled").then_some(CANCEL_NONCE)
+    }
 }
 
 pub fn verdict(rented_at: Option<i64>, claimed: bool, invalidated: bool) -> &'static str {
@@ -346,15 +383,27 @@ pub fn verdict(rented_at: Option<i64>, claimed: bool, invalidated: bool) -> &'st
     }
 }
 
-/// The verdicts of the touched listings that differ from what is stored.
+/// Whether the fold may write `status` over the stored one: a listing
+/// cancelled for any reason but a nonce move (`cancel_reason`, NULL when
+/// unknown) stays cancelled until a rent of it appears; the nonce verdict
+/// knows nothing of transfers, dissolved estates or expiry.
+pub fn fold_may_write(current: &str, cancel_reason: Option<&str>, status: &str) -> bool {
+    status != current
+        && !(current == "cancelled" && cancel_reason != Some(CANCEL_NONCE) && status == "open")
+}
+
+/// The verdicts of the touched listings that differ from what is stored
+/// (only `listing`'s when set).
 pub async fn changed_verdicts(
     conn: &mut PgConnection,
     venue: &str,
     since: i64,
+    listing: Option<uuid::Uuid>,
 ) -> Result<Vec<Verdict>, sqlx::Error> {
     let rows = sqlx::query(VERDICT_SQL)
         .bind(since)
         .bind(venue)
+        .bind(listing)
         .fetch_all(&mut *conn)
         .await?;
     Ok(rows
@@ -363,9 +412,10 @@ pub async fn changed_verdicts(
             let rented_at: Option<i64> = r.get("rented_at");
             let status = verdict(rented_at, r.get("claimed"), r.get("invalidated"));
             let current: String = r.get("status");
+            let reason: Option<String> = r.get("cancel_reason");
             let tenant: Option<String> = r.get("rented_tenant");
             let rented_days: Option<i32> = r.get("rental_days");
-            (status != current).then(|| Verdict {
+            fold_may_write(&current, reason.as_deref(), status).then(|| Verdict {
                 id: r.get("id"),
                 status,
                 started_at: rented_at,
@@ -376,27 +426,50 @@ pub async fn changed_verdicts(
         .collect())
 }
 
-/// Writes the verdicts: the rental's status, start and days, the listing's
-/// tenant; `now` stamps `updated_at`.
+/// Writes the verdicts: the rental's status and cancel reason, start and
+/// days, the listing's tenant; `now` stamps `updated_at`.
+///
+/// The verdicts that close or execute a listing land first, then the
+/// reopenings (a rebuild after a reorg removed a nonce move or a rent). A
+/// listing reopens only while no other listing of its asset is open (the
+/// one-open-per-asset `rentals_open_asset_key`), and of several reopenings
+/// of one asset only the newest listing does. One that may not reopen keeps
+/// its stored status and reason: a nonce cancellation stays `cancelled`
+/// with `nonce`, still the true cause, so a later rebuild reopens it if the
+/// asset's open listing has closed by then. A nonce cancellation past its
+/// `expiration` at `now` is not reopened either and gives its place to the
+/// asset's newest unexpired one: the `rental-listing-status` job would
+/// close it again as `expired`.
+///
+/// A `cancelled` verdict leaves a listing that is already cancelled: the
+/// verdicts were read before this write, and a cancellation the
+/// `rental-listing-status` job committed in between keeps its own reason
+/// (the nonce one would make it reopenable). A rent or a claim still moves
+/// it.
 pub async fn apply_verdicts(
     conn: &mut PgConnection,
     verdicts: &[Verdict],
     now: NaiveDateTime,
 ) -> Result<u64, sqlx::Error> {
-    if verdicts.is_empty() {
-        return Ok(0);
+    let (opening, closing): (Vec<&Verdict>, Vec<&Verdict>) =
+        verdicts.iter().partition(|v| v.status == "open");
+    // The reopenings go last, so a listing the closing writes close frees
+    // its asset for them.
+    if closing.is_empty() {
+        return reopen(conn, &opening, now).await;
     }
-    let ids: Vec<uuid::Uuid> = verdicts.iter().map(|v| v.id).collect();
-    let statuses: Vec<String> = verdicts.iter().map(|v| v.status.to_string()).collect();
-    let started: Vec<Option<i64>> = verdicts.iter().map(|v| v.started_at).collect();
-    let days: Vec<Option<i32>> = verdicts.iter().map(|v| v.rented_days).collect();
-    let tenants: Vec<Option<String>> = verdicts.iter().map(|v| v.tenant.clone()).collect();
+    let ids: Vec<uuid::Uuid> = closing.iter().map(|v| v.id).collect();
+    let statuses: Vec<&str> = closing.iter().map(|v| v.status).collect();
+    let started: Vec<Option<i64>> = closing.iter().map(|v| v.started_at).collect();
+    let days: Vec<Option<i32>> = closing.iter().map(|v| v.rented_days).collect();
+    let tenants: Vec<Option<String>> = closing.iter().map(|v| v.tenant.clone()).collect();
+    let reasons: Vec<Option<&str>> = closing.iter().map(|v| v.cancel_reason()).collect();
     let updated = sqlx::query(
-        "UPDATE signatures.rentals r SET status = u.status::signatures.rental_status, \
+        "UPDATE signatures.rentals r SET status = u.status::signatures.rental_status, cancel_reason = u.reason, \
              started_at = COALESCE(to_timestamp(u.started_at) AT TIME ZONE 'UTC', r.started_at), \
              rented_days = COALESCE(u.days, r.rented_days), updated_at = $6 \
-         FROM UNNEST($1::uuid[], $2::text[], $3::bigint[], $4::int[], $5::text[]) AS u(id, status, started_at, days, tenant) \
-         WHERE r.id = u.id",
+         FROM UNNEST($1::uuid[], $2::text[], $3::bigint[], $4::int[], $5::text[], $7::text[]) AS u(id, status, started_at, days, tenant, reason) \
+         WHERE r.id = u.id AND NOT (r.status = 'cancelled' AND u.status = 'cancelled')",
     )
     .bind(&ids)
     .bind(&statuses)
@@ -404,6 +477,7 @@ pub async fn apply_verdicts(
     .bind(&days)
     .bind(&tenants)
     .bind(now)
+    .bind(&reasons)
     .execute(&mut *conn)
     .await?
     .rows_affected();
@@ -415,7 +489,38 @@ pub async fn apply_verdicts(
     .bind(&tenants)
     .execute(&mut *conn)
     .await?;
-    Ok(updated)
+    Ok(updated + reopen(conn, &opening, now).await?)
+}
+
+/// The reopenings of [`apply_verdicts`]: per asset the newest listing that
+/// is not a cancellation past its expiration at `now` (the job's expiry
+/// test, `expiration < now`), and only while no other listing of the asset
+/// is open.
+async fn reopen(
+    conn: &mut PgConnection,
+    opening: &[&Verdict],
+    now: NaiveDateTime,
+) -> Result<u64, sqlx::Error> {
+    if opening.is_empty() {
+        return Ok(0);
+    }
+    let ids: Vec<uuid::Uuid> = opening.iter().map(|v| v.id).collect();
+    Ok(sqlx::query(
+        "UPDATE signatures.rentals r SET status = 'open', cancel_reason = NULL, updated_at = $2 \
+         FROM (SELECT DISTINCT ON (x.contract_address, x.token_id) x.id \
+               FROM signatures.rentals x \
+               WHERE x.id = ANY($1) AND (x.status <> 'cancelled' OR x.expiration >= $2) \
+               ORDER BY x.contract_address, x.token_id, x.created_at DESC, x.id DESC) pick \
+         WHERE r.id = pick.id \
+           AND NOT EXISTS (SELECT 1 FROM signatures.rentals o \
+                           WHERE o.contract_address = r.contract_address AND o.token_id = r.token_id \
+                             AND o.status = 'open' AND o.id <> r.id)",
+    )
+    .bind(&ids)
+    .bind(now)
+    .execute(&mut *conn)
+    .await?
+    .rows_affected())
 }
 
 /// The fold: the touched listings' verdicts written in one transaction.
@@ -432,9 +537,25 @@ pub async fn fold(
         .execute(&mut *tx)
         .await?;
     chain_walk::analyze_if_stale(&mut tx, "shop", "rental_event", since < 0).await?;
-    let verdicts = changed_verdicts(&mut tx, venue, since).await?;
+    let verdicts = changed_verdicts(&mut tx, venue, since, None).await?;
     let written = apply_verdicts(&mut tx, &verdicts, now.naive_utc()).await?;
     owner.check(&mut tx).await?;
+    tx.commit().await?;
+    Ok(written)
+}
+
+/// The fold of one listing (the refresh route) over every indexed event of
+/// `venue`, as an incremental fold sees it: only an `open` or `executed`
+/// listing moves. Run only while the index is [`ready`].
+pub async fn fold_listing(
+    pool: &PgPool,
+    venue: &str,
+    listing: uuid::Uuid,
+    now: DateTime<Utc>,
+) -> Result<u64, sqlx::Error> {
+    let mut tx = pool.begin().await?;
+    let verdicts = changed_verdicts(&mut tx, venue, 0, Some(listing)).await?;
+    let written = apply_verdicts(&mut tx, &verdicts, now.naive_utc()).await?;
     tx.commit().await?;
     Ok(written)
 }
@@ -581,6 +702,18 @@ pub(crate) mod tests {
     use super::*;
     use alloy_primitives::{U256, keccak256};
     use alloy_sol_types::SolValue;
+
+    /// A fold at the present time by the projection's owner, claimed as a
+    /// process without leases claims it.
+    async fn fold_as_owner(pool: &PgPool, venue: &str, since: Option<i64>) -> anyhow::Result<u64> {
+        let owner = chain_walk::test_owner(
+            pool,
+            &RentalsIndex::mainnet(),
+            &chain_walk::IndexSettings::default(),
+        )
+        .await;
+        fold(pool, venue, since, Utc::now(), &owner).await
+    }
 
     #[test]
     fn the_topics_are_the_keccak_of_the_pinned_abis_events() {
@@ -892,7 +1025,7 @@ pub(crate) mod tests {
         );
     }
 
-    async fn seed_listing(
+    pub(crate) async fn seed_listing(
         pool: &PgPool,
         contract: &str,
         token: &str,
@@ -930,7 +1063,7 @@ pub(crate) mod tests {
         id
     }
 
-    async fn status_of(
+    pub(crate) async fn status_of(
         pool: &PgPool,
         id: uuid::Uuid,
     ) -> (String, Option<String>, Option<i32>, bool) {
@@ -953,7 +1086,7 @@ pub(crate) mod tests {
     /// rebuild revisits closed rows too.
     #[tokio::test]
     async fn the_fold_moves_listings_through_executed_claimed_and_cancelled() {
-        let Some(pool) = crate::db::scratch::pool(2).await else {
+        let Some(pool) = crate::db::scratch::isolated_pool(2).await else {
             return;
         };
         let tag = format!(
@@ -1099,6 +1232,596 @@ pub(crate) mod tests {
         assert_eq!(status_of(&pool, bumped).await.0, "cancelled");
 
         sqlx::query("DELETE FROM shop.rental_event WHERE network = 'ethereum' AND (contract_address = $1 OR signer IN ($2, $3))").bind(&land).bind(&lessor_a).bind(&lessor_b).execute(&pool).await.unwrap();
+        sqlx::query("DELETE FROM signatures.rental_assets WHERE contract_address = $1")
+            .bind(&land)
+            .execute(&pool)
+            .await
+            .unwrap();
+    }
+
+    /// A rebuild that would reopen a nonce cancellation while the lessor has
+    /// posted another open listing of the asset (the one-open-per-asset
+    /// index) keeps the old one cancelled and completes the fold: the other
+    /// listings of the venue still take their verdicts. Of two reopenings of
+    /// one asset, only the newest listing opens.
+    #[tokio::test]
+    async fn a_rebuild_never_reopens_a_second_open_listing_of_an_asset() {
+        let Some(pool) = crate::db::scratch::isolated_pool(2).await else {
+            return;
+        };
+        let tag = format!(
+            "{}{}",
+            uuid::Uuid::new_v4().simple(),
+            uuid::Uuid::new_v4().simple()
+        );
+        let land = format!("0x{}{}", &tag[..24], "0000000000000000");
+        let lessor = format!("0x{}a1", &tag[..38]);
+        let venue = format!("0x{}", &tag[24..64]);
+        let sig = |n: u8| format!("0x{tag}{tag}{n:02x}");
+        let seed = |token: &'static str, n: u8| {
+            let (pool, land, lessor, venue, sig) = (
+                pool.clone(),
+                land.clone(),
+                lessor.clone(),
+                venue.clone(),
+                sig(n),
+            );
+            async move {
+                seed_listing(&pool, &land, token, ["0", "0", "0"], &sig, &lessor, &venue).await
+            }
+        };
+        let at_venue = |l: RpcLog| {
+            let mut e = decode_log(&l, 1_700_000_000).unwrap().unwrap();
+            e.rentals_address = venue.clone();
+            e
+        };
+        let state = |id: uuid::Uuid| {
+            let pool = pool.clone();
+            async move {
+                sqlx::query_as::<_, (String, Option<String>)>(
+                    "SELECT status::text, cancel_reason FROM signatures.rentals WHERE id = $1",
+                )
+                .bind(id)
+                .fetch_one(&pool)
+                .await
+                .unwrap()
+            }
+        };
+        let nonce = || ("cancelled".to_string(), Some(CANCEL_NONCE.to_string()));
+
+        // Token 1: the bump cancels the old listing, then a new one opens.
+        // Token 2: two listings cancelled by two bumps (the second posted
+        // between them), so a rebuild without the bumps would reopen both.
+        // Token 3: a listing an unrelated rent executes in the same fold.
+        let old = seed("1", 1).await;
+        let first = seed("2", 2).await;
+        let mut conn = pool.acquire().await.unwrap();
+        insert_events(
+            &mut conn,
+            ChainNet::Ethereum,
+            &[
+                at_venue(asset_index_log(
+                    &lessor,
+                    &land,
+                    U256::from(1u8),
+                    1,
+                    9_200,
+                    0,
+                )),
+                at_venue(asset_index_log(
+                    &lessor,
+                    &land,
+                    U256::from(2u8),
+                    1,
+                    9_200,
+                    1,
+                )),
+            ],
+        )
+        .await
+        .unwrap();
+        drop(conn);
+        assert_eq!(fold_as_owner(&pool, &venue, Some(9_199)).await.unwrap(), 2);
+        let new = seed("1", 3).await;
+        let second = seed("2", 4).await;
+        let rented = seed("3", 5).await;
+        let mut conn = pool.acquire().await.unwrap();
+        insert_events(
+            &mut conn,
+            ChainNet::Ethereum,
+            &[at_venue(asset_index_log(
+                &lessor,
+                &land,
+                U256::from(2u8),
+                2,
+                9_201,
+                0,
+            ))],
+        )
+        .await
+        .unwrap();
+        drop(conn);
+        assert_eq!(fold_as_owner(&pool, &venue, Some(9_200)).await.unwrap(), 1);
+        assert_eq!(state(second).await, nonce());
+
+        // The reorg removes every bump and lands a rent of token 3.
+        sqlx::query(
+            "DELETE FROM shop.rental_event WHERE network = 'ethereum' AND rentals_address = $1",
+        )
+        .bind(&venue)
+        .execute(&pool)
+        .await
+        .unwrap();
+        let mut conn = pool.acquire().await.unwrap();
+        insert_events(
+            &mut conn,
+            ChainNet::Ethereum,
+            &[at_venue(rented_log(
+                &land,
+                U256::from(3u8),
+                &lessor,
+                TENANT,
+                7,
+                U256::from(5u8),
+                &hex::decode(&sig(5)[2..]).unwrap(),
+                9_202,
+                0,
+            ))],
+        )
+        .await
+        .unwrap();
+        drop(conn);
+        assert_eq!(
+            fold_as_owner(&pool, &venue, None).await.unwrap(),
+            2,
+            "the rent and one reopening"
+        );
+        assert_eq!(
+            state(old).await,
+            nonce(),
+            "token 1 already has an open listing"
+        );
+        assert_eq!(state(new).await, ("open".into(), None));
+        assert_eq!(
+            state(second).await,
+            ("open".into(), None),
+            "the newest reopens"
+        );
+        assert_eq!(state(first).await, nonce());
+        assert_eq!(state(rented).await, ("executed".into(), None));
+
+        sqlx::query(
+            "DELETE FROM shop.rental_event WHERE network = 'ethereum' AND rentals_address = $1",
+        )
+        .bind(&venue)
+        .execute(&pool)
+        .await
+        .unwrap();
+        sqlx::query("DELETE FROM signatures.rental_assets WHERE contract_address = $1")
+            .bind(&land)
+            .execute(&pool)
+            .await
+            .unwrap();
+    }
+
+    /// A rebuild that no longer sees the nonce move leaves an expired nonce
+    /// cancellation as it is, and reopens the asset's newest unexpired one.
+    #[tokio::test]
+    async fn a_rebuild_never_reopens_an_expired_nonce_cancellation() {
+        let Some(pool) = crate::db::scratch::isolated_pool(2).await else {
+            return;
+        };
+        let tag = format!(
+            "{}{}",
+            uuid::Uuid::new_v4().simple(),
+            uuid::Uuid::new_v4().simple()
+        );
+        let land = format!("0x{}{}", &tag[..24], "0000000000000000");
+        let lessor = format!("0x{}a1", &tag[..38]);
+        let venue = format!("0x{}", &tag[24..64]);
+        let sig = |n: u8| format!("0x{tag}{tag}{n:02x}");
+        // `alone` is its asset's only listing; `older` and `newer` share one.
+        let mut ids = Vec::new();
+        for (n, token) in [(1u8, "1"), (2, "2"), (3, "2")] {
+            let id = seed_listing(
+                &pool,
+                &land,
+                token,
+                ["0", "0", "0"],
+                &sig(n),
+                &lessor,
+                &venue,
+            )
+            .await;
+            sqlx::query(
+                "UPDATE signatures.rentals SET status = 'cancelled', cancel_reason = 'nonce' WHERE id = $1",
+            )
+            .bind(id)
+            .execute(&pool)
+            .await
+            .unwrap();
+            ids.push(id);
+        }
+        let [alone, older, newer] = ids[..] else {
+            unreachable!()
+        };
+        sqlx::query(
+            "UPDATE signatures.rentals SET expiration = timezone('UTC', now()) - interval '1 minute' WHERE id = ANY($1)",
+        )
+        .bind([alone, newer])
+        .execute(&pool)
+        .await
+        .unwrap();
+        let state_of = |id: uuid::Uuid| {
+            let pool = pool.clone();
+            async move {
+                sqlx::query_as::<_, (String, Option<String>)>(
+                    "SELECT status::text, cancel_reason FROM signatures.rentals WHERE id = $1",
+                )
+                .bind(id)
+                .fetch_one(&pool)
+                .await
+                .unwrap()
+            }
+        };
+
+        // No event of the venue remains: every verdict is `open`.
+        assert_eq!(fold_as_owner(&pool, &venue, None).await.unwrap(), 1);
+        let nonce = ("cancelled".to_string(), Some(CANCEL_NONCE.to_string()));
+        assert_eq!(state_of(alone).await, nonce);
+        assert_eq!(state_of(newer).await, nonce);
+        assert_eq!(state_of(older).await, ("open".into(), None));
+
+        sqlx::query("DELETE FROM signatures.rental_assets WHERE contract_address = $1")
+            .bind(&land)
+            .execute(&pool)
+            .await
+            .unwrap();
+    }
+
+    /// An incremental fold executes a cancelled listing whose rent is in its
+    /// block range, and leaves the cancelled listings with no rent or with a
+    /// rent before the range as they are.
+    #[tokio::test]
+    async fn an_incremental_fold_revisits_only_the_cancellations_rented_in_its_range() {
+        let Some(pool) = crate::db::scratch::isolated_pool(2).await else {
+            return;
+        };
+        let tag = format!(
+            "{}{}",
+            uuid::Uuid::new_v4().simple(),
+            uuid::Uuid::new_v4().simple()
+        );
+        let land = format!("0x{}{}", &tag[..24], "0000000000000000");
+        let lessor = format!("0x{}a1", &tag[..38]);
+        let venue = format!("0x{}", &tag[24..64]);
+        let sig = |n: u8| format!("0x{tag}{tag}{n:02x}");
+        let stamp = chrono::DateTime::from_timestamp(1_700_000_000, 0)
+            .unwrap()
+            .naive_utc();
+        let mut ids = Vec::new();
+        for (n, reason) in [(1u8, Some("expired")), (2, Some("transferred")), (3, None)] {
+            let id = seed_listing(
+                &pool,
+                &land,
+                &n.to_string(),
+                ["0", "0", "0"],
+                &sig(n),
+                &lessor,
+                &venue,
+            )
+            .await;
+            sqlx::query(
+                "UPDATE signatures.rentals SET status = 'cancelled', cancel_reason = $2, updated_at = $3 WHERE id = $1",
+            )
+            .bind(id)
+            .bind(reason)
+            .bind(stamp)
+            .execute(&pool)
+            .await
+            .unwrap();
+            ids.push(id);
+        }
+        let [rented_in_range, never_rented, rented_before] = ids[..] else {
+            unreachable!()
+        };
+        let rent = |n: u8, block: u64| {
+            let log = rented_log(
+                &land,
+                U256::from(n),
+                &lessor,
+                TENANT,
+                7,
+                U256::from(5u8),
+                &hex::decode(&sig(n)[2..]).unwrap(),
+                block,
+                0,
+            );
+            let mut e = decode_log(&log, 1_700_000_000).unwrap().unwrap();
+            e.rentals_address = venue.clone();
+            e
+        };
+        let mut conn = pool.acquire().await.unwrap();
+        insert_events(
+            &mut conn,
+            ChainNet::Ethereum,
+            &[rent(3, 9_300), rent(1, 9_320)],
+        )
+        .await
+        .unwrap();
+        drop(conn);
+        let state_of = |id: uuid::Uuid| {
+            let pool = pool.clone();
+            async move {
+                sqlx::query_as::<_, (String, Option<String>, NaiveDateTime)>(
+                    "SELECT status::text, cancel_reason, updated_at FROM signatures.rentals WHERE id = $1",
+                )
+                .bind(id)
+                .fetch_one(&pool)
+                .await
+                .unwrap()
+            }
+        };
+
+        assert_eq!(fold_as_owner(&pool, &venue, Some(9_310)).await.unwrap(), 1);
+        let (status, reason, updated_at) = state_of(rented_in_range).await;
+        assert_eq!((status.as_str(), reason), ("executed", None));
+        assert!(updated_at > stamp);
+        assert_eq!(
+            state_of(never_rented).await,
+            ("cancelled".into(), Some("transferred".into()), stamp)
+        );
+        assert_eq!(
+            state_of(rented_before).await,
+            ("cancelled".into(), None, stamp)
+        );
+
+        sqlx::query(
+            "DELETE FROM shop.rental_event WHERE network = 'ethereum' AND rentals_address = $1",
+        )
+        .bind(&venue)
+        .execute(&pool)
+        .await
+        .unwrap();
+        sqlx::query("DELETE FROM signatures.rental_assets WHERE contract_address = $1")
+            .bind(&land)
+            .execute(&pool)
+            .await
+            .unwrap();
+    }
+
+    /// Two `rented` rows of one signature in a fold's range give its
+    /// cancelled listing one verdict, not one per row.
+    #[tokio::test]
+    async fn an_incremental_fold_gives_a_twice_rented_signature_one_verdict() {
+        let Some(pool) = crate::db::scratch::isolated_pool(2).await else {
+            return;
+        };
+        let tag = format!(
+            "{}{}",
+            uuid::Uuid::new_v4().simple(),
+            uuid::Uuid::new_v4().simple()
+        );
+        let land = format!("0x{}{}", &tag[..24], "0000000000000000");
+        let lessor = format!("0x{}a1", &tag[..38]);
+        let venue = format!("0x{}", &tag[24..64]);
+        let sig = format!("0x{tag}{tag}01");
+        let id = seed_listing(&pool, &land, "1", ["0", "0", "0"], &sig, &lessor, &venue).await;
+        sqlx::query("UPDATE signatures.rentals SET status = 'cancelled', cancel_reason = 'expired' WHERE id = $1")
+            .bind(id)
+            .execute(&pool)
+            .await
+            .unwrap();
+        let rent = |block: u64| {
+            let log = rented_log(
+                &land,
+                U256::from(1u8),
+                &lessor,
+                TENANT,
+                7,
+                U256::from(5u8),
+                &hex::decode(&sig[2..]).unwrap(),
+                block,
+                0,
+            );
+            let mut e = decode_log(&log, 1_700_000_000).unwrap().unwrap();
+            e.rentals_address = venue.clone();
+            e
+        };
+        let mut conn = pool.acquire().await.unwrap();
+        insert_events(&mut conn, ChainNet::Ethereum, &[rent(9_320), rent(9_330)])
+            .await
+            .unwrap();
+        let verdicts = changed_verdicts(&mut conn, &venue, 9_310, None)
+            .await
+            .unwrap();
+        drop(conn);
+        assert_eq!(
+            verdicts
+                .iter()
+                .map(|v| (v.id, v.status))
+                .collect::<Vec<_>>(),
+            vec![(id, "executed")]
+        );
+
+        sqlx::query(
+            "DELETE FROM shop.rental_event WHERE network = 'ethereum' AND rentals_address = $1",
+        )
+        .bind(&venue)
+        .execute(&pool)
+        .await
+        .unwrap();
+        sqlx::query("DELETE FROM signatures.rental_assets WHERE contract_address = $1")
+            .bind(&land)
+            .execute(&pool)
+            .await
+            .unwrap();
+    }
+
+    #[test]
+    fn the_fold_reopens_only_a_nonce_cancellation() {
+        assert!(fold_may_write("cancelled", Some(CANCEL_NONCE), "open"));
+        for reason in [
+            None,
+            Some("transferred"),
+            Some("dissolved"),
+            Some("expired"),
+        ] {
+            assert!(!fold_may_write("cancelled", reason, "open"), "{reason:?}");
+            assert!(
+                fold_may_write("cancelled", reason, "executed"),
+                "a rent wins: {reason:?}"
+            );
+        }
+        assert!(!fold_may_write("open", None, "open"));
+        assert!(fold_may_write("executed", None, "open"));
+    }
+
+    /// A rebuild reopens a listing whose nonce bump a reorg removed, and
+    /// keeps the ones cancelled for a transfer, a dissolved estate, expiry
+    /// or an unknown reason; a rent of one of them still executes it.
+    #[tokio::test]
+    async fn a_rebuild_keeps_the_cancellations_that_are_not_a_nonce_move() {
+        let Some(pool) = crate::db::scratch::isolated_pool(2).await else {
+            return;
+        };
+        let tag = format!(
+            "{}{}",
+            uuid::Uuid::new_v4().simple(),
+            uuid::Uuid::new_v4().simple()
+        );
+        let land = format!("0x{}{}", &tag[..24], "0000000000000000");
+        let lessor = format!("0x{}a1", &tag[..38]);
+        let venue = format!("0x{}", &tag[24..64]);
+        // Signatures of this test alone: the column is unique across the shared database.
+        let sig = |n: u8| format!("0x{tag}{tag}{n:02x}");
+        let mut ids = Vec::new();
+        for n in 1..=5u8 {
+            ids.push(
+                seed_listing(
+                    &pool,
+                    &land,
+                    &n.to_string(),
+                    ["0", "0", "0"],
+                    &sig(n),
+                    &lessor,
+                    &venue,
+                )
+                .await,
+            );
+        }
+        let [bumped, transferred, dissolved, expired, unknown] = ids[..] else {
+            unreachable!()
+        };
+        let at_venue = |l: RpcLog| {
+            let mut e = decode_log(&l, 1_700_000_000).unwrap().unwrap();
+            e.rentals_address = venue.clone();
+            e
+        };
+        let mut conn = pool.acquire().await.unwrap();
+        insert_events(
+            &mut conn,
+            ChainNet::Ethereum,
+            &[at_venue(asset_index_log(
+                &lessor,
+                &land,
+                U256::from(1u8),
+                1,
+                // Blocks apart from the sibling test's: the log's key is
+                // the chain position, shared across venues.
+                9_100,
+                0,
+            ))],
+        )
+        .await
+        .unwrap();
+        drop(conn);
+        assert_eq!(fold_as_owner(&pool, &venue, Some(9_099)).await.unwrap(), 1);
+        let reason_of = |id: uuid::Uuid| {
+            let pool = pool.clone();
+            async move {
+                sqlx::query_as::<_, (String, Option<String>)>(
+                    "SELECT status::text, cancel_reason FROM signatures.rentals WHERE id = $1",
+                )
+                .bind(id)
+                .fetch_one(&pool)
+                .await
+                .unwrap()
+            }
+        };
+        assert_eq!(
+            reason_of(bumped).await,
+            ("cancelled".into(), Some(CANCEL_NONCE.into()))
+        );
+        for (id, reason) in [
+            (transferred, Some("transferred")),
+            (dissolved, Some("dissolved")),
+            (expired, Some("expired")),
+            (unknown, None),
+        ] {
+            sqlx::query(
+                "UPDATE signatures.rentals SET status = 'cancelled', cancel_reason = $2 WHERE id = $1",
+            )
+            .bind(id)
+            .bind(reason)
+            .execute(&pool)
+            .await
+            .unwrap();
+        }
+
+        // The reorg removes the bump; the rebuild reopens only that one.
+        sqlx::query(
+            "DELETE FROM shop.rental_event WHERE network = 'ethereum' AND rentals_address = $1",
+        )
+        .bind(&venue)
+        .execute(&pool)
+        .await
+        .unwrap();
+        assert_eq!(fold_as_owner(&pool, &venue, None).await.unwrap(), 1);
+        assert_eq!(reason_of(bumped).await, ("open".into(), None));
+        for (id, reason) in [
+            (transferred, Some("transferred")),
+            (dissolved, Some("dissolved")),
+            (expired, Some("expired")),
+            (unknown, None),
+        ] {
+            assert_eq!(
+                reason_of(id).await,
+                ("cancelled".into(), reason.map(String::from))
+            );
+        }
+
+        // A rent of a transfer-cancelled listing is the chain's truth, on an
+        // incremental fold too.
+        let mut conn = pool.acquire().await.unwrap();
+        insert_events(
+            &mut conn,
+            ChainNet::Ethereum,
+            &[at_venue(rented_log(
+                &land,
+                U256::from(2u8),
+                &lessor,
+                TENANT,
+                7,
+                U256::from(5u8),
+                &hex::decode(&sig(2)[2..]).unwrap(),
+                9_120,
+                0,
+            ))],
+        )
+        .await
+        .unwrap();
+        drop(conn);
+        assert_eq!(fold_as_owner(&pool, &venue, Some(9_110)).await.unwrap(), 1);
+        assert_eq!(reason_of(transferred).await, ("executed".into(), None));
+
+        sqlx::query(
+            "DELETE FROM shop.rental_event WHERE network = 'ethereum' AND rentals_address = $1",
+        )
+        .bind(&venue)
+        .execute(&pool)
+        .await
+        .unwrap();
         sqlx::query("DELETE FROM signatures.rental_assets WHERE contract_address = $1")
             .bind(&land)
             .execute(&pool)

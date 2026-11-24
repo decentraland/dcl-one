@@ -150,6 +150,12 @@ impl Transports {
         }
     }
 
+    pub(crate) fn refuse_webtransport_connection(&self, connection: u64, reason: u32) {
+        if let Some(wt) = &self.wt {
+            wt.refuse_connection(connection, reason);
+        }
+    }
+
     pub async fn disconnect_now(&mut self, peer: u32, reason: u32) -> std::io::Result<()> {
         self.silence.forget(peer);
         if self.owns_wt(peer) {

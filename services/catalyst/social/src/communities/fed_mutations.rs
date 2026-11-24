@@ -610,9 +610,10 @@ pub(super) async fn places_add(ctx: &Ctx<'_>, id: &str) -> Response {
     {
         return *r;
     }
+    let place_ids = crate::communities::places::canonical_place_ids(&m.place_ids);
     if let Err(e) = ctx
         .state
-        .validate_places_ownership(&m.place_ids, &signer)
+        .validate_places_ownership(&place_ids, &signer)
         .await
     {
         return e.into_response();
@@ -620,17 +621,18 @@ pub(super) async fn places_add(ctx: &Ctx<'_>, id: &str) -> Response {
     let signature_hash = signed.signature_hash();
     let applied: sqlx::Result<()> = async {
         let mut tx = ctx.state.pool.begin().await?;
-        for (i, place) in m.place_ids.iter().enumerate() {
+        for (i, place) in place_ids.iter().enumerate() {
             let entry = Entry { kind: "place", target: Some(place.clone()), action: Some("add".into()), ..Default::default() };
             record(&mut tx, &format!("{signature_hash}-add-{i}"), &m.community_id, community, &signer, signed.signed_at, &json!({ "place_id": place, "action": "add" }), &entry).await?;
         }
         sqlx::query(
             "INSERT INTO social.community_places (place_id, community_id, added_by) SELECT t.pid, $1, $2 FROM unnest($3::text[]) AS t(pid) \
+             WHERE NOT EXISTS (SELECT 1 FROM social.community_places e WHERE e.community_id = $1 AND lower(e.place_id) = t.pid) \
              ON CONFLICT (place_id, community_id) DO NOTHING",
         )
         .bind(community)
         .bind(&signer)
-        .bind(&m.place_ids)
+        .bind(&place_ids)
         .execute(&mut *tx)
         .await?;
         tx.commit().await
@@ -666,9 +668,10 @@ pub(super) async fn place_remove(ctx: &Ctx<'_>, id: &str, place: &str) -> Respon
     {
         return *r;
     }
+    let canonical = crate::communities::places::canonical_place_id(&m.place_id);
     if let Err(e) = ctx
         .state
-        .validate_places_ownership(std::slice::from_ref(&m.place_id), &signer)
+        .validate_places_ownership(std::slice::from_ref(&canonical), &signer)
         .await
     {
         return e.into_response();
@@ -678,7 +681,7 @@ pub(super) async fn place_remove(ctx: &Ctx<'_>, id: &str, place: &str) -> Respon
         let mut tx = ctx.state.pool.begin().await?;
         let entry = Entry {
             kind: "place",
-            target: Some(m.place_id.clone()),
+            target: Some(canonical.clone()),
             action: Some("remove".into()),
             ..Default::default()
         };
@@ -694,9 +697,9 @@ pub(super) async fn place_remove(ctx: &Ctx<'_>, id: &str, place: &str) -> Respon
         )
         .await?;
         sqlx::query(
-            "DELETE FROM social.community_places WHERE place_id = $1 AND community_id = $2",
+            "DELETE FROM social.community_places WHERE lower(place_id) = $1 AND community_id = $2",
         )
-        .bind(&m.place_id)
+        .bind(&canonical)
         .bind(community)
         .execute(&mut *tx)
         .await?;

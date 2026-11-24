@@ -71,7 +71,7 @@ new_scenario() {
 # expect <name> <expected-stdout> <expected-exit>
 expect() {
   local name="$1" want="$2" want_code="$3" got code=0
-  got=$(RUN_ID=42 REPO=o/r WAIT_SECONDS="${WAIT:-0}" POLL_SECONDS=5 \
+  got=$(RUN_ID=42 REPO=o/r WAIT_SECONDS="${WAIT:-0}" POLL_SECONDS=30 \
         bash "$PROBE" 2>"$SCENARIO/stderr") || code=$?
   if [ "$got" = "$want" ] && [ "$code" -eq "$want_code" ]; then
     echo "  ok   $name"
@@ -125,7 +125,7 @@ echo '{"status":"queued"}' > "$SCENARIO/run.1.json"
 jobs_json 'Changes:in_progress:' > "$SCENARIO/jobs.2.json"
 jobs_json 'Changes:completed:success' 'Headless Smoke:queued:' > "$SCENARIO/jobs.3.json"
 WAIT=60 expect "waits through an empty job list and a running Changes => true" true 0
-if [ "$(cat "$SCENARIO/.sleeps")" != $'1\n2' ]; then
+if [ "$(cat "$SCENARIO/.sleeps")" != $'10\n20' ]; then
   echo 'FAIL: selection backoff changed'
   exit 1
 fi

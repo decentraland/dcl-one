@@ -47,13 +47,21 @@ A difference not listed here is a gap, not a decision.
   both the stored owner and the live holder of each DCL NAME world.
   A publish credits back only the replaced scenes of a world charged to
   the same owner.
+- **Allowance monitoring.** Before enabling production Worlds writes,
+  verify that every serving node has effective `ETH_RPC_URL` and
+  `RPC_ENDPOINT_POLYGON` values for the intended chains. Mirror nodes and
+  nodes with no posture default to Decentraland's public RPCs. Scrape each
+  node's `SERVE_METRICS_BIND` endpoint in production. The
+  `worlds_allowance_read_failures_total` counter increments once per
+  terminal chain lookup failure.
 - **Legacy content keys.** The worlds `/contents/{key}` route also accepts a
   64-hex sha256 key and serves the blob whose raw-leaf CIDv1 has that
-  digest, which covers files of one chunk (256 KiB) or less. It also serves
-  CIDv0 (`Qm…`) keys. An invalid key answers 404 without a body, as a miss
-  does (upstream: 400). A key on the content denylist answers 404, and with
-  `READ_THROUGH_ENABLED` a missing key is fetched from the sync sources
-  before the 404.
+  digest, which covers files of one chunk (256 KiB) or less. The mirror and
+  cutover importer record verified SHA-256 aliases for thumbnails larger
+  than one chunk and up to 1 MiB. The route also serves CIDv0 (`Qm…`) keys.
+  Invalid and missing keys answer 404 without a body. A key on the content
+  denylist answers 404. With `READ_THROUGH_ENABLED`, the route tries to fetch
+  a missing key from the sync sources before answering 404.
 - **Content types.** The worlds `/contents` and `/ipfs` routes answer
   `file-type@16`'s Content-Type for scene formats: images, glTF binary,
   audio, video, fonts, PDF, WebAssembly, gzip and ZIP. Other formats, and a
@@ -130,9 +138,11 @@ A difference not listed here is a gap, not a decision.
   allowed clock skew (upstream `0`), and it carries the participant
   attribute `dcl.worldAuthorization`, the re-admission proof other
   participants can read.
-- **Kicks on access change.** Owners and holders of any world or live-scene
-  grant (deployment or streaming) are never kicked. A switch to an
-  allow-list keeps participants already on the new list. A participant
+- **Kicks on access change.** Owners and wallets with deployment or streaming
+  grants keep their place in an open world room when an access edit would
+  otherwise remove them. A parcel-scoped grant must cover an active scene
+  in the room inventory. Platform and scene bans still apply. A switch to
+  an allow-list keeps participants already on the new list. A participant
   whose access cannot be decided stays.
 
 - **`/about` health.** `healthy`, `acceptingUsers` and `content.healthy`
@@ -177,23 +187,26 @@ A difference not listed here is a gap, not a decision.
   participants and admitting the user.
 - **Presence from LiveKit.** `/live-data` and
   `/wallet/{wallet}/connected-world` read the occupancy recovered from
-  LiveKit every 30 seconds (about 5 seconds after a webhook), the same on
-  every replica. `lastUpdated` is the last complete observation
-  (`1970-01-01T00:00:00.000Z` before the first), `perWorld` is in name
-  order, the `authoritative-server` participant is not counted, and after
-  90 seconds without an observation both answer empty. A wallet's world
-  counts scene rooms and ENS worlds; in several worlds it is the one it
-  joined last, and a tie answers 503. A LiveKit room this node does not
-  resolve (no catalogue row, an upstream-format or non-canonical name) is
-  left out; while one could belong to a world, that world's mints answer
-  503.
+  LiveKit every 30 seconds. A webhook can bring the next observation on
+  its receiving replica forward to about 5 seconds. Both endpoints answer
+  503 with `Retry-After` before the first complete observation and after
+  90 seconds without one. A fresh observation can report zero occupants
+  or a 404 for a disconnected wallet. `/live-data` sets `lastUpdated` to
+  the latest complete observation and reports lobby counts in world-name
+  order and excludes the `authoritative-server` participant.
+  Connected-world includes scene rooms and ENS worlds. It reports the latest
+  world the wallet joined and picks the first normalized name in alphabetical
+  order for a tie. The public projection accepts legacy scene room names
+  when they match exactly one current catalogue entry. Admission and social
+  presence continue to use canonical room names.
 - **Scene room names.** A scene room is `w1:<base36 byte length of the world
   key>:<world key><scene id>`, with the scene id's case preserved. The
   prefix is fixed; there is no `SCENE_ROOM_PREFIX` or `COMMS_ROOM_PREFIX`
   setting. The world lobby room keeps `world-<name>`.
 - **Room events.** Participant joins and leaves are published on the NATS
-  subject `comms.room_events.v1`. No `peer.<id>.world.join|leave` subjects
-  are published.
+  subject `comms.room_events.v1`; every `serve` applies World joins and leaves to
+  social online status, which treats being inside a World as online. No
+  `peer.<id>.world.join|leave` subjects are published.
 - **LiveKit webhook.** `POST /livekit-webhook` (also under
   `/worlds-content-server` and `/comms-gatekeeper`) is the gatekeeper's one
   webhook: a missing or bad signature answers 401, an event it cannot read
@@ -228,9 +241,12 @@ A difference not listed here is a gap, not a decision.
   copied from its source's `/contents` and stored under the CIDv1 of its
   bytes, so for a thumbnail uploaded to the source (stored there under the
   SHA-256 hex of its bytes) `GET /world/{name}/settings` names the CID where
-  the source names the hex key. `/contents/<hex key>` still answers it on the
-  worlds mount. A thumbnail the source does not serve, or whose bytes are not
-  an image, leaves the mirrored world without one.
+  the source names the hex key. For larger thumbnails, the next successful
+  mirror of those settings or a replay of the cutover import records the
+  alias for the saved hex URL. The alias keeps the blob reachable after
+  settings edits. A failed source read keeps the existing thumbnail. A
+  successful read of a blob with an unsupported format leaves the world
+  without a thumbnail.
 - **ENS names.** With `ALLOW_ENS_DOMAINS=true` the holder is read over
   `ETH_RPC_URL` (required then; the process refuses to start without it).
   Only names whose labels the upstream's UTS46 normalization leaves
@@ -484,6 +500,9 @@ A difference not listed here is a gap, not a decision.
 ## Permissions
 
 - **Community ids** in an allow-list must be UUIDs.
+- **Deployment and streaming lists.** When supplied, `wallets` must be an
+  array of wallet address strings. Invalid values answer 400 and leave
+  existing grants in place.
 - **Allow-list caps.** `ACCESS_MAX_WALLETS` (1..=10,000, default 1000) and
   `ACCESS_MAX_COMMUNITIES` (1..=1,000, default 50) are refused at startup
   outside their range; upstream takes any number, and `0` there refuses
@@ -503,6 +522,9 @@ A difference not listed here is a gap, not a decision.
   <w>.`), `nft` must be a string, a `secret` that is not a non-empty string
   is a 400 (upstream: 500 for a non-string), and a parcel coordinate outside
   32 bits is 400 `Invalid parcels: …` (upstream stores it).
+- **Deployment and streaming allow-list edits** clear the grants when
+  `wallets` is omitted, `null` or an empty array. Other non-array values
+  and non-string elements answer 400 and preserve the grants.
 - **Parcel holder lookups** (`POST .../permissions/{permission}/parcels`)
   match the requested parcels in canonical form, so `00,01` finds a grant on
   `0,1`.
@@ -580,6 +602,24 @@ A difference not listed here is a gap, not a decision.
   any block of the stored owner), and `owner` is `null` for a world with no
   owner (bare names, mirrored worlds); `GET /wallet/contribute` answers the
   same `owner`.
+- **Places freshness.** A committed deploy, undeploy, settings edit,
+  spawn edit, access change, operator block change, or owner reconciliation
+  queues the affected world for a Places listing refresh. `places-derive`
+  checks for pending worlds every two seconds and refreshes up to 64 per
+  pass. The job still reconciles the full catalogue
+  every `PLACES_DERIVE_INTERVAL_SECS` (300 seconds by default). A full pass
+  already in progress or a backlog can delay the targeted refresh.
+
+## Scene Insights cutover
+
+Set `WORLDS_CONTENT_SERVER_URL` in the Scene Insights deployment to the
+public dcl-one base with the `/worlds-content-server` prefix when Worlds
+becomes authoritative. Verify that the base serves
+`GET /world/{name}/permissions` and `GET /world/{name}/scenes` for a World
+published on dcl-one. Then use signed Scene Insights requests to check a
+wallet listed in the active scene's `metadata.logsPermissions` and a separate
+wallet granted deployment permission for that scene. Each check should use
+a wallet whose access depends on the permission being tested.
 
 ## World storage
 
@@ -647,10 +687,14 @@ access.
   managers read the index while it is caught up, its fold is at most 30
   minutes old on the database clock and its registries are the node's; a
   fold older than that drops them to the next source at once.
-  `GET /lambdas/land-authz/status` reports this as top-level `ready`, with
-  `readyWindowSecs` and the cursor's `cursor.foldAgeSecs`,
-  `cursor.foldedBlock` and `cursor.lastBlock` (caught up when the two
-  blocks are equal).
+  The lamb2 LAND routes require a fold at most ten minutes
+  old. The index interval is capped at four minutes. The batch permissions
+  preview uses the same 30-minute window as deploy authorization. They use their configured subgraph fallback when the fold expires.
+  The LAND subgraph can lag the chain and its per-parcel responses are
+  cached locally for five seconds. Parcels with the same owner and registry
+  share a five-second authorization cache. `GET /lambdas/land-authz/status`
+  reports Lambdas readiness as `ready`, with `readyWindowSecs` and
+  `cursor.foldAgeSecs`, `cursor.foldedBlock` and `cursor.lastBlock`.
 - **Collaborator freshness.** Collaborator readiness is a separate
   condition from status `ready`. The collaborator rule needs a full replay
   started (`cursor.fullReplayStarted`), a published fold
