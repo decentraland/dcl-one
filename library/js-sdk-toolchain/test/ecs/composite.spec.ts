@@ -203,7 +203,6 @@ describe('composite instantiation system', () => {
       const buf = new ReadWriteByteBuffer()
       expect(() => component.schema.serialize(value as any, buf)).not.toThrow()
       expect((component.schema.deserialize(buf) as any).forceRender).toEqual([])
-      if (name === 'core::AvatarEquippedData') expect((component.schema.deserialize(buf) as any).wearables).toEqual([])
     }
   })
 

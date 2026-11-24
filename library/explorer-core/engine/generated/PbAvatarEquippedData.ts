@@ -10,7 +10,7 @@ export type PbAvatarEquippedData = { wearableUrns: Array<string>, emoteUrns: Arr
 /**
  * one per item of wearable_urns, in the same order
  */
-wearables: Array<EquippedWearable>, 
+wearables?: Array<EquippedWearable>, 
 /**
  * slots that will render even if hidden
  */

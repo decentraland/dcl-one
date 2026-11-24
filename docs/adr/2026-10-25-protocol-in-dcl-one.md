@@ -35,10 +35,15 @@ source in this repository.
   `decentraland/protocol`'s `main` defined it after this snapshot and published in
   `@dcl/protocol@next`, and `force_render`, which held 3 here and in `experimental-bevy`, is field
   4. `proto/buf.yaml` exempts that file from the three rules the renumbering trips; the exemption
-  goes once `main` carries the change. With it, every definition in `@dcl/protocol@next` exists
+  goes in the first change after this one, when this repository's `main` carries the new numbers. With it, every definition in `@dcl/protocol@next` exists
   here under the same number, name and type. The `experimental-bevy`
   protocol and SDK took the same numbering (decentraland/protocol#510,
-  decentraland/js-sdk-toolchain#1675), and the bridge scene pins that SDK. Field 4 is not
+  decentraland/js-sdk-toolchain#1675), and the bridge scene pins that SDK, which moves it 31
+  commits forward on that branch (AvatarNametag, `getPlayerLanguage`, input and pointer fixes,
+  `sdk-commands` bundle and deploy changes), not only to the new field number. The inspector's
+  Bevy agent (`apps/creator-hub/packages/inspector/agents/bevy`) still pins an SDK that reads
+  `force_render` at 3; it only checks the player for null. The engine sets no
+  `wearables[].visible` yet. Field 4 is not
   reserved on `decentraland/protocol`'s `main`, so the same collision can recur until it is.
 - `tooling/proto-source-check.py` (run by `structure.yml`) fails on a `decentraland.*`
   proto anywhere else. Every Rust consumer (`dcl_component`, `comms`, `social`,

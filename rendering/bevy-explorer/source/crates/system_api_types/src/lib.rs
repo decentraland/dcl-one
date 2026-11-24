@@ -1092,3 +1092,19 @@ pub struct OutfitsData {
     pub outfits: Vec<OutfitSlotData>,
     pub names_for_extra_slots: Vec<String>,
 }
+
+#[cfg(test)]
+mod tests {
+    use super::SetAvatarData;
+
+    #[test]
+    fn an_equip_without_the_wearables_list_deserializes() {
+        let patch: SetAvatarData = serde_json::from_value(serde_json::json!({
+            "equip": { "wearableUrns": ["urn:hat"], "emoteUrns": [], "forceRender": ["hair"] }
+        }))
+        .unwrap();
+        let equip = patch.equip.unwrap();
+        assert_eq!(equip.force_render, vec!["hair"]);
+        assert!(equip.wearables.is_empty());
+    }
+}

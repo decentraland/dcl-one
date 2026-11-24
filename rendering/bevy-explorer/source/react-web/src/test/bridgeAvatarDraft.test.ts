@@ -161,7 +161,7 @@ describe('Passport and Backpack deployments', () => {
     await vi.waitFor(() => expect(setAvatar).toHaveBeenCalledTimes(2))
     expect(setAvatar.mock.calls.map(([patch]) => patch)).toEqual([
       { profileExtras: { description: 'New' } },
-      { equip: { wearableUrns: ['urn:hat'], emoteUrns: [], wearables: [], forceRender: [] } }
+      { equip: { wearableUrns: ['urn:hat'], emoteUrns: [], forceRender: [] } }
     ])
     expect(replies()).toEqual([])
     backpack.resolve(7)

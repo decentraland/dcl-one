@@ -33,7 +33,7 @@ export function lookDeploy(look: AvatarLook, ...prior: AvatarLook[]): SetAvatarD
   }
   if (bodyShapeUrn || prior.some((from) => !sameItems(look.wearables, from.wearables) ||
     !sameItems(look.emotes, from.emotes) || !sameItems(look.forceRender, from.forceRender))) {
-    patch.equip = { wearableUrns: look.wearables, emoteUrns: look.emotes, wearables: [], forceRender: look.forceRender }
+    patch.equip = { wearableUrns: look.wearables, emoteUrns: look.emotes, forceRender: look.forceRender }
   }
   return patch
 }
