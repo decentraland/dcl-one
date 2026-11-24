@@ -276,7 +276,7 @@ impl Config {
         Ok(())
     }
 
-    pub(crate) fn secret_slots(&mut self) -> [(&'static str, &mut Option<String>); 82] {
+    pub(crate) fn secret_slots(&mut self) -> [(&'static str, &mut Option<String>); 83] {
         [
             ("SEGMENT_SIGNING_KEY", &mut self.social.segment_signing_key),
             ("ETH_RPC_URL", &mut self.content.eth_rpc_url),
@@ -505,6 +505,7 @@ impl Config {
                 &mut self.validator.third_party_registry_l2_subgraph_url,
             ),
             ("ONBOARDING_API_KEY", &mut self.node.onboarding_api_key),
+            ("MAGIC_SECRET_KEY", &mut self.node.magic_secret_key),
             (
                 "PLACES_ADMIN_AUTH_TOKEN",
                 &mut self.explore.places_admin_auth_token,
@@ -804,6 +805,7 @@ mod tests {
         "ANALYTICS_API_TOKEN",
         "OPEN_AI_API_KEY",
         "SENDGRID_API_KEY",
+        "MAGIC_SECRET_KEY",
         // Signs and checks unsubscribe links: rotating a short key breaks links already sent.
         "SIGNING_KEY",
         "SLACK_WEBHOOK",
