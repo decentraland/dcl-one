@@ -768,6 +768,63 @@ pub async fn owns_land_at(
 mod tests {
     use super::*;
 
+    const KEY: &str = "gateway-key-0123456789abcdef";
+
+    async fn index_over(app: axum::Router) -> (ChainIndex, String) {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+        let index = ChainIndex::new(
+            crate::http::Outbound::for_tests(),
+            super::super::IndexSettings::for_tests(),
+        );
+        index.allow_loopback_for_tests();
+        (
+            index,
+            format!("http://{addr}/api/{KEY}/subgraphs/id/collections"),
+        )
+    }
+
+    #[tokio::test]
+    async fn a_failed_subgraph_read_never_names_its_url() {
+        let path = format!("/api/{KEY}/subgraphs/id/collections");
+        let looping = axum::Router::new().route(
+            &path,
+            axum::routing::post({
+                let path = path.clone();
+                move || async move {
+                    (
+                        axum::http::StatusCode::TEMPORARY_REDIRECT,
+                        [(axum::http::header::LOCATION, path)],
+                    )
+                }
+            }),
+        );
+        let (index, url) = index_over(looping).await;
+        let error = graph_query(&index, &url, "{ rarities { id } }", json!({}))
+            .await
+            .unwrap_err();
+        assert!(!error.contains(KEY), "{error}");
+        let closed = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = closed.local_addr().unwrap().port();
+        drop(closed);
+        let error = graph_query(
+            &index,
+            &format!("http://127.0.0.1:{port}{path}"),
+            "{ rarities { id } }",
+            json!({}),
+        )
+        .await
+        .unwrap_err();
+        assert!(!error.contains(KEY), "{error}");
+        let broken = axum::Router::new().route(&path, axum::routing::post(|| async { "not json" }));
+        let (index, url) = index_over(broken).await;
+        let error = graph_query(&index, &url, "{ rarities { id } }", json!({}))
+            .await
+            .unwrap_err();
+        assert!(!error.contains(KEY), "{error}");
+    }
+
     #[test]
     fn name_owner_is_the_first_ens_holder_lowercased() {
         assert_eq!(

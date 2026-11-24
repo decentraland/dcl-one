@@ -5173,6 +5173,56 @@ async fn the_rentals_index_attaches_behind_its_switch_and_chain_endpoints() {
     db.drop().await;
 }
 
+/// The committee job walks the chain `MARKETPLACE_INDEX_CHAIN_ID_MATIC`
+/// names, over that chain's `TRADE_RPC_URLS` entry.
+#[tokio::test]
+async fn the_committee_job_walks_the_polygon_chain_the_index_settings_name() {
+    let pool = sqlx::postgres::PgPoolOptions::new()
+        .connect_lazy("postgres://nobody:nothing@127.0.0.1:9/none")
+        .unwrap();
+    let committee = |chain_id: i64| {
+        let mut st = state_over(
+            pool.clone(),
+            "https://matic.example/",
+            IndexSettings {
+                committee_enabled: true,
+                chain_id_matic: chain_id,
+                ..IndexSettings::default()
+            },
+            false,
+        );
+        Arc::get_mut(&mut st)
+            .unwrap()
+            .settings
+            .market
+            .trade_rpc_urls = RpcEndpoints::from_env(Some(
+            "137=https://matic.example/,80002=https://amoy.example/",
+        ));
+        let job = super::chain_jobs::projections(&st, ChainNet::Matic, None)
+            .into_iter()
+            .find(|p| p.lease == "committee-index-matic")
+            .unwrap();
+        let index = (job.make)();
+        (job.url, index.chain_id(), index.start_block())
+    };
+    assert_eq!(
+        committee(137),
+        (
+            "https://matic.example/".to_string(),
+            137,
+            super::committee_index::START_BLOCK
+        )
+    );
+    assert_eq!(
+        committee(80_002),
+        (
+            "https://amoy.example/".to_string(),
+            80_002,
+            super::committee_index::AMOY_START_BLOCK
+        )
+    );
+}
+
 /// The rentals walk over a fake chain feeds the notifications: a rent before
 /// the first notification pass is history; a later rent notifies its start,
 /// and its end once the published block's time passes it, with the
@@ -5421,7 +5471,7 @@ async fn committee_index_keeps_member_set_logs_of_both_contracts() {
     chain.finalized_lag.store(2, Ordering::SeqCst);
     let url = serve(chain.clone()).await;
     let st = state_over(db.pool.clone(), &url, index_settings(100, 10_000), false);
-    let out = pass(&st, &url, &CommitteeIndex).await;
+    let out = pass(&st, &url, &CommitteeIndex::mainnet()).await;
     assert!(out.published, "{out:?}");
     let rows: Vec<(String, String, bool)> = sqlx::query_as(
         "SELECT contract_address, member, is_member FROM shop.committee_event ORDER BY block_number",
@@ -5452,7 +5502,7 @@ async fn committee_index_keeps_member_set_logs_of_both_contracts() {
     .execute(&db.pool)
     .await
     .unwrap();
-    let again = pass(&st, &url, &CommitteeIndex).await;
+    let again = pass(&st, &url, &CommitteeIndex::mainnet()).await;
     assert!(again.published, "{again:?}");
     assert_eq!(again.rows_written, 0, "{again:?}");
     assert_eq!(count().await, 3);
@@ -5472,7 +5522,7 @@ async fn committee_index_keeps_member_set_logs_of_both_contracts() {
         .logs
         .lock()
         .retain(|l| l["blockNumber"] != json!(format!("0x{:x}", s + 3)));
-    let rewound = pass(&st, &url, &CommitteeIndex).await;
+    let rewound = pass(&st, &url, &CommitteeIndex::mainnet()).await;
     assert!(rewound.reorg_rewound_to.is_some(), "{rewound:?}");
     assert!(!rewound.published, "{rewound:?}");
     assert_eq!(count().await, 0, "the rewind deletes the reorged rows");
@@ -5484,7 +5534,7 @@ async fn committee_index_keeps_member_set_logs_of_both_contracts() {
     .unwrap();
     assert!(unpublished, "the rewind clears the published block");
     chain.forks.lock().clear();
-    let replayed = pass(&st, &url, &CommitteeIndex).await;
+    let replayed = pass(&st, &url, &CommitteeIndex::mainnet()).await;
     assert!(replayed.published, "{replayed:?}");
     let members: Vec<String> =
         sqlx::query_scalar("SELECT member FROM shop.committee_event ORDER BY block_number")
@@ -5496,7 +5546,7 @@ async fn committee_index_keeps_member_set_logs_of_both_contracts() {
     // The walk always rewinds below its start, so the partial case is
     // checked on the index directly: rows at or below the target survive.
     let mut conn = db.pool.acquire().await.unwrap();
-    CommitteeIndex
+    CommitteeIndex::mainnet()
         .rewind(&mut conn, (s + 1) as i64)
         .await
         .unwrap();
@@ -5507,6 +5557,57 @@ async fn committee_index_keeps_member_set_logs_of_both_contracts() {
             .await
             .unwrap();
     assert_eq!(kept, vec![((s + 1) as i64, true)]);
+    db.drop().await;
+}
+
+/// On Amoy (`MARKETPLACE_INDEX_CHAIN_ID_MATIC=80002`) the walk reads Amoy's
+/// Committee contract from its start block and binds its cursor to 80002,
+/// which an Amoy builder reads and a mainnet one refuses.
+#[tokio::test]
+async fn a_committee_walk_on_amoy_keeps_amoys_members_bound_to_amoy() {
+    let Some(db) = ScratchDb::create().await else {
+        return;
+    };
+    use super::committee_index::{AMOY_CONTRACTS, AMOY_START_BLOCK, CommitteeIndex, MEMBER_SET};
+    let s = AMOY_START_BLOCK;
+    let chain = FakeChain::new(
+        s + 100,
+        vec![crate::chain_index::rpc::RpcLog {
+            address: AMOY_CONTRACTS[0].into(),
+            topics: vec![MEMBER_SET.into(), format!("0x{:0>64}", &ALICE[2..])],
+            data: format!("0x{:064x}", 1),
+            block_number: format!("0x{:x}", s + 1),
+            log_index: "0x0".into(),
+            block_timestamp: Some(format!("0x{:x}", time_of(s + 1))),
+            block_hash: None,
+            transaction_hash: Some(format!("0x{:064x}", s + 1)),
+        }],
+        10_000,
+        1000,
+    );
+    chain.chain_id.store(80_002, Ordering::SeqCst);
+    chain.finalized_lag.store(2, Ordering::SeqCst);
+    let url = serve(chain.clone()).await;
+    let st = state_over(db.pool.clone(), &url, index_settings(100, 10_000), false);
+    let out = pass(&st, &url, &CommitteeIndex { chain_id: 80_002 }).await;
+    assert!(out.published, "{out:?}");
+    let cursor = chain_walk::cursor(&db.pool, chain_walk::INDEXER_COMMITTEE, ChainNet::Matic)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        (cursor.chain_id, cursor.start_block),
+        (Some(80_002), AMOY_START_BLOCK as i64)
+    );
+    let rows: Vec<(String, String, bool)> =
+        sqlx::query_as("SELECT contract_address, member, is_member FROM shop.committee_event")
+            .fetch_all(&db.pool)
+            .await
+            .unwrap();
+    assert_eq!(
+        rows,
+        vec![(AMOY_CONTRACTS[0].to_string(), ALICE.to_string(), true)]
+    );
     db.drop().await;
 }
 
@@ -5538,7 +5639,7 @@ async fn a_committee_pass_without_new_logs_refreshes_the_publish() {
     chain.finalized_lag.store(2, Ordering::SeqCst);
     let url = serve(chain.clone()).await;
     let st = state_over(db.pool.clone(), &url, index_settings(100, 10_000), false);
-    assert!(pass(&st, &url, &CommitteeIndex).await.published);
+    assert!(pass(&st, &url, &CommitteeIndex::mainnet()).await.published);
     let age_out = || async {
         sqlx::query(
             "UPDATE shop.chain_cursor SET folded_at = folded_at - interval '2 hours' WHERE indexer = 'committee'",
@@ -5561,7 +5662,7 @@ async fn a_committee_pass_without_new_logs_refreshes_the_publish() {
     // The head has not moved.
     age_out().await;
     assert!(!ready().await.0, "aged out");
-    let quiet = pass(&st, &url, &CommitteeIndex).await;
+    let quiet = pass(&st, &url, &CommitteeIndex::mainnet()).await;
     assert!(quiet.published, "{quiet:?}");
     assert_eq!(quiet.rows_written, 0, "{quiet:?}");
     let (is_ready, folded) = ready().await;
@@ -5570,7 +5671,7 @@ async fn a_committee_pass_without_new_logs_refreshes_the_publish() {
     // New blocks, none with a MemberSet.
     age_out().await;
     *chain.head.lock() = s + 200;
-    let quiet = pass(&st, &url, &CommitteeIndex).await;
+    let quiet = pass(&st, &url, &CommitteeIndex::mainnet()).await;
     assert!(quiet.published, "{quiet:?}");
     assert_eq!(quiet.rows_written, 0, "{quiet:?}");
     let (is_ready, advanced) = ready().await;
@@ -6624,7 +6725,7 @@ mod supervisor {
                 "committee-index",
                 ChainNet::Matic,
                 &hanging_endpoint().await,
-                Arc::new(|| Arc::new(super::super::committee_index::CommitteeIndex)),
+                Arc::new(|| Arc::new(super::super::committee_index::CommitteeIndex::mainnet())),
             ),
             projection("sales-index", ChainNet::Matic, &sales_url, sales),
         ];
@@ -6783,7 +6884,9 @@ mod supervisor {
                         "committee-index",
                         ChainNet::Matic,
                         &url,
-                        Arc::new(|| Arc::new(super::super::committee_index::CommitteeIndex)),
+                        Arc::new(|| {
+                            Arc::new(super::super::committee_index::CommitteeIndex::mainnet())
+                        }),
                     ),
                 ],
             ),
@@ -8577,7 +8680,9 @@ mod supervisor {
                         "committee-index",
                         ChainNet::Matic,
                         &url,
-                        Arc::new(|| Arc::new(super::super::committee_index::CommitteeIndex)),
+                        Arc::new(|| {
+                            Arc::new(super::super::committee_index::CommitteeIndex::mainnet())
+                        }),
                     ),
                     &held,
                 ),
@@ -8815,7 +8920,7 @@ mod supervisor {
             None,
         );
         let c = hooked(
-            Arc::new(super::super::committee_index::CommitteeIndex),
+            Arc::new(super::super::committee_index::CommitteeIndex::mainnet()),
             group(&[c1, shared], topic_c),
             Some(c_answer.clone()),
         );
@@ -9059,7 +9164,9 @@ mod supervisor {
                         "committee-index",
                         ChainNet::Matic,
                         &url,
-                        Arc::new(|| Arc::new(super::super::committee_index::CommitteeIndex)),
+                        Arc::new(|| {
+                            Arc::new(super::super::committee_index::CommitteeIndex::mainnet())
+                        }),
                     ),
                 ],
             ),

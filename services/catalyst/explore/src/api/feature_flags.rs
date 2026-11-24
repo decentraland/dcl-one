@@ -25,6 +25,9 @@ pub use crate::shared::feature_flags::{
 };
 
 pub const MIRROR: &str = "feature-flags";
+/// The builder's application, whose document the pass also stores for the
+/// builder to read its automated review's flag from.
+pub const BUILDER_APP: &str = "builder";
 const EMBEDDED_FLAGS: &str = include_str!("feature-flags.explorer.json");
 
 pub fn embedded_document() -> Value {
@@ -145,7 +148,8 @@ pub async fn refresh_app(
 /// `events` document beside it, which `events::foundation` reads for the
 /// Foundation display names (upstream `refreshFoundationAddresses` fetched
 /// `events.json` itself; review architecture-1 explore-change-4). Either
-/// document failing fails the pass.
+/// document failing fails the pass. The `builder` document beside them is
+/// stored too; failing to read it is logged and keeps the stored one.
 pub async fn run_pass(state: &Shared, ctx: &JobContext) -> anyhow::Result<()> {
     mirror::run(&state.pool, MIRROR, ctx, || async {
         let app = state.settings.feature_flags_app.as_str();
@@ -169,6 +173,12 @@ pub async fn run_pass(state: &Shared, ctx: &JobContext) -> anyhow::Result<()> {
                     .await
                     .context("reading the stored events flags")?;
             items += count_entries(&events_doc);
+        }
+        if BUILDER_APP != app
+            && let Some(builder_url) = sibling_document(url, BUILDER_APP)
+            && let Err(error) = mirror_document(state, BUILDER_APP, &builder_url).await
+        {
+            tracing::warn!(%error, "feature flags: the builder document was not mirrored");
         }
         Ok(mirror::PassOutcome {
             items,

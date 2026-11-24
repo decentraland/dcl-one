@@ -698,7 +698,6 @@ def runtime_env(config, refuse_exposed_relayer=True):
             'MARKETPLACE_INDEX_INTERVAL_SECS': '30',
             # The tag names development stacks in rpc.decentraland.org's request logs.
             'ETH_RPC_URL': 'https://rpc.decentraland.org/mainnet?project=dcl-one-dev',
-            'BUILDER_CONTENT_BUCKET_URL': 'https://builder-items.decentraland.org',
             # Credit prices need a MANA spot.
             'PRICE_POLL_ENABLED': 'true', 'COINGECKO_URL': 'https://api.coingecko.com/api/v3',
             'PRICE_FALLBACK_SOURCES': 'coinbase=https://api.coinbase.com,binance=https://api.binance.com,'
@@ -720,7 +719,8 @@ def testnet_env(config, refuse_exposed_relayer=True):
     does not resolve mainnet scenes on this profile.
 
     The trade-events index walks Amoy and Sepolia's marketplaces (MARKETPLACE_INDEX_CHAIN_ID_*), so a
-    trade signed into this stack leaves `open` once it is cancelled, replaced or executed on chain."""
+    trade signed into this stack leaves `open` once it is cancelled, replaced or executed on chain. The
+    committee index walks Amoy's Committee contract, the curation committee builder reads on Amoy."""
     return {
         'ETH_NETWORK': 'sepolia',
         'SYNC_SOURCE': 'https://peer.decentraland.zone/content',
@@ -751,8 +751,7 @@ def testnet_env(config, refuse_exposed_relayer=True):
         'MARKETPLACE_NFT_INDEX_ENABLED': 'false',
         # The Rentals contract is mainnet's; there is no chain-1 endpoint here.
         'SHOP_RENTALS_INDEX_ENABLED': 'false',
-        # The Committee contracts are Polygon mainnet's; RPC_ENDPOINT_POLYGON is Amoy here.
-        'MARKETPLACE_COMMITTEE_INDEX_ENABLED': 'false',
+        'MARKETPLACE_COMMITTEE_INDEX_ENABLED': 'true',
         'VITE_SHOP_CHAIN_ID': '80002',
         # The catalogue's chainId for MATIC items, and the chain the Shop's coupons pair with: the pages ask the
         # node to settle on it, and the node refuses a catalogue chain that differs from COLLECTIONS_CHAIN_ID.

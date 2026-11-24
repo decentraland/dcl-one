@@ -197,7 +197,8 @@ impl Default for IndexSettings {
 }
 
 impl IndexSettings {
-    /// The chain the trade-events walk of `net` reads.
+    /// The chain the trade-events walk of `net`, and on Polygon the
+    /// committee walk, reads.
     pub fn chain_id(&self, net: ChainNet) -> i64 {
         match net {
             ChainNet::Ethereum => self.chain_id_ethereum,
@@ -1094,7 +1095,7 @@ pub trait ChainIndex: Send + Sync {
     fn indexer(&self) -> &'static str;
     fn net(&self) -> ChainNet;
     /// The chain the index reads on `net`: mainnet for every index but
-    /// `trade_events`, which may read a testnet.
+    /// `trade_events` and `committee`, which may read a testnet.
     fn chain_id(&self) -> i64 {
         mainnet_chain(self.net())
     }

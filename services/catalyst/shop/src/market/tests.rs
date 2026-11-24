@@ -2316,6 +2316,32 @@ async fn polygon_mainnet_walks_use_the_polygon_endpoint_if_no_chain_137_override
 }
 
 #[tokio::test]
+async fn the_committee_walk_of_amoy_reads_only_amoys_trade_rpc_urls_entry() {
+    use super::chain_walk::ChainNet;
+    let settings = |network: &str, trade: Option<&str>| {
+        let mut s = Settings::for_tests();
+        s.eth_network = network.to_string();
+        s.polygon_rpc_url = Some("https://polygon.example/".into());
+        s.market.indexes.chain_id_matic = 80_002;
+        s.market.trade_rpc_urls = super::listings::RpcEndpoints::from_env(trade);
+        support::state_without_db_settings(s)
+    };
+    let amoy = settings(
+        "sepolia",
+        Some("137=https://matic.example/,80002=https://amoy.example/"),
+    );
+    assert_eq!(
+        amoy.committee_rpc_url(ChainNet::Matic).as_deref(),
+        Some("https://amoy.example/")
+    );
+    assert_eq!(
+        settings("mainnet", Some("137=https://matic.example/")).committee_rpc_url(ChainNet::Matic),
+        None,
+        "no other chain's endpoint stands in for Amoy"
+    );
+}
+
+#[tokio::test]
 async fn the_third_party_registry_projection_requires_its_switch_and_polygon_endpoint() {
     use super::chain_walk::{ChainNet, INDEXER_THIRD_PARTY_REGISTRY};
     let make_state = |enabled, endpoint| {

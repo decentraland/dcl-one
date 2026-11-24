@@ -44,6 +44,17 @@ pub mod validator;
 /// JSON preserving decoded property insertion order, with JavaScript index-key enumeration.
 /// Literal user objects are never interpreted as serializer number markers.
 pub type OrderedJson = validator::jsjson::JsValue<false>;
+
+/// JSON as JavaScript's `JSON.parse` holds it: insertion order, a repeated key at its first
+/// position with its last value, every number a double.
+pub type JsJson = validator::jsjson::JsValue<true>;
+
+/// `JSON.stringify` of `value`.
+pub fn js_stringify(value: &JsJson) -> String {
+    let mut out = String::new();
+    validator::jsjson::write(value, &mut out);
+    out
+}
 pub mod wire_types;
 
 // The write path peer sync drives: remote entity fetch + hash proof, auth-chain
@@ -442,6 +453,7 @@ pub struct SyncStatus {
     heartbeat_ms: AtomicI64,
     authority: AtomicBool,
     unsynced_copy: AtomicBool,
+    own_content_authority: AtomicBool,
     /// `SERVE_UNSYNCED_DEPLOY_TYPES`: what an unsynced copy still takes.
     copy_deploy_types: RwLock<Vec<String>>,
 }
@@ -454,6 +466,7 @@ impl Default for SyncStatus {
             heartbeat_ms: AtomicI64::new(-1),
             authority: AtomicBool::new(false),
             unsynced_copy: AtomicBool::new(false),
+            own_content_authority: AtomicBool::new(false),
             copy_deploy_types: RwLock::new(Vec::new()),
         }
     }
@@ -491,6 +504,20 @@ impl SyncStatus {
     /// ([`sync::worker::serve_unsynced`]): the forged state is not this node's.
     pub fn set_unsynced_copy(&self, copy: bool) {
         self.unsynced_copy.store(copy, Ordering::Relaxed);
+    }
+
+    /// True when this process serves unsynced with no `SYNC_SOURCE` (an
+    /// island or a journey node, [`sync::worker::serve_unsynced`]): no peer
+    /// feeds its content, so the entities its database holds are the whole
+    /// of it and a missing one is absent here. False in a sync leader, a
+    /// follower and an unsynced copy of a peer, which learn item coverage
+    /// from [`sync::item_coverage::item_history_coverage`] instead.
+    pub fn is_own_content_authority(&self) -> bool {
+        self.own_content_authority.load(Ordering::Relaxed)
+    }
+
+    pub fn set_own_content_authority(&self, own: bool) {
+        self.own_content_authority.store(own, Ordering::Relaxed);
     }
 
     /// The entity types an unsynced copy still takes deploys of
@@ -923,6 +950,14 @@ pub fn build_router(state: SharedState) -> Router {
         .route(
             "/lambdas/collections/contents/{pointer}/image",
             get(entity_thumbnail::get_entity_image).head(entity_thumbnail::get_entity_image),
+        )
+        .route(
+            "/lambdas/collections/standard/erc721/{chainId}/{contract}/{option}",
+            get(validator::erc721::get_erc721_entity),
+        )
+        .route(
+            "/lambdas/collections/standard/erc721/{chainId}/{contract}/{option}/{emission}",
+            get(validator::erc721::get_erc721_entity),
         )
         .merge(content_routes(&state, max_deploy_body))
         .nest("/content", content_routes(&state, max_deploy_body))

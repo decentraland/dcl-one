@@ -1,7 +1,8 @@
 //! The chain-derived readers every domain shares: the collections,
 //! marketplace and land-manager subgraph clients (`graph`, `land_graph`),
-//! the DCL NAME authority interface (`names`),
-//! the LAND registries per network (`registries`), Ethereum RPC logs and
+//! the third-party registry (`third_parties`), the DCL NAME authority
+//! interface (`names`), the LAND registries per network (`registries`),
+//! Ethereum RPC logs and
 //! headers (`rpc`), the log source the chain walks read (`logs`), a read-only portal
 //! client the walks are compared with (`portal`), and the unavailable
 //! envelope naming a missing source (`source`). [`ChainIndex`] holds the
@@ -21,6 +22,7 @@ pub mod portal;
 pub mod registries;
 pub mod rpc;
 pub mod source;
+pub mod third_parties;
 
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -34,6 +36,8 @@ pub struct IndexSettings {
     pub matic_collections_subgraph_url: Option<String>,
     pub marketplace_subgraph_url: Option<String>,
     pub land_subgraph_url: Option<String>,
+    /// `THIRD_PARTY_REGISTRY_L2_SUBGRAPH_URL`: the third-party registry.
+    pub third_party_registry_subgraph_url: Option<String>,
     /// `ETH_NETWORK` (`mainnet` | `sepolia`): picks the LAND registries.
     pub eth_network: String,
 }

@@ -471,6 +471,7 @@ impl Settings {
             matic_collections_subgraph_url: self.matic_collections_subgraph_url.clone(),
             marketplace_subgraph_url: self.marketplace_subgraph_url.clone(),
             land_subgraph_url: self.land_subgraph_url.clone(),
+            third_party_registry_subgraph_url: self.third_party_registry_subgraph_url.clone(),
             eth_network: self.eth_network.clone(),
         }
     }
@@ -878,6 +879,23 @@ impl MarketplaceState {
     /// (`MARKETPLACE_INDEX_CHAIN_ID_*`), and for Ethereum `ETH_RPC_URL`.
     pub fn trade_events_rpc_url(&self, net: chain_walk::ChainNet) -> Option<String> {
         self.rpc_url_for(net, self.settings.market.indexes.chain_id(net))
+    }
+
+    /// The endpoint the committee walk reads (Polygon only): the
+    /// `TRADE_RPC_URLS` entry of the chain it indexes
+    /// (`MARKETPLACE_INDEX_CHAIN_ID_MATIC`), else for 137 on mainnet
+    /// `RPC_ENDPOINT_POLYGON` (off mainnet it serves another chain); the walk
+    /// checks the endpoint serves that chain before each pass.
+    pub fn committee_rpc_url(&self, net: chain_walk::ChainNet) -> Option<String> {
+        if net != chain_walk::ChainNet::Matic {
+            return None;
+        }
+        let chain_id = self.settings.market.indexes.chain_id(net);
+        self.rpc_url_for(net, chain_id).or_else(|| {
+            (chain_id == net.chain_id() && self.settings.eth_network.trim() == "mainnet")
+                .then(|| self.settings.polygon_rpc_url.clone())
+                .flatten()
+        })
     }
 
     /// The `TRADE_RPC_URLS` 137 entry, with `RPC_ENDPOINT_POLYGON` as a

@@ -239,7 +239,7 @@ struct PaginationInfo {
 }
 
 /// One page, and whether the peer holds more rows after it.
-async fn fetch_page(
+pub(super) async fn fetch_page(
     client: &Client,
     url: &str,
 ) -> Result<(Vec<serde_json::Value>, bool), SyncError> {

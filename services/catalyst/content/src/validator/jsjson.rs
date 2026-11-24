@@ -25,10 +25,10 @@ pub enum JsValue<const LEGACY: bool = false> {
     Object(Vec<(String, JsValue<LEGACY>)>),
 }
 
-pub(super) type LegacyValue = JsValue<true>;
+pub(crate) type LegacyValue = JsValue<true>;
 
 impl<const LEGACY: bool> JsValue<LEGACY> {
-    pub(super) fn as_object(&self) -> Option<&[(String, Self)]> {
+    pub fn as_object(&self) -> Option<&[(String, Self)]> {
         match self {
             JsValue::Object(entries) => Some(entries),
             _ => None,
@@ -58,18 +58,6 @@ impl<const LEGACY: bool> JsValue<LEGACY> {
             .iter()
             .find(|(k, _)| k == key)
             .map(|(_, v)| v)
-    }
-}
-
-/// Assigns like a JS object: a repeated key keeps its first position and takes the last value.
-fn set<const LEGACY: bool>(
-    entries: &mut Vec<(String, JsValue<LEGACY>)>,
-    key: String,
-    value: JsValue<LEGACY>,
-) {
-    match entries.iter_mut().find(|(k, _)| *k == key) {
-        Some(slot) => slot.1 = value,
-        None => entries.push((key, value)),
     }
 }
 
@@ -125,23 +113,16 @@ impl<'de, const LEGACY: bool> Deserialize<'de> for JsValue<LEGACY> {
             }
             fn visit_map<A: MapAccess<'de>>(self, mut map: A) -> Result<JsValue<LEGACY>, A::Error> {
                 let mut out = Vec::new();
-                // Strict reads retain order without a linear duplicate search per property.
-                // The temporary key copies and index disappear when this object is complete.
                 let mut slots = BTreeMap::new();
                 while let Some((k, v)) = map.next_entry::<String, JsValue<LEGACY>>()? {
-                    if LEGACY {
-                        set(&mut out, k, v);
+                    let next = out.len();
+                    let slot = *slots.entry(k.clone()).or_insert(next);
+                    if slot == next {
+                        out.push((k, v));
                     } else {
-                        let next = out.len();
-                        let slot = *slots.entry(k.clone()).or_insert(next);
-                        if slot == next {
-                            out.push((k, v));
-                        } else {
-                            out[slot].1 = v;
-                        }
+                        out[slot].1 = v;
                     }
                 }
-                // serde_json's arbitrary-precision number, should the feature be on.
                 if LEGACY
                     && let [(key, JsValue::String(digits))] = out.as_slice()
                     && key == "$serde_json::private::Number"
@@ -194,7 +175,7 @@ fn array_index(key: &str) -> Option<u32> {
 }
 
 /// `JSON.stringify` of `value` appended to `out`.
-pub(super) fn write(value: &LegacyValue, out: &mut String) {
+pub(crate) fn write(value: &LegacyValue, out: &mut String) {
     match value {
         JsValue::Null => out.push_str("null"),
         JsValue::Bool(b) => out.push_str(if *b { "true" } else { "false" }),
@@ -386,6 +367,30 @@ mod tests {
             &mut out,
         );
         out
+    }
+
+    #[test]
+    fn legacy_wide_objects_parse_in_linear_time_keeping_first_position_and_last_value() {
+        let width = 100_000;
+        let mut text = String::from("{");
+        for i in 0..width {
+            text.push_str(&format!("\"k{i:06}\":{i},"));
+        }
+        text.push_str("\"k000000\":-1}");
+        let started = std::time::Instant::now();
+        let value: LegacyValue = serde_json::from_str(&text).unwrap();
+        let elapsed = started.elapsed();
+        let entries = value.as_object().unwrap();
+        assert_eq!(entries.len(), width);
+        assert_eq!(entries[0], ("k000000".to_owned(), JsValue::Number(-1.0)));
+        assert_eq!(
+            entries[width - 1],
+            (
+                format!("k{:06}", width - 1),
+                JsValue::Number((width - 1) as f64)
+            )
+        );
+        assert!(elapsed < std::time::Duration::from_secs(3), "{elapsed:?}");
     }
 
     #[test]
