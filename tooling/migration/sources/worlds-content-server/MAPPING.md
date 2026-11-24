@@ -178,7 +178,8 @@ the columns' range are capped (`max_parcels` at 2^31-1).
 - `federation_worlds` and `federation_peer_status`: claims made by peers,
   rebuilt by polling.
 - `forward_outbox`: upstream forwarding of new local publishes.
-- `change_log`: events of changes made on this node; upstream published them to SNS.
+- `change_log` and `change_log_horizon`: events of changes made on this node,
+  which upstream published to SNS, and the newest one retention deleted.
 - `world_access_log`: upstream has no such table.
 - `worlds.world_scene_identity`: a frozen upgrade source. It is never written.
 - Stream key notifications: the loads of `worlds.world_scenes` (local scenes),

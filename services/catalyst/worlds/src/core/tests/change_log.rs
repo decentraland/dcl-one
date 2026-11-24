@@ -41,10 +41,15 @@ async fn page(f: &Fixture, query: &str) -> Value {
 
 /// Every entry readable now, from the start.
 async fn feed(f: &Fixture) -> Vec<Value> {
-    let (changes, _) = change_log::read(&f.pool, Cursor::START, change_log::MAX_LIMIT)
-        .await
-        .unwrap();
-    changes
+    let page = change_log::read(
+        &f.pool,
+        None,
+        change_log::MAX_LIMIT,
+        change_log::PAGE_BUDGET_BYTES,
+    )
+    .await
+    .unwrap();
+    page.changes
         .into_iter()
         .map(|c| json!({ "event": c.event, "attributes": c.attributes }))
         .collect()
@@ -62,6 +67,39 @@ async fn feed_of(f: &Fixture, count: usize) -> Vec<Value> {
         "expected {count} readable rows, saw {seen:?}"
     );
     seen
+}
+
+/// Commits one `world_undeployment` row for a fresh world, returning the world.
+async fn logged(f: &Fixture) -> WorldName {
+    let world = world_name();
+    let mut tx = f.pool.begin().await.unwrap();
+    let event = change_log::world_undeployment(&world, 1);
+    change_log::record(&mut tx, &world, &event, &json!({}))
+        .await
+        .unwrap();
+    tx.commit().await.unwrap();
+    world
+}
+
+/// Backdates every row of `world` past retention.
+async fn expire(f: &Fixture, world: &WorldName) {
+    sqlx::query(
+        "UPDATE worlds.change_log SET created_at = timezone('UTC', now()) - interval '31 days' \
+         WHERE world_name = $1",
+    )
+    .bind(world.key())
+    .execute(&f.pool)
+    .await
+    .unwrap();
+}
+
+async fn delete_expired(f: &Fixture) -> u64 {
+    let cutoff = chrono::Utc::now().naive_utc() - change_log::RETENTION;
+    change_log::delete_expired(&f.pool, cutoff).await.unwrap()
+}
+
+fn cursor_of(entry: &Value) -> String {
+    entry["cursor"].as_str().unwrap().to_string()
 }
 
 async fn rows(f: &Fixture) -> i64 {
@@ -215,19 +253,16 @@ async fn undeploys_record_the_world_or_the_scenes_removed() {
         .await
         .unwrap();
     store::undeploy_world(&f.pool, &world).await.unwrap();
-    // A whole-world undeploy is announced even when nothing was left.
+    // Nothing was left: nothing to announce.
     store::undeploy_world(&f.pool, &world).await.unwrap();
 
-    let entries = feed_of(&f, before as usize + 3).await;
+    let entries = feed_of(&f, before as usize + 2).await;
     let tail = &entries[before as usize..];
     assert_eq!(
         kinds(tail),
-        [
-            "world_scenes_undeployment",
-            "world_undeployment",
-            "world_undeployment"
-        ]
+        ["world_scenes_undeployment", "world_undeployment"]
     );
+    assert_eq!(rows(&f).await, before + 2);
     let ts = tail[0]["event"]["timestamp"].as_i64().unwrap();
     assert_eq!(
         tail[0]["event"],
@@ -394,8 +429,7 @@ async fn a_lower_txid_committed_later_is_never_skipped() {
         .await
         .unwrap();
 
-    let world = world_name();
-    store::undeploy_world(&f.pool, &world).await.unwrap();
+    let world = logged(&f).await;
     assert_eq!(rows(&f).await, 1, "only the committed row is in the table");
     // The open transaction holds xmin at or below its own id, which is below the later one's.
     assert!(feed(&f).await.is_empty());
@@ -416,7 +450,7 @@ async fn a_lower_txid_committed_later_is_never_skipped() {
 async fn the_route_pages_by_cursor_until_caught_up() {
     let Some(f) = isolated().await else { return };
     for _ in 0..5 {
-        store::undeploy_world(&f.pool, &world_name()).await.unwrap();
+        logged(&f).await;
     }
     feed_of(&f, 5).await;
 
@@ -496,23 +530,11 @@ async fn the_route_takes_only_the_feed_token_and_refuses_bad_cursors_and_limits(
 #[tokio::test]
 async fn retention_deletes_only_rows_past_it() {
     let Some(f) = isolated().await else { return };
-    let (old, fresh) = (world_name(), world_name());
-    store::undeploy_world(&f.pool, &old).await.unwrap();
-    store::undeploy_world(&f.pool, &fresh).await.unwrap();
-    sqlx::query(
-        "UPDATE worlds.change_log SET created_at = timezone('UTC', now()) - interval '31 days' \
-         WHERE world_name = $1",
-    )
-    .bind(old.key())
-    .execute(&f.pool)
-    .await
-    .unwrap();
+    let old = logged(&f).await;
+    let fresh = logged(&f).await;
+    expire(&f, &old).await;
 
-    let cutoff = chrono::Utc::now().naive_utc() - change_log::RETENTION;
-    assert_eq!(
-        change_log::delete_expired(&f.pool, cutoff).await.unwrap(),
-        1
-    );
+    assert_eq!(delete_expired(&f).await, 1);
     let left: Vec<String> = sqlx::query_scalar("SELECT world_name FROM worlds.change_log")
         .fetch_all(&f.pool)
         .await
@@ -563,4 +585,191 @@ async fn the_route_is_refused_while_no_feed_token_is_set() {
     ] {
         expect(&f.app, case, 401).await;
     }
+}
+
+/// A whole-world undeploy of a mirrored world removes no scene published
+/// here: upstream still serves it, so nothing is announced.
+#[tokio::test]
+async fn undeploying_a_mirrored_world_records_nothing() {
+    let Some(f) = isolated().await else { return };
+    let world = world_name();
+    sqlx::query(
+        "INSERT INTO worlds.worlds (name, mirror_source) VALUES ($1, 'https://upstream.example')",
+    )
+    .bind(world.key())
+    .execute(&f.pool)
+    .await
+    .unwrap();
+    sqlx::query(
+        "INSERT INTO worlds.world_scenes (world_name, entity_id, deployment_auth_chain, entity, deployer, parcels, size, mirror_source) \
+         VALUES ($1, 'mirrored', '[]', $2, '0xabc', ARRAY['0,0'], 1, 'https://upstream.example')",
+    )
+    .bind(world.key())
+    .bind(scene_entity(&world, "Mirrored", "bafythumb", "0,0", &["0,0"]))
+    .execute(&f.pool)
+    .await
+    .unwrap();
+
+    assert_eq!(store::undeploy_world(&f.pool, &world).await.unwrap(), 1);
+    assert_eq!(rows(&f).await, 0);
+}
+
+/// A forwarded publish is recorded: the upstream's own event names the
+/// upstream, this one names this node's copy.
+#[tokio::test]
+async fn a_forwarded_publish_is_recorded_naming_this_node() {
+    let Some(f) = isolated().await else { return };
+    let world = world_name();
+    let owner = Address::parse(&format!("0x{}", "a5".repeat(20))).unwrap();
+    let entity = scene_entity(&world, "World", "bafythumb", "0,0", &["0,0"]);
+    store::deploy_scene(
+        &f.pool,
+        &f.storage,
+        SceneDeployment {
+            world: &world,
+            name_owner: Some(&owner),
+            entity_id: "scene-f",
+            deployer: &owner,
+            deployment_auth_chain: &json!([{ "type": "SIGNER", "payload": owner.as_str() }]),
+            entity: &entity,
+            parcels: &parcels(&["0,0"]),
+            size: 1,
+            replacement: &Deploy::Owner,
+            forward_to: Some("https://upstream.example"),
+            quota: None,
+            public_base: BASE,
+        },
+    )
+    .await
+    .unwrap();
+
+    let entries = feed_of(&f, 1).await;
+    assert_eq!(entries[0]["event"]["subType"], "deployment");
+    assert_eq!(entries[0]["event"]["contentServerUrls"], json!([BASE]));
+}
+
+/// A cursor past the cluster's next transaction id (a restore, another
+/// cluster) is refused, never answered as caught up.
+#[tokio::test]
+async fn a_cursor_ahead_of_the_cluster_is_refused_with_409() {
+    let Some(f) = isolated().await else { return };
+    logged(&f).await;
+    let xmax: String = sqlx::query_scalar("SELECT pg_snapshot_xmax(pg_current_snapshot())::text")
+        .fetch_one(&f.pool)
+        .await
+        .unwrap();
+    let ahead = xmax.parse::<u64>().unwrap() + 1_000_000;
+    for cursor in [format!("{ahead}:1"), "18446744073709551615:1".to_string()] {
+        expect(
+            &f.app,
+            Case::new("GET", format!("/changes?after={cursor}")).bearer(FEED_TOKEN),
+            409,
+        )
+        .await;
+    }
+}
+
+/// 410 only for a cursor behind rows retention deleted: a reader caught up
+/// at the newest deleted row, or reading from the start, missed nothing.
+#[tokio::test]
+async fn a_cursor_behind_deleted_rows_is_refused_with_410() {
+    let Some(f) = isolated().await else { return };
+    let (first, second) = (logged(&f).await, logged(&f).await);
+    feed_of(&f, 2).await;
+    let all = page(&f, "").await;
+    let (behind, caught_up) = (cursor_of(&all["changes"][0]), cursor_of(&all["changes"][1]));
+    expire(&f, &first).await;
+    expire(&f, &second).await;
+    assert_eq!(delete_expired(&f).await, 2);
+
+    // The table is empty: the caught-up reader is still caught up.
+    let empty = page(&f, &format!("?after={caught_up}")).await;
+    assert_eq!(empty, json!({ "changes": [], "next": null }));
+    expect(
+        &f.app,
+        Case::new("GET", format!("/changes?after={behind}")).bearer(FEED_TOKEN),
+        410,
+    )
+    .await;
+
+    // A new row: the caught-up reader takes it, the one behind is still refused.
+    let third = logged(&f).await;
+    feed_of(&f, 1).await;
+    let next = page(&f, &format!("?after={caught_up}")).await;
+    assert_eq!(
+        next["changes"][0]["event"]["metadata"]["worldName"],
+        third.display()
+    );
+    expect(
+        &f.app,
+        Case::new("GET", format!("/changes?after={behind}")).bearer(FEED_TOKEN),
+        410,
+    )
+    .await;
+    // Without `after`, from the oldest retained row.
+    assert_eq!(page(&f, "").await["changes"].as_array().unwrap().len(), 1);
+}
+
+#[tokio::test]
+async fn retention_deletes_in_batches_and_keeps_the_newest_deleted_cursor() {
+    let Some(f) = isolated().await else { return };
+    let mut worlds = Vec::new();
+    for _ in 0..5 {
+        worlds.push(logged(&f).await);
+    }
+    let kept = logged(&f).await;
+    for world in &worlds {
+        expire(&f, world).await;
+    }
+    feed_of(&f, 6).await;
+    let all = page(&f, "").await;
+    let newest_deleted = Cursor::parse(&cursor_of(&all["changes"][4])).unwrap();
+
+    let cutoff = chrono::Utc::now().naive_utc() - change_log::RETENTION;
+    assert_eq!(
+        change_log::delete_expired_in(&f.pool, cutoff, 2)
+            .await
+            .unwrap(),
+        5
+    );
+    let horizon: (String, i64) =
+        sqlx::query_as("SELECT txid::text, id FROM worlds.change_log_horizon")
+            .fetch_one(&f.pool)
+            .await
+            .unwrap();
+    assert_eq!(
+        horizon,
+        (newest_deleted.txid.to_string(), newest_deleted.id)
+    );
+    let left: Vec<String> = sqlx::query_scalar("SELECT world_name FROM worlds.change_log")
+        .fetch_all(&f.pool)
+        .await
+        .unwrap();
+    assert_eq!(left, [kept.key().to_string()]);
+}
+
+/// A page stops at the byte budget with `more` set, and always holds a row.
+#[tokio::test]
+async fn a_page_stops_at_the_byte_budget() {
+    let Some(f) = isolated().await else { return };
+    for _ in 0..3 {
+        logged(&f).await;
+    }
+    let all = feed_of(&f, 3).await;
+    assert_eq!(all.len(), 3);
+    let read = |budget| change_log::read(&f.pool, None, change_log::MAX_LIMIT, budget);
+    let whole = read(change_log::PAGE_BUDGET_BYTES).await.unwrap();
+    assert!(!whole.more);
+    let first = whole.changes[0].to_json().to_string().len() + 1;
+    let second = whole.changes[1].to_json().to_string().len() + 1;
+
+    let one = read(first + second - 1).await.unwrap();
+    assert_eq!(one.changes, whole.changes[..1]);
+    assert!(one.more);
+    let two = read(first + second).await.unwrap();
+    assert_eq!(two.changes, whole.changes[..2]);
+    assert!(two.more);
+    let tiny = read(0).await.unwrap();
+    assert_eq!(tiny.changes.len(), 1);
+    assert!(tiny.more);
 }

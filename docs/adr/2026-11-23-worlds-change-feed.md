@@ -21,7 +21,10 @@ The node records the events and a relay outside it publishes them.
   message body and its message attributes besides type and subType. The
   write path inserts it in the transaction of the change, so a row exists
   exactly when the change committed. The worlds mirror, peer sync and the TS
-  import never write it: the feed carries only this node's own changes.
+  import never write it: the feed carries only this node's own changes. A
+  whole-world undeploy is recorded only when it removed a scene published
+  here. A publish forwarded upstream is recorded as well: the upstream
+  announces its own copy with itself as the content server.
 - Bodies are the upstream's exactly (the `@dcl/schemas` event schemas forbid
   additional properties). A deployment names `WORLDS_PUBLIC_URL`, by default
   `<PUBLIC_URL>/worlds-content-server`, as its content server. The
@@ -30,8 +33,14 @@ The node records the events and a relay outside it publishes them.
 - `GET /worlds-content-server/changes?after=<txid>:<id>&limit=<n>` pages the
   rows in `(txid, id)` order, only rows of transactions older than every
   transaction still running. A transaction that took its id first and
-  commits last is therefore never skipped by a reader's cursor. Rows are kept
-  30 days.
+  commits last is therefore never skipped by a reader's cursor. A page stops
+  at `limit` rows or 8 MiB of entries; `next` is `null` once caught up. Rows
+  are kept 30 days.
+- A cursor the feed cannot serve is refused, never answered with an empty
+  page: 409 when its transaction id is at or past the cluster's next one
+  (a restored database, another cluster), 410 when retention deleted rows
+  after it (the newest deleted cursor is kept in `change_log_horizon`). A
+  reader resets its cursor and starts again without `after`.
 - The route requires its own bearer, `WORLDS_CHANGE_FEED_TOKEN`
   (`Authorization: Bearer <token>`, compared in constant time; unset refuses
   every request with 401). It grants nothing else, and the worlds admin token
@@ -44,9 +53,14 @@ handles itself.
 ## Consequences
 
 - A relay holds only the feed token, which reads the feed and nothing else.
-- The feed lags the cluster's oldest open write transaction.
+- The feed lags the cluster's oldest open write transaction;
+  `worlds_change_feed_withheld_seconds` reports how long committed rows have
+  been held back.
 - Transaction ids do not survive a logical dump and restore: after one, the
-  table is emptied and readers start again from its oldest row.
+  operator empties `change_log` and `change_log_horizon`, and readers' stored
+  cursors get 409 until reset.
+- Delivery is at least once: a reader may republish a page, and event keys
+  are not unique, so consumers must be idempotent.
 
 ## Rejected
 

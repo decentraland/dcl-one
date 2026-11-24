@@ -358,6 +358,7 @@ pub async fn deploy_scene_with_on(
     crate::explore::places::scene_identity::retire_orphans(&mut tx, &[world.key().to_string()])
         .await?;
 
+    // Recorded with a forward too: the upstream announces its own copy, naming itself.
     {
         use crate::core::change_log;
         let event =
@@ -527,14 +528,14 @@ pub(crate) fn entity_timestamp_value(entity: &Value) -> Result<f64, ApiError> {
 /// Which undeploy [`delete_scenes_locked`] runs, for its change log event.
 #[derive(Clone, Copy)]
 enum Undeploy {
-    /// `world_undeployment`, recorded whatever was removed.
+    /// `world_undeployment`, recorded when it removed a scene published here.
     World,
     /// `world_scenes_undeployment`, recorded when a removed scene has a base parcel.
     Scenes,
 }
 
 /// `sql` is a [`retiring!`] delete returning `entity_id, entity, parcels, mirror_source`.
-/// A removed mirrored scene is not this node's change: the scenes event leaves it out.
+/// A removed mirrored scene is not this node's change: no event names it.
 async fn delete_scenes_locked(
     pool: &PgPool,
     world: &WorldName,
@@ -564,10 +565,11 @@ async fn delete_scenes_locked(
     crate::explore::places::scene_identity::retire_orphans(&mut tx, &[world.key().to_string()])
         .await?;
     recompute_spawn(&mut tx, world).await?;
-    if !removed.is_empty() {
+    if !rows.is_empty() {
         crate::explore::places::derive::mark_world_dirty(&mut tx, world.key()).await?;
     }
     match undeploy {
+        Undeploy::World if removed.is_empty() => {}
         Undeploy::World => {
             let event = change_log::world_undeployment(world, emitted_at);
             change_log::record(&mut tx, world, &event, &serde_json::json!({})).await?;

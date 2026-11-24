@@ -47,6 +47,8 @@ pub(super) const RETENTION_INTERVAL: Duration = Duration::from_secs(60 * 60);
 /// Rows a page holds without `limit`, and at most.
 pub const DEFAULT_LIMIT: i64 = 500;
 pub const MAX_LIMIT: i64 = 1000;
+/// Serialized bytes a page's entries stay within; a larger first entry is served alone.
+pub const PAGE_BUDGET_BYTES: usize = 8 * 1024 * 1024;
 
 /// The upstream's SNS body budget for a scenes undeployment: 255 KiB, the
 /// rest of SNS's 256 KiB left to the message attributes.
@@ -61,7 +63,8 @@ pub(crate) async fn emission_clock(conn: &mut PgConnection) -> Result<i64, sqlx:
         .await
 }
 
-/// One event row, in the caller's transaction.
+/// One event row, in the caller's transaction. An event over
+/// [`MESSAGE_BODY_BUDGET_BYTES`] is still recorded, with a warning.
 pub(crate) async fn record(
     conn: &mut PgConnection,
     world: &WorldName,
@@ -69,6 +72,10 @@ pub(crate) async fn record(
     attributes: &Value,
 ) -> Result<(), sqlx::Error> {
     let kind = event.get("subType").and_then(Value::as_str).unwrap_or("");
+    let size = event.to_string().len();
+    if size > MESSAGE_BODY_BUDGET_BYTES {
+        tracing::warn!(%world, kind, size, "change log event over the SNS body budget: a relay will not publish it");
+    }
     sqlx::query(
         "INSERT INTO worlds.change_log (kind, world_name, event, attributes) VALUES ($1, $2, $3, $4)",
     )
@@ -330,45 +337,141 @@ pub struct Change {
     pub attributes: Value,
 }
 
-/// Up to `limit` rows after `after` in (txid, id) order, only of
-/// transactions older than every transaction still running, and whether more
-/// such rows follow.
+impl Change {
+    /// The entry as the route serves it.
+    pub fn to_json(&self) -> Value {
+        json!({
+            "cursor": self.cursor.to_string(),
+            "event": self.event,
+            "attributes": self.attributes,
+        })
+    }
+}
+
+/// One page of the feed, and whether more readable rows follow it.
+#[derive(Debug)]
+pub struct Page {
+    pub changes: Vec<Change>,
+    pub more: bool,
+}
+
+/// Why the feed cannot serve a cursor.
+#[derive(Debug)]
+pub enum ReadError {
+    /// At or past the cluster's next transaction id: a cursor from another
+    /// cluster, or from before a logical restore.
+    Ahead,
+    /// Rows after it were deleted by retention.
+    Pruned,
+    Db(sqlx::Error),
+}
+
+impl From<sqlx::Error> for ReadError {
+    fn from(e: sqlx::Error) -> Self {
+        Self::Db(e)
+    }
+}
+
+/// Up to `limit` rows after `after` (from the oldest retained row when
+/// `None`) in (txid, id) order, only of transactions older than every
+/// transaction still running, and no more than `budget` serialized bytes
+/// (always at least one row). The cursor checks and the page read share one
+/// snapshot.
 pub async fn read(
     pool: &PgPool,
-    after: Cursor,
+    after: Option<Cursor>,
     limit: i64,
-) -> Result<(Vec<Change>, bool), sqlx::Error> {
-    let rows: Vec<(String, i64, Value, Value)> = sqlx::query_as(
-        "SELECT txid::text, id, event, attributes FROM worlds.change_log \
-         WHERE (txid, id) > ($1::text::xid8, $2) \
-           AND txid < pg_snapshot_xmin(pg_current_snapshot()) \
-         ORDER BY txid, id LIMIT $3",
+    budget: usize,
+) -> Result<Page, ReadError> {
+    let mut tx = pool.begin().await?;
+    sqlx::query("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ, READ ONLY")
+        .execute(&mut *tx)
+        .await?;
+    if let Some(after) = after {
+        let (ahead, pruned): (bool, bool) = sqlx::query_as(
+            "SELECT $1::text::xid8 >= pg_snapshot_xmax(pg_current_snapshot()), \
+                    COALESCE((SELECT ($1::text::xid8, $2::bigint) < (txid, id) \
+                              FROM worlds.change_log_horizon), false)",
+        )
+        .bind(after.txid.to_string())
+        .bind(after.id)
+        .fetch_one(&mut *tx)
+        .await?;
+        if ahead {
+            return Err(ReadError::Ahead);
+        }
+        if pruned {
+            return Err(ReadError::Pruned);
+        }
+    }
+    let after = after.unwrap_or(Cursor::START);
+    // `jsonb::text` is never shorter than the compact form, so the estimate
+    // stops the fetch no earlier than the exact check below.
+    let rows: Vec<(String, i64, Value, Value, i64)> = sqlx::query_as(
+        "WITH page AS ( \
+             SELECT txid, id, event, attributes, \
+                    octet_length(event::text) + octet_length(attributes::text) AS size \
+             FROM worlds.change_log \
+             WHERE (txid, id) > ($1::text::xid8, $2) \
+               AND txid < pg_snapshot_xmin(pg_current_snapshot()) \
+             ORDER BY txid, id LIMIT $3), \
+         sized AS ( \
+             SELECT *, sum(size) OVER (ORDER BY txid, id) - size AS before FROM page) \
+         SELECT txid::text, id, event, attributes, (SELECT count(*) FROM page) \
+         FROM sized WHERE before = 0 OR before < $4 ORDER BY txid, id",
     )
     .bind(after.txid.to_string())
     .bind(after.id)
     .bind(limit + 1)
-    .fetch_all(pool)
+    .bind(budget as i64)
+    .fetch_all(&mut *tx)
     .await?;
-    let more = rows.len() as i64 > limit;
-    let changes = rows
-        .into_iter()
-        .take(limit as usize)
-        .map(|(txid, id, event, attributes)| Change {
+    tx.commit().await?;
+    let available = rows.first().map_or(0, |r| r.4) as usize;
+    let mut changes = Vec::new();
+    let mut size = 0;
+    for (txid, id, event, attributes, _) in rows {
+        if changes.len() as i64 == limit {
+            break;
+        }
+        let change = Change {
             cursor: Cursor {
                 txid: txid.parse().unwrap_or(0),
                 id,
             },
             event,
             attributes,
-        })
-        .collect();
-    Ok((changes, more))
+        };
+        let entry = change.to_json().to_string().len() + 1;
+        if !changes.is_empty() && size + entry > budget {
+            break;
+        }
+        size += entry;
+        changes.push(change);
+    }
+    Ok(Page {
+        more: available > changes.len(),
+        changes,
+    })
+}
+
+/// Seconds since the oldest committed row still held back by an open
+/// transaction was written; 0 when none is.
+pub async fn withheld_seconds(pool: &PgPool) -> Result<f64, sqlx::Error> {
+    sqlx::query_scalar(
+        "SELECT COALESCE(extract(epoch FROM timezone('UTC', now()) - min(created_at)), 0)::float8 \
+         FROM worlds.change_log WHERE txid >= pg_snapshot_xmin(pg_current_snapshot())",
+    )
+    .fetch_one(pool)
+    .await
 }
 
 /// `GET /changes?after=<txid>:<id>&limit=<n>`: the feed after `after` (from
 /// the oldest retained row without it). `next` is the last entry's cursor
 /// while more rows are readable, `null` once caught up; a reader then polls
-/// again with the last cursor it took.
+/// again with the last cursor it took. A page stops at `limit` rows or
+/// [`PAGE_BUDGET_BYTES`]. 409 for a cursor this cluster has not reached, 410
+/// for one behind rows retention deleted.
 pub async fn changes(
     State(state): State<SharedState>,
     headers: HeaderMap,
@@ -377,12 +480,12 @@ pub async fn changes(
     // The worlds bearer check (constant time, unset fails closed) over the feed's own token.
     authorize_admin(state.settings.change_feed_token.as_deref(), &headers)?;
     let after = match query.get("after").map(String::as_str) {
-        None | Some("") => Cursor::START,
-        Some(raw) => Cursor::parse(raw).ok_or_else(|| {
+        None | Some("") => None,
+        Some(raw) => Some(Cursor::parse(raw).ok_or_else(|| {
             ApiError::bad_request(format!(
                 "Invalid cursor \"{raw}\": expected <txid>:<id> as returned by this route."
             ))
-        })?,
+        })?),
     };
     let limit = match query.get("limit") {
         None => DEFAULT_LIMIT,
@@ -397,44 +500,72 @@ pub async fn changes(
             })?
             .min(MAX_LIMIT),
     };
-    let (changes, more) = read(&state.pool, after, limit).await?;
-    let next = changes
+    match withheld_seconds(&state.pool).await {
+        Ok(age) => super::metrics::change_feed_withheld(age),
+        Err(e) => tracing::warn!(error = %e, "change feed lag not read"),
+    }
+    let page = match read(&state.pool, after, limit, PAGE_BUDGET_BYTES).await {
+        Ok(page) => page,
+        Err(ReadError::Ahead) => {
+            return Err(ApiError::conflict(
+                "The cursor is ahead of this database: it was not issued by this feed, or the \
+                 database was restored. Start again without `after`.",
+            ));
+        }
+        Err(ReadError::Pruned) => {
+            return Err(ApiError::http(
+                410,
+                "Rows after the cursor were deleted by retention. Start again without `after`.",
+            ));
+        }
+        Err(ReadError::Db(e)) => return Err(e.into()),
+    };
+    let next = page
+        .changes
         .last()
-        .filter(|_| more)
+        .filter(|_| page.more)
         .map(|c| c.cursor.to_string());
-    let changes: Vec<Value> = changes
-        .into_iter()
-        .map(|c| {
-            json!({
-                "cursor": c.cursor.to_string(),
-                "event": c.event,
-                "attributes": c.attributes,
-            })
-        })
-        .collect();
+    let changes: Vec<Value> = page.changes.iter().map(Change::to_json).collect();
     Ok(Json(json!({ "changes": changes, "next": next })))
 }
 
 /// Deletes the rows created before `cutoff`, one bounded statement at a
-/// time; returns how many went.
+/// time, raising `change_log_horizon` to the newest cursor deleted; returns
+/// how many went.
 pub async fn delete_expired(
     pool: &PgPool,
     cutoff: chrono::NaiveDateTime,
 ) -> Result<u64, sqlx::Error> {
+    delete_expired_in(pool, cutoff, RETENTION_BATCH).await
+}
+
+pub(crate) async fn delete_expired_in(
+    pool: &PgPool,
+    cutoff: chrono::NaiveDateTime,
+    batch: i64,
+) -> Result<u64, sqlx::Error> {
     let mut deleted = 0;
     for _ in 0..RETENTION_MAX_BATCHES {
-        let n = sqlx::query(
-            "DELETE FROM worlds.change_log WHERE id IN ( \
-                 SELECT id FROM worlds.change_log WHERE created_at < $1 \
-                 ORDER BY created_at LIMIT $2)",
+        let n: i64 = sqlx::query_scalar(
+            "WITH gone AS ( \
+                 DELETE FROM worlds.change_log WHERE id IN ( \
+                     SELECT id FROM worlds.change_log WHERE created_at < $1 \
+                     ORDER BY created_at LIMIT $2) \
+                 RETURNING txid, id), \
+             newest AS (SELECT txid, id FROM gone ORDER BY txid DESC, id DESC LIMIT 1), \
+             raised AS ( \
+                 INSERT INTO worlds.change_log_horizon (txid, id) SELECT txid, id FROM newest \
+                 ON CONFLICT (singleton) DO UPDATE SET txid = EXCLUDED.txid, id = EXCLUDED.id \
+                 WHERE (EXCLUDED.txid, EXCLUDED.id) > \
+                       (worlds.change_log_horizon.txid, worlds.change_log_horizon.id)) \
+             SELECT count(*) FROM gone",
         )
         .bind(cutoff)
-        .bind(RETENTION_BATCH)
-        .execute(pool)
-        .await?
-        .rows_affected();
-        deleted += n;
-        if n < RETENTION_BATCH as u64 {
+        .bind(batch)
+        .fetch_one(pool)
+        .await?;
+        deleted += n as u64;
+        if n < batch {
             break;
         }
     }

@@ -3282,10 +3282,11 @@ spawn moved) and an access edit. A handful of rows per change, tens a day
 expected; a deployment body is its auth chain plus about 200 bytes, a scenes
 undeployment at most 255 KiB. The worlds mirror, peer sync and the TS import
 never write it. Read by a few relays through `GET
-/worlds-content-server/changes`, pages of at most 1000 rows in `(txid, id)`
-order on `change_log_cursor_idx`. The fleet-wide hourly
+/worlds-content-server/changes`, pages of at most 1000 rows and 8 MiB in
+`(txid, id)` order on `change_log_cursor_idx`. The fleet-wide hourly
 `worlds-change-log-retention` job deletes rows older than 30 days on
-`change_log_created_at_idx`, at most 100,000 a pass.
+`change_log_created_at_idx`, at most 100,000 a pass, and raises the one-row
+`worlds.change_log_horizon` to the newest cursor it deleted.
 
 Invariants:
 
@@ -3299,7 +3300,12 @@ Invariants:
   row whose transaction commits later; the feed lags the cluster's oldest
   open write transaction.
 - Transaction ids do not survive a logical dump and restore: after one,
-  empty the table, and readers start again from its oldest row.
+  empty `change_log` and `change_log_horizon`. The feed answers 409 for a
+  cursor at or past the cluster's next transaction id and 410 for one below
+  `change_log_horizon`, the newest cursor retention deleted; a reader then
+  starts again without a cursor.
+- A whole-world undeploy is recorded only when it removed a scene published
+  here; a removed mirrored copy is never named.
 - No FK to `worlds.worlds`: a row outlives the world it names.
 
 ## Scene admin grants

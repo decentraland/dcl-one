@@ -801,9 +801,10 @@ CREATE INDEX worlds_owner_idx ON worlds.worlds (owner) WHERE owner IS NOT NULL;
 -- (`txid < pg_snapshot_xmin(pg_current_snapshot())`), so a row is never
 -- skipped by a cursor that moved past a later commit, and the feed lags the
 -- oldest open write transaction of the cluster. Transaction ids do not
--- survive a logical dump and restore: after one, empty the table so readers
--- start again from its oldest row. No FK to worlds.worlds: a row outlives
--- the world it names.
+-- survive a logical dump and restore: after one, empty this table and
+-- change_log_horizon; a reader's stored cursor is then answered 409 until
+-- it starts again without one. No FK to worlds.worlds: a row outlives the
+-- world it names.
 CREATE TABLE worlds.change_log (
     id bigint GENERATED ALWAYS AS IDENTITY,
     txid xid8 NOT NULL DEFAULT pg_current_xact_id(),
@@ -824,4 +825,14 @@ CREATE TABLE worlds.change_log (
 CREATE INDEX change_log_cursor_idx ON worlds.change_log (txid, id);
 -- The retention pass.
 CREATE INDEX change_log_created_at_idx ON worlds.change_log (created_at);
+
+-- The newest cursor retention deleted (one row, raised by each pass): a
+-- reader's cursor below it missed rows, and the feed answers 410.
+CREATE TABLE worlds.change_log_horizon (
+    singleton boolean NOT NULL DEFAULT true,
+    txid xid8 NOT NULL,
+    id bigint NOT NULL,
+    CONSTRAINT change_log_horizon_pkey PRIMARY KEY (singleton),
+    CONSTRAINT change_log_horizon_singleton CHECK (singleton)
+);
 -- ==== end section: change-log ====
