@@ -32,6 +32,79 @@ describe('when Button owns content layout in a production bundle', () => {
   afterEach(() => {
     expect(b.session.runtimeErrors.slice(caseErrorStart)).toEqual([])
   })
+  it('should size the secondary-light icon and loading indicator for each button size', async () => {
+    await ready()
+    const metrics = await b.evaluate(
+      `Array.from(document.querySelectorAll('[data-variant="secondaryLight"][aria-busy="true"]'), button => [
+        button.dataset.size,
+        button.querySelector('svg').getBoundingClientRect().width,
+        button.querySelector('[data-loading-indicator]').offsetWidth
+      ])`
+    )
+    expect(metrics).toEqual([
+      ['xl', 24, 27],
+      ['lg', 24, 23],
+      ['md', 20, 23],
+      ['sm', 16, 18]
+    ])
+  })
+  describe('and an action group uses responsive medium buttons', () => {
+    it('should align labelled and square icon actions on desktop and mobile', async () => {
+      await ready()
+      try {
+        for (const [width, height, touch] of [
+          [1440, 40, false],
+          [390, 48, false],
+          [1440, 48, true]
+        ] as const) {
+          await b.session.send('Emulation.setTouchEmulationEnabled', { enabled: touch })
+          await b.session.send('Emulation.setDeviceMetricsOverride', {
+            width,
+            height: 900,
+            deviceScaleFactor: 1,
+            mobile: false
+          })
+          expect(
+            await b.evaluate(`['responsive-label', 'responsive-icon'].map(name => {
+              const button = document.querySelector('[data-case="' + name + '"]')
+              return [button.offsetHeight, button.querySelector('svg').getBoundingClientRect().width]
+            })`)
+          ).toEqual([
+            [height, 20],
+            [height, 24]
+          ])
+          expect(
+            await b.evaluate(`['responsive-icon', 'static-icon', 'responsive-small-icon'].map(name => {
+              const button = document.querySelector('[data-case="' + name + '"]')
+              return [button.offsetWidth, button.offsetHeight]
+            })`)
+          ).toEqual([
+            [height, height],
+            [48, 48],
+            [48, 48]
+          ])
+          expect(
+            await b.evaluate(
+              `document.querySelector('[data-case="responsive-loading"] [data-loading-indicator]').offsetWidth`
+            )
+          ).toBe(23)
+        }
+      } finally {
+        await b.session.send('Emulation.setTouchEmulationEnabled', { enabled: false })
+        await b.session.send('Emulation.clearDeviceMetricsOverride')
+      }
+    })
+  })
+  it('should preserve the default medium icon size and static icon target', async () => {
+    await ready()
+    expect(
+      await b.evaluate(`(() => {
+        const primary = document.querySelector('[data-case="default-medium"] svg')
+        const icon = document.querySelector('[data-case="static-icon"]')
+        return [primary.getBoundingClientRect().width, icon.offsetWidth, icon.offsetHeight]
+      })()`)
+    ).toEqual([17.5, 48, 48])
+  })
   it('should preserve intrinsic shrink wrapping and place fill icons at both content edges', async () => {
     await ready()
     const layout = await b.evaluate<

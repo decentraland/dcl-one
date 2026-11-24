@@ -15,8 +15,8 @@
   "inputs": {
     "config": {
       "path": "library/ui/figma/figma.config.json",
-      "sha256": "da4a9ae4f51f110d9badbf10e7b52cad8da3f5cbd1614285e7767f531ca76feb",
-      "indexBlobSha": "de0bfcb132d1138d70db2b539dfbd896b1da5b1b"
+      "sha256": "d11918273bc19c99613c6eda2d078d5c85811238be5e6de659915bd2e9d01475",
+      "indexBlobSha": "90c9f3acd73ee58426692a3b64a2bb742406d4f4"
     },
     "dependencies": [
       {
