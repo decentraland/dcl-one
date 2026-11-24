@@ -64,6 +64,8 @@ class GitHub:
         ]
         for deployment in self.deployments[1:]:
             deployment['creator'] = {'login': 'github-actions[bot]'}
+        for deployment in self.deployments:
+            deployment['task'] = 'dcl/set-rollout'
         # 9 was made by hand, 8 is still in progress, 2 failed; only the newest status of each counts
         self.deployment_states = {9: 'success', 8: 'queued', 7: 'success', 6: 'success', 5: 'success', 4: 'success',
                                   3: 'success', 2: 'failure', 1: 'success'}
@@ -97,8 +99,10 @@ class GitHub:
         if match := re.fullmatch(rf'repos/{REPO}/deployments\?environment=org&per_page=100&page=([0-9]+)', path):
             page = int(match.group(1))
             return self.deployments[(page - 1) * 100:page * 100]
-        if match := re.fullmatch(rf'repos/{REPO}/deployments/([0-9]+)/statuses\?per_page=1', path):
-            return [{'state': self.deployment_states[int(match.group(1))]}]
+        if match := re.fullmatch(rf'repos/{REPO}/deployments/([0-9]+)/statuses\?per_page=100', path):
+            # newest first; a plain state is a deployment that went straight to it
+            states = self.deployment_states[int(match.group(1))]
+            return [{'state': state} for state in ([states] if isinstance(states, str) else states)]
         if match := re.fullmatch(rf'repos/{REPO}/actions/runs/([0-9]+)', path):
             run_id = int(match.group(1))
             if run_id == self.release_run['id']:
@@ -179,8 +183,8 @@ class ResolverTest(unittest.TestCase):
         def other_commit(github):
             github.release_run['head_sha'] = 'f' * 40
 
-        def failed_run(github):
-            github.release_run['conclusion'] = 'failure'
+        def unfinished_run(github):
+            github.release_run['status'] = 'in_progress'
 
         def is_base(github):
             github.release_run['head_sha'] = MAIN[0]
@@ -208,7 +212,7 @@ class ResolverTest(unittest.TestCase):
             github.failures = [(r'/deployments\?', subprocess.TimeoutExpired('gh', 60))]
 
         for change, note in ((no_rollout, 'No successful rollout'), (deployments_error, 'could not be read'), (unnamed_run, 'does not name the CI run'),
-                             (other_commit, 'is not a successful'), (failed_run, 'is not a successful'),
+                             (other_commit, 'is not a finished'), (unfinished_run, 'is not a finished'),
                              (is_base, 'is the base build'), (expired, 'has expired'),
                              (unoptimized, 'is not optimized'), (no_api, 'could not be read'),
                              (slow_zip, 'could not be read'), (too_many_artifacts, 'could not be read'),
@@ -225,8 +229,27 @@ class ResolverTest(unittest.TestCase):
                 self.assertIn('Not compared with the latest release', result['notes'])
                 self.assertIn(note, result['notes'])
 
+    def test_a_release_whose_ci_run_ended_cancelled_after_building_its_web_app_is_measured(self):
+        for conclusion in ('cancelled', 'failure'):
+            with self.subTest(conclusion=conclusion):
+                self.github.release_run['conclusion'] = conclusion
+                result = self.resolve()
+                self.assertEqual(result['release_version'], RELEASE_VERSION)
+                self.assertEqual(result['legs'][0]['release_run_id'], '80')
+
+    def test_a_live_release_made_inactive_by_a_newer_rollout_is_still_the_release(self):
+        self.github.deployment_states[1] = ['inactive', 'success', 'in_progress', 'queued']
+        self.assertEqual(self.resolve()['release_version'], RELEASE_VERSION)
+        # never applied: not a release
+        self.github.deployment_states[1] = ['inactive', 'queued']
+        self.assertIn('No successful rollout', self.resolve()['notes'])
+
+    def test_only_a_rollout_task_is_a_release(self):
+        self.github.deployments[-1]['task'] = 'deploy'
+        self.assertIn('No successful rollout', self.resolve()['notes'])
+
     def test_the_release_is_searched_page_by_page_until_the_first_rollout(self):
-        partial = {'creator': {'login': 'github-actions[bot]'},
+        partial = {'creator': {'login': 'github-actions[bot]'}, 'task': 'dcl/set-rollout',
                    'payload': {'prefix': inputs.PACKAGE, 'path': 'play', 'percentage': 10, 'version': 'x'}}
         newer = [{**partial, 'id': 1000 + n} for n in range(150)]
         self.github.deployments = newer + self.github.deployments

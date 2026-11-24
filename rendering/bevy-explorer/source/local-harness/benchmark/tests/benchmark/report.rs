@@ -255,6 +255,26 @@ fn release_a_leg_that_could_not_run_the_release_says_so_instead_of_no_data() {
         !intel.iter().any(|line| line.contains("No Release run")),
         "{intel:#?}"
     );
+
+    // no laptop ran it: the headline says so, rather than that its runs produced no data
+    let dir = scratch("report-release-not-measured-anywhere");
+    for leg in ["apple-m1", "intel-i5"] {
+        let from = fixture("ok").join(format!("benchmark-result-{leg}-chrome"));
+        let to = dir.join(format!("benchmark-result-{leg}-chrome"));
+        std::fs::create_dir_all(&to).unwrap();
+        for file in std::fs::read_dir(&from).unwrap() {
+            let file = file.unwrap().path();
+            std::fs::copy(&file, to.join(file.file_name().unwrap())).unwrap();
+        }
+        std::fs::write(to.join("release_not_measured.txt"), "").unwrap();
+    }
+    options.dir = dir;
+    let report = build(&options);
+    has_line(
+        &report,
+        "**Against the latest release: ⚠️ not measured on any laptop — its download or warm-up failed**",
+    );
+    assert!(!report.markdown.contains("no Release run produced data"));
 }
 
 #[test]

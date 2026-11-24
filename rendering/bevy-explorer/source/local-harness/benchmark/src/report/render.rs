@@ -105,6 +105,10 @@ fn labelled_headline(
 pub const NOTHING_COMPARED_WITH_RELEASE: &str =
     "**Against the latest release: ⚠️ nothing was compared — no Release run produced data**\n\n";
 
+/// The release line when no leg with data could download or warm up the latest release.
+pub const RELEASE_NOT_MEASURED_ANYWHERE: &str =
+    "**Against the latest release: ⚠️ not measured on any laptop — its download or warm-up failed**\n\n";
+
 /// The **Overall** line when sections have data but none had baseline runs to compare with.
 pub const NOTHING_COMPARED: &str =
     "**Overall: ⚠️ nothing was compared — no Baseline run produced data**\n\n";

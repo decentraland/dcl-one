@@ -233,19 +233,21 @@ fn leg(args: LegArgs, ctx: &Context) -> Result<i32, Failure> {
     Ok(0)
 }
 
-/// A release step's result: its value, or, on any failure but an interrupt, a warning and none.
+/// A release step's result: its value, or, when the disk or the network failed, a warning and
+/// none. A mistyped `--release`, a machine that cannot run and an interrupt stop the leg, as for
+/// the other builds.
 fn optional_release<T>(
     result: Result<T, Failure>,
     not_measured: &mut bool,
 ) -> Result<Option<T>, Failure> {
     match result {
         Ok(value) => Ok(Some(value)),
-        Err(Failure::Interrupted) => Err(Failure::Interrupted),
-        Err(failure) => {
+        Err(failure @ Failure::Failed(_)) => {
             out::warn(format!("the latest release is not measured: {failure}"));
             *not_measured = true;
             Ok(None)
         }
+        Err(failure) => Err(failure),
     }
 }
 

@@ -60,9 +60,8 @@ Each enabled laptop of [the fleet](#the-fleet) runs one leg, a job on its self-h
 (*Chrome*, in `bevy-explorer-benchmark-leg.yml`), labelled `<runner label>-chrome`, for example
 `intel-i5-chrome`. The job checks nothing out:
 
-1. It removes an earlier session's files: the runner, the web app folders, `runs_on.txt` and every
-   run file (`runner`, `runs_on.txt`, `release_not_measured.txt`, `change_build*`, `base_build*`,
-   `release_build*`). A file it
+1. It removes an earlier session's files: `runner`, `runs_on.txt`, `release_not_measured.txt`, the
+   web app folders and every run file (`change_build*`, `base_build*`, `release_build*`). A file it
    cannot remove, one that a leftover process holds, fails the job.
 2. It downloads the `benchmark` runner for the laptop's operating system and the change, base and
    latest release web apps from their CI runs, and puts the runner on the PATH. Without a release
@@ -74,8 +73,8 @@ Each enabled laptop of [the fleet](#the-fleet) runs one leg, a job on its self-h
    by default), with a 15 s settle after each run. Each run's files become
    `change_build_<i>.csv/.log`, `base_build_<i>.csv/.log` and `release_build_<i>.csv/.log`;
    `runs_on.txt`, holding the label, comes last.
-5. It uploads `benchmark-result-<label>`: `runs_on.txt` and every run's `.csv`, `.csv.partial`
-   and `.log`, kept 7 days. It does so after a failed or cut-off `measure` too, so the runs that
+5. It uploads `benchmark-result-<label>`: `runs_on.txt`, `release_not_measured.txt` when the leg
+   could not run the release, and every run's `.csv`, `.csv.partial` and `.log`, kept 7 days. It does so after a failed or cut-off `measure` too, so the runs that
    finished can be looked at in the artifact, but not when `measure` never started. The report
    reads a leg only once `measure` wrote its `runs_on.txt`, at the end: after a failed or cut-off
    `measure` it says the leg "produced no results" ([The report](#the-report)). A re-run of the
@@ -185,8 +184,9 @@ run whose top 30 leave the scope out counts as 0.
   conclusion. An exceptions verdict needs two laptops.
 - The **Against the latest release** headline picks the release table's frame-time verdicts by the
   same rules; when the report was told of a release (`--release`) and no section has release runs,
-  it says "⚠️ nothing was compared — no Release run produced data". The badge reads the **Overall**
-  line only.
+  it says "⚠️ nothing was compared — no Release run produced data", or, when every leg with data
+  wrote `release_not_measured.txt`, "⚠️ not measured on any laptop — its download or warm-up
+  failed". The badge reads the **Overall** line only.
 
 Treat small GPU differences with caution: in this scene the GPU average is a few milliseconds
 (measurements (evidence supplied for the task)), near the noise floor, so most GPU changes rightly stay ⚪.
@@ -490,8 +490,9 @@ cargo build -p benchmark --release
 
 `--base` is optional: without it the section shows the change build alone, with the "No Baseline
 run produced data" note. `--release <folder|zip|url>` adds the latest release as a third build and
-its table; a release that cannot be fetched or warmed up is left out with a warning and
-`release_not_measured.txt`, as in the workflow.
+its table; a release whose download, unzip or warm-up fails is left out with a warning and
+`release_not_measured.txt`, as in the workflow, while a mistyped `--release` stops the leg, as a
+mistyped `--base` does.
 
 **The server** listens on `127.0.0.1` and `::1` only. The port is fixed (`--port`, `PERF_PORT`):
 the Chrome profile keeps the local guest per origin. Every response carries the isolation headers
@@ -619,21 +620,22 @@ to the `org` environment, whose payload names the package `@dcl-regenesislabs/be
 (`prefix`), the path (`play`), the rollout percentage and the npm version,
 `0.1.0-<CI run id>.commit-<short sha>`. Setup resolves it in four steps:
 
-1. Among the `org` deployments, newest first and read 100 a page up to 10 pages, the first of that package at `play` and 100% that
-   `github-actions[bot]` created (the rollout workflow's token) and whose latest status is
-   *success*: a partial rollout, a failed one, one still in progress or a record made by hand is
-   not the release.
+1. Among the `org` deployments, newest first and read 100 a page up to 10 pages, the first of
+   that package at `play` and 100% that `github-actions[bot]` created as a `dcl/set-rollout` task
+   (the rollout workflow's token and action) and that was applied: its statuses include *success*
+   and the newest is *success* or *inactive* (a newer rollout can retire it). A partial rollout, a
+   failed one, one still in progress or a record made by hand is not the release.
 2. Its version names the *Bevy Explorer / CI* run that stamped and published the package: setup reads
-   that run and requires it to be a passed `push` or `workflow_dispatch` run of this repository
-   whose commit starts with the short sha.
+   that run and requires it to be a finished `push` or `workflow_dispatch` run of this repository
+   whose commit starts with the short sha. Its conclusion does not count: jobs cancelled after the
+   rollout leave the web app intact, and step 3 checks it.
 3. That run's `bevy-explorer-web-<sha>` artifact is the release build, and its `build-info.json`
    must say the engine is optimized, as for the change and the base.
 4. Each leg gets the artifact and its run; the report header names the version and the commit.
 
 When any step fails (no rollout yet, a version that names no run, an expired artifact: CI keeps a
 main build's web app 90 days and a branch build's 7, an unoptimized build, a GitHub API error) or
-the release is the base build itself, the legs
-measure the change and the base only, and a note in the report says why the release was not
+the release is the base build itself, the legs measure the change and the base only, and a note in the report says why the release was not
 compared. On a laptop, a release download or warm-up that fails drops the release from that leg
 only: `benchmark measure` gets `RELEASE_NOT_MEASURED` and writes `release_not_measured.txt`, and
 the report says in that section that the release was not measured there. Setup downloads up to

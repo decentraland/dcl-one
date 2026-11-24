@@ -36,8 +36,10 @@ PACKAGE = '@dcl-regenesislabs/bevy-explorer-web'
 # The deployment environment of decentraland.org (bevy-explorer-rollout-manual.yml).
 RELEASE_ENVIRONMENT = 'org'
 RELEASE_PATH = 'play'
-# The rollout workflow creates the deployment with GITHUB_TOKEN; a record made by hand is not a release.
+# The rollout workflow creates the deployment with GITHUB_TOKEN, as set-rollout-action's task; a
+# record made by hand, or a CDN upload, is not a release.
 RELEASE_CREATOR = 'github-actions[bot]'
+RELEASE_TASK = 'dcl/set-rollout'
 RELEASE_VERSION = re.compile(r'[0-9]+\.[0-9]+\.[0-9]+-([0-9]+)\.commit-([0-9a-f]{7,40})')
 RUNNER = 'bevy-explorer-benchmark-'
 # A leg's Test builds step is cut off after 90 minutes, so runs x 3 builds x (the 480 s run timeout
@@ -142,12 +144,22 @@ def latest_release(repo):
             continue
         if str(payload.get('percentage')) != '100':
             continue
-        if (deployment.get('creator') or {}).get('login') != RELEASE_CREATOR:
+        if (deployment.get('creator') or {}).get('login') != RELEASE_CREATOR or deployment.get('task') != RELEASE_TASK:
             continue
-        statuses = api(f"repos/{repo}/deployments/{deployment['id']}/statuses?per_page=1")
-        if statuses and statuses[0].get('state') == 'success':
+        # newest first: applied (success), or applied and later made inactive by a newer rollout
+        states = [status.get('state') for status in api(f"repos/{repo}/deployments/{deployment['id']}/statuses?per_page=100")]
+        if states and states[0] in ('success', 'inactive') and 'success' in states:
             return str(payload.get('version') or '')
     return None
+
+
+def release_run(run, repo, short_sha):
+    """Whether a CI run is a finished Bevy Explorer / CI run of this repository's release commit. Its
+    conclusion does not count: a run whose later jobs were cancelled after the rollout still built
+    the web app, and the artifact and its build-info.json decide."""
+    return (run['path'] == WORKFLOW and run['status'] == 'completed' and run['event'] in ('push', 'workflow_dispatch')
+            and (run.get('head_repository') or {}).get('full_name') == repo
+            and bool(SHA.fullmatch(run['head_sha'])) and run['head_sha'].startswith(short_sha))
 
 
 def release_build(repo, base_sha):
@@ -160,8 +172,8 @@ def release_build(repo, base_sha):
         return None, f'The latest release {version!r} does not name the CI run that built it.'
     run_id, short_sha = match.groups()
     run = api(f'repos/{repo}/actions/runs/{run_id}')
-    if not ci_run(run, repo, ('push', 'workflow_dispatch')) or not run['head_sha'].startswith(short_sha):
-        return None, f'CI run {run_id} is not a successful Bevy Explorer / CI run of the latest release ({version}).'
+    if not release_run(run, repo, short_sha):
+        return None, f'CI run {run_id} is not a finished Bevy Explorer / CI run of the latest release ({version}).'
     if run['head_sha'] == base_sha:
         return None, f'The latest release ({version}) is the base build.'
     names = artifacts(repo, run['id'])

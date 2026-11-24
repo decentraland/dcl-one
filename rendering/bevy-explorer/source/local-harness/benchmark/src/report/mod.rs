@@ -246,6 +246,8 @@ pub fn build_report(options: &ReportOptions) -> Result<BenchmarkReport, Failure>
     // whether a section had baseline runs to compare with, and release runs
     let mut compared = false;
     let mut release_compared = false;
+    // whether every section with data is one whose leg could not run the release
+    let mut release_never_measured = true;
     for folder in &folders {
         let result = read_label(folder).and_then(|label| {
             labels.push(label.clone());
@@ -260,6 +262,10 @@ pub fn build_report(options: &ReportOptions) -> Result<BenchmarkReport, Failure>
             Ok(section) => {
                 compared |= section.baseline_comparison.is_some();
                 release_compared |= section.release_comparison.is_some();
+                release_never_measured &= section
+                    .caveats
+                    .iter()
+                    .any(|caveat| matches!(caveat, RunnerCaveat::ReleaseNotMeasured));
                 findings.extend(section.significant_metric_changes());
                 release_findings.extend(section.release_metric_changes());
                 sections += &render::runner_section(&section);
@@ -299,6 +305,8 @@ pub fn build_report(options: &ReportOptions) -> Result<BenchmarkReport, Failure>
             &stats::headline_metrics(&release_findings, false),
             &stats::headline_metrics(&release_findings, true),
         );
+    } else if has_data && release_never_measured {
+        markdown += render::RELEASE_NOT_MEASURED_ANYWHERE;
     } else if has_data && options.release.is_some() {
         markdown += render::NOTHING_COMPARED_WITH_RELEASE;
     }
