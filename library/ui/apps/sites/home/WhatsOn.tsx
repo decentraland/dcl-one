@@ -39,6 +39,8 @@ type WhatsOnProps = {
   background?: ReactNode
   /** Called when a card's page link is followed, e.g. for analytics. */
   onCardClick?: (card: WhatsOnCardData) => void
+  /** Called when a card's jump-in call is followed, e.g. for analytics. */
+  onJumpInClick?: (card: WhatsOnCardData) => void
 }
 
 // Source draws the badges and the View All chevron with @mui/icons-material (SensorsRounded,
@@ -91,12 +93,14 @@ function Card({
   card,
   labels,
   as: Root = 'li',
-  onClick
+  onClick,
+  onJumpInClick
 }: {
   card: WhatsOnCardData
   labels: WhatsOnProps['labels']
   as?: 'li' | 'div'
   onClick?: () => void
+  onJumpInClick?: () => void
 }) {
   return (
     <Root className={styles.card} data-card={card.title}>
@@ -145,7 +149,12 @@ function Card({
           ) : null}
           {card.jumpHref ? (
             <div className={styles.jumpBox}>
-              <JumpInCTA className={styles.jump} href={card.jumpHref} label={labels.jumpIn} />
+              <JumpInCTA
+                className={styles.jump}
+                href={card.jumpHref}
+                label={labels.jumpIn}
+                onClick={onJumpInClick}
+              />
             </div>
           ) : null}
         </div>
@@ -163,11 +172,13 @@ function WhatsOn({
   carouselLabels,
   viewAll,
   background,
-  onCardClick
+  onCardClick,
+  onJumpInClick
 }: WhatsOnProps) {
   const titleId = useId()
   if (!cards.length) return null
   const click = (card: WhatsOnCardData) => onCardClick && (() => onCardClick(card))
+  const jumpIn = (card: WhatsOnCardData) => onJumpInClick && (() => onJumpInClick(card))
   return (
     <section className={styles.root} aria-labelledby={titleId}>
       {background ? (
@@ -180,7 +191,13 @@ function WhatsOn({
       </h2>
       <ul className={styles.grid}>
         {cards.map((card) => (
-          <Card key={card.id} card={card} labels={labels} onClick={click(card)} />
+          <Card
+            key={card.id}
+            card={card}
+            labels={labels}
+            onClick={click(card)}
+            onJumpInClick={jumpIn(card)}
+          />
         ))}
       </ul>
       <Carousel
@@ -190,7 +207,15 @@ function WhatsOn({
         getKey={(card) => card.id}
         labelledBy={titleId}
         labels={carouselLabels}
-        renderSlide={(card) => <Card card={card} labels={labels} as="div" onClick={click(card)} />}
+        renderSlide={(card) => (
+          <Card
+            card={card}
+            labels={labels}
+            as="div"
+            onClick={click(card)}
+            onJumpInClick={jumpIn(card)}
+          />
+        )}
       />
       <Button
         variant="tertiary"

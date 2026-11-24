@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { render, screen, within } from '@testing-library/react'
+import { act, render, screen, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { renderToString } from 'react-dom/server'
 import { describe, expect, it, vi } from 'vitest'
@@ -258,6 +258,24 @@ describe('Dropdown', () => {
       expect(change).toHaveBeenCalledWith('nd')
     })
 
+    it('should keep the full phrase when Shift is pressed between words', async () => {
+      const user = userEvent.setup()
+      const change = vi.fn()
+      render(
+        <Single
+          onChange={change}
+          options={[
+            { value: 'delhi', label: 'New Delhi' },
+            { value: 'york', label: 'New York' }
+          ]}
+        />
+      )
+
+      await user.tab()
+      await user.keyboard('new {Shift>}Y{/Shift}ork{Enter}')
+      expect(change).toHaveBeenCalledWith('york')
+    })
+
     it('opens and dismisses with Alt+Arrow without committing the highlighted option', async () => {
       const user = userEvent.setup()
       const change = vi.fn()
@@ -340,6 +358,40 @@ describe('Dropdown', () => {
       expect(combobox('Rarity')).toHaveAttribute('aria-expanded', 'true')
     })
 
+    it('should retain unavailable selections when a visible option is toggled', async () => {
+      const user = userEvent.setup()
+      const change = vi.fn()
+      const visible = RARITIES.filter((entry) => entry.value !== 'rare')
+      function Filtered() {
+        const [selection, setSelection] = useState(['common', 'rare'])
+        return (
+          <form aria-label="Filters">
+            <Dropdown
+              multiple
+              label="Rarity"
+              name="rarity"
+              options={visible}
+              value={selection}
+              onChange={(next) => {
+                setSelection(next)
+                change(next)
+              }}
+            />
+          </form>
+        )
+      }
+      render(<Filtered />)
+
+      await user.click(combobox('Rarity'))
+      await user.click(option('Epic'))
+      expect(change).toHaveBeenLastCalledWith(['common', 'epic', 'rare'])
+      const form = screen.getByRole<HTMLFormElement>('form', { name: 'Filters' })
+      expect(new FormData(form).getAll('rarity')).toEqual(['common', 'epic', 'rare'])
+
+      await user.click(option('Common'))
+      expect(change).toHaveBeenLastCalledWith(['epic', 'rare'])
+    })
+
     it('shows the caller text for the chosen options', () => {
       render(
         <Dropdown
@@ -383,6 +435,51 @@ describe('Dropdown', () => {
   })
 
   describe('when it has help', () => {
+    it('should close the list and leave Escape with the help button after focus moves there', async () => {
+      const user = userEvent.setup()
+      render(
+        <Dropdown
+          label="Sort by"
+          help="Items not for sale have no price."
+          options={SORTS}
+          value="newest"
+          onChange={() => {}}
+        />
+      )
+      const control = combobox()
+      const help = screen.getByRole('button', { name: 'More information' })
+      await user.click(control)
+      act(() => help.focus())
+      expect(screen.queryByRole('listbox')).toBeNull()
+
+      await user.keyboard('{Enter}{Escape}')
+      expect(help).toHaveAttribute('aria-expanded', 'false')
+      expect(help).toHaveFocus()
+      await user.tab()
+      expect(control).toHaveFocus()
+      expect(control).toHaveAttribute('aria-expanded', 'false')
+    })
+
+    it('should replace the open list with help when a pointer does not move focus', async () => {
+      const user = userEvent.setup()
+      render(
+        <Dropdown
+          label="Sort by"
+          help="Items not for sale have no price."
+          options={SORTS}
+          value="newest"
+          onChange={() => {}}
+        />
+      )
+      const help = screen.getByRole('button', { name: 'More information' })
+      await user.click(combobox())
+      help.addEventListener('mousedown', (event) => event.preventDefault(), { once: true })
+
+      await user.click(help)
+      expect(screen.queryByRole('listbox')).toBeNull()
+      expect(help).toHaveAttribute('aria-expanded', 'true')
+    })
+
     it('describes the control, and shows the text from the help button until Escape', async () => {
       const user = userEvent.setup()
       render(

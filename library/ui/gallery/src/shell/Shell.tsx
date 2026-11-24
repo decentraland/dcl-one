@@ -273,6 +273,39 @@ function RuntimeView({
     window.addEventListener('message', receive)
     return () => window.removeEventListener('message', receive)
   }, [])
+  // A canvas wider than the space beside the sidebar is drawn scaled down, not scrolled: it keeps the chosen width,
+  // which is what its media queries read, and the whole of it stays in view.
+  const viewport = useRef<HTMLDivElement>(null)
+  const [fit, setFit] = useState({ scale: 1, width: 0, height: 0 })
+  useEffect(() => {
+    const area = viewport.current
+    const canvas = frame.current
+    if (!area || !canvas || route.width === 'fill') {
+      setFit({ scale: 1, width: 0, height: 0 })
+      return
+    }
+    const measure = () => {
+      const style = getComputedStyle(area)
+      const room =
+        area.clientWidth -
+        (parseFloat(style.paddingLeft) || 0) -
+        (parseFloat(style.paddingRight) || 0)
+      const width = canvas.offsetWidth
+      const scale = width > room && room > 0 ? room / width : 1
+      setFit((previous) =>
+        previous.scale === scale &&
+        previous.width === width &&
+        previous.height === canvas.offsetHeight
+          ? previous
+          : { scale, width, height: canvas.offsetHeight }
+      )
+    }
+    const observer = new ResizeObserver(measure)
+    observer.observe(area)
+    observer.observe(canvas)
+    measure()
+    return () => observer.disconnect()
+  }, [route.width])
   // Page names repeat across views (the HUD has a Button too), so each view looks up its own.
   const hud = route.view === 'hud'
   const entry =
@@ -327,17 +360,33 @@ function RuntimeView({
         ) : null}
         <WidthControl route={route} navigate={navigate} />
       </header>
-      <div className={styles.viewport} data-width={route.width}>
-        <iframe
-          ref={frame}
-          className={hud ? `${styles.canvas} ${styles.window}` : styles.canvas}
-          title={`${title} canvas`}
-          src={canvasHref(route.view, route.name)}
-          style={{
-            width: route.width === 'fill' ? '100%' : `${route.width}px`,
-            ...(hud ? {} : { height })
-          }}
-        />
+      <div ref={viewport} className={styles.viewport} data-width={route.width}>
+        {fit.scale < 1 ? (
+          <p className={styles.scaled}>
+            Shown at {Math.round(fit.scale * 100)}% to fit this window; the canvas is {route.width}
+            px wide.
+          </p>
+        ) : null}
+        <div
+          className={styles.fit}
+          style={
+            fit.scale < 1
+              ? { width: fit.width * fit.scale, height: fit.height * fit.scale }
+              : undefined
+          }
+        >
+          <iframe
+            ref={frame}
+            className={hud ? `${styles.canvas} ${styles.window}` : styles.canvas}
+            title={`${title} canvas`}
+            src={canvasHref(route.view, route.name)}
+            style={{
+              width: route.width === 'fill' ? '100%' : `${route.width}px`,
+              ...(hud ? {} : { height }),
+              ...(fit.scale < 1 ? { transform: `scale(${fit.scale})` } : {})
+            }}
+          />
+        </div>
       </div>
     </>
   )

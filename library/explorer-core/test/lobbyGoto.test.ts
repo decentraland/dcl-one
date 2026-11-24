@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { isDestination, isGenesisParcel, parseGotoTarget, randomParcel, worldName } from '../features/lobby/goto'
+import { isDestination, isGenesisParcel, isWorldName, isWorldParcel, parseGotoTarget, randomParcel, worldName, worldOfRealm } from '../features/lobby/goto'
 
 describe('lobby go to', () => {
   it.each(['3,-5', '3, -5', 'mana.dcl.eth/3,-5', 'eax', '3', 'random', 'crowd', 'crowd.dcl.eth', 'name.eth', 'my-world.eth', 'a-b-c.eth', 'mana.dcl.eth/140,0', 'mana.dcl.eth/-150,150', 'Name.DCL.ETH', 'My-World.ETH'])('accepts %s', (text) => {
@@ -29,6 +29,10 @@ describe('lobby go to', () => {
     expect(isGenesisParcel(-150, -150)).toBe(true)
     expect(isGenesisParcel(62, 151)).toBe(true)
     expect(isGenesisParcel(151, 59)).toBe(true)
+    // a world's own bound, the same on every side
+    expect(isWorldParcel(-150, 150)).toBe(true)
+    expect(isWorldParcel(151, 0)).toBe(false)
+    expect(isWorldParcel(0, -151)).toBe(false)
     expect(isGenesisParcel(-151, 0)).toBe(false)
     expect(isGenesisParcel(0, -151)).toBe(false)
     expect(isGenesisParcel(61, 155)).toBe(false)
@@ -41,6 +45,19 @@ describe('lobby go to', () => {
     expect(worldName('name.eth')).toBe('name.eth')
     expect(worldName('Name.DCL.ETH')).toBe('name.dcl.eth')
     expect(worldName('Mana')).toBe('mana.dcl.eth')
+  })
+
+  it("tells a world's name from other text", () => {
+    for (const name of ['mana', 'mana.dcl.eth', 'name.eth', 'my-world.eth']) expect(isWorldName(name)).toBe(true)
+    for (const name of ['my-world', '../x', 'a?b', 'your.world.eth', 'http://localhost:8000', '']) expect(isWorldName(name)).toBe(false)
+  })
+
+  it('reads the world a realm is from its name or its address', () => {
+    expect(worldOfRealm('Mana.dcl.eth')).toBe('mana.dcl.eth')
+    expect(worldOfRealm('https://worlds.example/world/mana.dcl.eth')).toBe('mana.dcl.eth')
+    expect(worldOfRealm('https://worlds.example/world/name.eth/')).toBe('name.eth')
+    // Genesis City's realm, a preview's, and a short name any realm may have
+    for (const realm of ['main', 'https://realm.example/main', 'http://localhost:8000', 'LocalPreview', '']) expect(worldOfRealm(realm)).toBeNull()
   })
 
   it('picks random parcels inside the square city', () => {

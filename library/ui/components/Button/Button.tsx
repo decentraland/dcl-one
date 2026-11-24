@@ -15,6 +15,7 @@ type Content = { children: NamedContent } | { label: NamedContent } | Accessible
 type Variant =
   | 'primary'
   | 'secondary'
+  | 'secondaryLight'
   | 'outline'
   | 'dark'
   | 'text'
@@ -45,7 +46,8 @@ export type ButtonProps = NativeProps &
     children?: ReactNode
     label?: ReactNode
     size?: 'xl' | 'lg' | 'md' | 'sm'
-    viewport?: 'desktop' | 'mobile'
+    /** Responsive uses the mobile dimensions below 768px or with a coarse primary pointer. */
+    viewport?: 'desktop' | 'mobile' | 'responsive'
     loading?: boolean
     leadingIcon?: ReactNode
     trailingIcon?: ReactNode

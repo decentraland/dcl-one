@@ -1,6 +1,5 @@
 import { useId, useState, type ComponentType } from "react";
 
-import { Switch } from "@dcl/one-ui";
 import {
   GeneralCalendar,
   GeneralDownArrow,
@@ -13,7 +12,8 @@ import {
   MenusFriends,
   ShopCredits,
   type IconProps,
-} from "@dcl/one-ui/foundations/icons";
+  Switch,
+} from "@dcl/one-ui";
 
 import {
   isTypeEmailEnabled,
