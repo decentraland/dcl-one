@@ -45,7 +45,6 @@ export * from './components/CopyFeedback/CopyFeedback'
 export * from './components/EventCard/EventCard'
 export * from './components/JumpInCTA/JumpInCTA'
 export * from './components/NavCreditsBalance/NavCreditsBalance'
-export { ShopHeldCredits } from './apps/shop/ShopHeldCredits'
 export * from './components/NavMenuItem/NavMenuItem'
 export * from './components/NavMenuTab/NavMenuTab'
 export * from './components/NavNotificationsButton/NavNotificationsButton'
@@ -135,4 +134,5 @@ export type {
   ConnectionStatusValue
 } from './components/ProfilePic/ConnectionStatus'
 
+export * from './apps/shop'
 export * from './apps/sites'
