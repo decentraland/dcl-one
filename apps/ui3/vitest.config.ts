@@ -20,15 +20,16 @@ export default defineConfig({
       { find: "@hud", replacement: fileURLToPath(new URL("../../library/ui/apps/hud", import.meta.url)) },
       { find: "@explorer-core", replacement: fileURLToPath(new URL("../../library/explorer-core", import.meta.url)) },
       { find: /^@dcl\/one-ui$/, replacement: ui("index.ts") },
+      { find: /^@dcl\/one-ui\/text-styles\.module\.css$/, replacement: ui("foundations/typography/text-styles.module.css") },
       { find: /^@dcl\/one-ui\//, replacement: ui("") },
     ],
     // library/ has no node_modules of its own: viem, zod, the WalletConnect client, React and the testing packages
     // the shared HUD's test harness imports resolve to ui3's copies.
     dedupe: ["viem", "zod", "@walletconnect/sign-client", "qrcode-generator", "react", "react-dom", "@tanstack/react-query", "@noble/curves", "@noble/hashes", "@testing-library/react", "@testing-library/user-event", "@testing-library/dom", "@testing-library/jest-dom"],
   },
-  // The HUD UI and the Sites assets (the bar's wordmark) live outside this app; their assets load through the dev
-  // server like ui3's own.
-  server: { fs: { allow: [".", fileURLToPath(new URL("../../library/ui/apps/hud", import.meta.url)), fileURLToPath(new URL("../../library/explorer-core", import.meta.url)), fileURLToPath(new URL("../../library/web-core", import.meta.url)), fileURLToPath(new URL("../../library/ui/apps/sites/assets", import.meta.url))] } },
+  // The HUD UI, the Sites assets (the bar's wordmark) and the shared images (AnimatedBackground's) live outside
+  // this app; their assets load through the dev server like ui3's own.
+  server: { fs: { allow: [".", fileURLToPath(new URL("../../library/ui/apps/hud", import.meta.url)), fileURLToPath(new URL("../../library/explorer-core", import.meta.url)), fileURLToPath(new URL("../../library/web-core", import.meta.url)), fileURLToPath(new URL("../../library/ui/apps/sites/assets", import.meta.url)), fileURLToPath(new URL("../../library/ui/assets", import.meta.url))] } },
   plugins: [react()],
   test: {
     environment: "jsdom",

@@ -1,4 +1,4 @@
-import { ReelsEmpty, ReelsPage } from "@dcl/one-ui/apps/sites/reels/ReelsPage";
+import { ReelsEmpty, ReelsPage } from "@dcl/one-ui";
 
 import { REELS_TITLE } from "../lib/reels-route";
 

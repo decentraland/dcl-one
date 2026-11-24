@@ -3,14 +3,20 @@ import { dehydrate, HydrationBoundary, QueryClient } from "@tanstack/react-query
 import { useNavigate, useSearchParams, useRouteLoaderData } from "react-router";
 
 import SitesLayout from "@/features/components/chrome/SitesLayout";
-import { ExploreBand, type ExploreBandLabels } from "@dcl/one-ui/apps/sites/places/ExploreBand";
-import { JumpInModal } from "@dcl/one-ui/apps/sites/places/JumpInModal";
-import { LiveNow } from "@dcl/one-ui/apps/sites/places/LiveNow";
-import { LoadMore, PlaceGrid, PlacesMessage } from "@dcl/one-ui/apps/sites/places/PlaceGrid";
-import { PlacesPage } from "@dcl/one-ui/apps/sites/places/PlacesPage";
+import {
+  ExploreBand,
+  type ExploreBandLabels,
+  JumpInModal,
+  PlacesLiveNow as LiveNow,
+  PlacesLoadMore as LoadMore,
+  PlaceGrid,
+  PlacesMessage,
+  PlacesPage,
+  type PlaceCardData,
+  type PlaceCardLabels,
+} from "@dcl/one-ui";
 import { remoteFlag, remoteFlagsPrimed, remoteFlagVariant } from "@dcl/one-ui/apps/shop/remote-flags";
 import { remoteFlagOn, remoteFlagVariantIn } from "@shop/discovery/lib/rolloutFlags";
-import type { PlaceCardData, PlaceCardLabels } from "@dcl/one-ui/apps/sites/places/cards/types";
 
 import { QUERY_CLIENT_CONFIG } from "@/core/lib/query/defaults";
 import { sidLoader } from "@/core/lib/telemetry/page-loader";

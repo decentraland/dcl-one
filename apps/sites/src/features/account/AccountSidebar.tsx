@@ -1,28 +1,28 @@
 import { useId, type ComponentType } from "react";
 import { Link } from "react-router";
 
-import { useChromeAuth } from "@dcl/one-ui/components/AppChrome/chrome-auth";
-
 import {
+  CopyAddress,
+  useBrokenImage,
+  useChromeAuth,
   GeneralGift,
   GeneralLogout,
   GeneralRightArrow,
   GeneralWallet,
   MenusNotifications,
   type IconProps,
-} from "@dcl/one-ui/foundations/icons";
+} from "@dcl/one-ui";
+
 
 import { shortAddress } from "@/data/lib/catalyst/format/address";
-import { CopyAddress } from "@dcl/one-ui/apps/sites/CopyAddress";
-import { useBrokenImage } from "@dcl/one-ui/apps/sites/useBrokenImage";
 
 import styles from "./AccountSidebar.module.css";
 import type { AccountLinkState } from "./AccountLayout";
 import { ACCOUNT_COPY } from "./copy";
+import { DeleteMagicAccount } from "./DeleteMagicAccount";
 
 export type AccountSection = "wallets" | "notifications" | "credits";
 
-/** Security and account deletion are not built yet, so they are not listed. */
 const SECTIONS: readonly { id: AccountSection; href: string; Icon: ComponentType<IconProps> }[] = [
   { id: "wallets", href: "/account/wallets", Icon: GeneralWallet },
   { id: "notifications", href: "/account/notifications", Icon: MenusNotifications },
@@ -95,6 +95,7 @@ export function AccountSidebar({ address, active, linkState, className }: Accoun
       {own && auth.onSignOut ? (
         <div className={styles.bottom}>
           <hr className={styles.divider} />
+          <DeleteMagicAccount key={address} address={address} onSignOut={auth.onSignOut} />
           <button type="button" className={styles.item} onClick={auth.onSignOut}>
             <GeneralLogout size={20} aria-hidden="true" />
             <span className={styles.itemLabel}>{ACCOUNT_COPY.logout}</span>

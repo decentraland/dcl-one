@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 use std::time::{Duration, Instant};
 
-pub const RELAY_SILENCE: Duration = Duration::from_millis(super::host::RELAY_TIMEOUT_MS as u64);
+pub const RELAY_SILENCE: Duration = Duration::from_secs(5);
 
 #[derive(Default)]
 pub struct RelaySilence {

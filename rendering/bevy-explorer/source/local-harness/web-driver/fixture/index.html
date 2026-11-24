@@ -5,6 +5,7 @@
   that is not offset by the frame's content box lands beside its target.
 
   ?mode=...  is passed on to app.html (see there).
+  ?fill=1    the frame fills the page, with no border.
   ?probe=<url>  mounts <url> instead, a frame of another origin: this page then answers the
   console itself and reports what the frame posts, to show that input is refused to it.
 -->
@@ -15,6 +16,7 @@
   <style>
     html, body { margin: 0; height: 100%; background: #eee; }
     iframe { position: absolute; left: 37px; top: 53px; width: 800px; height: 600px; border: 5px solid #c33; background: #fff; }
+    iframe.fill { position: fixed; inset: 0; width: 100%; height: 100%; border: 0; }
   </style>
 </head>
 <body>
@@ -23,6 +25,7 @@
     const params = new URLSearchParams(location.search)
     const frame = document.getElementById('app')
     const probe = params.get('probe')
+    if (params.get('fill') === '1') frame.className = 'fill'
     frame.src = probe || `app.html${location.search}`
     // the web client's shell focuses the app when it has loaded
     frame.addEventListener('load', () => frame.focus())

@@ -575,6 +575,17 @@ describe("page, identify, gates and the telemetry client (fetch mocked)", () => 
     expect(ran).toEqual(["first", "third", "later"]);
   });
 
+  it("drops a waiting registration that was cancelled, and keeps the others", async () => {
+    stubBrowser({ path: "/" });
+    const fresh = await loadDocument();
+    const ran: string[] = [];
+    const cancel = fresh.whenLegacyAnalyticsReady(() => ran.push("cancelled"));
+    fresh.whenLegacyAnalyticsReady(() => ran.push("kept"));
+    cancel();
+    fresh.page("Home", {}, { sid: "s" });
+    expect(ran).toEqual(["kept"]);
+  });
+
   it.each([
     ["a bot", { userAgent: GOOGLEBOT_UA }],
     ["an exempt session", { path: "/download" }],

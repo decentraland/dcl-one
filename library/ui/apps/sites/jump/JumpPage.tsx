@@ -1,5 +1,5 @@
 import type { ReactNode } from 'react'
-import { AnimatedBackground } from '../shared/AnimatedBackground/AnimatedBackground'
+import { AnimatedBackground } from '../../../components/AnimatedBackground/AnimatedBackground'
 import styles from './JumpPage.module.css'
 
 type JumpPageProps = {

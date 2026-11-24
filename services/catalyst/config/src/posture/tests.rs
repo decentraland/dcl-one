@@ -308,21 +308,26 @@ fn escrow_leases_count_only_on_an_operator_opt_in() {
 }
 
 #[test]
-fn a_mirror_catalog_takes_the_upstream_filters_only() {
-    assert_eq!(
-        expanded(Posture::Mirror, &[])["LAMBDAS_CATALOG_EXTENSIONS_ENABLED"],
-        "false"
+fn the_catalog_defaults_to_upstream_filters() {
+    let db = ("DATABASE_URL", "postgres:///catalyst");
+    let opt_in = ("LAMBDAS_CATALOG_EXTENSIONS_ENABLED", "true");
+    assert!(
+        !parsed(&[db])
+            .market_upstreams
+            .lambdas_catalog_extensions_enabled
     );
-    for posture in [Posture::Island, Posture::Journey] {
-        assert_eq!(
-            expanded(posture, &[])["LAMBDAS_CATALOG_EXTENSIONS_ENABLED"],
-            "true"
+    for posture in ["mirror", "island", "journey"] {
+        assert!(
+            !parsed(&[db, (ENV, posture)])
+                .market_upstreams
+                .lambdas_catalog_extensions_enabled
+        );
+        assert!(
+            parsed(&[db, (ENV, posture), opt_in])
+                .market_upstreams
+                .lambdas_catalog_extensions_enabled
         );
     }
-    let c = parsed(&[("DATABASE_URL", "postgres:///catalyst"), (ENV, "mirror")]);
-    assert!(!c.market_upstreams.lambdas_catalog_extensions_enabled);
-    let c = parsed(&[("DATABASE_URL", "postgres:///catalyst")]);
-    assert!(c.market_upstreams.lambdas_catalog_extensions_enabled);
 }
 
 /// CS-25: a mirror syncs from the DAO catalyst list, `SYNC_SOURCE` its fallback.
@@ -1062,6 +1067,7 @@ fn island_refuses_the_secrets_that_call_a_third_party() {
     for posture in ["island", "journey"] {
         for (secret, api) in [
             ("SENDGRID_API_KEY", "SendGrid"),
+            ("MAGIC_SECRET_KEY", "Magic"),
             ("SLACK_BOT_TOKEN", "Slack"),
             ("TURNSTILE_SECRET_KEY", "Turnstile"),
             ("STRIPE_SECRET_KEY", "Stripe"),

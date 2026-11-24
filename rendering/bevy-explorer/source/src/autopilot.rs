@@ -309,7 +309,7 @@ mod tests {
     /// A player entering the world: `OutOfWorld` until the scene is ready.
     fn spawn_player(app: &mut App) -> Entity {
         app.world_mut()
-            .spawn((PrimaryUser::default(), OutOfWorld))
+            .spawn((PrimaryUser::default(), OutOfWorld::default()))
             .id()
     }
 
@@ -408,7 +408,9 @@ mod tests {
         assert_eq!(phase(&app), AutopilotPhase::Arriving);
 
         // placed out of world for a frame, and then in
-        app.world_mut().entity_mut(player).insert(OutOfWorld);
+        app.world_mut()
+            .entity_mut(player)
+            .insert(OutOfWorld::default());
         app.update();
         assert_eq!(phase(&app), AutopilotPhase::Arriving);
         app.world_mut().entity_mut(player).remove::<OutOfWorld>();
@@ -426,7 +428,9 @@ mod tests {
         assert_eq!(phase(&app), AutopilotPhase::Arriving);
 
         // placed out of world and released before any frame sampled it: only the removal is left
-        app.world_mut().entity_mut(player).insert(OutOfWorld);
+        app.world_mut()
+            .entity_mut(player)
+            .insert(OutOfWorld::default());
         app.world_mut().entity_mut(player).remove::<OutOfWorld>();
         app.update();
         assert_eq!(phase(&app), AutopilotPhase::Measuring);
@@ -436,7 +440,7 @@ mod tests {
     fn another_entity_losing_out_of_world_is_not_the_player_arriving() {
         let mut app = app(true, Duration::from_secs(1));
         app.world_mut().spawn(PrimaryUser::default());
-        let other = app.world_mut().spawn(OutOfWorld).id();
+        let other = app.world_mut().spawn(OutOfWorld::default()).id();
         sign_in(&mut app);
         connect_realm(&mut app);
         app.world_mut().entity_mut(other).remove::<OutOfWorld>();
@@ -525,7 +529,9 @@ mod tests {
         let (mut app, player) = measuring();
         app.update();
         assert_eq!(phase(&app), AutopilotPhase::Measuring);
-        app.world_mut().entity_mut(player).insert(OutOfWorld);
+        app.world_mut()
+            .entity_mut(player)
+            .insert(OutOfWorld::default());
         ends_with(&mut app, 1);
     }
 

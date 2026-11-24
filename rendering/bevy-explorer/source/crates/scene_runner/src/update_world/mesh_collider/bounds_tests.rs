@@ -5,7 +5,7 @@ use scene_material::{BoundRegion, SceneBounds};
 
 const MASK: u32 = ColliderLayer::ClPointer as u32 | ColliderLayer::ClPhysics as u32;
 
-fn regions(parcels: &[(i32, i32)]) -> Vec<BoundRegion> {
+pub(crate) fn regions(parcels: &[(i32, i32)]) -> Vec<BoundRegion> {
     scene_regions(parcels.iter().map(|(x, y)| IVec2::new(*x, *y)))
         .into_iter()
         .map(|region| BoundRegion::new(region.min, region.max, region.count))
@@ -558,7 +558,7 @@ fn the_colliders_off_for_bounds_are_counted() {
 
 /// A scene on parcel (0, 0) that `update_scene_collider_data` gave its collider data, in a run
 /// that shows what is out of bounds or in one that does not.
-fn scene_in_a_run(show_out_of_bounds: bool) -> (App, Entity) {
+pub(super) fn scene_in_a_run(show_out_of_bounds: bool) -> (App, Entity) {
     let mut app = App::new();
     app.insert_resource(ShowOutOfBounds(show_out_of_bounds))
         .add_systems(Update, update_scene_collider_data);

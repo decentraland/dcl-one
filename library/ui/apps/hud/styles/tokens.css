@@ -575,6 +575,7 @@
   --place-access-open: #33cc33; /* the place detail's YOU ARE INVITED */
   --place-chip: rgba(255, 255, 255, 0.1); /* a category on the place detail */
   --explore-modal-scrim: rgba(0, 0, 0, 0.85); /* behind the lobby's Map, Places and Events modal */
+  --passport-scrim: rgba(0, 0, 0, 0.92); /* the passport's backdrop */
 }
 
 /* ---- item rarity ----

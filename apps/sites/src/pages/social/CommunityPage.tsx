@@ -8,7 +8,7 @@ import {
   CommunityMembershipAction,
   CommunityPrivateNotice,
   CommunitySections,
-} from "@dcl/one-ui/apps/sites/social/CommunityDetail";
+} from "@dcl/one-ui";
 
 import { usePageView } from "@/core/lib/telemetry/page-view";
 import { useAuth } from "@/data/lib/auth/context";

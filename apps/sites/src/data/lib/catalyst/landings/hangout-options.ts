@@ -2,7 +2,6 @@ import { z } from "zod";
 import type { AuthIdentity } from "../../auth/types";
 import { getJSON, signedGetJSON } from "../client";
 import { loadEventProfile } from "../places/event-management";
-import { fetchSchedules } from "./schedules";
 
 export type CommunityOption = { id: string; name: string };
 export type FeaturedAsset = { urn: string; name: string; thumbnail: string | null; kind: "item" | "collection" };
@@ -28,15 +27,14 @@ export async function loadManageableCommunities(identity: AuthIdentity, signal?:
 }
 
 export async function loadHangoutOptions(identity: AuthIdentity, signal?: AbortSignal) {
-  const [profile, communities, schedules, worlds] = await Promise.allSettled([
-    loadEventProfile(identity, signal), loadManageableCommunities(identity, signal), fetchSchedules({ signal }),
+  const [profile, communities, worlds] = await Promise.allSettled([
+    loadEventProfile(identity, signal), loadManageableCommunities(identity, signal),
     getJSON("/events/api/world_names", { signal }).then((raw) => z.object({ data: z.array(z.string()) }).parse(raw).data),
   ]);
   const error = (result: PromiseSettledResult<unknown>) => result.status === "rejected" ? result.reason instanceof Error ? result.reason.message : "Could not load this list." : null;
   return {
     profile: profile.status === "fulfilled" ? profile.value : null, profileError: error(profile),
     communities: communities.status === "fulfilled" ? communities.value : [], communitiesError: error(communities),
-    schedules: schedules.status === "fulfilled" ? schedules.value.data : [], schedulesError: error(schedules),
     worlds: worlds.status === "fulfilled" ? worlds.value : [], worldsError: error(worlds),
   };
 }
