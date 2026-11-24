@@ -82,7 +82,7 @@ fn state(
         "woken": woken,
         "unavailable": {
             "budget": "No scene loop has run yet.",
-            "handoffGap": "No frame has handed over to the render worker after a scene loop yet.",
+            "handoffGap": "No frame has handed over to the render worker yet.",
             "tail": tail_reason,
             "lateness": lateness_reason,
             "woken": "This mode does not wake the relays: each keeps its poll.",
@@ -125,7 +125,7 @@ mod commands {
                     ("Deadline from", "deadline"),
                     ("Last loop budget (ms)", "budget"),
                     (
-                        "Handoff to the next frame's start, last frame (ms)",
+                        "Handoff to the next frame's start, last handoff (ms)",
                         "handoffGap",
                     ),
                     (

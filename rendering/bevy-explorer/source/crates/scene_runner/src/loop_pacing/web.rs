@@ -172,19 +172,25 @@ pub struct LoopPacing {
     // worker's work between frames (the runner, its event loop's tasks) and, under a frame rate
     // cap, its wait for the cap's next frame; the reserve covers neither
     handoff_gap: Option<Duration>,
+    // the last handoff seen, so that each handoff sets the gap once
+    handoff: Option<Instant>,
     tail: TailEstimate,
     wait_lateness: WaitLateness,
 }
 
 impl LoopPacing {
     /// The frame starts at `now`. The previous frame's `handoff` to the render worker and its
-    /// `waits` for that worker close that frame's tail ([`frame_tail`]).
+    /// `waits` for that worker close that frame's tail ([`frame_tail`]). A handoff not seen
+    /// before also gives the time from it to `now`, with or without a tail.
     pub fn frame_started(&mut self, now: Instant, handoff: Option<Instant>, waits: Duration) {
         self.frame_start = Some(now);
+        if handoff.is_some() && handoff != self.handoff {
+            self.handoff = handoff;
+            self.handoff_gap = handoff.map(|handoff| now.saturating_duration_since(handoff));
+        }
         if let (Some(handoff), Some(loop_end)) = (handoff, self.loop_end.take()) {
             if let Some(tail) = frame_tail(loop_end, handoff, waits) {
                 self.tail.push(tail);
-                self.handoff_gap = Some(now.saturating_duration_since(handoff));
             }
         }
     }
@@ -432,13 +438,19 @@ mod tests {
         assert!(close(pacing.tail.ring[0], ms(3.0)));
         // and from that handoff to this frame's start
         assert!(close(pacing.handoff_gap.unwrap(), T - ms(14.0)));
-        // each loop end closes one tail; a frame without a new one pushes none
+        // each loop end closes one tail; a frame without a new one pushes none, but its handoff
+        // still gives the gap
         pacing.frame_started(s + 2 * T, Some(s + ms(20.0)), Duration::ZERO);
         assert_eq!(pacing.tail.len, 1);
-        // a handoff from before the loop's end is an older frame's
+        assert!(close(pacing.handoff_gap.unwrap(), 2 * T - ms(20.0)));
+        // a handoff from before the loop's end is an older frame's: no tail, and a gap only the
+        // first time it is seen
         pacing.loop_end = Some(s + 2 * T + ms(5.0));
         pacing.frame_started(s + 3 * T, Some(s + 2 * T), Duration::ZERO);
         assert_eq!(pacing.tail.len, 1);
+        assert!(close(pacing.handoff_gap.unwrap(), T));
+        pacing.frame_started(s + 4 * T, Some(s + 2 * T), Duration::ZERO);
+        assert!(close(pacing.handoff_gap.unwrap(), T));
     }
 
     /// The deadline mode keeps the grid until the tail is measured and with an uncapped frame
