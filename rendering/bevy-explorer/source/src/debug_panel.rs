@@ -3,13 +3,15 @@
 use bevy::prelude::*;
 use bevy_console::ConsoleCommand;
 use common::{
-    memory::{GpuMemoryBudget, MemoryStatus},
+    memory::{GpuMemoryBudget, LoadRefusal, MemoryStatus},
     structs::PrimaryUser,
 };
 use console::{AddDebugSection, DebugInput, DebugInputKind, DebugSection, DoAddConsoleCommand};
+use ipfs::IpfsResource;
 use scene_material::SceneMaterial;
 use scene_runner::{
-    visible_content_bytes::scene_visible_content_bytes, ContainerEntity, ContainingScene,
+    initialize_scene::RefusedScenes, visible_content_bytes::scene_visible_content_bytes,
+    ContainerEntity, ContainingScene,
 };
 use serde_json::{json, Value};
 
@@ -42,6 +44,9 @@ impl Plugin for MemoryDebugPanelPlugin {
                     ),
                     ("Current scene textures (count / MiB)", "textures"),
                     ("Current scene meshes (count / MiB)", "meshes"),
+                    ("Loads waiting for memory", "refusing"),
+                    ("Scenes in range not spawned", "refusedScenes"),
+                    ("Downloads held from tier", "heldFrom"),
                 ],
                 actions: &[
                     ("Restore platform limit", "/debug_memory 0"),
@@ -103,6 +108,11 @@ fn debug_memory(
     meshes: Res<Assets<Mesh>>,
     materials: Res<Assets<SceneMaterial>>,
     images: Res<Assets<Image>>,
+    (refusal, refused_scenes, ipfs): (
+        Option<Res<LoadRefusal>>,
+        Option<Res<RefusedScenes>>,
+        Option<Res<IpfsResource>>,
+    ),
 ) {
     let Some(Ok(args)) = cmd.take() else { return };
     if let Some(simulate) = args.simulate {
@@ -190,6 +200,9 @@ fn debug_memory(
         ])),
         "textures": current_scene_content.map(|c| count_and_mib(c.texture_count, c.texture_bytes_sum)),
         "meshes": current_scene_content.map(|c| count_and_mib(c.mesh_count, c.mesh_bytes_sum)),
+        "refusing": refusal.map(|r| r.refusing),
+        "refusedScenes": refused_scenes.map(|r| r.0),
+        "heldFrom": ipfs.as_ref().map(|ipfs| ipfs.downloads_held_from().map_or("none".to_owned(), |tier| format!("{tier:?}"))),
         "unavailable": {
             "used":ram_reason, "capacity":ram_reason, "cap":ram_reason,
             "usedPeakMiBInSample": if reading.is_some() { "Waiting for the first sampled frame." } else { ram_reason },
@@ -201,6 +214,9 @@ fn debug_memory(
             "jsHeap": if cfg!(target_arch = "wasm32") { "No running scene reports a heap: this browser has no memory API." } else { "No running scene has reported a heap yet." },
             "textures": "The player is not on a parcel scene.",
             "meshes": "The player is not on a parcel scene.",
+            "refusing": "The memory plugin is not running.",
+            "refusedScenes": "The scene lifecycle is not running.",
+            "heldFrom": "The content loader is not running.",
         }
     }).to_string());
 }

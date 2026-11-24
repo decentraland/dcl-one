@@ -1,6 +1,14 @@
 use bevy::prelude::*;
-use common::memory::{MemorySample, MemoryStatus};
+use common::{
+    memory::{LoadRefusal, MemorySample, MemoryStatus},
+    partition::Tier,
+};
+use ipfs::IpfsResource;
 use std::time::Duration;
+
+/// The first tier the request slots hold while engine memory is full: only the player's own
+/// avatar and the player's scenes keep downloading.
+const HELD_FROM: Tier = Tier::Avatar;
 
 const SAMPLE_INTERVAL: Duration = Duration::from_millis(250);
 
@@ -11,8 +19,36 @@ impl Plugin for MemoryStatusPlugin {
         #[cfg(not(target_arch = "wasm32"))]
         app.init_resource::<NativeSampler>();
         app.init_resource::<MemoryStatus>()
-            .add_systems(PreUpdate, sample_memory);
+            .init_resource::<LoadRefusal>()
+            .add_systems(PreUpdate, (sample_memory, update_load_refusal).chain());
     }
+}
+
+/// Advances [`LoadRefusal`] from the reading and, on a change, holds or releases every
+/// download but the player's.
+fn update_load_refusal(
+    status: Res<MemoryStatus>,
+    mut refusal: ResMut<LoadRefusal>,
+    ipfs: Option<Res<IpfsResource>>,
+) {
+    let reading = status.reading();
+    let next = refusal.next(reading);
+    if next == *refusal {
+        return;
+    }
+    match reading {
+        Some(reading) if next.refusing => warn!(
+            "engine memory full ({} of {} MiB): new scenes and other players' loads wait",
+            reading.used_bytes >> 20,
+            reading.cap_mib
+        ),
+        Some(_) => info!("engine memory below the warning threshold: loads resume"),
+        None => info!("engine memory reading unavailable: loads resume"),
+    }
+    if let Some(ipfs) = ipfs {
+        ipfs.hold_downloads_from(next.refusing.then_some(HELD_FROM));
+    }
+    *refusal = next;
 }
 
 #[cfg(not(target_arch = "wasm32"))]

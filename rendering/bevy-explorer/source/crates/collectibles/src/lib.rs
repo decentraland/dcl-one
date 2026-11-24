@@ -17,7 +17,7 @@ use bevy::{
     prelude::*,
 };
 
-use common::util::TaskExt;
+use common::{memory::LoadRefusal, util::TaskExt};
 pub use emotes::*;
 use ipfs::{
     ipfs_path::{IpfsPath, IpfsType},
@@ -48,7 +48,19 @@ impl<T: CollectibleType> Plugin for CollectiblesTypePlugin<T> {
         app.init_resource::<Collectibles<T>>()
             .init_asset::<Collectible<T>>()
             .init_asset::<CollectibleData<T>>()
-            .add_systems(Update, request_collectibles::<T>);
+            .add_systems(Update, (request_collectibles::<T>, release_idle_data::<T>));
+    }
+}
+
+/// While loads wait for memory, drop the metadata (name, thumbnail, flags) of collectibles no
+/// one has asked for in the last few frames; a later request loads it again.
+fn release_idle_data<T: CollectibleType>(
+    refusal: Option<Res<LoadRefusal>>,
+    mut collectibles: ResMut<Collectibles<T>>,
+    frame: Res<FrameCount>,
+) {
+    if refusal.is_some_and(|refusal| refusal.refusing) {
+        collectibles.release_idle_data(frame.0);
     }
 }
 
@@ -145,6 +157,19 @@ impl<T: CollectibleType> Collectibles<T> {
                 "{}/{} {} remain",
                 self.cache.len(),
                 count,
+                std::any::type_name::<T>()
+            );
+        }
+    }
+
+    /// Drop the metadata handles no `get_data` call has renewed by `frame`.
+    pub fn release_idle_data(&mut self, frame: u32) {
+        let count = self.data_cache.len();
+        self.data_cache.retain(|_, (expiry, _)| *expiry >= frame);
+        if self.data_cache.len() != count {
+            debug!(
+                "released {} idle {} metadata",
+                count - self.data_cache.len(),
                 std::any::type_name::<T>()
             );
         }
@@ -499,5 +524,22 @@ mod tests {
             "urn:decentraland:off-chain:base-avatars:f_eyes_00"
         )
         .is_empty());
+    }
+    #[test]
+    fn idle_metadata_is_released_once_its_retention_has_passed() {
+        let mut collectibles = Collectibles::<Emote>::default();
+        let asked = EmoteUrn::new("urn:decentraland:off-chain:base-emotes:wave").unwrap();
+        let idle = EmoteUrn::new("urn:decentraland:off-chain:base-emotes:clap").unwrap();
+        collectibles
+            .data_cache
+            .insert(asked.clone(), (10, Handle::default()));
+        collectibles
+            .data_cache
+            .insert(idle.clone(), (9, Handle::default()));
+
+        collectibles.release_idle_data(10);
+
+        assert!(collectibles.data_cache.contains_key(&asked));
+        assert!(!collectibles.data_cache.contains_key(&idle));
     }
 }

@@ -30,6 +30,7 @@ use system_bridge::settings::sync_prepasses;
 use ui_core::ui_actions::{DragData, Dragged, On};
 
 use crate::{AvatarSelection, AvatarShape};
+use ipfs::partition::PlayerDownloads;
 
 pub struct AvatarTexturePlugin;
 
@@ -85,6 +86,7 @@ impl PhotoBooth<'_, '_> {
                 Propagate(render_layers.clone()),
                 AvatarDynamicState::default(),
                 BoothAvatar,
+                PlayerDownloads,
             ))
             .id();
 

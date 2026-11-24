@@ -125,3 +125,24 @@ impl MemoryStatus {
         })
     }
 }
+
+/// Whether new loads wait because engine memory is full. The scene lifecycle and the download
+/// slots read it to admit only the player's loads; work already running continues.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Resource)]
+pub struct LoadRefusal {
+    pub refusing: bool,
+}
+
+impl LoadRefusal {
+    /// On at `Full`, held through `Warning`, off at `Normal`, `Abundance` or with no reading.
+    /// The gap between the two thresholds keeps a reading at the full threshold from admitting
+    /// and refusing on alternate samples.
+    pub fn next(self, reading: Option<MemoryReading>) -> Self {
+        let refusing = match reading.map(|reading| reading.pressure()) {
+            Some(MemoryPressure::Full) => true,
+            Some(MemoryPressure::Warning) => self.refusing,
+            Some(MemoryPressure::Normal | MemoryPressure::Abundance) | None => false,
+        };
+        Self { refusing }
+    }
+}

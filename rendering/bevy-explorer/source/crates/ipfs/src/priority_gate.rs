@@ -14,7 +14,7 @@ use std::{
 };
 
 use bevy::log::error;
-use common::partition::LoadPriority;
+use common::partition::{LoadPriority, Tier};
 use tokio::sync::oneshot;
 
 /// A request's place in the queue, taken when a read decides to download and awaited by the
@@ -66,6 +66,8 @@ struct GateState {
     /// hashes whose holders all left while a request of theirs was alive: they rank last until
     /// that request ends or the hash is registered again
     departed: HashSet<String>,
+    /// while set, requests ranked in this tier or a later one wait, even beside a free slot
+    held_from: Option<Tier>,
 }
 
 /// The live readers of one logical download, including while it is between attempts.
@@ -143,10 +145,15 @@ impl DownloadReaders {
         let readers = state.readers.get_mut(&self.id)?;
         let count = readers.owners.entry(owner.clone()).or_default();
         *count += 1;
-        if *count == 1 {
-            if let Some(seq) = readers.queued {
-                state.join(seq, owner.clone());
-            }
+        let joined = if *count == 1 { readers.queued } else { None };
+        if let Some(seq) = joined {
+            state.join(seq, owner.clone());
+        }
+        let held = state.held_from.is_some();
+        drop(state);
+        // the new owner can rank the ticket out of a hold
+        if joined.is_some() && held {
+            self.gate.grant();
         }
         Some(Registration {
             readers: self.clone(),
@@ -276,6 +283,7 @@ impl PriorityGate {
                 waiting: HashMap::new(),
                 scenes: HashMap::new(),
                 departed: HashSet::new(),
+                held_from: None,
             }),
         })
     }
@@ -369,9 +377,12 @@ impl PriorityGate {
     }
 
     /// An entity that owns `hash` (a scene root, an avatar wearing it) has appeared: the hash
-    /// ranks by `key`, or by the best key of its holders when it is held already.
-    pub fn register(&self, hash: &str, key: LoadPriority) {
+    /// ranks by `key`, or by the best key of its holders when it is held already. While a hold
+    /// is on, the new key can lift the hash's waiting requests out of it, so they are offered a
+    /// free slot at once.
+    pub fn register(self: &Arc<Self>, hash: &str, key: LoadPriority) {
         let mut state = self.state();
+        let offer = state.held_from.is_some() && state.scenes.contains_key(hash);
         state.departed.remove(hash);
         match state.keys.get_mut(hash) {
             Some(entry) => {
@@ -388,6 +399,10 @@ impl PriorityGate {
                     },
                 );
             }
+        }
+        drop(state);
+        if offer {
+            self.grant();
         }
     }
 
@@ -411,20 +426,52 @@ impl PriorityGate {
 
     /// A frame's keys, written in place: the first write of a hash replaces its key, later
     /// writes in the same publish take the best, and a hash nobody registered is ignored.
-    pub fn publish<'a>(&self, keys: impl IntoIterator<Item = (&'a str, LoadPriority)>) {
+    /// While a hold is on, a key that leaves the held tiers (the player walks into a neighbour)
+    /// offers its waiting requests a free slot at once.
+    pub fn publish<'a>(self: &Arc<Self>, keys: impl IntoIterator<Item = (&'a str, LoadPriority)>) {
         let mut state = self.state();
         state.generation += 1;
         let generation = state.generation;
+        let held_from = state.held_from;
+        let mut offer = false;
+        let GateState {
+            keys: entries,
+            scenes,
+            ..
+        } = &mut *state;
         for (hash, key) in keys {
-            if let Some(entry) = state.keys.get_mut(hash) {
+            if let Some(entry) = entries.get_mut(hash) {
+                let was_held = is_held(held_from, &entry.key);
                 if entry.generation == generation {
                     entry.key = entry.key.min(key);
                 } else {
                     entry.key = key;
                     entry.generation = generation;
                 }
+                offer |= was_held && !is_held(held_from, &entry.key) && scenes.contains_key(hash);
             }
         }
+        drop(state);
+        if offer {
+            self.grant();
+        }
+    }
+
+    /// Hold every request ranked in `tier` or a later one (`None` lifts the hold): they keep
+    /// their place but get no slot, even a free one, until the hold is lifted or they rank
+    /// earlier. Downloads already holding a slot continue.
+    pub fn hold_from(self: &Arc<Self>, tier: Option<Tier>) {
+        let mut state = self.state();
+        if state.held_from == tier {
+            return;
+        }
+        state.held_from = tier;
+        drop(state);
+        self.grant();
+    }
+
+    pub fn held_from(&self) -> Option<Tier> {
+        self.state().held_from
     }
 
     /// Whether any request waits for a slot.
@@ -576,7 +623,9 @@ impl GateState {
         self.no_scene.len() + self.scenes.values().map(BTreeSet::len).sum::<usize>()
     }
 
-    /// The oldest ticket of the best-ranked queue: best key first, then the oldest head.
+    /// The oldest ticket of the best-ranked queue: best key first, then the oldest head. A queue
+    /// in a held tier is passed over; a ticket queued under several owners is granted through
+    /// any owner that is not held.
     fn best(&self) -> Option<u64> {
         self.no_scene
             .first()
@@ -587,9 +636,15 @@ impl GateState {
                     .iter()
                     .filter_map(|(hash, queue)| Some((self.rank(hash), *queue.first()?))),
             )
+            .filter(|(key, _)| !is_held(self.held_from, key))
             .min()
             .map(|(_, seq)| seq)
     }
+}
+
+/// Whether `key` waits under a hold from `held_from`.
+fn is_held(held_from: Option<Tier>, key: &LoadPriority) -> bool {
+    held_from.is_some_and(|tier| key.tier >= tier)
 }
 
 #[cfg(test)]

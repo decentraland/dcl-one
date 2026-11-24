@@ -140,7 +140,9 @@ number of reporting scenes; on the web only where the browser has `performance.m
 and the current parcel scene's visible textures and meshes with their CPU-side bytes.
 **Simulate Warning pressure** and **Simulate Full pressure** set the session limit from the
 current use so the pressure tiers and the cache trimming they drive can be exercised;
-**Stop simulating** restores the platform's capacity.
+**Stop simulating** restores the platform's capacity. *Loads waiting for memory*, *Scenes in
+range not spawned* and *Downloads held from tier* show the load refusal that Full pressure turns
+on.
 
 ## The issue signal
 

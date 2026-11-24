@@ -435,6 +435,9 @@ pub enum IpfsKey {
     /// resolves, downloads and caches as without it; only the asset path differs, so the part
     /// loads with its own settings beside the whole file's asset.
     Part,
+    /// The request-slot owner of a load whose path names no scene: its downloads rank under
+    /// this hash instead of with the ownerless requests.
+    SlotOwner,
 }
 
 /// The [`IpfsKey::Part`] of a glTF loaded for its colliders only (`scene_lod`).
@@ -464,6 +467,7 @@ impl AsRef<Path> for IpfsKey {
         match self {
             IpfsKey::BaseUrl => Path::new("&baseUrl"),
             IpfsKey::Part => Path::new("&part"),
+            IpfsKey::SlotOwner => Path::new("&slotOwner"),
         }
     }
 }
@@ -475,6 +479,7 @@ impl TryFrom<&str> for IpfsKey {
         match key {
             "&baseUrl" => Ok(Self::BaseUrl),
             "&part" => Ok(Self::Part),
+            "&slotOwner" => Ok(Self::SlotOwner),
             other => anyhow::bail!("unrecognised ipfs key `{other}`"),
         }
     }
@@ -700,6 +705,12 @@ impl IpfsPath {
             | IpfsType::UrlUncached { .. }
             | IpfsType::IndexDb { .. } => None,
         }
+    }
+
+    /// The hash the file's requests rank under in the request slots: its [`IpfsKey::SlotOwner`],
+    /// else its scene.
+    pub fn slot_owner(&self) -> Option<&str> {
+        self.get(&IpfsKey::SlotOwner).or_else(|| self.scene_hash())
     }
 
     pub fn content_path(&self) -> Option<&str> {

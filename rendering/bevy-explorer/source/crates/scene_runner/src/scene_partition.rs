@@ -15,7 +15,9 @@ use crate::{
 };
 
 use ipfs::partition::{avatar_key, keyed};
-pub use ipfs::partition::{Partition, PartitionedDownloads, PartitionedEmoteDownloads};
+pub use ipfs::partition::{
+    Partition, PartitionedDownloads, PartitionedEmoteDownloads, PlayerDownloads,
+};
 
 /// `SceneHash` hook: the scene root appeared, so its hash ranks at its partition, or at the
 /// bottom of the scene tier until it has one; the publisher raises the player's scene to the
@@ -138,11 +140,17 @@ pub fn update_scene_partitions(
 /// keys unless the gate was idle when the frame began, and the steady state costs nothing.
 pub fn publish_download_priorities(
     scenes: Query<(Entity, &SceneHash, Option<&Partition>)>,
-    partitioned: Query<(Option<&Partition>, &PartitionedDownloads, Has<PrimaryUser>)>,
+    partitioned: Query<(
+        Option<&Partition>,
+        &PartitionedDownloads,
+        Has<PrimaryUser>,
+        Has<PlayerDownloads>,
+    )>,
     partitioned_emotes: Query<(
         Option<&Partition>,
         &PartitionedEmoteDownloads,
         Has<PrimaryUser>,
+        Has<PlayerDownloads>,
     )>,
     lods: Query<(&Partition, &SceneLod)>,
     player: Query<Entity, With<PrimaryUser>>,
@@ -166,16 +174,23 @@ pub fn publish_download_priorities(
         };
         (hash.0.as_str(), key)
     });
-    let wearable_keys = partitioned
-        .iter()
-        .flat_map(|(partition, downloads, is_player)| {
-            keyed(avatar_key(is_player, partition), &downloads.0)
-        });
-    let emote_keys = partitioned_emotes
-        .iter()
-        .flat_map(|(partition, downloads, is_player)| {
-            keyed(avatar_key(is_player, partition), &downloads.0)
-        });
+    let wearable_keys =
+        partitioned
+            .iter()
+            .flat_map(|(partition, downloads, is_player, player_downloads)| {
+                keyed(
+                    avatar_key(is_player || player_downloads, partition),
+                    &downloads.0,
+                )
+            });
+    let emote_keys = partitioned_emotes.iter().flat_map(
+        |(partition, downloads, is_player, player_downloads)| {
+            keyed(
+                avatar_key(is_player || player_downloads, partition),
+                &downloads.0,
+            )
+        },
+    );
     let lod_keys = lods
         .iter()
         .map(|(partition, lod)| (lod.hash.as_str(), partition.0.load_priority(Tier::Lod)));

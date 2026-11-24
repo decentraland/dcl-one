@@ -1,6 +1,6 @@
 use std::num::NonZeroU64;
 
-use crate::memory::{MemoryPressure, MemorySample, MemoryStatus, MemoryThresholds};
+use crate::memory::{LoadRefusal, MemoryPressure, MemorySample, MemoryStatus, MemoryThresholds};
 use bevy::prelude::*;
 
 const MIB: u64 = 1 << 20;
@@ -104,4 +104,25 @@ fn unavailable_measurements_do_not_report_a_pressure_tier() {
         MemoryPressure::Abundance
     );
     assert!(record(&mut world, None).reading().is_none());
+}
+
+#[test]
+fn load_refusal_starts_at_full_and_ends_below_warning() {
+    let mut world = World::new();
+    let mut refusal = LoadRefusal::default();
+    // cap 1000 MiB: warning above 700, full above 750
+    for (used_mib, refusing) in [
+        (720, false),
+        (760, true),
+        (720, true),
+        (700, false),
+        (720, false),
+    ] {
+        let reading = record(&mut world, sample(used_mib * MIB, 1_000 * MIB)).reading();
+        refusal = refusal.next(reading);
+        assert_eq!(refusal.refusing, refusing, "at {used_mib} MiB");
+    }
+    refusal = refusal.next(record(&mut world, sample(760 * MIB, 1_000 * MIB)).reading());
+    assert!(refusal.refusing);
+    assert!(!refusal.next(None).refusing);
 }
