@@ -63,10 +63,8 @@ fn settled_cursor(from: Timestamp, greatest: Timestamp, span_ms: Timestamp) -> T
 /// Upstream `isUsableTimestamp`. These values become the stream's high-water mark, and the persisted
 /// resume state only ever moves forward (`advance_sync_frontier` / `advance_server_sync_cursor` are
 /// GREATEST-monotonic), so a single bad one is permanent: the node then polls /pointer-changes from a
-/// point no real deployment can exceed and silently stops syncing. Hence the check before the
-/// tentative mark ever sees the value. The JS safe-integer clause is a non-concern here: i64 covers
-/// every value serde hands us, and anything that saturated on the way in (1e999 -> i64::MAX) fails
-/// the upper bound.
+/// point no real deployment can exceed and silently stops syncing. The deployment parser already
+/// checks that timestamps encode whole milliseconds.
 pub(crate) fn is_usable_timestamp(ts: Timestamp, now_ms: Timestamp) -> bool {
     ts >= 0 && ts <= now_ms.saturating_add(MAX_TIMESTAMP_CLOCK_SKEW_MS)
 }
@@ -76,16 +74,15 @@ pub(crate) fn is_usable_timestamp(ts: Timestamp, now_ms: Timestamp) -> bool {
 /// the confirmed timestamp at the next poll boundary and from there the durable, GREATEST-monotonic
 /// frontier, so one hostile delta reaching the max() below would poison the node permanently.
 ///
-/// Rejection skips the single delta rather than failing the stream, matching upstream's deliberate
-/// trade: failing would let one permanently-broken record stall every later deployment from that
-/// server.
+/// Malformed rows are skipped. A well-formed row above a structural limit
+/// fails the poll so the confirmed cursor cannot advance past it.
 fn accept_delta_and_advance_mark(
     item: serde_json::Value,
     from_timestamp: Timestamp,
     now_ms: Timestamp,
     greatest_timestamp: &mut Timestamp,
     rejected_logged: &mut u64,
-) -> Option<SyncDeployment> {
+) -> Result<Option<SyncDeployment>, SyncError> {
     let mut report_rejected = |reason: &str, detail: String| {
         if *rejected_logged < MAX_REJECTED_DELTA_LOGS {
             *rejected_logged += 1;
@@ -103,15 +100,26 @@ fn accept_delta_and_advance_mark(
         Ok(d) => d,
         Err(e) => {
             report_rejected("unparseable", e.to_string());
-            return None;
+            return Ok(None);
         }
     };
 
-    let entity_ts_ok = is_usable_timestamp(deployment.entity_timestamp, now_ms);
-    let local_ts_ok = deployment
-        .local_timestamp
-        .is_none_or(|ts| is_usable_timestamp(ts, now_ms));
-    if !entity_ts_ok || !local_ts_ok {
+    if let Err(reason) = deployment.validate_shape() {
+        report_rejected("invalid deployment", reason.into());
+        return Ok(None);
+    }
+    let Some(local_ts) = deployment.local_timestamp else {
+        report_rejected("invalid deployment", "localTimestamp is required".into());
+        return Ok(None);
+    };
+    check_delta_limits(&deployment).map_err(SyncError::Other)?;
+    if let Err(reason) = deployment.validate_auth_chain() {
+        report_rejected("invalid deployment", reason.into());
+        return Ok(None);
+    }
+    if !is_usable_timestamp(deployment.entity_timestamp, now_ms)
+        || !is_usable_timestamp(local_ts, now_ms)
+    {
         report_rejected(
             "implausible timestamp",
             format!(
@@ -119,16 +127,59 @@ fn accept_delta_and_advance_mark(
                 deployment.entity_id, deployment.entity_timestamp, deployment.local_timestamp
             ),
         );
-        return None;
+        return Ok(None);
     }
 
-    if let Some(local_ts) = deployment.local_timestamp
-        && local_ts >= from_timestamp
-    {
+    if local_ts >= from_timestamp {
         *greatest_timestamp = (*greatest_timestamp).max(local_ts);
     }
 
-    Some(deployment)
+    Ok(Some(deployment))
+}
+
+fn check_delta_limits(deployment: &SyncDeployment) -> Result<(), String> {
+    const MAX_POINTERS: usize = 10_000;
+    const MAX_AUTH_LINKS: usize = 100;
+    const MAX_FIELD_BYTES: usize = 256 * 1024;
+    const MAX_ROW_BYTES: usize = 1024 * 1024;
+
+    if deployment.pointers.len() > MAX_POINTERS {
+        return Err(format!(
+            "pointer-change delta exceeds {MAX_POINTERS} pointers"
+        ));
+    }
+    if deployment.auth_chain.len() > MAX_AUTH_LINKS {
+        return Err(format!(
+            "pointer-change delta exceeds {MAX_AUTH_LINKS} auth links"
+        ));
+    }
+
+    let mut bytes = 0;
+    let mut add = |len| {
+        if len > MAX_FIELD_BYTES {
+            return Err(format!(
+                "pointer-change delta field exceeds {MAX_FIELD_BYTES} bytes"
+            ));
+        }
+        bytes += len;
+        if bytes > MAX_ROW_BYTES {
+            return Err(format!(
+                "pointer-change delta exceeds {MAX_ROW_BYTES} field bytes"
+            ));
+        }
+        Ok(())
+    };
+    add(deployment.entity_type.len())?;
+    add(deployment.entity_id.len())?;
+    for pointer in &deployment.pointers {
+        add(pointer.len())?;
+    }
+    for link in &deployment.auth_chain {
+        add(link.link_type.to_string().len())?;
+        add(link.payload.len())?;
+        add(link.signature.as_deref().map_or(0, str::len))?;
+    }
+    Ok(())
 }
 
 /// Rows already delivered at or after the poll's `from`, so the overlap every poll re-reads costs
@@ -204,19 +255,19 @@ async fn fetch_page(
 /// not either), so it reads the same rows again downwards: following it, a poll never got past
 /// its first page, and a page that one flush filled with a single timestamp stalled the stream
 /// for good.
-fn keyset_next_url(server: &str, page: &[serde_json::Value]) -> Option<String> {
+fn keyset_next_url(server: &str, page: &[serde_json::Value], now_ms: Timestamp) -> Option<String> {
     let (from, last_id) = page.iter().rev().find_map(|delta| {
-        let from = match delta.get("localTimestamp")? {
-            serde_json::Value::Number(n) => n.to_string(),
-            _ => return None,
-        };
+        let from = crate::sync_types::timestamp_number(delta.get("localTimestamp")?.as_number()?)?;
+        if !is_usable_timestamp(from, now_ms) {
+            return None;
+        }
         Some((from, delta.get("entityId")?.as_str()?))
     })?;
     let mut url = url::Url::parse(&format!("{server}/pointer-changes")).ok()?;
     url.query_pairs_mut()
         .append_pair("sortingOrder", "ASC")
         .append_pair("sortingField", "local_timestamp")
-        .append_pair("from", &from)
+        .append_pair("from", &from.to_string())
         .append_pair("lastId", last_id);
     Some(url.to_string())
 }
@@ -323,8 +374,9 @@ where
             );
         }
         previous_page = page_ids;
+        let now_ms = chrono::Utc::now().timestamp_millis();
         let next = if more && !repeated {
-            keyset_next_url(server, &items)
+            keyset_next_url(server, &items, now_ms)
         } else {
             None
         };
@@ -335,7 +387,6 @@ where
             spawn_fetch(&mut in_flight, next.clone());
         }
 
-        let now_ms = chrono::Utc::now().timestamp_millis();
         for item in items {
             if should_stop() {
                 return Ok(confirmed_timestamp);
@@ -347,7 +398,8 @@ where
                 now_ms,
                 &mut greatest_timestamp,
                 &mut rejected_logged,
-            ) else {
+            )?
+            else {
                 continue;
             };
 
@@ -451,10 +503,10 @@ mod tests {
 
     fn delta(local_timestamp: serde_json::Value) -> serde_json::Value {
         serde_json::json!({
-            "entityId": "QmPoisonPoisonPoisonPoisonPoisonPoisonPoison1",
+            "entityId": crate::auth::hash_bytes_v1(b"delta test"),
             "entityType": "scene",
             "pointers": ["0,0"],
-            "authChain": [],
+            "authChain": [{"type": "SIGNER", "payload": "0x0000000000000000000000000000000000000001"}],
             "entityTimestamp": 1_700_000_000_000i64,
             "localTimestamp": local_timestamp,
         })
@@ -462,6 +514,20 @@ mod tests {
 
     const NOW_MS: i64 = 1_750_000_000_000;
     const FROM_TS: i64 = 1_600_000_000_000;
+
+    #[test]
+    fn a_keyset_uses_the_last_usable_timestamp_even_if_its_row_cannot_deploy() {
+        let rows = [
+            serde_json::from_str(r#"{"entityId": "usable-boundary", "localTimestamp": 1.7e12}"#)
+                .unwrap(),
+            serde_json::json!({"entityId": "too-far", "localTimestamp": i64::MAX}),
+        ];
+        let next = keyset_next_url("http://localhost", &rows, NOW_MS).unwrap();
+        let next = url::Url::parse(&next).unwrap();
+        let params: std::collections::HashMap<_, _> = next.query_pairs().collect();
+        assert_eq!(params["from"], "1700000000000");
+        assert_eq!(params["lastId"], "usable-boundary");
+    }
 
     #[test]
     fn far_future_local_timestamp_is_rejected_and_never_moves_the_mark() {
@@ -473,7 +539,8 @@ mod tests {
             NOW_MS,
             &mut mark,
             &mut logged,
-        );
+        )
+        .unwrap();
         assert!(rejected.is_none(), "far-future delta must be rejected");
         assert_eq!(mark, FROM_TS, "a rejected delta must not move the mark");
 
@@ -483,7 +550,8 @@ mod tests {
             NOW_MS,
             &mut mark,
             &mut logged,
-        );
+        )
+        .unwrap();
         assert!(negative.is_none(), "negative delta must be rejected");
         assert_eq!(mark, FROM_TS);
     }
@@ -503,7 +571,8 @@ mod tests {
         };
         let mut mark = FROM_TS;
         let mut logged = 0;
-        let rejected = accept_delta_and_advance_mark(item, FROM_TS, NOW_MS, &mut mark, &mut logged);
+        let rejected =
+            accept_delta_and_advance_mark(item, FROM_TS, NOW_MS, &mut mark, &mut logged).unwrap();
         assert!(rejected.is_none(), "overflowed timestamp must be rejected");
         assert_eq!(mark, FROM_TS, "a rejected delta must not move the mark");
     }
@@ -514,7 +583,8 @@ mod tests {
         item["entityTimestamp"] = serde_json::json!(253_402_300_799_000i64);
         let mut mark = FROM_TS;
         let mut logged = 0;
-        let rejected = accept_delta_and_advance_mark(item, FROM_TS, NOW_MS, &mut mark, &mut logged);
+        let rejected =
+            accept_delta_and_advance_mark(item, FROM_TS, NOW_MS, &mut mark, &mut logged).unwrap();
         assert!(rejected.is_none());
         assert_eq!(mark, FROM_TS);
     }
@@ -529,7 +599,8 @@ mod tests {
             NOW_MS,
             &mut mark,
             &mut logged,
-        );
+        )
+        .unwrap();
         assert!(accepted.is_some());
         assert_eq!(mark, FROM_TS + 1000);
         assert_eq!(logged, 0);
@@ -540,20 +611,50 @@ mod tests {
             NOW_MS,
             &mut mark,
             &mut logged,
-        );
+        )
+        .unwrap();
         assert!(skewed.is_some());
         assert_eq!(mark, NOW_MS + MAX_TIMESTAMP_CLOCK_SKEW_MS - 1);
     }
 
     #[test]
-    fn delta_without_local_timestamp_is_scheduled_but_never_moves_the_mark() {
+    fn delta_without_local_timestamp_is_rejected_and_never_moves_the_mark() {
         let mut item = delta(serde_json::json!(0));
         item.as_object_mut().unwrap().remove("localTimestamp");
         let mut mark = FROM_TS;
         let mut logged = 0;
-        let accepted = accept_delta_and_advance_mark(item, FROM_TS, NOW_MS, &mut mark, &mut logged);
-        assert!(accepted.is_some());
+        let accepted =
+            accept_delta_and_advance_mark(item, FROM_TS, NOW_MS, &mut mark, &mut logged).unwrap();
+        assert!(accepted.is_none());
         assert_eq!(mark, FROM_TS);
+    }
+
+    #[test]
+    fn malformed_deltas_are_skipped_before_scheduling_or_advancing() {
+        let mut mark = FROM_TS;
+        let mut logged = 0;
+        for (field, value) in [
+            ("entityId", serde_json::json!("not-a-cid")),
+            ("pointers", serde_json::json!([])),
+            ("authChain", serde_json::json!([])),
+            (
+                "authChain",
+                serde_json::json!([{"type": "ECDSA_SIGNED_ENTITY", "payload": "id"}]),
+            ),
+            ("localTimestamp", serde_json::Value::Null),
+            ("localTimestamp", serde_json::json!(FROM_TS as f64 + 0.5)),
+        ] {
+            let mut item = delta(serde_json::json!(FROM_TS + 1_000));
+            item[field] = value;
+            assert!(
+                accept_delta_and_advance_mark(item, FROM_TS, NOW_MS, &mut mark, &mut logged)
+                    .unwrap()
+                    .is_none(),
+                "{field}"
+            );
+        }
+        assert_eq!(mark, FROM_TS);
+        assert_eq!(logged, 6);
     }
 
     /// The stream never sends `includeAuthChain`, and `SyncDeployment` parses
@@ -567,10 +668,41 @@ mod tests {
         item.as_object_mut().unwrap().remove("authChain");
         let mut mark = FROM_TS;
         let mut logged = 0;
-        let accepted = accept_delta_and_advance_mark(item, FROM_TS, NOW_MS, &mut mark, &mut logged);
+        let accepted =
+            accept_delta_and_advance_mark(item, FROM_TS, NOW_MS, &mut mark, &mut logged).unwrap();
         assert!(accepted.is_none());
         assert_eq!(mark, FROM_TS);
         assert_eq!(logged, 1);
+    }
+
+    #[test]
+    fn oversized_deltas_fail_the_poll_before_advancing_its_mark() {
+        let mut mark = FROM_TS;
+        let mut logged = 0;
+        for pointers in [
+            vec!["0,0".to_string(); 10_001],
+            vec!["a".repeat(256 * 1024 + 1)],
+            vec!["a".repeat(256 * 1024); 4],
+        ] {
+            let mut item = delta(serde_json::json!(FROM_TS + 1_000));
+            item["pointers"] = serde_json::json!(pointers);
+            let error =
+                accept_delta_and_advance_mark(item, FROM_TS, NOW_MS, &mut mark, &mut logged)
+                    .unwrap_err();
+            assert!(error.to_string().contains("pointer-change delta"));
+        }
+        let mut item = delta(serde_json::json!(FROM_TS + 1_000));
+        let mut links = item["authChain"].as_array().unwrap().clone();
+        links.extend(std::iter::repeat_n(
+            serde_json::json!({"type": "ECDSA_EPHEMERAL", "payload": "payload", "signature": "signature"}),
+            100,
+        ));
+        item["authChain"] = serde_json::json!(links);
+        let error = accept_delta_and_advance_mark(item, FROM_TS, NOW_MS, &mut mark, &mut logged)
+            .unwrap_err();
+        assert!(error.to_string().contains("exceeds 100 auth links"));
+        assert_eq!(mark, FROM_TS);
+        assert_eq!(logged, 0);
     }
 
     fn deployment_at(entity_id: &str, local_ts: Timestamp) -> SyncDeployment {

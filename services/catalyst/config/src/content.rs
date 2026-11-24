@@ -43,6 +43,18 @@ pub struct ContentConfig {
     #[arg(long, env = "PHASED_SYNC", default_value_t = true, action = clap::ArgAction::Set)]
     pub phased_sync: bool,
 
+    /// Seconds after initial bootstrap before rechecking snapshots from syncing peers.
+    #[arg(
+        long,
+        env = "SYNC_SNAPSHOT_RESYNC_INITIAL_DELAY_SECS",
+        default_value_t = 3_600
+    )]
+    pub sync_snapshot_resync_initial_delay_secs: u32,
+
+    /// Seconds between subsequent peer snapshot checks.
+    #[arg(long, env = "SYNC_SNAPSHOT_RESYNC_INTERVAL_SECS", default_value_t = 14 * 86_400, value_parser = clap::value_parser!(u32).range(1..))]
+    pub sync_snapshot_resync_interval_secs: u32,
+
     /// https L1 JSON-RPC endpoint: the EIP-1654 (contract wallet) signature
     /// check and the L1 deploy access checks (LAND, names, v1 items) of local
     /// deployments; the L2 checks use RPC_ENDPOINT_POLYGON. It must serve
@@ -763,6 +775,8 @@ mod tests {
         assert_eq!(c.content.sync_entity_types, "");
         assert!(c.content.phased_sync);
         assert_eq!(c.content.sync_from_timestamp_ms, 0);
+        assert_eq!(c.content.sync_snapshot_resync_initial_delay_secs, 3_600);
+        assert_eq!(c.content.sync_snapshot_resync_interval_secs, 14 * 86_400);
         assert!(c.content.eth_rpc_url.is_none());
         assert_eq!(c.content.concurrent_sync_downloads, 200);
         assert_eq!(c.content.connections_max_idle, 25);

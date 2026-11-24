@@ -752,19 +752,37 @@ struct EntityFiles {
     snapshots: Vec<(String, String)>,
 }
 
-fn entity_files(entity_data: &[u8]) -> Result<EntityFiles, serde_json::Error> {
-    let entity: serde_json::Value = serde_json::from_slice(entity_data)?;
-    let declared: Vec<(String, String)> = entity
-        .get("content")
-        .and_then(|c| c.as_array())
-        .into_iter()
-        .flatten()
-        .filter_map(|entry| {
-            let hash = entry.get("hash")?.as_str()?;
-            let file = entry.get("file").and_then(|f| f.as_str()).unwrap_or("");
-            Some((file.to_string(), hash.to_string()))
-        })
-        .collect();
+fn entity_files(entity_data: &[u8]) -> Result<EntityFiles, String> {
+    const MAX_CONTENT_FILES: usize = 25_000;
+
+    let entity: serde_json::Value =
+        serde_json::from_slice(entity_data).map_err(|e| e.to_string())?;
+    if !entity.is_object() {
+        return Err("entity must be a JSON object".into());
+    }
+    let entries = match entity.get("content") {
+        None => &[][..],
+        Some(entries) => entries
+            .as_array()
+            .ok_or("content must be an array when present")?
+            .as_slice(),
+    };
+    if entries.len() > MAX_CONTENT_FILES {
+        return Err(format!(
+            "content declares {} files, above the maximum of {MAX_CONTENT_FILES}",
+            entries.len()
+        ));
+    }
+    let mut declared = Vec::with_capacity(entries.len());
+    for (index, entry) in entries.iter().enumerate() {
+        let hash = entry
+            .get("hash")
+            .and_then(|h| h.as_str())
+            .filter(|h| is_canonical_cid(h))
+            .ok_or_else(|| format!("content entry {index} has an invalid hash"))?;
+        let file = entry.get("file").and_then(|f| f.as_str()).unwrap_or("");
+        declared.push((file.to_string(), hash.to_string()));
+    }
     let mut seen = HashSet::new();
     let content = declared
         .iter()
@@ -1062,16 +1080,55 @@ mod tests {
 
     #[test]
     fn content_hashes_are_listed_once_in_order() {
+        let first = hash_bytes_v1(b"scene");
+        let second = hash_bytes_v1(b"model");
         let files = files_of(serde_json::json!({
             "type": "scene",
             "content": [
-                {"file": "scene.json", "hash": "bafabc"},
-                {"file": "model.glb", "hash": "bafdef"},
-                {"file": "copy.glb", "hash": "bafdef"},
+                {"file": "scene.json", "hash": first},
+                {"file": "model.glb", "hash": second},
+                {"file": "copy.glb", "hash": second},
             ]
         }));
-        assert_eq!(files.content, vec!["bafabc", "bafdef"]);
+        assert_eq!(files.content, vec![first, second]);
         assert!(files.snapshots.is_empty());
+    }
+
+    #[test]
+    fn content_may_be_absent_but_must_be_an_array_when_present() {
+        assert!(
+            entity_files(br#"{"type":"scene"}"#)
+                .unwrap()
+                .content
+                .is_empty()
+        );
+        assert!(
+            entity_files(br#"{"content":null}"#)
+                .unwrap_err()
+                .contains("array")
+        );
+        assert!(
+            entity_files(br#"{"content":[{"file":"missing-hash"}]}"#)
+                .unwrap_err()
+                .contains("invalid hash")
+        );
+    }
+
+    #[test]
+    fn content_file_cap_counts_declarations_before_deduplicating_hashes() {
+        let hash = hash_bytes_v1(b"duplicate");
+        let mut entries = vec![serde_json::json!({"hash": hash}); 25_000];
+        assert_eq!(
+            files_of(serde_json::json!({"content": entries})).content,
+            vec![hash.clone()]
+        );
+        entries.push(serde_json::json!({"hash": hash}));
+        let bytes = serde_json::to_vec(&serde_json::json!({"content": entries})).unwrap();
+        assert!(
+            entity_files(&bytes)
+                .unwrap_err()
+                .contains("maximum of 25000")
+        );
     }
 
     /// As snapshots-fetcher: only a profile's renders missing from `content[]` are added, and

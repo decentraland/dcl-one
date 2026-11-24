@@ -89,6 +89,15 @@ the data and its operations.
    regenerates those windows; the row keeps its real `generation_time`, which
    `/snapshots` publishes as upstream does.
 
+Content sync looks up peer snapshot receipts by primary key in batches during
+bootstrap and periodic refresh. A receipt records the entity types already
+processed. Unfiltered coverage uses a null array. Migration 0059 initializes
+older receipts to an empty set, so they are replayed for the current filter.
+Writes extend coverage and a peer's cursor advances after its receipts are durable.
+Peer downloads use temporary staging. The blob collector can reclaim old
+peer snapshot files once their final owning reference is gone. A local
+published snapshot continues to retain its blob.
+
 ## Worlds, persistent storage and scene hosting
 
 One worlds subsystem owns deployment/permission lookup, world/player storage
