@@ -3514,6 +3514,10 @@
           "kind": "directory"
         },
         {
+          "name": "hideUi",
+          "kind": "directory"
+        },
+        {
           "name": "itemPurchase",
           "kind": "directory"
         },
@@ -4233,6 +4237,15 @@
         },
         {
           "name": "useGifting.ts",
+          "kind": "regular"
+        }
+      ]
+    },
+    {
+      "path": "library/ui/apps/hud/features/hideUi",
+      "entries": [
+        {
+          "name": "hideUiToast.tsx",
           "kind": "regular"
         }
       ]
@@ -7304,7 +7317,7 @@
     },
     {
       "path": "library/ui/apps/hud/App.tsx",
-      "sha256": "87ee9e602065d8156bf283ea36fe5009d7424b38bd6285600c3fa63faec42af0"
+      "sha256": "04fd4ffae61d61d5e8b3acbff410de169a37f20307dd269262e382d1ab8c3c52"
     },
     {
       "path": "library/ui/apps/hud/assets/backpack/add-gradient.webp",
@@ -9867,6 +9880,10 @@
       "sha256": "5aa063c49b4d48dbbdd725359f092bd959e31e74bd7e74521f3f62dd3c799cf1"
     },
     {
+      "path": "library/ui/apps/hud/features/hideUi/hideUiToast.tsx",
+      "sha256": "866156b752bacc4ae401b1d2af8d2e9e562abc0393841787b35bd9813b41c2d8"
+    },
+    {
       "path": "library/ui/apps/hud/features/itemPurchase/answer.ts",
       "sha256": "16991b00b990c521b95b322b6193e6a3afe2fab7682f3a34731cddb598048c70"
     },
@@ -10304,7 +10321,7 @@
     },
     {
       "path": "library/ui/apps/hud/features/session/useEngineSession.ts",
-      "sha256": "cd4eb339fe2692d243e1c80bbe0de3f7542d494ab75984a12b3d23a683a4121d"
+      "sha256": "ff9d93ca8c1a591cb4a907c5751979fddb501df3ec67cf79bf6b9f85894e9710"
     },
     {
       "path": "library/ui/apps/hud/features/settings/KeyBindingsTab.module.css",
@@ -10652,7 +10669,7 @@
     },
     {
       "path": "library/ui/apps/hud/test/harness.tsx",
-      "sha256": "801eba4d40de565112c04a21349b82570148e5947bde5b6f968b71e68efa9314"
+      "sha256": "0153777d12b2e7dbc1a32a95a67b58000c397da07745dda02d1219c65f56a200"
     },
     {
       "path": "library/ui/apps/hud/test/host.ts",
@@ -11080,7 +11097,7 @@
     },
     {
       "path": "library/ui/apps/hud/test/hosted/systemActionShortcuts.test.tsx",
-      "sha256": "09221144b3c705b1117c1f7291fceede1dc7ba991633fc77a1d6f218cccabfec"
+      "sha256": "aff834f2327ebf802090840f6be5285f8e302c0ba9793ca9f9eb18940e11d29f"
     },
     {
       "path": "library/ui/apps/hud/test/hosted/systemPanel.test.tsx",
@@ -25325,6 +25342,21 @@
       "kind": "test:runtime"
     },
     {
+      "from": "library/ui/apps/hud/features/hideUi/hideUiToast.tsx",
+      "to": "library/ui/apps/hud/design/index.ts",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/hideUi/hideUiToast.tsx",
+      "to": "library/ui/apps/hud/design/index.ts",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/hideUi/hideUiToast.tsx",
+      "to": "library/ui/apps/hud/design/index.ts",
+      "kind": "test:runtime"
+    },
+    {
       "from": "library/ui/apps/hud/features/lobby/ExploreSectionModal.tsx",
       "to": "library/ui/apps/hud/assets/events/close-icn-thin.png",
       "kind": "native:runtime"
@@ -34322,6 +34354,21 @@
     {
       "from": "library/ui/apps/hud/features/session/useEngineSession.ts",
       "to": "library/ui/apps/hud/features/gate/exitApplication.ts",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/session/useEngineSession.ts",
+      "to": "library/ui/apps/hud/features/hideUi/hideUiToast.tsx",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/session/useEngineSession.ts",
+      "to": "library/ui/apps/hud/features/hideUi/hideUiToast.tsx",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/session/useEngineSession.ts",
+      "to": "library/ui/apps/hud/features/hideUi/hideUiToast.tsx",
       "kind": "test:runtime"
     },
     {
@@ -48272,6 +48319,11 @@
     {
       "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
       "to": "library/ui/apps/hud/features/gifting/useGifting.ts",
+      "kind": "type"
+    },
+    {
+      "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
+      "to": "library/ui/apps/hud/features/hideUi/hideUiToast.tsx",
       "kind": "type"
     },
     {

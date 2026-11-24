@@ -93,7 +93,7 @@ describe('system-action menu shortcuts', () => {
   it('HideUi cycles: Explorer HUD hidden, then the scene UI too, then everything back', async () => {
     const h = await world()
     render(<ToastHost />)
-    const showUi = (): string[][] => h.driver.sentOf('consoleCommand').filter((m) => m.command === 'show_ui').map((m) => m.args)
+    const showUi = (): string[][] => h.driver.sentOf('consoleCommand').filter((m) => m.command === 'show_ui').map((m) => m.args ?? [])
     h.driver.emit(action('HideUi'))
     expect(h.session().hudHidden).toBe(true)
     expect(showUi()).toEqual([])
@@ -114,7 +114,7 @@ describe('system-action menu shortcuts', () => {
     h.driver.emit(action('Map'))
     expect(h.session().hudHidden).toBe(false)
     expect(h.session().map.open).toBe(true)
-    expect(h.driver.sentOf('consoleCommand').filter((m) => m.command === 'show_ui').map((m) => m.args).at(-1)).toEqual(['all', 'true'])
+    expect(h.driver.sentOf('consoleCommand').filter((m) => m.command === 'show_ui').map((m) => m.args ?? []).at(-1)).toEqual(['all', 'true'])
   })
 
   it('ignores release edges', async () => {

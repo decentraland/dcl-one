@@ -1552,6 +1552,8 @@ export function useEngineSession(createDriver: () => LoginDriver, host: SessionH
   // requestFocusChat from a callback that would otherwise close over a stale value. Popups aren't in
   // here — they live in their own module store, so requestFocusChat asks it directly.
   const chatCoveredRef = useRef(false)
+  // Brings back the UI the HideUi key hid (assigned below, once setUiHidden exists).
+  const showUiRef = useRef<() => void>(() => {})
   // Open + (re)focus chat — the engine's "Chat" system action (Enter, relayed by the bridge as
   // focusChat) funnels here, wherever keyboard focus sat when it fired.
   const requestFocusChat = useCallback(() => {
@@ -1566,6 +1568,8 @@ export function useEngineSession(createDriver: () => LoginDriver, host: SessionH
     // `!document.pointerLockElement`. No-op on native (no DOM pointer lock; the engine frees its own OS
     // cursor grab from the Chat action).
     document.exitPointerLock?.()
+    // the chat is part of the HUD: Enter brings back a UI the HideUi key hid
+    showUiRef.current()
     // Friends is the only panel Enter closes: it shares the chat's bottom-left dock, so Chat renders
     // null behind it (App's `hidden`) and focusing without closing it would do nothing on screen.
     // The rest (profile, notifications, emotes) sit clear of the chat, so leave them open.
@@ -3772,6 +3776,7 @@ export function useEngineSession(createDriver: () => LoginDriver, host: SessionH
     },
     [ownConsoleCommand]
   )
+  showUiRef.current = () => setUiHidden('none')
   const stopPortable = useCallback((hash: string) => ownConsoleCommand('stop_portable', [hash]), [ownConsoleCommand])
   const restartSmartWearable = useCallback((urn: string) => ownConsoleCommand('smart_wearable', ['restart', urn]), [ownConsoleCommand])
   const resolveWorldPassword = useCallback((password: string | null) => {
@@ -4531,6 +4536,8 @@ export function useEngineSession(createDriver: () => LoginDriver, host: SessionH
     signOuts.current += 1
     // a /goto still waiting for its answer has no chat of this session to post it in
     gotoReplies.current.clear()
+    // the next sign-in starts with the whole UI shown; sent before the logout, while the engine listens
+    setUiHidden('none')
     driverRef.current?.logout(forget).catch((e: Error) => console.error('[session] logout failed', e))
     if (forget) {
       clearLogins() // drop the same-domain SSO identity for this origin
@@ -4633,7 +4640,7 @@ export function useEngineSession(createDriver: () => LoginDriver, host: SessionH
     setBanRefusedTravel(false)
     travelSeq.current++
     setTravellingTo(null)
-  }, [closeAllPanels, resetEvents])
+  }, [closeAllPanels, resetEvents, setUiHidden])
   const logout = useCallback(() => signOut(true), [signOut])
   // Cancel on Verifying, or a sign-in that took too long (`error`): the first screen, the stored
   // sign-in kept, and the error shown there.
