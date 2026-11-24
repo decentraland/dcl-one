@@ -26,6 +26,52 @@ describe('resolveEnv', () => {
   })
 })
 
+describe('when the page is on a deployed host', () => {
+  const MAINNET = 1
+  const SEPOLIA = 11155111
+
+  describe.each(['dcl.dev', 'dcl.live', 'create.dcl.dev', 'dcl.live:443', 'dcl.dev.'])('and the host is %s', host => {
+    it("should be production when the node's network is mainnet", () => {
+      expect(resolveEnv({ host, search: '' }, Env.DEVELOPMENT, MAINNET)).toBe(Env.PRODUCTION)
+    })
+
+    it("should be development when the node's network is sepolia", () => {
+      expect(resolveEnv({ host, search: '' }, Env.PRODUCTION, SEPOLIA)).toBe(Env.DEVELOPMENT)
+    })
+
+    it("should keep the node's environment when ?env= names another", () => {
+      expect(resolveEnv({ host, search: '?env=dev' }, Env.PRODUCTION, MAINNET)).toBe(Env.PRODUCTION)
+      expect(resolveEnv({ host, search: '?env=prod' }, Env.PRODUCTION, SEPOLIA)).toBe(Env.DEVELOPMENT)
+      expect(resolveEnv({ host, search: '?env=stg' }, Env.PRODUCTION, SEPOLIA)).toBe(Env.DEVELOPMENT)
+    })
+  })
+
+  describe("and the node's network is unknown", () => {
+    it.each([undefined, 0, 5])('should resolve as on any other host for network %s', networkId => {
+      expect(resolveEnv({ host: 'dcl.dev', search: '' }, Env.STAGING, networkId)).toBe(Env.STAGING)
+      expect(resolveEnv({ host: 'dcl.dev', search: '?env=dev' }, Env.STAGING, networkId)).toBe(Env.DEVELOPMENT)
+    })
+  })
+})
+
+describe("when the page is on another host and the node's network is known", () => {
+  const SEPOLIA = 11155111
+
+  it.each(['localhost:5212', 'example.org', 'notdcl.dev', 'dcl.dev.example.org'])(
+    'should not follow the node on %s',
+    host => {
+      expect(resolveEnv({ host, search: '' }, Env.PRODUCTION, SEPOLIA)).toBe(Env.PRODUCTION)
+      expect(resolveEnv({ host, search: '?env=stg' }, Env.PRODUCTION, SEPOLIA)).toBe(Env.STAGING)
+    }
+  )
+
+  it("should not follow the node on Decentraland's own hosts", () => {
+    expect(resolveEnv({ host: 'decentraland.org', search: '' }, Env.STAGING, SEPOLIA)).toBe(Env.PRODUCTION)
+    expect(resolveEnv({ host: 'decentraland.today', search: '' }, Env.PRODUCTION, SEPOLIA)).toBe(Env.STAGING)
+    expect(resolveEnv({ host: 'decentraland.zone', search: '?env=prod' }, Env.STAGING, SEPOLIA)).toBe(Env.PRODUCTION)
+  })
+})
+
 describe('createEnvConfig', () => {
   it('reads the resolved environment only', () => {
     const config = createEnvConfig(

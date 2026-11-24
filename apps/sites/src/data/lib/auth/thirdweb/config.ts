@@ -12,6 +12,7 @@ declare global {
       docsBase?: string;
       commitHash?: string;
       pulseServer?: string;
+      nodeNetworkId?: number;
     };
   }
 }
