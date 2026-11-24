@@ -1,19 +1,29 @@
-//! Where the scene loop ends each frame.
+//! Where the scene loop ends each frame, and how it waits for scene replies.
 //!
 //! [`grid_deadline`] keeps the deadline on a grid of frame targets: after a long frame the loop
 //! gets what is left of the grid, down to a 1 ms floor, and keeps the loss for the next frames
-//! (B_n = clamp(B_{n-1} + T - I_n, 1 ms, T)). Native builds always use it. The web adds the
-//! deadline mode and the scene loop's waits for replies (`web`); only the wasm build reads the
-//! scene loop mode.
+//! (B_n = clamp(B_{n-1} + T - I_n, 1 ms, T)).
+//!
+//! [`LoopPacing`] paces `run_scene_loop` on this platform, with one API on both:
+//! [`LoopPacing::begin`] takes the frame's grid deadline and starts the frame's `PacedLoop`
+//! (its deadline, the last moment a wait for replies may end, and that wait), and
+//! [`LoopPacing::end`] closes it. Natively (`native`) the loop keeps the grid deadline, waits
+//! with the spin sleeper's native sleep and, with a frame cap, sleeps to the deadline after the
+//! loop. The web (`web`) adds the deadline mode and the scene loop's waits for replies; only the
+//! wasm build reads the scene loop mode. [`LoopPacingPlugin`] sets either up.
 
 use std::time::Duration;
 
 use bevy::platform::time::Instant;
 
+#[cfg(not(target_arch = "wasm32"))]
+mod native;
+#[cfg(not(target_arch = "wasm32"))]
+pub(crate) use native::{LoopPacing, LoopPacingPlugin};
 #[cfg(any(target_arch = "wasm32", test))]
 mod web;
 #[cfg(target_arch = "wasm32")]
-pub(crate) use web::{warn_without_tail_diagnostics, web_frame_start, WebLoopPacing};
+pub(crate) use web::{LoopPacing, LoopPacingPlugin};
 
 /// The scene loop always runs at least this long.
 pub const LOOP_FLOOR: Duration = Duration::from_millis(1);

@@ -49,8 +49,6 @@ use dcl_types::{
 use initialize_scene::{PortableScenes, TestingData};
 use ipfs::SceneIpfsLocation;
 use primary_entities::PrimaryEntities;
-#[cfg(not(target_arch = "wasm32"))]
-use spin_sleep::SpinSleeper;
 use ui_core::ui_actions::{Click, On};
 use update_world::lights::LightsPlugin;
 use util::SceneUtilPlugin;
@@ -285,8 +283,6 @@ pub struct SceneLoopSchedule {
     /// frame) means a frame that overruns is repaid by a correspondingly shorter sleep,
     /// so the long-run rate matches the target instead of losing the overshoot forever.
     next_frame_end: Instant,
-    #[cfg(not(target_arch = "wasm32"))]
-    sleeper: SpinSleeper,
 }
 
 /// The time from the start of one scene loop pass to the start of the next while the loop
@@ -449,12 +445,7 @@ impl Plugin for SceneRunnerPlugin {
                 .chain()
                 .in_set(SceneSets::RunLoop),
         );
-        // the web scene loop's frame start and tail, for the deadline mode
-        #[cfg(target_arch = "wasm32")]
-        {
-            app.init_resource::<loop_pacing::WebLoopPacing>();
-            app.add_systems(First, loop_pacing::web_frame_start);
-        }
+        app.add_plugins(loop_pacing::LoopPacingPlugin);
 
         let mut scene_schedule = Schedule::new(SceneLoopLabel);
         // most passes find nothing to do, so handing each system to a worker costs more
@@ -478,8 +469,6 @@ impl Plugin for SceneRunnerPlugin {
         app.insert_resource(SceneLoopSchedule {
             schedule: scene_schedule,
             next_frame_end: Instant::now(),
-            #[cfg(not(target_arch = "wasm32"))]
-            sleeper: SpinSleeper::default(),
         });
 
         app.add_plugins(SceneInputPlugin);
@@ -516,13 +505,6 @@ impl Plugin for SceneRunnerPlugin {
 
         app.add_systems(PostUpdate, consume_toasts);
     }
-
-    // web: the deadline mode measures the frame's tail with the pipelined-rendering diagnostics,
-    // which another plugin adds
-    #[cfg(target_arch = "wasm32")]
-    fn finish(&self, app: &mut App) {
-        loop_pacing::warn_without_tail_diagnostics(app.world());
-    }
 }
 
 fn run_scene_loop(world: &mut World) {
@@ -551,30 +533,23 @@ fn run_scene_loop(world: &mut World) {
         Duration::from_nanos((1e9 / fps) as u64)
     };
     let start_loop_time = Instant::now();
-    let (target_end_time, next_frame_end) = loop_pacing::grid_deadline(
+    let frame_target = (fps != 0.0).then_some(frame_target_duration);
+    let (grid_end_time, next_frame_end) = loop_pacing::grid_deadline(
         loop_schedule.next_frame_end,
         start_loop_time,
         frame_target_duration,
     );
     loop_schedule.next_frame_end = next_frame_end;
-    // a native sleep can wake late by the sleeper's accuracy, so no wait for replies ends
-    // closer to the deadline than that
-    #[cfg(not(target_arch = "wasm32"))]
-    let last_wait_end =
-        target_end_time - Duration::new(0, loop_schedule.sleeper.native_accuracy_ns());
-    // web: the deadline mode's deadline, and timed waits that end before it by their lateness
-    #[cfg(target_arch = "wasm32")]
-    let mut web_loop = world.resource_mut::<loop_pacing::WebLoopPacing>().begin(
-        target_end_time,
+    let mut paced = world.resource_mut::<loop_pacing::LoopPacing>().begin(
+        grid_end_time,
         start_loop_time,
-        (fps != 0.0).then_some(frame_target_duration),
+        frame_target,
     );
-    #[cfg(target_arch = "wasm32")]
-    let (target_end_time, last_wait_end) = (web_loop.deadline, web_loop.last_wait_end);
+    let target_end_time = paced.deadline;
 
     let mut updates = world.resource_mut::<SceneUpdates>();
     updates.loop_end_time = target_end_time;
-    updates.frame_target = (fps != 0.0).then_some(frame_target_duration);
+    updates.frame_target = frame_target;
 
     // run at least once to collect updates even if no scenes are eligible
     let mut run_once = false;
@@ -587,8 +562,7 @@ fn run_scene_loop(world: &mut World) {
                 || !world.resource::<SceneUpdates>().jobs_in_flight.is_empty()))
     {
         let pass_start = Instant::now();
-        #[cfg(target_arch = "wasm32")]
-        web_loop.pass_start();
+        paced.pass_start();
         schedule.run(world);
         run_once = true;
         scene_schedule_run_count += 1;
@@ -598,32 +572,21 @@ fn run_scene_loop(world: &mut World) {
         if !updates.jobs_in_flight.is_empty()
             && updates.next_scene_to_start(scene_threads).is_none()
         {
-            let next_pass = (pass_start + SCENE_REPLY_POLL).min(last_wait_end);
+            let next_pass = (pass_start + SCENE_REPLY_POLL).min(paced.last_wait_end);
             if let Some(wait) = next_pass.checked_duration_since(Instant::now()) {
-                // the sleep the sleeper's accuracy is for
-                #[cfg(not(target_arch = "wasm32"))]
-                spin_sleep::native_sleep(wait);
-                #[cfg(target_arch = "wasm32")]
-                web_loop.wait(next_pass, wait);
+                paced.wait(world, next_pass, wait);
             }
         }
     }
     let loop_end_time = Instant::now();
-    #[cfg(target_arch = "wasm32")]
-    world
-        .resource_mut::<loop_pacing::WebLoopPacing>()
-        .end(web_loop, loop_end_time);
     let eligible_scene_jobs_left_count = world.resource::<SceneUpdates>().eligible_jobs as u32;
 
-    let mut loop_schedule = world.resource_mut::<SceneLoopSchedule>();
-    loop_schedule.schedule = schedule;
+    world.resource_mut::<SceneLoopSchedule>().schedule = schedule;
 
-    #[cfg(not(target_arch = "wasm32"))]
-    if fps != 0.0 {
-        if let Some(sleep_time) = target_end_time.checked_duration_since(Instant::now()) {
-            loop_schedule.sleeper.sleep(sleep_time);
-        }
-    }
+    // natively, with a frame cap, the frame limiter sleeps to the deadline
+    world
+        .resource_mut::<loop_pacing::LoopPacing>()
+        .end(paced, loop_end_time);
     let frame_limiter_sleep_ms = loop_end_time.elapsed().as_secs_f32() * 1000.0;
     world.insert_resource(SceneLoopTiming {
         scene_loop_ms: (loop_end_time - start_loop_time).as_secs_f32() * 1000.0,
