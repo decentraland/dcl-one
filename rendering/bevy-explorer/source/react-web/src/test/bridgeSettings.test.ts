@@ -12,7 +12,8 @@ const setting = (name: string, value: number, names: string[] = []): Setting => 
   namedVariants: variants(...names),
   value,
   default: value,
-  stepSize: 1
+  stepSize: 1,
+  disabled: false
 })
 const OFF_ON = ['Off', 'On']
 const FXAA = ['Off', 'FXAA (Low)', 'FXAA (High)']

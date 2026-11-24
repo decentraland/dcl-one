@@ -388,6 +388,17 @@ On the web only:
   (2000 by default; later waits double from it, 5 reopens at most) as `firstDelayMs` and
   `maxReopens`; with `ms`, sets it first for every source failing from then on. For tests that
   would otherwise wait the full 62 s schedule.
+- `/scene_loop_state`: the scene loop's scheduling as JSON, the Scene Loop debug section's
+  reading ([scheduling](scheduling.md)): `mode`; for the last loop, `deadline` (where its
+  deadline came from) and `budget` (ms from its start to its deadline); `handoffGap` (ms from
+  the last handoff to the render worker to the next frame's start); `tail` (the frame tail's
+  90th percentile and the reserve with its margin, ms) and `tailFrames` (frames measured, of
+  32); `lateness` (the 90th percentile of the last second's timed waits for replies, ms); and
+  `woken` (`count` and `scenes`, the titles of the scenes whose relays wake on the engine's send;
+  null in a mode that does not wake the relays). `unavailable` says why a reading is null.
+- `/scene_loop_mode <both|relay|deadline|legacy>`: switches the scheduling mode without a
+  reload, as `?sceneLoop=` sets it at load; the engine's loop takes it at its next frame and
+  each relay at its next step. The reply names the mode; an unknown name fails with the list.
 
 The HUD and input:
 

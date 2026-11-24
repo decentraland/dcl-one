@@ -10,6 +10,7 @@ import { requestPassport, useProfile } from '../session/profileStore'
 import { relationshipOf } from '@explorer-core/lib/relationship'
 import { openNameEdit } from './NameEditModal'
 import { ProfilePassport, type PassportTab } from './ProfilePassport'
+import styles from './ProfilePassport.module.css'
 import type { Profile } from '@explorer-core/engine/protocol'
 import { splitName, userColor } from '@explorer-core/lib/identity'
 import { hexToColor3 } from '@explorer-core/lib/color'
@@ -175,6 +176,7 @@ export function openPassport(userId: string, tab?: PassportTab): () => void {
       />
     ),
     {
+      className: styles.scrim,
       backdropClickCloses: () => !dirty.current,
       // Sync `true` when there is nothing to lose, so an ordinary close stays as immediate as it
       // was; only an edit in progress opens the dialog.

@@ -16,7 +16,7 @@ import {
   fixturesForLane,
   validateSpec,
   type MpRunSpec,
-} from "@ui/creatorhub/mp/rules";
+} from "@web-core/multiplayer-test/rules";
 
 const TRACK_CTX = {
   sid: "sid-mp",

@@ -3,10 +3,10 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { action, normalizeReport } from "./internal.client-error";
 
-function post(body: string): Request {
+function post(body: string, userAgent?: string): Request {
   return new Request("https://example.org/internal/client-error", {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: { "Content-Type": "application/json", ...(userAgent ? { "User-Agent": userAgent } : {}) },
     body,
   });
 }
@@ -95,6 +95,27 @@ describe("action (client-error ingest)", () => {
     } finally {
       vi.unstubAllGlobals();
     }
+  });
+
+  describe("when a bot submits a client error", () => {
+    const fetchMock = vi.fn<typeof fetch>();
+
+    beforeEach(() => {
+      vi.stubGlobal("fetch", fetchMock);
+      vi.stubEnv("SEGMENT_WRITE_KEY", "key-1");
+    });
+
+    afterEach(() => {
+      vi.unstubAllGlobals();
+      vi.unstubAllEnvs();
+    });
+
+    it("should accept and log the error without relaying it to Segment", async () => {
+      const res = await call(post(JSON.stringify({ message: "boom" }), "curl/8.6.0"));
+      expect(res.status).toBe(202);
+      expect(errSpy).toHaveBeenCalledOnce();
+      expect(fetchMock).not.toHaveBeenCalled();
+    });
   });
 
   it("answers non-POST 405, a signal-less body 204, an oversized body 413 and bad JSON 400, recording nothing", async () => {

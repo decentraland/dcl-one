@@ -398,8 +398,8 @@ const mockEquippedEmotes = (): Emote[] =>
 
 const v = (name: string): { name: string; description: string } => ({ name, description: '' })
 
-const choice = (name: string, category: string, variants: string[], value: number): Setting => ({ name, category, description: '', minValue: 0, maxValue: variants.length - 1, namedVariants: variants.map(v), value, default: value, stepSize: 1 })
-const level = (name: string, category: string, value: number, max = 100, min = 0, stepSize = 1): Setting => ({ name, category, description: '', minValue: min, maxValue: max, namedVariants: [], value, default: value, stepSize })
+const choice = (name: string, category: string, variants: string[], value: number): Setting => ({ name, category, description: '', minValue: 0, maxValue: variants.length - 1, namedVariants: variants.map(v), value, default: value, stepSize: 1, disabled: false })
+const level = (name: string, category: string, value: number, max = 100, min = 0, stepSize = 1): Setting => ({ name, category, description: '', minValue: min, maxValue: max, namedVariants: [], value, default: value, stepSize, disabled: false })
 const ON_OFF = ['Off', 'On']
 // Stateful so the mock's controls actually move when changed (setSetting → re-emit). The rows, their
 // names, order and values are the reference client's settings pages (Graphics, Sounds, Controls,
@@ -1406,6 +1406,7 @@ export function startMockBridge(opts: Partial<MockOptions> = {}): () => void {
     if (msg.kind === 'minimapConfig') {
       // No engine in mock mode — the Camera style has nothing to render. The DOM styles
       // are unaffected: React draws those from map tiles without the scene's help.
+      if (msg.style === 'imposters') reply({ kind: 'minimapReady' })
       return
     }
     if (msg.kind === 'previewFocus') return
