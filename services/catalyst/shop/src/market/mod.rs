@@ -38,13 +38,15 @@
 //! `/v1/items`, `/v1/contracts`, `/v1/collections` and `/v1/prices` on a
 //! complete pass per configured network. Readers (`readers.rs`: first ≤ 100,
 //! skip ≤ 5000, id-keyset counts capped at 5000, per-route TTL buckets):
-//! the LAND, estate and name pages of `/v1/nfts`, the legacy legs of
-//! `/v1/orders` and `/v1/bids`, `/v1/sales`, `/v1/owners`, `/v1/accounts`,
-//! `/v1/rankings`, `/v1/volume`, the sales signal of the trending and
-//! creators rails, and the `/v1/users` names over `graph.rs`. Wearable and
-//! emote ownership (`/v1/nfts`, `/v1/users`, the `/v1/orders` owner guard,
-//! the lambdas lists, profiles, outfits and the backpack) reads the nft
-//! index (`owned_items.rs`). Local: `POST /v1/trades` (`listings.rs`, the old EIP-712
+//! the LAND, estate and name pages of `/v1/nfts`, the legacy leg of
+//! `/v1/bids` (and of `/v1/orders` on a node that does not walk the nft
+//! index), `/v1/sales`, `/v1/owners`, `/v1/accounts`, `/v1/rankings`,
+//! `/v1/volume`, the sales signal of the trending and creators rails, and
+//! the `/v1/users` names over `graph.rs`. Wearable and emote ownership
+//! (`/v1/nfts`, `/v1/users`, the `/v1/orders` owner guard, the lambdas
+//! lists, profiles, outfits and the backpack) reads the nft index
+//! (`owned_items.rs`), and so does the legacy order book of `/v1/orders`
+//! (`legacy_orders.rs`). Local: `POST /v1/trades` (`listings.rs`, the old EIP-712
 //! policy, `ownerOf` on `TRADE_RPC_URLS`), lists and picks (`lists.rs`), the
 //! operator moderation (`admin.rs`, `MARKET_ADMIN_TOKEN`), a wallet's
 //! `/v1/activity` over the readers and the local trades (`activity.rs`),
