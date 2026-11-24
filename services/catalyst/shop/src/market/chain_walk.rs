@@ -1154,6 +1154,16 @@ pub trait ChainIndex: Send + Sync {
     ) -> anyhow::Result<Spent> {
         Ok(Spent::default())
     }
+    /// One optional historical log window after publication, using spare log budget.
+    async fn after_publish(
+        &self,
+        _pool: &PgPool,
+        _source: &dyn LogSource,
+        _owner: &Owner,
+        _window_blocks: u64,
+    ) -> anyhow::Result<usize> {
+        Ok(0)
+    }
     /// Forgets what the index keeps in memory between its calls (the nft
     /// walk's collection set and pending contracts) after a pass failed past
     /// it: the next pass reloads it from the database.
@@ -2067,7 +2077,10 @@ async fn walk(
         ix,
         settings,
         owner,
-        cur.fold_through,
+        Close {
+            fold_since: cur.fold_through,
+            remaining: total.saturating_sub(log_requests),
+        },
         &mut out,
     )
     .await?;
@@ -2104,6 +2117,11 @@ async fn diverged(
     Ok(out)
 }
 
+pub struct Close {
+    pub fold_since: Option<i64>,
+    pub remaining: usize,
+}
+
 /// The close of a pass that reached its target at `out.indexed_to`: the fold
 /// of what was touched since `fold_since`, its record, a fresh read of the
 /// heads, and the publish (or its withdrawal) against them.
@@ -2113,13 +2131,13 @@ pub(crate) async fn close(
     ix: &dyn ChainIndex,
     settings: &IndexSettings,
     owner: &Owner,
-    fold_since: Option<i64>,
+    close: Close,
     out: &mut PassOutcome,
 ) -> anyhow::Result<()> {
     let net = ix.net();
     let stop = settings.stop_block(net);
     let may_publish = ix
-        .fold(pool, fold_since, out.indexed_to, owner)
+        .fold(pool, close.fold_since, out.indexed_to, owner)
         .await
         .context("folding")?;
     record_fold(pool, owner, out.indexed_to).await?;
@@ -2151,6 +2169,17 @@ pub(crate) async fn close(
         out.published = mark_folded(pool, owner, out.indexed_to, Utc::now()).await?;
     } else {
         unpublish(pool, owner, out.indexed_to).await?;
+    }
+    if out.published && close.remaining > 0 {
+        match ix
+            .after_publish(pool, source, owner, settings.window_blocks.max(1))
+            .await
+        {
+            Ok(requests) => out.requests += requests,
+            Err(e) => {
+                tracing::warn!(indexer = ix.indexer(), error = %e, "post-publication repair will retry")
+            }
+        }
     }
     Ok(())
 }

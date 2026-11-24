@@ -26,6 +26,8 @@
 //! main range and refolded whole when it completes. A network publishes only
 //! with no backfill owed.
 
+mod estate_repair;
+
 use crate::market::chain_walk::{topic_address, topic_u256};
 use std::collections::{HashMap, HashSet};
 use std::sync::Mutex;
@@ -310,6 +312,14 @@ pub fn decode_log(log: &RpcLog, block_time: i64) -> Result<Option<NftEvent>, Dec
             let (raw,) = <(sol_data::String,)>::abi_decode_params(&data)
                 .map_err(|e| err(event, e.to_string()))?;
             NftEvent {
+                to_address: if topic0 == TOPIC_CREATE_ESTATE {
+                    Some(
+                        topic_address(topic(1, "CreateEstate owner")?)
+                            .ok_or_else(|| err(event, "bad owner".into()))?,
+                    )
+                } else {
+                    None
+                },
                 detail: Some(raw.replace('\0', "")),
                 ..base(KIND_LAND_DATA, emitter.clone(), token)
             }
@@ -609,20 +619,33 @@ pub async fn fold(
 /// Materialized so the per-token order does not shape the window's scan.
 pub(super) const LAND_DATA_SQL: &str = "WITH w AS MATERIALIZED (\
     SELECT contract_address, token_id, detail, block_number, log_index FROM shop.nft_event \
-    WHERE network = 'ethereum' AND kind = 'land_data' AND block_number > $1) \
+    WHERE network = 'ethereum' AND kind = 'land_data' AND block_number > $1 AND ($2::text IS NULL OR contract_address = $2) \
+      AND (to_address IS NULL OR block_number > COALESCE((SELECT ceiling FROM shop.worker_progress \
+           WHERE worker='nft_estate_creations' AND scope=1 AND position < ceiling), -1))) \
 SELECT w.contract_address, w.token_id::text AS token_id, w.detail, w.block_number, w.log_index \
 FROM w ORDER BY w.contract_address, w.token_id, w.block_number DESC, w.log_index DESC";
 
 /// The latest valid data document per touched LAND/estate token, parsed in Rust (the CSV
 /// has quoting SQL would re-implement badly) and upserted.
 async fn fold_land_data(conn: &mut PgConnection, since: i64) -> anyhow::Result<u64> {
+    fold_registry_data(conn, since, None).await
+}
+
+async fn fold_registry_data(
+    conn: &mut PgConnection,
+    since: i64,
+    registry: Option<&str>,
+) -> anyhow::Result<u64> {
     // The cross-chain `block_number` misestimate (see `NESTED_LOOP_TOUCHED_MAX`) makes custom plans scan the table.
     if since >= 0 {
         sqlx::query("SET LOCAL enable_seqscan = off")
             .execute(&mut *conn)
             .await?;
     }
-    let mut rows = sqlx::query(LAND_DATA_SQL).bind(since).fetch(&mut *conn);
+    let mut rows = sqlx::query(LAND_DATA_SQL)
+        .bind(since)
+        .bind(registry)
+        .fetch(&mut *conn);
     type Columns = (
         Vec<String>,
         Vec<String>,
@@ -881,6 +904,9 @@ impl ChainIndex for NftIndex {
         logs: &[RpcLog],
         times: &HashMap<i64, i64>,
     ) -> anyhow::Result<usize> {
+        if self.net == ChainNet::Ethereum {
+            estate_repair::initialize(conn).await?;
+        }
         let mut rows = Vec::with_capacity(logs.len());
         for log in logs {
             let block = chain_walk::log_position(log).0;
@@ -957,10 +983,11 @@ impl ChainIndex for NftIndex {
         .execute(&mut *conn)
         .await?;
         // LAND data is keyed by (token_address, token_id) and folded only for
-        // keys with a remaining Update: a key whose Updates were all reorged
+        // keys with a remaining document: a key whose documents were all reorged
         // out would otherwise keep a row past the cursor. The rebuild below
         // restores the rows of every key that still has one.
         if self.net == ChainNet::Ethereum {
+            estate_repair::rewind(conn, to).await?;
             sqlx::query(
                 "DELETE FROM shop.land_data l USING UNNEST($1::text[], $2::text[]) AS g(c, t) \
                  WHERE l.token_address = g.c AND l.token_id = g.t::numeric",
@@ -1015,6 +1042,20 @@ impl ChainIndex for NftIndex {
         .fetch_one(pool)
         .await?;
         Ok(owed == 0)
+    }
+
+    async fn after_publish(
+        &self,
+        pool: &PgPool,
+        source: &dyn chain_walk::LogSource,
+        owner: &chain_walk::Owner,
+        window_blocks: u64,
+    ) -> anyhow::Result<usize> {
+        if self.net == ChainNet::Ethereum {
+            estate_repair::step(pool, source, owner, window_blocks).await
+        } else {
+            Ok(0)
+        }
     }
 
     async fn lanes(
