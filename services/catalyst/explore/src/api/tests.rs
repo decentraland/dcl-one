@@ -7,7 +7,7 @@ use std::collections::{BTreeSet, HashMap};
 use std::future::IntoFuture;
 use std::net::SocketAddr;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicI64, Ordering};
+use std::sync::atomic::Ordering;
 use std::time::Duration;
 
 use axum::body::Body;
@@ -37,9 +37,6 @@ struct Mock {
     events_flags: Mutex<Value>,
     entities: Mutex<Vec<Value>>,
     profiles: Mutex<Vec<Value>>,
-    tiles: Mutex<Value>,
-    tiles_etag: Mutex<String>,
-    tiles_last_updated: AtomicI64,
     hits: Mutex<HashMap<String, usize>>,
     bodies: Mutex<Vec<Value>>,
 }
@@ -61,28 +58,6 @@ fn entity(id: &str, pointers: &[&str]) -> Value {
         "bundles": {"assets": {"mac": "complete", "windows": "complete", "webgl": "pending"}},
         "versions": {"assets": {"mac": {"version": "v49", "buildDate": "2026-09-16T17:14:28.886Z"}}}
     })
-}
-
-fn tile(x: i32, y: i32, kind: &str, estate: Option<&str>) -> Value {
-    let mut t = json!({"id": format!("{x},{y}"), "x": x, "y": y, "type": kind, "top": false, "left": false, "topLeft": false, "updatedAt": 1});
-    if let Some(e) = estate {
-        t["estateId"] = json!(e);
-        t["owner"] = json!("0xowner");
-    }
-    t
-}
-
-fn tiles_doc(stamp: i64) -> Value {
-    let mut data = serde_json::Map::new();
-    for t in [
-        tile(0, 0, "plaza", Some("1164")),
-        tile(1, 0, "road", None),
-        tile(1, 1, "owned", Some("77")),
-        tile(2, 1, "district", None),
-    ] {
-        data.insert(t["id"].as_str().unwrap().to_string(), t);
-    }
-    json!({"ok": true, "data": data, "stamp": stamp})
 }
 
 fn mock() -> Arc<Mock> {
@@ -111,9 +86,6 @@ fn mock() -> Arc<Mock> {
         profiles: Mutex::new(vec![
             json!({"timestamp": "1790276949479", "avatars": [{"name": "Ryumi", "ethAddress": "0xC9C29AB98E6BC42015985165A11153F564E9F8C2", "userId": "0xc9c29ab98e6bc42015985165a11153f564e9f8c2"}]}),
         ]),
-        tiles: Mutex::new(tiles_doc(1000)),
-        tiles_etag: Mutex::new("\"grid-1\"".into()),
-        tiles_last_updated: AtomicI64::new(1000),
         hits: Mutex::new(HashMap::new()),
         bodies: Mutex::new(Vec::new()),
     })
@@ -256,28 +228,6 @@ async fn serve_mock(mock: Arc<Mock>) -> SocketAddr {
             .collect();
         Json(Value::Array(docs))
     }
-    async fn tiles_info(AxState(m): AxState<Arc<Mock>>) -> Json<Value> {
-        m.hit("tiles/info");
-        Json(json!({"lastUpdatedAt": m.tiles_last_updated.load(Ordering::SeqCst)}))
-    }
-    async fn tiles(AxState(m): AxState<Arc<Mock>>, headers: HeaderMap) -> Response {
-        m.hit("tiles");
-        let etag = m.tiles_etag.lock().clone();
-        if headers
-            .get(header::IF_NONE_MATCH)
-            .and_then(|v| v.to_str().ok())
-            == Some(etag.as_str())
-        {
-            m.hit("tiles-304");
-            return StatusCode::NOT_MODIFIED.into_response();
-        }
-        (
-            StatusCode::OK,
-            [(header::ETAG, etag)],
-            Json(m.tiles.lock().clone()),
-        )
-            .into_response()
-    }
     async fn ab_object(
         AxState(m): AxState<Arc<Mock>>,
         axum::extract::Path(path): axum::extract::Path<String>,
@@ -305,8 +255,6 @@ async fn serve_mock(mock: Arc<Mock>) -> SocketAddr {
         .route("/entities/versions", post(versions))
         .route("/profiles", post(profiles))
         .route("/profiles/metadata", post(profiles_metadata))
-        .route("/v2/tiles/info", get(tiles_info))
-        .route("/v2/tiles", get(tiles))
         .with_state(mock);
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();
@@ -321,7 +269,6 @@ fn sources_at(addr: SocketAddr) -> Sources {
         denylist: format!("{base}/denylist.json"),
         feature_flags: format!("{base}/explorer.json"),
         registry: base.clone(),
-        map: base.clone(),
         ab_cdn: base,
     }
 }
@@ -396,6 +343,7 @@ async fn node_on_pool(settings: Settings, pool: PgPool) -> Node {
         contract_checks: Default::default(),
         auth_sockets: Default::default(),
         land_authz: std::sync::OnceLock::new(),
+        land_market: std::sync::OnceLock::new(),
     });
     Node { state, _tmp: tmp }
 }
@@ -717,7 +665,7 @@ fn sources_must_be_public_and_not_this_node() {
         assert!(err.contains("EXPLORER_LISTS_SOURCE_URL"), "{url}: {err}");
     }
     let mut s = settings.clone();
-    s.sources.map = "https://gateway.example.org/api".into();
+    s.sources.feature_flags = "https://gateway.example.org/api/explorer.json".into();
     let err = s.validate().unwrap_err().to_string();
     assert!(err.contains("own host gateway.example.org"), "{err}");
     assert!(s.guarded_url("https://api.decentraland.org").is_ok());
@@ -737,7 +685,7 @@ fn sources_must_be_public_and_not_this_node() {
 #[test]
 fn sources_from_env_strip_trailing_slashes() {
     let d = Sources::defaults();
-    assert_eq!(d.all().len(), 6);
+    assert_eq!(d.all().len(), 5);
     assert!(d.all().iter().all(|(_, u)| !u.ends_with('/')));
 }
 
@@ -1886,181 +1834,190 @@ async fn dapps_flags_refresh_preserves_the_audience_and_last_good_document() {
     db.teardown().await;
 }
 
+/// Shop's side of the map build as `serve` hands it over: a fixed snapshot,
+/// or the source it is waiting for.
+struct FixedLandMarket(Mutex<Result<map::LandMarketSnapshot, crate::chain_index::source::Source>>);
+
+impl map::LandMarket for FixedLandMarket {
+    fn snapshot<'a>(
+        &'a self,
+        _land: &'a str,
+        _estate: &'a str,
+        _now: chrono::DateTime<chrono::Utc>,
+    ) -> futures::future::BoxFuture<'a, Result<map::LandMarketSnapshot, map::LandMarketError>> {
+        let answer = match &*self.0.lock() {
+            Ok(snapshot) => Ok(snapshot.clone()),
+            Err(source) => Err(map::LandMarketError::Unready(
+                *source,
+                "fixture not published".into(),
+            )),
+        };
+        Box::pin(async move { answer })
+    }
+}
+
+/// The LAND fixture: estate 7 (two parcels at 10,13 and 11,13, owned by
+/// `0xbb..`, named "Seven"), a lone parcel at 10,14 owned by `0xaa..`; all
+/// off the roads and plazas.
+async fn seed_land(pool: &PgPool, settings: &crate::land_authz::Settings) {
+    let owner_a = format!("0x{}", "a".repeat(40));
+    let owner_b = format!("0x{}", "b".repeat(40));
+    let token = |x: i32, y: i32| map::meta::encode_land_token_id(x, y);
+    for (x, y, owner) in [
+        (10, 13, settings.estate_registry.clone()),
+        (11, 13, settings.estate_registry.clone()),
+        (10, 14, owner_a.clone()),
+    ] {
+        sqlx::query(
+            "INSERT INTO land_authz.token_right (token_address, token_id, x, y, owner, updated_block, updated_log) \
+             VALUES ($1, $2::numeric, $3, $4, $5, 90, 0)",
+        )
+        .bind(&settings.land_registry)
+        .bind(token(x, y))
+        .bind(x)
+        .bind(y)
+        .bind(owner)
+        .execute(pool)
+        .await
+        .unwrap();
+    }
+    sqlx::query(
+        "INSERT INTO land_authz.authz_event (block_number, log_index, block_time, token_address, kind, token_id, account) \
+         VALUES (90, 0, 1700000000, $1, 'transfer', $2::numeric, $3)",
+    )
+    .bind(&settings.land_registry)
+    .bind(token(10, 14))
+    .bind(&owner_a)
+    .execute(pool)
+    .await
+    .unwrap();
+    sqlx::query(
+        "INSERT INTO land_authz.token_right (token_address, token_id, owner, updated_block, updated_log) \
+         VALUES ($1, 7, $2, 91, 0)",
+    )
+    .bind(&settings.estate_registry)
+    .bind(&owner_b)
+    .execute(pool)
+    .await
+    .unwrap();
+    for (x, y) in [(10, 13), (11, 13)] {
+        sqlx::query(
+            "INSERT INTO land_authz.estate_land (land_token_id, estate_token_id, updated_block, updated_log) \
+             VALUES ($1::numeric, 7, 91, 1)",
+        )
+        .bind(token(x, y))
+        .execute(pool)
+        .await
+        .unwrap();
+    }
+    sqlx::query(
+        "INSERT INTO land_authz.estate_data_event (block_number, log_index, token_address, estate_id, name) \
+         VALUES (91, 2, $1, 7, 'Seven')",
+    )
+    .bind(&settings.estate_registry)
+    .execute(pool)
+    .await
+    .unwrap();
+}
+
+async fn publish_land(pool: &PgPool, settings: &crate::land_authz::Settings) {
+    sqlx::query(
+        "INSERT INTO land_authz.index_cursor (network, land_registry, estate_registry, last_block, folded_block, folded_at) \
+         VALUES ($1, $2, $3, 100, 100, timezone('UTC', now())) \
+         ON CONFLICT (network) DO UPDATE SET folded_block = 100, last_block = 100, folded_at = EXCLUDED.folded_at",
+    )
+    .bind(&settings.network)
+    .bind(&settings.land_registry)
+    .bind(&settings.estate_registry)
+    .execute(pool)
+    .await
+    .unwrap();
+}
+
+fn estate_order(settings: &crate::land_authz::Settings, mana: u64) -> map::build::LandOrder {
+    map::build::LandOrder {
+        contract_address: settings.estate_registry.clone(),
+        token_id: "7".into(),
+        open: true,
+        seller: format!("0x{}", "b".repeat(40)),
+        price: format!("{mana}000000000000000000"),
+        expires_at_ms: 4_102_444_800_000,
+        created_at: 1_700_000_100,
+        updated_at: 1_700_000_100,
+    }
+}
+
+async fn stored_grid(pool: &PgPool) -> Option<(i64, i32, chrono::NaiveDateTime)> {
+    sqlx::query_as(
+        "SELECT last_updated_at, tile_count, fetched_at FROM explore_api.map_grid WHERE id = 1",
+    )
+    .fetch_optional(pool)
+    .await
+    .unwrap()
+}
+
 #[tokio::test]
-async fn map_grid_mirror_persists_the_grid_resumes_after_restart_and_gates_downloads() {
+async fn map_grid_is_built_from_the_land_index_and_shop_and_waits_for_unpublished_sources() {
     let Some(db) = scratch_database().await else {
         return;
     };
-    let mock = mock();
-    let addr = serve_mock(mock.clone()).await;
-    let node = node_with_db(Settings::for_tests(sources_at(addr)), db.pool.clone()).await;
+    let node = node_with_db(Settings::for_tests(Sources::defaults()), db.pool.clone()).await;
     let app = router(node.state.clone());
     let (jobs, ctx) = job_ctx().await;
-
-    let (status, _, _) = call(
-        &app,
-        "GET",
-        "/api/v1/map.png?width=64&height=64&center=0,0&size=5",
-        None,
-    )
-    .await;
-    assert_eq!(
-        status,
-        StatusCode::SERVICE_UNAVAILABLE,
-        "no grid before the first pass"
-    );
-    let (status, _) = call_json(&app, "GET", "/api/v2/tiles/info", None).await;
-    assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE);
-
-    map::run_pass(&node.state, &ctx).await.unwrap();
-    assert_eq!((mock.hits("tiles/info"), mock.hits("tiles")), (1, 1));
-    let (status, info) = call_json(&app, "GET", "/api/v2/tiles/info", None).await;
-    assert_eq!(
-        (status, info),
-        (StatusCode::OK, json!({"lastUpdatedAt": 1000}))
-    );
-
-    let (status, headers, png) = call(
-        &app,
-        "GET",
-        "/api/v1/map.png?width=64&height=64&center=0,0&size=5",
-        None,
-    )
-    .await;
-    assert_eq!(status, StatusCode::OK);
-    assert_eq!(headers["content-type"], "image/png");
-    assert_eq!(&png[..8], b"\x89PNG\r\n\x1a\n");
-    assert!(
-        headers["cache-control"]
-            .to_str()
-            .unwrap()
-            .contains("max-age=120")
-    );
-    let etag = headers["etag"].to_str().unwrap().to_string();
-    let resp = app
-        .clone()
-        .oneshot(
-            Request::builder()
-                .uri("/api/v2/map.png?width=64&height=64&center=0,0&size=5")
-                .header("if-none-match", &etag)
-                .body(Body::empty())
-                .unwrap(),
-        )
-        .await
-        .unwrap();
-    assert_eq!(resp.status(), StatusCode::NOT_MODIFIED);
-    for path in [
-        "/api/v1/minimap.png",
-        "/api/v1/estatemap.png",
-        "/api/v2/parcels/1/1/map.png",
-        "/api/v1/estates/77/map.png",
-    ] {
-        let (status, headers, _) = call(&app, "GET", path, None).await;
-        assert_eq!((path, status), (path, StatusCode::OK));
-        assert_eq!(headers["content-type"], "image/png");
-    }
-    // an estate the grid holds no parcel of redirects, as the atlas does
-    let (status, headers, _) = call(&app, "GET", "/api/v1/estates/404/map.png", None).await;
-    assert_eq!(status, StatusCode::FOUND);
-    assert_eq!(headers["location"], "http://localhost/dissolved_estate.png");
-
-    let (status, tiles) = call_json(
-        &app,
-        "GET",
-        "/api/v2/tiles?x1=0&x2=1&y1=0&y2=1&include=x,y,type",
-        None,
-    )
-    .await;
-    assert_eq!(status, StatusCode::OK);
-    assert_eq!(tiles["ok"], true);
-    assert_eq!(
-        key_set(&tiles["data"]),
-        ["0,0", "1,0", "1,1"]
-            .into_iter()
-            .map(String::from)
-            .collect()
-    );
-    assert_eq!(
-        tiles["data"]["0,0"],
-        json!({"x": 0, "y": 0, "type": "plaza"})
-    );
-    let (_, legacy) = call_json(&app, "GET", "/api/v1/tiles?x1=1&x2=1&y1=1&y2=1", None).await;
-    assert_eq!(legacy["data"]["1,1"]["type"], 9);
-
-    let (stored_stamp, count): (i64, i32) =
-        sqlx::query_as("SELECT last_updated_at, tile_count FROM explore_api.map_grid WHERE id = 1")
-            .fetch_one(&db.pool)
-            .await
-            .unwrap();
-    assert_eq!((stored_stamp, count), (1000, 4));
-
-    let restarted = node_with_db(Settings::for_tests(sources_at(addr)), db.pool.clone()).await;
-    assert!(
-        restarted.state.map.is_ready(),
-        "the persisted grid is loaded at startup"
-    );
-    assert_eq!(restarted.state.map.last_updated_at(), 1000);
-    assert_eq!(mock.hits("tiles"), 1, "no download at startup");
-    let app2 = router(restarted.state.clone());
-    let (status, _, _) = call(
-        &app2,
-        "GET",
-        "/api/v1/map.png?width=64&height=64&center=0,0&size=5",
-        None,
-    )
-    .await;
-    assert_eq!(status, StatusCode::OK);
-
-    map::run_pass(&restarted.state, &ctx).await.unwrap();
-    assert_eq!(
-        mock.hits("tiles"),
-        1,
-        "an unchanged upstream stamp downloads nothing"
-    );
-
-    mock.tiles_last_updated.store(2000, Ordering::SeqCst);
-    map::run_pass(&restarted.state, &ctx).await.unwrap();
-    assert_eq!(
-        mock.hits("tiles"),
-        1,
-        "a fresh grid is not re-downloaded inside the refresh floor"
-    );
-    assert_eq!(restarted.state.map.last_updated_at(), 1000);
-
-    let mut eager = Settings::for_tests(sources_at(addr));
-    eager.map_min_refresh = Duration::ZERO;
-    let eager = node_with_db(eager, db.pool.clone()).await;
-    map::run_pass(&eager.state, &ctx).await.unwrap();
-    assert_eq!(
-        (mock.hits("tiles"), mock.hits("tiles-304")),
-        (2, 1),
-        "past the floor the stored etag makes it a 304"
-    );
-    assert_eq!(
-        eager.state.map.last_updated_at(),
-        2000,
-        "the held grid is restamped"
-    );
-    let (stored_stamp,): (i64,) =
-        sqlx::query_as("SELECT last_updated_at FROM explore_api.map_grid WHERE id = 1")
-            .fetch_one(&db.pool)
-            .await
-            .unwrap();
-    assert_eq!(stored_stamp, 2000);
-
-    *mock.tiles.lock() = {
-        let mut doc = tiles_doc(3000);
-        doc["data"]["9,9"] = tile(9, 9, "owned", None);
-        doc
+    let unavailable = |body: &Value, source: &str, configure: &str| {
+        assert_eq!(body["error"], "Service Unavailable", "{body}");
+        assert_eq!(body["source"], source, "{body}");
+        assert_eq!(body["configure"], configure, "{body}");
     };
-    *mock.tiles_etag.lock() = "\"grid-2\"".into();
-    mock.tiles_last_updated.store(3000, Ordering::SeqCst);
-    map::run_pass(&eager.state, &ctx).await.unwrap();
-    assert_eq!(mock.hits("tiles"), 3);
-    let app3 = router(eager.state.clone());
-    let (_, tiles) = call_json(&app3, "GET", "/api/v2/tiles?include=x", None).await;
-    assert_eq!(tiles["data"].as_object().unwrap().len(), 5);
-    let (_, report) = call_json(&app3, "GET", "/mirrors", None).await;
+
+    // No grid yet: every map route answers the envelope, never an empty map.
+    for path in [
+        "/api/v2/tiles",
+        "/api/v1/tiles",
+        "/api/v2/tiles/info",
+        "/api/v2/parcels/10/14",
+        "/api/v2/estates/7",
+        "/api/ready",
+        "/api/v1/map.png?width=64&height=64&center=0,0&size=5",
+    ] {
+        let (status, headers, body) = call(&app, "GET", path, None).await;
+        assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE, "{path}");
+        assert_eq!(headers["retry-after"], "60", "{path}");
+        let body: Value = serde_json::from_slice(&body).unwrap();
+        unavailable(&body, "land-authz-index", "LAND_AUTHZ_INDEX_ENABLED");
+    }
+
+    // Nothing attached, then an index that has not published: no grid.
+    assert!(map::run_pass(&node.state, &ctx).await.is_err());
+    let settings = crate::land_authz::Settings::for_tests();
+    node.state
+        .attach_land_authz(Arc::new(crate::land_authz::LandAuthzState::new(
+            db.pool.clone(),
+            crate::http::Outbound::for_tests(),
+            settings.clone(),
+            None,
+        )));
+    let market = Arc::new(FixedLandMarket(Mutex::new(Err(
+        crate::chain_index::source::Source::NftIndex,
+    ))));
+    node.state.attach_land_market(market.clone());
+    seed_land(&db.pool, &settings).await;
+    let err = map::run_pass(&node.state, &ctx).await.unwrap_err();
+    assert!(
+        err.to_string().contains("land-authz-index not ready"),
+        "{err}"
+    );
+
+    // The LAND index published, Shop's nft index not yet: still no grid,
+    // and the envelope names what the pass waits for.
+    publish_land(&db.pool, &settings).await;
+    let err = map::run_pass(&node.state, &ctx).await.unwrap_err();
+    assert!(err.to_string().contains("nft-index not ready"), "{err}");
+    let (status, body) = call_json(&app, "GET", "/api/v2/tiles", None).await;
+    assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE);
+    unavailable(&body, "nft-index", "MARKETPLACE_NFT_INDEX_ENABLED");
+    assert_eq!(stored_grid(&db.pool).await, None);
+    let (_, report) = call_json(&app, "GET", "/mirrors", None).await;
     let row = report["mirrors"]
         .as_array()
         .unwrap()
@@ -2068,18 +2025,149 @@ async fn map_grid_mirror_persists_the_grid_resumes_after_restart_and_gates_downl
         .find(|m| m["mirror"] == "map-grid")
         .unwrap()
         .clone();
-    assert_eq!(row["cursor"], "3000");
-    assert_eq!(row["items"], 5);
+    assert_eq!(row["complete"], false);
+    assert!(row["lastError"].as_str().unwrap().contains("nft-index"));
+
+    // Every source published: the grid is built, stored and served.
+    *market.0.lock() = Ok(map::LandMarketSnapshot {
+        orders: vec![estate_order(&settings, 1500)],
+        ..Default::default()
+    });
+    map::run_pass(&node.state, &ctx).await.unwrap();
+    let stamp = node.state.map.last_updated_at();
+    assert!(stamp > 0);
+    let (status, info) = call_json(&app, "GET", "/api/v2/tiles/info", None).await;
+    assert_eq!(
+        (status, info),
+        (StatusCode::OK, json!({"lastUpdatedAt": stamp}))
+    );
+    let (status, tiles) =
+        call_json(&app, "GET", "/api/v2/tiles?x1=10&x2=11&y1=13&y2=14", None).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(
+        key_set(&tiles["data"]),
+        ["10,13", "10,14", "11,13"]
+            .into_iter()
+            .map(String::from)
+            .collect()
+    );
+    let estate_tile = &tiles["data"]["11,13"];
+    assert_eq!(estate_tile["type"], "owned");
+    assert_eq!(estate_tile["owner"], format!("0x{}", "b".repeat(40)));
+    assert_eq!(estate_tile["estateId"], "7");
+    assert_eq!(estate_tile["name"], "Seven");
+    assert_eq!(estate_tile["left"], true, "joined to 10,13");
+    assert_eq!(estate_tile["price"], 1500.0);
+    assert_eq!(estate_tile["expiresAt"], 4_102_444_800_i64);
+    let lone = &tiles["data"]["10,14"];
+    assert_eq!(lone["owner"], format!("0x{}", "a".repeat(40)));
+    assert_eq!(lone["tokenId"], map::meta::encode_land_token_id(10, 14));
+    assert_eq!(
+        lone["updatedAt"], 1_700_000_000_000_i64,
+        "its last rights event"
+    );
+    assert!(lone.get("price").is_none());
+    let (status, plaza) = call_json(&app, "GET", "/api/v2/tiles?x1=0&x2=0&y1=0&y2=0", None).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(
+        plaza["data"]["0,0"]["type"], "plaza",
+        "the roads and plazas are on the grid"
+    );
+    let (status, legacy) =
+        call_json(&app, "GET", "/api/v1/tiles?x1=11&x2=11&y1=13&y2=13", None).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(legacy["data"]["11,13"]["type"], 10, "a priced tile");
+    let (status, headers, png) = call(
+        &app,
+        "GET",
+        "/api/v1/map.png?width=64&height=64&center=10,13&size=5",
+        None,
+    )
+    .await;
+    assert_eq!(
+        (status, &headers["content-type"]),
+        (
+            StatusCode::OK,
+            &"image/png".parse::<axum::http::HeaderValue>().unwrap()
+        )
+    );
+    assert_eq!(&png[..8], b"\x89PNG\r\n\x1a\n");
+    let (status, estate) = call_json(&app, "GET", "/api/v2/estates/7", None).await;
+    assert_eq!((status, &estate["name"]), (StatusCode::OK, &json!("Seven")));
+    let (stored_stamp, count, built_at) = stored_grid(&db.pool).await.unwrap();
+    assert_eq!(stored_stamp, stamp);
+    assert_eq!(
+        count as usize,
+        node.state.map.snapshot().unwrap().tiles.len()
+    );
+    let (_, report) = call_json(&app, "GET", "/mirrors", None).await;
+    let row = report["mirrors"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|m| m["mirror"] == "map-grid")
+        .unwrap()
+        .clone();
     assert_eq!(row["complete"], true);
-    assert_eq!(report["mapGridLastUpdatedAt"], 3000);
+    assert_eq!(row["cursor"], stamp.to_string());
+    assert_eq!(report["mapGridLastUpdatedAt"], stamp);
+
+    // Unchanged sources: nothing is written and the stamp stays.
+    map::run_pass(&node.state, &ctx).await.unwrap();
+    assert_eq!(node.state.map.last_updated_at(), stamp);
+    assert_eq!(
+        stored_grid(&db.pool).await.unwrap().2,
+        built_at,
+        "no rewrite"
+    );
+
+    // A restart serves the stored grid before its first pass, and that pass
+    // finds it unchanged.
+    let restarted = node_with_db(Settings::for_tests(Sources::defaults()), db.pool.clone()).await;
+    assert!(restarted.state.map.is_ready());
+    assert_eq!(restarted.state.map.last_updated_at(), stamp);
+    restarted
+        .state
+        .attach_land_authz(node.state.land_authz.get().unwrap().clone());
+    restarted.state.attach_land_market(market.clone());
+    map::run_pass(&restarted.state, &ctx).await.unwrap();
+    assert_eq!(restarted.state.map.last_updated_at(), stamp);
+    assert_eq!(stored_grid(&db.pool).await.unwrap().2, built_at);
+
+    // A changed listing moves the stamp at least a second forward, and a
+    // process that did not build it reloads it.
+    *market.0.lock() = Ok(map::LandMarketSnapshot::default());
+    map::run_pass(&node.state, &ctx).await.unwrap();
+    let moved = node.state.map.last_updated_at();
+    assert!(moved >= stamp + 1000, "{moved} after {stamp}");
+    let replica = node_with_db(Settings::for_tests(Sources::defaults()), db.pool.clone()).await;
+    assert!(
+        !map::reload_if_newer(&replica.state).await.unwrap(),
+        "already current"
+    );
+    assert!(map::reload_if_newer(&restarted.state).await.unwrap());
+    assert_eq!(restarted.state.map.last_updated_at(), moved);
+    assert!(!map::reload_if_newer(&restarted.state).await.unwrap());
+    let (_, tiles) = call_json(&app, "GET", "/api/v2/tiles?x1=11&x2=11&y1=13&y2=13", None).await;
+    assert!(tiles["data"]["11,13"].get("price").is_none());
+    assert_eq!(stored_grid(&db.pool).await.unwrap().0, moved);
+
+    // A source that stops publishing keeps the held grid served; the pass
+    // fails naming it.
+    *market.0.lock() = Err(crate::chain_index::source::Source::TradesMirror);
+    let err = map::run_pass(&node.state, &ctx).await.unwrap_err();
+    assert!(err.to_string().contains("trades-mirror not ready"), "{err}");
+    let (status, _) = call_json(&app, "GET", "/api/v2/tiles?x1=11&x2=11&y1=13&y2=13", None).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(node.state.map.last_updated_at(), moved);
 
     jobs.shutdown(Duration::from_secs(1)).await;
     db.teardown().await;
 }
 
 /// One bounded run of every mirror pass and reader against the real upstreams
-/// (`cargo test --lib live_upstream -- --ignored --nocapture`): one 38 MB grid
-/// download and three small documents. Registry uses the local runtime. Prints the `/mirrors`
+/// (`cargo test --lib live_upstream -- --ignored --nocapture`): three small
+/// documents. Registry uses the local runtime. Prints the `/mirrors`
 /// report; the freshness evidence in tests/README.md comes from here.
 #[tokio::test]
 #[ignore]
@@ -2097,7 +2185,6 @@ async fn live_upstream_passes_complete_and_the_boot_routes_answer() {
     lists::run_pass(&node.state, &ctx).await.unwrap();
     denylist::run_pass(&node.state, &ctx).await.unwrap();
     feature_flags::run_pass(&node.state, &ctx).await.unwrap();
-    map::run_pass(&node.state, &ctx).await.unwrap();
 
     let (status, pois) = call_json(&app, "POST", "/dcl-lists/pois", None).await;
     assert_eq!(status, StatusCode::OK);
@@ -2112,36 +2199,20 @@ async fn live_upstream_passes_complete_and_the_boot_routes_answer() {
         flags["flags"]["explorer-alfa-minimum-requirements"], true,
         "the referer-gated flag reached the mirror"
     );
-    let (status, headers, png) = call(
-        &app,
-        "GET",
-        "/api/v1/map.png?width=64&height=64&center=0,0&size=5",
-        None,
-    )
-    .await;
-    assert_eq!(
-        (status, headers["content-type"].to_str().unwrap()),
-        (StatusCode::OK, "image/png")
-    );
-    assert_eq!(&png[..8], b"\x89PNG\r\n\x1a\n");
-    let (_, tiles) = call_json(&app, "GET", "/api/v2/tiles?x1=0&x2=0&y1=0&y2=0", None).await;
-    assert_eq!(tiles["data"]["0,0"]["name"], "Genesis Plaza");
     let (_, report) = call_json(&app, "GET", "/mirrors", None).await;
     println!("{}", serde_json::to_string_pretty(&report).unwrap());
     println!(
-        "pois={} denylist={} flags={} variants={} tiles={}",
+        "pois={} denylist={} flags={} variants={}",
         pois["data"].as_array().unwrap().len(),
         deny["users"].as_array().unwrap().len(),
         flags["flags"].as_object().unwrap().len(),
         flags["variants"].as_object().unwrap().len(),
-        node.state.map.snapshot().unwrap().tiles.len()
     );
     for m in report["mirrors"].as_array().unwrap() {
         assert_eq!(m["complete"], true, "{m}");
     }
 
     let restarted = node_with_db(Settings::for_tests(Sources::defaults()), db.pool.clone()).await;
-    assert!(restarted.state.map.is_ready());
     assert!(restarted.state.denylist.list().users.len() > 100);
     jobs.shutdown(Duration::from_secs(1)).await;
     db.teardown().await;
@@ -2168,7 +2239,8 @@ async fn spawn_jobs_registers_every_explorer_job_and_stops_with_the_registry() {
             "explorer-denylist-reload",
             "explorer-flags-mirror",
             "explorer-lists-mirror",
-            "explorer-map-mirror",
+            "explorer-map-grid",
+            "explorer-map-grid-reload",
             "explorer-satellite-mirror",
             "explorer-world-manifest-mirror",
             "opensea-cache-expiry",

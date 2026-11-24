@@ -277,11 +277,6 @@ const ROWS: &[Row] = &[
     ),
     upstream(
         "mirrors",
-        "EXPLORER_MAP_SOURCE_URL",
-        "https://api.decentraland.org",
-    ),
-    upstream(
-        "mirrors",
         "WORLD_MANIFEST_UPSTREAM_URL",
         "https://places-dcf8abb.s3.amazonaws.com/WorldManifest.json",
     ),

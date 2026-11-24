@@ -392,18 +392,38 @@ pub fn counted_sql(alias: &str, since_p: &str) -> String {
     )
 }
 
+/// Why `shop.trades` may not be read as the truth ([`readiness`]).
+#[derive(Debug)]
+pub enum NotReady {
+    /// No source, or no recent complete pass: the envelope's message.
+    Refused(String),
+    /// The pass marker could not be read.
+    Database(sqlx::Error),
+}
+
 /// Whether `shop.trades` may be read as the truth, or the envelope to
 /// answer instead. `trades_mirror.completed_at` for the configured upstream
 /// (a completed pass stays completed while the next one runs), cached 10 s,
 /// within [`max_age`] of now.
 pub async fn ready(state: &MarketplaceState) -> Result<Readiness, Response> {
+    readiness(state).await.map_err(|not_ready| match not_ready {
+        NotReady::Refused(why) => unavailable(Source::TradesMirror, &why),
+        NotReady::Database(e) => {
+            tracing::error!(error = %e, "trades_mirror read failed");
+            super::internal_server_error()
+        }
+    })
+}
+
+/// [`ready`]'s verdict without the HTTP answer, for a reader that is not a
+/// route (the explorer map's LAND listings, `land_map`).
+pub async fn readiness(state: &MarketplaceState) -> Result<Readiness, NotReady> {
     let Some(upstream) = state.settings.trades_sync_upstream_url.clone() else {
         if state.settings.data_writes_enabled {
             return Ok(Readiness::LocalAuthority);
         }
-        return Err(unavailable(
-            Source::TradesMirror,
-            "no trades upstream is configured and this node accepts no local trades (DATA_WRITES_ENABLED=false), so shop.trades has no source",
+        return Err(NotReady::Refused(
+            "no trades upstream is configured and this node accepts no local trades (DATA_WRITES_ENABLED=false), so shop.trades has no source".to_string(),
         ));
     };
     if state.settings.trades_serve_partial {
@@ -421,20 +441,15 @@ pub async fn ready(state: &MarketplaceState) -> Result<Readiness, Response> {
             .await
             .map(Option::flatten)
         })
-        .await;
-    match completed {
-        Ok(completed_at) => pass_verdict(
-            completed_at,
-            Utc::now(),
-            max_age(state.settings.trades_sync_interval),
-        )
-        .map(|()| Readiness::Mirrored)
-        .map_err(|why| unavailable(Source::TradesMirror, &why)),
-        Err(e) => {
-            tracing::error!(error = %e, "trades_mirror read failed");
-            Err(super::internal_server_error())
-        }
-    }
+        .await
+        .map_err(NotReady::Database)?;
+    pass_verdict(
+        completed,
+        Utc::now(),
+        max_age(state.settings.trades_sync_interval),
+    )
+    .map(|()| Readiness::Mirrored)
+    .map_err(NotReady::Refused)
 }
 
 /// The gate every route over `shop.trades` passes first.

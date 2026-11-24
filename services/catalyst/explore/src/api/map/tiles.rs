@@ -1,6 +1,6 @@
 //! The tile types as api.decentraland.org serves them, and `/v2/tiles`
 //! (bbox + `include`/`exclude` projection), `/v1/tiles` (the legacy numeric
-//! shape) and `/v2/tiles/info` over the mirrored grid.
+//! shape) and `/v2/tiles/info` over the built grid.
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -335,17 +335,6 @@ pub fn to_legacy(tile: &Tile) -> LegacyTile {
     }
 }
 
-fn not_ready(last: i64) -> Response {
-    let mut resp = (StatusCode::SERVICE_UNAVAILABLE, "Not ready").into_response();
-    http_cache::apply(
-        &mut resp,
-        last,
-        http_cache::DEFAULT_MAX_AGE,
-        http_cache::DEFAULT_SWR,
-    );
-    resp
-}
-
 fn cached_json(body: Arc<Vec<u8>>, last: i64, key: &str) -> Response {
     let mut resp = (
         StatusCode::OK,
@@ -390,7 +379,7 @@ async fn serve_tiles(
         return r;
     }
     let Some(grid) = grid else {
-        return not_ready(last);
+        return state.map.unavailable();
     };
     if let Some(body) = state.map.cached_tiles(&key) {
         return cached_json(body, last, &key);
@@ -439,12 +428,7 @@ pub async fn get_legacy_tiles(
 
 pub async fn tiles_info(State(state): State<Shared>) -> Response {
     if !state.map.is_ready() {
-        return (
-            StatusCode::SERVICE_UNAVAILABLE,
-            [("cache-control", "no-cache")],
-            "Not ready",
-        )
-            .into_response();
+        return state.map.unavailable();
     }
     (
         StatusCode::OK,
@@ -681,7 +665,6 @@ mod tests {
         state.map.set(super::super::Grid::from_tiles(
             tiles,
             1,
-            None,
             chrono::Utc::now().naive_utc(),
         ));
         let barrier = Arc::new(tokio::sync::Barrier::new(16));

@@ -901,7 +901,8 @@ class DevTest(unittest.TestCase):
         self.assertNotIn('MEDIA_CONVERT_REMOTE_SOURCES', dev.runtime_env(self.config))
         self.assertEqual(env['PROFILE_IMAGES_ORIGIN_URL'], 'https://profile-images.decentraland.org')
         self.assertNotIn('PROFILE_IMAGES_ORIGIN_URL', offline)
-        self.assertEqual(env['EXPLORER_MAP_SOURCE_URL'], 'https://api.decentraland.org')
+        # The map grid is built from the node's own indexes, not copied from api.decentraland.org.
+        self.assertNotIn('EXPLORER_MAP_SOURCE_URL', env)
         self.assertEqual(env['PRICE_POLL_ENABLED'], 'true')
         self.assertNotIn('WORLD_MANIFEST_UPSTREAM_URL', env)
         self.assertNotIn('PULSE_ROOM_AUTHORITY_KEY', env)

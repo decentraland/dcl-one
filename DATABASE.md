@@ -2853,6 +2853,77 @@ closed. Its duration is not measured. Completeness check: `SELECT
 min(block_number) FROM land_authz.estate_data_event` is at or below the
 first `CreateEstate` block.
 
+## Map grid build workload
+
+`explore_api.map_grid` (`schemas/11_explore_api.sql`) holds the tile grid
+behind the explorer map routes (`/api/v{1,2}/tiles`, `/api/v2/tiles/info`,
+`map.png`, the minimaps and the parcel and estate metadata). The node
+builds it from its own indexes. It no longer copies api.decentraland.org's
+grid, and `EXPLORER_MAP_SOURCE_URL` and `EXPLORER_MAP_MIN_REFRESH_SECS` are
+gone.
+
+- **Job:** `explorer-map-grid` (`explore/src/api/map/mod.rs`, `run_pass`),
+  leased, every 60 s with 10 s of jitter. A failed pass backs off up to
+  5 minutes. It runs whatever `EXPLORER_MIRRORS_ENABLED` says. Its pass
+  marker is `map-grid` in `explore_api.mirror_passes` (`GET /mirrors`).
+  Every process also runs `explorer-map-grid-reload` every 60 s: one
+  primary-key read of `last_updated_at`, and a reload of the row only when
+  another process stored a newer grid.
+- **LAND reads:** one REPEATABLE READ, READ ONLY snapshot of the land-authz
+  index (`LandAuthzState::ready_snapshot`), so the publication check and
+  the reads see one state (`explore/src/api/map/build.rs`). It reads every
+  LAND `token_right` row with coordinates, its `estate_land` row and the
+  `authz_event` row its `(updated_block, updated_log)` names, by primary
+  key, for the time of its last rights event. It reads every Estate
+  `token_right` row that holds LAND, with the same event join and the name
+  of its latest `estate_data_event` (`estate_data_event_estate_idx`, one
+  probe per estate).
+- **Shop reads** (`shop/src/market/land_map.rs`, which `serve` hands to
+  Explore through `src/serve_adapters.rs`, as Shop sits above Explore):
+  the Ethereum `shop.nft_order` rows of the LAND and Estate registries,
+  whatever their status (primary-key range). The `shop.land_data` rows of
+  both registries, with the `shop.nft_event` row their
+  `(updated_block, updated_log)` names, by primary key. The open
+  `public_nft_order` trades that sell a token of either registry
+  (`catalog::unified_trades_cte_of` scoped to the two contracts,
+  `idx_trade_assets_sent_contract`). The open, unexpired `signatures.rentals`
+  rows of both registries with their periods.
+- **Readiness:** the land-authz index published for the configured
+  registries, the nft index published on Ethereum (`shop.chain_cursor`),
+  and `shop.trades` readable (a recent complete trades-mirror pass, or local
+  authority). The trade-events verdicts (`shop.trade_chain_state`) close a
+  sold or cancelled trade while that index is published on Ethereum, as in
+  the Shop's own listings. A source that is not ready fails the pass,
+  naming it, and nothing is built. The held grid keeps serving. Until a
+  grid exists, the map routes answer the unavailable envelope (503,
+  `Retry-After: 60`, `no-store`), naming the source the last pass waited
+  for.
+- **Write:** the pass hashes the canonical JSON body (the tiles in key
+  order). Only a body that differs from the held one is gzipped and upserted
+  into the one row, with `etag` NULL, `fetched_at` the build time and
+  `last_updated_at` the current time in milliseconds, at least one second
+  past the held stamp. An unchanged pass writes nothing. An order or rental
+  that expires changes the body on the next pass.
+- **Rules:** atlas-server's `buildTile`, `addSpecialTiles`,
+  `getEstateFlags` and `applyTrades`, with its roads and plazas vendored
+  (`special_tiles.json`). The rules and the known differences are in the
+  `build.rs` module docs. An order whose seller no longer owns the token
+  shows no price, while the atlas still prices it until it expires: 19 of
+  the 412 tiles the atlas priced by a legacy order on 2026-11-24. Bids do
+  not move `updatedAt`. Rental listings are this node's own.
+- **Volume and cost:** mainnet holds 92,598 LAND, 65,086 of them in about
+  2,700 estates. On a synthetic database of that size (1.02M rights
+  events, 30,866 orders, 69,448 names among 1.07M `nft_event` rows, 52,000
+  trades), measured on a laptop with Postgres 17 and a release build: the
+  LAND snapshot read takes 0.47 s, the estates 16 ms, the orders 10 ms, the
+  names 34 ms and the trades 16 ms. Composing the grid takes 0.14 s,
+  serializing it 0.19 s (a 36.5 MB body) and gzip 0.04 s (4.4 MB stored).
+- **Deploy:** no schema step. The first pass after the upgrade replaces the
+  row the mirror left, whose body differs. Until the sources publish, the
+  mirror's last copy keeps serving. A node without the land-authz index,
+  the nft index (`MARKETPLACE_NFT_INDEX_ENABLED`, mainnet only) or a trades
+  source never builds a grid, and its map routes answer the envelope.
+
 ## Place removal feed
 
 `explore.place_removal_pending` (`schemas/10_explore.sql`) is a sparse outbox

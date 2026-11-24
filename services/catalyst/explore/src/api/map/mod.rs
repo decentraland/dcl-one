@@ -1,16 +1,21 @@
 //! api.decentraland.org: `/v{1,2}/map.png` (the navmap atlas chunks the
 //! explorer loads), the minimaps, `/v{1,2}/tiles` and `/v2/tiles/info`,
-//! rendered from a mirrored copy of upstream's tile grid, plus the JSON
-//! metadata and district routes and the probes ([`meta`]), and
-//! `/satellite/{z}/{x}/{y}` painted over this grid (`super::satellite`). The grid is ~92k
-//! tiles, 38 MB of JSON: the `map-grid` pass polls the 30-byte
-//! `/v2/tiles/info` stamp and downloads the grid only when the stamp moved
-//! and the last download is older than `map_min_refresh`, with
-//! `If-None-Match`. The gzipped grid is one row of `explore_api.map_grid`,
-//! loaded at startup, so a restart serves the last grid before its first
-//! pass. A chain indexer of LAND/estate ownership and open orders would let
-//! the old builder run here instead.
+//! rendered from the tile grid this node builds from its own database
+//! ([`build`]: LAND and estates from the land-authz index, listings, names
+//! and rentals from Shop's indexes), plus the JSON metadata and district
+//! routes and the probes ([`meta`]), and `/satellite/{z}/{x}/{y}` painted
+//! over this grid (`super::satellite`). The grid is ~92k tiles, 38 MB of
+//! JSON: the leased `explorer-map-grid` job rebuilds it every minute
+//! ([`run_pass`]) and stores it, gzipped, as the one row of
+//! `explore_api.map_grid` only when its body changed, with a new stamp
+//! (`lastUpdatedAt`). The row is loaded at startup, so a restart serves the
+//! last grid before its first pass, and every process reloads it when
+//! another one stored a newer grid ([`reload_if_newer`]). A pass whose sources are not all
+//! published builds nothing and keeps the held grid; until a grid exists
+//! the map routes answer the unavailable envelope naming the source the
+//! last pass waited for.
 
+pub mod build;
 pub mod http_cache;
 pub mod meta;
 pub mod png;
@@ -25,18 +30,27 @@ use std::time::{Duration, Instant};
 use crate::shared::routing::get;
 use anyhow::Context as _;
 use axum::Router;
+use axum::response::Response;
 use chrono::NaiveDateTime;
 use parking_lot::RwLock;
 use serde::Deserialize;
+use sha2::{Digest as _, Sha256};
 use sqlx::PgPool;
 
 use super::{Shared, mirror};
+use crate::chain_index::source::{Source, unavailable};
 use crate::jobs::JobContext;
+pub use build::{LandMarket, LandMarketError, LandMarketSnapshot};
 use tiles::{Tile, TileType};
 
+/// The pass marker in `explore_api.mirror_passes` (`GET /mirrors`).
 pub const MIRROR: &str = "map-grid";
-const INFO_BODY_CAP: usize = 4 << 10;
-const GRID_BODY_CAP: usize = 96 << 20;
+/// The leased job that builds the grid.
+pub const JOB: &str = "explorer-map-grid";
+/// The job, in every process, that reloads a grid another process built.
+pub const RELOAD_JOB: &str = "explorer-map-grid-reload";
+/// Pause between two builds.
+pub const BUILD_INTERVAL: Duration = Duration::from_secs(60);
 const RESPONSE_CACHE_TTL: Duration = Duration::from_secs(120);
 const PNG_CACHE_ENTRIES: usize = 256;
 const TILES_CACHE_ENTRIES: usize = 512;
@@ -46,10 +60,15 @@ const FLIGHT_PRUNE_AT: usize = 64;
 
 pub struct Grid {
     pub tiles: HashMap<String, Tile>,
-    /// Upstream's `/v2/tiles/info` stamp when this grid was current.
+    /// The grid's stamp (`/v2/tiles/info`'s `lastUpdatedAt`, ms): it moves
+    /// only when the body changes.
     pub last_updated_at: i64,
-    pub etag: Option<String>,
+    /// When the stored body was built (or, for a row the old mirror wrote,
+    /// downloaded).
     pub fetched_at: NaiveDateTime,
+    /// SHA-256 of [`build::canonical_body`]: a pass compares it to decide
+    /// whether anything changed.
+    pub digest: [u8; 32],
     /// Mixed into ETags and cache keys, so two grids with one stamp still differ.
     pub content_tag: u64,
     /// estate id -> coords of its owned parcels (estate map.png selection).
@@ -68,29 +87,32 @@ struct TilesDocument {
 }
 
 impl Grid {
-    /// Parses upstream's `{ok, data: {"x,y": tile}}` document.
+    /// Parses a stored `{ok, data: {"x,y": tile}}` document.
     pub fn from_json(
         body: &[u8],
         last_updated_at: i64,
-        etag: Option<String>,
         fetched_at: NaiveDateTime,
     ) -> anyhow::Result<Self> {
         let doc: TilesDocument = serde_json::from_slice(body).context("tiles document")?;
         anyhow::ensure!(doc.ok, "tiles document has ok=false");
         anyhow::ensure!(!doc.data.is_empty(), "tiles document has no tiles");
-        Ok(Self::from_tiles(
-            doc.data,
-            last_updated_at,
-            etag,
-            fetched_at,
-        ))
+        Ok(Self::from_tiles(doc.data, last_updated_at, fetched_at))
     }
 
     pub fn from_tiles(
         tiles: HashMap<String, Tile>,
         last_updated_at: i64,
-        etag: Option<String>,
         fetched_at: NaiveDateTime,
+    ) -> Self {
+        let digest = Sha256::digest(build::canonical_body(&tiles)).into();
+        Self::from_parts(tiles, last_updated_at, fetched_at, digest)
+    }
+
+    fn from_parts(
+        tiles: HashMap<String, Tile>,
+        last_updated_at: i64,
+        fetched_at: NaiveDateTime,
+        digest: [u8; 32],
     ) -> Self {
         let mut estates_owned: HashMap<String, Vec<(i32, i32)>> = HashMap::new();
         let mut estates_all: HashMap<String, Vec<(i32, i32)>> = HashMap::new();
@@ -119,12 +141,11 @@ impl Grid {
             }
         }
         let mut content_tag: u64 = 0xcbf2_9ce4_8422_2325;
-        for b in format!(
-            "{last_updated_at}:{}:{}",
-            etag.as_deref().unwrap_or(""),
-            tiles.len()
-        )
-        .bytes()
+        for b in last_updated_at
+            .to_le_bytes()
+            .iter()
+            .chain(digest.iter())
+            .copied()
         {
             content_tag ^= b as u64;
             content_tag = content_tag.wrapping_mul(0x0000_0100_0000_01b3);
@@ -132,8 +153,8 @@ impl Grid {
         Self {
             tiles,
             last_updated_at,
-            etag,
             fetched_at,
+            digest,
             content_tag,
             estates_owned,
             estates_all,
@@ -240,6 +261,9 @@ impl ResponseCache {
 
 pub struct MapState {
     grid: RwLock<Option<Arc<Grid>>>,
+    /// The source the last pass found unpublished, and why: what the map
+    /// routes name while no grid is held.
+    waiting: parking_lot::Mutex<Option<(Source, String)>>,
     png_cache: ResponseCache,
     tiles_cache: ResponseCache,
     tiles_flights: parking_lot::Mutex<HashMap<String, Arc<tokio::sync::Mutex<()>>>>,
@@ -257,6 +281,7 @@ impl MapState {
     pub fn new() -> Self {
         Self {
             grid: RwLock::new(None),
+            waiting: parking_lot::Mutex::new(None),
             png_cache: ResponseCache::new(RESPONSE_CACHE_TTL, PNG_CACHE_ENTRIES, PNG_CACHE_BYTES),
             tiles_cache: ResponseCache::new(
                 RESPONSE_CACHE_TTL,
@@ -279,6 +304,30 @@ impl MapState {
 
     pub fn last_updated_at(&self) -> i64 {
         self.grid.read().as_ref().map_or(0, |g| g.last_updated_at)
+    }
+
+    /// The unavailable envelope a map route answers while no grid is held:
+    /// the source the last pass waited for, else the land-authz index (the
+    /// first source a build reads). `no-store`, so no cache in front keeps
+    /// it past the first grid.
+    pub fn unavailable(&self) -> Response {
+        let waiting = self.waiting.lock().clone();
+        let mut resp = match waiting {
+            Some((source, why)) => unavailable(
+                source,
+                &format!("the tile grid has not been built yet: {why}"),
+            ),
+            None => unavailable(
+                Source::LandAuthzIndex,
+                "the tile grid has not been built yet: it is built from the land-authz index and Shop's \
+                 marketplace indexes once they are published",
+            ),
+        };
+        resp.headers_mut().insert(
+            axum::http::header::CACHE_CONTROL,
+            axum::http::HeaderValue::from_static("no-store"),
+        );
+        resp
     }
 
     /// The lock a tiles miss holds while building `key`'s body.
@@ -330,15 +379,15 @@ impl MapState {
 
     /// The persisted grid, if a pass ever stored one.
     pub async fn load(&self, pool: &PgPool) -> anyhow::Result<()> {
-        let row: Option<(i64, Option<String>, Vec<u8>, NaiveDateTime)> = sqlx::query_as(
-            "SELECT last_updated_at, etag, body_gzip, fetched_at FROM explore_api.map_grid WHERE id = 1",
+        let row: Option<(i64, Vec<u8>, NaiveDateTime)> = sqlx::query_as(
+            "SELECT last_updated_at, body_gzip, fetched_at FROM explore_api.map_grid WHERE id = 1",
         )
         .fetch_optional(pool)
         .await
         .context("reading explore_api.map_grid")?;
-        let Some((last_updated_at, etag, body_gzip, fetched_at)) = row else {
+        let Some((last_updated_at, body_gzip, fetched_at)) = row else {
             tracing::info!(
-                "no mirrored tile grid yet; map routes answer 503 until the first map-grid pass"
+                "no tile grid stored yet; map routes answer 503 until the first map-grid build"
             );
             return Ok(());
         };
@@ -347,7 +396,7 @@ impl MapState {
             flate2::read::GzDecoder::new(body_gzip.as_slice())
                 .read_to_end(&mut body)
                 .context("inflating the stored grid")?;
-            Grid::from_json(&body, last_updated_at, etag, fetched_at)
+            Grid::from_json(&body, last_updated_at, fetched_at)
         })
         .await
         .context("grid load task")??;
@@ -367,103 +416,153 @@ pub fn gzip(body: &[u8]) -> anyhow::Result<Vec<u8>> {
     Ok(enc.finish()?)
 }
 
-#[derive(Deserialize)]
-struct TilesInfo {
-    #[serde(rename = "lastUpdatedAt")]
-    last_updated_at: i64,
-}
-
+/// Stores the built grid as the one row; `etag` is NULL (a column of the
+/// mirror this builder replaced).
 pub async fn store(
     pool: &PgPool,
     last_updated_at: i64,
-    etag: Option<&str>,
     tile_count: i64,
     body_gzip: &[u8],
+    built_at: NaiveDateTime,
 ) -> sqlx::Result<()> {
     sqlx::query(
         "INSERT INTO explore_api.map_grid (id, last_updated_at, etag, tile_count, body_gzip, fetched_at)
-         VALUES (1, $1, $2, $3, $4, timezone('UTC', now()))
+         VALUES (1, $1, NULL, $2, $3, $4)
          ON CONFLICT (id) DO UPDATE
-         SET last_updated_at = EXCLUDED.last_updated_at, etag = EXCLUDED.etag,
+         SET last_updated_at = EXCLUDED.last_updated_at, etag = NULL,
              tile_count = EXCLUDED.tile_count, body_gzip = EXCLUDED.body_gzip,
              fetched_at = EXCLUDED.fetched_at",
     )
     .bind(last_updated_at)
-    .bind(etag)
     .bind(tile_count as i32)
     .bind(body_gzip)
+    .bind(built_at)
     .execute(pool)
     .await?;
     Ok(())
 }
 
-/// One pass: the stamp, then the grid only if it moved past the one held
-/// and the refresh floor allows; the pass is complete either way, with the
-/// grid's stamp as its cursor.
+/// Reloads the stored grid when its stamp is newer than the held one: the
+/// build job runs in one process of the fleet and the routes in every one.
+/// One primary-key read when nothing changed; `true` when it reloaded.
+pub async fn reload_if_newer(state: &Shared) -> anyhow::Result<bool> {
+    let stored: Option<i64> =
+        sqlx::query_scalar("SELECT last_updated_at FROM explore_api.map_grid WHERE id = 1")
+            .fetch_optional(&state.pool)
+            .await
+            .context("reading explore_api.map_grid's stamp")?;
+    if stored.is_none_or(|s| s <= state.map.last_updated_at()) {
+        return Ok(false);
+    }
+    state.map.load(&state.pool).await?;
+    Ok(true)
+}
+
+/// The stamp a changed grid takes: now, and at least a second past the
+/// held one, so `lastUpdatedAt` and `Last-Modified` always move forward.
+fn next_stamp(held: Option<i64>, now_ms: i64) -> i64 {
+    held.map_or(now_ms, |h| now_ms.max(h + 1000))
+}
+
+/// One pass ([`build`]): the land-authz snapshot and Shop's listings, the
+/// grid composed, and the body stored and swapped in only when it differs
+/// from the held one. A source that is not published fails the pass naming
+/// it (`/mirrors`' `lastError`) and keeps the held grid; no partial grid is
+/// built. The pass is complete either way once a grid is built or found
+/// unchanged, with the grid's stamp as its cursor.
 pub async fn run_pass(state: &Shared, ctx: &JobContext) -> anyhow::Result<()> {
     mirror::run(&state.pool, MIRROR, ctx, || async {
-        let base = state.settings.sources.map.as_str();
-        let info_url = format!("{base}/v2/tiles/info");
-        let info = mirror::fetch(&state.http, &state.settings, reqwest::Method::GET, &info_url, None, &[], INFO_BODY_CAP).await?;
-        let info: TilesInfo = serde_json::from_slice(&info.body).with_context(|| format!("{}: not {{lastUpdatedAt}}", mirror::shown(&info_url)))?;
-
-        let current = state.map.snapshot();
-        let outcome = |g: &Grid| mirror::PassOutcome { items: g.tiles.len() as i64, cursor: Some(g.last_updated_at.to_string()) };
-        if let Some(grid) = &current {
-            if info.last_updated_at <= grid.last_updated_at {
-                return Ok(outcome(grid));
-            }
-            let age = (chrono::Utc::now().naive_utc() - grid.fetched_at).to_std().unwrap_or_default();
-            if age < state.settings.map_min_refresh {
-                tracing::info!(
-                    upstream = info.last_updated_at,
-                    held = grid.last_updated_at,
-                    age_secs = age.as_secs(),
-                    "upstream tile grid moved; next download after the refresh floor"
+        let now = chrono::Utc::now();
+        let (land, market) = match (state.land_authz.get(), state.land_market.get()) {
+            (Some(land), Some(market)) => (land.clone(), market.clone()),
+            (None, _) => {
+                return waiting(
+                    state,
+                    Source::LandAuthzIndex,
+                    "no land-authz index is attached to this process".into(),
                 );
-                return Ok(outcome(grid));
             }
-        }
-        anyhow::ensure!(!ctx.is_cancelled(), "cancelled before the grid download");
-
-        let grid_url = format!("{base}/v2/tiles");
-        let etag = current.as_ref().and_then(|g| g.etag.clone());
-        let headers: Vec<(&str, &str)> = etag.as_deref().map(|e| ("if-none-match", e)).into_iter().collect();
-        let fetched = mirror::fetch(&state.http, &state.settings, reqwest::Method::GET, &grid_url, None, &headers, GRID_BODY_CAP).await?;
-        let fetched_at = chrono::Utc::now().naive_utc();
-
-        if fetched.status == reqwest::StatusCode::NOT_MODIFIED {
-            let grid = current.context("304 without a held grid")?;
-            let stamped = Grid::from_tiles(grid.tiles.clone(), info.last_updated_at, grid.etag.clone(), fetched_at);
-            sqlx::query("UPDATE explore_api.map_grid SET last_updated_at = $1, fetched_at = $2 WHERE id = 1")
-                .bind(info.last_updated_at)
-                .bind(fetched_at)
-                .execute(&state.pool)
-                .await
-                .context("restamping explore_api.map_grid")?;
-            let out = outcome(&stamped);
-            state.map.set(stamped);
-            return Ok(out);
-        }
-
-        let last_updated_at = info.last_updated_at;
-        let etag = fetched.etag.clone();
-        let (grid, gz) = tokio::task::spawn_blocking(move || -> anyhow::Result<(Grid, Vec<u8>)> {
-            let grid = Grid::from_json(&fetched.body, last_updated_at, etag, fetched_at)?;
-            let gz = gzip(&fetched.body)?;
-            Ok((grid, gz))
+            (Some(_), None) => {
+                return waiting(
+                    state,
+                    Source::NftIndex,
+                    "no Shop marketplace reader is attached to this process".into(),
+                );
+            }
+        };
+        let land_registry = land.settings.land_registry.to_ascii_lowercase();
+        let estate_registry = land.settings.estate_registry.to_ascii_lowercase();
+        let snapshot = match build::read_land(&land).await {
+            Ok(s) => s,
+            Err(LandMarketError::Unready(source, why)) => return waiting(state, source, why),
+            Err(LandMarketError::Failed(e)) => return Err(e),
+        };
+        let listings = match market.snapshot(&land_registry, &estate_registry, now).await {
+            Ok(m) => m,
+            Err(LandMarketError::Unready(source, why)) => return waiting(state, source, why),
+            Err(LandMarketError::Failed(e)) => {
+                return Err(e.context("reading Shop's LAND listings"));
+            }
+        };
+        anyhow::ensure!(!ctx.is_cancelled(), "cancelled before the grid build");
+        let now_ms = now.timestamp_millis();
+        let held = state.map.snapshot();
+        let held_digest = held.as_ref().map(|g| g.digest);
+        let built = tokio::task::spawn_blocking(move || -> anyhow::Result<Option<Built>> {
+            let tiles = build::compose(
+                &land_registry,
+                &estate_registry,
+                &snapshot,
+                &listings,
+                now_ms,
+            );
+            let body = build::canonical_body(&tiles);
+            let digest: [u8; 32] = Sha256::digest(&body).into();
+            if held_digest == Some(digest) {
+                return Ok(None);
+            }
+            Ok(Some((tiles, digest, gzip(&body)?)))
         })
         .await
-        .context("grid parse task")??;
-        store(&state.pool, grid.last_updated_at, grid.etag.as_deref(), grid.tiles.len() as i64, &gz)
+        .context("grid build task")??;
+        *state.map.waiting.lock() = None;
+        let Some((tiles, digest, gz)) = built else {
+            let grid = held.context("an unchanged grid is a held one")?;
+            return Ok(mirror::PassOutcome {
+                items: grid.tiles.len() as i64,
+                cursor: Some(grid.last_updated_at.to_string()),
+            });
+        };
+        let stamp = next_stamp(held.as_ref().map(|g| g.last_updated_at), now_ms);
+        let built_at = now.naive_utc();
+        store(&state.pool, stamp, tiles.len() as i64, &gz, built_at)
             .await
             .context("storing explore_api.map_grid")?;
-        tracing::info!(tiles = grid.tiles.len(), gzip_bytes = gz.len(), last_updated_at, "tile grid mirrored");
-        let out = outcome(&grid);
+        tracing::info!(
+            tiles = tiles.len(),
+            gzip_bytes = gz.len(),
+            last_updated_at = stamp,
+            "tile grid built"
+        );
+        let grid = Grid::from_parts(tiles, stamp, built_at, digest);
+        let out = mirror::PassOutcome {
+            items: grid.tiles.len() as i64,
+            cursor: Some(stamp.to_string()),
+        };
         state.map.set(grid);
         Ok(out)
     })
     .await
+}
+
+/// A grid whose body differs from the held one: the tiles, the body's
+/// digest and the gzipped body to store.
+type Built = (HashMap<String, Tile>, [u8; 32], Vec<u8>);
+
+/// Records what the pass waits for and fails it, naming the source.
+fn waiting(state: &Shared, source: Source, why: String) -> anyhow::Result<mirror::PassOutcome> {
+    *state.map.waiting.lock() = Some((source, why.clone()));
+    anyhow::bail!("{} not ready: {why}", source.name())
 }
 
 pub fn routes() -> Router<Shared> {
@@ -590,7 +689,7 @@ mod tests {
             .into_iter()
             .map(|t| (t.id.clone(), t))
             .collect();
-        let grid = Grid::from_tiles(tiles, 1, None, chrono::Utc::now().naive_utc());
+        let grid = Grid::from_tiles(tiles, 1, chrono::Utc::now().naive_utc());
         assert_eq!(grid.bounds, Some((-3, 5, -7, 9)));
     }
 }

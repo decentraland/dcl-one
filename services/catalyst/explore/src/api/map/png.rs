@@ -240,12 +240,7 @@ where
         Some(b) => b,
         None => {
             let Some(grid) = state.map.snapshot() else {
-                return (
-                    StatusCode::SERVICE_UNAVAILABLE,
-                    [(header::CACHE_CONTROL, "no-store")],
-                    "Not ready",
-                )
-                    .into_response();
+                return state.map.unavailable();
             };
             match render_blocking(grid, render).await {
                 Ok(b) => {
@@ -461,7 +456,7 @@ mod tests {
         tiles.insert(t.id.clone(), t);
         let t = tile(8, 9, Some("77"), false);
         tiles.insert(t.id.clone(), t);
-        let grid = Grid::from_tiles(tiles, 0, None, chrono::Utc::now().naive_utc());
+        let grid = Grid::from_tiles(tiles, 0, chrono::Utc::now().naive_utc());
 
         let mut got: Vec<(i32, i32)> = select_estate_coords(&grid, "99")
             .iter()
@@ -539,7 +534,6 @@ mod tests {
         let grid = Arc::new(Grid::from_tiles(
             HashMap::new(),
             0,
-            None,
             chrono::Utc::now().naive_utc(),
         ));
         let worker = std::thread::current().id();
@@ -556,7 +550,6 @@ mod tests {
         let grid = Arc::new(Grid::from_tiles(
             HashMap::new(),
             0,
-            None,
             chrono::Utc::now().naive_utc(),
         ));
         let (started_tx, started_rx) = std::sync::mpsc::channel();
@@ -595,7 +588,7 @@ mod tests {
     }
 
     fn small_grid() -> Grid {
-        Grid::from_tiles(HashMap::new(), 1, None, chrono::Utc::now().naive_utc())
+        Grid::from_tiles(HashMap::new(), 1, chrono::Utc::now().naive_utc())
     }
 
     #[tokio::test(start_paused = true)]
@@ -641,6 +634,14 @@ mod tests {
         .await;
         assert_eq!(resp.status(), StatusCode::SERVICE_UNAVAILABLE);
         assert_eq!(resp.headers()[header::CACHE_CONTROL], "no-store");
+        let body = axum::body::to_bytes(resp.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let body: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(
+            body["source"], "land-authz-index",
+            "the unavailable envelope"
+        );
     }
 
     #[tokio::test]
@@ -682,12 +683,9 @@ mod tests {
         let mut tiles = HashMap::new();
         let t = tile(1, 1, Some("500"), true);
         tiles.insert(t.id.clone(), t);
-        state.map.set(Grid::from_tiles(
-            tiles,
-            1,
-            None,
-            chrono::Utc::now().naive_utc(),
-        ));
+        state
+            .map
+            .set(Grid::from_tiles(tiles, 1, chrono::Utc::now().naive_utc()));
         let mut conditional = HeaderMap::new();
         conditional.insert(header::IF_NONE_MATCH, "*".parse().unwrap());
         for (id, headers) in [

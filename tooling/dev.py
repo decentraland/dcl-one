@@ -601,6 +601,8 @@ def runtime_env(config, refuse_exposed_relayer=True):
             'PROFILE_IMAGES_ORIGIN_URL': 'https://profile-images.decentraland.org',
             # The Shop's catalogue: the marketplace mirrors and the NFT and LAND
             # indexes `catalyst posture show mirror` names, run by the index process.
+            # The map's tile grid (Places, the HUD's map, estate images) is built from
+            # the same LAND and NFT indexes and the trades mirror once they are published.
             'MARKETPLACE_MIRRORS_ENABLED': 'true',
             'TRADES_SYNC_UPSTREAM_URL': 'https://marketplace-api.decentraland.org/v1/trades',
             # The Shop's feeds wait for one complete trades pass; take it in one go rather than
@@ -625,11 +627,10 @@ def runtime_env(config, refuse_exposed_relayer=True):
             # Scene-template models (Qm... CIDs) live in the asset-packs bucket, which this
             # route redirects to; the builder pulls from it when the item bucket misses.
             'BUILDER_ASSET_PACKS_BUCKET_URL': 'https://builder-api.decentraland.org/v1/storage',
-            # Credit prices need a MANA spot; the map (Places, the HUD's map, estate images) its grid.
+            # Credit prices need a MANA spot.
             'PRICE_POLL_ENABLED': 'true', 'COINGECKO_URL': 'https://api.coingecko.com/api/v3',
             'PRICE_FALLBACK_SOURCES': 'coinbase=https://api.coinbase.com,binance=https://api.binance.com,'
                                       'kraken=https://api.kraken.com',
-            'EXPLORER_MAP_SOURCE_URL': 'https://api.decentraland.org',
             'RPC_ENDPOINT_POLYGON': 'https://rpc.decentraland.org/polygon?project=dcl-one-dev',
         })
     if config['profile'] == 'testnet':

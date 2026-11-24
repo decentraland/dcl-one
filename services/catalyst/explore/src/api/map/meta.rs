@@ -5,8 +5,8 @@
 //! `/v2/addresses/{address}/contributions`) and the probes (`/ping`,
 //! `/ready`). The old handlers read the squid `parcel`/`estate`/`data`
 //! tables; v2 has no squid database, so the token id, the name and the
-//! estate membership come from the mirrored tile grid (upstream fills a
-//! tile's `name` and `tokenId` from the same LAND data), the token id is
+//! estate membership come from the built tile grid (which fills a tile's
+//! `name` and `tokenId` from the same LAND data), the token id is
 //! derived from the coordinates when the grid carries none, and the
 //! description is empty (the grid has no description column). An estate the
 //! grid does not hold answers from the LAND index when that index proves it
@@ -172,10 +172,6 @@ fn finalize(mut resp: Response, last: i64) -> Response {
     resp
 }
 
-fn not_ready() -> Response {
-    (StatusCode::SERVICE_UNAVAILABLE, "Not ready").into_response()
-}
-
 fn not_found() -> Response {
     (
         StatusCode::NOT_FOUND,
@@ -315,7 +311,7 @@ fn with_grid(state: &Shared, headers: &HeaderMap, f: impl FnOnce(&Grid) -> Respo
     let last = state.map.last_updated_at();
     validated(headers, last, || match state.map.snapshot() {
         Some(grid) => f(&grid),
-        None => not_ready(),
+        None => state.map.unavailable(),
     })
 }
 
@@ -388,7 +384,7 @@ pub async fn get_estate(
 ) -> Response {
     let last = state.map.last_updated_at();
     let Some(grid) = state.map.snapshot() else {
-        return validated(&headers, last, not_ready);
+        return validated(&headers, last, || state.map.unavailable());
     };
     let Some(id) = canonical_estate_id(&id) else {
         return validated(&headers, last, || {
@@ -407,7 +403,7 @@ pub async fn get_token(
 ) -> Response {
     let last = state.map.last_updated_at();
     let Some(grid) = state.map.snapshot() else {
-        return validated(&headers, last, not_ready);
+        return validated(&headers, last, || state.map.unavailable());
     };
     let addr = address.to_lowercase();
     if addr == state.settings.estate_contract_address
@@ -508,7 +504,7 @@ pub async fn ready(State(state): State<Shared>) -> Response {
     if state.map.is_ready() {
         (StatusCode::OK, "ok").into_response()
     } else {
-        not_ready()
+        state.map.unavailable()
     }
 }
 
@@ -655,7 +651,6 @@ mod tests {
         Grid::from_tiles(
             [("1,1".to_string(), tile)].into(),
             1,
-            None,
             chrono::Utc::now().naive_utc(),
         )
     }
