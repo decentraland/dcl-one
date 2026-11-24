@@ -220,6 +220,9 @@ jobs:
           timeout=$((60 * QUEUE_TIMEOUT_MINUTES))
           limit=$((60 * ${WATCH_LIMIT_MINUTES:-340}))
           started=$SECONDS
+          # Before this run's jobs are first read: when a laptop of its legs was last seen busy, or
+          # the busy set could not be read, else the run's start.
+          unread_since=$SECONDS
           # Each laptop with a leg still to start: the time it was last seen running a benchmark
           # job, or first seen waiting. A leg's job is "<label> (<scenario>) / Chrome".
           waiting='{}'
@@ -273,8 +276,15 @@ jobs:
             queued=$(jq -r --argjson now "$SECONDS" --argjson timeout "$timeout" \
               '[to_entries[] | select($now - .value >= $timeout) | .key] | join(", ")' <<< "$waiting")
             if [ -n "$queued" ]; then break; fi
-            # no usable answer yet: the run's own start counts
-            if [ "$waiting" = '{}' ] && [ $((SECONDS - started)) -ge "$timeout" ]; then break; fi
+            # no usable answer yet: only time with no evidence that the legs' laptops are busy counts
+            if [ "$waiting" = '{}' ]; then
+              if jq -e --argjson busy "$busy" \
+                '$busy == null or any(.[]; .runs_on as $runner | $busy | index([$runner]) != null)' \
+                <<< "$LEGS" > /dev/null; then
+                unread_since=$SECONDS
+              fi
+              if [ $((SECONDS - unread_since)) -ge "$timeout" ]; then break; fi
+            fi
             if [ $((SECONDS - started)) -ge "$limit" ]; then
               echo "::warning::Stopped watching after $WATCH_LIMIT_MINUTES minutes with legs still to start; their own timeouts apply"
               echo "The queue watchdog stopped watching after $WATCH_LIMIT_MINUTES minutes with legs still to start." >> "$GITHUB_STEP_SUMMARY"

@@ -491,6 +491,20 @@ class QueueWatchdogTest(unittest.TestCase):
                                                  others='refused')
                 self.assertEqual((calls, output), (4, ''))
 
+    def test_unread_jobs_of_this_run_wait_while_its_laptops_are_busy_elsewhere(self):
+        started = {'jobs': [
+            {'name': 'first-chrome (still) / Chrome', 'status': 'in_progress'},
+            {'name': 'second-chrome (still) / Chrome', 'status': 'in_progress'},
+        ]}
+        suite = {'7': [{'name': 'second-chrome (walk) / Chrome', 'status': 'in_progress', 'labels': ['second']}]}
+        calls, _, output, _ = self.queue(['malformed JSON', 'malformed JSON', started], expire_after_sleep=True,
+                                         others=suite)
+        self.assertEqual((calls, output), (3, ''))
+        # with nothing busy, the run's start counts as before
+        calls, _, output, summary = self.queue(['malformed JSON'], expire_after_sleep=True)
+        self.assertEqual((calls, output), (2, 'stuck=true\n'))
+        self.assertIn('**a leg**', summary)
+
     def test_the_watchdog_stops_watching_before_the_job_limit(self):
         queued = {'jobs': [
             {'name': 'first-chrome (still) / Chrome', 'status': 'in_progress'},

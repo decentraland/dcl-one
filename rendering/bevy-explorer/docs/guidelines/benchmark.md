@@ -713,19 +713,19 @@ system in `FLEET` (`tooling/benchmark-inputs.py`) and its name in `MACHINES`
 
 **The watchdog.** A leg sent to an offline, stuck or busy laptop waits in the queue, and a job's
 timeout counts only once it starts. A laptop runs one job at a time, a suite's legs one after
-another, so the watchdog waits per laptop: the *Queue watchdog* job reads every minute the jobs
-of this run and of every other benchmark run in progress, and when a laptop with a leg of this
+another, so the watchdog waits per laptop: the *Queue watchdog* job reads, every few minutes, the
+jobs of this run and of every other benchmark run in progress, and when a laptop with a leg of this
 run still to start has run no benchmark job, of this run or another (a suite of another pull
 request included), for `BENCHMARK_QUEUE_TIMEOUT_MINUTES` (since it was last seen running one, or
 since the watchdog first saw it waiting), it sets the performance section to *Cancelled* with a
 message naming the laptop and cancels the run. A job of the other repository that uses the fleet
 is not visible to it, so it counts against the limit. A read that fails (the token's rate limit,
-say) moves no laptop toward the limit, and the reads come at most every three minutes, as each
-costs a call per benchmark run in progress. After 340 minutes the watchdog stops watching with a
-warning instead of reaching GitHub's six-hour job limit, and the legs' own timeouts apply.
+say) moves no laptop toward the limit, and before this run's own jobs are first read, the time
+counts only while none of its laptops is seen busy. The reads come at most every three minutes,
+as each costs a call per benchmark run in progress. After 340 minutes the watchdog stops watching
+with a warning instead of reaching GitHub's six-hour job limit, and the legs' own timeouts apply.
 Cancelling the run stops every leg, the healthy laptops' included, and writes no report: in a
-suite, what the other laptops measured so far is lost, and the cancelled message says to re-run
-the failed jobs once the laptop is free. The message says the laptop is
+suite, what the other laptops measured so far is lost. The message says the laptop is
 offline, stuck or busy with another job, and suggests *Re-run
 failed jobs* once it is free, which keeps the legs that finished and their results, raising
 `BENCHMARK_QUEUE_TIMEOUT_MINUTES`, or leaving the laptop out of `BENCHMARK_ENABLED_RUNNERS`. It
