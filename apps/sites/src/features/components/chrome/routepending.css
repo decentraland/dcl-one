@@ -1,20 +1,20 @@
 .route-pending {
   position: fixed;
-  inset-block-start: 12px;
+  inset-block-start: var(--dcl-space-12);
   inset-inline-start: 50%;
   transform: translateX(-50%);
   z-index: 200;
   display: flex;
   align-items: center;
-  gap: 12px;
-  max-inline-size: calc(100vw - 24px);
-  padding: 12px 20px;
-  border: 1px solid rgb(255 255 255 / 8%);
-  border-radius: 10px;
+  gap: var(--dcl-space-12);
+  max-inline-size: calc(100vw - var(--dcl-space-24));
+  padding: var(--dcl-space-12) var(--dcl-space-24);
+  border: 1px solid var(--dcl-border-subtle);
+  border-radius: var(--dcl-radius-md);
   background: var(--dcl-bg-page);
   color: var(--dcl-text-primary);
-  box-shadow: 0 6px 20px rgb(0 0 0 / 50%);
-  font: 500 14px/1.4 Inter, system-ui, sans-serif;
+  box-shadow: 0 6px 20px var(--dcl-transparencies-black-60);
+  font: 500 var(--dcl-font-size-body-sm)/1.4 Inter, system-ui, sans-serif;
   pointer-events: none;
 }
 .nav-progress,

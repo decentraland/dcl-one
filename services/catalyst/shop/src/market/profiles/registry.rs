@@ -655,9 +655,14 @@ mod tests {
             .map(|entity| entity["pointers"][0].as_str().unwrap().to_string())
             .collect();
         assert!(
-            super::super::process_and_cache_profiles(&state, &pointers, &entities)
-                .await
-                .is_err()
+            super::super::process_and_cache_profiles(
+                &state,
+                &pointers,
+                &entities,
+                Default::default()
+            )
+            .await
+            .is_err()
         );
         assert!(
             state.profile_cache.is_empty(),

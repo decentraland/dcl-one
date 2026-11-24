@@ -4,7 +4,7 @@
   --site-nav-bg: var(--dcl-bg-navbar);
   --site-nav-line: transparent;
   background: var(--dcl-bg-page);
-  color: #f0f0f0;
+  color: var(--dcl-text-primary);
   font-family: Inter, Helvetica, Arial, sans-serif;
   font-size: var(--dcl-font-size-body-md);
   line-height: 1.5;
