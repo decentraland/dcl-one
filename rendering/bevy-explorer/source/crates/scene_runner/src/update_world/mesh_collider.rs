@@ -12,7 +12,7 @@ use bevy_console::ConsoleCommand;
 use rapier3d_f64::{
     parry::{
         self,
-        query::{DefaultQueryDispatcher, Ray, ShapeCastOptions},
+        query::{DefaultQueryDispatcher, Ray, ShapeCastHit, ShapeCastOptions},
         shape::{Ball, Capsule},
     },
     prelude::*,
@@ -663,21 +663,10 @@ impl SceneColliderData {
         self.update_bvh();
 
         let predicate = |h, _: &Collider| !self.disabled.contains(&h);
-        let contact = self
-            .query_pipeline(Self::ground_filter(&predicate))
-            .cast_shape(
-                &(origin + Vec3::Y * PLAYER_COLLIDER_RADIUS)
-                    .as_dvec3()
-                    .into(),
-                &(-DVec3::Y).into(),
-                &Ball::new(PLAYER_COLLIDER_RADIUS as f64),
-                ShapeCastOptions {
-                    max_time_of_impact: GROUND_CAST_DISTANCE,
-                    target_distance: 0.0,
-                    stop_at_penetration: true,
-                    compute_impact_geometry_on_penetration: true,
-                },
-            );
+        let contact = self.cast_ground_ball(
+            (origin + Vec3::Y * PLAYER_COLLIDER_RADIUS).as_dvec3(),
+            &predicate,
+        );
 
         contact.map(|(handle, toi)| {
             (
@@ -699,20 +688,7 @@ impl SceneColliderData {
         let mut ground = None;
         for _ in 0..=GROUND_STEEP_EXCLUSIONS {
             let predicate = |h, _: &Collider| !self.disabled.contains(&h) && !steep.contains(&h);
-            let Some((handle, hit)) = self
-                .query_pipeline(Self::ground_filter(&predicate))
-                .cast_shape(
-                    &centre.into(),
-                    &(-DVec3::Y).into(),
-                    &Ball::new(PLAYER_COLLIDER_RADIUS as f64),
-                    ShapeCastOptions {
-                        max_time_of_impact: GROUND_CAST_DISTANCE,
-                        target_distance: 0.0,
-                        stop_at_penetration: true,
-                        compute_impact_geometry_on_penetration: true,
-                    },
-                )
-            else {
+            let Some((handle, hit)) = self.cast_ground_ball(centre, &predicate) else {
                 break;
             };
             if walkable(DVec3::from(hit.normal1)) {
@@ -745,6 +721,27 @@ impl SceneColliderData {
         }
 
         ground.map(|(toi, handle)| (toi as f32, self.get_id(handle).unwrap().clone()))
+    }
+
+    /// The first collider `predicate` admits that a ball of the avatar's radius at `centre` touches
+    /// as it drops, and the hit.
+    fn cast_ground_ball(
+        &self,
+        centre: DVec3,
+        predicate: &impl Fn(ColliderHandle, &Collider) -> bool,
+    ) -> Option<(ColliderHandle, ShapeCastHit)> {
+        self.query_pipeline(Self::ground_filter(predicate))
+            .cast_shape(
+                &centre.into(),
+                &(-DVec3::Y).into(),
+                &Ball::new(PLAYER_COLLIDER_RADIUS as f64),
+                ShapeCastOptions {
+                    max_time_of_impact: GROUND_CAST_DISTANCE,
+                    target_distance: 0.0,
+                    stop_at_penetration: true,
+                    compute_impact_geometry_on_penetration: true,
+                },
+            )
     }
 
     fn ground_filter<'a>(
