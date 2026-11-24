@@ -1,6 +1,6 @@
 //! Root HTTP server settings.
 use crate::social::communities;
-use crate::{comms, config::Config, explore, shared, shop};
+use crate::{builder, comms, config::Config, explore, shared, shop};
 use anyhow::Context;
 use std::time::Duration;
 
@@ -133,6 +133,48 @@ pub(super) fn comms_settings(config: &Config) -> anyhow::Result<comms::gatekeepe
     .context("LIVEKIT_* / COMMS_* configuration")
 }
 
+/// The builder's settings: its own `CREATE_*`/`BUILDER_*` settings and the Slack bot token social
+/// is configured with.
+pub(super) fn builder_settings(config: &Config) -> anyhow::Result<builder::Settings> {
+    builder::Settings::parse(builder::RawSettings {
+        eth_network: Some(config.node.eth_network.clone()),
+        matic_collections_subgraph_url: config
+            .market_upstreams
+            .matic_collections_subgraph_url
+            .clone(),
+        third_party_registry_subgraph_url: config
+            .validator
+            .third_party_registry_l2_subgraph_url
+            .clone(),
+        writes_enabled: config.create.create_writes_enabled,
+        polygon_rpc_url: config.create.builder_polygon_rpc_url.clone(),
+        admin_addresses: config.create.builder_admin_addresses.clone(),
+        admin_token: config.create.catalyrst_builder_admin_token.clone(),
+        newsletter_service_url: config.create.newsletter_service_url.clone(),
+        newsletter_publication_id: config.create.newsletter_publication_id.clone(),
+        newsletter_api_key: config.create.newsletter_service_api_key.clone(),
+        warehouse_url: config.create.warehouse_url.clone(),
+        warehouse_token: config.create.warehouse_token.clone(),
+        warehouse_context_prefix: config.create.warehouse_context_prefix.clone(),
+        slack_bot_token: config.social.referral_slack_token.clone(),
+        slack_curation_channel: config.create.slack_curation_channel.clone(),
+        creators_url: config.create.creators_url.clone(),
+        builder_url: Some(config.worlds.builder_url.clone()),
+        forum_url: config.create.forum_url.clone(),
+        forum_api_key: config.create.forum_api_key.clone(),
+        forum_api_username: config.create.forum_api_username.clone(),
+        forum_category: config.create.forum_category.clone(),
+        builder_server_url: config.create.builder_server_url.clone(),
+        validator_secret: config.create.wearable_validator_callback_secret.clone(),
+        cors_origin: config.create.cors_origin.clone(),
+        cors_method: config.create.cors_method.clone(),
+        unpublished_max_bytes: config.create.builder_unpublished_max_bytes,
+        unpublished_max_files: config.create.builder_unpublished_max_files,
+        video_uploads_max: config.create.builder_video_uploads_max,
+    })
+    .context("BUILDER_* / NEWSLETTER_* / CORS_* configuration")
+}
+
 /// The referral settings `social_states` passes on, including the backend
 /// proxies trusted to supply `X-Real-IP` for referral quotas.
 pub(super) fn referral_settings(config: &Config) -> communities::referral::Settings {
@@ -191,8 +233,66 @@ pub(super) fn referral_settings(config: &Config) -> communities::referral::Setti
 
 #[cfg(test)]
 mod tests {
-    use super::comms_settings;
+    use super::{builder_settings, comms_settings};
     use crate::config::Config;
+
+    #[test]
+    fn the_builder_works_on_the_polygon_chain_eth_network_pairs() {
+        let settings = |extra: &[(&'static str, &'static str)]| {
+            let mut vars = vec![("DATABASE_URL", "postgres:///catalyst")];
+            vars.extend_from_slice(extra);
+            builder_settings(&Config::parse_env_for_tests(vars).unwrap())
+        };
+        assert_eq!(
+            settings(&[]).unwrap().network,
+            crate::builder::network::POLYGON
+        );
+        assert_eq!(
+            settings(&[("ETH_NETWORK", "sepolia")]).unwrap().network,
+            crate::builder::network::AMOY
+        );
+        let err = format!("{:#}", settings(&[("ETH_NETWORK", "goerli")]).unwrap_err());
+        assert!(err.contains("ETH_NETWORK=goerli"), "{err}");
+    }
+
+    #[test]
+    fn the_builder_reads_its_networks_subgraphs_unless_a_setting_names_one() {
+        let subgraphs = |extra: &[(&'static str, &'static str)]| {
+            let mut vars = vec![("DATABASE_URL", "postgres:///catalyst")];
+            vars.extend_from_slice(extra);
+            let settings = builder_settings(&Config::parse_env_for_tests(vars).unwrap()).unwrap();
+            (
+                settings.default_collections_subgraph,
+                settings.default_registry_subgraph,
+            )
+        };
+        let some = |url: &str| Some(url.to_string());
+        assert_eq!(
+            subgraphs(&[]),
+            (
+                some("https://subgraph.decentraland.org/collections-matic-mainnet"),
+                some("https://subgraph.decentraland.org/tpr-matic-mainnet")
+            )
+        );
+        assert_eq!(
+            subgraphs(&[("ETH_NETWORK", "sepolia")]),
+            (
+                some("https://subgraph.decentraland.org/collections-matic-amoy"),
+                some("https://subgraph.decentraland.org/tpr-matic-amoy")
+            )
+        );
+        for value in ["https://subgraph.example/set", ""] {
+            assert_eq!(
+                subgraphs(&[
+                    ("ETH_NETWORK", "sepolia"),
+                    ("MATIC_COLLECTIONS_SUBGRAPH_URL", value),
+                    ("THIRD_PARTY_REGISTRY_L2_SUBGRAPH_URL", value),
+                ]),
+                (None, None),
+                "{value:?} is set: the node's settings answer"
+            );
+        }
+    }
 
     #[test]
     fn dev_only_lease_entries_count_only_on_a_test_network() {

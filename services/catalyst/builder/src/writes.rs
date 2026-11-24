@@ -1,17 +1,13 @@
-// from: src/social/writes.rs (the gate, its 503 envelope and its tests, with the creator-plane switch and message)
 //! `CREATE_WRITES_ENABLED`: the one switch in front of every creator-plane
 //! write (the builder drafts, uploads, curation, publication state and the
 //! newsletter opt-in; the camera-reel uploads, visibility and moderation
 //! share it). Like the social slice, this is local authority peer sync does
-//! not back up, so DATABASE.md ("Bootstrap, schema versions and local writes") requires a restore
-//! of this node's database, blobs and credentials to be demonstrated before
-//! the switch is turned on in production. Off (the default), every
+//! not back up: keeping it durable is the operator's job, and the switch
+//! alone decides whether these writes are taken. Off (the default), every
 //! `POST`/`PUT`/`PATCH`/`DELETE` answers 503 with the builder envelope and a
 //! `Retry-After`; the reads (drafts, blobs, on-chain lookups)
 //! keep answering. Nothing is exempt: the builder has no admission mint or
-//! stateless proxy on a mutating method. A read of a published collection
-//! stores its on-chain creator as the owner only while the switch is on;
-//! off, the answer carries the creator and the rows stay. The middleware itself is shared:
+//! stateless proxy on a mutating method. The middleware itself is shared:
 //! [`Gate`] carries a router's open paths and its own refusal envelope, so
 //! `camera_reel::writes` applies the same switch with the camera-reel
 //! `{message}` envelope and its one read-shaped `POST` kept open.
@@ -28,7 +24,7 @@ pub use crate::shared::writes::{Gate, guard_with, is_gated};
 /// The 503 the gate answers: the builder error envelope with a `Retry-After`
 /// so a client does not hammer a node that will not change its mind soon.
 pub fn disabled_response() -> Response {
-    let body = serde_json::json!({ "ok": false, "error": "Service Unavailable", "message": DISABLED_MESSAGE });
+    let body = serde_json::json!({ "ok": false, "data": {}, "error": DISABLED_MESSAGE });
     (
         StatusCode::SERVICE_UNAVAILABLE,
         [
@@ -89,13 +85,9 @@ mod tests {
         let (status, body) = call(&app, "PUT", "/v1/collections/x").await;
         assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE);
         let v: serde_json::Value = serde_json::from_str(&body).unwrap();
-        assert_eq!(v["ok"], false);
-        assert_eq!(v["error"], "Service Unavailable");
-        assert!(
-            v["message"]
-                .as_str()
-                .unwrap()
-                .contains("CREATE_WRITES_ENABLED=false")
+        assert_eq!(
+            v,
+            serde_json::json!({ "ok": false, "data": {}, "error": DISABLED_MESSAGE })
         );
         let (status, _) = call(&app, "POST", "/builder-api/v1/newsletter").await;
         assert_eq!(
