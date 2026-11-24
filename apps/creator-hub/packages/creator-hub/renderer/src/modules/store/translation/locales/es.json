@@ -130,6 +130,7 @@
         "title": "Historial de chats",
         "empty": "Aún no hay chats guardados.",
         "delete": "Eliminar chat",
+        "shared_stays": "Eliminar un chat aquí no borra lo que compartiste. Hazlo en Configuración → IA.",
         "now": "ahora mismo",
         "minutes": "hace {n} min",
         "hours": "hace {n} h",

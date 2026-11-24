@@ -130,6 +130,7 @@
         "title": "Chat history",
         "empty": "No saved chats yet.",
         "delete": "Delete chat",
+        "shared_stays": "Deleting a chat here doesn't erase what you've shared. Do that in Settings → AI.",
         "now": "just now",
         "minutes": "{n}m ago",
         "hours": "{n}h ago",
