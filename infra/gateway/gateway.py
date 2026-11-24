@@ -233,6 +233,7 @@ def render(table, cfg, mime):
         upstreams += f"upstream {name} {{ zone {name} 64k; {servers} keepalive 32; }}\n"
 
     # Hash across resolved peers. Consistent hashing groups replicas sharing a DNS name.
+    # Changing the replica set can remap an active polling session during scaling or rollout.
     socket_servers = "\n".join(
         f"server {host} resolve max_fails=2 fail_timeout=10s;" for host in cfg["apis"])
     upstreams += ("upstream auth_socket { zone auth_socket 64k; hash $binary_remote_addr; "
