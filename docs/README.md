@@ -17,6 +17,7 @@
 - [`comms-e2e`, a tool crate beside the Catalyst domain crates](adr/2026-11-19-comms-e2e-tool-crate.md)
 - [Protocol in dcl-one](adr/2026-10-25-protocol-in-dcl-one.md)
 - [SDK in dcl-one](adr/2026-10-26-sdk-in-dcl-one.md)
+- [SDK publishing](adr/2026-11-24-sdk-publishing.md)
 - [Creator Hub in dcl-one](adr/2026-11-09-creator-hub-in-dcl-one.md)
 - [Creator Hub ships as the desktop app only](adr/2026-11-19-creator-hub-desktop-only.md)
 - [Creators collections in Sites](adr/2026-11-19-creators-collections-in-sites.md)

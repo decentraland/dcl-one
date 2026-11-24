@@ -38,9 +38,8 @@ source in this repository.
 - Changes to the Explorer's protos trigger the Explorer workflows (`library/protocol/proto`
   is one of their inputs, in `tooling/bevy-ci.py` and the `paths:` filters), and the Nix
   Play build's source set includes it.
-- `@dcl/protocol` is still published by `decentraland/protocol`; the package here is marked
-  `private` until publishing moves. Publishing (`next` on `main` pushes, a dist-tag from a
-  branch on a manual run, with npm trusted publishing) is a separate change, as is the SDK.
+- `@dcl/protocol` publishes from here as a `next` snapshot for each commit that changes it,
+  alongside the SDK that pins it ([SDK publishing](2026-11-24-sdk-publishing.md)).
 
 What was reconciled, all additive (`buf breaking` clean, no `ecs_component_id` or
 field-number collision): the components `gltf_node` 1200, `gltf_node_state` 1201,
@@ -69,8 +68,7 @@ places where its copy was behind `main`.
 
 ## Follow-ups
 
-1. Publish `@dcl/protocol` from here and stop publishing from `decentraland/protocol`.
-2. Import `js-sdk-toolchain` beside it (`library/js-sdk-toolchain`), reading
-   `library/protocol` directly; then its publishing and the `auth-server` branch.
+1. Stop publishing from `decentraland/protocol`.
+2. The SDK's `auth-server` branch.
 3. Decide the protocol repository's `experimental` and `protocol-squad` branches, which no
    consumer tracks today.

@@ -20,8 +20,8 @@ The Rust comms server
 signed challenges. Application-relay message types support a dormant internal implementation;
 public admission cannot negotiate that capability. `WsPeerUpdate.recipients` (rfc5) is the
 scene preview's mini-comms addressing, proposed upstream as `feat/ws-peer-update-recipients`
-(decentraland/protocol #505). The package is marked
-`private` until `@dcl/protocol` publishes from here; until then that repository publishes it.
+(decentraland/protocol #505). `@dcl/protocol` publishes
+from here with the SDK ([SDK publishing](../../docs/adr/2026-11-24-sdk-publishing.md)).
 
 Checks: `make install` (dependencies and the `google/` well-known types), `make buf-lint`,
 `make buf-build`, `make buf-breaking` (wire compatibility against this repository's `main`;

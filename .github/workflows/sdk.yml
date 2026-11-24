@@ -21,14 +21,23 @@ on:
       - library/hashing/**
       - tooling/check-local-hashing.mjs
       - .github/workflows/sdk.yml
+  workflow_dispatch:
+    inputs:
+      release:
+        description: 'snapshot publishes to npm next; patch, minor or major releases to npm latest'
+        type: choice
+        options: [snapshot, patch, minor, major]
+        default: snapshot
+      dry-run:
+        description: 'Pack and run pnpm publish --dry-run (always on outside main)'
+        type: boolean
+        default: true
 permissions:
   contents: read
 concurrency:
-  group: sdk-ci-${{ github.ref }}
-  # a newer push supersedes a PR run; main runs finish
+  group: sdk-ci-${{ github.event_name == 'pull_request' && github.ref || github.run_id }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 env:
-  # the SDK's make install downloads protoc 3.20.1 for the runner's arch; nothing publishes
   CI: true
 jobs:
   lint:
@@ -119,3 +128,161 @@ jobs:
           rm -rf .packed && mkdir .packed
           for tgz in packages/@dcl/*/*.tgz; do mkdir -p ".packed/$(basename "$tgz" .tgz)" && tar -xzf "$tgz" -C ".packed/$(basename "$tgz" .tgz)"; done
           node scripts/check-no-local-packages.cjs .packed
+  channel:
+    name: Release channel
+    if: github.event_name != 'pull_request'
+    runs-on: ${{ vars.RUNNER_LINUX_X86 || 'ubuntu-26.04' }}
+    timeout-minutes: 5
+    outputs:
+      channel: ${{ steps.channel.outputs.channel }}
+      bump: ${{ steps.channel.outputs.bump }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          filter: blob:none
+      - name: Pick latest for a manual release or an Inspector bump, next otherwise
+        id: channel
+        env:
+          RELEASE: ${{ inputs.release }}
+          BEFORE: ${{ github.event.before }}
+        run: |
+          manifest=library/js-sdk-toolchain/packages/@dcl/sdk-commands/package.json
+          pin() { git show "$1:$manifest" 2>/dev/null | jq -r '.dependencies["@dcl/inspector"] // empty'; }
+          if [ -n "$RELEASE" ] && [ "$RELEASE" != snapshot ]; then
+            echo "channel=latest" >> "$GITHUB_OUTPUT"; echo "bump=$RELEASE" >> "$GITHUB_OUTPUT"
+          elif [ "$GITHUB_EVENT_NAME" = push ] && git cat-file -e "$BEFORE^{commit}" 2>/dev/null \
+            && [ "$(pin "$BEFORE")" != "$(pin "$GITHUB_SHA")" ]; then
+            echo "@dcl/inspector $(pin "$BEFORE") -> $(pin "$GITHUB_SHA")"
+            echo "channel=latest" >> "$GITHUB_OUTPUT"; echo "bump=patch" >> "$GITHUB_OUTPUT"
+          else
+            echo "channel=next" >> "$GITHUB_OUTPUT"; echo "bump=patch" >> "$GITHUB_OUTPUT"
+          fi
+  publish:
+    name: Publish
+    needs: [lint, build-test, channel]
+    runs-on: ${{ vars.RUNNER_LINUX_X86 || 'ubuntu-26.04' }}
+    timeout-minutes: 60
+    environment: ${{ github.ref == 'refs/heads/main' && 'sdk-release' || '' }}
+    concurrency:
+      group: ${{ needs.channel.outputs.channel == 'latest' && 'sdk-release-latest' || format('sdk-release-{0}', github.run_id) }}
+      cancel-in-progress: false
+    permissions:
+      contents: write
+      id-token: write
+    defaults:
+      run:
+        working-directory: library/js-sdk-toolchain
+    env:
+      CHANNEL: ${{ needs.channel.outputs.channel }}
+      BUMP: ${{ needs.channel.outputs.bump }}
+      DRY_RUN: ${{ (github.ref != 'refs/heads/main' || inputs.dry-run == true) && 'true' || 'false' }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          filter: blob:none
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 24.16.0
+          registry-url: https://registry.npmjs.org
+      - run: corepack enable
+      - name: Version
+        id: version
+        run: |
+          previous=$(git tag -l '@dcl/sdk@*' --sort=-v:refname | sed 's|^@dcl/sdk@||' | grep -E '^[0-9]+\.[0-9]+\.[0-9]+$' | head -1 || true)
+          if [ -z "$previous" ]; then
+            if [ "$DRY_RUN" != true ]; then
+              echo "::error::No @dcl/sdk@X.Y.Z tag found; tag the last released version before publishing from main"
+              exit 1
+            fi
+            previous=$(pnpm view @dcl/sdk dist-tags.latest)
+            echo "::warning::No @dcl/sdk@X.Y.Z tag; counting from npm latest $previous"
+          fi
+          IFS=. read -r major minor patch <<< "$previous"
+          case "$BUMP" in
+            major) next="$((major + 1)).0.0" ;;
+            minor) next="$major.$((minor + 1)).0" ;;
+            *) next="$major.$minor.$((patch + 1))" ;;
+          esac
+          if [ "$CHANNEL" != latest ]; then next="$next-$GITHUB_RUN_ID.commit-${GITHUB_SHA::7}"; fi
+          echo "$CHANNEL $previous -> $next (dry run: $DRY_RUN)"
+          echo "previous=$previous" >> "$GITHUB_OUTPUT"
+          echo "version=$next" >> "$GITHUB_OUTPUT"
+      - name: Install (builds library/protocol's out-ts and library/hashing first)
+        run: make install
+      - name: Pack @dcl/protocol and @dcl/hashing
+        id: deps
+        run: |
+          rm -rf .published && mkdir .published
+          for pkg in protocol hashing; do
+            dir="../$pkg"
+            sha=$(git log -1 --format=%H -- "$dir" | cut -c1-7)
+            name=$(jq -r .name "$dir/package.json")
+            version=$(pnpm view "$name" versions --json 2>/dev/null | jq -r --arg s ".commit-$sha" 'if type == "array" then . else [.] end | map(select(endswith($s))) | last // empty')
+            if [ -z "$version" ]; then
+              version="$(jq -r .version "$dir/package.json")-$GITHUB_RUN_ID.commit-$sha"
+              pnpm --dir "$dir" pkg set version="$version"
+              pnpm --dir "$dir" pack --pack-destination "$PWD/.published"
+            fi
+            echo "$name@$version"
+            echo "$pkg=$version" >> "$GITHUB_OUTPUT"
+          done
+      - name: Set the release version
+        working-directory: library/js-sdk-toolchain/packages/@dcl/sdk
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: pnpm pkg set version="$VERSION"
+      - name: Build
+        run: make build
+      - name: Prepare releasable packages
+        run: make prepare
+        env:
+          PROTOCOL_VERSION: ${{ steps.deps.outputs.protocol }}
+          HASHING_VERSION: ${{ steps.deps.outputs.hashing }}
+      - name: Packed manifests name no local dependency
+        run: |
+          rm -rf .packed && mkdir .packed
+          for tgz in packages/@dcl/*/*.tgz; do mkdir -p ".packed/$(basename "$tgz" .tgz)" && tar -xzf "$tgz" -C ".packed/$(basename "$tgz" .tgz)"; done
+          node scripts/check-no-local-packages.cjs .packed
+      - name: Publish to npm
+        run: |
+          dry=()
+          [ "$DRY_RUN" = true ] && dry=(--dry-run)
+          for pkg in js-runtime ecs react-ecs sdk-commands playground-assets sdk; do
+            mv packages/@dcl/$pkg/*.tgz .published/
+          done
+          for tgz in .published/dcl-hashing-*.tgz .published/dcl-protocol-*.tgz \
+            .published/dcl-js-runtime-*.tgz .published/dcl-ecs-*.tgz .published/dcl-react-ecs-*.tgz \
+            .published/dcl-sdk-commands-*.tgz .published/dcl-playground-assets-*.tgz .published/dcl-sdk-[0-9]*.tgz; do
+            [ -e "$tgz" ] || continue
+            manifest=$(tar -xOzf "$tgz" package/package.json)
+            spec="$(jq -r .name <<<"$manifest")@$(jq -r .version <<<"$manifest")"
+            if [ "$DRY_RUN" != true ] && [ -n "$(pnpm view "$spec" version 2>/dev/null)" ]; then
+              echo "$spec is already on npm; skipping"
+              continue
+            fi
+            tag=$CHANNEL
+            case "$spec" in @dcl/protocol@*|@dcl/hashing@*) tag=next ;; esac
+            pnpm publish "$tgz" --provenance --access public --tag "$tag" --no-git-checks "${dry[@]}"
+          done
+      - name: Release notes
+        if: env.CHANNEL == 'latest' && env.DRY_RUN != 'true'
+        id: release_notes
+        uses: ./.github/actions/creator-hub-generate-release-notes
+        with:
+          previous_version: ${{ steps.version.outputs.previous }}
+          current_version: ${{ steps.version.outputs.version }}
+          paths: 'library/js-sdk-toolchain,library/protocol,library/hashing'
+          section_names: 'SDK Changes,Protocol Changes,Hashing Changes'
+          release_title: '@dcl/sdk'
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          tag_prefix: '@dcl/sdk@'
+      - name: Tag and release
+        if: env.CHANNEL == 'latest' && env.DRY_RUN != 'true'
+        uses: ./.github/actions/creator-hub-update-release-description
+        with:
+          tag_name: '@dcl/sdk@${{ steps.version.outputs.version }}'
+          release_notes: ${{ steps.release_notes.outputs.release_notes }}
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          create_if_not_exists: true

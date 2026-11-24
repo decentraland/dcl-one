@@ -1,7 +1,6 @@
 {
   "name": "@dcl/hashing",
-  "version": "1.0.0",
-  "private": true,
+  "version": "3.1.0",
   "description": "Decentraland content hashes: hashV0, hashV1 and the ADR-32 and ADR-62 helpers",
   "repository": {
     "type": "git",

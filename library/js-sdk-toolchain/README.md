@@ -70,9 +70,15 @@ make build
 
 ## Release Process
 
-1. Merge changes to the main branch
-2. Wait for CI workflow completion in GitHub Actions
-3. Create a new Release following the [version guidelines](https://docs.decentraland.org/creator/releases/version-agreement/)
+`SDK / CI` (`.github/workflows/sdk.yml`) publishes every package on `main`
+([SDK publishing](../../docs/adr/2026-11-24-sdk-publishing.md)):
+
+- every merge publishes a `next` snapshot;
+- a merge that bumps `@dcl/inspector` in `@dcl/sdk-commands` releases a patch to `latest`;
+- a manual run with `release` set to `patch`, `minor` or `major` releases to `latest`, following
+  the [version guidelines](https://docs.decentraland.org/creator/releases/version-agreement/).
+
+A `latest` release tags `@dcl/sdk@X.Y.Z` with its release notes.
 
 ## Testing Infrastructure
 

@@ -28,8 +28,9 @@ It installs with pnpm as one workspace with a single lockfile
   from the one proto source. `make install` builds the protocol package first; `update-protocol`
   is gone, since there is nothing to bump.
 - `make prepare` pins `@dcl/protocol` in the packed manifests to `PROTOCOL_VERSION`, which the
-  caller must set (the publish job's value; `sdk.yml` packs with a `0.0.0-unpublished.<sha>` that
-  says what it is), so a tarball never names a local link or a version that is not on npm
+  caller must set (the snapshot the publish job uses, see
+  [SDK publishing](2026-11-24-sdk-publishing.md); the CI pack uses a `0.0.0-unpublished.<sha>`
+  that says what it is), so a tarball never names a local link or a version that is not on npm
   (`scripts/check-no-local-packages.cjs`, run by `sdk.yml`).
 - `AvatarShape` and `AvatarEquippedData` keep `forceRender` optional for scenes: the protocol's
   `repeated` field would otherwise make the generated type require it, so the two extended
@@ -45,7 +46,8 @@ It installs with pnpm as one workspace with a single lockfile
   `PROTOC`, which prost reads for the Rust crates. CI leaves it unset and uses the SDK's download
   of 3.20.1, so generated code in a PR comes from that version.
 - `.github/workflows/sdk.yml` runs lint, build, test, the CLI smoke test and `prepare` on changes
-  under `library/js-sdk-toolchain` or `library/protocol`. It publishes nothing.
+  under `library/js-sdk-toolchain` or `library/protocol`, and publishes the packages on `main`
+  ([SDK publishing](2026-11-24-sdk-publishing.md)).
 - Snapshots (`test/snapshots/**`, `playground-assets.api.md`) are regenerated locally
   (`make update-snapshots`) whenever `library/protocol` changes what `@dcl/ecs` generates; the
   snapshot test fails on a stale one (with `UPDATE_SNAPSHOTS` it also rewrites it) and the
@@ -55,17 +57,15 @@ It installs with pnpm as one workspace with a single lockfile
 
 - One pull request can change a proto, the engine and the SDK together; the SDK release that
   follows ships the protocol at that commit.
-- `@dcl/sdk@next` describes the Explorer dcl-one ships once publishing moves here; the bridge and
-  movement scenes stop needing the `experimental-bevy` dist-tag.
+- `@dcl/sdk@next` describes the Explorer dcl-one ships; the bridge and movement scenes stop
+  needing the `experimental-bevy` dist-tag.
 - `library/` holds a second JavaScript project that is not a `dcl-*` crate (as `catalyst-api/` and
   `protocol/` already are); its lockfile and `node_modules` stay its own.
 
 ## Follow-ups
 
-1. Publish the SDK packages from here (oddish, trusted publishing re-pointed, `next` on `main`,
-   `sdk/<version>` releases) and stop publishing from `decentraland/js-sdk-toolchain`; the PR-build
-   tooling (S3 tarballs, the "Test this pull request" comment, the e2e realm, the playground).
-   The first release notes carry the narrowed types above.
+1. The PR-build tooling: S3 tarballs, the "Test this pull request" comment, the e2e realm and
+   the playground. The first release notes carry the narrowed types above.
 2. The `auth-server` branch as a dcl-one branch published through a manual `publish-tag` run.
 3. Fold the rest of the SDK's `experimental-bevy` layer (react-ecs scroll and render-to-texture,
    drag events, `setGltfMesh`, …) into `main` here.
