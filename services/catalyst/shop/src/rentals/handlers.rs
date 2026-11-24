@@ -1,9 +1,7 @@
 //! The four routes: the listing page and the price histogram read the local
-//! tables; the create and the refresh take the asset from the marketplace
-//! subgraph reader ([`super::nft`]) and answer the unavailable envelope when
-//! no reader is configured, the way the old crate answered 503 without its
-//! squid pool. Both writes sit behind `DATA_WRITES_ENABLED` (the router's
-//! gate), the create behind signed fetch too.
+//! tables. Create and refresh read the listing asset from a published
+//! land-authz snapshot and return its unavailable envelope until ready.
+//! Both writes require `DATA_WRITES_ENABLED`. Creation also requires signed fetch.
 
 use std::collections::HashMap;
 
@@ -174,19 +172,10 @@ pub async fn get_rentals_listings(
 }
 
 fn reader_unavailable(err: NftReadError) -> Response {
-    match err {
-        NftReadError::Unconfigured => unavailable(
-            Source::MarketplaceSubgraph,
-            "NFT ownership verification is unavailable: no marketplace subgraph reader is configured",
-        ),
-        NftReadError::Upstream(detail) => {
-            tracing::warn!(error = %detail, "marketplace subgraph reader failed on a rentals route");
-            unavailable(
-                Source::MarketplaceSubgraph,
-                "NFT ownership verification is unavailable: the marketplace subgraph did not answer",
-            )
-        }
+    if let NftReadError::Database(e) = err {
+        tracing::warn!(error = %e, "failed to read the indexed rental asset");
     }
+    crate::market::nft_reads::land_unavailable()
 }
 
 fn naive_secs(secs: i64, fallback: chrono::NaiveDateTime) -> chrono::NaiveDateTime {
@@ -376,7 +365,7 @@ pub async fn refresh_rentals_listing(
     let now = clock.naive_utc();
     let nft = state.nft(&contract_address, &token_id).await;
     if let (Ok(nft), Ok(uuid)) = (&nft, uuid::Uuid::parse_str(&id)) {
-        super::status::sync_listing(state.db.pool(), uuid, nft.as_deref(), clock).await?;
+        super::status::sync_listing(state.db.pool(), uuid, nft.as_ref(), clock).await?;
     }
     match nft {
         Ok(Some(nft)) => {
@@ -401,7 +390,7 @@ pub async fn refresh_rentals_listing(
             // No row: the reader's is older than the stored one, which stays.
         }
         Ok(None) => {
-            tracing::debug!(rental_id = %id, "NFT not found in the marketplace subgraph during refresh; metadata unchanged");
+            tracing::debug!(rental_id = %id, "NFT not found in the land-authz index during refresh; metadata unchanged");
         }
         Err(e) => return Ok(reader_unavailable(e)),
     }

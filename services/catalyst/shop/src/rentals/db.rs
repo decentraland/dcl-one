@@ -73,7 +73,7 @@ pub struct ListingMetadata<'a> {
     pub distance_to_plaza: Option<i32>,
     pub adjacent_to_road: Option<bool>,
     pub estate_size: Option<i32>,
-    /// The subgraph's `updatedAt`.
+    /// The asset's indexed update time.
     pub updated_at: NaiveDateTime,
 }
 

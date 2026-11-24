@@ -2,7 +2,7 @@
 //! `catalyrst-signatures`, itself the Rust port of
 //! decentraland/signatures-server, moved here from `src/signatures` as
 //! SHOP.md slice 3 asked), over the ONE pool (`signatures.*`,
-//! `schemas/32_signatures.sql`) and the stage-4 marketplace subgraph reader.
+//! `schemas/32_signatures.sql`) and the published land-authz index.
 //!
 //! Where each route reads (the stage-5 data-plane rule: every route names its
 //! source, and a route whose source is unset answers the unavailable
@@ -14,12 +14,9 @@
 //! - `POST /v1/rentals-listings`: local authority behind
 //!   `DATA_WRITES_ENABLED` and signed fetch (ADR-44, the 6.x payload then the
 //!   legacy one, as the old crate accepted); the asset's owner, category and
-//!   LAND search columns come from the marketplace subgraph reader
-//!   ([`nft`], `nfts(where: {contractAddress, tokenId})`, 30 s TTL), which
-//!   replaces the crate's `squid.nft` probe; without
-//!   `MARKETPLACE_SUBGRAPH_URL` the route answers
-//!   `marketplace::unavailable(Source::MarketplaceSubgraph)` (the old 503
-//!   "NFT ownership verification is unavailable"). A listing must name the
+//!   LAND search columns come from a published land-authz snapshot joined
+//!   to the indexed LAND data and proximity map. Until the index is ready,
+//!   the route answers the land-authz unavailable envelope. A listing must name the
 //!   served Ethereum chain and its Rentals contract (stored as the
 //!   contract's address); an asset whose last rent at that contract is
 //!   still running answers 409, and an asset the contract still holds may
@@ -87,7 +84,6 @@ use sqlx::PgPool;
 
 use crate::auth::eip1654::Eip1654Validator;
 use crate::market::MarketplaceState;
-use crate::shared::cache::TtlMap;
 use crate::shared::signed_fetch::{self, PayloadPolicy, SignedFetchError};
 use crate::shared::writes::DataWrites;
 
@@ -105,12 +101,9 @@ pub struct Settings {
 pub struct State {
     pub settings: Settings,
     pub db: db::Database,
-    /// The stage-4 marketplace state whose `MARKETPLACE_SUBGRAPH_URL` reader
-    /// answers the asset lookups; `None` (or one without that URL) means the
-    /// writes answer the envelope.
+    /// The served network and marketplace rollout settings.
     market: Option<Arc<MarketplaceState>>,
     eip1654: Option<Arc<dyn Eip1654Validator>>,
-    nft_cache: TtlMap<(String, String), Option<Arc<nft::LandNft>>>,
 }
 
 pub type SharedState = Arc<State>;
@@ -142,7 +135,6 @@ impl State {
             db: db::Database::new(pool),
             market,
             eip1654,
-            nft_cache: TtlMap::bounded(nft::NFT_TTL, nft::NFT_CACHE_MAX_ENTRIES),
         }
     }
 
@@ -151,17 +143,18 @@ impl State {
     pub fn reader_configured(&self) -> bool {
         self.market
             .as_ref()
-            .is_some_and(|m| m.settings.marketplace_subgraph_url.is_some())
+            .and_then(|m| m.land_network())
+            .is_some()
     }
 
     pub(crate) async fn nft(
         &self,
         contract_address: &str,
         token_id: &str,
-    ) -> Result<Option<Arc<nft::LandNft>>, nft::NftReadError> {
+    ) -> Result<Option<nft::LandNft>, nft::NftReadError> {
         nft::nft_by_contract_token(
-            self.market.as_ref(),
-            &self.nft_cache,
+            self.db.pool(),
+            self.market.as_ref().and_then(|m| m.land_network()),
             contract_address,
             token_id,
         )

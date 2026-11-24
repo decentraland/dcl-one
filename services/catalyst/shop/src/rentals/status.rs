@@ -16,10 +16,8 @@
 //!
 //! An unknown never cancels, since a cancellation does not reopen: no
 //! published index, no indexed row, or an index that has not yet seen past
-//! the listing's creation (the create route checks the owner against the
-//! marketplace subgraph, which the land-authz index can trail) leave the
-//! listing open. So does a token in the Rentals contract whose rent the
-//! rentals index has not reached: the latest indexed rent names who the
+//! the listing's creation leave it open. So does a token in the Rentals
+//! contract whose rent the rentals index has not reached: the latest indexed rent names who the
 //! contract holds the token for only when it is no older than the token's
 //! arrival there (the job compares blocks, the refresh route the rent's
 //! block time with the asset row's `updated_at`). Every write is guarded by
@@ -489,11 +487,9 @@ mod tests {
         db.drop().await;
     }
 
-    /// Ownership and dissolution from the land-authz index: a transfer after
-    /// the listing cancels it, one before it (the index trailing the
-    /// subgraph the create read) does not; an estate without parcels is
-    /// dissolved; the Rentals contract's custody and an unindexed token keep
-    /// the listing; nothing moves while the index is not published.
+    /// A transfer after listing or a dissolved estate cancels the listing.
+    /// An earlier transfer, Rentals custody, an unknown token or an
+    /// unpublished index leaves it open.
     #[tokio::test]
     async fn the_pass_cancels_transferred_assets_and_dissolved_estates() {
         let Some(db) = OwnedDatabase::new("rental_moved", Schema::Full, 2).await else {

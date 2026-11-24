@@ -1846,8 +1846,8 @@ changed since the listing was created. It writes `dissolved` for an estate
 without parcels once the index head is newer than the listing. The index
 reads run only on a published land-authz snapshot. The refresh route
 (`PATCH /v1/rentals-listings/{id}`) applies the fold and the same cancellation
-rules to one listing, using the asset row that the marketplace subgraph reader
-returned when that row is newer than `rental_assets.nft_updated_at`. The
+rules to one listing, using the asset row from the published land-authz
+snapshot when that row is newer than `rental_assets.nft_updated_at`. The
 route then writes the row to `signatures.rental_assets` only when it is no
 older than the stored one, so a lagging reader replaces no metadata.
 
@@ -1914,9 +1914,8 @@ Invariants:
   be at or after that of the latest folded `transfer` in
   `land_authz.authz_event`: both indexes commit whole blocks of the same
   chain, and a rent either moves the token in its own transaction or finds
-  it already in the contract. The refresh route has no chain position for the
-  subgraph's asset row, so it requires the rent's `block_time` to be at or
-  after the row's `updatedAt`. When that row was updated again after the
+  it already in the contract. The refresh route requires the rent's `block_time` to be at
+  or after the asset row's indexed update time. When that row was updated again after the
   rent, the route decides nothing and the job's block comparison decides.
   While the `rentals` index is not published, neither path reads custody.
 - The signatures-server import keeps a node reason only while upstream also

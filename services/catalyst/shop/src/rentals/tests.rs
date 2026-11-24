@@ -2,11 +2,9 @@
 //! (`db::scratch`; without `CATALYST_TEST_DATABASE_URL` the DB-backed tests
 //! skip), with random token ids so every row is this test's and deleted at
 //! the end (the asset row cascades to the rental, the listing and the
-//! periods), and an in-process stub standing in for the marketplace
-//! subgraph. `CATALYST_LIVE_MARKETPLACE_SUBGRAPH_URL` gates the one real
-//! upstream read.
+//! periods). Asset lookup tests seed an isolated land-authz index.
 
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 
 use alloy::primitives::B256;
 use alloy::signers::{Signer as _, local::PrivateKeySigner};
@@ -27,6 +25,7 @@ use crate::shared::signed_fetch::{
 };
 
 const LAND: &str = "0xf87e31492faf9a91b02ee0deaad50d51d56d5d4d";
+const ESTATE: &str = crate::land_authz::ESTATE_REGISTRY_MAINNET;
 const RENTALS: &str = super::index::RENTALS_MAINNET;
 const LESSOR: &str = "0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266";
 
@@ -262,36 +261,37 @@ async fn refresh_updates_metadata_and_returns_the_listing() {
     cleanup(&pool, &[token]).await;
 }
 
-/// A stub marketplace subgraph: every POST answers the current document.
-struct StubGraph {
-    answer: Arc<Mutex<Value>>,
-    url: String,
+fn market() -> Arc<MarketplaceState> {
+    Arc::new(MarketplaceState::new(
+        lazy_pool(),
+        crate::http::Outbound::for_tests(),
+        crate::market::Settings::for_tests(),
+    ))
 }
 
-async fn stub_graph() -> StubGraph {
-    let answer = Arc::new(Mutex::new(json!({ "data": { "nfts": [] } })));
-    let served = answer.clone();
-    let app = Router::new().route(
-        "/",
-        axum::routing::post(move || {
-            let served = served.clone();
-            async move { axum::Json(served.lock().unwrap().clone()) }
-        }),
-    );
-    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-    let url = format!("http://{}", listener.local_addr().unwrap());
-    tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
-    StubGraph { answer, url }
+async fn publish_land(pool: &sqlx::PgPool) {
+    sqlx::query("INSERT INTO land_authz.index_cursor (network, land_registry, estate_registry, last_block, folded_block, folded_at, full_replay_started)
+                 VALUES ('ethereum-mainnet', $1, $2, 100, 100, timezone('UTC', now()), true)")
+        .bind(LAND).bind(ESTATE).execute(pool).await.unwrap();
 }
 
-fn market_with(subgraph_url: Option<String>) -> Arc<MarketplaceState> {
-    let mut settings = crate::market::Settings::for_tests();
-    settings.marketplace_subgraph_url = subgraph_url;
-    let state = MarketplaceState::new(lazy_pool(), crate::http::Outbound::for_tests(), settings);
-    state
-        .test_allow_loopback
-        .store(true, std::sync::atomic::Ordering::Relaxed);
-    Arc::new(state)
+async fn transfer(
+    pool: &sqlx::PgPool,
+    contract: &str,
+    token: &str,
+    owner: &str,
+    block: i64,
+    time: i64,
+) {
+    sqlx::query("INSERT INTO land_authz.authz_event (block_number, log_index, block_time, token_address, token_id, account, kind)
+                 VALUES ($1, 0, $2, $3, $4::numeric, $5, 'transfer')")
+        .bind(block).bind(time).bind(contract).bind(token).bind(owner).execute(pool).await.unwrap();
+    let coords = (contract == LAND).then_some((-10, -140));
+    sqlx::query("INSERT INTO land_authz.token_right (token_address, token_id, owner, x, y, updated_block, updated_log)
+                 VALUES ($1, $2::numeric, $3, $4, $5, $6, 0)
+                 ON CONFLICT (token_address, token_id) DO UPDATE SET owner = EXCLUDED.owner, updated_block = EXCLUDED.updated_block")
+        .bind(contract).bind(token).bind(owner).bind(coords.map(|c| c.0)).bind(coords.map(|c| c.1)).bind(block)
+        .execute(pool).await.unwrap();
 }
 
 fn state_over(
@@ -397,14 +397,6 @@ async fn send(
     (status, headers, body)
 }
 
-fn nft_row(owner: &str, category: &str, estate_size: Option<i32>) -> Value {
-    json!({ "data": { "nfts": [ {
-        "id": "x", "category": category, "owner": { "id": owner }, "searchText": "-10,20",
-        "searchDistanceToPlaza": 2, "searchAdjacentToRoad": false, "searchEstateSize": estate_size,
-        "createdAt": "1600000000", "updatedAt": "1700000000"
-    } ] } })
-}
-
 #[tokio::test]
 async fn writes_are_gated_and_the_reads_never_are() {
     let app = router(state_over(lazy_pool(), None, false));
@@ -476,7 +468,7 @@ async fn a_signed_rental_listing_is_refused_while_the_marketplace_is_off() {
     body.signature = sign_listing(&w, &body).await;
     let doc = creation_json(&body);
     let path = "/v1/rentals-listings";
-    let market = market_with(None);
+    let market = market();
     market.set_marketplace_features(false);
     for state in [
         state_over(lazy_pool(), Some(market), true),
@@ -500,11 +492,10 @@ async fn a_signed_rental_listing_is_refused_while_the_marketplace_is_off() {
 }
 
 #[tokio::test]
-async fn create_refresh_and_list_over_the_stub_subgraph() {
-    let Some(pool) = crate::db::scratch::pool(4).await else {
+async fn create_refresh_and_list_from_the_published_land_index() {
+    let Some(pool) = crate::db::scratch::isolated_pool(4).await else {
         return;
     };
-    let graph = stub_graph().await;
     let w = wallet();
     let token = random_token_id();
     let mut body = creation(&token, "");
@@ -512,8 +503,8 @@ async fn create_refresh_and_list_over_the_stub_subgraph() {
     let doc = creation_json(&body);
     let path = "/v1/rentals-listings";
 
-    // No reader configured: the envelope, not a guess.
-    let app = router(state_over(pool.clone(), Some(market_with(None)), true));
+    // An unpublished index returns the source envelope.
+    let app = router(state_over(pool.clone(), Some(market()), true));
     let (status, headers, out) = send(
         app,
         "POST",
@@ -523,15 +514,12 @@ async fn create_refresh_and_list_over_the_stub_subgraph() {
     )
     .await;
     assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE, "{out}");
-    assert_eq!(out["source"], "marketplace-subgraph");
-    assert_eq!(out["configure"], "MARKETPLACE_SUBGRAPH_URL");
+    assert_eq!(out["source"], "land-authz-index");
+    assert_eq!(out["configure"], "LAND_AUTHZ_INDEX_ENABLED");
     assert_eq!(headers.get(header::RETRY_AFTER).unwrap(), "60");
 
-    let state = state_over(
-        pool.clone(),
-        Some(market_with(Some(graph.url.clone()))),
-        true,
-    );
+    publish_land(&pool).await;
+    let state = state_over(pool.clone(), Some(market()), true);
     let app = || router(state.clone());
 
     let (status, _, out) = send(
@@ -547,15 +535,9 @@ async fn create_refresh_and_list_over_the_stub_subgraph() {
         (StatusCode::NOT_FOUND, "NFT not found")
     );
 
-    // Somebody else's parcel: 401 (a fresh cache key: the stub answer changed, so wait out the TTL by using a new state).
-    *graph.answer.lock().unwrap() = nft_row(LESSOR, "parcel", None);
-    let state2 = state_over(
-        pool.clone(),
-        Some(market_with(Some(graph.url.clone()))),
-        true,
-    );
+    transfer(&pool, LAND, &token, LESSOR, 1, 1_600_000_000).await;
     let (status, _, out) = send(
-        router(state2),
+        app(),
         "POST",
         path,
         signed_headers(&w, "post", path).await,
@@ -568,18 +550,16 @@ async fn create_refresh_and_list_over_the_stub_subgraph() {
         "{out}"
     );
 
-    *graph.answer.lock().unwrap() = nft_row(&w.address, "estate", Some(0));
-    let state3 = state_over(
-        pool.clone(),
-        Some(market_with(Some(graph.url.clone()))),
-        true,
-    );
+    transfer(&pool, ESTATE, &token, &w.address, 2, 1_600_000_100).await;
+    let mut estate = body.clone();
+    estate.contract_address = ESTATE.into();
+    estate.signature = sign_listing(&w, &estate).await;
     let (status, _, out) = send(
-        router(state3),
+        app(),
         "POST",
         path,
         signed_headers(&w, "post", path).await,
-        Some(doc.clone()),
+        Some(creation_json(&estate)),
     )
     .await;
     assert_eq!(
@@ -591,13 +571,7 @@ async fn create_refresh_and_list_over_the_stub_subgraph() {
     );
 
     // The lessor's own parcel: 201, then 409 on the second open listing.
-    *graph.answer.lock().unwrap() = nft_row(&w.address, "parcel", None);
-    let state4 = state_over(
-        pool.clone(),
-        Some(market_with(Some(graph.url.clone()))),
-        true,
-    );
-    let app = || router(state4.clone());
+    transfer(&pool, LAND, &token, &w.address, 3, 1_700_000_000).await;
     let (status, _, out) = send(
         app(),
         "POST",
@@ -613,6 +587,15 @@ async fn create_refresh_and_list_over_the_stub_subgraph() {
     assert_eq!(listing["lessor"], w.address);
     assert_eq!(listing["status"], "open");
     assert_eq!(listing["category"], "parcel");
+    assert_eq!(listing["searchText"], "-10,-140");
+    let stored: (Option<i16>, Option<bool>, Option<i16>, i64, i64) = sqlx::query_as(
+        "SELECT distance_to_plaza, adjacent_to_road, estate_size, extract(epoch FROM nft_created_at)::bigint,
+         extract(epoch FROM nft_updated_at)::bigint FROM signatures.rental_assets WHERE contract_address=$1 AND token_id=$2::numeric"
+    ).bind(LAND).bind(&token).fetch_one(&pool).await.unwrap();
+    assert_eq!(
+        stored,
+        (Some(9), Some(true), None, 1_600_000_000, 1_700_000_000)
+    );
     assert_eq!(listing["periods"][0]["minDays"], 7);
     let id = listing["id"].as_str().unwrap().to_string();
 
@@ -742,15 +725,38 @@ async fn create_refresh_and_list_over_the_stub_subgraph() {
     );
 
     // Refresh: the reader's new row lands on the asset.
-    *graph.answer.lock().unwrap() = nft_row(&w.address, "parcel", None);
-    graph.answer.lock().unwrap()["data"]["nfts"][0]["searchText"] = json!("Renamed plaza");
-    let state5 = state_over(
-        pool.clone(),
-        Some(market_with(Some(graph.url.clone()))),
-        true,
-    );
+    sqlx::query(
+        "INSERT INTO shop.land_data (token_address,token_id,name,updated_block,updated_log)
+                 VALUES ($1,$2::numeric,'Renamed plaza',4,1)",
+    )
+    .bind(LAND)
+    .bind(&token)
+    .execute(&pool)
+    .await
+    .unwrap();
+    sqlx::query("INSERT INTO shop.nft_event (network,block_number,log_index,block_time,kind,emitter,contract_address,token_id)
+                 VALUES ('ethereum',4,1,1700000050,'land_data',$1,$1,$2::numeric)").bind(LAND).bind(&token).execute(&pool).await.unwrap();
+    sqlx::query("UPDATE land_authz.index_cursor SET folded_block=NULL")
+        .execute(&pool)
+        .await
+        .unwrap();
+    let (code, headers, envelope) = send(
+        app(),
+        "PATCH",
+        &format!("/v1/rentals-listings/{id}"),
+        vec![],
+        None,
+    )
+    .await;
+    assert_eq!(code, StatusCode::SERVICE_UNAVAILABLE, "{envelope}");
+    assert_eq!(envelope["source"], "land-authz-index");
+    assert_eq!(headers.get(header::RETRY_AFTER).unwrap(), "60");
+    sqlx::query("UPDATE land_authz.index_cursor SET folded_block=last_block")
+        .execute(&pool)
+        .await
+        .unwrap();
     let (status, _, out) = send(
-        router(state5),
+        app(),
         "PATCH",
         &format!("/v1/rentals-listings/{id}"),
         vec![],
@@ -758,7 +764,7 @@ async fn create_refresh_and_list_over_the_stub_subgraph() {
     )
     .await;
     assert_eq!(status, StatusCode::OK, "{out}");
-    assert_eq!(out["data"]["searchText"], "Renamed plaza");
+    assert_eq!(out["data"]["searchText"], "-10,-140,renamed plaza");
     let (status, _, out) = send(
         app(),
         "PATCH",
@@ -773,7 +779,7 @@ async fn create_refresh_and_list_over_the_stub_subgraph() {
     );
 
     // The nested copy verifies the signature over the request path (the ONE path rule).
-    let nested = Router::new().nest("/signatures-api", router(state4.clone()));
+    let nested = Router::new().nest("/signatures-api", app());
     let nested_path = "/signatures-api/v1/rentals-listings";
     let (status, _, out) = send(
         nested,
@@ -790,7 +796,7 @@ async fn create_refresh_and_list_over_the_stub_subgraph() {
     );
     let local = signed_headers(&w, "post", "/v1/rentals-listings").await;
     let (status, _, out) = send(
-        Router::new().nest("/signatures-api", router(state4.clone())),
+        Router::new().nest("/signatures-api", app()),
         "POST",
         nested_path,
         local.clone(),
@@ -808,7 +814,7 @@ async fn create_refresh_and_list_over_the_stub_subgraph() {
         "/v1/rentals-listings".to_string(),
     ));
     let (status, _, out) = send(
-        Router::new().nest("/signatures-api", router(state4.clone())),
+        Router::new().nest("/signatures-api", app()),
         "POST",
         nested_path,
         forwarded,
@@ -823,15 +829,9 @@ async fn create_refresh_and_list_over_the_stub_subgraph() {
 
     // Refresh after a transfer: a newer reader row with another owner
     // cancels the listing, and the route answers the synced status.
-    *graph.answer.lock().unwrap() = nft_row(&format!("0x{}", "c3".repeat(20)), "parcel", None);
-    graph.answer.lock().unwrap()["data"]["nfts"][0]["updatedAt"] = json!("1700000100");
-    let state6 = state_over(
-        pool.clone(),
-        Some(market_with(Some(graph.url.clone()))),
-        true,
-    );
+    transfer(&pool, LAND, &token, LESSOR, 5, 1_700_000_100).await;
     let (status, _, out) = send(
-        router(state6),
+        app(),
         "PATCH",
         &format!("/v1/rentals-listings/{id}"),
         vec![],
@@ -849,11 +849,12 @@ async fn create_refresh_and_list_over_the_stub_subgraph() {
 /// stale read (the previous owner's) is still too old to close the listing.
 #[tokio::test]
 async fn a_stale_refresh_keeps_the_stored_asset_row_and_the_listing() {
-    let Some(pool) = crate::db::scratch::pool(4).await else {
+    let Some(pool) = crate::db::scratch::isolated_pool(4).await else {
         return;
     };
     let db = Database::new(pool.clone());
-    let graph = stub_graph().await;
+    publish_land(&pool).await;
+    let state = state_over(pool.clone(), Some(market()), true);
     let token = random_token_id();
     let listing = insert(&db, &token, LESSOR, &format!("0xsig-{token}"))
         .await
@@ -872,18 +873,10 @@ async fn a_stale_refresh_keeps_the_stored_asset_row_and_the_listing() {
     .unwrap();
 
     let previous_owner = format!("0x{}", "c3".repeat(20));
-    for (read_at, label) in [(t3, "a stale read"), (t4, "a later, less stale read")] {
-        *graph.answer.lock().unwrap() = nft_row(&previous_owner, "parcel", None);
-        graph.answer.lock().unwrap()["data"]["nfts"][0]["updatedAt"] = json!(read_at.to_string());
-        graph.answer.lock().unwrap()["data"]["nfts"][0]["searchText"] = json!("Older name");
-        // A state of its own: the reader caches an asset's row.
-        let state = state_over(
-            pool.clone(),
-            Some(market_with(Some(graph.url.clone()))),
-            true,
-        );
+    for (block, read_at, label) in [(1, t3, "a stale read"), (2, t4, "a later, less stale read")] {
+        transfer(&pool, LAND, &token, &previous_owner, block, read_at).await;
         let (status, _, out) = send(
-            router(state),
+            router(state.clone()),
             "PATCH",
             &format!("/v1/rentals-listings/{}", listing.id),
             vec![],
@@ -1092,39 +1085,35 @@ async fn a_relisting_at_the_stored_asset_time_replaces_the_details() {
     cleanup(&pool, &[token]).await;
 }
 
-/// `CATALYST_LIVE_MARKETPLACE_SUBGRAPH_URL=https://...` reads Genesis
-/// Plaza's parcel (token 0 of the LAND registry) from the real subgraph.
 #[tokio::test]
-async fn live_marketplace_subgraph_answers_a_land_parcel() {
-    let Ok(url) = std::env::var("CATALYST_LIVE_MARKETPLACE_SUBGRAPH_URL") else {
-        eprintln!("CATALYST_LIVE_MARKETPLACE_SUBGRAPH_URL unset; skipping");
+async fn an_estate_reads_its_members_size_and_proximity() {
+    let Some(pool) = crate::db::scratch::isolated_pool(4).await else {
         return;
     };
-    let mut settings = crate::market::Settings::for_tests();
-    settings.marketplace_subgraph_url = Some(url);
-    let market = Arc::new(MarketplaceState::new(
-        lazy_pool(),
-        crate::http::Outbound::new(crate::http::HttpClientCfg::default()).unwrap(),
-        settings,
-    ));
-    let cache = crate::shared::cache::TtlMap::bounded(super::nft::NFT_TTL, 4);
-    let nft = super::nft::nft_by_contract_token(Some(&market), &cache, LAND, "0")
-        .await
-        .unwrap()
-        .expect("parcel 0,0 exists");
-    assert_eq!(nft.category, "parcel");
-    assert!(
-        crate::market::is_valid_eth_address(&nft.owner_address),
-        "{nft:?}"
+    publish_land(&pool).await;
+    transfer(&pool, ESTATE, "1", LESSOR, 1, 100).await;
+    transfer(&pool, LAND, "2", ESTATE, 2, 110).await;
+    transfer(&pool, LAND, "3", ESTATE, 3, 120).await;
+    sqlx::raw_sql("UPDATE land_authz.token_right SET y=19 WHERE token_id=3;
+        INSERT INTO land_authz.estate_land VALUES (2,1,4,0),(3,1,5,0);
+        INSERT INTO shop.land_data (token_address,token_id,name,updated_block,updated_log)
+        SELECT token_address,token_id,'Estate Name',1,1 FROM land_authz.token_right WHERE token_id=1;")
+        .execute(&pool).await.unwrap();
+    let state = state_over(pool, Some(market()), true);
+    let nft = state.nft(ESTATE, "1").await.unwrap().unwrap();
+    assert_eq!(nft.owner_address, LESSOR);
+    assert_eq!(nft.search_text, "estate name");
+    assert_eq!(
+        (nft.estate_size, nft.distance_to_plaza, nft.adjacent_to_road),
+        (Some(2), Some(9), Some(true))
     );
-    assert_eq!(nft.nft_id, format!("{LAND}-0"));
 }
 
 #[tokio::test]
 async fn a_listing_is_refused_off_the_served_chain_or_rentals_contract() {
     let w = wallet();
     let path = "/v1/rentals-listings";
-    let app = router(state_over(lazy_pool(), Some(market_with(None)), true));
+    let app = router(state_over(lazy_pool(), Some(market()), true));
     let chain_refusal =
         "The chain id and network of the listing are not the ones supported by the server";
     let contract_refusal =
@@ -1169,19 +1158,15 @@ async fn a_running_rent_conflicts_and_an_ended_one_lets_its_lessor_relist() {
     let Some(pool) = crate::db::scratch::isolated_pool(4).await else {
         return;
     };
-    let graph = stub_graph().await;
-    *graph.answer.lock().unwrap() = nft_row(RENTALS, "parcel", None);
+    publish_land(&pool).await;
     let w = wallet();
     let token = random_token_id();
+    transfer(&pool, LAND, &token, RENTALS, 1, 1_700_000_000).await;
     let mut body = creation(&token, "");
     body.signature = sign_listing(&w, &body).await;
     let doc = creation_json(&body);
     let path = "/v1/rentals-listings";
-    let state = state_over(
-        pool.clone(),
-        Some(market_with(Some(graph.url.clone()))),
-        true,
-    );
+    let state = state_over(pool.clone(), Some(market()), true);
     let post = || async {
         send(
             router(state.clone()),
