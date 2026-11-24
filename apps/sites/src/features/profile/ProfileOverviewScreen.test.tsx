@@ -1,4 +1,4 @@
-import { ChromeNavContext } from "@dcl/one-ui/components/AppChrome/chrome-nav";
+import { ChromeNavContext } from "@dcl/one-ui";
 // @vitest-environment jsdom
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";

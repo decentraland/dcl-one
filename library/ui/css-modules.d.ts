@@ -23,3 +23,7 @@ declare module '*.webm' {
   const url: string
   export default url
 }
+declare module '*.svg?url' {
+  const url: string
+  export default url
+}

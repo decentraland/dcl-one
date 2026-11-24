@@ -46,7 +46,7 @@ reqwest.workspace = true
 flate2.workspace = true
 url.workspace = true
 regex.workspace = true
-image.workspace = true
+image = { workspace = true, features = ["gif"] }
 metrics.workspace = true
 
 [features]

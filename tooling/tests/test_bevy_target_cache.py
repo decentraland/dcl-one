@@ -265,7 +265,9 @@ class WorkflowTest(unittest.TestCase):
     def test_native_jobs_restore_after_their_tool_steps_and_save_after_their_uploads(self):
         for name, lane, last_tool, build in (('test', 'test', 'Export CEF distribution', 'cargo test --manifest-path vendor/basisu'),
                                              ('headless-smoke', 'headless', 'Install clang for webrtc-sys', 'build-headless.py'),
-                                             ('clippy', 'clippy', 'Install clang for webrtc-sys', 'cargo clippy')):
+                                             ('clippy', 'clippy', 'Install clang for webrtc-sys', 'cargo clippy'),
+                                             ('relay-wake', 'relay-wake', 'Install the pinned WASM binding generator and its test runner',
+                                              'cargo test --locked -p dcl_wasm')):
             with self.subTest(job=name):
                 job = self.job(name)
                 self.assertIn("CARGO_INCREMENTAL: '0'", job)

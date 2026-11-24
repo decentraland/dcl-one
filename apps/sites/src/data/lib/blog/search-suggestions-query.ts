@@ -1,11 +1,7 @@
 import { queryOptions } from "@tanstack/react-query";
 import { z } from "zod";
 
-import {
-  BLOG_SEARCH_SUGGESTIONS_API,
-  BLOG_SEARCH_SUGGESTIONS_LIMIT,
-  type BlogSearchSuggestions,
-} from "@dcl/one-ui/apps/sites/blog/blogModel";
+import { BLOG_SEARCH_SUGGESTIONS_API, BLOG_SEARCH_SUGGESTIONS_LIMIT, type BlogSearchSuggestions } from "@dcl/one-ui";
 
 const suggestionsSchema: z.ZodType<BlogSearchSuggestions> = z.object({
   query: z.string(),

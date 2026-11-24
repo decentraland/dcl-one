@@ -6,7 +6,7 @@ use std::io;
 use std::net::{Ipv4Addr, Ipv6Addr, SocketAddr};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU32, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, PoisonError};
 use std::time::Duration;
 
 use bytes::Bytes;
@@ -63,7 +63,7 @@ pub struct EndSignal {
 
 impl EndSignal {
     fn set(&self, report: EndReport) {
-        let mut slot = self.report.lock().expect("end report lock");
+        let mut slot = self.report.lock().unwrap_or_else(PoisonError::into_inner);
         if slot.is_none() {
             *slot = Some(report);
             self.arrived.notify_waiters();
@@ -71,7 +71,10 @@ impl EndSignal {
     }
 
     pub fn get(&self) -> Option<EndReport> {
-        self.report.lock().expect("end report lock").clone()
+        self.report
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .clone()
     }
 
     pub async fn wait(&self) {

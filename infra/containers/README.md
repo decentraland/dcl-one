@@ -42,6 +42,20 @@ are external. Explorer images: pipeline.
 - Tags: `sha-<full-commit>[-<arch>]`, `main`, `v*` (not Bevy). Bevy SHA tags can change on replay: pin `repository@sha256:<digest>`.
 - `image-sites-polygon-credits` is the Sites build with `VITE_SHOP_CHAIN_ID=137` and `VITE_SHOP_CREDITS_MANAGER` set to dcl-one's Polygon manager (`infra/containers/images.nix`, `shopSettlement` in `infra/packages/sites.nix`); the plain `image-sites` is unchanged. It is published to the Sites repository under its own suffix only (`sha-<full-commit>-polygon-credits`, `main-polygon-credits`), and names its settlement in `/shop-settlement.json` and the `org.decentraland.shop.*` labels.
 
+## Magic account deletion
+
+Set `MAGIC_CLIENT_ID`, `MAGIC_SECRET_KEY_FILE`, and
+`ACCOUNT_DELETION_ALLOWED_ORIGINS` on the APIs deployment to enable
+`DELETE /auth-api/accounts` from the browser. The origin list is
+semicolon-delimited and empty by default. Set it to the exact URLs that
+serve Account Settings, for example
+`https://decentraland.org;https://account.decentraland.org;https://play.decentraland.org`
+for those production front ends.
+
+Set the same hourly limits on all API replicas. `ACCOUNT_DELETION_WALLET_LIMIT`
+defaults to 3, `ACCOUNT_DELETION_NETWORK_LIMIT` to 20 and
+`ACCOUNT_DELETION_GLOBAL_LIMIT` to 120. A zero limit refuses all attempts.
+
 ## Sites Explorer build input
 
 Sites bundles our Bevy web build under `/play/`; no other engine is used.
@@ -221,6 +235,8 @@ and lowercases the rest, then adds and validates a check that keeps place ids lo
 (an old replica's mixed-case write fails afterwards). It is safe while the API serves,
 holds an exclusive lock on the table for its first run and is safe to run again.
 Keep the pre-run database backup: rollback must restore it.
+
+Rental listing status upgrade: run `catalyst schema migrate` before deploying the API. Step `0056_signatures_rental_cancel_reason` adds the nullable `signatures.rentals.cancel_reason`, which the `rentals` index fold, the `rental-listing-status` job and the listing refresh route read and write; existing cancellations keep no reason.
 
 World-admission upgrade: the release script
 `schemas/releases/world-scene-ban-keys.sql` requires a maintenance window. Stop old API and
