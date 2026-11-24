@@ -8,7 +8,7 @@ import {
   type CommunityDraft,
   type OwnedPlace,
 } from "@/data/lib/catalyst/social/create-community";
-import type { CreateFn } from "@/features/social/create-community/machine";
+import type { CreateFn } from "@/features/social/create-community/submit";
 import { createCommunity } from "@/data/lib/catalyst/social/community-commit";
 import { useAuth } from "@/data/lib/auth/index";
 import { type PageDefaults } from "@/core/lib/telemetry/page-loader";
@@ -105,7 +105,7 @@ type LoaderData = {
 export default function CreateCommunityRoute({ loaderData }: Route.ComponentProps) {
   const d = loaderData as LoaderData;
   const editLink = d.editId ? `?mode=edit&id=${encodeURIComponent(d.editId)}` : "?mode=edit";
-  const { identity } = useAuth();
+  const { identity, status } = useAuth();
   const create: CreateFn | undefined = identity
     ? async ({ draft, signal }) => {
         const c = await createCommunity(draft, null, { identity, signal });
@@ -126,9 +126,8 @@ export default function CreateCommunityRoute({ loaderData }: Route.ComponentProp
           story: STORY,
           variant: d.assignment.variant,
         }}
-        ownedPlaces={d.ownedPlaces}
-        draft={d.draft ?? undefined}
         create={create}
+        signedOut={status === "anonymous" || status === "expired"}
       />
     </LdCreateCommunityView>
   );
