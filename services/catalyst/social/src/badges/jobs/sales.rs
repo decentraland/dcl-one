@@ -1,37 +1,14 @@
-//! The Polygon shop logs → emotionista and fashionista. Upstream counted the
-//! collections subgraph's L2 `sales` (primary mints, orders, bids) per
-//! transaction hash; here the same sales come from the logs shop indexes on
-//! Polygon:
+//! Polygon purchase badges count paid CollectionStore mints, accepted ERC721
+//! bids and completed Marketplace orders, once per wallet, badge and transaction.
+//! A bid or order must have been created for an existing NFT. The two payment
+//! relays use the token's owner at the end of the sale block.
 //!
-//! - `shop.sale_event` `mint` (a CollectionStore issue, the beneficiary
-//!   buys) and `bid_accepted` (ERC721BidV2, the bidder buys);
-//! - `shop.trade_event` `traded` (the off-chain marketplace, which the
-//!   subgraph did not index: each good's beneficiary buys, else a listing's
-//!   caller or a bid's signer);
-//! - `shop.nft_event` `order_successful` (the legacy marketplace: its buyer,
-//!   or, when the buyer is a relay, the token's last recipient after the
-//!   order in its block, as the subgraph resolved it, and nobody when the
-//!   relay still holds it; a row indexed without its transaction hash is
-//!   counted by its chain position).
-//!
-//! An item's category is its mirrored `shop.items.item_type`. Each log table
-//! is read only up to the block its index has published (`shop.chain_cursor`
-//! folded and fresh, shop's own readiness rule), from its own cursor
-//! (`sales:<table>:matic`, block and log index), which starts at the
-//! published block.
-//!
-//! A sale of an item the items mirror does not hold yet holds its cursor
-//! (the logs are read in chain order, so the sales after it wait too) until
-//! the item appears or the mirror completes a pass [`ITEM_WAIT_SECS`] after
-//! the sale: a complete pass walks every item and at the defaults takes
-//! minutes, so an item still missing then is not a collection item the
-//! mirror will ever hold (a bid on a foreign ERC721), and the sale is passed
-//! without effect. A mirror that stops completing passes holds the sales,
-//! so the job runs only with `MARKETPLACE_MIRRORS_ENABLED`.
+//! The job reads only through the published NFT and sale index watermarks.
+//! Missing items wait for the items mirror. Older orders without a transaction
+//! hash wait for the NFT index to refill it.
 
-use std::collections::{BTreeMap, HashMap, HashSet};
+use std::collections::HashSet;
 
-use serde_json::Value;
 use sqlx::PgConnection;
 
 use super::super::evaluators as ev;
@@ -39,93 +16,100 @@ use super::{Pass, award, completed, init_cursor, lock_cursor};
 use crate::identity::Address;
 
 pub(crate) use crate::shared::collections::{ITEM_SHIFT, ITEM_WAIT_SECS};
-const ASSET_TYPE_ERC721: i64 = 3;
-const ASSET_TYPE_COLLECTION_ITEM: i64 = 4;
+const RELAYS: &str =
+    "('0xed038688ecf1193f8d9717eb3930f0bf0d745cb4', '0xea749fd6ba492dbc14c24fe8a3d08769229b896c')";
 const ZERO_ADDRESS: &str = "0x0000000000000000000000000000000000000000";
-/// The callers that buy a legacy order on a user's behalf and forward the
-/// token in the same transaction: the fiat and cross-chain relays, a
-/// fee-taking order router, then every CreditsManager deployment (Polygon,
-/// then Amoy). The buyer is the
-/// recipient of the relay's own first forward of the token after the order,
-/// so a later hand-on in the block credits nobody else.
-const RELAY_BUYERS: &str = "\
-    '0xed038688ecf1193f8d9717eb3930f0bf0d745cb4', '0xea749fd6ba492dbc14c24fe8a3d08769229b896c', \
-    '0x6a03991dfa9d661ef7ad3c6f88b31f16e5a282cf', '0xe9f961e6ded4e1476bbee4faab886d63a2493eb9', \
-    '0x8b3a40ca1b6f5cafc99d112a4d02e897d1fd8cc5', '0x31102fd8ab1303b847c1f8735b877acbad958aa4', \
-    '0xb40a9a1afde767025626e9b0c17e028b6305d8b0', '0x1985fa82b531cb4e20f103787eba99de67b5c25c', \
-    '0xa1691afad71b9a92d329f1a95c39d3077d8f2f5f', '0x037566bc90f85e76587e1b07f9184585f09c1420', \
-    '0x8052a560e6e6ac86eeb7e711a4497f639b322fb3'";
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum Log {
     Sale,
-    Trade,
     Order,
 }
 
 impl Log {
-    pub const ALL: [Log; 3] = [Log::Sale, Log::Trade, Log::Order];
+    pub const ALL: [Log; 2] = [Log::Sale, Log::Order];
 
     pub fn source(self) -> &'static str {
         match self {
             Log::Sale => "sales:sale_event:matic",
-            Log::Trade => "sales:trade_event:matic",
             Log::Order => "sales:nft_event:matic",
         }
     }
 
-    fn indexer(self) -> &'static str {
-        match self {
-            Log::Sale => "sales",
-            Log::Trade => "trade_events",
-            Log::Order => "nft",
-        }
-    }
-
     fn rows_sql(self) -> String {
-        match self {
+        // The collection emits the mint Transfer immediately before Issue. The token
+        // must already exist when the marketplace creates its bid or order.
+        let minted_before_creation = format!("EXISTS (
+            SELECT 1 FROM shop.nft_event n
+            WHERE n.network = c.network AND n.contract_address = c.contract_address
+              AND n.token_id = c.token_id AND n.kind = 'transfer' AND n.from_address = '{ZERO_ADDRESS}'
+              AND (n.block_number, n.log_index) < (c.block_number, c.log_index))");
+        let (table, kinds, buyer, item_id, eligible) = match self {
+            Log::Sale => (
+                "shop.sale_event",
+                "e.kind IN ('mint', 'bid_accepted')",
+                "e.buyer",
+                format!("CASE WHEN e.kind = 'mint' THEN e.item_id ELSE div(e.token_id, {ITEM_SHIFT}) END"),
+                format!("CASE WHEN e.kind = 'mint' THEN e.price > 0 ELSE (
+                    SELECT c.price > 0 FROM shop.sale_event c
+                    WHERE c.network = e.network AND c.contract_address = e.contract_address
+                      AND c.token_id = e.token_id AND c.buyer = e.buyer AND c.kind = 'bid_created'
+                      AND c.emitter = '0xb96697fa4a3361ba35b774a42c58daccaad1b8e1'
+                      AND c.block_number >= 22514900 AND c.emitter = e.emitter
+                      AND (c.block_number, c.log_index) < (e.block_number, e.log_index)
+                      AND {minted_before_creation}
+                    ORDER BY c.block_number DESC, c.log_index DESC LIMIT 1) END"),
+            ),
+            Log::Order => (
+                "shop.nft_event",
+                "e.kind = 'order_successful'",
+                "e.to_address",
+                format!("div(e.token_id, {ITEM_SHIFT})"),
+                format!("e.amount > 0 AND EXISTS (
+                    SELECT 1 FROM shop.nft_event c
+                    WHERE c.network = e.network AND c.contract_address = e.contract_address
+                      AND c.token_id = e.token_id AND c.kind = 'order_created'
+                      AND c.detail = e.detail AND c.emitter = e.emitter
+                      AND ((c.emitter = '0x02080031b45a3c67d338dd4a2cc309d28756a160' AND c.block_number >= 15202000)
+                        OR (c.emitter = '0x480a0f4e360e8964e68858dd231c2922f1df45ef' AND c.block_number >= 22514900))
+                      AND (c.block_number, c.log_index) < (e.block_number, e.log_index)
+                      AND {minted_before_creation})"),
+            ),
+        };
+        let needs_history = match self {
             Log::Sale => format!(
-                "SELECT e.block_number, e.log_index, e.block_time, e.buyer, e.tx_hash, \
-                        NULL::jsonb AS assets, NULL::text AS caller, \
-                        CASE WHEN i.item_type IS NULL THEN '{{}}'::text[] ELSE ARRAY[i.item_type] END AS item_types \
-                 FROM shop.sale_event e \
-                 LEFT JOIN shop.items i ON i.network = e.network AND i.contract_address = e.contract_address \
-                   AND i.item_id = CASE WHEN e.kind = 'mint' THEN e.item_id ELSE div(e.token_id, {ITEM_SHIFT}) END \
-                 WHERE e.network = 'matic' AND e.kind IN ('mint', 'bid_accepted') \
-                   AND (e.block_number, e.log_index) > ($1, $2) AND e.block_number <= $3 \
-                 ORDER BY e.block_number, e.log_index LIMIT $4"
+                "e.kind = 'bid_accepted' OR (coalesce(e.price, 0) > 0 AND e.buyer IN {RELAYS})"
             ),
-            Log::Trade => {
-                "SELECT e.block_number, e.log_index, e.block_time, e.signer AS buyer, e.tx_hash, \
-                        e.assets, e.caller, '{}'::text[] AS item_types \
-                 FROM shop.trade_event e \
-                 WHERE e.network = 'matic' AND e.kind = 'traded' \
-                   AND (e.block_number, e.log_index) > ($1, $2) AND e.block_number <= $3 \
-                 ORDER BY e.block_number, e.log_index LIMIT $4"
-                    .to_string()
-            }
-            Log::Order => format!(
-                "SELECT e.block_number, e.log_index, e.block_time, \
-                        CASE WHEN e.to_address IN ({RELAY_BUYERS}) THEN ( \
-                            SELECT CASE WHEN t.to_address IN ({RELAY_BUYERS}) THEN NULL ELSE t.to_address END \
-                            FROM shop.nft_event t \
-                            WHERE t.network = e.network AND t.contract_address = e.contract_address \
-                              AND t.token_id = e.token_id AND t.block_number = e.block_number \
-                              AND t.log_index > e.log_index AND t.kind = 'transfer' \
-                              AND t.from_address = e.to_address \
-                            ORDER BY t.log_index LIMIT 1) \
-                        ELSE e.to_address END AS buyer, \
-                        coalesce(e.tx_hash, 'nft_event:matic:' || e.block_number || ':' || e.log_index) AS tx_hash, \
-                        NULL::jsonb AS assets, NULL::text AS caller, \
-                        CASE WHEN i.item_type IS NULL THEN '{{}}'::text[] ELSE ARRAY[i.item_type] END AS item_types \
-                 FROM shop.nft_event e \
-                 LEFT JOIN shop.items i ON i.network = e.network AND i.contract_address = e.contract_address \
-                   AND i.item_id = div(e.token_id, {ITEM_SHIFT}) \
-                 WHERE e.network = 'matic' AND e.kind = 'order_successful' \
-                   AND (e.block_number, e.log_index) > ($1, $2) AND e.block_number <= $3 \
-                 ORDER BY e.block_number, e.log_index LIMIT $4"
-            ),
-        }
+            Log::Order => "coalesce(e.amount, 0) > 0".to_owned(),
+        };
+        format!(
+            "SELECT e.block_number, e.log_index, e.block_time, e.tx_hash, i.item_type,
+                    discovery.items_checked,
+                    ({needs_history}) AND CASE WHEN k.contract_address IS NULL THEN
+                      i.item_type IS NOT NULL OR EXISTS (SELECT 1 FROM shop.collections c
+                          WHERE c.network = e.network AND c.contract_address = e.contract_address)
+                      OR NOT (discovery.collections_checked AND discovery.items_checked)
+                    ELSE k.refold_owed OR (k.backfill_from_block IS NOT NULL AND
+                         coalesce(k.backfilled_to_block, k.backfill_from_block - 1) < k.walked_from_block - 1)
+                    END AS history_pending,
+                    CASE WHEN {eligible} THEN CASE WHEN {buyer} IN {RELAYS} THEN (SELECT nullif(t.to_address, '{ZERO_ADDRESS}') FROM shop.nft_event t
+                            WHERE t.network = e.network AND t.contract_address = e.contract_address
+                              AND t.token_id = e.token_id AND t.block_number <= e.block_number AND t.kind = 'transfer'
+                            ORDER BY t.block_number DESC, t.log_index DESC LIMIT 1)
+                      ELSE {buyer} END END AS buyer
+             FROM {table} e LEFT JOIN shop.items i ON i.network = e.network
+               AND i.contract_address = e.contract_address AND i.item_id = {item_id}
+             LEFT JOIN shop.nft_contract k ON k.network = e.network AND k.contract_address = e.contract_address
+             LEFT JOIN shop.mirror_state items_pass ON items_pass.network = e.network AND items_pass.mirror = 'items'
+             LEFT JOIN shop.mirror_state collections_pass ON collections_pass.network = e.network AND collections_pass.mirror = 'collections'
+             CROSS JOIN LATERAL (SELECT
+                 coalesce(extract(epoch FROM items_pass.last_complete_pass_at) - {ITEM_WAIT_SECS} >= e.block_time, false) AS items_checked,
+                 coalesce(extract(epoch FROM collections_pass.last_complete_pass_at) - {ITEM_WAIT_SECS} >= e.block_time, false) AS collections_checked
+             ) discovery
+             WHERE e.network = 'matic' AND {kinds}
+               AND (e.block_number, e.log_index) > ($1, $2) AND e.block_number <= $3
+             ORDER BY e.block_number, e.log_index LIMIT $4"
+        )
     }
 }
 
@@ -135,120 +119,39 @@ struct Row {
     log_index: i32,
     block_time: i64,
     buyer: Option<String>,
-    tx_hash: String,
-    assets: Option<Value>,
-    caller: Option<String>,
-    item_types: Vec<String>,
+    tx_hash: Option<String>,
+    item_type: Option<String>,
+    items_checked: bool,
+    history_pending: bool,
 }
 
-/// The badge a sold item's type counts for (`item-sold` `category`).
 fn badge_of(item_type: &str) -> &'static str {
-    if item_type.starts_with("emote") {
+    if item_type == "emote_v1" {
         ev::EMOTIONISTA
     } else {
         ev::FASHIONISTA
     }
 }
 
-/// (asset type, contract, value) of a Traded good.
-type Good = (i64, String, String);
-
-/// The goods (an ERC721 token or a collection item) of one side of a Traded
-/// log, each with its non-zero beneficiary.
-fn side(assets: &Value, key: &str) -> Vec<(Good, Option<String>)> {
-    assets[key]
-        .as_array()
-        .into_iter()
-        .flatten()
-        .filter_map(|a| {
-            let kind = match &a["assetType"] {
-                Value::Number(n) => n.as_i64()?,
-                Value::String(s) => s.parse().ok()?,
-                _ => return None,
-            };
-            let beneficiary = a["beneficiary"]
-                .as_str()
-                .map(str::to_ascii_lowercase)
-                .filter(|b| b != ZERO_ADDRESS);
-            Some((
-                (
-                    kind,
-                    a["contractAddress"].as_str()?.to_ascii_lowercase(),
-                    a["value"].as_str()?.to_string(),
-                ),
-                beneficiary,
-            ))
-        })
-        .filter(|((kind, _, _), _)| {
-            *kind == ASSET_TYPE_ERC721 || *kind == ASSET_TYPE_COLLECTION_ITEM
-        })
-        .collect()
-}
-
-/// A Traded log's goods, each with its buyer: the signer sent the goods (a
-/// listing) or received them (a bid), and each went to its beneficiary, else
-/// to the caller or the signer (`Marketplace._transferAssets`).
-fn trade(row: &Row) -> Vec<(String, Good)> {
-    let Some(assets) = row.assets.as_ref() else {
-        return Vec::new();
-    };
-    let sent = side(assets, "sent");
-    let (goods, to) = if sent.is_empty() {
-        (side(assets, "received"), row.buyer.as_deref())
-    } else {
-        (sent, row.caller.as_deref())
-    };
-    goods
-        .into_iter()
-        .filter_map(|(good, beneficiary)| {
-            let buyer = beneficiary.or_else(|| to.map(str::to_ascii_lowercase))?;
-            Some((buyer, good))
-        })
-        .collect()
-}
-
-/// The mirrored item types of Traded goods, by (contract, value).
-async fn trade_item_types(
-    conn: &mut PgConnection,
-    goods: &[Good],
-) -> Result<HashMap<(String, String), String>, sqlx::Error> {
-    if goods.is_empty() {
-        return Ok(HashMap::new());
-    }
-    let contracts: Vec<&str> = goods.iter().map(|g| g.1.as_str()).collect();
-    let values: Vec<&str> = goods.iter().map(|g| g.2.as_str()).collect();
-    let tokens: Vec<bool> = goods.iter().map(|g| g.0 == ASSET_TYPE_ERC721).collect();
-    let rows: Vec<(String, String, String)> = sqlx::query_as(sqlx::AssertSqlSafe(format!(
-        "SELECT u.c, u.v, i.item_type \
-         FROM unnest($1::text[], $2::text[], $3::bool[]) AS u(c, v, t) \
-         JOIN shop.items i ON i.network = 'matic' AND i.contract_address = u.c \
-           AND i.item_id = CASE WHEN u.t THEN div(u.v::numeric, {ITEM_SHIFT}) ELSE u.v::numeric END \
-         WHERE u.v ~ '^[0-9]{{1,78}}$'"
-    )))
-    .bind(&contracts)
-    .bind(&values)
-    .bind(&tokens)
-    .fetch_all(conn)
-    .await?;
-    Ok(rows.into_iter().map(|(c, v, t)| ((c, v), t)).collect())
-}
-
 /// The block `log`'s index has published, when it has (shop's readiness:
 /// full history folded through the last indexed block within 30 minutes,
 /// bound to Polygon and out of quarantine).
 async fn published(conn: &mut PgConnection, log: Log) -> Result<Option<i64>, sqlx::Error> {
+    let indexes: &[&str] = match log {
+        Log::Sale => &["sales", "nft"],
+        Log::Order => &["nft"],
+    };
     sqlx::query_scalar(
-        "SELECT folded_block FROM shop.chain_cursor \
-         WHERE indexer = $1 AND network = 'matic' AND full_history \
+        "SELECT CASE WHEN count(*) = cardinality($1::text[]) THEN min(folded_block) END FROM shop.chain_cursor \
+         WHERE indexer = ANY($1) AND network = 'matic' AND full_history \
            AND chain_id = 137 AND quarantined_at IS NULL \
            AND folded_block = last_block \
            AND folded_at <= timezone('UTC', now()) \
            AND folded_at >= timezone('UTC', now()) - interval '30 minutes'",
     )
-    .bind(log.indexer())
-    .fetch_optional(conn)
+    .bind(indexes)
+    .fetch_one(conn)
     .await
-    .map(Option::flatten)
 }
 
 pub(super) async fn run(pass: &Pass) -> anyhow::Result<u64> {
@@ -283,51 +186,35 @@ pub(crate) async fn batch(pass: &Pass, log: Log) -> Result<(u64, bool), sqlx::Er
         tx.rollback().await?;
         return Ok((0, false));
     }
-    // The last complete items pass, unix seconds.
-    let items_pass: Option<i64> = sqlx::query_scalar(
-        "SELECT extract(epoch FROM last_complete_pass_at)::bigint FROM shop.mirror_state \
-         WHERE mirror = 'items' AND network = 'matic'",
-    )
-    .fetch_optional(&mut *tx)
-    .await?
-    .flatten();
-    // (buyer, tx key, sale time, badges)
-    let mut sales: Vec<(String, String, i64, Vec<&'static str>)> = Vec::new();
+    // (buyer, transaction hash, sale time in milliseconds, badge)
+    let mut sales: Vec<(String, String, i64, &'static str)> = Vec::new();
     let now = crate::shared::now_utc();
-    let goods: Vec<Good> = if log == Log::Trade {
-        rows.iter().flat_map(trade).map(|(_, g)| g).collect()
-    } else {
-        Vec::new()
-    };
-    let traded = trade_item_types(&mut tx, &goods).await?;
     let mut passed = 0;
     for row in &rows {
         let at = chrono::DateTime::from_timestamp(row.block_time, 0)
             .map(|t| t.naive_utc())
             .unwrap_or(now);
-        // (buyer, item types) of the row's goods
-        let (buys, unmirrored): (Vec<(String, Vec<String>)>, bool) = if log == Log::Trade {
-            let goods = trade(row);
-            let total = goods.len();
-            let mut buys: BTreeMap<String, Vec<String>> = BTreeMap::new();
-            let mut found = 0;
-            for (buyer, (_, c, v)) in goods {
-                let Some(t) = traded.get(&(c, v)) else {
-                    continue;
-                };
-                found += 1;
-                buys.entry(buyer).or_default().push(t.clone());
-            }
-            (buys.into_iter().collect(), found < total)
-        } else {
-            let missing = row.buyer.is_some() && row.item_types.is_empty();
-            let buys = row.buyer.clone().map(|b| (b, row.item_types.clone()));
-            (buys.into_iter().collect(), missing)
-        };
-        if unmirrored && !pass.too_old(at, now) {
-            let waited = items_pass
-                .is_some_and(|done| done >= row.block_time.saturating_add(ITEM_WAIT_SECS));
-            if !waited {
+        let too_old = pass.too_old(at, now);
+        if row.history_pending && !too_old {
+            tracing::debug!(
+                source = log.source(),
+                block = row.block_number,
+                log = row.log_index,
+                "badge sale awaits collection discovery or NFT transfer history"
+            );
+            break;
+        }
+        let pending = row.buyer.is_some() && !too_old;
+        if pending && row.item_type.is_some() && row.tx_hash.is_none() {
+            tracing::warn!(
+                block = row.block_number,
+                log = row.log_index,
+                "badge sale awaits indexed transaction hash"
+            );
+            break;
+        }
+        if pending && row.item_type.is_none() {
+            if !row.items_checked {
                 tracing::debug!(
                     source = log.source(),
                     block = row.block_number,
@@ -344,21 +231,17 @@ pub(crate) async fn batch(pass: &Pass, log: Log) -> Result<(u64, bool), sqlx::Er
             );
         }
         passed += 1;
-        if pass.too_old(at, now) {
+        if too_old {
             continue;
         }
-        for (buyer, types) in buys {
-            let mut badges: Vec<&'static str> = types.iter().map(|t| badge_of(t)).collect();
-            badges.sort();
-            badges.dedup();
-            if badges.is_empty() {
-                continue;
-            }
+        if let (Some(buyer), Some(tx_hash), Some(item_type)) =
+            (&row.buyer, &row.tx_hash, &row.item_type)
+        {
             sales.push((
                 buyer.to_ascii_lowercase(),
-                row.tx_hash.to_ascii_lowercase(),
+                tx_hash.to_ascii_lowercase(),
                 row.block_time.saturating_mul(1000),
-                badges,
+                badge_of(item_type),
             ));
         }
     }
@@ -374,19 +257,17 @@ pub(crate) async fn batch(pass: &Pass, log: Log) -> Result<(u64, bool), sqlx::Er
         .collect();
     let done = completed(&mut tx, &addresses).await?;
     let notify = Some(pass.asset_base.as_str());
-    for (buyer, tx_hash, sale_at, badges) in &sales {
+    for (buyer, tx_hash, sale_at, badge) in &sales {
         let Ok(address) = Address::parse(buyer) else {
             continue;
         };
-        for badge in badges {
-            if done.contains(&(buyer.clone(), badge.to_string())) {
-                continue;
-            }
-            award(&mut tx, &address, badge, notify, |p| {
-                ev::buyer(p, badge, tx_hash, *sale_at)
-            })
-            .await?;
+        if done.contains(&(buyer.clone(), badge.to_string())) {
+            continue;
         }
+        award(&mut tx, &address, badge, notify, |p| {
+            ev::buyer(p, badge, tx_hash, *sale_at)
+        })
+        .await?;
     }
     super::advance(&mut tx, log.source(), last.0, last.1).await?;
     tx.commit().await?;
@@ -395,95 +276,4 @@ pub(crate) async fn batch(pass: &Pass, log: Log) -> Result<(u64, bool), sqlx::Er
         passed as u64,
         passed == rows.len() && rows.len() as i64 == limit,
     ))
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use serde_json::json;
-
-    fn row(signer: &str, caller: &str, assets: Value) -> Row {
-        Row {
-            block_number: 1,
-            log_index: 0,
-            block_time: 0,
-            buyer: Some(signer.into()),
-            tx_hash: "0x".into(),
-            assets: Some(assets),
-            caller: Some(caller.into()),
-            item_types: Vec::new(),
-        }
-    }
-
-    #[test]
-    fn a_listing_is_bought_by_its_caller_a_bid_by_its_signer() {
-        let listing = row(
-            "0xseller",
-            "0xBuyer",
-            json!({"sent": [{"assetType": 4, "contractAddress": "0xC", "value": "2",
-                             "beneficiary": ZERO_ADDRESS}],
-                   "received": [{"assetType": 1, "contractAddress": "0xm", "value": "10"}]}),
-        );
-        assert_eq!(
-            trade(&listing),
-            vec![("0xbuyer".into(), (4, "0xc".into(), "2".into()))]
-        );
-        let bid = row(
-            "0xbidder",
-            "0xowner",
-            json!({"sent": [{"assetType": 1, "contractAddress": "0xm", "value": "10"}],
-                   "received": [{"assetType": "3", "contractAddress": "0xc", "value": "77"}]}),
-        );
-        assert_eq!(
-            trade(&bid),
-            vec![("0xbidder".into(), (3, "0xc".into(), "77".into()))]
-        );
-        let currency_only = row(
-            "0xa",
-            "0xb",
-            json!({"sent": [{"assetType": 1, "contractAddress": "0xm", "value": "1"}]}),
-        );
-        assert_eq!(trade(&currency_only), vec![]);
-    }
-
-    #[test]
-    fn each_good_is_bought_by_its_beneficiary() {
-        // a credits purchase: the CreditsManager calls, the goods go to each beneficiary
-        let listing = row(
-            "0xseller",
-            "0xcredits",
-            json!({"sent": [
-                       {"assetType": "4", "contractAddress": "0xc", "value": "2", "beneficiary": "0xAlice"},
-                       {"assetType": "3", "contractAddress": "0xc", "value": "9", "beneficiary": "0xbob"},
-                       {"assetType": "4", "contractAddress": "0xc", "value": "5", "beneficiary": ZERO_ADDRESS}],
-                   "received": [{"assetType": 1, "contractAddress": "0xm", "value": "10",
-                                 "beneficiary": "0xseller"}]}),
-        );
-        assert_eq!(
-            trade(&listing),
-            vec![
-                ("0xalice".into(), (4, "0xc".into(), "2".into())),
-                ("0xbob".into(), (3, "0xc".into(), "9".into())),
-                ("0xcredits".into(), (4, "0xc".into(), "5".into())),
-            ]
-        );
-        let bid = row(
-            "0xbidder",
-            "0xowner",
-            json!({"sent": [{"assetType": 1, "contractAddress": "0xm", "value": "10"}],
-                   "received": [{"assetType": "3", "contractAddress": "0xc", "value": "77",
-                                 "beneficiary": "0xfriend"}]}),
-        );
-        assert_eq!(
-            trade(&bid),
-            vec![("0xfriend".into(), (3, "0xc".into(), "77".into()))]
-        );
-    }
-
-    #[test]
-    fn item_types_pick_the_buyer_badge() {
-        assert_eq!(badge_of("emote_v1"), ev::EMOTIONISTA);
-        assert_eq!(badge_of("wearable_v2"), ev::FASHIONISTA);
-        assert_eq!(badge_of("smart_wearable_v1"), ev::FASHIONISTA);
-    }
 }

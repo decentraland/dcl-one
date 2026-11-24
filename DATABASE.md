@@ -2175,10 +2175,12 @@ target through it. The backfill (`POST /badges/badges/{id}/backfill`,
 `social/src/badges/backfill.rs`) runs one such transaction per wallet (a
 statement error fails that wallet; a lost connection fails it and reports
 every later wallet as not attempted, at once): it
-takes the same badge lock and advisory lock first, merges upstream's way over
+takes the same badge lock and advisory lock first, merges incoming progress into
 the progress it reads under them, writes through `apply_progress` without
 notifications, then sets the merger's instants on the earned tiers and the
-completion.
+completion. Operators can retry the failed wallets independently. Backfill
+preserves earned tiers and completed badges even when a later input reports
+less progress. Use the audited console revoke to remove an award.
 
 Invariants: `steps_done` equals the document's `steps`; earned tiers and
 completion are never taken back by a write (only the console revoke deletes
@@ -2218,18 +2220,20 @@ default, and social writes are), each a reader of tables other areas own, with o
 - `content.deployments` by `id` (rarity badges, profile pro, land architect,
   the store half of open for business), a wearable's rarity from its active
   entity or `shop.items`;
-- `shop.sale_event` (`mint`, `bid_accepted`), `shop.trade_event` (`traded`)
-  and `shop.nft_event` (`order_successful`) on Polygon by (block, log index),
-  each up to the block its index published in `shop.chain_cursor`, a
-  cursor bound to chain 137 and out of quarantine (emotionista, fashionista; one step per transaction hash, a legacy order
-  indexed before `nft_event.tx_hash` was recorded counted by its chain
-  position until a re-index fills the hash). An off-chain good counts for
-  its `beneficiary` in `trade_event.assets`; a legacy order bought by a fiat
-  or cross-chain relay, a fee-taking order router or a CreditsManager counts
-  for the recipient of the relay's own first `transfer` of the token after
-  the order in the same block (transfer rows keep no transaction hash), and
-  for nobody while a relay holds it (one `nft_event_token_idx` probe per
-  such order). Step
+- Paid CollectionStore mints and indexed ERC721BidV2 acceptances from
+  `shop.sale_event`, and paid Marketplace orders from `shop.nft_event`,
+  on Polygon. Emotionista and Fashionista each count a transaction hash once
+  per buyer. Off-chain marketplace trades are excluded. A bid or order needs
+  a matching creation for a token that already existed. Only the two
+  payment relays substitute the token owner at the end of the sale block,
+  read from the NFT transfer history. The sales cursor uses the lower
+  published block of the sales and NFT indexes. The order cursor uses the NFT
+  index. Each required index must be bound to chain 137 and out of quarantine.
+  Before interpreting NFT history, the job checks the collection walk in
+  `shop.nft_contract` and waits for any owed backfill and refold. It passes
+  an unknown contract only after both the collections and items mirrors have
+  completed a pass at least one hour after the sale.
+  An eligible legacy order missing a transaction hash waits for a re-index. Step
   `0040_shop_nft_event_tx_hash` adds `tx_hash` as a nullable column without
   a default (catalog only, no row rewritten); it takes ACCESS EXCLUSIVE on
   `shop.nft_event`, held until `migrate` commits, so the nft index's writes
@@ -2266,7 +2270,9 @@ the cursor row `FOR UPDATE`, the batch's progress writes through
 `apply_progress` and the cursor advance, so a database error rolls the batch
 back and the next tick reads the same rows; a row an evaluator cannot read is
 logged and passed. Invariants: a cursor never moves past a row it did not
-pass; its first pass records the source's head and replays no history; a
+pass; an unseeded cursor records the source's head on its first pass. The
+[badge cutover](tooling/migration/sources/badges/MAPPING.md#processor-cutover)
+seeds the ID and Polygon block cursors at the frozen import boundary; a
 recount's first pass writes no notification.
 
 The id cursors (`client_events` by `seq`, `deployments` by `id`) never skip a
@@ -2478,10 +2484,13 @@ catalog rows, and the bootstrap seed reaches only new databases.
    A badge takes at most 32 tiers, each `2d` or `3d` at most 8 files, and
    the badges routes refuse bodies over 1 MiB (413), the backfill's over
    64 MiB and an art upload's over 16 MiB.
-2. Make the art reachable: upload it to the CDN that
-   `BADGES_PUBLIC_ASSET_BASE_URL` names (upstream's by default), or, when the
-   base is `<node>/badges/assets`, put each file into `BADGES_ASSETS_DIR`
-   under the same relative path: mirror it there, or `PUT
+2. For node-hosted textures, mirror existing catalog art into a shared
+   directory with `migrate.py blobs badges --to <directory>` before enabling
+   `BADGES_ASSETS_DIR` on every replica. Set `PUBLIC_URL` to the public node
+   URL. Catalog and notification links then use `PUBLIC_URL/badges/assets`.
+   Without a directory they use the upstream CDN. An explicit
+   `BADGES_PUBLIC_ASSET_BASE_URL` overrides either default and must serve
+   the same files. Add each new file under its catalog path with `PUT
    /badges/assets/{path}` with the admin bearer and the PNG as the body (204;
    only a path the badge or one of its tiers names, else 404). The upload is
    written on the process that receives it, so every process serving the

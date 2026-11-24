@@ -754,14 +754,10 @@ pub struct SocialConfig {
     #[arg(long, env = "CATALYRST_BADGES_ADMIN_TOKEN", hide_env_values = true)]
     pub catalyrst_badges_admin_token: Option<String>,
 
-    /// The base every badge asset path resolves against: upstream's CDN, so
-    /// the URLs are upstream's. `<node>/badges/assets` serves BADGES_ASSETS_DIR.
-    #[arg(
-        long,
-        env = "BADGES_PUBLIC_ASSET_BASE_URL",
-        default_value = "https://assets-cdn.decentraland.org"
-    )]
-    pub badges_public_asset_base_url: String,
+    /// Override the public badge art base. With BADGES_ASSETS_DIR configured,
+    /// defaults to PUBLIC_URL/badges/assets. Otherwise uses the upstream CDN.
+    #[arg(long, env = "BADGES_PUBLIC_ASSET_BASE_URL")]
+    pub badges_public_asset_base_url: Option<String>,
 
     /// Badge art mirrored from upstream's CDN (`<badge>[/<tier>]/{2d,3d}/...`)
     /// or uploaded by the admin `PUT`, served at /badges/assets; a shared

@@ -1907,6 +1907,44 @@ class AgainstPostgres(CommsMigrationCases, SocialMigrationCases, WorldsMigration
         return ', '.join(f"('{badge}', '{prefix}-{slot}', {i + 1}, '{slot.title()}', '{slot}', {steps}, '{slot}')"
                          for i, (slot, steps) in enumerate(slots))
 
+    def test_badge_cutover_seeds_frozen_positions_and_preserves_them_on_retry(self):
+        target = self.catalyst_db('badge_cutover')
+        checkpoint = "\\set last_covered_block 95\n" + (migrate.SOURCES / 'badges/cutover.sql').read_text()
+        activity = """
+            INSERT INTO content.deployments
+                (deployer_address, version, entity_type, entity_id, entity_timestamp,
+                 entity_pointers, local_timestamp, auth_chain)
+            VALUES ('address', 'v3', 'scene', '{key}', now(), '{{}}', now(), '[]');
+            INSERT INTO social.client_events (key, source, sub_type, address, reported_at, received_at)
+            VALUES ('{key}', 'client', 'logged-in', '0x' || repeat('a', 40), now(), now());
+        """
+        self.sql(target, activity.format(key='before'))
+        with self.assertRaisesRegex(migrate.MigrationError, 'requires complete Polygon'):
+            self.sql(target, checkpoint)
+        self.sql(target, """INSERT INTO shop.mirror_state (mirror, network, source_url, last_complete_pass_at)
+                            SELECT mirror, 'matic', '', now() FROM unnest(ARRAY['collections','items']) mirror;
+                            INSERT INTO shop.chain_cursor
+                                (indexer, network, start_block, last_block, folded_block, fold_through,
+                                 folded_at, full_history, chain_id)
+                            SELECT idx, 'matic', 0, 100, 100, 100, now(), true, 137
+                            FROM unnest(ARRAY['sales','nft']) idx;
+                            UPDATE shop.chain_cursor SET folded_at = now() - interval '1 hour' WHERE indexer = 'sales';
+                         """)
+        with self.assertRaisesRegex(migrate.MigrationError, 'requires current Polygon'):
+            self.sql(target, checkpoint)
+        self.assertEqual(self.count(target, 'social.badge_cursors'), 0)
+        self.sql(target, "UPDATE shop.chain_cursor SET folded_at = timezone('UTC', now());")
+        self.sql(target, checkpoint)
+        self.sql(target, activity.format(key='after'))
+        self.sql(target, 'UPDATE shop.chain_cursor SET folded_block=101, fold_through=101, last_block=101;')
+        self.sql(target, checkpoint)
+        self.assertEqual(self.sql(target, """
+            SELECT source, position, log_index FROM social.badge_cursors ORDER BY source;
+        """).splitlines(), [
+            'client_events\t1\t0', 'deployments\t1\t0',
+            'sales:nft_event:matic\t95\t2147483647', 'sales:sale_event:matic\t95\t2147483647',
+        ])
+
     def badges_dbs(self):
         src, tgt = self.fresh_db('badges_src'), self.catalyst_db('badges_tgt')
         self.sql(src, self.BADGES_SCHEMA)

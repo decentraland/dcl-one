@@ -136,6 +136,14 @@ pub struct Producer {
 }
 
 impl Producer {
+    pub(crate) fn queue_counts(&self) -> (usize, usize) {
+        let active = MAX_CONCURRENT - self.permits.available_permits();
+        let waiting = self.inflight.lock().len().saturating_sub(active)
+            + self.warm_tx.max_capacity()
+            - self.warm_tx.capacity();
+        (waiting, active)
+    }
+
     pub fn new(budget: Duration) -> Self {
         let (warm_tx, warm_rx) = mpsc::channel(WARM_QUEUE);
         Self {
@@ -323,8 +331,10 @@ impl ProfileImagesState {
             }
             Some(OriginResult::NotFound) | None => {}
         }
-        if let (Some(queue), Some(_)) = (&self.render_queue, profile) {
-            match tokio::time::timeout_at(deadline, queue.render_once(entity)).await {
+        if let (Some(queue), Some(profile)) = (&self.render_queue, profile) {
+            match tokio::time::timeout_at(deadline, queue.render_once(entity, profile.timestamp))
+                .await
+            {
                 Ok(RenderOutcome::Rendered { body, face }) => {
                     bump(&counters.render);
                     return Answer::Image(match kind {

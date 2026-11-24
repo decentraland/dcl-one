@@ -42,6 +42,8 @@ in-app purchases cannot be clawed back by a later Apple refund
   checking the store holds every blob its imported rows name, and fails when
   one is missing. `blobs worlds-content-server` also goes before `run places`
   (world images are rewritten to the copied thumbnails' CIDs).
+- **Badge processor.** [Checkpoint the input cursors](sources/badges/MAPPING.md#processor-cutover)
+  at the frozen boundary before importing badge progress.
 - **Badge art.** The node embeds the art of its seed badges only. After
   `run badges`, `migrate.py blobs badges --to "$BADGES_ASSETS_DIR"` copies
   every texture the imported catalog's `assets` name from upstream's CDN (or

@@ -8,6 +8,7 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use bytes::Bytes;
+use chrono::{NaiveDateTime, Utc};
 use sqlx::PgPool;
 use tokio::sync::{Semaphore, broadcast};
 
@@ -97,7 +98,7 @@ impl RenderQueue {
         }
     }
 
-    pub async fn render_once(&self, entity: &str) -> RenderOutcome {
+    pub async fn render_once(&self, entity: &str, deployed_at: NaiveDateTime) -> RenderOutcome {
         if self.inner.not_found.hit(entity) {
             return RenderOutcome::NotFound;
         }
@@ -119,7 +120,7 @@ impl RenderQueue {
         if !leader {
             return match rx.recv().await {
                 Ok(outcome) => outcome,
-                Err(_) => Box::pin(self.render_once(entity)).await,
+                Err(_) => Box::pin(self.render_once(entity, deployed_at)).await,
             };
         }
 
@@ -130,7 +131,7 @@ impl RenderQueue {
             outcome: None,
         };
 
-        let outcome = self.do_render(entity).await;
+        let outcome = self.do_render(entity, deployed_at).await;
         guard.outcome = Some(outcome.clone());
         outcome
     }
@@ -146,7 +147,7 @@ impl RenderQueue {
         })
     }
 
-    async fn do_render(&self, entity: &str) -> RenderOutcome {
+    async fn do_render(&self, entity: &str, deployed_at: NaiveDateTime) -> RenderOutcome {
         let _permit = match self.inner.limiter.acquire().await {
             Ok(p) => p,
             Err(_) => return RenderOutcome::Failed("render semaphore closed".into()),
@@ -169,12 +170,18 @@ impl RenderQueue {
                 .workdir_root
                 .join(format!("render-{}-{}", entity, std::process::id()));
 
+        let mut observation = RenderObservation {
+            started: Instant::now(),
+            status: "cancelled",
+        };
         let result = self
             .inner
             .renderer
             .render(entity, &avatar, &self.inner.content_base, &workdir)
             .await;
 
+        observation.status = if result.is_ok() { "success" } else { "failure" };
+        drop(observation);
         let outcome = match result {
             Ok(out) => {
                 let (body, face) = tokio::join!(
@@ -183,7 +190,14 @@ impl RenderQueue {
                 );
                 match (body, face) {
                     (Ok(b), Ok(f)) => {
-                        keep_render(&self.inner.cache, entity, Bytes::from(b), Bytes::from(f)).await
+                        keep_render(
+                            &self.inner.cache,
+                            entity,
+                            deployed_at,
+                            Bytes::from(b),
+                            Bytes::from(f),
+                        )
+                        .await
                     }
                     _ => RenderOutcome::Failed("rendered png unreadable".into()),
                 }
@@ -205,15 +219,51 @@ impl RenderQueue {
 
 /// Caches a finished render and answers it. As the origin path, a render the
 /// cache could not keep (a store-lock timeout included) is still served.
-async fn keep_render(cache: &ImageCache, entity: &str, body: Bytes, face: Bytes) -> RenderOutcome {
+async fn keep_render(
+    cache: &ImageCache,
+    entity: &str,
+    deployed_at: NaiveDateTime,
+    body: Bytes,
+    face: Bytes,
+) -> RenderOutcome {
+    let started = Instant::now();
     let (w1, w2) = tokio::join!(
         cache.put(entity, ImageKind::Body, ImageSource::Render, &body),
         cache.put(entity, ImageKind::Face, ImageSource::Render, &face)
     );
-    if let Err(e) = w1.and(w2) {
+    let writes = w1.and(w2);
+    let status = if writes.is_ok() { "success" } else { "error" };
+    dcl_metrics::histogram!("image_upload_duration_seconds", "status" => status)
+        .record(started.elapsed().as_secs_f64());
+    if let Err(e) = writes {
         tracing::warn!(entity, error = %e, "a rendered profile image was not cached");
+    } else {
+        record_generation_age(deployed_at, Utc::now().naive_utc());
     }
     RenderOutcome::Rendered { body, face }
+}
+
+/// Records one attempt even if the production budget cancels the renderer future.
+struct RenderObservation {
+    started: Instant,
+    status: &'static str,
+}
+
+impl Drop for RenderObservation {
+    fn drop(&mut self) {
+        dcl_metrics::histogram!("snapshot_generation_duration_seconds")
+            .record(self.started.elapsed().as_secs_f64());
+        dcl_metrics::counter!("snapshot_generation_count", "status" => self.status).increment(1);
+    }
+}
+
+fn record_generation_age(deployed_at: NaiveDateTime, completed_at: NaiveDateTime) {
+    if let Ok(age) = (completed_at - deployed_at).to_std()
+        && !age.is_zero()
+    {
+        dcl_metrics::histogram!("entity_deployment_to_image_generation_duration_seconds")
+            .record(age.as_secs_f64());
+    }
 }
 
 struct InflightGuard {
@@ -261,6 +311,7 @@ mod tests {
         let outcome = keep_render(
             &cache,
             "entity",
+            Utc::now().naive_utc(),
             Bytes::from_static(b"body"),
             Bytes::from_static(b"face"),
         )
@@ -271,6 +322,44 @@ mod tests {
             "{outcome:?}"
         );
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[tokio::test]
+    async fn monitoring_probes_count_a_cancelled_render_and_measure_deployment_age_in_seconds() {
+        let registry = dcl_metrics::Registry::new(&[crate::SERVICE_FAMILIES]).unwrap();
+        let recorder = registry
+            .builder(dcl_metrics::PrometheusBuilder::new())
+            .unwrap()
+            .build_recorder();
+        let _recording = dcl_metrics::set_default_local_recorder(&recorder);
+        let completed = Utc::now().naive_utc();
+        record_generation_age(completed - chrono::TimeDelta::milliseconds(1250), completed);
+        record_generation_age(completed, completed);
+        record_generation_age(completed + chrono::TimeDelta::seconds(1), completed);
+        let attempt = async {
+            let _observation = RenderObservation {
+                started: Instant::now(),
+                status: "cancelled",
+            };
+            std::future::pending::<()>().await;
+        };
+        assert!(
+            tokio::time::timeout(Duration::from_millis(1), attempt)
+                .await
+                .is_err()
+        );
+        let scrape = recorder.handle().render();
+        for sample in [
+            r#"snapshot_generation_count{status="cancelled"} 1"#,
+            "snapshot_generation_duration_seconds_count 1",
+            "entity_deployment_to_image_generation_duration_seconds_count 1",
+            "entity_deployment_to_image_generation_duration_seconds_sum 1.25",
+        ] {
+            assert!(
+                scrape.lines().any(|line| line == sample),
+                "{sample}: {scrape}"
+            );
+        }
     }
 
     #[test]

@@ -2,6 +2,35 @@
 use dcl_metrics::{Descriptor, Unit};
 
 pub const FAMILIES: &[Descriptor] = &[
+    Descriptor::histogram(
+        "entity_deployment_to_image_generation_duration_seconds",
+        "Seconds from the profile entity timestamp until both rendered images are stored.",
+        Some(Unit::Seconds),
+        &[],
+        &[
+            0.1, 0.5, 1., 2., 5., 10., 15., 30., 60., 120., 300., 600., 1200.,
+        ],
+    ),
+    Descriptor::histogram(
+        "image_upload_duration_seconds",
+        "Time to store the rendered profile image pair by write result.",
+        Some(Unit::Seconds),
+        &["status"],
+        &[0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1., 2.5, 5., 10.],
+    ),
+    Descriptor::histogram(
+        "snapshot_generation_duration_seconds",
+        "Time to render both profile images for one entity.",
+        Some(Unit::Seconds),
+        &[],
+        &[0.1, 0.2, 0.5, 1., 2., 3., 4., 5., 6., 10.],
+    ),
+    Descriptor::counter(
+        "snapshot_generation_count",
+        "Profile renderer calls by result, including cancellation.",
+        Some(Unit::Count),
+        &["status"],
+    ),
     Descriptor::gauge(
         "badges_processor_cursor_gaps",
         "Outstanding gaps in a badge worker's source cursor.",

@@ -50,6 +50,7 @@ pub mod media;
 pub mod messaging;
 mod metrics;
 mod mls;
+mod monitoring;
 pub mod notifications;
 pub mod profile_images;
 pub mod request_auth;
@@ -181,6 +182,11 @@ pub fn router(states: &States, writes_enabled: bool) -> Router {
             guard(profile_images::router(states.profile_images.clone())),
         )
         .merge(guard(rpc::router(states.rpc.clone())))
+        .merge(monitoring::routes(
+            states.rpc.settings.current_version.as_deref(),
+            states.rpc.settings.commit_hash.as_deref(),
+            states.profile_images.clone(),
+        ))
 }
 
 /// Production routes stay on `shared::routing` (see `shared::routing::guard`).

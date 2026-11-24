@@ -1,9 +1,7 @@
 //! The badge art served at `/badges/assets/{path}` from `BADGES_ASSETS_DIR`,
 //! upstream's CDN layout (`<badge>[/<tier slot>]/{2d,3d}/<file>.png`) mirrored
 //! there by the operator or uploaded through the admin `PUT` of the same
-//! path, for a node whose `BADGES_PUBLIC_ASSET_BASE_URL` is
-//! `<node>/badges/assets`. With the default base (upstream's CDN) nothing
-//! links here. No art is embedded.
+//! path. Configuring the directory makes this route the default public art base.
 
 use std::path::{Path, PathBuf};
 

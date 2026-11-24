@@ -20,6 +20,56 @@ Every step needs the badge catalog schema: `badge_definitions.criteria_steps`,
 without them a step stops on its first non-empty batch (naming what is
 missing) instead of importing without them; an empty batch is a no-op.
 
+## Processor cutover
+
+1. Warm the production primary with `NODE_POSTURE=mirror` and an explicit
+   `BADGES_PROCESSOR_ENABLED=false`. The posture enables the marketplace
+   mirrors and the NFT and sales indexes used by badges. Verify that the Polygon
+   items and collections passes have completed recently and that both
+   indexers have caught up to the expected confirmed Polygon block. Arrange
+   durable delivery of Segment client events and LiveKit join/leave events
+   during the handover. The client-event retention window must cover the
+   import and catch-up.
+2. Pause deployment admission and buffer incoming client and presence events.
+   Drain queued inputs through the legacy processor. Record the last complete
+   Polygon block its sale inputs cover as `LAST_COVERED_BLOCK`. Reconcile
+   any partial block before handover. Wait for the target content, client-event
+   and chain sources to include the covered activity. Stop the legacy processor. Run the following on the target from the
+   repository root, before resuming inputs or starting the import.
+
+   ```sh
+   psql -X -v ON_ERROR_STOP=1 -v last_covered_block="$LAST_COVERED_BLOCK" \
+     "$TARGET_DATABASE_URL" -f tooling/migration/sources/badges/cutover.sql
+   ```
+
+   The transaction verifies the two mirror passes and the sales job's two
+   published indexes, and seeds the ID and block cursors together. The
+   ID-source locks briefly wait for outstanding writes. On a lock timeout,
+   keep delivery paused and retry. Repeating the checkpoint preserves its
+   positions. On a previously active target, reconcile existing cursors and
+   progress against the frozen snapshot before continuing.
+3. Resume deployment and Segment ingestion into the target. Import the frozen
+   catalog, presence configuration and progress with
+   `python3 tooling/migration/migrate.py run badges --restart`. Verify the
+   import completed. In the production LiveKit configuration set the webhook
+   URL to `https://<node-origin>/comms-gatekeeper/livekit-webhook` and use
+   the API key whose secret the gatekeeper holds. With social writes enabled,
+   release buffered webhook deliveries to the node and verify a signed
+   participant join and leave receive successful responses. Presence grants
+   use this handler directly. In-flight visit timers require separate
+   reconciliation (see below).
+4. Set `BADGES_PROCESSOR_ENABLED=true` on the production primary with
+   `SOCIAL_WRITES_ENABLED=true` and `FLEET_JOBS_ENABLED=true`. Keep
+   `MARKETPLACE_MIRRORS_ENABLED=true` there. If catch-up spans an event age
+   limit, leave `BADGES_EVENT_MAX_AGE_SECS=0` until drained. Watch
+   `badges_processor_cursor_lag` for client events and deployments. For
+   sales, compare the saved position in `social.badge_cursors` with a known
+   post-boundary eligible sale and verify the recipient's badge progress.
+   The block distance can grow between sales even after processing catches up.
+   Referral recounts use accepted `social.referral_progress` rows. Verify
+   the clients feeding referral logins as part of the
+   [referral login handover](https://github.com/decentraland/dcl-one/issues/1563).
+
 ## Catalog mapping
 
 Upstream's catalog becomes the node's; the node reads its catalog from these
@@ -47,8 +97,8 @@ tables, so every imported badge is served with no code change.
   single badge's at `<badge>/2d/normal.png` and
   `<badge>/3d/{normal,hrm,basecolor}.png`, each tier's at
   `<badge>/<tier slot>/...`. The node resolves them against its public asset
-  base (by default upstream's production `CDN_HOST`,
-  `https://assets-cdn.decentraland.org`, so the URLs are upstream's). A
+  base (`PUBLIC_URL/badges/assets` with a configured mirror directory,
+  otherwise `https://assets-cdn.decentraland.org`). A
   tiered badge has no art of its own
   (upstream's bucket holds none): its `assets` is `{}`, and the art served
   for it is its current tier's, or its first tier's when none is earned.

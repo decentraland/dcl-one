@@ -504,6 +504,7 @@ http {{
         {" ".join(alias_moves)}
         "~^gateway:" "";
         {" ".join(settled)}
+        "~^badges:/badges/health/(live|ready|startup)$" "";
         "~^badges:/badges/({badges_mounts})(/|$)" "";
         "~^badges:(?<badges_own>/badges(/.*)?)$" /badges$badges_own;
         "~^([^:]+):/\\1(/|$)" "";

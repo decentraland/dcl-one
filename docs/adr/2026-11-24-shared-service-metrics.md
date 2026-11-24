@@ -56,6 +56,25 @@ Stage the private scrape targets in service discovery before the rollout. As eac
 
 For Stats, connector and Camera Reel, migrate request counts from `http_requests_total{handler,code,method}` to `dcl_http_requests_total{component,route,status_code,method}`. Select `component="stats"`, `"connector"` or `"camera-reel"`. Use `dcl_http_request_duration_seconds` for latency and `dcl_http_request_declared_size_bytes` for requests carrying a valid Content-Length. Review bucket-based latency alerts, especially Camera Reel's former 60-second bucket. The new histogram's largest finite bound is 30 seconds. Social and Worlds continue to publish their existing HTTP families on the process scrape. For Social WebSocket admission alerts, `dcl_ws_admission_rejections_total{reason="authentication"}` counts invalid credentials. Query `reason="unavailable"` for verifier outages.
 
+### Social services and Auth
+
+In the operations Prometheus repository (inventory revision `1f468d163734444901e28c9164f8b41984c8afed`), `prometheus/prometheus-template-dev.yml` and `prometheus/prometheus-template-prd.yml` define the jobs `dev-scrapper-coreteam` and `prd-scrapper-coreteam`. Their availability rules live in `prometheus/conf/core.prd-rules.yml`.
+
+The production collector scrapes `/metrics` for Social HTTP and RPC (separate ports), notifications processor and inbox, badges API and processor, profile-images worker, events-notifier and auth-server. The production rules include `profile-images-worker-down`, `notifications-processor-down`, `notifications-inbox-down` and `auth-server-down`. These rules test the presence and availability of the former service targets. Migrate availability alerts to `up{job="catalyst-serve"}` per expected replica and probe each HTTP interface below. For job progress also check the age of `dcl_job_last_success_timestamp_seconds{worker=~"badges-.+"}` on the replica holding the lease.
+
+| Service prefix | HTTP probes relative to prefix | Serve metrics for dashboards |
+| --- | --- | --- |
+| `/social-rpc` | `/status`, `/health/live` | `rpc_procedure_call_total`, `rpc_procedure_call_duration_seconds`, `ws_active_connections` |
+| `/notifications` | `/status`, `/health/{live,ready,startup}` | `dcl_http_requests_total{component="social",route=~"/notifications/.*"}` |
+| `/badges`, `/badges-processor` | `/status`, `/health/{live,ready,startup}` | For presence grants use `badges_presence_grants_total`; for event outcomes use `badges_presence_events_total` grouped by `outcome` (the source subtype is aggregated). For sweeper pass count and duration use `dcl_job_runs_total` and `dcl_job_duration_seconds` with `worker="badges-presence-sweep"`. For unprocessed inputs use `badges_processor_cursor_lag` grouped by `source` and `badges_presence_queue_oldest_seconds`. |
+| `/profile-images` | `/status`, `/health/{live,ready,startup}` | `snapshot_generation_count`, `snapshot_generation_duration_seconds` and `image_upload_duration_seconds` measure renderer calls and storage of the resulting pair. Requests satisfied from an origin or cache bypass the renderer. |
+| `/events-notifier` | `/health/{live,ready,startup}` | `handled_explorer_events_count`, `handled_web_events_count`, `explorer_segment_event_delay_in_seconds`, `segment_webhook_event_delay_in_seconds` |
+| `/auth-api` | `/health/{live,ready,startup}` | `dcl_http_requests_total{component="explore",route=~"/auth-api/.*"}` and `dcl_http_request_duration_seconds` with the same selector |
+
+Profile image status counts local queued work and active productions. Delayed messages and dead letters read zero because images are produced on demand. A render interrupted by the production deadline increments `snapshot_generation_count{status="cancelled"}` and contributes its elapsed time. After both generated images are stored, `entity_deployment_to_image_generation_duration_seconds` measures their age since the profile entity timestamp. Queue-publication-to-render latency has no corresponding event. Badge processor status reports the build and clock of the responding replica. Leased job metrics report actual processing. The badge API wraps its status in `data`; the processor returns its fields directly.
+
+Point each dashboard at the private serve scrape when its replica enters service. Confirm its label filters and a sample request or job observation before retiring former targets. Production target discovery, alert routing and Grafana dashboards are deployment-managed.
+
 ## Recording and querying
 
 Declare a service counter, gauge or histogram in its owning crate and export its descriptor to the binary's registry. Supply fixed label keys and bounded values. For example, a Builder failure can identify a lookup layer. A collection ID belongs in a log. The registry validates conflicting declarations at startup and applies declared histogram buckets before observations begin.

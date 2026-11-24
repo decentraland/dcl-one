@@ -374,6 +374,8 @@ pub fn routes() -> Router<AppState> {
     Router::new()
         .route("/health/live", get(health_live))
         .route("/health", get(health_live))
+        .route("/health/ready", get(|| async { "OK" }))
+        .route("/health/startup", get(|| async { "OK" }))
         .route("/accounts", delete(accounts::delete_account))
         .route("/requests", post(create_request))
         .route(
@@ -1512,6 +1514,28 @@ mod tests {
             body["error"],
             "Outcome must include either a result or an error"
         );
+    }
+
+    #[tokio::test]
+    async fn monitoring_probes_answer_without_a_database_connection() {
+        use tower::ServiceExt;
+
+        let app = router().await;
+        for path in ["/health/ready", "/health/startup"] {
+            let response = app
+                .clone()
+                .oneshot(Request::get(path).body(Body::empty()).unwrap())
+                .await
+                .unwrap();
+            assert_eq!(response.status(), StatusCode::OK, "{path}");
+            assert_eq!(
+                axum::body::to_bytes(response.into_body(), 16)
+                    .await
+                    .unwrap()
+                    .as_ref(),
+                b"OK"
+            );
+        }
     }
 
     async fn router() -> Router {

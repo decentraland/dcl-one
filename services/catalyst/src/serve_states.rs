@@ -795,12 +795,21 @@ pub(super) fn social_states(
     }
     communities.referral.set_mailer(notifications.email.clone());
 
+    let assets_dir = non_empty(&config.social.badges_assets_dir).map(std::path::PathBuf::from);
+    let public_asset_base_url = non_empty(&config.social.badges_public_asset_base_url)
+        .unwrap_or_else(|| {
+            if assets_dir.is_some() {
+                format!("{}/badges/assets", public_url.trim_end_matches('/'))
+            } else {
+                badges::DEFAULT_ASSET_BASE_URL.to_owned()
+            }
+        });
     let badges = Arc::new(badges::State::new(
         pool.clone(),
         badges::Settings {
             admin_token: non_empty(&config.social.catalyrst_badges_admin_token),
-            public_asset_base_url: config.social.badges_public_asset_base_url.clone(),
-            assets_dir: non_empty(&config.social.badges_assets_dir).map(std::path::PathBuf::from),
+            public_asset_base_url,
+            assets_dir,
             commit_hash: config.commit_hash(),
             processor: badges::jobs::ProcessorSettings {
                 enabled: config.social.badges_processor_enabled,
@@ -962,11 +971,11 @@ pub(super) fn social_states(
 }
 
 #[cfg(test)]
-mod event_notice_configuration_tests {
+mod social_configuration_tests {
     use super::*;
 
     #[tokio::test]
-    async fn event_email_origins_follow_the_public_site_and_keep_images_and_jump_links() {
+    async fn social_states_resolve_public_links_from_node_and_service_configuration() {
         let pool = crate::db::scratch::isolated_pool(4)
             .await
             .expect("real PostgreSQL required");
@@ -974,15 +983,27 @@ mod event_notice_configuration_tests {
             std::env::temp_dir().join(format!("event-email-origins-{}", uuid::Uuid::new_v4()));
         let storage = Arc::new(storage::Storage::from_config(&directory).await.unwrap());
         let http = http::Outbound::for_tests();
-        for custom in [false, true] {
+        for (custom, override_base, expected_art) in [
+            (false, None, badges::DEFAULT_ASSET_BASE_URL),
+            (true, None, "https://node.example.org/badges/assets"),
+            (
+                true,
+                Some("https://art.example.org"),
+                "https://art.example.org",
+            ),
+        ] {
             let mut vars = vec![("DATABASE_URL", "postgres://unused@127.0.0.1:1/postgres")];
             if custom {
                 vars.extend([
                     ("PUBLIC_URL", "https://node.example.org"),
+                    ("BADGES_ASSETS_DIR", "badge-art"),
                     ("EVENTS_BASE_URL", "https://legacy-events.example.org"),
                     ("EVENTS_SITE_URL", "https://site.example.org"),
                     ("JUMP_IN_SITE_URL", "https://jump.example.org"),
                 ]);
+            }
+            if let Some(base) = override_base {
+                vars.push(("BADGES_PUBLIC_ASSET_BASE_URL", base));
             }
             let config = Config::parse_env_for_tests(vars).unwrap();
             let content = Arc::new(content::ContentState::new(
@@ -1018,6 +1039,7 @@ mod event_notice_configuration_tests {
                 onboarding,
             )
             .unwrap();
+            assert_eq!(social.badges.badges.asset_base_url(), expected_art);
             let settings = &social.notifications.settings;
             assert_eq!(
                 settings.events_base_url,
