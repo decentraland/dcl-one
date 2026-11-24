@@ -45,6 +45,10 @@ It installs with pnpm as one workspace with a single lockfile
   on `PBGltfContainerLoadingState` are new required fields, and `PBMaterial`, `PBMeshCollider` and
   `PBMeshRenderer` gain a `$case: 'gltf'` variant (an exhaustive `switch` stops compiling). The
   first release from here lists these.
+- The SDK here carries both upstream lines: `decentraland/js-sdk-toolchain` `main` and the layer
+  its `experimental-bevy` branch adds for the Explorer (react-ecs scroll, drag listeners and
+  render-to-texture, pointer drag events, `setGltfMesh`, shaped raycasts, `getPlayer().forceRender`).
+  A scene that uses that layer runs on the Explorer dcl-one ships.
 - `protoc` comes from `SDK_PROTOC` when set: a name on `PATH` (`SDK_PROTOC=protoc` in the Nix
   shell, or brew's on a Mac without Rosetta) or a path, resolved to an absolute path. It is not
   `PROTOC`, which prost reads for the Rust crates. CI leaves it unset and uses the SDK's download
@@ -87,11 +91,10 @@ It installs with pnpm as one workspace with a single lockfile
    workflow and environment, and `decentraland/js-sdk-toolchain` to stop publishing. Then the rest of the PR tooling (the e2e realm, the playground). The first
    release notes carry the narrowed types above.
 2. The `auth-server` branch as a dcl-one branch published through a manual `publish-tag` run.
-3. Fold the rest of the SDK's `experimental-bevy` layer (react-ecs scroll and render-to-texture,
-   drag events, `setGltfMesh`, …) into `main` here.
+3. Build the bridge scene from the SDK here, in place of the pinned snapshot published from
+   `decentraland/js-sdk-toolchain`'s `experimental-bevy`.
 4. `make lint-packages` (inherited) checks only the root manifest: its `packages/*/package.json`
    glob does not match `packages/@dcl/*`.
 5. Sites, the template games, the editor scene and the scene CLI templates consume one SDK version.
-6. Catch up with what `decentraland/js-sdk-toolchain` `main` merged after the snapshot: the
-   skybox, sun and fog components (its #1638) need `library/protocol` to carry the protocol's
-   #495 first; `TouchScreenControls.showDefault()` (its #1649) does not.
+6. A commit `decentraland/js-sdk-toolchain` lands on `main` or `experimental-bevy` is missing here
+   until it is ported, for as long as that repository takes changes.

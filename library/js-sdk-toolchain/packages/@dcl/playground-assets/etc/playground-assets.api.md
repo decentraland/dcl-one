@@ -506,7 +506,7 @@ export interface ByteBuffer {
 }
 
 // @public
-export type Callback = () => void;
+export type Callback = (event: PBPointerEventsResult) => void;
 
 // @public (undocumented)
 export const CameraLayer: LastWriteWinElementSetComponentDefinition<PBCameraLayer>;
@@ -1365,6 +1365,9 @@ export type EntityComponents = {
     onMouseUp: Callback;
     onMouseEnter: Callback;
     onMouseLeave: Callback;
+    onMouseDrag: Callback;
+    onMouseDragLocked: Callback;
+    onMouseDragEnd: Callback;
 };
 
 // @public (undocumented)
@@ -2002,6 +2005,9 @@ export type Listeners = {
     onMouseUp?: Callback;
     onMouseEnter?: Callback;
     onMouseLeave?: Callback;
+    onMouseDrag?: Callback;
+    onMouseDragLocked?: Callback;
+    onMouseDragEnd?: Callback;
 };
 
 // @public (undocumented)
@@ -2245,6 +2251,7 @@ export const MeshCollider: MeshColliderComponentDefinitionExtended;
 export interface MeshColliderComponentDefinitionExtended extends LastWriteWinElementSetComponentDefinition<PBMeshCollider> {
     setBox(entity: Entity, colliderLayers?: ColliderLayer | ColliderLayer[]): void;
     setCylinder(entity: Entity, radiusBottom?: number, radiusTop?: number, colliderLayers?: ColliderLayer | ColliderLayer[]): void;
+    setGltfMesh(entity: Entity, source: string, meshName: string, colliderLayers?: ColliderLayer | ColliderLayer[]): void;
     setPlane(entity: Entity, colliderLayers?: ColliderLayer | ColliderLayer[]): void;
     setSphere(entity: Entity, colliderLayers?: ColliderLayer | ColliderLayer[]): void;
 }
@@ -2258,6 +2265,7 @@ export const MeshRenderer: MeshRendererComponentDefinitionExtended;
 export interface MeshRendererComponentDefinitionExtended extends LastWriteWinElementSetComponentDefinition<PBMeshRenderer> {
     setBox(entity: Entity, uvs?: number[]): void;
     setCylinder(entity: Entity, radiusBottom?: number, radiusTop?: number): void;
+    setGltfMesh(entity: Entity, source: string, meshName: string): void;
     setPlane(entity: Entity, uvs?: number[]): void;
     setSphere(entity: Entity): void;
 }
@@ -5010,6 +5018,18 @@ export interface PointerEventsSystem {
     }, cb: EventSystemCallback): void;
     // @deprecated (undocumented)
     onPointerDown(entity: Entity, cb: EventSystemCallback, opts?: Partial<EventSystemOptions>): void;
+    onPointerDrag(pointerData: {
+        entity: Entity;
+        opts?: Partial<EventSystemOptions>;
+    }, cb: EventSystemCallback): void;
+    onPointerDragEnd(pointerData: {
+        entity: Entity;
+        opts?: Partial<EventSystemOptions>;
+    }, cb: EventSystemCallback): void;
+    onPointerDragLocked(pointerData: {
+        entity: Entity;
+        opts?: Partial<EventSystemOptions>;
+    }, cb: EventSystemCallback): void;
     onPointerHoverEnter(pointerData: {
         entity: Entity;
         opts?: Partial<EventSystemOptions>;
@@ -5041,6 +5061,9 @@ export interface PointerEventsSystem {
         opts?: Partial<EventSystemOptions>;
     }, cb: EventSystemCallback): void;
     removeOnPointerDown(entity: Entity): void;
+    removeOnPointerDrag(entity: Entity): void;
+    removeOnPointerDragEnd(entity: Entity): void;
+    removeOnPointerDragLocked(entity: Entity): void;
     removeOnPointerHoverEnter(entity: Entity): void;
     removeOnPointerHoverLeave(entity: Entity): void;
     removeOnPointerUp(entity: Entity): void;
@@ -5342,13 +5365,17 @@ export type RaycastSystemOptions = {
     queryType: RaycastQueryType;
     continuous?: boolean | undefined;
     collisionMask?: number | undefined;
+    shape?: RaycastShape | undefined;
+    includeWorld?: boolean | undefined;
 };
 
 // @public (undocumented)
 export interface ReactBasedUiSystem {
     addUiRenderer(entity: Entity, ui: UiComponent, options?: UiRendererOptions): void;
     destroy(): void;
+    removeTextureRenderer(entity: Entity): void;
     removeUiRenderer(entity: Entity): void;
+    setTextureRenderer(entity: Entity, ui: UiComponent): void;
     setUiRenderer(ui: UiComponent, options?: UiRendererOptions): void;
 }
 
@@ -5675,6 +5702,9 @@ export namespace ScrollPositionValue {
     // (undocumented)
     export function encode(message: ScrollPositionValue, writer?: _m0.Writer): _m0.Writer;
 }
+
+// @public
+export type ScrollVisibleType = 'horizontal' | 'vertical' | 'both' | 'hidden';
 
 // @public
 export function setCompositeProvider(engine: IEngine, provider: CompositeProvider): void;
@@ -6186,6 +6216,7 @@ export interface UiBackgroundProps {
     textureMode?: TextureMode;
     textureSlices?: BorderRect | undefined;
     uvs?: number[];
+    videoTexture?: UiVideoTexture;
 }
 
 // @public
@@ -6357,6 +6388,7 @@ export interface UiTransformProps {
     // (undocumented)
     borderWidth?: Partial<Position> | PositionUnit;
     display?: DisplayType;
+    elementId?: string;
     flex?: number;
     flexBasis?: number;
     flexDirection?: FlexDirectionType;
@@ -6376,8 +6408,20 @@ export interface UiTransformProps {
     pointerFilter?: PointerFilterType;
     position?: Partial<Position> | PositionShorthand;
     positionType?: PositionType;
+    scrollPosition?: PBVector2 | string;
+    scrollVisible?: ScrollVisibleType;
     width?: PositionUnit | 'auto';
     zIndex?: number;
+}
+
+// @public
+export interface UiVideoTexture {
+    // (undocumented)
+    filterMode?: TextureFilterType;
+    // (undocumented)
+    videoPlayerEntity: Entity;
+    // (undocumented)
+    wrapMode?: TextureWrapType;
 }
 
 // @public (undocumented)

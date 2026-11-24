@@ -177,6 +177,24 @@ describe('players helper', () => {
     })
   })
 
+  describe('when a player has equipped data', () => {
+    beforeEach(async () => {
+      await setup(jest.fn().mockResolvedValue({ metadataJson: '{}' }))
+    })
+
+    it('should return the wearables the player forces to render', () => {
+      addPlayer(engine.PlayerEntity, LOCAL_ADDRESS, 8, 8)
+      components.AvatarEquippedData(engine).createOrReplace(engine.PlayerEntity, {
+        wearableUrns: ['urn:hat'],
+        emoteUrns: [],
+        wearables: [],
+        forceRender: ['hat']
+      })
+
+      expect(playersModule.definePlayerHelper(engine).getPlayer()?.forceRender).toEqual(['hat'])
+    })
+  })
+
   describe.each`
     case                                     | getSceneInformation
     ${'the scene metadata has no parcels'}   | ${() => jest.fn().mockResolvedValue({ metadataJson: '{}' })}
