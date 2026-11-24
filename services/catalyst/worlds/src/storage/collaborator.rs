@@ -86,13 +86,13 @@ pub async fn list(
              UNION ALL
              SELECT d.entity_id, 'main', 'genesis', d.local_timestamp,
                     d.entity_pointers,
-                    (d.entity_metadata #> '{scene,base}')::text,
-                    (d.entity_metadata #> '{display,title}')::text
+                    (d.entity_metadata #> '{v,scene,base}')::text,
+                    (d.entity_metadata #> '{v,display,title}')::text
              FROM content.deployments d
              WHERE d.entity_type = 'scene' AND d.deleter_deployment IS NULL AND cardinality(d.entity_pointers) > 0
-               AND worlds.logs_permissions_decoded((d.entity_metadata -> 'logsPermissions')::text) @> ARRAY[$1::text]
+               AND worlds.logs_permissions_decoded((d.entity_metadata -> 'v' -> 'logsPermissions')::text) @> ARRAY[$1::text]
 
-               AND CASE WHEN worlds.logs_permissions_decoded((d.entity_metadata -> 'logsPermissions')::text) @> ARRAY[$1::text]
+               AND CASE WHEN worlds.logs_permissions_decoded((d.entity_metadata -> 'v' -> 'logsPermissions')::text) @> ARRAY[$1::text]
                    THEN land_authz.scene_collaborators_current($4, $5, $6, d.entity_pointers, d.entity_timestamp)
                    ELSE false END
                AND EXISTS (SELECT 1 FROM content.active_pointers ap WHERE ap.entity_id = d.entity_id)

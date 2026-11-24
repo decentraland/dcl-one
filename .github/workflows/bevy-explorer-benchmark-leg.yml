@@ -48,6 +48,11 @@ name: Bevy Explorer / Benchmark leg
         description: Measured runs per build (see RUN_TIMEOUT_SECONDS)
         type: string
         required: true
+      retention_days:
+        description: Days the results artifact is kept
+        type: string
+        required: false
+        default: '7'
 permissions: {}
 jobs:
   chrome:
@@ -151,4 +156,4 @@ jobs:
             base_build_*.log
             base_build_*.csv
             base_build_*.csv.partial
-          retention-days: 7
+          retention-days: ${{ inputs.retention_days }}
