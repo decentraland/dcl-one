@@ -155,7 +155,9 @@ fn landing_behind_the_loading_screen_times_the_destination_scene() {
     set_tick(&mut world, home, 6);
     world.entity_mut(player).remove::<OutOfWorld>();
     world.run_system_once(report_scene_load_times).unwrap();
-    assert!(world.resource::<FirstRingTiming>().reported);
+    let timing = world.resource::<FirstRingTiming>();
+    assert_eq!(timing.arrival.map(|(scene, _)| scene), Some(home));
+    assert!(timing.reported);
 }
 
 #[test]

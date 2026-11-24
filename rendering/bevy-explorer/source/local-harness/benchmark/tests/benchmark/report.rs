@@ -393,27 +393,34 @@ fn the_command_refuses_a_pr_that_is_not_a_number() {
     assert!(!out.exists());
 }
 
+/// An explorer source file, by its path under `rendering/bevy-explorer/source`.
+fn explorer_source(file: &str) -> String {
+    let source = PathBuf::from(env!("DCL_ONE_ROOT")).join("rendering/bevy-explorer/source");
+    std::fs::read_to_string(source.join(file)).unwrap_or_else(|error| panic!("{file}: {error}"))
+}
+
+/// The value of `pub const <name>: &str = "...";` in an explorer source file.
+fn explorer_constant(file: &str, name: &str) -> String {
+    let source = explorer_source(file);
+    let line = source
+        .lines()
+        .find(|l| l.starts_with(&format!("pub const {name}: &str = \"")))
+        .unwrap_or_else(|| panic!("{name} in {file}"));
+    line.split('"').nth(1).unwrap().to_string()
+}
+
 /// The two markers the log parser counts by are the ones the explorer writes
 /// (`perf_output::format`, which takes the exit marker from `common::autopilot`). `benchmark`
 /// cannot depend on `perf_output` without building the engine, so the sources are compared.
 #[test]
 fn the_log_markers_are_the_explorers() {
-    let crates = PathBuf::from(env!("DCL_ONE_ROOT")).join("rendering/bevy-explorer/source/crates");
-    let constant = |file: &str, name: &str| {
-        let source = std::fs::read_to_string(crates.join(file)).unwrap();
-        let line = source
-            .lines()
-            .find(|l| l.starts_with(&format!("pub const {name}: &str = \"")))
-            .unwrap_or_else(|| panic!("{name} in {file}"));
-        line.split('"').nth(1).unwrap().to_string()
-    };
     assert_eq!(
         report::EXIT_MARKER,
-        constant("common/src/autopilot.rs", "EXIT_MARKER")
+        explorer_constant("crates/common/src/autopilot.rs", "EXIT_MARKER")
     );
     assert_eq!(
         report::EXCEPTION_MARKER,
-        constant("perf_output/src/format.rs", "EXCEPTION_MARKER")
+        explorer_constant("crates/perf_output/src/format.rs", "EXCEPTION_MARKER")
     );
 }
 
@@ -446,16 +453,8 @@ fn load_time_lines_add_rows_with_verdicts() {
 /// `Measuring`) and the scene load timing's arrival line, under their log targets.
 #[test]
 fn the_load_time_lines_are_the_explorers() {
-    let source = PathBuf::from(env!("DCL_ONE_ROOT")).join("rendering/bevy-explorer/source");
-    let read = |file: &str| std::fs::read_to_string(source.join(file)).unwrap();
-    let constant = |file: &str, name: &str| {
-        let source = read(file);
-        let line = source
-            .lines()
-            .find(|l| l.starts_with(&format!("pub const {name}: &str = \"")))
-            .unwrap_or_else(|| panic!("{name} in {file}"));
-        line.split('"').nth(1).unwrap().to_string()
-    };
+    let read = explorer_source;
+    let constant = explorer_constant;
     let load_timing = "crates/scene_runner/src/load_timing.rs";
     assert_eq!(
         report::AUTOPILOT_CATEGORY,
@@ -472,7 +471,9 @@ fn the_load_time_lines_are_the_explorers() {
     assert!(read(load_timing).contains(r#""{FIRST_RING_READY} {} ms after the scene spawned""#));
 
     assert_eq!(report::ARRIVED_IN_WORLD_PREFIX, "phase Measuring at ");
-    assert!(read("src/autopilot.rs").contains(r#""phase {:?} at {:.1} s""#));
+    assert!(
+        read("src/autopilot.rs").contains(r#"info!(target: LOG_TARGET, "phase {:?} at {:.1} s""#)
+    );
     let phase = read("crates/common/src/autopilot.rs");
     let variants = phase
         .split_once("pub enum AutopilotPhase {")
