@@ -64,7 +64,6 @@ impl RentalsChain {
     pub(super) fn from_land_network(network: &str) -> Option<Self> {
         match network {
             "ethereum" | "ethereum-mainnet" => Some(Self::Mainnet),
-            "sepolia" | "ethereum-sepolia" => Some(Self::Sepolia),
             _ => None,
         }
     }
@@ -760,7 +759,7 @@ impl ChainIndex for RentalsIndex {
 
 /// Whether this node has a local Rentals index for `venue`.
 pub fn walks(venue: &str) -> bool {
-    venue.eq_ignore_ascii_case(RENTALS_MAINNET) || venue.eq_ignore_ascii_case(RENTALS_SEPOLIA)
+    venue.eq_ignore_ascii_case(RENTALS_MAINNET)
 }
 
 /// The latest rent and the publication that vouches for it, from one SQL snapshot.

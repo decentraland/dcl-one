@@ -158,7 +158,6 @@ SELECT r.id, l.lessor, r.rental_contract_address, t.owner,
        COALESCE(to_timestamp(lt.block_time) AT TIME ZONE 'UTC' > r.created_at, false) AS moved,
        COALESCE(
            $4::bigint >= lt.block_number
-           AND ren.block_number IS NOT NULL
            AND NOT EXISTS (
                SELECT 1 FROM shop.rental_event pending
                WHERE pending.network=$6 AND pending.rentals_address=r.rental_contract_address
@@ -402,47 +401,51 @@ pub async fn sync_listing(
     let Some(row) = row else {
         return Ok(true);
     };
-    let chain = index::RentalsChain::from_id(row.get("chain_id"));
-    let Some(chain) = chain else {
-        return Ok(false);
-    };
-    let Some(_) = index::fold_listing(pool, chain, &venue, id, now).await? else {
-        return Ok(false);
-    };
-    let mut tx = pool.begin().await?;
-    let Some(rentals_cursor) = index::lock_cursor(&mut tx, chain).await? else {
-        tx.rollback().await?;
-        return Ok(false);
-    };
-    if !crate::market::chain_walk::is_ready_on(&rentals_cursor, chain.id(), now) {
-        tx.rollback().await?;
+    let chain = index::RentalsChain::from_id(row.get("chain_id")).filter(|_| index::walks(&venue));
+    if let Some(chain) = chain
+        && index::fold_listing(pool, chain, &venue, id, now)
+            .await?
+            .is_none()
+    {
         return Ok(false);
     }
+    let mut tx = pool.begin().await?;
+    let rentals_cursor = if let Some(chain) = chain {
+        let Some(cursor) = index::lock_cursor(&mut tx, chain).await? else {
+            tx.rollback().await?;
+            return Ok(false);
+        };
+        if !crate::market::chain_walk::is_ready_on(&cursor, chain.id(), now) {
+            tx.rollback().await?;
+            return Ok(false);
+        }
+        Some(cursor)
+    } else {
+        None
+    };
     if let Some(expected_updated_at) = nft.and_then(|n| n.land_cursor_updated_at) {
+        let land_network = match chain {
+            Some(index::RentalsChain::Mainnet) => crate::land_authz::LAND_MAINNET.network,
+            Some(index::RentalsChain::Sepolia) | None => {
+                tx.rollback().await?;
+                return Ok(false);
+            }
+        };
         let current_land: Option<crate::land_authz::indexer::Cursor> = sqlx::query_as(
             "SELECT network, land_registry, estate_registry, last_block, folded_block, folded_at, full_replay_started, updated_at \
              FROM land_authz.index_cursor WHERE network=$1 FOR SHARE",
         )
-        .bind(match chain {
-            index::RentalsChain::Mainnet => crate::land_authz::LAND_MAINNET.network,
-            index::RentalsChain::Sepolia => crate::land_authz::LAND_SEPOLIA.network,
-        })
+        .bind(land_network)
         .fetch_optional(&mut *tx)
         .await?;
-        let (expected_land, expected_estate) = match chain {
-            index::RentalsChain::Mainnet => (
-                crate::land_authz::LAND_MAINNET.land_registry,
-                crate::land_authz::LAND_MAINNET.estate_registry,
-            ),
-            index::RentalsChain::Sepolia => (
-                crate::land_authz::LAND_SEPOLIA.land_registry,
-                crate::land_authz::LAND_SEPOLIA.estate_registry,
-            ),
-        };
         let current_matches = current_land.is_some_and(|cursor| {
             cursor.updated_at == expected_updated_at
-                && cursor.land_registry.eq_ignore_ascii_case(expected_land)
-                && cursor.estate_registry.eq_ignore_ascii_case(expected_estate)
+                && cursor
+                    .land_registry
+                    .eq_ignore_ascii_case(crate::land_authz::LAND_MAINNET.land_registry)
+                && cursor
+                    .estate_registry
+                    .eq_ignore_ascii_case(crate::land_authz::LAND_MAINNET.estate_registry)
                 && crate::land_authz::indexer::index_ready(&cursor, now)
         });
         if !current_matches {
@@ -475,18 +478,26 @@ pub async fn sync_listing(
     let owner = transfer.map(|n| n.owner_address.as_str());
     let custody: Option<String> = match transfer {
         Some(n) if n.owner_address.eq_ignore_ascii_case(&venue) => {
-            let evidence = index::rent_evidence_at(
-                &mut tx,
-                chain,
-                &venue,
-                row.get("contract_address"),
-                row.get("token_id"),
-                rentals_cursor.folded_block,
-            )
-            .await?;
-            match evidence.coverage(n.transfer_block, Some(n.metadata_block), n.transferred_at) {
-                index::RentCoverage::Pending | index::RentCoverage::NoCoveringRent => None,
-                index::RentCoverage::Covered => evidence.signer,
+            if let (Some(chain), Some(cursor)) = (chain, rentals_cursor.as_ref()) {
+                let evidence = index::rent_evidence_at(
+                    &mut tx,
+                    chain,
+                    &venue,
+                    row.get("contract_address"),
+                    row.get("token_id"),
+                    cursor.folded_block,
+                )
+                .await?;
+                match evidence.coverage(n.transfer_block, Some(n.metadata_block), n.transferred_at)
+                {
+                    index::RentCoverage::Pending => None,
+                    index::RentCoverage::NoCoveringRent => Some(String::new()),
+                    index::RentCoverage::Covered => evidence.signer,
+                }
+            } else {
+                // Non-walking chains have no local custody evidence. A token
+                // at the Rentals venue stays unknown and cannot be cancelled.
+                None
             }
         }
         _ => None,
@@ -728,13 +739,14 @@ mod tests {
         let pass = run_pass(pool, Some(LAND_MAINNET), Utc::now())
             .await
             .unwrap();
-        assert_eq!(pass.moved, Some(2));
+        assert_eq!(pass.moved, Some(3));
         assert_eq!(
             state_of(pool, transferred).await,
             cancelled(REASON_TRANSFERRED)
         );
+        assert_eq!(state_of(pool, custody).await, cancelled(REASON_TRANSFERRED));
         assert_eq!(state_of(pool, dissolved).await, cancelled(REASON_DISSOLVED));
-        for id in [trailing, kept, custody, unindexed, whole] {
+        for id in [trailing, kept, unindexed, whole] {
             assert_eq!(state_of(pool, id).await, open(), "{id}");
         }
         db.drop().await;
@@ -1177,7 +1189,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn sepolia_status_uses_only_the_published_sepolia_rentals_cursor() {
+    async fn sepolia_status_keeps_unknown_venue_custody_open() {
         let Some(db) = OwnedDatabase::new("rental_sepolia_status", Schema::Full, 2).await else {
             return;
         };
@@ -1205,13 +1217,6 @@ mod tests {
         .await
         .unwrap();
         sqlx::query(
-            "INSERT INTO shop.chain_cursor (indexer, network, start_block, last_block, folded_block, folded_at, full_history, chain_id) \
-             VALUES ('rentals_sepolia', 'ethereum', 1, 40, 40, timezone('UTC', now()), true, 11155111)",
-        )
-        .execute(pool)
-        .await
-        .unwrap();
-        sqlx::query(
             "INSERT INTO land_authz.token_right (token_address, token_id, owner, updated_block, updated_log) VALUES ($1, 55, $2, 40, 0)",
         )
         .bind(LAND_SEPOLIA.land_registry)
@@ -1228,33 +1233,10 @@ mod tests {
         .execute(pool)
         .await
         .unwrap();
-        sqlx::query(
-            "INSERT INTO shop.rental_event (network, block_number, log_index, block_time, rentals_address, kind, contract_address, token_id, signer, tenant, rental_days, price_per_day, signature, tx_hash) \
-             VALUES ('sepolia', 40, 0, $1, $2, 'rented', $3, 55, $4, $5, 1, 1, '0x55', '0xtx')",
-        )
-        .bind(now + 60)
-        .bind(venue)
-        .bind(LAND_SEPOLIA.land_registry)
-        .bind(LESSOR)
-        .bind(OTHER)
-        .execute(pool)
-        .await
-        .unwrap();
-
         assert_eq!(
             cancel_moved(pool, LAND_SEPOLIA, Utc::now()).await.unwrap(),
-            Some(0)
-        );
-        assert_eq!(state_of(pool, id).await, open());
-        sqlx::query(
-            "UPDATE shop.chain_cursor SET folded_block=NULL WHERE indexer='rentals_sepolia'",
-        )
-        .execute(pool)
-        .await
-        .unwrap();
-        assert_eq!(
-            cancel_moved(pool, LAND_SEPOLIA, Utc::now()).await.unwrap(),
-            None
+            None,
+            "the status job has no Sepolia Rentals source yet"
         );
         assert_eq!(state_of(pool, id).await, open());
         db.drop().await;
@@ -1276,12 +1258,10 @@ mod tests {
         .unwrap();
     }
 
-    /// The job's custody leg: a token in the Rentals contract keeps its
-    /// listing while the rentals index is not published, and once it is, the
-    /// latest indexed rent decides only when its block is at or after the
-    /// token's transfer into the contract. An older rent by another lessor
-    /// (the token arrived through a rent the index has not reached, such as
-    /// an accepted offer) leaves the listing open.
+    /// The job's custody leg: a token in the Rentals contract stays unknown
+    /// until the Rentals cursor reaches its arrival. Once published, a
+    /// covering rent keeps the listing only when it names this lessor; no
+    /// covering rent means nobody holds custody and cancels it.
     #[tokio::test]
     async fn the_pass_reads_custody_from_a_rent_no_older_than_the_arrival() {
         let Some(db) = OwnedDatabase::new("rental_custody", Schema::Full, 2).await else {
@@ -1292,18 +1272,22 @@ mod tests {
         let held = listing(pool, land, "1", 1).await;
         let rented_by_other = listing(pool, land, "2", 2).await;
         let unindexed = listing(pool, land, "3", 3).await;
+        let no_rent = listing(pool, land, "4", 4).await;
+        let cursor_behind_arrival = listing(pool, land, "5", 5).await;
         let later = Utc::now().timestamp() + 3_600;
         sqlx::raw_sql(sqlx::AssertSqlSafe(format!(
             "INSERT INTO land_authz.token_right (token_address, token_id, owner, updated_block, updated_log) VALUES \
-                ('{land}', 1, '{RENTALS}', 40, 0), ('{land}', 2, '{RENTALS}', 40, 1), ('{land}', 3, '{RENTALS}', 40, 2); \
+                ('{land}', 1, '{RENTALS}', 40, 0), ('{land}', 2, '{RENTALS}', 40, 1), ('{land}', 3, '{RENTALS}', 40, 2), \
+                ('{land}', 4, '{RENTALS}', 40, 3), ('{land}', 5, '{RENTALS}', 45, 0); \
              INSERT INTO land_authz.authz_event (block_number, log_index, block_time, token_address, kind, token_id, account) VALUES \
                 (40, 0, {later}, '{land}', 'transfer', 1, '{RENTALS}'), (40, 1, {later}, '{land}', 'transfer', 2, '{RENTALS}'), \
-                (40, 2, {later}, '{land}', 'transfer', 3, '{RENTALS}')"
+                (40, 2, {later}, '{land}', 'transfer', 3, '{RENTALS}'), (40, 3, {later}, '{land}', 'transfer', 4, '{RENTALS}'), \
+                (45, 0, {later}, '{land}', 'transfer', 5, '{RENTALS}')"
         )))
         .execute(pool)
         .await
         .unwrap();
-        publish_land_index(pool, 40).await;
+        publish_land_index(pool, 45).await;
         // The rent of each transfer's block, and for token 3 only a rent
         // from before the previous lessor's claim.
         index_rent(pool, 1, LESSOR, 40, later).await;
@@ -1326,11 +1310,21 @@ mod tests {
         let withheld = run_pass(pool, Some(LAND_MAINNET), Utc::now())
             .await
             .unwrap();
-        assert_eq!(withheld.moved, Some(0));
+        assert_eq!(withheld.moved, Some(2));
         assert_eq!(
             state_of(pool, rented_by_other).await,
             open(),
             "rent 41 is above the published Rentals head"
+        );
+        assert_eq!(
+            state_of(pool, unindexed).await,
+            cancelled(REASON_TRANSFERRED)
+        );
+        assert_eq!(state_of(pool, no_rent).await, cancelled(REASON_TRANSFERRED));
+        assert_eq!(
+            state_of(pool, cursor_behind_arrival).await,
+            open(),
+            "the Rentals cursor has not reached the transfer into custody"
         );
         sqlx::query(
             "UPDATE shop.chain_cursor SET last_block=50,folded_block=50 WHERE indexer='rentals'",
@@ -1341,7 +1335,7 @@ mod tests {
         let pass = run_pass(pool, Some(LAND_MAINNET), Utc::now())
             .await
             .unwrap();
-        assert_eq!(pass.moved, Some(1));
+        assert_eq!(pass.moved, Some(2));
         assert_eq!(
             state_of(pool, rented_by_other).await,
             cancelled(REASON_TRANSFERRED),
@@ -1350,17 +1344,13 @@ mod tests {
         assert_eq!(state_of(pool, held).await, open(), "held for the lessor");
         assert_eq!(
             state_of(pool, unindexed).await,
-            open(),
-            "a rent older than the arrival does not say who it is held for"
+            cancelled(REASON_TRANSFERRED)
         );
-
-        // The rent the token arrived under, once indexed, keeps the listing.
-        index_rent(pool, 3, LESSOR, 42, later).await;
-        let pass = run_pass(pool, Some(LAND_MAINNET), Utc::now())
-            .await
-            .unwrap();
-        assert_eq!(pass.moved, Some(0));
-        assert_eq!(state_of(pool, unindexed).await, open());
+        assert_eq!(state_of(pool, no_rent).await, cancelled(REASON_TRANSFERRED));
+        assert_eq!(
+            state_of(pool, cursor_behind_arrival).await,
+            cancelled(REASON_TRANSFERRED)
+        );
         db.drop().await;
     }
 
@@ -1434,11 +1424,8 @@ mod tests {
         db.drop().await;
     }
 
-    /// The refresh route's custody read: with the asset row naming the
-    /// Rentals contract, the latest indexed rent decides only when it is no
-    /// older than that row. An older rent by another lessor (the rentals
-    /// index has not reached the rent the token arrived under) leaves the
-    /// listing open.
+    /// The refresh route treats an older rent as no custody record for the
+    /// token's current arrival, so the listing is transferred away.
     #[tokio::test]
     async fn the_refresh_reads_custody_from_a_rent_no_older_than_the_asset_row() {
         let Some(db) = OwnedDatabase::new("rental_refresh_custody", Schema::Full, 2).await else {
@@ -1472,8 +1459,8 @@ mod tests {
             .unwrap();
         assert_eq!(
             state_of(pool, unindexed).await,
-            open(),
-            "a rent older than the asset row does not say who it is held for"
+            cancelled(REASON_TRANSFERRED),
+            "a rent older than the arrival does not cover custody"
         );
         index_rent(pool, 1, OTHER, 40, arrived).await;
         sync_listing(pool, unindexed, Some(&in_custody), Utc::now())

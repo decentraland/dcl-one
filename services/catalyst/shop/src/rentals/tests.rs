@@ -1296,10 +1296,15 @@ async fn non_walking_nodes_use_the_configured_graph_for_create_and_refresh() {
     };
     let wallet = wallet();
     let owner = wallet.address.clone();
+    let force_venue_owner = Arc::new(AtomicUsize::new(0));
+    let force_venue = force_venue_owner.clone();
+    let sepolia_venue = super::signature::rentals_contract(11155111)
+        .unwrap()
+        .to_string();
+    let venue_owner = sepolia_venue.clone();
     sqlx::query(
         "INSERT INTO shop.chain_cursor (indexer, network, start_block, last_block, folded_block, folded_at, full_history, chain_id) \
-         VALUES ('rentals', 'ethereum', 0, 100, 100, timezone('UTC', now()), true, 1), \
-                ('rentals_sepolia', 'ethereum', 0, 100, 100, timezone('UTC', now()), true, 11155111)",
+         VALUES ('rentals', 'ethereum', 0, 100, 100, timezone('UTC', now()), true, 1)",
     )
     .execute(&pool)
     .await
@@ -1309,13 +1314,15 @@ async fn non_walking_nodes_use_the_configured_graph_for_create_and_refresh() {
     let graph = Router::new().route("/", axum::routing::post(move |axum::Json(request): axum::Json<Value>| {
         let n = count.fetch_add(1, Ordering::Relaxed) + 1;
         let owner = owner.clone();
+        let force_venue = force_venue.clone();
+        let venue_owner = venue_owner.clone();
         async move {
             let vars = &request["variables"];
             axum::Json(json!({"data":{
                 "_meta":{"block":{"number": 100 + n, "timestamp": 1800000000 + n}},
                 "nfts":[{
                     "contractAddress": vars["contract"], "tokenId": vars["tokenId"],
-                    "category":"estate", "owner":{"id":owner}, "searchText":format!("estate {n}"),
+                    "category":"estate", "owner":{"id":if force_venue.load(Ordering::Relaxed) > 0 { venue_owner } else { owner }}, "searchText":format!("estate {n}"),
                     "searchDistanceToPlaza":3, "searchAdjacentToRoad":true,"searchEstateSize":4,
                     "createdAt":"1600000000","updatedAt":"1700000000","transferredAt":"1650000000"
                 }]
@@ -1378,6 +1385,11 @@ async fn non_walking_nodes_use_the_configured_graph_for_create_and_refresh() {
         assert_eq!(out["data"]["searchText"], format!("estate {}", before + 1));
         assert_eq!(out["data"]["status"], "open");
         let refresh = format!("{path}/{}", out["data"]["id"].as_str().unwrap());
+        if chain == 11155111 {
+            // The node does not walk Sepolia Rentals. Venue custody is unknown
+            // and PATCH must leave the listing open.
+            force_venue_owner.store(1, Ordering::Relaxed);
+        }
         let (code, _, out) = send(
             router(node(network, chain, enabled, Some(url.clone()))),
             "PATCH",
@@ -1388,20 +1400,13 @@ async fn non_walking_nodes_use_the_configured_graph_for_create_and_refresh() {
         .await;
         assert_eq!(code, StatusCode::OK, "{out}");
         assert_eq!(out["data"]["searchText"], format!("estate {}", before + 2));
+        assert_eq!(out["data"]["status"], "open");
         assert_eq!(reads.load(Ordering::Relaxed), before + 2);
         if chain == 11155111 {
-            sqlx::query(
-                "UPDATE shop.chain_cursor SET folded_block=NULL WHERE indexer='rentals_sepolia'",
-            )
-            .execute(&pool)
-            .await
-            .unwrap();
-            let mut refused = creation(&random_token_id(), "");
+            let mut refused = creation("999999", "");
             refused.chain_id = chain;
             refused.contract_address = registry.estate_registry.into();
-            refused.rental_contract_address = super::signature::rentals_contract(chain as u64)
-                .unwrap()
-                .into();
+            refused.rental_contract_address = sepolia_venue.clone();
             refused.signature = sign_listing(&wallet, &refused).await;
             let (code, _, out) = send(
                 router(node(network, chain, enabled, Some(url.clone()))),
@@ -1411,30 +1416,15 @@ async fn non_walking_nodes_use_the_configured_graph_for_create_and_refresh() {
                 Some(creation_json(&refused)),
             )
             .await;
-            assert_eq!(code, StatusCode::SERVICE_UNAVAILABLE, "{out}");
-            assert_eq!(out["source"], "rentals-index");
-            let (code, _, out) = send(
-                router(node(network, chain, enabled, Some(url.clone()))),
-                "PATCH",
-                &refresh,
-                vec![],
-                None,
-            )
-            .await;
-            assert_eq!(code, StatusCode::SERVICE_UNAVAILABLE, "{out}");
-            assert_eq!(out["source"], "rentals-index");
-
-            // Sepolia unavailability must not make the mainnet cursor unavailable.
-            assert!(
-                super::index::ready_on(
-                    &pool,
-                    super::index::RentalsChain::Mainnet,
-                    chrono::Utc::now(),
+            assert_eq!(code, StatusCode::UNAUTHORIZED, "{out}");
+            assert_eq!(
+                out["error"],
+                format!(
+                    "The owner of the NFT {sepolia_venue} is not the lessor {}",
+                    wallet.address
                 )
-                .await
             );
-            sqlx::query("UPDATE shop.chain_cursor SET folded_block=last_block WHERE indexer='rentals_sepolia'")
-                .execute(&pool).await.unwrap();
+            force_venue_owner.store(0, Ordering::Relaxed);
         }
     }
     // A configured URL never substitutes for a walking node's withdrawn NFT publication.
@@ -1913,6 +1903,20 @@ async fn a_running_rent_conflicts_and_an_ended_one_lets_its_lessor_relist() {
     // Complete publication proves no lessor covers the current transfer.
     rent(11, LESSOR.to_string(), now - 40 * 86_400).await;
     let (status, _, out) = post().await;
+    assert_eq!(status, StatusCode::UNAUTHORIZED, "{out}");
+
+    let no_rent_token = random_token_id();
+    transfer(&pool, LAND, &no_rent_token, RENTALS, 13, now - 40 * 86_400).await;
+    let mut no_rent_listing = creation(&no_rent_token, "");
+    no_rent_listing.signature = sign_listing(&w, &no_rent_listing).await;
+    let (status, _, out) = send(
+        router(state.clone()),
+        "POST",
+        path,
+        signed_headers(&w, "post", path).await,
+        Some(creation_json(&no_rent_listing)),
+    )
+    .await;
     assert_eq!(status, StatusCode::UNAUTHORIZED, "{out}");
 
     rent(14, w.address.clone(), now - 40 * 86_400).await;

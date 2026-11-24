@@ -277,11 +277,12 @@ pub async fn create_rentals_listing(
             "There is no rentals contract for chain id {served_chain}"
         )));
     };
-    let Some(rentals_chain) = super::index::RentalsChain::from_id(served_chain) else {
+    let rentals_chain = super::index::RentalsChain::from_id(served_chain);
+    if super::index::walks(rentals) && rentals_chain.is_none() {
         return Err(ApiError::bad_request(format!(
             "There is no rentals index for chain id {served_chain}"
         )));
-    };
+    }
     if !body.rental_contract_address.eq_ignore_ascii_case(rentals) {
         return Err(ApiError::bad_request(
             "The rental contract address does not match the Rentals contract of the given chain",
@@ -317,7 +318,7 @@ pub async fn create_rentals_listing(
         Some(
             super::index::rent_evidence(
                 state.db.pool(),
-                rentals_chain,
+                rentals_chain.expect("the walking Rentals venue has a chain"),
                 rentals,
                 &body.contract_address,
                 &body.token_id,
