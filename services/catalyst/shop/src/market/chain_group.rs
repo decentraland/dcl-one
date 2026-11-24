@@ -81,12 +81,12 @@ pub struct Member {
 /// How a member's part of a shared walk ended.
 pub enum MemberEnd {
     /// It walked to `out.indexed_to`, standing at `checkpoint`. `close` is
-    /// `Some(fold_since)` when it reached the target and its close comes
+    /// `Some(Close)` when it reached the target and its close comes
     /// next; `None` when its budget paused it.
     Walked {
         out: PassOutcome,
         checkpoint: Option<Checkpoint>,
-        close: Option<Option<i64>>,
+        close: Option<chain_walk::Close>,
     },
     /// Its gate said wait.
     Waiting(String),
@@ -778,7 +778,10 @@ pub async fn walk_together(
         ends.push((
             w.member.slot,
             MemberEnd::Walked {
-                close: reached.then_some(w.fold_since),
+                close: reached.then_some(chain_walk::Close {
+                    fold_since: w.fold_since,
+                    remaining: w.budget.remaining,
+                }),
                 out: w.out,
                 checkpoint,
             },

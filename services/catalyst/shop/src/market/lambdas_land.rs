@@ -278,8 +278,8 @@ pub async fn user_lands(
                 name: r.get("name"),
                 x: r.get("x"),
                 y: r.get("y"),
-                // `parse_land_data` stores an empty and a missing
-                // description alike (NULL), so a data record answers `""`.
+                // For parcels, parse_land_data stores empty and missing
+                // descriptions as NULL; has_data makes that answer an empty string.
                 description: r.get::<bool, _>("has_data").then(|| {
                     Some(
                         r.get::<Option<String>, _>("description")
