@@ -881,7 +881,7 @@ mod tests {
             .release(InputType::Keyboard, InputPriority::Ui);
 
         // a player out of the world, then none
-        app.world_mut().entity_mut(player).insert(OutOfWorld);
+        app.world_mut().entity_mut(player).insert(OutOfWorld::default());
         let cause = refused(&start(&mut app, &command(1.0), false).err().unwrap());
         assert_eq!(cause["cause"]["player"], "outOfWorld");
         untouched(&app, "out of the world");

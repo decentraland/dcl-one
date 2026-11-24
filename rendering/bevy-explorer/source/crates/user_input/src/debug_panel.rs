@@ -347,7 +347,7 @@ mod tests {
             PrimaryUser::default(),
             GlobalTransform::IDENTITY,
             AvatarDynamicState::default(),
-            OutOfWorld,
+            OutOfWorld::default(),
         ));
         let report = read(&mut app).unwrap();
         assert!(report["grounded"].is_null());
