@@ -3,7 +3,7 @@ import { skipToken, useQuery } from "@tanstack/react-query";
 import { useAuth } from "@/data/lib/auth/context";
 import type { AuthIdentity } from "@/data/lib/auth/types";
 import { CatalystError } from "@/data/lib/catalyst/client";
-import { eventAccessQuery, eventAdminKeys, type EventAccess } from "@/data/lib/catalyst/places/event-management";
+import { eventAccessQuery, eventAdminKeys } from "@/data/lib/catalyst/places/event-management";
 
 export type EventAdminAccess = {
   identity: AuthIdentity | null;
@@ -22,9 +22,8 @@ export type EventAdminAccess = {
   canEditAny: boolean;
   /** Pending Events, as decentraland.org's: approving any or own events, or editing any event. */
   canSeePending: boolean;
-  /** Users: the moderator-only list of grants answered for this account. */
+  /** Users: the account holds the profile grant; the Users page's own read of every grant decides the rest. */
   canManageUsers: boolean;
-  profiles: EventAccess["profiles"];
 };
 
 const NONE: readonly string[] = [];
@@ -45,7 +44,6 @@ export function useEventAdmin(): EventAdminAccess {
   const canApproveAny = has("approve_any_event");
   const canApproveOwn = has("approve_own_event");
   const canEditAny = has("edit_any_event");
-  const profiles = query.data?.profiles ?? null;
   return {
     identity,
     loading: Boolean(identity) && query.isPending && !refused,
@@ -57,7 +55,6 @@ export function useEventAdmin(): EventAdminAccess {
     canApproveOwn,
     canEditAny,
     canSeePending: canApproveAny || canApproveOwn || canEditAny,
-    canManageUsers: profiles !== null,
-    profiles,
+    canManageUsers: has("edit_any_profile"),
   };
 }

@@ -101,6 +101,7 @@ import type {
   GalleryPhoto,
   GalleryPhotoMeta,
   GalleryWriteMessage,
+  GalleryWearablesMessage,
   ExternalUrlOpenedMessage,
   SatelliteTileMessage,
   PlaceMessage,
@@ -637,6 +638,8 @@ export interface GalleryState {
   metas: Record<string, GalleryPhotoMeta | null | undefined>
   /** Fetch one photo's full metadata (populates `metas`). */
   loadPhoto: (id: string) => void
+  /** Resolve the wearables a person in a photo had on (urns from its metadata); null on failure. */
+  loadWearables: (urns: string[]) => Promise<Wearable[] | null>
   setPublic: (id: string, isPublic: boolean) => Promise<ReelWrite>
   remove: (id: string) => Promise<ReelWrite>
 }
@@ -1040,7 +1043,7 @@ export const SIGNING_IN_PICK = 'Still signing in. Try again in a moment.'
 // camera-reel-service deletes the photo and its thumbnail from S3 in turn, up to 15 s each.
 export const GALLERY_DELETE_TIMEOUT_MS = 60_000
 
-type BridgeReply = GalleryMessage | GalleryWriteMessage | ExternalUrlOpenedMessage | SatelliteTileMessage | PlaceMessage | WorldAccessMessage | GiftingPageMessage
+type BridgeReply = GalleryMessage | GalleryWriteMessage | GalleryWearablesMessage | ExternalUrlOpenedMessage | SatelliteTileMessage | PlaceMessage | WorldAccessMessage | GiftingPageMessage
 
 export type LoginStatus =
   | 'loading'
@@ -2781,6 +2784,7 @@ export function useEngineSession(createDriver: () => LoginDriver, host: SessionH
           break
         case 'gallery':
         case 'galleryWrite':
+        case 'galleryWearables':
         case 'externalUrlOpened':
         case 'satelliteTile':
         case 'place':
@@ -3591,6 +3595,13 @@ export function useEngineSession(createDriver: () => LoginDriver, host: SessionH
     async (path: string): Promise<string | null> => {
       const msg = await bridgeCall('satelliteTile', (requestId) => ({ kind: 'getSatelliteTile', requestId, path }))
       return msg?.ok === true && typeof msg.data === 'string' ? msg.data : null
+    },
+    [bridgeCall]
+  )
+  const loadGalleryWearables = useCallback(
+    async (urns: string[]): Promise<Wearable[] | null> => {
+      const msg = await bridgeCall('galleryWearables', (requestId) => ({ kind: 'getGalleryWearables', requestId, urns }))
+      return msg?.ok === true ? msg.wearables : null
     },
     [bridgeCall]
   )
@@ -5559,6 +5570,7 @@ export function useEngineSession(createDriver: () => LoginDriver, host: SessionH
       fetchPage: fetchGalleryPage,
       metas: galleryMetas,
       loadPhoto: loadGalleryPhoto,
+      loadWearables: loadGalleryWearables,
       setPublic: setGalleryPhotoPublic,
       remove: removeGalleryPhoto
     },

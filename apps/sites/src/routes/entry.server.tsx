@@ -62,7 +62,7 @@ export default function handleRequest(
           referrer: withoutSensitiveParams(request.headers.get("referer") ?? ""),
           ua: userAgent ?? "",
         },
-        { sid, story: "sites-error" },
+        { sid, story: "sites-error", requestUserAgent: userAgent },
       );
     } catch {
     }

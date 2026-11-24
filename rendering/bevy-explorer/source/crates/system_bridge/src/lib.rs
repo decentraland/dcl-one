@@ -172,6 +172,8 @@ pub enum SystemApi {
     GetWorldAccess(String, RpcResultSender<WorldAccessVerdict>),
     /// Credential-free resolved service endpoints.
     GetServiceUrls(RpcResultSender<Vec<(String, String)>>),
+    /// The official wallets the nametags mark, lowercase `0x` addresses.
+    GetOfficialWallets(RpcResultSender<Vec<String>>),
     GetWelcome(RpcResultSender<WelcomeState>),
     AcceptTerms(RpcResultSender<()>),
     GetSatelliteView(RpcResultSender<Option<SatelliteView>>),

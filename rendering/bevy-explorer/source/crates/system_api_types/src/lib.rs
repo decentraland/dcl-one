@@ -1052,6 +1052,8 @@ pub struct SettingInfo {
     pub step_size: f32,
     pub value: f32,
     pub default: f32,
+    /// True while another setting's value overrides this one.
+    pub disabled: bool,
 }
 
 /// A color as the catalyst `outfits` entity stores it. Other explorers read a missing `a` as 0.

@@ -1,35 +1,39 @@
-import { LANE_CLAIMS, type MpLane } from "./rules";
-import type { MpReportData, MpTimelineEntry, MpVerdict } from "./types";
+import { LANE_CLAIMS, type MpLane } from '../../../../../web-core/multiplayer-test/rules'
+import type {
+  MpReportData,
+  MpTimelineEntry,
+  MpVerdict
+} from '../../../../../web-core/multiplayer-test/types'
 
-import "./mpreportview.css";
+import './mpreportview.css'
 
-export type MpPerfSeries = { client: string; fps: number[] };
+export type MpPerfSeries = { client: string; fps: number[] }
 
 type MpReportViewProps = {
-  runId: string;
-  lane: MpLane;
-  report: MpReportData | null;
-  verdict: MpVerdict | null;
-  timeline: MpTimelineEntry[];
-  perf: MpPerfSeries[];
-  onOpenReportHtml?: () => void;
-  onOpenReplay: () => void;
-  onNewRun: () => void;
-};
+  runId: string
+  lane: MpLane
+  report: MpReportData | null
+  verdict: MpVerdict | null
+  timeline: MpTimelineEntry[]
+  perf: MpPerfSeries[]
+  onOpenReportHtml?: () => void
+  onOpenReplay: () => void
+  onNewRun: () => void
+}
 
 function Sparkline({ points }: { points: number[] }) {
-  if (points.length < 2) return null;
-  const w = 160;
-  const h = 36;
-  const max = Math.max(...points, 1);
-  const min = Math.min(...points, 0);
-  const span = max - min || 1;
+  if (points.length < 2) return null
+  const w = 160
+  const h = 36
+  const max = Math.max(...points, 1)
+  const min = Math.min(...points, 0)
+  const span = max - min || 1
   const path = points
     .map(
       (p, i) =>
-        `${((i / (points.length - 1)) * w).toFixed(1)},${(h - ((p - min) / span) * h).toFixed(1)}`,
+        `${((i / (points.length - 1)) * w).toFixed(1)},${(h - ((p - min) / span) * h).toFixed(1)}`
     )
-    .join(" ");
+    .join(' ')
   return (
     <svg
       className="mp-report__spark"
@@ -40,7 +44,7 @@ function Sparkline({ points }: { points: number[] }) {
     >
       <polyline points={path} fill="none" strokeWidth="1.5" />
     </svg>
-  );
+  )
 }
 
 export default function MpReportView({
@@ -52,9 +56,9 @@ export default function MpReportView({
   perf,
   onOpenReportHtml,
   onOpenReplay,
-  onNewRun,
+  onNewRun
 }: MpReportViewProps) {
-  const divergence = report?.divergence ?? [];
+  const divergence = report?.divergence ?? []
   return (
     <section className="mp-report" aria-label="Sync-health report">
       <header className="mp-report__head">
@@ -65,12 +69,12 @@ export default function MpReportView({
         {verdict ? (
           <span
             className={
-              "mp-report__verdict " +
-              (verdict.pass ? "mp-report__verdict--pass" : "mp-report__verdict--fail")
+              'mp-report__verdict ' +
+              (verdict.pass ? 'mp-report__verdict--pass' : 'mp-report__verdict--fail')
             }
-            data-mp-verdict={verdict.pass ? "pass" : "fail"}
+            data-mp-verdict={verdict.pass ? 'pass' : 'fail'}
           >
-            {verdict.pass ? "PASS" : "FAIL"}
+            {verdict.pass ? 'PASS' : 'FAIL'}
           </span>
         ) : (
           <span className="mp-report__verdict" data-mp-verdict="pending">
@@ -83,8 +87,8 @@ export default function MpReportView({
 
       {report === null ? (
         <p className="mp-report__pending" data-mp-note="report-pending">
-          Analyzer output not available yet &#x2014; the report appears once
-          the scene-sync-test report has processed the recorded frames.
+          Analyzer output not available yet &#x2014; the report appears once the scene-sync-test
+          report has processed the recorded frames.
         </p>
       ) : (
         <>
@@ -94,25 +98,26 @@ export default function MpReportView({
               <span className="mp-report__card-value" data-mp-metric="converge-ms">
                 {report.convergeMedianMs !== null
                   ? `${Math.round(report.convergeMedianMs)}`
-                  : "\u{2014}"}
+                  : '\u{2014}'}
               </span>
               <span className="mp-report__card-unit">
-                ms{report.convergeP95Ms !== null
+                ms
+                {report.convergeP95Ms !== null
                   ? ` \u{B7} p95 ${Math.round(report.convergeP95Ms)} ms`
-                  : ""}
+                  : ''}
               </span>
             </div>
             <div className="mp-report__card">
               <span className="mp-report__card-label">Corrections</span>
               <span className="mp-report__card-value" data-mp-metric="corrections">
-                {report.corrections ?? "\u{2014}"}
+                {report.corrections ?? '\u{2014}'}
               </span>
               <span className="mp-report__card-unit">late-write rejections</span>
             </div>
             <div className="mp-report__card">
               <span className="mp-report__card-label">Join burst</span>
               <span className="mp-report__card-value" data-mp-metric="join-retries">
-                {report.joinRetriesMax ?? "\u{2014}"}
+                {report.joinRetriesMax ?? '\u{2014}'}
               </span>
               <span className="mp-report__card-unit">max REQ retries</span>
             </div>
@@ -122,7 +127,7 @@ export default function MpReportView({
                 {report.neverSynced.length}
               </span>
               <span className="mp-report__card-unit">
-                {report.neverSynced.length ? report.neverSynced.join(", ") : "clients"}
+                {report.neverSynced.length ? report.neverSynced.join(', ') : 'clients'}
               </span>
             </div>
           </div>
@@ -141,9 +146,7 @@ export default function MpReportView({
           )}
 
           <section className="mp-report__panel" aria-label="Divergence">
-            <div className="mp-report__label">
-              Divergence at 5 s checkpoints
-            </div>
+            <div className="mp-report__label">Divergence at 5 s checkpoints</div>
             <table className="mp-report__divergence" data-mp-divergence="">
               <thead>
                 <tr>
@@ -165,20 +168,17 @@ export default function MpReportView({
                   </tr>
                 ) : (
                   divergence.map((d, i) => (
-                    <tr
-                      key={i}
-                      className={d.closed === false ? "is-open" : undefined}
-                    >
+                    <tr key={i} className={d.closed === false ? 'is-open' : undefined}>
                       <td>
                         <span className="mp-report__entity">#{d.entity}</span>
                       </td>
                       <td>{d.component}</td>
-                      <td>{d.peers.join(", ") || "\u{2014}"}</td>
-                      <td className="mp-report__hash">{d.oracle ?? "\u{2014}"}</td>
-                      <td className="mp-report__hash">{d.beacon ?? "\u{2014}"}</td>
-                      <td className="mp-report__hash">{d.probe ?? "\u{2014}"}</td>
+                      <td>{d.peers.join(', ') || '\u{2014}'}</td>
+                      <td className="mp-report__hash">{d.oracle ?? '\u{2014}'}</td>
+                      <td className="mp-report__hash">{d.beacon ?? '\u{2014}'}</td>
+                      <td className="mp-report__hash">{d.probe ?? '\u{2014}'}</td>
                       <td>
-                        {d.closed === null ? "\u{2014}" : d.closed ? "closed" : "open at end"}
+                        {d.closed === null ? '\u{2014}' : d.closed ? 'closed' : 'open at end'}
                       </td>
                     </tr>
                   ))
@@ -186,10 +186,9 @@ export default function MpReportView({
               </tbody>
             </table>
             <p className="mp-report__footnote">
-              Oracle fold: LWW oracle over each peer&rsquo;s recorded frames.
-              Beacons: executed-scene hashes from scene-running peers. Runner
-              store: decoded REQ/RES probes &#x2014; grounds the runner&rsquo;s store
-              only.
+              Oracle fold: LWW oracle over each peer&rsquo;s recorded frames. Beacons:
+              executed-scene hashes from scene-running peers. Runner store: decoded REQ/RES probes
+              &#x2014; grounds the runner&rsquo;s store only.
             </p>
           </section>
 
@@ -199,11 +198,11 @@ export default function MpReportView({
               <table className="mp-report__checks" data-mp-checks="">
                 <tbody>
                   {verdict.checks.map((c) => (
-                    <tr key={c.name} className={c.pass ? undefined : "is-fail"}>
+                    <tr key={c.name} className={c.pass ? undefined : 'is-fail'}>
                       <td>{c.name}</td>
                       <td>{c.value}</td>
                       <td>vs {c.threshold}</td>
-                      <td>{c.pass ? "pass" : "fail"}</td>
+                      <td>{c.pass ? 'pass' : 'fail'}</td>
                     </tr>
                   ))}
                 </tbody>
@@ -220,7 +219,7 @@ export default function MpReportView({
                     <span className="mp-report__perf-client">{p.client}</span>
                     <Sparkline points={p.fps} />
                     <span className="mp-report__perf-last">
-                      {p.fps.length ? `${Math.round(p.fps[p.fps.length - 1] ?? 0)} fps` : ""}
+                      {p.fps.length ? `${Math.round(p.fps[p.fps.length - 1] ?? 0)} fps` : ''}
                     </span>
                   </div>
                 ))}
@@ -276,5 +275,5 @@ export default function MpReportView({
         </button>
       </footer>
     </section>
-  );
+  )
 }

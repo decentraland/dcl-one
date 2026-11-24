@@ -19,7 +19,7 @@ export async function loader({ request, context }: Route.LoaderArgs) {
   track(
     "creator_builder_redirect",
     { from: FROM, to: TO, query },
-    { sid, story: STORY },
+    { sid, story: STORY, requestUserAgent: request.headers.get("user-agent") },
   );
 
   // Behind the root middleware the cookie is set once on the response; on its own this sets it.

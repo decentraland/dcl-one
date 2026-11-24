@@ -409,7 +409,6 @@ export function ProfilePassport({
   // Someone you blocked stays "blocked" even if they blocked you too: UNBLOCK is still yours to use.
   const theyBlockedYou = blockedBy && relationship !== 'blocked'
   const [menuOpen, setMenuOpen] = useState(false)
-  const [panel, setPanel] = useState<HTMLDivElement | null>(null)
   // The options menu (⋯), as in the reference client: Block (unless already blocked) and Report.
   const options: ContextMenuItem[] = []
   const pick = (fn: (address: string) => void) => (): void => {
@@ -512,7 +511,7 @@ export function ProfilePassport({
     // The dimmed scrim + click-outside-to-close are owned by the popup layer (openPassport →
     // PopupHost); this is just the panel. stopPropagation keeps a click inside it (tabs, copy, links)
     // from reaching the scrim and closing the passport.
-    <div ref={setPanel} className={styles.panel} data-tab={tab} onClick={(e) => e.stopPropagation()}>
+    <div className={styles.panel} data-tab={tab} onClick={(e) => e.stopPropagation()}>
           {/* --- left: the avatar — the catalyst full-body snapshot,
                   falling back to the 2D face if the body render isn't available. --- */}
           <div className={styles.avatarCol} data-passport-avatar={tab === 'badges' && !editMode && selectedBadge != null ? undefined : ''}>
@@ -772,7 +771,6 @@ export function ProfilePassport({
                 address={profile.address}
                 isSelf={isSelf}
                 actions={photoActions}
-                viewerHost={panel}
                 empty={
                   <section className={`${styles.card} ${styles.cardFill}`}>
                     <div className={styles.emptyState}>
