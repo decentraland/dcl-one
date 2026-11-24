@@ -704,10 +704,10 @@ async fn a_month_old_window_listing_an_overwritten_entity_is_regenerated() {
 }
 
 /// A month-old window that lists an overwritten entity and is also marked outdated is
-/// rebuilt without the inactive-entities count, so it is labelled `is_outdated` (upstream
-/// counts it and says `inactive_entities`).
+/// labelled `inactive_entities`, as upstream's, which checks inactive entities before
+/// the outdated mark.
 #[tokio::test]
-async fn an_outdated_window_is_not_counted_for_inactive_entities() {
+async fn an_outdated_window_with_inactive_entities_is_labelled_inactive_entities() {
     let Some(db) = db::scratch_database().await else {
         return;
     };
@@ -720,8 +720,8 @@ async fn an_outdated_window_is_not_counted_for_inactive_entities() {
     let (first, _) = generator.generate(end).await.unwrap();
     assert_eq!(first[0].hash, golden[0].hash);
 
-    // As in `a_month_old_window_listing_an_overwritten_entity_is_regenerated`, which labels
-    // this window `inactive_entities`, plus the deleter repair's mark.
+    // As in `a_month_old_window_listing_an_overwritten_entity_is_regenerated`, plus the
+    // deleter repair's mark.
     let generated = sqlx::query_scalar::<_, chrono::NaiveDateTime>(
         "UPDATE content.snapshots SET generation_time = '2021-01-07 07:00', outdated = true
          WHERE init_timestamp = to_timestamp($1 / 1000.0) AT TIME ZONE 'UTC'
@@ -748,14 +748,11 @@ async fn an_outdated_window_is_not_counted_for_inactive_entities() {
     assert_eq!(
         generations(
             &recorder,
-            &[("interval_size", "year"), ("reason", "is_outdated")]
+            &[("interval_size", "year"), ("reason", "inactive_entities")]
         ),
         1.0
     );
-    assert_eq!(
-        generations(&recorder, &[("reason", "inactive_entities")]),
-        0.0
-    );
+    assert_eq!(generations(&recorder, &[("reason", "is_outdated")]), 0.0);
     let rebuilt = rows.iter().find(|r| r.time_range == year).unwrap();
     assert_eq!(rebuilt.number_of_entities, golden[0].entities - 1);
 
