@@ -8,6 +8,7 @@ The one exception is `ui/apps/<app>/`, which holds UI used by a single app
 | --- | --- | --- |
 | `dcl-auth/` | Hashes, signatures, auth chains, signed fetch, wallets | catalyst, scene CLI |
 | `dcl-http/` | API errors, capped bodies, JSON-RPC, outbound client | catalyst, dcl-auth |
+| `dcl-metrics/` | HTTP, WebSocket and service instrumentation, Prometheus exposition | Catalyst services, Pulse, message router |
 | `dcl-livekit-token/` | Offline LiveKit tokens | comms, SDK preview |
 | `dcl-scene-authoring/` | Composites, CRDT encoding | scene CLI, scene build |
 | `dcl-scene-build/` | SDK7 scene build, native and WASI | sites, scene CLI tests |

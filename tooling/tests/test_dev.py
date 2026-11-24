@@ -632,6 +632,7 @@ class DevTest(unittest.TestCase):
 
     def test_two_stacks_on_one_machine_do_not_share_the_metrics_exporter(self):
         env = dev.runtime_env(self.config)
+        self.assertEqual(env['INDEX_METRICS_BIND'], f"127.0.0.1:{self.config['port'] + 6}")
         self.assertEqual(env['SERVE_METRICS_BIND'], f"127.0.0.1:{self.config['port'] + 1}", "not the binary's default 5006")
         with socket.socket() as busy:
             busy.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
@@ -986,7 +987,8 @@ class DevTest(unittest.TestCase):
         self.assertNotIn('MEDIA_CONVERT_REMOTE_SOURCES', dev.runtime_env(self.config))
         self.assertEqual(env['PROFILE_IMAGES_ORIGIN_URL'], 'https://profile-images.decentraland.org')
         self.assertNotIn('PROFILE_IMAGES_ORIGIN_URL', offline)
-        self.assertEqual(env['EXPLORER_MAP_SOURCE_URL'], 'https://api.decentraland.org')
+        # The map grid is built from the node's own indexes, not copied from api.decentraland.org.
+        self.assertNotIn('EXPLORER_MAP_SOURCE_URL', env)
         self.assertEqual(env['PRICE_POLL_ENABLED'], 'true')
         self.assertNotIn('WORLD_MANIFEST_UPSTREAM_URL', env)
         self.assertNotIn('PULSE_ROOM_AUTHORITY_KEY', env)

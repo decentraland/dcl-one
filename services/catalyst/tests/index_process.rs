@@ -20,6 +20,7 @@ async fn index_process_restarts_without_binding_or_stopping_the_api_port() {
             .arg("index")
             .env_clear()
             .env("DATABASE_URL", &url)
+            .env("INDEX_METRICS_BIND", "127.0.0.1:0")
             .env("HTTP_SERVER_HOST", address.ip().to_string())
             .env("HTTP_SERVER_PORT", address.port().to_string())
             .env("PG_POOL_SIZE", "2")

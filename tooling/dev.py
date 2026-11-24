@@ -120,7 +120,7 @@ def ports_free(base, public_udp=()):
     # TCP (the API's metrics on base+1, NATS on base+8 and +9), then the UDP ports: Pulse's WebTransport
     # (the Sites port) and ENet ports, LiveKit's media; behind a public origin Pulse's two, on every interface.
     return bindable([*((socket.SOCK_STREAM, port, '127.0.0.1') for port in (
-                         base, base + 1, base + 2, base + 3, base + 4, base + 5, base + 7, base + 8, base + 9)),
+                         base, base + 1, base + 2, base + 3, base + 4, base + 5, base + 6, base + 7, base + 8, base + 9)),
                      *((socket.SOCK_DGRAM, port, '127.0.0.1') for port in (base + 2, base + 6, base + 7)),
                      *((socket.SOCK_DGRAM, port, '0.0.0.0') for port in public_udp)])
 
@@ -570,6 +570,7 @@ def runtime_env(config, refuse_exposed_relayer=True):
         'HTTP_SERVER_PORT': str(base), 'PUBLIC_URL': f'http://127.0.0.1:{base + 2}',
         # In the stack's block, not the binary's default 5006: a second stack on the machine (a testnet
         # worktree) would otherwise fail to start its API.
+        'INDEX_METRICS_BIND': f'127.0.0.1:{base + 6}',
         'SERVE_METRICS_BIND': f'127.0.0.1:{base + 1}',
         'PG_POOL_SIZE': '12', 'SERVE_UNSYNCED': 'true',
         # The stack's own livekit-server (the `livekit` task) and its generated pair.
@@ -675,6 +676,8 @@ def runtime_env(config, refuse_exposed_relayer=True):
             'PROFILE_IMAGES_ORIGIN_URL': 'https://profile-images.decentraland.org',
             # The Shop's catalogue: the marketplace mirrors and the NFT and LAND
             # indexes `catalyst posture show mirror` names, run by the index process.
+            # The map's tile grid (Places, the HUD's map, estate images) is built from
+            # the same LAND and NFT indexes and the trades mirror once they are published.
             'MARKETPLACE_MIRRORS_ENABLED': 'true',
             'TRADES_SYNC_UPSTREAM_URL': 'https://marketplace-api.decentraland.org/v1/trades',
             # The Shop's feeds wait for one complete trades pass; take it in one go rather than
@@ -699,11 +702,10 @@ def runtime_env(config, refuse_exposed_relayer=True):
             # Scene-template models (Qm... CIDs) live in the asset-packs bucket, which this
             # route redirects to; the builder pulls from it when the item bucket misses.
             'BUILDER_ASSET_PACKS_BUCKET_URL': 'https://builder-api.decentraland.org/v1/storage',
-            # Credit prices need a MANA spot; the map (Places, the HUD's map, estate images) its grid.
+            # Credit prices need a MANA spot.
             'PRICE_POLL_ENABLED': 'true', 'COINGECKO_URL': 'https://api.coingecko.com/api/v3',
             'PRICE_FALLBACK_SOURCES': 'coinbase=https://api.coinbase.com,binance=https://api.binance.com,'
                                       'kraken=https://api.kraken.com',
-            'EXPLORER_MAP_SOURCE_URL': 'https://api.decentraland.org',
             'RPC_ENDPOINT_POLYGON': 'https://rpc.decentraland.org/polygon?project=dcl-one-dev',
         })
     if config['profile'] == 'testnet':

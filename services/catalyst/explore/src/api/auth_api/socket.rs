@@ -21,6 +21,23 @@ use super::{
 use crate::jobs::{Jobs, PeriodicCfg};
 use crate::shared::cors::{decentraland_cors, is_decentraland_origin};
 
+const SESSIONS: dcl_metrics::CounterFamily<0> = dcl_metrics::CounterFamily::new(
+    "dcl_auth_socketio_sessions_total",
+    "Auth Socket.IO namespace sessions opened.",
+    None,
+    &[],
+);
+const EVENTS: dcl_metrics::CounterFamily<1> = dcl_metrics::CounterFamily::new(
+    "dcl_auth_socketio_events_total",
+    "Inbound auth Socket.IO events handled.",
+    None,
+    &["event"],
+);
+
+/// Socket.IO exposes namespace and application callbacks for both Engine.IO
+/// polling and WebSocket clients.
+pub const SOCKET_FAMILIES: &[dcl_metrics::Descriptor] = &[SESSIONS.descriptor, EVENTS.descriptor];
+
 const PATH: &str = "/auth-api/socket.io/";
 const PUSH_INTERVAL: Duration = Duration::from_millis(500);
 
@@ -194,12 +211,14 @@ fn bad_message(ack: AckSender) {
 }
 
 fn register(socket: SocketRef, state: AppState) {
+    SESSIONS.handle([]).increment(1);
     let create_state = state.clone();
     socket.on(
         "request",
         move |socket: SocketRef, TryData(body): TryData<CreateRequestBody>, ack: AckSender| {
             let state = create_state.clone();
             async move {
+                EVENTS.handle(["request"]).increment(1);
                 let Ok(body) = body else {
                     return bad_message(ack);
                 };
@@ -233,6 +252,7 @@ fn register(socket: SocketRef, state: AppState) {
         move |TryData(data): TryData<RequestId>, ack: AckSender| {
             let state = recover_state.clone();
             async move {
+                EVENTS.handle(["recover"]).increment(1);
                 let Ok(data) = data else {
                     return bad_message(ack);
                 };
@@ -251,6 +271,7 @@ fn register(socket: SocketRef, state: AppState) {
         move |TryData(data): TryData<RequestId>, ack: AckSender| {
             let state = validation_state.clone();
             async move {
+                EVENTS.handle(["request-validation-status"]).increment(1);
                 let Ok(data) = data else {
                     return bad_message(ack);
                 };
@@ -268,6 +289,7 @@ fn register(socket: SocketRef, state: AppState) {
         move |socket: SocketRef, TryData(data): TryData<SocketOutcome>, ack: AckSender| {
             let state = state.clone();
             async move {
+                EVENTS.handle(["outcome"]).increment(1);
                 let Ok(data) = data else {
                     return bad_message(ack);
                 };

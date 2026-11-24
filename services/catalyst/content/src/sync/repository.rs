@@ -168,6 +168,9 @@ impl LiveDeploymentRepository {
         .execute(&self.pool)
         .await
         .map_err(|e| SyncError::Storage(e.to_string()))?;
+        crate::metrics::SYNC_HEARTBEAT
+            .handle([])
+            .set(timestamp as f64 / 1000.);
         self.status.set_heartbeat_ms(timestamp);
         Ok(())
     }

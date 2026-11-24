@@ -13,10 +13,8 @@ set -euo pipefail
 root="$(cd "$(dirname "$0")/.." && pwd)"
 durations="$root/tooling/catalyst-test-durations.tsv"
 cd "$root/services/catalyst"
-receipts="$root/.cache/dev"
 logs="${CARGO_TARGET_DIR:-target}/test-logs"
-mkdir -p "$logs" "$receipts"
-rm -f "$receipts/stats-engine-receipt.log"
+mkdir -p "$logs"
 # Every failing binary adds one line here, so the last lines of a failed run name what failed. The
 # summary goes to stdout, the stream of the dumped logs, so it follows them.
 failures="$logs/failures"
@@ -152,8 +150,8 @@ run() {
 name=$(basename "$1")
 log="$2/$name.log"
 case "$name" in
-  node_*) RUST_TEST_THREADS="$4"; export RUST_TEST_THREADS ;;
-  sockets_*) RUST_TEST_THREADS="$5"; export RUST_TEST_THREADS ;;
+  node_*) RUST_TEST_THREADS="$3"; export RUST_TEST_THREADS ;;
+  sockets_*) RUST_TEST_THREADS="$4"; export RUST_TEST_THREADS ;;
 esac
 status=0
 "$1" > "$log" 2>&1 || status=$?
@@ -166,12 +164,7 @@ if [ "$status" -ne 0 ]; then
   echo "$line" >> "$2/failures"; exit 1
 fi
 sed -n "s|^test result|$name|p" "$log"
-case "$name" in
-  stats_metrics_engine-*)
-    sed -n "/^STATS_ENGINE_RECEIPT /p" "$log" > "$3/stats-engine-receipt.log" || exit 1
-    cat "$3/stats-engine-receipt.log" ;;
-esac
-' _ {} "$logs" "$receipts" "$group_threads" "$socket_threads"
+' _ {} "$logs" "$group_threads" "$socket_threads"
 }
 phase="running the test binaries"
 run "$jobs" < "$logs/others"

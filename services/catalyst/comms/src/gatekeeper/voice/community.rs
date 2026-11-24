@@ -1,4 +1,6 @@
 //! Community voice admission, status and speaker moderation.
+use crate::metrics::declarations;
+
 use super::*;
 
 #[derive(Debug, Deserialize)]
@@ -146,7 +148,8 @@ pub async fn community_voice_credentials_for(
 
 /// Upstream answers inactive when the store fails; the counter keeps the outage visible.
 fn status_read_failed(route: &'static str, error: &dyn std::fmt::Display) {
-    metrics::counter!("comms_community_voice_status_read_failures_total", "route" => route)
+    declarations::COMMUNITY_VOICE_STATUS_READ_FAILURES
+        .handle([route])
         .increment(1);
     tracing::error!(route, error = %error, "community voice status unreadable; answering inactive");
 }
