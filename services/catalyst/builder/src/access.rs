@@ -1449,6 +1449,527 @@ pub(crate) async fn confirm_item_change(
     })
 }
 
+/// `POST /v1/collections/:id/lock`: only the owner of a standard collection.
+pub async fn lock_collection(
+    state: &SharedState,
+    signer: &Signer,
+    raw: &str,
+) -> Result<CollectionLock, ApiError> {
+    let lock = CollectionLock {
+        id: parse(raw)?,
+        signer: signer.as_str().to_string(),
+        at: (state.now)(),
+    };
+    let (mut conn, view) = decision(state).await?;
+    confirm_collection_lock(&mut conn, &view, &lock).await?;
+    Ok(lock)
+}
+
+/// [`lock_collection`]'s decision again, inside the write's transaction.
+pub(crate) async fn confirm_collection_lock(
+    conn: &mut PgConnection,
+    view: &DecisionView,
+    lock: &CollectionLock,
+) -> Result<(), ApiError> {
+    let c = collection(conn, view, lock.id, None)
+        .await?
+        .ok_or_else(|| not_found(lock.id, COLLECTIONS))?;
+    if !c.owner(&lock.signer) {
+        return Err(unauthorized_user(&lock.signer, COLLECTIONS, lock.id));
+    }
+    Ok(())
+}
+
+/// `DELETE /v1/collections/:id` and `POST /v1/collections/:id/tos`: the
+/// collection's owner, its on-chain manager or its provider's manager.
+pub async fn manage_collection(
+    state: &SharedState,
+    signer: &Signer,
+    raw: &str,
+) -> Result<CollectionManage, ApiError> {
+    let id = parse(raw)?;
+    let manage = CollectionManage {
+        id,
+        signer: signer.as_str().to_string(),
+        at: (state.now)(),
+        registry: registry_for(state, Since::write(), &[id], &[]).await?,
+    };
+    let (mut conn, view) = decision(state).await?;
+    confirm_collection_manage(&mut conn, &view, &manage).await?;
+    Ok(manage)
+}
+
+/// The state of the collection a manage grant was confirmed for, which a
+/// delete's own rules read.
+#[derive(Debug, Default)]
+pub struct ManageState {
+    pub third_party: bool,
+    pub published: bool,
+    pub pending: bool,
+    pub locked: bool,
+    pub contract: Option<String>,
+    /// A standard collection's owner; none for a third-party one.
+    pub owner: Option<String>,
+}
+
+/// [`manage_collection`]'s decision again, inside the write's transaction.
+pub(crate) async fn confirm_collection_manage(
+    conn: &mut PgConnection,
+    view: &DecisionView,
+    manage: &CollectionManage,
+) -> Result<ManageState, ApiError> {
+    let c = collection(conn, view, manage.id, providers(&manage.registry))
+        .await?
+        .ok_or_else(|| not_found(manage.id, COLLECTIONS))?;
+    if !c.role(&manage.signer) {
+        return Err(unauthorized_user(&manage.signer, COLLECTIONS, manage.id));
+    }
+    let owner = (!c.third_party).then(|| c.creator.clone().unwrap_or(c.stored_owner.clone()));
+    Ok(ManageState {
+        third_party: c.third_party,
+        published: c.published,
+        pending: c.pending,
+        locked: c.locked(manage.at),
+        contract: c.contract,
+        owner,
+    })
+}
+
+/// May reply in the forum topic of a collection: a current committee
+/// member.
+#[derive(Debug)]
+pub struct ForumReply {
+    collection: Uuid,
+    member: String,
+}
+
+impl ForumReply {
+    pub fn collection(&self) -> Uuid {
+        self.collection
+    }
+    pub fn member(&self) -> &str {
+        &self.member
+    }
+}
+
+/// `POST /v1/collections/:id/curation/post`: a current committee member
+/// (401, or 503 while the committee can't be read), then the collection
+/// must exist (404).
+pub async fn reply_on_forum(
+    state: &SharedState,
+    signer: &Signer,
+    raw: &str,
+) -> Result<ForumReply, ApiError> {
+    let s = signer.as_str();
+    if !on_committee(state, Since::write(), s).await? {
+        return Err(
+            ApiError::unauthorized("Unauthorized").with_data(json!({ "id": raw, "ethAddress": s }))
+        );
+    }
+    let id = parse(raw)?;
+    let exists: bool =
+        sqlx::query_scalar("SELECT EXISTS (SELECT 1 FROM builder.collections WHERE id = $1)")
+            .bind(id)
+            .fetch_one(state.items.pool())
+            .await?;
+    if !exists {
+        return Err(ApiError::not_found("Collection not found").with_data(json!({ "id": id })));
+    }
+    Ok(ForumReply {
+        collection: id,
+        member: s.to_string(),
+    })
+}
+
+/// `POST /v1/collections/:id/publish` and `/owner/sync`: the collection's
+/// owner, its on-chain manager or a current committee member; a
+/// third-party collection's provider manager alone.
+pub async fn sync_collection(
+    state: &SharedState,
+    signer: &Signer,
+    raw: &str,
+) -> Result<CollectionSync, ApiError> {
+    let id = parse(raw)?;
+    let registry = registry_for(state, Since::write(), &[id], &[]).await?;
+    let (mut conn, view) = decision(state).await?;
+    let c = collection(&mut conn, &view, id, providers(&registry))
+        .await?
+        .ok_or_else(|| not_found(id, COLLECTIONS))?;
+    drop(conn);
+    let s = signer.as_str();
+    let committee = !c.role(s);
+    if committee && (c.third_party || !on_committee(state, Since::write(), s).await?) {
+        return Err(unauthorized_user(s, COLLECTIONS, id));
+    }
+    Ok(CollectionSync {
+        id,
+        signer: s.to_string(),
+        committee,
+        provider: c.provider,
+        registry,
+    })
+}
+
+/// The third-party side of [`sync_collection`]'s grant: the publish of a
+/// third-party collection; a standard collection's grant comes back.
+pub fn publish_third_party(sync: CollectionSync) -> Result<ThirdPartyPublish, CollectionSync> {
+    match (sync.provider, sync.registry) {
+        (Some(provider), Some(registry)) if !sync.committee => Ok(ThirdPartyPublish {
+            id: sync.id,
+            signer: sync.signer,
+            provider,
+            registry,
+        }),
+        (provider, registry) => Err(CollectionSync {
+            provider,
+            registry,
+            ..sync
+        }),
+    }
+}
+
+impl ThirdPartyPublish {
+    pub fn id(&self) -> Uuid {
+        self.id
+    }
+
+    pub fn signer(&self) -> &str {
+        &self.signer
+    }
+
+    pub fn provider(&self) -> &str {
+        &self.provider
+    }
+
+    pub fn registry(&self) -> &[Provider] {
+        &self.registry
+    }
+
+    /// The full read of the collection it publishes.
+    pub fn full_read(&self) -> CollectionRead {
+        CollectionRead {
+            id: self.id,
+            full: true,
+            programmatic: third_parties::provider(&self.registry, &self.provider)
+                .is_some_and(|p| p.is_programmatic),
+        }
+    }
+}
+
+/// [`publish_third_party`]'s decision again, inside the publish's
+/// transaction: the collection still of the provider, the signer still its
+/// manager.
+pub(crate) async fn confirm_third_party_publish(
+    conn: &mut PgConnection,
+    view: &DecisionView,
+    grant: &ThirdPartyPublish,
+) -> Result<(), ApiError> {
+    let c = collection(conn, view, grant.id, Some(&grant.registry)).await?;
+    if c.is_none_or(|c| {
+        c.provider.as_deref() != Some(grant.provider.as_str()) || !c.provider_manager(&grant.signer)
+    }) {
+        return Err(ApiError::unauthorized("Unauthorized to upsert collection")
+            .with_data(json!({ "id": grant.id, "eth_address": grant.signer })));
+    }
+    Ok(())
+}
+
+/// [`sync_collection`]'s decision again, inside the write's transaction: a
+/// role the rows decide, else a committee read that started after the
+/// decision.
+pub(crate) async fn confirm_collection_sync(
+    conn: &mut PgConnection,
+    view: &DecisionView,
+    state: &State,
+    sync: &CollectionSync,
+) -> Result<(), ApiError> {
+    let c = collection(conn, view, sync.id, providers(&sync.registry))
+        .await?
+        .ok_or_else(|| not_found(sync.id, COLLECTIONS))?;
+    if !c.role(&sync.signer)
+        && !(sync.committee && on_committee(state, Since::write(), &sync.signer).await?)
+    {
+        return Err(unauthorized_user(&sync.signer, COLLECTIONS, sync.id));
+    }
+    Ok(())
+}
+
+/// `builder-server`'s curation 404: no collection, or an item without one.
+fn curation_not_found(signer: &str) -> ApiError {
+    ApiError::not_found("Not found").with_data(json!({ "ethAddress": signer }))
+}
+
+/// `GET /v1/curations`: the committee reads every collection's curation
+/// (503 while the committee can't be read); anyone else the curations of the
+/// collections it holds a role on.
+pub async fn curation_scope(
+    state: &SharedState,
+    signer: &Signer,
+) -> Result<CurationScope, ApiError> {
+    if on_committee(state, Since::read(), signer.as_str()).await? {
+        return Ok(CurationScope::Every(OnCommittee {
+            member: signer.as_str().to_string(),
+        }));
+    }
+    Ok(CurationScope::Own(managing(state, signer).await?))
+}
+
+/// The curation routes of the collection `raw`: the collection must exist
+/// (404) and be published (409), then the signer must hold a role on it or
+/// be on the committee (401).
+/// A curation read decides on [`Since::read`], a write on [`Since::write`].
+pub async fn curate_collection(
+    state: &SharedState,
+    signer: &Signer,
+    raw: &str,
+    since: Since,
+) -> Result<Curator, ApiError> {
+    let id = parse(raw)?;
+    let registry = registry_for(state, since, &[id], &[]).await?;
+    let (mut conn, view) = decision(state).await?;
+    let c = collection(&mut conn, &view, id, providers(&registry))
+        .await?
+        .ok_or_else(|| curation_not_found(signer.as_str()))?;
+    drop(conn);
+    let role = c.role(signer.as_str());
+    admit(state, signer, &c, id, None, role, since).await
+}
+
+/// The curation routes of the item `raw`: its collection must exist (404)
+/// and be published (409), then the signer must hold a role on its
+/// collection or be on the committee (401).
+/// A curation read decides on [`Since::read`], a write on [`Since::write`].
+pub async fn curate_item(
+    state: &SharedState,
+    signer: &Signer,
+    raw: &str,
+    since: Since,
+) -> Result<Curator, ApiError> {
+    let id = parse(raw)?;
+    let registry = registry_for(state, since, &[], &[id]).await?;
+    let (mut conn, view) = decision(state).await?;
+    let not_found = || curation_not_found(signer.as_str());
+    let i = item(&mut conn, id).await?.ok_or_else(not_found)?;
+    let parent_id = i.collection.ok_or_else(not_found)?;
+    let c = parent(&mut conn, &view, parent_id, providers(&registry)).await?;
+    drop(conn);
+    let role = c.role(signer.as_str());
+    admit(state, signer, &c, parent_id, Some(id), role, since).await
+}
+
+/// `GET /v1/collections/:id/events`: the signer holds a role on the
+/// collection or is on the committee (503 while the committee can't be read
+/// for a signer without a role, whether or not the collection exists).
+/// While the registry can't be read nobody holds a role on a third-party
+/// collection. Anyone else gets the answer an absent collection gets.
+pub async fn read_review(
+    state: &SharedState,
+    signer: &Signer,
+    raw: &str,
+) -> Result<ReviewRead, ApiError> {
+    let id = parse(raw)?;
+    let registry = registry_for(state, Since::read(), &[id], &[])
+        .await
+        .ok()
+        .flatten();
+    let (mut conn, view) = decision(state).await?;
+    let c = collection(&mut conn, &view, id, providers(&registry)).await?;
+    drop(conn);
+    let s = signer.as_str();
+    if let Some(c) = &c
+        && c.role(s)
+    {
+        return Ok(ReviewRead {
+            id,
+            committee: known_committee(state, Since::read(), s).await,
+        });
+    }
+    if on_committee(state, Since::read(), s).await? && c.is_some() {
+        return Ok(ReviewRead {
+            id,
+            committee: true,
+        });
+    }
+    Err(not_found(id, COLLECTIONS))
+}
+
+/// `POST /v1/collections/:id/comments`: the collection must exist (404),
+/// then the signer must hold a role on it or be on the committee (401). A
+/// role holder writes as the committee only when the committee shows it on it.
+pub async fn review_member(
+    state: &SharedState,
+    signer: &Signer,
+    raw: &str,
+) -> Result<Curator, ApiError> {
+    let (id, c) = reviewed(state, raw).await?;
+    let s = signer.as_str();
+    let role = c.role(s);
+    let committee = if role {
+        known_committee(state, Since::write(), s).await
+    } else {
+        on_committee(state, Since::write(), s).await?
+    };
+    if !role && !committee {
+        return Err(
+            ApiError::unauthorized("Unauthorized").with_data(json!({ "id": id, "ethAddress": s }))
+        );
+    }
+    Ok(Curator {
+        collection: id,
+        item: None,
+        signer: s.to_string(),
+        committee,
+    })
+}
+
+/// `POST /v1/collections/:id/validations` and `.../curation/appeal`: the
+/// collection must exist (404), then the signer must hold a role on it
+/// (401); the committee gets nothing here.
+pub async fn review_creator(
+    state: &SharedState,
+    signer: &Signer,
+    raw: &str,
+) -> Result<Curator, ApiError> {
+    let (id, c) = reviewed(state, raw).await?;
+    let s = signer.as_str();
+    if !c.role(s) {
+        return Err(unauthorized_user(s, COLLECTIONS, id));
+    }
+    Ok(Curator {
+        collection: id,
+        item: None,
+        signer: s.to_string(),
+        committee: false,
+    })
+}
+
+async fn reviewed(state: &SharedState, raw: &str) -> Result<(Uuid, Collection), ApiError> {
+    let id = parse(raw)?;
+    let registry = registry_for(state, Since::write(), &[id], &[]).await?;
+    let (mut conn, view) = decision(state).await?;
+    let c = collection(&mut conn, &view, id, providers(&registry))
+        .await?
+        .ok_or_else(|| not_found(id, COLLECTIONS))?;
+    Ok((id, c))
+}
+
+async fn admit(
+    state: &SharedState,
+    signer: &Signer,
+    c: &Collection,
+    collection: Uuid,
+    item: Option<Uuid>,
+    role: bool,
+    since: Since,
+) -> Result<Curator, ApiError> {
+    let s = signer.as_str();
+    if !c.published {
+        return Err(ApiError::conflict("Unpublished collection")
+            .with_data(json!({ "id": collection, "ethAddress": s })));
+    }
+    let committee = !role && on_committee(state, since, s).await?;
+    if !role && !committee {
+        return Err(ApiError::unauthorized("Unauthorized")
+            .with_data(json!({ "id": item.unwrap_or(collection), "ethAddress": s })));
+    }
+    Ok(Curator {
+        collection,
+        item,
+        signer: s.to_string(),
+        committee,
+    })
+}
+
+/// `curator`, admitted as the committee when the signer is on it: for a
+/// write the transition table gives only the committee (503 while the
+/// committee can't be read).
+pub async fn as_committee(state: &SharedState, mut curator: Curator) -> Result<Curator, ApiError> {
+    if !curator.committee {
+        curator.committee = on_committee(state, Since::write(), &curator.signer).await?;
+    }
+    Ok(curator)
+}
+
+/// Whether `address` is on the current committee: who may be assigned a
+/// review (503 while the committee can't be read).
+pub async fn assignable(state: &State, address: &str) -> Result<bool, ApiError> {
+    on_committee(state, Since::write(), &address.to_ascii_lowercase()).await
+}
+
+/// May set the status of item curations of one published collection
+/// through the operator's item status routes: made only from an [`Admin`]
+/// proof; it grants no other role.
+#[derive(Debug)]
+pub struct Operator {
+    collection: Uuid,
+    actor: String,
+}
+
+impl Operator {
+    pub fn collection(&self) -> Uuid {
+        self.collection
+    }
+    /// Who acts, for the audit row.
+    pub fn actor(&self) -> &str {
+        &self.actor
+    }
+}
+
+/// The operator's item status routes over `collection`: it must exist (404)
+/// and be published (409).
+pub async fn operate(
+    state: &SharedState,
+    admin: &crate::auth::Admin,
+    collection: Uuid,
+) -> Result<Operator, ApiError> {
+    let (mut conn, view) = decision(state).await?;
+    operated(&mut conn, &view, collection).await?;
+    Ok(Operator {
+        collection,
+        actor: admin.actor().to_string(),
+    })
+}
+
+async fn operated(
+    conn: &mut PgConnection,
+    view: &DecisionView,
+    collection: Uuid,
+) -> Result<(), ApiError> {
+    let exists: bool =
+        sqlx::query_scalar("SELECT EXISTS (SELECT 1 FROM builder.collections WHERE id = $1)")
+            .bind(collection)
+            .fetch_one(&mut *conn)
+            .await?;
+    if !exists {
+        return Err(ApiError::not_found("Not found"));
+    }
+    if !chain_state::published(conn, view, collection).await? {
+        return Err(
+            ApiError::conflict("Unpublished collection").with_data(json!({ "id": collection }))
+        );
+    }
+    Ok(())
+}
+
+/// Whether the committee shows the signer on it, false when it
+/// can't tell: for a notice, never for a grant.
+pub async fn known_curator(state: &SharedState, curator: &Curator) -> bool {
+    curator.committee || known_committee(state, Since::read(), &curator.signer).await
+}
+
+/// The facts of the curated collection a write reads, decided again inside
+/// its transaction.
+#[derive(Debug)]
+pub struct CuratedState {
+    pub name: String,
+    /// The signer is the collection's creator: the chain's once the copy
+    /// holds it, the stored owner before.
+    pub creator: bool,
+    pub third_party: bool,
+    pub contract: Option<String>,
+    pub published: bool,
+}
+
 /// The node's own standard publication routes: the stored owner of a
 /// standard collection.
 pub async fn publisher(

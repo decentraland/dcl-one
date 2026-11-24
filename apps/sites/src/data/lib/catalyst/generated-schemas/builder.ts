@@ -2,6 +2,8 @@
 import { z } from "zod";
 
 import type { BulkItemStatusPatchOut } from "@catalyst-api/builder/BulkItemStatusPatchOut";
+import type { CollectionCurationOpened } from "@catalyst-api/builder/CollectionCurationOpened";
+import type { CollectionCurationOut } from "@catalyst-api/builder/CollectionCurationOut";
 import type { CollectionListingOut } from "@catalyst-api/builder/CollectionListingOut";
 import type { CollectionListingRowOut } from "@catalyst-api/builder/CollectionListingRowOut";
 import type { CollectionMetaOut } from "@catalyst-api/builder/CollectionMetaOut";
@@ -12,6 +14,8 @@ import type { CommitteeMemberOut } from "@catalyst-api/builder/CommitteeMemberOu
 import type { CurationCollectionsOut } from "@catalyst-api/builder/CurationCollectionsOut";
 import type { CurationStatus } from "@catalyst-api/builder/CurationStatus";
 import type { FullItemOut } from "@catalyst-api/builder/FullItemOut";
+import type { ItemCurationOpened } from "@catalyst-api/builder/ItemCurationOpened";
+import type { ItemCurationOut } from "@catalyst-api/builder/ItemCurationOut";
 import type { ItemsOut } from "@catalyst-api/builder/ItemsOut";
 import type { ItemsPageOut } from "@catalyst-api/builder/ItemsPageOut";
 import type { ItemStatusPatchOut } from "@catalyst-api/builder/ItemStatusPatchOut";
@@ -27,6 +31,27 @@ export const BulkItemStatusPatchOutSchema = z.object({
   requested: z.number(),
   status: z.string(),
   updated: z.number(),
+});
+
+export const CollectionCurationOpenedSchema = z.object({
+  id: z.string(),
+  status: z.string(),
+  created_at: z.string(),
+  updated_at: z.string(),
+  collection_id: z.string(),
+  assignee: z.string().optional(),
+});
+
+export const CollectionCurationOutSchema = z.object({
+  id: z.string(),
+  collection_id: z.string(),
+  status: z.string(),
+  created_at: z.string(),
+  updated_at: z.string(),
+  assignee: z.string().nullable(),
+  reviewed_by: z.string().nullable(),
+  rejection_reasons: z.array(z.string()).nullable(),
+  rejection_message: z.string().nullable(),
 });
 
 export const CollectionListingOutSchema = z.object({
@@ -177,6 +202,26 @@ export const FullItemOutSchema = z.object({
   isMappingComplete: z.boolean().optional(),
 });
 
+export const ItemCurationOpenedSchema = z.object({
+  id: z.string(),
+  status: z.string(),
+  created_at: z.string(),
+  updated_at: z.string(),
+  item_id: z.string(),
+  content_hash: z.string(),
+  is_mapping_complete: z.boolean(),
+});
+
+export const ItemCurationOutSchema = z.object({
+  id: z.string(),
+  item_id: z.string(),
+  status: z.string(),
+  created_at: z.string(),
+  updated_at: z.string(),
+  content_hash: z.string(),
+  is_mapping_complete: z.boolean().nullable(),
+});
+
 export const ItemStatusPatchOutSchema = z.object({
   collection_id: z.string(),
   id: z.string(),
@@ -233,6 +278,8 @@ type Mutual<A, B> = AssignableTo<A, B> extends true ? AssignableTo<B, A> : false
 type Assert<T extends true> = T;
 
 export type _AssertBulkItemStatusPatchOut = Assert<Mutual<BulkItemStatusPatchOut, z.infer<typeof BulkItemStatusPatchOutSchema>>>;
+export type _AssertCollectionCurationOpened = Assert<Mutual<CollectionCurationOpened, z.infer<typeof CollectionCurationOpenedSchema>>>;
+export type _AssertCollectionCurationOut = Assert<Mutual<CollectionCurationOut, z.infer<typeof CollectionCurationOutSchema>>>;
 export type _AssertCollectionListingOut = Assert<Mutual<CollectionListingOut, z.infer<typeof CollectionListingOutSchema>>>;
 export type _AssertCollectionListingRowOut = Assert<Mutual<CollectionListingRowOut, z.infer<typeof CollectionListingRowOutSchema>>>;
 export type _AssertCollectionMetaOut = Assert<Mutual<CollectionMetaOut, z.infer<typeof CollectionMetaOutSchema>>>;
@@ -243,6 +290,8 @@ export type _AssertCommitteeMemberOut = Assert<Mutual<CommitteeMemberOut, z.infe
 export type _AssertCurationCollectionsOut = Assert<Mutual<CurationCollectionsOut, z.infer<typeof CurationCollectionsOutSchema>>>;
 export type _AssertCurationStatus = Assert<Mutual<CurationStatus, z.infer<typeof CurationStatusSchema>>>;
 export type _AssertFullItemOut = Assert<Mutual<FullItemOut, z.infer<typeof FullItemOutSchema>>>;
+export type _AssertItemCurationOpened = Assert<Mutual<ItemCurationOpened, z.infer<typeof ItemCurationOpenedSchema>>>;
+export type _AssertItemCurationOut = Assert<Mutual<ItemCurationOut, z.infer<typeof ItemCurationOutSchema>>>;
 export type _AssertItemsOut = Assert<Mutual<ItemsOut, z.infer<typeof ItemsOutSchema>>>;
 export type _AssertItemsPageOut = Assert<Mutual<ItemsPageOut, z.infer<typeof ItemsPageOutSchema>>>;
 export type _AssertItemStatusPatchOut = Assert<Mutual<ItemStatusPatchOut, z.infer<typeof ItemStatusPatchOutSchema>>>;

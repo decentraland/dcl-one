@@ -93,7 +93,12 @@ impl Committee {
 }
 
 #[cfg(test)]
-impl Committee {}
+impl Committee {
+    /// Ages the kept read past every read-only decision's window.
+    pub(crate) fn outdate(&self) {
+        self.kept.backdate(crate::kept::READ_WINDOW);
+    }
+}
 
 fn contains(members: &[Member], address: &str) -> bool {
     members

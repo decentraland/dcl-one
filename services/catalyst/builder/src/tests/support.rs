@@ -599,6 +599,18 @@ impl FakeRegistry {
         }
     }
 
+    /// Holds the receipt `id`: the registry consumed that cheque.
+    pub fn consume(&self, id: &str) {
+        self.receipts.lock().unwrap().insert(id.to_string());
+    }
+
+    /// Answers a query of receipts with a GraphQL error (`true`) while the
+    /// providers still answer.
+    pub fn fail_receipts(&self, down: bool) {
+        self.receipts_down
+            .store(down, std::sync::atomic::Ordering::SeqCst);
+    }
+
     async fn answer(
         axum::extract::State(fake): axum::extract::State<Self>,
         axum::Json(body): axum::Json<serde_json::Value>,
@@ -761,6 +773,20 @@ impl FakeOracle {
         self.asked.lock().unwrap().clone()
     }
 
+    /// A collection contract at `contract` holding `items` items: its code
+    /// answers `eth_getCode` and its `itemsCount()` answers `items`.
+    pub fn deploy(&self, contract: &str, items: u64) {
+        self.deployed
+            .lock()
+            .unwrap()
+            .insert(contract.to_ascii_lowercase(), items);
+    }
+
+    /// Every request answers HTTP 502 while `down`.
+    pub fn set_down(&self, down: bool) {
+        self.down.store(down, std::sync::atomic::Ordering::SeqCst);
+    }
+
     /// The fake of `network`'s chain, its chain id and oracle.
     pub fn on(mut self, network: crate::network::Network) -> Self {
         self.network = network;
@@ -771,6 +797,11 @@ impl FakeOracle {
     pub fn set_other_chain(&self, other: bool) {
         self.other_chain
             .store(other, std::sync::atomic::Ordering::SeqCst);
+    }
+
+    /// How many `eth_getCode` reads the fake answered.
+    pub fn code_reads(&self) -> usize {
+        self.code_reads.load(std::sync::atomic::Ordering::SeqCst)
     }
 
     async fn answer(

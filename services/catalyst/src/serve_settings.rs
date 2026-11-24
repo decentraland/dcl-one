@@ -227,6 +227,32 @@ mod tests {
     use crate::config::Config;
 
     #[test]
+    fn a_node_running_socials_slack_bot_starts_with_the_curation_notices_off_until_their_channel_is_set()
+     {
+        let settings = |extra: &[(&'static str, &'static str)]| {
+            let mut vars = vec![("DATABASE_URL", "postgres:///catalyst")];
+            vars.extend_from_slice(extra);
+            builder_settings(&Config::parse_env_for_tests(vars).unwrap())
+        };
+        let social_only = settings(&[("SLACK_BOT_TOKEN", "xoxb-example")]).unwrap();
+        assert!(social_only.slack.is_none());
+        let both = settings(&[
+            ("SLACK_BOT_TOKEN", "xoxb-example"),
+            ("SLACK_CURATION_CHANNEL", "curation"),
+        ])
+        .unwrap();
+        assert_eq!(
+            both.slack.map(|slack| slack.channel).as_deref(),
+            Some("curation")
+        );
+        let err = format!(
+            "{:#}",
+            settings(&[("SLACK_CURATION_CHANNEL", "curation")]).unwrap_err()
+        );
+        assert!(err.contains("SLACK_BOT_TOKEN"), "{err}");
+    }
+
+    #[test]
     fn the_builder_works_on_the_polygon_chain_eth_network_pairs() {
         let settings = |extra: &[(&'static str, &'static str)]| {
             let mut vars = vec![("DATABASE_URL", "postgres:///catalyst")];
