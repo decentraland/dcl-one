@@ -226,6 +226,11 @@ tag (name, badges, distance, opacity, scale) and `/nametag_bubble` shows a test 
       the avatar on its podium, with nothing of the lobby stage or the world in between and nothing
       of the preview outside the modal; closing hands the live stage back. Jump In loads the world
       (the hold is released) and a failed trip returns to the lobby.
+- [ ] **Minimap Camera style** (`bridge-scene/src/domains/minimap.tsx`, map region): picking Camera in
+      Minimap settings, expanding the minimap in that style and entering a World each show the map
+      square black until the engine reports `minimapReady`, then the top-down view, with nothing of
+      the player's own view in the square in between. Switching back to Satellite or Parcel atlas
+      shows the tiles at once.
 - [ ] **Lobby page** (`features/lobby`): the widgets sit on the four corner grids as the stored layout
       says; edit mode (the pencil) frames them, drags them with the others making room, lists the
       ones off the grids in Customize Lobby, and Save keeps the layout across a reload while Cancel,
@@ -244,6 +249,12 @@ tag (name, badges, distance, opacity, scale) and `/nametag_bubble` shows a test 
       out only once the engine reports `signinStageReady`, and comes back at once on Back. Picking a
       look or body type changes the avatar in place. Check a 16:9 window and a much wider or taller one.
       Mock has no engine, so the page's background stays.
+- [ ] **Full-screen view entrance** (`features/menu/MainMenuShell`): opening Map, Backpack or any other
+      menu page from the world darkens the world to black, then reveals the page, in 0.2 s; the
+      Backpack's engine-drawn avatar appears only after the black frame. Switching between menu pages
+      plays no black frame, nor does a first open of Create from another page when its code loads
+      within 0.2 s; a menu closed and reopened within 0.2 s appears with no entrance. With reduced motion
+      on, the page fades in without it.
 
 ---
 
