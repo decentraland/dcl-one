@@ -75,8 +75,8 @@ pub struct MarketUpstreamsConfig {
 
     /// Take this node's extended filters on `/lambdas/collections/wearables`
     /// (`collectionType`, `category`, `rarity`, `name`, `orderBy`,
-    /// `direction`). lamb2 ignores them, so the mirror posture turns it off.
-    #[arg(long, env = "LAMBDAS_CATALOG_EXTENSIONS_ENABLED", default_value_t = true, action = clap::ArgAction::Set)]
+    /// `direction`). Off by default to match lamb2.
+    #[arg(long, env = "LAMBDAS_CATALOG_EXTENSIONS_ENABLED", default_value_t = false, action = clap::ArgAction::Set)]
     pub lambdas_catalog_extensions_enabled: bool,
 }
 
@@ -161,8 +161,12 @@ pub struct MarketplaceConfig {
     #[arg(long, env = "MARKETPLACE_COMMITTEE_INDEX_ENABLED", default_value_t = false, action = clap::ArgAction::Set)]
     pub marketplace_committee_index_enabled: bool,
 
+    /// Walk the Polygon Third Party Registry for approved providers and publishing slots.
+    #[arg(long, env = "MARKETPLACE_THIRD_PARTY_REGISTRY_INDEX_ENABLED", default_value_t = false, action = clap::ArgAction::Set)]
+    pub marketplace_third_party_registry_index_enabled: bool,
+
     /// Pause between the end of one pass and the start of the next, for the nft, trade-events,
-    /// MANA transfers, sales, committee and rentals walks (30 under the mirror posture).
+    /// MANA transfers, sales, committee, third-party registry and rentals walks (30 under mirror).
     #[arg(long, env = "MARKETPLACE_INDEX_INTERVAL_SECS", default_value_t = 5)]
     pub marketplace_index_interval_secs: u64,
 
@@ -217,11 +221,20 @@ pub struct MarketplaceConfig {
     #[arg(long, env = "MARKETPLACE_INDEX_CHAIN_ID_MATIC", default_value_t = 137)]
     pub marketplace_index_chain_id_matic: i64,
 
-    /// `rpc` (default) or `shadow`: in shadow, each window the RPC walk
-    /// accepts is also read from the portal (`CHAIN_LOGS_PORTAL_URL`) in the
-    /// background and compared; the walk still reads and commits RPC data only.
-    #[arg(long, env = "CHAIN_LOGS_SOURCE", default_value = "rpc", value_parser = ["rpc", "shadow"])]
+    /// `rpc` (default), `shadow` or `portal`. In shadow, each window the RPC
+    /// walk accepts is also read from the portal (`CHAIN_LOGS_PORTAL_URL`) in
+    /// the background and compared; the walk still reads and commits RPC data
+    /// only. In portal, the logs of the windows and addresses chain-lake's
+    /// coverage answer admits are read from the portal, and everything else
+    /// (the other logs, headers, heads) from the RPC.
+    #[arg(long, env = "CHAIN_LOGS_SOURCE", default_value = "rpc", value_parser = ["rpc", "shadow", "portal"])]
     pub chain_logs_source: String,
+
+    /// In portal mode, how long one window's coverage read and portal pages
+    /// (limiter waits included) may take before it is read from the RPC
+    /// (1 to 600).
+    #[arg(long, env = "CHAIN_LOGS_PORTAL_DEADLINE_SECS", default_value_t = 20)]
+    pub chain_logs_portal_deadline_secs: u64,
 
     /// The origin of a portal speaking the SQD portal protocol (the SQD
     /// portal, or chain-lake's): https, or http on loopback; no path.
@@ -745,7 +758,8 @@ mod tests {
             !c.marketplace.marketplace_nft_index_enabled
                 && !c.marketplace.marketplace_trade_events_index_enabled
                 && !c.marketplace.marketplace_sales_index_enabled
-                && !c.marketplace.marketplace_committee_index_enabled,
+                && !c.marketplace.marketplace_committee_index_enabled
+                && !c.marketplace.marketplace_third_party_registry_index_enabled,
             "the chain indexes are opt-in"
         );
         assert_eq!(

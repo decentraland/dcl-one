@@ -3,17 +3,24 @@ import { dehydrate, HydrationBoundary, QueryClient } from "@tanstack/react-query
 import { useNavigate, useSearchParams, useRouteLoaderData } from "react-router";
 
 import SitesLayout from "@/features/components/chrome/SitesLayout";
-import { ExploreBand, type ExploreBandLabels } from "@dcl/one-ui/apps/sites/places/ExploreBand";
-import { JumpInModal } from "@dcl/one-ui/apps/sites/places/JumpInModal";
-import { LiveNow } from "@dcl/one-ui/apps/sites/places/LiveNow";
-import { LoadMore, PlaceGrid, PlacesMessage } from "@dcl/one-ui/apps/sites/places/PlaceGrid";
-import { PlacesPage } from "@dcl/one-ui/apps/sites/places/PlacesPage";
+import {
+  ExploreBand,
+  type ExploreBandLabels,
+  JumpInModal,
+  PlacesLiveNow as LiveNow,
+  PlacesLoadMore as LoadMore,
+  PlaceGrid,
+  PlacesMessage,
+  PlacesPage,
+  type PlaceCardData,
+  type PlaceCardLabels,
+} from "@dcl/one-ui";
 import { remoteFlag, remoteFlagsPrimed, remoteFlagVariant } from "@dcl/one-ui/apps/shop/remote-flags";
 import { remoteFlagOn, remoteFlagVariantIn } from "@shop/discovery/lib/rolloutFlags";
-import type { PlaceCardData, PlaceCardLabels } from "@dcl/one-ui/apps/sites/places/cards/types";
 
 import { QUERY_CLIENT_CONFIG } from "@/core/lib/query/defaults";
 import { sidLoader } from "@/core/lib/telemetry/page-loader";
+import { usePageView } from "@/core/lib/telemetry/page-view";
 import type { StoryId } from "@/core/lib/telemetry/story-id";
 import { track } from "@/core/lib/telemetry/track";
 import type { AgentMarkdownHandle } from "@/data/lib/agent/markdown";
@@ -35,6 +42,7 @@ import { dappsFlagsAnswer, isUnread } from "@/data/lib/feature-flags.server";
 import { openSignIn } from "@/features/components/auth/signin-store";
 import { detectPlatform, type DetectedPlatform } from "@/features/download/options";
 import { modalPlace, placeCard, placeJumpIn, type CreatorProfiles } from "@/features/places/cards";
+import { PLACES_PAGE_VIEW } from "@/features/places/page-view";
 import { useBrowsePlaces, useLiveRail, useMemberPlaces, usePlaceCreators } from "@/features/places/hooks";
 
 import { PLACES_SECTION, destinationMeta, sectionCard } from "../lib/destination-meta";
@@ -267,6 +275,8 @@ function PlacesExplorer({ loaderSid, loaderPlatform, unavailable, liveMinUsers }
   const sectionCards = toCards(sectionRows, profiles);
 
   const [modal, setModal] = useState<{ place: Destination; card: PlaceCardData } | null>(null);
+
+  usePageView(PLACES_PAGE_VIEW);
 
   // Analytics: one list view per filter set, as the previous page reported it.
   const viewed = useRef<string | null>(null);

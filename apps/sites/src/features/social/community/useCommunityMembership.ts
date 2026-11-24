@@ -1,6 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useRef, useState } from "react";
-import { useNavigate, useSearchParams } from "react-router";
+import { useLocation, useNavigate, useSearchParams } from "react-router";
 
 import type { AuthIdentity } from "@/data/lib/auth/types";
 import {
@@ -142,6 +142,7 @@ function usePendingAction(
   perform: (action: CommunityAction) => void,
 ) {
   const [params] = useSearchParams();
+  const { state: entryState } = useLocation();
   const navigate = useNavigate();
   const done = useRef(false);
   const raw = params.get(ACTION_PARAM);
@@ -155,7 +156,11 @@ function usePendingAction(
       next.delete(ACTION_PARAM);
       next.delete(NONCE_PARAM);
       const query = next.toString();
-      void navigate({ search: query ? `?${query}` : "" }, { replace: true, preventScrollReset: true });
+      // The entry keeps its state, such as the mark of an event detail opened meanwhile.
+      void navigate(
+        { search: query ? `?${query}` : "" },
+        { replace: true, preventScrollReset: true, state: entryState },
+      );
     };
     if (!action) return drop();
     if (state.kind === "signed-out" || state.kind === "loading" || busy) return;
@@ -164,5 +169,5 @@ function usePendingAction(
     if (started && action === "join" && state.kind === "join") perform("join");
     if (started && action === "requestToJoin" && state.kind === "request") perform("requestToJoin");
     drop();
-  }, [communityId, raw, nonce, action, state.kind, busy, params, navigate, perform]);
+  }, [communityId, raw, nonce, action, state.kind, busy, params, entryState, navigate, perform]);
 }

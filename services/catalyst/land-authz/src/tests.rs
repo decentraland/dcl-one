@@ -2539,7 +2539,7 @@ async fn the_indexer_catches_up_under_a_budget_resumes_after_a_kill_and_publishe
         Verdict::Denied
     );
 
-    // The freshness window: a stopped indexer falls back after 30 minutes,
+    // The freshness window: the deploy reader falls back after 30 minutes,
     // and a pass with nothing new re-publishes.
     sqlx::query("UPDATE land_authz.index_cursor SET folded_at = folded_at - interval '31 minutes'")
         .execute(&db.pool)
@@ -4534,6 +4534,18 @@ async fn published_history_survives_unrelated_ingest_and_revokes_pending_subject
     db.drop().await;
 }
 
+#[test]
+fn land_index_retry_waits_fit_inside_the_public_fold_window() {
+    let schedule = index_schedule(Duration::from_secs(240));
+    let after_two_failures =
+        schedule.interval + schedule.wait_after_failure(1) + schedule.wait_after_failure(2);
+    assert_eq!(
+        LAMBDAS_FOLD_WINDOW.to_std().unwrap() - after_two_failures,
+        Duration::from_secs(60)
+    );
+    assert_eq!(schedule.wait_after_failure(10), Duration::from_secs(150));
+}
+
 #[tokio::test]
 async fn readiness_and_status_use_database_freshness_boundaries() {
     let Some(db) = ScratchDb::create().await else {
@@ -4547,6 +4559,7 @@ async fn readiness_and_status_use_database_freshness_boundaries() {
             .await
             .is_some()
     );
+    seed_rights(&db.pool).await;
     let state = state_over(db.pool.clone(), settings, None);
     assert!(state.ready().await.is_some());
     let app = router(state.clone());
@@ -4572,19 +4585,138 @@ async fn readiness_and_status_use_database_freshness_boundaries() {
     let (_, _, body) = get_json(&app, "/lambdas/land-authz/status").await;
     assert_eq!(body["ready"], false);
     assert!(body["cursor"]["foldAgeSecs"].as_i64().unwrap() < 0);
-    for (minutes, expected) in [(29, true), (31, false)] {
+    for (minutes, expected) in [(9, true), (11, false), (31, false)] {
         sqlx::query("UPDATE land_authz.index_cursor SET folded_at=timezone('UTC',now())-make_interval(mins=>$1)").bind(minutes).execute(&db.pool).await.unwrap();
         assert_eq!(
             indexer::ready_cursor(&db.pool, NETWORK_MAINNET, LAND, ESTATE)
                 .await
                 .is_some(),
-            expected
+            minutes < 30
         );
-        assert_eq!(state.ready().await.is_some(), expected);
+        assert_eq!(state.ready().await.is_some(), minutes < 30);
         let (_, _, body) = get_json(&app, "/lambdas/land-authz/status").await;
         assert_eq!(body["ready"], expected);
+        assert_eq!(body["readyWindowSecs"], 600);
         assert!(body["cursor"]["foldAgeSecs"].as_i64().unwrap() >= minutes as i64 * 60);
+        let (status, _, _) = get_json(&app, "/lambdas/parcels/1/2/operators").await;
+        assert_eq!(
+            status,
+            if expected {
+                StatusCode::NOT_FOUND
+            } else {
+                StatusCode::SERVICE_UNAVAILABLE
+            }
+        );
     }
+    sqlx::query("UPDATE land_authz.index_cursor SET folded_at = timezone('UTC',now()) - interval '11 minutes'")
+        .execute(&db.pool).await.unwrap();
+    let actor = DANA;
+    let decision = can_deploy(&state, (1, 1), actor).await.unwrap();
+    assert_eq!(
+        decision.verdict,
+        Verdict::Granted(LandRightLeg::UpdateManager)
+    );
+    let (status, headers, body) = post_json(
+        &app,
+        &format!("/lambdas/users/{actor}/parcels/permissions"),
+        json!({ "parcels": ["1,1"] }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(headers[crate::routes::SOURCE_HEADER], "land-authz-index");
+    assert_eq!(body["elements"][0]["permissions"]["updateManager"], true);
+    db.drop().await;
+}
+
+#[tokio::test]
+async fn public_land_routes_use_the_land_subgraph_only_after_the_fold_expires() {
+    let Some(db) = ScratchDb::create().await else {
+        return;
+    };
+    let settings = Settings::for_tests();
+    indexer::ensure_cursor(&db.pool, &settings).await.unwrap();
+    sqlx::query(
+        "UPDATE land_authz.index_cursor SET last_block=100, folded_block=100, folded_at=timezone('UTC',now())",
+    )
+    .execute(&db.pool)
+    .await
+    .unwrap();
+    seed_rights(&db.pool).await;
+
+    async fn graphql(axum::Json(request): axum::Json<Value>) -> axum::Json<Value> {
+        let query = request["query"].as_str().unwrap();
+        let variables = &request["variables"];
+        let data = if query.contains("fetchOperatorsOfParcel") {
+            assert_eq!(variables, &json!({ "x": 1, "y": 1 }));
+            json!({
+                "estates": [],
+                "parcels": [{ "owner": { "address": ALICE }, "updateOperator": DANA }]
+            })
+        } else if query.contains("fetchAuthorizations") {
+            assert_eq!(variables["address"], ALICE);
+            json!({ "authorizations": [] })
+        } else {
+            assert!(query.contains("fetchParcelsByUpdateOperator"));
+            assert_eq!(variables["updateOperator"], DANA);
+            json!({ "parcels": [{
+                "id": "0x1", "x": "1", "y": "1", "owner": { "id": ALICE }, "updateOperator": DANA
+            }] })
+        };
+        axum::Json(json!({ "data": data }))
+    }
+
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let url = format!("http://{}/", listener.local_addr().unwrap());
+    let server = tokio::spawn(async move {
+        axum::serve(listener, Router::new().route("/", post(graphql)))
+            .await
+            .unwrap();
+    });
+    let market = Arc::new(crate::chain_index::ChainIndex::new(
+        crate::http::Outbound::for_tests(),
+        crate::chain_index::IndexSettings {
+            land_subgraph_url: Some(url),
+            ..crate::chain_index::IndexSettings::for_tests()
+        },
+    ));
+    market.allow_loopback_for_tests();
+    let app = router(state_over(db.pool.clone(), settings, Some(market)));
+    let operators = "/lambdas/parcels/1/1/operators";
+    let permissions = format!("/lambdas/users/{ALICE}/parcels/1/1/permissions");
+    let lands = format!("/lambdas/users/{DANA}/lands-permissions");
+
+    let (status, _, body) = get_json(&app, operators).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["owner"], BOB);
+    let (status, headers, body) = get_json(&app, &permissions).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(headers[SOURCE_HEADER], "land-authz-index");
+    assert_eq!(body["owner"], false);
+    let (status, _, body) = get_json(&app, &lands).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["elements"][0]["x"], "3");
+
+    sqlx::query(
+        "UPDATE land_authz.index_cursor SET folded_at=timezone('UTC',now())-interval '11 minutes'",
+    )
+    .execute(&db.pool)
+    .await
+    .unwrap();
+
+    let (status, _, body) = get_json(&app, operators).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["owner"], ALICE);
+    assert_eq!(body["updateOperator"], DANA);
+    let (status, headers, body) = get_json(&app, &permissions).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(headers[SOURCE_HEADER], "land-subgraph");
+    assert_eq!(body["owner"], true);
+    let (status, _, body) = get_json(&app, &lands).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["totalAmount"], 1);
+    assert_eq!(body["elements"][0]["id"], "0x1");
+
+    server.abort();
     db.drop().await;
 }
 

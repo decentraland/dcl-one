@@ -60,6 +60,7 @@ import { SetScaleAction } from './SetScaleAction';
 import { RandomAction } from './RandomAction';
 import { BatchAction } from './BatchAction';
 import { getDefaultPayload, getPartialPayload, isStates } from './utils';
+import { trackActionTypeSelected } from './analytics';
 import { LightsModifyAction } from './LightsModifyAction';
 import { ChangeCameraAction } from './ChangeCameraAction';
 import { ChangeTextAction } from './ChangeTextAction';
@@ -650,6 +651,11 @@ export default withSdk<Props>(({ sdk, entity: entityId, initialOpen = true }) =>
   const handleChangeType = useCallback(
     ({ target: { value } }: React.ChangeEvent<HTMLSelectElement>, idx: number) => {
       const scriptAction = scriptActions.find(sa => sa.actionType === value);
+      trackActionTypeSelected(
+        actions[idx].type,
+        scriptAction ? ActionType.CALL_SCRIPT_METHOD : value,
+        GltfContainer.getOrNull(entityId)?.src,
+      );
       if (scriptAction) {
         const defaultParams: Record<string, any> = {};
         for (const [name, param] of Object.entries(scriptAction.action.params)) {
@@ -673,7 +679,7 @@ export default withSdk<Props>(({ sdk, entity: entityId, initialOpen = true }) =>
         jsonPayload: getDefaultPayload(value),
       });
     },
-    [actions, handleModifyAction, scriptActions],
+    [actions, handleModifyAction, scriptActions, entityId],
   );
 
   const handleChangeName = useCallback(

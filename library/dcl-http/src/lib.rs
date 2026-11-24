@@ -20,7 +20,7 @@ pub mod api_error;
 mod body;
 pub mod jsonrpc;
 
-pub use body::read_body_capped;
+pub use body::{TransferRateGuard, read_body_capped, read_peer_body_capped};
 
 pub const USER_AGENT: &str = concat!("catalyst/", env!("CARGO_PKG_VERSION"));
 

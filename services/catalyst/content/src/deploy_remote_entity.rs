@@ -7,7 +7,7 @@ use std::collections::{HashMap, HashSet};
 use std::io::Write;
 use std::sync::{Arc, OnceLock};
 
-use crate::http::CheckedRedirectClient;
+use crate::http::{CheckedRedirectClient, TransferRateGuard};
 use futures::StreamExt;
 use tokio::sync::{OwnedSemaphorePermit, Semaphore};
 use tracing::{debug, warn};
@@ -162,7 +162,12 @@ pub(crate) async fn stream_body<S: DecodedSink>(
     };
     let mut run: Vec<u8> = Vec::new();
     let mut stream = resp.bytes_stream();
-    while let Some(chunk) = stream.next().await {
+    let mut rate = TransferRateGuard::default();
+    loop {
+        let read_started = tokio::time::Instant::now();
+        let Some(chunk) = stream.next().await else {
+            break;
+        };
         // A body error names the URL, which is stripped as `SendError` strips it from a
         // transport error.
         let chunk = chunk.map_err(|e| e.without_url().to_string())?;
@@ -170,6 +175,8 @@ pub(crate) async fn stream_body<S: DecodedSink>(
         if stats.wire_len > cap as u64 {
             return Err(format!("response body exceeds the {cap} byte cap"));
         }
+        rate.check(chunk.len() as u64, read_started.elapsed())
+            .map_err(|e| e.to_string())?;
         for piece in chunk.chunks(decoder.input_step()) {
             // `run` holds decoded bytes not yet counted in `decoded_len`.
             let left = (cap as u64).saturating_sub(stats.decoded_len) as usize;
@@ -388,28 +395,43 @@ fn eviction_locks() -> &'static parking_lot::Mutex<HashMap<String, Arc<tokio::sy
     LOCKS.get_or_init(Default::default)
 }
 
-async fn evict_corrupt_entity_file(storage: &Storage, entity_id: &str) -> &'static str {
-    let lock = {
-        let mut map = eviction_locks().lock();
-        map.entry(entity_id.to_string()).or_default().clone()
-    };
+/// An entity's entry in [`eviction_locks`], removed on drop (also on unwind or cancellation)
+/// once no other eviction holds it.
+struct EvictionLock {
+    entity_id: String,
+    lock: Arc<tokio::sync::Mutex<()>>,
+}
 
-    let outcome = {
-        let _guard = lock.lock().await;
-        evict_corrupt_entity_file_locked(storage, entity_id).await
-    };
-
-    {
-        let mut map = eviction_locks().lock();
-        if let Some(existing) = map.get(entity_id)
-            && Arc::ptr_eq(existing, &lock)
-            && Arc::strong_count(existing) == 2
-        {
-            map.remove(entity_id);
+impl EvictionLock {
+    fn of(entity_id: &str) -> Self {
+        let lock = eviction_locks()
+            .lock()
+            .entry(entity_id.to_string())
+            .or_default()
+            .clone();
+        Self {
+            entity_id: entity_id.to_string(),
+            lock,
         }
     }
+}
 
-    outcome
+impl Drop for EvictionLock {
+    fn drop(&mut self) {
+        let mut map = eviction_locks().lock();
+        if let Some(existing) = map.get(&self.entity_id)
+            && Arc::ptr_eq(existing, &self.lock)
+            && Arc::strong_count(existing) == 2
+        {
+            map.remove(&self.entity_id);
+        }
+    }
+}
+
+async fn evict_corrupt_entity_file(storage: &Storage, entity_id: &str) -> &'static str {
+    let entry = EvictionLock::of(entity_id);
+    let _held = entry.lock.lock().await;
+    evict_corrupt_entity_file_locked(storage, entity_id).await
 }
 
 async fn evict_corrupt_entity_file_locked(storage: &Storage, entity_id: &str) -> &'static str {
@@ -454,7 +476,24 @@ pub struct RemoteDeployment<'a> {
     pub discard_overtaken: bool,
 }
 
+/// A panic in the deployment is returned as an error, so every caller records it like any
+/// other failure (backed off and counted against the retry cap) instead of unwinding.
 pub async fn deploy_entity_streaming(
+    source: ContentSource<'_>,
+    deployer: &LiveSyncDeployer,
+    target: RemoteDeployment<'_>,
+) -> Result<(), SyncError> {
+    // Unwind safe: every lock, permit and reservation it holds is RAII or poison-tolerant.
+    crate::jobs::catch_panic(deploy_entity_streaming_unguarded(source, deployer, target))
+        .await
+        .unwrap_or_else(|panic| {
+            Err(SyncError::Other(format!(
+                "the deployment panicked: {panic}"
+            )))
+        })
+}
+
+async fn deploy_entity_streaming_unguarded(
     source: ContentSource<'_>,
     deployer: &LiveSyncDeployer,
     target: RemoteDeployment<'_>,
@@ -1591,6 +1630,30 @@ mod tests {
         let _ = tokio::fs::remove_dir_all(&tmp).await;
     }
 
+    #[test]
+    fn an_eviction_that_unwinds_leaves_no_lock_entry() {
+        let entity_id = format!("bafy-eviction-unwinds-{}", std::process::id());
+        let unwound = std::panic::catch_unwind(|| {
+            let _entry = EvictionLock::of(&entity_id);
+            assert!(eviction_locks().lock().contains_key(&entity_id));
+            panic!("eviction panicked");
+        });
+        assert!(unwound.is_err());
+        assert!(!eviction_locks().lock().contains_key(&entity_id));
+    }
+
+    #[test]
+    fn an_eviction_lock_another_eviction_holds_stays_until_both_end() {
+        let entity_id = format!("bafy-eviction-shared-{}", std::process::id());
+        let first = EvictionLock::of(&entity_id);
+        let second = EvictionLock::of(&entity_id);
+        assert!(Arc::ptr_eq(&first.lock, &second.lock));
+        drop(first);
+        assert!(eviction_locks().lock().contains_key(&entity_id));
+        drop(second);
+        assert!(!eviction_locks().lock().contains_key(&entity_id));
+    }
+
     #[cfg(unix)]
     fn running_as_root() -> bool {
         unsafe { libc::geteuid() == 0 }
@@ -1835,6 +1898,48 @@ mod tests {
             .await
             .expect_err("a compression bomb must not outgrow the caller's cap");
         assert!(err.contains("exceeds 100 byte cap"), "{err}");
+        server.abort();
+    }
+
+    #[tokio::test]
+    async fn a_slow_gzip_stream_fails_even_when_no_decoded_bytes_reach_the_sink() {
+        use axum::{Router, body::Body, http::header, response::IntoResponse, routing::get};
+        use std::time::Duration;
+
+        let (tx, rx) = tokio::sync::mpsc::channel::<Vec<u8>>(1);
+        let rx = Arc::new(tokio::sync::Mutex::new(Some(rx)));
+        let app = Router::new().route(
+            "/",
+            get(move || async move {
+                let rx = rx.lock().await.take().unwrap();
+                let chunks = futures::stream::unfold(rx, |mut rx| async {
+                    rx.recv()
+                        .await
+                        .map(|chunk| (Ok::<_, std::convert::Infallible>(chunk), rx))
+                });
+                (
+                    [(header::CONTENT_ENCODING, "gzip")],
+                    Body::from_stream(chunks),
+                )
+                    .into_response()
+            }),
+        );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let url = format!("http://{}", listener.local_addr().unwrap());
+        let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+        tx.send(gzip(b"")).await.unwrap();
+        let resp = reqwest::Client::new().get(url).send().await.unwrap();
+
+        tokio::time::pause();
+        let mut sink = LargestRun(0, 0);
+        let mut transfer = Box::pin(stream_body(resp, 1024, &mut sink));
+        assert!(futures::poll!(&mut transfer).is_pending());
+        tokio::time::advance(Duration::from_secs(61)).await;
+        tx.send(gzip(b"")).await.unwrap();
+        drop(tx);
+        let err = transfer.await.unwrap_err();
+        assert!(err.contains("fell below 4096 bytes/s"), "{err}");
+        assert_eq!(sink.1, 0);
         server.abort();
     }
 

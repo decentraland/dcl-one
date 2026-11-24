@@ -232,6 +232,13 @@ def render(table, cfg, mime):
         servers = "\n".join(f"server {host} resolve max_fails=2 fail_timeout=10s;" for host in cfg[name])
         upstreams += f"upstream {name} {{ zone {name} 64k; {servers} keepalive 32; }}\n"
 
+    # Hash across resolved peers. Consistent hashing groups replicas sharing a DNS name.
+    # Changing the replica set can remap an active polling session during scaling or rollout.
+    socket_servers = "\n".join(
+        f"server {host} resolve max_fails=2 fail_timeout=10s;" for host in cfg["apis"])
+    upstreams += ("upstream auth_socket { zone auth_socket 64k; hash $binary_remote_addr; "
+                  + socket_servers + " }\n")
+
     names = set()
 
     def location(key, body):
@@ -372,6 +379,7 @@ def render(table, cfg, mime):
     locations += location("~ ^(/builder-api)?/v1/(projects/[^/]+/(blobs/[^/]+|manifest|files)|items/[^/]+/files)/*$",
                           proxy("apis", "client_max_body_size 21m;"))
     locations += location('~ "^/explorer/0x[0-9a-fA-F]{40}/(wearables|emotes)$"', proxy("apis"))
+    locations += pair("/auth-api/socket.io", "auth_socket", True)
     # Keep the Sites .data regex after every API regex.
     locations += location(r"~ \.data$", proxy("sites"))
     for prefix in prefixes:
@@ -465,8 +473,10 @@ http {{
     }}
     geo $admin_gate {{ default ""; {admin_geo} }}
     map $http_upgrade $connection_keepalive {{ default upgrade; "" ""; }}
-    map $upstream_http_access_control_allow_origin $cors_fallback {{
-        "" "*";
+    # The sign-in relay controls CORS on both the auth-api host and path.
+    map "$uri:$upstream_http_access_control_allow_origin" $cors_fallback {{
+        "~^/auth-api(/|:)" "";
+        "~:$" "*";
         default "";
     }}
     map $upstream_http_cross_origin_opener_policy $coop_fallback {{

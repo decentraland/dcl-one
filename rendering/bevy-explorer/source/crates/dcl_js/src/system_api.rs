@@ -400,6 +400,20 @@ pub async fn op_get_service_urls(
     rx.await.map_err(|e| anyhow::anyhow!(e))
 }
 
+pub async fn op_get_official_wallets(
+    state: Rc<RefCell<impl State>>,
+) -> Result<Vec<String>, anyhow::Error> {
+    let (sx, rx) = RpcResultSender::channel();
+
+    state
+        .borrow_mut()
+        .borrow_mut::<SuperUserScene>()
+        .send(SystemApi::GetOfficialWallets(sx))
+        .unwrap();
+
+    rx.await.map_err(|e| anyhow::anyhow!(e))
+}
+
 pub async fn op_get_welcome(state: Rc<RefCell<impl State>>) -> Result<WelcomeState, anyhow::Error> {
     let (sx, rx) = RpcResultSender::channel();
 
@@ -480,7 +494,20 @@ pub fn op_set_home_scene(state: Rc<RefCell<impl State>>, realm: String, parcel: 
     state
         .borrow_mut()
         .borrow_mut::<SuperUserScene>()
-        .send(SystemApi::SetHomeScene(HomeScene { realm, parcel }))
+        .send(SystemApi::SetHomeScene(HomeScene {
+            realm,
+            parcel,
+            pinned: true,
+            pinnable: true,
+        }))
+        .unwrap();
+}
+
+pub fn op_clear_home_scene(state: Rc<RefCell<impl State>>) {
+    state
+        .borrow_mut()
+        .borrow_mut::<SuperUserScene>()
+        .send(SystemApi::ClearHomeScene)
         .unwrap();
 }
 
