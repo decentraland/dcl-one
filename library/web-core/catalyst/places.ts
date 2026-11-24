@@ -6,7 +6,7 @@ import { hueFor } from "../format";
 
 export const PLACES_LIMIT = 40;
 
-export { isPlaceholderThumbnail, placeViewerOf, type PlaceViewer } from "@web-core/place-view";
+export { isPlaceholderThumbnail, placeViewerOf, type PlaceViewer } from "../place-view";
 
 export function normalizePlace(p: PlaceWire) {
   return {
