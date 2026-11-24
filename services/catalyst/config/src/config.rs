@@ -200,7 +200,7 @@ impl Config {
     /// bearers, service tokens, the console's session key): a short one is
     /// guessable or brute-forced offline, so startup refuses it. Bearers this
     /// node sends elsewhere keep their issuer's length.
-    pub const OPERATOR_SECRETS: [&'static str; 24] = [
+    pub const OPERATOR_SECRETS: [&'static str; 26] = [
         "SESSION_SECRET",
         "CATALYRST_CONTENT_ADMIN_TOKEN",
         "COMMUNITIES_ADMIN_TOKEN",
@@ -208,6 +208,8 @@ impl Config {
         "CATALYRST_NOTIFICATIONS_ADMIN_TOKEN",
         "CATALYRST_BADGES_ADMIN_TOKEN",
         "CATALYRST_EVENTS_ADMIN_TOKEN",
+        "CATALYRST_BUILDER_ADMIN_TOKEN",
+        "WEARABLE_VALIDATOR_CALLBACK_SECRET",
         "CATALYRST_CAMERA_REEL_ADMIN_TOKEN",
         "CATALYRST_WORLDS_ADMIN_TOKEN",
         "SCENE_HOST_ADMIN_TOKEN",
@@ -280,7 +282,7 @@ impl Config {
         Ok(())
     }
 
-    pub(crate) fn secret_slots(&mut self) -> [(&'static str, &mut Option<String>); 80] {
+    pub(crate) fn secret_slots(&mut self) -> [(&'static str, &mut Option<String>); 86] {
         [
             ("SEGMENT_SIGNING_KEY", &mut self.social.segment_signing_key),
             ("ETH_RPC_URL", &mut self.content.eth_rpc_url),
@@ -382,6 +384,21 @@ impl Config {
             (
                 "EVENTS_FEATURE_FLAGS_USER_ID",
                 &mut self.explore.events_feature_flags_user_id,
+            ),
+            (
+                "CATALYRST_BUILDER_ADMIN_TOKEN",
+                &mut self.create.catalyrst_builder_admin_token,
+            ),
+            (
+                "NEWSLETTER_SERVICE_API_KEY",
+                &mut self.create.newsletter_service_api_key,
+            ),
+            ("WAREHOUSE_URL", &mut self.create.warehouse_url),
+            ("WAREHOUSE_TOKEN", &mut self.create.warehouse_token),
+            ("FORUM_API_KEY", &mut self.create.forum_api_key),
+            (
+                "WEARABLE_VALIDATOR_CALLBACK_SECRET",
+                &mut self.create.wearable_validator_callback_secret,
             ),
             (
                 "BUILDER_POLYGON_RPC_URL",
@@ -790,6 +807,9 @@ mod tests {
     const OTHER_SECRETS: &[&str] = &[
         "SEGMENT_SIGNING_KEY",
         "ETH_RPC_URL",
+        "WAREHOUSE_URL",
+        "WAREHOUSE_TOKEN",
+        "FORUM_API_KEY",
         "EVENTS_FEATURE_FLAGS_USER_ID",
         "LIVEKIT_API_KEY",
         "LIVEKIT_API_SECRET",
@@ -810,6 +830,7 @@ mod tests {
         "REWARDS_API_KEY_BY_REFERRAL_INVITED_USERS_60",
         "REWARDS_API_KEY_BY_REFERRAL_INVITED_USERS_75",
         "TURNSTILE_SECRET_KEY",
+        "NEWSLETTER_SERVICE_API_KEY",
         "BUILDER_POLYGON_RPC_URL",
         "ENCRYPTION_KEY",
         "SCENE_HOST_AUTHORITATIVE_KEY",
@@ -1249,6 +1270,7 @@ mod tests {
             "--moderator-token",
             "--sendgrid-api-key",
             "--turnstile-secret-key",
+            "--catalyrst-builder-admin-token",
             "--catalyrst-camera-reel-admin-token",
             "--encryption-key",
             "--scene-host-authoritative-key",
@@ -1277,7 +1299,10 @@ mod tests {
             !help.contains("[env: LIVEKIT_API_SECRET="),
             "secret env values must be hidden"
         );
-        assert!(!help.contains("[env: BUILDER_POLYGON_RPC_URL="));
+        assert!(
+            !help.contains("[env: BUILDER_POLYGON_RPC_URL=")
+                && !help.contains("[env: NEWSLETTER_SERVICE_API_KEY=")
+        );
         assert!(
             !help.contains("[env: ENCRYPTION_KEY=")
                 && !help.contains("[env: SCENE_HOST_AUTHORITATIVE_KEY=")

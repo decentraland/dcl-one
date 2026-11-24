@@ -9,8 +9,8 @@
 //! A key the body leaves out keeps the stored value of an existing item
 //! (`thumbnail`, `video`, `price`, `beneficiary`, `rarity`, `utility`,
 //! `mappings`); `collection_id` left out keeps the item where it is. An item
-//! may name any content hash; naming one grants nothing over its bytes (an
-//! upload record names who uploaded what). The `video` is a name too:
+//! may name any content hash; naming one grants nothing over its bytes
+//! ([`super::upload`] records who uploaded what). The `video` is a name too:
 //! `video_named_by` keeps the wallet whose save wrote it (the writer kept
 //! while the value is, else the writer of the item's own entry for that hash,
 //! else the saving signer). Content an item stops naming, in its contents or

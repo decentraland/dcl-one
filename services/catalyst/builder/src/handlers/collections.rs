@@ -8,8 +8,10 @@ use crate::SharedState;
 use crate::access;
 use crate::auth::{Signed, signed_path, try_extract_signer};
 use crate::collections::listing::{CommitteeListing, ListQuery, OwnListing, PublicSearch};
+use crate::committee::Member;
 use crate::http::{ApiData, ApiError};
 use crate::items::listing::ItemsOut;
+use crate::kept::Since;
 use crate::shared::signed_fetch::AUTH_CHAIN_HEADER_PREFIX;
 
 /// `GET /v1/collections/:id`, for whoever `access::read_collection` admits.
@@ -187,6 +189,15 @@ pub async fn get_address_items(
         .address_items(&wallet, &ListQuery::parse(raw.as_deref()), &listing)
         .await?;
     Ok(Json(ApiData::ok(items)))
+}
+
+/// `GET /v1/committee`: the current committee members, unauthenticated;
+/// 503 while the committee can't tell.
+pub async fn get_committee(
+    State(state): State<SharedState>,
+) -> Result<Json<ApiData<Vec<Member>>>, ApiError> {
+    let members = state.committee.members(&state, Since::read()).await?;
+    Ok(Json(ApiData::ok(members.to_vec())))
 }
 
 #[cfg(test)]

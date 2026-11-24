@@ -55,6 +55,9 @@ impl ApiError {
     pub fn unauthorized(error: impl Into<String>) -> Self {
         Self::http(401, error)
     }
+    pub fn forbidden(error: impl Into<String>) -> Self {
+        Self::http(403, error)
+    }
     pub fn not_found(error: impl Into<String>) -> Self {
         Self::http(404, error)
     }
@@ -108,6 +111,14 @@ impl ApiError {
             }
         };
         Self::http(423, error).with_data(json!({ "id": id }))
+    }
+
+    /// `GET /v1/items/:collectionAddress/:itemId/contents` for an item no
+    /// published collection holds: upstream's handler throws without a
+    /// status, so it answers 200 with `ok:false` (its `Item.router.spec.ts`
+    /// asserts it).
+    pub fn item_does_not_exist() -> Self {
+        Self::http(200, "The item doesn't exist.")
     }
 
     pub fn status(&self) -> u16 {
@@ -188,6 +199,17 @@ pub fn iso(t: &DateTime<Utc>) -> String {
 /// `serialize_with` for a timestamp field.
 pub fn iso_timestamp<S: Serializer>(t: &DateTime<Utc>, s: S) -> Result<S::Ok, S::Error> {
     s.serialize_str(&iso(t))
+}
+
+/// `serialize_with` for an optional timestamp field (`null` when absent).
+pub fn iso_timestamp_opt<S: Serializer>(
+    t: &Option<DateTime<Utc>>,
+    s: S,
+) -> Result<S::Ok, S::Error> {
+    match t {
+        Some(t) => iso_timestamp(t, s),
+        None => s.serialize_none(),
+    }
 }
 
 /// A refusal the router answered itself (an extractor's, a method the route
@@ -303,6 +325,17 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn the_missing_item_contents_answer_ok_false_with_200() {
+        assert_eq!(
+            wire(ApiError::item_does_not_exist()).await,
+            (
+                StatusCode::OK,
+                json!({ "ok": false, "data": {}, "error": "The item doesn't exist." })
+            )
+        );
+    }
+
+    #[tokio::test]
     async fn database_and_internal_errors_do_not_expose_details() {
         for err in [
             ApiError::Database(sqlx::Error::Protocol(
@@ -332,10 +365,16 @@ mod tests {
         struct Row {
             #[serde(serialize_with = "iso_timestamp")]
             at: DateTime<Utc>,
+            #[serde(serialize_with = "iso_timestamp_opt")]
+            maybe: Option<DateTime<Utc>>,
         }
         assert_eq!(
-            serde_json::to_value(Row { at: whole }).unwrap(),
-            json!({ "at": "2026-01-01T00:00:00.000Z" })
+            serde_json::to_value(Row {
+                at: whole,
+                maybe: None
+            })
+            .unwrap(),
+            json!({ "at": "2026-01-01T00:00:00.000Z", "maybe": null })
         );
     }
 }

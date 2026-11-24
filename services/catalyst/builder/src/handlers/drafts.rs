@@ -12,7 +12,8 @@ use crate::collections::{lifecycle, save};
 use crate::drafts::CollectionListingOut;
 use crate::http::{ApiData, ApiError};
 use crate::items::body::FullItemOut;
-use crate::items::{save as item_save, schema};
+use crate::items::{save as item_save, schema, upload, video};
+use crate::publication::PublicationPreparation;
 
 /// `GET /v1/drafts/collections`: the signer's draft collections, charged by
 /// the row.
@@ -129,4 +130,128 @@ pub async fn get_item(
 ) -> Result<Json<ApiData<FullItemOut>>, ApiError> {
     let read = access::read_item(&state, &signer, &id).await?;
     Ok(Json(ApiData::ok(state.items.item(&read).await?)))
+}
+
+/// `POST /v1/items/:id/files` (`uploadItemFiles`): decided, a place taken
+/// among the file uploads in flight ([`crate::State::file_uploads`], 429
+/// with `Retry-After` at once) and the upload's budgets checked
+/// ([`crate::limits::within_storage`]) before the body is read
+/// (`items::upload`); answers `{ok: true}` without data.
+pub async fn post_item_files(
+    State(state): State<SharedState>,
+    Signed(signer): Signed,
+    Path(id): Path<String>,
+    request: axum::extract::Request,
+) -> Result<axum::response::Response, ApiError> {
+    use axum::extract::FromRequest;
+    use axum::response::IntoResponse;
+    let change = access::change_item(&state, &signer, &id).await?;
+    state.items.require_documents_release().await?;
+    if crate::limits::declared_length(request.headers())
+        .is_some_and(|n| n > crate::UPLOAD_BODY_LIMIT as u64)
+    {
+        return Err(upload::too_large());
+    }
+    let source = crate::limits::upload_source(request.headers());
+    let _admission = match state.file_uploads.admit(signer.as_str(), source.as_deref()) {
+        Ok(admission) => admission,
+        Err(busy) => return Ok(busy),
+    };
+    let mut upload = crate::limits::within_storage(
+        &state,
+        signer.as_str(),
+        request.headers(),
+        crate::UPLOAD_BODY_LIMIT as u64,
+    )
+    .await?;
+    let request = upload.counted(request);
+    let multipart = match axum::extract::Multipart::from_request(request, &state).await {
+        Ok(multipart) => multipart,
+        Err(refused) => {
+            upload.carried(0);
+            return Ok(refused.into_response());
+        }
+    };
+    let files = tokio::time::timeout(state.file_deadline, upload::read(multipart))
+        .await
+        .unwrap_or_else(|_| Err(ApiError::http(408, "The upload timed out")));
+    let count = files.as_ref().map_or(1, |files| files.len().max(1));
+    upload.carried(u32::try_from(count).unwrap_or(u32::MAX));
+    drop(upload);
+    let files = files?;
+    let bytes = files.iter().map(|(_, file)| file.len() as u64).sum();
+    let count = files.len() as u64;
+    state.items.save_item_files(&change, files).await?;
+    crate::limits::stored(&state, bytes, count);
+    Ok(Json(serde_json::json!({ "ok": true })).into_response())
+}
+
+/// `POST /v1/items/:id/videos` (`uploadItemFiles` with the video bound):
+/// access, the item's video name, a place among the uploads in flight and
+/// the upload's budgets ([`crate::limits::within_storage`]) are settled
+/// before the body is read ([`video`]); a refused place answers 429 with
+/// `Retry-After` at once. The store and its record run
+/// in a task of their own, so a client that leaves can't cut them short.
+pub async fn post_item_videos(
+    State(state): State<SharedState>,
+    Signed(signer): Signed,
+    Path(id): Path<String>,
+    request: axum::extract::Request,
+) -> Result<axum::response::Response, ApiError> {
+    use axum::response::IntoResponse;
+    let change = access::change_item(&state, &signer, &id).await?;
+    state.items.require_documents_release().await?;
+    if !state.items.names_video(change.id()).await? {
+        return Err(ApiError::bad_request("The item names no video"));
+    }
+    if crate::limits::declared_length(request.headers())
+        .is_some_and(|n| n > video::BODY_LIMIT as u64)
+    {
+        return Err(video::too_large(state.videos.max_bytes));
+    }
+    let source = crate::limits::upload_source(request.headers());
+    let admission = match state.videos.admit(signer.as_str(), source.as_deref()) {
+        Ok(admission) => admission,
+        Err(busy) => return Ok(busy),
+    };
+    let upload = crate::limits::within_storage(
+        &state,
+        signer.as_str(),
+        request.headers(),
+        video::BODY_LIMIT as u64,
+    )
+    .await?;
+    let root = video::spool_root(&state.items.blobs);
+    state.videos.sweep(&root).await;
+    let request = upload.counted(request);
+    let received = video::receive(&state.videos, &root, request, admission.progress()).await;
+    drop(upload);
+    let received = match received {
+        Err(refused) if admission.gave_way() => {
+            return Ok(crate::items::places::retry_later(refused));
+        }
+        received => received?,
+    };
+    let size = received.size();
+    admission.received();
+    let stored = state.clone();
+    tokio::spawn(async move {
+        let _admission = admission;
+        stored.items.save_item_video(&change, received).await
+    })
+    .await
+    .map_err(|e| ApiError::internal(e.to_string()))??;
+    crate::limits::stored(&state, size, 1);
+    Ok(Json(serde_json::json!({ "ok": true })).into_response())
+}
+
+pub async fn get_publication(
+    State(state): State<SharedState>,
+    Signed(signer): Signed,
+    Path(id): Path<Uuid>,
+) -> Result<Json<ApiData<PublicationPreparation>>, ApiError> {
+    let publisher = access::publisher(&state, &signer, id).await?;
+    Ok(Json(ApiData::ok(
+        state.items.prepare_publication(&publisher).await?,
+    )))
 }

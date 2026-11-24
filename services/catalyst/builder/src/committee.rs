@@ -156,4 +156,140 @@ async fn read(market: Option<Arc<ChainIndex>>, url: Option<String>) -> Result<Ve
 }
 
 #[cfg(test)]
-mod tests {}
+mod tests {
+    use super::*;
+
+    const MEMBER: &str = "0x00000000000000000000000000000000000000c2";
+
+    async fn committee_route(
+        fake: Option<&crate::tests::support::FakeCommittee>,
+    ) -> (u16, serde_json::Value) {
+        let market = match fake {
+            Some(fake) => Some(crate::tests::support::committee_index(fake).await),
+            None => None,
+        };
+        answer(crate::tests::support::state_without_db(market).await).await
+    }
+
+    async fn answer(state: crate::SharedState) -> (u16, serde_json::Value) {
+        use tower::ServiceExt;
+        let response = crate::router(state)
+            .oneshot(
+                axum::http::Request::get("/v1/committee")
+                    .body(axum::body::Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let status = response.status().as_u16();
+        let body = axum::body::to_bytes(response.into_body(), 1 << 20)
+            .await
+            .unwrap();
+        (status, serde_json::from_slice(&body).unwrap())
+    }
+
+    fn many(n: usize) -> Vec<String> {
+        (0..n).map(|i| format!("0x{i:040x}")).collect()
+    }
+
+    #[tokio::test]
+    async fn the_committee_is_the_collections_subgraph_s_committee_accounts() {
+        use crate::tests::support::FakeCommittee;
+        let upper = "0x00000000000000000000000000000000000000AB";
+        let fake = FakeCommittee::with(&[MEMBER, upper]);
+        assert_eq!(
+            committee_route(Some(&fake)).await,
+            (
+                200,
+                serde_json::json!({ "ok": true, "data": [
+                    { "id": upper.to_lowercase(), "address": upper.to_lowercase() },
+                    { "id": MEMBER, "address": MEMBER },
+                ] })
+            )
+        );
+        let unavailable = (
+            503,
+            serde_json::json!({ "ok": false, "data": {}, "error": "The curation committee is not available. Try again later." }),
+        );
+        assert_eq!(
+            committee_route(Some(&FakeCommittee::down())).await,
+            unavailable,
+            "a subgraph that fails can't tell"
+        );
+        assert_eq!(
+            committee_route(None).await,
+            unavailable,
+            "a node without the subgraph can't tell"
+        );
+        let malformed = FakeCommittee::with(&[MEMBER, "not-an-address"]);
+        assert_eq!(
+            committee_route(Some(&malformed)).await,
+            unavailable,
+            "a malformed account can't tell"
+        );
+
+        let full = many(MAX_MEMBERS);
+        let full = FakeCommittee::with(&full.iter().map(String::as_str).collect::<Vec<_>>());
+        let (status, body) = committee_route(Some(&full)).await;
+        assert_eq!(
+            (
+                status,
+                body["data"].as_array().map(Vec::len),
+                full.committee_hits()
+            ),
+            (200, Some(MAX_MEMBERS), 2),
+            "a full page asks for the next one, as builder-server pages"
+        );
+        let over = many(MAX_MEMBERS + 1);
+        let over = FakeCommittee::with(&over.iter().map(String::as_str).collect::<Vec<_>>());
+        assert_eq!(
+            committee_route(Some(&over)).await,
+            unavailable,
+            "a committee past the bound can't tell"
+        );
+    }
+
+    #[tokio::test]
+    async fn the_committee_comes_from_the_subgraph_set_else_from_the_network_s() {
+        use crate::tests::support::{FakeCommittee, committee_index, lazy_pool, state_over_with};
+        const OTHER: &str = "0x00000000000000000000000000000000000000c3";
+        let default = committee_index(&FakeCommittee::with(&[OTHER])).await;
+        let network_s = || crate::Settings {
+            default_collections_subgraph: default.settings.matic_collections_subgraph_url.clone(),
+            ..crate::Settings::default()
+        };
+        let set = committee_index(&FakeCommittee::with(&[MEMBER])).await;
+        let unset = crate::tests::support::market_without_db(
+            crate::chain_index::IndexSettings::for_tests(),
+        );
+        unset.allow_loopback_for_tests();
+        let only = |address: &str| serde_json::json!({ "ok": true, "data": [{ "id": address, "address": address }] });
+        assert_eq!(
+            answer(state_over_with(lazy_pool(), Some(set), network_s()).await).await,
+            (200, only(MEMBER)),
+            "a set subgraph wins"
+        );
+        assert_eq!(
+            answer(state_over_with(lazy_pool(), Some(unset), network_s()).await).await,
+            (200, only(OTHER)),
+            "an unset one reads the network's"
+        );
+        let registry = |set: Option<&str>| {
+            crate::tests::support::market_without_db(crate::chain_index::IndexSettings {
+                third_party_registry_subgraph_url: set.map(str::to_string),
+                ..crate::chain_index::IndexSettings::for_tests()
+            })
+        };
+        let network_registry = || crate::Settings {
+            default_registry_subgraph: Some("https://tpr.example/network".into()),
+            ..crate::Settings::default()
+        };
+        for (set, read) in [
+            (Some("https://tpr.example/set"), "https://tpr.example/set"),
+            (None, "https://tpr.example/network"),
+        ] {
+            let state = state_over_with(lazy_pool(), Some(registry(set)), network_registry()).await;
+            assert_eq!(state.registry_subgraph().as_deref(), Some(read));
+        }
+    }
+}

@@ -1,28 +1,44 @@
 //! Builder: the pre-publish draft store behind `builder-api.decentraland.org`:
-//! item and collection drafts, their listings and the committee's
-//! collection listing. It keeps no scenes: no projects, manifests, asset
-//! packs or scene files. Schema `builder` (`schemas/50_create.sql`).
+//! item and collection drafts, uploaded content, the committee's item
+//! curation, standard collection publication (Polygon factory parameters
+//! prepared here, signed and submitted by the client, the receipt verified
+//! here), third-party publication (the items a provider manager submits for
+//! curation with its signed slot cheque, [`cheques`]), the wearable
+//! validator's review requests, which it pulls ([`validator`]), the review
+//! flow creators, curators and the validator share ([`review`]), and the
+//! newsletter opt-in. It keeps no scenes: no projects, manifests,
+//! asset packs or scene files. Schema `builder` (`schemas/50_create.sql`).
 //!
 //! What it reuses: the ONE pool; the ONE `http::Outbound` client for the
-//! Polygon RPC, which tells whether a collection's address holds its
-//! contract ([`collections::deployment`]); signed fetch through `src/auth`
-//! and the shared verifier the explore and social routes use
-//! (`shared::signed_fetch`, [`auth`]); the shop's copy of the Polygon
-//! collections subgraph, read by shared SQL, for a collection's published
-//! and approved state ([`chain_state`]: 503 while the copy can't tell) and
-//! the chain facts a collection's body and listings merge ([`collections`]).
-//! Every write goes behind `CREATE_WRITES_ENABLED` ([`writes`], default
-//! false, 503 with `Retry-After`, built the way `social::writes` gates the
-//! social writes).
+//! Polygon RPC; the ONE blob store (`storage`) for uploaded item files, by
+//! hash (an item's video streams there, [`items::video`]), which it serves
+//! itself (who may read a file is [`access::read_file`]); signed fetch
+//! through `src/auth` and the shared verifier the explore and social routes
+//! use (`shared::signed_fetch`, [`auth`]); the marketplace subgraph readers
+//! (`marketplace::graph`) for the curation console's listing ([`onchain`]);
+//! the shop's copy of the Polygon collections subgraph, read by shared SQL,
+//! for a collection's published and approved state ([`chain_state`]: 503
+//! while the copy can't tell) and the chain facts a collection's body and
+//! listings merge ([`collections`]). The one client it does not share is
+//! [`guarded_client`]: guarded as the shared one, but it follows no
+//! redirect, so a credential it carries never reaches another host; the
+//! terms-of-service forward to the warehouse ([`terms`]), the newsletter
+//! forward, the Slack notices and the forum take it. Every write goes behind
+//! `CREATE_WRITES_ENABLED` ([`writes`], default false, 503 with
+//! `Retry-After`, built the way `social::writes` gates the social writes).
 //!
 //! Authorization: [`access`] decides every read and write of a collection or
 //! item (owner, on-chain manager, current committee member, third-party
 //! manager, as builder-server defines them; 503 when a source it needs can't
 //! tell), and the store functions take the grant it returns. The committee is
-//! [`committee`]'s read of the Polygon collections subgraph. The node never
-//! holds a signing key. The signed-fetch window is the shared verifier's 60
-//! seconds, and `BUILDER_POLYGON_RPC_URL` must be https to a public host, so
-//! a plaintext endpoint can't feed it a fake contract.
+//! [`committee`]'s read of the Polygon collections subgraph.
+//! The curation routes need the admin bearer (`CATALYRST_BUILDER_ADMIN_TOKEN`,
+//! constant-time, fails closed) or a `BUILDER_ADMIN_ADDRESSES` signer; chain
+//! writes are prepared here and signed and submitted by the client, the
+//! receipt verified over the Polygon RPC; a slot cheque is verified only;
+//! the node never holds a signing key. The signed-fetch window is the shared
+//! verifier's 60 seconds, and `BUILDER_POLYGON_RPC_URL` must be https to a
+//! public host, so a plaintext verifier can't be fed a fake receipt.
 //!
 //! Mount: `serve` merges [`root_router`] at the root (the
 //! `builder-api.` host's paths) and nests [`router`] under `/builder-api`
@@ -51,6 +67,10 @@ pub mod kept;
 pub mod limits;
 pub mod network;
 pub mod onchain;
+pub mod publication;
+pub mod publication_chain;
+pub mod publication_store;
+pub mod rarities;
 pub mod third_parties;
 pub mod writes;
 
@@ -62,16 +82,19 @@ use std::sync::Arc;
 use anyhow::{Context as _, bail};
 use axum::Router;
 use axum::extract::DefaultBodyLimit;
-use axum::routing::get;
+use axum::routing::{get, post};
 use sqlx::PgPool;
 
 use crate::chain_index::ChainIndex;
 use crate::storage::Storage;
 use dcl_auth::eip1654::Eip1654Validator;
-use dcl_http::Outbound;
+use dcl_http::{HttpClientCfg, Outbound};
 
 use items::ItemsComponent;
 
+pub const ADMIN_TOKEN_ENV: &str = "CATALYRST_BUILDER_ADMIN_TOKEN";
+/// One 20 MiB upload with its framing.
+pub const UPLOAD_BODY_LIMIT: usize = 21 * 1024 * 1024;
 /// A request body on a route that takes none of the larger ones below.
 pub const BODY_LIMIT: usize = 64 * 1024;
 /// An item save: ten times the largest item document builder-server holds.
@@ -79,6 +102,32 @@ pub const ITEM_BODY_LIMIT: usize = 256 * 1024;
 /// A collection save (its `data`), a terms acceptance (its hashes) and a
 /// publication (its item ids).
 pub const LARGE_BODY_LIMIT: usize = 2 * 1024 * 1024;
+/// File uploads the node reads at once, each up to [`UPLOAD_BODY_LIMIT`]
+/// in memory; of them per wallet (the `/create` dApp sends one item's files
+/// at a time) and per source address.
+pub const FILE_UPLOADS: usize = 16;
+pub const FILE_UPLOADS_PER_SIGNER: usize = 4;
+pub const FILE_UPLOADS_PER_SOURCE: usize = 8;
+
+/// The newsletter SaaS forward (`NEWSLETTER_SERVICE_URL`,
+/// `NEWSLETTER_PUBLICATION_ID`, `NEWSLETTER_SERVICE_API_KEY`), configured
+/// only when all three are set.
+#[derive(Clone)]
+pub struct NewsletterForward {
+    pub url: String,
+    pub publication_id: String,
+    pub api_key: String,
+}
+
+impl std::fmt::Debug for NewsletterForward {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("NewsletterForward")
+            .field("url", &self.url)
+            .field("publication_id", &self.publication_id)
+            .finish_non_exhaustive()
+    }
+}
+
 /// The environment as `Config` hands it over.
 #[derive(Clone, Default)]
 pub struct RawSettings {
@@ -93,14 +142,57 @@ pub struct RawSettings {
     pub third_party_registry_subgraph_url: Option<String>,
     /// `CREATE_WRITES_ENABLED` (false).
     pub writes_enabled: bool,
-    /// `BUILDER_POLYGON_RPC_URL`: the Polygon JSON-RPC that tells whether a
-    /// collection's address holds its contract; unset, a save that moves a
-    /// collection off its stored address answers 503.
+    /// `BUILDER_POLYGON_RPC_URL`: the Polygon JSON-RPC that verifies
+    /// publication receipts and reads the rarities' MANA prices
+    /// ([`rarities`]); unset refuses begin/claim/verify and the rarities
+    /// routes with 503.
     pub polygon_rpc_url: Option<String>,
+    /// `BUILDER_ADMIN_ADDRESSES`: comma-separated admin wallets.
+    pub admin_addresses: String,
+    /// `CATALYRST_BUILDER_ADMIN_TOKEN`: bearer of the curation routes.
+    pub admin_token: Option<String>,
+    pub newsletter_service_url: Option<String>,
+    pub newsletter_publication_id: Option<String>,
+    pub newsletter_api_key: Option<String>,
+    pub warehouse_url: Option<String>,
+    pub warehouse_token: Option<String>,
+    pub warehouse_context_prefix: Option<String>,
+    /// `SLACK_BOT_TOKEN`: the bot the curation notices are posted as, the
+    /// one social's Slack notices use.
+    pub slack_bot_token: Option<String>,
+    /// `SLACK_CURATION_CHANNEL`: the curators' channel; notices are posted
+    /// only when it is set, and it needs `SLACK_BOT_TOKEN`.
+    pub slack_curation_channel: Option<String>,
+    /// `CREATORS_URL`: the creators site a notice links to.
+    pub creators_url: Option<String>,
+    /// `BUILDER_URL`: the legacy builder a notice links to without
+    /// `CREATORS_URL`.
+    pub builder_url: Option<String>,
+    /// `FORUM_URL`: the forum's origin a collection's topic is posted to.
+    pub forum_url: Option<String>,
+    /// `FORUM_API_KEY`: the forum API key; the forum needs all four.
+    pub forum_api_key: Option<String>,
+    /// `FORUM_API_USERNAME`: the forum account the node posts as.
+    pub forum_api_username: Option<String>,
+    /// `FORUM_CATEGORY`: the id of the category a topic is created in.
+    pub forum_category: Option<String>,
+    /// `BUILDER_SERVER_URL`: the public origin of these routes, which a
+    /// forum post's thumbnails link into.
+    pub builder_server_url: Option<String>,
+    /// `WEARABLE_VALIDATOR_CALLBACK_SECRET`: the secret the wearable
+    /// validator signs its calls with; unset, no validation is requested
+    /// and the validator routes refuse.
+    pub validator_secret: Option<String>,
     /// `CORS_ORIGIN`: the origins that may read the answers ([`cors`]).
     pub cors_origin: Option<String>,
     /// `CORS_METHOD`: the methods a preflight allows ([`cors`]).
     pub cors_method: Option<String>,
+    /// `BUILDER_UNPUBLISHED_MAX_BYTES` ([`limits::NODE_BYTES`] unset).
+    pub unpublished_max_bytes: Option<u64>,
+    /// `BUILDER_UNPUBLISHED_MAX_FILES` ([`limits::NODE_FILES`] unset).
+    pub unpublished_max_files: Option<u64>,
+    /// `BUILDER_VIDEO_UPLOADS_MAX` ([`items::video::MAX_UPLOADS`] unset).
+    pub video_uploads_max: Option<usize>,
 }
 
 #[derive(Clone, Default)]
@@ -115,8 +207,17 @@ pub struct Settings {
     pub default_registry_subgraph: Option<String>,
     pub writes_enabled: bool,
     pub polygon_rpc_url: Option<String>,
+    pub admin_addresses: Vec<String>,
+    pub admin_token: Option<String>,
+    pub newsletter: Option<NewsletterForward>,
     /// Who may read the answers from another origin.
     pub cors: cors::Cors,
+    /// The node's bound of unpublished upload bytes, if not the default.
+    pub unpublished_max_bytes: Option<u64>,
+    /// The node's bound of unpublished upload files, if not the default.
+    pub unpublished_max_files: Option<u64>,
+    /// The video uploads the node reads at once, if not the default.
+    pub video_uploads_max: Option<usize>,
 }
 
 impl std::fmt::Debug for Settings {
@@ -130,9 +231,45 @@ impl std::fmt::Debug for Settings {
             .field("default_registry_subgraph", &self.default_registry_subgraph)
             .field("writes_enabled", &self.writes_enabled)
             .field("polygon_rpc_url", &self.polygon_rpc_url.is_some())
+            .field("admin_addresses", &self.admin_addresses)
+            .field("admin_token", &self.admin_token.is_some())
+            .field("newsletter", &self.newsletter)
             .field("cors", &self.cors)
+            .field("unpublished_max_bytes", &self.unpublished_max_bytes)
+            .field("unpublished_max_files", &self.unpublished_max_files)
+            .field("video_uploads_max", &self.video_uploads_max)
             .finish()
     }
+}
+
+/// The most video uploads `BUILDER_VIDEO_UPLOADS_MAX` may set: 64 GB of spool.
+pub const MAX_VIDEO_UPLOADS_SETTING: usize = 256;
+
+/// The shortest admin token or validator secret startup accepts.
+pub const MIN_SECRET_BYTES: usize = 32;
+
+/// The settings of one integration, all set or none; one set without the
+/// others refuses to start, naming the first missing.
+fn all_or_none<const N: usize>(
+    named: [(&str, &Option<String>); N],
+) -> anyhow::Result<Option<[String; N]>> {
+    let values = named.map(|(name, value)| (name, non_empty(value)));
+    if values.iter().all(|(_, value)| value.is_none()) {
+        return Ok(None);
+    }
+    if let Some((missing, _)) = values.iter().find(|(_, value)| value.is_none()) {
+        let set: Vec<&str> = named.iter().map(|(name, _)| *name).collect();
+        bail!("{} are set together; {missing} is unset", set.join(", "));
+    }
+    Ok(Some(values.map(|(_, value)| value.unwrap_or_default())))
+}
+
+/// Refuses a URL that carries a token unless it is a public https URL.
+fn token_url(name: &str, url: &str) -> anyhow::Result<()> {
+    if !url.starts_with("https://") || !dcl_http::is_safe_http_url(url) {
+        bail!("{name} must be a public https URL: it carries a token");
+    }
+    Ok(())
 }
 
 fn non_empty(value: &Option<String>) -> Option<String> {
@@ -144,6 +281,14 @@ fn non_empty(value: &Option<String>) -> Option<String> {
 }
 
 impl Settings {
+    /// Lowercased, trimmed, blanks dropped.
+    pub fn admin_addresses_from(raw: &str) -> Vec<String> {
+        raw.split(',')
+            .map(|s| s.trim().to_ascii_lowercase())
+            .filter(|s| !s.is_empty())
+            .collect()
+    }
+
     /// The settings from [`RawSettings`]; a configured value the builder
     /// can't use safely (an invalid or unsafe endpoint, a malformed id) is
     /// an error.
@@ -160,13 +305,44 @@ impl Settings {
                 .map_err(|e| anyhow::anyhow!("BUILDER_POLYGON_RPC_URL is not a valid URL: {e}"))?;
             if parsed.scheme() != "https" || !dcl_http::is_safe_http_url(url) {
                 bail!(
-                    "BUILDER_POLYGON_RPC_URL is {}:// to {}; the builder reads the chain only over a trusted TLS (https://) endpoint",
+                    "BUILDER_POLYGON_RPC_URL is {}:// to {}; publication receipts must be verified over a trusted TLS (https://) endpoint",
                     parsed.scheme(),
                     parsed.host_str().unwrap_or("?")
                 );
             }
         }
+        let newsletter = all_or_none([
+            ("NEWSLETTER_SERVICE_URL", &raw.newsletter_service_url),
+            ("NEWSLETTER_PUBLICATION_ID", &raw.newsletter_publication_id),
+            ("NEWSLETTER_SERVICE_API_KEY", &raw.newsletter_api_key),
+        ])?
+        .map(|[url, publication_id, api_key]| {
+            token_url("NEWSLETTER_SERVICE_URL", &url)?;
+            if publication_id.len() > 128
+                || !publication_id
+                    .bytes()
+                    .all(|b| b.is_ascii_alphanumeric() || b == b'_' || b == b'-')
+            {
+                bail!("NEWSLETTER_PUBLICATION_ID must be letters, digits, '_' or '-'");
+            }
+            Ok(NewsletterForward {
+                url,
+                publication_id,
+                api_key,
+            })
+        })
+        .transpose()?;
         let cors = cors::Cors::parse(raw.cors_origin.as_deref(), raw.cors_method.as_deref())?;
+        let admin_token = non_empty(&raw.admin_token);
+        if admin_token.as_ref().is_some_and(|s| s.len() < MIN_SECRET_BYTES) {
+            bail!("CATALYRST_BUILDER_ADMIN_TOKEN must be at least {MIN_SECRET_BYTES} bytes");
+        }
+        if raw
+            .video_uploads_max
+            .is_some_and(|n| !(1..=MAX_VIDEO_UPLOADS_SETTING).contains(&n))
+        {
+            bail!("BUILDER_VIDEO_UPLOADS_MAX must be 1 to {MAX_VIDEO_UPLOADS_SETTING}");
+        }
         let default_of = |set: &Option<String>, url: &str| set.is_none().then(|| url.to_string());
         Ok(Self {
             network,
@@ -179,8 +355,14 @@ impl Settings {
                 network.registry_subgraph,
             ),
             cors,
+            unpublished_max_bytes: raw.unpublished_max_bytes,
+            unpublished_max_files: raw.unpublished_max_files,
+            video_uploads_max: raw.video_uploads_max,
             writes_enabled: raw.writes_enabled,
             polygon_rpc_url,
+            admin_addresses: Self::admin_addresses_from(&raw.admin_addresses),
+            admin_token,
+            newsletter,
         })
     }
 }
@@ -192,11 +374,16 @@ pub struct State {
     pub market: Option<Arc<ChainIndex>>,
     pub settings: Settings,
     pub http: Outbound,
+    /// [`guarded_client`]: the warehouse forward, the Slack notices and the
+    /// forum, whose requests carry a credential.
+    pub guarded: Outbound,
     pub eip1654: Option<Arc<dyn Eip1654Validator>>,
     /// The content state's denylist (the same `Arc`): a hash the camera reel
     /// withheld (rejected or deleted photo) is a 404 on the storage routes
     /// here too, not only on the content server's routes.
     pub denylist: Arc<crate::content::Denylist>,
+    /// The rarities and their prices (`rarities`), kept a minute.
+    pub rarities: rarities::Rarities,
     /// The third-party registry (`third_parties`), read per decision.
     pub third_parties: third_parties::ThirdParties,
     /// The curation committee (`committee`), read per decision.
@@ -208,15 +395,31 @@ pub struct State {
     /// The content sync's state: whether this process is its own content
     /// authority, so an item URN its content lacks is unused.
     pub content_sync: Arc<crate::content::SyncStatus>,
+    /// The item video uploads' bounds and those in flight.
+    pub videos: items::video::Videos,
+    /// The item file uploads in flight, each holding its body in memory:
+    /// [`FILE_UPLOADS`] on the node, [`FILE_UPLOADS_PER_SIGNER`] of a wallet,
+    /// [`FILE_UPLOADS_PER_SOURCE`] of a source address.
+    pub file_uploads: items::places::Places,
+    /// The longest a file upload's body may take to arrive
+    /// ([`items::upload::DEADLINE`]).
+    pub file_deadline: std::time::Duration,
     /// The request budgets per source, signer and route ([`limits`]).
     pub limits: limits::Limits,
 }
 
 pub type SharedState = Arc<State>;
 
+/// The guarded client that follows no redirect, 20 s a request, built once
+/// per process: the shared one follows redirects with the request's headers.
+pub fn guarded_client() -> Outbound {
+    Outbound::new(HttpClientCfg::default().with_total_timeout(std::time::Duration::from_secs(20)))
+        .expect("the guarded client builds")
+}
+
 impl State {
-    /// `blobs` is the node's blob store, which must hold the builder's
-    /// [`Storage::item_files`] tree, the one the content routes never read.
+    /// `blobs` is the node's blob store; the builder keeps its item files in
+    /// its [`Storage::item_files`] tree, which the content routes never read.
     pub fn new(
         pool: PgPool,
         blobs: Arc<Storage>,
@@ -226,24 +429,47 @@ impl State {
         eip1654: Option<Arc<dyn Eip1654Validator>>,
         settings: Settings,
     ) -> anyhow::Result<Self> {
-        blobs
+        let blobs = blobs
             .item_files()
+            .cloned()
             .context("the builder keeps its files in the blob store's item-files tree")?;
+        let mut limits = limits::Limits::default();
+        limits.node_bytes = settings.unpublished_max_bytes.unwrap_or(limits.node_bytes);
+        limits.node_files = settings.unpublished_max_files.unwrap_or(limits.node_files);
+        let mut videos = items::video::Videos::default();
+        if let Some(places) = settings.video_uploads_max {
+            videos.places = items::places::Places::new(
+                "video uploads",
+                places,
+                items::video::MAX_UPLOADS_PER_SIGNER,
+                items::video::MAX_UPLOADS_PER_SOURCE,
+            );
+        }
         Ok(Self {
-            items: ItemsComponent::new(pool.clone())
+            items: ItemsComponent::new(pool.clone(), blobs)
                 .with_denylist(denylist.clone())
                 .with_network(settings.network),
             market,
             settings,
             http,
+            guarded: guarded_client(),
             eip1654,
             denylist,
+            rarities: rarities::Rarities::default(),
             third_parties: third_parties::ThirdParties::default(),
             committee: committee::Committee::default(),
             now: chrono::Utc::now,
             deployments: collections::deployment::Deployments::default(),
             content_sync: Arc::default(),
-            limits: limits::Limits::default(),
+            videos,
+            file_uploads: items::places::Places::new(
+                "file uploads",
+                FILE_UPLOADS,
+                FILE_UPLOADS_PER_SIGNER,
+                FILE_UPLOADS_PER_SOURCE,
+            ),
+            file_deadline: items::upload::DEADLINE,
+            limits,
         })
     }
 
@@ -268,16 +494,39 @@ impl State {
     /// What `serve` logs at startup.
     pub fn sources_label(&self) -> String {
         format!(
-            "polygon_chain={} polygon_rpc={} collections_reader={}",
+            "polygon_chain={} polygon_rpc={} collections_reader={} admins={} newsletter={}",
             self.settings.network.chain_id,
             self.settings.polygon_rpc_url.is_some(),
             onchain::configured(self.market.as_deref()),
+            self.settings.admin_addresses.len(),
+            self.settings.newsletter.is_some(),
         )
     }
 }
 
 fn api_routes() -> Router<SharedState> {
     Router::new()
+        .route(
+            "/v1/items/{id}/files",
+            post(handlers::drafts::post_item_files).layer(DefaultBodyLimit::max(UPLOAD_BODY_LIMIT)),
+        )
+        .route(
+            "/v1/items/{id}/videos",
+            post(handlers::drafts::post_item_videos)
+                .layer(DefaultBodyLimit::max(items::video::BODY_LIMIT)),
+        )
+        .route(
+            "/v1/collections/{id}/publication",
+            get(handlers::drafts::get_publication)
+                .post(handlers::publication::begin)
+                .put(handlers::publication::transaction)
+                .delete(handlers::publication::cancel)
+                .patch(handlers::publication::claim),
+        )
+        .route(
+            "/v1/collections/{id}/publication/status",
+            get(handlers::publication::status),
+        )
         .route(
             "/v1/drafts/collections",
             get(handlers::drafts::get_collection_drafts),
@@ -314,6 +563,35 @@ fn api_routes() -> Router<SharedState> {
             "/v1/collections",
             get(handlers::collections::get_collections),
         )
+        .route("/v1/committee", get(handlers::collections::get_committee))
+        .route("/v1/info", get(handlers::small_reads::get_info))
+        .route("/v1/rarities", get(handlers::small_reads::get_rarities))
+        .route(
+            "/v1/rarities/{name}",
+            get(handlers::small_reads::get_rarity),
+        )
+        .route(
+            "/v1/published-collections/{address}/items/{id}/utility",
+            get(handlers::small_reads::get_item_utility),
+        )
+        .route(
+            "/v1/items/{id}/{item}/contents",
+            get(handlers::small_reads::get_item_contents),
+        )
+        .route("/v1/addresses", get(handlers::small_reads::get_addresses))
+        .route(
+            "/v1/storage/contents/{hash}",
+            get(handlers::storage::get_storage_content)
+                .head(handlers::storage::get_storage_content),
+        )
+        .route(
+            "/v1/storage/contents/{hash}/exists",
+            get(handlers::storage::get_storage_content_exists),
+        )
+        .route(
+            "/v1/newsletter",
+            post(handlers::newsletter::post_newsletter),
+        )
         .layer(DefaultBodyLimit::max(BODY_LIMIT))
 }
 
@@ -349,10 +627,14 @@ mod router_tests {
     #[test]
     fn settings_parse_the_old_env_rules_and_refuse_unsafe_endpoints() {
         let s = Settings::parse(RawSettings {
+            admin_addresses: " 0xABC, ,0xdef ".into(),
+            admin_token: Some("  ".into()),
             polygon_rpc_url: Some("https://polygon-rpc.com".into()),
             ..RawSettings::default()
         })
         .unwrap();
+        assert_eq!(s.admin_addresses, vec!["0xabc", "0xdef"]);
+        assert_eq!(s.admin_token, None, "a blank token is unset");
         assert!(!s.writes_enabled);
         let err = Settings::parse(RawSettings {
             polygon_rpc_url: Some("http://rpc.example/v3/SECRET".into()),
@@ -373,17 +655,57 @@ mod router_tests {
         );
     }
 
+    #[tokio::test]
+    async fn the_video_places_setting_sizes_the_node_and_refuses_what_it_cannot_hold() {
+        for refused in [0, MAX_VIDEO_UPLOADS_SETTING + 1] {
+            let err = Settings::parse(RawSettings {
+                video_uploads_max: Some(refused),
+                ..RawSettings::default()
+            })
+            .unwrap_err()
+            .to_string();
+            assert!(err.contains("BUILDER_VIDEO_UPLOADS_MAX"), "{err}");
+        }
+        let settings = Settings::parse(RawSettings {
+            video_uploads_max: Some(2),
+            ..RawSettings::default()
+        })
+        .unwrap();
+        let state = State::new(
+            crate::tests::support::lazy_pool(),
+            crate::tests::support::temp_storage().await,
+            Arc::default(),
+            dcl_http::Outbound::for_tests(),
+            None,
+            None,
+            settings,
+        )
+        .unwrap();
+        let held: Vec<_> = (0..2)
+            .map(|n| state.videos.admit(&format!("0xwallet{n}"), None).ok())
+            .collect();
+        assert!(held.iter().all(Option::is_some));
+        assert!(state.videos.admit("0xwallet2", None).is_err());
+    }
+
     #[test]
     fn no_secret_reaches_the_settings_printout() {
         let settings = Settings::parse(RawSettings {
             polygon_rpc_url: Some("https://rpc.example/v3/sk-example-rpc".into()),
+            admin_token: Some("sk-example-admin-0123456789abcdef".into()),
+            newsletter_service_url: Some("https://newsletter.example/v2".into()),
+            newsletter_publication_id: Some("pub-example".into()),
+            newsletter_api_key: Some("sk-example-newsletter".into()),
             ..RawSettings::default()
         })
         .unwrap();
         let printed = format!("{settings:?}");
-        assert!(
-            !printed.contains("sk-example-rpc"),
-            "the RPC key in {printed}"
-        );
+        for secret in [
+            "sk-example-rpc",
+            "sk-example-admin",
+            "sk-example-newsletter",
+        ] {
+            assert!(!printed.contains(secret), "{secret} in {printed}");
+        }
     }
 }
