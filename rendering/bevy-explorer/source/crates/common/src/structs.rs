@@ -1096,6 +1096,9 @@ impl AppConfig {
     }
 }
 
+/// The `fps_target` meaning no cap (Max).
+pub const UNCAPPED_FPS: usize = 999;
+
 #[derive(Serialize, Deserialize, Clone)]
 #[serde(default)]
 pub struct GraphicsSettings {
@@ -1242,9 +1245,9 @@ impl SessionGraphics {
 
     /// The frame rate the explorer paces to: the session's target, else the player's, and with
     /// VSync on no faster than the monitor. VSync only removes tearing, so a lower target still
-    /// applies, and Max (999) means the monitor's rate. `refresh_hz`, when known, is the monitor's
-    /// rate rounded up past it (60 Hz gives 61), so at the monitor's rate VSync, not the pacer's
-    /// sleep, sets the frame time.
+    /// applies, and Max ([`UNCAPPED_FPS`]) means the monitor's rate. `refresh_hz`, when known, is
+    /// the monitor's rate rounded up past it (60 Hz gives 61), so at the monitor's rate VSync, not
+    /// the pacer's sleep, sets the frame time.
     pub fn paced_fps(
         session: Option<&Self>,
         config: &AppConfig,
@@ -2987,10 +2990,10 @@ mod tests {
         assert_eq!(paced(&config, None, Some(61)), 61);
         assert_eq!(paced(&config, Some(&thirty), Some(144)), 30);
         assert_eq!(paced(&config, None, None), 60);
-        config.graphics.fps_target = 999;
+        config.graphics.fps_target = UNCAPPED_FPS;
         assert_eq!(paced(&config, None, Some(144)), 144);
         config.graphics.vsync = false;
-        assert_eq!(paced(&config, None, Some(144)), 999);
+        assert_eq!(paced(&config, None, Some(144)), UNCAPPED_FPS);
         assert_eq!(paced(&config, Some(&thirty), Some(144)), 30);
     }
 
@@ -2999,15 +3002,15 @@ mod tests {
         let mut config = AppConfig::default();
         let shown = |config: &AppConfig, refresh| SessionGraphics::shown_fps(None, config, refresh);
         config.graphics.vsync = true;
-        config.graphics.fps_target = 999;
+        config.graphics.fps_target = UNCAPPED_FPS;
         assert_eq!(shown(&config, Some(61)), 60);
-        assert_eq!(shown(&config, None), 999);
+        assert_eq!(shown(&config, None), UNCAPPED_FPS);
         config.graphics.fps_target = 60;
         assert_eq!(shown(&config, Some(61)), 60);
         assert_eq!(shown(&config, Some(145)), 60);
         config.graphics.vsync = false;
-        config.graphics.fps_target = 999;
-        assert_eq!(shown(&config, Some(61)), 999);
+        config.graphics.fps_target = UNCAPPED_FPS;
+        assert_eq!(shown(&config, Some(61)), UNCAPPED_FPS);
     }
 
     #[test]

@@ -606,6 +606,61 @@ fn is_fullscreen_available() -> bool {
 mod tests {
     use super::*;
 
+    // MSAA variants exist only on native
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn msaa_disables_depth_of_field() {
+        let mut config = AppConfig::default();
+        let mut settings = Settings {
+            settings: Vec::default(),
+        };
+        settings.add_enum_setting::<AaSetting>(&config);
+        settings.add_enum_setting::<DofSetting>(&config);
+        let index =
+            |names: Vec<String>, name: &str| names.iter().position(|n| n == name).unwrap() as f32;
+        let aa = |name: &str| {
+            index(
+                AaSetting::variants().iter().map(|v| v.name()).collect(),
+                name,
+            )
+        };
+        let high = index(
+            DofSetting::variants().iter().map(|v| v.name()).collect(),
+            "High",
+        );
+        let dof = |settings: &Settings| {
+            settings
+                .get()
+                .into_iter()
+                .find(|s| s.name == DofSetting::title())
+                .unwrap()
+        };
+
+        settings
+            .set_value(&mut config, &AaSetting::title(), aa("FXAA (High)"))
+            .unwrap();
+        settings
+            .set_value(&mut config, &DofSetting::title(), high)
+            .unwrap();
+        assert!(!dof(&settings).disabled);
+
+        settings
+            .set_value(&mut config, &AaSetting::title(), aa("MSAA 4x"))
+            .unwrap();
+        let info = dof(&settings);
+        assert!(info.disabled);
+        // the stored value is kept
+        assert_eq!(info.value, high);
+
+        settings
+            .set_value(&mut config, &AaSetting::title(), aa("FXAA (High)"))
+            .unwrap();
+        let info = dof(&settings);
+        assert!(!info.disabled);
+        assert_eq!(info.value, high);
+        assert_eq!(config.graphics.dof, DofSetting::High);
+    }
+
     #[test]
     fn prepasses_follow_the_avatar_outline() {
         let mut world = World::new();
