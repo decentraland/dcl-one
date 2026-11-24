@@ -1,10 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useMachine } from "@xstate/react";
 
-import MpLaunchForm from "@dcl/one-ui/apps/sites/creator-hub/multiplayer-test/MpLaunchForm";
-import MpLiveRunView from "@dcl/one-ui/apps/sites/creator-hub/multiplayer-test/MpLiveRunView";
-import MpReportView, { type MpPerfSeries } from "@dcl/one-ui/apps/sites/creator-hub/multiplayer-test/MpReportView";
-import MpUnpaired from "@dcl/one-ui/apps/sites/creator-hub/multiplayer-test/MpUnpaired";
+import { MpLaunchForm, MpLiveRunView, type MpPerfSeries, MpReportView, MpUnpaired } from "@dcl/one-ui";
 import MpReplayDialog from "@ui/creatorhub/mp/MpReplayDialog";
 import type { MpLane, MpLaunchRequest } from "@web-core/multiplayer-test/rules";
 import {
