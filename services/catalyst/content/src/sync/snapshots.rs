@@ -763,8 +763,13 @@ pub async fn deploy_entities_from_snapshot(
             .partition(|deployment| deployment.entity_type == "scene");
         for (records, concurrency) in [(others, nonscene_concurrency), (scenes, scene_concurrency)]
         {
-            outcome.absorb(
-                schedule_records(
+            let scheduled = tokio::select! {
+                biased;
+                _ = &mut cancelled => {
+                    outcome.stopped = true;
+                    break;
+                }
+                result = schedule_records(
                     deployer,
                     records,
                     concurrency,
@@ -772,9 +777,9 @@ pub async fn deploy_entities_from_snapshot(
                     report,
                     snapshot_hash,
                     &should_stop,
-                )
-                .await,
-            );
+                ) => result,
+            };
+            outcome.absorb(scheduled);
             if outcome.stopped {
                 break;
             }
@@ -1018,6 +1023,19 @@ mod tests {
     const GOOD_HASH_2: &str = "QmYwAPJzv5CZsnA625s3Xf2nemtYgPpHdWEz79ojWnPbdH";
     const GOOD_HASH_3: &str = "QmYwAPJzv5CZsnA625s3Xf2nemtYgPpHdWEz79ojWnPbdJ";
 
+    fn staged_files(storage: &Storage, hash: &str) -> Vec<PathBuf> {
+        let blob = resolve_file_path(storage.root(), hash).unwrap();
+        let dir = blob.parent().unwrap();
+        match std::fs::read_dir(dir) {
+            Ok(entries) => entries
+                .map(|entry| entry.unwrap().path())
+                .filter(|path| path.extension().is_some_and(|ext| ext == "tmp"))
+                .collect(),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Vec::new(),
+            Err(error) => panic!("could not read snapshot staging directory: {error}"),
+        }
+    }
+
     #[test]
     fn a_long_invalid_entry_preview_is_cut_on_a_character_boundary() {
         // `"` takes byte 0, so every `é` starts on an odd byte and byte 512 falls inside one.
@@ -1216,6 +1234,7 @@ mod tests {
         .expect("decoded bytes that mismatch the CID must still be rejected");
         assert!(err.to_string().contains("snapshot hash mismatch"), "{err}");
         assert!(!storage.exist(&cid).await.unwrap());
+        assert!(staged_files(&storage, &cid).is_empty());
 
         server.abort();
         let _ = tokio::fs::remove_dir_all(&tmp).await;
@@ -1259,6 +1278,9 @@ mod tests {
         let client = crate::sync::test_sync_client(Client::new());
         let retire_peer = async {
             body_stalled.notified().await;
+            while staged_files(&storage, &cid).is_empty() {
+                tokio::task::yield_now().await;
+            }
             retired.cancel();
         };
 
@@ -1272,7 +1294,9 @@ mod tests {
         .expect("retirement must release the stalled response");
         let spool = result.expect("the current peer keeps the one download attempt");
         assert_eq!(tokio::fs::read(spool.path()).await.unwrap(), PAYLOAD);
+        assert_eq!(staged_files(&storage, &cid), [spool.path().to_path_buf()]);
         drop(spool);
+        assert!(staged_files(&storage, &cid).is_empty());
 
         for server in [retired_server, current_server] {
             server.abort();

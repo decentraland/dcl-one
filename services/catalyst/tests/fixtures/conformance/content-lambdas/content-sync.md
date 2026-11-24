@@ -1047,9 +1047,11 @@ catalyst list and its `/about` is healthy.
       peers keep their progress, and removed peers' streams stop. Deployments try the advertising
       peer first, then other current peers. Failed-deployment retries use the current peer list.
       Read-through keeps `SYNC_SOURCE`.
-    - Steady-state peers poll pointer changes every five seconds. The orchestrator revisits their
-      snapshot lists one hour after bootstrap and then every 14 days, controlled by
-      `SYNC_SNAPSHOT_RESYNC_INITIAL_DELAY_SECS` and `SYNC_SNAPSHOT_RESYNC_INTERVAL_SECS`.
+    - Steady-state peers poll pointer changes every five seconds by default. Set
+      `SYNC_POINTER_CHANGES_POLL_INTERVAL_SECS` to at least one second to change it.
+      The orchestrator revisits snapshot lists one hour after bootstrap and then every
+      14 days by default. Both `SYNC_SNAPSHOT_RESYNC_INITIAL_DELAY_SECS` and
+      `SYNC_SNAPSHOT_RESYNC_INTERVAL_SECS` require at least 60 seconds.
       Tests: `sync::dao::tests`, `tests/sync_peer_changes.rs`.
     - Left: without `ETH_RPC_URL`, or on a network other than mainnet and sepolia, the node syncs from
       `SYNC_SOURCE` only; `lastSyncWithDAO` stays the sync heartbeat (CS-15). Difference: upstream

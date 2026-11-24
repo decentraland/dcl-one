@@ -47,13 +47,23 @@ pub struct ContentConfig {
     #[arg(
         long,
         env = "SYNC_SNAPSHOT_RESYNC_INITIAL_DELAY_SECS",
-        default_value_t = 3_600
+        default_value_t = 3_600,
+        value_parser = clap::value_parser!(u32).range(60..)
     )]
     pub sync_snapshot_resync_initial_delay_secs: u32,
 
     /// Seconds between subsequent peer snapshot checks.
-    #[arg(long, env = "SYNC_SNAPSHOT_RESYNC_INTERVAL_SECS", default_value_t = 14 * 86_400, value_parser = clap::value_parser!(u32).range(1..))]
+    #[arg(long, env = "SYNC_SNAPSHOT_RESYNC_INTERVAL_SECS", default_value_t = 14 * 86_400, value_parser = clap::value_parser!(u32).range(60..))]
     pub sync_snapshot_resync_interval_secs: u32,
+
+    /// Seconds between steady-state pointer-change polls.
+    #[arg(
+        long,
+        env = "SYNC_POINTER_CHANGES_POLL_INTERVAL_SECS",
+        default_value_t = 5,
+        value_parser = clap::value_parser!(u32).range(1..)
+    )]
+    pub sync_pointer_changes_poll_interval_secs: u32,
 
     /// https L1 JSON-RPC endpoint: the EIP-1654 (contract wallet) signature
     /// check and the L1 deploy access checks (LAND, names, v1 items) of local
@@ -777,6 +787,7 @@ mod tests {
         assert_eq!(c.content.sync_from_timestamp_ms, 0);
         assert_eq!(c.content.sync_snapshot_resync_initial_delay_secs, 3_600);
         assert_eq!(c.content.sync_snapshot_resync_interval_secs, 14 * 86_400);
+        assert_eq!(c.content.sync_pointer_changes_poll_interval_secs, 5);
         assert!(c.content.eth_rpc_url.is_none());
         assert_eq!(c.content.concurrent_sync_downloads, 200);
         assert_eq!(c.content.connections_max_idle, 25);
@@ -854,6 +865,28 @@ mod tests {
         assert!(!cli.content.phased_sync);
         assert!(!cli.content.retry_failed_enabled);
         assert_eq!(cli.content.sync_entity_types, "store,outfits");
+    }
+
+    #[test]
+    fn sync_poll_intervals_enforce_their_minimums() {
+        let cli =
+            |flag, value| parse(&["x", "--database-url", "postgres:///catalyst", flag, value]);
+        for flag in [
+            "--sync-snapshot-resync-initial-delay-secs",
+            "--sync-snapshot-resync-interval-secs",
+        ] {
+            assert!(cli(flag, "59").is_err(), "{flag}");
+            assert!(cli(flag, "60").is_ok(), "{flag}");
+        }
+        let flag = "--sync-pointer-changes-poll-interval-secs";
+        assert!(cli(flag, "0").is_err());
+        assert_eq!(
+            cli(flag, "17")
+                .unwrap()
+                .content
+                .sync_pointer_changes_poll_interval_secs,
+            17
+        );
     }
 
     #[test]

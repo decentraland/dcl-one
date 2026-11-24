@@ -895,6 +895,7 @@ fn sync_settings(peer: &str) -> SyncSettings {
         phased_sync: true,
         snapshot_resync_initial_delay: Duration::from_secs(3_600),
         snapshot_resync_interval: Duration::from_secs(14 * 86_400),
+        pointer_changes_wait_time_ms: 5_000,
         content_download_concurrency: 8,
         connections_max_idle: 4,
         snapshot_concurrency: 2,
