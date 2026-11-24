@@ -326,7 +326,7 @@ fn client_endpoint(
     cert_hash: Option<Vec<u8>>,
 ) -> Result<quinn::Endpoint, ClientError> {
     let fail = |error: &dyn std::fmt::Display| ClientError::Connect(error.to_string());
-    let provider = web_transport_quinn::crypto::default_provider();
+    let provider = super::tls_provider();
     let builder = rustls::ClientConfig::builder_with_provider(provider.clone())
         .with_protocol_versions(&[&rustls::version::TLS13])
         .map_err(|e| fail(&e))?;
@@ -355,9 +355,14 @@ fn client_endpoint(
     }
     .with_no_client_auth();
     crypto.alpn_protocols = vec![web_transport_quinn::ALPN.as_bytes().to_vec()];
-    let config = quinn::crypto::rustls::QuicClientConfig::try_from(crypto).map_err(|e| fail(&e))?;
+    let config =
+        web_transport_quinn::crypto::QuicClientConfig::try_from(crypto).map_err(|e| fail(&e))?;
     let bind = SocketAddr::new(local.unwrap_or(Ipv6Addr::UNSPECIFIED.into()), 0);
-    let mut endpoint = quinn::Endpoint::client(bind).map_err(|e| fail(&e))?;
+    let socket = std::net::UdpSocket::bind(bind).map_err(|e| fail(&e))?;
+    let runtime = quinn::default_runtime().ok_or_else(|| fail(&"no async runtime found"))?;
+    let mut endpoint =
+        quinn::Endpoint::new(quinn::EndpointConfig::default(), None, socket, runtime)
+            .map_err(|e| fail(&e))?;
     endpoint.set_default_client_config(quinn::ClientConfig::new(Arc::new(config)));
     Ok(endpoint)
 }
@@ -379,7 +384,7 @@ impl rustls::client::danger::ServerCertVerifier for PinnedCertificate {
         _ocsp_response: &[u8],
         _now: rustls_pki_types::UnixTime,
     ) -> Result<rustls::client::danger::ServerCertVerified, rustls::Error> {
-        let seen = web_transport_quinn::crypto::sha256(&self.provider, end_entity);
+        let seen = web_transport_quinn::crypto::sha256(&self.provider, end_entity)?;
         if seen.as_ref() == self.hash.as_slice() {
             Ok(rustls::client::danger::ServerCertVerified::assertion())
         } else {
