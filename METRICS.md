@@ -454,3 +454,14 @@ new identities increased measured WAL from 221 kB to 332 kB. Production world
 sizes, request rates and latency are unmeasured.
 
 Building the two wallet indexes and the retired identity index on the synthetic tables took 64, 65 and 108 ms respectively.
+
+## Sales accounting day and order lookups
+
+A PostgreSQL fixture contained 200,000 Polygon account-day rows across 365 UTC days and 250,000 NFT events with one successful order per 50 events. Each figure is one local `EXPLAIN (ANALYZE, BUFFERS)` run.
+
+| Fold query | Primary key only | With the sales index |
+| --- | --- | --- |
+| Distinct wallets for two days | Sequential scan filtered 198,904 rows in 8.060 ms | The network and day index read 1,096 matching rows in 1.386 ms |
+| First 96 successful orders in a 250,000-block window | Primary key scan filtered 4,704 events in 0.313 ms | The partial order index returned 96 rows in 0.108 ms |
+
+These measurements cover the SQL lookups. Receipt RPC time and production replay throughput remain unmeasured.

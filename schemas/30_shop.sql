@@ -502,6 +502,7 @@ CREATE TABLE shop.nft_event (
 
 -- The fold's per-token legs (DISTINCT ON (contract_address, token_id) ORDER
 -- BY block_number, log_index) and a refold's "events of these tokens".
+CREATE INDEX nft_event_successful_order ON shop.nft_event(network,block_number) WHERE kind='order_successful';
 CREATE INDEX nft_event_token_idx ON shop.nft_event (network, contract_address, token_id, block_number, log_index);
 
 -- The ownership fold of the collections' and names' transfers: owner is the
@@ -16936,7 +16937,7 @@ CREATE TABLE shop.sale_asset (
        REFERENCES shop.sale_execution ON DELETE CASCADE
 );
 
-CREATE INDEX sale_asset_priced_buyer ON shop.sale_asset(network,buyer) WHERE price>0 AND seller IS NOT NULL;
+CREATE INDEX sale_asset_priced_buyer ON shop.sale_asset(network,buyer,seller,contract_address,currency) WHERE price>0 AND seller IS NOT NULL;
 
 -- One row per consideration leg, including the explicit price of each
 -- store line. Source-proven gross can be available before payee attribution.

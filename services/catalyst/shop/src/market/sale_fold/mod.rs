@@ -365,17 +365,19 @@ pub(super) async fn pass(pool: &PgPool, rpc: &Rpc<'_>, net: ChainNet) -> anyhow:
     if !former_buyers.is_empty() {
         // A later receipt can replace the checkout provider with the recipient.
         // The old buyer may still have a later purchase of the same item.
-        sqlx::query("DELETE FROM shop.sale_first_purchase WHERE network=$1 AND buyer=ANY($2)")
-            .bind(net.db_name())
-            .bind(&former_buyers)
-            .execute(&mut *tx)
-            .await?;
-        sqlx::query("INSERT INTO shop.sale_first_purchase(network,currency,buyer,seller,contract_address,item_id,first_day)
-            SELECT a.network,a.currency,a.buyer,a.seller,a.contract_address,a.item_id,min(e.block_time)/86400*86400
-            FROM shop.sale_asset a JOIN shop.sale_execution e USING(network,block_number,log_index)
-            WHERE a.network=$1 AND a.buyer=ANY($2) AND a.seller IS NOT NULL AND a.price>0
-            GROUP BY a.network,a.currency,a.buyer,a.seller,a.contract_address,a.item_id")
-            .bind(net.db_name()).bind(&former_buyers).execute(&mut *tx).await?;
+        sqlx::query("MERGE INTO shop.sale_first_purchase f USING (
+            SELECT k.ctid AS id, (
+                SELECT min(e.block_time)/86400*86400 FROM shop.sale_asset a
+                JOIN shop.sale_execution e USING(network,block_number,log_index)
+                WHERE (a.network,a.buyer,a.seller,a.contract_address,a.currency)=
+                      (k.network,k.buyer,k.seller,k.contract_address,k.currency)
+                  AND a.item_id IS NOT DISTINCT FROM k.item_id AND a.price>0
+            ) AS first_day
+            FROM shop.sale_first_purchase k WHERE network=$1 AND buyer=ANY($2) AND first_day=ANY($3)
+        ) remaining ON f.ctid=remaining.id
+        WHEN MATCHED AND remaining.first_day IS NULL THEN DELETE
+        WHEN MATCHED AND remaining.first_day<>f.first_day THEN UPDATE SET first_day=remaining.first_day")
+            .bind(net.db_name()).bind(&former_buyers).bind(&days).execute(&mut *tx).await?;
     }
     rollups(&mut tx, net, &days).await?;
     let point = rpc.block_header(to as u64).await?;
