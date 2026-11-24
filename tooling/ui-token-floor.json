@@ -471,10 +471,6 @@
     "primitives": 0,
     "tokens": 9
   },
-  "apps/ui3/src/web/components/itemcard.css": {
-    "primitives": 19,
-    "tokens": 0
-  },
   "apps/ui3/src/web/frames/accountmenu.css": {
     "primitives": 8,
     "tokens": 11
@@ -502,10 +498,6 @@
   "apps/ui3/src/web/pages/stinvite.css": {
     "primitives": 0,
     "tokens": 37
-  },
-  "apps/ui3/src/web/pages/stprofileoverviewtab.css": {
-    "primitives": 12,
-    "tokens": 0
   },
   "apps/ui3/src/web/pages/stprofilereferralrewardstab.css": {
     "primitives": 16,
@@ -595,6 +587,18 @@
     "primitives": 0,
     "tokens": 40
   },
+  "library/ui/apps/sites/social/CommunityDetail.module.css": {
+    "primitives": 0,
+    "tokens": 79
+  },
+  "library/ui/apps/sites/social/CommunityError.module.css": {
+    "primitives": 0,
+    "tokens": 10
+  },
+  "library/ui/apps/sites/social/CommunityLists.module.css": {
+    "primitives": 0,
+    "tokens": 41
+  },
   "library/ui/components/AppChrome/ChromeBody.module.css": {
     "primitives": 0,
     "tokens": 2
@@ -653,7 +657,7 @@
   },
   "library/ui/components/EventCard/EventCard.module.css": {
     "primitives": 0,
-    "tokens": 82
+    "tokens": 81
   },
   "library/ui/components/FriendCTA/FriendCTA.module.css": {
     "primitives": 0,

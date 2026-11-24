@@ -14,6 +14,7 @@ import type { PlaceCardData, PlaceCardLabels } from "@dcl/one-ui/apps/sites/plac
 
 import { QUERY_CLIENT_CONFIG } from "@/core/lib/query/defaults";
 import { sidLoader } from "@/core/lib/telemetry/page-loader";
+import { usePageView } from "@/core/lib/telemetry/page-view";
 import type { StoryId } from "@/core/lib/telemetry/story-id";
 import { track } from "@/core/lib/telemetry/track";
 import type { AgentMarkdownHandle } from "@/data/lib/agent/markdown";
@@ -35,6 +36,7 @@ import { dappsFlagsAnswer, isUnread } from "@/data/lib/feature-flags.server";
 import { openSignIn } from "@/features/components/auth/signin-store";
 import { detectPlatform, type DetectedPlatform } from "@/features/download/options";
 import { modalPlace, placeCard, placeJumpIn, type CreatorProfiles } from "@/features/places/cards";
+import { PLACES_PAGE_VIEW } from "@/features/places/page-view";
 import { useBrowsePlaces, useLiveRail, useMemberPlaces, usePlaceCreators } from "@/features/places/hooks";
 
 import { PLACES_SECTION, destinationMeta, sectionCard } from "../lib/destination-meta";
@@ -267,6 +269,8 @@ function PlacesExplorer({ loaderSid, loaderPlatform, unavailable, liveMinUsers }
   const sectionCards = toCards(sectionRows, profiles);
 
   const [modal, setModal] = useState<{ place: Destination; card: PlaceCardData } | null>(null);
+
+  usePageView(PLACES_PAGE_VIEW);
 
   // Analytics: one list view per filter set, as the previous page reported it.
   const viewed = useRef<string | null>(null);

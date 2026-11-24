@@ -10,10 +10,12 @@ import {
   type WatchResult,
 } from "@/data/lib/catalyst/landings/cast-watcher";
 import type { TrackContext } from "@/core/lib/telemetry/track";
+import { usePageView } from "@/core/lib/telemetry/page-view";
 
 import { openSignIn } from "../../components/auth/signin-store";
 import CastWatch, { type WatchJoin, type WatchLive, type WatchRefusal } from "../cast-watch/CastWatch";
 import { WatcherStage, useCastTracks } from "./CastStage";
+import { CAST_WATCHER_TITLE, castPageView, type CastPageInfo } from "./page-view";
 import { joinCast, type CastSession } from "./session";
 
 /** How the gatekeeper's refusals of `POST /cast/watcher-token` read on the page. */
@@ -107,6 +109,9 @@ export default function LiveCastWatch({
   const aborter = useRef<AbortController | null>(null);
   const tracks = useCastTracks(session);
   const [placeName, setPlaceName] = useState(() => fallbackPlaceName(location));
+  // Known once the watcher token is: the legacy watcher page view's place.
+  const [joinedPlace, setJoinedPlace] = useState<CastPageInfo | null>(null);
+  usePageView(castPageView(CAST_WATCHER_TITLE, joinedPlace));
 
   useEffect(
     () => () => {
@@ -136,6 +141,7 @@ export default function LiveCastWatch({
     if (joined === null) return new Promise<WatchJoin>(() => {});
     if ("refused" in joined) return { refused: joined.refused };
     if (joined.credentials.placeName) setPlaceName(joined.credentials.placeName);
+    setJoinedPlace({ placeName: joined.credentials.placeName || location, location, isWorld: isWorldLocation(location) });
     sessionRef.current = joined.session;
     setSession(joined.session);
     return { roomId: joined.credentials.roomId };

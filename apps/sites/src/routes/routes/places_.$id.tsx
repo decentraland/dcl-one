@@ -14,8 +14,10 @@ import { loadPlaceViewer, savePlaceFavorite, savePlaceLike } from "@/data/lib/ca
 import { sceneTravelHref } from "@/data/lib/catalyst/places/world-scenes";
 import { loadPlaceDetail } from "@/features/explorer/place-detail.server";
 import { usePlaceDetailChat, usePlaceDetailCreator } from "@/features/explorer/place-detail-profiles";
+import { placePageView } from "@/features/places/page-view";
 import type { AgentMarkdownHandle } from "@/data/lib/agent/markdown";
 import { track } from "@/core/lib/telemetry/track";
+import { usePageView } from "@/core/lib/telemetry/page-view";
 import { useSceneChat, type SceneChat } from "@/features/explorer/scene-chat/useSceneChat";
 
 import { PLACES_SECTION, placeDetailMeta, sectionCard } from "../lib/destination-meta";
@@ -86,6 +88,7 @@ export default function PlaceDetailRoute({ loaderData }: Route.ComponentProps) {
   const chat = useSceneChat(place && !place.world && place.base_position && !mobile && (livePlayers ?? 0) > 0 ? { location: place.base_position } : null);
   const creator = usePlaceDetailCreator(place);
   const chatView = usePlaceDetailChat(place?.world ? WORLD_CHAT : chat);
+  usePageView(placePageView(place));
 
   function retryTravel() {
     const query = new URLSearchParams(location.search);

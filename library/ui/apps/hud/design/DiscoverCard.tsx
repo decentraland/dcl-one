@@ -148,13 +148,13 @@ export function DiscoverCard({
   )
 }
 
-/** The grid DiscoverCards sit in. `columns` fixes the count (e.g. a 4-up row); otherwise wide cards
- *  fill the width (~4 columns), like the Figma, not a narrow centered grid. */
+/** The grid DiscoverCards sit in. `columns` caps the count (e.g. a 4-up row), and a window too narrow for that many
+ *  readable cards wraps them; otherwise wide cards fill the width (~4 columns), like the Figma, not a narrow centered
+ *  grid. */
 export function DiscoverGrid({ columns, children }: { columns?: number; children: React.ReactNode }): React.JSX.Element {
-  // minmax(0, 1fr) keeps a long title/world pill from widening its track.
-  const style = columns != null ? { gridTemplateColumns: `repeat(${columns}, minmax(0, 1fr))` } : undefined
+  const style = columns != null ? ({ '--discover-columns': columns } as React.CSSProperties) : undefined
   return (
-    <div className={styles.grid} style={style}>
+    <div className={styles.grid} data-columns={columns != null ? '' : undefined} style={style}>
       {children}
     </div>
   )

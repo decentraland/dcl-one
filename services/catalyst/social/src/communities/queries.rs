@@ -748,7 +748,8 @@ pub async fn admin_list(
 }
 
 /// The suspension CHECK ties `suspended_at`/`suspended_by` to the flag, so
-/// both directions set all four columns together.
+/// both directions set all four columns together. Suspension is local
+/// moderation and leaves the import's metadata edit timestamp intact.
 pub async fn set_suspended(
     pool: &PgPool,
     id: CommunityId,
@@ -760,7 +761,7 @@ pub async fn set_suspended(
         sqlx::query(
             "UPDATE social.communities \
              SET suspended = TRUE, suspended_at = timezone('UTC', now()), suspended_by = $2, \
-                 suspension_reason = $3, updated_at = timezone('UTC', now()) \
+                 suspension_reason = $3 \
              WHERE id = $1",
         )
         .bind(id)
@@ -773,7 +774,7 @@ pub async fn set_suspended(
         sqlx::query(
             "UPDATE social.communities \
              SET suspended = FALSE, suspended_at = NULL, suspended_by = NULL, \
-                 suspension_reason = NULL, updated_at = timezone('UTC', now()) \
+                 suspension_reason = NULL \
              WHERE id = $1",
         )
         .bind(id)
