@@ -1572,6 +1572,45 @@ async fn estate_repair_reconciles_legacy_rows_and_recovers_an_old_writer_interva
         .execute(&db.pool)
         .await
         .unwrap();
+    // A retained recovery point lands on the last archived block while
+    // reconciliation is still owed. The legacy row has no orphaned event.
+    let partial = state_over(db.pool.clone(), &url, index_settings(100, 2), false);
+    assert!(pass(&partial, &url, &ix).await.published);
+    let retained = first + 1;
+    let progress: (i64, i64) = sqlx::query_as(
+        "SELECT position,ceiling FROM shop.worker_progress WHERE worker='nft_estate_creations'",
+    )
+    .fetch_one(&db.pool)
+    .await
+    .unwrap();
+    assert_eq!(progress, (retained as i64, h as i64));
+    let retained_hash = chain.hash_of(retained);
+    sqlx::query(
+        "INSERT INTO shop.chain_checkpoint VALUES ('nft','ethereum',$1,$2,$3)
+        ON CONFLICT (indexer,network,block_number) DO NOTHING",
+    )
+    .bind(retained as i64)
+    .bind(&retained_hash)
+    .bind(time_of(retained))
+    .execute(&db.pool)
+    .await
+    .unwrap();
+    let owner = chain_walk::test_owner(&db.pool, &ix, &IndexSettings::default()).await;
+    let mut tx = db.pool.begin().await.unwrap();
+    ix.rewind(&mut tx, retained as i64).await.unwrap();
+    chain_walk::rewind(
+        &mut tx,
+        ix.indexer(),
+        net,
+        (h as i64, Some(&chain.hash_of(h))),
+        retained as i64,
+        Some((&retained_hash, time_of(retained))),
+    )
+    .await
+    .unwrap();
+    owner.check(&mut tx).await.unwrap();
+    tx.commit().await.unwrap();
+    *chain.head.lock() = retained + net.confirmations();
     assert!(pass(&st, &url, &ix).await.published);
     let rows = || {
         sqlx::query_as::<_,(String,String,Option<String>,Option<String>,i64,i32)>(
@@ -1608,8 +1647,11 @@ async fn estate_repair_reconciles_legacy_rows_and_recovers_an_old_writer_interva
     nft_index::fold(&db.pool, net, None, &owner).await.unwrap();
     assert_eq!(rows().await.unwrap(), repaired);
 
+    *chain.head.lock() = h + net.confirmations();
+    assert!(publish_nft(&st, &url, &ix).await.published);
     // Stop the new writer at H. The old writer commits the Updates and its
     // cursor through J, without changing our existing, completed marker.
+    let owner = chain_walk::test_owner(&db.pool, &ix, &IndexSettings::default()).await;
     let j = h + 3;
     let rename = estate_document(j, 0, 4, false, r#"0,"Later","Update""#);
     chain.logs.lock().extend([
@@ -1649,6 +1691,41 @@ async fn estate_repair_reconciles_legacy_rows_and_recovers_an_old_writer_interva
             ("4".into(), "Later".into())
         ]
     );
+    // An old writer resets the whole projection and advances over the
+    // same chain. Its cursor ends at exactly the marker's former height and hash.
+    let before_rebuild = rows().await.unwrap();
+    let mut tx = db.pool.begin().await.unwrap();
+    let start: i64 = sqlx::query_scalar("UPDATE shop.chain_cursor SET last_block=start_block-1,last_block_hash=NULL,
+        folded_block=NULL,folded_at=NULL,fold_through=NULL WHERE indexer='nft' AND network='ethereum' RETURNING last_block")
+        .fetch_one(&mut *tx).await.unwrap();
+    sqlx::query("DELETE FROM shop.chain_checkpoint WHERE indexer='nft' AND network='ethereum'")
+        .execute(&mut *tx)
+        .await
+        .unwrap();
+    sqlx::query("DELETE FROM shop.nft_event WHERE network='ethereum' AND kind='land_data' AND to_address IS NOT NULL")
+        .execute(&mut *tx).await.unwrap();
+    sqlx::query("DELETE FROM shop.land_data WHERE token_address=$1")
+        .bind(estate)
+        .execute(&mut *tx)
+        .await
+        .unwrap();
+    chain_walk::advance(
+        &mut tx,
+        ix.indexer(),
+        net,
+        (start, None),
+        &crate::chain_index::rpc::BlockHeader {
+            number: j,
+            hash: chain.hash_of(j),
+            timestamp: time_of(j),
+        },
+    )
+    .await
+    .unwrap();
+    tx.commit().await.unwrap();
+    assert_ne!(rows().await.unwrap(), before_rebuild);
+    assert!(pass(&st, &url, &NftIndex::new(net)).await.published);
+    assert_eq!(rows().await.unwrap(), before_rebuild);
     db.drop().await;
 }
 

@@ -420,6 +420,28 @@ CREATE TABLE shop.chain_checkpoint (
     CONSTRAINT chain_checkpoint_hash_shape CHECK (block_hash ~ '^0x[0-9a-f]{64}$')
 );
 
+-- A pre-CreateEstate writer can rebuild the NFT projection to the same
+-- block and hash. Invalidate its archive proof when any writer resets it.
+CREATE OR REPLACE FUNCTION shop.reset_estate_creation_repair() RETURNS trigger
+LANGUAGE plpgsql AS $$
+BEGIN
+    DELETE FROM shop.worker_progress WHERE worker = 'nft_estate_creations' AND scope = 1;
+    RETURN NULL;
+END;
+$$;
+
+CREATE TRIGGER reset_estate_creation_repair
+AFTER UPDATE OF last_block ON shop.chain_cursor
+FOR EACH ROW WHEN (OLD.indexer = 'nft' AND OLD.network = 'ethereum'
+    AND NEW.last_block < OLD.last_block AND NEW.last_block = NEW.start_block - 1
+    AND NEW.last_block_hash IS NULL)
+EXECUTE FUNCTION shop.reset_estate_creation_repair();
+
+CREATE TRIGGER drop_estate_creation_repair
+AFTER DELETE ON shop.chain_cursor
+FOR EACH ROW WHEN (OLD.indexer = 'nft' AND OLD.network = 'ethereum')
+EXECUTE FUNCTION shop.reset_estate_creation_repair();
+
 -- The collections the nft walk has taken in, and from which block. A
 -- collection the mirror reports after the walk passed its creation gets a
 -- backfill range [backfill_from_block, walked_from_block - 1], walked by its

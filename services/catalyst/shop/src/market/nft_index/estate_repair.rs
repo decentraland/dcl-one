@@ -40,7 +40,17 @@ pub(super) async fn record(
     Ok(())
 }
 
-pub(super) async fn rewind(conn: &mut PgConnection, to: i64) -> sqlx::Result<()> {
+pub(super) async fn rewind(conn: &mut PgConnection, to: i64) -> anyhow::Result<()> {
+    // If the rewind removes the last outstanding archive window, its retained
+    // prefix is complete but still needs the final replacement of legacy rows.
+    let reconcile: Option<bool> = sqlx::query_scalar(
+        "SELECT position < ceiling AND position >= $2 FROM shop.worker_progress
+         WHERE worker=$1 AND scope=1 FOR UPDATE",
+    )
+    .bind(WORKER)
+    .bind(to)
+    .fetch_optional(&mut *conn)
+    .await?;
     // Preserve proven coverage below the rewind. If the previous cursor
     // was already unaccounted for, the next capture will reconcile it.
     sqlx::query("UPDATE shop.worker_progress p SET
@@ -51,7 +61,10 @@ pub(super) async fn rewind(conn: &mut PgConnection, to: i64) -> sqlx::Result<()>
                     WHERE indexer=c.indexer AND network=c.network AND block_number=$2), '')]
           ELSE p.key_ceiling END
         FROM shop.chain_cursor c WHERE worker=$1 AND scope=1 AND c.indexer='nft' AND c.network='ethereum'")
-        .bind(WORKER).bind(to).execute(conn).await?;
+        .bind(WORKER).bind(to).execute(&mut *conn).await?;
+    if reconcile == Some(true) {
+        replace_registry(conn).await?;
+    }
     Ok(())
 }
 
@@ -234,11 +247,7 @@ pub(super) async fn step(
     if end.number as i64 == ceiling {
         // A newer valid Update still wins, including when an old fold had
         // previously overwritten it with a malformed document.
-        sqlx::query("DELETE FROM shop.land_data WHERE token_address=$1")
-            .bind(ESTATE_REGISTRY_MAINNET)
-            .execute(&mut *tx)
-            .await?;
-        fold_registry_data(&mut tx, -1, Some(ESTATE_REGISTRY_MAINNET)).await?;
+        replace_registry(&mut tx).await?;
     }
     // A concurrent rewind can invalidate the prefix even when this worker
     // still holds the same owner generation.
@@ -253,4 +262,13 @@ pub(super) async fn step(
     owner.check(&mut tx).await?;
     tx.commit().await?;
     Ok(requests)
+}
+
+async fn replace_registry(conn: &mut PgConnection) -> anyhow::Result<()> {
+    sqlx::query("DELETE FROM shop.land_data WHERE token_address=$1")
+        .bind(ESTATE_REGISTRY_MAINNET)
+        .execute(&mut *conn)
+        .await?;
+    fold_registry_data(conn, -1, Some(ESTATE_REGISTRY_MAINNET)).await?;
+    Ok(())
 }
