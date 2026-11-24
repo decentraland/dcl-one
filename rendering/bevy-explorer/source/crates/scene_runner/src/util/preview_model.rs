@@ -101,7 +101,6 @@ pub(super) fn reload_model(
 /// A reload is over when the asset is loaded with its dependencies, or replaced (`source` is set
 /// again: dropping it after a load is a modification too), or failed. Runs before the reloads are
 /// requested in a frame, so a container waits only for events sent after its request.
-#[allow(clippy::too_many_arguments)]
 pub(super) fn finish_model_reloads(
     mut commands: Commands,
     mut asset_events: EventReader<AssetEvent<Gltf>>,
