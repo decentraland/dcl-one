@@ -55,8 +55,7 @@ const MAX_HELD_BYTES: usize = 16 * 1024 * 1024;
 /// The Pulse server's ENet-CSharp host drops datagrams over 1280 bytes.
 const PULSE_MTU: u16 = 1280;
 
-/// The driver's host: one peer (the server), three channels, no compressor/checksum
-/// (`HostSettings` defaults), and the server's MTU, set before `connect` copies it to the peer.
+/// One peer, three channels, no compressor/checksum, and the MTU set before `connect`.
 fn pulse_host<S: enet::Socket>(socket: S) -> Result<enet::Host<S>, String> {
     let mut host = enet::Host::new(
         socket,

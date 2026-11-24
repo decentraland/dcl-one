@@ -169,8 +169,7 @@ impl enet::Socket for DropsOver1280 {
     }
 }
 
-/// A reliable message larger than one datagram reaches a server that drops datagrams over
-/// 1280 bytes. The server keeps ENet's default MTU, so the driver's own setting decides.
+/// The server keeps ENet's default MTU, so only the driver's MTU can keep fragments under 1280.
 #[test]
 fn a_fragmented_reliable_message_reaches_a_server_capped_at_1280_bytes() {
     let mut server = enet::Host::new(
