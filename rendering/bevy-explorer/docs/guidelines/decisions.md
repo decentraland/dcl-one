@@ -817,6 +817,16 @@ ends in "we don't do that", so the next person doesn't have to rediscover it.
   thicken with a shorter scene load distance, so the edge of the loaded scenes shows through it,
   and a scene's global light does not tint it. A scene sets fog colour and density with its fog
   component. The Off setting is no fog at all.
+- **Scene labels lay out as in the Unity client, not as in CSS (#1976).** A label with an `auto`
+  axis (every react-ecs node since `@dcl/sdk` 7.5.0) sizes to its text, and its entity's
+  `justifyContent` and `alignItems` place it; `textAlign` acts only inside the text's own box, so
+  an unstyled label stretched across a row is not centred. A label sized in px or % on an axis is
+  a box its text aligns inside by `textAlign`. A label with no size draws over its entity and
+  takes no space. Every label's text box has the margin (top 4, right 4, bottom 2, left 2) and
+  padding (top 4, right 2, bottom 4, left 1) that the Unity client's default runtime UI theme gives
+  scene labels; CSS adds none. They are device pixels, as the Unity client's scene panel counts
+  them, so a scale factor of 2 halves them in logical pixels. Scenes are authored against the
+  Unity client, so its spacing is kept.
 - **glTF occlusion textures are ignored.** Scene materials drop a glTF's occlusion texture, so
   baked ambient occlusion does not darken the ambient light. The Unity client's scene shader
   does not sample it either, and content is authored against that look.

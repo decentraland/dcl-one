@@ -86,6 +86,48 @@ impl From<PbUiText> for UiText {
     }
 }
 
+/// Space outside a scene label's text box, as [top, right, bottom, left] device pixels. Every
+/// label carries the same margin and [`LABEL_PADDING`] whichever way it is laid out, so giving a
+/// label a size changes where its box sits, never the spacing around its text. The spacing is a
+/// fixed number of device pixels, so it takes fewer logical pixels on a high-density display.
+const LABEL_MARGIN: [f32; 4] = [4.0, 4.0, 2.0, 2.0];
+
+/// Space between a scene label's text box and its glyphs, as [top, right, bottom, left] device
+/// pixels. See [`LABEL_MARGIN`].
+const LABEL_PADDING: [f32; 4] = [4.0, 2.0, 4.0, 1.0];
+
+/// `edges` in device pixels as logical pixels for a window with `scale_factor`.
+fn device_px(edges: [f32; 4], scale_factor: f32) -> UiRect {
+    let [top, right, bottom, left] = edges.map(|px| Val::Px(px / scale_factor));
+    UiRect {
+        top,
+        right,
+        bottom,
+        left,
+    }
+}
+
+/// Rebuilds every scene label when the window's scale factor changes, so the device-pixel
+/// spacing ([`LABEL_MARGIN`], [`LABEL_PADDING`]) keeps its size.
+pub fn refresh_ui_text_on_scale_change(
+    window: Query<&Window, With<PrimaryWindow>>,
+    mut last: Local<Option<f32>>,
+    mut texts: Query<&mut UiText>,
+) {
+    let Ok(window) = window.single() else {
+        return;
+    };
+    let scale_factor = window.scale_factor();
+    if last
+        .replace(scale_factor)
+        .is_some_and(|prev| prev != scale_factor)
+    {
+        for mut text in texts.iter_mut() {
+            text.set_changed();
+        }
+    }
+}
+
 #[derive(Component)]
 pub struct UiTextMarker;
 
@@ -121,7 +163,12 @@ pub fn set_ui_text(
     mut unrecognized_tags: ResMut<UnrecognisedTags>,
     mut scene_fonts: SceneFontServer,
     scenes: Query<&RendererSceneContext>,
+    window: Query<&Window, With<PrimaryWindow>>,
 ) {
+    let scale_factor = window.single().map_or(1.0, Window::scale_factor);
+    let label_margin = device_px(LABEL_MARGIN, scale_factor);
+    let label_padding = device_px(LABEL_PADDING, scale_factor);
+
     for ent in removed.read() {
         let Ok(link) = links.get(ent) else {
             continue;
@@ -195,6 +242,7 @@ pub fn set_ui_text(
         // c) otherwise (px or % on an axis, the other px, % or unset): the entity is a box the
         //    text aligns inside, by justify-content and align-items; an unset axis follows the
         //    content.
+        // all three give the text's own box the same margin and padding.
         let axes = [ui_transform.size.width, ui_transform.size.height];
         let content_sized = axes.contains(&Some(Val::Auto));
         let no_size = axes.iter().all(Option::is_none);
@@ -202,6 +250,8 @@ pub fn set_ui_text(
         let inner_style = if content_sized {
             Node {
                 position_type: PositionType::Relative,
+                margin: label_margin,
+                padding: label_padding,
                 ..Default::default()
             }
         } else if no_size {
@@ -212,12 +262,15 @@ pub fn set_ui_text(
                 right: half_if(ui_text.h_align == JustifyText::Right),
                 top: half_if(ui_text.v_align == VAlign::Top),
                 bottom: half_if(ui_text.v_align == VAlign::Bottom),
+                margin: label_margin,
+                padding: label_padding,
                 ..Default::default()
             }
         } else {
             Node {
                 position_type: PositionType::Relative,
-                margin: UiRect::all(Val::Px(ui_text.font_size * 0.5)),
+                margin: label_margin,
+                padding: label_padding,
                 ..Default::default()
             }
         };
