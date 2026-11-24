@@ -970,7 +970,18 @@ async fn native_backdated_logins_share_a_server_timed_concurrent_quota_and_termi
             other => panic!("unexpected admission: {other:?}"),
         }
     }
-    assert_eq!(accepted, 1);
+    assert_eq!(
+        accepted, 8,
+        "the first counts today; the rest change nothing"
+    );
+    let count: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM social.referral_login_receipts WHERE invited_user=$1",
+    )
+    .bind(&invited)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(count, 120, "only the first takes a quota slot");
     let retention: bool = sqlx::query_scalar("SELECT bool_and(expires_at >= received_at+interval '23 hours 59 minutes') FROM social.referral_login_receipts WHERE invited_user=$1")
         .bind(&invited).fetch_one(&pool).await.unwrap();
     assert!(
@@ -1000,7 +1011,7 @@ async fn native_backdated_logins_share_a_server_timed_concurrent_quota_and_termi
         count, 120,
         "terminal logins neither write nor fail the full quota"
     );
-    sqlx::query("UPDATE social.referral_progress SET status='pending',tier_granted=false WHERE invited_user=$1")
+    sqlx::query("UPDATE social.referral_progress SET status='pending',tier_granted=false,login_days='{}' WHERE invited_user=$1")
         .bind(&invited).execute(&pool).await.unwrap();
     // A future-dated prior occurrence may outlive its server quota window.
     sqlx::query("UPDATE social.referral_login_receipts SET received_at=timezone('UTC',now())-interval '24 hours 1 second',expires_at=timezone('UTC',now())+interval '4 minutes' WHERE invited_user=$1")
@@ -1093,6 +1104,102 @@ async fn native_receipt_cleanup_skips_locked_rows_and_failures_do_not_stop_rewar
         drop(referral);
         database.drop().await;
     }
+}
+
+#[tokio::test]
+async fn logins_on_a_counted_date_leave_the_next_days_first_login_its_quota() {
+    let Some(database) = reward_database().await else {
+        return;
+    };
+    let pool = database.pool.clone();
+    let (referrer, invited) = (wallet(), wallet());
+    let referral = Referral::new(pool.clone(), Outbound::for_tests(), Settings::for_tests());
+    referral
+        .create(&referrer, &invited, "192.0.2.1")
+        .await
+        .unwrap();
+    let now = chrono::Utc::now().timestamp_millis();
+    // What each `/ws` handshake calls.
+    use crate::comms::interfaces::LoginRecorder;
+    for _ in 0..200 {
+        referral
+            .record_login(invited.as_str(), uuid::Uuid::new_v4())
+            .await
+            .unwrap();
+    }
+    let receipts: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM social.referral_login_receipts WHERE invited_user=$1",
+    )
+    .bind(&invited)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(receipts, 1, "reconnects on a counted date take no slot");
+    // The next UTC day, still inside the rolling quota window.
+    sqlx::query("UPDATE social.referral_progress SET login_days=ARRAY[(timezone('UTC',now())::date - 1)] WHERE invited_user=$1")
+        .bind(&invited).execute(&pool).await.unwrap();
+    referral
+        .record_authenticated_login(invited.as_str(), uuid::Uuid::new_v4(), now)
+        .await
+        .unwrap();
+    let days: Vec<chrono::NaiveDate> =
+        sqlx::query_scalar("SELECT login_days FROM social.referral_progress WHERE invited_user=$1")
+            .bind(&invited)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(days.len(), 2, "the next day's first login counts");
+    database.drop().await;
+}
+
+#[tokio::test]
+async fn the_login_recorder_retries_only_server_errors() {
+    use crate::comms::interfaces::{LoginRecordError, LoginRecorder};
+    let Some(database) = reward_database().await else {
+        return;
+    };
+    let pool = database.pool.clone();
+    let (referrer, invited) = (wallet(), wallet());
+    let referral = Referral::new(pool.clone(), Outbound::for_tests(), Settings::for_tests());
+    referral
+        .create(&referrer, &invited, "192.0.2.1")
+        .await
+        .unwrap();
+
+    let invalid = referral
+        .record_login("not-a-wallet", uuid::Uuid::new_v4())
+        .await;
+    assert!(
+        matches!(invalid, Err(LoginRecordError::Refused(_))),
+        "400: {invalid:?}"
+    );
+
+    // A held progress row runs into the login's lock timeout.
+    let mut holder = pool.begin().await.unwrap();
+    sqlx::query("SELECT 1 FROM social.referral_progress WHERE invited_user=$1 FOR UPDATE")
+        .bind(&invited)
+        .execute(&mut *holder)
+        .await
+        .unwrap();
+    let busy = referral
+        .record_login(invited.as_str(), uuid::Uuid::new_v4())
+        .await;
+    assert!(
+        matches!(busy, Err(LoginRecordError::Transient(_))),
+        "503: {busy:?}"
+    );
+    holder.rollback().await.unwrap();
+
+    sqlx::query("INSERT INTO social.referral_login_receipts(invited_user,login_id,expires_at,received_at) SELECT $1,gen_random_uuid(),timezone('UTC',now())+interval '1 day',timezone('UTC',now()) FROM generate_series(1,120)")
+        .bind(&invited).execute(&pool).await.unwrap();
+    let full = referral
+        .record_login(invited.as_str(), uuid::Uuid::new_v4())
+        .await;
+    assert!(
+        matches!(full, Err(LoginRecordError::Refused(_))),
+        "429: {full:?}"
+    );
+    database.drop().await;
 }
 
 #[tokio::test]

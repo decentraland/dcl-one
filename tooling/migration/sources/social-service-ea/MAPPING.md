@@ -211,8 +211,24 @@ consistent; completed progress does not regress on repeat imports. The first ref
 and existing IP and transition timestamps are retained. The older referral-server only fills
 gaps for the same referrer. Reward images retain their IDs and historical snapshots.
 No reward requests, retry state or deliveries are created; existing target reward execution
-fields are untouched. Redis login-day counters are not in this PostgreSQL database and
-require a separate cutover decision before referral logins are enabled.
+fields are untouched.
+
+Legacy login state outside PostgreSQL is not imported. At cutover, in this order:
+
+1. Drain: let the legacy login consumer empty its queue, then stop it and every other
+   legacy referral writer. Undrained messages are lost: they carry no user signature to
+   replay.
+2. Final import: run the `referral_progress` step, so grants made during the drain arrive.
+3. Merge login days: for each Redis set `referral:invited-user:<wallet>`, add its days to
+   `social.referral_progress.login_days` (a set union with the days this node already
+   counted), only where `tier_granted` is false and the status is not
+   `rejected_ip_match`. Skipped, those invitees count again from the node's own days.
+
+Before step 1 ends, the legacy consumer still grants. Keep `SOCIAL_WRITES_ENABLED` off until
+step 2: with it off, neither `client-login` nor the `/ws` handshake credits a login. With it on,
+a login for an invitee an earlier `referral_progress` import already brought in counts here,
+and the same invitee can be granted on both sides, with two accepted notifications and two
+reward requests. Invitees not yet imported have no progress row and are not counted.
 
 After upgrading an earlier import, restart `referral_progress` to populate fields whose
 source watermark has not changed. The reward-image step has its own checkpoint.

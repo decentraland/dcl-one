@@ -41,6 +41,8 @@ crate::shared::send_sync_once! {
 
         pub ban_checker: Arc<BanChecker>,
         pub deny_list: Arc<DenyList>,
+        /// Credits each completed handshake as a login of its wallet.
+        pub logins: crate::archipelago::logins::LoginCredits,
     }
 }
 

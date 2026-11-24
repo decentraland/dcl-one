@@ -623,9 +623,14 @@ async fn configured_legacy_heartbeat_reaches_real_pulse_clustering_over_nats() {
             .with_bus(bus),
     );
     let jobs = catalyst::jobs::Jobs::new();
-    let state = catalyst::comms::archipelago::build_state(Settings::for_tests(), gatekeeper, &jobs)
-        .await
-        .unwrap();
+    let state = catalyst::comms::archipelago::build_state(
+        Settings::for_tests(),
+        gatekeeper,
+        std::sync::Arc::new(catalyst::comms::interfaces::test_support::RecordedLogins::default()),
+        &jobs,
+    )
+    .await
+    .unwrap();
     archipelago::start_island_feed(&state, &jobs);
     assert!(state.control_v4.is_available());
     let port = archipelago::serve(state.clone()).await;

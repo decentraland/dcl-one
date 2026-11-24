@@ -1016,6 +1016,18 @@ pub async fn serve(
             presence_badge_settings.clone(),
         )) as Arc<dyn comms::gatekeeper::events::RoomEventStore>
     });
+    // One referral state: comms credits `/ws` logins to it, social serves it.
+    let referral = Arc::new(communities::referral::Referral::new(
+        pool.clone(),
+        http_client.clone(),
+        referral_settings(&config),
+    ));
+    // `client-login` sits behind the social writes switch; so does this credit.
+    let logins: Arc<dyn comms::interfaces::LoginRecorder> = if config.writes.social_writes_enabled {
+        referral.clone()
+    } else {
+        Arc::new(comms::interfaces::NoLoginRecorder)
+    };
     let comms_stage = comms_states(
         &config,
         &pool,
@@ -1031,6 +1043,7 @@ pub async fn serve(
         live_presence.clone(),
         eip1654.clone(),
         content.denylist.clone(),
+        logins,
         primary,
         &jobs,
     )
@@ -1116,6 +1129,7 @@ pub async fn serve(
         &explore,
         explorer_api.onboarding.clone(),
         metrics_handle,
+        referral,
     )?;
     social
         .rpc

@@ -1347,6 +1347,16 @@ The client preserves these values across retries and signs each request afresh.
 The occurrence timestamp bounds replay acceptance, while login-day accounting
 continues to use the database's UTC processing date.
 
+Clients that do not call that route are credited from the archipelago
+connector: each completed `/ws` challenge handshake runs the same login
+recording for its wallet, on a spawned task after the welcome (at most 16
+attempts at once, a retry's wait holding none, and 4,096 waiting; a 5-second
+timeout per attempt; three attempts with the same login ID). It is off while
+`SOCIAL_WRITES_ENABLED` is. Its login ID is a UUID v5 of the handshake's single-use
+challenge, and its occurrence is the server's time. Each handshake adds one
+indexed invited-wallet lookup; the receipts, quota and locks below are shared
+by both sources. Only the primary `serve` runs `/ws`.
+
 Most logins have no referral attribution and require only the indexed invited
 wallet lookup. For an attributed wallet, `social.referral_login_receipts` stores
 one receipt keyed by `(invited_user, login_id)` in the same transaction as the
@@ -1356,7 +1366,9 @@ progress shares its deletion/restore lifecycle and cascades on deletion.
 
 Under the invited-user row lock, admission caps distinct new IDs at 120 per
 wallet in a rolling 24-hour window of server `received_at` values. A duplicate
-does not consume another slot. Finished or rejected referrals return success
+does not consume another slot, and neither does a login on a UTC date already
+in `login_days` while the threshold is not reached: it stores no receipt, so
+reconnects cannot block the next day's first login. Finished or rejected referrals return success
 without adding receipts; banned referrers are a no-op on this native ingress,
 without exposing their identity or stored IP. Those acknowledged login
 observations are not retained or replayed if the ban is later lifted; a new

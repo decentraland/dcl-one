@@ -2,7 +2,9 @@
 //! The invited user is always the signed-fetch signer: POST records the
 //! attribution (first referrer wins), PATCH marks the signer as signed up,
 //! GET reports the signer's own stats as a referrer. Login events grant
-//! progress after the configured distinct UTC login days. `POST
+//! progress after the configured distinct UTC login days; they come from
+//! the signed `POST /v1/client-login` and from each completed `/ws`
+//! challenge handshake (`comms::archipelago::logins`). `POST
 //! /v1/referral-email` stores the contact email of a referrer at the IRL-swag
 //! tier, checked as upstream's `setReferralEmail` checks it.
 
@@ -395,6 +397,14 @@ impl Referral {
             tx.commit().await.map_err(login_database_error)?;
             return Ok(());
         }
+        let today = match today {
+            Some(day) => day,
+            None => sqlx::query_scalar("SELECT timezone('UTC',clock_timestamp())::date")
+                .fetch_one(&mut *tx)
+                .await
+                .map_err(login_database_error)?,
+        };
+        let below_threshold = (days.len() as f64) < self.settings.min_login_days;
         if let Some((login_id, occurred_at)) = event {
             let now: chrono::NaiveDateTime =
                 sqlx::query_scalar("SELECT timezone('UTC',clock_timestamp())")
@@ -412,6 +422,10 @@ impl Referral {
             let duplicate: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM social.referral_login_receipts WHERE invited_user=$1 AND login_id=$2)")
                 .bind(&invited).bind(login_id).fetch_one(&mut *tx).await.map_err(login_database_error)?;
             if duplicate {
+                return Ok(());
+            }
+            // A date already counted changes nothing: no receipt, no quota slot.
+            if below_threshold && days.contains(&today) {
                 return Ok(());
             }
             // Legacy receipts retain their old expiry after migration; their
@@ -439,14 +453,7 @@ impl Referral {
             sqlx::query("INSERT INTO social.referral_login_receipts(invited_user,login_id,expires_at,received_at) VALUES($1,$2,$3,$4)")
                 .bind(&invited).bind(login_id).bind(expires_at).bind(now).execute(&mut *tx).await.map_err(login_database_error)?;
         }
-        if (days.len() as f64) < self.settings.min_login_days {
-            let today = match today {
-                Some(day) => day,
-                None => sqlx::query_scalar("SELECT timezone('UTC',clock_timestamp())::date")
-                    .fetch_one(&mut *tx)
-                    .await
-                    .map_err(login_database_error)?,
-            };
+        if below_threshold {
             if !days.contains(&today) {
                 days.push(today);
             }
@@ -937,6 +944,32 @@ pub async fn create_referral(
         .map_err(|_| CommError::bad_request("Invalid referrer address"))?;
     state.referral.create(&referrer, &invited, &ip).await?;
     Ok(StatusCode::NO_CONTENT)
+}
+
+/// A wallet that signed a fresh `/ws` challenge logged in now; the login id
+/// is the handshake's.
+#[async_trait::async_trait]
+impl crate::comms::interfaces::LoginRecorder for Referral {
+    async fn record_login(
+        &self,
+        wallet: &str,
+        login_id: uuid::Uuid,
+    ) -> Result<(), crate::comms::interfaces::LoginRecordError> {
+        use crate::comms::interfaces::LoginRecordError;
+        let now = chrono::Utc::now().timestamp_millis();
+        let Err(error) = self.record_authenticated_login(wallet, login_id, now).await else {
+            return Ok(());
+        };
+        let reason = format!("{error:?}");
+        if axum::response::IntoResponse::into_response(error)
+            .status()
+            .is_server_error()
+        {
+            Err(LoginRecordError::Transient(reason))
+        } else {
+            Err(LoginRecordError::Refused(reason))
+        }
+    }
 }
 
 /// Explorer reports both fresh and restored authenticated login occurrences.

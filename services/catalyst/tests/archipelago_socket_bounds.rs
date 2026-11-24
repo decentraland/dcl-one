@@ -1496,6 +1496,7 @@ async fn orderly_shutdown_drains_authenticated_disconnect_to_live_pulse() {
     let state = catalyst::comms::archipelago::build_state(
         Settings::for_tests(),
         archipelago::gatekeeper(Some(bus.clone())),
+        std::sync::Arc::new(catalyst::comms::interfaces::test_support::RecordedLogins::default()),
         &jobs,
     )
     .await

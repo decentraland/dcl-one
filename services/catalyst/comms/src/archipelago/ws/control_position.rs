@@ -211,6 +211,7 @@ mod tests {
         let state = crate::archipelago::build_state(
             Settings::for_tests(),
             shared,
+            std::sync::Arc::new(crate::interfaces::test_support::RecordedLogins::default()),
             &crate::jobs::Jobs::new(),
         )
         .await

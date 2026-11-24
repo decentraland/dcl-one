@@ -459,6 +459,7 @@ pub(super) async fn comms_states(
     presence: Arc<comms::presence::Presence>,
     eip1654: Option<Arc<dyn crate::auth::eip1654::Eip1654Validator>>,
     content_denylist: Arc<content::Denylist>,
+    logins: Arc<dyn comms::interfaces::LoginRecorder>,
     primary: bool,
     jobs: &Arc<jobs::Jobs>,
 ) -> anyhow::Result<CommsStage> {
@@ -523,9 +524,10 @@ pub(super) async fn comms_states(
     let gatekeeper = Arc::new(gatekeeper);
     gatekeeper.spawn_presence_recovery(jobs);
 
-    let archipelago = archipelago::build_state(archipelago_settings, gatekeeper.clone(), jobs)
-        .await
-        .context("wiring archipelago")?;
+    let archipelago =
+        archipelago::build_state(archipelago_settings, gatekeeper.clone(), logins, jobs)
+            .await
+            .context("wiring archipelago")?;
     // Social reads the union of Pulse islands and World presence from events and recovery.
     gatekeeper
         .presence
@@ -612,6 +614,7 @@ pub(super) fn social_states(
     explore: &explore::SharedState,
     onboarding: Arc<explore::api::onboarding::OnboardingState>,
     metrics_handle: comms::metrics::PrometheusHandle,
+    referral: Arc<communities::referral::Referral>,
 ) -> anyhow::Result<social::States> {
     config
         .social
@@ -652,7 +655,7 @@ pub(super) fn social_states(
         profile_images_settings.derives_faces(),
     );
 
-    let communities = Arc::new(communities::State::new(
+    let communities = Arc::new(communities::State::with_referral(
         pool.clone(),
         storage.clone(),
         communities::Settings {
@@ -714,8 +717,8 @@ pub(super) fn social_states(
             referral: referral_settings(config),
         },
         eip1654.clone(),
-        http_client,
         explore.clone(),
+        referral,
     ));
 
     let analytics = social_analytics(config, http_client)?;
@@ -1033,6 +1036,11 @@ mod event_notice_configuration_tests {
                 &explore,
                 onboarding,
                 recorder.handle(),
+                Arc::new(communities::referral::Referral::new(
+                    pool.clone(),
+                    http.clone(),
+                    referral_settings(&config),
+                )),
             )
             .unwrap();
             let settings = &social.notifications.settings;

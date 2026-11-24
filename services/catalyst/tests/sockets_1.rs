@@ -8,18 +8,20 @@ mod archipelago_ban_check;
 mod archipelago_ban_eviction;
 #[path = "archipelago_hot_scenes.rs"]
 mod archipelago_hot_scenes;
+#[path = "archipelago_login_credit.rs"]
+mod archipelago_login_credit;
 #[path = "archipelago_proto_wire.rs"]
 mod archipelago_proto_wire;
 #[path = "archipelago_upstream_parity.rs"]
 mod archipelago_upstream_parity;
 #[path = "archipelago_ws_island_dedup.rs"]
 mod archipelago_ws_island_dedup;
+#[path = "pulse_application_transport.rs"]
+mod pulse_application_transport;
 // Builds only with test-support, as its own target did.
 #[cfg(feature = "test-support")]
 #[path = "pulse_generation.rs"]
 mod pulse_generation;
-#[path = "pulse_application_transport.rs"]
-mod pulse_application_transport;
 #[path = "pulse_loopback.rs"]
 mod pulse_loopback;
 #[path = "pulse_quantize_differential.rs"]

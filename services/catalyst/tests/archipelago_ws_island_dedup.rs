@@ -944,6 +944,7 @@ async fn an_assigned_socket_recovers_a_lost_move_and_reannounces_after_broker_re
     let state = catalyst::comms::archipelago::build_state(
         cfg,
         archipelago::gatekeeper(Some(bus.clone())),
+        std::sync::Arc::new(catalyst::comms::interfaces::test_support::RecordedLogins::default()),
         &jobs,
     )
     .await

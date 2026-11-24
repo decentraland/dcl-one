@@ -9,6 +9,8 @@
 //!   rows (a request to its active deployment and room). Implemented by
 //!   worlds' `rooms::SceneResolver`; the gatekeeper and its relay authority
 //!   take it.
+//! - [`LoginRecorder`]: social's referral login days, credited for a wallet
+//!   that completed the `/ws` challenge handshake.
 
 use std::collections::BTreeSet;
 use std::sync::Arc;
@@ -259,10 +261,57 @@ pub trait SocialDirectory: Send + Sync {
     ) -> Result<(), sqlx::Error>;
 }
 
+/// Why a login was not recorded.
+#[derive(Debug)]
+pub enum LoginRecordError {
+    /// Worth retrying with the same login id (contention, a database error).
+    Transient(String),
+    /// Refused for good (quota, invalid wallet).
+    Refused(String),
+}
+
+/// Social records an authenticated login of `wallet`: comms calls it once a
+/// wallet signs a fresh server challenge. `login_id` is unique per
+/// handshake; recording the same id again is a no-op.
+#[async_trait::async_trait]
+pub trait LoginRecorder: Send + Sync {
+    async fn record_login(
+        &self,
+        wallet: &str,
+        login_id: uuid::Uuid,
+    ) -> Result<(), LoginRecordError>;
+}
+
+/// Records nothing: the node's social writes are off.
+pub struct NoLoginRecorder;
+
+#[async_trait::async_trait]
+impl LoginRecorder for NoLoginRecorder {
+    async fn record_login(&self, _: &str, _: uuid::Uuid) -> Result<(), LoginRecordError> {
+        Ok(())
+    }
+}
+
 #[cfg(any(test, feature = "test-support"))]
 pub mod test_support {
     use super::*;
     use crate::access::AccessGrant;
+
+    /// Records every login it is handed.
+    #[derive(Default)]
+    pub struct RecordedLogins(pub std::sync::Mutex<Vec<(String, uuid::Uuid)>>);
+
+    #[async_trait::async_trait]
+    impl LoginRecorder for RecordedLogins {
+        async fn record_login(
+            &self,
+            wallet: &str,
+            login_id: uuid::Uuid,
+        ) -> Result<(), LoginRecordError> {
+            self.0.lock().unwrap().push((wallet.to_string(), login_id));
+            Ok(())
+        }
+    }
 
     /// In-memory social seam; records notifications for assertions.
     #[derive(Default)]

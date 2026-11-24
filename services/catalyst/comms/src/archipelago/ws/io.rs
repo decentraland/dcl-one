@@ -2439,6 +2439,7 @@ mod bounds_tests {
         let state = crate::archipelago::build_state(
             crate::archipelago::Settings::for_tests(),
             gatekeeper,
+            std::sync::Arc::new(crate::interfaces::test_support::RecordedLogins::default()),
             &jobs,
         )
         .await

@@ -56,6 +56,7 @@ the player report routes under the gatekeeper's own mount (the intake is the
 | `interfaces::AccessPolicy` | `worlds::policy::Policy` | may this wallet enter this world, scene or parcel |
 | `interfaces::SceneIdentity` | `worlds::rooms::SceneResolver` | a world's active scene and the resolved room; room names are `comms::rooms` |
 | `interfaces::SocialDirectory` | `social::comms_directory::Directory` | privacy, friendships, community roles; notices inserted on the caller's transaction |
+| `interfaces::LoginRecorder` | `social::communities::referral::Referral` (one instance, built by `serve` and shared with social) | a login for each completed `/ws` challenge handshake, recorded on a bounded spawned task with retries, ended at shutdown by the job `archipelago-login-credits`; never delays or fails the handshake. `serve` hands in `interfaces::NoLoginRecorder` while social writes are off. `/ws` runs on the primary `serve` only ([ADR](../../../../docs/adr/2026-11-23-referral-logins-from-comms-handshake.md)) |
 | `interfaces::NameOwnerReader` | root `serve_adapters::ShopNameOwners` over shop `MarketplaceState::name_owner` | name ownership for Admin Toolkit targets |
 | `gatekeeper::events::RoomEventSink` | `worlds::core::CoreState` | worlds' join/leave access log |
 | `gatekeeper::events::RoomEventStore` | `social::badges::presence::EventSink` | every verified join/leave, stored before the webhook answers (503 on failure) |
