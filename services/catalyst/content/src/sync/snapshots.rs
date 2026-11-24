@@ -20,7 +20,7 @@ use super::{SnapshotMetadata, SyncDeployment, SyncError, TimeRange, Timestamp};
 use crate::auth::{HashV1Writer, is_canonical_cid};
 use crate::batch_deployer::{BatchDeployer, DeploymentReport};
 use crate::deploy_remote_entity::{BodyStats, DecodedSink, stream_body};
-use crate::http::read_peer_body_capped;
+use crate::http::read_body_capped;
 use crate::storage::{StagingGuard, Storage, create_staging_file, resolve_file_path, staging_path};
 
 /// Cap on a snapshot body, wire and decoded, enforced as it streams to disk.
@@ -298,7 +298,8 @@ pub async fn fetch_snapshots(
         {
             Ok(resp) => {
                 if resp.status().is_success() {
-                    let body = read_peer_body_capped(resp, MAX_SNAPSHOT_LIST_BYTES)
+                    // The 15 s request timeout covers this body read.
+                    let body = read_body_capped(resp, MAX_SNAPSHOT_LIST_BYTES)
                         .await
                         .map_err(|e| {
                             SyncError::Other(format!("snapshot list from {server}: {e}"))

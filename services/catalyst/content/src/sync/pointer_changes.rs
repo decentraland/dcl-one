@@ -234,16 +234,44 @@ fn page_entity_ids(page: &[serde_json::Value]) -> HashSet<String> {
 
 /// The resume cursor (`progress`, the return value, and the persisted frontier) only ever reflects
 /// CONFIRMED progress: the high-water timestamp stays tentative while entities are merely scheduled
-/// and commits at each poll boundary -- the end of a pagination chain -- after the deployer has
+/// and commits at each poll boundary after the deployer has
 /// drained and every deployment this stream scheduled has been acknowledged (deployed, or durably
 /// recorded in failed_deployments). A boundary where something remains unacknowledged fails the
 /// stream instead, so the caller reconnects from the last confirmed timestamp. Committing per entity,
 /// as this used to, let a later confirmed entity carry the cursor past an earlier one still in flight
 /// -- a crash in that window skipped it forever. The cursor a boundary confirms is the
-/// [`settled_cursor`], the overlap behind the high-water mark, and the next poll starts there.
+/// [`settled_cursor`], the overlap behind the high-water mark. A batch that reaches the page cap
+/// checkpoints its acknowledged prefix and resumes at its exact keyset within this run.
 /// `settled_polls` counts the boundaries this run settled.
 #[allow(clippy::too_many_arguments)]
 pub async fn deploy_entities_from_pointer_changes<S>(
+    client: &Client,
+    server: &str,
+    options: &PointerChangesOptions<'_>,
+    target: ScheduleTarget<'_>,
+    heartbeat_repo: Option<std::sync::Arc<LiveDeploymentRepository>>,
+    progress: &std::sync::atomic::AtomicI64,
+    settled_polls: &std::sync::atomic::AtomicU64,
+    should_stop: S,
+) -> Result<Timestamp, SyncError>
+where
+    S: Fn() -> bool,
+{
+    deploy_pointer_pages::<_, MAX_PAGES_PER_POLL>(
+        client,
+        server,
+        options,
+        target,
+        heartbeat_repo,
+        progress,
+        settled_polls,
+        should_stop,
+    )
+    .await
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn deploy_pointer_pages<S, const PAGE_LIMIT: usize>(
     client: &Client,
     server: &str,
     options: &PointerChangesOptions<'_>,
@@ -337,8 +365,9 @@ where
             None
         };
 
+        let reached_page_limit = pages_fetched == PAGE_LIMIT;
         if let Some(next) = &next
-            && pages_fetched < MAX_PAGES_PER_POLL
+            && !reached_page_limit
         {
             spawn_fetch(&mut in_flight, next.clone());
         }
@@ -376,13 +405,7 @@ where
                 .await?;
         }
 
-        if next.is_some() && pages_fetched == MAX_PAGES_PER_POLL {
-            return Err(SyncError::Other(format!(
-                "pointer-changes poll for {server} exceeded {MAX_PAGES_PER_POLL} pages"
-            )));
-        }
-
-        if next.is_none() {
+        if next.is_none() || reached_page_limit {
             deployer.on_idle().await?;
             if !report.is_complete() {
                 return Err(SyncError::Other(format!(
@@ -414,15 +437,23 @@ where
                 last_persisted = confirmed_timestamp;
             }
 
-            if options.wait_time_ms == 0 {
+            if next.is_none() && options.wait_time_ms == 0 {
                 break;
             }
-            tokio::time::sleep(std::time::Duration::from_millis(options.wait_time_ms)).await;
-            delivered.begin_poll(confirmed_timestamp);
-            previous_page.clear();
-            poll_started = std::time::Instant::now();
+            if options.wait_time_ms > 0 {
+                tokio::time::sleep(std::time::Duration::from_millis(options.wait_time_ms)).await;
+            }
             pages_fetched = 0;
-            spawn_fetch(&mut in_flight, first_page(confirmed_timestamp));
+            if let Some(next) = next {
+                // Keep the chain's full span for cursor safety. The keyset still moves
+                // forward when the overlap keeps the durable timestamp unchanged.
+                spawn_fetch(&mut in_flight, next);
+            } else {
+                delivered.begin_poll(confirmed_timestamp);
+                previous_page.clear();
+                poll_started = std::time::Instant::now();
+                spawn_fetch(&mut in_flight, first_page(confirmed_timestamp));
+            }
         }
     }
 
@@ -906,33 +937,44 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn a_poll_exceeding_the_page_cap_never_fetches_the_next_page_or_confirms_progress() {
+    async fn the_page_cap_confirms_progress_then_continues_inside_a_shared_timestamp() {
         use crate::batch_deployer::BatchDeployerConfig;
         use crate::bloom_filter::BloomFilter;
         use crate::failed_deployments_store::LiveFailedDeploymentsStore;
         use crate::sync_deployer::LiveSyncDeployer;
+        use axum::extract::Query;
+        use std::collections::HashMap;
         use std::sync::{
-            Arc,
-            atomic::{AtomicI64, AtomicU64, AtomicUsize, Ordering},
+            Arc, Mutex,
+            atomic::{AtomicI64, AtomicU64, Ordering},
         };
 
-        let rows: Vec<_> = scenes("page-cap", 0, &[0, 0])
+        let rows: Vec<_> = scenes("page-cap", 0, &[1_000_000, 1_000_000, 1_000_000, 1_200_000])
             .await
             .into_iter()
             .map(|(row, _, _)| row)
             .collect();
-        let hits = Arc::new(AtomicUsize::new(0));
-        let served = hits.clone();
+        let cap_last_id = rows[1]["entityId"].as_str().unwrap().to_owned();
+        let requests = Arc::new(Mutex::new(Vec::new()));
+        let observed = requests.clone();
+        let progress = Arc::new(AtomicI64::new(0));
+        let observed_progress = progress.clone();
         let app = axum::Router::new().route(
             "/pointer-changes",
-            axum::routing::get(move || {
-                let page = served.fetch_add(1, Ordering::Relaxed);
-                let mut row = rows[page % rows.len()].clone();
-                row["localTimestamp"] = serde_json::json!(1_000_000 + page);
+            axum::routing::get(move |Query(query): Query<HashMap<String, String>>| {
+                let mut requests = observed.lock().unwrap();
+                let page = requests.len();
+                requests.push((
+                    query["from"].clone(),
+                    query.get("lastId").cloned(),
+                    observed_progress.load(Ordering::Relaxed),
+                ));
+                let row = rows.get(page).cloned();
+                let more = page + 1 < rows.len();
                 async move {
                     axum::Json(serde_json::json!({
-                        "deltas": [row],
-                        "pagination": {"moreData": true}
+                        "deltas": row.into_iter().collect::<Vec<_>>(),
+                        "pagination": {"moreData": more}
                     }))
                 }
             }),
@@ -961,9 +1003,8 @@ mod tests {
             Arc::new(LiveFailedDeploymentsStore::new(pool)),
             BloomFilter::with_capacity(10),
         );
-        let progress = AtomicI64::new(0);
         let settled_polls = AtomicU64::new(0);
-        let result = deploy_entities_from_pointer_changes(
+        let result = deploy_pointer_pages::<_, 2>(
             &client,
             &base,
             &PointerChangesOptions {
@@ -981,15 +1022,18 @@ mod tests {
             &settled_polls,
             || false,
         )
-        .await;
+        .await
+        .unwrap();
 
         server.abort();
-        assert!(
-            matches!(&result, Err(SyncError::Other(e)) if e.contains("exceeded 10000 pages")),
-            "{result:?}"
-        );
-        assert_eq!(hits.load(Ordering::Relaxed), MAX_PAGES_PER_POLL);
-        assert_eq!(progress.load(Ordering::Relaxed), 0);
-        assert_eq!(settled_polls.load(Ordering::Relaxed), 0);
+        let requests = requests.lock().unwrap();
+        assert_eq!(requests.len(), 4);
+        let (from, last_id, checkpoint) = &requests[2];
+        assert_eq!(from, "1000000");
+        assert_eq!(last_id.as_deref(), Some(cap_last_id.as_str()));
+        assert!((600_000..=700_000).contains(checkpoint), "{checkpoint}");
+        assert!(result > *checkpoint);
+        assert_eq!(progress.load(Ordering::Relaxed), result);
+        assert_eq!(settled_polls.load(Ordering::Relaxed), 2);
     }
 }
