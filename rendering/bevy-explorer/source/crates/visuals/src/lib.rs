@@ -981,6 +981,9 @@ fn bloom_console_command(
 }
 
 #[cfg(test)]
+mod skinned_pipelines_test;
+
+#[cfg(test)]
 mod tests {
     use super::{next_shadow_bias, shader_cover, user_cover};
 
