@@ -2,12 +2,9 @@
 
 `catalyst serve` keeps the content server's and lamb2's Prometheus series
 under their names, labels and buckets, unless dcl-one already measures the
-same thing under another name. Each area page maps every legacy series to
-what the node emits:
-
-- [Content server](content.md);
-- [Sync](sync.md): the snapshots fetcher and the deployments-to-SQS series;
-- [Lambdas](lambdas.md): lamb2.
+same thing under another name. The [Lambdas metric reference](lambdas.md) maps the legacy lamb2 series
+to what the node emits. The content server and sync metric inventories
+are tracked in issue #1475.
 
 ## Endpoint and scraping
 
@@ -70,5 +67,5 @@ area pages. A typical availability alert reads these legacy series:
 | Failed deployments | `dcl_content_server_failed_deployments`, `entity_deployment_failure`, `entity_download_failure` | content server, deployments-to-SQS |
 | HTTP 5xx rate | `http_requests_total{code=~"5.."}` by `handler`; now `dcl_http_requests_total{status_code=~"5.."}` by `component` and `route` | content server, lamb2 |
 
-Whether each is emitted, replaced or not applicable is stated in
-[content](content.md), [sync](sync.md) and [lambdas](lambdas.md).
+See the [Lambdas metric reference](lambdas.md) for the series emitted by
+the lambdas routes.
