@@ -952,15 +952,22 @@ fn a_glb_br_model_that_fails_to_load_is_not_reloaded() {
 #[test]
 fn repeated_transport_failures_turn_variants_off_for_the_session() {
     let variants = BevyVariants::default();
+    variants.set_base(Some(BASE));
     for _ in 1..BREAKER_FAILURES {
-        variants.transport_failed("connection refused");
+        variants.transport_failed(BASE, "connection refused");
     }
-    variants.transport_ok();
+    variants.transport_ok(BASE);
     for _ in 1..BREAKER_FAILURES {
-        variants.transport_failed("connection refused");
+        variants.transport_failed(BASE, "connection refused");
     }
     assert!(variants.disabled().is_none());
-    variants.transport_failed("connection refused");
+    // another base's requests count for nothing, failed or answered
+    for _ in 0..BREAKER_FAILURES {
+        variants.transport_failed("https://old.example", "timeout");
+    }
+    variants.transport_ok("https://old.example");
+    assert!(variants.disabled().is_none());
+    variants.transport_failed(BASE, "connection refused");
     assert!(variants.disabled().unwrap().contains("connection refused"));
 }
 
@@ -968,7 +975,7 @@ fn repeated_transport_failures_turn_variants_off_for_the_session() {
 fn the_debug_snapshot_reports_state_and_fallbacks() {
     let variants = BevyVariants::default();
     assert_eq!(snapshot_of(&variants)["state"], "off");
-    variants.set_base("http://localhost:5147/");
+    variants.set_base(Some("http://localhost:5147/"));
     let _ = variants.bc.set(true);
     variants.fail(
         SCENE,
@@ -1077,7 +1084,7 @@ fn the_endpoint_flag_routes_only_to_decentraland_hosts() {
             value: value.to_owned(),
         }),
     };
-    let base = |v: Option<FlagVariant>| flagged_base(v.as_ref(), DEFAULT);
+    let base = |v: Option<FlagVariant>| flagged_base(v.as_ref(), DEFAULT).0;
     let staging = Some(("string", "https://abgen-cdn.decentraland.zone/"));
 
     // unread, disabled or without an enabled variant: the default
@@ -1161,9 +1168,10 @@ async fn a_variant_is_read_from_its_manifests_base() {
     std::fs::remove_dir_all(dir).unwrap();
 }
 
-/// A far LOD url named under the base before a switch still reports its answer.
+/// A far LOD url named under the base before a switch is still known as one, and its answer
+/// settles its name without counting for the new base.
 #[tokio::test]
-async fn a_far_lod_named_before_a_switch_still_reports() {
+async fn a_far_lod_named_before_a_switch_settles_without_counting() {
     let (io, dir) = io_with_cache("far-lod-switch");
     io.set_bevy_variants_base(Some("https://abgen.example"));
     io.context.write().await.about = Some(ServerAbout {
@@ -1180,11 +1188,20 @@ async fn a_far_lod_named_before_a_switch_still_reports() {
     io.set_bevy_variants_base(Some("https://abgen-cdn.decentraland.zone"));
     assert!(io.is_named_far_lod(&url));
     io.far_lod_fetched(&url, Err(Some(reqwest::StatusCode::NOT_FOUND)));
-    assert_eq!(io.far_lod_status().missing, 1);
-    assert!(matches!(
+    for _ in 0..FAR_LOD_BREAKER_FAILURES {
+        io.far_lod_fetched(&url, Err(None));
+    }
+    assert!(io.is_named_far_lod(&url));
+    let status = io.far_lod_status();
+    assert_eq!((status.missing, status.failures), (0, 0));
+    assert!(status.paused_for.is_none());
+    assert_eq!(
         io.bevy_far_lod(SCENE),
-        FarLodSource::Unavailable(_)
-    ));
+        FarLodSource::Url(format!(
+            "https://abgen-cdn.decentraland.zone/LOD/lods-bevy/lods/{}_1.glb",
+            SCENE.to_lowercase()
+        ))
+    );
     std::fs::remove_dir_all(dir).unwrap();
 }
 
@@ -1206,7 +1223,8 @@ async fn a_switch_resets_the_breakers() {
     };
     io.far_lod_fetched(&url, Err(Some(reqwest::StatusCode::NOT_FOUND)));
     for _ in 0..BREAKER_FAILURES {
-        io.bevy_variants.transport_failed("timeout");
+        io.bevy_variants
+            .transport_failed("https://abgen.example", "timeout");
     }
     assert!(io.bevy_variants.disabled().is_some());
     assert!(io.far_lods_off());
@@ -1245,13 +1263,85 @@ fn the_flag_routes_the_variants_once_the_flags_settle() {
             .insert_resource(FlagDefaultBase(DEFAULT.to_owned()))
             .add_plugins(common::feature_flags::FeatureFlagsPlugin {
                 overrides: Some(ff.to_owned()),
-            });
-        add_flag_routing(&mut app);
+            })
+            .add_systems(Update, route_by_endpoint_flag.run_if(routing_condition()));
         for _ in 0..3 {
             app.update();
         }
         assert_eq!(io.bevy_variants.base().as_deref(), expected, "{ff}");
         assert!(!app.world().contains_resource::<FlagDefaultBase>(), "{ff}");
+        assert!(
+            snapshot_of(&io.bevy_variants)["baseSource"]
+                .as_str()
+                .unwrap()
+                .starts_with("endpoint flag"),
+            "{ff}"
+        );
         std::fs::remove_dir_all(dir).unwrap();
     }
+}
+
+/// End to end from the flags service: its answer names a base that is not an https
+/// Decentraland url, which is never asked for; the entity's manifest comes from the default.
+#[tokio::test]
+async fn a_flagged_base_outside_decentraland_is_never_requested() {
+    let manifest_route = format!("/bevy/manifest/{SCENE}.json");
+    let manifest = format!(r#"{{"files": {{"{ORIGINAL_CID}": ["bevy/t4/{VARIANT_CID}"]}}}}"#);
+    let (default, default_log) = serve(vec![(manifest_route.clone(), manifest.into_bytes())]).await;
+    let (elsewhere, elsewhere_log) = serve(vec![]).await;
+    let file = format!(
+        r#"{{
+            "flags": {{ "explorer-bevy-variants-endpoint": true }},
+            "variants": {{ "explorer-bevy-variants-endpoint": {{
+                "name": "elsewhere", "enabled": true,
+                "payload": {{ "type": "string", "value": "{elsewhere}" }}
+            }} }}
+        }}"#
+    );
+    let (flags, flags_log) = serve(vec![("/explorer.json".to_owned(), file.into_bytes())]).await;
+    // the only test in this binary that resolves the feature-flags service
+    common::base_domain::set_services([(base_domain::Service::FeatureFlags, flags.as_str())])
+        .unwrap();
+
+    let (io, dir) = io_with_cache("flag-end-to-end");
+    io.context.write().await.about = Some(ServerAbout {
+        content: Some(EndpointConfig {
+            healthy: true,
+            public_url: "https://peer.example/content".to_owned(),
+        }),
+        ..Default::default()
+    });
+    io.set_bevy_variants_base(Some(&default));
+    let mut app = App::new();
+    app.insert_resource(common::structs::AppConfig::default())
+        .insert_resource(IpfsResource { inner: io.clone() })
+        .insert_resource(FlagDefaultBase(default.clone()))
+        .add_plugins(common::feature_flags::FeatureFlagsPlugin::default())
+        .add_systems(Update, route_by_endpoint_flag.run_if(routing_condition()));
+    for _ in 0..500 {
+        app.update();
+        if !app.world().contains_resource::<FlagDefaultBase>() {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+    assert_eq!(requests_for(&flags_log, "/explorer.json"), 1);
+    assert!(!app.world().contains_resource::<FlagDefaultBase>());
+    assert_eq!(io.bevy_variants.base().as_deref(), Some(default.as_str()));
+    assert!(snapshot_of(&io.bevy_variants)["baseSource"]
+        .as_str()
+        .unwrap()
+        .contains("`elsewhere` names no https Decentraland url"));
+
+    io.request_bevy_variants(SCENE);
+    let mut state = io.bevy_variants.manifest(SCENE).unwrap();
+    let state = state
+        .wait_for(|state| !matches!(state, ManifestState::Pending))
+        .await
+        .unwrap()
+        .clone();
+    assert!(matches!(state, ManifestState::Loaded(_)), "{state:?}");
+    assert_eq!(requests_for(&default_log, &manifest_route), 1);
+    assert!(elsewhere_log.lock_ignore_poison().is_empty());
+    std::fs::remove_dir_all(dir).unwrap();
 }

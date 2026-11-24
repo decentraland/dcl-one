@@ -114,23 +114,21 @@ pub fn apply_client(
         imposters::imposter_spec::set_source(source);
     }
 
-    // abgen's Bevy variants: the launch option, else the config, else the asset-bundle
-    // generator's CDN for this base domain, which the endpoint flag may replace once the flags
-    // are read unless the `abgen_cdn` service is overridden; `off` in the option or the config
-    // turns them off
-    use common::base_domain::{self, Service};
-    let pinned_base = bevy_variants
-        .as_deref()
-        .or(config.bevy_variants_url.as_deref());
-    let default_base = base_domain::service(Service::AbgenCdn);
-    let bevy_variants_base = pinned_base.unwrap_or(&default_base);
-    if !bevy_variants_base.trim().eq_ignore_ascii_case("off") {
-        if let Some(ipfs) = app.world().get_resource::<ipfs::IpfsResource>() {
-            ipfs.set_bevy_variants_base(Some(bevy_variants_base));
+    let abgen_cdn = common::base_domain::Service::AbgenCdn;
+    let routing = bevy_variants_routing(
+        bevy_variants.as_deref(),
+        config.bevy_variants_url.as_deref(),
+        common::base_domain::service_override(abgen_cdn),
+        common::base_domain::service(abgen_cdn),
+    );
+    if let Some(ipfs) = app.world().get_resource::<ipfs::IpfsResource>() {
+        if !routing.base.trim().eq_ignore_ascii_case("off") {
+            ipfs.set_bevy_variants_base(Some(&routing.base));
         }
+        ipfs.set_bevy_variants_source(routing.source);
     }
-    if pinned_base.is_none() && base_domain::service_override(Service::AbgenCdn).is_none() {
-        app.insert_resource(ipfs::bevy_variants::FlagDefaultBase(default_base));
+    if routing.flag_may_route {
+        app.insert_resource(ipfs::bevy_variants::FlagDefaultBase(routing.base));
     }
 
     let gpu_bytes_per_frame = gpu_bytes_per_frame.unwrap_or(config.graphics.gpu_bytes_per_frame);
@@ -138,5 +136,89 @@ pub fn apply_client(
         app.insert_resource(RenderAssetBytesPerFrame::new_with_priorities(
             gpu_bytes_per_frame,
         ));
+    }
+}
+
+/// Where the Bevy variants start in a session.
+#[derive(Debug, PartialEq)]
+struct BevyVariantsRouting {
+    /// A base url, or `off`.
+    base: String,
+    /// What set it, for the debug panel.
+    source: &'static str,
+    /// Whether the endpoint flag may replace it once the flags are read.
+    flag_may_route: bool,
+}
+
+/// The launch option, else the config field, else the `abgen_cdn` service: an override of it
+/// is pinned like the other two, and its composition for the base domain is the default the
+/// endpoint flag may replace.
+fn bevy_variants_routing(
+    launch_option: Option<&str>,
+    config: Option<&str>,
+    abgen_cdn_override: Option<&str>,
+    abgen_cdn: String,
+) -> BevyVariantsRouting {
+    let pinned = |base: &str, source| BevyVariantsRouting {
+        base: base.to_owned(),
+        source,
+        flag_may_route: false,
+    };
+    if let Some(base) = launch_option {
+        pinned(base, "launch option")
+    } else if let Some(base) = config {
+        pinned(base, "config")
+    } else if let Some(base) = abgen_cdn_override {
+        pinned(base, "`abgen_cdn` service override")
+    } else {
+        BevyVariantsRouting {
+            base: abgen_cdn,
+            source: "default, until the endpoint flag is read",
+            flag_may_route: true,
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const CDN: &str = "https://abgen-cdn.decentraland.org";
+
+    fn routing(
+        launch_option: Option<&str>,
+        config: Option<&str>,
+        abgen_cdn_override: Option<&str>,
+    ) -> BevyVariantsRouting {
+        bevy_variants_routing(launch_option, config, abgen_cdn_override, CDN.to_owned())
+    }
+
+    #[test]
+    fn only_an_unpinned_bevy_variants_base_is_left_to_the_flag() {
+        let unpinned = routing(None, None, None);
+        assert_eq!(
+            (unpinned.base.as_str(), unpinned.flag_may_route),
+            (CDN, true)
+        );
+
+        let option = routing(
+            Some("https://a.example"),
+            Some("off"),
+            Some("https://c.example"),
+        );
+        assert_eq!(
+            (option.base.as_str(), option.source, option.flag_may_route),
+            ("https://a.example", "launch option", false)
+        );
+        let config = routing(None, Some("off"), Some("https://c.example"));
+        assert_eq!(
+            (config.base.as_str(), config.source, config.flag_may_route),
+            ("off", "config", false)
+        );
+        let overridden = routing(None, None, Some("https://c.example"));
+        assert_eq!(
+            (overridden.base.as_str(), overridden.flag_may_route),
+            ("https://c.example", false)
+        );
     }
 }

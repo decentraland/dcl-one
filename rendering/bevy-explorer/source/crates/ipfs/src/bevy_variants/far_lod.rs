@@ -72,7 +72,7 @@ impl FarLodHealth {
     }
 
     /// `scene`'s download answered: its name moves from `pending` to the bounded answered names.
-    fn settle(&mut self, scene: &str) {
+    pub(crate) fn settle(&mut self, scene: &str) {
         if !self.pending.remove(scene) {
             return;
         }

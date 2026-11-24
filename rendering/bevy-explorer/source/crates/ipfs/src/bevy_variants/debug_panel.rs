@@ -17,6 +17,8 @@ impl Plugin for BevyVariantsDebugPanelPlugin {
                 query: "/bevy_variants",
                 fields: &[
                     ("Variants base url", "base"),
+                    ("Base set by", "baseSource"),
+                    ("Bases used this session", "usedBases"),
                     ("State", "state"),
                     ("Formats taken", "formats"),
                     (
@@ -52,7 +54,14 @@ fn bevy_variants_state(mut input: ConsoleCommand<BevyVariantsCommand>, ipfs: Res
 
 pub(super) fn snapshot(variants: &BevyVariants) -> Value {
     let mut counts = [0u64; 5];
-    let current = variants.base();
+    let (current, base_source, used_bases) = {
+        let bases = variants.base.lock_ignore_poison();
+        (
+            bases.current.clone(),
+            bases.source.clone(),
+            bases.used.clone(),
+        )
+    };
     let mut manifests: Vec<String> = variants
         .manifests
         .lock_ignore_poison()
@@ -71,7 +80,6 @@ pub(super) fn snapshot(variants: &BevyVariants) -> Value {
                                 manifest.lanes.values().map(String::as_str).collect();
                             format!(" ({})", lanes.join(", "))
                         },
-                        // read from an earlier base of the session
                         if current.as_deref() == Some(manifest.base.as_str()) {
                             String::new()
                         } else {
@@ -112,7 +120,9 @@ pub(super) fn snapshot(variants: &BevyVariants) -> Value {
         })
         .collect();
     json!({
-        "base": variants.base(),
+        "base": current,
+        "baseSource": base_source,
+        "usedBases": (!used_bases.is_empty()).then(|| used_bases.join("\n")),
         "state": state,
         "formats": super::taken_formats(),
         "manifestCounts": counts,
