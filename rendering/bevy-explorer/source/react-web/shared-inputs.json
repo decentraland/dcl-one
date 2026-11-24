@@ -6190,7 +6190,7 @@
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/src/lib/baseDomain.ts",
-      "sha256": "d3b4c2ffdf256e8e97525b09f189da5436a54054aa3f999a3c37786ab6071bdf"
+      "sha256": "8047228d1b0aac186f740a0a41a1beb00d573df6298320fed0186c77fbfe7c09"
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/src/lib/bootMode.ts",
@@ -6210,7 +6210,7 @@
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/src/lib/launchGate.ts",
-      "sha256": "34e391873af0c24afede610fe1767204d7ec62b309bad6fec585b3d743e16b89"
+      "sha256": "02eb39b32f3961a6dfdbef9a1898df876114cf487edec29f87ff26c1c250cee3"
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/src/lib/loopbackHost.ts",
@@ -6258,7 +6258,7 @@
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/src/test/baseDomain.test.ts",
-      "sha256": "606993499ee7d14b38e7063d023e7b14921c6f49fc2dbaaafbe52dd430854e38"
+      "sha256": "b2095236e4173f6bc01c8607c120093adcc3b83afc9e63a3c6e6f34da458b18a"
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/src/test/benchmarkSwitches.test.tsx",
@@ -7023,7 +7023,7 @@
     },
     {
       "path": "library/explorer-core/lib/gateway.ts",
-      "sha256": "ed117feba155395fe0b9c48aa84025560a4a64aff83ad9ee5be950bf5efd9c18"
+      "sha256": "c6f3730f772373d8241fd592108ff82a7c0372c36c60531aeb0e92f701ebea41"
     },
     {
       "path": "library/explorer-core/lib/gpu.test.ts",
@@ -7187,7 +7187,7 @@
     },
     {
       "path": "library/explorer-core/test/gateway.test.ts",
-      "sha256": "f4ba61d85dd0cd7348a6c0c867ee2b1b527da76bf254f2562208b7eae5f3f224"
+      "sha256": "c2c86ce940f145e5cc714deb34be1025bbd2b88d2f6112397f69f6f2ed7f1e43"
     },
     {
       "path": "library/explorer-core/test/giftItem.test.ts",

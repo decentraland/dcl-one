@@ -48,5 +48,20 @@ describe('?gateway=', () => {
     expect(m.serviceUrl('storage')).toBe('https://storage.decentraland.org')
     const { untrustedLaunchParams } = await import('../lib/launchGate')
     expect(untrustedLaunchParams({ native: false }).map((p) => p.name)).toEqual(['gateway'])
+    const { engineLaunch } = await import('../lib/engineLaunch')
+    expect(engineLaunch(new URLSearchParams(window.location.search)).options.gateway).toBe('https://gateway.example.test')
+  })
+
+  it("trusts an https origin under Decentraland's deployments, never a path under one", async () => {
+    for (const [gateway, untrusted] of [
+      ['https://gateway.decentraland.org', []],
+      ['https://gateway.decentraland.org/_scene/x', ['gateway']],
+      ['http://gateway.decentraland.org', ['gateway']]
+    ] as const) {
+      window.history.replaceState(null, '', `/?gateway=${encodeURIComponent(gateway)}`)
+      vi.resetModules()
+      const { untrustedLaunchParams } = await import('../lib/launchGate')
+      expect(untrustedLaunchParams({ native: false }).map((p) => p.name), gateway).toEqual(untrusted)
+    }
   })
 })

@@ -42,12 +42,16 @@ const GATES: Record<string, Gate> = {
   },
   // Routes every first-party API, signed requests included, through one server. Read normalised,
   // like the base domain; native is exempt the same way (its link may name only a Decentraland
-  // gateway). Trusted: an https gateway under Decentraland's own deployments.
+  // gateway). Trusted: an https origin under Decentraland's own deployments; a path never is, since
+  // a node proxies other hosts under one (`/_scene/<host>`).
   gateway: {
     warning:
       'Sends sign-in, profiles, comms admission and every other Decentraland API request through this server. Whoever runs it would see your signed requests and choose the answers.',
     read: (native) => (native ? null : (GATEWAY?.prefix ?? null)),
-    isTrusted: (prefix) => prefix.startsWith('https://') && hostBaseDomain(new URL(prefix).hostname) != null
+    isTrusted: (prefix) => {
+      const url = new URL(prefix)
+      return url.protocol === 'https:' && url.pathname === '/' && hostBaseDomain(url.hostname) != null
+    }
   },
   // Repoints every scene and asset fetch at one server while everything else looks normal.
   contentServer: {

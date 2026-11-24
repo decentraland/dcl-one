@@ -72,12 +72,13 @@ also keep their configured destinations, set with `--auth-page https://example.o
 and `--reels https://example.org/reels` when needed.
 
 The web client takes the same gateway as `?gateway=<url>`. Both HUD hosts route their own requests
-with the engine's mapping (`library/explorer-core/lib/gateway.ts`) and hand the gateway to the
-engine, which signs the forwarded paths. A link with a gateway outside `decentraland.org` and
-`decentraland.zone` over HTTPS stops on the untrusted-launch prompt; on `/play`, the page's own
-host is trusted too. A `decentraland://` link selects one with `gateway=<url>`. The native client
-accepts only an HTTPS gateway under `decentraland.org` or `decentraland.zone` from a link, since a
-link reaches it without a prompt. An explicit `--gateway` takes precedence over the link's.
+with the segments from the engine's service table (`library/explorer-core/lib/gateway.ts`) and
+hand the gateway to the engine, which signs the forwarded paths. A link with any gateway other than
+an HTTPS origin under `decentraland.org` or `decentraland.zone` stops on the untrusted-launch
+prompt; on `/play`, the page's own origin is trusted too. A gateway with a path is never trusted,
+since a node proxies other hosts under `/_scene/<host>`. A `decentraland://` link selects one with
+`gateway=<url>`. The native client accepts from a link only an HTTPS origin under those domains,
+since a link reaches it without a prompt. An explicit `--gateway` takes precedence over the link's.
 
 With Python 3 and Node.js 24 installed, run
 `cargo test --locked -p common gateway_routes_match_deployment -- --ignored` from the

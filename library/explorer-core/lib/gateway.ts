@@ -42,19 +42,24 @@ export function gatewayServiceUrl(gateway: Gateway, s: ServiceDef): string | nul
 }
 
 /**
- * A backend-supplied profile image through the gateway (`Gateway::profile_image`): only an
+ * A backend-supplied profile image under `base` (`Gateway::profile_image`): only an
  * `https://profile-images.<domain>` url with that literal authority and no dot segment after the
  * proxy decodes separators; anything else is null and loads as given.
  */
-export function gatewayProfileImage(gateway: Gateway, raw: string, domain: string): string | null {
+export function profileImageUnder(base: string, raw: string, domain: string): string | null {
   const authority = /^https:\/\/([^/?#]*)/i.exec(raw)?.[1]
   if (authority?.toLowerCase() !== `profile-images.${domain}`) return null
   try {
     const image = new URL(raw)
     const decoded = image.pathname.toLowerCase().replace(/%2f|%5c/g, '/').replace(/%2e/g, '.')
     if (decoded.split('/').some((part) => part === '.' || part === '..')) return null
-    return `${gateway.prefix}/profile-images${image.href.slice(image.origin.length)}`
+    return base + image.href.slice(image.origin.length)
   } catch {
     return null
   }
+}
+
+/** A backend-supplied profile image through the gateway's `/profile-images`, or null (`profileImageUnder`). */
+export function gatewayProfileImage(gateway: Gateway, raw: string, domain: string): string | null {
+  return profileImageUnder(`${gateway.prefix}/profile-images`, raw, domain)
 }

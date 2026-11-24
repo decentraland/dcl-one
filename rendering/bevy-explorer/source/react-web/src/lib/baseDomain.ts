@@ -18,7 +18,7 @@
 // url sync exactly as the HUD does.
 
 import { SERVICES, type ServiceDef } from '@explorer-core/engine/generated'
-import { gatewayProfileImage, gatewayServiceUrl, parseGateway } from '@explorer-core/lib/gateway'
+import { gatewayProfileImage, gatewayServiceUrl, parseGateway, profileImageUnder } from '@explorer-core/lib/gateway'
 import { isNativeHud } from './bootMode'
 
 // Decentraland's own deployments — the hosting origins we derive from, and the only domains a
@@ -65,16 +65,7 @@ const nativeImageBase = nativeHostParams?.get('nativeProfileImageBase')
 export function nativeProfileImage(raw: string | undefined): string | undefined {
   if (GATEWAY != null && raw != null && !nativeImageBase) return gatewayProfileImage(GATEWAY, raw, BASE_DOMAIN) ?? raw
   if (!nativeImageBase || raw == null) return raw
-  const authority = /^https:\/\/([^/?#]+)/i.exec(raw)?.[1]
-  if (authority?.toLowerCase() !== `profile-images.${BASE_DOMAIN}`) return raw
-  try {
-    const image = new URL(raw)
-    // The proxy decodes escaped separators before normalizing the service path.
-    if (decodeURIComponent(image.pathname).split(/[\\/]/).some(part => part === '.' || part === '..')) return raw
-    return nativeImageBase + image.href.slice(image.origin.length)
-  } catch {
-    return raw
-  }
+  return profileImageUnder(nativeImageBase, raw, BASE_DOMAIN) ?? raw
 }
 
 declare global {
@@ -141,7 +132,7 @@ export function serviceUrl(name: string): string {
   const routed = SERVICE_OVERRIDES[name] ?? (GATEWAY == null ? null : gatewayServiceUrl(GATEWAY, s))
   if (routed != null) return routed
   const host = s.sub === '' ? BASE_DOMAIN : `${s.sub}.${BASE_DOMAIN}`
-  return SERVICE_OVERRIDES[name] ?? (s.value === 'authority' ? host : `${s.scheme}://${host}${s.path}`)
+  return s.value === 'authority' ? host : `${s.scheme}://${host}${s.path}`
 }
 window.__serviceUrl = serviceUrl
 

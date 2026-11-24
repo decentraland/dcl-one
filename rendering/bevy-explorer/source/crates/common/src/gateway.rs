@@ -34,16 +34,19 @@ impl Gateway {
         })
     }
 
-    /// A gateway a `decentraland://` link may select: https, on one of Decentraland's own
-    /// deployments. A link reaches the native client with no prompt, so any other gateway takes
-    /// `--gateway`.
+    /// A gateway a `decentraland://` link may select: an https origin, with no path, on one of
+    /// Decentraland's own deployments; a node proxies other hosts under a path
+    /// (`/_scene/<host>`). A link reaches the native client with no prompt, so any other gateway
+    /// takes `--gateway`.
     pub fn parse_link(raw: &str) -> Result<Self, String> {
         let gateway = Self::parse(raw)?;
-        if !gateway.prefix.starts_with("https://")
+        let url = Url::parse(&gateway.prefix).map_err(|e| e.to_string())?;
+        if url.scheme() != "https"
+            || url.path() != "/"
             || crate::base_domain::decentraland_domain(&gateway.prefix).is_none()
         {
             return Err(format!(
-                "a link's gateway must be an https url under {}; pass --gateway for `{raw}`",
+                "a link's gateway must be an https origin under {}; pass --gateway for `{raw}`",
                 crate::base_domain::DECENTRALAND_DOMAINS.join(" or ")
             ));
         }
@@ -372,12 +375,14 @@ mod gateway_tests {
     fn a_link_selects_only_an_https_decentraland_gateway() {
         for raw in [
             "https://gateway.decentraland.org",
-            "https://decentraland.zone/mount/",
+            "https://decentraland.zone/",
         ] {
             assert_eq!(Gateway::parse_link(raw), Gateway::parse(raw), "{raw}");
         }
         for raw in [
             "http://gateway.decentraland.org",
+            "https://gateway.decentraland.org/_scene/x",
+            "https://decentraland.zone/mount",
             "https://gateway.example.test",
             "https://decentraland.org.example.test",
             "https://evil-decentraland.org",

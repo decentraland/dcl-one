@@ -18,14 +18,17 @@ selecting the base domain.
 `gateway=` key. The engine latches it with the base domain and resolves, signs and rewrites
 profile images exactly as `--gateway` does. Explicit service URLs take precedence.
 
-Both HUD hosts resolve their own requests with a copy of the engine's mapping
+The engine's service table carries each service's gateway segments (`Service::gateway_segment`).
+Both HUD hosts join them with the gateway for their own requests
 (`library/explorer-core/lib/gateway.ts`) and pass the gateway to the engine. The cross-language
-route test compares the two resolvers for the virtual-host and apex layouts.
+route test compares the HUD resolvers with the engine's for the virtual-host and apex layouts.
 
 Trust follows the base domain:
 
-- On web, a gateway outside `decentraland.org` and `decentraland.zone` over HTTPS stops the boot
-  on the untrusted-launch prompt. `/play` also trusts its own host.
-- The native client takes from a link only an HTTPS gateway under those domains, because a link
-  starts it without a prompt. Any other gateway needs `--gateway`, which wins over the link.
+- Only an origin is trusted, never a path under one: a node proxies other hosts under
+  `/_scene/<host>` with the request's signature headers.
+- On web, any gateway other than an HTTPS origin under `decentraland.org` or `decentraland.zone`
+  stops the boot on the untrusted-launch prompt. `/play` also trusts its own origin.
+- The native client takes from a link only such an HTTPS origin, because a link starts it
+  without a prompt. Any other gateway needs `--gateway`, which wins over the link.
 - A running native client refuses a link whose gateway differs from the one it started with.

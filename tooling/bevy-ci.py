@@ -24,6 +24,8 @@ ENGINE_LABEL = 'ci:engine'
 NATIVE_JOBS = {'Test Suite (ubuntu-24.04)', 'Test Suite (windows-2025)', 'Test Suite (macos-15)'}
 GATEWAY_HUD_INPUTS = ('apps/ui3/src/play/lib/baseDomain.ts',
                       'rendering/bevy-explorer/source/react-web/src/lib/baseDomain.ts',
+                      'rendering/bevy-explorer/source/react-web/src/lib/bootMode.ts',
+                      'rendering/bevy-explorer/source/react-web/src/lib/loopbackHost.ts',
                       'library/explorer-core/lib/gateway.ts',
                       'library/explorer-core/engine/generated/serviceTable.ts')
 # Sources the web HUD compiles from library/: the ones tooling/play-artifact.py fingerprints with it.

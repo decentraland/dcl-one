@@ -1,5 +1,5 @@
-// The HUD's copy of the engine's gateway rules (crates/common/src/gateway.rs). The endpoint
-// equality with the engine's own resolver is the cross-language contract test
+// The HUD's gateway resolver over the engine's generated service table (crates/common/src/gateway.rs
+// rules). The endpoint equality with the engine's own resolver is the cross-language contract test
 // (infra/gateway/tests/explorer_routes.py); these cases pin the parse and profile-image edges.
 import { describe, expect, it } from 'vitest'
 import { SERVICES } from '../engine/generated/serviceTable'
