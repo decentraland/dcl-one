@@ -158,6 +158,19 @@ async fn make_scene_listing(signer: &PrivateKeySigner, files: &[&[u8]], extra: &
     scene
 }
 
+/// A scene with `files` as its content on `pointers` (another fixture's parcels).
+async fn make_scene_on(signer: &PrivateKeySigner, files: &[&[u8]], pointers: &[String]) -> Scene {
+    let mut scene = make_scene(signer, files, "scene").await;
+    let mut entity: Value = serde_json::from_slice(&scene.bytes).unwrap();
+    entity["pointers"] = json!(pointers);
+    entity["metadata"] = json!({"scene": {"base": pointers[0], "parcels": pointers}});
+    scene.bytes = Bytes::from(serde_json::to_vec(&entity).unwrap());
+    scene.id = hash_bytes_v1(&scene.bytes);
+    scene.chain = chain_for(signer, &scene.id).await;
+    scene.pointers = pointers.to_vec();
+    scene
+}
+
 /// Cleanup reclaims every expired upload in the process's shared scratch
 /// database but unlinks blobs only in its caller's storage, and each node here
 /// has a storage of its own: another test's run would delete this test's
@@ -1946,6 +1959,208 @@ async fn an_account_over_its_byte_rate_waits() {
     assert_throttled(&recorder, "bytes_per_minute");
 }
 
+/// A parcel with as many uploads in progress as `max_per_pointer` turns away another
+/// account's upload there.
+#[tokio::test]
+async fn a_full_parcel_turns_away_another_upload() {
+    let limits = Limits {
+        max_per_pointer: 1,
+        ..Limits::default()
+    };
+    require_test_db!(Some(node) = Node::new("pointer-cap", limits).await);
+    let recorder = crate::series::test_support::recorder();
+    let _metrics = dcl_metrics::set_default_local_recorder(&recorder);
+    let router = node.router();
+    let first = make_scene(&PrivateKeySigner::random(), &[b"pointer-cap-a"], "scene").await;
+    let (status, _, _) = send(&router, &first, &first.chain, vec![entity_file(&first)]).await;
+    assert_eq!(status, StatusCode::ACCEPTED);
+    let second = make_scene_on(
+        &PrivateKeySigner::random(),
+        &[b"pointer-cap-b"],
+        &first.pointers,
+    )
+    .await;
+    let (status, headers, body) =
+        send(&router, &second, &second.chain, vec![entity_file(&second)]).await;
+    assert_eq!(status, StatusCode::TOO_MANY_REQUESTS, "{body}");
+    assert_eq!(
+        body["errors"][0],
+        format!(
+            "Too many partial uploads in progress for parcels {} (max 1 per parcel). Complete an upload or wait for one to expire.",
+            first.pointers[0]
+        )
+    );
+    assert!(headers.contains_key(header::RETRY_AFTER));
+    assert_throttled(&recorder, "uploads_per_pointer");
+}
+
+/// One account holds at most `max_per_pointer - 1` uploads on a parcel.
+#[tokio::test]
+async fn an_account_full_on_a_parcel_waits() {
+    let limits = Limits {
+        max_per_pointer: 2,
+        ..Limits::default()
+    };
+    require_test_db!(Some(node) = Node::new("pointer-account-cap", limits).await);
+    let recorder = crate::series::test_support::recorder();
+    let _metrics = dcl_metrics::set_default_local_recorder(&recorder);
+    let router = node.router();
+    let signer = PrivateKeySigner::random();
+    let first = make_scene(&signer, &[b"pointer-account-a"], "scene").await;
+    let (status, _, _) = send(&router, &first, &first.chain, vec![entity_file(&first)]).await;
+    assert_eq!(status, StatusCode::ACCEPTED);
+    let second = make_scene_on(&signer, &[b"pointer-account-b"], &first.pointers).await;
+    let (status, headers, body) =
+        send(&router, &second, &second.chain, vec![entity_file(&second)]).await;
+    assert_eq!(status, StatusCode::TOO_MANY_REQUESTS, "{body}");
+    assert_eq!(
+        body["errors"][0],
+        format!(
+            "Too many partial uploads in progress for this account on parcels {} (max 1 per parcel). Complete an upload or wait for one to expire.",
+            first.pointers[0]
+        )
+    );
+    assert!(headers.contains_key(header::RETRY_AFTER));
+    assert_throttled(&recorder, "uploads_per_pointer_account");
+}
+
+/// An account whose staged bytes would pass its budget waits; each upload alone fits.
+#[tokio::test]
+async fn an_account_over_its_byte_budget_waits() {
+    let signer = PrivateKeySigner::random();
+    let first = make_scene(&signer, &[b"account-bytes-a"], "scene").await;
+    let second = make_scene(&signer, &[b"account-bytes-b"], "scene").await;
+    // Each batch charges the entity file it sends.
+    let budget = (first.bytes.len() + second.bytes.len() - 1) as i64;
+    let limits = Limits {
+        account_bytes: budget,
+        ..Limits::default()
+    };
+    require_test_db!(Some(node) = Node::new("account-bytes", limits).await);
+    let recorder = crate::series::test_support::recorder();
+    let _metrics = dcl_metrics::set_default_local_recorder(&recorder);
+    let router = node.router();
+    let (status, _, _) = send(&router, &first, &first.chain, vec![entity_file(&first)]).await;
+    assert_eq!(status, StatusCode::ACCEPTED);
+    let (status, headers, body) =
+        send(&router, &second, &second.chain, vec![entity_file(&second)]).await;
+    assert_eq!(status, StatusCode::TOO_MANY_REQUESTS, "{body}");
+    assert_eq!(
+        body["errors"][0],
+        format!(
+            "Partial upload storage budget exceeded for this account: {} bytes staged with this batch, max {budget}. Complete uploads or wait for cleanup.",
+            budget + 1
+        )
+    );
+    assert!(headers.contains_key(header::RETRY_AFTER));
+    assert_throttled(&recorder, "bytes_per_account");
+}
+
+/// A server whose staged bytes would pass its budget turns away another account's upload.
+#[tokio::test]
+async fn a_full_server_turns_away_an_upload() {
+    let first = make_scene(&PrivateKeySigner::random(), &[b"server-bytes-a"], "scene").await;
+    let second = make_scene(&PrivateKeySigner::random(), &[b"server-bytes-b"], "scene").await;
+    let limits = Limits {
+        global_bytes: (first.bytes.len() + second.bytes.len() - 1) as i64,
+        ..Limits::default()
+    };
+    // The server total reads every upload: a database of its own.
+    require_test_db!(Some(node) = Node::isolated("server-bytes", limits).await);
+    let recorder = crate::series::test_support::recorder();
+    let _metrics = dcl_metrics::set_default_local_recorder(&recorder);
+    let router = node.router();
+    let (status, _, _) = send(&router, &first, &first.chain, vec![entity_file(&first)]).await;
+    assert_eq!(status, StatusCode::ACCEPTED);
+    let (status, headers, body) =
+        send(&router, &second, &second.chain, vec![entity_file(&second)]).await;
+    assert_eq!(status, StatusCode::TOO_MANY_REQUESTS, "{body}");
+    assert_eq!(
+        body["errors"][0],
+        "Partial upload storage on this server is full. Retry later."
+    );
+    assert!(headers.contains_key(header::RETRY_AFTER));
+    assert_throttled(&recorder, "bytes_per_server");
+}
+
+/// A new upload on pointers a deployment just rate limited waits before anything is staged.
+#[tokio::test]
+async fn an_upload_on_rate_limited_pointers_waits() {
+    require_test_db!(Some(node) = Node::new("entity-rate", Limits::default()).await);
+    let recorder = crate::series::test_support::recorder();
+    let _metrics = dcl_metrics::set_default_local_recorder(&recorder);
+    let router = node.router();
+    let signer = PrivateKeySigner::random();
+    let scene = make_scene(&signer, &[b"entity-rate-content"], "scene").await;
+    let (_, bytes) = &scene.files[0];
+    let mut earlier: Value = serde_json::from_slice(&scene.bytes).unwrap();
+    earlier["timestamp"] = json!(earlier["timestamp"].as_i64().unwrap() - 1);
+    let earlier = Bytes::from(serde_json::to_vec(&earlier).unwrap());
+    let earlier_id = hash_bytes_v1(&earlier);
+    node.state
+        .writes
+        .get()
+        .unwrap()
+        .deployer
+        .deploy_entity(
+            vec![earlier, bytes.clone()],
+            &earlier_id,
+            chain_for(&signer, &earlier_id).await,
+            "LOCAL",
+        )
+        .await
+        .unwrap();
+    let (status, headers, body) =
+        send(&router, &scene, &scene.chain, vec![entity_file(&scene)]).await;
+    assert_eq!(status, StatusCode::TOO_MANY_REQUESTS, "{body}");
+    assert_eq!(
+        body["errors"][0],
+        format!(
+            "Entity rate limited (entityId={} pointers={}).",
+            scene.id,
+            scene.pointers.join(",")
+        )
+    );
+    assert!(headers.contains_key(header::RETRY_AFTER));
+    assert_eq!(pending_rows(&node.state.pool, &scene.id).await, 0);
+    assert_throttled(&recorder, "entity_rate_limit");
+}
+
+/// The batch that completes an upload whose pointers another deploy holds waits out the
+/// conflict retries and answers 429, the upload kept.
+#[tokio::test]
+async fn a_completing_batch_on_held_pointers_waits() {
+    require_test_db!(Some(node) = Node::new("pointer-conflict", Limits::default()).await);
+    let recorder = crate::series::test_support::recorder();
+    let _metrics = dcl_metrics::set_default_local_recorder(&recorder);
+    let router = node.router();
+    let scene = make_scene(
+        &PrivateKeySigner::random(),
+        &[b"pointer-conflict-content"],
+        "scene",
+    )
+    .await;
+    let (status, _, _) = send(&router, &scene, &scene.chain, vec![entity_file(&scene)]).await;
+    assert_eq!(status, StatusCode::ACCEPTED);
+    let deployer = &node.state.writes.get().unwrap().deployer;
+    let _claim = deployer.hold_pointers_for_tests("scene", &scene.pointers);
+    let (status, headers, body) = send(&router, &scene, &scene.chain, scene.files.clone()).await;
+    assert_eq!(status, StatusCode::TOO_MANY_REQUESTS, "{body}");
+    assert_eq!(
+        body["errors"][0],
+        format!(
+            "The following pointers are currently being deployed: '{}'. Please try again in a few seconds.",
+            scene.pointers.join(",")
+        )
+    );
+    assert_eq!(
+        headers[header::RETRY_AFTER],
+        POINTER_CONFLICT_RETRY_AFTER_SECS.to_string()
+    );
+    assert_eq!(pending_rows(&node.state.pool, &scene.id).await, 1);
+    assert_throttled(&recorder, "pointer_conflict");
+}
+
 /// Every replica reads the last cleanup run from the database.
 #[tokio::test]
 async fn the_last_cleanup_run_is_shared() {
@@ -2069,9 +2284,14 @@ fn quota_retry_waits_for_the_cleanup_after_the_oldest_upload_expires() {
     );
 }
 
+/// The rate-limit 429 that only publication sees (a deploy landed after the batch's own
+/// check) is reached by calling `finalize`; it is counted through `Refusal::answer`, as
+/// `handle` answers it.
 #[tokio::test]
 async fn finalization_retains_rate_limited_uploads_and_releases_superseded_ones() {
     require_test_db!(Some(node) = Node::isolated("finalize-kinds", Limits::default()).await);
+    let recorder = crate::series::test_support::recorder();
+    let _metrics = dcl_metrics::set_default_local_recorder(&recorder);
     let signer = PrivateKeySigner::random();
     let scene = make_scene(&signer, &[b"finalize-kinds-content"], "scene").await;
     let (status, _, _) = send(
@@ -2115,7 +2335,7 @@ async fn finalization_retains_rate_limited_uploads_and_releases_superseded_ones(
     .await
     .err()
     .unwrap();
-    let response = refusal.into_response();
+    let response = refusal.answer();
     assert_eq!(response.status(), StatusCode::TOO_MANY_REQUESTS);
     assert!(
         response.headers()[header::RETRY_AFTER]
@@ -2131,6 +2351,7 @@ async fn finalization_retains_rate_limited_uploads_and_releases_superseded_ones(
         json!({"errors": [format!("Entity rate limited (entityId={} pointers={}).", scene.id, scene.pointers.join(","))]})
     );
     assert_eq!(pending_rows(&node.state.pool, &scene.id).await, 1);
+    assert_throttled(&recorder, "entity_rate_limit");
 
     deployer.clear_rate_limits();
     other["timestamp"] = json!(entity.timestamp + 1);
