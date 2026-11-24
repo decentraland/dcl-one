@@ -185,7 +185,7 @@ macro_rules! server_stream {
                     .server_context
                     .try_subscription(context.transport_id, $name)
                 else {
-                    metrics::counter!("subscription_duplicates_total", "event" => $event).increment(1);
+                    dcl_metrics::counter!("subscription_duplicates_total", "event" => $event).increment(1);
                     let (generator, yielder) = Generator::create();
                     let notice = $update {
                         stream_closed: Some(SubscriptionStreamClosed {
