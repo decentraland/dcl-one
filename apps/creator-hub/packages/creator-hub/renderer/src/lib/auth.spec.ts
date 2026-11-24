@@ -110,6 +110,29 @@ describe('AuthServerProvider.request', () => {
       });
     });
 
+    describe('and the socket reports a connection error', () => {
+      let socket: ReturnType<typeof fakeSocket>;
+
+      beforeEach(() => {
+        vi.useFakeTimers();
+        socket = fakeSocket(undefined);
+        socket.on = (event, listener) => {
+          if (event === 'connect_error')
+            queueMicrotask(() => listener(new Error('connection failed')));
+        };
+        ioMock.mockReturnValue(socket);
+      });
+
+      afterEach(() => vi.useRealTimers());
+
+      it('should immediately disconnect, clear the deadline and report the relay as unavailable', async () => {
+        await expect(sendTransaction()).rejects.toMatchObject({ reason: 'unavailable' });
+        expect(socket.disconnect).toHaveBeenCalledOnce();
+        expect(vi.getTimerCount()).toBe(0);
+        expect(socket.emitWithAck).not.toHaveBeenCalled();
+      });
+    });
+
     describe('and the acknowledgement times out', () => {
       let socket: ReturnType<typeof fakeSocket>;
 
