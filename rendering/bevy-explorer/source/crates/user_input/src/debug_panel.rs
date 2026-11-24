@@ -5,8 +5,11 @@ use console::{AddDebugSection, DebugInput, DebugInputKind, DebugSection, DoAddCo
 use dcl_component::proto_components::common::Vector3;
 use serde_json::json;
 
-use crate::avatar_movement::{
-    ActivePlayerComponent, AvatarLocomotionSettings, AvatarMovement, AvatarMovementInfo,
+use crate::{
+    avatar_movement::{
+        ActivePlayerComponent, AvatarLocomotionSettings, AvatarMovement, AvatarMovementInfo,
+    },
+    camera_collision::CameraCollision,
 };
 
 pub(super) struct InputDebugPanelPlugin;
@@ -16,6 +19,7 @@ impl Plugin for InputDebugPanelPlugin {
         app.add_console_command::<CameraState, _>(camera_state)
             .add_console_command::<MovementState, _>(movement_state)
             .add_preview_console_command::<CameraSensitivity, _>(camera_sensitivity)
+            .add_preview_console_command::<CameraCollisions, _>(camera_collisions)
             .add_preview_debug_inputs(DebugSection {
                 title: "Camera",
                 query: "/camera_state",
@@ -24,18 +28,30 @@ impl Plugin for InputDebugPanelPlugin {
                     ("Far clip (m)", "far"),
                     ("Vertical FOV (degrees)", "fov"),
                     ("Scene override", "override"),
+                    ("Collision: desired distance (m)", "desiredDistance"),
+                    ("Collision: distance (m)", "collidedDistance"),
+                    ("Collision: occluded", "occluded"),
+                    ("Collision: damping (s)", "dampTime"),
                 ],
                 actions: &[],
-                inputs: &[DebugInput {
-                    label: "Look sensitivity",
-                    field: "sensitivity",
-                    command: "/camera_sensitivity {value}",
-                    kind: DebugInputKind::Number {
-                        min: 0.01,
-                        max: 100.0,
-                        step: 0.01,
+                inputs: &[
+                    DebugInput {
+                        label: "Look sensitivity",
+                        field: "sensitivity",
+                        command: "/camera_sensitivity {value}",
+                        kind: DebugInputKind::Number {
+                            min: 0.01,
+                            max: 100.0,
+                            step: 0.01,
+                        },
                     },
-                }],
+                    DebugInput {
+                        label: "Camera collisions",
+                        field: "collisions",
+                        command: "/camera_collisions {value}",
+                        kind: DebugInputKind::Toggle,
+                    },
+                ],
             })
             .add_debug_section(DebugSection {
                 title: "Locomotion",
@@ -87,9 +103,31 @@ fn camera_sensitivity(
     }
 }
 
+/// Turn the third-person camera's collisions on or off in preview.
+#[derive(clap::Parser, ConsoleCommand)]
+#[command(name = "/camera_collisions")]
+struct CameraCollisions {
+    #[arg(action = clap::ArgAction::Set)]
+    enabled: bool,
+}
+
+fn camera_collisions(
+    mut cmd: ConsoleCommand<CameraCollisions>,
+    mut collision: ResMut<CameraCollision>,
+) {
+    let Some(Ok(args)) = cmd.take() else { return };
+    collision.enabled = args.enabled;
+    cmd.reply_ok(if args.enabled {
+        "camera collisions on"
+    } else {
+        "camera collisions off"
+    });
+}
+
 fn camera_state(
     mut cmd: ConsoleCommand<CameraState>,
     camera: Query<(&PrimaryCamera, &Projection)>,
+    collision: Res<CameraCollision>,
 ) {
     let Some(Ok(_)) = cmd.take() else { return };
     let Ok((camera, projection)) = camera.single() else {
@@ -100,7 +138,21 @@ fn camera_state(
         Projection::Perspective(p) => (Some(p.far), Some(p.fov.to_degrees())),
         _ => (None, None),
     };
-    cmd.reply_ok(json!({"sensitivity":camera.sensitivity, "distance":camera.distance, "far":far, "fov":fov, "override":camera.scene_override.is_some()}).to_string());
+    cmd.reply_ok(
+        json!({
+            "sensitivity": camera.sensitivity,
+            "distance": camera.distance,
+            "far": far,
+            "fov": fov,
+            "override": camera.scene_override.is_some(),
+            "collisions": collision.enabled,
+            "desiredDistance": collision.desired_distance,
+            "collidedDistance": collision.collided_distance,
+            "occluded": collision.occluded,
+            "dampTime": collision.damp_time,
+        })
+        .to_string(),
+    );
 }
 
 /// Read the active SDK movement settings and last frame of controller feedback.

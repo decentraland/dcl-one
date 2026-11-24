@@ -11,7 +11,6 @@
 #import bevy_pbr::mesh_view_bindings::view;
 
 #import "embedded://shaders/simplex.wgsl"::simplex_noise_2d
-#import "embedded://shaders/bound_material_effect.wgsl"::discard_dither
 #import "embedded://visuals/terrain_params.wgsl"::terrain
 #import "embedded://visuals/coast_profile.wgsl"::beyond_coast
 
@@ -84,9 +83,6 @@ fn fragment(in: VertexOutput, @builtin(front_facing) is_front: bool) -> Fragment
     // metres of ground per pixel, taken before any discard so the derivatives stay uniform
     let footprint = max(fwidth(in.world_position.x), fwidth(in.world_position.z));
 
-    // shells are double sided so the inside of a hill shows; dither them out between the camera
-    // and the player like scene materials
-    discard_dither(in.position.xy, in.world_position.xyz, view.user_value, true, 0.0, vec3(0.0), false);
     if beyond_coast(in.world_position.xz, terrain.coast) {
         discard;
     }

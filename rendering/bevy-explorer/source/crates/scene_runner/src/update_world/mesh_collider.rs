@@ -43,6 +43,8 @@ use super::AddCrdtInterfaceExt;
 
 mod bounds;
 use bounds::ColliderBounds;
+mod camera;
+pub use camera::{is_camera_obstacle, CameraHit, CameraSweep};
 mod volume;
 use volume::SceneVolume;
 
