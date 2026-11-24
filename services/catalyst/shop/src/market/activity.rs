@@ -7,13 +7,17 @@
 //! events are merged by time, one per transaction and role (or per
 //! token/time/role without a transaction), and paged in memory (`limit` at
 //! most 500, `offset`). A source that cannot be read contributes nothing,
-//! as before.
+//! as before, and the answer stays a 200 with the legs that answered; the
+//! `x-activity-unavailable-sources` header ([`UNAVAILABLE_SOURCES_HEADER`])
+//! names the source of each unavailable envelope that left a leg out (the
+//! order legs' `nft-index` and `land-authz-index`, a reader's subgraph), so
+//! a client can tell a partial history from a complete one.
 
-use std::collections::HashSet;
+use std::collections::{BTreeSet, HashSet};
 
 use axum::Json;
 use axum::extract::{Query, State};
-use axum::http::HeaderMap;
+use axum::http::{HeaderMap, HeaderName, HeaderValue, StatusCode};
 use axum::response::{IntoResponse, Response};
 use serde::Serialize;
 use serde_json::{Value, json};
@@ -32,6 +36,11 @@ use crate::shared::signed_fetch::{
 use crate::types::{ASSET_TYPE_ERC20, ASSET_TYPE_USD_PEGGED_MANA};
 
 const INTERNAL_FETCH_CAP: i64 = 500;
+
+/// The response header naming, sorted and comma-separated, the source of
+/// each unavailable envelope that left a leg out of the activity; absent
+/// when no leg was left out that way.
+pub const UNAVAILABLE_SOURCES_HEADER: &str = "x-activity-unavailable-sources";
 const MAX_PAGE_SIZE: i64 = 500;
 
 #[derive(Debug, Serialize)]
@@ -69,8 +78,9 @@ fn network_name<T: Serialize>(network: &T) -> String {
         .unwrap_or_default()
 }
 
-/// Every page of a subgraph-backed source up to the internal cap.
-async fn pages<T, F, Fut>(fetch: F) -> Vec<T>
+/// Every page of a source up to the internal cap, and the source an
+/// unavailable envelope named when a page failed with one.
+async fn pages<T, F, Fut>(fetch: F) -> (Vec<T>, Option<String>)
 where
     F: Fn(i64) -> Fut,
     Fut: std::future::Future<Output = Result<(Vec<T>, i64), Response>>,
@@ -89,10 +99,25 @@ where
                     break;
                 }
             }
-            Err(_) => break,
+            Err(response) => return (out, unavailable_source(response).await),
         }
     }
-    out
+    (out, None)
+}
+
+/// The `source` an unavailable envelope names; `None` for another failure.
+async fn unavailable_source(response: Response) -> Option<String> {
+    if response.status() != StatusCode::SERVICE_UNAVAILABLE {
+        return None;
+    }
+    let body = axum::body::to_bytes(response.into_body(), 64 * 1024)
+        .await
+        .ok()?;
+    serde_json::from_slice::<Value>(&body)
+        .ok()?
+        .get("source")?
+        .as_str()
+        .map(str::to_string)
 }
 
 pub async fn user_activity(
@@ -100,7 +125,7 @@ pub async fn user_activity(
     address: &str,
     limit: Option<i64>,
     offset: Option<i64>,
-) -> (Vec<ActivityEvent>, i64) {
+) -> (Vec<ActivityEvent>, i64, BTreeSet<String>) {
     let limit = limit
         .filter(|v| *v > 0)
         .unwrap_or(MAX_PAGE_SIZE)
@@ -174,6 +199,15 @@ pub async fn user_activity(
         tracing::warn!(error = %e, "activity: the trades leg failed");
         Vec::new()
     });
+    let mut unavailable = BTreeSet::new();
+    let (sales_buyer, sales_seller, bids_bidder, bids_seller, orders_owner, orders_buyer) = (
+        leg_rows(sales_buyer, &mut unavailable),
+        leg_rows(sales_seller, &mut unavailable),
+        leg_rows(bids_bidder, &mut unavailable),
+        leg_rows(bids_seller, &mut unavailable),
+        leg_rows(orders_owner, &mut unavailable),
+        leg_rows(orders_buyer, &mut unavailable),
+    );
     let mut events: Vec<ActivityEvent> = Vec::new();
     events.extend(sales_buyer.iter().map(|s| sale_to_event(s, "sale_buyer")));
     events.extend(sales_seller.iter().map(|s| sale_to_event(s, "sale_seller")));
@@ -207,7 +241,16 @@ pub async fn user_activity(
             .take(limit as usize)
             .collect(),
         total,
+        unavailable,
     )
+}
+
+/// A leg's rows, recording the source that left it short in `unavailable`.
+fn leg_rows<T>(leg: (Vec<T>, Option<String>), unavailable: &mut BTreeSet<String>) -> Vec<T> {
+    if let Some(source) = leg.1 {
+        unavailable.insert(source);
+    }
+    leg.0
 }
 
 pub async fn get_activity(
@@ -216,7 +259,18 @@ pub async fn get_activity(
     Query(pairs): Query<Vec<(String, String)>>,
 ) -> Response {
     match activity(&state, &headers, &pairs).await {
-        Ok(envelope) => Json(envelope).into_response(),
+        Ok((envelope, unavailable)) => {
+            let mut response = Json(envelope).into_response();
+            let names = unavailable.into_iter().collect::<Vec<_>>().join(", ");
+            if let Ok(value) = HeaderValue::from_str(&names)
+                && !names.is_empty()
+            {
+                response
+                    .headers_mut()
+                    .insert(HeaderName::from_static(UNAVAILABLE_SOURCES_HEADER), value);
+            }
+            response
+        }
         Err(e) => e.into_response(),
     }
 }
@@ -239,7 +293,7 @@ async fn activity(
     state: &super::MarketplaceState,
     headers: &HeaderMap,
     pairs: &[(String, String)],
-) -> Result<ActivityEnvelope, ApiError> {
+) -> Result<(ActivityEnvelope, BTreeSet<String>), ApiError> {
     if !headers.contains_key(format!("{AUTH_CHAIN_HEADER_PREFIX}0").as_str())
         || !headers.contains_key(AUTH_TIMESTAMP_HEADER)
     {
@@ -266,8 +320,8 @@ async fn activity(
     }
     let limit = get_number_parameter("limit", pairs)?;
     let offset = get_number_parameter("offset", pairs)?;
-    let (data, total) = user_activity(state, &recovered, limit, offset).await;
-    Ok(ActivityEnvelope { data, total })
+    let (data, total, unavailable) = user_activity(state, &recovered, limit, offset).await;
+    Ok((ActivityEnvelope { data, total }, unavailable))
 }
 
 fn dedup_key(e: &ActivityEvent) -> String {
@@ -608,7 +662,7 @@ mod tests {
         .execute(&state.pool)
         .await
         .unwrap();
-        let (events, _) = user_activity(&state, &me, None, None).await;
+        let (events, _, _) = user_activity(&state, &me, None, None).await;
         let ids: Vec<&str> = events.iter().map(|e| e.id.as_str()).collect();
         for (id, want) in [
             (&local, true),

@@ -3916,9 +3916,20 @@ Invariants:
   before the status filter, the total and the page. The reader serves only
   the orders of a mirrored collection, the LAND and Estate registries and
   the DCLRegistrar.
+- The book's marker per network (`shop.legacy_order_cursor`) is the nft
+  walk's last block when the order fold last ran. The fold refolds the
+  orders touched past the lower of it and the nft fold's `since`, so the book
+  catches up with nft folds a replica on an earlier binary ran during a
+  rollout without writing it. A rewind lowers the marker to its point.
+- A reader serves the book only while its marker reaches the published nft
+  fold (`folded_block`), checked on the read's snapshot; otherwise the
+  `nft-index` envelope.
 - A database that predates the table fills it in the schema run that creates
-  it: the seed statement after its `CREATE TABLE` (a follow-up, so it runs
-  only then) applies the fold's rules to every token of both networks.
+  it. The seed statements after each `CREATE TABLE` (follow-ups, so they run
+  only then) record each network's nft `fold_through` as the book's marker,
+  then apply the fold's rules to every token up to it. They hold no
+  creation, supersession or end past what the nft fold folded; the next fold
+  takes the rest.
 
 Reads, each on one `REPEATABLE READ, READ ONLY` snapshot that also checks the
 nft cursor (fresh on the networks read) and, when an open LAND or estate
@@ -3928,8 +3939,8 @@ the `/v1/nfts` statement timeout:
 - the page: the filters, a sort (`created_at`, `updated_at`, `price` or
   `token_id`, ties by id) and `LIMIT first + skip`, beside the v3 listings
   of the same snapshot;
-- the total: a count capped at 5,000, or at the deep window for a deeper
-  page;
+- the total: each network's count capped at 5,000, or at the deep window
+  for a deeper page, summed, as the subgraph reader counted;
 - open-by-items: per contract, its open orders cheapest first
   (`legacy_order_open_idx`), up to `perContract`.
 
@@ -3955,7 +3966,7 @@ quarter sold and 30% cancelled by id, 130,050 left open:
 
 | Operation | Time |
 |---|---|
-| the seed in the schema run (1M orders from 6.6M log rows) | 16.5 s, plus 2.8 s for the seven indexes |
+| the seed in the schema run (1M orders from 6.6M log rows, bounded by the nft fold) | 20.4 s, plus 2.8 s for the seven indexes |
 | a rebuild over a filled table (no row changes): Polygon / Ethereum | 11.1 s / 7.7 s |
 | a rebuild of Polygon from an empty table (after a rewind) | 25.5 s |
 | a steady pass (the last 1,000 Polygon blocks, nested loops) | 6.6 ms |

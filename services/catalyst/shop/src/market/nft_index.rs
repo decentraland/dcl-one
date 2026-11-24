@@ -1023,7 +1023,7 @@ impl ChainIndex for NftIndex {
         .bind(&tokens)
         .execute(&mut *conn)
         .await?;
-        super::legacy_orders::rewind(&mut *conn, self.net, &contracts, &tokens).await?;
+        super::legacy_orders::rewind(&mut *conn, self.net, to, &contracts, &tokens).await?;
         // LAND data is keyed by (token_address, token_id) and folded only for
         // keys with a remaining document: a key whose documents were all reorged
         // out would otherwise keep a row past the cursor. The rebuild below

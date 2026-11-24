@@ -38,20 +38,30 @@ and the DCLRegistrar.
 
 Readiness follows the ownership readers' fresh rule: the nft index complete
 and published within 30 minutes on every network the read names, read on
-the same `REPEATABLE READ, READ ONLY` snapshot as the rows; and, when an
-open LAND or estate order could be answered, the land-authz index ready,
-whose snapshot the read then runs on. Otherwise the route answers the
-unavailable envelope naming the index that is not ready. The v3 listings
-leg reads the same snapshot behind its owner guard, so the order book no
-longer has a partial mode.
+the same `REPEATABLE READ, READ ONLY` snapshot as the rows, with the order
+book caught up with that publication (below); and, when an open LAND or
+estate order could be answered, the land-authz index ready, whose snapshot
+the read then runs on. Otherwise the route answers the unavailable envelope
+naming the index that is not ready. The v3 listings leg reads the same
+snapshot behind its owner guard, so the order book no longer has a partial
+mode. One request reads both legs at one instant, and its total counts each
+network up to the reader's cap and sums them, as the subgraph reader did.
 
 A node that does not walk the index (the switch off, or a network other
 than mainnet) keeps the collections subgraph reader for its legacy orders
 and serves the v3 listings unguarded, as before.
 
-A database that predates the table fills it from the log in the schema run
-that creates it (the schema's seed statement, the fold's rules over every
-token), so no reader finds it empty under a published cursor.
+The book keeps its own marker per network (`shop.legacy_order_cursor`): the
+nft walk's last block when the order fold last ran. The fold refolds the
+orders touched past the lower of that marker and the nft fold's, so the
+book catches up with nft folds that ran without it: during a rollout, a
+replica on an earlier binary folds the nft index and never writes the book.
+A reader serves the book only while its marker reaches the published nft
+fold. A database that predates the table fills it in the schema run that
+creates it: the fold's rules over every token, bounded by what the nft fold
+had folded (`fold_through`), which becomes the book's marker. So the seed
+holds no creation, supersession or end that the ownership it is read beside
+does not hold yet, and the next fold takes the rest.
 
 ## Consequences
 
@@ -60,9 +70,14 @@ token), so no reader finds it empty under a published cursor.
   indexed, are listed.
 - An order whose `expiresAt` the 2018 contract took in seconds is compared
   in milliseconds, so it is listed until it really expires.
-- While the nft index is not fresh, `/v1/orders` and
-  `/v1/orders/open-by-items` answer 503. So does credits pricing, which reads
-  the latter, and the activity feed leaves its orders out.
+- While the nft index is not fresh, or the order book trails it,
+  `/v1/orders` and `/v1/orders/open-by-items` answer 503. So does credits
+  pricing, which reads the latter.
+- `/v1/activity` keeps its partial 200: a leg whose index is not ready
+  contributes nothing, as any failing source did. Its
+  `x-activity-unavailable-sources` header names the source of each such
+  leg (`nft-index`, `land-authz-index`, or a reader's subgraph), so a client
+  can tell a partial history from a complete one.
 - A token sent away and back, away for good, relisted, sold or cancelled
   leaves the statuses the subgraph left (a test replays those traces
   against a model of its handlers). One trace differs: when an order is

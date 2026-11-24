@@ -3977,6 +3977,22 @@ async fn the_legacy_order_book_is_the_index_with_the_subgraph_statuses() {
         Duration::ZERO,
     )
     .await;
+    // A book that trails the published fold (an earlier binary folded the
+    // nft index past it) is not served beside that ownership.
+    sqlx::query("UPDATE shop.legacy_order_cursor SET folded_through = 50 WHERE network = 'matic'")
+        .execute(&pool)
+        .await
+        .unwrap();
+    let (status, body) = get(app(), "/v1/orders?network=MATIC").await;
+    assert_eq!(
+        (status, body["source"].as_str()),
+        (StatusCode::SERVICE_UNAVAILABLE, Some("nft-index")),
+        "{body}"
+    );
+    sqlx::query("UPDATE shop.legacy_order_cursor SET folded_through = 100 WHERE network = 'matic'")
+        .execute(&pool)
+        .await
+        .unwrap();
     // Polygon alone needs no LAND index.
     let (status, body) = get(app(), "/v1/orders?network=MATIC&sortBy=cheapest").await;
     assert_eq!(status, StatusCode::OK, "{body}");
@@ -4348,6 +4364,125 @@ async fn the_order_book_agrees_with_the_subgraph_on_transfers_away_and_back() {
         }
         assert_eq!(ours, graph, "{label}: {body}");
     }
+    own.drop().await;
+}
+
+/// The legacy order book's total counts each network up to the reader's
+/// cap and sums them, as the subgraph reader did: 3,000 sold orders on each
+/// network total 6,000 on a shallow page, not 5,000.
+#[tokio::test]
+async fn the_legacy_order_total_caps_each_network_and_sums_them() {
+    let up = FakeGraph::new();
+    let url = serve_graph(up.clone()).await;
+    let Some((state, own)) = state_over_own(&url, true).await else {
+        return;
+    };
+    let pool = state.pool.clone();
+    let c = contract_of(&tag(), 6);
+    sqlx::query(
+        "INSERT INTO shop.collections (network, contract_address, chain_id, name, creator, owner, urn, is_completed, is_approved, is_editable, created_at, updated_at, reviewed_at, mirrored_at) \
+         SELECT 'matic', $1, 137, 'Counted', $2, $2, 'urn:decentraland:matic:collections-v2:' || $1, true, true, false, 1, 1, 1, timezone('UTC', now())",
+    )
+    .bind(&c)
+    .bind(CREATOR)
+    .execute(&pool)
+    .await
+    .unwrap();
+    sqlx::query(
+        "INSERT INTO shop.legacy_order (network, marketplace_address, order_id, contract_address, token_id, seller, buyer, price, expires_at, status, \
+             created_block, created_log, created_at, updated_block, updated_log, updated_at) \
+         SELECT n, 'm', n || i, CASE n WHEN 'matic' THEN $1 ELSE $2 END, i, $3, $4, 1, 0, 'sold', i, 0, i, i, 0, i \
+         FROM generate_series(1, 3000) i, unnest(ARRAY['matic', 'ethereum']) n",
+    )
+    .bind(&c)
+    .bind(crate::land_authz::LAND_REGISTRY_MAINNET.to_lowercase())
+    .bind(WALLET_A)
+    .bind(WALLET_B)
+    .execute(&pool)
+    .await
+    .unwrap();
+    super::owned_items::test_support::publish(
+        &pool,
+        &super::chain_walk::ChainNet::ALL,
+        false,
+        Duration::ZERO,
+    )
+    .await;
+    let app = || market_router(state.clone());
+    let (status, body) = get(app(), "/v1/orders?status=sold&first=1").await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["total"], "6000", "{body}");
+    let (_, body) = get(app(), "/v1/orders?status=sold&first=1&network=MATIC").await;
+    assert_eq!(body["total"], "3000", "{body}");
+    own.drop().await;
+}
+
+/// `/v1/activity` keeps its partial 200 when an order leg's index is not
+/// ready, and names each source that left a leg out in
+/// `x-activity-unavailable-sources`: both while neither is ready, then the
+/// land-authz index while an owner's orders (which may hold an open LAND
+/// order) need it; no header once every leg answers.
+#[tokio::test]
+async fn a_partial_activity_names_the_unavailable_sources() {
+    let up = FakeGraph::new();
+    let url = serve_graph(up.clone()).await;
+    let Some((state, own)) = state_over_own(&url, true).await else {
+        return;
+    };
+    let me = crate::shared::signed_fetch::test_support::address();
+    let marketplace = r#"{"signer":"dcl:marketplace"}"#;
+    let activity = || {
+        let state = state.clone();
+        let me = me.clone();
+        async move {
+            let headers = signed_headers("get", "/v1/activity", marketplace, true).await;
+            let mut req = Request::builder().uri(format!("/v1/activity?address={me}"));
+            for (k, v) in headers.iter() {
+                req = req.header(k, v);
+            }
+            let resp = market_router(state)
+                .oneshot(req.body(Body::empty()).unwrap())
+                .await
+                .unwrap();
+            let status = resp.status();
+            let named = resp
+                .headers()
+                .get(super::activity::UNAVAILABLE_SOURCES_HEADER)
+                .map(|v| v.to_str().unwrap().to_string());
+            (status, named)
+        }
+    };
+    assert_eq!(
+        activity().await,
+        (
+            StatusCode::OK,
+            Some("land-authz-index, nft-index".to_string())
+        ),
+        "neither is ready: the owner's orders stop at the LAND index, the buyer's at the nft index"
+    );
+    super::owned_items::test_support::publish(
+        &state.pool,
+        &super::chain_walk::ChainNet::ALL,
+        false,
+        Duration::ZERO,
+    )
+    .await;
+    assert_eq!(
+        activity().await,
+        (StatusCode::OK, Some("land-authz-index".to_string())),
+        "an owner's orders may hold an open LAND order"
+    );
+    sqlx::query("INSERT INTO land_authz.index_cursor (network, land_registry, estate_registry, last_block, folded_block, folded_at, full_replay_started) VALUES ('ethereum-mainnet', $1, $2, 1, 1, timezone('UTC', now()), true)")
+        .bind(crate::land_authz::LAND_REGISTRY_MAINNET)
+        .bind(crate::land_authz::ESTATE_REGISTRY_MAINNET)
+        .execute(&state.pool)
+        .await
+        .unwrap();
+    assert_eq!(
+        activity().await,
+        (StatusCode::OK, None),
+        "every leg answered"
+    );
     own.drop().await;
 }
 

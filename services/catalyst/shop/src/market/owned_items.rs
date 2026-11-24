@@ -741,7 +741,8 @@ pub(crate) mod test_support {
     }
 
     /// Publishes the nft index of `nets` `age` ago (a complete walk at
-    /// block 100) and, with `items`, records the items mirror's pass.
+    /// block 100, its legacy order book folded through it) and, with
+    /// `items`, records the items mirror's pass.
     pub async fn publish(pool: &PgPool, nets: &[ChainNet], items: bool, age: std::time::Duration) {
         for net in nets {
             sqlx::query(
@@ -753,6 +754,15 @@ pub(crate) mod test_support {
             .bind(net.db_name())
             .bind(age.as_secs_f64())
             .bind(chain_walk::mainnet_chain(*net))
+            .execute(pool)
+            .await
+            .unwrap();
+            // The fold that published it folded the legacy order book too.
+            sqlx::query(
+                "INSERT INTO shop.legacy_order_cursor (network, folded_through) VALUES ($1, 100) \
+                 ON CONFLICT (network) DO UPDATE SET folded_through = 100",
+            )
+            .bind(net.db_name())
             .execute(pool)
             .await
             .unwrap();

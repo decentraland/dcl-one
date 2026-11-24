@@ -36,7 +36,7 @@ use axum::Json;
 use axum::extract::{Query, State};
 use axum::http::{HeaderName, HeaderValue};
 use axum::response::{IntoResponse, Response};
-use chrono::Utc;
+use chrono::{DateTime, Utc};
 use serde::Serialize;
 use serde_json::{Value, json};
 use sqlx::{PgConnection, Postgres, Row, Transaction};
@@ -411,14 +411,17 @@ fn reads_land(state: &MarketplaceState, f: &OrderFilters) -> bool {
 
 /// The read-only snapshot a walking node's order book reads on: the
 /// land-authz index ready on it when `land` (its own snapshot, which the
-/// LAND/estate reads share), and the nft index published and recent on
-/// `nets` ([`Rule::Fresh`]), each statement bounded by
-/// `nft_reads::READ_STATEMENT_TIMEOUT`. `Err` is the unavailable envelope
-/// naming the index that is not ready, or a 500.
+/// LAND/estate reads share), the nft index published and recent on `nets`
+/// at `now` ([`Rule::Fresh`]) and, with `book`, the legacy order book caught
+/// up with that publication on each (`legacy_orders::caught_up`), each
+/// statement bounded by `nft_reads::READ_STATEMENT_TIMEOUT`. `Err` is the
+/// unavailable envelope naming the index that is not ready, or a 500.
 pub(crate) async fn book_snapshot(
     state: &MarketplaceState,
     nets: &[ChainNet],
     land: bool,
+    book: bool,
+    now: DateTime<Utc>,
 ) -> Result<Transaction<'static, Postgres>, Response> {
     let db = |e: sqlx::Error| ApiError::internal(e.to_string()).into_response();
     let mut tx = if land {
@@ -443,9 +446,22 @@ pub(crate) async fn book_snapshot(
         .execute(&mut *tx)
         .await
         .map_err(db)?;
-    owned_items::check(&mut tx, nets, Rule::Fresh, false, Utc::now())
+    owned_items::check(&mut tx, nets, Rule::Fresh, false, now)
         .await
         .map_err(|e| e.into_response(|m| ApiError::internal(m.to_string()).into_response()))?;
+    if book {
+        for &net in nets {
+            if !super::legacy_orders::caught_up(&mut tx, net)
+                .await
+                .map_err(db)?
+            {
+                return Err(owned_items::not_ready(&format!(
+                    "the {} legacy order book has not caught up with the published nft fold",
+                    net.db_name()
+                )));
+            }
+        }
+    }
     Ok(tx)
 }
 
@@ -512,11 +528,12 @@ async fn read_trades(
     state: &MarketplaceState,
     f: &OrderFilters,
     check: OwnerCheck,
+    now: DateTime<Utc>,
 ) -> Result<Vec<Keyed>, sqlx::Error> {
     let Some((extra, binds)) = trades_filters(f) else {
         return Ok(Vec::new());
     };
-    let now = Utc::now().naive_utc();
+    let now = now.naive_utc();
     let sql = trades_leg_sql(&extra, check);
     let mut q = sqlx::query(sqlx::AssertSqlSafe(sql))
         .bind(now)
@@ -544,9 +561,10 @@ pub async fn trades_leg(
     state: &MarketplaceState,
     f: &OrderFilters,
 ) -> Result<(Vec<Keyed>, OwnerCheck), Response> {
+    let now = Utc::now();
     if owned_items::walks_here(state) {
-        let mut tx = book_snapshot(state, nets_of(f.network), false).await?;
-        let rows = read_trades(&mut tx, state, f, OwnerCheck::Checked)
+        let mut tx = book_snapshot(state, nets_of(f.network), false, false, now).await?;
+        let rows = read_trades(&mut tx, state, f, OwnerCheck::Checked, now)
             .await
             .map_err(read_error)?;
         tx.rollback().await.ok();
@@ -557,7 +575,7 @@ pub async fn trades_leg(
             .acquire()
             .await
             .map_err(|e| ApiError::from(e).into_response())?;
-        let rows = read_trades(&mut conn, state, f, OwnerCheck::Unchecked)
+        let rows = read_trades(&mut conn, state, f, OwnerCheck::Unchecked, now)
             .await
             .map_err(read_error)?;
         Ok((rows, OwnerCheck::Unchecked))
@@ -733,8 +751,9 @@ async fn book_rows(
     f: &OrderFilters,
     window: i64,
     land: bool,
+    now_ms: i64,
 ) -> Result<Vec<Keyed>, sqlx::Error> {
-    let Some((from, binds)) = book_from(&registries(state), f, readers::now_ms(), land) else {
+    let Some((from, binds)) = book_from(&registries(state), f, now_ms, land) else {
         return Ok(Vec::new());
     };
     let sql = format!(
@@ -779,26 +798,34 @@ async fn book_rows(
         .collect())
 }
 
-/// How many legacy orders match `f`, counted up to `cap`.
+/// How many legacy orders match `f` at `now_ms`: each network's count
+/// capped at `cap`, summed, as the subgraph reader counts them.
 async fn book_total(
     conn: &mut PgConnection,
     state: &MarketplaceState,
     f: &OrderFilters,
     cap: i64,
     land: bool,
+    now_ms: i64,
 ) -> Result<i64, sqlx::Error> {
-    let Some((from, binds)) = book_from(&registries(state), f, readers::now_ms(), land) else {
+    let Some((from, binds)) = book_from(&registries(state), f, now_ms, land) else {
         return Ok(0);
     };
-    let sql = format!(
-        "SELECT count(*) FROM (SELECT 1 {from} LIMIT {}) x",
-        cap.max(0)
-    );
-    let mut q = sqlx::query_scalar(sqlx::AssertSqlSafe(sql));
-    for b in &binds {
-        q = q.bind(b);
+    let mut total = 0;
+    for net in nets_of(f.network) {
+        let sql = format!(
+            "SELECT count(*) FROM (SELECT 1 {from} AND o.network = '{}' LIMIT {}) x",
+            net.db_name(),
+            cap.max(0)
+        );
+        let mut q = sqlx::query_scalar(sqlx::AssertSqlSafe(sql));
+        for b in &binds {
+            q = q.bind(b);
+        }
+        let n: i64 = q.fetch_one(&mut *conn).await?;
+        total += n;
     }
-    q.fetch_one(conn).await
+    Ok(total)
 }
 
 const ORDER_FIELDS: &str = "id marketplaceAddress nftAddress tokenId owner buyer price status expiresAt createdAt updatedAt nft { issuedId }";
@@ -984,11 +1011,14 @@ pub async fn list_orders_checked(
     let (mut merged, legacy_total, trades, check) = if owned_items::walks_here(state) {
         super::trades::require_ready(state).await?;
         let land = reads_land(state, f);
-        let mut tx = book_snapshot(state, nets_of(f.network), land).await?;
+        let now = Utc::now();
+        let now_ms = now.timestamp_millis();
+        let mut tx = book_snapshot(state, nets_of(f.network), land, true, now).await?;
         let (rows, total, trades) = async {
-            let rows = book_rows(&mut tx, state, f, window, land).await?;
-            let total = book_total(&mut tx, state, f, readers::count_cap(0, window), land).await?;
-            let trades = read_trades(&mut tx, state, f, OwnerCheck::Checked).await?;
+            let rows = book_rows(&mut tx, state, f, window, land, now_ms).await?;
+            let cap = readers::count_cap(0, window);
+            let total = book_total(&mut tx, state, f, cap, land, now_ms).await?;
+            let trades = read_trades(&mut tx, state, f, OwnerCheck::Checked, now).await?;
             Ok::<_, sqlx::Error>((rows, total, trades))
         }
         .await
@@ -1081,12 +1111,21 @@ pub async fn open_orders_by_items_checked(
     let check = if owned_items::walks_here(state) {
         super::trades::require_ready(state).await?;
         let land = contracts.iter().any(|c| is_land_registry(state, c));
-        let mut tx = book_snapshot(state, &ChainNet::ALL, land).await?;
+        let now = Utc::now();
+        let mut tx = book_snapshot(state, &ChainNet::ALL, land, true, now).await?;
         for contract in &contracts {
             let f = filters(contract);
             let rows = async {
-                let mut rows = book_rows(&mut tx, state, &f, per_contract, land).await?;
-                rows.extend(read_trades(&mut tx, state, &f, OwnerCheck::Checked).await?);
+                let mut rows = book_rows(
+                    &mut tx,
+                    state,
+                    &f,
+                    per_contract,
+                    land,
+                    now.timestamp_millis(),
+                )
+                .await?;
+                rows.extend(read_trades(&mut tx, state, &f, OwnerCheck::Checked, now).await?);
                 Ok::<_, sqlx::Error>(rows)
             }
             .await

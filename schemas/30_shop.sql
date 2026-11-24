@@ -566,6 +566,25 @@ CREATE TABLE shop.nft_order (
 -- the estate stats): WHERE status = 'open' AND expires_at > $now.
 CREATE INDEX nft_order_open_idx ON shop.nft_order (network, contract_address, expires_at) WHERE status = 'open';
 
+-- How far each network's legacy order book (`shop.legacy_order`) is folded:
+-- the nft walk's last block when the order fold last ran, in the nft fold's
+-- transaction, or the nft fold's `fold_through` when the schema run seeded
+-- the book. The order fold refolds the orders touched past the lower of this
+-- and the nft fold's own marker, so the book catches up with nft folds that
+-- ran without it (a replica on an earlier binary during a rollout); a reader
+-- serves the book only while this reaches the published nft fold
+-- (`folded_block`). A rewind lowers it to the rewind's point.
+CREATE TABLE shop.legacy_order_cursor (
+    network text PRIMARY KEY,
+    folded_through bigint NOT NULL,
+    CONSTRAINT legacy_order_cursor_network_known CHECK (network IN ('ethereum', 'matic'))
+);
+
+-- A database that predates the order book records the block its seed below
+-- covers: what the nft fold has folded, never a walked block past it.
+INSERT INTO shop.legacy_order_cursor (network, folded_through)
+SELECT network, fold_through FROM shop.chain_cursor WHERE indexer = 'nft' AND fold_through IS NOT NULL;
+
 -- Every legacy Marketplace order ever created, one row per order (the order
 -- book of /v1/orders, /v1/orders/open-by-items and the activity orders
 -- leg), folded from `shop.nft_event` in the nft fold's transaction
@@ -607,18 +626,20 @@ CREATE TABLE shop.legacy_order (
 );
 
 -- A database that predates the table fills it from the log in the run that
--- creates it, so no reader finds it empty under a published nft cursor: the
--- fold's rules (legacy_orders::FOLD_SQL) over every token of both networks.
+-- creates it: the fold's rules (legacy_orders::FOLD_SQL) over every token of
+-- each network, bounded by the block `shop.legacy_order_cursor` records for
+-- it, so the book holds no creation, supersession or end the nft fold has not
+-- folded yet; the next fold folds the rest.
 INSERT INTO shop.legacy_order (network, marketplace_address, order_id, contract_address, token_id, seller, buyer, price, expires_at, status,
     created_block, created_log, created_at, updated_block, updated_log, updated_at)
 WITH created AS (
     SELECT DISTINCT ON (c.network, c.emitter, c.detail) c.*
     FROM (
         SELECT e.network, e.contract_address, e.token_id, e.block_number, e.log_index, e.block_time, e.emitter, e.detail,
-               e.from_address, e.amount, e.expires_at,
+               e.from_address, e.amount, e.expires_at, k.folded_through,
                lead(e.block_number) OVER w AS next_block, lead(e.log_index) OVER w AS next_log, lead(e.block_time) OVER w AS next_time
-        FROM shop.nft_event e
-        WHERE e.kind = 'order_created' AND e.detail IS NOT NULL
+        FROM shop.nft_event e JOIN shop.legacy_order_cursor k ON k.network = e.network
+        WHERE e.kind = 'order_created' AND e.detail IS NOT NULL AND e.block_number <= k.folded_through
         WINDOW w AS (PARTITION BY e.network, e.contract_address, e.token_id ORDER BY e.block_number, e.log_index)
     ) c
     ORDER BY c.network, c.emitter, c.detail, c.block_number DESC, c.log_index DESC
@@ -637,7 +658,7 @@ LEFT JOIN LATERAL (
     FROM shop.nft_event t
     WHERE t.network = c.network AND t.contract_address = c.contract_address AND t.token_id = c.token_id
       AND t.kind IN ('order_successful', 'order_cancelled') AND t.emitter = c.emitter AND t.detail = c.detail
-      AND (t.block_number, t.log_index) > (c.block_number, c.log_index)
+      AND (t.block_number, t.log_index) > (c.block_number, c.log_index) AND t.block_number <= c.folded_through
     ORDER BY t.block_number DESC, t.log_index DESC
     LIMIT 1
 ) t ON true;
