@@ -43,6 +43,7 @@
     "../../../../../library/shop/checkout/chain/selection.ts",
     "../../../../../library/web-core/shop-chain-env.ts",
     "../../../../../library/web-core/site.ts",
+    "../../../../../library/web-core/catalyst/client.ts",
     "../../../../../library/shop/model/address.ts",
     "../../../../../library/shop/model/chain.ts",
     "../../../../../library/shop/model/decimal.ts",
