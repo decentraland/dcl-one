@@ -161,6 +161,12 @@ impl Rig {
         ));
         let storage = Arc::new(Storage::from_config(&dir).await.unwrap());
         storage.store(&corpus.hash, blob.clone()).await.unwrap();
+        storage
+            .item_files()
+            .unwrap()
+            .store(&corpus.hash, blob.clone())
+            .await
+            .unwrap();
 
         let content = Arc::new(crate::content::ContentState::new(
             pool.clone(),
@@ -239,6 +245,35 @@ impl Rig {
         )
         .bind(&corpus.hash)
         .bind(blob.len() as i64)
+        .bind(&user)
+        .execute(&pool)
+        .await
+        .unwrap();
+        sqlx::query(
+            "INSERT INTO builder.collections (id, name, eth_address, contract_address) VALUES ($1, 'served routes', $2, $3)",
+        )
+        .bind(corpus.community)
+        .bind(&user)
+        .bind(format!("0x{}", corpus.community.simple().to_string()[..20].repeat(2)))
+        .execute(&pool)
+        .await
+        .unwrap();
+        let item = Uuid::new_v4();
+        sqlx::query(
+            "INSERT INTO builder.items (id, collection_id, eth_address, name, type, blockchain_item_id) \
+             VALUES ($1, $2, $3, 'served routes', 'wearable', '0')",
+        )
+        .bind(item)
+        .bind(corpus.community)
+        .bind(&user)
+        .execute(&pool)
+        .await
+        .unwrap();
+        sqlx::query(
+            "INSERT INTO builder.item_contents (item_id, file, hash, named_by) VALUES ($1, 'model.glb', $2, $3)",
+        )
+        .bind(item)
+        .bind(&corpus.hash)
         .bind(&user)
         .execute(&pool)
         .await
@@ -365,6 +400,16 @@ impl Rig {
             .execute(&self.pool)
             .await
             .unwrap();
+        sqlx::query("DELETE FROM builder.items WHERE collection_id = $1")
+            .bind(corpus.community)
+            .execute(&self.pool)
+            .await
+            .unwrap();
+        sqlx::query("DELETE FROM builder.collections WHERE id = $1")
+            .bind(corpus.community)
+            .execute(&self.pool)
+            .await
+            .unwrap();
         sqlx::query("DELETE FROM builder.uploaded_contents WHERE hash = $1")
             .bind(&corpus.hash)
             .execute(&self.pool)
@@ -409,12 +454,6 @@ fn blob_routes(corpus: &Corpus) -> Vec<(&'static str, &'static str, String)> {
     } = corpus;
     vec![
         ("content", "", format!("/contents/{hash}")),
-        ("builder", "", format!("/v1/storage/contents/{hash}")),
-        (
-            "builder",
-            "/builder-api",
-            format!("/builder-api/v1/storage/contents/{hash}"),
-        ),
         (
             "camera_reel",
             "/camera-reel-service",
@@ -470,10 +509,6 @@ fn the_router_tables_yield_the_known_blob_routes() {
     assert!(
         all.iter()
             .any(|p| p == "/camera-reel-service/api/images/bafyhash/metadata")
-    );
-    assert!(
-        all.iter()
-            .any(|p| p == "/builder-api/v1/storage/contents/bafyhash/exists")
     );
     assert!(
         all.iter()
@@ -568,18 +603,6 @@ async fn every_blob_route_refuses_a_withheld_hash_and_a_withheld_entity() {
         status,
         StatusCode::NOT_FOUND,
         "the reel's metadata of a withheld hash"
-    );
-    let (status, _) = rig
-        .get(
-            "builder",
-            "/builder-api",
-            &format!("/builder-api/v1/storage/contents/{}/exists", corpus.hash),
-        )
-        .await;
-    assert_eq!(
-        status,
-        StatusCode::NOT_FOUND,
-        "the builder's existence probe of a withheld hash"
     );
 
     // Phase 3: the profile entity alone; its images refuse, the rest serve again.

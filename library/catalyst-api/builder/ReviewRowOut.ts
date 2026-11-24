@@ -6,4 +6,4 @@ import type { ReviewCurationOut } from "./ReviewCurationOut";
 /**
  * Row of the `collections` list in `GET /v1/collections/curation`.
  */
-export type ReviewRowOut = { created_at: number | null, curation: ReviewCurationOut | null, has_reviews: boolean, id: string, is_approved: boolean, is_programmatic: boolean, item_count: number, name: string, owner: string | null, reviewed_at: number | null, status: CollectionStatus, type: CollectionType, };
+export type ReviewRowOut = { created_at: string | null, curation: ReviewCurationOut | null, has_reviews: boolean, id: string, is_approved: boolean, is_programmatic: boolean, item_count: number, name: string, owner: string | null, reviewed_at: string | null, status: CollectionStatus, type: CollectionType, };

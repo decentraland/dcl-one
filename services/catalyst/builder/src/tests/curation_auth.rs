@@ -2,6 +2,7 @@ use alloy::signers::{Signer, local::PrivateKeySigner};
 use axum::http::{HeaderMap, HeaderName, HeaderValue};
 
 use crate::auth::{SignedPath, authorize_admin};
+
 use crate::http::ApiError;
 use crate::shared::signed_fetch::build_legacy_payload as build_payload;
 
@@ -128,8 +129,7 @@ async fn empty_admin_token_does_not_weaken_the_signed_fetch_branch() {
 }
 
 #[tokio::test]
-async fn expired_signed_fetch_is_forbidden() {
-    // Just past the 60 s window.
+async fn expired_signed_fetch_is_unauthenticated() {
     let ts = now_ms() - 65 * 1000;
     let (headers, signer) = signed_headers(ts).await;
     let admins = vec![signer];
@@ -137,11 +137,11 @@ async fn expired_signed_fetch_is_forbidden() {
     let err = authorize_admin(None, &admins, None, &headers, "get", &path())
         .await
         .expect_err("stale timestamp must be denied");
-    assert!(is_forbidden(err));
+    assert_eq!(err.status(), 401);
 }
 
 #[tokio::test]
-async fn signature_bound_to_a_different_path_is_forbidden() {
+async fn signature_bound_to_a_different_path_is_unauthenticated() {
     let ts = now_ms();
     let (headers, signer) = signed_headers(ts).await;
     let admins = vec![signer];
@@ -156,11 +156,11 @@ async fn signature_bound_to_a_different_path_is_forbidden() {
     )
     .await
     .expect_err("path-bound signature must not authorize a different path");
-    assert!(is_forbidden(err));
+    assert_eq!(err.status(), 401);
 }
 
 #[tokio::test]
-async fn malformed_auth_chain_headers_are_forbidden_not_panicking() {
+async fn malformed_auth_chain_headers_are_unauthenticated_not_panicking() {
     let mut headers = HeaderMap::new();
     headers.insert(
         HeaderName::from_static("x-identity-auth-chain-0"),
@@ -173,5 +173,5 @@ async fn malformed_auth_chain_headers_are_forbidden_not_panicking() {
     let err = authorize_admin(None, &[], None, &headers, "get", &path())
         .await
         .expect_err("garbage chain must be denied");
-    assert!(is_forbidden(err));
+    assert_eq!(err.status(), 401);
 }
