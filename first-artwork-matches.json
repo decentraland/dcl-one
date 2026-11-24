@@ -1,0 +1,346 @@
+{
+  "calendar": [
+    {
+      "event": "Hang with AudioHotLab",
+      "source": "https://dcl.dev/events-assets-099ac00/poster/5f4ce90a-42fa-47ca-9aaa-6cf40e620e57.webp",
+      "box": [
+        17,
+        182,
+        315,
+        335
+      ],
+      "reference_score": 0.9988,
+      "reference_fit": "cover",
+      "best_score": 0.9988,
+      "best_art": "Hang with AudioHotLab",
+      "exact_art_rank": 1,
+      "best_upside_down_score": 0.3665,
+      "reference_sha256": "dc534d4c396eb2f8a88a59332bb8b492234c130ec7436f63bddc7f1c15667c35"
+    },
+    {
+      "event": "🪲 Chiri Malware 🖥️ The Game",
+      "source": "https://dcl.dev/events-assets-099ac00/poster/0c70175b-92b2-4b9b-b189-6fea6eef62fa.webp",
+      "box": [
+        332,
+        182,
+        630,
+        335
+      ],
+      "reference_score": 0.9992,
+      "reference_fit": "cover",
+      "best_score": 0.9992,
+      "best_art": "🪲 Chiri Malware 🖥️ The Game",
+      "exact_art_rank": 1,
+      "best_upside_down_score": 0.4342,
+      "reference_sha256": "7393d5fbb114422df683cfb6f822e6c6e7cf512759f2a16a35cea5c2628c6c79"
+    },
+    {
+      "event": "Nights of Antrom",
+      "source": "https://dcl.dev/events-assets-099ac00/poster/eed13ffd-cc4e-4da9-a7b1-85b11d535cbf.webp",
+      "box": [
+        647,
+        182,
+        945,
+        335
+      ],
+      "reference_score": 0.9989,
+      "reference_fit": "cover",
+      "best_score": 0.9989,
+      "best_art": "Nights of Antrom",
+      "exact_art_rank": 1,
+      "best_upside_down_score": 0.3842,
+      "reference_sha256": "8a8e209d1c46eea85c7808241cf750417e63323cd3e56735b51d53f15b4a2ba4"
+    },
+    {
+      "event": "The Avatalks show and party ",
+      "source": "https://dcl.dev/events-assets-099ac00/poster/f34432956978e7b1.png",
+      "box": [
+        962,
+        182,
+        1260,
+        335
+      ],
+      "reference_score": 0.9995,
+      "reference_fit": "cover",
+      "best_score": 0.9995,
+      "best_art": "The Avatalks show and party ",
+      "exact_art_rank": 1,
+      "best_upside_down_score": 0.5426,
+      "reference_sha256": "348da3d63be6e839833e0097aa1284e0af3804135984e8aece62e28b41e8dc5c"
+    },
+    {
+      "event": "The Meta Beast Roaming Party With DJvAPED taking over",
+      "source": "https://dcl.dev/events-assets-099ac00/poster/541b7168-abe2-4dd2-8f51-8ce8404a849a.webp",
+      "box": [
+        1277,
+        182,
+        1575,
+        335
+      ],
+      "reference_score": 0.9985,
+      "reference_fit": "cover",
+      "best_score": 0.9985,
+      "best_art": "The Meta Beast Roaming Party With DJvAPED taking over",
+      "exact_art_rank": 1,
+      "best_upside_down_score": 0.4845,
+      "reference_sha256": "d8652fe87cb263aaebaf165b627755489595b15299da6ba4f0fb9eb5b2fcb245"
+    },
+    {
+      "event": "Poker Night ⛃⛂ ⛃⛂",
+      "source": "https://dcl.dev/events-assets-099ac00/poster/4710556b-2927-4402-941c-fa1aad9cbaca.webp",
+      "box": [
+        17,
+        432,
+        315,
+        585
+      ],
+      "reference_score": 0.999,
+      "reference_fit": "cover",
+      "best_score": 0.999,
+      "best_art": "Poker Night ⛃⛂ ⛃⛂",
+      "exact_art_rank": 1,
+      "best_upside_down_score": 0.2596,
+      "reference_sha256": "320018ff0822925726c603d7576a2902e14f9c7a33cd33ce5546059ed89524b6"
+    },
+    {
+      "event": "VIP Lounge",
+      "source": "https://dcl.dev/events-assets-099ac00/poster/c92e2dba-a7c6-4cb8-ab0d-8680f0680af2.webp",
+      "box": [
+        332,
+        432,
+        630,
+        585
+      ],
+      "reference_score": 0.9989,
+      "reference_fit": "cover",
+      "best_score": 0.9989,
+      "best_art": "VIP Lounge",
+      "exact_art_rank": 1,
+      "best_upside_down_score": 0.0008,
+      "reference_sha256": "992efff7389b98c5cddb55ead800ee3dba3f5daf35b9fe7827ee4654a086f656"
+    },
+    {
+      "event": "Portal Night",
+      "source": "https://dcl.dev/events-assets-099ac00/poster/9f54a88b-df21-4915-9df3-39fe91b33af3.webp",
+      "box": [
+        647,
+        432,
+        945,
+        585
+      ],
+      "reference_score": 0.9994,
+      "reference_fit": "cover",
+      "best_score": 0.9994,
+      "best_art": "Portal Night",
+      "exact_art_rank": 1,
+      "best_upside_down_score": 0.5339,
+      "reference_sha256": "7d2172c471360b37db4c69b61d69aea45dcc98f3cf8cacdf01d68bd4594cd1f3"
+    },
+    {
+      "event": "SkeleFrenz Gamenight",
+      "source": "https://dcl.dev/events-assets-099ac00/poster/0ff7a428-5bc8-4b9c-9b96-c0711cb32d80.webp",
+      "box": [
+        962,
+        432,
+        1260,
+        585
+      ],
+      "reference_score": 0.998,
+      "reference_fit": "cover",
+      "best_score": 0.998,
+      "best_art": "SkeleFrenz Gamenight",
+      "exact_art_rank": 1,
+      "best_upside_down_score": 0.0553,
+      "reference_sha256": "ddaacfd3b5fec49125a2f33ad49806ad4139594b68440ef43203bfa4972bad54"
+    },
+    {
+      "event": "Community Building Decentraland",
+      "source": "https://dcl.dev/events-assets-099ac00/poster/149d6ef6678931b1.png",
+      "box": [
+        1277,
+        432,
+        1575,
+        585
+      ],
+      "reference_score": 0.9404,
+      "reference_fit": "cover",
+      "best_score": 0.9404,
+      "best_art": "Community Building Decentraland",
+      "exact_art_rank": 1,
+      "best_upside_down_score": 0.2663,
+      "reference_sha256": "fda8103fb28805ec4a6471514af462ebea0e530d899af28da869b50bd875ca4f"
+    },
+    {
+      "event": "Live DJ Music and Dancing in the Unity Café",
+      "source": "https://dcl.dev/events-assets-099ac00/poster/1e34ab54-55cf-404b-ab2b-0a11263e3577.webp",
+      "box": [
+        17,
+        682,
+        315,
+        835
+      ],
+      "reference_score": 0.9992,
+      "reference_fit": "cover",
+      "best_score": 0.9992,
+      "best_art": "Live DJ Music and Dancing in the Unity Café",
+      "exact_art_rank": 1,
+      "best_upside_down_score": 0.6916,
+      "reference_sha256": "648a39cb1a12ba34c22c170159da4cf85da2dd2ad57b0ce69ecac19b6e92460f"
+    },
+    {
+      "event": "dummBz Tunes | NEW GAME! Playtest 🎸✨",
+      "source": "https://dcl.dev/events-assets-099ac00/poster/4c48c0b2-77de-4a06-a3a3-37b803884a04.webp",
+      "box": [
+        332,
+        682,
+        630,
+        835
+      ],
+      "reference_score": 0.9991,
+      "reference_fit": "cover",
+      "best_score": 0.9991,
+      "best_art": "dummBz Tunes | NEW GAME! Playtest 🎸✨",
+      "exact_art_rank": 1,
+      "best_upside_down_score": 0.6212,
+      "reference_sha256": "76e40eeb9973210e3875a4de74eef18182f363f8302731ede1c6aacf8fade79a"
+    }
+  ],
+  "chiri": [
+    {
+      "event": "🧉🍕 Chiri & The Impossible Dimension 🔮 The Game",
+      "source": "https://dcl.dev/events-assets-099ac00/poster/58b773af-01b1-4236-aaac-6b45a94ed802.webp",
+      "box": [
+        1112,
+        153,
+        1262,
+        258
+      ],
+      "reference_score": 0.9968,
+      "reference_fit": "cover",
+      "best_score": 0.9968,
+      "best_art": "🧉🍕 Chiri & The Impossible Dimension 🔮 The Game",
+      "exact_art_rank": 1,
+      "best_upside_down_score": 0.4414,
+      "reference_sha256": "2f5cdaf1c5fa7bf81a4f10409ee6a204ff5ef92de25bb6e9ad0045b2d9c0025e"
+    },
+    {
+      "event": "🌱 Chiri Touch Grass! 🪻 The Game",
+      "source": "https://dcl.dev/events-assets-099ac00/poster/002f9ebc-3ff1-4f92-b34f-9f02677a6840.webp",
+      "box": [
+        1112,
+        266,
+        1262,
+        371
+      ],
+      "reference_score": 0.9921,
+      "reference_fit": "cover",
+      "best_score": 0.9921,
+      "best_art": "🌱 Chiri Touch Grass! 🪻 The Game",
+      "exact_art_rank": 1,
+      "best_upside_down_score": 0.1561,
+      "reference_sha256": "c3014ede29cc752670f5d9f14f055ec635239855c46b7f724a04e8ffc117d72d"
+    },
+    {
+      "event": "KOMBAT PARTY - NEW GAME!💥",
+      "source": "https://dcl.dev/events-assets-099ac00/poster/9b0e89e6-f3aa-4a4e-9c7d-6f5db06a033e.webp",
+      "box": [
+        1112,
+        380,
+        1262,
+        485
+      ],
+      "reference_score": 0.9949,
+      "reference_fit": "cover",
+      "best_score": 0.9949,
+      "best_art": "KOMBAT PARTY - NEW GAME!💥",
+      "exact_art_rank": 1,
+      "best_upside_down_score": 0.3227,
+      "reference_sha256": "2cde3c72cf9679ed3843155db6aea0ab2ffe4cd0630cc93b81967285b148924b"
+    },
+    {
+      "event": "🕹️  Chiri Arcade 📺 The Game",
+      "source": "https://dcl.dev/events-assets-099ac00/poster/beeaf320-7e30-4125-8e8d-505d77878978.webp",
+      "box": [
+        1112,
+        493,
+        1262,
+        598
+      ],
+      "reference_score": 0.9932,
+      "reference_fit": "cover",
+      "best_score": 0.9932,
+      "best_art": "🕹️  Chiri Arcade 📺 The Game",
+      "exact_art_rank": 1,
+      "best_upside_down_score": 0.3963,
+      "reference_sha256": "717b36f636da8344f24be99a96e25923fca6d6a2ba428fc761133ee660d4c4c1"
+    },
+    {
+      "event": "🌱 Chiri Touch Grass! 🪻 The Game",
+      "source": "https://dcl.dev/events-assets-099ac00/poster/4c7226b9-22b3-4896-9cfa-0aa42276d232.webp",
+      "box": [
+        1112,
+        606,
+        1262,
+        711
+      ],
+      "reference_score": 0.9921,
+      "reference_fit": "cover",
+      "best_score": 0.9921,
+      "best_art": "🌱 Chiri Touch Grass! 🪻 The Game",
+      "exact_art_rank": 1,
+      "best_upside_down_score": 0.1561,
+      "reference_sha256": "c3014ede29cc752670f5d9f14f055ec635239855c46b7f724a04e8ffc117d72d"
+    },
+    {
+      "event": "🪲 Chiri Malware 🖥️ The Game",
+      "source": "https://dcl.dev/events-assets-099ac00/poster/0c70175b-92b2-4b9b-b189-6fea6eef62fa.webp",
+      "box": [
+        1112,
+        720,
+        1262,
+        825
+      ],
+      "reference_score": 0.997,
+      "reference_fit": "cover",
+      "best_score": 0.997,
+      "best_art": "🪲 Chiri Malware 🖥️ The Game",
+      "exact_art_rank": 1,
+      "best_upside_down_score": 0.3501,
+      "reference_sha256": "7393d5fbb114422df683cfb6f822e6c6e7cf512759f2a16a35cea5c2628c6c79"
+    }
+  ],
+  "detail": {
+    "event": "SkeleFrenz Gamenight",
+    "source": "https://dcl.dev/events-assets-099ac00/poster/0ff7a428-5bc8-4b9c-9b96-c0711cb32d80.webp",
+    "box": [
+      433,
+      109,
+      1167,
+      483
+    ],
+    "reference_score": 0.9988,
+    "reference_fit": "cover",
+    "best_score": 0.9988,
+    "best_art": "SkeleFrenz Gamenight",
+    "exact_art_rank": 1,
+    "best_upside_down_score": 0.1446,
+    "reference_sha256": "ddaacfd3b5fec49125a2f33ad49806ad4139594b68440ef43203bfa4972bad54"
+  },
+  "control_detail": {
+    "event": "Community Building Decentraland",
+    "source": "https://dcl.dev/events-assets-099ac00/poster/149d6ef6678931b1.png",
+    "box": [
+      433,
+      109,
+      1167,
+      483
+    ],
+    "reference_score": 0.9999,
+    "reference_fit": "cover",
+    "best_score": 0.9999,
+    "best_art": "Community Building Decentraland",
+    "exact_art_rank": 1,
+    "best_upside_down_score": 0.2331,
+    "reference_sha256": "fda8103fb28805ec4a6471514af462ebea0e530d899af28da869b50bd875ca4f"
+  }
+}

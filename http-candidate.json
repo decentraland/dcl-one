@@ -1,0 +1,2656 @@
+{
+  "environment": "candidate",
+  "utc": "2026-11-24T11:33:58.885978+00:00",
+  "revision_or_capture": "1a3f8223380c1ee44e26397862fde0a61db5c0bd",
+  "routes": "both",
+  "passed": 17,
+  "failed": 0,
+  "checks": [
+    {
+      "archived_url": "https://dcl.dev/events-assets-099ac00/poster/5f4ce90a-42fa-47ca-9aaa-6cf40e620e57.webp",
+      "requests": [
+        {
+          "url": "/metamorph-api/media/convert?url=https%3A%2F%2Fdcl.dev%2Fevents-assets-099ac00%2Fposter%2F5f4ce90a-42fa-47ca-9aaa-6cf40e620e57.webp",
+          "method": "GET",
+          "status": 200,
+          "mime": "image/webp",
+          "length": "307930",
+          "cache_control": "public, max-age=86400",
+          "age": null,
+          "x_cache": null,
+          "date": "Tue, 24 Nov 2026 11:33:59 GMT",
+          "body_bytes": 307930,
+          "signature": "52494646d2b204005745425056503858",
+          "body_sha256": "dc534d4c396eb2f8a88a59332bb8b492234c130ec7436f63bddc7f1c15667c35"
+        },
+        {
+          "url": "/metamorph-api/convert?url=https%3A%2F%2Fdcl.dev%2Fevents-assets-099ac00%2Fposter%2F5f4ce90a-42fa-47ca-9aaa-6cf40e620e57.webp",
+          "method": "GET",
+          "status": 200,
+          "mime": "image/jpeg",
+          "length": "172591",
+          "cache_control": "public, max-age=86400",
+          "age": null,
+          "x_cache": null,
+          "date": "Tue, 24 Nov 2026 11:33:59 GMT",
+          "body_bytes": 172591,
+          "signature": "ffd8ffe000104a464946000102000001",
+          "body_sha256": "fdebc6fa5bbed0ef914bbad2ad4d01c79da153364da34188247d2f4aff484ab8"
+        },
+        {
+          "url": "/metamorph-api/convert?url=https%3A%2F%2Fdcl.dev%2Fevents-assets-099ac00%2Fposter%2F5f4ce90a-42fa-47ca-9aaa-6cf40e620e57.webp",
+          "method": "HEAD",
+          "status": 200,
+          "mime": "image/jpeg",
+          "length": "172591",
+          "cache_control": "public, max-age=86400",
+          "age": null,
+          "x_cache": null,
+          "date": "Tue, 24 Nov 2026 11:33:59 GMT",
+          "body_bytes": 0,
+          "signature": "",
+          "body_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        {
+          "url": "/metamorph-api/convert?url=https%3A%2F%2Fdcl.dev%2Fevents-assets-099ac00%2Fposter%2F5f4ce90a-42fa-47ca-9aaa-6cf40e620e57.webp",
+          "method": "GET",
+          "status": 200,
+          "mime": "image/jpeg",
+          "length": "172591",
+          "cache_control": "public, max-age=86400",
+          "age": null,
+          "x_cache": null,
+          "date": "Tue, 24 Nov 2026 11:33:59 GMT",
+          "body_bytes": 172591,
+          "signature": "ffd8ffe000104a464946000102000001",
+          "body_sha256": "fdebc6fa5bbed0ef914bbad2ad4d01c79da153364da34188247d2f4aff484ab8"
+        },
+        {
+          "url": "/convert?url=https%3A%2F%2Fdcl.dev%2Fevents-assets-099ac00%2Fposter%2F5f4ce90a-42fa-47ca-9aaa-6cf40e620e57.webp",
+          "method": "GET",
+          "status": 200,
+          "mime": "image/jpeg",
+          "length": "172591",
+          "cache_control": "public, max-age=86400",
+          "age": null,
+          "x_cache": null,
+          "date": "Tue, 24 Nov 2026 11:33:59 GMT",
+          "body_bytes": 172591,
+          "signature": "ffd8ffe000104a464946000102000001",
+          "body_sha256": "fdebc6fa5bbed0ef914bbad2ad4d01c79da153364da34188247d2f4aff484ab8"
+        },
+        {
+          "url": "/convert?url=https%3A%2F%2Fdcl.dev%2Fevents-assets-099ac00%2Fposter%2F5f4ce90a-42fa-47ca-9aaa-6cf40e620e57.webp",
+          "method": "HEAD",
+          "status": 200,
+          "mime": "image/jpeg",
+          "length": "172591",
+          "cache_control": "public, max-age=86400",
+          "age": null,
+          "x_cache": null,
+          "date": "Tue, 24 Nov 2026 11:33:59 GMT",
+          "body_bytes": 0,
+          "signature": "",
+          "body_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        {
+          "url": "/convert?url=https%3A%2F%2Fdcl.dev%2Fevents-assets-099ac00%2Fposter%2F5f4ce90a-42fa-47ca-9aaa-6cf40e620e57.webp",
+          "method": "GET",
+          "status": 200,
+          "mime": "image/jpeg",
+          "length": "172591",
+          "cache_control": "public, max-age=86400",
+          "age": null,
+          "x_cache": null,
+          "date": "Tue, 24 Nov 2026 11:33:59 GMT",
+          "body_bytes": 172591,
+          "signature": "ffd8ffe000104a464946000102000001",
+          "body_sha256": "fdebc6fa5bbed0ef914bbad2ad4d01c79da153364da34188247d2f4aff484ab8"
+        },
+        {
+          "url": "/metamorph-api/media/convert?url=https%3A%2F%2Fdcl.dev%2Fevents-assets-099ac00%2Fposter%2F5f4ce90a-42fa-47ca-9aaa-6cf40e620e57.webp",
+          "method": "GET",
+          "status": 200,
+          "mime": "image/webp",
+          "length": "307930",
+          "cache_control": "public, max-age=86400",
+          "age": null,
+          "x_cache": null,
+          "date": "Tue, 24 Nov 2026 11:33:59 GMT",
+          "body_bytes": 307930,
+          "signature": "52494646d2b204005745425056503858",
+          "body_sha256": "dc534d4c396eb2f8a88a59332bb8b492234c130ec7436f63bddc7f1c15667c35"
+        },
+        {
+          "url": "/media/convert?url=https%3A%2F%2Fdcl.dev%2Fevents-assets-099ac00%2Fposter%2F5f4ce90a-42fa-47ca-9aaa-6cf40e620e57.webp",
+          "method": "GET",
+          "status": 200,
+          "mime": "image/webp",
+          "length": "307930",
+          "cache_control": "public, max-age=86400",
+          "age": null,
+          "x_cache": null,
+          "date": "Tue, 24 Nov 2026 11:33:59 GMT",
+          "body_bytes": 307930,
+          "signature": "52494646d2b204005745425056503858",
+          "body_sha256": "dc534d4c396eb2f8a88a59332bb8b492234c130ec7436f63bddc7f1c15667c35"
+        }
+      ],
+      "source_url": "https://dcl.dev/events-assets-099ac00/poster/5f4ce90a-42fa-47ca-9aaa-6cf40e620e57.webp",
+      "archived_sha256": "dc534d4c396eb2f8a88a59332bb8b492234c130ec7436f63bddc7f1c15667c35",
+      "appearances": [
+        {
+          "surface": "calendar",
+          "name": "Hang with AudioHotLab"
+        }
+      ],
+      "source_size": [
+        1672,
+        941
+      ],
+      "raster_size": [
+        960,
+        540
+      ],
+      "rgba_mae_on_64px_grid": [
+        2.211,
+        2.074,
+        2.214,
+        0.0
+      ],
+      "alternative_orientation_mae_sums": {
+        "FLIP_LEFT_RIGHT": 102.396,
+        "FLIP_TOP_BOTTOM": 202.048,
+        "ROTATE_90": 215.2,
+        "ROTATE_180": 208.364,
+        "ROTATE_270": 215.251,
+        "TRANSPOSE": 209.691,
+        "TRANSVERSE": 216.137
+      }
+    },
+    {
+      "archived_url": "https://dcl.dev/events-assets-099ac00/poster/0c70175b-92b2-4b9b-b189-6fea6eef62fa.webp",
+      "requests": [
+        {
+          "url": "/convert?url=https%3A%2F%2Fdcl.dev%2Fevents-assets-099ac00%2Fposter%2F0c70175b-92b2-4b9b-b189-6fea6eef62fa.webp",
+          "method": "HEAD",
+          "status": 200,
+          "mime": "image/jpeg",
+          "length": "163496",
+          "cache_control": "public, max-age=86400",
+          "age": null,
+          "x_cache": null,
+          "date": "Tue, 24 Nov 2026 11:33:59 GMT",
+          "body_bytes": 0,
+          "signature": "",
+          "body_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        {
+          "url": "/convert?url=https%3A%2F%2Fdcl.dev%2Fevents-assets-099ac00%2Fposter%2F0c70175b-92b2-4b9b-b189-6fea6eef62fa.webp",
+          "method": "GET",
+          "status": 200,
+          "mime": "image/jpeg",
+          "length": "163496",
+          "cache_control": "public, max-age=86400",
+          "age": null,
+          "x_cache": null,
+          "date": "Tue, 24 Nov 2026 11:33:59 GMT",
+          "body_bytes": 163496,
+          "signature": "ffd8ffe000104a464946000102000001",
+          "body_sha256": "c81259f5be2d9e7fafbbd274faf0b1180039919e8af37410638f0cd1bc0b280c"
+        },
+        {
+          "url": "/convert?url=https%3A%2F%2Fdcl.dev%2Fevents-assets-099ac00%2Fposter%2F0c70175b-92b2-4b9b-b189-6fea6eef62fa.webp",
+          "method": "GET",
+          "status": 200,
+          "mime": "image/jpeg",
+          "length": "163496",
+          "cache_control": "public, max-age=86400",
+          "age": null,
+          "x_cache": null,
+          "date": "Tue, 24 Nov 2026 11:33:59 GMT",
+          "body_bytes": 163496,
+          "signature": "ffd8ffe000104a464946000102000001",
+          "body_sha256": "c81259f5be2d9e7fafbbd274faf0b1180039919e8af37410638f0cd1bc0b280c"
+        },
+        {
+          "url": "/metamorph-api/convert?url=https%3A%2F%2Fdcl.dev%2Fevents-assets-099ac00%2Fposter%2F0c70175b-92b2-4b9b-b189-6fea6eef62fa.webp",
+          "method": "HEAD",
+          "status": 200,
+          "mime": "image/jpeg",
+          "length": "163496",
+          "cache_control": "public, max-age=86400",
+          "age": null,
+          "x_cache": null,
+          "date": "Tue, 24 Nov 2026 11:33:59 GMT",
+          "body_bytes": 0,
+          "signature": "",
+          "body_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        {
+          "url": "/metamorph-api/convert?url=https%3A%2F%2Fdcl.dev%2Fevents-assets-099ac00%2Fposter%2F0c70175b-92b2-4b9b-b189-6fea6eef62fa.webp",
+          "method": "GET",
+          "status": 200,
+          "mime": "image/jpeg",
+          "length": "163496",
+          "cache_control": "public, max-age=86400",
+          "age": null,
+          "x_cache": null,
+          "date": "Tue, 24 Nov 2026 11:33:59 GMT",
+          "body_bytes": 163496,
+          "signature": "ffd8ffe000104a464946000102000001",
+          "body_sha256": "c81259f5be2d9e7fafbbd274faf0b1180039919e8af37410638f0cd1bc0b280c"
+        },
+        {
+          "url": "/metamorph-api/convert?url=https%3A%2F%2Fdcl.dev%2Fevents-assets-099ac00%2Fposter%2F0c70175b-92b2-4b9b-b189-6fea6eef62fa.webp",
+          "method": "GET",
+          "status": 200,
+          "mime": "image/jpeg",
+          "length": "163496",
+          "cache_control": "public, max-age=86400",
+          "age": null,
+          "x_cache": null,
+          "date": "Tue, 24 Nov 2026 11:33:59 GMT",
+          "body_bytes": 163496,
+          "signature": "ffd8ffe000104a464946000102000001",
+          "body_sha256": "c81259f5be2d9e7fafbbd274faf0b1180039919e8af37410638f0cd1bc0b280c"
+        },
+        {
+          "url": "/media/convert?url=https%3A%2F%2Fdcl.dev%2Fevents-assets-099ac00%2Fposter%2F0c70175b-92b2-4b9b-b189-6fea6eef62fa.webp",
+          "method": "GET",
+          "status": 200,
+          "mime": "image/webp",
+          "length": "326876",
+          "cache_control": "public, max-age=86400",
+          "age": null,
+          "x_cache": null,
+          "date": "Tue, 24 Nov 2026 11:34:00 GMT",
+          "body_bytes": 326876,
+          "signature": "52494646d4fc04005745425056503858",
+          "body_sha256": "7393d5fbb114422df683cfb6f822e6c6e7cf512759f2a16a35cea5c2628c6c79"
+        },
+        {
+          "url": "/metamorph-api/media/convert?url=https%3A%2F%2Fdcl.dev%2Fevents-assets-099ac00%2Fposter%2F0c70175b-92b2-4b9b-b189-6fea6eef62fa.webp",
+          "method": "GET",
+          "status": 200,
+          "mime": "image/webp",
+          "length": "326876",
+          "cache_control": "public, max-age=86400",
+          "age": null,
+          "x_cache": null,
+          "date": "Tue, 24 Nov 2026 11:34:00 GMT",
+          "body_bytes": 326876,
+          "signature": "52494646d4fc04005745425056503858",
+          "body_sha256": "7393d5fbb114422df683cfb6f822e6c6e7cf512759f2a16a35cea5c2628c6c79"
+        }
+      ],
+      "source_url": "https://dcl.dev/events-assets-099ac00/poster/0c70175b-92b2-4b9b-b189-6fea6eef62fa.webp",
+      "archived_sha256": "7393d5fbb114422df683cfb6f822e6c6e7cf512759f2a16a35cea5c2628c6c79",
+      "appearances": [
+        {
+          "surface": "calendar",
+          "name": "🪲 Chiri Malware 🖥️ The Game"
+        },
+        {
+          "surface": "chiri",
+          "name": "🪲 Chiri Malware 🖥️ The Game"
+        }
+      ],
+      "source_size": [
+        1672,
+        941
+      ],
+      "raster_size": [
+        960,
+        540
+      ],
+      "rgba_mae_on_64px_grid": [
+        1.573,
+        1.526,
+        1.235,
+        0.0
+      ],
+      "alternative_orientation_mae_sums": {
+        "FLIP_LEFT_RIGHT": 173.589,
+        "FLIP_TOP_BOTTOM": 163.26,
+        "ROTATE_90": 177.701,
+        "ROTATE_180": 183.377,
+        "ROTATE_270": 177.572,
+        "TRANSPOSE": 170.0,
+        "TRANSVERSE": 175.683
+      }
+    },
+    {
+      "archived_url": "https://dcl.dev/events-assets-099ac00/poster/eed13ffd-cc4e-4da9-a7b1-85b11d535cbf.webp",
+      "requests": [
+        {
+          "url": "/metamorph-api/media/convert?url=https%3A%2F%2Fdcl.dev%2Fevents-assets-099ac00%2Fposter%2Feed13ffd-cc4e-4da9-a7b1-85b11d535cbf.webp",
+          "method": "GET",
+          "status": 200,
+          "mime": "image/webp",
+          "length": "215684",
+          "cache_control": "public, max-age=86400",
+          "age": null,
+          "x_cache": null,
+          "date": "Tue, 24 Nov 2026 11:34:00 GMT",
+          "body_bytes": 215684,
+          "signature": "524946467c4a03005745425056503858",
+          "body_sha256": "8a8e209d1c46eea85c7808241cf750417e63323cd3e56735b51d53f15b4a2ba4"
+        },
+        {
+          "url": "/metamorph-api/convert?url=https%3A%2F%2Fdcl.dev%2Fevents-assets-099ac00%2Fposter%2Feed13ffd-cc4e-4da9-a7b1-85b11d535cbf.webp",
+          "method": "GET",
+          "status": 200,
+          "mime": "image/jpeg",
+          "length": "134631",
+          "cache_control": "public, max-age=86400",
+          "age": null,
+          "x_cache": null,
+          "date": "Tue, 24 Nov 2026 11:34:00 GMT",
+          "body_bytes": 134631,
+          "signature": "ffd8ffe000104a464946000102000001",
+          "body_sha256": "4305e6b056fbfbb10ed5505e183b973c7e9514c69cbecac6561a3fa4d2467078"
+        },
+        {
+          "url": "/metamorph-api/convert?url=https%3A%2F%2Fdcl.dev%2Fevents-assets-099ac00%2Fposter%2Feed13ffd-cc4e-4da9-a7b1-85b11d535cbf.webp",
+          "method": "HEAD",
+          "status": 200,
+          "mime": "image/jpeg",
+          "length": "134631",
+          "cache_control": "public, max-age=86400",
+          "age": null,
+          "x_cache": null,
+          "date": "Tue, 24 Nov 2026 11:34:00 GMT",
+          "body_bytes": 0,
+          "signature": "",
+          "body_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        {
+          "url": "/metamorph-api/convert?url=https%3A%2F%2Fdcl.dev%2Fevents-assets-099ac00%2Fposter%2Feed13ffd-cc4e-4da9-a7b1-85b11d535cbf.webp",
+          "method": "GET",
+          "status": 200,
+          "mime": "image/jpeg",
+          "length": "134631",
+          "cache_control": "public, max-age=86400",
+          "age": null,
+          "x_cache": null,
+          "date": "Tue, 24 Nov 2026 11:34:00 GMT",
+          "body_bytes": 134631,
+          "signature": "ffd8ffe000104a464946000102000001",
+          "body_sha256": "4305e6b056fbfbb10ed5505e183b973c7e9514c69cbecac6561a3fa4d2467078"
+        },
+        {
+          "url": "/convert?url=https%3A%2F%2Fdcl.dev%2Fevents-assets-099ac00%2Fposter%2Feed13ffd-cc4e-4da9-a7b1-85b11d535cbf.webp",
+          "method": "GET",
+          "status": 200,
+          "mime": "image/jpeg",
+          "length": "134631",
+          "cache_control": "public, max-age=86400",
+          "age": null,
+          "x_cache": null,
+          "date": "Tue, 24 Nov 2026 11:34:00 GMT",
+          "body_bytes": 134631,
+          "signature": "ffd8ffe000104a464946000102000001",
+          "body_sha256": "4305e6b056fbfbb10ed5505e183b973c7e9514c69cbecac6561a3fa4d2467078"
+        },
+        {
+          "url": "/convert?url=https%3A%2F%2Fdcl.dev%2Fevents-assets-099ac00%2Fposter%2Feed13ffd-cc4e-4da9-a7b1-85b11d535cbf.webp",
+          "method": "HEAD",
+          "status": 200,
+          "mime": "image/jpeg",
+          "length": "134631",
+          "cache_control": "public, max-age=86400",
+          "age": null,
+          "x_cache": null,
+          "date": "Tue, 24 Nov 2026 11:34:00 GMT",
+          "body_bytes": 0,
+          "signature": "",
+          "body_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        {
+          "url": "/convert?url=https%3A%2F%2Fdcl.dev%2Fevents-assets-099ac00%2Fposter%2Feed13ffd-cc4e-4da9-a7b1-85b11d535cbf.webp",
+          "method": "GET",
+          "status": 200,
+          "mime": "image/jpeg",
+          "length": "134631",
+          "cache_control": "public, max-age=86400",
+          "age": null,
+          "x_cache": null,
+          "date": "Tue, 24 Nov 2026 11:34:00 GMT",
+          "body_bytes": 134631,
+          "signature": "ffd8ffe000104a464946000102000001",
+          "body_sha256": "4305e6b056fbfbb10ed5505e183b973c7e9514c69cbecac6561a3fa4d2467078"
+        },
+        {
+          "url": "/metamorph-api/media/convert?url=https%3A%2F%2Fdcl.dev%2Fevents-assets-099ac00%2Fposter%2Feed13ffd-cc4e-4da9-a7b1-85b11d535cbf.webp",
+          "method": "GET",
+          "status": 200,
+          "mime": "image/webp",
+          "length": "215684",
+          "cache_control": "public, max-age=86400",
+          "age": null,
+          "x_cache": null,
+          "date": "Tue, 24 Nov 2026 11:34:00 GMT",
+          "body_bytes": 215684,
+          "signature": "524946467c4a03005745425056503858",
+          "body_sha256": "8a8e209d1c46eea85c7808241cf750417e63323cd3e56735b51d53f15b4a2ba4"
+        },
+        {
+          "url": "/media/convert?url=https%3A%2F%2Fdcl.dev%2Fevents-assets-099ac00%2Fposter%2Feed13ffd-cc4e-4da9-a7b1-85b11d535cbf.webp",
+          "method": "GET",
+          "status": 200,
+          "mime": "image/webp",
+          "length": "215684",
+          "cache_control": "public, max-age=86400",
+          "age": null,
+          "x_cache": null,
+          "date": "Tue, 24 Nov 2026 11:34:00 GMT",
+          "body_bytes": 215684,
+          "signature": "524946467c4a03005745425056503858",
+          "body_sha256": "8a8e209d1c46eea85c7808241cf750417e63323cd3e56735b51d53f15b4a2ba4"
+        }
+      ],
+      "source_url": "https://dcl.dev/events-assets-099ac00/poster/eed13ffd-cc4e-4da9-a7b1-85b11d535cbf.webp",
+      "archived_sha256": "8a8e209d1c46eea85c7808241cf750417e63323cd3e56735b51d53f15b4a2ba4",
+      "appearances": [
+        {
+          "surface": "calendar",
+          "name": "Nights of Antrom"
+        }
+      ],
+      "source_size": [
+        1316,
+        740
+      ],
+      "raster_size": [
+        960,
+        540
+      ],
+      "rgba_mae_on_64px_grid": [
+        1.649,
+        1.385,
+        1.366,
+        0.0
+      ],
+      "alternative_orientation_mae_sums": {
+        "FLIP_LEFT_RIGHT": 101.109,
+        "FLIP_TOP_BOTTOM": 130.668,
+        "ROTATE_90": 139.217,
+        "ROTATE_180": 134.94,
+        "ROTATE_270": 139.322,
+        "TRANSPOSE": 122.292,
+        "TRANSVERSE": 135.772
+      }
+    },
+    {
+      "archived_url": "https://dcl.dev/events-assets-099ac00/poster/f34432956978e7b1.png",
+      "requests": [
+        {
+          "url": "/convert?url=https%3A%2F%2Fdcl.dev%2Fevents-assets-099ac00%2Fposter%2Ff34432956978e7b1.png",
+          "method": "HEAD",
+          "status": 200,
+          "mime": "image/png",
+          "length": "143909",
+          "cache_control": "public, max-age=86400",
+          "age": null,
+          "x_cache": null,
+          "date": "Tue, 24 Nov 2026 11:34:00 GMT",
+          "body_bytes": 0,
+          "signature": "",
+          "body_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        {
+          "url": "/convert?url=https%3A%2F%2Fdcl.dev%2Fevents-assets-099ac00%2Fposter%2Ff34432956978e7b1.png",
+          "method": "GET",
+          "status": 200,
+          "mime": "image/png",
+          "length": "143909",
+          "cache_control": "public, max-age=86400",
+          "age": null,
+          "x_cache": null,
+          "date": "Tue, 24 Nov 2026 11:34:00 GMT",
+          "body_bytes": 143909,
+          "signature": "89504e470d0a1a0a0000000d49484452",
+          "body_sha256": "348da3d63be6e839833e0097aa1284e0af3804135984e8aece62e28b41e8dc5c"
+        },
+        {
+          "url": "/convert?url=https%3A%2F%2Fdcl.dev%2Fevents-assets-099ac00%2Fposter%2Ff34432956978e7b1.png",
+          "method": "GET",
+          "status": 200,
+          "mime": "image/png",
+          "length": "143909",
+          "cache_control": "public, max-age=86400",
+          "age": null,
+          "x_cache": null,
+          "date": "Tue, 24 Nov 2026 11:34:00 GMT",
+          "body_bytes": 143909,
+          "signature": "89504e470d0a1a0a0000000d49484452",
+          "body_sha256": "348da3d63be6e839833e0097aa1284e0af3804135984e8aece62e28b41e8dc5c"
+        },
+        {
+          "url": "/metamorph-api/convert?url=https%3A%2F%2Fdcl.dev%2Fevents-assets-099ac00%2Fposter%2Ff34432956978e7b1.png",
+          "method": "HEAD",
+          "status": 200,
+          "mime": "image/png",
+          "length": "143909",
+          "cache_control": "public, max-age=86400",
+          "age": null,
+          "x_cache": null,
+          "date": "Tue, 24 Nov 2026 11:34:00 GMT",
+          "body_bytes": 0,
+          "signature": "",
+          "body_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        {
+          "url": "/metamorph-api/convert?url=https%3A%2F%2Fdcl.dev%2Fevents-assets-099ac00%2Fposter%2Ff34432956978e7b1.png",
+          "method": "GET",
+          "status": 200,
+          "mime": "image/png",
+          "length": "143909",
+          "cache_control": "public, max-age=86400",
+          "age": null,
+          "x_cache": null,
+          "date": "Tue, 24 Nov 2026 11:34:00 GMT",
+          "body_bytes": 143909,
+          "signature": "89504e470d0a1a0a0000000d49484452",
+          "body_sha256": "348da3d63be6e839833e0097aa1284e0af3804135984e8aece62e28b41e8dc5c"
+        },
+        {
+          "url": "/metamorph-api/convert?url=https%3A%2F%2Fdcl.dev%2Fevents-assets-099ac00%2Fposter%2Ff34432956978e7b1.png",
+          "method": "GET",
+          "status": 200,
+          "mime": "image/png",
+          "length": "143909",
+          "cache_control": "public, max-age=86400",
+          "age": null,
+          "x_cache": null,
+          "date": "Tue, 24 Nov 2026 11:34:00 GMT",
+          "body_bytes": 143909,
+          "signature": "89504e470d0a1a0a0000000d49484452",
+          "body_sha256": "348da3d63be6e839833e0097aa1284e0af3804135984e8aece62e28b41e8dc5c"
+        },
+        {
+          "url": "/media/convert?url=https%3A%2F%2Fdcl.dev%2Fevents-assets-099ac00%2Fposter%2Ff34432956978e7b1.png",
+          "method": "GET",
+          "status": 200,
+          "mime": "image/png",
+          "length": "143909",
+          "cache_control": "public, max-age=86400",
+          "age": null,
+          "x_cache": null,
+          "date": "Tue, 24 Nov 2026 11:34:00 GMT",
+          "body_bytes": 143909,
+          "signature": "89504e470d0a1a0a0000000d49484452",
+          "body_sha256": "348da3d63be6e839833e0097aa1284e0af3804135984e8aece62e28b41e8dc5c"
+        },
+        {
+          "url": "/metamorph-api/media/convert?url=https%3A%2F%2Fdcl.dev%2Fevents-assets-099ac00%2Fposter%2Ff34432956978e7b1.png",
+          "method": "GET",
+          "status": 200,
+          "mime": "image/png",
+          "length": "143909",
+          "cache_control": "public, max-age=86400",
+          "age": null,
+          "x_cache": null,
+          "date": "Tue, 24 Nov 2026 11:34:00 GMT",
+          "body_bytes": 143909,
+          "signature": "89504e470d0a1a0a0000000d49484452",
+          "body_sha256": "348da3d63be6e839833e0097aa1284e0af3804135984e8aece62e28b41e8dc5c"
+        }
+      ],
+      "source_url": "https://dcl.dev/events-assets-099ac00/poster/f34432956978e7b1.png",
+      "archived_sha256": "348da3d63be6e839833e0097aa1284e0af3804135984e8aece62e28b41e8dc5c",
+      "appearances": [
+        {
+          "surface": "calendar",
+          "name": "The Avatalks show and party "
+        }
+      ],
+      "source_size": [
+        640,
+        956
+      ],
+      "raster_size": [
+        640,
+        956
+      ],
+      "rgba_mae_on_64px_grid": [
+        0.0,
+        0.0,
+        0.0,
+        0.0
+      ],
+      "alternative_orientation_mae_sums": {
+        "FLIP_LEFT_RIGHT": 62.541,
+        "FLIP_TOP_BOTTOM": 121.042,
+        "ROTATE_90": 164.735,
+        "ROTATE_180": 123.617,
+        "ROTATE_270": 164.735,
+        "TRANSPOSE": 163.254,
+        "TRANSVERSE": 159.522
+      }
+    },
+    {
+      "archived_url": "https://dcl.dev/events-assets-099ac00/poster/541b7168-abe2-4dd2-8f51-8ce8404a849a.webp",
+      "requests": [
+        {
+          "url": "/metamorph-api/media/convert?url=https%3A%2F%2Fdcl.dev%2Fevents-assets-099ac00%2Fposter%2F541b7168-abe2-4dd2-8f51-8ce8404a849a.webp",
+          "method": "GET",
+          "status": 200,
+          "mime": "image/webp",
+          "length": "184908",
+          "cache_control": "public, max-age=86400",
+          "age": null,
+          "x_cache": null,
+          "date": "Tue, 24 Nov 2026 11:34:01 GMT",
+          "body_bytes": 184908,
+          "signature": "5249464644d202005745425056503858",
+          "body_sha256": "d8652fe87cb263aaebaf165b627755489595b15299da6ba4f0fb9eb5b2fcb245"
+        },
+        {
+          "url": "/metamorph-api/convert?url=https%3A%2F%2Fdcl.dev%2Fevents-assets-099ac00%2Fposter%2F541b7168-abe2-4dd2-8f51-8ce8404a849a.webp",
+          "method": "GET",
+          "status": 200,
+          "mime": "image/jpeg",
+          "length": "159839",
+          "cache_control": "public, max-age=86400",
+          "age": null,
+          "x_cache": null,
+          "date": "Tue, 24 Nov 2026 11:34:01 GMT",
+          "body_bytes": 159839,
+          "signature": "ffd8ffe000104a464946000102000001",
+          "body_sha256": "c717d23ae2f7c67c182b5510e93f0730c74867c74c0824abc994552494bb58e2"
+        },
+        {
+          "url": "/metamorph-api/convert?url=https%3A%2F%2Fdcl.dev%2Fevents-assets-099ac00%2Fposter%2F541b7168-abe2-4dd2-8f51-8ce8404a849a.webp",
+          "method": "HEAD",
+          "status": 200,
+          "mime": "image/jpeg",
+          "length": "159839",
+          "cache_control": "public, max-age=86400",
+          "age": null,
+          "x_cache": null,
+          "date": "Tue, 24 Nov 2026 11:34:01 GMT",
+          "body_bytes": 0,
+          "signature": "",
+          "body_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        {
+          "url": "/metamorph-api/convert?url=https%3A%2F%2Fdcl.dev%2Fevents-assets-099ac00%2Fposter%2F541b7168-abe2-4dd2-8f51-8ce8404a849a.webp",
+          "method": "GET",
+          "status": 200,
+          "mime": "image/jpeg",
+          "length": "159839",
+          "cache_control": "public, max-age=86400",
+          "age": null,
+          "x_cache": null,
+          "date": "Tue, 24 Nov 2026 11:34:01 GMT",
+          "body_bytes": 159839,
+          "signature": "ffd8ffe000104a464946000102000001",
+          "body_sha256": "c717d23ae2f7c67c182b5510e93f0730c74867c74c0824abc994552494bb58e2"
+        },
+        {
+          "url": "/convert?url=https%3A%2F%2Fdcl.dev%2Fevents-assets-099ac00%2Fposter%2F541b7168-abe2-4dd2-8f51-8ce8404a849a.webp",
+          "method": "GET",
+          "status": 200,
+          "mime": "image/jpeg",
+          "length": "159839",
+          "cache_control": "public, max-age=86400",
+          "age": null,
+          "x_cache": null,
+          "date": "Tue, 24 Nov 2026 11:34:01 GMT",
+          "body_bytes": 159839,
+          "signature": "ffd8ffe000104a464946000102000001",
+          "body_sha256": "c717d23ae2f7c67c182b5510e93f0730c74867c74c0824abc994552494bb58e2"
+        },
+        {
+          "url": "/convert?url=https%3A%2F%2Fdcl.dev%2Fevents-assets-099ac00%2Fposter%2F541b7168-abe2-4dd2-8f51-8ce8404a849a.webp",
+          "method": "HEAD",
+          "status": 200,
+          "mime": "image/jpeg",
+          "length": "159839",
+          "cache_control": "public, max-age=86400",
+          "age": null,
+          "x_cache": null,
+          "date": "Tue, 24 Nov 2026 11:34:01 GMT",
+          "body_bytes": 0,
+          "signature": "",
+          "body_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        {
+          "url": "/convert?url=https%3A%2F%2Fdcl.dev%2Fevents-assets-099ac00%2Fposter%2F541b7168-abe2-4dd2-8f51-8ce8404a849a.webp",
+          "method": "GET",
+          "status": 200,
+          "mime": "image/jpeg",
+          "length": "159839",
+          "cache_control": "public, max-age=86400",
+          "age": null,
+          "x_cache": null,
+          "date": "Tue, 24 Nov 2026 11:34:01 GMT",
+          "body_bytes": 159839,
+          "signature": "ffd8ffe000104a464946000102000001",
+          "body_sha256": "c717d23ae2f7c67c182b5510e93f0730c74867c74c0824abc994552494bb58e2"
+        },
+        {
+          "url": "/metamorph-api/media/convert?url=https%3A%2F%2Fdcl.dev%2Fevents-assets-099ac00%2Fposter%2F541b7168-abe2-4dd2-8f51-8ce8404a849a.webp",
+          "method": "GET",
+          "status": 200,
+          "mime": "image/webp",
+          "length": "184908",
+          "cache_control": "public, max-age=86400",
+          "age": null,
+          "x_cache": null,
+          "date": "Tue, 24 Nov 2026 11:34:01 GMT",
+          "body_bytes": 184908,
+          "signature": "5249464644d202005745425056503858",
+          "body_sha256": "d8652fe87cb263aaebaf165b627755489595b15299da6ba4f0fb9eb5b2fcb245"
+        },
+        {
+          "url": "/media/convert?url=https%3A%2F%2Fdcl.dev%2Fevents-assets-099ac00%2Fposter%2F541b7168-abe2-4dd2-8f51-8ce8404a849a.webp",
+          "method": "GET",
+          "status": 200,
+          "mime": "image/webp",
+          "length": "184908",
+          "cache_control": "public, max-age=86400",
+          "age": null,
+          "x_cache": null,
+          "date": "Tue, 24 Nov 2026 11:34:01 GMT",
+          "body_bytes": 184908,
+          "signature": "5249464644d202005745425056503858",
+          "body_sha256": "d8652fe87cb263aaebaf165b627755489595b15299da6ba4f0fb9eb5b2fcb245"
+        }
+      ],
+      "source_url": "https://dcl.dev/events-assets-099ac00/poster/541b7168-abe2-4dd2-8f51-8ce8404a849a.webp",
+      "archived_sha256": "d8652fe87cb263aaebaf165b627755489595b15299da6ba4f0fb9eb5b2fcb245",
+      "appearances": [
+        {
+          "surface": "calendar",
+          "name": "The Meta Beast Roaming Party With DJvAPED taking over"
+        }
+      ],
+      "source_size": [
+        1191,
+        670
+      ],
+      "raster_size": [
+        960,
+        540
+      ],
+      "rgba_mae_on_64px_grid": [
+        2.743,
+        2.997,
+        2.696,
+        0.0
+      ],
+      "alternative_orientation_mae_sums": {
+        "FLIP_LEFT_RIGHT": 106.408,
+        "FLIP_TOP_BOTTOM": 185.569,
+        "ROTATE_90": 195.588,
+        "ROTATE_180": 193.868,
+        "ROTATE_270": 195.941,
+        "TRANSPOSE": 190.522,
+        "TRANSVERSE": 194.429
+      }
+    },
+    {
+      "archived_url": "https://dcl.dev/events-assets-099ac00/poster/4710556b-2927-4402-941c-fa1aad9cbaca.webp",
+      "requests": [
+        {
+          "url": "/convert?url=https%3A%2F%2Fdcl.dev%2Fevents-assets-099ac00%2Fposter%2F4710556b-2927-4402-941c-fa1aad9cbaca.webp",
+          "method": "HEAD",
+          "status": 200,
+          "mime": "image/jpeg",
+          "length": "76189",
+          "cache_control": "public, max-age=86400",
+          "age": null,
+          "x_cache": null,
+          "date": "Tue, 24 Nov 2026 11:34:01 GMT",
+          "body_bytes": 0,
+          "signature": "",
+          "body_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        {
+          "url": "/convert?url=https%3A%2F%2Fdcl.dev%2Fevents-assets-099ac00%2Fposter%2F4710556b-2927-4402-941c-fa1aad9cbaca.webp",
+          "method": "GET",
+          "status": 200,
+          "mime": "image/jpeg",
+          "length": "76189",
+          "cache_control": "public, max-age=86400",
+          "age": null,
+          "x_cache": null,
+          "date": "Tue, 24 Nov 2026 11:34:01 GMT",
+          "body_bytes": 76189,
+          "signature": "ffd8ffe000104a464946000102000001",
+          "body_sha256": "bbfcbfe00e6f09bd972749750837436d76124ef275157c4299782953d9f903db"
+        },
+        {
+          "url": "/convert?url=https%3A%2F%2Fdcl.dev%2Fevents-assets-099ac00%2Fposter%2F4710556b-2927-4402-941c-fa1aad9cbaca.webp",
+          "method": "GET",
+          "status": 200,
+          "mime": "image/jpeg",
+          "length": "76189",
+          "cache_control": "public, max-age=86400",
+          "age": null,
+          "x_cache": null,
+          "date": "Tue, 24 Nov 2026 11:34:01 GMT",
+          "body_bytes": 76189,
+          "signature": "ffd8ffe000104a464946000102000001",
+          "body_sha256": "bbfcbfe00e6f09bd972749750837436d76124ef275157c4299782953d9f903db"
+        },
+        {
+          "url": "/metamorph-api/convert?url=https%3A%2F%2Fdcl.dev%2Fevents-assets-099ac00%2Fposter%2F4710556b-2927-4402-941c-fa1aad9cbaca.webp",
+          "method": "HEAD",
+          "status": 200,
+          "mime": "image/jpeg",
+          "length": "76189",
+          "cache_control": "public, max-age=86400",
+          "age": null,
+          "x_cache": null,
+          "date": "Tue, 24 Nov 2026 11:34:01 GMT",
+          "body_bytes": 0,
+          "signature": "",
+          "body_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        {
+          "url": "/metamorph-api/convert?url=https%3A%2F%2Fdcl.dev%2Fevents-assets-099ac00%2Fposter%2F4710556b-2927-4402-941c-fa1aad9cbaca.webp",
+          "method": "GET",
+          "status": 200,
+          "mime": "image/jpeg",
+          "length": "76189",
+          "cache_control": "public, max-age=86400",
+          "age": null,
+          "x_cache": null,
+          "date": "Tue, 24 Nov 2026 11:34:01 GMT",
+          "body_bytes": 76189,
+          "signature": "ffd8ffe000104a464946000102000001",
+          "body_sha256": "bbfcbfe00e6f09bd972749750837436d76124ef275157c4299782953d9f903db"
+        },
+        {
+          "url": "/metamorph-api/convert?url=https%3A%2F%2Fdcl.dev%2Fevents-assets-099ac00%2Fposter%2F4710556b-2927-4402-941c-fa1aad9cbaca.webp",
+          "method": "GET",
+          "status": 200,
+          "mime": "image/jpeg",
+          "length": "76189",
+          "cache_control": "public, max-age=86400",
+          "age": null,
+          "x_cache": null,
+          "date": "Tue, 24 Nov 2026 11:34:01 GMT",
+          "body_bytes": 76189,
+          "signature": "ffd8ffe000104a464946000102000001",
+          "body_sha256": "bbfcbfe00e6f09bd972749750837436d76124ef275157c4299782953d9f903db"
+        },
+        {
+          "url": "/media/convert?url=https%3A%2F%2Fdcl.dev%2Fevents-assets-099ac00%2Fposter%2F4710556b-2927-4402-941c-fa1aad9cbaca.webp",
+          "method": "GET",
+          "status": 200,
+          "mime": "image/webp",
+          "length": "92620",
+          "cache_control": "public, max-age=86400",
+          "age": null,
+          "x_cache": null,
+          "date": "Tue, 24 Nov 2026 11:34:01 GMT",
+          "body_bytes": 92620,
+          "signature": "52494646c46901005745425056503858",
+          "body_sha256": "320018ff0822925726c603d7576a2902e14f9c7a33cd33ce5546059ed89524b6"
+        },
+        {
+          "url": "/metamorph-api/media/convert?url=https%3A%2F%2Fdcl.dev%2Fevents-assets-099ac00%2Fposter%2F4710556b-2927-4402-941c-fa1aad9cbaca.webp",
+          "method": "GET",
+          "status": 200,
+          "mime": "image/webp",
+          "length": "92620",
+          "cache_control": "public, max-age=86400",
+          "age": null,
+          "x_cache": null,
+          "date": "Tue, 24 Nov 2026 11:34:01 GMT",
+          "body_bytes": 92620,
+          "signature": "52494646c46901005745425056503858",
+          "body_sha256": "320018ff0822925726c603d7576a2902e14f9c7a33cd33ce5546059ed89524b6"
+        }
+      ],
+      "source_url": "https://dcl.dev/events-assets-099ac00/poster/4710556b-2927-4402-941c-fa1aad9cbaca.webp",
+      "archived_sha256": "320018ff0822925726c603d7576a2902e14f9c7a33cd33ce5546059ed89524b6",
+      "appearances": [
+        {
+          "surface": "calendar",
+          "name": "Poker Night ⛃⛂ ⛃⛂"
+        }
+      ],
+      "source_size": [
+        1195,
+        672
+      ],
+      "raster_size": [
+        960,
+        540
+      ],
+      "rgba_mae_on_64px_grid": [
+        1.081,
+        0.958,
+        0.926,
+        0.0
+      ],
+      "alternative_orientation_mae_sums": {
+        "FLIP_LEFT_RIGHT": 75.432,
+        "FLIP_TOP_BOTTOM": 104.394,
+        "ROTATE_90": 114.237,
+        "ROTATE_180": 107.007,
+        "ROTATE_270": 114.316,
+        "TRANSPOSE": 112.494,
+        "TRANSVERSE": 99.325
+      }
+    },
+    {
+      "archived_url": "https://dcl.dev/events-assets-099ac00/poster/c92e2dba-a7c6-4cb8-ab0d-8680f0680af2.webp",
+      "requests": [
+        {
+          "url": "/metamorph-api/media/convert?url=https%3A%2F%2Fdcl.dev%2Fevents-assets-099ac00%2Fposter%2Fc92e2dba-a7c6-4cb8-ab0d-8680f0680af2.webp",
+          "method": "GET",
+          "status": 200,
+          "mime": "image/webp",
+          "length": "177594",
+          "cache_control": "public, max-age=86400",
+          "age": null,
+          "x_cache": null,
+          "date": "Tue, 24 Nov 2026 11:34:02 GMT",
+          "body_bytes": 177594,
+          "signature": "52494646b2b502005745425056503858",
+          "body_sha256": "992efff7389b98c5cddb55ead800ee3dba3f5daf35b9fe7827ee4654a086f656"
+        },
+        {
+          "url": "/metamorph-api/convert?url=https%3A%2F%2Fdcl.dev%2Fevents-assets-099ac00%2Fposter%2Fc92e2dba-a7c6-4cb8-ab0d-8680f0680af2.webp",
+          "method": "GET",
+          "status": 200,
+          "mime": "image/jpeg",
+          "length": "99569",
+          "cache_control": "public, max-age=86400",
+          "age": null,
+          "x_cache": null,
+          "date": "Tue, 24 Nov 2026 11:34:02 GMT",
+          "body_bytes": 99569,
+          "signature": "ffd8ffe000104a464946000102000001",
+          "body_sha256": "71943f8bfaf1f17854d123fcfd57f911c8f983da67b954452d4d59f16ecd2527"
+        },
+        {
+          "url": "/metamorph-api/convert?url=https%3A%2F%2Fdcl.dev%2Fevents-assets-099ac00%2Fposter%2Fc92e2dba-a7c6-4cb8-ab0d-8680f0680af2.webp",
+          "method": "HEAD",
+          "status": 200,
+          "mime": "image/jpeg",
+          "length": "99569",
+          "cache_control": "public, max-age=86400",
+          "age": null,
+          "x_cache": null,
+          "date": "Tue, 24 Nov 2026 11:34:02 GMT",
+          "body_bytes": 0,
+          "signature": "",
+          "body_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        {
+          "url": "/metamorph-api/convert?url=https%3A%2F%2Fdcl.dev%2Fevents-assets-099ac00%2Fposter%2Fc92e2dba-a7c6-4cb8-ab0d-8680f0680af2.webp",
+          "method": "GET",
+          "status": 200,
+          "mime": "image/jpeg",
+          "length": "99569",
+          "cache_control": "public, max-age=86400",
+          "age": null,
+          "x_cache": null,
+          "date": "Tue, 24 Nov 2026 11:34:02 GMT",
+          "body_bytes": 99569,
+          "signature": "ffd8ffe000104a464946000102000001",
+          "body_sha256": "71943f8bfaf1f17854d123fcfd57f911c8f983da67b954452d4d59f16ecd2527"
+        },
+        {
+          "url": "/convert?url=https%3A%2F%2Fdcl.dev%2Fevents-assets-099ac00%2Fposter%2Fc92e2dba-a7c6-4cb8-ab0d-8680f0680af2.webp",
+          "method": "GET",
+          "status": 200,
+          "mime": "image/jpeg",
+          "length": "99569",
+          "cache_control": "public, max-age=86400",
+          "age": null,
+          "x_cache": null,
+          "date": "Tue, 24 Nov 2026 11:34:02 GMT",
+          "body_bytes": 99569,
+          "signature": "ffd8ffe000104a464946000102000001",
+          "body_sha256": "71943f8bfaf1f17854d123fcfd57f911c8f983da67b954452d4d59f16ecd2527"
+        },
+        {
+          "url": "/convert?url=https%3A%2F%2Fdcl.dev%2Fevents-assets-099ac00%2Fposter%2Fc92e2dba-a7c6-4cb8-ab0d-8680f0680af2.webp",
+          "method": "HEAD",
+          "status": 200,
+          "mime": "image/jpeg",
+          "length": "99569",
+          "cache_control": "public, max-age=86400",
+          "age": null,
+          "x_cache": null,
+          "date": "Tue, 24 Nov 2026 11:34:02 GMT",
+          "body_bytes": 0,
+          "signature": "",
+          "body_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        {
+          "url": "/convert?url=https%3A%2F%2Fdcl.dev%2Fevents-assets-099ac00%2Fposter%2Fc92e2dba-a7c6-4cb8-ab0d-8680f0680af2.webp",
+          "method": "GET",
+          "status": 200,
+          "mime": "image/jpeg",
+          "length": "99569",
+          "cache_control": "public, max-age=86400",
+          "age": null,
+          "x_cache": null,
+          "date": "Tue, 24 Nov 2026 11:34:02 GMT",
+          "body_bytes": 99569,
+          "signature": "ffd8ffe000104a464946000102000001",
+          "body_sha256": "71943f8bfaf1f17854d123fcfd57f911c8f983da67b954452d4d59f16ecd2527"
+        },
+        {
+          "url": "/metamorph-api/media/convert?url=https%3A%2F%2Fdcl.dev%2Fevents-assets-099ac00%2Fposter%2Fc92e2dba-a7c6-4cb8-ab0d-8680f0680af2.webp",
+          "method": "GET",
+          "status": 200,
+          "mime": "image/webp",
+          "length": "177594",
+          "cache_control": "public, max-age=86400",
+          "age": null,
+          "x_cache": null,
+          "date": "Tue, 24 Nov 2026 11:34:02 GMT",
+          "body_bytes": 177594,
+          "signature": "52494646b2b502005745425056503858",
+          "body_sha256": "992efff7389b98c5cddb55ead800ee3dba3f5daf35b9fe7827ee4654a086f656"
+        },
+        {
+          "url": "/media/convert?url=https%3A%2F%2Fdcl.dev%2Fevents-assets-099ac00%2Fposter%2Fc92e2dba-a7c6-4cb8-ab0d-8680f0680af2.webp",
+          "method": "GET",
+          "status": 200,
+          "mime": "image/webp",
+          "length": "177594",
+          "cache_control": "public, max-age=86400",
+          "age": null,
+          "x_cache": null,
+          "date": "Tue, 24 Nov 2026 11:34:02 GMT",
+          "body_bytes": 177594,
+          "signature": "52494646b2b502005745425056503858",
+          "body_sha256": "992efff7389b98c5cddb55ead800ee3dba3f5daf35b9fe7827ee4654a086f656"
+        }
+      ],
+      "source_url": "https://dcl.dev/events-assets-099ac00/poster/c92e2dba-a7c6-4cb8-ab0d-8680f0680af2.webp",
+      "archived_sha256": "992efff7389b98c5cddb55ead800ee3dba3f5daf35b9fe7827ee4654a086f656",
+      "appearances": [
+        {
+          "surface": "calendar",
+          "name": "VIP Lounge"
+        }
+      ],
+      "source_size": [
+        1340,
+        670
+      ],
+      "raster_size": [
+        960,
+        480
+      ],
+      "rgba_mae_on_64px_grid": [
+        1.57,
+        1.163,
+        1.51,
+        0.0
+      ],
+      "alternative_orientation_mae_sums": {
+        "FLIP_LEFT_RIGHT": 131.315,
+        "FLIP_TOP_BOTTOM": 155.995,
+        "ROTATE_90": 151.153,
+        "ROTATE_180": 162.422,
+        "ROTATE_270": 151.208,
+        "TRANSPOSE": 146.312,
+        "TRANSVERSE": 127.049
+      }
+    },
+    {
+      "archived_url": "https://dcl.dev/events-assets-099ac00/poster/9f54a88b-df21-4915-9df3-39fe91b33af3.webp",
+      "requests": [
+        {
+          "url": "/convert?url=https%3A%2F%2Fdcl.dev%2Fevents-assets-099ac00%2Fposter%2F9f54a88b-df21-4915-9df3-39fe91b33af3.webp",
+          "method": "HEAD",
+          "status": 200,
+          "mime": "image/jpeg",
+          "length": "221911",
+          "cache_control": "public, max-age=86400",
+          "age": null,
+          "x_cache": null,
+          "date": "Tue, 24 Nov 2026 11:34:02 GMT",
+          "body_bytes": 0,
+          "signature": "",
+          "body_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        {
+          "url": "/convert?url=https%3A%2F%2Fdcl.dev%2Fevents-assets-099ac00%2Fposter%2F9f54a88b-df21-4915-9df3-39fe91b33af3.webp",
+          "method": "GET",
+          "status": 200,
+          "mime": "image/jpeg",
+          "length": "221911",
+          "cache_control": "public, max-age=86400",
+          "age": null,
+          "x_cache": null,
+          "date": "Tue, 24 Nov 2026 11:34:02 GMT",
+          "body_bytes": 221911,
+          "signature": "ffd8ffe000104a464946000102000001",
+          "body_sha256": "46d18e21a34964960e9a9ba6c2ff926b53bda657bd817fa0eb59cf1ed5cd8593"
+        },
+        {
+          "url": "/convert?url=https%3A%2F%2Fdcl.dev%2Fevents-assets-099ac00%2Fposter%2F9f54a88b-df21-4915-9df3-39fe91b33af3.webp",
+          "method": "GET",
+          "status": 200,
+          "mime": "image/jpeg",
+          "length": "221911",
+          "cache_control": "public, max-age=86400",
+          "age": null,
+          "x_cache": null,
+          "date": "Tue, 24 Nov 2026 11:34:02 GMT",
+          "body_bytes": 221911,
+          "signature": "ffd8ffe000104a464946000102000001",
+          "body_sha256": "46d18e21a34964960e9a9ba6c2ff926b53bda657bd817fa0eb59cf1ed5cd8593"
+        },
+        {
+          "url": "/metamorph-api/convert?url=https%3A%2F%2Fdcl.dev%2Fevents-assets-099ac00%2Fposter%2F9f54a88b-df21-4915-9df3-39fe91b33af3.webp",
+          "method": "HEAD",
+          "status": 200,
+          "mime": "image/jpeg",
+          "length": "221911",
+          "cache_control": "public, max-age=86400",
+          "age": null,
+          "x_cache": null,
+          "date": "Tue, 24 Nov 2026 11:34:02 GMT",
+          "body_bytes": 0,
+          "signature": "",
+          "body_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        {
+          "url": "/metamorph-api/convert?url=https%3A%2F%2Fdcl.dev%2Fevents-assets-099ac00%2Fposter%2F9f54a88b-df21-4915-9df3-39fe91b33af3.webp",
+          "method": "GET",
+          "status": 200,
+          "mime": "image/jpeg",
+          "length": "221911",
+          "cache_control": "public, max-age=86400",
+          "age": null,
+          "x_cache": null,
+          "date": "Tue, 24 Nov 2026 11:34:02 GMT",
+          "body_bytes": 221911,
+          "signature": "ffd8ffe000104a464946000102000001",
+          "body_sha256": "46d18e21a34964960e9a9ba6c2ff926b53bda657bd817fa0eb59cf1ed5cd8593"
+        },
+        {
+          "url": "/metamorph-api/convert?url=https%3A%2F%2Fdcl.dev%2Fevents-assets-099ac00%2Fposter%2F9f54a88b-df21-4915-9df3-39fe91b33af3.webp",
+          "method": "GET",
+          "status": 200,
+          "mime": "image/jpeg",
+          "length": "221911",
+          "cache_control": "public, max-age=86400",
+          "age": null,
+          "x_cache": null,
+          "date": "Tue, 24 Nov 2026 11:34:02 GMT",
+          "body_bytes": 221911,
+          "signature": "ffd8ffe000104a464946000102000001",
+          "body_sha256": "46d18e21a34964960e9a9ba6c2ff926b53bda657bd817fa0eb59cf1ed5cd8593"
+        },
+        {
+          "url": "/media/convert?url=https%3A%2F%2Fdcl.dev%2Fevents-assets-099ac00%2Fposter%2F9f54a88b-df21-4915-9df3-39fe91b33af3.webp",
+          "method": "GET",
+          "status": 200,
+          "mime": "image/webp",
+          "length": "343220",
+          "cache_control": "public, max-age=86400",
+          "age": null,
+          "x_cache": null,
+          "date": "Tue, 24 Nov 2026 11:34:02 GMT",
+          "body_bytes": 343220,
+          "signature": "52494646ac3c05005745425056503858",
+          "body_sha256": "7d2172c471360b37db4c69b61d69aea45dcc98f3cf8cacdf01d68bd4594cd1f3"
+        },
+        {
+          "url": "/metamorph-api/media/convert?url=https%3A%2F%2Fdcl.dev%2Fevents-assets-099ac00%2Fposter%2F9f54a88b-df21-4915-9df3-39fe91b33af3.webp",
+          "method": "GET",
+          "status": 200,
+          "mime": "image/webp",
+          "length": "343220",
+          "cache_control": "public, max-age=86400",
+          "age": null,
+          "x_cache": null,
+          "date": "Tue, 24 Nov 2026 11:34:02 GMT",
+          "body_bytes": 343220,
+          "signature": "52494646ac3c05005745425056503858",
+          "body_sha256": "7d2172c471360b37db4c69b61d69aea45dcc98f3cf8cacdf01d68bd4594cd1f3"
+        }
+      ],
+      "source_url": "https://dcl.dev/events-assets-099ac00/poster/9f54a88b-df21-4915-9df3-39fe91b33af3.webp",
+      "archived_sha256": "7d2172c471360b37db4c69b61d69aea45dcc98f3cf8cacdf01d68bd4594cd1f3",
+      "appearances": [
+        {
+          "surface": "calendar",
+          "name": "Portal Night"
+        }
+      ],
+      "source_size": [
+        1920,
+        1080
+      ],
+      "raster_size": [
+        960,
+        540
+      ],
+      "rgba_mae_on_64px_grid": [
+        1.334,
+        1.086,
+        1.014,
+        0.0
+      ],
+      "alternative_orientation_mae_sums": {
+        "FLIP_LEFT_RIGHT": 137.443,
+        "FLIP_TOP_BOTTOM": 174.804,
+        "ROTATE_90": 176.761,
+        "ROTATE_180": 181.853,
+        "ROTATE_270": 176.75,
+        "TRANSPOSE": 170.457,
+        "TRANSVERSE": 170.406
+      }
+    },
+    {
+      "archived_url": "https://dcl.dev/events-assets-099ac00/poster/0ff7a428-5bc8-4b9c-9b96-c0711cb32d80.webp",
+      "requests": [
+        {
+          "url": "/metamorph-api/media/convert?url=https%3A%2F%2Fdcl.dev%2Fevents-assets-099ac00%2Fposter%2F0ff7a428-5bc8-4b9c-9b96-c0711cb32d80.webp",
+          "method": "GET",
+          "status": 200,
+          "mime": "image/webp",
+          "length": "221090",
+          "cache_control": "public, max-age=86400",
+          "age": null,
+          "x_cache": null,
+          "date": "Tue, 24 Nov 2026 11:34:03 GMT",
+          "body_bytes": 221090,
+          "signature": "524946469a5f03005745425056503820",
+          "body_sha256": "ddaacfd3b5fec49125a2f33ad49806ad4139594b68440ef43203bfa4972bad54"
+        },
+        {
+          "url": "/metamorph-api/convert?url=https%3A%2F%2Fdcl.dev%2Fevents-assets-099ac00%2Fposter%2F0ff7a428-5bc8-4b9c-9b96-c0711cb32d80.webp",
+          "method": "GET",
+          "status": 200,
+          "mime": "image/jpeg",
+          "length": "179366",
+          "cache_control": "public, max-age=86400",
+          "age": null,
+          "x_cache": null,
+          "date": "Tue, 24 Nov 2026 11:34:03 GMT",
+          "body_bytes": 179366,
+          "signature": "ffd8ffe000104a464946000102000001",
+          "body_sha256": "f1cafd369661eef12617c5985c970d863665dce6aa6ba73742f2c732fbb77fed"
+        },
+        {
+          "url": "/metamorph-api/convert?url=https%3A%2F%2Fdcl.dev%2Fevents-assets-099ac00%2Fposter%2F0ff7a428-5bc8-4b9c-9b96-c0711cb32d80.webp",
+          "method": "HEAD",
+          "status": 200,
+          "mime": "image/jpeg",
+          "length": "179366",
+          "cache_control": "public, max-age=86400",
+          "age": null,
+          "x_cache": null,
+          "date": "Tue, 24 Nov 2026 11:34:03 GMT",
+          "body_bytes": 0,
+          "signature": "",
+          "body_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        {
+          "url": "/metamorph-api/convert?url=https%3A%2F%2Fdcl.dev%2Fevents-assets-099ac00%2Fposter%2F0ff7a428-5bc8-4b9c-9b96-c0711cb32d80.webp",
+          "method": "GET",
+          "status": 200,
+          "mime": "image/jpeg",
+          "length": "179366",
+          "cache_control": "public, max-age=86400",
+          "age": null,
+          "x_cache": null,
+          "date": "Tue, 24 Nov 2026 11:34:03 GMT",
+          "body_bytes": 179366,
+          "signature": "ffd8ffe000104a464946000102000001",
+          "body_sha256": "f1cafd369661eef12617c5985c970d863665dce6aa6ba73742f2c732fbb77fed"
+        },
+        {
+          "url": "/convert?url=https%3A%2F%2Fdcl.dev%2Fevents-assets-099ac00%2Fposter%2F0ff7a428-5bc8-4b9c-9b96-c0711cb32d80.webp",
+          "method": "GET",
+          "status": 200,
+          "mime": "image/jpeg",
+          "length": "179366",
+          "cache_control": "public, max-age=86400",
+          "age": null,
+          "x_cache": null,
+          "date": "Tue, 24 Nov 2026 11:34:03 GMT",
+          "body_bytes": 179366,
+          "signature": "ffd8ffe000104a464946000102000001",
+          "body_sha256": "f1cafd369661eef12617c5985c970d863665dce6aa6ba73742f2c732fbb77fed"
+        },
+        {
+          "url": "/convert?url=https%3A%2F%2Fdcl.dev%2Fevents-assets-099ac00%2Fposter%2F0ff7a428-5bc8-4b9c-9b96-c0711cb32d80.webp",
+          "method": "HEAD",
+          "status": 200,
+          "mime": "image/jpeg",
+          "length": "179366",
+          "cache_control": "public, max-age=86400",
+          "age": null,
+          "x_cache": null,
+          "date": "Tue, 24 Nov 2026 11:34:03 GMT",
+          "body_bytes": 0,
+          "signature": "",
+          "body_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        {
+          "url": "/convert?url=https%3A%2F%2Fdcl.dev%2Fevents-assets-099ac00%2Fposter%2F0ff7a428-5bc8-4b9c-9b96-c0711cb32d80.webp",
+          "method": "GET",
+          "status": 200,
+          "mime": "image/jpeg",
+          "length": "179366",
+          "cache_control": "public, max-age=86400",
+          "age": null,
+          "x_cache": null,
+          "date": "Tue, 24 Nov 2026 11:34:03 GMT",
+          "body_bytes": 179366,
+          "signature": "ffd8ffe000104a464946000102000001",
+          "body_sha256": "f1cafd369661eef12617c5985c970d863665dce6aa6ba73742f2c732fbb77fed"
+        },
+        {
+          "url": "/metamorph-api/media/convert?url=https%3A%2F%2Fdcl.dev%2Fevents-assets-099ac00%2Fposter%2F0ff7a428-5bc8-4b9c-9b96-c0711cb32d80.webp",
+          "method": "GET",
+          "status": 200,
+          "mime": "image/webp",
+          "length": "221090",
+          "cache_control": "public, max-age=86400",
+          "age": null,
+          "x_cache": null,
+          "date": "Tue, 24 Nov 2026 11:34:03 GMT",
+          "body_bytes": 221090,
+          "signature": "524946469a5f03005745425056503820",
+          "body_sha256": "ddaacfd3b5fec49125a2f33ad49806ad4139594b68440ef43203bfa4972bad54"
+        },
+        {
+          "url": "/media/convert?url=https%3A%2F%2Fdcl.dev%2Fevents-assets-099ac00%2Fposter%2F0ff7a428-5bc8-4b9c-9b96-c0711cb32d80.webp",
+          "method": "GET",
+          "status": 200,
+          "mime": "image/webp",
+          "length": "221090",
+          "cache_control": "public, max-age=86400",
+          "age": null,
+          "x_cache": null,
+          "date": "Tue, 24 Nov 2026 11:34:03 GMT",
+          "body_bytes": 221090,
+          "signature": "524946469a5f03005745425056503820",
+          "body_sha256": "ddaacfd3b5fec49125a2f33ad49806ad4139594b68440ef43203bfa4972bad54"
+        }
+      ],
+      "source_url": "https://dcl.dev/events-assets-099ac00/poster/0ff7a428-5bc8-4b9c-9b96-c0711cb32d80.webp",
+      "archived_sha256": "ddaacfd3b5fec49125a2f33ad49806ad4139594b68440ef43203bfa4972bad54",
+      "appearances": [
+        {
+          "surface": "calendar",
+          "name": "SkeleFrenz Gamenight"
+        }
+      ],
+      "source_size": [
+        1080,
+        608
+      ],
+      "raster_size": [
+        960,
+        540
+      ],
+      "rgba_mae_on_64px_grid": [
+        2.525,
+        2.137,
+        1.878,
+        0.0
+      ],
+      "alternative_orientation_mae_sums": {
+        "FLIP_LEFT_RIGHT": 148.771,
+        "FLIP_TOP_BOTTOM": 183.625,
+        "ROTATE_90": 177.657,
+        "ROTATE_180": 181.938,
+        "ROTATE_270": 177.463,
+        "TRANSPOSE": 165.903,
+        "TRANSVERSE": 169.786
+      }
+    },
+    {
+      "archived_url": "https://dcl.dev/events-assets-099ac00/poster/149d6ef6678931b1.png",
+      "requests": [
+        {
+          "url": "/convert?url=https%3A%2F%2Fdcl.dev%2Fevents-assets-099ac00%2Fposter%2F149d6ef6678931b1.png",
+          "method": "HEAD",
+          "status": 200,
+          "mime": "image/png",
+          "length": "260230",
+          "cache_control": "public, max-age=86400",
+          "age": null,
+          "x_cache": null,
+          "date": "Tue, 24 Nov 2026 11:34:03 GMT",
+          "body_bytes": 0,
+          "signature": "",
+          "body_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        {
+          "url": "/convert?url=https%3A%2F%2Fdcl.dev%2Fevents-assets-099ac00%2Fposter%2F149d6ef6678931b1.png",
+          "method": "GET",
+          "status": 200,
+          "mime": "image/png",
+          "length": "260230",
+          "cache_control": "public, max-age=86400",
+          "age": null,
+          "x_cache": null,
+          "date": "Tue, 24 Nov 2026 11:34:03 GMT",
+          "body_bytes": 260230,
+          "signature": "89504e470d0a1a0a0000000d49484452",
+          "body_sha256": "fda8103fb28805ec4a6471514af462ebea0e530d899af28da869b50bd875ca4f"
+        },
+        {
+          "url": "/convert?url=https%3A%2F%2Fdcl.dev%2Fevents-assets-099ac00%2Fposter%2F149d6ef6678931b1.png",
+          "method": "GET",
+          "status": 200,
+          "mime": "image/png",
+          "length": "260230",
+          "cache_control": "public, max-age=86400",
+          "age": null,
+          "x_cache": null,
+          "date": "Tue, 24 Nov 2026 11:34:03 GMT",
+          "body_bytes": 260230,
+          "signature": "89504e470d0a1a0a0000000d49484452",
+          "body_sha256": "fda8103fb28805ec4a6471514af462ebea0e530d899af28da869b50bd875ca4f"
+        },
+        {
+          "url": "/metamorph-api/convert?url=https%3A%2F%2Fdcl.dev%2Fevents-assets-099ac00%2Fposter%2F149d6ef6678931b1.png",
+          "method": "HEAD",
+          "status": 200,
+          "mime": "image/png",
+          "length": "260230",
+          "cache_control": "public, max-age=86400",
+          "age": null,
+          "x_cache": null,
+          "date": "Tue, 24 Nov 2026 11:34:03 GMT",
+          "body_bytes": 0,
+          "signature": "",
+          "body_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        {
+          "url": "/metamorph-api/convert?url=https%3A%2F%2Fdcl.dev%2Fevents-assets-099ac00%2Fposter%2F149d6ef6678931b1.png",
+          "method": "GET",
+          "status": 200,
+          "mime": "image/png",
+          "length": "260230",
+          "cache_control": "public, max-age=86400",
+          "age": null,
+          "x_cache": null,
+          "date": "Tue, 24 Nov 2026 11:34:03 GMT",
+          "body_bytes": 260230,
+          "signature": "89504e470d0a1a0a0000000d49484452",
+          "body_sha256": "fda8103fb28805ec4a6471514af462ebea0e530d899af28da869b50bd875ca4f"
+        },
+        {
+          "url": "/metamorph-api/convert?url=https%3A%2F%2Fdcl.dev%2Fevents-assets-099ac00%2Fposter%2F149d6ef6678931b1.png",
+          "method": "GET",
+          "status": 200,
+          "mime": "image/png",
+          "length": "260230",
+          "cache_control": "public, max-age=86400",
+          "age": null,
+          "x_cache": null,
+          "date": "Tue, 24 Nov 2026 11:34:03 GMT",
+          "body_bytes": 260230,
+          "signature": "89504e470d0a1a0a0000000d49484452",
+          "body_sha256": "fda8103fb28805ec4a6471514af462ebea0e530d899af28da869b50bd875ca4f"
+        },
+        {
+          "url": "/media/convert?url=https%3A%2F%2Fdcl.dev%2Fevents-assets-099ac00%2Fposter%2F149d6ef6678931b1.png",
+          "method": "GET",
+          "status": 200,
+          "mime": "image/png",
+          "length": "260230",
+          "cache_control": "public, max-age=86400",
+          "age": null,
+          "x_cache": null,
+          "date": "Tue, 24 Nov 2026 11:34:03 GMT",
+          "body_bytes": 260230,
+          "signature": "89504e470d0a1a0a0000000d49484452",
+          "body_sha256": "fda8103fb28805ec4a6471514af462ebea0e530d899af28da869b50bd875ca4f"
+        },
+        {
+          "url": "/metamorph-api/media/convert?url=https%3A%2F%2Fdcl.dev%2Fevents-assets-099ac00%2Fposter%2F149d6ef6678931b1.png",
+          "method": "GET",
+          "status": 200,
+          "mime": "image/png",
+          "length": "260230",
+          "cache_control": "public, max-age=86400",
+          "age": null,
+          "x_cache": null,
+          "date": "Tue, 24 Nov 2026 11:34:03 GMT",
+          "body_bytes": 260230,
+          "signature": "89504e470d0a1a0a0000000d49484452",
+          "body_sha256": "fda8103fb28805ec4a6471514af462ebea0e530d899af28da869b50bd875ca4f"
+        }
+      ],
+      "source_url": "https://dcl.dev/events-assets-099ac00/poster/149d6ef6678931b1.png",
+      "archived_sha256": "fda8103fb28805ec4a6471514af462ebea0e530d899af28da869b50bd875ca4f",
+      "appearances": [
+        {
+          "surface": "calendar",
+          "name": "Community Building Decentraland"
+        }
+      ],
+      "source_size": [
+        1280,
+        720
+      ],
+      "raster_size": [
+        1280,
+        720
+      ],
+      "rgba_mae_on_64px_grid": [
+        0.0,
+        0.0,
+        0.0,
+        0.0
+      ],
+      "alternative_orientation_mae_sums": {
+        "FLIP_LEFT_RIGHT": 150.046,
+        "FLIP_TOP_BOTTOM": 156.088,
+        "ROTATE_90": 164.736,
+        "ROTATE_180": 186.207,
+        "ROTATE_270": 164.736,
+        "TRANSPOSE": 165.392,
+        "TRANSVERSE": 142.426
+      }
+    },
+    {
+      "archived_url": "https://dcl.dev/events-assets-099ac00/poster/1e34ab54-55cf-404b-ab2b-0a11263e3577.webp",
+      "requests": [
+        {
+          "url": "/metamorph-api/media/convert?url=https%3A%2F%2Fdcl.dev%2Fevents-assets-099ac00%2Fposter%2F1e34ab54-55cf-404b-ab2b-0a11263e3577.webp",
+          "method": "GET",
+          "status": 200,
+          "mime": "image/webp",
+          "length": "77772",
+          "cache_control": "public, max-age=86400",
+          "age": null,
+          "x_cache": null,
+          "date": "Tue, 24 Nov 2026 11:34:04 GMT",
+          "body_bytes": 77772,
+          "signature": "52494646c42f01005745425056503858",
+          "body_sha256": "648a39cb1a12ba34c22c170159da4cf85da2dd2ad57b0ce69ecac19b6e92460f"
+        },
+        {
+          "url": "/metamorph-api/convert?url=https%3A%2F%2Fdcl.dev%2Fevents-assets-099ac00%2Fposter%2F1e34ab54-55cf-404b-ab2b-0a11263e3577.webp",
+          "method": "GET",
+          "status": 200,
+          "mime": "image/jpeg",
+          "length": "85891",
+          "cache_control": "public, max-age=86400",
+          "age": null,
+          "x_cache": null,
+          "date": "Tue, 24 Nov 2026 11:34:04 GMT",
+          "body_bytes": 85891,
+          "signature": "ffd8ffe000104a464946000102000001",
+          "body_sha256": "bc80b4bbd7b7f2f26a359d9ae5d1272b39c6adc886da7c1f9bd8dbad084fe827"
+        },
+        {
+          "url": "/metamorph-api/convert?url=https%3A%2F%2Fdcl.dev%2Fevents-assets-099ac00%2Fposter%2F1e34ab54-55cf-404b-ab2b-0a11263e3577.webp",
+          "method": "HEAD",
+          "status": 200,
+          "mime": "image/jpeg",
+          "length": "85891",
+          "cache_control": "public, max-age=86400",
+          "age": null,
+          "x_cache": null,
+          "date": "Tue, 24 Nov 2026 11:34:04 GMT",
+          "body_bytes": 0,
+          "signature": "",
+          "body_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        {
+          "url": "/metamorph-api/convert?url=https%3A%2F%2Fdcl.dev%2Fevents-assets-099ac00%2Fposter%2F1e34ab54-55cf-404b-ab2b-0a11263e3577.webp",
+          "method": "GET",
+          "status": 200,
+          "mime": "image/jpeg",
+          "length": "85891",
+          "cache_control": "public, max-age=86400",
+          "age": null,
+          "x_cache": null,
+          "date": "Tue, 24 Nov 2026 11:34:04 GMT",
+          "body_bytes": 85891,
+          "signature": "ffd8ffe000104a464946000102000001",
+          "body_sha256": "bc80b4bbd7b7f2f26a359d9ae5d1272b39c6adc886da7c1f9bd8dbad084fe827"
+        },
+        {
+          "url": "/convert?url=https%3A%2F%2Fdcl.dev%2Fevents-assets-099ac00%2Fposter%2F1e34ab54-55cf-404b-ab2b-0a11263e3577.webp",
+          "method": "GET",
+          "status": 200,
+          "mime": "image/jpeg",
+          "length": "85891",
+          "cache_control": "public, max-age=86400",
+          "age": null,
+          "x_cache": null,
+          "date": "Tue, 24 Nov 2026 11:34:04 GMT",
+          "body_bytes": 85891,
+          "signature": "ffd8ffe000104a464946000102000001",
+          "body_sha256": "bc80b4bbd7b7f2f26a359d9ae5d1272b39c6adc886da7c1f9bd8dbad084fe827"
+        },
+        {
+          "url": "/convert?url=https%3A%2F%2Fdcl.dev%2Fevents-assets-099ac00%2Fposter%2F1e34ab54-55cf-404b-ab2b-0a11263e3577.webp",
+          "method": "HEAD",
+          "status": 200,
+          "mime": "image/jpeg",
+          "length": "85891",
+          "cache_control": "public, max-age=86400",
+          "age": null,
+          "x_cache": null,
+          "date": "Tue, 24 Nov 2026 11:34:04 GMT",
+          "body_bytes": 0,
+          "signature": "",
+          "body_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        {
+          "url": "/convert?url=https%3A%2F%2Fdcl.dev%2Fevents-assets-099ac00%2Fposter%2F1e34ab54-55cf-404b-ab2b-0a11263e3577.webp",
+          "method": "GET",
+          "status": 200,
+          "mime": "image/jpeg",
+          "length": "85891",
+          "cache_control": "public, max-age=86400",
+          "age": null,
+          "x_cache": null,
+          "date": "Tue, 24 Nov 2026 11:34:04 GMT",
+          "body_bytes": 85891,
+          "signature": "ffd8ffe000104a464946000102000001",
+          "body_sha256": "bc80b4bbd7b7f2f26a359d9ae5d1272b39c6adc886da7c1f9bd8dbad084fe827"
+        },
+        {
+          "url": "/metamorph-api/media/convert?url=https%3A%2F%2Fdcl.dev%2Fevents-assets-099ac00%2Fposter%2F1e34ab54-55cf-404b-ab2b-0a11263e3577.webp",
+          "method": "GET",
+          "status": 200,
+          "mime": "image/webp",
+          "length": "77772",
+          "cache_control": "public, max-age=86400",
+          "age": null,
+          "x_cache": null,
+          "date": "Tue, 24 Nov 2026 11:34:04 GMT",
+          "body_bytes": 77772,
+          "signature": "52494646c42f01005745425056503858",
+          "body_sha256": "648a39cb1a12ba34c22c170159da4cf85da2dd2ad57b0ce69ecac19b6e92460f"
+        },
+        {
+          "url": "/media/convert?url=https%3A%2F%2Fdcl.dev%2Fevents-assets-099ac00%2Fposter%2F1e34ab54-55cf-404b-ab2b-0a11263e3577.webp",
+          "method": "GET",
+          "status": 200,
+          "mime": "image/webp",
+          "length": "77772",
+          "cache_control": "public, max-age=86400",
+          "age": null,
+          "x_cache": null,
+          "date": "Tue, 24 Nov 2026 11:34:04 GMT",
+          "body_bytes": 77772,
+          "signature": "52494646c42f01005745425056503858",
+          "body_sha256": "648a39cb1a12ba34c22c170159da4cf85da2dd2ad57b0ce69ecac19b6e92460f"
+        }
+      ],
+      "source_url": "https://dcl.dev/events-assets-099ac00/poster/1e34ab54-55cf-404b-ab2b-0a11263e3577.webp",
+      "archived_sha256": "648a39cb1a12ba34c22c170159da4cf85da2dd2ad57b0ce69ecac19b6e92460f",
+      "appearances": [
+        {
+          "surface": "calendar",
+          "name": "Live DJ Music and Dancing in the Unity Café"
+        }
+      ],
+      "source_size": [
+        1024,
+        512
+      ],
+      "raster_size": [
+        960,
+        480
+      ],
+      "rgba_mae_on_64px_grid": [
+        2.435,
+        2.5,
+        2.632,
+        0.0
+      ],
+      "alternative_orientation_mae_sums": {
+        "FLIP_LEFT_RIGHT": 361.766,
+        "FLIP_TOP_BOTTOM": 195.041,
+        "ROTATE_90": 290.292,
+        "ROTATE_180": 398.854,
+        "ROTATE_270": 289.99,
+        "TRANSPOSE": 318.143,
+        "TRANSVERSE": 252.966
+      }
+    },
+    {
+      "archived_url": "https://dcl.dev/events-assets-099ac00/poster/4c48c0b2-77de-4a06-a3a3-37b803884a04.webp",
+      "requests": [
+        {
+          "url": "/convert?url=https%3A%2F%2Fdcl.dev%2Fevents-assets-099ac00%2Fposter%2F4c48c0b2-77de-4a06-a3a3-37b803884a04.webp",
+          "method": "HEAD",
+          "status": 200,
+          "mime": "image/jpeg",
+          "length": "178449",
+          "cache_control": "public, max-age=86400",
+          "age": null,
+          "x_cache": null,
+          "date": "Tue, 24 Nov 2026 11:34:04 GMT",
+          "body_bytes": 0,
+          "signature": "",
+          "body_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        {
+          "url": "/convert?url=https%3A%2F%2Fdcl.dev%2Fevents-assets-099ac00%2Fposter%2F4c48c0b2-77de-4a06-a3a3-37b803884a04.webp",
+          "method": "GET",
+          "status": 200,
+          "mime": "image/jpeg",
+          "length": "178449",
+          "cache_control": "public, max-age=86400",
+          "age": null,
+          "x_cache": null,
+          "date": "Tue, 24 Nov 2026 11:34:04 GMT",
+          "body_bytes": 178449,
+          "signature": "ffd8ffe000104a464946000102000001",
+          "body_sha256": "002f78d70b6269c0a3ccd6a75a91dea3ea3ec3a10c6a06613de494e76fd003f0"
+        },
+        {
+          "url": "/convert?url=https%3A%2F%2Fdcl.dev%2Fevents-assets-099ac00%2Fposter%2F4c48c0b2-77de-4a06-a3a3-37b803884a04.webp",
+          "method": "GET",
+          "status": 200,
+          "mime": "image/jpeg",
+          "length": "178449",
+          "cache_control": "public, max-age=86400",
+          "age": null,
+          "x_cache": null,
+          "date": "Tue, 24 Nov 2026 11:34:04 GMT",
+          "body_bytes": 178449,
+          "signature": "ffd8ffe000104a464946000102000001",
+          "body_sha256": "002f78d70b6269c0a3ccd6a75a91dea3ea3ec3a10c6a06613de494e76fd003f0"
+        },
+        {
+          "url": "/metamorph-api/convert?url=https%3A%2F%2Fdcl.dev%2Fevents-assets-099ac00%2Fposter%2F4c48c0b2-77de-4a06-a3a3-37b803884a04.webp",
+          "method": "HEAD",
+          "status": 200,
+          "mime": "image/jpeg",
+          "length": "178449",
+          "cache_control": "public, max-age=86400",
+          "age": null,
+          "x_cache": null,
+          "date": "Tue, 24 Nov 2026 11:34:04 GMT",
+          "body_bytes": 0,
+          "signature": "",
+          "body_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        {
+          "url": "/metamorph-api/convert?url=https%3A%2F%2Fdcl.dev%2Fevents-assets-099ac00%2Fposter%2F4c48c0b2-77de-4a06-a3a3-37b803884a04.webp",
+          "method": "GET",
+          "status": 200,
+          "mime": "image/jpeg",
+          "length": "178449",
+          "cache_control": "public, max-age=86400",
+          "age": null,
+          "x_cache": null,
+          "date": "Tue, 24 Nov 2026 11:34:04 GMT",
+          "body_bytes": 178449,
+          "signature": "ffd8ffe000104a464946000102000001",
+          "body_sha256": "002f78d70b6269c0a3ccd6a75a91dea3ea3ec3a10c6a06613de494e76fd003f0"
+        },
+        {
+          "url": "/metamorph-api/convert?url=https%3A%2F%2Fdcl.dev%2Fevents-assets-099ac00%2Fposter%2F4c48c0b2-77de-4a06-a3a3-37b803884a04.webp",
+          "method": "GET",
+          "status": 200,
+          "mime": "image/jpeg",
+          "length": "178449",
+          "cache_control": "public, max-age=86400",
+          "age": null,
+          "x_cache": null,
+          "date": "Tue, 24 Nov 2026 11:34:04 GMT",
+          "body_bytes": 178449,
+          "signature": "ffd8ffe000104a464946000102000001",
+          "body_sha256": "002f78d70b6269c0a3ccd6a75a91dea3ea3ec3a10c6a06613de494e76fd003f0"
+        },
+        {
+          "url": "/media/convert?url=https%3A%2F%2Fdcl.dev%2Fevents-assets-099ac00%2Fposter%2F4c48c0b2-77de-4a06-a3a3-37b803884a04.webp",
+          "method": "GET",
+          "status": 200,
+          "mime": "image/webp",
+          "length": "409998",
+          "cache_control": "public, max-age=86400",
+          "age": null,
+          "x_cache": null,
+          "date": "Tue, 24 Nov 2026 11:34:04 GMT",
+          "body_bytes": 409998,
+          "signature": "52494646864106005745425056503858",
+          "body_sha256": "76e40eeb9973210e3875a4de74eef18182f363f8302731ede1c6aacf8fade79a"
+        },
+        {
+          "url": "/metamorph-api/media/convert?url=https%3A%2F%2Fdcl.dev%2Fevents-assets-099ac00%2Fposter%2F4c48c0b2-77de-4a06-a3a3-37b803884a04.webp",
+          "method": "GET",
+          "status": 200,
+          "mime": "image/webp",
+          "length": "409998",
+          "cache_control": "public, max-age=86400",
+          "age": null,
+          "x_cache": null,
+          "date": "Tue, 24 Nov 2026 11:34:04 GMT",
+          "body_bytes": 409998,
+          "signature": "52494646864106005745425056503858",
+          "body_sha256": "76e40eeb9973210e3875a4de74eef18182f363f8302731ede1c6aacf8fade79a"
+        }
+      ],
+      "source_url": "https://dcl.dev/events-assets-099ac00/poster/4c48c0b2-77de-4a06-a3a3-37b803884a04.webp",
+      "archived_sha256": "76e40eeb9973210e3875a4de74eef18182f363f8302731ede1c6aacf8fade79a",
+      "appearances": [
+        {
+          "surface": "calendar",
+          "name": "dummBz Tunes | NEW GAME! Playtest 🎸✨"
+        }
+      ],
+      "source_size": [
+        1672,
+        941
+      ],
+      "raster_size": [
+        960,
+        540
+      ],
+      "rgba_mae_on_64px_grid": [
+        2.003,
+        1.98,
+        1.8,
+        0.0
+      ],
+      "alternative_orientation_mae_sums": {
+        "FLIP_LEFT_RIGHT": 104.97,
+        "FLIP_TOP_BOTTOM": 181.673,
+        "ROTATE_90": 216.363,
+        "ROTATE_180": 186.329,
+        "ROTATE_270": 216.425,
+        "TRANSPOSE": 211.869,
+        "TRANSVERSE": 216.161
+      }
+    },
+    {
+      "archived_url": "https://dcl.dev/events-assets-099ac00/poster/58b773af-01b1-4236-aaac-6b45a94ed802.webp",
+      "requests": [
+        {
+          "url": "/metamorph-api/media/convert?url=https%3A%2F%2Fdcl.dev%2Fevents-assets-099ac00%2Fposter%2F58b773af-01b1-4236-aaac-6b45a94ed802.webp",
+          "method": "GET",
+          "status": 200,
+          "mime": "image/webp",
+          "length": "288680",
+          "cache_control": "public, max-age=86400",
+          "age": null,
+          "x_cache": null,
+          "date": "Tue, 24 Nov 2026 11:34:05 GMT",
+          "body_bytes": 288680,
+          "signature": "52494646a06704005745425056503858",
+          "body_sha256": "2f5cdaf1c5fa7bf81a4f10409ee6a204ff5ef92de25bb6e9ad0045b2d9c0025e"
+        },
+        {
+          "url": "/metamorph-api/convert?url=https%3A%2F%2Fdcl.dev%2Fevents-assets-099ac00%2Fposter%2F58b773af-01b1-4236-aaac-6b45a94ed802.webp",
+          "method": "GET",
+          "status": 200,
+          "mime": "image/jpeg",
+          "length": "148755",
+          "cache_control": "public, max-age=86400",
+          "age": null,
+          "x_cache": null,
+          "date": "Tue, 24 Nov 2026 11:34:05 GMT",
+          "body_bytes": 148755,
+          "signature": "ffd8ffe000104a464946000102000001",
+          "body_sha256": "72a964c68c7093be2b6491e33e1c33e5d366c16a6716205bfc2fc4ce63022809"
+        },
+        {
+          "url": "/metamorph-api/convert?url=https%3A%2F%2Fdcl.dev%2Fevents-assets-099ac00%2Fposter%2F58b773af-01b1-4236-aaac-6b45a94ed802.webp",
+          "method": "HEAD",
+          "status": 200,
+          "mime": "image/jpeg",
+          "length": "148755",
+          "cache_control": "public, max-age=86400",
+          "age": null,
+          "x_cache": null,
+          "date": "Tue, 24 Nov 2026 11:34:05 GMT",
+          "body_bytes": 0,
+          "signature": "",
+          "body_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        {
+          "url": "/metamorph-api/convert?url=https%3A%2F%2Fdcl.dev%2Fevents-assets-099ac00%2Fposter%2F58b773af-01b1-4236-aaac-6b45a94ed802.webp",
+          "method": "GET",
+          "status": 200,
+          "mime": "image/jpeg",
+          "length": "148755",
+          "cache_control": "public, max-age=86400",
+          "age": null,
+          "x_cache": null,
+          "date": "Tue, 24 Nov 2026 11:34:05 GMT",
+          "body_bytes": 148755,
+          "signature": "ffd8ffe000104a464946000102000001",
+          "body_sha256": "72a964c68c7093be2b6491e33e1c33e5d366c16a6716205bfc2fc4ce63022809"
+        },
+        {
+          "url": "/convert?url=https%3A%2F%2Fdcl.dev%2Fevents-assets-099ac00%2Fposter%2F58b773af-01b1-4236-aaac-6b45a94ed802.webp",
+          "method": "GET",
+          "status": 200,
+          "mime": "image/jpeg",
+          "length": "148755",
+          "cache_control": "public, max-age=86400",
+          "age": null,
+          "x_cache": null,
+          "date": "Tue, 24 Nov 2026 11:34:05 GMT",
+          "body_bytes": 148755,
+          "signature": "ffd8ffe000104a464946000102000001",
+          "body_sha256": "72a964c68c7093be2b6491e33e1c33e5d366c16a6716205bfc2fc4ce63022809"
+        },
+        {
+          "url": "/convert?url=https%3A%2F%2Fdcl.dev%2Fevents-assets-099ac00%2Fposter%2F58b773af-01b1-4236-aaac-6b45a94ed802.webp",
+          "method": "HEAD",
+          "status": 200,
+          "mime": "image/jpeg",
+          "length": "148755",
+          "cache_control": "public, max-age=86400",
+          "age": null,
+          "x_cache": null,
+          "date": "Tue, 24 Nov 2026 11:34:05 GMT",
+          "body_bytes": 0,
+          "signature": "",
+          "body_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        {
+          "url": "/convert?url=https%3A%2F%2Fdcl.dev%2Fevents-assets-099ac00%2Fposter%2F58b773af-01b1-4236-aaac-6b45a94ed802.webp",
+          "method": "GET",
+          "status": 200,
+          "mime": "image/jpeg",
+          "length": "148755",
+          "cache_control": "public, max-age=86400",
+          "age": null,
+          "x_cache": null,
+          "date": "Tue, 24 Nov 2026 11:34:05 GMT",
+          "body_bytes": 148755,
+          "signature": "ffd8ffe000104a464946000102000001",
+          "body_sha256": "72a964c68c7093be2b6491e33e1c33e5d366c16a6716205bfc2fc4ce63022809"
+        },
+        {
+          "url": "/metamorph-api/media/convert?url=https%3A%2F%2Fdcl.dev%2Fevents-assets-099ac00%2Fposter%2F58b773af-01b1-4236-aaac-6b45a94ed802.webp",
+          "method": "GET",
+          "status": 200,
+          "mime": "image/webp",
+          "length": "288680",
+          "cache_control": "public, max-age=86400",
+          "age": null,
+          "x_cache": null,
+          "date": "Tue, 24 Nov 2026 11:34:05 GMT",
+          "body_bytes": 288680,
+          "signature": "52494646a06704005745425056503858",
+          "body_sha256": "2f5cdaf1c5fa7bf81a4f10409ee6a204ff5ef92de25bb6e9ad0045b2d9c0025e"
+        },
+        {
+          "url": "/media/convert?url=https%3A%2F%2Fdcl.dev%2Fevents-assets-099ac00%2Fposter%2F58b773af-01b1-4236-aaac-6b45a94ed802.webp",
+          "method": "GET",
+          "status": 200,
+          "mime": "image/webp",
+          "length": "288680",
+          "cache_control": "public, max-age=86400",
+          "age": null,
+          "x_cache": null,
+          "date": "Tue, 24 Nov 2026 11:34:05 GMT",
+          "body_bytes": 288680,
+          "signature": "52494646a06704005745425056503858",
+          "body_sha256": "2f5cdaf1c5fa7bf81a4f10409ee6a204ff5ef92de25bb6e9ad0045b2d9c0025e"
+        }
+      ],
+      "source_url": "https://dcl.dev/events-assets-099ac00/poster/58b773af-01b1-4236-aaac-6b45a94ed802.webp",
+      "archived_sha256": "2f5cdaf1c5fa7bf81a4f10409ee6a204ff5ef92de25bb6e9ad0045b2d9c0025e",
+      "appearances": [
+        {
+          "surface": "chiri",
+          "name": "🧉🍕 Chiri & The Impossible Dimension 🔮 The Game"
+        }
+      ],
+      "source_size": [
+        1365,
+        768
+      ],
+      "raster_size": [
+        960,
+        540
+      ],
+      "rgba_mae_on_64px_grid": [
+        1.687,
+        1.377,
+        1.544,
+        0.0
+      ],
+      "alternative_orientation_mae_sums": {
+        "FLIP_LEFT_RIGHT": 124.878,
+        "FLIP_TOP_BOTTOM": 132.386,
+        "ROTATE_90": 146.607,
+        "ROTATE_180": 132.492,
+        "ROTATE_270": 146.814,
+        "TRANSPOSE": 137.187,
+        "TRANSVERSE": 141.135
+      }
+    },
+    {
+      "archived_url": "https://dcl.dev/events-assets-099ac00/poster/002f9ebc-3ff1-4f92-b34f-9f02677a6840.webp",
+      "requests": [
+        {
+          "url": "/convert?url=https%3A%2F%2Fdcl.dev%2Fevents-assets-099ac00%2Fposter%2F002f9ebc-3ff1-4f92-b34f-9f02677a6840.webp",
+          "method": "HEAD",
+          "status": 200,
+          "mime": "image/jpeg",
+          "length": "135550",
+          "cache_control": "public, max-age=86400",
+          "age": null,
+          "x_cache": null,
+          "date": "Tue, 24 Nov 2026 11:34:05 GMT",
+          "body_bytes": 0,
+          "signature": "",
+          "body_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        {
+          "url": "/convert?url=https%3A%2F%2Fdcl.dev%2Fevents-assets-099ac00%2Fposter%2F002f9ebc-3ff1-4f92-b34f-9f02677a6840.webp",
+          "method": "GET",
+          "status": 200,
+          "mime": "image/jpeg",
+          "length": "135550",
+          "cache_control": "public, max-age=86400",
+          "age": null,
+          "x_cache": null,
+          "date": "Tue, 24 Nov 2026 11:34:05 GMT",
+          "body_bytes": 135550,
+          "signature": "ffd8ffe000104a464946000102000001",
+          "body_sha256": "d82f18a133db4bf4a004b4ead3d8032a44e7048a1f6769f7bc2267c32e666468"
+        },
+        {
+          "url": "/convert?url=https%3A%2F%2Fdcl.dev%2Fevents-assets-099ac00%2Fposter%2F002f9ebc-3ff1-4f92-b34f-9f02677a6840.webp",
+          "method": "GET",
+          "status": 200,
+          "mime": "image/jpeg",
+          "length": "135550",
+          "cache_control": "public, max-age=86400",
+          "age": null,
+          "x_cache": null,
+          "date": "Tue, 24 Nov 2026 11:34:05 GMT",
+          "body_bytes": 135550,
+          "signature": "ffd8ffe000104a464946000102000001",
+          "body_sha256": "d82f18a133db4bf4a004b4ead3d8032a44e7048a1f6769f7bc2267c32e666468"
+        },
+        {
+          "url": "/metamorph-api/convert?url=https%3A%2F%2Fdcl.dev%2Fevents-assets-099ac00%2Fposter%2F002f9ebc-3ff1-4f92-b34f-9f02677a6840.webp",
+          "method": "HEAD",
+          "status": 200,
+          "mime": "image/jpeg",
+          "length": "135550",
+          "cache_control": "public, max-age=86400",
+          "age": null,
+          "x_cache": null,
+          "date": "Tue, 24 Nov 2026 11:34:05 GMT",
+          "body_bytes": 0,
+          "signature": "",
+          "body_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        {
+          "url": "/metamorph-api/convert?url=https%3A%2F%2Fdcl.dev%2Fevents-assets-099ac00%2Fposter%2F002f9ebc-3ff1-4f92-b34f-9f02677a6840.webp",
+          "method": "GET",
+          "status": 200,
+          "mime": "image/jpeg",
+          "length": "135550",
+          "cache_control": "public, max-age=86400",
+          "age": null,
+          "x_cache": null,
+          "date": "Tue, 24 Nov 2026 11:34:05 GMT",
+          "body_bytes": 135550,
+          "signature": "ffd8ffe000104a464946000102000001",
+          "body_sha256": "d82f18a133db4bf4a004b4ead3d8032a44e7048a1f6769f7bc2267c32e666468"
+        },
+        {
+          "url": "/metamorph-api/convert?url=https%3A%2F%2Fdcl.dev%2Fevents-assets-099ac00%2Fposter%2F002f9ebc-3ff1-4f92-b34f-9f02677a6840.webp",
+          "method": "GET",
+          "status": 200,
+          "mime": "image/jpeg",
+          "length": "135550",
+          "cache_control": "public, max-age=86400",
+          "age": null,
+          "x_cache": null,
+          "date": "Tue, 24 Nov 2026 11:34:05 GMT",
+          "body_bytes": 135550,
+          "signature": "ffd8ffe000104a464946000102000001",
+          "body_sha256": "d82f18a133db4bf4a004b4ead3d8032a44e7048a1f6769f7bc2267c32e666468"
+        },
+        {
+          "url": "/media/convert?url=https%3A%2F%2Fdcl.dev%2Fevents-assets-099ac00%2Fposter%2F002f9ebc-3ff1-4f92-b34f-9f02677a6840.webp",
+          "method": "GET",
+          "status": 200,
+          "mime": "image/webp",
+          "length": "336856",
+          "cache_control": "public, max-age=86400",
+          "age": null,
+          "x_cache": null,
+          "date": "Tue, 24 Nov 2026 11:34:05 GMT",
+          "body_bytes": 336856,
+          "signature": "52494646d02305005745425056503858",
+          "body_sha256": "c3014ede29cc752670f5d9f14f055ec635239855c46b7f724a04e8ffc117d72d"
+        },
+        {
+          "url": "/metamorph-api/media/convert?url=https%3A%2F%2Fdcl.dev%2Fevents-assets-099ac00%2Fposter%2F002f9ebc-3ff1-4f92-b34f-9f02677a6840.webp",
+          "method": "GET",
+          "status": 200,
+          "mime": "image/webp",
+          "length": "336856",
+          "cache_control": "public, max-age=86400",
+          "age": null,
+          "x_cache": null,
+          "date": "Tue, 24 Nov 2026 11:34:05 GMT",
+          "body_bytes": 336856,
+          "signature": "52494646d02305005745425056503858",
+          "body_sha256": "c3014ede29cc752670f5d9f14f055ec635239855c46b7f724a04e8ffc117d72d"
+        }
+      ],
+      "source_url": "https://dcl.dev/events-assets-099ac00/poster/002f9ebc-3ff1-4f92-b34f-9f02677a6840.webp",
+      "archived_sha256": "c3014ede29cc752670f5d9f14f055ec635239855c46b7f724a04e8ffc117d72d",
+      "appearances": [
+        {
+          "surface": "chiri",
+          "name": "🌱 Chiri Touch Grass! 🪻 The Game"
+        }
+      ],
+      "source_size": [
+        1672,
+        941
+      ],
+      "raster_size": [
+        960,
+        540
+      ],
+      "rgba_mae_on_64px_grid": [
+        1.433,
+        1.143,
+        1.139,
+        0.0
+      ],
+      "alternative_orientation_mae_sums": {
+        "FLIP_LEFT_RIGHT": 159.806,
+        "FLIP_TOP_BOTTOM": 190.193,
+        "ROTATE_90": 192.643,
+        "ROTATE_180": 206.408,
+        "ROTATE_270": 192.689,
+        "TRANSPOSE": 162.851,
+        "TRANSVERSE": 198.928
+      }
+    },
+    {
+      "archived_url": "https://dcl.dev/events-assets-099ac00/poster/9b0e89e6-f3aa-4a4e-9c7d-6f5db06a033e.webp",
+      "requests": [
+        {
+          "url": "/metamorph-api/media/convert?url=https%3A%2F%2Fdcl.dev%2Fevents-assets-099ac00%2Fposter%2F9b0e89e6-f3aa-4a4e-9c7d-6f5db06a033e.webp",
+          "method": "GET",
+          "status": 200,
+          "mime": "image/webp",
+          "length": "421666",
+          "cache_control": "public, max-age=86400",
+          "age": null,
+          "x_cache": null,
+          "date": "Tue, 24 Nov 2026 11:34:06 GMT",
+          "body_bytes": 421666,
+          "signature": "524946461a6f06005745425056503858",
+          "body_sha256": "2cde3c72cf9679ed3843155db6aea0ab2ffe4cd0630cc93b81967285b148924b"
+        },
+        {
+          "url": "/metamorph-api/convert?url=https%3A%2F%2Fdcl.dev%2Fevents-assets-099ac00%2Fposter%2F9b0e89e6-f3aa-4a4e-9c7d-6f5db06a033e.webp",
+          "method": "GET",
+          "status": 200,
+          "mime": "image/jpeg",
+          "length": "243824",
+          "cache_control": "public, max-age=86400",
+          "age": null,
+          "x_cache": null,
+          "date": "Tue, 24 Nov 2026 11:34:06 GMT",
+          "body_bytes": 243824,
+          "signature": "ffd8ffe000104a464946000102000001",
+          "body_sha256": "5883664e93bb6de3783661f1ecde9596b1aadac67c9f444186c212f25a6c2246"
+        },
+        {
+          "url": "/metamorph-api/convert?url=https%3A%2F%2Fdcl.dev%2Fevents-assets-099ac00%2Fposter%2F9b0e89e6-f3aa-4a4e-9c7d-6f5db06a033e.webp",
+          "method": "HEAD",
+          "status": 200,
+          "mime": "image/jpeg",
+          "length": "243824",
+          "cache_control": "public, max-age=86400",
+          "age": null,
+          "x_cache": null,
+          "date": "Tue, 24 Nov 2026 11:34:06 GMT",
+          "body_bytes": 0,
+          "signature": "",
+          "body_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        {
+          "url": "/metamorph-api/convert?url=https%3A%2F%2Fdcl.dev%2Fevents-assets-099ac00%2Fposter%2F9b0e89e6-f3aa-4a4e-9c7d-6f5db06a033e.webp",
+          "method": "GET",
+          "status": 200,
+          "mime": "image/jpeg",
+          "length": "243824",
+          "cache_control": "public, max-age=86400",
+          "age": null,
+          "x_cache": null,
+          "date": "Tue, 24 Nov 2026 11:34:06 GMT",
+          "body_bytes": 243824,
+          "signature": "ffd8ffe000104a464946000102000001",
+          "body_sha256": "5883664e93bb6de3783661f1ecde9596b1aadac67c9f444186c212f25a6c2246"
+        },
+        {
+          "url": "/convert?url=https%3A%2F%2Fdcl.dev%2Fevents-assets-099ac00%2Fposter%2F9b0e89e6-f3aa-4a4e-9c7d-6f5db06a033e.webp",
+          "method": "GET",
+          "status": 200,
+          "mime": "image/jpeg",
+          "length": "243824",
+          "cache_control": "public, max-age=86400",
+          "age": null,
+          "x_cache": null,
+          "date": "Tue, 24 Nov 2026 11:34:06 GMT",
+          "body_bytes": 243824,
+          "signature": "ffd8ffe000104a464946000102000001",
+          "body_sha256": "5883664e93bb6de3783661f1ecde9596b1aadac67c9f444186c212f25a6c2246"
+        },
+        {
+          "url": "/convert?url=https%3A%2F%2Fdcl.dev%2Fevents-assets-099ac00%2Fposter%2F9b0e89e6-f3aa-4a4e-9c7d-6f5db06a033e.webp",
+          "method": "HEAD",
+          "status": 200,
+          "mime": "image/jpeg",
+          "length": "243824",
+          "cache_control": "public, max-age=86400",
+          "age": null,
+          "x_cache": null,
+          "date": "Tue, 24 Nov 2026 11:34:06 GMT",
+          "body_bytes": 0,
+          "signature": "",
+          "body_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        {
+          "url": "/convert?url=https%3A%2F%2Fdcl.dev%2Fevents-assets-099ac00%2Fposter%2F9b0e89e6-f3aa-4a4e-9c7d-6f5db06a033e.webp",
+          "method": "GET",
+          "status": 200,
+          "mime": "image/jpeg",
+          "length": "243824",
+          "cache_control": "public, max-age=86400",
+          "age": null,
+          "x_cache": null,
+          "date": "Tue, 24 Nov 2026 11:34:06 GMT",
+          "body_bytes": 243824,
+          "signature": "ffd8ffe000104a464946000102000001",
+          "body_sha256": "5883664e93bb6de3783661f1ecde9596b1aadac67c9f444186c212f25a6c2246"
+        },
+        {
+          "url": "/metamorph-api/media/convert?url=https%3A%2F%2Fdcl.dev%2Fevents-assets-099ac00%2Fposter%2F9b0e89e6-f3aa-4a4e-9c7d-6f5db06a033e.webp",
+          "method": "GET",
+          "status": 200,
+          "mime": "image/webp",
+          "length": "421666",
+          "cache_control": "public, max-age=86400",
+          "age": null,
+          "x_cache": null,
+          "date": "Tue, 24 Nov 2026 11:34:06 GMT",
+          "body_bytes": 421666,
+          "signature": "524946461a6f06005745425056503858",
+          "body_sha256": "2cde3c72cf9679ed3843155db6aea0ab2ffe4cd0630cc93b81967285b148924b"
+        },
+        {
+          "url": "/media/convert?url=https%3A%2F%2Fdcl.dev%2Fevents-assets-099ac00%2Fposter%2F9b0e89e6-f3aa-4a4e-9c7d-6f5db06a033e.webp",
+          "method": "GET",
+          "status": 200,
+          "mime": "image/webp",
+          "length": "421666",
+          "cache_control": "public, max-age=86400",
+          "age": null,
+          "x_cache": null,
+          "date": "Tue, 24 Nov 2026 11:34:06 GMT",
+          "body_bytes": 421666,
+          "signature": "524946461a6f06005745425056503858",
+          "body_sha256": "2cde3c72cf9679ed3843155db6aea0ab2ffe4cd0630cc93b81967285b148924b"
+        }
+      ],
+      "source_url": "https://dcl.dev/events-assets-099ac00/poster/9b0e89e6-f3aa-4a4e-9c7d-6f5db06a033e.webp",
+      "archived_sha256": "2cde3c72cf9679ed3843155db6aea0ab2ffe4cd0630cc93b81967285b148924b",
+      "appearances": [
+        {
+          "surface": "chiri",
+          "name": "KOMBAT PARTY - NEW GAME!💥"
+        }
+      ],
+      "source_size": [
+        1672,
+        941
+      ],
+      "raster_size": [
+        960,
+        540
+      ],
+      "rgba_mae_on_64px_grid": [
+        2.752,
+        2.08,
+        2.324,
+        0.0
+      ],
+      "alternative_orientation_mae_sums": {
+        "FLIP_LEFT_RIGHT": 167.508,
+        "FLIP_TOP_BOTTOM": 190.204,
+        "ROTATE_90": 184.573,
+        "ROTATE_180": 197.008,
+        "ROTATE_270": 184.627,
+        "TRANSPOSE": 182.972,
+        "TRANSVERSE": 179.641
+      }
+    },
+    {
+      "archived_url": "https://dcl.dev/events-assets-099ac00/poster/beeaf320-7e30-4125-8e8d-505d77878978.webp",
+      "requests": [
+        {
+          "url": "/convert?url=https%3A%2F%2Fdcl.dev%2Fevents-assets-099ac00%2Fposter%2Fbeeaf320-7e30-4125-8e8d-505d77878978.webp",
+          "method": "HEAD",
+          "status": 200,
+          "mime": "image/jpeg",
+          "length": "229078",
+          "cache_control": "public, max-age=86400",
+          "age": null,
+          "x_cache": null,
+          "date": "Tue, 24 Nov 2026 11:34:06 GMT",
+          "body_bytes": 0,
+          "signature": "",
+          "body_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        {
+          "url": "/convert?url=https%3A%2F%2Fdcl.dev%2Fevents-assets-099ac00%2Fposter%2Fbeeaf320-7e30-4125-8e8d-505d77878978.webp",
+          "method": "GET",
+          "status": 200,
+          "mime": "image/jpeg",
+          "length": "229078",
+          "cache_control": "public, max-age=86400",
+          "age": null,
+          "x_cache": null,
+          "date": "Tue, 24 Nov 2026 11:34:06 GMT",
+          "body_bytes": 229078,
+          "signature": "ffd8ffe000104a464946000102000001",
+          "body_sha256": "860e848d8e949f2c6917239a3fba714d40f5ebec5a79294e5d26a21d5e79aa52"
+        },
+        {
+          "url": "/convert?url=https%3A%2F%2Fdcl.dev%2Fevents-assets-099ac00%2Fposter%2Fbeeaf320-7e30-4125-8e8d-505d77878978.webp",
+          "method": "GET",
+          "status": 200,
+          "mime": "image/jpeg",
+          "length": "229078",
+          "cache_control": "public, max-age=86400",
+          "age": null,
+          "x_cache": null,
+          "date": "Tue, 24 Nov 2026 11:34:06 GMT",
+          "body_bytes": 229078,
+          "signature": "ffd8ffe000104a464946000102000001",
+          "body_sha256": "860e848d8e949f2c6917239a3fba714d40f5ebec5a79294e5d26a21d5e79aa52"
+        },
+        {
+          "url": "/metamorph-api/convert?url=https%3A%2F%2Fdcl.dev%2Fevents-assets-099ac00%2Fposter%2Fbeeaf320-7e30-4125-8e8d-505d77878978.webp",
+          "method": "HEAD",
+          "status": 200,
+          "mime": "image/jpeg",
+          "length": "229078",
+          "cache_control": "public, max-age=86400",
+          "age": null,
+          "x_cache": null,
+          "date": "Tue, 24 Nov 2026 11:34:06 GMT",
+          "body_bytes": 0,
+          "signature": "",
+          "body_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        {
+          "url": "/metamorph-api/convert?url=https%3A%2F%2Fdcl.dev%2Fevents-assets-099ac00%2Fposter%2Fbeeaf320-7e30-4125-8e8d-505d77878978.webp",
+          "method": "GET",
+          "status": 200,
+          "mime": "image/jpeg",
+          "length": "229078",
+          "cache_control": "public, max-age=86400",
+          "age": null,
+          "x_cache": null,
+          "date": "Tue, 24 Nov 2026 11:34:06 GMT",
+          "body_bytes": 229078,
+          "signature": "ffd8ffe000104a464946000102000001",
+          "body_sha256": "860e848d8e949f2c6917239a3fba714d40f5ebec5a79294e5d26a21d5e79aa52"
+        },
+        {
+          "url": "/metamorph-api/convert?url=https%3A%2F%2Fdcl.dev%2Fevents-assets-099ac00%2Fposter%2Fbeeaf320-7e30-4125-8e8d-505d77878978.webp",
+          "method": "GET",
+          "status": 200,
+          "mime": "image/jpeg",
+          "length": "229078",
+          "cache_control": "public, max-age=86400",
+          "age": null,
+          "x_cache": null,
+          "date": "Tue, 24 Nov 2026 11:34:06 GMT",
+          "body_bytes": 229078,
+          "signature": "ffd8ffe000104a464946000102000001",
+          "body_sha256": "860e848d8e949f2c6917239a3fba714d40f5ebec5a79294e5d26a21d5e79aa52"
+        },
+        {
+          "url": "/media/convert?url=https%3A%2F%2Fdcl.dev%2Fevents-assets-099ac00%2Fposter%2Fbeeaf320-7e30-4125-8e8d-505d77878978.webp",
+          "method": "GET",
+          "status": 200,
+          "mime": "image/webp",
+          "length": "371184",
+          "cache_control": "public, max-age=86400",
+          "age": null,
+          "x_cache": null,
+          "date": "Tue, 24 Nov 2026 11:34:06 GMT",
+          "body_bytes": 371184,
+          "signature": "52494646e8a905005745425056503858",
+          "body_sha256": "717b36f636da8344f24be99a96e25923fca6d6a2ba428fc761133ee660d4c4c1"
+        },
+        {
+          "url": "/metamorph-api/media/convert?url=https%3A%2F%2Fdcl.dev%2Fevents-assets-099ac00%2Fposter%2Fbeeaf320-7e30-4125-8e8d-505d77878978.webp",
+          "method": "GET",
+          "status": 200,
+          "mime": "image/webp",
+          "length": "371184",
+          "cache_control": "public, max-age=86400",
+          "age": null,
+          "x_cache": null,
+          "date": "Tue, 24 Nov 2026 11:34:06 GMT",
+          "body_bytes": 371184,
+          "signature": "52494646e8a905005745425056503858",
+          "body_sha256": "717b36f636da8344f24be99a96e25923fca6d6a2ba428fc761133ee660d4c4c1"
+        }
+      ],
+      "source_url": "https://dcl.dev/events-assets-099ac00/poster/beeaf320-7e30-4125-8e8d-505d77878978.webp",
+      "archived_sha256": "717b36f636da8344f24be99a96e25923fca6d6a2ba428fc761133ee660d4c4c1",
+      "appearances": [
+        {
+          "surface": "chiri",
+          "name": "🕹️  Chiri Arcade 📺 The Game"
+        }
+      ],
+      "source_size": [
+        1672,
+        941
+      ],
+      "raster_size": [
+        960,
+        540
+      ],
+      "rgba_mae_on_64px_grid": [
+        2.023,
+        1.835,
+        1.756,
+        0.0
+      ],
+      "alternative_orientation_mae_sums": {
+        "FLIP_LEFT_RIGHT": 163.693,
+        "FLIP_TOP_BOTTOM": 171.177,
+        "ROTATE_90": 180.321,
+        "ROTATE_180": 187.141,
+        "ROTATE_270": 180.388,
+        "TRANSPOSE": 177.58,
+        "TRANSVERSE": 181.052
+      }
+    },
+    {
+      "archived_url": "https://dcl.dev/events-assets-099ac00/poster/4c7226b9-22b3-4896-9cfa-0aa42276d232.webp",
+      "requests": [
+        {
+          "url": "/metamorph-api/media/convert?url=https%3A%2F%2Fdcl.dev%2Fevents-assets-099ac00%2Fposter%2F4c7226b9-22b3-4896-9cfa-0aa42276d232.webp",
+          "method": "GET",
+          "status": 200,
+          "mime": "image/webp",
+          "length": "336856",
+          "cache_control": "public, max-age=86400",
+          "age": null,
+          "x_cache": null,
+          "date": "Tue, 24 Nov 2026 11:34:07 GMT",
+          "body_bytes": 336856,
+          "signature": "52494646d02305005745425056503858",
+          "body_sha256": "c3014ede29cc752670f5d9f14f055ec635239855c46b7f724a04e8ffc117d72d"
+        },
+        {
+          "url": "/metamorph-api/convert?url=https%3A%2F%2Fdcl.dev%2Fevents-assets-099ac00%2Fposter%2F4c7226b9-22b3-4896-9cfa-0aa42276d232.webp",
+          "method": "GET",
+          "status": 200,
+          "mime": "image/jpeg",
+          "length": "135550",
+          "cache_control": "public, max-age=86400",
+          "age": null,
+          "x_cache": null,
+          "date": "Tue, 24 Nov 2026 11:34:07 GMT",
+          "body_bytes": 135550,
+          "signature": "ffd8ffe000104a464946000102000001",
+          "body_sha256": "d82f18a133db4bf4a004b4ead3d8032a44e7048a1f6769f7bc2267c32e666468"
+        },
+        {
+          "url": "/metamorph-api/convert?url=https%3A%2F%2Fdcl.dev%2Fevents-assets-099ac00%2Fposter%2F4c7226b9-22b3-4896-9cfa-0aa42276d232.webp",
+          "method": "HEAD",
+          "status": 200,
+          "mime": "image/jpeg",
+          "length": "135550",
+          "cache_control": "public, max-age=86400",
+          "age": null,
+          "x_cache": null,
+          "date": "Tue, 24 Nov 2026 11:34:07 GMT",
+          "body_bytes": 0,
+          "signature": "",
+          "body_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        {
+          "url": "/metamorph-api/convert?url=https%3A%2F%2Fdcl.dev%2Fevents-assets-099ac00%2Fposter%2F4c7226b9-22b3-4896-9cfa-0aa42276d232.webp",
+          "method": "GET",
+          "status": 200,
+          "mime": "image/jpeg",
+          "length": "135550",
+          "cache_control": "public, max-age=86400",
+          "age": null,
+          "x_cache": null,
+          "date": "Tue, 24 Nov 2026 11:34:07 GMT",
+          "body_bytes": 135550,
+          "signature": "ffd8ffe000104a464946000102000001",
+          "body_sha256": "d82f18a133db4bf4a004b4ead3d8032a44e7048a1f6769f7bc2267c32e666468"
+        },
+        {
+          "url": "/convert?url=https%3A%2F%2Fdcl.dev%2Fevents-assets-099ac00%2Fposter%2F4c7226b9-22b3-4896-9cfa-0aa42276d232.webp",
+          "method": "GET",
+          "status": 200,
+          "mime": "image/jpeg",
+          "length": "135550",
+          "cache_control": "public, max-age=86400",
+          "age": null,
+          "x_cache": null,
+          "date": "Tue, 24 Nov 2026 11:34:07 GMT",
+          "body_bytes": 135550,
+          "signature": "ffd8ffe000104a464946000102000001",
+          "body_sha256": "d82f18a133db4bf4a004b4ead3d8032a44e7048a1f6769f7bc2267c32e666468"
+        },
+        {
+          "url": "/convert?url=https%3A%2F%2Fdcl.dev%2Fevents-assets-099ac00%2Fposter%2F4c7226b9-22b3-4896-9cfa-0aa42276d232.webp",
+          "method": "HEAD",
+          "status": 200,
+          "mime": "image/jpeg",
+          "length": "135550",
+          "cache_control": "public, max-age=86400",
+          "age": null,
+          "x_cache": null,
+          "date": "Tue, 24 Nov 2026 11:34:07 GMT",
+          "body_bytes": 0,
+          "signature": "",
+          "body_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        {
+          "url": "/convert?url=https%3A%2F%2Fdcl.dev%2Fevents-assets-099ac00%2Fposter%2F4c7226b9-22b3-4896-9cfa-0aa42276d232.webp",
+          "method": "GET",
+          "status": 200,
+          "mime": "image/jpeg",
+          "length": "135550",
+          "cache_control": "public, max-age=86400",
+          "age": null,
+          "x_cache": null,
+          "date": "Tue, 24 Nov 2026 11:34:07 GMT",
+          "body_bytes": 135550,
+          "signature": "ffd8ffe000104a464946000102000001",
+          "body_sha256": "d82f18a133db4bf4a004b4ead3d8032a44e7048a1f6769f7bc2267c32e666468"
+        },
+        {
+          "url": "/metamorph-api/media/convert?url=https%3A%2F%2Fdcl.dev%2Fevents-assets-099ac00%2Fposter%2F4c7226b9-22b3-4896-9cfa-0aa42276d232.webp",
+          "method": "GET",
+          "status": 200,
+          "mime": "image/webp",
+          "length": "336856",
+          "cache_control": "public, max-age=86400",
+          "age": null,
+          "x_cache": null,
+          "date": "Tue, 24 Nov 2026 11:34:07 GMT",
+          "body_bytes": 336856,
+          "signature": "52494646d02305005745425056503858",
+          "body_sha256": "c3014ede29cc752670f5d9f14f055ec635239855c46b7f724a04e8ffc117d72d"
+        },
+        {
+          "url": "/media/convert?url=https%3A%2F%2Fdcl.dev%2Fevents-assets-099ac00%2Fposter%2F4c7226b9-22b3-4896-9cfa-0aa42276d232.webp",
+          "method": "GET",
+          "status": 200,
+          "mime": "image/webp",
+          "length": "336856",
+          "cache_control": "public, max-age=86400",
+          "age": null,
+          "x_cache": null,
+          "date": "Tue, 24 Nov 2026 11:34:07 GMT",
+          "body_bytes": 336856,
+          "signature": "52494646d02305005745425056503858",
+          "body_sha256": "c3014ede29cc752670f5d9f14f055ec635239855c46b7f724a04e8ffc117d72d"
+        }
+      ],
+      "source_url": "https://dcl.dev/events-assets-099ac00/poster/4c7226b9-22b3-4896-9cfa-0aa42276d232.webp",
+      "archived_sha256": "c3014ede29cc752670f5d9f14f055ec635239855c46b7f724a04e8ffc117d72d",
+      "appearances": [
+        {
+          "surface": "chiri",
+          "name": "🌱 Chiri Touch Grass! 🪻 The Game"
+        }
+      ],
+      "source_size": [
+        1672,
+        941
+      ],
+      "raster_size": [
+        960,
+        540
+      ],
+      "rgba_mae_on_64px_grid": [
+        1.433,
+        1.143,
+        1.139,
+        0.0
+      ],
+      "alternative_orientation_mae_sums": {
+        "FLIP_LEFT_RIGHT": 159.806,
+        "FLIP_TOP_BOTTOM": 190.193,
+        "ROTATE_90": 192.643,
+        "ROTATE_180": 206.408,
+        "ROTATE_270": 192.689,
+        "TRANSPOSE": 162.851,
+        "TRANSVERSE": 198.928
+      }
+    }
+  ]
+}

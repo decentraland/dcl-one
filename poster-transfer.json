@@ -1,0 +1,216 @@
+{
+  "metric": "Wire bytes of delivered files, including any mip levels",
+  "source_matched_by": "SHA-256",
+  "raster_bytes": 2154201,
+  "ktx2_bytes": 9078699,
+  "pairs": [
+    {
+      "source": "https://dcl.dev/events-assets-099ac00/poster/541b7168-abe2-4dd2-8f51-8ce8404a849a.webp",
+      "source_sha256": "d8652fe87cb263aaebaf165b627755489595b15299da6ba4f0fb9eb5b2fcb245",
+      "raster_bytes": 159839,
+      "raster_dimensions": [
+        960,
+        540
+      ],
+      "raster_sha256": "c717d23ae2f7c67c182b5510e93f0730c74867c74c0824abc994552494bb58e2",
+      "ktx2_bytes": 699944,
+      "ktx2_dimensions": [
+        1024,
+        576
+      ],
+      "ktx2_sha256": "e3437605e3da2b3c8dbb4d6ed4be38ca04fc55794553579dc37e2d3e4135b171"
+    },
+    {
+      "source": "https://dcl.dev/events-assets-099ac00/poster/4710556b-2927-4402-941c-fa1aad9cbaca.webp",
+      "source_sha256": "320018ff0822925726c603d7576a2902e14f9c7a33cd33ce5546059ed89524b6",
+      "raster_bytes": 76189,
+      "raster_dimensions": [
+        960,
+        540
+      ],
+      "raster_sha256": "bbfcbfe00e6f09bd972749750837436d76124ef275157c4299782953d9f903db",
+      "ktx2_bytes": 676814,
+      "ktx2_dimensions": [
+        1024,
+        576
+      ],
+      "ktx2_sha256": "efce8d857da2114c049fc3864b5100722b4db8904c2d2dcc18a14de27e9b8966"
+    },
+    {
+      "source": "https://dcl.dev/events-assets-099ac00/poster/c92e2dba-a7c6-4cb8-ab0d-8680f0680af2.webp",
+      "source_sha256": "992efff7389b98c5cddb55ead800ee3dba3f5daf35b9fe7827ee4654a086f656",
+      "raster_bytes": 99569,
+      "raster_dimensions": [
+        960,
+        480
+      ],
+      "raster_sha256": "71943f8bfaf1f17854d123fcfd57f911c8f983da67b954452d4d59f16ecd2527",
+      "ktx2_bytes": 647749,
+      "ktx2_dimensions": [
+        1024,
+        512
+      ],
+      "ktx2_sha256": "f4ff5a718f0457ff63d814ff9fac88efc9b5d9655009c51091f412d3b8e7d2cf"
+    },
+    {
+      "source": "https://dcl.dev/events-assets-099ac00/poster/9f54a88b-df21-4915-9df3-39fe91b33af3.webp",
+      "source_sha256": "7d2172c471360b37db4c69b61d69aea45dcc98f3cf8cacdf01d68bd4594cd1f3",
+      "raster_bytes": 221911,
+      "raster_dimensions": [
+        960,
+        540
+      ],
+      "raster_sha256": "46d18e21a34964960e9a9ba6c2ff926b53bda657bd817fa0eb59cf1ed5cd8593",
+      "ktx2_bytes": 770150,
+      "ktx2_dimensions": [
+        1024,
+        576
+      ],
+      "ktx2_sha256": "a179421be823221573974d3fe498fbe08f4a98b56eb968a265b09bf965526016"
+    },
+    {
+      "source": "https://dcl.dev/events-assets-099ac00/poster/0ff7a428-5bc8-4b9c-9b96-c0711cb32d80.webp",
+      "source_sha256": "ddaacfd3b5fec49125a2f33ad49806ad4139594b68440ef43203bfa4972bad54",
+      "raster_bytes": 179366,
+      "raster_dimensions": [
+        960,
+        540
+      ],
+      "raster_sha256": "f1cafd369661eef12617c5985c970d863665dce6aa6ba73742f2c732fbb77fed",
+      "ktx2_bytes": 710257,
+      "ktx2_dimensions": [
+        1024,
+        576
+      ],
+      "ktx2_sha256": "2ecfc2c8cb11d0a6d39a473f203ba9db63ef9e87a26c972a22ad5c38a510fe61"
+    },
+    {
+      "source": "https://dcl.dev/events-assets-099ac00/poster/149d6ef6678931b1.png",
+      "source_sha256": "fda8103fb28805ec4a6471514af462ebea0e530d899af28da869b50bd875ca4f",
+      "raster_bytes": 260230,
+      "raster_dimensions": [
+        1280,
+        720
+      ],
+      "raster_sha256": "fda8103fb28805ec4a6471514af462ebea0e530d899af28da869b50bd875ca4f",
+      "ktx2_bytes": 593366,
+      "ktx2_dimensions": [
+        1024,
+        576
+      ],
+      "ktx2_sha256": "ece912aced22e6fa46ac82f82c87e4a2f369d4d10199f19075cbe4f178ffb4a6"
+    },
+    {
+      "source": "https://dcl.dev/events-assets-099ac00/poster/1e34ab54-55cf-404b-ab2b-0a11263e3577.webp",
+      "source_sha256": "648a39cb1a12ba34c22c170159da4cf85da2dd2ad57b0ce69ecac19b6e92460f",
+      "raster_bytes": 85891,
+      "raster_dimensions": [
+        960,
+        480
+      ],
+      "raster_sha256": "bc80b4bbd7b7f2f26a359d9ae5d1272b39c6adc886da7c1f9bd8dbad084fe827",
+      "ktx2_bytes": 383074,
+      "ktx2_dimensions": [
+        1024,
+        512
+      ],
+      "ktx2_sha256": "234df237b975cbd4ab31179dee2dbf26e6f98275ca661a17460c49839cddd415"
+    },
+    {
+      "source": "https://dcl.dev/events-assets-099ac00/poster/4c48c0b2-77de-4a06-a3a3-37b803884a04.webp",
+      "source_sha256": "76e40eeb9973210e3875a4de74eef18182f363f8302731ede1c6aacf8fade79a",
+      "raster_bytes": 178449,
+      "raster_dimensions": [
+        960,
+        540
+      ],
+      "raster_sha256": "002f78d70b6269c0a3ccd6a75a91dea3ea3ec3a10c6a06613de494e76fd003f0",
+      "ktx2_bytes": 759614,
+      "ktx2_dimensions": [
+        1024,
+        576
+      ],
+      "ktx2_sha256": "7a1eaa218e71154df7d621abb1867e4f0348d802bc32accd48d33381c68afe82"
+    },
+    {
+      "source": "https://dcl.dev/events-assets-099ac00/poster/58b773af-01b1-4236-aaac-6b45a94ed802.webp",
+      "source_sha256": "2f5cdaf1c5fa7bf81a4f10409ee6a204ff5ef92de25bb6e9ad0045b2d9c0025e",
+      "raster_bytes": 148755,
+      "raster_dimensions": [
+        960,
+        540
+      ],
+      "raster_sha256": "72a964c68c7093be2b6491e33e1c33e5d366c16a6716205bfc2fc4ce63022809",
+      "ktx2_bytes": 758078,
+      "ktx2_dimensions": [
+        1024,
+        576
+      ],
+      "ktx2_sha256": "5c0248c86453a68570cfc107f9cf59a71df44d0daaeeeb1a656b8e68b25d7e48"
+    },
+    {
+      "source": "https://dcl.dev/events-assets-099ac00/poster/002f9ebc-3ff1-4f92-b34f-9f02677a6840.webp",
+      "source_sha256": "c3014ede29cc752670f5d9f14f055ec635239855c46b7f724a04e8ffc117d72d",
+      "raster_bytes": 135550,
+      "raster_dimensions": [
+        960,
+        540
+      ],
+      "raster_sha256": "d82f18a133db4bf4a004b4ead3d8032a44e7048a1f6769f7bc2267c32e666468",
+      "ktx2_bytes": 771823,
+      "ktx2_dimensions": [
+        1024,
+        576
+      ],
+      "ktx2_sha256": "d8cd6247583d09b1c0bc0e3c44be8a121153c9bec6fc201ee934301b8758185c"
+    },
+    {
+      "source": "https://dcl.dev/events-assets-099ac00/poster/9b0e89e6-f3aa-4a4e-9c7d-6f5db06a033e.webp",
+      "source_sha256": "2cde3c72cf9679ed3843155db6aea0ab2ffe4cd0630cc93b81967285b148924b",
+      "raster_bytes": 243824,
+      "raster_dimensions": [
+        960,
+        540
+      ],
+      "raster_sha256": "5883664e93bb6de3783661f1ecde9596b1aadac67c9f444186c212f25a6c2246",
+      "ktx2_bytes": 762777,
+      "ktx2_dimensions": [
+        1024,
+        576
+      ],
+      "ktx2_sha256": "d27e0a9adba4e11c4a4127aaeb8d4d3c8886c695be667502d0dbc847cadf2444"
+    },
+    {
+      "source": "https://dcl.dev/events-assets-099ac00/poster/beeaf320-7e30-4125-8e8d-505d77878978.webp",
+      "source_sha256": "717b36f636da8344f24be99a96e25923fca6d6a2ba428fc761133ee660d4c4c1",
+      "raster_bytes": 229078,
+      "raster_dimensions": [
+        960,
+        540
+      ],
+      "raster_sha256": "860e848d8e949f2c6917239a3fba714d40f5ebec5a79294e5d26a21d5e79aa52",
+      "ktx2_bytes": 773230,
+      "ktx2_dimensions": [
+        1024,
+        576
+      ],
+      "ktx2_sha256": "4ea9ccc0ee22169f206f8e24a288e7a8a9ef64d2f86c74854037a7d19d4e6f58"
+    },
+    {
+      "source": "https://dcl.dev/events-assets-099ac00/poster/4c7226b9-22b3-4896-9cfa-0aa42276d232.webp",
+      "source_sha256": "c3014ede29cc752670f5d9f14f055ec635239855c46b7f724a04e8ffc117d72d",
+      "raster_bytes": 135550,
+      "raster_dimensions": [
+        960,
+        540
+      ],
+      "raster_sha256": "d82f18a133db4bf4a004b4ead3d8032a44e7048a1f6769f7bc2267c32e666468",
+      "ktx2_bytes": 771823,
+      "ktx2_dimensions": [
+        1024,
+        576
+      ],
+      "ktx2_sha256": "d8cd6247583d09b1c0bc0e3c44be8a121153c9bec6fc201ee934301b8758185c"
+    }
+  ]
+}

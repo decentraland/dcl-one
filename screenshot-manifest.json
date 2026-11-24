@@ -1,0 +1,197 @@
+[
+  {
+    "file": "baseline-calendar.png",
+    "sha256": "6d7997428b0fa4411464ab91229661b561f27178a25512f3ad650af1dbbbd818",
+    "source_capture_sha256": "2e059c94348a03eb3f13ffa68636b891ae04094246724d17e97da40f4a4ca730",
+    "crop_xyxy": [
+      0,
+      116,
+      1600,
+      900
+    ],
+    "source_size": [
+      1600,
+      900
+    ]
+  },
+  {
+    "file": "baseline-skelefrenz.png",
+    "sha256": "f7706af21ebf05c81655990a9ad1da0140acc86556a065013567fe6e3f9ea132",
+    "source_capture_sha256": "fb810df7ca29b8f862cc3a03e84cc837f696f901f4156674d5b002c8271ea8c5",
+    "crop_xyxy": [
+      432,
+      107,
+      1168,
+      483
+    ],
+    "source_size": [
+      1600,
+      900
+    ]
+  },
+  {
+    "file": "baseline-chiri.png",
+    "sha256": "1e21b81d59f1184e1898683fabcbd99a581f3922ff26c3fc511c0ee643886adb",
+    "source_capture_sha256": "d3c59154abb62e5bf68d9945e0d31e64e68d5afc344d42095dc45458d00a654c",
+    "crop_xyxy": [
+      1096,
+      94,
+      1487,
+      830
+    ],
+    "source_size": [
+      1600,
+      900
+    ]
+  },
+  {
+    "file": "baseline-png-control.png",
+    "sha256": "5db48e1f4240a22affd67c149cde10c91d905aa06bc42c77a96914d83a8255c0",
+    "source_capture_sha256": "2e059c94348a03eb3f13ffa68636b891ae04094246724d17e97da40f4a4ca730",
+    "crop_xyxy": [
+      1276,
+      428,
+      1577,
+      668
+    ],
+    "source_size": [
+      1600,
+      900
+    ]
+  },
+  {
+    "file": "first-calendar.png",
+    "sha256": "e221fed4c84fb956fe5427d1ae11c2ce5d9945e39437c7bfd53dbfd987039e96",
+    "source_capture_sha256": "938c21d1507d32f69875747bb5afe9a6672edc8ab016f017f55254f783bfcd71",
+    "crop_xyxy": [
+      0,
+      116,
+      1600,
+      900
+    ],
+    "source_size": [
+      1600,
+      900
+    ]
+  },
+  {
+    "file": "first-skelefrenz.png",
+    "sha256": "17bd010087d30beaee57ffdb62d40207e932bca64d0e459c03d578a25fe1bdd3",
+    "source_capture_sha256": "ec57ff4efc91e9d2087d011106332385dd3fdb3830069464efc5524111cc739d",
+    "crop_xyxy": [
+      432,
+      107,
+      1168,
+      483
+    ],
+    "source_size": [
+      1600,
+      900
+    ]
+  },
+  {
+    "file": "first-chiri.png",
+    "sha256": "ceaf424d4b4b6846903651366a296ed67bbb11375135ba6108c775bd1377059e",
+    "source_capture_sha256": "7f522c8334ca35d388e5a74c79f11f0b07ac6bada48a2aaff1ff905f15536d1b",
+    "crop_xyxy": [
+      1096,
+      94,
+      1487,
+      830
+    ],
+    "source_size": [
+      1600,
+      900
+    ]
+  },
+  {
+    "file": "first-png-control.png",
+    "sha256": "d5f9f1970182f42fd09dff86610536207e19a16a4e84c7f5a80710387858b8e8",
+    "source_capture_sha256": "a04be4baea272e1c1d1c040e068e39346a0a1f518ab4599e7cf9254addd42e7d",
+    "crop_xyxy": [
+      432,
+      107,
+      1168,
+      483
+    ],
+    "source_size": [
+      1600,
+      900
+    ]
+  },
+  {
+    "file": "revisit-calendar.png",
+    "sha256": "d5b8bb3fe8136c817d962c48ff71febd635a5230b646e176dea4c50e46960614",
+    "source_capture_sha256": "69263add84f453aae339f971796113f6793045d9c994f1a901caded30461876b",
+    "crop_xyxy": [
+      0,
+      116,
+      1600,
+      900
+    ],
+    "source_size": [
+      1600,
+      900
+    ]
+  },
+  {
+    "file": "revisit-skelefrenz.png",
+    "sha256": "e74d67ba015c4bf37b8fe4c65e069a02ba28662b8a2216612570b6a457f0314a",
+    "source_capture_sha256": "44410983658cbd61b58e6b927c3b743f6f531db82149c6978a5d8331af356411",
+    "crop_xyxy": [
+      432,
+      107,
+      1168,
+      483
+    ],
+    "source_size": [
+      1600,
+      900
+    ]
+  },
+  {
+    "file": "revisit-chiri.png",
+    "sha256": "c726faaae96f0a6cc0ee2c8f7d7c1b356b30a67f2c47c494be9d7b9bdd9fc1e5",
+    "source_capture_sha256": "5a846c5bd62627d0cbe6ae9f7cfde1ffacdf394bd52811722021351c211f2b32",
+    "crop_xyxy": [
+      1096,
+      94,
+      1487,
+      830
+    ],
+    "source_size": [
+      1600,
+      900
+    ]
+  },
+  {
+    "file": "revisit-png-control.png",
+    "sha256": "e96a1b8188d0c2295acd4365b9545edb421162f964934a1a8db4050adfbdf895",
+    "source_capture_sha256": "e2825099506d9cef4b57d7089804031a39958d3145d26e7423520782264208b9",
+    "crop_xyxy": [
+      432,
+      107,
+      1168,
+      483
+    ],
+    "source_size": [
+      1600,
+      900
+    ]
+  },
+  {
+    "file": "chiri-community-header.png",
+    "sha256": "72593307e3c3d5c96051c7354de206cbd118e895f9ce9b481a35fa7c688239ea",
+    "source_capture_sha256": "7f522c8334ca35d388e5a74c79f11f0b07ac6bada48a2aaff1ff905f15536d1b",
+    "crop_xyxy": [
+      145,
+      96,
+      650,
+      263
+    ],
+    "source_size": [
+      1600,
+      900
+    ]
+  }
+]

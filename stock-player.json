@@ -1,0 +1,14 @@
+{
+  "buildNumber": 28116,
+  "revision": "7308da1b8caca66a9dd338ca98b5487553278206",
+  "buildArtifact": "https://explorer-artifacts.decentraland.org/@dcl/unity-explorer/branch/feat/realm-scene-pointers-pulse-server/pr-28116-7308da1/Decentraland_windows64.zip",
+  "archiveBytes": 448535634,
+  "archiveSha256": "9794009E402971598C2F554AC5EBAB357B19EBA7824D23F319C0FFD691E0110F",
+  "gateway": "https://dcl.dev",
+  "diskCacheDisabled": true,
+  "selectedLogLines": [
+    "Unity Version: 6000.5.9f1",
+    "Version: v0.199.0-alpha-feat/realm-scene-pointers-pulse-server-7308da1",
+    "Disable disk cache, flag --disable-disk-cache is passed"
+  ]
+}

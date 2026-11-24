@@ -1,0 +1,14 @@
+{
+  "run": 45379062331,
+  "run_url": "https://github.com/decentraland/dcl-one/actions/runs/45379062331",
+  "event": "workflow_dispatch",
+  "revision": "1a3f8223380c1ee44e26397862fde0a61db5c0bd",
+  "artifact_id": 14914432938,
+  "artifact_name": "apis-sites-images-amd64",
+  "zip_bytes": 1089501661,
+  "zip_digest": "sha256:301ebad7fb164830abac2df613d7707815a896e7ae36d7fa020df28de127e93b",
+  "member": "apis.tar.gz",
+  "api_archive_sha256": "542f83abd423a03f007aafb1d831b73628398ab822ac5637eb6e7a7cae7a2b7a",
+  "api_archive_bytes": 105573909,
+  "downloaded_utc": "2026-11-24T11:24:54.007695+00:00"
+}
