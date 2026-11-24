@@ -5,38 +5,18 @@ use crate::chain_index::{
 };
 use crate::shop::market::{MarketplaceState, chain_jobs, chain_walk::ChainNet, mirrors, trades};
 use crate::{
-    comms, http,
+    http,
     jobs::{Jobs, PeriodicCfg},
     land_authz,
 };
-use anyhow::Context;
 use chrono::{NaiveDateTime, Utc};
 use futures::future::join_all;
 use sqlx::PgPool;
 use std::{
     collections::{BTreeSet, HashMap},
-    net::SocketAddr,
     sync::Arc,
     time::Duration,
 };
-
-pub(super) fn install() -> anyhow::Result<bool> {
-    let Some(raw) = std::env::var_os("INDEX_METRICS_BIND") else {
-        return Ok(false);
-    };
-    let bind: SocketAddr = raw
-        .to_str()
-        .context("INDEX_METRICS_BIND must be text")?
-        .parse()
-        .context("invalid INDEX_METRICS_BIND")?;
-    anyhow::ensure!(
-        bind.ip().is_loopback(),
-        "INDEX_METRICS_BIND must use a loopback address"
-    );
-    comms::metrics::install_prometheus_exporter(bind)?;
-    tracing::info!(%bind, "index /metrics listening");
-    Ok(true)
-}
 
 struct Target {
     source: &'static str,
@@ -53,7 +33,7 @@ impl Target {
 struct CursorTarget {
     target: Target,
     url: Option<String>,
-    publication_expected: bool,
+    stop_block: Option<u64>,
     chain_id: u64,
     lag_limit: u64,
 }
@@ -105,10 +85,7 @@ impl Monitor {
                         network: net.db_name().into(),
                     },
                     url,
-                    publication_expected: settings.stop_block(net).is_none()
-                        && settings
-                            .start_override(net)
-                            .is_none_or(|start| start <= index.start_block()),
+                    stop_block: settings.stop_block(net),
                     chain_id: index.chain_id() as u64,
                     lag_limit: net.confirmations() + net.publish_lag(),
                 });
@@ -121,7 +98,7 @@ impl Monitor {
                     network: land.network.clone(),
                 },
                 url: land.rpc_url.clone(),
-                publication_expected: land.stop_block.is_none(),
+                stop_block: land.stop_block,
                 chain_id: if land.network == crate::chain_index::registries::NETWORK_SEPOLIA {
                     11_155_111
                 } else {
@@ -175,6 +152,7 @@ struct Cursor {
     source: String,
     network: String,
     last_block: i64,
+    full_history: bool,
     chain_id: Option<i64>,
     folded_block: Option<i64>,
     folded_at: Option<NaiveDateTime>,
@@ -217,10 +195,10 @@ impl Monitor {
         .collect::<HashMap<_, _>>();
 
         let cursors = sqlx::query_as::<_, Cursor>(
-            "SELECT indexer AS source, network, last_block, folded_block, folded_at, chain_id,
+            "SELECT indexer AS source, network, last_block, folded_block, folded_at, chain_id, full_history,
                     quarantined_at IS NOT NULL AS quarantined FROM shop.chain_cursor
              UNION ALL SELECT 'land_authz', network, last_block, folded_block, folded_at,
-                    NULL::bigint, false FROM land_authz.index_cursor WHERE land_registry = $1 AND estate_registry = $2",
+                    NULL::bigint, full_replay_started, false FROM land_authz.index_cursor WHERE land_registry = $1 AND estate_registry = $2",
         )
         .bind(&self.land_registry).bind(&self.estate_registry)
         .fetch_all(pool)
@@ -236,12 +214,21 @@ impl Monitor {
             let row = cursors
                 .iter()
                 .find(|r| r.source == c.target.source && r.network == c.target.network);
-            let head = c
-                .url
-                .as_deref()
-                .and_then(|url| heads[url])
-                .filter(|(id, _)| *id == c.chain_id)
-                .map(|(_, h)| h);
+            let probe = c.url.as_deref().and_then(|url| heads[url]);
+            let head = match probe {
+                Some((id, height)) if id == c.chain_id => Some(height),
+                Some((id, _)) => {
+                    tracing::debug!(network = %c.target.network, source = c.target.source, expected = c.chain_id, actual = id, "index RPC chain ID mismatch");
+                    None
+                }
+                None => {
+                    tracing::debug!(network = %c.target.network, source = c.target.source, "index RPC head unavailable");
+                    None
+                }
+            };
+            if row.is_none() {
+                tracing::debug!(network = %c.target.network, source = c.target.source, "matching index cursor missing");
+            }
             c.report(row, head, now);
         }
         for m in &self.mirrors {
@@ -271,9 +258,14 @@ impl CursorTarget {
             .map(|(h, r)| (h as i128 - i128::from(r.last_block)).max(0) as f64);
         t.set("catalyst_index_source_observed", f64::from(lag.is_some()));
         t.set("catalyst_index_lag_limit_blocks", self.lag_limit as f64);
+        let held = self
+            .stop_block
+            .zip(row)
+            .is_some_and(|(stop, row)| i128::from(row.last_block) >= i128::from(stop));
+        t.set("catalyst_index_held_at_stop", f64::from(held));
         t.set(
             "catalyst_index_publication_expected",
-            f64::from(self.publication_expected),
+            f64::from(row.is_some_and(|r| r.full_history) && !held),
         );
         t.set("catalyst_index_lag_blocks", lag.unwrap_or(f64::NAN));
         t.set(
@@ -380,10 +372,12 @@ mod tests {
         land.index_enabled = true;
         land.land_registry = "land".into();
         land.estate_registry = "estate".into();
+        land.stop_block = Some(35);
         let without_land_rpc = Monitor::configured(&market, &land, Some(false));
+        land.stop_block = None;
         land.rpc_url = Some(url);
         let monitor = Monitor::configured(&market, &land, Some(true));
-        let recorder = comms::metrics::prometheus_builder()
+        let recorder = crate::comms::metrics::prometheus_builder()
             .unwrap()
             .build_recorder();
         let handle = recorder.handle();
@@ -403,6 +397,15 @@ mod tests {
             gauge(&incomplete, "source_observed", "nft", "ethereum"),
             1.0
         );
+        assert_eq!(
+            gauge(
+                &incomplete,
+                "held_at_stop",
+                "land_authz",
+                "ethereum-mainnet"
+            ),
+            1.0
+        );
         assert!(!incomplete.contains("source=\"rentals\""));
         assert!(!incomplete.contains("source=\"committee\""));
         monitor.sample(&pool, &http).await.unwrap();
@@ -410,6 +413,7 @@ mod tests {
         assert_eq!(gauge(&text, "lag_blocks", "nft", "ethereum"), 12.0);
         assert_eq!(gauge(&text, "quarantined", "nft", "ethereum"), 0.0);
         assert_eq!(gauge(&text, "folded_block", "nft", "ethereum"), 88.0);
+        assert_eq!(gauge(&text, "publication_expected", "nft", "ethereum"), 1.0);
         assert!(gauge(&text, "fold_age_seconds", "nft", "ethereum") >= 10800.0);
         assert_eq!(
             gauge(&text, "lag_blocks", "land_authz", "ethereum-mainnet"),
@@ -451,6 +455,15 @@ mod tests {
                 "ethereum-mainnet"
             )
             .is_nan()
+        );
+        sqlx::query("UPDATE shop.chain_cursor SET full_history = false WHERE indexer = 'nft'")
+            .execute(&pool)
+            .await
+            .unwrap();
+        monitor.sample(&pool, &http).await.unwrap();
+        assert_eq!(
+            gauge(&handle.render(), "publication_expected", "nft", "ethereum"),
+            0.0
         );
         height.store(200, Ordering::Relaxed);
         monitor.sample(&pool, &http).await.unwrap();

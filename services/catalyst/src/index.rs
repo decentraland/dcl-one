@@ -9,7 +9,12 @@ pub async fn run(mut config: Config) -> anyhow::Result<()> {
     config.node.init_tracing();
     tracing::info!("{}", catalyst_config::posture::startup_line(&config));
     config.resolve_secret_files()?;
-    let export_metrics = metrics::install()?;
+    let metrics_bind = config.node.index_metrics_bind.as_deref();
+    if let Some(raw) = metrics_bind {
+        let bind = crate::comms::metrics::operator_metrics_bind("INDEX_METRICS_BIND", raw)?;
+        crate::comms::metrics::install_prometheus_exporter(bind)?;
+        tracing::info!(%bind, "index /metrics listening");
+    }
     let pool = db::connect_pool(
         &config.node.database_url,
         &db::PoolSettings {
@@ -37,7 +42,7 @@ pub async fn run(mut config: Config) -> anyhow::Result<()> {
         Some(market.index.clone()),
     ));
     land.spawn_jobs(&jobs);
-    if export_metrics {
+    if metrics_bind.is_some() {
         metrics::spawn(
             &jobs,
             &market,

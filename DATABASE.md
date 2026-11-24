@@ -2450,6 +2450,14 @@ fold record, a publish and a rewind; the table stays at a dozen rows.
 `shop.chain_checkpoint` holds each projection's recovery points (see
 "Reorgs").
 
+With `INDEX_METRICS_BIND` set, the index process reads these bounded cursor
+tables once per minute. It samples the height, stored history mode, fold
+publication and quarantine from `shop.chain_cursor` and the height, replay
+mode and fold from `land_authz.index_cursor` for its configured registries
+and network. A second read samples complete-pass times and page counts from
+`shop.mirror_state` and `shop.trades_mirror` for the configured sources.
+The sampler uses the index worker's existing pool and writes no rows.
+
 **Ownership.** Each network has a supervisor job, `chain-walk-ethereum` and
 `chain-walk-matic`, in the process that runs the indexes. It walks each
 projection that process enables under the projection's own lease,

@@ -4,7 +4,19 @@ Set `INDEX_METRICS_BIND` on the `catalyst index` process to an allocated
 loopback socket address. Scrape its `/metrics` endpoint every minute with
 the Prometheus job name `catalyst-index`. Use a collector in the same
 network namespace or a private scrape proxy. Keep each expected index
-instance in target discovery across process restarts.
+instance in target discovery across process restarts. When a target can
+disappear with its collector, supply one independent recording rule on
+the evaluating Prometheus per expected instance, with the scrape target's
+`job`, `instance` and, when present, `cluster` labels.
+
+```yaml
+- record: catalyst_index_target_expected
+  expr: vector(1)
+  labels: {job: catalyst-index, instance: "<expected instance>"}
+```
+
+This deployment-owned inventory lets the missing-metrics rule identify a
+removed instance while its peers still report.
 
 Load `index.rules.yml` through Prometheus `rule_files`. Configure its
 `alerting.alertmanagers` and add this child route under the deployment's
@@ -20,11 +32,15 @@ The index worker checks the configured shop projections, LAND cursor and
 mirrors every minute. Projections in the same process that use one RPC
 endpoint share a head probe. The lag gauge measures the chain head minus the persisted last block.
 The threshold includes the index's confirmation depth and publication
-allowance. A stationary block only alerts while the index exceeds that
-threshold. A quarantine alerts even if the RPC is down. The published
-fold has its own height and age. A full walk that stays near the head for
-30 minutes without a publication also alerts. Partial and stop-bounded
-development walks are excluded from that publication warning. Mirror age
+allowance. Rules use the most recent valid lag from the last four minutes, so a single
+missed head probe preserves lag, stall and unpublished warning timers. A walk held at its configured stop block, or in quarantine, is
+excluded from both. A stationary block alerts while an active walk exceeds
+its lag threshold. A quarantine alerts even if the RPC is down. The published
+fold has its own height and age. Readers require a publication within
+30 minutes. A publication two hours old triggers the stale-publication
+warning. A full walk that stays near the head for
+30 minutes without a publication also alerts. The persisted full-history
+or replay flag determines whether a cursor can publish. Mirror age
 measures seconds since the last complete pass, using the freshness budget
 of the mirror's readers.
 
