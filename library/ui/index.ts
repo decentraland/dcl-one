@@ -1,6 +1,5 @@
 export * from './foundations'
-export { default as ShopChrome, ShopNavigation } from './apps/shop/ShopChrome'
-export type { ShopNavSet, ShopNavTab, ShopSection } from './apps/shop/ShopChrome'
+export * from './apps/shop'
 
 export { NavBar } from './components/NavBar/NavBar'
 export type {
