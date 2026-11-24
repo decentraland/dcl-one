@@ -343,8 +343,8 @@ importers:
         specifier: workspace:*
         version: link:../../../../hashing
       '@dcl/inspector':
-        specifier: 7.36.3
-        version: 7.36.3(@dcl/ecs@packages+@dcl+ecs)
+        specifier: 7.59.0
+        version: 7.59.0(@dcl/ecs@packages+@dcl+ecs)
       '@dcl/linker-dapp':
         specifier: 0.16.0
         version: 0.16.0
@@ -705,8 +705,8 @@ packages:
     resolution: {integrity: sha512-2sfCvyLKEJlmUrgkWQh57NnjvYeynJWyGCr/WMcUFFur1xlbJEC3kgqbkkNEmVKuOhM/DeYoL5fQDV/BGcxHQg==}
     engines: {node: '>=18.0.0'}
 
-  '@dcl/inspector@7.36.3':
-    resolution: {integrity: sha512-EwvXoZlXvDKZsK2qrRYG+Yia7qKHWgQUqbWY7e6zSVMffRDhhjVyS2FEipgrLqL0YMrTkJcfAsHaNnZgZsnP4A==}
+  '@dcl/inspector@7.59.0':
+    resolution: {integrity: sha512-PnkweMY7arJeTWfh/9pptjxQUNRDSk/JVT9e9O43D286D4qJSiSmwRtY4tVY+85pAjySbjzSeF8o7eBznrQxtA==}
 
   '@dcl/linker-dapp@0.16.0':
     resolution: {integrity: sha512-UdEWZGQc7Zg8YARBNrC6zXONoVRh3ivJULASdZHJj8+9aA28fNJjxZHSCPhgPP459i1ZD5w022ubL1Vgm/e+tA==}
@@ -4377,7 +4377,7 @@ snapshots:
 
   '@dcl/gltf-validator-ts@1.0.14': {}
 
-  '@dcl/inspector@7.36.3(@dcl/ecs@packages+@dcl+ecs)':
+  '@dcl/inspector@7.59.0(@dcl/ecs@packages+@dcl+ecs)':
     dependencies:
       '@babel/parser': 7.28.5
       '@dcl/asset-packs': 2.17.2(@dcl/ecs@packages+@dcl+ecs)
