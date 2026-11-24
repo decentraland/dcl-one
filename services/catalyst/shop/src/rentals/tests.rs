@@ -83,6 +83,7 @@ async fn insert(
             distance_to_plaza: Some(3),
             adjacent_to_road: Some(true),
             estate_size: None,
+            membership_block: 0,
             updated_at: now,
         },
         now,
@@ -224,6 +225,7 @@ async fn refresh_updates_metadata_and_returns_the_listing() {
         distance_to_plaza: Some(1),
         adjacent_to_road: Some(false),
         estate_size: Some(4),
+        membership_block: 0,
         updated_at: later,
     };
     let refreshed = db
@@ -1154,6 +1156,7 @@ async fn a_relisting_at_the_stored_asset_time_replaces_the_details() {
                 distance_to_plaza: Some(3),
                 adjacent_to_road: Some(true),
                 estate_size: None,
+                membership_block: 0,
                 updated_at: at,
             },
             now,
@@ -1243,18 +1246,92 @@ async fn an_estate_reads_its_members_size_and_proximity() {
     transfer(&pool, ESTATE, "1", LESSOR, 1, 100).await;
     transfer(&pool, LAND, "2", ESTATE, 2, 110).await;
     transfer(&pool, LAND, "3", ESTATE, 3, 120).await;
-    sqlx::raw_sql("UPDATE land_authz.token_right SET y=19 WHERE token_id=3;
+    sqlx::raw_sql("UPDATE land_authz.token_right SET y=-121 WHERE token_id=3;
         INSERT INTO land_authz.estate_land VALUES (2,1,4,0),(3,1,5,0);
         INSERT INTO shop.land_data (token_address,token_id,name,updated_block,updated_log)
         SELECT token_address,token_id,'Estate Name',1,1 FROM land_authz.token_right WHERE token_id=1;")
         .execute(&pool).await.unwrap();
-    let state = state_over(pool, Some(market()), true);
+    let state = state_over(pool.clone(), Some(market()), true);
     let nft = state.nft(1, ESTATE, "1").await.unwrap().unwrap();
     assert_eq!(nft.owner_address, LESSOR);
     assert_eq!(nft.search_text, "estate name");
     assert_eq!(
         (nft.estate_size, nft.distance_to_plaza, nft.adjacent_to_road),
         (Some(2), Some(9), Some(true))
+    );
+    let now = chrono::Utc::now().naive_utc();
+    let mut body = creation("1", "0xestate");
+    body.contract_address = ESTATE.into();
+    let listing = state
+        .db
+        .insert_listing(
+            &nft.nft_id,
+            &super::handlers::listing_metadata(&nft, now),
+            now,
+            &body,
+            LESSOR,
+            now,
+        )
+        .await
+        .unwrap();
+    sqlx::query("INSERT INTO land_authz.authz_event (block_number, log_index, block_time, token_address, token_id, estate_id, kind)
+        VALUES (101,0,200,$1,2,1,'remove_land')").bind(ESTATE).execute(&pool).await.unwrap();
+    sqlx::raw_sql(
+        "DELETE FROM land_authz.estate_land WHERE land_token_id=2;
+        UPDATE land_authz.index_cursor SET last_block=101,folded_block=101;",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+    let newer = state.nft(1, ESTATE, "1").await.unwrap().unwrap();
+    assert_eq!(
+        (
+            newer.estate_size,
+            newer.distance_to_plaza,
+            newer.adjacent_to_road
+        ),
+        (Some(1), Some(-1), Some(false))
+    );
+    assert_eq!(nft.updated_at, newer.updated_at);
+    assert!(
+        state
+            .db
+            .refresh_metadata_for_rental(
+                &listing.id,
+                &super::handlers::listing_metadata(&newer, now),
+                now
+            )
+            .await
+            .unwrap()
+            .is_some()
+    );
+    assert!(
+        state
+            .db
+            .refresh_metadata_for_rental(
+                &listing.id,
+                &super::handlers::listing_metadata(&nft, now),
+                now
+            )
+            .await
+            .unwrap()
+            .is_none()
+    );
+    let saved: (i32, i32, bool) = sqlx::query_as(
+        "SELECT estate_size::int, distance_to_plaza::int, adjacent_to_road
+        FROM signatures.rental_assets WHERE contract_address=$1 AND token_id=1",
+    )
+    .bind(ESTATE)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        saved,
+        (
+            1,
+            newer.distance_to_plaza.unwrap(),
+            newer.adjacent_to_road.unwrap()
+        )
     );
 }
 
@@ -1371,11 +1448,22 @@ async fn a_running_rent_conflicts_and_an_ended_one_lets_its_lessor_relist() {
     .execute(&pool)
     .await
     .unwrap();
-    rent(3, LESSOR.to_string(), now - 40 * 86_400).await;
+    transfer(&pool, LAND, &token, RENTALS, 12, now - 40 * 86_400).await;
+    let (status, _, out) = post().await;
+    assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE, "{out}");
+    assert_eq!(out["source"], "rentals-index");
+    assert_eq!(counts(&pool, &token).await, (0, 0, 0, 0));
+    sqlx::query(
+        "UPDATE shop.chain_cursor SET last_block=14, folded_block=14 WHERE indexer='rentals'",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+    rent(12, LESSOR.to_string(), now - 40 * 86_400).await;
     let (status, _, out) = post().await;
     assert_eq!(status, StatusCode::UNAUTHORIZED, "{out}");
 
-    rent(4, w.address.clone(), now - 40 * 86_400).await;
+    rent(14, w.address.clone(), now - 40 * 86_400).await;
     let (status, _, out) = post().await;
     assert_eq!(status, StatusCode::CREATED, "{out}");
     assert_eq!(out["data"]["rentalContractAddress"], RENTALS);
@@ -1386,20 +1474,18 @@ async fn a_running_rent_conflicts_and_an_ended_one_lets_its_lessor_relist() {
 /// a readiness that never comes; at mainnet's it waits for the index.
 #[tokio::test]
 async fn a_held_asset_off_the_indexed_contract_is_not_relisted() {
-    let sepolia = super::signature::rentals_contract(11_155_111).unwrap();
-    let now = chrono::Utc::now();
-    let last_rent = (LESSOR.to_string(), now.timestamp() - 86_400);
     assert_eq!(
-        super::handlers::held_for_lessor(&lazy_pool(), now, sepolia, Some(&last_rent), LESSOR)
-            .await,
+        super::handlers::held_for_lessor(None, 1, LESSOR),
         Some(false)
     );
-
     let Some(pool) = crate::db::scratch::isolated_pool(2).await else {
         return;
     };
+    let evidence = super::index::rent_evidence(&pool, RENTALS, LAND, "1")
+        .await
+        .unwrap();
     assert_eq!(
-        super::handlers::held_for_lessor(&pool, now, RENTALS, Some(&last_rent), LESSOR).await,
+        super::handlers::held_for_lessor(Some(&evidence), 1, LESSOR),
         None
     );
 }

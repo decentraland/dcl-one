@@ -6,8 +6,8 @@
 -- `metadata` becomes `rental_assets` keyed by (contract, token) with the
 -- wire's `nft_id` as a UNIQUE, uuids come from gen_random_uuid (no uuid-ossp),
 -- every timestamp is `timestamp without time zone` UTC. The asset's owner and
--- LAND columns come from the marketplace subgraph reader at create/refresh
--- time (the old squid.nft probe); `fetched_at` is their freshness. Status
+-- LAND columns come from the published chain indexes at create/refresh
+-- time; `fetched_at` records the metadata refresh. Status
 -- comes from the `rentals` chain index (shop.rental_event) and from the
 -- `rental-listing-status` pass (transfer, dissolution, expiry); no sync row
 -- exists. Writes are local authority behind DATA_WRITES_ENABLED.
@@ -30,6 +30,8 @@ CREATE TABLE signatures.rental_assets (
     nft_created_at timestamp without time zone NOT NULL,
     nft_updated_at timestamp without time zone NOT NULL,
     fetched_at timestamp without time zone NOT NULL,
+    -- Published LAND block for estate membership, zero on imported rows and parcels.
+    membership_block bigint NOT NULL DEFAULT 0,
     PRIMARY KEY (contract_address, token_id),
     CONSTRAINT rental_assets_contract_lowercase CHECK (contract_address = lower(contract_address)),
     CONSTRAINT rental_assets_category_known CHECK (category IN ('parcel', 'estate'))

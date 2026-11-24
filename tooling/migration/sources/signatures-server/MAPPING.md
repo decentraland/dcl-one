@@ -19,7 +19,8 @@ LAND/Estate rentals listings.
 - `rental_assets`: `nft_id` comes from `metadata.id` (lowercased), network and
   chain from the newest rental. `fetched_at` is the newest rental's create time,
   which is when upstream last read the NFT. A newer `fetched_at` in the target
-  wins.
+  wins. Imported metadata has no LAND membership block. When the upstream row
+  wins, `membership_block` returns to zero until the next indexed fill.
 - `status`, `started_at`, `rented_days` and `tenant` are upstream's
   rentals-subgraph sync. They seed the node, and the node's `rentals` chain
   index (`shop.rental_event`) refolds them once it is published. Rows the sync

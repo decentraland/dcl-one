@@ -90,19 +90,6 @@ macro_rules! latest_rent_sql {
     };
 }
 
-/// The lessor the Rentals contract (`$1`) holds the asset (`$2`, `$3`) for,
-/// the legacy `isAssetControlledByLessor` read: the lessor of the latest
-/// indexed rent, or no row when that rent is older than the asset row the
-/// route read (`$4`, its latest transfer time). A transfer into the contract stamps
-/// that row, and a rent lands in the block of its transfer or later, so an
-/// older rent means the rentals index has not reached the one the contract
-/// holds the asset under.
-const CUSTODY_SQL: &str = concat!(
-    "SELECT ren.signer FROM (",
-    latest_rent_sql!("$1", "$2", "$3::numeric"),
-    ") ren WHERE ren.block_time >= $4"
-);
-
 async fn cancel(
     pool: &PgPool,
     cancels: &[(Uuid, &'static str)],
@@ -284,7 +271,7 @@ pub async fn sync_listing(
     }
     let row = sqlx::query(
         "SELECT r.status::text AS status, r.expiration < $2 AS expired, l.lessor, \
-                r.contract_address, r.token_id::text AS token_id, \
+                r.created_at, r.contract_address, r.token_id::text AS token_id, a.membership_block, \
                 extract(epoch FROM a.nft_updated_at)::bigint AS stored_at \
          FROM signatures.rentals r JOIN signatures.rental_listings l ON l.id = r.id \
          JOIN signatures.rental_assets a ON a.contract_address = r.contract_address AND a.token_id = r.token_id \
@@ -307,20 +294,30 @@ pub async fn sync_listing(
     let owner = transfer.map(|n| n.owner_address.as_str());
     let custody: Option<String> = match transfer {
         Some(n) if rentals_ready && n.owner_address.eq_ignore_ascii_case(&venue) => {
-            sqlx::query_scalar(CUSTODY_SQL)
-                .bind(&venue)
-                .bind(row.get::<String, _>("contract_address"))
-                .bind(row.get::<String, _>("token_id"))
-                .bind(n.transferred_at)
-                .fetch_optional(pool)
-                .await?
+            let evidence = index::rent_evidence(
+                pool,
+                &venue,
+                row.get("contract_address"),
+                row.get("token_id"),
+            )
+            .await?;
+            evidence
+                .covers_transfer(n.transfer_block)
+                .then_some(evidence.signer)
+                .flatten()
         }
         _ => None,
     };
+    let created_at = row
+        .get::<NaiveDateTime, _>("created_at")
+        .and_utc()
+        .timestamp();
     let dissolved = nft.is_some_and(|n| {
         n.category == "estate"
             && n.estate_size == Some(0)
-            && n.membership_checked_at.is_some_and(|at| at > stored_at)
+            && n.membership_block >= row.get::<i64, _>("membership_block")
+            && n.membership_checked_at
+                .is_some_and(|at| at > stored_at && at > created_at)
     });
     if let Some(reason) = cancel_reason(
         row.get("expired"),
@@ -574,6 +571,8 @@ mod tests {
             // Newer than the seeded `nft_updated_at`.
             updated_at: Utc::now().timestamp() + 60,
             transferred_at: Utc::now().timestamp() + 60,
+            transfer_block: 1,
+            membership_block: 1,
             membership_checked_at: Some(Utc::now().timestamp() + 60),
         };
         let now = Utc::now();
@@ -621,6 +620,27 @@ mod tests {
             state_of(pool, estate).await,
             open(),
             "an unknown size is not dissolved"
+        );
+        sqlx::query(
+            "UPDATE signatures.rental_assets SET nft_updated_at=to_timestamp($1) AT TIME ZONE 'UTC'
+            WHERE contract_address=$2 AND token_id=10",
+        )
+        .bind(now.timestamp() - 120)
+        .bind(ESTATE_REGISTRY_MAINNET)
+        .execute(pool)
+        .await
+        .unwrap();
+        let trailing = LandNft {
+            membership_checked_at: Some(now.timestamp() - 60),
+            ..row(LESSOR, "estate", Some(0))
+        };
+        sync_listing(pool, estate, Some(&trailing), now)
+            .await
+            .unwrap();
+        assert_eq!(
+            state_of(pool, estate).await,
+            open(),
+            "LAND's empty observation predates the listing"
         );
         sync_listing(pool, estate, Some(&row(LESSOR, "estate", Some(0))), now)
             .await
@@ -925,6 +945,8 @@ mod tests {
             created_at: 0,
             updated_at: arrived,
             transferred_at: arrived,
+            transfer_block: 40,
+            membership_block: 0,
             membership_checked_at: None,
         };
         publish_rentals_index(pool).await;

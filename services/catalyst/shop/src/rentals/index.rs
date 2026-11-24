@@ -655,23 +655,49 @@ pub fn walks(venue: &str) -> bool {
     venue.eq_ignore_ascii_case(RENTALS_MAINNET)
 }
 
-/// The asset's most recent rent at `venue`: its lessor and when it ends
-/// (unix seconds; the rentals subgraph's `endsAt`, block time plus days).
-pub async fn latest_rent(
+/// The latest rent and the publication that vouches for it, from one SQL snapshot.
+#[derive(sqlx::FromRow)]
+pub(super) struct RentEvidence {
+    pub(super) published_through: Option<i64>,
+    pub(super) rent_block: Option<i64>,
+    pub(super) signer: Option<String>,
+    pub(super) ends_at: Option<i64>,
+}
+
+impl RentEvidence {
+    pub(super) fn covers_transfer(&self, block: i64) -> bool {
+        self.published_through.is_some_and(|head| {
+            head >= block
+                && self
+                    .rent_block
+                    .is_none_or(|rent| (block..=head).contains(&rent))
+        })
+    }
+}
+
+pub(super) async fn rent_evidence(
     pool: &PgPool,
     venue: &str,
     contract_address: &str,
     token_id: &str,
-) -> sqlx::Result<Option<(String, i64)>> {
-    sqlx::query_as(
-        "SELECT signer, block_time + rental_days::bigint * 86400 FROM shop.rental_event \
-         WHERE rentals_address = $1 AND contract_address = $2 AND token_id = $3::numeric AND kind = 'rented' \
-         ORDER BY block_number DESC, log_index DESC LIMIT 1",
-    )
+) -> sqlx::Result<RentEvidence> {
+    let ready = chain_walk::ready_sql("c", "timezone('UTC', now())");
+    sqlx::query_as(sqlx::AssertSqlSafe(format!(
+        "SELECT (SELECT folded_block FROM shop.chain_cursor c WHERE indexer='rentals'
+                   AND network='ethereum' AND {ready}) AS published_through,
+                r.block_number AS rent_block, r.signer, r.ends_at
+         FROM (VALUES (1)) AS anchor(n)
+         LEFT JOIN LATERAL (
+             SELECT block_number, signer, block_time + rental_days::bigint * 86400 AS ends_at
+             FROM shop.rental_event WHERE network='ethereum' AND rentals_address=$1
+               AND contract_address=$2 AND token_id=$3::numeric AND kind='rented'
+             ORDER BY block_number DESC, log_index DESC LIMIT 1
+         ) r ON true"
+    )))
     .bind(venue.to_ascii_lowercase())
     .bind(contract_address.to_ascii_lowercase())
     .bind(token_id)
-    .fetch_optional(pool)
+    .fetch_one(pool)
     .await
 }
 

@@ -1848,7 +1848,8 @@ reads run only on a published land-authz snapshot. The refresh route
 (`PATCH /v1/rentals-listings/{id}`) applies the fold and the same cancellation
 rules to one listing, using the asset row from the published land-authz
 snapshot. A transfer is actionable only when its own block time is newer
-than the stored asset time. Dissolution uses the latest observed LAND event time. The
+than the stored asset time. Dissolution requires a LAND observation later than
+both the listing creation and its stored asset time. The
 route then writes the row to `signatures.rental_assets` only when it is no
 older than the stored one, so a lagging reader replaces no metadata.
 
@@ -1857,7 +1858,9 @@ They read the NFT index publication and LAND rights in one database snapshot.
 Incomplete mint or transfer times, an unavailable publication, or a document
 beyond the LAND fold returns the unavailable envelope. A transfer beyond the
 NFT publication also waits for metadata to catch up. The NFT index publishes
-Ethereum mainnet metadata.
+Ethereum mainnet metadata. A listing by a lessor whose asset is in Rentals
+custody requires a published Rentals cursor and a rent at or after the LAND
+transfer into custody. The lookup reads the rent and its publication together.
 
 Workload: mainnet holds thousands of listings, of which hundreds are open
 (an estimate, not a measurement). Each pass does the following:
@@ -1874,6 +1877,10 @@ Workload: mainnet holds thousands of listings, of which hundreds are open
 Invariants:
 
 - `cancel_reason` is NULL unless the status is `cancelled` (a row `CHECK`).
+- Step `0059_rental_asset_membership_block` records the published LAND block
+  of an estate metadata fill. Existing rows, parcels, and imported metadata
+  carry zero. Create and refresh compare this block and the indexed asset
+  time independently. Equal evidence can refresh the row.
 - The routes never move `rental_assets.nft_updated_at` backwards, and a
   reader row older than the stored one replaces no asset detail. The refresh
   route skips such a row. The create route still creates the listing, and
@@ -1922,8 +1929,8 @@ Invariants:
   be at or after that of the latest folded `transfer` in
   `land_authz.authz_event`: both indexes commit whole blocks of the same
   chain, and a rent either moves the token in its own transaction or finds
-  it already in the contract. The refresh route compares the rent's block time to that of the
-  latest indexed transfer into custody.
+  it already in the contract. Create and refresh compare the rent's block with the
+  latest transfer into custody and verify the Rentals publication covers both.
   While the `rentals` index is not published, neither path reads custody.
 - The signatures-server import keeps a node reason only while upstream also
   says `cancelled`, and clears it otherwise. It skips an upstream row older

@@ -20,6 +20,8 @@ pub struct LandNft {
     pub created_at: i64,
     pub updated_at: i64,
     pub transferred_at: i64,
+    pub transfer_block: i64,
+    pub membership_block: i64,
     pub membership_checked_at: Option<i64>,
 }
 
@@ -72,7 +74,6 @@ pub async fn nft_by_contract_token(
         #[sqlx(flatten)]
         asset: LandNft,
         data_block: Option<i64>,
-        transfer_block: i64,
     }
 
     let row = sqlx::query_as::<_, IndexedAsset>(
@@ -91,6 +92,7 @@ pub async fn nft_by_contract_token(
                     SELECT e.block_time FROM land_authz.authz_event e WHERE e.block_number <= $5
                     ORDER BY e.block_number DESC, e.log_index DESC LIMIT 1
                 ) END AS membership_checked_at,
+                CASE WHEN tr.token_address = $4 THEN $5::bigint ELSE 0 END AS membership_block,
                 coalesce(transfer.block_number, 0) AS transfer_block, d.updated_block AS data_block
          FROM land_authz.token_right tr
          LEFT JOIN shop.land_data d ON d.token_address = tr.token_address AND d.token_id = tr.token_id
@@ -134,7 +136,7 @@ pub async fn nft_by_contract_token(
     if row.asset.created_at <= 0 || row.asset.transferred_at <= 0 {
         return Err(NftReadError::Unavailable);
     }
-    if row.transfer_block > metadata_head
+    if row.asset.transfer_block > metadata_head
         || row.data_block.is_some_and(|block| block > metadata_head)
     {
         return Err(NftReadError::MetadataUnavailable);

@@ -15,7 +15,7 @@ use super::db::{
     is_decimal,
 };
 use super::http::{ApiError, Ok2};
-use super::nft::NftReadError;
+use super::nft::{LandNft, NftReadError};
 use super::signature::{has_valid_v, rentals_contract, verify_rentals_listing_signature};
 use super::types::{ADDRESS_ZERO, ContractRentalListing, RentalListingCreation};
 use super::{SharedState, signed_path};
@@ -190,24 +190,37 @@ fn naive_secs(secs: i64, fallback: chrono::NaiveDateTime) -> chrono::NaiveDateTi
         .unwrap_or(fallback)
 }
 
-/// Whether `signer` may list an asset the Rentals contract at `rentals` holds
-/// (it keeps the asset after a rent until claimed): the last rent there was
-/// theirs. `None` while the index is not ready to name that lessor; `false`
-/// at a contract the index does not walk (any but mainnet's).
-pub(super) async fn held_for_lessor(
-    pool: &sqlx::PgPool,
-    now: chrono::DateTime<chrono::Utc>,
-    rentals: &str,
-    latest_rent: Option<&(String, i64)>,
+pub(super) fn listing_metadata(nft: &LandNft, now: chrono::NaiveDateTime) -> ListingMetadata<'_> {
+    ListingMetadata {
+        category: &nft.category,
+        search_text: &nft.search_text,
+        distance_to_plaza: nft.distance_to_plaza,
+        adjacent_to_road: nft.adjacent_to_road,
+        estate_size: nft.estate_size,
+        membership_block: nft.membership_block,
+        updated_at: naive_secs(nft.updated_at, now),
+    }
+}
+
+/// An indexed venue can establish custody once its publication and its rent
+/// both cover the transfer into the venue.
+pub(super) fn held_for_lessor(
+    evidence: Option<&super::index::RentEvidence>,
+    transfer_block: i64,
     signer: &str,
 ) -> Option<bool> {
-    if !super::index::walks(rentals) {
+    let Some(evidence) = evidence else {
         return Some(false);
-    }
-    if !super::index::ready(pool, now).await {
+    };
+    if !evidence.covers_transfer(transfer_block) {
         return None;
     }
-    Some(latest_rent.is_some_and(|(lessor, _)| lessor.eq_ignore_ascii_case(signer)))
+    Some(
+        evidence
+            .signer
+            .as_deref()
+            .is_some_and(|lessor| lessor.eq_ignore_ascii_case(signer)),
+    )
 }
 
 pub async fn create_rentals_listing(
@@ -274,27 +287,6 @@ pub async fn create_rentals_listing(
         Err(e) => return Err(ApiError::bad_request(e.to_string())),
     }
 
-    // Only the indexed contract has rents to read; elsewhere a rented asset is the contract's, so the owner check refuses it.
-    let latest_rent = if super::index::walks(rentals) {
-        super::index::latest_rent(
-            state.db.pool(),
-            rentals,
-            &body.contract_address,
-            &body.token_id,
-        )
-        .await?
-    } else {
-        None
-    };
-    if latest_rent
-        .as_ref()
-        .is_some_and(|(_, ends_at)| *ends_at > now.timestamp())
-    {
-        return Err(ApiError::conflict(
-            "An open rental already exists for this token",
-        ));
-    }
-
     let nft = match state
         .nft(body.chain_id, &body.contract_address, &body.token_id)
         .await
@@ -304,9 +296,32 @@ pub async fn create_rentals_listing(
         Err(e) => return Ok(reader_unavailable(e)),
     };
 
+    // Only the indexed contract has rents to read; elsewhere a rented asset is the contract's, so the owner check refuses it.
+    let rent_evidence = if super::index::walks(rentals) {
+        Some(
+            super::index::rent_evidence(
+                state.db.pool(),
+                rentals,
+                &body.contract_address,
+                &body.token_id,
+            )
+            .await?,
+        )
+    } else {
+        None
+    };
+    if rent_evidence
+        .as_ref()
+        .and_then(|r| r.ends_at)
+        .is_some_and(|ends_at| ends_at > now.timestamp())
+    {
+        return Err(ApiError::conflict(
+            "An open rental already exists for this token",
+        ));
+    }
+
     let relist = if nft.owner_address.eq_ignore_ascii_case(rentals) {
-        let Some(held) =
-            held_for_lessor(state.db.pool(), now, rentals, latest_rent.as_ref(), &signer).await
+        let Some(held) = held_for_lessor(rent_evidence.as_ref(), nft.transfer_block, &signer)
         else {
             return Ok(unavailable(
                 Source::RentalsIndex,
@@ -339,14 +354,7 @@ pub async fn create_rentals_listing(
         .db
         .insert_listing(
             &nft.nft_id,
-            &ListingMetadata {
-                category: &nft.category,
-                search_text: &nft.search_text,
-                distance_to_plaza: nft.distance_to_plaza,
-                adjacent_to_road: nft.adjacent_to_road,
-                estate_size: nft.estate_size,
-                updated_at: naive_secs(nft.updated_at, now_naive),
-            },
+            &listing_metadata(&nft, now_naive),
             naive_secs(nft.created_at, now_naive),
             &body,
             &signer,
@@ -381,18 +389,7 @@ pub async fn refresh_rentals_listing(
         Ok(Some(nft)) => {
             if let Some(refreshed) = state
                 .db
-                .refresh_metadata_for_rental(
-                    &id,
-                    &ListingMetadata {
-                        category: &nft.category,
-                        search_text: &nft.search_text,
-                        distance_to_plaza: nft.distance_to_plaza,
-                        adjacent_to_road: nft.adjacent_to_road,
-                        estate_size: nft.estate_size,
-                        updated_at: naive_secs(nft.updated_at, now),
-                    },
-                    now,
-                )
+                .refresh_metadata_for_rental(&id, &listing_metadata(&nft, now), now)
                 .await?
             {
                 return Ok(Ok2(StatusCode::OK, refreshed).into_response());
