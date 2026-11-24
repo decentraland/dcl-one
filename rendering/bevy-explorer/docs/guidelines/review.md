@@ -13,16 +13,21 @@ not from the PR branch: a branch cut before a rule landed is still reviewed agai
 1. **Intent and breadth.** Say briefly what the PR does, how far it reaches, and why the design
    fits before listing what it should change.
 2. **One PR.** Is this one problem, fixed at the sentence that names it? See R1.
-3. **Correctness.** Bugs, races, leaks, ordering, platform behaviour.
+3. **Correctness.** Bugs, races, leaks, ordering, platform behaviour. For every value whose
+   behaviour the PR changes (a diagnostic, component, event, stream or setting), list everything
+   in the workspace that reads it, not only the readers in the diff, and check that each still
+   holds.
 4. **The rules on this page.** Work through every rule against the diff; do not sample. A rule
    with no hit is not reported.
 5. **Consolidation.** Check every new path against what already exists. See R3.
 6. **Structural changes.** Always include a section listing each top-level structural change and
    whether the PR justifies it. See R17.
 7. **Earlier review rounds.** On a re-review, check that each earlier finding, the bot's included,
-   was fixed or answered. One left without either is a finding at its original severity.
+   was fixed or answered. One left without either is a finding at its original severity. Then
+   review the whole PR again, not only the commits since the last round.
 
-State what was built or run and what was only read. Leave mergeability checks and merge-conflict
+The description's account of where the risk lies is a claim to check, not the bounds of the
+review. State what was built or run and what was only read. Leave mergeability checks and merge-conflict
 enforcement to GitHub. Continue reviewing the diff. Mention a merge conflict only to explain
 why a specific verification step could not be completed.
 
