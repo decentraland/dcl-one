@@ -169,6 +169,9 @@ pub async fn serve(
     worlds::rooms::ensure_world_scene_ban_release(&pool).await?;
     worlds::rooms::ensure_scene_admin_place_release(&pool).await?;
     worlds::rooms::ensure_genesis_scene_ban_release(&pool).await?;
+    if config.writes.social_writes_enabled {
+        comms::gatekeeper::streaming::backfill_admin_place_keys(&pool).await?;
+    }
 
     let storage_root = Path::new(&config.node.storage_root_folder);
     let storage = Arc::new(

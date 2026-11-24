@@ -221,8 +221,16 @@ tag (name, badges, distance, opacity, scale) and `/nametag_bubble` shows a test 
       dust and vignette around the live avatar, which waves, plays an idle emote every 8–20 s and
       turns when dragged. Settings → Lobby, in the full page or the lobby's compact Settings, switches
       the look at once (Halloween 2026, Game World).
-      Customize opens the Backpack modal with the avatar through its hole and hands the stage back on
-      close; Jump In loads the world (the hold is released) and a failed trip returns to the lobby.
+      Customize opens the Backpack modal: the lobby around it keeps the stage's last frame, the
+      preview stays the Backpack's purple until the engine reports `avatarPreviewReady`, then shows
+      the avatar on its podium, with nothing of the lobby stage or the world in between and nothing
+      of the preview outside the modal; closing hands the live stage back. Jump In loads the world
+      (the hold is released) and a failed trip returns to the lobby.
+- [ ] **Minimap Camera style** (`bridge-scene/src/domains/minimap.tsx`, map region): picking Camera in
+      Minimap settings, expanding the minimap in that style and entering a World each show the map
+      square black until the engine reports `minimapReady`, then the top-down view, with nothing of
+      the player's own view in the square in between. Switching back to Satellite or Parcel atlas
+      shows the tiles at once.
 - [ ] **Lobby page** (`features/lobby`): the widgets sit on the four corner grids as the stored layout
       says; edit mode (the pencil) frames them, drags them with the others making room, lists the
       ones off the grids in Customize Lobby, and Save keeps the layout across a reload while Cancel,
