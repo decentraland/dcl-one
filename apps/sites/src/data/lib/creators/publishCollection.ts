@@ -300,8 +300,9 @@ export type PublishResult = {
 /**
  * The publish sequence: re-save the collection (regenerates salt + contract address), verify the
  * items match the server, re-save items still carrying legacy hashes, record the ToS, pay and send
- * createCollection, then lock the collection. A locked collection is not re-saved, and is refused as
- * `locked` when the address its createCollection arguments derive is not the one it stored.
+ * createCollection, then lock the collection. A locked collection is not re-saved. A
+ * collection whose createCollection arguments derive another address than the one it stored is
+ * refused, as `locked` when it is locked.
  * Errors are normalized to PublishCollectionError.
  */
 export async function publishCollection(params: PublishParams, deps: PublishDeps): Promise<PublishResult> {
@@ -327,11 +328,10 @@ export async function publishCollection(params: PublishParams, deps: PublishDeps
 
     const args = buildCreateCollectionArgs(collection, items, address, chainId)
     if (
-      locked &&
       collection.contractAddress?.toLowerCase() !==
-        getCollectionAddress(chainId, collection.salt, buildCollectionInitializeData(collection, items, address))
+      getCollectionAddress(chainId, collection.salt, buildCollectionInitializeData(collection, items, address))
     ) {
-      throw new PublishCollectionError('locked')
+      throw new PublishCollectionError(locked ? 'locked' : 'generic')
     }
 
     try {

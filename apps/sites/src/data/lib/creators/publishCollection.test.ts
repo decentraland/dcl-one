@@ -122,10 +122,10 @@ function makeDeps(overrides: Partial<PublishDeps> = {}): PublishDeps & { calls: 
     }
   return {
     calls,
-    saveCollection: track('saveCollection', async (c: Collection) => ({
+    saveCollection: track('saveCollection', async (c: Collection, saved: Item[]) => ({
       ...c,
       salt: SALT,
-      contractAddress: '0xc0ffee'
+      contractAddress: getCollectionAddress(CHAIN_ID, SALT, buildCollectionInitializeData(c, saved, ADDRESS))
     })),
     fetchItems: track('fetchItems', async () => items),
     rehashItem: track('rehashItem', async (item: Item) => item),
@@ -380,7 +380,9 @@ describe('publishCollection', () => {
     ])
     expect(result.txHash).toBe('0xtx')
     expect(result.collection.lock).toBe(1234)
-    expect(result.collection.contractAddress).toBe('0xc0ffee')
+    expect(result.collection.contractAddress).toBe(
+      getCollectionAddress(CHAIN_ID, SALT, buildCollectionInitializeData(collection, items, ADDRESS))
+    )
   })
 
   it('charges the fee in cents and sends the useCredits transaction to the CreditsManager on a Decentraland host', async () => {
@@ -600,6 +602,25 @@ describe('publishCollection', () => {
         })
         expect(deps.calls).toEqual(['fetchItems'])
       })
+    })
+  })
+
+  describe('when the save answers an address another chain derives', () => {
+    let deps: ReturnType<typeof makeDeps>
+
+    beforeEach(() => {
+      deps = makeDeps({
+        saveCollection: async c => ({
+          ...c,
+          salt: SALT,
+          contractAddress: getCollectionAddress(137, SALT, buildCollectionInitializeData(c, items, ADDRESS))
+        })
+      })
+    })
+
+    it('should refuse the publication before recording the ToS or paying', async () => {
+      await expect(publishCollection(params, deps)).rejects.toMatchObject({ reason: 'generic' })
+      expect(deps.calls).toEqual(['fetchItems'])
     })
   })
 
