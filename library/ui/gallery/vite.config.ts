@@ -44,6 +44,25 @@ export function noHostPackages(): Plugin {
     }
   }
 }
+const SITES_UI = '\0gallery:sites-ui'
+/**
+ * The gallery shows the shared foundations and components. The root entry also re-exports the app-scoped Sites UI
+ * (apps/sites), which the gallery never draws; this leaves it out, so the build neither reads nor emits its modules and
+ * assets.
+ */
+export function withoutSitesUi(): Plugin {
+  const entry = path.resolve(here, '../index.ts')
+  return {
+    name: 'gallery:without-sites-ui',
+    enforce: 'pre',
+    resolveId(source, importer) {
+      return importer === entry && source === './apps/sites' ? SITES_UI : null
+    },
+    load(id) {
+      return id === SITES_UI ? 'export {}' : null
+    }
+  }
+}
 // Only the names of the generated Review's components reach the bundle; the catalog itself stays in figma/.
 const generatedComponents = () =>
   (
@@ -63,7 +82,7 @@ export default defineConfig(({ command, mode }) => {
     // Its own dependency cache: `pnpm review` runs from the same package, and a shared node_modules/.vite would be
     // re-optimized for whichever server started last, breaking the other's prebundled dependencies.
     cacheDir: path.resolve(here, '../node_modules/.vite-gallery'),
-    plugins: [react(), noHostPackages()],
+    plugins: [react(), noHostPackages(), withoutSitesUi()],
     define: {
       __GENERATED_COMPONENTS__: JSON.stringify(hosted ? [] : generatedComponents()),
       // The build sits beside the generated Review in one output; `pnpm review` serves it in development.

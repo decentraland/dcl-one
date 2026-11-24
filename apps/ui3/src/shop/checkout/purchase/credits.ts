@@ -110,6 +110,25 @@ export function creditsManagerFor(chainId: ChainId, credits: SpendableCredit[]):
 /** A group's useCredits as built: its arguments, its credits' salts, its chain and manager, and its encoded call. */
 export type BuiltUseCredits = { args: UseCreditsArgs; salts: string[]; chainId: ChainId; manager: ContractInfo; data: Hex };
 
+/**
+ * A group's useCredits as built, handed to the caller before anything is signed for it (`onBuilt`): false when the caller
+ * couldn't keep what an execution must carry to count as that group's, and then nothing is signed or sent.
+ */
+export type OnBuilt = (built: BuiltUseCredits) => boolean | void;
+
+/** Thrown before anything is signed when the caller couldn't keep a group's call (`onBuilt`): nothing was sent. */
+export class CallNotKeptError extends Error {
+  constructor() {
+    super("This browser couldn't keep a record of this purchase, so it wasn't sent. Nothing was charged.");
+    this.name = "CallNotKeptError";
+  }
+}
+
+/** Calls `onBuilt` for `built`, throwing (nothing sent) when the caller couldn't keep it. */
+export function keepBuilt(built: BuiltUseCredits, onBuilt?: OnBuilt): void {
+  if (onBuilt?.(built) === false) throw new CallNotKeptError();
+}
+
 export function buildGroupUseCreditsArgs(group: PurchaseGroup, buyer: string, env?: EnvelopeOptions): BuiltUseCredits {
   const credits = dedupeCredits(group.purchases.flatMap((p) => p.credits));
   const maxCreditedValue = groupMaxCreditedValue(group.purchases);
@@ -199,6 +218,13 @@ export type GroupCallbacks = {
   onBroadcast?: (info: { txHash: Hex; salts: string[] }) => void;
   onSettled?: (info: { txHash: Hex; salts: string[] }) => void;
   onReverted?: (info: { salts: string[] }) => void;
+  /** Each group's useCredits as built, before the wallet is handed it (see OnBuilt). */
+  onBuilt?: OnBuilt;
+  /**
+   * The exact bytes about to go to the wallet as the group's transaction data, right before it is handed them: false when
+   * the caller couldn't keep their identity, and then nothing is sent.
+   */
+  onDispatch?: (data: Hex) => boolean | void;
 };
 
 /** Several purchases in as few signatures as possible, group by group; returns the hashes in group order. */
@@ -208,6 +234,8 @@ export async function buyManyWithCredits(ctx: RailContext, opts: { purchases: An
   const hashes: Hex[] = [];
   for (const group of groups) {
     const built = buildGroupUseCreditsArgs(group, ctx.buyer);
+    keepBuilt(built, opts.onBuilt);
+    if (opts.onDispatch?.(built.data) === false) throw new CallNotKeptError();
     let hash: Hex;
     try {
       hash = await sendUseCredits(ctx, {

@@ -15,7 +15,7 @@
 //! | statistics producer control | `archipelago.statistics.producer.v2` | connector <-> Pulse | [`statistics::ProducerRequest`], [`statistics::ProducerReply`] |
 //! | statistics observation | `archipelago.statistics.observations.v2` | connector -> Pulse | [`statistics::Observation`] |
 //! | statistics snapshot chunks | `archipelago.statistics.snapshots.v1` | Pulse -> statistics readers | [`statistics::Snapshot`] |
-//! | room event | `comms.room_events.v1` | gatekeeper -> `multiplayer-hosting` | [`room_events::RoomEvent`] |
+//! | room event | `comms.room_events.v1` | gatekeeper -> every `serve`, `multiplayer-hosting` | [`room_events::RoomEvent`] |
 //!
 //! A session's connect and its island assignment are not messages: inside `serve` the
 //! connector and the gatekeeper's island subscriber exchange them by call. Their former

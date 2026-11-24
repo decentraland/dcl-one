@@ -1070,14 +1070,24 @@ impl Db {
             .await?)
     }
 
-    pub async fn connectivity_member_allowed(
+    /// The actor's membership, if the recipient is a member of the active community.
+    pub async fn connectivity_community_membership(
         &self,
         actor: &str,
         recipient: &str,
         community: Uuid,
-    ) -> Result<bool, DbError> {
-        Ok(sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM social.communities c JOIN social.community_members a ON a.community_id=c.id AND a.member_address=$1 JOIN social.community_members r ON r.community_id=c.id AND r.member_address=$2 WHERE c.id=$3 AND c.active)")
-            .bind(actor.to_lowercase()).bind(recipient.to_lowercase()).bind(community).fetch_one(&self.pool).await?)
+    ) -> Result<Option<bool>, DbError> {
+        Ok(sqlx::query_scalar(
+            "SELECT a.member_address IS NOT NULL FROM social.communities c \
+             JOIN social.community_members r ON r.community_id=c.id AND r.member_address=$2 \
+             LEFT JOIN social.community_members a ON a.community_id=c.id AND a.member_address=$1 \
+             WHERE c.id=$3 AND c.active",
+        )
+        .bind(actor.to_lowercase())
+        .bind(recipient.to_lowercase())
+        .bind(community)
+        .fetch_optional(&self.pool)
+        .await?)
     }
 
     /// The membership PK (community_id, member_address) is the stable two-column cursor.
