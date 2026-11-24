@@ -1,5 +1,6 @@
 use bevy::ecs::system::RunSystemOnce;
 use common::structs::ServerConfiguration;
+use comms::SetCurrentScene;
 
 use super::*;
 
@@ -16,6 +17,9 @@ fn setup_lifecycle(world: &mut World) {
     world.init_resource::<CurrentImposterScene>();
     world.init_resource::<PreviewMode>();
     world.init_resource::<CurrentSceneLoading>();
+    world.init_resource::<CurrentRealm>();
+    world.init_resource::<comms::SceneAdmission>();
+    world.init_resource::<wallet::Wallet>();
     world.init_resource::<Time>();
     world.init_resource::<AppConfig>();
     world.insert_resource(SceneLoadDistance {
@@ -428,6 +432,118 @@ fn a_smart_wearable_loads_from_its_content_file_while_the_current_scene_loads() 
 }
 
 #[test]
+fn scene_ban_unloads_only_the_matching_scene_until_admitted() {
+    let mut world = lifecycle_world();
+    let mut wallet = wallet::Wallet::default();
+    wallet.finalize_as_guest_with_seed([1; 32]);
+    let address = wallet.address().unwrap();
+    world.insert_resource(wallet);
+    world.insert_resource(CurrentRealm::default());
+    let current = spawn_current_scene(&mut world, SceneLoading::SceneEntity);
+    world.insert_resource(
+        comms::SceneAdmission::from_refusal(
+            403,
+            Some("User is banned from this scene"),
+            false,
+            "current",
+        )
+        .for_session("", address),
+    );
+
+    world.run_system_once(process_scene_lifecycle).unwrap();
+    assert!(world.get_entity(current).is_err());
+    assert!(!world.resource::<CurrentSceneLoading>().0);
+    assert_eq!(spawned_hashes(&world), vec!["neighbour"]);
+
+    world.run_system_once(process_scene_lifecycle).unwrap();
+    assert!(!world
+        .resource::<LiveScenes>()
+        .scenes
+        .contains_key("current"));
+
+    for x in [24.0, 8.0, 24.0, 8.0] {
+        move_player(&mut world, x);
+        world.run_system_once(process_scene_lifecycle).unwrap();
+        assert!(!world
+            .resource::<LiveScenes>()
+            .scenes
+            .contains_key("current"));
+        assert!(!spawned_hashes(&world).iter().any(|hash| hash == "current"));
+    }
+
+    world.insert_resource(comms::SceneAdmission::allowed("current"));
+    world.run_system_once(process_scene_lifecycle).unwrap();
+    assert!(world
+        .resource::<LiveScenes>()
+        .scenes
+        .contains_key("current"));
+}
+
+#[test]
+fn returning_from_another_scene_targets_the_unloaded_banned_parcel() {
+    let mut app = App::new();
+    setup_lifecycle(app.world_mut());
+    let mut wallet = wallet::Wallet::default();
+    wallet.finalize_as_guest_with_seed([1; 32]);
+    let address = wallet.address().unwrap();
+    app.insert_resource(wallet)
+        .insert_resource(
+            comms::SceneAdmission::from_refusal(
+                403,
+                Some("User is banned from this scene"),
+                false,
+                "current",
+            )
+            .for_session("", address),
+        )
+        .add_event::<SetCurrentScene>()
+        .add_systems(Update, crate::update_scene_room);
+    app.world_mut()
+        .resource_mut::<CurrentRealm>()
+        .config
+        .realm_name = Some("realm".into());
+    let entity = spawn_live_neighbour(app.world_mut());
+    app.world_mut()
+        .entity_mut(entity)
+        .insert(RendererSceneContext::new(
+            SceneId(entity),
+            "neighbour".into(),
+            String::new(),
+            false,
+            0,
+            "Neighbour".into(),
+            IVec2::X,
+            [IVec2::X].into_iter().collect(),
+            Vec::new(),
+            SceneBounds::default(),
+            Vec::new(),
+            entity,
+            0.0,
+            false,
+            "",
+            false,
+            false,
+        ));
+    for (x, expected) in [
+        (24.0, "neighbour"),
+        (8.0, "current"),
+        (24.0, "neighbour"),
+        (8.0, "current"),
+    ] {
+        move_player(app.world_mut(), x);
+        app.update();
+        let events = app.world().resource::<Events<SetCurrentScene>>();
+        let mut reader = events.get_cursor();
+        assert_eq!(reader.read(events).last().unwrap().scene_id, expected);
+        assert!(!app
+            .world()
+            .resource::<LiveScenes>()
+            .scenes
+            .contains_key("current"));
+    }
+}
+
+#[test]
 fn empty_definition_is_kept_without_deferring_and_despawned_out_of_range() {
     use std::path::Path;
 
@@ -602,4 +718,340 @@ fn a_city_scene_is_bounded_by_the_parcel_count_of_each_region() {
         assert_eq!(heights_over(&[IVec2::ZERO], &city), [20.0]);
         assert_eq!(heights_over(&SPLIT_SCENE, &city), [40.0, 40.0, 40.0, 20.0]);
     }
+}
+
+/// An app running the realm lifecycle as the plugin does. Its player stands in the world on
+/// parcel 0,0, and `target` is where the next realm change lands them.
+fn realm_app(target: RealmInitialLocation) -> (App, Entity) {
+    use bevy::asset::io::memory::{Dir, MemoryAssetReader};
+    use ipfs::{IpfsIo, IpfsResource};
+
+    let mut app = App::new();
+    app.add_plugins((MinimalPlugins, AssetPlugin::default()))
+        .insert_resource(IpfsResource {
+            inner: std::sync::Arc::new(IpfsIo::new(
+                false,
+                Box::new(MemoryAssetReader {
+                    root: Dir::default(),
+                }),
+                None,
+                Default::default(),
+                1,
+                tokio::sync::mpsc::unbounded_channel().0,
+            )),
+        })
+        .init_resource::<CurrentRealm>()
+        .insert_resource(target)
+        .add_systems(PostUpdate, realm_lifecycle_systems());
+    setup_lifecycle(app.world_mut());
+    let player = app
+        .world_mut()
+        .query_filtered::<Entity, With<PrimaryUser>>()
+        .single(app.world())
+        .unwrap();
+    (app, player)
+}
+
+/// A live realm: one that lists `scenes` (a world), or none of them (a city).
+fn live_realm(scenes: &[&str], spawn_parcel: Option<IVec2>) -> CurrentRealm {
+    CurrentRealm {
+        about_url: "https://realm.example/about".to_owned(),
+        address: "https://realm.example".to_owned(),
+        config: ServerConfiguration {
+            scenes_urn: Some(scenes.iter().map(|urn| (*urn).to_owned()).collect()),
+            ..Default::default()
+        },
+        spawn_parcel,
+        ..Default::default()
+    }
+}
+
+/// The realm becomes `realm`, and the lifecycle runs once on the change.
+fn change_realm_to(app: &mut App, realm: CurrentRealm) {
+    *app.world_mut().resource_mut::<CurrentRealm>() = realm;
+    app.update();
+}
+
+/// Runs the app until `done`, for work that ends on another thread.
+fn run_until(app: &mut App, done: impl Fn(&App) -> bool) {
+    for _ in 0..5000 {
+        if done(app) {
+            return;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(1));
+        app.update();
+    }
+    panic!("the app never got there");
+}
+
+/// The spawn point the player's landing names: `None` in the world, `Some(None)` on a landing
+/// that names none.
+fn landing_spawn_point(app: &App, player: Entity) -> Option<Option<String>> {
+    app.world()
+        .entity(player)
+        .get::<OutOfWorld>()
+        .map(|out_of_world| out_of_world.spawn_point.clone())
+}
+
+/// Where a landing put the player; `None` when none has moved them.
+fn landing_position(app: &App, player: Entity) -> Option<Vec3> {
+    app.world()
+        .entity(player)
+        .get::<Transform>()
+        .map(|transform| transform.translation)
+}
+
+fn landing_target(app: &App) -> &RealmInitialLocation {
+    app.world().resource::<RealmInitialLocation>()
+}
+
+fn door() -> Option<String> {
+    Some("door".to_owned())
+}
+
+#[test]
+fn a_realm_change_naming_a_parcel_lands_on_it_with_its_spawn_point() {
+    let (mut app, player) = realm_app(RealmInitialLocation::Parcel {
+        parcel: IVec2::new(3, 4),
+        spawn_point: door(),
+    });
+
+    change_realm_to(&mut app, live_realm(&[], None));
+
+    assert_eq!(landing_spawn_point(&app, player), Some(door()));
+    // the middle of parcel 3,4
+    assert_eq!(
+        landing_position(&app, player),
+        Some(Vec3::new(56.0, 0.0, -72.0))
+    );
+    assert_eq!(*landing_target(&app), RealmInitialLocation::None);
+}
+
+#[test]
+fn a_realm_change_to_a_city_lands_on_its_spawn_point_where_the_player_stands() {
+    let (mut app, player) = realm_app(RealmInitialLocation::Base {
+        spawn_point: door(),
+    });
+
+    change_realm_to(&mut app, live_realm(&[], None));
+
+    assert_eq!(landing_spawn_point(&app, player), Some(door()));
+    assert_eq!(
+        landing_position(&app, player),
+        Some(Vec3::new(8.0, 0.0, -8.0))
+    );
+    assert_eq!(*landing_target(&app), RealmInitialLocation::None);
+}
+
+#[test]
+fn a_realm_change_to_a_world_lands_on_its_spawn_parcel_with_the_spawn_point() {
+    let (mut app, player) = realm_app(RealmInitialLocation::Base {
+        spawn_point: door(),
+    });
+
+    change_realm_to(
+        &mut app,
+        live_realm(&["urn:decentraland:entity:lobby"], Some(IVec2::new(5, 6))),
+    );
+
+    assert_eq!(landing_spawn_point(&app, player), Some(door()));
+    // the middle of parcel 5,6
+    assert_eq!(
+        landing_position(&app, player),
+        Some(Vec3::new(88.0, 0.0, -104.0))
+    );
+    assert_eq!(*landing_target(&app), RealmInitialLocation::None);
+}
+
+/// A directory of the system's temporary one, removed with this.
+struct ScratchDir(std::path::PathBuf);
+
+impl Drop for ScratchDir {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_dir_all(&self.0);
+    }
+}
+
+// A world without a spawn parcel lands on its first scene, which is known only once read. The
+// spawn point waits on the target meanwhile, and a landing that was under way before the realm
+// change does not lend its own to the new realm.
+#[test]
+fn a_realm_change_to_a_world_without_a_spawn_parcel_names_the_spawn_point_once_its_scene_resolves()
+{
+    use ipfs::{EndpointConfig, IpfsResource, ServerAbout};
+
+    // the world's one scene, on parcel 7,8, in a directory the content reads are allowed
+    let dir = std::env::temp_dir().join(format!("realm-landing-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let dir = ScratchDir(dir.canonicalize().unwrap());
+    let scene = serde_json::json!({
+        "pointers": ["7,8"],
+        "content": [],
+        "metadata": { "main": "index.js", "scene": { "base": "7,8", "parcels": ["7,8"] } },
+    });
+    std::fs::write(dir.0.join("lobby"), scene.to_string()).unwrap();
+    let path = dir.0.to_string_lossy().replace('\\', "/");
+    let path = path.trim_start_matches("//?/").trim_start_matches('/');
+    let urn = format!("urn:decentraland:entity:lobby?=&baseUrl=file:///{path}/");
+
+    let (mut app, player) = realm_app(RealmInitialLocation::Base {
+        spawn_point: door(),
+    });
+    let ipfs = app.world().resource::<IpfsResource>().clone();
+    ipfs.add_allowed_file_root(dir.0.clone());
+    ipfs.set_realm_about(ServerAbout {
+        content: Some(EndpointConfig {
+            healthy: true,
+            public_url: "https://realm.example/content".to_owned(),
+        }),
+        ..Default::default()
+    });
+    app.world_mut().entity_mut(player).insert(OutOfWorld {
+        spawn_point: Some("roof".to_owned()),
+    });
+
+    change_realm_to(&mut app, live_realm(&[&urn], None));
+
+    assert_eq!(landing_spawn_point(&app, player), Some(None));
+    assert_eq!(
+        *landing_target(&app),
+        RealmInitialLocation::Base {
+            spawn_point: door()
+        }
+    );
+
+    run_until(&mut app, |app| {
+        *landing_target(app) == RealmInitialLocation::None
+    });
+
+    assert_eq!(landing_spawn_point(&app, player), Some(door()));
+    // the middle of parcel 7,8
+    assert_eq!(
+        landing_position(&app, player),
+        Some(Vec3::new(120.0, 0.0, -136.0))
+    );
+}
+
+// A teleport inside the realm made while a realm change is on its way gives up that change's
+// landing for its own (`RealmInitialLocation::None`, and `OutOfWorld` with the name it asked
+// for). The realm change still lands, and the landing goes on in the new realm.
+#[test]
+fn a_landing_under_way_keeps_its_spawn_point_through_a_realm_change_without_a_target() {
+    let (mut app, player) = realm_app(RealmInitialLocation::None);
+    // the middle of parcel 1,2
+    let asked = Vec3::new(24.0, 0.0, -40.0);
+    app.world_mut().entity_mut(player).insert((
+        Transform::from_translation(asked),
+        OutOfWorld {
+            spawn_point: Some("roof".to_owned()),
+        },
+    ));
+
+    change_realm_to(
+        &mut app,
+        live_realm(&["urn:decentraland:entity:lobby"], Some(IVec2::new(5, 6))),
+    );
+
+    assert_eq!(
+        landing_spawn_point(&app, player),
+        Some(Some("roof".to_owned()))
+    );
+    assert_eq!(landing_position(&app, player), Some(asked));
+}
+
+#[test]
+fn a_realm_change_without_a_target_puts_a_player_in_the_world_out_of_it() {
+    let (mut app, player) = realm_app(RealmInitialLocation::None);
+
+    change_realm_to(&mut app, live_realm(&[], None));
+
+    assert_eq!(landing_spawn_point(&app, player), Some(None));
+    assert_eq!(landing_position(&app, player), None);
+}
+
+/// `realm_app` with realm changes asked for through `ipfs::change_realm`, and its player in the
+/// world of a realm that answered.
+fn realm_app_taking_changes() -> (App, Entity) {
+    use bevy_console::PrintConsoleLine;
+    use ipfs::{world_access::WorldCommsSecret, ChangeRealmEvent, IpfsResource, ServerAbout};
+
+    let (mut app, player) = realm_app(RealmInitialLocation::None);
+    app.add_event::<ChangeRealmEvent>()
+        .add_event::<PrintConsoleLine>()
+        .init_resource::<WorldCommsSecret>()
+        .add_systems(Update, ipfs::change_realm);
+    app.world()
+        .resource::<IpfsResource>()
+        .set_realm_about(ServerAbout::default());
+    run_until(&mut app, |app| {
+        !app.world().resource::<CurrentRealm>().about_url.is_empty()
+    });
+    app.world_mut().entity_mut(player).remove::<OutOfWorld>();
+    (app, player)
+}
+
+/// A teleport to parcel 3,4 of `realm`, on the spawn point `door`, as `teleport_player` asks for
+/// it. Returns where the realm change answers.
+fn teleport_to_realm(
+    app: &mut App,
+    realm: String,
+) -> common::rpc::RpcResultReceiver<Result<(), String>> {
+    *app.world_mut().resource_mut::<RealmInitialLocation>() = RealmInitialLocation::Parcel {
+        parcel: IVec2::new(3, 4),
+        spawn_point: door(),
+    };
+    let (response, answer) = common::rpc::RpcResultSender::channel();
+    app.world_mut().send_event(ipfs::ChangeRealmEvent {
+        new_realm: realm,
+        content_server_override: None,
+        response,
+        report: false,
+    });
+    answer
+}
+
+// A realm change that fails keeps the player in the realm they are in, and gives up the landing
+// it was to make: the next realm change does not land on its parcel or its spawn point.
+#[test]
+fn a_realm_change_that_fails_leaves_no_landing_for_the_next_one() {
+    let (mut app, player) = realm_app_taking_changes();
+
+    // a realm that does not answer: nothing listens on this port
+    let closed = std::net::TcpListener::bind("127.0.0.1:0")
+        .unwrap()
+        .local_addr()
+        .unwrap();
+    let mut answer = teleport_to_realm(&mut app, format!("http://{closed}"));
+    run_until(&mut app, |app| {
+        *landing_target(app) == RealmInitialLocation::None
+    });
+
+    assert!(matches!(answer.try_recv(), Ok(Err(_))));
+    assert_eq!(landing_spawn_point(&app, player), None);
+    assert_eq!(landing_position(&app, player), None);
+
+    change_realm_to(&mut app, live_realm(&[], None));
+
+    assert_eq!(landing_spawn_point(&app, player), Some(None));
+    assert_eq!(landing_position(&app, player), None);
+}
+
+// A scene preview refuses every realm change, and gives up the landing as a change that failed
+// does.
+#[test]
+fn a_realm_change_refused_in_a_preview_leaves_no_landing_for_the_next_one() {
+    let (mut app, player) = realm_app_taking_changes();
+    app.world_mut().resource_mut::<PreviewMode>().is_preview = true;
+
+    let mut answer = teleport_to_realm(&mut app, "mana.dcl.eth".to_owned());
+    app.update();
+
+    assert!(matches!(answer.try_recv(), Ok(Err(_))));
+    assert_eq!(*landing_target(&app), RealmInitialLocation::None);
+    assert_eq!(landing_spawn_point(&app, player), None);
+
+    change_realm_to(&mut app, live_realm(&[], None));
+
+    assert_eq!(landing_spawn_point(&app, player), Some(None));
+    assert_eq!(landing_position(&app, player), None);
 }

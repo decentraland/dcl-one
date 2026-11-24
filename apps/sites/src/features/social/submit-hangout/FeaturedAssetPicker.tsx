@@ -1,6 +1,4 @@
-import { useEventsCopy } from "@dcl/one-ui/apps/sites/events/locale";
-import { Notice } from "@dcl/one-ui/apps/sites/events/Notice";
-import { Button } from "@dcl/one-ui/apps/sites/shared/Button/Button";
+import { useEventsCopy, Notice, SitesButton as Button } from "@dcl/one-ui";
 import { useEffect, useState } from "react";
 import { searchFeaturedAssets, type FeaturedAsset } from "@/data/lib/catalyst/landings/hangout-options";
 

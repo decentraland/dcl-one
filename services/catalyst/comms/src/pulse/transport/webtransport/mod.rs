@@ -1,3 +1,5 @@
+#[cfg(feature = "test-support")]
+pub mod client;
 pub mod config;
 pub mod framing;
 pub mod host;

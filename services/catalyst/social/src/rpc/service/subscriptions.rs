@@ -48,7 +48,10 @@ impl SocialServiceImpl {
                     Some(friendship_update::Update::Cancel(response)) => {
                         response.user.as_ref().map(|user| &user.address)
                     }
-                    _ => None,
+                    Some(friendship_update::Update::Block(response)) => {
+                        response.user.as_ref().map(|user| &user.address)
+                    }
+                    None => None,
                 };
                 let Some(actor) = actor.cloned() else {
                     continue;
@@ -120,13 +123,14 @@ impl SocialServiceImpl {
                 };
                 for (actor, profile) in profiles {
                     let friend = crate::rpc::profiles::friend_profile(&actor, Some(&profile));
-                    let snapshot = ctx.topology().snapshot();
-                    let online = snapshot.is_online(&actor);
+                    let (online, generation) = {
+                        let snapshot = ctx.topology().snapshot();
+                        (snapshot.is_online(&actor), snapshot.generation)
+                    };
                     if !online {
                         continue;
                     }
-                    let guard =
-                        ctx.friend_delivery_guard(me.clone(), actor, online, snapshot.generation);
+                    let guard = ctx.friend_delivery_guard(me.clone(), actor, online, generation);
                     let update = friend_replay_update(friend, online);
                     if yielder.yield_confirmed(update, guard).await.is_err() {
                         return;
@@ -260,22 +264,8 @@ impl SocialServiceImpl {
                         }
                         let update = match &*event {
                             SocialEvent::TopologyCommunityMember(update, _)
-                            | SocialEvent::CommunityMember(update) => update.clone(),
-                            SocialEvent::CommunityMemberStatus(update) => {
-                                // delivered as published: a bounded stream
-                                // sends guarded items only, so its guard
-                                // always admits it
-                                let admit: crate::rpc::drpc::stream_protocol::DeliveryGuard =
-                                    std::sync::Arc::new(|| Box::pin(async { Ok(true) }));
-                                if yielder
-                                    .yield_confirmed(update.clone(), admit)
-                                    .await
-                                    .is_err()
-                                {
-                                    break;
-                                }
-                                continue;
-                            }
+                            | SocialEvent::CommunityMember(update)
+                            | SocialEvent::CommunityMemberStatus(update) => update.clone(),
                             _ => continue,
                         };
                         let Some(guard) = ctx.event_delivery_guard(&me, &event) else {

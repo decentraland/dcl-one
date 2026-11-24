@@ -10,6 +10,7 @@ import { requestPassport, useProfile } from '../session/profileStore'
 import { relationshipOf } from '@explorer-core/lib/relationship'
 import { openNameEdit } from './NameEditModal'
 import { ProfilePassport, type PassportTab } from './ProfilePassport'
+import styles from './ProfilePassport.module.css'
 import type { Profile } from '@explorer-core/engine/protocol'
 import { splitName, userColor } from '@explorer-core/lib/identity'
 import { hexToColor3 } from '@explorer-core/lib/color'
@@ -19,6 +20,7 @@ import { startCallWith } from '../voiceChat/callGate'
 import { openGiftPicker } from '../gifting/GiftPicker'
 import { useGiftingAvailable } from '../gifting/useGifting'
 import { canJumpToFriend, jumpToFriend } from '../friends/jumpToFriend'
+import { travelToPhoto } from '../gallery/reelActions'
 
 export function Passport({
   userId,
@@ -142,9 +144,10 @@ export function Passport({
         remove: session.gallery.remove,
         metas: session.gallery.metas,
         loadPhoto: session.gallery.loadPhoto,
-        onTeleport: (x, y) => {
+        loadWearables: session.gallery.loadWearables,
+        onJumpIn: (place) => {
           // A refused Jump In leaves the passport and its photo open.
-          if (session.map.teleport(x, y) === 'refused') return false
+          if (travelToPhoto(place, session.map) === 'refused') return false
           onClose()
           return true
         },
@@ -175,6 +178,7 @@ export function openPassport(userId: string, tab?: PassportTab): () => void {
       />
     ),
     {
+      className: styles.scrim,
       backdropClickCloses: () => !dirty.current,
       // Sync `true` when there is nothing to lose, so an ordinary close stays as immediate as it
       // was; only an edit in progress opens the dialog.
