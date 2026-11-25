@@ -18,7 +18,7 @@ use sqlx::{PgConnection, PgPool};
 use super::chain_walk::{self, ChainNet, INDEXER_NFT, INDEXER_THIRD_PARTY_REGISTRY};
 use super::wire::{ApiError, NftCategory};
 use super::{MarketplaceState, SharedState, nft_index};
-use crate::auth::admin_bearer::{bearer_token, timing_safe_eq};
+use crate::auth::admin_bearer;
 use crate::chain_index::rpc::{BlockHeader, HEADER_BATCH, Rpc};
 use crate::land_authz::{ESTATE_REGISTRY_MAINNET, LAND_MAINNET, LAND_REGISTRY_MAINNET};
 use crate::rentals::index::RentalsChain;
@@ -135,21 +135,22 @@ impl Failure {
 }
 
 async fn respond(state: SharedState, req: Request, resource: Resource) -> Response {
-    let Some(expected) = state.settings.historical_admin_token.as_deref() else {
-        return StatusCode::NOT_FOUND.into_response();
-    };
-    if !bearer_token(req.headers())
-        .is_some_and(|token| timing_safe_eq(expected.as_bytes(), token.as_bytes()))
-    {
+    if !admin_bearer::matches(
+        state.settings.market.historical_admin_token.as_deref(),
+        req.headers(),
+    ) {
         return ApiError::unauthorized("Unauthorized").into_response();
     }
-    let Ok(_slot) = state.historical_slots.try_acquire() else {
-        return Failure::Busy.response(resource);
-    };
     let read = async {
-        let bytes = to_bytes(req.into_body(), MAX_BODY)
-            .await
-            .map_err(|_| Failure::BadRequest("Could not read request body".into()))?;
+        let bytes =
+            tokio::time::timeout(Duration::from_secs(10), to_bytes(req.into_body(), MAX_BODY))
+                .await
+                .map_err(|_| Failure::BadRequest("Historical request body timed out".into()))?
+                .map_err(|_| Failure::BadRequest("Could not read request body".into()))?;
+        let _slot = state
+            .historical_slots
+            .try_acquire()
+            .map_err(|_| Failure::Busy)?;
         let data: Value = serde_json::from_slice(&bytes)
             .map_err(|_| Failure::BadRequest("Invalid historical request".into()))?;
         lookup(&state, resource, data).await
@@ -293,9 +294,12 @@ async fn snapshot(pool: &PgPool) -> Result<sqlx::Transaction<'_, sqlx::Postgres>
     sqlx::query("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY")
         .execute(&mut *tx)
         .await?;
-    sqlx::query("SET LOCAL statement_timeout = '10s'")
-        .execute(&mut *tx)
-        .await?;
+    sqlx::raw_sql(
+        "SET LOCAL statement_timeout = '10s';
+                   SET LOCAL idle_in_transaction_session_timeout = '15s'",
+    )
+    .execute(&mut *tx)
+    .await?;
     Ok(tx)
 }
 
@@ -309,7 +313,12 @@ async fn position(
         INDEXER_THIRD_PARTY_REGISTRY => "third-party-registry-index",
         _ => "rentals-index",
     };
-    let ready = chain_walk::published_sql_on("c", "timezone('UTC', now())", 1, 137);
+    let ready = chain_walk::published_sql_on(
+        "c",
+        "timezone('UTC', now())",
+        ETH.chain_id(),
+        POLYGON.chain_id(),
+    );
     let (number, hash, timestamp) = sqlx::query_as(sqlx::AssertSqlSafe(format!(
         "SELECT c.folded_block, p.block_hash, p.block_time
          FROM shop.chain_cursor c LEFT JOIN shop.chain_checkpoint p

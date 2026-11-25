@@ -2230,9 +2230,9 @@ catalog reaches it through the TS database import.
 
 ### Historical holdings
 
-The five bearer-authenticated marketplace historical reads accept up to
+The four bearer-authenticated historical holdings lookups accept up to
 10,000 wallet or asset keys and return up to 1,000 results, ordered by their
-legacy string IDs. Two reads can run per process. Each uses one repeatable-read
+legacy string IDs. The NFT contract filter accepts up to 100 addresses. Two reads can run per process. Each uses one repeatable-read
 snapshot with a 10-second SQL statement timeout. NFT and rental lookups derive
 candidate assets from events naming the requested addresses, then find the
 last event of each asset at the requested block before checking ownership.
@@ -2244,14 +2244,15 @@ registry publications bound the corresponding histories, independent of
 how far the next walk has advanced. NFT reads also require the catalogue
 projection or a completed, block-pinned mirror pass that covers the requested
 block. When a mirror publishes below the NFT walk, the marketplace head uses
-the earlier block after proving the hashes share an ancestor. Pending transfer
-backfills are checked by block interval before any holdings are returned. The LAND cursor keeps the published
+the earlier block after proving the hashes share an ancestor. The wearable read
+and marketplace heads check pending NFT transfers by block interval. The LAND cursor keeps the published
 hash when it writes its fold marker. The third-party writer marks review
 events explicitly. Old registry versions have a null review flag until the
 registry job classifies them from an archive window bracketed by the published
 checkpoint. A missing archive event leaves that window pending. Existing
 current-provider readers continue using the same state snapshots. Historical
 readers require every relevant version through their block to be classified.
+A review without a stored root reads as unapproved, as in the registry squid.
 
 ### Historical marketplace sale inputs
 

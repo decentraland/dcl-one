@@ -49,11 +49,11 @@ async fn historical_routes_read_only_the_published_prefix() {
     .await;
     assert_eq!(status, StatusCode::NOT_FOUND);
     let settings = &mut Arc::get_mut(&mut state).unwrap().settings;
-    settings.historical_admin_token = Some(TOKEN.to_string());
+    settings.market.historical_admin_token = Some(TOKEN.to_string());
     settings.eth_network = "ethereum".to_string();
     let mut testnet = state_over(db.pool.clone(), &url, index_settings(100, 10), false);
     let settings = &mut Arc::get_mut(&mut testnet).unwrap().settings;
-    settings.historical_admin_token = Some(TOKEN.to_string());
+    settings.market.historical_admin_token = Some(TOKEN.to_string());
     settings.eth_network = "sepolia".to_string();
     let auth = format!("Bearer {TOKEN}");
     let (status, _, _) = post(
