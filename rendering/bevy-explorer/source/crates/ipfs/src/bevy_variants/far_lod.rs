@@ -72,7 +72,7 @@ impl FarLodHealth {
     }
 
     /// `scene`'s download answered: its name moves from `pending` to the bounded answered names.
-    pub(crate) fn settle(&mut self, scene: &str) {
+    fn settle(&mut self, scene: &str) {
         if !self.pending.remove(scene) {
             return;
         }
@@ -83,14 +83,6 @@ impl FarLodHealth {
         }
         self.answered_order.push_back(scene.to_owned());
         self.answered_names.insert(scene.to_owned());
-    }
-
-    /// Forgets the missing set, the failures and the pause, which describe the previous base;
-    /// keeps the names.
-    pub(crate) fn new_base(&mut self) {
-        self.missing.clear();
-        self.failures = 0;
-        self.paused_until = None;
     }
 
     /// Whether the server said earlier this session that it has no mesh for `scene`.

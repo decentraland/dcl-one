@@ -4,7 +4,7 @@ use common::sync::MutexExt;
 use console::{AddDebugSection, DebugSection, DoAddConsoleCommand};
 use serde_json::{json, Value};
 
-use super::{BevyVariants, ManifestState};
+use super::{Base, BevyVariants, ManifestState};
 use crate::IpfsResource;
 
 pub(super) struct BevyVariantsDebugPanelPlugin;
@@ -18,7 +18,6 @@ impl Plugin for BevyVariantsDebugPanelPlugin {
                 fields: &[
                     ("Variants base url", "base"),
                     ("Base set by", "baseSource"),
-                    ("Bases used this session", "usedBases"),
                     ("State", "state"),
                     ("Formats taken", "formats"),
                     (
@@ -54,14 +53,7 @@ fn bevy_variants_state(mut input: ConsoleCommand<BevyVariantsCommand>, ipfs: Res
 
 pub(super) fn snapshot(variants: &BevyVariants) -> Value {
     let mut counts = [0u64; 5];
-    let (current, base_source, used_bases) = {
-        let bases = variants.base.lock_ignore_poison();
-        (
-            bases.current.clone(),
-            bases.source.clone(),
-            bases.used.clone(),
-        )
-    };
+    let route = variants.route.borrow().clone();
     let mut manifests: Vec<String> = variants
         .manifests
         .lock_ignore_poison()
@@ -71,7 +63,7 @@ pub(super) fn snapshot(variants: &BevyVariants) -> Value {
                 ManifestState::Loaded(manifest) => (
                     0,
                     format!(
-                        "loaded, {} files{}{}",
+                        "loaded, {} files{}",
                         manifest.files.len(),
                         if manifest.lanes.is_empty() {
                             String::new()
@@ -79,11 +71,6 @@ pub(super) fn snapshot(variants: &BevyVariants) -> Value {
                             let lanes: Vec<_> =
                                 manifest.lanes.values().map(String::as_str).collect();
                             format!(" ({})", lanes.join(", "))
-                        },
-                        if current.as_deref() == Some(manifest.base.as_str()) {
-                            String::new()
-                        } else {
-                            format!(", from {}", manifest.base)
                         }
                     ),
                 ),
@@ -99,15 +86,19 @@ pub(super) fn snapshot(variants: &BevyVariants) -> Value {
     manifests.sort();
 
     let session = variants.session.lock_ignore_poison();
-    // `base` was released above, before `session` is taken
-    let state = match (current.as_deref(), &session.disabled, variants.bc.get()) {
-        (None, _, _) => "off".to_owned(),
-        (Some(_), Some(reason), _) => format!("off for this session: {reason}"),
-        (Some(_), None, None) => "on, waiting for the renderer's texture formats".to_owned(),
-        (Some(_), None, Some(false)) => {
+    let state = match (&route.base, &session.disabled, variants.bc.get()) {
+        (Base::Off, _, _) => "off".to_owned(),
+        (Base::Pending(_), _, _) => "waiting for the endpoint flag".to_owned(),
+        (Base::On(..), Some(reason), _) => format!("off for this session: {reason}"),
+        (Base::On(..), None, None) => "on, waiting for the renderer's texture formats".to_owned(),
+        (Base::On(..), None, Some(false)) => {
             "on, but the GPU has no BC textures: nothing is replaced".to_owned()
         }
-        (Some(_), None, Some(true)) => "on".to_owned(),
+        (Base::On(..), None, Some(true)) => "on".to_owned(),
+    };
+    let base = match &route.base {
+        Base::On(url, _) => Some(url.as_str()),
+        Base::Pending(_) | Base::Off => None,
     };
     let recent: Vec<String> = session
         .recent
@@ -121,9 +112,8 @@ pub(super) fn snapshot(variants: &BevyVariants) -> Value {
         })
         .collect();
     json!({
-        "base": current,
-        "baseSource": base_source,
-        "usedBases": (!used_bases.is_empty()).then(|| used_bases.join("\n")),
+        "base": base,
+        "baseSource": route.source,
         "state": state,
         "formats": super::taken_formats(),
         "manifestCounts": counts,
@@ -150,7 +140,7 @@ pub(super) fn snapshot(variants: &BevyVariants) -> Value {
         }),
         "recentFallbacks": (!recent.is_empty()).then(|| recent.join("\n")),
         "unavailable": {
-            "base": "Off: --bevy-variants-url, ?bevyVariants= or bevy_variants_url in the config is `off`, or the `bevy-variants-endpoint` flag's variant is.",
+            "base": "Off, or waiting for the `bevy-variants-endpoint` flag: see State and Base set by.",
             "manifests": "No scene has asked for a manifest yet.",
             "servedByFormat": "No variant has been served.",
             "fallbacksByFormat": "No chosen variant has fallen back.",

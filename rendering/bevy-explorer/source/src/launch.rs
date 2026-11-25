@@ -122,16 +122,13 @@ pub fn apply_client(
         common::base_domain::service(abgen_cdn),
     );
     if let Some(ipfs) = app.world().get_resource::<ipfs::IpfsResource>() {
-        if !routing.base.trim().eq_ignore_ascii_case("off") {
-            ipfs.set_bevy_variants_base(Some(&routing.base));
+        let base = (!routing.base.trim().eq_ignore_ascii_case("off")).then_some(&*routing.base);
+        // the flags plugin is added above, so a base left to the flag settles
+        if routing.flag_may_route {
+            ipfs.route_bevy_variants_by_flag(base, routing.source);
+        } else {
+            ipfs.set_bevy_variants_base(base, routing.source);
         }
-        ipfs.set_bevy_variants_source(routing.source);
-    }
-    if routing.flag_may_route {
-        let off = routing.base.trim().eq_ignore_ascii_case("off");
-        app.insert_resource(ipfs::bevy_variants::FlagDefaultBase(
-            (!off).then_some(routing.base),
-        ));
     }
 
     let gpu_bytes_per_frame = gpu_bytes_per_frame.unwrap_or(config.graphics.gpu_bytes_per_frame);
@@ -149,13 +146,13 @@ struct BevyVariantsRouting {
     base: String,
     /// What set it.
     source: &'static str,
-    /// Whether the endpoint flag may replace it once the flags are read.
+    /// Whether it waits for the endpoint flag, as the flag's fallback.
     flag_may_route: bool,
 }
 
-/// Launch options first: `bevy_variants`, then an `abgen_cdn` service override; both pin the
-/// base. Otherwise the endpoint flag decides once the flags are read, falling back to the
-/// config field, else to the `abgen_cdn` service composed for the base domain.
+/// Launch options first: `bevy_variants`, then an `abgen_cdn` service override; both settle the
+/// base at launch. Otherwise the endpoint flag settles it once the flags are read, falling back
+/// to the config field, else to the `abgen_cdn` service composed for the base domain.
 fn bevy_variants_routing(
     launch_option: Option<&str>,
     config: Option<&str>,
@@ -174,13 +171,13 @@ fn bevy_variants_routing(
     } else if let Some(base) = config {
         BevyVariantsRouting {
             base: base.to_owned(),
-            source: "config, until the endpoint flag is read",
+            source: "config",
             flag_may_route: true,
         }
     } else {
         BevyVariantsRouting {
             base: abgen_cdn,
-            source: "default, until the endpoint flag is read",
+            source: "the `abgen_cdn` service for the base domain",
             flag_may_route: true,
         }
     }
