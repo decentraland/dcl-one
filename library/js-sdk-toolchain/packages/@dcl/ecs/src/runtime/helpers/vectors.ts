@@ -1,4 +1,4 @@
-import { Vector3Type } from '../../schemas'
+import type { Vector3Type } from '../../schemas'
 
 /**
  * Lightweight Vector3 math utilities for internal use.

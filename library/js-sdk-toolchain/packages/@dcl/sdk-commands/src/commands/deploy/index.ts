@@ -4,14 +4,14 @@ import { DeploymentBuilder } from 'dcl-catalyst-client'
 import future from '../../logic/future'
 import i18next from 'i18next'
 
-import { CliComponents } from '../../components'
+import type { CliComponents } from '../../components'
 import { getBaseCoords, getFiles, getValidSceneJson, validateFilesSizes } from '../../logic/scene-validations'
 import { declareArgs } from '../../logic/args'
 import { CliError } from '../../logic/error'
 import { printProgressInfo, printSuccess } from '../../logic/beautiful-logs'
 import { getPackageJson, b64HashingFunction } from '../../logic/project-files'
-import { Events } from '../../components/analytics'
-import { Result } from 'arg'
+import type { Events } from '../../components/analytics'
+import type { Result } from 'arg'
 import {
   getAddressAndSignature,
   getCatalyst,
@@ -27,12 +27,13 @@ import {
 } from './utils'
 import { buildScene } from '../build'
 import { getValidWorkspace } from '../../logic/workspace-validations'
-import { LinkerResponse } from '../../linker-dapp/routes'
+import type { LinkerResponse } from '../../linker-dapp/routes'
 import { analyticsFeatures } from './analytics-features'
 import { getInstalledPackageVersion } from '../../logic/config'
 import { drainResponse, withDeadline } from '../../logic/fetch'
 import { uploadDeployment } from './upload'
-import { createDeployment, DeployContext, deploymentCancelledError, settleCancelledUpload } from './deployment'
+import type { DeployContext } from './deployment'
+import { createDeployment, deploymentCancelledError, settleCancelledUpload } from './deployment'
 
 interface Options {
   args: Result<typeof args>

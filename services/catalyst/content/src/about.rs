@@ -106,9 +106,10 @@ pub struct AboutBff {
 }
 
 fn network_id(eth_network: &str) -> u64 {
+    if let Some(pair) = crate::shared::network::ChainPair::from_eth_network(eth_network) {
+        return pair.chain_ids().0 as u64;
+    }
     match eth_network {
-        "mainnet" => 1,
-        "sepolia" => 11155111,
         "goerli" => 5,
         "ropsten" => 3,
         "rinkeby" => 4,
@@ -117,7 +118,7 @@ fn network_id(eth_network: &str) -> u64 {
     }
 }
 
-fn content_is_healthy(sync_state: &str) -> bool {
+pub(crate) fn content_is_healthy(sync_state: &str) -> bool {
     sync_state == "Syncing"
 }
 

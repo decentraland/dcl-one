@@ -1,4 +1,5 @@
-import { AvatarShape, Entity, Transform, engine } from '@dcl/sdk/ecs'
+import type { Entity } from '@dcl/sdk/ecs'
+import { AvatarShape, Transform, engine } from '@dcl/sdk/ecs'
 import { Color3, Quaternion, Vector3 } from '@dcl/sdk/math'
 import { setupVisualTest } from './visual-test-setup'
 

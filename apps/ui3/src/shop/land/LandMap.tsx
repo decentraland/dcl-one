@@ -7,7 +7,7 @@
 // the canvas (mapView.ts), LAND on sale or for rent with a mark in the same paint. On top of both, the
 // Shop's other layers as one SVG in parcel units: the account's own and rented LAND, and a selection.
 
-import { memo, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent } from "react";
+import { memo, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent, type ReactNode } from "react";
 
 import MapSurface, { GRID_PARCELS } from "../../explorer/components/MapSurface";
 import { landTokenId } from "../../data/catalyst/landListing";
@@ -76,6 +76,9 @@ export type LandMapProps = {
   wheelZoom?: "modifier" | "always";
   /** False: no zoom buttons. */
   withZoomControls?: boolean;
+  /** Shown over the map's top-left corner, where the buttons and the page's filters leave room: the
+      atlas's age (`MapGridAge`) on the Shop's pages. */
+  status?: ReactNode;
   /** The names and the texts of the zoom buttons; the default is "Zoom in" with + and "Zoom out" with the minus sign. */
   zoomButtons?: { inLabel?: string; outLabel?: string; inText?: string; outText?: string };
   /** The zoom after a press of a zoom button (1 in, -1 out); the default multiplies or divides by 1.5. */
@@ -143,6 +146,7 @@ export default function LandMap({
   dragWithAnyButton = false,
   wheelZoom = "modifier",
   withZoomControls = true,
+  status,
   zoomButtons = NO_ZOOM_BUTTONS,
   zoomStep = defaultZoomStep,
   paintInTask = false,
@@ -433,6 +437,8 @@ export default function LandMap({
           <ShopLayer cells={cells} />
         </div>
       </div>
+
+      {status != null ? <div className={`shop-landmap__status ${styles.status}`}>{status}</div> : null}
 
       {withZoomControls ? (
         <div className="shop-landmap__zoom">

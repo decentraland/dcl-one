@@ -1,4 +1,4 @@
-import { adminCopy, adminPageStyles, Busy, Notice, SitesButton as Button } from "@dcl/one-ui";
+import { adminCopy, adminPageStyles, Busy, Notice, Button } from "@dcl/one-ui";
 import type { ReactNode } from "react";
 import { Navigate } from "react-router";
 
@@ -17,7 +17,7 @@ export function AdminAccessGate({ access, allowed, children }: { access: EventAd
     return (
       <div className={adminPageStyles.status}>
         <p>Sign in to continue.</p>
-        <Button onClick={() => openSignIn()}>Sign in</Button>
+        <Button size="lg" onClick={() => openSignIn()}>Sign in</Button>
       </div>
     );
   }
@@ -26,7 +26,7 @@ export function AdminAccessGate({ access, allowed, children }: { access: EventAd
     return (
       <div className={adminPageStyles.status}>
         <Notice tone="error">{access.error.message}</Notice>
-        <Button variant="secondary" onClick={access.retry}>{adminCopy.pending.retry}</Button>
+        <Button size="lg" variant="secondary" onClick={access.retry}>{adminCopy.pending.retry}</Button>
       </div>
     );
   }

@@ -321,13 +321,15 @@ async fn auth(
 
 /// The answer to a refused signed request: the verifier's 400 or 401 with
 /// its message, logged at debug; a contract-wallet check that could not run is
-/// 503 with a fixed message, its detail kept in the log.
+/// 503 with a fixed message, its detail kept in the log; one the client
+/// source's budget refused is 429.
 fn auth_refusal(e: RequestAuthError) -> ApiError {
     match e.status() {
         400 => {
             tracing::debug!(error = %e, "signed-fetch rejected");
             ApiError::bad_request(e.to_string())
         }
+        429 => ApiError::http(429, e.to_string()),
         503 => {
             tracing::warn!(error = %e, "signed-fetch validation unavailable");
             service_unavailable("Signature validation unavailable")

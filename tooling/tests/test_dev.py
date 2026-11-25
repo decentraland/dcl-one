@@ -561,39 +561,54 @@ class DevTest(unittest.TestCase):
         self.assertEqual((Path(binary).name, argv[1:]), ('catalyst', ['pulse']))
         self.assertEqual(env, dev.pulse_env(self.config, certificate, key))
 
-    def test_api_process_readiness_can_start_pulse_before_whole_stack_about_is_healthy(self):
+    def test_api_can_accept_traffic_before_pulse_is_ready_for_local_players(self):
         processes = dev.project(self.config)['processes']
-        pulse_ready = False
+        attempts = 0
         observed = []
         api_url = f"http://127.0.0.1:{self.config['port']}"
 
         def response(url, timeout):
             observed.append(url)
-            if url == api_url + '/about' and not pulse_ready:
-                raise dev.urllib.error.HTTPError(url, 503, 'Pulse not ready', {}, None)
+            if url == api_url + '/health':
+                details = {'comms': {'status': 'pass' if attempts >= 1 else 'fail', 'required': False},
+                           'postgres': {'status': 'fail' if attempts == 1 else 'pass', 'required': False}}
+                body = io.BytesIO(json.dumps({'status': 'pass', 'details': details}).encode())
+                body.status = 200
+                return body
             return contextlib.nullcontext(type('Response', (), {'status': 200})())
 
-        def start_pulse(_delay):
-            nonlocal pulse_ready
+        def next_attempt(_delay):
+            nonlocal attempts
             mirrors.assert_not_called()
-            pulse_ready = True
+            attempts += 1
 
         listing = subprocess.CompletedProcess([], 0, stdout='[]')
         with patch.object(dev.urllib.request, 'urlopen', side_effect=response), \
                 patch.object(dev, 'pc', return_value=listing), \
-                patch.object(dev, 'backoff_delays', return_value=iter([0])), \
-                patch.object(dev.time, 'sleep', side_effect=start_pulse), \
+                patch.object(dev, 'backoff_delays', return_value=iter([0, 0])), \
+                patch.object(dev.time, 'sleep', side_effect=next_attempt), \
                 patch.object(dev, 'wait_first_mirror_pass', return_value=0) as mirrors:
             probe = processes['api']['readiness_probe']['http_get']
             # The real /status route answers 200 after schema/state/listener setup,
-            # while /about includes the still-absent Pulse heartbeat.
+            # while /health includes the still-absent Pulse heartbeat.
             with dev.urllib.request.urlopen(api_url + probe['path'], timeout=3) as ready:
                 self.assertEqual(ready.status, 200)
             self.assertEqual(processes['pulse']['depends_on']['api'], {'condition': 'process_healthy'})
             self.assertEqual(dev.wait_ready(10), 0)
-        self.assertTrue(pulse_ready)
-        self.assertEqual(observed.count(api_url + '/about'), 2)
+        self.assertEqual(attempts, 2)
+        self.assertEqual(observed.count(api_url + '/health'), 3)
         mirrors.assert_called_once()
+
+    def test_local_mirror_can_start_while_its_map_indexes_catch_up(self):
+        config = {**self.config, 'profile': 'mirror'}
+        listing = subprocess.CompletedProcess([], 0, stdout='[]')
+        with patch.object(dev, 'settings', return_value=config), \
+                patch.object(dev, 'pc', return_value=listing), \
+                patch.object(dev, 'wait_first_mirror_pass', return_value=0), \
+                patch.object(dev.urllib.request, 'urlopen') as request:
+            request.return_value.__enter__.return_value.status = 200
+            self.assertEqual(dev.wait_ready(10), 0)
+            self.assertEqual(request.call_args_list[0].args[0], f"http://127.0.0.1:{config['port']}/about")
 
     def test_the_stacks_own_nats_carries_pulses_cluster_feed_to_archipelago(self):
         client, monitor = dev.nats_ports(self.config)
@@ -960,12 +975,16 @@ class DevTest(unittest.TestCase):
         self.assertEqual(env['WORLDS_READ_THROUGH_TRUST_UPSTREAM_GRANTS'], 'true')
         self.assertNotIn('WORLDS_READ_THROUGH_TRUST_UPSTREAM_GRANTS', dev.runtime_env(self.config))
         for key in ('SYNC_ENABLED', 'WORLDS_CONTENT_MIRROR_ENABLED', 'SCENE_HOST_ENABLED',
-                    'MARKETPLACE_TRADE_EVENTS_INDEX_ENABLED', 'CREDITS_USAGE_INDEX_ENABLED'):
+                    'CREDITS_USAGE_INDEX_ENABLED'):
             self.assertEqual(env[key], 'false', key)
-        # The Shop's catalogue follows the public subgraphs and chain, as `posture show mirror` does.
+        # The Shop's catalogue follows the public subgraphs and chain, as `posture show mirror` does; its
+        # listings wait for the trade-events index, which walks mainnet over the tagged endpoints.
         for key in ('MARKETPLACE_MIRRORS_ENABLED', 'MARKETPLACE_NFT_INDEX_ENABLED', 'LAND_AUTHZ_INDEX_ENABLED',
-                    'SHOP_RENTALS_INDEX_ENABLED', 'MARKETPLACE_COMMITTEE_INDEX_ENABLED'):
+                    'SHOP_RENTALS_INDEX_ENABLED', 'MARKETPLACE_COMMITTEE_INDEX_ENABLED',
+                    'MARKETPLACE_TRADE_EVENTS_INDEX_ENABLED'):
             self.assertEqual(env[key], 'true', key)
+        self.assertEqual(sorted(e.split('=', 1)[0] for e in env['TRADE_RPC_URLS'].split(',')), ['1', '137'])
+        self.assertTrue(all(e.endswith('?project=dcl-one-dev') for e in env['TRADE_RPC_URLS'].split(',')))
         # The mirror posture's pause between index passes, and the tag naming dev stacks in the RPC's logs.
         self.assertEqual(env['MARKETPLACE_INDEX_INTERVAL_SECS'], '30')
         for key in ('ETH_RPC_URL', 'RPC_ENDPOINT_POLYGON'):
@@ -1008,7 +1027,7 @@ class DevTest(unittest.TestCase):
         self.assertEqual((env['MARKETPLACE_INDEX_CHAIN_ID_MATIC'], env['MARKETPLACE_INDEX_CHAIN_ID_ETHEREUM']), ('80002', '11155111'))
         # A trade signed into the stack closes within seconds: the testnet keeps the binary's pause, not the mirror's.
         self.assertEqual((env['MARKETPLACE_INDEX_INTERVAL_SECS'], mirror['MARKETPLACE_INDEX_INTERVAL_SECS']), ('5', '30'))
-        self.assertEqual(mirror['MARKETPLACE_TRADE_EVENTS_INDEX_ENABLED'], 'false')
+        self.assertEqual(mirror['MARKETPLACE_TRADE_EVENTS_INDEX_ENABLED'], 'true')
         self.assertNotIn('MARKETPLACE_INDEX_CHAIN_ID_MATIC', mirror)
         # The NFT index knows mainnet's contracts only, so it does not walk the testnets.
         self.assertEqual(env['MARKETPLACE_NFT_INDEX_ENABLED'], 'false')
@@ -1391,12 +1410,15 @@ class DevTest(unittest.TestCase):
         api_url = f"http://127.0.0.1:{self.config['port']}"
         restarting = json.dumps([{'name': 'pulse', 'status': 'Restarting', 'exit_code': 1, 'is_running': False}])
         running = json.dumps([{'name': 'pulse', 'status': 'Running', 'exit_code': 1, 'is_running': True}])
-        about = []
+        health_checks = []
 
         def response(url, timeout):
-            # /about can still answer from the last heartbeat while Pulse waits for its restart.
-            if url == api_url + '/about':
-                about.append(url)
+            # The last heartbeat can still be fresh while Pulse waits for its restart.
+            if url == api_url + '/health':
+                health_checks.append(url)
+                body = io.BytesIO(b'{"status":"pass","details":{"comms":{"status":"pass"},"postgres":{"status":"pass"}}}')
+                body.status = 200
+                return body
             return contextlib.nullcontext(type('Response', (), {'status': 200})())
 
         listings = iter([subprocess.CompletedProcess([], 0, restarting), subprocess.CompletedProcess([], 0, running)])
@@ -1408,7 +1430,7 @@ class DevTest(unittest.TestCase):
                 contextlib.redirect_stdout(io.StringIO()):
             self.assertEqual(dev.wait_ready(10), 0)
         # Ready only on the listing after the restart.
-        self.assertEqual(len(about), 1)
+        self.assertEqual(len(health_checks), 1)
         self.assertIsNone(next(listings, None))
         exhausted = subprocess.CompletedProcess([], 0, json.dumps([
             {'name': 'pulse', 'status': 'Completed', 'exit_code': 1, 'is_running': False, 'restarts': 10}]))
