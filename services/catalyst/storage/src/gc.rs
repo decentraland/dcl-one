@@ -317,6 +317,14 @@ pub const NOT_STORE_KEYS: &[(&str, &str)] = &[
     ("shop.trade_event.hashed_signature", "an order digest"),
     ("shop.trade_event.tx_hash", "a transaction hash"),
     ("shop.sale_event.tx_hash", "a transaction hash"),
+    ("shop.sale_execution.tx_hash", "a transaction hash"),
+    ("shop.sale_publication.block_hash", "a block hash"),
+    ("shop.store_sale_line.tx_hash", "a transaction hash"),
+    (
+        "shop.verified_store_sale_line.tx_hash",
+        "a transaction hash",
+    ),
+    ("shop.name_purchase.tx_hash", "a transaction hash"),
     ("shop.nft_event.tx_hash", "a transaction hash"),
     (
         "shop.collection_event.content_hash",
