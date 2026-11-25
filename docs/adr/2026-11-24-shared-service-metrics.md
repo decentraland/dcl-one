@@ -72,7 +72,10 @@ Review histogram thresholds when migrating latency alerts.
   `dcl_map_render_errors_total{kind,reason}` counter distinguishes worker failures, render
   errors and waits that timed out. Use `dcl_map_image_cache_total{kind,result}` for hits, misses,
   shared renders and conditional responses. A PNG cache lookup that finds no image and
-  times out waiting for a render counts as a miss.
+  times out waiting for a render counts as a miss. Use
+  `dcl_map_render_duration_seconds_count` to count successful renders. To include renders
+  that returned a server error, add `dcl_map_render_errors_total{reason="render_error"}`
+  after aggregating both by `kind`.
 - Use `dcl_registry_backend_requests_total{backend,outcome}` for Registry reads forwarded to a
   local native service or public upstream. The outcome distinguishes successful responses,
   upstream client and server errors, other HTTP responses, a full queue and request failures.

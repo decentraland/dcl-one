@@ -697,15 +697,19 @@ mod tests {
         assert_eq!(resp.headers()[header::CACHE_CONTROL], "no-store");
         assert_eq!(resp.headers()[header::RETRY_AFTER], "5");
         let scrape = recorder.handle().render();
-        assert!(
-            scrape.lines().any(|line| {
-                line.starts_with("dcl_map_image_cache_total{")
-                    && line.contains("kind=\"map\"")
-                    && line.contains("result=\"miss\"")
-                    && line.ends_with(" 1")
-            }),
-            "{scrape}"
-        );
+        for (metric, label) in [
+            ("dcl_map_image_cache_total{", "result=\"miss\""),
+            ("dcl_map_render_errors_total{", "reason=\"busy\""),
+        ] {
+            let mut samples = scrape.lines().filter(|line| line.starts_with(metric));
+            assert!(
+                samples.next().is_some_and(|line| {
+                    line.contains("kind=\"map\"") && line.contains(label) && line.ends_with(" 1")
+                }),
+                "{scrape}"
+            );
+            assert_eq!(samples.next(), None, "{scrape}");
+        }
     }
 
     #[tokio::test(start_paused = true)]
