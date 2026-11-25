@@ -124,5 +124,6 @@ export function AnchoredMenu({
 }
 
 function focusables(node: HTMLElement | null): HTMLElement[] {
-  return Array.from(node?.querySelectorAll<HTMLElement>('button:not(:disabled)') ?? [])
+  // A toggle row's control is the shared Switch, a native checkbox.
+  return Array.from(node?.querySelectorAll<HTMLElement>('button:not(:disabled), input[role="switch"]:not(:disabled)') ?? [])
 }

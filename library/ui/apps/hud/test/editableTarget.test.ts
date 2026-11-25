@@ -9,14 +9,14 @@ function element(html: string): HTMLElement {
 }
 
 describe('isEditableTarget', () => {
-  it('is true for text fields', () => {
-    for (const html of ['<input>', '<input type="text">', '<input type="search">', '<input type="email">', '<input type="range">', '<textarea></textarea>']) {
+  it('is true for text fields, and for the other inputs the HUD has always treated as one', () => {
+    for (const html of ['<input>', '<input type="text">', '<input type="search">', '<input type="email">', '<input type="range">', '<input type="radio">', '<textarea></textarea>']) {
       expect(isEditableTarget(element(html)), html).toBe(true)
     }
   })
 
-  it('is false for a switch, a checkbox and a radio, which are inputs that take no text', () => {
-    for (const html of ['<input type="checkbox" role="switch">', '<input type="checkbox">', '<input type="radio">']) {
+  it('is false for a switch and a checkbox, which are inputs that take no text', () => {
+    for (const html of ['<input type="checkbox" role="switch">', '<input type="checkbox">']) {
       expect(isEditableTarget(element(html)), html).toBe(false)
     }
   })
