@@ -1358,7 +1358,13 @@ async fn post_trade_inner(
         return Err(ApiError::http(429, "rate limit exceeded".to_string()));
     }
     require_auth_metadata(headers, MARKETPLACE_AUTH_SIGNERS, Some(CREATE_TRADE_INTENT))?;
-    let recovered = require_signer(state.eip1654.as_deref(), headers, "post", "/v1/trades").await?;
+    let recovered = require_signer(
+        super::signed::fresh(state.eip1654.as_deref()),
+        headers,
+        "post",
+        "/v1/trades",
+    )
+    .await?;
     if TRADE_LIMITER.check(&recovered.to_ascii_lowercase()) == RateLimitDecision::Deny {
         return Err(ApiError::http(429, "rate limit exceeded".to_string()));
     }

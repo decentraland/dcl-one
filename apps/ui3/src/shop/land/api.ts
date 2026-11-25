@@ -81,6 +81,8 @@ export const DEFAULT_LAND_FILTERS: LandFilters = {
 };
 
 const num = (v: string | null) => (v && /^\d+(\.\d+)?$/.test(v.trim()) ? v.trim() : "");
+/** A price bound from the URL: any amount the query would send ([`manaParam`]). */
+const price = (v: string | null) => (v && manaParam(v) !== undefined ? v.trim() : "");
 
 /** The filters a /shop/lands URL carries (upstream's browse options, same names). */
 export function landFiltersFromSearch(search: string): LandFilters {
@@ -97,8 +99,8 @@ export function landFiltersFromSearch(search: string): LandFilters {
     category,
     sort: sort && landSortsFor(status).includes(sort) ? sort : landSortsFor(status)[0]!,
     search: q.get("search") ?? "",
-    minPrice: num(q.get("minPrice")),
-    maxPrice: num(q.get("maxPrice")),
+    minPrice: price(q.get("minPrice")),
+    maxPrice: price(q.get("maxPrice")),
     minEstateSize: num(q.get("minEstateSize")),
     maxEstateSize: num(q.get("maxEstateSize")),
     adjacentToRoad: q.get("adjacentToRoad") === "true",
@@ -131,10 +133,11 @@ export function landFiltersToSearch(f: LandFilters): string {
 /** A MANA amount as `/v1/nfts` reads `minPrice`/`maxPrice` (ethers `parseEther`, as the
  * legacy API did): a plain decimal with at most 18 fraction digits, or nothing. */
 function manaParam(mana: string): string | undefined {
-  const m = /^(\d+)(?:\.(\d+))?$/.exec(mana.trim());
-  if (!m) return undefined;
+  const m = /^(\d*)(?:\.(\d*))?$/.exec(mana.trim());
+  if (!m || (!m[1] && !m[2])) return undefined;
+  const whole = m[1] || "0";
   const frac = (m[2] ?? "").slice(0, 18).replace(/0+$/, "");
-  return frac ? `${m[1]}.${frac}` : m[1];
+  return frac ? `${whole}.${frac}` : whole;
 }
 
 /** The `/v1/nfts` query for the filters (upstream `buildNFTQueryString` for the LAND section). */

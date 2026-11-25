@@ -234,7 +234,10 @@ pub fn parse_ether(value: &str) -> Option<String> {
 /// (`parsePrice`): items, catalog, nfts and stats; sales and prices take wei.
 pub(crate) fn parse_price_param(p: &Params, key: &str) -> Result<Option<String>, ApiError> {
     match p.get_string(key, None) {
+        // Past 78 digits of wei the amount is beyond uint256: a 400 here, not
+        // a failed read further down (the subgraph's `searchOrderPrice_gte`).
         Some(raw) if !raw.trim().is_empty() => parse_ether(&raw)
+            .filter(|wei| wei.trim_start_matches('-').len() <= 78)
             .map(Some)
             .ok_or_else(|| ApiError::bad_request(format!("Invalid {key} value: {raw}"))),
         _ => Ok(None),
@@ -1512,6 +1515,12 @@ mod tests {
         }
         let err = parse_filters(&pairs(&[("minPrice", "abc")])).unwrap_err();
         assert_eq!(err.message(), "Invalid minPrice value: abc");
+        // Past 78 digits of wei (beyond uint256) a bound is a 400, not a failed read.
+        let at_cap = "9".repeat(60);
+        assert!(parse_filters(&pairs(&[("maxPrice", &at_cap)])).is_ok());
+        let past = "9".repeat(61);
+        let err = parse_filters(&pairs(&[("maxPrice", &past)])).unwrap_err();
+        assert_eq!(err.message(), format!("Invalid maxPrice value: {past}"));
         let f = parse_filters(&pairs(&[
             ("maxPrice", "2"),
             ("sortBy", "cheapest"),

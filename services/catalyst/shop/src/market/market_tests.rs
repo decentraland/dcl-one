@@ -1780,6 +1780,11 @@ struct StubEip1654(ContractWallet);
 
 #[async_trait::async_trait]
 impl crate::auth::eip1654::Eip1654Validator for StubEip1654 {
+    /// It asks the contract on every call, as the RPC validator does.
+    fn fresh_validator(&self) -> Option<&dyn crate::auth::eip1654::Eip1654Validator> {
+        Some(self)
+    }
+
     async fn validate_signature(
         &self,
         _contract_address: &str,
@@ -2037,6 +2042,118 @@ async fn contract_wallet_checks_are_admitted_per_source_before_any_rpc_call() {
         StatusCode::UNAUTHORIZED,
         "another source keeps its own budget"
     );
+}
+
+/// The shared cache within its acceptance TTL after a contract wallet's
+/// owner was removed: the cached answer still accepts, the contract (the
+/// fresh path) refuses.
+struct StaleAcceptance(StubEip1654);
+
+#[async_trait::async_trait]
+impl crate::auth::eip1654::Eip1654Validator for StaleAcceptance {
+    fn fresh_validator(&self) -> Option<&dyn crate::auth::eip1654::Eip1654Validator> {
+        Some(&self.0)
+    }
+
+    async fn validate_signature(
+        &self,
+        _contract_address: &str,
+        _hash: &[u8],
+        _signature: &[u8],
+    ) -> Result<bool, crate::auth::AuthError> {
+        Ok(true)
+    }
+}
+
+/// A write asks the contract itself (`signed::fresh`), so a delegation stops
+/// authorizing the moment its owner is removed; a read keeps the shared
+/// cache. The optional signer of the public reads (catalog `pickedBy`, the
+/// suggested feed) verifies a contract wallet too, and a check that cannot
+/// run is a 503 there, never an anonymous visitor.
+#[tokio::test]
+async fn writes_ask_the_contract_and_optional_reads_fail_closed() {
+    let Some(mut state) = state_with_db(Settings {
+        data_writes_enabled: true,
+        ..Settings::for_tests()
+    })
+    .await
+    else {
+        return;
+    };
+    let pool = state.pool.clone();
+    let t = tag();
+    let contract = format!("0x{:0>40}", "c0de3").to_lowercase();
+    let item = format!("{}-0", contract_of(&t, 9));
+    mirrors::items::upsert(
+        &pool,
+        super::graph::Network::Matic,
+        137,
+        &[mirrors::items::fixture(
+            &contract_of(&t, 9),
+            "0",
+            "wearable_v2",
+            "Stale",
+        )],
+    )
+    .await
+    .unwrap();
+    Arc::get_mut(&mut state).expect("an unshared state").eip1654 = Some(Arc::new(StaleAcceptance(
+        StubEip1654(ContractWallet::Refuses),
+    )));
+    let path = format!("/v1/picks/{item}");
+    let (status, body) = call(
+        market_router(state.clone()),
+        "POST",
+        &path,
+        contract_wallet_headers(&contract, "post", &path).await,
+        Some(json!({ "pickedFor": [lists::DEFAULT_LIST_ID] })),
+    )
+    .await;
+    assert_eq!(
+        status,
+        StatusCode::UNAUTHORIZED,
+        "a write asks the contract: {body}"
+    );
+    let (status, body) = call(
+        market_router(state.clone()),
+        "GET",
+        &path,
+        contract_wallet_headers(&contract, "get", &path).await,
+        None,
+    )
+    .await;
+    assert_eq!(
+        status,
+        StatusCode::OK,
+        "a read keeps the cached answer: {body}"
+    );
+
+    use super::wire::ApiError;
+    let optional = |wallet| {
+        let contract = contract.clone();
+        async move {
+            let headers = contract_wallet_headers(&contract, "get", "/v1/catalog").await;
+            super::signed::optional_signer(
+                Some(&StubEip1654(wallet)),
+                &headers,
+                "get",
+                "/v1/catalog",
+            )
+            .await
+        }
+    };
+    assert_eq!(
+        optional(ContractWallet::Accepts).await.unwrap(),
+        Some(contract.clone())
+    );
+    assert!(matches!(
+        optional(ContractWallet::Refuses).await,
+        Err(ApiError::Http { code: 401, .. })
+    ));
+    assert!(matches!(
+        optional(ContractWallet::Unreachable).await,
+        Err(ApiError::Http { code: 503, .. })
+    ));
 }
 
 #[tokio::test]

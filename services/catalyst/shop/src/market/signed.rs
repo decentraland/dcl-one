@@ -7,7 +7,8 @@
 //! visitor, never as the visiting user). Both modes verify an EIP-1654
 //! contract-wallet chain through the node's validator (`isValidSignature`
 //! over RPC), as upstream's crypto middleware did; a check that cannot run
-//! fails closed with a 503, never as the signer. Every such check is
+//! fails closed with a 503, never as the signer; a write checks it uncached
+//! ([`fresh`]). Every such check is
 //! admitted per client source first ([`admit_contract_wallet_check`], the
 //! `/forward-blockchain` pre-auth budget), so an anonymous client attaching a
 //! contract-wallet chain to public reads cannot spend the node's RPC quota
@@ -79,12 +80,30 @@ static CONTRACT_WALLET_CHECKS: LazyLock<super::tips::ForwardLimiter> =
     LazyLock::new(|| super::tips::ForwardLimiter::new(super::tips::LIMITER_KEYS));
 
 /// Whether the request's auth chain carries an EIP-1654 link, the one kind
-/// whose verification is an `isValidSignature` call over RPC.
+/// whose verification is an `isValidSignature` call over RPC. Decided on the
+/// chain as the verifier parses it, so a JSON escape in a link's `type`
+/// cannot hide one; a chain that does not parse is refused before any RPC.
 fn carries_contract_wallet_link(headers: &HeaderMap) -> bool {
-    headers.iter().any(|(name, value)| {
-        name.as_str().starts_with(AUTH_CHAIN_HEADER_PREFIX)
-            && value.to_str().is_ok_and(|v| v.contains("EIP_1654"))
+    use crate::auth::AuthLinkType::{
+        EcdsaEip1654Ephemeral, EcdsaEip1654ScopedEphemeral, EcdsaEip1654SignedEntity,
+    };
+    signed_fetch::extract_auth_chain(headers).is_ok_and(|chain| {
+        chain.iter().any(|link| {
+            matches!(
+                link.link_type,
+                EcdsaEip1654Ephemeral | EcdsaEip1654SignedEntity | EcdsaEip1654ScopedEphemeral
+            )
+        })
     })
+}
+
+/// The validator of a write: the uncached one (`fresh_validator`), so a
+/// contract wallet's delegation stops authorizing the moment its owner is
+/// removed, not after the shared cache's acceptance TTL. A validator with no
+/// fresh path leaves a contract-wallet write unverifiable: the 501, never a
+/// cached acceptance.
+pub fn fresh(eip1654: Option<&dyn Eip1654Validator>) -> Option<&dyn Eip1654Validator> {
+    eip1654.and_then(|v| v.fresh_validator())
 }
 
 /// Admits a contract-wallet verification before any RPC call: a chain with an
@@ -371,6 +390,38 @@ mod tests {
                 .message(),
             "Invalid auth signer"
         );
+    }
+
+    /// The contract-wallet admission reads the chain as the verifier parses
+    /// it: a `\u` escape in a link's type still names an EIP-1654 link.
+    #[test]
+    fn a_contract_wallet_link_is_found_on_the_parsed_chain_whatever_its_escapes() {
+        let chain = |ephemeral_type: &str| {
+            let mut h = HeaderMap::new();
+            for (i, link) in [
+                r#"{"type":"SIGNER","payload":"0x00000000000000000000000000000000000c0de1","signature":""}"#.to_string(),
+                format!(r#"{{"type":"{ephemeral_type}","payload":"Decentraland Login\nEphemeral address: 0x00000000000000000000000000000000000e0e0e\nExpiration: 2099-01-01T00:00:00.000Z","signature":"0x11"}}"#),
+                r#"{"type":"ECDSA_SIGNED_ENTITY","payload":"x","signature":"0x22"}"#.to_string(),
+            ]
+            .iter()
+            .enumerate()
+            {
+                h.insert(
+                    axum::http::HeaderName::try_from(format!("x-identity-auth-chain-{i}")).unwrap(),
+                    HeaderValue::from_str(link).unwrap(),
+                );
+            }
+            h
+        };
+        assert!(carries_contract_wallet_link(&chain(
+            "ECDSA_EIP_1654_EPHEMERAL"
+        )));
+        assert!(
+            carries_contract_wallet_link(&chain(r"ECDSA_EIP_1654_EPHEMERAL")),
+            "an escaped type is still the link the verifier sees"
+        );
+        assert!(!carries_contract_wallet_link(&chain("ECDSA_EPHEMERAL")));
+        assert!(!carries_contract_wallet_link(&HeaderMap::new()));
     }
 
     #[tokio::test]

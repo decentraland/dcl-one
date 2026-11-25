@@ -700,7 +700,14 @@ async fn authenticate(
     path: &str,
 ) -> Result<String, ApiError> {
     require_not_scene_signer(headers)?;
-    require_signer(state.eip1654.as_deref(), headers, method, path).await
+    // Every caller writes: the uncached check (`signed::fresh`).
+    require_signer(
+        super::signed::fresh(state.eip1654.as_deref()),
+        headers,
+        method,
+        path,
+    )
+    .await
 }
 
 async fn pick_inner(
