@@ -16,8 +16,14 @@ mod text;
 
 use alloy_core::primitives::Address;
 use bevy::{
-    app::PropagateStop, color::Mix, ecs::system::SystemParam, math::Vec3A, pbr::NotShadowCaster,
-    platform::collections::HashSet, prelude::*, render::primitives::Aabb,
+    app::PropagateStop,
+    color::Mix,
+    ecs::system::SystemParam,
+    math::Vec3A,
+    pbr::NotShadowCaster,
+    platform::collections::{HashMap, HashSet},
+    prelude::*,
+    render::primitives::Aabb,
 };
 use common::{
     feature_flags::{FeatureFlags, FlagsSource},
@@ -614,30 +620,58 @@ fn resolve_content(
     }
 }
 
-/// The system scene's word on the tag of one of its avatars: put on it, or taken away. The
-/// entity is read in the system scene's own context, so no other scene's entity can be reached.
-/// The scene's `AvatarShape` may reach the engine after its word: the tag waits on the entity,
-/// and shows once the avatar is built.
+/// The system scene's last word on the tag of one of its entities, kept until the engine has the
+/// entity: the system scenes there were when it was asked, and the tag or none.
+struct PendingNametag {
+    scenes: Vec<Entity>,
+    nametag: Option<AvatarShapeNametag>,
+}
+
+/// The system scene's word on the tag of one of its avatars: put on it, or taken away. Only the
+/// last word on an entity in an engine update counts. The entity is read in the system scene's
+/// own context, so no other scene's entity can be reached. The scene's word can come before the
+/// engine has the entity: a tag then waits for it, until the scene it was asked in names it, the
+/// entity dies or the scene goes; a word to take it away has nothing to wait for. The scene's
+/// `AvatarShape` may come later still: the tag waits on the entity, and shows once the avatar is
+/// built.
 fn set_system_scene_nametags(
     mut commands: Commands,
     mut requests: EventReader<SystemApi>,
-    system_scenes: Query<&RendererSceneContext, With<SuperUserScene>>,
+    system_scenes: Query<(Entity, &RendererSceneContext), With<SuperUserScene>>,
     tagged: Query<Option<&SystemSceneNametag>>,
+    mut pending: Local<HashMap<SceneEntityId, PendingNametag>>,
 ) {
     for request in requests.read() {
         let SystemApi::SetAvatarShapeNametag { entity, nametag } = request else {
             continue;
         };
-        let entity = SceneEntityId::from_proto_u32(*entity);
-        let Some((avatar, current)) = system_scenes
-            .iter()
-            .filter_map(|context| context.bevy_entity(entity))
-            .find_map(|avatar| tagged.get(avatar).ok().map(|current| (avatar, current)))
-        else {
-            debug!("the system scene has no entity {entity}: its nametag is dropped");
-            continue;
+        pending.insert(
+            SceneEntityId::from_proto_u32(*entity),
+            PendingNametag {
+                scenes: system_scenes.iter().map(|(root, _)| root).collect(),
+                nametag: nametag.clone(),
+            },
+        );
+    }
+    pending.retain(|&entity, word| {
+        let contexts = || {
+            word.scenes
+                .iter()
+                .filter_map(|&root| system_scenes.get(root).ok())
+                .map(|(_, context)| context)
         };
-        match nametag {
+        // the scene it was asked in went
+        if contexts().next().is_none() {
+            return false;
+        }
+        let found = contexts()
+            .filter_map(|context| context.bevy_entity(entity))
+            .find_map(|avatar| tagged.get(avatar).ok().map(|current| (avatar, current)));
+        let Some((avatar, current)) = found else {
+            // a tag waits for the entity, unless it died
+            return word.nametag.is_some() && !contexts().all(|context| context.is_dead(entity));
+        };
+        match &word.nametag {
             Some(nametag) if current.is_none_or(|current| current.0 != *nametag) => {
                 commands
                     .entity(avatar)
@@ -648,7 +682,8 @@ fn set_system_scene_nametags(
             }
             _ => {}
         }
-    }
+        false
+    });
 }
 
 /// Names the avatars a scene made, while they have a body that is built: without one the tag

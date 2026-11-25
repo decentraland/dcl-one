@@ -475,7 +475,14 @@ fn a_system_scene_tag_reads_as_a_claimed_or_an_unclaimed_name() {
 
 /// Makes `root` the scene that numbers `avatar` as its entity 600: the system scene, or another.
 fn number_avatar(app: &mut App, root: Entity, avatar: Entity, system: bool) -> SceneEntityId {
-    let mut context = RendererSceneContext::new(
+    let id = scene_context(app, root, system);
+    name_entity(app, root, id, avatar);
+    id
+}
+
+/// Makes `root` a scene, the system scene or another, whose entity 600 the engine doesn't have yet.
+fn scene_context(app: &mut App, root: Entity, system: bool) -> SceneEntityId {
+    let context = RendererSceneContext::new(
         dcl_types::SceneId(root),
         "scene".to_owned(),
         String::new(),
@@ -494,14 +501,30 @@ fn number_avatar(app: &mut App, root: Entity, avatar: Entity, system: bool) -> S
         false,
         false,
     );
-    let id = SceneEntityId::new(600, 0);
-    context.associate_bevy_entity(id, avatar);
     let mut root = app.world_mut().entity_mut(root);
     root.insert(context);
     if system {
         root.insert(SuperUserScene);
     }
-    id
+    // the scene's entity 600
+    SceneEntityId::new(600, 0)
+}
+
+/// The scene at `root` names `avatar` as its entity `id`: the engine has it now.
+fn name_entity(app: &mut App, root: Entity, id: SceneEntityId, avatar: Entity) {
+    app.world_mut()
+        .get_mut::<RendererSceneContext>(root)
+        .unwrap()
+        .associate_bevy_entity(id, avatar);
+}
+
+/// A built preview avatar of the scene at `root`, as the engine makes it for the scene's entity.
+fn spawn_preview(app: &mut App, root: Entity) -> Entity {
+    let preview = spawn_scene_avatar(app, root, &shape(ADDRESS, None));
+    app.world_mut()
+        .entity_mut(preview)
+        .insert(NametagHeadOffset(0.4));
+    preview
 }
 
 /// The system scene's `setAvatarShapeNametag` for its entity `entity`.
@@ -583,6 +606,97 @@ fn a_tag_put_on_before_the_avatars_shape_arrives_shows_once_it_is_built() {
         selection(&look),
         NametagHeadOffset(0.4),
     ));
+    app.update();
+    assert_eq!(name_of(&app, preview).as_deref(), Some("Ada"));
+}
+
+#[test]
+fn a_tag_asked_before_the_engine_has_the_entity_shows_once_it_does() {
+    let mut app = scene_avatar_app();
+    let root = app.world_mut().spawn_empty().id();
+    let id = scene_context(&mut app, root, true);
+    set_system_tag(&mut app, id, Some(system_tag("Ada", true)));
+    app.update();
+
+    // the scene's entity and its shape arrive later, and nothing is asked again
+    let preview = spawn_preview(&mut app, root);
+    name_entity(&mut app, root, id, preview);
+    app.update();
+    app.update();
+    assert_eq!(name_of(&app, preview).as_deref(), Some("Ada"));
+}
+
+#[test]
+fn a_waiting_tag_goes_with_a_clear_its_entity_or_its_scene() {
+    // taken away while it waits
+    let mut app = scene_avatar_app();
+    let root = app.world_mut().spawn_empty().id();
+    let id = scene_context(&mut app, root, true);
+    set_system_tag(&mut app, id, Some(system_tag("Ada", true)));
+    app.update();
+    set_system_tag(&mut app, id, None);
+    app.update();
+    let preview = spawn_preview(&mut app, root);
+    name_entity(&mut app, root, id, preview);
+    app.update();
+    app.update();
+    assert_eq!(name_of(&app, preview), None);
+
+    // its entity died while it waited: a later entity with the number is another one, not its
+    let mut app = scene_avatar_app();
+    let root = app.world_mut().spawn_empty().id();
+    let id = scene_context(&mut app, root, true);
+    set_system_tag(&mut app, id, Some(system_tag("Ada", true)));
+    app.update();
+    app.world_mut()
+        .get_mut::<RendererSceneContext>(root)
+        .unwrap()
+        .set_dead(id);
+    app.update();
+    let reborn = SceneEntityId::new(id.id, id.generation + 1);
+    let preview = spawn_preview(&mut app, root);
+    name_entity(&mut app, root, reborn, preview);
+    app.update();
+    app.update();
+    assert_eq!(name_of(&app, preview), None);
+
+    // the scene it was asked in went: a new system scene's entity of the same number is not it
+    let mut app = scene_avatar_app();
+    let root = app.world_mut().spawn_empty().id();
+    let id = scene_context(&mut app, root, true);
+    set_system_tag(&mut app, id, Some(system_tag("Ada", true)));
+    app.update();
+    app.world_mut().entity_mut(root).despawn();
+    let next = app.world_mut().spawn_empty().id();
+    scene_context(&mut app, next, true);
+    let preview = spawn_preview(&mut app, next);
+    name_entity(&mut app, next, id, preview);
+    app.update();
+    app.update();
+    assert_eq!(name_of(&app, preview), None);
+}
+
+#[test]
+fn the_last_word_on_a_tag_in_an_update_wins() {
+    let mut app = scene_avatar_app();
+    let root = app.world_mut().spawn_empty().id();
+    let preview = spawn_preview(&mut app, root);
+    let id = number_avatar(&mut app, root, preview, true);
+    app.update();
+
+    // put on and taken away in one update, on an avatar with none: none
+    set_system_tag(&mut app, id, Some(system_tag("Ada", true)));
+    set_system_tag(&mut app, id, None);
+    app.update();
+    assert!(app.world().get::<SystemSceneNametag>(preview).is_none());
+    assert_eq!(name_of(&app, preview), None);
+
+    // tagged, then taken away and put back in one update: still tagged
+    set_system_tag(&mut app, id, Some(system_tag("Ada", true)));
+    app.update();
+    assert_eq!(name_of(&app, preview).as_deref(), Some("Ada"));
+    set_system_tag(&mut app, id, None);
+    set_system_tag(&mut app, id, Some(system_tag("Ada", true)));
     app.update();
     assert_eq!(name_of(&app, preview).as_deref(), Some("Ada"));
 }
