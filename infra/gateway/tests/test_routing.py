@@ -68,6 +68,38 @@ class HostAliasTest(unittest.TestCase):
         mounts = set(re.findall(r'\.route\(\s*"/([^/"]+)', router))
         self.assertEqual(mounts, set(gateway.BADGES_MOUNTS))
 
+    def test_credits_host_serves_credits_servers_own_paths(self):
+        # credits-server's /credits/... paths are served at the same subpaths
+        # of the node's /credits mount: the pack list, the pack purchase (not
+        # the merchandise checkout at the mount's /checkout), its orders and
+        # the credit authorizations, as the rest of credits-server's surface.
+        for path in ["/credits", "/credits/packs", "/credits/checkout", "/credits/orders/ord_1",
+                     "/credits/orders/ord_1/cancel-return", "/credits/orders/ord_1/resume",
+                     "/credits/authorize", "/credits/authorize/batch",
+                     "/credits/authorize-publication", "/credits/iap/quote", "/users/0xab/credits",
+                     "/seasons"]:
+            with self.subTest(path=path):
+                self.assertEqual(route("credits.example.test", path), ("/credits" + path, path))
+
+    def test_credits_host_keeps_other_prefixed_paths(self):
+        # Stripe's webhook for credits-server is /credits/webhook, the node's
+        # mount's /webhook; a path already written for the node passes as sent.
+        for path in ["/credits/webhook", "/credits/credits/packs", "/credits/users/0xab/credits",
+                     "/credits/checkout-other"]:
+            with self.subTest(path=path):
+                self.assertEqual(route("credits.example.test", path), (path, path))
+
+    def test_credits_server_mounts_cover_the_credits_router(self):
+        # Every /credits/<x> route the node's credits mount serves, and every
+        # /credits/credits/<x> path the Shop's path table lists, is one of
+        # credits-server's own paths, so the credits host reaches it.
+        shop = Path(__file__).parents[3] / "services/catalyst/shop/src"
+        router = (shop / "credits/mod.rs").read_text()
+        mounts = set(re.findall(r'\.route\(\s*"/credits/([^/"{]+)', router))
+        mounts |= set(re.findall(r'/credits/credits/([a-z-]+)', (shop / "paths.rs").read_text()))
+        self.assertTrue(mounts, "the credits router's /credits/... routes")
+        self.assertLessEqual(mounts, set(gateway.CREDITS_SERVER_MOUNTS))
+
     def test_worlds_host_reaches_the_prefixed_worlds_routes(self):
         for path in ["/world/w.dcl.eth/settings", "/livekit-webhook", "/health/live",
                      "/contents/bafy", "/entities"]:
