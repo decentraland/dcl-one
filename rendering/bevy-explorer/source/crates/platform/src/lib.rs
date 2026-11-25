@@ -50,7 +50,7 @@ pub fn default_color_grading() -> ColorGrading {
 /// upsample: `lerp(0.05, 0.95, scatter)`.
 pub const BLOOM_SCATTER: f32 = 0.05 + 0.9 * 0.5;
 
-/// The bloom of the High setting: threshold 1, intensity 1, scatter 0.5.
+/// The bloom the Bloom setting turns on: threshold 1, intensity 1, scatter 0.5.
 ///
 /// A scatter bloom upsamples with `lerp(fine, coarse, SCATTER)` folded over the mip chain and
 /// adds the result once, so mip `i` weighs `(1 - s) s^i`. bevy's `Additive` mode adds each mip

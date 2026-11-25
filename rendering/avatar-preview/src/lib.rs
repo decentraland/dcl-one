@@ -201,7 +201,7 @@ pub fn dress_camera(camera: &mut EntityCommands, flags: &StageFlags) {
         camera.remove::<bevy::core_pipeline::bloom::Bloom>();
     } else {
         // the Unity preview's bloom: threshold 1, so only what is brighter than white blooms
-        // (emissive parts), intensity 1 and scatter 0.6. That is the Explorer's High bloom with
+        // (emissive parts), intensity 1 and scatter 0.6. That is the Explorer's bloom with
         // a wider scatter; `platform::scatter_bloom` derives the two weights, and
         // `size_bloom_to_view` sets how far it reaches
         let scatter = 0.05 + 0.9 * 0.6;

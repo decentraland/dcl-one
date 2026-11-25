@@ -94,9 +94,10 @@ ends in "we don't do that", so the next person doesn't have to rediscover it.
   channel pointing down the image and a glTF's normal map up, so the glTF's own normal map
   keeps its orientation when it comes back, and a bump texture the scene puts in its place is
   read as the SDK's.
-- **High bloom scatters at 0.5.** Unity's quality presets name 0.3 (Low, where bloom is off),
-  0.5 (Medium) and 0.6 (High). At 0.3 the glow around a bright surface here is about half as
-  strong as Unity draws it, and 0.5 matches its captures (`BLOOM_SCATTER`).
+- **Bloom is off or on, and scatters at 0.5.** Unity's quality presets name 0.3 (Low, where
+  bloom is off), 0.5 (Medium) and 0.6 (High). At 0.3 the glow around a bright surface here is
+  about half as strong as Unity draws it, and 0.5 matches its captures (`BLOOM_SCATTER`). The
+  setting has one level: a saved config that names an earlier one (Low or High) reads as On.
 - **Alpha test and blend premultiplies the whole base colour.** The alpha multiplies the base
   colour before lighting, and a metal's reflectance is its base colour, so a transparent metal's
   reflections thin with it where Unity keeps them. Keeping them needs the diffuse and specular
@@ -959,8 +960,8 @@ ends in "we don't do that", so the next person doesn't have to rediscover it.
   carry Unity's values for the frame rate, VSync, render scale, avatar outline, jiggle bones, sun
   shadow quality, the Low and High shadow distances and scene lights; Medium is the default and
   the one every saved config migrates to, except jiggle bones, which stay off by default (see the
-  spring bones ADR). Anti-aliasing and depth of field differ (next entry). Every preset uses the
-  default bloom, High, the one that matches Unity's on Medium and High; Unity turns bloom off on
+  spring bones ADR). Anti-aliasing and depth of field differ (next entry). Every preset keeps
+  bloom on, as Unity's Medium and High do; Unity turns bloom off on
   Low. Medium's sun shadow distance is 20 m, not 60 m: Medium
   has one cascade (above), which stops at 40 m, and at 20 m its texels are half as large as at
   40 m. The presets leave out Unity's scene distance (in parcels, where far scenes load as

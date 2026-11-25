@@ -728,7 +728,7 @@ pub struct AppConfig {
 
 /// bump to run one-time migrations of the preset-managed settings in existing configs
 /// (see [`AppConfig::reset_outdated_settings`])
-pub const SETTINGS_GENERATION: u32 = 6;
+pub const SETTINGS_GENERATION: u32 = 5;
 
 /// bump to run one-time migrations of saved input binding tables
 /// (see [`AppConfig::migrate_inputs`])
@@ -873,14 +873,13 @@ impl AppConfig {
 
     /// one-time migrations for configs saved with an older generation, keeping everything
     /// else. gen 1: reinitialize the preset-managed settings to the current defaults.
-    /// gen 2: default bloom dropped High -> Low; move configs still on the old default.
+    /// gen 2: moved configs off an old bloom level; bloom is only on or off now (`BloomSetting`),
+    /// so there is nothing left to move.
     /// gen 3: native gpu uploads became capped by default; move configs still uncapped (0).
     /// gen 4: the defaults became the Medium graphics preset; reset the settings the presets set,
     /// so every saved config lands on Medium.
     /// gen 5: Render Resolution moves in 10% steps; move a value saved between steps to its
     /// nearest step.
-    /// gen 6: default bloom went back to High, whose threshold keeps the glow to emissive and
-    /// bright surfaces; move configs still on Low, the old default.
     pub fn reset_outdated_settings(&mut self) {
         if self.settings_generation >= SETTINGS_GENERATION {
             return;
@@ -888,9 +887,6 @@ impl AppConfig {
         let default = Self::default();
         if self.settings_generation < 1 {
             self.reset_preset_settings(&default);
-        }
-        if self.settings_generation < 2 && self.graphics.bloom == BloomSetting::High {
-            self.graphics.bloom = default.graphics.bloom;
         }
         if self.settings_generation < 3 && self.graphics.gpu_bytes_per_frame == 0 {
             self.graphics.gpu_bytes_per_frame = default.graphics.gpu_bytes_per_frame;
@@ -901,9 +897,6 @@ impl AppConfig {
         if self.settings_generation < 5 {
             self.graphics
                 .set_render_scale_steps(self.graphics.render_scale_steps());
-        }
-        if self.settings_generation < 6 && self.graphics.bloom == BloomSetting::Low {
-            self.graphics.bloom = default.graphics.bloom;
         }
         self.settings_generation = SETTINGS_GENERATION;
     }
@@ -1194,7 +1187,7 @@ impl Default for GraphicsSettings {
             window: WindowSetting::Windowed,
             // fullscreen_res: FullscreenResSetting(UVec2::new(1280,720)),
             fog: FogSetting::On,
-            bloom: BloomSetting::High,
+            bloom: BloomSetting::On,
             dof: DofSetting::High,
             ssao: SsaoSetting::Off,
             sky_reflections: SkyReflectionSetting::High,
@@ -1463,11 +1456,13 @@ pub enum FogSetting {
     On,
 }
 
+/// Bloom is on or off. A saved config may name one of the two levels there used to be: both
+/// read as on.
 #[derive(Serialize, Deserialize, Clone, Copy, PartialEq, Eq, Debug)]
 pub enum BloomSetting {
     Off,
-    Low,
-    High,
+    #[serde(alias = "Low", alias = "High")]
+    On,
 }
 
 #[derive(Serialize, Deserialize, Clone, Copy, PartialEq, Eq, Debug)]
@@ -3010,7 +3005,7 @@ mod tests {
     fn default_graphics_are_the_medium_preset() {
         let g = GraphicsSettings::default();
         assert_eq!((g.fps_target, g.render_scale), (60, 1.0));
-        assert_eq!((g.bloom, g.avatar_outline), (BloomSetting::High, true));
+        assert_eq!((g.bloom, g.avatar_outline), (BloomSetting::On, true));
         assert_eq!(
             (
                 g.shadow_settings,
@@ -3075,19 +3070,12 @@ mod tests {
     }
 
     #[test]
-    fn generation_6_moves_low_bloom_to_high_and_keeps_off() {
-        let migrated = |bloom| {
-            let mut config = AppConfig {
-                settings_generation: 5,
-                ..Default::default()
-            };
-            config.graphics.bloom = bloom;
-            config.reset_outdated_settings();
-            config.graphics.bloom
-        };
-        assert_eq!(migrated(BloomSetting::Low), BloomSetting::High);
-        assert_eq!(migrated(BloomSetting::Off), BloomSetting::Off);
-        assert_eq!(migrated(BloomSetting::High), BloomSetting::High);
+    fn a_saved_bloom_level_reads_as_on() {
+        let read = |saved: &str| serde_json::from_str::<BloomSetting>(saved).unwrap();
+        assert_eq!(read(r#""Low""#), BloomSetting::On);
+        assert_eq!(read(r#""High""#), BloomSetting::On);
+        assert_eq!(read(r#""On""#), BloomSetting::On);
+        assert_eq!(read(r#""Off""#), BloomSetting::Off);
     }
 
     #[test]
@@ -3100,7 +3088,7 @@ mod tests {
         };
         let g = &mut config.graphics;
         (g.vsync, g.fps_target, g.render_scale) = (false, 144, 0.5);
-        (g.msaa, g.bloom, g.dof) = (AaSetting::FxaaLow, BloomSetting::High, DofSetting::Off);
+        (g.msaa, g.bloom, g.dof) = (AaSetting::FxaaLow, BloomSetting::Off, DofSetting::Off);
         (g.shadow_distance, g.light_count, g.shadow_caster_count) = (200.0, 32, 8);
         g.lens_flare = false;
         (g.ambient_brightness, g.oob) = (10, 0.0);

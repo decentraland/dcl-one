@@ -25,7 +25,7 @@ const webDefaults = (): Setting[] => [
   setting('Target Frame Rate', 1, ['30 fps', '60 fps', '120 fps', '144 fps', 'Max']),
   setting('Render Resolution', 100),
   setting('Anti-aliasing', 2, FXAA),
-  setting('Bloom', 2, ['Off', 'Low', 'High']),
+  setting('Bloom', 1, OFF_ON),
   setting('Avatar Outline', 1, OFF_ON),
   setting('Jiggle Bones', 0, OFF_ON),
   setting('Shadow settings', 1, ['Off', 'Low', 'High']),
@@ -71,7 +71,7 @@ describe('graphics presets', () => {
 
   it('every preset uses the default bloom', () => {
     for (const preset of [0, 1, 2]) {
-      expect(target(nativeDefaults(), preset, 'Bloom')).toBe(2)
+      expect(target(nativeDefaults(), preset, 'Bloom')).toBe(1)
     }
   })
 
