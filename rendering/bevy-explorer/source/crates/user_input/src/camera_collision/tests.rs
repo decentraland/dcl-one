@@ -1,4 +1,3 @@
-use bevy::prelude::*;
 use dcl_component::{proto_components::sdk::components::ColliderLayer, SceneEntityId};
 use rapier3d_f64::prelude::{ColliderBuilder, Group, InteractionGroups, InteractionTestMode};
 use scene_runner::update_world::mesh_collider::{
