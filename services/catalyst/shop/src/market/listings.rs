@@ -1051,9 +1051,8 @@ pub(crate) async fn refuse_duplicate_open(
             AND t.signer = $7 \
             AND t.hashed_signature <> $8 AND t.expires_at > $9 \
             AND NOT EXISTS (SELECT 1 FROM shop.trade_cancellations c WHERE c.target_hashed_signature = t.hashed_signature) \
-            AND NOT {closed} AND NOT {unverifiable} AND {counted})",
+            AND NOT {closed} AND {counted})",
         closed = super::trade_events::closed_on_chain_sql("t", "$9"),
-        unverifiable = super::trade_events::unverifiable_sql("t"),
         counted = super::trades::counted_sql("t.", "$10"),
     );
     let open: bool = sqlx::query_scalar(sqlx::AssertSqlSafe(sql))

@@ -2816,9 +2816,12 @@ Invariants:
   newer than the backoff, so the step's loop ends. A permanent failure costs
   one rebuild per trade every 10 minutes.
 - The open-listing reads (`unified_trades`, `/v1/bids`) list a trade only
-  while its network's trade-events cursor is current
-  (`chain_walk::ready_sql_on`), in the same statement. A trade that is sold,
-  cancelled or marked is not listed. The routes that list, price or report
+  while its network's trade-events cursor holds a publish
+  (`chain_walk::published_sql_on`: a fold published within 30 minutes; a
+  pass in progress keeps the previous publish), in the same statement. A
+  trade that is sold, cancelled or marked is not listed. A marked trade
+  still counts in the duplicate-listing refusal: it may still execute, or
+  be verified later. The routes that list, price or report
   the status of trades refuse with the `trade-events-index` envelope until
   the index is current on both networks. `/v1/trades` and
   `/v1/trades/{id}` serve the stored records, which carry no status, so

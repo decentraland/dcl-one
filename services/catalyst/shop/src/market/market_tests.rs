@@ -2609,6 +2609,24 @@ async fn a_second_open_order_or_bid_on_the_same_asset_is_refused() {
         err.to_string(),
         "There is already an open order for this Item"
     );
+    // A first order without a verified V3 digest is left out of the
+    // listings, but still counts: it may still execute on chain, or be
+    // verified later, and two open orders would then be listed.
+    sqlx::query("INSERT INTO shop.trade_chain_state (trade_id, network, status, folded_block, digest_failed_at) VALUES ($1::uuid, 'matic', 'open', 10, timezone('UTC', now()))")
+        .bind(&first)
+        .execute(&pool)
+        .await
+        .unwrap();
+    let marked = create(signed(item_order_json(&signer, &contract), "0x03")).await;
+    assert!(
+        matches!(marked, Err(listings::TradeCreationError::DuplicateOpen(_))),
+        "{marked:?}"
+    );
+    sqlx::query("DELETE FROM shop.trade_chain_state WHERE trade_id = $1::uuid")
+        .bind(&first)
+        .execute(&pool)
+        .await
+        .unwrap();
     // Once the first order is closed, the item can be listed again.
     sqlx::query("UPDATE shop.trades SET expires_at = '2000-01-01' WHERE id = $1::uuid")
         .bind(&first)
