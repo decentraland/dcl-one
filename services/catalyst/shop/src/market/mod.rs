@@ -52,8 +52,8 @@
 //! the market federation's signed-action log and its feeds
 //! (`federation.rs`: `/v1/federation/*`, `/federation/market/*`).
 
-pub use crate::chain_index::source::{Source, unavailable};
 pub use crate::chain_index::graph;
+pub use crate::chain_index::source::{Source, unavailable};
 
 pub mod accounts;
 pub mod activity;
