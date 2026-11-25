@@ -18,5 +18,8 @@ WITH sales AS (
           AND p.consideration AND p.currency=a.currency
         ORDER BY p.ordinal LIMIT 1
     ) bid ON e.kind='trade' AND a.kind='bid'
-    WHERE a.network=ANY($1) AND a.price>0 AND a.currency=CASE WHEN a.network='ethereum' THEN $2 ELSE $3 END
+    WHERE (e.kind<>'trade' OR NOT EXISTS (
+        SELECT FROM shop.sale_asset other WHERE (other.network,other.block_number,other.log_index)=
+            (a.network,a.block_number,a.log_index) AND other.ordinal<>a.ordinal))
+      AND a.network=ANY($1) AND a.price>0 AND a.currency=CASE WHEN a.network='ethereum' THEN $2 ELSE $3 END
 )

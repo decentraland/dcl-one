@@ -14,6 +14,10 @@ use super::chain_walk::{self, ChainNet};
 use super::{ethereum_sales, listings, nft_index, sale_history, sales_index, trade_events};
 use crate::chain_index::rpc::Rpc;
 
+// Version 1 used the same canonical rows and input proofs, but attributed
+// some unallocated payments to daily rollups. Only their days need repair.
+pub(super) const PUBLICATION_VERSION: i32 = 2;
+
 #[derive(FromRow)]
 struct Input {
     indexer: String,
@@ -58,7 +62,7 @@ impl Inputs {
     }
 
     fn reusable_prefix(&self, marker: &Marker) -> Option<i64> {
-        if marker.input_version != sale_history::VERSION
+        if !matches!(marker.input_version, 1 | PUBLICATION_VERSION)
             || marker.input_epochs.get(..self.rows.len()) != self.epochs().get(..self.rows.len())
             || marker.input_revisions.len() < self.rows.len()
         {
@@ -77,7 +81,7 @@ impl Inputs {
     }
 
     fn covers(&self, marker: &Marker) -> bool {
-        marker.input_version == sale_history::VERSION
+        matches!(marker.input_version, 1 | PUBLICATION_VERSION)
             && marker.input_epochs.starts_with(&self.epochs())
             && marker.input_revisions.starts_with(&self.revisions())
             && marker.late_collections == self.late_collections
@@ -231,7 +235,11 @@ pub async fn snapshot(
         let Some(at) = marker.published_at else {
             return Ok(None);
         };
-        if inputs.factory.is_some() || !inputs.covers(&marker) || at > now.naive_utc() {
+        if marker.input_version != PUBLICATION_VERSION
+            || inputs.factory.is_some()
+            || !inputs.covers(&marker)
+            || at > now.naive_utc()
+        {
             return Ok(None);
         }
         generations.push((net, marker.generation));
@@ -325,7 +333,12 @@ async fn rollups(c: &mut PgConnection, net: ChainNet, days: &[i64]) -> anyhow::R
             .execute(&mut *c)
             .await?;
     }
-    sqlx::query(include_str!("rollups.sql"))
+    sqlx::query(concat!(
+        "WITH execution AS MATERIALIZED (SELECT *, block_time/86400*86400 AS day FROM shop.sale_execution
+         WHERE network=$1 AND block_time/86400*86400=ANY($2))",
+        include_str!("allocated_money.sql"),
+        include_str!("rollups.sql")
+    ))
         .bind(net.db_name())
         .bind(days)
         .bind(ethereum_sales::BURNING_NAME_CONTROLLER)
@@ -424,6 +437,20 @@ pub(super) async fn pass(pool: &PgPool, rpc: &Rpc<'_>, net: ChainNet) -> anyhow:
     write_rows(&mut tx, net, from, to).await?;
     days.extend(creators::write(&mut tx, rpc, net, from, to).await?);
     days.extend(settlements::write(&mut tx, rpc, net, from, to).await?);
+    if previous.as_ref().is_some_and(|m| m.input_version == 1) {
+        // Canonical rows and receipt evidence survive the rollup upgrade. The
+        // publication fence below commits their repaired days and version together.
+        let repair_days = sqlx::query_scalar::<_, i64>(concat!(
+            "WITH execution AS MATERIALIZED (SELECT *, block_time/86400*86400 AS day
+             FROM shop.sale_execution WHERE network=$1)",
+            include_str!("allocated_money.sql"),
+            "SELECT DISTINCT day FROM classified WHERE NOT allocated
+             UNION SELECT DISTINCT e.day FROM execution e JOIN shop.sale_asset a USING(network,block_number,log_index)
+             WHERE a.price>0 AND NOT EXISTS (SELECT FROM classified p WHERE
+                (p.network,p.block_number,p.log_index,p.asset_ordinal)=(a.network,a.block_number,a.log_index,a.ordinal))"
+        )).bind(net.db_name()).fetch_all(&mut *tx).await?;
+        days.extend(repair_days);
+    }
     days.sort_unstable();
     days.dedup();
     // These checkout providers take custody before delivery. Preserve the
@@ -450,6 +477,8 @@ pub(super) async fn pass(pool: &PgPool, rpc: &Rpc<'_>, net: ChainNet) -> anyhow:
                 WHERE (a.network,a.buyer,a.seller,a.contract_address,a.currency)=
                       (k.network,k.buyer,k.seller,k.contract_address,k.currency)
                   AND a.item_id IS NOT DISTINCT FROM k.item_id AND a.price>0
+                  AND (e.kind<>'trade' OR NOT EXISTS (SELECT FROM shop.sale_asset other WHERE
+                    (other.network,other.block_number,other.log_index)=(a.network,a.block_number,a.log_index) AND other.ordinal<>a.ordinal))
             ) AS first_day
             FROM shop.sale_first_purchase k WHERE network=$1 AND first_day=ANY($2)
         ) remaining ON f.ctid=remaining.id
@@ -541,7 +570,7 @@ pub(super) async fn pass(pool: &PgPool, rpc: &Rpc<'_>, net: ChainNet) -> anyhow:
         generation=CASE WHEN $9 THEN EXCLUDED.generation ELSE sale_publication.generation END,
         block_hash=EXCLUDED.block_hash,input_version=EXCLUDED.input_version,input_epochs=EXCLUDED.input_epochs,
         input_revisions=EXCLUDED.input_revisions,late_collections=EXCLUDED.late_collections,published_at=EXCLUDED.published_at")
-        .bind(net.db_name()).bind(to).bind(hash).bind(sale_history::VERSION).bind(start.epochs()).bind(start.revisions())
+        .bind(net.db_name()).bind(to).bind(hash).bind(PUBLICATION_VERSION).bind(start.epochs()).bind(start.revisions())
         .bind(start.late_collections).bind(published_at).bind(!same_history || from!=to || !days.is_empty()).execute(&mut *tx).await?;
     tx.commit().await?;
     Ok(())

@@ -3241,7 +3241,7 @@ async fn account_inventory_pages_indexed_participants_and_excludes_sender_only_w
          SELECT network,$1,$2,$3,array_agg(sale_input_epoch ORDER BY indexer),
                 array_agg(sale_history_revision ORDER BY indexer),0,timezone('UTC',now())
          FROM shop.chain_cursor WHERE indexer IN ('nft','sales','trade_events') GROUP BY network",
-    ).bind(height).bind(&hash).bind(super::sale_history::VERSION).execute(pool).await.unwrap();
+    ).bind(height).bind(&hash).bind(super::sale_fold::PUBLICATION_VERSION).execute(pool).await.unwrap();
 
     // The same 700 wallets received a different protocol cut on each network.
     sqlx::query(

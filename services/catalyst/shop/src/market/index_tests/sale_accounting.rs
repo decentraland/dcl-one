@@ -928,7 +928,11 @@ async fn sales_history_repair_resumes_at_the_next_window_and_discovers_store_iss
     .fetch_one(&db.pool)
     .await
     .unwrap();
-    assert_eq!(excluded, (false, false, false, false, "105".into()));
+    assert_eq!(
+        excluded,
+        (false, false, false, false, "88".into()),
+        "only the two issued NFTs contribute volume; the unmatched 17 remains payment evidence"
+    );
 
     let sellers: Vec<String> =
         sqlx::query_scalar("SELECT seller FROM shop.sale_asset ORDER BY log_index")

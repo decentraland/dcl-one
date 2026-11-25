@@ -523,3 +523,112 @@ async fn deep_sales_pages_keep_equal_timestamps_in_id_order_across_networks() {
     }
     db.drop().await;
 }
+
+#[tokio::test]
+async fn volume_repairs_unallocated_payments_and_counts_only_priced_store_lines() {
+    let Some(db) = ScratchDb::create().await else {
+        return;
+    };
+    let mut settings = index_settings(100, 20);
+    settings.sales_enabled = true;
+    let mut polygon_url = String::new();
+    for net in ChainNet::ALL {
+        let height = nft_index::start_block(net) + 20;
+        let chain = FakeChain::new(height + net.confirmations(), vec![], 1000, 100);
+        chain
+            .chain_id
+            .store(net.chain_id() as u64, Ordering::SeqCst);
+        let url = serve(chain.clone()).await;
+        let st = state_over(db.pool.clone(), &url, settings.clone(), false);
+        sqlx::query("INSERT INTO shop.chain_cursor(indexer,network,chain_id,start_block,last_block,last_block_hash,
+            full_history,folded_block,folded_at,sale_input_version,sale_verified_through,sale_covered_rewinds)
+            SELECT ix,$1,$2,1,$3,$4,true,$3,timezone('UTC',now()),$5,$3,0 FROM unnest(ARRAY['nft','sales','trade_events']) ix")
+            .bind(net.db_name()).bind(net.chain_id()).bind(height as i64).bind(chain.hash_of(height)).bind(sale_history::VERSION)
+            .execute(&db.pool).await.unwrap();
+        sale_fold::pass(&db.pool, &Rpc::at(&st.http, &url), net)
+            .await
+            .unwrap();
+        if net == ChainNet::Matic {
+            polygon_url = url;
+        }
+    }
+    let net = ChainNet::Matic;
+    let block = nft_index::start_block(net) as i64 + 20;
+    let mana = crate::market::listings::mana_token(net.chain_id()).unwrap();
+    let st = state_over(db.pool.clone(), &polygon_url, settings, false);
+    let rpc = Rpc::at(&st.http, &polygon_url);
+    let app = market_router(st.clone());
+    // Version 1 counted the consideration and royalties of this unpriced bid.
+    sqlx::query("WITH e AS (INSERT INTO shop.sale_execution(network,block_number,log_index,tx_hash,venue,kind,block_time,receipt_read)
+        VALUES('matic',$1,1,$2,$3,'bid',86400,true) RETURNING network,block_number,log_index),
+        p AS (INSERT INTO shop.sale_payment(network,block_number,log_index,ordinal,currency,gross,consideration,settled)
+        SELECT network,block_number,log_index,0,$4,240,true,true FROM e RETURNING network,block_number,log_index)
+        INSERT INTO shop.sale_payout(network,block_number,log_index,payment_ordinal,ordinal,role,recipient,amount)
+        SELECT network,block_number,log_index,0,0,'royalty',$3,240 FROM p")
+        .bind(block).bind(format!("0x{:064x}",81)).bind(CARL).bind(mana).execute(&db.pool).await.unwrap();
+    // A bundle price has no per-NFT allocation. Even a partial legacy price
+    // on one of its two asset rows cannot establish an independent sale.
+    sqlx::query("WITH e AS (INSERT INTO shop.sale_execution(network,block_number,log_index,tx_hash,venue,kind,block_time,receipt_read)
+        VALUES('matic',$1,3,$2,$3,'trade',86400,true) RETURNING network,block_number,log_index),
+        a AS (INSERT INTO shop.sale_asset(network,block_number,log_index,ordinal,public_id,beneficiary,kind,contract_address,token_id,seller,buyer,price,currency)
+        SELECT e.*,v.n,'bundled-'||v.n,$4,'order',$3,v.n,$3,$4,v.amount,CASE WHEN v.amount IS NOT NULL THEN $5 END
+        FROM e CROSS JOIN (VALUES (0,120),(1,NULL::int)) v(n,amount))
+        INSERT INTO shop.sale_payment(network,block_number,log_index,ordinal,currency,gross,consideration,settled)
+        SELECT e.*,0,$5,120,true,false FROM e")
+        .bind(block).bind(format!("0x{:064x}",83)).bind(CARL).bind(BOB).bind(mana).execute(&db.pool).await.unwrap();
+    sqlx::query(
+        "INSERT INTO shop.sale_analytics_day(network,day,currency,sales,volume,name_fees,creator_earnings,
+        venue_fees,store_fees,burn_fees,unknown_splits,unallocated_executions)
+        VALUES('matic',86400,$1,1,360,0,240,0,0,0,1,0)",
+    )
+    .bind(mana)
+    .execute(&db.pool)
+    .await
+    .unwrap();
+    sqlx::query("UPDATE shop.sale_publication SET input_version=1 WHERE network='matic'")
+        .execute(&db.pool)
+        .await
+        .unwrap();
+    assert_eq!(
+        get_json(&app, "/v1/volume/all").await.0,
+        StatusCode::SERVICE_UNAVAILABLE
+    );
+    sale_fold::pass(&db.pool, &rpc, net).await.unwrap();
+    let (code, volume) = get_json(&app, "/v1/volume/all").await;
+    assert_eq!(code, StatusCode::OK, "{volume}");
+    assert_eq!(
+        volume["data"],
+        json!({"sales":0,"volume":"0","creatorsEarnings":"0","daoEarnings":"0"})
+    );
+
+    // One receipt includes a priced store line and a second payment whose NFT
+    // has no proven Issue. Neither the second gross nor its fee is allocated.
+    sqlx::query("INSERT INTO shop.sale_execution(network,block_number,log_index,tx_hash,venue,kind,block_time,receipt_read)
+        VALUES('matic',$1,2,$2,$3,'store',86400,true)")
+        .bind(block).bind(format!("0x{:064x}",82)).bind(CARL).execute(&db.pool).await.unwrap();
+    sqlx::query("INSERT INTO shop.sale_asset(network,block_number,log_index,ordinal,public_id,beneficiary,kind,contract_address,token_id,item_id,seller,buyer,price,currency)
+        VALUES('matic',$1,2,1,'priced-store-line',$2,'mint',$3,12,1,$3,$2,60,$4)")
+        .bind(block).bind(BOB).bind(CARL).bind(mana).execute(&db.pool).await.unwrap();
+    sqlx::query("INSERT INTO shop.sale_payment(network,block_number,log_index,ordinal,currency,gross,consideration,settled)
+        VALUES('matic',$1,2,0,$2,250,true,true),('matic',$1,2,1,$2,60,true,true)").bind(block).bind(mana).execute(&db.pool).await.unwrap();
+    sqlx::query("INSERT INTO shop.sale_payout(network,block_number,log_index,payment_ordinal,ordinal,role,recipient,amount)
+        VALUES('matic',$1,2,0,0,'store_fee',$2,250),('matic',$1,2,1,0,'seller',$2,45),
+              ('matic',$1,2,1,1,'royalty',$3,5),('matic',$1,2,1,2,'store_fee',$2,10)")
+        .bind(block).bind(CARL).bind(DAVE).execute(&db.pool).await.unwrap();
+    sqlx::query("UPDATE shop.sale_publication SET input_version=1 WHERE network='matic'")
+        .execute(&db.pool)
+        .await
+        .unwrap();
+    sale_fold::pass(&db.pool, &rpc, net).await.unwrap();
+    let (code, volume) = get_json(&app, "/v1/volume/all").await;
+    assert_eq!(code, StatusCode::OK, "{volume}");
+    assert_eq!(
+        volume["data"],
+        json!({"sales":1,"volume":"60","creatorsEarnings":"50","daoEarnings":"10"})
+    );
+    let (code, sales) = get_json(&app, "/v1/sales?network=MATIC").await;
+    assert_eq!(code, StatusCode::OK, "{sales}");
+    assert_eq!(sales["total"], 1);
+    assert_eq!(sales["data"][0]["price"], "60");
+    db.drop().await;
+}

@@ -2,19 +2,25 @@
 -- after transferring every NFT or leaving the committee.
 , prefix AS (
     SELECT network,block_number FROM shop.sale_publication WHERE network=ANY($1)
+), inventory_assets AS (
+    SELECT a.* FROM shop.sale_asset a JOIN prefix p USING(network)
+    JOIN shop.sale_execution e ON (e.network,e.block_number,e.log_index)=(a.network,a.block_number,a.log_index)
+    WHERE a.block_number<=p.block_number AND a.price>0 AND (e.kind<>'trade' OR NOT EXISTS (
+        SELECT FROM shop.sale_asset other WHERE (other.network,other.block_number,other.log_index)=
+            (a.network,a.block_number,a.log_index) AND other.ordinal<>a.ordinal))
 ), native_accounts AS (
     SELECT a.network,w.address
-    FROM shop.sale_asset a JOIN prefix p USING(network)
+    FROM inventory_assets a
     CROSS JOIN LATERAL (VALUES (a.buyer),(a.seller)) w(address)
-    WHERE a.block_number<=p.block_number AND a.price>0 AND w.address IS NOT NULL
+    WHERE w.address IS NOT NULL
     UNION
     SELECT m.network,w.address
     FROM shop.sale_payment m JOIN prefix p USING(network)
     JOIN shop.sale_execution e ON (e.network,e.block_number,e.log_index)=(m.network,m.block_number,m.log_index)
     CROSS JOIN LATERAL (VALUES (m.payer),(m.beneficiary)) w(address)
     WHERE m.block_number<=p.block_number AND m.consideration AND m.gross>0 AND w.address IS NOT NULL
-      AND (e.kind<>'trade' OR EXISTS (SELECT FROM shop.sale_asset a WHERE a.price>0
-        AND (a.network,a.block_number,a.log_index,a.currency)=(m.network,m.block_number,m.log_index,m.currency)))
+      AND (e.kind='name_fee' OR EXISTS (SELECT FROM inventory_assets a WHERE (a.network,a.block_number,a.log_index,a.currency)=(m.network,m.block_number,m.log_index,m.currency)
+        AND (e.kind='trade' OR a.ordinal=m.ordinal)))
     UNION
     SELECT network,address FROM collections
     UNION
