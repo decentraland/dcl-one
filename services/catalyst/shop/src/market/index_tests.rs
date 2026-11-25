@@ -5814,7 +5814,7 @@ async fn a_job_that_lost_its_projection_commits_nothing() {
         chain_walk::record_fold(&db.pool, &a, before.0)
             .await
             .unwrap_err(),
-        chain_walk::mark_folded(&db.pool, &a, before.0, chrono::Utc::now())
+        chain_walk::mark_folded(&db.pool, &a, before.0)
             .await
             .unwrap_err(),
         chain_walk::unpublish(&db.pool, &a, before.0)

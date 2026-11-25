@@ -835,22 +835,16 @@ pub async fn record_fold(pool: &PgPool, owner: &Owner, block: i64) -> anyhow::Re
 /// Sets `folded_block` to the block a completed fold covered, only on the
 /// row still at that block, with its whole history walked and not in
 /// quarantine.
-pub async fn mark_folded(
-    pool: &PgPool,
-    owner: &Owner,
-    block: i64,
-    now: DateTime<Utc>,
-) -> anyhow::Result<bool> {
+pub async fn mark_folded(pool: &PgPool, owner: &Owner, block: i64) -> anyhow::Result<bool> {
     let mut tx = pool.begin().await?;
     let updated = sqlx::query(
-        "UPDATE shop.chain_cursor SET folded_block = last_block, folded_at = $4 \
+        "UPDATE shop.chain_cursor SET folded_block = last_block, folded_at = timezone('UTC', now()) \
          WHERE indexer = $1 AND network = $2 AND last_block = $3 AND full_history AND last_block_hash IS NOT NULL \
            AND fold_through = $3 AND quarantine_reason IS NULL",
     )
     .bind(owner.indexer)
     .bind(owner.net.db_name())
     .bind(block)
-    .bind(now.naive_utc())
     .execute(&mut *tx)
     .await?;
     owner.check(&mut tx).await?;
@@ -2187,7 +2181,7 @@ pub(crate) async fn close(
         && out.indexed_to as u64 <= latest_safe
         && within_publish_lag(net, latest, out.indexed_to as u64)
     {
-        out.published = mark_folded(pool, owner, out.indexed_to, Utc::now()).await?;
+        out.published = mark_folded(pool, owner, out.indexed_to).await?;
     } else {
         unpublish(pool, owner, out.indexed_to).await?;
     }
