@@ -745,7 +745,7 @@
   },
   "library/ui/components/Switch/Switch.module.css": {
     "primitives": 0,
-    "tokens": 26
+    "tokens": 27
   },
   "library/ui/components/Tabs/Tabs.module.css": {
     "primitives": 0,
