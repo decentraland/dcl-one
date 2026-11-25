@@ -10812,3 +10812,86 @@ async fn the_cancel_return_calls_stripe_only_for_a_pending_order() {
         ("abandoned".to_string(), 0, 0)
     );
 }
+
+/// The cancel landing sends the buyer back to the surface that opened the
+/// checkout, with `order=<id>&canceled=1` (the query the apps read), as
+/// credits-server does: a builder order to the builder's cancel page, any
+/// other or an unknown order to the Shop's.
+#[tokio::test]
+async fn the_cancel_return_sends_the_buyer_back_to_the_order_surface() {
+    let Some(pool) = pool().await else { return };
+    let settings = Settings::parse(RawSettings {
+        writes_enabled: true,
+        usage_chain_id: super::usage::CHAIN_POLYGON,
+        checkout_fulfillment_mode: "secondary".into(),
+        marketplace_markup_bps: 0,
+        mana_price_max_staleness_secs: 3600,
+        checkout_success_url: "https://shop/credits".into(),
+        checkout_cancel_url: "https://shop/credits".into(),
+        checkout_success_url_builder: Some("https://builder/ok".into()),
+        checkout_cancel_url_builder: Some("https://builder/no".into()),
+        ..RawSettings::default()
+    })
+    .unwrap();
+    let state: SharedState = Arc::new(State::with_sources(
+        pool.clone(),
+        Outbound::for_tests(),
+        settings,
+        Arc::new(FakeMarket::default()),
+        Arc::new(MockBroker::configured()),
+        None,
+    ));
+    let app = app(state.clone());
+    let addr = scratch_wallet().address;
+    let (shop_order, _) = session_order_fixture(&state, &addr).await;
+    let pack = PackRow {
+        sku: "settle-pack".into(),
+        title: "Settle".into(),
+        credits: "50".into(),
+        price_cents: 500,
+        currency: "usd".into(),
+        sort_order: 0,
+    };
+    let builder_order = unique("ord");
+    state
+        .credits
+        .insert_pending_order(
+            &builder_order,
+            &addr,
+            &pack.order(1).unwrap().from_source(Some("builder")),
+            &unique("cs"),
+        )
+        .await
+        .unwrap();
+    let landing = |order: String| {
+        let app = app.clone();
+        async move {
+            let resp = app
+                .oneshot(
+                    Request::builder()
+                        .uri(format!("/credits/credits/orders/{order}/cancel-return"))
+                        .body(Body::empty())
+                        .unwrap(),
+                )
+                .await
+                .unwrap();
+            assert!(resp.status().is_redirection(), "{}", resp.status());
+            resp.headers()[axum::http::header::LOCATION]
+                .to_str()
+                .unwrap()
+                .to_string()
+        }
+    };
+    assert_eq!(
+        landing(builder_order.clone()).await,
+        format!("https://builder/no?order={builder_order}&canceled=1")
+    );
+    assert_eq!(
+        landing(shop_order.clone()).await,
+        format!("https://shop/credits?order={shop_order}&canceled=1")
+    );
+    assert_eq!(
+        landing("ord_unknown".into()).await,
+        "https://shop/credits?order=ord_unknown&canceled=1"
+    );
+}
