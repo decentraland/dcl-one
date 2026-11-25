@@ -1,4 +1,5 @@
-import { Entity, engine, Transform, MeshRenderer, Material, MaterialTransparencyMode } from '@dcl/sdk/ecs'
+import type { Entity } from '@dcl/sdk/ecs'
+import { engine, Transform, MeshRenderer, Material, MaterialTransparencyMode } from '@dcl/sdk/ecs'
 
 function createSphere(x: number, y: number, z: number): Entity {
   const meshEntity = engine.addEntity()

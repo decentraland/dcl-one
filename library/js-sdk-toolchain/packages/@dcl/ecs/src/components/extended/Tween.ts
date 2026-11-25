@@ -1,7 +1,6 @@
-import { Entity, IEngine, LastWriteWinElementSetComponentDefinition } from '../../engine'
-import { Quaternion, Vector2, Vector3 } from '../generated/pb/decentraland/common/vectors.gen'
-import {
-  EasingFunction,
+import type { Entity, IEngine, LastWriteWinElementSetComponentDefinition } from '../../engine'
+import type { Quaternion, Vector2, Vector3 } from '../generated/pb/decentraland/common/vectors.gen'
+import type {
   Move,
   MoveContinuous,
   MoveRotateScale,
@@ -10,10 +9,9 @@ import {
   RotateContinuous,
   Scale,
   TextureMove,
-  TextureMoveContinuous,
-  TextureMovementType,
-  Tween
+  TextureMoveContinuous
 } from '../generated/index.gen'
+import { EasingFunction, TextureMovementType, Tween } from '../generated/index.gen'
 
 /**
  * @public

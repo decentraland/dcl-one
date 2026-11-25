@@ -159,6 +159,11 @@ fn verdict(outcome: Result<(), SignatureRefusal>, chain: &AuthChain) -> Verdict 
         AuthError::Eip1654ValidationFailed(_) => {
             Verdict::Other(SignedFetchError::new(503, "Error connecting to catalyst"))
         }
+        // The client source spent its contract-wallet checks, before any RPC call.
+        AuthError::Eip1654RateLimited => Verdict::Other(SignedFetchError::new(
+            429,
+            "Too many contract-wallet signature checks; retry later",
+        )),
         AuthError::MalformedChain(_)
         | AuthError::MissingSignature { .. }
         | AuthError::InvalidEphemeralPayload(_) => {
@@ -180,6 +185,10 @@ fn map_chain_error(e: ChainError) -> SignedFetchError {
         ChainError::CatalystUnavailable(_) => {
             SignedFetchError::new(503, "Error connecting to catalyst")
         }
+        ChainError::RateLimited => SignedFetchError::new(
+            429,
+            "Too many contract-wallet signature checks; retry later",
+        ),
     }
 }
 

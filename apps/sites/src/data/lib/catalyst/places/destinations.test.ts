@@ -4,7 +4,7 @@ vi.mock("../client", async (original) => ({ ...await original<typeof import("../
 vi.mock("../schema-drift", () => ({ reportSchemaDrift: vi.fn() }));
 import { reportSchemaDrift } from "../schema-drift";
 import { getJSON, signedGetJSON } from "../client";
-import { DestinationSchema } from "../generated-schemas/places";
+import type { DestinationSchema } from "../generated-schemas/places";
 import { fetchDestinations, loadWorldPlace, resolveLegacyPlace } from "./destinations";
 import { mapPlace } from "./index";
 import type { AuthIdentity } from "../../auth/types";
