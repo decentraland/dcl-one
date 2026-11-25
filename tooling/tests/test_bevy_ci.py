@@ -515,10 +515,41 @@ class WorkflowTest(unittest.TestCase):
                       job)
         self.assertIn("verify-engine .cache/bevy-engine ${{ env.BEVY_WEB_OPT == 'optimized' && '--production' || '' }}\n",
                       job)
-        self.assertIn("build-web.py --engine-cache ../../../.cache/bevy-engine "
+        self.assertIn("build-web.py --engine-cache ../../../.cache/bevy-engine --preview-cache ../../../.cache/avatar-preview "
                       "${{ env.BEVY_WEB_OPT == 'unoptimized' && '--no-opt' || '' }} --shared-build\n", job)
         self.assertIn('          path: .cache/bevy-engine\n'
                       '          key: ${{ steps.engine-cache.outputs.cache-primary-key }}\n', job)
+
+    def test_the_avatar_preview_is_compiled_once_per_input_and_only_main_saves_its_target(self):
+        workflow = (ci.ROOT / ci.WORKFLOW).read_text(encoding='utf-8')
+        job = workflow.split('\n  build-deploy-web:\n', 1)[1].split('\n  package-web:\n', 1)[0]
+        self.assertIn('          key=$(python3 tooling/play-artifact.py preview-inputs)\n', job)
+        # As the engine: a PR may take main's optimized preview, main never an unoptimized one.
+        self.assertIn('          key: avatar-preview-v1-${{ env.BEVY_WEB_OPT }}-${{ steps.preview-inputs.outputs.key }}\n'
+                      '          restore-keys: avatar-preview-v1-optimized-${{ steps.preview-inputs.outputs.key }}\n', job)
+        self.assertIn("verify-preview .cache/avatar-preview ${{ env.BEVY_WEB_OPT == 'optimized' && '--production' || '' }}\n",
+                      job)
+        # The compilers are set up when either the engine or the preview is compiled.
+        either = ("(steps.engine-cache.outputs.cache-matched-key == '' || "
+                  "steps.preview-cache.outputs.cache-matched-key == '')")
+        for step in ('Install the web build tools from the flake', 'Install the pinned WASM binding generator and optimizer',
+                     'Stamp rust-src with the toolchain date so cached build-std artifacts stay fresh'):
+            with self.subTest(step=step):
+                self.assertIn(f'      - name: {step}\n        if: {either}\n', job)
+        self.assertIn(f"      - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # master 2026-10-16\n"
+                      f"        if: {either}\n", job)
+        restore = job.index('Restore the avatar preview target cache')
+        times = job.index("bevy-mtimes.py\" restore ../../avatar-preview/target")
+        build = job.index('      - name: Build and test the local web app')
+        record = job.index("bevy-mtimes.py\" record ../../avatar-preview/target")
+        save = job.index('      - name: Save the avatar preview target cache\n'
+                         "        if: github.ref == 'refs/heads/main' && ")
+        self.assertLess(restore, times)
+        self.assertLess(times, build)
+        self.assertLess(build, record)
+        self.assertLess(record, save)
+        self.assertIn('          path: .cache/avatar-preview\n'
+                      '          key: ${{ steps.preview-cache.outputs.cache-primary-key }}\n', job)
 
     def test_pr_web_builds_restore_the_unoptimised_target_that_main_saves(self):
         workflow = (ci.ROOT / ci.WORKFLOW).read_text(encoding='utf-8')
@@ -762,6 +793,21 @@ class SelectionTest(unittest.TestCase):
                 selected = ci.select(before, self.commit())
                 self.assertEqual({lane for lane in (*ci.LANES, 'native-matrix', 'scenes')
                                   if selected[lane]}, {'web'})
+
+    def test_avatar_preview_changes_build_and_publish_it_with_the_web_app(self):
+        # The web lane compiles, packages and publishes the preview (play-artifact.py); the native
+        # lanes never build it. Its prose selects nothing.
+        for name in ('src/lib.rs', 'Cargo.lock', 'web/preview.js', 'web/index.html', 'tools/package.py'):
+            with self.subTest(path=name):
+                before = self.git('rev-parse', 'HEAD')
+                self.write('rendering/avatar-preview/' + name, 'changed')
+                selected = ci.select(before, self.commit())
+                self.assertEqual({lane for lane in (*ci.LANES, 'native-matrix', 'scenes')
+                                  if selected[lane]}, {'web'})
+        before = self.git('rev-parse', 'HEAD')
+        self.write('rendering/avatar-preview/README.md', 'prose')
+        selected = ci.select(before, self.commit())
+        self.assertFalse(any(selected[lane] for lane in (*ci.LANES, 'native-matrix', 'scenes')))
 
     def test_shared_hud_sources_validate_web_only(self):
         for name in SHARED:

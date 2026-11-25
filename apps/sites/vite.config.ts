@@ -187,6 +187,8 @@ const PLAY_MIME: Record<string, string> = {
   ".png": "image/png",
   ".svg": "image/svg+xml",
   ".css": "text/css; charset=utf-8",
+  ".glb": "model/gltf-binary",
+  ".otf": "font/otf",
 };
 export function playWebDir(root = fileURLToPath(new URL("../..", import.meta.url))): string {
   if (process.env.PLAY_WEB_DIR) return process.env.PLAY_WEB_DIR;
@@ -201,10 +203,18 @@ function servePlayWeb(): Plugin {
       const dir = playWebDir();
       server.middlewares.use((req, res, next) => {
         const url = new URL(req.url ?? "/", "http://localhost");
-        if (!url.pathname.startsWith("/play/")) return next();
-        const rel = decodeURIComponent(url.pathname.slice("/play/".length));
-        const [head] = rel.split("/");
-        if (!head || !served.has(head)) return next();
+        let rel: string;
+        if (url.pathname === "/avatar-preview" || url.pathname === "/avatar-preview/") {
+          // The avatar preview from the same build, where the Sites image serves it (infra/packages/sites.nix).
+          rel = "avatar-preview/index.html";
+        } else if (url.pathname.startsWith("/assets/avatar-preview/")) {
+          rel = "avatar-preview/assets/" + decodeURIComponent(url.pathname.slice("/assets/avatar-preview/".length));
+        } else {
+          if (!url.pathname.startsWith("/play/")) return next();
+          rel = decodeURIComponent(url.pathname.slice("/play/".length));
+          const [head] = rel.split("/");
+          if (!head || !served.has(head)) return next();
+        }
         const file = normalize(join(dir, rel));
         if (!file.startsWith(normalize(dir) + "/") || !existsSync(file) || !statSync(file).isFile()) {
           if (!existsSync(dir)) {

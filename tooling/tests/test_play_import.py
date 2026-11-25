@@ -325,7 +325,8 @@ class PlayImportTests(unittest.TestCase):
         for name in contract.REQUIRED:
             self.write('build/' + name, b'\0asm\x01\0\0\0fixture' if name.endswith('.wasm') else b'fixture')
         self.write('build/build-info.json', json.dumps({'revision': SHA, 'engine': {
-            'revision': SHA, 'inputs': contract.engine_inputs(self.root), 'optimized': True}}))
+            'revision': SHA, 'inputs': contract.engine_inputs(self.root), 'optimized': True}, 'preview': {
+            'revision': SHA, 'inputs': contract.preview_inputs(self.root), 'optimized': True}}))
         contract.pack(self.build, self.root)
         root_patch = patch.object(play, 'ROOT', self.root)
         root_patch.start()
@@ -384,6 +385,7 @@ class PlayImportTests(unittest.TestCase):
     def test_production_refuses_unoptimized_pr_build(self):
         info = contract.read_json(self.build / 'build-info.json')
         info['engine']['optimized'] = False
+        info['preview']['optimized'] = False
         self.write('build/build-info.json', json.dumps(info))
         contract.pack(self.build, self.root, optimized=False)
         play.install(self.build)
@@ -412,6 +414,46 @@ class PlayImportTests(unittest.TestCase):
             self.write('build/build-info.json', json.dumps({**info, 'engine': value}))
             with self.subTest(engine=value), self.assertRaises(ValueError):
                 contract.pack(self.build, self.root)
+
+    def test_avatar_preview_provenance_is_required_and_follows_its_own_inputs(self):
+        info = contract.read_json(self.build / 'build-info.json')
+        for value in (None, {}, {**info['preview'], 'inputs': 'bad'},
+                      {**info['preview'], 'revision': ''}, {**info['preview'], 'optimized': False}):
+            self.write('build/build-info.json', json.dumps({**info, 'preview': value}))
+            with self.subTest(preview=value), self.assertRaises(ValueError):
+                contract.pack(self.build, self.root)
+        # A PR that changes only the preview restores main's optimized engine and compiles its own:
+        # the artifact is unoptimized, which production refuses.
+        self.write('build/build-info.json', json.dumps({**info, 'preview': {**info['preview'], 'optimized': False}}))
+        with self.assertRaisesRegex(ValueError, 'optimization flag'):
+            contract.pack(self.build, self.root)
+        contract.pack(self.build, self.root, optimized=False)
+        play.install(self.build)
+        with self.assertRaisesRegex(ValueError, 'optimized'):
+            play.install(self.build, production=True)
+        self.write('build/build-info.json', json.dumps(info))
+        contract.pack(self.build, self.root)
+        engine, preview, whole = (contract.engine_inputs(self.root), contract.preview_inputs(self.root),
+                                  contract.inputs(self.root))
+        # The preview's crate recompiles the preview but never the engine; its page and packaging
+        # change only the assembled artifact; its build outputs and prose are no inputs.
+        self.write(contract.PREVIEW + 'src/lib.rs', 'fn preview() {}\n')
+        self.assertEqual(contract.engine_inputs(self.root), engine)
+        self.assertNotEqual(contract.preview_inputs(self.root), preview)
+        preview = contract.preview_inputs(self.root)
+        self.assertNotEqual(contract.inputs(self.root), whole)
+        whole = contract.inputs(self.root)
+        for name in ('web/preview.js', 'tools/package.py'):
+            self.write(contract.PREVIEW + name, 'changed')
+            self.assertEqual(contract.preview_inputs(self.root), preview)
+            self.assertNotEqual(contract.inputs(self.root), whole)
+            whole = contract.inputs(self.root)
+        for name in ('README.md', 'target/wasm32-unknown-unknown/release/x.wasm', 'web/pkg/x.wasm'):
+            self.write(contract.PREVIEW + name, 'ignored')
+            self.assertEqual((contract.inputs(self.root), contract.preview_inputs(self.root)), (whole, preview))
+        # An engine change recompiles the preview from the same crates.
+        self.write(contract.SOURCE + 'src/lib.rs', 'fn engine() { changed() }\n')
+        self.assertNotEqual(contract.preview_inputs(self.root), preview)
 
     def test_production_cannot_import_local_builds_or_only_print_a_path(self):
         for option in (['--from-build', str(self.build)], ['--print-directory']):
@@ -596,14 +638,21 @@ class PlayImportTests(unittest.TestCase):
         spec.loader.exec_module(smoke)
         entity = 'baf' + 'a' * 56
         self.write(f'build/bridge-scene/static/{entity}', '{"content": []}')
+        # A packaged avatar preview (rendering/avatar-preview/tools/package.py).
+        script, module = 'preview.0123456789abcdef.js', 'pkg.fedcba9876543210/dcl_avatar_preview_bg.wasm'
+        self.write('build/avatar-preview/index.html', f"<script>import('../assets/avatar-preview/{script}')</script>")
+        self.write('build/avatar-preview/assets/' + script, 'export {}')
+        self.write('build/avatar-preview/assets/' + module, b'\0asm\x01\0\0\0preview')
         meta = contract.pack(self.build, self.root)
-        self.assertEqual(meta['format'], 3)
+        self.assertEqual(meta['format'], 4)
         self.assertNotIn('upstream_revision', meta)
         self.write('apps/sites/content/docs/_media.json',
                    json.dumps({'/docs/media/fixture.png': {'bytes': 7}}))
         responses = {f'http://sites:5212/play/{name}': (self.build / name).read_bytes()
                      for name in (*meta['files'], contract.MANIFEST)}
         responses.update({
+            'http://sites:5212/avatar-preview/': (self.build / 'avatar-preview/index.html').read_bytes(),
+            f'http://sites:5212/assets/avatar-preview/{module}': (self.build / 'avatar-preview/assets' / module).read_bytes(),
             'http://api:5210/about': b'{}',
             'http://api:5210/places/api/places?limit=1': b'[]',
             'http://sites:5212/': b'fixture',
@@ -618,6 +667,7 @@ class PlayImportTests(unittest.TestCase):
             'http://sites:5212/ui-gallery/hud.html': b'fixture',
         })
         requested = []
+        headers = {}
         bootstraps = 0
         def docker(*args, check=True):
             nonlocal bootstraps
@@ -633,7 +683,8 @@ class PlayImportTests(unittest.TestCase):
                 data = responses[url]
                 if data is None:
                     return subprocess.CompletedProcess(args, 1, '', '')
-                stdout = json.dumps({'bytes': len(data), 'sha256': contract.digest(data),
+                stdout = json.dumps({'bytes': len(data), 'sha256': contract.digest(data), 'cacheControl': headers.get(
+                                         url, 'public, max-age=31536000, immutable' if '/assets/' in url else 'public, max-age=0'),
                                      'body': json.loads(data) if mode == 'json'
                                      else data.decode() if mode == 'text' else None})
             elif args[-2:] == ('schema', 'apply'):
@@ -663,6 +714,24 @@ class PlayImportTests(unittest.TestCase):
                 responses[url] = broken
                 run()
         responses.update(gallery)
+        # The avatar preview: the same build's page, revalidated, and its immutable module.
+        preview = {url: responses[url] for url in responses if 'avatar-preview/' in url}
+        page, wasm = 'http://sites:5212/avatar-preview/', f'http://sites:5212/assets/avatar-preview/{module}'
+        for url, body, header, message in (
+                (page, b'another page', None, 'different avatar preview page'),
+                (page, None, 'public, max-age=31536000, immutable', 'page must revalidate'),
+                (wasm, b'\0asm\x01\0\0\0another', None, 'different avatar preview bytes'),
+                (wasm, None, 'public, max-age=0', 'modules must be immutable')):
+            with self.subTest(url=url, message=message), self.assertRaisesRegex(AssertionError, message):
+                responses.update(preview)
+                headers.clear()
+                if body is not None:
+                    responses[url] = body
+                if header is not None:
+                    headers[url] = header
+                run()
+        responses.update(preview)
+        headers.clear()
         requested.clear()
         output = run()
         for url in gallery:
@@ -874,8 +943,12 @@ class PlayImportTests(unittest.TestCase):
         def engine_inputs(root=contract.ROOT, revision=None):
             return meta['engine']['inputs'] if revision else 'moved-on'
 
+        def preview_inputs(root=contract.ROOT, revision=None):
+            return meta['preview']['inputs'] if revision else 'moved-on'
+
         with patch.object(contract, 'inputs', side_effect=inputs), \
-                patch.object(contract, 'engine_inputs', side_effect=engine_inputs):
+                patch.object(contract, 'engine_inputs', side_effect=engine_inputs), \
+                patch.object(contract, 'preview_inputs', side_effect=preview_inputs):
             with self.assertRaisesRegex(ValueError, 'inputs differ'):
                 contract.verify(self.build, self.root)
             self.assertEqual(contract.verify(self.build, self.root, producer=SHA)['build_revision'], SHA)
@@ -891,12 +964,14 @@ class PlayImportTests(unittest.TestCase):
             (destination / contract.PRODUCER_VALIDATION).write_text(json.dumps(record))
             with patch.object(contract, 'inputs', side_effect=inputs), \
                     patch.object(contract, 'engine_inputs', side_effect=engine_inputs), \
+                    patch.object(contract, 'preview_inputs', side_effect=preview_inputs), \
                     self.assertRaisesRegex(ValueError, 'inputs differ'):
                 contract.verify(destination, self.root, trust_inputs=True)
         # The bindings are still the tree's, whatever built the engine.
         self.write(contract.BINDINGS + '/Example.ts', 'different protocol')
         with patch.object(contract, 'inputs', side_effect=inputs), \
                 patch.object(contract, 'engine_inputs', side_effect=engine_inputs), \
+                patch.object(contract, 'preview_inputs', side_effect=preview_inputs), \
                 self.assertRaisesRegex(ValueError, 'bindings differ'):
             contract.verify(destination, self.root, producer=SHA)
 
@@ -934,13 +1009,17 @@ class PlayImportTests(unittest.TestCase):
         def engine_inputs(root=contract.ROOT, revision=None):
             return meta['engine']['inputs'] if revision == SHA else 'moved-on'
 
+        def preview_inputs(root=contract.ROOT, revision=None):
+            return meta['preview']['inputs'] if revision == SHA else 'moved-on'
+
         with patch.object(play, 'api', side_effect=[{'workflow_runs': [run()]}, {'total_count': 1, 'jobs': [passed]},
                                                     {'total_count': 1, 'artifacts': [record]}]) as api, \
                 patch.object(play, 'current_pr', return_value=pr), \
                 patch.object(play, 'engine_changed', return_value=False), \
                 patch.object(play.subprocess, 'run', side_effect=command), \
                 patch.object(contract, 'inputs', side_effect=inputs), \
-                patch.object(contract, 'engine_inputs', side_effect=engine_inputs):
+                patch.object(contract, 'engine_inputs', side_effect=engine_inputs), \
+                patch.object(contract, 'preview_inputs', side_effect=preview_inputs):
             destination = play.fetch()
         self.assertEqual(api.call_count, 3)
         self.assertEqual(json.loads((destination / contract.MANIFEST).read_text())['build_revision'], SHA)
