@@ -255,3 +255,40 @@ fn a_bad_read_admin_address_fails_startup() {
         "{err}"
     );
 }
+
+/// The `/shop-api` mount binds its own route: a signature over another path
+/// that merely ends in `/credits` does not verify through the proxy header.
+#[tokio::test]
+async fn the_canonical_mount_binds_its_own_route() {
+    let Some(pool) = crate::db::scratch::isolated_pool(4).await else {
+        return;
+    };
+    let admin = scratch_wallet();
+    let shop = axum::Router::new().nest(
+        "/shop-api",
+        super::shop_router(reports_state(pool, &admin.address)),
+    );
+
+    for path in ["/shop-api/admin/credits", "/shop-api/admin/credit-reasons"] {
+        let headers = signed_headers(&admin, "get", path).await;
+        let (status, _, v) = send(&shop, "GET", path, headers, None).await;
+        assert_eq!(status, StatusCode::OK, "{path}: {v}");
+    }
+
+    for (path, foreign) in [
+        ("/shop-api/admin/credits", "/elsewhere/credits"),
+        (
+            "/shop-api/admin/credit-reasons",
+            "/elsewhere/credit-reasons",
+        ),
+    ] {
+        let mut headers = signed_headers(&admin, "get", foreign).await;
+        headers.insert("x-original-path", foreign.parse().unwrap());
+        let (status, _, _) = send(&shop, "GET", path, headers, None).await;
+        assert_eq!(
+            status,
+            StatusCode::UNAUTHORIZED,
+            "{path} must not accept a signature over {foreign}"
+        );
+    }
+}

@@ -147,14 +147,38 @@ fn record(r: CreditListRow) -> CreditRecordOut {
     }
 }
 
+/// The credits host's `GET /credits`.
 pub async fn list_credits(
     State(state): State<SharedState>,
     original: OriginalUri,
     headers: HeaderMap,
     Query(q): Query<CreditListQuery>,
 ) -> Result<Json<Paginated<CreditRecordOut>>, ApiError> {
-    require_read_admin(&state, &headers, "/credits", &original).await?;
-    let (filters, order, descending) = credit_filters(&q);
+    list_credits_at(&state, &original, &headers, &q, "/credits").await
+}
+
+/// `/shop-api/admin/credits`: the signature binds its own route.
+pub async fn list_credits_canonical(
+    State(state): State<SharedState>,
+    original: OriginalUri,
+    headers: HeaderMap,
+    Query(q): Query<CreditListQuery>,
+) -> Result<Json<Paginated<CreditRecordOut>>, ApiError> {
+    list_credits_at(&state, &original, &headers, &q, "/admin/credits").await
+}
+
+/// `route` is the mount's own local path, so a proxy's `x-original-path`
+/// only counts when it ends with this route, not with another one that
+/// happens to share its last segment.
+async fn list_credits_at(
+    state: &SharedState,
+    original: &OriginalUri,
+    headers: &HeaderMap,
+    q: &CreditListQuery,
+    route: &str,
+) -> Result<Json<Paginated<CreditRecordOut>>, ApiError> {
+    require_read_admin(state, headers, route, original).await?;
+    let (filters, order, descending) = credit_filters(q);
     let (limit, offset) = paginate(q.limit, q.offset);
     let (rows, total) = state
         .credits
@@ -172,13 +196,34 @@ pub struct ReasonsQuery {
     offset: Option<i64>,
 }
 
+/// The credits host's `GET /credit-reasons`.
 pub async fn credit_reasons(
     State(state): State<SharedState>,
     original: OriginalUri,
     headers: HeaderMap,
     Query(q): Query<ReasonsQuery>,
 ) -> Result<Json<Paginated<String>>, ApiError> {
-    require_read_admin(&state, &headers, "/credit-reasons", &original).await?;
+    credit_reasons_at(&state, &original, &headers, &q, "/credit-reasons").await
+}
+
+/// `/shop-api/admin/credit-reasons`.
+pub async fn credit_reasons_canonical(
+    State(state): State<SharedState>,
+    original: OriginalUri,
+    headers: HeaderMap,
+    Query(q): Query<ReasonsQuery>,
+) -> Result<Json<Paginated<String>>, ApiError> {
+    credit_reasons_at(&state, &original, &headers, &q, "/admin/credit-reasons").await
+}
+
+async fn credit_reasons_at(
+    state: &SharedState,
+    original: &OriginalUri,
+    headers: &HeaderMap,
+    q: &ReasonsQuery,
+    route: &str,
+) -> Result<Json<Paginated<String>>, ApiError> {
+    require_read_admin(state, headers, route, original).await?;
     let (limit, offset) = paginate(q.limit, q.offset);
     let (data, total) = state.credits.report_credit_reasons(limit, offset).await?;
     Ok(Json(Paginated { data, total }))

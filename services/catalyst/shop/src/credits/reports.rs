@@ -157,6 +157,8 @@ impl Credits {
         );
         let count_sql = format!("SELECT count(*) FROM ({CREDIT_ROWS}) c {CREDIT_WHERE}");
 
+        // The page and its total read one snapshot, so the count describes the page's view.
+        let mut tx = self.read_snapshot().await?;
         let page = sqlx::query(sqlx::AssertSqlSafe(page_sql))
             .bind(filters.address.as_deref())
             .bind(filters.season_id)
@@ -168,7 +170,7 @@ impl Credits {
             .bind(filters.max_amount.as_deref())
             .bind(limit)
             .bind(offset)
-            .fetch_all(&self.pool)
+            .fetch_all(&mut *tx)
             .await?;
         let total: i64 = sqlx::query_scalar(sqlx::AssertSqlSafe(count_sql))
             .bind(filters.address.as_deref())
@@ -179,8 +181,9 @@ impl Credits {
             .bind(filters.source.as_deref())
             .bind(filters.min_amount.as_deref())
             .bind(filters.max_amount.as_deref())
-            .fetch_one(&self.pool)
+            .fetch_one(&mut *tx)
             .await?;
+        tx.commit().await?;
 
         let rows = page
             .into_iter()
@@ -216,18 +219,30 @@ impl Credits {
             SELECT DISTINCT a.detail->>'reason' AS reason \
             FROM credits.ledger l JOIN ops.admin_audit a ON a.id = l.admin_audit_id \
             WHERE l.kind = 'grant' AND a.detail->>'reason' IS NOT NULL";
+        let mut tx = self.read_snapshot().await?;
         let page: Vec<String> = sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
             "SELECT reason FROM ({REASONS}) r ORDER BY reason LIMIT $1 OFFSET $2"
         )))
         .bind(limit)
         .bind(offset)
-        .fetch_all(&self.pool)
+        .fetch_all(&mut *tx)
         .await?;
         let total: i64 = sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
             "SELECT count(*) FROM ({REASONS}) r"
         )))
-        .fetch_one(&self.pool)
+        .fetch_one(&mut *tx)
         .await?;
+        tx.commit().await?;
         Ok((page, total))
+    }
+
+    /// A REPEATABLE READ, READ ONLY transaction: every statement in it reads
+    /// the same snapshot, and nothing in it can write.
+    async fn read_snapshot(&self) -> Result<sqlx::Transaction<'_, sqlx::Postgres>, ApiError> {
+        let mut tx = self.pool.begin().await?;
+        sqlx::query("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ, READ ONLY")
+            .execute(&mut *tx)
+            .await?;
+        Ok(tx)
     }
 }

@@ -1098,10 +1098,13 @@ pub fn shop_router(state: SharedState) -> Router {
             get(handlers::users::user_credits),
         )
         .route("/v1/packs", get(handlers::packs::unity_list_packs))
-        .route("/admin/credits", get(handlers::reports::list_credits))
+        .route(
+            "/admin/credits",
+            get(handlers::reports::list_credits_canonical),
+        )
         .route(
             "/admin/credit-reasons",
-            get(handlers::reports::credit_reasons),
+            get(handlers::reports::credit_reasons_canonical),
         )
         .route(
             "/v1/packs/{sku}/payment-intents",
