@@ -1416,6 +1416,7 @@ name = "avatar"
 version = "0.1.0"
 dependencies = [
  "alloy-core",
+ "analytics",
  "anyhow",
  "assets",
  "bevy",
@@ -1445,6 +1446,7 @@ dependencies = [
  "texture_camera",
  "tokio",
  "ui_core",
+ "wallet",
 ]
 
 [[package]]

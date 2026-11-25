@@ -397,6 +397,14 @@ ends in "we don't do that", so the next person doesn't have to rediscover it.
   unity-explorer stores no community history. A new DM or DM reaction from them is not stored,
   since a DM history is never trimmed. A DM thread stored before the block is read back whole:
   hiding it would reveal that the other side blocked you, who is otherwise shown as offline.
+- **Situational reactions.** An emoji a player reacts with travels as unity-explorer's rfc4
+  `Reaction`, sent, limited and played one at a time as it is there, with these differences. Only
+  the indices that name an emoji are taken (unity-explorer takes any under 4096 and draws the
+  blank tiles), and an emoji with no index is not sent or shown. A message's copy by the other
+  room is told by its stamp and its index together, and the stamps sent only move on: the
+  sender's uptime as a float stops telling two messages of one send apart after a few hours. What
+  a sender may send is counted on the sender's own entity, so a player who leaves or is blocked
+  takes their waiting reactions with them; unity-explorer plays them out.
 - **Community creation and editing.** The form follows unity-explorer's (fields, limits, texts,
   the content check's two refusal screens, every HTTP 400 read as the check's answer), with
   these differences. CANCEL on the refusal screen asks "Discard this community?" first, as the

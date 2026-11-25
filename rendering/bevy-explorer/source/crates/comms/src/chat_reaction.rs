@@ -81,14 +81,14 @@ pub fn canonical_emoji(emoji: &str) -> Option<String> {
     }
 }
 
+/// The Unity atlas tile for an emoji, or `None` if the atlas has none.
+pub fn emoji_atlas_tile(emoji: &str) -> Option<i32> {
+    ATLAS.tiles.get(atlas_name(emoji).as_str()).copied()
+}
+
 /// The Unity atlas tile for an emoji: its own tile if the atlas has one, else ⬜.
 pub fn emoji_to_atlas_index(emoji: &str) -> i32 {
-    let atlas = &*ATLAS;
-    atlas
-        .tiles
-        .get(atlas_name(emoji).as_str())
-        .copied()
-        .unwrap_or(atlas.unmapped)
+    emoji_atlas_tile(emoji).unwrap_or(ATLAS.unmapped)
 }
 
 /// The emoji a Unity atlas tile shows, or `None` for an index outside the atlas.
@@ -255,6 +255,10 @@ mod tests {
         // unity has no flags
         assert_eq!(emoji_to_atlas_index("🇬🇧"), ATLAS.unmapped);
         assert_eq!(atlas_index_to_emoji(ATLAS.unmapped), Some(UNMAPPED));
+        // the strict lookup tells an emoji the atlas lacks from the blank tile itself
+        assert_eq!(emoji_atlas_tile("🇬🇧"), None);
+        assert_eq!(emoji_atlas_tile(UNMAPPED), Some(ATLAS.unmapped));
+        assert_eq!(emoji_atlas_tile("👍"), Some(emoji_to_atlas_index("👍")));
         // unity's picker sends a keycap as its first codepoint
         let hash = ATLAS.tiles["0023"];
         assert_eq!(atlas_index_to_emoji(hash), Some("#️⃣"));
