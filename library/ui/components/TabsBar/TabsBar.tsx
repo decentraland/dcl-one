@@ -76,6 +76,10 @@ export type TabsBarItem = Readonly<{
   href: string
   /** Hide inactive routes on narrow layouts; the controlled current route remains visible. */
   hiddenOnMobile?: boolean
+  /** A shortcut shown only on screens up to 768px wide. */
+  mobileOnly?: boolean
+  /** Apply the campaign gradient to the label while retaining the standard underline and focus ring. */
+  accent?: 'campaign'
 }>
 /** Render one native anchor and forward children, className, data-label, aria-current and events. */
 export type TabsBarLinkProps = AnchorHTMLAttributes<HTMLAnchorElement> & {
@@ -87,7 +91,9 @@ export type TabsBarLinkProps = AnchorHTMLAttributes<HTMLAnchorElement> & {
 type SharedProps = {
   /** Caller-owned route configuration. IDs, labels and destinations must be non-empty. */
   items: readonly TabsBarItem[]
-  activeId: string
+  activeId: string | null
+  /** Describes the active route link from the current page. */
+  current?: 'page' | 'true'
   label?: string
   onSelect?: (id: string) => void
   /** The app adapter forwards anchor attributes and owns client routing and intent prefetch. */
@@ -100,9 +106,12 @@ export type TabsBarNavigationProps = SharedProps & {
   children?: never
   variant?: never
 } & (
-    | { page?: 'create'; search?: never; actions?: never }
+    | { page?: 'create'; layout?: never; search?: never; actions?: never }
+    | { page: 'shop'; layout: 'links'; search?: never; actions?: never }
+    | { page: 'blog'; layout?: never; search: ReactNode; actions?: never }
     | {
         page: 'shop' | 'learn'
+        layout?: never
         /** Explicit caller-owned content, including empty or loading states. */
         search: ReactNode
         actions: ReactNode
@@ -112,8 +121,10 @@ export type TabsBarNavigationProps = SharedProps & {
 /** Navigation precedes caller-owned controls in visual and keyboard order at every size. */
 function NavigationTabsBar({
   page = 'create',
+  layout,
   items,
   activeId,
+  current = 'page',
   label = 'Sections',
   onSelect,
   LinkComponent,
@@ -121,14 +132,14 @@ function NavigationTabsBar({
   search,
   actions
 }: TabsBarNavigationProps) {
-  if (!['create', 'shop', 'learn'].includes(page)) throw new Error('Unsupported TabsBar page')
+  if (!['create', 'shop', 'learn', 'blog'].includes(page)) throw new Error('Unsupported TabsBar page')
   assertNavigationEntries(items, (href) => typeof href === 'string' && !!href.trim(), {
     id: 'TabsBar item IDs must be unique non-empty strings',
     entry: 'TabsBar routes require a non-empty label and href'
   })
   const listRef = useRef<HTMLUListElement>(null)
   const routeLayout = JSON.stringify(
-    items.map((item) => [item.id, item.label, item.href, !!item.hiddenOnMobile])
+    items.map((item) => [item.id, item.label, item.href, !!item.hiddenOnMobile, !!item.mobileOnly])
   )
   useLayoutEffect(() => {
     const list = listRef.current
@@ -147,7 +158,7 @@ function NavigationTabsBar({
     /* Keep the current route clear of the fades: the scroll padding is the fade width. */
     const revealCurrent = () => {
       if (!list.isConnected) return
-      const current = list.querySelector<HTMLElement>('[aria-current="page"]')
+      const current = list.querySelector<HTMLElement>('[aria-current]')
       if (!current) return
       const frame = list.getBoundingClientRect()
       const route = current.getBoundingClientRect()
@@ -200,6 +211,7 @@ function NavigationTabsBar({
     <nav
       aria-label={label.trim() || 'Sections'}
       data-page={page}
+      data-layout={layout}
       className={[styles.routeRoot, className].filter(Boolean).join(' ')}
     >
       <div className={styles.routeNavigation} data-region="navigation">
@@ -212,6 +224,8 @@ function NavigationTabsBar({
               <li
                 key={item.id}
                 className={styles.routeItem}
+                data-mobile-only={(item.mobileOnly && item.id !== activeId) || undefined}
+                data-accent={item.accent}
                 data-mobile-hidden={(item.hiddenOnMobile && item.id !== activeId) || undefined}
               >
                 {LinkComponent ? (
@@ -220,7 +234,7 @@ function NavigationTabsBar({
                     prefetch="intent"
                     data-label={item.label}
                     className={styles.routeLink}
-                    aria-current={item.id === activeId ? 'page' : undefined}
+                    aria-current={item.id === activeId ? current : undefined}
                     onClick={select}
                   >
                     <span className={styles.routeText}>{item.label}</span>
@@ -231,6 +245,7 @@ function NavigationTabsBar({
                     href={item.href}
                     label={item.label}
                     selected={item.id === activeId}
+                    current={current}
                     className={styles.routeLink}
                     onClick={select}
                   />
@@ -240,14 +255,16 @@ function NavigationTabsBar({
           })}
         </ul>
       </div>
-      {page !== 'create' ? (
+      {page !== 'create' && layout !== 'links' ? (
         <div className={styles.routeControls} data-region="controls">
           <div className={styles.routeSearch} data-region="search">
             {search}
           </div>
-          <div className={styles.routeActions} data-region="actions">
-            {actions}
-          </div>
+          {page !== 'blog' && (
+            <div className={styles.routeActions} data-region="actions">
+              {actions}
+            </div>
+          )}
         </div>
       ) : null}
     </nav>
@@ -260,6 +277,7 @@ type TabsBarComponentProps =
       mode?: 'panel'
       items?: never
       activeId?: never
+      current?: never
       page?: never
       search?: never
       actions?: never

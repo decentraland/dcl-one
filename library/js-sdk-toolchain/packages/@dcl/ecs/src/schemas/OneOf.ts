@@ -1,7 +1,7 @@
-import { DeepReadonly } from '../engine/readonly'
-import { ByteBuffer } from '../serialization/ByteBuffer'
-import { ISchema } from './ISchema'
-import { Spec } from './Map'
+import type { DeepReadonly } from '../engine/readonly'
+import type { ByteBuffer } from '../serialization/ByteBuffer'
+import type { ISchema } from './ISchema'
+import type { Spec } from './Map'
 
 type OneOfType<T extends Spec> = {
   [K in keyof T]: {

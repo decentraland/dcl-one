@@ -974,16 +974,19 @@ async fn fetch(state: &MarketplaceState, b: Builder) -> Result<Vec<PgRow>, ApiEr
         .await?)
 }
 
-fn total_of(rows: &[PgRow]) -> i64 {
-    rows.first().map(|r| r.get::<i64, _>("total")).unwrap_or(0)
+// The count side always returns one row, even when OFFSET exhausts the
+// page. Discard its NULL page before mapping the non-null listing fields.
+fn counted_page(mut rows: Vec<PgRow>) -> (Vec<PgRow>, i64) {
+    let total = rows.first().map(|r| r.get::<i64, _>("total")).unwrap_or(0);
+    rows.retain(|r| r.get::<Option<bool>, _>("page_present") == Some(true));
+    (rows, total)
 }
 
 pub async fn shop_listings(
     state: &MarketplaceState,
     f: &ShopCatalogFilters,
 ) -> Result<(Vec<ShopListing>, i64), ApiError> {
-    let rows = fetch(state, build_shop_listings_sql(f, since(state))).await?;
-    let total = total_of(&rows);
+    let (rows, total) = counted_page(fetch(state, build_shop_listings_sql(f, since(state))).await?);
     let data = rows
         .iter()
         .map(|r| {
@@ -1019,8 +1022,8 @@ pub async fn legacy_listings(
     state: &MarketplaceState,
     f: &LegacyCatalogFilters,
 ) -> Result<(Vec<LegacyListing>, i64), ApiError> {
-    let rows = fetch(state, build_legacy_listings_sql(f, since(state))).await?;
-    let total = total_of(&rows);
+    let (rows, total) =
+        counted_page(fetch(state, build_legacy_listings_sql(f, since(state))).await?);
     let data = rows
         .iter()
         .map(|r| {
@@ -1091,11 +1094,9 @@ pub async fn unified_listings(
     f: &UnifiedCatalogFilters,
     rate: ManaUsdRate,
 ) -> Result<(Vec<UnifiedListing>, i64), ApiError> {
-    let rows = fetch(state, build_unified_listings_sql(f, rate, since(state))).await?;
-    Ok((
-        rows.iter().map(map_unified_listing).collect(),
-        total_of(&rows),
-    ))
+    let (rows, total) =
+        counted_page(fetch(state, build_unified_listings_sql(f, rate, since(state))).await?);
+    Ok((rows.iter().map(map_unified_listing).collect(), total))
 }
 
 pub async fn unified_items(
@@ -1103,8 +1104,9 @@ pub async fn unified_items(
     f: &UnifiedCatalogFilters,
     rate: ManaUsdRate,
 ) -> Result<(Vec<UnifiedItem>, i64), ApiError> {
-    let rows = fetch(state, build_unified_items_sql(f, rate, since(state))).await?;
-    Ok((rows.iter().map(map_unified_item).collect(), total_of(&rows)))
+    let (rows, total) =
+        counted_page(fetch(state, build_unified_items_sql(f, rate, since(state))).await?);
+    Ok((rows.iter().map(map_unified_item).collect(), total))
 }
 
 pub async fn items_by_ids(
@@ -1578,11 +1580,17 @@ pub async fn get_suggested_catalog(
     if let Err(r) = ready(&state).await {
         return r;
     }
-    let verified =
-        match super::signed::optional_signer(&headers, "get", "/v3/catalog/suggested").await {
-            Ok(v) => v.map(|a| a.to_lowercase()),
-            Err(e) => return e.into_response(),
-        };
+    let verified = match super::signed::optional_signer(
+        state.eip1654.as_deref(),
+        &headers,
+        "get",
+        "/v3/catalog/suggested",
+    )
+    .await
+    {
+        Ok(v) => v.map(|a| a.to_lowercase()),
+        Err(e) => return e.into_response(),
+    };
     let p = Params::new(&pairs);
     let first = finite_i64(p.get_number("first", None));
     let limit = first.unwrap_or(12).clamp(1, 40) as usize;

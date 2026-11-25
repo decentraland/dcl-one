@@ -1,3 +1,4 @@
+use common::sync::MutexExt;
 use std::sync::{Arc, Mutex};
 
 use bevy::prelude::*;
@@ -78,10 +79,10 @@ fn manifest(app: &mut App) -> Value {
         command_name: "/debug_panel".into(),
         args: vec![],
         responder: Some(Arc::new(move |result| {
-            *output.lock().unwrap() = Some(result)
+            *output.lock_ignore_poison() = Some(result)
         })),
     });
     app.update();
-    let text = reply.lock().unwrap().take().unwrap().unwrap();
+    let text = reply.lock_ignore_poison().take().unwrap().unwrap();
     serde_json::from_str(&text).unwrap()
 }

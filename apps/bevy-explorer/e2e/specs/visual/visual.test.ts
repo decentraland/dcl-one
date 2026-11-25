@@ -29,9 +29,9 @@ const SCENE_LIVE_TIMEOUT_MS = 60_000
  *  own limit is above their sum, so a stuck wait reports itself. */
 const SCENARIO_TIMEOUT_MS = 600_000
 const WINDOW_SIZE: [number, number] = [960, 540]
-/** `/cloud`'s cover and drift speed at boot (the engine's `CloudCover`), restored after the frame. */
-const DEFAULT_CLOUD_COVER = 0.35
-const DEFAULT_CLOUD_SPEED = 5
+/** `/cloud`'s cover and speed at boot (the engine's `CloudCover`), restored after the frame. */
+const DEFAULT_CLOUD_COVER = 1
+const DEFAULT_CLOUD_SPEED = 1
 
 const server = await visualRealm()
 
@@ -59,11 +59,12 @@ for (const scene of SCENES) {
       // The frame is to agree with the next. The scene hides avatars, not the nametag over the
       // hidden player, whose name is the session's fresh guest's: off for the frame. The
       // landscape's trees and bushes around the scene sway in the wind, so no two frames of them
-      // agree: held still for the frame. The clouds drift from boot and their noise is seeded by
-      // the day of the month: cover 0 clears the sky, which then reads the same on any day. The
-      // sky eases to a new cover over a few seconds, less than the teleport and settle take. The
-      // grass on the empty parcels around the scene is drawn as stacked shells whose order is not
-      // fixed from one bevy pin to the next, so its pixels drift between builds: off for the session.
+      // agree: held still for the frame. The sky's strips are fixed art that scrolls from
+      // boot, and its horizon noise drifts with the clock: `/cloud 0 0` clears the strips and
+      // holds them and the horizon noise in a fixed pose, so the sky reads the same on any day. The
+      // stars keep twinkling, but the scenes are at noon and show none. The grass on the empty
+      // parcels around the scene is drawn as stacked shells whose order is not fixed from one
+      // bevy pin to the next, so its pixels drift between builds: off for the session.
       restore(async () => {
         await explorer.json('/nametags true')
         await explorer.json('/tree_wind true')

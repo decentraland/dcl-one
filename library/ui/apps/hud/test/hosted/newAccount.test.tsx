@@ -79,9 +79,16 @@ describe('after sign-in', () => {
     // letters and numbers only
     expect(name).toHaveValue('NovaRiver')
     expect(screen.getByText('9/15')).toBeInTheDocument()
-    await userEvent.click(screen.getByRole('checkbox', { name: /Terms of Use/i }))
+    const terms = screen.getByRole('checkbox', { name: /Terms of Use/i })
+    await userEvent.click(screen.getByText(/I agree with Decentraland/))
+    expect(terms).toBeChecked()
     expect(jump).toBeEnabled()
-    await userEvent.click(screen.getByRole('checkbox', { name: 'Subscribe to newsletter' }))
+    // a link in the text opens its document and leaves the box as it is
+    await userEvent.click(screen.getByRole('link', { name: 'Terms of Use' }))
+    expect(session.welcome.openLegal).toHaveBeenCalledWith('terms')
+    expect(terms).toBeChecked()
+    await userEvent.click(screen.getByText(/Subscribe to newsletter for updates/))
+    expect(screen.getByRole('checkbox', { name: 'Subscribe to newsletter' })).toBeChecked()
     await userEvent.click(jump)
     expect(session.welcome.accept).toHaveBeenCalledWith('NovaRiver', true)
 

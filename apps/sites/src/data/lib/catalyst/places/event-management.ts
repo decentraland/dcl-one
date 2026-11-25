@@ -10,7 +10,7 @@ export const EVENT_PERMISSIONS = [
   { id: "approve_any_event", label: "Approve any hangout" },
   { id: "edit_any_event", label: "Edit any hangout" },
   { id: "edit_any_schedule", label: "Manage schedules" },
-  { id: "edit_any_profile", label: "Legacy profile permission" },
+  { id: "edit_any_profile", label: "Edit users" },
 ] as const;
 export type EventPermission = typeof EVENT_PERMISSIONS[number]["id"];
 export type ManagedEvent = z.infer<typeof EventRecordSchema>;
@@ -106,13 +106,14 @@ export async function saveEventPermissions(identity: AuthIdentity, address: stri
   return apiOkOf(Profile).parse(await postJSON(`/events/api/profiles/${address.toLowerCase()}/settings`, { permissions }, { identity, method: "PATCH" })).data;
 }
 
-/** An account's event permissions and, for a moderator, every account's grants. */
-export type EventAccess = { profile: EventProfile; profiles: EventProfile[] | null };
+/** An account's event permissions. */
+export type EventAccess = { profile: EventProfile };
 
 /** The signed reads of the admin pages are the account's own, so they sit under `["private", account, ...]`. */
 export const eventAdminKeys = {
   all: (account: string) => ["private", account.toLowerCase(), "event-admin"] as const,
   access: (account: string) => ["private", account.toLowerCase(), "event-admin", "access"] as const,
+  grants: (account: string) => ["private", account.toLowerCase(), "event-admin", "grants"] as const,
   queue: (account: string) => ["private", account.toLowerCase(), "event-admin", "queue"] as const,
 };
 
@@ -146,10 +147,10 @@ export function editEventHref(id: string): string {
 const EVENT_ADMIN_STALE_MS = 30_000;
 
 /**
- * Every account's grants, or null when the moderator-only list refuses this account (403): the server,
+ * Every account's grants, or null when the list (moderators and `edit_any_profile` grantees) refuses this account (403): the server,
  * not the `edit_any_profile` hint, decides who may read other accounts. Any other failure throws.
  */
-async function loadEventProfilesIfAllowed(identity: AuthIdentity, signal?: AbortSignal): Promise<EventProfile[] | null> {
+export async function loadEventGrants(identity: AuthIdentity, signal?: AbortSignal): Promise<EventProfile[] | null> {
   try {
     return await loadEventProfiles(identity, signal);
   } catch (error) {
@@ -158,13 +159,12 @@ async function loadEventProfilesIfAllowed(identity: AuthIdentity, signal?: Abort
   }
 }
 
-/** The account's own grants, and every account's when it may administer users (`profiles` null when not). */
+/**
+ * The account's own grants. Every account's grants are a separate read for the Users page alone, so a
+ * failure of that moderator-only list cannot take the Pending Events queue down with it.
+ */
 export async function loadEventAccess(identity: AuthIdentity, signal?: AbortSignal): Promise<EventAccess> {
-  const profile = await loadEventProfile(identity, signal);
-  const profiles = profile.permissions.includes("edit_any_profile")
-    ? await loadEventProfilesIfAllowed(identity, signal)
-    : null;
-  return { profile, profiles };
+  return { profile: await loadEventProfile(identity, signal) };
 }
 
 export const eventAccessQuery = (identity: AuthIdentity) =>
@@ -172,6 +172,13 @@ export const eventAccessQuery = (identity: AuthIdentity) =>
     queryKey: eventAdminKeys.access(identity.signer),
     staleTime: EVENT_ADMIN_STALE_MS,
     queryFn: ({ signal }) => loadEventAccess(identity, signal),
+  });
+
+export const eventGrantsQuery = (identity: AuthIdentity) =>
+  queryOptions({
+    queryKey: eventAdminKeys.grants(identity.signer),
+    staleTime: EVENT_ADMIN_STALE_MS,
+    queryFn: ({ signal }) => loadEventGrants(identity, signal),
   });
 
 export const moderationQueueQuery = (identity: AuthIdentity) =>

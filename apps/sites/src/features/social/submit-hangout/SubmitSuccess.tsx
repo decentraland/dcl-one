@@ -1,7 +1,5 @@
-import { Notice } from "@dcl/one-ui/apps/sites/events/Notice";
-import { useEventsCopy } from "@dcl/one-ui/apps/sites/events/locale";
-import { Button } from "@dcl/one-ui/apps/sites/shared/Button/Button";
-import { GeneralCheck } from "@dcl/one-ui/foundations/icons";
+import { Notice, useEventsCopy, Button } from "@dcl/one-ui";
+import { GeneralCheck } from "@dcl/one-ui";
 import { useEffect, useRef } from "react";
 import { useNavigate } from "react-router";
 
@@ -48,8 +46,8 @@ export default function SubmitSuccess({ mode, approved, stillRejected = false }:
           </>
         )}
         <div className={styles.actions}>
-          <Button variant="inverse" className={styles.action} onClick={() => { void navigate("/events"); }}>{text("Back to Explore")}</Button>
-          <Button className={styles.action} onClick={() => { void navigate("/events?tab=my"); }}>{text("My Events")}</Button>
+          <Button size="lg" variant="inverse" className={styles.action} onClick={() => { void navigate("/events"); }}>{text("Back to Explore")}</Button>
+          <Button size="lg" className={styles.action} onClick={() => { void navigate("/events?tab=my"); }}>{text("My Events")}</Button>
         </div>
       </div>
     </section>

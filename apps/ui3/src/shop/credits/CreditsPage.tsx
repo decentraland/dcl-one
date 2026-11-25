@@ -6,7 +6,7 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useCallback, useEffect, useId, useRef, useState } from "react";
 import { Link, useNavigate, useSearchParams } from "react-router";
 
-import Button from "../../atoms/Button";
+import { Button } from "@dcl/one-ui";
 import { useShopWallet } from "../wallet/context";
 import { SHOP_QUERY_KEYS } from "../checkout/lib/after-purchase";
 import { CURRENCY, formatAmount } from "@shop/checkout/lib/currency";

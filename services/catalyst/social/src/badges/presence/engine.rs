@@ -886,7 +886,7 @@ impl Flow<'_> {
         .await?;
         let granted = matches!(&applied, Applied::Written(change) if change.completed);
         if granted {
-            metrics::counter!("badges_presence_grants_total").increment(1);
+            dcl_metrics::counter!("badges_presence_grants_total").increment(1);
             tracing::info!(
                 badge_id,
                 wallet = address.as_str(),

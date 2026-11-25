@@ -42,16 +42,16 @@ pub use eip1654::{Eip1654Validator, PeerValidated, verify_eip1654};
 pub use error::AuthError;
 pub use eth_address::{EthAddress, is_eth_address, normalize_eth_address};
 pub use hash::{
-    HashV1Writer, hash_bytes, hash_bytes_v0_unixfs, hash_bytes_v1, is_canonical_cid,
+    HashV0Writer, HashV1Writer, hash_bytes, hash_bytes_v0_unixfs, hash_bytes_v1, is_canonical_cid,
     raw_cid_v1_from_sha256_hex, verify_hash,
 };
 pub use hex0x::{HexDecodeError, decode_hex_0x};
 pub use pointer::{canonicalize_pointer, is_canonical_pointer, parse_pointer};
 pub use recover::{recover_address, recover_address_from_digest};
-pub use rpc_validator::{RpcEip1654Validator, rpc_client};
+pub use rpc_validator::{CallGate, RpcEip1654Validator, rpc_client, with_call_gate};
 pub use validation_cache::{ValidationCache, cached_rpc_validator};
 pub use verify::{
-    LOGIN_PURPOSE, verify_auth_chain, verify_auth_chain_async, verify_login_chain,
-    verify_login_chain_async,
+    LOGIN_PURPOSE, verify_auth_chain, verify_auth_chain_async, verify_entity_auth_chain,
+    verify_login_chain, verify_login_chain_async,
 };
 pub use wallet::{SignError, Wallet, create_scoped_auth_chain, create_simple_auth_chain};

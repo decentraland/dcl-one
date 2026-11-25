@@ -1,6 +1,8 @@
 #![forbid(unsafe_code)]
 
 #[cfg(feature = "explorer")]
+use common::sync::MutexExt;
+#[cfg(feature = "explorer")]
 use std::path::PathBuf;
 use std::{collections::VecDeque, f32::consts::PI, time::Duration};
 
@@ -16,6 +18,7 @@ use bevy::{
             MeshAabb, MeshTag,
         },
         primitives::Aabb,
+        render_resource::Face,
         view::RenderLayers,
     },
     scene::InstanceId,
@@ -53,6 +56,8 @@ pub mod colliders;
 #[cfg(feature = "explorer")]
 mod debug_avatars;
 #[cfg(feature = "explorer")]
+mod debug_wear;
+#[cfg(feature = "explorer")]
 pub mod dynamic_nametag;
 #[cfg(feature = "explorer")]
 pub mod emote_report;
@@ -78,9 +83,12 @@ pub mod pause_hidden;
 pub mod point_at_ik;
 #[cfg(feature = "explorer")]
 pub mod point_at_marker;
+mod processing_timing;
 pub mod spring_bones;
 mod two_bone_ik;
 
+#[cfg(test)]
+mod outline_emission;
 #[cfg(test)]
 mod tests;
 
@@ -113,7 +121,8 @@ use dcl_component::proto_components::{
 #[cfg(feature = "explorer")]
 use dcl_component::{
     proto_components::sdk::components::{
-        PbAssetLoadLoadingState, PbAvatarBase, PbAvatarEquippedData, PbGltfContainerLoadingState,
+        pb_avatar_equipped_data::EquippedWearable, PbAssetLoadLoadingState, PbAvatarBase,
+        PbAvatarEquippedData, PbGltfContainerLoadingState,
     },
     SceneComponentId, SceneEntityId,
 };
@@ -180,6 +189,7 @@ impl Plugin for AvatarRenderPlugin {
         app.init_resource::<SessionGraphics>();
         // read by emote playback; the Explorer's input crate initialises it too
         app.init_resource::<common::structs::SceneDrivenAnimationFeedback>();
+        app.add_plugins(processing_timing::AvatarProcessingTimingPlugin);
         app.add_plugins(MaskMaterialPlugin);
         app.add_plugins(AvatarAnimationPlugin);
         app.add_plugins(spring_bones::SpringBonesPlugin);
@@ -381,6 +391,15 @@ pub fn update_avatar_info(
                             .find(|emote| emote.slot == ix)
                             .map(|emote| emote.urn.clone())
                             .unwrap_or_default()
+                    })
+                    .collect(),
+                // `visible` stays unset: what the outfit hides is known only once it has loaded
+                wearables: avatar
+                    .wearables
+                    .iter()
+                    .map(|urn| EquippedWearable {
+                        urn: urn.clone(),
+                        visible: None,
                     })
                     .collect(),
                 force_render: avatar.force_render.clone().unwrap_or_default(),
@@ -1255,6 +1274,81 @@ pub struct AvatarLoaded {
 #[derive(Component)]
 pub struct AvatarProcessed;
 
+/// The suffix the glTF loader adds to a material's label for the copy it makes for a mirrored
+/// (negative-scale) node, whose faces wind the other way.
+const MIRRORED_MATERIAL_SUFFIX: &str = " (inverted)";
+
+/// Whether `material` is the glTF loader's copy of a material for a mirrored node.
+fn is_mirrored_material(material: &Handle<StandardMaterial>) -> bool {
+    material
+        .path()
+        .and_then(|path| path.label())
+        .is_some_and(|label| label.ends_with(MIRRORED_MATERIAL_SUFFIX))
+}
+
+/// A glTF material and, when a mirrored node uses it, the loader's mirrored copy, which
+/// `Gltf::materials` does not list.
+fn material_and_mirrored(
+    material: &Handle<StandardMaterial>,
+    asset_server: &AssetServer,
+) -> impl Iterator<Item = Handle<StandardMaterial>> {
+    let mirrored = material.path().and_then(|path| {
+        let label = path.label()?;
+        let mirrored = path
+            .clone()
+            .with_label(format!("{label}{MIRRORED_MATERIAL_SUFFIX}"));
+        asset_server.get_handle::<StandardMaterial>(mirrored)
+    });
+    std::iter::once(material.clone_weak()).chain(mirrored.map(|handle| handle.clone_weak()))
+}
+
+/// Divides the KHR_materials_emissive_strength out of a loaded wearable glTF's materials: the glTF
+/// loader multiplies the emissive by it, and avatars do not take that extension. The strengths
+/// come from the glTF's source, the document and binary chunk the loader kept for this, which is
+/// then dropped: a glTF already divided has no source left.
+fn drop_emissive_strengths(
+    gltfs: &mut Assets<Gltf>,
+    id: AssetId<Gltf>,
+    materials: &mut Assets<StandardMaterial>,
+    asset_server: &AssetServer,
+) {
+    if gltfs.get(id).is_none_or(|gltf| gltf.source.is_none()) {
+        return;
+    }
+    let Some(gltf) = gltfs.get_mut(id) else {
+        return;
+    };
+    let Some(source) = gltf.source.take() else {
+        return;
+    };
+    // the loader keeps the materials in the document's order
+    for (material, handle) in source.document.materials().zip(&gltf.materials) {
+        if let Some(strength) = material
+            .emissive_strength()
+            .filter(|s| *s > 0.0 && *s != 1.0)
+        {
+            divide_emissive(materials, handle, strength, asset_server);
+        }
+    }
+}
+
+/// Divides `strength` out of a glTF material's emissive colour, and out of its mirrored copy's.
+fn divide_emissive(
+    materials: &mut Assets<StandardMaterial>,
+    material: &Handle<StandardMaterial>,
+    strength: f32,
+    asset_server: &AssetServer,
+) {
+    for handle in material_and_mirrored(material, asset_server) {
+        if let Some(material) = materials.get_mut(&handle) {
+            // the alpha is the exposure weight, not part of the colour
+            material.emissive.red /= strength;
+            material.emissive.green /= strength;
+            material.emissive.blue /= strength;
+        }
+    }
+}
+
 /// Tells a scene how the avatar on one of its entities is loading, as the AssetLoad loading
 /// state of that entity (a grow-only set the scene reads in order): Loading once the look's
 /// files are being fetched, Finished once it renders, FinishedWithError when it never will.
@@ -1266,7 +1360,8 @@ fn spawn_scenes(
         (Without<AvatarLoaded>, Without<AvatarProcessed>),
     >,
     asset_server: Res<AssetServer>,
-    gltfs: Res<Assets<Gltf>>,
+    mut gltfs: ResMut<Assets<Gltf>>,
+    mut standard_materials: ResMut<Assets<StandardMaterial>>,
     mut scene_spawner: ResMut<SceneSpawner>,
     // absent without the asset pipeline (tests): nothing reloads
     ipfs: Option<Res<IpfsResource>>,
@@ -1308,6 +1403,20 @@ fn spawn_scenes(
 
         if any_loading || face_loading {
             continue;
+        }
+
+        let models = def.body.model.iter().chain(
+            def.wearables
+                .iter()
+                .flat_map(|(_, wearable)| wearable.model.as_ref()),
+        );
+        for model in models {
+            drop_emissive_strengths(
+                &mut gltfs,
+                model.gltf.id(),
+                &mut standard_materials,
+                &asset_server,
+            );
         }
 
         let Some(gltf) = def
@@ -1371,14 +1480,14 @@ fn spawn_scenes(
             gltf.named_materials
                 .iter()
                 .filter(|(name, _)| name.to_lowercase().contains("skin"))
-                .map(|(_, h)| h.clone_weak()),
+                .flat_map(|(_, h)| material_and_mirrored(h, &asset_server)),
         );
 
         hair_materials.extend(
             gltf.named_materials
                 .iter()
                 .filter(|(name, _)| name.to_lowercase().contains("hair"))
-                .map(|(_, h)| h.clone_weak()),
+                .flat_map(|(_, h)| material_and_mirrored(h, &asset_server)),
         );
 
         let body_instance = scene_spawner.spawn_as_child(h_scene.clone(), ent);
@@ -1410,13 +1519,13 @@ fn spawn_scenes(
                     gltf.named_materials
                         .iter()
                         .filter(|(name, _)| name.to_lowercase().contains("skin"))
-                        .map(|(_, h)| h.clone_weak()),
+                        .flat_map(|(_, h)| material_and_mirrored(h, &asset_server)),
                 );
                 hair_materials.extend(
                     gltf.named_materials
                         .iter()
                         .filter(|(name, _)| name.to_lowercase().contains("hair"))
-                        .map(|(_, h)| h.clone_weak()),
+                        .flat_map(|(_, h)| material_and_mirrored(h, &asset_server)),
                 );
 
                 Some(
@@ -1444,7 +1553,12 @@ pub struct AvatarMaterials(pub HashSet<AssetId<SceneMaterial>>);
 #[derive(Component, Debug)]
 pub struct PreviousAvatar(Entity);
 
-const AVATAR_EMISSIVE_MULTIPLIER: f32 = 4.0;
+/// An avatar's emission for one channel of a glTF emissive factor, in the toon lighting's output
+/// units (lit white is 1): the factor times 5, taken as a linear value with no gamma decode, times
+/// 2.5, so a factor of 1 emits 12.5. toon.wgsl undoes bound_material's x5 lift.
+fn avatar_emission(factor: f32) -> f32 {
+    factor.max(0.0) * 5.0 * 2.5
+}
 /// The camera-to-player dither's base opacity for avatars: an avatar fades as a whole, by the
 /// worst point of its capsule, so all of it shows the floor. Higher than text's for that reason.
 const AVATAR_DITHER_BASE_OPACITY: f32 = 0.5;
@@ -1479,11 +1593,12 @@ fn process_avatar(
     mut meshes: ResMut<Assets<Mesh>>,
     gltfs: Res<Assets<Gltf>>,
     attach_points: Query<&AttachPoints>,
-    (config, inverse_bindposes, mut mat_cache, mut mask_cache): (
+    (config, inverse_bindposes, mut mat_cache, mut mask_cache, mut run): (
         Res<AppConfig>,
         Res<Assets<SkinnedMeshInverseBindposes>>,
         ResMut<AssetCache<AvatarMatKey, SceneMaterial>>,
         ResMut<AssetCache<AvatarMaskKey, MaskMaterial>>,
+        ResMut<processing_timing::AvatarProcessingRun>,
     ),
     mut emote_loader: CollectibleManager<Emote>,
     mut graphs: ResMut<Assets<AnimationGraph>>,
@@ -1503,6 +1618,8 @@ fn process_avatar(
         EventWriter<AvatarLoadReport>,
     ),
 ) {
+    let started = bevy::platform::time::Instant::now();
+    let mut processed = 0;
     for (avatar_ent, root_gt, def, loaded_avatar, root_player_entity) in query.iter() {
         let (def, emote) = (&def.render, &def.emote);
         let not_loaded = !scene_spawner.instance_is_really_ready(loaded_avatar.body_instance)
@@ -1518,6 +1635,7 @@ fn process_avatar(
             debug!("not loaded...");
             continue;
         }
+        processed += 1;
 
         // https://docs.decentraland.org/creator/wearables/creating-wearables/#max-width-height-and-depth-dimension-of-the-wearables
         let aabb_bounds = (
@@ -2121,6 +2239,10 @@ fn process_avatar(
             state: LoadingState::Finished,
         });
     }
+    *run = processing_timing::AvatarProcessingRun {
+        spent: started.elapsed(),
+        processed,
+    };
 }
 
 // derive the scene material for an avatar's gltf material, sharing the asset
@@ -2144,13 +2266,14 @@ fn derived_scene_material(
         mat.base_color
     };
 
+    // the emissive is the glTF factor alone (drop_emissive_strengths)
     let emissive_color_specified =
         mat.emissive.red != 0.0 || mat.emissive.green != 0.0 || mat.emissive.blue != 0.0;
     let emissive = if emissive_color_specified {
         LinearRgba {
-            red: mat.emissive.red * AVATAR_EMISSIVE_MULTIPLIER,
-            green: mat.emissive.green * AVATAR_EMISSIVE_MULTIPLIER,
-            blue: mat.emissive.blue * AVATAR_EMISSIVE_MULTIPLIER,
+            red: avatar_emission(mat.emissive.red),
+            green: avatar_emission(mat.emissive.green),
+            blue: avatar_emission(mat.emissive.blue),
             alpha: mat.emissive.alpha,
         }
     } else {
@@ -2171,6 +2294,16 @@ fn derived_scene_material(
             base_color,
             emissive,
             depth_bias,
+            // every avatar material culls its back faces, double-sided in the glTF or not: a
+            // blended skirt does not show its inside through its front, and a mesh modelled with
+            // back-to-back faces draws one layer, not two. A mirrored node's faces wind the other
+            // way, so its copy of the material culls the front-wound ones
+            cull_mode: Some(if is_mirrored_material(&h_mat.0) {
+                Face::Front
+            } else {
+                Face::Back
+            }),
+            double_sided: false,
             ..mat.clone()
         },
         extension: SceneBound::new(&def.bounds, oob)
@@ -2483,7 +2616,7 @@ fn debug_dump_avatar(
             let count = std::sync::Arc::new(std::sync::Mutex::new((0, 0, 0)));
 
             for content_file in def.content.files() {
-                count.lock().unwrap().0 += 1;
+                count.lock_ignore_poison().0 += 1;
                 let ipfs_path = IpfsPath::new(IpfsType::new_content_file(
                     scene_hash.to_owned(),
                     content_file.to_owned(),
@@ -2498,7 +2631,7 @@ fn debug_dump_avatar(
                 let send = console_relay.send.clone();
                 tasks.push(IoTaskPool::get().spawn(async move {
                     let report = |fail: Option<String>| {
-                        let mut count = count.lock().unwrap();
+                        let mut count = count.lock_ignore_poison();
                         if let Some(fail) = fail {
                             count.2 += 1;
                             let _ = send.send(fail);

@@ -4,6 +4,7 @@ use crate::{
     builder, camera_reel, comms, config::Config, content, explore, land_authz, ops, presence,
     price, shared, shop, social, worlds,
 };
+use dcl_metrics::http::component;
 use std::sync::Arc;
 
 /// The old transactions-server surface: the relay (`economy`) plus the
@@ -90,10 +91,11 @@ pub(super) struct Routes<'a> {
 
 pub(super) fn build_routes(
     config: &Config,
-    prepared: crate::metrics_matcher::PreparedStats,
+    statistics_settings: comms::stats::http::Settings,
     primary: bool,
     routes: Routes<'_>,
 ) -> axum::Router {
+    let health = super::health::router(config, &routes);
     let Routes {
         content,
         market,
@@ -139,111 +141,166 @@ pub(super) fn build_routes(
     // connector answers at the root and under /archipelago-ea-stats; its
     // socket routes only on the primary.
     let connector_lifecycle = archipelago_state.clone();
-    let (statistics_settings, statistics_matcher) = prepared.into_parts();
     let archipelago = crate::comms::archipelago::mounts(
         archipelago_state,
         primary,
         statistics_settings,
-        statistics_matcher,
         content.denylist.clone(),
     );
     let statistics = archipelago.statistics.clone();
     let blobs = content.clone();
     let report_storage = blobs.storage.clone();
-    let app = content::build_router(content)
-        .merge(shop::market::router(market.clone()))
-        .merge(shop_routes(shop::States {
-            market: market.clone(),
-            credits: stage5_ops.credits.clone(),
-            economy: economy_state,
-            signatures,
-            outfits,
-            subscriptions,
-            mana,
-        }))
-        .merge(shop::campaigns::builder_alias_router(market.clone()))
+    let max_deploy_body = content::create_entity::max_deployment_body_bytes(&content.settings);
+    let app = component(health, "shared")
+        .merge(component(content::build_router(content), "content"))
+        .merge(component(shop::market::router(market.clone()), "shop"))
+        .merge(component(
+            shop_routes(shop::States {
+                market: market.clone(),
+                credits: stage5_ops.credits.clone(),
+                economy: economy_state,
+                signatures,
+                outfits,
+                subscriptions,
+                mana,
+            }),
+            "shop",
+        ))
+        .merge(component(
+            shop::campaigns::builder_alias_router(market.clone()),
+            "shop",
+        ))
         // events-notifier.<domain> reaches /events-notifier (gateway subdomain rule).
         .nest(
             "/events-notifier",
-            shop::market::tips::router(market.clone()),
+            component(shop::market::tips::router(market.clone()), "shop"),
         )
-        .merge(registry_profiles(market.clone()))
-        .nest("/marketplace-api", shop::market::market_router(market))
-        .merge(land_authz::router(land))
-        .merge(shop::evm::contracts_document_router())
-        .merge(price::router(price.clone()))
-        .nest("/price", price::router(price))
-        .nest("/presence", presence::router(presence))
-        .merge(explore::router(explore.clone()));
+        .merge(component(registry_profiles(market.clone()), "shop"))
+        .nest(
+            "/marketplace-api",
+            component(shop::market::market_router(market), "shop"),
+        )
+        .merge(component(land_authz::router(land), "land-authz"))
+        .merge(component(shop::evm::contracts_document_router(), "shop"))
+        .merge(component(price::router(price.clone()), "price"))
+        .nest("/price", component(price::router(price), "price"))
+        .nest(
+            "/presence",
+            component(presence::router(presence), "presence"),
+        )
+        .merge(component(explore::router(explore.clone()), "explore"));
     let app = explore::NESTS.into_iter().fold(app, |app, nest| {
-        app.nest(nest, explore::router(explore.clone()))
+        app.nest(nest, component(explore::router(explore.clone()), "explore"))
     });
     let app = app
-        .merge(worlds::app_router(worlds, blobs, stage5))
-        .merge(live_presence_routes(live_presence, stage5.writes_enabled))
-        .merge(if primary {
-            comms::archipelago::socket_router(connector_lifecycle.clone())
-        } else {
-            axum::Router::new()
-        })
-        .merge(explore::api::router(explorer_api))
+        .merge(component(
+            worlds::app_router(worlds, blobs, stage5),
+            "worlds",
+        ))
+        .merge(component(
+            live_presence_routes(live_presence, stage5.writes_enabled),
+            "comms",
+        ))
+        .merge(component(
+            if primary {
+                comms::archipelago::socket_router(connector_lifecycle.clone())
+            } else {
+                axum::Router::new()
+            },
+            "comms",
+        ))
+        .merge(component(explore::api::router(explorer_api), "explore"))
         // The scene workers' routing map and proxy (`scene_proxy`).
-        .nest("/_scene", crate::scene_proxy::router(scene_proxy))
+        .nest(
+            "/_scene",
+            component(crate::scene_proxy::router(scene_proxy), "scene-proxy"),
+        )
         // The gatekeeper's mounts, where `social::router` held them: the Pulse
         // room authority, the message router's token route, the world comms mints and the LiveKit webhook (the
         // worlds content server's root path) at the root, the mints and the
         // webhook under `/worlds-content-server`, and the gatekeeper's routes
         // with social's MLS routes under `/comms-gatekeeper` behind the
         // social writes switch.
-        .merge(comms::gatekeeper::room_authority_router(gatekeeper))
-        .merge(comms::gatekeeper::message_router_token_router(gatekeeper))
-        .merge(comms::gatekeeper::admission::world_mint::router(
-            gatekeeper.clone(),
+        .merge(component(
+            comms::gatekeeper::room_authority_router(gatekeeper),
+            "comms",
         ))
-        .merge(social::writes::guard(
-            comms::gatekeeper::webhook_router(gatekeeper.clone()),
-            config.writes.social_writes_enabled,
+        .merge(component(
+            comms::gatekeeper::message_router_token_router(gatekeeper),
+            "comms",
+        ))
+        .merge(component(
+            comms::gatekeeper::admission::world_mint::router(gatekeeper.clone()),
+            "comms",
+        ))
+        .merge(component(
+            social::writes::guard(
+                comms::gatekeeper::webhook_router(gatekeeper.clone()),
+                config.writes.social_writes_enabled,
+            ),
+            "comms",
         ))
         .nest(
             "/worlds-content-server",
-            comms::gatekeeper::admission::world_mint::router(gatekeeper.clone()).merge(
-                social::writes::guard(
-                    comms::gatekeeper::webhook_router(gatekeeper.clone()),
-                    config.writes.social_writes_enabled,
+            component(
+                comms::gatekeeper::admission::world_mint::router(gatekeeper.clone()).merge(
+                    social::writes::guard(
+                        comms::gatekeeper::webhook_router(gatekeeper.clone()),
+                        config.writes.social_writes_enabled,
+                    ),
                 ),
+                "comms",
             ),
         )
         .nest(
             "/comms-gatekeeper",
-            social::writes::guard(
-                comms::gatekeeper::router(gatekeeper.clone())
-                    .merge(social::messaging::router(social.messaging.clone())),
-                config.writes.social_writes_enabled,
+            component(
+                social::writes::guard(
+                    comms::gatekeeper::router(gatekeeper.clone())
+                        .merge(social::messaging::router(social.messaging.clone())),
+                    config.writes.social_writes_enabled,
+                ),
+                "comms",
             ),
         )
-        .merge(social::router(social, config.writes.social_writes_enabled))
-        .merge(builder::root_router(builder.clone()))
-        .nest("/builder-api", builder::router(builder))
-        .nest("/camera-reel-service", camera_reel::router(camera_reel))
+        .merge(component(
+            social::router(social, config.writes.social_writes_enabled),
+            "social",
+        ))
+        .merge(component(builder::root_router(builder.clone()), "builder"))
+        .nest(
+            "/builder-api",
+            component(builder::router(builder), "builder"),
+        )
+        .nest(
+            "/camera-reel-service",
+            component(camera_reel::router(camera_reel), "camera-reel"),
+        )
         // The Cast presenter under upstream's host label (cast-presenter-service);
         // its sessions live in this process and their bots in `cast-bot` processes.
         .nest(
             "/cast-presenter-service",
-            comms::cast_presenter::router(comms::cast_presenter::presenter(
-                gatekeeper.clone(),
-                config.social.cast_bot_bin.clone(),
-                comms::cast_presenter::LiveKitTarget::from_livekit(&gatekeeper.livekit),
-                config.social.max_concurrent_presentations,
-                Config::non_empty(&config.social.cast_presenter_public_url),
-            )),
+            component(
+                comms::cast_presenter::router(comms::cast_presenter::presenter(
+                    gatekeeper.clone(),
+                    config.social.cast_bot_bin.clone(),
+                    comms::cast_presenter::LiveKitTarget::from_livekit(&gatekeeper.livekit),
+                    config.social.max_concurrent_presentations,
+                    Config::non_empty(&config.social.cast_presenter_public_url),
+                )),
+                "comms",
+            ),
         )
         // The player report intake (`gatekeeper::reports`). Reports and their
         // evidence are social rows and blobs, so the social writes switch gates them.
         .nest(
             "/report-user",
-            social::writes::guard(
-                comms::gatekeeper::reports::router(gatekeeper.clone(), report_storage),
-                config.writes.social_writes_enabled,
+            component(
+                social::writes::guard(
+                    comms::gatekeeper::reports::router(gatekeeper.clone(), report_storage),
+                    config.writes.social_writes_enabled,
+                ),
+                "comms",
             ),
         );
     // The operator plane under the old gateway's prefixes: credits under
@@ -253,34 +310,244 @@ pub(super) fn build_routes(
     // the imposter zips under /bvimposters (the prefix baked into the explorer
     // wasm), the console API at the root (/admin/auth, /admin/api/*).
     let app = app
-        .nest("/credits", shop::credits::router(stage5_ops.credits))
-        .nest("/rpc", ops::rpc::router(stage5_ops.rpc))
+        .nest(
+            "/credits",
+            component(shop::credits::router(stage5_ops.credits), "shop"),
+        )
+        .nest("/rpc", component(ops::rpc::router(stage5_ops.rpc), "ops"))
         .nest(
             "/bvimposters",
-            explore::imposters::router(stage5_ops.imposters),
+            component(explore::imposters::router(stage5_ops.imposters), "explore"),
         )
-        .merge(ops::admin::content::router(ops_admin.clone()))
-        .merge(ops::admin::snapshots::router(
-            ops_admin.clone(),
-            snapshot_gen,
+        .merge(component(
+            ops::admin::content::router(ops_admin.clone()),
+            "ops",
         ))
-        .merge(ops::admin::router(ops_admin))
-        .merge(shared::writes::status_router(write_switches(config)));
+        .merge(component(
+            ops::admin::snapshots::router(ops_admin.clone(), snapshot_gen),
+            "ops",
+        ))
+        .merge(component(ops::admin::router(ops_admin), "ops"))
+        .merge(component(
+            shared::writes::status_router(write_switches(config)),
+            "shared",
+        ));
     // A request a gate, an auth check or a handler answers before reading
-    // its body is drained, not reset: nginx writes a buffered upload after
-    // the answer, and a reset fails that write, answers 502 and counts the
-    // process down. Up to the largest body a route admits (a deployment).
+    // its body is drained, not reset: nginx is still writing the upload
+    // after the answer, and a reset fails that write, answers 502 and counts
+    // the process down. Up to the largest body a route admits (a deployment,
+    // `MAX_UPLOAD_TOTAL_SIZE` plus framing): the drain discards each chunk
+    // as it arrives, so the bound costs bandwidth, never memory or disk. A
+    // content deploy streams through nginx unbuffered, so its drain runs at
+    // the client's pace; it ends at `DRAIN_DEADLINE` (300 s) whatever is left.
     // Forwarding headers name the client only from a loopback or listed proxy.
     let app =
         shared::client_ip::pin_client_headers(app, config.node.http_trusted_proxy_cidrs.clone());
     let app = shared::drain::drain_unread(
         app,
-        content::create_entity::MAX_DEPLOYMENT_BYTES
-            .max(worlds::core::deploy::MAX_UPLOAD_WIRE_SIZE_BYTES) as u64,
+        max_deploy_body.max(worlds::core::deploy::MAX_UPLOAD_WIRE_SIZE_BYTES) as u64,
     );
     // Upstream's router under /content/: static segments matched whatever
     // their case, and its `Allow` list on a 405 (also under
     // /worlds-content-server/). Other paths pass untouched.
     let app = content::routing::upstream_routing(app);
-    comms::stats::http::mount_services(app, statistics, archipelago.stats, archipelago.connector)
+    client_facing(
+        app,
+        statistics,
+        archipelago.stats,
+        archipelago.connector,
+        config,
+    )
+}
+
+/// The router the listener serves: the archipelago socket's stats and
+/// connector hosts beside the shared app (`mount_services`), and every request
+/// on any of them, those hosts' socket aliases included, inside its client
+/// source, which the shared EIP-1654 validator charges its contract-wallet
+/// checks to (`shared::eip1654_budget`).
+fn client_facing(
+    app: axum::Router,
+    statistics: comms::stats::http::State,
+    stats: axum::Router,
+    connector: axum::Router,
+    config: &Config,
+) -> axum::Router {
+    let app = comms::stats::http::mount_services(app, statistics, stats, connector);
+    shared::eip1654_budget::scope_client_source(app, config.node.http_trusted_proxy_cidrs.clone())
+}
+
+#[cfg(test)]
+mod client_source_tests {
+    use std::sync::Arc;
+
+    use axum::body::Body;
+    use axum::extract::ConnectInfo;
+    use axum::http::Request;
+    use axum::routing::get;
+    use tower::ServiceExt;
+
+    use crate::comms::stats;
+    use crate::shared::eip1654_budget::current_source;
+
+    struct Hooks;
+
+    #[async_trait::async_trait]
+    impl stats::http::Hooks for Hooks {
+        async fn probe(&self, _: bool) -> stats::http::Lifecycle {
+            Default::default()
+        }
+        async fn diagnostics(&self) -> Result<String, stats::content::Error> {
+            Ok(String::new())
+        }
+    }
+
+    fn probe() -> axum::Router {
+        axum::Router::new().route(
+            "/probe",
+            get(|| async { current_source().unwrap_or_else(|| "-".into()) }),
+        )
+    }
+
+    /// A contract wallet that refuses every signature, counting the calls.
+    #[derive(Default)]
+    struct Refusing(std::sync::atomic::AtomicUsize);
+
+    #[async_trait::async_trait]
+    impl crate::auth::eip1654::Eip1654Validator for Refusing {
+        async fn validate_signature(
+            &self,
+            _: &str,
+            _: &[u8],
+            _: &[u8],
+        ) -> Result<bool, crate::auth::AuthError> {
+            self.0.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            Ok(false)
+        }
+    }
+
+    /// [`probe`] and `/check`, one contract-wallet check through `validator`:
+    /// 401 when the contract refuses, 429 when the caller's budget does.
+    fn shared_app(validator: Arc<dyn crate::auth::eip1654::Eip1654Validator>) -> axum::Router {
+        probe().route(
+            "/check",
+            get(move || {
+                let validator = validator.clone();
+                async move {
+                    let wallet = "0x00000000000000000000000000000000000c0de1";
+                    match validator.validate_signature(wallet, &[0; 32], &[0]).await {
+                        Ok(_) => axum::http::StatusCode::UNAUTHORIZED,
+                        Err(crate::auth::AuthError::Eip1654RateLimited) => {
+                            axum::http::StatusCode::TOO_MANY_REQUESTS
+                        }
+                        Err(_) => axum::http::StatusCode::SERVICE_UNAVAILABLE,
+                    }
+                }
+            }),
+        )
+    }
+
+    /// Every mount the listener serves (`client_facing`, the router
+    /// `build_routes` returns) names the request's client source: the shared
+    /// app and the archipelago socket's stats and connector hosts, which sit
+    /// outside the shared router's middleware. A trusted proxy's `X-Real-IP`
+    /// names its client; an untrusted internal peer names none. A
+    /// contract-wallet check through the node's budgeted validator is charged
+    /// to its caller: one client behind the proxy spends its budget, the next
+    /// one still gets its check.
+    #[tokio::test]
+    async fn every_mount_runs_inside_the_client_source() {
+        let pool = sqlx::postgres::PgPoolOptions::new()
+            .connect_lazy("postgres://nobody@127.0.0.1:1/nowhere")
+            .unwrap();
+        let statistics = stats::http::State::new(
+            Arc::new(stats::Reader::default()),
+            Arc::new(stats::content::Content {
+                pool,
+                denylist: Arc::new(crate::content::Denylist::default()),
+            }),
+            Arc::new(Hooks),
+            Default::default(),
+        );
+        let config = crate::config::Config::parse_env_for_tests([
+            ("DATABASE_URL", "postgres:///catalyst"),
+            ("HTTP_TRUSTED_PROXY_CIDRS", "10.40.0.0/18"),
+        ])
+        .unwrap();
+        let contract = Arc::new(Refusing::default());
+        let validator = Arc::new(crate::shared::eip1654_budget::SourceBudgeted::new(
+            contract.clone(),
+        ));
+        let app =
+            super::client_facing(shared_app(validator), statistics, probe(), probe(), &config);
+        let source = |path: &'static str, peer: &'static str, real_ip: Option<&'static str>| {
+            let app = app.clone();
+            async move {
+                let mut request = Request::get(path);
+                if let Some(ip) = real_ip {
+                    request = request.header("x-real-ip", ip);
+                }
+                let mut request = request.body(Body::empty()).unwrap();
+                request
+                    .extensions_mut()
+                    .insert(ConnectInfo(peer.parse::<std::net::SocketAddr>().unwrap()));
+                let response = app.oneshot(request).await.unwrap();
+                let body = axum::body::to_bytes(response.into_body(), 1024)
+                    .await
+                    .unwrap();
+                String::from_utf8(body.to_vec()).unwrap()
+            }
+        };
+        for path in [
+            "/probe",
+            "/archipelago-ea-stats/probe",
+            "/archipelago-ea-ws-connector/probe",
+        ] {
+            assert_eq!(
+                source(path, "203.0.113.9:1", None).await,
+                "203.0.113.9",
+                "{path}"
+            );
+            assert_eq!(
+                source(path, "10.40.1.2:1", Some("198.51.100.4")).await,
+                "198.51.100.4",
+                "{path}: a trusted proxy's client"
+            );
+            assert_eq!(source(path, "10.9.0.2:1", None).await, "-", "{path}");
+        }
+
+        let check = |real_ip: &'static str| {
+            let app = app.clone();
+            async move {
+                let mut request = Request::get("/check")
+                    .header("x-real-ip", real_ip)
+                    .body(Body::empty())
+                    .unwrap();
+                request.extensions_mut().insert(ConnectInfo(
+                    "10.40.1.2:1".parse::<std::net::SocketAddr>().unwrap(),
+                ));
+                app.oneshot(request).await.unwrap().status()
+            }
+        };
+        let started = std::time::Instant::now();
+        let mut refused = 0;
+        loop {
+            match check("203.0.113.40").await.as_u16() {
+                401 => refused += 1,
+                429 => break,
+                other => panic!("unexpected {other}"),
+            }
+            assert!(refused <= 2 * crate::shared::limits::PREAUTH_PER_MINUTE);
+        }
+        let spent = contract.0.load(std::sync::atomic::Ordering::SeqCst);
+        let admitted = crate::shared::eip1654_budget::admitted_within(started.elapsed());
+        assert!(
+            admitted.contains(&spent),
+            "the caller's budget, and no call past it: {spent}, {admitted:?}"
+        );
+        assert_eq!(check("203.0.113.41").await, 401, "another caller's budget");
+        assert_eq!(
+            contract.0.load(std::sync::atomic::Ordering::SeqCst),
+            spent + 1
+        );
+    }
 }

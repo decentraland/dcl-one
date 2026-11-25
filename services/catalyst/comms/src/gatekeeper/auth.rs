@@ -12,7 +12,7 @@
 //!   only when every key in [`CANONICAL_METADATA_KEYS`] is delivered in its
 //!   declared spelling;
 //! - the platform moderator credential (`MODERATOR_TOKEN` bearer, or a
-//!   signed fetch by a `PLATFORM_USER_MODERATORS` wallet);
+//!   signed fetch by a wallet in the live `platform_user_moderators` flag);
 //! - the platform service credential (`COMMS_GATEKEEPER_AUTH_TOKEN` bearer)
 //!   in front of the voice routes and the world ban-status route.
 //!
@@ -159,6 +159,11 @@ fn verdict(outcome: Result<(), SignatureRefusal>, chain: &AuthChain) -> Verdict 
         AuthError::Eip1654ValidationFailed(_) => {
             Verdict::Other(SignedFetchError::new(503, "Error connecting to catalyst"))
         }
+        // The client source spent its contract-wallet checks, before any RPC call.
+        AuthError::Eip1654RateLimited => Verdict::Other(SignedFetchError::new(
+            429,
+            "Too many contract-wallet signature checks; retry later",
+        )),
         AuthError::MalformedChain(_)
         | AuthError::MissingSignature { .. }
         | AuthError::InvalidEphemeralPayload(_) => {
@@ -180,6 +185,10 @@ fn map_chain_error(e: ChainError) -> SignedFetchError {
         ChainError::CatalystUnavailable(_) => {
             SignedFetchError::new(503, "Error connecting to catalyst")
         }
+        ChainError::RateLimited => SignedFetchError::new(
+            429,
+            "Too many contract-wallet signature checks; retry later",
+        ),
     }
 }
 
@@ -412,12 +421,13 @@ pub enum ModeratorMode {
 /// What the moderator gate needs from the settings.
 pub struct ModeratorCredentials<'a> {
     pub token: Option<&'a str>,
-    pub addresses: &'a [Address],
+    pub addresses: std::borrow::Cow<'a, [Address]>,
 }
 
 /// Upstream's user-moderation gate: the `MODERATOR_TOKEN` bearer (a write
 /// names its operator in `?moderator=`), else a signed fetch by a wallet in
-/// `PLATFORM_USER_MODERATORS` (current payload only, as upstream: its callers
+/// `addresses`, read per request from the `platform_user_moderators` flag
+/// (`CommsState::platform_moderators`; current payload only, as upstream: its callers
 /// sign empty metadata; the scene signer refused). Every refusal is the same
 /// 401.
 pub async fn authorize_moderator(
@@ -909,7 +919,7 @@ mod tests {
         let listed = Address::parse(&address_of(KEY)).unwrap();
         let creds = ModeratorCredentials {
             token: Some("mod-token"),
-            addresses: std::slice::from_ref(&listed),
+            addresses: std::slice::from_ref(&listed).into(),
         };
         let mut bearer = HeaderMap::new();
         bearer.insert(

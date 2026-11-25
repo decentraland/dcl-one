@@ -99,6 +99,12 @@ describe('BlogIndexPage', () => {
       for (const form of screen.getAllByRole('search')) expect(form).toHaveAttribute('data-routed')
     })
 
+    it('should let the host prefetch a blog category on intent', () => {
+      expect(Link.mock.calls.map(([props]) => props)).toContainEqual(
+        expect.objectContaining({ href: '/blog/platform', prefetch: 'intent' })
+      )
+    })
+
     it("should load more through the host's link without resetting the scroll", () => {
       const more = Link.mock.calls.map(([p]) => p).find((p) => p.href === '/blog?page=2')
       expect(more?.preventScrollReset).toBe(true)
@@ -133,10 +139,68 @@ describe('BlogIndexPage', () => {
       ])
     })
 
+    it('should render the shared navigation bar and keep desktop search', () => {
+      const links = within(nav).getAllByRole('link')
+      expect(nav).toHaveAttribute('data-page', 'blog')
+      expect(links.every((link) => link.hasAttribute('data-label'))).toBe(true)
+      expect(within(nav).getByRole('searchbox')).toBeInTheDocument()
+    })
+
+    it('should keep the native link free of router prefetch attributes', () => {
+      expect(within(nav).getByRole('link', { name: 'Platform' })).not.toHaveAttribute('prefetch')
+    })
+
     it('should mark the active tab with aria-current', () => {
       expect(within(nav).getByRole('link', { name: 'Platform' })).toHaveAttribute(
         'aria-current',
         'page'
+      )
+    })
+  })
+
+  describe('when the category menu repeats a slug', () => {
+    beforeEach(() => {
+      renderIndex({
+        categories: [...categories, { slug: 'platform', title: 'Platform duplicate' }]
+      })
+    })
+
+    it('should keep the first link for each destination in menu order', () => {
+      const nav = screen.getByRole('navigation', { name: 'Blog categories' })
+      expect(
+        within(nav)
+          .getAllByRole('link')
+          .map((link) => link.textContent)
+      ).toEqual(['All articles', 'Platform', 'Announcements'])
+    })
+  })
+
+  describe('when the category menu contains a blank slug', () => {
+    beforeEach(() => {
+      renderIndex({
+        categories: [
+          { slug: '', title: 'Duplicate home' },
+          { slug: ' ', title: 'No category' }
+        ]
+      })
+    })
+
+    it('should render only the All articles link', () => {
+      const nav = screen.getByRole('navigation', { name: 'Blog categories' })
+      expect(within(nav).getByRole('link')).toHaveAccessibleName('All articles')
+    })
+  })
+
+  describe('when a category title is blank', () => {
+    beforeEach(() => {
+      renderIndex({ categories: [{ slug: 'platform', title: '  ' }] })
+    })
+
+    it('should name the link with the category slug', () => {
+      const nav = screen.getByRole('navigation', { name: 'Blog categories' })
+      expect(within(nav).getByRole('link', { name: 'platform' })).toHaveAttribute(
+        'href',
+        '/blog/platform'
       )
     })
   })

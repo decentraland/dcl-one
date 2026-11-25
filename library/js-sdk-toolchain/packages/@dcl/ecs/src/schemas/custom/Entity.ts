@@ -1,6 +1,6 @@
-import { Entity } from '../../engine/entity'
-import { ByteBuffer } from '../../serialization/ByteBuffer'
-import { ISchema } from '../ISchema'
+import type { Entity } from '../../engine/entity'
+import type { ByteBuffer } from '../../serialization/ByteBuffer'
+import type { ISchema } from '../ISchema'
 
 /**
  * @internal

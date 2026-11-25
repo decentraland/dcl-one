@@ -1,14 +1,15 @@
 import path from 'path'
 import i18next from 'i18next'
 
-import { CliComponents } from '../../components'
+import type { CliComponents } from '../../components'
 import { declareArgs } from '../../logic/args'
 import { CliError } from '../../logic/error'
 import { download, extract, isDirectoryEmpty } from '../../logic/fs'
 
-import { Result } from 'arg'
+import type { Result } from 'arg'
 import { installDependencies, needsDependencies } from '../../logic/project-validations'
-import { ScaffoldedProject, existScaffoldedProject, getScaffoldedProjectUrl, scaffoldedProjectOptions } from './repos'
+import type { ScaffoldedProject } from './repos'
+import { existScaffoldedProject, getScaffoldedProjectUrl, scaffoldedProjectOptions } from './repos'
 import { createPxSceneJson } from './project'
 import { downloadGithubFolder } from './download-github-folder'
 

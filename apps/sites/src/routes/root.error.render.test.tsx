@@ -2,12 +2,14 @@ import { renderToString } from "react-dom/server";
 import { createMemoryRouter, RouterProvider } from "react-router";
 import { beforeEach, describe, expect, it } from "vitest";
 
-import crew from "@dcl/one-ui/apps/sites/assets/errors/crew.webp";
-import locked from "@dcl/one-ui/apps/sites/assets/errors/locked.webp";
-import lost from "@dcl/one-ui/apps/sites/assets/errors/lost.webp";
-import notFoundAvatar from "@dcl/one-ui/apps/sites/assets/errors/not-found-avatar.webp";
-import wave from "@dcl/one-ui/apps/sites/assets/errors/wave.webp";
-import { StatusPage } from "@dcl/one-ui/apps/sites/status/StatusPage";
+import {
+  errorsCrewUrl as crew,
+  errorsLockedUrl as locked,
+  errorsLostUrl as lost,
+  errorsNotFoundAvatarUrl as notFoundAvatar,
+  errorsWaveUrl as wave,
+  StatusPage,
+} from "@dcl/one-ui";
 import { ErrorBoundary } from "./root";
 
 const routeError = (status: number, statusText: string, data: unknown = "") =>

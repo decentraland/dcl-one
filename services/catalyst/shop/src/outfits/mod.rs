@@ -235,13 +235,19 @@ impl IntoResponse for ApiError {
 }
 
 /// A refusal before signature verification (a scene-signed chain, a
-/// non-canonical `signer`) is a 400 as upstream's `rejectIfSigner`; every
+/// non-canonical `signer`) is a 400 as upstream's `rejectIfSigner`; a
+/// contract-wallet check the client source's budget refused is a 429; every
 /// other refusal is the static 401 body.
 fn signed_fetch_error(e: SignedFetchError) -> ApiError {
     match e {
         SignedFetchError::MalformedChain { ref detail } if e.is_metadata_refusal() => {
             ApiError::bad_request("invalid_signer", detail.clone())
         }
+        SignedFetchError::RateLimited => ApiError::Labelled {
+            status: StatusCode::TOO_MANY_REQUESTS,
+            label: "rate_limited",
+            message: Some(e.to_string()),
+        },
         other => {
             tracing::debug!(error = %other, "signed-fetch verification failed for an outfits route");
             ApiError::Unauthorized
@@ -670,23 +676,27 @@ async fn upload_thumbnail(
     };
     let hash = hex::encode(Sha256::digest(&bytes));
     let cid = crate::auth::hash_bytes_v1(&bytes);
-    state
-        .storage
-        .store(&cid, bytes.clone())
-        .await
-        .map_err(|e| ApiError::Internal(format!("blob store: {e}")))?;
+    let size = bytes.len() as i32;
     state
         .store
         .put_thumbnail(
+            &state.storage,
+            bytes,
             &OutfitThumbnail {
                 hash: hash.clone(),
                 blob_cid: cid,
                 content_type: content_type.to_string(),
-                size: bytes.len() as i32,
+                size,
             },
             &author,
         )
-        .await?;
+        .await
+        .map_err(|e| match e {
+            crate::storage::gc::GcError::LockTimeout => {
+                ApiError::labelled(StatusCode::SERVICE_UNAVAILABLE, "store_busy")
+            }
+            e => ApiError::Internal(format!("blob store: {e}")),
+        })?;
     Ok((StatusCode::CREATED, Json(json!({ "hash": hash }))).into_response())
 }
 

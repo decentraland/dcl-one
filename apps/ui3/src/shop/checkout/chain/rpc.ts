@@ -115,17 +115,22 @@ export function setShopChainReader(reader: ChainReader | null): void {
 
 export type WaitOptions = { timeoutMs?: number; pollMs?: number; signal?: AbortSignal; now?: () => number; sleep?: (ms: number) => Promise<void> };
 
+/**
+ * Waits `ms`, or rejects with an AbortError once `signal` aborts, at once when it already has. A wait that ends on
+ * its own removes its abort listener, so a loop of waits on one signal leaves no listeners behind.
+ */
 export const defaultSleep = (ms: number, signal?: AbortSignal) =>
   new Promise<void>((resolve, reject) => {
-    const timer = setTimeout(resolve, ms);
-    signal?.addEventListener(
-      "abort",
-      () => {
-        clearTimeout(timer);
-        reject(new DOMException("Aborted", "AbortError"));
-      },
-      { once: true },
-    );
+    if (signal?.aborted) return reject(new DOMException("Aborted", "AbortError"));
+    const onAbort = () => {
+      clearTimeout(timer);
+      reject(new DOMException("Aborted", "AbortError"));
+    };
+    const timer = setTimeout(() => {
+      signal?.removeEventListener("abort", onAbort);
+      resolve();
+    }, ms);
+    signal?.addEventListener("abort", onAbort, { once: true });
   });
 
 /**

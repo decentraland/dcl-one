@@ -1,7 +1,7 @@
 // this file is tested extensively to build scenes in the `make test` command
 // but since it runs outiside the testing harness, coverage is not collected
 
-import { Scene } from '@dcl/schemas'
+import type { Scene } from '@dcl/schemas'
 import child_process from 'child_process'
 import esbuild from 'esbuild'
 import { future } from './future'
@@ -11,7 +11,7 @@ import path from 'path'
 import { pathToFileURL } from 'url'
 import i18next from 'i18next'
 
-import { CliComponents } from '../components'
+import type { CliComponents } from '../components'
 import { colors } from '../components/log'
 import { printProgressInfo, printProgressStep, printWarning } from './beautiful-logs'
 import { CliError } from './error'
@@ -185,6 +185,8 @@ export async function bundleSingleProject(components: BundleComponents, options:
     preserveSymlinks: false,
     outfile: options.outputFile,
     allowOverwrite: false,
+    // rebuildToDisk writes the files
+    write: false,
     sourcemap: options.production ? false : 'inline',
     minify: options.production,
     minifyIdentifiers: options.production,
@@ -289,14 +291,26 @@ export async function bundleSingleProject(components: BundleComponents, options:
   /* istanbul ignore if */
   if (options.watch) {
     // Instead of using esbuild's watch, we create our own watcher
-    const watcher = watch(path.resolve(options.workingDirectory), {
-      ignored: ['**/node_modules/**', '**/dist/**', '**/*.crdt', '**/*.d.ts', path.resolve(options.outputFile)],
+    const root = path.resolve(options.workingDirectory)
+    const outputFile = path.resolve(options.outputFile)
+    const watcher = watch(root, {
+      ignored: (file: string) => {
+        const absolute = path.resolve(root, file)
+        const parts = path.relative(root, absolute).split(path.sep)
+        return (
+          parts.includes('node_modules') ||
+          parts.includes('dist') ||
+          absolute.endsWith('.crdt') ||
+          absolute.endsWith('.d.ts') ||
+          absolute === outputFile
+        )
+      },
       ignoreInitial: true
     })
 
     const debouncedRebuild = debounce(async () => {
       try {
-        await context.rebuild()
+        await rebuildToDisk(context)
         printProgressInfo(components.logger, `Bundle saved ${colors.bold(options.outputFile)}`)
       } catch (err: any) {
         /* istanbul ignore next */
@@ -319,7 +333,7 @@ export async function bundleSingleProject(components: BundleComponents, options:
     // dead when a scene was opened with a pre-existing syntax error, with no
     // watcher alive to pick up the fix.
     try {
-      await context.rebuild()
+      await rebuildToDisk(context)
       printProgressInfo(components.logger, `Bundle saved ${colors.bold(options.outputFile)}`)
     } catch (err: any) {
       /* istanbul ignore next */
@@ -328,7 +342,7 @@ export async function bundleSingleProject(components: BundleComponents, options:
     printProgressInfo(components.logger, `The compiler is watching for changes`)
   } else {
     try {
-      await context.rebuild()
+      await rebuildToDisk(context)
       printProgressInfo(components.logger, `Bundle saved ${colors.bold(options.outputFile)}`)
     } catch (err: any) {
       /* istanbul ignore next */
@@ -341,6 +355,22 @@ export async function bundleSingleProject(components: BundleComponents, options:
   if (options.watch) printProgressInfo(components.logger, `The compiler is watching for changes`)
 
   await runTypeChecker(components, options)
+}
+
+/**
+ * Runs a build of a context that has `write: false`, and writes its files. A build that fails throws before it
+ * writes, so the files of the last build that passed stay. When esbuild writes the files, a rebuild that fails
+ * deletes them, and the preview would lose the scene until the next build that passes. A file that holds the same
+ * bytes stays as it is, as with esbuild, so the preview does not reload for a build that changed nothing.
+ */
+export async function rebuildToDisk(context: esbuild.BuildContext<{ write: false }>) {
+  const { outputFiles } = await context.rebuild()
+  for (const file of outputFiles) {
+    const current = await fs.promises.readFile(file.path).catch(() => undefined)
+    if (current?.equals(file.contents)) continue
+    await fs.promises.mkdir(path.dirname(file.path), { recursive: true })
+    await fs.promises.writeFile(file.path, file.contents)
+  }
 }
 
 function runTypeChecker(components: BundleComponents, options: CompileOptions) {

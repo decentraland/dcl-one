@@ -42,6 +42,9 @@ use super::chain_walk::{
     self, Budget, ChainIndex, Cursor, Fenced, Holdings, IndexSettings, LogGroup, LogSource,
     Opening, Owner, PassOutcome, RpcSource, WrongChain, requests_for,
 };
+use crate::chain_index::portal::admit::{Admission, AdmittedPortal};
+use crate::chain_index::portal::compare::AcceptedView;
+use crate::chain_index::portal::shadow::{Shadow, Shadowed};
 use crate::chain_index::rpc::{BlockHeader, Rpc, RpcLog};
 use crate::jobs::LeaseControl;
 
@@ -78,12 +81,12 @@ pub struct Member {
 /// How a member's part of a shared walk ended.
 pub enum MemberEnd {
     /// It walked to `out.indexed_to`, standing at `checkpoint`. `close` is
-    /// `Some(fold_since)` when it reached the target and its close comes
+    /// `Some(Close)` when it reached the target and its close comes
     /// next; `None` when its budget paused it.
     Walked {
         out: PassOutcome,
         checkpoint: Option<Checkpoint>,
-        close: Option<Option<i64>>,
+        close: Option<chain_walk::Close>,
     },
     /// Its gate said wait.
     Waiting(String),
@@ -331,8 +334,13 @@ pub async fn walk_together(
     at: &Checkpoint,
     deadline: Duration,
     sent: &AtomicUsize,
+    shadow: Option<&Shadow>,
+    portal: Option<&Admission>,
 ) -> Vec<(usize, MemberEnd)> {
-    let source = RpcSource::new(Rpc::at(http, url).counting(sent));
+    let source = Shadowed::new(
+        AdmittedPortal::new(RpcSource::new(Rpc::at(http, url).counting(sent)), portal),
+        shadow,
+    );
     let mut ends = Vec::new();
     let started = std::time::Instant::now();
 
@@ -417,7 +425,12 @@ pub async fn walk_together(
                 .holdings
                 .owner(pool, member.lease.as_ref(), ix.as_ref(), settings)
                 .await?;
-            if ix.walks_alone(pool).await? {
+            if ix.walks_alone(pool).await?
+                || (settings.sales_enabled
+                    && super::sale_history::pending(pool, ix.as_ref())
+                        .await?
+                        .is_some())
+            {
                 return Ok(Err(MemberEnd::Regroup {
                     checkpoint: None,
                     solo: true,
@@ -703,6 +716,17 @@ pub async fn walk_together(
             }
             return ends;
         }
+        // The shared read is accepted (its commits may still fail): offered
+        // once to the shadow, whatever each member's share.
+        source.accepted(&AcceptedView {
+            chain_id: served as u64,
+            from: next,
+            reached: window.reached,
+            reached_hash: &header.hash,
+            groups: &groups,
+            logs: &window.logs,
+            times: &times,
+        });
         // Each member's share, committed in the fixed order.
         walking.sort_by_key(|w| w.member.slot);
         let mut committed = Vec::new();
@@ -759,7 +783,10 @@ pub async fn walk_together(
         ends.push((
             w.member.slot,
             MemberEnd::Walked {
-                close: reached.then_some(w.fold_since),
+                close: reached.then_some(chain_walk::Close {
+                    fold_since: w.fold_since,
+                    remaining: w.budget.remaining,
+                }),
                 out: w.out,
                 checkpoint,
             },

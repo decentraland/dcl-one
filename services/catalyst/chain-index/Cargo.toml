@@ -15,8 +15,10 @@ serde_json.workspace = true
 tracing.workspace = true
 anyhow.workspace = true
 async-trait.workspace = true
+dcl-metrics.workspace = true
 thiserror.workspace = true
 reqwest.workspace = true
+sqlx.workspace = true
 url.workspace = true
 
 [features]

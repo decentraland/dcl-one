@@ -1,6 +1,6 @@
-import { DeepReadonly } from '../engine/readonly'
-import { ByteBuffer } from '../serialization/ByteBuffer'
-import { ISchema } from './ISchema'
+import type { DeepReadonly } from '../engine/readonly'
+import type { ByteBuffer } from '../serialization/ByteBuffer'
+import type { ISchema } from './ISchema'
 
 /**
  * @internal

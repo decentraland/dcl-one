@@ -49,7 +49,7 @@ pub(super) async fn forward(
                 "Segment web event: wallet is not an address, no row"
             );
         }
-        metrics::counter!("handled_web_events_count", "event_type" => parsed.event_type.clone())
+        dcl_metrics::counter!("handled_web_events_count", "event_type" => parsed.event_type.clone())
             .increment(1);
     }
     reply(

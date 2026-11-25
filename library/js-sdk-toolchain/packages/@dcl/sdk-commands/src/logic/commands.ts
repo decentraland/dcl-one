@@ -1,5 +1,5 @@
 import { resolve } from 'path'
-import { CliComponents } from '../components'
+import type { CliComponents } from '../components'
 import { CliError } from './error'
 import i18next from 'i18next'
 

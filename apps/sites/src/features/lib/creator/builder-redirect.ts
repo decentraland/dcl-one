@@ -92,7 +92,7 @@ export function builderRedirect(
       to,
       fromPath: url.pathname + url.search,
     },
-    { sid, story: REDIRECT_STORY },
+    { sid, story: REDIRECT_STORY, requestUserAgent: request.headers.get("user-agent") },
   );
 
   const headers = new Headers();

@@ -1,7 +1,6 @@
 import * as components from '../components'
-import { Entity } from '../engine'
-import { IEngine } from '../engine'
-import { Vector3Type } from '../schemas'
+import type { Entity, IEngine } from '../engine'
+import type { Vector3Type } from '../schemas'
 import { Vector3, createTimers } from '../runtime/helpers'
 import { KnockbackFalloff } from './physics-impulse'
 

@@ -26,7 +26,7 @@ const keys: KeyElement[] = [
 
 /**
  * The AnimatedBackground behind the page is a WebGL <canvas> animated over a static picture (sites: decentraland-ui2
- * AnimatedBackground variant "absolute"; dcl-one: shop/discovery/components/animated-background), as on the report
+ * AnimatedBackground variant "absolute"; dcl-one: library/ui/components/AnimatedBackground), as on the report
  * page: both sides hide the canvas, so the static picture and the page over it are compared.
  */
 async function holdBackground(page: Page): Promise<void> {

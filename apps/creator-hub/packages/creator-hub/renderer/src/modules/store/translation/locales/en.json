@@ -130,6 +130,7 @@
         "title": "Chat history",
         "empty": "No saved chats yet.",
         "delete": "Delete chat",
+        "shared_stays": "Deleting a chat here doesn't erase what you've shared. Do that in Settings → AI.",
         "now": "just now",
         "minutes": "{n}m ago",
         "hours": "{n}h ago",
@@ -195,11 +196,11 @@
         "card_body": "Share your conversations with Decentraland to help improve the assistant. An AI model reads them to find what works and what doesn't. Before anything is sent, your computer removes keys, seed phrases, emails and other common personal details.",
         "signin_body": "Sign in to share your conversations and help improve the assistant.",
         "details_toggle": "What's shared and what isn't",
-        "details_shared": "Shared: what you type, the assistant's replies, the tools it used with their file names and commands, the agent and model, and how long each reply took.",
+        "details_shared": "Shared: what you type, the assistant's replies, the tools it used with their file names and commands, the agent and model, how long each reply took, your ratings, and your Creator Hub version and operating system.",
         "details_not_shared": "Not shared: images, file contents, your scene's name, or conversations you mark as not shared.",
-        "details_analysis": "How they're used: an AI model from a provider working for Decentraland summarises each conversation. The provider keeps no copy and doesn't train on it. We keep the patterns we see across many creators to improve the assistant.",
+        "details_analysis": "How they're used: an AI model from a provider working for Decentraland summarises each conversation, under an agreement that the provider keeps no copy and doesn't train on it. We keep the patterns we see across many creators to improve the assistant.",
         "details_publish": "The team discusses those patterns. Changes made from them may be published in the assistant's public instructions, skills and docs, and in the descriptions of those changes. Once published, they stay public even if you delete what you shared.",
-        "details_control": "Stop sharing or delete everything you've shared at any time in Settings. Stopping also stops the analysis, and deleting also deletes the summaries. Shared conversations and their summaries are kept for up to 180 days.",
+        "details_control": "Stop sharing or delete everything you've shared at any time in Settings. Stopping ends the analysis and deletes the summaries, but keeps what you already shared until it expires; deleting removes that too. Shared conversations are kept for up to 180 days, and deleted data can remain in encrypted backups for up to 35 days.",
         "accept": "Share to help improve",
         "decline": "No thanks",
         "not_now": "Not now",
@@ -210,7 +211,10 @@
         "rate_down": "Bad reply",
         "menu_share_chat": "Share this chat",
         "menu_share_all": "Share all chats",
-        "menu_chat_erased": "What this chat shared was deleted."
+        "menu_chat_erased": "What this chat shared was deleted.",
+        "menu_chat_confirm": "Stop sharing this chat? What it already shared will be deleted.",
+        "menu_chat_confirm_yes": "Stop and delete",
+        "menu_chat_confirm_no": "Keep sharing"
       }
     },
     "publish": {
@@ -394,6 +398,7 @@
       "more": "More"
     },
     "earn_not_joined": "EARN, not joined yet",
+    "earn_payout_pending": "EARN, payout setup not finished",
     "feedback": "Submit feedback",
     "user_menu": {
       "sign_in": "Sign In",
@@ -1866,7 +1871,8 @@
         "my_places": "My Places",
         "leaderboard": "Leaderboard",
         "payouts": "Payouts",
-        "home": "Home"
+        "home": "Home",
+        "payouts_pending": "PAYOUTS, setup not finished"
       },
       "title_prefix": "Earn",
       "title": "Creator Fund",
@@ -1879,6 +1885,12 @@
       "contact_support": "Contact Support",
       "banner": {
         "region": "Announcement"
+      },
+      "setup_banner": {
+        "wallet": {
+          "title": "Set up your payout wallet",
+          "description": "Add a wallet to receive your Creator Fund payouts in USDC."
+        }
       },
       "filter": {
         "cycle": "Cycle",
@@ -1973,17 +1985,22 @@
           "title": "Payout Wallet",
           "info_label": "About payout wallets",
           "info": "A digital wallet is where you store and manage your digital assets. You can use it to send, receive, and keep track of your funds securely, including your Creator Fund USDC rewards.",
+          "payout_info": "Your payout wallet is where the Creator Fund sends your rewards, in USDC on Ethereum (ERC-20), within 14 days after each cycle ends. It can be any wallet or exchange account you control.",
           "learn_more": "Learn More",
           "copy": "Copy wallet address",
           "edit": "Edit",
-          "add": "Add wallet"
+          "add": "Add wallet",
+          "unavailable": "Verify your email to set up your wallet.",
+          "no_active_place": "You need to have a published scene to set up your wallet.",
+          "notify_failed": "We couldn't email you about this change, so your wallet wasn't saved. Please try again."
         },
         "contact": {
           "title": "Contact Information",
           "full_name": "Full Name",
           "email": "Email",
           "unverified": "Unverified",
-          "verify": "Verify email"
+          "verify": "Verify email",
+          "unavailable": "You need to have a published scene to verify your email"
         },
         "table": {
           "label": "Payouts",
@@ -2020,13 +2037,20 @@
         },
         "erc20": "Make sure this wallet can receive USDC on Ethereum (ERC-20). Funds sent to a wallet that doesn't support it can't be recovered.",
         "verify": {
-          "title": "Verify your email",
+          "confirm_title": "1. Confirm your email",
+          "confirm_body": "Make sure your email is correct. We’ll send a verification code to this address.",
+          "edit_email": "Edit email",
+          "daily_limit": "You've requested too many codes today. Try again tomorrow.",
+          "send_soon": "You can send a code to this address in a moment.",
+          "continue": "Continue",
+          "title": "2. Enter the verification code",
           "body_sent": "6-digit code sent to <b>{email}</b>.",
           "body_instruction": "Please enter the code below to complete verification.",
           "digit": "Digit {n} of 6",
-          "resend": "Resend Code",
-          "incorrect": "Incorrect Code. Check the email and try again.",
+          "resend": "Resend code",
+          "incorrect": "Incorrect code. Check the email and try again.",
           "expired": "This code has expired. Resend a new one.",
+          "back": "Back",
           "submit": "Verify"
         },
         "snackbar": {

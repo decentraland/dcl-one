@@ -184,13 +184,32 @@ tag (name, badges, distance, opacity, scale) and `/nametag_bubble` shows a test 
       Your **own** tag shows above your head in third person and is hidden in first person.
 - [ ] **Crosshair** shows when the camera is locked (mouse hidden) and hides when the cursor is free.
 - [ ] **Hover / proximity prompts** ("Press E…") show on interactables and sit on the right entity.
+- [ ] **`/goto` and `/goto-local`**: `/goto x,y` teleports inside the realm the player is in, Genesis City or a
+      world, within that realm's bounds; `/goto world` and `world/x,y` travel; `genesis` and `main` are Genesis City, at Genesis Plaza when no parcel is named;
+      `random` and `crowd` are Genesis City places from any realm; `/goto-local x,y` never changes realm. Each answers once in chat when the
+      engine does (`🟢 You teleported to x,y.`, `🟢 Welcome to the … world!`, `🟢 Welcome to Genesis
+      City!`), a failure in chat alone with no travel notice beside it, a parcel out of bounds or a
+      bad destination at once. In a scene preview `/goto x,y` moves inside the preview, and
+      `random` and `crowd` answer the engine's refusal to change realm. A `/goto` typed while a
+      travel is under way is read against the realm travelled to; a travel it replaces answers
+      `🔴 Error: The operation was canceled!`. A place inside the realm travelled to
+      (`/goto world/x,y` on the way to that world, `/goto-local x,y`) is that travel asked for
+      again, so a travel that fails moves nobody. A `/goto crowd` still reading the busiest scene
+      gives way to a `/goto` typed after it. A destination ending in `/name` lands on the scene's
+      spawn point of that name (the debug panel's Teleport section shows the name looked for and
+      whether the scene had it). Tests: `library/ui/apps/hud/test/hosted/chatGoto.test.tsx` (the
+      session), `library/explorer-core/features/chat/chatCommands.test.ts` (the destinations),
+      `src/test/bridgeTravel.test.ts` (the bridge).
 - [ ] **Chat bubbles**: a message opens its author's tag into a bubble with a tail for 5 s (a new
       message restarts it); a long message wraps and is cut at 100 characters with an ellipsis; a message that @-mentions you has a pink-to-purple
       ring. A message said in a **community** chat by a player standing nearby shows the community's
       name on a smaller, dimmer row above their name, cut short with an ellipsis (and over your own
       head for your own); a **DM** shows a green `DM` tag after the name, and your own names who it is
       for when they are around. The Chat bubbles setting (All / Nearby only / None) picks which show.
-      A translated message replaces the bubble's text.
+      A translated message replaces the bubble's text. `<b>` and `<i>` tags are left out of the
+      bubble, which shows the words between them unstyled; a tag that styles no text (`<b></b>`, a
+      closing tag with nothing open) is shown as typed, in the bubble and in chat, and a link next
+      to a tag is coloured as chat links it.
 - [ ] **Voice badges**: a talking player's tag shows three green bars swinging; your own shows three
       dots while your microphone is open and you are quiet. While a player whose nearby voice you muted
       (profile menu, Hush) is talking, their tag shows the red hushed icon in place of the bars, and
@@ -202,8 +221,16 @@ tag (name, badges, distance, opacity, scale) and `/nametag_bubble` shows a test 
       dust and vignette around the live avatar, which waves, plays an idle emote every 8–20 s and
       turns when dragged. Settings → Lobby, in the full page or the lobby's compact Settings, switches
       the look at once (Halloween 2026, Game World).
-      Customize opens the Backpack modal with the avatar through its hole and hands the stage back on
-      close; Jump In loads the world (the hold is released) and a failed trip returns to the lobby.
+      Customize opens the Backpack modal: the lobby around it keeps the stage's last frame, the
+      preview stays the Backpack's purple until the engine reports `avatarPreviewReady`, then shows
+      the avatar on its podium, with nothing of the lobby stage or the world in between and nothing
+      of the preview outside the modal; closing hands the live stage back. Jump In loads the world
+      (the hold is released) and a failed trip returns to the lobby.
+- [ ] **Minimap Camera style** (`bridge-scene/src/domains/minimap.tsx`, map region): picking Camera in
+      Minimap settings, expanding the minimap in that style and entering a World each show the map
+      square black until the engine reports `minimapReady`, then the top-down view, with nothing of
+      the player's own view in the square in between. Switching back to Satellite or Parcel atlas
+      shows the tiles at once.
 - [ ] **Lobby page** (`features/lobby`): the widgets sit on the four corner grids as the stored layout
       says; edit mode (the pencil) frames them, drags them with the others making room, lists the
       ones off the grids in Customize Lobby, and Save keeps the layout across a reload while Cancel,
@@ -222,6 +249,12 @@ tag (name, badges, distance, opacity, scale) and `/nametag_bubble` shows a test 
       out only once the engine reports `signinStageReady`, and comes back at once on Back. Picking a
       look or body type changes the avatar in place. Check a 16:9 window and a much wider or taller one.
       Mock has no engine, so the page's background stays.
+- [ ] **Full-screen view entrance** (`features/menu/MainMenuShell`): opening Map, Backpack or any other
+      menu page from the world darkens the world to black, then reveals the page, in 0.2 s; the
+      Backpack's engine-drawn avatar appears only after the black frame. Switching between menu pages
+      plays no black frame, nor does a first open of Create from another page when its code loads
+      within 0.2 s; a menu closed and reopened within 0.2 s appears with no entrance. With reduced motion
+      on, the page fades in without it.
 
 ---
 
@@ -506,23 +539,37 @@ Expectations:
   favourites and a place's photos in `domains/places.ts`; events at parcels and reminders through the
   events domain's own `getEvents` and `setEventAttending`. Each request kind has its own answer kind
   that echoes `request` (a reminder's names its event), and every request is answered, a failed one
-  with `failed`. The points-of-interest list and the connected players are plain fetches.
+  with `failed`. The points-of-interest list, the connected players and the parcel grid's age
+  (`/v2/tiles/info` on `mapApi`) are plain fetches; `?mock=1` answers all three from fixed data
+  (`fixMapPublicReads`) and reads none of them.
+- **Age label:** the Parcels view shows "Updated N min ago" beside the zoom controls when the map
+  API's `checkedAt` is over five minutes old, measured on the server's clock (the answer's `serverNow`,
+  else its `Date`, which a cross-origin read may not expose); only the map API's own 503 envelope
+  clears it, while any other failed read keeps the last answer;
+  nothing without `checkedAt`, on the Satellite view or while the page is hidden. It is read when
+  shown and every minute (`features/map/useMapGridAge.ts`; the Shop's LAND map reads the same
+  explorer-core `gridAge` through TanStack Query), and drawn in HUD styles matching the Shop LAND
+  map's label, since the HUD keeps its own styles until its move to the shared library (its build
+  admits only the foundations).
 - **Ids:** the map and the Events page both send `getEvents`; their ids come from one sequence
   (`engine/requestIds.ts`), so each takes only the answers to its own requests.
 - **Nothing draws per frame:** the camera writes custom properties on the viewport; the sea is one
   image (`assets/map/sea.webp`) placed in the world layer like a satellite tile.
 - **Home:** the map and the place detail read the session's home and set it with `setHomeScene`
-  (`placeHomeTarget` in `features/map/home.ts` picks what each saves); Set as Home does not clear it.
-  Until the engine answers, the home is the web build's boot copy, its default realm read as
-  Genesis City, so the startup lobby agrees with the world.
+  (`placeHomeTarget` in `features/map/home.ts` picks what each saves); Set as Home on the place
+  that is home clears it with `clearHomeScene`, as the minimap's switch does. The home is the
+  signed-in account's: `homeScene` says `pinned: false` for an account with none, which then has
+  no pin and starts on 0,0 of the default realm. Until the engine answers, the home is the web
+  build's boot copy, its default realm read as Genesis City, so the startup lobby agrees with
+  the world; the lobby asks again once it shows, as the account may not be the boot copy's.
 - **Arrival** ends a route only in Genesis City: a World's parcels share the numbers, not the place.
 - **Quest pins:** the engine streams the map pins of portable experiences (`GetMapPinsStream`, the
   whole list on each change, the last list again on `hello`), and the session drops them when it ends.
   The Quest Mini-Games layer, on by default, draws them on the map and on the Genesis City minimap; a
-  pin outside the city is dropped. A pin without an icon, or whose icon fails to load, draws the
-  default quest pin. Clicking one selects its parcel, it never teleports. `?mock=1&mockpins=1` shows
-  two pins, one with a broken icon.
-- Tests: `library/explorer-core/test/{navmap,mapCore}.test.ts`, `library/ui/apps/hud/test/hosted/map.page.test.tsx`,
+  pin outside the city is dropped. Every pin draws the default quest pin: the scene's own icon is
+  not read. Clicking one selects its parcel, it never teleports. `?mock=1&mockpins=1` shows two pins.
+- Tests: `library/explorer-core/test/{navmap,mapCore,gridAge}.test.ts`, `library/ui/apps/hud/test/mapGridAge.test.tsx`,
+  `library/ui/apps/hud/test/hosted/map.page.test.tsx`,
   `hosted/home.session.test.tsx`, `hosted/placeDetail.test.tsx`, `mapEventInfo.test.tsx`, `mapPins.test.tsx`; here,
   `src/test/bridgePlaces.test.ts` and `bridgeEvents.test.ts`. Visual baseline: `panel-map`.
 

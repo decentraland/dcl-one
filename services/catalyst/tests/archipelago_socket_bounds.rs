@@ -29,7 +29,6 @@ async fn server_with(settings: Settings) -> (u16, AppState) {
         state.clone(),
         true,
         Default::default(),
-        catalyst::comms::stats::http::test_support::matcher(),
         std::sync::Arc::new(catalyst::content::Denylist::default()),
     );
     let app = axum::Router::new()
@@ -386,7 +385,7 @@ impl catalyst::comms::gatekeeper::moderation::BanStatus for PolicyBan {
     async fn ban(
         &self,
         actor: &catalyst::comms::Address,
-        _: Option<&catalyst::comms::world_identity::SceneId>,
+        _: Option<&catalyst::comms::access::SceneBanKey>,
         _: Option<&str>,
         _: chrono::NaiveDateTime,
     ) -> Result<Option<catalyst::comms::access::Ban>, catalyst::comms::AuthorityNotEstablished>
@@ -2151,7 +2150,6 @@ async fn proxied_server(settings: Settings) -> (u16, AppState) {
         state.clone(),
         true,
         Default::default(),
-        catalyst::comms::stats::http::test_support::matcher(),
         std::sync::Arc::new(catalyst::content::Denylist::default()),
     );
     let app = axum::Router::new().merge(mounts.root);

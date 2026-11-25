@@ -184,6 +184,43 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn streaming_fanout_replay_keeps_one_notice_and_email_per_recipient() {
+        let Some(pool) = crate::db::scratch::pool(4).await else {
+            return;
+        };
+        let directory = Directory::new(pool.clone());
+        let event_key = format!("fanout-{}", uuid::Uuid::new_v4());
+        let recipients: Vec<_> = (0..3)
+            .map(|_| {
+                Address::parse(&format!("0x00000000{}", uuid::Uuid::new_v4().simple())).unwrap()
+            })
+            .collect();
+        for kind in [
+            StreamingNotificationKind::KeyReset,
+            StreamingNotificationKind::KeyRevoke,
+            StreamingNotificationKind::KeyExpired,
+            StreamingNotificationKind::TimeExceeded,
+            StreamingNotificationKind::PlaceUpdated,
+        ] {
+            let key = format!("{event_key}-{}", kind.as_str());
+            let at = chrono::Utc::now().naive_utc();
+            for recipient in recipients.iter().take(1).chain(recipients.iter()) {
+                directory.notify_streaming_notification(&StreamingNotification {
+                    event_key:key.clone(),recipient:recipient.clone(),kind,occurred_at:at,
+                    metadata:serde_json::json!({"address":recipient.as_str(),"title":"stream notice"}),
+                }).await.unwrap();
+            }
+            let rows:Vec<(String,i64)>=sqlx::query_as("SELECT n.address,count(d.notification_id) FROM social.notifications n LEFT JOIN social.notification_deliveries d ON d.notification_id=n.id WHERE n.broadcast_key=$1 GROUP BY n.id,n.address ORDER BY n.address")
+                .bind(&key).fetch_all(&pool).await.unwrap();
+            assert_eq!(rows.len(), 3);
+            assert!(
+                rows.iter().all(|(_, deliveries)| *deliveries == 1),
+                "replaying an accepted prefix creates no duplicate email deliveries"
+            );
+        }
+    }
+
+    #[tokio::test]
     async fn community_voice_end_ranks_once_and_notifies_no_member() {
         let Some(pool) = crate::db::scratch::pool(4).await else {
             return;

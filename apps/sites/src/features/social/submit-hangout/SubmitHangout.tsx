@@ -1,9 +1,13 @@
-import { useEventsCopy, type EventsLocale } from "@dcl/one-ui/apps/sites/events/locale";
-import { EventDetailModal } from "@dcl/one-ui/apps/sites/events/DetailModal";
-import { GeneralAdd, GeneralCamera, GeneralDelete, GeneralInfoButton } from "@dcl/one-ui/foundations/icons";
-import { Button } from "@dcl/one-ui/apps/sites/shared/Button/Button";
-import { Busy } from "@dcl/one-ui/apps/sites/events/Busy";
-import { Notice, type NoticeTone } from "@dcl/one-ui/apps/sites/events/Notice";
+import {
+  useEventsCopy,
+  type EventsLocale,
+  EventDetailModal,
+  Button,
+  Busy,
+  Notice,
+  type NoticeTone,
+} from "@dcl/one-ui";
+import { Button as OneButton, GeneralAdd, GeneralCamera, GeneralDelete, GeneralInfoButton } from "@dcl/one-ui";
 import { useEffect, useRef, useState, type DragEvent } from "react";
 import { useMachine } from "@xstate/react";
 import { Link, useSearchParams } from "react-router";
@@ -54,6 +58,8 @@ type SubmitHangoutProps = {
   reviewTone?: NoticeTone;
   /** Edit mode: opens the delete confirmation from the form's actions. */
   onDelete?: () => void;
+  /** Follows the draft on screen, for a caller that keeps it across a sign-in. */
+  onDraftChange?: (draft: HangoutDraft) => void;
 };
 
 export default function SubmitHangout({
@@ -76,6 +82,7 @@ export default function SubmitHangout({
   reviewNotice,
   reviewTone = "warning",
   onDelete,
+  onDraftChange,
 }: SubmitHangoutProps) {
   const [searchParams] = useSearchParams();
 
@@ -104,6 +111,7 @@ export default function SubmitHangout({
       privateFieldsEditable={privateFieldsEditable}
       canChangeCommunity={canChangeCommunity}
       onDelete={onDelete}
+      onDraftChange={onDraftChange}
     />
   );
 }
@@ -129,6 +137,7 @@ type InnerProps = {
   privateFieldsEditable: boolean;
   canChangeCommunity: boolean;
   onDelete?: () => void;
+  onDraftChange?: (draft: HangoutDraft) => void;
 };
 
 function uiStateFor(value: HangoutStateId): "signin" | "success" | "form" {
@@ -157,6 +166,7 @@ function SubmitHangoutInner({
   privateFieldsEditable,
   canChangeCommunity,
   onDelete,
+  onDraftChange,
 }: InnerProps) {
   const { locale, text, errorText } = useEventsCopy();
   const [, setSearchParams] = useSearchParams();
@@ -175,6 +185,7 @@ function SubmitHangoutInner({
   const d = state.context.draft;
   const emitTrack: TrackFn = track ?? state.context.track;
   const needsSignIn = Boolean(onSignIn) && !signedIn;
+  useEffect(() => { onDraftChange?.(d); }, [d, onDraftChange]);
   const trackDirectEntry = useRef(inline && stateId === "review");
   useEffect(() => {
     if (!trackDirectEntry.current) return;
@@ -269,13 +280,9 @@ function SubmitHangoutInner({
 
       <div className={`submit-hangout__controls ${inline ? styles.editorControls : ""}`} role="group" aria-label={text(inline ? "Event editor" : "Hangout wizard")}>
         {(value === "signinGate" || needsSignIn) && (
-          <button
-            type="button"
-            className="submit-hangout__btn submit-hangout__btn--primary"
-            onClick={() => onSignIn ? onSignIn() : send({ type: "SIGN_IN", inline })}
-          >
+          <OneButton size="md" className={styles.signIn} onClick={() => onSignIn ? onSignIn() : send({ type: "SIGN_IN", inline })}>
             {text("Sign In to continue")}
-          </button>
+          </OneButton>
         )}
 
         {isForm && (
@@ -298,16 +305,16 @@ function SubmitHangoutInner({
                   <div className={styles.editorActions}>
                     <div className={styles.reviewBar}>
                       <p><GeneralInfoButton size={16} aria-hidden="true" />{text("The event submission will be reviewed by our team, you'll be notified by email")}</p>
-                      <Button variant="tertiary" disabled={!canSubmit} onClick={() => send({ type: "PREVIEW" })}>{text("Preview")}</Button>
+                      <Button size="lg" variant="tertiary" disabled={!canSubmit} onClick={() => send({ type: "PREVIEW" })}>{text("Preview")}</Button>
                     </div>
                     <div className={styles.formActions}>
                       {mode === "edit" && onDelete && (
-                        <button type="button" className={styles.delete} onClick={onDelete}>
-                          {text("Delete")}<GeneralDelete size={20} aria-hidden="true" />
-                        </button>
+                        <Button size="lg" variant="tertiary" className={styles.delete} trailingIcon={<GeneralDelete size={20} aria-hidden="true" />} onClick={onDelete}>
+                          {text("Delete")}
+                        </Button>
                       )}
                       <Link className={styles.cancel} to={mode === "edit" ? "/events?tab=my" : "/events"}>{text("Cancel")}</Link>
-                      <Button disabled={!canSubmit} onClick={() => send({ type: "SUBMIT" })}>{text(mode === "edit" ? "Save changes" : "Submit Event")}</Button>
+                      <Button size="lg" disabled={!canSubmit} onClick={() => send({ type: "SUBMIT" })}>{text(mode === "edit" ? "Save changes" : "Submit Event")}</Button>
                     </div>
                   </div>
                 </div>
@@ -411,7 +418,7 @@ export function SubmitHangoutLoading({ mode, error, onRetry }: { mode: "create" 
       {error ? (
         <div className={styles.loadState}>
           <Notice tone="error">{errorText(error)}</Notice>
-          {onRetry && <Button variant="tertiary" onClick={onRetry}>{text("Retry")}</Button>}
+          {onRetry && <Button size="lg" variant="tertiary" onClick={onRetry}>{text("Retry")}</Button>}
         </div>
       ) : <Busy layout="page">{text("Loading your hangout…")}</Busy>}
     </div>

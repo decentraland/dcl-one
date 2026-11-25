@@ -223,6 +223,8 @@ struct Rig {
     app: Router,
     state: Arc<State>,
     storage_dir: std::path::PathBuf,
+    /// The node's DCL NAME source.
+    names: Arc<super::test_names::Held>,
 }
 
 impl Rig {
@@ -262,10 +264,8 @@ impl Rig {
             &crate::http::Outbound::for_tests(),
             explore(&pool),
         ));
-        state.set_chain_index(Arc::new(crate::chain_index::ChainIndex::new(
-            crate::http::Outbound::for_tests(),
-            crate::chain_index::IndexSettings::for_tests(),
-        )));
+        let names = Arc::new(super::test_names::Held::default());
+        state.set_name_authority(names.clone());
         let app = Router::new().merge(router(state.clone())).nest(
             "/social-api",
             crate::social_api_gateway(router(state.clone())),
@@ -275,6 +275,7 @@ impl Rig {
             app,
             state,
             storage_dir,
+            names,
         }
     }
 
@@ -384,15 +385,7 @@ impl Rig {
     }
 
     fn name_owner(&self, wallet: &Wallet, name: &str) {
-        self.state.chain_index.get().unwrap().graph.names.insert(
-            wallet.address.as_str().to_string(),
-            Arc::new(vec![crate::chain_index::graph::OwnedName {
-                name: name.to_string(),
-                contract_address: "0x0000000000000000000000000000000000000001".to_string(),
-                token_id: "1".to_string(),
-                price: None,
-            }]),
-        );
+        self.names.grant(wallet.address.as_str(), name);
     }
 
     async fn voice(&self, id: CommunityId, w: &Wallet, status: &str, moderator: bool) {
@@ -839,9 +832,11 @@ async fn every_route_answers_its_contract() {
 
     // thumbnail seeded through the store, as an upload would leave it
     let thumb = png(2048);
-    super::thumbnail::store_thumbnail(&rig.pool, &rig.state.storage, c1, &thumb)
+    let mut tx = rig.pool.begin().await.unwrap();
+    super::thumbnail::store_thumbnail(&mut tx, &rig.state.storage, c1, &thumb)
         .await
         .unwrap();
+    tx.commit().await.unwrap();
 
     // The list reads search this test's own rows: sibling tests seed the same
     // scratch database, and their communities would page c1 out.
@@ -1262,8 +1257,10 @@ async fn every_route_answers_its_contract() {
     let with_thumb = v["data"]["id"].as_str().unwrap().to_string();
     assert_eq!(
         v["data"]["thumbnails"]["raw"],
-        rig.state
-            .thumbnail_url(CommunityId::parse(&with_thumb).unwrap())
+        rig.state.versioned_thumbnail_url(
+            CommunityId::parse(&with_thumb).unwrap(),
+            Some(&super::thumbnail::thumbnail_hash(&png(1500)))
+        )
     );
     let (status, _) = hit(
         app,
@@ -2604,9 +2601,239 @@ fn settings_fold_restricted_names_and_validate_moderators() {
         super::thumbnail_url("http://cdn/", "x"),
         "http://cdn/social/communities/x/raw-thumbnail.png"
     );
+    assert_eq!(
+        super::versioned_thumbnail_url("http://cdn/", "x", Some("bafkreiabc")),
+        "http://cdn/social/communities/x/raw-thumbnail.png?v=bafkreiabc"
+    );
+    for bare in [None, Some(""), Some("a&b"), Some("a b")] {
+        assert_eq!(
+            super::versioned_thumbnail_url("http://cdn/", "x", bare),
+            "http://cdn/social/communities/x/raw-thumbnail.png",
+            "{bare:?}"
+        );
+    }
+}
+
+/// The raw thumbnail's caching: long only for the current hash's URL, short
+/// with an ETag otherwise, and an update moves the versioned URL.
+#[tokio::test]
+async fn raw_thumbnail_cache_control_follows_the_url_version() {
+    let Some(rig) = Rig::new(Settings::for_tests()).await else {
+        return;
+    };
+    let get = |path: String, if_none_match: Option<String>| {
+        let app = rig.app.clone();
+        async move {
+            let mut builder = Request::builder().method("GET").uri(path);
+            if let Some(tag) = if_none_match {
+                builder = builder.header(header::IF_NONE_MATCH, tag);
+            }
+            let response = app
+                .oneshot(builder.body(Body::empty()).unwrap())
+                .await
+                .unwrap();
+            let header_of = |name: header::HeaderName| {
+                response
+                    .headers()
+                    .get(name)
+                    .map(|v| v.to_str().unwrap().to_string())
+            };
+            (
+                response.status(),
+                header_of(header::CACHE_CONTROL),
+                header_of(header::ETAG),
+            )
+        }
+    };
+    let owner = wallet();
+    let c = rig.community(&owner, false).await;
+    let path = format!("/social/communities/{c}/raw-thumbnail.png");
+
+    let (status, cache, _) = get(path.clone(), None).await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+    assert_eq!(
+        cache.as_deref(),
+        Some("public, max-age=60"),
+        "a miss is short-cached"
+    );
+
+    let first = png(1500);
+    let mut conn = rig.pool.acquire().await.unwrap();
+    let old_hash = super::thumbnail::store_thumbnail(&mut conn, &rig.state.storage, c, &first)
+        .await
+        .unwrap();
+    drop(conn);
+    let (status, cache, etag) = get(path.clone(), None).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(cache.as_deref(), Some("public, max-age=60"));
+    assert_eq!(etag, Some(format!("\"{old_hash}\"")));
+    let (status, cache, _) = get(format!("{path}?v={old_hash}"), None).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(
+        cache.as_deref(),
+        Some("public, max-age=86400, immutable"),
+        "the current version is long-cached"
+    );
+    let (status, cache, _) = get(path.clone(), Some(format!("\"{old_hash}\""))).await;
+    assert_eq!(status, StatusCode::NOT_MODIFIED);
+    assert_eq!(cache.as_deref(), Some("public, max-age=60"));
+
+    let mut conn = rig.pool.acquire().await.unwrap();
+    let new_hash = super::thumbnail::store_thumbnail(&mut conn, &rig.state.storage, c, &png(1600))
+        .await
+        .unwrap();
+    drop(conn);
+    assert_ne!(old_hash, new_hash);
+    let (status, cache, etag) = get(format!("{path}?v={old_hash}"), None).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(
+        cache.as_deref(),
+        Some("public, max-age=60"),
+        "a stale version serves the new image short-cached"
+    );
+    assert_eq!(etag, Some(format!("\"{new_hash}\"")));
+    let (status, _, _) = get(path.clone(), Some(format!("\"{old_hash}\""))).await;
+    assert_eq!(status, StatusCode::OK, "the old ETag no longer matches");
+    assert_eq!(
+        rig.state.versioned_thumbnail_url(c, Some(&new_hash)),
+        format!(
+            "{}{path}?v={new_hash}",
+            rig.state.settings.cdn_url.trim_end_matches('/')
+        )
+    );
+
+    // an update answers the URL of the new version
+    let third = png(1700);
+    let (mp, ct) = multipart(&[("thumbnail", &third)]);
+    let (status, v) = hit(
+        &rig.app,
+        Case::new("put", format!("/v1/communities/{c}"))
+            .signed(&owner)
+            .await
+            .body(mp, &ct),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{v}");
+    let third_hash = super::thumbnail::thumbnail_hash(&third);
+    assert_eq!(
+        v["data"]["thumbnails"]["raw"],
+        rig.state.versioned_thumbnail_url(c, Some(&third_hash))
+    );
+    let (_, cache, _) = get(format!("{path}?v={third_hash}"), None).await;
+    assert_eq!(cache.as_deref(), Some("public, max-age=86400, immutable"));
+
+    // a rename sent with a thumbnail announces the new version
+    let fourth = png(1800);
+    let (mp, ct) = multipart(&[("name", b"Renamed With Thumb"), ("thumbnail", &fourth)]);
+    let (status, v) = hit(
+        &rig.app,
+        Case::new("put", format!("/v1/communities/{c}"))
+            .signed(&owner)
+            .await
+            .body(mp, &ct),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{v}");
+    let renamed_to = |name: &'static str| {
+        let pool = rig.pool.clone();
+        async move {
+            tokio::time::timeout(std::time::Duration::from_secs(5), async {
+                loop {
+                    let row: Option<Value> = sqlx::query_scalar(
+                        "SELECT metadata FROM social.notifications \
+                         WHERE type = 'community_renamed' AND metadata->>'communityId' = $1 \
+                           AND metadata->>'newName' = $2 LIMIT 1",
+                    )
+                    .bind(c.to_string())
+                    .bind(name)
+                    .fetch_optional(&pool)
+                    .await
+                    .unwrap();
+                    if let Some(row) = row {
+                        return row;
+                    }
+                    tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+                }
+            })
+            .await
+            .expect("rename notification")
+        }
+    };
+    let renamed = renamed_to("Renamed With Thumb").await;
+    assert_eq!(
+        renamed["thumbnailUrl"],
+        rig.state
+            .versioned_thumbnail_url(c, Some(&super::thumbnail::thumbnail_hash(&fourth)))
+    );
+
+    // a thumbnail that fails to store leaves the rename on the stored version
+    let collector = crate::storage::gc::lock_store_exclusive(&rig.pool)
+        .await
+        .unwrap();
+    let (mp, ct) = multipart(&[("name", b"Renamed Again"), ("thumbnail", &png(1900))]);
+    let (status, v) = hit(
+        &rig.app,
+        Case::new("put", format!("/v1/communities/{c}"))
+            .signed(&owner)
+            .await
+            .body(mp, &ct),
+    )
+    .await;
+    drop(collector);
+    assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE, "{v}");
+    assert_eq!(
+        renamed_to("Renamed Again").await["thumbnailUrl"],
+        rig.state
+            .versioned_thumbnail_url(c, Some(&super::thumbnail::thumbnail_hash(&fourth)))
+    );
+    rig.finish();
 }
 
 mod friendship_parity;
 
 mod member_friendship_fields;
 mod member_request_pages;
+
+/// A community thumbnail found stored is not unlinked before its row
+/// commits: the write waits while an unlink batch holds the exclusive store
+/// lock, then stores again what the batch removed.
+#[tokio::test]
+async fn a_thumbnail_waits_for_an_unlink_batch_and_stores_what_it_removed() {
+    let Some(rig) = Rig::new(Settings::for_tests()).await else {
+        return;
+    };
+    let owner = wallet();
+    let community = rig.community(&owner, false).await;
+    let thumb = png(2049);
+    let hash = super::thumbnail::thumbnail_hash(&thumb);
+    rig.state
+        .storage
+        .store(&hash, thumb.clone().into())
+        .await
+        .unwrap();
+
+    let batch = crate::storage::gc::lock_store_exclusive(&rig.pool)
+        .await
+        .unwrap();
+    let mut tx = rig.pool.begin().await.unwrap();
+    {
+        let write =
+            super::thumbnail::store_thumbnail(&mut tx, &rig.state.storage, community, &thumb);
+        tokio::pin!(write);
+        assert!(
+            tokio::time::timeout(std::time::Duration::from_millis(300), &mut write)
+                .await
+                .is_err(),
+            "the write waits for the unlink batch"
+        );
+        rig.state.storage.delete_strict(&hash).await.unwrap();
+        batch.commit().await.unwrap();
+        assert_eq!(write.await.unwrap(), hash);
+    }
+    tx.commit().await.unwrap();
+    assert!(
+        rig.state.storage.exist(&hash).await.unwrap(),
+        "stored again"
+    );
+    rig.finish();
+}

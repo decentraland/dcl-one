@@ -50,6 +50,7 @@ impl Plugin for CommsAutomationPlugin {
             fields: &[
                 ("Microphone available", "mic.available"),
                 ("Microphone enabled", "mic.enabled"),
+                ("Turned off by the scene", "mic.sceneBlocked"),
                 ("LiveKit available", "livekit"),
             ],
             actions: &[],
@@ -328,7 +329,8 @@ type VoiceRooms<'w, 's> =
 type ActiveSpeakers<'w, 's> = Query<'w, 's, &'static LivekitParticipant, With<ActiveSpeaker>>;
 
 /// Report, as JSON, the microphone as `mic` (`available`, `enabled`, and `sceneBlocked` while the
-/// scene the player stands in turns nearby voice off) and, in a build with the
+/// scene the player stands in turns nearby voice off or its room refused the player as banned)
+/// and, in a build with the
 /// `livekit` feature, `connected` (a realm or scene voice room is connected), `rooms` (each
 /// `scene` and the shared room `state`, including paused and admission failures),
 /// `speakers` (addresses speaking now, the local player's included) and `call` (the private
@@ -346,18 +348,15 @@ fn voice_state_cmd(
     #[cfg(feature = "livekit")] speakers: ActiveSpeakers,
     #[cfg(feature = "livekit")] call: Option<Res<crate::voice_chat::VoiceChat>>,
     #[cfg(feature = "livekit")] call_mic: Option<Res<crate::voice_chat::CallMic>>,
-    #[cfg(feature = "livekit")] focus: Option<Res<common::structs::ClientWindowFocus>>,
+    #[cfg(feature = "livekit")] focus: crate::livekit::mic::MicrophoneFocus,
     #[cfg(feature = "livekit")] call_participants: crate::voice_chat::CallParticipants,
 ) {
     if let Some(Ok(_)) = input.take() {
         #[cfg(feature = "livekit")]
-        let call = call
-            .zip(call_mic)
-            .zip(focus)
-            .map(|((call, call_mic), focus)| {
-                serde_json::to_value(call.snapshot(&call_mic, *focus, &call_participants))
-                    .unwrap_or(Value::Null)
-            });
+        let call = call.zip(call_mic).map(|(call, call_mic)| {
+            serde_json::to_value(call.snapshot(&call_mic, focus.get(), &call_participants))
+                .unwrap_or(Value::Null)
+        });
         #[cfg(not(feature = "livekit"))]
         let call = None;
         #[cfg(feature = "livekit")]

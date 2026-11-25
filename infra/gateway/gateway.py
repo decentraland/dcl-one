@@ -31,10 +31,11 @@ CAST_PRESENTATION_CAP = "101m"
 CAMERA_REEL_UPLOAD_CAP = "7m"
 # The root alias whose upload path takes CAMERA_REEL_UPLOAD_CAP.
 CAMERA_REEL_ALIAS = "^~ /camera-reel/"
-# The content server's `POST /entities` route limit at the default field
-# count (`max_deployment_body_bytes`: 200 MiB of files and fields plus
-# multipart framing), rounded up, so its own 413 is the one a client meets.
-CONTENT_DEPLOY_CAP = "248m"
+# The content server's `POST /entities` route limit at the default
+# `MAX_UPLOAD_*` values (`max_deployment_body_bytes`: 2 GiB of files and
+# fields plus multipart framing), rounded up, so its own 413 is the one a
+# client meets. A node that changes those values changes this too.
+CONTENT_DEPLOY_CAP = "2096m"
 # World storage bodies: the largest storage route maximum at the deployed
 # defaults (config/src/worlds.rs: WORLD_STORAGE_MAX_VALUE_SIZE_BYTES, 512 KiB,
 # plus the 1 KiB envelope slack; the export body's 256 KiB + 1 KiB is below
@@ -50,9 +51,10 @@ STORAGE_TOO_LARGE = {"error": "Payload Too Large",
 # budget (reads and trusted callers are not counted): each body is buffered in
 # the gateway's temp space before the service answers.
 STORAGE_UPLOADS_PER_ADDRESS = 10
-# Uploads one address may have in flight on a deploy route: nginx buffers each
-# body before proxying it, and the app's limits only answer after that. Above
-# upstream catalyst's 4 per source, so it stays a coarse guard.
+# Uploads one address may have in flight on a deploy route: each holds a
+# connection to the app (content deploys stream through) or a body in the
+# gateway's temp space (worlds deploys are buffered). Above upstream
+# catalyst's 4 per source, so it stays a coarse guard.
 DEPLOY_CONNECTIONS_PER_ADDRESS = 10
 # The gateway's own answers on a worlds deploy: named location, status,
 # Retry-After seconds (0 for none) and the worlds service's {error, message} body.
@@ -230,6 +232,13 @@ def render(table, cfg, mime):
         servers = "\n".join(f"server {host} resolve max_fails=2 fail_timeout=10s;" for host in cfg[name])
         upstreams += f"upstream {name} {{ zone {name} 64k; {servers} keepalive 32; }}\n"
 
+    # Hash across resolved peers. Consistent hashing groups replicas sharing a DNS name.
+    # Changing the replica set can remap an active polling session during scaling or rollout.
+    socket_servers = "\n".join(
+        f"server {host} resolve max_fails=2 fail_timeout=10s;" for host in cfg["apis"])
+    upstreams += ("upstream auth_socket { zone auth_socket 64k; hash $binary_remote_addr; "
+                  + socket_servers + " }\n")
+
     names = set()
 
     def location(key, body):
@@ -279,16 +288,20 @@ def render(table, cfg, mime):
     # The content deploy zone is only a coarse abuse guard: 200 at once, then
     # 5 r/s per address, above the content server's own per-client burst limit
     # (upstream's 200 per 60 s, answered as JSON with Retry-After), so a
-    # client within that limit never meets nginx's HTML 429. Concurrent
-    # uploads per address are capped on both deploy routes, since each body
-    # is buffered in the gateway's temp space before the app sees it.
+    # client within that limit never meets nginx's HTML 429. Content deploys
+    # are not buffered: the body streams to the app, which spools it to disk
+    # under its own budgets (holding only the bytes received), upload
+    # timeout and unread-body drain (with its own deadline), so a body
+    # of up to CONTENT_DEPLOY_CAP never lands in the gateway's temp space (a
+    # tmpfs in the documented run). Concurrent uploads per address are
+    # capped on both deploy routes.
     deploy = "|".join(re.escape(path) for path in table["deploy"])
     uploads = f"limit_conn deploy_uploads {DEPLOY_CONNECTIONS_PER_ADDRESS};"
     # Case-insensitive, as nginx would otherwise pass /content/Entities to the
     # /content/ location and its looser limits.
     locations += location(f'~* "^({deploy})/*$"', proxy("apis",
         f"client_max_body_size {CONTENT_DEPLOY_CAP}; client_body_timeout 300s; "
-        f"limit_req zone=deploy burst=200 nodelay; {uploads}"))
+        f"proxy_request_buffering off; limit_req zone=deploy burst=200 nodelay; {uploads}"))
     # Upstream caps the POST /entities/active body at 10 MiB and answers its
     # own 413 (MAX_ACTIVE_ENTITIES_BODY_SIZE); the server-wide 1m would answer
     # nginx's HTML 413 first. The content server's case rewrite routes any
@@ -366,6 +379,7 @@ def render(table, cfg, mime):
     locations += location("~ ^(/builder-api)?/v1/(projects/[^/]+/(blobs/[^/]+|manifest|files)|items/[^/]+/files)/*$",
                           proxy("apis", "client_max_body_size 21m;"))
     locations += location('~ "^/explorer/0x[0-9a-fA-F]{40}/(wearables|emotes)$"', proxy("apis"))
+    locations += pair("/auth-api/socket.io", "auth_socket", True)
     # Keep the Sites .data regex after every API regex.
     locations += location(r"~ \.data$", proxy("sites"))
     for prefix in prefixes:
@@ -414,15 +428,17 @@ def render(table, cfg, mime):
         # A host rewrite also marks a request internal in nginx. Require an
         # upstream response header as well; client headers cannot supply it.
         # nginx keeps the app's Content-Type, Accept-Ranges and Cache-Control on
-        # the redirect and drops its other headers, so ETag and the expose list
-        # are copied back. The app answers every Range it supports itself; one it
-        # does not (multi-range, `bytes=-`) gets the whole file, as upstream.
+        # the redirect and drops its other headers, so ETag, the expose list and
+        # the Content-Security-Policy are copied back. The app answers every
+        # Range it supports itself; one it does not (multi-range, `bytes=-`)
+        # gets the whole file, as upstream.
         storage = (f'internal; alias {cfg["storage"]}/contents/; sendfile on; etag off;\n'
                    'max_ranges 0;\n'
                    'if ($upstream_http_x_accel_redirect = "") { return 404; }\n'
                    'add_header ETag $upstream_http_etag always;\n'
                    'add_header Access-Control-Expose-Headers $upstream_http_access_control_expose_headers always;\n'
                    'add_header Access-Control-Allow-Origin "*" always;\n'
+                   'add_header Content-Security-Policy $upstream_http_content_security_policy always;\n'
                    + security_headers)
     locations += location("= /__protected_storage", "return 404;")
     locations += location("^~ /__protected_storage/", storage)
@@ -457,8 +473,10 @@ http {{
     }}
     geo $admin_gate {{ default ""; {admin_geo} }}
     map $http_upgrade $connection_keepalive {{ default upgrade; "" ""; }}
-    map $upstream_http_access_control_allow_origin $cors_fallback {{
-        "" "*";
+    # The sign-in relay controls CORS on both the auth-api host and path.
+    map "$uri:$upstream_http_access_control_allow_origin" $cors_fallback {{
+        "~^/auth-api(/|:)" "";
+        "~:$" "*";
         default "";
     }}
     map $upstream_http_cross_origin_opener_policy $coop_fallback {{

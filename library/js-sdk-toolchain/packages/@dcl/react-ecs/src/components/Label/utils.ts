@@ -1,7 +1,7 @@
 import { Font, TextAlignMode, TextWrap } from '@dcl/ecs'
-import { TextAlignType, UiFontType, UiTextWrapType } from './types'
+import type { TextAlignType, UiFontType, UiTextWrapType } from './types'
 import { calcOnViewport, getScaleCtx, getUiScaleFactor } from '../utils'
-import { ScaleContext, ScaleUnit } from '../types'
+import type { ScaleContext, ScaleUnit } from '../types'
 
 const parseFont: Readonly<Record<UiFontType, Font>> = {
   'sans-serif': Font.F_SANS_SERIF,

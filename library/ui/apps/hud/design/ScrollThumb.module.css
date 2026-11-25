@@ -38,3 +38,12 @@
 .dark .thumb {
   background: var(--scroll-thumb-dark);
 }
+/* A caller may narrow it with --scroll-thumb-w (default 14px). */
+.solid,
+.solid .thumb {
+  width: var(--scroll-thumb-w, 14px);
+}
+.solid .thumb {
+  border: none;
+  background: var(--text);
+}

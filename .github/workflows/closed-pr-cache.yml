@@ -15,7 +15,7 @@ jobs:
   cleanup:
     if: github.event_name != 'pull_request' || (github.event.pull_request.head.repo.full_name == github.repository && github.actor != 'dependabot[bot]')
     runs-on: ubuntu-26.04
-    timeout-minutes: 5
+    timeout-minutes: 15
     permissions:
       actions: write
       pull-requests: read
@@ -33,6 +33,90 @@ jobs:
           import os
           import re
           import subprocess
+          import time
+
+          # GITHUB_TOKEN is capped at 1000 requests/hour per repository and this repo's own
+          # CI routinely consumes most of it. The sweep stops while a reserve remains rather
+          # than dying mid-run: a partial sweep is resumed by the next schedule, an aborted
+          # one loses all of its progress.
+          RESERVE = 50
+          LISTING_COST = 60
+          # Leaves margin under timeout-minutes so the job reports instead of being cancelled.
+          DEADLINE = 10 * 60
+          STARTED = time.monotonic()
+          budget = {'left': None}
+
+          class RateLimited(RuntimeError):
+              """The primary hourly limit, which only resets on the hour."""
+
+          def out_of_time():
+              return time.monotonic() - STARTED > DEADLINE
+
+          def gh(args, retries=4, accept_partial=False):
+              delay = 5
+              for attempt in range(retries):
+                  done = subprocess.run(['gh'] + args, capture_output=True, text=True)
+                  if done.returncode == 0:
+                      return done.stdout
+                  # gh exits 1 on a GraphQL response that carries both data and errors.
+                  if accept_partial and done.stdout.strip():
+                      try:
+                          if json.loads(done.stdout).get('data') is not None:
+                              return done.stdout
+                      except ValueError:
+                          pass
+                  error = done.stderr.strip()
+                  lowered = error.lower()
+                  # Secondary limits are short-lived and must be matched before the primary
+                  # one, whose wording varies ('already exceeded for installation ID ...').
+                  transient = ('was submitted too quickly' in lowered
+                               or 'secondary rate limit' in lowered
+                               or ' 500' in lowered or ' 502' in lowered
+                               or ' 503' in lowered or ' 504' in lowered
+                               or 'gateway timeout' in lowered or 'timed out' in lowered
+                               or 'something went wrong while executing your query' in lowered)
+                  # Retrying the primary limit inside the job cannot help, so surface it.
+                  if not transient and 'rate limit' in lowered and 'exceeded' in lowered:
+                      raise RateLimited(error[:300])
+                  if not transient or attempt == retries - 1 or out_of_time():
+                      raise RuntimeError(' '.join(args) + ' -> ' + error[:300])
+                  time.sleep(delay)
+                  delay *= 2
+              raise AssertionError('unreachable')
+
+          def remaining():
+              # The rate_limit endpoint is exempt, so this never costs budget. A failed read
+              # keeps the last known value: resetting it to None would disable the gate.
+              try:
+                  body = json.loads(gh(['api', 'rate_limit'], retries=2))
+                  budget['left'] = body['resources']['core']['remaining']
+              except Exception:
+                  pass
+              return budget['left']
+
+          def exhausted():
+              left = budget['left']
+              return left is not None and left <= RESERVE
+
+          def pull_request_states(repository, numbers, states):
+              # One GraphQL call per 100 PRs instead of one REST call each. GraphQL reports
+              # MERGED separately, where REST folds it into 'closed'; both mean deletable.
+              owner, name = repository.split('/', 1)
+              ordered = sorted(numbers, key=int)
+              for start in range(0, len(ordered), 100):
+                  chunk = ordered[start:start + 100]
+                  fields = ' '.join(f'p{number}: pullRequest(number: {number}) {{ state }}'
+                                    for number in chunk)
+                  query = ('query($owner: String!, $name: String!) '
+                           f'{{ repository(owner: $owner, name: $name) {{ {fields} }} }}')
+                  body = json.loads(gh(['api', 'graphql', '-f', f'query={query}',
+                                        '-f', f'owner={owner}', '-f', f'name={name}'],
+                                       accept_partial=True))
+                  repo = (body.get('data') or {}).get('repository') or {}
+                  for number in chunk:
+                      node = repo.get(f'p{number}')
+                      # An unresolvable PR stays unknown and its caches are left alone.
+                      states[number] = node.get('state') if node else None
 
           number = os.environ.get('PR_NUMBER', '')
           event = os.environ.get('GITHUB_EVENT_NAME', 'pull_request')
@@ -43,27 +127,56 @@ jobs:
               raise ValueError('Unsupported cleanup event')
           ref = f'refs/pull/{number}/merge' if targeted else None
           repository = os.environ['GITHUB_REPOSITORY']
+          # The listing alone costs one call per 100 entries, so do not start a sweep that
+          # would eat the reserve the rest of CI depends on.
+          remaining()
+          if budget['left'] is not None and budget['left'] <= RESERVE + LISTING_COST:
+              print(f'::warning::rate budget {budget["left"]} below the listing cost; '
+                    'skipping this sweep')
+              raise SystemExit(0)
           # Snapshot all pages before deleting, so pagination cannot skip entries.
           request = [
-              'gh', 'api', '--method', 'GET', '--paginate', '--slurp',
+              'api', '--method', 'GET', '--paginate', '--slurp',
               f'repos/{repository}/actions/caches', '-f', 'per_page=100',
           ]
           if targeted:
               request += ['-f', f'ref={ref}']
-          pages = json.loads(subprocess.check_output(request, text=True))
+          try:
+              pages = json.loads(gh(request))
+          except RateLimited as error:
+              print(f'::warning::rate limited while listing caches, skipping this sweep: {error}')
+              raise SystemExit(0)
           caches = [cache for page in pages for cache in page['actions_caches']
                     if type(cache.get('id')) is int]
-          cache_ids, closed, snapshots, images = set(), {}, {}, {}
-          # The smoke snapshots, every rust-cache key and the Explorer's native build caches,
+          cache_ids, snapshots, images = set(), {}, {}
+          # The smoke snapshots, every rust-cache key and the Explorer's Cargo build caches,
           # whose prefixes end with the platform, and the web target of an unoptimised build.
           # A flake hash inside a prefix folds away, so a flake update supersedes the entry.
           namespace = re.compile(r'^foundation-dev-v2-smoke-' + re.escape(repository)
                                  + r'-(Linux|macOS)-(X64|ARM64)-'
                                  r'|^v0-rust-.+?-(Linux|Darwin|Windows_NT)-(x64|arm64)-'
-                                 r'|^bevy-native-v1-[a-z]+-(Linux|macOS|Windows)-(X64|ARM64)-'
+                                 r'|^bevy-native-v1-.+-(Linux|macOS|Windows)-(X64|ARM64)-'
                                  r'|^bevy-web-unopt-v1-(main|pr)-')
           image_namespace = re.compile(
               r'images-v2-(main|pr-[1-9][0-9]*)-(catalyst|sites|apis|sites-app|ui-gallery)-(amd64|arm64)-[0-9a-f]{64}')
+          pull_refs = {}
+          for cache in caches:
+              match = re.fullmatch(r'refs/pull/([1-9][0-9]*)/merge', cache.get('ref', ''))
+              if match and not targeted:
+                  pull_refs[match[1]] = True
+          closed, states, state_failure = {}, {}, None
+          if pull_refs:
+              try:
+                  pull_request_states(repository, pull_refs, states)
+              except RateLimited as error:
+                  # Snapshot and image pruning below needs no PR state, so keep going.
+                  print(f'::warning::rate limited resolving PR states, closed-PR cleanup deferred to the next sweep '
+                        f'for {len(pull_refs) - len(states)} of {len(pull_refs)} PRs: {error}')
+              except RuntimeError as error:
+                  # Prune with the states resolved so far, then fail: this may not clear by itself.
+                  state_failure = error
+              for pr, state in states.items():
+                  closed[pr] = state in ('CLOSED', 'MERGED')
           for cache in caches:
               cache_ref = cache.get('ref', '')
               if targeted:
@@ -72,13 +185,7 @@ jobs:
                   continue
               match = re.fullmatch(r'refs/pull/([1-9][0-9]*)/merge', cache_ref)
               if match:
-                  pr = match[1]
-                  if pr not in closed:
-                      payload = json.loads(subprocess.check_output([
-                          'gh', 'api', f'repos/{repository}/pulls/{pr}',
-                      ], text=True))
-                      closed[pr] = payload['state'] == 'closed'
-                  if closed[pr]:
+                  if closed.get(match[1]):
                       cache_ids.add(cache['id'])
                       continue
               elif cache_ref != 'refs/heads/main':
@@ -102,11 +209,48 @@ jobs:
           for entries in images.values():
               entries.sort(key=lambda cache: (cache.get('created_at', ''), cache['id']), reverse=True)
               cache_ids.update(cache['id'] for cache in entries[2:])
-          for cache_id in sorted(cache_ids):
-              subprocess.run([
-                  'gh', 'api', '--method', 'DELETE',
-                  f'repos/{repository}/actions/caches/{cache_id}',
-              ], check=True)
-          print(f'Removed {len(cache_ids)} cache entries; inspected {len(caches)} entries, '
-                f'{sum(cache.get("size_in_bytes", 0) for cache in caches)} bytes')
+          # Biggest first, so a sweep cut short by the budget still reclaims the most bytes.
+          sizes = {cache['id']: cache.get('size_in_bytes', 0) for cache in caches}
+          ordered = sorted(cache_ids, key=lambda i: (-sizes.get(i, 0), i))
+          removed = freed = failed = 0
+          deferred = []
+          for index, cache_id in enumerate(ordered):
+              # Re-read the shared bucket rather than counting this job's own calls: the
+              # rest of CI drains the same 1000/hour and a local tally cannot see it.
+              if index % 25 == 0:
+                  remaining()
+              if exhausted() or out_of_time():
+                  deferred = ordered[index:]
+                  break
+              # Count down between refreshes too, so a burst cannot run past the reserve.
+              if budget['left'] is not None:
+                  budget['left'] -= 1
+              try:
+                  gh(['api', '--method', 'DELETE', f'repos/{repository}/actions/caches/{cache_id}'])
+              except RateLimited:
+                  remaining()
+                  deferred = ordered[index:]
+                  break
+              except RuntimeError as error:
+                  # One bad entry must not strand the rest; the next sweep retries it.
+                  failed += 1
+                  print(f'::warning::could not delete cache {cache_id}: {error}')
+                  if failed > 25:
+                      deferred = ordered[index + 1:]
+                      break
+              else:
+                  removed += 1
+                  freed += sizes.get(cache_id, 0)
+          print(f'Removed {removed} cache entries, {freed} bytes; inspected {len(caches)} '
+                f'entries, {sum(cache.get("size_in_bytes", 0) for cache in caches)} bytes')
+          if failed:
+              print(f'::warning::{failed} deletions failed and will be retried next sweep')
+          if deferred:
+              print(f'::warning::stopped with {len(deferred)} entries left to free; '
+                    f'rate budget {budget["left"]} remaining, '
+                    f'{time.monotonic() - STARTED:.0f}s elapsed, resuming next sweep')
+          if state_failure is not None:
+              print(f'::error::PR states unresolved for {len(pull_refs) - len(states)} of {len(pull_refs)} PRs, '
+                    f'their closed-PR cleanup skipped: {str(state_failure).split(" -> ", 1)[-1]}')
+              raise SystemExit(1)
           PY

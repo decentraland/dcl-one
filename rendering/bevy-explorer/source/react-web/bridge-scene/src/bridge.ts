@@ -104,7 +104,10 @@ export function startBridge(register: (ctx: Ctx) => void): void {
       const profileRead = msg.kind === 'getUserProfile' && msg.requestId != null
         ? { address: msg.address, requestId: msg.requestId }
         : undefined
-      ctx.send({ kind: 'requestFailed', request: msg.kind, error: String(err), ...(profileRead != null && { profileRead }) })
+      ctx.send({
+        kind: 'requestFailed', request: msg.kind, error: String(err), ...(profileRead && { profileRead }),
+        ...(msg.kind === 'saveProfile' && msg.requestId != null && { profileSaveId: msg.requestId })
+      })
     }
     for (const handler of list) {
       try {

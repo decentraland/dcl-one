@@ -266,17 +266,12 @@ pub async fn update_world_settings(
         if !authorized {
             return Err(SettingsError::Handler { status: StatusCode::FORBIDDEN, message: NOT_ALLOWED_MESSAGE.to_string() });
         }
-        if let Some(bytes) = thumbnail {
-            let hash = crate::auth::hash_bytes_v1(&bytes);
-            state
-                .storage
-                .store(&hash, bytes::Bytes::from(bytes))
-                .await
-                .map_err(|e| ApiError::internal(format!("failed to store thumbnail: {e}")))?;
-            input.thumbnail_hash = Some(hash);
-        }
+        let thumbnail = thumbnail.map(|bytes| {
+            input.thumbnail_hash = Some(crate::auth::hash_bytes_v1(&bytes));
+            (state.storage.as_ref(), bytes::Bytes::from(bytes))
+        });
         // The two spawn refusals are the store's only 400s: upstream's `ValidationError`s.
-        let (settings, _old_spawn) = store::update_world_settings(&state.pool, &world, &signer, holder.as_ref(), &input)
+        let (settings, _old_spawn) = store::update_world_settings(&state.pool, &world, &signer, holder.as_ref(), &input, thumbnail)
             .await
             .map_err(|e| match e.is_bad_request() {
                 true => SettingsError::invalid(e.public_message()),

@@ -10,8 +10,8 @@ import {
 } from '../helpers/auth-mocks';
 import { Auth } from '../pages/Auth';
 
-const IDENTITY_ID = 'e2e-identity-id';
-const FOREIGN_IDENTITY_ID = 'e2e-foreign-identity-id';
+const IDENTITY_ID = '4ddc4369-5f09-4b47-b43d-b5d48354ddcd';
+const FOREIGN_IDENTITY_ID = 'c639e427-0638-4a10-acff-d7b524cdef2c';
 
 const REQUESTS_PATH_WITH_UUID_V4 =
   /\/requests\/([0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12})\?/i;

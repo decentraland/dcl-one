@@ -136,9 +136,44 @@ fn set(lookup: &Lookup, key: &str) -> Option<String> {
     lookup(key).filter(|v| !v.trim().is_empty())
 }
 
-/// The chain endpoints and contracts the mirror preset knows are mainnet's.
+/// Some mirror preset jobs and endpoints cover only mainnet.
 fn mainnet(lookup: &Lookup) -> bool {
     lookup("ETH_NETWORK").is_none_or(|n| n.trim().is_empty() || n.trim() == "mainnet")
+}
+
+fn sepolia(lookup: &Lookup) -> bool {
+    set(lookup, "ETH_NETWORK").is_some_and(|n| {
+        matches!(
+            n.trim().to_ascii_lowercase().as_str(),
+            "sepolia" | "ethereum-sepolia"
+        )
+    })
+}
+
+fn eth_collections_source(lookup: &Lookup) -> Option<String> {
+    Some(
+        if set(lookup, "MARKETPLACE_INDEX_CHAIN_ID_ETHEREUM").as_deref() == Some("11155111") {
+            "https://subgraph.decentraland.org/collections-ethereum-sepolia"
+        } else {
+            "https://subgraph.decentraland.org/collections-ethereum-mainnet"
+        }
+        .into(),
+    )
+}
+
+fn matic_collections_source(lookup: &Lookup) -> Option<String> {
+    Some(
+        if set(lookup, "MARKETPLACE_INDEX_CHAIN_ID_MATIC").as_deref() == Some("80002") {
+            "https://subgraph.decentraland.org/collections-matic-amoy"
+        } else {
+            "https://subgraph.decentraland.org/collections-matic-mainnet"
+        }
+        .into(),
+    )
+}
+
+fn third_party_registry_subgraph(lookup: &Lookup) -> Option<String> {
+    (!mainnet(lookup)).then(|| "https://subgraph.decentraland.org/tpr-matic-mainnet".into())
 }
 
 fn credits_manager(lookup: &Lookup) -> Option<String> {
@@ -277,11 +312,6 @@ const ROWS: &[Row] = &[
     ),
     upstream(
         "mirrors",
-        "EXPLORER_MAP_SOURCE_URL",
-        "https://api.decentraland.org",
-    ),
-    upstream(
-        "mirrors",
         "WORLD_MANIFEST_UPSTREAM_URL",
         "https://places-dcf8abb.s3.amazonaws.com/WorldManifest.json",
     ),
@@ -293,15 +323,43 @@ const ROWS: &[Row] = &[
     ),
     // Development only: no posture serves an order book before its first complete pass.
     same("mirrors", "TRADES_SERVE_PARTIAL", "false"),
-    upstream(
+    row(
+        "mirrors",
+        "MARKETPLACE_INDEX_CHAIN_ID_ETHEREUM",
+        From("Sepolia when ETH_NETWORK selects it", |env| {
+            sepolia(env).then(|| "11155111".into())
+        }),
+        Default("Ethereum mainnet"),
+        Default("Ethereum mainnet"),
+    ),
+    row(
+        "mirrors",
+        "MARKETPLACE_INDEX_CHAIN_ID_MATIC",
+        From("Amoy when ETH_NETWORK selects Sepolia", |env| {
+            sepolia(env).then(|| "80002".into())
+        }),
+        Default("Polygon mainnet"),
+        Default("Polygon mainnet"),
+    ),
+    row(
         "mirrors",
         "ETH_COLLECTIONS_SUBGRAPH_URL",
-        "https://subgraph.decentraland.org/collections-ethereum-mainnet",
+        From(
+            "collections subgraph of the served ethereum chain",
+            eth_collections_source,
+        ),
+        Is(""),
+        Is(""),
     ),
-    upstream(
+    row(
         "mirrors",
         "MATIC_COLLECTIONS_SUBGRAPH_URL",
-        "https://subgraph.decentraland.org/collections-matic-mainnet",
+        From(
+            "collections subgraph of the served matic chain",
+            matic_collections_source,
+        ),
+        Is(""),
+        Is(""),
     ),
     upstream(
         "mirrors",
@@ -313,43 +371,35 @@ const ROWS: &[Row] = &[
         "NFT_WORKER_BASE_URL",
         "https://nfts.decentraland.org",
     ),
-    // The approved third-party providers, lamb2's and the catalyst's default
-    // registry on Polygon mainnet.
-    upstream(
+    // Mirrors configured for testnet can read the Polygon registry before
+    // they have a separate mainnet RPC and a published registry index.
+    row(
         "mirrors",
         "THIRD_PARTY_REGISTRY_L2_SUBGRAPH_URL",
-        "https://subgraph.decentraland.org/tpr-matic-mainnet",
+        From(
+            "Polygon registry subgraph when ETH_NETWORK is a testnet",
+            third_party_registry_subgraph,
+        ),
+        Is(""),
+        Is(""),
     ),
-    // lamb2's explorer backpack lists chain-owned tokens only: a mirror
-    // answers the same; island and journey also list this node's escrow grants.
-    row(
-        "lambdas",
-        "EXPLORER_ESCROW_GRANTS_ENABLED",
-        Is("false"),
-        Is("true"),
-        Is("true"),
-    ),
+    // lamb2's explorer backpack lists chain-owned tokens only; listing this
+    // node's escrow grants too stays an operator's opt-in under every posture,
+    // island and journey included: set `EXPLORER_ESCROW_GRANTS_ENABLED=true`
+    // with `CONTENT_ESCROW_LEASE_OWNERSHIP_ENABLED=true`.
+    same("lambdas", "EXPLORER_ESCROW_GRANTS_ENABLED", "false"),
     // lamb2's `/collections/wearables` takes `collectionId`, `wearableId`
-    // and `textSearch` only: a mirror answers the same; island and journey
-    // also take this node's extended filters.
-    row(
-        "lambdas",
-        "LAMBDAS_CATALOG_EXTENSIONS_ENABLED",
-        Is("false"),
-        Is("true"),
-        Is("true"),
-    ),
-    // lamb2's LAND subgraph: parcel operators and permissions until the
-    // land-authz index is published.
-    upstream(
-        "mirrors",
-        "LAND_SUBGRAPH_URL",
-        "https://subgraph.decentraland.org/land-manager",
-    ),
+    // and `textSearch` by default; operators can opt in to extended filters.
+    same("lambdas", "LAMBDAS_CATALOG_EXTENSIONS_ENABLED", "false"),
     mirrored("indexes", "MARKETPLACE_NFT_INDEX_ENABLED"),
     mirrored("indexes", "MARKETPLACE_TRADE_EVENTS_INDEX_ENABLED"),
     mirrored("indexes", "MARKETPLACE_SALES_INDEX_ENABLED"),
     mirrored("indexes", "MARKETPLACE_COMMITTEE_INDEX_ENABLED"),
+    mirrored("indexes", "MARKETPLACE_THIRD_PARTY_REGISTRY_INDEX_ENABLED"),
+    // Account inventory and lifetime creator rankings require the factory walk.
+    mirrored("indexes", "MARKETPLACE_COLLECTIONS_INDEX_ENABLED"),
+    // Taking a network's catalogue from the mirror is an operator's step.
+    same("indexes", "MARKETPLACE_COLLECTIONS_INDEX_OWNS", ""),
     // The MANA transfer walk stays an operator's opt-in under every posture.
     same(
         "indexes",
@@ -569,6 +619,11 @@ const ROWS: &[Row] = &[
         Is("false"),
         Is("true"),
     ),
+    // Peers check item ownership on chain only and reject an entity that
+    // wears an item held only by an escrow lease, so counting leases stays an
+    // operator's opt-in under every posture (set it with
+    // `EXPLORER_ESCROW_GRANTS_ENABLED`).
+    same("writes", "CONTENT_ESCROW_LEASE_OWNERSHIP_ENABLED", "false"),
     // PRESENCE_COLLECTOR_ENABLED stays unset: the headcount archive writes
     // to the database, so it follows DATA_WRITES_ENABLED.
 ];
@@ -717,11 +772,12 @@ pub fn check(config: &Config, env: &Lookup) -> anyhow::Result<()> {
         anyhow::bail!("SYNC_ENABLED=true with an empty SYNC_SOURCE: there is no peer to sync from");
     }
     config.content.denylist_urls()?;
+    config.content.check_upload_limits()?;
     let Some(posture) = posture else {
         return Ok(());
     };
     if posture == Posture::Mirror {
-        refuse_unfiltered_profiles(config)?;
+        refuse_unfiltered_profiles(config, env)?;
     }
     if posture != Posture::Mirror {
         let name = posture.name();
@@ -749,64 +805,161 @@ pub fn check(config: &Config, env: &Lookup) -> anyhow::Result<()> {
         refuse_third_party_secrets(posture, env)?;
     }
     if posture == Posture::Mirror {
-        refuse_chain_read_third_party(config, env)?;
+        refuse_blank_nft_worker(config)?;
     }
     Ok(())
 }
 
-/// A DCL NAME world's owner is its NAME's holder, read from
-/// `MARKETPLACE_SUBGRAPH_URL`; without it no DCL NAME world has an owner. A
-/// `serve` taking world writes is refused without the reader, unless it
-/// skips the chain checks (`IGNORE_BLOCKCHAIN_ACCESS_CHECKS`), which gets the
-/// warning returned here and serves personal worlds only. The indexer takes
-/// no world writes, so only `serve` runs this.
+fn walks_catalogue(config: &Config) -> bool {
+    let market = &config.marketplace;
+    market.marketplace_nft_index_enabled
+        && matches!(
+            (
+                config.node.eth_network.trim(),
+                market.marketplace_index_chain_id_ethereum,
+                market.marketplace_index_chain_id_matic
+            ),
+            ("mainnet" | "ethereum" | "ethereum-mainnet", 1, 137)
+                | ("sepolia" | "ethereum-sepolia", 11155111, 80002)
+        )
+}
+
+/// A DCL NAME world's owner is its NAME's holder. A node that walks the nft
+/// index (`MARKETPLACE_NFT_INDEX_ENABLED` for its chain pair) reads it there, so
+/// world writes need nothing more: while the index is not current, a DCL
+/// NAME world's owner writes answer 503. A node that does not reads
+/// `MARKETPLACE_SUBGRAPH_URL`; without it no DCL NAME world has an owner, so
+/// a `serve` taking world writes is refused, unless it skips the chain checks
+/// (`IGNORE_BLOCKCHAIN_ACCESS_CHECKS`), which gets the warning returned here
+/// and serves personal worlds only. The indexer takes no world writes, so
+/// only `serve` runs this.
 pub fn worlds_names_reader(config: &Config) -> anyhow::Result<Option<&'static str>> {
+    let walks = walks_catalogue(config);
     if !config.worlds.worlds_writes_enabled
+        || walks
         || Config::non_empty(&config.market_upstreams.marketplace_subgraph_url).is_some()
     {
         return Ok(None);
     }
     if !config.validator.ignore_blockchain_access_checks {
         anyhow::bail!(
-            "WORLDS_WRITES_ENABLED=true needs MARKETPLACE_SUBGRAPH_URL, the DCL NAME holder reader: \
-             set it, or IGNORE_BLOCKCHAIN_ACCESS_CHECKS=true on a node without chain access"
+            "WORLDS_WRITES_ENABLED=true needs a DCL NAME holder reader: the nft index \
+             (MARKETPLACE_NFT_INDEX_ENABLED=true for the configured chain pair) or MARKETPLACE_SUBGRAPH_URL. Set one, or \
+             IGNORE_BLOCKCHAIN_ACCESS_CHECKS=true on a node without chain access"
         );
     }
     Ok(Some(
-        "MARKETPLACE_SUBGRAPH_URL is unset: DCL NAME worlds have no owner here, only personal worlds take owner writes",
+        "neither the nft index nor MARKETPLACE_SUBGRAPH_URL reads DCL NAMEs here: DCL NAME worlds have no owner, only personal worlds take owner writes",
     ))
 }
 
-/// A mirror replaces a Catalyst whose lambdas always check the profiles'
-/// items and names against their owner: the collections and marketplace
-/// subgraphs the posture names may not be blanked (an island, with no
-/// ownership source, serves the items as deployed).
-fn refuse_unfiltered_profiles(config: &Config) -> anyhow::Result<()> {
+/// Wearable and emote ownership is read from the nft index alone, which a
+/// node walks with `MARKETPLACE_NFT_INDEX_ENABLED` for its catalogue pair. A node that
+/// names a collections subgraph and does not walk the index gets the
+/// warning returned here: the subgraph checks no ownership.
+pub fn unchecked_profile_items(config: &Config) -> Option<&'static str> {
+    let walks = walks_catalogue(config);
     let upstreams = &config.market_upstreams;
-    let blank: Vec<&str> = [
-        (
-            "ETH_COLLECTIONS_SUBGRAPH_URL",
-            &upstreams.eth_collections_subgraph_url,
-        ),
-        (
-            "MATIC_COLLECTIONS_SUBGRAPH_URL",
-            &upstreams.matic_collections_subgraph_url,
-        ),
-        (
-            "MARKETPLACE_SUBGRAPH_URL",
-            &upstreams.marketplace_subgraph_url,
-        ),
-    ]
-    .into_iter()
-    .filter_map(|(key, value)| Config::non_empty(value).is_none().then_some(key))
-    .collect();
-    if !blank.is_empty() {
+    let subgraph = Config::non_empty(&upstreams.eth_collections_subgraph_url).is_some()
+        || Config::non_empty(&upstreams.matic_collections_subgraph_url).is_some();
+    (subgraph && !walks).then_some(
+        "a collections subgraph URL is set, but this node does not walk the nft index \
+         (MARKETPLACE_NFT_INDEX_ENABLED off, or ETH_NETWORK and the chain pair disagree): the subgraphs check \
+         no ownership, so profiles and outfits are served as deployed and the owned wearable and \
+         emote routes answer the nft-index unavailable envelope",
+    )
+}
+
+/// A walking mirror checks wearables, emotes and DCL NAMEs against the
+/// catalogue for its chain pair. A testnet mirror without a walk checks
+/// names through the configured graph and serves items as deployed.
+fn refuse_unfiltered_profiles(config: &Config, env: &Lookup) -> anyhow::Result<()> {
+    if !walks_catalogue(config) && config.node.eth_network.trim() != "mainnet" {
+        if Config::non_empty(&config.market_upstreams.marketplace_subgraph_url).is_none() {
+            anyhow::bail!(
+                "{ENV}=mirror off mainnet checks every profile's names against their owner through \
+                 the marketplace subgraph, but MARKETPLACE_SUBGRAPH_URL is empty: unset it to read \
+                 Decentraland's subgraph"
+            );
+        }
+        return Ok(());
+    }
+    if !config.marketplace.marketplace_nft_index_enabled {
         anyhow::bail!(
-            "{ENV}=mirror checks every profile's wearables, emotes and names against their owner, \
-             but {} {} empty: unset {} to read Decentraland's subgraphs",
-            blank.join(", "),
-            if blank.len() == 1 { "is" } else { "are" },
-            if blank.len() == 1 { "it" } else { "them" },
+            "{ENV}=mirror checks every profile's wearables, emotes and names against the nft index, \
+             but MARKETPLACE_NFT_INDEX_ENABLED is off: unset it to walk the index"
+        );
+    }
+    // The walk takes its contracts from the collections mirror and starts on
+    // a network once that mirror completed a pass there, so a node that fills
+    // its own catalogue reads both collections subgraphs. One whose catalogue
+    // another writer fills (MARKETPLACE_MIRRORS_ENABLED=false) reads its tables.
+    if config.marketplace.marketplace_mirrors_enabled {
+        let upstreams = &config.market_upstreams;
+        for (key, url) in [
+            (
+                "ETH_COLLECTIONS_SUBGRAPH_URL",
+                &upstreams.eth_collections_subgraph_url,
+            ),
+            (
+                "MATIC_COLLECTIONS_SUBGRAPH_URL",
+                &upstreams.matic_collections_subgraph_url,
+            ),
+        ] {
+            if Config::non_empty(url).is_none() {
+                anyhow::bail!(
+                    "{ENV}=mirror walks the nft index over the contracts its collections mirror finds, \
+                     but {key} is empty: that network's mirror has nothing to read and its ownership \
+                     never publishes. Unset it to read Decentraland's subgraph, or set \
+                     MARKETPLACE_MIRRORS_ENABLED=false on a node whose catalogue another node fills"
+                );
+            }
+        }
+    }
+    // The list a mirror derives from its own endpoints, or the explicit
+    // one; a `_FILE` is read after this check, and
+    // [`refuse_unwalkable_polygon`] checks what it held.
+    let from_file = env("TRADE_RPC_URLS_FILE").is_some_and(|v| !v.trim().is_empty());
+    if let Some(raw) = config.marketplace.trade_rpc_urls.as_deref()
+        && !from_file
+        && config.marketplace.marketplace_index_chain_id_matic == 137
+        && !names_chain(raw, 137)
+    {
+        anyhow::bail!(
+            "{ENV}=mirror walks the nft index on chains 1 and 137, but TRADE_RPC_URLS names no \
+             137= endpoint: add one, or unset it to use RPC_ENDPOINT_POLYGON"
+        );
+    }
+    Ok(())
+}
+
+/// Whether the list binds an endpoint to this chain.
+fn names_chain(raw: &str, expected: u64) -> bool {
+    raw.split(',').any(|entry| {
+        entry.split_once('=').is_some_and(|(chain, url)| {
+            chain.trim().parse::<u64>() == Ok(expected) && !url.trim().is_empty()
+        })
+    })
+}
+
+/// Check the resolved endpoints after secret files and network defaults
+/// have been read. The Amoy walk also accepts the node's Polygon endpoint.
+fn refuse_unwalkable_polygon(config: &Config) -> anyhow::Result<()> {
+    if !walks_catalogue(config) {
+        return Ok(());
+    }
+    let raw = config.marketplace.trade_rpc_urls.as_deref().unwrap_or("");
+    if config.marketplace.marketplace_index_chain_id_matic == 80002 {
+        anyhow::ensure!(
+            names_chain(raw, 80002)
+                || Config::non_empty(&config.economy.rpc_endpoint_polygon).is_some(),
+            "{ENV}=mirror needs an Amoy endpoint in TRADE_RPC_URLS or RPC_ENDPOINT_POLYGON"
+        );
+    } else if !names_chain(raw, 137) {
+        anyhow::bail!(
+            "{ENV}=mirror walks the nft index on chains 1 and 137, but the TRADE_RPC_URLS it read \
+             (TRADE_RPC_URLS_FILE included) names no 137= endpoint: add one, or unset both to use \
+             RPC_ENDPOINT_POLYGON"
         );
     }
     Ok(())
@@ -865,43 +1018,12 @@ fn refuse_followers(posture: Posture, env: &Lookup) -> anyhow::Result<()> {
     Ok(())
 }
 
-/// A mirror serves the public third-party routes, which lamb2 answers from
-/// the registry subgraph and the NFT worker: without
-/// `THIRD_PARTY_REGISTRY_L2_SUBGRAPH_URL` every route lists no provider, and
-/// without `NFT_WORKER_BASE_URL` the chain path leaves an open mapping's
-/// tokens out, so a mirror may blank neither. A registry URL held in its
-/// `_FILE` is read after this check, so `refuse_blank_registry_file` checks it.
-fn refuse_chain_read_third_party(config: &Config, env: &Lookup) -> anyhow::Result<()> {
-    if set(env, REGISTRY_FILE).is_none()
-        && Config::non_empty(&config.validator.third_party_registry_l2_subgraph_url).is_none()
-    {
-        anyhow::bail!(
-            "{ENV}=mirror lists the approved third-party providers from the registry subgraph, \
-             as lamb2 does, but {REGISTRY} is empty: unset it to read Decentraland's registry"
-        );
-    }
+/// A mirror needs the NFT worker to include tokens from open mappings.
+fn refuse_blank_nft_worker(config: &Config) -> anyhow::Result<()> {
     if Config::non_empty(&config.market_upstreams.nft_worker_base_url).is_none() {
         anyhow::bail!(
             "{ENV}=mirror answers the third-party wearables from the NFT worker, as lamb2 does, \
              but NFT_WORKER_BASE_URL is empty: unset it to read Decentraland's worker"
-        );
-    }
-    Ok(())
-}
-
-/// The third-party registry a mirror may not blank, and the credential file
-/// that may hold it.
-const REGISTRY: &str = "THIRD_PARTY_REGISTRY_L2_SUBGRAPH_URL";
-const REGISTRY_FILE: &str = "THIRD_PARTY_REGISTRY_L2_SUBGRAPH_URL_FILE";
-
-/// The mirror's registry check once the secret files are read: a
-/// `THIRD_PARTY_REGISTRY_L2_SUBGRAPH_URL_FILE` with no URL in it.
-fn refuse_blank_registry_file(config: &Config) -> anyhow::Result<()> {
-    if Config::non_empty(&config.validator.third_party_registry_l2_subgraph_url).is_none() {
-        anyhow::bail!(
-            "{ENV}=mirror lists the approved third-party providers from the registry subgraph, \
-             as lamb2 does, but {REGISTRY_FILE} holds no URL: put the registry URL in it, or \
-             unset it and {REGISTRY} to read Decentraland's registry"
         );
     }
     Ok(())
@@ -924,6 +1046,7 @@ pub const ANY_HOST: &[(&str, &str)] = &[
     ("SHOP_BASE_URL", LINK),
     ("SHOP_ITEM_BASE_URL", LINK),
     ("EVENTS_BASE_URL", LINK),
+    ("EVENTS_SITE_URL", LINK),
     ("JUMP_IN_SITE_URL", LINK),
     ("PLACES_BASE_URL", LINK),
     ("CREDITS_CHECKOUT_CANCEL_URL", LINK),
@@ -1109,8 +1232,7 @@ fn outside_host(posture: Posture, key: &str, host: &str) -> anyhow::Error {
 }
 
 /// The same refusal over the secrets, once their `<NAME>_FILE`s are read: an
-/// RPC endpoint or token URL held in a credential file. A mirror instead
-/// checks the third-party registry its `_FILE` may hold.
+/// RPC endpoint or token URL held in a credential file.
 pub fn refuse_remote_secrets(config: &mut Config) -> anyhow::Result<()> {
     let Some(posture) = config
         .node
@@ -1121,7 +1243,7 @@ pub fn refuse_remote_secrets(config: &mut Config) -> anyhow::Result<()> {
         return Ok(());
     };
     if posture == Posture::Mirror {
-        return refuse_blank_registry_file(config);
+        return refuse_unwalkable_polygon(config);
     }
     let own = own_hosts(config);
     let values: Vec<(&'static str, String)> = config
@@ -1153,6 +1275,7 @@ const THIRD_PARTY_SECRETS: &[(&str, Option<&str>, &str)] = &[
         "SendGrid's mail API",
     ),
     ("SLACK_BOT_TOKEN", None, "Slack Web API"),
+    ("MAGIC_SECRET_KEY", None, "Magic account deletion API"),
     (
         "ANALYTICS_API_TOKEN",
         Some("ANALYTICS_API_URL"),
