@@ -491,8 +491,10 @@ impl Settings {
 }
 
 fn network_id(eth_network: &str) -> u64 {
+    if let Some(pair) = crate::shared::network::ChainPair::from_eth_network(eth_network) {
+        return pair.chain_ids().0 as u64;
+    }
     match eth_network {
-        "sepolia" => 11155111,
         "goerli" => 5,
         _ => 1,
     }
