@@ -96,6 +96,7 @@ fn container(app: &mut App, scene: Entity, src: &str, h_gltf: Option<Handle<Gltf
             src: src.to_owned(),
             ..Default::default()
         }),
+        GltfDefinitionGeneration::default(),
     ));
     if let Some(h_gltf) = h_gltf {
         entity.insert(GltfHandle::for_test(h_gltf));
@@ -249,7 +250,10 @@ fn reload_loads_the_file_again_and_then_the_containers_showing_it() {
     for entity in [model, same_file] {
         assert_eq!(
             app.world().get::<ModelReloadPending>(entity),
-            Some(&ModelReloadPending(id))
+            Some(&ModelReloadPending {
+                asset_id: id,
+                generation: 0
+            })
         );
     }
     assert!(app.world().get::<ModelReloadPending>(other).is_none());
@@ -303,7 +307,10 @@ fn reload_forgets_the_scene_data_kept_for_the_old_file() {
     let model = container(&mut app, scene, "model.glb", Some(h_gltf));
     app.world_mut()
         .entity_mut(model)
-        .insert(ModelReloadPending(id));
+        .insert(ModelReloadPending {
+            asset_id: id,
+            generation: 0,
+        });
     app.update();
 
     app.world_mut()
