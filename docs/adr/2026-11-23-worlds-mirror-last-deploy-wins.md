@@ -2,6 +2,9 @@
 
 - Status: Accepted
 - Date: 2026-11-23
+- Decided by: user, 2026-11-24, in the review of this change: place identities
+  keep the overlap rule unchanged on a takeover, and a takeover that keeps a
+  place id queues no place removal.
 
 ## Context
 
@@ -24,7 +27,11 @@ deployment to a world name wins, with the whole world compared.
   later than its own write: the local row's update time, and upstream the listed
   deploy time (`updatedAt`, else `createdAt`) and now. Without a numeric timestamp, a
   local scene counts at its row's update time and an upstream scene at its listed
-  deploy time. An upstream scene with neither never replaces a local one.
+  deploy time. An upstream scene listed without a deploy time never replaces a local
+  one, whatever its entity timestamp.
+- **Guards.** A local world stays local while it is blocked here or a publish of it
+  is queued or being sent upstream (`worlds.forward_outbox`), so a forward is never
+  dropped and an operator block is never lifted by the mirror.
 - **Ties.** Equal times go to the byte-wise greater entity id, as publishes order
   them. The same entity on both sides (a publish this node forwarded, a row the
   worlds import wrote as local) keeps the world local.
@@ -34,7 +41,8 @@ deployment to a world name wins, with the whole world compared.
   that the upstream lists by the same id becomes the mirrored row. The world row
   is marked mirrored. Place identities follow the overlap rule: an upstream scene
   overlapping exactly one retired scene keeps that identity, and so the storage
-  scoped to it. The access setting and world settings are copied as for any mirrored
+  scoped to it. The rule is the same as for a publish here: it compares
+  footprints only, not who deployed either scene. The access setting and world settings are copied as for any mirrored
   world, unless the owner set them here and still holds the name. An operator block
   stands.
 - **Local not outdated.** The world is refused as before, and only the scenes the
@@ -42,8 +50,13 @@ deployment to a world name wins, with the whole world compared.
   anything is downloaded. The write decides again on the hash-checked entities, so a
   publish that lands during the download is compared too.
 - **Read-through fills** never replace a local publish.
-- This path writes no local activity record. Superseding is mirror state, not a
-  local deployment.
+- This path writes no local activity record. It records one
+  `world_scenes_undeployment` in the [change feed](2026-11-23-worlds-change-feed.md)
+  for the retired local scenes, in the same transaction: the feed announced their
+  deployment, and the upstream announces only its own scenes.
+- **Place removal.** The explore catalogue then prunes the world's local row. That is
+  not a place removal while the world is mirrored and one of its scene places is
+  active, so no removal is queued and the world's bans and scene admin grants stay.
 
 ## Consequences
 
@@ -58,5 +71,7 @@ deployment to a world name wins, with the whole world compared.
 - A pass row carries the upstream's chain only when it checks. A local publish
   can be replaced by an upstream scene whose signer this node never verified,
   on the upstream's word as for any mirrored world.
+- A local identity that a takeover does not keep is retired as a replacing publish
+  retires one: its storage stays, and its grants no longer resolve to a scene.
 - Every pass reads the `/about` and `/scenes` of each listed world that this node
   keeps local. Entities and files are fetched only when the upstream is newer.

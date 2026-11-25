@@ -360,7 +360,9 @@ A difference not listed here is a gap, not a decision.
   `<PUBLIC_URL>/worlds-content-server`) as its content server and settings
   thumbnails link under it. The timestamp is the database clock after the
   world's row lock, not the time of publication. Mirrored worlds, access
-  allow-list, permission and block changes are not recorded, and a
+  allow-list, permission and block changes are not recorded (a mirror pass
+  records only the `WorldScenesUndeploymentEvent` of the local scenes a newer
+  upstream deployment replaces), and a
   whole-world undeploy records `WorldUndeploymentEvent` only when it removed
   a scene published here (upstream announces every one). A publish forwarded
   to `WORLDS_FORWARD_UPSTREAM_URL` is recorded too: the upstream announces

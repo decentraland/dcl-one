@@ -20,8 +20,11 @@ The node records the events and a relay outside it publishes them.
 - `worlds.change_log` holds, per change made on this node, the upstream
   message body and its message attributes besides type and subType. The
   write path inserts it in the transaction of the change, so a row exists
-  exactly when the change committed. The worlds mirror, peer sync and the TS
-  import never write it: the feed carries only this node's own changes. A
+  exactly when the change committed. The feed carries only this node's own
+  changes: peer sync and the TS import never write it, and the worlds mirror
+  only records the undeployment of the local scenes a newer upstream
+  deployment retires
+  ([last deploy wins](2026-11-23-worlds-mirror-last-deploy-wins.md)). A
   whole-world undeploy is recorded only when it removed a scene published
   here. A publish forwarded upstream is recorded as well: the upstream
   announces its own copy with itself as the content server.
