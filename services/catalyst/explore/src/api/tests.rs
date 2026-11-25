@@ -1937,7 +1937,6 @@ fn land_authz_on(pool: &PgPool) -> Arc<crate::land_authz::LandAuthzState> {
         pool.clone(),
         crate::http::Outbound::for_tests(),
         crate::land_authz::Settings::for_tests(),
-        None,
     ))
 }
 
