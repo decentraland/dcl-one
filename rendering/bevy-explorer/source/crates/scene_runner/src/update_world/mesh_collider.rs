@@ -2143,7 +2143,12 @@ mod tests {
             .is_none());
     }
 
-    use common::dynamics::grounded;
+    use common::dynamics::PLAYER_GROUND_THRESHOLD;
+
+    /// True for feet resting on the ground: within [`PLAYER_GROUND_THRESHOLD`], tighter than landed.
+    fn grounded(ground_height: f32) -> bool {
+        ground_height <= PLAYER_GROUND_THRESHOLD
+    }
 
     /// A floor whose top is y = 0.
     fn floor(colliders: &mut SceneColliderData) {

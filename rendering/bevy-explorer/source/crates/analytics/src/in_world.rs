@@ -5,7 +5,7 @@
 
 use bevy::prelude::*;
 use common::{
-    dynamics::PLAYER_LANDED_THRESHOLD,
+    dynamics::landed,
     structs::{AvatarDynamicState, OutOfWorld, PrimaryUser},
 };
 
@@ -108,7 +108,7 @@ pub fn report_in_world(
     }
 
     let grounded_speed = match player {
-        Some((dynamics, false)) if dynamics.ground_height <= PLAYER_LANDED_THRESHOLD => {
+        Some((dynamics, false)) if landed(dynamics.ground_height) => {
             dynamics.velocity.xz().length()
         }
         _ => 0.0,

@@ -13,14 +13,16 @@ pub const PLAYER_GROUND_THRESHOLD: f32 = 0.05;
 /// count; looser than [`PLAYER_GROUND_THRESHOLD`].
 pub const PLAYER_LANDED_THRESHOLD: f32 = 0.2;
 
+/// True when the feet are within [`PLAYER_LANDED_THRESHOLD`] of the ground: the one test of landed
+/// against airborne for the animation, jump tracking, position broadcast, jump marker and
+/// analytics.
+pub fn landed(ground_height: f32) -> bool {
+    ground_height < PLAYER_LANDED_THRESHOLD
+}
+
 /// True for a contact normal within [`MAX_GROUND_INCLINE`] of up.
 pub fn walkable(normal: DVec3) -> bool {
     normal.y >= f64::from(MAX_GROUND_INCLINE.cos())
-}
-
-/// True when the feet are within [`PLAYER_GROUND_THRESHOLD`] of the ground.
-pub fn grounded(ground_height: f32) -> bool {
-    ground_height <= PLAYER_GROUND_THRESHOLD
 }
 
 pub const PLAYER_COLLIDER_RADIUS: f32 = 0.3;

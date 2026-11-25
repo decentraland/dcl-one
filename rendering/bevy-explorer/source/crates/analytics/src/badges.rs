@@ -9,7 +9,7 @@
 
 use bevy::prelude::*;
 use common::{
-    dynamics::PLAYER_LANDED_THRESHOLD,
+    dynamics::landed,
     structs::{
         AvatarDynamicState, MoveKind, OutOfWorld, PlayerEmoteTriggered, PlayerTeleported,
         PrimaryUser,
@@ -147,7 +147,7 @@ fn footing(dynamics: &AvatarDynamicState) -> Footing {
     if dynamics.own_displacement == Vec3::ZERO {
         return Footing::Standing;
     }
-    let airborne = dynamics.ground_height > PLAYER_LANDED_THRESHOLD
+    let airborne = !landed(dynamics.ground_height)
         || matches!(
             dynamics.move_kind,
             MoveKind::Jump

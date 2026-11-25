@@ -7,10 +7,7 @@ use bevy::{
     prelude::*,
 };
 use common::{
-    dynamics::{
-        PLAYER_COLLIDER_OVERLAP, PLAYER_COLLIDER_RADIUS, PLAYER_GROUND_THRESHOLD,
-        PLAYER_LANDED_THRESHOLD,
-    },
+    dynamics::{landed, PLAYER_COLLIDER_OVERLAP, PLAYER_COLLIDER_RADIUS, PLAYER_GROUND_THRESHOLD},
     inputs::MOVE_SET,
     movement_clip::ClipMotion,
     sets::{PostUpdateSets, SceneLoopSets, SceneSets},
@@ -889,14 +886,13 @@ impl JumpCue {
 /// Record the take-off time of a jump. While a scene drives the player's animation, the clip a jump
 /// starts with marks it, so walking up a step is no jump and a jump of any height is one.
 /// Otherwise the player takes off when it rises off the ground, or starts rising again in the air
-/// (an air jump): off the ground is past [`PLAYER_LANDED_THRESHOLD`], where
-/// [`end_jump_on_landing`] stops.
+/// (an air jump): off the ground is not [`landed`], where [`end_jump_on_landing`] stops.
 fn start_jump_on_take_off(dynamic_state: &mut AvatarDynamicState, cue: JumpCue, now: f64) {
     let take_off = match cue {
         JumpCue::Clip { starts, .. } => starts,
         JumpCue::Rise { rose } => {
             let rising = dynamic_state.velocity.y > 0.0;
-            let airborne = dynamic_state.ground_height >= PLAYER_LANDED_THRESHOLD;
+            let airborne = !landed(dynamic_state.ground_height);
             rising && airborne && (dynamic_state.jump_time <= 0.0 || !rose)
         }
     };
@@ -911,10 +907,7 @@ fn start_jump_on_take_off(dynamic_state: &mut AvatarDynamicState, cue: JumpCue, 
 /// can start before the feet leave the ground.
 fn end_jump_on_landing(dynamic_state: &mut AvatarDynamicState, cue: JumpCue) {
     let jump_clip = matches!(cue, JumpCue::Clip { in_jump: true, .. });
-    if !jump_clip
-        && dynamic_state.ground_height < PLAYER_LANDED_THRESHOLD
-        && dynamic_state.velocity.y <= 0.0
-    {
+    if !jump_clip && landed(dynamic_state.ground_height) && dynamic_state.velocity.y <= 0.0 {
         dynamic_state.jump_time = -1.0;
     }
 }

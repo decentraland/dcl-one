@@ -24,7 +24,7 @@ use collectibles::{
 #[cfg(feature = "explorer")]
 use common::rpc::{RpcCall, RpcCallEvent, RpcEventSender, RpcOrigin};
 use common::{
-    dynamics::PLAYER_LANDED_THRESHOLD,
+    dynamics::landed,
     sets::SceneSets,
     structs::{
         AudioEmitter, AudioType, AvatarDynamicState, Clips, EmoteCommand, EmoteLifecycle,
@@ -920,7 +920,7 @@ fn animate(
                     },
                     MoveKind::Glide,
                 )
-            } else if dynamic_state.ground_height > PLAYER_LANDED_THRESHOLD
+            } else if !landed(dynamic_state.ground_height)
                 || (dynamic_state.velocity.y > 0.0 && just_jumped)
             {
                 let move_kind = if just_jumped {

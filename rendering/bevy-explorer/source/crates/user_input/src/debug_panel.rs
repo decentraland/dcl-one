@@ -1,7 +1,7 @@
 use bevy::prelude::*;
 use bevy_console::ConsoleCommand;
 use common::{
-    dynamics::PLAYER_LANDED_THRESHOLD,
+    dynamics::landed,
     structs::{AvatarDynamicState, PrimaryCamera, PrimaryUser},
 };
 use console::{AddDebugSection, DebugInput, DebugInputKind, DebugSection, DoAddConsoleCommand};
@@ -148,7 +148,7 @@ fn movement_state(
         "doubleJump":loc.and_then(|s| s.double_jump_height), "landing":loc.and_then(|s| s.hard_landing_cooldown),
         "requested":requested.map(vector), "actual":actual.map(vector),
         "external":step.external_velocity.map(vector),
-        "grounded":ground_height.map(|height| height < PLAYER_LANDED_THRESHOLD),
+        "grounded":ground_height.map(landed),
         "groundHeight":ground_height,
         "unavailable":{
             "grounded":"No player movement state.",
@@ -167,7 +167,7 @@ mod tests {
     use super::*;
     use crate::avatar_movement::{AvatarMovement, AvatarMovementInfo, FromConfig};
     use bevy_console::{ConsoleCommandEntered, PrintConsoleLine};
-    use common::structs::AvatarDynamicState;
+    use common::{dynamics::PLAYER_LANDED_THRESHOLD, structs::AvatarDynamicState};
     use std::sync::{mpsc, Arc};
 
     #[test]

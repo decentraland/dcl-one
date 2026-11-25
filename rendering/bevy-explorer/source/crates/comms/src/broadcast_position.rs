@@ -1,7 +1,7 @@
 use bevy::prelude::*;
 
 use common::{
-    dynamics::PLAYER_LANDED_THRESHOLD,
+    dynamics::landed,
     movement_clip::ClipMotion,
     structs::{
         AvatarDynamicState, HeadSync, LocomotionSpeeds, MoveKind, PointAtSync, PrimaryUser,
@@ -121,7 +121,7 @@ fn broadcast_position(
 
     // the jump count updates every frame, before the send pacing, so that a jump clip shorter than
     // the broadcast interval still counts
-    let grounded = dynamics.ground_height < PLAYER_LANDED_THRESHOLD;
+    let grounded = landed(dynamics.ground_height);
     let motion = match scene_anim.and_then(|s| s.active.as_ref()) {
         Some(anim) => ClipMotion::of_clip(&anim.src, anim.speed),
         None => ClipMotion::of_move_kind(dynamics.move_kind),
