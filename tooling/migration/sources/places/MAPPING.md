@@ -73,7 +73,7 @@ which then count twice with the imported facts. Rows upstream does not list
   `world_deployment_position_watermarks` (upstream ingestion state), `users`
   (admins come from `PLACES_ADMIN_ADDRESSES`), and the `content_ratings`
   history.
-- `explore.moderators` is written by the events import (events moderators).
+- `explore.moderators` (events moderators) is seeded by `catalyst explore moderators-add`, not by an import.
   Upstream places has no report table, so `explore.place_reports` gets nothing.
 
 ## Left to the node

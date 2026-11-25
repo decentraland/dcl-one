@@ -67,6 +67,19 @@ A signed owner soft-deletes their event (`deleted_by_user`, `deleted_by` the wal
 
 With `EVENTS_MIRROR_UPSTREAM=true` the `events-mirror` job copies the old events service's catalogue from `EVENTS_UPSTREAM_URL` every `EVENTS_MIRROR_INTERVAL_SECS`; rows it writes carry `origin = 'upstream'`, and an owner's edit or delete of such a row answers 409 naming the upstream (the admin's moderation, the admin's delete and RSVPs are local rows on it). The cut-over is an explicit opt-in once the old service stops writing: a start with `EVENTS_MIRROR_UPSTREAM=false` and `EVENTS_MIRROR_ADOPT=true` adopts every row the mirror wrote as `origin = 'local'` (`events/mirror.rs`, `adopt_upstream`), once per database: `explore.mirror_state.adopted_at` records it, so a later start changes nothing with or without the flag, and it runs as the `events-mirror` job under that job's lease, so a replica still mirroring finishes first and the rows it wrote are the ones adopted. After it their owners edit and delete them and their RSVPs and moderation rows stay (`docs/adr/2026-11-05-explore-api-parity-contract.md`, "Deployment posture kept"). The adoption is one-way: a mirror turned on again skips the adopted rows as local and reports their ids as collisions.
 
+### Events moderators
+
+The old service's admins were its `ADMIN_ADDRESSES` setting, not a table, so neither the mirror nor the import (`tooling/migration`) brings them. Until `explore.moderators` holds them, they answer 403 on schedules and other profiles' settings and see no pending events. Seed it at the cut-over, before the node takes the events traffic, with the old service's value as it was:
+
+```sh
+catalyst explore moderators-add --addresses "<old ADMIN_ADDRESSES value>" --added-by 0x<operator wallet>
+catalyst explore moderators-list
+```
+
+Take the value from the old events service's configuration, not from the node's environment: the node's own `ADMIN_ADDRESSES` lists the operator console's wallets, which is a different list. The command needs `DATABASE_URL` and works while `serve` is stopped. `--addresses` is comma-separated, as upstream read it: empty entries are skipped, and an entry that is not exactly a wallet address (`0x` and 40 hex digits, no surrounding spaces) refuses the whole list and writes nothing, naming the entries, where upstream ignored them. Addresses are stored lowercase. A wallet already listed keeps its row, so a re-run adds nothing. It prints `requested`, `changed` (the wallets added) and `unchanged`, and each added wallet gets an `explore`/`events.moderator.add` audit row by `cli:<operator wallet>`. `catalyst explore moderators-remove --addresses ... --actor 0x<operator wallet>` removes moderators the same way.
+
+Later changes go through the operator console ("Explorer overlays" card, "Events moderator" form): `/admin/api/events/moderator-add` and `/admin/api/events/moderator-remove` take `{address}` and need `OPS_WRITES_ENABLED`; `/admin/api/events/moderators-list` is open with writes off. Each call is audited as the signed-in wallet, which is also the row's `added_by`. The gate reads the table on every request, so a change applies on the next request.
+
 ## Background jobs and notifications
 
 The old events service ran four cron jobs (`Event/cron.ts`) and posted Slack notices inline (`Slack/utils.ts`). This node runs them as leased periodic jobs over the same database; the texts, links and audiences are the old service's, the delivery is durable.
