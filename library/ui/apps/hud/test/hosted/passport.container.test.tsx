@@ -9,6 +9,7 @@ import { setPublicReelFetcher } from '../../features/gallery/publicReels'
 import { PopupHost, closeTopPopup, resetPopups } from '../../design'
 import type { EngineSession } from '../../features/session/useEngineSession'
 import type { Profile } from '@explorer-core/engine/protocol'
+import { pending } from '@explorer-core/lib/analytics'
 import passportStyles from '../../features/profile/ProfilePassport.module.css'
 
 // COMPONENT: the smart <Passport userId> fetches the rich profile on open, renders identity-only from
@@ -110,6 +111,96 @@ describe('Jump In from a passport photo', () => {
     expect(s.map.teleportToPlace).toHaveBeenCalledWith(-9, 14)
     expect(onClose).toHaveBeenCalledTimes(closes)
     expect(screen.queryAllByRole('dialog', { name: 'Photo' })).toHaveLength(1 - closes)
+  })
+})
+
+// The node's social butterfly badge counts the other players' passports opened; one's own is
+// reported apart.
+describe('Passport analytics', () => {
+  const ME: Profile = { ...RICH, address: '0xme', name: 'Me' }
+  const opened = (from: number): unknown[] =>
+    pending()
+      .slice(from)
+      .filter((e) => e.event === 'passport_opened' || e.event === 'profile_opened')
+      .map((e) => [e.event, e.properties.receiver_id])
+  const signedIn = (s: EngineSession): void => {
+    s.profile = fakeProfileState({ data: ME })
+  }
+
+  it('reports passport_opened with the receiver for another player', async () => {
+    receiveProfile('0xabc', RICH)
+    const from = pending().length
+    await renderWithSession(<Passport userId="0xabc" onClose={vi.fn()} />, signedIn)
+    expect(opened(from)).toEqual([['passport_opened', '0xabc']])
+  })
+
+  it('reports profile_opened, not passport_opened, for your own', async () => {
+    receiveProfile('0xme', ME)
+    const from = pending().length
+    await renderWithSession(<Passport userId="0xme" onClose={vi.fn()} />, signedIn)
+    expect(opened(from)).toEqual([['profile_opened', '0xme']])
+  })
+
+  it('waits for your own profile, so your own passport opened early is still profile_opened', async () => {
+    receiveProfile('0xme', ME)
+    const from = pending().length
+    const s = fakeSession()
+    const view = await renderSettled(
+      <SessionProvider value={s}>
+        <Passport userId="0xme" onClose={vi.fn()} />
+      </SessionProvider>
+    )
+    expect(opened(from)).toEqual([])
+    const loaded = { ...s, profile: fakeProfileState({ data: ME }) }
+    await act(async () => {
+      view.rerender(
+        <SessionProvider value={loaded}>
+          <Passport userId="0xme" onClose={vi.fn()} />
+        </SessionProvider>
+      )
+    })
+    expect(opened(from)).toEqual([['profile_opened', '0xme']])
+  })
+
+  it('waits for your own profile before reporting another player\'s passport opened early', async () => {
+    receiveProfile('0xabc', RICH)
+    const from = pending().length
+    const s = fakeSession()
+    const view = await renderSettled(
+      <SessionProvider value={s}>
+        <Passport userId="0xabc" onClose={vi.fn()} />
+      </SessionProvider>
+    )
+    expect(opened(from)).toEqual([])
+    const loaded = { ...s, profile: fakeProfileState({ data: ME }) }
+    await act(async () => {
+      view.rerender(
+        <SessionProvider value={loaded}>
+          <Passport userId="0xabc" onClose={vi.fn()} />
+        </SessionProvider>
+      )
+    })
+    expect(opened(from)).toEqual([['passport_opened', '0xabc']])
+  })
+
+  it('reports the same player once when the address changes case', async () => {
+    receiveProfile('0xabc', RICH)
+    const from = pending().length
+    const s = fakeSession()
+    signedIn(s)
+    const view = await renderSettled(
+      <SessionProvider value={s}>
+        <Passport userId="0xabc" onClose={vi.fn()} />
+      </SessionProvider>
+    )
+    await act(async () => {
+      view.rerender(
+        <SessionProvider value={s}>
+          <Passport userId="0xABC" onClose={vi.fn()} />
+        </SessionProvider>
+      )
+    })
+    expect(opened(from)).toEqual([['passport_opened', '0xabc']])
   })
 })
 

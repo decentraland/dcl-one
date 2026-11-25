@@ -19,6 +19,7 @@ use serde_json::{Value, json};
 use sqlx::postgres::PgRow;
 use sqlx::{PgConnection, Row};
 
+use crate::chain_index::names::{NamesError, Purpose};
 use crate::land_authz::{LandNetwork, land_network};
 use crate::shared::http_util::{fetcher_error, lambdas_internal_error};
 use crate::shared::query_params::{
@@ -26,9 +27,8 @@ use crate::shared::query_params::{
     parse_pagination_with, parse_query_string,
 };
 
-use super::chain_walk::{ChainNet, INDEXER_NFT, cursor, is_ready, ready_cursor};
+use super::chain_walk::{ChainNet, INDEXER_NFT, cursor, is_ready};
 use super::graph::{self, OwnedLand};
-use super::nft_index::DCL_REGISTRAR;
 use super::nft_reads::land_snapshot;
 use super::{SharedState, Source, bad_request, unavailable};
 
@@ -61,12 +61,6 @@ fn land_index_unavailable() -> Response {
         Source::LandAuthzIndex,
         "LAND ownership reads the land-authz index, which is not published yet",
     )
-}
-
-async fn nft_index_ready(pool: &sqlx::PgPool) -> bool {
-    ready_cursor(pool, INDEXER_NFT, ChainNet::Ethereum, Utc::now())
-        .await
-        .is_some()
 }
 
 /// [`nft_index_ready`] on the caller's connection: the land snapshot a
@@ -284,8 +278,8 @@ pub async fn user_lands(
                 name: r.get("name"),
                 x: r.get("x"),
                 y: r.get("y"),
-                // `parse_land_data` stores an empty and a missing
-                // description alike (NULL), so a data record answers `""`.
+                // For parcels, parse_land_data stores empty and missing
+                // descriptions as NULL; has_data makes that answer an empty string.
                 description: r.get::<bool, _>("has_data").then(|| {
                     Some(
                         r.get::<Option<String>, _>("description")
@@ -405,14 +399,13 @@ pub async fn user_genesis_parcels(
 }
 
 /// `GET /lambdas/names/{name}/owner`: the holder of the DCL name (`.dcl.eth`
-/// optional), matched case-insensitively; 404 when nobody holds it.
+/// optional), matched case-insensitively, from the node's NAME source as a
+/// display read; 404 when nobody holds it.
 pub async fn name_owner(State(state): State<SharedState>, Path(name): Path<String>) -> Response {
-    // Preserve the public route's existing fallback posture on cursor faults.
-    let ready = nft_index_ready(&state.pool).await;
-    match read_name_owner(&state, &name, ready).await {
+    match read_name_owner(&state, &name, Purpose::Display).await {
         Ok(Some(owner)) => Json(json!({"owner":owner.as_str()})).into_response(),
         Ok(None) => StatusCode::NOT_FOUND.into_response(),
-        Err(NameOwnerError::Unavailable(source, message)) => unavailable(source, message),
+        Err(NameOwnerError::Unavailable(source, message)) => unavailable(source, &message),
         Err(NameOwnerError::Fetcher(name)) => fetcher_error(&name),
         Err(NameOwnerError::Store(error)) => {
             tracing::error!(%error, "name owner query failed");
@@ -422,78 +415,62 @@ pub async fn name_owner(State(state): State<SharedState>, Path(name): Path<Strin
 }
 
 enum NameOwnerError {
-    Unavailable(Source, &'static str),
-    /// The marketplace subgraph failed for this (normalized) name: lamb2's 502.
+    /// The source cannot answer for this purpose now.
+    Unavailable(Source, String),
+    /// The NAME source failed for this (normalized) name: lamb2's 502.
     Fetcher(String),
     Store(String),
 }
 
-/// One source-complete owner lookup shared by the public lambdas route and
-/// comms. Shop retains ownership of its NFT SQL and source selection.
+/// One owner lookup through the node's NAME source, shared by the public
+/// lambdas route (a display read) and comms' Admin Toolkit (an
+/// authorization: it picks the target of a moderation write). The index
+/// reads a published database whether or not this process walks it.
 async fn read_name_owner(
     state: &super::MarketplaceState,
     name: &str,
-    ready: bool,
+    purpose: Purpose,
 ) -> Result<Option<crate::shared::identity::Address>, NameOwnerError> {
     let normalized = name.trim().to_lowercase();
     let dcl_name = normalized.strip_suffix(".dcl.eth").unwrap_or(&normalized);
-    if !ready {
-        if state.settings.marketplace_subgraph_url.is_none() {
-            return Err(NameOwnerError::Unavailable(
-                Source::NftIndex,
-                "DCL names read the ethereum nft index, which is not published yet",
-            ));
+    let source = state.name_source();
+    let authority = state
+        .names()
+        .map_err(|e| NameOwnerError::Unavailable(source, e.to_string()))?;
+    match authority.name_owner(dcl_name, purpose).await {
+        Ok(answer) => answer
+            .value
+            .map(|owner| {
+                crate::shared::identity::Address::parse(&owner)
+                    .map_err(|error| NameOwnerError::Store(error.to_string()))
+            })
+            .transpose(),
+        Err(NamesError::NotEstablished(message)) => {
+            Err(NameOwnerError::Unavailable(source, message))
         }
-        return match graph::name_owner(&state.index, dcl_name).await {
-            Ok(Some(owner)) => crate::shared::identity::Address::parse(&owner)
-                .map(Some)
-                .map_err(|error| NameOwnerError::Store(error.to_string())),
-            Ok(None) => Ok(None),
-            Err(e) => {
-                tracing::warn!(name = %dcl_name, error = %e, "marketplace names reader failed");
-                Err(NameOwnerError::Fetcher(dcl_name.to_string()))
-            }
-        };
-    }
-    let owner: Result<Option<String>, sqlx::Error> = sqlx::query_scalar(
-        "SELECT n.owner FROM shop.nft n \
-         WHERE lower(n.ens_subdomain) = lower($1) AND n.ens_subdomain IS NOT NULL \
-           AND n.network = 'ethereum' AND n.contract_address = $2 AND n.owner IS NOT NULL \
-         ORDER BY n.token_id LIMIT 1",
-    )
-    .bind(dcl_name)
-    .bind(DCL_REGISTRAR)
-    .fetch_optional(&state.pool)
-    .await
-    .map(Option::flatten);
-    match owner {
-        Ok(Some(owner)) if !owner.is_empty() => crate::shared::identity::Address::parse(&owner)
-            .map(Some)
-            .map_err(|error| NameOwnerError::Store(error.to_string())),
-        Ok(_) => Ok(None),
-        Err(error) => Err(NameOwnerError::Store(error.to_string())),
+        // A failed read, of either source, is lamb2's 502 for the name.
+        Err(NamesError::Failed(e)) => {
+            tracing::warn!(name = %dcl_name, error = %e, "DCL NAME source failed");
+            Err(NameOwnerError::Fetcher(dcl_name.to_string()))
+        }
     }
 }
 
 impl super::MarketplaceState {
     /// The owner of `name` as the gatekeeper's Admin Toolkit asks it (`serve`
-    /// hands it to comms as its `NameOwnerReader`).
+    /// hands it to comms as its `NameOwnerReader`): an authorization, so the
+    /// index must be current, and an unavailable source is an error, never a
+    /// verified absence.
     pub async fn name_owner(
         &self,
         name: &str,
     ) -> Result<Option<crate::shared::identity::Address>, String> {
-        // A moderation write cannot infer an absent/unready source from a
-        // failed readiness read, even when a subgraph fallback is configured.
-        let ready = super::chain_walk::cursor(&self.pool, INDEXER_NFT, ChainNet::Ethereum)
-            .await
-            .map_err(|error| error.to_string())?
-            .is_some_and(|cursor| super::chain_walk::is_ready(&cursor, Utc::now()));
-        read_name_owner(self, name, ready)
+        read_name_owner(self, name, Purpose::Authorize)
             .await
             .map_err(|error| match error {
-                NameOwnerError::Unavailable(_, message) => message.to_string(),
+                NameOwnerError::Unavailable(_, message) => message,
                 NameOwnerError::Fetcher(name) => {
-                    format!("the marketplace names reader did not answer for {name}")
+                    format!("the DCL NAME source did not answer for {name}")
                 }
                 NameOwnerError::Store(error) => error,
             })

@@ -23,7 +23,10 @@ with active pointers. Resolve world UUIDs through the active
 `explore.world_scene_place` association and its `worlds.world_scenes` row.
 Effective bases come from the target's `social.scene_base_parcel`, the SQL copy
 of the resolver's rules: the canonical declared base when it belongs to the
-footprint, otherwise the numerically first valid parcel.
+footprint, otherwise the numerically first valid parcel. A Genesis scene's
+declared base is read where content stores it, at `entity_metadata` `v`
+(`{v,scene,base}`), for admins and bans alike; a world scene's at `entity`
+`{metadata,scene,base}`.
 
 Both moderation steps read the complete source set in one transaction, so
 aliases of one target identity cannot land in separate batches and overwrite
@@ -50,6 +53,8 @@ metadata) nor player reports, so `social.user_settings` and
 Native `scene_stream_access.admin_place_key` is preserved on re-import. New
 imports leave it NULL because the source does not establish an exact bound
 scene namespace; unresolved cleanup resolves current applicable authority.
+The table's insert guard (`scene_stream_access_scene_place`) checks only rows
+with `admin_place_key` set, so imported rows pass it.
 
 New cleanup intents initialize `notification_started=false`. Re-import keeps
 native delivery decisions, recipient snapshots and cursor progress unchanged.

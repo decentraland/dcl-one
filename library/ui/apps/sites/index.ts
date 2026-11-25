@@ -208,7 +208,9 @@ export {
   CommunityPrivateNotice,
   CommunitySections
 } from './social/CommunityDetail'
+export { default as CommunityCreate, type CommunityCreateInput } from './social/CommunityCreate'
 export { CommunityError } from './social/CommunityError'
+export { default as LdCreateCommunityView } from './social/LdCreateCommunityView'
 export {
   CommunityEventsList,
   type CommunityListMore,

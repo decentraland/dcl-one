@@ -6,7 +6,7 @@ import { useInfiniteQuery, useQuery } from "@tanstack/react-query";
 import { lazy, Suspense, useEffect, useMemo, useState, type ReactNode } from "react";
 import { Link, useNavigate, useSearchParams } from "react-router";
 
-import Button from "../../../atoms/Button";
+import { Button } from "@dcl/one-ui";
 import EmptyState from "../../../components/EmptyState";
 import BrowseLayout from "../../discovery/components/BrowseLayout";
 import FilterBar, { type SortOption } from "../../discovery/components/FilterBar";
@@ -202,7 +202,7 @@ function OwnedGrid({
       </div>
       {query.hasNextPage ? (
         <div className="mk-more">
-          <Button variant="secondary" disabled={query.isFetchingNextPage} onClick={() => void query.fetchNextPage()}>
+          <Button size="md" variant="secondary" disabled={query.isFetchingNextPage} onClick={() => void query.fetchNextPage()}>
             {query.isFetchingNextPage ? "Loading…" : "Load more"}
           </Button>
         </div>

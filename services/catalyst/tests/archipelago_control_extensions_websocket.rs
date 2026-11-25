@@ -161,7 +161,6 @@ impl Server {
             state.clone(),
             true,
             Default::default(),
-            catalyst::comms::stats::http::test_support::matcher(),
             std::sync::Arc::new(catalyst::content::Denylist::default()),
         )
         .stats;
