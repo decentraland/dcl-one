@@ -663,7 +663,7 @@ pub struct MarketplaceState {
     pub(crate) trades_ready: TtlMap<(), Option<chrono::NaiveDateTime>>,
     /// The upstream trades list of the pass in progress, held between ticks
     /// so a pass that spans several ticks downloads it once (`trades::PassList`).
-    pub(crate) trades_list: std::sync::Mutex<Option<Arc<trades::PassList>>>,
+    pub(crate) trades_list: parking_lot::Mutex<Option<Arc<trades::PassList>>>,
     /// Catalog pages and totals (`MARKETPLACE_CATALOG_CACHE_TTL_SECS`).
     pub(crate) catalog_cache: catalog::Cache,
     /// The lambdas catalogue's memo (`lambdas_catalog`).
@@ -756,7 +756,7 @@ impl MarketplaceState {
             sales_pages_slots: tokio::sync::Semaphore::new(4),
             mirror_ready: TtlMap::bounded(mirrors::READY_TTL, 8),
             trades_ready: TtlMap::bounded(mirrors::READY_TTL, 1),
-            trades_list: std::sync::Mutex::new(None),
+            trades_list: parking_lot::Mutex::new(None),
             catalog_cache: catalog::Cache::new(settings.market.catalog_cache_ttl),
             lambdas: lambdas_catalog::Caches::default(),
             third_party: third_party::Caches::default(),

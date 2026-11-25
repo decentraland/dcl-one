@@ -2064,7 +2064,7 @@ async fn a_whole_list_upstream_is_walked_every_tick_within_the_detail_budget() {
     assert!(!m.in_progress() && m.completed_at.is_some());
     assert_eq!(mirrored_count(pool, &upstream).await, 205);
     assert!(
-        state.trades_list.lock().unwrap().is_none(),
+        state.trades_list.lock().is_none(),
         "a complete pass holds nothing"
     );
     visible.trades_ready.clear();

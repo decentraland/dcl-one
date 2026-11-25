@@ -768,16 +768,13 @@ fn held_list(state: &MarketplaceState, pass: i64, upstream: &str) -> Option<Arc<
     state
         .trades_list
         .lock()
-        .ok()?
         .as_ref()
         .filter(|l| l.matches(pass, upstream))
         .cloned()
 }
 
 fn hold_list(state: &MarketplaceState, list: Option<Arc<PassList>>) {
-    if let Ok(mut slot) = state.trades_list.lock() {
-        *slot = list;
-    }
+    *state.trades_list.lock() = list;
 }
 
 fn detail_url(base: &str, id: &str) -> String {
