@@ -4714,9 +4714,13 @@ Invariants:
   deletes the network's orders and refolds them whole, in the nft fold's
   transaction, so no order of a lost branch survives. This binary's rewind
   lowers the block to its target and clears the hash.
-- A reader serves the book only while it stands and its block reaches the
-  published nft fold (`folded_block`), checked on the read's snapshot;
-  otherwise the `nft-index` envelope.
+- A reader serves the book only while it stands and its block, written in
+  the nft fold's transaction, is the published nft fold (`folded_block`),
+  checked on the read's snapshot; otherwise the `nft-index` envelope. The
+  walk publishes a fold only after it commits and reads the head, so between
+  the two the rows hold an unpublished fold: a read then answers the
+  envelope rather than rows past the published block. A walk that advanced
+  without folding leaves the book at the published block, still read.
 - A database that predates the table fills it in the schema run that creates
   it. The seed statements after each `CREATE TABLE` (follow-ups, so they run
   only then) record each network's nft `fold_through` and its recovery

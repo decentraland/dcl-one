@@ -74,7 +74,11 @@ behind past the kept points loses its point. A book whose point no longer
 carries its hash does not stand: no reader serves it, and the next fold
 deletes the network's orders and refolds them whole, as every rebuild does,
 so no order of a lost branch survives. A reader serves the book only while
-it stands and its block reaches the published nft fold. A database that
+it stands and its block, written in the fold's transaction, is the published
+nft fold's: between a fold's commit and its publication (which waits on the
+walk's head reads and can stall) the rows already hold an unpublished fold,
+and the read answers the envelope; a walk that advanced without folding
+leaves the book at the published block, still read. A database that
 predates the table fills it in the schema run that creates it: the fold's
 rules over every token, bounded by what the nft fold had folded
 (`fold_through`), which becomes the book's marker with its recovery point's
