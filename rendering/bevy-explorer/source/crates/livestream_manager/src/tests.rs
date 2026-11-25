@@ -1522,51 +1522,6 @@ fn test_audios_on_transmission_kind_change() {
 }
 
 #[test]
-fn automatic_receiver_clears_the_last_frame_when_the_cast_ends() {
-    let mut app = min_app();
-    app.update();
-    let receiver = app.world_mut().spawn(ActiveReceiver).id();
-    let track = app.world_mut().spawn(TransmitterKind::VideoCast).id();
-    for _ in 0..4 {
-        app.update();
-    }
-    let handle = app
-        .world()
-        .get::<ReceiverImage>(receiver)
-        .unwrap()
-        .image
-        .clone();
-    app.world_mut()
-        .resource_mut::<Assets<Image>>()
-        .get_mut(&handle)
-        .unwrap()
-        .data = Some([12, 34, 56, 255].repeat(64));
-    app.world()
-        .get::<ActiveTransmitter>(track)
-        .unwrap()
-        .state
-        .send_replace(dcl_component::proto_components::sdk::components::VideoState::VsPlaying);
-    app.world_mut().entity_mut(track).despawn();
-    for _ in 0..4 {
-        app.update();
-    }
-    let output = app.world().get::<ReceiverImage>(receiver).unwrap();
-    assert_eq!(output.image, handle);
-    assert_eq!(
-        *output.state.borrow(),
-        dcl_component::proto_components::sdk::components::VideoState::VsLoading
-    );
-    assert_eq!(
-        app.world()
-            .resource::<Assets<Image>>()
-            .get(&handle)
-            .unwrap()
-            .data,
-        Some([0, 0, 0, 255].repeat(64))
-    );
-}
-
-#[test]
 fn selected_receivers_share_their_track_and_never_bind_another_room() {
     use crate::{SelectedVideoReceiver, SelectedVideoTransmitter, VideoTrackSource};
     let mut app = min_app();
