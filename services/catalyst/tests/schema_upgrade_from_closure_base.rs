@@ -82,7 +82,6 @@ fn expected_pending_steps() -> Vec<&'static str> {
             "0064_shop_sale_accounting",
             "0067_rental_asset_membership_block",
             "0069_shop_trade_digest",
-            "0071_shop_sales_read_indexes",
         ])
         .collect()
 }
