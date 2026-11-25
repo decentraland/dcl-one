@@ -152,7 +152,8 @@ pub struct Settings {
     pub meta_tx_broadcast_enabled: bool,
     /// `RELAYER_PRIVATE_KEY` via `RELAYER_PRIVATE_KEY_FILE`: the relayer EOA's key.
     pub relayer_private_key: Option<String>,
-    /// `TRANSACTIONS_UPSTREAM_URL`, `TRANSACTIONS_UPSTREAM_TIMEOUT_MS` (30000): the forward fallback.
+    /// `TRANSACTIONS_UPSTREAM_URL`, `TRANSACTIONS_UPSTREAM_TIMEOUT_MS` (30000): the forward fallback
+    /// of a testnet relay; a Polygon mainnet relay refuses to start with it ([`Settings::validate`]).
     pub transactions_upstream_url: Option<String>,
     pub transactions_upstream_timeout: Duration,
     /// `CATALYRST_ECONOMY_ADMIN_TOKEN` (`_FILE`): the bearer of the money routes; unset refuses them.
@@ -356,7 +357,20 @@ impl Settings {
     /// (the guard refuses anything else at send time too; this names the
     /// variable at startup instead of at the first relay). `ETH_RPC_URL`
     /// is checked by `Config::eth_rpc_url()` already. Values are never echoed.
+    ///
+    /// A relay on Polygon mainnet (`COLLECTIONS_CHAIN_ID=137`) signs with a
+    /// relayer of its own or relays nothing: it refuses to start with
+    /// `TRANSACTIONS_UPSTREAM_URL`, so it never depends on the upstream
+    /// transactions API that is being retired. A testnet relay may still
+    /// forward there (the testnet development profile does).
     pub fn validate(&self) -> anyhow::Result<()> {
+        if self.collections_chain_id == POLYGON_MAINNET
+            && Self::has(&self.transactions_upstream_url)
+        {
+            anyhow::bail!(
+                "TRANSACTIONS_UPSTREAM_URL is set on a Polygon mainnet relay (COLLECTIONS_CHAIN_ID=137), which does not forward to an upstream transactions API: unset it and provision a relayer, either OZ_RELAYER_URL, OZ_RELAYER_ID and OZ_RELAYER_API_KEY, or META_TX_BROADCAST_ENABLED=true with RELAYER_PRIVATE_KEY_FILE and RPC_ENDPOINT_POLYGON"
+            );
+        }
         for (var, value) in [
             ("RPC_ENDPOINT_POLYGON", &self.polygon_rpc_url),
             ("CONTRACT_ADDRESSES_URL", &self.contract_addresses_url),
@@ -391,6 +405,9 @@ impl Settings {
         Ok(())
     }
 }
+
+/// The chain of a mainnet relay (`COLLECTIONS_CHAIN_ID`).
+const POLYGON_MAINNET: u64 = 137;
 
 pub struct State {
     pub pool: PgPool,
@@ -700,7 +717,10 @@ mod schema_tests {
 
     #[test]
     fn relay_mode_prefers_local_providers_and_validate_names_the_variable() {
-        let mut s = Settings::defaults();
+        let mut s = Settings {
+            collections_chain_id: 80_002,
+            ..Settings::defaults()
+        };
         assert_eq!(s.relay_mode(), "none");
         assert!(!s.can_relay());
         s.transactions_upstream_url = Some("https://transactions-api.decentraland.org".into());
@@ -727,5 +747,50 @@ mod schema_tests {
             err.contains("RPC_ENDPOINT_POLYGON") && !err.contains("127.0.0.1"),
             "{err}"
         );
+    }
+
+    /// A Polygon mainnet relay never forwards to the upstream transactions
+    /// API: the setting refuses the start, naming the variable and the
+    /// signers to provision instead, whatever else is provisioned. A
+    /// testnet relay may forward.
+    #[test]
+    fn a_polygon_mainnet_relay_refuses_the_upstream_forward() {
+        let upstream = Some("https://transactions-api.example/SECRET".to_string());
+        let mainnet = Settings {
+            transactions_upstream_url: upstream.clone(),
+            ..Settings::defaults()
+        };
+        assert_eq!(mainnet.collections_chain_id, 137);
+        let err = mainnet.validate().unwrap_err().to_string();
+        assert!(
+            err.contains("TRANSACTIONS_UPSTREAM_URL")
+                && err.contains("OZ_RELAYER_URL")
+                && err.contains("RELAYER_PRIVATE_KEY_FILE")
+                && !err.contains("SECRET"),
+            "{err}"
+        );
+        let with_signer = Settings {
+            meta_tx_broadcast_enabled: true,
+            relayer_private_key: Some("00".repeat(32)),
+            polygon_rpc_url: Some("https://polygon-rpc.example".into()),
+            ..mainnet
+        };
+        assert!(
+            with_signer.validate().is_err(),
+            "a signer of its own does not make the forward acceptable"
+        );
+        let signer_only = Settings {
+            transactions_upstream_url: None,
+            ..with_signer
+        };
+        assert!(signer_only.validate().is_ok());
+        assert_eq!(signer_only.relay_mode(), "direct");
+        let testnet = Settings {
+            collections_chain_id: 80_002,
+            transactions_upstream_url: upstream,
+            ..Settings::defaults()
+        };
+        assert!(testnet.validate().is_ok());
+        assert_eq!(testnet.relay_mode(), "upstream");
     }
 }
