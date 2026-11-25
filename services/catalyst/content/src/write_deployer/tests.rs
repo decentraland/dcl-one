@@ -2103,3 +2103,19 @@ async fn a_scene_published_past_the_request_ttl_asks_its_contract_wallet_at_late
     assert!(asked > 0, "the wallet is asked at the entity-time block");
     let _ = std::fs::remove_dir_all(tmp);
 }
+
+/// A contract-wallet check the client source's budget refused is undecided
+/// (the retryable 503 with `Retry-After`), never a rejection of the signature.
+#[test]
+fn a_rate_limited_contract_check_is_unverifiable_not_rejected() {
+    assert!(matches!(
+        signature_verdict(Err(AuthError::Eip1654RateLimited)),
+        Err(DeployFailure::Unverifiable(_))
+    ));
+    assert!(matches!(
+        signature_verdict(Err(AuthError::Eip1654Rejected {
+            contract: "0x00000000000000000000000000000000000c0de1".into(),
+        })),
+        Err(DeployFailure::Rejected(RejectionKind::Validation, _))
+    ));
+}

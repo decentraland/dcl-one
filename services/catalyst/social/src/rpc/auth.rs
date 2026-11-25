@@ -34,6 +34,9 @@ impl SocketAuthError {
     pub(super) fn rejection_labels(&self) -> (&'static str, &'static str) {
         if self.is_unavailable() {
             ("unavailable", "server_error")
+        } else if matches!(self, Self::Refused(RequestAuthError::RateLimited)) {
+            // The client source spent its contract-wallet checks (EIP-1654 budget).
+            ("rate_limited", "client_rejected")
         } else {
             ("authentication", "client_rejected")
         }

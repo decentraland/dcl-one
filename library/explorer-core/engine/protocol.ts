@@ -885,7 +885,8 @@ export interface MicMessage {
   kind: 'mic'
   enabled: boolean
   available: boolean
-  /** The scene the player stands in turns nearby voice off. */
+  /** Nearby voice is off where the player stands: the scene turns it off with the player's
+   *  `DisableVoice` permission, or its room refused the player as banned. */
   sceneBlocked?: boolean
   /** Counts the mic opens the scene refused. */
   refusals?: number
@@ -1171,6 +1172,9 @@ export interface PermissionUsedMessage {
   scene: string
   realm: string
   allowed: boolean
+  /** Absent for a use. Present when what the permission allows starts (true) or stops (false)
+   *  acting on the player, such as a camera the scene holds; `allowed` is then true. */
+  inForce?: boolean
 }
 
 /** The portable experiences the player can see and stop (scene → page, from getPortablesStream):

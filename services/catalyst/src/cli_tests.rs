@@ -72,6 +72,9 @@ fn the_operator_database_urls_are_hidden() {
             ("content", "import-denylist"),
             ("shop", "notice-rewind"),
             ("shop", "compare-sources"),
+            ("explore", "moderators-add"),
+            ("explore", "moderators-remove"),
+            ("explore", "moderators-list"),
         ] {
             let cmd = cli
                 .find_subcommand(sub)
@@ -88,7 +91,7 @@ fn the_operator_database_urls_are_hidden() {
             );
             seen += 1;
         }
-        assert_eq!(seen, 9);
+        assert_eq!(seen, 12);
     });
 }
 
@@ -189,6 +192,45 @@ fn import_denylist_takes_only_a_wallet() {
             assert!(err.to_string().contains("wallet address"), "{err}");
         }
         assert!(parse(&["--print-ids"]).is_ok());
+    });
+}
+
+/// `explore moderators-add` takes the address list as given (it is checked
+/// by the command, so a bad list writes nothing) and an operator wallet.
+#[test]
+fn moderators_add_takes_a_list_and_an_operator_wallet() {
+    on_a_wide_stack(|| {
+        let parse = |added_by: &str| {
+            <crate::Cli as clap::Parser>::try_parse_from([
+                "catalyst",
+                "explore",
+                "moderators-add",
+                "--database-url",
+                "postgres://example.invalid/db",
+                "--addresses",
+                "0x0000000000000000000000000000000000000001,0x0000000000000000000000000000000000000002",
+                "--added-by",
+                added_by,
+            ])
+        };
+        let cli = parse("0x00000000000000000000000000000000000000AA").unwrap();
+        let crate::Command::Explore {
+            command:
+                crate::ExploreCommand::ModeratorsAdd {
+                    addresses,
+                    added_by,
+                    ..
+                },
+        } = cli.command
+        else {
+            panic!("not moderators-add");
+        };
+        assert_eq!(
+            (addresses.matches(',').count(), added_by.as_str()),
+            (1, "0x00000000000000000000000000000000000000aa")
+        );
+        let err = parse("admin").err().unwrap();
+        assert_eq!(err.kind(), clap::error::ErrorKind::ValueValidation);
     });
 }
 

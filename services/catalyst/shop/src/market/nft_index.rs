@@ -146,8 +146,9 @@ pub struct NftEvent {
     pub amount: Option<String>,
     pub expires_at: Option<i64>,
     pub detail: Option<String>,
-    /// The transaction of an `order_successful` (NULL on other kinds and on
-    /// rows indexed before 0040).
+    /// The log's transaction: NULL on an `order_successful` indexed before
+    /// 0040 and on another kind's row indexed before the walk recorded it,
+    /// until a replay of the log fills it ([`insert_events`]).
     pub tx_hash: Option<String>,
 }
 
@@ -205,7 +206,11 @@ pub fn decode_log(log: &RpcLog, block_time: i64) -> Result<Option<NftEvent>, Dec
         amount: None,
         expires_at: None,
         detail: None,
-        tx_hash: None,
+        tx_hash: log
+            .transaction_hash
+            .as_ref()
+            .filter(|h| !h.is_empty())
+            .map(|h| h.to_ascii_lowercase()),
     };
     let event = match topic0.as_str() {
         TOPIC_TRANSFER => {
@@ -288,10 +293,6 @@ pub fn decode_log(log: &RpcLog, block_time: i64) -> Result<Option<NftEvent>, Dec
                 to_address: buyer,
                 amount: Some(price.to_string()),
                 detail: Some(format!("{id:#x}")),
-                tx_hash: log
-                    .transaction_hash
-                    .as_ref()
-                    .map(|h| h.to_ascii_lowercase()),
                 ..base(KIND_ORDER_SUCCESSFUL, format!("{nft:#x}"), token)
             }
         }
@@ -371,7 +372,9 @@ pub fn parse_land_data(raw: &str) -> Option<(Option<String>, Option<String>)> {
     Some((field(1), field(2)))
 }
 
-/// Replays fill missing transaction hashes and incomplete successful order details.
+/// Replays fill missing transaction hashes and incomplete successful order
+/// details. Another kind's row gains a hash only from the same log: the same
+/// emitter, token, parties and payload at its position.
 pub async fn insert_events(
     conn: &mut PgConnection,
     net: ChainNet,
@@ -391,7 +394,14 @@ pub async fn insert_events(
                  to_address = CASE WHEN EXCLUDED.kind = 'order_successful' THEN COALESCE(shop.nft_event.to_address, EXCLUDED.to_address) ELSE shop.nft_event.to_address END,
                  block_time = CASE WHEN EXCLUDED.kind = 'order_successful' AND shop.nft_event.block_time = 0 THEN EXCLUDED.block_time ELSE shop.nft_event.block_time END
              WHERE shop.nft_event.kind = EXCLUDED.kind AND EXCLUDED.tx_hash IS NOT NULL
-               AND ((EXCLUDED.kind <> 'order_successful' AND shop.nft_event.tx_hash IS NULL)
+               AND ((EXCLUDED.kind <> 'order_successful' AND shop.nft_event.tx_hash IS NULL
+                 AND (shop.nft_event.emitter, shop.nft_event.contract_address, shop.nft_event.token_id)
+                     = (EXCLUDED.emitter, EXCLUDED.contract_address, EXCLUDED.token_id)
+                 AND shop.nft_event.from_address IS NOT DISTINCT FROM EXCLUDED.from_address
+                 AND shop.nft_event.to_address IS NOT DISTINCT FROM EXCLUDED.to_address
+                 AND shop.nft_event.amount IS NOT DISTINCT FROM EXCLUDED.amount
+                 AND shop.nft_event.expires_at IS NOT DISTINCT FROM EXCLUDED.expires_at
+                 AND shop.nft_event.detail IS NOT DISTINCT FROM EXCLUDED.detail)
                  OR (EXCLUDED.kind = 'order_successful'
                AND (shop.nft_event.emitter,shop.nft_event.contract_address,shop.nft_event.token_id)
                    = (EXCLUDED.emitter,EXCLUDED.contract_address,EXCLUDED.token_id)
@@ -1395,19 +1405,26 @@ pub(crate) mod tests {
     fn a_transfer_decodes_with_the_token_in_a_topic_or_in_the_data() {
         let c = "0x00000000000000000000000000000000000000c1";
         let a = "0x00000000000000000000000000000000000000a1";
-        let ev = decode_log(&transfer_log(c, ZERO_ADDRESS, a, U256::from(5u8), 10, 1), 7)
-            .unwrap()
-            .unwrap();
+        let mut minted = transfer_log(c, ZERO_ADDRESS, a, U256::from(5u8), 10, 1);
+        minted.transaction_hash = Some(format!("0x{}", "CD".repeat(32)));
+        let ev = decode_log(&minted, 7).unwrap().unwrap();
         assert_eq!(
             (
                 ev.kind,
                 ev.token_id.as_str(),
                 ev.to_address.as_deref(),
-                ev.from_address.as_deref()
+                ev.from_address.as_deref(),
+                ev.tx_hash
             ),
-            (KIND_TRANSFER, "5", Some(a), Some(ZERO_ADDRESS))
+            (
+                KIND_TRANSFER,
+                "5",
+                Some(a),
+                Some(ZERO_ADDRESS),
+                Some(format!("0x{}", "cd".repeat(32)))
+            )
         );
-        let legacy = log(
+        let mut legacy = log(
             c,
             vec![
                 TOPIC_TRANSFER.into(),
@@ -1418,7 +1435,13 @@ pub(crate) mod tests {
             11,
             0,
         );
-        assert_eq!(decode_log(&legacy, 7).unwrap().unwrap().token_id, "9");
+        legacy.transaction_hash = Some(String::new());
+        let ev = decode_log(&legacy, 7).unwrap().unwrap();
+        assert_eq!(
+            (ev.token_id.as_str(), ev.tx_hash),
+            ("9", None),
+            "an empty hash is none"
+        );
     }
 
     #[test]

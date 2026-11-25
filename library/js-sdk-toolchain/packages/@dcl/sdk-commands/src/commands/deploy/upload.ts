@@ -1,15 +1,11 @@
-import {
-  ContentClient,
-  PartialDeploymentNotSupportedError,
-  PartialDeploymentResult,
-  UploadProgress
-} from 'dcl-catalyst-client'
-import { CliComponents } from '../../components'
+import type { ContentClient, PartialDeploymentResult, UploadProgress } from 'dcl-catalyst-client'
+import { PartialDeploymentNotSupportedError } from 'dcl-catalyst-client'
+import type { CliComponents } from '../../components'
 import { CliError } from '../../logic/error'
 import { printProgressInfo } from '../../logic/beautiful-logs'
 import { withDeadline } from '../../logic/fetch'
-import { IDeploymentStateComponent } from './state'
-import { CatalystFetchInit } from './utils'
+import type { IDeploymentStateComponent } from './state'
+import type { CatalystFetchInit } from './utils'
 
 type DeploymentData = Parameters<ContentClient['deploy']>[0]
 

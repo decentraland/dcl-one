@@ -1,13 +1,15 @@
 import { z } from "zod";
 
 import { dataTotalOf } from "../envelope";
+import type {
+  NftSchema,
+  OrderSchema,
+} from "../generated-schemas/market";
 import {
   CatalogItemSchema,
   CollectionSchema,
   ItemSchema,
   NftResultSchema,
-  NftSchema,
-  OrderSchema,
 } from "../generated-schemas/market";
 import { warnInvalid } from "../warn";
 

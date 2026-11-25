@@ -427,6 +427,9 @@ CREATE TABLE shop.chain_cursor (
     -- cleared by the rewind or by a pass that proves the cursor again.
     -- Readers of the height without the publication skip it meanwhile.
     diverged_at timestamp without time zone,
+    -- Raised by the rebuild that clears the projection and by the estate
+    -- repair's refold: with reorg_rewinds, every rewrite of rows in place.
+    rebuilds integer NOT NULL DEFAULT 0,
     -- An old binary omits this column when claiming its lease. It cannot
     -- take the Sepolia trades cursor and publish a history missing V1.
     sepolia_trade_v1 boolean NOT NULL DEFAULT false,
@@ -503,8 +506,10 @@ CREATE TABLE shop.nft_contract (
 -- nftAddress for the three legacy order kinds, whose emitter is the
 -- marketplace); `amount` is the order price or the v1 issued id; `detail`
 -- the legacy order id, the v1 wearable id, the registered subdomain or the
--- registry's data string; `tx_hash` the transaction of an `order_successful`
--- (NULL on other kinds and on rows indexed before it was recorded).
+-- registry's data string; `tx_hash` the log's transaction, NULL on a row
+-- indexed before the walk recorded it (an `order_successful` before 0040,
+-- another kind before transfers' transactions were recorded) until a replay
+-- of the same log fills it.
 CREATE TABLE shop.nft_event (
     network text NOT NULL,
     block_number bigint NOT NULL,
@@ -534,6 +539,12 @@ CREATE INDEX nft_event_token_idx ON shop.nft_event (network, contract_address, t
 
 -- Successful marketplace fills by network and block range.
 CREATE INDEX nft_event_successful_order ON shop.nft_event(network,block_number) WHERE kind='order_successful';
+
+-- The transfer leg of /v1/activity (`activity_transfers`): a wallet's
+-- newest transfers out and in on one network, each side walked by time
+-- (then position; a legacy row can carry time 0) to its cap.
+CREATE INDEX nft_event_transfer_from_idx ON shop.nft_event (network, from_address, block_time DESC, block_number DESC, log_index DESC) WHERE kind = 'transfer';
+CREATE INDEX nft_event_transfer_to_idx ON shop.nft_event (network, to_address, block_time DESC, block_number DESC, log_index DESC) WHERE kind = 'transfer';
 
 -- The ownership fold of the collections' and names' transfers: owner is the
 -- latest Transfer's `to` (NULL once burned), the mint the first; item_id and
@@ -17073,6 +17084,9 @@ CREATE TABLE shop.sale_execution (
     block_time bigint NOT NULL,
     PRIMARY KEY (network, block_number, log_index)
 );
+CREATE INDEX sale_execution_read_special
+    ON shop.sale_execution (network, kind, block_number, log_index) WHERE kind IN ('store', 'trade', 'name_fee');
+CREATE INDEX sale_execution_read_time ON shop.sale_execution (block_time DESC,network,block_number,log_index);
 CREATE INDEX sale_execution_tx ON shop.sale_execution (network, tx_hash, log_index);
 CREATE INDEX sale_execution_day ON shop.sale_execution (network, ((block_time / 86400) * 86400));
 CREATE INDEX sale_execution_pending_creator ON shop.sale_execution (network, creator_attempted_at NULLS FIRST, block_number) WHERE kind='store' AND NOT creator_checked;
@@ -17100,6 +17114,14 @@ CREATE TABLE shop.sale_asset (
     FOREIGN KEY (network, block_number, log_index)
        REFERENCES shop.sale_execution ON DELETE CASCADE
 );
+CREATE INDEX sale_asset_read_unresolved
+    ON shop.sale_asset (network, block_number, log_index, ordinal) WHERE price > 0 AND (seller IS NULL OR kind = 'bid');
+CREATE INDEX sale_asset_read_seller ON shop.sale_asset (network,seller,block_number) WHERE price>0;
+CREATE INDEX sale_asset_read_buyer ON shop.sale_asset (network,buyer,block_number) WHERE price>0;
+CREATE INDEX sale_asset_read_token ON shop.sale_asset (network, token_id, contract_address) WHERE price > 0;
+CREATE INDEX sale_asset_read_kind ON shop.sale_asset (network, kind, block_number) WHERE price > 0;
+CREATE INDEX sale_asset_read_item ON shop.sale_asset (network,contract_address,item_id) WHERE price>0;
+CREATE INDEX sale_asset_read_price ON shop.sale_asset (price DESC,public_id) WHERE price>0;
 
 CREATE INDEX sale_asset_priced_buyer ON shop.sale_asset(network,buyer,seller,contract_address,currency) WHERE price>0 AND seller IS NOT NULL;
 
@@ -17121,6 +17143,7 @@ CREATE TABLE shop.sale_payment (
     FOREIGN KEY (network, block_number, log_index)
        REFERENCES shop.sale_execution ON DELETE CASCADE
 );
+CREATE INDEX sale_payment_read_beneficiary ON shop.sale_payment (network,beneficiary,block_number) WHERE consideration;
 CREATE TABLE shop.sale_payout (
     network text NOT NULL,
     block_number bigint NOT NULL,
@@ -17459,6 +17482,10 @@ CREATE TABLE shop.collection_event (
 -- take them first.
 CREATE INDEX collection_event_created_idx ON shop.collection_event (network, contract_address)
     WHERE kind = 'proxy_created';
+CREATE INDEX collection_event_creator_account_idx
+    ON shop.collection_event (network, account, block_number) WHERE kind = 'creatorship_transferred';
+CREATE INDEX collection_event_creator_previous_idx
+    ON shop.collection_event (network, previous_account, block_number) WHERE kind = 'creatorship_transferred';
 
 -- A collection's history in chain order, mints aside (a few hundred thousand
 -- rows): the fold of the collections it replays from their creation.

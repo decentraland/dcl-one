@@ -34,8 +34,8 @@ use super::formatters::{
     ParsedRange, check_not_modified, content_file_headers, parse_range_header,
 };
 use super::get_content::{content_type, set_content_type, x_accel_redirect_path};
-use super::queries::active_entity_docs_by_pointers;
 use super::query_params::{parse_query_string, qs_get_string};
+use super::read_through::active_entity_docs;
 use super::{ContentState, SharedState};
 
 /// `?width=` when it names a served size; any other value is ignored, as
@@ -52,19 +52,17 @@ pub fn valid_width(width: u32) -> bool {
 
 async fn entity_by_pointer(state: &ContentState, pointer: &str) -> AppResult<Value> {
     let pointers = [pointer.to_string()];
-    let docs = match state.read_through() {
-        Some(read_through) => read_through.active_docs(false, &pointers).await?,
-        None => active_entity_docs_by_pointers(&state.pool, &pointers).await?,
-    };
-    let entity = docs
-        .first()
+    let docs = active_entity_docs(
+        &state.pool,
+        state.read_through().map(|r| r.as_ref()),
+        false,
+        &pointers,
+        Some(&state.denylist),
+    )
+    .await?;
+    docs.first()
         .and_then(|d| d.to_value())
-        .ok_or_else(|| AppError::not_found("Entity not found."))?;
-    let entity_id = entity.get("id").and_then(|id| id.as_str()).unwrap_or("");
-    if entity_id.is_empty() || state.denylist.contains(entity_id) {
-        return Err(AppError::not_found("Entity not found."));
-    }
-    Ok(entity)
+        .ok_or_else(|| AppError::not_found("Entity not found."))
 }
 
 /// The content hash of the file `metadata.<field>` names.

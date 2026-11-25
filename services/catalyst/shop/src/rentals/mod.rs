@@ -258,7 +258,8 @@ impl State {
     }
 
     /// The lowercased signer of a write; every refusal is the old 401 with
-    /// [`wire_message`].
+    /// [`wire_message`], except a contract-wallet check the client source's
+    /// budget refused (429).
     pub async fn require_signer(
         &self,
         headers: &HeaderMap,
@@ -267,6 +268,9 @@ impl State {
     ) -> Result<String, ApiError> {
         self.verify(headers, method, path).await.map_err(|e| {
             tracing::debug!(error = %e, "auth chain verification failed on a rentals route");
+            if matches!(e, SignedFetchError::RateLimited) {
+                return ApiError::http(429, e.to_string());
+            }
             ApiError::unauthorized(wire_message(&e))
         })
     }

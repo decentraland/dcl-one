@@ -1,6 +1,6 @@
-import { PBUiInput } from '@dcl/ecs'
-import { TextAlignType, UiFontType } from '../Label/types'
-import { ScaleUnit } from '../types'
+import type { PBUiInput } from '@dcl/ecs'
+import type { TextAlignType, UiFontType } from '../Label/types'
+import type { ScaleUnit } from '../types'
 
 /**
  * @public

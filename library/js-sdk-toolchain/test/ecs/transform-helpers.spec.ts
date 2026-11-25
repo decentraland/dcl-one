@@ -1,5 +1,6 @@
-import { components, Engine, IEngine } from '../../packages/@dcl/ecs/src'
-import { TransformComponentExtended } from '../../packages/@dcl/ecs/src/components/manual/Transform'
+import type { IEngine } from '../../packages/@dcl/ecs/src'
+import { components, Engine } from '../../packages/@dcl/ecs/src'
+import type { TransformComponentExtended } from '../../packages/@dcl/ecs/src/components/manual/Transform'
 
 describe('Transform.localToWorldDirection', () => {
   function setup() {

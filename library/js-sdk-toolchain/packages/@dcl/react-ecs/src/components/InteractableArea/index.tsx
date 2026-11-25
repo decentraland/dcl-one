@@ -1,7 +1,7 @@
 import { ReactEcs } from '../../react-ecs'
 import { UiEntity } from '../index'
 import { compensateInsetForUiScale, getInteractableArea } from '../utils'
-import { UiInteractableAreaProps } from './types'
+import type { UiInteractableAreaProps } from './types'
 
 /**
  *
