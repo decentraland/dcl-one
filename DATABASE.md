@@ -2263,6 +2263,10 @@ A wallet-filtered sale with an unresolved seller withholds a response only when 
 
 The published sales readers use a 10-second PostgreSQL statement timeout. Recent unfiltered pages select asset keys in timestamp order and obtain the count from published daily rollups. Wallet lookups use indexes on the buyer, seller, payment beneficiary and collection item before enrichment.
 
+Accounts read `shop.sale_account_total` for monetary totals. The sale fold credits net proceeds to the public seller, including the first consideration beneficiary of a mediated bid. Payout recipients retain their separate fee and royalty amounts. The publication upgrade repairs the UTC days containing affected bids from stored evidence before readers use those totals.
+
+The schema object pass creates the sales read indexes. On an existing large ledger, prebuild the definitions in `schemas/30_shop.sql` with `CREATE INDEX CONCURRENTLY` outside a transaction before running `catalyst schema migrate`.
+
 ### Badge processor
 
 The writers of evaluated progress are four leased jobs

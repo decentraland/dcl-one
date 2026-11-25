@@ -1,10 +1,11 @@
 , seller_days AS (
-    SELECT network,seller AS id,block_time/86400 AS day,count(*) AS sales,sum(net) FILTER (WHERE $7=0 OR kind='mint') AS earned,
-           count(*) FILTER (WHERE kind='mint') AS mints
-    FROM sold WHERE block_time >= $7 GROUP BY network,seller,block_time/86400
+    SELECT network,seller AS id,count(*) AS sales,NULL::numeric AS earned
+    FROM sales WHERE $7=0 GROUP BY network,seller
+    UNION ALL
+    SELECT network,seller,count(*),sum(net) FROM sold
+    WHERE $7>0 AND block_time >= $7 AND kind='mint' GROUP BY network,seller
 ), sellers AS (
-    SELECT network,id,sum(CASE WHEN $7=0 THEN sales ELSE mints END) AS sales,sum(earned) AS earned
-    FROM seller_days WHERE $7=0 OR mints>0 GROUP BY network,id
+    SELECT * FROM seller_days
 ), relationships AS (
     SELECT network,seller AS id,count(DISTINCT buyer) AS collectors,
            count(DISTINCT contract_address) FILTER (WHERE kind='mint') AS collections
@@ -41,6 +42,7 @@
 )
 SELECT coalesce((SELECT jsonb_agg(jsonb_build_object('id',id,'sales',sales,'earned',earned::text,
        'uniqueCollectors',collectors,'collections',collections) ORDER BY sort_key DESC,id) FROM page),'[]'::jsonb),
-       EXISTS(SELECT FROM sold WHERE block_time >= $7 AND (seller IS NULL OR NOT settled)),
+       EXISTS(SELECT FROM sold WHERE block_time >= $7 AND kind='mint' AND (seller IS NULL OR NOT settled))
+         OR ($7=0 AND EXISTS(SELECT FROM account_values JOIN collections USING(network,address) WHERE unknown_proceeds>0)),
        ($7=0 AND EXISTS(SELECT FROM founders WHERE creator IS NULL))
          OR ($8 IN ('sales','volume') AND EXISTS(SELECT FROM mint_creators WHERE creator IS NULL))

@@ -56,14 +56,9 @@
     FROM rows ORDER BY sort_key DESC,address,network LIMIT $9 OFFSET $10
 )
 SELECT (SELECT count(*) FROM rows) AS total,
-       EXISTS(SELECT FROM sold s WHERE (s.seller IS NULL OR NOT s.settled) AND (
-            EXISTS(SELECT FROM page r WHERE r.network=s.network AND r.address IN (s.seller,s.creator))
-            OR EXISTS(SELECT FROM seller_evidence ev JOIN page r USING(network,address)
-                     WHERE (ev.network,ev.block_number,ev.log_index,ev.ordinal)=(s.network,s.block_number,s.log_index,s.ordinal))
-            OR EXISTS(SELECT FROM shop.sale_payment p JOIN page r ON r.network=p.network AND r.address=p.beneficiary
-                     WHERE p.consideration AND (p.network,p.block_number,p.log_index)=(s.network,s.block_number,s.log_index)
-                       AND (s.venue_kind<>'store' OR s.ordinal=p.ordinal))
-       )) AS missing_payment,
+       EXISTS(SELECT FROM page r JOIN account_values a USING(network,address) WHERE a.unknown_proceeds>0)
+         OR EXISTS(SELECT FROM seller_evidence ev JOIN page r USING(network,address)
+                   JOIN sales s USING(network,block_number,log_index,ordinal) WHERE s.seller IS NULL) AS missing_payment,
        EXISTS(SELECT FROM founders WHERE creator IS NULL) AS missing_creator,
        coalesce((SELECT jsonb_agg(jsonb_build_object('id',address,'address',address,
           'sales',sales,'purchases',purchases,'spent',spent::text,'earned',earned::text,

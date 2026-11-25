@@ -37,7 +37,6 @@ pub(in crate::market) async fn accounts(
         Json<Vec<Account>>,
     ) = sales_query!(
         nets,
-        "settled_sales.sql",
         "account_values.sql",
         "collection_counts.sql",
         "accounts.sql"

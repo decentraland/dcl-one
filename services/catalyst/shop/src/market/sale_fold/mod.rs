@@ -319,7 +319,11 @@ async fn write_rows(c: &mut PgConnection, net: ChainNet, from: i64, to: i64) -> 
     Ok(())
 }
 
-async fn rollups(c: &mut PgConnection, net: ChainNet, days: &[i64]) -> anyhow::Result<()> {
+pub(super) async fn rollups(
+    c: &mut PgConnection,
+    net: ChainNet,
+    days: &[i64],
+) -> anyhow::Result<()> {
     if days.is_empty() {
         return Ok(());
     }
@@ -453,6 +457,7 @@ pub(super) async fn pass(pool: &PgPool, rpc: &Rpc<'_>, net: ChainNet) -> anyhow:
              FROM shop.sale_execution WHERE network=$1)",
             include_str!("allocated_money.sql"),
             "SELECT DISTINCT day FROM classified WHERE NOT allocated
+             UNION SELECT DISTINCT a.day FROM priced a WHERE a.venue_kind='trade' AND a.kind='bid'
              UNION SELECT DISTINCT e.day FROM execution e JOIN shop.sale_asset a USING(network,block_number,log_index)
              WHERE a.price>0 AND NOT EXISTS (SELECT FROM classified p WHERE
                 (p.network,p.block_number,p.log_index,p.asset_ordinal)=(a.network,a.block_number,a.log_index,a.ordinal))"

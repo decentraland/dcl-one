@@ -1,6 +1,6 @@
 -- One NFT can have several payments in the same currency. A store execution
 -- has explicitly priced line ordinals. Check all matching payments for the asset.
-, sold AS (
+, sold AS NOT MATERIALIZED (
     SELECT s.*,coalesce(legs.settled AND legs.gross=s.price,false) AS settled,
            legs.fees,legs.royalties,legs.net
     FROM sales s
