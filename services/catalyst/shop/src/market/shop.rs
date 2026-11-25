@@ -60,8 +60,8 @@ use std::sync::Arc;
 
 use axum::Json;
 use axum::extract::{Query, State};
-use axum::http::HeaderMap;
 use axum::http::header::CACHE_CONTROL;
+use axum::http::{HeaderMap, HeaderValue};
 use axum::response::{IntoResponse, Response};
 use chrono::Utc;
 use serde::Serialize;
@@ -1515,7 +1515,7 @@ fn brief_cache() -> HeaderMap {
     let mut headers = HeaderMap::new();
     headers.insert(
         CACHE_CONTROL,
-        "public,max-age=60,s-maxage=60".parse().unwrap(),
+        HeaderValue::from_static("public,max-age=60,s-maxage=60"),
     );
     headers
 }
@@ -1524,7 +1524,7 @@ fn brief_cache() -> HeaderMap {
 /// revalidate it, so a profile the content denylist withholds is gone from its next answer.
 fn profiles_revalidate() -> HeaderMap {
     let mut headers = HeaderMap::new();
-    headers.insert(CACHE_CONTROL, "no-cache".parse().unwrap());
+    headers.insert(CACHE_CONTROL, HeaderValue::from_static("no-cache"));
     headers
 }
 

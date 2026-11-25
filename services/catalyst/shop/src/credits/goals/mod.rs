@@ -14,7 +14,7 @@ use super::{
 };
 use crate::jobs::{Jobs, PeriodicCfg};
 use alloy_primitives::{Address, B256, U256, keccak256};
-use chrono::{Datelike, NaiveDateTime, TimeDelta, Timelike};
+use chrono::{Datelike, NaiveDateTime, NaiveTime, TimeDelta, Timelike};
 use serde_json::{Value, json};
 use sqlx::{PgConnection, Row};
 use std::{str::FromStr, sync::Arc, time::Duration};
@@ -40,7 +40,7 @@ struct Season {
 impl Season {
     fn week(&self, now: NaiveDateTime) -> (i32, NaiveDateTime, NaiveDateTime) {
         fn monday(t: NaiveDateTime) -> NaiveDateTime {
-            t.date().and_hms_opt(0, 0, 0).unwrap()
+            t.date().and_time(NaiveTime::MIN)
                 - TimeDelta::days(i64::from(t.weekday().num_days_from_monday()))
         }
         let start = monday(now);
@@ -320,9 +320,9 @@ async fn process_event(state: &SharedState, id: i64, now: NaiveDateTime) -> Resu
     let mut ordinal = None;
     let season_id = season.as_ref().map(|s| s.id);
     let week = season.as_ref().map(|s| s.week(occurred_at).0);
-    if outcome.is_none() {
-        let season = season.as_ref().unwrap();
-        let week = week.unwrap();
+    if outcome.is_none()
+        && let (Some(season), Some(week)) = (season.as_ref(), week)
+    {
         initialize(&mut tx, &address, season.id, week).await?;
         let progress = sqlx::query("SELECT completed_steps,total_steps,reward_wei::text AS reward_wei FROM credits.goal_progress WHERE address=$1 AND season_id=$2 AND week_id=$3 AND goal_id=$4 FOR UPDATE")
             .bind(&address).bind(season.id).bind(week).bind(GOAL).fetch_optional(&mut *tx).await?;

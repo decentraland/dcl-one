@@ -337,7 +337,9 @@ impl Admission {
         if !state.sockets.is_empty() {
             return;
         }
-        let mut budget = inner.connected.remove(&address).map(|s| s.budget).unwrap();
+        let Some(mut budget) = inner.connected.remove(&address).map(|s| s.budget) else {
+            return;
+        };
         budget.replenish(&limits, now);
         if budget.tokens >= limits.subscription_burst as f64 {
             return;

@@ -566,7 +566,7 @@ pub fn bn_add(a: &str, b: &str) -> String {
     if carry > 0 {
         out.push(b'0' + carry as u8);
     }
-    while out.len() > 1 && *out.last().unwrap() == b'0' {
+    while out.len() > 1 && out.last() == Some(&b'0') {
         out.pop();
     }
     out.into_iter().rev().map(|b| b as char).collect()

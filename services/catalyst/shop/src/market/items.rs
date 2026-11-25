@@ -20,7 +20,7 @@ use axum::extract::{Query, State};
 use axum::http::HeaderMap;
 use axum::http::header::CACHE_CONTROL;
 use axum::response::{IntoResponse, Response};
-use chrono::Utc;
+use chrono::{NaiveTime, Utc};
 use serde::Serialize;
 use serde_json::{Value, json};
 use sqlx::Row;
@@ -1021,8 +1021,7 @@ query recentSales($from: BigInt!, $first: Int!) {
 pub fn midnight_days_ago(days: i64) -> i64 {
     let date = Utc::now() - chrono::Duration::days(days);
     date.date_naive()
-        .and_hms_opt(0, 0, 0)
-        .unwrap()
+        .and_time(NaiveTime::MIN)
         .and_utc()
         .timestamp()
 }

@@ -108,7 +108,9 @@ pub(crate) fn json_bytes(value: &serde_json::Value) -> usize {
                 5
             }
         }
-        Value::String(value) => serde_json::to_string(value).unwrap().len(),
+        Value::String(value) => serde_json::to_string(value)
+            .expect("a string serializes to JSON")
+            .len(),
         Value::Number(value) => {
             if let Some(value) = value.as_i64() {
                 return value.to_string().len();
@@ -121,7 +123,11 @@ pub(crate) fn json_bytes(value: &serde_json::Value) -> usize {
                 1
             } else if value.abs() >= 1e21 || value.abs() < 1e-6 {
                 let text = format!("{value:e}");
-                text.len() + usize::from(!text.split_once('e').unwrap().1.starts_with('-'))
+                text.len()
+                    + usize::from(
+                        text.split_once('e')
+                            .is_some_and(|(_, exponent)| !exponent.starts_with('-')),
+                    )
             } else {
                 value.to_string().len()
             }
@@ -133,7 +139,11 @@ pub(crate) fn json_bytes(value: &serde_json::Value) -> usize {
             2 + values
                 .iter()
                 .map(|(key, value)| {
-                    serde_json::to_string(key).unwrap().len() + 1 + json_bytes(value)
+                    serde_json::to_string(key)
+                        .expect("a string serializes to JSON")
+                        .len()
+                        + 1
+                        + json_bytes(value)
                 })
                 .sum::<usize>()
                 + values.len().saturating_sub(1)
