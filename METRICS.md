@@ -8,6 +8,16 @@ A local Polygon refold fixture replayed 288 legacy sales in 288 distinct blocks 
 
 The index process increments `catalyst_index_sales_repair_failures_total` by indexer and network when a historical sales repair fails. The error log includes the starting block and requests spent. The cursor keeps its last verified boundary.
 
+## Marketplace catalogue mirror proof
+
+`catalyst_catalogue_mirror_proof_outcomes_total` counts mainnet proof
+attempts by `mirror`, `network` and `outcome`. `proof_rejected` records
+a conflicting chain or block hash. `graph_unavailable` records a failed
+graph query or a graph response without usable block metadata.
+`proof_skipped_rpc_unavailable` records an unpinned graph pass started
+after the RPC retry window elapsed. `rpc_auth_failed` counts HTTP 401/403
+responses and accompanies the error log for the configured RPC.
+
 ## Published sales reads
 
 A PostgreSQL 17 fixture held one million synthetic sales across Ethereum and Polygon, plus 32,000 sales for a single seller. The account plan used 40,004 published account totals and the creator plan included 9,900 mints. Timings are SQL execution times from local `EXPLAIN (ANALYZE, BUFFERS)`, measured with the publication present. The request statement budget is 10 seconds.
@@ -21,6 +31,25 @@ A PostgreSQL 17 fixture held one million synthetic sales across Ethereum and Pol
 A larger fixture included 5.3 million collection mint events, 6,200 factory creations and creator transfers, and 5.3 million NFT transfer events alongside one million sales. The accounts page took 8.00 s with 16 MiB of work memory, the lifetime creator ranking took 6.25 s, and an indexed token lookup took 0.282 ms. Creator lookups used the collection replay index in both directions. The separate partial creator wallet indexes occupied 64 KiB each on the fixture.
 
 The timestamp and price indexes occupied 54 MiB and 114 MiB on the sales fixture. Daily sale counts supply the total for unfiltered pages. Filtered sales count up to the page window cap. Indexed wallet and item lookups narrow rows before enriching them with payment evidence. Accounts, rankings and volume have a 30-second cache keyed by checked publications.
+
+## Wallet activity transfers
+
+A synthetic PostgreSQL 17.6 fixture on a laptop held 5M Polygon and 1M Ethereum transfers in `shop.nft_event` among 400,000 wallets. 30% of them settled a sale, giving 1.83M single-asset executions in the sales ledger. The older half of each network's transfers had no transaction hash. Timings are for the leg's statement on one network: both sides capped at 500, with the public-sale checks against the ledger. The leg runs the two networks concurrently.
+
+| Index | Size | Concurrent build | Build in the migration transaction |
+| --- | ---: | ---: | ---: |
+| `nft_event_transfer_from_idx` | 601 MB | 35.6 s (first build, cold cache) | 15.7 s |
+| `nft_event_transfer_to_idx` | 601 MB | 14.7 s | not measured |
+
+| Wallet | Network | Rows returned | Cached | Cold |
+| --- | --- | ---: | ---: | ---: |
+| 400 transfers | Polygon | 232 | 8.4 ms | 128 ms |
+| 400 transfers | Ethereum | 42 | 9.0 ms | 37 ms |
+| 50,000 transfers, 90% of them sales | Polygon | 1,000 | 78 ms | 1.15 s |
+| 50,000 transfers, 90% of them sales | Ethereum | 668 | 38 ms | 1.53 s |
+| Three random wallets | Polygon | 19 to 25 | 1.1 to 2.2 ms | 18 to 24 ms |
+
+Each side walks its index in the order the activity merges in (time, then position), with no sort step. On Polygon, each side of the 50,000-transfer wallet walked about 4,800 index rows to find 500 transfers that were not sales. Each walked row made one `sale_asset_read_token` probe and, when it found a sale, one probe of the execution's primary key. Other agents' builds were running during these measurements.
 
 ## Marketplace sales day rollups
 

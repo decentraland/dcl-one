@@ -34,8 +34,8 @@ source in this repository.
 - One change is not additive: `PBAvatarEquippedData` field 3 is `wearables`, as
   `decentraland/protocol`'s `main` defined it after this snapshot and published in
   `@dcl/protocol@next`, and `force_render`, which held 3 here and in `experimental-bevy`, is field
-  4. `proto/buf.yaml` exempts that file from the three rules the renumbering trips; the exemption
-  goes in the first change after this one, when this repository's `main` carries the new numbers. With it, every definition in `@dcl/protocol@next` exists
+  4, a renumbering the wire-compatibility check was exempted for, in that file only, until it
+  merged. With the new numbers, every definition in `@dcl/protocol@next` exists
   here under the same number, name and type. The `experimental-bevy`
   protocol and SDK took the same numbering (decentraland/protocol#510,
   decentraland/js-sdk-toolchain#1675), and the bridge scene pins that SDK, which moves it 31
