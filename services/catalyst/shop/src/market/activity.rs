@@ -254,6 +254,7 @@ async fn activity(
         return Err(ApiError::bad_request("Invalid Auth Chain"));
     }
     require_auth_metadata(headers, MARKETPLACE_AUTH_SIGNERS, None)?;
+    super::signed::admit_contract_wallet_check(state.eip1654.as_deref(), headers)?;
     let recovered = signed_fetch::require_signer(
         headers,
         "get",

@@ -7,13 +7,19 @@
 //! visitor, never as the visiting user). Both modes verify an EIP-1654
 //! contract-wallet chain through the node's validator (`isValidSignature`
 //! over RPC), as upstream's crypto middleware did; a check that cannot run
-//! fails closed with a 503, never as the signer. Comparisons are exact against
+//! fails closed with a 503, never as the signer. Every such check is
+//! admitted per client source first ([`admit_contract_wallet_check`], the
+//! `/forward-blockchain` pre-auth budget), so an anonymous client attaching a
+//! contract-wallet chain to public reads cannot spend the node's RPC quota
+//! and turn real contract wallets into 503s. Comparisons are exact against
 //! canonical spellings: the legacy payload lowercased the metadata before
 //! signing, so a re-cased `Signer` carries a byte-identical signature and
 //! folding before comparing would authorize a request as something it is not.
 
 use axum::http::HeaderMap;
 use serde_json::Value;
+
+use std::sync::LazyLock;
 
 use crate::auth::eip1654::Eip1654Validator;
 use crate::shared::signed_fetch::{
@@ -37,6 +43,72 @@ pub(super) async fn mounted_path(
         request.headers_mut().insert("x-original-path", path);
     }
     next.run(request).await
+}
+
+tokio::task_local! {
+    /// The client source (`client_ip::distinct_client_ip`) of the market
+    /// request in flight, set by [`client_source`]; absent outside the market
+    /// router or when the peer does not name one client.
+    static CLIENT_SOURCE: Option<String>;
+}
+
+/// The market router's own record of who is asking: the address that names
+/// one client (a trusted proxy's `X-Real-IP`, else a public peer), for the
+/// contract-wallet admission below. A task-local, not a header, so a client
+/// cannot name someone else's bucket.
+pub(super) async fn client_source(
+    axum::extract::State(state): axum::extract::State<super::SharedState>,
+    request: axum::extract::Request,
+    next: axum::middleware::Next,
+) -> axum::response::Response {
+    let peer = request
+        .extensions()
+        .get::<axum::extract::ConnectInfo<std::net::SocketAddr>>()
+        .map(|axum::extract::ConnectInfo(p)| *p);
+    let source = crate::shared::client_ip::distinct_client_ip(
+        request.headers(),
+        peer,
+        &state.settings.market.trusted_proxy_cidrs,
+    );
+    CLIENT_SOURCE.scope(source, next.run(request)).await
+}
+
+/// The contract-wallet checks one client source may start, by the
+/// `/forward-blockchain` pre-auth budgets (`tips::source_keys`).
+static CONTRACT_WALLET_CHECKS: LazyLock<super::tips::ForwardLimiter> =
+    LazyLock::new(|| super::tips::ForwardLimiter::new(super::tips::LIMITER_KEYS));
+
+/// Whether the request's auth chain carries an EIP-1654 link, the one kind
+/// whose verification is an `isValidSignature` call over RPC.
+fn carries_contract_wallet_link(headers: &HeaderMap) -> bool {
+    headers.iter().any(|(name, value)| {
+        name.as_str().starts_with(AUTH_CHAIN_HEADER_PREFIX)
+            && value.to_str().is_ok_and(|v| v.contains("EIP_1654"))
+    })
+}
+
+/// Admits a contract-wallet verification before any RPC call: a chain with an
+/// EIP-1654 link, on a node that would check it, spends one token of its
+/// client source's budget, and a spent budget is a 429. A request with no
+/// source the router could name (no peer, an internal one) is not counted,
+/// as `/forward-blockchain` does.
+pub(super) fn admit_contract_wallet_check(
+    eip1654: Option<&dyn Eip1654Validator>,
+    headers: &HeaderMap,
+) -> Result<(), ApiError> {
+    if eip1654.is_none() || !carries_contract_wallet_link(headers) {
+        return Ok(());
+    }
+    let source = CLIENT_SOURCE.try_with(Clone::clone).ok().flatten();
+    match source {
+        Some(ip) if !CONTRACT_WALLET_CHECKS.allow(&super::tips::source_keys(&ip)) => {
+            Err(ApiError::http(
+                429,
+                "Too many contract-wallet signature checks; retry later",
+            ))
+        }
+        _ => Ok(()),
+    }
 }
 
 pub const SCENE_SIGNER: &str = "decentraland-kernel-scene";
@@ -157,6 +229,7 @@ pub async fn require_signer(
     method: &str,
     path: &str,
 ) -> Result<String, ApiError> {
+    admit_contract_wallet_check(eip1654, headers)?;
     signed_fetch::require_signer(headers, method, path, PayloadPolicy::V6ThenLegacy, eip1654)
         .await
         .map(|s| s.into_string())

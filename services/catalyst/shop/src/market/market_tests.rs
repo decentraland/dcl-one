@@ -1968,6 +1968,77 @@ async fn a_contract_wallet_picks_through_the_eip1654_validator() {
         .unwrap();
 }
 
+/// A contract that refuses every signature and counts the `isValidSignature`
+/// calls it was asked.
+#[derive(Default)]
+struct CountingRefusal(std::sync::atomic::AtomicUsize);
+
+#[async_trait::async_trait]
+impl crate::auth::eip1654::Eip1654Validator for CountingRefusal {
+    async fn validate_signature(
+        &self,
+        _contract_address: &str,
+        _hash: &[u8],
+        _signature: &[u8],
+    ) -> Result<bool, crate::auth::AuthError> {
+        self.0.fetch_add(1, Ordering::SeqCst);
+        Ok(false)
+    }
+}
+
+/// The public reads that verify an optional contract-wallet chain spend the
+/// node's RPC quota per request, so each client source may start only the
+/// `/forward-blockchain` pre-auth budget of checks a minute: past it the
+/// answer is a 429 before any `isValidSignature` call, and another source
+/// keeps its own budget.
+#[tokio::test]
+async fn contract_wallet_checks_are_admitted_per_source_before_any_rpc_call() {
+    let Some(mut state) = state_with_db(Settings::for_tests()).await else {
+        return;
+    };
+    let counter = Arc::new(CountingRefusal::default());
+    Arc::get_mut(&mut state).expect("an unshared state").eip1654 = Some(counter.clone());
+    let contract = format!("0x{:0>40}", "c0de2").to_lowercase();
+    let path = format!("/v1/picks/{}-0", contract_of(&tag(), 8));
+    let get_from = |peer: &'static str| {
+        let (app, path, contract) = (market_router(state.clone()), path.clone(), contract.clone());
+        async move {
+            let mut req = Request::builder().uri(&path).body(Body::empty()).unwrap();
+            *req.headers_mut() = contract_wallet_headers(&contract, "get", &path).await;
+            req.extensions_mut()
+                .insert(axum::extract::ConnectInfo::<std::net::SocketAddr>(
+                    peer.parse().unwrap(),
+                ));
+            app.oneshot(req).await.unwrap().status()
+        }
+    };
+    let mut tripped = None;
+    for sent in 0..200 {
+        let before = counter.0.load(Ordering::SeqCst);
+        let status = get_from("203.0.113.77:40000").await;
+        if status == StatusCode::TOO_MANY_REQUESTS {
+            tripped = Some((sent, before, counter.0.load(Ordering::SeqCst)));
+            break;
+        }
+        assert_eq!(status, StatusCode::UNAUTHORIZED, "a refused contract");
+    }
+    let (sent, before, after) = tripped.expect("the source's budget trips");
+    assert!(
+        (super::tips::PREAUTH_PER_MINUTE as usize..=super::tips::PREAUTH_PER_MINUTE as usize + 5)
+            .contains(&sent),
+        "the /forward-blockchain pre-auth budget: {sent}"
+    );
+    assert_eq!(
+        before, after,
+        "no isValidSignature call once the budget is spent"
+    );
+    assert_eq!(
+        get_from("198.51.100.9:40000").await,
+        StatusCode::UNAUTHORIZED,
+        "another source keeps its own budget"
+    );
+}
+
 #[tokio::test]
 async fn favorites_lists_and_picks_keep_the_old_authorization_and_counting_rules() {
     let Some(state) = state_with_db(Settings {
