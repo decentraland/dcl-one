@@ -1,8 +1,8 @@
 #![forbid(unsafe_code)]
 
 pub mod avatar_movement;
-pub mod camera;
-pub mod camera_zoom;
+mod camera;
+mod camera_zoom;
 mod debug_panel;
 pub mod point_at;
 

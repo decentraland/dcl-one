@@ -19,7 +19,7 @@ import { Vector3 } from '@dcl/sdk/math'
  *
  * The player spawns at (8, 0, 8). The spawn point's `cameraTarget` faces +X, but the explorer
  * does not turn the player to it on a teleport, so the player may face +Z with the camera about
- * 5 m behind, near (9, 2, 3), or face +X with the camera near (3, 2, 8). Every ray starts at the
+ * 4.5 m behind, near (8, 3, 3.5), or face +X with the camera near (3.5, 3, 8). Every ray starts at the
  * camera, so the layout holds for both:
  *   - z = 10 to 16: `near` (12, 1, 11), then `wall` (14, 3, 13), 0.5 by 6 by 6, then `behind`
  *     (16, 1, 15), which the wall hides from either camera;

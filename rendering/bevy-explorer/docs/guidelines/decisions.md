@@ -665,10 +665,6 @@ ends in "we don't do that", so the next person doesn't have to rediscover it.
 - **A scene that forces first person on a drone camera keeps the player's aim.** unity-explorer's
   first-person camera then comes back with the aim it had when the player last left first person.
   Here the camera has one aim, so first person looks along the heading and pitch the drone had.
-- **The camera-to-player fade aims at the camera focus.** The fade's cone runs from the camera
-  along its view direction for the camera's distance to the focus. A shoulder offset moves the
-  camera at most 0.6 m to the side of that line, inside the cone, so the offset is not passed to
-  the shaders.
 - **The Camera Zoom sensitivity setting scales photo mode only.** The player camera reads which
   way the wheel turned, not how far, so the setting has nothing to scale there.
 - **Photo mode follows the engine's cursor convention.** unity-explorer's in-world camera has its

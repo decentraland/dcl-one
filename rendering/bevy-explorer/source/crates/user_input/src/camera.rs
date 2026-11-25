@@ -139,7 +139,6 @@ pub fn update_camera(
         options.yaw -= mouse_delta.x * options.sensitivity / 1000.0;
     }
 
-    // the player steps the level and swaps shoulder only while no scene holds the camera
     if options.scene_override.is_none() {
         if let Some(direction) = zoom_request(&input_manager) {
             options.level = step_level(options.level, direction, false).0;
@@ -293,7 +292,9 @@ pub fn update_camera_position(
             target_transition = transition.clone();
         }
 
-        commands.entity(camera_ent).try_insert(ViewUserValue(0.0));
+        commands
+            .entity(camera_ent)
+            .try_insert(ViewUserValue(Vec4::ZERO));
     } else {
         zoom.tick(
             time.delta_secs(),
@@ -305,9 +306,10 @@ pub fn update_camera_position(
         if let Some(pose) = zoom.pose(focus, options.yaw, options.pitch, options.roll) {
             target_transform = pose.transform();
             target_fov = pose.fov;
+            // the camera-to-player fade aims at the focus
             commands
                 .entity(camera_ent)
-                .try_insert(ViewUserValue((pose.position - focus).length()));
+                .try_insert(ViewUserValue(focus.extend(1.0)));
         }
     }
 

@@ -9,6 +9,6 @@ license    = "(MIT OR Apache-2.0) AND Zlib"
 paths      = ["."]
 exclude    = [".gitattributes", ".github", "assets", "examples/wasm/assets"]
 base_tree  = "4f1453a1670d25c35dad4580cbdc46e8233638cc"
-tree       = "d30a59dc77e75654967a5b6135b53c70172a96a5"
-rev        = "a6e4fa2f494d40f2d035e0e90f1b608d95a0f0e5"
+tree       = "ec4a3aac750ff36eb5012d59ee269d0f386c8720"
+rev        = "ee35e2c40ea2d9051f2e3f2c3c1eeef4a6f982c4"
 nix_hash   = "sha256-KZ11CKJEIO/fpAJZSnytxaP/X7GSjvPNT0l1RXyg3zU="

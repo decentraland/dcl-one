@@ -68,7 +68,7 @@ fn the_switch_key_bounces_between_first_person_and_drone() {
 
 #[test]
 fn the_orbit_passes_through_its_rings_and_follows_the_reference_curve() {
-    // (orbit value, metres behind the focus, metres above it), from the reference formula
+    // (orbit value, metres behind the focus, metres above it)
     let third_person = [
         (0.0, 0.7, -0.75),
         (0.1, 1.5248, -0.68714),
@@ -205,7 +205,6 @@ fn the_shoulder_offset_moves_at_four_metres_a_second_while_the_cursor_is_locked(
     assert!(zoom
         .shoulder_offset(ThirdPerson)
         .abs_diff_eq(Vec2::ZERO, 1e-5));
-    // and the drone's offset was never touched
     assert_eq!(zoom.shoulder_offset(Drone), Vec2::ZERO);
 }
 
@@ -384,4 +383,72 @@ fn rotation_to_target_and_back_recovers_the_camera() {
         apply_rotation(facing, offset, Vec3::Y),
         pose.rotation
     ));
+}
+
+#[test]
+fn steps_that_keep_interrupting_the_blend_stay_continuous_and_then_land() {
+    let mut zoom = settled(ThirdPerson);
+    let (mut yaw, mut pitch) = (0.4, -0.3);
+    let mut level = ThirdPerson;
+    for step in 0..1000 {
+        let shown = zoom.pose(FOCUS, yaw, pitch, 0.0).unwrap();
+        level = if level == ThirdPerson {
+            Drone
+        } else {
+            ThirdPerson
+        };
+        (yaw, pitch) = zoom.set_level(Some(level), yaw, pitch).unwrap();
+        let next = zoom.pose(FOCUS, yaw, pitch, 0.0).unwrap();
+        assert!(
+            next.position.distance(shown.position) < 1e-3,
+            "{step}: {next:?} {shown:?}"
+        );
+        assert!(same_rotation(next.rotation, shown.rotation), "{step}");
+        assert!(close(next.fov, shown.fov, 1e-4), "{step}");
+        // uneven frames, each far shorter than a blend
+        let frames = 1 + step % 4;
+        for frame in 0..frames {
+            let dt = FRAME * (0.7 + 0.15 * ((step + frame) % 5) as f32);
+            zoom.tick(dt, pitch, CameraShoulder::Right, true);
+        }
+    }
+
+    run(&mut zoom, BLEND_SECS + FRAME);
+    assert!(!zoom.blending());
+    let end = zoom.pose(FOCUS, yaw, pitch, 0.0).unwrap();
+    let settled = level_pose(level, FOCUS, yaw, pitch, 0.0, zoom.shoulder_offset(level));
+    assert!(end.position.distance(settled.position) < 1e-5);
+}
+
+#[test]
+fn a_held_blend_follows_the_focus() {
+    let mut zoom = settled(FirstPerson);
+    let (yaw, pitch) = zoom.set_level(Some(ThirdPerson), 0.2, -0.1).unwrap();
+    run(&mut zoom, 0.2);
+    let (yaw, pitch) = zoom.set_level(Some(Drone), yaw, pitch).unwrap();
+    run(&mut zoom, 0.1);
+
+    let moved = Vec3::new(3.0, 0.5, -7.0);
+    let here = zoom.pose(FOCUS, yaw, pitch, 0.0).unwrap();
+    let there = zoom.pose(FOCUS + moved, yaw, pitch, 0.0).unwrap();
+    assert!(there.position.distance(here.position + moved) < 1e-4);
+    assert!(same_rotation(there.rotation, here.rotation));
+}
+
+#[test]
+fn backing_out_of_a_second_step_takes_the_time_spent_and_keeps_the_aim() {
+    let mut zoom = settled(FirstPerson);
+    let (yaw, pitch) = zoom.set_level(Some(ThirdPerson), 0.3, -0.2).unwrap();
+    run(&mut zoom, 0.1);
+    let (drone_yaw, drone_pitch) = zoom.set_level(Some(Drone), yaw, pitch).unwrap();
+    run(&mut zoom, 0.2);
+    // third person is held in the blend: it keeps the aim it was left with
+    assert_eq!(
+        zoom.set_level(Some(ThirdPerson), drone_yaw, drone_pitch),
+        Some((yaw, pitch))
+    );
+    run(&mut zoom, 0.2 - FRAME);
+    assert!(zoom.blending());
+    run(&mut zoom, 2.0 * FRAME);
+    assert!(!zoom.blending());
 }

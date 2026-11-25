@@ -14,7 +14,7 @@ use common::structs::{CameraShoulder, CameraZoomLevel};
 /// The point the camera follows and aims at, above the player's feet.
 pub const FOCUS_HEIGHT: f32 = 1.75;
 /// Seconds a change of level takes.
-pub const BLEND_SECS: f32 = 0.5;
+const BLEND_SECS: f32 = 0.5;
 /// Metres per second the shoulder offset moves towards its target.
 const SHOULDER_CHANGE_SPEED: f32 = 4.0;
 /// Degrees the first-person camera may pitch.
@@ -93,7 +93,7 @@ fn orbit(level: CameraZoomLevel) -> Option<&'static Orbit> {
 }
 
 /// Vertical, in radians.
-pub fn level_fov(level: CameraZoomLevel) -> f32 {
+fn level_fov(level: CameraZoomLevel) -> f32 {
     orbit(level)
         .map_or(FIRST_PERSON_FOV_DEGREES, |orbit| orbit.fov_degrees)
         .to_radians()
@@ -143,7 +143,7 @@ pub fn step_level(
 }
 
 /// The orbit value of a camera pitch (radians, up positive): 0.5 level, 1 looking straight down.
-pub fn orbit_value(pitch: f32) -> f32 {
+fn orbit_value(pitch: f32) -> f32 {
     (0.5 - pitch / PI).clamp(0.0, 1.0)
 }
 
@@ -267,7 +267,7 @@ fn screen_tilt(screen_y: f32, fov_degrees: f32) -> f32 {
 }
 
 /// The yaw and pitch the camera continues from when the level changes from `from` to `to`.
-pub fn carry_view(from: CameraZoomLevel, to: CameraZoomLevel, yaw: f32, pitch: f32) -> (f32, f32) {
+fn carry_view(from: CameraZoomLevel, to: CameraZoomLevel, yaw: f32, pitch: f32) -> (f32, f32) {
     let pitch = match (orbit(from), orbit(to)) {
         (Some(from), Some(to)) => pitch_of_orbit_value(closest_orbit_value(
             to,
@@ -494,8 +494,11 @@ fn blend_poses(a: &CameraPose, b: &CameraPose, t: f32) -> CameraPose {
     }
 }
 
+/// The yaw and pitch each level was left with, by `CameraZoomLevel as usize`.
+type LevelAims = [Option<(f32, f32)>; 3];
+
 /// What a blend starts from: a level's camera as it was aimed when the player left it, or a
-/// blend that was under way, held at the weight it had reached.
+/// blend that was under way, held at the pose it had reached.
 #[derive(Clone, Debug)]
 enum BlendSource {
     Level {
@@ -504,26 +507,32 @@ enum BlendSource {
         pitch: f32,
     },
     Held {
-        from: Box<BlendSource>,
-        to: Box<BlendSource>,
-        weight: f32,
+        /// Relative to the focus, so the held camera keeps following the player.
+        pose: CameraPose,
+        /// The level the held blend was heading to.
+        left: CameraZoomLevel,
+        aims: LevelAims,
     },
 }
 
 impl BlendSource {
-    fn aim_of(&self, level: CameraZoomLevel) -> Option<(f32, f32)> {
+    fn aims(&self) -> LevelAims {
         match self {
-            BlendSource::Level {
-                level: own,
-                yaw,
-                pitch,
-            } => (*own == level).then_some((*yaw, *pitch)),
-            BlendSource::Held { from, to, .. } => to.aim_of(level).or_else(|| from.aim_of(level)),
+            BlendSource::Level { level, yaw, pitch } => {
+                let mut aims = LevelAims::default();
+                aims[*level as usize] = Some((*yaw, *pitch));
+                aims
+            }
+            BlendSource::Held { aims, .. } => *aims,
         }
     }
 
-    fn is_level(&self, level: CameraZoomLevel) -> bool {
-        matches!(self, BlendSource::Level { level: own, .. } if *own == level)
+    /// The level the player most recently left.
+    fn left(&self) -> CameraZoomLevel {
+        match self {
+            BlendSource::Level { level, .. } => *level,
+            BlendSource::Held { left, .. } => *left,
+        }
     }
 }
 
@@ -599,32 +608,46 @@ impl CameraZoom {
         };
         self.level = level;
 
-        let leaving = BlendSource::Level {
-            level: from,
-            yaw,
-            pitch,
-        };
         let mut seconds = BLEND_SECS;
         let mut start = 0.0;
-        // a level still in the running blend keeps the aim it was left with
-        let kept_aim = self.blend.as_ref().and_then(|blend| blend.from.aim_of(to));
+        let mut kept_aim = None;
         let source = match self.blend.take() {
             Some(running) => {
-                let backing_out = running.from.is_level(to)
-                    || matches!(&running.from, BlendSource::Held { to: held, .. } if held.is_level(to));
-                if backing_out {
+                if running.from.left() == to {
                     let progress =
                         running.start + (1.0 - running.start) * (running.elapsed / running.seconds);
                     seconds *= progress;
                     start = 1.0 - progress;
                 }
+                let mut aims = running.from.aims();
+                // a level still in the running blend keeps the aim it was left with
+                kept_aim = aims[to as usize];
+                aims[from as usize] = Some((yaw, pitch));
+                // the pose shown now, around a focus at the origin
+                let leaving = level_pose(
+                    from,
+                    Vec3::ZERO,
+                    yaw,
+                    pitch,
+                    0.0,
+                    self.shoulder_offset(from),
+                );
+                let pose = blend_poses(
+                    &self.source_pose(&running.from, Vec3::ZERO),
+                    &leaving,
+                    running.weight(),
+                );
                 BlendSource::Held {
-                    weight: running.weight(),
-                    from: Box::new(running.from),
-                    to: Box::new(leaving),
+                    pose,
+                    left: from,
+                    aims,
                 }
             }
-            None => leaving,
+            None => BlendSource::Level {
+                level: from,
+                yaw,
+                pitch,
+            },
         };
         self.blend = Some(Blend {
             from: source,
@@ -670,11 +693,11 @@ impl CameraZoom {
                 0.0,
                 self.shoulder_offset(*level),
             ),
-            BlendSource::Held { from, to, weight } => blend_poses(
-                &self.source_pose(from, focus),
-                &self.source_pose(to, focus),
-                *weight,
-            ),
+            BlendSource::Held { pose, .. } => CameraPose {
+                position: pose.position + focus,
+                look_at: pose.look_at.map(|look_at| look_at + focus),
+                ..*pose
+            },
         }
     }
 
