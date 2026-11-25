@@ -157,7 +157,7 @@ describe('Switch', () => {
       expect(onCheckedChange).toHaveBeenCalledWith(true)
     })
 
-    it('should toggle on Enter, as the button it replaces did', async () => {
+    it('should toggle on Enter as well as Space', async () => {
       const onCheckedChange = vi.fn()
       render(<Switch appearance="hud" label="Auto" checked={false} onCheckedChange={onCheckedChange} />)
       screen.getByRole('switch', { name: 'Auto' }).focus()

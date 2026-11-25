@@ -637,7 +637,7 @@
   },
   "library/ui/components/Checkbox/Checkbox.module.css": {
     "primitives": 0,
-    "tokens": 33
+    "tokens": 34
   },
   "library/ui/components/CheckboxLabel/CheckboxLabel.module.css": {
     "primitives": 0,
@@ -745,7 +745,7 @@
   },
   "library/ui/components/Switch/Switch.module.css": {
     "primitives": 0,
-    "tokens": 26
+    "tokens": 27
   },
   "library/ui/components/Tabs/Tabs.module.css": {
     "primitives": 0,

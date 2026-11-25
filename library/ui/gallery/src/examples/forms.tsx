@@ -167,8 +167,8 @@ export const formEntries: GalleryEntry[] = [
               </div>
             ))}
             <div className={layout.row}>
-              <Checkbox aria-label="hud" variant="hud" defaultChecked />
-              <Checkbox aria-label="hud off" variant="hud" />
+              <Checkbox aria-label="hud" appearance="hud" defaultChecked />
+              <Checkbox aria-label="hud off" appearance="hud" />
             </div>
           </div>
         )
@@ -245,7 +245,9 @@ export const formEntries: GalleryEntry[] = [
             <Switch appearance="hud" label="Fullscreen off" labelHidden />
             <Switch appearance="hud" size="sm" label="Hear others" labelHidden defaultChecked />
             <Switch appearance="hud" size="sm" label="Hear others off" labelHidden />
-            <Switch appearance="hud" size="sm" surface="light" label="Map layer" labelHidden />
+            <span style={{ padding: 8, borderRadius: 8, background: '#fcfcfc' }}>
+              <Switch appearance="hud" size="sm" surface="light" label="Map layer" labelHidden />
+            </span>
             <Switch appearance="hud" label="Unavailable" labelHidden disabled />
           </div>
         )

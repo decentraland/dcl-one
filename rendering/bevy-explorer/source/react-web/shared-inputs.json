@@ -12101,7 +12101,7 @@
     },
     {
       "path": "library/ui/apps/hud/design/AnchoredMenu.tsx",
-      "sha256": "da01319614a9284cb5abb9a8e7e75074379e46ef3bb1a4cc68eb72971277fb66"
+      "sha256": "6ea8d33c83ca400656dbefe8ec38d24d446307fca3233a3b4f824943952ee1df"
     },
     {
       "path": "library/ui/apps/hud/design/ArmedButton.tsx",
@@ -12573,7 +12573,7 @@
     },
     {
       "path": "library/ui/apps/hud/features/chat/buttonSounds.ts",
-      "sha256": "bc54d1cf14353eee328eb9199088a55d215625e249dcb04d804475ce1d69f3a4"
+      "sha256": "90a2c25a9461ad8d2a046b1d2929cb7d4baa6d7509d918e8568ff5012c46c1ae"
     },
     {
       "path": "library/ui/apps/hud/features/chat/chatIdentity.ts",
@@ -13617,7 +13617,7 @@
     },
     {
       "path": "library/ui/apps/hud/features/startup/NewAccountName.tsx",
-      "sha256": "45317127041c8b9cfc953f4a45c63a68293bfdebfe86f1357199b4d10061d52f"
+      "sha256": "5322d947ea9ed6d6ef60d2d7fe0a7bcb99dd73b9c8c4af7f7189d4758025507f"
     },
     {
       "path": "library/ui/apps/hud/features/startup/StartupBack.module.css",
@@ -13737,7 +13737,7 @@
     },
     {
       "path": "library/ui/apps/hud/lib/bindingLabels.ts",
-      "sha256": "192981a40eb2d33c96feac006e754d54a08370aca1c95c0193b071aee373ebbd"
+      "sha256": "ab1b4c9b56f8f657a6b364d4a9e90b3cb7f69f3143f0c676cf3686c1470f971d"
     },
     {
       "path": "library/ui/apps/hud/lib/hudInset.ts",
@@ -13813,7 +13813,7 @@
     },
     {
       "path": "library/ui/apps/hud/test/editableTarget.test.ts",
-      "sha256": "cb26e7f210411c3d2cf8bfba309bafbafbbd5866b0d1ab6ac2cc2d6c387c6a4c"
+      "sha256": "74ff24558dd84aad1e23b84b092d13d5b04fba0c2e66b487983bdecccaf84d99"
     },
     {
       "path": "library/ui/apps/hud/test/engineViewport.test.tsx",
@@ -14377,7 +14377,7 @@
     },
     {
       "path": "library/ui/apps/hud/test/reelGrid.test.tsx",
-      "sha256": "eabe4ef5ced59f26e57cc3b6b987b76a1bf787b60f8c88e41863efbdd55a5c11"
+      "sha256": "59085def5feb143211d88db400a544bd698d85e407be931366773af02be36ed4"
     },
     {
       "path": "library/ui/apps/hud/test/referral.test.ts",
@@ -16161,11 +16161,11 @@
     },
     {
       "path": "library/ui/components/Checkbox/Checkbox.module.css",
-      "sha256": "aabcd67ae6acbd6386fc81fd771c531351b132460eaaa5501bad1fe5e13230be"
+      "sha256": "702b6c9a66882778dc08143066668cd08459f00abd464dd01fd9f3e2d418b63a"
     },
     {
       "path": "library/ui/components/Checkbox/Checkbox.tsx",
-      "sha256": "955c1fe96a409727e20e8a88e301987c118c0b20fdc22af7c293eb88c252fd5c"
+      "sha256": "4cba0db9d3d00a32309a5aa85e0b6e834af5ce6ef6e18559fd4acf5f55714558"
     },
     {
       "path": "library/ui/components/CheckboxLabel/CheckboxLabel.module.css",
@@ -16397,11 +16397,11 @@
     },
     {
       "path": "library/ui/components/Switch/Switch.module.css",
-      "sha256": "aef123dfc05fd55858eebeb011dc2729c96157f872023ca6649525e4af2c9b75"
+      "sha256": "5678744d90f00909ca0ba01a41d829808bf5760b6e46d7c9fc34449344a9ceed"
     },
     {
       "path": "library/ui/components/Switch/Switch.tsx",
-      "sha256": "3a2470a712ae5569d7b4c23a28e76e09f1b13c7b2a1b22b53d54b06f31e35ede"
+      "sha256": "6f89d3814653ab39ababe53a87591eca29c9b3eedf3ca79cbbe857bb5af52167"
     },
     {
       "path": "library/ui/components/Tabs/Tabs.module.css",

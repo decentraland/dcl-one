@@ -130,19 +130,19 @@ describe('Checkbox', () => {
       })
     })
 
-    describe('and the variant is hud', () => {
+    describe('and the appearance is hud', () => {
       let container: HTMLElement
       let onCheckedChange: Mock<(checked: boolean) => void>
 
       beforeEach(() => {
         onCheckedChange = vi.fn()
         container = render(
-          <Checkbox aria-label="I agree" variant="hud" id="terms" checked={false} onCheckedChange={onCheckedChange} />
+          <Checkbox aria-label="I agree" appearance="hud" id="terms" checked={false} onCheckedChange={onCheckedChange} />
         ).container
       })
 
-      it('should render the hud variant with its own tick and keep the id a label can point at', () => {
-        expect(container.firstElementChild).toHaveAttribute('data-variant', 'hud')
+      it('should render the hud appearance with its own tick and keep the id a label can point at', () => {
+        expect(container.firstElementChild).toHaveAttribute('data-appearance', 'hud')
         expect(container.querySelector('path')).toHaveAttribute('d', 'M3 8.5l3 3 7-7')
         expect(screen.getByRole('checkbox', { name: 'I agree' })).toHaveAttribute('id', 'terms')
       })
