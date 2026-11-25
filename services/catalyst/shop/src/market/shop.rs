@@ -27,10 +27,10 @@
 
 #[path = "shop_queries.rs"]
 mod queries;
+use queries::ReferenceItem;
 pub(crate) use queries::coupon_pairings;
-use queries::{ReferenceItem, since_at};
 pub use queries::{
-    build_importable_listings_sql, build_items_by_ids_sql, build_legacy_listings_sql,
+    FeedClock, build_importable_listings_sql, build_items_by_ids_sql, build_legacy_listings_sql,
     build_related_items_sql, build_shop_listings_sql, build_unified_items_sql,
     build_unified_listings_sql,
 };
@@ -994,7 +994,7 @@ pub async fn shop_listings(
     let (rows, total) = counted_page(
         fetch(
             &mut read.tx,
-            build_shop_listings_sql(f, since_at(state, read.now)),
+            build_shop_listings_sql(f, FeedClock::of(state, read.now)),
         )
         .await?,
     );
@@ -1037,7 +1037,7 @@ pub async fn legacy_listings(
     let (rows, total) = counted_page(
         fetch(
             &mut read.tx,
-            build_legacy_listings_sql(f, since_at(state, read.now)),
+            build_legacy_listings_sql(f, FeedClock::of(state, read.now)),
         )
         .await?,
     );
@@ -1079,7 +1079,7 @@ pub async fn importable_listings(
 ) -> Result<Vec<ImportableListing>, ApiError> {
     let rows = fetch(
         &mut read.tx,
-        build_importable_listings_sql(seller, since_at(state, read.now)),
+        build_importable_listings_sql(seller, FeedClock::of(state, read.now)),
     )
     .await?;
     Ok(rows
@@ -1120,7 +1120,7 @@ pub async fn unified_listings(
     let (rows, total) = counted_page(
         fetch(
             &mut read.tx,
-            build_unified_listings_sql(f, rate, since_at(state, read.now)),
+            build_unified_listings_sql(f, rate, FeedClock::of(state, read.now)),
         )
         .await?,
     );
@@ -1136,7 +1136,7 @@ pub async fn unified_items(
     let (rows, total) = counted_page(
         fetch(
             &mut read.tx,
-            build_unified_items_sql(f, rate, since_at(state, read.now)),
+            build_unified_items_sql(f, rate, FeedClock::of(state, read.now)),
         )
         .await?,
     );
@@ -1155,7 +1155,7 @@ pub async fn items_by_ids(
     }
     let rows = fetch(
         &mut read.tx,
-        build_items_by_ids_sql(ids, f, rate, since_at(state, read.now)),
+        build_items_by_ids_sql(ids, f, rate, FeedClock::of(state, read.now)),
     )
     .await?;
     Ok(rows.iter().map(map_unified_item).collect())
@@ -1201,7 +1201,7 @@ pub async fn related_items(
             first,
             rail,
             rate,
-            since_at(state, read.now),
+            FeedClock::of(state, read.now),
         ),
     )
     .await?;
@@ -2164,6 +2164,7 @@ mod tests {
             UnifiedAcquisition::Store,
             Some("$1"),
             &UnifiedCatalogFilters::default(),
+            "$2",
         );
         assert!(
             !legacy.contains("shop.coupons") && legacy.contains("NULL::jsonb AS coupon"),
@@ -2246,15 +2247,25 @@ mod tests {
         ];
         assert_eq!(id_contracts(&ids), vec!["0xaa", "0xbb"]);
         let rate = ManaUsdRate::parse_usd_per_mana("0.5").unwrap();
-        let by_ids =
-            build_items_by_ids_sql(&ids, &UnifiedCatalogFilters::default(), rate, None).sql;
+        let by_ids = build_items_by_ids_sql(
+            &ids,
+            &UnifiedCatalogFilters::default(),
+            rate,
+            FeedClock::unbounded(),
+        )
+        .sql;
         assert!(
             by_ids.contains(
                 "sent.direction = 'sent' AND sent.contract_address IN (SELECT unnest($3::text[]))"
             ) && by_ids.contains("(d.contract_address || '-' || d.item_id) = ANY("),
             "{by_ids}"
         );
-        let feed = build_unified_items_sql(&UnifiedCatalogFilters::default(), rate, None).sql;
+        let feed = build_unified_items_sql(
+            &UnifiedCatalogFilters::default(),
+            rate,
+            FeedClock::unbounded(),
+        )
+        .sql;
         assert!(
             !feed.contains("unnest("),
             "a feed reads every open trade: {feed}"
@@ -2335,7 +2346,7 @@ mod tests {
                 ("sortBy", "cheapest"),
                 ("discounted", "true"),
             ])),
-            None,
+            FeedClock::unbounded(),
         );
         assert!(
             shop.sql.contains("shop.items i")
@@ -2362,7 +2373,7 @@ mod tests {
         );
         let legacy = build_legacy_listings_sql(
             &parse_legacy_filters(&pairs(&[("category", "emote"), ("sortBy", "discount")])),
-            None,
+            FeedClock::unbounded(),
         );
         assert!(
             legacy.sql.contains("u.received_asset_type = 1")
@@ -2375,7 +2386,7 @@ mod tests {
         let unified = build_unified_items_sql(
             &parse_unified_filters(&pairs(&[("groupBy", "item")])),
             ManaUsdRate::parse_usd_per_mana("0.5").unwrap(),
-            None,
+            FeedClock::unbounded(),
         );
         assert_eq!(
             unified.sql.matches("UNION ALL").count(),
@@ -2395,14 +2406,14 @@ mod tests {
         let native = build_unified_listings_sql(
             &parse_unified_filters(&pairs(&[("source", "native")])),
             ManaUsdRate::parse_usd_per_mana("0.5").unwrap(),
-            None,
+            FeedClock::unbounded(),
         );
         assert!(
             !native.sql.contains("UNION ALL") && !native.sql.contains("store"),
             "{}",
             native.sql
         );
-        let importable = build_importable_listings_sql("0xABC", None);
+        let importable = build_importable_listings_sql("0xABC", FeedClock::unbounded());
         assert!(
             importable.sql.contains("lower(sub.signer) =")
                 && !importable.sql.contains(" AND u.type = 'public_item_order'"),
@@ -2418,7 +2429,7 @@ mod tests {
             None,
             &RelatedItemsFilters::default(),
             ManaUsdRate::parse_usd_per_mana("0.5").unwrap(),
-            None,
+            FeedClock::unbounded(),
         );
         assert!(
             related.sql.contains("CASE lower(d.rarity)")

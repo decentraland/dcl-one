@@ -947,20 +947,9 @@ async fn catalog_wearables_with_base(state: &MarketplaceState, query: CatalogQue
         query.last_id.clone()
     };
     let want_on_chain = !only_base_collection && filters.extended.allows(CollectionType::OnChain);
-    let mut source = if want_on_chain {
-        match urn_source(state).await {
-            Ok(s) => Some(s),
-            Err(envelope) => return envelope,
-        }
-    } else {
-        None
-    };
-
-    // The urn leg is fetched at limit+1 concurrently and cut to what the base leg leaves.
-    let base_leg = async {
-        if !in_base_range {
-            return Vec::new();
-        }
+    // The base leg reads through the pool, so it runs before the catalogue
+    // read holds a connection: never wait on a second one while holding it.
+    let off_chain = if in_base_range {
         let base = cached_base_wearables(state).await;
         filter_and_extract_base_wearables(
             &base,
@@ -969,24 +958,32 @@ async fn catalog_wearables_with_base(state: &MarketplaceState, query: CatalogQue
             (limit + 1) as usize,
             &state.settings.content_public_url,
         )
+    } else {
+        Vec::new()
     };
-    let urns_leg = async {
-        match source.as_mut() {
-            Some(source) => {
-                item_urns(
-                    state,
-                    source,
-                    "wearable",
-                    filters,
-                    limit + 1,
-                    &on_chain_cursor,
-                )
-                .await
-            }
-            None => Ok(Vec::new()),
+    // The urn leg is fetched at limit+1 and cut to what the base leg leaves.
+    let mut source = if want_on_chain {
+        match urn_source(state).await {
+            Ok(s) => Some(s),
+            Err(envelope) => return envelope,
         }
+    } else {
+        None
     };
-    let (off_chain, urns) = tokio::join!(base_leg, urns_leg);
+    let urns = match source.as_mut() {
+        Some(source) => {
+            item_urns(
+                state,
+                source,
+                "wearable",
+                filters,
+                limit + 1,
+                &on_chain_cursor,
+            )
+            .await
+        }
+        None => Ok(Vec::new()),
+    };
     let mut urns = match urns {
         Ok(u) => u,
         Err(resp) => return resp,

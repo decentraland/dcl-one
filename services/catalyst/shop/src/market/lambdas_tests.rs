@@ -1676,6 +1676,48 @@ async fn assert_lambdas_profile_dependency_failure(state: &SharedState, layer: &
 }
 
 #[tokio::test]
+async fn cold_wearables_answer_the_base_leg_on_a_one_connection_pool() {
+    // The base wearables read the pool before the catalogue read holds its
+    // connection: on a one-connection pool, cold, the base leg must not
+    // time out into an empty list while the snapshot waits.
+    let Some(pool) = crate::db::scratch::isolated_pool(4).await else {
+        return;
+    };
+    seed(&pool).await;
+    let mut answers = Vec::new();
+    for cap in [2, 1] {
+        let narrow = PgPoolOptions::new()
+            .max_connections(cap)
+            .acquire_timeout(std::time::Duration::from_millis(400))
+            .connect_with((*pool.connect_options()).clone())
+            .await
+            .unwrap();
+        let state = Arc::new(crate::market::MarketplaceState::new(
+            narrow,
+            crate::http::Outbound::for_tests(),
+            Settings::for_tests(),
+        ));
+        let (status, body) = get(&state, "/lambdas/collections/wearables?textSearch=eyes").await;
+        assert_eq!(status, StatusCode::OK, "pool of {cap}: {body}");
+        let ids: Vec<String> = body["wearables"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter_map(|w| w["id"].as_str().map(str::to_owned))
+            .collect();
+        assert_eq!(
+            ids,
+            vec!["urn:decentraland:off-chain:base-avatars:eyes_00".to_string()],
+            "pool of {cap}"
+        );
+        answers.push(body);
+        state.pool.close().await;
+    }
+    assert_eq!(answers[0], answers[1]);
+    pool.close().await;
+}
+
+#[tokio::test]
 async fn catalogue_and_user_pages_fail_when_the_content_read_fails() {
     // A node that walks the nft index: the user pages read their owner's
     // copies from the same closed pool first, and answer the same 500.

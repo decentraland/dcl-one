@@ -3274,9 +3274,11 @@ In that transaction the reader reads per network the ownership marker, the
 `collections` cursor, the projection's row and the mirrors' passes. It decides
 readiness by the source that owns each network, then reads its rows in the
 same snapshot, so a rewind, a republication or a hand-back that commits
-meanwhile never splits an answer. A reader that joins the open trades reads
-their pass and verdicts in the same snapshot, at the same instant its rows
-are filtered by. The transaction holds a pooled connection, so a reader
+meanwhile never splits an answer. A reader that joins the open trades
+(credits pricing included) reads their pass and verdicts in the same
+snapshot, at the read's instant. That instant also decides the rows' open
+trades, trade floor and coupon window, on every page of the read. The
+transaction holds a pooled connection, so a reader
 releases it before any pool work that reads no catalogue row, and reuses it
 for what does.
 
@@ -3313,18 +3315,21 @@ refuses reads until the publication.
 The mirrors' rule covers every network the index does not own that a read
 may return rows of. Every one of their passes there must be bound to the
 chain this node serves, a network with no subgraph configured now included,
-since its rows are read too. Each configured network the index does not own
-needs a complete pass of each mirror the route reads, the items one within
-its money budget for a priced read. With no subgraph configured, a network
-an index owns still answers. A read for every network then names the
+since its rows are read too. Each network the read may return rows of (the
+catalogue holds rows of it), configured or not, needs a complete pass of each
+mirror the route reads, the items one within its money budget for a priced
+read; so does each configured network the index does not own. A network
+holding rows with no pass and no subgraph configured names its subgraph, since
+no pass can come. With no subgraph configured, a network an index owns still
+answers. A read for every network then names the
 subgraph of the network without a source. The lambdas catalogue falls back
 to asking the subgraphs only when the mirrors refused and the index owns no
 network; it never stands in for a network the index owns.
 
 A memo over catalogue rows is filed under what its read saw: each mirror's
-pass on each network it took rows from (the oldest alone would not move when
-a newer network's pass does), and each owned network's publication and
-projection generation. The creator directory is a display aggregate that
+pass on each network it may take rows from, configured or not (the oldest
+alone would not move when a newer network's pass does), and each owned
+network's publication and projection generation. The creator directory is a display aggregate that
 keeps its stated staleness (15 minutes, kept up to an hour), so it is filed
 under which source serves each network: an ownership change files it anew.
 

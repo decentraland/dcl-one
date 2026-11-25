@@ -170,6 +170,17 @@ impl CatalogueRead {
             .await
             .map(|_| ())
     }
+
+    /// [`Self::trades_ready`], typed ([`super::trades::ready_checked_on`]):
+    /// the source that refused and why, `None` when it could not be read.
+    pub async fn trades_checked(
+        &mut self,
+        state: &MarketplaceState,
+    ) -> Result<(), Option<(Source, String)>> {
+        super::trades::ready_checked_on(state, &mut self.tx, self.now)
+            .await
+            .map(|_| ())
+    }
 }
 
 /// Why the gate refused a read.
@@ -212,6 +223,8 @@ pub struct NetworkState {
     pub folded_at: Option<NaiveDateTime>,
     /// A collections event walked past the published fold.
     pub walked_past: bool,
+    /// The catalogue holds rows of this network (collections or items).
+    pub has_rows: bool,
     pub collections_pass: Option<NaiveDateTime>,
     pub items_pass: Option<NaiveDateTime>,
     /// The chain each mirror's pass was proven on.
@@ -311,6 +324,9 @@ pub fn index_verdict(
 struct MirrorScope<'a> {
     /// Every network the index does not own, with its state.
     unowned: &'a [&'a NetworkState],
+    /// The networks the read may return mirror rows of: those in its scope
+    /// the index does not own and the catalogue holds rows of.
+    returnable: &'a [Network],
     /// The configured networks the index does not own.
     served: &'a [Network],
     /// Whether any subgraph is configured.
@@ -320,16 +336,19 @@ struct MirrorScope<'a> {
 }
 
 /// The mirrors' verdict for a read that may return rows of the networks the
-/// index does not own (`unowned`):
+/// index does not own:
 /// - every mirror pass of those networks is bound to the chain this node
 ///   serves ([`mirrors::bound`], main's rule over every stored publication,
 ///   a network no subgraph is configured for included: its rows are read);
-/// - with subgraphs configured, each one the index does not own (`served`)
-///   has a complete pass of each mirror the read needs, the items one within
-///   its money budget for a priced read;
-/// - with none configured, a descriptive read serves the passes the tables
-///   record; a priced read names the subgraph of the first network no index
-///   owns.
+/// - each network the read may return rows of (`returnable`), and with
+///   subgraphs configured each one the index does not own (`served`), has a
+///   complete pass of each mirror the read needs, the items one within its
+///   money budget for a priced read; each of those passes files the read
+///   (its key). A returnable network without a pass and without a subgraph
+///   names its subgraph: no pass can come;
+/// - with no subgraph configured, a priced read names the subgraph of the
+///   first network no index owns, and so does a descriptive read when no
+///   network is owned and no pass is recorded.
 fn mirror_verdict(
     state: &MarketplaceState,
     scope: &MirrorScope<'_>,
@@ -339,6 +358,7 @@ fn mirror_verdict(
 ) -> Result<MirrorCopy, (Source, String)> {
     let MirrorScope {
         unowned,
+        returnable,
         served,
         configured,
         owned: owned_networks,
@@ -369,31 +389,53 @@ fn mirror_verdict(
                 ),
             ));
         }
-        let passes: Vec<(String, NaiveDateTime)> = if configured {
-            let mut passes = Vec::new();
-            for network in served {
-                match rows
-                    .iter()
-                    .find(|(n, _, _)| n == network.db_name())
-                    .and_then(|(_, at, _)| *at)
-                {
-                    Some(at) => passes.push((network.db_name().to_string(), at)),
-                    None => return Err(mirrors::not_ready_reason(state, *mirror, true)),
+        if !configured && purpose != Purpose::Describe {
+            return Err(missing_subgraph(*mirror));
+        }
+        let mut required: Vec<Network> = served.to_vec();
+        required.extend(returnable.iter().copied().filter(|n| !served.contains(n)));
+        // No subgraph, no index and no pass: nothing could ever serve a row.
+        if required.is_empty()
+            && owned_networks.is_empty()
+            && rows.iter().all(|(_, at, _)| at.is_none())
+        {
+            return Err(missing_subgraph(*mirror));
+        }
+        let mut passes = Vec::new();
+        for network in required {
+            match rows
+                .iter()
+                .find(|(n, _, _)| n == network.db_name())
+                .and_then(|(_, at, _)| *at)
+            {
+                Some(at) => passes.push((network.db_name().to_string(), at)),
+                None if served.contains(&network) => {
+                    return Err(mirrors::not_ready_reason(state, *mirror, true));
+                }
+                // No subgraph is configured for it: no pass can come.
+                None => {
+                    return Err((
+                        Source::CollectionsSubgraph(network),
+                        format!(
+                            "the catalogue holds {net} rows, and no collections subgraph is configured for {net} to give the {} mirror a pass of them",
+                            mirror.name(),
+                            net = network.db_name(),
+                        ),
+                    ));
                 }
             }
-            passes
-        } else if purpose == Purpose::Describe {
-            let passes: Vec<(String, NaiveDateTime)> = rows
-                .iter()
-                .filter_map(|(n, at, _)| Some((n.clone(), (*at)?)))
-                .collect();
-            if passes.is_empty() {
-                return Err(missing_subgraph(*mirror));
+        }
+        // With no subgraph at all, a descriptive read serves the copy the
+        // tables record: every recorded pass files it and dates it.
+        if !configured {
+            for (network, at, _) in &rows {
+                if let Some(at) = at
+                    && !passes.iter().any(|(n, _)| n == network)
+                {
+                    passes.push((network.clone(), *at));
+                }
             }
-            passes
-        } else {
-            return Err(missing_subgraph(*mirror));
-        };
+        }
         if purpose != Purpose::Describe
             && *mirror == Mirror::Items
             && let Some(oldest) = passes.iter().map(|(_, at)| *at).min()
@@ -420,6 +462,8 @@ async fn read_states(
                 EXISTS (SELECT 1 FROM shop.collection_event e \
                         WHERE e.network = n.network AND e.block_number > c.folded_block \
                           AND e.block_number <= c.last_block) AS walked_past, \
+                (EXISTS (SELECT 1 FROM shop.collections r WHERE r.network = n.network) \
+                 OR EXISTS (SELECT 1 FROM shop.items r WHERE r.network = n.network)) AS has_rows, \
                 mc.last_complete_pass_at AS collections_pass, mc.chain_id AS collections_chain, \
                 mi.last_complete_pass_at AS items_pass, mi.chain_id AS items_chain \
          FROM unnest(ARRAY['ethereum', 'matic']) AS n(network) \
@@ -447,6 +491,7 @@ async fn read_states(
                 folded_block: r.try_get("folded_block")?,
                 folded_at: r.try_get("folded_at")?,
                 walked_past: r.try_get("walked_past")?,
+                has_rows: r.try_get("has_rows")?,
                 collections_pass: r.try_get("collections_pass")?,
                 items_pass: r.try_get("items_pass")?,
                 collections_chain: r.try_get("collections_chain")?,
@@ -546,6 +591,13 @@ pub async fn begin_checked(
         None
     } else {
         let all_unowned: Vec<&NetworkState> = states.iter().filter(|s| !s.owned).collect();
+        // Polygon first, as a missing subgraph is named.
+        let mut returnable: Vec<Network> = unowned
+            .iter()
+            .filter(|s| s.has_rows)
+            .filter_map(|s| Network::parse_db(&s.network))
+            .collect();
+        returnable.sort_by_key(|n| *n != Network::Matic);
         let served: Vec<Network> = configured
             .iter()
             .copied()
@@ -556,6 +608,7 @@ pub async fn begin_checked(
                 state,
                 &MirrorScope {
                     unowned: &all_unowned,
+                    returnable: &returnable,
                     served: &served,
                     configured: !configured.is_empty(),
                     owned: &owned_networks,
@@ -623,6 +676,7 @@ mod tests {
             folded_block: Some(100),
             folded_at: Some(now.naive_utc() - Duration::minutes(1)),
             walked_past: false,
+            has_rows: true,
             collections_pass: None,
             items_pass: None,
             collections_chain: None,
@@ -990,6 +1044,110 @@ mod tests {
             .unwrap();
         let refused = open(&state, Purpose::Priced).await.err().unwrap();
         assert_eq!(source_of(refused).await, "collections-subgraph:matic");
+    }
+
+    /// Only Polygon's subgraph configured, and Polygon owned: the Ethereum
+    /// rows left in the catalogue are still returned, so their mirror pass
+    /// is required and files the read.
+    async fn only_polygon_configured() -> Option<(PgPool, crate::market::SharedState)> {
+        let (pool, base) = owned_polygon().await?;
+        let state = std::sync::Arc::new(crate::market::MarketplaceState::new(
+            pool.clone(),
+            crate::http::Outbound::for_tests(),
+            crate::market::Settings {
+                eth_collections_subgraph_url: None,
+                matic_collections_subgraph_url: Some("http://127.0.0.1:9".into()),
+                ..base.settings.clone()
+            },
+        ));
+        assert_eq!(state.settings.collection_networks(), [Network::Matic]);
+        Some((pool, state))
+    }
+
+    async fn ethereum_read(
+        state: &MarketplaceState,
+        purpose: Purpose,
+        scope: Option<Network>,
+    ) -> Result<CatalogueRead, axum::response::Response> {
+        begin(state, purpose, &[Mirror::Items], scope, Access::ReadOnly).await
+    }
+
+    /// A priced read needs a current items pass of every network it can
+    /// return rows of, configured or not: a stale or a missing Ethereum pass
+    /// refuses it (scoped to Ethereum or unscoped); a missing one refuses a
+    /// descriptive read too, naming Ethereum's subgraph (no pass can come
+    /// without it); with no Ethereum row left nothing is asked of that
+    /// network.
+    #[tokio::test]
+    async fn a_read_needs_a_pass_of_every_network_it_can_return() {
+        let Some((pool, state)) = only_polygon_configured().await else {
+            return;
+        };
+        for scope in [Some(Network::Ethereum), None] {
+            assert!(ethereum_read(&state, Purpose::Priced, scope).await.is_ok());
+        }
+        sqlx::query(
+            "UPDATE shop.mirror_state SET last_complete_pass_at = timezone('UTC', now()) - interval '10 days', \
+                    chain_id = 1 WHERE network = 'ethereum'",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        for scope in [Some(Network::Ethereum), None] {
+            let refused = ethereum_read(&state, Purpose::Priced, scope)
+                .await
+                .err()
+                .unwrap();
+            assert_eq!(source_of(refused).await, "items-mirror", "{scope:?}");
+            assert!(
+                ethereum_read(&state, Purpose::Describe, scope)
+                    .await
+                    .is_ok()
+            );
+        }
+        sqlx::query("DELETE FROM shop.mirror_state WHERE network = 'ethereum'")
+            .execute(&pool)
+            .await
+            .unwrap();
+        for purpose in PURPOSES {
+            for scope in [Some(Network::Ethereum), None] {
+                let refused = ethereum_read(&state, purpose, scope).await.err().unwrap();
+                assert_eq!(
+                    source_of(refused).await,
+                    "collections-subgraph:ethereum",
+                    "{purpose:?} {scope:?}"
+                );
+            }
+        }
+        sqlx::query("DELETE FROM shop.collections WHERE network = 'ethereum'")
+            .execute(&pool)
+            .await
+            .unwrap();
+        for purpose in PURPOSES {
+            let mut read = ethereum_read(&state, purpose, None).await.unwrap();
+            assert_eq!(networks_read(&mut read).await, ["matic"]);
+            assert!(!read.key().contains("ethereum"), "{}", read.key());
+        }
+    }
+
+    /// Each pass of a network the read can return files it: a newer
+    /// Ethereum pass gives an unscoped read a new key though no subgraph is
+    /// configured for Ethereum.
+    #[tokio::test]
+    async fn a_newer_pass_of_an_unconfigured_returnable_network_gives_a_new_key() {
+        let Some((pool, state)) = only_polygon_configured().await else {
+            return;
+        };
+        let first = open(&state, Purpose::Describe).await.unwrap().key();
+        assert!(first.contains("items:ethereum@"), "{first}");
+        sqlx::query(
+            "UPDATE shop.mirror_state SET last_complete_pass_at = last_complete_pass_at + interval '1 second' \
+             WHERE network = 'ethereum'",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        assert_ne!(open(&state, Purpose::Describe).await.unwrap().key(), first);
     }
 
     /// The mirrors' rule binds every pass they serve to this node's chain

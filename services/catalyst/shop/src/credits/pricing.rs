@@ -175,11 +175,17 @@ pub struct LocalMarket {
 /// items mirror, a subgraph or the collections index), its `configure` and
 /// the envelope's Retry-After kept ([`ApiError::SourceUnavailable`]).
 fn catalogue_refused(refusal: crate::market::catalogue::Refusal) -> ApiError {
-    match refusal.refused {
+    source_refused(refusal.refused, "the item catalogue could not be read")
+}
+
+/// A source that refused keeps its name, configuration and Retry-After;
+/// one that could not be read is an internal error.
+fn source_refused(refused: Option<(crate::market::Source, String)>, unreadable: &str) -> ApiError {
+    match refused {
         Some((source, message)) => {
             ApiError::source_unavailable(source.name(), source.configure().unwrap_or(""), message)
         }
-        None => ApiError::Internal("the item catalogue could not be read".into()),
+        None => ApiError::Internal(unreadable.into()),
     }
 }
 
@@ -203,8 +209,11 @@ impl Market for LocalMarket {
             ));
         };
         // What the credits charge is a price: the catalogue's priced read,
-        // whose snapshot the items are read in. A refusal keeps the source it
-        // names (the mirror or the collections index) and its Retry-After.
+        // whose snapshot the items are read in, joined to the open trades
+        // (whether an item is store-mintable), checked in that snapshot at
+        // its clock. A refusal keeps the source it names (the mirror, the
+        // collections index, the trades mirror or the trade-events index)
+        // and its Retry-After.
         let mut read = crate::market::catalogue::begin_checked(
             market,
             crate::market::catalogue::Purpose::Priced,
@@ -214,6 +223,9 @@ impl Market for LocalMarket {
         )
         .await
         .map_err(catalogue_refused)?;
+        read.trades_checked(market)
+            .await
+            .map_err(|refused| source_refused(refused, "the trades state could not be read"))?;
         let mut ids: Vec<String> = Vec::new();
         for (collection, item_id) in pairs {
             let id = format!("{}-{}", collection.to_ascii_lowercase(), item_id);
@@ -978,6 +990,97 @@ mod tests {
         .unwrap();
         assert_eq!(body["source"], "collections-index");
         assert_eq!(body["configure"], "MARKETPLACE_COLLECTIONS_INDEX_ENABLED");
+    }
+
+    /// Credits price an item through the catalogue's priced read, which
+    /// joins the open trades: with a trades upstream configured and no
+    /// complete pass of it, `LocalMarket::items` refuses with the trades
+    /// mirror as its typed source, checked in the read's snapshot; once the
+    /// pass completes, the item is priced.
+    #[tokio::test]
+    async fn credits_wait_for_the_trades_the_catalogue_joins() {
+        use axum::response::IntoResponse;
+        let Some(pool) = crate::db::scratch::isolated_pool(4).await else {
+            return;
+        };
+        const COFFEE: &str = "0xc0ffee0000000000000000000000000000000000";
+        const OWNER: &str = "0x00000000000000000000000000000000000000aa";
+        sqlx::query(
+            "INSERT INTO shop.collections (network, contract_address, chain_id, name, creator, owner, urn, is_completed, is_approved, \
+                 is_editable, created_at, updated_at, reviewed_at, mirrored_at) \
+             VALUES ('matic', $1, 137, 'Coffee', $2, $2, $3, true, true, false, 1, 1, 1, timezone('UTC', now()))",
+        )
+        .bind(COFFEE)
+        .bind(OWNER)
+        .bind(format!("urn:decentraland:matic:collections-v2:{COFFEE}"))
+        .execute(&pool)
+        .await
+        .unwrap();
+        sqlx::query(
+            "INSERT INTO shop.items (network, contract_address, item_id, chain_id, item_type, urn, creator, rarity, total_supply, \
+                 max_supply, available, price, name, category, created_at, updated_at, reviewed_at, mirrored_at, search_is_store_minter) \
+             VALUES ('matic', $1, 1, 137, 'wearable_v2', $2, $3, 'epic', 1, 10, 9, 5, 'Hat', 'hat', 1, 1, 1, timezone('UTC', now()), true)",
+        )
+        .bind(COFFEE)
+        .bind(format!("urn:decentraland:matic:collections-v2:{COFFEE}:1"))
+        .bind(OWNER)
+        .execute(&pool)
+        .await
+        .unwrap();
+        sqlx::query(
+            "INSERT INTO shop.mirror_state (mirror, network, source_url, last_complete_pass_at) \
+             SELECT m, 'matic', 'test', timezone('UTC', now()) FROM unnest(ARRAY['collections', 'items']) m",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        crate::market::trade_events::tests::publish_cursors(&pool).await;
+        sqlx::query(
+            "INSERT INTO shop.trades_mirror (id, upstream_url) VALUES (1, 'https://trades.example')",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        let market = Arc::new(crate::market::MarketplaceState::new(
+            pool.clone(),
+            crate::http::Outbound::for_tests(),
+            crate::market::Settings {
+                matic_collections_subgraph_url: Some("http://127.0.0.1:9".into()),
+                trades_sync_upstream_url: Some("https://trades.example".into()),
+                ..crate::market::Settings::for_tests()
+            },
+        ));
+        let local = LocalMarket {
+            pool: pool.clone(),
+            market: Some(market),
+            price: None,
+            max_staleness_secs: 300,
+        };
+        let pair = [(COFFEE.to_string(), "1".to_string())];
+        let response = local.items(&pair).await.unwrap_err().into_response();
+        assert_eq!(
+            response.status(),
+            axum::http::StatusCode::SERVICE_UNAVAILABLE
+        );
+        assert_eq!(response.headers()[axum::http::header::RETRY_AFTER], "60");
+        let body: serde_json::Value = serde_json::from_slice(
+            &axum::body::to_bytes(response.into_body(), 1 << 16)
+                .await
+                .unwrap(),
+        )
+        .unwrap();
+        assert_eq!(body["source"], "trades-mirror", "{body}");
+
+        sqlx::query(
+            "UPDATE shop.trades_mirror SET completed_at = timezone('UTC', now()) WHERE id = 1",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        let priced = local.items(&pair).await.unwrap();
+        let item = priced[0].as_ref().unwrap();
+        assert_eq!((item.item_id.as_str(), item.store_mintable), ("1", true));
+        pool.close().await;
     }
 
     #[test]

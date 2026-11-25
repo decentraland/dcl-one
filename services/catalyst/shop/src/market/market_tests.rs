@@ -1560,6 +1560,95 @@ async fn the_mirrors_walk_the_subgraph_and_every_market_route_answers_over_them(
         "{body}"
     );
 
+    // Every catalogue route answers on a pool of one connection: no request
+    // waits on a second connection while its catalogue read holds the first.
+    // Each answer, cold, is the one a cold state on a wide pool gives (a leg
+    // that timed out on the pool would answer 200 with fewer rows), and each
+    // request must finish well inside the pool's acquire timeout (a wait for
+    // a second connection panics here rather than degrade).
+    let cold = |p: sqlx::PgPool| {
+        let st = Arc::new(super::MarketplaceState::new(
+            p,
+            crate::http::Outbound::for_tests(),
+            state.settings.clone(),
+        ));
+        st.test_allow_loopback.store(true, Ordering::Relaxed);
+        st
+    };
+    let single = sqlx::postgres::PgPoolOptions::new()
+        .max_connections(1)
+        .acquire_timeout(Duration::from_secs(20))
+        .connect_with((*pool.connect_options()).clone())
+        .await
+        .unwrap();
+    let one = cold(single.clone());
+    let wide = cold(pool.clone());
+    let routes = [
+        "/v1/catalog?first=2".to_string(),
+        "/v2/catalog?first=2".to_string(),
+        format!("/v1/items?contractAddress={c1}&itemId=1"),
+        format!("/v3/catalog/items?contractAddress={c1}&first=3"),
+        "/v1/trendings?size=3".to_string(),
+        format!("/v1/prices?contractAddress={c1}&category=wearable"),
+        format!("/v3/catalog/shop?contractAddress={c1}"),
+        "/v3/catalog/legacy?first=2&search=Item%200004".to_string(),
+        "/v3/catalog/unified?groupBy=item&first=3".to_string(),
+        "/v3/catalog/trending?first=3".to_string(),
+        "/v3/catalog/creators?days=7".to_string(),
+        "/v3/catalog/suggested?first=2".to_string(),
+        format!("/v3/catalog/related?contractAddress={c1}&itemId=1&first=3"),
+        format!("/v3/catalog/importable?seller={CREATOR}"),
+        "/v3/catalog/suggest?search=item".to_string(),
+        format!("/v1/collections?contractAddress={c2}"),
+        "/v1/contracts?first=1000".to_string(),
+    ];
+    let lambdas = [
+        "/lambdas/collections".to_string(),
+        "/lambdas/collections/wearables?textSearch=item".to_string(),
+    ];
+    let on = |st: &Arc<super::MarketplaceState>, uri: &str| {
+        if uri.starts_with("/lambdas/") {
+            super::router(st.clone())
+        } else {
+            market_router(st.clone())
+        }
+    };
+    // This fixture lists no MANA-priced trade (legacy, importable) and
+    // deploys no wearable entity (lambdas wearables: its one-connection
+    // answer with rows is `cold_wearables_answer_the_base_leg_on_a_one_
+    // connection_pool`); their bodies are still compared.
+    const EMPTY_BY_FIXTURE: [&str; 3] = [
+        "/v3/catalog/legacy?first=2&search=Item%200004",
+        "/v3/catalog/importable?seller=0xcccccccccccccccccccccccccccccccccccccccc",
+        "/lambdas/collections/wearables?textSearch=item",
+    ];
+    let mut empty = Vec::new();
+    for uri in routes.iter().chain(&lambdas) {
+        let (status, expected) = get(on(&wide, uri), uri).await;
+        assert_eq!(status, StatusCode::OK, "{uri} (wide pool): {expected}");
+        fn has_rows(v: &Value) -> bool {
+            match v {
+                Value::Array(a) => !a.is_empty(),
+                // `/v1/prices` answers its buckets as a `data` map.
+                Value::Object(o) => o.iter().any(|(k, v)| {
+                    has_rows(v) || (k == "data" && v.as_object().is_some_and(|d| !d.is_empty()))
+                }),
+                _ => false,
+            }
+        }
+        if !has_rows(&expected) && !EMPTY_BY_FIXTURE.contains(&uri.as_str()) {
+            empty.push(format!("{uri}: {expected}"));
+        }
+        let (status, body) = tokio::time::timeout(Duration::from_secs(10), get(on(&one, uri), uri))
+            .await
+            .unwrap_or_else(|_| panic!("{uri} waited on the pool"));
+        assert_eq!(status, StatusCode::OK, "{uri}: {body}");
+        assert_eq!(body, expected, "{uri} answered otherwise on one connection");
+    }
+    assert!(empty.is_empty(), "routes that answered no rows: {empty:#?}");
+    drop((one, wide));
+    single.close().await;
+
     let (status, body) = get(
         app(),
         &format!(
@@ -1828,63 +1917,6 @@ async fn the_mirrors_walk_the_subgraph_and_every_market_route_answers_over_them(
         assert_eq!(cache, "public,max-age=60,s-maxage=60", "{uri}");
     }
     state.readers.end_refresh(&directory, hold, true);
-
-    // Every catalogue route answers on a pool of one connection: no request
-    // waits on a second connection while its catalogue read holds the first.
-    let single = sqlx::postgres::PgPoolOptions::new()
-        .max_connections(1)
-        .acquire_timeout(Duration::from_secs(5))
-        .connect_with((*pool.connect_options()).clone())
-        .await
-        .unwrap();
-    let one = Arc::new(super::MarketplaceState::new(
-        single.clone(),
-        crate::http::Outbound::for_tests(),
-        state.settings.clone(),
-    ));
-    one.test_allow_loopback.store(true, Ordering::Relaxed);
-    let routes = [
-        "/v1/catalog?first=2".to_string(),
-        "/v2/catalog?first=2".to_string(),
-        format!("/v1/items?contractAddress={c1}&itemId=1"),
-        format!("/v3/catalog/items?contractAddress={c1}&first=3"),
-        "/v1/trendings?size=3".to_string(),
-        format!("/v1/prices?contractAddress={c1}&category=wearable"),
-        "/v3/catalog/shop?".to_string(),
-        "/v3/catalog/legacy?first=2".to_string(),
-        "/v3/catalog/unified?groupBy=item&first=3".to_string(),
-        "/v3/catalog/trending?first=3".to_string(),
-        "/v3/catalog/creators?days=7".to_string(),
-        "/v3/catalog/suggested?first=2".to_string(),
-        format!("/v3/catalog/related?contractAddress={c1}&itemId=1&first=3"),
-        format!("/v3/catalog/importable?seller={CREATOR}"),
-        "/v3/catalog/suggest?search=item".to_string(),
-        format!("/v1/collections?contractAddress={c2}"),
-        "/v1/contracts?first=1000".to_string(),
-    ];
-    for uri in &routes {
-        let (status, body) = tokio::time::timeout(
-            Duration::from_secs(30),
-            get(market_router(one.clone()), uri),
-        )
-        .await
-        .unwrap_or_else(|_| panic!("{uri} waited on the pool"));
-        assert_eq!(status, StatusCode::OK, "{uri}: {body}");
-    }
-    for uri in [
-        "/lambdas/collections",
-        "/lambdas/collections/wearables?textSearch=item",
-    ] {
-        let (status, body) = tokio::time::timeout(
-            Duration::from_secs(30),
-            get(super::router(one.clone()), uri),
-        )
-        .await
-        .unwrap_or_else(|_| panic!("{uri} waited on the pool"));
-        assert_eq!(status, StatusCode::OK, "{uri}: {body}");
-    }
-    drop(one);
-    single.close().await;
 
     sqlx::query("DELETE FROM shop.usage_grants WHERE grantee_address = $1")
         .bind(WALLET_A)
@@ -2645,6 +2677,116 @@ async fn seed_item_row(pool: &PgPool, contract: &str, item_id: &str, creator: &s
     .unwrap();
 }
 
+/// The pages of one read are read at its instant: a native listing and a
+/// coupon that expire between the read's first and second OFFSET page are
+/// counted and priced alike on both; a later read no longer has them, and a
+/// read held at the first one's instant still does.
+#[tokio::test]
+async fn the_pages_of_one_read_decide_expiries_at_its_instant() {
+    use super::shop::{parse_shop_filters, shop_listings};
+    let Some(pool) = crate::db::scratch::isolated_pool(4).await else {
+        return;
+    };
+    let state = Arc::new(super::MarketplaceState::new(
+        pool.clone(),
+        crate::http::Outbound::for_tests(),
+        Settings::for_tests(),
+    ));
+    super::trade_events::tests::publish_cursors(&pool).await;
+    let t = tag();
+    let (c1, c2) = (contract_of(&t, 1), contract_of(&t, 2));
+    let mut trades = Vec::new();
+    for c in [&c1, &c2] {
+        seed_item_row(&pool, c, "0", CREATOR).await;
+        let sent = Asset {
+            asset_type: 4,
+            contract: c.clone(),
+            value: "0".into(),
+        };
+        let received = Asset {
+            asset_type: 2,
+            contract: "0x7ad72b9f944ea9793cf4055d88f81138cc2c63a0".into(),
+            value: "250000000000000000".into(),
+        };
+        trades.push(
+            insert_trade(&pool, "public_item_order", CREATOR, sent, received)
+                .await
+                .0,
+        );
+    }
+    sqlx::query("UPDATE shop.items SET search_is_collection_approved = true")
+        .execute(&pool)
+        .await
+        .unwrap();
+    // c1's listing (first page, the newer) and c2's coupon (second page;
+    // half off: a sale the card shows) end 1.5 s from now.
+    sqlx::query("UPDATE shop.trades SET expires_at = timezone('UTC', now()) + interval '1.5 seconds' WHERE id = $1::uuid")
+        .bind(&trades[0])
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query(
+        "UPDATE shop.trades SET created_at = created_at - interval '1 hour' WHERE id = $1::uuid",
+    )
+    .bind(&trades[1])
+    .execute(&pool)
+    .await
+    .unwrap();
+    sqlx::query("INSERT INTO shop.coupons (network, chain_id, signer, signature, hashed_signature, state_key, coupon_manager, coupon_address, checks, \
+            discount_type, discount_ppm, root, collections, effective_since, expires_at) \
+            VALUES ('MATIC', 137, $1, $2, $2, $2, '0x655fdfa91d69ea49f4ce1a8f7f7e2622c8630813', '0xc914507fe297b2dddd1232ac3a8903f1c125e794', \
+                '{\"uses\": 10}', 1, 500000, '0x00', ARRAY[$3], timezone('UTC', now()) - interval '1 day', timezone('UTC', now()) + interval '1.5 seconds')")
+        .bind(CREATOR)
+        .bind(format!("0x{}", tag()))
+        .bind(&c2)
+        .execute(&pool)
+        .await
+        .unwrap();
+    let page = |skip: &str| {
+        parse_shop_filters(&[
+            ("first".to_string(), "1".to_string()),
+            ("skip".to_string(), skip.to_string()),
+        ])
+    };
+    let mut read = super::catalogue::begin_unchecked(&state).await;
+    let instant = read.now;
+    let (first, total) = shop_listings(&state, &mut read, &page("0")).await.unwrap();
+    assert_eq!((first.len(), total), (1, 2));
+    tokio::time::sleep(Duration::from_millis(1800)).await;
+    let (second, total) = shop_listings(&state, &mut read, &page("1")).await.unwrap();
+    assert_eq!((second.len(), total), (1, 2), "the second page of the read");
+    assert_eq!(
+        (first[0].trade_id.as_str(), second[0].trade_id.as_str()),
+        (trades[0].as_str(), trades[1].as_str())
+    );
+    assert!(
+        second[0].sale.coupon.is_some(),
+        "the coupon holds at the read's instant"
+    );
+    drop(read);
+
+    let mut later = super::catalogue::begin_unchecked(&state).await;
+    let (rows, total) = shop_listings(&state, &mut later, &page("0")).await.unwrap();
+    assert_eq!(total, 1);
+    assert_eq!(rows[0].trade_id, trades[1]);
+    assert!(rows[0].sale.coupon.is_none(), "the coupon ended");
+    drop(later);
+
+    // The read's clock decides, not the database's: a read held at the
+    // first one's instant still has both.
+    let mut held = super::catalogue::begin_unchecked(&state).await;
+    held.now = instant;
+    let all = parse_shop_filters(&[("first".to_string(), "10".to_string())]);
+    let (rows, total) = shop_listings(&state, &mut held, &all).await.unwrap();
+    assert_eq!(total, 2);
+    assert!(
+        rows[1].sale.coupon.is_some(),
+        "the coupon at the read's instant"
+    );
+    drop(held);
+    pool.close().await;
+}
+
 /// One contract and one item id on both networks: the read that names both
 /// pages the two rows itself and keeps the exact total on every page, as the
 /// paged read and its count do over the whole contract.
@@ -3389,7 +3531,7 @@ async fn a_stored_malformed_token_id_does_not_break_the_bid_or_listing_reads() {
 #[tokio::test]
 async fn a_read_naming_a_contract_keeps_the_rows_of_the_whole_read() {
     use super::shop::{
-        build_shop_listings_sql, build_unified_items_sql, build_unified_listings_sql,
+        FeedClock, build_shop_listings_sql, build_unified_items_sql, build_unified_listings_sql,
         parse_shop_filters, parse_unified_filters,
     };
     let Some(state) = state_with_db(Settings::for_tests()).await else {
@@ -3431,9 +3573,13 @@ async fn a_read_naming_a_contract_keeps_the_rows_of_the_whole_read() {
 
     let rate = crate::types::ManaUsdRate::parse_usd_per_mana("0.5").unwrap();
     let build = |kind: &str, pairs: &[(String, String)]| match kind {
-        "shop" => build_shop_listings_sql(&parse_shop_filters(pairs), None),
-        "items" => build_unified_items_sql(&parse_unified_filters(pairs), rate, None),
-        _ => build_unified_listings_sql(&parse_unified_filters(pairs), rate, None),
+        "shop" => build_shop_listings_sql(&parse_shop_filters(pairs), FeedClock::unbounded()),
+        "items" => {
+            build_unified_items_sql(&parse_unified_filters(pairs), rate, FeedClock::unbounded())
+        }
+        _ => {
+            build_unified_listings_sql(&parse_unified_filters(pairs), rate, FeedClock::unbounded())
+        }
     };
     let rows = async |b: super::catalog::Builder| -> Vec<Value> {
         let sql = format!("SELECT to_jsonb(q) - 'total' FROM ({}) q", b.sql);
@@ -4371,7 +4517,7 @@ async fn shop_feed_totals_survive_exact_and_past_end_offsets() {
                     ..Default::default()
                 };
                 let b = match feed {
-                    "shop" => build_shop_listings_sql(&base, None),
+                    "shop" => build_shop_listings_sql(&base, FeedClock::unbounded()),
                     "legacy" => build_legacy_listings_sql(
                         &LegacyCatalogFilters {
                             first: base.first,
@@ -4380,10 +4526,14 @@ async fn shop_feed_totals_survive_exact_and_past_end_offsets() {
                             sort_by: base.sort_by,
                             ..Default::default()
                         },
-                        None,
+                        FeedClock::unbounded(),
                     ),
-                    "unified listings" => build_unified_listings_sql(&unified, rate, None),
-                    "unified items" => build_unified_items_sql(&unified, rate, None),
+                    "unified listings" => {
+                        build_unified_listings_sql(&unified, rate, FeedClock::unbounded())
+                    }
+                    "unified items" => {
+                        build_unified_items_sql(&unified, rate, FeedClock::unbounded())
+                    }
                     _ => unreachable!(),
                 };
                 let rows = sqlx::query_with(sqlx::AssertSqlSafe(b.sql), b.args)
