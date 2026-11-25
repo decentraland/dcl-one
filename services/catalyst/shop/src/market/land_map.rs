@@ -164,7 +164,7 @@ async fn check_ready(
     chain_id: i64,
     now: DateTime<Utc>,
 ) -> Result<(), LandMarketError> {
-    let mainnet = chain_walk::mainnet_chain(ChainNet::Ethereum);
+    let mainnet = ChainNet::Ethereum.chain_id();
     if chain_id != mainnet {
         return Err(LandMarketError::Unready(
             Source::NftIndex,
@@ -325,7 +325,7 @@ mod tests {
 
     const LAND: &str = "0xf87e31492faf9a91b02ee0deaad50d51d56d5d4d";
     const ESTATE: &str = "0x959e104e1a4db6317fa58f8295f586e1a978c297";
-    const SEPOLIA: i64 = 11_155_111;
+    const SEPOLIA: i64 = crate::types::ChainId::SEPOLIA.0 as i64;
 
     fn addr(c: char) -> String {
         format!("0x{}", c.to_string().repeat(40))

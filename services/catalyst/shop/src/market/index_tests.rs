@@ -2007,6 +2007,26 @@ async fn a_testnet_graph_page_proves_its_block_even_when_the_page_is_empty() {
         assert_eq!(page["collections"], json!([]));
     }
     assert_eq!(chain.requests.load(Ordering::SeqCst), calls);
+    for (response, reason) in [
+        (
+            json!({"number":90,"hash":"other"}),
+            "differs from the pinned block",
+        ),
+        (json!({"number":90}), "no block hash"),
+    ] {
+        *meta.lock() = response;
+        let error = super::mirrors::read_catalogue_page(
+            &state,
+            &graph,
+            "{collections{id}}",
+            None,
+            Some(pinned.clone()),
+        )
+        .await
+        .unwrap_err();
+        assert!(error.contains(reason), "{error}");
+    }
+    *meta.lock() = json!({"number":90,"hash":good});
     chain.chain_id.store(137, Ordering::SeqCst);
     assert!(prove().await.unwrap_err().contains("serves chain 137"));
 }
@@ -2131,6 +2151,29 @@ async fn a_split_mirror_resumes_the_pinned_graph_block_without_another_rpc_read(
         .unwrap()
         .unwrap();
     assert_eq!(resumed.pass_block_hash.as_deref(), Some(hash.as_str()));
+    // Even a hash that the graph still serves expires. The new pass fetches
+    // a confirmed block and starts at the first page again.
+    sqlx::query(
+        "UPDATE shop.mirror_state SET pass_started_at=timezone('UTC',now())-interval '2 days'",
+    )
+    .execute(&db.pool)
+    .await
+    .unwrap();
+    let calls = chain.requests.load(Ordering::SeqCst);
+    mirrors::run_tick(&state(), Mirror::Collections, &ctx)
+        .await
+        .unwrap();
+    let restarted = mirrors::load(&db.pool, Mirror::Collections, Network::Matic)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(chain.requests.load(Ordering::SeqCst), calls + 2);
+    assert!(restarted.in_progress());
+    assert_eq!(restarted.cursor_id, resumed.cursor_id);
+    assert_eq!(
+        restarted.last_complete_pass_at,
+        resumed.last_complete_pass_at
+    );
     db.drop().await;
 }
 
@@ -2169,6 +2212,19 @@ async fn an_unbound_mirror_keyset_is_adopted_only_for_the_same_mainnet_source() 
             .cursor_id
             .is_none()
     );
+    sqlx::query("UPDATE shop.mirror_state SET pass_block_hash='pinned'")
+        .execute(&db.pool)
+        .await
+        .unwrap();
+    assert!(read("source", Some(137)).await.is_err());
+    assert_eq!(
+        read("source", Some(80002))
+            .await
+            .unwrap()
+            .cursor_id
+            .as_deref(),
+        Some("next")
+    );
     sqlx::query("UPDATE shop.mirror_state SET chain_id=80002")
         .execute(&db.pool)
         .await
@@ -2193,7 +2249,7 @@ async fn catalogue_startup_refuses_another_pair_and_allows_independent_rentals()
       VALUES ('rentals_sepolia','ethereum',11155111,1,0,true),('committee','matic',137,1,0,true),('nft','matic',137,1,0,true)")
         .execute(&db.pool).await.unwrap();
     assert!(
-        test.check_catalogue_db(&db.pool, true)
+        test.check_catalogue_db(&db.pool, true, [None, None])
             .await
             .unwrap_err()
             .to_string()
@@ -2205,25 +2261,56 @@ async fn catalogue_startup_refuses_another_pair_and_allows_independent_rentals()
         .unwrap();
     sqlx::query("INSERT INTO shop.mirror_state(mirror,network,source_url,chain_id) VALUES ('items','matic','test',137)").execute(&db.pool).await.unwrap();
     assert!(
-        test.check_catalogue_db(&db.pool, true)
+        test.check_catalogue_db(&db.pool, true, [None, None])
             .await
             .unwrap_err()
             .to_string()
             .contains("items/matic")
     );
-    main.check_catalogue_db(&db.pool, true).await.unwrap();
+    main.check_catalogue_db(&db.pool, true, [None, None])
+        .await
+        .unwrap();
     sqlx::query("DELETE FROM shop.mirror_state")
         .execute(&db.pool)
         .await
         .unwrap();
-    test.check_catalogue_db(&db.pool, false).await.unwrap();
-    assert!(test.check_catalogue_db(&db.pool, true).await.is_err());
+    test.check_catalogue_db(&db.pool, false, [None, None])
+        .await
+        .unwrap();
+    assert!(
+        test.check_catalogue_db(&db.pool, true, [None, None])
+            .await
+            .is_err()
+    );
     sqlx::query("DELETE FROM shop.worker_progress WHERE worker='nft_catalogue_pair'")
         .execute(&db.pool)
         .await
         .unwrap();
-    test.check_catalogue_db(&db.pool, true).await.unwrap();
-    main.check_catalogue_db(&db.pool, false).await.unwrap();
+    sqlx::query("INSERT INTO shop.mirror_state(mirror,network,source_url) VALUES ('collections','matic','prior')")
+        .execute(&db.pool).await.unwrap();
+    test.check_catalogue_db(&db.pool, false, [None, Some("new")])
+        .await
+        .unwrap();
+    let marker: bool = sqlx::query_scalar(
+        "SELECT EXISTS(SELECT 1 FROM shop.worker_progress WHERE worker='nft_catalogue_pair')",
+    )
+    .fetch_one(&db.pool)
+    .await
+    .unwrap();
+    assert!(!marker);
+    assert!(
+        test.check_catalogue_db(&db.pool, true, [None, Some("new")])
+            .await
+            .unwrap_err()
+            .to_string()
+            .contains("rebind")
+    );
+    test.check_catalogue_db(&db.pool, true, [None, Some("prior")])
+        .await
+        .unwrap();
+    main.check_catalogue_db(&db.pool, false, [None, None])
+        .await
+        .unwrap();
     db.drop().await;
 }
 
@@ -2245,16 +2332,82 @@ async fn legacy_default_mirrors_require_an_explicit_testnet_rebind() {
         VALUES ('collections','matic','https://subgraph.decentraland.org/collections-matic-mainnet',137,now())").execute(&db.pool).await.unwrap();
     sqlx::query("INSERT INTO shop.chain_cursor(indexer,network,chain_id,start_block,last_block,full_history)
         VALUES ('rentals_sepolia','ethereum',11155111,4,3,true),('nft','matic',137,1,0,true)").execute(&db.pool).await.unwrap();
-    assert!(test.check_catalogue_db(&db.pool, true).await.is_err());
-    assert!(sqlx::raw_sql(REBIND).execute(&db.pool).await.is_err());
-    sqlx::query("DELETE FROM shop.chain_cursor WHERE indexer='nft'")
-        .execute(&db.pool)
+    // Use one connection so that the operator's explicit confirmation applies to the script.
+    let mut conn = db.pool.acquire().await.unwrap();
+    assert!(
+        sqlx::raw_sql(REBIND)
+            .execute(&mut *conn)
+            .await
+            .unwrap_err()
+            .to_string()
+            .contains("confirm_testnet")
+    );
+    sqlx::query("SET rebind.confirm_testnet='yes'")
+        .execute(&mut *conn)
         .await
         .unwrap();
-    assert!(test.check_catalogue_db(&db.pool, true).await.is_err());
-    sqlx::raw_sql(REBIND).execute(&db.pool).await.unwrap();
-    test.check_catalogue_db(&db.pool, true).await.unwrap();
-    assert!(sqlx::raw_sql(REBIND).execute(&db.pool).await.is_err());
+    assert!(
+        sqlx::raw_sql(REBIND)
+            .execute(&mut *conn)
+            .await
+            .unwrap_err()
+            .to_string()
+            .contains("Sepolia LAND")
+    );
+    sqlx::query(
+        "INSERT INTO land_authz.index_cursor(network,land_registry,estate_registry,last_block)
+                 VALUES ('ethereum-sepolia',$1,$2,3831219)",
+    )
+    .bind(crate::land_authz::LAND_REGISTRY_SEPOLIA)
+    .bind(crate::land_authz::ESTATE_REGISTRY_SEPOLIA)
+    .execute(&mut *conn)
+    .await
+    .unwrap();
+    assert!(
+        sqlx::raw_sql(REBIND)
+            .execute(&mut *conn)
+            .await
+            .unwrap_err()
+            .to_string()
+            .contains("NFT history")
+    );
+    sqlx::query("DELETE FROM shop.chain_cursor WHERE indexer='nft'")
+        .execute(&mut *conn)
+        .await
+        .unwrap();
+    for (setup, reason) in [
+        ("INSERT INTO shop.nft_event(network,block_number,log_index,block_time,kind,emitter,contract_address,token_id)
+            VALUES ('matic',1,0,1,'transfer','asset','asset',1)", "NFT history"),
+        ("UPDATE shop.mirror_state SET source_url='custom'", "legacy mainnet default"),
+        ("UPDATE shop.mirror_state SET pass_block_hash='pin'", "legacy mainnet default"),
+        ("UPDATE shop.mirror_state SET chain_id=80002", "legacy mainnet default"),
+        ("DELETE FROM shop.mirror_state", "legacy mainnet default"),
+    ] {
+        use sqlx::Connection;
+        let mut tx = conn.begin().await.unwrap();
+        sqlx::query(setup).execute(&mut *tx).await.unwrap();
+        let err = sqlx::raw_sql(REBIND).execute(&mut *tx).await.unwrap_err();
+        assert!(err.to_string().contains(reason), "{err}");
+        tx.rollback().await.unwrap();
+    }
+    assert!(
+        test.check_catalogue_db(&db.pool, true, [None, None])
+            .await
+            .is_err()
+    );
+    sqlx::raw_sql(REBIND).execute(&mut *conn).await.unwrap();
+    test.check_catalogue_db(&db.pool, true, [None, None])
+        .await
+        .unwrap();
+    assert!(
+        sqlx::raw_sql(REBIND)
+            .execute(&mut *conn)
+            .await
+            .unwrap_err()
+            .to_string()
+            .contains("pair binding")
+    );
+    drop(conn);
     assert!(!nft_index::mirror_complete(&db.pool, ChainNet::Matic, 80_002).await);
     assert!(
         chain_walk::cursor(&db.pool, "rentals_sepolia", ChainNet::Ethereum)

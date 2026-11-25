@@ -299,6 +299,14 @@ pub(super) async fn cursor_for(
             anyhow::bail!("a verified catalogue mirror requires its chain RPC to continue");
         }
         Some(c)
+            if c.chain_id.is_none()
+                && c.pass_block_hash.is_some()
+                && chain_id
+                    != Some(super::chain_walk::ChainNet::from(network).testnet_chain_id()) =>
+        {
+            anyhow::bail!("an unbound pinned catalogue pass requires its testnet chain");
+        }
+        Some(c)
             if c.source_url == url
                 && (c.chain_id == chain_id
                     || (c.chain_id.is_none() && c.pass_block_hash.is_some())) =>

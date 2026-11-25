@@ -3,12 +3,19 @@
 -- how to check the database and configure its replacement sources.
 DO $rebind$
 BEGIN
+    IF current_setting('rebind.confirm_testnet', true) IS DISTINCT FROM 'yes' THEN
+        RAISE EXCEPTION 'confirm the testnet rebind with rebind.confirm_testnet=yes';
+    END IF;
+    IF NOT EXISTS (SELECT 1 FROM land_authz.index_cursor WHERE network='ethereum-sepolia') THEN
+        RAISE EXCEPTION 'missing Sepolia LAND cursor for the testnet rebind';
+    END IF;
     LOCK TABLE shop.worker_progress, shop.chain_cursor, shop.mirror_state,
                shop.collections, shop.items IN SHARE ROW EXCLUSIVE MODE;
     IF EXISTS (SELECT 1 FROM shop.worker_progress WHERE worker='nft_catalogue_pair' AND scope=0)
-       OR EXISTS (SELECT 1 FROM shop.chain_cursor WHERE indexer='nft')
+       OR EXISTS (SELECT 1 FROM shop.chain_cursor WHERE indexer IN ('nft','sales'))
+       OR EXISTS (SELECT 1 FROM shop.sale_event LIMIT 1)
        OR EXISTS (SELECT 1 FROM shop.nft_event LIMIT 1) THEN
-        RAISE EXCEPTION 'catalogue has a pair binding or NFT history';
+        RAISE EXCEPTION 'catalogue has a pair binding or NFT history or sales history';
     END IF;
     IF NOT EXISTS (SELECT 1 FROM shop.mirror_state)
        OR EXISTS (SELECT 1 FROM shop.mirror_state WHERE

@@ -138,7 +138,7 @@ impl PortalSettings {
         for net in ChainNet::ALL {
             let reader = settings.reader(net).map_err(anyhow::Error::msg)?;
             anyhow::ensure!(
-                reader.chain() == chain_walk::mainnet_chain(net) as u64,
+                reader.chain() == net.chain_id() as u64,
                 "the {} portal dataset {:?} is not {} mainnet",
                 net.db_name(),
                 reader.dataset(),
