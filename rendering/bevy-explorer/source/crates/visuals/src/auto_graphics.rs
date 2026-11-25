@@ -587,7 +587,7 @@ mod tests {
         let graphics = GraphicsSettings {
             shadow_settings: ShadowSetting::Low,
             render_scale: 1.0,
-            bloom: BloomSetting::Low,
+            bloom: BloomSetting::On,
             ..Default::default()
         };
         let rungs = ladder(&graphics);
