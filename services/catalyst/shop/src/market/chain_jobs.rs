@@ -1521,6 +1521,29 @@ fn visit_projections(
             market_cfg(),
         );
     }
+    if settings.collections_enabled && net == ChainNet::Matic {
+        let url = state.chain_rpc_url(net);
+        // The factories' lists (the walk's filter) and the collections'
+        // creation state, read before each attempt.
+        let gate: Gate = {
+            let (state, url) = (state.clone(), url.clone().unwrap_or_default());
+            Arc::new(move || {
+                let (state, url) = (state.clone(), url.clone());
+                async move {
+                    let rpc = crate::chain_index::rpc::Rpc::at(&state.http, &url);
+                    super::collections_index::gate(&state.pool, &rpc).await
+                }
+                .boxed()
+            })
+        };
+        add(
+            "collections-index",
+            url,
+            Arc::new(|| Arc::new(super::collections_index::CollectionsIndex::new())),
+            Some(gate),
+            market_cfg(),
+        );
+    }
     if settings.third_party_registry_enabled && net == ChainNet::Matic {
         add(
             "third-party-registry-index",
@@ -1541,11 +1564,6 @@ fn visit_projections(
     }
     if net == ChainNet::Ethereum && rentals != Some(false) {
         use crate::rentals::index::RentalsIndex;
-        let rentals_cfg = || {
-            PeriodicCfg::every(settings.interval)
-                .with_jitter(Duration::from_secs(20))
-                .with_error_backoff(Duration::from_secs(1800))
-        };
         let mainnet_url = state.venue_rpc_url(1);
         if rentals.unwrap_or(mainnet_url.is_some()) {
             add(
@@ -1553,7 +1571,8 @@ fn visit_projections(
                 mainnet_url,
                 Arc::new(|| Arc::new(RentalsIndex::mainnet())),
                 None,
-                rentals_cfg(),
+                // LAND owner pages require a fresh mainnet Rentals publication.
+                market_cfg().with_jitter(Duration::from_secs(20)),
             );
         }
         // A Sepolia endpoint opts the worker into the separate testnet history.
@@ -1563,7 +1582,9 @@ fn visit_projections(
                 Some(url),
                 Arc::new(|| Arc::new(RentalsIndex::sepolia())),
                 None,
-                rentals_cfg(),
+                PeriodicCfg::every(settings.interval)
+                    .with_jitter(Duration::from_secs(20))
+                    .with_error_backoff(Duration::from_secs(1800)),
             );
         }
     }
@@ -1714,6 +1735,12 @@ fn log_switches(state: &Arc<MarketplaceState>, rentals: Option<bool>) {
             "committee index enabled but no Polygon JSON-RPC endpoint is configured (TRADE_RPC_URLS 137=, or RPC_ENDPOINT_POLYGON on mainnet): it stays off"
         );
     }
+    if settings.collections_enabled && state.chain_rpc_url(ChainNet::Matic).is_none() {
+        tracing::warn!(
+            job = "collections-index",
+            "collections index enabled but no Polygon JSON-RPC endpoint is configured (TRADE_RPC_URLS 137=): it stays off"
+        );
+    }
     if settings.third_party_registry_enabled && state.polygon_mainnet_rpc_url().is_none() {
         tracing::warn!(
             job = "third-party-registry-index",
@@ -1722,7 +1749,7 @@ fn log_switches(state: &Arc<MarketplaceState>, rentals: Option<bool>) {
     }
     if rentals == Some(false) {
         tracing::info!(
-            "rentals index off (SHOP_RENTALS_INDEX_ENABLED=false): rental listings keep the status they were posted with"
+            "rentals index off (SHOP_RENTALS_INDEX_ENABLED=false): on mainnet NFT walkers, owner pages that include LAND return 503 rentals-index while the Rentals publication is unavailable"
         );
     } else if state.venue_rpc_url(1).is_none() {
         let why = "no chain-1 JSON-RPC endpoint is configured (TRADE_RPC_URLS 1=, or ETH_RPC_URL on mainnet)";

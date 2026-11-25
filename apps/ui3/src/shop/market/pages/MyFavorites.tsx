@@ -7,7 +7,7 @@ import { useQuery } from "@tanstack/react-query";
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { Link, useNavigate, useSearchParams } from "react-router";
 
-import Button from "../../../atoms/Button";
+import { Button } from "@dcl/one-ui";
 import LoadMore from "../../discovery/components/LoadMore";
 import SkeletonCards from "../../discovery/components/SkeletonCards";
 import SuggestedForYouRow from "../../discovery/components/SuggestedForYouRow";

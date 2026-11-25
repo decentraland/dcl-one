@@ -47,6 +47,8 @@ pub const INDEXER_MANA: &str = "mana_transfers";
 
 pub const INDEXER_COMMITTEE: &str = "committee";
 
+pub const INDEXER_COLLECTIONS: &str = "collections";
+
 pub const INDEXER_NFT: &str = "nft";
 pub const INDEXER_SALES: &str = "sales";
 pub const INDEXER_TRADE_EVENTS: &str = "trade_events";
@@ -142,6 +144,8 @@ pub struct IndexSettings {
     pub committee_enabled: bool,
     /// `MARKETPLACE_THIRD_PARTY_REGISTRY_INDEX_ENABLED`: Polygon providers and slots.
     pub third_party_registry_enabled: bool,
+    /// `MARKETPLACE_COLLECTIONS_INDEX_ENABLED`: the Polygon collection factories and collections.
+    pub collections_enabled: bool,
     /// `MARKETPLACE_INDEX_INTERVAL_SECS` (5; 30 under the mirror posture): pause between passes.
     pub interval: Duration,
     /// `MARKETPLACE_INDEX_REQUESTS_PER_PASS` (100): `eth_getLogs` calls one
@@ -180,6 +184,7 @@ impl Default for IndexSettings {
             sales_enabled: false,
             committee_enabled: false,
             third_party_registry_enabled: false,
+            collections_enabled: false,
             interval: Duration::from_secs(5),
             requests_per_pass: 100,
             window_blocks: 10_000,
@@ -881,16 +886,21 @@ pub fn mainnet_chain(net: ChainNet) -> i64 {
 /// chain `chain_id`: a whole history folded through its last block within
 /// [`READY_WINDOW`], bound to that chain and not in quarantine.
 pub fn is_ready_on(c: &Cursor, chain_id: i64, now: DateTime<Utc>) -> bool {
-    let Some(folded_at) = c.folded_at else {
-        return false;
-    };
-    let age = now.naive_utc().signed_duration_since(folded_at);
-    c.full_history
-        && c.folded_block == Some(c.last_block)
-        && c.chain_id == Some(chain_id)
-        && c.quarantined_at.is_none()
-        && age >= ChronoDuration::zero()
-        && age <= READY_WINDOW
+    fresh_fold_on(c, chain_id, now) == Some(c.last_block)
+}
+
+/// The published height for a reader that bounds every event query by that
+/// height. A forward walk may already have committed the next window.
+pub(super) fn fresh_fold_on(c: &Cursor, chain_id: i64, now: DateTime<Utc>) -> Option<i64> {
+    let age = now.naive_utc().signed_duration_since(c.folded_at?);
+    c.folded_block.filter(|folded| {
+        c.full_history
+            && *folded <= c.last_block
+            && c.chain_id == Some(chain_id)
+            && c.quarantined_at.is_none()
+            && age >= ChronoDuration::zero()
+            && age <= READY_WINDOW
+    })
 }
 
 /// [`is_ready_on`] for the indexes that read mainnet only: every index but

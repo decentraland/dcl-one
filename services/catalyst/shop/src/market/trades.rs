@@ -406,13 +406,17 @@ pub enum NotReady {
 /// (a completed pass stays completed while the next one runs), cached 10 s,
 /// within [`max_age`] of now.
 pub async fn ready(state: &MarketplaceState) -> Result<Readiness, Response> {
-    readiness(state).await.map_err(|not_ready| match not_ready {
+    readiness(state).await.map_err(not_ready_response)
+}
+
+pub(super) fn not_ready_response(not_ready: NotReady) -> Response {
+    match not_ready {
         NotReady::Refused(why) => unavailable(Source::TradesMirror, &why),
         NotReady::Database(e) => {
             tracing::error!(error = %e, "trades_mirror read failed");
             super::internal_server_error()
         }
-    })
+    }
 }
 
 /// The marker of a configured upstream's last complete pass.

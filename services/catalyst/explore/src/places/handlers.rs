@@ -993,7 +993,6 @@ mod tests {
                 pool.clone(),
                 crate::http::Outbound::new(Default::default()).unwrap(),
                 settings,
-                None,
             )));
         let n = 30;
         let mut samples = Vec::with_capacity(n);
@@ -1139,7 +1138,6 @@ mod tests {
                 pool.clone(),
                 crate::http::Outbound::new(Default::default()).unwrap(),
                 settings,
-                None,
             )));
         assert!(
             state
