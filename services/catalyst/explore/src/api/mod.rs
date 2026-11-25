@@ -164,6 +164,11 @@ pub struct Settings {
     pub bff_url: String,
     /// The one app whose flags document is mirrored (`explorer`).
     pub feature_flags_app: String,
+    /// `EVENTS_FEATURE_FLAGS_URL`, no trailing slash: where `events.json` is
+    /// read for the Foundation names; empty reads none.
+    pub events_flags_url: String,
+    /// `EVENTS_FEATURE_FLAGS_USER_ID`: that request's `X-Address-Hash`.
+    pub events_flags_user_id: Option<String>,
     /// The least age of a stored tile grid revision before a changed one
     /// replaces it ([`map::MIN_PUBLISH_INTERVAL`]; none in tests).
     pub map_min_publish_interval: Duration,
@@ -261,6 +266,14 @@ impl Settings {
             ),
             bff_url: value_or(&config.explore.bff_url, "/bff".into()),
             feature_flags_app: "explorer".into(),
+            events_flags_url: value_or(&config.explore.events_feature_flags_url, String::new()),
+            events_flags_user_id: config
+                .explore
+                .events_feature_flags_user_id
+                .as_deref()
+                .map(str::trim)
+                .filter(|id| !id.is_empty())
+                .map(str::to_string),
             map_min_publish_interval: map::MIN_PUBLISH_INTERVAL,
             version: env!("CARGO_PKG_VERSION").to_string(),
             commit_hash: config.commit_hash().unwrap_or_default(),
@@ -354,6 +367,8 @@ impl Settings {
             comms_fixed_adapter: "offline:offline".into(),
             bff_url: "/bff".into(),
             feature_flags_app: "explorer".into(),
+            events_flags_url: String::new(),
+            events_flags_user_id: None,
             map_min_publish_interval: Duration::ZERO,
             version: "test".into(),
             commit_hash: String::new(),
@@ -441,6 +456,11 @@ impl Settings {
             (
                 "EVENTS_POSTER_UPSTREAM_URL",
                 self.poster_upstream.as_deref(),
+                false,
+            ),
+            (
+                "EVENTS_FEATURE_FLAGS_URL",
+                Some(self.events_flags_url.as_str()).filter(|u| !u.is_empty()),
                 false,
             ),
             (
@@ -672,6 +692,19 @@ impl State {
                             .context("ab-cdn cache maintenance")?;
                         Ok(())
                     }
+                },
+            );
+        }
+        // The Foundation names follow the flags service whatever the mirror switch says.
+        if !self.settings.events_flags_url.is_empty() {
+            let s = self.clone();
+            jobs.spawn_periodic_leased(
+                feature_flags::EVENTS_JOB,
+                PeriodicCfg::every(crate::events::foundation::REFRESH_INTERVAL)
+                    .with_jitter(Duration::from_secs(30)),
+                move |_ctx| {
+                    let s = s.clone();
+                    async move { feature_flags::refresh_events(&s).await }
                 },
             );
         }
