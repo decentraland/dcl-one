@@ -14876,5 +14876,7 @@ mod compare_sources_tests {
 
 mod sale_accounting;
 
+mod cancelled_trades;
 mod historical_routes;
+mod royalties;
 mod sale_routes;
