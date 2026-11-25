@@ -2,6 +2,7 @@
 // mount may stay silent.
 
 import { act, cleanup, render, screen } from "@testing-library/react";
+import { useEffect } from "react";
 import { afterEach, describe, expect, test, vi } from "vitest";
 
 import PreviewFrame, { type PreviewFrameOptions } from "./PreviewFrame";
@@ -41,6 +42,11 @@ function booted() {
   return { win, updates };
 }
 
+/** What wearable-preview runs on: the mount URL's options with the update laid over them (its useOptions). */
+function applied(update: Record<string, unknown>): Record<string, unknown> {
+  return { ...Object.fromEntries(params()), ...update };
+}
+
 afterEach(() => {
   cleanup();
   vi.useRealTimers();
@@ -69,7 +75,28 @@ describe("updates", () => {
     expect(frame().contentWindow).toBe(win);
     expect(updates()).toHaveLength(1);
     expect(updates()[0]!.payload.options).toMatchObject({ type: "wearable" });
-    expect(updates()[0]!.payload.options.emote).toBeUndefined();
+    expect(Object.hasOwn(updates()[0]!.payload.options, "emote")).toBe(true);
+    expect(applied(updates()[0]!.payload.options).emote).toBeUndefined();
+  });
+
+  test("over Babylon an option the mount URL set and the new options leave out is cleared, not taken back from the URL", () => {
+    const { change } = mount({ urns: [HOODIE], profile: "default", emote: "fashion", type: "avatar" });
+    const { win, updates } = booted();
+
+    change({ urns: [HAT] });
+    expect(frame().contentWindow).toBe(win);
+    const first = updates()[0]!.payload.options;
+    for (const key of ["profile", "emote", "type"]) {
+      expect(Object.hasOwn(first, key)).toBe(true);
+      expect(applied(first)[key]).toBeUndefined();
+    }
+
+    // Every later update clears them again: each one replaces the last whole.
+    change({ urns: [HOODIE] });
+    const second = updates()[1]!.payload.options;
+    expect(second.urns).toEqual([HOODIE]);
+    expect(Object.hasOwn(second, "profile")).toBe(true);
+    expect(applied(second).profile).toBeUndefined();
   });
 });
 
@@ -119,6 +146,32 @@ describe("a new mount", () => {
     expect(onLoad).not.toHaveBeenCalled();
     fromPreview({ type: "load", payload: { renderer: "babylon" } }, TESTNET);
     expect(onLoad).toHaveBeenCalledWith("babylon");
+  });
+
+  test("a retiring iframe cannot answer for the one replacing it", () => {
+    vi.useFakeTimers();
+    const onLoad = vi.fn();
+    const onError = vi.fn();
+    const retiring: { win: Window | null } = { win: null };
+    // Its effect runs after PreviewFrame's in the same commit: the frame has chosen a new mount, and React has not
+    // replaced the iframe yet.
+    function Page({ options }: { options: PreviewFrameOptions }) {
+      useEffect(() => {
+        if (!retiring.win) return;
+        window.dispatchEvent(new MessageEvent("message", { data: { type: "load", payload: { renderer: "unity" } }, source: retiring.win, origin: MAINNET }));
+      }, [options]);
+      return <PreviewFrame options={options} loadTimeoutMs={45_000} onLoad={onLoad} onError={onError} />;
+    }
+
+    const view = render(<Page options={{ urns: [DANCE], emote: "fashion", ...UNITY }} />);
+    fromPreview({ type: "ready" });
+    retiring.win = frame().contentWindow;
+    view.rerender(<Page options={{ urns: [HAT], ...UNITY }} />);
+
+    expect(frame().contentWindow).not.toBe(retiring.win);
+    expect(onLoad).not.toHaveBeenCalled();
+    act(() => vi.advanceTimersByTime(45_000));
+    expect(onError).toHaveBeenCalledTimes(1);
   });
 
   test("a change of renderer mounts again", () => {
