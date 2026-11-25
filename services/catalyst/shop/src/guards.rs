@@ -26,9 +26,9 @@ use super::policy::{
 };
 use super::policy_entry::{self, ItemFacts, item_facts_from_mirror, manager_routes};
 use super::types::{
-    AssetId, ChainId, ContractRef, ContractRole, EvmAddress, ExternalCall, ItemRecord, Lookup,
-    ManaWei, NameLabel, Offer, PaymentMethod, Session, SettlementOperation, SignedTrade, StoreItem,
-    TokenRecord, TradeAssetType, TradeCoupon, UsdCents,
+    AssetId, ChainId, ContractRef, ContractRole, CustomEffect, EvmAddress, ExternalCall,
+    ItemRecord, Lookup, ManaWei, NameLabel, Offer, PaymentMethod, Session, SettlementOperation,
+    SignedTrade, StoreItem, TokenRecord, TradeAssetType, TradeCoupon, UsdCents,
 };
 
 /// The `error` code of every rule refusal.
@@ -713,8 +713,10 @@ pub mod broker {
 
 pub mod relay {
     //! The meta-transaction relay: a `useCredits` to a CreditsManager is
-    //! decoded and judged as the operation it executes; every other target
-    //! and every other manager function spends no credit here.
+    //! decoded and judged as the operation it executes (a collection's
+    //! publication by `credits::publication::guard_relayed`, anything else by
+    //! the payment rule); every other target and every other manager
+    //! function spends no credit here.
 
     use super::*;
     use crate::evm::abi::decode_meta_tx_full;
@@ -844,6 +846,21 @@ pub mod relay {
                 "useCredits is relayed only when its external call decodes: {e}"
             ))
         })?;
+        if matches!(
+            decoded.call,
+            ExternalCall::Custom {
+                effect: CustomEffect::CollectionPublication { .. },
+                ..
+            }
+        ) {
+            return crate::credits::publication::guard_relayed(pool, chain, wallet, target, &decoded)
+                .await
+                .map_err(|why| {
+                    ApiError::InvalidTransaction(format!(
+                        "useCredits to createCollection is relayed only for the publication this node authorized: {why}"
+                    ))
+                });
+        }
         let session = Session::Web3 { wallet };
         let lines = lines_of(pool, chain, session, &decoded.call).await?;
         let op = SettlementOperation::UseCredits {

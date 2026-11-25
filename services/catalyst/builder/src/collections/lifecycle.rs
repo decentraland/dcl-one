@@ -50,7 +50,7 @@ pub async fn lock(state: &State, lock: &CollectionLock) -> Result<DateTime<Utc>,
 
 /// Whether the RPC shows code at `contract`; an RPC that can't tell is 503,
 /// an unconfigured one shows nothing.
-async fn deployed(state: &State, contract: &str) -> Result<bool, ApiError> {
+pub(crate) async fn deployed(state: &State, contract: &str) -> Result<bool, ApiError> {
     match state.deployments.of(state, contract).await {
         Onchain::Deployed(_) => Ok(true),
         Onchain::Absent | Onchain::Unconfigured => Ok(false),

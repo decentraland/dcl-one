@@ -21,7 +21,6 @@
   "MATIC_RPC_URL": "https://rpc.decentraland.org/polygon",
   "MATIC_EXPLORER_URL": "https://polygonscan.com",
   "MATIC_MIN_TIP_GWEI": "",
-  "CREDITS_SERVER_URL": "https://credits.decentraland.today",
   "MARKETPLACE_SERVER_URL": "https://marketplace-api.decentraland.today",
   "SOCIAL_RPC_URL": "wss://rpc-social-service-ea.decentraland.today",
   "TRANSACTIONS_API_URL": "https://transactions-api.decentraland.today/v1",

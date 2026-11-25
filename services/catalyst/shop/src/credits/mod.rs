@@ -39,6 +39,9 @@
 //!   `CREDITS_MANAGER_CONTRACT`, and minting only while the CreditUsed index
 //!   (`usage.rs`, `credits.usages`) is ready: 503 naming
 //!   `credits-usage-index` otherwise; the index consumes the pledges;
+//! - `/credits/authorize-publication`: a collection's publication fee
+//!   (`publication.rs`), under the same lane, with
+//!   `CREDITS_EXTERNAL_CALL_SIGNER_KEY_FILE` and the builder `serve` attaches;
 //! - `/usage-index/status`: the index's cursor, readiness and lag.
 //!
 //! Money: every balance and amount is `numeric` in SQL and a decimal string
@@ -90,6 +93,7 @@ pub mod money;
 pub mod orders;
 pub mod packs;
 pub mod pricing;
+pub mod publication;
 pub mod purchase_intent;
 pub mod reconcile;
 pub mod settlement;
@@ -101,6 +105,8 @@ pub mod wallet;
 pub mod wallet_flags;
 pub mod writes;
 
+#[cfg(test)]
+mod publication_tests;
 #[cfg(test)]
 mod tests;
 #[cfg(test)]
@@ -218,6 +224,8 @@ pub struct RawSettings {
     pub credit_buffer_bps: u32,
     /// `CREDITS_REVOKER_KEY_FILE` (the plain variable is refused): the `CREDITS_REVOKER_ROLE` signer of `revokeCredits`; unset, revocations queue and wait.
     pub credits_revoker_key: Option<String>,
+    /// `CREDITS_EXTERNAL_CALL_SIGNER_KEY_FILE` (the plain variable is refused): the `EXTERNAL_CALL_SIGNER_ROLE` signer of the `createCollection` call a publication credit pays for; unset, the publication authorization answers 503.
+    pub credits_external_call_signer_key: Option<String>,
     /// `CREDITS_TRIAL_MODE` (false): a closed trial (`trial.rs`).
     pub trial_mode: bool,
     /// `CREDITS_TRIAL_BUYERS` (or `_FILE`): the trial's buyers.
@@ -272,6 +280,7 @@ impl Default for RawSettings {
             credit_cap_headroom_pct: batch::DEFAULT_CAP_HEADROOM_PCT,
             credit_buffer_bps: batch::DEFAULT_ORACLE_BUFFER_BPS,
             credits_revoker_key: None,
+            credits_external_call_signer_key: None,
             trial_mode: false,
             trial_buyers: None,
             shop_base_url: crate::subscriptions::DEFAULT_SHOP_BASE_URL.to_string(),
@@ -316,6 +325,7 @@ pub struct Settings {
     pub credit_cap_headroom_pct: u32,
     pub credit_buffer_bps: u32,
     pub credits_revoker_key: Option<String>,
+    pub credits_external_call_signer_key: Option<String>,
     /// `Some` under `CREDITS_TRIAL_MODE`: only these buyers get new credit authorizations, and
     /// the MANA top-up routes refuse.
     pub trial: Option<trial::TrialBuyers>,
@@ -583,6 +593,7 @@ impl Settings {
             credit_cap_headroom_pct: raw.credit_cap_headroom_pct,
             credit_buffer_bps: raw.credit_buffer_bps,
             credits_revoker_key,
+            credits_external_call_signer_key: non_empty(raw.credits_external_call_signer_key),
             trial,
             shop_base_url: non_empty(Some(raw.shop_base_url))
                 .unwrap_or_else(|| crate::subscriptions::DEFAULT_SHOP_BASE_URL.to_string())
@@ -655,6 +666,9 @@ pub struct State {
     /// The `dapps` rollout flags the market reads (`market::features`); none without a market, and then every
     /// flag reads off.
     pub(crate) dapps_flags: Option<Arc<crate::market::features::DappsFlags>>,
+    /// The builder's publications ([`publication::Publications`]); unattached, a publication authorization
+    /// answers 503.
+    pub(crate) publications: std::sync::OnceLock<Arc<dyn publication::Publications>>,
 }
 
 pub type SharedState = Arc<State>;
@@ -775,6 +789,7 @@ impl State {
             feed,
             goals_chain: chain,
             dapps_flags: None,
+            publications: std::sync::OnceLock::new(),
         }
     }
 
@@ -790,6 +805,11 @@ impl State {
     pub fn with_dapps_flags(mut self, flags: Arc<crate::market::features::DappsFlags>) -> Self {
         self.dapps_flags = Some(flags);
         self
+    }
+
+    /// Attaches this node's builder, which prices a publication; `false` when one is already attached.
+    pub fn attach_publications(&self, publications: Arc<dyn publication::Publications>) -> bool {
+        self.publications.set(publications).is_ok()
     }
 
     /// The tests' gate in place of the chain read.
@@ -978,6 +998,10 @@ pub fn router(state: SharedState) -> Router {
             post(handlers::authorize::authorize_batch),
         )
         .route(
+            "/credits/authorize-publication",
+            post(handlers::publication::authorize_publication),
+        )
+        .route(
             "/credits/authorize/cancel",
             post(handlers::authorize::cancel),
         )
@@ -1084,6 +1108,10 @@ pub fn shop_router(state: SharedState) -> Router {
         .route(
             "/v1/credit-authorizations/batch",
             post(handlers::authorize::authorize_batch),
+        )
+        .route(
+            "/v1/credit-authorizations/publication",
+            post(handlers::publication::authorize_publication),
         )
         .route(
             "/v1/credit-authorizations/cancel",

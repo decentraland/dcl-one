@@ -1,6 +1,6 @@
-// credits-server client (shop credits, USD-denominated: 1 credit = 10 US cents). Requests are
-// ADR-44 signed through the lib/auth chokepoint.
-import { config } from './config'
+// Client of the node's credits (shop credits, USD-denominated: 1 credit = 10 US cents), which answers
+// credits-server's paths under `/credits`. Requests are ADR-44 signed through the lib/auth chokepoint.
+import { catalystUrl } from '../catalyst/bases'
 import { signedFetch } from './auth'
 
 export type CreditsBalance = {
@@ -42,7 +42,10 @@ export class CreditsServerError extends Error {
   }
 }
 
-const baseUrl = () => config.get('CREDITS_SERVER_URL')
+/** The node's credits, on every host. */
+export const creditsUrl = () => `${catalystUrl()}/credits`
+
+const baseUrl = creditsUrl
 
 async function parseError(response: Response, fallback: string): Promise<CreditsServerError> {
   const body = (await response.json().catch(() => null)) as { error?: string } | null
