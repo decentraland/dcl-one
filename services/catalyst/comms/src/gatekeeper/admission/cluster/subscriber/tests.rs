@@ -2558,10 +2558,10 @@ fn moving_a_token_s_not_before_leaves_every_other_claim_alone() {
 }
 
 #[tokio::test]
-async fn poisoned_lane_registry_still_drains_new_work() {
+async fn panicked_lane_registry_still_drains_new_work() {
     let h = harness();
     let queue = h.subscriber.queue.clone();
-    queue.poison_for_test();
+    queue.panic_while_locked_for_test();
     let ran = Arc::new(AtomicBool::new(false));
     let flag = ran.clone();
     h.subscriber.spawn(WALLET.to_string(), move |_| {

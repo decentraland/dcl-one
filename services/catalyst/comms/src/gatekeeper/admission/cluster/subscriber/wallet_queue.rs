@@ -500,10 +500,10 @@ impl WalletQueue {
     }
 
     #[cfg(test)]
-    pub(super) fn poison_for_test(&self) {
+    pub(super) fn panic_while_locked_for_test(&self) {
         let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
             let _guard = self.state.lock();
-            panic!("poison registry");
+            panic!("panic while holding the registry");
         }));
     }
 }

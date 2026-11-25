@@ -80,6 +80,7 @@ struct Shared {
     pending: Notify,
     user_count: AtomicU32,
     current: Arc<CurrentAssignments>,
+    // std on purpose: control positions fail closed once poisoned.
     control: std::sync::Mutex<ControlPositions>,
     control_enabled: Notify,
     statistics: Mutex<crate::pulse::statistics::Statistics>,
@@ -179,11 +180,11 @@ impl ClusterFeedPublisher for NatsClusterFeed {
         Some(self.shared.current.clone())
     }
     fn control_snapshot(&self) -> ControlSnapshot {
-        self.shared
-            .control
-            .lock()
-            .expect("control lock poisoned")
-            .snapshot()
+        // Poisoned: no control member joins the pass.
+        let Ok(mut control) = self.shared.control.lock() else {
+            return ControlSnapshot::default();
+        };
+        control.snapshot()
     }
 
     fn replace_assignments(
@@ -529,13 +530,10 @@ async fn serve_control_positions(shared: &Shared, client: &async_nats::Client) {
         let enabled = shared.control_enabled.notified();
         tokio::pin!(enabled);
         enabled.as_mut().enable();
-        if shared
-            .control
-            .lock()
-            .expect("control lock poisoned")
-            .is_enabled()
-        {
-            break;
+        match shared.control.lock() {
+            Ok(control) if control.is_enabled() => break,
+            Ok(_) => {}
+            Err(_) => return,
         }
         enabled.await;
     }
@@ -557,20 +555,18 @@ async fn serve_control_positions(shared: &Shared, client: &async_nats::Client) {
         match message.subject.as_str() {
             crate::protocol::bus::control_position::SUBJECT => {
                 if let Some(update) = ControlPosition::decode(&message.payload) {
-                    shared
-                        .control
-                        .lock()
-                        .expect("control lock poisoned")
-                        .ingest(update);
+                    let Ok(mut control) = shared.control.lock() else {
+                        return;
+                    };
+                    control.ingest(update);
                 }
             }
             LegacyRoomIntent::SUBJECT => {
                 if let Some(update) = LegacyRoomIntent::decode(&message.payload) {
-                    shared
-                        .control
-                        .lock()
-                        .expect("control lock poisoned")
-                        .ingest_intent(update);
+                    let Ok(mut control) = shared.control.lock() else {
+                        return;
+                    };
+                    control.ingest_intent(update);
                 }
             }
             _ => {}
