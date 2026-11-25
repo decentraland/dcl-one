@@ -823,7 +823,7 @@ mod tests {
             contract_address: "0xnft".into(),
             token_id: "42".into(),
             item_id: None,
-            category: "wearable".into(),
+            category: Some("wearable".into()),
             tx_hash: Some("0xtx".into()),
             timestamp: 1_700_000_000_000,
             network: Network::Matic,

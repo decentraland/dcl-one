@@ -115,7 +115,7 @@ pub(crate) async fn seller_slot(
     }
 }
 
-fn enabled(state: &MarketplaceState) -> bool {
+pub(crate) fn enabled(state: &MarketplaceState) -> bool {
     state.settings.market.indexes.sales_enabled && state.settings.eth_network.trim() == "mainnet"
 }
 

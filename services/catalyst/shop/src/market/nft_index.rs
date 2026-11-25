@@ -208,6 +208,7 @@ pub fn decode_log(log: &RpcLog, block_time: i64) -> Result<Option<NftEvent>, Dec
         tx_hash: log
             .transaction_hash
             .as_ref()
+            .filter(|h| !h.is_empty())
             .map(|h| h.to_ascii_lowercase()),
     };
     let event = match topic0.as_str() {
@@ -370,7 +371,9 @@ pub fn parse_land_data(raw: &str) -> Option<(Option<String>, Option<String>)> {
     Some((field(1), field(2)))
 }
 
-/// Replays fill missing transaction hashes and incomplete successful order details.
+/// Replays fill missing transaction hashes and incomplete successful order
+/// details. Another kind's row gains a hash only from the same log: the same
+/// emitter, token, parties and payload at its position.
 pub async fn insert_events(
     conn: &mut PgConnection,
     net: ChainNet,
@@ -390,7 +393,14 @@ pub async fn insert_events(
                  to_address = CASE WHEN EXCLUDED.kind = 'order_successful' THEN COALESCE(shop.nft_event.to_address, EXCLUDED.to_address) ELSE shop.nft_event.to_address END,
                  block_time = CASE WHEN EXCLUDED.kind = 'order_successful' AND shop.nft_event.block_time = 0 THEN EXCLUDED.block_time ELSE shop.nft_event.block_time END
              WHERE shop.nft_event.kind = EXCLUDED.kind AND EXCLUDED.tx_hash IS NOT NULL
-               AND ((EXCLUDED.kind <> 'order_successful' AND shop.nft_event.tx_hash IS NULL)
+               AND ((EXCLUDED.kind <> 'order_successful' AND shop.nft_event.tx_hash IS NULL
+                 AND (shop.nft_event.emitter, shop.nft_event.contract_address, shop.nft_event.token_id)
+                     = (EXCLUDED.emitter, EXCLUDED.contract_address, EXCLUDED.token_id)
+                 AND shop.nft_event.from_address IS NOT DISTINCT FROM EXCLUDED.from_address
+                 AND shop.nft_event.to_address IS NOT DISTINCT FROM EXCLUDED.to_address
+                 AND shop.nft_event.amount IS NOT DISTINCT FROM EXCLUDED.amount
+                 AND shop.nft_event.expires_at IS NOT DISTINCT FROM EXCLUDED.expires_at
+                 AND shop.nft_event.detail IS NOT DISTINCT FROM EXCLUDED.detail)
                  OR (EXCLUDED.kind = 'order_successful'
                AND (shop.nft_event.emitter,shop.nft_event.contract_address,shop.nft_event.token_id)
                    = (EXCLUDED.emitter,EXCLUDED.contract_address,EXCLUDED.token_id)
@@ -1407,7 +1417,7 @@ pub(crate) mod tests {
                 Some(format!("0x{}", "cd".repeat(32)))
             )
         );
-        let legacy = log(
+        let mut legacy = log(
             c,
             vec![
                 TOPIC_TRANSFER.into(),
@@ -1418,7 +1428,13 @@ pub(crate) mod tests {
             11,
             0,
         );
-        assert_eq!(decode_log(&legacy, 7).unwrap().unwrap().token_id, "9");
+        legacy.transaction_hash = Some(String::new());
+        let ev = decode_log(&legacy, 7).unwrap().unwrap();
+        assert_eq!(
+            (ev.token_id.as_str(), ev.tx_hash),
+            ("9", None),
+            "an empty hash is none"
+        );
     }
 
     #[test]

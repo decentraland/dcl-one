@@ -539,9 +539,10 @@ CREATE INDEX nft_event_token_idx ON shop.nft_event (network, contract_address, t
 CREATE INDEX nft_event_successful_order ON shop.nft_event(network,block_number) WHERE kind='order_successful';
 
 -- The transfer leg of /v1/activity (`activity_transfers`): a wallet's
--- newest transfers out and in, each side walked newest first to its cap.
-CREATE INDEX nft_event_transfer_from_idx ON shop.nft_event (from_address, block_time DESC) WHERE kind = 'transfer';
-CREATE INDEX nft_event_transfer_to_idx ON shop.nft_event (to_address, block_time DESC) WHERE kind = 'transfer';
+-- newest transfers out and in on one network, each side walked newest
+-- first to its cap.
+CREATE INDEX nft_event_transfer_from_idx ON shop.nft_event (network, from_address, block_number DESC, log_index DESC) WHERE kind = 'transfer';
+CREATE INDEX nft_event_transfer_to_idx ON shop.nft_event (network, to_address, block_number DESC, log_index DESC) WHERE kind = 'transfer';
 
 -- The ownership fold of the collections' and names' transfers: owner is the
 -- latest Transfer's `to` (NULL once burned), the mint the first; item_id and
@@ -16204,9 +16205,6 @@ CREATE TABLE shop.trade_event (
 
 -- A trade's executions and cancellations: WHERE hashed_signature = ANY($1).
 CREATE INDEX trade_event_signature_idx ON shop.trade_event (hashed_signature, kind) WHERE hashed_signature IS NOT NULL;
--- The execution in a transfer's own transaction, which makes the transfer a
--- sale in /v1/activity (`activity_transfers`).
-CREATE INDEX trade_event_traded_tx_idx ON shop.trade_event (network, tx_hash) WHERE kind = 'traded';
 -- The current signer / contract index of a marketplace: the latest row of
 -- (network, marketplace_address, kind, caller) by block.
 CREATE INDEX trade_event_index_idx ON shop.trade_event (network, marketplace_address, kind, caller, block_number DESC, log_index DESC) WHERE new_index IS NOT NULL;

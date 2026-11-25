@@ -24,21 +24,22 @@ The timestamp and price indexes occupied 54 MiB and 114 MiB on the sales fixture
 
 ## Wallet activity transfers
 
-A synthetic PostgreSQL 17.6 fixture on a laptop held 5M Polygon and 1M Ethereum transfers in `shop.nft_event` among 400,000 wallets. 30% of the transfers settled a sale: 611,000 legacy orders, 306,000 accepted bids and 916,000 trades. The older half of each network's transfers had no transaction hash. Timings are for the leg's statement: both sides capped at 500, both networks read, the sale checks included.
+A synthetic PostgreSQL 17.6 fixture on a laptop held 5M Polygon and 1M Ethereum transfers in `shop.nft_event` among 400,000 wallets. 30% of them settled a sale, giving 1.83M single-asset executions in the sales ledger. The older half of each network's transfers had no transaction hash. Timings are for the leg's statement on one network: both sides capped at 500, with the public-sale checks against the ledger. The leg runs the two networks concurrently.
 
 | Index | Size | Concurrent build | Build in the migration transaction |
 | --- | ---: | ---: | ---: |
-| `nft_event_transfer_from_idx` | 443 MB | 11.0 s | 9.7 s |
-| `nft_event_transfer_to_idx` | 443 MB | 12.1 s | not measured |
-| `trade_event_traded_tx_idx` | 92 MB | 2.6 s | 2.9 s |
+| `nft_event_transfer_from_idx` | 546 MB | 20.5 s | 12.2 s |
+| `nft_event_transfer_to_idx` | 546 MB | 20.3 s | not measured |
 
-| Wallet | Rows returned | Cached | Cold |
-| --- | ---: | ---: | ---: |
-| 400 transfers | 274 | 14 ms | 143 ms |
-| 50,000 transfers, 90% of them sales | 1,000 | 132 to 543 ms | 4.4 s |
-| Three random wallets | 17 to 26 | 1.0 to 1.3 ms | 14 to 41 ms |
+| Wallet | Network | Rows returned | Cached | Cold |
+| --- | --- | ---: | ---: | ---: |
+| 400 transfers | Polygon | 244 | 2.7 ms | 136 ms |
+| 400 transfers | Ethereum | 46 | 2.0 ms | 35 ms |
+| 50,000 transfers, 90% of them sales | Polygon | 1,000 | 57 ms | 994 ms |
+| 50,000 transfers, 90% of them sales | Ethereum | 668 | 35 ms | 455 ms |
+| Three random wallets | Polygon | 21 to 25 | 0.4 to 1.5 ms | 9.8 to 11.2 ms |
 
-For the 50,000-transfer wallet, each side walked about 4,900 index rows to find 500 transfers that were not sales. It ran about 4,000 to 4,900 probes of each sale source per side, from the token indexes and from the trade index's transaction or block arm.
+On Polygon, each side of the 50,000-transfer wallet walked about 4,800 index rows to find 500 transfers that were not sales. Each walked row made one `sale_asset_read_token` probe (0.04 to 0.07 ms) and, when it found a sale, one probe of the execution's primary key.
 
 ## Marketplace sales day rollups
 

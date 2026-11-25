@@ -4603,20 +4603,21 @@ async fn a_reindexed_order_only_gains_its_missing_transaction_hash() {
 }
 
 /// A transfer indexed before the walk recorded transfers' transactions
-/// gains its hash when the log is read again, and keeps it after.
+/// gains its hash when the same log is read again, and keeps it after; a
+/// different log at its position never supplies one.
 #[tokio::test]
 async fn a_reindexed_transfer_gains_its_missing_transaction_hash() {
     let Some(db) = ScratchDb::create().await else {
         return;
     };
-    let transfer = |tx_hash: Option<&str>| nft_index::NftEvent {
+    let transfer = |token: &str, tx_hash: Option<&str>| nft_index::NftEvent {
         block_number: 100,
         log_index: 0,
         block_time: 1,
         kind: nft_index::KIND_TRANSFER,
         emitter: "0xnft".into(),
         contract_address: "0xnft".into(),
-        token_id: "7".into(),
+        token_id: token.into(),
         from_address: Some("0xseller".into()),
         to_address: Some("0xbuyer".into()),
         amount: None,
@@ -4634,9 +4635,18 @@ async fn a_reindexed_transfer_gains_its_missing_transaction_hash() {
             .await
             .unwrap()
     };
-    assert_eq!(write(transfer(None)).await, 1);
-    assert_eq!(write(transfer(Some(&a))).await, 1, "the hash is filled");
-    assert_eq!(write(transfer(Some(&b))).await, 0, "a kept hash stays");
+    assert_eq!(write(transfer("7", None)).await, 1);
+    assert_eq!(
+        write(transfer("8", Some(&b))).await,
+        0,
+        "another token's log at the position"
+    );
+    assert_eq!(
+        write(transfer("7", Some(&a))).await,
+        1,
+        "the hash is filled"
+    );
+    assert_eq!(write(transfer("7", Some(&b))).await, 0, "a kept hash stays");
     drop(conn);
     let kept: Option<String> = sqlx::query_scalar(
         "SELECT tx_hash FROM shop.nft_event WHERE network = 'matic' AND block_number = 100",
