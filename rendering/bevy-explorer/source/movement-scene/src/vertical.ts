@@ -1,6 +1,6 @@
 import { ColliderLayer, engine, Entity, InputAction, inputSystem, RaycastQueryType, RaycastShape, raycastSystem, RaycastSystemCallback, Transform } from '@dcl/sdk/ecs'
 import { Vector3 } from '@dcl/sdk/math';
-import { centreOnGround, centreSupported, groundDistance, grounded, GROUNDED_ANGLE_Y_LEN, groundNormal, groundRayDistance, groundRayNormal, prevGrounded, setGrounded } from './ground';
+import { castGrounded, centreOnGround, centreSupported, groundDistance, grounded, GROUNDED_ANGLE_Y_LEN, groundNormal, groundRayDistance, groundRayNormal, prevGrounded, setGrounded } from './ground';
 import {
   AIR_JUMP_COOLDOWN, AIR_JUMP_HOVER_SPEED, AIR_JUMP_HOVER_TIME,
   GLIDE_CLOSE_TIME, GLIDE_COOLDOWN, GLIDE_DAMP_TIME, GLIDE_MIN_GROUND_DISTANCE, GLIDE_OPEN_TIME,
@@ -21,6 +21,7 @@ export function updateVerticalVelocity() {
   leftEdge = false;
   followsGround = false;
   snapSpeed = 0;
+  const pushArrived = updatePushLaunch();
   if (engineDriven) {
     stepping = false;
     climbSent = 0;
@@ -28,20 +29,22 @@ export function updateVerticalVelocity() {
     // us off the ground must not read as a fall, nor arrive as a landing. A jump press still
     // goes through so the player can cancel the move.
     // ... unless an upward push launches us off it
-    setGrounded(isLaunched() ? false : prevGrounded);
+    setGrounded(pushLaunched ? false : prevGrounded);
     const top = vstate.topY;
     applyJumpAndGravity(true);
     // keep the stun's top from before the placement, so a placement high up never stuns
     vstate.topY = top; placedY = playerPosition.y;
     return;
   }
+  // launched by a push on an earlier tick: in the air until the push ends
+  if (pushLaunched && !pushArrived) setGrounded(false);
   stepUp();
   leaveEdge();
   const snap = snapDistance();
   if (snap > 0) setGrounded(true);
   applyJumpAndGravity(false);
-  // pushed upward: off the ground for this tick's horizontal move and the next tick
-  if (isLaunched()) setGrounded(false);
+  // pushed upward: off the ground for this tick's horizontal move, and until the push ends
+  if (pushLaunched) setGrounded(false);
   if (!grounded || jumpStartHeight !== undefined) {
     stepping = false;
     climbSent = 0;
@@ -382,7 +385,7 @@ function applyJumpAndGravity(noGravity: boolean) {
   groundY = groundDistance < Infinity ? playerPosition.y - Math.max(0, groundDistance) : -Infinity;
   // While the model hovers above the ground in an air jump, the avatar reaching the ground on a late reply is not a
   // landing.
-  if (grounded && vstate.airLaunchT !== NEVER && vstate.t < vstate.airLaunchT - EPS && vstate.y > groundY && !isLaunched()) {
+  if (grounded && vstate.airLaunchT !== NEVER && vstate.t < vstate.airLaunchT - EPS && vstate.y > groundY && !pushLaunched) {
     setGrounded(false);
   }
   // Until the committed steps reach a published launch, they run on the ground, even if the avatar already rose. A push
@@ -400,9 +403,11 @@ function applyJumpAndGravity(noGravity: boolean) {
   const pressBefore = vstate.airPressT;
   // the committed steps up to the end of this frame run on the previous tick's keys
   vadvance(vstate, prevJumpPressed, prevRunning, onGround, noGravity, tickAdvance);
-  if (!onGround || vstate.launched || isLaunched()) {
+  if (!onGround || vstate.launched || pushLaunched) {
     vstate.ve += prevExternalVelocity.y;
   }
+  // a push launch ends once the avatar no longer rises
+  if (pushLaunched && vstate.vy + vstate.ve <= 0) pushLaunched = false;
   if (vstate.launched) {
     jumpStartHeight = playerPosition.y;
     setGrounded(false);
@@ -576,11 +581,26 @@ var placedY = -Infinity;
 var lastReplyVy = 0;
 var lastReplyAir = false;
 
-// An upward push stronger than gravity is meant to lift the avatar, so like a jump it leaves
-// the ground rather than being snapped back down. A weaker one (externalVelocity is summed
-// over the tick, so a force shows up as force * tickTime) stays on the ground.
-function isLaunched(): boolean {
-  return prevExternalVelocity.y > -GRAVITY.y * tickTime;
+// An upward push stronger than gravity is meant to lift the avatar, so like a jump it leaves the ground rather than being
+// snapped back down. A weaker one (externalVelocity is summed over the tick, so a force shows up as force * tickTime)
+// stays on the ground. The launch lasts until the avatar no longer rises, or until it lands: the ground casts find the
+// ground after they lost it at least once since the push. The landing reads the casts, not `grounded`, which the push
+// tick sets false: a weak push would otherwise read as a landing on the next tick.
+var pushLaunched = false;
+// the ground casts have lost the ground since the push
+var pushLeftGround = false;
+// Updates the launch for this tick's pushes; true when a push launches the avatar on this tick.
+function updatePushLaunch(): boolean {
+  if (prevExternalVelocity.y > G * tickTime) {
+    pushLaunched = true;
+    pushLeftGround = !castGrounded;
+    return true;
+  }
+  if (pushLaunched) {
+    if (!castGrounded) pushLeftGround = true;
+    else if (pushLeftGround) pushLaunched = false;
+  }
+  return false;
 }
 
 // ---------------------------------------------------------------- the ground: step up, ground snap, ground following
@@ -783,7 +803,7 @@ var followsGround = false;
 const SNAP_MIN = 1e-3; // m
 
 function snapDistance(): number {
-  if (stepping || !prevGrounded || jumpStartHeight !== undefined || isLaunched() || !centreSupported()) return 0;
+  if (stepping || !prevGrounded || jumpStartHeight !== undefined || pushLaunched || !centreSupported()) return 0;
   const d = groundNormal.y >= GROUNDED_ANGLE_Y_LEN ? groundDistance : groundRayDistance;
   return d > SNAP_MIN ? d : 0;
 }

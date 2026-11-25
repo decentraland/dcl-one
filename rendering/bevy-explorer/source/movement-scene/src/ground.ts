@@ -12,6 +12,8 @@ export var groundRayNormal = Vector3.Zero();
 // updated in recordGroundPosition @ 100000 - 2
 export var grounded = false;
 export var prevGrounded = false;
+// what the ground casts report this tick, before the models change `grounded`
+export var castGrounded = false;
 
 export const GROUNDED_ANGLE_Y_LEN = Math.cos(GROUNDED_ANGLE / 180 * Math.PI)
 
@@ -94,6 +96,7 @@ export function initGroundRaycast() {
 function recordGroundState() {
     prevGrounded = grounded;
     grounded = ((groundHitTick == tick) || (groundRayHitTick == tick) || (playerPosition.y < 0.01));
+    castGrounded = grounded;
     if (playerPosition.y < 0.01) {
         Vector3.copyFrom(VEC3_UP, groundNormal);
     }
