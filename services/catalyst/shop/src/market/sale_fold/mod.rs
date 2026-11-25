@@ -26,7 +26,18 @@ struct Input {
     dirty_from: Option<i64>,
 }
 
+#[derive(FromRow)]
+struct FactoryProof {
+    last_block: i64,
+    hash: String,
+    epoch: Uuid,
+    revision: i64,
+    folded_at: NaiveDateTime,
+    required_from: i64,
+}
+
 struct Inputs {
+    factory: Option<FactoryProof>,
     rows: Vec<Input>,
     late_collections: i64,
     first_backfill: Option<i64>,
@@ -39,21 +50,35 @@ impl Inputs {
     }
 
     fn epochs(&self) -> Vec<Uuid> {
-        self.rows.iter().map(|r| r.epoch).collect()
+        self.rows
+            .iter()
+            .map(|r| r.epoch)
+            .chain(self.factory.iter().map(|f| f.epoch))
+            .collect()
     }
 
     fn revisions(&self) -> Vec<i64> {
-        self.rows.iter().map(|r| r.revision).collect()
+        self.rows
+            .iter()
+            .map(|r| r.revision)
+            .chain(self.factory.iter().map(|f| f.revision))
+            .collect()
     }
 
     fn reusable_prefix(&self, marker: &Marker) -> Option<i64> {
         if marker.input_version != sale_history::VERSION
-            || marker.input_epochs != self.epochs()
-            || marker.input_revisions.len() != self.rows.len()
+            || marker.input_epochs.get(..self.rows.len()) != self.epochs().get(..self.rows.len())
+            || marker.input_revisions.len() < self.rows.len()
         {
             return None;
         }
         let mut prefix = marker.block_number.min(self.common());
+        if let Some(f) = &self.factory
+            && (marker.input_epochs.get(self.rows.len()) != Some(&f.epoch)
+                || marker.input_revisions.get(self.rows.len()) != Some(&f.revision))
+        {
+            prefix = prefix.min(f.required_from.checked_sub(1)?);
+        }
         if let Some(from) = self.first_backfill {
             prefix = prefix.min(from.checked_sub(1)?);
         }
@@ -142,21 +167,45 @@ async fn inputs(
     // A Bought line outside the current catalogue may name a late genuine
     // collection. Only a complete factory walk through that purchase can
     // distinguish it from an unrelated address.
-    let missing = net == ChainNet::Matic && sqlx::query_scalar::<_,bool>(
-        "SELECT EXISTS(SELECT FROM shop.store_sale_line l WHERE l.block_number <= $1
-           AND l.issue_log IS NULL AND NOT l.issue_checked AND (
-             EXISTS(SELECT FROM shop.collections c WHERE c.network='matic' AND c.chain_id=137
-                    AND c.contract_address=l.contract_address AND c.created_at<=l.block_time)
-             OR EXISTS(SELECT FROM shop.collection_event e WHERE e.network='matic' AND e.kind='proxy_created'
-                    AND e.contract_address=l.contract_address AND e.block_number<=l.block_number)
-             OR NOT EXISTS(SELECT FROM shop.chain_cursor c WHERE c.indexer='collections' AND c.network='matic'
-                    AND c.chain_id=137 AND c.full_history AND c.start_block<=$2 AND c.folded_block>=l.block_number
-                    AND c.folded_at BETWEEN $3::timestamp - interval '30 minutes' AND $3 AND c.last_block_hash IS NOT NULL
-                    AND c.quarantined_at IS NULL AND c.diverged_at IS NULL AND c.rebuild_requested_at IS NULL
-                    AND NOT EXISTS(SELECT FROM shop.chain_cursor i WHERE i.network=c.network AND i.indexer IN ('nft','sales','trade_events')
-                       AND i.last_block=c.last_block AND i.last_block_hash IS DISTINCT FROM c.last_block_hash))))")
-        .bind(common).bind(super::collections_index::START_BLOCK as i64).bind(now.naive_utc()).fetch_one(&mut *c).await?;
-    Ok((!owed && !missing && !undiscovered).then_some(Inputs {
+    if owed || undiscovered {
+        return Ok(None);
+    }
+    let factory = if net == ChainNet::Matic {
+        let (needs_issue, first, last): (bool, Option<i64>, Option<i64>) =
+            sqlx::query_as(include_str!("store_coverage.sql"))
+                .bind(common)
+                .fetch_one(&mut *c)
+                .await?;
+        if needs_issue {
+            return Ok(None);
+        }
+        if let (Some(first), Some(last)) = (first, last) {
+            let proof:Option<FactoryProof>=sqlx::query_as("SELECT last_block,last_block_hash AS hash,
+                sale_input_epoch AS epoch,reorg_rewinds::bigint AS revision,folded_at,$4::bigint AS required_from
+                FROM shop.chain_cursor WHERE indexer='collections' AND network='matic'
+                  AND chain_id=137 AND full_history AND start_block<=$1 AND folded_block>=$2
+                  AND folded_at BETWEEN $3::timestamp - interval '30 minutes' AND $3 AND last_block_hash IS NOT NULL
+                  AND quarantined_at IS NULL AND diverged_at IS NULL AND rebuild_requested_at IS NULL")
+                .bind(super::collections_index::START_BLOCK as i64).bind(last).bind(now.naive_utc()).bind(first)
+                .fetch_optional(&mut *c).await?;
+            let Some(proof) = proof else {
+                return Ok(None);
+            };
+            if rows
+                .iter()
+                .any(|r| r.last_block == proof.last_block && r.hash != proof.hash)
+            {
+                return Ok(None);
+            }
+            Some(proof)
+        } else {
+            None
+        }
+    } else {
+        None
+    };
+    Ok(Some(Inputs {
+        factory,
         rows,
         late_collections,
         first_backfill,
@@ -202,6 +251,7 @@ pub async fn snapshot(
             .rows
             .iter()
             .map(|r| r.folded_at)
+            .chain(inputs.factory.iter().map(|f| f.folded_at))
             .fold(at, std::cmp::min);
         deadline = deadline.min(earliest.and_utc() + chain_walk::READY_WINDOW);
     }
@@ -339,6 +389,7 @@ pub(super) async fn pass(pool: &PgPool, rpc: &Rpc<'_>, net: ChainNet) -> anyhow:
         .rows
         .iter()
         .map(|r| r.last_block as u64)
+        .chain(start.factory.iter().map(|f| f.last_block as u64))
         .chain([to as u64])
         .chain(preserved_marker.iter().map(|m| m.block_number as u64))
         .collect();
@@ -349,6 +400,12 @@ pub(super) async fn pass(pool: &PgPool, rpc: &Rpc<'_>, net: ChainNet) -> anyhow:
         ensure!(
             blocks[&(row.last_block as u64)].hash == row.hash,
             "sales input is on a different branch"
+        );
+    }
+    if let Some(f) = &start.factory {
+        ensure!(
+            blocks[&(f.last_block as u64)].hash == f.hash,
+            "store factory input is on a different branch"
         );
     }
     if let Some(m) = preserved_marker {

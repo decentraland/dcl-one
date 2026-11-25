@@ -793,6 +793,36 @@ async fn sales_history_repair_resumes_at_the_next_window_and_discovers_store_iss
             .unwrap()
             .is_some()
     );
+    sqlx::query(
+        "UPDATE shop.chain_cursor SET folded_at=timezone('UTC',now())-interval '21 minutes'
+        WHERE indexer='collections'",
+    )
+    .execute(&db.pool)
+    .await
+    .unwrap();
+    let snapshot =
+        crate::market::sale_fold::snapshot(&db.pool, &[ChainNet::Matic], chrono::Utc::now())
+            .await
+            .unwrap()
+            .unwrap();
+    assert!(snapshot.expires_at < chrono::Utc::now() + chrono::Duration::minutes(10));
+    drop(snapshot);
+    sqlx::query(
+        "UPDATE shop.chain_cursor SET reorg_rewinds=reorg_rewinds+1 WHERE indexer='collections'",
+    )
+    .execute(&db.pool)
+    .await
+    .unwrap();
+    assert!(
+        crate::market::sale_fold::snapshot(&db.pool, &[ChainNet::Matic], chrono::Utc::now())
+            .await
+            .unwrap()
+            .is_none(),
+        "an independent change to factory history withdraws the old proof"
+    );
+    crate::market::sale_fold::pass(&db.pool, &rpc, ChainNet::Matic)
+        .await
+        .unwrap();
     let canonical: (i64, i64, String) = sqlx::query_as(
         "SELECT (SELECT count(*) FROM shop.sale_execution),
         (SELECT count(*) FROM shop.sale_asset),sum(gross)::text FROM shop.sale_payment",
