@@ -252,7 +252,7 @@ fn reload_loads_the_file_again_and_then_the_containers_showing_it() {
             app.world().get::<ModelReloadPending>(entity),
             Some(&ModelReloadPending {
                 asset_id: id,
-                generation: 0
+                generation: 1
             })
         );
     }
