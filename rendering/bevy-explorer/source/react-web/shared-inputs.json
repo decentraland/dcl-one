@@ -12417,7 +12417,7 @@
     },
     {
       "path": "library/ui/apps/hud/design/Tabs.tsx",
-      "sha256": "d5f48082d9ae858edf36da3e6c84cd5bdbf301161c21a7f034650770c5b701cf"
+      "sha256": "4b23ea9881034b69beda6ecfe0a0ba5cacdd51a054f0e143c8e4dd29b432c5de"
     },
     {
       "path": "library/ui/apps/hud/design/TextArea.module.css",
@@ -13433,7 +13433,7 @@
     },
     {
       "path": "library/ui/apps/hud/features/profile/ProfilePassport.module.css",
-      "sha256": "3f05d9af79db63e9365fc50958ad63bc60b5ef5530680b72f3ba57bf4a1ff4a4"
+      "sha256": "0b456427d00b4fc0ddb9776c9c278eda97787d3c67ea00e46b7374b41aba91d7"
     },
     {
       "path": "library/ui/apps/hud/features/profile/ProfilePassport.tsx",
@@ -16417,7 +16417,7 @@
     },
     {
       "path": "library/ui/components/TabsBar/TabsBar.module.css",
-      "sha256": "961fbb5bf26a42e60fc27b6684d6f910d0faa1204c92b4a20049f97d73cec3d6"
+      "sha256": "4e545cc6d11695aa6fd2de54951488042acd3ad134bad3abd8c9d86a7f0def3f"
     },
     {
       "path": "library/ui/components/TabsBar/TabsBar.module.css.d.ts",
@@ -16425,7 +16425,7 @@
     },
     {
       "path": "library/ui/components/TabsBar/TabsBar.tsx",
-      "sha256": "854e3091ddb1ca0851cef5f071cca4f729c1f3ed5be3cef19938df181adfb879"
+      "sha256": "84086c5a545659931a227836cd8ed0915c710743d859e05199f2dc48d7cc87de"
     },
     {
       "path": "library/ui/components/Tag/Tag.module.css",

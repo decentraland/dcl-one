@@ -753,7 +753,7 @@
   },
   "library/ui/components/TabsBar/TabsBar.module.css": {
     "primitives": 0,
-    "tokens": 48
+    "tokens": 49
   },
   "library/ui/components/Tag/Tag.module.css": {
     "primitives": 0,
