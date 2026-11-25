@@ -17,8 +17,8 @@
 //!   web-push rows, kept in step with `notify_by_browser`
 //!   (`ProfileSubscription/routes.ts:17-73`); nothing sends pushes;
 //! - `GET /api/profile/{user}/{face,body}.png`: 302 to the avatar snapshot of
-//!   the profile this node holds, else the default avatar (gatsby
-//!   `entities/Profile/routes.js`).
+//!   the profile this node holds or reads through, else the default avatar
+//!   (gatsby `entities/Profile/routes.js`).
 //!
 //! "isAdmin" (gatsby's `ADMIN_ADDRESSES`) is a wallet in `explore.moderators`;
 //! the `edit_any_*` permissions count once granted (`permissions_granted`);
@@ -50,11 +50,11 @@ use sha2::{Digest, Sha256};
 use sqlx::{PgConnection, PgPool};
 
 use super::ScheduleRecord;
-use crate::SharedState;
 use crate::fed::{self, ProfileSettingsUpdate, ScheduleUpsert};
 use crate::shared::errors::{ApiData, ApiError};
 use crate::shared::identity::Address;
 use crate::validate::{self, Flavour};
+use crate::{ExploreState, SharedState};
 
 /// The list is capped (a table with one row per wallet that saved settings).
 const SETTINGS_LIST_CAP: i64 = 10_000;
@@ -181,8 +181,28 @@ pub(super) async fn local_profile(
     let docs =
         crate::content::queries::active_entity_docs_by_pointers(pool, &[address.into_string()])
             .await?;
-    Ok(docs
-        .into_iter()
+    Ok(profile_of(docs))
+}
+
+/// [`local_profile`], else read through; a failing source is a miss, as gatsby's `API.catch` made it.
+pub(super) async fn profile(
+    state: &ExploreState,
+    address: &str,
+) -> Result<Option<(String, Value)>, ApiError> {
+    let Some(read_through) = &state.read_through else {
+        return local_profile(&state.pool, address).await;
+    };
+    let Ok(address) = Address::parse(address) else {
+        return Ok(None);
+    };
+    let docs = read_through
+        .active_docs(false, &[address.into_string()])
+        .await?;
+    Ok(profile_of(docs))
+}
+
+fn profile_of(docs: Vec<crate::content::queries::EntityDoc>) -> Option<(String, Value)> {
+    docs.into_iter()
         .filter_map(|doc| doc.to_value())
         .find(|doc| doc.get("type").and_then(Value::as_str) == Some("profile"))
         .map(|doc| {
@@ -193,13 +213,12 @@ pub(super) async fn local_profile(
                     .to_owned(),
                 doc.get("metadata").cloned().unwrap_or(Value::Null),
             )
-        }))
+        })
 }
 
-/// gatsby `withAuthProfile()` (`dist/entities/Profile/middleware.js:33-47`):
-/// a signer without a profile is 404 `Not found profile for "<user>"`.
-pub(super) async fn require_profile(pool: &PgPool, signer: &str) -> Result<(), ApiError> {
-    if local_profile(pool, signer).await?.is_none() {
+/// gatsby `withAuthProfile()`: a signer with no profile anywhere is 404 `Not found profile for "<user>"`.
+pub(super) async fn require_profile(state: &ExploreState, signer: &str) -> Result<(), ApiError> {
+    if profile(state, signer).await?.is_none() {
         return Err(ApiError::not_found(format!(
             "Not found profile for \"{signer}\""
         )));
@@ -230,7 +249,7 @@ pub async fn avatar_body(
 }
 
 async fn avatar(state: &SharedState, user: &str, which: Snapshot) -> Result<Response, ApiError> {
-    let target = match local_profile(&state.pool, user).await? {
+    let target = match profile(state, user).await? {
         Some((entity_id, metadata)) => snapshot_url(
             &metadata,
             &entity_id,
@@ -2408,6 +2427,200 @@ mod tests {
         assert!(
             avatar_redirect(Some("javascript:alert(1)")).headers()["location"] == DEFAULT_AVATAR
         );
+    }
+
+    /// A peer serving signed `profiles` (500 when `down`), counting its `/entities/active` calls.
+    async fn profile_peer(
+        profiles: Vec<Value>,
+        down: bool,
+    ) -> (String, Arc<std::sync::atomic::AtomicUsize>) {
+        use axum::extract::Path as P;
+        use axum::routing::{get, post};
+        use std::collections::HashMap;
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        let mut docs = Vec::new();
+        let mut files = HashMap::new();
+        let mut chains = HashMap::new();
+        for entity in profiles {
+            let bytes = serde_json::to_vec(&entity).unwrap();
+            let id = crate::auth::hash_bytes_v1(&bytes);
+            let chain = catalyst_shared::test_keys::signed_chain(
+                catalyst_shared::test_keys::ENTITY_KEY,
+                &id,
+            )
+            .await;
+            let mut doc = entity;
+            doc["id"] = json!(id);
+            docs.push(doc);
+            chains.insert(id.clone(), serde_json::to_value(chain).unwrap());
+            files.insert(id, bytes);
+        }
+        let (docs, chains, files) = (Arc::new(docs), Arc::new(chains), Arc::new(files));
+        let calls = Arc::new(AtomicUsize::new(0));
+        let counter = calls.clone();
+        let active = post(move |Json(body): Json<Value>| async move {
+            counter.fetch_add(1, Ordering::SeqCst);
+            if down {
+                return StatusCode::INTERNAL_SERVER_ERROR.into_response();
+            }
+            let wanted = body["pointers"].as_array().cloned().unwrap_or_default();
+            let found: Vec<Value> = docs
+                .iter()
+                .filter(|d| {
+                    d["pointers"]
+                        .as_array()
+                        .unwrap()
+                        .iter()
+                        .any(|p| wanted.contains(p))
+                })
+                .cloned()
+                .collect();
+            Json(found).into_response()
+        });
+        let app = axum::Router::new()
+            .route("/content/entities/active", active)
+            .route(
+                "/content/audit/{type}/{id}",
+                get(move |P((_, id)): P<(String, String)>| async move {
+                    Json(json!({"version": "v3", "authChain": chains[&id]}))
+                }),
+            )
+            .route(
+                "/content/contents/{hash}",
+                get(move |P(hash): P<String>| async move {
+                    files.get(&hash).cloned().ok_or(StatusCode::NOT_FOUND)
+                }),
+            );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+        (format!("http://{addr}/content"), calls)
+    }
+
+    async fn read_through_app(pool: &PgPool, source: String) -> (axum::Router, std::path::PathBuf) {
+        let tmp = std::env::temp_dir().join(format!(
+            "explore-profile-read-through-{}",
+            uuid::Uuid::new_v4().simple()
+        ));
+        let storage = Arc::new(crate::storage::Storage::from_config(&tmp).await.unwrap());
+        let read_through = crate::content::read_through::ReadThrough::new(
+            pool.clone(),
+            storage,
+            crate::content::sync::test_sync_client(reqwest::Client::new()),
+            vec![source],
+            None,
+            crate::content::read_through::Fills::new(1, std::time::Duration::from_secs(30)),
+            crate::content::sync_deployer::SyncValidation::AuthChainOnly,
+        );
+        let state = crate::ExploreState::new(
+            pool.clone(),
+            crate::Settings {
+                user_writes_enabled: true,
+                ..crate::Settings::for_tests()
+            },
+            None,
+        )
+        .with_read_through(Some(Arc::new(read_through)));
+        (crate::router(Arc::new(state)), tmp)
+    }
+
+    async fn redirect(app: &axum::Router, uri: &str) -> String {
+        let response = app
+            .clone()
+            .oneshot(Request::get(uri).body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::FOUND, "{uri}");
+        response.headers()["location"].to_str().unwrap().to_owned()
+    }
+
+    async fn visible_event(pool: &PgPool) -> String {
+        let id = uuid::Uuid::new_v4().to_string();
+        super::super::mirror::upsert_event(
+            pool,
+            &json!({"id": id, "name": "Mirrored", "user": "0x0000000000000000000000000000000000000abc", "approved": true, "start_at": "2099-06-01T18:00:00Z", "duration": 3_600_000}),
+        )
+        .await
+        .unwrap();
+        id
+    }
+
+    /// A wallet this node lacks RSVPs and gets its avatar once its profile is read through.
+    #[tokio::test]
+    async fn a_profile_this_node_lacks_is_read_through() {
+        let Some(pool) = crate::db::scratch::pool(4).await else {
+            return;
+        };
+        let wallet = Wallet::random();
+        let user = address(&wallet);
+        let face = "https://peer.decentraland.org/content/contents/bafyremoteface";
+        let (source, calls) = profile_peer(
+            vec![json!({
+                "version": "v3",
+                "type": "profile",
+                "pointers": [user],
+                "timestamp": Utc::now().timestamp_millis(),
+                "content": [],
+                "metadata": {"avatars": [{"name": "Remote", "userId": user, "ethAddress": user, "avatar": {"snapshots": {"face256": face, "body": "https://peer.decentraland.org/content/contents/bafyremotebody"}}}]}
+            })],
+            false,
+        )
+        .await;
+        let (app, tmp) = read_through_app(&pool, source).await;
+        assert!(local_profile(&pool, &user).await.unwrap().is_none());
+        let event = visible_event(&pool).await;
+        let (status, body) = call(
+            &app,
+            &wallet,
+            "post",
+            &format!("/api/events/{event}/attendees"),
+            None,
+        )
+        .await;
+        assert_eq!(status, StatusCode::CREATED, "{body}");
+        assert_eq!(body["data"][0]["user"], user);
+        assert_eq!(body["data"][0]["user_name"], "Remote");
+        assert_eq!(calls.load(std::sync::atomic::Ordering::SeqCst), 1);
+        assert!(local_profile(&pool, &user).await.unwrap().is_some());
+        assert_eq!(
+            redirect(&app, &format!("/api/profile/{user}/face.png")).await,
+            face
+        );
+        assert_eq!(calls.load(std::sync::atomic::Ordering::SeqCst), 1);
+        let _ = std::fs::remove_dir_all(tmp);
+    }
+
+    /// No profile anywhere, or a failing source, is the 404 and the default avatar.
+    #[tokio::test]
+    async fn a_profile_found_nowhere_or_behind_a_failing_source_is_a_miss() {
+        let Some(pool) = crate::db::scratch::pool(4).await else {
+            return;
+        };
+        let event = visible_event(&pool).await;
+        for down in [false, true] {
+            let (source, calls) = profile_peer(Vec::new(), down).await;
+            let (app, tmp) = read_through_app(&pool, source).await;
+            let wallet = Wallet::random();
+            let user = address(&wallet);
+            let (status, body) = call(
+                &app,
+                &wallet,
+                "post",
+                &format!("/api/events/{event}/attendees"),
+                None,
+            )
+            .await;
+            assert_eq!(status, StatusCode::NOT_FOUND, "down={down} {body}");
+            assert_eq!(body["error"], format!("Not found profile for \"{user}\""));
+            assert_eq!(calls.load(std::sync::atomic::Ordering::SeqCst), 1);
+            let other = address(&Wallet::random());
+            assert_eq!(
+                redirect(&app, &format!("/api/profile/{other}/face.png")).await,
+                DEFAULT_AVATAR
+            );
+            assert_eq!(calls.load(std::sync::atomic::Ordering::SeqCst), 2);
+            let _ = std::fs::remove_dir_all(tmp);
+        }
     }
 
     #[test]

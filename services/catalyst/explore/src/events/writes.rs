@@ -370,7 +370,7 @@ async fn answer_admin(
 /// `POST /api/events` (`Event/routes/index.ts:76`, `createEvent.ts:46-271`):
 /// a signed fetch (the admin bearer is not honoured here; fixture
 /// `events.create.bearer_not_accepted`) by a wallet whose profile this node
-/// holds (`withAuthProfile()`, 404 `Not found profile for "<user>"`); the
+/// holds or reads through (`withAuthProfile()`, 404 `Not found profile for "<user>"`); the
 /// body null-defaulted (`:61-79`), validated against `newEventSchema` (the
 /// ajv 400 echoes the defaulted body), then upstream's checks in its order
 /// (`moderation::create_as`). `schedules` are always stored `[]` (`:260`); a
@@ -385,7 +385,7 @@ pub async fn create_event(
 ) -> Result<Json<ApiData<Value>>, ApiError> {
     state.user_writes()?;
     let signer = state.signer(&headers, method.as_str(), uri.path()).await?;
-    super::profiles::require_profile(&state.pool, &signer).await?;
+    super::profiles::require_profile(&state, &signer).await?;
     let mut data = match serde_json::from_slice::<Value>(&body) {
         Ok(Value::Object(map)) => map,
         _ => Map::new(),
@@ -1371,8 +1371,8 @@ pub async fn delete_event(
 
 /// `EventAttendee/routes.ts:61-85`: a signed fetch, `getEvent` (400
 /// non-UUID, 404 missing or hidden; the bearer is not mounted here), the RSVP
-/// row and the list. The POST needs the signer's profile
-/// (`withAuthProfile()`, 404 `Not found profile for "<user>"`), whose name
+/// row and the list. The POST needs the signer's profile, held or read
+/// through (`withAuthProfile()`, 404 `Not found profile for "<user>"`), whose name
 /// is the row's `user_name`.
 async fn rsvp(
     state: SharedState,
@@ -1385,7 +1385,7 @@ async fn rsvp(
     state.user_writes()?;
     let signer = state.signer(&headers, method.as_str(), path).await?;
     let user_name = if going {
-        let (_, metadata) = super::profiles::local_profile(&state.pool, &signer)
+        let (_, metadata) = super::profiles::profile(&state, &signer)
             .await?
             .ok_or_else(|| ApiError::not_found(format!("Not found profile for \"{signer}\"")))?;
         metadata
