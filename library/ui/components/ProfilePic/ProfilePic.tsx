@@ -14,9 +14,9 @@ type Common = Omit<HTMLAttributes<HTMLSpanElement>, 'children'> & {
   alt?: string
   /** The member's own name colour, behind the picture and the initial. It is member data, not a palette choice. */
   nameColor?: string
-  /** Called when the picture loads. */
+  /** Called when the picture loads, for a load seen after hydration. */
   onPictureLoad?: () => void
-  /** Called when the picture fails to load. */
+  /** Called when the picture fails to load, for a failure seen after hydration. */
   onPictureError?: () => void
 }
 
@@ -99,7 +99,7 @@ function HudProfilePic({
           className={[styles.hudDot, HUD_STATUS[status], dotPosition === 'top' && styles.hudDotTop]
             .filter(Boolean)
             .join(' ')}
-          style={{ width: dot, height: dot }}
+          style={{ width: dot, height: dot, boxSizing: 'content-box' }}
         />
       )}
     </span>
@@ -108,7 +108,8 @@ function HudProfilePic({
 
 /**
  * A member's round face picture. The picture is an `img` whose `alt` is the member's name (or
- * `alt`); the fallback, the name's initial, carries the same text alternative.
+ * `alt`); in the default appearance the fallback, the name's initial, carries the same text alternative.
+ * The `hud` initial is plain text, as the Explorer HUD drew it.
  */
 export function ProfilePic({ appearance = 'default', ...props }: ProfilePicProps) {
   if (appearance === 'hud')
