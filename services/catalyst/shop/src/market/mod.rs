@@ -48,7 +48,8 @@
 //! index (`owned_items.rs`). Local: `POST /v1/trades` (`listings.rs`, the old EIP-712
 //! policy, `ownerOf` on `TRADE_RPC_URLS`), lists and picks (`lists.rs`), the
 //! operator moderation (`admin.rs`, `MARKET_ADMIN_TOKEN`), a wallet's
-//! `/v1/activity` over the readers and the local trades (`activity.rs`),
+//! `/v1/activity` over the readers, the local trades and the nft index's
+//! transfers (`activity.rs`, `activity_transfers.rs`),
 //! the `/v1/nfts` rental legs over the local rentals listings (`rentals.rs`),
 //! the market federation's signed-action log and its feeds
 //! (`federation.rs`: `/v1/federation/*`, `/federation/market/*`).
@@ -58,6 +59,7 @@ pub use crate::chain_index::source::{Source, unavailable};
 
 pub mod accounts;
 pub mod activity;
+pub mod activity_transfers;
 pub mod admin;
 pub mod base_wearables;
 pub mod bid_notices;
@@ -512,7 +514,7 @@ impl Settings {
         if self.writes_catalogue() {
             self.market
                 .indexes
-                .check_chains()
+                .check_catalogue_pair()
                 .map_err(anyhow::Error::msg)?;
             for net in chain_walk::ChainNet::ALL {
                 let expected = self
@@ -606,7 +608,8 @@ pub fn select_name_authority(
     pool: &PgPool,
     index: &Arc<ChainIndex>,
 ) -> Option<Arc<dyn crate::chain_index::names::NameAuthority>> {
-    let mainnet = settings.eth_network.trim() == "mainnet";
+    let mainnet = crate::shared::network::ChainPair::from_eth_network(&settings.eth_network)
+        == Some(crate::shared::network::ChainPair::Mainnet);
     if settings.walks_catalogue() {
         return Some(Arc::new(names::IndexNames::for_catalogue(
             pool.clone(),
@@ -915,7 +918,9 @@ impl MarketplaceState {
             }
             _ => return None,
         };
-        if self.settings.eth_network.trim() != "mainnet" {
+        if crate::shared::network::ChainPair::from_eth_network(&self.settings.eth_network)
+            != Some(crate::shared::network::ChainPair::Mainnet)
+        {
             return self
                 .settings
                 .market
@@ -929,7 +934,7 @@ impl MarketplaceState {
     /// Sepolia rentals use an explicit chain endpoint, or the node's Ethereum
     /// RPC only when it is configured for Sepolia.
     pub(crate) fn sepolia_rentals_rpc_url(&self) -> Option<String> {
-        if self.settings.eth_network.eq_ignore_ascii_case("sepolia") {
+        if self.land_network() == Some(crate::land_authz::LAND_SEPOLIA) {
             return self.rpc_url_for(chain_walk::ChainNet::Ethereum, 11_155_111);
         }
         self.settings
@@ -946,7 +951,7 @@ impl MarketplaceState {
         if let Some(url) = self.settings.market.trade_rpc_urls.for_chain(id) {
             return Some(url.to_string());
         }
-        if id == net.chain_id() {
+        if self.settings.market.indexes.serves_mainnet(net) {
             return self.chain_rpc_url(net);
         }
         if self.settings.catalogue_chain(net)? != id {
@@ -969,7 +974,7 @@ impl MarketplaceState {
     /// fallback when `ETH_NETWORK` is mainnet. Callers verify the chain ID.
     pub fn polygon_mainnet_rpc_url(&self) -> Option<String> {
         self.chain_rpc_url(chain_walk::ChainNet::Matic).or_else(|| {
-            (self.settings.eth_network.trim() == "mainnet")
+            (self.land_network() == Some(crate::land_authz::LAND_MAINNET))
                 .then(|| self.settings.polygon_rpc_url.clone())
                 .flatten()
         })

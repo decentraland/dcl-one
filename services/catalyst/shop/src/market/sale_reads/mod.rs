@@ -115,8 +115,10 @@ pub(crate) async fn seller_slot(
     }
 }
 
-fn enabled(state: &MarketplaceState) -> bool {
-    state.settings.market.indexes.sales_enabled && state.settings.eth_network.trim() == "mainnet"
+pub(crate) fn enabled(state: &MarketplaceState) -> bool {
+    state.settings.market.indexes.sales_enabled
+        && crate::shared::network::ChainPair::from_eth_network(&state.settings.eth_network)
+            == Some(crate::shared::network::ChainPair::Mainnet)
 }
 
 pub(crate) async fn snapshot(

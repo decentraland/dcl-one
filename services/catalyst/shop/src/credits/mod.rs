@@ -189,6 +189,10 @@ pub struct RawSettings {
     /// it returns to the Shop pair like every other surface.
     pub checkout_success_url_builder: Option<String>,
     pub checkout_cancel_url_builder: Option<String>,
+    /// `PUBLIC_URL`: the node's externally reachable base, where Stripe's
+    /// `cancel_url` lands on this node's cancel-return for the order; unset,
+    /// `cancel_url` is the surface's cancel page.
+    pub public_url: Option<String>,
     /// `CREDITS_USAGE_INDEX_ENABLED` (false): attach the CreditUsed index.
     pub usage_index_enabled: bool,
     /// `RPC_ENDPOINT_POLYGON` (or `_FILE`): the collections chain's JSON-RPC the index reads.
@@ -258,6 +262,7 @@ impl Default for RawSettings {
             checkout_cancel_url: String::new(),
             checkout_success_url_builder: None,
             checkout_cancel_url_builder: None,
+            public_url: None,
             usage_index_enabled: false,
             usage_rpc_url: None,
             usage_chain_id: usage::CHAIN_POLYGON,
@@ -309,6 +314,9 @@ pub struct Settings {
     pub checkout_cancel_url: String,
     /// Both set or neither (a half-configured pair falls back to the Shop's).
     pub checkout_builder_urls: Option<(String, String)>,
+    /// `PUBLIC_URL` without a trailing `/`: the base of the cancel-return URL
+    /// Stripe sends an abandoning buyer to.
+    pub public_url: Option<String>,
     /// The CreditUsed index (`usage.rs`); its contract is `credits_manager_contract`.
     pub usage: usage::Settings,
     /// Which MANA top-up transfers are credited (`handlers::topup`).
@@ -575,6 +583,7 @@ impl Settings {
             checkout_cancel_url: raw.checkout_cancel_url.trim().to_string(),
             checkout_builder_urls: non_empty(raw.checkout_success_url_builder)
                 .zip(non_empty(raw.checkout_cancel_url_builder)),
+            public_url: non_empty(raw.public_url).map(|u| u.trim_end_matches('/').to_string()),
             usage,
             topup: handlers::topup::TopupPolicy {
                 start_block: raw.topup_start_block,
@@ -604,6 +613,34 @@ impl Settings {
         }
     }
 
+    /// The `success_url` and `cancel_url` of a pack order's Stripe session, as
+    /// credits-server builds them: the surface's success page with
+    /// `order=<id>`, which the app polls the order by; and the cancel-return
+    /// of the order on this node (`PUBLIC_URL`), which retires the abandoned
+    /// checkout before sending the buyer on ([`Self::checkout_cancel_landing`]).
+    /// Without `PUBLIC_URL`, `cancel_url` is the surface's cancel page with
+    /// `order=<id>&canceled=1`: Stripe refuses a relative one.
+    pub fn checkout_session_urls(&self, source: Option<&str>, order_id: &str) -> (String, String) {
+        let (success, cancel) = self.checkout_return_urls(source);
+        let order = urlencoding::encode(order_id);
+        let cancel = match &self.public_url {
+            Some(base) => format!("{base}/shop-api/v1/pack-orders/{order}/cancel-return"),
+            None => append_query(cancel, &format!("order={order}&canceled=1")),
+        };
+        (append_query(success, &format!("order={order}")), cancel)
+    }
+
+    /// Where cancel-return sends the buyer: the order's surface cancel page
+    /// with `order=<id>&canceled=1`, the query the apps read; an unknown
+    /// order goes to the Shop's.
+    pub fn checkout_cancel_landing(&self, source: Option<&str>, order_id: &str) -> String {
+        let (_, cancel) = self.checkout_return_urls(source);
+        append_query(
+            cancel,
+            &format!("order={}&canceled=1", urlencoding::encode(order_id)),
+        )
+    }
+
     pub fn for_tests() -> Self {
         Self::parse(RawSettings {
             writes_enabled: true,
@@ -614,6 +651,16 @@ impl Settings {
         })
         .expect("the defaults parse")
     }
+}
+
+/// `url` with `query` appended after `?`, or after `&` when it has one
+/// (credits-server's `appendQuery`).
+fn append_query(url: &str, query: &str) -> String {
+    if query.is_empty() {
+        return url.to_string();
+    }
+    let separator = if url.contains('?') { '&' } else { '?' };
+    format!("{url}{separator}{query}")
 }
 
 /// The sources a credits state is built over: the marketplace and price
