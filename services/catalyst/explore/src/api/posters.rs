@@ -95,7 +95,7 @@ fn avif_file_type(body: &[u8]) -> bool {
     if &header[4..] != b"ftyp" {
         return false;
     }
-    let size = u32::from_be_bytes(header[..4].try_into().unwrap());
+    let size = u32::from_be_bytes([header[0], header[1], header[2], header[3]]);
     let (size, offset) = if size == 1 {
         let Some(extended) = body.get(8..16).and_then(|bytes| bytes.try_into().ok()) else {
             return false;
