@@ -65,6 +65,12 @@ across workers:
 - The DoF gather weights each sample by the ratio of its circle of confusion to the gathering
   pixel's, so sharp neighbours don't smear into a blurred pixel. Earlier: distant-only blur and
   alpha blending in the DoF shader.
+- **A skybox stays sharp.** Two passes (`dof_coc.wgsl`) write each pixel's circle of confusion
+  to an `R16Float` texture that the blur passes read. Cleared depth counts as the focal
+  distance, except near geometry: it takes the circle of the geometry around it, less one pixel
+  per pixel of distance (a maximum filter over the Manhattan distance, one horizontal pass and
+  one vertical). Distant geometry then fades into the sky instead of keeping a sharp outline,
+  which the gather's rejection of sharper samples would otherwise leave.
 - Per-asset write ticks in `RenderAssets` so entities respecialize when a prepared asset is
   swapped render-world-only (fallback material to real, deferred mesh re-upload).
 - `Transparent3d` sorts by euclidean distance from the camera rather than view-space z.

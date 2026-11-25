@@ -1,0 +1,679 @@
+From 0000000000000000000000000000000000000000
+Subject: depth of field: a skybox stays sharp, and distant geometry fades into it
+Date: 2026-11-25T12:55:29+00:00
+
+---
+diff --git a/crates/bevy_core_pipeline/src/dof/dof.wgsl b/crates/bevy_core_pipeline/src/dof/dof.wgsl
+index 693a7ac19216b53f62e622e610d2bfcf44065aab..138781a7a3c88a4dc281bd1fd16e71e8bdba4414 100644
+--- a/crates/bevy_core_pipeline/src/dof/dof.wgsl
++++ b/crates/bevy_core_pipeline/src/dof/dof.wgsl
+@@ -16,9 +16,6 @@
+ // [1]: https://colinbarrebrisebois.com/2017/04/18/hexagonal-bokeh-blur-revisited-part-2-improved-2-pass-version/
+ 
+ #import bevy_core_pipeline::fullscreen_vertex_shader::FullscreenVertexOutput
+-#import bevy_pbr::mesh_view_bindings::view
+-#import bevy_pbr::view_transformations::depth_ndc_to_view_z
+-#import bevy_render::view::View
+ 
+ // Parameters that control the depth of field effect. See
+ // `bevy_core_pipeline::dof::DepthOfFieldUniforms` for information on what these
+@@ -71,38 +68,22 @@ struct DualOutput {
+     @location(1) output_1: vec4<f32>,
+ }
+ 
+-// @group(0) @binding(0) is `mesh_view_bindings::view`.
+-
+-// The depth texture for the main view.
+-#ifdef MULTISAMPLED
+-@group(0) @binding(1) var depth_texture: texture_depth_multisampled_2d;
+-#else   // MULTISAMPLED
+-@group(0) @binding(1) var depth_texture: texture_depth_2d;
+-#endif  // MULTISAMPLED
++// @group(0) @binding(0) is the view uniform, which these passes don't read.
+ 
+ // The main color texture.
+-@group(0) @binding(2) var color_texture_a: texture_2d<f32>;
++@group(0) @binding(1) var color_texture_a: texture_2d<f32>;
+ 
+ // The auxiliary color texture that we're sampling from. This is only used as
+ // part of the second bokeh pass.
+ #ifdef DUAL_INPUT
+-@group(0) @binding(3) var color_texture_b: texture_2d<f32>;
++@group(0) @binding(2) var color_texture_b: texture_2d<f32>;
+ #endif  // DUAL_INPUT
+ 
+-// The transparent focus texture, accumulated during the main transparent pass:
+-// alpha-weighted view depth in r, total coverage in g.
++// The circle of confusion diameter of each pixel, from `dof_coc.wgsl`.
+ #ifdef DUAL_INPUT
+-#ifdef MULTISAMPLED
+-@group(0) @binding(4) var focus_texture: texture_multisampled_2d<f32>;
+-#else   // MULTISAMPLED
+-@group(0) @binding(4) var focus_texture: texture_2d<f32>;
+-#endif  // MULTISAMPLED
++@group(0) @binding(3) var coc_texture: texture_2d<f32>;
+ #else   // DUAL_INPUT
+-#ifdef MULTISAMPLED
+-@group(0) @binding(3) var focus_texture: texture_multisampled_2d<f32>;
+-#else   // MULTISAMPLED
+-@group(0) @binding(3) var focus_texture: texture_2d<f32>;
+-#endif  // MULTISAMPLED
++@group(0) @binding(2) var coc_texture: texture_2d<f32>;
+ #endif  // DUAL_INPUT
+ 
+ // The global uniforms, representing data backed by buffers shared among all
+@@ -123,53 +104,18 @@ const COS_NEG_FRAC_PI_5_6: f32 = -0.8660254037844387;
+ // sin(-150°), used for the bokeh blur.
+ const SIN_NEG_FRAC_PI_5_6: f32 = -0.5;
+ 
+-// Calculates and returns the diameter (not the radius) of the [circle of
+-// confusion].
++// The diameter (not the radius) of the [circle of confusion] of the fragment.
+ //
+ // [circle of confusion]: https://en.wikipedia.org/wiki/Circle_of_confusion
+ fn calculate_circle_of_confusion(in_frag_coord: vec4<f32>) -> f32 {
+     return circle_of_confusion_at(vec2<i32>(floor(in_frag_coord.xy)));
+ }
+ 
+-// The circle of confusion diameter of the pixel at `frag_coord`.
++// The circle of confusion diameter of the pixel at `frag_coord`, clamped to
++// the screen as a sample near its edge can fall outside it.
+ fn circle_of_confusion_at(frag_coord: vec2<i32>) -> f32 {
+-    // Unpack the depth of field parameters.
+-    let focus = dof_params.focal_distance;
+-    let f = dof_params.focal_length;
+-    let scale = dof_params.coc_scale_factor;
+-    let max_coc_diameter = dof_params.max_circle_of_confusion_diameter;
+-
+-    // Sample the depth. Apply max_depth before the coverage-weighted blend
+-    // below so that a distant background doesn't swamp the contribution of a
+-    // partially-covering transparent surface, and cap at a large finite value
+-    // so that a cleared depth of 0.0 (infinitely far away under reverse-z, and
+-    // max_depth defaults to infinity) can't produce an infinity that would
+-    // poison the blend.
+-    let blended_depth = blended_view_depth(frag_coord);
+-
+-    let depth = clamp(blended_depth, focus, dof_params.max_depth);
+-
+-    // Calculate the circle of confusion.
+-    //
+-    // This is just the formula from Wikipedia [1].
+-    //
+-    // [1]: https://en.wikipedia.org/wiki/Circle_of_confusion#Determining_a_circle_of_confusion_diameter_from_the_object_field
+-    let candidate_coc = scale * abs(depth - focus) / (depth * (focus - f));
+-
+-    let framebuffer_size = vec2<f32>(textureDimensions(color_texture_a));
+-    return clamp(candidate_coc * framebuffer_size.y, 0.0, max_coc_diameter);
+-}
+-
+-// The view depth of a pixel as the circle of confusion sees it: the opaque
+-// depth with the depth of the transparent surfaces blended in, weighted by how
+-// much they cover the pixel, so that they attract focus in proportion to their
+-// opacity.
+-fn blended_view_depth(frag_coord: vec2<i32>) -> f32 {
+-    let raw_depth = textureLoad(depth_texture, frag_coord, 0);
+-    let opaque_depth = min(min(-depth_ndc_to_view_z(raw_depth), dof_params.max_depth), 3.4e37);
+-    let focus_sample = textureLoad(focus_texture, frag_coord, 0);
+-    let coverage = clamp(focus_sample.g, 0.0, 1.0);
+-    return focus_sample.r + (1.0 - coverage) * opaque_depth;
++    let size = vec2<i32>(textureDimensions(coc_texture));
++    return textureLoad(coc_texture, clamp(frag_coord, vec2(0), size - 1), 0).r;
+ }
+ 
+ // How much a blur sample at `sample_coord` may contribute to a fragment whose
+diff --git a/crates/bevy_core_pipeline/src/dof/dof_coc.wgsl b/crates/bevy_core_pipeline/src/dof/dof_coc.wgsl
+new file mode 100644
+index 0000000000000000000000000000000000000000..c460a9c3609ce0cafa8a499e50019c3a6f1fcb9f
+--- /dev/null
++++ b/crates/bevy_core_pipeline/src/dof/dof_coc.wgsl
+@@ -0,0 +1,150 @@
++// Computes the circle of confusion of each pixel once, for the depth of field
++// blur passes in `dof.wgsl` to read.
++//
++// Cleared depth is the backdrop that nothing drew, a skybox. It has no
++// distance of its own, so it counts as the focal distance and stays sharp,
++// except near geometry: a backdrop pixel takes the circle of confusion of the
++// geometry around it, less one pixel for each pixel of distance. Geometry
++// blurred against the backdrop then fades into it instead of keeping a sharp
++// outline, since the blur rejects samples much sharper than the pixel it
++// gathers for. The spread is a maximum filter with a falloff along the
++// Manhattan distance, which separates exactly into a horizontal pass and a
++// vertical one.
++
++#import bevy_core_pipeline::fullscreen_vertex_shader::FullscreenVertexOutput
++#import bevy_pbr::mesh_view_bindings::view
++#import bevy_pbr::view_transformations::depth_ndc_to_view_z
++
++// See `DepthOfFieldParams` in `dof.wgsl`.
++struct DepthOfFieldParams {
++    focal_distance: f32,
++    focal_length: f32,
++    coc_scale_factor: f32,
++    max_circle_of_confusion_diameter: f32,
++    max_depth: f32,
++    pad_a: u32,
++    pad_b: u32,
++    pad_c: u32,
++}
++
++// @group(0) @binding(0) is `mesh_view_bindings::view`.
++
++// The depth texture for the main view.
++#ifdef MULTISAMPLED
++@group(0) @binding(1) var depth_texture: texture_depth_multisampled_2d;
++#else   // MULTISAMPLED
++@group(0) @binding(1) var depth_texture: texture_depth_2d;
++#endif  // MULTISAMPLED
++
++// The transparent focus texture, accumulated during the main transparent pass:
++// alpha-weighted view depth in r, total coverage in g.
++#ifdef MULTISAMPLED
++@group(0) @binding(2) var focus_texture: texture_multisampled_2d<f32>;
++#else   // MULTISAMPLED
++@group(0) @binding(2) var focus_texture: texture_2d<f32>;
++#endif  // MULTISAMPLED
++
++// The vertical pass reads the horizontal pass's output.
++@group(0) @binding(3) var spread_texture: texture_2d<f32>;
++
++@group(1) @binding(0) var<uniform> dof_params: DepthOfFieldParams;
++
++// The circle of confusion of geometry at `depth`, before the cap.
++fn circle_of_confusion_for(depth: f32) -> f32 {
++    let focus = dof_params.focal_distance;
++    // This is just the formula from Wikipedia [1].
++    //
++    // [1]: https://en.wikipedia.org/wiki/Circle_of_confusion#Determining_a_circle_of_confusion_diameter_from_the_object_field
++    let candidate_coc = dof_params.coc_scale_factor * abs(depth - focus)
++        / (depth * (focus - dof_params.focal_length));
++    let framebuffer_size = vec2<f32>(textureDimensions(depth_texture));
++    return candidate_coc * framebuffer_size.y;
++}
++
++// The circle of confusion diameter of the pixel at `frag_coord`, with the
++// backdrop at the focal distance.
++fn own_circle_of_confusion(frag_coord: vec2<i32>) -> f32 {
++    let focus = dof_params.focal_distance;
++
++    // Apply max_depth before the coverage-weighted blend below so that a
++    // distant background doesn't swamp the contribution of a partially-covering
++    // transparent surface, and cap at a large finite value so that a depth near
++    // 0.0 (far away under reverse-z, and max_depth defaults to infinity) can't
++    // produce an infinity that would poison the blend.
++    let raw_depth = textureLoad(depth_texture, frag_coord, 0);
++    let opaque_depth = select(
++        min(min(-depth_ndc_to_view_z(raw_depth), dof_params.max_depth), 3.4e37),
++        focus,
++        raw_depth == 0.0,
++    );
++
++    // Blend in the depth of the transparent surfaces, weighted by how much they
++    // cover the pixel, so that they attract focus in proportion to their
++    // opacity.
++    let focus_sample = textureLoad(focus_texture, frag_coord, 0);
++    let coverage = clamp(focus_sample.g, 0.0, 1.0);
++    let blended_depth = focus_sample.r + (1.0 - coverage) * opaque_depth;
++
++    let depth = clamp(blended_depth, focus, dof_params.max_depth);
++    return clamp(circle_of_confusion_for(depth), 0.0, dof_params.max_circle_of_confusion_diameter);
++}
++
++// How far, in pixels, geometry can spread its circle of confusion: the circle
++// of the farthest geometry, whose depth is clamped to max_depth.
++fn spread_reach() -> i32 {
++    let depth = max(min(dof_params.max_depth, 3.4e37), dof_params.focal_distance);
++    let coc = circle_of_confusion_for(depth);
++    return i32(ceil(clamp(coc, 0.0, dof_params.max_circle_of_confusion_diameter)));
++}
++
++fn is_backdrop(frag_coord: vec2<i32>) -> bool {
++    return textureLoad(depth_texture, frag_coord, 0) == 0.0;
++}
++
++// The largest circle of confusion along the row, less the distance to it.
++@fragment
++fn coc_horizontal(in: FullscreenVertexOutput) -> @location(0) vec4<f32> {
++    let frag_coord = vec2<i32>(floor(in.position.xy));
++    let width = i32(textureDimensions(depth_texture).x);
++    let reach = spread_reach();
++    var spread = own_circle_of_confusion(frag_coord);
++    // beyond the reach, no circle is wider than its distance
++    for (var i = 1; i < reach; i += 1) {
++        let falloff = f32(i);
++        let left = frag_coord.x - i;
++        if (left >= 0) {
++            spread = max(spread, own_circle_of_confusion(vec2(left, frag_coord.y)) - falloff);
++        }
++        let right = frag_coord.x + i;
++        if (right < width) {
++            spread = max(spread, own_circle_of_confusion(vec2(right, frag_coord.y)) - falloff);
++        }
++    }
++    return vec4(spread, 0.0, 0.0, 1.0);
++}
++
++// Geometry keeps its own circle of confusion; the backdrop takes the largest
++// in the column of the horizontal pass's spread, less the distance to it.
++@fragment
++fn coc_vertical(in: FullscreenVertexOutput) -> @location(0) vec4<f32> {
++    let frag_coord = vec2<i32>(floor(in.position.xy));
++    if (!is_backdrop(frag_coord)) {
++        return vec4(own_circle_of_confusion(frag_coord), 0.0, 0.0, 1.0);
++    }
++    let height = i32(textureDimensions(depth_texture).y);
++    let reach = spread_reach();
++    var spread = textureLoad(spread_texture, frag_coord, 0).r;
++    // beyond the reach, no circle is wider than its distance
++    for (var i = 1; i < reach; i += 1) {
++        let falloff = f32(i);
++        let up = frag_coord.y - i;
++        if (up >= 0) {
++            spread = max(spread, textureLoad(spread_texture, vec2(frag_coord.x, up), 0).r - falloff);
++        }
++        let down = frag_coord.y + i;
++        if (down < height) {
++            spread = max(spread, textureLoad(spread_texture, vec2(frag_coord.x, down), 0).r - falloff);
++        }
++    }
++    return vec4(max(spread, 0.0), 0.0, 0.0, 1.0);
++}
+diff --git a/crates/bevy_core_pipeline/src/dof/mod.rs b/crates/bevy_core_pipeline/src/dof/mod.rs
+index b1ed472ec2ab524c25e80343a8ff91bd9da1d79b..8e015f8e81d2a01fa57453ce922d3ba488e44798 100644
+--- a/crates/bevy_core_pipeline/src/dof/mod.rs
++++ b/crates/bevy_core_pipeline/src/dof/mod.rs
+@@ -72,6 +72,7 @@ use crate::{
+ };
+ 
+ const DOF_SHADER_HANDLE: Handle<Shader> = weak_handle!("c3580ddc-2cbc-4535-a02b-9a2959066b52");
++const DOF_COC_SHADER_HANDLE: Handle<Shader> = weak_handle!("48e6eb62-dda7-4938-889d-886d77d9c93a");
+ 
+ /// A plugin that adds support for the depth of field effect to Bevy.
+ pub struct DepthOfFieldPlugin;
+@@ -200,6 +201,12 @@ pub struct DepthOfFieldPipelineKey {
+ /// Identifies a specific depth of field render pass.
+ #[derive(Clone, Copy, PartialEq, Eq, Hash)]
+ enum DofPass {
++    /// The first circle of confusion pass: each pixel's own, spread along the
++    /// row.
++    CocHorizontal,
++    /// The second circle of confusion pass: the spread along the column, kept
++    /// for the backdrop only.
++    CocVertical,
+     /// The first, horizontal, Gaussian blur pass.
+     GaussianHorizontal,
+     /// The second, vertical, Gaussian blur pass.
+@@ -213,6 +220,12 @@ enum DofPass {
+ impl Plugin for DepthOfFieldPlugin {
+     fn build(&self, app: &mut App) {
+         load_internal_asset!(app, DOF_SHADER_HANDLE, "dof.wgsl", Shader::from_wgsl);
++        load_internal_asset!(
++            app,
++            DOF_COC_SHADER_HANDLE,
++            "dof_coc.wgsl",
++            Shader::from_wgsl
++        );
+ 
+         app.register_type::<DepthOfField>();
+         app.register_type::<DepthOfFieldMode>();
+@@ -233,6 +246,7 @@ impl Plugin for DepthOfFieldPlugin {
+                 (
+                     configure_depth_of_field_view_targets,
+                     prepare_auxiliary_depth_of_field_textures,
++                    prepare_depth_of_field_coc_textures,
+                     prepare_transparent_focus_textures,
+                 )
+                     .after(prepare_view_targets)
+@@ -298,6 +312,14 @@ pub enum DepthOfFieldPipelines {
+     },
+ }
+ 
++/// The two passes that compute each pixel's circle of confusion before the
++/// blur passes of [`DepthOfFieldPipelines`].
++#[derive(Component)]
++pub struct DepthOfFieldCocPipelines {
++    horizontal: CachedRenderPipelineId,
++    vertical: CachedRenderPipelineId,
++}
++
+ struct DepthOfFieldPipelineRenderInfo {
+     pass_label: &'static str,
+     view_bind_group_label: &'static str,
+@@ -314,6 +336,26 @@ struct DepthOfFieldPipelineRenderInfo {
+ #[derive(Component, Deref, DerefMut)]
+ pub struct AuxiliaryDepthOfFieldTexture(CachedTexture);
+ 
++/// The format of [`DepthOfFieldCocTextures`].
++pub const DEPTH_OF_FIELD_COC_TEXTURE_FORMAT: TextureFormat = TextureFormat::R16Float;
++
++/// The circle of confusion diameter of each pixel, in pixels, computed once by
++/// `dof_coc.wgsl` for the blur passes to read.
++///
++/// The backdrop (cleared depth) counts as the focal distance, so a skybox stays
++/// sharp, except near geometry, whose circle it takes less one pixel for each
++/// pixel of distance: distant geometry fades into the backdrop instead of
++/// keeping a sharp outline. Both textures are single-sampled and the size of
++/// the main view target.
++#[derive(Component)]
++pub struct DepthOfFieldCocTextures {
++    /// The horizontal pass's output: the largest circle along the row, less
++    /// the distance to it.
++    spread: CachedTexture,
++    /// The vertical pass's output, which the blur passes read.
++    coc: CachedTexture,
++}
++
+ /// The format of [`TransparentFocusTexture`].
+ pub const TRANSPARENT_FOCUS_TEXTURE_FORMAT: TextureFormat = TextureFormat::Rg16Float;
+ 
+@@ -331,6 +373,10 @@ pub struct TransparentFocusTexture(pub ColorAttachment);
+ /// Bind group layouts for depth of field specific to a single view.
+ #[derive(Component, Clone)]
+ pub struct ViewDepthOfFieldBindGroupLayouts {
++    /// The bind group layout for the circle of confusion passes, which read
++    /// the depth and the transparent focus textures.
++    coc: BindGroupLayout,
++
+     /// The bind group layout for passes that take only one input.
+     single_input: BindGroupLayout,
+ 
+@@ -356,6 +402,8 @@ impl ViewNode for DepthOfFieldNode {
+         Read<ViewTarget>,
+         Read<ViewDepthTexture>,
+         Read<DepthOfFieldPipelines>,
++        Read<DepthOfFieldCocPipelines>,
++        Read<DepthOfFieldCocTextures>,
+         Read<ViewDepthOfFieldBindGroupLayouts>,
+         Read<DynamicUniformIndex<DepthOfFieldUniform>>,
+         Option<Read<AuxiliaryDepthOfFieldTexture>>,
+@@ -371,6 +419,8 @@ impl ViewNode for DepthOfFieldNode {
+             view_target,
+             view_depth_texture,
+             view_pipelines,
++            coc_pipelines,
++            coc_textures,
+             view_bind_group_layouts,
+             depth_of_field_uniform_index,
+             auxiliary_dof_texture,
+@@ -389,6 +439,73 @@ impl ViewNode for DepthOfFieldNode {
+             return Ok(());
+         };
+ 
++        let (
++            Some(coc_horizontal_pipeline),
++            Some(coc_vertical_pipeline),
++            Some(coc_view_uniforms_binding),
++            Some(coc_global_bind_group),
++        ) = (
++            pipeline_cache.get_render_pipeline(coc_pipelines.horizontal),
++            pipeline_cache.get_render_pipeline(coc_pipelines.vertical),
++            view_uniforms.uniforms.binding(),
++            &**global_bind_group,
++        )
++        else {
++            return Ok(());
++        };
++
++        // Compute each pixel's circle of confusion once: the horizontal pass
++        // writes `spread`, which the vertical pass reads to write `coc`. The
++        // horizontal pass binds `coc` as its unused input.
++        for (label, pipeline, input, output) in [
++            (
++                "depth of field pass (circle of confusion, horizontal)",
++                coc_horizontal_pipeline,
++                &coc_textures.coc,
++                &coc_textures.spread,
++            ),
++            (
++                "depth of field pass (circle of confusion, vertical)",
++                coc_vertical_pipeline,
++                &coc_textures.spread,
++                &coc_textures.coc,
++            ),
++        ] {
++            let view_bind_group = render_context.render_device().create_bind_group(
++                Some("depth of field view bind group (circle of confusion)"),
++                &view_bind_group_layouts.coc,
++                &BindGroupEntries::sequential((
++                    coc_view_uniforms_binding.clone(),
++                    view_depth_texture.view(),
++                    &transparent_focus_texture.texture.default_view,
++                    &input.default_view,
++                )),
++            );
++            let mut render_pass =
++                render_context
++                    .command_encoder()
++                    .begin_render_pass(&RenderPassDescriptor {
++                        label: Some(label),
++                        color_attachments: &[Some(RenderPassColorAttachment {
++                            view: &output.default_view,
++                            resolve_target: None,
++                            ops: Operations {
++                                load: LoadOp::Clear(default()),
++                                store: StoreOp::Store,
++                            },
++                        })],
++                        ..default()
++                    });
++            render_pass.set_pipeline(pipeline);
++            render_pass.set_bind_group(0, &view_bind_group, &[view_uniform_offset.offset]);
++            render_pass.set_bind_group(
++                1,
++                coc_global_bind_group,
++                &[depth_of_field_uniform_index.index()],
++            );
++            render_pass.draw(0..3, 0..1);
++        }
++
+         // We can be in either Gaussian blur or bokeh mode here. Both modes are
+         // similar, consisting of two passes each. We factor out the information
+         // specific to each pass into
+@@ -423,10 +540,9 @@ impl ViewNode for DepthOfFieldNode {
+                     dual_input_bind_group_layout,
+                     &BindGroupEntries::sequential((
+                         view_uniforms_binding,
+-                        view_depth_texture.view(),
+                         postprocess.source,
+                         &auxiliary_dof_texture.default_view,
+-                        &transparent_focus_texture.texture.default_view,
++                        &coc_textures.coc.default_view,
+                     )),
+                 )
+             } else {
+@@ -435,9 +551,8 @@ impl ViewNode for DepthOfFieldNode {
+                     &view_bind_group_layouts.single_input,
+                     &BindGroupEntries::sequential((
+                         view_uniforms_binding,
+-                        view_depth_texture.view(),
+                         postprocess.source,
+-                        &transparent_focus_texture.texture.default_view,
++                        &coc_textures.coc.default_view,
+                     )),
+                 )
+             };
+@@ -584,9 +699,13 @@ pub fn prepare_depth_of_field_view_bind_group_layouts(
+             texture_2d(TextureSampleType::Float { filterable: false })
+         };
+ 
+-        // Create the bind group layout for the passes that take one input.
+-        let single_input = render_device.create_bind_group_layout(
+-            Some("depth of field bind group layout (single input)"),
++        // The circle of confusion texture is single-sampled and only ever
++        // read with `textureLoad`.
++        let coc_texture_entry = texture_2d(TextureSampleType::Float { filterable: false });
++
++        // Create the bind group layout for the circle of confusion passes.
++        let coc = render_device.create_bind_group_layout(
++            Some("depth of field bind group layout (circle of confusion)"),
+             &BindGroupLayoutEntries::sequential(
+                 ShaderStages::FRAGMENT,
+                 (
+@@ -596,8 +715,21 @@ pub fn prepare_depth_of_field_view_bind_group_layouts(
+                     } else {
+                         texture_depth_2d()
+                     },
+-                    texture_2d(TextureSampleType::Float { filterable: true }),
+                     focus_texture_entry,
++                    coc_texture_entry,
++                ),
++            ),
++        );
++
++        // Create the bind group layout for the passes that take one input.
++        let single_input = render_device.create_bind_group_layout(
++            Some("depth of field bind group layout (single input)"),
++            &BindGroupLayoutEntries::sequential(
++                ShaderStages::FRAGMENT,
++                (
++                    uniform_buffer::<ViewUniform>(true),
++                    texture_2d(TextureSampleType::Float { filterable: true }),
++                    coc_texture_entry,
+                 ),
+             ),
+         );
+@@ -612,14 +744,9 @@ pub fn prepare_depth_of_field_view_bind_group_layouts(
+                     ShaderStages::FRAGMENT,
+                     (
+                         uniform_buffer::<ViewUniform>(true),
+-                        if *msaa != Msaa::Off {
+-                            texture_depth_2d_multisampled()
+-                        } else {
+-                            texture_depth_2d()
+-                        },
+                         texture_2d(TextureSampleType::Float { filterable: true }),
+                         texture_2d(TextureSampleType::Float { filterable: true }),
+-                        focus_texture_entry,
++                        coc_texture_entry,
+                     ),
+                 ),
+             )),
+@@ -628,6 +755,7 @@ pub fn prepare_depth_of_field_view_bind_group_layouts(
+         commands
+             .entity(view)
+             .insert(ViewDepthOfFieldBindGroupLayouts {
++                coc,
+                 single_input,
+                 dual_input,
+             });
+@@ -707,6 +835,39 @@ pub fn prepare_auxiliary_depth_of_field_textures(
+     }
+ }
+ 
++/// Creates the [`DepthOfFieldCocTextures`] for each view that blurs.
++pub fn prepare_depth_of_field_coc_textures(
++    mut commands: Commands,
++    render_device: Res<RenderDevice>,
++    mut texture_cache: ResMut<TextureCache>,
++    view_targets: Query<(Entity, &ViewTarget, &DepthOfField)>,
++) {
++    for (entity, view_target, depth_of_field) in view_targets.iter() {
++        if depth_of_field.mode == DepthOfFieldMode::Disabled {
++            commands.entity(entity).remove::<DepthOfFieldCocTextures>();
++            continue;
++        }
++
++        let mut texture_descriptor = TextureDescriptor {
++            label: Some("depth of field circle of confusion spread texture"),
++            size: view_target.main_texture().size(),
++            mip_level_count: 1,
++            sample_count: 1,
++            dimension: TextureDimension::D2,
++            format: DEPTH_OF_FIELD_COC_TEXTURE_FORMAT,
++            usage: TextureUsages::RENDER_ATTACHMENT | TextureUsages::TEXTURE_BINDING,
++            view_formats: &[],
++        };
++        let spread = texture_cache.get(&render_device, texture_descriptor.clone());
++        texture_descriptor.label = Some("depth of field circle of confusion texture");
++        let coc = texture_cache.get(&render_device, texture_descriptor);
++
++        commands
++            .entity(entity)
++            .insert(DepthOfFieldCocTextures { spread, coc });
++    }
++}
++
+ /// Creates the [`TransparentFocusTexture`] for each view with depth of field
+ /// enabled, and removes it from views that no longer have depth of field so
+ /// the transparent pass attachments stay in sync with the specialized
+@@ -773,7 +934,10 @@ pub fn prepare_depth_of_field_pipelines(
+         match depth_of_field.mode {
+             // no pipelines: the node skips views without them
+             DepthOfFieldMode::Disabled => {
+-                commands.entity(entity).remove::<DepthOfFieldPipelines>();
++                commands
++                    .entity(entity)
++                    .remove::<(DepthOfFieldPipelines, DepthOfFieldCocPipelines)>();
++                continue;
+             }
+             DepthOfFieldMode::Gaussian => {
+                 commands
+@@ -825,6 +989,27 @@ pub fn prepare_depth_of_field_pipelines(
+                     });
+             }
+         }
++
++        commands.entity(entity).insert(DepthOfFieldCocPipelines {
++            horizontal: pipelines.specialize(
++                &pipeline_cache,
++                &dof_pipeline,
++                DepthOfFieldPipelineKey {
++                    hdr,
++                    multisample,
++                    pass: DofPass::CocHorizontal,
++                },
++            ),
++            vertical: pipelines.specialize(
++                &pipeline_cache,
++                &dof_pipeline,
++                DepthOfFieldPipelineKey {
++                    hdr,
++                    multisample,
++                    pass: DofPass::CocVertical,
++                },
++            ),
++        });
+     }
+ }
+ 
+@@ -846,6 +1031,15 @@ impl SpecializedRenderPipeline for DepthOfFieldPipeline {
+ 
+         // Select bind group 0, the view-specific bind group.
+         match key.pass {
++            DofPass::CocHorizontal | DofPass::CocVertical => {
++                // The circle of confusion passes write one channel.
++                layout.push(self.view_bind_group_layouts.coc.clone());
++                targets[0] = Some(ColorTargetState {
++                    format: DEPTH_OF_FIELD_COC_TEXTURE_FORMAT,
++                    blend: None,
++                    write_mask: ColorWrites::ALL,
++                });
++            }
+             DofPass::GaussianHorizontal | DofPass::GaussianVertical => {
+                 // Gaussian blurs take only a single input and output.
+                 layout.push(self.view_bind_group_layouts.single_input.clone());
+@@ -885,9 +1079,14 @@ impl SpecializedRenderPipeline for DepthOfFieldPipeline {
+             depth_stencil: None,
+             multisample: default(),
+             fragment: Some(FragmentState {
+-                shader: DOF_SHADER_HANDLE,
++                shader: match key.pass {
++                    DofPass::CocHorizontal | DofPass::CocVertical => DOF_COC_SHADER_HANDLE,
++                    _ => DOF_SHADER_HANDLE,
++                },
+                 shader_defs,
+                 entry_point: match key.pass {
++                    DofPass::CocHorizontal => "coc_horizontal".into(),
++                    DofPass::CocVertical => "coc_vertical".into(),
+                     DofPass::GaussianHorizontal => "gaussian_horizontal".into(),
+                     DofPass::GaussianVertical => "gaussian_vertical".into(),
+                     DofPass::BokehPass0 => "bokeh_pass_0".into(),
+@@ -925,7 +1124,9 @@ fn extract_depth_of_field_settings(
+                 DepthOfFieldUniform,
+                 // components added in prepare systems (because `DepthOfFieldNode` does not query extracted components)
+                 DepthOfFieldPipelines,
++                DepthOfFieldCocPipelines,
+                 AuxiliaryDepthOfFieldTexture,
++                DepthOfFieldCocTextures,
+                 ViewDepthOfFieldBindGroupLayouts,
+             )>();
+             continue;
