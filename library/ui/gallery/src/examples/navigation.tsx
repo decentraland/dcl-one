@@ -393,16 +393,22 @@ export const navigationEntries: GalleryEntry[] = [
     examples: [
       {
         id: 'hud',
-        title: 'Explorer HUD strips: pill, underline, section and subtab',
+        title: 'Explorer HUD strips: pill, underline, section, shop, subtab and a filled underline',
         render: () => (
           <div className={layout.stack}>
-            {(['pill', 'underline', 'section', 'subtab'] as const).map((variant) => (
+            {(['pill', 'underline', 'section', 'shop', 'subtab'] as const).map((variant) => (
               <TabsBar key={variant} appearance="hud" variant={variant} label={`${variant} strip`}>
                 <Tabs appearance="hud" label="Wearables" selected />
                 <Tabs appearance="hud" label="Emotes" />
                 <Tabs appearance="hud" label="Unavailable" disabled />
               </TabsBar>
             ))}
+            <div style={{ height: 44 }}>
+              <TabsBar appearance="hud" variant="underline" fill label="filled strip">
+                <Tabs appearance="hud" label="Friends" selected />
+                <Tabs appearance="hud" label="Requests" />
+              </TabsBar>
+            </div>
           </div>
         )
       },

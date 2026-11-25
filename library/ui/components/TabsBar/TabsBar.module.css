@@ -90,7 +90,7 @@
   .hudUnderline > [role='tab'] {
     position: relative;
     padding: 12px 2px;
-    color: var(--tab-ink, rgba(255, 255, 255, 0.6));
+    color: var(--tab-ink, var(--dcl-transparencies-white-60));
     letter-spacing: 0.04em;
     text-transform: uppercase;
     transition: color 140ms ease;

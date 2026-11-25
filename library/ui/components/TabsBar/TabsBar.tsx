@@ -13,10 +13,11 @@ type PanelTabsBarProps = {
   appearance?: 'default' | 'hud'
   /**
    * By default: `underline`, `compact` (the transparent underline bar) or `pill` (rounded filter tabs).
-   * `section`, `shop` and `subtab` exist for `appearance="hud"` only.
+   * `section`, `shop` and `subtab` exist for `appearance="hud"` only: the default appearance draws them as
+   * `underline`. The `hud` appearance has no `compact`, and draws it as `pill`, as it does without a variant.
    */
   variant?: 'underline' | 'compact' | 'pill' | 'section' | 'shop' | 'subtab'
-  /** For `appearance="hud"`: equal-width tabs across the strip, with centred labels. */
+  /** For `appearance="hud"`: equal-width tabs across the strip, with centred labels. Ignored otherwise. */
   fill?: boolean
   label: string
   children: ReactNode
@@ -53,7 +54,7 @@ function PanelTabsBar({
 }: PanelTabsBarProps) {
   const look =
     appearance === 'hud'
-      ? [styles[HUD_VARIANT[variant && variant in HUD_VARIANT ? (variant as keyof typeof HUD_VARIANT) : 'pill']], fill && styles.hudFill]
+      ? [styles[HUD_VARIANT[!variant || variant === 'compact' ? 'pill' : variant]], fill && styles.hudFill]
       : [styles[variant === 'compact' || variant === 'pill' ? variant : 'underline']]
   const handleKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
     onKeyDown?.(event)

@@ -50,7 +50,11 @@ export function Tabs<T extends string>({
           appearance="hud"
           selected={it.id === value}
           disabled={it.disabled}
-          onClick={() => onChange(it.id)}
+          onClick={(event) => {
+            // Safari does not focus a button on click, and the arrow keys start from the focused tab.
+            event.currentTarget.focus()
+            onChange(it.id)
+          }}
           label={
             <>
               {it.icon}
