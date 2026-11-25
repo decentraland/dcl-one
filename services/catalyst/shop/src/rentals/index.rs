@@ -46,14 +46,29 @@ const RENTALS_SEPOLIA: &str = "0xe70db6319e9cee3f604909bdade58d1f5c1cf702";
 const RENTALS_SEPOLIA_START_BLOCK: u64 = 3_831_254;
 pub(crate) const INDEXER_RENTALS_SEPOLIA: &str = "rentals_sepolia";
 
-#[derive(Clone, Copy)]
-pub(super) enum RentalsChain {
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum RentalsChain {
     Mainnet,
     Sepolia,
 }
 
 impl RentalsChain {
-    pub(super) fn from_land_network(network: &str) -> Option<Self> {
+    pub(crate) fn from_id(chain_id: i64) -> Option<Self> {
+        match chain_id {
+            1 => Some(Self::Mainnet),
+            11_155_111 => Some(Self::Sepolia),
+            _ => None,
+        }
+    }
+
+    pub(crate) fn land(self) -> crate::land_authz::LandNetwork {
+        match self {
+            Self::Mainnet => crate::land_authz::LAND_MAINNET,
+            Self::Sepolia => crate::land_authz::LAND_SEPOLIA,
+        }
+    }
+
+    pub(crate) fn from_land_network(network: &str) -> Option<Self> {
         match network {
             "ethereum" | "ethereum-mainnet" => Some(Self::Mainnet),
             "ethereum-sepolia" => Some(Self::Sepolia),
@@ -61,35 +76,35 @@ impl RentalsChain {
         }
     }
 
-    pub(super) fn id(self) -> i64 {
+    pub(crate) fn id(self) -> i64 {
         match self {
             Self::Mainnet => 1,
             Self::Sepolia => 11_155_111,
         }
     }
 
-    pub(super) fn indexer(self) -> &'static str {
+    pub(crate) fn indexer(self) -> &'static str {
         match self {
             Self::Mainnet => INDEXER_RENTALS,
             Self::Sepolia => INDEXER_RENTALS_SEPOLIA,
         }
     }
 
-    pub(super) fn event_network(self) -> &'static str {
+    pub(crate) fn event_network(self) -> &'static str {
         match self {
             Self::Mainnet => "ethereum",
             Self::Sepolia => "sepolia",
         }
     }
 
-    pub(super) fn venue(self) -> &'static str {
+    pub(crate) fn venue(self) -> &'static str {
         match self {
             Self::Mainnet => RENTALS_MAINNET,
             Self::Sepolia => RENTALS_SEPOLIA,
         }
     }
 
-    pub(super) fn registries(self) -> [&'static str; 2] {
+    pub(crate) fn registries(self) -> [&'static str; 2] {
         use crate::land_authz::{
             ESTATE_REGISTRY_MAINNET, ESTATE_REGISTRY_SEPOLIA, LAND_REGISTRY_MAINNET,
             LAND_REGISTRY_SEPOLIA,
@@ -379,7 +394,7 @@ listing AS (
            l.lessor, l.tenant
     FROM signatures.rentals r JOIN signatures.rental_listings l ON l.id = r.id
     LEFT JOIN new_rent nr ON nr.signature = lower(r.signature)
-    WHERE upper(r.network) = 'ETHEREUM' AND r.rental_contract_address = $2
+    WHERE upper(r.network) = 'ETHEREUM' AND r.rental_contract_address = $2 AND r.chain_id = $6
       AND ($1 < 0 OR r.status IN ('open', 'executed')
            OR (r.status = 'cancelled' AND CASE WHEN $3::uuid IS NULL
                THEN nr.signature IS NOT NULL
@@ -468,6 +483,7 @@ pub(super) async fn changed_verdicts(
         .bind(listing.map(|(id, _)| id))
         .bind(chain.event_network())
         .bind(listing.map_or(i64::MAX, |(_, published)| published))
+        .bind(chain.id())
         .fetch_all(&mut *conn)
         .await?;
     Ok(rows
@@ -596,14 +612,39 @@ pub(super) async fn fold(
     now: DateTime<Utc>,
     owner: &chain_walk::Owner,
 ) -> anyhow::Result<u64> {
-    let since = since.unwrap_or(-1);
     let mut tx = pool.begin().await?;
+    // A previous writer could have advanced the Sepolia event log without
+    // folding listings. Reconcile its stored history on the first fold
+    // of each new owner generation, including after a rollback/re-upgrade.
+    let since = if chain == RentalsChain::Sepolia {
+        let previous: Option<i64> = sqlx::query_scalar(
+            "SELECT position FROM shop.worker_progress
+            WHERE worker='rental_listing_generation' AND scope=$1",
+        )
+        .bind(chain.id())
+        .fetch_optional(&mut *tx)
+        .await?;
+        if previous == Some(owner.generation) {
+            since
+        } else {
+            None
+        }
+    } else {
+        since
+    }
+    .unwrap_or(-1);
     sqlx::query("SET LOCAL statement_timeout = '600s'")
         .execute(&mut *tx)
         .await?;
     chain_walk::analyze_if_stale(&mut tx, "shop", "rental_event", since < 0).await?;
     let verdicts = changed_verdicts(&mut tx, chain, venue, since, None).await?;
     let written = apply_verdicts(&mut tx, &verdicts, now.naive_utc()).await?;
+    if chain == RentalsChain::Sepolia {
+        sqlx::query("INSERT INTO shop.worker_progress(worker,scope,position,ceiling)
+            VALUES ('rental_listing_generation',$1,$2,$2) ON CONFLICT(worker,scope) DO UPDATE SET
+            position=EXCLUDED.position,ceiling=EXCLUDED.ceiling WHERE shop.worker_progress.position<>EXCLUDED.position")
+            .bind(chain.id()).bind(owner.generation).execute(&mut *tx).await?;
+    }
     owner.check(&mut tx).await?;
     tx.commit().await?;
     Ok(written)
@@ -622,7 +663,7 @@ pub(super) async fn fold_listing(
     let mut tx = pool.begin().await?;
     let cursor = lock_cursor(&mut tx, chain).await?;
     let Some(published) = cursor
-        .filter(|cursor| chain_walk::is_ready_on(cursor, chain.id(), now))
+        .filter(|cursor| chain_walk::fresh_fold_on(cursor, chain.id(), now).is_some())
         .and_then(|cursor| cursor.folded_block)
     else {
         tx.rollback().await?;
@@ -652,11 +693,12 @@ pub(super) async fn lock_cursor(
     .await
 }
 
-/// The walk of one Rentals deployment. Only mainnet folds listing statuses.
+/// Each venue has its own event history. The served catalogue also derives listing statuses.
 pub struct RentalsIndex {
     pub venue: String,
     pub start: u64,
     chain: RentalsChain,
+    fold_listings: bool,
 }
 
 impl RentalsIndex {
@@ -664,8 +706,9 @@ impl RentalsIndex {
         Self::at(RENTALS_MAINNET, RENTALS_MAINNET_START_BLOCK)
     }
 
-    pub fn sepolia() -> Self {
+    pub fn sepolia(fold_listings: bool) -> Self {
         Self {
+            fold_listings,
             venue: RENTALS_SEPOLIA.to_string(),
             start: RENTALS_SEPOLIA_START_BLOCK,
             chain: RentalsChain::Sepolia,
@@ -677,6 +720,7 @@ impl RentalsIndex {
             venue: venue.to_ascii_lowercase(),
             start,
             chain: RentalsChain::Mainnet,
+            fold_listings: true,
         }
     }
 }
@@ -747,17 +791,12 @@ impl ChainIndex for RentalsIndex {
         _upto: i64,
         owner: &chain_walk::Owner,
     ) -> anyhow::Result<bool> {
-        if matches!(self.chain, RentalsChain::Mainnet) {
+        if self.fold_listings {
             let written = fold(pool, self.chain, &self.venue, since, Utc::now(), owner).await?;
             tracing::info!(venue = %self.venue, listings = written, "rentals index: folded");
         }
         Ok(true)
     }
-}
-
-/// Whether this node has a local Rentals index for `venue`.
-pub fn walks(venue: &str) -> bool {
-    venue.eq_ignore_ascii_case(RENTALS_MAINNET)
 }
 
 /// The latest rent and the publication that vouches for it, from one SQL snapshot.
@@ -844,7 +883,7 @@ pub(super) async fn published_rent(
     let cursor = chain_walk::cursor(&mut *conn, chain.indexer(), ChainNet::Ethereum).await?;
     let head = cursor
         .as_ref()
-        .filter(|c| chain_walk::is_ready_on(c, chain.id(), now))
+        .filter(|c| chain_walk::fresh_fold_on(c, chain.id(), now).is_some())
         .and_then(|c| c.folded_block);
     let mut evidence =
         rent_evidence_at(conn, chain, venue, contract_address, token_id, head).await?;
@@ -911,14 +950,62 @@ pub(super) async fn rent_evidence_at(
     })
 }
 
+/// A direct LAND owner can already have rented out the token beyond the LAND
+/// fold. Only use observed events to refuse a new listing. No Rentals cursor
+/// is needed to accept one. The caller holds the observed LAND revision.
+pub(super) async fn observed_running_rent(
+    conn: &mut PgConnection,
+    chain: RentalsChain,
+    contract: &str,
+    token_id: &str,
+    transfer_block: i64,
+    now: DateTime<Utc>,
+) -> sqlx::Result<bool> {
+    sqlx::query_scalar(
+        "WITH transfer AS (
+            SELECT block_number, log_index FROM land_authz.authz_event
+            WHERE token_address=$1 AND token_id=$2::numeric AND kind='transfer' AND block_number=$3
+            ORDER BY log_index DESC LIMIT 1
+        ), events AS (
+            SELECT r.kind, r.is_extension, r.block_time, r.rental_days, r.block_number, r.log_index
+            FROM shop.rental_event r, transfer t
+            WHERE r.network=$6 AND r.rentals_address=$4 AND r.contract_address=$1
+              AND r.token_id=$2::numeric AND r.kind IN ('rented','claimed')
+              AND (r.block_number,r.log_index) >= (t.block_number,t.log_index)
+        ), period AS (
+            SELECT kind,block_time,block_number,log_index FROM events
+            WHERE kind='claimed' OR is_extension IS NOT TRUE
+            ORDER BY block_number DESC,log_index DESC LIMIT 1
+        )
+        SELECT EXISTS (
+            SELECT 1 FROM period p WHERE p.kind='rented'
+              AND p.block_time + 86400 * (
+                  SELECT sum(e.rental_days) FROM events e WHERE e.kind='rented'
+                    AND (e.block_number,e.log_index) >= (p.block_number,p.log_index)
+              ) > $5
+        )",
+    )
+    .bind(contract.to_ascii_lowercase())
+    .bind(token_id)
+    .bind(transfer_block)
+    .bind(chain.venue())
+    .bind(now.timestamp())
+    .bind(chain.event_network())
+    .fetch_one(conn)
+    .await
+}
+
 /// Whether the statuses may be trusted at `now` (the cursor is published).
 pub async fn ready(pool: &PgPool, now: DateTime<Utc>) -> bool {
     ready_on(pool, RentalsChain::Mainnet, now).await
 }
 
 pub(super) async fn ready_on(pool: &PgPool, chain: RentalsChain, now: DateTime<Utc>) -> bool {
-    chain_walk::ready_cursor_on(pool, chain.indexer(), ChainNet::Ethereum, chain.id(), now)
+    chain_walk::cursor(pool, chain.indexer(), ChainNet::Ethereum)
         .await
+        .ok()
+        .flatten()
+        .and_then(|c| chain_walk::fresh_fold_on(&c, chain.id(), now))
         .is_some()
 }
 
@@ -935,7 +1022,7 @@ pub async fn status(pool: &PgPool) -> Value {
             .flatten()?;
         Some(json!({
             "lastBlock": c.last_block, "foldedBlock": c.folded_block, "fullHistory": c.full_history,
-            "ready": chain_walk::is_ready_on(&c, chain.id(), now), "reorgRewinds": c.reorg_rewinds,
+            "ready": chain_walk::fresh_fold_on(&c, chain.id(), now).is_some(), "reorgRewinds": c.reorg_rewinds,
             "divergedAt": c.diverged_at,
         }))
     }

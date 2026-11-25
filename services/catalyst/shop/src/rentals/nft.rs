@@ -72,7 +72,10 @@ pub(super) async fn nft_by_contract_token(
     .await?
     .ok_or(NftReadError::Unavailable)?;
 
-    let ready = chain_walk::ready_sql("c", "timezone('UTC', now())");
+    let chain = super::index::RentalsChain::from_id(chain_id)
+        .filter(|chain| chain.land() == net)
+        .ok_or(NftReadError::Unavailable)?;
+    let ready = chain_walk::published_sql_on("c", "timezone('UTC', now())", chain.id(), 137);
     let metadata_head: i64 = sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
         "SELECT folded_block FROM shop.chain_cursor c WHERE indexer='nft' AND network='ethereum'
          AND chain_id=$1 AND {ready}"
@@ -164,19 +167,20 @@ pub(super) async fn nft_by_contract_token(
     {
         return Err(NftReadError::MetadataUnavailable);
     }
+    let at_venue = row.asset.owner_address.eq_ignore_ascii_case(chain.venue());
     let rent = match custody_at {
-        Some(now) => Some(
+        Some(now) if at_venue => Some(
             super::index::published_rent(
                 &mut snapshot.tx,
-                super::index::RentalsChain::Mainnet,
-                super::index::RENTALS_MAINNET,
+                chain,
+                chain.venue(),
                 contract_address,
                 token_id,
                 now,
             )
             .await?,
         ),
-        None => None,
+        _ => None,
     };
     Ok(Some((row.asset, rent)))
 }

@@ -39,7 +39,9 @@
 //!   contract's own logs instead of the rentals subgraph the old crate
 //!   configured and never ran), on whenever a chain-1 endpoint is configured
 //!   unless `SHOP_RENTALS_INDEX_ENABLED=false`;
-//!   `GET /v1/rentals-index` reports its cursor. Until it publishes, a
+//!   `GET /v1/rentals-index` reports its cursor. On NFT walkers for either catalogue pair,
+//!   owner pages that can include LAND return the `rentals-index` 503
+//!   while this publication is absent or stale. Until it publishes, a
 //!   listing keeps the status it was posted with and the rent quote
 //!   (`shop::mana`) reads the nonces on chain. The leased
 //!   `rental-listing-status` job ([`status`]) cancels expired open
@@ -157,8 +159,7 @@ impl State {
     }
 
     fn walks_nfts(market: &MarketplaceState) -> bool {
-        market.settings.market.indexes.nft_enabled
-            && market.settings.eth_network.trim() == "mainnet"
+        crate::market::owned_items::walks_here(market)
     }
 
     fn served_chain(&self) -> Option<i64> {

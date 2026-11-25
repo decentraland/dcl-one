@@ -366,7 +366,9 @@ pub async fn trade_verdict(
     {
         return Ok((None, false));
     }
-    let row: Option<(String, i32)> = sqlx::query_as("SELECT status, executions FROM shop.trade_chain_state WHERE trade_id = $1::uuid AND folded_block >= 0")
+    // A V3 trade whose cancellation digest could not be established reads
+    // `unverifiable`: its cancellation would go unseen.
+    let row: Option<(String, i32)> = sqlx::query_as("SELECT CASE WHEN status = 'open' AND digest_failed_at IS NOT NULL THEN 'unverifiable' ELSE status END, executions FROM shop.trade_chain_state WHERE trade_id = $1::uuid AND folded_block >= 0")
         .bind(trade_id)
         .fetch_optional(pool)
         .await?;

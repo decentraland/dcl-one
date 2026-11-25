@@ -13,7 +13,7 @@
 use sqlx::{PgConnection, PgPool};
 use uuid::Uuid;
 
-use super::chain_walk::{self, ChainNet, INDEXER_NFT, INDEXER_SALES, INDEXER_TRADE_EVENTS};
+use super::chain_walk::{ChainNet, INDEXER_NFT, INDEXER_SALES, INDEXER_TRADE_EVENTS};
 use crate::rentals::index::INDEXER_RENTALS;
 
 pub const TRANSFER_RECEIVED: &str = "transfer_received";
@@ -292,12 +292,10 @@ fn event_table(indexer: &str) -> Option<&'static str> {
 /// network's mainnet.
 fn read_chain(producer: &str, indexer: &str, net: ChainNet, trade_chains: (i64, i64)) -> i64 {
     match (indexer, net) {
-        (INDEXER_TRADE_EVENTS, _) if producer == TRANSFER_RECEIVED => {
-            chain_walk::mainnet_chain(net)
-        }
+        (INDEXER_TRADE_EVENTS, _) if producer == TRANSFER_RECEIVED => net.chain_id(),
         (INDEXER_TRADE_EVENTS, ChainNet::Ethereum) => trade_chains.0,
         (INDEXER_TRADE_EVENTS, ChainNet::Matic) => trade_chains.1,
-        _ => chain_walk::mainnet_chain(net),
+        _ => net.chain_id(),
     }
 }
 
