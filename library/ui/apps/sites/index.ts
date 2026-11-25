@@ -197,7 +197,6 @@ export {
   useFocusNewRows
 } from './profile/collectibles'
 export { ReelsEmpty, ReelsGallery, ReelsPage } from './reels/ReelsPage'
-export { Button as SitesButton } from './shared/Button/Button'
 export { Carousel, type CarouselLabels } from './shared/Carousel'
 export {
   CommunityDeciding,
