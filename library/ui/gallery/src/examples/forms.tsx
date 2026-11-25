@@ -241,7 +241,9 @@ export const formEntries: GalleryEntry[] = [
             <Switch appearance="hud" label="Fullscreen off" labelHidden />
             <Switch appearance="hud" size="sm" label="Hear others" labelHidden defaultChecked />
             <Switch appearance="hud" size="sm" label="Hear others off" labelHidden />
-            <Switch appearance="hud" size="sm" surface="light" label="Map layer" labelHidden />
+            <span style={{ padding: 8, borderRadius: 8, background: '#fcfcfc' }}>
+              <Switch appearance="hud" size="sm" surface="light" label="Map layer" labelHidden />
+            </span>
             <Switch appearance="hud" label="Unavailable" labelHidden disabled />
           </div>
         )

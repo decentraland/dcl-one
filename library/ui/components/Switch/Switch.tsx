@@ -43,7 +43,7 @@ export function Switch({
     onChange?.(event)
     onCheckedChange?.(event.currentTarget.checked)
   }
-  // The HUD's switch was a button, which Enter presses; a native checkbox only takes Space.
+  // A HUD switch toggles on Enter as well as Space, like the HUD's buttons; a native checkbox only takes Space.
   const keyDown = (event: KeyboardEvent<HTMLInputElement>) => {
     input.onKeyDown?.(event)
     if (appearance === 'hud' && event.key === 'Enter' && !event.defaultPrevented) event.currentTarget.click()

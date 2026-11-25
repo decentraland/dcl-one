@@ -121,7 +121,8 @@
 
   /* Not in Figma: the Explorer HUD's switch, a pill whose knob fills the height inside its padding and travels
      the rest of the width. Unset, each `--toggle-*` property takes the size's value (the `--d-*` below). The
-     knob's off-white on the small switch and the light panel's off track have no token. */
+     small switch's off track and off-white knob, the knob's shadow, the light panel's off track and the HUD's
+     140ms motion and its easing curve have no token. */
   .hud {
     --d-w: 46px;
     --d-h: 26px;
@@ -193,6 +194,11 @@
 
   .hud .input:disabled + .track {
     opacity: 0.45;
+  }
+
+  /* The ring is the only focus cue, and the default snow ring cannot be seen on a light panel. */
+  .hud.onLight .input:focus-visible + .track {
+    outline-color: var(--dcl-neutrals-shadow);
   }
 
   .hud.onLight .input:not(:checked) + .track {
