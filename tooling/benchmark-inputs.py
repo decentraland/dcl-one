@@ -35,24 +35,21 @@ FLEET = (
 # The runner build each operating system takes; Linux writes the report.
 PLATFORMS = {'windows': 'windows-amd64', 'macos': 'macos-arm64', 'linux': 'linux-amd64'}
 WEB = 'bevy-explorer-web'
-PACKAGE = '@dcl-regenesislabs/bevy-explorer-web'
-RELEASE_PATH = 'play'
-# The rollout workflow creates the deployment with GITHUB_TOKEN, as set-rollout-action's task; a
-# record made by hand, or a CDN upload, is not a release.
-RELEASE_CREATOR = 'github-actions[bot]'
-RELEASE_TASK = 'dcl/set-rollout'
-PR_RELEASE_VERSION = re.compile(r'[0-9]+\.[0-9]+\.[0-9]+-([0-9]+)\.commit-([0-9a-f]{7,40})')
 RUNNER = 'bevy-explorer-benchmark-'
 # A leg's Test builds step is cut off after 90 minutes, so runs x 3 builds x (the 480 s run timeout
 # + 45 s to close Chrome and settle) must stay under 5400 (bevy-explorer-benchmark-leg.yml).
 MAX_RUNS = (5400 - 1) // (3 * (480 + 45))
 SHA = re.compile(r'[0-9a-f]{40}')
-# The latest release is the newest complete, successful rollout of the web package to
-# decentraland.org: a GitHub deployment that bevy-explorer-rollout-manual.yml records. Its own commit
+# The latest release is the newest applied rollout of the web package to every player at
+# decentraland.org/play: a GitHub deployment that bevy-explorer-rollout-manual.yml records with
+# GITHUB_TOKEN as set-rollout-action's task (a record made by hand is not a release). Its own commit
 # is where the rollout was dispatched from; the build is the CI run named in its version,
 # <semver>-<CI run ID>.commit-<short commit>.
 RELEASE_ENVIRONMENT = 'org'
 RELEASE_PACKAGE = '@dcl-regenesislabs/bevy-explorer-web'
+RELEASE_PATH = 'play'
+RELEASE_CREATOR = 'github-actions[bot]'
+RELEASE_TASK = 'dcl/set-rollout'
 RELEASE_VERSION = re.compile(r'.+-([0-9]+)\.commit-([0-9a-f]{7,40})')
 MAIN_ISSUE = 'Bevy Explorer: performance regression on main against the latest release'
 # Days a run keeps its leg results and report: a pull request's for its review, main's as history.
@@ -170,74 +167,22 @@ def deployments(repo, pages=10):
 
 
 def latest_release(repo):
-    """The version of the newest successful rollout to every player of decentraland.org, or None."""
+    """The newest applied rollout of the web package to every player of decentraland.org:
+    (version, CI run ID, short commit), with None for both when its version names no CI run, or
+    None. The callers decide what a version without a run means."""
     for deployment in deployments(repo):
         payload = deployment.get('payload')
-        if not isinstance(payload, dict) or payload.get('prefix') != PACKAGE or payload.get('path') != RELEASE_PATH:
+        if not isinstance(payload, dict) or payload.get('prefix') != RELEASE_PACKAGE:
             continue
-        if str(payload.get('percentage')) != '100':
+        if payload.get('path') != RELEASE_PATH or str(payload.get('percentage')) != '100':
             continue
         if (deployment.get('creator') or {}).get('login') != RELEASE_CREATOR or deployment.get('task') != RELEASE_TASK:
             continue
-        # newest first: applied (success), or applied and later made inactive by a newer rollout
-        states = [status.get('state') for status in api(f"repos/{repo}/deployments/{deployment['id']}/statuses?per_page=100")]
-        if states and states[0] in ('success', 'inactive') and 'success' in states:
-            return str(payload.get('version') or '')
-    return None
-
-
-def release_run(run, repo, short_sha):
-    """Whether a CI run is a finished Bevy Explorer / CI run of this repository's release commit. Its
-    conclusion does not count: a run whose later jobs were cancelled after the rollout still built
-    the web app, and the artifact and its build-info.json decide."""
-    return (run['path'] == WORKFLOW and run['status'] == 'completed' and run['event'] in ('push', 'workflow_dispatch')
-            and (run.get('head_repository') or {}).get('full_name') == repo
-            and bool(SHA.fullmatch(run['head_sha'])) and run['head_sha'].startswith(short_sha))
-
-
-def release_build(repo, base_sha):
-    """The latest release's web app: ({'version', 'sha', 'artifact', 'run_id'}, None), or (None, why not)."""
-    version = latest_release(repo)
-    if version is None:
-        return None, f'No successful rollout of {PACKAGE} to every player of decentraland.org was found.'
-    match = PR_RELEASE_VERSION.fullmatch(version)
-    if not match:
-        return None, f'The latest release {version!r} does not name the CI run that built it.'
-    run_id, short_sha = match.groups()
-    run = api(f'repos/{repo}/actions/runs/{run_id}')
-    if not release_run(run, repo, short_sha):
-        return None, f'CI run {run_id} is not a finished Bevy Explorer / CI run of the latest release ({version}).'
-    if run['head_sha'] == base_sha:
-        return None, f'The latest release ({version}) is the base build.'
-    names = artifacts(repo, run['id'])
-    web = named(names, WEB)
-    if not web:
-        return None, f'The web app of the latest release ({version}, CI run {run_id}) has expired.'
-    if not optimized(repo, names[web]):
-        return None, f'The web build of the latest release ({version}, CI run {run_id}) is not optimized.'
-    return {'version': version, 'sha': run['head_sha'], 'artifact': web, 'run_id': str(run['id'])}, None
-
-
-def release(repo):
-    """The newest complete, successful rollout of the web package: (version, CI run ID, short commit),
-    or None. A version that names no CI run raises: an older release must not become the base."""
-    rows = api(f'repos/{repo}/deployments?environment={RELEASE_ENVIRONMENT}&per_page=100')
-    for row in rows:
-        payload = row.get('payload')
-        if not isinstance(payload, dict):
-            continue
-        # set-rollout-action names the package `prefix`; cdn-deploy names it `packageName`.
-        package = payload.get('prefix') or payload.get('packageName')
-        if package != RELEASE_PACKAGE or str(payload.get('percentage', 100)) != '100':
-            continue
-        if not released(api(f"repos/{repo}/deployments/{row['id']}/statuses?per_page=100")):
+        if not released(api(f"repos/{repo}/deployments/{deployment['id']}/statuses?per_page=100")):
             continue
         version = str(payload.get('version') or '')
         match = RELEASE_VERSION.fullmatch(version)
-        if not match:
-            raise ValueError(f'The latest release, {version or "a rollout without a version"}, names no CI run: '
-                             'its version lacks the -<CI run ID>.commit-<short commit> suffix.')
-        return version, int(match.group(1)), match.group(2)
+        return (version, int(match.group(1)), match.group(2)) if match else (version, None, None)
     return None
 
 
@@ -254,11 +199,35 @@ def released(statuses):
 
 
 def released_by(run, repo, short):
-    """Whether a CI run of this repository built the commit a release version names. Not its status:
-    a release can roll out while its run is still going, and its web app is checked next."""
+    """Whether a CI run of this repository built the commit a release version names. Not its status
+    or conclusion: a release can roll out while its run is still going, later jobs can be cancelled
+    or a guard fail after the web app is published, and the web app is checked next."""
     return (run['path'] == WORKFLOW and run['event'] in ('push', 'workflow_dispatch')
             and (run.get('head_repository') or {}).get('full_name') == repo
-            and SHA.fullmatch(run['head_sha']) and run['head_sha'].startswith(short))
+            and bool(SHA.fullmatch(run['head_sha'])) and run['head_sha'].startswith(short))
+
+
+def release_build(repo, base_sha):
+    """The latest release's web app for a pull request: ({'version', 'sha', 'artifact', 'run_id'},
+    None), or (None, why not)."""
+    latest = latest_release(repo)
+    if latest is None:
+        return None, f'No successful rollout of {RELEASE_PACKAGE} to every player of decentraland.org was found.'
+    version, run_id, short = latest
+    if run_id is None:
+        return None, f'The latest release {version!r} does not name the CI run that built it.'
+    run = api(f'repos/{repo}/actions/runs/{run_id}')
+    if not released_by(run, repo, short):
+        return None, f'CI run {run_id} is not a Bevy Explorer / CI run of the latest release ({version}).'
+    if run['head_sha'] == base_sha:
+        return None, f'The latest release ({version}) is the base build.'
+    names = artifacts(repo, run['id'])
+    web = named(names, WEB)
+    if not web:
+        return None, f'The web app of the latest release ({version}, CI run {run_id}) has expired.'
+    if not optimized(repo, names[web]):
+        return None, f'The web build of the latest release ({version}, CI run {run_id}) is not optimized.'
+    return {'version': version, 'sha': run['head_sha'], 'artifact': web, 'run_id': str(run['id'])}, None
 
 
 def run_count(inputs, runs):
@@ -400,18 +369,21 @@ def resolve_main(inputs, repo, enabled, runs):
         base_web, base, base_web_id = found[WEB]
         base_description = base_sha
     else:
-        latest = release(repo)
+        latest = latest_release(repo)
         if not latest:
             return stop(result, f'No complete, successful {RELEASE_PACKAGE} rollout to {RELEASE_ENVIRONMENT} is '
                                 'recorded as a deployment.')
         version, run_id, short = latest
+        # An older release must not become main's base.
+        if run_id is None:
+            raise ValueError(f'The latest release, {version or "a rollout without a version"}, names no CI run: '
+                             'its version lacks the -<CI run ID>.commit-<short commit> suffix.')
         not_ci = (f'Release {version} names CI run {run_id}, which is not a Bevy Explorer / CI run of commit '
                   f'{short} in {repo}.')
         try:
             base = api(f'repos/{repo}/actions/runs/{run_id}')
         except subprocess.CalledProcessError:
             return stop(result, not_ci)
-        # Not its conclusion: on main a failed guard does not stop the build from being published.
         if not released_by(base, repo, short):
             return stop(result, not_ci)
         base_names = artifacts(repo, run_id)
@@ -485,7 +457,7 @@ def measure(repo, result, enabled, change_build, base_build, runner_runs, runner
     if result['pr']:
         try:
             release, why_not = release_build(repo, base['head_sha'])
-        except Exception:  # pylint: disable=broad-except
+        except (subprocess.SubprocessError, ValueError):
             release, why_not = None, 'it could not be read from the GitHub API.'
         if release:
             result['release_sha'], result['release_version'] = release['sha'], release['version']

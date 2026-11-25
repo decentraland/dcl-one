@@ -13,7 +13,7 @@
 #
 # Repository variables: BENCHMARK_ENABLED_RUNNERS (the laptops that are online, by runner label;
 # empty means all; `none` means none, and PR engine builds then skip wasm-opt), BENCHMARK_RUNS
-# (measured runs per build, 3 by default) and BENCHMARK_QUEUE_TIMEOUT_MINUTES (60 by default).
+# (measured runs per build, 3 by default) and BENCHMARK_QUEUE_TIMEOUT_MINUTES (150 by default).
 name: Bevy Explorer / Benchmark
 'on':
   workflow_run:
@@ -83,7 +83,6 @@ jobs:
       actions: read
       deployments: read
       pull-requests: read
-      deployments: read
     outputs:
       run: ${{ steps.inputs.outputs.run }}
       pr: ${{ steps.inputs.outputs.pr }}
@@ -214,7 +213,8 @@ jobs:
       GH_REPO: ${{ github.repository }}
       PR_NUMBER: ${{ needs.setup.outputs.pr }}
       EXPECTED_LABELS: ${{ needs.setup.outputs.expected_labels }}
-      QUEUE_TIMEOUT_MINUTES: ${{ vars.BENCHMARK_QUEUE_TIMEOUT_MINUTES || 60 }}
+      # A leg queued behind another run's leg on the same laptop waits up to that leg's 135-minute job.
+      QUEUE_TIMEOUT_MINUTES: ${{ vars.BENCHMARK_QUEUE_TIMEOUT_MINUTES || 150 }}
       RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1

@@ -527,7 +527,7 @@ cargo build -p benchmark --release
 `--base` is optional: without it the section shows the change build alone, with the "No Baseline
 run produced data" note. `--release <folder|zip|url>` adds the latest release as a third build and
 its table; a release whose download, unzip or warm-up fails is left out with a warning and
-`release_not_measured.txt`, as in the workflow, while a mistyped `--release` stops the leg, as a
+`release_not_measured.txt`, as in the workflow, while a `--release` that is no folder, `.zip` or URL stops the leg, as a
 mistyped `--base` does.
 
 **The server** listens on `127.0.0.1` and `::1` only. The port is fixed (`--port`, `PERF_PORT`):
@@ -642,25 +642,14 @@ its merge commit.
 - **The base:** the newest passed `push` run on main that still has a web app, among the latest
   100; with `base_sha`, a passed main run of that commit. For main, the change is that newest main
   build and the base the latest release's.
-- **The latest release:** <a id="the-latest-release"></a>the newest GitHub deployment to the
-  `org` environment whose payload names `@dcl-regenesislabs/bevy-explorer-web` (`prefix`) at 100%
-  and whose newest `success` status no `failure` or `error` follows (a newer deployment may mark it
-  `inactive`; it stays the release): the record
-  [`bevy-explorer-rollout-manual.yml`](../../../../.github/workflows/bevy-explorer-rollout-manual.yml)
-  writes when it rolls a version out to decentraland.org. The deployment's own commit is where the
-  rollout was dispatched from, not the build: the build is the CI run its `version` names
-  (`<semver>-<CI run ID>.commit-<short commit>`; a newest release without that suffix fails the
-  run rather than fall back to an older one), which must be a CI run of that commit in this
-  repository and supplies the web app, kept 90 days on main. Neither its status nor its conclusion
-  matters: a release may roll out while its run is still going, and on main a failed guard does not
-  stop the web package from being published.
+- **The latest release** ([The latest release](#the-latest-release)): for main, the base; for a
+  pull request, a third build when it can be measured.
 - **The runners,** for each operating system the legs need and for Linux, which writes the report:
   from the change run when it has one, so a pull request that changes the runner is measured with
   its own, else from main's runs, searched as for the base (for main, main's newest push run that
   has it, which may be the release's; a given `change_sha`'s run is never searched: the runner reads
   both builds' files). A laptop whose operating system has no
   runner is left out, with a note in the report; without a Linux runner nothing runs.
-- **The latest release** ([The latest release](#the-latest-release)).
 - **The legs:** the fleet's laptops that `BENCHMARK_ENABLED_RUNNERS` enables, each with its runner
   and the web apps; their labels, which the report expects; and the runs per build.
 
@@ -670,28 +659,37 @@ The latest release is the web app every player gets at decentraland.org/play. *B
 Manual CDN rollout* (`bevy-explorer-rollout-manual.yml`) records each rollout as a GitHub deployment
 to the `org` environment, whose payload names the package `@dcl-regenesislabs/bevy-explorer-web`
 (`prefix`), the path (`play`), the rollout percentage and the npm version,
-`0.1.0-<CI run id>.commit-<short sha>`. Setup resolves it in four steps:
+`<semver>-<CI run ID>.commit-<short commit>`. Pull requests and main resolve it the same way:
 
 1. Among the `org` deployments, newest first and read 100 a page up to 10 pages, the first of
    that package at `play` and 100% that `github-actions[bot]` created as a `dcl/set-rollout` task
-   (the rollout workflow's token and action) and that was applied: its statuses include *success*
-   and the newest is *success* or *inactive* (a newer rollout can retire it). A partial rollout, a
-   failed one, one still in progress or a record made by hand is not the release.
-2. Its version names the *Bevy Explorer / CI* run that stamped and published the package: setup reads
-   that run and requires it to be a finished `push` or `workflow_dispatch` run of this repository
-   whose commit starts with the short sha. Its conclusion does not count: jobs cancelled after the
-   rollout leave the web app intact, and step 3 checks it.
+   (the rollout workflow's token and action), and whose newest *success* status no *failure* or
+   *error* follows (a newer rollout may mark it *inactive*; it stays the release). A partial
+   rollout, a failed one, one still in progress or a record made by hand is not the release.
+2. Its version names the *Bevy Explorer / CI* run that stamped and published the package; the
+   deployment's own commit is only where the rollout was dispatched from. That run must be a
+   `push` or `workflow_dispatch` run of this repository whose commit starts with the short commit.
+   Neither its status nor its conclusion counts: a release may roll out while its run is still
+   going, and jobs cancelled or a guard failed after the publish leave the web app intact.
 3. That run's `bevy-explorer-web-<sha>` artifact is the release build, and its `build-info.json`
-   must say the engine is optimized, as for the change and the base.
-4. Each leg gets the artifact and its run; the report header names the version and the commit.
+   must say the engine is optimized, as for the change and the base. CI keeps a main build's web
+   app 90 days.
 
-When any step fails (no rollout yet, a version that names no run, an expired artifact: CI keeps a
-main build's web app 90 days and a branch build's 7, an unoptimized build, a GitHub API error) or
-the release is the base build itself, the legs measure the change and the base only, and a note in the report says why the release was not
-compared. On a laptop, a release download or warm-up that fails drops the release from that leg
-only: `benchmark measure` gets `RELEASE_NOT_MEASURED` and writes `release_not_measured.txt`, and
-the report says in that section that the release was not measured there. Setup downloads up to
-three web app zips (change, base, release) and has 20 minutes.
+The callers differ only in what an unusable release means:
+
+- **Main** compares with the release, so a run of main that cannot use it fails with the reason
+  ([How a run starts](#how-a-run-starts)). A newest release whose version names no CI run fails
+  too, rather than fall back to an older release.
+- **A pull request** compares with it beside the base. When a step fails (no rollout yet, a
+  version that names no run, an expired or unoptimized build, a failed GitHub API read) or the
+  release is the base build itself, the legs measure the change and the base only, and a note in
+  the report says why the release was not compared. A response of an unexpected shape fails
+  setup instead. Each leg gets the artifact and its run; the report header names the version and
+  the commit. On a laptop, a release download, unzip or warm-up that fails drops the release from
+  that leg only: `benchmark measure` gets `RELEASE_NOT_MEASURED` and writes
+  `release_not_measured.txt`, and the report says in that section that the release was not
+  measured there. Setup downloads up to three web app zips (change, base, release) and has 20
+  minutes.
 
 **The report job** runs `benchmark report results` with `PR_NUMBER`, `CHANGE_DESCRIPTION`
 (`#<pr> at <commit>`, or `main at <commit>`), `BASE_DESCRIPTION` (`main at <commit>`, or
@@ -742,7 +740,8 @@ system in `FLEET` (`tooling/benchmark-inputs.py`) and its name in `MACHINES`
   keeps them optimized.
 - `BENCHMARK_RUNS`: measured runs per build, 1 to 3; 3 when unset. A manual run's `runs` overrides
   it.
-- `BENCHMARK_QUEUE_TIMEOUT_MINUTES`: the watchdog's limit, 60 when unset.
+- `BENCHMARK_QUEUE_TIMEOUT_MINUTES`: the watchdog's limit, 150 when unset: longer than a leg's
+  135-minute job, so a leg queued behind another run's leg on the same laptop is not cancelled.
 
 **The watchdog.** A leg sent to an offline, stuck or busy laptop waits in the queue, and a job's
 timeout counts only once it starts. The *Queue watchdog* job reads the run's jobs every minute;

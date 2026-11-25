@@ -206,6 +206,9 @@ fn leg(args: LegArgs, ctx: &Context) -> Result<i32, Failure> {
     // the release is optional, as in the workflow: one that cannot be fetched or warmed up is
     // left out and noted, and the change is still measured against the base
     let mut release_not_measured = false;
+    if let Some(release) = given(&args.release) {
+        app_source::check_source(release)?;
+    }
     let mut release_root = match given(&args.release) {
         Some(release) => optional_release(
             app_source::provision(release, &settings.out_dir.join(RELEASE_BUILD), &ctx.cancel),
@@ -233,21 +236,20 @@ fn leg(args: LegArgs, ctx: &Context) -> Result<i32, Failure> {
     Ok(0)
 }
 
-/// A release step's result: its value, or, when the disk or the network failed, a warning and
-/// none. A mistyped `--release`, a machine that cannot run and an interrupt stop the leg, as for
-/// the other builds.
+/// A release step's result: its value, or, on any failure but an interrupt (a download out of
+/// retries, a corrupt zip, a warm-up that did not run), a warning and none.
 fn optional_release<T>(
     result: Result<T, Failure>,
     not_measured: &mut bool,
 ) -> Result<Option<T>, Failure> {
     match result {
         Ok(value) => Ok(Some(value)),
-        Err(failure @ Failure::Failed(_)) => {
+        Err(Failure::Interrupted) => Err(Failure::Interrupted),
+        Err(failure) => {
             out::warn(format!("the latest release is not measured: {failure}"));
             *not_measured = true;
             Ok(None)
         }
-        Err(failure) => Err(failure),
     }
 }
 
@@ -644,6 +646,32 @@ mod tests {
             !check(&format!("{header}1,16.7,0\r\ntruncated")),
             "a cut row"
         );
+    }
+
+    #[test]
+    fn a_release_that_fails_for_any_reason_but_an_interrupt_is_left_out() {
+        for failure in [
+            Failure::usage("corrupt zip"),
+            Failure::cannot_run("download out of retries"),
+            Failure::Failed("disk full".into()),
+        ] {
+            let mut not_measured = false;
+            assert!(matches!(
+                optional_release::<()>(Err(failure), &mut not_measured),
+                Ok(None)
+            ));
+            assert!(not_measured);
+        }
+        let mut not_measured = false;
+        assert!(matches!(
+            optional_release::<()>(Err(Failure::Interrupted), &mut not_measured),
+            Err(Failure::Interrupted)
+        ));
+        assert!(!not_measured);
+        assert!(matches!(
+            app_source::check_source("no-such-folder-here"),
+            Err(Failure::Usage(_))
+        ));
     }
 
     #[test]

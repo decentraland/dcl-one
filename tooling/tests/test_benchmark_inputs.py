@@ -22,9 +22,9 @@ REPO = 'example/project'
 HEAD = 'a' * 40
 MERGE = 'b' * 40
 MAIN = ('c' * 40, 'd' * 40, 'e' * 40)
-RELEASE = '9' * 40
-RELEASE_VERSION = f'0.1.0-80.commit-{RELEASE[:7]}'
-MAIN_RELEASE = MAIN[2]
+# The latest release: main's CI run 88, rolled out to decentraland.org.
+RELEASE = MAIN[2]
+RELEASE_VERSION = f'0.1.0-88.commit-{RELEASE[:7]}'
 RUNNERS = ('windows-amd64', 'macos-arm64', 'linux-amd64')
 
 
@@ -49,37 +49,23 @@ class GitHub:
         self.main_runs = [ci_run(90 - n, sha, event='push', branch='main') for n, sha in enumerate(MAIN)]
         # A PR run's artifacts carry the merge commit it built; a main run's its own commit.
         self.artifacts = {100: artifacts(MERGE), **{run['id']: artifacts(run['head_sha']) for run in self.main_runs}}
-        # The latest release: run 80 on main, rolled out to decentraland.org; newest first.
-        self.release_run = ci_run(80, RELEASE, event='push', branch='main')
-        self.artifacts[80] = artifacts(RELEASE)
-        pr_rollout = {'prefix': inputs.PACKAGE, 'path': 'play', 'percentage': 100}
+        # GitHub deployments of the release environment, newest first; only 1 is the release. 9 was
+        # made by hand, 8 is still in progress, 7 is another package, 6 another path, 5 has no
+        # percentage, 3 is partial and 2, which names main's run 89, failed after it was applied.
         self.deployments = [
-            {'id': 9, 'creator': {'login': 'someone'}, 'payload': {**pr_rollout, 'version': '0.1.0-89.commit-9999990'}},
-            {'id': 8, 'payload': {**pr_rollout, 'version': '0.1.0-88.commit-8888888'}},
-            {'id': 7, 'payload': {**pr_rollout, 'prefix': '@dcl/other', 'version': '0.1.0-87.commit-7777777'}},
-            {'id': 6, 'payload': {**pr_rollout, 'path': 'other', 'version': '0.1.0-86.commit-6666666'}},
-            {'id': 5, 'payload': {'prefix': inputs.PACKAGE, 'path': 'play', 'version': '0.1.0-85.commit-5555555'}},
-            {'id': 4, 'payload': 'not an object'},
-            {'id': 3, 'payload': {**pr_rollout, 'percentage': 10, 'version': '0.1.0-81.commit-1111111'}},
-            {'id': 2, 'payload': {**pr_rollout, 'version': '0.1.0-82.commit-2222222'}},
-            {'id': 1, 'payload': {**pr_rollout, 'version': RELEASE_VERSION}},
+            rollout(9, f'0.1.0-90.commit-{MAIN[0][:7]}', creator='someone'),
+            rollout(8, f'0.1.0-90.commit-{MAIN[0][:7]}'),
+            rollout(7, '9.9.9-90.commit-ccccccc', package='@dcl/other'),
+            rollout(6, f'0.1.0-90.commit-{MAIN[0][:7]}', path='other'),
+            rollout(5, f'0.1.0-90.commit-{MAIN[0][:7]}', percentage=None),
+            {**rollout(4, ''), 'payload': 'not an object'},
+            rollout(3, f'0.1.0-90.commit-{MAIN[0][:7]}', percentage=10),
+            rollout(2, f'0.1.0-89.commit-{MAIN[1][:7]}'),
+            rollout(1, RELEASE_VERSION),
         ]
-        for deployment in self.deployments[1:]:
-            deployment['creator'] = {'login': 'github-actions[bot]'}
-        for deployment in self.deployments:
-            deployment['task'] = 'dcl/set-rollout'
-        # 9 was made by hand, 8 is still in progress, 2 failed; only the newest status of each counts
-        self.deployment_states = {9: 'success', 8: 'queued', 7: 'success', 6: 'success', 5: 'success', 4: 'success',
-                                  3: 'success', 2: 'failure', 1: 'success'}
+        # newest first; a plain state is a deployment that went straight to it, success by default
+        self.statuses = {8: 'queued', 2: ['failure', 'success']}
         self.expired = set()
-        # GitHub deployments of the release environment, newest first, as set-rollout-action writes
-        # them: the deployment's commit is where the rollout was dispatched from, here main's tip.
-        self.nightly_deployments = [
-            rollout(1, 'another-package', '9.9.9-90.commit-ccccccc'),
-            rollout(2, inputs.RELEASE_PACKAGE, '0.1.0-88.commit-eeeeeee'),
-            rollout(3, inputs.RELEASE_PACKAGE, '0.1.0-89.commit-ddddddd'),
-        ]
-        self.statuses = {}
         # build-info.json per web app, an optimized engine unless given here; None leaves it out.
         self.build_info = {}
         self.ids = {}
@@ -114,12 +100,10 @@ class GitHub:
         if match := re.fullmatch(rf'repos/{REPO}/deployments/([0-9]+)/statuses\?per_page=100', path):
             # newest first; a plain state is a deployment that went straight to it
             number = int(match.group(1))
-            states = self.statuses.get(number, self.deployment_states.get(number, 'success'))
+            states = self.statuses.get(number, 'success')
             return [{'state': state} for state in ([states] if isinstance(states, str) else states)]
         if match := re.fullmatch(rf'repos/{REPO}/actions/runs/([0-9]+)', path):
             run_id = int(match.group(1))
-            if run_id == self.release_run['id']:
-                return self.release_run
             for run in self.main_runs + self.change_runs:
                 if run['id'] == run_id:
                     return run
@@ -149,9 +133,15 @@ class GitHub:
                       if f'repos/{REPO}/actions/artifacts/{number}/zip' in self.calls)
 
 
-def rollout(number, package, version, percentage=100):
-    return {'id': number, 'sha': MAIN[0], 'payload': {'environment': 'org', 'prefix': package, 'version': version,
-                                                      'percentage': percentage, 'sha': MAIN[0]}}
+def rollout(number, version, package=inputs.RELEASE_PACKAGE, path='play', percentage=100,
+            creator='github-actions[bot]'):
+    """A deployment as the rollout workflow records it: its commit is where the rollout was dispatched
+    from, here main's tip."""
+    payload = {'environment': 'org', 'prefix': package, 'path': path, 'version': version, 'sha': MAIN[0]}
+    if percentage is not None:
+        payload['percentage'] = percentage
+    return {'id': number, 'sha': MAIN[0], 'creator': {'login': creator}, 'task': 'dcl/set-rollout',
+            'payload': payload}
 
 
 def completed(**changes):
@@ -188,7 +178,7 @@ class ResolverTest(Fixture):
             'runner_artifact': f'bevy-explorer-benchmark-macos-arm64-{MERGE}', 'runner_run_id': '100',
             'change_artifact': f'bevy-explorer-web-{MERGE}', 'change_run_id': '100',
             'base_artifact': f'bevy-explorer-web-{MAIN[0]}', 'base_run_id': '90',
-            'release_artifact': f'bevy-explorer-web-{RELEASE}', 'release_run_id': '80'})
+            'release_artifact': f'bevy-explorer-web-{RELEASE}', 'release_run_id': '88'})
         self.assertEqual((result['release_sha'], result['release_version']), (RELEASE, RELEASE_VERSION))
         self.assertEqual((result['report_runner_artifact'], result['report_runner_run_id']),
                          (f'bevy-explorer-benchmark-linux-amd64-{MERGE}', '100'))
@@ -204,14 +194,11 @@ class ResolverTest(Fixture):
             github.deployments[-1]['payload']['version'] = '1.2.3'
 
         def other_commit(github):
-            github.release_run['head_sha'] = 'f' * 40
-
-        def unfinished_run(github):
-            github.release_run['status'] = 'in_progress'
+            github.main_runs[2]['head_sha'] = 'f' * 40
 
         def is_base(github):
-            github.release_run['head_sha'] = MAIN[0]
-            github.deployments[-1]['payload']['version'] = f'0.1.0-80.commit-{MAIN[0][:7]}'
+            github.main_runs[2]['head_sha'] = MAIN[0]
+            github.deployments[-1]['payload']['version'] = f'0.1.0-88.commit-{MAIN[0][:7]}'
 
         def expired(github):
             github.expired = {f'bevy-explorer-web-{RELEASE}'}
@@ -220,26 +207,22 @@ class ResolverTest(Fixture):
             github.build_info = {f'bevy-explorer-web-{RELEASE}': {'engine': {'optimized': False}}}
 
         def no_api(github):
-            github.failures = [(r'actions/runs/80$', subprocess.CalledProcessError(1, 'gh'))]
+            github.failures = [(r'actions/runs/88$', subprocess.CalledProcessError(1, 'gh'))]
 
         def slow_zip(github):
             github.slow_zips = {f'bevy-explorer-web-{RELEASE}'}
 
         def too_many_artifacts(github):
-            github.paged_runs = {80}
-
-        def odd_shape(github):
-            del github.release_run['path']
+            github.paged_runs = {88}
 
         def deployments_error(github):
             github.failures = [(r'/deployments\?', subprocess.TimeoutExpired('gh', 60))]
 
         for change, note in ((no_rollout, 'No successful rollout'), (deployments_error, 'could not be read'), (unnamed_run, 'does not name the CI run'),
-                             (other_commit, 'is not a finished'), (unfinished_run, 'is not a finished'),
+                             (other_commit, 'is not a Bevy Explorer / CI run'),
                              (is_base, 'is the base build'), (expired, 'has expired'),
                              (unoptimized, 'is not optimized'), (no_api, 'could not be read'),
-                             (slow_zip, 'could not be read'), (too_many_artifacts, 'could not be read'),
-                             (odd_shape, 'could not be read')):
+                             (slow_zip, 'could not be read'), (too_many_artifacts, 'could not be read')):
             with self.subTest(change=change.__name__):
                 self.github = GitHub()
                 change(self.github)
@@ -252,19 +235,24 @@ class ResolverTest(Fixture):
                 self.assertIn('Not compared with the latest release', result['notes'])
                 self.assertIn(note, result['notes'])
 
-    def test_a_release_whose_ci_run_ended_cancelled_after_building_its_web_app_is_measured(self):
-        for conclusion in ('cancelled', 'failure'):
-            with self.subTest(conclusion=conclusion):
-                self.github.release_run['conclusion'] = conclusion
+    def test_an_unexpected_api_response_fails_the_step_instead_of_becoming_a_note(self):
+        del self.github.main_runs[2]['path']
+        with self.assertRaises(KeyError):
+            self.resolve()
+
+    def test_a_release_whose_ci_run_was_cancelled_or_is_still_going_is_measured_from_its_web_app(self):
+        for status, conclusion in (('completed', 'cancelled'), ('completed', 'failure'), ('in_progress', None)):
+            with self.subTest(status=status, conclusion=conclusion):
+                self.github.main_runs[2].update(status=status, conclusion=conclusion)
                 result = self.resolve()
                 self.assertEqual(result['release_version'], RELEASE_VERSION)
-                self.assertEqual(result['legs'][0]['release_run_id'], '80')
+                self.assertEqual(result['legs'][0]['release_run_id'], '88')
 
     def test_a_live_release_made_inactive_by_a_newer_rollout_is_still_the_release(self):
-        self.github.deployment_states[1] = ['inactive', 'success', 'in_progress', 'queued']
+        self.github.statuses[1] = ['inactive', 'success', 'in_progress', 'queued']
         self.assertEqual(self.resolve()['release_version'], RELEASE_VERSION)
         # never applied: not a release
-        self.github.deployment_states[1] = ['inactive', 'queued']
+        self.github.statuses[1] = ['inactive', 'queued']
         self.assertIn('No successful rollout', self.resolve()['notes'])
 
     def test_only_a_rollout_task_is_a_release(self):
@@ -273,10 +261,10 @@ class ResolverTest(Fixture):
 
     def test_the_release_is_searched_page_by_page_until_the_first_rollout(self):
         partial = {'creator': {'login': 'github-actions[bot]'}, 'task': 'dcl/set-rollout',
-                   'payload': {'prefix': inputs.PACKAGE, 'path': 'play', 'percentage': 10, 'version': 'x'}}
+                   'payload': {'prefix': inputs.RELEASE_PACKAGE, 'path': 'play', 'percentage': 10, 'version': 'x'}}
         newer = [{**partial, 'id': 1000 + n} for n in range(150)]
         self.github.deployments = newer + self.github.deployments
-        self.github.deployment_states.update({row['id']: 'success' for row in newer})
+        self.github.statuses.update({row['id']: 'success' for row in newer})
         result = self.resolve()
         self.assertEqual(result['release_version'], RELEASE_VERSION)
         pages = [call for call in self.github.calls if '/deployments?' in call]
@@ -412,11 +400,6 @@ class ResolverTest(Fixture):
 
 
 class MainTest(Fixture):
-    def setUp(self):
-        super().setUp()
-        self.github.deployments = self.github.nightly_deployments
-        self.github.deployment_states.clear()
-
     """Main's newest web build against the latest release: on a schedule, or by hand without a pull request."""
 
     def test_a_scheduled_run_measures_main_against_the_newest_release_rollout(self):
@@ -424,17 +407,17 @@ class MainTest(Fixture):
         self.assertEqual(result['issue_title'], inputs.MAIN_ISSUE)
         self.assertTrue(result['run'])
         self.assertEqual((result['pr'], result['change_sha'], result['base_sha'], result['runs']),
-                         ('', MAIN[0], MAIN_RELEASE, '3'))
+                         ('', MAIN[0], RELEASE, '3'))
         self.assertEqual((result['change_description'], result['base_description']),
-                         (f'main at {MAIN[0]}', f'release 0.1.0-88.commit-eeeeeee at {MAIN_RELEASE}'))
+                         (f'main at {MAIN[0]}', f'release 0.1.0-88.commit-eeeeeee at {RELEASE}'))
         self.assertEqual(result['retention_days'], '90')
         self.assertEqual(result['legs'][0], {
             'label': 'intel-i5-chrome', 'runs_on': 'intel-i5', 'os': 'windows',
             'runner_artifact': f'bevy-explorer-benchmark-windows-amd64-{MAIN[0]}', 'runner_run_id': '90',
             'change_artifact': f'bevy-explorer-web-{MAIN[0]}', 'change_run_id': '90',
-            'base_artifact': f'bevy-explorer-web-{MAIN_RELEASE}', 'base_run_id': '88',
+            'base_artifact': f'bevy-explorer-web-{RELEASE}', 'base_run_id': '88',
             'release_artifact': '', 'release_run_id': ''})
-        self.assertEqual(self.resolve('workflow_dispatch', {'inputs': {'pr': ''}})['base_sha'], MAIN_RELEASE)
+        self.assertEqual(self.resolve('workflow_dispatch', {'inputs': {'pr': ''}})['base_sha'], RELEASE)
         with self.assertRaises(ValueError):
             self.resolve('workflow_dispatch', {'inputs': {'pr': ' '}})
 
@@ -448,31 +431,32 @@ class MainTest(Fixture):
     def test_the_release_is_the_build_its_version_names_not_the_commit_the_rollout_ran_from(self):
         result = self.resolve('schedule', {})
         self.assertEqual(self.github.deployments[1]['sha'], MAIN[0])
-        self.assertEqual((result['base_sha'], result['legs'][0]['base_run_id']), (MAIN_RELEASE, '88'))
+        self.assertEqual((result['base_sha'], result['legs'][0]['base_run_id']), (RELEASE, '88'))
 
     def test_a_release_built_by_a_run_whose_guard_failed_is_still_measured(self):
         self.github.main_runs[2]['conclusion'] = 'failure'
         result = self.resolve('schedule', {})
         self.assertTrue(result['run'])
-        self.assertEqual(result['base_sha'], MAIN_RELEASE)
+        self.assertEqual(result['base_sha'], RELEASE)
 
     def test_an_unoptimized_release_build_names_its_commit(self):
-        self.github.build_info = {f'bevy-explorer-web-{MAIN_RELEASE}': {'engine': {'optimized': False}}}
-        self.assertIn(f'({MAIN_RELEASE}, CI run 88)', self.resolve('schedule', {})['notes'])
+        self.github.build_info = {f'bevy-explorer-web-{RELEASE}': {'engine': {'optimized': False}}}
+        self.assertIn(f'({RELEASE}, CI run 88)', self.resolve('schedule', {})['notes'])
 
-    def test_a_partial_or_unsuccessful_rollout_is_not_the_release(self):
-        self.github.deployments.insert(1, rollout(4, inputs.RELEASE_PACKAGE, '0.1.0-90.commit-ccccccc', percentage=10))
-        self.github.deployments.insert(1, rollout(5, inputs.RELEASE_PACKAGE, '0.1.0-90.commit-ccccccc'))
-        self.github.statuses[5] = ['failure', 'success']
-        self.assertEqual(self.resolve('schedule', {})['base_sha'], MAIN_RELEASE)
-
-    def test_a_release_a_newer_deployment_marked_inactive_is_still_the_release(self):
-        self.github.deployments.insert(1, rollout(4, inputs.RELEASE_PACKAGE, '0.1.0-90.commit-ccccccc', percentage=10))
-        self.github.statuses[2] = ['inactive', 'success', 'in_progress']
-        self.assertEqual(self.resolve('schedule', {})['base_sha'], MAIN_RELEASE)
-        # Never successful: the next older complete rollout is the release.
-        self.github.statuses[2] = ['inactive', 'in_progress']
+    def test_the_nightly_and_a_pr_take_the_same_release(self):
+        # every deployment newer than the release is not one, whatever the caller
+        self.assertEqual(self.resolve('schedule', {})['base_sha'], RELEASE)
+        self.assertEqual(self.resolve()['release_sha'], RELEASE)
+        # applied, then retired by a newer rollout: still the release; applied, failed, then retired: not
+        self.github.statuses[1] = ['inactive', 'success', 'in_progress']
+        self.assertEqual(self.resolve('schedule', {})['base_sha'], RELEASE)
+        self.github.statuses[1] = ['inactive', 'failure', 'success']
+        self.assertIn('rollout', self.resolve('schedule', {})['notes'])
+        self.assertIn('No successful rollout', self.resolve()['notes'])
+        # the newer run 89 once its rollout succeeds
+        self.github.statuses[2] = 'success'
         self.assertEqual(self.resolve('schedule', {})['base_sha'], MAIN[1])
+        self.assertEqual(self.resolve()['release_sha'], MAIN[1])
 
     def test_the_fleet_switched_off_skips_while_no_enabled_laptop_fails(self):
         for enabled in ('none', ' None '):
@@ -483,7 +467,7 @@ class MainTest(Fixture):
 
     def test_main_older_than_a_release_whose_guard_failed_is_not_measured_backwards(self):
         # The release is CI run 89, which failed a guard; main's newest passed web build is run 88.
-        self.github.deployments = [rollout(2, inputs.RELEASE_PACKAGE, '0.1.0-89.commit-ddddddd')]
+        self.github.deployments = [rollout(20, f'0.1.0-89.commit-{MAIN[1][:7]}')]
         self.github.main_runs[1]['conclusion'] = 'failure'
         self.github.artifacts[90] = artifacts(MAIN[0], web=False)
         result = self.resolve('schedule', {})
@@ -498,25 +482,25 @@ class MainTest(Fixture):
     def test_no_release_rollout_or_an_expired_release_build_is_the_note(self):
         self.github.deployments = self.github.deployments[:1]
         self.assertIn('rollout', self.resolve('schedule', {})['notes'])
-        self.github.deployments = [rollout(2, inputs.RELEASE_PACKAGE, '0.1.0-88.commit-eeeeeee')]
-        self.github.expired = {f'bevy-explorer-web-{MAIN_RELEASE}'}
+        self.github.deployments = [rollout(20, RELEASE_VERSION)]
+        self.github.expired = {f'bevy-explorer-web-{RELEASE}'}
         result = self.resolve('schedule', {})
         self.assertFalse(result['run'])
         self.assertIn('has expired', result['notes'])
-        self.github.deployments = [rollout(2, inputs.RELEASE_PACKAGE, '0.1.0-88.commit-ddddddd')]
+        self.github.deployments = [rollout(20, f'0.1.0-88.commit-{MAIN[1][:7]}')]
         self.assertIn('not a Bevy Explorer / CI run', self.resolve('schedule', {})['notes'])
         # A run of another repository is not found.
-        self.github.deployments = [rollout(2, inputs.RELEASE_PACKAGE, '0.1.0-12345.commit-eeeeeee')]
+        self.github.deployments = [rollout(20, f'0.1.0-12345.commit-{RELEASE[:7]}')]
         self.assertIn('not a Bevy Explorer / CI run', self.resolve('schedule', {})['notes'])
 
     def test_the_newest_release_whose_version_names_no_run_fails_instead_of_an_older_base(self):
-        self.github.deployments.insert(1, rollout(4, inputs.RELEASE_PACKAGE, '0.2.0'))
+        self.github.deployments.insert(0, rollout(10, '0.2.0'))
         with self.assertRaisesRegex(ValueError, 'names no CI run'):
             self.resolve('schedule', {})
 
     def test_a_release_whose_ci_run_is_still_going_is_measured_from_its_web_app(self):
         self.github.main_runs[2].update(status='in_progress', conclusion=None)
-        self.assertEqual(self.resolve('schedule', {})['base_sha'], MAIN_RELEASE)
+        self.assertEqual(self.resolve('schedule', {})['base_sha'], RELEASE)
 
     def test_a_manual_run_with_the_same_commit_on_both_sides_fails_with_a_note(self):
         event = {'inputs': {'pr': '', 'base_sha': MAIN[0]}}
