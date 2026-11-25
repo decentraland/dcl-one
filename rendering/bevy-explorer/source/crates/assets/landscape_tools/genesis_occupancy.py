@@ -4,8 +4,9 @@ Reads the `WorldManifest.json` Decentraland's places pipeline publishes for each
 file unity-explorer's `WorldManifestProvider` downloads) and writes
 `crates/scene_runner/src/genesis_occupancy/<environment>.occupancy`:
 
-    b"OCC1", then min x, min y, width and height as little-endian i32, then one byte per parcel,
-    rows from min y upwards, x ascending: 0 unlisted, 1 empty, 2 occupied (roads included).
+    b"OCC2", then min x, min y, width and height as little-endian i32, then two bits per parcel,
+    rows from min y upwards, x ascending, four parcels to a byte from its low bits: 0 unlisted,
+    1 empty, 2 occupied (roads included).
 
 Run from anywhere with Python 3.10 or later and no other dependency:
 
@@ -49,7 +50,15 @@ def snapshot(manifest: dict) -> bytes:
     for value, listed in ((EMPTY, empty), (OCCUPIED, occupied)):
         for x, y in listed:
             cells[(y - min_y) * width + (x - min_x)] = value
-    return b"OCC1" + struct.pack("<4i", min_x, min_y, width, height) + bytes(cells)
+    return b"OCC2" + struct.pack("<4i", min_x, min_y, width, height) + pack(cells)
+
+
+def pack(cells: bytes) -> bytes:
+    """Four two-bit values to a byte, the first in the low bits."""
+    out = bytearray((len(cells) + 3) // 4)
+    for index, value in enumerate(cells):
+        out[index // 4] |= value << (index % 4 * 2)
+    return bytes(out)
 
 
 def main() -> None:

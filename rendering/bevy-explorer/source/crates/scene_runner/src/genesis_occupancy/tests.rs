@@ -2,12 +2,7 @@ use super::*;
 
 /// A 3x2 snapshot from (-1, 5): rows y = 5 then y = 6.
 fn snapshot(cells: [u8; 6]) -> &'static [u8] {
-    let mut bytes = MAGIC.to_vec();
-    for value in [-1i32, 5, 3, 2] {
-        bytes.extend_from_slice(&value.to_le_bytes());
-    }
-    bytes.extend_from_slice(&cells);
-    bytes.leak()
+    GenesisOccupancy::encode(IVec2::new(-1, 5), IVec2::new(3, 2), &cells)
 }
 
 #[test]
@@ -43,6 +38,8 @@ fn lists_the_occupied_parcels() {
 #[test]
 fn rejects_what_is_not_a_whole_snapshot() {
     let whole = snapshot([0; 6]);
+    // six parcels take two bytes
+    assert_eq!(whole.len(), 4 + 16 + 2);
     assert!(GenesisOccupancy::parse(&whole[..whole.len() - 1]).is_none());
     assert!(GenesisOccupancy::parse(&whole[..10]).is_none());
     let mut wrong_magic = whole.to_vec();

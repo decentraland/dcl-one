@@ -17,23 +17,19 @@ use scene_runner::initialize_scene::{PointerResult, ScenePointers};
 
 use super::{
     add_spawn_systems,
-    layout::TreeLayout,
+    layout::{TreeLayout, TreeLayoutLoader, TreeLayouts, GENESIS_LABEL, WORLDS_LABEL},
     material::{Surface, SURFACES, TERRAIN_TEXTURE},
     prototypes::PROTOTYPES,
-    tree_radius_parcels, LandscapeTreeAssets, Tree, ASSET_DIR,
+    tree_radius_parcels, LandscapeTreeAssets, Tree, ASSET_DIR, LAYOUT,
 };
 use crate::{
     solids::{prototype_solids, Solid},
     terrain::TerrainSurface,
 };
 
-const GENESIS: &[u8] = include_bytes!(concat!(
+const LAYOUT_FILE: &[u8] = include_bytes!(concat!(
     env!("DCL_ONE_ROOT"),
-    "/rendering/bevy-explorer/source/crates/assets/src/assets/landscape/layout/genesis.trees"
-));
-const WORLDS: &[u8] = include_bytes!(concat!(
-    env!("DCL_ONE_ROOT"),
-    "/rendering/bevy-explorer/source/crates/assets/src/assets/landscape/layout/worlds.trees"
+    "/rendering/bevy-explorer/source/crates/assets/src/assets/landscape/layout/landscape.trees"
 ));
 
 /// A headless app running `update_trees` over a settled terrain from parcel -`extent` to
@@ -64,8 +60,8 @@ fn app(extent: i32, realm: (IVec2, IVec2), player: Vec3) -> App {
     app.add_plugins((MinimalPlugins, AssetPlugin::default()))
         .init_asset::<TreeLayout>();
     let mut layouts = app.world_mut().resource_mut::<Assets<TreeLayout>>();
-    let genesis = layouts.add(TreeLayout::parse(GENESIS).unwrap());
-    let worlds = layouts.add(TreeLayout::parse(WORLDS).unwrap());
+    let genesis = layouts.add(layout(false));
+    let worlds = layouts.add(layout(true));
     app.insert_resource(LandscapeTreeAssets {
         genesis,
         worlds,
@@ -137,8 +133,9 @@ fn spawned(app: &mut App) -> Vec<Spawned> {
         .collect()
 }
 
-fn layout(bytes: &[u8]) -> TreeLayout {
-    TreeLayout::parse(bytes).unwrap()
+/// Genesis City's layout, or the Worlds' when `worlds`.
+fn layout(worlds: bool) -> TreeLayout {
+    TreeLayout::parse(LAYOUT_FILE, worlds).unwrap()
 }
 
 /// Parcel (-1,-1) holds three Genesis instances, a bush of each kind and a stone.
@@ -158,10 +155,17 @@ fn tree_assets_load_embedded() {
     .init_asset::<Mesh>()
     .init_asset::<StandardMaterial>()
     .init_asset::<SkinnedMeshInverseBindposes>()
-    .init_asset::<AnimationClip>();
+    .init_asset::<AnimationClip>()
+    .init_asset::<TreeLayout>()
+    .init_asset::<TreeLayouts>()
+    .init_asset_loader::<TreeLayoutLoader>();
     app.finish();
     app.cleanup();
     let server = app.world().resource::<AssetServer>().clone();
+    let layouts: Vec<Handle<TreeLayout>> = [GENESIS_LABEL, WORLDS_LABEL]
+        .into_iter()
+        .map(|label| server.load(format!("{LAYOUT}#{label}")))
+        .collect();
     let models: Vec<Handle<Gltf>> = PROTOTYPES
         .iter()
         .map(|prototype| server.load(format!("{ASSET_DIR}/{}.glb", prototype.asset)))
@@ -184,6 +188,11 @@ fn tree_assets_load_embedded() {
             .map(|handle| (handle.id().untyped(), handle.path()))
             .chain(
                 textures
+                    .iter()
+                    .map(|handle| (handle.id().untyped(), handle.path())),
+            )
+            .chain(
+                layouts
                     .iter()
                     .map(|handle| (handle.id().untyped(), handle.path())),
             )
@@ -219,6 +228,17 @@ fn tree_assets_load_embedded() {
         );
     }
 
+    // the file holds both realms' layouts
+    let loaded = app.world().resource::<Assets<TreeLayout>>();
+    for handle in &layouts {
+        assert_eq!(
+            loaded.get(handle).unwrap().len(),
+            303_020,
+            "{:?}",
+            handle.path()
+        );
+    }
+
     // each model's material slots carry the surface names, in the order the prototypes list them
     let gltfs = app.world().resource::<Assets<Gltf>>();
     for (prototype, handle) in PROTOTYPES.iter().zip(&models) {
@@ -251,7 +271,7 @@ fn spawns_layout_instances_on_empty_parcel() {
     resolve(&mut app, block(PARCEL, 1), PointerResult::Nothing);
     app.update();
 
-    let genesis = layout(GENESIS);
+    let genesis = layout(false);
     let expected = genesis.instances(PARCEL);
     assert_eq!(expected.len(), 3);
     let surface = app.world().resource::<TerrainSurface>();
@@ -316,8 +336,8 @@ fn unknown_parcel_has_no_trees() {
 fn realm_switch_swaps_layout() {
     let mut app = open_land(6, Vec3::ZERO);
     app.update();
-    let genesis = layout(GENESIS);
-    let worlds = layout(WORLDS);
+    let genesis = layout(false);
+    let worlds = layout(true);
     let check = |trees: &[Spawned], layout: &TreeLayout| {
         assert!(!trees.is_empty());
         for tree in trees {
@@ -344,13 +364,17 @@ fn realm_switch_swaps_layout() {
     app.update();
     let after = spawned(&mut app);
     check(&after, &worlds);
-    let positions = |trees: &[Spawned]| {
+    // the two layouts place the same instances, each at its own scales
+    let scales = |trees: &[Spawned]| {
         trees
             .iter()
-            .map(|tree| tree.transform.translation.xz().to_array().map(f32::to_bits))
-            .collect::<Vec<_>>()
+            .map(|tree| ((tree.parcel, tree.index), tree.transform.scale))
+            .collect::<HashMap<_, _>>()
     };
-    assert_ne!(positions(&before), positions(&after));
+    let (before, after) = (scales(&before), scales(&after));
+    assert!(after
+        .iter()
+        .any(|(key, scale)| before.get(key).is_some_and(|old| old != scale)));
 }
 
 #[test]
@@ -362,7 +386,7 @@ fn bush01_has_no_solid() {
 
     let mut app = open_land(6, Vec3::ZERO);
     app.update();
-    let genesis = layout(GENESIS);
+    let genesis = layout(false);
     let trees = spawned(&mut app);
     let prototype = |tree: &Spawned| genesis.instances(tree.parcel)[tree.index as usize].prototype;
     assert!(trees.iter().any(|tree| prototype(tree) == 0));
@@ -504,7 +528,7 @@ fn realm_switch_clears_trees_while_the_layout_loads() {
     app.update();
     let trees = spawned(&mut app);
     assert!(!trees.is_empty());
-    let worlds = layout(WORLDS);
+    let worlds = layout(true);
     for tree in &trees {
         let expected =
             worlds.instances(tree.parcel)[tree.index as usize].transform(tree.parcel, |_, _| 0.0);

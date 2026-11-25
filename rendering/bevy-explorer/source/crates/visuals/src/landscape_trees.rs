@@ -28,7 +28,9 @@ use crate::{
     solids::{prototype_solids, Solid},
     terrain::{TerrainSet, TerrainSurface},
 };
-use layout::{hidden_by_occupancy, TreeLayout, TreeLayoutLoader};
+use layout::{
+    hidden_by_occupancy, TreeLayout, TreeLayoutLoader, TreeLayouts, GENESIS_LABEL, WORLDS_LABEL,
+};
 use material::{
     add_mips, stone_material, surface_material, StoneMaterial, Surface, SurfaceMaterial,
     TreeMaterial, TreeSway, ALL_SURFACES,
@@ -40,6 +42,8 @@ pub(crate) mod material;
 pub(crate) mod prototypes;
 
 const ASSET_DIR: &str = "embedded://landscape/trees";
+/// Both realms' tree layouts (`layout`).
+const LAYOUT: &str = "embedded://landscape/layout/landscape.trees";
 
 pub(crate) struct LandscapeTreesPlugin;
 
@@ -47,6 +51,7 @@ impl Plugin for LandscapeTreesPlugin {
     fn build(&self, app: &mut App) {
         embed_shaders(app);
         app.init_asset::<TreeLayout>()
+            .init_asset::<TreeLayouts>()
             .init_asset_loader::<TreeLayoutLoader>()
             .add_plugins((
                 MaterialPlugin::<TreeMaterial>::default(),
@@ -196,8 +201,8 @@ fn setup(
         asset_server.load(GltfAssetLabel::Scene(0).from_asset(path))
     });
     commands.insert_resource(LandscapeTreeAssets {
-        genesis: asset_server.load("embedded://landscape/layout/genesis.trees"),
-        worlds: asset_server.load("embedded://landscape/layout/worlds.trees"),
+        genesis: asset_server.load(format!("{LAYOUT}#{GENESIS_LABEL}")),
+        worlds: asset_server.load(format!("{LAYOUT}#{WORLDS_LABEL}")),
         scenes,
     });
     commands.insert_resource(TreeMaterials {

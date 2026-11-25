@@ -5,16 +5,17 @@
 //! around the player resolve. The published file cannot be fetched from the web build: its bucket
 //! answers CORS for one origin only.
 //!
-//! A snapshot is `OCC1`, then min x, min y, width and height as little-endian i32, then one byte
-//! per parcel, rows from min y upwards with x ascending: 0 unlisted, 1 empty, 2 occupied (roads
-//! are occupied). `crates/assets/landscape_tools/genesis_occupancy.py` writes them.
+//! A snapshot is `OCC2`, then min x, min y, width and height as little-endian i32, then two bits
+//! per parcel, rows from min y upwards with x ascending, four parcels to a byte from its low bits:
+//! 0 unlisted, 1 empty, 2 occupied (roads are occupied).
+//! `crates/assets/landscape_tools/genesis_occupancy.py` writes them.
 
 use bevy::math::IVec2;
 use common::{base_domain, terrain::Occupancy};
 
 static ORG: &[u8] = include_bytes!("genesis_occupancy/org.occupancy");
 static ZONE: &[u8] = include_bytes!("genesis_occupancy/zone.occupancy");
-const MAGIC: &[u8; 4] = b"OCC1";
+const MAGIC: &[u8; 4] = b"OCC2";
 const EMPTY: u8 = 1;
 const OCCUPIED: u8 = 2;
 
@@ -39,7 +40,8 @@ impl GenesisOccupancy {
             rest = tail;
         }
         let [x, y, width, height] = header;
-        if width <= 0 || height <= 0 || rest.len() != width as usize * height as usize {
+        if width <= 0 || height <= 0 || rest.len() != (width as usize * height as usize).div_ceil(4)
+        {
             return None;
         }
         Some(Self {
@@ -64,7 +66,7 @@ impl GenesisOccupancy {
         if offset.cmplt(IVec2::ZERO).any() || offset.cmpge(self.size).any() {
             return None;
         }
-        match self.cells[(offset.y * self.size.x + offset.x) as usize] {
+        match self.cell((offset.y * self.size.x + offset.x) as usize) {
             EMPTY => Some(Occupancy::Empty),
             OCCUPIED => Some(Occupancy::Occupied),
             _ => None,
@@ -74,14 +76,36 @@ impl GenesisOccupancy {
     /// Every parcel the snapshot lists as occupied.
     pub fn occupied(&self) -> impl Iterator<Item = IVec2> + '_ {
         let (min, width) = (self.min, self.size.x);
-        self.cells
-            .iter()
-            .enumerate()
-            .filter(|(_, cell)| **cell == OCCUPIED)
-            .map(move |(index, _)| {
+        (0..(self.size.x * self.size.y) as usize)
+            .filter(|index| self.cell(*index) == OCCUPIED)
+            .map(move |index| {
                 let index = index as i32;
                 min + IVec2::new(index % width, index / width)
             })
+    }
+
+    /// The two bits of the parcel at `index` in the rows.
+    fn cell(&self, index: usize) -> u8 {
+        (self.cells[index / 4] >> (index % 4 * 2)) & 0b11
+    }
+
+    /// A snapshot of `size` parcels from `min` holding `cells`, one value per parcel in the
+    /// snapshot's order, for tests.
+    #[cfg(test)]
+    pub(crate) fn encode(min: IVec2, size: IVec2, cells: &[u8]) -> &'static [u8] {
+        assert_eq!(cells.len(), (size.x * size.y) as usize);
+        let mut bytes = MAGIC.to_vec();
+        for value in [min.x, min.y, size.x, size.y] {
+            bytes.extend_from_slice(&value.to_le_bytes());
+        }
+        for four in cells.chunks(4) {
+            let packed = four
+                .iter()
+                .enumerate()
+                .fold(0, |packed, (at, cell)| packed | ((cell & 0b11) << (at * 2)));
+            bytes.push(packed);
+        }
+        bytes.leak()
     }
 }
 

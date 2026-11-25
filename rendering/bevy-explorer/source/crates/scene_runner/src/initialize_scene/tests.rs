@@ -1169,12 +1169,8 @@ fn a_realm_change_refused_in_a_preview_leaves_no_landing_for_the_next_one() {
 
 /// A 2x2 Genesis occupancy from parcel (0, 0): rows y = 0 then y = 1.
 fn genesis_occupancy(cells: [u8; 4]) -> GenesisOccupancy {
-    let mut bytes = b"OCC1".to_vec();
-    for value in [0i32, 0, 2, 2] {
-        bytes.extend_from_slice(&value.to_le_bytes());
-    }
-    bytes.extend_from_slice(&cells);
-    GenesisOccupancy::parse(bytes.leak()).unwrap()
+    let bytes = GenesisOccupancy::encode(IVec2::ZERO, IVec2::splat(2), &cells);
+    GenesisOccupancy::parse(bytes).unwrap()
 }
 
 #[test]
