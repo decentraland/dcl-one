@@ -152,8 +152,8 @@ This is the order in which a production node stops reading trades from marketpla
 transactions-server. Step 2 is independent of the others, but it must land before transactions-server retires.
 
 1. Deploy a build that stores each V3 trade's digest (`shop.trades.trade_digest`) and run `catalyst schema migrate`.
-   Every route over `shop.trades` waits for the trade-events index to be current on both networks
-   (`MARKETPLACE_TRADE_EVENTS_INDEX_ENABLED`).
+   Every route that lists, prices or reports trade status waits for the trade-events index to be current on both
+   networks (`MARKETPLACE_TRADE_EVENTS_INDEX_ENABLED`).
 2. Provision the relay's own signer: `OZ_RELAYER_URL`, `OZ_RELAYER_ID` and `OZ_RELAYER_API_KEY`, or
    `META_TX_BROADCAST_ENABLED=true` with `RELAYER_PRIVATE_KEY_FILE` and `RPC_ENDPOINT_POLYGON`. Then leave
    `TRANSACTIONS_UPSTREAM_URL` unset; a Polygon mainnet relay refuses to start with it.
