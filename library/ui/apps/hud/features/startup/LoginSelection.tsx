@@ -4,9 +4,9 @@
 // meanwhile (`inProgress`).
 //
 // Laid out on the startup screens' canvas, its 1080 rows centred vertically.
-import { Button, Spinner } from '@dcl/one-ui'
+import { Button, Spinner, SubmitField } from '@dcl/one-ui'
 import { useEffect, useRef, useState } from 'react'
-import { MaskIcon, SubmitField } from '../../design'
+import { MaskIcon } from '../../design'
 import { EMAIL_MAX, EMAIL_PATTERN } from '@explorer-core/features/auth/email'
 import { emailLoginErrorCode } from '@explorer-core/features/auth/thirdweb'
 import type { LoginMethod } from '@explorer-core/features/auth/sso'
@@ -121,7 +121,7 @@ export function LoginSelection({
                 type="email"
                 autoComplete="email"
                 placeholder="your@email.com"
-                icon={envelope}
+                icon={<MaskIcon src={envelope} size={24} />}
                 maxLength={EMAIL_MAX}
                 value={email}
                 onChange={(next) => {
@@ -133,7 +133,7 @@ export function LoginSelection({
                 canSubmit={valid && !flow.busy}
                 busy={sending}
                 error={invalid ? 'Invalid email' : null}
-                errorIcon={warning}
+                errorIcon={<MaskIcon src={warning} size={15} />}
                 autoFocus
               />
             </div>

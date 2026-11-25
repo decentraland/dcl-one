@@ -20,7 +20,7 @@ export const SHOWCASE_INDEX = [
   { name: 'Typography', title: 'Typography (Inter)', components: [] },
   { name: 'Radii', title: 'Radii', components: [] },
   { name: 'ArmedButton', title: "ArmedButton (a confirm that spends or gives away what can't be taken back: SEND GIFT, SEND TIP, BUY ITEM)", components: ['ArmedButton'] },
-  { name: 'SignIn', title: 'Sign-in: SubmitField, method buttons, CodeInput, chase spinner', components: ['SubmitField'] },
+  { name: 'SignIn', title: 'Sign-in: SubmitField, method buttons, CodeInput, chase spinner', components: [] },
   { name: 'LogoPattern', title: 'Logo pattern (the loading and sign-in backdrop)', components: ['LogoPattern'] },
   { name: 'Dialogs', title: 'Dialogs (imperative popup layer — showDialog / showConfirm)', components: ['PopupHost'] },
   { name: 'Modal', title: 'Modal (the dialog card: ModalShell, or Modal with ModalTitle and ModalActions)', components: ['Modal', 'ModalTitle', 'ModalActions', 'ModalShell'] },

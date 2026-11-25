@@ -6,7 +6,7 @@
 // features import them: that test watches the entry. Sections use local data only: no network,
 // wallet or engine call.
 
-import { Button, CharCounter, CodeInput, CountBadge, FieldLabel, Slider, Spinner, Switch } from '@dcl/one-ui'
+import { Button, CharCounter, CodeInput, CountBadge, FieldLabel, Slider, Spinner, SubmitField, Switch } from '@dcl/one-ui'
 import { useId, useRef, useState, useSyncExternalStore } from 'react'
 import { getHudScale, subscribeHudScale } from '@explorer-core/lib/hudScale'
 import {
@@ -60,7 +60,6 @@ import {
   showDialog,
   showToast,
   Submenu,
-  SubmitField,
   SwapLabel,
   Tabs,
   TextArea,
