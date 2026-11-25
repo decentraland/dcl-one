@@ -25,6 +25,7 @@ fn options(case: &str) -> ReportOptions {
         pr: None,
         change: None,
         base: None,
+        release: None,
         run_url: None,
         expected_runs: 3,
         expected_labels: Vec::new(),
@@ -125,6 +126,176 @@ fn ok_the_whole_report_with_its_header() {
 
     let expected = std::fs::read_to_string(fixture("ok.md")).unwrap();
     assert_eq!(report.markdown, expected.replace("\r\n", "\n"));
+}
+
+#[test]
+fn release_each_machine_also_compares_the_change_with_the_latest_release() {
+    let mut options = options("release");
+    options.release = Some("`0.1.0-80.commit-9999999`".into());
+    let report = build(&options);
+    assert!(report.has_data);
+    has_line(
+        &report,
+        "**Overall: 🟢 CPU average improved on Apple M1 (Chrome), Intel Core i5 (Chrome)**",
+    );
+    // the release is 4 ms slower on CPU than the baseline, so it has verdicts of its own, and
+    // the Overall line above stays the baseline's
+    has_line(
+        &report,
+        "**Against the latest release: 🟢 CPU average improved on Apple M1 (Chrome), Intel Core i5 (Chrome); CPU 1% worst improved on Apple M1 (Chrome), Intel Core i5 (Chrome)**",
+    );
+    assert!(report
+        .markdown
+        .contains("latest release: `0.1.0-80.commit-9999999`"));
+
+    // the release runs are the baseline's with 4 ms more CPU time a frame
+    let apple = section(&report, "Apple M1 (Chrome)");
+    let table = apple
+        .iter()
+        .position(|l| *l == "**Against the latest release**")
+        .unwrap_or_else(|| panic!("no release table\n{apple:#?}"));
+    assert_eq!(
+        &apple[table + 2..table + 11],
+        &[
+            "| Metric | Release | Change | Δ | Result |",
+            "| --- | ---: | ---: | ---: | :--- |",
+            "| Samples | 10 (×3) | 10 (×3) | | |",
+            "| CPU average | 27.0 ms (26.9–27.1) | 21.0 ms (20.9–21.1) | -6.0 ms | 🟢 22% faster |",
+            "| CPU 1% worst | 36.0 ms (35.4–36.6) | 30.0 ms (29.0–31.0) | -6.0 ms | 🟢 17% faster |",
+            "| CPU 0.1% worst | 36.0 ms (35.4–36.6) | 30.0 ms (29.0–31.0) | -6.0 ms | — informational |",
+            "| GPU average | 6.4 ms (6.3–6.5) | 6.4 ms (6.3–6.5) | 0.0 ms | ⚠️ no verdict — GPU timing unreliable on Metal |",
+            "| GPU 1% worst | 10.0 ms (9.0–11.0) | 10.0 ms (9.0–11.0) | 0.0 ms | ⚠️ no verdict — GPU timing unreliable on Metal |",
+            "| GPU 0.1% worst | 10.0 ms (9.0–11.0) | 10.0 ms (9.0–11.0) | 0.0 ms | — informational |",
+        ]
+    );
+    // the baseline table keeps the baseline's numbers
+    assert!(apple.contains(
+        &"| CPU average | 23.0 ms (22.9–23.1) | 21.0 ms (20.9–21.1) | -2.0 ms | 🟢 9% faster |"
+    ));
+}
+
+#[test]
+fn release_a_machine_without_release_runs_says_so_beside_one_with_some() {
+    let mut options = options("release-partial");
+    options.release = Some("`0.1.0-80.commit-9999999`".into());
+    let report = build(&options);
+    let note =
+        "> ⚠️ No Release run produced data — the change is not compared with the latest release here.";
+
+    // two of three release runs: compared, with the missing run noted
+    let apple = section(&report, "Apple M1 (Chrome)");
+    assert!(
+        apple.contains(&"**Against the latest release**"),
+        "{apple:#?}"
+    );
+    assert!(
+        apple.contains(&"| Samples | 10 (×2) | 10 (×3) | | |"),
+        "{apple:#?}"
+    );
+    assert!(
+        apple.contains(
+            &"> ⚠️ Only 2 of 3 Release runs produced data — the app may have crashed in the missing runs."
+        ),
+        "{apple:#?}"
+    );
+    assert!(!apple.contains(&note), "{apple:#?}");
+
+    let intel = section(&report, "Intel Core i5 (Chrome)");
+    assert!(
+        !intel.contains(&"**Against the latest release**"),
+        "{intel:#?}"
+    );
+    assert!(intel.contains(&note), "{intel:#?}");
+
+    // one machine, but by more than 10%: named
+    assert!(
+        report.markdown.lines().any(|line| line.starts_with(
+            "**Against the latest release: 🟢 CPU average improved on Apple M1 (Chrome)"
+        )),
+        "{}",
+        report.markdown
+    );
+    assert!(report
+        .markdown
+        .contains("interleaved with the other builds (change, baseline, release"));
+}
+
+#[test]
+fn release_a_leg_that_could_not_run_the_release_says_so_instead_of_no_data() {
+    // the release-partial results, with the Intel leg's marker that its release never ran
+    let dir = scratch("report-release-not-measured");
+    for entry in std::fs::read_dir(fixture("release-partial")).unwrap() {
+        let leg = entry.unwrap().path();
+        let to = dir.join(leg.file_name().unwrap());
+        std::fs::create_dir_all(&to).unwrap();
+        for file in std::fs::read_dir(&leg).unwrap() {
+            let file = file.unwrap().path();
+            std::fs::copy(&file, to.join(file.file_name().unwrap())).unwrap();
+        }
+    }
+    std::fs::write(
+        dir.join("benchmark-result-intel-i5-chrome")
+            .join("release_not_measured.txt"),
+        "",
+    )
+    .unwrap();
+
+    let mut options = options("release-partial");
+    options.dir = dir;
+    options.release = Some("`0.1.0-80.commit-9999999`".into());
+    let report = build(&options);
+    let intel = section(&report, "Intel Core i5 (Chrome)");
+    assert!(
+        intel.contains(
+            &"> ⚠️ The latest release was not measured on this laptop: its download or warm-up failed."
+        ),
+        "{intel:#?}"
+    );
+    assert!(
+        !intel.iter().any(|line| line.contains("No Release run")),
+        "{intel:#?}"
+    );
+
+    // no laptop ran it: the headline says so, rather than that its runs produced no data
+    let dir = scratch("report-release-not-measured-anywhere");
+    for leg in ["apple-m1", "intel-i5"] {
+        let from = fixture("ok").join(format!("benchmark-result-{leg}-chrome"));
+        let to = dir.join(format!("benchmark-result-{leg}-chrome"));
+        std::fs::create_dir_all(&to).unwrap();
+        for file in std::fs::read_dir(&from).unwrap() {
+            let file = file.unwrap().path();
+            std::fs::copy(&file, to.join(file.file_name().unwrap())).unwrap();
+        }
+        std::fs::write(to.join("release_not_measured.txt"), "").unwrap();
+    }
+    options.dir = dir;
+    let report = build(&options);
+    has_line(
+        &report,
+        "**Against the latest release: ⚠️ not measured on any laptop — its download or warm-up failed**",
+    );
+    assert!(!report.markdown.contains("no Release run produced data"));
+}
+
+#[test]
+fn release_a_release_without_runs_is_said_and_the_base_comparison_stays() {
+    let mut options = options("ok");
+    options.release = Some("`0.1.0-80.commit-9999999`".into());
+    let report = build(&options);
+    has_line(
+        &report,
+        "**Overall: 🟢 CPU average improved on Apple M1 (Chrome), Intel Core i5 (Chrome)**",
+    );
+    has_line(
+        &report,
+        "**Against the latest release: ⚠️ nothing was compared — no Release run produced data**",
+    );
+    assert!(!report.markdown.contains("| Metric | Release | Change |"));
+
+    // without a release, no release line, note or legend bullet at all
+    let report = report_of("ok");
+    assert!(!report.markdown.contains("Against the latest release"));
+    assert!(!report.markdown.contains("No Release run"));
 }
 
 #[test]
