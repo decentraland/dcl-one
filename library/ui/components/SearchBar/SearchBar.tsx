@@ -10,7 +10,7 @@ export type SearchBarProps = {
   clearLabel?: string
   /** Class of the field itself; `className` styles the box around it. */
   inputClassName?: string
-  /** A visual before the field, such as a magnifier. */
+  /** A visual before the field, such as a magnifier. The `hud` field sizes it: 15px, or 19 by 18px when light. */
   leading?: ReactNode
   /** What the clear button draws. Defaults to a multiplication sign. */
   clearIcon?: ReactNode
