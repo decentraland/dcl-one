@@ -83,4 +83,12 @@ describe('the gateway option', () => {
       expect(m.untrustedLaunchParams({ native: false }).map((p) => p.name), gateway).toEqual(['gateway'])
     }
   })
+
+  it('puts a value the engine would refuse to the user instead of dropping it silently', async () => {
+    const m = await load(false, `/?gateway=${encodeURIComponent('ftp://gateway.decentraland.org')}`)
+    expect(m.GATEWAY).toBe(null)
+    expect(m.untrustedLaunchParams({ native: false }).map((p) => [p.name, p.value])).toEqual([
+      ['gateway', 'ftp://gateway.decentraland.org']
+    ])
+  })
 })

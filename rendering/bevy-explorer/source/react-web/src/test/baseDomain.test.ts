@@ -74,7 +74,10 @@ describe('?gateway=', () => {
       ['https://gateway.decentraland.org', []],
       ['https://gateway.decentraland.org/_scene/x', ['gateway']],
       ['http://gateway.decentraland.org', ['gateway']],
-      ['https://gateway.decentraland.zone', ['gateway']]
+      ['https://gateway.decentraland.zone', ['gateway']],
+      // a value the engine would refuse is put to the user, not dropped silently
+      ['ftp://gateway.decentraland.org', ['gateway']],
+      ['https://gateway.decentraland.org/?', ['gateway']]
     ] as const) {
       window.history.replaceState(null, '', `/?gateway=${encodeURIComponent(gateway)}`)
       vi.resetModules()

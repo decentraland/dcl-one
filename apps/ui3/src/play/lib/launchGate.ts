@@ -8,7 +8,7 @@ import { BASE_DOMAIN, GATEWAY, derivedServiceUrl, entryServiceUrl, hostBaseDomai
 import { bootMode } from './bootMode'
 import { isTrustedSystemScene } from './systemScene'
 import { webParam } from '@explorer-core/lib/webParams'
-import { isTrustedGatewayPrefix } from '@explorer-core/lib/gateway'
+import { GATEWAY_LAUNCH_WARNING, gatewayLaunchValue, isTrustedGatewayLaunchValue } from '@explorer-core/lib/gateway'
 import type { UntrustedParam } from '@explorer-core/hostContract'
 
 export type { UntrustedParam }
@@ -44,12 +44,11 @@ const GATES: Record<string, Gate> = {
   // Routes every first-party API, signed requests included, through one server. Read normalised,
   // like the base domain; native is exempt the same way (its link may name only a Decentraland
   // gateway). Trusted: this page's origin, or an https origin of the session's Decentraland
-  // deployment (isTrustedGatewayPrefix).
+  // deployment (isTrustedGatewayPrefix). A value the parse refuses is shown too, never dropped silently.
   gateway: {
-    warning:
-      'Sends sign-in, profiles, comms admission and every other Decentraland API request through this server. Whoever runs it would see your signed requests and choose the answers.',
-    read: (native) => (native ? null : (GATEWAY?.prefix ?? null)),
-    isTrusted: (prefix) => isTrustedGatewayPrefix(prefix, BASE_DOMAIN, location.origin)
+    warning: GATEWAY_LAUNCH_WARNING,
+    read: (native) => (native ? null : gatewayLaunchValue(new URLSearchParams(location.search).get('gateway'), GATEWAY)),
+    isTrusted: (value) => isTrustedGatewayLaunchValue(value, GATEWAY, BASE_DOMAIN, location.origin)
   },
   // Repoints every scene and asset fetch at one server while everything else looks normal.
   contentServer: {

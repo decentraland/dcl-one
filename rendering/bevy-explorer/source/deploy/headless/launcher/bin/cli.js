@@ -29,6 +29,7 @@ const USAGE = `
                            local preview). Standalone only; orchestrated scenes carry their own.
     --pulse-server <h:p>   Pulse server to join, host:port. Default: derived from --base-domain.
     --base-domain <domain> Domain every backend host is composed from. Default decentraland.org.
+    --gateway <url>        Route the first-party HTTP APIs through this one origin.
     --<service> <url>      Per-service url override (--catalyst, --preview-gatekeeper, ...);
                            the engine's --help lists them all.
     --version              Print version and exit.
@@ -58,6 +59,7 @@ function translate(argv) {
     '--pulse-realm': true,
     '--pulse-server': true,
     '--base-domain': true,
+    '--gateway': true,
     '--content-server': true,
     // the per-service url overrides (crates/system_api_types/src/services.rs — the
     // Service::field names, kebab-cased); keep in sync when a service is added

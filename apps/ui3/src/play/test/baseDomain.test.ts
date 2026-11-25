@@ -188,5 +188,30 @@ describe('?gateway=', () => {
       gateway: 'https://gateway.example.test',
       baseDomain: 'decentraland.org'
     })
+    // the engine forwards the path after the service alias; the HUD signs the same one
+    expect(m.gatewaySignedPath('https://gateway.example.test/events/api/events?x=1')).toBe('/api/events')
+    expect(m.gatewaySignedPath('https://places.example.test/api/places')).toBe(null)
+  })
+
+  it("on the node's own host: the engine gets the gateway and none of the services it routes", async () => {
+    window.history.replaceState(null, '', '/?gateway=https://gateway.example.test')
+    vi.resetModules()
+    ;(window as { __DCL_PUBLIC__?: unknown }).__DCL_PUBLIC__ = {}
+    try {
+      const m = await import('../lib/baseDomain')
+      const { SERVICES } = await import('@explorer-core/engine/generated')
+      const { gatewayServiceUrl } = await import('@explorer-core/lib/gateway')
+      expect(m.BASE_DOMAIN).toBe(window.location.host)
+      // a dev host the engine refuses as a base domain: the engine keeps its default
+      expect(m.ENGINE_BASE_DOMAIN).toBe('decentraland.org')
+      const options = m.engineServiceOptions()
+      expect(options.gateway).toBe('https://gateway.example.test')
+      for (const s of SERVICES) {
+        const routed = gatewayServiceUrl(m.GATEWAY!, s) != null
+        expect(s.name in options, s.name).toBe(!routed)
+      }
+    } finally {
+      delete (window as { __DCL_PUBLIC__?: unknown }).__DCL_PUBLIC__
+    }
   })
 })

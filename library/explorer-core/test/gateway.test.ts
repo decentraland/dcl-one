@@ -3,7 +3,7 @@
 // (infra/gateway/tests/explorer_routes.py); these cases pin the parse and profile-image edges.
 import { describe, expect, it } from 'vitest'
 import { SERVICES } from '../engine/generated/serviceTable'
-import { gatewayProfileImage, gatewayServiceUrl, gatewaySignedPath, isTrustedGatewayPrefix, parseGateway } from '../lib/gateway'
+import { gatewayLaunchValue, gatewayProfileImage, gatewayServiceUrl, gatewaySignedPath, isTrustedGatewayLaunchValue, isTrustedGatewayPrefix, parseGateway } from '../lib/gateway'
 
 const service = (name: string) => SERVICES.find((s) => s.name === name)!
 
@@ -142,5 +142,24 @@ describe('gatewaySignedPath', () => {
     ]) {
       expect(() => sign(raw), raw).toThrow('ambiguous')
     }
+  })
+})
+
+describe('the ?gateway= launch gate', () => {
+  it('weighs the parsed prefix, or the raw value the parse refused; absent or empty is not in play', () => {
+    const gateway = parseGateway('https://gateway.decentraland.org/')
+    expect(gatewayLaunchValue('https://gateway.decentraland.org/', gateway)).toBe('https://gateway.decentraland.org')
+    expect(gatewayLaunchValue(' ftp://gateway.decentraland.org ', null)).toBe('ftp://gateway.decentraland.org')
+    expect(gatewayLaunchValue('  ', null)).toBe(null)
+    expect(gatewayLaunchValue(null, null)).toBe(null)
+  })
+
+  it('boots unprompted only with a parsed, trusted gateway', () => {
+    const own = parseGateway('https://gateway.decentraland.org')
+    expect(isTrustedGatewayLaunchValue('https://gateway.decentraland.org', own, 'decentraland.org')).toBe(true)
+    const foreign = parseGateway('https://gateway.example.test')
+    expect(isTrustedGatewayLaunchValue('https://gateway.example.test', foreign, 'decentraland.org')).toBe(false)
+    // a value the parse refused is never trusted, whatever host it names
+    expect(isTrustedGatewayLaunchValue('https://gateway.decentraland.org/?', null, 'decentraland.org')).toBe(false)
   })
 })

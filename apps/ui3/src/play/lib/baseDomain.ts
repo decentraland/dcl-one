@@ -124,6 +124,9 @@ export function checkoutSiteUrl(path: string): string {
 export const BASE_DOMAIN =
   normaliseBaseDomain(new URLSearchParams(window.location.search).get('baseDomain')) ?? DEFAULT_BASE_DOMAIN
 
+/** The base domain the engine runs on: BASE_DOMAIN when the engine accepts it (engineServiceOptions), else its default. */
+export const ENGINE_BASE_DOMAIN = normaliseBaseDomain(BASE_DOMAIN) ?? 'decentraland.org'
+
 // Pulse is UDP, which an HTTP front cannot carry: behind the gateway the deployment names its host.
 const PULSE_SERVER = BASE_DOMAIN === ONE_GATEWAY_HOST ? configuredPulseServer() : null
 

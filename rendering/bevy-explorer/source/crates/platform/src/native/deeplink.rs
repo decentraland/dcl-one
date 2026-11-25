@@ -134,7 +134,9 @@ pub fn parse_place_link(link: &str) -> Result<PlaceLink, anyhow::Error> {
         match key.as_str() {
             "realm" => place.realm = Some(value),
             "position" => place.position = Some(value),
-            "gateway" => place.gateway = Some(value),
+            // an empty value means absent, as on the web
+            "gateway" if !value.trim().is_empty() => place.gateway = Some(value),
+            "gateway" => (),
             "dclenv" => {
                 place.base_domain = Some(match value.as_str() {
                     "org" => "decentraland.org".to_owned(),

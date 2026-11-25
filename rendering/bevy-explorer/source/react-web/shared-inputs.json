@@ -916,6 +916,10 @@
           "kind": "regular"
         },
         {
+          "name": "placesSigning.test.ts",
+          "kind": "regular"
+        },
+        {
           "name": "pointerKeys.test.ts",
           "kind": "regular"
         },
@@ -6230,7 +6234,7 @@
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/src/lib/launchGate.ts",
-      "sha256": "11f2c334666375fcd99a85d4018c37e40a78a4b00e7500a60ba3e7eeec3b5594"
+      "sha256": "6deab1f5aaf9b4da96a3c00bef33c72c7e224e4a30493d2a8d377bd6382acfe3"
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/src/lib/loopbackHost.ts",
@@ -6278,7 +6282,7 @@
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/src/test/baseDomain.test.ts",
-      "sha256": "f880c50d26a66aeaca3972909ca9f393e278242163cc8aa9648d84d61ef52173"
+      "sha256": "e0b54bd790142f5b1c33fcc8f0acabc870247293c8e1db65349594dc86dceeae"
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/src/test/benchmarkSwitches.test.tsx",
@@ -7048,7 +7052,7 @@
     },
     {
       "path": "library/explorer-core/lib/gateway.ts",
-      "sha256": "6e88358aa1e82f87f52a9c2f34ca4f31091147510ad1f5a4d759b20f62342235"
+      "sha256": "20b22f30ed113a728519877f753a16b0d9a7e9d05fb6a99d701f74a7bfaa30a7"
     },
     {
       "path": "library/explorer-core/lib/gpu.test.ts",
@@ -7212,7 +7216,7 @@
     },
     {
       "path": "library/explorer-core/test/gateway.test.ts",
-      "sha256": "23d971f6fd124754cb72717cfb90af9ba01e70da5e30e6f6338a35891c9fce79"
+      "sha256": "b2493f451ac7a41aa3d6bd8383f6bcda3de70b9a8a684c0e506586d147cec461"
     },
     {
       "path": "library/explorer-core/test/giftItem.test.ts",
@@ -7293,6 +7297,10 @@
     {
       "path": "library/explorer-core/test/places.test.ts",
       "sha256": "df6392935605273413a08756d05057cd7cf9d142c3aca90e8110a74bcbbf9160"
+    },
+    {
+      "path": "library/explorer-core/test/placesSigning.test.ts",
+      "sha256": "aad9de3a7fe058af2b51a7a0ad5044a380bcc0303e536327fda616983bb93944"
     },
     {
       "path": "library/explorer-core/test/pointerKeys.test.ts",
@@ -13984,6 +13992,21 @@
       "from": "library/explorer-core/test/places.test.ts",
       "to": "library/explorer-core/features/places/placesApi.ts",
       "kind": "test:runtime"
+    },
+    {
+      "from": "library/explorer-core/test/placesSigning.test.ts",
+      "to": "library/explorer-core/features/places/placesApi.ts",
+      "kind": "native:dynamic"
+    },
+    {
+      "from": "library/explorer-core/test/placesSigning.test.ts",
+      "to": "library/explorer-core/features/places/placesApi.ts",
+      "kind": "production:dynamic"
+    },
+    {
+      "from": "library/explorer-core/test/placesSigning.test.ts",
+      "to": "library/explorer-core/features/places/placesApi.ts",
+      "kind": "test:dynamic"
     },
     {
       "from": "library/explorer-core/test/pointerKeys.test.ts",
@@ -47563,6 +47586,11 @@
     {
       "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
       "to": "library/explorer-core/test/places.test.ts",
+      "kind": "type"
+    },
+    {
+      "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
+      "to": "library/explorer-core/test/placesSigning.test.ts",
       "kind": "type"
     },
     {

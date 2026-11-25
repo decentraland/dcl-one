@@ -53,6 +53,31 @@ export function isTrustedGatewayPrefix(prefix: string, baseDomain: string, ownOr
   )
 }
 
+/** The untrusted-launch prompt's warning for `?gateway=`. */
+export const GATEWAY_LAUNCH_WARNING =
+  'Sends sign-in, profiles, comms admission and every other Decentraland API request through this server. Whoever runs it would see your signed requests and choose the answers. An address that is not an http(s) base url is ignored instead.'
+
+/**
+ * The `?gateway=` value the untrusted-launch prompt weighs: the parsed prefix, or the raw value
+ * `parseGateway` refused (the session then runs without a gateway, and the prompt says so rather
+ * than ignoring it silently); null when absent or empty.
+ */
+export function gatewayLaunchValue(raw: string | null, gateway: Gateway | null): string | null {
+  if (gateway != null) return gateway.prefix
+  const trimmed = raw?.trim() ?? ''
+  return trimmed === '' ? null : trimmed
+}
+
+/** Whether that value boots with no prompt: a parsed gateway `isTrustedGatewayPrefix` accepts. */
+export function isTrustedGatewayLaunchValue(
+  value: string,
+  gateway: Gateway | null,
+  baseDomain: string,
+  ownOrigin: string | null = null
+): boolean {
+  return gateway != null && value === gateway.prefix && isTrustedGatewayPrefix(value, baseDomain, ownOrigin)
+}
+
 /**
  * The service's base url through the gateway (`Gateway::service`), or null when it keeps its own
  * destination. The segments come from the engine's service table (`Service::gateway_segment`).

@@ -1,7 +1,7 @@
 // The HUD host module (`@hud-host`) for the Sites /play host: the shared HUD in library/ui/apps/hud
 // reads these through the contract in its hostContract.ts.
 import type { HudHost } from '@explorer-core/hostContract'
-import { BASE_DOMAIN, checkoutSiteUrl, DEFAULT_REALM, gatewaySignedPath, GATEWAY, ONE_GATEWAY_HOST, serviceUrl, siteUrl } from './lib/baseDomain'
+import { BASE_DOMAIN, checkoutSiteUrl, DEFAULT_REALM, ENGINE_BASE_DOMAIN, gatewaySignedPath, GATEWAY, ONE_GATEWAY_HOST, serviceUrl, siteUrl } from './lib/baseDomain'
 import { gatewayProfileImage } from '@explorer-core/lib/gateway'
 import { bootMode, isNativeHud } from './lib/bootMode'
 import { acceptedEntryParams, entryRealm, unrecognisedEntryParams } from './lib/entryParams'
@@ -12,9 +12,10 @@ import { IN_WORLD_SHOP } from '@dcl/one-ui/apps/shop/entry'
 import { donations } from './lib/donations'
 import { gifting } from './lib/gifting'
 
-/** Sites loads profile images as given, or through the entry url's ?gateway= as the engine does. */
+/** Sites loads profile images as given, or through the entry url's ?gateway= as the engine does
+ *  (for the engine's own base domain). */
 const nativeProfileImage = (raw: string | undefined): string | undefined =>
-  GATEWAY == null || raw == null ? raw : (gatewayProfileImage(GATEWAY, raw, BASE_DOMAIN) ?? raw)
+  GATEWAY == null || raw == null ? raw : (gatewayProfileImage(GATEWAY, raw, ENGINE_BASE_DOMAIN) ?? raw)
 /** dcl-one's Shop serves a collection item at /shop/item/<contract>/<item>; the Foundation's
  *  deployments (`?baseDomain=decentraland.org`) keep the marketplace's own page. */
 const ownShopItemUrl = (contract: string, item: string): string | null =>
