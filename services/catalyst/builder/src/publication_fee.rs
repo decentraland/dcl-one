@@ -9,7 +9,8 @@
 //! name, symbol, token metadata base, creator and items) is the one a
 //! collection row of the signer's holds; [`access::publisher`] grants the
 //! signer its publication; and the collection is neither published,
-//! deployed, being published by the node nor under its owner's lock.
+//! deployed nor being published by the node. Its owner's lock does not refuse
+//! it: a first transaction may have reverted.
 //!
 //! The fee is what the collection manager charges: each item's rarity price
 //! in USD ([`crate::rarities`]), summed and rounded up to a cent.
@@ -112,7 +113,7 @@ pub async fn for_call(
     refuse_before_snapshot(&mut conn, &view, publisher.id(), publisher.signer()).await?;
     let stored = access::confirm_collection_manage(&mut conn, &view, &manage).await?;
     drop(conn);
-    if stored.pending || stored.locked {
+    if stored.pending {
         return Err(ApiError::locked(
             Subject::Collection,
             &id.to_string(),
