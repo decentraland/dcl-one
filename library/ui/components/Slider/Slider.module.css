@@ -1,8 +1,7 @@
 /* Not in Figma: the Explorer HUD's slider. These rules sit outside the cascade layer and keep the specificity
    of the HUD rules they replaced: the HUD's skybox menu restyles the track and the steppers through element
    selectors, and keeps the precedence it had. A caller sets `--slider-rail-track` on an ancestor to change the
-   unfilled colour of the `rail` track. The stepper's black washes and the 19 % and 42 % white tracks have no
-   token. */
+   unfilled colour of the `rail` track. The stepper's 25 % black wash and the 19 % and 42 % white tracks have no token. */
 .root {
   -webkit-appearance: none;
   appearance: none;
@@ -25,7 +24,7 @@
   height: 18px;
   border-radius: var(--dcl-radius-full);
   background: var(--dcl-neutrals-white);
-  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.4);
+  box-shadow: 0 1px 3px var(--dcl-transparencies-black-40);
   cursor: pointer;
 }
 .row {
@@ -50,7 +49,7 @@
   cursor: pointer;
 }
 .arrow:hover:not(:disabled) {
-  background: rgba(0, 0, 0, 0.4);
+  background: var(--dcl-transparencies-black-40);
 }
 .arrow:disabled {
   opacity: 0.35;
@@ -63,7 +62,7 @@
   border: none;
   border-radius: var(--dcl-radius-full);
   background: var(--dcl-neutrals-white);
-  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.4);
+  box-shadow: 0 1px 3px var(--dcl-transparencies-black-40);
   cursor: pointer;
 }
 
@@ -71,7 +70,7 @@
   height: 22px;
   margin: 0;
   border-radius: var(--dcl-radius-xs);
-  background: linear-gradient(to right, var(--dcl-brand-ruby) var(--pct), rgba(255, 255, 255, 0.19) /* = HUD --slider-track */ var(--pct));
+  background: linear-gradient(to right, var(--dcl-brand-ruby) var(--pct), rgba(255, 255, 255, 0.19) var(--pct)); /* = HUD --slider-track */
 }
 .thick::-webkit-slider-thumb {
   width: 18px;
@@ -79,8 +78,8 @@
   border-radius: 0;
   background: var(--dcl-neutrals-gray);
   box-shadow: none;
-  -webkit-mask: url('./slider-handle.webp') center / contain no-repeat;
-  mask: url('./slider-handle.webp') center / contain no-repeat;
+  -webkit-mask: url('../../assets/slider-handle.webp') center / contain no-repeat;
+  mask: url('../../assets/slider-handle.webp') center / contain no-repeat;
   transform: translateY(-1.5px);
 }
 .thick::-moz-range-thumb {
@@ -88,7 +87,7 @@
   height: 31px;
   border-radius: 0;
   background: var(--dcl-neutrals-gray);
-  mask: url('./slider-handle.webp') center / contain no-repeat;
+  mask: url('../../assets/slider-handle.webp') center / contain no-repeat;
 }
 
 /* pin: the settings slider. A 30px track, a pin handle whose centre runs from one end of the
@@ -102,8 +101,8 @@
 .pin {
   height: 30px;
   margin: 0;
-  border-radius: 6px;
-  background: linear-gradient(to right, var(--dcl-brand-ruby) var(--pct), rgba(255, 255, 255, 0.42) /* = HUD --control-track */ var(--pct));
+  border-radius: var(--dcl-radius-xs);
+  background: linear-gradient(to right, var(--dcl-brand-ruby) var(--pct), rgba(255, 255, 255, 0.42) var(--pct)); /* = HUD --control-track */
 }
 .pin::-webkit-slider-thumb {
   width: 22px;

@@ -1,4 +1,4 @@
-import { useEffect, useRef, type HTMLInputTypeAttribute, type ReactNode } from 'react'
+import { useEffect, useId, useRef, type HTMLInputTypeAttribute, type ReactNode } from 'react'
 import { Spinner } from '../Spinner/Spinner'
 import styles from './SubmitField.module.css'
 
@@ -13,7 +13,7 @@ export type SubmitFieldProps = {
   canSubmit: boolean
   /** Disables the field and draws a spinner in the button's place. */
   busy?: boolean
-  /** Shown under the field as an alert, with the field's ring red. */
+  /** Shown under the field as an alert that describes it. The ring turns red once the field loses the focus. */
   error?: string | null
   /** Drawn before the error text. */
   errorIcon?: ReactNode
@@ -52,6 +52,7 @@ export function SubmitField({
   'aria-label': label
 }: SubmitFieldProps) {
   const input = useRef<HTMLInputElement>(null)
+  const errorId = useId()
   useEffect(() => {
     if (autoFocus) input.current?.focus()
   }, [autoFocus])
@@ -73,6 +74,7 @@ export function SubmitField({
           disabled={disabled || busy}
           aria-label={label}
           aria-invalid={error != null || undefined}
+          aria-describedby={error != null ? errorId : undefined}
           onChange={(event) => onChange(event.target.value)}
           onKeyDown={(event) => {
             if (event.key === 'Enter') submit()
@@ -94,7 +96,7 @@ export function SubmitField({
         )}
       </div>
       {error != null && (
-        <p className={styles.error} role="alert">
+        <p id={errorId} className={styles.error} role="alert">
           {errorIcon}
           {error}
         </p>

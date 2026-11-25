@@ -3081,14 +3081,6 @@
           "kind": "regular"
         },
         {
-          "name": "EmptyState.module.css",
-          "kind": "regular"
-        },
-        {
-          "name": "EmptyState.tsx",
-          "kind": "regular"
-        },
-        {
           "name": "EquippedItemCard.module.css",
           "kind": "regular"
         },
@@ -3173,14 +3165,6 @@
           "kind": "regular"
         },
         {
-          "name": "Panel.module.css",
-          "kind": "regular"
-        },
-        {
-          "name": "Panel.tsx",
-          "kind": "regular"
-        },
-        {
           "name": "Rail.module.css",
           "kind": "regular"
         },
@@ -3221,18 +3205,6 @@
           "kind": "regular"
         },
         {
-          "name": "SubmitField.tsx",
-          "kind": "regular"
-        },
-        {
-          "name": "SwapLabel.module.css",
-          "kind": "regular"
-        },
-        {
-          "name": "SwapLabel.tsx",
-          "kind": "regular"
-        },
-        {
           "name": "Tabs.tsx",
           "kind": "regular"
         },
@@ -3254,14 +3226,6 @@
         },
         {
           "name": "Toast.tsx",
-          "kind": "regular"
-        },
-        {
-          "name": "VoiceBars.module.css",
-          "kind": "regular"
-        },
-        {
-          "name": "VoiceBars.tsx",
           "kind": "regular"
         },
         {
@@ -5080,10 +5044,6 @@
         },
         {
           "name": "menu.clicks.test.tsx",
-          "kind": "regular"
-        },
-        {
-          "name": "pageWindow.test.ts",
           "kind": "regular"
         },
         {
@@ -7515,6 +7475,10 @@
         {
           "name": "skeleton-sweep.webp",
           "kind": "regular"
+        },
+        {
+          "name": "slider-handle.webp",
+          "kind": "regular"
         }
       ]
     },
@@ -7594,6 +7558,10 @@
           "kind": "directory"
         },
         {
+          "name": "EmptyState",
+          "kind": "directory"
+        },
+        {
           "name": "EventCard",
           "kind": "directory"
         },
@@ -7662,6 +7630,10 @@
           "kind": "directory"
         },
         {
+          "name": "Panel",
+          "kind": "directory"
+        },
+        {
           "name": "PlaceCard",
           "kind": "directory"
         },
@@ -7698,6 +7670,10 @@
           "kind": "directory"
         },
         {
+          "name": "SwapLabel",
+          "kind": "directory"
+        },
+        {
           "name": "Switch",
           "kind": "directory"
         },
@@ -7723,6 +7699,10 @@
         },
         {
           "name": "Tooltip",
+          "kind": "directory"
+        },
+        {
+          "name": "VoiceBars",
           "kind": "directory"
         },
         {
@@ -8166,6 +8146,23 @@
       ]
     },
     {
+      "path": "library/ui/components/EmptyState",
+      "entries": [
+        {
+          "name": "EmptyState.module.css",
+          "kind": "regular"
+        },
+        {
+          "name": "EmptyState.test.tsx",
+          "kind": "regular"
+        },
+        {
+          "name": "EmptyState.tsx",
+          "kind": "regular"
+        }
+      ]
+    },
+    {
       "path": "library/ui/components/EventCard",
       "entries": [
         {
@@ -8571,6 +8568,23 @@
       ]
     },
     {
+      "path": "library/ui/components/Panel",
+      "entries": [
+        {
+          "name": "Panel.module.css",
+          "kind": "regular"
+        },
+        {
+          "name": "Panel.test.tsx",
+          "kind": "regular"
+        },
+        {
+          "name": "Panel.tsx",
+          "kind": "regular"
+        }
+      ]
+    },
+    {
       "path": "library/ui/components/PlaceCard",
       "entries": [
         {
@@ -8718,10 +8732,6 @@
         {
           "name": "Slider.tsx",
           "kind": "regular"
-        },
-        {
-          "name": "slider-handle.webp",
-          "kind": "regular"
         }
       ]
     },
@@ -8759,6 +8769,23 @@
         },
         {
           "name": "SubmitField.tsx",
+          "kind": "regular"
+        }
+      ]
+    },
+    {
+      "path": "library/ui/components/SwapLabel",
+      "entries": [
+        {
+          "name": "SwapLabel.module.css",
+          "kind": "regular"
+        },
+        {
+          "name": "SwapLabel.test.tsx",
+          "kind": "regular"
+        },
+        {
+          "name": "SwapLabel.tsx",
           "kind": "regular"
         }
       ]
@@ -8950,6 +8977,23 @@
         },
         {
           "name": "TooltipRegular.figma.ts",
+          "kind": "regular"
+        }
+      ]
+    },
+    {
+      "path": "library/ui/components/VoiceBars",
+      "entries": [
+        {
+          "name": "VoiceBars.module.css",
+          "kind": "regular"
+        },
+        {
+          "name": "VoiceBars.test.tsx",
+          "kind": "regular"
+        },
+        {
+          "name": "VoiceBars.tsx",
           "kind": "regular"
         }
       ]
@@ -12265,14 +12309,6 @@
       "sha256": "29068b4d1444369e159b99c8510ce4714ff04df342d8c40db9b8491c48ef7390"
     },
     {
-      "path": "library/ui/apps/hud/design/EmptyState.module.css",
-      "sha256": "a91d159846f8e49a4ef26167344c00104dd78af6935765604ec86ab2606797b5"
-    },
-    {
-      "path": "library/ui/apps/hud/design/EmptyState.tsx",
-      "sha256": "a3776058dcd4952981c87053f3911b715c235c9e366d0b1811db63b2c73a57d8"
-    },
-    {
       "path": "library/ui/apps/hud/design/EquippedItemCard.module.css",
       "sha256": "3ead15b4724af85ed04da2c6ffa569eca55f553ad092f560b91fccfc20f8d282"
     },
@@ -12338,7 +12374,7 @@
     },
     {
       "path": "library/ui/apps/hud/design/MenuPanel.tsx",
-      "sha256": "195d59f294091e12fd0278c4953b365a1fefc0a12ba0bb3cd5f3cf3667757f48"
+      "sha256": "cfebe967a479b0a27ffc91c0255a79d15fc1bc380d6f14174c67f570aecc68d7"
     },
     {
       "path": "library/ui/apps/hud/design/Modal.tsx",
@@ -12355,14 +12391,6 @@
     {
       "path": "library/ui/apps/hud/design/Pager.tsx",
       "sha256": "937c0d8c855edef74d30ceb745714ea680b8154454b696fba84667fe53fbf94e"
-    },
-    {
-      "path": "library/ui/apps/hud/design/Panel.module.css",
-      "sha256": "ea79d8398b353928779c5cd3acb657fa35c1d31206824d2a78c54beb58d406cb"
-    },
-    {
-      "path": "library/ui/apps/hud/design/Panel.tsx",
-      "sha256": "4c375eb5e3a94b696ad812528d403baf9a6e21c573f9260e8ef3246cac6b4e06"
     },
     {
       "path": "library/ui/apps/hud/design/Rail.module.css",
@@ -12390,11 +12418,11 @@
     },
     {
       "path": "library/ui/apps/hud/design/Showcase.tsx",
-      "sha256": "fee81fdcb3240e2ecd081826af24fb09b76b96a31ed0c7b156e030f29d804471"
+      "sha256": "82585eca07b218db15066bb5d86ff32c9861528bf4168bacd6afb99e26d23128"
     },
     {
       "path": "library/ui/apps/hud/design/ShowcaseIndex.ts",
-      "sha256": "939d057eba84444194a00264fda7c294ba73a732e226898f4c71d917f0ee48ef"
+      "sha256": "3cc6759334887ad72c5ab1360074a3aca889e333e088b39acddfa2ee97dc9244"
     },
     {
       "path": "library/ui/apps/hud/design/Submenu.module.css",
@@ -12403,18 +12431,6 @@
     {
       "path": "library/ui/apps/hud/design/Submenu.tsx",
       "sha256": "8d0acddb022a8e9e980e4f232730bdbfe2f69ecf0c6067c92f0a56305913f384"
-    },
-    {
-      "path": "library/ui/apps/hud/design/SubmitField.tsx",
-      "sha256": "9c6b7d9aefda42cef5eb96cc02aefa16683eecc68127ee2a6dab08a450962a6a"
-    },
-    {
-      "path": "library/ui/apps/hud/design/SwapLabel.module.css",
-      "sha256": "81a3700cd1f3df28e476e10b64d3ff912e0b29069a77929e3c087ce6c8776abe"
-    },
-    {
-      "path": "library/ui/apps/hud/design/SwapLabel.tsx",
-      "sha256": "cf21eb699850a4052ce74494487f08bd31c2e5dba8edf1fce394d13fe9ffe37f"
     },
     {
       "path": "library/ui/apps/hud/design/Tabs.tsx",
@@ -12441,14 +12457,6 @@
       "sha256": "3c310608bd13b418e80addb99f18f70e937f83b41c98417ad146456766377675"
     },
     {
-      "path": "library/ui/apps/hud/design/VoiceBars.module.css",
-      "sha256": "f5100fafb0685afaf7cc1e47fa9bba245c7d52cf7bdb3e0f443c6ab6d02f5ef9"
-    },
-    {
-      "path": "library/ui/apps/hud/design/VoiceBars.tsx",
-      "sha256": "bef1dca320fa0514321dd376770f46a359c882d3629ad48eb39caf69781cbf9f"
-    },
-    {
       "path": "library/ui/apps/hud/design/WearableCard.module.css",
       "sha256": "e60d013e883af9620898bf8bde4d6c444cccbd4b079e5d37794587e2c1cf81a7"
     },
@@ -12462,7 +12470,7 @@
     },
     {
       "path": "library/ui/apps/hud/design/index.ts",
-      "sha256": "b079501994e398d2477c56773e779c265de3cd17fdaa2cc7273d6b4c3862fd1c"
+      "sha256": "371c617db3e12e12e4d80200effdac48364da71ef1943d5caeac05537a9f6e56"
     },
     {
       "path": "library/ui/apps/hud/design/popups.module.css",
@@ -12502,7 +12510,7 @@
     },
     {
       "path": "library/ui/apps/hud/features/chat/Chat.tsx",
-      "sha256": "62bf5cf0b4cb48ae350e981053b2b85b5a5d78bca318dfee72afafb5f7c1c639"
+      "sha256": "857bca92eea9fc635240d36060a5258482235a6a9c376090b785caee495a2fde"
     },
     {
       "path": "library/ui/apps/hud/features/chat/ChatIcons.tsx",
@@ -12618,7 +12626,7 @@
     },
     {
       "path": "library/ui/apps/hud/features/communities/CommunitiesPage.tsx",
-      "sha256": "827a8a16dcae492b6613e1ab7ec61cc7566ad5d33d93a8153a15a9aef282cda8"
+      "sha256": "b6aee197b6a5322070f5ebd5a04b06d9e07dc835ddd9a4c99fe04f7fb78565a7"
     },
     {
       "path": "library/ui/apps/hud/features/communities/CommunityCreateModal.module.css",
@@ -12634,7 +12642,7 @@
     },
     {
       "path": "library/ui/apps/hud/features/communities/CommunityModal.tsx",
-      "sha256": "b9659ba351ca1d372ee18bc5a226c703517ec79b49603be6686c525db88eaef4"
+      "sha256": "7f4a1ec2ea8a3d9563a862e490ed04c276d9d2ca01d853cc4f490c598f0816e5"
     },
     {
       "path": "library/ui/apps/hud/features/communities/InviteToCommunity.tsx",
@@ -12762,7 +12770,7 @@
     },
     {
       "path": "library/ui/apps/hud/features/error/ConnectivityFeedback.tsx",
-      "sha256": "2aad6e3bab425ae6d854ba46780a62e62c7db06e6b37bccfcafb77de9f208e12"
+      "sha256": "81c9bf047d085b033b173ea0007e1770e623dec00567208c516402a3fdc1752e"
     },
     {
       "path": "library/ui/apps/hud/features/error/CrashModal.module.css",
@@ -12818,7 +12826,7 @@
     },
     {
       "path": "library/ui/apps/hud/features/events/EventsByDay.tsx",
-      "sha256": "abd6f6488e849fcbcd5878c27970fac435ac4bf9a76efc8aa9d0e173bad67105"
+      "sha256": "d526ec5654c6a5e56791bc176ee8519ffe71ea5a6412409384970de168f6149d"
     },
     {
       "path": "library/ui/apps/hud/features/events/EventsCalendar.module.css",
@@ -12826,7 +12834,7 @@
     },
     {
       "path": "library/ui/apps/hud/features/events/EventsCalendar.tsx",
-      "sha256": "79a89abb0a29dd62e34003622327908c052a22c8838865a314cd3c96746f7962"
+      "sha256": "8848e993ede963bb57a798d457872344f8f4ac706d56453e0eb6276fe5ad3778"
     },
     {
       "path": "library/ui/apps/hud/features/events/EventsPage.module.css",
@@ -12902,7 +12910,7 @@
     },
     {
       "path": "library/ui/apps/hud/features/gallery/GalleryPage.tsx",
-      "sha256": "ea729d2812105058351cc00aae6f86fc33dd4469f1cbd59bb3fdd6d22b4c8bb4"
+      "sha256": "0b3df2083b85de6e60a335e4970d0d28a3d9c798a1f8e5b12f1b1ec449b9b960"
     },
     {
       "path": "library/ui/apps/hud/features/gallery/PassportPhotos.module.css",
@@ -12910,7 +12918,7 @@
     },
     {
       "path": "library/ui/apps/hud/features/gallery/PassportPhotos.tsx",
-      "sha256": "175aba095c2c2174561396dc5364e5851247c4b5aa8dcc90c87593e345e65ba9"
+      "sha256": "c3091a1d9eb9e40477835a67bfe5581c7cfef9b2bbcf3fc2f8da8cf832bd60c4"
     },
     {
       "path": "library/ui/apps/hud/features/gallery/PhotoDetail.module.css",
@@ -13338,7 +13346,7 @@
     },
     {
       "path": "library/ui/apps/hud/features/places/PlacesBrowser.tsx",
-      "sha256": "e5b38705395a9c79fe650f9fd71e1a47badbe48bd7fd715d59c77f222e773c18"
+      "sha256": "a7db35b22888d29769a3c1f25442091fbe7f6b077159aa62d8534fad6a6d5369"
     },
     {
       "path": "library/ui/apps/hud/features/places/PlacesPage.module.css",
@@ -13426,7 +13434,7 @@
     },
     {
       "path": "library/ui/apps/hud/features/profile/ProfilePassport.tsx",
-      "sha256": "cd9873ebead22ac8fe39266348af7624ad5e29a8477eff3f99bba7906d9f337d"
+      "sha256": "797e546ef9dc54a4fce23ab9670ef97bfdd997266b30aa87264147f3aca38565"
     },
     {
       "path": "library/ui/apps/hud/features/profileCard/ProfileCard.tsx",
@@ -13510,7 +13518,7 @@
     },
     {
       "path": "library/ui/apps/hud/features/shop/ShopPage.tsx",
-      "sha256": "e8a0a4a0c168e1e848ab6dbc6712e710d1d4dc5d8c72103938f826a80b02b200"
+      "sha256": "6f19f7b732a693d23e296ca65e695ca8214c19f8da6ed92ff2db0d5b98abea5b"
     },
     {
       "path": "library/ui/apps/hud/features/sidebar/Sidebar.module.css",
@@ -13518,7 +13526,7 @@
     },
     {
       "path": "library/ui/apps/hud/features/sidebar/Sidebar.tsx",
-      "sha256": "3c6f0e28408c4bac948af4969d630c2731e918e7713fa3c383a2edcd6f2a64dc"
+      "sha256": "766cfc1842b83a157b6824e0c6ce5b765e04e2fbe94ec75a332e5cad54bb53f5"
     },
     {
       "path": "library/ui/apps/hud/features/sidebar/inviteLink.ts",
@@ -13574,7 +13582,7 @@
     },
     {
       "path": "library/ui/apps/hud/features/skybox/SkyboxMenu.tsx",
-      "sha256": "85e7165ed8edbf2a65c5d1efba9560503eb78036d67270344c964d7f563313e1"
+      "sha256": "eac9366e2bc65c2b28f81591683047ab7eca08352483c87b74d732c927dc152b"
     },
     {
       "path": "library/ui/apps/hud/features/startup/GuestOrSignUp.module.css",
@@ -13590,7 +13598,7 @@
     },
     {
       "path": "library/ui/apps/hud/features/startup/LoginSelection.tsx",
-      "sha256": "0a544cce8711f702fdebba13188afa15aff0caf24b07eb4da9c153cccb56d3c6"
+      "sha256": "3bf81121477c625992c4005430b3616c9d5994bc3b7a4f5b46442037d1a66576"
     },
     {
       "path": "library/ui/apps/hud/features/startup/NewAccountLook.module.css",
@@ -13750,7 +13758,7 @@
     },
     {
       "path": "library/ui/apps/hud/styles/tokens.css",
-      "sha256": "67eedff4ab08fbf974e045f11e0b747eb074732a89afbdec6104ac6b6b61125b"
+      "sha256": "63c4f5647e8ffd4b9d41568754a736c0efc8756cd6d6af869b42dd675d1af303"
     },
     {
       "path": "library/ui/apps/hud/test/armedButton.test.tsx",
@@ -13790,7 +13798,7 @@
     },
     {
       "path": "library/ui/apps/hud/test/design.ported.test.tsx",
-      "sha256": "e0d016817ec525cc0cd82812f74d4c3e2aaec1d9bc3fba59a405b1ea0a4d6e55"
+      "sha256": "efeb827564327bd068d4b1e7a6664ffc57e0b540032c9825f6e403c58939f79a"
     },
     {
       "path": "library/ui/apps/hud/test/donate.test.tsx",
@@ -14315,10 +14323,6 @@
     {
       "path": "library/ui/apps/hud/test/menu.clicks.test.tsx",
       "sha256": "08d593d3686cd7e9da76821284db320f32e5cfa4632be60a132f126e9840a131"
-    },
-    {
-      "path": "library/ui/apps/hud/test/pageWindow.test.ts",
-      "sha256": "13067595423fedd01681a6b2e8d55585a71e129cee279c40834c056fededeb20"
     },
     {
       "path": "library/ui/apps/hud/test/photoDetail.test.tsx",
@@ -16049,6 +16053,14 @@
       }
     },
     {
+      "path": "library/ui/assets/slider-handle.webp",
+      "sha256": "ced34ad97ae0a62e41f5fd96d7653cda2d23bc970e9c1b2ee007081106a4ec93",
+      "lfs": {
+        "oid": "ced34ad97ae0a62e41f5fd96d7653cda2d23bc970e9c1b2ee007081106a4ec93",
+        "size": 668
+      }
+    },
+    {
       "path": "library/ui/components/AnimatedBackground/AnimatedBackground.module.css",
       "sha256": "a016665633e10a79f097ea309a849d8a03f96f8e0c5691536dbc4cd32cea9394"
     },
@@ -16166,7 +16178,7 @@
     },
     {
       "path": "library/ui/components/CharCounter/CharCounter.tsx",
-      "sha256": "6c28917e55c75182ce1fda4cc4decd4fd3ce263e34d9a8d9c64320f4ae6388b0"
+      "sha256": "4c5b0860bd281f18d4d488542a7ee30fe858d1f70fc0fde1791a83e2e7432e4d"
     },
     {
       "path": "library/ui/components/Checkbox/Checkbox.module.css",
@@ -16202,7 +16214,7 @@
     },
     {
       "path": "library/ui/components/CodeInput/CodeInput.module.css",
-      "sha256": "5c3a46985289d48c58335787e6150f73c0d4566c3a10c3dde3d6092467c65c86"
+      "sha256": "528e474aa381b1b22e61a5429f5fed2c6772af54a7f050087340f3e67f7a9191"
     },
     {
       "path": "library/ui/components/CodeInput/CodeInput.tsx",
@@ -16243,6 +16255,14 @@
     {
       "path": "library/ui/components/Dropdown/HudDropdown.tsx",
       "sha256": "4f2aa6b09969995db9a7a72fbf727c8b705dc2c313beb4a8804803e795074444"
+    },
+    {
+      "path": "library/ui/components/EmptyState/EmptyState.module.css",
+      "sha256": "6937e4ab7cff184e5bdea5e81c0b981a23059a46ea084c17b7ee10d981cd7b9c"
+    },
+    {
+      "path": "library/ui/components/EmptyState/EmptyState.tsx",
+      "sha256": "042fd6572b819d801033109c6ad776793b23a79175ecc599086487aa83e6d764"
     },
     {
       "path": "library/ui/components/EventCard/EventCard.module.css",
@@ -16390,11 +16410,19 @@
     },
     {
       "path": "library/ui/components/Pager/Pager.module.css",
-      "sha256": "4a422fb79a91cc075373d6a0851abf257e1c531f25f945832376ddee2f68e5d6"
+      "sha256": "d84ac046b152884b819210c9c5cae934981093aa1d1cc56003fe3a92dc216918"
     },
     {
       "path": "library/ui/components/Pager/Pager.tsx",
-      "sha256": "252a2477ce625243fe4ce50b530e0720e5c8ed05ea31feda02c74d39887b7680"
+      "sha256": "f7fd6cfa0fcd3bf7446545d258c5d8a47e01f5f24024a9a9c8293df0cd1b701a"
+    },
+    {
+      "path": "library/ui/components/Panel/Panel.module.css",
+      "sha256": "48b79b831ebf6004eb30f8aa589dd3732e35f9b727c83f1aacb8f8d44acd5427"
+    },
+    {
+      "path": "library/ui/components/Panel/Panel.tsx",
+      "sha256": "99b92dc4131b7b7a06f6eab7166aa314f9a1354f52aec99ab65080876d5ebceb"
     },
     {
       "path": "library/ui/components/PlaceCard/PlaceCard.module.css",
@@ -16454,15 +16482,11 @@
     },
     {
       "path": "library/ui/components/Slider/Slider.module.css",
-      "sha256": "f585fa09bcd03f2fb4a10f8fcadd5f67653ef45dfd7abd63ccb099edd547a496"
+      "sha256": "89c32dee040cef5d0c5694b61100368501558848e8ae4a66ebccaa3046c23a83"
     },
     {
       "path": "library/ui/components/Slider/Slider.tsx",
       "sha256": "4509d51ec698afa416645386c2b45f5689b753ce8972a015855065ec73091d56"
-    },
-    {
-      "path": "library/ui/components/Slider/slider-handle.webp",
-      "sha256": "ced34ad97ae0a62e41f5fd96d7653cda2d23bc970e9c1b2ee007081106a4ec93"
     },
     {
       "path": "library/ui/components/Spinner/Spinner.module.css",
@@ -16474,11 +16498,19 @@
     },
     {
       "path": "library/ui/components/SubmitField/SubmitField.module.css",
-      "sha256": "2e7e0400277370c433ee1004f233911bc789c3ca0e3d66f100e4c1e2a2ef81ba"
+      "sha256": "109e77652f693a3209f40d12abeaffa5ee270793ac446d2970bacba16abe6d1f"
     },
     {
       "path": "library/ui/components/SubmitField/SubmitField.tsx",
-      "sha256": "e2f385eb52a18e91fa4077b60a90b877c5373e54c502d1f2aa5514a5daa98666"
+      "sha256": "8ab4721d609f5149c1699b74aa65d55897193ab1f00ed14dce4aea43b5428ecb"
+    },
+    {
+      "path": "library/ui/components/SwapLabel/SwapLabel.module.css",
+      "sha256": "23fa4239a87b41925df28f8205769836e2f0647b8f9bac39ae06c374f7de9417"
+    },
+    {
+      "path": "library/ui/components/SwapLabel/SwapLabel.tsx",
+      "sha256": "e84b02affa29112fbf28273e4fff8f1d5a088414f6278c9aecc36ca2c77df447"
     },
     {
       "path": "library/ui/components/Switch/Switch.module.css",
@@ -16547,6 +16579,14 @@
     {
       "path": "library/ui/components/Tooltip/Tooltip.tsx",
       "sha256": "ac60227c65f52c1fe957c515154042ab4fab972c667205eb31be29190217bd64"
+    },
+    {
+      "path": "library/ui/components/VoiceBars/VoiceBars.module.css",
+      "sha256": "f65699defd2cba238fcc6728db30b33f85d6416ac911fccc67d193ab488836e6"
+    },
+    {
+      "path": "library/ui/components/VoiceBars/VoiceBars.tsx",
+      "sha256": "02489972dc8194968f5c97eb70b0c478563cc0422451ba8ea21523db48832f47"
     },
     {
       "path": "library/ui/content.helpers.ts",
@@ -16670,7 +16710,7 @@
     },
     {
       "path": "library/ui/index.ts",
-      "sha256": "cfc5b943ce7cfe4774a58409a1e41f5d01a80b00999f7f9ee9054867bfba1643"
+      "sha256": "e91960dfd9e1f965ff203ba3f7c13960f7db27d3e9ac5c0d2c32eaa8b3f2c58b"
     },
     {
       "path": "library/ui/link.helpers.ts",
@@ -20892,21 +20932,6 @@
       "kind": "test:runtime"
     },
     {
-      "from": "library/ui/apps/hud/design/EmptyState.tsx",
-      "to": "library/ui/apps/hud/design/EmptyState.module.css",
-      "kind": "native:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/design/EmptyState.tsx",
-      "to": "library/ui/apps/hud/design/EmptyState.module.css",
-      "kind": "production:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/design/EmptyState.tsx",
-      "to": "library/ui/apps/hud/design/EmptyState.module.css",
-      "kind": "test:runtime"
-    },
-    {
       "from": "library/ui/apps/hud/design/EquippedItemCard.tsx",
       "to": "library/ui/apps/hud/design/EquippedItemCard.module.css",
       "kind": "native:runtime"
@@ -21223,17 +21248,17 @@
     },
     {
       "from": "library/ui/apps/hud/design/MenuPanel.tsx",
-      "to": "library/ui/apps/hud/design/Panel.tsx",
+      "to": "library/ui/index.ts",
       "kind": "native:runtime"
     },
     {
       "from": "library/ui/apps/hud/design/MenuPanel.tsx",
-      "to": "library/ui/apps/hud/design/Panel.tsx",
+      "to": "library/ui/index.ts",
       "kind": "production:runtime"
     },
     {
       "from": "library/ui/apps/hud/design/MenuPanel.tsx",
-      "to": "library/ui/apps/hud/design/Panel.tsx",
+      "to": "library/ui/index.ts",
       "kind": "test:runtime"
     },
     {
@@ -21354,21 +21379,6 @@
     {
       "from": "library/ui/apps/hud/design/Pager.tsx",
       "to": "library/ui/index.ts",
-      "kind": "test:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/design/Panel.tsx",
-      "to": "library/ui/apps/hud/design/Panel.module.css",
-      "kind": "native:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/design/Panel.tsx",
-      "to": "library/ui/apps/hud/design/Panel.module.css",
-      "kind": "production:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/design/Panel.tsx",
-      "to": "library/ui/apps/hud/design/Panel.module.css",
       "kind": "test:runtime"
     },
     {
@@ -21747,51 +21757,6 @@
       "kind": "test:runtime"
     },
     {
-      "from": "library/ui/apps/hud/design/SubmitField.tsx",
-      "to": "library/ui/apps/hud/design/MaskIcon.tsx",
-      "kind": "native:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/design/SubmitField.tsx",
-      "to": "library/ui/apps/hud/design/MaskIcon.tsx",
-      "kind": "production:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/design/SubmitField.tsx",
-      "to": "library/ui/apps/hud/design/MaskIcon.tsx",
-      "kind": "test:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/design/SubmitField.tsx",
-      "to": "library/ui/index.ts",
-      "kind": "native:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/design/SubmitField.tsx",
-      "to": "library/ui/index.ts",
-      "kind": "production:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/design/SubmitField.tsx",
-      "to": "library/ui/index.ts",
-      "kind": "test:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/design/SwapLabel.tsx",
-      "to": "library/ui/apps/hud/design/SwapLabel.module.css",
-      "kind": "native:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/design/SwapLabel.tsx",
-      "to": "library/ui/apps/hud/design/SwapLabel.module.css",
-      "kind": "production:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/design/SwapLabel.tsx",
-      "to": "library/ui/apps/hud/design/SwapLabel.module.css",
-      "kind": "test:runtime"
-    },
-    {
       "from": "library/ui/apps/hud/design/Tabs.tsx",
       "to": "library/ui/index.ts",
       "kind": "native:runtime"
@@ -21924,21 +21889,6 @@
     {
       "from": "library/ui/apps/hud/design/Toast.tsx",
       "to": "library/ui/index.ts",
-      "kind": "test:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/design/VoiceBars.tsx",
-      "to": "library/ui/apps/hud/design/VoiceBars.module.css",
-      "kind": "native:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/design/VoiceBars.tsx",
-      "to": "library/ui/apps/hud/design/VoiceBars.module.css",
-      "kind": "production:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/design/VoiceBars.tsx",
-      "to": "library/ui/apps/hud/design/VoiceBars.module.css",
       "kind": "test:runtime"
     },
     {
@@ -22453,21 +22403,6 @@
     },
     {
       "from": "library/ui/apps/hud/design/index.ts",
-      "to": "library/ui/apps/hud/design/EmptyState.tsx",
-      "kind": "native:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/design/index.ts",
-      "to": "library/ui/apps/hud/design/EmptyState.tsx",
-      "kind": "production:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/design/index.ts",
-      "to": "library/ui/apps/hud/design/EmptyState.tsx",
-      "kind": "test:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/design/index.ts",
       "to": "library/ui/apps/hud/design/EquippedItemCard.tsx",
       "kind": "native:runtime"
     },
@@ -22648,21 +22583,6 @@
     },
     {
       "from": "library/ui/apps/hud/design/index.ts",
-      "to": "library/ui/apps/hud/design/Panel.tsx",
-      "kind": "native:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/design/index.ts",
-      "to": "library/ui/apps/hud/design/Panel.tsx",
-      "kind": "production:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/design/index.ts",
-      "to": "library/ui/apps/hud/design/Panel.tsx",
-      "kind": "test:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/design/index.ts",
       "to": "library/ui/apps/hud/design/Rail.tsx",
       "kind": "native:runtime"
     },
@@ -22738,36 +22658,6 @@
     },
     {
       "from": "library/ui/apps/hud/design/index.ts",
-      "to": "library/ui/apps/hud/design/SubmitField.tsx",
-      "kind": "native:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/design/index.ts",
-      "to": "library/ui/apps/hud/design/SubmitField.tsx",
-      "kind": "production:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/design/index.ts",
-      "to": "library/ui/apps/hud/design/SubmitField.tsx",
-      "kind": "test:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/design/index.ts",
-      "to": "library/ui/apps/hud/design/SwapLabel.tsx",
-      "kind": "native:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/design/index.ts",
-      "to": "library/ui/apps/hud/design/SwapLabel.tsx",
-      "kind": "production:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/design/index.ts",
-      "to": "library/ui/apps/hud/design/SwapLabel.tsx",
-      "kind": "test:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/design/index.ts",
       "to": "library/ui/apps/hud/design/Tabs.tsx",
       "kind": "native:runtime"
     },
@@ -22824,21 +22714,6 @@
     {
       "from": "library/ui/apps/hud/design/index.ts",
       "to": "library/ui/apps/hud/design/Toast.tsx",
-      "kind": "test:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/design/index.ts",
-      "to": "library/ui/apps/hud/design/VoiceBars.tsx",
-      "kind": "native:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/design/index.ts",
-      "to": "library/ui/apps/hud/design/VoiceBars.tsx",
-      "kind": "production:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/design/index.ts",
-      "to": "library/ui/apps/hud/design/VoiceBars.tsx",
       "kind": "test:runtime"
     },
     {
@@ -29274,21 +29149,6 @@
     {
       "from": "library/ui/apps/hud/features/gallery/GalleryPage.tsx",
       "to": "library/ui/index.ts",
-      "kind": "test:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/features/gallery/PassportPhotos.tsx",
-      "to": "library/ui/apps/hud/design/index.ts",
-      "kind": "native:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/features/gallery/PassportPhotos.tsx",
-      "to": "library/ui/apps/hud/design/index.ts",
-      "kind": "production:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/features/gallery/PassportPhotos.tsx",
-      "to": "library/ui/apps/hud/design/index.ts",
       "kind": "test:runtime"
     },
     {
@@ -50922,21 +50782,6 @@
       "kind": "test:runtime"
     },
     {
-      "from": "library/ui/apps/hud/test/pageWindow.test.ts",
-      "to": "library/ui/index.ts",
-      "kind": "native:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/test/pageWindow.test.ts",
-      "to": "library/ui/index.ts",
-      "kind": "production:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/test/pageWindow.test.ts",
-      "to": "library/ui/index.ts",
-      "kind": "test:runtime"
-    },
-    {
       "from": "library/ui/apps/hud/test/photoDetail.test.tsx",
       "to": "library/explorer-core/lib/analytics.ts",
       "kind": "native:runtime"
@@ -61932,6 +61777,21 @@
       "kind": "test:runtime"
     },
     {
+      "from": "library/ui/components/EmptyState/EmptyState.tsx",
+      "to": "library/ui/components/EmptyState/EmptyState.module.css",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/components/EmptyState/EmptyState.tsx",
+      "to": "library/ui/components/EmptyState/EmptyState.module.css",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/components/EmptyState/EmptyState.tsx",
+      "to": "library/ui/components/EmptyState/EmptyState.module.css",
+      "kind": "test:runtime"
+    },
+    {
       "from": "library/ui/components/EventCard/EventCard.module.css",
       "to": "library/ui/foundations/typography/text-styles.module.css",
       "kind": "native:composes"
@@ -62547,6 +62407,21 @@
       "kind": "test:runtime"
     },
     {
+      "from": "library/ui/components/Panel/Panel.tsx",
+      "to": "library/ui/components/Panel/Panel.module.css",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/components/Panel/Panel.tsx",
+      "to": "library/ui/components/Panel/Panel.module.css",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/components/Panel/Panel.tsx",
+      "to": "library/ui/components/Panel/Panel.module.css",
+      "kind": "test:runtime"
+    },
+    {
       "from": "library/ui/components/PlaceCard/PlaceCard.tsx",
       "to": "library/ui/components/PlaceCard/PlaceCard.module.css",
       "kind": "native:runtime"
@@ -62814,6 +62689,21 @@
     {
       "from": "library/ui/components/SubmitField/SubmitField.tsx",
       "to": "library/ui/components/SubmitField/SubmitField.module.css",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/components/SwapLabel/SwapLabel.tsx",
+      "to": "library/ui/components/SwapLabel/SwapLabel.module.css",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/components/SwapLabel/SwapLabel.tsx",
+      "to": "library/ui/components/SwapLabel/SwapLabel.module.css",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/components/SwapLabel/SwapLabel.tsx",
+      "to": "library/ui/components/SwapLabel/SwapLabel.module.css",
       "kind": "test:runtime"
     },
     {
@@ -63129,6 +63019,21 @@
     {
       "from": "library/ui/components/Tooltip/Tooltip.tsx",
       "to": "library/ui/components/Tooltip/Tooltip.module.css",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/components/VoiceBars/VoiceBars.tsx",
+      "to": "library/ui/components/VoiceBars/VoiceBars.module.css",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/components/VoiceBars/VoiceBars.tsx",
+      "to": "library/ui/components/VoiceBars/VoiceBars.module.css",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/components/VoiceBars/VoiceBars.tsx",
+      "to": "library/ui/components/VoiceBars/VoiceBars.module.css",
       "kind": "test:runtime"
     },
     {
@@ -63833,6 +63738,21 @@
     },
     {
       "from": "library/ui/index.ts",
+      "to": "library/ui/components/EmptyState/EmptyState.tsx",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/index.ts",
+      "to": "library/ui/components/EmptyState/EmptyState.tsx",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/index.ts",
+      "to": "library/ui/components/EmptyState/EmptyState.tsx",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/index.ts",
       "to": "library/ui/components/EventCard/EventCard.tsx",
       "kind": "native:runtime"
     },
@@ -64103,6 +64023,21 @@
     },
     {
       "from": "library/ui/index.ts",
+      "to": "library/ui/components/Panel/Panel.tsx",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/index.ts",
+      "to": "library/ui/components/Panel/Panel.tsx",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/index.ts",
+      "to": "library/ui/components/Panel/Panel.tsx",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/index.ts",
       "to": "library/ui/components/PlaceCard/PlaceCard.tsx",
       "kind": "native:runtime"
     },
@@ -64253,6 +64188,21 @@
     },
     {
       "from": "library/ui/index.ts",
+      "to": "library/ui/components/SwapLabel/SwapLabel.tsx",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/index.ts",
+      "to": "library/ui/components/SwapLabel/SwapLabel.tsx",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/index.ts",
+      "to": "library/ui/components/SwapLabel/SwapLabel.tsx",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/index.ts",
       "to": "library/ui/components/Switch/Switch.tsx",
       "kind": "native:runtime"
     },
@@ -64354,6 +64304,21 @@
     {
       "from": "library/ui/index.ts",
       "to": "library/ui/components/Tooltip/Tooltip.tsx",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/index.ts",
+      "to": "library/ui/components/VoiceBars/VoiceBars.tsx",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/index.ts",
+      "to": "library/ui/components/VoiceBars/VoiceBars.tsx",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/index.ts",
+      "to": "library/ui/components/VoiceBars/VoiceBars.tsx",
       "kind": "test:runtime"
     },
     {
@@ -66128,11 +66093,6 @@
     },
     {
       "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
-      "to": "library/ui/apps/hud/design/EmptyState.tsx",
-      "kind": "type"
-    },
-    {
-      "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
       "to": "library/ui/apps/hud/design/EquippedItemCard.tsx",
       "kind": "type"
     },
@@ -66193,11 +66153,6 @@
     },
     {
       "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
-      "to": "library/ui/apps/hud/design/Panel.tsx",
-      "kind": "type"
-    },
-    {
-      "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
       "to": "library/ui/apps/hud/design/Rail.tsx",
       "kind": "type"
     },
@@ -66233,16 +66188,6 @@
     },
     {
       "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
-      "to": "library/ui/apps/hud/design/SubmitField.tsx",
-      "kind": "type"
-    },
-    {
-      "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
-      "to": "library/ui/apps/hud/design/SwapLabel.tsx",
-      "kind": "type"
-    },
-    {
-      "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
       "to": "library/ui/apps/hud/design/Tabs.tsx",
       "kind": "type"
     },
@@ -66259,11 +66204,6 @@
     {
       "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
       "to": "library/ui/apps/hud/design/Toast.tsx",
-      "kind": "type"
-    },
-    {
-      "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
-      "to": "library/ui/apps/hud/design/VoiceBars.tsx",
       "kind": "type"
     },
     {
@@ -68053,11 +67993,6 @@
     },
     {
       "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
-      "to": "library/ui/apps/hud/test/pageWindow.test.ts",
-      "kind": "type"
-    },
-    {
-      "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
       "to": "library/ui/apps/hud/test/photoDetail.test.tsx",
       "kind": "type"
     },
@@ -68983,6 +68918,11 @@
     },
     {
       "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
+      "to": "library/ui/components/EmptyState/EmptyState.tsx",
+      "kind": "type"
+    },
+    {
+      "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
       "to": "library/ui/components/EventCard/EventCard.tsx",
       "kind": "type"
     },
@@ -69088,6 +69028,11 @@
     },
     {
       "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
+      "to": "library/ui/components/Panel/Panel.tsx",
+      "kind": "type"
+    },
+    {
+      "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
       "to": "library/ui/components/PlaceCard/PlaceCard.tsx",
       "kind": "type"
     },
@@ -69138,6 +69083,11 @@
     },
     {
       "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
+      "to": "library/ui/components/SwapLabel/SwapLabel.tsx",
+      "kind": "type"
+    },
+    {
+      "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
       "to": "library/ui/components/Switch/Switch.tsx",
       "kind": "type"
     },
@@ -69184,6 +69134,11 @@
     {
       "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
       "to": "library/ui/components/Tooltip/Tooltip.tsx",
+      "kind": "type"
+    },
+    {
+      "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
+      "to": "library/ui/components/VoiceBars/VoiceBars.tsx",
       "kind": "type"
     },
     {
@@ -75798,17 +75753,17 @@
     },
     {
       "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
-      "to": "library/ui/components/Slider/slider-handle.webp",
+      "to": "library/ui/assets/slider-handle.webp",
       "kind": "native:asset"
     },
     {
       "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
-      "to": "library/ui/components/Slider/slider-handle.webp",
+      "to": "library/ui/assets/slider-handle.webp",
       "kind": "production:asset"
     },
     {
       "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
-      "to": "library/ui/components/Slider/slider-handle.webp",
+      "to": "library/ui/assets/slider-handle.webp",
       "kind": "test:asset"
     }
   ]

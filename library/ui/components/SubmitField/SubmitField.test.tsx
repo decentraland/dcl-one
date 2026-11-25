@@ -28,6 +28,7 @@ describe('SubmitField', () => {
       expect(field).not.toHaveAttribute('aria-invalid')
       expect(screen.getByRole('button', { name: 'NEXT' })).toBeEnabled()
       expect(screen.queryByRole('alert')).toBeNull()
+      expect(field).not.toHaveAttribute('aria-describedby')
     })
 
     it('reports what is typed', () => {
@@ -98,6 +99,7 @@ describe('SubmitField', () => {
       const alert = screen.getByRole('alert')
       expect(alert).toHaveTextContent('Invalid email')
       expect(alert).toContainElement(screen.getByTestId('warning'))
+      expect(field).toHaveAccessibleDescription('Invalid email')
     })
 
     it('draws no error icon without an error', () => {

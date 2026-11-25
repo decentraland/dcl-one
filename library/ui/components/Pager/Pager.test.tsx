@@ -5,19 +5,31 @@ import { Pager, pageWindow } from './Pager'
 
 describe('pageWindow', () => {
   it('shows every page when there are five or fewer', () => {
+    expect(pageWindow(0, 1)).toEqual([0])
     expect(pageWindow(0, 3)).toEqual([0, 1, 2])
+    expect(pageWindow(3, 4)).toEqual([0, 1, 2, 3])
+    expect(pageWindow(2, 5)).toEqual([0, 1, 2, 3, 4])
   })
 
   it('starts at the first page until the current one passes the middle', () => {
-    expect(pageWindow(2, 9)).toEqual([0, 1, 2, 3, 4])
+    expect(pageWindow(0, 20)).toEqual([0, 1, 2, 3, 4])
+    expect(pageWindow(1, 20)).toEqual([0, 1, 2, 3, 4])
+    expect(pageWindow(2, 20)).toEqual([0, 1, 2, 3, 4])
   })
 
   it('centres the current page', () => {
-    expect(pageWindow(4, 9)).toEqual([2, 3, 4, 5, 6])
+    expect(pageWindow(3, 20)).toEqual([1, 2, 3, 4, 5])
+    expect(pageWindow(9, 20)).toEqual([7, 8, 9, 10, 11])
   })
 
-  it('clamps at the last page', () => {
-    expect(pageWindow(8, 9)).toEqual([4, 5, 6, 7, 8])
+  it('clamps at the last pages', () => {
+    expect(pageWindow(18, 20)).toEqual([15, 16, 17, 18, 19])
+    expect(pageWindow(19, 20)).toEqual([15, 16, 17, 18, 19])
+  })
+
+  it('stays inside the pages for a current page outside them', () => {
+    expect(pageWindow(-1, 9)).toEqual([0, 1, 2, 3, 4])
+    expect(pageWindow(12, 9)).toEqual([4, 5, 6, 7, 8])
   })
 })
 
@@ -64,6 +76,18 @@ describe('Pager', () => {
       fireEvent.click(screen.getByRole('button', { name: 'Next page' }))
       expect(onChange).toHaveBeenNthCalledWith(1, 8)
       expect(onChange).toHaveBeenNthCalledWith(2, 0)
+    })
+
+    it('draws a chevron in both arrows by default', () => {
+      render(<Pager page={0} count={3} onChange={() => {}} />)
+      expect(screen.getByRole('button', { name: 'Previous page' }).querySelector('svg')).not.toBeNull()
+      expect(screen.getByRole('button', { name: 'Next page' }).querySelector('svg')).not.toBeNull()
+    })
+
+    it('marks no page current when the current page is outside the pages', () => {
+      render(<Pager page={12} count={9} onChange={() => {}} />)
+      expect(screen.getByRole('button', { name: '9' })).not.toHaveAttribute('aria-current')
+      expect(screen.getAllByRole('button').filter((b) => b.hasAttribute('aria-current'))).toHaveLength(0)
     })
 
     it("draws the caller's glyph in both arrows", () => {

@@ -111,7 +111,7 @@ export type {
 } from './components/EmptyState/EmptyState'
 export { FieldLabel } from './components/FieldLabel/FieldLabel'
 export type { FieldLabelProps } from './components/FieldLabel/FieldLabel'
-export { Pager, pageWindow } from './components/Pager/Pager'
+export { Pager } from './components/Pager/Pager'
 export type { PagerProps } from './components/Pager/Pager'
 export { Slider } from './components/Slider/Slider'
 export type { SliderProps } from './components/Slider/Slider'

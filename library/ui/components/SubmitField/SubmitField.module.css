@@ -24,7 +24,7 @@
 
   .field:hover,
   .field:focus-within {
-    background: #f2f2f2; /* = HUD --signin-field-focus */
+    background: #f2f2f2;
   }
 
   .field:focus-within::after,
@@ -37,7 +37,8 @@
     pointer-events: none;
   }
 
-  .field[data-invalid]::after {
+  /* The ring turns red once the field loses the focus; while focused it keeps the white of the focus ring. */
+  .field[data-invalid]:not(:focus-within)::after {
     border-color: #e00000; /* = HUD --signin-error-ring */
   }
 
@@ -82,7 +83,7 @@
   }
 
   .submit:hover:not(:disabled) {
-    background: #e41e43; /* = HUD --brand-pressed */
+    background: #e41e43;
   }
 
   .submit:disabled {

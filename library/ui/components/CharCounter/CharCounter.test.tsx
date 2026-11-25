@@ -29,6 +29,13 @@ describe('CharCounter', () => {
     })
   })
 
+  describe('when it has no maximum', () => {
+    it.each(['slash', 'spaced', 'words'] as const)('writes the count alone in the %s format', (format) => {
+      render(<CharCounter current={7} format={format} />)
+      expect(screen.getByText('7')).toBeInTheDocument()
+    })
+  })
+
   describe('when the count passes the maximum', () => {
     it('marks itself over', () => {
       render(<CharCounter current={11} max={10} />)
@@ -47,7 +54,7 @@ describe('CharCounter', () => {
 
     it('is not marked without a maximum', () => {
       render(<CharCounter current={11} />)
-      expect(screen.getByText('11/undefined')).not.toHaveAttribute('data-over')
+      expect(screen.getByText('11')).not.toHaveAttribute('data-over')
     })
   })
 })

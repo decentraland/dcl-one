@@ -675,6 +675,10 @@
     "primitives": 2,
     "tokens": 68
   },
+  "library/ui/components/EmptyState/EmptyState.module.css": {
+    "primitives": 0,
+    "tokens": 9
+  },
   "library/ui/components/EventCard/EventCard.module.css": {
     "primitives": 0,
     "tokens": 81
@@ -743,6 +747,10 @@
     "primitives": 0,
     "tokens": 7
   },
+  "library/ui/components/Panel/Panel.module.css": {
+    "primitives": 0,
+    "tokens": 1
+  },
   "library/ui/components/PlaceCard/PlaceCard.module.css": {
     "primitives": 0,
     "tokens": 55
@@ -773,7 +781,7 @@
   },
   "library/ui/components/Slider/Slider.module.css": {
     "primitives": 0,
-    "tokens": 20
+    "tokens": 24
   },
   "library/ui/components/Spinner/Spinner.module.css": {
     "primitives": 0,
