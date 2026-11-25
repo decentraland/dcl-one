@@ -401,7 +401,15 @@ pub async fn trades_leg(
         None => &[ChainNet::Ethereum, ChainNet::Matic],
     };
     let (mut guarded, check) = if owned_items::walks_here(state) {
-        match owned_items::snapshot(&state.pool, nets, Rule::Fresh, false).await {
+        match owned_items::snapshot(
+            &state.pool,
+            state.settings.catalogue(),
+            nets,
+            Rule::Fresh,
+            false,
+        )
+        .await
+        {
             Ok(tx) => (Some(tx), OwnerCheck::Checked),
             Err(ReadError::NotReady(..)) => (None, OwnerCheck::Partial),
             Err(ReadError::Db(e)) => return Err(ApiError::internal(e.to_string()).into_response()),

@@ -1,4 +1,4 @@
-import { IEngine } from '../../engine/types'
+import type { IEngine } from '../../engine/types'
 
 export type TimerId = number
 

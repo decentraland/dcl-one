@@ -175,6 +175,11 @@ CREATE TABLE land_authz.index_cursor (
     last_block_hash text,
     checkpoint_block bigint,
     checkpoint_hash text,
+    -- Raised in the statement of every write that changes the log other than
+    -- by appending past the cursor (a reorg or replay rewind, the block-time
+    -- repair): between two raises, a change to what the folds publish moves
+    -- the newest folded event instead.
+    rewrites bigint NOT NULL DEFAULT 0,
     CONSTRAINT index_cursor_network_known CHECK (network IN ('ethereum-mainnet', 'ethereum-sepolia')),
     CONSTRAINT index_cursor_folded_within_indexed CHECK (folded_block IS NULL OR folded_block <= last_block)
 );

@@ -1,10 +1,10 @@
-import { PBUiText } from '@dcl/ecs'
+import type { PBUiText } from '@dcl/ecs'
 
 import { ReactEcs } from '../../react-ecs'
 import { getFont, getFontSize, getTextAlign, getTextWrap } from '../Label/utils'
 import { parseUiBackground } from '../uiBackground'
 import { parseUiTransform } from '../uiTransform'
-import { UiButtonProps } from './types'
+import type { UiButtonProps } from './types'
 
 function getButtonProps(props: UiButtonProps) {
   if (props.variant === 'secondary') {

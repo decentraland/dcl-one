@@ -1,7 +1,7 @@
-//! The command line. Every option but four has an environment variable, so a workflow step needs
+//! The command line. Every option but five has an environment variable, so a workflow step needs
 //! no shell-specific syntax (PowerShell on Windows, bash on macOS): `--keep-service-worker`,
-//! `leg`'s `--change` and `--base` and `fetch`'s `--source` have none. An empty variable is not
-//! set.
+//! `leg`'s `--change`, `--base` and `--release` and `fetch`'s `--source` have none. An empty
+//! variable is not set.
 
 use std::path::PathBuf;
 use std::time::Duration;
@@ -17,6 +17,9 @@ pub const DEFAULT_PORT: u16 = 18742;
 
 pub const CHANGE_BUILD: &str = "change_build";
 pub const BASE_BUILD: &str = "base_build";
+pub const RELEASE_BUILD: &str = "release_build";
+/// Written by `measure` when the leg was given the latest release but could not run it.
+pub const RELEASE_NOT_MEASURED: &str = "release_not_measured.txt";
 
 /// The measured run: arriving in world is bounded by 300 s and the measuring window is 90 s,
 /// plus boot.
@@ -47,10 +50,10 @@ pub enum Command {
     Warmup(WarmupArgs),
     /// Download (URL) or unzip (zip) a web app into a folder
     Fetch(FetchArgs),
-    /// The interleaved loop: change, base, change, base ... renamed to change_build_<i>.csv/.log
-    /// and base_build_<i>.csv/.log, then runs_on.txt
+    /// The interleaved loop: change, base, release, change, base, release ... renamed to
+    /// <build>_<i>.csv/.log, then runs_on.txt
     Measure(MeasureArgs),
-    /// Everything for a by-hand check: fetch both builds, warm both up, measure, write runs_on.txt
+    /// Everything for a by-hand check: fetch the builds, warm each up, measure, write runs_on.txt
     Leg(LegArgs),
     /// The Markdown report of the results under DIR: a section for each folder holding a
     /// runs_on.txt. Exits 2 when no section has data, after writing the report
@@ -148,6 +151,18 @@ pub struct MeasureArgs {
     /// The baseline build's web app folder
     #[arg(long = "base-dir", env = "BASE_BUILD_DIR")]
     pub base_dir: Option<String>,
+    /// The latest release's web app folder
+    #[arg(long = "release-dir", env = "RELEASE_BUILD_DIR")]
+    pub release_dir: Option<String>,
+    /// The leg was given the latest release but could not download or warm it up: writes
+    /// release_not_measured.txt, so the report says so
+    #[arg(
+        long = "release-not-measured",
+        env = "RELEASE_NOT_MEASURED",
+        num_args = 0..=1,
+        default_missing_value = "true"
+    )]
+    pub release_not_measured: Option<String>,
     /// The runner label that names the report section (runs_on.txt)
     #[arg(long, env = "RUNS_ON_LABEL")]
     pub label: Option<String>,
@@ -169,6 +184,9 @@ pub struct LegArgs {
     /// The baseline build's web app
     #[arg(long = "base")]
     pub baseline: Option<String>,
+    /// The latest release's web app
+    #[arg(long)]
+    pub release: Option<String>,
     /// The runner label that names the report section
     #[arg(long, env = "RUNS_ON_LABEL")]
     pub label: Option<String>,
@@ -199,6 +217,9 @@ pub struct ReportArgs {
     /// The baseline build, as the header names it
     #[arg(long = "base", env = "BASE_DESCRIPTION")]
     pub baseline: Option<String>,
+    /// The latest release, as the header names it
+    #[arg(long, env = "RELEASE_DESCRIPTION")]
+    pub release: Option<String>,
     /// The workflow run that measured
     #[arg(long = "run-url", env = "RUN_URL")]
     pub run_url: Option<String>,

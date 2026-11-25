@@ -699,9 +699,24 @@ pub async fn list_nfts(
     f: &NftFilters,
 ) -> Result<(Vec<NftResult>, i64), Response> {
     validate(f)?;
+    let chain_id = state.settings.market.indexes.chain_id_ethereum;
+    // The pinned Decentraland contracts address book (01b40cff154a046f9ec509ac84be3643b51181c6,
+    // addresses.json) has LANDProxy, EstateProxy and DCLRegistrar on Sepolia only on this pair.
+    if super::owned_items::walks_here(state)
+        && state.settings.catalogue() == super::nft_index::Catalogue::Testnet
+        && f.network == Some(Network::Matic)
+        && (f.is_land
+            || matches!(
+                f.category,
+                Some(NftCategory::Parcel | NftCategory::Estate | NftCategory::Ens)
+            ))
+    {
+        return Ok((vec![], 0));
+    }
     let mut snapshot = None;
     if super::owned_items::walks_here(state)
-        && let Some(sources) = super::nft_reads::land_page_sources(f)
+        && let Some(land) = state.land_network()
+        && let Some(sources) = super::nft_reads::land_page_sources(f, land)
     {
         let (first, skip) = index_page(f);
         if first.saturating_add(skip) > super::nft_reads::MAX_WINDOW {
@@ -738,10 +753,10 @@ pub async fn list_nfts(
     let narrowed;
     if wants_rentals {
         let listings = match snapshot.as_mut() {
-            Some((conn, _)) => super::rentals::newest_listings(&mut **conn, &statuses)
+            Some((conn, _)) => super::rentals::newest_listings(&mut **conn, chain_id, &statuses)
                 .await
                 .map_err(super::nft_reads::read_error)?,
-            None => super::rentals::newest_listings(&state.pool, &statuses)
+            None => super::rentals::newest_listings(&state.pool, chain_id, &statuses)
                 .await
                 .unwrap_or_else(|e| {
                     tracing::warn!(error = %e, "/v1/nfts: the rentals read failed");
@@ -774,10 +789,12 @@ pub async fn list_nfts(
                 .map(|r| r.nft.id.clone())
                 .collect();
             match snapshot.as_mut() {
-                Some((conn, _)) => super::rentals::listings_of_nfts(&mut **conn, &land, &statuses)
-                    .await
-                    .map_err(super::nft_reads::read_error)?,
-                None => super::rentals::listings_of_nfts(&state.pool, &land, &statuses)
+                Some((conn, _)) => {
+                    super::rentals::listings_of_nfts(&mut **conn, chain_id, &land, &statuses)
+                        .await
+                        .map_err(super::nft_reads::read_error)?
+                }
+                None => super::rentals::listings_of_nfts(&state.pool, chain_id, &land, &statuses)
                     .await
                     .unwrap_or_else(|e| {
                         tracing::warn!(error = %e, "/v1/nfts: the rentals read failed");
@@ -914,6 +931,12 @@ async fn list_page(
     state: &MarketplaceState,
     f: &NftFilters,
 ) -> Result<(Vec<NftResult>, i64), Response> {
+    if super::owned_items::walks_here(state)
+        && state.settings.catalogue() == super::nft_index::Catalogue::Testnet
+    {
+        let (first, skip) = index_page(f);
+        return super::nft_reads::list_nfts(state, f, first, skip).await;
+    }
     let reader_page = readers::reader_page(f.first, f.skip, DEFAULT_FIRST);
     let (first, skip) = match reader_page {
         Some(page) if is_land_routed(f) && f.search.is_none() => page,

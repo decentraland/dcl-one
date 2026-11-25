@@ -22,7 +22,9 @@ REPO = 'example/project'
 HEAD = 'a' * 40
 MERGE = 'b' * 40
 MAIN = ('c' * 40, 'd' * 40, 'e' * 40)
+# The latest release: main's CI run 88, rolled out to decentraland.org.
 RELEASE = MAIN[2]
+RELEASE_VERSION = f'0.1.0-88.commit-{RELEASE[:7]}'
 RUNNERS = ('windows-amd64', 'macos-arm64', 'linux-amd64')
 
 
@@ -47,19 +49,32 @@ class GitHub:
         self.main_runs = [ci_run(90 - n, sha, event='push', branch='main') for n, sha in enumerate(MAIN)]
         # A PR run's artifacts carry the merge commit it built; a main run's its own commit.
         self.artifacts = {100: artifacts(MERGE), **{run['id']: artifacts(run['head_sha']) for run in self.main_runs}}
-        self.expired = set()
-        # GitHub deployments of the release environment, newest first, as set-rollout-action writes
-        # them: the deployment's commit is where the rollout was dispatched from, here main's tip.
+        # GitHub deployments of the release environment, newest first; only 1 is the release. 9 was
+        # made by hand, 8 is still in progress, 7 is another package, 6 another path, 5 has no
+        # percentage, 3 is partial and 2, which names main's run 89, failed after it was applied.
         self.deployments = [
-            rollout(1, 'another-package', '9.9.9-90.commit-ccccccc'),
-            rollout(2, inputs.RELEASE_PACKAGE, '0.1.0-88.commit-eeeeeee'),
-            rollout(3, inputs.RELEASE_PACKAGE, '0.1.0-89.commit-ddddddd'),
+            rollout(9, f'0.1.0-90.commit-{MAIN[0][:7]}', creator='someone'),
+            rollout(8, f'0.1.0-90.commit-{MAIN[0][:7]}'),
+            rollout(7, '9.9.9-90.commit-ccccccc', package='@dcl/other'),
+            rollout(6, f'0.1.0-90.commit-{MAIN[0][:7]}', path='other'),
+            rollout(5, f'0.1.0-90.commit-{MAIN[0][:7]}', percentage=None),
+            {**rollout(4, ''), 'payload': 'not an object'},
+            rollout(3, f'0.1.0-90.commit-{MAIN[0][:7]}', percentage=10),
+            rollout(2, f'0.1.0-89.commit-{MAIN[1][:7]}'),
+            rollout(1, RELEASE_VERSION),
         ]
-        self.statuses = {}
+        # newest first; a plain state is a deployment that went straight to it, success by default
+        self.statuses = {8: 'queued', 2: ['failure', 'success']}
+        self.expired = set()
         # build-info.json per web app, an optimized engine unless given here; None leaves it out.
         self.build_info = {}
         self.ids = {}
         self.calls = []
+        # (path pattern, exception) a read raises; artifact zips that time out; runs whose artifact
+        # list says it has more than one page
+        self.failures = []
+        self.slow_zips = set()
+        self.paged_runs = set()
 
     def web_zip(self, name):
         archive = io.BytesIO()
@@ -72,26 +87,39 @@ class GitHub:
 
     def __call__(self, path, raw=False):
         self.calls.append(path)
+        for pattern, failure in self.failures:
+            if re.search(pattern, path):
+                raise failure
         if path == f'repos/{REPO}/deployments?environment={inputs.RELEASE_ENVIRONMENT}&per_page=100':
             return self.deployments
-        if match := re.fullmatch(rf'repos/{REPO}/deployments/([0-9]+)/statuses\?per_page=100', path):
-            return [{'state': state} for state in self.statuses.get(int(match.group(1)), ['success'])]
-        if match := re.fullmatch(rf'repos/{REPO}/actions/runs/([0-9]+)', path):
-            runs = [run for run in self.main_runs + self.change_runs if run['id'] == int(match.group(1))]
-            if not runs:
-                raise subprocess.CalledProcessError(1, ['gh', 'api', path])
-            return runs[0]
         if path == f'repos/{REPO}/pulls/7':
             return self.pr
+        if match := re.fullmatch(rf'repos/{REPO}/deployments\?environment=org&per_page=100&page=([0-9]+)', path):
+            page = int(match.group(1))
+            return self.deployments[(page - 1) * 100:page * 100]
+        if match := re.fullmatch(rf'repos/{REPO}/deployments/([0-9]+)/statuses\?per_page=100', path):
+            # newest first; a plain state is a deployment that went straight to it
+            number = int(match.group(1))
+            states = self.statuses.get(number, 'success')
+            return [{'state': state} for state in ([states] if isinstance(states, str) else states)]
+        if match := re.fullmatch(rf'repos/{REPO}/actions/runs/([0-9]+)', path):
+            run_id = int(match.group(1))
+            for run in self.main_runs + self.change_runs:
+                if run['id'] == run_id:
+                    return run
+            raise subprocess.CalledProcessError(1, ['gh', 'api', path])
         if match := re.fullmatch(rf'repos/{REPO}/actions/runs/([0-9]+)/artifacts\?per_page=100', path):
             names = self.artifacts.get(int(match.group(1)), [])
             rows = [{'id': self.ids.setdefault(name, len(self.ids) + 1), 'name': name,
                      'expired': name in self.expired} for name in names]
-            return {'total_count': len(rows), 'artifacts': rows}
+            return {'total_count': len(rows) + (int(match.group(1)) in self.paged_runs), 'artifacts': rows}
         if match := re.fullmatch(rf'repos/{REPO}/actions/artifacts/([0-9]+)/zip', path):
             if not raw:
                 raise AssertionError('an artifact zip is read as bytes')
-            return self.web_zip(next(name for name, number in self.ids.items() if number == int(match.group(1))))
+            name = next(name for name, number in self.ids.items() if number == int(match.group(1)))
+            if name in self.slow_zips:
+                raise subprocess.TimeoutExpired('gh', 300)
+            return self.web_zip(name)
         if path == f'repos/{REPO}/{inputs.RUNS_PATH}?head_sha={HEAD}&status=success&per_page=100':
             return {'workflow_runs': self.change_runs}
         if path == f'repos/{REPO}/{inputs.RUNS_PATH}?branch=main&event=push&status=success&per_page=100':
@@ -105,9 +133,15 @@ class GitHub:
                       if f'repos/{REPO}/actions/artifacts/{number}/zip' in self.calls)
 
 
-def rollout(number, package, version, percentage=100):
-    return {'id': number, 'sha': MAIN[0], 'payload': {'environment': 'org', 'prefix': package, 'version': version,
-                                                      'percentage': percentage, 'sha': MAIN[0]}}
+def rollout(number, version, package=inputs.RELEASE_PACKAGE, path='play', percentage=100,
+            creator='github-actions[bot]'):
+    """A deployment as the rollout workflow records it: its commit is where the rollout was dispatched
+    from, here main's tip."""
+    payload = {'environment': 'org', 'prefix': package, 'path': path, 'version': version, 'sha': MAIN[0]}
+    if percentage is not None:
+        payload['percentage'] = percentage
+    return {'id': number, 'sha': MAIN[0], 'creator': {'login': creator}, 'task': 'dcl/set-rollout',
+            'payload': payload}
 
 
 def completed(**changes):
@@ -143,11 +177,98 @@ class ResolverTest(Fixture):
             'label': 'apple-m1-chrome', 'runs_on': 'apple-m1', 'os': 'macos',
             'runner_artifact': f'bevy-explorer-benchmark-macos-arm64-{MERGE}', 'runner_run_id': '100',
             'change_artifact': f'bevy-explorer-web-{MERGE}', 'change_run_id': '100',
-            'base_artifact': f'bevy-explorer-web-{MAIN[0]}', 'base_run_id': '90'})
+            'base_artifact': f'bevy-explorer-web-{MAIN[0]}', 'base_run_id': '90',
+            'release_artifact': f'bevy-explorer-web-{RELEASE}', 'release_run_id': '88'})
+        self.assertEqual((result['release_sha'], result['release_version']), (RELEASE, RELEASE_VERSION))
         self.assertEqual((result['report_runner_artifact'], result['report_runner_run_id']),
                          (f'bevy-explorer-benchmark-linux-amd64-{MERGE}', '100'))
         self.assertEqual(result['notes'], '')
-        self.assertEqual(self.github.zips_read(), [f'bevy-explorer-web-{MERGE}', f'bevy-explorer-web-{MAIN[0]}'])
+        self.assertEqual(self.github.zips_read(), sorted([f'bevy-explorer-web-{MERGE}', f'bevy-explorer-web-{MAIN[0]}',
+                                                          f'bevy-explorer-web-{RELEASE}']))
+
+    def test_a_release_that_cannot_be_measured_leaves_a_note_and_the_base_is_still_compared(self):
+        def no_rollout(github):
+            github.deployments = []
+
+        def unnamed_run(github):
+            github.deployments[-1]['payload']['version'] = '1.2.3'
+
+        def other_commit(github):
+            github.main_runs[2]['head_sha'] = 'f' * 40
+
+        def is_base(github):
+            github.main_runs[2]['head_sha'] = MAIN[0]
+            github.deployments[-1]['payload']['version'] = f'0.1.0-88.commit-{MAIN[0][:7]}'
+
+        def expired(github):
+            github.expired = {f'bevy-explorer-web-{RELEASE}'}
+
+        def unoptimized(github):
+            github.build_info = {f'bevy-explorer-web-{RELEASE}': {'engine': {'optimized': False}}}
+
+        def no_api(github):
+            github.failures = [(r'actions/runs/88$', subprocess.CalledProcessError(1, 'gh'))]
+
+        def slow_zip(github):
+            github.slow_zips = {f'bevy-explorer-web-{RELEASE}'}
+
+        def too_many_artifacts(github):
+            github.paged_runs = {88}
+
+        def deployments_error(github):
+            github.failures = [(r'/deployments\?', subprocess.TimeoutExpired('gh', 60))]
+
+        for change, note in ((no_rollout, 'No successful rollout'), (deployments_error, 'could not be read'), (unnamed_run, 'does not name the CI run'),
+                             (other_commit, 'is not a Bevy Explorer / CI run'),
+                             (is_base, 'is the base build'), (expired, 'has expired'),
+                             (unoptimized, 'is not optimized'), (no_api, 'could not be read'),
+                             (slow_zip, 'could not be read'), (too_many_artifacts, 'could not be read')):
+            with self.subTest(change=change.__name__):
+                self.github = GitHub()
+                change(self.github)
+                with patch.object(inputs, 'api', side_effect=self.github):
+                    result = self.resolve()
+                self.assertTrue(result['run'])
+                self.assertEqual((result['release_sha'], result['release_version']), ('', ''))
+                self.assertEqual({(leg['release_artifact'], leg['release_run_id']) for leg in result['legs']},
+                                 {('', '')})
+                self.assertIn('Not compared with the latest release', result['notes'])
+                self.assertIn(note, result['notes'])
+
+    def test_an_unexpected_api_response_fails_the_step_instead_of_becoming_a_note(self):
+        del self.github.main_runs[2]['path']
+        with self.assertRaises(KeyError):
+            self.resolve()
+
+    def test_a_release_whose_ci_run_was_cancelled_or_is_still_going_is_measured_from_its_web_app(self):
+        for status, conclusion in (('completed', 'cancelled'), ('completed', 'failure'), ('in_progress', None)):
+            with self.subTest(status=status, conclusion=conclusion):
+                self.github.main_runs[2].update(status=status, conclusion=conclusion)
+                result = self.resolve()
+                self.assertEqual(result['release_version'], RELEASE_VERSION)
+                self.assertEqual(result['legs'][0]['release_run_id'], '88')
+
+    def test_a_live_release_made_inactive_by_a_newer_rollout_is_still_the_release(self):
+        self.github.statuses[1] = ['inactive', 'success', 'in_progress', 'queued']
+        self.assertEqual(self.resolve()['release_version'], RELEASE_VERSION)
+        # never applied: not a release
+        self.github.statuses[1] = ['inactive', 'queued']
+        self.assertIn('No successful rollout', self.resolve()['notes'])
+
+    def test_only_a_rollout_task_is_a_release(self):
+        self.github.deployments[-1]['task'] = 'deploy'
+        self.assertIn('No successful rollout', self.resolve()['notes'])
+
+    def test_the_release_is_searched_page_by_page_until_the_first_rollout(self):
+        partial = {'creator': {'login': 'github-actions[bot]'}, 'task': 'dcl/set-rollout',
+                   'payload': {'prefix': inputs.RELEASE_PACKAGE, 'path': 'play', 'percentage': 10, 'version': 'x'}}
+        newer = [{**partial, 'id': 1000 + n} for n in range(150)]
+        self.github.deployments = newer + self.github.deployments
+        self.github.statuses.update({row['id']: 'success' for row in newer})
+        result = self.resolve()
+        self.assertEqual(result['release_version'], RELEASE_VERSION)
+        pages = [call for call in self.github.calls if '/deployments?' in call]
+        self.assertEqual([call.rsplit('=', 1)[1] for call in pages], ['1', '2'])
 
     def test_an_unoptimized_change_build_is_not_measured_and_the_pr_is_told_how_to_get_one(self):
         for info in ({'engine': {'optimized': False}}, {'engine': {}}, None):
@@ -268,7 +389,7 @@ class ResolverTest(Fixture):
             with self.subTest(bad=bad), self.assertRaises(ValueError):
                 self.resolve('workflow_dispatch', {'inputs': {'pr': '7', **bad}})
 
-    def test_the_runs_stay_within_the_legs_hour_and_reach_the_report_as_a_plain_integer(self):
+    def test_the_runs_stay_within_the_legs_90_minutes_and_reach_the_report_as_a_plain_integer(self):
         self.assertEqual(inputs.MAX_RUNS, 3)
         for given, expected in (('2', '2'), (' 2 ', '2'), ('02', '2'), ('', '3')):
             with self.subTest(given=given):
@@ -294,7 +415,8 @@ class MainTest(Fixture):
             'label': 'intel-i5-chrome', 'runs_on': 'intel-i5', 'os': 'windows',
             'runner_artifact': f'bevy-explorer-benchmark-windows-amd64-{MAIN[0]}', 'runner_run_id': '90',
             'change_artifact': f'bevy-explorer-web-{MAIN[0]}', 'change_run_id': '90',
-            'base_artifact': f'bevy-explorer-web-{RELEASE}', 'base_run_id': '88'})
+            'base_artifact': f'bevy-explorer-web-{RELEASE}', 'base_run_id': '88',
+            'release_artifact': '', 'release_run_id': ''})
         self.assertEqual(self.resolve('workflow_dispatch', {'inputs': {'pr': ''}})['base_sha'], RELEASE)
         with self.assertRaises(ValueError):
             self.resolve('workflow_dispatch', {'inputs': {'pr': ' '}})
@@ -321,19 +443,20 @@ class MainTest(Fixture):
         self.github.build_info = {f'bevy-explorer-web-{RELEASE}': {'engine': {'optimized': False}}}
         self.assertIn(f'({RELEASE}, CI run 88)', self.resolve('schedule', {})['notes'])
 
-    def test_a_partial_or_unsuccessful_rollout_is_not_the_release(self):
-        self.github.deployments.insert(1, rollout(4, inputs.RELEASE_PACKAGE, '0.1.0-90.commit-ccccccc', percentage=10))
-        self.github.deployments.insert(1, rollout(5, inputs.RELEASE_PACKAGE, '0.1.0-90.commit-ccccccc'))
-        self.github.statuses[5] = ['failure', 'success']
+    def test_the_nightly_and_a_pr_take_the_same_release(self):
+        # every deployment newer than the release is not one, whatever the caller
         self.assertEqual(self.resolve('schedule', {})['base_sha'], RELEASE)
-
-    def test_a_release_a_newer_deployment_marked_inactive_is_still_the_release(self):
-        self.github.deployments.insert(1, rollout(4, inputs.RELEASE_PACKAGE, '0.1.0-90.commit-ccccccc', percentage=10))
-        self.github.statuses[2] = ['inactive', 'success', 'in_progress']
+        self.assertEqual(self.resolve()['release_sha'], RELEASE)
+        # applied, then retired by a newer rollout: still the release; applied, failed, then retired: not
+        self.github.statuses[1] = ['inactive', 'success', 'in_progress']
         self.assertEqual(self.resolve('schedule', {})['base_sha'], RELEASE)
-        # Never successful: the next older complete rollout is the release.
-        self.github.statuses[2] = ['inactive', 'in_progress']
+        self.github.statuses[1] = ['inactive', 'failure', 'success']
+        self.assertIn('rollout', self.resolve('schedule', {})['notes'])
+        self.assertIn('No successful rollout', self.resolve()['notes'])
+        # the newer run 89 once its rollout succeeds
+        self.github.statuses[2] = 'success'
         self.assertEqual(self.resolve('schedule', {})['base_sha'], MAIN[1])
+        self.assertEqual(self.resolve()['release_sha'], MAIN[1])
 
     def test_the_fleet_switched_off_skips_while_no_enabled_laptop_fails(self):
         for enabled in ('none', ' None '):
@@ -344,7 +467,7 @@ class MainTest(Fixture):
 
     def test_main_older_than_a_release_whose_guard_failed_is_not_measured_backwards(self):
         # The release is CI run 89, which failed a guard; main's newest passed web build is run 88.
-        self.github.deployments = [rollout(2, inputs.RELEASE_PACKAGE, '0.1.0-89.commit-ddddddd')]
+        self.github.deployments = [rollout(20, f'0.1.0-89.commit-{MAIN[1][:7]}')]
         self.github.main_runs[1]['conclusion'] = 'failure'
         self.github.artifacts[90] = artifacts(MAIN[0], web=False)
         result = self.resolve('schedule', {})
@@ -359,19 +482,19 @@ class MainTest(Fixture):
     def test_no_release_rollout_or_an_expired_release_build_is_the_note(self):
         self.github.deployments = self.github.deployments[:1]
         self.assertIn('rollout', self.resolve('schedule', {})['notes'])
-        self.github.deployments = [rollout(2, inputs.RELEASE_PACKAGE, '0.1.0-88.commit-eeeeeee')]
+        self.github.deployments = [rollout(20, RELEASE_VERSION)]
         self.github.expired = {f'bevy-explorer-web-{RELEASE}'}
         result = self.resolve('schedule', {})
         self.assertFalse(result['run'])
         self.assertIn('has expired', result['notes'])
-        self.github.deployments = [rollout(2, inputs.RELEASE_PACKAGE, '0.1.0-88.commit-ddddddd')]
+        self.github.deployments = [rollout(20, f'0.1.0-88.commit-{MAIN[1][:7]}')]
         self.assertIn('not a Bevy Explorer / CI run', self.resolve('schedule', {})['notes'])
         # A run of another repository is not found.
-        self.github.deployments = [rollout(2, inputs.RELEASE_PACKAGE, '0.1.0-12345.commit-eeeeeee')]
+        self.github.deployments = [rollout(20, f'0.1.0-12345.commit-{RELEASE[:7]}')]
         self.assertIn('not a Bevy Explorer / CI run', self.resolve('schedule', {})['notes'])
 
     def test_the_newest_release_whose_version_names_no_run_fails_instead_of_an_older_base(self):
-        self.github.deployments.insert(1, rollout(4, inputs.RELEASE_PACKAGE, '0.2.0'))
+        self.github.deployments.insert(0, rollout(10, '0.2.0'))
         with self.assertRaisesRegex(ValueError, 'names no CI run'):
             self.resolve('schedule', {})
 
@@ -437,7 +560,7 @@ class OutputTest(unittest.TestCase):
                 self.assertEqual(inputs.main(), 0)
             values = dict(line.split('=', 1) for line in (folder / 'output').read_text().splitlines())
             self.assertIn('Benchmark runs', (folder / 'summary').read_text())
-        for name in ('run', 'pr', 'change_sha', 'base_sha', 'runs', 'legs', 'expected_labels',
+        for name in ('run', 'pr', 'change_sha', 'base_sha', 'release_sha', 'release_version', 'runs', 'legs', 'expected_labels',
                      'report_runner_artifact', 'report_runner_run_id', 'notes', 'change_description',
                      'base_description', 'retention_days', 'issue_title'):
             self.assertIn(name, values)
