@@ -117,6 +117,23 @@ describe("One list: a private list is never rendered to another account", () => 
     expect(m.shop.requests.some((r) => r.url.pathname.startsWith("/v1/lists"))).toBe(false);
   });
 
+  it("marks both deletion choices as destructive when the owner opens the confirmation", async () => {
+    const wallet = fakeWallet();
+    mountShop({
+      path: "/shop/my-favorites/list-private", who: "web3", wallet,
+      routes: [
+        { method: "GET", path: /^\/v1\/lists\/list-private$/, reply: () => ({ body: { ok: true, data: { ...privateList, userAddress: wallet.address } } }) },
+        picks([]), catalog,
+      ],
+    });
+    const open = await screen.findByRole("button", { name: "Delete list" });
+    expect(open).toHaveAttribute("data-tone", "danger");
+    fireEvent.click(open);
+    const dialog = within(screen.getByRole("alertdialog", { name: "Delete list" }));
+    expect(dialog.getByRole("button", { name: "Delete" })).toHaveAttribute("data-tone", "danger");
+    expect(dialog.getByRole("button", { name: "Keep it" })).not.toHaveAttribute("data-tone");
+  });
+
   it("the owner sees it, edits it, and can remove items", async () => {
     const wallet = fakeWallet();
     const own = { ...privateList, userAddress: wallet.address };

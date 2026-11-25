@@ -26,12 +26,6 @@ pub struct MarketUpstreamsConfig {
     #[arg(long, env = "MARKETPLACE_SUBGRAPH_URL")]
     pub marketplace_subgraph_url: Option<String>,
 
-    /// Land-manager subgraph: parcel operators, permissions and
-    /// update-operator lookups before the land-authz index is published;
-    /// unset answers the envelope (lamb2's 500 on the permissions route).
-    #[arg(long, env = "LAND_SUBGRAPH_URL")]
-    pub land_subgraph_url: Option<String>,
-
     /// The marketplace API `/v1/trades` list to mirror; unset attaches no job.
     #[arg(long, env = "TRADES_SYNC_UPSTREAM_URL")]
     pub trades_sync_upstream_url: Option<String>,
@@ -154,7 +148,7 @@ pub struct MarketplaceConfig {
     /// Tip forwards waiting for the MANA transfer index, across every sender.
     #[arg(long, env = "MARKETPLACE_TIP_MAX_PENDING", default_value_t = 2_000)]
     pub marketplace_tip_max_pending: u64,
-    /// Walk the store's primary mints and the ERC721BidV2 bids on Polygon.
+    /// Walk Polygon store mints and bids, and Ethereum accepted bids and NAME purchase fees.
     #[arg(long, env = "MARKETPLACE_SALES_INDEX_ENABLED", default_value_t = false, action = clap::ArgAction::Set)]
     pub marketplace_sales_index_enabled: bool,
 
@@ -167,8 +161,14 @@ pub struct MarketplaceConfig {
     #[arg(long, env = "MARKETPLACE_THIRD_PARTY_REGISTRY_INDEX_ENABLED", default_value_t = false, action = clap::ArgAction::Set)]
     pub marketplace_third_party_registry_index_enabled: bool,
 
+    /// Walk the Polygon collection factories and their collections' events into
+    /// `shop.collection_event` over the `TRADE_RPC_URLS` 137 entry. Nothing reads it yet.
+    #[arg(long, env = "MARKETPLACE_COLLECTIONS_INDEX_ENABLED", default_value_t = false, action = clap::ArgAction::Set)]
+    pub marketplace_collections_index_enabled: bool,
+
     /// Pause between the end of one pass and the start of the next, for the nft, trade-events,
-    /// MANA transfers, sales, committee, third-party registry and rentals walks (30 under mirror).
+    /// MANA transfers, sales, committee, third-party registry, collections and rentals walks
+    /// (30 under mirror).
     #[arg(long, env = "MARKETPLACE_INDEX_INTERVAL_SECS", default_value_t = 5)]
     pub marketplace_index_interval_secs: u64,
 
@@ -376,7 +376,8 @@ pub struct EconomyConfig {
     #[arg(long, env = "RELAYER_PRIVATE_KEY", hide_env_values = true)]
     pub relayer_private_key: Option<String>,
 
-    /// The upstream transactions-api the relay forwards to when it has no signer of its own (public https).
+    /// The upstream transactions-api a testnet relay forwards to when it has no signer of its own (public
+    /// https). A Polygon mainnet relay (COLLECTIONS_CHAIN_ID=137) refuses to start with it.
     #[arg(long, env = "TRANSACTIONS_UPSTREAM_URL")]
     pub transactions_upstream_url: Option<String>,
 
@@ -761,7 +762,8 @@ mod tests {
                 && !c.marketplace.marketplace_trade_events_index_enabled
                 && !c.marketplace.marketplace_sales_index_enabled
                 && !c.marketplace.marketplace_committee_index_enabled
-                && !c.marketplace.marketplace_third_party_registry_index_enabled,
+                && !c.marketplace.marketplace_third_party_registry_index_enabled
+                && !c.marketplace.marketplace_collections_index_enabled,
             "the chain indexes are opt-in"
         );
         assert_eq!(

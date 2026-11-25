@@ -129,8 +129,10 @@ pub struct RawSettings {
     pub gatekeeper_auth_token: Option<String>,
     /// `COMMS_LAND_OPERATORS_URL`: a lambdas base whose
     /// `/parcels/{x}/{y}/operators` protects LAND owners/operators from scene
-    /// bans (the old `LAMBDAS_URL`); unset protects none (the old degraded
-    /// mode without a places database).
+    /// bans (the old `LAMBDAS_URL`), read only when the permission core has
+    /// no land-authz index attached (`catalyst serve` always attaches it);
+    /// unset there protects none (the old degraded mode without a places
+    /// database).
     pub land_operators_url: Option<String>,
     /// `LEASE_AUTHORIZATIONS_URL`: the linker-server lease document; unset
     /// lists no lease holder.

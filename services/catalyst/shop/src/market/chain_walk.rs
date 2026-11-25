@@ -47,6 +47,8 @@ pub const INDEXER_MANA: &str = "mana_transfers";
 
 pub const INDEXER_COMMITTEE: &str = "committee";
 
+pub const INDEXER_COLLECTIONS: &str = "collections";
+
 pub const INDEXER_NFT: &str = "nft";
 pub const INDEXER_SALES: &str = "sales";
 pub const INDEXER_TRADE_EVENTS: &str = "trade_events";
@@ -142,6 +144,8 @@ pub struct IndexSettings {
     pub committee_enabled: bool,
     /// `MARKETPLACE_THIRD_PARTY_REGISTRY_INDEX_ENABLED`: Polygon providers and slots.
     pub third_party_registry_enabled: bool,
+    /// `MARKETPLACE_COLLECTIONS_INDEX_ENABLED`: the Polygon collection factories and collections.
+    pub collections_enabled: bool,
     /// `MARKETPLACE_INDEX_INTERVAL_SECS` (5; 30 under the mirror posture): pause between passes.
     pub interval: Duration,
     /// `MARKETPLACE_INDEX_REQUESTS_PER_PASS` (100): `eth_getLogs` calls one
@@ -180,6 +184,7 @@ impl Default for IndexSettings {
             sales_enabled: false,
             committee_enabled: false,
             third_party_registry_enabled: false,
+            collections_enabled: false,
             interval: Duration::from_secs(5),
             requests_per_pass: 100,
             window_blocks: 10_000,
@@ -429,6 +434,7 @@ pub struct Owner {
     pub net: ChainNet,
     pub chain_id: i64,
     pub generation: i64,
+    verify_sales: bool,
     /// Whether this generation's walk touched its cursor at its start.
     pub started: Started,
 }
@@ -625,6 +631,9 @@ impl Holdings {
             net,
             chain_id,
             generation,
+            verify_sales: settings.sales_enabled
+                && super::sale_history::required(indexer)
+                && chain_id == net.chain_id(),
             started,
         })
     }
@@ -654,9 +663,13 @@ pub async fn advance(
     net: ChainNet,
     expected: (i64, Option<&str>),
     header: &BlockHeader,
+    verified_sales: bool,
 ) -> Result<(), sqlx::Error> {
     let updated = sqlx::query(
         "UPDATE shop.chain_cursor SET last_block = $5, last_block_hash = $6, last_block_time = $7, \
+             sale_covered_rewinds = CASE WHEN $8 AND ($3 = start_block - 1 OR (sale_covered_rewinds = reorg_rewinds AND sale_input_version = $9 AND sale_verified_through = $3)) THEN reorg_rewinds ELSE sale_covered_rewinds END, \
+             sale_input_version = CASE WHEN $8 AND ($3 = start_block - 1 OR (sale_covered_rewinds = reorg_rewinds AND sale_input_version = $9 AND sale_verified_through = $3)) THEN $9 ELSE sale_input_version END, \
+             sale_verified_through = CASE WHEN $8 AND ($3 = start_block - 1 OR (sale_covered_rewinds = reorg_rewinds AND sale_input_version = $9 AND sale_verified_through = $3)) THEN $5 ELSE sale_verified_through END, \
              updated_at = timezone('UTC', now()) \
          WHERE indexer = $1 AND network = $2 AND last_block = $3 AND last_block_hash IS NOT DISTINCT FROM $4 \
            AND last_block < $5",
@@ -668,6 +681,8 @@ pub async fn advance(
     .bind(header.number as i64)
     .bind(&header.hash)
     .bind(header.timestamp)
+    .bind(verified_sales)
+    .bind(super::sale_history::VERSION)
     .execute(&mut *conn)
     .await?;
     if updated.rows_affected() != 1 {
@@ -728,7 +743,9 @@ pub async fn rewind(
     let updated = sqlx::query(
         "UPDATE shop.chain_cursor SET last_block = $5, last_block_hash = $6, last_block_time = $7, \
              fold_through = NULL, folded_block = NULL, folded_at = NULL, diverged_at = NULL, \
-             reorg_rewinds = reorg_rewinds + 1, updated_at = timezone('UTC', now()) \
+             sale_covered_rewinds = CASE WHEN sale_covered_rewinds = reorg_rewinds THEN reorg_rewinds + 1 END, \
+             sale_verified_through = CASE WHEN sale_verified_through IS NOT NULL THEN least(sale_verified_through, $5) END, \
+             sale_repair_upper = NULL, sale_dirty_from = least(sale_dirty_from, $5::bigint + 1), sale_history_revision = sale_history_revision + 1, reorg_rewinds = reorg_rewinds + 1, updated_at = timezone('UTC', now()) \
          WHERE indexer = $1 AND network = $2 AND last_block = $3 AND last_block_hash IS NOT DISTINCT FROM $4 \
            AND last_block >= $5",
     )
@@ -881,16 +898,21 @@ pub fn mainnet_chain(net: ChainNet) -> i64 {
 /// chain `chain_id`: a whole history folded through its last block within
 /// [`READY_WINDOW`], bound to that chain and not in quarantine.
 pub fn is_ready_on(c: &Cursor, chain_id: i64, now: DateTime<Utc>) -> bool {
-    let Some(folded_at) = c.folded_at else {
-        return false;
-    };
-    let age = now.naive_utc().signed_duration_since(folded_at);
-    c.full_history
-        && c.folded_block == Some(c.last_block)
-        && c.chain_id == Some(chain_id)
-        && c.quarantined_at.is_none()
-        && age >= ChronoDuration::zero()
-        && age <= READY_WINDOW
+    fresh_fold_on(c, chain_id, now) == Some(c.last_block)
+}
+
+/// The published height for a reader that bounds every event query by that
+/// height. A forward walk may already have committed the next window.
+pub(super) fn fresh_fold_on(c: &Cursor, chain_id: i64, now: DateTime<Utc>) -> Option<i64> {
+    let age = now.naive_utc().signed_duration_since(c.folded_at?);
+    c.folded_block.filter(|folded| {
+        c.full_history
+            && *folded <= c.last_block
+            && c.chain_id == Some(chain_id)
+            && c.quarantined_at.is_none()
+            && age >= ChronoDuration::zero()
+            && age <= READY_WINDOW
+    })
 }
 
 /// [`is_ready_on`] for the indexes that read mainnet only: every index but
@@ -918,6 +940,27 @@ pub fn ready_sql_on(alias: &str, now_p: &str, ethereum_chain: i64, matic_chain: 
           AND {alias}.chain_id = CASE {alias}.network WHEN 'ethereum' THEN {ethereum_chain}::bigint WHEN 'matic' THEN {matic_chain}::bigint END \
           AND {alias}.quarantined_at IS NULL \
           AND {alias}.folded_at <= {now_p} AND {alias}.folded_at >= {now_p} - interval '30 minutes')"
+    )
+}
+
+/// The publish marker alone as SQL, for the fail-closed readers of an index
+/// whose every pass advances `last_block` before it folds and publishes
+/// (`trade_events`; the `nft` readers' `owned_items::Rule::Fresh`): the whole
+/// history walked, a fold published (`folded_block`, cleared by every
+/// rewind, divergence, unpublish, quarantine and rebuild) within
+/// [`READY_WINDOW`] of the caller's clock, bound to the expected chain and
+/// out of quarantine, without `folded_block = last_block`, which a pass
+/// breaks for as long as it walks and folds. `folded_at` is the walker's
+/// clock: one up to [`MAX_CLOCK_SKEW`] ahead of the caller's still counts.
+pub fn published_sql_on(alias: &str, now_p: &str, ethereum_chain: i64, matic_chain: i64) -> String {
+    format!(
+        "({alias}.full_history AND {alias}.folded_block IS NOT NULL \
+          AND {alias}.chain_id = CASE {alias}.network WHEN 'ethereum' THEN {ethereum_chain}::bigint WHEN 'matic' THEN {matic_chain}::bigint END \
+          AND {alias}.quarantined_at IS NULL \
+          AND {alias}.folded_at <= {now_p} + interval '{skew} seconds' \
+          AND {alias}.folded_at >= {now_p} - interval '{window} seconds')",
+        skew = MAX_CLOCK_SKEW.num_seconds(),
+        window = READY_WINDOW.num_seconds(),
     )
 }
 
@@ -1477,6 +1520,7 @@ async fn rebuild(
     }
     sqlx::query(
         "UPDATE shop.chain_cursor SET last_block = $3, last_block_hash = NULL, last_block_time = NULL, \
+             sale_input_epoch = gen_random_uuid(), sale_repair_upper = NULL, sale_dirty_from = NULL, sale_input_version = NULL, sale_verified_through = NULL, sale_history_revision = sale_history_revision + 1, \
              fold_through = NULL, folded_block = NULL, folded_at = NULL, full_history = $4, chain_id = $5, \
              quarantined_at = NULL, quarantine_reason = NULL, rebuild_requested_at = NULL, diverged_at = NULL, \
              updated_at = timezone('UTC', now()) \
@@ -1906,10 +1950,36 @@ pub(crate) async fn commit_window(
     times: &HashMap<i64, i64>,
 ) -> anyhow::Result<usize> {
     let mut tx = pool.begin().await?;
-    let written = ix.write(&mut tx, logs, times).await?;
-    advance(&mut tx, ix.indexer(), ix.net(), expected, header)
-        .await
-        .context("advancing the cursor")?;
+    let mut verified_sales = owner.verify_sales;
+    let mut usable = std::borrow::Cow::Borrowed(logs);
+    if owner.verify_sales
+        && let Err(error) = super::sale_history::validate_window(ix, logs, times)
+    {
+        tracing::warn!(indexer=ix.indexer(), network=ix.net().db_name(), from=expected.0+1,
+            through=header.number, %error, "sales coverage withheld for this window");
+        verified_sales = false;
+        // Only the Ethereum sales writer requires this filter. The other
+        // projections consume the original stream under their own rules.
+        if ix.indexer() == INDEXER_SALES && ix.net() == ChainNet::Ethereum {
+            usable = std::borrow::Cow::Owned(
+                logs.iter()
+                    .filter(|log| super::sale_history::validate_log(ix, log, times).is_ok())
+                    .cloned()
+                    .collect(),
+            );
+        }
+    }
+    let written = ix.write(&mut tx, &usable, times).await?;
+    advance(
+        &mut tx,
+        ix.indexer(),
+        ix.net(),
+        expected,
+        header,
+        verified_sales,
+    )
+    .await
+    .context("advancing the cursor")?;
     ix.record_coverage(&mut tx, expected, header).await?;
     owner.check(&mut tx).await?;
     tx.commit().await?;
@@ -2091,6 +2161,63 @@ async fn walk(
         out.elapsed_ms = started.elapsed().as_millis() as u64;
         return Ok(out);
     }
+    let mut remaining = total.saturating_sub(log_requests);
+    if owner.verify_sales
+        && let Some(hash) = expected.1.as_deref()
+    {
+        let at = expected.0 as u64;
+        // Repair the old prefix with spare budget. Always leave the primary
+        // projection free to publish after an incomplete or unavailable replay.
+        let reserved = if name == INDEXER_NFT && net == ChainNet::Ethereum {
+            remaining.div_ceil(2)
+        } else {
+            0
+        };
+        while remaining > reserved && !cancel.is_some_and(|c| c.is_cancelled()) {
+            match super::sale_history::repair(
+                pool,
+                source,
+                ix,
+                owner,
+                Some((at, hash)),
+                remaining - reserved,
+                &mut chunk,
+            )
+            .await
+            {
+                Ok(spent) if spent.charge > 0 => {
+                    remaining = remaining.saturating_sub(spent.charge);
+                    out.requests += spent.requests;
+                }
+                Ok(_) => break,
+                Err(e) if e.downcast_ref::<Diverged>().is_some() => {
+                    out.requests += e.downcast_ref::<Diverged>().unwrap().requests;
+                    return diverged(
+                        pool,
+                        source,
+                        ix,
+                        owner,
+                        (expected.0, hash.to_owned()),
+                        out,
+                        started,
+                    )
+                    .await;
+                }
+                Err(e) if e.downcast_ref::<Fenced>().is_some() => return Err(e),
+                Err(e) => {
+                    if let Some(attempt) = e.downcast_ref::<super::sale_history::RepairAttempt>() {
+                        out.requests += attempt.requests;
+                    }
+                    super::sale_history::REPAIR_FAILURES
+                        .handle([name, net.db_name()])
+                        .increment(1);
+                    tracing::error!(indexer=name, network=net.db_name(), error=%format!("{e:#}"), "sales history repair will retry");
+                    // Leave the independent estate repair its reserved budget.
+                    remaining = reserved;
+                }
+            }
+        }
+    }
     close(
         pool,
         source,
@@ -2099,7 +2226,7 @@ async fn walk(
         owner,
         Close {
             fold_since: cur.fold_through,
-            remaining: total.saturating_sub(log_requests),
+            remaining,
         },
         &mut out,
     )

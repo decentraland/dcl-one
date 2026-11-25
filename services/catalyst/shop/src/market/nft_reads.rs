@@ -100,6 +100,40 @@ pub fn sources_for(f: &NftFilters) -> Sources {
     }
 }
 
+/// Required sources for a walker page that can return a parcel or estate.
+pub(super) fn land_page_sources(f: &NftFilters) -> Option<Sources> {
+    let sources = sources_for(f);
+    if sources.land {
+        return Some(sources);
+    }
+    if f.category.is_some()
+        || matches!(f.network, Some(Network::Matic))
+        || super::nfts::filters_collections_only(f)
+    {
+        return None;
+    }
+    if super::nfts::merges_land(f) {
+        return Some(Sources {
+            land: true,
+            names: true,
+            collections: true,
+        });
+    }
+    let mut contracts = Sources::default();
+    for address in &f.contract_addresses {
+        if address.eq_ignore_ascii_case(crate::land_authz::LAND_MAINNET.land_registry)
+            || address.eq_ignore_ascii_case(crate::land_authz::LAND_MAINNET.estate_registry)
+        {
+            contracts.land = true;
+        } else if address.eq_ignore_ascii_case(DCL_REGISTRAR) {
+            contracts.names = true;
+        } else {
+            contracts.collections = true;
+        }
+    }
+    contracts.land.then_some(contracts)
+}
+
 /// The networks the collection source reads for `f`.
 fn collection_networks(f: &NftFilters) -> Vec<ChainNet> {
     match f.network {
@@ -155,7 +189,7 @@ pub(crate) fn land_unavailable() -> Response {
 /// Where a read of [`Sources`] runs: on the land snapshot when it reads
 /// LAND ([`land_snapshot`]), else on a read-only snapshot of its own; the
 /// nft index is checked again on either.
-enum ReadConn {
+pub(super) enum ReadConn {
     Land(ReadySnapshot),
     Pool(sqlx::Transaction<'static, sqlx::Postgres>),
 }
@@ -181,10 +215,10 @@ impl std::ops::DerefMut for ReadConn {
 
 /// How long one statement of a `/v1/nfts`, prices or estate-size read may
 /// run before Postgres cancels it (the pool's own bound is 60 s per
-/// statement), answering [`read_error`]'s 503 past it. It bounds each
-/// statement, not the read: a `/v1/nfts` page runs at most four heavy ones
-/// (the owner's count, the page, the capped total, the estates' parcels),
-/// so it holds its connection up to four times this. Above the slowest
+/// statement), answering [`read_error`]'s 503 past it. Each statement has its
+/// own bound. A walking node holds the connection across publication checks,
+/// the owner's count, page, capped total, estate members, rental reads and
+/// order enrichment. Above the slowest
 /// statements measured on the seeded index (DATABASE.md): 7 to 8 s for a
 /// 32,000-token owner's capped total naming no category, 8.1 s for the
 /// deepest page sorted by price naming no category.
@@ -213,7 +247,7 @@ pub(crate) fn timed_out() -> Response {
 
 /// A statement of a read failed: a cancelled one is [`timed_out`]'s 503,
 /// anything else a 500.
-fn read_error(e: sqlx::Error) -> Response {
+pub(super) fn read_error(e: sqlx::Error) -> Response {
     if cancelled(&e) {
         return timed_out();
     }
@@ -511,7 +545,7 @@ fn filters_on_orders(f: &NftFilters) -> bool {
 }
 
 /// Whether the filter set reads the order legs (a filter or sort on them).
-fn needs_orders(f: &NftFilters) -> bool {
+pub(super) fn needs_orders(f: &NftFilters) -> bool {
     filters_on_orders(f)
         || matches!(
             f.sort_by,
@@ -538,7 +572,11 @@ fn body_shapes(genders: &[String]) -> Option<Vec<String>> {
 fn push_filters(b: &mut Builder, f: &NftFilters, wheres: &mut Vec<String>) {
     if let Some(o) = &f.owner {
         let p = b.bind_string(o.to_ascii_lowercase());
-        wheres.push(format!("c.owner = {p}"));
+        if f.unclaimed_land.is_empty() {
+            wheres.push(format!("c.owner = {p}"));
+        } else {
+            wheres.push(format!("(c.owner = {p} OR c.held_for_lessor)"));
+        }
     }
     match f.category {
         // The item's type, a plain column the planner has statistics for:
@@ -819,22 +857,36 @@ fn candidate_legs(
             Candidates::ListedWhenFiltered => on_sale_only(f),
             Candidates::Listed => true,
         };
-    // Each source, and whether it already keeps only the listed tokens.
-    let mut parts: Vec<(String, bool)> = Vec::new();
+    // On a lessor page only the LAND leg evaluates the extra custody match.
+    // FALSE simplifies the other legs to their indexed owner equality.
+    let (other_custody, land_custody) = if f.unclaimed_land.is_empty() {
+        ("", String::new())
+    } else {
+        let ids = b.bind_strings(&f.unclaimed_land);
+        let venue = crate::rentals::index::RENTALS_MAINNET;
+        (
+            ", FALSE AS held_for_lessor",
+            format!(
+                ", (b.owner = '{venue}' AND (b.contract_address || '-' || b.token_id::text) = ANY({ids})) AS held_for_lessor"
+            ),
+        )
+    };
+    let mut parts = Vec::new();
     if sources.collections {
         parts.extend(
             collection_networks(f)
                 .into_iter()
-                .map(|net| (collection_source(net), false)),
+                .map(|net| (collection_source(net), false, other_custody)),
         );
     }
     if sources.names {
-        parts.push((names_source(), false));
+        parts.push((names_source(), false, other_custody));
     }
     if sources.land {
         parts.push((
             land_source(land, reads_geography(f), restricted),
             restricted,
+            land_custody.as_str(),
         ));
     }
     let now_ms_p = b.bind_i64(now_ms);
@@ -889,10 +941,10 @@ fn candidate_legs(
     };
     let legs = parts
         .into_iter()
-        .map(|(source, listed_only)| {
+        .map(|(source, listed_only, custody)| {
             let restrict = if listed_only { "" } else { restrict };
             format!(
-                "SELECT b.*, lo.order_id, lo.marketplace_address AS order_marketplace, lo.price AS legacy_price, lo.expires_at AS legacy_expires_at, \
+                "SELECT b.*{custody}, lo.order_id, lo.marketplace_address AS order_marketplace, lo.price AS legacy_price, lo.expires_at AS legacy_expires_at, \
                         lo.created_at AS legacy_created_at, lo.updated_at AS legacy_updated_at, {columns} \
                  FROM ({source}) b {legacy}{v3}{restrict}"
             )
@@ -1253,6 +1305,18 @@ pub(super) async fn estate_parcels(
     Ok(out)
 }
 
+pub(super) async fn land_page_snapshot(
+    state: &MarketplaceState,
+    f: &NftFilters,
+    sources: Sources,
+) -> Result<ReadConn, Response> {
+    let mut conn = read_conn(&state.pool, state.land_network(), f, sources).await?;
+    if needs_orders(f) {
+        super::trades::ready_on(state, &mut conn, Utc::now()).await?;
+    }
+    Ok(conn)
+}
+
 /// `/v1/nfts` from the indexes: the page over the `first + skip` window and
 /// its total (exact up to [`MAX_WINDOW`]).
 pub async fn list_nfts(
@@ -1261,7 +1325,7 @@ pub async fn list_nfts(
     first: i64,
     skip: i64,
 ) -> Result<(Vec<NftResult>, i64), Response> {
-    if first + skip > MAX_WINDOW {
+    if first.saturating_add(skip) > MAX_WINDOW {
         return Err(
             ApiError::bad_request(format!("first + skip may not exceed {MAX_WINDOW}"))
                 .into_response(),
@@ -1269,10 +1333,9 @@ pub async fn list_nfts(
     }
     let mut sources = sources_for(f);
     if super::nfts::merges_land(f) {
-        // A read that names no category answers every category, as
-        // upstream's does: the names and LAND legs join whenever their
-        // indexes are published, and a read without them still answers the
-        // wearables and emotes.
+        // On the compatibility route, include the NAME and LAND legs when
+        // available. Walking nodes take the strict catalogue snapshot before
+        // reaching this path for a mixed page.
         let names = Sources {
             names: true,
             ..Default::default()
@@ -1298,10 +1361,22 @@ pub async fn list_nfts(
             ReadConnError::Pool(e) => ApiError::internal(e.to_string()).into_response(),
         })?,
     };
+    list_page_on(state, f, first, skip, sources, &mut conn).await
+}
+
+pub(super) async fn list_page_on(
+    state: &MarketplaceState,
+    f: &NftFilters,
+    first: i64,
+    skip: i64,
+    sources: Sources,
+    conn: &mut PgConnection,
+) -> Result<(Vec<NftResult>, i64), Response> {
+    let land = state.land_network();
     let now_ms = Utc::now().timestamp_millis();
     let large_owner = match &f.owner {
         Some(owner) if sorts_on_orders(f) && !on_sale_only(f) => {
-            holds_many(&mut conn, owner).await.map_err(read_error)?
+            holds_many(conn, owner).await.map_err(read_error)?
         }
         _ => false,
     };
@@ -1328,9 +1403,7 @@ pub async fn list_nfts(
         .filter(|r| r.get::<String, _>("category") == "estate")
         .map(|r| r.get::<String, _>("token_text"))
         .collect();
-    let parcels = estate_parcels(&mut conn, &estates)
-        .await
-        .map_err(read_error)?;
+    let parcels = estate_parcels(conn, &estates).await.map_err(read_error)?;
     Ok((
         rows.iter()
             .map(|r| row_to_result(r, &parcels, &state.settings.land_image_base_url))
@@ -1930,6 +2003,13 @@ mod tests {
             return;
         };
         let pool = own.pool.clone();
+        let now = 1_700_000_000_000;
+        // Current at the reads' fixed clock.
+        crate::market::trade_events::tests::publish_cursors_at(
+            &pool,
+            chrono::DateTime::from_timestamp_millis(now).map(|t| t.naive_utc()),
+        )
+        .await;
         let c = "0x00000000000000000000000000000000000000c1";
         let a = "0x00000000000000000000000000000000000000aa";
         let b = "0x00000000000000000000000000000000000000bb";
@@ -1963,19 +2043,19 @@ mod tests {
              INSERT INTO shop.trade_assets_erc20 (asset_id, amount) \
              SELECT md5('received' || v.n)::uuid, v.price FROM (VALUES (1, 7), (2, 9), (3, 3), (4, 5)) v(n, price); \
              INSERT INTO land_authz.token_right (token_address, token_id, x, y, owner, updated_block, updated_log) \
-             SELECT '{LAND_REGISTRY_MAINNET}', g, g, 0, '{a}', g, 0 FROM generate_series(1, 5) g; \
+             SELECT '{LAND_REGISTRY_MAINNET}', g, g, 0, CASE WHEN g=5 THEN '{venue}' ELSE '{a}' END, g, 0 FROM generate_series(1, 5) g; \
              INSERT INTO land_authz.token_right (token_address, token_id, owner, updated_block, updated_log) \
              SELECT '{ESTATE_REGISTRY_MAINNET}', g, '{b}', g, 1 FROM generate_series(3, 4) g; \
              INSERT INTO land_authz.estate_land (land_token_id, estate_token_id, updated_block, updated_log) VALUES (4, 3, 9, 0), (5, 4, 9, 1); \
              INSERT INTO land_authz.authz_event (block_number, log_index, block_time, token_address, kind, token_id, account) \
              SELECT g, 0, 102 + g / 2, '{LAND_REGISTRY_MAINNET}', 'transfer', g, '{a}' FROM generate_series(1, 4) g; \
-             UPDATE shop.items SET emote_outcome_type = 'so' WHERE contract_address = '{c}' AND item_id = 1"
+             UPDATE shop.items SET emote_outcome_type = 'so' WHERE contract_address = '{c}' AND item_id = 1",
+            venue = crate::rentals::index::RENTALS_MAINNET
         )))
         .execute(&pool)
         .await
         .unwrap();
         let land = Some(LAND_MAINNET);
-        let now = 1_700_000_000_000;
         let ids = |rows: &[sqlx::postgres::PgRow]| -> Vec<(String, String)> {
             rows.iter()
                 .map(|r| (r.get("contract_address"), r.get("token_text")))
@@ -2001,7 +2081,10 @@ mod tests {
             ] {
                 let mut q = filters.clone();
                 q.push(("sortBy", sort));
-                let f = parse_filters(&pairs(&q)).unwrap();
+                let mut f = parse_filters(&pairs(&q)).unwrap();
+                if f.owner.is_some() {
+                    f.unclaimed_land = vec![format!("{LAND_REGISTRY_MAINNET}-5")];
+                }
                 let mut s = sources_for(&f);
                 if crate::market::nfts::merges_land(&f) {
                     s.names = true;
