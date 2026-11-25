@@ -665,7 +665,8 @@ pub struct PlayerPositionEvent {
     ///   - `jump_count == 1`, `is_jumping` or `is_long_jump` → `Jump`
     ///
     /// `None` means no movement-state indicator — the velocity fallback picks. Drives `jump_time`
-    /// (Jump) and the matching emote (DoubleJump / Glide) on foreign avatars.
+    /// and the matching emote (DoubleJump / Glide) on foreign avatars; a Jump after DoubleJump or
+    /// Glide continues the fall (see `foreign_dynamics::apply_remote_move_kind`).
     pub remote_move_kind: Option<MoveKind>,
     /// This update is a discontinuous reposition, such as a Pulse `TeleportPerformed` or the
     /// first snapshot for a newly observed join. The avatar snaps to this position.

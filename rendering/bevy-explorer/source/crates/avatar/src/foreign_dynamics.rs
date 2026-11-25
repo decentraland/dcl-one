@@ -439,6 +439,10 @@ fn update_foreign_scene_anim(
 /// take-off clip once and the falling loop follows. A grounded packet that does not announce a
 /// jump ends the flight and clears it. DoubleJump / Glide select the matching emote; a Jump, or
 /// no state, clears a previously-applied DoubleJump / Glide so the picker reclaims.
+///
+/// An air jump or a glide also sets `jump_time` when no jump is in flight (the avatar walked off
+/// a ledge), because senders count the fall after it, or a glider closed in the air, as a Jump:
+/// that Jump continues the fall instead of starting a take-off.
 fn apply_remote_move_kind(
     dynamic_state: &mut AvatarDynamicState,
     kind: Option<MoveKind>,
@@ -451,7 +455,13 @@ fn apply_remote_move_kind(
                 dynamic_state.jump_time = now;
             }
         }
-        Some(k) => dynamic_state.move_kind = k,
+        Some(k) => {
+            if matches!(k, MoveKind::DoubleJump | MoveKind::Glide) && dynamic_state.jump_time <= 0.0
+            {
+                dynamic_state.jump_time = now;
+            }
+            dynamic_state.move_kind = k;
+        }
         None => {}
     }
     if matches!(kind, None | Some(MoveKind::Jump))
@@ -774,6 +784,34 @@ mod tests {
         receive(&mut app, avatar, None, true);
         assert_eq!(state(&app, avatar).1, MoveKind::Idle);
         assert!(state(&app, avatar).0 < 0.0);
+    }
+
+    #[test]
+    fn a_jump_after_an_air_jump_or_a_glide_continues_the_fall() {
+        for air_move in [MoveKind::DoubleJump, MoveKind::Glide] {
+            let (mut app, avatar) = app_with_avatar();
+            receive(&mut app, avatar, None, true);
+            // walked off a ledge: in the air with no jump
+            receive(&mut app, avatar, None, false);
+            assert!(state(&app, avatar).0 <= 0.0);
+
+            receive(&mut app, avatar, Some(air_move), false);
+            let (air_start, _) = state(&app, avatar);
+            // the fall after the air jump, or a glider closed in the air
+            for _ in 0..5 {
+                app.update();
+                receive(&mut app, avatar, Some(MoveKind::Jump), false);
+                assert_eq!(state(&app, avatar).0, air_start, "{air_move:?}");
+                assert_ne!(state(&app, avatar).1, air_move);
+            }
+
+            receive(&mut app, avatar, None, true);
+            assert!(state(&app, avatar).0 < 0.0);
+            // a jump from the ground takes off again
+            app.update();
+            receive(&mut app, avatar, Some(MoveKind::Jump), true);
+            assert!(state(&app, avatar).0 > air_start, "{air_move:?}");
+        }
     }
 
     #[test]
