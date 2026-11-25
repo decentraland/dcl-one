@@ -9,7 +9,10 @@
 //!   upstream managers, and the endpoint serves the configured chain. Any
 //!   failed or unreadable check refuses issuance (fail closed); the verdict
 //!   is memoised for [`GATE_TTL`], so a flipped flag stops issuance within a
-//!   minute.
+//!   minute. A publication credit ([`IssuanceGate::check_publication`])
+//!   also needs the manager to allow the collection manager's
+//!   `createCollection` as a custom external call and the external-call
+//!   signer to hold `EXTERNAL_CALL_SIGNER_ROLE`.
 //! - **Settlement** ([`settle`]): the CreditUsed logs the index wrote
 //!   (`credits.usages`) become ledger effects exactly once per log
 //!   (`credits.usage_settlements`, PK = the log's key, written in the
@@ -94,6 +97,10 @@ pub fn credits_signer_role() -> B256 {
     keccak256(b"CREDITS_SIGNER_ROLE")
 }
 
+pub fn external_call_signer_role() -> B256 {
+    keccak256(b"EXTERNAL_CALL_SIGNER_ROLE")
+}
+
 /// `revokeCredits([hash])` calldata.
 pub fn revoke_calldata(credit_hash: B256) -> Bytes {
     Bytes::from(
@@ -109,6 +116,15 @@ pub fn revoke_calldata(credit_hash: B256) -> Bytes {
 pub trait IssuanceGate: Send + Sync {
     /// `Err(reason)` refuses; the reason names the check, never a URL.
     async fn check(&self, manager: Address, signer: Address) -> Result<(), String>;
+
+    /// Whether `manager` executes `createCollection` on `collection_manager`
+    /// as a custom external call co-signed by `signer`.
+    async fn check_publication(
+        &self,
+        manager: Address,
+        signer: Address,
+        collection_manager: Address,
+    ) -> Result<(), String>;
 }
 
 /// The gate over a JSON-RPC endpoint of the credits chain.
@@ -116,6 +132,7 @@ pub struct ChainGate {
     chain: Arc<ChainComponent>,
     chain_id: u64,
     memo: TtlMap<(Address, Address), Result<(), String>>,
+    publication_memo: TtlMap<(Address, Address, Address), Result<(), String>>,
 }
 
 impl ChainGate {
@@ -124,7 +141,47 @@ impl ChainGate {
             chain,
             chain_id,
             memo: TtlMap::new(GATE_TTL),
+            publication_memo: TtlMap::new(GATE_TTL),
         }
+    }
+
+    async fn evaluate_publication(
+        &self,
+        manager: Address,
+        signer: Address,
+        collection_manager: Address,
+    ) -> Result<(), String> {
+        let allowed = ICreditsManager::allowedCustomExternalCallsCall {
+            target: collection_manager,
+            selector: super::publication::createCollectionCall::SELECTOR.into(),
+        }
+        .abi_encode();
+        if !self
+            .read_bool(
+                manager,
+                allowed,
+                "allowedCustomExternalCalls(CollectionManager, createCollection)",
+            )
+            .await?
+        {
+            return Err(format!(
+                "the manager does not allow createCollection on {collection_manager:#x} as a custom external call"
+            ));
+        }
+        let role = ICreditsManager::hasRoleCall {
+            role: external_call_signer_role(),
+            account: signer,
+        }
+        .abi_encode();
+        if !self
+            .read_bool(manager, role, "hasRole(EXTERNAL_CALL_SIGNER_ROLE, signer)")
+            .await?
+        {
+            return Err(format!(
+                "the configured external-call signer {signer:#x} does not hold EXTERNAL_CALL_SIGNER_ROLE on the manager"
+            ));
+        }
+        Ok(())
     }
 
     async fn read_bool(&self, manager: Address, data: Vec<u8>, what: &str) -> Result<bool, String> {
@@ -247,6 +304,24 @@ impl IssuanceGate for ChainGate {
             .await;
         verdict.unwrap_or_else(|_| Err("gate unavailable".to_string()))
     }
+
+    async fn check_publication(
+        &self,
+        manager: Address,
+        signer: Address,
+        collection_manager: Address,
+    ) -> Result<(), String> {
+        let verdict: Result<Result<(), String>, ()> = self
+            .publication_memo
+            .get_or_fetch((manager, signer, collection_manager), || async {
+                Ok::<_, ()>(
+                    self.evaluate_publication(manager, signer, collection_manager)
+                        .await,
+                )
+            })
+            .await;
+        verdict.unwrap_or_else(|_| Err("gate unavailable".to_string()))
+    }
 }
 
 /// No endpoint to read the manager from: issuance stays refused.
@@ -257,6 +332,15 @@ impl IssuanceGate for ClosedGate {
     async fn check(&self, _manager: Address, _signer: Address) -> Result<(), String> {
         Err("no RPC endpoint reads the CreditsManager (RPC_ENDPOINT_POLYGON with CREDITS_USAGE_INDEX_ENABLED)".to_string())
     }
+
+    async fn check_publication(
+        &self,
+        manager: Address,
+        signer: Address,
+        _collection_manager: Address,
+    ) -> Result<(), String> {
+        self.check(manager, signer).await
+    }
 }
 
 /// The tests' gate: a fixed verdict.
@@ -265,6 +349,15 @@ pub struct FixedGate(pub Result<(), String>);
 #[async_trait]
 impl IssuanceGate for FixedGate {
     async fn check(&self, _manager: Address, _signer: Address) -> Result<(), String> {
+        self.0.clone()
+    }
+
+    async fn check_publication(
+        &self,
+        _manager: Address,
+        _signer: Address,
+        _collection_manager: Address,
+    ) -> Result<(), String> {
         self.0.clone()
     }
 }

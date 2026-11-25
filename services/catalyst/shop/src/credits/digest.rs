@@ -28,6 +28,15 @@ sol! {
         uint256 expiresAt;
         bytes32 salt;
     }
+
+    /// `CreditsManagerPolygon.ExternalCall`.
+    struct ExternalCall {
+        address target;
+        bytes4 selector;
+        bytes data;
+        uint256 expiresAt;
+        bytes32 salt;
+    }
 }
 
 /// What a credit binds: the buyer (`_msgSender()` of `useCredits`, through a
@@ -62,6 +71,38 @@ impl CreditIdentity {
     /// The prehash the contract recovers the signer from.
     pub fn eth_signed_message_hash(&self) -> B256 {
         eip191_hash_message(self.credit_hash())
+    }
+}
+
+/// What the co-signature of a custom external call binds: the caller
+/// (`_msgSender()` of `useCredits`), the chain, the manager and the call as
+/// `useCredits` carries it. The manager recovers a holder of
+/// `EXTERNAL_CALL_SIGNER_ROLE` from the EIP-191 personal message of
+/// [`Self::hash`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ExternalCallIdentity {
+    pub sender: Address,
+    pub chain_id: u64,
+    pub manager: Address,
+    pub target: Address,
+    pub selector: [u8; 4],
+    pub data: Vec<u8>,
+    /// Unix seconds.
+    pub expires_at: U256,
+    pub salt: B256,
+}
+
+impl ExternalCallIdentity {
+    /// `keccak256(abi.encode(sender, block.chainid, address(this), externalCall))`.
+    pub fn hash(&self) -> B256 {
+        let call = ExternalCall {
+            target: self.target,
+            selector: self.selector.into(),
+            data: self.data.clone().into(),
+            expiresAt: self.expires_at,
+            salt: self.salt,
+        };
+        keccak256((self.sender, U256::from(self.chain_id), self.manager, call).abi_encode_params())
     }
 }
 
@@ -148,12 +189,53 @@ impl TreasuryWallet {
     pub fn sign_credit(&self, credit: &CreditIdentity) -> Result<String, String> {
         self.sign_message(credit.credit_hash().as_slice())
     }
+
+    /// The signature `useCredits` verifies for the custom external call `call`.
+    pub fn sign_external_call(&self, call: &ExternalCallIdentity) -> Result<String, String> {
+        self.sign_message(call.hash().as_slice())
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use serde_json::Value;
+
+    #[test]
+    fn an_external_call_hashes_as_the_manager_encodes_it() {
+        let call = ExternalCallIdentity {
+            sender: "0x00000000000000000000000000000000000000b1"
+                .parse()
+                .unwrap(),
+            chain_id: 137,
+            manager: "0xe21289022b9324f9b9145a91ee59297ceb040c06"
+                .parse()
+                .unwrap(),
+            target: "0x9d32aac179153a991e832550d9f96441ea27763a"
+                .parse()
+                .unwrap(),
+            selector: [0x35, 0xa6, 0x29, 0xc2],
+            data: vec![0x12, 0x34, 0xab, 0xcd],
+            expires_at: U256::from(1_900_000_000u64),
+            salt: B256::repeat_byte(7),
+        };
+        assert_eq!(
+            bytes32_hex(call.hash()),
+            "0x47ee85cf110b4d1452f3353fcc88aaf0d90a1d1a16192907ef72a350dbaa2768",
+            "viem's encodeAbiParameters of (address, uint256, address, ExternalCall)"
+        );
+        let wallet = TreasuryWallet::from_hex(&"5a".repeat(32)).unwrap();
+        let signature = wallet.sign_external_call(&call).unwrap();
+        assert_eq!(
+            recover_credit_signer(call.hash(), &signature),
+            Some(wallet.signer())
+        );
+        let other_sender = ExternalCallIdentity {
+            sender: Address::repeat_byte(1),
+            ..call.clone()
+        };
+        assert_ne!(other_sender.hash(), call.hash());
+    }
 
     const VECTORS: &str = include_str!(concat!(
         env!("DCL_ONE_ROOT"),

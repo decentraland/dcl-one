@@ -896,6 +896,12 @@ pub enum CustomEffect {
     /// drawing its own fixed amount) is not bound to the decoded inner call.
     /// The policy refuses it rather than judging the inner call.
     Call(Box<ExternalCall>),
+    /// The collection manager's `createCollection` naming `creator`: the
+    /// publication of a collection, whose fee a credit issued for it pays.
+    /// It settles no asset line, so the asset rule refuses it; the relay
+    /// accepts it only for the authorization this node issued for the same
+    /// call (`credits::publication::guard_relayed`).
+    CollectionPublication { creator: EvmAddress },
     /// Arguments nobody decoded: never spendable with credits.
     Opaque,
 }

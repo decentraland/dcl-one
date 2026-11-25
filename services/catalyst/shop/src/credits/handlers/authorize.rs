@@ -6,6 +6,8 @@
 //!   with one line, the single-route messages);
 //! - `POST /credits/authorize/batch`: one credit for a whole settlement
 //!   group, its lines echoed in request order;
+//! - `POST /credits/authorize-publication`: a collection's publication fee
+//!   (`handlers::publication`);
 //! - `POST /credits/authorize/cancel`: retire the signer's pledges by salt;
 //!   the answer is upstream's `{released, retired, spendableAtSeconds}`, the
 //!   money rejoins the balance only when the CreditUsed index has read the
@@ -123,11 +125,11 @@ pub(crate) fn derive_idempotency_key(
     format!("authz:{}", hex::encode(h.finalize()))
 }
 
-fn body_json(body: &[u8]) -> Value {
+pub(super) fn body_json(body: &[u8]) -> Value {
     serde_json::from_slice(body).unwrap_or(Value::Object(Default::default()))
 }
 
-fn refuse(e: AuthorizeError, single: bool) -> Response {
+pub(super) fn refuse(e: AuthorizeError, single: bool) -> Response {
     let (status, body) = e.wire(single);
     let mut response = (
         axum::http::StatusCode::from_u16(status)

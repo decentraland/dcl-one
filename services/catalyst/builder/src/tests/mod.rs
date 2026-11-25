@@ -20,6 +20,7 @@ mod items;
 mod lifecycle;
 mod limits;
 mod newsletter;
+mod publication_fee;
 mod publication_preparation;
 mod publication_transactions;
 mod review_flow;

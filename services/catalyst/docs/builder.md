@@ -351,3 +351,44 @@ refuses to start.
 | Terms of service warehouse | `WAREHOUSE_URL`, `WAREHOUSE_TOKEN`, `WAREHOUSE_CONTEXT_PREFIX` | Acceptances are stored and forwarded later |
 | Newsletter service | `NEWSLETTER_SERVICE_URL`, `NEWSLETTER_PUBLICATION_ID`, `NEWSLETTER_SERVICE_API_KEY` | Subscriptions are answered `{ok:true}` and go nowhere; the node never stores one |
 | Operator routes (item status, `GET /v1/collections/curation`) | `CATALYRST_BUILDER_ADMIN_TOKEN` (at least 32 bytes), the curation console's bearer; `BUILDER_ADMIN_ADDRESSES`, the wallets whose signed requests they admit | The routes refuse every request |
+
+## Paying a publication fee with credits
+
+A creator may pay a standard collection's publication fee with the node's
+credits instead of MANA. The creators app asks `POST
+/credits/credits/authorize-publication` (canonical `POST
+/shop-api/v1/credit-authorizations/publication`), signed, with the
+collection manager's `createCollection` call it is about to send. The node
+answers one credit sized for the fee and its co-signature of that call, and
+the app sends both in one `useCredits` to the node's CreditsManager, through
+the relay or from the wallet.
+
+The node authorizes only what it can check. The call must be the one that
+deploys an unpublished standard collection the signer owns, at the address
+that collection's row holds; a collection that is published, deployed, being
+published by the node or under its owner's lock is refused. The fee is the
+sum of the items' rarity prices in USD, rounded up to a cent, and a request
+naming another amount answers 409. The credit holds the fee's MANA at the
+node's rate plus `CREDITS_ORACLE_BUFFER_BPS`, lasts `CREDITS_TTL_SECONDS`, and
+counts against the wallet's balance and its bound of 10 live credits like a
+purchase credit. The relay accepts a `useCredits` whose call is
+`createCollection` only for the sender's live authorization of exactly that
+call and credit.
+
+A node needs these to serve it, beside what a purchase with credits needs
+(`CREDITS_ONCHAIN_AUTHORIZE_ENABLED`, `CREDITS_SIGNER_KEY_FILE`,
+`CREDITS_MANAGER_CONTRACT`, the CreditUsed index and `OPS_WRITES_ENABLED`):
+
+| Requirement | Where | Without it |
+| --- | --- | --- |
+| The external-call signer's key | `CREDITS_EXTERNAL_CALL_SIGNER_KEY_FILE`, a file holding a 32-byte secp256k1 key; the plain variable is refused | 503 naming the setting |
+| `EXTERNAL_CALL_SIGNER_ROLE` for that key's address | On the node's CreditsManager, granted by its admin: `grantRole(keccak256("EXTERNAL_CALL_SIGNER_ROLE"), <signer address>)` | 503 naming the missing role |
+| `createCollection` allowed as a custom external call | On the node's CreditsManager, by its admin: `allowCustomExternalCall(<CollectionManager>, 0x35a629c2, true)` | 503 naming the missing allowance |
+| The rarities and the collections copy | `BUILDER_POLYGON_RPC_URL` and the Polygon collections subgraph, as the builder's own routes need them | 503 |
+
+The CollectionManager is `0x9d32aac179153a991e832550d9f96441ea27763a` on
+Polygon and `0x5309ae874fc4eb21adcd63f8b6c3f766cc3b1849` on Amoy. The node
+reads both on-chain facts before it reserves or signs anything and keeps the
+answer for a minute, so a grant takes effect within a minute and a revoked one
+stops new authorizations as fast.
+
