@@ -10,8 +10,9 @@ for avatars, wearables and emotes, replacing the Unity renderer slot of
 ## Layout
 
 - `Cargo.toml`: its own workspace. Explorer crates come in by path from
-  `../bevy-explorer/source/crates`; the `[patch.crates-io]` table repeats the Explorer's so
-  both resolve the same engine fork. `Cargo.lock` is seeded from the Explorer's (a fresh
+  `../bevy-explorer/source/crates`; the patch tables repeat the Explorer's pins for the crates this
+  graph has, so both resolve the same engine fork (a pin this graph never uses would go into
+  `Cargo.lock` as unused, in an order that changes between runs, which `--locked` refuses). `Cargo.lock` is seeded from the Explorer's (a fresh
   resolution fails on the yanked `core2 0.4.0` that `multihash-codetable` needs).
 - `.cargo/config.toml`: wasm flags without shared memory or atomics. `DCL_ONE_ROOT` comes
   from the repository root's cargo configuration.

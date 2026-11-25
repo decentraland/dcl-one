@@ -108,6 +108,10 @@ class WorkflowTest(unittest.TestCase):
                         (pin.get('git'), pin.get('rev')),
                         (expected.get('git'), expected.get('rev')),
                     )
+        # Cargo writes unused patches to the lockfile in an order that changes between runs, so a
+        # --locked build of the preview fails now and then: it repeats only the pins it uses.
+        lock = (ci.ROOT / 'rendering/avatar-preview/Cargo.lock').read_text()
+        self.assertNotIn('[[patch.unused]]', lock)
 
     @staticmethod
     def upstream_commit_cache(job):
