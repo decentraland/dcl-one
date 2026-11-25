@@ -3177,6 +3177,44 @@ recorded for a lease another claim took over changes nothing. The bootstrap
 defines the table; an existing database gains it from the object pass, so no
 step exists.
 
+## Credits publication fee workload
+
+A creator pays a standard collection's publication fee with credits through
+`POST /credits/credits/authorize-publication`
+(`shop/src/credits/publication.rs`). The authorization is one row of
+`credits.authorizations` with one row of `credits.authorization_lines`, written
+by the reservation the purchase authorizations use (`authorize.rs`
+`reserve_group`): the wallet row locked, then one statement that reads the
+request's key, the wallet's live pledges and their count and inserts only when
+the charge fits the balance and fewer than 10 credits are live, then the line,
+in the same transaction. A wallet authorizes a publication a few times in its
+life, so the workload is the purchase authorizations' at a far lower rate and
+uses their indexes: the unique `idempotency_key`, and `(address, status,
+expires_at)` for the live pledges.
+
+The line is `sale_kind = 'publication_fee'`, `asset_kind = 'collection'`,
+`asset_chain_id` the credits chain, `asset_contract` and `contract_address`
+the address the collection deploys at, the fee as quoted and the charge
+rounded up to whole credits. The authorization's `request_digest` is the hash
+the co-signature of the `createCollection` call covers (the sender, the
+chain, the manager and the call), and its key is derived from the signer, that
+hash and the signed request's timestamp, so the same signed request finds its
+row and answers the same credit.
+
+The relay reads the row by primary key before it relays a `useCredits` whose
+call is `createCollection` (`publication::guard_relayed`): one `EXISTS` over
+the authorization by `id` and its line by `(authorization_id, position)`'s
+leading column. It writes nothing.
+
+Invariants: a publication authorization has exactly one line and that line's
+kind is `publication_fee`; no other flow writes that kind. The row is written
+only after every refusal (the builder's publisher grant and fee, the issuance
+gate, the balance and the live bound) and before either signature. It settles
+when the CreditUsed index reads the credit's use, expires or is released by
+the sweep, and is listed in the wallet's purchases, as any authorization.
+Step `0096_credits_publication_fee_line` widens the two `CHECK`s of an applied
+database; it changes no row.
+
 ## Credits checkout and broker claim edges
 
 A credits checkout line buys through the shop broker under the claim key
