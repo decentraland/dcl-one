@@ -185,6 +185,8 @@ export async function bundleSingleProject(components: BundleComponents, options:
     preserveSymlinks: false,
     outfile: options.outputFile,
     allowOverwrite: false,
+    // rebuildToDisk writes the files
+    write: false,
     sourcemap: options.production ? false : 'inline',
     minify: options.production,
     minifyIdentifiers: options.production,
@@ -308,7 +310,7 @@ export async function bundleSingleProject(components: BundleComponents, options:
 
     const debouncedRebuild = debounce(async () => {
       try {
-        await context.rebuild()
+        await rebuildToDisk(context)
         printProgressInfo(components.logger, `Bundle saved ${colors.bold(options.outputFile)}`)
       } catch (err: any) {
         /* istanbul ignore next */
@@ -331,7 +333,7 @@ export async function bundleSingleProject(components: BundleComponents, options:
     // dead when a scene was opened with a pre-existing syntax error, with no
     // watcher alive to pick up the fix.
     try {
-      await context.rebuild()
+      await rebuildToDisk(context)
       printProgressInfo(components.logger, `Bundle saved ${colors.bold(options.outputFile)}`)
     } catch (err: any) {
       /* istanbul ignore next */
@@ -340,7 +342,7 @@ export async function bundleSingleProject(components: BundleComponents, options:
     printProgressInfo(components.logger, `The compiler is watching for changes`)
   } else {
     try {
-      await context.rebuild()
+      await rebuildToDisk(context)
       printProgressInfo(components.logger, `Bundle saved ${colors.bold(options.outputFile)}`)
     } catch (err: any) {
       /* istanbul ignore next */
@@ -353,6 +355,22 @@ export async function bundleSingleProject(components: BundleComponents, options:
   if (options.watch) printProgressInfo(components.logger, `The compiler is watching for changes`)
 
   await runTypeChecker(components, options)
+}
+
+/**
+ * Runs a build of a context that has `write: false`, and writes its files. A build that fails throws before it
+ * writes, so the files of the last build that passed stay. When esbuild writes the files, a rebuild that fails
+ * deletes them, and the preview would lose the scene until the next build that passes. A file that holds the same
+ * bytes stays as it is, as with esbuild, so the preview does not reload for a build that changed nothing.
+ */
+export async function rebuildToDisk(context: esbuild.BuildContext<{ write: false }>) {
+  const { outputFiles } = await context.rebuild()
+  for (const file of outputFiles) {
+    const current = await fs.promises.readFile(file.path).catch(() => undefined)
+    if (current?.equals(file.contents)) continue
+    await fs.promises.mkdir(path.dirname(file.path), { recursive: true })
+    await fs.promises.writeFile(file.path, file.contents)
+  }
 }
 
 function runTypeChecker(components: BundleComponents, options: CompileOptions) {

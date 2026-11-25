@@ -90,7 +90,8 @@ fn read_content<'de, D: serde::Deserializer<'de>>(
 
             let record_rejection = |reason: &'static str| {
                 if self.record_peer_rejections {
-                    metrics::counter!("content_sync_manifest_rejections_total", "reason" => reason)
+                    crate::metrics::MANIFEST_REJECTIONS
+                        .handle([reason])
                         .increment(1);
                 }
             };
@@ -265,11 +266,11 @@ mod tests {
 
     #[test]
     fn peer_manifest_limits_report_rejection_reasons() {
-        let recorder = metrics_exporter_prometheus::PrometheusBuilder::new().build_recorder();
+        let recorder = dcl_metrics::PrometheusBuilder::new().build_recorder();
         let handle = recorder.handle();
         let oversized = serde_json::Value::Array(vec![serde_json::Value::Null; 25_001]);
         let invalid_cid = serde_json::json!([{"file":"a","hash":"not-a-cid"}]);
-        metrics::with_local_recorder(&recorder, || {
+        dcl_metrics::with_local_recorder(&recorder, || {
             for content in [&oversized, &invalid_cid] {
                 assert!(parse_peer_content(content).is_err());
                 assert!(deserialize_content(content).is_err());

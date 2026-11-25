@@ -114,6 +114,7 @@
       "paths": [
         "/library/dcl-auth/",
         "/library/dcl-http/",
+        "/library/dcl-metrics/",
         "/library/catalyst-api/",
         "/services/catalyst/fed/",
         "/services/catalyst/jobs/",
@@ -213,7 +214,9 @@
         "/apps/ui3/",
         "/library/ui/",
         "/library/web-core/",
-        "/tooling/creators-e2e/"
+        "/tooling/creators-e2e/",
+        "/tooling/ui-kit-ceiling.json",
+        "/tooling/ui-token-floor.json"
       ]
     },
     {

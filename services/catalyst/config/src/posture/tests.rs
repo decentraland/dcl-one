@@ -32,6 +32,34 @@ fn parsed(pairs: &[(&str, &str)]) -> Config {
 }
 
 #[test]
+fn the_mirror_sources_follow_the_catalogue_chain_pair() {
+    let main = expanded(Posture::Mirror, &[]);
+    assert_eq!(
+        main["ETH_COLLECTIONS_SUBGRAPH_URL"],
+        "https://subgraph.decentraland.org/collections-ethereum-mainnet"
+    );
+    assert_eq!(
+        main["MATIC_COLLECTIONS_SUBGRAPH_URL"],
+        "https://subgraph.decentraland.org/collections-matic-mainnet"
+    );
+    let cfg = expanded(
+        Posture::Mirror,
+        &[
+            ("MARKETPLACE_INDEX_CHAIN_ID_ETHEREUM", "11155111"),
+            ("MARKETPLACE_INDEX_CHAIN_ID_MATIC", "80002"),
+        ],
+    );
+    assert_eq!(
+        cfg["ETH_COLLECTIONS_SUBGRAPH_URL"],
+        "https://subgraph.decentraland.org/collections-ethereum-sepolia"
+    );
+    assert_eq!(
+        cfg["MATIC_COLLECTIONS_SUBGRAPH_URL"],
+        "https://subgraph.decentraland.org/collections-matic-amoy"
+    );
+}
+
+#[test]
 fn every_key_is_one_the_binary_reads_and_appears_once() {
     let known = Config::env_names_for_tests();
     let mut seen = std::collections::HashSet::new();
@@ -70,23 +98,18 @@ fn an_explicit_variable_or_its_file_wins_even_empty() {
 fn a_mirror_reads_the_subgraphs_lamb2_defaults_to() {
     let mirror = expanded(Posture::Mirror, &[]);
     assert_eq!(
-        (
-            mirror["MARKETPLACE_SUBGRAPH_URL"].as_str(),
-            mirror["LAND_SUBGRAPH_URL"].as_str()
-        ),
-        (
-            "https://subgraph.decentraland.org/marketplace",
-            "https://subgraph.decentraland.org/land-manager"
-        )
+        mirror["MARKETPLACE_SUBGRAPH_URL"].as_str(),
+        "https://subgraph.decentraland.org/marketplace"
     );
-    for posture in [Posture::Island, Posture::Journey] {
-        assert_eq!(expanded(posture, &[])["LAND_SUBGRAPH_URL"], "");
+    // LAND rights read the land-authz index alone: no posture names the
+    // land-manager subgraph (a value left in an environment is no Config
+    // variable, so the process never reads it).
+    for posture in [Posture::Mirror, Posture::Island, Posture::Journey] {
+        assert!(
+            !expanded(posture, &[]).contains_key("LAND_SUBGRAPH_URL"),
+            "{posture:?}"
+        );
     }
-    let c = parsed(&[("DATABASE_URL", "postgres:///catalyst"), (ENV, "mirror")]);
-    assert_eq!(
-        c.market_upstreams.land_subgraph_url.as_deref(),
-        Some("https://subgraph.decentraland.org/land-manager")
-    );
 }
 
 /// lamb2's defaults for a mirror's profile snapshots and /about parcel
@@ -573,7 +596,6 @@ fn island_sets_every_upstream_empty_and_every_follower_switch_off() {
         "BUILDER_FOUNDATION_URL",
         "WORLDS_CONTENT_MIRROR_SOURCE",
         "COMMUNITIES_MIRROR_THUMBNAIL_URL",
-        "EXPLORER_MAP_SOURCE_URL",
         "MAP_SATELLITE_BASE_URL",
     ] {
         assert_eq!(got[key], "", "{key}");
@@ -613,7 +635,6 @@ fn only_the_mirror_row_names_decentraland() {
     let island = parsed(&[("DATABASE_URL", "postgres:///catalyst"), (ENV, "island")]);
     for c in [&bare, &island] {
         assert!(c.explore.places_upstream_url.is_empty());
-        assert!(c.explore.explorer_map_source_url.is_empty());
         assert!(c.explore.world_manifest_upstream_url.is_empty());
         assert!(c.social.communities_upstream_url.is_empty());
         assert!(c.social.lease_authorizations_url.is_empty());
@@ -622,10 +643,6 @@ fn only_the_mirror_row_names_decentraland() {
         assert!(!c.social.media_convert_remote_sources);
     }
     let mirror = parsed(&[("DATABASE_URL", "postgres:///catalyst"), (ENV, "mirror")]);
-    assert_eq!(
-        mirror.explore.explorer_map_source_url,
-        "https://api.decentraland.org"
-    );
     assert!(mirror.social.media_convert_remote_sources);
     assert!(
         mirror
@@ -637,6 +654,36 @@ fn only_the_mirror_row_names_decentraland() {
     // Only the scratch journey stack runs on the LiveKit dev pair.
     assert!(journey.social.livekit_allow_dev_creds);
     assert!(!island.social.livekit_allow_dev_creds && !mirror.social.livekit_allow_dev_creds);
+}
+
+/// The tile grid's old copy source is gone (the map grid is built from the
+/// node's own indexes): no posture sets its two variables, the binary reads
+/// neither, and an environment that still sets them passes every posture's
+/// check, which looks only at keys the binary reads.
+#[test]
+fn the_retired_map_source_variables_are_ignored_at_startup() {
+    let leftover = [
+        ("EXPLORER_MAP_SOURCE_URL", "https://api.decentraland.org"),
+        ("EXPLORER_MAP_MIN_REFRESH_SECS", "3600"),
+    ];
+    let read = Config::env_names_for_tests();
+    for (key, _) in leftover {
+        assert!(!read.contains(key), "{key} is read by the binary");
+        assert!(keys().all(|k| k != key), "{key} is in the posture table");
+    }
+    for posture in ["mirror", "island", "journey"] {
+        let pairs = [("DATABASE_URL", "postgres:///catalyst"), (ENV, posture)];
+        let config = parsed(&pairs);
+        let mut environment = env(&pairs);
+        environment.extend(env(&leftover));
+        check(&config, &lookup(&environment)).unwrap_or_else(|e| panic!("{posture}: {e}"));
+        assert!(
+            expanded(Posture::parse(posture).unwrap(), &leftover)
+                .keys()
+                .all(|k| !k.starts_with("EXPLORER_MAP_")),
+            "{posture}"
+        );
+    }
 }
 
 #[test]
@@ -983,6 +1030,7 @@ fn island_and_journey_refuse_every_follower_switch() {
         .map(|r| r.key)
         .collect();
     followers.push("MARKETPLACE_MANA_TRANSFERS_INDEX_ENABLED");
+    followers.push("MARKETPLACE_COLLECTIONS_INDEX_ENABLED");
     assert!(followers.contains(&"PRICE_POLL_ENABLED") && followers.len() >= 14);
     for posture in ["island", "journey"] {
         for key in &followers {

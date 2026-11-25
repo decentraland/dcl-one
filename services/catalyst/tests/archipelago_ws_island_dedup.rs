@@ -957,7 +957,6 @@ async fn an_assigned_socket_recovers_a_lost_move_and_reannounces_after_broker_re
         state.clone(),
         true,
         Default::default(),
-        catalyst::comms::stats::http::test_support::matcher(),
         std::sync::Arc::new(catalyst::content::Denylist::default()),
     )
     .stats;
