@@ -31,8 +31,6 @@
     "../../../../ui3/src/shop/land/tiles.ts",
     "../../../../ui3/src/shop/land/chain.ts",
     "../../../../ui3/src/shop/land/format.tsx",
-    "../../../../ui3/src/shop/checkout/chain/config.ts",
-    "../../../../ui3/src/shop/pageOverride.ts",
     "../../../../ui3/src/explorer/components/MapSurface.tsx",
     "../../../../ui3/src/data/site.ts",
     "../../../../ui3/src/data/catalyst/client.ts",

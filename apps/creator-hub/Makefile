@@ -143,7 +143,7 @@ test-e2e:
 	make test-creator-hub-e2e
 
 test-inspector-e2e:
-	cd $(INSPECTOR_PATH)/; pnpm run test:e2e
+	cd $(INSPECTOR_PATH)/; pnpm run test:e2e $(E2E_SPECS)
 
 test-creator-hub-e2e:
 	cd $(CH_PATH); pnpm run test:e2e

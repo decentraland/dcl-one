@@ -175,6 +175,12 @@ Our team will add appropriate labels:
 - \`dependencies\` - Dependency updates
 - \`breaking-change\` - Breaking changes
 
+CI labels run the expensive jobs on demand:
+- \`ci:creator-hub-e2e\` - Runs the e2e suites this pull request requires, as soon as it is added. The \`Creator Hub e2e\` status names them and stays pending until the label runs them; a push or a reopen takes off a label added before it. When the deploy flow changed, the label runs the pull request's own specs and dependencies with the e2e wallet, so add it only once that code is reviewed.
+- \`ci:desktop\` / \`ci:linux\` - Build the desktop app for macOS, Windows and Linux, or Linux alone.
+
+For \`ci:desktop\` and \`ci:linux\`, add the label, then push or reopen.
+
 ## Coding Standards
 
 ### TypeScript/JavaScript

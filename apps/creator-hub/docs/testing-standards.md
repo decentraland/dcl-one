@@ -230,9 +230,18 @@ Each tier maps to a package script (all drive the packaged app, so they build/pa
 `test:e2e` runs `@offline` + `@live` locally (`pnpm run compile` then Playwright); `test:e2e:ci` is
 the CI form (packages with `electron-builder --dir` but skips the Vite rebuild that the
 `download-build` action already provides) and runs **`@offline` only**; `test:e2e:ci:live` runs
-`@live` against the app `test:e2e:ci` already packaged, and `e2e.yml` gates that step on
-`github.event_name != 'pull_request'` — real `.zone` deploys must never run on a PR, and the
-offline step is given no secrets at all; `test:e2e:live` runs only `@live` locally. **`@scene` is
+`@live` against the app `test:e2e:ci` already packaged. `e2e.yml` runs that step on `main`, on a
+manual run, and on a pull request whose changes touch the deploy flow or what the live specs run on
+(`creator-hub-live` and `every-suite` in `apps/creator-hub/e2e-selection.json`) only once a maintainer adds the `ci:creator-hub-e2e` label:
+real `.zone` deploys never run on a pull request without that admission, a Dependabot run has no
+secrets and only warns that live did not run, any other run that selects live without
+`CREATOR_HUB_E2E_PRIVATE_KEY` fails, and the offline step is given no secrets
+at all. The live step reads the repository secrets `CREATOR_HUB_E2E_PRIVATE_KEY`,
+`CREATOR_HUB_E2E_NAME` and `CREATOR_HUB_E2E_LAND`, which `creator-hub-ci.yml` passes to `e2e.yml`.
+`main` and pull requests share that wallet, world and LAND, so every live run deploys one at a time
+(concurrency group `creator-hub-e2e-live`); a third run waiting on the group cancels the pending
+one, which a re-run recovers.
+`test:e2e:live` runs only `@live` locally. **`@scene` is
 deliberately not in those scripts** — creating a scene runs a live `npm install`, so it can fail on
 registry outages rather than real regressions, which would make it a flaky PR gate. Run it on demand
 with `test:e2e:scene`.

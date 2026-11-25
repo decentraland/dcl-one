@@ -33,23 +33,34 @@ on:
       - 'apps/ui3/tsconfig.json'
       - 'apps/ui3/src/atoms/**'
       - 'apps/ui3/src/shop/land/**'
-      - 'apps/ui3/src/shop/checkout/chain/**'
       - 'apps/ui3/src/explorer/components/MapSurface.tsx'
       - 'apps/ui3/src/explorer/components/mapsurface.css'
-      - 'apps/ui3/src/data/**'
+      - 'apps/ui3/src/data/site.ts'
+      - 'apps/ui3/src/data/catalyst/client.ts'
+      - 'apps/ui3/src/data/catalyst/landListing.ts'
       - 'apps/ui3/src/generated/bridge/**'
       - 'library/ui/components/Tooltip/**'
       - 'library/ui/package.json'
-      - 'library/shop/**'
+      - 'library/shop/checkout/chain/selection.ts'
+      - 'library/shop/land/contracts.ts'
+      - 'library/shop/model/address.ts'
+      - 'library/shop/model/chain.ts'
+      - 'library/shop/model/decimal.ts'
+      - 'library/shop/model/money.ts'
       - 'library/web-core/shop-chain-env.ts'
       - 'library/web-core/site.ts'
+      - 'library/web-core/catalyst/client.ts'
       - '.github/workflows/creator-hub-*'
       - '.github/actions/creator-hub-*/**'
+      - 'tooling/creator-hub-ci.py'
+      - 'tooling/ci_paths.py'
+      - 'tooling/tests/test_creator_hub_ci.py'
   pull_request:
 
 permissions:
   contents: write
   pull-requests: write
+  statuses: write
   id-token: write
 
 concurrency:
@@ -59,37 +70,67 @@ concurrency:
 
 jobs:
   changes:
-    runs-on: ${{ vars.RUNNER_LINUX_X86 || 'ubuntu-26.04' }}
+    runs-on: ubuntu-26.04
     permissions:
       contents: read
-      pull-requests: read
+      pull-requests: write
+      statuses: write
     outputs:
-      creator-hub: ${{ steps.diff.outputs.creator-hub }}
+      creator-hub: ${{ steps.plan.outputs.creator-hub }}
+      e2e: ${{ steps.plan.outputs.run }}
+      e2e-inspector: ${{ steps.plan.outputs.inspector }}
+      e2e-inspector-specs: ${{ steps.plan.outputs.inspector-specs }}
+      e2e-creator-hub-offline: ${{ steps.plan.outputs.creator-hub-offline }}
+      e2e-creator-hub-live: ${{ steps.plan.outputs.creator-hub-live }}
       release: ${{ steps.release.outputs.release }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        if: github.event_name == 'pull_request'
         with:
-          fetch-depth: 0
+          fetch-depth: ${{ github.event_name == 'pull_request' && '0' || '1' }}
           filter: blob:none
-          sparse-checkout: .github
-      - name: Did this change touch the Creator Hub?
-        id: diff
+          persist-credentials: false
+          sparse-checkout: |
+            .github
+            tooling
+            apps/creator-hub/packages/inspector/test/e2e
+            apps/creator-hub/packages/creator-hub/renderer
+      - name: Test the e2e selection
+        run: python3 -m unittest discover -s tooling/tests -p test_creator_hub_ci.py
+      - name: Which e2e does this change require?
+        id: plan
         env:
+          GH_TOKEN: ${{ github.token }}
           BASE: ${{ github.event.pull_request.base.sha }}
           HEAD: ${{ github.event.pull_request.head.sha }}
+          ACTION: ${{ github.event.action }}
+          EVENT_AT: ${{ github.event.pull_request.updated_at }}
+          PR: ${{ github.event.pull_request.number }}
+        run: python3 tooling/creator-hub-ci.py plan
+      - name: Take the e2e label off the pushed commit
+        if: steps.plan.outputs.remove-label == 'true' && github.event.pull_request.head.repo.full_name == github.repository
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR: ${{ github.event.pull_request.number }}
+        run: gh api -X DELETE "repos/$GITHUB_REPOSITORY/issues/$PR/labels/ci%3Acreator-hub-e2e" --silent || true
+      - name: Report what e2e this change requires
+        if: github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository
+        env:
+          GH_TOKEN: ${{ github.token }}
+          HEAD: ${{ github.event.pull_request.head.sha }}
+          STATE: ${{ steps.plan.outputs.state }}
+          DESCRIPTION: ${{ steps.plan.outputs.description }}
+        run: |
+          gh api "repos/$GITHUB_REPOSITORY/statuses/$HEAD" --silent \
+            -f context='Creator Hub e2e' -f state="$STATE" -f description="$DESCRIPTION" \
+            -f target_url="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
+          if [ "$STATE" = pending ]; then echo "::notice::$DESCRIPTION"; fi
+      - name: Point at the desktop build labels
+        if: github.event_name == 'pull_request' && steps.plan.outputs.creator-hub == 'true'
+        env:
           DESKTOP: ${{ contains(github.event.pull_request.labels.*.name, 'ci:desktop') }}
         run: |
-          if [ "$GITHUB_EVENT_NAME" != pull_request ]; then
-            echo "creator-hub=true" >> "$GITHUB_OUTPUT"
-          elif git diff --name-only "$BASE...$HEAD" \
-              | grep -qE '^(apps/creator-hub/|apps/ui3/(package|tsconfig)\.json$|apps/ui3/src/(atoms|shop/land|shop/checkout/chain|data|generated/bridge)/|apps/ui3/src/explorer/components/(MapSurface\.tsx|mapsurface\.css)$|library/ui/(components/Tooltip/|package\.json$)|library/shop/|library/web-core/(shop-chain-env|site)\.ts$|\.github/workflows/creator-hub-|\.github/actions/creator-hub-)'; then
-            echo "creator-hub=true" >> "$GITHUB_OUTPUT"
-            if [ "$DESKTOP" != true ]; then
-              echo "::notice::The desktop builds run on main. Add the ci:desktop label to build the desktop app for macOS, Windows and Linux on this pull request, or ci:linux for Linux alone."
-            fi
-          else
-            echo "creator-hub=false" >> "$GITHUB_OUTPUT"
+          if [ "$DESKTOP" != true ]; then
+            echo "::notice::The desktop builds run on main. Add the ci:desktop label to build the desktop app for macOS, Windows and Linux on this pull request, or ci:linux for Linux alone."
           fi
       # A push is one merged pull request, so its labels are read from the pushed commit. The
       # labels are read when the job runs: a run started again after the label is added releases.
@@ -127,12 +168,40 @@ jobs:
     needs: [ build ]
     uses: ./.github/workflows/creator-hub-tests.yml
   e2e:
-    needs: [ build, tests ]
+    needs: [ changes, build ]
+    if: needs.changes.outputs.e2e == 'true'
     uses: ./.github/workflows/creator-hub-e2e.yml
+    with:
+      inspector: ${{ needs.changes.outputs.e2e-inspector == 'true' }}
+      inspector-specs: ${{ needs.changes.outputs.e2e-inspector-specs }}
+      creator-hub-offline: ${{ needs.changes.outputs.e2e-creator-hub-offline == 'true' }}
+      creator-hub-live: ${{ needs.changes.outputs.e2e-creator-hub-live == 'true' }}
     secrets:
-      E2E_LAND: ${{ secrets.E2E_LAND }}
-      E2E_NAME: ${{ secrets.E2E_NAME }}
-      E2E_PRIVATE_KEY: ${{ secrets.E2E_PRIVATE_KEY }}
+      CREATOR_HUB_E2E_PRIVATE_KEY: ${{ secrets.CREATOR_HUB_E2E_PRIVATE_KEY }}
+      CREATOR_HUB_E2E_NAME: ${{ secrets.CREATOR_HUB_E2E_NAME }}
+      CREATOR_HUB_E2E_LAND: ${{ secrets.CREATOR_HUB_E2E_LAND }}
+  e2e-status:
+    name: e2e status
+    needs: [ changes, e2e ]
+    if: always() && github.event_name == 'pull_request' && needs.changes.outputs.e2e == 'true' && github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-26.04
+    permissions:
+      statuses: write
+    steps:
+      - name: Report the e2e result
+        env:
+          GH_TOKEN: ${{ github.token }}
+          HEAD: ${{ github.event.pull_request.head.sha }}
+          RESULT: ${{ needs.e2e.result }}
+        run: |
+          case "$RESULT" in
+            success) state=success description=Passed ;;
+            cancelled) state=error description='Cancelled: run the workflow again' ;;
+            *) state=failure description="Failed ($RESULT)" ;;
+          esac
+          gh api "repos/$GITHUB_REPOSITORY/statuses/$HEAD" --silent \
+            -f context='Creator Hub e2e' -f state="$state" -f description="$description" \
+            -f target_url="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
   drop_pre_release:
     name: drop pre-release
     needs: [ changes, lint, typechecking, tests ]
@@ -207,11 +276,6 @@ jobs:
     with:
       dry-run: ${{ needs.changes.outputs.release != 'true' }}
       keep: ${{ needs.creator-hub.outputs.version }}
-  # The one required check. It stands for lint, typecheck, unit tests, both e2e suites and the
-  # macOS and Windows builds (the checks decentraland/creator-hub required), plus the package jobs
-  # those builds wait on: it fails if any of them failed or was cancelled, and passes when they
-  # passed or were skipped (`changes` skips them all; a pull request without the `ci:desktop`
-  # or `ci:linux` label skips the builds and the prune that needs them).
   result:
     name: Creator Hub CI
     if: always()
@@ -224,4 +288,6 @@ jobs:
           RESULTS: ${{ toJSON(needs) }}
         run: |
           echo "$RESULTS" | jq -r 'to_entries[] | "\(.key): \(.value.result)"'
-          ! echo "$RESULTS" | jq -e 'to_entries | any(.value.result == "failure" or .value.result == "cancelled")' > /dev/null
+          ! echo "$RESULTS" | jq -e --arg event "$GITHUB_EVENT_NAME" \
+            'if $event == "pull_request" then del(.e2e) else . end
+             | to_entries | any(.value.result == "failure" or .value.result == "cancelled")' > /dev/null

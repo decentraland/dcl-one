@@ -114,6 +114,8 @@
 /apps/creator-hub/ @decentraland/web-applications
 /.github/workflows/creator-hub-*.yml @decentraland/web-applications
 /.github/actions/creator-hub-*/ @decentraland/web-applications
+/tooling/creator-hub-ci.py @decentraland/web-applications
+/tooling/tests/test_creator_hub_ci.py @decentraland/web-applications
 
 # explorer-client
 /rendering/bevy-explorer/ @decentraland/client

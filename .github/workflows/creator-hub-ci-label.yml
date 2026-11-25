@@ -1,0 +1,43 @@
+name: Creator Hub / CI label
+on:
+  pull_request:
+    types: [labeled]
+
+permissions: {}
+
+jobs:
+  rerun:
+    name: run the required e2e
+    if: github.event.label.name == 'ci:creator-hub-e2e' && github.event.pull_request.head.repo.full_name == github.repository
+    concurrency:
+      group: creator-hub-ci-label-${{ github.event.pull_request.number }}
+      cancel-in-progress: true
+    runs-on: ubuntu-26.04
+    timeout-minutes: 15
+    permissions:
+      actions: write
+      pull-requests: read
+    steps:
+      - name: Run Creator Hub CI again on the pull request's head
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          HEAD: ${{ github.event.pull_request.head.sha }}
+          PR: ${{ github.event.pull_request.number }}
+        run: |
+          if [ "$(gh pr view "$PR" --json headRefOid --jq .headRefOid)" != "$HEAD" ]; then
+            echo "::notice::$HEAD is no longer the head of this pull request; a push takes the label off, so add it again."
+            exit 0
+          fi
+          read -r id status < <(gh run list --workflow creator-hub-ci.yml --event pull_request --commit "$HEAD" \
+            --limit 1 --json databaseId,status --jq '.[0] | "\(.databaseId) \(.status)"')
+          if [ -z "${id:-}" ] || [ "$id" = null ]; then
+            echo "::notice::No Creator Hub / CI run for $HEAD yet; it reads the label when it starts."
+            exit 0
+          fi
+          if [ "$status" != completed ]; then
+            gh run cancel "$id" || true
+            gh run watch "$id" --interval 10 > /dev/null || true
+          fi
+          gh run rerun "$id"
+          echo "::notice::Started Creator Hub / CI run $id again with the ci:creator-hub-e2e label."

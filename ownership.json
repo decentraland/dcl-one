@@ -264,7 +264,9 @@
         "/apps/ui3/editor-scene/",
         "/apps/creator-hub/",
         "/.github/workflows/creator-hub-*.yml",
-        "/.github/actions/creator-hub-*/"
+        "/.github/actions/creator-hub-*/",
+        "/tooling/creator-hub-ci.py",
+        "/tooling/tests/test_creator_hub_ci.py"
       ]
     },
     {

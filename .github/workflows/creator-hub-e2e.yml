@@ -1,12 +1,25 @@
 name: E2E
 on:
   workflow_call:
+    inputs:
+      inspector:
+        type: boolean
+        default: true
+      inspector-specs:
+        type: string
+        default: ''
+      creator-hub-offline:
+        type: boolean
+        default: true
+      creator-hub-live:
+        type: boolean
+        default: false
     secrets:
-      E2E_PRIVATE_KEY:
+      CREATOR_HUB_E2E_PRIVATE_KEY:
         required: false
-      E2E_NAME:
+      CREATOR_HUB_E2E_NAME:
         required: false
-      E2E_LAND:
+      CREATOR_HUB_E2E_LAND:
         required: false
 
 permissions:
@@ -28,6 +41,8 @@ jobs:
   # runner has 4 vCPU/16GB against macOS arm64's 3 vCPU/7GB at a tenth the
   # billed minutes. Only e2e-creator-hub needs darwin, to package the .app.
   e2e-inspector:
+    if: inputs.inspector
+    timeout-minutes: 30
     # Not ubuntu-latest: Playwright 1.60 had no Chromium build for Ubuntu 26.04. The suite now runs 1.62,
     # so this can move to ubuntu-latest once a run there is green.
     runs-on: ${{ vars.RUNNER_LINUX_X86_UBUNTU_24_04 || 'ubuntu-24.04' }}
@@ -79,8 +94,9 @@ jobs:
 
       - name: e2e
         timeout-minutes: 20
-        run: make test-inspector-e2e
+        run: make test-inspector-e2e E2E_SPECS="$SPECS"
         env:
+          SPECS: ${{ inputs.inspector-specs }}
           NODE_OPTIONS: "--max-old-space-size=8192"
           E2E_CONTENT_URL: https://builder-items.decentraland.zone
 
@@ -94,10 +110,15 @@ jobs:
           if-no-files-found: ignore
           retention-days: 3
 
-  # Cold-launches the real Electron app via Playwright _electron (drives the
-  # app's own Chromium — no browser download); runs the prebuilt dist.
   e2e-creator-hub:
+    if: inputs.creator-hub-offline
+    timeout-minutes: 45
     runs-on: macos-latest
+    concurrency:
+      group: ${{ inputs.creator-hub-live && 'creator-hub-e2e-live' || format('creator-hub-e2e-offline-{0}', github.run_id) }}
+      cancel-in-progress: false
+    env:
+      HAS_LIVE_SECRETS: ${{ secrets.CREATOR_HUB_E2E_PRIVATE_KEY != '' }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: ./.github/actions/creator-hub-setup
@@ -123,15 +144,24 @@ jobs:
           CSC_IDENTITY_AUTO_DISCOVERY: 'false'
           E2E_CONTENT_URL: https://builder-items.decentraland.zone
 
-      - name: e2e live tier (post-merge and manual dispatch only; reuses the app packaged above)
-        if: github.event_name != 'pull_request'
+      - name: No live secrets
+        if: inputs.creator-hub-live && env.HAS_LIVE_SECRETS != 'true'
+        run: |
+          if [ "$GITHUB_ACTOR" = 'dependabot[bot]' ]; then
+            echo "::warning::Dependabot runs get no CREATOR_HUB_E2E_PRIVATE_KEY, so the @live specs did not run."
+          else
+            echo "::error::CREATOR_HUB_E2E_PRIVATE_KEY is not set in this repository, so the @live specs cannot run."
+            exit 1
+          fi
+      - name: e2e live tier (reuses the app packaged above)
+        if: inputs.creator-hub-live && env.HAS_LIVE_SECRETS == 'true'
         run: make test-creator-hub-e2e-ci-live
         env:
           NODE_OPTIONS: "--max-old-space-size=8192"
           E2E_CONTENT_URL: https://builder-items.decentraland.zone
-          E2E_PRIVATE_KEY: ${{ secrets.E2E_PRIVATE_KEY }}
-          E2E_NAME: ${{ secrets.E2E_NAME }}
-          E2E_LAND: ${{ secrets.E2E_LAND }}
+          E2E_PRIVATE_KEY: ${{ secrets.CREATOR_HUB_E2E_PRIVATE_KEY }}
+          E2E_NAME: ${{ secrets.CREATOR_HUB_E2E_NAME }}
+          E2E_LAND: ${{ secrets.CREATOR_HUB_E2E_LAND }}
 
       - name: upload e2e diagnostics
         if: failure()
