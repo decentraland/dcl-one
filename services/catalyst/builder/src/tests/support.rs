@@ -574,14 +574,15 @@ pub struct FakeRegistry {
 
 static INDEX_POSITION: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(0);
 
-/// A current publication of the shop's third-party registry index in
-/// `pool`'s database, or one older than the index's bound when `stale`.
+/// A publication of the shop's third-party registry index in `pool`'s
+/// database: a current one, dated a second back, or one older than the
+/// index's bound when `stale`.
 pub async fn publish_registry_index(conn: &mut sqlx::PgConnection, stale: bool) {
     sqlx::query(
         "INSERT INTO shop.chain_cursor \
            (indexer, network, start_block, last_block, full_history, folded_block, folded_at, chain_id) \
          VALUES ($1, 'matic', 0, 1, true, 1, \
-           timezone('UTC', now()) - CASE WHEN $2 THEN interval '31 minutes' ELSE interval '0' END, 137) \
+           timezone('UTC', now()) - CASE WHEN $2 THEN interval '31 minutes' ELSE interval '1 second' END, 137) \
          ON CONFLICT (indexer, network) DO UPDATE SET folded_at = EXCLUDED.folded_at",
     )
     .bind(crate::chain_index::third_party_index::INDEXER)
