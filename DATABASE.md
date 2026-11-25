@@ -3364,7 +3364,10 @@ anything else while it holds it:
   EIP-1654 signer check) first opens a short read for the gate and its page
   memo, so a refusal or a warm page answers at once. On a miss it releases
   the read for the call, then opens it again, checking readiness again, and
-  files the page under the copy that read saw;
+  reads the whole page on that read (the suggested feed rebuilds its personal
+  rows there too) and files it under the copy that read saw. The answer's
+  `as_of` comes only from the reads that supplied its rows: the short read on
+  a warm page, the final read on a miss;
 - a request never waits on another's memo fetch while it holds the
   connection.
 

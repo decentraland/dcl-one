@@ -163,11 +163,15 @@ fn bearer(token: &str) -> HeaderMap {
 /// for from canned rows: `items` and `collections` by their keysets, the
 /// rest by `first`/`skip`/`id_gt`. `fail_next_items_page` makes every
 /// items page past the first answer 500 (through the client's retries) until cleared;
-/// `hang` makes every request wait without an answer.
+/// `hang` makes every request wait without an answer; `pause` holds the
+/// next request between `arrived` and `release`.
 struct FakeGraph {
     rows: std::sync::Mutex<BTreeMap<&'static str, Vec<Value>>>,
     fail_next_items_page: AtomicBool,
     hang: AtomicBool,
+    pause: AtomicBool,
+    arrived: tokio::sync::Notify,
+    release: tokio::sync::Notify,
     requests: std::sync::Mutex<Vec<String>>,
 }
 
@@ -177,6 +181,9 @@ impl FakeGraph {
             rows: std::sync::Mutex::new(BTreeMap::new()),
             fail_next_items_page: AtomicBool::new(false),
             hang: AtomicBool::new(false),
+            pause: AtomicBool::new(false),
+            arrived: tokio::sync::Notify::new(),
+            release: tokio::sync::Notify::new(),
             requests: std::sync::Mutex::new(Vec::new()),
         })
     }
@@ -333,6 +340,10 @@ async fn serve_graph(up: Arc<FakeGraph>) -> String {
     ) -> axum::response::Response {
         if up.hang.load(Ordering::SeqCst) {
             std::future::pending::<()>().await;
+        }
+        if up.pause.swap(false, Ordering::SeqCst) {
+            up.arrived.notify_one();
+            up.release.notified().await;
         }
         let query = body.get("query").and_then(Value::as_str).unwrap_or("");
         let vars = body.get("variables").cloned().unwrap_or(json!({}));
@@ -5289,6 +5300,166 @@ async fn a_stalled_sales_read_never_masks_the_gate_or_a_warm_page() {
             "{uri}: {body}"
         );
     }
+    drop(state);
+    pool.close().await;
+}
+
+/// A suggested page is read on one snapshot. A full personal page answers
+/// from its first read without the sales reader; one that falls back to the
+/// trending rail rebuilds its personal rows on the read it opens after the
+/// sales call, so a publication committed meanwhile never mixes into it.
+#[tokio::test]
+async fn a_suggested_page_never_mixes_two_publications() {
+    let up = FakeGraph::new();
+    let Some((pool, state, c)) = owned_polygon_market(&up).await else {
+        return;
+    };
+    for i in 1..=4 {
+        seed_item_row(&pool, &c, &i.to_string(), CREATOR).await;
+    }
+    sqlx::query(
+        "UPDATE shop.items SET name = 'before', search_is_collection_approved = true, \
+                search_is_store_minter = true, price = 1000000000000000000",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+    sqlx::query("INSERT INTO shop.item_neighbors_meta (id, built_at, algorithm, wallets, items, rows_written) VALUES (1, now(), 'test', 10, 5, 4)")
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query(
+        "INSERT INTO shop.item_neighbors (network, contract_address, item_id, neighbor_network, \
+                neighbor_contract_address, neighbor_item_id, sim, support, rank) \
+         SELECT 'matic', $1, 0, 'matic', $1, g, 0.9, 5, g FROM generate_series(1, 4) g",
+    )
+    .bind(&c)
+    .execute(&pool)
+    .await
+    .unwrap();
+    let asked = || up.requests.lock().unwrap().len();
+
+    // Four personal rows fill a page of four: no sales call.
+    let before = asked();
+    let (status, body) = get(
+        market_router(state.clone()),
+        &format!("/v3/catalog/suggested?first=4&seeds={c}-0"),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["data"].as_array().map(Vec::len), Some(4), "{body}");
+    assert_eq!(asked(), before, "a full personal page reads no sales");
+
+    // A page of five falls back to the trending rail; the catalogue is
+    // republished while its sales call is held.
+    up.pause.store(true, Ordering::SeqCst);
+    let uri = format!("/v3/catalog/suggested?first=5&seeds={c}-0");
+    let task = {
+        let state = state.clone();
+        tokio::spawn(async move { get(market_router(state), &uri).await })
+    };
+    tokio::time::timeout(Duration::from_secs(15), up.arrived.notified())
+        .await
+        .unwrap();
+    let mut tx = pool.begin().await.unwrap();
+    sqlx::query("UPDATE shop.items SET name = 'after', price = 2000000000000000000")
+        .execute(&mut *tx)
+        .await
+        .unwrap();
+    sqlx::query(
+        "UPDATE shop.collection_projection SET generation = generation + 1 WHERE network = 'matic'",
+    )
+    .execute(&mut *tx)
+    .await
+    .unwrap();
+    tx.commit().await.unwrap();
+    up.release.notify_one();
+    let (status, body) = task.await.unwrap();
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let rows: Vec<(Value, Value)> = body["data"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|r| (r["name"].clone(), r["reason"]["kind"].clone()))
+        .collect();
+    assert_eq!(rows.len(), 5, "{body}");
+    assert!(
+        rows.iter().all(|(name, _)| name == "after"),
+        "one publication: {rows:?}"
+    );
+    assert!(
+        rows.iter().any(|(_, kind)| kind == "trending")
+            && rows.iter().any(|(_, kind)| kind != "trending"),
+        "{rows:?}"
+    );
+    assert_eq!(body["personalized"], true);
+    drop(state);
+    pool.close().await;
+}
+
+/// A page is stamped with the copy it was read from: a trending page read on
+/// the snapshot opened after its sales call carries that publication's
+/// `as_of`, not the one the discarded preflight read saw.
+#[tokio::test]
+async fn a_page_is_stamped_with_the_copy_it_was_read_from() {
+    let up = FakeGraph::new();
+    let Some((pool, state, _)) = owned_polygon_market(&up).await else {
+        return;
+    };
+    let old: chrono::NaiveDateTime = sqlx::query_scalar(
+        "UPDATE shop.chain_cursor SET folded_at = date_trunc('second', timezone('UTC', now())) - interval '10 minutes' \
+         WHERE network = 'matic' AND indexer = 'collections' RETURNING folded_at",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    up.pause.store(true, Ordering::SeqCst);
+    let task = {
+        let state = state.clone();
+        tokio::spawn(async move { get(market_router(state), "/v3/catalog/trending?first=3").await })
+    };
+    tokio::time::timeout(Duration::from_secs(15), up.arrived.notified())
+        .await
+        .unwrap();
+    let mut tx = pool.begin().await.unwrap();
+    sqlx::query("UPDATE shop.items SET name = 'after'")
+        .execute(&mut *tx)
+        .await
+        .unwrap();
+    sqlx::query(
+        "UPDATE shop.collection_projection SET generation = generation + 1 WHERE network = 'matic'",
+    )
+    .execute(&mut *tx)
+    .await
+    .unwrap();
+    sqlx::query("UPDATE shop.chain_cursor SET folded_at = timezone('UTC', now()) WHERE network = 'matic' AND indexer = 'collections'")
+        .execute(&mut *tx)
+        .await
+        .unwrap();
+    tx.commit().await.unwrap();
+    up.release.notify_one();
+    let (status, body) = task.await.unwrap();
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["data"][0]["name"], "after", "{body}");
+    // The final read's copies: Ethereum's items pass and Polygon's new
+    // publication; the oldest stamps the page.
+    let expected: chrono::NaiveDateTime = sqlx::query_scalar(
+        "SELECT least( \
+           (SELECT last_complete_pass_at FROM shop.mirror_state WHERE mirror = 'items' AND network = 'ethereum'), \
+           (SELECT folded_at FROM shop.chain_cursor WHERE indexer = 'collections' AND network = 'matic'))",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    let stamp = chrono::DateTime::parse_from_rfc3339(body["as_of"].as_str().unwrap())
+        .unwrap()
+        .timestamp_millis();
+    assert_ne!(
+        stamp,
+        old.and_utc().timestamp_millis(),
+        "not the preflight's copy"
+    );
+    assert_eq!(stamp, expected.and_utc().timestamp_millis(), "{body}");
     drop(state);
     pool.close().await;
 }

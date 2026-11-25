@@ -644,7 +644,7 @@ pub async fn get_search_suggest(
     };
     // The gate first, on a short read: a refusal answers without waiting on
     // the sales reader's subgraph call, which runs with no connection held.
-    if let Err(envelope) = items::priced_read(&state, None).await {
+    if let Err(envelope) = items::priced_preflight(&state).await {
         return envelope;
     }
     let sales = collection_sales(&state).await;

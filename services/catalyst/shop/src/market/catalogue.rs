@@ -178,6 +178,24 @@ impl CatalogueRead {
             .map(|_| ())
     }
 
+    /// Records the copies this read answers from for the answer's `as_of`
+    /// and staleness ([`mirrors::stamp_copies`], the minimum over every read
+    /// that contributed rows): each mirror pass it took and each owned
+    /// network's publication. [`begin`] records them; a [`preflight`] read
+    /// records them only when the route answers from it.
+    pub fn note(&self, state: &MarketplaceState) {
+        if let Some(mirror) = &self.mirror {
+            for m in [Mirror::Collections, Mirror::Items] {
+                if let Some(at) = mirror.oldest(Some(m)) {
+                    mirrors::note_copy_at(state, m, at);
+                }
+            }
+        }
+        for (_, p) in &self.owned {
+            mirrors::note_index_copy(p.folded_at);
+        }
+    }
+
     /// [`Self::trades_ready`], typed ([`super::trades::ready_checked_on`]):
     /// the source that refused and why, `None` when it could not be read.
     pub async fn trades_checked(
@@ -540,6 +558,19 @@ pub async fn begin_checked(
     scope: Option<Network>,
     access: Access,
 ) -> Result<CatalogueRead, Refusal> {
+    let read = open(state, purpose, needs, scope, access).await?;
+    read.note(state);
+    Ok(read)
+}
+
+/// [`begin_checked`] without recording the copies for the answer's stamp.
+async fn open(
+    state: &MarketplaceState,
+    purpose: Purpose,
+    needs: &[Mirror],
+    scope: Option<Network>,
+    access: Access,
+) -> Result<CatalogueRead, Refusal> {
     let failed = |e: sqlx::Error| {
         tracing::error!(error = %e, "catalogue snapshot read failed");
         Refusal {
@@ -628,23 +659,26 @@ pub async fn begin_checked(
             .map_err(|(source, why)| refused(source, why, false))?,
         )
     };
-    let read = CatalogueRead {
+    Ok(CatalogueRead {
         tx,
         now,
         mirror,
         owned,
-    };
-    if let Some(mirror) = &read.mirror {
-        for needed in needs {
-            if let Some(at) = mirror.oldest(Some(*needed)) {
-                mirrors::note_copy_at(state, *needed, at);
-            }
-        }
-    }
-    for (_, p) in &read.owned {
-        mirrors::note_index_copy(p.folded_at);
-    }
-    Ok(read)
+    })
+}
+
+/// A read opened only to check the gate (and a page memo) before a route
+/// releases it for a remote call: it records no copy for the answer's
+/// `as_of` unless the route answers from it ([`CatalogueRead::note`]).
+pub async fn preflight(
+    state: &MarketplaceState,
+    purpose: Purpose,
+    needs: &[Mirror],
+    scope: Option<Network>,
+) -> Result<CatalogueRead, Response> {
+    open(state, purpose, needs, scope, Access::ReadOnly)
+        .await
+        .map_err(Refusal::into_response)
 }
 
 /// A read of the mirrors' copy that skips readiness, for a test of what a

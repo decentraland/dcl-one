@@ -947,6 +947,15 @@ pub async fn mana_usd_rate(state: &MarketplaceState) -> Result<ManaUsdRate, Resp
 /// `scope`, and the trades mirror's pass and verdicts (the open item trade
 /// every row carries: `tradeId`, the trade price, `isOnSale`), read in the
 /// same snapshot at the same instant.
+/// [`priced_read`] as a [`catalogue::preflight`]: the gate and the trades
+/// check, with no copy recorded for the answer unless the route answers from
+/// it ([`CatalogueRead::note`]).
+pub(crate) async fn priced_preflight(state: &MarketplaceState) -> Result<CatalogueRead, Response> {
+    let mut read = catalogue::preflight(state, Purpose::Priced, &[Mirror::Items], None).await?;
+    read.trades_ready(state).await?;
+    Ok(read)
+}
+
 pub(crate) async fn priced_read(
     state: &MarketplaceState,
     scope: Option<Network>,
@@ -1186,7 +1195,7 @@ pub async fn get_trendings(
     // The gate first, on a short read: a refusal answers without waiting on
     // the sales reader's subgraph call, which runs with no connection held;
     // the read is then opened again, rechecked, for the rows.
-    if let Err(envelope) = priced_read(&state, None).await {
+    if let Err(envelope) = priced_preflight(&state).await {
         return envelope;
     }
     let cache_control = [(CACHE_CONTROL, "public,max-age=3600,s-maxage=3600")];

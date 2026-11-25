@@ -74,7 +74,8 @@ use super::catalog::{
 };
 use super::catalogue::CatalogueRead;
 use super::items::{
-    USD_WEI_PER_CREDIT, mana_usd_rate, priced_read, rate_to_numeric_string, recent_sales,
+    USD_WEI_PER_CREDIT, mana_usd_rate, priced_preflight, priced_read, rate_to_numeric_string,
+    recent_sales,
 };
 use super::readers::{self, Ttl, cached, memoized};
 use super::search::{CreatorProfile, creator_profiles, directory_snapshot};
@@ -1535,15 +1536,19 @@ pub async fn get_trending_catalog(
     };
     // The gate and the page memo first, on a short read: a refusal or a warm
     // page answers without waiting on the sales reader's subgraph call.
-    let read = match priced_read(&state, None).await {
+    let read = match priced_preflight(&state).await {
         Ok(read) => read,
         Err(r) => return r,
     };
     let (key, sources) = (key_of(read.key()), read.sources());
-    drop(read);
     let warm = key
         .as_deref()
         .and_then(|key| state.readers.fresh(Ttl::S30, key));
+    if warm.is_some() {
+        // A warm page answers from this read's copy, so its stamp is this one.
+        read.note(&state);
+    }
+    drop(read);
     let (body, directory) = match warm {
         Some(body) => (Ok(body), directory_snapshot(&state, &sources).await),
         None => {
@@ -1679,7 +1684,7 @@ pub async fn get_suggested_catalog(
     };
     // The gate first, on a short read: a refusal answers without waiting on
     // the signer's EIP-1654 call, which runs with no connection held.
-    if let Err(r) = priced_read(&state, None).await {
+    if let Err(r) = priced_preflight(&state).await {
         return r;
     }
     let verified = match super::signed::optional_signer(
@@ -1693,10 +1698,6 @@ pub async fn get_suggested_catalog(
         Ok(v) => v.map(|a| a.to_lowercase()),
         Err(e) => return e.into_response(),
     };
-    let mut read = match priced_read(&state, None).await {
-        Ok(read) => read,
-        Err(r) => return r,
-    };
     let p = Params::new(&pairs);
     let first = finite_i64(p.get_number("first", None));
     let limit = first.unwrap_or(12).clamp(1, 40) as usize;
@@ -1708,28 +1709,25 @@ pub async fn get_suggested_catalog(
         },
         ..Default::default()
     };
-    let mut data: Vec<SuggestedItem> = Vec::new();
-    if super::neighbours::built(&mut *read.tx).await {
-        match personal_rows(
-            &state,
-            &mut read,
-            &p,
-            verified.as_deref(),
-            &filters,
-            rate,
-            limit,
-        )
-        .await
-        {
-            Ok(rows) if rows.len() >= MIN_PERSONAL_ROWS => data = rows,
-            Ok(_) => {}
-            Err(e) => return e.into_response(),
-        }
-    }
-    let personalized = !data.is_empty();
-    if data.len() < limit {
+    let personal_on = async |read: &mut CatalogueRead| {
+        suggested_personal(&state, read, &p, verified.as_deref(), &filters, rate, limit).await
+    };
+    let mut read = match priced_preflight(&state).await {
+        Ok(read) => read,
+        Err(r) => return r,
+    };
+    let mut data = match personal_on(&mut read).await {
+        Ok(rows) => rows,
+        Err(r) => return r,
+    };
+    let mut personalized = !data.is_empty();
+    if data.len() >= limit {
+        // A full personal page answers from this read alone.
+        read.note(&state);
+    } else {
         // The trending rail needs the sales reader's subgraph call: the read
-        // is released for it and opened again, rechecked.
+        // is released for it and opened again, rechecked, and the whole page,
+        // its personal rows included, is read on that one snapshot.
         drop(read);
         let sales = match recent_sales(&state, trending_clamp_days(None)).await {
             Ok(sales) => sales,
@@ -1739,47 +1737,26 @@ pub async fn get_suggested_catalog(
             Ok(read) => read,
             Err(r) => return r,
         };
-        match trending_items(
-            &state,
-            &mut read,
-            Some(limit as i64 * 2),
-            &sales,
-            &filters,
-            rate,
-        )
-        .await
-        {
-            Ok(items) => {
-                for t in items {
-                    if data.len() >= limit {
-                        break;
-                    }
-                    let id = format!(
-                        "{}-{}",
-                        t.item.contract_address,
-                        t.item.item_id.clone().unwrap_or_default()
-                    );
-                    if data.iter().any(|d| {
-                        format!(
-                            "{}-{}",
-                            d.item.contract_address,
-                            d.item.item_id.clone().unwrap_or_default()
-                        ) == id
-                    }) {
-                        continue;
-                    }
-                    data.push(SuggestedItem {
-                        item: t.item,
-                        reason: SuggestionReason {
-                            kind: "trending",
-                            item_id: None,
-                            creator: None,
-                        },
-                        score: 0.0,
-                    });
-                }
-            }
+        data = match personal_on(&mut read).await {
+            Ok(rows) => rows,
             Err(r) => return r,
+        };
+        personalized = !data.is_empty();
+        if data.len() < limit {
+            let trending = match trending_items(
+                &state,
+                &mut read,
+                Some(limit as i64 * 2),
+                &sales,
+                &filters,
+                rate,
+            )
+            .await
+            {
+                Ok(items) => items,
+                Err(r) => return r,
+            };
+            fill_with_trending(&mut data, trending, limit);
         }
     }
     (
@@ -1791,6 +1768,59 @@ pub async fn get_suggested_catalog(
         }),
     )
         .into_response()
+}
+
+/// The suggested feed's personal rows on `read`: none until the neighbours
+/// are built, and none unless there are at least [`MIN_PERSONAL_ROWS`].
+async fn suggested_personal(
+    state: &MarketplaceState,
+    read: &mut CatalogueRead,
+    p: &Params<'_>,
+    verified: Option<&str>,
+    filters: &UnifiedCatalogFilters,
+    rate: ManaUsdRate,
+    limit: usize,
+) -> Result<Vec<SuggestedItem>, Response> {
+    if !super::neighbours::built(&mut *read.tx).await {
+        return Ok(Vec::new());
+    }
+    match personal_rows(state, read, p, verified, filters, rate, limit).await {
+        Ok(rows) if rows.len() >= MIN_PERSONAL_ROWS => Ok(rows),
+        Ok(_) => Ok(Vec::new()),
+        Err(e) => Err(e.into_response()),
+    }
+}
+
+/// Fills `data` up to `limit` with the trending items it does not hold yet.
+fn fill_with_trending(data: &mut Vec<SuggestedItem>, trending: Vec<TrendingItem>, limit: usize) {
+    for t in trending {
+        if data.len() >= limit {
+            break;
+        }
+        let id = format!(
+            "{}-{}",
+            t.item.contract_address,
+            t.item.item_id.clone().unwrap_or_default()
+        );
+        if data.iter().any(|d| {
+            format!(
+                "{}-{}",
+                d.item.contract_address,
+                d.item.item_id.clone().unwrap_or_default()
+            ) == id
+        }) {
+            continue;
+        }
+        data.push(SuggestedItem {
+            item: t.item,
+            reason: SuggestionReason {
+                kind: "trending",
+                item_id: None,
+                creator: None,
+            },
+            score: 0.0,
+        });
+    }
 }
 
 pub async fn get_top_creators(
@@ -1805,13 +1835,18 @@ pub async fn get_top_creators(
     // The gate and the ranking memo first, on a short read: a refusal or a
     // warm ranking answers without waiting on the sales reader's subgraph
     // call.
-    let read = match priced_read(&state, None).await {
+    let read = match priced_preflight(&state).await {
         Ok(read) => read,
         Err(r) => return r,
     };
     let (key, sources) = (top_creators_key(first, days, &read.key()), read.sources());
+    let warm = state.readers.fresh(Ttl::M15, &key);
+    if warm.is_some() {
+        // A warm ranking answers from this read's copy, so its stamp is this one.
+        read.note(&state);
+    }
     drop(read);
-    let (ranked, directory) = match state.readers.fresh(Ttl::M15, &key) {
+    let (ranked, directory) = match warm {
         Some(value) => (
             creators_of(&value),
             directory_snapshot(&state, &sources).await,
