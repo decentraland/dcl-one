@@ -481,7 +481,9 @@ export interface ByteBuffer {
 }
 
 // @public
-export type Callback = (event: PBPointerEventsResult) => void;
+export type Callback = {
+    callback(event?: PBPointerEventsResult): void;
+}['callback'];
 
 // @public (undocumented)
 export const CameraLayer: LastWriteWinElementSetComponentDefinition<PBCameraLayer>;

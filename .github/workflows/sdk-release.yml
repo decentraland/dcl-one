@@ -20,6 +20,11 @@ on:
         default: ''
 permissions:
   contents: read
+concurrency:
+  # Pushes publish in order and a waiting one gives way to a newer one, so next ends on the newest
+  # commit; two runs of one release version do not race on its tag.
+  group: sdk-release-${{ github.event_name }}-${{ inputs.version }}
+  cancel-in-progress: false
 env:
   SDK_PACKAGES: ecs js-runtime react-ecs sdk-commands sdk
   PNPM: corepack pnpm@12.21.0
@@ -81,9 +86,6 @@ jobs:
     name: Publish to npm
     needs: [check, build]
     if: github.ref == 'refs/heads/main' && needs.check.outputs.publish == 'true'
-    concurrency:
-      group: sdk-publish-${{ github.event_name }}
-      cancel-in-progress: false
     runs-on: ubuntu-26.04
     timeout-minutes: 15
     environment: npm-release
@@ -115,6 +117,11 @@ jobs:
           else
             tag=next
             [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+-[0-9]+\.commit-[0-9a-f]+$ ]] || { echo "next needs a snapshot version, got $first" >&2; exit 1; }
+          fi
+          latest=$($PNPM view @dcl/sdk dist-tags.latest 2> /dev/null || true)
+          if [ "$tag" = latest ] && [ -n "$latest" ] && [ "$(printf '%s\n%s\n' "$latest" "$version" | sort -V | tail -1)" != "$version" ]; then
+            echo "$version is below $latest and would move the latest dist-tag back" >&2
+            exit 1
           fi
           for name in $SDK_PACKAGES; do
             tgz=./dist/dcl-$name-$version.tgz

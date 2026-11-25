@@ -22,18 +22,30 @@ function findPackageJsonFiles(dir, fileList = []) {
 
 const DEPENDENCY_FIELDS = ['dependencies', 'devDependencies', 'peerDependencies', 'optionalDependencies', 'overrides']
 
-// Only what the registry resolves: a version, a range or a dist-tag, directly or through an `npm:`
-// alias to one (a rescoped sibling). Anything else (a path, a tarball, a link, a workspace, a URL, a
-// git or `user/repo` source) names something unpublished or not under its own name.
+// Only what the registry resolves: a version, a range or a dist-tag. Anything else (a path, a
+// tarball, a link, a workspace, a URL, a git or `user/repo` source) names something unpublished.
+// An `npm:` alias is a PR preview's sibling: the same package name under the preview's own scope,
+// at the preview's exact version. A release never carries one.
 const PUBLISHED_TYPES = ['version', 'range', 'tag']
 
-function unpublishedReason(name, spec) {
+function aliasReason(name, parsed, owner) {
+  const [ownerScope] = owner.name.split('/')
+  const sibling = `${ownerScope}/${name.split('/').pop()}`
+  const target = parsed.subSpec
+  if (ownerScope === '@dcl' || target.name !== sibling || target.type !== 'version' || target.fetchSpec !== owner.version) {
+    return `aliases ${target.raw}; only a preview may alias, and only ${sibling}@${owner.version}`
+  }
+  return null
+}
+
+function unpublishedReason(name, spec, owner) {
   if (typeof spec !== 'string') return `is not a version string: ${JSON.stringify(spec)}`
   // an override's `$name` reuses that direct dependency's spec, which is checked on its own
   if (spec.startsWith('$')) return null
   try {
     const parsed = npa.resolve(name, spec)
-    const type = parsed.type === 'alias' ? parsed.subSpec.type : parsed.type
+    if (parsed.type === 'alias') return aliasReason(name, parsed, owner)
+    const type = parsed.type
     return PUBLISHED_TYPES.includes(type) ? null : `is a ${type} dependency, not a published version: ${spec}`
   } catch (error) {
     return `is not a valid dependency spec (${error.message}): ${spec}`
@@ -63,7 +75,7 @@ function checkNoLocalPackages(packageJsonPath) {
       if (!deps) continue
 
       for (const [label, name, spec] of dependencyEntries(field, deps)) {
-        const reason = unpublishedReason(name, spec)
+        const reason = unpublishedReason(name, spec, packageJson)
         if (reason) errors.push(`${field}: ${label} ${reason}`)
       }
     }

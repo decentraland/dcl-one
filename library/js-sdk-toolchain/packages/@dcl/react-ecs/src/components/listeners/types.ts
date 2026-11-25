@@ -5,7 +5,9 @@ import type { PBPointerEventsResult } from '@dcl/ecs'
  * fired it (button, hit, and for drags the pointer delta), which handlers may ignore.
  * @public
  */
-export type Callback = (event: PBPointerEventsResult) => void
+// A method signature, so a handler that reads the event and code that calls a callback with no
+// argument both type-check, as they did when this was `() => void`.
+export type Callback = { callback(event?: PBPointerEventsResult): void }['callback']
 
 /**
  * User key event Listeners
