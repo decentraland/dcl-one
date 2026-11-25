@@ -549,7 +549,9 @@ class DevelopmentWorkflowTest(unittest.TestCase):
     def test_creator_hub_workflows_track_shared_tooltip_sources(self):
         ci = CREATOR_HUB.read_text()
         push_patterns = re.findall(r"^      - '([^']+)'$", ci, re.M)
-        pr_pattern = re.search(r"grep -qE '([^']+)'", ci)[1]
+        selection = json.loads((WORKFLOW.parents[2] / 'apps/creator-hub/e2e-selection.json').read_text())['creator-hub']
+        def selected(path):
+            return any(fnmatch.fnmatch(path, pattern) for pattern in selection)
         shared_filter = {'library/ui/components/Tooltip/**', 'library/ui/package.json'}
         def ui_paths(paths):
             return {path for path in paths if path.startswith('library/ui/')}
@@ -559,10 +561,10 @@ class DevelopmentWorkflowTest(unittest.TestCase):
                      'library/ui/components/Tooltip/Tooltip.module.css', 'library/ui/package.json']:
             with self.subTest(path=path):
                 self.assertTrue(any(fnmatch.fnmatch(path, pattern) for pattern in push_patterns))
-                self.assertRegex(path, pr_pattern)
+                self.assertTrue(selected(path))
         for unrelated in ['docs/ui-components.md', 'library/ui/components/Button/Button.tsx',
                           'library/ui/index.ts', 'library/ui/pnpm-lock.yaml']:
-            self.assertNotRegex(unrelated, pr_pattern)
+            self.assertFalse(selected(unrelated), unrelated)
 
         for workflow in ['build', 'e2e']:
             source = CREATOR_HUB.with_name(f'creator-hub-{workflow}.yml').read_text()
