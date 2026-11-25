@@ -43,7 +43,15 @@ CREATE TABLE shop.trades (
     created_at timestamp(3) without time zone NOT NULL DEFAULT timezone('UTC', now())::timestamp(3),
     mirrored_from text,
     mirrored_at timestamp without time zone,
-    CONSTRAINT trades_signer_lowercase CHECK (signer = lower(signer))
+    -- The EIP-712 digest a V3 trade was signed over, the key of its V3
+    -- cancellation: stored when POST /v1/trades verifies the signature, or
+    -- copied from the trade's source (the marketplace-server import, the
+    -- mirror). NULL for a V1/V2 trade and for a V3 one whose source had none;
+    -- the trade-events fold accepts it only when the signature recovers the
+    -- signer over it (trade_chain_state.digest).
+    trade_digest text,
+    CONSTRAINT trades_signer_lowercase CHECK (signer = lower(signer)),
+    CONSTRAINT trades_trade_digest_hex CHECK (trade_digest ~ '^0x[0-9a-f]{64}$')
 );
 
 -- /v1/activity (trades_of_address): WHERE signer = $1 ORDER BY created_at DESC LIMIT.
@@ -16171,6 +16179,11 @@ CREATE INDEX trade_event_index_idx ON shop.trade_event (network, marketplace_add
 -- signature index moved away from the one it was signed with, else `open`.
 -- Expiry and local cancellations stay read-time rules. Derived: a rebuild
 -- refolds every trade; a trade row deleted takes its verdict with it.
+-- `digest` is the V3 cancellation key the fold verified (the signature
+-- recovers the signer over it): the trade's stored digest, else the one
+-- rebuilt from the row. `digest_failed_at` is set while a V3 trade has no
+-- such digest (the time of the last attempt, retried after a backoff): its
+-- cancellation would go unseen, so the open-listing reads leave it out.
 CREATE TABLE shop.trade_chain_state (
     trade_id uuid PRIMARY KEY REFERENCES shop.trades(id) ON DELETE CASCADE,
     network text NOT NULL,
@@ -16179,8 +16192,10 @@ CREATE TABLE shop.trade_chain_state (
     status text NOT NULL,
     executed_at bigint,
     folded_block bigint NOT NULL,
+    digest_failed_at timestamp without time zone,
     CONSTRAINT trade_chain_state_status_known CHECK (status IN ('open', 'sold', 'cancelled')),
-    CONSTRAINT trade_chain_state_executions_nonneg CHECK (executions >= 0)
+    CONSTRAINT trade_chain_state_executions_nonneg CHECK (executions >= 0),
+    CONSTRAINT trade_chain_state_digest_or_failure CHECK (digest IS NULL OR digest_failed_at IS NULL)
 );
 
 -- A v3 cancellation names the digest: WHERE digest = ANY($1) (the fold's touched set).
