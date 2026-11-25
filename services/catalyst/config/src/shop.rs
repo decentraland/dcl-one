@@ -376,7 +376,8 @@ pub struct EconomyConfig {
     #[arg(long, env = "RELAYER_PRIVATE_KEY", hide_env_values = true)]
     pub relayer_private_key: Option<String>,
 
-    /// The upstream transactions-api the relay forwards to when it has no signer of its own (public https).
+    /// The upstream transactions-api a testnet relay forwards to when it has no signer of its own (public
+    /// https). A Polygon mainnet relay (COLLECTIONS_CHAIN_ID=137) refuses to start with it.
     #[arg(long, env = "TRANSACTIONS_UPSTREAM_URL")]
     pub transactions_upstream_url: Option<String>,
 
