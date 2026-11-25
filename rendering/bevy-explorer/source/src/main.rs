@@ -40,7 +40,53 @@ static SESSION_LOG: OnceLock<String> = OnceLock::new();
 /// where it goes.
 static BENCHMARK_LOG: DeferredSink = DeferredSink::new();
 
+/// winit takes Wayland whenever `WAYLAND_DISPLAY` or `WAYLAND_SOCKET` is set, and fails, with no
+/// second try on X11, when the session cannot be reached: a variable left from another session
+/// (`sudo -E`, `su`, another `XDG_RUNTIME_DIR`) or no `libwayland-client` to load. This makes the
+/// connection winit would make, with the `wayland-client` it uses, and removes both variables
+/// when that fails and an X11 display is named: winit and the HUD's browser (`ozone_platform`)
+/// then both start on X11. It changes the environment, so it runs before any thread starts.
+#[cfg(target_os = "linux")]
+fn fall_back_to_x11_without_wayland() {
+    use std::os::fd::{FromRawFd, OwnedFd, RawFd};
+    use wayland_client::Connection;
+
+    let set = |name: &str| std::env::var_os(name).is_some_and(|value| !value.is_empty());
+    // An empty `WAYLAND_SOCKET` names no socket, but `wayland-client` reads it before
+    // `WAYLAND_DISPLAY` and fails on it.
+    if std::env::var_os("WAYLAND_SOCKET").is_some_and(|value| value.is_empty()) {
+        std::env::remove_var("WAYLAND_SOCKET");
+    }
+    if !(set("WAYLAND_DISPLAY") || set("WAYLAND_SOCKET")) || !set("DISPLAY") {
+        return;
+    }
+    let reached = match std::env::var("WAYLAND_SOCKET") {
+        // An inherited socket serves one connection, which is winit's: try a duplicate of it.
+        // That shows only that the descriptor is open and the library loads.
+        Ok(socket) => socket
+            .parse::<RawFd>()
+            .ok()
+            .filter(|fd| *fd >= 0)
+            // SAFETY: this call reads no memory, and fails for a number that names no open
+            // descriptor.
+            .map(|fd| unsafe { libc::fcntl(fd, libc::F_DUPFD_CLOEXEC, 0) })
+            .filter(|duplicate| *duplicate >= 0)
+            // SAFETY: `fcntl` made this descriptor, and nothing else owns it.
+            .map(|duplicate| unsafe { OwnedFd::from_raw_fd(duplicate) })
+            .is_some_and(|socket| Connection::from_socket(socket.into()).is_ok()),
+        Err(_) => Connection::connect_to_env().is_ok(),
+    };
+    if !reached {
+        eprintln!("the Wayland session cannot be reached: starting on X11");
+        std::env::remove_var("WAYLAND_DISPLAY");
+        std::env::remove_var("WAYLAND_SOCKET");
+    }
+}
+
 fn main() {
+    #[cfg(target_os = "linux")]
+    fall_back_to_x11_without_wayland();
+
     // As the registered `decentraland://` handler (windows/linux) the OS spawns a fresh process
     // per link: a sign-in link belongs to the running explorer, hand it over through the launcher
     // bridge file and stop here. Any other link is a place to boot into (`deep_link` below).

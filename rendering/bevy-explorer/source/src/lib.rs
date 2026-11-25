@@ -12,6 +12,8 @@ mod memory;
 #[cfg(test)]
 mod memory_tests;
 pub mod perf;
+#[cfg(target_os = "linux")]
+mod wayland_clipboard;
 #[cfg(target_arch = "wasm32")]
 mod web;
 pub mod world_state;
@@ -805,6 +807,8 @@ impl DecentralandApp {
         app.configure_sets(Startup, SetupSets::Init.before(SetupSets::Main));
         app.add_systems(Startup, setup.in_set(SetupSets::Init));
         app.add_systems(Startup, save_fresh_user_id);
+        #[cfg(target_os = "linux")]
+        app.add_plugins(wayland_clipboard::WaylandClipboardPlugin);
 
         // Commands
         app.add_console_command::<ChangeLocationCommand, _>(change_location);

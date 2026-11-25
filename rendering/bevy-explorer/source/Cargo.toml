@@ -208,6 +208,9 @@ bevy_platform = { version = "0.16.1", default-features = false, features = [
 ] }
 disqualified = "1.0"
 nonmax = "0.5"
+winit = { version = "0.30", default-features = false }
+# winit's Wayland client library, to try the session before winit does (src/main.rs).
+wayland-client = "0.31"
 wgpu = "24"
 # Match wgpu-hal's ash/windows versions: the GPU memory queries use its native handles.
 ash = { version = "0.38", default-features = false }
@@ -500,6 +503,15 @@ cef_offscreen = { workspace = true, optional = true }
 bevy = { workspace = true, features = ["sysinfo_plugin"] }
 ash = { workspace = true }
 
+[target.'cfg(target_os = "linux")'.dependencies]
+# The window's Wayland backend, in this package only: the dcl_deno_ipc sidecar is built alone and
+# holds none of it. bevy's `wayland` by itself links libwayland-client; winit's `wayland-dlopen`
+# loads it at run time instead, so each binary of this package starts where the library is absent.
+bevy = { workspace = true, features = ["wayland"] }
+winit = { workspace = true, features = ["wayland-dlopen", "rwh_06"] }
+copypwasmta = { workspace = true }
+wayland-client = { workspace = true }
+
 [target.'cfg(windows)'.dependencies]
 windows = { workspace = true }
 
@@ -609,7 +621,7 @@ bevy_console = { git = "https://github.com/decentraland/dcl-one", rev = "62b94f3
 bevy_ecss = { git = "https://github.com/decentraland/dcl-one", rev = "da37b8fbfd7d2561257254f4ae9370ca33a71acb" }
 bevy_kira_audio = { git = "https://github.com/decentraland/dcl-one", rev = "343c72eb0e0e4b232aea96a4f5210209d06e113b" }
 bevy_simple_text_input = { git = "https://github.com/decentraland/dcl-one", rev = "0cc0431d0a0e851ca5297033bb992aae70053a9b" }
-copypwasmta = { git = "https://github.com/decentraland/dcl-one", rev = "b56757323a5f73eb4a373fef69c4e840f76f98f2" }
+copypwasmta = { git = "https://github.com/decentraland/dcl-one", rev = "b12a199f1848ee22054d4e0aa7b5dd33a3c60cf7" }
 opener = { git = "https://github.com/decentraland/dcl-one", rev = "9fec930b69093f45e4a75e21d8a51d864639dc62" }
 
 # The manifests of bevy_dui, bevy_ecss, bevy_simple_text_input and boimp name three former forks
@@ -622,4 +634,4 @@ bevy = { git = "https://github.com/decentraland/dcl-one", rev = "a6e4fa2f494d40f
 bevy_ecss = { git = "https://github.com/decentraland/dcl-one", rev = "da37b8fbfd7d2561257254f4ae9370ca33a71acb" }
 
 [patch."https://github.com/robtfm/copypwasmta"]
-copypwasmta = { git = "https://github.com/decentraland/dcl-one", rev = "b56757323a5f73eb4a373fef69c4e840f76f98f2" }
+copypwasmta = { git = "https://github.com/decentraland/dcl-one", rev = "b12a199f1848ee22054d4e0aa7b5dd33a3c60cf7" }

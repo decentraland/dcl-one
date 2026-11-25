@@ -29,6 +29,24 @@ to `~/.local/share/cef` at runtime; on Linux the loader needs `LD_LIBRARY_PATH` 
 With Nix, `nix develop .#explorer` from the repository root has the tools and libraries of this
 loop on Linux and macOS, and one Cargo build directory for every worktree (see `source/readme.md`).
 
+### Wayland and X11
+
+On Linux one binary has the two window systems. The window is on Wayland when `WAYLAND_DISPLAY`
+names a session, and on X11 otherwise; the HUD's browser and the clipboard follow the window. When
+the Wayland session cannot be reached (a variable left from another session, or no
+`libwayland-client`) and `DISPLAY` is set, the client says so and starts on X11. To get X11 on a
+session that has Wayland, start the client with `WAYLAND_DISPLAY=` (empty).
+
+On a Wayland window:
+
+- The compositor's cursor does not follow the gamepad pointer or the console's cursor steps:
+  Wayland lets no client move the pointer, and the log has `could not set cursor position` for
+  each such frame. Use X11 for a gamepad pointer.
+- The HUD's browser has no clipboard of its own. The engine copies for it, and types the text of a
+  paste when it sees Ctrl+V or Shift+Insert on the window. A paste key that the console plays
+  (`/press_key`) pastes nothing in the HUD.
+- The session's clipboard takes a copy only after a real key or button event.
+
 ### Gateway routing
 
 For a deployment serving the APIs on one origin, run `just native-debug --gateway https://example.org`.

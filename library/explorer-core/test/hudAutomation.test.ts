@@ -1041,6 +1041,7 @@ describe("the native bridge's hudAutomation listener", () => {
     }
     vi.stubGlobal('BroadcastChannel', class { postMessage() {} })
     installCefNativeBridge()
+    replies.length = 0 // what the bridge sends as it starts is not a reply
     hear = listeners.get('hudAutomation')!
   })
   afterEach(() => {

@@ -512,7 +512,9 @@ fn run_scene_loop(world: &mut World) {
         .ok()
         .and_then(|window_ent| winit_windows.and_then(|ww| ww.get_window(window_ent)))
         .and_then(|window| window.current_monitor())
-        .and_then(|monitor| monitor.refresh_rate_millihertz());
+        .and_then(|monitor| monitor.refresh_rate_millihertz())
+        // a Wayland output can report 0 for "not known"
+        .filter(|rr| *rr > 0);
     // TODO this should use video mode if we add fullscreen video modes
     let refresh_hz = refresh_rate.map(|rr| ((rr as f64 + 999.0) / 1000.0).ceil() as usize);
     let fps = SessionGraphics::paced_fps(
