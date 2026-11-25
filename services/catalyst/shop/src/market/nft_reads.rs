@@ -100,6 +100,40 @@ pub fn sources_for(f: &NftFilters) -> Sources {
     }
 }
 
+/// Required sources for a walker page that can return a parcel or estate.
+pub(super) fn land_page_sources(f: &NftFilters) -> Option<Sources> {
+    let sources = sources_for(f);
+    if sources.land {
+        return Some(sources);
+    }
+    if f.category.is_some()
+        || matches!(f.network, Some(Network::Matic))
+        || super::nfts::filters_collections_only(f)
+    {
+        return None;
+    }
+    if super::nfts::merges_land(f) {
+        return Some(Sources {
+            land: true,
+            names: true,
+            collections: true,
+        });
+    }
+    let mut contracts = Sources::default();
+    for address in &f.contract_addresses {
+        if address.eq_ignore_ascii_case(crate::land_authz::LAND_MAINNET.land_registry)
+            || address.eq_ignore_ascii_case(crate::land_authz::LAND_MAINNET.estate_registry)
+        {
+            contracts.land = true;
+        } else if address.eq_ignore_ascii_case(DCL_REGISTRAR) {
+            contracts.names = true;
+        } else {
+            contracts.collections = true;
+        }
+    }
+    contracts.land.then_some(contracts)
+}
+
 /// The networks the collection source reads for `f`.
 fn collection_networks(f: &NftFilters) -> Vec<ChainNet> {
     match f.network {
@@ -155,7 +189,7 @@ pub(crate) fn land_unavailable() -> Response {
 /// Where a read of [`Sources`] runs: on the land snapshot when it reads
 /// LAND ([`land_snapshot`]), else on a read-only snapshot of its own; the
 /// nft index is checked again on either.
-enum ReadConn {
+pub(super) enum ReadConn {
     Land(ReadySnapshot),
     Pool(sqlx::Transaction<'static, sqlx::Postgres>),
 }
@@ -181,10 +215,10 @@ impl std::ops::DerefMut for ReadConn {
 
 /// How long one statement of a `/v1/nfts`, prices or estate-size read may
 /// run before Postgres cancels it (the pool's own bound is 60 s per
-/// statement), answering [`read_error`]'s 503 past it. It bounds each
-/// statement, not the read: a `/v1/nfts` page runs at most four heavy ones
-/// (the owner's count, the page, the capped total, the estates' parcels),
-/// so it holds its connection up to four times this. Above the slowest
+/// statement), answering [`read_error`]'s 503 past it. Each statement has its
+/// own bound. A walking node holds the connection across publication checks,
+/// the owner's count, page, capped total, estate members, rental reads and
+/// order enrichment. Above the slowest
 /// statements measured on the seeded index (DATABASE.md): 7 to 8 s for a
 /// 32,000-token owner's capped total naming no category, 8.1 s for the
 /// deepest page sorted by price naming no category.
@@ -213,7 +247,7 @@ pub(crate) fn timed_out() -> Response {
 
 /// A statement of a read failed: a cancelled one is [`timed_out`]'s 503,
 /// anything else a 500.
-fn read_error(e: sqlx::Error) -> Response {
+pub(super) fn read_error(e: sqlx::Error) -> Response {
     if cancelled(&e) {
         return timed_out();
     }
@@ -511,7 +545,7 @@ fn filters_on_orders(f: &NftFilters) -> bool {
 }
 
 /// Whether the filter set reads the order legs (a filter or sort on them).
-fn needs_orders(f: &NftFilters) -> bool {
+pub(super) fn needs_orders(f: &NftFilters) -> bool {
     filters_on_orders(f)
         || matches!(
             f.sort_by,
@@ -1253,6 +1287,20 @@ pub(super) async fn estate_parcels(
     Ok(out)
 }
 
+pub(super) async fn land_page_snapshot(
+    state: &MarketplaceState,
+    f: &NftFilters,
+    sources: Sources,
+) -> Result<ReadConn, Response> {
+    let mut conn = read_conn(&state.pool, state.land_network(), f, sources).await?;
+    if needs_orders(f) {
+        super::trades::readiness_on(state, &mut conn, Utc::now())
+            .await
+            .map_err(super::trades::not_ready_response)?;
+    }
+    Ok(conn)
+}
+
 /// `/v1/nfts` from the indexes: the page over the `first + skip` window and
 /// its total (exact up to [`MAX_WINDOW`]).
 pub async fn list_nfts(
@@ -1261,7 +1309,7 @@ pub async fn list_nfts(
     first: i64,
     skip: i64,
 ) -> Result<(Vec<NftResult>, i64), Response> {
-    if first + skip > MAX_WINDOW {
+    if first.saturating_add(skip) > MAX_WINDOW {
         return Err(
             ApiError::bad_request(format!("first + skip may not exceed {MAX_WINDOW}"))
                 .into_response(),
@@ -1269,10 +1317,9 @@ pub async fn list_nfts(
     }
     let mut sources = sources_for(f);
     if super::nfts::merges_land(f) {
-        // A read that names no category answers every category, as
-        // upstream's does: the names and LAND legs join whenever their
-        // indexes are published, and a read without them still answers the
-        // wearables and emotes.
+        // On the compatibility route, include the NAME and LAND legs when
+        // available. Walking nodes take the strict catalogue snapshot before
+        // reaching this path for a mixed page.
         let names = Sources {
             names: true,
             ..Default::default()
@@ -1298,10 +1345,22 @@ pub async fn list_nfts(
             ReadConnError::Pool(e) => ApiError::internal(e.to_string()).into_response(),
         })?,
     };
+    list_page_on(state, f, first, skip, sources, &mut conn).await
+}
+
+pub(super) async fn list_page_on(
+    state: &MarketplaceState,
+    f: &NftFilters,
+    first: i64,
+    skip: i64,
+    sources: Sources,
+    conn: &mut PgConnection,
+) -> Result<(Vec<NftResult>, i64), Response> {
+    let land = state.land_network();
     let now_ms = Utc::now().timestamp_millis();
     let large_owner = match &f.owner {
         Some(owner) if sorts_on_orders(f) && !on_sale_only(f) => {
-            holds_many(&mut conn, owner).await.map_err(read_error)?
+            holds_many(conn, owner).await.map_err(read_error)?
         }
         _ => false,
     };
@@ -1328,9 +1387,7 @@ pub async fn list_nfts(
         .filter(|r| r.get::<String, _>("category") == "estate")
         .map(|r| r.get::<String, _>("token_text"))
         .collect();
-    let parcels = estate_parcels(&mut conn, &estates)
-        .await
-        .map_err(read_error)?;
+    let parcels = estate_parcels(conn, &estates).await.map_err(read_error)?;
     Ok((
         rows.iter()
             .map(|r| row_to_result(r, &parcels, &state.settings.land_image_base_url))
