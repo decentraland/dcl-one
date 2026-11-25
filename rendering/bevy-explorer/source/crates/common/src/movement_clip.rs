@@ -41,11 +41,7 @@ const DOUBLE_JUMPS: [&str; 6] = [
 /// about the avatar's motion. Any other clip is [`Self::None`]. [`Self::of_other_scene_clip`] reads
 /// the clips of any other scene.
 ///
-/// - The fall loops and touchdowns are not jumps, so walking off a ledge is not a jump.
-/// - The stun clips count only at speed 1 or slower, because the scene speeds up the Exit clip as
-///   the stun ends.
-/// - The plain `Hard_Landing` clip is no stun. The scene plays it for any big drop, and faster for
-///   a soft landing.
+/// The fall loops and touchdowns are not jumps, so walking off a ledge is not a jump.
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 pub enum ClipMotion {
     #[default]
@@ -55,20 +51,16 @@ pub enum ClipMotion {
     GlideOpening,
     Gliding,
     GlideClosing,
-    HardLanding,
 }
 
 impl ClipMotion {
-    pub fn of_clip(src: &str, speed: f32) -> Self {
+    pub fn of_clip(src: &str) -> Self {
         match clip_stem(src) {
             stem if JUMPS.contains(&stem) => Self::Jump,
             stem if DOUBLE_JUMPS.contains(&stem) => Self::DoubleJump,
             "Gliding_AvatarStartRig" => Self::GlideOpening,
             "Gliding_AvatarForwardRig" | "Gliding_AvatarIdleRig" => Self::Gliding,
             "Gliding_AvatarEndRig" | "Hard_Landing_GliderRig" => Self::GlideClosing,
-            "Hard_Landing_Enter" | "Hard_Landing_Loop" | "Hard_Landing_Exit" if speed <= 1.0 => {
-                Self::HardLanding
-            }
             _ => Self::None,
         }
     }
@@ -99,7 +91,7 @@ impl ClipMotion {
         match self {
             Self::Jump => 1,
             Self::DoubleJump | Self::GlideOpening | Self::Gliding => 2,
-            Self::None | Self::GlideClosing | Self::HardLanding => 0,
+            Self::None | Self::GlideClosing => 0,
         }
     }
 }
@@ -144,28 +136,18 @@ mod tests {
             ("Gliding_AvatarIdleRig.glb", ClipMotion::Gliding),
             ("Gliding_AvatarEndRig.glb", ClipMotion::GlideClosing),
             ("Hard_Landing_GliderRig.glb", ClipMotion::GlideClosing),
-            ("Hard_Landing_Enter.glb", ClipMotion::HardLanding),
-            ("Hard_Landing_Loop.glb", ClipMotion::HardLanding),
-            ("Hard_Landing_Exit.glb", ClipMotion::HardLanding),
-            // a big drop that does not stun plays the plain clip at full speed
+            // a hard landing is no motion the clip names
             ("Hard_Landing.glb", ClipMotion::None),
+            ("Hard_Landing_Enter.glb", ClipMotion::None),
+            ("Hard_Landing_Loop.glb", ClipMotion::None),
+            ("Hard_Landing_Exit.glb", ClipMotion::None),
         ] {
             assert_eq!(
-                ClipMotion::of_clip(&format!("{anim}{clip}"), 1.0),
+                ClipMotion::of_clip(&format!("{anim}{clip}")),
                 motion,
                 "{clip}"
             );
         }
-        // the soft landing replays the plain clip's end faster, and the stun's Exit plays faster
-        // once the stun is over
-        assert_eq!(
-            ClipMotion::of_clip("assets/animations/Hard_Landing.glb", 1.5),
-            ClipMotion::None
-        );
-        assert_eq!(
-            ClipMotion::of_clip("assets/animations/Hard_Landing_Exit.glb", 1.2),
-            ClipMotion::None
-        );
     }
 
     #[test]
@@ -186,7 +168,7 @@ mod tests {
             ("player_glide.glb", ClipMotion::None),
             ("Glider_Open.glb", ClipMotion::None),
         ] {
-            assert_eq!(ClipMotion::of_clip(clip, 1.0), motion, "{clip}");
+            assert_eq!(ClipMotion::of_clip(clip), motion, "{clip}");
         }
     }
 

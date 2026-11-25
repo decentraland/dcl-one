@@ -123,7 +123,7 @@ fn broadcast_position(
     // the broadcast interval still counts
     let grounded = landed(dynamics.ground_height);
     let motion = match scene_anim.and_then(|s| s.active.as_ref()) {
-        Some(anim) if anim.movement_scene => ClipMotion::of_clip(&anim.src, anim.speed),
+        Some(anim) if anim.movement_scene => ClipMotion::of_clip(&anim.src),
         Some(anim) => ClipMotion::of_other_scene_clip(&anim.src),
         None => ClipMotion::of_move_kind(dynamics.move_kind),
     };

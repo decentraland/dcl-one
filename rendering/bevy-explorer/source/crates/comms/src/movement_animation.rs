@@ -1,7 +1,7 @@
-//! The animation fields of the rfc4 `Movement` that this client sends. Jumps, the glider and hard
-//! landings come from the file name of the clip that the movement scene plays. Under any other
-//! scene, `double` or `glide` in its clip's path marks the air jump or the glide. Under every
-//! scene, a jump the engine has in flight from the player's take-off counts too.
+//! The animation fields of the rfc4 `Movement` that this client sends. Jumps and the glider come
+//! from the file name of the clip that the movement scene plays. Under any other scene, `double` or
+//! `glide` in its clip's path marks the air jump or the glide. Under every scene, a jump the engine
+//! has in flight from the player's take-off counts too. This client sends no stun.
 
 use bevy::prelude::*;
 use common::{movement_clip::ClipMotion, structs::LocomotionSpeeds};
@@ -56,7 +56,6 @@ pub fn wire_animation(
         is_jumping: !grounded && jump_count > 0 && !is_falling,
         is_falling,
         is_long_fall: !grounded && velocity.y < LONG_FALLING_SPEED,
-        is_stunned: motion == ClipMotion::HardLanding,
         jump_count: jump_count as i32,
         glide_state: glide_state(motion) as i32,
         ..Default::default()
@@ -156,8 +155,8 @@ mod tests {
         let far = wire(Vec3::new(0.0, -9.0, 0.0), false, ClipMotion::None, 0);
         assert!(far.is_falling && far.is_long_fall);
         // on the ground nothing falls, whatever the speed
-        let landed = wire(Vec3::new(0.0, -9.0, 0.0), true, ClipMotion::HardLanding, 0);
-        assert!(landed.is_grounded && !landed.is_falling && landed.is_stunned);
+        let landed = wire(Vec3::new(0.0, -9.0, 0.0), true, ClipMotion::None, 0);
+        assert!(landed.is_grounded && !landed.is_falling && !landed.is_stunned);
 
         let gliding = wire(Vec3::new(0.0, -1.5, 6.0), false, ClipMotion::Gliding, 2);
         assert_eq!(gliding.glide_state, GlideState::Gliding as i32);
