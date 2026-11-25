@@ -63,6 +63,9 @@ pub trait AVPlayer: Component + Clone + PartialEq {
     fn requested_position(&self) -> Option<f32> {
         None
     }
+    fn requested_position_revision(&self) -> Option<u32> {
+        None
+    }
 }
 
 /// A scene's volume as a player volume: unset is full, non-finite is silent, the rest 0..=1.
@@ -209,6 +212,10 @@ impl AVPlayer for VideoPlayer {
 
     fn requested_position(&self) -> Option<f32> {
         self.position
+    }
+
+    fn requested_position_revision(&self) -> Option<u32> {
+        self.position_revision
     }
 
     fn position(&self) -> Self::Position {
