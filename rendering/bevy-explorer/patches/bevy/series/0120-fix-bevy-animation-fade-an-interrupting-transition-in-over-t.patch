@@ -4,7 +4,7 @@ Date: 2026-11-18T22:50:46+00:00
 
 ---
 diff --git a/crates/bevy_animation/src/transition.rs b/crates/bevy_animation/src/transition.rs
-index 494855970441dd75f6e79f4b8637e2d3a6bc39b3..5bd58db5bd23694688d83859384283ce3788268a 100644
+index 494855970441dd75f6e79f4b8637e2d3a6bc39b3..94aa573bcb380ad266c35f24ac099d7db0d84de6 100644
 --- a/crates/bevy_animation/src/transition.rs
 +++ b/crates/bevy_animation/src/transition.rs
 @@ -14,13 +14,19 @@ use core::time::Duration;
@@ -90,7 +90,7 @@ index 494855970441dd75f6e79f4b8637e2d3a6bc39b3..5bd58db5bd23694688d83859384283ce
      ///
      /// Pass [`Duration::ZERO`] to instantly switch to a new animation, avoiding
      /// any transition.
-@@ -81,80 +87,112 @@ impl AnimationTransitions {
+@@ -81,80 +87,264 @@ impl AnimationTransitions {
          new_animation: AnimationNodeIndex,
          transition_duration: Duration,
      ) -> &'p mut ActiveAnimation {
@@ -233,9 +233,6 @@ index 494855970441dd75f6e79f4b8637e2d3a6bc39b3..5bd58db5bd23694688d83859384283ce
 -            let expire = transition.current_weight <= 0.0;
 -            if expire {
 -                player.stop(transition.animation);
--            }
--            !expire
--        });
 +        // Animations under one with its full share have no weight left.
 +        let Some(full) = animation_transitions
 +            .layers
@@ -247,5 +244,159 @@ index 494855970441dd75f6e79f4b8637e2d3a6bc39b3..5bd58db5bd23694688d83859384283ce
 +        for layer in animation_transitions.layers.drain(..full) {
 +            player.stop(layer.animation);
 +        }
++    }
++}
++
++#[cfg(test)]
++mod tests {
++    use super::*;
++    use bevy_ecs::{entity::Entity, system::RunSystemOnce, world::World};
++
++    struct Rig {
++        world: World,
++        entity: Entity,
++    }
++
++    impl Rig {
++        /// Animation 0 plays alone at full weight.
++        fn new() -> Self {
++            let mut world = World::new();
++            world.insert_resource(Time::<()>::default());
++            let entity = world
++                .spawn((AnimationTransitions::new(), AnimationPlayer::default()))
++                .id();
++            let mut rig = Self { world, entity };
++            rig.play(0, 0.0);
++            rig
++        }
++
++        fn play(&mut self, animation: usize, transition_secs: f32) {
++            let mut query = self
++                .world
++                .query::<(&mut AnimationTransitions, &mut AnimationPlayer)>();
++            let (mut transitions, mut player) =
++                query.get_mut(&mut self.world, self.entity).unwrap();
++            transitions.play(
++                &mut player,
++                AnimationNodeIndex::new(animation),
++                Duration::from_secs_f32(transition_secs),
++            );
++        }
++
++        fn player(&mut self) -> &mut AnimationPlayer {
++            self.world
++                .get_mut::<AnimationPlayer>(self.entity)
++                .unwrap()
++                .into_inner()
++        }
++
++        fn animation(&mut self, animation: usize) -> Option<&mut ActiveAnimation> {
++            self.player()
++                .animation_mut(AnimationNodeIndex::new(animation))
++        }
++
++        /// One frame of `secs`, in the order the animation plugin runs them.
++        fn advance(&mut self, secs: f32) {
++            self.world
++                .resource_mut::<Time>()
++                .advance_by(Duration::from_secs_f32(secs));
++            self.world.run_system_once(advance_transitions).unwrap();
++            self.world
++                .run_system_once(expire_completed_transitions)
++                .unwrap();
++        }
++
++        /// The weight of animations 0, 1 and 2, `None` for one the player
++        /// doesn't hold.
++        #[track_caller]
++        fn assert_weights(&mut self, expected: [Option<f32>; 3]) {
++            let got =
++                [0, 1, 2].map(|index| self.animation(index).map(|animation| animation.weight));
++            for (got, expected) in got.iter().zip(expected) {
++                match (got, expected) {
++                    (Some(got), Some(expected)) => {
++                        assert!((got - expected).abs() < 1e-6, "{got:?} != {expected:?}");
++                    }
++                    (got, expected) => assert_eq!(*got, expected),
++                }
+             }
+-            !expire
+-        });
++            let sum: f32 = got.iter().flatten().sum();
++            assert!((sum - 1.0).abs() < 1e-6, "weights {got:?} sum to {sum}");
++        }
++    }
++
++    #[test]
++    fn transition_fades_the_new_animation_in() {
++        let mut rig = Rig::new();
++        rig.play(1, 1.0);
++        rig.advance(0.5);
++        rig.assert_weights([Some(0.5), Some(0.5), None]);
++        rig.advance(0.5);
++        rig.assert_weights([None, Some(1.0), None]);
++    }
++
++    #[test]
++    fn interrupting_transition_fades_in_over_the_running_blend() {
++        let mut rig = Rig::new();
++        rig.play(1, 1.0);
++        rig.advance(0.5);
++        rig.play(2, 1.0);
++        rig.advance(0.25);
++        // 1 keeps fading in under 2: 0.75 of the 0.75 that 2 leaves.
++        rig.assert_weights([Some(0.1875), Some(0.5625), Some(0.25)]);
++        rig.advance(0.75);
++        rig.assert_weights([None, None, Some(1.0)]);
++    }
++
++    #[test]
++    fn replaying_a_fading_animation_fades_it_back_in_from_its_weight() {
++        let mut rig = Rig::new();
++        rig.play(1, 1.0);
++        rig.advance(0.25);
++        rig.play(0, 1.0);
++        rig.advance(0.125);
++        rig.assert_weights([Some(0.875), Some(0.125), None]);
++        rig.advance(0.125);
++        rig.assert_weights([Some(1.0), None, None]);
++    }
++
++    #[test]
++    fn paused_main_animation_leaves_the_blend_at_once() {
++        let mut rig = Rig::new();
++        rig.play(1, 1.0);
++        rig.advance(0.5);
++        rig.animation(1).unwrap().set_seek_time(0.3).pause();
++        rig.play(2, 1.0);
++        rig.advance(0.5);
++        // 2 fades in over 0 alone; 1 stays in the player where it was paused.
++        rig.assert_weights([Some(0.5), Some(0.0), Some(0.5)]);
++        let paused = rig.animation(1).unwrap();
++        assert!(paused.is_paused());
++        assert_eq!(paused.seek_time(), 0.3);
++        rig.advance(0.5);
++        rig.assert_weights([None, Some(0.0), Some(1.0)]);
++    }
++
++    #[test]
++    fn paused_main_animation_alone_is_replaced_at_once() {
++        let mut rig = Rig::new();
++        rig.animation(0).unwrap().pause();
++        rig.play(1, 1.0);
++        rig.assert_weights([Some(0.0), Some(1.0), None]);
++        rig.advance(0.5);
++        rig.assert_weights([Some(0.0), Some(1.0), None]);
++    }
++
++    #[test]
++    fn stopped_main_animation_leaves_the_blend() {
++        let mut rig = Rig::new();
++        rig.play(1, 1.0);
++        rig.advance(0.5);
++        rig.player().stop(AnimationNodeIndex::new(1));
++        rig.play(2, 1.0);
++        rig.advance(0.5);
++        rig.assert_weights([Some(0.5), None, Some(0.5)]);
      }
  }
