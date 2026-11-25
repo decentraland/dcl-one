@@ -2298,6 +2298,14 @@ ON shop.nft_event (network, to_address, block_time DESC, block_number DESC, log_
 
 See the [synthetic fixture measurements](METRICS.md#wallet-activity-transfers) for index sizes, build times and reads. Production table sizes have not been measured.
 
+### Latest sale per token
+
+`/v1/nfts` serves `soldAt` and its recently sold sort from every public sale: orders, accepted bids, single-asset trades and Polygon store mints. `shop.nft_last_sale` holds each token's latest public sale under the rule in `sale_reads/public_sales.sql`: a positive price in the network's MANA, and a trade only when it moved one asset. The sales fold writes the table in the transaction that publishes each window. A window's sales replace a token's older row. A changed history deletes the ledger past the prefix the fold keeps, and in the same transaction each token whose latest sale lay past that prefix takes its latest earlier sale or leaves the table. A reverted sale is therefore never kept.
+
+`sale_publication.last_sale_through` records the block through which the table holds every published sale. Each pass applies the ledger past that block, at most 5,000,000 blocks at a time. Once the table is current, that is the new window itself. After step `0078_shop_nft_last_sale` adds the column, or after a rebuild, it is the earlier history. The schema object pass creates the table.
+
+A `/v1/nfts` read checks each network's publication on its own snapshot (`sale_fold::last_sale_networks`): valid and fresh, as the sales reads require, and with `last_sale_through` at its block. For such a network, `sold_at` is the later of the token's latest legacy `OrderSuccessful` (`shop.nft.sold_at`, or the LAND source's subquery) and its row in `shop.nft_last_sale`, joined on the primary key. Elsewhere, including on a testnet node, `sold_at` keeps the legacy order alone. The recently sold sort still reads and sorts every held token, and the join adds one primary-key lookup or hash probe per token. See the [synthetic fixture measurements](METRICS.md#latest-sale-per-token).
+
 ### Badge processor
 
 The writers of evaluated progress are four leased jobs
@@ -4599,7 +4607,7 @@ windows below are a lower bound for a table folded in another order.
 | newest, `itemRarity=mythic` (85,000 tokens) | 204 ms | 222 ms | walks `nft_mint_order_idx` |
 | name, `category=wearable` | 380 ms | 78 ms | the items sorted by name, then `nft_item_idx` |
 | name, no category | 0.7 to 1.2 s | 96 ms | the same, and 300,000 names sorted |
-| recently sold, `category=wearable` | 1.6 to 3.3 s | 80 ms | every held token read and sorted: no index orders `sold_at` |
+| recently sold, `category=wearable` | 1.6 to 3.3 s | 80 ms | every held token read and sorted: no index orders `sold_at` (before `shop.nft_last_sale`; see [Latest sale per token](#latest-sale-per-token)) |
 | recently sold, no category | 2.1 to 2.9 s | 94 ms | the same |
 | cheapest or recently listed, `category=wearable` | 736 to 740 ms | 65 ms | the listed part (8,200 listed tokens with their lookups); the unlisted part reads 24 rows |
 | the same, no category | 791 ms | 82 ms | the same, with names and LAND |
