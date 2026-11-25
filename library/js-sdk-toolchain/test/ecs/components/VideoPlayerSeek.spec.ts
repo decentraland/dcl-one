@@ -1,4 +1,4 @@
-import { Engine, components } from '../../../packages/@dcl/ecs/src'
+import { Engine, components, engine, VideoPlayer } from '../../../packages/@dcl/ecs/src'
 import { ReadWriteByteBuffer } from '../../../packages/@dcl/ecs/src/serialization/ByteBuffer'
 import { CrdtMessageType } from '../../../packages/@dcl/ecs/src/serialization/crdt/types'
 
@@ -20,6 +20,17 @@ function setup() {
 }
 
 describe('VideoPlayer explicit seek intent', () => {
+  it('tracks repeated requests through the default engine export used by scenes', () => {
+    const entity = engine.addEntity()
+    VideoPlayer.create(entity, { src: 'video.mp4' })
+    Array.from(VideoPlayer.getCrdtUpdates())
+    for (let revision = 1; revision <= 3; revision++) {
+      VideoPlayer.getMutable(entity).position = 0
+      expect(Array.from(VideoPlayer.getCrdtUpdates())).toHaveLength(1)
+      expect(VideoPlayer.get(entity).positionRevision).toBe(revision)
+    }
+    engine.removeEntity(entity)
+  })
   it('sends repeated Restarts and distinguishes Restart after Pause from Resume', () => {
     const { player, entity, flush } = setup()
     let timestamp = 0
