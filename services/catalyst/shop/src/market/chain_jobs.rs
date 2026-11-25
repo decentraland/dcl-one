@@ -1557,7 +1557,16 @@ fn visit_projections(
         add(
             "collections-index",
             url,
-            Arc::new(|| Arc::new(super::collections_index::CollectionsIndex::new())),
+            {
+                // Only a network the operator hands it is projected: the
+                // mirror and the fold never both write a network's rows.
+                let project = settings.collections_owned.contains(&ChainNet::Matic);
+                Arc::new(move || {
+                    Arc::new(super::collections_index::CollectionsIndex::projecting(
+                        project,
+                    ))
+                })
+            },
             Some(gate),
             market_cfg(),
         );

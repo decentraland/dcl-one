@@ -163,6 +163,9 @@ pub struct IndexSettings {
     pub third_party_registry_enabled: bool,
     /// `MARKETPLACE_COLLECTIONS_INDEX_ENABLED`: the Polygon collection factories and collections.
     pub collections_enabled: bool,
+    /// `MARKETPLACE_COLLECTIONS_INDEX_OWNS`: the networks whose catalogue rows that walk's fold
+    /// takes from the collections mirror and writes.
+    pub collections_owned: Vec<ChainNet>,
     /// `MARKETPLACE_INDEX_INTERVAL_SECS` (5; 30 under the mirror posture): pause between passes.
     pub interval: Duration,
     /// `MARKETPLACE_INDEX_REQUESTS_PER_PASS` (100): `eth_getLogs` calls one
@@ -202,6 +205,7 @@ impl Default for IndexSettings {
             committee_enabled: false,
             third_party_registry_enabled: false,
             collections_enabled: false,
+            collections_owned: Vec::new(),
             interval: Duration::from_secs(5),
             requests_per_pass: 100,
             window_blocks: 10_000,

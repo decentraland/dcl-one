@@ -3020,9 +3020,11 @@ Those events are the items added, rescued and edited, the mints (`Issue`),
 the global and item minters and managers, approval, editability,
 completion, creatorship and ownership. The walk keeps them in
 `shop.collection_event`, appended with each window's cursor advance and
-deleted past a rewind. Its publication means the log is complete to
-`folded_block`. No route reads these tables yet: `shop.collections` and
-`shop.items` are still the collections subgraph's copy (`mirrors`).
+deleted past a rewind. A process that runs the collections mirror
+(`MARKETPLACE_MIRRORS_ENABLED=true`) keeps the log alone. One that does not
+also projects it into `shop.collections` and `shop.items` (see
+"Projection"). Either way, the publication means everything the fold wrote
+is complete to `folded_block`.
 
 **Workload.** Polygon holds about 6,200 collections, 12,000 items and 5.3
 million mints, so the log is about 5.3 million rows, nearly all `issue`.
@@ -3080,24 +3082,208 @@ chain 137.
 
 **Creation state.** `initialize` sets a collection's name, symbol, creator,
 approval and editability without an event. The gate reads them once per
-collection into `shop.collection_seed`:
-- walked collections first, then final hints (a provisional one may never
-  exist);
+walked collection into `shop.collection_seed`:
+- only collections whose `ProxyCreated` the walk has walked, oldest first;
 - at most 500 collections per attempt, ten JSON-RPC batches of 100 calls
   for each 200 collections;
-- at Polygon's finalized block, recorded in `read_block`.
+- at the walk's own cursor block, named by the hash the walk stored for it
+  (EIP-1898 `{"blockHash", "requireCanonical": true}`), recorded in
+  `read_block` and `read_hash`.
 
-A collection with no code at that block waits for a later attempt. A read
-that fails is logged and does not stop the walk. Rows are never rewound:
-they are a finalized block's state. Whatever folds the log takes a value
-from the last walked event that sets it. It takes the read only when no
-event does and `read_block` is at or below the block it folds to; then the
-value has not changed since creation.
+The cursor and the walk's owner generation and epoch are read in one
+snapshot, and the write checks under the reads lock that they did not move.
+So a read is of the walked branch whatever any header says, and it is
+written proven (`verified`). A rewind below it deletes it in the cursor's
+own transaction. An endpoint that no longer holds that block canonical, or
+does not serve its state, refuses the read; a read that fails is logged and
+does not stop the walk, and the collection waits for a later attempt.
+
+Whatever folds the log takes a value from the last walked event that sets
+it. It takes a creation read only when it is verified, no event sets the
+value, and `read_block` is at or below the block it folds to; then the value
+has not changed since creation. Rows written before reads were proven (no
+hash) are never taken, and the collection's first proven read replaces
+them.
+
+**Factory list reads ahead of the walk.** The gate reads the lists at the
+finalized block, usually past the walk's cursor, where a reorg is invisible
+to the walk. Every read there names the block by hash (EIP-1898), in batches
+and in the single requests they fall back to alike: what is read and the
+hash it is stored with are one block's, and an endpoint that left that block
+refuses the read. Only the provisional reads go to `latest`. A final row
+keeps that height and hash, and until it is `verified`, before each attempt:
+- a row with no hash (written by an index published before hashes were
+  kept) needs no read where a walk with its full history holds its exact
+  slot (below): it is proven there, with the creation's block as its height,
+  so a published walk does not wait for its lists to be read again. Any
+  other is undone without a read: it becomes provisional again, to be read
+  again;
+- at or below the cursor of a walk with its full history, the walk's own log
+  decides, slot by slot, with no header asked. A factory's list grows only by
+  the push after each `ProxyCreated` it emits (both factories'
+  `createCollection`), so slot i is the factory's i-th walked `ProxyCreated`
+  in (block, log index) order. That one naming the row's address, at or
+  before that height, proves the row (`verified`; from then a rewind below it
+  undoes it). Anything else is undone, and the slot is read again: with
+  CREATE2 a collection keeps its address on a branch that created it in
+  another order, so the address alone proves nothing;
+- otherwise (ahead of the walk, or on a walk without its full history,
+  whose log lacks the older collections) the endpoint's hash at that height
+  is asked. Another hash undoes the row; the same one leaves it as it is. A
+  header never proves a row: two replies may come from two branches.
+
+Undoing runs under the reads lock (see Projection), exclusive, and raises
+the walk's epoch, so a read in flight from the left branch is not written;
+nothing is written if a rewind or a new owner moved the walk since the
+check began. Headers go in batches of 100, then one request each for what a
+batch did not answer whole, or for all of them on an endpoint that takes no
+batches; a header the endpoint does not serve fails the attempt. One
+attempt asks at most 100 heights, going on from where the last stopped
+(`shop.collection_walk.checked_through`), so every height is asked within a
+few attempts. They are the heights of attempts that read a list past the
+walk's cursor: a handful once the walk is at the head.
+
+So a collection replaced at a list index above a lagging cursor is read
+again by the next attempt, and the window that walks it commits without a
+rebuild.
 
 **Decoding.** Every factory collection shares one ABI for these topics. A
 log of a walked topic that does not decode fails its window instead of
 being skipped. A `ProxyCreated` from any contract other than the two
 factories fails it too. Strings are read as lossy UTF-8, with NUL removed.
+
+**Projection.** A network the operator hands the index
+(`MARKETPLACE_COLLECTIONS_INDEX_OWNS`, `matic` or empty, independent of
+`MARKETPLACE_MIRRORS_ENABLED`) is projected. When a pass closes, the fold
+writes Polygon's catalogue rows from the log and the creation reads, in one
+transaction fenced by the walk's owner. Without that setting the walk keeps
+its log alone, whatever the mirror switch says. `shop.collection_projection`
+holds one row per network:
+- `owned_at` is set in the transaction of the first projection. From then
+  the fold is the only writer of the network's rows in both tables. A
+  hand-back clears it.
+- `projected_through` is the block the rows stand at.
+- `pending` counts the walked collections without a row at that block,
+  waiting for their creation read. The catalogue is complete only at 0.
+- `generation` grows with every projection and hand-back, so two reads under
+  the same generation read the same rows.
+
+The mirror refuses to write a network the fold owns, and its job skips that
+network: no page is read. It keeps walking the others. Both take the
+network's advisory lock (`pg_advisory_xact_lock(0x636f6c6c, <chain id>)`)
+around the ownership check and the write: the mirror shared, for each page,
+and the fold exclusive. So a page that read the network as unowned commits
+before the projection that takes it, and none commits after.
+
+A projection folds the events past `projected_through` onto the stored
+rows. It folds a collection again from its creation in three cases:
+- it has no row yet (created since, or waiting for its creation read);
+- an event names one of its items that has no row (metadata no item type
+  takes);
+- the walk rewound. A rewind clears `projected_through`, and the next fold
+  rebuilds every row of the network in one transaction, replacing the rows
+  it does not produce, the mirror's included.
+
+A rewind also undoes the gate's reads taken past its point, so a read of a
+branch the chain left is read again on the new one:
+- it deletes the creation reads taken past it;
+- it makes the factory list rows read at a finalized block past it, or at an
+  unrecorded block, provisional again;
+- it raises the walk's epoch (`shop.collection_walk`).
+
+It holds the reads lock (`pg_advisory_xact_lock(0x72656164, <chain id>)`)
+exclusive. A write of those reads holds it shared, and checks that the walk's
+owner generation and epoch did not move since its reads began. So a read
+taken before a rewind is never written after it, and one written while it
+runs is undone by it. An operator's rebuild runs the same rewind from the
+start block, in its own transaction, so it undoes them all and raises the
+epoch too.
+
+A collection waits, with no row and without holding the publication back,
+in either case:
+- until its creation read exists (a proven one, see Creation state);
+- while that read was taken past the block and no walked event sets the
+  value it gives.
+
+The fold from the creation reads the collection's events other than mints
+through the partial index on them, a few hundred thousand rows. Mints come
+in three forms:
+- the mints of item minters with a finite allowance, which it replays;
+- each item's highest issued id;
+- the block time of the item's newest mint by the CollectionStore,
+  aggregated from the store's issues.
+
+A rebuild aggregates the whole log once. A resume reads only the events past
+`projected_through`, by the primary key.
+
+The rows follow the contract where the collections subgraph differs:
+- global and item minters and managers are sets; an account is listed once,
+  while its newest grant set it, in address order;
+- the store sells an item while it is a global minter or holds an allowance
+  for the item, and an item it can sell from its addition is listed from
+  then (`first_listed_at`);
+- each mint an item minter calls spends one of a finite allowance, unless it
+  called while it was the creator or a global minter, as `_issueToken` does.
+  `shop.items.minters` and `minter_allowances` hold the item minters with an
+  allowance left, and what they hold;
+- an item's supply is its highest issued id.
+
+Item metadata follows the subgraph's format: `w`, `sw` and `e` items,
+wearables with a known category, emotes with an unknown category as `dance`,
+and an emote's social outcome as `simple_outcome`, `multiple_outcome` or
+`random_outcome`. Search text folds ASCII letters alone, as the subgraph's
+helper does. `sold_at` is the newest primary sale only; secondary sales come
+with the sales index.
+
+The catalogue routes still decide readiness from the mirror's passes
+(`shop.mirror_state`), so no network is taken from the mirror while they do.
+
+**Switching a network from the mirror.** Run this after the catalogue routes
+follow the index and the NFT and sales walks take their contracts from it.
+Deploys are manual, one process at a time:
+
+1. Enable the walk (`MARKETPLACE_COLLECTIONS_INDEX_ENABLED=true`) on the
+   process that runs the mirror, and wait until the `collections` cursor on
+   `matic` publishes. That is the catch-up, from block 15,202,000. The
+   mirror keeps serving meanwhile.
+2. Stop that process, set `MARKETPLACE_COLLECTIONS_INDEX_OWNS=matic`, and
+   start it again. Two processes must never write the catalogue under
+   different settings. The mirror switch stays as it was: the mirror keeps
+   walking Ethereum. The next pass's fold rebuilds Polygon's rows from the log
+   and takes the network.
+3. Check `SELECT owned_at, projected_through, pending, generation FROM
+   shop.collection_projection`.
+
+**Handing a network back to the mirror.**
+1. Stop the index process, remove the network from
+   `MARKETPLACE_COLLECTIONS_INDEX_OWNS`, and start it again. Its fold keeps
+   the log alone from then.
+2. Run this transaction. It takes the exclusive catalogue lock, and removes
+   the network's rows, the mirror's pass markers and the ownership together:
+
+   ```sql
+   BEGIN;
+   SELECT pg_advisory_xact_lock(1668246636, 137);
+   DELETE FROM shop.items WHERE network = 'matic' AND EXISTS (SELECT 1 FROM shop.collection_projection
+          WHERE network = 'matic' AND owned_at IS NOT NULL);
+   DELETE FROM shop.collections WHERE network = 'matic' AND EXISTS (SELECT 1 FROM shop.collection_projection
+          WHERE network = 'matic' AND owned_at IS NOT NULL);
+   DELETE FROM shop.mirror_state WHERE network = 'matic' AND mirror IN ('collections', 'items')
+      AND EXISTS (SELECT 1 FROM shop.collection_projection WHERE network = 'matic' AND owned_at IS NOT NULL);
+   UPDATE shop.collection_projection SET owned_at = NULL, projected_through = NULL, pending = 0,
+          generation = generation + 1, updated_at = timezone('UTC', now())
+    WHERE network = 'matic' AND owned_at IS NOT NULL;
+   COMMIT;
+   ```
+
+   Every statement acts only while the index still owns the network, so
+   running the transaction again (after a commit that went unconfirmed)
+   changes nothing the mirror wrote since.
+
+Every read of the network then answers the unavailable envelope until the
+mirror's next complete collections and items passes, which rewrite it with
+the mirror's rows alone (`collections_projection::hand_back` runs the same
+statements).
 
 ## Auth API relay state workload
 

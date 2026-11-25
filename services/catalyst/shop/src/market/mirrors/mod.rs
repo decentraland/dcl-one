@@ -549,6 +549,19 @@ pub async fn run_tick(
         let Some(url) = network.url(&state.index) else {
             continue;
         };
+        // A network the collections index owns is not mirrored (its pages
+        // would not be written either: `collections::upsert`).
+        if let Some(net) = super::chain_walk::ChainNet::parse(network.db_name()) {
+            let mut conn = state.pool.acquire().await?;
+            if super::collections_projection::owned(&mut conn, net).await? {
+                tracing::info!(
+                    mirror = mirror.name(),
+                    network = network.db_name(),
+                    "the collections index owns this network's rows; the mirror skips it"
+                );
+                continue;
+            }
+        }
         let result = match mirror {
             Mirror::Collections => collections::run_pass(state, ctx, network, url).await,
             Mirror::Items => items::run_pass(state, ctx, network, url).await,
