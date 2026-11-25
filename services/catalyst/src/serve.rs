@@ -644,7 +644,7 @@ pub async fn serve(mut config: Config) -> anyhow::Result<()> {
             config.worlds.deployment_processing_timeout_ms,
         );
         tokio::spawn(async move {
-            catalyst_storage::upload_spool::sweep_stale(&spool_root, stale_after).await;
+            content::create_entity::reclaim_stale_spool(&spool_root, stale_after).await;
         });
     }
     // Expired partial uploads (content::partial_deployments) are reclaimed

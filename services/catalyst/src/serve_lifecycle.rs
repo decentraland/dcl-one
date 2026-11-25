@@ -54,6 +54,7 @@ fn registry() -> anyhow::Result<dcl_metrics::Registry> {
         crate::social::SERVICE_FAMILIES,
         crate::comms::metrics::FAMILIES,
         crate::content::metrics::FAMILIES,
+        crate::content::series::FAMILIES,
         comms::archipelago::metrics::FAMILIES,
         crate::chain_index::portal::FAMILIES,
         crate::explore::api::auth_api::FAMILIES,
@@ -127,5 +128,53 @@ mod tests {
     #[test]
     fn all_serve_metric_declarations_can_share_one_recorder() {
         super::registry().unwrap();
+    }
+
+    /// The serve registry exports the content histograms with their declared buckets.
+    #[test]
+    fn serve_renders_the_content_histograms_with_their_buckets() {
+        let recorder = super::registry()
+            .unwrap()
+            .builder(dcl_metrics::PrometheusBuilder::new())
+            .unwrap()
+            .build_recorder();
+        let handle = recorder.handle();
+        dcl_metrics::with_local_recorder(&recorder, || {
+            dcl_metrics::histogram!("dcl_partial_upload_stage_duration_seconds", "stage" => "hash")
+                .record(1.0);
+            dcl_metrics::histogram!(
+                "dcl_content_server_snapshot_generation_time",
+                "result" => "success",
+                "interval_size" => "day",
+                "reason" => "cover_time_range"
+            )
+            .record(1.0);
+        });
+        let rendered = handle.render();
+        for (name, buckets) in [
+            (
+                "dcl_partial_upload_stage_duration_seconds",
+                &[
+                    0.005, 0.025, 0.1, 0.25, 0.5, 1., 2.5, 5., 10., 30., 60., 120.,
+                ][..],
+            ),
+            (
+                "dcl_content_server_snapshot_generation_time",
+                &[0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1., 2.5, 5., 10.][..],
+            ),
+        ] {
+            assert!(
+                rendered.contains(&format!("# TYPE {name} histogram")),
+                "{name}: {rendered}"
+            );
+            let le: Vec<&str> = rendered
+                .lines()
+                .filter(|line| line.starts_with(&format!("{name}_bucket{{")))
+                .filter_map(|line| line.split("le=\"").nth(1)?.split('"').next())
+                .collect();
+            let mut expected: Vec<String> = buckets.iter().map(f64::to_string).collect();
+            expected.push("+Inf".to_string());
+            assert_eq!(le, expected, "{name}");
+        }
     }
 }

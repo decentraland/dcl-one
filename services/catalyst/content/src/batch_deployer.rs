@@ -291,9 +291,10 @@ impl BatchDeployer {
         if self.out_of_scope(&entity, chrono::Utc::now().timestamp_millis()) {
             return Ok(());
         }
-        if self.deployed_bloom.read().maybe_contains(&entity.entity_id)
-            && is_entity_deployed(&self.pool, &entity.entity_id, entity.entity_timestamp).await?
-        {
+        let deployed = self.deployed_bloom.read().maybe_contains(&entity.entity_id)
+            && is_entity_deployed(&self.pool, &entity.entity_id, entity.entity_timestamp).await?;
+        crate::series::bloom_filter_checked(deployed, 1);
+        if deployed {
             return Ok(());
         }
         self.schedule_undeployed(entity, advertising_peers, report)
@@ -319,10 +320,14 @@ impl BatchDeployer {
                 .collect()
         };
         if hits.is_empty() {
+            crate::series::bloom_filter_checked(false, records.len());
             return Ok(());
         }
         let deployed = deployed_entity_ids(&self.pool, &hits).await?;
+        let checked = records.len();
         records.retain(|e| !deployed.contains(&e.entity_id));
+        crate::series::bloom_filter_checked(true, checked - records.len());
+        crate::series::bloom_filter_checked(false, records.len());
         Ok(())
     }
 
@@ -650,6 +655,8 @@ mod tests {
         assert!(is_entity_deployed(&pool, &entity_id, 1_000).await.unwrap());
         assert!(recorded().await.is_empty(), "the write cleared the record");
 
+        let recorder = crate::series::test_support::recorder();
+        let metrics_guard = dcl_metrics::set_default_local_recorder(&recorder);
         batch
             .schedule_entity_deployment(
                 announce(entity_id.clone(), "scene".into(), entity_id.clone()).await,
@@ -663,6 +670,26 @@ mod tests {
             2,
             "a deployed entity is skipped by the bloom+db probe"
         );
+        let mut records = vec![
+            announce(entity_id.clone(), "scene".into(), entity_id.clone()).await,
+            announce(format!("{prefix}-new"), "scene".into(), entity_id.clone()).await,
+            announce(format!("{prefix}-other"), "scene".into(), entity_id.clone()).await,
+        ];
+        batch.retain_undeployed(&mut records).await.unwrap();
+        assert_eq!(records.len(), 2, "the deployed record is dropped");
+        drop(metrics_guard);
+        let rendered = recorder.handle().render();
+        for (hit, n) in [("true", 2.0), ("false", 2.0)] {
+            assert_eq!(
+                crate::series::test_support::sample(
+                    &rendered,
+                    crate::series::BLOOM_FILTER_CHECKS.descriptor.name,
+                    &[("hit", hit)]
+                ),
+                Some(n),
+                "hit={hit}: {rendered}"
+            );
+        }
 
         server.abort();
         sqlx::query("DELETE FROM content.failed_deployments WHERE entity_id = $1")
