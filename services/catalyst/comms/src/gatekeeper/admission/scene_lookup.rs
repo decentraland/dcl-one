@@ -150,7 +150,7 @@ pub(crate) async fn resolve_adapter_room(
             room: gatekeeper_scene_room(realm_name, scene_id),
         });
     }
-    let realm = crate::world_identity::RealmId::World(name);
+    let realm = crate::world_identity::RealmId::World(name.clone());
     let request = if scene.is_world_shaped() {
         RoomRequest::Adapter {
             realm: &realm,
@@ -158,7 +158,7 @@ pub(crate) async fn resolve_adapter_room(
         }
     } else {
         RoomRequest::WorldScene {
-            world: realm.world().unwrap(),
+            world: &name,
             scene: &scene,
         }
     };

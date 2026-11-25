@@ -236,7 +236,10 @@ async fn metadata_scene_context(
                 .scenes
                 .resolve(crate::rooms::RoomRequest::Adapter {
                     realm: &identity.realm,
-                    scene: identity.scene_id.as_ref().unwrap(),
+                    scene: identity
+                        .scene_id
+                        .as_ref()
+                        .expect("guarded by scene_id.is_some()"),
                 })
                 .await
                 .map_err(|_| ApiError::http(503, "Room identity is temporarily unavailable"))?;
@@ -334,12 +337,10 @@ async fn room_metadata_fields(
     .bind([ban_key.as_str().to_owned(), context.place_id.clone()].as_slice())
     .fetch_all(&state.pool)
     .await?;
-    Ok(Some(
-        json!({"sceneAdmins": admins, "bannedAddresses": bans})
-            .as_object()
-            .unwrap()
-            .clone(),
-    ))
+    Ok(Some(serde_json::Map::from_iter([
+        ("sceneAdmins".to_owned(), json!(admins)),
+        ("bannedAddresses".to_owned(), json!(bans)),
+    ])))
 }
 
 // Retired world rooms have no current role authority. Only reconcile their
@@ -372,12 +373,10 @@ async fn retired_room_ban_fields(
     .bind(&keys)
     .fetch_all(&state.pool)
     .await?;
-    Ok(Some(
-        json!({"bannedAddresses": bans})
-            .as_object()
-            .unwrap()
-            .clone(),
-    ))
+    Ok(Some(serde_json::Map::from_iter([(
+        "bannedAddresses".to_owned(),
+        json!(bans),
+    )])))
 }
 
 async fn refresh_room(state: &CommsState, room: &str) -> Result<(), ApiError> {

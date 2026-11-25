@@ -92,7 +92,9 @@ impl ProducerSession {
         if self.confirmed {
             return true;
         }
-        let grant = self.grant.clone().unwrap();
+        let Some(grant) = self.grant.clone() else {
+            return false;
+        };
         match control(bus, ProducerRequest::Confirm(grant.clone())).await {
             Some(ProducerReply::Active(active)) if active == grant => {
                 self.confirmed = true;
@@ -121,7 +123,9 @@ async fn submit_observation(
     if !session.prepare(bus, producer, hint).await || tokio::time::Instant::now() >= deadline {
         return false;
     }
-    let grant = session.grant.as_ref().unwrap();
+    let Some(grant) = session.grant.as_ref() else {
+        return false;
+    };
     {
         let mut current = source.lock();
         if *current == hint {

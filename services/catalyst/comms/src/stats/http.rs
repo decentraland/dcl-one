@@ -329,14 +329,13 @@ impl Reply {
             Body::from_stream(futures::stream::empty::<Result<bytes::Bytes, std::io::Error>>())
         } else {
             let body = self.body.unwrap_or_default();
-            self.headers.insert(
-                "content-length",
-                HeaderValue::from_str(&body.len().to_string()).unwrap(),
-            );
+            self.headers
+                .insert("content-length", HeaderValue::from(body.len()));
             Body::from(body)
         };
         let mut response = Response::new(body);
-        *response.status_mut() = StatusCode::from_u16(self.status).unwrap();
+        *response.status_mut() =
+            StatusCode::from_u16(self.status).expect("replies use valid HTTP status codes");
         *response.headers_mut() = self.headers;
         response
     }

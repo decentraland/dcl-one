@@ -1035,10 +1035,9 @@ impl PulseServer {
         let Some(current) = self.board.try_read(peer).cloned() else {
             return;
         };
-        if !current.is_emoting() {
+        let Some(active) = current.emote.clone().filter(|e| e.emote_id.is_some()) else {
             return;
-        }
-        let active = current.emote.clone().unwrap();
+        };
         let stop = crate::pulse::snapshot::PeerSnapshot {
             seq: self.board.last_seq(peer).wrapping_add(1),
             server_tick: now,
