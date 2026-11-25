@@ -11,6 +11,17 @@ export type SwitchProps = Omit<
   ref?: Ref<HTMLInputElement>
   /** Called with the next state after the native `onChange`. */
   onCheckedChange?: (checked: boolean) => void
+  /**
+   * `hud` is the Explorer HUD's switch: a ruby pill with a white knob and no minimum height. A caller sizes
+   * and tints it with custom properties set on it or on an ancestor: `--toggle-w`, `--toggle-h`,
+   * `--toggle-pad`, `--toggle-off`, `--toggle-on`, `--toggle-knob`, `--toggle-knob-on` and
+   * `--toggle-knob-shadow`. A visible label takes the caller's type.
+   */
+  appearance?: 'default' | 'hud'
+  /** For `hud`: `sm` is the compact 39 × 24 switch of the HUD's popovers. */
+  size?: 'md' | 'sm'
+  /** For `hud`: `light` is a switch on a light panel, whose off track is dark. */
+  surface?: 'dark' | 'light'
 }
 
 /**
@@ -23,6 +34,9 @@ export function Switch({
   className,
   onChange,
   onCheckedChange,
+  appearance = 'default',
+  size = 'md',
+  surface = 'dark',
   ...input
 }: SwitchProps) {
   const change = (event: ChangeEvent<HTMLInputElement>) => {
@@ -31,7 +45,15 @@ export function Switch({
   }
   return (
     <label
-      className={[styles.root, className].filter(Boolean).join(' ')}
+      className={[
+        styles.root,
+        appearance === 'hud' && styles.hud,
+        appearance === 'hud' && size === 'sm' && styles.sm,
+        appearance === 'hud' && surface === 'light' && styles.onLight,
+        className
+      ]
+        .filter(Boolean)
+        .join(' ')}
       data-disabled={input.disabled || undefined}
     >
       <span className={labelHidden ? styles.hiddenLabel : styles.label}>{label}</span>

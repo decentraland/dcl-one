@@ -6,7 +6,7 @@
 // features import them: that test watches the entry. Sections use local data only: no network,
 // wallet or engine call.
 
-import { Spinner } from '@dcl/one-ui'
+import { Spinner, Switch } from '@dcl/one-ui'
 import { useId, useRef, useState, useSyncExternalStore } from 'react'
 import { getHudScale, subscribeHudScale } from '@explorer-core/lib/hudScale'
 import {
@@ -76,7 +76,6 @@ import {
   TextArea,
   TextInput,
   ToastHost,
-  Toggle,
   Tooltip,
   VerifiedBadge,
   VoiceBars,
@@ -879,11 +878,11 @@ function FormControlsShowcase(): React.JSX.Element {
     <div style={{ display: 'flex', flexDirection: 'column', gap: 16, maxWidth: 320 }}>
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
         <span style={{ fontSize: 14 }}>Fullscreen</span>
-        <Toggle checked={on} onChange={setOn} aria-label="Fullscreen" />
+        <Switch appearance="hud" checked={on} onCheckedChange={setOn} label="Fullscreen" labelHidden />
       </div>
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: 8, borderRadius: 8, background: 'var(--text)', color: 'var(--panel)' }}>
         <span style={{ fontSize: 14 }}>On a light panel</span>
-        <Toggle size="sm" surface="light" checked={on} onChange={setOn} aria-label="On a light panel" />
+        <Switch appearance="hud" size="sm" surface="light" checked={on} onCheckedChange={setOn} label="On a light panel" labelHidden />
       </div>
       <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
         <span style={{ fontSize: 14, width: 60 }}>Volume</span>

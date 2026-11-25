@@ -35,7 +35,6 @@
   --signin-code-success: #e9ffd3; /* the code's slots, accepted */
   --signin-code-error: #ffd3df; /* the code's slots, refused */
   --signin-incorrect: #ff5757; /* "Incorrect code"'s icon */
-  --signin-spinner-1: #ffbc5b; /* the sign-in spinner's arc, first of its three colours */
   --signin-select: #ff7439; /* a picked starting look's ring, the sign-in checkmarks */
   --signin-option-hover: #cdcbd1; /* the body type menu's option, hovered */
   --signin-name-placeholder: #716b7c; /* the new account's name field placeholder */
@@ -242,7 +241,6 @@
   --slot-empty: #582987;
   --slot-edge: #a14bf3;
   --slot-edge-20: rgba(161, 75, 243, 0.2);
-  --skeleton: rgba(138, 65, 212, 0.62);
   --pager-idle: rgba(161, 75, 243, 0.28);
   --unequip-hover: #43404a;
   --outfit-banner: #67279b;
@@ -284,8 +282,6 @@
   --shadow-shop-panel-coin: 1.077px 1.077px 1.347px rgba(0, 0, 0, 0.25);
   /* compact switches / thick sliders / nearby voice (sRGB equivalents of linear blends) */
   --switch-off: rgba(255, 255, 255, 0.38);
-  --switch-knob-off: rgba(236, 235, 237, 0.73);
-  --switch-off-on-light: rgba(0, 0, 0, 0.15); /* a switch's off track on a light panel: black 30% */
   --slider-track: rgba(255, 255, 255, 0.19);
   --control-track: rgba(255, 255, 255, 0.42); /* a settings switch or slider while off or unfilled */
   --switch-off-menu: #454545; /* a switch in a menu sheet, off */
@@ -375,11 +371,9 @@
   --lobby-white-70: rgba(255, 255, 255, 0.7);
   --lobby-white-80: rgba(255, 255, 255, 0.8);
   --lobby-black-40: rgba(0, 0, 0, 0.4);
-  --lobby-black-55: rgba(0, 0, 0, 0.55);
   --lobby-black-60: rgba(0, 0, 0, 0.6);
   --lobby-black-80: rgba(0, 0, 0, 0.8);
   --lobby-black-95: rgba(0, 0, 0, 0.95);
-  --lobby-button-hover: rgba(90, 90, 90, 0.55);
   --lobby-snow: rgb(252, 252, 252);
   --lobby-silver: rgb(160, 155, 168);
   --lobby-shadow: rgb(22, 21, 24);

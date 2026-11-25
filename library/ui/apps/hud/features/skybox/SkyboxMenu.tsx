@@ -1,8 +1,9 @@
 // Skybox menu — the sidebar's NIGHT/DAY panel: "Auto" lets the engine's day cycle
 // run; the "Custom" time-of-day slider is locked meanwhile.
 
+import { Switch } from '@dcl/one-ui'
 import { useEffect } from 'react'
-import { Panel, Slider, Toggle, hasOpenPopup } from '../../design'
+import { Panel, Slider, hasOpenPopup } from '../../design'
 import type { SkyboxState } from '../session/useEngineSession'
 import styles from './SkyboxMenu.module.css'
 
@@ -29,10 +30,7 @@ export function SkyboxMenu({ skybox }: { skybox: SkyboxState }): React.JSX.Eleme
     <Panel className={styles.root} role="dialog" aria-label="Skybox">
       <div className={styles.title}>NIGHT/DAY</div>
       <div className={styles.divider} />
-      <label className={styles.row}>
-        <span>Auto</span>
-        <Toggle size="sm" checked={skybox.progressing} onChange={skybox.setProgressing} />
-      </label>
+      <Switch appearance="hud" size="sm" label="Auto" className={styles.row} checked={skybox.progressing} onCheckedChange={skybox.setProgressing} />
       <div className={styles.divider} />
       <div className={styles.custom} data-locked={skybox.progressing}>
         <div className={styles.head}>

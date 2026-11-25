@@ -2,8 +2,9 @@
 // volume, and a Speak toggle. It opens up and to the right of the button. Closes on an outside
 // click or Cancel; turning hearing off closes it too.
 
+import { Switch } from '@dcl/one-ui'
 import { useEffect, useLayoutEffect, useRef, useState } from 'react'
-import { MaskIcon, Slider, Toggle } from '../../design'
+import { MaskIcon, Slider } from '../../design'
 import { registerCancelLayer } from '@explorer-core/lib/cancelLayers'
 import hearIcon from '../../assets/voice/hear.webp'
 import speakerIcon from '../../assets/voice/speaker.webp'
@@ -82,7 +83,7 @@ export function NearbyVoiceWidget({
       <div className={styles.row}>
         <MaskIcon src={hearIcon} size={20} />
         <span className={styles.label}>Hear others</span>
-        <Toggle size="sm" checked={hearing} onChange={onHearingChange} aria-label="Hear others" />
+        <Switch appearance="hud" size="sm" checked={hearing} onCheckedChange={onHearingChange} label="Hear others" labelHidden />
       </div>
       {hearing && (
         <>

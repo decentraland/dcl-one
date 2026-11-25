@@ -139,4 +139,28 @@ describe('Switch', () => {
       expect(data.has('tips')).toBe(false)
     })
   })
+  describe('when it takes the hud appearance', () => {
+    it('should keep the named native switch and add the appearance, size and surface classes', () => {
+      render(<Switch appearance="hud" size="sm" surface="light" label="Hear others" labelHidden className="row" />)
+      const control = screen.getByRole('switch', { name: 'Hear others' })
+      const root = control.closest('label') as HTMLElement
+      expect(root.className).toMatch(/hud/)
+      expect(root.className).toMatch(/sm/)
+      expect(root.className).toMatch(/onLight/)
+      expect(root.className).toMatch(/row/)
+    })
+
+    it('should report the next state to the caller', async () => {
+      const onCheckedChange = vi.fn()
+      render(<Switch appearance="hud" label="Set as Home" checked={false} onCheckedChange={onCheckedChange} />)
+      await userEvent.click(screen.getByRole('switch', { name: 'Set as Home' }))
+      expect(onCheckedChange).toHaveBeenCalledWith(true)
+    })
+
+    it('should not add the size or surface classes to the default appearance', () => {
+      render(<Switch size="sm" surface="light" label="Notifications" />)
+      const root = screen.getByRole('switch', { name: 'Notifications' }).closest('label') as HTMLElement
+      expect(root.className).not.toMatch(/hud|sm|onLight/)
+    })
+  })
 })

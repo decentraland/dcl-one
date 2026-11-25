@@ -231,6 +231,20 @@ export const formEntries: GalleryEntry[] = [
             <Switch label="Voice chat" labelHidden defaultChecked />
           </div>
         )
+      },
+      {
+        id: 'hud',
+        title: 'Explorer HUD appearance: default, small and small on a light panel',
+        render: () => (
+          <div className={layout.row}>
+            <Switch appearance="hud" label="Fullscreen" labelHidden defaultChecked />
+            <Switch appearance="hud" label="Fullscreen off" labelHidden />
+            <Switch appearance="hud" size="sm" label="Hear others" labelHidden defaultChecked />
+            <Switch appearance="hud" size="sm" label="Hear others off" labelHidden />
+            <Switch appearance="hud" size="sm" surface="light" label="Map layer" labelHidden />
+            <Switch appearance="hud" label="Unavailable" labelHidden disabled />
+          </div>
+        )
       }
     ]
   },

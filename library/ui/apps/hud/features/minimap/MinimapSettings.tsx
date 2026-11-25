@@ -3,8 +3,9 @@
 // settings", which opens the rotation mode and the visualisation style. Which markers show is the
 // full map's Layers panel's.
 
+import { Switch } from '@dcl/one-ui'
 import { useState } from 'react'
-import { Check, ChevronDown, ChevronRight, Toggle } from '../../design'
+import { Check, ChevronDown, ChevronRight } from '../../design'
 import { MaskIcon } from '../../design/MaskIcon'
 import reloadIcon from '../../assets/minimap/reload.png'
 import type { MinimapRotation, MinimapStyle } from '@explorer-core/engine/protocol'
@@ -52,11 +53,15 @@ export function MinimapSettings({
     <div className={styles.menu} role="menu" aria-label="Minimap settings">
       {home != null && (
         <>
-          {/* the switch is the one control; the row's label only gives it a bigger target */}
-          <label className={`${styles.entry} ${styles.toggleEntry}`}>
-            Set as Home
-            <Toggle size="sm" checked={home.on} onChange={(on) => (on ? home.onSet() : home.onClear())} aria-label="Set as Home" />
-          </label>
+          {/* the switch is the one control; its label is the row, which gives it a bigger target */}
+          <Switch
+            appearance="hud"
+            size="sm"
+            className={`${styles.entry} ${styles.toggleEntry}`}
+            label="Set as Home"
+            checked={home.on}
+            onCheckedChange={(on) => (on ? home.onSet() : home.onClear())}
+          />
           <div className={styles.separator} />
         </>
       )}

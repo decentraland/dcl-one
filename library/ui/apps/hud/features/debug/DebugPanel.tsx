@@ -1,6 +1,7 @@
+import { Switch } from '@dcl/one-ui'
 import { useEffect, useRef, useState } from 'react'
 import { debugPanelLauncherEnabled } from '@explorer-core/lib/debugPanelLauncher'
-import { Button, ModalShell, Select, TextInput, Toggle } from '../../design'
+import { Button, ModalShell, Select, TextInput } from '../../design'
 import { Mark } from '../../design/Glyphs'
 import type { EngineSession } from '../session/useEngineSession'
 import { closeDebugPanel, useDebugPanel } from './useDebugPanel'
@@ -190,8 +191,8 @@ function InputWidget({ input, live, reason, busy, submit }: {
   }
   if (kind.type === 'toggle') return (
     <div className={styles.inputRow}><span>{input.label}{unavailable && reason && <> — {reason}</>}</span>
-      <Toggle aria-label={input.label} checked={live === true} disabled={busy || unavailable}
-        onChange={(v) => void apply(String(v))} /></div>
+      <Switch appearance="hud" label={input.label} labelHidden checked={live === true} disabled={busy || unavailable}
+        onCheckedChange={(v) => void apply(String(v))} /></div>
   )
   if (kind.type === 'select') return (
     <div className={styles.inputRow}><span>{input.label}{unavailable && reason && <> — {reason}</>}</span>

@@ -119,9 +119,96 @@
     background: var(--dcl-action-disabled);
   }
 
+  /* Not in Figma: the Explorer HUD's switch, a pill whose knob fills the height inside its padding and travels
+     the rest of the width. Unset, each `--toggle-*` property takes the size's value (the `--d-*` below). The
+     knob's off-white on the small switch and the light panel's off track have no token. */
+  .hud {
+    --d-w: 46px;
+    --d-h: 26px;
+    --d-pad: 3px;
+    --d-off: var(--dcl-transparencies-white-10);
+    --d-knob: var(--dcl-neutrals-white);
+    --d-knob-on: var(--dcl-neutrals-white);
+    --d-knob-shadow: 0 1px 2px rgba(0, 0, 0, 0.3);
+    --w: var(--toggle-w, var(--d-w));
+    --h: var(--toggle-h, var(--d-h));
+    --pad: var(--toggle-pad, var(--d-pad));
+    flex: none;
+    gap: var(--dcl-space-0);
+    min-height: 0;
+  }
+
+  .hud.sm {
+    --d-w: 39px;
+    --d-h: 24px;
+    --d-pad: 2px;
+    --d-off: rgba(255, 255, 255, 0.38);
+    --d-knob: rgba(236, 235, 237, 0.73);
+    --d-knob-on: var(--dcl-neutrals-snow);
+    --d-knob-shadow: none;
+  }
+
+  .hud .label {
+    font: inherit;
+    letter-spacing: inherit;
+    text-transform: inherit;
+    color: inherit;
+  }
+
+  .hud .control {
+    width: var(--w);
+    height: var(--h);
+  }
+
+  .hud .track,
+  .hud:hover .input:not(:disabled) + .track,
+  .hud .input:disabled + .track {
+    border: 0;
+    background: var(--toggle-off, var(--d-off));
+    transition: background-color 140ms ease;
+  }
+
+  .hud .track::after,
+  .hud .input:disabled + .track::after {
+    top: var(--pad);
+    left: var(--pad);
+    width: calc(var(--h) - 2 * var(--pad));
+    height: calc(var(--h) - 2 * var(--pad));
+    background: var(--toggle-knob, var(--d-knob));
+    box-shadow: var(--toggle-knob-shadow, var(--d-knob-shadow));
+    transition: transform 140ms cubic-bezier(0.16, 1, 0.3, 1);
+  }
+
+  .hud .input:checked + .track,
+  .hud:hover .input:checked:not(:disabled) + .track,
+  .hud .input:checked:disabled + .track {
+    background: var(--toggle-on, var(--dcl-primary-primary));
+  }
+
+  .hud .input:checked + .track::after,
+  .hud .input:checked:disabled + .track::after {
+    background: var(--toggle-knob-on, var(--toggle-knob, var(--d-knob-on)));
+    transform: translateX(calc(var(--w) - var(--h)));
+  }
+
+  .hud .input:disabled + .track {
+    opacity: 0.45;
+  }
+
+  .hud.onLight .input:not(:checked) + .track {
+    background: rgba(0, 0, 0, 0.15);
+  }
+
+  .hud.onLight .track::after,
+  .hud.onLight .input:checked + .track::after {
+    background: var(--dcl-neutrals-snow);
+  }
+
   @media (prefers-reduced-motion: reduce) {
     .track,
-    .track::after {
+    .track::after,
+    .hud .track,
+    .hud .track::after {
       transition: none;
     }
   }

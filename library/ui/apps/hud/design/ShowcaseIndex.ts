@@ -30,7 +30,7 @@ export const SHOWCASE_INDEX = [
   { name: 'Tooltip', title: 'Tooltip (hover the chips)', components: ['Tooltip'] },
   { name: 'ControlButton', title: 'ControlButton', components: ['ControlButton'] },
   { name: 'Tabs', title: 'Tabs (pill · underline — arrows/Home/End move the selection)', components: ['Tabs'] },
-  { name: 'FormControls', title: 'Form controls', components: ['Toggle', 'Slider', 'TextInput', 'TextArea', 'DateField', 'Select'] },
+  { name: 'FormControls', title: 'Form controls', components: ['Slider', 'TextInput', 'TextArea', 'DateField', 'Select'] },
   { name: 'FieldLabel', title: 'FieldLabel and CharCounter (a labelled field and its count)', components: ['FieldLabel', 'CharCounter', 'TextInput'] },
   { name: 'SearchField', title: 'SearchField (dark · light · small, clearable)', components: ['SearchField'] },
   { name: 'Dropdown', title: 'Dropdown (a sort or filter list)', components: ['Dropdown'] },

@@ -2,9 +2,9 @@
 // owner, place, people in the shot) that the info button slides away. Opened through usePhotoViewer,
 // as a popup of its own.
 
-import { Spinner, Skeleton } from '@dcl/one-ui'
+import { Spinner, Skeleton, Switch } from '@dcl/one-ui'
 import { useEffect, useRef, useState } from 'react'
-import { ControlButton, MaskIcon, ScrollThumb, Toggle } from '../../design'
+import { ControlButton, MaskIcon, ScrollThumb } from '../../design'
 import { useWindowKeyDown } from '../../lib/useWindowKeyDown'
 import { track } from '@explorer-core/lib/analytics'
 import { photoTime } from '../session/useEngineSession'
@@ -137,10 +137,7 @@ export function PhotoDetail({
         <div className={styles.actions}>
           {showToggle && (
             <>
-              <label className={styles.publicToggle}>
-                <span>Set as Public</span>
-                <Toggle checked={isPublic} onChange={setPublic} aria-label="Set as Public" />
-              </label>
+              <Switch appearance="hud" className={styles.publicToggle} label="Set as Public" checked={isPublic} onCheckedChange={setPublic} />
               <span className={styles.separator} aria-hidden="true" />
             </>
           )}

@@ -3,8 +3,9 @@
 // (light Select / ruby Toggle / arrow Slider). Data + actions via the bridge relay
 // of BevyApi.getSettings / setSetting.
 
+import { Switch } from '@dcl/one-ui'
 import { memo, useEffect, useId, useMemo, useState } from 'react'
-import { Select, Slider, Tabs, Toggle, Tooltip, showConfirm } from '../../design'
+import { Select, Slider, Tabs, Tooltip, showConfirm } from '../../design'
 import { MainMenuShell } from '../menu/MainMenuShell'
 import type { Setting } from '@explorer-core/engine/protocol'
 import type { BindingsState, EngineSession, ProfileState, SettingsState } from '../session/useEngineSession'
@@ -170,7 +171,7 @@ function Control({ s, onSet, describedBy }: { s: Setting; onSet: (name: string, 
   const unset = s.value < 0
   const locked = unset || s.disabled
   if (isBinary(s)) {
-    return <Toggle checked={s.value >= 1} disabled={locked} onChange={(c) => onSet(s.name, c ? 1 : 0)} aria-label={s.name} aria-describedby={describedBy} />
+    return <Switch appearance="hud" checked={s.value >= 1} disabled={locked} onCheckedChange={(c) => onSet(s.name, c ? 1 : 0)} label={s.name} labelHidden aria-describedby={describedBy} />
   }
   if (s.namedVariants.length >= 2) {
     return (
@@ -252,7 +253,7 @@ function AutoTranslateField(): React.JSX.Element {
           <span className={styles.label}>Auto-Translate New Conversations</span>
         </div>
         <div className={styles.control}>
-          <Toggle checked={prefs.autoDefault} onChange={setAutoTranslateDefault} aria-label="Auto-Translate New Conversations" />
+          <Switch appearance="hud" checked={prefs.autoDefault} onCheckedChange={setAutoTranslateDefault} label="Auto-Translate New Conversations" labelHidden />
         </div>
       </div>
   )
@@ -268,7 +269,7 @@ function AskBeforeLeavingField(): React.JSX.Element {
           <span className={styles.label}>Ask Before Leaving the Page</span>
         </div>
         <div className={styles.control}>
-          <Toggle checked={ask} onChange={setAskBeforeLeaving} aria-label="Ask Before Leaving the Page" />
+          <Switch appearance="hud" checked={ask} onCheckedChange={setAskBeforeLeaving} label="Ask Before Leaving the Page" labelHidden />
         </div>
       </div>
   )

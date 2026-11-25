@@ -1,8 +1,8 @@
 // ContextMenu — a stacked menu surface (header, titles, separators, items,
 // toggles) ported from the dcl-react-ui shared primitives.
 
+import { Switch } from '@dcl/one-ui'
 import { useState, type ReactNode } from 'react'
-import { Toggle } from './Toggle'
 import { Submenu } from './Submenu'
 import { Mark } from './Glyphs'
 import styles from './ContextMenu.module.css'
@@ -129,10 +129,19 @@ function ToggleItem({ item }: { item: Extract<ContextMenuItem, { kind: 'toggle' 
   }
   const name = typeof item.label === 'string' ? item.label : undefined
   return (
-    <label className={`${styles.item} ${styles.itemToggle}`} role="menuitemcheckbox" aria-checked={on} aria-label={name}>
+    <div
+      className={`${styles.item} ${styles.itemToggle}`}
+      role="menuitemcheckbox"
+      aria-checked={on}
+      aria-label={name}
+      onClick={(event) => {
+        if (!(event.target as HTMLElement).closest('label')) change(!on)
+      }}
+    >
       {item.icon != null && <span className={styles.icon}>{item.icon}</span>}
       <span className={styles.label}>{item.label}</span>
-      <Toggle checked={on} onChange={change} aria-label={name} />
-    </label>
+      {/* The shared Switch is a label of its own, so the row is not one: a click beside the switch toggles it. */}
+      <Switch appearance="hud" checked={on} onCheckedChange={change} label={name ?? 'Toggle'} labelHidden />
+    </div>
   )
 }
