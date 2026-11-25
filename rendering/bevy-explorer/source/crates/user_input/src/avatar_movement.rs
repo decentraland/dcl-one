@@ -281,6 +281,19 @@ impl AvatarMovement {
             .filter(|velocity| velocity.is_finite())
             .unwrap_or(Vec3::ZERO)
     }
+
+    /// Adds the one-shot fields of `earlier`, an earlier reply of the same scene taken in this
+    /// frame: the walk result, the sounds and, for the same clip, the seek.
+    fn keep_one_shot_fields(&mut self, earlier: &AvatarMovement) {
+        self.walk_success = self.walk_success.or(earlier.walk_success);
+        let (Some(animation), Some(earlier)) = (&mut self.animation, &earlier.animation) else {
+            return;
+        };
+        if animation.src == earlier.src {
+            animation.playback_time = animation.playback_time.or(earlier.playback_time);
+        }
+        animation.sounds = [earlier.sounds.as_slice(), &animation.sounds].concat();
+    }
 }
 
 impl Default for AvatarMovement {
@@ -513,32 +526,47 @@ impl<C: Component + Clone + FromConfig> ActivePlayerComponent<C> {
             debug!("{} chose {}", std::any::type_name::<C>(), ctx.title);
         }
     }
+}
 
+impl ActivePlayerComponent<AvatarMovement> {
     // pick based on priority, only from scenes that updated the component in the scene-tick
     // responses taken since the last pick. Runs in each pass of the scene loop
     fn pick_latest_frame_only_by_priority(
         mut commands: Commands,
-        q: Query<(Entity, &C, &SceneEntity), Changed<C>>,
+        q: Query<(Entity, &AvatarMovement, &SceneEntity), Changed<AvatarMovement>>,
         scenes: Query<&RendererSceneContext>,
         containing_scenes: ContainingScene,
-        mut player: Query<&mut ActivePlayerComponent<C>, With<PrimaryUser>>,
+        mut player: Query<&mut ActivePlayerComponent<AvatarMovement>, With<PrimaryUser>>,
         player_res: Res<PrimaryPlayerRes>,
         config: Res<AppConfig>,
+        frame: Res<FrameCount>,
+        mut picked_in: Local<Option<u32>>,
     ) {
         let Ok(mut current_choice) = player.single_mut() else {
-            commands
-                .entity(player_res.0)
-                .try_insert(ActivePlayerComponent::<C>::from_config(&config));
+            commands.entity(player_res.0).try_insert(
+                ActivePlayerComponent::<AvatarMovement>::from_config(&config),
+            );
             return;
         };
 
-        if let Some(choice) = choose_latest_frame(
+        if let Some(mut choice) = choose_latest_frame(
             &current_choice,
             q.iter(),
             &scenes,
             &containing_scenes.get(player_res.0),
             &config,
         ) {
+            // a re-dispatch can bring a second reply of the scene in the same frame, and the
+            // components are read once a frame
+            if *picked_in == Some(frame.0)
+                && choice.scene == current_choice.scene
+                && choice.entity == current_choice.entity
+            {
+                choice
+                    .component
+                    .keep_one_shot_fields(&current_choice.component);
+            }
+            *picked_in = Some(frame.0);
             *current_choice = choice;
         }
     }
@@ -1477,6 +1505,7 @@ mod tests {
             ..default()
         })
         .init_resource::<AppConfig>()
+        .init_resource::<FrameCount>()
         .add_systems(
             Update,
             (
@@ -1568,6 +1597,7 @@ mod tests {
     /// Runs a frame whose loop pass takes the replies landed before it. Returns the yaw that a
     /// dispatch after that pass is sent, and the player's yaw after the frame.
     fn run_frame(app: &mut App, player: Entity) -> (f32, f32) {
+        app.world_mut().resource_mut::<FrameCount>().0 += 1;
         app.world_mut().run_schedule(Update);
         let sent = player_yaw(app, player);
         app.world_mut().run_schedule(PostUpdate);
@@ -1607,6 +1637,89 @@ mod tests {
             frames_out.push((sent, applied));
         }
         frames_out
+    }
+
+    fn one_shot_movement(
+        walk_success: Option<bool>,
+        src: &str,
+        seek: Option<f32>,
+        sound: &str,
+    ) -> AvatarMovement {
+        AvatarMovement {
+            walk_success,
+            animation: Some(MovementAnimation {
+                src: src.to_owned(),
+                playback_time: seek,
+                sounds: vec![sound.to_owned()],
+                ..default()
+            }),
+            ..default()
+        }
+    }
+
+    /// Takes a reply of `scene` setting `movement` in a loop pass of frame `frame`. Returns the
+    /// movement the player is given after the pass.
+    fn take_movement(
+        app: &mut App,
+        player: Entity,
+        scene: (Entity, Entity),
+        frame: u32,
+        movement: AvatarMovement,
+    ) -> AvatarMovement {
+        app.world_mut().resource_mut::<FrameCount>().0 = frame;
+        app.world_mut().entity_mut(scene.1).insert(movement);
+        land_reply(app, scene, frame, frame, None);
+        app.world_mut().run_schedule(Update);
+        app.world()
+            .get::<ActivePlayerComponent<AvatarMovement>>(player)
+            .unwrap()
+            .component
+            .clone()
+    }
+
+    #[test]
+    fn two_replies_in_a_frame_keep_the_one_shot_fields_of_both() {
+        let (mut app, player) = rotation_app(0.0);
+        let scene = add_scene(&mut app, "movement", Some(1));
+        let first = one_shot_movement(Some(true), "Jump.glb", Some(0.5), "jump.mp3");
+        take_movement(&mut app, player, scene, 1, first);
+        let second = one_shot_movement(None, "Jump.glb", None, "land.mp3");
+        let movement = take_movement(&mut app, player, scene, 1, second);
+
+        assert_eq!(movement.walk_success, Some(true));
+        let animation = movement.animation.unwrap();
+        assert_eq!(animation.playback_time, Some(0.5));
+        assert_eq!(animation.sounds, ["jump.mp3", "land.mp3"]);
+    }
+
+    #[test]
+    fn a_seek_is_not_kept_for_another_clip() {
+        let (mut app, player) = rotation_app(0.0);
+        let scene = add_scene(&mut app, "movement", Some(1));
+        let first = one_shot_movement(None, "Jump.glb", Some(0.5), "jump.mp3");
+        take_movement(&mut app, player, scene, 1, first);
+        let second = one_shot_movement(None, "Fall.glb", None, "land.mp3");
+        let animation = take_movement(&mut app, player, scene, 1, second)
+            .animation
+            .unwrap();
+
+        assert_eq!(animation.playback_time, None);
+        assert_eq!(animation.sounds, ["jump.mp3", "land.mp3"]);
+    }
+
+    #[test]
+    fn replies_in_different_frames_keep_only_their_own_one_shot_fields() {
+        let (mut app, player) = rotation_app(0.0);
+        let scene = add_scene(&mut app, "movement", Some(1));
+        let first = one_shot_movement(Some(true), "Jump.glb", Some(0.5), "jump.mp3");
+        take_movement(&mut app, player, scene, 1, first);
+        let second = one_shot_movement(None, "Jump.glb", None, "land.mp3");
+        let movement = take_movement(&mut app, player, scene, 2, second);
+
+        assert_eq!(movement.walk_success, None);
+        let animation = movement.animation.unwrap();
+        assert_eq!(animation.playback_time, None);
+        assert_eq!(animation.sounds, ["land.mp3"]);
     }
 
     /// A parcel scene takes over at 70 degrees, then something else turns the player to 40.
