@@ -28,7 +28,7 @@ decisions; the rest of both stands.
   (`packageManagerDependencies`), and a frozen install fails until it does.
   CI and the build scripts install with `--frozen-lockfile` on that version, through corepack
   (`corepack enable`, or `corepack pnpm@12.21.0`, the `PNPM` default of the SDK and protocol
-  Makefiles) or through the development shell's pnpm, which switches to the pinned version. The
+  Makefiles) or through the development shells' pnpm, which is the pinned version. The
   Nix builds run the Nix package set's pnpm and ignore the pin.
 - `library/ui`'s `package.json` is an input of its generated components, so changing its pin is a
   component regeneration (`pnpm figma port prepare`, then `port verify`).
@@ -98,7 +98,7 @@ What stays on npm:
   separate decision.
 - The electron-builder setting depends on that tool's internals and is checked on each upgrade.
 - Another pnpm version is one change: each project's pin and the record at the top of its lockfile
-  (`pnpm install --lockfile-only`), the workflows, the Makefiles' `PNPM` defaults and
+  (`pnpm install --lockfile-only`), the workflows, the Makefiles' `PNPM` defaults, `infra/packages/pnpm.nix` and
   `PNPM_VERSION` with `PNPM_SHA512`, which the guard then holds everything to.
 - CI fetches pnpm through the corepack Node 24 ships. Node 25 and later do not ship corepack, so a
   move of CI past Node 24 needs another way to fetch the pinned pnpm. The development shell

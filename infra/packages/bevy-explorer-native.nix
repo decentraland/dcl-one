@@ -56,4 +56,7 @@ in {
     alsa-lib udev openssl ffmpeg_6-headless glib libdrm libgbm libGL
     libx11 libxext libxfixes libxdamage libxrandr libxcomposite
   ];
+  runtimeLibraries = with pkgs; [
+    vulkan-loader libxkbcommon wayland libx11 libxcursor libxi libxrandr libGL alsa-lib udev
+  ];
 }

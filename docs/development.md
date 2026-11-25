@@ -14,6 +14,30 @@ nix develop --command make check   # non-interactive: never starts services
 proposes the current tip on the first of each month; `python3
 tooling/nixpkgs-update.py` does the same locally.
 
+## Development shells
+
+Each shell carries what its part of the tree needs on a machine that has only Nix.
+
+| Shell | For |
+| --- | --- |
+| `default` | The node, Sites, UI3, the SDK and protocol Makefiles, `tooling/tests`, `foundation-dev` |
+| `ci` | The Rust suites in CI |
+| `wasm` | `just wasm`, `make bevy-web`, `rendering/avatar-preview` |
+| `explorer` | The native Explorer, `make bevy-headless`, `make bevy-avatar-render` |
+| `creator-hub` | `apps/creator-hub` |
+| `uuav` | `library/uuav` |
+
+Every shell has Node 26 and the pnpm the projects pin (`infra/packages/pnpm.nix`), with
+`PNPM=pnpm`, since Node 26 has no corepack. The `explorer` shell adds Mesa's software Vulkan
+driver and sets `WGPU_BACKEND=vulkan`, so its GPU tests run on a machine without a GPU. It applies
+to `cargo run` too: where the Nix Vulkan loader cannot see the machine's driver (Nix on another
+Linux distribution), the Explorer runs on that CPU rasterizer and its log names the `llvmpipe`
+adapter; start it there through a wrapper that exposes the machine's driver, such as nixGL.
+
+`nix run .#explorer` (x86_64 Linux) starts the native Explorer as a release lays it out: the
+client beside its scene runtime, CEF, the React HUD and the bridge scene, with the window-system,
+Vulkan and audio libraries it loads at run time and, on NixOS, the machine's GPU driver.
+
 `nix develop` starts a per-checkout PostgreSQL 18, API, Sites, LiveKit with its
 RTMP Ingress and Valkey, NATS and Pulse that outlive the shell and reload on edits.
 

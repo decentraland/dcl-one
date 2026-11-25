@@ -130,7 +130,12 @@ let
   };
   depsSrc = assemble stableDummyRepo (builtins.intersectAttrs early inTree);
   bevySrc = assemble dummyRepo inTree;
-  src = repoFiles;
+  src = pkgs.runCommand "source" { } ''
+    cp -r ${repoFiles} $out
+    chmod -R u+w $out
+    ln -s ${patchedSources.${treeDir "bevy"}} $out/${treeDir "bevy"}
+    install -Dm644 ${root + /library/explorer-core/engine/protocol.ts} $out/library/explorer-core/engine/protocol.ts
+  '';
 
   hashOfUnpatchedGitSource."git+https://github.com/gltf-rs/gltf?rev=50d65229#50d65229477fe5f785c2c90df21eb59c93ea2261" =
     "sha256-nSlREMX9EKNpBFAXMA9PUj2FeLEr9Yh8UayEzrJIUBQ=";

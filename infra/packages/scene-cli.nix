@@ -56,6 +56,11 @@ let
     vars = { asset = targets.livekit; semver = lib.removePrefix "v" livekitLock.version; };
     exe = "livekit-server";
   };
+  basisuLock = lockOf (app + /basisu-release.lock);
+  basisuWasm = pkgs.fetchurl {
+    url = fill { inherit (basisuLock) version; } basisuLock.url;
+    sha256 = basisuLock."basisu_st.wasm";
+  };
 
   src = lib.fileset.toSource {
     inherit root;
@@ -96,6 +101,7 @@ let
     LIBCLANG_PATH = "${pkgs.llvmPackages.libclang.lib}/lib";
     ABGEN_EMBED_CACHE = "${abgenCache}";
     LIVEKIT_EMBED_CACHE = "${livekitCache}";
+    BASISU_EMBED_WASM = "${basisuWasm}";
   };
   cargoVendorDir = craneLib.vendorCargoDeps (common // vendorGit);
   cargoArtifacts = craneLib.buildDepsOnly (common // { inherit cargoVendorDir; });
@@ -107,6 +113,6 @@ in craneLib.buildPackage (common // {
   postInstall = ''
     wrapProgram "$out/bin/dcl-scene-cli" --suffix PATH : ${lib.makeBinPath [ pkgs.nodejs ]}
   '';
-  passthru = { inherit cargoArtifacts cargoVendorDir abgenCache livekitCache; };
+  passthru = { inherit cargoArtifacts cargoVendorDir abgenCache livekitCache basisuWasm; };
   meta.mainProgram = "dcl-scene-cli";
 })

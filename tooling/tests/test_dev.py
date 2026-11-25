@@ -59,6 +59,16 @@ class DevTest(unittest.TestCase):
             os.environ.pop('FOUNDATION_DEV_TRADES_SNAPSHOT', None)
             self.assertIsNone(dev.trades_snapshot_file(), 'no file, no snapshot')
 
+    def test_pnpm_dev_reads_the_pnpm_settings_the_install_read_but_no_credentials(self):
+        shell = {'pnpm_config_store_dir': '/store', 'pnpm_config_offline': 'true',
+                 'pnpm_config_manage_package_manager_versions': 'false',
+                 'pnpm_config__authToken': 'secret', 'pnpm_config_//registry.example/:_authToken': 'secret'}
+        with patch.dict(os.environ, shell):
+            env = dev.runtime_env(self.config)
+        self.assertEqual({key: value for key, value in env.items() if key.startswith('pnpm_config_')},
+                         {'pnpm_config_store_dir': '/store', 'pnpm_config_offline': 'true',
+                          'pnpm_config_manage_package_manager_versions': 'false'})
+
     def test_the_mirror_profile_serves_the_shop_while_the_first_trades_pass_runs(self):
         env = dev.runtime_env({**self.config, 'profile': 'mirror'})
         self.assertEqual(env['TRADES_SERVE_PARTIAL'], 'true')

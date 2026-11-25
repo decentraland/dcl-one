@@ -19,6 +19,12 @@ const config = {
   },
   beforePack: path.join(__dirname, 'scripts', 'before-pack.js'),
   afterPack: path.join(__dirname, 'scripts', 'after-pack.js'),
+  // The unpacked app (`--dir`, what the e2e suites launch) takes the Electron of a shell that
+  // carries one (`nix develop .#creator-hub`), which the electron package reads from the same
+  // variable: the release download cannot start on NixOS. Installers keep the release Electron,
+  // since the Nix one starts only beside its /nix/store.
+  ...(process.env.ELECTRON_OVERRIDE_DIST_PATH &&
+    process.argv.includes('--dir') && { electronDist: process.env.ELECTRON_OVERRIDE_DIST_PATH }),
   // The only native dep (node-pty) ships N-API prebuilds for every target (darwin/win ×
   // arm64/x64), which are ABI-stable under Electron — so don't let @electron/rebuild recompile
   // it from source. That rebuild failed the Windows CI build outright ("Could not find any

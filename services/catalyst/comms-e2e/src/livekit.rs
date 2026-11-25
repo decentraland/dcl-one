@@ -1210,7 +1210,7 @@ mod tests {
                 .unwrap();
             String::from_utf8_lossy(&output.stdout).contains(&format!(" {pid} "))
         } else {
-            std::process::Command::new("/bin/kill")
+            std::process::Command::new("kill")
                 .args(["-0", &pid.to_string()])
                 .stderr(std::process::Stdio::null())
                 .status()

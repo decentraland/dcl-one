@@ -225,6 +225,7 @@ class EngineCacheTests(unittest.TestCase):
         with patch.object(build, 'ROOT', self.root), patch.object(build, 'SOURCE', self.source), \
                 patch.object(build, 'APP', app), patch.object(build, 'run', side_effect=command), \
                 patch.dict(os.environ, {'GITHUB_SHA': SHA}):
+            os.environ.pop('PNPM', None)
             build.web(engine_cache=self.cache)
             self.assertEqual(sum(c[0] == 'wasm-pack' for c in calls), 2)
             self.assertTrue(any(c[0] == 'bash' for c in calls))

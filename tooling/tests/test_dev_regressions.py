@@ -983,7 +983,7 @@ class DevScriptTests(unittest.TestCase):
             log = root / "calls"
             def executable(name, body):
                 path = tools / name
-                path.write_text("#!/bin/bash\nset -eu\n" + body + "\n", newline="\n")
+                path.write_text("#!/usr/bin/env bash\nset -eu\n" + body + "\n", newline="\n")
                 path.chmod(0o755)
             executable("foundation-dev", r'''echo "foundation:$*" >> "$CALLS"
 if [ "$1" = env ]; then
@@ -1029,8 +1029,11 @@ if [ "$SCENARIO" = broad-fail ]; then exit 9; fi''')
                 environment.pop("GITHUB_ACTIONS", None)
             else:
                 environment["GITHUB_ACTIONS"] = ci
+            # bash, sed and sleep from their own directories: on NixOS /usr/bin and /bin hold none of them.
+            own = os.pathsep.join(sorted({Path(os.path.realpath(found)).parent.as_posix()
+                                          for found in map(shutil.which, ("bash", "sed", "sleep")) if found}))
             # Git Bash converts Windows paths passed through PATH differently; set it in bash.
-            command = 'export PATH="$1:/usr/bin:/bin"; bash "$2" rust'
+            command = 'export PATH="$1:$3:/usr/bin:/bin"; bash "$2" rust'
             if os.name == "nt":
                 command = 'export PATH="$(cygpath -u "$1"):/usr/bin:/bin"; bash "$2" rust'
             command = '''ulimit() {
@@ -1039,7 +1042,7 @@ if [ "$SCENARIO" = broad-fail ]; then exit 9; fi''')
 export -f ulimit
 ''' + command
             result = subprocess.run([bash, "-c", command, "fixture", tools.as_posix(),
-                                     (ROOT / "tooling/dev-test.sh").as_posix()], env=environment,
+                                     (ROOT / "tooling/dev-test.sh").as_posix(), own], env=environment,
                                     text=True, capture_output=True)
             return result, log.read_text() if log.exists() else ""
 
