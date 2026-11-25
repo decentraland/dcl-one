@@ -134,7 +134,13 @@ export const CreditsOrderStatusOutSchema = z.object({
 });
 
 export const GoalMetadataSchema = z.object({
-  photosTaken: z.array(z.string()),
+  photosTaken: z.array(z.string()).optional(),
+  dates: z.array(z.string()).optional(),
+  eventsVisitedAndStayed: z.array(z.object({
+    id: z.string(),
+    total_time_spent: z.number(),
+    startedAt: z.number().nullable(),
+  })).optional(),
 });
 
 export const GoalProgressDataSchema = z.object({

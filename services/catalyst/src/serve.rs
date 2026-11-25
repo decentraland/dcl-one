@@ -1031,9 +1031,8 @@ pub async fn serve(mut config: Config) -> anyhow::Result<()> {
             "FLEET_JOBS_ENABLED=false: this process serves no /ws, /ws/v4 or socket-reading connector route and mints no island; the primary serves them"
         );
     }
-    // The gatekeeper's room events feed the worlds access log and, on a
-    // process with social writes, the presence badges (stored before the
-    // webhook is acknowledged, applied by a leased job).
+    // The gatekeeper's room events feed the worlds access log. The badge
+    // and Credits stores enqueue their own facts before webhook acknowledgement.
     let presence_badges = config.writes.social_writes_enabled;
     let room_event_sinks: Vec<Arc<dyn comms::gatekeeper::events::RoomEventSink>> =
         vec![stage5.core.clone()];
@@ -1060,6 +1059,32 @@ pub async fn serve(mut config: Config) -> anyhow::Result<()> {
             presence_badge_settings.clone(),
         )) as Arc<dyn comms::gatekeeper::events::RoomEventStore>
     });
+    let room_event_store = if stage5_ops.credits.settings.writes_enabled {
+        let roster = live_presence.clone();
+        let events_mirror = explore
+            .settings
+            .events_upstream
+            .as_ref()
+            .map(|source| source.base().to_owned());
+        shop::credits::goals::rooms::spawn(
+            &stage5_ops.credits,
+            &jobs,
+            events_mirror.clone(),
+            move |room, sid, wallet| {
+                roster
+                    .session_observed_at(room, sid, wallet)
+                    .map(|at| at.naive_utc())
+            },
+        );
+        Some(Arc::new(adapters::CreditsRoomEvents {
+            credits: stage5_ops.credits.clone(),
+            events_mirror,
+            badges: presence_badge_store,
+        })
+            as Arc<dyn comms::gatekeeper::events::RoomEventStore>)
+    } else {
+        presence_badge_store
+    };
     let comms_stage = comms_states(
         &config,
         &pool,
@@ -1071,7 +1096,7 @@ pub async fn serve(mut config: Config) -> anyhow::Result<()> {
         Arc::new(comms::gatekeeper::events::RoomEventFanout::new(
             room_event_sinks,
         )),
-        presence_badge_store,
+        room_event_store,
         live_presence.clone(),
         eip1654.clone(),
         content.denylist.clone(),

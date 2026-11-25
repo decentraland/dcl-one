@@ -96,6 +96,16 @@ cache state. They establish the selected access path and the cost of the
 diagnostic in that fixture, not production latency, throughput, index write
 cost or capacity.
 
+## Seasonal room goal processing
+
+A local PostgreSQL 17 temporary-table fixture held 200,100 room facts (101
+pending) and 20,000 visits (101 with timers). After `ANALYZE`, `EXPLAIN (ANALYZE,
+BUFFERS)` selected the partial pending index to take 100 facts (0.044 ms), the
+session index to find a matching leave (0.025 ms), and the partial due index
+to take 100 timers (0.032 ms). The pending and due indexes were 16 KiB each,
+and the session index was 26 MiB. These synthetic queries measured local
+read paths. Production event volume and write cost remain unmeasured.
+
 ## Social notification polling and oversized-event expiry
 
 The explicit `rpc::tests::fanout::notification_and_spill_queries_use_bounded_index_paths`

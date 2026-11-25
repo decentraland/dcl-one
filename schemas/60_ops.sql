@@ -643,7 +643,8 @@ CREATE TABLE credits.seasons (
 );
 CREATE TABLE credits.season_goals (
     season_id integer NOT NULL REFERENCES credits.seasons(id),
-    goal_id text NOT NULL CHECK (goal_id = 'take-photo'),
+    goal_id text NOT NULL CONSTRAINT season_goals_goal_id_check
+        CHECK (goal_id IN ('take-photo', 'log-in', 'visit-location', 'visit-event-and-stay')),
     title text NOT NULL,
     description text,
     thumbnail text NOT NULL,
@@ -674,6 +675,67 @@ CREATE TABLE credits.goal_progress (
     FOREIGN KEY (season_id, goal_id) REFERENCES credits.season_goals(season_id, goal_id),
     CHECK ((completed_steps = total_steps) = (completed_at IS NOT NULL))
 );
+-- One login step per UTC day, from enrolment or a verified room join.
+CREATE TABLE credits.goal_login_days (
+    address text NOT NULL REFERENCES credits.wallets(address),
+    season_id integer NOT NULL REFERENCES credits.seasons(id),
+    week_id integer NOT NULL CHECK (week_id > 0),
+    day date NOT NULL,
+    PRIMARY KEY (address, season_id, week_id, day)
+);
+
+-- Verified LiveKit facts, keyed by the webhook event ID across retries.
+CREATE TABLE credits.goal_room_events (
+    event_id text PRIMARY KEY,
+    address text NOT NULL,
+    room text NOT NULL,
+    participant_sid text NOT NULL,
+    joined boolean NOT NULL,
+    world boolean NOT NULL,
+    realm text NOT NULL,
+    scene_id text,
+    occurred_at timestamp without time zone NOT NULL,
+    ready_at timestamp without time zone NOT NULL,
+    processed_at timestamp without time zone,
+    stay_resolved boolean NOT NULL DEFAULT false,
+    stay_event_id text,
+    stay_start timestamp without time zone,
+    stay_finish timestamp without time zone,
+    CHECK ((stay_event_id IS NULL AND stay_start IS NULL AND stay_finish IS NULL)
+           OR (stay_resolved AND stay_event_id IS NOT NULL AND stay_start IS NOT NULL
+               AND stay_finish IS NOT NULL AND stay_finish > stay_start AND occurred_at BETWEEN stay_start AND stay_finish))
+);
+CREATE INDEX goal_room_events_pending_idx
+    ON credits.goal_room_events (ready_at, occurred_at, event_id) WHERE processed_at IS NULL;
+CREATE INDEX goal_room_events_session_idx
+    ON credits.goal_room_events (address, room, participant_sid, joined, occurred_at);
+CREATE INDEX goal_room_events_expiry_idx ON credits.goal_room_events (occurred_at);
+
+-- A signed room join starts an observation. Only a matching leave or a
+-- complete room roster proving the same session can confirm elapsed time.
+CREATE TABLE credits.goal_event_visits (
+    address text NOT NULL REFERENCES credits.wallets(address),
+    room text NOT NULL,
+    participant_sid text NOT NULL,
+    season_id integer NOT NULL REFERENCES credits.seasons(id),
+    week_id integer NOT NULL CHECK (week_id > 0),
+    event_id text NOT NULL,
+    joined_at timestamp without time zone NOT NULL,
+    occurrence_start timestamp without time zone NOT NULL,
+    occurrence_finish timestamp without time zone NOT NULL,
+    confirmed_until timestamp without time zone NOT NULL,
+    due_at timestamp without time zone NOT NULL,
+    check_at timestamp without time zone,
+    PRIMARY KEY (address, room, participant_sid),
+    CHECK (occurrence_start <= joined_at),
+    CHECK (confirmed_until BETWEEN joined_at AND occurrence_finish),
+    CHECK (due_at > joined_at AND due_at <= occurrence_finish)
+);
+CREATE INDEX goal_event_visits_wallet_idx
+    ON credits.goal_event_visits (address, season_id, week_id, event_id);
+CREATE INDEX goal_event_visits_due_idx ON credits.goal_event_visits (check_at)
+    WHERE check_at IS NOT NULL;
+
 CREATE TABLE credits.photo_goal_receipts (
     photo_id uuid PRIMARY KEY,
     event_id bigint NOT NULL UNIQUE,
