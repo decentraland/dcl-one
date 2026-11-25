@@ -561,28 +561,32 @@ class DevTest(unittest.TestCase):
         self.assertEqual((Path(binary).name, argv[1:]), ('catalyst', ['pulse']))
         self.assertEqual(env, dev.pulse_env(self.config, certificate, key))
 
-    def test_api_process_readiness_can_start_pulse_before_aggregate_health_passes(self):
+    def test_api_can_accept_traffic_before_pulse_is_ready_for_local_players(self):
         processes = dev.project(self.config)['processes']
-        pulse_ready = False
+        attempts = 0
         observed = []
         api_url = f"http://127.0.0.1:{self.config['port']}"
 
         def response(url, timeout):
             observed.append(url)
-            if url == api_url + '/health' and not pulse_ready:
-                raise dev.urllib.error.HTTPError(url, 503, 'Pulse not ready', {}, None)
+            if url == api_url + '/health':
+                details = {'comms': {'status': 'pass' if attempts >= 1 else 'fail', 'required': False},
+                           'postgres': {'status': 'fail' if attempts == 1 else 'pass', 'required': False}}
+                body = io.BytesIO(json.dumps({'status': 'pass', 'details': details}).encode())
+                body.status = 200
+                return body
             return contextlib.nullcontext(type('Response', (), {'status': 200})())
 
-        def start_pulse(_delay):
-            nonlocal pulse_ready
+        def next_attempt(_delay):
+            nonlocal attempts
             mirrors.assert_not_called()
-            pulse_ready = True
+            attempts += 1
 
         listing = subprocess.CompletedProcess([], 0, stdout='[]')
         with patch.object(dev.urllib.request, 'urlopen', side_effect=response), \
                 patch.object(dev, 'pc', return_value=listing), \
-                patch.object(dev, 'backoff_delays', return_value=iter([0])), \
-                patch.object(dev.time, 'sleep', side_effect=start_pulse), \
+                patch.object(dev, 'backoff_delays', return_value=iter([0, 0])), \
+                patch.object(dev.time, 'sleep', side_effect=next_attempt), \
                 patch.object(dev, 'wait_first_mirror_pass', return_value=0) as mirrors:
             probe = processes['api']['readiness_probe']['http_get']
             # The real /status route answers 200 after schema/state/listener setup,
@@ -591,8 +595,8 @@ class DevTest(unittest.TestCase):
                 self.assertEqual(ready.status, 200)
             self.assertEqual(processes['pulse']['depends_on']['api'], {'condition': 'process_healthy'})
             self.assertEqual(dev.wait_ready(10), 0)
-        self.assertTrue(pulse_ready)
-        self.assertEqual(observed.count(api_url + '/health'), 2)
+        self.assertEqual(attempts, 2)
+        self.assertEqual(observed.count(api_url + '/health'), 3)
         mirrors.assert_called_once()
 
     def test_local_mirror_can_start_while_its_map_indexes_catch_up(self):
@@ -1408,6 +1412,9 @@ class DevTest(unittest.TestCase):
             # The last heartbeat can still be fresh while Pulse waits for its restart.
             if url == api_url + '/health':
                 health_checks.append(url)
+                body = io.BytesIO(b'{"status":"pass","details":{"comms":{"status":"pass"},"postgres":{"status":"pass"}}}')
+                body.status = 200
+                return body
             return contextlib.nullcontext(type('Response', (), {'status': 200})())
 
         listings = iter([subprocess.CompletedProcess([], 0, restarting), subprocess.CompletedProcess([], 0, running)])

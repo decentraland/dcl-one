@@ -2,16 +2,30 @@
 
 ## Decision
 
-Use `GET /health` on each `catalyst serve` replica to decide whether to send it traffic. The response contains a top-level `status` and a `details` object keyed by check name. HTTP 200 means every registered check passed. HTTP 503 means at least one failed. The failed entries identify which service or dependency needs attention.
+Use `GET /health` on each `catalyst serve` replica to decide whether to send it traffic. HTTP 200 and a top-level `status` of `pass` mean all required checks passed. A required check that fails or times out produces HTTP 503 and `fail`. Each entry in `details` reports its own `status` and a boolean `required`. A 200 response can contain failed diagnostics.
 
-Each service owns the predicate for its readiness. Serve registers the checks that apply to its role and configuration, evaluates them in process, and combines their results. Services that use the shared PostgreSQL pool share one database check. A service whose only requirement is a listening HTTP server shares the server check.
+Each service owns its readiness predicate. Serve runs the applicable checks concurrently in process, with a two-second deadline per check. Concurrent probes share one evaluation and reuse the result for one second. Responses carry `Cache-Control: no-store`.
 
-The server checks listener startup and drain state. PostgreSQL must answer a query through the request pool. Social RPC reports whether its initial fanout subscription is ready to admit connections. A syncing node or follower uses the content readiness reported by `/about`. A node explicitly serving unsynced content omits that check. A configured comms integration uses the local heartbeat observation. A node configured to build a mainnet map waits for its first loaded grid.
+| Required check | When the replica can accept traffic |
+| --- | --- |
+| `server` | Its listener has started and is accepting requests. |
+| `social-rpc` | Its initial fanout subscription is ready to admit connections, or fanout is disabled. |
+| `map` | Its first grid is loaded. This check applies to replicas configured with the sources for a mainnet map. |
 
-Checks run concurrently with a two-second deadline. Concurrent requests share the result for one second, including failures. The HTTP response carries `Cache-Control: no-store`.
+## Shared dependencies
+
+Moving a request to another replica helps when the failure is local. The following signals are visible to operators and excluded from the HTTP routing decision.
+
+| Diagnostic | Meaning of a failed check |
+| --- | --- |
+| `content` | Sync reports bootstrap or failure. Followers mirror the leader's published state and can all report bootstrap during lease takeover. The same routing policy applies on both sides of the handoff. Nodes explicitly serving unsynced content omit this check. |
+| `comms` | The configured Pulse heartbeat appears unhealthy. A Pulse outage or clock skew can affect this observation across replicas. |
+| `postgres` | A query through the request pool failed or exceeded the deadline. This can indicate local pool saturation or a shared database outage. Withdrawing a busy replica would move its load onto peers. |
+
+Alert on these diagnostics separately. During a database outage, database-backed requests can fail while the API stays in rotation and other routes continue serving.
 
 ## Deployment
 
-Point load balancer readiness probes at `/health` on each backend. Through the apex gateway the same path samples the replica that handled the request. Probe `/_gateway/healthz` for nginx liveness. Per-service ping, status and health routes retain their published responses for existing clients.
+Configure load balancers to probe `/health` directly on each backend and withdraw individual replicas on 503. Set the HTTP probe timeout above the two-second check deadline (for example, five seconds) so the API can return a result even when a diagnostic times out. The apex gateway samples one backend per request. If every target fails a required check, the load balancer's all-targets-unhealthy policy determines whether to fail open or return an unavailable response. Choose and verify that policy at deployment. Use a process or listener liveness probe for restart decisions. Nginx has its own `/_gateway/healthz`. Existing service probes retain their published response formats.
 
-The development supervisor uses `/status` to start Pulse once the API is listening. After Pulse starts, offline and testnet stacks check `/health`, which can then observe its heartbeat. The local mirror profile checks realm availability through `/about` during startup so a fresh installation can launch while its historical map indexes catch up. Its `/health` reports full readiness once those inputs are available. Sites and separately deployed worker processes have their own lifecycle checks.
+The development supervisor starts Pulse once `/status` confirms the API is listening. Offline and testnet stacks then require both HTTP 200 and passing PostgreSQL and comms diagnostics from `/health` before reporting the stack ready for players. The local mirror uses `/about` during startup so it can launch while its historical map indexes catch up. Sites and separately deployed workers have their own lifecycle checks.

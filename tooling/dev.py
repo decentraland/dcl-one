@@ -1527,7 +1527,8 @@ def wait_ready(timeout, postgres_only=False):
     # A fresh local mirror can serve traffic while its historical map indexes
     # catch up. Its launch gate checks realm availability during that warmup.
     api_probe = '/about' if config['profile'] == 'mirror' else '/health'
-    urls = [f"http://127.0.0.1:{config['port']}{api_probe}", f"http://127.0.0.1:{config['port'] + 2}/"]
+    api_url = f"http://127.0.0.1:{config['port']}{api_probe}"
+    sites_url = f"http://127.0.0.1:{config['port'] + 2}/"
     started = reported = time.monotonic()
     deadline = started + timeout
     log_positions = {name: log_position(STATE / f'{name}.log') for name in ('web-install', 'api-build')}
@@ -1561,13 +1562,18 @@ def wait_ready(timeout, postgres_only=False):
             restarting = [process['name'] for process in listing if process.get('status') == 'Restarting']
             if restarting:
                 raise RuntimeError('A process is restarting')
-            for url in urls:
+            for url in (api_url, sites_url):
                 with urllib.request.urlopen(url, timeout=3) as response:
                     if response.status != 200:
                         raise RuntimeError('Service not ready')
+                    if url == api_url and api_probe == '/health':
+                        # A usable local stack needs the database and Pulse as well as an API replica.
+                        checks = json.load(response)['details']
+                        if any(checks[name]['status'] != 'pass' for name in ('postgres', 'comms')):
+                            raise RuntimeError('Waiting for the database and Pulse')
             print('API and Sites are ready.')
             return wait_first_mirror_pass(config, deadline)
-        except (urllib.error.URLError, TimeoutError, OSError, RuntimeError, subprocess.CalledProcessError):
+        except (urllib.error.URLError, TimeoutError, OSError, RuntimeError, ValueError, KeyError, subprocess.CalledProcessError):
             delay = next(delays, None)
             if delay is None:
                 break
