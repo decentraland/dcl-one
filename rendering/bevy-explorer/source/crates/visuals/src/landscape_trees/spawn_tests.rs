@@ -591,17 +591,20 @@ fn landscape_trees_schedule_is_acyclic() {
     use bevy::ecs::schedule::ScheduleLabel;
     use scene_runner::{
         initialize_scene::process_scene_lifecycle,
-        update_world::transform_and_parent::configure_post_update_sets,
+        update_world::{transform_and_parent::TransformAndParentPlugin, CrdtExtractors},
+        SceneLoopSchedule,
     };
 
     let mut app = App::new();
     app.add_plugins((MinimalPlugins, AssetPlugin::default()))
         .init_asset::<Shader>()
         .init_asset::<Mesh>()
-        .init_asset::<Image>();
+        .init_asset::<Image>()
+        .init_resource::<CrdtExtractors>()
+        .insert_resource(SceneLoopSchedule::empty());
     // the explorer's own order of the transform, collider and camera sets, before the realm's
     // scene lifecycle
-    configure_post_update_sets(&mut app);
+    TransformAndParentPlugin.build(&mut app);
     app.add_systems(PostUpdate, process_scene_lifecycle.in_set(RealmLifecycle));
     crate::terrain::TerrainPlugin.build(&mut app);
     super::LandscapeTreesPlugin.build(&mut app);
@@ -795,21 +798,16 @@ fn every_surface_is_used() {
 #[ignore = "needs a GPU; run with --ignored"]
 fn landscape_tree_shader_compiles() {
     use bevy::{
-        asset::RenderAssetUsages,
         core_pipeline::prepass::{DepthPrepass, NormalPrepass},
-        log::LogPlugin,
         render::{
             camera::RenderTarget,
-            pipelined_rendering::PipelinedRenderingPlugin,
             render_resource::{
-                CachedPipelineState, Extent3d, PipelineCache, PipelineDescriptor, ShaderDefVal,
-                TextureDimension, TextureFormat, TextureUsages,
+                CachedPipelineState, PipelineCache, PipelineDescriptor, ShaderDefVal,
             },
             RenderApp,
         },
-        window::ExitCondition,
-        winit::WinitPlugin,
     };
+    use pipeline_test::{compile_pipelines, headless_app, render_target};
 
     use super::{
         embed_shaders,
@@ -817,22 +815,8 @@ fn landscape_tree_shader_compiles() {
         TreeMaterial,
     };
 
-    let mut app = App::new();
-    app.add_plugins(
-        DefaultPlugins
-            .build()
-            .disable::<LogPlugin>()
-            .disable::<WinitPlugin>()
-            // keeps the render app in this app, so the pipeline cache is readable
-            .disable::<PipelinedRenderingPlugin>()
-            .set(WindowPlugin {
-                primary_window: None,
-                exit_condition: ExitCondition::DontExit,
-                close_when_requested: false,
-            }),
-    );
+    let mut app = headless_app();
     app.add_plugins((
-        assets::EmbedAssetsPlugin,
         MaterialPlugin::<TreeMaterial>::default(),
         MaterialPlugin::<StoneMaterial>::default(),
     ));
@@ -841,6 +825,7 @@ fn landscape_tree_shader_compiles() {
     app.cleanup();
 
     let server = app.world().resource::<AssetServer>().clone();
+    let target = render_target(&mut app);
     let mut textures = Vec::new();
     let world = app.world_mut();
     let mut materials = Vec::new();
@@ -853,20 +838,6 @@ fn landscape_tree_shader_compiles() {
     let (material, loading) = stone_material(rock, rock.stone.as_ref().unwrap(), &server);
     textures.extend(loading);
     let stone = world.resource_mut::<Assets<StoneMaterial>>().add(material);
-    let mut images = world.resource_mut::<Assets<Image>>();
-    let mut target = Image::new_fill(
-        Extent3d {
-            width: 64,
-            height: 64,
-            depth_or_array_layers: 1,
-        },
-        TextureDimension::D2,
-        &[0, 0, 0, 0],
-        TextureFormat::Bgra8UnormSrgb,
-        RenderAssetUsages::all(),
-    );
-    target.texture_descriptor.usage |= TextureUsages::RENDER_ATTACHMENT;
-    let target = images.add(target);
     let cube = world.resource_mut::<Assets<Mesh>>().add(
         Mesh::from(Cuboid::new(0.5, 1.0, 0.5))
             .with_generated_tangents()
@@ -915,11 +886,7 @@ fn landscape_tree_shader_compiles() {
         app.update();
         std::thread::sleep(Duration::from_millis(1));
     }
-    // a few frames queue every pipeline; then they compile in the background
-    for _ in 0..10 {
-        app.update();
-    }
-    let started = Instant::now();
+    let ok = compile_pipelines(&mut app);
     // whether a pipeline's fragment shader is the stones' variant
     let is_stone = |descriptor: &PipelineDescriptor| {
         let PipelineDescriptor::RenderPipelineDescriptor(descriptor) = descriptor else {
@@ -931,42 +898,15 @@ fn landscape_tree_shader_compiles() {
             )
         })
     };
-    let mut ok;
-    let mut stone_ok;
-    let mut errors = Vec::new();
-    loop {
-        app.update();
-        let cache = app.sub_app(RenderApp).world().resource::<PipelineCache>();
-        ok = 0;
-        stone_ok = 0;
-        errors.clear();
-        let mut pending = 0;
-        for pipeline in cache.pipelines() {
-            match &pipeline.state {
-                CachedPipelineState::Ok(_) => {
-                    ok += 1;
-                    if is_stone(&pipeline.descriptor) {
-                        stone_ok += 1;
-                    }
-                }
-                CachedPipelineState::Err(error) => errors.push(error.to_string()),
-                _ => pending += 1,
-            }
-        }
-        if pending == 0 {
-            break;
-        }
-        assert!(
-            started.elapsed() < Duration::from_secs(60),
-            "{pending} pipelines still compiling"
-        );
-    }
-    println!("{ok} pipelines compiled");
-    assert!(
-        errors.is_empty(),
-        "pipeline errors:\n{}",
-        errors.join("\n\n")
-    );
+    let stone_ok = app
+        .sub_app(RenderApp)
+        .world()
+        .resource::<PipelineCache>()
+        .pipelines()
+        .filter(|pipeline| {
+            matches!(pipeline.state, CachedPipelineState::Ok(_)) && is_stone(&pipeline.descriptor)
+        })
+        .count();
     // the three surfaces' main, depth and normal prepass, and shadow passes
     assert!(ok >= 9, "only {ok} pipelines compiled");
     assert!(stone_ok >= 1, "no stone pipeline compiled");
