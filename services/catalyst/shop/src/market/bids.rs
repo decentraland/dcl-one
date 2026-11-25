@@ -218,6 +218,7 @@ const TRADES_BIDS_SQL: &str = "SELECT t.id::text AS id, t.contract AS trade_cont
  LEFT JOIN shop.trade_assets_item recv_item ON recv_item.asset_id = recv.id \
  LEFT JOIN shop.items i ON i.contract_address = recv.contract_address AND i.network = lower(t.network) \
       AND i.item_id = COALESCE(ITEM_NUM, div(TOKEN_NUM, SHIFT::numeric)) \
+      AND i.chain_id = t.chain_id AND (t.chain_id IN (1, 137) OR i.testnet_verified) \
  LEFT JOIN shop.nft n ON recv_erc721.token_id IS NOT NULL AND n.network = lower(t.network) AND n.contract_address = recv.contract_address \
       AND n.token_id = TOKEN_NUM \
  LEFT JOIN land_authz.token_right tr ON recv_erc721.token_id IS NOT NULL AND tr.token_address = recv.contract_address AND tr.token_id = TOKEN_NUM \
@@ -420,7 +421,8 @@ async fn legacy_leg(
 }
 
 /// The subgraph reader's legacy bids of `networks` unexpired at `now_ms`
-/// over the merged window and their capped total.
+/// over the merged window and their capped total (a node that does not walk
+/// the indexes).
 async fn graph_leg(
     state: &MarketplaceState,
     f: &BidFilters,
@@ -588,11 +590,32 @@ pub(super) async fn bids_snapshot(
         let sales = chain_walk::cursor(&mut *tx, INDEXER_SALES, net)
             .await
             .map_err(db)?;
-        if !sales.is_some_and(|c| sales_published(&c, chain, now)) {
+        let Some(published) = sales
+            .filter(|c| sales_published(c, chain, now))
+            .and_then(|c| c.folded_block)
+        else {
             return Err(unavailable(
                 Source::SalesIndex,
                 &format!(
                     "the {} sales index is not published (catching up, rewound after a reorg, stopped, or MARKETPLACE_SALES_INDEX_ENABLED off)",
+                    net.db_name()
+                ),
+            ));
+        };
+        // The book's rows are the fold its marker names, written with them;
+        // the walk publishes that fold only after its head reads, which can
+        // stall.
+        let book: Option<i64> =
+            sqlx::query_scalar("SELECT folded_through FROM shop.nft_bid_cursor WHERE network = $1")
+                .bind(net.db_name())
+                .fetch_optional(&mut *tx)
+                .await
+                .map_err(db)?;
+        if book != Some(published) {
+            return Err(unavailable(
+                Source::SalesIndex,
+                &format!(
+                    "the {} bid book holds a fold the sales index has not published yet",
                     net.db_name()
                 ),
             ));
@@ -1067,17 +1090,13 @@ pub async fn list_bids(
         (rows, total, trades)
     } else {
         readers::require_networks(state, f.network.map(|n| n.graph()))?;
-        super::trades::require_ready(state).await?;
-        let now = Utc::now();
+        // The trades readiness and rows on one short snapshot, released
+        // before the subgraph is awaited, whose filter takes its instant.
+        let (mut tx, _, now) = bids_snapshot(state, &[]).await?;
+        let trades = trades_rows(&mut tx, state, f, now).await;
+        tx.rollback().await.ok();
+        let trades = trades.map_err(read_error)?;
         let (rows, total) = legacy_leg(state, f, window, now.timestamp_millis()).await?;
-        let mut conn = state
-            .pool
-            .acquire()
-            .await
-            .map_err(|e| ApiError::from(e).into_response())?;
-        let trades = trades_rows(&mut conn, state, f, now)
-            .await
-            .map_err(|e| ApiError::from(e).into_response())?;
         (rows, total, trades)
     };
     let total = legacy_total + trades.len() as i64;

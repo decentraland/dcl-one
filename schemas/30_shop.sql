@@ -17242,6 +17242,18 @@ CREATE INDEX nft_bid_seller_unknown_idx ON shop.nft_bid (network) WHERE seller I
 -- The fold's "open bids a later acceptance invalidated".
 CREATE INDEX nft_bid_open_idx ON shop.nft_bid (network) WHERE status = 'open';
 
+-- The block each network's bids fold last folded through, written in the
+-- fold's transaction with its rows. The sales walk publishes that fold only
+-- afterwards (`shop.chain_cursor.folded_block`, once it has read the head),
+-- so a reader serves `shop.nft_bid` only while this is the published block:
+-- between the two the rows hold an unpublished fold. One row per network; a
+-- database that gains the table reads the book once the next fold writes it.
+CREATE TABLE shop.nft_bid_cursor (
+    network text PRIMARY KEY,
+    folded_through bigint NOT NULL,
+    CONSTRAINT nft_bid_cursor_network_known CHECK (network IN ('ethereum', 'matic'))
+);
+
 -- The nft walk's rewinds, for the bids fold: a seller inferred from the nft
 -- walk's transfers may name an owner the rewind took away, so the next fold
 -- infers again the seller of every bid created past `from_block` (a seller

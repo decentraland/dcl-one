@@ -31,6 +31,10 @@ It checks:
   (`MARKETPLACE_INDEX_CHAIN_ID_MATIC`), out of quarantine. As for the nft
   index's readers, `folded_block` is not compared with `last_block`, which
   every pass advances before it folds;
+- the bid book holds that published fold, by a marker the fold writes with
+  its rows: the walk publishes a fold only after it commits and reads the
+  head, and a read in between answers the envelope rather than rows past the
+  published block;
 - the nft index is fresh on Polygon, on that same chain;
 - every bid in the request's scope (its filters but the seller's) has a
   seller.

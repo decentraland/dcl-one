@@ -5323,6 +5323,17 @@ async fn polygon_bids_come_from_the_bid_book_and_never_without_their_seller() {
             .execute(&pool)
             .await
             .unwrap();
+            if indexer == "sales" {
+                // The bid book's rows are that published fold's.
+                sqlx::query(
+                    "INSERT INTO shop.nft_bid_cursor (network, folded_through) VALUES ('matic', $1) \
+                     ON CONFLICT (network) DO UPDATE SET folded_through = $1",
+                )
+                .bind(last)
+                .execute(&pool)
+                .await
+                .unwrap();
+            }
         }
     };
     let app = || market_router(state.clone());
@@ -5480,6 +5491,30 @@ async fn polygon_bids_come_from_the_bid_book_and_never_without_their_seller() {
         (StatusCode::OK, Some(6)),
         "{body}"
     );
+    // The book is read only at the sales walk's published fold. A walk that
+    // advanced without folding leaves it at the published 200, still read; a
+    // fold committed through 210 whose publication stalls (the walk reads
+    // the head first) is not read until it is published.
+    let sold = "/v1/bids?network=MATIC&status=sold";
+    sqlx::query("UPDATE shop.chain_cursor SET last_block = 210 WHERE indexer = 'sales' AND network = 'matic'")
+        .execute(&pool)
+        .await
+        .unwrap();
+    let (status, body) = get(app(), sold).await;
+    assert_eq!(status, StatusCode::OK, "the walk advanced unfolded: {body}");
+    sqlx::query("UPDATE shop.nft_bid_cursor SET folded_through = 210 WHERE network = 'matic'")
+        .execute(&pool)
+        .await
+        .unwrap();
+    let (status, body) = get(app(), sold).await;
+    assert_eq!(
+        (status, body["source"].as_str()),
+        (StatusCode::SERVICE_UNAVAILABLE, Some("sales-index")),
+        "a fold through 210 committed while 200 is published: {body}"
+    );
+    set_cursor("sales", 210).await;
+    let (status, body) = get(app(), sold).await;
+    assert_eq!(status, StatusCode::OK, "published at 210: {body}");
     // A contract added to the walk late, its backfill done through block 40
     // of the 99 below its walk: the log holds a transfer at 35 but not yet
     // the one at 60, so the owner before a bid at 70 is not known.
@@ -5595,6 +5630,10 @@ async fn amoy_bids_come_from_the_bid_book_of_the_served_catalogue() {
         .await
         .unwrap();
     }
+    sqlx::query("INSERT INTO shop.nft_bid_cursor (network, folded_through) VALUES ('matic', 200)")
+        .execute(&pool)
+        .await
+        .unwrap();
     let t = tag();
     let (verified, unverified) = (contract_of(&t, 1), contract_of(&t, 2));
     for (contract, checked, bid) in [(&verified, true, 10i64), (&unverified, false, 11)] {
@@ -5647,6 +5686,142 @@ async fn amoy_bids_come_from_the_bid_book_of_the_served_catalogue() {
         "no Polygon bid read asks the subgraph: {:?}",
         up.requests.lock().unwrap()
     );
+    // Sepolia's legacy bids come from the book too, on Sepolia's chain and
+    // bid contract, beside Amoy's, with no subgraph read.
+    let sepolia = super::nft_index::deployments::Deployments::for_chain(
+        ChainNet::Ethereum,
+        ChainNet::Ethereum.testnet_chain_id(),
+    )
+    .and_then(|d| d.land)
+    .unwrap();
+    let v1 = contract_of(&t, 3);
+    sqlx::raw_sql(sqlx::AssertSqlSafe(format!(
+        "INSERT INTO land_authz.index_cursor(network,land_registry,estate_registry,last_block,folded_block,folded_at,full_replay_started)
+         VALUES ('ethereum-sepolia','{land}','{estate}',100,100,timezone('UTC',now()),true);
+         INSERT INTO shop.chain_cursor (indexer, network, start_block, last_block, last_block_hash, fold_through, folded_block, folded_at, full_history, chain_id)
+         VALUES ('sales', 'ethereum', 1, 200, '0x' || repeat('0', 64), 200, 200, timezone('UTC', now()), true, 11155111),
+                ('nft', 'ethereum', 1, 200, '0x' || repeat('0', 64), 200, 200, timezone('UTC', now()), true, 11155111);
+         INSERT INTO shop.nft_bid_cursor (network, folded_through) VALUES ('ethereum', 200);
+         INSERT INTO shop.collections (network, contract_address, chain_id, name, creator, owner, urn, is_completed, is_approved, is_editable, created_at, updated_at, reviewed_at, mirrored_at, testnet_verified)
+         VALUES ('ethereum', '{v1}', 11155111, 'Halloween', '{CREATOR}', '{CREATOR}', 'urn:decentraland:sepolia:collections-v1:halloween', true, true, false, 1, 1, 1, timezone('UTC', now()), true);
+         INSERT INTO shop.nft_bid (network, contract_address, token_id, bidder, bid_id, seller, price, expires_at, status,
+             created_block, created_log_index, created_at, updated_block, updated_log_index, updated_at)
+         VALUES ('ethereum', '{v1}', 1, '{WALLET_B}', '0x' || lpad(to_hex(12), 64, '0'), '{WALLET_A}', 100, {expires}, 'open', 10, 0, 10, 10, 0, 10)",
+        land = sepolia.land_registry.to_lowercase(),
+        estate = sepolia.estate_registry.to_lowercase(),
+        expires = chrono::Utc::now().timestamp() + 86_400,
+    )))
+    .execute(&pool)
+    .await
+    .unwrap();
+    let (status, body) = get(app(), "/v1/bids").await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let mut chains: Vec<(String, Option<i64>, Option<String>)> = body["data"]["results"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|b| {
+            (
+                b["network"].as_str().unwrap().to_string(),
+                b["chainId"].as_i64(),
+                b["bidAddress"].as_str().map(str::to_string),
+            )
+        })
+        .collect();
+    chains.sort();
+    assert_eq!(
+        chains,
+        vec![
+            (
+                "ETHEREUM".to_string(),
+                Some(11_155_111),
+                Some("0x2c2835b95852fd975e087b3b25297322728792e2".to_string())
+            ),
+            (
+                "MATIC".to_string(),
+                Some(80_002),
+                super::sales_index::SalesIndex::for_chain(80_002)
+                    .map(|i| i.bid_contract().to_string())
+            ),
+        ],
+        "{body}"
+    );
+    assert!(
+        !up.requests.lock().unwrap().iter().any(|e| e == "bids"),
+        "no bid read asks the subgraph: {:?}",
+        up.requests.lock().unwrap()
+    );
+    own.drop().await;
+}
+
+/// A mirror bid on an item takes its seller (the item's creator) only from
+/// an item of the trade's chain, verified there on a testnet: an item row of
+/// another chain under the same network, contract and id names no seller.
+/// On a node that does not walk the indexes the readiness and the rows are
+/// one short snapshot read beside the subgraph.
+#[tokio::test]
+async fn an_item_bid_takes_its_creator_from_an_item_of_its_chain() {
+    let Some(own) = super::tests::support::OwnDb::create("item_bid_creator").await else {
+        return;
+    };
+    let url = serve_empty_graph().await;
+    let state = Arc::new(super::MarketplaceState::new(
+        own.pool.clone(),
+        crate::http::Outbound::for_tests(),
+        market_settings(&url, &url, true),
+    ));
+    state.test_allow_loopback.store(true, Ordering::Relaxed);
+    assert!(!super::owned_items::walks_here(&state));
+    let pool = own.pool.clone();
+    super::trade_events::tests::publish_cursors(&pool).await;
+    let c = contract_of(&tag(), 1);
+    insert_trade(
+        &pool,
+        "bid",
+        WALLET_B,
+        Asset {
+            asset_type: 1,
+            contract: "0x2222222222222222222222222222222222222222".into(),
+            value: "9000000000000000000".into(),
+        },
+        Asset {
+            asset_type: 4,
+            contract: c.clone(),
+            value: "3".into(),
+        },
+    )
+    .await;
+    let mut sellers = Vec::new();
+    for chain in [80_002, 137] {
+        sqlx::query(
+            "INSERT INTO shop.items (network, contract_address, item_id, chain_id, item_type, urn, creator, rarity, total_supply, max_supply, available, \
+                 price, name, category, created_at, updated_at, reviewed_at, mirrored_at) \
+             VALUES ('matic', $1, 3, $2, 'wearable_v2', 'urn:decentraland:matic:collections-v2:' || $1 || ':3', $3, 'common', 1, 1, 0, 0, 'Hat', 'hat', 1, 1, 1, timezone('UTC', now())) \
+             ON CONFLICT (network, contract_address, item_id) DO UPDATE SET chain_id = EXCLUDED.chain_id",
+        )
+        .bind(&c)
+        .bind(chain)
+        .bind(CREATOR)
+        .execute(&pool)
+        .await
+        .unwrap();
+        let (status, body) = get(
+            market_router(state.clone()),
+            &format!("/v1/bids?bidder={WALLET_B}"),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        sellers.push(
+            body["data"]["results"][0]["seller"]
+                .as_str()
+                .map(str::to_string),
+        );
+    }
+    assert_eq!(
+        sellers,
+        vec![Some(String::new()), Some(CREATOR.to_string())],
+        "an Amoy item row names no seller for a chain-137 bid; the chain-137 row does"
+    );
     own.drop().await;
 }
 
@@ -5677,6 +5852,7 @@ async fn ethereum_bids_come_from_the_bid_book_with_land_sellers_from_the_land_in
          INSERT INTO shop.chain_cursor (indexer, network, start_block, last_block, last_block_hash, fold_through, folded_block, folded_at, full_history, chain_id)
          VALUES ('sales', 'ethereum', 1, 200, '0x' || repeat('0', 64), 200, 200, timezone('UTC', now()), true, 1),
                 ('nft', 'ethereum', 1, 200, '0x' || repeat('0', 64), 200, 200, timezone('UTC', now()), true, 1);
+         INSERT INTO shop.nft_bid_cursor (network, folded_through) VALUES ('ethereum', 200);
          INSERT INTO shop.collections (network, contract_address, chain_id, name, creator, owner, urn, is_completed, is_approved, is_editable, created_at, updated_at, reviewed_at, mirrored_at)
          VALUES ('ethereum', '{wearables}', 1, 'Halloween', '{CREATOR}', '{CREATOR}', 'urn:decentraland:ethereum:collections-v1:halloween', true, true, false, 1, 1, 1, timezone('UTC', now()));
          INSERT INTO land_authz.authz_event (block_number, log_index, block_time, token_address, kind, token_id, account)
