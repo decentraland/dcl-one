@@ -4513,14 +4513,18 @@ Statuses are the subgraph's: an acceptance reads `sold`, and a bid the
 contract dropped when another bid on its token was accepted reads
 `cancelled`.
 
-Measured on 60,000 synthetic bids over 2,000 contracts with 2M transfers
-(PostgreSQL 17, warm cache), no index added:
+Measured on 60,000 synthetic bids over 2,000 catalogued contracts, plus
+3,000 bids on 200 contracts outside the catalogue, with 2M transfers and
+6,000 bids without a stored seller (PostgreSQL 17, warm cache), no index
+added. The catalogue check is a join in a page and a total, and one primary
+key probe per bid in the unresolved-seller check, where a join misjudged the
+few bids it reads and compared each with the whole catalogue (180 ms):
 
 | Read (first = 100) | Time |
 |---|---|
-| the unresolved-seller check (`nft_bid_seller_unknown_idx`) | 0.5 ms; 40 ms with a pending recheck reaching half the bids |
-| no filter, newest first / its capped total | 22 ms / 0.6 ms |
-| one bidder (the activity leg) | 4.3 ms |
-| one seller (the activity leg), page and total | 5.4 ms and 5.3 ms |
-| one token | 0.3 ms |
-| open, most expensive | 9.9 ms |
+| the unresolved-seller check (`nft_bid_seller_unknown_idx`) | 22 to 27 ms |
+| no filter, newest first / its capped total | 20 ms / 2 ms |
+| one bidder (the activity leg) | 5.6 ms |
+| one seller (the activity leg), page and total | 48 ms and 46 ms |
+| one token | 0.5 ms |
+| open, most expensive | 17 ms |

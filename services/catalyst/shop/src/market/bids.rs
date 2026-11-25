@@ -610,34 +610,32 @@ fn stored_statuses(status: &str) -> &'static [&'static str] {
 /// there (`NftIndex::load`'s address set). The bid contract takes any
 /// ERC721, and the collections subgraph kept no bid on an asset it had not
 /// catalogued; the nft walk never reads such a token's transfers.
-fn catalogued(chain: i64) -> String {
+///
+/// `probe` keeps it one primary-key lookup per bid (`OFFSET 0` stops the
+/// planner turning it into a join), for the unresolved-seller check: as a
+/// join the planner takes the few bids that check reads for one row and
+/// compares each with the whole catalogue. A page and a total join it.
+fn catalogued(chain: i64, probe: bool) -> String {
     format!(
         "EXISTS (SELECT 1 FROM shop.collections c WHERE c.network = 'matic' AND c.contract_address = b.contract_address \
-           AND c.chain_id = {chain}{})",
+           AND c.chain_id = {chain}{}{})",
         if chain == ChainNet::Matic.chain_id() {
             ""
         } else {
             " AND c.testnet_verified"
-        }
+        },
+        if probe { " OFFSET 0" } else { "" }
     )
 }
 
-/// The filters of `f` but its seller over `shop.nft_bid b` at `now_ms`, on
-/// the catalogue of `chain` ([`catalogued`]), from `$4` (`$1` is `now_ms`,
-/// `$2` and `$3` the [`SellerBounds`]); `None` when no bid can match (a
-/// token id that is not a decimal).
-fn polygon_scope(
-    f: &BidFilters,
-    now_ms: i64,
-    chain: i64,
-    binds: &mut Vec<String>,
-) -> Option<String> {
+/// The filters of `f` but its seller over `shop.nft_bid b` at `now_ms`, from
+/// `$4` (`$1` is `now_ms`, `$2` and `$3` the [`SellerBounds`]); `None` when
+/// no bid can match (a token id that is not a decimal). Each read adds the
+/// catalogue ([`catalogued`]).
+fn polygon_scope(f: &BidFilters, now_ms: i64, binds: &mut Vec<String>) -> Option<String> {
     binds.clear();
     binds.push(now_ms.to_string());
-    let mut sql = format!(
-        "b.network = 'matic' AND b.expires_at * 1000 > $1::bigint AND {}",
-        catalogued(chain)
-    );
+    let mut sql = String::from("b.network = 'matic' AND b.expires_at * 1000 > $1::bigint");
     let next = |binds: &mut Vec<String>, v: String| {
         binds.push(v);
         format!("${}", binds.len() + 2)
@@ -725,7 +723,7 @@ async fn polygon_rows(
     let bid_contract = super::sales_index::SalesIndex::for_chain(chain)
         .map_or(super::sales_index::BID_V2_MATIC, |i| i.bid_contract());
     let mut binds = Vec::new();
-    let Some(scope) = polygon_scope(f, now_ms, chain, &mut binds) else {
+    let Some(scope) = polygon_scope(f, now_ms, &mut binds) else {
         return Ok(Some((Vec::new(), 0)));
     };
     let bind_all = |sql: String, binds: &[String]| {
@@ -741,8 +739,9 @@ async fn polygon_rows(
     // Only a bid the fold left without a seller (`nft_bid_seller_unknown_idx`)
     // or whose stored seller a pending recheck sets aside can lack one now.
     let unknown = format!(
-        "SELECT EXISTS (SELECT 1 FROM shop.nft_bid b WHERE {scope} \
+        "SELECT EXISTS (SELECT 1 FROM shop.nft_bid b WHERE {scope} AND {} \
            AND (b.seller IS NULL OR NOT {STORED_SELLER_STANDS}) AND {} IS NULL) AS unknown",
+        catalogued(chain, true),
         seller_now()
     );
     let unknown: bool = bind_all(unknown, &binds)
@@ -763,8 +762,9 @@ async fn polygon_rows(
         "SELECT b.contract_address || '-' || b.token_id::text || '-' || b.bidder AS id, b.bidder, b.price, \
                 b.created_at, b.updated_at, b.status, {} AS seller, b.contract_address, b.expires_at, \
                 b.token_id::text AS token_id, b.bid_id, b.updated_block \
-         FROM shop.nft_bid b WHERE {scope}",
-        seller_now()
+         FROM shop.nft_bid b WHERE {scope} AND {}",
+        seller_now(),
+        catalogued(chain, false)
     );
     let rows = bind_all(
         format!(
@@ -1163,14 +1163,14 @@ mod tests {
     /// that chain.
     #[test]
     fn the_bid_scope_is_the_walked_catalogue_of_the_served_chain() {
-        let mainnet = catalogued(137);
+        let mainnet = catalogued(137, false);
         assert!(
             mainnet.contains("c.chain_id = 137") && !mainnet.contains("testnet_verified"),
             "{mainnet}"
         );
-        let amoy = catalogued(80_002);
+        let amoy = catalogued(80_002, true);
         assert!(
-            amoy.contains("c.chain_id = 80002 AND c.testnet_verified"),
+            amoy.contains("c.chain_id = 80002 AND c.testnet_verified OFFSET 0)"),
             "{amoy}"
         );
         assert_eq!(wire_chain(80_002, Network::Matic), ChainId::MaticAmoy);
