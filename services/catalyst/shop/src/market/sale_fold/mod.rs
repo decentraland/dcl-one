@@ -29,6 +29,7 @@ struct Input {
 struct Inputs {
     rows: Vec<Input>,
     late_collections: i64,
+    first_backfill: Option<i64>,
 }
 
 impl Inputs {
@@ -48,11 +49,16 @@ impl Inputs {
         if marker.input_version != sale_history::VERSION
             || marker.input_epochs != self.epochs()
             || marker.input_revisions.len() != self.rows.len()
-            || marker.late_collections != self.late_collections
+            || marker.late_collections > self.late_collections
         {
             return None;
         }
         let mut prefix = marker.block_number.min(self.common());
+        if marker.late_collections < self.late_collections {
+            // The earliest of all late collections is a conservative lower
+            // bound for every addition since this marker.
+            prefix = prefix.min(self.first_backfill?.checked_sub(1)?);
+        }
         for (row, previous) in self.rows.iter().zip(&marker.input_revisions) {
             if row.revision != *previous {
                 prefix = prefix.min(row.dirty_from?.checked_sub(1)?);
@@ -117,8 +123,8 @@ async fn inputs(
         return Ok(None);
     }
     let common = rows.iter().map(|r| r.folded_block).min().unwrap();
-    let (late_collections, owed): (i64, bool) = sqlx::query_as(
-        "SELECT count(*), coalesce(bool_or(refold_owed OR coalesce(backfilled_to_block,backfill_from_block-1) < walked_from_block-1),false)
+    let (late_collections, first_backfill, owed): (i64, Option<i64>, bool) = sqlx::query_as(
+        "SELECT count(*), min(backfill_from_block), coalesce(bool_or(refold_owed OR coalesce(backfilled_to_block,backfill_from_block-1) < walked_from_block-1),false)
          FROM shop.nft_contract WHERE network=$1 AND backfill_from_block IS NOT NULL")
         .bind(net.db_name()).fetch_one(&mut *c).await?;
     let undiscovered:bool=sqlx::query_scalar(
@@ -132,6 +138,7 @@ async fn inputs(
     Ok((!owed && !missing && !undiscovered).then_some(Inputs {
         rows,
         late_collections,
+        first_backfill,
     }))
 }
 
@@ -397,6 +404,7 @@ pub(super) async fn pass(pool: &PgPool, rpc: &Rpc<'_>, net: ChainNet) -> anyhow:
         start.epochs() == end.epochs()
             && start.revisions() == end.revisions()
             && start.late_collections == end.late_collections
+            && start.first_backfill == end.first_backfill
             && to <= end.common(),
         "sales history changed during fold"
     );

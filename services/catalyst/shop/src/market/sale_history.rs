@@ -26,65 +26,81 @@ pub fn validate_window(
     logs: &[crate::chain_index::rpc::RpcLog],
     times: &std::collections::HashMap<i64, i64>,
 ) -> anyhow::Result<()> {
-    for log in logs {
-        let Some(topic) = log.topics.first() else {
-            continue;
-        };
-        let block = chain_walk::log_position(log).0;
-        let required = match ix.indexer() {
-            INDEXER_NFT => {
-                topic.eq_ignore_ascii_case(nft_index::TOPIC_ORDER_SUCCESSFUL)
-                    && nft_index::legacy_marketplaces(ix.net())
-                        .iter()
-                        .any(|(address, _)| log.address.eq_ignore_ascii_case(address))
-            }
-            INDEXER_TRADE_EVENTS => [trade_events::TOPIC_TRADED, trade_events::TOPIC_TRADED_V3]
-                .iter()
-                .any(|t| topic.eq_ignore_ascii_case(t)),
-            INDEXER_SALES => [
-                sales_index::TOPIC_BID_ACCEPTED,
-                sales_index::TOPIC_BOUGHT,
-                ethereum_sales::TOPIC_NAME_BOUGHT,
-            ]
+    logs.iter().try_for_each(|log| validate_log(ix, log, times))
+}
+
+pub(super) fn validate_log(
+    ix: &dyn ChainIndex,
+    log: &crate::chain_index::rpc::RpcLog,
+    times: &std::collections::HashMap<i64, i64>,
+) -> anyhow::Result<()> {
+    let Some(topic) = log.topics.first() else {
+        return Ok(());
+    };
+    let block = chain_walk::log_position(log).0;
+    let required = match ix.indexer() {
+        INDEXER_NFT => {
+            topic.eq_ignore_ascii_case(nft_index::TOPIC_ORDER_SUCCESSFUL)
+                && nft_index::legacy_marketplaces(ix.net())
+                    .iter()
+                    .any(|(address, _)| log.address.eq_ignore_ascii_case(address))
+        }
+        INDEXER_TRADE_EVENTS => [trade_events::TOPIC_TRADED, trade_events::TOPIC_TRADED_V3]
             .iter()
             .any(|t| topic.eq_ignore_ascii_case(t)),
-            _ => false,
-        };
-        if !required {
-            continue;
+        INDEXER_SALES => [
+            sales_index::TOPIC_BID_ACCEPTED,
+            sales_index::TOPIC_BOUGHT,
+            ethereum_sales::TOPIC_NAME_BOUGHT,
+        ]
+        .iter()
+        .any(|t| topic.eq_ignore_ascii_case(t)),
+        _ => false,
+    };
+    if ix.indexer() == INDEXER_SALES {
+        super::sale_terms::decode(ix.net(), log)?;
+    }
+    if !required {
+        return Ok(());
+    }
+    let time = *times.get(&block).context("missing sale block time")?;
+    let hash = log
+        .transaction_hash
+        .as_deref()
+        .context("missing sale transaction")?;
+    ensure!(
+        hash.strip_prefix("0x")
+            .is_some_and(|h| h.len() == 64 && h.bytes().all(|c| c.is_ascii_hexdigit())),
+        "invalid sale transaction"
+    );
+    match ix.indexer() {
+        INDEXER_NFT => {
+            let row = nft_index::decode_log(log, time)?.context("missing sale order")?;
+            ensure!(
+                row.to_address.is_some() && row.from_address.is_some(),
+                "missing order parties"
+            );
         }
-        let time = *times.get(&block).context("missing sale block time")?;
-        let hash = log
-            .transaction_hash
-            .as_deref()
-            .context("missing sale transaction")?;
-        ensure!(
-            hash.strip_prefix("0x")
-                .is_some_and(|h| h.len() == 64 && h.bytes().all(|c| c.is_ascii_hexdigit())),
-            "invalid sale transaction"
-        );
-        match ix.indexer() {
-            INDEXER_NFT => {
-                let row = nft_index::decode_log(log, time)?.context("missing sale order")?;
-                ensure!(
-                    row.to_address.is_some() && row.from_address.is_some(),
-                    "missing order parties"
-                );
-            }
-            INDEXER_SALES if topic.eq_ignore_ascii_case(sales_index::TOPIC_BID_ACCEPTED) => {
-                sales_index::decode_log(log, time)?;
-            }
-            INDEXER_TRADE_EVENTS => {
-                ensure!(
-                    log.topics
-                        .get(1)
-                        .and_then(|t| chain_walk::topic_address(t))
-                        .is_some(),
-                    "missing trade caller"
-                );
-            }
-            _ => {}
+        INDEXER_SALES if topic.eq_ignore_ascii_case(sales_index::TOPIC_BID_ACCEPTED) => {
+            sales_index::decode_log(log, time)?;
         }
+        INDEXER_SALES if topic.eq_ignore_ascii_case(sales_index::TOPIC_BOUGHT) => {
+            sales_index::decode_bought(log)?;
+        }
+        INDEXER_SALES if topic.eq_ignore_ascii_case(ethereum_sales::TOPIC_NAME_BOUGHT) => {
+            ethereum_sales::decode_name(log, time)?;
+        }
+        INDEXER_TRADE_EVENTS => {
+            trade_events::decode_log(log, time)?;
+            ensure!(
+                log.topics
+                    .get(1)
+                    .and_then(|t| chain_walk::topic_address(t))
+                    .is_some(),
+                "missing trade caller"
+            );
+        }
+        _ => {}
     }
     Ok(())
 }

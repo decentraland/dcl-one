@@ -21,7 +21,7 @@ pub const NAME_CONTROLLERS: [&str; 2] = [BURNING_NAME_CONTROLLER, NAME_CONTROLLE
 pub const TOPIC_NAME_BOUGHT: &str =
     "0xb8c56202a5ae8b00edfcd57a54ec6c3fb8d2f6deb3067a7ba11408a7bd014a3e";
 
-struct NamePurchase {
+pub(super) struct NamePurchase {
     venue: String,
     block: i64,
     index: i32,
@@ -31,6 +31,35 @@ struct NamePurchase {
     price: String,
     name: String,
     tx_hash: String,
+}
+
+pub(super) fn decode_name(log: &RpcLog, time: i64) -> anyhow::Result<NamePurchase> {
+    let (block, index) = chain_walk::log_position(log);
+    ensure!(
+        log.topics.len() == 3 && log.topics[0].eq_ignore_ascii_case(TOPIC_NAME_BOUGHT),
+        "unexpected name controller log"
+    );
+    let caller = chain_walk::topic_address(&log.topics[1]).context("NameBought caller")?;
+    let beneficiary =
+        chain_walk::topic_address(&log.topics[2]).context("NameBought beneficiary")?;
+    let data = hex::decode(log.data.trim_start_matches("0x"))?;
+    let (price, name) = <(sol_data::Uint<256>, sol_data::String)>::abi_decode_params(&data)
+        .context("NameBought payload")?;
+    let hash = log
+        .transaction_hash
+        .as_deref()
+        .context("NameBought transaction hash")?;
+    Ok(NamePurchase {
+        venue: log.address.to_ascii_lowercase(),
+        block,
+        index: i32::try_from(index)?,
+        time,
+        caller,
+        beneficiary,
+        price: price.to_string(),
+        name,
+        tx_hash: hash.to_ascii_lowercase(),
+    })
 }
 
 pub struct EthereumSalesIndex;
@@ -79,7 +108,7 @@ impl ChainIndex for EthereumSalesIndex {
         let mut bids = Vec::new();
         let mut names = Vec::new();
         for log in logs {
-            let (block, index) = chain_walk::log_position(log);
+            let block = chain_walk::log_position(log).0;
             let time = *times
                 .get(&block)
                 .context("missing Ethereum sale block time")?;
@@ -95,33 +124,7 @@ impl ChainIndex for EthereumSalesIndex {
                 .iter()
                 .any(|a| log.address.eq_ignore_ascii_case(a))
             {
-                ensure!(
-                    log.topics.len() == 3 && log.topics[0].eq_ignore_ascii_case(TOPIC_NAME_BOUGHT),
-                    "unexpected name controller log"
-                );
-                let caller =
-                    chain_walk::topic_address(&log.topics[1]).context("NameBought caller")?;
-                let beneficiary =
-                    chain_walk::topic_address(&log.topics[2]).context("NameBought beneficiary")?;
-                let data = hex::decode(log.data.trim_start_matches("0x"))?;
-                let (price, name) =
-                    <(sol_data::Uint<256>, sol_data::String)>::abi_decode_params(&data)
-                        .context("NameBought payload")?;
-                let hash = log
-                    .transaction_hash
-                    .as_deref()
-                    .context("NameBought transaction hash")?;
-                names.push(NamePurchase {
-                    venue: log.address.to_ascii_lowercase(),
-                    block,
-                    index: i32::try_from(index)?,
-                    time,
-                    caller,
-                    beneficiary,
-                    price: price.to_string(),
-                    name,
-                    tx_hash: hash.to_ascii_lowercase(),
-                });
+                names.push(decode_name(log, time)?);
             }
         }
         let mut written = sales_index::insert_events(conn, self.net(), &bids).await?;

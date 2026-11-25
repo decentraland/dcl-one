@@ -1,4 +1,4 @@
-SELECT e.block_number AS block, e.log_index AS index, e.tx_hash, e.venue, e.kind,
+SELECT e.block_number AS block, e.log_index AS index, e.venue, e.kind,
        p.ordinal, p.currency, p.gross::text, p.payer, p.beneficiary, p.bid_fee::text,
        terms.collector, terms.rate, terms.royalty_rate, trade.extra
 FROM shop.sale_execution e

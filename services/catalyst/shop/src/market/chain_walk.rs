@@ -1924,17 +1924,36 @@ pub(crate) async fn commit_window(
     times: &HashMap<i64, i64>,
 ) -> anyhow::Result<usize> {
     let mut tx = pool.begin().await?;
-    if owner.verify_sales {
-        super::sale_history::validate_window(ix, logs, times)?;
+    let mut verified_sales = owner.verify_sales;
+    let mut usable = std::borrow::Cow::Borrowed(logs);
+    if owner.verify_sales
+        && let Err(error) = super::sale_history::validate_window(ix, logs, times)
+    {
+        tracing::warn!(indexer=ix.indexer(), network=ix.net().db_name(), from=expected.0+1,
+            through=header.number, %error, "sales coverage withheld for this window");
+        verified_sales = false;
+        // Polygon sales and NFT already tolerate incomplete events. Keep their
+        // normal indexing and store fill boundaries intact. Other projections
+        // pass only usable logs to their strict writers on an incomplete window.
+        if !(ix.indexer() == INDEXER_NFT
+            || (ix.indexer() == INDEXER_SALES && ix.net() == ChainNet::Matic))
+        {
+            usable = std::borrow::Cow::Owned(
+                logs.iter()
+                    .filter(|log| super::sale_history::validate_log(ix, log, times).is_ok())
+                    .cloned()
+                    .collect(),
+            );
+        }
     }
-    let written = ix.write(&mut tx, logs, times).await?;
+    let written = ix.write(&mut tx, &usable, times).await?;
     advance(
         &mut tx,
         ix.indexer(),
         ix.net(),
         expected,
         header,
-        owner.verify_sales,
+        verified_sales,
     )
     .await
     .context("advancing the cursor")?;
@@ -1998,28 +2017,10 @@ async fn walk(
         .as_deref()
         .filter(|_| cur.last_block >= cur.start_block)
         .map(|h| (cur.last_block as u64, h));
-    let lanes = async {
-        let mut used = if settings.sales_enabled {
-            super::sale_history::repair(pool, source, ix, owner, durable, total, &mut chunk).await?
-        } else {
-            Spent::default()
-        };
-        let own = ix
-            .lanes(
-                pool,
-                source,
-                anchor,
-                total.saturating_sub(used.charge),
-                &mut chunk,
-                owner,
-                durable,
-            )
-            .await?;
-        used.charge += own.charge;
-        used.requests += own.requests;
-        anyhow::Ok(used)
-    };
-    let spent = match lanes.await {
+    let spent = match ix
+        .lanes(pool, source, anchor, total, &mut chunk, owner, durable)
+        .await
+    {
         Ok(spent) => spent,
         Err(e) if e.downcast_ref::<Diverged>().is_some() => {
             out.requests += e.downcast_ref::<Diverged>().map_or(0, |d| d.requests);
@@ -2137,6 +2138,52 @@ async fn walk(
         out.elapsed_ms = started.elapsed().as_millis() as u64;
         return Ok(out);
     }
+    let mut remaining = total.saturating_sub(log_requests);
+    if owner.verify_sales
+        && let Some(hash) = expected.1.as_deref()
+    {
+        let at = expected.0 as u64;
+        // Repair the old prefix with spare budget. Always leave the primary
+        // projection free to publish after an incomplete or unavailable replay.
+        while remaining > 0 && !cancel.is_some_and(|c| c.is_cancelled()) {
+            match super::sale_history::repair(
+                pool,
+                source,
+                ix,
+                owner,
+                Some((at, hash)),
+                remaining,
+                &mut chunk,
+            )
+            .await
+            {
+                Ok(spent) if spent.charge > 0 => {
+                    remaining = remaining.saturating_sub(spent.charge);
+                    out.requests += spent.requests;
+                }
+                Ok(_) => break,
+                Err(e) if e.downcast_ref::<Diverged>().is_some() => {
+                    out.requests += e.downcast_ref::<Diverged>().unwrap().requests;
+                    return diverged(
+                        pool,
+                        source,
+                        ix,
+                        owner,
+                        (expected.0, hash.to_owned()),
+                        out,
+                        started,
+                    )
+                    .await;
+                }
+                Err(e) if e.downcast_ref::<Fenced>().is_some() => return Err(e),
+                Err(e) => {
+                    tracing::warn!(indexer=name, network=net.db_name(), error=%e, "sales history repair will retry");
+                    // A failed source read has no reliable remaining budget.
+                    remaining = 0;
+                }
+            }
+        }
+    }
     close(
         pool,
         source,
@@ -2145,7 +2192,7 @@ async fn walk(
         owner,
         Close {
             fold_since: cur.fold_through,
-            remaining: total.saturating_sub(log_requests),
+            remaining,
         },
         &mut out,
     )

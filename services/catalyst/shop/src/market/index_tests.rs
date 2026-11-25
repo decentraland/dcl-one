@@ -150,6 +150,7 @@ struct FakeChain {
     reorg_on_logs: std::sync::atomic::AtomicBool,
     logs: Mutex<Vec<Value>>,
     receipts: Mutex<HashMap<String, Value>>,
+    creators_at_hash: Mutex<HashMap<(String, String), String>>,
     max_span: u64,
     max_addresses: usize,
     forks: Mutex<HashMap<u64, String>>,
@@ -242,6 +243,7 @@ impl FakeChain {
     ) -> Arc<Self> {
         Arc::new(Self {
             receipts: Mutex::default(),
+            creators_at_hash: Mutex::default(),
             head: Mutex::new(head),
             finalized_lag: std::sync::atomic::AtomicU64::new(64),
             finalized_available: std::sync::atomic::AtomicBool::new(true),
@@ -458,6 +460,24 @@ fn answer(chain: &FakeChain, body: &Value) -> Value {
         // `royaltiesCutPerMillion()` of any venue: the pinned 2.5 %.
         Some("eth_call") if body["params"][0]["data"] == sales_index::ROYALTIES_CUT_SELECTOR => {
             reply(json!(format!("0x{:064x}", 25_000)))
+        }
+        Some("eth_call")
+            if body["params"][0]["data"]
+                == format!(
+                    "0x{}",
+                    hex::encode(&alloy_primitives::keccak256("creator()")[..4])
+                )
+                && body["params"][1]["requireCanonical"] == true =>
+        {
+            let call = &body["params"];
+            let key = (
+                call[0]["to"].as_str().unwrap_or_default().to_owned(),
+                call[1]["blockHash"].as_str().unwrap_or_default().to_owned(),
+            );
+            match chain.creators_at_hash.lock().get(&key) {
+                Some(address) => reply(json!(topic_addr(address))),
+                None => refuse("unknown collection at block hash".into()),
+            }
         }
         Some("eth_getBlockByNumber") => {
             let n = if body["params"][0] == "finalized" {

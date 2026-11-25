@@ -379,8 +379,20 @@ pub async fn insert_events(
              SELECT $1, b, i, t, k, em, c, tok::numeric, f, tt, a::numeric, x, d, h \
              FROM UNNEST($2::bigint[], $3::int[], $4::bigint[], $5::text[], $6::text[], $7::text[], $8::text[], $9::text[], $10::text[], $11::text[], $12::bigint[], $13::text[], $14::text[]) \
                   AS u(b, i, t, k, em, c, tok, f, tt, a, x, d, h) \
-             ON CONFLICT (network, block_number, log_index) DO UPDATE SET tx_hash = EXCLUDED.tx_hash \
-             WHERE shop.nft_event.tx_hash IS NULL AND EXCLUDED.tx_hash IS NOT NULL",
+             ON CONFLICT (network, block_number, log_index) DO UPDATE SET
+                 tx_hash = EXCLUDED.tx_hash,
+                 from_address = COALESCE(shop.nft_event.from_address, EXCLUDED.from_address),
+                 to_address = COALESCE(shop.nft_event.to_address, EXCLUDED.to_address),
+                 block_time = CASE WHEN shop.nft_event.block_time = 0 THEN EXCLUDED.block_time ELSE shop.nft_event.block_time END
+             WHERE shop.nft_event.kind = 'order_successful' AND EXCLUDED.kind = 'order_successful'
+               AND (shop.nft_event.emitter,shop.nft_event.contract_address,shop.nft_event.token_id)
+                   = (EXCLUDED.emitter,EXCLUDED.contract_address,EXCLUDED.token_id)
+               AND EXCLUDED.tx_hash IS NOT NULL
+               AND (shop.nft_event.tx_hash IS NULL OR shop.nft_event.tx_hash = EXCLUDED.tx_hash)
+               AND (shop.nft_event.tx_hash IS NULL
+                 OR (shop.nft_event.from_address IS NULL AND EXCLUDED.from_address IS NOT NULL)
+                 OR (shop.nft_event.to_address IS NULL AND EXCLUDED.to_address IS NOT NULL)
+                 OR (shop.nft_event.block_time = 0 AND EXCLUDED.block_time > 0))",
         )
         .bind(net.db_name())
         .bind(chunk.iter().map(|r| r.block_number).collect::<Vec<_>>())

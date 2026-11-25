@@ -1,7 +1,7 @@
 SELECT coalesce((
   SELECT block_number FROM (
     (SELECT block_number FROM shop.sale_event WHERE network=$1 AND block_number>$2 AND block_number<=$3
-         AND kind IN ('mint','bid_accepted') ORDER BY block_number LIMIT 96)
+         AND kind='bid_accepted' ORDER BY block_number LIMIT 96)
     UNION ALL
     (SELECT block_number FROM shop.nft_event WHERE network=$1 AND block_number>$2 AND block_number<=$3
          AND kind='order_successful' ORDER BY block_number LIMIT 96)

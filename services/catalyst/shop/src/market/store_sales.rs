@@ -30,8 +30,16 @@ pub(super) fn pair(rows: &mut [SaleEvent], logs: &[RpcLog]) -> anyhow::Result<Ve
     }
     let mut bought = Vec::new();
     for log in logs {
-        if let Some((hash, lines)) = decode_bought(log)? {
-            bought.push((log_position(log), hash, lines));
+        match decode_bought(log) {
+            Ok(Some((hash, lines))) => bought.push((log_position(log), hash, lines)),
+            Ok(None) => {}
+            Err(error) => {
+                tracing::warn!(%error, "sales index: skipping an undecodable store purchase");
+                // The log still ends this fill. Its Issues cannot price the next purchase.
+                if let Some(hash) = &log.transaction_hash {
+                    bought.push((log_position(log), hash.to_ascii_lowercase(), Vec::new()));
+                }
+            }
         }
     }
     bought.sort_by_key(|(position, _, _)| *position);
@@ -99,6 +107,7 @@ pub(super) async fn write(
              SELECT block, bought, ordinal, tx, contract, item::numeric, beneficiary, price::numeric, issue, block_time
              FROM unnest($1::bigint[], $2::int[], $3::int[], $4::text[], $5::text[], $6::text[], $7::text[], $8::text[], $9::int[], $10::bigint[])
                AS u(block, bought, ordinal, tx, contract, item, beneficiary, price, issue, block_time)
+             WHERE block_time IS NOT NULL
              ON CONFLICT (block_number, bought_log, ordinal) DO UPDATE SET issue_log = EXCLUDED.issue_log
              WHERE store_sale_line.tx_hash = EXCLUDED.tx_hash AND store_sale_line.issue_log IS NULL AND EXCLUDED.issue_log IS NOT NULL"
         )
@@ -111,8 +120,50 @@ pub(super) async fn write(
         .bind(chunk.iter().map(|r| r.beneficiary.as_str()).collect::<Vec<_>>())
         .bind(chunk.iter().map(|r| r.price.as_str()).collect::<Vec<_>>())
         .bind(chunk.iter().map(|r| r.issue).collect::<Vec<_>>())
-        .bind(chunk.iter().map(|r| times.get(&r.block).copied().context("missing Bought timestamp")).collect::<anyhow::Result<Vec<_>>>()?)
+        .bind(chunk.iter().map(|r| times.get(&r.block).copied()).collect::<Vec<_>>())
         .execute(&mut *conn).await?;
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::super::sales_index::{
+        self,
+        tests::{bought_log, issue_log},
+    };
+    use super::*;
+    use alloy_primitives::U256;
+
+    #[test]
+    fn identical_store_lines_consume_their_issues_in_log_order() {
+        let issuer = "0x0000000000000000000000000000000000000011";
+        let recipient = "0x0000000000000000000000000000000000000022";
+        let hash = format!("0x{:064x}", 10);
+        let mut rows: Vec<_> = [3, 1]
+            .into_iter()
+            .map(|index| {
+                let mut l = issue_log(
+                    issuer,
+                    recipient,
+                    U256::from(index),
+                    7,
+                    sales_index::STORE_MATIC,
+                    100,
+                    index,
+                );
+                l.transaction_hash = Some(hash.clone());
+                sales_index::decode_log(&l, 1000).unwrap().unwrap()
+            })
+            .collect();
+        let line = (issuer, 7, 50, recipient);
+        let result = pair(&mut rows, &[bought_log(&[line, line], &hash, 100, 4)]).unwrap();
+        assert_eq!(
+            result
+                .iter()
+                .map(|l| (l.ordinal, l.issue))
+                .collect::<Vec<_>>(),
+            [(0, Some(1)), (1, Some(3))]
+        );
+    }
 }

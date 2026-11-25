@@ -136,40 +136,54 @@ pub fn group(net: ChainNet) -> LogGroup {
     }
 }
 
-pub async fn write(conn: &mut PgConnection, net: ChainNet, logs: &[RpcLog]) -> anyhow::Result<()> {
-    let known = venues(net);
-    for log in logs {
-        let Some(event) = EVENTS.iter().find(|e| {
-            log.topics
-                .first()
-                .is_some_and(|t| e.topic.eq_ignore_ascii_case(t))
-        }) else {
-            continue;
-        };
-        if !known
-            .iter()
-            .any(|(a, v)| a.eq_ignore_ascii_case(&log.address) && *v == event.venues)
-        {
-            continue;
+pub(super) fn decode(
+    net: ChainNet,
+    log: &RpcLog,
+) -> anyhow::Result<Option<(&'static str, String)>> {
+    let Some(event) = EVENTS.iter().find(|e| {
+        log.topics
+            .first()
+            .is_some_and(|t| e.topic.eq_ignore_ascii_case(t))
+    }) else {
+        return Ok(None);
+    };
+    if !venues(net)
+        .iter()
+        .any(|(a, v)| a.eq_ignore_ascii_case(&log.address) && *v == event.venues)
+    {
+        return Ok(None);
+    }
+    let value = match event.word {
+        Word::Address => {
+            chain_walk::topic_address(log.topics.get(2).context("missing fee recipient")?)
+                .context("invalid fee recipient")?
         }
-        let value = match event.word {
-            Word::Address => {
-                chain_walk::topic_address(log.topics.get(2).context("missing fee recipient")?)
-                    .context("invalid fee recipient")?
-            }
-            Word::Last => {
-                let data = hex::decode(log.data.trim_start_matches("0x"))?;
-                ensure!(
-                    data.len() == if event.venues == Venue::Store { 64 } else { 32 },
-                    "invalid fee event width"
-                );
-                U256::from_be_slice(&data[data.len() - 32..]).to_string()
+        Word::Last => {
+            let data = hex::decode(log.data.trim_start_matches("0x"))?;
+            ensure!(
+                data.len() == if event.venues == Venue::Store { 64 } else { 32 },
+                "invalid fee event width"
+            );
+            U256::from_be_slice(&data[data.len() - 32..]).to_string()
+        }
+    };
+    Ok(Some((event.field, value)))
+}
+
+pub async fn write(conn: &mut PgConnection, net: ChainNet, logs: &[RpcLog]) -> anyhow::Result<()> {
+    for log in logs {
+        let (field, value) = match decode(net, log) {
+            Ok(Some(change)) => change,
+            Ok(None) => continue,
+            Err(error) => {
+                tracing::warn!(%error, "skipping an undecodable sale fee change");
+                continue;
             }
         };
         let (block, index) = chain_walk::log_position(log);
         sqlx::query("INSERT INTO shop.sale_fee_change (network, venue, field, block_number, log_index, value)
                      VALUES ($1,$2,$3,$4,$5,$6) ON CONFLICT DO NOTHING")
-            .bind(net.db_name()).bind(log.address.to_ascii_lowercase()).bind(event.field).bind(block)
+            .bind(net.db_name()).bind(log.address.to_ascii_lowercase()).bind(field).bind(block)
             .bind(i32::try_from(index)?).bind(value).execute(&mut *conn).await?;
     }
     Ok(())

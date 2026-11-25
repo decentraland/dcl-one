@@ -65,7 +65,7 @@ async fn ethereum_sales_preserve_name_fees_and_bids_across_replay_and_rewind() {
         3,
     );
     let mut bid =
-        sales_index::tests::bid_accepted_log(ALICE, U256::from(4), BOB, CARL, 0x11, 400, 100, 4);
+        sales_index::tests::bid_accepted_log(ALICE, U256::from(4), BOB, CARL, 0x11, 20, 100, 4);
     bid.address = ERC721_BID.into();
     let logs = [name, bid];
     let times = HashMap::from([(100, 1_700_000_000)]);
@@ -91,7 +91,7 @@ async fn ethereum_sales_preserve_name_fees_and_bids_across_replay_and_rewind() {
             .fetch_one(&mut *conn)
             .await
             .unwrap();
-    assert_eq!(fee, "10");
+    assert_eq!(fee, "0");
     index.rewind(&mut conn, 99).await.unwrap();
     let remaining: i64 = sqlx::query_scalar(
         "SELECT (SELECT count(*) FROM shop.name_purchase) + (SELECT count(*) FROM shop.sale_event)",
@@ -235,6 +235,27 @@ async fn sales_accounting_publishes_one_common_prefix_and_rechecks_inputs_after_
             .await
             .unwrap()
             .is_none()
+    );
+    let earlier = block as i64 - 10;
+    sqlx::query("INSERT INTO shop.sale_execution(network,block_number,log_index,tx_hash,venue,kind,block_time,receipt_read)
+        VALUES('ethereum',$1,1,$2,$3,'order',86400,true)").bind(earlier).bind(format!("0x{:064x}",97)).bind(ALICE).execute(&db.pool).await.unwrap();
+    sqlx::query("INSERT INTO shop.nft_contract(network,contract_address,walked_from_block,backfill_from_block,backfilled_to_block)
+        VALUES('ethereum',$1,$2,$2::bigint-2,$2::bigint-1)").bind(BOB).bind(block as i64).execute(&db.pool).await.unwrap();
+    assert!(
+        sale_fold::snapshot(&db.pool, &[net], Utc::now())
+            .await
+            .unwrap()
+            .is_none()
+    );
+    sale_fold::pass(&db.pool, &rpc, net).await.unwrap();
+    assert!(
+        sqlx::query_scalar::<_, bool>(
+            "SELECT EXISTS(SELECT FROM shop.sale_execution WHERE block_number=$1)"
+        )
+        .bind(earlier)
+        .fetch_one(&db.pool)
+        .await
+        .unwrap()
     );
     // The walk can advance between folds while the recent common prefix stands.
     sqlx::query("UPDATE shop.chain_cursor SET last_block=$1,last_block_hash=$2,sale_verified_through=$1 WHERE indexer='nft'")
@@ -498,6 +519,48 @@ async fn sales_accounting_replays_fees_in_log_order_and_removes_empty_reorg_grou
             }
         );
     }
+    // The canonical receipt can be complete while payment attribution is not.
+    // Two identical transfer sequences for one venue event have no unique split.
+    let ambiguous_hash = format!("0x{:064x}", 77);
+    let mut order = market_event(CARL, 2, 15);
+    order.transaction_hash = Some(ambiguous_hash.clone());
+    let fee = sale_price / U256::from(100u8);
+    let mut c = db.pool.acquire().await.unwrap();
+    nft_index::insert_events(
+        &mut c,
+        net,
+        &[nft_index::decode_log(&order, 172800).unwrap().unwrap()],
+    )
+    .await
+    .unwrap();
+    drop(c);
+    let receipt: Vec<_> = [
+        transfer(DAVE, fee, 10),
+        transfer(CARL, sale_price - fee, 11),
+        transfer(DAVE, fee, 12),
+        transfer(CARL, sale_price - fee, 13),
+        order,
+    ]
+    .iter()
+    .map(|log| {
+        let mut v = log_json(log);
+        v["blockHash"] = json!(chain.hash_of(block));
+        v["transactionHash"] = json!(ambiguous_hash);
+        v
+    })
+    .collect();
+    chain.receipts.lock().insert(
+        ambiguous_hash.clone(),
+        json!({"status":"0x1","blockNumber":format!("0x{block:x}"),
+        "blockHash":chain.hash_of(block),"transactionHash":ambiguous_hash,"logs":receipt}),
+    );
+    sqlx::query("UPDATE shop.chain_cursor SET sale_dirty_from=$1, sale_history_revision=sale_history_revision+1 WHERE indexer='nft'")
+        .bind(block as i64).execute(&db.pool).await.unwrap();
+    sale_fold::pass(&db.pool, &rpc, net).await.unwrap();
+    let observed:(bool,bool,i64)=sqlx::query_as("SELECT receipt_read,settled,(SELECT count(*) FROM shop.sale_payout WHERE log_index=15)
+        FROM shop.sale_execution JOIN shop.sale_payment USING(network,block_number,log_index) WHERE tx_hash=$1")
+        .bind(ambiguous_hash).fetch_one(&db.pool).await.unwrap();
+    assert_eq!(observed, (true, false, 0));
     db.drop().await;
 }
 
@@ -537,12 +600,30 @@ async fn sales_history_repair_resumes_at_the_next_window_and_discovers_store_iss
     malformed.log_index = "0x4".into();
     malformed.data = "0x12".into();
     let orphan = sales_index::tests::bought_log(&[(CARL, 5, 17, BOB)], &hash, b, 5);
+    let changed = log_at(
+        CARL,
+        vec![
+            format!(
+                "{:#x}",
+                alloy_primitives::keccak256("CreatorshipTransferred(address,address)")
+            ),
+            topic_addr(BOB),
+            topic_addr(DAVE),
+        ],
+        vec![],
+        b,
+        6,
+    );
     let chain = FakeChain::new(
         tip + 64,
-        vec![one, buy1, two, buy2, malformed, orphan],
+        vec![one, buy1, two, buy2, malformed, orphan, changed],
         100_000,
         100,
     );
+    chain
+        .creators_at_hash
+        .lock()
+        .insert((CARL.into(), chain.hash_of(b)), DAVE.into());
     let url = serve(chain.clone()).await;
     let mut settings = index_settings(100, 100_000);
     settings.sales_enabled = true;
@@ -648,6 +729,16 @@ async fn sales_history_repair_resumes_at_the_next_window_and_discovers_store_iss
     .await
     .unwrap();
     assert_eq!(canonical, (3, 2, "105".into()));
+    let sellers: Vec<String> =
+        sqlx::query_scalar("SELECT seller FROM shop.sale_asset ORDER BY log_index")
+            .fetch_all(&db.pool)
+            .await
+            .unwrap();
+    assert_eq!(
+        sellers,
+        [BOB, BOB],
+        "both mints preceded the same-block change to DAVE"
+    );
     assert_eq!(
         sale_history::pending(&db.pool, &SalesIndex).await.unwrap(),
         None
@@ -802,6 +893,34 @@ async fn sales_delayed_receipt_corrects_checkout_buyer_and_first_purchase_day() 
     sqlx::query("INSERT INTO shop.nft_event(network,block_number,log_index,block_time,kind,emitter,contract_address,token_id,from_address,to_address)
         VALUES('matic',$1,10,86400,'transfer',$2,$2,123,$3,$4)")
         .bind(b as i64).bind(DAVE).bind(CHECKOUT).bind(CARL).execute(&db.pool).await.unwrap();
+    let barter = b - 1;
+    let mut gift = trade_events::decode_log(&traded(barter), 86400)
+        .unwrap()
+        .unwrap();
+    gift.signer = Some(ALICE.into());
+    gift.caller = BOB.into();
+    gift.assets = Some(
+        json!({"sent":[{"assetType":"4","contractAddress":DAVE,"value":"3","beneficiary":CARL,"extra":"0x"}],
+        "received":[{"assetType":"3","contractAddress":DAVE,"value":"24","beneficiary":ALICE,"extra":"0x"}]}),
+    );
+    let mut c = db.pool.acquire().await.unwrap();
+    trade_events::insert_events(&mut c, net, &[gift])
+        .await
+        .unwrap();
+    drop(c);
+    let barter_logs: Vec<_> = [
+        sales_index::tests::issue_log(DAVE, CARL, U256::from(122), 3, venue, barter, 3),
+        traded(barter),
+    ]
+    .iter()
+    .map(|l| {
+        let mut v = log_json(l);
+        v["blockHash"] = json!(chain.hash_of(barter));
+        v["transactionHash"] = json!(tx_hash(barter));
+        v
+    })
+    .collect();
+    chain.receipts.lock().insert(tx_hash(barter),json!({"status":"0x1","blockNumber":format!("0x{barter:x}"),"blockHash":chain.hash_of(barter),"transactionHash":tx_hash(barter),"logs":barter_logs}));
     let firsts = || {
         sqlx::query_as::<_, (String, i64)>(
             "SELECT buyer,first_day FROM shop.sale_first_purchase ORDER BY first_day",
@@ -810,6 +929,17 @@ async fn sales_delayed_receipt_corrects_checkout_buyer_and_first_purchase_day() 
     };
     sale_fold::pass(&db.pool, &rpc, net).await.unwrap();
     assert_eq!(firsts().await.unwrap(), [(CHECKOUT.into(), 86400)]);
+    let barter_fact: (bool, String, i64) = sqlx::query_as(
+        "SELECT e.receipt_read,a.token_id::text,
+        (SELECT count(*) FROM shop.sale_payment WHERE block_number=$1)
+        FROM shop.sale_execution e JOIN shop.sale_asset a USING(network,block_number,log_index)
+        WHERE e.block_number=$1 AND a.kind='mint'",
+    )
+    .bind(barter as i64)
+    .fetch_one(&db.pool)
+    .await
+    .unwrap();
+    assert_eq!(barter_fact, (true, "122".into(), 0));
     let issue = sales_index::tests::issue_log(DAVE, CHECKOUT, U256::from(123), 3, venue, b, 3);
     let mut malformed = issue.clone();
     malformed.address = BOB.into();
@@ -859,5 +989,118 @@ async fn sales_delayed_receipt_corrects_checkout_buyer_and_first_purchase_day() 
         JOIN shop.sale_payment p USING(network,block_number,log_index,ordinal) WHERE block_number=$1")
         .bind(b as i64).fetch_one(&db.pool).await.unwrap();
     assert_eq!(paid, (true, "500".into(), "123".into(), CHECKOUT.into()));
+    db.drop().await;
+}
+
+#[tokio::test]
+async fn incomplete_sales_evidence_keeps_the_primary_walk_live_and_the_proof_at_the_gap() {
+    let Some(db) = ScratchDb::create().await else {
+        return;
+    };
+    let net = ChainNet::Matic;
+    let b = sales_index::BID_V2_MATIC_START_BLOCK + 150;
+    let mut bought =
+        sales_index::tests::bought_log(&[(CARL, 4, 25, ALICE)], &format!("0x{:064x}", 317), b, 1);
+    bought.data.clear();
+    let mut incomplete_bid =
+        sales_index::tests::bid_accepted_log(CARL, U256::from(4), BOB, ALICE, 1, 400, b, 2);
+    incomplete_bid.data.clear();
+    let good_bid =
+        sales_index::tests::bid_accepted_log(CARL, U256::from(5), BOB, ALICE, 2, 800, b, 3);
+    let order = log_at(
+        nft_index::legacy_marketplaces(net)[0].0,
+        vec![
+            nft_index::TOPIC_ORDER_SUCCESSFUL.into(),
+            topic_word(U256::from(7)),
+            topic_addr(ALICE),
+            topic_addr(BOB),
+        ],
+        (
+            FixedBytes::<32>::repeat_byte(5),
+            Address::from_str(CARL).unwrap(),
+            U256::from(400),
+        )
+            .abi_encode_params(),
+        b,
+        4,
+    );
+    let mut partial_order = order.clone();
+    partial_order.topics[2] = "0x".into();
+    let chain = FakeChain::new(
+        b + 64,
+        vec![bought, incomplete_bid, good_bid, partial_order],
+        1000,
+        100,
+    );
+    let url = serve(chain.clone()).await;
+    let disabled = state_over(db.pool.clone(), &url, index_settings(100, 100), false);
+    let mut settings = index_settings(100, 100);
+    settings.sales_enabled = true;
+    let enabled = state_over(db.pool.clone(), &url, settings, false);
+    let nft = NftIndex::new(net);
+    for ix in [&SalesIndex as &dyn ChainIndex, &nft] {
+        sqlx::query("INSERT INTO shop.chain_cursor(indexer,network,chain_id,start_block,last_block,last_block_hash,full_history,folded_block,folded_at,sale_input_version,sale_verified_through,sale_covered_rewinds)
+            VALUES($1,'matic',137,$2,$3,$4,true,$3,timezone('UTC',now()),1,$3,0)")
+            .bind(ix.indexer()).bind(ix.start_block() as i64).bind(b as i64-1).bind(chain.hash_of(b-1)).execute(&db.pool).await.unwrap();
+    }
+    // A Polygon sale with its fee evidence missing must still allow a valid
+    // bid in the same window to reach the existing notice and badge readers.
+    assert!(
+        try_pass(&disabled, &url, &SalesIndex)
+            .await
+            .unwrap()
+            .published
+    );
+    assert_eq!(
+        sqlx::query_scalar::<_, i64>(
+            "SELECT count(*) FROM shop.sale_event WHERE kind='bid_accepted'"
+        )
+        .fetch_one(&db.pool)
+        .await
+        .unwrap(),
+        1
+    );
+    // Start with an unverified old window, then advance live again. A failing
+    // sales replay cannot keep either projection at its previous checkpoint.
+    *chain.head.lock() += 1;
+    for ix in [&SalesIndex as &dyn ChainIndex, &nft] {
+        let out = try_pass(&enabled, &url, ix).await.unwrap();
+        assert_eq!(out.indexed_to, b as i64 + 1);
+        let row:(i64,Option<i64>, Option<i64>)=sqlx::query_as("SELECT last_block,folded_block,sale_verified_through FROM shop.chain_cursor WHERE network='matic' AND indexer=$1")
+            .bind(ix.indexer()).fetch_one(&db.pool).await.unwrap();
+        assert_eq!(
+            row,
+            (b as i64 + 1, Some(b as i64 + 1), Some(b as i64 - 1)),
+            "{}",
+            ix.indexer()
+        );
+    }
+    // Once the endpoint supplies a complete window, the repair can certify
+    // the gap at the same tip.
+    assert_eq!(
+        sqlx::query_scalar::<_, Option<String>>(
+            "SELECT from_address FROM shop.nft_event WHERE kind='order_successful'"
+        )
+        .fetch_one(&db.pool)
+        .await
+        .unwrap(),
+        None
+    );
+    chain.logs.lock().retain(|log| log["logIndex"] == "0x3");
+    chain.logs.lock().push(log_json(&order));
+    for ix in [&SalesIndex as &dyn ChainIndex, &nft] {
+        try_pass(&enabled, &url, ix).await.unwrap();
+        assert_eq!(sqlx::query_scalar::<_,Option<i64>>("SELECT sale_verified_through FROM shop.chain_cursor WHERE network='matic' AND indexer=$1")
+            .bind(ix.indexer()).fetch_one(&db.pool).await.unwrap(),Some(b as i64+1));
+    }
+    assert_eq!(
+        sqlx::query_scalar::<_, String>(
+            "SELECT from_address FROM shop.nft_event WHERE kind='order_successful'"
+        )
+        .fetch_one(&db.pool)
+        .await
+        .unwrap(),
+        ALICE
+    );
     db.drop().await;
 }

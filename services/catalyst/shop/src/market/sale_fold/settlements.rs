@@ -13,11 +13,19 @@ use sqlx::{FromRow, PgConnection};
 use super::{ChainNet, Rpc, chain_walk, ethereum_sales, nft_index, sales_index, trade_events};
 use crate::chain_index::rpc::{RpcLog, hex_to_i64};
 
+#[derive(FromRow)]
+struct Execution {
+    block: i64,
+    index: i32,
+    tx_hash: String,
+    venue: String,
+    kind: String,
+}
+
 #[derive(FromRow, Debug)]
 pub(super) struct Payment {
     block: i64,
     index: i32,
-    tx_hash: String,
     venue: String,
     kind: String,
     ordinal: i32,
@@ -432,7 +440,7 @@ fn traded_issue(
 async fn issued_tokens(
     c: &mut PgConnection,
     net: ChainNet,
-    p: &Payment,
+    p: &Execution,
     logs: &[&RpcLog],
 ) -> anyhow::Result<()> {
     let assets: Vec<(i32, String, String, String)> = sqlx::query_as(
@@ -495,8 +503,6 @@ pub(super) async fn write(
     let retry:Vec<String>=sqlx::query_scalar(
        "SELECT tx_hash FROM shop.sale_execution WHERE network=$1 AND block_number <= $2 AND NOT receipt_read
           AND (receipt_attempted_at IS NULL OR receipt_attempted_at<timezone('UTC',now()) - interval '5 minutes')
-        AND EXISTS (SELECT FROM shop.sale_payment p WHERE (p.network,p.block_number,p.log_index)=
-                   (sale_execution.network,sale_execution.block_number,sale_execution.log_index))
         ORDER BY receipt_attempted_at NULLS FIRST,block_number LIMIT 48")
        .bind(net.db_name()).bind(from).fetch_all(&mut *conn).await?;
     let rows: Vec<Payment> = sqlx::query_as(include_str!("settlements.sql"))
@@ -506,7 +512,31 @@ pub(super) async fn write(
         .bind(&retry)
         .fetch_all(&mut *conn)
         .await?;
-    let txs: BTreeMap<_, _> = rows.iter().map(|p| (p.tx_hash.as_str(), p.block)).collect();
+    let mut payments = BTreeMap::new();
+    for row in rows {
+        payments
+            .entry((row.block, row.index))
+            .or_insert_with(Vec::new)
+            .push(row);
+    }
+    // Barters and giveaways can mint a token without emitting a payment.
+    // Their venue and Issue logs still need the same canonical receipt.
+    let executions: Vec<Execution> = sqlx::query_as(
+        "SELECT block_number AS block,log_index AS index,tx_hash,venue,kind
+         FROM shop.sale_execution WHERE network=$1 AND NOT receipt_read
+           AND ((block_number>$2 AND block_number<=$3) OR tx_hash=ANY($4))
+         ORDER BY block_number,tx_hash,log_index",
+    )
+    .bind(net.db_name())
+    .bind(from)
+    .bind(to)
+    .bind(&retry)
+    .fetch_all(&mut *conn)
+    .await?;
+    let txs: BTreeMap<_, _> = executions
+        .iter()
+        .map(|e| (e.tx_hash.as_str(), e.block))
+        .collect();
     let hashes: Vec<_> = txs.keys().copied().collect();
     sqlx::query("UPDATE shop.sale_execution SET receipt_attempted_at=timezone('UTC',now()) WHERE network=$1 AND tx_hash=ANY($2) AND NOT receipt_read")
         .bind(net.db_name()).bind(&hashes).execute(&mut *conn).await?;
@@ -539,7 +569,7 @@ pub(super) async fn write(
     let (headers, _) = rpc
         .block_headers(&heights.into_iter().collect::<Vec<_>>())
         .await?;
-    for tx in rows.chunk_by(|a, b| a.tx_hash == b.tx_hash) {
+    for tx in executions.chunk_by(|a, b| a.tx_hash == b.tx_hash) {
         let first = &tx[0];
         let Some(receipt) = receipts.get(&first.tx_hash) else {
             continue;
@@ -573,18 +603,20 @@ pub(super) async fn write(
             );
             previous = index;
             if let Some(kind) = venue_event(net, log) {
-                let slice = &tx[tx.partition_point(|p| p.index < index)
-                    ..tx.partition_point(|p| p.index <= index)];
-                if let Some(p) = slice.first() {
-                    seen.insert(index);
-                    if kind == "trade" {
-                        issued_tokens(conn, net, p, &issue_logs).await?;
-                    }
+                if let Ok(i) = tx.binary_search_by_key(&index, |e| e.index) {
+                    let execution = &tx[i];
                     ensure!(
-                        p.kind == kind && log.address.eq_ignore_ascii_case(&p.venue),
+                        execution.kind == kind
+                            && log.address.eq_ignore_ascii_case(&execution.venue),
                         "receipt venue mismatch"
                     );
-                    if let Some(splits) = classify(net, slice, &moves) {
+                    seen.insert(index);
+                    if kind == "trade" {
+                        issued_tokens(conn, net, execution, &issue_logs).await?;
+                    }
+                    if let Some(slice) = payments.get(&(execution.block, index))
+                        && let Some(splits) = classify(net, slice, &moves)
+                    {
                         for (p, split) in slice.iter().zip(splits) {
                             save(conn, net, p, split).await?;
                         }
@@ -648,7 +680,6 @@ mod tests {
         Payment {
             block: 1,
             index: 12,
-            tx_hash: String::new(),
             venue: String::from("venue"),
             kind: kind.into(),
             ordinal: 0,

@@ -220,7 +220,11 @@ pub fn decode_bought(log: &RpcLog) -> Result<Option<(String, Vec<BoughtItem>)>, 
         .transaction_hash
         .as_deref()
         .map(str::to_ascii_lowercase)
-        .ok_or_else(|| err("missing transaction hash".into()))?;
+        .filter(|h| {
+            h.strip_prefix("0x")
+                .is_some_and(|word| word.len() == 64 && word.bytes().all(|c| c.is_ascii_hexdigit()))
+        })
+        .ok_or_else(|| err("missing or invalid transaction hash".into()))?;
     let data = hex::decode(log.data.trim_start_matches("0x")).map_err(|e| err(e.to_string()))?;
     type Items = sol_data::Array<(
         sol_data::Address,
