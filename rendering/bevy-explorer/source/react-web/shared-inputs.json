@@ -13797,7 +13797,7 @@
     },
     {
       "path": "library/ui/apps/hud/styles/tokens.css",
-      "sha256": "a3a01ef22ddaabed51a1a4659b992b410d4b485ebdc72ba189bebc8edc3e2e2e"
+      "sha256": "e13bb11caa1e4a08cf2700c1130fcbd2b9c35618af6b439639a372d17d198212"
     },
     {
       "path": "library/ui/apps/hud/test/armedButton.test.tsx",

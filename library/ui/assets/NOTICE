@@ -1,1 +1,3 @@
 logo-pattern.webp and custom-welcome-background.webp are copied byte for byte from decentraland-ui2 3.23.1 (https://github.com/decentraland/ui2), dist/Assets/<name>. That source is licensed under the Apache License 2.0 (LICENSE in this directory); the license applies to these files.
+
+skeleton-sweep.webp is the band of light of the Explorer HUD's loading placeholders. It is not a decentraland-ui2 file, and the paragraph above does not cover it.
