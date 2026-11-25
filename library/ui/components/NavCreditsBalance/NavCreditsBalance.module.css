@@ -28,4 +28,42 @@
   .root svg {
     flex-shrink: 0;
   }
+
+  .shop {
+    box-sizing: border-box;
+    min-inline-size: 44px;
+    min-block-size: 44px;
+    padding: var(--dcl-space-8);
+    line-height: normal;
+    color: var(--dcl-text-primary);
+    font-family: Inter, Helvetica, Arial, sans-serif;
+    font-weight: 600;
+    font-size: var(--dcl-font-size-body-md);
+    letter-spacing: -0.8px;
+  }
+
+  span.shop {
+    cursor: default;
+  }
+
+  span.shop:hover {
+    opacity: 1;
+  }
+
+  .shop svg {
+    width: 20px;
+    height: 20px;
+  }
+
+  @media (max-width: 991px) {
+    .shop {
+      font-size: var(--dcl-font-size-body-xs);
+      letter-spacing: -0.6px;
+    }
+
+    .shop svg {
+      width: 14px;
+      height: 14px;
+    }
+  }
 }

@@ -243,7 +243,9 @@ async fn pages(pool: &PgPool, settings: &Settings, now: DateTime<Utc>) -> anyhow
             .filter(|r| r.collection)
             .map(|r| (r.contract_address.clone(), r.token_id.clone()))
             .collect();
-        let metas = trade_events::nft_metas(pool, &settings.land_images, network, &keys).await?;
+        let metas =
+            trade_events::nft_metas(pool, &settings.land_images, network, NET.chain_id(), &keys)
+                .await?;
         let items_pass: Option<i64> = sqlx::query_scalar(
             "SELECT extract(epoch FROM last_complete_pass_at)::bigint FROM shop.mirror_state \
              WHERE mirror = 'items' AND network = $1",

@@ -3,7 +3,7 @@
 .mk-native { position: relative; min-height: 100%; height: 100%; overflow: auto; color: var(--ui-text-primary, #fff); background: var(--ui-bg-panel, #15121c); }
 .mk-native__view { min-height: 100%; }
 .mk-native .cs { position: relative; inset: auto; min-height: 100%; z-index: auto; }
-.mk-native .dtb, .mk-native .dappfooter, .mk-native .shop-footer { display: none; }
+.mk-native .dtb, .mk-native .dappfooter, .mk-native [data-shop-footer] { display: none; }
 /* The Shop subnav (ShopChrome, shop@2d3bf62 NavBar) is the Explorer's secondary row: it stays pinned
    while the page scrolls under it. */
 .mk-native .shop-chrome > .cs__tools,

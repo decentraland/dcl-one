@@ -42,7 +42,7 @@ export default defineConfig({
           include: [
             'components/**/*.test.tsx',
             'apps/sites/**/*.test.{ts,tsx}',
-            'apps/shop/*.test.tsx',
+            'apps/shop/*.test.{ts,tsx}',
             'foundations/**/*.test.ts',
             'test/**/*.test.{ts,tsx}',
             'figma/review/test/**/*.dom.test.tsx',
