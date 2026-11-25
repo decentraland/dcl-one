@@ -2,8 +2,8 @@
   "ecs7": true,
   "runtimeVersion": "7",
   "display": {
-    "title": "Basic Controller",
-    "description": "Basic Controller portable",
+    "title": "Movement Controller",
+    "description": "Movement Controller portable",
     "navmapThumbnail": "images/scene-thumbnail.png",
     "favicon": "favicon_asset"
   },
@@ -26,7 +26,7 @@
       "0,0"
     ]
   },
-  "name": "Basic Controller",
+  "name": "Movement Controller",
   "portableExperiences": "enabled",
   "worldConfiguration": {
     "name": "movecontroller.dcl.eth"
