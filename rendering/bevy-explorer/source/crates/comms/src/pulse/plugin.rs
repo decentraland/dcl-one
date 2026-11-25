@@ -244,10 +244,10 @@ struct ListenerRole {
     /// its parcels from 0,0, so a server cohosting two worlds has two different scenes at `0,0`.
     transport_by_parcel: HashMap<String, HashMap<IVec2, Entity>>,
     /// The AoI we want observed: one entry per hosted realm. A world is its hosted parcels'
-    /// bounding box ([`is_world_realm`]); any other realm is its parcels consolidated into one rect
-    /// per contiguous rectangular block ([`scene_regions`]), which tile the parcel set exactly — no
-    /// overlap, no over-coverage — so consolidating them is purely a wire-size win against the
-    /// server's Σ-area budget.
+    /// bounding box ([`is_world_realm`]), which counts its whole area against the server's Σ-area
+    /// budget. Any other realm is its parcels consolidated into one rect per contiguous rectangular
+    /// block ([`scene_regions`]), which tile the parcel set exactly — no overlap, no
+    /// over-coverage — so for those consolidating is purely a wire-size win.
     aoi: Vec<pulse::SceneListenerAoi>,
     /// The AoI the server holds: what the handshake carried, then what the last update carried.
     /// `flush_listener_aoi` sends an update whenever `aoi` differs from this, so a change is never
@@ -1175,7 +1175,7 @@ fn drain_status(session: &mut PulseSession, sinks: &Query<&PulseSink>, now: f64)
                     PulseRole::Listener(listener),
                 ) = (reason, &session.role)
                 {
-                    error!(
+                    warn!(
                         "pulse: the server rejected the scene-listener announcement ({}); retrying on the backoff",
                         describe_aoi(&listener.announced)
                     );
@@ -1795,12 +1795,9 @@ fn update_listener_aoi(
 /// Whether `realm` is a world, judged by its name: a world served under its NAME or ENS name ends
 /// in `.eth`, and a Genesis City realm or a local preview key never does. A world whose realm name
 /// is something else (renamed, or with `.dcl.eth` stripped by the worlds server that publishes it)
-/// is announced exactly, as before. On an orchestrated server only the orchestrator knows whether a
-/// scene's realm lists its scenes ([`common::structs::ServerConfiguration::lists_scenes`]), and
-/// `add-scene` does not say yet. A world is announced as its
-/// bounding box, one rect however irregular it is: only the world's own scenes are inside it, so the
-/// extra parcels are empty ground, and routing still uses the exact parcels, so a peer standing
-/// there reaches no scene.
+/// is announced exactly. A world is announced as its bounding box, one rect however irregular it
+/// is: only the world's own scenes are inside it, so the extra parcels are empty ground, and
+/// routing still uses the exact parcels, so a peer standing there reaches no scene.
 fn is_world_realm(realm: &str) -> bool {
     realm.ends_with(".eth")
 }
