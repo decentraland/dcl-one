@@ -50,6 +50,7 @@ impl Plugin for CommsAutomationPlugin {
             fields: &[
                 ("Microphone available", "mic.available"),
                 ("Microphone enabled", "mic.enabled"),
+                ("Scene's voice-off refused", "mic.sceneRefused"),
                 ("LiveKit available", "livekit"),
             ],
             actions: &[],
@@ -282,7 +283,7 @@ const CALL_UNSET: [(&str, &str); 4] = [
 impl VoiceState {
     fn to_json(&self) -> Value {
         let mut report = json!({
-            "mic": { "available": self.mic.available, "enabled": self.mic.enabled, "sceneBlocked": self.mic.scene_blocked() },
+            "mic": { "available": self.mic.available, "enabled": self.mic.enabled, "sceneBlocked": self.mic.scene_blocked(), "sceneRefused": self.mic.scene_disable_refused() },
             "call": self.call,
             "livekit": false,
             "connected": null,
@@ -581,7 +582,7 @@ mod tests {
         assert_eq!(
             state.to_json(),
             json!({
-                "mic": { "available": true, "enabled": false, "sceneBlocked": false },
+                "mic": { "available": true, "enabled": false, "sceneBlocked": false, "sceneRefused": false },
                 "call": null,
                 "livekit": false,
                 "connected": null,
@@ -614,7 +615,7 @@ mod tests {
         assert_eq!(
             state.to_json(),
             json!({
-                "mic": { "available": true, "enabled": true, "sceneBlocked": false },
+                "mic": { "available": true, "enabled": true, "sceneBlocked": false, "sceneRefused": false },
                 "call": { "status": "disconnected" },
                 "livekit": true,
                 "connected": true,

@@ -285,7 +285,8 @@ export type RoomState = 'connecting' | 'connected' | 'reconnecting' | 'disconnec
   | 'paused' | 'denied' | 'invalid' | 'identity_conflict' | 'credentials_required'
 
 export interface VoiceState {
-  mic: { available: boolean; enabled: boolean; sceneBlocked: boolean }
+  /** `sceneRefused`: the scene asks to turn nearby voice off and the `DisableVoice` permission refuses. */
+  mic: { available: boolean; enabled: boolean; sceneBlocked: boolean; sceneRefused: boolean }
   livekit: boolean
   connected: boolean | null
   rooms: { scene: boolean; state: RoomState }[] | null

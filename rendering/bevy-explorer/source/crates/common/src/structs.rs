@@ -2274,12 +2274,17 @@ pub struct MicState {
     /// through [`MicState::set_scene_disabled`] and [`MicState::set_scene_banned`].
     #[serde(default)]
     scene_blocked: bool,
-    /// The scene the player stands in turns nearby voice off.
+    /// The scene the player stands in turns nearby voice off, and the player's `DisableVoice`
+    /// permission allows it.
     #[serde(skip)]
     scene_disabled: bool,
     /// The current scene's room refused the player as banned.
     #[serde(skip)]
     scene_banned: bool,
+    /// The scene the player stands in asks to turn nearby voice off and the player's
+    /// `DisableVoice` permission refuses it.
+    #[serde(skip)]
+    scene_disable_refused: bool,
     /// Counts the mic opens the scene refused.
     #[serde(default)]
     pub refusals: u32,
@@ -2305,6 +2310,14 @@ impl MicState {
 
     pub fn scene_banned(&self) -> bool {
         self.scene_banned
+    }
+
+    pub fn scene_disable_refused(&self) -> bool {
+        self.scene_disable_refused
+    }
+
+    pub fn set_scene_disable_refused(&mut self, refused: bool) {
+        self.scene_disable_refused = refused;
     }
 
     /// Leaving the scene does not reopen the mic.
