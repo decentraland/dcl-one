@@ -4,13 +4,20 @@ import styles from './NavCreditsBalance.module.css'
 
 export type NavCreditsBalanceProps<C extends ElementType = 'a'> = PolymorphicLinkProps<
   C,
-  { label: ReactNode }
+  { label: ReactNode; variant?: 'default' | 'shop' }
 >
 
 // from: decentraland-ui2@3.23.8:dist/components/Navbar (ShopCreditsIcon): the credits mark.
 function CreditsMark() {
   return (
-    <svg width={16} height={16} viewBox="0 0 20 21" fill="none" aria-hidden="true" focusable="false">
+    <svg
+      width={16}
+      height={16}
+      viewBox="0 0 20 21"
+      fill="none"
+      aria-hidden="true"
+      focusable="false"
+    >
       <path
         d="M13.1318 0.891714L18.5 6.29015V14.0226L13.125 19.5831H6.26758L0.891602 14.0216V6.29113L6.26074 0.891714H13.1318Z"
         stroke="currentColor"
@@ -26,13 +33,19 @@ function CreditsMark() {
 
 export function NavCreditsBalance<C extends ElementType = 'a'>({
   as,
+  variant,
   label,
   className,
   ...rest
 }: NavCreditsBalanceProps<C>) {
   const Link: ElementType = as ?? 'a'
   return (
-    <Link {...rest} className={[styles.root, className].filter(Boolean).join(' ')}>
+    <Link
+      {...rest}
+      className={[styles.root, variant === 'shop' && styles.shop, className]
+        .filter(Boolean)
+        .join(' ')}
+    >
       <CreditsMark />
       {label}
     </Link>
