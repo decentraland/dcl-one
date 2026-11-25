@@ -237,7 +237,9 @@ export const feedbackEntries: GalleryEntry[] = [
         title:
           'Explorer HUD: a name with a shortcut, the sidebar rail, a paragraph and an end-aligned tip',
         render: () => (
-          <div className={`${layout.row} ${layout.tooltipHost} ${layout.tooltipRoom}`}>
+          <div
+            className={`${layout.row} ${layout.tooltipHost} ${layout.tooltipRoom} ${layout.tooltipClip}`}
+          >
             <Tooltip appearance="hud" label="Friends" shortcut="L" side="top">
               <Button size="md" variant="secondary">
                 top
