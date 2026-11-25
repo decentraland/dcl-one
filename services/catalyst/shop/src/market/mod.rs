@@ -39,9 +39,10 @@
 //! complete pass per configured network. Readers (`readers.rs`: first ≤ 100,
 //! skip ≤ 5000, id-keyset counts capped at 5000, per-route TTL buckets):
 //! the LAND, estate and name pages of `/v1/nfts`, the legacy legs of
-//! `/v1/orders` and `/v1/bids`, `/v1/sales`, `/v1/owners`, `/v1/accounts`,
-//! `/v1/rankings`, `/v1/volume`, the sales signal of the trending and
-//! creators rails, and the `/v1/users` names over `graph.rs`. Wearable and
+//! `/v1/orders` and `/v1/bids`, `/v1/owners`, the sales signal of the trending
+//! and creators rails, and the `/v1/users` names over `graph.rs`. Sales,
+//! seller summaries, proceeds, accounts, rankings, volume, store statistics
+//! and the sales leg of activity read the published shop sales index. Wearable and
 //! emote ownership (`/v1/nfts`, `/v1/users`, the `/v1/orders` owner guard,
 //! the lambdas lists, profiles, outfits and the backpack) reads the nft
 //! index (`owned_items.rs`). Local: `POST /v1/trades` (`listings.rs`, the old EIP-712
@@ -105,6 +106,7 @@ pub mod sale_fold;
 pub(crate) mod sale_history;
 pub use sale_history::FAMILIES as SALES_REPAIR_METRICS;
 pub mod sale_notices;
+pub(crate) mod sale_reads;
 mod sale_terms;
 pub mod sales;
 pub mod sales_index;
