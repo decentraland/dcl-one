@@ -208,7 +208,7 @@ impl Links {
         match (source, net) {
             (Source::Traded, ChainNet::Ethereum) => self.trade_chains.0,
             (Source::Traded, ChainNet::Matic) => self.trade_chains.1,
-            _ => chain_walk::mainnet_chain(net),
+            _ => net.chain_id(),
         }
     }
 }

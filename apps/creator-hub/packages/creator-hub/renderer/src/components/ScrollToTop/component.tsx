@@ -1,5 +1,5 @@
 import { useEffect } from 'react';
-import { useLocation } from 'react-router-dom';
+import { useLocation } from 'react-router';
 
 // MemoryRouter has no scroll restoration, so the document offset of the page you
 // leave carries into the page you open (#1491). Reset it whenever the path changes.

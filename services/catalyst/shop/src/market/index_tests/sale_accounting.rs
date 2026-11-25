@@ -192,7 +192,7 @@ async fn sales_accounting_publishes_one_common_prefix_and_rechecks_inputs_after_
         return;
     };
     let net = ChainNet::Ethereum;
-    let block = nft_index::start_block(net) + 60;
+    let block = nft_index::deployments::Deployments::mainnet(net).start + 60;
     let chain = FakeChain::new(block + 14, vec![], 1000, 10);
     chain.chain_id.store(1, Ordering::SeqCst);
     let url = serve(chain.clone()).await;
@@ -388,8 +388,8 @@ async fn sales_accounting_replays_fees_in_log_order_and_removes_empty_reorg_grou
         return;
     };
     let net = ChainNet::Ethereum;
-    let venue = nft_index::legacy_marketplaces(net)[0].0;
-    let block = nft_index::start_block(net) + 15;
+    let venue = nft_index::deployments::Deployments::mainnet(net).markets[0].0;
+    let block = nft_index::deployments::Deployments::mainnet(net).start + 15;
     let chain = FakeChain::new(block + 17, Vec::new(), 1_000, 100);
     chain.chain_id.store(1, Ordering::SeqCst);
     let url = serve(chain.clone()).await;
@@ -976,7 +976,7 @@ async fn sales_accounting_keeps_unallocated_evidence_out_of_public_totals() {
         return;
     };
     let net = ChainNet::Ethereum;
-    let b = nft_index::start_block(net) + 20;
+    let b = nft_index::deployments::Deployments::mainnet(net).start + 20;
     let chain = FakeChain::new(b + 12, vec![], 1000, 100);
     chain.chain_id.store(1, Ordering::SeqCst);
     let url = serve(chain.clone()).await;
@@ -1024,7 +1024,7 @@ async fn sales_accounting_keeps_unallocated_evidence_out_of_public_totals() {
     bundled.assets.as_mut().unwrap()["sent"][1]["contractAddress"] = json!(DAVE);
     sqlx::query("INSERT INTO shop.nft_event(network,block_number,log_index,block_time,kind,emitter,contract_address,token_id,from_address,to_address,amount,tx_hash)
         VALUES('ethereum',$1,10,86400,'order_successful',$2,$3,1,$3,$4,500,$5)")
-        .bind(b as i64).bind(nft_index::legacy_marketplaces(net)[0].0).bind(CARL).bind(BOB).bind(&outside.tx_hash)
+        .bind(b as i64).bind(nft_index::deployments::Deployments::mainnet(net).markets[0].0).bind(CARL).bind(BOB).bind(&outside.tx_hash)
         .execute(&mut *c).await.unwrap();
     sqlx::query("INSERT INTO shop.sale_event(network,block_number,log_index,block_time,kind,emitter,contract_address,token_id,bid_id,buyer,seller,price,tx_hash)
         VALUES('ethereum',$1,11,86400,'bid_accepted',$2,$3,1,$5,$4,$3,500,$5)")
@@ -1132,7 +1132,7 @@ async fn sales_delayed_receipt_corrects_checkout_buyer_and_first_purchase_day() 
     };
     const CHECKOUT: &str = "0xed038688ecf1193f8d9717eb3930f0bf0d745cb4";
     let net = ChainNet::Matic;
-    let b = nft_index::start_block(net) + 12;
+    let b = nft_index::deployments::Deployments::mainnet(net).start + 12;
     let chain = FakeChain::new(b + 5, vec![], 1000, 100);
     let url = serve(chain.clone()).await;
     let st = state_over(db.pool.clone(), &url, index_settings(100, 10), false);
@@ -1339,7 +1339,7 @@ async fn incomplete_sales_evidence_keeps_the_primary_walk_live_and_the_proof_at_
     let good_bid =
         sales_index::tests::bid_accepted_log(CARL, U256::from(5), BOB, ALICE, 2, 800, b, 3);
     let order = log_at(
-        nft_index::legacy_marketplaces(net)[0].0,
+        nft_index::deployments::Deployments::mainnet(net).markets[0].0,
         vec![
             nft_index::TOPIC_ORDER_SUCCESSFUL.into(),
             topic_word(U256::from(7)),
@@ -1443,7 +1443,7 @@ async fn capped_sales_advance_preserves_the_published_prefix_deadline() {
         return;
     };
     let net = ChainNet::Ethereum;
-    let first = nft_index::start_block(net) + 10;
+    let first = nft_index::deployments::Deployments::mainnet(net).start + 10;
     let chain = FakeChain::new(first + 12, vec![], 1000, 100);
     chain.chain_id.store(1, Ordering::SeqCst);
     let url = serve(chain.clone()).await;
@@ -1539,7 +1539,10 @@ async fn a_pending_sales_replay_leaves_budget_for_ethereum_estate_repair() {
     .fetch_one(&db.pool)
     .await
     .unwrap();
-    assert!(progress.0 >= nft_index::start_block(net) as i64 && progress.0 < (tip as i64));
+    assert!(
+        progress.0 >= nft_index::deployments::Deployments::mainnet(net).start as i64
+            && progress.0 < (tip as i64)
+    );
     assert!(
         progress.1 >= 6_236_547 && progress.1 < tip as i64,
         "{progress:?}"
@@ -1651,7 +1654,7 @@ async fn a_store_purchase_and_order_in_one_receipt_settle_after_a_failed_batch()
         return;
     };
     let net = ChainNet::Matic;
-    let (order_venue, deployed) = nft_index::legacy_marketplaces(net)[0];
+    let (order_venue, deployed) = nft_index::deployments::Deployments::mainnet(net).markets[0];
     let block = deployed.max(SalesIndex.start_block()) + 100;
     let chain = FakeChain::new(block + 5, vec![], 1000, 100);
     let url = serve(chain.clone()).await;

@@ -134,6 +134,7 @@ async fn seed_item(pool: &PgPool, contract: &str, item_id: &str, creator: &str) 
         pool,
         super::market::graph::Network::Matic,
         137,
+        false,
         &[collection],
     )
     .await
@@ -689,6 +690,7 @@ async fn campaigns_are_operator_data_read_publicly_with_the_builder_shape() {
         &pool,
         super::market::graph::Network::Matic,
         137,
+        false,
         &[mirrors::collections::fixture(
             &unapproved,
             "Pending",

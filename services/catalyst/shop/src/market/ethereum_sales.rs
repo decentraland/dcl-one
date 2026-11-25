@@ -75,7 +75,7 @@ impl ChainIndex for EthereumSalesIndex {
     }
 
     fn start_block(&self) -> u64 {
-        nft_index::start_block(self.net())
+        nft_index::deployments::Deployments::mainnet(self.net()).start
     }
 
     async fn groups(

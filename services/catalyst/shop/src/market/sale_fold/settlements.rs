@@ -98,7 +98,7 @@ fn cut(gross: U256, ppm: i32) -> Option<U256> {
 }
 
 fn legacy(net: ChainNet, venue: &str) -> bool {
-    venue == nft_index::legacy_marketplaces(net)[0].0
+    venue == nft_index::deployments::Deployments::mainnet(net).markets[0].0
         || (net == ChainNet::Ethereum && venue == ethereum_sales::ERC721_BID)
 }
 
@@ -388,7 +388,8 @@ fn venue_event(net: ChainNet, log: &RpcLog) -> Option<&'static str> {
             Some("store")
         }
         nft_index::TOPIC_ORDER_SUCCESSFUL
-            if nft_index::legacy_marketplaces(net)
+            if nft_index::deployments::Deployments::mainnet(net)
+                .markets
                 .iter()
                 .any(|(a, _)| *a == address) =>
         {

@@ -23,10 +23,7 @@ bevy_atmosphere = { workspace = true }
 bevy_console = { workspace = true }
 
 clap = { workspace = true }
-chrono = { workspace = true }
 half = { workspace = true }
-noise = "0.9"
-web-time = { workspace = true }
 
 [dev-dependencies]
 assets = { workspace = true }

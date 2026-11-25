@@ -8,7 +8,7 @@ async fn sales_page_reads_one_published_network_and_refuses_a_withdrawn_warm_pag
         return;
     };
     let net = ChainNet::Ethereum;
-    let block = nft_index::start_block(net) + 75;
+    let block = nft_index::deployments::Deployments::mainnet(net).start + 75;
     let chain = FakeChain::new(block + 14, vec![], 1000, 10);
     chain.chain_id.store(1, Ordering::SeqCst);
     let url = serve(chain.clone()).await;
@@ -40,7 +40,7 @@ async fn sales_page_reads_one_published_network_and_refuses_a_withdrawn_warm_pag
          FROM generate_series(1,2) AS i",
     )
     .bind(block as i64)
-    .bind(nft_index::legacy_marketplaces(net)[0].0)
+    .bind(nft_index::deployments::Deployments::mainnet(net).markets[0].0)
     .bind(LAND_REGISTRY_MAINNET)
     .bind(ALICE)
     .bind(BOB)
@@ -124,7 +124,7 @@ async fn sales_page_reads_one_published_network_and_refuses_a_withdrawn_warm_pag
         StatusCode::SERVICE_UNAVAILABLE
     );
 
-    let polygon = nft_index::start_block(ChainNet::Matic) + 20;
+    let polygon = nft_index::deployments::Deployments::mainnet(ChainNet::Matic).start + 20;
     let polygon_chain = FakeChain::new(polygon + 5, vec![], 1000, 10);
     let polygon_url = serve(polygon_chain.clone()).await;
     sqlx::query("INSERT INTO shop.chain_cursor(indexer,network,chain_id,start_block,last_block,last_block_hash,
@@ -520,7 +520,7 @@ async fn deep_sales_pages_keep_equal_timestamps_in_id_order_across_networks() {
     settings.sales_enabled = true;
     let mut expected = Vec::new();
     for net in ChainNet::ALL {
-        let height = nft_index::start_block(net) + 20;
+        let height = nft_index::deployments::Deployments::mainnet(net).start + 20;
         let chain = FakeChain::new(height + net.confirmations(), vec![], 1000, 100);
         chain
             .chain_id
@@ -646,7 +646,7 @@ async fn volume_repairs_unallocated_payments_and_counts_only_priced_store_lines(
     settings.sales_enabled = true;
     let mut polygon_url = String::new();
     for net in ChainNet::ALL {
-        let height = nft_index::start_block(net) + 20;
+        let height = nft_index::deployments::Deployments::mainnet(net).start + 20;
         let chain = FakeChain::new(height + net.confirmations(), vec![], 1000, 100);
         chain
             .chain_id
@@ -666,7 +666,7 @@ async fn volume_repairs_unallocated_payments_and_counts_only_priced_store_lines(
         }
     }
     let net = ChainNet::Matic;
-    let block = nft_index::start_block(net) as i64 + 20;
+    let block = nft_index::deployments::Deployments::mainnet(net).start as i64 + 20;
     let mana = crate::market::listings::mana_token(net.chain_id()).unwrap();
     let st = state_over(db.pool.clone(), &polygon_url, settings, false);
     let rpc = Rpc::at(&st.http, &polygon_url);

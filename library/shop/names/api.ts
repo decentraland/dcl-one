@@ -102,12 +102,13 @@ export async function fetchNameResales(q: NameResaleQuery, opts: { client: ShopC
   };
   if (q.onlyOnSale) query.isOnSale = true;
   if (q.search.trim()) query.search = q.search.trim();
-  // The route's price bounds are MANA in wei (marketplace-server's unit) on the open listing. A range asks
-  // for live listings only: the subgraph keeps an expired order's price, the index does not.
-  const min = parsePriceBound(q.minPrice)?.wei;
-  const max = parsePriceBound(q.maxPrice)?.wei;
-  if (min) query.minPrice = min.toString();
-  if (max) query.maxPrice = max.toString();
+  // The route's price bounds are MANA, as typed (the legacy marketplace API's unit, ethers `parseEther`),
+  // on the open listing; a typed bound that parses is already in that grammar (`parseManaInput`). A range
+  // asks for live listings only: the subgraph keeps an expired order's price, the index does not.
+  const min = parsePriceBound(q.minPrice)?.wei ? q.minPrice.trim() : null;
+  const max = parsePriceBound(q.maxPrice)?.wei ? q.maxPrice.trim() : null;
+  if (min) query.minPrice = min;
+  if (max) query.maxPrice = max;
   if (min || max) query.isOnSale = true;
   const body = await client.market.nfts<NftsResponseBody>(query, { signal: opts.signal });
   return { results: body?.data ?? [], total: body?.total ?? 0 };

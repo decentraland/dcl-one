@@ -120,7 +120,7 @@ async fn inputs(
         .bind(net.chain_id())
         .bind(sale_history::VERSION)
         .bind(now.naive_utc())
-        .bind(nft_index::start_block(net) as i64)
+        .bind(nft_index::deployments::Deployments::mainnet(net).start as i64)
         .bind(
             trade_events::marketplaces(net)
                 .iter()
@@ -265,7 +265,8 @@ pub async fn snapshot(
 }
 
 async fn write_rows(c: &mut PgConnection, net: ChainNet, from: i64, to: i64) -> anyhow::Result<()> {
-    let orders: Vec<_> = nft_index::legacy_marketplaces(net)
+    let orders: Vec<_> = nft_index::deployments::Deployments::mainnet(net)
+        .markets
         .iter()
         .map(|d| d.0)
         .collect();
@@ -380,7 +381,7 @@ pub(super) async fn pass(pool: &PgPool, rpc: &Rpc<'_>, net: ChainNet) -> anyhow:
     let previous = marker(&mut c, net).await?;
     drop(c);
     let same_history = previous.as_ref().is_some_and(|m| start.covers(m));
-    let initial = nft_index::start_block(net) as i64 - 1;
+    let initial = nft_index::deployments::Deployments::mainnet(net).start as i64 - 1;
     let from = previous
         .as_ref()
         .and_then(|m| start.reusable_prefix(m))

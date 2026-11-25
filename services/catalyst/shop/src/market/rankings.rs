@@ -226,6 +226,13 @@ pub async fn get_stats(
 ) -> Response {
     let data = if category == "estate" && stat == "size" {
         let p = super::wire::Params::new(&pairs);
+        let (min_price, max_price) = match (
+            super::items::parse_price_param(&p, "minPrice"),
+            super::items::parse_price_param(&p, "maxPrice"),
+        ) {
+            (Ok(min), Ok(max)) => (min, max),
+            (Err(e), _) | (_, Err(e)) => return e.into_response(),
+        };
         let f = super::nfts::NftFilters {
             is_on_sale: p.get_boolean("isOnSale").then_some(true),
             adjacent_to_road: p.get_boolean("adjacentToRoad"),
@@ -233,12 +240,8 @@ pub async fn get_stats(
             max_distance_to_plaza: p.get_number("maxDistanceToPlaza", None),
             max_estate_size: p.get_number("maxEstateSize", None),
             min_estate_size: p.get_number("minEstateSize", None),
-            min_price: p
-                .get_string("minPrice", None)
-                .filter(|s| !s.trim().is_empty()),
-            max_price: p
-                .get_string("maxPrice", None)
-                .filter(|s| !s.trim().is_empty()),
+            min_price,
+            max_price,
             ..Default::default()
         };
         match super::nft_reads::estate_sizes(&state, &f).await {
