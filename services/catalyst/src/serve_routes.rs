@@ -95,6 +95,7 @@ pub(super) fn build_routes(
     primary: bool,
     routes: Routes<'_>,
 ) -> axum::Router {
+    let health = super::health::router(config, &routes);
     let Routes {
         content,
         market,
@@ -150,7 +151,8 @@ pub(super) fn build_routes(
     let blobs = content.clone();
     let report_storage = blobs.storage.clone();
     let max_deploy_body = content::create_entity::max_deployment_body_bytes(&content.settings);
-    let app = component(content::build_router(content), "content")
+    let app = component(health, "shared")
+        .merge(component(content::build_router(content), "content"))
         .merge(component(shop::market::router(market.clone()), "shop"))
         .merge(component(
             shop_routes(shop::States {

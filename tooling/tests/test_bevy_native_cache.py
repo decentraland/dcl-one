@@ -160,11 +160,11 @@ class NativeCacheKeyTest(unittest.TestCase):
                     self.assertIn('prepare-native-cache.py', before.rsplit('actions/checkout@', 1)[-1], workflow.name)
                 before = step
         self.assertGreaterEqual(uses, 3)
-        # Bevy Explorer / CI keys its native caches with tooling/bevy-target-cache.py, which puts
+        # Bevy Explorer / CI keys its Cargo caches with tooling/bevy-target-cache.py, which puts
         # the same trees in each key.
         ci = (ROOT / '.github/workflows/bevy-explorer-ci.yml').read_text()
         self.assertNotIn('Swatinem/rust-cache@', ci)
-        self.assertEqual(len(re.findall(r'bevy-target-cache\.py" key --lane \w+\n', ci)), 3)
+        self.assertEqual(len(re.findall(r'bevy-target-cache\.py" key --lane \S+\n', ci)), 4)
         self.assertLessEqual(set(cache.VENDORED), set(target_cache.VENDORED))
 
     def test_the_scenes_cache_names_the_release_of_the_runner_image(self):
