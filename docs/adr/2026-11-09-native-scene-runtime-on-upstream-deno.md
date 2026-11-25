@@ -42,7 +42,8 @@ and own the rest. Scenes keep the behaviour they had on 0.307 wherever the new c
   with no host-object path (`structured_clone.rs`).
 - **Op results** are ordinary objects (`JsPlain<T>`): serde_v8 builds them with a null
   prototype, so `String(result)` would throw.
-- **Clock:** `performance.now()` keeps its 2 ms resolution (`clock.rs`).
+- **Clock:** `performance.now()` and deno_core's timer clock (`op_timer_now`, which timers store
+  on objects a prototype setter can read) keep a 2 ms resolution on one clock (`clock.rs`).
 - **V8 platform:** `JsRuntime::init_platform` on the sidecar's main thread; only `dcl_deno`'s own
   tests use the unprotected platform, under `cfg(test)`, never through a Cargo feature that
   could unify into a shipped binary. Each scene thread enters its tokio runtime before it creates

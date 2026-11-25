@@ -598,3 +598,56 @@ fn compile_function_is_disabled() {
         err
     });
 }
+
+/// deno_core's timer clock reads at the same 2 ms resolution as `performance.now()`, both
+/// called directly and through the timer fields a prototype setter can observe.
+#[test]
+fn timer_clock_has_two_millisecond_granularity() {
+    let mut runtime = client_runtime();
+    eval(
+        &mut runtime,
+        r#"
+        globalThis.__direct = [];
+        const until = Date.now() + 30;
+        while (Date.now() < until) {
+            __direct.push(Deno.core.ops.op_timer_now());
+        }
+        globalThis.__seen = [];
+        for (const field of ["_idleStart", "expiry"]) {
+            Object.defineProperty(Object.prototype, field, {
+                set(v) {
+                    __seen.push(v);
+                    Object.defineProperty(this, field, { value: v, writable: true, configurable: true });
+                },
+                configurable: true,
+            });
+        }
+        globalThis.__start = performance.now();
+        globalThis.__fired = [];
+        setTimeout(() => __fired.push(["once", performance.now() - __start]), 50);
+        let ticks = 0;
+        const id = setInterval(() => {
+            __fired.push(["tick", performance.now() - __start]);
+            if (++ticks === 3) clearInterval(id);
+        }, 8);
+        "#
+        .to_owned(),
+    )
+    .unwrap();
+    run_event_loop(&mut runtime);
+    let outcome = eval(
+        &mut runtime,
+        r#"JSON.stringify({
+            direct: __direct.every((t) => t % 2 === 0) && __direct[__direct.length - 1] > __direct[0],
+            seen: __seen.length > 0 && __seen.every((t) => t % 2 === 0),
+            fired: __fired.map(([k]) => k),
+            onTime: __fired.every(([k, t]) => t >= (k === "once" ? 50 : 8) - 2),
+        })"#
+        .to_owned(),
+    )
+    .unwrap();
+    assert_eq!(
+        outcome,
+        r#"{"direct":true,"seen":true,"fired":["tick","tick","tick","once"],"onTime":true}"#
+    );
+}
