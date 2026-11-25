@@ -199,41 +199,7 @@ fn marketplace_reader(query: &str, vars: &Value) -> Value {
     }
 }
 
-const MANAGER: &str = "0x462ab09f1a75786e0c54ced394e0fb537af03734";
 const UPDATE_OP: &str = "0xbbbb000000000000000000000000000000000002";
-
-/// The land-manager subgraph: parcel 0,0 sits in an estate of OWNER whose
-/// update manager is MANAGER (an approved-then-revoked operator drops out);
-/// UPDATE_OP is the update operator of two parcels.
-fn land_reader(query: &str, vars: &Value) -> Value {
-    if query.contains("fetchOperatorsOfParcel") {
-        if vars["x"] == 0 && vars["y"] == 0 {
-            json!({ "parcels": [{ "x": "0", "y": "0", "owner": { "address": ESTATE_REGISTRY_MAINNET }, "operator": null, "updateOperator": null }],
-                    "estates": [{ "owner": { "address": OWNER }, "operator": null, "updateOperator": null }] })
-        } else {
-            json!({ "parcels": [], "estates": [] })
-        }
-    } else if query.contains("fetchAuthorizations") {
-        if vars["tokenAddress"] != ESTATE_REGISTRY_MAINNET || vars["address"] != OWNER {
-            return json!({ "authorizations": [] });
-        }
-        json!({ "authorizations": [
-            { "type": "UpdateManager", "operator": MANAGER, "isApproved": true, "timestamp": "1" },
-            { "type": "Operator", "operator": "0xdead", "isApproved": true, "timestamp": "2" },
-            { "type": "Operator", "operator": "0xdead", "isApproved": false, "timestamp": "3" }
-        ] })
-    } else if query.contains("fetchParcelsByUpdateOperator") {
-        if vars["updateOperator"] != UPDATE_OP {
-            return json!({ "parcels": [] });
-        }
-        json!({ "parcels": [
-            { "id": "1", "x": "1", "y": "2", "owner": { "id": OWNER }, "updateOperator": UPDATE_OP },
-            { "id": "2", "x": "3", "y": "4", "owner": { "id": OWNER }, "updateOperator": UPDATE_OP }
-        ] })
-    } else {
-        json!({})
-    }
-}
 
 fn registry_graph(_: &str) -> Value {
     json!({ "thirdParties": [{
@@ -1445,10 +1411,9 @@ async fn the_g1_lambdas_answer_from_the_mirrors_indexes_and_readers() {
 /// Before the indexes and the items mirror exist, the routes the old lambdas
 /// answered from the subgraphs answer from them here: the catalogue's on-chain
 /// leg from the collections subgraphs, the name holder and the owner's lands
-/// from the marketplace subgraph, the parcel operators, the permission flags
-/// and the update operator's parcels from the land-manager subgraph; without
-/// `LAND_SUBGRAPH_URL` the two land routes keep the index envelope and the
-/// flags route answers lamb2's 500.
+/// from the marketplace subgraph. The parcel operators, the permission flags
+/// and the update operator's parcels read the land-authz index alone and
+/// answer its envelope until it publishes.
 #[tokio::test]
 async fn the_lambdas_read_the_subgraphs_before_their_indexes_and_mirrors() {
     let Some(db) = ScratchDb::create().await else {
@@ -1466,12 +1431,10 @@ async fn the_lambdas_read_the_subgraphs_before_their_indexes_and_mirrors() {
     deploy(&db.pool, "bafyhat", "wearable", &hat_urn, hat, &files).await;
     deploy(&db.pool, "bafydance", "emote", &dance_urn, json!({ "id": dance_urn, "name": "Dance", "emoteDataADR74": { "category": "dance", "loop": true, "representations": [] } }), &[]).await;
 
-    let land_url = serve_graph_vars(land_reader).await;
     let settings = Settings {
         eth_collections_subgraph_url: Some(serve_graph(eth_collections).await),
         matic_collections_subgraph_url: Some(serve_graph(matic_items).await),
         marketplace_subgraph_url: Some(serve_graph_vars(marketplace_reader).await),
-        land_subgraph_url: Some(land_url.clone()),
         ..Settings::for_tests()
     };
     let state = Arc::new(MarketplaceState::new(
@@ -1576,11 +1539,12 @@ async fn the_lambdas_read_the_subgraphs_before_their_indexes_and_mirrors() {
         json!({ "elements": [], "totalAmount": 0, "pageNum": 99999999999i64, "pageSize": 100 })
     );
 
+    // The LAND rights routes read the land-authz index alone: a fresh fold
+    // answers, an expired one answers the envelope (no subgraph stands in).
     let land = crate::land_authz::router(Arc::new(crate::land_authz::LandAuthzState::new(
         db.pool.clone(),
         crate::http::Outbound::for_tests(),
         crate::land_authz::Settings::for_tests(),
-        Some(state.index.clone()),
     )));
     sqlx::query("INSERT INTO land_authz.index_cursor (network, land_registry, estate_registry, last_block, folded_block, folded_at, full_replay_started) VALUES ('ethereum-mainnet', $1, $2, 1, 1, timezone('UTC', now()), true)")
         .bind(LAND_REGISTRY_MAINNET)
@@ -1599,107 +1563,12 @@ async fn the_lambdas_read_the_subgraphs_before_their_indexes_and_mirrors() {
         .execute(&db.pool)
         .await
         .unwrap();
-    let (status, body) = get_via(land.clone(), "/lambdas/parcels/0/0/operators").await;
-    assert_eq!(status, StatusCode::OK, "{body}");
-    assert_eq!(
-        body,
-        json!({ "owner": OWNER, "operator": null, "updateOperator": null, "updateManagers": [MANAGER], "approvedForAll": [] })
-    );
-    let (status, body) = get_via(land.clone(), "/lambdas/parcels/5/5/operators").await;
-    assert_eq!(
-        (status, body["error"].as_str()),
-        (StatusCode::NOT_FOUND, Some("Bad Request")),
-        "{body}"
-    );
-    let (status, body) = get_via(
-        land.clone(),
-        &format!("/lambdas/users/{UPDATE_OP}/lands-permissions?pageSize=1&pageNum=2"),
-    )
-    .await;
-    assert_eq!(status, StatusCode::OK, "{body}");
-    assert_eq!(body["totalAmount"], 2);
-    assert_eq!(
-        body["elements"],
-        json!([{ "id": "2", "x": "3", "y": "4", "owner": OWNER, "updateOperator": UPDATE_OP }])
-    );
-    let (_, body) = get_via(
-        land.clone(),
-        &format!("/lambdas/users/{UPDATE_OP}/lands-permissions?pageSize=5000"),
-    )
-    .await;
-    assert_eq!(
-        (
-            body["pageSize"].as_i64(),
-            body["elements"].as_array().map(Vec::len)
-        ),
-        (Some(5000), Some(2)),
-        "no pageSize maximum: {body}"
-    );
-    let (_, body) = get_via(
-        land.clone(),
-        "/lambdas/users/0xdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef/lands-permissions",
-    )
-    .await;
-    assert_eq!(
-        body,
-        json!({ "elements": [], "totalAmount": 0, "pageNum": 1, "pageSize": 100 })
-    );
-    // The flags route reads the same operators and answers booleans, as
-    // lamb2's getParcelPermissions compares them.
-    for (who, expected) in [
-        (
-            OWNER,
-            json!({ "owner": true, "operator": false, "updateOperator": false, "updateManager": false, "approvedForAll": false }),
-        ),
-        (
-            MANAGER,
-            json!({ "owner": false, "operator": false, "updateOperator": false, "updateManager": true, "approvedForAll": false }),
-        ),
-        (
-            UPDATE_OP,
-            json!({ "owner": false, "operator": false, "updateOperator": false, "updateManager": false, "approvedForAll": false }),
-        ),
-    ] {
-        let (status, body) = get_via(
-            land.clone(),
-            &format!("/lambdas/users/{who}/parcels/0/0/permissions"),
-        )
-        .await;
-        assert_eq!((status, body), (StatusCode::OK, expected), "{who}");
-    }
-    let (status, body) = get_via(
-        land.clone(),
-        &format!("/lambdas/users/{OWNER}/parcels/160/100/permissions"),
-    )
-    .await;
-    assert_eq!(
-        (status, body["message"].as_str()),
-        (
-            StatusCode::NOT_FOUND,
-            Some("Parcel or estate rights not found for x: 160, y: 100")
-        ),
-        "an exception-block parcel reaches the subgraph"
-    );
-
-    let without_land = Arc::new(MarketplaceState::new(
-        db.pool.clone(),
-        crate::http::Outbound::for_tests(),
-        Settings {
-            land_subgraph_url: None,
-            ..Settings::for_tests()
-        },
-    ));
-    let land = crate::land_authz::router(Arc::new(crate::land_authz::LandAuthzState::new(
-        db.pool.clone(),
-        crate::http::Outbound::for_tests(),
-        crate::land_authz::Settings::for_tests(),
-        Some(without_land.index.clone()),
-    )));
     for uri in [
-        "/lambdas/parcels/0/0/operators",
-        &format!("/lambdas/users/{UPDATE_OP}/lands-permissions"),
+        "/lambdas/parcels/0/0/operators".to_string(),
+        format!("/lambdas/users/{UPDATE_OP}/lands-permissions"),
+        format!("/lambdas/users/{OWNER}/parcels/0/0/permissions"),
     ] {
-        let (status, body) = get_via(land.clone(), uri).await;
+        let (status, body) = get_via(land.clone(), &uri).await;
         assert_eq!(
             (status, body["configure"].as_str()),
             (
@@ -1709,19 +1578,6 @@ async fn the_lambdas_read_the_subgraphs_before_their_indexes_and_mirrors() {
             "{uri}: {body}"
         );
     }
-    let (status, body) = get_via(
-        land.clone(),
-        &format!("/lambdas/users/{OWNER}/parcels/0/0/permissions"),
-    )
-    .await;
-    assert_eq!(
-        (status, body),
-        (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            json!({ "error": "Internal Server Error" })
-        ),
-        "neither source: lamb2's bare 500"
-    );
 
     db.drop().await;
 }
@@ -1766,7 +1622,7 @@ async fn assert_lambdas_profile_dependency_failure(state: &SharedState, layer: &
     let recorder = crate::comms::metrics::prometheus_builder()
         .unwrap()
         .build_recorder();
-    let _recording = metrics::set_default_local_recorder(&recorder);
+    let _recording = dcl_metrics::set_default_local_recorder(&recorder);
     let app = router(state.clone());
     for modified_since in [None, Some("Wed, 21 Oct 2015 07:28:00 GMT")] {
         let mut request = Request::post("/lambdas/profiles");
@@ -1923,9 +1779,9 @@ async fn user_item_entities_and_definitions_look_up_missing_pointers_on_peers() 
 }
 
 /// A configured subgraph that fails: the element routes answer lamb2's 502
-/// `FetcherError` naming the key as requested, `/operators` and
-/// `/permissions` lamb2's bare 500 (`errorHandler.ts`). No database: the
-/// index cursors read as not ready, so every route takes its subgraph leg.
+/// `FetcherError` naming the key as requested. No database: the index
+/// cursors read as not ready, so every route that has a subgraph leg takes
+/// it; the LAND rights routes have none and answer the index envelope.
 #[tokio::test]
 async fn a_failing_subgraph_answers_lamb2s_status() {
     let pool = PgPool::connect_lazy("postgres://postgres@127.0.0.1:1/postgres").unwrap();
@@ -1936,7 +1792,6 @@ async fn a_failing_subgraph_answers_lamb2s_status() {
         crate::http::Outbound::for_tests(),
         Settings {
             marketplace_subgraph_url: Some(failing.clone()),
-            land_subgraph_url: Some(failing),
             ..Settings::for_tests()
         },
     ));
@@ -1980,14 +1835,7 @@ async fn a_failing_subgraph_answers_lamb2s_status() {
         pool,
         crate::http::Outbound::for_tests(),
         crate::land_authz::Settings::for_tests(),
-        Some(state.index.clone()),
     )));
-    let (status, body) = get_via(
-        land.clone(),
-        &format!("/lambdas/users/{mixed}/lands-permissions"),
-    )
-    .await;
-    assert_eq!((status, body), (StatusCode::BAD_GATEWAY, fetcher(mixed)));
     for method in [Method::GET, Method::OPTIONS] {
         let response = land
             .clone()
@@ -2008,18 +1856,18 @@ async fn a_failing_subgraph_answers_lamb2s_status() {
                 .contains_key(header::ACCESS_CONTROL_ALLOW_CREDENTIALS)
         );
     }
+    // The LAND rights routes have no subgraph leg: with no index they
+    // answer its envelope, whatever subgraph is configured.
     for uri in [
         "/lambdas/parcels/0/0/operators".to_string(),
         format!("/lambdas/users/{OWNER}/parcels/0/0/permissions"),
+        format!("/lambdas/users/{mixed}/lands-permissions"),
     ] {
         let (status, body) = get_via(land.clone(), &uri).await;
         assert_eq!(
-            (status, body),
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                json!({ "error": "Internal Server Error" })
-            ),
-            "{uri}"
+            (status, body["source"].as_str()),
+            (StatusCode::SERVICE_UNAVAILABLE, Some("land-authz-index")),
+            "{uri}: {body}"
         );
     }
 }
@@ -2166,7 +2014,7 @@ async fn user_lands_read_the_registries_of_the_configured_network() {
     .unwrap();
     sqlx::query(
         "INSERT INTO shop.chain_cursor (indexer, network, start_block, last_block, folded_block, folded_at, full_history, chain_id) \
-         VALUES ('nft', 'ethereum', 0, 10, 10, $1, true, 1)",
+         VALUES ('nft', 'ethereum', 0, 11, 10, $1, true, 11155111)",
     )
     .bind(now)
     .execute(&db.pool)
@@ -2188,6 +2036,14 @@ async fn user_lands_read_the_registries_of_the_configured_network() {
             crate::http::Outbound::for_tests(),
             Settings {
                 eth_network: network.to_string(),
+                market: super::MarketSettings {
+                    indexes: super::chain_walk::IndexSettings {
+                        chain_id_ethereum: if network == "sepolia" { 11155111 } else { 1 },
+                        chain_id_matic: if network == "sepolia" { 80002 } else { 137 },
+                        ..Default::default()
+                    },
+                    ..Default::default()
+                },
                 ..Settings::for_tests()
             },
         ))
@@ -2240,8 +2096,8 @@ async fn user_lands_read_the_registries_of_the_configured_network() {
     .await;
     assert_eq!(
         (status, body["source"].as_str()),
-        (StatusCode::SERVICE_UNAVAILABLE, Some("land-authz-index")),
-        "no mainnet cursor: {body}"
+        (StatusCode::SERVICE_UNAVAILABLE, Some("nft-index")),
+        "the mainnet NFT publication is missing: {body}"
     );
     db.drop().await;
 }
@@ -2321,6 +2177,43 @@ async fn names_and_lands_serve_stale_on_outage_and_ownership_does_not() {
     let (status, body) = get(&state, &names_uri).await;
     assert_eq!(status, StatusCode::BAD_GATEWAY, "{body}");
     assert_eq!(get(&state, &lands_uri).await, (StatusCode::OK, lands));
+}
+
+/// `/users/{a}/names` on a node whose NAME source is the subgraph counts
+/// each read of the per-owner memo: the first a `miss`, the next a `hit`.
+#[tokio::test(flavor = "current_thread")]
+async fn names_from_the_subgraph_count_owner_memo_reads() {
+    let recorder = dcl_metrics::Registry::new(&[super::lambdas_metrics::FAMILIES])
+        .unwrap()
+        .builder(dcl_metrics::PrometheusBuilder::new())
+        .unwrap()
+        .build_recorder();
+    let handle = recorder.handle();
+    let _recording = dcl_metrics::set_default_local_recorder(&recorder);
+    let pool = PgPool::connect_lazy("postgres://postgres@127.0.0.1:1/postgres").unwrap();
+    pool.close().await;
+    let state = Arc::new(MarketplaceState::new(
+        pool,
+        crate::http::Outbound::for_tests(),
+        Settings {
+            marketplace_subgraph_url: Some(serve_graph_vars(marketplace_reader).await),
+            ..Settings::for_tests()
+        },
+    ));
+    state
+        .test_allow_loopback
+        .store(true, std::sync::atomic::Ordering::Relaxed);
+    for _ in 0..2 {
+        let (status, body) = get(&state, &format!("/lambdas/users/{OWNER}/names")).await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+    }
+    let rendered = handle.render();
+    for line in [
+        "dcl_lambdas_owner_memo_reads_total{result=\"miss\"} 1",
+        "dcl_lambdas_owner_memo_reads_total{result=\"hit\"} 1",
+    ] {
+        assert!(rendered.contains(line), "missing {line}:\n{rendered}");
+    }
 }
 
 /// The nft leg of `/v1/prices` reads after its gate; if the land index

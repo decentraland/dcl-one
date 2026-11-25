@@ -6,7 +6,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Link, useLocation, useParams } from "react-router";
 
-import Button from "../../atoms/Button";
+import { Button } from "@dcl/one-ui";
 import type { ShopClient } from "@shop/api/shop";
 import { tokenAsset } from "@shop/model/asset";
 import { evmAddress } from "@shop/model/address";
@@ -332,7 +332,7 @@ export default function RentPage(props: RentPageProps) {
                   ) : null}
                   {phase.kind === "select" ? (
                     <div className="shop-land-actions">
-                      <Button onClick={() => setPhase({ kind: "confirm" })} disabled={!canRent}>
+                      <Button size="md" onClick={() => setPhase({ kind: "confirm" })} disabled={!canRent}>
                         Rent
                       </Button>
                     </div>
@@ -480,10 +480,10 @@ function ConfirmRent({
         I will be the operator of this LAND
       </label>
       <div className="shop-land-actions">
-        <Button type="submit" disabled={!priceMatches || !operatorValid}>
+        <Button size="md" type="submit" disabled={!priceMatches || !operatorValid}>
           Confirm
         </Button>
-        <Button variant="secondary" onClick={onCancel}>
+        <Button size="md" variant="secondary" onClick={onCancel}>
           Cancel
         </Button>
       </div>

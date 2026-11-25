@@ -855,7 +855,8 @@ impl TransactionComponent {
             BroadcastRoute::None => Err(ApiError::RelayerUnavailable(
                 "No relayer is provisioned for the selected signer preference. Validation passed; broadcast is \
                  unavailable. Set OZ_RELAYER_URL/OZ_RELAYER_ID/OZ_RELAYER_API_KEY, META_TX_BROADCAST_ENABLED=true with \
-                 RELAYER_PRIVATE_KEY_FILE (+ RPC_ENDPOINT_POLYGON), or TRANSACTIONS_UPSTREAM_URL, to enable broadcasting."
+                 RELAYER_PRIVATE_KEY_FILE (+ RPC_ENDPOINT_POLYGON), or on a testnet relay TRANSACTIONS_UPSTREAM_URL, \
+                 to enable broadcasting."
                     .into(),
             )),
         }

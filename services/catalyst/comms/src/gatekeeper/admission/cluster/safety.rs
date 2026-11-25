@@ -1,5 +1,7 @@
 //! Shared island safety facts. Stable wallet locks serialize first admission
 //! with first cleanup; remote calls never run while these transactions live.
+use crate::metrics::declarations;
+
 use sqlx::{PgPool, Postgres, Row, Transaction};
 use uuid::Uuid;
 
@@ -327,7 +329,9 @@ impl SafetyStore {
         let count:i64=sqlx::query_scalar("SELECT (SELECT count(*) FROM social.island_takeover_receipts WHERE NOT acknowledged AND retired_by_source IS NULL)+(SELECT count(*) FROM (SELECT wallet,intent_root_key,intent_target_key,intent_generation FROM social.island_cleanup_dispatches WHERE purpose='island_enforcement' AND state IN ('dispatched','quarantine','settled_late') GROUP BY wallet,intent_root_key,intent_target_key,intent_generation) obligations)")
             .fetch_one(&mut **tx).await.map_err(|_|GatewayError::Unknown)?;
         if count >= CAPACITY {
-            metrics::counter!("comms_island_safety_capacity_refused_total").increment(1);
+            declarations::ISLAND_SAFETY_CAPACITY_REFUSED
+                .handle([])
+                .increment(1);
             return Err(GatewayError::Unknown);
         }
         Ok(())
@@ -943,7 +947,9 @@ impl SafetyStore {
             lease.commit().await
             }.await;
             if result.is_err() {
-                metrics::counter!("comms_island_cleanup_maintenance_failed_total").increment(1);
+                declarations::ISLAND_CLEANUP_MAINTENANCE_FAILED
+                    .handle([])
+                    .increment(1);
                 tracing::warn!(%wallet,"island compaction wallet unavailable; retaining all evidence");
             }
         }

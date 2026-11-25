@@ -183,13 +183,6 @@ pub struct ExploreConfig {
     #[arg(long, env = "EXPLORER_REGISTRY_SOURCE_URL", default_value = "")]
     pub explorer_registry_source_url: String,
 
-    #[arg(long, env = "EXPLORER_MAP_SOURCE_URL", default_value = "")]
-    pub explorer_map_source_url: String,
-
-    /// Floor between two downloads of the 38 MB tile grid.
-    #[arg(long, env = "EXPLORER_MAP_MIN_REFRESH_SECS", default_value_t = 3600)]
-    pub explorer_map_min_refresh_secs: u64,
-
     /// The render directory `/satellite/{z}/{x}/{y}` is painted from
     /// (`manifest.json`, `<cx>/<cy>.png`, `<cx>/<cy>.t.png`), mirrored into
     /// the blob store with the explorer mirrors (the old satelliteMirror);

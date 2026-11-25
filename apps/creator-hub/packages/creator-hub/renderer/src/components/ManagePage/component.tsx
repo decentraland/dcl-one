@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useId, useRef, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate } from 'react-router';
 import { cx } from '/@/lib/cx';
 import { analytics, misc } from '#preload';
 import { useDispatch, useSelector } from '#store';

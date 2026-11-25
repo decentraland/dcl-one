@@ -90,6 +90,21 @@ across workers:
   `alpha_mode` receives the base as input.
 - Pipeline cache: `PipelineCompilationMode::async_with_handler` with a
   `PipelineCompilationHandler` that is notified as pipelines compile.
+- **Skinning, where skins use storage buffers**: the joint matrix buffer holds one world matrix
+  per joint entity, shared by every skin that names the joint and written once a frame when
+  the joint moves; slot 0 is the identity. A second buffer, `SkinUniforms::skin_joints_buffer`,
+  holds each skin's inverse bindposes with the joint's slot in the bottom row's first
+  component; a skin's entries are uploaded when the skin is added. A joint with no transform
+  when its skin is added renders at the identity until it has one. Once a frame, before any
+  camera renders, a compute pass (`SkinMatricesNode`, `skin_matrices.wgsl`) multiplies the two
+  into `SkinUniforms::skin_matrices_buffer`, one finished matrix per skin and joint, which
+  the mesh bind group binds as `joint_matrices`; the vertex shaders and bind group layouts
+  are stock, and the previous frame's buffer serves motion vectors.
+  `SkinUniforms::skinning_buffers` returns the pair a mesh bind group takes. An avatar's
+  body and wearables name the same joint entities, so their joints cost the CPU one matrix
+  each a frame however many meshes the avatar has. Stock bevy computes and uploads a
+  finished matrix per skin and joint from the CPU each frame, and still does where skins use
+  uniform buffers.
 - **Throwaway**: `RenderMeshInstances` and `RenderMaterialInstances` mirrored into render-entity
   components with component-first lookups (`MeshInstanceLookup`, `MaterialInstanceLookup`,
   `validate_instance_mirror` feature); upstream #22966 removes the need.
@@ -137,13 +152,14 @@ across workers:
   bytes reads back from the same path.
 - Every compressed decode (basis, dds, ktx2) gets the caller's asset usage, which upstream
   leaves at the default: a cached dds loads with `RENDER_WORLD` as its first load did.
-- The patched crates' tests (`bevy_image`, `bevy_gltf`) run in the explorer's CI ("Test the
+- The patched crates' tests (`bevy_image`, `bevy_gltf`, `bevy_pbr`) run in the explorer's CI ("Test the
   patched Bevy crates"): they are git dependencies, so `cargo test --all` never runs them. Write
   the tree with `python3 tooling/patched-sources.py materialise bevy`. Then, from `source`, seed
   its workspace with this lock file and run them there: `cp Cargo.lock ../bevy/Cargo.lock`, then
   `cargo test --manifest-path ../bevy/Cargo.toml -p
   bevy_image -p bevy_gltf --lib --features
-  bevy_gltf/dds,bevy_gltf/bevy_animation,bevy_image/ktx2,bevy_image/zstd`.
+  bevy_gltf/dds,bevy_gltf/bevy_animation,bevy_image/ktx2,bevy_image/zstd`, and `cargo test
+  --manifest-path ../bevy/Cargo.toml -p bevy_pbr --lib` for the skinning tests.
 - Accessors with no `bufferView` are accepted (zero-filled per spec; Blender morph targets). When a
   `KHR_draco_mesh_compression` primitive reads an accessor with neither a `bufferView` nor sparse
   data (its indices or an attribute), the load fails with an error naming the extension, so

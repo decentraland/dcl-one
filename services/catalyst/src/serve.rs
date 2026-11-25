@@ -15,6 +15,8 @@ use crate::{
 
 #[path = "serve_adapters.rs"]
 mod adapters;
+#[path = "serve_health.rs"]
+mod health;
 #[path = "serve_lifecycle.rs"]
 mod lifecycle;
 #[path = "serve_routes.rs"]
@@ -97,10 +99,11 @@ mod metrics_tests {
         let bind = reserved.local_addr().unwrap();
         drop(reserved);
         super::install_metrics(&bind.to_string()).unwrap();
-        let response = reqwest::Client::builder()
+        let client = reqwest::Client::builder()
             .timeout(std::time::Duration::from_secs(2))
             .build()
-            .unwrap()
+            .unwrap();
+        let response = client
             .get(format!("http://{bind}/metrics"))
             .send()
             .await
@@ -110,6 +113,23 @@ mod metrics_tests {
         for sample in ["comms_nats_connected 0", "comms_cluster_work_running 0"] {
             assert!(rendered.contains(sample), "missing {sample}: {rendered}");
         }
+        for path in ["/", "/metrics/", "/social-rpc/metrics", "/custom"] {
+            let response = client
+                .get(format!("http://{bind}{path}"))
+                .send()
+                .await
+                .unwrap();
+            assert_eq!(response.status(), reqwest::StatusCode::NOT_FOUND, "{path}");
+        }
+        assert_eq!(
+            client
+                .post(format!("http://{bind}/metrics"))
+                .send()
+                .await
+                .unwrap()
+                .status(),
+            reqwest::StatusCode::METHOD_NOT_ALLOWED
+        );
         let reserved = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
         let failed_bind = reserved.local_addr().unwrap();
         drop(reserved);
@@ -125,7 +145,7 @@ mod metrics_tests {
             .unwrap()
             .build_recorder();
         let handle = recorder.handle();
-        metrics::with_local_recorder(&recorder, super::register_metrics);
+        dcl_metrics::with_local_recorder(&recorder, super::register_metrics);
         let rendered = handle.render();
         for sample in [
             "comms_nats_connected 0",
@@ -134,21 +154,17 @@ mod metrics_tests {
             "comms_cluster_work_queued 0",
             "comms_cluster_work_rejected_total{reason=\"wallet_full\"} 0",
             "worlds_allowance_read_failures_total 0",
+            "dcl_content_server_sync_state 0",
         ] {
             assert!(rendered.contains(sample), "missing {sample}: {rendered}");
         }
     }
 }
 
-/// Run with Stats prepared before creating workers. The unsafe preparation
-/// contract applies through every route clone, canceled blocking operation and
-/// final isolate teardown; an arbitrary preexisting runtime is not supported.
-pub async fn serve(
-    mut config: Config,
-    mut prepared: crate::metrics_matcher::PreparedStats,
-) -> anyhow::Result<()> {
+pub async fn serve(mut config: Config) -> anyhow::Result<()> {
     config.node.init_tracing();
-    let metrics_handle = install_metrics(&config.node.serve_metrics_bind)?;
+    install_metrics(&config.node.serve_metrics_bind)?;
+    shop::market::lambdas_metrics::record_build_info(&config.commit_hash().unwrap_or_default());
     tracing::info!("{}", catalyst_config::posture::startup_line(&config));
     if let Ok(Some(warning)) = catalyst_config::posture::worlds_names_reader(&config) {
         tracing::warn!("{warning}");
@@ -169,6 +185,8 @@ pub async fn serve(
     .await
     .context("connecting to DATABASE_URL")?;
     db::bootstrap(&pool).await?;
+    let self_hosts = content::own_hosts(&config);
+    let market_settings = crate::settings::market_settings(&config, &self_hosts)?;
     worlds::rooms::ensure_world_scene_ban_release(&pool).await?;
     worlds::rooms::ensure_scene_admin_place_release(&pool).await?;
     worlds::rooms::ensure_genesis_scene_ban_release(&pool).await?;
@@ -196,11 +214,13 @@ pub async fn serve(
         storage.clone(),
         sync_status.clone(),
     ));
-    prepared.settings.commit_hash = Some(config.commit_hash().unwrap_or_default());
-    prepared.settings.content_url = stats_content_url(
-        config.node.content_url.as_deref(),
-        &content.settings.content_public_url,
-    );
+    let statistics_settings = comms::stats::http::Settings {
+        commit_hash: Some(config.commit_hash().unwrap_or_default()),
+        content_url: stats_content_url(
+            config.node.content_url.as_deref(),
+            &content.settings.content_public_url,
+        ),
+    };
 
     // ONE outbound client: every mirror and upstream reader goes through the
     // guard; peer sync (`content::sync::sync_http_client`) and the RPC
@@ -473,7 +493,6 @@ pub async fn serve(
     .await
     .context("starting the explorer-api readers and mirrors")?;
     explorer_api.attach_eip1654(eip1654.clone());
-    explorer_api.spawn_jobs(&jobs);
     // An island's /about advertises its own minimap once the grid it draws is loaded.
     let grid = Arc::downgrade(&explorer_api);
     content.attach_parcel_grid(Arc::new(move || {
@@ -546,8 +565,6 @@ pub async fn serve(
     // archive, every one over the same pool, client and job lifecycle. The
     // local writes among them sit behind DATA_WRITES_ENABLED
     // (`shop::market::DataWrites`, the social switch's twin).
-    let self_hosts = content::own_hosts(&config);
-    let market_settings = crate::settings::market_settings(&config, &self_hosts)?;
     shop::market::catalog::install_served_chains(&market_settings.market.indexes);
     let market = Arc::new(
         shop::market::MarketplaceState::new(
@@ -585,10 +602,13 @@ pub async fn serve(
         pool.clone(),
         http_client.clone(),
         land_settings,
-        Some(market.index.clone()),
     ));
     explore.places.set_land_authz(land.clone());
     explorer_api.attach_land_authz(land.clone());
+    explorer_api.attach_land_market(Arc::new(adapters::ShopLandMarket(market.clone())));
+    // Its jobs start once the tile grid's sources are attached, so the first
+    // build does not record them as missing.
+    explorer_api.spawn_jobs(&jobs);
 
     // The content server's local write path (src/content/{create_entity,
     // unpublish_scene,land_publish}): the write deployer over the ONE pool
@@ -627,7 +647,7 @@ pub async fn serve(
             config.worlds.deployment_processing_timeout_ms,
         );
         tokio::spawn(async move {
-            catalyst_storage::upload_spool::sweep_stale(&spool_root, stale_after).await;
+            content::create_entity::reclaim_stale_spool(&spool_root, stale_after).await;
         });
     }
     // Expired partial uploads (content::partial_deployments) are reclaimed
@@ -873,7 +893,6 @@ pub async fn serve(
             max_images_per_user: config.create.camera_reel_max_images_per_user,
             admin_token: Config::non_empty(&config.create.catalyrst_camera_reel_admin_token),
             writes_enabled: config.create.create_writes_enabled,
-            metrics_bearer_token: config.create.camera_reel_metrics_bearer_token.clone(),
             places_cache_ttl_seconds: config.create.camera_reel_places_cache_ttl_seconds,
             places_cache_max_size: config.create.camera_reel_places_cache_max_size,
         },
@@ -930,6 +949,19 @@ pub async fn serve(
         worlds::policy::MAX_SCENE_SIZE_BYTES,
     )
     .context("WORLDS_PERSONAL_WORLDS_MAX / WORLDS_PERSONAL_WORLD_MAX_SIZE_BYTES")?;
+    // The permission core below always attaches the land-authz index, whose
+    // published fold is then the only LAND authority: neither variable is
+    // read any more, so a deployment still setting one is told so.
+    if comms_settings.land_operators_url.is_some() {
+        tracing::warn!(
+            "COMMS_LAND_OPERATORS_URL is set but not read: LAND rights come from the land-authz index alone"
+        );
+    }
+    if std::env::var_os("LAND_SUBGRAPH_URL").is_some() {
+        tracing::warn!(
+            "LAND_SUBGRAPH_URL is set but not read: LAND rights come from the land-authz index alone"
+        );
+    }
     let land_operators = comms_settings
         .land_operators_url
         .as_deref()
@@ -1122,7 +1154,6 @@ pub async fn serve(
         eip1654,
         &explore,
         explorer_api.onboarding.clone(),
-        metrics_handle,
     )?;
     social
         .rpc
@@ -1213,7 +1244,7 @@ pub async fn serve(
                 pool: pool.clone(),
                 denylist: content.denylist.clone(),
             }),
-            prepared.settings.content_url.clone(),
+            statistics_settings.content_url.clone(),
             comms_stage.gatekeeper.clone(),
             stage5.core.clone(),
         ),
@@ -1439,7 +1470,7 @@ pub async fn serve(
     let connector_lifecycle = comms_stage.archipelago.clone();
     let app = build_routes(
         &config,
-        prepared,
+        statistics_settings,
         primary,
         Routes {
             content,

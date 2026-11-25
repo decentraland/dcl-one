@@ -129,8 +129,8 @@ pub async fn resolve(state: &SceneHostState, key: &SceneKey) -> Result<Option<Re
         }
         SceneKey::Genesis(_) | SceneKey::GenesisParcel(_) => {
             let rows = sqlx::query(
-                "SELECT d.entity_metadata ->> 'main' AS main, \
-                 (d.entity_metadata -> 'authoritativeMultiplayer')::jsonb = 'true'::jsonb AS authoritative, \
+                "SELECT d.entity_metadata -> 'v' ->> 'main' AS main, \
+                 (d.entity_metadata -> 'v' -> 'authoritativeMultiplayer')::jsonb = 'true'::jsonb AS authoritative, \
                  cf.key, cf.content_hash \
                  FROM content.deployments d \
                  LEFT JOIN content.content_files cf ON cf.deployment = d.id \
