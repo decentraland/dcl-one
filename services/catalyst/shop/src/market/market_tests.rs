@@ -4064,11 +4064,12 @@ async fn owner_pages_include_only_current_unclaimed_land_before_pagination() {
     let mut settings = Settings::for_tests();
     settings.eth_network = "mainnet".into();
     settings.market.indexes.nft_enabled = true;
-    let app = market_router(Arc::new(super::MarketplaceState::new(
+    let state = Arc::new(super::MarketplaceState::new(
         db.pool.clone(),
         crate::http::Outbound::for_tests(),
         settings,
-    )));
+    ));
+    let app = market_router(state.clone());
     let run = |sql: String| async {
         sqlx::raw_sql(sqlx::AssertSqlSafe(sql))
             .execute(&db.pool)
@@ -4120,6 +4121,28 @@ async fn owner_pages_include_only_current_unclaimed_land_before_pagination() {
     assert_eq!(tokens["1"], WALLET_A);
     assert_eq!(tokens["2"], VENUE);
     assert_eq!(tokens["3"], VENUE);
+    let listing = crate::rentals::index::tests::seed_listing(
+        &db.pool, land, "2", ["0"; 3], "0xabb1", WALLET_A, VENUE,
+    )
+    .await;
+    sqlx::query("UPDATE signatures.rentals SET status='executed' WHERE id=$1")
+        .bind(listing)
+        .execute(&db.pool)
+        .await
+        .unwrap();
+    for (status, total) in [("executed", 1), ("open", 0)] {
+        let (code, result) = get(
+            app.clone(),
+            &format!("{owner_url}&category=parcel&isOnRent=true&rentalStatus={status}"),
+        )
+        .await;
+        assert_eq!(code, StatusCode::OK, "{result}");
+        assert_eq!(result["total"], total);
+        if total == 1 {
+            assert_eq!(result["data"][0]["nft"]["tokenId"], "2");
+            assert_eq!(result["data"][0]["rental"]["id"], listing.to_string());
+        }
+    }
     let claim = |block: i64, log: i32| {
         format!(
         "INSERT INTO shop.rental_event(network,rentals_address,kind,contract_address,token_id,block_number,log_index,block_time,tx_hash)
@@ -4130,7 +4153,20 @@ async fn owner_pages_include_only_current_unclaimed_land_before_pagination() {
     let (code, result) = get(app.clone(), &owner_url).await;
     assert_eq!(code, StatusCode::OK, "{result}");
     assert_eq!(result["total"], 2, "a claim removes the parcel");
-    run(rent(land, 2, 20, 1, WALLET_B, false)).await;
+    let transfer = |block: i64, log: i32, owner: &str| {
+        format!(
+        "INSERT INTO land_authz.authz_event(token_address,token_id,kind,block_number,log_index,block_time,account)
+         VALUES ('{land}',2,'transfer',{block},{log},200,'{owner}');
+         UPDATE land_authz.token_right SET owner='{owner}',updated_block={block},updated_log={log} WHERE token_address='{land}' AND token_id=2"
+    )
+    };
+    // LAND catches up with the claim: the parcel returns through direct ownership.
+    run(transfer(20, 1, WALLET_A)).await;
+    let (code, result) = get(app.clone(), &owner_url).await;
+    assert_eq!(code, StatusCode::OK, "{result}");
+    assert_eq!(result["total"], 3);
+    run(transfer(20, 2, VENUE)).await;
+    run(rent(land, 2, 20, 3, WALLET_B, false)).await;
     let (code, result) = get(
         app.clone(),
         &format!("/v1/nfts?owner={WALLET_B}&category=parcel"),
@@ -4176,6 +4212,23 @@ async fn owner_pages_include_only_current_unclaimed_land_before_pagination() {
     assert_eq!(code, StatusCode::SERVICE_UNAVAILABLE, "{result}");
     assert_eq!(result["source"], "rentals-index");
     let (code, result) = get(app.clone(), "/v1/nfts?category=parcel").await;
+    assert_eq!(code, StatusCode::OK, "{result}");
+    // The switch controls the writer. Without a cursor the reader cannot
+    // establish LAND custody, while a wearable-only page still has all its sources.
+    assert!(
+        super::chain_jobs::expected_cursors(
+            &state,
+            super::chain_walk::ChainNet::Ethereum,
+            Some(false)
+        )
+        .iter()
+        .all(|(index, _)| index.indexer() != "rentals")
+    );
+    run("DELETE FROM shop.chain_cursor WHERE indexer='rentals'".into()).await;
+    let (code, result) = get(app.clone(), &owner_url).await;
+    assert_eq!(code, StatusCode::SERVICE_UNAVAILABLE, "{result}");
+    assert_eq!(result["source"], "rentals-index");
+    let (code, result) = get(app.clone(), &format!("{owner_url}&category=wearable")).await;
     assert_eq!(code, StatusCode::OK, "{result}");
     db.drop().await;
 }

@@ -5165,10 +5165,13 @@ async fn the_rentals_index_attaches_behind_its_switch_and_chain_endpoints() {
     assert_eq!(index.indexer(), "rentals_sepolia");
     assert_eq!(index.chain_id(), 11_155_111);
     assert_eq!(index.start_block(), 3_831_254);
-    assert!(
-        both.iter()
-            .any(|projection| projection.lease == "rentals-index-ethereum")
-    );
+    let mainnet = both
+        .iter()
+        .find(|projection| projection.lease == "rentals-index-ethereum")
+        .unwrap();
+    let longest_retry = mainnet.cfg.wait_after_failure(u32::MAX);
+    assert!(longest_retry <= std::time::Duration::from_secs(30));
+    assert!(longest_retry < chain_walk::READY_WINDOW.to_std().unwrap());
     assert!(
         super::chain_jobs::projections(&with_sepolia, ChainNet::Ethereum, Some(false))
             .iter()
