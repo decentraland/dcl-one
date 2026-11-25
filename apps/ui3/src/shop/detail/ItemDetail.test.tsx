@@ -92,6 +92,18 @@ describe("the item route (a collection item, sold by its creator)", () => {
     expect(screen.queryByTestId("buy-modal")).toBeNull();
   });
 
+  it("opens the rarity hint on hover and dismisses it with Escape", async () => {
+    itemPage({ offers: { kind: "storeMint" } });
+    const link = await screen.findByRole("link", { name: /^epic$/i });
+    fireEvent.mouseEnter(link);
+    const hint = await screen.findByRole("tooltip");
+    expect(link).toHaveAccessibleDescription(hint.textContent!);
+    expect(link).toHaveAccessibleName(/^epic$/i);
+    fireEvent.keyDown(link, { key: "Escape" });
+    expect(screen.queryByRole("tooltip")).toBeNull();
+    expect(link).not.toHaveAttribute("aria-describedby");
+  });
+
   it("lists the item's resales as MANA-only offers, never with their feed credit figure", async () => {
     onTestFinished(marketplaceOn());
     itemPage({ offers: { kind: "storeMint" } });
@@ -117,6 +129,8 @@ describe("the item route (a collection item, sold by its creator)", () => {
       invalidateShopQueries();
       const view = itemPage({ session, overrides: resaleOnly, offers: { kind: "resale" } });
       expect(await screen.findByText("Not for sale")).toBeTruthy();
+      const info = screen.getByRole("img", { name: "Availability information" });
+      expect(info).toHaveAttribute("aria-description", "This item isn't listed for sale right now. Get notified when it becomes available.");
       expect(screen.queryByTestId("price-mana")).toBeNull();
       expect(asked.length).toBeGreaterThan(0);
       expect(asked.every((t) => t === "primary")).toBe(true);

@@ -345,7 +345,7 @@ function Home(p: HomeProps) {
           action={<button className="soc__cardlink" type="button" onClick={() => p.onSection("explore")}>Discover <span aria-hidden="true">&#x2197;</span></button>}
           footer={<>
             <button className="soc__cardlink" type="button" onClick={() => p.onSection("explore")}><Icon name="friends" size={16} />Your communities</button>
-            <button className="soc__cardlink" type="button" aria-label="Create a community" onClick={p.onCreate} data-sb-linkto={p.onCreate ? undefined : "Explorer/Components/CommunityCreate"}><Icon name="plus" size={16} /></button>
+            <button className="soc__cardlink" type="button" aria-label="Create a community" onClick={p.onCreate}><Icon name="plus" size={16} /></button>
           </>}
         >
           <div className="soc__note">
@@ -1045,7 +1045,7 @@ export default function Communities({
     ...(mine.length ? [{ kind: "title" as const, label: "Your communities" },
       ...mine.map(c => ({ kind: "button" as const, label: c.name, onClick: () => open(c.id) }))] : []),
     { kind: "separator" },
-    { kind: "button", label: "Create a community", icon: <Icon name="plus" size={18} />, onClick: onCreate, to: onCreate ? undefined : "Explorer/Components/CommunityCreate" },
+    { kind: "button", label: "Create a community", icon: <Icon name="plus" size={18} />, onClick: onCreate },
   ];
 
   let body;
@@ -1136,7 +1136,7 @@ export default function Communities({
               <Cover community={c} className="soc__railthumb" />
             </button>
           ))}
-          <button type="button" aria-label="Create a community" title="Create a community" onClick={onCreate} data-sb-linkto={onCreate ? undefined : "Explorer/Components/CommunityCreate"}>
+          <button type="button" aria-label="Create a community" title="Create a community" onClick={onCreate}>
             <Icon name="plus" />
           </button>
         </nav>}

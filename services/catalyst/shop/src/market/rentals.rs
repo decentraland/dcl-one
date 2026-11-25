@@ -7,10 +7,92 @@
 //! never applied by the old query builder; they still are not. A listing
 //! without periods is not a listing (the old inner join on the aggregate).
 
+#[cfg(test)]
 use sqlx::PgPool;
 
 use crate::rentals::db::{STATUS_VALUES, row_to_listing};
 use crate::rentals::types::RentalListing;
+
+/// Supplemental owner matches for a LAND page. Only the published Rentals log
+/// can identify a lessor. A later transfer into the venue can belong to any
+/// wallet, including one with no previous rent. Wait for that arrival before
+/// returning an owner page. The caller supplies the catalogue's LAND snapshot.
+pub(super) async fn unclaimed_land(
+    land: &mut crate::land_authz::indexer::ReadySnapshot,
+    owner: &str,
+) -> Result<Vec<String>, axum::response::Response> {
+    use super::chain_walk::{self, ChainNet};
+    use super::{Source, unavailable};
+    use crate::land_authz::LAND_MAINNET;
+    use crate::rentals::index::{INDEXER_RENTALS, RENTALS_MAINNET};
+
+    let land_head = land
+        .cursor
+        .folded_block
+        .ok_or_else(super::nft_reads::land_unavailable)?;
+    let conn = &mut *land.tx;
+    let cursor = chain_walk::cursor(&mut *conn, INDEXER_RENTALS, ChainNet::Ethereum)
+        .await
+        .map_err(super::nft_reads::read_error)?;
+    let Some(head) = cursor.and_then(|c| chain_walk::fresh_fold_on(&c, 1, chrono::Utc::now()))
+    else {
+        return Err(unavailable(
+            Source::RentalsIndex,
+            "The rentals index is not ready",
+        ));
+    };
+    let registries = [LAND_MAINNET.land_registry, LAND_MAINNET.estate_registry];
+    let behind: bool = sqlx::query_scalar(
+        "SELECT EXISTS (
+            SELECT 1 FROM land_authz.authz_event e
+            JOIN land_authz.token_right t USING (token_address,token_id)
+            WHERE e.block_number > $1 AND e.block_number <= $4 AND e.kind='transfer'
+              AND e.token_address=ANY($2) AND t.owner=$3
+        )",
+    )
+    .bind(head)
+    .bind(registries.as_slice())
+    .bind(RENTALS_MAINNET)
+    .bind(land_head)
+    .fetch_one(&mut *conn)
+    .await
+    .map_err(super::nft_reads::read_error)?;
+    if behind {
+        tracing::debug!(
+            rentals_folded_block = head,
+            "owner page waiting for Rentals to publish a transfer into custody"
+        );
+        return Err(unavailable(
+            Source::RentalsIndex,
+            "The rentals index has not reached the transfer into custody",
+        ));
+    }
+    sqlx::query_scalar(
+        "WITH candidates AS (
+            SELECT DISTINCT e.contract_address,e.token_id FROM shop.rental_event e
+            WHERE e.network='ethereum' AND e.rentals_address=$1 AND e.signer=$2
+              AND e.kind='rented' AND e.block_number <= $3 AND e.contract_address=ANY($4)
+        )
+        SELECT c.contract_address || '-' || c.token_id::text FROM candidates c
+        JOIN land_authz.token_right t ON (t.token_address,t.token_id)=(c.contract_address,c.token_id)
+        CROSS JOIN LATERAL (
+            SELECT e.kind,e.signer,e.block_number,e.log_index FROM shop.rental_event e
+            WHERE e.network='ethereum' AND e.rentals_address=$1 AND e.block_number <= $3
+              AND (e.contract_address,e.token_id)=(c.contract_address,c.token_id)
+              AND e.kind IN ('rented','claimed')
+            ORDER BY e.block_number DESC,e.log_index DESC LIMIT 1
+        ) latest
+        CROSS JOIN LATERAL (
+            SELECT e.block_number,e.log_index FROM land_authz.authz_event e
+            WHERE (e.token_address,e.token_id)=(c.contract_address,c.token_id) AND e.kind='transfer' AND e.block_number <= $5
+            ORDER BY e.block_number DESC,e.log_index DESC LIMIT 1
+        ) arrival
+        WHERE t.owner=$1 AND latest.kind='rented' AND latest.signer=$2
+          AND (latest.block_number,latest.log_index) >= (arrival.block_number,arrival.log_index)",
+    )
+    .bind(RENTALS_MAINNET).bind(owner.to_ascii_lowercase()).bind(head).bind(registries.as_slice()).bind(land_head)
+        .fetch_all(conn).await.map_err(super::nft_reads::read_error)
+}
 
 /// The old `get_open_rentals` bound.
 pub const NEWEST_LISTINGS: i64 = 1000;
@@ -40,8 +122,8 @@ pub fn statuses(requested: &[String]) -> Vec<String> {
 
 /// The listings of these nft ids (a page's parcels and estates) in these
 /// statuses, oldest first so a later listing of the same asset wins.
-pub async fn listings_of_nfts(
-    pool: &PgPool,
+pub async fn listings_of_nfts<'e>(
+    conn: impl sqlx::PgExecutor<'e>,
     nft_ids: &[String],
     statuses: &[String],
 ) -> Result<Vec<RentalListing>, sqlx::Error> {
@@ -54,14 +136,14 @@ pub async fn listings_of_nfts(
     let rows = sqlx::query(sqlx::AssertSqlSafe(sql))
         .bind(nft_ids)
         .bind(statuses)
-        .fetch_all(pool)
+        .fetch_all(conn)
         .await?;
     Ok(rows.iter().map(row_to_listing).collect())
 }
 
 /// The newest [`NEWEST_LISTINGS`] listings in these statuses.
-pub async fn newest_listings(
-    pool: &PgPool,
+pub async fn newest_listings<'e>(
+    conn: impl sqlx::PgExecutor<'e>,
     statuses: &[String],
 ) -> Result<Vec<RentalListing>, sqlx::Error> {
     if statuses.is_empty() {
@@ -73,7 +155,7 @@ pub async fn newest_listings(
     let rows = sqlx::query(sqlx::AssertSqlSafe(sql))
         .bind(statuses)
         .bind(NEWEST_LISTINGS)
-        .fetch_all(pool)
+        .fetch_all(conn)
         .await?;
     Ok(rows.iter().map(row_to_listing).collect())
 }

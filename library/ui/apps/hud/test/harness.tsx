@@ -245,7 +245,7 @@ export function fakeSession(): EngineSession {
     places: { open: false, toggle: vi.fn(), close: vi.fn(), readSigned: vi.fn(async () => null), worldAccess: vi.fn(async () => 'allowed' as const) },
     events: { open: false, toggle: vi.fn(), close: vi.fn(), data: { store: emptyEventsStore(), loadCalendar: vi.fn(), loadDay: vi.fn(), loadLobby: vi.fn(), setAttending: vi.fn(), clear: vi.fn(), resetAll: vi.fn() }, memberOf: [] },
     shop: { open: false, toggle: vi.fn() },
-    gallery: { open: false, toggle: vi.fn(), fetchPage: vi.fn(async () => ({ ok: true, photos: [], total: 0, max: 0 })), metas: {}, loadPhoto: vi.fn(), setPublic: vi.fn(async () => ({ ok: true })), remove: vi.fn(async () => ({ ok: true })) },
+    gallery: { open: false, toggle: vi.fn(), fetchPage: vi.fn(async () => ({ ok: true, photos: [], total: 0, max: 0 })), metas: {}, loadPhoto: vi.fn(), loadWearables: vi.fn(async () => []), setPublic: vi.fn(async () => ({ ok: true })), remove: vi.fn(async () => ({ ok: true })) },
     photoMode: { snapshot: null, active: false, capture: null, set: vi.fn(), take: vi.fn() },
     permissions: { pending: [], visit: [], triggered: [], unseenDenied: 0, markSeen: vi.fn(), rules: null, loadRules: vi.fn(), setRule: vi.fn(), clearRule: vi.fn(), resetDefaults: vi.fn(), resolve: vi.fn() },
     worldPassword: { pending: null, resolve: vi.fn() },
@@ -271,6 +271,7 @@ export function fakeSession(): EngineSession {
     setInteractableArea: vi.fn(),
     logout: vi.fn(),
     menuOpen: false,
+    hudHidden: false,
     closeAllPanels: vi.fn(),
     login: {
       status: 'sign-in-or-guest',

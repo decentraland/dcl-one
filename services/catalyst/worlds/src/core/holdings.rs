@@ -559,11 +559,11 @@ mod tests {
     #[tokio::test(flavor = "current_thread")]
     async fn a_reverted_call_is_an_error_not_a_zero_holding() {
         let (holdings, l1, _) = chains().await;
-        let recorder = crate::comms::metrics::prometheus_builder()
+        let recorder = crate::core::metrics::metrics_builder()
             .unwrap()
             .build_recorder();
         let handle = recorder.handle();
-        let _recording = metrics::set_default_local_recorder(&recorder);
+        let _recording = dcl_metrics::set_default_local_recorder(&recorder);
         l1.values
             .lock()
             .unwrap()
@@ -584,11 +584,11 @@ mod tests {
     #[tokio::test(flavor = "current_thread")]
     async fn an_rpc_fault_on_either_chain_is_retried_then_an_error() {
         let (holdings, _, l2) = chains().await;
-        let recorder = crate::comms::metrics::prometheus_builder()
+        let recorder = crate::core::metrics::metrics_builder()
             .unwrap()
             .build_recorder();
         let handle = recorder.handle();
-        let _recording = metrics::set_default_local_recorder(&recorder);
+        let _recording = dcl_metrics::set_default_local_recorder(&recorder);
         l2.faulty
             .lock()
             .unwrap()

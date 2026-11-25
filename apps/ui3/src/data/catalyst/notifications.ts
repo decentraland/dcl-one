@@ -1,7 +1,7 @@
 import { getJSON, sendJSON, type RequestOpts } from "./client";
 import { notificationMillis, type Notification } from "@web-core/notifications/notificationsView";
 import { serviceBase, signedFetch } from "./client";
-import { field, isRecord, keepRows } from "./rows";
+import { field, isRecord, keepRows } from "@web-core/catalyst/rows";
 import { ListEnvelopeSchema, NotificationSchema } from "./schemas/notifications";
 
 export * from "@web-core/notifications/notificationsView";

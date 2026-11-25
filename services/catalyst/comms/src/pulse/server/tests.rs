@@ -2180,7 +2180,7 @@ async fn run_uses_the_configured_simulation_base_tick() {
         .unwrap()
         .build_recorder();
     let handle = recorder.handle();
-    let _local_recorder = ::metrics::set_default_local_recorder(&recorder);
+    let _local_recorder = dcl_metrics::set_default_local_recorder(&recorder);
     let server = PulseServer::with_config(4, 2, &[75, 150, 300], false);
     let running = crate::shared::task::spawn_with(server.run("127.0.0.1:0".parse().unwrap()));
 

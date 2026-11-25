@@ -1,5 +1,23 @@
 # Measured query workloads
 
+## Marketplace sales indexing
+
+A PostgreSQL 17.6 fixture held 200,000 Polygon event rows, with one accepted bid per 1,000 blocks and a mint in each other block. After `ANALYZE`, the fold's ordered lookup for 96 accepted bids between blocks 20,001 and 150,000 scanned 200,000 rows and read 2,273 local buffers in 9.763 ms. The 16 KiB partial index on accepted bids returned those 96 rows in 0.204 ms with 97 local buffer reads.
+
+A local Polygon refold fixture replayed 288 legacy sales in 288 distinct blocks using PostgreSQL and a loopback RPC with successful receipts. Replacing the NFT cursor epoch forced a complete rebuild. Each rebuild settled all 288 payments and published in three consecutive passes with 36 RPC requests. Three warmed runs took 90, 88 and 85 ms, excluding scheduling delays. Production history size, provider latency, retries and pass scheduling determine deployment recovery time.
+
+The index process increments `catalyst_index_sales_repair_failures_total` by indexer and network when a historical sales repair fails. The error log includes the starting block and requests spent. The cursor keeps its last verified boundary.
+
+## Marketplace sales day rollups
+
+On PostgreSQL 17.6, a temporary table held 200,000 executions on one network,
+spaced five minutes apart. Selecting one UTC day returned 288 rows. With the
+network and block primary key, PostgreSQL scanned 1,667 local buffers and
+filtered out 199,712 rows. The index on network and the UTC day expression
+reduced that read to six local buffers and three shared buffer hits. The index
+occupied 1,458,176 bytes. This measures the day lookup that precedes rebuilding
+its aggregates.
+
 ## Credit revocation sweep
 
 A disposable PostgreSQL 18 table held 200,000 revocations across two chains,
@@ -444,3 +462,14 @@ new identities increased measured WAL from 221 kB to 332 kB. Production world
 sizes, request rates and latency are unmeasured.
 
 Building the two wallet indexes and the retired identity index on the synthetic tables took 64, 65 and 108 ms respectively.
+
+## Sales accounting day and order lookups
+
+A PostgreSQL fixture contained 200,000 Polygon account-day rows across 365 UTC days and 250,000 NFT events with one successful order per 50 events. Each figure is one local `EXPLAIN (ANALYZE, BUFFERS)` run.
+
+| Fold query | Primary key only | With the sales index |
+| --- | --- | --- |
+| Distinct wallets for two days | Sequential scan filtered 198,904 rows in 8.060 ms | The network and day index read 1,096 matching rows in 1.386 ms |
+| First 96 successful orders in a 250,000-block window | Primary key scan filtered 4,704 events in 0.313 ms | The partial order index returned 96 rows in 0.108 ms |
+
+These measurements cover the SQL lookups. Receipt RPC time and production replay throughput remain unmeasured.

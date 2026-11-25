@@ -1149,6 +1149,63 @@ pub fn decode_page(lines: &[Vec<u8>], from: u64, to: u64) -> Result<Page, Portal
     })
 }
 
+pub const FAMILIES: &[dcl_metrics::Descriptor] = &[
+    dcl_metrics::Descriptor::counter(
+        admit::WINDOWS,
+        "Log windows read with portal admission enabled.",
+        Some(dcl_metrics::Unit::Count),
+        &["net", "result"],
+    ),
+    dcl_metrics::Descriptor::counter(
+        admit::LOGS,
+        "Logs returned while reading a portal-mode window.",
+        Some(dcl_metrics::Unit::Count),
+        &["net", "source"],
+    ),
+    dcl_metrics::Descriptor::counter(
+        admit::RPC_SENDS,
+        "RPC requests sent while admitting a window.",
+        Some(dcl_metrics::Unit::Count),
+        &["net", "kind"],
+    ),
+    dcl_metrics::Descriptor::counter(
+        shadow::WINDOWS,
+        "Log windows offered for shadow comparison.",
+        Some(dcl_metrics::Unit::Count),
+        &["net", "result"],
+    ),
+    dcl_metrics::Descriptor::counter(
+        shadow::SKIPPED,
+        "Shadow window comparisons skipped.",
+        Some(dcl_metrics::Unit::Count),
+        &["net", "reason"],
+    ),
+    dcl_metrics::Descriptor::counter(
+        shadow::LOGS,
+        "Log differences observed during shadow comparison.",
+        Some(dcl_metrics::Unit::Count),
+        &["net", "kind"],
+    ),
+    dcl_metrics::Descriptor::counter(
+        shadow::BLOCKS,
+        "Blocks compared or skipped in shadow mode.",
+        Some(dcl_metrics::Unit::Count),
+        &["net", "kind"],
+    ),
+    dcl_metrics::Descriptor::counter(
+        shadow::UNAVAILABLE,
+        "Fields unavailable to compare in shadow mode.",
+        Some(dcl_metrics::Unit::Count),
+        &["net", "field"],
+    ),
+    dcl_metrics::Descriptor::counter(
+        shadow::SENDS,
+        "Requests sent to the portal by kind.",
+        Some(dcl_metrics::Unit::Count),
+        &["net", "kind"],
+    ),
+];
+
 pub mod admit;
 pub mod compare;
 pub mod shadow;

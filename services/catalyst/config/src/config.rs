@@ -168,9 +168,16 @@ impl Config {
     /// makes the list. An explicit value, empty included, wins; off mainnet
     /// the chain ids name other chains, so nothing is derived.
     pub fn derive_trade_rpc_urls(&mut self) {
-        if self.node.node_posture.as_deref() != Some("mirror")
+        // Read as the posture checks read it (trimmed), so a padded value
+        // derives the list the checks then require.
+        let mirror = self
+            .node
+            .node_posture
+            .as_deref()
+            .is_some_and(|p| crate::posture::Posture::parse(p).ok() == Some(Mirror));
+        if !mirror
             || self.marketplace.trade_rpc_urls.is_some()
-            || self.node.eth_network != "mainnet"
+            || self.node.eth_network.trim() != "mainnet"
         {
             return;
         }
@@ -193,7 +200,7 @@ impl Config {
     /// bearers, service tokens, the console's session key): a short one is
     /// guessable or brute-forced offline, so startup refuses it. Bearers this
     /// node sends elsewhere keep their issuer's length.
-    pub const OPERATOR_SECRETS: [&'static str; 27] = [
+    pub const OPERATOR_SECRETS: [&'static str; 25] = [
         "SESSION_SECRET",
         "CATALYRST_CONTENT_ADMIN_TOKEN",
         "COMMUNITIES_ADMIN_TOKEN",
@@ -203,7 +210,6 @@ impl Config {
         "CATALYRST_EVENTS_ADMIN_TOKEN",
         "CATALYRST_BUILDER_ADMIN_TOKEN",
         "CATALYRST_CAMERA_REEL_ADMIN_TOKEN",
-        "CAMERA_REEL_METRICS_BEARER_TOKEN",
         "CATALYRST_WORLDS_ADMIN_TOKEN",
         "SCENE_HOST_ADMIN_TOKEN",
         "MARKET_ADMIN_TOKEN",
@@ -220,7 +226,6 @@ impl Config {
         "NOTIFICATIONS_REWARDS_TOKEN",
         "ONBOARDING_API_KEY",
         "DATA_TEAM_AUTH_TOKEN",
-        "WKC_METRICS_BEARER_TOKEN",
     ];
 
     pub fn is_operator_secret(name: &str) -> bool {
@@ -276,7 +281,7 @@ impl Config {
         Ok(())
     }
 
-    pub(crate) fn secret_slots(&mut self) -> [(&'static str, &mut Option<String>); 83] {
+    pub(crate) fn secret_slots(&mut self) -> [(&'static str, &mut Option<String>); 81] {
         [
             ("SEGMENT_SIGNING_KEY", &mut self.social.segment_signing_key),
             ("ETH_RPC_URL", &mut self.content.eth_rpc_url),
@@ -302,10 +307,6 @@ impl Config {
             (
                 "CATALYRST_SOCIAL_RPC_ADMIN_TOKEN",
                 &mut self.social.catalyrst_social_rpc_admin_token,
-            ),
-            (
-                "WKC_METRICS_BEARER_TOKEN",
-                &mut self.social.wkc_metrics_bearer_token,
             ),
             ("MODERATOR_TOKEN", &mut self.social.moderator_token),
             (
@@ -394,10 +395,6 @@ impl Config {
             (
                 "CATALYRST_CAMERA_REEL_ADMIN_TOKEN",
                 &mut self.create.catalyrst_camera_reel_admin_token,
-            ),
-            (
-                "CAMERA_REEL_METRICS_BEARER_TOKEN",
-                &mut self.create.camera_reel_metrics_bearer_token,
             ),
             (
                 "CATALYRST_WORLDS_ADMIN_TOKEN",

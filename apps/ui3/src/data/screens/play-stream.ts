@@ -1,6 +1,6 @@
-import { publicImageUrl } from "../publicImage";
-import { normalizeEvent } from "../catalyst/events";
-import type { PlayScreen, PlaySectionMessage, PlaySectionName } from "./play";
+import { publicImageUrl } from "@web-core/publicImage";
+import { normalizeEvent } from "@web-core/catalyst/events";
+import type { PlayScreen, PlaySectionMessage, PlaySectionName } from "@web-core/screens/play";
 
 const names: PlaySectionName[] = ["featured", "places", "events", "wearables", "emotes", "outfits"];
 const supported: PlaySectionName[] = [...names, "upcoming"];
