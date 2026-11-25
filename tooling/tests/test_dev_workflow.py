@@ -381,7 +381,7 @@ class DevelopmentWorkflowTest(unittest.TestCase):
                         continue
                     installs += 1
                     snapshot, roots = steps[i + 1], steps[i + 2]
-                    shell = 'ci' if 'dev-test.sh rust' in job or 'social-voice-release-test.sh' in job else 'default'
+                    shell = 'ci' if 'dev-test.sh rust' in job or 'cargo clippy' in job or 'social-voice-release-test.sh' in job else 'default'
                     key = 'nix-store-${{ runner.os }}-${{ runner.arch }}-' + shell + '-'
                     self.assertTrue(snapshot.startswith('uses: nix-community/cache-nix-action@'), name)
                     self.assertIn('primary-key: ' + key + "${{ hashFiles('flake.nix', 'flake.lock', ", snapshot)
@@ -396,7 +396,7 @@ class DevelopmentWorkflowTest(unittest.TestCase):
                     self.assertIn('nix flake archive --json', roots)
                     for command in re.findall(r'nix develop(?: \.#\w+)?', job):
                         self.assertEqual(command, 'nix develop .#ci' if shell == 'ci' else 'nix develop', name)
-        self.assertEqual(installs, 5)
+        self.assertEqual(installs, 6)
 
     def test_smoke_snapshots_are_saved_only_from_passing_main_pushes(self):
         def allowed(event, ref, platform, passed=True, hit=False):

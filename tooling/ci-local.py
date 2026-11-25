@@ -198,6 +198,8 @@ def pre_push_steps(changed):
     if development:
         steps.append(Step('dev stack smoke', 'bash tooling/dev-smoke.sh', tools=('nix',)))
         steps += web_steps()
+        steps.append(Step('catalyst clippy', 'cargo clippy --manifest-path services/catalyst/Cargo.toml --locked '
+                          '--workspace --all-targets -- -D warnings', tools=('cargo',)))
         steps.append(Step('rust and sites e2e suites', 'bash tooling/dev-test.sh', tools=('nix',)))
     if images:
         system = image_system()
