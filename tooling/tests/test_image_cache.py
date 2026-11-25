@@ -717,6 +717,18 @@ class CacheSweepBudgetTest(unittest.TestCase):
                 self.assertNotIn('deferred', output)
                 self.assertNotIn('query=', output)
 
+    def test_a_failed_batch_keeps_the_states_resolved_before_it(self):
+        # 101 PRs make two state queries; only the second fails, so the closed PR of the first is still freed.
+        rows = [self.image(number, f'pr-{number}') for number in range(1, 102)]
+        for error, code, line in (('gh: Bad credentials (HTTP 401)', 1, 'unresolved for 1 of 101'),
+                                  (self.RATE_LIMITED, None, 'deferred to the next sweep for 1 of 101')):
+            with self.subTest(error=error):
+                calls, deleted, exit_code, output = self.sweep(rows, states={'1': 'CLOSED', '101': 'CLOSED'},
+                                                               states_error=error, states_error_from=1)
+                self.assertEqual((exit_code, deleted), (code, [1]))
+                self.assertEqual(sum('graphql' in call for call in calls), 2)
+                self.assertIn(line, output)
+
     def test_a_graphql_query_error_is_retried_before_it_fails_the_run(self):
         rows = [self.image(1), self.image(2), self.image(3), self.image(4, 'pr-93')]
         error = 'gh: Something went wrong while executing your query. Please include `ABCD:1234` when reporting this issue.'
