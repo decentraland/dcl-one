@@ -19,7 +19,15 @@ import {
   decentralandPublicNavSections,
   type TitleBarProps,
   type TitleBarSection,
-  Pager
+  Pager,
+  BrowseControl,
+  BrowseLoading,
+  BrowsePanel,
+  BrowseToolbar,
+  MenuDivider,
+  MenuList,
+  MenuPanel,
+  MenuRow
 } from '@dcl/one-ui'
 import type { GalleryEntry } from '../registry'
 import { covers, people, placeholderFace } from './data'
@@ -462,6 +470,65 @@ export const navigationEntries: GalleryEntry[] = [
       title: controls.variant[0]!.toUpperCase() + controls.variant.slice(1),
       render: () => <TitleBarDemo controls={controls} />
     }))
+  },
+  {
+    name: 'BrowsePage',
+    group: 'Navigation',
+    summary: 'The frame of a browse page: a toolbar of tabs and controls over a results panel.',
+    components: ['BrowseToolbar', 'BrowseControl', 'BrowsePanel', 'BrowseLoading'],
+    examples: [
+      {
+        id: 'frame',
+        title: 'A toolbar over a loading panel and a panel with results',
+        render: () => (
+          <div className={layout.strip}>
+            <div style={{ width: 720 }}>
+              <BrowseToolbar tabs={<strong>Wearables</strong>}>
+                <BrowseControl size="search">
+                  <input aria-label="Search the shop" placeholder="Search" />
+                </BrowseControl>
+                <BrowseControl size="select">
+                  <select aria-label="Sort by">
+                    <option>Newest</option>
+                  </select>
+                </BrowseControl>
+              </BrowseToolbar>
+              <div className={layout.stack}>
+                <BrowsePanel label="Results, loading" busy>
+                  <BrowseLoading />
+                </BrowsePanel>
+                <BrowsePanel label="Results">Nothing on sale here.</BrowsePanel>
+              </div>
+            </div>
+          </div>
+        )
+      }
+    ]
+  },
+  {
+    name: 'MenuPanel',
+    group: 'Navigation',
+    summary: 'The panel a navigation button opens, with its rows.',
+    components: ['MenuPanel', 'MenuList', 'MenuRow', 'MenuDivider'],
+    examples: [
+      {
+        id: 'panel',
+        title: 'A titled panel with two groups of rows',
+        render: () => (
+          <MenuPanel label="Discover" title="DISCOVER">
+            <MenuList>
+              <MenuRow label="Events" hint="X" trailing={<strong>3</strong>} />
+              <MenuRow label="Places" hint="C" />
+            </MenuList>
+            <MenuDivider />
+            <MenuList>
+              <MenuRow label="Communities" />
+              <MenuRow label="Unavailable" disabled />
+            </MenuList>
+          </MenuPanel>
+        )
+      }
+    ]
   },
   {
     name: 'Pager',

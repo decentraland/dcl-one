@@ -3,8 +3,7 @@
 // mark of a live stream in one of the player's communities. The bar places it and closes it; every
 // action and every key comes in by props.
 
-import { CountBadge } from '@dcl/one-ui'
-import { MenuList, MenuPanel, MenuRow } from '../../../design'
+import { CountBadge, MenuList, MenuPanel, MenuRow } from '@dcl/one-ui'
 import eventsIcon from '../../../assets/sidebar-rail/discover-events.svg?no-inline'
 import placesIcon from '../../../assets/sidebar-rail/discover-places.svg?no-inline'
 import communitiesIcon from '../../../assets/sidebar-rail/discover-communities.svg?no-inline'

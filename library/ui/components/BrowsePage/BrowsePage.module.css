@@ -1,3 +1,6 @@
+/* Not in Figma: the frame of the Explorer HUD's browse pages. These rules sit outside the cascade layer: the
+   toolbar sizes the controls placed in it (`.search > *`), and those controls' own rules are a mix of layered
+   and unlayered. The panel's purple wash and its 8 % white border have no token. */
 .toolbar {
   display: flex;
   align-items: center;
@@ -26,11 +29,11 @@
   width: 100%;
 }
 
-/* Purple grid panel (decentraland-ui2 GridPanel). */
+/* The purple results panel. */
 .panel {
   background: rgba(179, 47, 255, 0.15);
-  border: 1px solid rgba(255, 255, 255, 0.08);
-  border-radius: 24px;
+  border: 1px solid rgba(255, 255, 255, 0.08); /* = HUD --line */
+  border-radius: var(--dcl-radius-xl);
   padding: 24px;
 }
 

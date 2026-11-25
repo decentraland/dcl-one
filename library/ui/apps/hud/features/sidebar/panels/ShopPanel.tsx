@@ -9,9 +9,8 @@ import { checkoutSiteUrl } from '@hud-host'
 import coin from '../../../assets/sidebar-shop/credits.svg?no-inline'
 import emotesArt from '../../../assets/sidebar-shop/banner-emotes.webp'
 import wearablesArt from '../../../assets/sidebar-shop/banner-wearables.webp'
-import { MenuPanel } from '../../../design'
 import styles from './ShopPanel.module.css'
-import { Button } from '@dcl/one-ui'
+import { Button, MenuPanel } from '@dcl/one-ui'
 
 /** A Shop section a banner leads to. */
 export type ShopPanelSection = 'emotes' | 'wearables'

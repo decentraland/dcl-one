@@ -261,8 +261,6 @@
   --rail-me-ring: rgba(255, 255, 255, 0.7); /* the ring inside the Me button */
   --shadow-rail-button: 2px 2px 2.5px rgba(0, 0, 0, 0.25);
   --shadow-rail-button-selected: 2px 2px 5px rgba(0, 0, 0, 0.25); /* a selected bar button */
-  --rail-row-hover: #2e2d30; /* a navigation panel's row under the pointer */
-  --rail-hint: #797979; /* the key beside a navigation panel row's label */
   --rail-tag: #727272; /* the #tag after the player's name in the Me panel */
   --rail-rule: #7e7e7e; /* the hairline between the Me panel's groups */
   --rail-panel-left: 66px; /* where a panel beside the navigation column starts */
@@ -315,7 +313,6 @@
   --type-11: 11px;
   --type-12: 12px;
   --type-13: 13px;
-  --type-rail-hint: 13.239px; /* the key beside a navigation panel row's label */
   --type-10: 10px;
   --type-14: 14px;
   --type-15: 15px;

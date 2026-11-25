@@ -132,9 +132,9 @@ describe('when a reviewer opens the HUD Showcase', () => {
   })
 
   it('should open a component on the section that renders it, and name a missing section', () => {
-    const { unmount } = render(<Shell search="?hud=MenuRow" />)
-    expect(screen.getByText('MenuRow is shown on the MenuPanel page.')).toBeTruthy()
-    expect(heading()).toBe('MenuPanelHUD')
+    const { unmount } = render(<Shell search="?hud=TextArea" />)
+    expect(screen.getByText('TextArea is shown on the FormControls page.')).toBeTruthy()
+    expect(heading()).toBe('FormControlsHUD')
     unmount()
     render(<Shell search="?hud=Nope" />)
     expect(screen.getByRole('alert').textContent).toBe(

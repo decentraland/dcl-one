@@ -19,7 +19,7 @@ export const HUD_GLYPHS = {
 
 export const hudSections: readonly ShowcaseEntry[] = [...SHOWCASE_INDEX, HUD_GLYPHS]
 
-/** The `hud` pages, the overview first, and the section each other component opens (MenuRow shows MenuPanel). */
+/** The `hud` pages, the overview first, and the section each other component opens (TextArea shows FormControls). */
 export const hudPages: HudPages = {
   pages: [HUD_OVERVIEW, ...hudSections.map((section) => section.name)],
   aliases: pageAliases(hudSections)

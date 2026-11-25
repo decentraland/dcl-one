@@ -623,6 +623,10 @@
     "primitives": 0,
     "tokens": 1
   },
+  "library/ui/components/BrowsePage/BrowsePage.module.css": {
+    "primitives": 0,
+    "tokens": 1
+  },
   "library/ui/components/Button/Button.module.css": {
     "primitives": 0,
     "tokens": 105
@@ -706,6 +710,10 @@
   "library/ui/components/JumpInCTA/JumpInCTA.module.css": {
     "primitives": 0,
     "tokens": 28
+  },
+  "library/ui/components/MenuPanel/MenuPanel.module.css": {
+    "primitives": 0,
+    "tokens": 4
   },
   "library/ui/components/Modal/Modal.module.css": {
     "primitives": 0,
