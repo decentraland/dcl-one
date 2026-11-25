@@ -107,7 +107,7 @@ const DEPLOYMENTS: [ContractName, number, string, string, string, ContractData['
   [
     'CreditsManager',
     137,
-    '0x8b3a40ca1b6f5cafc99d112a4d02e897d1fd8cc5',
+    '0xe21289022b9324f9b9145a91ee59297ceb040c06',
     'Decentraland Credits',
     '1.0.0',
     'functionData'
@@ -115,7 +115,7 @@ const DEPLOYMENTS: [ContractName, number, string, string, string, ContractData['
   [
     'CreditsManager',
     80002,
-    '0x8052a560e6e6ac86eeb7e711a4497f639b322fb3',
+    '0xb65fd692d15c30c3adcacdd5ccf80e1facecfc7c',
     'Decentraland Credits',
     '1.0.0',
     'functionData'
