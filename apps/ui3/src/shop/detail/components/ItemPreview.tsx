@@ -17,7 +17,7 @@ import { fetchWearableRules, keepEquipped, sharedEntityBase } from "../lib/weara
 import { fetchEmoteClipUrl } from "../lib/emoteBase64";
 import { useShopQuery } from "../../discovery/query";
 import { REMOTE_FLAG, useRemoteFlagState } from "../../discovery/lib/remoteFlags";
-import PreviewFrame, { type PreviewFrameOptions, type PreviewRendererName } from "./PreviewFrame";
+import PreviewFrame, { previewBase, type PreviewFrameOptions, type PreviewRendererName } from "./PreviewFrame";
 import "./itempreview.css";
 
 const VIEW_TEXT = { previewMode: "Preview mode", onAvatar: "On avatar", itemView: "Item", playEmote: "Play emote" };
@@ -190,9 +190,11 @@ function WebItemPreview({ item, avatarShape = null, renderer }: ItemPreviewProps
     }
   }, [renderer]);
   const [view, setView] = useState<"avatar" | "item">("avatar");
-  const [status, setStatus] = useState<"loading" | "ready" | "error">("loading");
-  const [drawnBy, setDrawnBy] = useState<PreviewRendererName | undefined>(undefined);
+  // What the preview reported, each for the frame and scene it reported it on: a new frame or scene starts loading.
+  const [drawn, setDrawn] = useState<{ scene: string; by: PreviewRendererName } | null>(null);
+  const [failedFrame, setFailedFrame] = useState<string | null>(null);
   const [unityFailed, setUnityFailed] = useState(false);
+  const [generation, setGeneration] = useState(0);
   const [replay, setReplay] = useState(0);
   const urn = item.urn ?? itemUrn(item);
   const canPreview = !!urn && item.category !== "ens";
@@ -209,19 +211,23 @@ function WebItemPreview({ item, avatarShape = null, renderer }: ItemPreviewProps
   const mismatch = !isEmote && !!shopperShape && !shapes.includes(shopperShape);
   const wearsOwn = !!ownShape && (isEmote || shapes.includes(ownShape));
   const itemAlone = !isEmote && view === "item";
-  // Mounted once with its final avatar and renderer, so the preview never loads a default and then the shopper's.
-  const settled = !(account && profile.isLoading) && unityFlag !== null && fullDevice !== null;
+  // Mounted once with its final avatar and renderer, so the preview never loads a default and then the shopper's. A
+  // lighter device draws with Babylon whatever the flag says, so it does not wait for it.
+  const settled = !(account && profile.isLoading) && fullDevice !== null && (fullDevice === false || unityFlag !== null);
   const unity = !unityFailed && unityFlag === true && fullDevice === true;
-  const failed = status === "error";
+
+  // A frame is mounted per renderer, preview origin, shopper and retry; a new item or view reloads its scene in place.
+  const frame = [unity ? "unity" : "babylon", previewBase(urn ? [urn] : []), account ?? "", generation].join("|");
+  const scene = `${frame}|${urn}|${itemAlone ? "item" : "avatar"}`;
+  const failed = failedFrame === frame;
+  const status: "loading" | "ready" | "error" = failed ? "error" : drawn?.scene === scene ? "ready" : "loading";
+  const drawnBy = drawn?.scene === scene ? drawn.by : undefined;
   const mounted = wanted && settled && !failed;
 
-  // A new item or view reloads the scene in place; the thumbnail covers it until the preview says it has drawn.
-  useEffect(() => {
-    setStatus("loading");
-  }, [urn, itemAlone]);
   useEffect(() => {
     setView("avatar");
     setUnityFailed(false);
+    setFailedFrame(null);
   }, [urn]);
 
   const options: PreviewFrameOptions = {
@@ -242,16 +248,17 @@ function WebItemPreview({ item, avatarShape = null, renderer }: ItemPreviewProps
     <div className="shop-preview" data-status={show3d ? status : "thumbnail"} data-renderer={drawnBy}>
       {mounted ? (
         <PreviewFrame
-          key={unity ? "unity" : "babylon"}
+          key={frame}
           options={options}
           replay={replay}
-          onLoad={(by) => {
-            setDrawnBy(by ?? (unity ? "unity" : "babylon"));
-            setStatus("ready");
-          }}
+          onLoad={(by) => setDrawn({ scene, by: by ?? (unity ? "unity" : "babylon") })}
           onError={() => {
             if (unity) setUnityFailed(true);
-            else setStatus("error");
+            // The item alone failed where the avatar had drawn: back to the avatar, in a fresh frame.
+            else if (itemAlone) {
+              setView("avatar");
+              setGeneration((n) => n + 1);
+            } else setFailedFrame(frame);
           }}
         />
       ) : null}

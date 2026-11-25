@@ -59,6 +59,19 @@ beforeEach(() => {
 afterEach(() => {
   cleanup();
   delete window.dclAvatarPreviewExpected;
+  delete window.dclAvatarPreview;
+});
+
+test("an Explorer that installs its preview host without announcing it still gets the Explorer's scene", async () => {
+  delete window.dclAvatarPreviewExpected;
+  window.dclAvatarPreview = { create: vi.fn() } as unknown as NonNullable<typeof window.dclAvatarPreview>;
+  render(<ItemPreview item={ITEM} renderer="full" />);
+  expect(screen.queryByTitle("3D preview")).toBeNull();
+  await act(async () => {
+    await vi.waitFor(() => expect(reads.profile).not.toBeNull());
+    reads.profile!({ avatar: { bodyShape: BODY, wearables: [] } });
+  });
+  await vi.waitFor(() => expect(screen.getByTestId("scene")).toBeTruthy());
 });
 
 test("the scene mounts after the profile, during the outfit's entity read, with its loads held under the thumbnail, and gets the outfit once it is read", async () => {

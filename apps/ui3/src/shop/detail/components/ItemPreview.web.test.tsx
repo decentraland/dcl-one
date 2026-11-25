@@ -61,6 +61,7 @@ beforeEach(() => {
 afterEach(() => {
   cleanup();
   primeRemoteFlags(null);
+  vi.unstubAllGlobals();
 });
 
 describe("what the iframe mounts with", () => {
@@ -125,6 +126,23 @@ describe("what the iframe mounts with", () => {
     expect(params().get("env")).toBe("dev");
   });
 
+  test("a flags file that cannot be read leaves the preview on Babylon, not waiting", async () => {
+    primeRemoteFlags(null);
+    vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new Error("flags down")));
+    render(<ItemPreview item={item()} renderer="full" />);
+    await vi.waitFor(() => expect(frame()).not.toBeNull());
+    expect(params().has("unity")).toBe(false);
+  });
+
+  test("a lighter device mounts Babylon without waiting for the flags file", () => {
+    primeRemoteFlags(null);
+    vi.stubGlobal("fetch", vi.fn(() => new Promise(() => {})));
+    env.device = "lite";
+    render(<ItemPreview item={item()} />);
+    expect(frame()).not.toBeNull();
+    expect(params().has("unity")).toBe(false);
+  });
+
   test("an emote plays on the avatar, with no view type and a closer wheel zoom", () => {
     flag(false);
     render(<ItemPreview item={item({ category: "emote" } as Partial<CatalogItem>)} renderer="full" />);
@@ -157,6 +175,50 @@ describe("talking to the iframe", () => {
     fromPreview({ type: "ready" });
     fromPreview({ type: "ready" });
     expect(posted).not.toHaveBeenCalled();
+  });
+
+  test("the item alone failing where the avatar had drawn goes back to the avatar, in a fresh frame with its controls", () => {
+    flag(false);
+    render(<ItemPreview item={item()} renderer="full" />);
+    const first = frame();
+    fromPreview({ type: "ready" });
+    fromPreview({ type: "load", payload: { renderer: "babylon" } });
+    fireEvent.click(screen.getByRole("button", { name: "Item" }));
+    fromPreview({ type: "error", payload: { message: "no item alone" } });
+
+    expect(frame()).not.toBe(first);
+    expect(params().get("type")).toBe("avatar");
+    expect(thumb()).not.toBeNull();
+    fromPreview({ type: "load", payload: { renderer: "babylon" } });
+    expect(screen.getByRole("button", { name: "On avatar" }).getAttribute("aria-pressed")).toBe("true");
+  });
+
+  test("signing in with the preview open mounts a new frame for the shopper, covered until it draws", async () => {
+    flag(false);
+    const view = render(<ItemPreview item={item()} renderer="full" />);
+    fromPreview({ type: "load", payload: { renderer: "babylon" } });
+    expect(screen.queryByTestId("preview-toggle")).not.toBeNull();
+
+    env.account = ACCOUNT;
+    view.rerender(<ItemPreview item={item()} renderer="full" />);
+    await act(async () => {
+      await vi.waitFor(() => expect(env.profile).not.toBeNull());
+      env.profile!({ avatar: { bodyShape: MALE, wearables: [] } });
+    });
+    expect(params().get("profile")).toBe(ACCOUNT);
+    expect(thumb()).not.toBeNull();
+    expect(screen.queryByTestId("preview-toggle")).toBeNull();
+  });
+
+  test("a new item starts over: avatar view, and Unity tried again after the last item fell back", () => {
+    const view = render(<ItemPreview item={item()} renderer="full" />);
+    fromPreview({ type: "error", payload: { message: "unity failed" } });
+    expect(params().has("unity")).toBe(false);
+
+    const next = "urn:decentraland:matic:collections-v2:0x0768847951fddd4e73e670800da26d953a77059b:1";
+    view.rerender(<ItemPreview item={item({ id: "item-1", urn: next })} renderer="full" />);
+    expect(params().get("unity")).toBe("true");
+    expect(params().get("type")).toBe("avatar");
   });
 
   test("over Babylon the page's view switch reloads the scene in place, as the item alone", () => {
