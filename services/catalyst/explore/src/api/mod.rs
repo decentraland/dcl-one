@@ -707,6 +707,12 @@ impl State {
                     async move { feature_flags::refresh_events(&s).await }
                 },
             );
+        } else if self.settings.mirrors_enabled && !self.settings.sources.feature_flags.is_empty() {
+            tracing::warn!(
+                "EXPLORER_MIRRORS_ENABLED=true with EXPLORER_FEATURE_FLAGS_SOURCE_URL set but EVENTS_FEATURE_FLAGS_URL \
+                 empty: the explorer flags mirror no longer reads events.json, so the Foundation event creators \
+                 stay at the last stored list; set EVENTS_FEATURE_FLAGS_URL"
+            );
         }
         if !self.settings.mirrors_enabled {
             tracing::info!(

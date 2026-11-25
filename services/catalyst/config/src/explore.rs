@@ -56,8 +56,8 @@ pub struct ExploreConfig {
     #[arg(long, env = "EVENTS_FEATURE_FLAGS_URL", default_value = "")]
     pub events_feature_flags_url: String,
 
-    /// The `X-Address-Hash` that request sends, as the old events service sent its `FEATURE_FLAGS_USER_ID`;
-    /// unset sends none. Also accepts EVENTS_FEATURE_FLAGS_USER_ID_FILE.
+    /// Optional `X-Address-Hash` that request adds beside its decentraland.org Referer (the old events service's
+    /// `FEATURE_FLAGS_USER_ID`); labelling works without it. Also accepts EVENTS_FEATURE_FLAGS_USER_ID_FILE.
     #[arg(long, env = "EVENTS_FEATURE_FLAGS_USER_ID", hide_env_values = true)]
     pub events_feature_flags_user_id: Option<String>,
 

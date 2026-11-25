@@ -152,11 +152,13 @@ pub async fn run_pass(state: &Shared, ctx: &JobContext) -> anyhow::Result<()> {
 /// The job that keeps the `events` document `events::foundation` reads.
 pub const EVENTS_JOB: &str = "events-foundation-flags";
 const EVENTS_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
+/// The site the `events` flags are asked for (the service answers by Referer).
+const EVENTS_REFERER: &str = "https://decentraland.org";
 
 /// One read of `<EVENTS_FEATURE_FLAGS_URL>/events.json`, stored as the `events`
-/// row. Sent as the old events service sent it (`@dcl/feature-flags`
-/// `fetchFlags`): no Referer, and `X-Address-Hash` when a user id is set. A
-/// failure leaves the stored row as it was.
+/// row. The service answers the Foundation variant only to the decentraland.org
+/// Referer; `X-Address-Hash` is added when a user id is set. A failure leaves
+/// the stored row as it was.
 pub async fn refresh_events(state: &Shared) -> anyhow::Result<()> {
     let app = crate::events::foundation::APP;
     let url = format!("{}/{app}.json", state.settings.events_flags_url);
@@ -164,13 +166,10 @@ pub async fn refresh_events(state: &Shared) -> anyhow::Result<()> {
         .settings
         .guarded_url(&url)
         .context("EVENTS_FEATURE_FLAGS_URL")?;
-    let headers: Vec<(&str, &str)> = state
-        .settings
-        .events_flags_user_id
-        .as_deref()
-        .map(|id| ("x-address-hash", id))
-        .into_iter()
-        .collect();
+    let mut headers = vec![("referer", EVENTS_REFERER)];
+    if let Some(id) = state.settings.events_flags_user_id.as_deref() {
+        headers.push(("x-address-hash", id));
+    }
     let doc = fetch_document_with(&state.http, target, &headers, EVENTS_TIMEOUT).await?;
     store(&state.pool, app, &doc, None)
         .await

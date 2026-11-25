@@ -33,7 +33,7 @@ struct Mock {
     flags: Mutex<Value>,
     flags_etag: Mutex<String>,
     /// The `events` application's document (`events.json`), the one
-    /// `events::foundation` reads: answered only to [`EVENTS_HASH`].
+    /// `events::foundation` reads: answered only to the decentraland.org Referer.
     events_flags: Mutex<Value>,
     /// The status `events.json` answers with.
     events_status: Mutex<StatusCode>,
@@ -64,7 +64,7 @@ fn entity(id: &str, pointers: &[&str]) -> Value {
     })
 }
 
-/// The `X-Address-Hash` the mock targets the Foundation list at.
+/// The optional `X-Address-Hash` a node may send.
 const EVENTS_HASH: &str = "events-test-hash";
 
 fn mock() -> Arc<Mock> {
@@ -150,12 +150,11 @@ async fn serve_mock(mock: Arc<Mock>) -> SocketAddr {
         if !status.is_success() {
             return status.into_response();
         }
-        // As the live service: an untargeted request sees the variant disabled.
-        if hash.as_deref() != Some(EVENTS_HASH) {
-            return Json(json!({"flags": {}, "variants": {
-                "events-decentraland-foundation-addresses": {"name": "disabled", "enabled": false}
-            }}))
-            .into_response();
+        // As the live service: only the decentraland.org Referer sees the variant.
+        if headers.get(header::REFERER).and_then(|v| v.to_str().ok())
+            != Some("https://decentraland.org")
+        {
+            return Json(json!({"flags": {}, "variants": {}})).into_response();
         }
         Json(m.events_flags.lock().clone()).into_response()
     }
@@ -1703,7 +1702,7 @@ async fn feature_flags_mirror_sends_the_referer_applies_overrides_and_uses_the_e
 }
 
 /// The Foundation names follow `EVENTS_FEATURE_FLAGS_URL` with the explorer
-/// mirrors off, asked as the old events service asked.
+/// mirrors off, asked with the decentraland.org Referer.
 #[tokio::test]
 async fn events_flags_refresh_labels_foundation_creators_with_the_mirrors_off() {
     let Some(db) = scratch_database().await else {
@@ -1730,8 +1729,11 @@ async fn events_flags_refresh_labels_foundation_creators_with_the_mirrors_off() 
     feature_flags::refresh_events(&node.state).await.unwrap();
     assert_eq!(
         *mock.events_headers.lock(),
-        (None, Some(EVENTS_HASH.to_string())),
-        "no Referer, the configured address hash"
+        (
+            Some("https://decentraland.org".to_string()),
+            Some(EVENTS_HASH.to_string())
+        ),
+        "the Referer and the configured address hash"
     );
     let (stored,): (Value,) =
         sqlx::query_as("SELECT document FROM explore_api.feature_flags WHERE app = 'events'")
@@ -1760,17 +1762,32 @@ async fn events_flags_refresh_labels_foundation_creators_with_the_mirrors_off() 
     );
 
     *mock.events_status.lock() = StatusCode::OK;
-    let mut untargeted = Settings::for_tests(sources_at(addr));
-    untargeted.events_flags_url = format!("http://{addr}");
-    let untargeted = node_with_db(untargeted, db.pool.clone()).await;
-    feature_flags::refresh_events(&untargeted.state)
-        .await
-        .unwrap();
-    assert_eq!(mock.events_headers.lock().1, None);
+    let mut no_hash = Settings::for_tests(sources_at(addr));
+    no_hash.events_flags_url = format!("http://{addr}");
+    let no_hash = node_with_db(no_hash, db.pool.clone()).await;
+    *mock.events_flags.lock() = json!({"flags": {}, "variants": {}});
+    feature_flags::refresh_events(&no_hash.state).await.unwrap();
     assert_eq!(
         labelled().await,
         Some("Alice".into()),
-        "a disabled variant labels no creator"
+        "an absent variant labels no creator"
+    );
+    *mock.events_flags.lock() = json!({
+        "flags": {},
+        "variants": {"events-decentraland-foundation-addresses": {
+            "name": "addresses", "enabled": true,
+            "payload": {"type": "json", "value": format!("[\"{foundation_wallet}\"]")}
+        }}
+    });
+    feature_flags::refresh_events(&no_hash.state).await.unwrap();
+    assert_eq!(
+        *mock.events_headers.lock(),
+        (Some("https://decentraland.org".to_string()), None)
+    );
+    assert_eq!(
+        labelled().await,
+        Some(crate::events::foundation::FOUNDATION_NAME.into()),
+        "the Referer alone labels the creators"
     );
 
     db.teardown().await;
