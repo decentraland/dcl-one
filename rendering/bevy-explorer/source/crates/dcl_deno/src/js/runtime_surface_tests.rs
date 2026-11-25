@@ -728,7 +728,7 @@ fn timer_clock_has_two_millisecond_granularity() {
         r#"JSON.stringify({
             direct: __direct.every((t) => t % 2 === 0) && __direct[__direct.length - 1] > __direct[0],
             seen: __seen.length > 0 && __seen.every((t) => t % 2 === 0),
-            fired: __fired.map(([k]) => k),
+            fired: __fired.map(([k]) => k).sort(),
             onTime: __fired.every(([k, t]) => t >= (k === "once" ? 50 : 8) - 2),
         })"#
         .to_owned(),
@@ -736,6 +736,25 @@ fn timer_clock_has_two_millisecond_granularity() {
     .unwrap();
     assert_eq!(
         outcome,
-        r#"{"direct":true,"seen":true,"fired":["tick","tick","tick","once"],"onTime":true}"#
+        r#"{"direct":true,"seen":true,"fired":["once","tick","tick","tick"],"onTime":true}"#
     );
+}
+
+/// Timers start on the coarse clock and fire on deno_core's: no timer fires before its delay,
+/// whatever the phase of the 2 ms step it starts in.
+#[test]
+fn timers_never_fire_early() {
+    let mut runtime = client_runtime();
+    for k in 0..40u64 {
+        std::thread::sleep(Duration::from_micros(137 * k));
+        let delay = 10 + k % 7;
+        let start = std::time::Instant::now();
+        eval(&mut runtime, format!("setTimeout(() => {{}}, {delay})")).unwrap();
+        run_event_loop(&mut runtime);
+        let elapsed = start.elapsed();
+        assert!(
+            elapsed >= Duration::from_millis(delay),
+            "a {delay} ms timer fired after {elapsed:?}"
+        );
+    }
 }

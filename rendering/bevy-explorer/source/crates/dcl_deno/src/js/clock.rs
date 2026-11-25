@@ -10,8 +10,15 @@ pub fn override_ops() -> Vec<OpDecl> {
 const CLOCK_GRANULARITY: std::time::Duration = std::time::Duration::from_millis(2);
 
 fn coarsen(time: std::time::Duration) -> std::time::Duration {
-    let step = CLOCK_GRANULARITY.as_nanos();
-    let nanos = time.as_nanos() / step * step;
+    to_step(time.as_nanos() / CLOCK_GRANULARITY.as_nanos())
+}
+
+fn coarsen_up(time: std::time::Duration) -> std::time::Duration {
+    to_step(time.as_nanos().div_ceil(CLOCK_GRANULARITY.as_nanos()))
+}
+
+fn to_step(steps: u128) -> std::time::Duration {
+    let nanos = steps * CLOCK_GRANULARITY.as_nanos();
     std::time::Duration::new(
         (nanos / 1_000_000_000) as u64,
         (nanos % 1_000_000_000) as u32,
@@ -37,8 +44,9 @@ fn op_now(state: &mut OpState, #[buffer] buf: &mut [u8]) {
     expose_time(coarsen(elapsed(state)), buf);
 }
 
-// On `performance.now()`'s clock, so the two read the same 2 ms steps.
+// On `performance.now()`'s 2 ms steps, rounded up: deno_core compares a timer's start on this
+// clock with its own, which starts later, so rounding down could fire a timer early.
 #[op2(fast)]
 fn op_timer_now(state: &mut OpState) -> f64 {
-    coarsen(elapsed(state)).as_secs_f64() * 1000.0
+    coarsen_up(elapsed(state)).as_secs_f64() * 1000.0
 }
