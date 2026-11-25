@@ -53,7 +53,7 @@
 //! (`federation.rs`: `/v1/federation/*`, `/federation/market/*`).
 
 pub use crate::chain_index::source::{Source, unavailable};
-pub use crate::chain_index::{graph, land_graph};
+pub use crate::chain_index::graph;
 
 pub mod accounts;
 pub mod activity;
@@ -79,6 +79,7 @@ pub mod lambdas_crypto;
 pub mod lambdas_explorer;
 pub mod lambdas_http;
 pub mod lambdas_land;
+pub mod lambdas_metrics;
 pub mod land_map;
 pub mod listings;
 pub mod lists;
@@ -156,9 +157,6 @@ pub struct Upstreams {
     pub matic_collections_subgraph_url: Option<String>,
     /// `MARKETPLACE_SUBGRAPH_URL`: the L1 marketplace subgraph (ENS names).
     pub marketplace_subgraph_url: Option<String>,
-    /// `LAND_SUBGRAPH_URL`: the land-manager subgraph (parcel operators and
-    /// update-operator lookups before the land-authz index is published).
-    pub land_subgraph_url: Option<String>,
     /// `TRADES_SYNC_UPSTREAM_URL`: the marketplace API `/v1/trades` list to mirror.
     pub trades_sync_upstream_url: Option<String>,
     /// `TRADES_SYNC_INTERVAL_SECS` (900): pause between two mirror passes.
@@ -193,7 +191,6 @@ pub struct Settings {
     pub eth_collections_subgraph_url: Option<String>,
     pub matic_collections_subgraph_url: Option<String>,
     pub marketplace_subgraph_url: Option<String>,
-    pub land_subgraph_url: Option<String>,
     /// `Config::eth_rpc_url()`: the contracts registry is read over the same
     /// TLS JSON-RPC endpoint the EIP-1654 validator uses.
     pub eth_rpc_url: Option<String>,
@@ -425,7 +422,6 @@ impl Settings {
                 "MARKETPLACE_SUBGRAPH_URL",
                 &upstreams.marketplace_subgraph_url,
             )?,
-            land_subgraph_url: checked("LAND_SUBGRAPH_URL", &upstreams.land_subgraph_url)?,
             eth_rpc_url: config.content.eth_rpc_url().context("ETH_RPC_URL")?,
             polygon_rpc_url: non_empty(&config.economy.rpc_endpoint_polygon),
             third_party_registry_subgraph_url: checked(
@@ -471,7 +467,6 @@ impl Settings {
             eth_collections_subgraph_url: self.eth_collections_subgraph_url.clone(),
             matic_collections_subgraph_url: self.matic_collections_subgraph_url.clone(),
             marketplace_subgraph_url: self.marketplace_subgraph_url.clone(),
-            land_subgraph_url: self.land_subgraph_url.clone(),
             eth_network: self.eth_network.clone(),
         }
     }
@@ -499,7 +494,6 @@ impl Settings {
             eth_collections_subgraph_url: None,
             matic_collections_subgraph_url: None,
             marketplace_subgraph_url: None,
-            land_subgraph_url: None,
             eth_rpc_url: None,
             polygon_rpc_url: None,
             third_party_registry_subgraph_url: None,

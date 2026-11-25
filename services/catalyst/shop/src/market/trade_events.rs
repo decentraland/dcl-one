@@ -926,24 +926,36 @@ pub fn stale_message(stale: &[ChainNet]) -> String {
 /// prices or reports the status of trades (`trades::ready`). A database
 /// error reads as not current: the envelope, never a guess.
 pub async fn require_current(state: &MarketplaceState) -> Result<(), Response> {
-    let read = async {
-        let mut conn = state.pool.acquire().await?;
-        stale_networks_on(&mut conn, &ChainNet::ALL, Utc::now()).await
+    let mut conn = match state.pool.acquire().await {
+        Ok(conn) => conn,
+        Err(e) => return Err(unreadable(e)),
     };
-    match read.await {
+    require_current_on(&mut conn, Utc::now()).await
+}
+
+/// [`require_current`] read on `conn` at `now`: a reader that runs its
+/// reads in one snapshot decides on the cursors that snapshot sees.
+pub async fn require_current_on(
+    conn: &mut PgConnection,
+    now: chrono::DateTime<Utc>,
+) -> Result<(), Response> {
+    match stale_networks_on(conn, &ChainNet::ALL, now).await {
         Ok(stale) if stale.is_empty() => Ok(()),
         Ok(stale) => Err(unavailable(
             Source::TradeEventsIndex,
             &stale_message(&stale),
         )),
-        Err(e) => {
-            tracing::warn!(error = %e, "cannot read shop.chain_cursor; treating the trade-events index as not current");
-            Err(unavailable(
-                Source::TradeEventsIndex,
-                "the trade-events index state cannot be read",
-            ))
-        }
+        Err(e) => Err(unreadable(e)),
     }
+}
+
+/// The envelope of a cursor read that failed: not current, never a guess.
+fn unreadable(e: sqlx::Error) -> Response {
+    tracing::warn!(error = %e, "cannot read shop.chain_cursor; treating the trade-events index as not current");
+    unavailable(
+        Source::TradeEventsIndex,
+        "the trade-events index state cannot be read",
+    )
 }
 
 /// The readiness rule of the trade-events cursor as the verdict SQL reads
