@@ -722,14 +722,13 @@ mod tests {
         collections_index::reads_token(pool, NET).await.unwrap()
     }
 
-    /// Writes `seeds` as creation reads the gate has proven on the walked
-    /// branch (`verified`), the only ones a projection takes.
+    /// The hash of the walk's block the creation reads are taken at.
+    const WALKED: &str = "0x00000000000000000000000000000000000000000000000000000000000000aa";
+
+    /// Writes `seeds` as the gate does: taken at the walk's block, proven
+    /// (`verified`), the only ones a projection takes.
     async fn proven(pool: &PgPool, seeds: &[Seed]) {
-        collections_index::write_seeds(pool, NET, seeds, None, seed_token(pool).await)
-            .await
-            .unwrap();
-        sqlx::query("UPDATE shop.collection_seed SET verified = true WHERE network = 'matic'")
-            .execute(pool)
+        collections_index::write_seeds(pool, NET, seeds, WALKED, seed_token(pool).await)
             .await
             .unwrap();
     }
@@ -940,19 +939,22 @@ mod tests {
             (1, 1),
             "one collection pending: not complete"
         );
-        collections_index::write_seeds(&pool, NET, &[seed()], None, seed_token(&pool).await)
-            .await
-            .unwrap();
+        // A row written before reads were proven (no hash): not taken.
+        sqlx::query(
+            "INSERT INTO shop.collection_seed (network, contract_address, name, symbol, creator, is_approved, is_editable, read_block) \
+             VALUES ('matic', $1, 'Legacy', 'L', '0x23be90335e79d3245615985d91f69814f98a0fab', true, true, 97700000)",
+        )
+        .bind(CREATED)
+        .execute(&pool)
+        .await
+        .unwrap();
         let out = project(&pool, &owner, NET, 97_895_000).await.unwrap();
         assert_eq!(
             (out.collections, out.waiting),
             (0, 1),
-            "a read not yet proven on the walked branch is not taken"
+            "a read not proven on the walked branch is not taken"
         );
-        sqlx::query("UPDATE shop.collection_seed SET verified = true")
-            .execute(&pool)
-            .await
-            .unwrap();
+        proven(&pool, &[seed()]).await;
         let out = project(&pool, &owner, NET, 97_895_000).await.unwrap();
         assert_eq!(
             (out.rebuilt, out.collections, out.replayed, out.waiting),
@@ -1041,7 +1043,7 @@ mod tests {
         let before = seed_token(&pool).await;
         rewind_to(&pool, 97_800_000).await;
         assert_eq!(
-            collections_index::write_seeds(&pool, NET, &[seed()], None, before)
+            collections_index::write_seeds(&pool, NET, &[seed()], WALKED, before)
                 .await
                 .unwrap(),
             0,

@@ -17116,11 +17116,13 @@ CREATE TABLE shop.collection_hint (
     finalized boolean NOT NULL,
     -- The finalized block a final row was read at (by its hash), and that
     -- hash (both NULL for a provisional row, and for a final row written
-    -- before they were recorded). The gate checks the hash at that height
-    -- until it is proven on the walked branch (`verified`: the walk's
-    -- cursor at or past it, with both blocks canonical); a different hash, a
-    -- missing one, or a rewind below the height makes the row provisional
-    -- again, to be read on the branch the chain took.
+    -- before they were recorded). Until the row is `verified`: at or below
+    -- the cursor of a walk with its full history, the walk's log decides
+    -- (the collection's ProxyCreated walked by that height proves it, none
+    -- undoes it); otherwise the gate asks the hash at that height, and
+    -- another one undoes it. A missing hash, or a rewind below the height,
+    -- undoes it too. Undone, the row is provisional again, to be read on
+    -- the branch the chain took.
     read_block bigint,
     read_hash text,
     verified boolean NOT NULL DEFAULT false,
@@ -17136,14 +17138,14 @@ CREATE UNIQUE INDEX collection_hint_final_idx ON shop.collection_hint (network, 
 
 -- What a collection's initialize set without an event (name, symbol,
 -- creator, approval, editability), read once by the collections index's
--- gate at Polygon's finalized block (by its hash), kept with its height and
--- hash (`read_block`, `read_hash`). The gate checks the hash at that height
--- until it is proven on the walked branch (`verified`: the walk's cursor at
--- or past it, with both blocks canonical); a different hash, a missing one,
--- or a rewind below the height deletes the row, to be read again on the
--- branch the chain took. A projection takes a value from it only once it is
--- verified, when no walked event sets the value and `read_block` is at or
--- below the block it folds to. One row per collection.
+-- gate for a walked collection at the walk's own cursor block, by the hash
+-- the walk stored for it (`read_block`, `read_hash`), under the walk's owner
+-- and epoch fence: so it is of the walked branch, and written `verified`.
+-- A rewind below `read_block` deletes it. A projection takes a value from it
+-- only when it is verified, no walked event sets the value and `read_block`
+-- is at or below the block it folds to. A row written before reads were
+-- proven (no hash, not verified) is never taken; the first proven read
+-- replaces it. One row per collection.
 CREATE TABLE shop.collection_seed (
     network text NOT NULL,
     contract_address varchar(42) NOT NULL,

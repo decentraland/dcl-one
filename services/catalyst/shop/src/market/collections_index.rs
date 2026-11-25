@@ -20,11 +20,11 @@
 //! index once its factory's `ProxyCreated` is walked.
 //!
 //! `initialize` sets the name, symbol, creator, approval and editability
-//! without an event. The gate reads them once per collection at Polygon's
-//! finalized block (`shop.collection_seed`, with that block), for the
-//! projection to take a value from the last walked event that sets it, and
-//! from that read only when no event does and the read is at or below the
-//! block it folds to.
+//! without an event. The gate reads them once per walked collection at the
+//! walk's own cursor block, by the hash the walk stored for it
+//! (`shop.collection_seed`, with that block), for the projection to take a
+//! value from the last walked event that sets it, and from that read only
+//! when no event does and the read is at or below the block it folds to.
 
 use std::collections::{HashMap, HashSet};
 use std::sync::Mutex;
@@ -84,8 +84,8 @@ pub const CALLS_PER_BATCH: usize = 100;
 /// for the next attempt, so a fresh node's first gates stay short.
 pub const SEEDS_PER_GATE: usize = 500;
 
-/// Heights of the gate's reads one gate checks at most against the chain
-/// ([`revalidate_reads`]); the rest wait for the next attempts, in turn.
+/// Heights of final factory list rows one gate asks the endpoint for at
+/// most ([`revalidate_reads`]); the rest wait for the next attempts, in turn.
 pub const HEIGHTS_PER_GATE: usize = 100;
 
 sol! {
@@ -669,11 +669,11 @@ impl ChainIndex for CollectionsIndex {
     }
 }
 
-/// The block parameter of a read of the state at `block` (EIP-1898): by its
-/// hash, so what is read and the hash it is stored with are one block's,
-/// and refused once that block is not canonical.
-pub fn at_block(block: &BlockHeader) -> Value {
-    json!({ "blockHash": block.hash, "requireCanonical": true })
+/// The block parameter of a read of the state at the block whose hash is
+/// `hash` (EIP-1898): what is read and the hash it is stored with are one
+/// block's, and the read is refused once that block is not canonical.
+pub fn at_block(hash: &str) -> Value {
+    json!({ "blockHash": hash, "requireCanonical": true })
 }
 
 /// One `eth_call` of `data` to `to` at `block` (`"latest"`, or
@@ -825,7 +825,7 @@ pub async fn refresh_hints(
     let token = reads_token(pool, net).await?;
     let final_block = i64::try_from(finalized.number).context("finalized block out of range")?;
     let final_hash = finalized.hash.clone();
-    let at_final = at_block(finalized);
+    let at_final = at_block(&finalized.hash);
     let latest = json!("latest");
     let size_calls: Vec<(String, Vec<u8>)> = FACTORIES
         .iter()
@@ -1023,30 +1023,42 @@ pub fn seed_of(contract: &str, answers: &[Answer], read_block: u64) -> Option<Se
     })
 }
 
-/// Reads the creation state of up to [`SEEDS_PER_GATE`] collections that
-/// have none, walked ones first, then the final hints (a provisional one
-/// may never exist), at the finalized block `finalized` by its hash
-/// ([`at_block`]), into `shop.collection_seed` with that height and hash
-/// (unverified: [`revalidate_reads`]). A collection not deployed at that block, or one
-/// a call was refused for, waits for the next gate. Returns the seeds added.
-pub async fn read_seeds(
-    pool: &PgPool,
-    rpc: &Rpc<'_>,
-    finalized: &BlockHeader,
-) -> anyhow::Result<usize> {
+/// Reads the creation state of up to [`SEEDS_PER_GATE`] walked collections
+/// without a proven one, oldest first, at the walk's own cursor block, named
+/// by the hash the walk stored for it ([`at_block`]), into
+/// `shop.collection_seed`. The cursor and the walk's [`ReadsToken`] are read
+/// in one snapshot and the write is fenced by that token, so every read is
+/// of the walked branch and is written proven (`verified`); a rewind below
+/// it deletes it in the cursor's own transaction. No header proves
+/// anything here: the hash is the walk's. An endpoint that no longer holds
+/// that block canonical, or does not serve its state, refuses the read, and
+/// the collection waits for the next gate. Returns the reads written.
+pub async fn read_seeds(pool: &PgPool, rpc: &Rpc<'_>) -> anyhow::Result<usize> {
     let net = ChainNet::Matic;
-    let token = reads_token(pool, net).await?;
+    let walk: Option<(i64, i64, i64, Option<String>)> = sqlx::query_as(
+        "SELECT c.owner_generation, COALESCE(w.epoch, 0), c.last_block, c.last_block_hash \
+         FROM shop.chain_cursor c LEFT JOIN shop.collection_walk w ON w.network = c.network \
+         WHERE c.indexer = $1 AND c.network = $2",
+    )
+    .bind(INDEXER_COLLECTIONS)
+    .bind(net.db_name())
+    .fetch_optional(pool)
+    .await?;
+    let Some((generation, epoch, walked, Some(hash))) = walk else {
+        return Ok(0);
+    };
+    let Ok(at) = u64::try_from(walked) else {
+        return Ok(0);
+    };
     let pending: Vec<String> = sqlx::query_scalar(
-        "SELECT address FROM ( \
-             SELECT e.contract_address AS address, 0 AS walked_first, e.block_number AS position \
-             FROM shop.collection_event e WHERE e.network = $1 AND e.kind = 'proxy_created' \
-             UNION ALL \
-             SELECT h.address, 1, h.idx FROM shop.collection_hint h WHERE h.network = $1 AND h.finalized \
-         ) c \
-         WHERE NOT EXISTS (SELECT 1 FROM shop.collection_seed s WHERE s.network = $1 AND s.contract_address = c.address) \
-         GROUP BY address ORDER BY min(walked_first), min(position), address LIMIT $2",
+        "SELECT e.contract_address FROM shop.collection_event e \
+         WHERE e.network = $1 AND e.kind = 'proxy_created' AND e.block_number <= $2 \
+           AND NOT EXISTS (SELECT 1 FROM shop.collection_seed s \
+                           WHERE s.network = $1 AND s.contract_address = e.contract_address AND s.verified) \
+         ORDER BY e.block_number, e.log_index LIMIT $3",
     )
     .bind(net.db_name())
+    .bind(walked)
     .bind(SEEDS_PER_GATE as i64)
     .fetch_all(pool)
     .await?;
@@ -1064,7 +1076,7 @@ pub async fn read_seeds(
         .iter()
         .flat_map(|c| selectors.iter().map(move |s| (c.clone(), s.clone())))
         .collect();
-    let answers = eth_calls(rpc, &calls, &at_block(finalized)).await?;
+    let answers = eth_calls(rpc, &calls, &at_block(&hash)).await?;
     if let Some((count, first)) = refusals(&answers) {
         tracing::warn!(
             count,
@@ -1075,9 +1087,9 @@ pub async fn read_seeds(
     let seeds: Vec<Seed> = pending
         .iter()
         .zip(answers.chunks(selectors.len()))
-        .filter_map(|(c, a)| seed_of(c, a, finalized.number))
+        .filter_map(|(c, a)| seed_of(c, a, at))
         .collect();
-    write_seeds(pool, net, &seeds, Some(&finalized.hash), token).await
+    write_seeds(pool, net, &seeds, &hash, Some((generation, epoch))).await
 }
 
 /// What a write of the gate's reads checks has not moved since the reads
@@ -1101,15 +1113,17 @@ pub async fn reads_token<'e>(
     .await
 }
 
-/// Inserts `seeds`, read since `token` was taken; a collection's first read
-/// stands. Under the reads lock, shared, it writes nothing when a rewind, a
-/// rebuild or a new owner moved the walk since `token`: those reads may be
-/// of a branch the walk left.
+/// Writes `seeds`, read at the walk's cursor block `read_hash` since `token`
+/// was taken, as proven (`verified`): a collection's first proven read
+/// stands, and one replaces a row written before reads were proven. Under
+/// the reads lock, shared, it writes nothing when a rewind, a rebuild or a
+/// new owner moved the walk since `token`: that block may no longer be the
+/// walked branch's.
 pub async fn write_seeds(
     pool: &PgPool,
     net: ChainNet,
     seeds: &[Seed],
-    read_hash: Option<&str>,
+    read_hash: &str,
     token: ReadsToken,
 ) -> anyhow::Result<usize> {
     if seeds.is_empty() {
@@ -1129,10 +1143,17 @@ pub async fn write_seeds(
         return Ok(0);
     }
     let written = sqlx::query(
-        "INSERT INTO shop.collection_seed (network, contract_address, name, symbol, creator, is_approved, is_editable, read_block, read_hash) \
-         SELECT $1, c, n, s, cr, a, e, b, $9 FROM UNNEST($2::text[], $3::text[], $4::text[], $5::text[], $6::bool[], $7::bool[], $8::bigint[]) \
+        "INSERT INTO shop.collection_seed \
+             (network, contract_address, name, symbol, creator, is_approved, is_editable, read_block, read_hash, verified) \
+         SELECT $1, c, n, s, cr, a, e, b, $9, true \
+         FROM UNNEST($2::text[], $3::text[], $4::text[], $5::text[], $6::bool[], $7::bool[], $8::bigint[]) \
               AS u(c, n, s, cr, a, e, b) \
-         ON CONFLICT (network, contract_address) DO NOTHING",
+         ON CONFLICT (network, contract_address) DO UPDATE \
+         SET name = EXCLUDED.name, symbol = EXCLUDED.symbol, creator = EXCLUDED.creator, \
+             is_approved = EXCLUDED.is_approved, is_editable = EXCLUDED.is_editable, \
+             read_block = EXCLUDED.read_block, read_hash = EXCLUDED.read_hash, verified = true, \
+             read_at = EXCLUDED.read_at \
+         WHERE NOT shop.collection_seed.verified",
     )
     .bind(net.db_name())
     .bind(seeds.iter().map(|s| s.contract_address.as_str()).collect::<Vec<_>>())
@@ -1178,31 +1199,32 @@ async fn block_hashes(rpc: &Rpc<'_>, heights: &[u64]) -> anyhow::Result<HashMap<
     Ok(out)
 }
 
-/// Checks the gate's reads against the chain. Each final factory list row
-/// and creation read keeps the height and hash of the block it was read at
-/// ([`at_block`]); until it is `verified`:
+/// Checks the final factory list rows against the chain. Each keeps the
+/// height and hash of the finalized block it was read at ([`at_block`]);
+/// until it is `verified`:
 /// - one with no hash (written before hashes were kept) is undone without a
-///   read: its list row becomes provisional again, its creation read is
-///   deleted;
-/// - one whose height holds another hash now (the chain left its branch,
-///   which the walk cannot see while its own cursor is below it) is undone
-///   the same way;
-/// - one whose hash holds, at a height at or below the walk's cursor, while
-///   the cursor's own block is canonical too, is on the walked branch: it is
-///   verified. From then the walk's reorg check covers it (a rewind below it
-///   undoes it), and only then does a projection use a creation read.
+///   read: it becomes provisional again, to be read again;
+/// - at or below the walk's cursor, on a walk with its full history, the
+///   walk's own log decides. The collection's `ProxyCreated` walked at or
+///   before that height proves the row (`verified`; from then a rewind below
+///   it undoes it). None means the walked branch does not hold it there, and
+///   the row is undone;
+/// - otherwise (ahead of the walk, or on a walk without its full history,
+///   whose log lacks the older collections) the endpoint's hash at that
+///   height is asked. Another hash undoes the row; the same one leaves it as
+///   it is. A header never proves a row: two replies may come from two
+///   branches.
 ///
-/// At most `max_heights` heights are checked, in turn from where the last
+/// At most `max_heights` heights are asked, in turn from where the last
 /// check stopped (`shop.collection_walk.checked_through`), so every height
-/// is checked within a few attempts however many there are. A header the
-/// endpoint does not serve fails the call, and nothing is undone or
-/// verified on a guess. The writes hold the reads lock (exclusive when
-/// anything is undone, raising the walk's epoch so a read in flight from a
-/// left branch is not written either, and clearing the projection's block
-/// when a creation read goes) and are dropped if a rewind or a new owner
-/// moved the walk since the check began.
+/// is asked within a few attempts. A header the endpoint does not serve
+/// fails the call. The writes hold the reads lock exclusive, raise the
+/// walk's epoch when a row is undone (so a read in flight from a left
+/// branch is not written either), and are dropped when a rewind or a new
+/// owner moved the walk since the check began. The creation reads need no
+/// check: [`read_seeds`] takes them at the walk's own block.
 ///
-/// Returns the reads undone.
+/// Returns the rows undone.
 pub async fn revalidate_reads(
     pool: &PgPool,
     rpc: &Rpc<'_>,
@@ -1210,45 +1232,34 @@ pub async fn revalidate_reads(
 ) -> anyhow::Result<usize> {
     let net = ChainNet::Matic;
     let token = reads_token(pool, net).await?;
-    let reads: Vec<(Option<i64>, Option<String>)> = sqlx::query_as(
-        "SELECT read_block, read_hash FROM shop.collection_hint WHERE network = $1 AND finalized AND NOT verified \
-         UNION \
-         SELECT read_block, read_hash FROM shop.collection_seed WHERE network = $1 AND NOT verified",
+    let walk: Option<(i64, bool)> = sqlx::query_as(
+        "SELECT last_block, full_history FROM shop.chain_cursor WHERE indexer = $1 AND network = $2",
+    )
+    .bind(INDEXER_COLLECTIONS)
+    .bind(net.db_name())
+    .fetch_optional(pool)
+    .await?;
+    let (walked, full) = walk.map_or((None, false), |(b, f)| (Some(b), f));
+    // The heights the walk's log does not decide.
+    let heights: Vec<i64> = sqlx::query_scalar(
+        "SELECT DISTINCT read_block FROM shop.collection_hint \
+         WHERE network = $1 AND finalized AND NOT verified \
+           AND read_hash IS NOT NULL AND read_block >= 0 \
+           AND NOT ($3 AND read_block <= $2) \
+         ORDER BY read_block",
     )
     .bind(net.db_name())
+    .bind(walked.unwrap_or(-1))
+    .bind(full && walked.is_some())
     .fetch_all(pool)
     .await?;
-    if reads.is_empty() {
-        return Ok(0);
-    }
-    let (walk_at, checked_through): (Option<(i64, String)>, Option<i64>) = {
-        let cursor: Option<(i64, Option<String>)> = sqlx::query_as(
-            "SELECT last_block, last_block_hash FROM shop.chain_cursor WHERE indexer = $1 AND network = $2",
-        )
-        .bind(INDEXER_COLLECTIONS)
-        .bind(net.db_name())
-        .fetch_optional(pool)
-        .await?;
-        let through: Option<i64> = sqlx::query_scalar(
-            "SELECT checked_through FROM shop.collection_walk WHERE network = $1",
-        )
-        .bind(net.db_name())
-        .fetch_optional(pool)
-        .await?
-        .flatten();
-        (
-            cursor.and_then(|(block, hash)| Some((block, hash?))),
-            through,
-        )
-    };
-    let mut heights: Vec<i64> = reads
-        .iter()
-        .filter_map(|(block, hash)| hash.as_ref().and(*block))
-        .filter(|b| *b >= 0)
-        .collect();
-    heights.sort_unstable();
-    heights.dedup();
-    let from = checked_through.unwrap_or(-1);
+    let through: Option<i64> =
+        sqlx::query_scalar("SELECT checked_through FROM shop.collection_walk WHERE network = $1")
+            .bind(net.db_name())
+            .fetch_optional(pool)
+            .await?
+            .flatten();
+    let from = through.unwrap_or(-1);
     let turn: Vec<i64> = heights
         .iter()
         .filter(|h| **h > from)
@@ -1259,46 +1270,25 @@ pub async fn revalidate_reads(
     let next_through = (heights.len() > turn.len())
         .then(|| turn.last().copied())
         .flatten();
-    let mut ask: Vec<u64> = turn.iter().map(|h| *h as u64).collect();
-    if let Some((block, _)) = &walk_at {
-        ask.push(*block as u64);
-    }
-    ask.sort_unstable();
-    ask.dedup();
-    let hashes = if ask.is_empty() {
-        HashMap::new()
-    } else {
-        block_hashes(rpc, &ask).await?
-    };
-    // The walk's cursor is on the endpoint's chain: what that chain holds
-    // at or below it is what the walk walked.
-    let walked = walk_at
-        .filter(|(block, hash)| hashes.get(&(*block as u64)) == Some(hash))
-        .map(|(block, _)| block);
-    let (mut verify, mut undo) = (Vec::new(), Vec::new());
-    for (block, hash) in reads {
-        match (block, hash) {
-            (Some(b), Some(read)) if turn.contains(&b) => {
-                let now = hashes
-                    .get(&(b as u64))
-                    .expect("every height asked is answered");
-                if *now != read {
-                    undo.push((Some(b), Some(read)));
-                } else if walked.is_some_and(|w| w >= b) {
-                    verify.push((b, read));
-                }
-            }
-            (Some(_), Some(_)) => {}
-            (block, hash) => undo.push((block, hash)),
-        }
+    let mut left = Vec::new();
+    if !turn.is_empty() {
+        let ask: Vec<u64> = turn.iter().map(|h| *h as u64).collect();
+        let hashes = block_hashes(rpc, &ask).await?;
+        let stored: Vec<(i64, String)> = sqlx::query_as(
+            "SELECT DISTINCT read_block, read_hash FROM shop.collection_hint \
+             WHERE network = $1 AND finalized AND NOT verified AND read_block = ANY($2) AND read_hash IS NOT NULL",
+        )
+        .bind(net.db_name())
+        .bind(&turn)
+        .fetch_all(pool)
+        .await?;
+        left = stored
+            .into_iter()
+            .filter(|(block, hash)| hashes.get(&(*block as u64)) != Some(hash))
+            .collect();
     }
     let mut tx = pool.begin().await?;
-    let lock = if undo.is_empty() {
-        "SELECT pg_advisory_xact_lock_shared($1, $2)"
-    } else {
-        "SELECT pg_advisory_xact_lock($1, $2)"
-    };
-    sqlx::query(lock)
+    sqlx::query("SELECT pg_advisory_xact_lock($1, $2)")
         .bind(READS_LOCK)
         .bind(net.chain_id() as i32)
         .execute(&mut *tx)
@@ -1306,77 +1296,98 @@ pub async fn revalidate_reads(
     if reads_token(&mut *tx, net).await? != token {
         tracing::info!(
             network = net.db_name(),
-            "collections: the walk moved while the reads were checked; the next attempt checks them again"
+            "collections: the walk moved while the lists were checked; the next attempt checks them again"
         );
         return Ok(0);
     }
-    for (block, hash) in &verify {
-        for sql in [
-            "UPDATE shop.collection_hint SET verified = true \
-             WHERE network = $1 AND finalized AND read_block = $2 AND read_hash = $3",
-            "UPDATE shop.collection_seed SET verified = true \
-             WHERE network = $1 AND read_block = $2 AND read_hash = $3",
-        ] {
-            sqlx::query(sql)
-                .bind(net.db_name())
-                .bind(block)
-                .bind(hash)
-                .execute(&mut *tx)
-                .await?;
-        }
+    macro_rules! demote {
+        () => {
+            "UPDATE shop.collection_hint h \
+             SET finalized = false, read_block = NULL, read_hash = NULL, verified = false "
+        };
     }
-    let (mut hints, mut seeds) = (0usize, 0usize);
-    for (block, hash) in &undo {
-        hints += sqlx::query(
-            "UPDATE shop.collection_hint SET finalized = false, read_block = NULL, read_hash = NULL, \
-                    verified = false \
-             WHERE network = $1 AND finalized AND NOT verified \
-               AND read_block IS NOT DISTINCT FROM $2 AND read_hash IS NOT DISTINCT FROM $3",
-        )
+    // The walk's log, against the cursor as it stands in the same statement.
+    macro_rules! walked_through {
+        () => {
+            "FROM shop.chain_cursor c \
+             WHERE h.network = $1 AND h.finalized AND NOT h.verified AND h.read_hash IS NOT NULL \
+               AND c.indexer = $2 AND c.network = h.network AND c.full_history \
+               AND h.read_block <= c.last_block "
+        };
+    }
+    macro_rules! created {
+        () => {
+            "EXISTS (SELECT 1 FROM shop.collection_event e \
+             WHERE e.network = h.network AND e.kind = 'proxy_created' \
+               AND e.contract_address = h.address AND e.block_number <= h.read_block)"
+        };
+    }
+    let mut undone = sqlx::query(concat!(
+        demote!(),
+        "WHERE h.network = $1 AND h.finalized AND NOT h.verified \
+           AND (h.read_hash IS NULL OR h.read_block IS NULL)"
+    ))
+    .bind(net.db_name())
+    .execute(&mut *tx)
+    .await?
+    .rows_affected() as usize;
+    sqlx::query(concat!(
+        "UPDATE shop.collection_hint h SET verified = true ",
+        walked_through!(),
+        "AND ",
+        created!()
+    ))
+    .bind(net.db_name())
+    .bind(INDEXER_COLLECTIONS)
+    .execute(&mut *tx)
+    .await?;
+    undone += sqlx::query(concat!(
+        demote!(),
+        walked_through!(),
+        "AND NOT ",
+        created!()
+    ))
+    .bind(net.db_name())
+    .bind(INDEXER_COLLECTIONS)
+    .execute(&mut *tx)
+    .await?
+    .rows_affected() as usize;
+    for (block, hash) in &left {
+        undone += sqlx::query(concat!(
+            demote!(),
+            "WHERE h.network = $1 AND h.finalized AND NOT h.verified \
+               AND h.read_block = $2 AND h.read_hash = $3"
+        ))
         .bind(net.db_name())
         .bind(block)
         .bind(hash)
         .execute(&mut *tx)
         .await?
         .rows_affected() as usize;
-        seeds += sqlx::query(
-            "DELETE FROM shop.collection_seed WHERE network = $1 AND NOT verified \
-               AND read_block IS NOT DISTINCT FROM $2 AND read_hash IS NOT DISTINCT FROM $3",
-        )
-        .bind(net.db_name())
-        .bind(block)
-        .bind(hash)
-        .execute(&mut *tx)
-        .await?
-        .rows_affected() as usize;
     }
-    let raise = i64::from(!undo.is_empty());
     sqlx::query(
         "INSERT INTO shop.collection_walk (network, epoch, checked_through) VALUES ($1, $2, $3) \
          ON CONFLICT (network) DO UPDATE \
          SET epoch = shop.collection_walk.epoch + $2, checked_through = EXCLUDED.checked_through",
     )
     .bind(net.db_name())
-    .bind(raise)
+    .bind(i64::from(undone > 0))
     .bind(next_through)
     .execute(&mut *tx)
     .await?;
-    // The projection folds the log and the creation reads, never the lists.
-    if seeds > 0 {
-        super::collections_projection::invalidate(&mut tx, net).await?;
-    }
     tx.commit().await?;
-    Ok(hints + seeds)
+    Ok(undone)
 }
 
 /// The gate before each attempt: the endpoint must serve Polygon (what it
 /// reads is kept until a rewind or rebuild past it, or until the chain leaves
 /// the branch it was read on: [`revalidate_reads`], which runs first and
-/// fails the attempt if it cannot check); then the factories' lists (a
-/// failure fails the attempt: a filter without the newest collections would
-/// fail the windows that walk them), then the creation reads (a failure is
-/// only logged: the walk does not need them), both against Polygon's
-/// finalized block, read once. While the lists are not read whole up to the
+/// fails the attempt if it cannot check); then the factories' lists at
+/// Polygon's finalized block, read once (a failure fails the attempt: a
+/// filter without the newest collections would fail the windows that walk
+/// them); then the creation reads of the walked collections at the walk's
+/// own block ([`read_seeds`]; a failure is only logged: the walk does not
+/// need them). While the lists are not read whole up to the
 /// finalized sizes (a fresh node's take several attempts), the attempt
 /// waits for the next interval; provisional indexes past them never hold
 /// it back (a window that walks a collection the filter lacks still fails).
@@ -1422,7 +1433,7 @@ pub async fn gate(pool: &PgPool, rpc: &Rpc<'_>) -> anyhow::Result<Option<String>
             hinted.remaining
         )));
     }
-    match read_seeds(pool, rpc, &finalized).await {
+    match read_seeds(pool, rpc).await {
         Ok(0) => {}
         Ok(seeded) => tracing::info!(seeded, "collections matic: creation state read"),
         Err(e) => {
@@ -2253,7 +2264,7 @@ mod tests {
                 &pool,
                 ChainNet::Matic,
                 std::slice::from_ref(&read),
-                None,
+                &header(97_800_000).hash,
                 in_flight
             )
             .await
@@ -2262,9 +2273,15 @@ mod tests {
         );
         let now = reads_token(&pool, ChainNet::Matic).await.unwrap();
         assert_eq!(
-            write_seeds(&pool, ChainNet::Matic, &[read], None, now)
-                .await
-                .unwrap(),
+            write_seeds(
+                &pool,
+                ChainNet::Matic,
+                &[read],
+                &header(97_800_000).hash,
+                now
+            )
+            .await
+            .unwrap(),
             1
         );
     }
@@ -2523,11 +2540,11 @@ mod tests {
         assert_eq!(
             hints,
             vec![
-                (0, OLDER.into(), true, Some(97_000_000), true),
+                (0, OLDER.into(), true, Some(97_000_000), false),
                 (1, replacement.into(), true, Some(97_895_000), false),
                 (1, CREATED.into(), false, None, false),
             ],
-            "the row below the walk verified; the left branch's read again"
+            "the row whose hash holds kept (unproven: this walk lacks its full history); the left branch's read again"
         );
         chain_walk::run_pass(
             &pool,
@@ -2543,130 +2560,6 @@ mod tests {
         assert_eq!(
             created_rows(&pool, replacement).await,
             vec![(replacement.to_string(), 17)]
-        );
-    }
-
-    /// A creation read ahead of the walk is bound the same way: when the
-    /// chain leaves its branch and the collection keeps its list slot, the
-    /// read is deleted, taken again at the finalized block, and the
-    /// projection is rebuilt from the new one.
-    #[tokio::test]
-    async fn a_creation_read_changed_ahead_of_the_walk_is_read_again() {
-        let Some(pool) = crate::db::scratch::isolated_pool(4).await else {
-            return;
-        };
-        let below = header(97_000_000).hash;
-        hint_read(&pool, 0, OLDER, 97_000_000, &below).await;
-        hint_read(&pool, 1, CREATED, 97_000_000, &below).await;
-        let chain = |finalized| Chain {
-            logs: fixture(),
-            finalized,
-        };
-        let settings = walk_settings();
-        let ix = CollectionsIndex::projecting(true);
-        let owner = chain_walk::test_owner(&pool, &ix, &settings).await;
-        chain_walk::run_pass(
-            &pool,
-            &chain(97_700_000),
-            &ix,
-            &settings,
-            &owner,
-            None,
-            &|_| {},
-        )
-        .await
-        .unwrap();
-        let token = reads_token(&pool, ChainNet::Matic).await.unwrap();
-        let left = Seed {
-            contract_address: CREATED.into(),
-            name: "Left".into(),
-            symbol: "L".into(),
-            creator: CREATOR.into(),
-            is_approved: true,
-            is_editable: true,
-            read_block: 97_750_000,
-        };
-        assert_eq!(
-            write_seeds(&pool, ChainNet::Matic, &[left], Some(&left_branch()), token)
-                .await
-                .unwrap(),
-            1
-        );
-
-        let at = format!("0x{:x}", 97_895_000);
-        let mut calls = gate_calls(97_895_000);
-        for (call, answer) in [
-            (
-                Collection::nameCall {}.abi_encode(),
-                word("Kept".to_string()),
-            ),
-            (
-                Collection::symbolCall {}.abi_encode(),
-                word("K".to_string()),
-            ),
-            (Collection::creatorCall {}.abi_encode(), addr(CREATOR)),
-            (Collection::isApprovedCall {}.abi_encode(), word(false)),
-            (Collection::isEditableCall {}.abi_encode(), word(true)),
-        ] {
-            calls.insert(call_key(CREATED, call, &at), answer);
-        }
-        let url = fake_rpc(
-            Arc::new(std::sync::Mutex::new(calls)),
-            Batches::Upto(100),
-            Arc::default(),
-        )
-        .await;
-        let http = crate::http::Outbound::for_tests();
-        let rpc = Rpc::at(&http, &url);
-        assert_eq!(gate(&pool, &rpc).await.unwrap(), None);
-        let projected: Option<i64> = sqlx::query_scalar(
-            "SELECT projected_through FROM shop.collection_projection WHERE network = 'matic'",
-        )
-        .fetch_one(&pool)
-        .await
-        .unwrap();
-        assert_eq!(projected, None, "the next fold rebuilds");
-        let seeds: Vec<(String, bool, i64, Option<String>)> = sqlx::query_as(
-            "SELECT name, is_approved, read_block, read_hash FROM shop.collection_seed WHERE contract_address = $1",
-        )
-        .bind(CREATED)
-        .fetch_all(&pool)
-        .await
-        .unwrap();
-        assert_eq!(
-            seeds,
-            vec![(
-                "Kept".into(),
-                false,
-                97_895_000,
-                Some(header(97_895_000).hash)
-            )]
-        );
-        let hints: Vec<(String, bool, bool)> = sqlx::query_as(
-            "SELECT address, finalized, verified FROM shop.collection_hint ORDER BY idx",
-        )
-        .fetch_all(&pool)
-        .await
-        .unwrap();
-        assert_eq!(
-            hints,
-            vec![(OLDER.into(), true, true), (CREATED.into(), true, true)],
-            "the list slot holds: only the creation read is taken again"
-        );
-        let head = chain(97_895_000);
-        let pass = || chain_walk::run_pass(&pool, &head, &ix, &settings, &owner, None, &|_| {});
-        pass().await.unwrap();
-        assert_eq!(
-            projected_name(&pool, CREATED).await,
-            None,
-            "the new read waits for its proof"
-        );
-        assert_eq!(gate(&pool, &rpc).await.unwrap(), None);
-        pass().await.unwrap();
-        assert_eq!(
-            projected_name(&pool, CREATED).await.as_deref(),
-            Some("Kept"),
-            "the new branch's read, not the left one's"
         );
     }
 
@@ -2702,9 +2595,9 @@ mod tests {
         }
     }
 
-    /// The final reads go by the finalized block's hash: a list slot and a
-    /// creation read stored with that hash are that block's, even when the
-    /// endpoint's block at that number is another branch's.
+    /// The final list reads go by the finalized block's hash: a list slot
+    /// stored with that hash is that block's, even when the endpoint's block
+    /// at that number is another branch's.
     #[tokio::test]
     async fn final_reads_are_pinned_to_the_finalized_hash() {
         let Some(pool) = crate::db::scratch::isolated_pool(2).await else {
@@ -2730,9 +2623,6 @@ mod tests {
         }
         calls.insert(call_key(V3, nth(0), &a), addr(on_a));
         calls.insert(call_key(V3, nth(0), "0x64"), addr(on_b));
-        creation_answers(&mut calls, on_a, &a, "A");
-        creation_answers(&mut calls, on_a, "0x64", "B");
-        creation_answers(&mut calls, on_b, "0x64", "B");
         let url = fake_rpc(
             Arc::new(std::sync::Mutex::new(calls)),
             Batches::Upto(100),
@@ -2747,22 +2637,17 @@ mod tests {
         .fetch_all(&pool)
         .await
         .unwrap();
-        assert_eq!(hints, vec![(on_a.to_string(), Some(100), Some(a.clone()))]);
-        let seeds: Vec<(String, String, i64, Option<String>)> = sqlx::query_as(
-            "SELECT contract_address, name, read_block, read_hash FROM shop.collection_seed",
-        )
-        .fetch_all(&pool)
-        .await
-        .unwrap();
-        assert_eq!(seeds, vec![(on_a.to_string(), "A".into(), 100, Some(a))]);
+        assert_eq!(hints, vec![(on_a.to_string(), Some(100), Some(a))]);
     }
 
-    /// A creation read correctly tagged with its branch's hash is still not
-    /// published when the walk takes another branch past it before the gate
-    /// checks it: the collection waits until a read of the walked branch is
-    /// proven.
+    /// A creation read is taken at the walk's own cursor block, by the hash
+    /// the walk stored for it, whatever the endpoint says of other blocks:
+    /// with the endpoint's finalized block on branch A and the walk on
+    /// branch B, the read is B's, proven as written, and the next pass
+    /// publishes it. Before the walk has passed a creation there is nothing
+    /// to read.
     #[tokio::test]
-    async fn a_creation_read_of_a_branch_the_walk_did_not_take_is_never_published() {
+    async fn creation_reads_are_taken_at_the_walks_own_block() {
         let Some(pool) = crate::db::scratch::isolated_pool(4).await else {
             return;
         };
@@ -2786,51 +2671,53 @@ mod tests {
         };
         pass(97_700_000).await;
 
-        // The endpoint's finalized block is branch A's; the walk takes B.
         let a = left_branch();
-        let at = format!("0x{:x}", 97_895_000);
+        let b = format!("0x{:x}", 97_895_000);
         let mut calls = gate_calls(97_895_000);
         calls.insert(
             ("block".to_string(), "finalized".to_string(), String::new()),
-            format!("{at} {a}"),
+            format!("{b} {a}"),
         );
         let size = Factory::collectionsSizeCall {}.abi_encode();
         calls.insert(call_key(FACTORIES[0].0, size.clone(), &a), word(U256::ZERO));
         calls.insert(call_key(V3, size, &a), word(U256::from(2)));
         creation_answers(&mut calls, CREATED, &a, "Left");
-        let calls = Arc::new(std::sync::Mutex::new(calls));
-        let url = fake_rpc(calls.clone(), Batches::Upto(100), Arc::default()).await;
+        creation_answers(&mut calls, CREATED, &b, "Kept");
+        let url = fake_rpc(
+            Arc::new(std::sync::Mutex::new(calls)),
+            Batches::Upto(100),
+            Arc::default(),
+        )
+        .await;
         let http = crate::http::Outbound::for_tests();
         let rpc = Rpc::at(&http, &url);
+        let seeds = || async {
+            sqlx::query_as::<_, (String, i64, Option<String>, bool)>(
+                "SELECT name, read_block, read_hash, verified FROM shop.collection_seed",
+            )
+            .fetch_all(&pool)
+            .await
+            .unwrap()
+        };
         assert_eq!(gate(&pool, &rpc).await.unwrap(), None);
+        assert_eq!(seeds().await, vec![], "nothing walked to read yet");
         pass(97_895_000).await;
-        let marker: (Option<i64>, i32) = sqlx::query_as(
-            "SELECT projected_through, pending FROM shop.collection_projection WHERE network = 'matic'",
-        )
-        .fetch_one(&pool)
-        .await
-        .unwrap();
         assert_eq!(
-            (projected_name(&pool, CREATED).await, marker),
-            (None, (Some(97_895_000), 1)),
-            "branch A's read is not published on branch B: the collection waits"
+            projected_name(&pool, CREATED).await,
+            None,
+            "walked, waiting for its creation read"
         );
-
-        // The endpoint follows B: A's read is undone, B's taken, proven,
-        // then published.
-        {
-            let mut calls = calls.lock().unwrap();
-            calls.remove(&("block".to_string(), "finalized".to_string(), String::new()));
-            calls.insert(
-                ("block".to_string(), "finalized".to_string(), String::new()),
-                format!("{at} {}", header(97_895_000).hash),
-            );
-            creation_answers(&mut calls, CREATED, &at, "Kept");
-        }
         assert_eq!(gate(&pool, &rpc).await.unwrap(), None);
-        pass(97_895_000).await;
-        assert_eq!(projected_name(&pool, CREATED).await, None);
-        assert_eq!(gate(&pool, &rpc).await.unwrap(), None);
+        assert_eq!(
+            seeds().await,
+            vec![(
+                "Kept".to_string(),
+                97_895_000,
+                Some(header(97_895_000).hash),
+                true
+            )],
+            "branch B's state at the walk's block, proven as written"
+        );
         pass(97_895_000).await;
         assert_eq!(
             projected_name(&pool, CREATED).await.as_deref(),
@@ -2838,18 +2725,19 @@ mod tests {
         );
     }
 
-    /// A read is proven only while the walk's own cursor block is the
-    /// endpoint's too: a read whose hash holds on an endpoint that left the
-    /// walk's branch below the cursor stays unproven (the walk's next pass
-    /// rewinds first).
+    /// A list row at or below the cursor of a walk with its full history is
+    /// decided by the walk's own log, with no header asked: the row of a
+    /// collection the walk created by that height is proven, the row of one
+    /// it never created there is undone.
     #[tokio::test]
-    async fn a_read_is_proven_only_while_the_walk_is_on_the_endpoints_chain() {
+    async fn the_walk_decides_the_list_rows_it_has_passed() {
         let Some(pool) = crate::db::scratch::isolated_pool(2).await else {
             return;
         };
-        let below = header(97_000_000).hash;
-        hint_read(&pool, 0, OLDER, 97_000_000, &below).await;
-        hint_read(&pool, 1, CREATED, 97_000_000, &below).await;
+        let elsewhere = "0x00000000000000000000000000000000000000e9";
+        let read_at = 97_800_000u64;
+        hint_read(&pool, 1, CREATED, read_at, &left_branch()).await;
+        hint_read(&pool, 2, elsewhere, read_at, &left_branch()).await;
         let settings = walk_settings();
         let ix = CollectionsIndex::new();
         let owner = chain_walk::test_owner(&pool, &ix, &settings).await;
@@ -2860,33 +2748,18 @@ mod tests {
         chain_walk::run_pass(&pool, &chain, &ix, &settings, &owner, None, &|_| {})
             .await
             .unwrap();
-        let (read_at, a) = (97_800_000u64, left_branch());
-        let read = Seed {
-            contract_address: CREATED.into(),
-            name: "A".into(),
-            symbol: "A".into(),
-            creator: CREATOR.into(),
-            is_approved: true,
-            is_editable: true,
-            read_block: read_at as i64,
-        };
-        let token = reads_token(&pool, ChainNet::Matic).await.unwrap();
-        write_seeds(&pool, ChainNet::Matic, &[read], Some(&a), token)
-            .await
-            .unwrap();
-        // The endpoint is on branch A from below the read up to the cursor.
-        let mut calls = gate_calls(100);
+        // As a walk from the factories' deployment holds it.
+        sqlx::query(
+            "UPDATE shop.chain_cursor SET full_history = true WHERE indexer = 'collections' AND network = 'matic'",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        // A header asked at that height would fail the check.
+        let mut calls = HashMap::new();
         calls.insert(
             ("block".to_string(), format!("0x{read_at:x}"), String::new()),
-            format!("0x{read_at:x} {a}"),
-        );
-        calls.insert(
-            (
-                "block".to_string(),
-                format!("0x{:x}", 97_895_000),
-                String::new(),
-            ),
-            format!("0x{:x} 0x{}", 97_895_000, "cd".repeat(32)),
+            "null".to_string(),
         );
         let url = fake_rpc(
             Arc::new(std::sync::Mutex::new(calls)),
@@ -2895,43 +2768,53 @@ mod tests {
         )
         .await;
         let http = crate::http::Outbound::for_tests();
-        assert_eq!(gate(&pool, &Rpc::at(&http, &url)).await.unwrap(), None);
-        let seeds: Vec<(String, bool)> =
-            sqlx::query_as("SELECT read_hash, verified FROM shop.collection_seed")
-                .fetch_all(&pool)
+        let rpc = Rpc::at(&http, &url);
+        let before = reads_token(&pool, ChainNet::Matic).await.unwrap();
+        assert_eq!(
+            revalidate_reads(&pool, &rpc, HEIGHTS_PER_GATE)
                 .await
-                .unwrap();
-        assert_eq!(seeds, vec![(a, false)], "kept, not proven");
-        let hints: Vec<bool> =
-            sqlx::query_scalar("SELECT verified FROM shop.collection_hint ORDER BY idx")
-                .fetch_all(&pool)
-                .await
-                .unwrap();
-        assert_eq!(hints, vec![false, false]);
+                .unwrap(),
+            1
+        );
+        assert_ne!(reads_token(&pool, ChainNet::Matic).await.unwrap(), before);
+        let rows: Vec<(String, bool, bool)> = sqlx::query_as(
+            "SELECT address, finalized, verified FROM shop.collection_hint ORDER BY idx",
+        )
+        .fetch_all(&pool)
+        .await
+        .unwrap();
+        assert_eq!(
+            rows,
+            vec![
+                (CREATED.to_string(), true, true),
+                (elsewhere.to_string(), false, false)
+            ]
+        );
     }
 
     /// An endpoint that takes no batches still has its headers read, one
-    /// request each, attempt after attempt; a read with no hash to check is
-    /// undone without asking for its block, even one the endpoint does not
-    /// serve.
+    /// request each, attempt after attempt; a list row with no hash to check
+    /// is undone without asking for its block, even one the endpoint does
+    /// not serve.
     #[tokio::test]
     async fn the_gate_checks_reads_on_an_endpoint_without_batches() {
         let Some(pool) = crate::db::scratch::isolated_pool(2).await else {
             return;
         };
-        let (a, b, c) = (
+        let (a, b, c, legacy) = (
             "0x00000000000000000000000000000000000000a1",
             "0x00000000000000000000000000000000000000b2",
             "0x00000000000000000000000000000000000000c3",
+            "0x00000000000000000000000000000000000000d4",
         );
         hint_read(&pool, 0, a, 100, &header(100).hash).await;
         hint_read(&pool, 1, b, 100, &left_branch()).await;
         sqlx::query(
-            "INSERT INTO shop.collection_seed (network, contract_address, name, symbol, creator, is_approved, is_editable, read_block) \
-             VALUES ('matic', $1, 'Legacy', 'L', $2, true, true, 7)",
+            "INSERT INTO shop.collection_hint (network, factory, idx, address, finalized, read_block) \
+             VALUES ('matic', $1, 2, $2, true, 7)",
         )
-        .bind(a)
-        .bind(CREATOR)
+        .bind(V3)
+        .bind(legacy)
         .execute(&pool)
         .await
         .unwrap();
@@ -2941,7 +2824,6 @@ mod tests {
             "null".into(),
         );
         calls.insert(call_key(V3, nth(1), "0x64"), addr(c));
-        creation_answers(&mut calls, a, "0x64", "Read");
         let url = fake_rpc(
             Arc::new(std::sync::Mutex::new(calls)),
             Batches::BadRequest,
@@ -2951,28 +2833,19 @@ mod tests {
         let http = crate::http::Outbound::for_tests();
         let rpc = Rpc::at(&http, &url);
         let state = || async {
-            let hints: Vec<(String, bool, Option<String>)> = sqlx::query_as(
+            sqlx::query_as::<_, (String, bool, Option<String>)>(
                 "SELECT address, finalized, read_hash FROM shop.collection_hint ORDER BY idx, address",
             )
             .fetch_all(&pool)
             .await
-            .unwrap();
-            let seeds: Vec<(String, String, i64)> = sqlx::query_as(
-                "SELECT contract_address, name, read_block FROM shop.collection_seed",
-            )
-            .fetch_all(&pool)
-            .await
-            .unwrap();
-            (hints, seeds)
+            .unwrap()
         };
-        let expected = (
-            vec![
-                (a.to_string(), true, Some(header(100).hash)),
-                (b.to_string(), false, None),
-                (c.to_string(), true, Some(header(100).hash)),
-            ],
-            vec![(a.to_string(), "Read".to_string(), 100)],
-        );
+        let expected = vec![
+            (a.to_string(), true, Some(header(100).hash)),
+            (b.to_string(), false, None),
+            (c.to_string(), true, Some(header(100).hash)),
+            (legacy.to_string(), false, None),
+        ];
         for attempt in 0..2 {
             assert_eq!(gate(&pool, &rpc).await.unwrap(), None, "attempt {attempt}");
             assert_eq!(state().await, expected, "attempt {attempt}");
@@ -3174,10 +3047,11 @@ mod tests {
 
     /// The gate reads each list index once at the finalized block and the
     /// newer ones at the latest block until they are final; an index whose
-    /// answer is missing fails the attempt and is read again, never skipped;
-    /// the creation state is read at the finalized block.
+    /// answer is missing fails the attempt and is read again, never skipped.
+    /// No creation state is read for a listed collection the walk has not
+    /// created, even one the finalized block answers for.
     #[tokio::test]
-    async fn the_gate_reads_the_factory_lists_and_the_creation_state() {
+    async fn the_gate_reads_the_factory_lists() {
         let Some(pool) = crate::db::scratch::isolated_pool(2).await else {
             return;
         };
@@ -3254,16 +3128,8 @@ mod tests {
         .unwrap();
         assert_eq!(
             seeds,
-            vec![(
-                a.into(),
-                "Alpha".into(),
-                "ALP".into(),
-                CREATOR.into(),
-                false,
-                true,
-                100
-            )],
-            "the others have no code at the finalized block: they wait"
+            vec![],
+            "creation reads wait for the walk to create each collection"
         );
 
         // The provisional index is read again at every refresh; a reorg put

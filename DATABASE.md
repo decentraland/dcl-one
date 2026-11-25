@@ -2911,67 +2911,62 @@ chain 137.
 
 **Creation state.** `initialize` sets a collection's name, symbol, creator,
 approval and editability without an event. The gate reads them once per
-collection into `shop.collection_seed`:
-- walked collections first, then final hints (a provisional one may never
-  exist);
+walked collection into `shop.collection_seed`:
+- only collections whose `ProxyCreated` the walk has walked, oldest first;
 - at most 500 collections per attempt, ten JSON-RPC batches of 100 calls
   for each 200 collections;
-- at Polygon's finalized block, recorded in `read_block` with its hash in
-  `read_hash`.
+- at the walk's own cursor block, named by the hash the walk stored for it
+  (EIP-1898 `{"blockHash", "requireCanonical": true}`), recorded in
+  `read_block` and `read_hash`.
 
-A collection with no code at that block waits for a later attempt. A read
-that fails is logged and does not stop the walk. A read stands until the
-chain leaves the branch it was taken on (below). Whatever folds the log
-takes a value from the last walked event that sets it. It takes the read
-only once the read is proven on the walked branch (below), when no event
-sets the value and `read_block` is at or below the block it folds to; then
-the value has not changed since creation.
+The cursor and the walk's owner generation and epoch are read in one
+snapshot, and the write checks under the reads lock that they did not move.
+So a read is of the walked branch whatever any header says, and it is
+written proven (`verified`). A rewind below it deletes it in the cursor's
+own transaction. An endpoint that no longer holds that block canonical, or
+does not serve its state, refuses the read; a read that fails is logged and
+does not stop the walk, and the collection waits for a later attempt.
 
-**Reads ahead of the walk.** The gate reads the lists and the creation state
-at the finalized block, usually past the walk's cursor. A reorg there is
-invisible to the walk, which checks only the blocks it has walked. So:
-- every read at the finalized block names it by hash (EIP-1898
-  `{"blockHash", "requireCanonical": true}`), in batches and in the single
-  requests they fall back to alike. What is read and the hash it is stored
-  with are one block's, and an endpoint that left that block refuses the
-  read. Only the provisional list reads go to `latest`;
-- a final list row or a creation read keeps that height and hash.
+Whatever folds the log takes a value from the last walked event that sets
+it. It takes a creation read only when it is verified, no event sets the
+value, and `read_block` is at or below the block it folds to; then the value
+has not changed since creation. Rows written before reads were proven (no
+hash) are never taken, and the collection's first proven read replaces
+them.
 
-Before each attempt the gate asks the endpoint for the hash at each height
-whose rows are not yet `verified`, and at the walk's cursor:
-- rows with no hash (written before hashes were kept) are undone without a
-  read: the list row becomes provisional again and the creation read is
-  deleted, so the attempt reads them again;
-- another hash at the height: undone the same way, so the attempt reads them
-  on the branch the chain took;
-- the same hash, at or below the walk's cursor, with the cursor's own block
-  the endpoint's too: the rows are on the walked branch and are `verified`.
-  From then the walk's own reorg check covers them, and a rewind below them
-  undoes them;
-- a header the endpoint does not serve fails the attempt. Headers go in
-  batches of 100, then one request each for what a batch did not answer
-  whole, or for all of them on an endpoint that takes no batches.
+**Factory list reads ahead of the walk.** The gate reads the lists at the
+finalized block, usually past the walk's cursor, where a reorg is invisible
+to the walk. Every read there names the block by hash (EIP-1898), in batches
+and in the single requests they fall back to alike: what is read and the
+hash it is stored with are one block's, and an endpoint that left that block
+refuses the read. Only the provisional reads go to `latest`. A final row
+keeps that height and hash, and until it is `verified`, before each attempt:
+- a row with no hash (written before hashes were kept) is undone without a
+  read: it becomes provisional again, to be read again;
+- at or below the cursor of a walk with its full history, the walk's own log
+  decides, with no header asked. The collection's `ProxyCreated` walked at
+  or before that height proves the row (`verified`; from then a rewind below
+  it undoes it). None means the walked branch does not hold it there, and it
+  is undone;
+- otherwise (ahead of the walk, or on a walk without its full history,
+  whose log lacks the older collections) the endpoint's hash at that height
+  is asked. Another hash undoes the row; the same one leaves it as it is. A
+  header never proves a row: two replies may come from two branches.
 
 Undoing runs under the reads lock (see Projection), exclusive, and raises
-the walk's epoch, so a read in flight from the left branch is not written.
-When a creation read goes, it also clears the projection's block, so the
-next fold rebuilds without it. Verifying holds the lock shared. Either
-writes nothing if a rewind or a new owner moved the walk since the check
-began.
+the walk's epoch, so a read in flight from the left branch is not written;
+nothing is written if a rewind or a new owner moved the walk since the
+check began. Headers go in batches of 100, then one request each for what a
+batch did not answer whole, or for all of them on an endpoint that takes no
+batches; a header the endpoint does not serve fails the attempt. One
+attempt asks at most 100 heights, going on from where the last stopped
+(`shop.collection_walk.checked_through`), so every height is asked within a
+few attempts. They are the heights of attempts that read a list past the
+walk's cursor: a handful once the walk is at the head.
 
-A projection takes only verified creation reads. A read of a branch the walk
-did not take is never published, even when the walk passes its block before
-the gate sees the change; the collection waits until a read of the walked
-branch is proven, usually the next attempt after the walk passes it.
-
-So a collection replaced at a list index, or one whose creation state
-changed, above a lagging cursor is read again by the next attempt, and the
-window that walks it commits without a rebuild. One attempt checks at most
-100 heights, going on from where the last stopped
-(`shop.collection_walk.checked_through`), so every height is checked within
-a few attempts. The heights still to check are those of the attempts that
-read something past the walk's cursor: a handful once the walk is at the
-head.
+So a collection replaced at a list index above a lagging cursor is read
+again by the next attempt, and the window that walks it commits without a
+rebuild.
 
 **Decoding.** Every factory collection shares one ABI for these topics. A
 log of a walked topic that does not decode fails its window instead of
@@ -2990,8 +2985,7 @@ holds one row per network:
   hand-back clears it.
 - `projected_through` is the block the rows stand at.
 - `pending` counts the walked collections without a row at that block,
-  waiting for their creation read or its proof. The catalogue is complete
-  only at 0.
+  waiting for their creation read. The catalogue is complete only at 0.
 - `generation` grows with every projection and hand-back, so two reads under
   the same generation read the same rows.
 
@@ -3028,7 +3022,7 @@ epoch too.
 
 A collection waits, with no row and without holding the publication back,
 in either case:
-- until its creation read exists and is proven on the walked branch;
+- until its creation read exists (a proven one, see Creation state);
 - while that read was taken past the block and no walked event sets the
   value it gives.
 
