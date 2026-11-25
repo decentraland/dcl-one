@@ -98,7 +98,7 @@ describe("Store settings: the owner's own store", () => {
   });
 });
 
-const summary = { total: 3, mints: 2, resales: 1, earnedWei: MANA(10), byCollection: [{ contractAddress: BOOK.collection, sold: 2, earnedWei: MANA(6) }], byItem: [], royalties: { resales: 4, volumeWei: MANA(40) } };
+const summary = { total: 3, mints: 2, resales: 1, earnedWei: MANA(10), earnedUsd: "0", unpricedSales: 3, byCollection: [{ contractAddress: BOOK.collection, sold: 2, earnedWei: MANA(6) }], byItem: [], royalties: { resales: 4, volumeWei: MANA(40), royaltiesWei: MANA(3) } };
 const storeRoutes = (over: FakeRoute[] = []): FakeRoute[] => [
   ...over,
   { method: "GET", path: /^\/v1\/sales\/summary$/, reply: () => ({ body: { data: summary } }) },
@@ -128,6 +128,7 @@ describe("My store", () => {
     expect(await screen.findByTestId("store-tile-sold")).toHaveTextContent("3");
     expect(screen.getByTestId("store-tile-earnings")).toHaveTextContent("10");
     expect(screen.getByTestId("store-tile-earnings")).toHaveTextContent("Paid to you this period");
+    expect(screen.getByTestId("store-tile-royalties")).toHaveTextContent(/3(?:[.]00)?\s*MANA/);
     expect(builderCalls[0]).toBe(`/builder-api/v1/${wallet.address}/collections`);
     fireEvent.click(screen.getByRole("button", { name: "Neon Nights" }));
     const items = await screen.findAllByTestId("store-item");

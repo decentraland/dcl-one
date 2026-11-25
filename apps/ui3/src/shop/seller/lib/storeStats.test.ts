@@ -350,9 +350,11 @@ describe('buildStoreStats with the server summary', () => {
     mints: 8_400,
     resales: 600,
     earnedWei: '4500000000000000000000',
+    earnedUsd: '0',
+    unpricedSales: 9_000,
     byCollection: [{ contractAddress: COLLECTION, sold: 8_400, earnedWei: '4200000000000000000000' }],
     byItem: [{ contractAddress: COLLECTION, itemId: '0', soldLifetime: 12_345 }],
-    royalties: { resales: 77, volumeWei: '900000000000000000000' }
+    royalties: { resales: 77, volumeWei: '900000000000000000000', royaltiesWei: '2000000000000000000' }
   }
 
   const withSummary = (over: Partial<Parameters<typeof buildStoreStats>[0]> = {}) =>
@@ -372,7 +374,14 @@ describe('buildStoreStats with the server summary', () => {
     expect(stats.mints).toBe(8_400)
     expect(stats.resales).toBe(600)
     expect(stats.earningsWei).toBe(4_500_000_000_000_000_000_000n)
-    expect(stats.royalties).toEqual({ resales: 77, volumeWei: 900_000_000_000_000_000_000n })
+    expect(stats.royalties).toEqual({ resales: 77, volumeWei: 900_000_000_000_000_000_000n, royaltiesWei: 2_000_000_000_000_000_000n })
+  })
+
+  it('distinguishes a proven zero from missing royalty evidence', () => {
+    const forAmount = (royaltiesWei: string | null) =>
+      withSummary({ summary: { ...summary, royalties: { ...summary.royalties, royaltiesWei } } }).royalties
+    expect(forAmount('0')?.royaltiesWei).toBe(0n)
+    expect(forAmount(null)?.royaltiesWei).toBeNull()
   })
 
   it("carries each item's lifetime sales, which no window of rows can answer", () => {

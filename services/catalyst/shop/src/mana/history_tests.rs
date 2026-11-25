@@ -45,7 +45,9 @@ async fn call(State(feed): State<Arc<Feed>>, Json(request): Json<Value>) -> Json
                     if to[19] == 1 {
                         round(65_536, feed.start, 125_000_000)
                     } else {
-                        round(2, feed.start + DAY_SECONDS * 31, 125_000_000)
+                        let time = (feed.start + DAY_SECONDS * 32 + 270) as u64;
+                        // A legacy aggregator timed out and repeated round 2's answer.
+                        data(&[3, 125_000_000, time, time, 2])
                     }
                 }
                 s if s == getRoundDataCall::SELECTOR => {
@@ -66,8 +68,11 @@ async fn call(State(feed): State<Arc<Feed>>, Json(request): Json<Value>) -> Json
                         if to[19] == 1 {
                             round(id, feed.start, 125_000_000)
                         } else {
-                            assert_eq!(id, 1);
-                            round(id, feed.start + DAY_SECONDS * 30, 0)
+                            match id {
+                                1 => round(id, feed.start + DAY_SECONDS * 30, 0),
+                                2 => round(id, feed.start + DAY_SECONDS * 31, 125_000_000),
+                                _ => panic!("unexpected round {id}"),
+                            }
                         }
                     }
                 }
@@ -159,7 +164,7 @@ async fn history_keeps_completed_days_across_latency_and_rpc_failure() {
         .execute(&db.pool)
         .await
         .unwrap();
-    assert_eq!(fill(&db.pool, &rpc, day(34)).await.unwrap(), 4);
+    assert_eq!(fill(&db.pool, &rpc, day(35)).await.unwrap(), 5);
     let closes: Vec<(NaiveDate, Option<String>, Option<String>)> = sqlx::query_as(
         "SELECT day,usd::text,round_id::text FROM shop.mana_usd_daily WHERE day>=$1 ORDER BY day",
     )
@@ -176,7 +181,8 @@ async fn history_keeps_completed_days_across_latency_and_rpc_failure() {
                 Some("1.25".to_owned()),
                 Some(((3u128 << 64) | 2).to_string())
             ),
-            (day(33), None, None),
+            (day(33), None, Some(((3u128 << 64) | 3).to_string())),
+            (day(34), None, None),
         ]
     );
     server.abort();

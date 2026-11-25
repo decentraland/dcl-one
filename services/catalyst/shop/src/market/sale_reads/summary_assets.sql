@@ -1,21 +1,19 @@
 -- Ethereum v1 sales have token IDs in the ledger. The latest Issue at
 -- the sale position must resolve against rows from completed mirror copies.
-, v1_copy AS (
-    SELECT mirror, tsrange(last_complete_pass_started_at,last_complete_pass_at,'[]') AS completed
-    FROM shop.mirror_state
-    WHERE network='ethereum' AND (chain_id=1 OR (chain_id IS NULL AND pass_block_hash IS NULL))
-      AND last_complete_pass_started_at<=last_complete_pass_at
-), v1_collections AS (
-    SELECT c.network,c.contract_address,
-           CASE WHEN (SELECT completed FROM v1_copy WHERE mirror='collections') @> c.mirrored_at THEN c.urn END AS urn
-    FROM candidate_collections candidate JOIN shop.collections c USING(network,contract_address)
-    WHERE c.network='ethereum' AND c.chain_id=1
+, v1_contracts AS (
+    SELECT contract_address FROM candidate_collections WHERE network='ethereum'
     UNION
-    SELECT i.network,i.contract_address,c.urn
-    FROM requested_wallet w JOIN shop.items i ON i.creator=w.address
-    LEFT JOIN shop.collections c ON (c.network,c.contract_address)=(i.network,i.contract_address) AND c.chain_id=1
-      AND (SELECT completed FROM v1_copy WHERE mirror='collections') @> c.mirrored_at
-    WHERE i.network='ethereum' AND i.network=ANY($1) AND i.item_type='wearable_v1' AND i.chain_id=1
+    SELECT i.contract_address FROM shop.items i,requested_wallet w
+    WHERE i.creator=w.address AND i.network='ethereum' AND i.chain_id=1 AND i.item_type='wearable_v1'
+    UNION
+    SELECT i.contract_address FROM shop.v1_royalty_item i,requested_wallet w WHERE i.creator=w.address
+    UNION
+    SELECT c.contract_address FROM shop.v1_royalty_collection c,requested_wallet w WHERE c.creator=w.address
+), v1_collections AS (
+    SELECT 'ethereum'::text AS network,candidate.contract_address,c.urn
+    FROM v1_contracts candidate
+    LEFT JOIN shop.v1_royalty_collection c USING(contract_address)
+    WHERE 'ethereum'=ANY($1)
 ), v1_resales AS MATERIALIZED (
     SELECT a.network,a.block_number,a.log_index,a.ordinal,i.creator
     FROM v1_collections c JOIN shop.sale_asset a USING(network,contract_address)
@@ -29,9 +27,8 @@
           AND e.kind='issue_v1' AND (e.block_number,e.log_index)<=(a.block_number,a.log_index)
         ORDER BY e.block_number DESC,e.log_index DESC LIMIT 1
     ) issue ON true
-    LEFT JOIN shop.items i ON i.urn=c.urn || ':' || issue.detail AND i.chain_id=1
-      AND (i.network,i.contract_address)=(c.network,c.contract_address) AND i.item_type='wearable_v1'
-      AND (SELECT completed FROM v1_copy WHERE mirror='items') @> i.mirrored_at
+    LEFT JOIN shop.v1_royalty_item i ON i.urn=c.urn || ':' || issue.detail
+      AND i.contract_address=c.contract_address
     WHERE a.price>0 AND a.kind IN ('order','bid') AND a.item_id IS NULL AND a.token_id IS NOT NULL
       AND ($8::bigint IS NULL OR execution.block_time*1000 >= $8)
       AND ($9::bigint IS NULL OR execution.block_time*1000 <= $9)

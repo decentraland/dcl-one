@@ -234,7 +234,6 @@ CREATE INDEX items_approved_created_idx ON shop.items (created_at DESC) WHERE se
 -- One row per (mirror, network): the in-flight keyset (persisted per page so
 -- a kill -9 resumes at that page) and the last complete pass, which a route
 -- over the mirror requires before answering (NULL = the unavailable envelope).
--- Start and finish bound the rows written by that completed pass.
 CREATE TABLE shop.mirror_state (
     mirror text NOT NULL,
     network text NOT NULL,
@@ -244,7 +243,6 @@ CREATE TABLE shop.mirror_state (
     cursor_id text,
     pages_fetched bigint NOT NULL DEFAULT 0,
     rows_upserted bigint NOT NULL DEFAULT 0,
-    last_complete_pass_started_at timestamp without time zone,
     last_complete_pass_at timestamp without time zone,
     last_complete_pass_rows bigint,
     last_error text,
@@ -261,22 +259,81 @@ CREATE TABLE shop.mirror_state (
     CONSTRAINT mirror_state_network_known CHECK (network IN ('ethereum', 'matic'))
 );
 
--- Keep both completed-pass bounds in sync even with an older mirror writer.
-CREATE OR REPLACE FUNCTION shop.remember_mirror_completed_pass_start() RETURNS trigger
+-- Keep the attribution fields from the last completed Ethereum v1 mirror
+-- passes. The next full sweep updates the live catalogue before it publishes.
+CREATE TABLE shop.v1_royalty_collection (
+    contract_address text PRIMARY KEY,
+    urn text NOT NULL,
+    creator text NOT NULL
+);
+
+CREATE TABLE shop.v1_royalty_item (
+    urn text PRIMARY KEY,
+    contract_address text NOT NULL,
+    creator text NOT NULL
+);
+
+CREATE INDEX v1_royalty_item_creator_idx ON shop.v1_royalty_item (creator);
+
+CREATE OR REPLACE FUNCTION shop.publish_v1_royalty_catalogue(
+    p_mirror text, p_started timestamp without time zone, p_finished timestamp without time zone
+) RETURNS void LANGUAGE plpgsql AS $$
+BEGIN
+    IF p_mirror = 'collections' THEN
+        DELETE FROM shop.v1_royalty_collection saved
+        WHERE NOT EXISTS (
+            SELECT FROM shop.collections c
+            WHERE c.network = 'ethereum' AND c.chain_id = 1
+              AND c.contract_address = saved.contract_address
+              AND c.mirrored_at BETWEEN p_started AND p_finished
+        );
+
+        INSERT INTO shop.v1_royalty_collection AS saved (contract_address, urn, creator)
+        SELECT c.contract_address, c.urn, c.creator
+        FROM shop.collections c
+        WHERE c.network = 'ethereum' AND c.chain_id = 1
+          AND c.mirrored_at BETWEEN p_started AND p_finished
+        ON CONFLICT (contract_address) DO UPDATE SET urn = EXCLUDED.urn, creator = EXCLUDED.creator
+        WHERE (saved.urn, saved.creator) IS DISTINCT FROM (EXCLUDED.urn, EXCLUDED.creator);
+    ELSIF p_mirror = 'items' THEN
+        DELETE FROM shop.v1_royalty_item saved
+        WHERE NOT EXISTS (
+            SELECT FROM shop.items i
+            WHERE i.network = 'ethereum' AND i.chain_id = 1 AND i.item_type = 'wearable_v1'
+              AND i.urn = saved.urn AND i.mirrored_at BETWEEN p_started AND p_finished
+        );
+
+        INSERT INTO shop.v1_royalty_item AS saved (urn, contract_address, creator)
+        SELECT i.urn, i.contract_address, i.creator
+        FROM shop.items i
+        WHERE i.network = 'ethereum' AND i.chain_id = 1 AND i.item_type = 'wearable_v1'
+          AND i.mirrored_at BETWEEN p_started AND p_finished
+        ON CONFLICT (urn) DO UPDATE SET contract_address = EXCLUDED.contract_address, creator = EXCLUDED.creator
+        WHERE (saved.contract_address, saved.creator) IS DISTINCT FROM (EXCLUDED.contract_address, EXCLUDED.creator);
+    END IF;
+END;
+$$;
+
+-- This trigger uses columns written by both old and new mirror workers.
+CREATE OR REPLACE FUNCTION shop.publish_v1_royalties_on_completion() RETURNS trigger
 LANGUAGE plpgsql AS $$
 BEGIN
-    IF TG_OP = 'INSERT' OR NEW.last_complete_pass_at IS DISTINCT FROM OLD.last_complete_pass_at THEN
-        NEW.last_complete_pass_started_at := CASE
-            WHEN NEW.pass_started_at <= NEW.last_complete_pass_at THEN NEW.pass_started_at
-        END;
+    IF NEW.network = 'ethereum'
+       AND (TG_OP = 'INSERT' OR NEW.last_complete_pass_at IS DISTINCT FROM OLD.last_complete_pass_at) THEN
+        PERFORM shop.publish_v1_royalty_catalogue(
+            NEW.mirror,
+            CASE WHEN NEW.chain_id = 1 OR (NEW.chain_id IS NULL AND NEW.pass_block_hash IS NULL)
+                THEN NEW.pass_started_at END,
+            NEW.last_complete_pass_at
+        );
     END IF;
     RETURN NEW;
 END;
 $$;
 
-CREATE TRIGGER remember_mirror_completed_pass_start
-BEFORE INSERT OR UPDATE OF last_complete_pass_at ON shop.mirror_state
-FOR EACH ROW EXECUTE FUNCTION shop.remember_mirror_completed_pass_start();
+CREATE TRIGGER publish_v1_royalties_on_completion
+AFTER INSERT OR UPDATE OF last_complete_pass_at ON shop.mirror_state
+FOR EACH ROW EXECUTE FUNCTION shop.publish_v1_royalties_on_completion();
 
 -- ── Stage 5: local authority (behind DATA_WRITES_ENABLED) ───────────────────
 --

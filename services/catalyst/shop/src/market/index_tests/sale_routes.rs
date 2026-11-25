@@ -1104,9 +1104,69 @@ async fn sales_page_reads_one_published_network_and_refuses_a_withdrawn_warm_pag
     assert_eq!(code, StatusCode::OK, "{complete_copy}");
     assert_eq!(complete_copy["data"]["royalties"]["royaltiesWei"], "5");
 
-    // A completed pass does not prove a collection row on another chain.
-    let catalogue_chain = "UPDATE shop.collections SET creator=$1,chain_id=$2
+    // Later full sweeps rewrite these rows before publishing. Both their
+    // unchanged refresh and an unpublished attribution change leave the
+    // previous royalty amount, resale count and volume available.
+    sqlx::query(begin_ethereum_collections)
+        .execute(&db.pool)
+        .await
+        .unwrap();
+    sqlx::query(
+        "UPDATE shop.mirror_state SET pass_started_at=timezone('UTC',now())
+         WHERE network='ethereum' AND mirror='items'",
+    )
+    .execute(&db.pool)
+    .await
+    .unwrap();
+    sqlx::query(
+        "UPDATE shop.items SET mirrored_at=timezone('UTC',now())
+         WHERE network='ethereum' AND contract_address=$1",
+    )
+    .bind(CARL)
+    .execute(&db.pool)
+    .await
+    .unwrap();
+    let catalogue_chain =
+        "UPDATE shop.collections SET creator=$1,chain_id=$2,mirrored_at=timezone('UTC',now())
         WHERE network='ethereum' AND contract_address=$3";
+    sqlx::query(catalogue_chain)
+        .bind(BOB)
+        .bind(1)
+        .bind(CARL)
+        .execute(&db.pool)
+        .await
+        .unwrap();
+    let (code, refreshing) = get_json(&app, &format!("/v1/sales/summary?seller={CARL}")).await;
+    assert_eq!(code, StatusCode::OK, "{refreshing}");
+    assert_eq!(
+        refreshing["data"]["royalties"],
+        complete_copy["data"]["royalties"]
+    );
+    sqlx::query(
+        "UPDATE shop.items SET creator=$1,mirrored_at=timezone('UTC',now())
+         WHERE network='ethereum' AND contract_address=$2",
+    )
+    .bind(DAVE)
+    .bind(CARL)
+    .execute(&db.pool)
+    .await
+    .unwrap();
+    let (code, refreshing) = get_json(&app, &format!("/v1/sales/summary?seller={CARL}")).await;
+    assert_eq!(code, StatusCode::OK, "{refreshing}");
+    assert_eq!(
+        refreshing["data"]["royalties"],
+        complete_copy["data"]["royalties"]
+    );
+    sqlx::query(
+        "UPDATE shop.items SET creator=$1,mirrored_at=timezone('UTC',now())
+         WHERE network='ethereum' AND contract_address=$1",
+    )
+    .bind(CARL)
+    .execute(&db.pool)
+    .await
+    .unwrap();
+
+    // Publishing a replacement pass still cannot prove a row on another chain.
     sqlx::query(catalogue_chain)
         .bind(BOB)
         .bind(11155111)
@@ -1114,14 +1174,26 @@ async fn sales_page_reads_one_published_network_and_refuses_a_withdrawn_warm_pag
         .execute(&db.pool)
         .await
         .unwrap();
+    sqlx::query(complete_ethereum_collections)
+        .execute(&db.pool)
+        .await
+        .unwrap();
     let (code, incomplete) = get_json(&app, &format!("/v1/sales/summary?seller={CARL}")).await;
     assert_eq!(code, StatusCode::OK, "{incomplete}");
     assert_eq!(incomplete["data"]["royalties"]["royaltiesWei"], Value::Null);
     assert!(incomplete["data"]["earnedUsd"].is_string());
+    sqlx::query(begin_ethereum_collections)
+        .execute(&db.pool)
+        .await
+        .unwrap();
     sqlx::query(catalogue_chain)
         .bind(BOB)
         .bind(1)
         .bind(CARL)
+        .execute(&db.pool)
+        .await
+        .unwrap();
+    sqlx::query(complete_ethereum_collections)
         .execute(&db.pool)
         .await
         .unwrap();

@@ -39,7 +39,7 @@ struct Oracle<'a> {
 struct Round {
     index: u64,
     time: i64,
-    answer: I256,
+    answer: Option<I256>,
 }
 
 struct Phase {
@@ -51,14 +51,19 @@ struct Phase {
 }
 
 impl Round {
-    fn new(id: U80, updated_at: U256, answer: I256) -> anyhow::Result<Self> {
+    fn new(
+        id: U80,
+        updated_at: U256,
+        answer: I256,
+        answered_in_round: U80,
+    ) -> anyhow::Result<Self> {
         let index = u64::try_from(id).context("invalid aggregator round id")?;
         let time = i64::try_from(updated_at).context("invalid oracle round timestamp")?;
         ensure!(index > 0 && time > 0, "oracle round is incomplete");
         Ok(Self {
             index,
             time,
-            answer,
+            answer: (answered_in_round >= id).then_some(answer),
         })
     }
 }
@@ -111,7 +116,12 @@ impl Oracle<'_> {
         let Some(result) = result.filter(|result| result.updatedAt != U256::ZERO) else {
             return Ok(None);
         };
-        let round = Round::new(result.roundId, result.updatedAt, result.answer)?;
+        let round = Round::new(
+            result.roundId,
+            result.updatedAt,
+            result.answer,
+            result.answeredInRound,
+        )?;
         ensure!(round.index == index, "oracle returned a different round");
         Ok(Some(round))
     }
@@ -134,7 +144,12 @@ impl Oracle<'_> {
                 self.call(address, latestRoundDataCall {}),
                 self.call(address, decimalsCall {}),
             )?;
-            let last = Round::new(last.roundId, last.updatedAt, last.answer)?;
+            let last = Round::new(
+                last.roundId,
+                last.updatedAt,
+                last.answer,
+                last.answeredInRound,
+            )?;
             ensure!(
                 last.time >= first.time
                     && last.time <= finalized_at
@@ -250,10 +265,9 @@ async fn fill(pool: &PgPool, rpc: &Rpc, today: NaiveDate) -> anyhow::Result<usiz
             if round.time > at - DAY_SECONDS {
                 let id = (u128::from(phase.id) << 64) | u128::from(round.index);
                 round_id = Some(id.to_string());
-                if round.answer.is_positive() {
-                    let rate =
-                        crate::types::ManaUsdRate::new(round.answer.into_raw(), phase.decimals)
-                            .context("invalid MANA/USD close")?;
+                if let Some(answer) = round.answer.filter(|answer| answer.is_positive()) {
+                    let rate = crate::types::ManaUsdRate::new(answer.into_raw(), phase.decimals)
+                        .context("invalid MANA/USD close")?;
                     usd = Some(rate.decimal_text());
                 }
             }
