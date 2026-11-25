@@ -217,10 +217,13 @@ function airDrag(s: State, h: number) {
   }
 }
 
-// A diagonal launches sqrt(2) faster, and air drag and acceleration take back the excess over the gait's speed. With no
-// movement key held the launch stops the move.
+// The launch goes along the input at the impulse or the current speed, whichever is higher. An input longer than 1 (two
+// held keys) counts as 1, so a diagonal launches as fast as a straight move; a shorter analog input keeps its length.
+// Air drag and acceleration take back any excess over the gait's speed. With no movement key held the launch stops the
+// move.
 function airLaunch(s: State, c: StepInput) {
-  const v = Math.max(AIR_JUMP_IMPULSE, Math.sqrt(s.vx * s.vx + s.vz * s.vz));
+  const len = Math.sqrt(c.x * c.x + c.z * c.z);
+  const v = Math.max(AIR_JUMP_IMPULSE, Math.sqrt(s.vx * s.vx + s.vz * s.vz)) / Math.max(1, len);
   s.ax = v * c.x; s.az = v * c.z; s.adx = 0; s.adz = 0;
   s.vx = right.x * s.ax + fwd.x * s.az;
   s.vz = right.z * s.ax + fwd.z * s.az;
