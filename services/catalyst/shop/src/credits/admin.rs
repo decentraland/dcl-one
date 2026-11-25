@@ -61,6 +61,40 @@ pub(crate) fn establish_admin(
     }
 }
 
+/// The reports gate (the cross-wallet credits list and its grant reasons):
+/// the operator bearer, or a signed-fetch request whose signer is one of
+/// `CREDITS_READ_ADMIN_ADDRESSES`, the old server's read-only and read-write
+/// admin lists, so the ops dashboard reads them with its wallet as it did.
+/// Anything else answers the old server's 401.
+pub(crate) async fn require_read_admin(
+    state: &SharedState,
+    headers: &HeaderMap,
+    route_path: &str,
+    original: &axum::extract::OriginalUri,
+) -> Result<(), ApiError> {
+    const REFUSED: &str =
+        "Unauthorized: the admin token or a read-admin signed request is required";
+    if establish_admin(state.settings.admin_token.as_deref(), headers).is_ok() {
+        return Ok(());
+    }
+    if state.settings.read_admin_addresses.is_empty() {
+        return Err(ApiError::unauthorized(REFUSED));
+    }
+    let signer = super::handlers::signer_from(state, headers, "GET", route_path, original)
+        .await
+        .map_err(|_| ApiError::unauthorized(REFUSED))?;
+    if state
+        .settings
+        .read_admin_addresses
+        .iter()
+        .any(|a| a == signer.as_str())
+    {
+        Ok(())
+    } else {
+        Err(ApiError::unauthorized(REFUSED))
+    }
+}
+
 impl FromRequestParts<SharedState> for RequireAdmin {
     type Rejection = ApiError;
 

@@ -47,6 +47,7 @@ pub(super) fn credits_settings(config: &Config) -> anyhow::Result<shop::credits:
         },
         writes_enabled: config.ops.ops_writes_enabled,
         admin_token: non_empty(&config.shop.catalyrst_credits_admin_token),
+        read_admin_addresses: config.shop.credits_read_admin_addresses.clone(),
         captcha_secret: non_empty(&config.shop.credits_captcha_secret),
         captcha_verify_url: config.shop.credits_captcha_verify_url.clone(),
         stripe_secret_key: non_empty(&config.shop.stripe_secret_key),
