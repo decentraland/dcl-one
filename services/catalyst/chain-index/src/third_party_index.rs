@@ -9,7 +9,7 @@
 use std::collections::BTreeSet;
 
 use serde::{Deserialize, Serialize};
-use sqlx::PgPool;
+use sqlx::PgExecutor;
 use sqlx::types::Json;
 
 /// The registry walk's name in `shop.chain_cursor`.
@@ -65,7 +65,7 @@ macro_rules! published {
            SELECT folded_block FROM shop.chain_cursor
            WHERE indexer = $1 AND network = 'matic' AND chain_id = 137 AND full_history
              AND quarantined_at IS NULL AND diverged_at IS NULL AND folded_block IS NOT NULL
-             AND folded_at BETWEEN timezone('UTC', now()) - interval '30 minutes' AND timezone('UTC', now())
+             AND folded_at BETWEEN timezone('UTC', now()) - interval '30 minutes' AND timezone('UTC', clock_timestamp())
          )"
     };
 }
@@ -75,7 +75,7 @@ macro_rules! published {
 /// (a lowercased address) manages, the approved ones when `approved`.
 /// `None` without a current publication.
 pub async fn providers(
-    pool: &PgPool,
+    db: impl PgExecutor<'_>,
     id: Option<&str>,
     manager: Option<&str>,
     approved: bool,
@@ -99,7 +99,7 @@ pub async fn providers(
     .bind(id)
     .bind(manager)
     .bind(approved)
-    .fetch_one(pool)
+    .fetch_one(db)
     .await?;
     Ok(result.map(|rows| rows.0))
 }
@@ -108,7 +108,7 @@ pub async fn providers(
 /// hex) at the published block, oldest first. `None` without a current
 /// publication.
 pub async fn receipts(
-    pool: &PgPool,
+    db: impl PgExecutor<'_>,
     provider: &str,
     hash: &str,
 ) -> anyhow::Result<Option<Vec<Receipt>>> {
@@ -124,7 +124,7 @@ pub async fn receipts(
     .bind(INDEXER)
     .bind(provider)
     .bind(hash)
-    .fetch_one(pool)
+    .fetch_one(db)
     .await?;
     Ok(result.map(|rows| rows.0))
 }

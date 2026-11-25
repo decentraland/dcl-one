@@ -1808,6 +1808,32 @@ async fn on_polygon_the_registry_is_the_index_at_its_published_block() {
 }
 
 #[tokio::test]
+async fn a_publication_dated_after_a_read_began_is_current_and_one_in_the_future_is_not() {
+    use crate::chain_index::third_party_index::{INDEXER, providers};
+    let Some(w) = world().await else { return };
+    let mut read = w.pool.begin().await.unwrap();
+    super::support::publish_registry_index(&mut read, false).await;
+    for (dated, current) in [("0 seconds", true), ("1 minute", false)] {
+        sqlx::query(
+            "WITH waited AS (SELECT pg_sleep(0.05)) \
+             UPDATE shop.chain_cursor SET folded_at = timezone('UTC', clock_timestamp()) + $2::interval \
+             FROM waited WHERE indexer = $1",
+        )
+        .bind(INDEXER)
+        .bind(dated)
+        .execute(&mut *read)
+        .await
+        .unwrap();
+        let answer = providers(&mut *read, None, None, false).await.unwrap();
+        assert_eq!(
+            answer.is_some(),
+            current,
+            "dated {dated} after the read began"
+        );
+    }
+}
+
+#[tokio::test]
 async fn while_the_index_has_no_current_publication_every_registry_answer_is_503() {
     let Some(w) = world().await else { return };
     let manager = address(MANAGER_KEY);
