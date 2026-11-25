@@ -1,9 +1,9 @@
 // The cards an event shows as: small and big in a calendar column, big in a day's grid, the
 // banner in the highlighted carousel, and the empty slot that offers to create one.
 
-import { Button, Skeleton } from '@dcl/one-ui'
+import { Button, Skeleton, Tooltip } from '@dcl/one-ui'
 import { useState, type CSSProperties } from 'react'
-import { Avatar, ContextMenu, MaskIcon, Tooltip, openPopup } from '../../design'
+import { Avatar, ContextMenu, MaskIcon, openPopup } from '../../design'
 import type { EventData, Friend } from '@explorer-core/engine/protocol'
 import type { EventCommunity } from '../session/useEngineSession'
 import addGradientIcon from '../../assets/events/add-icn-gradient.png'
@@ -82,7 +82,7 @@ export function FriendFaces({ friends, tip = 'top' }: { friends: Friend[]; tip?:
   return (
     <span className={styles.friends}>
       {friends.slice(0, FRIEND_FACES).map((f) => (
-        <Tooltip key={f.address} label={f.name} side={tip} className={styles.friend}>
+        <Tooltip appearance="hud" key={f.address} label={f.name} side={tip} className={styles.friend}>
           <Avatar src={f.picture} name={f.name} size={26} />
         </Tooltip>
       ))}
@@ -275,7 +275,7 @@ export function EventCardBig({ event, friends, community, actions, onOpen, wide 
         <SocialInfo event={event} friends={friends} />
       </span>
       {community != null && (
-        <Tooltip label={community.name} side="top" className={styles.community}>
+        <Tooltip appearance="hud" label={community.name} side="top" className={styles.community}>
           <CommunityThumb src={community.thumbnail} />
         </Tooltip>
       )}

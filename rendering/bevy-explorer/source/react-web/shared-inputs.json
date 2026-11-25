@@ -3361,14 +3361,6 @@
           "kind": "regular"
         },
         {
-          "name": "Tooltip.module.css",
-          "kind": "regular"
-        },
-        {
-          "name": "Tooltip.tsx",
-          "kind": "regular"
-        },
-        {
           "name": "VoiceBars.module.css",
           "kind": "regular"
         },
@@ -12253,7 +12245,7 @@
     },
     {
       "path": "library/ui/apps/hud/design/IconButton.tsx",
-      "sha256": "1513629c4855e0b16bda4e3bdf1146ee8d6329c2c40bfb8758e4a7da9c09bfb2"
+      "sha256": "b8e3ff4b658408340e8399070e97aba12f755d87b8996cc7321215879836fa7b"
     },
     {
       "path": "library/ui/apps/hud/design/KebabMenu.module.css",
@@ -12361,11 +12353,11 @@
     },
     {
       "path": "library/ui/apps/hud/design/Showcase.tsx",
-      "sha256": "d5117e360b93e43a72868ba6c756317cd40cd5f1e5ce62e4124fe9eaad2b0475"
+      "sha256": "be159fe6ce9c618f2397e45191721e69e4ca576a24f2e3825e167a4fc196f7b1"
     },
     {
       "path": "library/ui/apps/hud/design/ShowcaseIndex.ts",
-      "sha256": "c223051b79cf43fe78fba8db42a3e7d1cdf4cee68fb0a24e7eec42687cc2539b"
+      "sha256": "6ff1510026f993d7758545559fd768efe7619f44ed725fb5767dc70dfd978e90"
     },
     {
       "path": "library/ui/apps/hud/design/Slider.module.css",
@@ -12428,14 +12420,6 @@
       "sha256": "4c072868185b843105b0ddf58db41b7e6dadf035648026426ffafdf2197228ab"
     },
     {
-      "path": "library/ui/apps/hud/design/Tooltip.module.css",
-      "sha256": "cfde7a0f39330c7c7862e2597ced5b70e2a3a89058607a1cf36d01f7dcf34533"
-    },
-    {
-      "path": "library/ui/apps/hud/design/Tooltip.tsx",
-      "sha256": "b39585c2844a1dcf4c7f7765bb08724a86a6092faaf63f5e4e4f1eb1cfa434ca"
-    },
-    {
       "path": "library/ui/apps/hud/design/VoiceBars.module.css",
       "sha256": "f5100fafb0685afaf7cc1e47fa9bba245c7d52cf7bdb3e0f443c6ab6d02f5ef9"
     },
@@ -12457,7 +12441,7 @@
     },
     {
       "path": "library/ui/apps/hud/design/index.ts",
-      "sha256": "8bf1fe6e1e39636ff781a08e2720a027044b4039adaf1c82d71e9454cdc4df49"
+      "sha256": "893ea022a1e0c4ed72f81b261c66f063dca1145ee22ceefbc0ec969faf17f12c"
     },
     {
       "path": "library/ui/apps/hud/design/popups.module.css",
@@ -12497,7 +12481,7 @@
     },
     {
       "path": "library/ui/apps/hud/features/chat/Chat.tsx",
-      "sha256": "10be41a2e8e5cc2713221a6e27a836fc246f1167af0c8bd309e6ded5bc955d5e"
+      "sha256": "62bf5cf0b4cb48ae350e981053b2b85b5a5d78bca318dfee72afafb5f7c1c639"
     },
     {
       "path": "library/ui/apps/hud/features/chat/ChatIcons.tsx",
@@ -12517,7 +12501,7 @@
     },
     {
       "path": "library/ui/apps/hud/features/chat/ConversationRail.tsx",
-      "sha256": "0232980fdbd8ddf4f4d6df59f0ca1586c2b56eeb54427cbd63791cdcf422e641"
+      "sha256": "cd0c9996163310a4595f4cad550b15e8e45aa34ee73e6ff24260fd4802fa4717"
     },
     {
       "path": "library/ui/apps/hud/features/chat/EmojiButton.module.css",
@@ -12549,7 +12533,7 @@
     },
     {
       "path": "library/ui/apps/hud/features/chat/ProfileCardPresentation.tsx",
-      "sha256": "c7b4d3040609c20a8eaa01d7249d8a095f985233b70732adbee183afdd56f5c7"
+      "sha256": "27fa24daacde1d94c8b632a68bd9c261ee5bcd41197ce631dc737824a6d6c18a"
     },
     {
       "path": "library/ui/apps/hud/features/chat/buttonSounds.test.ts",
@@ -12613,7 +12597,7 @@
     },
     {
       "path": "library/ui/apps/hud/features/communities/CommunitiesPage.tsx",
-      "sha256": "8f2369ff867d84b82b1a1482ddd47263a098a28166a75998f88468675f67a47a"
+      "sha256": "cef167a8f5defbc87cf1fd45110d4ccfd8d892abf2fa42a2a6e305298f527cd9"
     },
     {
       "path": "library/ui/apps/hud/features/communities/CommunityCreateModal.module.css",
@@ -12797,7 +12781,7 @@
     },
     {
       "path": "library/ui/apps/hud/features/events/EventCard.tsx",
-      "sha256": "3d11497ebd617e6797ff3e45a8f55c7eac41ce4cd77b9ad44365e975576a8c3f"
+      "sha256": "606e7d208e307c42c352484a730a7e54e50a86ddbfb83a1852d925bf20b1efdb"
     },
     {
       "path": "library/ui/apps/hud/features/events/EventDetail.module.css",
@@ -12869,7 +12853,7 @@
     },
     {
       "path": "library/ui/apps/hud/features/friends/FriendsPanel.tsx",
-      "sha256": "a7c451c8754c4fd82cc10214a805538d3a659ddfb8e69fabbeff74b5b46ad5ed"
+      "sha256": "1fee974afa27d96aec6572fa9189f383bccd14a583faf4aa5e74d738647e1c7a"
     },
     {
       "path": "library/ui/apps/hud/features/friends/friendDialogs.tsx",
@@ -13261,7 +13245,7 @@
     },
     {
       "path": "library/ui/apps/hud/features/minimap/SceneRestrictions.tsx",
-      "sha256": "20b10c2a7d2df7a2a082e58b7c5c009bbb35a728705765b4c36c21889393cbff"
+      "sha256": "d53c1059ffaba9b53786ce8958d56cdec785c8a667a2986483c2096c6a88918b"
     },
     {
       "path": "library/ui/apps/hud/features/minimap/icons.tsx",
@@ -13421,7 +13405,7 @@
     },
     {
       "path": "library/ui/apps/hud/features/profile/ProfilePassport.tsx",
-      "sha256": "ac91e27e03a28badf3512721917f6c2d883dbc8dbd54d1c4a27bbcc84396d39c"
+      "sha256": "cd9873ebead22ac8fe39266348af7624ad5e29a8477eff3f99bba7906d9f337d"
     },
     {
       "path": "library/ui/apps/hud/features/profileCard/ProfileCard.tsx",
@@ -13493,7 +13477,7 @@
     },
     {
       "path": "library/ui/apps/hud/features/settings/SettingsPanel.tsx",
-      "sha256": "cf5e142a1eb4afb1a03e93afef3cb61efe8169db42ea6aba8610d62ddcbdf34f"
+      "sha256": "91bbe5ced2f6815e0b80dc00b7ea2dbd99cf280cf23d117280d13150cf378c91"
     },
     {
       "path": "library/ui/apps/hud/features/settings/askBeforeLeaving.ts",
@@ -13509,7 +13493,7 @@
     },
     {
       "path": "library/ui/apps/hud/features/sidebar/Sidebar.module.css",
-      "sha256": "c950ecaa62ed3e0650f8516e5401de165c70ebed91ed9bf9e871fd16ab01e624"
+      "sha256": "d13e5cd12e1e005b3a03a1fff43e26006a6f5ea48cc90e4749a3081804ea7ce1"
     },
     {
       "path": "library/ui/apps/hud/features/sidebar/Sidebar.tsx",
@@ -13693,7 +13677,7 @@
     },
     {
       "path": "library/ui/apps/hud/features/voiceChat/VoiceChatPanel.tsx",
-      "sha256": "dee609b08c6bb0267561da36165e5f2fac843dbaab0aa27807d914c2820cef85"
+      "sha256": "b0c068c2659bff9c1613a64b1cc0c5753cbf3bf7385f7441fbeeccf67353b96c"
     },
     {
       "path": "library/ui/apps/hud/features/voiceChat/callGate.ts",
@@ -16441,11 +16425,11 @@
     },
     {
       "path": "library/ui/components/Tooltip/Tooltip.module.css",
-      "sha256": "31812136f426334fe7302352883a0a4bd5819249cfc30b179b2ad84fd2097314"
+      "sha256": "7aa0d5756f285fd98ad8332d317a301c91d4f9dc42f66143fdbe45077ba290c1"
     },
     {
       "path": "library/ui/components/Tooltip/Tooltip.tsx",
-      "sha256": "33eebd8b637cf914f225c1bf522ed116086f4a8d5899705e5e80c0a8abc0cb7e"
+      "sha256": "ac60227c65f52c1fe957c515154042ab4fab972c667205eb31be29190217bd64"
     },
     {
       "path": "library/ui/content.helpers.ts",
@@ -21062,32 +21046,32 @@
     },
     {
       "from": "library/ui/apps/hud/design/IconButton.tsx",
-      "to": "library/ui/apps/hud/design/Tooltip.tsx",
+      "to": "library/ui/apps/hud/design/icons.tsx",
       "kind": "native:runtime"
     },
     {
       "from": "library/ui/apps/hud/design/IconButton.tsx",
-      "to": "library/ui/apps/hud/design/Tooltip.tsx",
+      "to": "library/ui/apps/hud/design/icons.tsx",
       "kind": "production:runtime"
     },
     {
       "from": "library/ui/apps/hud/design/IconButton.tsx",
-      "to": "library/ui/apps/hud/design/Tooltip.tsx",
+      "to": "library/ui/apps/hud/design/icons.tsx",
       "kind": "test:runtime"
     },
     {
       "from": "library/ui/apps/hud/design/IconButton.tsx",
-      "to": "library/ui/apps/hud/design/icons.tsx",
+      "to": "library/ui/index.ts",
       "kind": "native:runtime"
     },
     {
       "from": "library/ui/apps/hud/design/IconButton.tsx",
-      "to": "library/ui/apps/hud/design/icons.tsx",
+      "to": "library/ui/index.ts",
       "kind": "production:runtime"
     },
     {
       "from": "library/ui/apps/hud/design/IconButton.tsx",
-      "to": "library/ui/apps/hud/design/icons.tsx",
+      "to": "library/ui/index.ts",
       "kind": "test:runtime"
     },
     {
@@ -21943,21 +21927,6 @@
     {
       "from": "library/ui/apps/hud/design/Toast.tsx",
       "to": "library/ui/index.ts",
-      "kind": "test:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/design/Tooltip.tsx",
-      "to": "library/ui/apps/hud/design/Tooltip.module.css",
-      "kind": "native:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/design/Tooltip.tsx",
-      "to": "library/ui/apps/hud/design/Tooltip.module.css",
-      "kind": "production:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/design/Tooltip.tsx",
-      "to": "library/ui/apps/hud/design/Tooltip.module.css",
       "kind": "test:runtime"
     },
     {
@@ -22963,21 +22932,6 @@
     {
       "from": "library/ui/apps/hud/design/index.ts",
       "to": "library/ui/apps/hud/design/Toast.tsx",
-      "kind": "test:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/design/index.ts",
-      "to": "library/ui/apps/hud/design/Tooltip.tsx",
-      "kind": "native:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/design/index.ts",
-      "to": "library/ui/apps/hud/design/Tooltip.tsx",
-      "kind": "production:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/design/index.ts",
-      "to": "library/ui/apps/hud/design/Tooltip.tsx",
       "kind": "test:runtime"
     },
     {
@@ -24946,6 +24900,21 @@
       "kind": "test:runtime"
     },
     {
+      "from": "library/ui/apps/hud/features/chat/Chat.tsx",
+      "to": "library/ui/index.ts",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/chat/Chat.tsx",
+      "to": "library/ui/index.ts",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/chat/Chat.tsx",
+      "to": "library/ui/index.ts",
+      "kind": "test:runtime"
+    },
+    {
       "from": "library/ui/apps/hud/features/chat/CommunityHeader.tsx",
       "to": "library/ui/apps/hud/assets/chat/players.png",
       "kind": "native:runtime"
@@ -25381,6 +25350,21 @@
       "kind": "test:runtime"
     },
     {
+      "from": "library/ui/apps/hud/features/chat/ConversationRail.tsx",
+      "to": "library/ui/index.ts",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/chat/ConversationRail.tsx",
+      "to": "library/ui/index.ts",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/chat/ConversationRail.tsx",
+      "to": "library/ui/index.ts",
+      "kind": "test:runtime"
+    },
+    {
       "from": "library/ui/apps/hud/features/chat/EmojiButton.tsx",
       "to": "library/ui/apps/hud/features/chat/EmojiButton.module.css",
       "kind": "native:runtime"
@@ -25768,6 +25752,21 @@
     {
       "from": "library/ui/apps/hud/features/chat/ProfileCardPresentation.tsx",
       "to": "library/ui/apps/hud/features/session/profileStore.ts",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/chat/ProfileCardPresentation.tsx",
+      "to": "library/ui/index.ts",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/chat/ProfileCardPresentation.tsx",
+      "to": "library/ui/index.ts",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/chat/ProfileCardPresentation.tsx",
+      "to": "library/ui/index.ts",
       "kind": "test:runtime"
     },
     {
@@ -36511,6 +36510,21 @@
       "kind": "test:runtime"
     },
     {
+      "from": "library/ui/apps/hud/features/minimap/SceneRestrictions.tsx",
+      "to": "library/ui/index.ts",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/minimap/SceneRestrictions.tsx",
+      "to": "library/ui/index.ts",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/minimap/SceneRestrictions.tsx",
+      "to": "library/ui/index.ts",
+      "kind": "test:runtime"
+    },
+    {
       "from": "library/ui/apps/hud/features/notifications/NotificationToast.tsx",
       "to": "library/ui/apps/hud/features/notifications/NotificationToast.module.css",
       "kind": "native:runtime"
@@ -44263,6 +44277,21 @@
     {
       "from": "library/ui/apps/hud/features/voiceChat/VoiceChatPanel.tsx",
       "to": "library/ui/apps/hud/features/voiceChat/callGate.ts",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/voiceChat/VoiceChatPanel.tsx",
+      "to": "library/ui/index.ts",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/voiceChat/VoiceChatPanel.tsx",
+      "to": "library/ui/index.ts",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/voiceChat/VoiceChatPanel.tsx",
+      "to": "library/ui/index.ts",
       "kind": "test:runtime"
     },
     {
@@ -65983,11 +66012,6 @@
     {
       "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
       "to": "library/ui/apps/hud/design/Toast.tsx",
-      "kind": "type"
-    },
-    {
-      "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
-      "to": "library/ui/apps/hud/design/Tooltip.tsx",
       "kind": "type"
     },
     {

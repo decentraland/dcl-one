@@ -203,6 +203,40 @@ export const feedbackEntries: GalleryEntry[] = [
             </Tooltip>
           </div>
         )
+      },
+      {
+        id: 'hud',
+        title:
+          'Explorer HUD: a name with a shortcut, the sidebar rail, a paragraph and an end-aligned tip',
+        render: () => (
+          <div className={`${layout.row} ${layout.tooltipHost} ${layout.tooltipRoom}`}>
+            <Tooltip appearance="hud" label="Friends" shortcut="L" side="top">
+              <Button size="md" variant="secondary">
+                top
+              </Button>
+            </Tooltip>
+            <Tooltip appearance="hud" variant="rail" label="Settings" shortcut="P">
+              <Button size="md" variant="secondary">
+                rail
+              </Button>
+            </Tooltip>
+            <Tooltip
+              appearance="hud"
+              side="bottom"
+              multiline
+              label={'A longer hint that wraps.\n\nParagraph breaks are kept.'}
+            >
+              <Button size="md" variant="secondary">
+                multiline
+              </Button>
+            </Tooltip>
+            <Tooltip appearance="hud" side="bottom" align="end" label="End stream for everyone">
+              <Button size="md" variant="secondary">
+                bottom, end
+              </Button>
+            </Tooltip>
+          </div>
+        )
       }
     ]
   },

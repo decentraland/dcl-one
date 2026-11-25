@@ -22,7 +22,7 @@
   box-sizing: border-box;
   /* the world between the two groups takes the pointer */
   pointer-events: none;
-  /* the hover labels: 36px high, 13px from the edge to the text, 12px corners (design/Tooltip
+  /* the hover labels: 36px high, 13px from the edge to the text, 12px corners (the shared Tooltip
      reads these) */
   --tooltip-pad: 9.5px 13px;
   --tooltip-radius: var(--r-md);

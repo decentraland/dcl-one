@@ -24,7 +24,6 @@ export const SHOWCASE_INDEX = [
   { name: 'LogoPattern', title: 'Logo pattern (the loading and sign-in backdrop)', components: ['LogoPattern'] },
   { name: 'Dialogs', title: 'Dialogs (imperative popup layer — showDialog / showConfirm)', components: ['PopupHost'] },
   { name: 'Modal', title: 'Modal (the dialog card: ModalShell, or Modal with ModalTitle and ModalActions)', components: ['Modal', 'ModalTitle', 'ModalActions', 'ModalShell'] },
-  { name: 'Tooltip', title: 'Tooltip (hover the chips)', components: ['Tooltip'] },
   { name: 'ControlButton', title: 'ControlButton', components: ['ControlButton'] },
   { name: 'Tabs', title: 'Tabs (pill · underline — arrows/Home/End move the selection)', components: ['Tabs'] },
   { name: 'FormControls', title: 'Form controls', components: ['Slider', 'TextInput', 'TextArea', 'DateField', 'Select'] },

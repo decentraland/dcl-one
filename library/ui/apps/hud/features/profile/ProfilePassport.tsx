@@ -7,9 +7,9 @@
 // NOTE: backend follow-up for OTHER users — the bridge must fetch their rich profile
 // (badges/info/mutuals) by address; the 2D picture is the fallback meanwhile.
 
-import { Button, Spinner } from '@dcl/one-ui'
+import { Button, Spinner, Tooltip } from '@dcl/one-ui'
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { Avatar, BlockUserIcon, Close, ColorPicker, ContextMenu, ControlButton, EmptyState, EquippedItemCard, Icon, Kebab, MaskIcon, Pencil, ReportFlag, ScrollThumb, Search, Tabs, Tooltip, showConfirm, type ContextMenuItem, type EquippedItemCardProps, type TabItem, NameSeal } from '../../design'
+import { Avatar, BlockUserIcon, Close, ColorPicker, ContextMenu, ControlButton, EmptyState, EquippedItemCard, Icon, Kebab, MaskIcon, Pencil, ReportFlag, ScrollThumb, Search, Tabs, showConfirm, type ContextMenuItem, type EquippedItemCardProps, type TabItem, NameSeal } from '../../design'
 import giftIcon from '../../assets/gifting/gift.png'
 import jumpInIcon from '../../assets/friends/jump-in.png'
 import { registerCancelLayer } from '@explorer-core/lib/cancelLayers'
@@ -90,7 +90,7 @@ function BadgeIcon({ image, alt, className = '' }: { image?: string; alt: string
 // The Overview's compact row: icon only, name on hover.
 function BadgeTile({ badge }: { badge: Badge }): React.JSX.Element {
   return (
-    <Tooltip label={badgeLabel(badge)} side="top">
+    <Tooltip appearance="hud" label={badgeLabel(badge)} side="top">
       <BadgeIcon image={badge.image} alt={badge.name} />
     </Tooltip>
   )
@@ -563,7 +563,7 @@ export function ProfilePassport({
           </div>
           <div className={styles.headActions}>
             {!isSelf && onJump != null && (
-              <Tooltip label="Jump to Location" side="bottom">
+              <Tooltip appearance="hud" label="Jump to Location" side="bottom">
                 <button type="button" className={`${styles.headBtn} ${styles.headIconBtn}`} aria-label="Jump to Location" onClick={() => onJump(profile.address)}>
                   <img src={jumpInIcon} alt="" width={24} height={24} />
                 </button>

@@ -3,9 +3,9 @@
 // (light Select / ruby Switch / arrow Slider). Data + actions via the bridge relay
 // of BevyApi.getSettings / setSetting.
 
-import { Switch } from '@dcl/one-ui'
+import { Switch, Tooltip } from '@dcl/one-ui'
 import { memo, useEffect, useId, useMemo, useState } from 'react'
-import { Select, Slider, Tabs, Tooltip, showConfirm } from '../../design'
+import { Select, Slider, Tabs, showConfirm } from '../../design'
 import { MainMenuShell } from '../menu/MainMenuShell'
 import type { Setting } from '@explorer-core/engine/protocol'
 import type { BindingsState, EngineSession, ProfileState, SettingsState } from '../session/useEngineSession'
@@ -202,7 +202,7 @@ const SettingField = memo(
       <div className={styles.field}>
         <div className={styles.fieldHead}>
           {description ? (
-            <Tooltip label={description} side="bottom" multiline className={styles.hint}>
+            <Tooltip appearance="hud" label={description} side="bottom" multiline className={styles.hint}>
               {label}
             </Tooltip>
           ) : (
@@ -229,7 +229,7 @@ function PingField(): React.JSX.Element {
   return (
       <div className={styles.field}>
         <div className={styles.fieldHead}>
-          <Tooltip label="The sound for a chat line landing in a conversation; each conversation's menu can choose otherwise. Sending a message sounds only on All Messages." side="bottom" multiline className={styles.hint}>
+          <Tooltip appearance="hud" label="The sound for a chat line landing in a conversation; each conversation's menu can choose otherwise. Sending a message sounds only on All Messages." side="bottom" multiline className={styles.hint}>
             <span className={styles.label}>Notification Ping</span>
           </Tooltip>
         </div>

@@ -7,9 +7,9 @@
 // it, and its description on hover. The sidebar's Invites & Requests opens the user's invites, the
 // join requests their communities received and their own requests.
 
-import { Button, Spinner } from '@dcl/one-ui'
+import { Button, Spinner, Tooltip } from '@dcl/one-ui'
 import { useEffect, useRef, useState } from 'react'
-import { Avatar, Chip, CountBadge, EmptyState, SearchField, SwapLabel, Tooltip } from '../../design'
+import { Avatar, Chip, CountBadge, EmptyState, SearchField, SwapLabel } from '../../design'
 import { nameColor } from '@explorer-core/lib/identity'
 import { MainMenuShell } from '../menu/MainMenuShell'
 import { MenuBackdrop } from '../menu/MenuBackdrop'
@@ -123,7 +123,7 @@ function CommunityCard({ c, live, onOpen, ...actions }: CardActions & { c: Commu
           {friends.length > 0 && (
             <span className={styles.friends} aria-label={`Friends in this community: ${friends.map((f) => f.name).join(', ')}`}>
               {friends.map((f) => (
-                <Tooltip key={f.address} label={f.name} side="top" className={styles.friend}>
+                <Tooltip appearance="hud" key={f.address} label={f.name} side="top" className={styles.friend}>
                   <Avatar src={f.picture} name={f.name} color={nameColor(f.address)} size={20} />
                 </Tooltip>
               ))}

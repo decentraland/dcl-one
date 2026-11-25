@@ -74,7 +74,6 @@ import {
   TextArea,
   TextInput,
   ToastHost,
-  Tooltip,
   VerifiedBadge,
   VoiceBars,
   WearableCard,
@@ -191,7 +190,6 @@ const h: React.CSSProperties = {
   color: 'var(--ink-45)',
   margin: '0 0 14px'
 }
-const chipLabel: React.CSSProperties = { padding: '8px 14px', borderRadius: 10, background: 'var(--fill-4)' }
 
 function Section({ title, children }: { title: string; children: React.ReactNode }): React.JSX.Element {
   return (
@@ -340,23 +338,6 @@ const RENDER: Record<ShowcaseName, () => React.JSX.Element> = {
           <Button appearance="hud">OK</Button>
         </ModalActions>
       </Modal>
-    </div>
-  ),
-
-  Tooltip: () => (
-    <div style={{ ...row, gap: 16 }}>
-      <Tooltip label="Friends" shortcut="L">
-        <span style={chipLabel}>right</span>
-      </Tooltip>
-      <Tooltip label="Settings" shortcut="P" side="top">
-        <span style={chipLabel}>top</span>
-      </Tooltip>
-      <Tooltip label={'A longer hint that wraps.\n\nParagraph breaks are kept, and it hangs from the left edge.'} side="bottom" multiline>
-        <span style={chipLabel}>multiline</span>
-      </Tooltip>
-      <Tooltip label="End stream for everyone" side="bottom" align="end">
-        <span style={chipLabel}>bottom, end</span>
-      </Tooltip>
     </div>
   ),
 

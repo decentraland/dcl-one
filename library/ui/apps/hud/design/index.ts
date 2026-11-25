@@ -4,7 +4,6 @@
 export { ArmedButton, ARM_MS } from './ArmedButton'
 export { IconButton } from './IconButton'
 export { ControlButton } from './ControlButton'
-export { Tooltip } from './Tooltip'
 export { Slider } from './Slider'
 export { ColorPicker } from './ColorPicker'
 export { Select, type SelectOption } from './Select'
