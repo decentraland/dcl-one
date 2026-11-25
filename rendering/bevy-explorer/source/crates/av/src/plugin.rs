@@ -1042,20 +1042,31 @@ mod tests {
         for revision in 1..=3 {
             data.position = Some(0.);
             data.position_revision = Some(revision);
-            app.world_mut().entity_mut(player).insert(VideoPlayer(data.clone()));
-            assert_eq!(app.world().resource::<Seeks>().0, initial + revision as usize);
+            app.world_mut()
+                .entity_mut(player)
+                .insert(VideoPlayer(data.clone()));
+            assert_eq!(
+                app.world().resource::<Seeks>().0,
+                initial + revision as usize
+            );
         }
         for playing in [false, true] {
             data.playing = Some(playing);
             data.volume = Some(0.5);
-            app.world_mut().entity_mut(player).insert(VideoPlayer(data.clone()));
+            app.world_mut()
+                .entity_mut(player)
+                .insert(VideoPlayer(data.clone()));
             assert_eq!(app.world().resource::<Seeks>().0, initial + 3);
         }
         data.playing = Some(false);
-        app.world_mut().entity_mut(player).insert(VideoPlayer(data.clone()));
+        app.world_mut()
+            .entity_mut(player)
+            .insert(VideoPlayer(data.clone()));
         data.playing = Some(true);
         data.position_revision = Some(4);
-        app.world_mut().entity_mut(player).insert(VideoPlayer(data.clone()));
+        app.world_mut()
+            .entity_mut(player)
+            .insert(VideoPlayer(data.clone()));
         assert_eq!(app.world().resource::<Seeks>().0, initial + 4);
         app.world_mut().entity_mut(player).insert(VideoPlayer(data));
         assert_eq!(app.world().resource::<Seeks>().0, initial + 4);
