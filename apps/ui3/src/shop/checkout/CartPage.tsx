@@ -31,6 +31,7 @@ import PaymentCtas from "./components/PaymentCtas";
 import { cartRails } from "./lib/cart-rails";
 import { EnsureQueryClient, useShopServices } from "./services";
 import { useMarketplace } from "../market/access";
+import { PRIORITY_LINE_COUNT } from "../cart/pictures";
 import { CREDITS_SHORT, useCheckout, type CheckoutView } from "./useCheckout";
 import { useRailCheckout } from "./useRailCheckout";
 import cartEmptyIllustration from "./assets/cart-empty.svg?url";
@@ -340,10 +341,11 @@ function CartScreen() {
                 </div>
 
                 <div className="shop-cart__lines" aria-label="Items in your cart">
-                  {co.lines.map((line) => (
+                  {co.lines.map((line, i) => (
                     <CartLineRow
                       key={line.id}
                       line={line}
+                      priority={i < PRIORITY_LINE_COUNT}
                       offer={co.offers[line.id] ?? null}
                       view={co.views[line.id] ?? null}
                       changes={co.changesByLine[line.id] ?? []}

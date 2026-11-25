@@ -15,6 +15,8 @@ use crate::{
 
 #[path = "serve_adapters.rs"]
 mod adapters;
+#[path = "serve_health.rs"]
+mod health;
 #[path = "serve_lifecycle.rs"]
 mod lifecycle;
 #[path = "serve_routes.rs"]
