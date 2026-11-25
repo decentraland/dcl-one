@@ -146,3 +146,13 @@
   align-items: flex-start;
   min-height: 180px;
 }
+
+/* The Explorer HUD's page reset, for a HUD part that leaves its box model to its host. */
+.hudHost,
+.hudHost * {
+  box-sizing: border-box;
+}
+
+.hudHost {
+  max-width: 100%;
+}

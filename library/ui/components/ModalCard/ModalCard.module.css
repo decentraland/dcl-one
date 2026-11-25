@@ -1,10 +1,10 @@
 @layer dcl.reset, dcl.foundations, dcl.components;
 
 /* Not in Figma: the Explorer HUD's dialog card and its parts. The purple gradient, the card's shadow and 18px
-   corners, its white inks, its 10px control corners and its 46px buttons have no token. */
+   corners, its white inks, its 10px control corners and its 46px buttons have no token. The card sets no box
+   model: its host does (the HUD's page reset; the `/play` shell has none, and its dialogs are sized for that). */
 @layer dcl.components {
   .card {
-    box-sizing: border-box;
     /* Capped against the host's box, not the viewport: viewport units ignore an ancestor's scale, so a card capped
        in dvh would be taller than a scaled screen. Taller content scrolls inside the card. */
     max-height: calc(100% - 40px);

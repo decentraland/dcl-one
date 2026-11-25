@@ -241,7 +241,8 @@
 }
 
 /* Not in Figma: the Explorer HUD's select (`appearance="hud"`). Its 8% white field, its 70% white ink, its panel
-   shadow and its 140ms have no token. The host supplies --z-overlay for the list. */
+   shadow and its 140ms have no token. The host supplies --z-overlay for the list, and the
+   box model: the rules set none, as the HUD's did. */
 @layer dcl.components {
   .hudRoot {
     position: relative;
@@ -251,7 +252,6 @@
 
   .hudField {
     display: flex;
-    box-sizing: border-box;
     align-items: center;
     justify-content: space-between;
     gap: var(--dcl-space-8);
@@ -316,7 +316,6 @@
     right: 0;
     left: 0;
     z-index: var(--z-overlay);
-    box-sizing: border-box;
     max-height: 260px;
     margin: 0;
     padding: 6px;
@@ -336,7 +335,6 @@
 
   .hudOption {
     display: block;
-    box-sizing: border-box;
     width: 100%;
     padding: var(--dcl-space-8) 10px;
     border: none;

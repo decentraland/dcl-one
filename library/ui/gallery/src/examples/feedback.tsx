@@ -114,67 +114,71 @@ export const feedbackEntries: GalleryEntry[] = [
         id: 'shell',
         title: 'ModalShell: a title with a close button, a body and two equal actions',
         render: () => (
-          <ModalShell
-            title="Leave this community?"
-            subtitle="You can join again at any time."
-            ariaLabel="Leave this community?"
-            modal={false}
-            onClose={() => {}}
-            actionsEqual
-            actions={
-              <>
-                <Button appearance="hud" variant="secondary" size="bare" radius="md">
-                  CANCEL
-                </Button>
-                <Button appearance="hud" size="bare" radius="md">
-                  LEAVE
-                </Button>
-              </>
-            }
-          >
-            Your posts stay in the community.
-          </ModalShell>
+          <div className={layout.hudHost}>
+            <ModalShell
+              title="Leave this community?"
+              subtitle="You can join again at any time."
+              ariaLabel="Leave this community?"
+              modal={false}
+              onClose={() => {}}
+              actionsEqual
+              actions={
+                <>
+                  <Button appearance="hud" variant="secondary" size="bare" radius="md">
+                    CANCEL
+                  </Button>
+                  <Button appearance="hud" size="bare" radius="md">
+                    LEAVE
+                  </Button>
+                </>
+              }
+            >
+              Your posts stay in the community.
+            </ModalShell>
+          </div>
         )
       },
       {
         id: 'centered',
         title: 'A centered title with a back button, and a lead note beside the action',
         render: () => (
-          <ModalShell
-            title="Report submitted"
-            ariaLabel="Report submitted"
-            modal={false}
-            centeredTitle
-            onBack={() => {}}
-            onClose={() => {}}
-            actionsLead="Our moderators will review it."
-            actions={
-              <ModalActions>
+          <div className={layout.hudHost}>
+            <ModalShell
+              title="Report submitted"
+              ariaLabel="Report submitted"
+              modal={false}
+              centeredTitle
+              onBack={() => {}}
+              onClose={() => {}}
+              actionsLead="Our moderators will review it."
+              actions={
                 <Button appearance="hud" size="sm">
                   OK
                 </Button>
-              </ModalActions>
-            }
-          >
-            Thanks for helping keep Decentraland safe.
-          </ModalShell>
+              }
+            >
+              Thanks for helping keep Decentraland safe.
+            </ModalShell>
+          </div>
         )
       },
       {
         id: 'card',
         title: 'ModalCard with its own layout: a title and a column of actions',
         render: () => (
-          <ModalCard ariaLabel="Unsaved changes" modal={false} width={360}>
-            <ModalTitle title="Unsaved changes" subtitle="Your avatar has changes." />
-            <ModalActions direction="column">
-              <Button appearance="hud" size="sm">
-                SAVE
-              </Button>
-              <Button appearance="hud" variant="ghost" size="sm">
-                DISCARD
-              </Button>
-            </ModalActions>
-          </ModalCard>
+          <div className={layout.hudHost}>
+            <ModalCard ariaLabel="Unsaved changes" modal={false} width={360}>
+              <ModalTitle title="Unsaved changes" subtitle="Your avatar has changes." />
+              <ModalActions direction="column">
+                <Button appearance="hud" size="sm">
+                  SAVE
+                </Button>
+                <Button appearance="hud" variant="ghost" size="sm">
+                  DISCARD
+                </Button>
+              </ModalActions>
+            </ModalCard>
+          </div>
         )
       }
     ]
