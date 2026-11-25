@@ -14,12 +14,12 @@ use serde_json::json;
 
 use crate::{nametag::NametagContent, AvatarProcessed, AvatarSelection, AvatarShape};
 
-/// Enough to find where frame time breaks down, well past the Max Avatars setting's range.
+/// Enough to find where frame time breaks down, well past the Max Avatars setting's range (1 to 100).
 const MAX_DEMOS: usize = 1024;
 /// The highest number `/avatar_demo cap` takes: every demo avatar and the player.
 const MAX_CAP: usize = MAX_DEMOS + 1;
 /// `/avatar_demo cap all`: no cap, so real players and scene avatars count against nothing.
-const UNCAPPED: usize = usize::MAX;
+const UNCAPPED: usize = common::structs::SessionGraphics::NO_AVATAR_CAP;
 const DEMO_LAYOUTS: &[(&str, &str)] = &[("Grid", "grid"), ("Around", "around")];
 
 /// `/avatar_demo cap`'s argument: a number, or `all` for no cap.
