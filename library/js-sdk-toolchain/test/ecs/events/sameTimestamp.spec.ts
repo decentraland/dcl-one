@@ -1,11 +1,12 @@
+import type { IEngine } from '../../../packages/@dcl/ecs/src'
 import {
   Engine,
-  IEngine,
   components,
   PointerEventType,
   InputAction
 } from '../../../packages/@dcl/ecs/src'
-import { createInputSystem, IInputSystem } from '../../../packages/@dcl/ecs/src/engine/input'
+import type { IInputSystem } from '../../../packages/@dcl/ecs/src/engine/input'
+import { createInputSystem } from '../../../packages/@dcl/ecs/src/engine/input'
 import { createTestPointerDownCommand } from './utils'
 
 describe('Same-timestamp input system behavior', () => {

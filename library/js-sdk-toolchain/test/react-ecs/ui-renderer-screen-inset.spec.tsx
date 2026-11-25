@@ -1,4 +1,4 @@
-import { Entity } from '../../packages/@dcl/ecs/src/engine'
+import type { Entity } from '../../packages/@dcl/ecs/src/engine'
 import { components, YGPositionType, YGUnit } from '../../packages/@dcl/ecs/src'
 import { UiEntity, ReactEcs } from '../../packages/@dcl/react-ecs/src'
 import { CANVAS_ROOT_ENTITY } from '../../packages/@dcl/react-ecs/src/components/uiTransform'

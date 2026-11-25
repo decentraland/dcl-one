@@ -220,7 +220,8 @@ impl State {
         .await
     }
 
-    /// The signer of a write, as an address; 401 with the lambdas envelope otherwise.
+    /// The signer of a write, as an address; 401 with the lambdas envelope
+    /// otherwise, or 429 when the client source's contract-wallet checks are spent.
     pub async fn require_signer(
         &self,
         headers: &HeaderMap,
@@ -236,6 +237,12 @@ impl State {
                     "the signer is not an address",
                 )
             }),
+            // The client source spent its contract-wallet checks: retry later.
+            Err(e @ signed_fetch::SignedFetchError::RateLimited) => Err(error(
+                StatusCode::TOO_MANY_REQUESTS,
+                "Too Many Requests",
+                &e.to_string(),
+            )),
             Err(e) => {
                 tracing::debug!(error = %e, "auth chain verification failed on a mana route");
                 Err(error(
