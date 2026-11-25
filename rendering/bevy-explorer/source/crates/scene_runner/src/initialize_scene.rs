@@ -1215,7 +1215,7 @@ impl ScenePointers {
     /// Changes whenever what `get` answers may have changed, so a reader can keep what it worked
     /// out from the pointers until then. Change detection on the resource cannot tell, since
     /// `crc` and the terrain take it mutably.
-    pub(crate) fn generation(&self) -> u64 {
+    pub fn generation(&self) -> u64 {
         self.generation
     }
 

@@ -476,6 +476,27 @@ fn lowering_distance_despawns_far_trees() {
     assert_eq!(spawned(&mut app).len(), near.len());
 }
 
+/// Taking the pointers mutably without changing them, as the imposters' `crc` does every frame,
+/// does not send the trees through the layout again: a tree removed behind its back stays gone.
+#[test]
+fn untouched_pointers_do_not_rescan() {
+    let mut app = open_land(6, Vec3::ZERO);
+    settle(&mut app);
+    let count = spawned(&mut app).len();
+    let mut trees = app.world_mut().query_filtered::<Entity, With<Tree>>();
+    let one = trees.iter(app.world()).next().unwrap();
+    app.world_mut().despawn(one);
+    app.world_mut()
+        .resource_mut::<ScenePointers>()
+        .set_changed();
+    app.update();
+    assert_eq!(
+        spawned(&mut app).len(),
+        count - 1,
+        "the trees were scanned again"
+    );
+}
+
 /// Filling the distance spreads over frames, nearest first, at most the budget in each.
 #[test]
 fn spawning_spreads_over_frames_nearest_first() {

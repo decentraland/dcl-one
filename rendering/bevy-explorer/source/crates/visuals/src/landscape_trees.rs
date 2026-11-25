@@ -11,7 +11,9 @@ use bevy::{
     gltf::GltfAssetLabel,
     platform::collections::HashMap,
     prelude::*,
-    render::{mesh::MeshAabb, render_resource::ShaderRef, view::VisibilitySystems},
+    render::{
+        mesh::MeshAabb, primitives::Aabb, render_resource::ShaderRef, view::VisibilitySystems,
+    },
 };
 use bevy_console::ConsoleCommand;
 use common::{
@@ -247,12 +249,14 @@ type ModelMesh = (
 );
 
 /// The models carry placeholder materials; swap in the surfaces' as their meshes spawn, and pad a
-/// swaying mesh's bounds by the wind's reach so it is not culled while it leans out of them.
+/// swaying mesh's bounds by the wind's reach so it is not culled while it leans out of them. The
+/// padded bounds are worked out once per mesh, not once per spawned instance.
 fn dress_trees(
     mut commands: Commands,
     materials: Option<Res<TreeMaterials>>,
     meshes: Res<Assets<Mesh>>,
     added: Query<ModelMesh, Added<MeshMaterial3d<StandardMaterial>>>,
+    mut padded: Local<HashMap<(AssetId<Mesh>, Surface), Aabb>>,
 ) {
     let Some(materials) = materials else { return };
     for (entity, material, mesh) in &added {
@@ -268,8 +272,14 @@ fn dress_trees(
         };
         let padding = wind_padding(surface.spec().wind.as_ref());
         if padding > 0.0 {
-            if let Some(mut aabb) = meshes.get(mesh).and_then(|mesh| mesh.compute_aabb()) {
+            let key = (mesh.0.id(), *surface);
+            let aabb = padded.get(&key).copied().or_else(|| {
+                let mut aabb = meshes.get(mesh)?.compute_aabb()?;
                 aabb.half_extents += Vec3A::splat(padding);
+                padded.insert(key, aabb);
+                Some(aabb)
+            });
+            if let Some(aabb) = aabb {
                 entity.insert(aabb);
             }
         }
@@ -334,12 +344,15 @@ struct Landscape<'w> {
 /// The most instances spawned in one frame. Filling the Landscape Distance at start, after a
 /// teleport or a larger distance spreads over frames, nearest first, instead of stalling one; a
 /// parcel resolving empty once that is done spawns its few instances in the frame it resolves.
-pub(crate) const SPAWN_BUDGET: usize = 500;
+pub(crate) const SPAWN_BUDGET: usize = 200;
 
 #[derive(Default)]
 struct TreeState {
     centre: Option<IVec2>,
     world: Option<bool>,
+    /// The pointers' generation the trees last followed: change detection on the resource fires
+    /// whenever anything takes it mutably, which some systems do every frame.
+    generation: Option<u64>,
     /// Something changed that the trees have not followed yet.
     pending: bool,
     /// Instances still to spawn, with their prototype and their transform at height 0, farthest
@@ -417,10 +430,11 @@ fn update_trees(
 
     state.pending |= state.centre != Some(centre)
         || state.world != Some(world)
-        || pointers.is_changed()
+        || state.generation != Some(pointers.generation())
         || distance.is_changed()
         || changes.relayout
         || changes.targets.is_some();
+    state.generation = Some(pointers.generation());
     let layout = layouts.get(if world {
         &assets.worlds
     } else {
