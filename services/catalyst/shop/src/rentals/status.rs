@@ -894,7 +894,21 @@ mod tests {
         );
         sqlx::query(
             "INSERT INTO shop.chain_cursor (indexer, network, start_block, last_block, folded_block, folded_at, full_history, chain_id) \
-             VALUES ('rentals', 'ethereum', 1, 50, 50, timezone('UTC', now()), true, 1)",
+             VALUES ('rentals', 'ethereum', 1, 49, 49, timezone('UTC', now()), true, 1)",
+        )
+        .execute(pool)
+        .await
+        .unwrap();
+        sync_listing(pool, bumped, Some(&row(LESSOR, "parcel", None)), Utc::now())
+            .await
+            .unwrap();
+        assert_eq!(
+            state_of(pool, bumped).await,
+            open(),
+            "the nonce bump is above the published height"
+        );
+        sqlx::query(
+            "UPDATE shop.chain_cursor SET last_block=50, folded_block=50 WHERE indexer='rentals'",
         )
         .execute(pool)
         .await

@@ -364,8 +364,10 @@ pub(super) async fn insert_events(
 /// are `[contract, signer, asset]`.
 /// `$3`, when set, narrows it to one listing (the refresh route).
 const VERDICT_SQL: &str = "
-WITH new_rent AS (
-    SELECT DISTINCT e.signature FROM shop.rental_event e
+WITH visible_events AS NOT MATERIALIZED (
+    SELECT * FROM shop.rental_event WHERE block_number <= $5
+), new_rent AS (
+    SELECT DISTINCT e.signature FROM visible_events e
     WHERE $3::uuid IS NULL AND $1 >= 0 AND e.kind = 'rented'
       AND e.network = $4 AND e.rentals_address = $2 AND e.block_number > $1
 ),
@@ -381,32 +383,32 @@ listing AS (
            OR (r.status = 'cancelled' AND CASE WHEN $3::uuid IS NULL
                THEN nr.signature IS NOT NULL
                ELSE EXISTS (
-                   SELECT 1 FROM shop.rental_event e WHERE e.signature = lower(r.signature) AND e.kind = 'rented'
+                   SELECT 1 FROM visible_events e WHERE e.signature = lower(r.signature) AND e.kind = 'rented'
                      AND e.network = $4 AND e.rentals_address = $2 AND e.block_number > $1) END))
       AND ($3::uuid IS NULL OR r.id = $3)
 ),
 touched AS (
     SELECT l.* FROM listing l
     WHERE $1 < 0
-       OR EXISTS (SELECT 1 FROM shop.rental_event e WHERE e.network = $4 AND e.rentals_address = $2 AND e.block_number > $1
+       OR EXISTS (SELECT 1 FROM visible_events e WHERE e.network = $4 AND e.rentals_address = $2 AND e.block_number > $1
                     AND e.contract_address = l.contract_address AND e.token_id = l.token_id)
-       OR EXISTS (SELECT 1 FROM shop.rental_event e WHERE e.network = $4 AND e.rentals_address = $2 AND e.block_number > $1
+       OR EXISTS (SELECT 1 FROM visible_events e WHERE e.network = $4 AND e.rentals_address = $2 AND e.block_number > $1
                     AND e.kind = 'signer_index_updated' AND e.signer = l.lessor)
-       OR EXISTS (SELECT 1 FROM shop.rental_event e WHERE e.network = $4 AND e.rentals_address = $2 AND e.block_number > $1
+       OR EXISTS (SELECT 1 FROM visible_events e WHERE e.network = $4 AND e.rentals_address = $2 AND e.block_number > $1
                     AND e.kind = 'contract_index_updated')
 )
 SELECT t.id, t.status, t.cancel_reason, rented.block_time AS rented_at, rented.tenant AS rented_tenant, rented.rental_days,
        (rented.block_number IS NOT NULL AND EXISTS (
-            SELECT 1 FROM shop.rental_event c WHERE c.network = $4 AND c.rentals_address = $2 AND c.kind = 'claimed'
+            SELECT 1 FROM visible_events c WHERE c.network = $4 AND c.rentals_address = $2 AND c.kind = 'claimed'
               AND c.contract_address = t.contract_address AND c.token_id = t.token_id
               AND (c.block_number, c.log_index) > (rented.block_number, rented.log_index))) AS claimed,
-       (COALESCE((SELECT max(e.new_index) FROM shop.rental_event e WHERE e.network = $4 AND e.rentals_address = $2 AND e.kind = 'contract_index_updated'), 0) > t.contract_nonce
-        OR COALESCE((SELECT max(e.new_index) FROM shop.rental_event e WHERE e.network = $4 AND e.rentals_address = $2 AND e.kind = 'signer_index_updated' AND e.signer = t.lessor), 0) > t.signer_nonce
-        OR COALESCE((SELECT max(e.new_index) FROM shop.rental_event e WHERE e.network = $4 AND e.rentals_address = $2 AND e.kind = 'asset_index_updated'
+       (COALESCE((SELECT max(e.new_index) FROM visible_events e WHERE e.network = $4 AND e.rentals_address = $2 AND e.kind = 'contract_index_updated'), 0) > t.contract_nonce
+        OR COALESCE((SELECT max(e.new_index) FROM visible_events e WHERE e.network = $4 AND e.rentals_address = $2 AND e.kind = 'signer_index_updated' AND e.signer = t.lessor), 0) > t.signer_nonce
+        OR COALESCE((SELECT max(e.new_index) FROM visible_events e WHERE e.network = $4 AND e.rentals_address = $2 AND e.kind = 'asset_index_updated'
                        AND e.signer = t.lessor AND e.contract_address = t.contract_address AND e.token_id = t.token_id), 0) > t.asset_nonce) AS invalidated
 FROM touched t
 LEFT JOIN LATERAL (
-    SELECT e.block_number, e.log_index, e.block_time, e.tenant, e.rental_days FROM shop.rental_event e
+    SELECT e.block_number, e.log_index, e.block_time, e.tenant, e.rental_days FROM visible_events e
     WHERE e.network = $4 AND e.rentals_address = $2 AND e.kind = 'rented' AND e.signature = t.signature
       AND e.contract_address = t.contract_address AND e.token_id = t.token_id
     ORDER BY e.block_number, e.log_index LIMIT 1
@@ -457,13 +459,14 @@ pub(super) async fn changed_verdicts(
     chain: RentalsChain,
     venue: &str,
     since: i64,
-    listing: Option<uuid::Uuid>,
+    listing: Option<(uuid::Uuid, i64)>,
 ) -> Result<Vec<Verdict>, sqlx::Error> {
     let rows = sqlx::query(VERDICT_SQL)
         .bind(since)
         .bind(venue)
-        .bind(listing)
+        .bind(listing.map(|(id, _)| id))
         .bind(chain.event_network())
+        .bind(listing.map_or(i64::MAX, |(_, published)| published))
         .fetch_all(&mut *conn)
         .await?;
     Ok(rows
@@ -617,15 +620,16 @@ pub(super) async fn fold_listing(
 ) -> Result<Option<u64>, sqlx::Error> {
     let mut tx = pool.begin().await?;
     let cursor = lock_cursor(&mut tx, chain).await?;
-    let Some(cursor) = cursor.filter(|cursor| chain_walk::is_ready_on(cursor, chain.id(), now))
+    let Some(published) = cursor
+        .filter(|cursor| chain_walk::is_ready_on(cursor, chain.id(), now))
+        .and_then(|cursor| cursor.folded_block)
     else {
         tx.rollback().await?;
         return Ok(None);
     };
     // Keep the publication row locked while deriving and writing the verdict.
     // A rewind cannot withdraw this evidence between the read and commit.
-    let _published_through = cursor.folded_block;
-    let verdicts = changed_verdicts(&mut tx, chain, venue, 0, Some(listing)).await?;
+    let verdicts = changed_verdicts(&mut tx, chain, venue, 0, Some((listing, published))).await?;
     let written = apply_verdicts(&mut tx, &verdicts, now.naive_utc()).await?;
     tx.commit().await?;
     Ok(Some(written))
