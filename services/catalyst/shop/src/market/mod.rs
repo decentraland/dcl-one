@@ -653,6 +653,8 @@ pub struct MarketplaceState {
     pub readers: readers::Caches,
     /// Bounds concurrent expensive sales analytics independently of other Shop reads.
     pub(crate) sales_analytics_slots: tokio::sync::Semaphore,
+    /// Concurrent uncached creator owner rankings.
+    pub(crate) top_owners_slots: tokio::sync::Semaphore,
     pub(crate) sales_accounts_slots: tokio::sync::Semaphore,
     sales_seller_slots: tokio::sync::Semaphore,
     pub(crate) sales_pages_slots: tokio::sync::Semaphore,
@@ -751,6 +753,7 @@ impl MarketplaceState {
             contracts: contracts::Caches::default(),
             readers: readers::Caches::default(),
             sales_analytics_slots: tokio::sync::Semaphore::new(2),
+            top_owners_slots: tokio::sync::Semaphore::new(1),
             sales_accounts_slots: tokio::sync::Semaphore::new(1),
             sales_seller_slots: tokio::sync::Semaphore::new(4),
             sales_pages_slots: tokio::sync::Semaphore::new(4),
@@ -1254,6 +1257,7 @@ pub fn market_router(state: SharedState) -> Router {
         .route("/v1/collections", get(collections::get_collections))
         .route("/v1/accounts", get(accounts::get_accounts))
         .route("/v1/owners", get(owners::get_owners))
+        .route("/v1/owners/top", get(owners::get_top_owners))
         .route("/v1/catalog", get(catalog::get_catalog_v1))
         .route("/v2/catalog", get(catalog::get_catalog_v2))
         .route("/v3/catalog/shop", get(shop::get_shop_catalog))
