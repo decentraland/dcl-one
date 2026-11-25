@@ -191,6 +191,11 @@ async fn publish(opts: &DeployOptions) -> Result<Published> {
             "--skip-validations: scene.json media permissions and the per-file size limit are not checked",
         );
     }
+    if !opts.quiet
+        && let Some(note) = super::display_defaults_note(&project.scene_json)
+    {
+        ux::note(note);
+    }
     let metadata = super::build_metadata_checked(&project, validate)?;
     let pointers = extract_pointers(&metadata)?;
     if nameless_world_section(&metadata) {

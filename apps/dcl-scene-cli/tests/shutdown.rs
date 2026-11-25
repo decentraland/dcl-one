@@ -66,6 +66,7 @@ fn start_preview(scene: &Path, log: &Path) -> ChildGuard {
     let child = Command::new(BIN)
         .args([
             "start",
+            "--no-browser",
             "--dir",
             &scene.display().to_string(),
             "--port",

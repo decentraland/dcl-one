@@ -118,6 +118,12 @@ dcl-scene-cli build [--dir D] [-p|--production] [-w|--watch] [--ignoreComposite]
                     [--single GLOB] [--emitDeclaration]
 ```
 
+Every command that loads a scene checks `scene.json` first, with the rules of `@dcl/sdk-commands` and
+the Creator Hub: at least one parcel, each written `"x,y"` and listed once, `scene.base` one of them,
+every parcel on the map (x and y from -150 to 150, or in the areas x 62..162 / y 151..158, x 151..162 /
+y 144..150 and x 151..163 / y 59..143), and all of them connected edge to edge. `deploy` also says
+when the `display` title, description or map thumbnail is missing or still the template's.
+
 `--single GLOB` bundles each matching `.ts`/`.tsx` under the project to a sibling `.js` instead of the
 scene, after one type check; the SDK stays a `require`, as in the scene chunk, so a consuming scene
 bundles one SDK. Two matches that would write one `.js` (`a.ts` and `a.tsx`) are refused.
@@ -145,9 +151,10 @@ a script); `--skip-build` skips the initial run.
 
 A scene with no `node_modules` folder (a fresh clone) gets the vendored SDK restored before the
 built-in pipeline runs, with a line saying so and a second one when `package.json` pins another
-`@dcl/sdk`; `--skip-install` turns that off. An existing `node_modules` is never touched, except one
-whose install of the vendored SDK stopped half way (an empty `node_modules/.dcl-one-archive`): the
-build then replaces the eleven vendored packages, as `init --node-modules-only` does.
+`@dcl/sdk`; `--skip-install` turns that off. An existing `node_modules` is never reinstalled, except
+one whose install of the vendored SDK stopped half way (an empty `node_modules/.dcl-one-archive`):
+the build then replaces the eleven vendored packages, as `init --node-modules-only` does. Otherwise
+a build writes into it only the script types of [smart-item scripts](#smart-item-scripts).
 
 The embedded SDK retains its pinned 7.29.1 runtime and local fixes. Its Skybox, Sun and
 EnvironmentFog bindings (1223–1225) are generated from the monorepo protocol/SDK sources.
@@ -164,9 +171,26 @@ The normal scene build uses these bindings without npm.
 
 The built-in pipeline bundles to `bin/index.js`, type-checks beside the build with incremental tsc
 (`.dcl-cache/`), and encodes `main.crdt` in Rust (`DCL_ONE_CRDT_VERIFY=1` compares with node).
+An import the bundler cannot resolve (a package missing from `node_modules`, a wrong path) fails the
+build and writes nothing, so under a watcher the last good bundle keeps serving.
 A watcher (`start`, `build --watch`) keeps one node process with tsc 5.x or 6.x loaded and the last
 program in memory, so the check after a save covers the edit alone; it reports what a spawned tsc
 does, ends with the watcher, and with TypeScript 7 each check spawns tsc.
+
+### Smart-item scripts
+
+Every `asset-packs::Script` entry in the scene's composites is bundled into the scene chunk and
+started before `main()` with the entity, the script's folder as `src` and the layout parameters, as
+`@dcl/sdk-commands` does. The script runtime is the SDK toolchain's `runtime-script.ts`, embedded in
+the binary; a scene with scripts loads the smart-item chunk, and on an npm install it needs
+`@dcl/asset-packs` in `node_modules`. Script data a composite stores in binary form stops the build
+with the composite named. For a scene with scripts, the build also writes their types into the
+`~sdk/script-utils` declaration of `@dcl/js-runtime` (`sdk.d.ts`, or the vendored `index.d.ts`), so
+`getScriptInstance` and `callScriptMethod` are typed per script path.
+
+The vendored `@dcl/sdk/prebuilt/smart.js` is built by `dcl-scene-cli vendor-chunks` from a scene
+whose `node_modules` is an npm install of the pinned `@dcl/sdk` plus `@dcl/asset-packs`; only that
+entry of `src/vendor/node_modules.zip` is replaced, the others stay byte-for-byte.
 
 ### Code to composite
 
@@ -226,14 +250,38 @@ page (deep-link knobs, web **Player** via `?where=web&player=<url>`). abgen on 5
 `{realm}/optimized-assets`. Scene errors print via the client's MCP port (default 8123, range
 1024-65535). `/content/contents/{hash}` resolves by path: a stale digest gets the current bytes.
 `--data-layer` serves the Creator Hub protocol at `/data-layer` and `/inspector/`.
-`/preview-wearables` lists the smart wearables this preview serves and `/preview-wearables/{id}`
-answers one by its scene id or wearable id (empty `data` when none matches, as upstream), the
-routes the wearable preview page polls.
 
-The join block always prints the desktop deep link and the web URL; nothing launches unless asked.
-`--mobile` adds a scan-to-join QR code for the web URL (also served at `/mobile-preview`).
-`--explorer-alpha` opens the deep link in the desktop Explorer and `--web` opens the hosted web
-explorer in a browser (both off under `--ci` or `--no-client`, `--web` also under `--no-browser`).
+### Smart wearables
+
+A project with a `wearable.json` beside its `scene.json` is a smart wearable, served as
+`@dcl/sdk-commands start` serves one:
+
+- `/content/entities/active` and `/content/contents/{scene id}` answer a `wearable` entity whose
+  only pointer is its scene id and whose metadata is `wearable.json`. No parcel pointer returns it
+  and `/about` lists no `scenesUrn` for it, so it does not load as a scene on its parcels.
+- `/preview-wearables` lists each smart wearable as a lambdas wearable: its id is a `urn:` uuid
+  kept until `start` exits, `baseUrl` is this preview's `/content/contents/`, `thumbnail` and
+  `image` name `thumbnail.png`, and every representation of `wearable.json` lists every published
+  file under `male/`, with `mainFile` under `male/` too. `/preview-wearables/{id}` answers the one
+  whose scene id or listed id is `{id}` (empty `data` when none matches).
+- With exactly one smart wearable served, `GET /lambdas/profiles` adds its id to
+  `avatars[0].avatar.wearables` of a catalyst answer holding one profile; other answers and
+  methods pass through.
+- A save sends the scene update with the project's scene id; its JSON text frame carries
+  `sceneType: "smart-wearable"` (`scene` for a scene).
+
+The Explorer runs each listed wearable as a portable experience for either body shape and, on a
+scene update, reads `/preview-wearables/{scene id}` and restarts that wearable on the new files.
+It also shows the player's own avatar wearing each listed wearable, built from the listing in
+place of whatever the avatar wears in that category, and shows the new model after a save. Only
+that client shows it: the player's profile, what other players see and what is deployed keep the
+wearables the player has.
+
+The join block always prints the desktop deep link and the web URL, and `start` opens the Bevy web
+player in a browser. `--explorer-alpha` opens the deep link in the desktop Explorer instead (add
+`--web`, alias `--bevy-web`, for both), and `--mobile` or `--talk` opens no web player. `--mobile`
+adds a scan-to-join QR code for the web URL (also served at `/mobile-preview`). `--ci` and
+`--no-client` launch nothing; `--no-browser` keeps the web player closed.
 `--dclenv zone` points the deep link's `dclenv` and the web explorer at decentraland.zone; `--realm`
 names another realm in the desktop deep links; `--position X,Y` picks the parcel the join links land
 on; `--hub`, `-n` and `--landscape-terrain-enabled` add the matching `=true` deep-link knobs. The
@@ -508,8 +556,9 @@ dcl-scene-cli world access add|remove <name> --user U | --community C
 
 `deploy` signs in a browser on the preview server, or headlessly with `--sign-key FILE` or
 `DCL_PRIVATE_KEY` (the flag wins; every signing command, `unpublish`, `sync`, `storage` and the
-`world` writes included, takes both). Worlds go to the worlds server, parcels to the first healthy
-public catalyst (`--target-server` / `DCL_SCENE_CLI_TARGET_SERVER` override); only content missing
+`world` writes included, takes both). Worlds go to the worlds server; parcels go to the first healthy
+public catalyst when signing in a browser and to `https://peer.decentraland.org` when signing with a
+key (`--target-server` / `DCL_SCENE_CLI_TARGET_SERVER` override both); only content missing
 from `/available-content` is uploaded (`--force-upload` or `DCL_SCENE_CLI_UPLOAD_ALL=1` sends all).
 Before signing, scene.json's media permissions and the 50 MB per-file limit are checked;
 `--skip-validations` skips both, as a custom `--target-server` does implicitly (its limits are its
@@ -703,6 +752,8 @@ notice are `LICENSE.basis_universal` and `NOTICE.basis_universal`.
 
 Ports: 8000 preview, 5147 abgen, 7880-7882 LiveKit. Scene files (never deployed): `bin/`,
 `.dcl-one/`, `.dcl-cache/`, `.dcl-optimized-assets/`.
+
+`@dcl/sdk-commands quests` has no counterpart: the Quests service it drives is legacy.
 
 Environment: `DCL_SCENE_CLI_CATALYST` (default `https://interconnected.online`),
 `DCL_SCENE_CLI_CATALYST_ROTATION`, `DCL_SCENE_CLI_WORLD_BASE`, `DCL_SCENE_CLI_SOCIAL_API`,

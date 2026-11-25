@@ -48,13 +48,20 @@ pub fn locate(project: &Project) -> Option<Prebuilt> {
     })
 }
 
-/// An editor scene's entrypoint calls `initAssetPacks`; a scene can also import
+/// An editor scene's entrypoint calls `initAssetPacks`; a scene that attaches
+/// scripts calls the smart chunk's `runScripts`; a scene can also import
 /// `@dcl/asset-packs/dist/scene-entrypoint` from its own source with no
 /// composite at all (`0,0-cube-spawner` in sdk7-test-scenes), and since the
 /// package is an external of the scene chunk the specifier survives into the
 /// emitted bundle exactly when something reaches it.
 pub fn scene_needs_smart_chunk(project: &Project, scene_chunk: &Path) -> bool {
-    project.is_editor_scene() || chunk_requires(scene_chunk, "@dcl/asset-packs")
+    project.is_editor_scene()
+        || project
+            .root
+            .join(".dcl-one")
+            .join(entrypoint::SCENE_SCRIPTS_FILE)
+            .is_file()
+        || chunk_requires(scene_chunk, "@dcl/asset-packs")
 }
 
 fn chunk_requires(chunk: &Path, package: &str) -> bool {
@@ -97,7 +104,7 @@ pub fn remove_stale_smart_chunk(root: &Path, smart_rel: &str) {
 /// subcommand). The passes differ in entry and externals: core aliases
 /// `~sdk/script-utils` to the no-op stub with nothing external; smart makes
 /// everything core owns external and aliases `~sdk/script-utils` to the *real*
-/// `@dcl/sdk-commands` runtime, so exactly one copy is bundled and the registry
+/// script runtime ([`entrypoint::script_runtime`]), so exactly one copy is bundled and the registry
 /// entry and asset-packs' own import land on the same module instance. Both are
 /// then checked for requires the loader could not serve — `@dcl/sdk/platform`
 /// and `@dcl/sdk/text-codec` were invisible while asset-packs shared the SDK's
@@ -135,22 +142,20 @@ pub async fn build_chunks(dir: &Path, out_core: &Path, out_smart: &Path) -> Resu
     )
     .await?;
 
-    let script_utils = entrypoint::script_utils_source(&project).ok_or_else(|| {
+    let asset_packs = project.node_module("@dcl/asset-packs").ok_or_else(|| {
         anyhow::Error::from(UserError::new(
-            "cannot build the smart-item chunk: the real ~sdk/script-utils runtime is missing",
+            "cannot build the smart-item chunk: @dcl/asset-packs is not installed",
             TrySteps::one(
-                "install @dcl/asset-packs and @dcl/sdk-commands in the blob work tree before building the chunks",
+                "install @dcl/asset-packs in the blob work tree before building the chunks",
             ),
-        )
-        .why("@dcl/sdk-commands/dist/logic/runtime-script.js did not resolve"))
+        ))
     })?;
-    let real_utils = write("script-utils.js", &script_utils)?;
+    let real_utils = write(entrypoint::SCRIPT_UTILS_FILE, &entrypoint::script_runtime())?;
     let smart_entry = write("smart-registry.js", &split::registry_module(smart_keys))?;
-    let mut smart_aliases = Vec::new();
-    if let Some(ap) = project.node_module("@dcl/asset-packs") {
-        smart_aliases.push(("@dcl/asset-packs".to_string(), ap));
-    }
-    smart_aliases.push(("~sdk/script-utils".to_string(), real_utils));
+    let smart_aliases = vec![
+        ("@dcl/asset-packs".to_string(), asset_packs),
+        ("~sdk/script-utils".to_string(), real_utils),
+    ];
     bundle_chunk(
         &project,
         smart_entry,

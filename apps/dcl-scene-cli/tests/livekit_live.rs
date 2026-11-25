@@ -143,6 +143,7 @@ async fn a_livekit_preview_mints_tokens_the_sfu_accepts() {
     let child = Command::new(BIN)
         .args([
             "start",
+            "--no-browser",
             "--dir",
             &root.display().to_string(),
             "--port",

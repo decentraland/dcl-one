@@ -1,4 +1,8 @@
-use std::{str::FromStr, sync::Arc};
+use std::{
+    path::{Path, PathBuf},
+    str::FromStr,
+    sync::Arc,
+};
 
 use crate::{
     spring_bones::{model_spring_bones, spring_bone_models, SpringBoneModel},
@@ -348,6 +352,216 @@ impl CollectibleType for Wearable {
     }
 }
 
+/// Loads the files a wearable's representations name, by asset path.
+pub trait WearableFiles {
+    fn gltf(&mut self, path: PathBuf) -> Handle<Gltf>;
+    fn image(&mut self, path: PathBuf) -> Handle<Image>;
+}
+
+fn gltf_settings(s: &mut GltfLoaderSettings) {
+    s.load_cameras = false;
+    s.load_lights = false;
+    s.load_meshes = RenderAssetUsages::MAIN_WORLD;
+    s.load_materials = RenderAssetUsages::RENDER_WORLD;
+    s.transfer_priority = RenderAssetTransferPriority::Priority(2);
+}
+
+fn image_settings(s: &mut ImageLoaderSettings) {
+    s.asset_usage = RenderAssetUsages::RENDER_WORLD;
+    s.transfer_priority = RenderAssetTransferPriority::Priority(2);
+}
+
+struct LoaderFiles<'a, 'b>(&'a mut bevy::asset::LoadContext<'b>);
+
+impl WearableFiles for LoaderFiles<'_, '_> {
+    fn gltf(&mut self, path: PathBuf) -> Handle<Gltf> {
+        self.0.loader().with_settings(gltf_settings).load(path)
+    }
+
+    fn image(&mut self, path: PathBuf) -> Handle<Image> {
+        self.0.loader().with_settings(image_settings).load(path)
+    }
+}
+
+struct ServerFiles<'a>(&'a AssetServer);
+
+impl WearableFiles for ServerFiles<'_> {
+    fn gltf(&mut self, path: PathBuf) -> Handle<Gltf> {
+        self.0.load_with_settings(path, gltf_settings)
+    }
+
+    fn image(&mut self, path: PathBuf) -> Handle<Image> {
+        self.0.load_with_settings(path, image_settings)
+    }
+}
+
+/// A wearable from its definition: one representation for each body shape a representation
+/// names, keyed by the lowercase body shape urn, its files resolved under `parent` (the folder
+/// of the collection's `collectible.wearable`) and loaded through `files`.
+pub fn build_wearable(
+    meta: WearableMeta,
+    content: &ipfs::ContentMap,
+    hash: String,
+    urn: String,
+    parent: &Path,
+    files: &mut impl WearableFiles,
+) -> Result<Collectible<Wearable>, anyhow::Error> {
+    let category = meta.data.category;
+    let thumbnail = parent
+        .resolve_content_uri(&meta.thumbnail)
+        .to_string_lossy()
+        .into_owned();
+
+    let spring_bones = spring_bone_models(meta.data.spring_bones.as_ref(), &meta.id);
+
+    let mut representations = HashMap::new();
+
+    for representation in meta.data.representations.into_iter() {
+        let spring_bones = model_spring_bones(&spring_bones, content, &representation.main_file);
+
+        let (model, texture, mask) = if category.is_texture {
+            let texture = representation
+                .contents
+                .iter()
+                .find(|f| {
+                    f.to_lowercase().ends_with(".png") && !f.to_lowercase().ends_with("_mask.png")
+                })
+                .map(|f| files.image(parent.resolve_content_uri(f)));
+            let mask = representation
+                .contents
+                .iter()
+                .find(|f| f.to_lowercase().ends_with("_mask.png"))
+                .map(|f| files.image(parent.resolve_content_uri(f)));
+
+            (None, texture, mask)
+        } else {
+            if !representation.main_file.to_lowercase().ends_with(".glb")
+                && !representation.main_file.to_lowercase().ends_with(".gltf")
+            {
+                return Err(anyhow!(
+                    "expected .gl[b|tf] main file, found {}",
+                    representation.main_file
+                ));
+            }
+
+            let model = files.gltf(parent.resolve_content_uri(&representation.main_file));
+
+            (Some(model), None, None)
+        };
+
+        for body_shape in representation.body_shapes {
+            let mut hides: HashSet<_> = if representation.override_hides.is_empty() {
+                &meta.data.hides
+            } else {
+                &representation.override_hides
+            }
+            .iter()
+            .copied()
+            .collect();
+
+            hides.extend(
+                if representation.override_replaces.is_empty() {
+                    &meta.data.replaces
+                } else {
+                    &representation.override_replaces
+                }
+                .iter()
+                .copied(),
+            );
+
+            if category == WearableCategory::SKIN {
+                hides.extend([
+                    WearableCategory::HEAD,
+                    WearableCategory::HAIR,
+                    WearableCategory::FACIAL_HAIR,
+                    WearableCategory::MOUTH,
+                    WearableCategory::EYEBROWS,
+                    WearableCategory::EYES,
+                    WearableCategory::UPPER_BODY,
+                    WearableCategory::LOWER_BODY,
+                    WearableCategory::FEET,
+                    WearableCategory::HAND_WEAR,
+                    WearableCategory::BODY_SHAPE,
+                ]);
+            }
+
+            let keeps_hands = meta
+                .data
+                .removes_default_hiding
+                .as_ref()
+                .map(|removes| removes.iter())
+                .unwrap_or_default()
+                .any(|r| r == "hands");
+            if (category == WearableCategory::UPPER_BODY
+                || hides.contains(&WearableCategory::UPPER_BODY))
+                && !keeps_hands
+            {
+                hides.insert(WearableCategory::HANDS);
+            }
+
+            hides.remove(&category);
+
+            representations.insert(
+                body_shape.to_lowercase(),
+                Wearable {
+                    category,
+                    hides,
+                    model: model.clone().map(|gltf| WearableModel {
+                        gltf,
+                        outline_compatible: meta.data.outline_compatible.unwrap_or(true),
+                        spring_bones: spring_bones.clone(),
+                    }),
+                    texture: texture.clone(),
+                    mask: mask.clone(),
+                },
+            );
+        }
+    }
+
+    Ok(Collectible {
+        data: CollectibleData {
+            thumbnail,
+            hash,
+            urn,
+            name: meta.name.unwrap_or_default(),
+            description: meta.description.unwrap_or_default(),
+            available_representations: representations.keys().cloned().collect(),
+            extra_data: WearableExtraData {
+                category,
+                scene_json_files: scene_json_files(content),
+            },
+        },
+        representations,
+    })
+}
+
+/// A wearable whose definition the engine already holds, its files read from the registered
+/// collection `collection`: a creator preview's wearable, registered with
+/// [`crate::CollectibleManager::add_builtin`] instead of being looked up on a catalyst.
+pub fn inline_wearable(
+    meta: WearableMeta,
+    content: &ipfs::ContentMap,
+    collection: &str,
+    urn: String,
+    assets: &AssetServer,
+) -> Result<Collectible<Wearable>, anyhow::Error> {
+    let definition = PathBuf::from(&ipfs::ipfs_path::IpfsPath::new(
+        ipfs::ipfs_path::IpfsType::new_content_file(
+            collection.to_owned(),
+            format!("collectible.{}", Wearable::extension()),
+        ),
+    ));
+    let parent = definition.parent().unwrap_or(Path::new(""));
+    build_wearable(
+        meta,
+        content,
+        collection.to_owned(),
+        urn,
+        parent,
+        &mut ServerFiles(assets),
+    )
+}
+
 struct WearableLoader;
 
 impl AssetLoader for WearableLoader {
@@ -366,181 +580,17 @@ impl AssetLoader for WearableLoader {
         let mut entity = EntityDefinitionLoader
             .load(reader, settings, load_context)
             .await?;
-        let scene_json_files = scene_json_files(&entity.content);
         let metadata = entity.metadata.ok_or(anyhow!("no metadata?"))?;
         let meta = serde_json::from_value::<WearableMeta>(metadata)?;
-
-        let category = meta.data.category;
-        let thumbnail = load_context
-            .path()
-            .parent()
-            .unwrap()
-            .resolve_content_uri(&meta.thumbnail)
-            .to_string_lossy()
-            .into_owned();
-
-        let spring_bones = spring_bone_models(meta.data.spring_bones.as_ref(), &meta.id);
-
-        let mut representations = HashMap::new();
-
-        for representation in meta.data.representations.into_iter() {
-            // declared for each model file, under that file's content hash
-            let spring_bones =
-                model_spring_bones(&spring_bones, &entity.content, &representation.main_file);
-
-            let (model, texture, mask) = if category.is_texture {
-                // don't validate the main file, as some base wearables have no extension on the main_file member (Eyebrows_09 e.g)
-                let texture = representation
-                    .contents
-                    .iter()
-                    .find(|f| {
-                        f.to_lowercase().ends_with(".png")
-                            && !f.to_lowercase().ends_with("_mask.png")
-                    })
-                    .map(|f| {
-                        let path = load_context.path().parent().unwrap().resolve_content_uri(f);
-                        load_context
-                            .loader()
-                            .with_settings::<ImageLoaderSettings>(|s| {
-                                s.asset_usage = RenderAssetUsages::RENDER_WORLD;
-                                s.transfer_priority = RenderAssetTransferPriority::Priority(2);
-                            })
-                            .load(path)
-                    });
-                let mask = representation
-                    .contents
-                    .iter()
-                    .find(|f| f.to_lowercase().ends_with("_mask.png"))
-                    .map(|f| {
-                        let path = load_context.path().parent().unwrap().resolve_content_uri(f);
-                        load_context
-                            .loader()
-                            .with_settings::<ImageLoaderSettings>(|s| {
-                                s.asset_usage = RenderAssetUsages::RENDER_WORLD;
-                                s.transfer_priority = RenderAssetTransferPriority::Priority(2);
-                            })
-                            .load(path)
-                    });
-
-                (None, texture, mask)
-            } else {
-                if !representation.main_file.to_lowercase().ends_with(".glb")
-                    && !representation.main_file.to_lowercase().ends_with(".gltf")
-                {
-                    return Err(anyhow!(
-                        "expected .gl[b|tf] main file, found {}",
-                        representation.main_file
-                    ));
-                }
-
-                let path = load_context
-                    .path()
-                    .parent()
-                    .unwrap()
-                    .resolve_content_uri(&representation.main_file);
-                let model = load_context
-                    .loader()
-                    .with_settings::<GltfLoaderSettings>(|s| {
-                        s.load_cameras = false;
-                        s.load_lights = false;
-                        s.load_meshes = RenderAssetUsages::MAIN_WORLD;
-                        s.load_materials = RenderAssetUsages::RENDER_WORLD;
-                        s.transfer_priority = RenderAssetTransferPriority::Priority(2);
-                    })
-                    .load(path);
-
-                (Some(model), None, None)
-            };
-
-            for body_shape in representation.body_shapes {
-                let mut hides: HashSet<_> = if representation.override_hides.is_empty() {
-                    &meta.data.hides
-                } else {
-                    &representation.override_hides
-                }
-                .iter()
-                .copied()
-                .collect();
-
-                hides.extend(
-                    if representation.override_replaces.is_empty() {
-                        &meta.data.replaces
-                    } else {
-                        &representation.override_replaces
-                    }
-                    .iter()
-                    .copied(),
-                );
-
-                // add extra hides
-                if category == WearableCategory::SKIN {
-                    hides.extend([
-                        WearableCategory::HEAD,
-                        WearableCategory::HAIR,
-                        WearableCategory::FACIAL_HAIR,
-                        WearableCategory::MOUTH,
-                        WearableCategory::EYEBROWS,
-                        WearableCategory::EYES,
-                        WearableCategory::UPPER_BODY,
-                        WearableCategory::LOWER_BODY,
-                        WearableCategory::FEET,
-                        WearableCategory::HAND_WEAR,
-                        WearableCategory::BODY_SHAPE,
-                    ]);
-                }
-
-                // upper body or hide(upper body) -> hide hands
-                if category == WearableCategory::UPPER_BODY
-                    || hides.contains(&WearableCategory::UPPER_BODY)
-                {
-                    // unless it explicitly removes it
-                    if !meta
-                        .data
-                        .removes_default_hiding
-                        .as_ref()
-                        .map(|removes| removes.iter())
-                        .unwrap_or_default()
-                        .any(|r| r == "hands")
-                    {
-                        hides.insert(WearableCategory::HANDS);
-                    }
-                }
-
-                // remove self
-                hides.remove(&category);
-
-                representations.insert(
-                    body_shape.to_lowercase(),
-                    Wearable {
-                        category,
-                        hides,
-                        model: model.clone().map(|gltf| WearableModel {
-                            gltf,
-                            outline_compatible: meta.data.outline_compatible.unwrap_or(true),
-                            spring_bones: spring_bones.clone(),
-                        }),
-                        texture: texture.clone(),
-                        mask: mask.clone(),
-                    },
-                );
-            }
-        }
-
-        Ok(Collectible {
-            data: CollectibleData {
-                thumbnail,
-                hash: entity.id,
-                urn: entity.pointers.pop().unwrap_or_default(),
-                name: meta.name.unwrap_or_default(),
-                description: meta.description.unwrap_or_default(),
-                available_representations: representations.keys().cloned().collect(),
-                extra_data: WearableExtraData {
-                    category,
-                    scene_json_files: scene_json_files.clone(),
-                },
-            },
-            representations,
-        })
+        let parent = load_context.path().parent().unwrap().to_path_buf();
+        build_wearable(
+            meta,
+            &entity.content,
+            entity.id,
+            entity.pointers.pop().unwrap_or_default(),
+            &parent,
+            &mut LoaderFiles(load_context),
+        )
     }
 }
 
@@ -689,5 +739,112 @@ mod screenshot_reference_tests {
         ] {
             assert!(!screenshot_reference(&AssetPath::parse(path)), "{path}");
         }
+    }
+}
+
+#[cfg(test)]
+mod build_tests {
+    use super::*;
+    use ipfs::ContentMap;
+    use std::path::{Path, PathBuf};
+
+    const MALE: &str = "urn:decentraland:off-chain:base-avatars:BaseMale";
+    const FEMALE: &str = "urn:decentraland:off-chain:base-avatars:BaseFemale";
+
+    #[derive(Default)]
+    struct Recorder(Vec<PathBuf>);
+
+    impl WearableFiles for Recorder {
+        fn gltf(&mut self, path: PathBuf) -> Handle<Gltf> {
+            self.0.push(path);
+            Handle::default()
+        }
+
+        fn image(&mut self, path: PathBuf) -> Handle<Image> {
+            self.0.push(path);
+            Handle::default()
+        }
+    }
+
+    /// A wearable whose definition the engine already holds (a creator preview's) is built as a
+    /// deployed one is: a representation for each body shape it names, each loading that body's
+    /// model from the collection, with the hides its definition gives.
+    #[test]
+    fn a_held_definition_builds_the_wearable_for_each_body() {
+        let representation = |body: &str, main: &str| {
+            serde_json::json!({
+                "bodyShapes": [body],
+                "mainFile": main,
+                "overrideHides": [],
+                "overrideReplaces": [],
+                "contents": [main]
+            })
+        };
+        let meta: WearableMeta = serde_json::from_value(serde_json::json!({
+            "id": "urn:6f1d3c2e-0000-4000-8000-000000000003",
+            "name": "Preview Hat",
+            "thumbnail": "",
+            "data": {
+                "tags": [],
+                "category": "hat",
+                "hides": ["hair"],
+                "replaces": ["eyewear"],
+                "representations": [
+                    representation(MALE, "male/model.glb"),
+                    representation(FEMALE, "female/model.glb")
+                ]
+            }
+        }))
+        .unwrap();
+        let content = ContentMap::from_content([
+            ("male/model.glb".to_owned(), "b64-m".to_owned()),
+            ("female/model.glb".to_owned(), "b64-m".to_owned()),
+            ("male/scene.json".to_owned(), "b64-s".to_owned()),
+        ]);
+        let parent = Path::new("$content_file/abc-preview");
+        let mut files = Recorder::default();
+
+        let collectible = build_wearable(
+            meta,
+            &content,
+            "abc-preview".to_owned(),
+            "urn:decentraland:off-chain:preview:abc".to_owned(),
+            parent,
+            &mut files,
+        )
+        .unwrap();
+
+        let mut bodies: Vec<&String> = collectible.representations.keys().collect();
+        bodies.sort();
+        assert_eq!(
+            bodies,
+            [&FEMALE.to_lowercase(), &MALE.to_lowercase()],
+            "keyed as the avatar asks, by lowercase body urn"
+        );
+        for wearable in collectible.representations.values() {
+            assert_eq!(wearable.category, WearableCategory::HAT);
+            assert_eq!(
+                wearable.hides,
+                HashSet::from_iter([WearableCategory::HAIR, WearableCategory::EYEWEAR])
+            );
+            assert!(wearable.model.is_some());
+        }
+        assert_eq!(
+            files.0,
+            vec![
+                parent.resolve_content_uri("male/model.glb"),
+                parent.resolve_content_uri("female/model.glb"),
+            ]
+        );
+        assert_eq!(
+            collectible.data.urn,
+            "urn:decentraland:off-chain:preview:abc"
+        );
+        assert_eq!(collectible.data.hash, "abc-preview");
+        assert_eq!(collectible.data.name, "Preview Hat");
+        assert_eq!(
+            collectible.data.extra_data.scene_json_files,
+            vec!["male/scene.json".to_owned()]
+        );
     }
 }

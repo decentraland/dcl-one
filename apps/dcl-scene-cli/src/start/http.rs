@@ -4,7 +4,8 @@ use super::{
 use crate::deploy::collect_publishable_files;
 use crate::live_reload::ReloadFrame;
 use crate::scene::{
-    Project, b64_content_hash_in_root, b64_hash_in_root, b64_unhash, hash_path_part, root_tag,
+    Project, b64_content_hash_in_root, b64_hash_in_root, b64_unhash, hash_path_part,
+    is_smart_wearable, root_tag,
 };
 use crate::signed_fetch::{AUTH_CHAIN_HEADER_PREFIX, AUTH_METADATA_HEADER};
 use axum::{
@@ -171,6 +172,7 @@ pub(super) async fn about(State(st): State<Arc<AppState>>, req: Request) -> Json
     let parcels: Vec<String> = projects.iter().flat_map(|p| p.parcels()).collect();
     let scenes_urn: Vec<String> = projects
         .iter()
+        .filter(|p| !is_smart_wearable(&p.root))
         .map(|p| {
             format!(
                 "urn:decentraland:entity:{}?=&baseUrl={origin}/content/contents/",
@@ -388,9 +390,8 @@ pub(super) async fn feature_flags(AxPath(file): AxPath<String>) -> Response {
     super::proxy::passthrough(Method::GET, &format!("{base}/{file}")).await
 }
 
-/// The smart-wearable manifests in this workspace, content URLs rebased onto
-/// the preview origin. Upstream deprecates it for `/content/entities/active`;
-/// kept for older explorer builds.
+/// Upstream's `/preview-wearables`: each smart-wearable project as a lambdas
+/// wearable, its files served by this preview.
 pub(super) async fn preview_wearables(
     State(st): State<Arc<AppState>>,
     headers: HeaderMap,
@@ -403,8 +404,8 @@ pub(super) async fn preview_wearables(
 }
 
 /// `/preview-wearables/{id}`: the wearable whose project has that scene id
-/// (what upstream keys the route on), else the one whose `wearable.json`
-/// carries it. `data` is empty when neither matches, like upstream.
+/// (what upstream keys the route on), else the one listed under that id.
+/// `data` is empty when neither matches, like upstream.
 pub(super) async fn preview_wearable(
     State(st): State<Arc<AppState>>,
     AxPath(id): AxPath<String>,
@@ -427,39 +428,110 @@ pub(super) async fn preview_wearable(
     Json(json!({ "ok": true, "data": data }))
 }
 
-/// One entry per project with a readable `wearable.json`; a plain scene
-/// contributes nothing, so the route answers `{ok: true, data: []}` like
-/// upstream. The contents are the project's scene entity's (the same walk
-/// and the same reversible path hashes), so the entity memo serves both.
+/// The ids `/preview-wearables` lists.
+pub(super) fn preview_wearable_ids(st: &AppState) -> Vec<String> {
+    collect_preview_wearables(&st.projects(), "", |p| scene_entity_cached(st, p))
+        .iter()
+        .filter_map(|w| Some(w.get("id")?.as_str()?.to_string()))
+        .collect()
+}
+
+/// One entry per smart-wearable project whose `wearable.json` parses; a plain
+/// scene contributes nothing. Every representation lists every file of the
+/// project's entity under `male/`, as upstream does.
 fn collect_preview_wearables(
     projects: &[Project],
     base: &str,
     entity_of: impl Fn(&Project) -> Value,
 ) -> Vec<Value> {
-    let mut out = Vec::new();
-    for p in projects {
-        let Ok(text) = std::fs::read_to_string(p.root.join("wearable.json")) else {
-            continue;
-        };
-        let Ok(mut wearable) = serde_json::from_str::<Value>(&text) else {
-            continue;
-        };
-        let entity = entity_of(p);
-        let contents: Vec<Value> = entity
-            .get("content")
-            .and_then(Value::as_array)
-            .into_iter()
-            .flatten()
-            .filter_map(|c| Some((c.get("file")?.as_str()?, c.get("hash")?.as_str()?)))
-            .map(|(rel, hash)| json!({ "key": rel, "url": format!("{base}/{hash}"), "hash": hash }))
-            .collect();
-        if let Some(obj) = wearable.as_object_mut() {
-            obj.insert("baseUrl".into(), json!(base));
-            obj.insert("contents".into(), json!(contents));
-        }
-        out.push(wearable);
-    }
-    out
+    projects
+        .iter()
+        .filter(|p| is_smart_wearable(&p.root))
+        .filter_map(|p| lambdas_wearable(p, &entity_of(p), base))
+        .collect()
+}
+
+fn lambdas_wearable(project: &Project, entity: &Value, base: &str) -> Option<Value> {
+    let wearable = read_wearable_json(&project.root)?;
+    let files: Vec<(&str, &str)> = entity
+        .get("content")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(|c| Some((c.get("file")?.as_str()?, c.get("hash")?.as_str()?)))
+        .collect();
+    let contents: Vec<Value> = files
+        .iter()
+        .map(|(file, hash)| json!({ "key": format!("male/{file}"), "url": format!("{base}/{hash}"), "hash": hash }))
+        .collect();
+    let thumbnail = files
+        .iter()
+        .find(|(file, _)| *file == "thumbnail.png")
+        .map(|(_, hash)| format!("{base}/{hash}"))
+        .unwrap_or_default();
+    let data = &wearable["data"];
+    let representations: Vec<Value> = data["representations"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .map(|r| {
+            let mut r = r.clone();
+            let main = format!("male/{}", r["mainFile"].as_str().unwrap_or_default());
+            if let Some(obj) = r.as_object_mut() {
+                obj.insert("mainFile".into(), json!(main));
+                obj.insert("contents".into(), json!(contents));
+            }
+            r
+        })
+        .collect();
+    let name = wearable["name"].as_str().unwrap_or_default();
+    Some(json!({
+        "id": preview_wearable_urn(&project.root),
+        "rarity": wearable["rarity"],
+        "i18n": [{ "code": "en", "text": name }],
+        "description": wearable["description"],
+        "thumbnail": thumbnail,
+        "image": thumbnail,
+        "collectionAddress": "0x0",
+        "baseUrl": format!("{base}/"),
+        "name": name,
+        "data": {
+            "category": data["category"],
+            "replaces": [],
+            "hides": [],
+            "tags": [],
+            "representations": representations,
+        },
+    }))
+}
+
+fn read_wearable_json(root: &Path) -> Option<Value> {
+    serde_json::from_str(&std::fs::read_to_string(root.join("wearable.json")).ok()?).ok()
+}
+
+/// The `urn:` uuid a smart-wearable root is listed under, minted once per run
+/// as upstream does.
+fn preview_wearable_urn(root: &Path) -> String {
+    static URNS: OnceLock<Mutex<HashMap<PathBuf, String>>> = OnceLock::new();
+    URNS.get_or_init(Default::default)
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner)
+        .entry(root.to_path_buf())
+        .or_insert_with(|| format!("urn:{}", random_uuid()))
+        .clone()
+}
+
+fn random_uuid() -> String {
+    let bits = rand::random::<u128>() & !(0xf << 76) & !(0x3 << 62) | (0x4 << 76) | (0x2 << 62);
+    let hex = format!("{bits:032x}");
+    format!(
+        "{}-{}-{}-{}-{}",
+        &hex[..8],
+        &hex[8..12],
+        &hex[12..16],
+        &hex[16..20],
+        &hex[20..]
+    )
 }
 
 fn not_found() -> Response {
@@ -724,14 +796,24 @@ pub(super) fn build_scene_entity(project: &Project, machine: &str) -> Value {
         .duration_since(UNIX_EPOCH)
         .map(|d| d.as_millis() as i64)
         .unwrap_or(0);
+    let id = scene_id_for(project, machine);
+    let (kind, pointers, metadata) = if is_smart_wearable(root) {
+        (
+            "wearable",
+            vec![id.clone()],
+            read_wearable_json(root).unwrap_or(Value::Null),
+        )
+    } else {
+        ("scene", project.parcels(), project.scene_json.clone())
+    };
     json!({
         "version": "v3",
-        "type": "scene",
-        "id": scene_id_for(project, machine),
-        "pointers": project.parcels(),
+        "type": kind,
+        "id": id,
+        "pointers": pointers,
         "timestamp": ts,
         "content": content,
-        "metadata": project.scene_json,
+        "metadata": metadata,
     })
 }
 
@@ -1503,73 +1585,6 @@ mod tests {
             build_scene_entity(p, "m")
         });
         assert!(out.is_empty());
-    }
-
-    #[test]
-    fn a_smart_wearable_is_listed_with_preview_resolvable_urls() {
-        let tmp = Tmp::new("sw");
-        std::fs::write(tmp.0.join("scene.json"), "{}").unwrap();
-        std::fs::write(
-            tmp.0.join("wearable.json"),
-            r#"{"id":"urn:x","data":{"category":"eyewear"}}"#,
-        )
-        .unwrap();
-        std::fs::write(tmp.0.join("model.glb"), b"glb").unwrap();
-        let out = collect_preview_wearables(&[project_at(tmp.0.clone())], "http://x/c", |p| {
-            build_scene_entity(p, "m")
-        });
-        assert_eq!(out.len(), 1);
-        assert_eq!(out[0]["id"], "urn:x");
-        assert_eq!(out[0]["baseUrl"], "http://x/c");
-        let contents = out[0]["contents"].as_array().unwrap();
-        let model = contents
-            .iter()
-            .find(|c| c["key"] == "model.glb")
-            .expect("model.glb listed");
-        let abs = tmp.0.join("model.glb").display().to_string();
-        assert_eq!(model["hash"], json!(b64_content_hash(&abs, "m")));
-        assert_eq!(
-            model["url"],
-            json!(format!("http://x/c/{}", b64_content_hash(&abs, "m")))
-        );
-        assert_eq!(
-            b64_unhash(model["hash"].as_str().unwrap()).unwrap(),
-            (root_tag(&tmp.0, "m"), "model.glb".to_string()),
-            "the url has to name the file inside the wearable's own root, or \
-             /content/contents cannot find it"
-        );
-    }
-
-    #[tokio::test]
-    async fn one_wearable_answers_to_its_id_and_to_its_scene_id() {
-        let tmp = Tmp::new("swid");
-        std::fs::write(tmp.0.join("scene.json"), "{}").unwrap();
-        std::fs::write(
-            tmp.0.join("wearable.json"),
-            r#"{"id":"urn:x","data":{"category":"eyewear"}}"#,
-        )
-        .unwrap();
-        std::fs::write(tmp.0.join("model.glb"), b"glb").unwrap();
-        let project = project_at(tmp.0.clone());
-        let st = contents_state(vec![project.clone()]);
-        let ask = |id: &str| {
-            let st = st.clone();
-            let id = id.to_string();
-            async move {
-                preview_wearable(State(st), AxPath(id), HeaderMap::new())
-                    .await
-                    .0
-            }
-        };
-        for id in ["urn:x", &scene_id_for(&project, "m")] {
-            let out = ask(id).await;
-            assert_eq!(out["ok"], true);
-            assert_eq!(out["data"].as_array().unwrap().len(), 1, "{id}");
-            assert_eq!(out["data"][0]["id"], "urn:x", "{id}");
-        }
-        let out = ask("urn:somebody-else").await;
-        assert_eq!(out["ok"], true);
-        assert!(out["data"].as_array().unwrap().is_empty());
     }
 
     #[test]

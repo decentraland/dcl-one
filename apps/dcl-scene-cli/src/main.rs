@@ -22,6 +22,29 @@ fn parse_position(raw: &str) -> Result<(i64, i64), String> {
     Ok((num(x)?, num(y)?))
 }
 
+/// Whether `start` should open the Bevy web player: when asked with `--web`, or
+/// by default when no other client (`--explorer-alpha`, `--mobile`, `--talk`) is.
+fn wants_web(explorer_alpha: bool, web: bool, mobile: bool, talk: bool) -> bool {
+    web || !(explorer_alpha || mobile || talk)
+}
+
+/// The (desktop, web) clients `start` launches; `--ci` and `--no-client` stop
+/// both, `--no-browser` the web player.
+fn launch_choice(
+    explorer_alpha: bool,
+    web: bool,
+    mobile: bool,
+    talk: bool,
+    no_browser: bool,
+    no_client: bool,
+    ci: bool,
+) -> (bool, bool) {
+    (
+        explorer_alpha && !ci && !no_client,
+        wants_web(explorer_alpha, web, mobile, talk) && !no_browser && !ci && !no_client,
+    )
+}
+
 fn ci_mode(flag: bool) -> bool {
     if flag {
         ux::set_ci(true);
@@ -701,8 +724,8 @@ enum Command {
     },
     /// Build the prebuilt SDK runtime chunks for the vendored blob: a step of
     /// `scripts/build-base-blob.py`, so `--dir` must be a throwaway scene whose
-    /// `node_modules` is the full install tree (including `@dcl/asset-packs`
-    /// and `@dcl/sdk-commands`, which the blob itself does not ship).
+    /// `node_modules` is the full install tree (including `@dcl/asset-packs`,
+    /// which the blob itself does not ship).
     #[command(hide = true)]
     VendorChunks {
         #[arg(long, default_value = ".")]
@@ -1223,16 +1246,17 @@ async fn run(command: Command) -> Result<()> {
                 room: livekit_room.clone(),
                 offline_comms,
             })?;
-            let launch_desktop = explorer_alpha && !ci && !no_client;
-            let launch_web = web && !no_browser && !ci && !no_client;
+            let (launch_desktop, launch_web) =
+                launch_choice(explorer_alpha, web, mobile, talk, no_browser, no_client, ci);
+            let wants_web = wants_web(explorer_alpha, web, mobile, talk);
             for (given, note) in [
                 (
-                    no_browser && !talk && !web && !ci,
-                    "--no-browser has no effect without --talk or --web (dcl-scene-cli opens a browser only for those)",
+                    no_browser && !talk && !wants_web && !ci,
+                    "--no-browser has no effect with --explorer-alpha or --mobile (no browser opens then)",
                 ),
                 (
-                    no_client && !explorer_alpha && !web,
-                    "--no-client has no effect without --explorer-alpha or --web (dcl-scene-cli launches a client only when asked)",
+                    no_client && !explorer_alpha && !wants_web,
+                    "--no-client has no effect with --mobile or --talk (no client launches then)",
                 ),
                 (
                     explorer_alpha && !launch_desktop,
@@ -1731,6 +1755,46 @@ mod tests {
             Command::Start { talk, player, .. } => (talk, player),
             _ => panic!("not a start command"),
         }
+    }
+
+    /// (desktop, web) launches of a parsed `start`.
+    fn launches(args: &[&str]) -> (bool, bool) {
+        match parse(args) {
+            Command::Start {
+                explorer_alpha,
+                web,
+                mobile,
+                talk,
+                no_browser,
+                no_client,
+                ci,
+                ..
+            } => launch_choice(explorer_alpha, web, mobile, talk, no_browser, no_client, ci),
+            _ => panic!("not a start command"),
+        }
+    }
+
+    /// `start` opens the Bevy web player unless the creator picks another
+    /// client or asks for none, as Creator Hub's Bevy preview does.
+    #[test]
+    fn start_opens_the_bevy_web_player_unless_told_otherwise() {
+        assert_eq!(launches(&[]), (false, true));
+        assert_eq!(launches(&["--bevy-web"]), (false, true));
+        assert_eq!(launches(&["--explorer-alpha"]), (true, false));
+        assert_eq!(launches(&["--explorer-alpha", "--web"]), (true, true));
+        for quiet in [
+            ["--mobile"],
+            ["--talk"],
+            ["--no-browser"],
+            ["--no-client"],
+            ["--ci"],
+        ] {
+            assert_eq!(launches(&quiet), (false, false), "{quiet:?}");
+        }
+        assert_eq!(
+            launches(&["--explorer-alpha", "--no-browser"]),
+            (true, false)
+        );
     }
 
     /// Every flag `@dcl/sdk-commands` documents parses here under the same

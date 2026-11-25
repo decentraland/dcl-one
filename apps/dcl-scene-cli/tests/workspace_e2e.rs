@@ -143,6 +143,7 @@ async fn two_member_workspace_builds_serves_and_reloads_per_member() {
     let child = Command::new(BIN)
         .args([
             "start",
+            "--no-browser",
             "--dir",
             &root_str,
             "--port",

@@ -73,7 +73,7 @@ const LIB_PACKAGE_JSON: &str = include_str!("templates/init/library/package.json
 const LIB_TSCONFIG: &str = include_str!("templates/init/library/tsconfig.json");
 const LIB_INDEX_TS: &str = include_str!("templates/init/library/index.ts");
 const LIB_README: &str = include_str!("templates/init/library/README.md");
-const VENDORED_NODE_MODULES: &[u8] = include_bytes!("vendor/node_modules.zip");
+pub(crate) const VENDORED_NODE_MODULES: &[u8] = include_bytes!("vendor/node_modules.zip");
 
 const INSTALLED_NOTE: &str = "Installed node_modules from the vendored SDK — no npm needed";
 const KEPT_NOTE: &str = "node_modules was installed by another tool and is kept — nothing to do (remove node_modules, then run this command again, to get the vendored SDK)";
@@ -1114,14 +1114,19 @@ fn parse_kind_choice(answer: &str) -> Result<ProjectKind> {
     }
 }
 
-pub fn scaffold_files(kind: ProjectKind, title: &str) -> Vec<FileSpec> {
-    let slug = project_slug(title);
-    let description = match kind {
+/// The `display.description` `init` writes for `kind`.
+pub fn default_description(kind: ProjectKind) -> &'static str {
+    match kind {
         ProjectKind::Scene => "A new Decentraland scene.",
         ProjectKind::SmartWearable => "A new Decentraland smart wearable.",
         ProjectKind::PxTemplate => "A new Decentraland portable experience.",
         ProjectKind::Library => "A new Decentraland SDK library.",
-    };
+    }
+}
+
+pub fn scaffold_files(kind: ProjectKind, title: &str) -> Vec<FileSpec> {
+    let slug = project_slug(title);
+    let description = default_description(kind);
     let sub = |template: &str| {
         template
             .replace("{{TITLE}}", title)

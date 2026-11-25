@@ -63,6 +63,9 @@ struct Fixture {
     /// kept in the fixture dir, so there is one source of truth: (path under
     /// that testdata/, path in the scene).
     staged: &'static [(&'static str, &'static str)],
+    /// Lines the runtime tier must print, asserted before the snapshot so an
+    /// `UPDATE_GOLDEN` run cannot record their absence as the expected output.
+    runtime_expects: &'static [&'static str],
 }
 
 impl Fixture {
@@ -72,7 +75,13 @@ impl Fixture {
             production: true,
             custom_entry_point: false,
             staged: &[],
+            runtime_expects: &[],
         }
+    }
+
+    const fn expecting(mut self, lines: &'static [&'static str]) -> Self {
+        self.runtime_expects = lines;
+        self
     }
 
     const fn development(mut self) -> Self {
@@ -136,7 +145,10 @@ async fn ui_production() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn smart_item_production() {
-    golden(Fixture::new("smart-item")).await;
+    golden(Fixture::new("smart-item").expecting(&[
+        "CONSOLE(log): counter script started on entity 512 from assets/scene/Scripts",
+    ]))
+    .await;
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -177,7 +189,15 @@ async fn golden(fixture: Fixture) {
     .unwrap_or_else(|e| panic!("{} failed to build: {e:#}", fixture.stem()));
 
     let mut text = render_static(&fixture, &built);
-    text.push_str(&run_runtime(&node, &built.project.root));
+    let runtime = run_runtime(&node, &built.project.root);
+    for line in fixture.runtime_expects {
+        assert!(
+            runtime.contains(line),
+            "{}: the runtime did not print {line:?}\n{runtime}",
+            fixture.stem()
+        );
+    }
+    text.push_str(&runtime);
     compare(&fixture, &text);
 }
 
@@ -265,7 +285,8 @@ fn sweep_dead_extractions(parent: &Path) {
     }
 }
 
-/// A private copy of the fixture with the shared toolchain symlinked in.
+/// A private copy of the fixture with the shared toolchain linked in, except
+/// `@dcl/js-runtime`, which a build with scripts writes its types into.
 fn stage(fixture: &Fixture) -> PathBuf {
     let modules = node_modules_src().join("node_modules");
     let root = work_dir().join(fixture.stem());
@@ -277,8 +298,21 @@ fn stage(fixture: &Fixture) -> PathBuf {
         std::fs::copy(authoring_testdata().join(from), &dst)
             .unwrap_or_else(|e| panic!("staging {from}: {e}"));
     }
-    std::os::unix::fs::symlink(modules, root.join("node_modules")).expect("linking node_modules");
+    link_entries(&modules, &root.join("node_modules"));
     root
+}
+
+fn link_entries(from: &Path, to: &Path) {
+    std::fs::create_dir_all(to).unwrap_or_else(|e| panic!("creating {}: {e}", to.display()));
+    for entry in std::fs::read_dir(from).unwrap().flatten() {
+        let (src, dst) = (entry.path(), to.join(entry.file_name()));
+        match entry.file_name().to_str() {
+            Some("@dcl") => link_entries(&src, &dst),
+            Some("js-runtime") if from.ends_with("@dcl") => copy_tree(&src, &dst),
+            _ => std::os::unix::fs::symlink(&src, &dst)
+                .unwrap_or_else(|e| panic!("linking {}: {e}", dst.display())),
+        }
+    }
 }
 
 fn copy_tree(from: &Path, to: &Path) {
@@ -378,11 +412,12 @@ fn render_entrypoint(out: &mut String, root: &Path, fixture: &Fixture, scene_rel
     let composites = std::fs::read_to_string(dir.join("all-composites.js"))
         .map(|s| s.matches(".composite':").count())
         .unwrap_or(0);
-    let script_utils = match std::fs::read_to_string(dir.join("script-utils.js")).as_deref() {
-        Ok(entrypoint::SCRIPT_UTILS_STUB) => "stub",
-        Ok(_) => "runtime",
-        Err(_) => "-",
-    };
+    let script_utils =
+        match std::fs::read_to_string(dir.join(entrypoint::SCRIPT_UTILS_FILE)).as_deref() {
+            Ok(entrypoint::SCRIPT_UTILS_STUB) => "stub",
+            Ok(_) => "runtime",
+            Err(_) => "-",
+        };
     let _ = writeln!(
         out,
         "ENTRYPOINT .dcl-one/entrypoint.ts main={} composites={composites} script-utils={script_utils}",

@@ -111,6 +111,7 @@ async fn failed_initial_build_keeps_serving_and_recovers_on_fix() {
     let child = Command::new(BIN)
         .args([
             "start",
+            "--no-browser",
             "--dir",
             &root_str,
             "--port",

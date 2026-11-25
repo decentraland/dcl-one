@@ -262,7 +262,10 @@ fn g3_sdk6_scene() {
 #[test]
 fn g4_missing_main() {
     let f = Fixture::new("g4");
-    f.write("scene.json", r#"{"runtimeVersion":"7"}"#);
+    f.write(
+        "scene.json",
+        r#"{"runtimeVersion":"7","scene":{"parcels":["0,0"],"base":"0,0"}}"#,
+    );
     let dir = f.dir_arg();
     let args = ["build", "--dir", &dir];
     let out = run(&args, &[]);
@@ -315,7 +318,10 @@ fn g6_missing_node_modules() {
 #[test]
 fn g7_main_is_a_directory() {
     let f = Fixture::new("g7");
-    f.write("scene.json", r#"{"main":"bin","runtimeVersion":"7"}"#);
+    f.write(
+        "scene.json",
+        r#"{"main":"bin","runtimeVersion":"7","scene":{"parcels":["0,0"],"base":"0,0"}}"#,
+    );
     f.mkdir("bin");
     let dir = f.dir_arg();
     let args = ["build", "--dir", &dir];
@@ -348,16 +354,13 @@ fn g8_port_already_in_use() {
 }
 
 #[test]
-fn g9_headless_key_requires_explicit_target() {
+fn g9_headless_key_unpublish_requires_explicit_target() {
     let f = Fixture::new("g9");
-    f.write("scene.json", SCENE_OK);
-    f.write("bin/index.js", "module.exports = {}\n");
     let key = (
         "DCL_PRIVATE_KEY",
         "0x59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d",
     );
-    let dir = f.dir_arg();
-    let args = ["deploy", "--dir", &dir, "--skip-build"];
+    let args = ["unpublish", "--parcel", "0,0"];
     let out = run(&args, &[key]);
     assert_contract(&out, f.path(), "no deploy target given");
     let err = stderr_of(&out);
@@ -614,6 +617,7 @@ fn g24_tunnel_unreachable_warns_and_keeps_serving() {
     let mut cmd = cli(
         &[
             "start",
+            "--no-browser",
             "--dir",
             &dir,
             "--port",
@@ -821,7 +825,7 @@ fn g29_main_is_not_a_js_bundle() {
     let f = Fixture::new("g29");
     f.write(
         "scene.json",
-        r#"{"main":"src/index.ts","runtimeVersion":"7"}"#,
+        r#"{"main":"src/index.ts","runtimeVersion":"7","scene":{"parcels":["0,0"],"base":"0,0"}}"#,
     );
     let dir = f.dir_arg();
     let args = ["build", "--dir", &dir];

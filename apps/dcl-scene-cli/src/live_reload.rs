@@ -22,10 +22,12 @@ pub enum ReloadFrame {
     Binary(Vec<u8>),
 }
 
-pub fn scene_update_json(scene_id: &str) -> String {
+/// The legacy JSON twin of a scene update; `scene_type` is upstream's project
+/// kind, `scene` or `smart-wearable`.
+pub fn scene_update_json(scene_id: &str, scene_type: &str) -> String {
     json!({
         "type": "SCENE_UPDATE",
-        "payload": { "sceneId": scene_id, "sceneType": "scene" }
+        "payload": { "sceneId": scene_id, "sceneType": scene_type }
     })
     .to_string()
 }
@@ -108,6 +110,14 @@ pub fn model_src(root: &Path, path: &Path) -> String {
         .replace('\\', "/")
 }
 
+fn scene_type(root: &Path) -> &'static str {
+    if crate::scene::is_smart_wearable(root) {
+        "smart-wearable"
+    } else {
+        "scene"
+    }
+}
+
 pub fn reload_frames(
     root: &Path,
     scene_id: &str,
@@ -131,7 +141,7 @@ pub fn reload_frames(
         }
     };
     vec![
-        ReloadFrame::Text(scene_update_json(scene_id)),
+        ReloadFrame::Text(scene_update_json(scene_id, scene_type(root))),
         ReloadFrame::Binary(binary),
     ]
 }
@@ -224,6 +234,26 @@ mod tests {
             frames[1],
             ReloadFrame::Binary(update_scene_frame("scene-1"))
         );
+    }
+
+    #[test]
+    fn a_save_in_a_smart_wearable_project_announces_a_smart_wearable() {
+        let tmp = crate::scene::Tmp::new("reload-sw");
+        tmp.write("scene.json", "{}");
+        tmp.write("wearable.json", "{}");
+        let frames = reload_frames(&tmp.0, "sw-1", "host", &ReloadEvent::Scene);
+        let ReloadFrame::Text(text) = &frames[0] else {
+            panic!("text frame first: {frames:?}");
+        };
+        let v: serde_json::Value = serde_json::from_str(text).unwrap();
+        assert_eq!(
+            v,
+            json!({
+                "type": "SCENE_UPDATE",
+                "payload": { "sceneId": "sw-1", "sceneType": "smart-wearable" }
+            })
+        );
+        assert_eq!(frames[1], ReloadFrame::Binary(update_scene_frame("sw-1")));
     }
 
     #[test]

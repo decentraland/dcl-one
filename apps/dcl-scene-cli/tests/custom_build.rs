@@ -496,7 +496,7 @@ async fn output_path_and_symlinks_cannot_escape_the_scene() {
     );
     s.write(
         "scene.json",
-        &json!({"runtimeVersion":"7", "main":"../outside.js"}).to_string(),
+        &json!({"runtimeVersion":"7", "main":"../outside.js", "scene":{"parcels":["0,0"], "base":"0,0"}}).to_string(),
     );
     assert!(
         build::build(&s.opts())
