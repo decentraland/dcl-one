@@ -312,6 +312,24 @@ describe("talking to the iframe", () => {
     expect(params().has("unity")).toBe(false);
   });
 
+  test("Unity that neither draws nor fails within 45 seconds gives way to Babylon", () => {
+    vi.useFakeTimers();
+    try {
+      render(<ItemPreview item={item()} renderer="full" />);
+      expect(params().get("unity")).toBe("true");
+      fromPreview({ type: "ready" });
+      act(() => vi.advanceTimersByTime(45_000));
+      expect(params().has("unity")).toBe(false);
+      expect(thumb()).not.toBeNull();
+
+      // Babylon is given no timeout: it says when it fails.
+      act(() => vi.advanceTimersByTime(10 * 60_000));
+      expect(frame()).not.toBeNull();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   test("Babylon failing leaves the thumbnail with the unavailable note", () => {
     flag(false);
     render(<ItemPreview item={item()} renderer="full" />);

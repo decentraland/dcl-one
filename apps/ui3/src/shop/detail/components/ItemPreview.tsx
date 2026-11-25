@@ -174,6 +174,10 @@ function ExplorerItemPreview({ item, avatarShape = null, renderer }: ItemPreview
   );
 }
 
+// Unity that has neither drawn nor failed by then gives way to Babylon: when it cannot read its config it shows the error
+// on its own canvas and tells the page nothing. The three.js preview this replaced allowed a load the same 45 seconds.
+const UNITY_LOAD_TIMEOUT_MS = 45_000;
+
 // The web preview, as decentraland.org's Shop draws it (shop@3a322cf9 ItemPreview): the shopper's own avatar when it
 // can wear the item, otherwise a default one of a shape the item fits; the item alone in the item view; an emote on the
 // avatar. The Unity renderer where the `unity-wearable-preview` flag and this device allow it, Babylon otherwise and
@@ -255,6 +259,7 @@ function WebItemPreview({ item, avatarShape = null, renderer }: ItemPreviewProps
           key={frame}
           options={options}
           replay={replay}
+          loadTimeoutMs={unity ? UNITY_LOAD_TIMEOUT_MS : undefined}
           onLoad={(by) => setDrawn({ scene, by: by ?? (unity ? "unity" : "babylon") })}
           onError={() => {
             // The item alone failed where the avatar had drawn: back to the avatar, in a fresh frame. Before the
