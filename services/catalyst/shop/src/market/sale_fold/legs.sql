@@ -17,7 +17,7 @@ WITH execution AS MATERIALIZED (
     UNION ALL
     SELECT e.network, e.block_number, e.log_index, l.ordinal, 'mint', l.contract_address,
            s.token_id, l.item_id, NULL, l.beneficiary, l.price, NULL, NULL, NULL
-    FROM execution e JOIN shop.store_sale_line l ON (l.block_number,l.bought_log) = (e.block_number,e.log_index)
+    FROM execution e JOIN shop.verified_store_sale_line l ON (l.block_number,l.bought_log) = (e.block_number,e.log_index)
     LEFT JOIN shop.sale_event s ON s.network = e.network AND s.block_number = l.block_number
       AND s.log_index = l.issue_log AND s.tx_hash = l.tx_hash AND s.kind = 'mint'
     WHERE e.kind = 'store'

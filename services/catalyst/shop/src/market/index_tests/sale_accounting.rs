@@ -257,6 +257,23 @@ async fn sales_accounting_publishes_one_common_prefix_and_rechecks_inputs_after_
         .await
         .unwrap()
     );
+    // A second late arrival must preserve a confirmed receipt between the
+    // old discovery boundary and the new one.
+    let between = block as i64 - 2;
+    sqlx::query("INSERT INTO shop.sale_execution(network,block_number,log_index,tx_hash,venue,kind,block_time,receipt_read)
+        VALUES('ethereum',$1,2,$2,$3,'order',86400,true)").bind(between).bind(format!("0x{:064x}",98)).bind(ALICE).execute(&db.pool).await.unwrap();
+    sqlx::query("INSERT INTO shop.nft_contract(network,contract_address,walked_from_block,backfill_from_block,backfilled_to_block)
+        VALUES('ethereum',$1,$2,$2::bigint-1,$2::bigint-1)").bind(DAVE).bind(block as i64).execute(&db.pool).await.unwrap();
+    sale_fold::pass(&db.pool, &rpc, net).await.unwrap();
+    assert!(
+        sqlx::query_scalar::<_, bool>(
+            "SELECT EXISTS(SELECT FROM shop.sale_execution WHERE block_number=$1 AND receipt_read)"
+        )
+        .bind(between)
+        .fetch_one(&db.pool)
+        .await
+        .unwrap()
+    );
     // The walk can advance between folds while the recent common prefix stands.
     sqlx::query("UPDATE shop.chain_cursor SET last_block=$1,last_block_hash=$2,sale_verified_through=$1 WHERE indexer='nft'")
         .bind(block as i64+5).bind(chain.hash_of(block+5)).execute(&db.pool).await.unwrap();
@@ -572,6 +589,15 @@ async fn sales_history_repair_resumes_at_the_next_window_and_discovers_store_iss
     };
     let s = SalesIndex.start_block();
     let b = s + 10_020;
+    seed_collection(
+        &db.pool,
+        "matic",
+        CARL,
+        s,
+        "factory-collection",
+        "Factory collection",
+    )
+    .await;
     let tip = b + 15;
     let hash = format!("0x{:064x}", 317);
     let mut one = sales_index::tests::issue_log(
@@ -595,11 +621,15 @@ async fn sales_history_repair_resumes_at_the_next_window_and_discovers_store_iss
     one.transaction_hash = Some(hash.clone());
     two.transaction_hash = Some(hash.clone());
     let buy1 = sales_index::tests::bought_log(&[(CARL, 4, 25, ALICE)], &hash, b, 1);
-    let buy2 = sales_index::tests::bought_log(&[(CARL, 4, 63, ALICE)], &hash, b, 3);
+
     let mut malformed = two.clone();
     malformed.log_index = "0x4".into();
     malformed.data = "0x12".into();
     let orphan = sales_index::tests::bought_log(&[(CARL, 5, 17, BOB)], &hash, b, 5);
+    // An ordinary catalogue exclusion in both a mixed and a standalone purchase.
+    let mixed =
+        sales_index::tests::bought_log(&[(CARL, 4, 63, ALICE), (DAVE, 8, 13, ALICE)], &hash, b, 3);
+    let outside = sales_index::tests::bought_log(&[(DAVE, 9, 14, BOB)], &hash, b, 7);
     let changed = log_at(
         CARL,
         vec![
@@ -616,10 +646,11 @@ async fn sales_history_repair_resumes_at_the_next_window_and_discovers_store_iss
     );
     let chain = FakeChain::new(
         tip + 64,
-        vec![one, buy1, two, buy2, malformed, orphan, changed],
+        vec![one, buy1, two, mixed, malformed, orphan, changed, outside],
         100_000,
         100,
     );
+    chain.strip_timestamps.store(true, Ordering::SeqCst);
     chain
         .creators_at_hash
         .lock()
@@ -637,7 +668,35 @@ async fn sales_history_repair_resumes_at_the_next_window_and_discovers_store_iss
         sale_history::pending(&db.pool, &SalesIndex).await.unwrap(),
         Some(s as i64)
     );
-    for (expected, calls) in [(Some((s + 10_000) as i64), 0), (None, 3)] {
+    // Multiple address chunks share one archive budget, even if a later
+    // chunk would ordinarily issue another request.
+    let before_reads = chain.get_logs.load(Ordering::SeqCst);
+    let groups = [chain_walk::LogGroup {
+        addresses: vec![CARL.into(), DAVE.into()],
+        topics: json!([[sales_index::TOPIC_ISSUE]]),
+    }];
+    let budget_error = chain_walk::LogSource::archive_window(&source, s, s, &groups, &mut 1, 1)
+        .await
+        .unwrap_err();
+    assert!(matches!(
+        budget_error,
+        crate::chain_index::rpc::RpcError::Budget { requests: 1, .. }
+    ));
+    assert_eq!(chain.get_logs.load(Ordering::SeqCst) - before_reads, 1);
+    let owner = chain_walk::test_owner(&db.pool, &SalesIndex, &settings).await;
+    let charged = sale_history::repair(
+        &db.pool,
+        &source,
+        &SalesIndex,
+        &owner,
+        Some((tip, &anchor)),
+        2,
+        &mut 100,
+    )
+    .await
+    .unwrap();
+    assert_eq!(charged, chain_walk::Spent::default());
+    for (expected, calls) in [(Some((s + 10_000) as i64), 0), (None, 5)] {
         let owner = chain_walk::test_owner(&db.pool, &SalesIndex, &settings).await;
         sale_history::repair(
             &db.pool,
@@ -645,7 +704,7 @@ async fn sales_history_repair_resumes_at_the_next_window_and_discovers_store_iss
             &SalesIndex,
             &owner,
             Some((tip, &anchor)),
-            100,
+            150,
             &mut 100,
         )
         .await
@@ -673,7 +732,7 @@ async fn sales_history_repair_resumes_at_the_next_window_and_discovers_store_iss
         .fetch_one(&db.pool).await.unwrap());
     // A newly owed line at this height invalidates the old semantic revision,
     // even though the cursor never moved.
-    sqlx::query("UPDATE shop.store_sale_line SET issue_log=NULL WHERE bought_log=3")
+    sqlx::query("UPDATE shop.store_sale_line SET issue_log=NULL WHERE bought_log=3 AND ordinal=0")
         .execute(&db.pool)
         .await
         .unwrap();
@@ -712,6 +771,19 @@ async fn sales_history_repair_resumes_at_the_next_window_and_discovers_store_iss
     }
     *chain.head.lock() = tip + 5;
     let rpc = Rpc::at(&st.http, &url);
+    crate::market::sale_fold::pass(&db.pool, &rpc, ChainNet::Matic)
+        .await
+        .unwrap();
+    assert!(
+        crate::market::sale_fold::snapshot(&db.pool, &[ChainNet::Matic], chrono::Utc::now())
+            .await
+            .unwrap()
+            .is_none(),
+        "a complete factory walk must distinguish a late collection from an unrelated issuer"
+    );
+    sqlx::query("INSERT INTO shop.chain_cursor(indexer,network,chain_id,start_block,last_block,last_block_hash,folded_block,folded_at,full_history)
+        VALUES('collections','matic',137,1,$1,$2,$1,timezone('UTC',now()),true)")
+        .bind(tip as i64).bind(&anchor).execute(&db.pool).await.unwrap();
     crate::market::sale_fold::pass(&db.pool, &rpc, ChainNet::Matic)
         .await
         .unwrap();
@@ -891,8 +963,10 @@ async fn sales_delayed_receipt_corrects_checkout_buyer_and_first_purchase_day() 
             .unwrap();
     }
     sqlx::query("INSERT INTO shop.nft_event(network,block_number,log_index,block_time,kind,emitter,contract_address,token_id,from_address,to_address)
-        VALUES('matic',$1,10,86400,'transfer',$2,$2,123,$3,$4)")
-        .bind(b as i64).bind(DAVE).bind(CHECKOUT).bind(CARL).execute(&db.pool).await.unwrap();
+        VALUES('matic',$1,2,86400,'transfer',$2,$2,123,$3,$5),
+              ('matic',$1,10,86400,'transfer',$2,$2,123,$3,$4),
+              ('matic',$1,12,86400,'transfer',$2,$2,123,$4,$5)")
+        .bind(b as i64).bind(DAVE).bind(CHECKOUT).bind(CARL).bind(BOB).execute(&db.pool).await.unwrap();
     let barter = b - 1;
     let mut gift = trade_events::decode_log(&traded(barter), 86400)
         .unwrap()
@@ -1101,6 +1175,117 @@ async fn incomplete_sales_evidence_keeps_the_primary_walk_live_and_the_proof_at_
         .await
         .unwrap(),
         ALICE
+    );
+    db.drop().await;
+}
+
+#[tokio::test]
+async fn capped_sales_advance_preserves_the_published_prefix_deadline() {
+    use crate::market::{ethereum_sales, sale_fold};
+    let Some(db) = ScratchDb::create().await else {
+        return;
+    };
+    let net = ChainNet::Ethereum;
+    let first = nft_index::start_block(net) + 10;
+    let chain = FakeChain::new(first + 12, vec![], 1000, 100);
+    chain.chain_id.store(1, Ordering::SeqCst);
+    let url = serve(chain.clone()).await;
+    let st = state_over(db.pool.clone(), &url, index_settings(100, 100), false);
+    let rpc = Rpc::at(&st.http, &url);
+    sqlx::query("INSERT INTO shop.chain_cursor(indexer,network,chain_id,start_block,last_block,last_block_hash,
+        full_history,folded_block,folded_at,sale_input_version,sale_verified_through,sale_covered_rewinds)
+        SELECT ix,'ethereum',1,1,$1,$2,true,$1,timezone('UTC',now()),$3,$1,0
+        FROM unnest(ARRAY['nft','sales','trade_events']) ix")
+        .bind(first as i64).bind(chain.hash_of(first)).bind(crate::market::sale_history::VERSION).execute(&db.pool).await.unwrap();
+    sale_fold::pass(&db.pool, &rpc, net).await.unwrap();
+    let deadline = sale_fold::snapshot(&db.pool, &[net], chrono::Utc::now())
+        .await
+        .unwrap()
+        .unwrap()
+        .expires_at;
+    let tip = first + 300;
+    *chain.head.lock() = tip + 12;
+    sqlx::query(
+        "UPDATE shop.chain_cursor SET last_block=$1,last_block_hash=$2,folded_block=$1,
+        sale_verified_through=$1,folded_at=timezone('UTC',now())",
+    )
+    .bind(tip as i64)
+    .bind(chain.hash_of(tip))
+    .execute(&db.pool)
+    .await
+    .unwrap();
+    sqlx::query("INSERT INTO shop.name_purchase(venue,block_number,log_index,block_time,caller,beneficiary,price,name,tx_hash)
+        SELECT $1,$2::bigint+i,1,172800,$3,$3,1,'name-'||i,'0x'||lpad(to_hex(i),64,'0') FROM generate_series(1,97) i")
+        .bind(ethereum_sales::BURNING_NAME_CONTROLLER).bind(first as i64).bind(ALICE).execute(&db.pool).await.unwrap();
+    let old_stamp: chrono::NaiveDateTime =
+        sqlx::query_scalar("SELECT published_at FROM shop.sale_publication")
+            .fetch_one(&db.pool)
+            .await
+            .unwrap();
+    sale_fold::pass(&db.pool, &rpc, net).await.unwrap();
+    let (height, stamp): (i64, chrono::NaiveDateTime) =
+        sqlx::query_as("SELECT block_number,published_at FROM shop.sale_publication")
+            .fetch_one(&db.pool)
+            .await
+            .unwrap();
+    assert_eq!((height, stamp), ((first + 96) as i64, old_stamp));
+    assert!(
+        sale_fold::snapshot(&db.pool, &[net], chrono::Utc::now())
+            .await
+            .unwrap()
+            .is_some()
+    );
+    assert!(
+        sale_fold::snapshot(&db.pool, &[net], deadline + chrono::Duration::minutes(1))
+            .await
+            .unwrap()
+            .is_none()
+    );
+    sale_fold::pass(&db.pool, &rpc, net).await.unwrap();
+    assert!(
+        sale_fold::snapshot(&db.pool, &[net], chrono::Utc::now())
+            .await
+            .unwrap()
+            .unwrap()
+            .expires_at
+            > deadline
+    );
+    db.drop().await;
+}
+
+#[tokio::test]
+async fn a_pending_sales_replay_leaves_budget_for_ethereum_estate_repair() {
+    let Some(db) = ScratchDb::create().await else {
+        return;
+    };
+    let tip = 6_236_559;
+    let net = ChainNet::Ethereum;
+    let chain = FakeChain::new(tip + net.confirmations(), vec![], 2_000_000, 100);
+    chain.chain_id.store(1, Ordering::SeqCst);
+    let url = serve(chain.clone()).await;
+    let old = state_over(db.pool.clone(), &url, index_settings(100, 2_000_000), false);
+    let nft = NftIndex::new(net);
+    assert!(publish_nft(&old, &url, &nft).await.published);
+    sqlx::query("DELETE FROM shop.worker_progress WHERE worker='nft_estate_creations'")
+        .execute(&db.pool)
+        .await
+        .unwrap();
+    let mut settings = index_settings(20, 2);
+    settings.sales_enabled = true;
+    let current = state_over(db.pool.clone(), &url, settings, false);
+    assert!(pass(&current, &url, &NftIndex::new(net)).await.published);
+    let progress: (i64, i64) = sqlx::query_as(
+        "SELECT c.sale_verified_through,p.position FROM shop.chain_cursor c
+        JOIN shop.worker_progress p ON p.worker='nft_estate_creations' AND p.scope=1
+        WHERE c.indexer='nft' AND c.network='ethereum'",
+    )
+    .fetch_one(&db.pool)
+    .await
+    .unwrap();
+    assert!(progress.0 >= nft_index::start_block(net) as i64 && progress.0 < (tip as i64));
+    assert!(
+        progress.1 >= 6_236_547 && progress.1 < tip as i64,
+        "{progress:?}"
     );
     db.drop().await;
 }

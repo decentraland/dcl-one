@@ -128,6 +128,21 @@ pub trait LogSource: Send + Sync {
         sent.fetch_add(w.requests, Ordering::SeqCst);
         Ok(w)
     }
+    /// A historical RPC window with a hard send ceiling. Sources without a
+    /// bounded transport can leave the optional replay pending.
+    async fn archive_window(
+        &self,
+        from: u64,
+        _to: u64,
+        _groups: &[LogGroup],
+        _chunk: &mut usize,
+        _budget: usize,
+    ) -> Result<Window, RpcError> {
+        Err(RpcError::Budget {
+            upper: from,
+            requests: 0,
+        })
+    }
     /// The block time of every log's block.
     async fn block_times(&self, logs: &[RpcLog]) -> Result<Read<HashMap<i64, i64>>, RpcError>;
     /// A window the walk accepted: its bracket and predecessor check
@@ -195,16 +210,27 @@ impl LogSource for RpcSource<'_> {
         chunk: &mut usize,
         sent: &AtomicUsize,
     ) -> Result<Window, RpcError> {
-        // The window's requests are what its client sent, counted in the
-        // caller's counter as each goes out.
-        let before = sent.load(Ordering::SeqCst);
-        let rpc = self.rpc.also_counting(sent);
-        let read = fetch_window(&rpc, from, to, groups, chunk).await;
-        let requests = sent.load(Ordering::SeqCst) - before;
-        let mut w = read?;
-        w.requests = requests;
-        w.charge = requests;
-        Ok(w)
+        fetch_window(&self.rpc, from, to, groups, chunk, sent, usize::MAX).await
+    }
+
+    async fn archive_window(
+        &self,
+        from: u64,
+        to: u64,
+        groups: &[LogGroup],
+        chunk: &mut usize,
+        budget: usize,
+    ) -> Result<Window, RpcError> {
+        fetch_window(
+            &self.rpc,
+            from,
+            to,
+            groups,
+            chunk,
+            &AtomicUsize::new(0),
+            budget,
+        )
+        .await
     }
 
     async fn block_times(&self, logs: &[RpcLog]) -> Result<Read<HashMap<i64, i64>>, RpcError> {
@@ -225,7 +251,11 @@ pub(crate) async fn fetch_window(
     to: u64,
     groups: &[LogGroup],
     chunk: &mut usize,
+    sent: &AtomicUsize,
+    budget: usize,
 ) -> Result<Window, RpcError> {
+    let before = sent.load(Ordering::SeqCst);
+    let rpc = rpc.also_counting(sent);
     let mut out = Window {
         logs: Vec::new(),
         reached: to,
@@ -241,8 +271,15 @@ pub(crate) async fn fetch_window(
             } else {
                 json!(slice)
             };
+            let spent = sent.load(Ordering::SeqCst) - before;
+            if spent >= budget {
+                return Err(RpcError::Budget {
+                    upper: out.reached,
+                    requests: spent,
+                });
+            }
             match rpc
-                .get_logs_matching(from, out.reached, &address, &group.topics)
+                .get_logs_bounded(from, out.reached, &address, &group.topics, budget - spent)
                 .await
             {
                 Ok((logs, upper, _)) => {
@@ -270,6 +307,12 @@ pub(crate) async fn fetch_window(
                         .extend(logs.into_iter().filter(|l| log_position(l).0 <= cut));
                     i = end;
                 }
+                Err(RpcError::Budget { upper, .. }) => {
+                    return Err(RpcError::Budget {
+                        upper,
+                        requests: sent.load(Ordering::SeqCst) - before,
+                    });
+                }
                 Err(RpcError::Rpc(message)) if is_address_limit(&message) && *chunk > 1 => {
                     *chunk = (*chunk / 2).max(1);
                     tracing::info!(
@@ -281,6 +324,8 @@ pub(crate) async fn fetch_window(
             }
         }
     }
+    out.requests = sent.load(Ordering::SeqCst) - before;
+    out.charge = out.requests;
     out.logs.sort_by_key(log_position);
     out.logs.dedup_by(|a, b| log_position(a) == log_position(b));
     Ok(out)

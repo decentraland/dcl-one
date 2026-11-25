@@ -17040,7 +17040,7 @@ CREATE TABLE shop.sale_fee_change (
 );
 
 -- Polygon CollectionStore.Bought lines. A missing Issue can be recovered
--- from the collection named by Bought even before the collection is mirrored.
+-- once the named issuer is in the Polygon collection catalogue.
 CREATE TABLE shop.store_sale_line (
     block_number bigint NOT NULL,
     bought_log integer NOT NULL,
@@ -17057,6 +17057,19 @@ CREATE TABLE shop.store_sale_line (
     UNIQUE (block_number, issue_log)
 );
 CREATE INDEX store_sale_unmatched ON shop.store_sale_line (block_number) WHERE issue_log IS NULL AND NOT issue_checked;
+
+-- Only factory collections in the Polygon catalogue are issuers for accounting.
+-- Keeping the raw store line allows a late collection to be replayed on discovery.
+CREATE VIEW shop.verified_store_sale_line AS
+    SELECT l.* FROM shop.store_sale_line l JOIN shop.collections c
+      ON c.network='matic' AND c.chain_id=137 AND c.contract_address=l.contract_address
+      AND c.created_at<=l.block_time;
+
+-- The late collections represented by the current network sale publication.
+CREATE TABLE shop.sale_covered_collection (
+    network text NOT NULL, contract_address varchar(42) NOT NULL, backfill_from_block bigint NOT NULL,
+    PRIMARY KEY(network,contract_address)
+);
 
 -- Fees paid at Ethereum's names controller, keyed by the log so one
 -- transaction may buy several names. The sales walk removes the suffix

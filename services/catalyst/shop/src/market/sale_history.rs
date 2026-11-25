@@ -1,8 +1,9 @@
 //! Proof of the log coverage needed by sales accounting. An existing
 //! published walk may predate the tx hash, price, bid fee, or trade extras.
 //! Its owner repairs those fields below its cursor in bounded windows.
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 
+use crate::chain_index::rpc::RpcError;
 use anyhow::{Context, ensure};
 use serde_json::json;
 use sqlx::PgPool;
@@ -116,7 +117,7 @@ pub async fn pending(pool: &PgPool, ix: &dyn ChainIndex) -> anyhow::Result<Optio
            CASE WHEN sale_input_version IS DISTINCT FROM $3 OR sale_covered_rewinds IS DISTINCT FROM reorg_rewinds OR sale_verified_through IS NULL THEN start_block
                 WHEN sale_verified_through < last_block THEN sale_verified_through + 1 END,
            CASE WHEN indexer = 'sales' AND network = 'matic' THEN
-                (SELECT min(block_number) FROM shop.store_sale_line WHERE issue_log IS NULL AND NOT issue_checked AND block_number <= last_block) END)
+                (SELECT min(block_number) FROM shop.verified_store_sale_line WHERE issue_log IS NULL AND NOT issue_checked AND block_number <= last_block) END)
          FROM shop.chain_cursor WHERE indexer = $1 AND network = $2 AND full_history AND chain_id = $4
            AND last_block >= start_block AND last_block_hash IS NOT NULL AND quarantined_at IS NULL AND diverged_at IS NULL")
         .bind(ix.indexer()).bind(ix.net().db_name()).bind(VERSION).bind(ix.chain_id())
@@ -182,28 +183,96 @@ pub async fn repair(
         return Ok(used);
     };
     let from = u64::try_from(next)?;
-    let to = anchor.min(from.saturating_add(9_999));
+    let groups = groups(owner);
+    let store = owner.indexer == INDEXER_SALES && owner.net == ChainNet::Matic;
+    let log_cost = chain_walk::requests_for(&groups, *chunk);
+    // Bracket the window and leave room for the issuer filter and block times.
+    let overhead = 2 + log_cost + usize::from(store);
+    let width = budget
+        .saturating_sub(overhead)
+        .saturating_mul(crate::chain_index::rpc::HEADER_BATCH)
+        .min(10_000);
+    if width == 0 {
+        return Ok(used);
+    }
+    let to = anchor.min(from.saturating_add(width as u64 - 1));
     ensure!(from <= to, "sales repair moved beyond its cursor");
     let before = source.header(anchor).await?;
     used.read(before.requests);
-    let mut window = source.window(from, to, &groups(owner), chunk).await?;
+    let mut window = match source
+        .archive_window(from, to, &groups, chunk, budget - used.charge - 1)
+        .await
+    {
+        Ok(window) => window,
+        Err(RpcError::Budget { requests, .. }) => {
+            used.read(requests);
+            return Ok(used);
+        }
+        Err(error) => return Err(error.into()),
+    };
     used.window(&window);
     source.lane_read();
-    if owner.indexer == INDEXER_SALES && owner.net == ChainNet::Matic {
-        let mut addresses = BTreeSet::new();
+    let mut issuers_read = Vec::new();
+    if store {
+        let mut by_block: BTreeMap<i64, BTreeSet<String>> = BTreeMap::new();
         for log in &window.logs {
             if let Some((_, lines)) = sales_index::decode_bought(log)? {
-                addresses.extend(lines.into_iter().map(|(contract, _, _, _)| contract));
+                by_block
+                    .entry(chain_walk::log_position(log).0)
+                    .or_default()
+                    .extend(lines.into_iter().map(|(contract, _, _, _)| contract));
             }
         }
-        if !addresses.is_empty() {
+        let candidates: BTreeSet<_> = by_block.values().flatten().cloned().collect();
+        let listed: BTreeSet<String> = sqlx::query_scalar::<_,String>(
+            "SELECT contract_address FROM shop.collections WHERE network='matic' AND chain_id=137 AND contract_address=ANY($1)")
+            .bind(candidates.into_iter().collect::<Vec<_>>()).fetch_all(pool).await?.into_iter().collect();
+        // Keep whole blocks. A hot window can name more issuers than fit in
+        // the remaining address chunks. Its suffix belongs to the next pass.
+        let max_addresses = budget
+            .saturating_sub(used.charge + 2)
+            .saturating_mul((*chunk).max(1));
+        let mut addresses = BTreeSet::new();
+        for (block, names) in by_block {
+            let extra = names
+                .intersection(&listed)
+                .filter(|a| !addresses.contains(*a))
+                .count();
+            if addresses.len() + extra > max_addresses {
+                if block as u64 == from {
+                    return Ok(used);
+                }
+                window.reached = block as u64 - 1;
+                window
+                    .logs
+                    .retain(|l| chain_walk::log_position(l).0 < block);
+                break;
+            }
+            addresses.extend(names.intersection(&listed).cloned());
+        }
+        issuers_read = addresses.into_iter().collect();
+        if !issuers_read.is_empty() {
             let issuers = LogGroup {
-                addresses: addresses.into_iter().collect(),
+                addresses: issuers_read.clone(),
                 topics: json!([[sales_index::TOPIC_ISSUE]]),
             };
-            let issues = source
-                .window(from, window.reached, &[issuers], chunk)
-                .await?;
+            let issues = match source
+                .archive_window(
+                    from,
+                    window.reached,
+                    &[issuers],
+                    chunk,
+                    budget - used.charge - 1,
+                )
+                .await
+            {
+                Ok(window) => window,
+                Err(RpcError::Budget { requests, .. }) => {
+                    used.read(requests);
+                    return Ok(used);
+                }
+                Err(error) => return Err(error.into()),
+            };
             used.window(&issues);
             window.reached = issues.reached;
             window
@@ -212,6 +281,34 @@ pub async fn repair(
             window.logs.extend(issues.logs);
             window.logs.sort_by_key(chain_walk::log_position);
         }
+    }
+    // A source can narrow its chunk and spend more than the initial estimate.
+    // Before any further RPC, trim to the block-time batches this pass can pay.
+    let time_capacity = budget
+        .saturating_sub(used.charge + 1)
+        .saturating_mul(crate::chain_index::rpc::HEADER_BATCH);
+    let missing_times: BTreeSet<_> = window
+        .logs
+        .iter()
+        .filter(|l| {
+            l.block_timestamp
+                .as_deref()
+                .and_then(crate::chain_index::rpc::hex_to_i64)
+                .is_none()
+        })
+        .map(|l| chain_walk::log_position(l).0)
+        .collect();
+    if used.charge >= budget {
+        return Ok(used);
+    }
+    if let Some(&block) = missing_times.iter().nth(time_capacity) {
+        if block as u64 == from {
+            return Ok(used);
+        }
+        window.reached = block as u64 - 1;
+        window
+            .logs
+            .retain(|l| chain_walk::log_position(l).0 < block);
     }
     let times = source.block_times(&window.logs).await?;
     used.read(times.requests);
@@ -249,9 +346,8 @@ pub async fn repair(
     } else {
         ix.write(&mut tx, &window.logs, &times.value).await?;
     }
-    if owner.indexer == INDEXER_SALES && owner.net == ChainNet::Matic {
-        // These exact Bought logs and all the issuers they name were read on
-        // the same branch. A nonconforming collection need never emit Issue.
+    if !issuers_read.is_empty() {
+        // Mark only the factory issuers this exact window actually probed.
         let mut blocks = Vec::new();
         let mut indices = Vec::new();
         let mut hashes = Vec::new();
@@ -267,11 +363,12 @@ pub async fn repair(
             "UPDATE shop.store_sale_line s SET issue_checked=true
             FROM unnest($1::bigint[],$2::int[],$3::text[]) b(block,idx,hash)
             WHERE (s.block_number,s.bought_log,s.tx_hash)=(b.block,b.idx,b.hash)
-              AND s.issue_log IS NULL AND NOT s.issue_checked",
+              AND s.issue_log IS NULL AND NOT s.issue_checked AND s.contract_address=ANY($4)",
         )
         .bind(blocks)
         .bind(indices)
         .bind(hashes)
+        .bind(issuers_read)
         .execute(&mut *tx)
         .await?;
     }

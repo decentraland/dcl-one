@@ -13,7 +13,7 @@ WHERE network = $1 AND block_number > $2 AND block_number <= $3
   AND kind = 'bid_accepted' AND emitter = $5
 UNION ALL
 SELECT $1, s.block_number, s.bought_log, s.tx_hash, $6, 'store', min(s.block_time)
-FROM shop.store_sale_line s
+FROM shop.verified_store_sale_line s
 WHERE $1 = 'matic' AND s.block_number > $2 AND s.block_number <= $3
 GROUP BY s.block_number, s.bought_log, s.tx_hash
 UNION ALL

@@ -307,6 +307,10 @@ pub const NOT_STORE_KEYS: &[(&str, &str)] = &[
     ("shop.sale_execution.tx_hash", "a transaction hash"),
     ("shop.sale_publication.block_hash", "a block hash"),
     ("shop.store_sale_line.tx_hash", "a transaction hash"),
+    (
+        "shop.verified_store_sale_line.tx_hash",
+        "a transaction hash",
+    ),
     ("shop.name_purchase.tx_hash", "a transaction hash"),
     ("shop.nft_event.tx_hash", "a transaction hash"),
     (

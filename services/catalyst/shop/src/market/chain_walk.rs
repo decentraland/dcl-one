@@ -2145,14 +2145,19 @@ async fn walk(
         let at = expected.0 as u64;
         // Repair the old prefix with spare budget. Always leave the primary
         // projection free to publish after an incomplete or unavailable replay.
-        while remaining > 0 && !cancel.is_some_and(|c| c.is_cancelled()) {
+        let reserved = if name == INDEXER_NFT && net == ChainNet::Ethereum {
+            remaining.div_ceil(2)
+        } else {
+            0
+        };
+        while remaining > reserved && !cancel.is_some_and(|c| c.is_cancelled()) {
             match super::sale_history::repair(
                 pool,
                 source,
                 ix,
                 owner,
                 Some((at, hash)),
-                remaining,
+                remaining - reserved,
                 &mut chunk,
             )
             .await
@@ -2178,8 +2183,8 @@ async fn walk(
                 Err(e) if e.downcast_ref::<Fenced>().is_some() => return Err(e),
                 Err(e) => {
                     tracing::warn!(indexer=name, network=net.db_name(), error=%e, "sales history repair will retry");
-                    // A failed source read has no reliable remaining budget.
-                    remaining = 0;
+                    // Leave the independent estate repair its reserved budget.
+                    remaining = reserved;
                 }
             }
         }

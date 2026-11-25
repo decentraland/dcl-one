@@ -30,6 +30,7 @@ struct Inputs {
     rows: Vec<Input>,
     late_collections: i64,
     first_backfill: Option<i64>,
+    collection_changes: Vec<String>,
 }
 
 impl Inputs {
@@ -49,15 +50,12 @@ impl Inputs {
         if marker.input_version != sale_history::VERSION
             || marker.input_epochs != self.epochs()
             || marker.input_revisions.len() != self.rows.len()
-            || marker.late_collections > self.late_collections
         {
             return None;
         }
         let mut prefix = marker.block_number.min(self.common());
-        if marker.late_collections < self.late_collections {
-            // The earliest of all late collections is a conservative lower
-            // bound for every addition since this marker.
-            prefix = prefix.min(self.first_backfill?.checked_sub(1)?);
+        if let Some(from) = self.first_backfill {
+            prefix = prefix.min(from.checked_sub(1)?);
         }
         for (row, previous) in self.rows.iter().zip(&marker.input_revisions) {
             if row.revision != *previous {
@@ -72,6 +70,7 @@ impl Inputs {
             && marker.input_epochs == self.epochs()
             && marker.input_revisions == self.revisions()
             && marker.late_collections == self.late_collections
+            && self.collection_changes.is_empty()
             && marker.block_number <= self.common()
     }
 }
@@ -123,22 +122,45 @@ async fn inputs(
         return Ok(None);
     }
     let common = rows.iter().map(|r| r.folded_block).min().unwrap();
-    let (late_collections, first_backfill, owed): (i64, Option<i64>, bool) = sqlx::query_as(
-        "SELECT count(*), min(backfill_from_block), coalesce(bool_or(refold_owed OR coalesce(backfilled_to_block,backfill_from_block-1) < walked_from_block-1),false)
-         FROM shop.nft_contract WHERE network=$1 AND backfill_from_block IS NOT NULL")
+    let (late_collections, first_backfill, collection_changes, owed): (i64, Option<i64>, Vec<String>, bool) = sqlx::query_as(
+        "WITH current AS (SELECT contract_address,backfill_from_block,refold_owed OR
+                   coalesce(backfilled_to_block,backfill_from_block-1)<walked_from_block-1 AS owed
+             FROM shop.nft_contract WHERE network=$1 AND backfill_from_block IS NOT NULL),
+         saved AS (SELECT contract_address,backfill_from_block FROM shop.sale_covered_collection WHERE network=$1),
+         compared AS (SELECT contract_address,c.backfill_from_block AS new,s.backfill_from_block AS old,c.owed
+             FROM current c FULL JOIN saved s USING(contract_address))
+         SELECT count(new),min(least(new,old)) FILTER (WHERE new IS DISTINCT FROM old),
+             coalesce(array_agg(contract_address||'/'||coalesce(new::text,'-')||'/'||coalesce(old::text,'-') ORDER BY contract_address)
+                      FILTER (WHERE new IS DISTINCT FROM old),'{}'::text[]),coalesce(bool_or(owed),false)
+         FROM compared")
         .bind(net.db_name()).fetch_one(&mut *c).await?;
     let undiscovered:bool=sqlx::query_scalar(
         "SELECT EXISTS(SELECT FROM shop.collections c JOIN shop.chain_cursor n ON n.network=c.network AND n.indexer='nft'
          WHERE c.network=$1 AND c.created_at<=n.last_block_time AND NOT EXISTS
            (SELECT FROM shop.nft_contract k WHERE k.network=c.network AND k.contract_address=c.contract_address))")
         .bind(net.db_name()).fetch_one(&mut *c).await?;
-    let missing: bool = net == ChainNet::Matic && sqlx::query_scalar(
-        "SELECT EXISTS(SELECT FROM shop.store_sale_line WHERE issue_log IS NULL AND NOT issue_checked AND block_number <= $1)")
-        .bind(common).fetch_one(&mut *c).await?;
+    // A Bought line outside the current catalogue may name a late genuine
+    // collection. Only a complete factory walk through that purchase can
+    // distinguish it from an unrelated address.
+    let missing = net == ChainNet::Matic && sqlx::query_scalar::<_,bool>(
+        "SELECT EXISTS(SELECT FROM shop.store_sale_line l WHERE l.block_number <= $1
+           AND l.issue_log IS NULL AND NOT l.issue_checked AND (
+             EXISTS(SELECT FROM shop.collections c WHERE c.network='matic' AND c.chain_id=137
+                    AND c.contract_address=l.contract_address AND c.created_at<=l.block_time)
+             OR EXISTS(SELECT FROM shop.collection_event e WHERE e.network='matic' AND e.kind='proxy_created'
+                    AND e.contract_address=l.contract_address AND e.block_number<=l.block_number)
+             OR NOT EXISTS(SELECT FROM shop.chain_cursor c WHERE c.indexer='collections' AND c.network='matic'
+                    AND c.chain_id=137 AND c.full_history AND c.start_block<=$2 AND c.folded_block>=l.block_number
+                    AND c.folded_at BETWEEN $3::timestamp - interval '30 minutes' AND $3 AND c.last_block_hash IS NOT NULL
+                    AND c.quarantined_at IS NULL AND c.diverged_at IS NULL AND c.rebuild_requested_at IS NULL
+                    AND NOT EXISTS(SELECT FROM shop.chain_cursor i WHERE i.network=c.network AND i.indexer IN ('nft','sales','trade_events')
+                       AND i.last_block=c.last_block AND i.last_block_hash IS DISTINCT FROM c.last_block_hash))))")
+        .bind(common).bind(super::collections_index::START_BLOCK as i64).bind(now.naive_utc()).fetch_one(&mut *c).await?;
     Ok((!owed && !missing && !undiscovered).then_some(Inputs {
         rows,
         late_collections,
         first_backfill,
+        collection_changes,
     }))
 }
 
@@ -361,7 +383,8 @@ pub(super) async fn pass(pool: &PgPool, rpc: &Rpc<'_>, net: ChainNet) -> anyhow:
     let former_buyers: Vec<String> = sqlx::query_scalar("WITH delivered AS (
         SELECT a.block_number,a.log_index,a.ordinal,a.buyer AS previous_buyer,
           (SELECT n.to_address FROM shop.nft_event n WHERE n.network=a.network AND n.contract_address=a.contract_address
-            AND n.token_id=a.token_id AND n.block_number=a.block_number AND n.kind='transfer' ORDER BY n.log_index DESC LIMIT 1) AS recipient
+            AND n.token_id=a.token_id AND n.block_number=a.block_number AND n.kind='transfer'
+            AND n.from_address=a.beneficiary AND n.log_index>a.log_index ORDER BY n.log_index LIMIT 1) AS recipient
         FROM shop.sale_asset a JOIN shop.sale_execution e USING(network,block_number,log_index)
         WHERE a.network=$1 AND e.block_time/86400*86400=ANY($2) AND a.beneficiary=ANY($3))
         , changed AS (UPDATE shop.sale_asset a SET buyer=d.recipient FROM delivered d WHERE a.network=$1
@@ -390,12 +413,25 @@ pub(super) async fn pass(pool: &PgPool, rpc: &Rpc<'_>, net: ChainNet) -> anyhow:
     let point = rpc.block_header(to as u64).await?;
     ensure!(point.hash == *hash, "sales prefix changed during fold");
     let head = rpc.head_block().await?;
-    let published = to == start.common()
+    let previously_published = previous
+        .as_ref()
+        .filter(|_| same_history)
+        .and_then(|m| m.published_at);
+    let published_at = if (to == start.common() || previously_published.is_some())
         && head >= to as u64
-        && chain_walk::within_publish_lag(net, head, to as u64);
+        && chain_walk::within_publish_lag(net, head, to as u64)
+    {
+        Some(Utc::now().naive_utc())
+    } else if to < start.common() && head >= to as u64 {
+        // This prefix extends the same verified history. Retain its original
+        // freshness deadline until a near-head measurement earns a new one.
+        previously_published
+    } else {
+        None
+    };
     // Take the same cursor locks used by the owners before visibility.
     // A rewind or a repair committed during the fold changes this comparison.
-    sqlx::query("SELECT indexer FROM shop.chain_cursor WHERE network=$1 AND indexer IN ('nft','sales','trade_events') ORDER BY indexer FOR UPDATE")
+    sqlx::query("SELECT indexer FROM shop.chain_cursor WHERE network=$1 AND indexer IN ('nft','sales','trade_events','collections') ORDER BY indexer FOR UPDATE")
         .bind(net.db_name()).fetch_all(&mut *tx).await?;
     let end = inputs(&mut tx, net, Utc::now())
         .await?
@@ -404,7 +440,7 @@ pub(super) async fn pass(pool: &PgPool, rpc: &Rpc<'_>, net: ChainNet) -> anyhow:
         start.epochs() == end.epochs()
             && start.revisions() == end.revisions()
             && start.late_collections == end.late_collections
-            && start.first_backfill == end.first_backfill
+            && start.collection_changes == end.collection_changes
             && to <= end.common(),
         "sales history changed during fold"
     );
@@ -421,13 +457,22 @@ pub(super) async fn pass(pool: &PgPool, rpc: &Rpc<'_>, net: ChainNet) -> anyhow:
     .bind(net.db_name())
     .execute(&mut *tx)
     .await?;
+    if !start.collection_changes.is_empty() {
+        sqlx::query("DELETE FROM shop.sale_covered_collection s WHERE network=$1 AND NOT EXISTS
+             (SELECT FROM shop.nft_contract c WHERE c.network=s.network AND c.contract_address=s.contract_address
+               AND c.backfill_from_block IS NOT NULL)").bind(net.db_name()).execute(&mut *tx).await?;
+        sqlx::query("INSERT INTO shop.sale_covered_collection AS s(network,contract_address,backfill_from_block)
+             SELECT network,contract_address,backfill_from_block FROM shop.nft_contract WHERE network=$1 AND backfill_from_block IS NOT NULL
+             ON CONFLICT(network,contract_address) DO UPDATE SET backfill_from_block=excluded.backfill_from_block
+             WHERE s.backfill_from_block<>excluded.backfill_from_block").bind(net.db_name()).execute(&mut *tx).await?;
+    }
     sqlx::query("INSERT INTO shop.sale_publication (network,block_number,block_hash,input_version,input_epochs,input_revisions,late_collections,published_at)
         VALUES ($1,$2,$3,$4,$5,$6,$7,$8) ON CONFLICT (network) DO UPDATE SET block_number=EXCLUDED.block_number,
         generation=CASE WHEN $9 THEN EXCLUDED.generation ELSE sale_publication.generation END,
         block_hash=EXCLUDED.block_hash,input_version=EXCLUDED.input_version,input_epochs=EXCLUDED.input_epochs,
         input_revisions=EXCLUDED.input_revisions,late_collections=EXCLUDED.late_collections,published_at=EXCLUDED.published_at")
         .bind(net.db_name()).bind(to).bind(hash).bind(sale_history::VERSION).bind(start.epochs()).bind(start.revisions())
-        .bind(start.late_collections).bind(published.then(|| Utc::now().naive_utc())).bind(!same_history || from!=to || !days.is_empty()).execute(&mut *tx).await?;
+        .bind(start.late_collections).bind(published_at).bind(!same_history || from!=to || !days.is_empty()).execute(&mut *tx).await?;
     tx.commit().await?;
     Ok(())
 }

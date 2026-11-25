@@ -36,7 +36,7 @@ pub(super) async fn write(
              AND NOT creator_checked AND block_number<=$2 AND (creator_attempted_at IS NULL OR creator_attempted_at<timezone('UTC',now())-interval '5 minutes')
            ORDER BY creator_attempted_at NULLS FIRST,block_number LIMIT 32)
          SELECT a.block_number,a.log_index,a.ordinal,a.contract_address,l.issue_log
-         FROM shop.sale_asset a JOIN shop.store_sale_line l ON (a.block_number,a.log_index,a.ordinal)=(l.block_number,l.bought_log,l.ordinal)
+         FROM shop.sale_asset a JOIN shop.verified_store_sale_line l ON (a.block_number,a.log_index,a.ordinal)=(l.block_number,l.bought_log,l.ordinal)
          JOIN shop.sale_execution e ON (e.network,e.block_number,e.log_index)=(a.network,a.block_number,a.log_index)
          WHERE a.network=$1 AND e.kind='store' AND a.seller IS NULL AND
            ((a.block_number>$2 AND a.block_number<=$3) OR (a.block_number,a.log_index) IN (SELECT * FROM pending))
