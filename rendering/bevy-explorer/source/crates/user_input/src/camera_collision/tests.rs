@@ -1,7 +1,13 @@
+use bevy::{ecs::system::RunSystemOnce, render::mesh::MeshTag};
 use dcl_component::{proto_components::sdk::components::ColliderLayer, SceneEntityId};
 use rapier3d_f64::prelude::{ColliderBuilder, Group, InteractionGroups, InteractionTestMode};
+use scene_material::{SceneMaterial, SCENE_MATERIAL_CAMERA_OBSTACLE_MESH_TAG};
 use scene_runner::update_world::mesh_collider::{
     ColliderId, SceneColliderData, GROUND_COLLISION_MASK,
+};
+use scene_runner::{
+    update_world::mesh_collider::{CtCollider, HasCollider},
+    ContainerEntity,
 };
 
 use super::*;
@@ -10,7 +16,6 @@ const PHYSICS: u32 = ColliderLayer::ClPhysics as u32;
 const POINTER: u32 = ColliderLayer::ClPointer as u32;
 const FRAME: f32 = 1.0 / 60.0;
 
-/// The camera looks at the origin from 5 m along +z.
 const LOOK_AT: Vec3 = Vec3::ZERO;
 const RAW: Vec3 = Vec3::new(0.0, 0.0, 5.0);
 
@@ -25,7 +30,6 @@ fn collider_id(index: u16) -> ColliderId {
     )
 }
 
-/// A box of `size` centred on `centre` on the collider layers `layers`.
 fn add_box(colliders: &mut SceneColliderData, index: u16, layers: u32, centre: Vec3, size: Vec3) {
     let id = collider_id(index);
     let groups = Group::from_bits_truncate(layers);
@@ -264,7 +268,6 @@ fn the_shoulder_offset_eases_in_and_out() {
     }
     assert!((previous - 0.24).abs() < 0.01, "{previous}");
 
-    // out over 0.5 s
     let first = shoulder_offset(&free, &mut state, Vec3::ZERO, SHOULDER, FRAME).x;
     assert!(first < 0.4, "{first}");
     for _ in 0..60 {
@@ -411,4 +414,53 @@ fn orbiting_into_a_corner_moves_the_shoulder_without_a_jump() {
         }
         previous = Some(offset);
     }
+}
+
+fn scene_with_wall_mesh(world: &mut World, layers: u32) -> Entity {
+    let mut colliders = SceneColliderData::default();
+    wall(&mut colliders, layers);
+    let root = world.spawn(colliders).id();
+    world
+        .spawn((
+            HasCollider::<CtCollider>(collider_id(0), Default::default()),
+            ContainerEntity {
+                container: root,
+                root,
+                container_id: SceneEntityId::ROOT,
+            },
+            Mesh3d::default(),
+            MeshMaterial3d::<SceneMaterial>::default(),
+            MeshTag(0),
+        ))
+        .id()
+}
+
+fn obstacle_tag(world: &World, mesh: Entity) -> u32 {
+    world.get::<MeshTag>(mesh).unwrap().0 & SCENE_MATERIAL_CAMERA_OBSTACLE_MESH_TAG
+}
+
+#[test]
+fn only_a_mesh_holding_a_camera_obstacle_is_tagged_and_only_while_collisions_are_on() {
+    let mut world = World::new();
+    world.init_resource::<CameraCollision>();
+    let wall_mesh = scene_with_wall_mesh(&mut world, PHYSICS | POINTER);
+    let physics_only_mesh = scene_with_wall_mesh(&mut world, PHYSICS);
+
+    world.run_system_once(tag_camera_obstacle_meshes).unwrap();
+    assert_ne!(obstacle_tag(&world, wall_mesh), 0);
+    assert_eq!(obstacle_tag(&world, physics_only_mesh), 0);
+
+    world.resource_mut::<CameraCollision>().enabled = false;
+    world.run_system_once(tag_camera_obstacle_meshes).unwrap();
+    assert_eq!(obstacle_tag(&world, wall_mesh), 0);
+
+    world.resource_mut::<CameraCollision>().enabled = true;
+    world.run_system_once(tag_camera_obstacle_meshes).unwrap();
+    assert_ne!(obstacle_tag(&world, wall_mesh), 0);
+
+    world
+        .entity_mut(wall_mesh)
+        .remove::<HasCollider<CtCollider>>();
+    world.run_system_once(tag_camera_obstacle_meshes).unwrap();
+    assert_eq!(obstacle_tag(&world, wall_mesh), 0);
 }

@@ -670,14 +670,21 @@ ends in "we don't do that", so the next person doesn't have to rediscover it.
   unity-explorer disables. Jump In treats a photo as taken in a World when the HUD's `worldOfRealm`
   accepts its realm, so hyphenated ENS names and Worlds-server realm URLs count, where
   unity-explorer's test is `^[a-zA-Z0-9.]+\.eth$` and sends those photos to a Genesis City parcel.
-- **The third-person camera collides with scene geometry, which stays opaque.** It is pulled in
-  front of the scene colliders on both `CL_PHYSICS` and `CL_POINTER` and of the terrain, with
-  unity-explorer's camera radius, distances and easing times. Kept differences: the shoulder
-  offset moves the pivot before the collision and eases (0.2 s in, 0.5 s out, never past the
-  centre), where unity-explorer shifts the camera after the collision and shortens the shift at
-  once, which jumped the camera sideways as a wall came in range and most of all in corners; and
-  scene meshes and grass between the camera and the player are not dithered, only avatars, as
-  the collision keeps walls out of the view.
+- **The third-person camera collides with scene geometry.** It is pulled in front of the scene
+  colliders on both `CL_PHYSICS` and `CL_POINTER` and of the terrain, with unity-explorer's
+  camera radius, distances and easing times. The shoulder offset moves the pivot before the
+  collision and eases (0.2 s in, 0.5 s out, never past the centre), where unity-explorer shifts
+  the camera after the collision and shortens the shift at once, which jumped the camera
+  sideways as a wall came in range and most of all in corners.
+- **A mesh that holds a camera obstacle does not fade; everything else between the camera and
+  the player does.** While camera collisions are on, a scene mesh whose own entity holds an
+  enabled collider on both `CL_PHYSICS` and `CL_POINTER` is drawn opaque: the camera stops in
+  front of it. Every other scene mesh, the grass and avatars fade in the cone between the camera
+  and the player, because the camera passes through them and they would hide the player. That
+  includes a glTF wall whose collider is a separate `_collider` node: the wall drawn is another
+  mesh with no collider, so it still fades where it comes near the line of sight. With
+  `/camera_collisions false` nothing is exempt. The fade is the cone alone; scene meshes near
+  the camera no longer fade across the whole screen.
 - **The photo camera stops at scene geometry instead of sliding.** unity-explorer moves a capsule
   character controller, which slides along walls; here the move is swept and refused whole when
   the camera's sphere would cross a scene collider. A collider the camera starts inside (the player

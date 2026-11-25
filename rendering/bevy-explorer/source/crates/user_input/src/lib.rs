@@ -50,6 +50,7 @@ impl Plugin for UserInputPlugin {
             )
                 .chain(),
         );
+        app.add_systems(PostUpdate, camera_collision::tag_camera_obstacle_meshes);
         app.init_resource::<EngineMovementControl>()
             .init_resource::<CursorLocks>()
             .init_resource::<camera_collision::CameraCollision>();

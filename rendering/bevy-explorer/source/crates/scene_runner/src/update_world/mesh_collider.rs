@@ -1570,7 +1570,7 @@ fn update_scene_collider_data(
 
 // collider state component
 #[derive(Component)]
-pub struct HasCollider<T: ColliderType>(pub ColliderId, PhantomData<fn() -> T>);
+pub struct HasCollider<T: ColliderType>(pub ColliderId, pub PhantomData<fn() -> T>);
 
 // collider state component
 #[derive(Component)]

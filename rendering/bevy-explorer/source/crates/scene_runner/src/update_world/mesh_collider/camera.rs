@@ -12,7 +12,7 @@ use rapier3d_f64::{
 
 use dcl_component::proto_components::sdk::components::ColliderLayer;
 
-use super::{SceneColliderData, GROUND_COLLISION_MASK};
+use super::{ColliderId, SceneColliderData, GROUND_COLLISION_MASK};
 
 const INSIDE_PROBE: f64 = 0.001;
 
@@ -34,7 +34,6 @@ pub struct CameraHit {
     pub normal: Vec3,
 }
 
-/// The result of [`SceneColliderData::camera_sphere_sweep`].
 #[derive(Default, Debug)]
 pub struct CameraSweep {
     /// The nearest obstacle the ball reaches that it did not start in.
@@ -58,6 +57,12 @@ impl SceneColliderData {
             predicate: Some(predicate),
             ..QueryFilter::default().exclude_sensors()
         }
+    }
+
+    pub fn stops_camera(&self, id: &ColliderId) -> bool {
+        self.get_collider(id).is_some_and(|collider| {
+            collider.is_enabled() && !collider.is_sensor() && is_camera_obstacle(collider)
+        })
     }
 
     fn is_camera_candidate(&self, handle: ColliderHandle, collider: &Collider) -> bool {

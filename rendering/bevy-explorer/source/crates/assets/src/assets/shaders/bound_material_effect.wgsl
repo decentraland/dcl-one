@@ -219,7 +219,7 @@ fn closest_point_on_segment_to_line(a: vec3<f32>, b: vec3<f32>, o: vec3<f32>, d:
     return a + ab * t;
 }
 
-// discards an avatar's fragments between the camera and the player
+// discards fragments in the cone between the camera and the player
 // base_opacity: the opacity the dither fades towards; 0 fades out fully
 // capsule: dither by the avatar capsule standing at capsule_root instead of by the fragment
 fn discard_dither(ndc_position: vec2<f32>, world_position: vec3<f32>, depth: f32, base_opacity: f32, capsule_root: vec3<f32>, capsule: bool) -> Dither {
@@ -274,14 +274,13 @@ fn discard_dither(ndc_position: vec2<f32>, world_position: vec3<f32>, depth: f32
 }
 
 // the camera-to-player dither of a tagged mesh, for the scene material's passes and the face
-// masks alike. Only avatars carry the cone-only tag and fade between the camera and the player;
-// scene meshes stay opaque, as the player camera collides with them instead, and the
-// no-dithering tag skips it.
+// masks alike: the cone fade, skipped under the no-dithering tag and under the camera-obstacle
+// tag, which marks a scene mesh holding a collider the player camera is kept in front of.
 // instance_index: the mesh, whose origin is the capsule's root
 // A pipeline importing this needs scene_material::avatar_style_shader_defs
 #ifdef NO_DITHERING_MESH_TAG
 fn camera_dither(mesh_tag: u32, frag_coord: vec2<f32>, world_position: vec3<f32>, instance_index: u32, base_opacity: f32, capsule: bool) -> Dither {
-    if (mesh_tag & #{NO_DITHERING_MESH_TAG}) != 0u || (mesh_tag & #{CONE_ONLY_DITHER_MESH_TAG}) == 0u {
+    if (mesh_tag & (#{NO_DITHERING_MESH_TAG} | #{CAMERA_OBSTACLE_MESH_TAG})) != 0u {
         return Dither(1.0, 0.0);
     }
     return discard_dither(frag_coord, world_position, view.user_value, base_opacity, mesh_functions::get_world_from_local(instance_index)[3].xyz, capsule);

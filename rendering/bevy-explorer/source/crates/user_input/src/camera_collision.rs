@@ -1,9 +1,13 @@
 //! Third-person camera collisions against
 //! [`scene_runner::update_world::mesh_collider::is_camera_obstacle`].
 
-use bevy::prelude::*;
+use bevy::{prelude::*, render::mesh::MeshTag};
 use rapier3d_f64::prelude::ColliderHandle;
-use scene_runner::update_world::mesh_collider::{CameraHit, SceneColliderData};
+use scene_material::{SceneMaterial, SCENE_MATERIAL_CAMERA_OBSTACLE_MESH_TAG};
+use scene_runner::{
+    update_world::mesh_collider::{CameraHit, CtCollider, HasCollider, SceneColliderData},
+    ContainerEntity,
+};
 
 const MINIMUM_DISTANCE_FROM_TARGET: f32 = 0.1;
 pub const CAMERA_RADIUS: f32 = 0.2;
@@ -36,6 +40,61 @@ impl Default for CameraCollision {
             collided_distance: 0.0,
             occluded: false,
             damp_time: 0.0,
+        }
+    }
+}
+
+/// A mesh carrying the camera-obstacle tag.
+#[derive(Component)]
+pub struct CameraObstacleMesh;
+
+/// With collisions off no mesh is tagged, so every scene mesh fades.
+pub fn tag_camera_obstacle_meshes(
+    mut commands: Commands,
+    collision: Res<CameraCollision>,
+    scene_colliders: Query<&SceneColliderData>,
+    mut untagged: Query<
+        (
+            Entity,
+            &HasCollider<CtCollider>,
+            &ContainerEntity,
+            &mut Mesh3d,
+            &mut MeshTag,
+        ),
+        (
+            With<MeshMaterial3d<SceneMaterial>>,
+            Without<CameraObstacleMesh>,
+        ),
+    >,
+    mut tagged: Query<
+        (
+            Entity,
+            Option<(&HasCollider<CtCollider>, &ContainerEntity)>,
+            &mut Mesh3d,
+            &mut MeshTag,
+        ),
+        With<CameraObstacleMesh>,
+    >,
+) {
+    let stops_camera = |collider: &HasCollider<CtCollider>, container: &ContainerEntity| {
+        collision.enabled
+            && scene_colliders
+                .get(container.root)
+                .is_ok_and(|colliders| colliders.stops_camera(&collider.0))
+    };
+    for (entity, collider, container, mut mesh, mut tag) in &mut untagged {
+        if stops_camera(collider, container) {
+            tag.0 |= SCENE_MATERIAL_CAMERA_OBSTACLE_MESH_TAG;
+            // bevy's mesh extraction doesn't watch MeshTag (0.16); Mesh3d is on its list
+            mesh.set_changed();
+            commands.entity(entity).try_insert(CameraObstacleMesh);
+        }
+    }
+    for (entity, collider, mut mesh, mut tag) in &mut tagged {
+        if !collider.is_some_and(|(collider, container)| stops_camera(collider, container)) {
+            tag.0 &= !SCENE_MATERIAL_CAMERA_OBSTACLE_MESH_TAG;
+            mesh.set_changed();
+            commands.entity(entity).try_remove::<CameraObstacleMesh>();
         }
     }
 }
