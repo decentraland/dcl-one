@@ -606,7 +606,8 @@ pub fn select_name_authority(
     pool: &PgPool,
     index: &Arc<ChainIndex>,
 ) -> Option<Arc<dyn crate::chain_index::names::NameAuthority>> {
-    let mainnet = settings.eth_network.trim() == "mainnet";
+    let mainnet = crate::shared::network::ChainPair::from_eth_network(&settings.eth_network)
+        == Some(crate::shared::network::ChainPair::Mainnet);
     if settings.walks_catalogue() {
         return Some(Arc::new(names::IndexNames::for_catalogue(
             pool.clone(),
@@ -915,7 +916,9 @@ impl MarketplaceState {
             }
             _ => return None,
         };
-        if self.settings.eth_network.trim() != "mainnet" {
+        if crate::shared::network::ChainPair::from_eth_network(&self.settings.eth_network)
+            != Some(crate::shared::network::ChainPair::Mainnet)
+        {
             return self
                 .settings
                 .market

@@ -12,7 +12,7 @@ use super::nft_index::deployments::Deployments;
 use std::collections::HashMap;
 use std::str::FromStr;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicUsize, Ordering};
 
 use alloy_primitives::{Address, FixedBytes, U256, keccak256};
 use alloy_sol_types::SolValue;
@@ -165,7 +165,7 @@ struct FakeChain {
     strip_block_hash: std::sync::atomic::AtomicBool,
     /// `eth_chainId` answers an error.
     fail_chain_id: std::sync::atomic::AtomicBool,
-    /// Refuse every call with HTTP 401 or answer HTTP 200 with HTML.
+    /// Refuse every call with HTTP 401/403 or answer HTTP 200 with HTML.
     invalid_http_response: AtomicUsize,
     /// Text the failing reads echo in their error message (a gateway that
     /// repeats the request it got).
@@ -365,7 +365,7 @@ async fn rpc(
 ) -> axum::response::Response {
     chain.requests.fetch_add(1, Ordering::SeqCst);
     match chain.invalid_http_response.load(Ordering::SeqCst) {
-        401 => return (StatusCode::UNAUTHORIZED, axum::Json(json!({
+        status @ (401 | 403) => return (StatusCode::from_u16(status as u16).unwrap(), axum::Json(json!({
             "jsonrpc":"2.0", "id":body["id"], "error":{"code":-32000,"message":"authentication failed"}
         }))).into_response(),
         200 => return axum::response::Html("<html>gateway response</html>").into_response(),
@@ -2184,7 +2184,7 @@ async fn a_lagging_mainnet_rpc_pins_a_matching_confirmed_block() {
         let err = mirrors::run_tick(&state, Mirror::Collections, &ctx)
             .await
             .unwrap_err();
-        assert!(format!("{err:#}").contains("header unavailable"));
+        assert!(format!("{err:#}").contains("RPC unavailable"));
         let pending = mirrors::load(&db.pool, Mirror::Collections, network)
             .await
             .unwrap()
@@ -2369,19 +2369,23 @@ async fn mainnet_items_retry_then_refresh_prices_during_an_extended_rpc_outage()
     let chain = FakeChain::new(200, vec![], 100, 100);
     let hash = chain.hash_of(100);
     let price = Arc::new(AtomicUsize::new(100));
-    let meta_ready = Arc::new(AtomicBool::new(true));
+    let graph_failure = Arc::new(AtomicUsize::new(0));
     #[derive(Clone)]
     struct GraphFixture {
         hash: String,
         price: Arc<AtomicUsize>,
-        meta_ready: Arc<AtomicBool>,
+        graph_failure: Arc<AtomicUsize>,
     }
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let graph = format!("http://{}/", listener.local_addr().unwrap());
     let app = Router::new().route("/", post(
         |State(graph): State<GraphFixture>, axum::Json(body): axum::Json<Value>| async move {
             let vars = &body["variables"];
-            let block = if !graph.meta_ready.load(Ordering::SeqCst) {
+            let failure = graph.graph_failure.load(Ordering::SeqCst);
+            if failure == 502 {
+                return StatusCode::BAD_GATEWAY.into_response();
+            }
+            let block = if failure == 1 {
                 Value::Null
             } else if vars["number"] == 100 || vars["block"].is_object() {
                 json!({"number":100,"hash":graph.hash})
@@ -2397,9 +2401,9 @@ async fn mainnet_items_retry_then_refresh_prices_during_an_extended_rpc_outage()
             } else {
                 Vec::new()
             };
-            axum::Json(json!({"data":{"items":items,"_meta":{"block":block}}}))
+            axum::Json(json!({"data":{"items":items,"_meta":{"block":block}}})).into_response()
         }
-    )).with_state(GraphFixture { hash, price: price.clone(), meta_ready: meta_ready.clone() });
+    )).with_state(GraphFixture { hash, price: price.clone(), graph_failure: graph_failure.clone() });
     tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
     let mut config = Settings::for_tests();
     config.matic_collections_subgraph_url = Some(graph);
@@ -2440,7 +2444,7 @@ async fn mainnet_items_retry_then_refresh_prices_during_an_extended_rpc_outage()
 
     // An older graph failure does not count toward the RPC-only window.
     price.store(200, Ordering::SeqCst);
-    meta_ready.store(false, Ordering::SeqCst);
+    graph_failure.store(1, Ordering::SeqCst);
     assert!(
         tick()
             .await
@@ -2450,12 +2454,13 @@ async fn mainnet_items_retry_then_refresh_prices_during_an_extended_rpc_outage()
     );
     age_proof().await.unwrap();
     let earlier = read().await.unwrap().unwrap();
-    meta_ready.store(true, Ordering::SeqCst);
+    graph_failure.store(0, Ordering::SeqCst);
     chain.invalid_http_response.store(401, Ordering::SeqCst);
     assert!(tick().await.unwrap_err().to_string().contains("status 401"));
     let pending = read().await.unwrap().unwrap();
     assert!(pending.pass_started_at > earlier.pass_started_at);
-    assert!(tick().await.unwrap_err().to_string().contains("status 401"));
+    chain.invalid_http_response.store(403, Ordering::SeqCst);
+    assert!(tick().await.unwrap_err().to_string().contains("status 403"));
     let retried = read().await.unwrap().unwrap();
     assert_eq!(retried.pass_started_at, pending.pass_started_at);
     assert_eq!(retried.last_complete_pass_at, earlier.last_complete_pass_at);
@@ -2464,6 +2469,13 @@ async fn mainnet_items_retry_then_refresh_prices_during_an_extended_rpc_outage()
 
     // Advance the persisted RPC outage clock without a wall-clock wait.
     age_proof().await.unwrap();
+    let aged = read().await.unwrap().unwrap();
+    graph_failure.store(502, Ordering::SeqCst);
+    assert!(tick().await.is_err());
+    let after_graph_error = read().await.unwrap().unwrap();
+    assert_eq!(after_graph_error.pass_started_at, aged.pass_started_at);
+    assert_eq!(after_graph_error.last_error, aged.last_error);
+    graph_failure.store(0, Ordering::SeqCst);
     tick().await.unwrap();
     let partial = read().await.unwrap().unwrap();
     assert!(partial.in_progress() && partial.pass_block_hash.is_none());
@@ -2484,6 +2496,7 @@ async fn mainnet_items_retry_then_refresh_prices_during_an_extended_rpc_outage()
     assert!(metric_handle.render().lines().any(|line| {
         line.starts_with("catalyst_catalogue_mirror_proof_outcomes_total{")
             && line.contains("outcome=\"rpc_auth_failed\"")
+            && line.ends_with(" 3")
     }));
 
     price.store(300, Ordering::SeqCst);
@@ -2493,7 +2506,7 @@ async fn mainnet_items_retry_then_refresh_prices_during_an_extended_rpc_outage()
             .await
             .unwrap_err()
             .to_string()
-            .contains("malformed rpc body")
+            .contains("RPC unavailable")
     );
     assert_eq!(stored_price().await.unwrap(), "200");
     age_proof().await.unwrap();
@@ -6470,6 +6483,31 @@ async fn an_operator_can_rebuild_quarantined_legacy_sepolia_trades_with_an_unpro
         .execute(&mut *conn)
         .await
         .unwrap();
+    let error = sqlx::raw_sql(REBUILD)
+        .execute(&mut *conn)
+        .await
+        .unwrap_err();
+    assert!(error.to_string().contains("missing Sepolia LAND cursor"));
+    sqlx::query(
+        "INSERT INTO land_authz.index_cursor(network,land_registry,estate_registry,last_block)
+        VALUES ('ethereum-sepolia',$1,$2,3831219)",
+    )
+    .bind(crate::land_authz::LAND_REGISTRY_SEPOLIA)
+    .bind(crate::land_authz::ESTATE_REGISTRY_SEPOLIA)
+    .execute(&mut *conn)
+    .await
+    .unwrap();
+    let mut tx = conn.begin().await.unwrap();
+    sqlx::query(
+        "INSERT INTO shop.worker_progress(worker,scope,key_position)
+        VALUES ('nft_catalogue_pair',0,ARRAY['1','137'])",
+    )
+    .execute(&mut *tx)
+    .await
+    .unwrap();
+    let error = sqlx::raw_sql(REBUILD).execute(&mut *tx).await.unwrap_err();
+    assert!(error.to_string().contains("bound to another chain pair"));
+    tx.rollback().await.unwrap();
     for change in [
         "chain_id=1",
         "sepolia_trade_v1=true",

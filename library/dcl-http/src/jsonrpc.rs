@@ -91,8 +91,17 @@ impl<'a> Rpc<'a> {
     /// A call whose HTTP status must be successful, even when the body is
     /// a JSON-RPC envelope. Keeps provider status codes such as 401/403.
     pub async fn call_strict_status(&self, method: &str, params: Value) -> Result<Value, RpcError> {
+        result_of(self.envelope_strict_status(method, params).await?)
+    }
+
+    /// Keep the JSON-RPC envelope on a successful HTTP response.
+    pub async fn envelope_strict_status(
+        &self,
+        method: &str,
+        params: Value,
+    ) -> Result<Value, RpcError> {
         let (status, bytes) = self.post(&request(1, method, params), true).await?;
-        result_of(parse_envelope(status, &bytes)?)
+        parse_envelope(status, &bytes)
     }
 
     /// A call whose result is a `0x` hex string.
@@ -193,6 +202,28 @@ mod tests {
                 .await
                 .unwrap_err(),
             RpcError::Refused(_)
+        ));
+    }
+
+    #[tokio::test]
+    async fn a_strict_call_keeps_the_http_status_of_a_jsonrpc_error() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let endpoint = format!("http://{}/", listener.local_addr().unwrap());
+        let app = axum::Router::new().route("/", axum::routing::post(|| async {
+            (axum::http::StatusCode::UNAUTHORIZED, axum::Json(json!({
+                "jsonrpc":"2.0", "id":1, "error":{"code":-32000,"message":"authentication failed"}
+            })))
+        }));
+        tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+        let http = Outbound::for_tests();
+        let rpc = Rpc::new(&http, &endpoint);
+        assert_eq!(
+            rpc.call_strict_status("eth_chainId", json!([])).await,
+            Err(RpcError::Status(401))
+        );
+        assert!(matches!(
+            rpc.call("eth_chainId", json!([])).await,
+            Err(RpcError::Response { code: -32000, .. })
         ));
     }
 

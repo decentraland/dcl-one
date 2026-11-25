@@ -12,7 +12,8 @@ The index process increments `catalyst_index_sales_repair_failures_total` by ind
 
 `catalyst_catalogue_mirror_proof_outcomes_total` counts mainnet proof
 attempts by `mirror`, `network` and `outcome`. `proof_rejected` records
-invalid proof, including a conflicting chain or block hash.
+a conflicting chain or block hash. `graph_unavailable` records a failed
+graph query or a graph response without usable block metadata.
 `proof_skipped_rpc_unavailable` records an unpinned graph pass started
 after the RPC retry window elapsed. `rpc_auth_failed` counts HTTP 401/403
 responses and accompanies the error log for the configured RPC.

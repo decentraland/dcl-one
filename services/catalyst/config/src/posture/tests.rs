@@ -839,6 +839,52 @@ fn mirror_follows_decentraland_and_derives_the_trade_rpcs() {
     }
 }
 
+#[test]
+fn ethereum_network_aliases_derive_the_rpc_defaults_for_their_catalogue_pair() {
+    for (alias, l1, l2, expected_ids) in [
+        ("mainnet", "mainnet", "polygon", (1, 137)),
+        ("Ethereum", "mainnet", "polygon", (1, 137)),
+        (" ethereum-mainnet ", "mainnet", "polygon", (1, 137)),
+        ("Mainnet", "mainnet", "polygon", (1, 137)),
+        ("Sepolia", "sepolia", "amoy", (11155111, 80002)),
+        (" ethereum-sepolia ", "sepolia", "amoy", (11155111, 80002)),
+    ] {
+        let mut config = parsed(&[
+            ("DATABASE_URL", "postgres:///catalyst"),
+            (ENV, "mirror"),
+            ("ETH_NETWORK", alias),
+        ]);
+        config.default_rpc_urls();
+        config.derive_trade_rpc_urls();
+        let l1 = format!("https://rpc.decentraland.org/{l1}?project=dcl-one");
+        let l2 = format!("https://rpc.decentraland.org/{l2}?project=dcl-one");
+        assert_eq!(
+            config.content.eth_rpc_url.as_deref(),
+            Some(l1.as_str()),
+            "{alias}"
+        );
+        assert_eq!(
+            config.economy.rpc_endpoint_polygon.as_deref(),
+            Some(l2.as_str()),
+            "{alias}"
+        );
+        assert_eq!(
+            (
+                config.marketplace.marketplace_index_chain_id_ethereum,
+                config.marketplace.marketplace_index_chain_id_matic
+            ),
+            expected_ids,
+            "{alias}"
+        );
+        assert!(walks_catalogue(&config), "{alias}");
+        assert_eq!(
+            config.marketplace.trade_rpc_urls,
+            (expected_ids == (1, 137)).then(|| format!("1={l1},137={l2}")),
+            "{alias}"
+        );
+    }
+}
+
 /// The headcount archive is a database write: no posture turns it on
 /// past DATA_WRITES_ENABLED (a mirror or island restore found its rows).
 #[test]

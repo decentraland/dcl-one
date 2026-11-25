@@ -2597,6 +2597,8 @@ A catalogue database serves one Ethereum/Polygon pair. The NFT worker uses
 to select mainnet (1/137) or Sepolia/Amoy (11155111/80002). Its RPC must
 serve that chain. The mirror posture derives the testnet defaults from
 `ETH_NETWORK=sepolia` when the operator leaves the IDs unset. At startup
+the preset and its RPC defaults resolve `ETH_NETWORK` aliases to the same
+mainnet or testnet pair, ignoring case and surrounding whitespace. Then
 the catalogue writer checks the pair against
 `ETH_NETWORK` and the database binding. The API process leaves the binding
 to the index writer, even when they share settings. Each database can have independent
@@ -2618,6 +2620,7 @@ configured graph without a pin to keep prices fresh under the existing
 price freshness budget. Authentication errors and malformed RPC responses
 use the same retry window. A wrong-chain result or a conflicting block hash
 rejects the pass, and later RPC unavailability cannot override that result.
+A graph proof error leaves the RPC outage clock as it was.
 A replacement mainnet writer can finish from a persisted pin even without
 an RPC. New mainnet passes on nodes without an RPC use the configured graph.
 Testnet passes require their configured proof RPC.
@@ -2960,7 +2963,8 @@ pass claims the projection again and acts.
   legacy V2-start cursor was quarantined and Revalidate cannot prove its
   checkpoint. Confirm from the deployment configuration that this database
   holds the Sepolia trade history, especially if Revalidate cleared its
-  chain binding. Stop its trade writer and use the Sepolia RPC and default
+  chain binding. The script requires a Sepolia LAND cursor and checks any
+  existing catalogue pair binding. Stop its trade writer and use the Sepolia RPC and default
   V1 start for the replacement. Run
   `PGOPTIONS="-c rebuild.confirm_sepolia=yes" psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f tooling/migration/rebuild-quarantined-legacy-sepolia-trades.sql`
   on that database, then restart the writer. The statement only schedules

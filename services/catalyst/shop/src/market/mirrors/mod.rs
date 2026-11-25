@@ -45,7 +45,8 @@ use chrono::{DateTime, NaiveDateTime, Utc};
 use serde_json::Value;
 use sqlx::{PgPool, Row};
 
-use crate::http::jsonrpc::{Rpc, RpcError};
+use crate::chain_index::rpc::{Rpc, RpcError};
+use crate::http::jsonrpc::RpcError as HttpRpcError;
 use crate::jobs::{JobContext, Jobs, PeriodicCfg};
 use crate::shared::as_of;
 
@@ -245,16 +246,23 @@ fn catalogue_proof_rpc(
 
 #[derive(Debug, thiserror::Error)]
 pub(super) enum CatalogueProofError {
-    #[error(transparent)]
-    RpcUnavailable(#[from] RpcError),
+    #[error("catalogue proof RPC unavailable")]
+    RpcUnavailable,
+    #[error("catalogue proof RPC returned status {0}")]
+    RpcStatus(u16),
     #[error("{0}")]
     Disagreement(String),
     #[error("{0}")]
-    Invalid(String),
+    GraphUnavailable(String),
 }
 
-fn rpc_quantity(value: &Value) -> Option<u64> {
-    u64::from_str_radix(value.as_str()?.strip_prefix("0x")?, 16).ok()
+impl From<RpcError> for CatalogueProofError {
+    fn from(error: RpcError) -> Self {
+        match error {
+            RpcError::Provider(HttpRpcError::Status(status)) => Self::RpcStatus(status),
+            _ => Self::RpcUnavailable,
+        }
+    }
 }
 
 fn block_hash(value: &Value) -> Option<&str> {
@@ -273,68 +281,54 @@ pub(super) async fn catalogue_pass_hash(
     net: super::chain_walk::ChainNet,
     url: &str,
 ) -> Result<String, CatalogueProofError> {
-    use CatalogueProofError::{Disagreement, Invalid};
+    use super::chain_walk::{LogSource, RpcSource, WrongChain};
+    use CatalogueProofError::{Disagreement, GraphUnavailable, RpcUnavailable};
     use serde_json::json;
     let head = super::readers::query(state, url, "{ _meta { block { number } } }", json!({}))
         .await
-        .map_err(Invalid)?;
+        .map_err(GraphUnavailable)?;
     let graph_head = head["_meta"]["block"]["number"]
         .as_u64()
-        .ok_or_else(|| Invalid("collections graph has no block number".into()))?;
-    let endpoint = catalogue_proof_rpc(state, net)
-        .ok_or_else(|| Invalid("no RPC for the configured catalogue chain".into()))?;
-    let rpc = Rpc::new(&state.http, &endpoint);
+        .ok_or_else(|| GraphUnavailable("collections graph has no block number".into()))?;
+    let endpoint = catalogue_proof_rpc(state, net).ok_or(RpcUnavailable)?;
+    let source = RpcSource::new(Rpc::at(&state.http, &endpoint).with_strict_status());
     let indexes = &state.settings.market.indexes;
-    let expected = indexes.chain_id(net);
-    let served = rpc_quantity(&rpc.call_strict_status("eth_chainId", json!([])).await?)
-        .ok_or_else(|| RpcError::Malformed("eth_chainId returned no valid chain ID".into()))?;
-    if u64::try_from(expected) != Ok(served) {
-        return Err(Disagreement(format!(
-            "the endpoint serves chain {served}, expected {expected}"
-        )));
-    }
-    let head = if indexes.serves_mainnet(net) {
-        let rpc_head = rpc_quantity(&rpc.call_strict_status("eth_blockNumber", json!([])).await?)
-            .ok_or_else(|| {
-            RpcError::Malformed("eth_blockNumber returned no valid height".into())
+    super::ensure_chain(&source, indexes.chain_id(net))
+        .await
+        .map_err(|error| {
+            if error.is::<WrongChain>() {
+                Disagreement(error.to_string())
+            } else {
+                error
+                    .downcast::<RpcError>()
+                    .map_or(RpcUnavailable, CatalogueProofError::from)
+            }
         })?;
-        graph_head.min(rpc_head)
+    let head = if indexes.serves_mainnet(net) {
+        graph_head.min(source.head().await?.value)
     } else {
         graph_head
     };
     let number = head.saturating_sub(net.confirmations());
     let data = super::readers::query(state, url,
         "query CatalogueBlock($number: Int!) { _meta(block: {number: $number}) { block { number hash } } }",
-        json!({"number":number})).await.map_err(Invalid)?;
+        json!({"number":number})).await.map_err(GraphUnavailable)?;
     let block = &data["_meta"]["block"];
     if block["number"].as_u64() != Some(number) {
-        return Err(Invalid(format!(
+        return Err(GraphUnavailable(format!(
             "collections graph did not return block {number}"
         )));
     }
     let hash = block_hash(&block["hash"]).ok_or_else(|| {
-        Invalid("collections graph has no block hash or returned an invalid hash".into())
+        GraphUnavailable("collections graph has no block hash or returned an invalid hash".into())
     })?;
-    let header = rpc
-        .call_strict_status(
-            "eth_getBlockByNumber",
-            json!([format!("0x{number:x}"), false]),
-        )
-        .await?;
-    if rpc_quantity(&header["number"]) != Some(number) {
-        return Err(RpcError::Malformed(format!(
-            "RPC did not return the header for block {number}"
-        ))
-        .into());
-    }
-    let rpc_hash = block_hash(&header["hash"])
-        .ok_or_else(|| RpcError::Malformed("RPC header has no valid hash".into()))?;
-    if !rpc_hash.eq_ignore_ascii_case(hash) {
+    let header = source.header(number).await?.value;
+    if !header.hash.eq_ignore_ascii_case(hash) {
         return Err(Disagreement(format!(
             "collections graph block {number} differs from the configured chain"
         )));
     }
-    Ok(rpc_hash.to_ascii_lowercase())
+    Ok(header.hash)
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -444,8 +438,7 @@ async fn pin_new_pass(
     };
     let previous = c.last_error.as_deref().unwrap_or_default();
     if state.settings.market.indexes.serves_mainnet(net) {
-        if let CatalogueProofError::RpcUnavailable(RpcError::Status(status @ (401 | 403))) = &error
-        {
+        if let CatalogueProofError::RpcStatus(status @ (401 | 403)) = &error {
             tracing::error!(
                 mirror = c.mirror.name(),
                 network = net.db_name(),
@@ -457,7 +450,9 @@ async fn pin_new_pass(
                 .increment(1);
         }
         match &error {
-            CatalogueProofError::RpcUnavailable(_) if !previous.starts_with(PROOF_REJECTED) => {
+            CatalogueProofError::RpcUnavailable | CatalogueProofError::RpcStatus(_)
+                if !previous.starts_with(PROOF_REJECTED) =>
+            {
                 let now = now_utc();
                 let retrying = previous.starts_with(PROOF_UNAVAILABLE);
                 if retrying
@@ -481,19 +476,26 @@ async fn pin_new_pass(
                 c.last_error = Some(format!("{PROOF_UNAVAILABLE}{error}"));
                 save(&state.pool, c).await?;
             }
-            CatalogueProofError::RpcUnavailable(_) => {
+            CatalogueProofError::RpcUnavailable | CatalogueProofError::RpcStatus(_) => {
                 // A transport failure cannot supersede prior conflicting evidence.
             }
-            CatalogueProofError::Disagreement(_) | CatalogueProofError::Invalid(_) => {
+            CatalogueProofError::Disagreement(_) => {
                 tracing::error!(mirror = c.mirror.name(), network = net.db_name(), %error,
                     "catalogue proof rejected");
                 PROOF_OUTCOMES
                     .handle([c.mirror.name(), net.db_name(), "proof_rejected"])
                     .increment(1);
-                if matches!(error, CatalogueProofError::Disagreement(_)) {
-                    c.last_error = Some(format!("{PROOF_REJECTED}{error}"));
-                    save(&state.pool, c).await?;
-                } else if !previous.starts_with(PROOF_REJECTED) {
+                c.last_error = Some(format!("{PROOF_REJECTED}{error}"));
+                save(&state.pool, c).await?;
+            }
+            CatalogueProofError::GraphUnavailable(_) => {
+                tracing::warn!(mirror = c.mirror.name(), network = net.db_name(), %error,
+                    "catalogue proof graph unavailable");
+                PROOF_OUTCOMES
+                    .handle([c.mirror.name(), net.db_name(), "graph_unavailable"])
+                    .increment(1);
+                if !previous.starts_with(PROOF_REJECTED) && !previous.starts_with(PROOF_UNAVAILABLE)
+                {
                     c.last_error = Some(error.to_string());
                     save(&state.pool, c).await?;
                 }
@@ -1096,6 +1098,11 @@ mod tests {
         assert!(
             schedule.interval + MAINNET_PROOF_RETRY_WINDOW.to_std().unwrap() + cap
                 < price_max_age(&state.settings)
+        );
+        Arc::get_mut(&mut state).unwrap().settings.polygon_rpc_url = None;
+        assert_eq!(
+            periodic_config(&state, Mirror::Items).wait_after_failure(u32::MAX),
+            Duration::from_secs(3600)
         );
     }
 

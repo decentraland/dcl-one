@@ -6,6 +6,17 @@ BEGIN
     IF current_setting('rebuild.confirm_sepolia', true) IS DISTINCT FROM 'yes' THEN
         RAISE EXCEPTION 'confirm the legacy Sepolia trade rebuild with rebuild.confirm_sepolia=yes';
     END IF;
+    IF NOT EXISTS (SELECT 1 FROM land_authz.index_cursor WHERE network='ethereum-sepolia') THEN
+        RAISE EXCEPTION 'missing Sepolia LAND cursor for the legacy trade rebuild';
+    END IF;
+    LOCK TABLE shop.worker_progress IN SHARE MODE;
+    IF EXISTS (
+        SELECT 1 FROM shop.worker_progress
+         WHERE worker='nft_catalogue_pair' AND scope=0
+           AND key_position IS DISTINCT FROM ARRAY['11155111','80002']
+    ) THEN
+        RAISE EXCEPTION 'catalogue database is bound to another chain pair';
+    END IF;
     UPDATE shop.chain_cursor
        SET chain_id = 11155111, start_block = 6770056,
            rebuild_requested_at = timezone('UTC', now()),
