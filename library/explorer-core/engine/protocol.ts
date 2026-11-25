@@ -1171,6 +1171,9 @@ export interface PermissionUsedMessage {
   scene: string
   realm: string
   allowed: boolean
+  /** Absent for a use. Present when what the permission allows starts (true) or stops (false)
+   *  acting on the player, such as a camera the scene holds; `allowed` is then true. */
+  inForce?: boolean
 }
 
 /** The portable experiences the player can see and stop (scene → page, from getPortablesStream):

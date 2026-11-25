@@ -63,6 +63,10 @@
   background: var(--fill-2);
   box-shadow: inset 3px 0 0 var(--brand);
 }
+/* what the scene is doing to the player now */
+.row[data-in-force] {
+  box-shadow: inset 3px 0 0 var(--brand);
+}
 .empty,
 .hint {
   padding: 4px 16px 0;

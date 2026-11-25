@@ -1844,6 +1844,19 @@ pub struct PermissionUsed {
     pub additional: Option<String>,
     pub scene: String,
     pub was_allowed: bool,
+    /// `None` for a use: the scene asked and was allowed or refused. `Some` reports instead that
+    /// what the permission allows started (`true`) or stopped (`false`) acting on the player,
+    /// such as a camera the scene holds.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub in_force: Option<bool>,
+}
+
+/// The permissions whose effect acts on the player now, and the scene they are counted for: the
+/// parcel scene the player stands in.
+#[derive(Resource, Default, Debug, Clone, PartialEq, Eq)]
+pub struct PermissionsInForce {
+    pub scene: Option<String>,
+    pub types: Vec<PermissionType>,
 }
 
 #[derive(Resource)]

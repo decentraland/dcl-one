@@ -472,6 +472,7 @@ export function Sidebar({
           anchor={permissionsAnchor}
           visit={session.permissions.visit}
           triggered={session.permissions.triggered}
+          inForce={session.permissions.inForce}
           rules={session.permissions.rules}
           sceneName={session.minimap.sceneTitle}
           setRule={session.permissions.setRule}

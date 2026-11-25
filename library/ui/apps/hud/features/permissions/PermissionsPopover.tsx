@@ -1,5 +1,8 @@
 // Permissions popover beside the sidebar permissions button, for the scene the player stands in:
-// the player's "This visit" answers, then the stored rules for the scene, the realm and everywhere.
+// what the scene is doing to the player now ("In force now": a held camera, a hidden avatar,
+// changed movement), the player's "This visit" answers, then the stored rules for the scene, the
+// realm and everywhere. An "In force now" row opens the review on the scene's rule, so what a
+// default allowed without asking can be refused from here.
 // A row the scene has run into this visit is highlighted — the answer or the rule in force for the
 // type — so a silent refusal points at what caused it; a dismissed prompt's refusal has no row and
 // shows nothing. Clicking a row clears that answer or rule at once and opens the review dialog on
@@ -31,6 +34,7 @@ export function PermissionsPopover({
   anchor,
   visit,
   triggered,
+  inForce,
   rules,
   sceneName,
   setRule,
@@ -42,6 +46,8 @@ export function PermissionsPopover({
   anchor: HTMLElement | null
   visit: VisitAnswer[]
   triggered: TriggeredPermission[]
+  /** The permission types acting on the player now. */
+  inForce: string[]
   rules: PermissionRules | null
   sceneName: string
   setRule: (subject: PermissionSubject, allow: boolean, level: PermissionRuleLevel) => void
@@ -85,7 +91,32 @@ export function PermissionsPopover({
     <div ref={ref} className={styles.panel} role="dialog" aria-label="Scene permissions" style={style}>
       <div className={styles.title}>SCENE PERMISSIONS</div>
       <div className={styles.divider} />
-      {visit.length === 0 && !anyRules ? (
+      {inForce.length > 0 && (
+        <>
+          <div className={styles.section}>In force now</div>
+          {inForce.map((ty) => (
+            <button
+              key={`inForce|${ty}`}
+              type="button"
+              className={styles.row}
+              data-in-force
+              disabled={rules == null}
+              onClick={() => {
+                if (rules == null) return
+                review({ ty, sceneName, scene: rules.scene, realm: rules.realm, scope: 'scene', value: 'Allow' }, 'scene')
+              }}
+            >
+              {describePermission(ty)}
+              <span className={styles.value} data-value="Allow">
+                active
+              </span>
+            </button>
+          ))}
+          <div className={styles.hint}>Click one to choose whether this scene may do it.</div>
+          <div className={styles.divider} />
+        </>
+      )}
+      {visit.length === 0 && !anyRules && inForce.length === 0 ? (
         <div className={styles.empty}>Nothing decided for this scene yet: it asks when it needs a permission.</div>
       ) : null}
       {visit.length > 0 && (

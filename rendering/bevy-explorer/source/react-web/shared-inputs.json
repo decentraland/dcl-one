@@ -6023,7 +6023,7 @@
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/bridge-scene/src/bevy-api.ts",
-      "sha256": "8347d7e5ecb514f0cca00362e395b0dcaee78eaa80170b309a9b4de5bec3480c"
+      "sha256": "3265aa6da237bb5b31d494fa30c12a8dcc9b4843849c4735398a991339bda64c"
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/bridge-scene/src/bridge.ts",
@@ -6112,6 +6112,10 @@
     {
       "path": "rendering/bevy-explorer/source/react-web/bridge-scene/src/domains/outfits.ts",
       "sha256": "4940b5f381241e8a35be703bbba78d802623ddda3f2ca74391f508d20fd4095c"
+    },
+    {
+      "path": "rendering/bevy-explorer/source/react-web/bridge-scene/src/domains/permissions.ts",
+      "sha256": "d7d244f5f457a9f6642b5f4fb04c25bfe668048ac74221734700ab7d27f01a34"
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/bridge-scene/src/domains/places.ts",
@@ -6366,6 +6370,10 @@
       "sha256": "b0648f5f93f52685a6d9cc61630644c70850cb5e52ad532fb0cf80d59748f48b"
     },
     {
+      "path": "rendering/bevy-explorer/source/react-web/src/test/bridgePermissionsInForce.test.ts",
+      "sha256": "b9fdc9752356ad8d4fdcf0f453552086f69685dcf0aaee4d3510b37cea62b8dc"
+    },
+    {
       "path": "rendering/bevy-explorer/source/react-web/src/test/bridgePlaces.test.ts",
       "sha256": "5b6206d2f815a52a02054dd682e877e4853b27c2a61049d3f37980942a7b3d0e"
     },
@@ -6539,7 +6547,7 @@
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/tsconfig.json",
-      "sha256": "ea5699c93130195ebfada2bd4b89ef6ec56277729e4a6a4f092c33f6ad55b863"
+      "sha256": "aaca4e4ce0d2e89686d3493c994b93576d0ce519ce09232ed589d3465d4561f1"
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/vite.config.ts",
@@ -6598,6 +6606,7 @@
     "rendering/bevy-explorer/source/react-web/src/test/bridgeNearbyMutes.test.ts",
     "rendering/bevy-explorer/source/react-web/src/test/bridgeNotifications.test.ts",
     "rendering/bevy-explorer/source/react-web/src/test/bridgeOutfits.test.ts",
+    "rendering/bevy-explorer/source/react-web/src/test/bridgePermissionsInForce.test.ts",
     "rendering/bevy-explorer/source/react-web/src/test/bridgePlaces.test.ts",
     "rendering/bevy-explorer/source/react-web/src/test/bridgeProfileReads.test.ts",
     "rendering/bevy-explorer/source/react-web/src/test/bridgeRandomizer.test.ts",
@@ -6733,7 +6742,7 @@
     },
     {
       "path": "library/explorer-core/engine/protocol.ts",
-      "sha256": "b5305a8fcae8da728e51384cefe4a588acd923521479ad85ac50941b6c6908c0"
+      "sha256": "d82ae799ed0359904367974d9d73d39a7abface817efcafcf0a4fec87df1233c"
     },
     {
       "path": "library/explorer-core/engine/requestIds.ts",
@@ -10157,11 +10166,11 @@
     },
     {
       "path": "library/ui/apps/hud/features/permissions/PermissionsPopover.module.css",
-      "sha256": "e896ba986bbb922b234dc29b1e725a60de38aac0456f16105dac8f1669df6ee0"
+      "sha256": "8b36d1337361da793b4722bb4af4597329c8ace641b426b8d6a7678a2565db49"
     },
     {
       "path": "library/ui/apps/hud/features/permissions/PermissionsPopover.tsx",
-      "sha256": "6f86265c2ac0a7a1b96f09713dae14f1a9e9d36f8b4b131cd2845993a1197e93"
+      "sha256": "1df239615f979c731debf46d9ffe75c28af3981316e92da3dfba39e5f005ed34"
     },
     {
       "path": "library/ui/apps/hud/features/photoMode/PhotoModeOverlay.module.css",
@@ -10329,7 +10338,7 @@
     },
     {
       "path": "library/ui/apps/hud/features/session/useEngineSession.ts",
-      "sha256": "ff9d93ca8c1a591cb4a907c5751979fddb501df3ec67cf79bf6b9f85894e9710"
+      "sha256": "44924ea38ec8827b8316a41a7419aed9874289969b919eb33fa4deea850a3ed1"
     },
     {
       "path": "library/ui/apps/hud/features/settings/KeyBindingsTab.module.css",
@@ -10373,7 +10382,7 @@
     },
     {
       "path": "library/ui/apps/hud/features/sidebar/Sidebar.tsx",
-      "sha256": "607772ceee3294cb0de927b30ed5e9b1a32983cb600670ae44155f7ff53ba2cb"
+      "sha256": "c3ce6292c0f8a50f4b5d1d72dc09f08f4bb693681b2ee9ac454228c97ac7159f"
     },
     {
       "path": "library/ui/apps/hud/features/sidebar/inviteLink.ts",
@@ -10677,7 +10686,7 @@
     },
     {
       "path": "library/ui/apps/hud/test/harness.tsx",
-      "sha256": "0153777d12b2e7dbc1a32a95a67b58000c397da07745dda02d1219c65f56a200"
+      "sha256": "d3649d75d7acfc18211f3753f58ac0d264c502c7f5a13965297f1ecca896aa14"
     },
     {
       "path": "library/ui/apps/hud/test/host.ts",
@@ -11025,7 +11034,7 @@
     },
     {
       "path": "library/ui/apps/hud/test/hosted/permissions.test.tsx",
-      "sha256": "03c157c1028c234d9e9a6b6ba807627f6d071cae38e2d8cbb415357e9d0d20b8"
+      "sha256": "1f3bf1aa47cb3cc1e095b9daac5a8f5622dd0bea98f84c65f7b950c634a7027f"
     },
     {
       "path": "library/ui/apps/hud/test/hosted/photoMode.test.tsx",

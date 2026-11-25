@@ -765,6 +765,9 @@ export interface PermissionsState {
   /** Permissions the scene used this visit, by type, with the engine's latest outcome. The list
    *  highlights the row that decided each: a visit answer, or the stored rule in force. */
   triggered: TriggeredPermission[]
+  /** The permission types whose effect acts on the player now in the scene they stand in, such as
+   *  a camera the scene holds: the list's "In force now" rows. */
+  inForce: string[]
   /** Refusals the player did not click themselves — the HUD answering from a visit deny, or a stored
    *  rule — by type, that the player has not opened the list for yet: the rail badge. */
   unseenDenied: number
@@ -1769,6 +1772,9 @@ export function useEngineSession(createDriver: () => LoginDriver, host: SessionH
   const [visitAnswers, setVisitAnswers] = useState<VisitAnswer[]>([])
   // the engine's latest outcome per permission the scene used this visit (scene hash + type)
   const [triggeredPermissions, setTriggeredPermissions] = useState<(TriggeredPermission & { scene: string })[]>([])
+  // Kept for every scene, not the current one only: a start can arrive before the scene message
+  // that says the player stands there, and the engine sends it once.
+  const [permissionsInForce, setPermissionsInForce] = useState<{ scene: string; ty: string }[]>([])
   // types the scene was refused without the player clicking Deny — by a visit deny or a stored rule
   // — and those the player has seen. The engine reports the refusal of the request the player did
   // click Deny (or Escape) on too: that one report is skipped.
@@ -2802,6 +2808,14 @@ export function useEngineSession(createDriver: () => LoginDriver, host: SessionH
           setPermissionQueue((q) => q.filter((r) => r.id !== msg.id))
           break
         case 'permissionUsed':
+          if (msg.inForce != null) {
+            setPermissionsInForce((f) => {
+              const rest = f.filter((e) => !(e.scene === msg.scene && e.ty === msg.ty))
+              if (!msg.inForce) return rest.length === f.length ? f : rest
+              return rest.length === f.length ? [...f, { scene: msg.scene, ty: msg.ty }] : f
+            })
+            break
+          }
           // a neighbouring scene's or a portable's use is not this scene's
           if (msg.scene !== currentScene.current) break
           setTriggeredPermissions((t) => {
@@ -5589,6 +5603,7 @@ export function useEngineSession(createDriver: () => LoginDriver, host: SessionH
       pending: permissionQueue,
       visit: visitAnswers.filter((e) => e.scene === sceneHash),
       triggered: triggeredPermissions,
+      inForce: permissionsInForce.filter((e) => e.scene === sceneHash).map((e) => e.ty),
       unseenDenied,
       markSeen: markPermissionsSeen,
       rules: permissionRules,

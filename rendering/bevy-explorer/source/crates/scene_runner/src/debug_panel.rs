@@ -31,6 +31,7 @@ impl Plugin for SceneDebugPanelPlugin {
             .add_console_command::<SceneState, _>(scene_state)
             .add_console_command::<SceneContent, _>(scene_content)
             .add_console_command::<LoadingState, _>(loading_state)
+            .add_console_command::<PermissionsInForceState, _>(permissions_in_force_state)
             .add_console_command::<TextureState, _>(texture_state)
             .add_debug_section(DebugSection {
                 title: "Current Scene",
@@ -157,6 +158,13 @@ impl Plugin for SceneDebugPanelPlugin {
                     ("Broken scenes", "broken"),
                 ],
                 actions: &[("Reload current parcel scene", "/reload --current")],
+                inputs: &[],
+            })
+            .add_debug_section(DebugSection {
+                title: "Scene permissions in force",
+                query: "/permissions_in_force",
+                fields: &[("Scene", "scene"), ("In force now", "types")],
+                actions: &[],
                 inputs: &[],
             })
             .add_debug_section(DebugSection {
@@ -549,6 +557,21 @@ fn scene_content(
         "visibleMaterials": visible_materials.len(), "textures": textures.len(),
         "colliders": colliders.map_or(0, SceneColliderData::collider_count),
         "collidersOutOfBounds": colliders.map_or(0, SceneColliderData::out_of_bounds_count)}).to_string());
+}
+
+/// Report, as JSON, the permissions whose effect acts on the player now (`types`) and the hash
+/// of the parcel scene they are counted for (`scene`, null outside any).
+#[derive(clap::Parser, ConsoleCommand)]
+#[command(name = "/permissions_in_force")]
+struct PermissionsInForceState;
+
+fn permissions_in_force_state(
+    mut input: ConsoleCommand<PermissionsInForceState>,
+    in_force: Res<common::structs::PermissionsInForce>,
+) {
+    if let Some(Ok(_)) = input.take() {
+        input.reply_ok(json!({"scene": in_force.scene, "types": in_force.types}).to_string());
+    }
 }
 
 #[derive(clap::Parser, ConsoleCommand)]

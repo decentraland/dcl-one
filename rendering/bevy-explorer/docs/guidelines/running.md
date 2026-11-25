@@ -265,6 +265,11 @@ State, in every build:
 - `/chat_history [count]`: the last chat messages sent and received (200 kept), oldest first,
   with the sender's address and `messageId`, and `total` counting every message so far. Commands,
   emote markers and direct messages are left out; `/dm_history` has those.
+- `/permissions_in_force`: the permissions whose effect acts on the player now, as JSON: `scene`
+  (the hash of the parcel scene the player stands in, null outside any) and `types`
+  (`ForceCamera` while a scene holds the camera, `HideAvatarsNametags` while the player's avatar
+  or passport is hidden, `SetLocomotion` while the player's movement is changed or blocked). The
+  HUD's permissions popover lists the same under "In force now".
 - `/voice_state`: the mic (`available`, `enabled`, and `sceneBlocked` while the scene the player
   stands in turns nearby voice off) and, in LiveKit builds, each voice room's state
   and the addresses speaking.

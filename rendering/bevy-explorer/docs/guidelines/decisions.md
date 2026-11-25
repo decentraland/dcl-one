@@ -608,6 +608,17 @@ ends in "we don't do that", so the next person doesn't have to rediscover it.
   unity-explorer scales the scroll delta by 50 everywhere but macOS, per frame; here a wheel line
   (16 pixels of a trackpad's scroll, on every platform including web) zooms as Unity's 60 fps frame
   would, and a held bumper zooms at Unity's per-second rate, so neither depends on the frame rate.
+- **What a scene is doing to the player is listed with its permissions.** A held camera, a
+  hidden avatar or passport and changed movement all happen under a permission that allows by
+  default, so nothing asks. The permissions popover lists them under "In force now" for the
+  scene the player stands in, and each row opens that scene's rule, so the player can refuse
+  it there. There is no separate restrictions list.
+  - The engine reports a start and an end on the permission-used stream (`inForce`), read
+    from the effect itself (`PrimaryCamera.scene_override`, `PlayerModifiers`), not from the
+    grant: a granted camera permission with no camera held lists nothing.
+  - Each is counted for the parcel scene the player stands in. An avatar modifier area of a
+    neighbouring scene that reaches the player is listed under the scene the player stands in.
+  - A rule changed from the row applies from the next visit to the scene.
 - **Smart wearable permissions are asked on use, not at equip.** unity-explorer asks once, when a
   smart wearable is equipped (or at login for one already worn), to allow the permissions its
   `requiredPermissions` declares, and refuses what it did not declare. Here a smart wearable is a

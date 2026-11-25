@@ -275,6 +275,22 @@ describe('triggered uses + badge', () => {
     ])
   })
 
+  it('lists what is in force in the scene the player stands in, and drops it when it ends', async () => {
+    const h = renderSession()
+    await enter(h)
+    h.driver.emit({ ...USED, ty: 'ForceCamera', allowed: true, inForce: true })
+    h.driver.emit({ ...USED, ty: 'ForceCamera', allowed: true, inForce: true })
+    h.driver.emit({ ...USED, ty: 'SetLocomotion', allowed: true, inForce: true })
+    // a start for a scene the player is not known to stand in yet is kept, not shown
+    h.driver.emit({ ...USED, scene: 'bafkotherscene', ty: 'HideAvatarsNametags', allowed: true, inForce: true })
+    expect(h.session().permissions.inForce).toEqual(['ForceCamera', 'SetLocomotion'])
+    // neither a use nor a refusal: the used list and the badge are untouched
+    expect(h.session().permissions.triggered).toEqual([])
+    expect(h.session().permissions.unseenDenied).toBe(0)
+    h.driver.emit({ ...USED, ty: 'ForceCamera', allowed: true, inForce: false })
+    expect(h.session().permissions.inForce).toEqual(['SetLocomotion'])
+  })
+
   it('is cleared with the visit answers when the player moves to another scene or reloads', async () => {
     const h = renderSession()
     await enter(h)
@@ -509,6 +525,37 @@ describe('sidebar permissions button', () => {
     session.permissions.visit = [{ ...SUBJECT, allowed: false }]
     rerender(<Sidebar session={{ ...session, permissions: { ...session.permissions } }} />)
     expect(hits()).toEqual(['open a url in your browsernever', 'fetch data from a remote serveralways'])
+  })
+
+  it('lists what is in force first; a click opens the review on the scene rule without clearing anything', async () => {
+    const session = fakeSession()
+    session.permissions.inForce = ['ForceCamera']
+    session.permissions.rules = { scene: 'bafkscenehash', realm: USED.realm, rules: { scene: [], realm: [], global: [] } }
+    await renderSettled(
+      <>
+        <Sidebar session={session} />
+        <PopupHost />
+      </>
+    )
+    await userEvent.click(screen.getByRole('button', { name: 'Scene permissions' }))
+    expect(screen.getByText('In force now')).toBeInTheDocument()
+    expect(screen.queryByText(/Nothing decided for this scene yet/)).toBeNull()
+    const row = screen.getByRole('button', { name: /active$/ })
+    expect(row).toHaveAttribute('data-in-force')
+    await userEvent.click(row)
+    expect(session.permissions.clearRule).not.toHaveBeenCalled()
+    expect(screen.getByRole('alertdialog', { name: 'Scene permission review' })).toBeInTheDocument()
+    await userEvent.click(screen.getByRole('button', { name: 'Deny' }))
+    const subject = { ty: 'ForceCamera', sceneName: '', scene: 'bafkscenehash', realm: USED.realm, scope: 'scene', value: 'Allow' }
+    expect(session.permissions.setRule).toHaveBeenCalledWith(subject, false, expect.anything())
+  })
+
+  it('an in-force row waits for the scene rules before it can be opened', async () => {
+    const session = fakeSession()
+    session.permissions.inForce = ['SetLocomotion']
+    await renderSettled(<Sidebar session={session} />)
+    await userEvent.click(screen.getByRole('button', { name: 'Scene permissions' }))
+    expect(screen.getByRole('button', { name: /active$/ })).toBeDisabled()
   })
 
   it('closes on a pointerdown outside, the event the engine canvas lets through', async () => {
