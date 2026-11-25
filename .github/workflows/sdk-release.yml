@@ -8,13 +8,6 @@ on:
     paths:
       - library/js-sdk-toolchain/**
       - library/protocol/**
-      - apps/dcl-scene-cli/**
-      - apps/bevy-explorer/e2e/scenes/environment/**
-      - library/dcl-scene-build/**
-      - library/hashing/**
-      - tooling/check-local-hashing.mjs
-      - .github/workflows/sdk.yml
-      - .github/workflows/sdk-release.yml
   workflow_dispatch:
     inputs:
       version:
