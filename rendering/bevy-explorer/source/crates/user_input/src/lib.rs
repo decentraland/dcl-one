@@ -2,7 +2,7 @@
 
 pub mod avatar_movement;
 pub mod camera;
-pub mod camera_collision;
+mod camera_collision;
 mod debug_panel;
 pub mod point_at;
 
@@ -18,7 +18,10 @@ use common::{
     },
 };
 use console::DoAddConsoleCommand;
-use scene_runner::{update_scene::pointer_lock::update_pointer_lock, OutOfWorld};
+use scene_runner::{
+    update_scene::pointer_lock::update_pointer_lock,
+    update_world::mesh_collider::PlayerCollisionToggled, OutOfWorld,
+};
 
 use crate::avatar_movement::AvatarMovementPlugin;
 use crate::point_at::PointAtPlugin;
@@ -50,6 +53,7 @@ impl Plugin for UserInputPlugin {
             )
                 .chain(),
         );
+        app.add_event::<PlayerCollisionToggled>();
         app.add_systems(PostUpdate, camera_collision::tag_camera_obstacle_meshes);
         app.init_resource::<EngineMovementControl>()
             .init_resource::<CursorLocks>()

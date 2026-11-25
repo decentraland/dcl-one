@@ -1,12 +1,19 @@
-use bevy::{ecs::system::RunSystemOnce, render::mesh::MeshTag};
+use std::sync::Arc;
+
+use bevy::{
+    asset::io::memory::{Dir, MemoryAssetReader},
+    gltf::{Gltf, GltfMesh},
+    render::mesh::MeshTag,
+};
 use dcl_component::{proto_components::sdk::components::ColliderLayer, SceneEntityId};
+use ipfs::{IpfsIo, IpfsResource};
 use rapier3d_f64::prelude::{ColliderBuilder, Group, InteractionGroups, InteractionTestMode};
 use scene_material::{SceneMaterial, SCENE_MATERIAL_CAMERA_OBSTACLE_MESH_TAG};
-use scene_runner::update_world::mesh_collider::{
-    ColliderId, SceneColliderData, GROUND_COLLISION_MASK,
-};
 use scene_runner::{
-    update_world::mesh_collider::{CtCollider, HasCollider},
+    update_world::mesh_collider::{
+        add_collider_systems, ColliderId, CtCollider, MeshCollider, SceneColliderData,
+        GROUND_COLLISION_MASK,
+    },
     ContainerEntity,
 };
 
@@ -45,7 +52,7 @@ fn add_box(colliders: &mut SceneColliderData, index: u16, layers: u32, centre: V
         &id,
         &GlobalTransform::from(Transform::from_translation(centre).with_scale(size)),
     );
-    colliders.prepare_camera_queries();
+    colliders.update_bvh();
 }
 
 /// A wall across the line of sight, its near face 2.9 m from the target.
@@ -128,7 +135,7 @@ fn the_camera_pulls_in_over_the_occluded_damping_time() {
         "{} vs {expected}",
         first.position.z
     );
-    assert_eq!(first.damp_time, 0.2);
+    assert_eq!(state.damp_time, 0.2);
 
     for _ in 0..30 {
         now += FRAME;
@@ -152,7 +159,7 @@ fn the_camera_holds_then_releases_after_the_obstacle_clears() {
     step(&colliders, &mut state, now);
 
     colliders.remove_collider(&collider_id(0));
-    colliders.prepare_camera_queries();
+    colliders.update_bvh();
 
     // the smoothing time holds the distance for 0.3 s
     let mut held = Vec::new();
@@ -299,7 +306,7 @@ fn a_triangle_mesh_wall_pulls_the_camera_in() {
     let id = collider_id(0);
     colliders.set_collider(&id, collider, Some(Entity::from_raw(1)));
     colliders.update_collider_transform(&id, &GlobalTransform::IDENTITY);
-    colliders.prepare_camera_queries();
+    colliders.update_bvh();
 
     let resolved = step(&colliders, &mut CameraCollisionState::default(), 1.0);
 
@@ -323,7 +330,7 @@ fn the_terrain_heightfield_pulls_the_camera_above_it() {
         Vec2::splat(32.0),
         Vec3::ZERO,
     );
-    colliders.prepare_camera_queries();
+    colliders.update_bvh();
 
     let resolved = resolve(
         &CameraObstacles(vec![&colliders]),
@@ -363,7 +370,7 @@ fn orbiting_while_occluded_keeps_the_camera_pulled_in() {
             ),
         );
     }
-    colliders.prepare_camera_queries();
+    colliders.update_bvh();
     let obstacles = CameraObstacles(vec![&colliders]);
     let mut state = CameraCollisionState::default();
 
@@ -416,126 +423,178 @@ fn orbiting_into_a_corner_moves_the_shoulder_without_a_jump() {
     }
 }
 
-fn scene_with_wall(world: &mut World, layers: u32) -> (Entity, Entity) {
-    let mut colliders = SceneColliderData::default();
-    wall(&mut colliders, layers);
-    let root = world.spawn(colliders).id();
-    let mesh = world
+#[derive(Resource, Default)]
+struct RedrawnMeshes(Vec<Entity>);
+
+fn record_redrawn_meshes(
+    meshes: Query<Entity, Changed<Mesh3d>>,
+    mut redrawn: ResMut<RedrawnMeshes>,
+) {
+    redrawn.0 = meshes.iter().collect();
+}
+
+fn tagging_app() -> (App, Entity) {
+    let mut app = App::new();
+    app.add_plugins((MinimalPlugins, AssetPlugin::default(), TransformPlugin))
+        .init_asset::<Mesh>()
+        .init_asset::<StandardMaterial>()
+        .init_asset::<Gltf>()
+        .init_asset::<GltfMesh>()
+        .add_event::<PlayerCollisionToggled>()
+        .init_resource::<CameraCollision>()
+        .init_resource::<RedrawnMeshes>()
+        .insert_resource(IpfsResource {
+            inner: Arc::new(IpfsIo::new(
+                false,
+                Box::new(MemoryAssetReader {
+                    root: Dir::default(),
+                }),
+                None,
+                Default::default(),
+                1,
+                tokio::sync::mpsc::unbounded_channel().0,
+            )),
+        })
+        .add_systems(
+            PostUpdate,
+            (tag_camera_obstacle_meshes, record_redrawn_meshes).chain(),
+        );
+    add_collider_systems::<CtCollider>(&mut app);
+    let root = app.world_mut().spawn(SceneColliderData::default()).id();
+    (app, root)
+}
+
+fn spawn_wall_mesh(app: &mut App, root: Entity, index: u16, layers: u32) -> Entity {
+    app.world_mut()
         .spawn((
-            HasCollider::<CtCollider>(collider_id(0), Default::default()),
             ContainerEntity {
                 container: root,
                 root,
-                container_id: SceneEntityId::ROOT,
+                container_id: collider_id(index).entity,
+            },
+            Transform::default(),
+            MeshCollider::<CtCollider> {
+                collision_mask: layers,
+                ..Default::default()
             },
             Mesh3d::default(),
             MeshMaterial3d::<SceneMaterial>::default(),
             MeshTag(0),
         ))
-        .id();
-    (root, mesh)
+        .id()
 }
 
-fn scene_with_wall_mesh(world: &mut World, layers: u32) -> Entity {
-    scene_with_wall(world, layers).1
+fn obstacle_tag(app: &App, mesh: Entity) -> u32 {
+    app.world().get::<MeshTag>(mesh).unwrap().0 & SCENE_MATERIAL_CAMERA_OBSTACLE_MESH_TAG
 }
 
-fn obstacle_tag(world: &World, mesh: Entity) -> u32 {
-    world.get::<MeshTag>(mesh).unwrap().0 & SCENE_MATERIAL_CAMERA_OBSTACLE_MESH_TAG
+/// Long enough for a change to reach the collider data and then the tag.
+fn settle(app: &mut App) {
+    app.update();
+    app.update();
 }
 
 #[test]
 fn only_a_mesh_holding_a_camera_obstacle_is_tagged_and_only_while_collisions_are_on() {
-    let mut world = World::new();
-    world.init_resource::<CameraCollision>();
-    let wall_mesh = scene_with_wall_mesh(&mut world, PHYSICS | POINTER);
-    let physics_only_mesh = scene_with_wall_mesh(&mut world, PHYSICS);
+    let (mut app, root) = tagging_app();
+    let wall_mesh = spawn_wall_mesh(&mut app, root, 0, PHYSICS | POINTER);
+    let physics_only_mesh = spawn_wall_mesh(&mut app, root, 1, PHYSICS);
 
-    world.run_system_once(tag_camera_obstacle_meshes).unwrap();
-    assert_ne!(obstacle_tag(&world, wall_mesh), 0);
-    assert_eq!(obstacle_tag(&world, physics_only_mesh), 0);
+    settle(&mut app);
+    assert_ne!(obstacle_tag(&app, wall_mesh), 0);
+    assert_eq!(obstacle_tag(&app, physics_only_mesh), 0);
 
-    world.resource_mut::<CameraCollision>().enabled = false;
-    world.run_system_once(tag_camera_obstacle_meshes).unwrap();
-    assert_eq!(obstacle_tag(&world, wall_mesh), 0);
+    app.world_mut().resource_mut::<CameraCollision>().enabled = false;
+    settle(&mut app);
+    assert_eq!(obstacle_tag(&app, wall_mesh), 0);
 
-    world.resource_mut::<CameraCollision>().enabled = true;
-    world.run_system_once(tag_camera_obstacle_meshes).unwrap();
-    assert_ne!(obstacle_tag(&world, wall_mesh), 0);
+    app.world_mut().resource_mut::<CameraCollision>().enabled = true;
+    settle(&mut app);
+    assert_ne!(obstacle_tag(&app, wall_mesh), 0);
 
-    world
+    app.world_mut()
         .entity_mut(wall_mesh)
-        .remove::<HasCollider<CtCollider>>();
-    world.run_system_once(tag_camera_obstacle_meshes).unwrap();
-    assert_eq!(obstacle_tag(&world, wall_mesh), 0);
+        .remove::<MeshCollider<CtCollider>>();
+    settle(&mut app);
+    assert_eq!(obstacle_tag(&app, wall_mesh), 0);
 }
 
 #[test]
-fn a_mesh_whose_collider_is_disabled_for_the_player_is_not_tagged() {
-    let mut world = World::new();
-    world.init_resource::<CameraCollision>();
-    let (root, wall_mesh) = scene_with_wall(&mut world, PHYSICS | POINTER);
+fn a_collider_that_changes_layers_changes_its_mesh_tag() {
+    let (mut app, root) = tagging_app();
+    let mesh = spawn_wall_mesh(&mut app, root, 0, PHYSICS);
+    settle(&mut app);
+    assert_eq!(obstacle_tag(&app, mesh), 0);
 
-    world.run_system_once(tag_camera_obstacle_meshes).unwrap();
-    assert_ne!(obstacle_tag(&world, wall_mesh), 0);
+    for (layers, tagged) in [(PHYSICS | POINTER, true), (POINTER, false)] {
+        app.world_mut()
+            .get_mut::<MeshCollider<CtCollider>>(mesh)
+            .unwrap()
+            .collision_mask = layers;
+        settle(&mut app);
+        assert_eq!(obstacle_tag(&app, mesh) != 0, tagged, "layers {layers}");
+    }
+}
 
-    let mut colliders = world.get_mut::<SceneColliderData>(root).unwrap();
-    colliders.disable_player_collisions(&collider_id(0));
-    assert!(!colliders.stops_camera(&collider_id(0)));
-    world.run_system_once(tag_camera_obstacle_meshes).unwrap();
-    assert_eq!(obstacle_tag(&world, wall_mesh), 0);
+#[test]
+fn a_mesh_is_checked_again_when_its_collisions_with_the_player_flip() {
+    let (mut app, root) = tagging_app();
+    let wall_mesh = spawn_wall_mesh(&mut app, root, 0, PHYSICS | POINTER);
+    settle(&mut app);
+    assert_ne!(obstacle_tag(&app, wall_mesh), 0);
 
-    world
-        .get_mut::<SceneColliderData>(root)
-        .unwrap()
-        .clear_disabled();
-    world.run_system_once(tag_camera_obstacle_meshes).unwrap();
-    assert_ne!(obstacle_tag(&world, wall_mesh), 0);
+    // the collider stops being an obstacle with no change to the mesh's own components, as when
+    // an entity above it is parented to the scene's player entity
+    let mut colliders = app.world_mut().get_mut::<SceneColliderData>(root).unwrap();
+    add_box(&mut colliders, 0, PHYSICS, Vec3::ZERO, Vec3::ONE);
+    settle(&mut app);
+    assert_ne!(obstacle_tag(&app, wall_mesh), 0);
+
+    app.world_mut()
+        .send_event(PlayerCollisionToggled(wall_mesh));
+    app.update();
+    assert_eq!(obstacle_tag(&app, wall_mesh), 0);
 }
 
 #[test]
 fn a_tag_rewritten_by_another_system_is_corrected() {
-    let mut world = World::new();
-    world.init_resource::<CameraCollision>();
-    let wall_mesh = scene_with_wall_mesh(&mut world, PHYSICS | POINTER);
-    let physics_only_mesh = scene_with_wall_mesh(&mut world, PHYSICS);
-    world.run_system_once(tag_camera_obstacle_meshes).unwrap();
+    let (mut app, root) = tagging_app();
+    let wall_mesh = spawn_wall_mesh(&mut app, root, 0, PHYSICS | POINTER);
+    let physics_only_mesh = spawn_wall_mesh(&mut app, root, 1, PHYSICS);
+    settle(&mut app);
 
     // removing the material drops MeshTag, which comes back empty
-    world.entity_mut(wall_mesh).remove::<MeshTag>();
-    world.run_system_once(tag_camera_obstacle_meshes).unwrap();
-    world.entity_mut(wall_mesh).insert(MeshTag(0));
-    world.run_system_once(tag_camera_obstacle_meshes).unwrap();
-    assert_ne!(obstacle_tag(&world, wall_mesh), 0);
+    app.world_mut().entity_mut(wall_mesh).remove::<MeshTag>();
+    app.update();
+    app.world_mut().entity_mut(wall_mesh).insert(MeshTag(0));
+    app.update();
+    assert_ne!(obstacle_tag(&app, wall_mesh), 0);
 
     // a detached item gets back the whole tag it was attached with
-    world.get_mut::<MeshTag>(wall_mesh).unwrap().0 = 0;
-    world.get_mut::<MeshTag>(physics_only_mesh).unwrap().0 =
-        SCENE_MATERIAL_CAMERA_OBSTACLE_MESH_TAG;
-    world.run_system_once(tag_camera_obstacle_meshes).unwrap();
-    assert_ne!(obstacle_tag(&world, wall_mesh), 0);
-    assert_eq!(obstacle_tag(&world, physics_only_mesh), 0);
+    app.world_mut().get_mut::<MeshTag>(wall_mesh).unwrap().0 = 0;
+    app.world_mut()
+        .get_mut::<MeshTag>(physics_only_mesh)
+        .unwrap()
+        .0 = SCENE_MATERIAL_CAMERA_OBSTACLE_MESH_TAG;
+    app.update();
+    assert_ne!(obstacle_tag(&app, wall_mesh), 0);
+    assert_eq!(obstacle_tag(&app, physics_only_mesh), 0);
 }
 
 #[test]
-fn a_mesh_is_marked_changed_only_when_its_tag_flips() {
-    let mut world = World::new();
-    world.init_resource::<CameraCollision>();
-    let wall_mesh = scene_with_wall_mesh(&mut world, PHYSICS | POINTER);
-    let physics_only_mesh = scene_with_wall_mesh(&mut world, PHYSICS);
-    let mut schedule = Schedule::default();
-    schedule.add_systems(tag_camera_obstacle_meshes);
-    let changed =
-        |world: &World, mesh: Entity| world.entity(mesh).get_ref::<Mesh3d>().unwrap().is_changed();
+fn a_mesh_is_redrawn_only_when_its_tag_flips() {
+    let (mut app, root) = tagging_app();
+    let wall_mesh = spawn_wall_mesh(&mut app, root, 0, PHYSICS | POINTER);
+    spawn_wall_mesh(&mut app, root, 1, PHYSICS);
+    settle(&mut app);
 
-    schedule.run(&mut world);
-    world.clear_trackers();
-    schedule.run(&mut world);
-    assert!(!changed(&world, wall_mesh));
-    assert!(!changed(&world, physics_only_mesh));
+    app.update();
+    assert_eq!(app.world().resource::<RedrawnMeshes>().0, []);
 
-    world.resource_mut::<CameraCollision>().enabled = false;
-    schedule.run(&mut world);
-    assert!(changed(&world, wall_mesh));
-    assert!(!changed(&world, physics_only_mesh));
+    app.world_mut().resource_mut::<CameraCollision>().enabled = false;
+    app.update();
+    assert_eq!(app.world().resource::<RedrawnMeshes>().0, [wall_mesh]);
+
+    app.update();
+    assert_eq!(app.world().resource::<RedrawnMeshes>().0, []);
 }

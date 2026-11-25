@@ -144,7 +144,7 @@ pub fn update_camera(
     }
 }
 
-pub fn update_camera_position(
+pub(crate) fn update_camera_position(
     mut commands: Commands,
     mut camera: Query<
         (
@@ -203,7 +203,11 @@ pub fn update_camera_position(
     let idle = dynamic_state.move_kind == MoveKind::Idle
         && !emotes.is_some_and(|(active, masked)| is_emoting(active, masked));
     let head_active = real_camera && idle;
-    let first_person = options.distance < 0.05;
+    let follow_distance = match options.scene_override {
+        Some(CameraOverride::Distance(d)) => d,
+        _ => options.distance,
+    };
+    let first_person = follow_distance < 0.05;
     head_sync.yaw_enabled = head_active && !first_person;
     head_sync.pitch_enabled = head_active;
     if head_active {
@@ -269,10 +273,6 @@ pub fn update_camera_position(
 
         commands.entity(camera_ent).try_insert(ViewUserValue(0.0));
     } else {
-        let follow_distance = match options.scene_override {
-            Some(CameraOverride::Distance(d)) => d,
-            _ => options.distance,
-        };
         let mut distance = follow_distance * 5.0;
 
         target_transform.rotation =
@@ -296,23 +296,24 @@ pub fn update_camera_position(
 
         let orbit = player_head + target_direction * distance;
         // the camera sits in the player's head in first person, so there is nothing to collide
-        let first_person = follow_distance < 0.05;
         if collision.enabled && !first_person {
+            let shoulder = head_offset * distance.clamp(0.0, 3.0);
             let margin = CAMERA_RADIUS + head_offset.length() * 3.0;
-            let mut scenes: HashSet<Entity> = containing_scene
-                .get_ray(player_head, orbit - player_head)
+            // the sweep runs from the shoulder, up to the whole offset beside the head
+            let mut scenes: HashSet<Entity> = [player_head, player_head + shoulder]
                 .into_iter()
+                .flat_map(|pivot| containing_scene.get_ray(pivot, orbit - player_head))
                 .map(|(scene, _)| scene)
                 .collect();
             scenes.extend(containing_scene.get_area_at(player_head, margin));
             scenes.extend(containing_scene.get_area_at(orbit, margin));
             for scene in &scenes {
                 if let Ok(mut colliders) = scene_colliders.get_mut(*scene) {
-                    colliders.prepare_camera_queries();
+                    colliders.update_bvh();
                 }
             }
             for mut colliders in &mut ground_colliders {
-                colliders.prepare_camera_queries();
+                colliders.update_bvh();
             }
             let obstacles = CameraObstacles(
                 scenes
@@ -326,7 +327,7 @@ pub fn update_camera_position(
                 &obstacles,
                 &mut collision_state,
                 player_head,
-                head_offset * distance.clamp(0.0, 3.0),
+                shoulder,
                 time.delta_secs(),
             );
             let pivot = player_head + offset;
@@ -358,7 +359,7 @@ pub fn update_camera_position(
             .try_insert(ViewUserValue(distance));
     }
 
-    if is_oow || matches!(options.scene_override, Some(CameraOverride::Cinematic(_))) {
+    if !real_camera {
         collision_state.invalidate();
     }
 

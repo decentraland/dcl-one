@@ -1,16 +1,18 @@
 //! Third-person camera collisions against
-//! [`scene_runner::update_world::mesh_collider::is_camera_obstacle`].
+//! [`ColliderLayers::CAMERA`](scene_runner::update_world::mesh_collider::ColliderLayers::CAMERA).
 
-use bevy::{prelude::*, render::mesh::MeshTag};
-use rapier3d_f64::prelude::ColliderHandle;
+use bevy::{ecs::system::ParamSet, prelude::*, render::mesh::MeshTag};
 use scene_material::{SceneMaterial, SCENE_MATERIAL_CAMERA_OBSTACLE_MESH_TAG};
 use scene_runner::{
-    update_world::mesh_collider::{CameraHit, CtCollider, HasCollider, SceneColliderData},
+    update_world::mesh_collider::{
+        BallHit, ColliderId, ColliderLayers, CtCollider, HasCollider, PlayerCollisionToggled,
+        SceneColliderData,
+    },
     ContainerEntity,
 };
 
 const MINIMUM_DISTANCE_FROM_TARGET: f32 = 0.1;
-pub const CAMERA_RADIUS: f32 = 0.2;
+pub(crate) const CAMERA_RADIUS: f32 = 0.2;
 /// holds the camera in after an obstacle clears, so bumpy geometry doesn't make it pop
 const SMOOTHING_TIME: f32 = 0.3;
 const DAMPING: f32 = 0.5;
@@ -24,8 +26,8 @@ const PRECISION_SLUSH: f32 = 0.001;
 const LOG_NEGLIGIBLE_RESIDUAL: f32 = -4.605_170_2;
 
 #[derive(Resource)]
-pub struct CameraCollision {
-    pub enabled: bool,
+pub(crate) struct CameraCollision {
+    pub(crate) enabled: bool,
 }
 
 impl Default for CameraCollision {
@@ -34,21 +36,47 @@ impl Default for CameraCollision {
     }
 }
 
+type SceneMesh = With<MeshMaterial3d<SceneMaterial>>;
+
 /// With collisions off no mesh is tagged, so every scene mesh fades. The tag bit is the only
 /// record: other systems rewrite or drop `MeshTag`.
-pub fn tag_camera_obstacle_meshes(
+pub(crate) fn tag_camera_obstacle_meshes(
     collision: Res<CameraCollision>,
     scene_colliders: Query<&SceneColliderData>,
-    mut meshes: Query<
-        (
-            Option<(&HasCollider<CtCollider>, &ContainerEntity)>,
-            &mut Mesh3d,
-            &mut MeshTag,
-        ),
-        With<MeshMaterial3d<SceneMaterial>>,
-    >,
+    mut removed: RemovedComponents<HasCollider<CtCollider>>,
+    mut toggled: EventReader<PlayerCollisionToggled>,
+    mut meshes: ParamSet<(
+        Query<
+            Entity,
+            (
+                SceneMesh,
+                Or<(Changed<HasCollider<CtCollider>>, Changed<MeshTag>)>,
+            ),
+        >,
+        Query<
+            (
+                Option<(&HasCollider<CtCollider>, &ContainerEntity)>,
+                &mut Mesh3d,
+                &mut MeshTag,
+            ),
+            SceneMesh,
+        >,
+    )>,
 ) {
-    for (collider, mut mesh, mut tag) in &mut meshes {
+    let stale: Option<Vec<Entity>> = (!collision.is_changed()).then(|| {
+        meshes
+            .p0()
+            .iter()
+            .chain(removed.read())
+            .chain(toggled.read().map(|toggled| toggled.0))
+            .collect()
+    });
+    let mut meshes = meshes.p1();
+    let update = |(collider, mut mesh, mut tag): (
+        Option<(&HasCollider<CtCollider>, &ContainerEntity)>,
+        Mut<Mesh3d>,
+        Mut<MeshTag>,
+    )| {
         let stops_camera = collision.enabled
             && collider.is_some_and(|(collider, container)| {
                 scene_colliders
@@ -57,18 +85,33 @@ pub fn tag_camera_obstacle_meshes(
             });
         let tagged = tag.0 & SCENE_MATERIAL_CAMERA_OBSTACLE_MESH_TAG != 0;
         if stops_camera != tagged {
-            tag.0 ^= SCENE_MATERIAL_CAMERA_OBSTACLE_MESH_TAG;
+            // unseen by `Changed<MeshTag>` above, which would visit the mesh again
+            tag.bypass_change_detection().0 ^= SCENE_MATERIAL_CAMERA_OBSTACLE_MESH_TAG;
             // bevy's mesh extraction doesn't watch MeshTag (0.16); Mesh3d is on its list
             mesh.set_changed();
+        }
+    };
+    match stale {
+        Some(stale) => {
+            for mesh in stale {
+                if let Ok(mesh) = meshes.get_mut(mesh) {
+                    update(mesh);
+                }
+            }
+        }
+        None => {
+            removed.clear();
+            toggled.clear();
+            meshes.iter_mut().for_each(update);
         }
     }
 }
 
 /// The collider sets around the camera, queried as one.
-pub struct CameraObstacles<'a>(pub Vec<&'a SceneColliderData>);
+pub(crate) struct CameraObstacles<'a>(pub(crate) Vec<&'a SceneColliderData>);
 
-#[derive(Clone, Copy, Debug, PartialEq)]
-struct ObstacleId(usize, ColliderHandle);
+#[derive(Clone, Debug, PartialEq)]
+struct ObstacleId(usize, ColliderId);
 
 impl CameraObstacles<'_> {
     /// When the ball starts inside more than one obstacle, their hits are weighted by depth so it
@@ -79,11 +122,17 @@ impl CameraObstacles<'_> {
         radius: f32,
         direction: Vec3,
         length: f32,
-    ) -> Option<CameraHit> {
+    ) -> Option<BallHit> {
         let mut hits = Vec::new();
         let mut penetrations = Vec::new();
         for set in &self.0 {
-            let sweep = set.camera_sphere_sweep(start, radius, direction, length);
+            let sweep = set.cast_ball_in_scene_flushed(
+                start,
+                direction,
+                length,
+                radius,
+                ColliderLayers::CAMERA,
+            );
             hits.extend(sweep.nearest);
             for hit in sweep.starting {
                 if hit.distance < -0.0001 {
@@ -95,7 +144,7 @@ impl CameraObstacles<'_> {
 
         if penetrations.len() > 1 {
             let sum: f32 = penetrations.iter().map(|h| h.distance).sum();
-            let mut combined = CameraHit {
+            let mut combined = BallHit {
                 distance: 0.0,
                 point: Vec3::ZERO,
                 normal: Vec3::ZERO,
@@ -114,13 +163,25 @@ impl CameraObstacles<'_> {
             .min_by(|a, b| a.distance.total_cmp(&b.distance))
     }
 
+    /// A collider the ray starts inside is not hit.
     fn ray(&self, origin: Vec3, direction: Vec3, length: f32) -> Option<(f32, ObstacleId)> {
+        if !direction.is_finite() || !origin.is_finite() || length <= 0.0 {
+            return None;
+        }
         self.0
             .iter()
             .enumerate()
             .filter_map(|(index, set)| {
-                set.camera_ray(origin, direction, length)
-                    .map(|(toi, handle)| (toi, ObstacleId(index, handle)))
+                set.cast_ray_nearest_in_scene_flushed(
+                    origin,
+                    direction,
+                    length,
+                    ColliderLayers::CAMERA,
+                    true,
+                    false,
+                    None,
+                )
+                .map(|hit| (hit.toi, ObstacleId(index, hit.id)))
             })
             .min_by(|a, b| a.0.total_cmp(&b.0))
     }
@@ -130,34 +191,34 @@ impl CameraObstacles<'_> {
             .iter()
             .enumerate()
             .flat_map(|(index, set)| {
-                set.camera_overlaps(centre, radius)
+                set.ball_overlaps_flushed(centre, radius, ColliderLayers::CAMERA)
                     .into_iter()
-                    .map(move |handle| ObstacleId(index, handle))
+                    .map(move |id| ObstacleId(index, id))
             })
             .collect()
     }
 
     fn ray_collider(
         &self,
-        id: ObstacleId,
+        id: &ObstacleId,
         origin: Vec3,
         direction: Vec3,
         length: f32,
     ) -> Option<f32> {
-        self.0[id.0].camera_ray_collider(id.1, origin, direction, length)
+        self.0[id.0].cast_ray_at(&id.1, origin, direction, length)
     }
 
-    fn penetration(&self, id: ObstacleId, centre: Vec3, radius: f32) -> Option<(Vec3, f32)> {
-        self.0[id.0].camera_penetration(id.1, centre, radius)
+    fn penetration(&self, id: &ObstacleId, centre: Vec3, radius: f32) -> Option<(Vec3, f32)> {
+        self.0[id.0].ball_penetration(&id.1, centre, radius)
     }
 }
 
 #[derive(Component, Default)]
-pub struct CameraCollisionState {
-    pub desired_distance: f32,
-    pub collided_distance: f32,
-    pub occluded: bool,
-    pub damp_time: f32,
+pub(crate) struct CameraCollisionState {
+    pub(crate) desired_distance: f32,
+    pub(crate) collided_distance: f32,
+    pub(crate) occluded: bool,
+    pub(crate) damp_time: f32,
     valid: bool,
     previous_raw_position: Vec3,
     previous_displacement: Vec3,
@@ -170,7 +231,7 @@ pub struct CameraCollisionState {
 
 impl CameraCollisionState {
     /// The next pass starts undamped.
-    pub fn invalidate(&mut self) {
+    pub(crate) fn invalidate(&mut self) {
         self.valid = false;
         self.previous_displacement = Vec3::ZERO;
         self.smoothed_distance = 0.0;
@@ -203,14 +264,13 @@ impl CameraCollisionState {
     }
 }
 
-pub struct Resolved {
-    pub position: Vec3,
-    pub occluded: bool,
-    pub damp_time: f32,
+pub(crate) struct Resolved {
+    pub(crate) position: Vec3,
+    pub(crate) occluded: bool,
 }
 
 /// `now` is the elapsed time and `dt` the frame time, in seconds.
-pub fn resolve(
+pub(crate) fn resolve(
     obstacles: &CameraObstacles,
     state: &mut CameraCollisionState,
     look_at: Vec3,
@@ -278,18 +338,14 @@ pub fn resolve(
     state.damp_time = damp_time;
     state.valid = true;
 
-    Resolved {
-        position,
-        occluded,
-        damp_time,
-    }
+    Resolved { position, occluded }
 }
 
 /// The shoulder `offset` from `pivot`, kept clear of obstacles beside it. It must move the pivot
 /// before [`resolve`]: applied after, it shifts the camera sideways at once as a wall comes in
 /// range, most of all in a corner. It eases rather than jumps, and is cut at once only where the
 /// camera's ball would enter the obstacle.
-pub fn shoulder_offset(
+pub(crate) fn shoulder_offset(
     obstacles: &CameraObstacles,
     state: &mut CameraCollisionState,
     pivot: Vec3,
@@ -379,7 +435,7 @@ fn respect_camera_radius(obstacles: &CameraObstacles, camera_pos: Vec3, look_at:
         let d = distance - MINIMUM_DISTANCE_FROM_TARGET;
         let target_pos = look_at + dir * MINIMUM_DISTANCE_FROM_TARGET;
         if let Some((_, id)) = obstacles.ray(target_pos, dir, d) {
-            if obstacles.ray_collider(id, camera_pos, -dir, d).is_none() {
+            if obstacles.ray_collider(&id, camera_pos, -dir, d).is_none() {
                 found.push(id);
             }
         }
@@ -393,12 +449,13 @@ fn respect_camera_radius(obstacles: &CameraObstacles, camera_pos: Vec3, look_at:
                 let d = dir.length();
                 if d > EPSILON {
                     dir /= d;
-                    if let Some(toi) = obstacles.ray_collider(id, look_at, dir, d + CAMERA_RADIUS) {
+                    if let Some(toi) = obstacles.ray_collider(&id, look_at, dir, d + CAMERA_RADIUS)
+                    {
                         new_cam_pos = look_at + dir * toi - dir * PRECISION_SLUSH;
                     }
                 }
             }
-            if let Some((push, depth)) = obstacles.penetration(id, new_cam_pos, CAMERA_RADIUS) {
+            if let Some((push, depth)) = obstacles.penetration(&id, new_cam_pos, CAMERA_RADIUS) {
                 new_cam_pos += push * depth;
             }
         }
