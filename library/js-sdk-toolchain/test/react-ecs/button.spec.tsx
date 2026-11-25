@@ -1,8 +1,10 @@
-import { Entity, Font, TextAlignMode } from '../../packages/@dcl/ecs/dist'
+import type { Entity } from '../../packages/@dcl/ecs/dist'
+import { Font, TextAlignMode } from '../../packages/@dcl/ecs/dist'
 import { components } from '../../packages/@dcl/ecs/src'
-import { ReactEcs, Button, UiButtonProps } from '../../packages/@dcl/react-ecs/src'
+import type { UiButtonProps } from '../../packages/@dcl/react-ecs/src'
+import { ReactEcs, Button } from '../../packages/@dcl/react-ecs/src'
 import { CANVAS_ROOT_ENTITY } from '../../packages/@dcl/react-ecs/src/components/uiTransform'
-import { Color4 } from '../../packages/@dcl/sdk/math'
+import type { Color4 } from '../../packages/@dcl/sdk/math'
 import { setupEngine, WHOLE_SCREEN } from './utils'
 
 describe('Button React Ecs', () => {

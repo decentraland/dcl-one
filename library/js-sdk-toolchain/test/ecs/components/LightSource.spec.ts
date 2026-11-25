@@ -1,6 +1,7 @@
 import { Engine, components } from '../../../packages/@dcl/ecs/src'
 import { testComponentSerialization } from './assertion'
-import { PBLightSource, PBLightSource_Point, LightSource } from '../../../packages/@dcl/ecs'
+import type { PBLightSource } from '../../../packages/@dcl/ecs'
+import { PBLightSource_Point, LightSource } from '../../../packages/@dcl/ecs'
 
 describe('Generated LightSource ProtoBuf', () => {
   it('should serialize/deserialize Point LightSource', () => {

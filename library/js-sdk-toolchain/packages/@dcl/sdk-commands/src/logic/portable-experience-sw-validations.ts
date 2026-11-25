@@ -3,7 +3,7 @@ import { Scene } from '@dcl/schemas'
 import i18next from 'i18next'
 
 import { CliError } from './error'
-import { CliComponents } from '../components'
+import type { CliComponents } from '../components'
 export interface IFile {
   path: string
   content: Buffer

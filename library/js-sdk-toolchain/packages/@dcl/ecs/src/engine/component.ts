@@ -1,8 +1,8 @@
-import { ISchema } from '../schemas'
-import { ByteBuffer } from '../serialization/ByteBuffer'
-import { CrdtMessageBody, DeleteComponentMessageBody, PutComponentMessageBody } from '../serialization/crdt'
-import { Entity } from './entity'
-import { DeepReadonly, DeepReadonlySet } from './readonly'
+import type { ISchema } from '../schemas'
+import type { ByteBuffer } from '../serialization/ByteBuffer'
+import type { CrdtMessageBody, DeleteComponentMessageBody, PutComponentMessageBody } from '../serialization/crdt'
+import type { Entity } from './entity'
+import type { DeepReadonly, DeepReadonlySet } from './readonly'
 
 /**
  * Component types are used to pick the wire protocol and the conflict resolution algorithm

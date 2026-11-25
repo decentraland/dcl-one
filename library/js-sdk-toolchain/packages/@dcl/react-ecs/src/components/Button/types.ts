@@ -1,5 +1,5 @@
-import { UiLabelProps } from '../Label/types'
-import { EntityPropTypes } from '../types'
+import type { UiLabelProps } from '../Label/types'
+import type { EntityPropTypes } from '../types'
 /**
  * Button Component Props
  * @public
