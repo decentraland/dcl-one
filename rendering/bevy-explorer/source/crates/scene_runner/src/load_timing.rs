@@ -45,7 +45,7 @@ pub fn ring_of(parcel: IVec2, parcels: impl IntoIterator<Item = IVec2>) -> u16 {
 /// but its glTFs keep loading renderer-side, and with them the colliders the player lands on. The
 /// load timing, the teleport's release of the player and the settling commands (`util::settle`)
 /// all stop waiting for such a scene.
-pub fn scene_is_halted(context: &RendererSceneContext) -> bool {
+pub(crate) fn scene_is_halted(context: &RendererSceneContext) -> bool {
     context.broken()
         || (context.blocked.contains(FROZEN_BLOCK) && !context.blocked.contains(GLTF_LOADING))
 }

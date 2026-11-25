@@ -185,7 +185,7 @@ impl RendererSceneContext {
     }
 
     /// The scene has run past its [`STARTUP_TICKS`] with nothing blocking it (its glTFs loaded).
-    pub fn started(&self) -> bool {
+    pub(crate) fn started(&self) -> bool {
         self.tick_number > STARTUP_TICKS && self.blocked.is_empty()
     }
 
