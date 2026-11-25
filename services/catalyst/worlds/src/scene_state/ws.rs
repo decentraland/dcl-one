@@ -172,12 +172,13 @@ pub async fn ws_upgrade(
         .max_message_size(state.settings.ws_max_frame_bytes);
     let caller_ip = crate::shared::client_ip::client_ip(&headers);
     let mgr = Arc::clone(&state);
-    ws.on_upgrade(move |socket| async move {
+    // The socket verifies its auth frame after the upgrade, in the task it
+    // spawns: it keeps the request's client source for the EIP-1654 budget.
+    crate::shared::eip1654_budget::on_upgrade(ws, move |socket| async move {
         mgr.scenes.on_ws_connected();
         handle_socket(&mgr, socket, target, paths, caller_ip).await;
         mgr.scenes.on_ws_closed();
     })
-    .into_response()
 }
 
 fn not_loaded(scene_name: &str, why: Option<&str>) -> axum::response::Response {
@@ -207,6 +208,7 @@ async fn handle_socket(
                 && let Some((MessageType::Auth, body)) = decode_message(&bytes)
             {
                 let now = chrono::Utc::now().timestamp();
+                crate::shared::eip1654_budget::debug_assert_scoped("the scene-state socket");
                 return Some(verify_auth_frame(body, "GET", &paths, now, state.eip1654()).await);
             }
         }
