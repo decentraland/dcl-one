@@ -1,14 +1,18 @@
 WITH unresolved AS NOT MATERIALIZED (
-    SELECT a.network,a.block_number,a.log_index,a.ordinal,a.contract_address,a.item_id,a.seller,e.kind AS venue_kind
+    SELECT a.network,a.block_number,a.log_index,a.ordinal,a.contract_address,a.item_id,a.seller,a.currency,e.kind AS venue_kind
     FROM shop.sale_asset a JOIN shop.sale_execution e USING(network,block_number,log_index)
     JOIN shop.sale_publication pub ON pub.network=a.network AND a.block_number<=pub.block_number
-    WHERE a.network=ANY($1) AND a.price>0 AND
-       (a.seller IS NULL OR (e.kind='trade' AND a.kind='bid' AND
-           (SELECT p.beneficiary FROM shop.sale_payment p WHERE p.consideration AND p.currency=a.currency
-             AND (p.network,p.block_number,p.log_index)=(a.network,a.block_number,a.log_index)
-             ORDER BY p.ordinal LIMIT 1) IS NULL))
+    WHERE a.network=ANY($1) AND a.price>0
+      AND (e.kind<>'trade' OR NOT EXISTS (SELECT FROM shop.sale_asset other
+            WHERE (other.network,other.block_number,other.log_index)=(a.network,a.block_number,a.log_index)
+              AND other.ordinal<>a.ordinal))
+      AND CASE WHEN e.kind='trade' AND a.kind='bid' THEN
+          (SELECT p.beneficiary FROM shop.sale_payment p WHERE p.consideration AND p.currency=a.currency
+           AND (p.network,p.block_number,p.log_index)=(a.network,a.block_number,a.log_index)
+           ORDER BY p.ordinal LIMIT 1)
+          ELSE a.seller END IS NULL
 ), seller_evidence AS NOT MATERIALIZED (
-    SELECT a.network,a.block_number,a.log_index,a.ordinal,candidate.address FROM unresolved a
+    SELECT a.network,a.block_number,a.log_index,a.ordinal,a.currency,candidate.address FROM unresolved a
     CROSS JOIN LATERAL (
         SELECT a.seller AS address
         UNION ALL SELECT p.beneficiary FROM shop.sale_payment p WHERE p.consideration

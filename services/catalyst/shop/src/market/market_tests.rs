@@ -3749,7 +3749,7 @@ async fn account_inventory_pages_indexed_participants_and_excludes_sender_only_w
     sqlx::query("INSERT INTO shop.nft_contract(network,contract_address,walked_from_block) VALUES('matic',$1,$2)")
         .bind(CREATOR).bind(height).execute(pool).await.unwrap();
     super::sale_fold::write_rows(
-        &mut *pool.acquire().await.unwrap(),
+        &mut pool.acquire().await.unwrap(),
         super::chain_walk::ChainNet::Matic,
         height - 1,
         height,

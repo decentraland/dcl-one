@@ -315,7 +315,7 @@ async fn sales_page_reads_one_published_network_and_refuses_a_withdrawn_warm_pag
         .execute(&db.pool)
         .await
         .unwrap();
-    sale_fold::rollups(&mut *db.pool.acquire().await.unwrap(), net, &[1699920000])
+    sale_fold::rollups(&mut db.pool.acquire().await.unwrap(), net, &[1699920000])
         .await
         .unwrap();
     let (code, proceeds) = get_json(&app, &proceeds_path).await;
