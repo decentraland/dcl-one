@@ -1919,8 +1919,10 @@ publication and LAND rights in one database snapshot.
 Incomplete mint or transfer times, an unavailable publication, or a document
 beyond the LAND fold returns the unavailable envelope. A transfer beyond the
 NFT publication also waits for metadata to catch up. The NFT index publishes
-Ethereum mainnet metadata. Mainnet create requires the Rentals publication.
-During an outage an existing open listing still returns 409. A listing by a lessor whose asset is in Rentals
+Ethereum mainnet metadata. A mainnet NFT walker uses published LAND to
+authorize the direct owner and returns 401 when a third party owns the token.
+It checks the observed LAND revision in the insertion transaction. During a
+Rentals outage an existing open listing still returns 409. A listing by a lessor whose asset is in Rentals
 custody requires a published Rentals cursor and a rent at or after the LAND
 transfer into custody. PATCH rechecks a current custody observation when a
 later Rentals publication names the lessor, even if its first refresh already

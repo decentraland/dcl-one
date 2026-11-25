@@ -324,29 +324,29 @@ pub async fn create_rentals_listing(
             "An open rental already exists for this token",
         ));
     }
-    if super::index::walks(rentals)
-        && !rent_evidence
-            .as_ref()
-            .is_some_and(|evidence| evidence.published_through.is_some())
+    let rentals_unavailable = rent_evidence
+        .as_ref()
+        .is_some_and(|evidence| evidence.published_through.is_none());
+    let venue_owned = nft.owner_address.eq_ignore_ascii_case(rentals);
+    let signer_owns = nft.owner_address.eq_ignore_ascii_case(&signer);
+    let indexed_third_party = nft.land_cursor_updated_at.is_some() && !venue_owned && !signer_owns;
+
+    // An already-open listing takes precedence during a Rentals outage.
+    // A third-party LAND owner needs no Rentals check unless that conflict exists.
+    if (rentals_unavailable || indexed_third_party)
+        && let Some(conflict) = state.db.open_listing_conflict(&body).await?
+        && (rentals_unavailable || !super::index::ready(state.db.pool(), now).await)
     {
-        let existing: Option<String> = sqlx::query_scalar(
-            "SELECT signature FROM signatures.rentals WHERE contract_address=lower($1) AND token_id=$2::numeric AND chain_id=$3 AND status='open'",
-        ).bind(&body.contract_address).bind(&body.token_id).bind(served_chain).fetch_optional(state.db.pool()).await?;
-        if let Some(signature) = existing {
-            let conflict = if signature.eq_ignore_ascii_case(&body.signature) {
-                super::db::Conflict::Signature
-            } else {
-                super::db::Conflict::OpenListing
-            };
-            return Err(ApiError::conflict(conflict.message()));
-        }
+        return Err(ApiError::conflict(conflict.message()));
+    }
+    if rentals_unavailable {
         return Ok(unavailable(
             Source::RentalsIndex,
             "The Rentals index for the listing chain is not ready",
         ));
     }
 
-    let relist = if nft.owner_address.eq_ignore_ascii_case(rentals) {
+    let relist = if venue_owned {
         let Some(held) = held_for_lessor(
             rent_evidence.as_ref(),
             nft.transfer_block,
@@ -363,7 +363,7 @@ pub async fn create_rentals_listing(
     } else {
         false
     };
-    if !nft.owner_address.eq_ignore_ascii_case(&signer) && !relist {
+    if !signer_owns && !relist {
         return Err(ApiError::unauthorized(format!(
             "The owner of the NFT {} is not the lessor {}",
             nft.owner_address, signer
