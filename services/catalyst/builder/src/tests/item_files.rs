@@ -513,9 +513,7 @@ async fn files(committee: &FakeCommittee) -> Option<Files> {
         )
         .unwrap(),
     );
-    let app = Router::new()
-        .merge(crate::root_router(state.clone()))
-        .nest("/builder-api", crate::router(state));
+    let app = super::support::mounted(&state);
     Some(Files {
         pool,
         app,

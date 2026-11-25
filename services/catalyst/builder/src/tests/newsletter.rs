@@ -14,7 +14,6 @@ use axum::response::IntoResponse;
 use chrono::Duration;
 use serde_json::{Value, json};
 
-use super::support::temp_storage;
 use super::validator::{advance, clock, set_clock};
 
 const KEY: &str = "sk-example123";
@@ -117,12 +116,8 @@ async fn node_tuned(url: Option<String>, tune: impl FnOnce(&mut crate::State)) -
         chrono::DateTime::from_timestamp_millis(chrono::Utc::now().timestamp_millis()).unwrap(),
     );
     let pool = crate::db::scratch::isolated_pool(2).await?;
-    let mut state = crate::State::new(
+    let mut state = super::support::state(
         pool.clone(),
-        temp_storage().await,
-        Arc::default(),
-        dcl_http::Outbound::for_tests(),
-        None,
         None,
         crate::Settings {
             writes_enabled: true,
@@ -134,14 +129,12 @@ async fn node_tuned(url: Option<String>, tune: impl FnOnce(&mut crate::State)) -
             ..crate::Settings::default()
         },
     )
-    .unwrap();
+    .await;
     state.now = clock;
     state.guarded = dcl_http::Outbound::for_tests();
     tune(&mut state);
     let state = Arc::new(state);
-    let app = Router::new()
-        .merge(crate::root_router(state.clone()))
-        .nest("/builder-api", crate::router(state.clone()));
+    let app = super::support::mounted(&state);
     Some(Node { app, pool })
 }
 

@@ -184,9 +184,7 @@ async fn node_on(
     .unwrap();
     configure(&mut state);
     let state = Arc::new(state);
-    let app = Router::new()
-        .merge(crate::root_router(state.clone()))
-        .nest("/builder-api", crate::router(state.clone()));
+    let app = super::support::mounted(&state);
     Some(Node {
         pool,
         app,

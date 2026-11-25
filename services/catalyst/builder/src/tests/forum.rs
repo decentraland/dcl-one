@@ -11,9 +11,7 @@ use serde_json::{Value, json};
 use sqlx::PgPool;
 use uuid::Uuid;
 
-use super::support::{
-    FakeCommittee, address, committee_index, on_chain, own_pool, scratch_pool, temp_storage,
-};
+use super::support::{FakeCommittee, address, committee_index, on_chain, own_pool, scratch_pool};
 use crate::curation::forum::fake::{API_USERNAME, FakeForum};
 
 const OWNER_KEY: &str = super::support::OWNER_KEY;
@@ -34,13 +32,9 @@ async fn env_with(pool: PgPool, forum_on: bool) -> Env {
     let committee = FakeCommittee::with(&[&address(COMMITTEE_KEY)]);
     let forum = FakeForum::default();
     let origin = forum.start().await;
-    let mut state = crate::State::new(
+    let mut state = super::support::state(
         pool.clone(),
-        temp_storage().await,
-        Arc::default(),
-        dcl_http::Outbound::for_tests(),
         Some(committee_index(&committee).await),
-        None,
         crate::Settings {
             writes_enabled: true,
             forum: forum_on.then(|| FakeForum::forum(&origin)),
@@ -52,12 +46,10 @@ async fn env_with(pool: PgPool, forum_on: bool) -> Env {
             ..crate::Settings::default()
         },
     )
-    .unwrap();
+    .await;
     state.guarded = dcl_http::Outbound::for_tests();
     let state = Arc::new(state);
-    let app = Router::new()
-        .merge(crate::root_router(state.clone()))
-        .nest("/builder-api", crate::router(state.clone()));
+    let app = super::support::mounted(&state);
     Env {
         pool,
         app,

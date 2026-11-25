@@ -15,7 +15,7 @@ use uuid::Uuid;
 
 use super::support::{
     FakeCommittee, FakeOracle, OWNER_KEY, address, call, committee_index, contents_of, own_pool,
-    request, save_collection, saved_item, temp_storage, unique, upload,
+    request, save_collection, saved_item, unique, upload,
 };
 
 const STRANGER_KEY: &str = "0x2222222222222222222222222222222222222222222222222222222222222222";
@@ -91,13 +91,9 @@ async fn node_over(pool: PgPool, options: Options) -> Node {
         Some(committee) => Some(committee_index(committee).await),
         None => Some(super::support::registry_only_index().await),
     };
-    let mut state = crate::State::new(
+    let mut state = super::support::state(
         pool.clone(),
-        temp_storage().await,
-        Arc::default(),
-        dcl_http::Outbound::for_tests(),
         market,
-        None,
         crate::Settings {
             network: options.network,
             writes_enabled: options.writes,
@@ -110,14 +106,12 @@ async fn node_over(pool: PgPool, options: Options) -> Node {
             ..crate::Settings::default()
         },
     )
-    .unwrap();
+    .await;
     state.now = options.now;
     state.guarded = dcl_http::Outbound::for_tests();
     (options.tune)(&mut state);
     let state = Arc::new(state);
-    let app = Router::new()
-        .merge(crate::root_router(state.clone()))
-        .nest("/builder-api", crate::router(state.clone()));
+    let app = super::support::mounted(&state);
     Node { pool, app, state }
 }
 

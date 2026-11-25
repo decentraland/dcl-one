@@ -454,11 +454,30 @@ pub(crate) fn lazy_pool() -> sqlx::PgPool {
         .expect("lazy pool from static url")
 }
 
-async fn state_over(
+/// A builder state over `pool` with a throwaway blob store.
+pub async fn state(
     pool: sqlx::PgPool,
     market: Option<Arc<crate::chain_index::ChainIndex>>,
-) -> crate::SharedState {
-    state_over_with(pool, market, crate::Settings::default()).await
+    settings: crate::Settings,
+) -> crate::State {
+    crate::State::new(
+        pool,
+        temp_storage().await,
+        Arc::default(),
+        dcl_http::Outbound::for_tests(),
+        market,
+        None,
+        settings,
+    )
+    .unwrap()
+}
+
+/// `state`'s routes as `serve` mounts them: at the root and under
+/// `/builder-api`.
+pub fn mounted(state: &crate::SharedState) -> Router {
+    Router::new()
+        .merge(crate::root_router(state.clone()))
+        .nest("/builder-api", crate::router(state.clone()))
 }
 
 pub(crate) async fn state_over_with(
@@ -466,18 +485,7 @@ pub(crate) async fn state_over_with(
     market: Option<Arc<crate::chain_index::ChainIndex>>,
     settings: crate::Settings,
 ) -> crate::SharedState {
-    Arc::new(
-        crate::State::new(
-            pool,
-            temp_storage().await,
-            Arc::default(),
-            dcl_http::Outbound::for_tests(),
-            market,
-            None,
-            settings,
-        )
-        .unwrap(),
-    )
+    Arc::new(state(pool, market, settings).await)
 }
 
 /// [`state_without_db`] with `settings`.
@@ -490,7 +498,7 @@ pub async fn state_with_settings(settings: crate::Settings) -> crate::SharedStat
 pub async fn state_without_db(
     market: Option<Arc<crate::chain_index::ChainIndex>>,
 ) -> crate::SharedState {
-    state_over(lazy_pool(), market).await
+    state_over_with(lazy_pool(), market, crate::Settings::default()).await
 }
 
 /// A loopback Polygon collections subgraph ([`committee_index`]): to a
