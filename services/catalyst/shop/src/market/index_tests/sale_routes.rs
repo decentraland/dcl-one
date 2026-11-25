@@ -503,6 +503,10 @@ async fn sales_page_reads_one_published_network_and_refuses_a_withdrawn_warm_pag
     .execute(&db.pool)
     .await
     .unwrap();
+    assert_eq!(
+        get_json(&app, "/v1/volume/all").await.0,
+        StatusCode::SERVICE_UNAVAILABLE
+    );
     let (status, body) = get_json(&app, path).await;
     assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE, "{body}");
     let (activity, _) = crate::market::activity::user_activity(&state, ALICE, None, None).await;
@@ -601,6 +605,20 @@ async fn deep_sales_pages_keep_equal_timestamps_in_id_order_across_networks() {
     }
     assert_eq!(
         get_json(&router, "/v1/sales?first=10&skip=24995").await.0,
+        StatusCode::BAD_REQUEST
+    );
+    for (skip, total) in [(0, 5_000), (5_500, 25_000)] {
+        let (code, page) = get_json(
+            &router,
+            &format!("/v1/sales?network=ETHEREUM&type=order&first=5&skip={skip}"),
+        )
+        .await;
+        assert_eq!(code, StatusCode::OK, "{page}");
+        assert_eq!(page["total"], total);
+        assert_eq!(page["data"].as_array().unwrap().len(), 5);
+    }
+    assert_eq!(
+        get_json(&router, "/v1/sales?tokenId=1e2").await.0,
         StatusCode::BAD_REQUEST
     );
     // Aggregates cover every published sale, including a seller beyond the

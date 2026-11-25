@@ -16930,6 +16930,8 @@ CREATE TABLE shop.sale_execution (
     block_time bigint NOT NULL,
     PRIMARY KEY (network, block_number, log_index)
 );
+CREATE INDEX sale_execution_read_special
+    ON shop.sale_execution (network, kind, block_number, log_index) WHERE kind IN ('store', 'trade', 'name_fee');
 CREATE INDEX sale_execution_read_time ON shop.sale_execution (block_time DESC,network,block_number,log_index);
 CREATE INDEX sale_execution_tx ON shop.sale_execution (network, tx_hash, log_index);
 CREATE INDEX sale_execution_day ON shop.sale_execution (network, ((block_time / 86400) * 86400));
@@ -16958,8 +16960,12 @@ CREATE TABLE shop.sale_asset (
     FOREIGN KEY (network, block_number, log_index)
        REFERENCES shop.sale_execution ON DELETE CASCADE
 );
+CREATE INDEX sale_asset_read_unresolved
+    ON shop.sale_asset (network, block_number, log_index, ordinal) WHERE price > 0 AND (seller IS NULL OR kind = 'bid');
 CREATE INDEX sale_asset_read_seller ON shop.sale_asset (network,seller,block_number) WHERE price>0;
 CREATE INDEX sale_asset_read_buyer ON shop.sale_asset (network,buyer,block_number) WHERE price>0;
+CREATE INDEX sale_asset_read_token ON shop.sale_asset (network, token_id, contract_address) WHERE price > 0;
+CREATE INDEX sale_asset_read_kind ON shop.sale_asset (network, kind, block_number) WHERE price > 0;
 CREATE INDEX sale_asset_read_item ON shop.sale_asset (network,contract_address,item_id) WHERE price>0;
 CREATE INDEX sale_asset_read_price ON shop.sale_asset (price DESC,public_id) WHERE price>0;
 
@@ -17317,6 +17323,12 @@ CREATE TABLE shop.collection_event (
 
 -- The walked collections: the walk's address filter and the creation reads
 -- take them first.
+CREATE INDEX collection_event_creator_contract_idx
+    ON shop.collection_event (network, contract_address, block_number, log_index) WHERE kind = 'creatorship_transferred';
+CREATE INDEX collection_event_creator_account_idx
+    ON shop.collection_event (network, account, block_number) WHERE kind = 'creatorship_transferred';
+CREATE INDEX collection_event_creator_previous_idx
+    ON shop.collection_event (network, previous_account, block_number) WHERE kind = 'creatorship_transferred';
 CREATE INDEX collection_event_created_idx ON shop.collection_event (network, contract_address)
     WHERE kind = 'proxy_created';
 

@@ -3,6 +3,7 @@ WITH unresolved AS NOT MATERIALIZED (
     FROM shop.sale_asset a JOIN shop.sale_execution e USING(network,block_number,log_index)
     JOIN shop.sale_publication pub ON pub.network=a.network AND a.block_number<=pub.block_number
     WHERE a.network=ANY($1) AND a.price>0
+      AND (a.seller IS NULL OR a.kind='bid')
       AND (e.kind<>'trade' OR NOT EXISTS (SELECT FROM shop.sale_asset other
             WHERE (other.network,other.block_number,other.log_index)=(a.network,a.block_number,a.log_index)
               AND other.ordinal<>a.ordinal))

@@ -3810,6 +3810,10 @@ async fn account_inventory_pages_indexed_participants_and_excludes_sender_only_w
     )
     .await;
     assert_eq!(after, list);
+    sqlx::query("UPDATE shop.sale_publication SET generation=gen_random_uuid()")
+        .execute(pool)
+        .await
+        .unwrap();
     let (status, ranked) = get(app.clone(), "/v1/accounts?first=10&skip=995").await;
     assert_eq!(status, StatusCode::OK, "{ranked}");
     assert_eq!(ranked["data"], before["data"]);

@@ -32,15 +32,55 @@ pub(crate) use proceeds::{proceeds_page, proceeds_summary};
 
 fn db_error(error: impl Into<anyhow::Error>) -> Response {
     let error = error.into();
+    if matches!(
+        error.downcast_ref::<sqlx::Error>(),
+        Some(sqlx::Error::PoolTimedOut)
+    ) {
+        return analytics_busy();
+    }
     if error
         .downcast_ref::<sqlx::Error>()
         .and_then(sqlx::Error::as_database_error)
         .is_some_and(|e| e.code().as_deref() == Some("57014"))
     {
+        tracing::warn!("published marketplace sales query exceeded its statement timeout");
         return super::nft_reads::timed_out();
     }
     tracing::error!(%error, "reading published marketplace sales");
     ApiError::internal("database error").into_response()
+}
+
+fn analytics_busy() -> Response {
+    unavailable(Source::SalesIndex, "sales analytics is busy")
+}
+
+fn analytics_slot(state: &MarketplaceState) -> Result<tokio::sync::SemaphorePermit<'_>, Response> {
+    state
+        .sales_analytics_slots
+        .try_acquire()
+        .map_err(|_| analytics_busy())
+}
+
+async fn cached_analytics<T>(
+    state: &MarketplaceState,
+    key: String,
+    expires_at: chrono::DateTime<Utc>,
+    fetch: impl std::future::Future<Output = Result<T, Response>>,
+) -> Result<T, Response>
+where
+    T: serde::Serialize + serde::de::DeserializeOwned,
+{
+    let value = readers::memoized(state, readers::Ttl::S30, key, || async {
+        serde_json::to_value(fetch.await?).map_err(db_error)
+    })
+    .await?;
+    if Utc::now() > expires_at {
+        return Err(unavailable(
+            Source::SalesIndex,
+            "the sales publication expired during the read",
+        ));
+    }
+    serde_json::from_value(value.as_ref().clone()).map_err(db_error)
 }
 
 pub(crate) async fn snapshot(
@@ -78,22 +118,30 @@ pub(crate) async fn require_mirror(
     nets: &[ChainNet],
     mirror: &'static str,
     source: Source,
-) -> Result<(), Response> {
-    let ready:bool=sqlx::query_scalar("SELECT count(*)=cardinality($2::text[]) FROM shop.mirror_state WHERE mirror=$1 AND network=ANY($2) AND last_complete_pass_at IS NOT NULL")
-        .bind(mirror).bind(nets.iter().map(|n|n.db_name()).collect::<Vec<_>>()).fetch_one(tx).await.map_err(db_error)?;
-    if !ready {
+) -> Result<Vec<chrono::NaiveDateTime>, Response> {
+    let passes: Vec<chrono::NaiveDateTime> = sqlx::query_scalar(
+        "SELECT last_complete_pass_at FROM shop.mirror_state
+         WHERE mirror=$1 AND network=ANY($2) AND last_complete_pass_at IS NOT NULL
+         ORDER BY network",
+    )
+    .bind(mirror)
+    .bind(nets.iter().map(|n| n.db_name()).collect::<Vec<_>>())
+    .fetch_all(tx)
+    .await
+    .map_err(db_error)?;
+    if passes.len() != nets.len() {
         return Err(unavailable(
             source,
             "the requested marketplace metadata has no complete mirror pass",
         ));
     }
-    Ok(())
+    Ok(passes)
 }
 
 async fn require_collections(
     state: &MarketplaceState,
     snap: &mut sale_fold::SalesSnapshot,
-) -> Result<(), Response> {
+) -> Result<super::chain_walk::Cursor, Response> {
     require_polygon_cursor(
         snap,
         super::chain_walk::INDEXER_COLLECTIONS,
@@ -110,7 +158,7 @@ async fn require_polygon_cursor(
     start_block: u64,
     enabled: bool,
     source: Source,
-) -> Result<(), Response> {
+) -> Result<super::chain_walk::Cursor, Response> {
     use super::chain_walk;
     if !enabled {
         return Err(unavailable(source, "the Polygon index is disabled"));
@@ -124,8 +172,8 @@ async fn require_polygon_cursor(
     .fetch_one(&mut *snap.transaction)
     .await
     .map_err(db_error)?;
-    let ready = cursor.is_some_and(|c| {
-        chain_walk::is_ready_on(&c, 137, Utc::now())
+    let cursor = cursor.filter(|c| {
+        chain_walk::is_ready_on(c, 137, Utc::now())
             && c.start_block <= start_block as i64
             && c.diverged_at.is_none()
             && c.rebuild_requested_at.is_none()
@@ -133,13 +181,12 @@ async fn require_polygon_cursor(
             && c.last_block >= height
             && (c.last_block != height || c.last_block_hash.as_deref() == Some(hash.as_str()))
     });
-    if !ready {
-        return Err(unavailable(
+    cursor.ok_or_else(|| {
+        unavailable(
             source,
             "the Polygon index does not cover the published sales",
-        ));
-    }
-    Ok(())
+        )
+    })
 }
 
 pub(crate) struct SellerStats {
@@ -224,13 +271,17 @@ pub(super) async fn list(
     f: &SaleFilters,
 ) -> Result<(Vec<Sale>, i64), Response> {
     let (first, skip) = readers::deep_page(f.first, f.skip, 100)?;
-    for price in [f.min_price.as_deref(), f.max_price.as_deref()]
-        .into_iter()
-        .flatten()
-    {
-        if price.is_empty() || price.len() > 78 || !price.bytes().all(|c| c.is_ascii_digit()) {
+    for (field, value) in [
+        ("minPrice", &f.min_price),
+        ("maxPrice", &f.max_price),
+        ("itemId", &f.item_id),
+        ("tokenId", &f.token_id),
+    ] {
+        if let Some(value) = value
+            && (value.is_empty() || value.len() > 78 || !value.bytes().all(|c| c.is_ascii_digit()))
+        {
             return Err(
-                ApiError::bad_request("price must be an unsigned integer in base units")
+                ApiError::bad_request(format!("{field} must be an unsigned integer"))
                     .into_response(),
             );
         }
@@ -290,9 +341,18 @@ async fn sale_page(
         && f.min_price.is_none()
         && f.max_price.is_none()
         && f.categories.is_empty();
+    let recent_lane = f.buyer.is_none()
+        && f.seller.is_none()
+        && f.contract_address.is_none()
+        && f.token_id.is_none()
+        && f.item_id.is_none()
+        && f.min_price.is_none()
+        && f.max_price.is_none()
+        && f.categories.is_empty()
+        && f.sort_by != Some(SaleSortBy::MostExpensive);
     let query = if f.seller.is_some() {
         sales_query!(nets, wallet "$9"; "list.sql")
-    } else if unfiltered && f.sort_by != Some(SaleSortBy::MostExpensive) {
+    } else if recent_lane {
         sales_query!(@query nets, include_str!("recent_assets.sql"); "list.sql")
     } else {
         sales_query!(nets, "list.sql")
@@ -313,6 +373,7 @@ async fn sale_page(
         .bind(first)
         .bind(skip)
         .bind(unfiltered)
+        .bind(readers::count_cap(first, skip))
         .fetch_one(&mut *snap.transaction)
         .await
         .map_err(db_error)?;
@@ -329,30 +390,35 @@ pub(super) async fn volume(
     state: &MarketplaceState,
     from_ms: i64,
 ) -> Result<super::rankings::VolumeData, Response> {
+    let _slot = analytics_slot(state)?;
     let (mut snap, nets) = snapshot(state, None).await?;
-    let (sales, volume, creators_earnings, dao_earnings, incomplete): (
-        i64,
-        String,
-        String,
-        String,
-        bool,
-    ) = sales_query!(nets, "volume.sql")
-        .bind(from_ms / 1000)
-        .fetch_one(&mut *snap.transaction)
-        .await
-        .map_err(db_error)?;
-    if incomplete {
-        return Err(unavailable(
-            Source::SalesIndex,
-            "the requested volume contains an unresolved payment split",
-        ));
-    }
-    Ok(super::rankings::VolumeData {
-        sales,
-        volume,
-        creators_earnings,
-        dao_earnings,
+    let key = format!("published-volume/{:?}/{from_ms}", snap.generations);
+    cached_analytics(state, key, snap.expires_at, async {
+        let (sales, volume, creators_earnings, dao_earnings, incomplete): (
+            i64,
+            String,
+            String,
+            String,
+            bool,
+        ) = sales_query!(nets, "volume.sql")
+            .bind(from_ms / 1000)
+            .fetch_one(&mut *snap.transaction)
+            .await
+            .map_err(db_error)?;
+        if incomplete {
+            return Err(unavailable(
+                Source::SalesIndex,
+                "the requested volume contains an unresolved payment split",
+            ));
+        }
+        Ok(super::rankings::VolumeData {
+            sales,
+            volume,
+            creators_earnings,
+            dao_earnings,
+        })
     })
+    .await
 }
 
 mod rankings;

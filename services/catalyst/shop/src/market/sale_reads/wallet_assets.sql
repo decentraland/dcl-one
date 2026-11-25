@@ -3,7 +3,7 @@
     UNION SELECT network,contract_address FROM shop.collection_seed c,requested_wallet w WHERE c.network=ANY($1) AND c.creator=w.address
     UNION SELECT c.network,c.contract_address FROM shop.collection_event c JOIN shop.sale_publication pub USING(network),requested_wallet w
         WHERE c.network=ANY($1) AND c.kind='creatorship_transferred' AND c.block_number<=pub.block_number
-          AND w.address IN (c.account,c.previous_account)
+          AND (c.account=w.address OR c.previous_account=w.address)
 ), wallet_keys AS (
     SELECT a.network,a.block_number,a.log_index,a.ordinal
     FROM shop.sale_asset a, requested_wallet w WHERE a.network=ANY($1) AND a.price>0 AND a.seller=w.address

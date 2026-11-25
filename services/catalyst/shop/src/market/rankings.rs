@@ -81,7 +81,7 @@ pub fn get_timestamp_from_timeframe(tf: AnalyticsTimeframe) -> i64 {
         .timestamp_millis()
 }
 
-#[derive(Debug, Clone, Serialize, sqlx::FromRow)]
+#[derive(Debug, Clone, serde::Deserialize, Serialize, sqlx::FromRow)]
 pub struct ItemRank {
     pub id: String,
     pub sales: i64,
@@ -181,7 +181,7 @@ pub async fn get_rankings(
     }
 }
 
-#[derive(Debug, Serialize, PartialEq)]
+#[derive(Debug, serde::Deserialize, Serialize, PartialEq)]
 pub struct VolumeData {
     pub sales: i64,
     pub volume: String,

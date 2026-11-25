@@ -2257,7 +2257,7 @@ The fold groups payments by currency. UTC-day rows keep gross volume, counts, NA
 
 `shop.sale_publication` records the common block and hash and the three source identities and revisions. All three source tips must match the RPC branch. The accounting job locks and rechecks the input cursors before committing the facts and their marker together. Readers can obtain a read-only repeatable-read transaction for one network or both. Each requested network needs a recent whole-history publication, no newly owed history, matching source revisions and a recent accounting marker. The earliest of those freshness deadlines bounds use of the snapshot. A capped ordinary advance retains the previous freshness deadline until a near-head prefix earns a new one. Excluding an unlisted store issuer requires a complete Polygon factory cursor through the purchase. The fold saves the verified exclusion height on the factory cursor under the publication locks. A factory rewind clips that height to the surviving prefix. A rebuild clears it. A newly discovered issuer reopens repair even below a saved exclusion. The saved set in `shop.sale_covered_collection` bounds the next historical refold to additions, removals or changed backfill heights since that marker.
 
-Since version 2, the sales publication identifies each asset by network, transaction hash, zero-based venue execution ordinal in that transaction, and zero-based asset ordinal in the execution. The execution ordinal counts raw successful orders, accepted bids, marketplace trades, distinct store Bought logs and NAME purchases by log order, before catalogue checks. Store Issue and transfer logs do not increment it. Re-inclusion preserves the relative order even when the transaction moves to a different block or its first log index changes. Adding a venue to this set requires a new publication version.
+The sales publication identifies each asset by network, transaction hash, zero-based venue execution ordinal in that transaction, and zero-based asset ordinal in the execution. The execution ordinal counts raw successful orders, accepted bids, marketplace trades, distinct store Bought logs and NAME purchases by log order, before catalogue checks. Store Issue and transfer logs do not increment it. Re-inclusion preserves the relative order even when the transaction moves to a different block or its first log index changes. Adding a venue to this set requires a new publication version.
 
 On a version 1 marker the fold ranks the persisted venue logs in the surviving prefix, stages the changed IDs, and replaces them in the same fenced transaction that publishes the new marker. The existing unique constraint remains valid throughout both updates. No historical receipts are needed for the ID repair.
 
@@ -2265,7 +2265,7 @@ Sales publication version 3 sums gross volume from positively priced NFT assets.
 
 A wallet-filtered sale with an unresolved seller withholds a response only when indexed evidence ties that wallet to the sale. Candidates come from the asset, the consideration beneficiary for its line, the item or collection creator, collection seeds and published creatorship transfers. An unresolved sale without a candidate stays out of address lookups. An unfiltered sales page that contains it returns HTTP 503. The fold logs a warning with the count of sales without a candidate on the days it recomputed.
 
-The published sales readers use a 10-second PostgreSQL statement timeout. Recent unfiltered pages select asset keys in timestamp order and obtain the count from published daily rollups. Wallet lookups use indexes on the buyer, seller, payment beneficiary and collection item before enrichment.
+The published sales readers use a 10-second PostgreSQL statement timeout. Recent unfiltered pages select asset keys in timestamp order and obtain the count from published daily rollups. Wallet lookups use indexes on the buyer, seller, payment beneficiary and collection item before enrichment. Filtered sales counts use the same 5,000-row or 25,000-row bound as the reader's page window. Accounts, rankings and volume use a 30-second memo keyed by publication generation and any additional proofs. Every hit rechecks readiness in the same snapshot. Two concurrent analytics requests may hold connections, and excess requests or pool acquisition timeouts receive HTTP 503.
 
 Accounts read `shop.sale_account_total` for monetary totals. The sale fold credits net proceeds to the public seller, including the first consideration beneficiary of a mediated bid. Payout recipients retain their separate fee and royalty amounts. The publication upgrade repairs the UTC days containing affected bids from stored evidence before readers use those totals.
 
@@ -3002,8 +3002,8 @@ submission state still belong to the service that processes the submission.
 
 ## Collections index
 
-The Polygon `collections` walk (`MARKETPLACE_COLLECTIONS_INDEX_ENABLED`, off
-under every posture) reads the `TRADE_RPC_URLS` 137 entry. It walks two kinds
+The Polygon `collections` walk (`MARKETPLACE_COLLECTIONS_INDEX_ENABLED`, enabled
+in the mirror posture) reads the `TRADE_RPC_URLS` 137 entry. It walks two kinds
 of log from the first factory's start block (15,202,000), on the shared
 `shop.chain_cursor` (see "Market chain index cursors"):
 - the collection factories' `ProxyCreated`;
@@ -3014,8 +3014,10 @@ the global and item minters and managers, approval, editability,
 completion, creatorship and ownership. The walk keeps them in
 `shop.collection_event`, appended with each window's cursor advance and
 deleted past a rewind. Its publication means the log is complete to
-`folded_block`. No route reads these tables yet: `shop.collections` and
-`shop.items` are still the collections subgraph's copy (`mirrors`).
+`folded_block`. Account inventory and lifetime creator rankings require this
+publication for Polygon. Creatorship transitions are indexed by contract
+and by both wallet roles. The catalogue reads `shop.collections` and
+`shop.items` from the collection mirror.
 
 **Workload.** Polygon holds about 6,200 collections, 12,000 items and 5.3
 million mints, so the log is about 5.3 million rows, nearly all `issue`.

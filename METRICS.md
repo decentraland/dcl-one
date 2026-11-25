@@ -12,15 +12,15 @@ The index process increments `catalyst_index_sales_repair_failures_total` by ind
 
 A PostgreSQL 17 fixture held one million synthetic sales across Ethereum and Polygon, plus 32,000 sales for a single seller. The account plan used 40,004 published account totals and the creator plan included 9,900 mints. Timings are SQL execution times from local `EXPLAIN (ANALYZE, BUFFERS)`, measured with the publication present. The request statement budget is 10 seconds.
 
-| Read | Initial query | Indexed query |
-| --- | ---: | ---: |
-| First sales page in timestamp order, with total | 5,787 ms | 12.0 ms |
-| Seller summary, 100 matching sales | 4,386 ms | 615 ms |
-| Buyer page, 34 matching sales | 62 ms | 2.8 ms |
-| First accounts page by earned | Over 20 s | 6.76 s |
-| Lifetime creator ranking | Over 20 s | 4.68 s |
+| Read | Execution time |
+| --- | ---: |
+| First sales page in timestamp order, with total | 12.0 ms |
+| Seller summary, 100 matching sales | 615 ms |
+| Buyer page, 34 matching sales | 2.8 ms |
 
-The six sales read indexes occupied 359 MiB together after the load. The timestamp and price indexes accounted for 54 MiB and 114 MiB respectively. Daily sale counts supply the total for unfiltered pages. Indexed wallet and item lookups narrow rows before enriching them with payment evidence.
+A larger fixture included 5.3 million collection mint events, 6,200 factory creations and creator transfers, and three million NFT transfer events alongside one million sales. The accounts page took 6.22 s, the lifetime creator ranking took 6.92 s, and a sales page filtered by token ID took 0.385 ms. The creator lookups used the partial contract index in both directions. The token lookup used the numeric token index. The contract index occupied 592 KiB, the two creator wallet indexes 64 KiB each, and the token index 47 MiB.
+
+The timestamp and price indexes occupied 54 MiB and 114 MiB on the sales fixture. Daily sale counts supply the total for unfiltered pages. Filtered sales count up to the page window cap. Indexed wallet and item lookups narrow rows before enriching them with payment evidence. Accounts, rankings and volume have a 30-second cache keyed by checked publications.
 
 ## Marketplace sales day rollups
 
