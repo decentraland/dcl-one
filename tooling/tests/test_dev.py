@@ -561,7 +561,7 @@ class DevTest(unittest.TestCase):
         self.assertEqual((Path(binary).name, argv[1:]), ('catalyst', ['pulse']))
         self.assertEqual(env, dev.pulse_env(self.config, certificate, key))
 
-    def test_api_process_readiness_can_start_pulse_before_whole_stack_about_is_healthy(self):
+    def test_api_process_readiness_can_start_pulse_before_aggregate_health_passes(self):
         processes = dev.project(self.config)['processes']
         pulse_ready = False
         observed = []
@@ -569,7 +569,7 @@ class DevTest(unittest.TestCase):
 
         def response(url, timeout):
             observed.append(url)
-            if url == api_url + '/about' and not pulse_ready:
+            if url == api_url + '/health' and not pulse_ready:
                 raise dev.urllib.error.HTTPError(url, 503, 'Pulse not ready', {}, None)
             return contextlib.nullcontext(type('Response', (), {'status': 200})())
 
@@ -586,13 +586,13 @@ class DevTest(unittest.TestCase):
                 patch.object(dev, 'wait_first_mirror_pass', return_value=0) as mirrors:
             probe = processes['api']['readiness_probe']['http_get']
             # The real /status route answers 200 after schema/state/listener setup,
-            # while /about includes the still-absent Pulse heartbeat.
+            # while /health includes the still-absent Pulse heartbeat.
             with dev.urllib.request.urlopen(api_url + probe['path'], timeout=3) as ready:
                 self.assertEqual(ready.status, 200)
             self.assertEqual(processes['pulse']['depends_on']['api'], {'condition': 'process_healthy'})
             self.assertEqual(dev.wait_ready(10), 0)
         self.assertTrue(pulse_ready)
-        self.assertEqual(observed.count(api_url + '/about'), 2)
+        self.assertEqual(observed.count(api_url + '/health'), 2)
         mirrors.assert_called_once()
 
     def test_the_stacks_own_nats_carries_pulses_cluster_feed_to_archipelago(self):
@@ -1391,12 +1391,12 @@ class DevTest(unittest.TestCase):
         api_url = f"http://127.0.0.1:{self.config['port']}"
         restarting = json.dumps([{'name': 'pulse', 'status': 'Restarting', 'exit_code': 1, 'is_running': False}])
         running = json.dumps([{'name': 'pulse', 'status': 'Running', 'exit_code': 1, 'is_running': True}])
-        about = []
+        health_checks = []
 
         def response(url, timeout):
-            # /about can still answer from the last heartbeat while Pulse waits for its restart.
-            if url == api_url + '/about':
-                about.append(url)
+            # The last heartbeat can still be fresh while Pulse waits for its restart.
+            if url == api_url + '/health':
+                health_checks.append(url)
             return contextlib.nullcontext(type('Response', (), {'status': 200})())
 
         listings = iter([subprocess.CompletedProcess([], 0, restarting), subprocess.CompletedProcess([], 0, running)])
@@ -1408,7 +1408,7 @@ class DevTest(unittest.TestCase):
                 contextlib.redirect_stdout(io.StringIO()):
             self.assertEqual(dev.wait_ready(10), 0)
         # Ready only on the listing after the restart.
-        self.assertEqual(len(about), 1)
+        self.assertEqual(len(health_checks), 1)
         self.assertIsNone(next(listings, None))
         exhausted = subprocess.CompletedProcess([], 0, json.dumps([
             {'name': 'pulse', 'status': 'Completed', 'exit_code': 1, 'is_running': False, 'restarts': 10}]))

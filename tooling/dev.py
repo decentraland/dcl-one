@@ -958,8 +958,8 @@ def project(config, postgres_only=False):
         return {'version': '0.5', 'processes': {'postgres': postgres}}
     api = process('api', {'postgres': 'process_healthy', 'api-build': 'process_completed_successfully',
                           'web-install': 'process_completed_successfully', 'nats': 'process_healthy'})
-    # Process readiness gates Pulse on schema/state/listener setup. /about also needs
-    # Pulse's heartbeat, so it remains the final whole-stack gate in wait_ready.
+    # Pulse needs a listening API before it can publish its heartbeat. Use process
+    # startup here and check aggregate readiness in wait_ready after Pulse starts.
     api['readiness_probe'] = {'http_get': {'host': '127.0.0.1', 'port': config['port'], 'path': '/status'},
                              'period_seconds': 2, 'failure_threshold': 1800}
     pulse = process('pulse', {'api': 'process_healthy', 'nats': 'process_healthy'})
@@ -1524,7 +1524,7 @@ def progress(processes, elapsed, log_positions=None):
 
 def wait_ready(timeout, postgres_only=False):
     config = settings()
-    urls = [f"http://127.0.0.1:{config['port']}/about", f"http://127.0.0.1:{config['port'] + 2}/"]
+    urls = [f"http://127.0.0.1:{config['port']}/health", f"http://127.0.0.1:{config['port'] + 2}/"]
     started = reported = time.monotonic()
     deadline = started + timeout
     log_positions = {name: log_position(STATE / f'{name}.log') for name in ('web-install', 'api-build')}

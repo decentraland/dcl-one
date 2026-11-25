@@ -10,6 +10,7 @@ are external. Explorer images: pipeline.
 | `image-sites-polygon-credits` (`foundation-sites-polygon-credits:nix`) | `sites-server`, its Shop settling credits on Polygon through dcl-one's own CreditsManager | `/data` |
 | `image-gateway` (`foundation-gateway:nix`) | `gateway` (8080) | `/tmp` |
 
+- Probe each API replica at `GET /health` for readiness. HTTP 503 identifies a failing check in the JSON response. See [Catalyst API readiness](../../docs/adr/2026-11-24-serve-readiness.md).
 - Run API, indexer, Pulse and migrations from one `apis` digest; domain crates are not separate services.
 - The APIs image carries the community chat message router at `/bin/catalyst-message-router`
   (`.#message-router`, `infra/packages/message-router.nix`: the catalyst workspace member built
