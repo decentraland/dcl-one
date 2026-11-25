@@ -82,7 +82,6 @@ fn world_with_player(position: Vec3, velocity: Vec3) -> (World, Entity) {
             AvatarDynamicState::default(),
             PrimaryUser::default(),
             GroundCollider::default(),
-            LastMovementClip::default(),
             ActivePlayerComponent {
                 scene: Entity::PLACEHOLDER,
                 entity: Entity::PLACEHOLDER,

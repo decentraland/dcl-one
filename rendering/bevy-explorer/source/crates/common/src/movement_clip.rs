@@ -15,10 +15,11 @@ fn contains_ignore_case(text: &str, word: &str) -> bool {
         .any(|window| window.eq_ignore_ascii_case(word.as_bytes()))
 }
 
-/// The clips a ground jump starts with, one for each take-off gait.
-const JUMP_STARTS: [&str; 3] = ["Jump_Start", "Jog_Jump_Start", "Run_Jump_Start"];
-/// The clips of a ground jump on its way up after its start clip.
-const JUMP_RISES: [&str; 6] = [
+/// The clips of a ground jump on its way up, from its start clip, for each take-off gait.
+const JUMPS: [&str; 9] = [
+    "Jump_Start",
+    "Jog_Jump_Start",
+    "Run_Jump_Start",
     "Jump_Rise_Loop",
     "Jump_Mid",
     "Jog_Jump_Rise_Loop",
@@ -60,7 +61,7 @@ pub enum ClipMotion {
 impl ClipMotion {
     pub fn of_clip(src: &str, speed: f32) -> Self {
         match clip_stem(src) {
-            stem if JUMP_STARTS.contains(&stem) || JUMP_RISES.contains(&stem) => Self::Jump,
+            stem if JUMPS.contains(&stem) => Self::Jump,
             stem if DOUBLE_JUMPS.contains(&stem) => Self::DoubleJump,
             "Gliding_AvatarStartRig" => Self::GlideOpening,
             "Gliding_AvatarForwardRig" | "Gliding_AvatarIdleRig" => Self::Gliding,
@@ -100,17 +101,6 @@ impl ClipMotion {
             Self::DoubleJump | Self::GlideOpening | Self::Gliding => 2,
             Self::None | Self::GlideClosing | Self::HardLanding => 0,
         }
-    }
-
-    /// True for the clip of a jump on its way up: [`Self::Jump`] and [`Self::DoubleJump`].
-    pub fn is_jump(self) -> bool {
-        matches!(self, Self::Jump | Self::DoubleJump)
-    }
-
-    /// True for a clip that a jump starts with: a ground jump's start clip, or an air jump's clip.
-    pub fn starts_jump(src: &str) -> bool {
-        let stem = clip_stem(src);
-        JUMP_STARTS.contains(&stem) || DOUBLE_JUMPS.contains(&stem)
     }
 }
 
@@ -214,31 +204,6 @@ mod tests {
             ("gl", ClipMotion::None),
         ] {
             assert_eq!(ClipMotion::of_other_scene_clip(clip), motion, "{clip}");
-        }
-    }
-
-    #[test]
-    fn a_jump_starts_with_its_start_clip_or_an_air_jump_clip() {
-        let anim = "assets/animations/";
-        for (clip, starts) in [
-            ("Jump_Start.glb", true),
-            ("Jog_Jump_Start.glb", true),
-            ("Run_Jump_Start.glb", true),
-            ("DoubleJump_Base.glb", true),
-            ("DoubleJump_Jog_Right.glb", true),
-            ("Jump_Rise_Loop.glb", false),
-            ("Run_Jump_Mid.glb", false),
-            ("Jump_Fall_Loop.glb", false),
-            ("Jog_Jump_End.glb", false),
-            ("JumpStart.glb", false),
-            ("Gliding_AvatarStartRig.glb", false),
-            ("Walk.glb", false),
-        ] {
-            assert_eq!(
-                ClipMotion::starts_jump(&format!("{anim}{clip}")),
-                starts,
-                "{clip}"
-            );
         }
     }
 }

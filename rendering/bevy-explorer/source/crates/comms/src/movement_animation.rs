@@ -1,7 +1,7 @@
 //! The animation fields of the rfc4 `Movement` that this client sends. Jumps, the glider and hard
 //! landings come from the file name of the clip that the movement scene plays. Under any other
-//! scene, `double` or `glide` in its clip's path marks the air jump or the glide, and other jumps
-//! come from the take-off.
+//! scene, `double` or `glide` in its clip's path marks the air jump or the glide. Under every
+//! scene, a jump the engine has in flight from the player's take-off counts too.
 
 use bevy::prelude::*;
 use common::{movement_clip::ClipMotion, structs::LocomotionSpeeds};
