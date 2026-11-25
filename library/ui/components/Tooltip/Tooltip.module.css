@@ -126,8 +126,9 @@
 }
 
 /* Not in Figma: the Explorer HUD's tip (`appearance="hud"`). The pointer alone opens it. Each rule has the
- * specificity of the HUD rule it replaced, so a HUD stylesheet keeps the precedence it had; the HUD's 140ms and its
- * easing curve have no token. */
+ * specificity of the HUD rule it replaced, so a HUD stylesheet keeps the precedence it had. It takes its surface
+ * from `.tip`. Its 140ms, its easing curve and the rail's 9.6px corners are the HUD's --dur-fast, --ease-out and
+ * --r-button, written as values: the shared library has no token for them and does not read the host's. */
 .hudRoot {
   position: relative;
   display: inline-flex;
@@ -136,12 +137,9 @@
 .hud {
   padding: var(--tooltip-pad, 8px 12px);
   border-radius: var(--tooltip-radius, 12px);
-  background: var(--panel);
-  color: var(--text);
   font-size: 14px;
   font-weight: 600;
   line-height: 17px;
-  box-shadow: var(--shadow-panel);
   transition:
     opacity 140ms ease,
     transform 140ms cubic-bezier(0.16, 1, 0.3, 1);

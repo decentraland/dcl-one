@@ -768,7 +768,7 @@
     "tokens": 14
   },
   "library/ui/components/Tooltip/Tooltip.module.css": {
-    "primitives": 8,
+    "primitives": 5,
     "tokens": 0
   }
 }
