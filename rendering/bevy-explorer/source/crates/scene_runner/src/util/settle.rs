@@ -10,10 +10,9 @@ use common::{
 use serde_json::{json, Value};
 
 use crate::{
-    debug_panel::{state_of, Stage},
     initialize_scene::{NoParcelScene, SceneLoading, SuperUserScene},
-    load_timing::scene_is_halted,
     renderer_context::RendererSceneContext,
+    stage::{state_of, Stage},
     ContainingScene,
 };
 
@@ -38,21 +37,6 @@ pub fn wait_timeout(wait: bool, timeout_seconds: Option<f32>) -> Result<Option<f
     Ok(Some(timeout))
 }
 
-/// Why the scene will never be ready, for one that failed to load or is halted
-/// ([`scene_is_halted`]: broken, or frozen with its glTFs loaded).
-fn never_ready(
-    loading: Option<&SceneLoading>,
-    context: Option<&RendererSceneContext>,
-) -> Option<&'static str> {
-    match (loading, context) {
-        (Some(SceneLoading::Failed), _) => Some("failed"),
-        (Some(_), _) | (None, None) => None,
-        (None, Some(context)) if context.broken() => Some("broken"),
-        (None, Some(context)) if scene_is_halted(context) => Some("frozen"),
-        _ => None,
-    }
-}
-
 enum Target {
     /// The parcel scene the player lands in after a teleport. `landed` once a
     /// [`ReturnedToWorld`] was seen since the teleport.
@@ -64,8 +48,9 @@ enum Target {
 /// The scene a wait watches, or why it has none yet.
 enum Watched {
     Scene(Entity),
-    /// The teleport landed on a parcel with no scene.
-    NoScene(IVec2),
+    /// The teleport landed on a parcel that will hold no scene for the player: an empty one, or
+    /// one whose scene refuses them.
+    NoScene(IVec2, NoParcelScene),
     Waiting(&'static str),
 }
 
@@ -88,6 +73,12 @@ struct Frame {
     /// A [`ReturnedToWorld`] arrived this frame.
     landed: bool,
     out_of_world: bool,
+}
+
+/// The parcel lookup of the frame: the scenes placed, and the ones that refuse the player.
+struct Parcels<'a, 'w, 's> {
+    containing: &'a ContainingScene<'w, 's>,
+    bans: &'a comms::SceneBanGate<'w>,
 }
 
 type Scenes<'w, 's> = Query<
@@ -185,6 +176,7 @@ pub(super) fn settle_scenes(
     time: Res<Time<Real>>,
     frame: Res<FrameCount>,
     containing: ContainingScene,
+    bans: comms::SceneBanGate,
     player: Query<Has<OutOfWorld>, With<PrimaryUser>>,
     scenes: Scenes,
 ) {
@@ -198,14 +190,18 @@ pub(super) fn settle_scenes(
         landed,
         out_of_world: player.single().unwrap_or(true),
     };
+    let parcels = Parcels {
+        containing: &containing,
+        bans: &bans,
+    };
     waits
         .0
-        .retain_mut(|wait| wait.advance(&frame, &containing, &scenes));
+        .retain_mut(|wait| wait.advance(&frame, &parcels, &scenes));
 }
 
 impl SceneWait {
     /// One frame of the wait; `false` once it has replied, so `retain_mut` drops it.
-    fn advance(&mut self, frame: &Frame, containing: &ContainingScene, scenes: &Scenes) -> bool {
+    fn advance(&mut self, frame: &Frame, parcels: &Parcels, scenes: &Scenes) -> bool {
         if self.sender.as_ref().is_none_or(|s| s.is_closed()) {
             return false;
         }
@@ -214,19 +210,25 @@ impl SceneWait {
             return keep;
         }
 
-        let entity = match self.watch(frame, containing) {
+        let entity = match self.watch(frame, parcels) {
             Watched::Scene(entity) => Ok(entity),
             Watched::Waiting(why) => Err(why),
-            Watched::NoScene(parcel) => {
+            Watched::NoScene(parcel, none) => {
                 self.reply["sceneHash"] = Value::Null;
                 let outcome = Outcome {
                     arrived: true,
                     ready: false,
-                    state: state_of(Err(NoParcelScene::Empty)),
+                    state: state_of(Err(none)),
                     rendered_frames: 0,
                     settled: true,
                 };
-                let warning = format!("there is no scene on parcel {},{}", parcel.x, parcel.y);
+                let (x, y) = (parcel.x, parcel.y);
+                let warning = match none {
+                    NoParcelScene::Refused => {
+                        format!("the scene on parcel {x},{y} refuses this player; it is not loaded")
+                    }
+                    _ => format!("there is no scene on parcel {x},{y}"),
+                };
                 return self.finish(outcome, Some(warning));
             }
         };
@@ -257,7 +259,7 @@ impl SceneWait {
 
         let rendered_frames = self.ready.map_or(0, |at| frame.count.wrapping_sub(at));
         let presented = rendered_frames >= PRESENT_FRAMES;
-        let halted = never_ready(loading, context);
+        let halted = stage.halted(context);
         let expired = self.elapsed >= self.timeout;
         if !(presented || halted.is_some() || expired) {
             return true;
@@ -331,21 +333,25 @@ impl SceneWait {
     }
 
     /// The scene entity to watch this frame, or why there is none yet.
-    fn watch(&mut self, frame: &Frame, containing: &ContainingScene) -> Watched {
+    fn watch(&mut self, frame: &Frame, parcels: &Parcels) -> Watched {
         match &mut self.target {
             Target::Arrival { parcel, landed } => {
                 *landed |= frame.landed;
                 if !*landed || frame.out_of_world {
                     return Watched::Waiting("Waiting for the player to land.");
                 }
-                match containing.parcel_scene(*parcel) {
+                // the lookup the teleport released the player on: neither waits for a scene on an
+                // empty parcel or for one that refuses the player
+                match parcels.containing.admitted_scene(*parcel, parcels.bans) {
                     Ok(entity) => Watched::Scene(entity),
-                    Err(NoParcelScene::Empty) => Watched::NoScene(*parcel),
+                    Err(none @ (NoParcelScene::Empty | NoParcelScene::Refused)) => {
+                        Watched::NoScene(*parcel, none)
+                    }
                     Err(none) => Watched::Waiting(none.reason()),
                 }
             }
             Target::Reload { hash, replaced } => {
-                match containing.live_scenes.scenes.get(hash.as_str()) {
+                match parcels.containing.live_scenes.scenes.get(hash.as_str()) {
                     Some(entity) if entity != replaced => Watched::Scene(*entity),
                     _ => Watched::Waiting("Waiting for the scene to spawn again."),
                 }
@@ -410,6 +416,11 @@ mod tests {
             .init_resource::<LiveScenes>()
             .init_resource::<PortableScenes>()
             .init_resource::<ScenePointers>()
+            // what the ban gate reads
+            .init_resource::<comms::SceneAdmission>()
+            .init_resource::<common::structs::CurrentRealm>()
+            .init_resource::<common::structs::PreviewMode>()
+            .init_resource::<wallet::Wallet>()
             .init_resource::<FrameCount>()
             .init_resource::<Time<Real>>()
             .add_event::<ReturnedToWorld>()
@@ -498,6 +509,16 @@ mod tests {
         // a frozen scene shows what it has, and is not ready
         assert!(context.content_shown());
         assert!(!stage.is_ready());
+        // it will not be, once the glTFs it still loads have
+        assert_eq!(stage.halted(Some(&*context)), Some("frozen"));
+        context.blocked.insert(GLTF_LOADING);
+        assert_eq!(
+            Stage::of(None, Some(&*context)).halted(Some(&*context)),
+            None
+        );
+        assert_eq!(Stage::Failed.halted(None), Some("failed"));
+        assert_eq!(Stage::Broken.halted(None), Some("broken"));
+        assert_eq!(Stage::Starting.halted(None), None);
         assert_eq!(
             Stage::of(Some(&SceneLoading::Failed), None).state(),
             "failed"
@@ -507,6 +528,7 @@ mod tests {
             "loading"
         );
         assert_eq!(state_of(Err(NoParcelScene::Empty)), "none");
+        assert_eq!(state_of(Err(NoParcelScene::Refused)), "refused");
         assert_eq!(state_of(Err(NoParcelScene::NotSpawned)), "loading");
     }
 
@@ -684,6 +706,81 @@ mod tests {
         assert_eq!(reply["settled"], true);
         assert!(reply["sceneHash"].is_null());
         assert!(reply["warning"].as_str().unwrap().contains("no scene"));
+    }
+
+    /// Parcel (0, 0) holds the scene "h".
+    fn place_scene(app: &mut App) {
+        let mut pointers = ScenePointers::default();
+        pointers.set_realm(IVec2::ZERO, IVec2::ONE);
+        pointers.insert(
+            IVec2::ZERO,
+            PointerResult::Exists {
+                hash: "h".to_owned(),
+                urn: None,
+            },
+        );
+        app.insert_resource(pointers);
+    }
+
+    #[test]
+    fn an_arrival_on_a_parcel_whose_scene_refuses_the_player_settles_on_landing() {
+        let mut app = app();
+        place_scene(&mut app);
+        // a refused scene is not loaded for the player: it has no live root to wait for
+        crate::stage::refuse_player(app.world_mut(), "h");
+        let (response, request) = RpcResultSender::<Result<(), String>>::channel();
+        response.send(Ok(()));
+        let mut rx = app.world_mut().resource_mut::<SceneWaits>().arrival(
+            IVec2::ZERO,
+            5.0,
+            request,
+            json!({}),
+        );
+        assert!(step(&mut app, &mut rx, 0.1).is_none());
+
+        // the teleport's release lands the player there without a scene
+        app.world_mut().send_event(ReturnedToWorld::SceneReady);
+        let reply = step(&mut app, &mut rx, 0.1).unwrap();
+        assert_eq!(reply["arrived"], true);
+        assert_eq!(reply["sceneReady"], false);
+        assert_eq!(reply["sceneState"], "refused");
+        assert_eq!(reply["renderedFrames"], 0);
+        assert_eq!(reply["settled"], true);
+        assert!(reply["sceneHash"].is_null());
+        assert!(reply["warning"]
+            .as_str()
+            .unwrap()
+            .contains("the scene on parcel 0,0 refuses this player"));
+        assert_eq!(app.world().resource::<SceneWaits>().pending(), 0);
+    }
+
+    #[test]
+    fn a_scene_that_refuses_the_player_while_it_loads_ends_the_wait() {
+        let mut app = app();
+        place_scene(&mut app);
+        let (response, request) = RpcResultSender::<Result<(), String>>::channel();
+        response.send(Ok(()));
+        let mut rx = app.world_mut().resource_mut::<SceneWaits>().arrival(
+            IVec2::ZERO,
+            60.0,
+            request,
+            json!({}),
+        );
+        app.world_mut().send_event(ReturnedToWorld::SceneReady);
+        scene(&mut app, "h", 2);
+        assert!(step(&mut app, &mut rx, 0.1).is_none());
+
+        // the room refuses the player after the landing, and the scene is unloaded
+        crate::stage::refuse_player(app.world_mut(), "h");
+        app.world_mut()
+            .resource_mut::<LiveScenes>()
+            .scenes
+            .remove("h");
+        let reply = step(&mut app, &mut rx, 0.1).unwrap();
+        assert_eq!(reply["arrived"], true);
+        assert_eq!(reply["sceneState"], "refused");
+        assert_eq!(reply["settled"], true);
+        assert!(reply["warning"].as_str().unwrap().contains("refuses"));
     }
 
     #[test]

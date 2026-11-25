@@ -14,7 +14,7 @@ use ipfs::{ChangeRealmEvent, RealmInitialLocation};
 use rand::{seq::SliceRandom, Rng};
 use scene_runner::{
     initialize_scene::{
-        LiveScenes, PointerResult, SceneHash, SceneLoading, ScenePointers, SuperUserScene,
+        LiveScenes, NoParcelScene, SceneHash, SceneLoading, ScenePointers, SuperUserScene,
         PARCEL_SIZE,
     },
     load_timing::scene_has_loaded,
@@ -253,22 +253,23 @@ pub(crate) fn handle_out_of_world(
         .floor()
         .as_ivec2();
 
-    let hash = match pointers.get(parcel) {
-        Some(PointerResult::Exists { hash, .. }) if !bans.is_banned(hash) => hash,
-        Some(PointerResult::Exists { .. }) => {
+    // the lookup a settling command (`/teleport --wait`) reads too, so both stop on the same parcels
+    let hash = match pointers.admitted_hash(parcel, &bans) {
+        Ok(hash) => hash,
+        Err(NoParcelScene::Refused) => {
             // A refused scene deliberately has no live root. Arrival must not wait for it.
             end_landing(&mut commands, player, out_of_world, false);
             returned.write(ReturnedToWorld::SceneReady);
             return;
         }
-        Some(PointerResult::Nothing) => {
+        Err(NoParcelScene::Empty) => {
             debug!("scene {parcel} doesn't exist, returning to world");
             debug!("everything: {:?}", pointers);
             end_landing(&mut commands, player, out_of_world, false);
             returned.write(ReturnedToWorld::SceneReady);
             return;
         }
-        None => {
+        Err(NoParcelScene::Unresolved | NoParcelScene::NotSpawned) => {
             // we don't know yet, the scene isn't loaded
             debug!("waiting for scene to resolve");
             return;
@@ -405,7 +406,10 @@ mod tests {
         },
     };
     use dcl_types::SceneId;
-    use scene_runner::{initialize_scene::PortableScenes, permissions::PermissionManager};
+    use scene_runner::{
+        initialize_scene::{PointerResult, PortableScenes},
+        permissions::PermissionManager,
+    };
 
     use super::*;
 

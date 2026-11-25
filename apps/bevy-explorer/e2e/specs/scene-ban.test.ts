@@ -85,8 +85,7 @@ scenario(
       assert.equal(state.sceneAdmission.message, 'User is banned from this scene')
       assert.equal(state.sceneRoom.state, 'not_connected')
 
-      const absent = 'Waiting for the parcel scene to load.'
-      await until(loadingState, (s) => s.stage === absent, {
+      await until(loadingState, (s) => s.state === 'refused', {
         timeoutMs: ROOM_TIMEOUT_MS,
         what: 'the refused scene to unload'
       })
@@ -97,12 +96,18 @@ scenario(
       })
       assert.ok((await explorer.banBlockState()).sceneAdmission.retainedRefusals.some((refusal) =>
         refusal.sceneId === state.sceneAdmission.sceneId && refusal.scope === 'scene'))
-      await explorer.teleport(...SCENE_PARCEL)
+      // the refusal is retained, so the wait settles on landing instead of running to its timeout
+      const returned = await explorer.teleport(...SCENE_PARCEL)
+      assert.equal(returned.teleport.settled, true)
+      assert.equal(returned.teleport.sceneState, 'refused')
       await until(() => explorer.banBlockState(), (s) =>
         s.sceneAdmission.state === 'refused' && s.sceneAdmission.sceneId === state.sceneAdmission.sceneId, {
           timeoutMs: ROOM_TIMEOUT_MS, what: 'the refused parcel to regain its admission owner'
         })
-      assert.equal((await loadingState()).stage, absent)
+      // the teleport's wait settles on landing there: a refused scene is not one to wait for
+      const back = await loadingState()
+      assert.equal(back.state, 'refused')
+      assert.equal(back.sceneHash, null)
       assert.ok((await explorer.worldState()).inWorld, 'returning to a banned parcel must finish teleport arrival')
 
       // Admission succeeds; a loopback endpoint keeps the transport out of this assertion.
@@ -111,7 +116,7 @@ scenario(
         timeoutMs: ROOM_TIMEOUT_MS,
         what: 'a fresh admission to lift the scene ban'
       })
-      await until(loadingState, (s) => s.stage === 'Running', {
+      await until(loadingState, (s) => s.isReady, {
         timeoutMs: ROOM_TIMEOUT_MS,
         what: 'the scene to load again on the same parcel'
       })

@@ -48,20 +48,24 @@ export interface WorldState {
   keyboardClaimed?: boolean | null
 }
 
-/** A scene's lifecycle state as `/scene_loading_state` and the settling waits name it. */
-export type SceneLifecycle = 'loading' | 'failed' | 'starting' | 'blocked' | 'broken' | 'running' | 'none'
+/** A scene's lifecycle state as `/scene_loading_state` and the settling waits name it: `none` on a
+ *  parcel with no scene, `refused` on one whose scene refuses the player (a scene or world ban; it
+ *  is not loaded for them). */
+export type SceneLifecycle = 'loading' | 'failed' | 'starting' | 'blocked' | 'broken' | 'running' | 'none' | 'refused'
 
 /** What `/teleport --wait` and `/reload --wait` report: the scene settled (it runs, its content is
  *  shown and a frame with it was presented) or the wait ended, and why in `warning`. */
 export interface SettleReport {
-  /** null on a parcel with no scene; absent when a teleport's wait ended before the landing */
+  /** null on a parcel with no scene or one whose scene refuses the player; absent when a
+   *  teleport's wait ended before the landing */
   sceneHash?: string | null
   title?: string
   sceneState: SceneLifecycle
   /** scene ticks run during the wait */
   ticksWaited?: number
-  /** frames drawn since the scene was ready: 2 on a settled reply (the first of them has been
-   *  presented), 0 while it was not ready */
+  /** frames drawn since the scene was ready: 2 when the reply settled on a ready scene (the first
+   *  of them has been presented); 0 when it settled on a parcel with no scene or a refused one, or
+   *  ended before the scene was ready */
   renderedFrames: number
   settleMs: number
   settled: boolean
@@ -91,7 +95,7 @@ export interface SceneStateReport {
    *  a position */
   outOfWorld: boolean | null
   /** the parcel's scene, known once its pointer has resolved, before the scene spawns; null on a
-   *  parcel with no scene, or until then */
+   *  parcel with no scene or one whose scene refuses the player, or until then */
   sceneHash: string | null
   state: SceneLifecycle
   /** the scene readiness `/teleport --wait` and `/reload --wait` wait for: `state` is `running`.

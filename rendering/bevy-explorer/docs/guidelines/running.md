@@ -233,11 +233,14 @@ State, in every build:
 - `/teleport x y [realm] --wait [--timeout-seconds S]`: teleports, then answers JSON once the
   player has landed (`arrived`) and the parcel's scene is ready and drawn: `sceneReady`,
   `sceneHash`, `title`, `sceneState`, `ticksWaited` (scene ticks during the wait),
-  `renderedFrames` (frames drawn since the scene was ready: 2 on a settled reply, the first of
-  them presented), `settleMs` and `settled`.
-  A parcel with no scene settles on landing (`sceneState:"none"`, a `warning`); a failed or broken
-  scene ends the wait at once with `settled:false` and a `warning`, and so does a frozen one once
-  its glTFs have loaded; the timeout (60 s by default, at most 300, counted from the command, a
+  `renderedFrames` (frames drawn since the scene was ready: 2 when it settled on a ready scene,
+  the first of them presented; 0 otherwise), `settleMs`, `settled` and, while the scene is
+  blocked, `blocked` (what holds it, sorted: `frozen`, `gltfs loading`).
+  A parcel with no scene settles on landing (`sceneState:"none"`, a `warning`), and so does a
+  parcel whose scene refuses the player, a scene or world ban, since that scene is not loaded for
+  them (`sceneState:"refused"`, no `sceneHash`, a `warning`); a failed or broken scene ends the
+  wait at once with `settled:false` and a `warning` naming its state, and so does a frozen one
+  once its glTFs have loaded; the timeout (60 s by default, at most 300, counted from the command, a
   realm change included) answers `settled:false` with a `warning` naming what it waited for; one
   that expires before the teleport request is answered (during a realm change, say) has no
   `sceneHash`. Without `--wait` it answers at once, and `--timeout-seconds` without `--wait` is an
@@ -245,8 +248,9 @@ State, in every build:
 - `/reload --current --wait [--timeout-seconds S]` (or `/reload <hash> --wait`): reloads the scene
   and answers once the new instance runs, shows its content and a frame with it was presented:
   `reloaded`, `sceneHash`, `sceneState`, `ticksWaited`, `renderedFrames`, `settleMs`, `settled`, a
-  `hint` that the scene starts from scratch (its counters and scene-UI ids are new), or a
-  `warning` when it expired. A ready scene is `running`: past tick 5 with nothing blocking it (its
+  `hint` that the scene starts from scratch (its counters and scene-UI ids are new), and a
+  `warning` when the wait expired or the new instance failed, broke or froze (`the scene is
+  frozen; it will not become ready`), with `settled:false`. A ready scene is `running`: past tick 5 with nothing blocking it (its
   glTFs loaded), which is when its content replaces its stand-ins and a teleport releases the
   player; until then it is `starting` or `blocked`. A teleport also releases the player onto a
   scene that will load no further (broken, or frozen with its glTFs loaded), which is the scene a
@@ -255,9 +259,10 @@ State, in every build:
 - `/scene_loading_state`: JSON of how scene loading stands. Of the parcel scene under the player:
   `playerParcel`, `outOfWorld` (the player has not landed; the scene under them loads first),
   `sceneHash` (known once the parcel's pointer has resolved, before the scene spawns; null on an
-  empty parcel), `stage` (its load stage, or why there is none), `state` (`loading`, `failed`,
-  `starting`, `blocked`, `broken`, `running`, or `none` on an empty parcel; `stage` and `state`
-  name one classification), `blockedBy` (what holds it: `frozen`, `gltfs loading`) and `isReady`
+  empty parcel or one whose scene refuses the player), `stage` (its load stage, or why there is
+  none), `state` (`loading`, `failed`, `starting`, `blocked`, `broken`, `running`, `none` on an
+  empty parcel, or `refused` when the parcel's scene refuses the player; `stage` and `state` name
+  one classification), `blockedBy` (what holds it: `frozen`, `gltfs loading`) and `isReady`
   (`state` is `running`), the scene readiness the two `--wait` commands above wait for; a
   teleport's wait also needs the player landed. Every `null` has its reason in `unavailable`. Of
   every scene: counts by load stage (`spawned`, `definition`, `crdt`, `javascript`, `failed`,

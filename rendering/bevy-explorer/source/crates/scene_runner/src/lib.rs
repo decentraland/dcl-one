@@ -94,6 +94,7 @@ pub mod scene_lod;
 pub mod scene_partition;
 pub mod scene_spawn_slice;
 mod scene_traffic;
+mod stage;
 #[cfg(test)]
 pub mod test;
 pub mod update_scene;
@@ -796,13 +797,36 @@ impl ContainingScene<'_, '_> {
     }
 
     /// The hash of the scene on `parcel`, or why the parcel has none (yet).
-    pub fn parcel_hash(&self, parcel: IVec2) -> Result<&str, NoParcelScene> {
+    pub(crate) fn parcel_hash(&self, parcel: IVec2) -> Result<&str, NoParcelScene> {
         self.pointers.scene_hash(parcel)
     }
 
     /// The live scene on `parcel`, or why there is none (yet).
-    pub fn parcel_scene(&self, parcel: IVec2) -> Result<Entity, NoParcelScene> {
-        let hash = self.pointers.scene_hash(parcel)?;
+    pub(crate) fn parcel_scene(&self, parcel: IVec2) -> Result<Entity, NoParcelScene> {
+        self.live(self.pointers.scene_hash(parcel)?)
+    }
+
+    /// [`Self::parcel_hash`] for the local player: a scene `bans` refuses them is
+    /// [`NoParcelScene::Refused`] (`ScenePointers::admitted_hash`).
+    pub(crate) fn admitted_hash(
+        &self,
+        parcel: IVec2,
+        bans: &comms::SceneBanGate,
+    ) -> Result<&str, NoParcelScene> {
+        self.pointers.admitted_hash(parcel, bans)
+    }
+
+    /// [`Self::parcel_scene`] for the local player: a scene `bans` refuses them is
+    /// [`NoParcelScene::Refused`], not one still to spawn.
+    pub(crate) fn admitted_scene(
+        &self,
+        parcel: IVec2,
+        bans: &comms::SceneBanGate,
+    ) -> Result<Entity, NoParcelScene> {
+        self.live(self.pointers.admitted_hash(parcel, bans)?)
+    }
+
+    fn live(&self, hash: &str) -> Result<Entity, NoParcelScene> {
         self.live_scenes
             .scenes
             .get(hash)

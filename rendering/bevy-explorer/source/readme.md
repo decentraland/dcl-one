@@ -360,7 +360,8 @@ the [conventions ADR](../../../docs/adr/2026-11-17-console-command-conventions.m
   answer once the parcel's scene runs, shows its content (past tick 5, nothing blocking it) and a
   frame with it was presented (`settled`, `sceneState`, `ticksWaited`, `renderedFrames`,
   `settleMs`), or with `settled:false` and a `warning` naming what it waited for. A teleport
-  waits for the player to land first and adds `arrived`, `sceneReady`, `sceneHash`; a reload
+  waits for the player to land first and adds `arrived`, `sceneReady`, `sceneHash`; on a parcel
+  with no scene, or one whose scene refuses the player, it settles on landing; a reload
   waits for the new instance of the scene and adds `reloaded` and a `hint`.
   `/scene_loading_state` reads the parcel scene under the player (`playerParcel`, `outOfWorld`,
   `sceneHash`, `stage`, `state`, `blockedBy`, `isReady`) beside its counts of every scene by load
