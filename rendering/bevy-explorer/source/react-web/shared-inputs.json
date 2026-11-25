@@ -5139,6 +5139,10 @@
           "kind": "regular"
         },
         {
+          "name": "editableTarget.test.ts",
+          "kind": "regular"
+        },
+        {
           "name": "engineViewport.test.tsx",
           "kind": "regular"
         },
@@ -9929,7 +9933,7 @@
     },
     {
       "path": "library/explorer-core/engine/protocol.ts",
-      "sha256": "b5305a8fcae8da728e51384cefe4a588acd923521479ad85ac50941b6c6908c0"
+      "sha256": "c704480e003d8ed6dbbd9399c5fb517b94ed4f61adfdc956ccffad488e9ce46c"
     },
     {
       "path": "library/explorer-core/engine/requestIds.ts",
@@ -10265,7 +10269,7 @@
     },
     {
       "path": "library/explorer-core/lib/hudAutomation.ts",
-      "sha256": "576e8c80cb3a1c2ce4b397d7bccaeb0939238d265e5a92fe0ea54fe1b5c78a53"
+      "sha256": "f058b1b20b028e2bf3a77b91e77441f8e0a14502fbc2131c707058cbdef8fae4"
     },
     {
       "path": "library/explorer-core/lib/hudScale.ts",
@@ -10441,7 +10445,7 @@
     },
     {
       "path": "library/explorer-core/test/hudAutomation.test.ts",
-      "sha256": "84d4394ec657ed8a7b85795db6ceaa4110754caa6ab3817bbc9c1f4b21b5d11c"
+      "sha256": "68302e9849a2cce73b6906543ea557cd09d29fbff1c19227741b97af5973d7eb"
     },
     {
       "path": "library/explorer-core/test/hudScale.test.ts",
@@ -12169,7 +12173,7 @@
     },
     {
       "path": "library/ui/apps/hud/design/ContextMenu.tsx",
-      "sha256": "0757a4a08de0af907119e86365951d0eec0e0d0cb4133df4e31d91fd407f7cb5"
+      "sha256": "ee48ec7544bd7edf4e1ec5b51ccc121ad2df67c0bea998c2ca8b27fb0366ade4"
     },
     {
       "path": "library/ui/apps/hud/design/ControlButton.module.css",
@@ -13265,7 +13269,7 @@
     },
     {
       "path": "library/ui/apps/hud/features/minimap/MinimapSettings.module.css",
-      "sha256": "c41eb77a1db195e1329314a68e7a60f20e4b589ec9c82fb09164b639d1e86730"
+      "sha256": "a69057fbec3a3869a5c14f9b2fbdaeda1de2b65c7ff3a6e9ef47c2d961209066"
     },
     {
       "path": "library/ui/apps/hud/features/minimap/MinimapSettings.tsx",
@@ -13509,11 +13513,11 @@
     },
     {
       "path": "library/ui/apps/hud/features/settings/SettingsPanel.module.css",
-      "sha256": "32cbe604ee4160b7cef69d41ed69a23bf575eb3d943ae22159ab09bee6443b2e"
+      "sha256": "82125791abd466cb959f7d490a7d8846d309e030470ab5c8def6f569f60480bc"
     },
     {
       "path": "library/ui/apps/hud/features/settings/SettingsPanel.tsx",
-      "sha256": "f5a59e6c5e63d687bfe51d7682c25e8b718a4567af9ca49bf882a29e699e69ae"
+      "sha256": "cf5e142a1eb4afb1a03e93afef3cb61efe8169db42ea6aba8610d62ddcbdf34f"
     },
     {
       "path": "library/ui/apps/hud/features/settings/askBeforeLeaving.ts",
@@ -13529,7 +13533,7 @@
     },
     {
       "path": "library/ui/apps/hud/features/sidebar/Sidebar.module.css",
-      "sha256": "f0557bacca14f9e3b95b12f62e7e22aec76082f52ffa397947fdd1c5526b4396"
+      "sha256": "c950ecaa62ed3e0650f8516e5401de165c70ebed91ed9bf9e871fd16ab01e624"
     },
     {
       "path": "library/ui/apps/hud/features/sidebar/Sidebar.tsx",
@@ -13585,7 +13589,7 @@
     },
     {
       "path": "library/ui/apps/hud/features/skybox/SkyboxMenu.module.css",
-      "sha256": "dca6cbcfc2cacbd8747a86eea95202d53f117bb6b55bc9246760d18dec54332b"
+      "sha256": "66a76949914c36a174fd12c024e6b89ca7001fe9ce27ff998fee0edbe85b6f46"
     },
     {
       "path": "library/ui/apps/hud/features/skybox/SkyboxMenu.tsx",
@@ -13741,7 +13745,7 @@
     },
     {
       "path": "library/ui/apps/hud/lib/bindingLabels.ts",
-      "sha256": "028f54981522025bedcc8188a96d98b02a6eb785bf30f889057bf1a855898919"
+      "sha256": "192981a40eb2d33c96feac006e754d54a08370aca1c95c0193b071aee373ebbd"
     },
     {
       "path": "library/ui/apps/hud/lib/hudInset.ts",
@@ -13765,7 +13769,7 @@
     },
     {
       "path": "library/ui/apps/hud/styles/tokens.css",
-      "sha256": "245c03f49726f1be5d20bef3f21bc7494f34605059ed3bdd65ddb3d61e4c16b0"
+      "sha256": "5cbb46ced8e137f8981db96fa0a061664040b7b5c87f53e21b41bb2a40edeb71"
     },
     {
       "path": "library/ui/apps/hud/test/armedButton.test.tsx",
@@ -13814,6 +13818,10 @@
     {
       "path": "library/ui/apps/hud/test/donatePanel.test.ts",
       "sha256": "6ff187f0c763b8c51980477fe79611261e17f40836089bf5dd45159778e8c0ea"
+    },
+    {
+      "path": "library/ui/apps/hud/test/editableTarget.test.ts",
+      "sha256": "cb26e7f210411c3d2cf8bfba309bafbafbbd5866b0d1ab6ac2cc2d6c387c6a4c"
     },
     {
       "path": "library/ui/apps/hud/test/engineViewport.test.tsx",
@@ -16397,11 +16405,11 @@
     },
     {
       "path": "library/ui/components/Switch/Switch.module.css",
-      "sha256": "125d208b3e7b7f1b4bc7a9abac624440dadd671922eeedb8854727e3dddd4d0a"
+      "sha256": "aef123dfc05fd55858eebeb011dc2729c96157f872023ca6649525e4af2c9b75"
     },
     {
       "path": "library/ui/components/Switch/Switch.tsx",
-      "sha256": "6687ede5dfac1d14dda40bda882e12a9d8436ce7a1fcf9d1192c6a8b331c0fa4"
+      "sha256": "3a2470a712ae5569d7b4c23a28e76e09f1b13c7b2a1b22b53d54b06f31e35ede"
     },
     {
       "path": "library/ui/components/Tabs/Tabs.module.css",
@@ -44267,6 +44275,21 @@
       "kind": "test:runtime"
     },
     {
+      "from": "library/ui/apps/hud/test/editableTarget.test.ts",
+      "to": "library/ui/apps/hud/lib/bindingLabels.ts",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/editableTarget.test.ts",
+      "to": "library/ui/apps/hud/lib/bindingLabels.ts",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/editableTarget.test.ts",
+      "to": "library/ui/apps/hud/lib/bindingLabels.ts",
+      "kind": "test:runtime"
+    },
+    {
       "from": "library/ui/apps/hud/test/engineViewport.test.tsx",
       "to": "library/ui/apps/hud/features/engine/EngineViewport.tsx",
       "kind": "native:runtime"
@@ -66689,6 +66712,11 @@
     {
       "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
       "to": "library/ui/apps/hud/test/donatePanel.test.ts",
+      "kind": "type"
+    },
+    {
+      "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
+      "to": "library/ui/apps/hud/test/editableTarget.test.ts",
       "kind": "type"
     },
     {

@@ -135,7 +135,8 @@ function ToggleItem({ item }: { item: Extract<ContextMenuItem, { kind: 'toggle' 
       aria-checked={on}
       aria-label={name}
       onClick={(event) => {
-        if (!(event.target as HTMLElement).closest('label')) change(!on)
+        const label = (event.target as HTMLElement).closest('label')
+        if (!label || !event.currentTarget.contains(label)) change(!on)
       }}
     >
       {item.icon != null && <span className={styles.icon}>{item.icon}</span>}

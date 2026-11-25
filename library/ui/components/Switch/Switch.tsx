@@ -1,4 +1,4 @@
-import type { ChangeEvent, InputHTMLAttributes, Ref } from 'react'
+import type { ChangeEvent, InputHTMLAttributes, KeyboardEvent, Ref } from 'react'
 import styles from './Switch.module.css'
 
 export type SwitchProps = Omit<
@@ -18,9 +18,9 @@ export type SwitchProps = Omit<
    * `--toggle-knob-shadow`. A visible label takes the caller's type.
    */
   appearance?: 'default' | 'hud'
-  /** For `hud`: `sm` is the compact 39 × 24 switch of the HUD's popovers. */
+  /** For `hud` only (ignored otherwise): `sm` is the compact 39 × 24 switch of the HUD's popovers. */
   size?: 'md' | 'sm'
-  /** For `hud`: `light` is a switch on a light panel, whose off track is dark. */
+  /** For `hud` only (ignored otherwise): `light` is a switch on a light panel, whose off track is dark. */
   surface?: 'dark' | 'light'
 }
 
@@ -43,6 +43,11 @@ export function Switch({
     onChange?.(event)
     onCheckedChange?.(event.currentTarget.checked)
   }
+  // The HUD's switch was a button, which Enter presses; a native checkbox only takes Space.
+  const keyDown = (event: KeyboardEvent<HTMLInputElement>) => {
+    input.onKeyDown?.(event)
+    if (appearance === 'hud' && event.key === 'Enter' && !event.defaultPrevented) event.currentTarget.click()
+  }
   return (
     <label
       className={[
@@ -58,7 +63,7 @@ export function Switch({
     >
       <span className={labelHidden ? styles.hiddenLabel : styles.label}>{label}</span>
       <span className={styles.control}>
-        <input {...input} type="checkbox" role="switch" className={styles.input} onChange={change} />
+        <input {...input} type="checkbox" role="switch" className={styles.input} onChange={change} onKeyDown={keyDown} />
         <span className={styles.track} aria-hidden="true" />
       </span>
     </label>

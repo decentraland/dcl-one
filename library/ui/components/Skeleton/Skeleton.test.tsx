@@ -37,21 +37,23 @@ describe('Skeleton', () => {
     })
   })
 
-  describe('when the tone is sweep or band', () => {
-    it('adds the tone class and keeps the size the consumer gives it', () => {
-      const { container } = render(
-        <>
-          <Skeleton tone="sweep" className="tile" />
-          <Skeleton tone="band" className="line" style={{ width: 200 }} />
-        </>
-      )
-      const sweep = container.children[0] as HTMLElement
-      const band = container.children[1] as HTMLElement
-      expect(sweep.className).toMatch(/sweep/)
-      expect(sweep.className).toMatch(/tile/)
-      expect(band.className).toMatch(/band/)
-      expect(band.style.width).toBe('200px')
-      expect(band).toHaveAttribute('aria-hidden', 'true')
+  describe('when the tone is sweep', () => {
+    it('adds the sweep class and keeps the consumer class', () => {
+      const { container } = render(<Skeleton tone="sweep" className="tile" />)
+      const node = container.firstElementChild as HTMLElement
+      expect(node.className).toMatch(/sweep/)
+      expect(node.className).toMatch(/tile/)
+      expect(node).toHaveAttribute('aria-hidden', 'true')
+    })
+  })
+
+  describe('when the tone is band', () => {
+    it('adds the band class and keeps the size the consumer gives it', () => {
+      const { container } = render(<Skeleton tone="band" className="line" style={{ width: 200 }} />)
+      const node = container.firstElementChild as HTMLElement
+      expect(node.className).toMatch(/band/)
+      expect(node.style.width).toBe('200px')
+      expect(node).toHaveAttribute('aria-hidden', 'true')
     })
   })
 

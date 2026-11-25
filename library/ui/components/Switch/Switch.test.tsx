@@ -157,6 +157,22 @@ describe('Switch', () => {
       expect(onCheckedChange).toHaveBeenCalledWith(true)
     })
 
+    it('should toggle on Enter, as the button it replaces did', async () => {
+      const onCheckedChange = vi.fn()
+      render(<Switch appearance="hud" label="Auto" checked={false} onCheckedChange={onCheckedChange} />)
+      screen.getByRole('switch', { name: 'Auto' }).focus()
+      await userEvent.keyboard('{Enter}')
+      expect(onCheckedChange).toHaveBeenCalledWith(true)
+    })
+
+    it('should leave Enter alone in the default appearance', async () => {
+      const onCheckedChange = vi.fn()
+      render(<Switch label="Notifications" checked={false} onCheckedChange={onCheckedChange} />)
+      screen.getByRole('switch', { name: 'Notifications' }).focus()
+      await userEvent.keyboard('{Enter}')
+      expect(onCheckedChange).not.toHaveBeenCalled()
+    })
+
     it('should not add the size or surface classes to the default appearance', () => {
       render(<Switch size="sm" surface="light" label="Notifications" />)
       const root = screen.getByRole('switch', { name: 'Notifications' }).closest('label') as HTMLElement

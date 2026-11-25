@@ -1,6 +1,6 @@
 // React Settings — a page inside the shared MainMenuShell (consistent top bar with
 // Backpack/etc). "Settings" + category sub-tabs and a two-column grid of controls
-// (light Select / ruby Toggle / arrow Slider). Data + actions via the bridge relay
+// (light Select / ruby Switch / arrow Slider). Data + actions via the bridge relay
 // of BevyApi.getSettings / setSetting.
 
 import { Switch } from '@dcl/one-ui'
