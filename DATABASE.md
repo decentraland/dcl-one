@@ -2557,7 +2557,10 @@ and takes addresses only from collection rows bearing that chain ID.
 A testnet NFT node checks the block hash returned alongside each graph page
 against its chain-checked RPC before saving the page. Graph-only testnet
 passes have no chain binding. An empty verified pass covers the chain's
-fixed contracts.
+fixed contracts. The Sepolia/Amoy pair omits the mainnet-only sales,
+committee, collections, third-party registry and MANA transfer walks, even
+when the mirror posture enables them and mainnet RPCs are available. The
+separately keyed Ethereum Rentals histories keep their own endpoints.
 
 On Sepolia the NFT and LAND authorization walks start at LAND proxy
 deployment block 3,831,219. On Amoy the NFT walk starts at marketplace V2

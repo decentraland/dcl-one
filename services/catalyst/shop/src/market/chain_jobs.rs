@@ -1448,6 +1448,7 @@ fn visit_projections(
             .with_error_backoff(Duration::from_secs(30))
     };
     let chain_id = settings.chain_id(net);
+    let mainnet = chain_id == net.chain_id();
     if settings.nft_enabled {
         let gate: Gate = {
             let state = state.clone();
@@ -1479,7 +1480,7 @@ fn visit_projections(
             market_cfg(),
         );
     }
-    if settings.sales_enabled && net == ChainNet::Matic {
+    if settings.sales_enabled && net == ChainNet::Matic && mainnet {
         let url = state.chain_rpc_url(net);
         let gate: Gate = {
             let (state, url) = (state.clone(), url.clone().unwrap_or_default());
@@ -1518,7 +1519,7 @@ fn visit_projections(
             market_cfg(),
         );
     }
-    if settings.committee_enabled && net == ChainNet::Matic {
+    if settings.committee_enabled && net == ChainNet::Matic && mainnet {
         add(
             "committee-index",
             state.polygon_mainnet_rpc_url(),
@@ -1527,7 +1528,7 @@ fn visit_projections(
             market_cfg(),
         );
     }
-    if settings.collections_enabled && net == ChainNet::Matic {
+    if settings.collections_enabled && net == ChainNet::Matic && mainnet {
         let url = state.chain_rpc_url(net);
         // The factories' lists (the walk's filter) and the collections'
         // creation state, read before each attempt.
@@ -1550,7 +1551,7 @@ fn visit_projections(
             market_cfg(),
         );
     }
-    if settings.third_party_registry_enabled && net == ChainNet::Matic {
+    if settings.third_party_registry_enabled && net == ChainNet::Matic && mainnet {
         add(
             "third-party-registry-index",
             state.polygon_mainnet_rpc_url(),
@@ -1559,7 +1560,7 @@ fn visit_projections(
             market_cfg(),
         );
     }
-    if settings.mana_transfers_enabled {
+    if settings.mana_transfers_enabled && mainnet {
         add(
             "mana-transfers-index",
             state.chain_rpc_url(net),
@@ -1690,12 +1691,27 @@ fn log_switches(state: &Arc<MarketplaceState>, rentals: Option<bool>) {
     let settings = &state.settings.market.indexes;
     let any_url =
         |f: &dyn Fn(ChainNet) -> Option<String>| ChainNet::ALL.into_iter().any(|n| f(n).is_some());
+    let polygon_mainnet = settings.chain_id(ChainNet::Matic) == ChainNet::Matic.chain_id();
+    if !polygon_mainnet {
+        tracing::info!(
+            chain_id = settings.chain_id(ChainNet::Matic),
+            "mainnet-only sales, committee, collections and third-party registry walks are off for this catalogue"
+        );
+    }
+    for net in ChainNet::ALL {
+        if settings.mana_transfers_enabled && settings.chain_id(net) != net.chain_id() {
+            tracing::info!(
+                network = net.db_name(),
+                "mainnet-only MANA transfer walk is off for this catalogue"
+            );
+        }
+    }
     if !settings.sales_enabled {
         tracing::info!(
             job = "sales-index",
             "marketplace chain index off: its routes answer the unavailable envelope"
         );
-    } else if state.chain_rpc_url(ChainNet::Matic).is_none() {
+    } else if polygon_mainnet && state.chain_rpc_url(ChainNet::Matic).is_none() {
         tracing::warn!(
             job = "sales-index",
             "marketplace chain index enabled but no Polygon JSON-RPC endpoint is configured (TRADE_RPC_URLS 137=): it stays off"
@@ -1726,7 +1742,7 @@ fn log_switches(state: &Arc<MarketplaceState>, rentals: Option<bool>) {
         } else if !has_url {
             tracing::warn!(
                 job,
-                "marketplace chain index enabled but no JSON-RPC endpoint is configured (TRADE_RPC_URLS 1= / 137=, or ETH_RPC_URL): it stays off"
+                "marketplace chain index enabled but no JSON-RPC endpoint is configured for its chain: it stays off"
             );
         }
     }
@@ -1735,19 +1751,25 @@ fn log_switches(state: &Arc<MarketplaceState>, rentals: Option<bool>) {
             job = "committee-index",
             "committee index off: builder's committee routes admit only BUILDER_ADMIN_ADDRESSES"
         );
-    } else if state.polygon_mainnet_rpc_url().is_none() {
+    } else if polygon_mainnet && state.polygon_mainnet_rpc_url().is_none() {
         tracing::warn!(
             job = "committee-index",
             "committee index enabled but no Polygon JSON-RPC endpoint is configured (TRADE_RPC_URLS 137=, or RPC_ENDPOINT_POLYGON on mainnet): it stays off"
         );
     }
-    if settings.collections_enabled && state.chain_rpc_url(ChainNet::Matic).is_none() {
+    if settings.collections_enabled
+        && polygon_mainnet
+        && state.chain_rpc_url(ChainNet::Matic).is_none()
+    {
         tracing::warn!(
             job = "collections-index",
             "collections index enabled but no Polygon JSON-RPC endpoint is configured (TRADE_RPC_URLS 137=): it stays off"
         );
     }
-    if settings.third_party_registry_enabled && state.polygon_mainnet_rpc_url().is_none() {
+    if settings.third_party_registry_enabled
+        && polygon_mainnet
+        && state.polygon_mainnet_rpc_url().is_none()
+    {
         tracing::warn!(
             job = "third-party-registry-index",
             "third-party registry index enabled but no Polygon JSON-RPC endpoint is configured (TRADE_RPC_URLS 137=, or RPC_ENDPOINT_POLYGON on mainnet): it stays off"

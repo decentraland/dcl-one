@@ -185,6 +185,51 @@ mod tests {
         }
     }
 
+    #[tokio::test]
+    async fn testnet_mirror_schedules_only_projections_for_its_catalogue_pair() {
+        use catalyst_config::posture::{Posture, expand};
+        use shop::market::{MarketplaceState, chain_jobs, chain_walk::ChainNet};
+        use std::{collections::HashMap, sync::Arc};
+
+        let mut vars = HashMap::from([
+            ("ETH_NETWORK", "sepolia".to_owned()),
+            ("DATABASE_URL", "postgres:///catalyst".to_owned()),
+            ("MARKETPLACE_INDEX_CHAIN_ID_ETHEREUM", "11155111".to_owned()),
+            ("MARKETPLACE_INDEX_CHAIN_ID_MATIC", "80002".to_owned()),
+            ("MARKETPLACE_MANA_TRANSFERS_INDEX_ENABLED", "true".to_owned()),
+            ("MARKETPLACE_COLLECTIONS_INDEX_ENABLED", "true".to_owned()),
+            ("TRADE_RPC_URLS", "1=https://eth.example,137=https://polygon.example,11155111=https://sepolia.example,80002=https://amoy.example".to_owned()),
+        ]);
+        let posture = expand(Posture::Mirror, &|key| vars.get(key).cloned());
+        vars.extend(posture);
+        let config = Config::parse_env_for_tests(vars).unwrap();
+        let settings = market_settings(&config, &[]).unwrap();
+        let indexes = &settings.market.indexes;
+        assert!(
+            indexes.sales_enabled
+                && indexes.committee_enabled
+                && indexes.third_party_registry_enabled
+        );
+        let pool = sqlx::PgPool::connect_lazy("postgres:///catalyst").unwrap();
+        let state = Arc::new(MarketplaceState::new(
+            pool,
+            crate::http::Outbound::for_tests(),
+            settings,
+        ));
+        for (net, chain) in [(ChainNet::Ethereum, 11_155_111), (ChainNet::Matic, 80_002)] {
+            let scheduled = chain_jobs::projections(&state, net, Some(false));
+            let names: Vec<_> = scheduled
+                .iter()
+                .map(|job| {
+                    let index = (job.make)();
+                    assert_eq!(index.chain_id(), chain);
+                    index.indexer()
+                })
+                .collect();
+            assert_eq!(names, ["nft", "trade_events"]);
+        }
+    }
+
     #[test]
     fn shared_market_settings_reject_unsupported_chain_ids() {
         let mut config =
