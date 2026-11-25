@@ -3,6 +3,7 @@ use bevy::{
     prelude::*,
     state::app::StatesPlugin,
 };
+use dcl_component::proto_components::sdk::components::VideoState;
 #[cfg(target_arch = "wasm32")]
 use wasm_bindgen_test::*;
 
@@ -10,7 +11,7 @@ use crate::{
     plugin::LivestreamManagerPlugin,
     states::{Receiver, TransmissionKind, Transmitter},
     ActiveAudioTransmitter, ActiveReceiver, ActiveTransmitter, ActiveVideoCast,
-    AudioTransmitterKind, ReceiverImage, TransmitterKind,
+    AudioTransmitterKind, ReceiverImage, TransmissionImageResized, TransmitterKind,
 };
 
 #[cfg(target_arch = "wasm32")]
@@ -79,6 +80,121 @@ fn test_add_receiver() {
     );
 
     assert!(app.world().entity(receiver).contains::<ReceiverImage>());
+}
+
+#[test]
+#[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
+fn a_receiver_with_no_stream_reads_opaque_black() {
+    let mut app = min_app();
+
+    app.update();
+
+    let receiver = app.world_mut().spawn(ActiveReceiver).id();
+
+    app.update();
+    app.update();
+    app.update();
+
+    let handle = &app.world().get::<ReceiverImage>(receiver).unwrap().image;
+    let image = app.world().resource::<Assets<Image>>().get(handle).unwrap();
+    assert_eq!(image.data, Some([0, 0, 0, 255].repeat(8 * 8)));
+}
+
+/// Runs the frames that an added or removed entity takes to change the states.
+fn settle(app: &mut App) {
+    for _ in 0..3 {
+        app.update();
+    }
+}
+
+/// The shown transmitter draws a white frame and reports it.
+fn show_frame(app: &mut App, transmitter: Entity) {
+    let active = app.world().get::<ActiveTransmitter>(transmitter).unwrap();
+    active.send_if_modified(VideoState::VsPlaying);
+    let image = active.image.clone();
+    let mut images = app.world_mut().resource_mut::<Assets<Image>>();
+    images.get_mut(&image).unwrap().data = Some(vec![255; 8 * 8 * 4]);
+}
+
+/// The picture and the state that a receiver reads.
+fn screen(app: &App, receiver: Entity) -> (Option<Vec<u8>>, VideoState) {
+    let receiver = app.world().get::<ReceiverImage>(receiver).unwrap();
+    let images = app.world().resource::<Assets<Image>>();
+    let image = images.get(&receiver.image).unwrap();
+    (image.data.clone(), *receiver.state.borrow())
+}
+
+fn no_stream() -> (Option<Vec<u8>>, VideoState) {
+    (Some([0, 0, 0, 255].repeat(8 * 8)), VideoState::VsLoading)
+}
+
+#[test]
+#[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
+fn a_screen_reads_no_stream_when_its_publication_is_gone() {
+    let mut app = min_app();
+    app.update();
+    let receiver = app.world_mut().spawn(ActiveReceiver).id();
+    let stream = app.world_mut().spawn(TransmitterKind::Stream).id();
+    settle(&mut app);
+    show_frame(&mut app, stream);
+    assert_eq!(screen(&app, receiver).0.unwrap(), [255; 8 * 8 * 4]);
+
+    app.world_mut().despawn(stream);
+
+    assert_eq!(screen(&app, receiver), no_stream());
+    // the screens take the new texture
+    let resized = app.world().resource::<Events<TransmissionImageResized>>();
+    assert_eq!(resized.len(), 1);
+}
+
+#[test]
+#[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
+fn a_publication_gone_with_no_receiver_is_not_shown_to_the_next_receiver() {
+    let mut app = min_app();
+    app.update();
+    let receiver = app.world_mut().spawn(ActiveReceiver).id();
+    let stream = app.world_mut().spawn(TransmitterKind::Stream).id();
+    settle(&mut app);
+    show_frame(&mut app, stream);
+
+    app.world_mut().despawn(receiver);
+    settle(&mut app);
+    app.world_mut().despawn(stream);
+    let receiver = app.world_mut().spawn(ActiveReceiver).id();
+    settle(&mut app);
+
+    assert_eq!(screen(&app, receiver), no_stream());
+}
+
+#[test]
+#[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
+fn a_source_change_keeps_the_picture_until_the_shown_publication_is_gone() {
+    let mut app = min_app();
+    app.update();
+    let receiver = app.world_mut().spawn(ActiveReceiver).id();
+    let stream = app.world_mut().spawn(TransmitterKind::Stream).id();
+    settle(&mut app);
+    show_frame(&mut app, stream);
+
+    // a presentation takes the screen of a stream that is still published
+    let presentation = app.world_mut().spawn(TransmitterKind::Presentation).id();
+    settle(&mut app);
+    assert!(app
+        .world()
+        .entity(presentation)
+        .contains::<ActiveTransmitter>());
+    assert_eq!(screen(&app, receiver).0.unwrap(), [255; 8 * 8 * 4]);
+
+    // the end of a publication that is not shown changes nothing
+    app.world_mut().despawn(stream);
+    assert_eq!(screen(&app, receiver).0.unwrap(), [255; 8 * 8 * 4]);
+
+    // the end of the shown one clears the screen, also when another publication is there
+    let stream = app.world_mut().spawn(TransmitterKind::Stream).id();
+    app.world_mut().despawn(presentation);
+    assert_eq!(screen(&app, receiver), no_stream());
+    settle(&mut app);
+    assert!(app.world().entity(stream).contains::<ActiveTransmitter>());
 }
 
 #[test]

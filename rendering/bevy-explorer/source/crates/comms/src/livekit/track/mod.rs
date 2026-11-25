@@ -132,7 +132,7 @@ struct AudioStreamingHandle {
 #[derive(Component)]
 struct VideoFrameReceiver {
     receiver: mpsc::Receiver<I420Buffer>,
-    last_received: f64,
+    last_received: Option<f64>,
 }
 
 /// A track's page video element, adopted into the media host; dropping this releases it.
@@ -142,6 +142,7 @@ struct HtmlMediaEntity {
     _commands: tokio::sync::mpsc::UnboundedSender<AVCommand>,
     video: tokio::sync::mpsc::Receiver<VideoData>,
     image: Handle<Image>,
+    last_frame: Option<f64>,
 }
 
 #[derive(Component)]

@@ -59,8 +59,9 @@ Toolkit and the Bevy Explorer do not compose: they show the bot's screen-share t
 - A session holds at most 8 PNG of at most 1920x1080 pixels; the sessions are bounded by
   `MAX_CONCURRENT_PRESENTATIONS`.
 - The camera appears in a composing client only after a caller names the presenter. The
-  Admin Toolkit and the Cast pages of this tree send neither `presenterIdentity` nor the
-  claim.
+  Cast streamer page of this tree sends the claim when the bot shows a slide whose
+  presenter is not in the room (`apps/sites/src/features/social/cast-live/presenter.ts`).
+  No client of this tree sends `presenterIdentity`, and the Admin Toolkit sends neither.
 - The Unity Explorer accepts a `stream:` identity of at most 128 characters. This node's
   streamer identities are `stream:<place>:<access id>:<uuid>`, so a place name longer
   than 47 characters gives a slide without the camera.

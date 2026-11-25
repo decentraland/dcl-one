@@ -1,5 +1,5 @@
 (dcl-scene-cli golden v1 composite production)
-TOOLCHAIN sdk=7.29.1-34986384248.commit-bb45080 ecs=7.29.1-34986384248.commit-bb45080 bundler=rolldown-1.3.2 blob=sha256:50abfae7d8f97207
+TOOLCHAIN sdk=7.29.1-34986384248.commit-bb45080 ecs=7.29.1-34986384248.commit-bb45080 bundler=rolldown-1.3.2 blob=sha256:d3ddcd82626d02a9
 SCENE_COMPILED_JS_SIZE_PROD=551.9k bytes
   ARTIFACT bin/index.js               6414 sha256=829445fdb6028928
   ARTIFACT bin/scene.js               1149 sha256=0441eee7a04e15db

@@ -1,15 +1,24 @@
 // decentraland.org's rollout flags for a page the server did not render: a client navigation into the Shop (its
 // loader runs in the browser) or the native shop. The feature-flags service would tell this document's own Referer that
 // every flag is off, so they come from this server's reading (/internal/feature-flags). Read once per document: a page
-// the server rendered, or an earlier navigation, has already primed them.
+// the server rendered, or an earlier navigation, has already primed them. A flag hook on any other page reads them
+// the same way, never from the service: it refuses this site's origin.
 
-import { primeRemoteFlags, remoteFlagsPrimed } from "@dcl/one-ui/apps/shop/remote-flags";
+import { primeRemoteFlags, remoteFlagsPrimed, setRemoteFlagsRefresh } from "@dcl/one-ui/apps/shop/remote-flags";
 
 const TIMEOUT_MS = 1_500;
 
+let reading: Promise<void> | null = null;
+
 /** Primes the flags unless already primed; on no answer (or a slow one) they stay off, as before any answer. */
-export async function primeDappsFlags(): Promise<void> {
-  if (remoteFlagsPrimed()) return;
+export function primeDappsFlags(): Promise<void> {
+  if (remoteFlagsPrimed()) return Promise.resolve();
+  return (reading ??= read().finally(() => (reading = null)));
+}
+
+setRemoteFlagsRefresh(primeDappsFlags);
+
+async function read(): Promise<void> {
   try {
     const res = await fetch("/internal/feature-flags?variants=1", { signal: AbortSignal.timeout(TIMEOUT_MS) });
     if (!res.ok) {

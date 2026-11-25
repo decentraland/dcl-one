@@ -1,6 +1,7 @@
 use crate::scene::Project;
 use crate::ux::{TrySteps, UserError, write_error};
 use anyhow::Result;
+use dcl_scene_authoring::Scripts;
 use std::path::{Path, PathBuf};
 
 pub struct Generated {
@@ -30,14 +31,15 @@ pub fn generate(
     let content = if custom_entry {
         format!(";\"use strict\";export * from {safe_entry}")
     } else {
+        let scripts = scripts(&project.root, ignore_composite);
+        for message in &scripts.skipped {
+            crate::ux::note_stderr(message);
+        }
         write_all_composites(project, &dir, ignore_composite)?;
-        write_in(
-            &dir,
-            "script-utils.js",
-            script_utils_content(project, ignore_composite),
-        )?;
+        let script_utils = script_utils_content(project, !scripts.is_empty());
+        write_in(&dir, "script-utils.js", script_utils)?;
         write_in(&dir, "sdk-boot.js", SDK_BOOT)?;
-        entrypoint_code(&safe_entry, project.is_editor_scene(), split)
+        entrypoint_code(&safe_entry, project.is_editor_scene(), split, &scripts)
     };
     let entrypoint = write_in(&dir, "entrypoint.ts", content)?;
 
@@ -69,12 +71,16 @@ const SDK_BOOT: &str = "import { engine, setCompositeProvider } from '@dcl/sdk/e
                         import { compositeProvider } from '@dcl/sdk/composite-provider'\n\
                         setCompositeProvider(engine, compositeProvider)\n";
 
-fn entrypoint_code(safe_entry: &str, editor_scene: bool, split: bool) -> String {
+fn entrypoint_code(safe_entry: &str, editor_scene: bool, split: bool, scripts: &Scripts) -> String {
     let composite_fill = if split {
         "import { compositeFromLoader as __sceneComposites } from './all-composites.js'\nObject.assign(compositeFromLoader, __sceneComposites)\n"
     } else {
         ""
     };
+    // The scene chunk holds the script modules: `~sdk/script-utils` is in a
+    // chunk that no scene owns, so the scene gives it the instances to start.
+    let composite_fill = format!("{composite_fill}{}", scripts.imports);
+    let script_instances = &scripts.argument;
     let editor_block = if editor_scene {
         "\nimport { syncEntity } from '@dcl/sdk/network'\nimport players from '@dcl/sdk/players'\nimport { setCompositeProvider } from '@dcl/sdk/ecs'\nimport { initAssetPacks } from '@dcl/asset-packs/dist/scene-entrypoint'\nsetCompositeProvider(engine, compositeProvider)\ninitAssetPacks(engine, { syncEntity }, players)\n"
             .to_string()
@@ -119,7 +125,7 @@ function __reportSceneError(e: any) {{
 if ((entrypoint as any).main !== undefined) {{
   function _INTERNAL_startup_system() {{
     try {{
-      _initializeScripts(engine)
+      _initializeScripts(engine{script_instances})
 
       const maybePromise = (entrypoint as any).main()
       if (maybePromise && typeof maybePromise === 'object' && typeof (maybePromise as unknown as Promise<unknown>).then === 'function') {{
@@ -232,75 +238,26 @@ pub fn script_utils_source(project: &Project) -> Option<String> {
         "@dcl/asset-packs",
     )));
     Some(format!(
-        "{runtime}\n\nexport function _initializeScripts(engine) {{\n  const scriptsArray = []\n  return runScripts(engine, scriptsArray)\n}}\n\nexport {{ getScriptInstance, getScriptInstancesByPath, getAllScriptInstances, callScriptMethod }}\n"
+        "{runtime}\n\nexport function _initializeScripts(engine, scripts = []) {{\n  return runScripts(engine, scripts)\n}}\n\nexport {{ getScriptInstance, getScriptInstancesByPath, getAllScriptInstances, callScriptMethod }}\n"
     ))
 }
 
 /// Upstream skips the embedded script runtime for scenes that author no scripts
 /// and are not editor scenes.
-pub fn script_utils_content(project: &Project, ignore_composite: bool) -> String {
-    let has_scripts = !ignore_composite && composites_have_scripts(&project.root);
+pub fn script_utils_content(project: &Project, has_scripts: bool) -> String {
     if !has_scripts && !project.is_editor_scene() {
         return SCRIPT_UTILS_STUB.to_string();
     }
     script_utils_source(project).unwrap_or_else(|| SCRIPT_UTILS_STUB.to_string())
 }
 
-/// Does any composite author a smart-item script? The Rust side of upstream's
-/// `compositeData.scripts.size > 0`: any entry in an `asset-packs::Script`
-/// component's `value` array flips the gate. Composites that would fail to
-/// instance contribute nothing, matching upstream's per-composite try/catch.
-pub fn composites_have_scripts(root: &Path) -> bool {
-    let (has_scripts, skipped) = composites_script_scan(root);
-    for message in skipped {
-        crate::ux::note_stderr(message);
+/// The scripts of the scene's composites; none with `--ignoreComposite`, as upstream.
+pub fn scripts(root: &Path, ignore_composite: bool) -> Scripts {
+    if ignore_composite {
+        return Scripts::default();
     }
-    has_scripts
-}
-
-fn composites_script_scan(root: &Path) -> (bool, Vec<String>) {
-    let mut normalizer = dcl_scene_authoring::composite_norm::CompositeNormalizer::new();
-    let mut skipped = Vec::new();
-    let has_scripts = find_composites(root).into_iter().any(|path| {
-        let Ok(raw) = std::fs::read_to_string(&path) else {
-            return false;
-        };
-        if let Err(err) = normalizer.normalize(&raw) {
-            skipped.push(format!(
-                "composite {} can't be instanced, so its components are ignored: {err:#}",
-                crate::ux::rel_to(root, &path)
-            ));
-            return false;
-        }
-        let Ok(json) = serde_json::from_str::<serde_json::Value>(&raw) else {
-            return false;
-        };
-        json.get("components")
-            .and_then(|c| c.as_array())
-            .is_some_and(|comps| {
-                comps
-                    .iter()
-                    .filter(|c| {
-                        c.get("name").and_then(|n| n.as_str()) == Some("asset-packs::Script")
-                    })
-                    .any(script_component_has_instances)
-            })
-    });
-    (has_scripts, skipped)
-}
-
-fn script_component_has_instances(comp: &serde_json::Value) -> bool {
-    comp.get("data")
-        .and_then(|d| d.as_object())
-        .is_some_and(|data| {
-            data.values().any(|entry| match entry.get("json") {
-                Some(json) => json
-                    .get("value")
-                    .and_then(|v| v.as_array())
-                    .is_some_and(|v| !v.is_empty()),
-                None => entry.get("binary").is_some(),
-            })
-        })
+    let scene = crate::scene_files::SceneDir::new(root);
+    dcl_scene_authoring::scripts(&scene, &root.display().to_string())
 }
 
 fn strip_cjs(code: &str) -> String {
@@ -399,62 +356,33 @@ fn top_level_require(line: &str) -> Option<(&str, &str)> {
 #[cfg(test)]
 mod tests {
     use super::{
-        SCRIPT_UTILS_STUB, composites_have_scripts, composites_script_scan, rewrite_requires,
-        scan_max_composite_entity, script_utils_content, strip_cjs,
+        SCRIPT_UTILS_STUB, entrypoint_code, rewrite_requires, scan_max_composite_entity,
+        script_utils_content, scripts, strip_cjs,
     };
     use crate::scene::{Project, Tmp};
 
-    const MAIN: &str = "assets/scene/main.composite";
-    const UNINSTANCEABLE: &str = r#"{"version":1,"components":[{"name":"core::NotAThing","data":{}},{"name":"asset-packs::Script","jsonSchema":{"type":"object"},"data":{"512":{"json":{"value":[{"path":"src/counter.ts"}]}}}}]}"#;
-
     #[test]
-    fn composites_have_scripts_requires_script_instances() {
-        let t = Tmp::new("hasscripts");
-        std::fs::create_dir_all(t.0.join("assets/scene")).unwrap();
-        assert!(!composites_have_scripts(&t.0));
+    fn entrypoint_imports_each_script_and_starts_its_instances() {
+        let t = Tmp::new("scripts");
         t.write(
-            MAIN,
-            r#"{"version":1,"components":[{"name":"asset-packs::Script","jsonSchema":{"type":"object"},"data":{"512":{"json":{"value":[]}}}},{"name":"asset-packs::Actions","jsonSchema":{"type":"object"},"data":{"512":{"json":{}}}}]}"#,
-        );
-        assert!(!composites_have_scripts(&t.0));
-        t.write(
-            MAIN,
+            "assets/scene/main.composite",
             r#"{"version":1,"components":[{"name":"asset-packs::Script","jsonSchema":{"type":"object"},"data":{"512":{"json":{"value":[{"path":"src/counter.ts","priority":0}]}}}}]}"#,
         );
-        assert!(composites_have_scripts(&t.0));
-    }
-
-    #[test]
-    fn composites_have_scripts_counts_binary_entries_in_instanceable_composites() {
-        let t = Tmp::new("binscripts");
-        t.write(
-            MAIN,
-            r#"{"version":1,"components":[{"name":"asset-packs::Script","jsonSchema":{"type":"object"},"data":{"512":{"binary":"AQID"}}}]}"#,
+        let code = entrypoint_code("\"index.ts\"", false, true, &scripts(&t.0, false));
+        let file = t.0.join("src/counter.ts");
+        assert!(code.contains(&format!(
+            "import * as script_src_counter from \"{}\"\n",
+            file.display()
+        )));
+        assert!(code.contains(
+            r#"_initializeScripts(engine, [
+  { ...{"path":"src/counter.ts","priority":0,"entity":512}, module: script_src_counter }
+])"#
+        ));
+        let ignored = entrypoint_code("\"index.ts\"", false, true, &scripts(&t.0, true));
+        assert!(
+            ignored.contains("_initializeScripts(engine)\n") && !ignored.contains("script_src")
         );
-        assert!(composites_have_scripts(&t.0));
-    }
-
-    #[test]
-    fn non_instanceable_composites_do_not_flip_the_script_gate() {
-        let t = Tmp::new("badscripts");
-        t.write(MAIN, UNINSTANCEABLE);
-        assert!(!composites_have_scripts(&t.0));
-        t.write(
-            "assets/scene/other.composite",
-            r#"{"version":1,"components":[{"name":"asset-packs::Script","data":{"512":{"json":{"value":[{"path":"src/counter.ts"}]}}}}]}"#,
-        );
-        assert!(!composites_have_scripts(&t.0));
-    }
-
-    #[test]
-    fn non_instanceable_composite_skip_is_reported() {
-        let t = Tmp::new("skipnote");
-        t.write(MAIN, UNINSTANCEABLE);
-        let (has_scripts, skipped) = composites_script_scan(&t.0);
-        assert!(!has_scripts);
-        assert_eq!(skipped.len(), 1);
-        assert!(skipped[0].contains("can't be instanced"), "{}", skipped[0]);
-        assert!(skipped[0].contains("main.composite"), "{}", skipped[0]);
     }
 
     #[test]
@@ -470,12 +398,9 @@ mod tests {
             scene_json: serde_json::json!({"main": "bin/index.js"}),
         };
         assert_eq!(script_utils_content(&project, false), SCRIPT_UTILS_STUB);
-        t.write(
-            MAIN,
-            r#"{"version":1,"components":[{"name":"asset-packs::Script","jsonSchema":{"type":"object"},"data":{"0":{"json":{"value":[{"path":"src/counter.ts"}]}}}}]}"#,
-        );
-        assert!(script_utils_content(&project, false).contains("runScripts"));
-        assert_eq!(script_utils_content(&project, true), SCRIPT_UTILS_STUB);
+        assert!(script_utils_content(&project, true).contains(
+            "_initializeScripts(engine, scripts = []) {\n  return runScripts(engine, scripts)"
+        ));
     }
 
     #[test]

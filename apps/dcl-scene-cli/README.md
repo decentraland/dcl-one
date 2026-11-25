@@ -160,7 +160,13 @@ keeps unrelated ZIP entries byte-for-byte, and records source/output hashes insi
 prebuilt-registry wire contracts and strict declaration check; this development check requires
 Node, Python 3 and the installed SDK TypeScript dependency. SDK CI runs it after installation.
 The normal scene build uses these bindings without npm.
+The prebuilt smart-item chunk (`@dcl/sdk/prebuilt/smart.js`) holds `@dcl/asset-packs` from
+`apps/creator-hub/packages/asset-packs` and the script runtime of `@dcl/sdk-commands`. The hidden
+`vendor-chunks` command builds it from an install tree that has both packages.
 
+The build bundles each script of a smart item (an entry of `asset-packs::Script` in a composite)
+into the scene chunk, and the scene starts it before `main()`. A scene with a script loads the
+smart-item chunk.
 
 The built-in pipeline bundles to `bin/index.js`, type-checks beside the build with incremental tsc
 (`.dcl-cache/`), and encodes `main.crdt` in Rust (`DCL_ONE_CRDT_VERIFY=1` compares with node).

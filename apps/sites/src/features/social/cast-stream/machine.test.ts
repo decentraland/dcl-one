@@ -1,10 +1,12 @@
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { createActor, waitFor } from "xstate";
 import { settle } from "../../test-utils/fake-clock";
+import { CatalystError } from "@/data/lib/catalyst/client";
 
 import {
   castMachine,
   CAST_EVENTS,
+  NO_ANSWER,
   STATE_TO_SLUG,
   SLUG_TO_STATE,
   FIRST_STEP_SLUG,
@@ -33,6 +35,9 @@ const RESULT: TokenResult = {
     identity: "Speaker",
   },
 };
+
+// A link check that failed goes to the console.
+beforeEach(() => void vi.spyOn(console, "warn").mockImplementation(() => {}));
 
 const okResolve: ResolveTokenFn = async () => RESULT;
 const grant: RequestPermissionsFn = async () => ({ granted: true });
@@ -352,9 +357,21 @@ describe("castMachine \u{2014} a real session (goLive, stopShare, SHARE_ENDED)",
     await waitFor(actor, (s) => s.matches({ live: "idle" }));
     actor.send({ type: "CONNECTION_LOST" });
     expect(actor.getSnapshot().matches("ended")).toBe(true);
-    expect(actor.getSnapshot().context.connectionLost).toBe(true);
+    expect(actor.getSnapshot().context).toMatchObject({ connectionLost: true, removed: false });
     const lost = track.mock.calls.find((c) => c[0] === CAST_EVENTS.connectionLost);
     expect(lost?.[1]).toEqual({ room_id: "scene-room" });
+  });
+
+  it("an ended cast takes RETRY back to the lobby of the same link, and the lost room is forgotten", async () => {
+    const actor = await toPreview(vi.fn<GoLiveFn>(async () => CREDS), vi.fn());
+    actor.send({ type: "JOIN" });
+    await waitFor(actor, (s) => s.matches({ live: "idle" }));
+    actor.send({ type: "CONNECTION_LOST", removed: true });
+    expect(actor.getSnapshot().context).toMatchObject({ connectionLost: true, removed: true });
+    actor.send({ type: "RETRY" });
+    await waitFor(actor, (s) => s.matches("deviceSelect"));
+    expect(actor.getSnapshot().context.removed).toBe(false);
+    expect(actor.getSnapshot().context.connectionLost).toBe(false);
   });
 
   it("stopping a share calls stopShare; the browser ending it does not, and both leave sharing", async () => {
@@ -441,10 +458,65 @@ describe("castMachine \u{2014} one join from device select", () => {
     actor.send({ type: "SELECT_DEVICES", devices: DEFAULT_DEVICES, name: "Ada", join: true });
     await waitFor(actor, (s) => s.matches("preview"));
     expect(actor.getSnapshot().context.joinError).toBe("room is full");
+    expect(actor.getSnapshot().context.joinWords).toBe("Try again in a moment.");
 
     actor.send({ type: "JOIN", name: "Grace" });
     await waitFor(actor, (s) => s.matches({ live: "idle" }));
     expect(goLive.mock.calls[1]![0]).toMatchObject({ identity: "Grace" });
     actor.stop();
+  });
+});
+
+describe("castMachine \u{2014} every wait of the join has a bound", () => {
+  const never = () => new Promise<never>(() => {});
+  const CREDS = { url: "wss://lk.test", token: "jwt", roomId: "scene-room" };
+
+  it("a link check nobody answers in 15 s is unreachable with the reason, and RETRY checks it again", async () => {
+    vi.useFakeTimers();
+    const resolveToken = vi.fn<ResolveTokenFn>(okResolve).mockImplementationOnce(never);
+    const actor = createActor(castMachine, { input: inputFor(resolveToken, grant, vi.fn()) }).start();
+    await vi.advanceTimersByTimeAsync(14_999);
+    expect(actor.getSnapshot().matches("tokenCheck")).toBe(true);
+    await vi.advanceTimersByTimeAsync(1);
+    expect(actor.getSnapshot().matches("unreachable")).toBe(true);
+    expect(actor.getSnapshot().context.invalidReason).toBe(NO_ANSWER);
+    actor.send({ type: "RETRY" });
+    await vi.advanceTimersByTimeAsync(0);
+    expect(actor.getSnapshot().matches("deviceSelect")).toBe(true);
+  });
+
+  it("a link check that failed (network, 5xx) is unreachable; a key the server refused stays invalid", async () => {
+    for (const [error, state] of [
+      [new CatalystError("Cast request failed: Failed to fetch", "u"), "unreachable"],
+      [new CatalystError("Catalyst returned 502 Bad Gateway", "u", 502), "unreachable"],
+      [new CatalystError("Invalid streaming key", "u", 400, true), "invalid"],
+    ] as const) {
+      const resolveToken: ResolveTokenFn = async () => {
+        throw error;
+      };
+      const actor = createActor(castMachine, { input: inputFor(resolveToken, grant, vi.fn()) }).start();
+      await waitFor(actor, (s) => s.matches(state));
+      expect(actor.getSnapshot().context.invalidReason).toBe(error.message);
+      // Only the server's refusal of the key is words for the page.
+      expect(actor.getSnapshot().context.invalidWords).toBe(state === "invalid" ? error.message : undefined);
+    }
+  });
+
+  it("a join nobody answers in 45 s is stopped and returns to preview with the reason, and a retry joins", async () => {
+    vi.useFakeTimers();
+    const goLive = vi.fn<GoLiveFn>(async () => CREDS).mockImplementationOnce(never);
+    const actor = createActor(castMachine, { input: { ...inputFor(okResolve, grant, vi.fn()), goLive } }).start();
+    await vi.advanceTimersByTimeAsync(0);
+    actor.send({ type: "SELECT_DEVICES", devices: DEFAULT_DEVICES, join: true });
+    await vi.advanceTimersByTimeAsync(44_999);
+    expect(actor.getSnapshot().matches("joining")).toBe(true);
+    await vi.advanceTimersByTimeAsync(1);
+    expect(actor.getSnapshot().matches("preview")).toBe(true);
+    expect(actor.getSnapshot().context.joinError).toBe(NO_ANSWER);
+    expect(actor.getSnapshot().context.joinWords).toBe(NO_ANSWER);
+    expect(goLive.mock.calls[0]![0].signal?.aborted).toBe(true);
+    actor.send({ type: "JOIN" });
+    await vi.advanceTimersByTimeAsync(0);
+    expect(actor.getSnapshot().matches({ live: "idle" })).toBe(true);
   });
 });

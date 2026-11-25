@@ -641,7 +641,7 @@ fn video_track_is_now_subscribed(
         LivekitTrackTask(handle),
         VideoFrameReceiver {
             receiver,
-            last_received: 0.,
+            last_received: None,
         },
     ));
 }
@@ -684,6 +684,7 @@ fn video_track_is_now_subscribed(
         _commands: command_sender,
         video: video_receiver,
         image,
+        last_frame: None,
     });
 }
 
@@ -698,15 +699,21 @@ fn video_track_is_now_unsubscribed(
 
 #[cfg(target_arch = "wasm32")]
 fn queue_frame_copy(
-    mut video_tracks: Query<&mut HtmlMediaEntity, (With<Video>, With<Subscribed>)>,
+    mut video_tracks: Query<
+        (&mut HtmlMediaEntity, Option<&ActiveTransmitter>),
+        (With<Video>, With<Subscribed>),
+    >,
     mut images: ResMut<Assets<Image>>,
     mut transmission_image_resized: EventWriter<TransmissionImageResized>,
+    time: Res<Time<Real>>,
 ) {
-    for mut html_media_entity in video_tracks.iter_mut() {
+    for (mut html_media_entity, active_transmitter) in video_tracks.iter_mut() {
+        let mut frame = false;
         while let Ok(data) = html_media_entity.video.try_recv() {
             // the render world copies the frames into the image itself; only its size is
             // followed here
             let VideoData::Info(info) = data else {
+                frame = true;
                 continue;
             };
             let Some(image) = images.get_mut(html_media_entity.image.id()) else {
@@ -720,6 +727,14 @@ fn queue_frame_copy(
                 depth_or_array_layers: 1,
             };
             transmission_image_resized.write(TransmissionImageResized);
+        }
+        // the element can start playing before the page adopts it, and then reports no state
+        if let Some(active_transmitter) = active_transmitter {
+            active_transmitter.report_frames(
+                frame,
+                &mut html_media_entity.last_frame,
+                time.elapsed_secs_f64(),
+            );
         }
     }
 }
@@ -756,8 +771,6 @@ fn active_transmitter_removed(
 }
 
 #[cfg(not(target_arch = "wasm32"))]
-const BUFFER_THRESHOLD: f64 = 1.;
-#[cfg(not(target_arch = "wasm32"))]
 fn copy_frame(
     mut commands: Commands,
     active_transmitter: Single<(Entity, &ActiveTransmitter, &mut VideoFrameReceiver)>,
@@ -777,16 +790,13 @@ fn copy_frame(
     let mut frame = None;
     loop {
         match video_frame_receiver.receiver.try_recv() {
-            Ok(new_frame) => {
-                frame = Some(new_frame);
-                video_frame_receiver.last_received = time.elapsed_secs_f64();
-            }
+            Ok(new_frame) => frame = Some(new_frame),
             Err(mpsc::error::TryRecvError::Empty) => {
-                let elapsed = time.elapsed_secs_f64();
-                if elapsed > video_frame_receiver.last_received + BUFFER_THRESHOLD {
-                    active_transmitter.send_if_modified(VideoState::VsBuffering);
-                    video_frame_receiver.last_received = elapsed;
-                }
+                active_transmitter.report_frames(
+                    frame.is_some(),
+                    &mut video_frame_receiver.last_received,
+                    time.elapsed_secs_f64(),
+                );
                 break;
             }
             Err(mpsc::error::TryRecvError::Disconnected) => {
@@ -798,7 +808,6 @@ fn copy_frame(
         }
     }
     if let Some(frame) = frame {
-        active_transmitter.send_if_modified(VideoState::VsPlaying);
         if image.width() != frame.width() || image.height() != frame.height() {
             debug!("Resizing active transmitter image.");
             image.resize(Extent3d {

@@ -1,5 +1,5 @@
 (dcl-scene-cli golden v1 dynamic-import production)
-TOOLCHAIN sdk=7.29.1-34986384248.commit-bb45080 ecs=7.29.1-34986384248.commit-bb45080 bundler=rolldown-1.3.2 blob=sha256:50abfae7d8f97207
+TOOLCHAIN sdk=7.29.1-34986384248.commit-bb45080 ecs=7.29.1-34986384248.commit-bb45080 bundler=rolldown-1.3.2 blob=sha256:d3ddcd82626d02a9
 SCENE_COMPILED_JS_SIZE_PROD=552.3k bytes
   ARTIFACT bin/index.js               6412 sha256=cea723e4fc4fd8f1
   ARTIFACT bin/scene.js               1508 sha256=607e7970c22c9fd9

@@ -13,7 +13,8 @@
 //
 // Presentation: with a presentation-bot token from `POST /comms-gatekeeper/cast/presentation-bot-token`
 // a two-page PDF is posted to `POST /cast-presenter-service/presentations`; the node starts
-// `cast-bot`, which publishes the slides as the `presentation` screen share. A presenter (a second
+// `cast-bot`, which publishes the slides as the `presentation` screen share and, for clients that
+// compose, names each slide's picture in its metadata (`CAST_PRESENTER_PUBLIC_URL`). A presenter (a second
 // streamer token, which the gatekeeper adds to the room's `presenters`) connects with the pages'
 // `livekit-client` and sends `presentation:navigate` and `presentation:stop` as RFC-4 scene
 // packets on the `presentation` topic (`services/catalyst/comms/src/cast_presenter/wire.rs`); the
@@ -263,6 +264,8 @@ async function startNode(dir: string, ports: Ports, databaseUrl: string, livekit
     LIVEKIT_API_KEY: LIVEKIT_KEY,
     LIVEKIT_API_SECRET: LIVEKIT_SECRET,
     CAST_BOT_BIN: castBot,
+    // Client composition: the bot names each slide's picture under this address.
+    CAST_PRESENTER_PUBLIC_URL: `${base}/cast-presenter-service`,
     // The stream and watcher links name this app's pages.
     CAST2_URL: `http://127.0.0.1:${ports.site}/cast`,
   };
@@ -737,13 +740,33 @@ async function main(opts: { out: string; keep: boolean }): Promise<number> {
       `window.__room.localParticipant.publishData(window.__castCodec.encode(${JSON.stringify(entityId)}, ${JSON.stringify(message)}), { reliable: true }).then(() => true)`,
       { awaitPromise: true },
     );
+  // Client composition, as a composing client reads it: the bot's metadata names the slide's
+  // picture, and the node serves it.
+  const slideUrl = `JSON.parse([...window.__room.remoteParticipants.values()].find((p) => p.identity.startsWith("presentation-bot:"))?.metadata || "{}").slide?.url`;
+  const picture = async () => {
+    const url = String(await control.ev(`(${slideUrl}) ?? ""`));
+    const res = url.startsWith(`${node}/cast-presenter-service/presentations/${presentation.id}/slides/`) ? await fetch(url) : undefined;
+    return { url, ok: res?.status === 200 && res.headers.get("content-type") === "image/png" };
+  };
+  await until(control, slideUrl, 10_000);
+  const first = await picture();
+  check("the bot's metadata names the first slide's picture, and the node serves it", first.ok, first.url);
   // The bot obeys the identities the room's metadata lists.
   await until(control, `window.__room.metadata?.includes(window.__room.localParticipant.identity)`, 10_000);
+  await send({ type: "presentation:presenter:claim" });
+  check(
+    "a presenter's claim names it as the presenter",
+    await until(control, `window.__messages.find((m) => m.type === "presentation:state" && m.presenterIdentity === window.__room.localParticipant.identity)`, 15_000),
+    JSON.stringify(await control.ev(`window.__messages`)),
+  );
   await send({ type: "presentation:navigate", action: "next" });
   const advanced = `window.__messages.find((m) => m.type === "presentation:state" && m.currentSlide === 1 && m.slideCount === 2 && m.id === ${JSON.stringify(presentation.id)})`;
   check("`navigate next` broadcasts a state on the next slide", await until(control, advanced, 15_000), JSON.stringify(await control.ev(`window.__messages`)));
   check("the watcher shows the second slide", await until(watcher, RED_SLIDE, 20_000), JSON.stringify(await watcher.ev(STAGE_PIXEL)));
   await screenshot(watcher, path.join(opts.out, "watcher-slide-2.png"));
+  await until(control, `(${slideUrl}) !== ${JSON.stringify(first.url)}`, 10_000);
+  const second = await picture();
+  check("the second slide has its own picture", second.ok && second.url !== first.url, second.url);
   await send({ type: "presentation:stop" });
   check(
     "`stop` broadcasts presentation:stopped",

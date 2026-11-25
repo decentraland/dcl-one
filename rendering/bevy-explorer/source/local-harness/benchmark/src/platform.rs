@@ -122,7 +122,7 @@ fn signal(target: i32, signal: i32) -> bool {
 
 #[cfg(unix)]
 pub fn chrome_processes() -> Result<Vec<Process>, Failure> {
-    let mut command = Command::new("/bin/ps");
+    let mut command = Command::new("ps");
     command.args(["-A", "-ww", "-o", "pid=", "-o", "command="]);
 
     Ok(capture(command)?

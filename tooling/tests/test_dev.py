@@ -500,6 +500,13 @@ class DevTest(unittest.TestCase):
             config = {**self.config, 'public_origin': dev.public_origin(origin)}
             self.assertEqual(dev.message_router_identity_prefix(config), prefix, origin)
 
+    def test_a_stack_sets_how_many_presentations_run_at_once(self):
+        self.assertNotIn('MAX_CONCURRENT_PRESENTATIONS', dev.runtime_env(self.config))
+        env = dev.runtime_env({**self.config, 'cast_presentations': 20})
+        self.assertEqual(env['MAX_CONCURRENT_PRESENTATIONS'], '20')
+        unlimited = dev.runtime_env({**self.config, 'cast_presentations': 0})
+        self.assertEqual(unlimited['MAX_CONCURRENT_PRESENTATIONS'], '0')
+
     def test_profile_images_render_here_once_the_avatar_renderer_is_built(self):
         with patch.dict(os.environ, {}, clear=False), patch.object(dev, 'AVATAR_RENDER_BIN', self.state / 'missing'):
             os.environ.pop('FOUNDATION_DEV_AVATAR_RENDER_BIN', None)

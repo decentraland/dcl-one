@@ -266,10 +266,14 @@ def scene_proxy_hosts(config):
 # Cast on this stack, from settings.json. `"cast_bot_bin"`: the built `cast-bot` (`nix build .#cast-bot`) the API
 # starts per presentation; unset, or a path that is not executable (a warning, never a stop: every command
 # reads this), presentations answer 503. `"personal_worlds": N`: the realm hosts N personal test worlds
-# (`<address>.dcl.eth`); unset, none.
+# (`<address>.dcl.eth`); unset, none. `"cast_presentations": N`: N presentations run at once, 0 for no limit;
+# unset, the API's default.
 def cast_settings(config):
-    keys = {'cast_bot_bin': 'CAST_BOT_BIN', 'personal_worlds': 'WORLDS_PERSONAL_WORLDS_MAX'}
+    keys = {'cast_bot_bin': 'CAST_BOT_BIN', 'personal_worlds': 'WORLDS_PERSONAL_WORLDS_MAX',
+            'cast_presentations': 'MAX_CONCURRENT_PRESENTATIONS'}
     env = {env: str(config[key]) for key, env in keys.items() if config.get(key)}
+    if str(config.get('cast_presentations')) == '0':
+        env['MAX_CONCURRENT_PRESENTATIONS'] = '0'
     if 'CAST_BOT_BIN' in env and not os.access(env['CAST_BOT_BIN'], os.X_OK):
         print(f"settings.json: cast_bot_bin {env.pop('CAST_BOT_BIN')} is not executable; Cast presentations answer 503",
               file=sys.stderr)

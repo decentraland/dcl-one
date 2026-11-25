@@ -2738,7 +2738,11 @@
       "loose": false,
       "props": {
         "reason": {
-          "kind": "string",
+          "kind": "enum-string",
+          "values": [
+            "network",
+            "removed"
+          ],
           "optional": false
         }
       }
