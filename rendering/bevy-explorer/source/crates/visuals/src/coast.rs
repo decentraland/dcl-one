@@ -1,7 +1,7 @@
 //! The coast around the terrain, after eordano's procedural landscape (#1342): cliffs dropping from
 //! the ground to a sandy shelf, the sea, and invisible walls along the cliff crest. Unity places
 //! cliff prefabs along the terrain bounds; this builds a rounded, varying cliff instead. The ground
-//! and grass end just past the cliff crest (`beyond_coast` in coast_profile.wgsl).
+//! ends just past the cliff crest (`beyond_coast` in coast_profile.wgsl).
 //!
 //! Coordinates in the geometry are unity x/z metres (bevy z = -unity z).
 
@@ -54,8 +54,8 @@ const ROCK_RINGS: usize = 3;
 const ROCK_SPLIT: usize = 4;
 /// Walls stand on every this many columns: the crest is smooth, so they stay on it.
 const WALL_EVERY: usize = 4;
-/// The ground's visual offset (shell_texturing), where the cliff crest meets it.
-const GROUND_LEVEL: f32 = -0.05;
+/// The ground's visual offset, where the cliff crest meets it.
+const GROUND_LEVEL: f32 = crate::terrain::GROUND_Y;
 /// Hidden shadow casters for the land stand just below the ground: the ground doesn't cast
 /// shadows, which would otherwise leave only the ring of cliffs shading the shore.
 const UNDERGROUND: f32 = -0.5;

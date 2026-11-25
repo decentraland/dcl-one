@@ -374,15 +374,16 @@ header and bio, the skybox slider and switch; `aria-selected` and `aria-pressed`
 InWorld spec `smart-wearables` previews ([scenes/README.md](scenes/README.md)).
 `specs/visual/visual.test.ts` builds their entities, serves them as a realm on loopback
 (`driver/realm.ts`: `/about`, `/content/contents/<hash>`), boots the client on it as a guest in a
-960x540 window, turns the nametags off and holds the landscape's trees still (`/nametags false`:
+960x540 window, turns the nametags off and holds the landscape still (`/nametags false`:
 the scenes hide avatars, not the nametag over the hidden guest, whose name changes every run;
-`/tree_wind false`: the trees and bushes sway in the wind, so no two frames of them agree),
-clears the sky (`/cloud 0 0`: cover 0 clears the cloud strips, and speed 0 holds them and the
-horizon noise in a fixed pose; the stars keep twinkling, though the scenes are at noon and show
-none), turns the empty parcels' grass off for the session (`/session_graphics grass off`: its
-stacked shells are not drawn in a fixed order, so its pixels move with each bevy pin), teleports
-to each scene, waits for its entities and its settle time, and compares the engine's frame
-(`/screenshot`, the canvas without the HUD) with `references/<id>.png`: a pixel
+`/tree_wind false`: the trees, bushes, grass, flowers and reeds sway in the wind, so no two frames
+of them agree), clears the sky (`/cloud 0 0`: cover 0 clears the cloud strips, and speed 0 holds
+them and the horizon noise in a fixed pose; the stars keep twinkling, though the scenes are at
+noon and show none), turns the empty parcels' grass, flowers and reeds off for the session
+(`/session_graphics grass off`: the references hold the scene, its ground and the trees, not the
+scattered blades), teleports to each scene, waits for its entities and its settle time, and
+compares the engine's frame (`/screenshot`, the canvas without the HUD) with
+`references/<id>.png`: a pixel
 differs when any RGB channel differs by more than 8, and the scene passes when at most 0.3% of the
 pixels differ (1.5% for `avatar-shape`), as explorer-automation compared. A last scenario turns
 the nametags back on at `avatar-shape` and reads `/nametag_state` until the scene's five avatars

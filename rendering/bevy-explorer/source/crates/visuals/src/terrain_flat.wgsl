@@ -1,5 +1,4 @@
-// The ground without grass shells (parcel grass off): the splat-textured ground colour under
-// standard lighting, ending at the coast like the grass.
+// The ground: the splat-textured ground colour under standard lighting, ending at the coast.
 
 #ifdef PREPASS_PIPELINE
     #import bevy_pbr::prepass_io::{VertexOutput, FragmentOutput};

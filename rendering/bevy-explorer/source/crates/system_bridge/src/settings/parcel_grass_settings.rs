@@ -33,12 +33,12 @@ impl AppSetting for ParcelGrassSetting {
 
     fn description(&self) -> String {
         format!(
-            "Controls the density of the grass on empty parcels.\n\n{}",
+            "Controls how densely grass, flowers and reeds grow on empty parcels.\n\n{}",
             match self {
-                ParcelGrassSetting::Off => "Off: No grass.",
-                ParcelGrassSetting::Low => "Low: Sparse grass.",
-                ParcelGrassSetting::Mid => "Mid: Average density grass.",
-                ParcelGrassSetting::High => "High: Dense grass.",
+                ParcelGrassSetting::Off => "Off: No grass, flowers or reeds.",
+                ParcelGrassSetting::Low => "Low: Sparse grass, flowers and reeds.",
+                ParcelGrassSetting::Mid => "Mid: Average density grass, flowers and reeds.",
+                ParcelGrassSetting::High => "High: Dense grass, flowers and reeds.",
             }
         )
     }

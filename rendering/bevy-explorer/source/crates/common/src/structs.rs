@@ -9,7 +9,6 @@ use std::{
 
 use alloy_core::primitives::Address;
 use bevy::{
-    color::palettes,
     math::DVec3,
     pbr::CascadeShadowConfig,
     platform::collections::{HashMap, HashSet},
@@ -1508,8 +1507,9 @@ pub struct SceneLoadDistance {
     pub load_imposter: f32,
 }
 
-/// The landscape distance in metres: how far the hills are displaced and the cliffs are drawn.
-/// Set from the config's `landscape_distance` at startup ([`LandscapeDistance::from_config`]).
+/// The landscape distance in metres: how far the hills are displaced and the cliffs and the sea
+/// are drawn, and, up to 180 m, how far grass grows. Set from the config's `landscape_distance`
+/// at startup ([`LandscapeDistance::from_config`]).
 #[derive(Resource, Clone, Copy, Debug, PartialEq)]
 pub struct LandscapeDistance(pub f32);
 
@@ -2428,61 +2428,24 @@ impl Deref for ParcelGrassSetting {
 
     fn deref(&self) -> &Self::Target {
         match self {
-            Self::Off => &ParcelGrassConfig {
-                layers: 0,
-                subdivisions: 32,
-                y_displacement: 0.04,
-                root_color: Color::Srgba(ParcelGrassConfig::ROOT_COLOR),
-                tip_color: Color::Srgba(ParcelGrassConfig::TIP_COLOR),
-            },
-            Self::Low => &ParcelGrassConfig {
-                layers: 8,
-                subdivisions: 32,
-                y_displacement: 0.02,
-                root_color: Color::Srgba(ParcelGrassConfig::ROOT_COLOR),
-                tip_color: Color::Srgba(ParcelGrassConfig::TIP_COLOR),
-            },
-            Self::Mid => &ParcelGrassConfig {
-                layers: 16,
-                subdivisions: 32,
-                y_displacement: 0.02,
-                root_color: Color::Srgba(ParcelGrassConfig::ROOT_COLOR),
-                tip_color: Color::Srgba(ParcelGrassConfig::TIP_COLOR),
-            },
-            Self::High => &ParcelGrassConfig {
-                layers: 32,
-                subdivisions: 32,
-                y_displacement: 0.01,
-                root_color: Color::Srgba(ParcelGrassConfig::ROOT_COLOR),
-                tip_color: Color::Srgba(ParcelGrassConfig::TIP_COLOR),
-            },
+            Self::Off => &ParcelGrassConfig { per_parcel: 0 },
+            Self::Low => &ParcelGrassConfig { per_parcel: 64 },
+            Self::Mid => &ParcelGrassConfig { per_parcel: 128 },
+            Self::High => &ParcelGrassConfig { per_parcel: 256 },
         }
     }
 }
 
-#[derive(Clone, Copy, Resource, Serialize, Deserialize)]
+/// How densely grass, flowers and reeds grow on empty parcels.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Resource, Serialize, Deserialize)]
 pub struct ParcelGrassConfig {
-    pub layers: u32,
-    pub subdivisions: u32,
-    pub y_displacement: f32,
-    pub root_color: Color,
-    pub tip_color: Color,
-}
-
-impl ParcelGrassConfig {
-    pub const ROOT_COLOR: Srgba = palettes::tailwind::LIME_800;
-    pub const TIP_COLOR: Srgba = palettes::tailwind::LIME_600;
+    /// Grass tufts per parcel, up to 256; flowers and reeds scale with them.
+    pub per_parcel: u32,
 }
 
 impl Default for ParcelGrassConfig {
     fn default() -> Self {
-        Self {
-            layers: 32,
-            subdivisions: 32,
-            y_displacement: 0.01,
-            root_color: Self::ROOT_COLOR.into(),
-            tip_color: Self::TIP_COLOR.into(),
-        }
+        *ParcelGrassSetting::default()
     }
 }
 
