@@ -3337,10 +3337,6 @@
           "kind": "regular"
         },
         {
-          "name": "TextInput.module.css",
-          "kind": "regular"
-        },
-        {
           "name": "TextInput.tsx",
           "kind": "regular"
         },
@@ -8175,6 +8171,14 @@
           "kind": "regular"
         },
         {
+          "name": "InputExplorerNames.module.css",
+          "kind": "regular"
+        },
+        {
+          "name": "InputExplorerNames.test.tsx",
+          "kind": "regular"
+        },
+        {
           "name": "InputExplorerNames.tsx",
           "kind": "regular"
         }
@@ -12388,12 +12392,8 @@
       "sha256": "6bbeb208b06c6dc8ad46c38d640a95964ce0a0143ba0e911634f044c817d7a3a"
     },
     {
-      "path": "library/ui/apps/hud/design/TextInput.module.css",
-      "sha256": "493a56c616f6bc2d71d4afa5dc8391ab3932531b8da8aeaf92d594068d7a68f5"
-    },
-    {
       "path": "library/ui/apps/hud/design/TextInput.tsx",
-      "sha256": "21daa1a987c4a96253090277cd1dcc167300a3207ab717886ebeabd568caf07b"
+      "sha256": "16f114c62eb5490e378a2a2e631dde1b8bfcbb01cfa6cc87b0889b47be3df401"
     },
     {
       "path": "library/ui/apps/hud/design/Toast.module.css",
@@ -16176,8 +16176,12 @@
       "sha256": "3d2c544bd8fc90b34bbac62646194d174fedcee8402597b1bc6332a14770b0d8"
     },
     {
+      "path": "library/ui/components/InputExplorerNames/InputExplorerNames.module.css",
+      "sha256": "4740aa4f62ffd23e81b5936af1aa3607bf4ca4fa17a83a42266a582960110f5b"
+    },
+    {
       "path": "library/ui/components/InputExplorerNames/InputExplorerNames.tsx",
-      "sha256": "0b4ce62d464e9ba3c0bc62d6d8bf67d764619623cb0f521402b07606dac62f58"
+      "sha256": "d0eda29492a17f0693d367cb6e5c85e28e01fd9565fba07c431a61217d5bf40c"
     },
     {
       "path": "library/ui/components/InputField/InputField.icons.tsx",
@@ -21855,32 +21859,32 @@
     },
     {
       "from": "library/ui/apps/hud/design/TextInput.tsx",
-      "to": "library/ui/apps/hud/design/TextInput.module.css",
+      "to": "library/ui/apps/hud/design/icons.tsx",
       "kind": "native:runtime"
     },
     {
       "from": "library/ui/apps/hud/design/TextInput.tsx",
-      "to": "library/ui/apps/hud/design/TextInput.module.css",
+      "to": "library/ui/apps/hud/design/icons.tsx",
       "kind": "production:runtime"
     },
     {
       "from": "library/ui/apps/hud/design/TextInput.tsx",
-      "to": "library/ui/apps/hud/design/TextInput.module.css",
+      "to": "library/ui/apps/hud/design/icons.tsx",
       "kind": "test:runtime"
     },
     {
       "from": "library/ui/apps/hud/design/TextInput.tsx",
-      "to": "library/ui/apps/hud/design/icons.tsx",
+      "to": "library/ui/index.ts",
       "kind": "native:runtime"
     },
     {
       "from": "library/ui/apps/hud/design/TextInput.tsx",
-      "to": "library/ui/apps/hud/design/icons.tsx",
+      "to": "library/ui/index.ts",
       "kind": "production:runtime"
     },
     {
       "from": "library/ui/apps/hud/design/TextInput.tsx",
-      "to": "library/ui/apps/hud/design/icons.tsx",
+      "to": "library/ui/index.ts",
       "kind": "test:runtime"
     },
     {
@@ -62006,6 +62010,21 @@
     {
       "from": "library/ui/components/FriendCTA/FriendCTA.tsx",
       "to": "library/ui/foundations/icons/menus.tsx",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/components/InputExplorerNames/InputExplorerNames.tsx",
+      "to": "library/ui/components/InputExplorerNames/InputExplorerNames.module.css",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/components/InputExplorerNames/InputExplorerNames.tsx",
+      "to": "library/ui/components/InputExplorerNames/InputExplorerNames.module.css",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/components/InputExplorerNames/InputExplorerNames.tsx",
+      "to": "library/ui/components/InputExplorerNames/InputExplorerNames.module.css",
       "kind": "test:runtime"
     },
     {

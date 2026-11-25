@@ -289,7 +289,42 @@ export const formEntries: GalleryEntry[] = [
     group: 'Forms',
     summary: 'The text field on the Explorer surface.',
     components: ['InputExplorerNames'],
-    examples: inputExamples(InputExplorerNames)
+    examples: [
+      ...inputExamples(InputExplorerNames),
+      {
+        id: 'hud',
+        title:
+          'Explorer HUD: the dark field, the light field, an invalid value, an action and the large field',
+        render: () => (
+          <div className={`${layout.stack} ${layout.field}`}>
+            <InputExplorerNames appearance="hud" label="Name" defaultValue="robtfm" />
+            <InputExplorerNames
+              appearance="hud"
+              variant="light"
+              label="Name"
+              placeholder="Your name"
+            />
+            <InputExplorerNames appearance="hud" invalid label="Link" defaultValue="not-a-url" />
+            <InputExplorerNames
+              appearance="hud"
+              label="Name"
+              defaultValue="robtfm"
+              fieldAction={{
+                icon: <GeneralSearch size={18} aria-hidden="true" />,
+                label: 'Pick another',
+                onClick: () => {}
+              }}
+            />
+            <InputExplorerNames
+              appearance="hud"
+              fieldSize="lg"
+              label="Name"
+              defaultValue="robtfm"
+            />
+          </div>
+        )
+      }
+    ]
   },
   {
     name: 'InputWebCreatorTools',
