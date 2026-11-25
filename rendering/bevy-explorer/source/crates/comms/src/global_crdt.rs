@@ -1256,7 +1256,13 @@ pub fn process_transport_updates(
                                 }
                             }
 
-                            messagebus.process(scene, update.address, update.transport_id, true);
+                            let authoritative = update.address == "authoritative-server";
+                            messagebus.process(
+                                scene,
+                                update.address,
+                                update.transport_id,
+                                authoritative,
+                            );
                         }
                         // a server resolving a guest profile asks the guest directly — the
                         // only source there is. The request handler reads the requested
@@ -2040,6 +2046,48 @@ mod tests {
             ("presentation-bot:session".to_owned(), frame[1..].to_vec())
         );
         assert!(bus_rx.try_recv().is_err());
+    }
+
+    #[test]
+    fn authoritative_server_retains_video_crdt_authority() {
+        use crate::scene_rooms::test_support::spawn_client_room;
+        let (mut app, context) = presence_app();
+        let (room, _) = spawn_client_room(&mut app, "bafyscene", context);
+        let (binary, mut binary_rx) = RpcStreamSender::<(String, Vec<u8>)>::channel();
+        let scene = app.world_mut().spawn_empty().id();
+        app.world_mut().send_event(RpcCallEvent {
+            origin: RpcOrigin::Scene {
+                entity: scene,
+                hash: "bafyscene".into(),
+            },
+            call: RpcCall::SubscribeBinaryBus { sender: binary },
+        });
+        app.update();
+        // Binary scene frame, CRDT batch, then a VideoPlayer put with an empty value.
+        let mut frame = vec![2, 1];
+        for word in [
+            24_u32,
+            1,
+            1,
+            dcl_component::SceneComponentId::VIDEO_PLAYER.0,
+            1,
+            0,
+        ] {
+            frame.extend(word.to_le_bytes());
+        }
+        queue_presenter_message(
+            &app,
+            context,
+            room,
+            "authoritative-server",
+            "bafyscene",
+            frame.clone(),
+        );
+        app.update();
+        assert_eq!(
+            binary_rx.try_recv().unwrap(),
+            ("authoritative-server".into(), frame[1..].to_vec())
+        );
     }
 
     #[test]
