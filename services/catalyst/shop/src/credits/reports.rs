@@ -263,7 +263,9 @@ impl Credits {
 
     /// A REPEATABLE READ, READ ONLY transaction: every statement in it reads
     /// the same snapshot, and nothing in it can write.
-    async fn read_snapshot(&self) -> Result<sqlx::Transaction<'_, sqlx::Postgres>, ApiError> {
+    pub(super) async fn read_snapshot(
+        &self,
+    ) -> Result<sqlx::Transaction<'_, sqlx::Postgres>, ApiError> {
         let mut tx = self.pool.begin().await?;
         sqlx::query("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ, READ ONLY")
             .execute(&mut *tx)

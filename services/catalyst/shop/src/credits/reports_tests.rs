@@ -463,3 +463,570 @@ async fn a_replayed_balance_signature_does_not_open_the_list() {
     let (status, _, v) = send(&app, "GET", "/credits/credits", headers, None).await;
     assert_eq!(status, StatusCode::OK, "{v}");
 }
+
+async fn ledger_row(
+    pool: &sqlx::PgPool,
+    address: &str,
+    kind: &str,
+    bucket: &str,
+    credits: &str,
+    tx_ref: Option<&str>,
+) {
+    sqlx::query("INSERT INTO credits.ledger (address, kind, amount, bucket, tx_ref) VALUES ($1, $2, $3::numeric, $4, $5)")
+        .bind(address)
+        .bind(kind)
+        .bind(credits)
+        .bind(bucket)
+        .bind(tx_ref)
+        .execute(pool)
+        .await
+        .unwrap();
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn card_purchase(
+    pool: &sqlx::PgPool,
+    address: &str,
+    sku: &str,
+    credits: &str,
+    amount: i64,
+    status: &str,
+    refunded: i64,
+    revoked: &str,
+    method: &str,
+) {
+    sqlx::query("INSERT INTO credits.purchases (address, sku, credits, amount_cents, currency, method, status, refunded_cents, revoked_credits) VALUES ($1, $2, $3::numeric, $4, 'usd', $8, $5, $6, $7::numeric)")
+        .bind(address)
+        .bind(sku)
+        .bind(credits)
+        .bind(amount)
+        .bind(status)
+        .bind(refunded)
+        .bind(revoked)
+        .bind(method)
+        .execute(pool)
+        .await
+        .unwrap();
+}
+
+/// A credit this node signed: `rate` USD per MANA at `decimals`, created
+/// `age_mins` ago.
+#[allow(clippy::too_many_arguments)]
+async fn authorization(
+    pool: &sqlx::PgPool,
+    salt: &str,
+    address: &str,
+    usd_cents: i64,
+    cap_wei: &str,
+    status: &str,
+    rate: Option<&str>,
+    decimals: Option<i16>,
+    age_mins: i32,
+) {
+    sqlx::query("INSERT INTO credits.authorizations (id, address, usd_cents, amount_wei, status, expires_at, oracle_rate, oracle_decimals, trade_id, created_at) VALUES ($1, $2, $3, $4::numeric, $5, timezone('UTC', now()) + interval '1 day', $6::numeric, $7, 'trade-' || $3::text, timezone('UTC', now()) - make_interval(mins => $8))")
+        .bind(salt)
+        .bind(address)
+        .bind(usd_cents)
+        .bind(cap_wei)
+        .bind(status)
+        .bind(rate)
+        .bind(decimals)
+        .bind(age_mins)
+        .execute(pool)
+        .await
+        .unwrap();
+}
+
+/// One CreditUsed log of `salt` in `tx`, and the debit it settled (none when
+/// `debited` is `None`).
+#[allow(clippy::too_many_arguments)]
+async fn used(
+    pool: &sqlx::PgPool,
+    tx: &str,
+    block: i64,
+    log: i32,
+    salt: &str,
+    sender: &str,
+    wei: &str,
+    debited: Option<&str>,
+) {
+    sqlx::query("INSERT INTO credits.usages (chain_id, block_number, log_index, contract, tx_hash, block_time, sender, credit_id, salt, credit_value, credit_expires_at, value_wei) VALUES (137, $1, $2, '0x00000000000000000000000000000000000000cc', $3, timestamp '2026-11-20 10:00:00' + make_interval(secs => $1), $4, $5, $5, $6::numeric, 0, $6::numeric)")
+        .bind(block)
+        .bind(log)
+        .bind(tx)
+        .bind(sender)
+        .bind(salt)
+        .bind(wei)
+        .execute(pool)
+        .await
+        .unwrap();
+    if let Some(credits) = debited {
+        sqlx::query("INSERT INTO credits.usage_settlements (chain_id, block_number, log_index, authorization_id, address, kind, value_wei, debited_credits, tx_ref) VALUES (137, $1, $2, $3, $4, 'purchase', $5::numeric, $6::numeric, 'credit-used:' || $3)")
+            .bind(block)
+            .bind(log)
+            .bind(salt)
+            .bind(sender)
+            .bind(wei)
+            .bind(credits)
+            .execute(pool)
+            .await
+            .unwrap();
+    }
+}
+
+fn hash(n: u8) -> String {
+    format!("0x{}", format!("{n:02x}").repeat(32))
+}
+
+#[tokio::test]
+async fn ledger_stats_add_up_the_ledger_orders_and_seasonal_credits() {
+    let Some(pool) = crate::db::scratch::isolated_pool(4).await else {
+        return;
+    };
+    let admin = scratch_wallet();
+    let app = app(reports_state(pool.clone(), &admin.address));
+    let (a, b) = (scratch_wallet(), scratch_wallet());
+
+    // Issued 95 credits, reversed 11, spent 20 (one checkout split over both buckets), refunded 5.
+    ledger_row(&pool, &a.address, "grant", "paid", "40", None).await;
+    ledger_row(&pool, &a.address, "purchase", "paid", "50", Some("pi_1")).await;
+    ledger_row(&pool, &a.address, "claim", "earned", "5", None).await;
+    ledger_row(
+        &pool,
+        &a.address,
+        "spend",
+        "earned",
+        "5",
+        Some("checkout:1"),
+    )
+    .await;
+    ledger_row(&pool, &a.address, "spend", "paid", "15", Some("checkout:1")).await;
+    ledger_row(&pool, &a.address, "refund", "paid", "5", Some("checkout:1")).await;
+    ledger_row(&pool, &a.address, "consume", "paid", "10", Some("revoke")).await;
+    ledger_row(&pool, &a.address, "expire", "earned", "1", None).await;
+    // Pledged: 300 + 100 cents still count, a consumed one does not.
+    authorization(
+        &pool,
+        &hash(1),
+        &a.address,
+        300,
+        "1",
+        "authorized",
+        None,
+        None,
+        1,
+    )
+    .await;
+    authorization(
+        &pool,
+        &hash(2),
+        &a.address,
+        100,
+        "1",
+        "retired",
+        None,
+        None,
+        1,
+    )
+    .await;
+    authorization(
+        &pool,
+        &hash(3),
+        &b.address,
+        999,
+        "1",
+        "consumed",
+        None,
+        None,
+        1,
+    )
+    .await;
+    for (pos, cents) in [(0, 600), (1, 390)] {
+        sqlx::query("INSERT INTO credits.authorization_lines (authorization_id, position, quoted_cents, charged_cents, sale_kind, asset_kind, asset_chain_id, asset_contract) VALUES ($1, $2, $3, $3, 'primary_mint', 'wearable', 137, '0x00000000000000000000000000000000000000c1')")
+            .bind(hash(3))
+            .bind(pos)
+            .bind(cents as i64)
+            .execute(&pool)
+            .await
+            .unwrap();
+    }
+
+    card_purchase(
+        &pool,
+        &a.address,
+        "credits_usd_5",
+        "50",
+        500,
+        "paid",
+        100,
+        "10",
+        "card",
+    )
+    .await;
+    card_purchase(
+        &pool,
+        &a.address,
+        "credits_usd_15",
+        "150",
+        1500,
+        "refunded",
+        1500,
+        "150",
+        "card",
+    )
+    .await;
+    card_purchase(
+        &pool,
+        &b.address,
+        "credits_usd_25",
+        "250",
+        2500,
+        "disputed",
+        2500,
+        "250",
+        "card",
+    )
+    .await;
+    card_purchase(
+        &pool,
+        &b.address,
+        "credits_usd_5",
+        "50",
+        500,
+        "pending",
+        0,
+        "0",
+        "card",
+    )
+    .await;
+    card_purchase(
+        &pool,
+        &b.address,
+        "credits_usd_5",
+        "50",
+        500,
+        "failed",
+        0,
+        "0",
+        "card",
+    )
+    .await;
+    card_purchase(
+        &pool,
+        &b.address,
+        "credits_usd_5",
+        "50",
+        500,
+        "abandoned",
+        0,
+        "0",
+        "card",
+    )
+    .await;
+    card_purchase(
+        &pool,
+        &b.address,
+        "credits_usd_5",
+        "50",
+        500,
+        "paid",
+        0,
+        "0",
+        "mana",
+    )
+    .await;
+
+    for (addr, mins) in [(&a.address, 5), (&b.address, 1)] {
+        sqlx::query("INSERT INTO credits.wallet_flags (address, source, flagged_at) VALUES ($1, 'test', timezone('UTC', now()) - make_interval(mins => $2))")
+            .bind(addr)
+            .bind(mins)
+            .execute(&pool)
+            .await
+            .unwrap();
+    }
+    let earner = scratch_wallet();
+    goal_credit(&pool, &earner.address, "5000", &["700", "500"]).await;
+
+    let (status, _, _) = send(
+        &app,
+        "GET",
+        "/credits/admin/ledger-stats",
+        HeaderMap::new(),
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::UNAUTHORIZED);
+    let headers = signed_headers(&admin, "get", "/credits/admin/ledger-stats").await;
+    let (status, _, v) = send(&app, "GET", "/credits/admin/ledger-stats", headers, None).await;
+    assert_eq!(status, StatusCode::OK, "{v}");
+
+    assert_eq!(
+        v["usd"],
+        json!({
+            "totalIssuedCents": 950, "totalReversedCents": 110, "netCreditedCents": 840,
+            "totalSettledCents": 150, "totalPendingCents": 400, "outstandingLiabilityCents": 290
+        })
+    );
+    assert_eq!(
+        v["orders"]["byStatus"],
+        json!([
+            { "status": "abandoned", "count": 1, "grossCents": 500 },
+            { "status": "credited", "count": 1, "grossCents": 500 },
+            { "status": "failed", "count": 1, "grossCents": 500 },
+            { "status": "processing", "count": 1, "grossCents": 500 },
+            { "status": "reversed", "count": 2, "grossCents": 4000 }
+        ])
+    );
+    let stripe = &v["analytics"]["stripe"];
+    assert_eq!(stripe["grossCents"], 4500);
+    assert_eq!(stripe["refundedGrossCents"], 4100);
+    assert_eq!(stripe["netCents"], 400);
+    assert_eq!(stripe["clawedBackCents"], 4100);
+    assert_eq!(stripe["creditedCount"], 1);
+    assert_eq!(stripe["reversedCount"], 2);
+    assert!((stripe["refundRate"].as_f64().unwrap() - 2.0 / 3.0).abs() < 1e-9);
+    assert_eq!(
+        stripe["byPack"],
+        json!([
+            { "packId": "credits_usd_25", "paidOrders": 1, "grossCents": 2500, "netCents": 0, "credits": 0 },
+            { "packId": "credits_usd_15", "paidOrders": 1, "grossCents": 1500, "netCents": 0, "credits": 0 },
+            { "packId": "credits_usd_5", "paidOrders": 1, "grossCents": 500, "netCents": 400, "credits": 50 }
+        ])
+    );
+    let trends = &v["analytics"]["usdTrends"];
+    assert_eq!(trends["windowDays"], 90);
+    assert_eq!(trends["daily"].as_array().unwrap().len(), 1, "{trends}");
+    assert_eq!(trends["daily"][0]["issuedUsdCents"], 950);
+    assert_eq!(trends["daily"][0]["spentUsdCents"], 150);
+    assert_eq!(trends["daily"][0]["stripeGrossCents"], 4500);
+    assert_eq!(
+        v["analytics"]["usdTopSpenders"],
+        json!([{ "address": a.address, "spentUsdCents": 150, "purchases": 1 }])
+    );
+    assert_eq!(
+        v["analytics"]["usdTopCollections"],
+        json!([{ "collectionAddress": "0x00000000000000000000000000000000000000c1", "purchases": 2, "usdCents": 990, "primarySales": 2 }])
+    );
+    let flagged = &v["analytics"]["flaggedWallets"];
+    assert_eq!(flagged["total"], 2);
+    assert_eq!(flagged["recent"][0]["address"], b.address, "newest first");
+    assert!(
+        flagged["recent"][0]["flaggedAt"]
+            .as_str()
+            .unwrap()
+            .ends_with('Z')
+    );
+    let legacy = &v["analytics"]["legacy"];
+    assert_eq!(legacy["redemption"]["issuedManaWei"], "5000");
+    assert_eq!(legacy["redemption"]["consumedManaWei"], "1200");
+    assert_eq!(legacy["redemption"]["redemptionRate"], 0.24);
+    assert_eq!(legacy["redemption"]["breakageManaWei"], "0");
+    assert_eq!(
+        legacy["redemption"]["expiring"],
+        json!([
+            { "label": "≤ 7d", "withinDays": 7, "count": 0, "manaWei": "0" },
+            { "label": "7–30d", "withinDays": 30, "count": 1, "manaWei": "3800" },
+            { "label": "30–90d", "withinDays": 90, "count": 0, "manaWei": "0" }
+        ])
+    );
+    assert_eq!(
+        legacy["topSpenders"],
+        json!([{ "address": earner.address, "consumedManaWei": "1200", "consumptions": 2 }])
+    );
+    assert!(v["generatedAt"].as_i64().unwrap() > 0);
+}
+
+#[tokio::test]
+async fn the_purchase_audit_reconciles_per_transaction() {
+    let Some(pool) = crate::db::scratch::isolated_pool(4).await else {
+        return;
+    };
+    let admin = scratch_wallet();
+    let app = app(reports_state(pool.clone(), &admin.address));
+    let (buyer, other) = (scratch_wallet(), scratch_wallet());
+
+    // One cart, two credits at $0.25/MANA (8 decimals): $8.80 charged and fully spent,
+    // $3.00 charged and $0.25 spent.
+    authorization(
+        &pool,
+        &hash(1),
+        &buyer.address,
+        880,
+        "40000000000000000000",
+        "consumed",
+        Some("25000000"),
+        Some(8),
+        10,
+    )
+    .await;
+    authorization(
+        &pool,
+        &hash(2),
+        &buyer.address,
+        300,
+        "20000000000000000000",
+        "consumed",
+        Some("25000000"),
+        Some(8),
+        9,
+    )
+    .await;
+    used(
+        &pool,
+        &hash(0xa1),
+        100,
+        0,
+        &hash(1),
+        &buyer.address,
+        "35200000000000000000",
+        Some("88"),
+    )
+    .await;
+    used(
+        &pool,
+        &hash(0xa1),
+        100,
+        1,
+        &hash(2),
+        &buyer.address,
+        "1000000000000000000",
+        Some("30"),
+    )
+    .await;
+    // Another buyer, a rate at 18 decimals ($0.30/MANA): $1.00 charged, $0.09 spent.
+    authorization(
+        &pool,
+        &hash(3),
+        &other.address,
+        100,
+        "9000000000000000000",
+        "consumed",
+        Some("300000000000000000"),
+        Some(18),
+        5,
+    )
+    .await;
+    used(
+        &pool,
+        &hash(0xb2),
+        200,
+        0,
+        &hash(3),
+        &other.address,
+        "300000000000000000",
+        Some("10"),
+    )
+    .await;
+    // A credit nobody on this node signed is not a purchase here.
+    used(
+        &pool,
+        &hash(0xc3),
+        300,
+        0,
+        &hash(9),
+        &other.address,
+        "1",
+        None,
+    )
+    .await;
+
+    let path = "/credits/admin/purchase-audit";
+    let (status, _, _) = send(&app, "GET", path, HeaderMap::new(), None).await;
+    assert_eq!(status, StatusCode::UNAUTHORIZED);
+    let headers = signed_headers(&admin, "get", path).await;
+    let (status, _, v) = send(&app, "GET", path, headers, None).await;
+    assert_eq!(status, StatusCode::OK, "{v}");
+
+    let txs = v["transactions"].as_array().unwrap();
+    assert_eq!(txs.len(), 2, "{v}");
+    assert_eq!(txs[0]["txHash"], hash(0xb2), "newest first");
+    assert_eq!(txs[1]["txHash"], hash(0xa1));
+    let cart = &txs[1];
+    assert_eq!(cart["buyerAddress"], buyer.address);
+    assert_eq!(cart["block"], 100);
+    assert_eq!(cart["settledAt"], 1_795_168_900_000i64);
+    assert_eq!(cart["reservedUsdCents"], 1180);
+    assert_eq!(cart["consumedUsdCents"], 905);
+    assert_eq!(cart["retainedUsdCents"], 275);
+    assert_eq!(cart["intents"][0]["creditId"], hash(1));
+    assert_eq!(cart["intents"][0]["reservedUsdCents"], 880);
+    assert_eq!(cart["intents"][0]["settledManaWei"], "35200000000000000000");
+    assert_eq!(cart["intents"][0]["manaCapWei"], "40000000000000000000");
+    assert_eq!(cart["intents"][0]["oracleRate"], "25000000");
+    assert_eq!(cart["intents"][0]["tradeId"], "trade-880");
+    assert_eq!(cart["intents"][1]["creditId"], hash(2));
+    assert_eq!(txs[0]["consumedUsdCents"], 9);
+    assert_eq!(txs[0]["retainedUsdCents"], 91);
+    assert_eq!(
+        txs[0]["intents"][0]["oracleRate"], "30000000",
+        "normalised to 8 decimals"
+    );
+    assert_eq!(
+        v["page"],
+        json!({
+            "limit": 50, "offset": 0, "count": 2, "total": 2, "sortBy": "settledAt", "sortDirection": "desc",
+            "reservedUsdCents": 1280, "consumedUsdCents": 914, "retainedUsdCents": 366
+        })
+    );
+
+    let get = async |q: &str| {
+        let headers = signed_headers(&admin, "get", path).await;
+        send(&app, "GET", &format!("{path}?{q}"), headers, None).await
+    };
+    let (_, _, v) = get("sortBy=retained&sortDirection=asc").await;
+    assert_eq!(v["transactions"][0]["txHash"], hash(0xb2), "{v}");
+    let (_, _, v) = get("limit=1&offset=1").await;
+    assert_eq!(v["page"]["count"], 1);
+    assert_eq!(v["page"]["total"], 2);
+    assert_eq!(v["transactions"][0]["txHash"], hash(0xa1));
+    let (_, _, v) = get(&format!(
+        "address={}",
+        buyer.address.to_uppercase().replace("0X", "0x")
+    ))
+    .await;
+    assert_eq!(v["page"]["total"], 1, "{v}");
+    let (_, _, v) = get("limit=abc&offset=-4").await;
+    assert_eq!(
+        (v["page"]["limit"].clone(), v["page"]["offset"].clone()),
+        (json!(50), json!(0))
+    );
+    let (_, _, v) = get("limit=900").await;
+    assert_eq!(v["page"]["limit"], 200);
+
+    for (q, error) in [
+        ("address=0x12", "Invalid address"),
+        (
+            "sortBy=constructor",
+            "Invalid sortBy. Valid: settledAt, buyer, items, charged, consumed, retained",
+        ),
+        (
+            "sortDirection=ASC",
+            "Invalid sortDirection. Valid: asc, desc",
+        ),
+    ] {
+        let (status, _, v) = get(q).await;
+        assert_eq!(status, StatusCode::BAD_REQUEST, "{q}");
+        assert_eq!(v["error"], error, "{q}");
+    }
+}
+
+/// Both reports answer at the same local path under `/shop-api`.
+#[tokio::test]
+async fn the_canonical_mount_serves_the_reports() {
+    let Some(pool) = crate::db::scratch::isolated_pool(4).await else {
+        return;
+    };
+    let admin = scratch_wallet();
+    let shop = axum::Router::new().nest(
+        "/shop-api",
+        super::shop_router(reports_state(pool, &admin.address)),
+    );
+    for path in [
+        "/shop-api/admin/ledger-stats",
+        "/shop-api/admin/purchase-audit",
+    ] {
+        let headers = signed_headers(&admin, "get", path).await;
+        let (status, _, v) = send(&shop, "GET", path, headers, None).await;
+        assert_eq!(status, StatusCode::OK, "{path}: {v}");
+    }
+}

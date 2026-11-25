@@ -16,7 +16,10 @@
 //! `/admin/users/{a}/block`, `/admin/packs[/{sku}]`, `/admin/purchases`,
 //! `/admin/checkouts[/{id}/{refund,force-fulfill}]`, `/admin/ledger`,
 //! `/admin/grants/{ref}/{reclaim,release}`, `/admin/reconcile` behind
-//! `CATALYRST_CREDITS_ADMIN_TOKEN` (`admin.rs`).
+//! `CATALYRST_CREDITS_ADMIN_TOKEN` (`admin.rs`); the ops dashboard's reads
+//! `/credits`, `/credit-reasons`, `/admin/ledger-stats` and
+//! `/admin/purchase-audit` behind that bearer or a wallet signature from
+//! `CREDITS_READ_ADMIN_ADDRESSES` (`handlers/reports.rs`).
 //!
 //! Where each route reads and writes:
 //! - the wallet routes, the cart and the checkout: local (`credits.wallets`,
@@ -92,6 +95,8 @@ pub mod packs;
 pub mod pricing;
 pub mod purchase_intent;
 pub mod reconcile;
+pub mod ledger_stats;
+pub mod purchase_audit;
 pub mod reports;
 pub mod settlement;
 pub mod store;
@@ -996,6 +1001,8 @@ pub fn router(state: SharedState) -> Router {
         .route("/credits/packs", get(handlers::packs::unity_list_packs))
         .route("/credits", get(handlers::reports::list_credits))
         .route("/credit-reasons", get(handlers::reports::credit_reasons))
+        .route("/admin/ledger-stats", get(handlers::reports::ledger_stats))
+        .route("/admin/purchase-audit", get(handlers::reports::purchase_audit))
         .route("/packs/{sku}/intent", post(handlers::packs::create_intent))
         .route("/credits/checkout", post(handlers::orders::create_checkout))
         .route(
@@ -1105,6 +1112,11 @@ pub fn shop_router(state: SharedState) -> Router {
         .route(
             "/admin/credit-reasons",
             get(handlers::reports::credit_reasons_canonical),
+        )
+        .route("/admin/ledger-stats", get(handlers::reports::ledger_stats))
+        .route(
+            "/admin/purchase-audit",
+            get(handlers::reports::purchase_audit),
         )
         .route(
             "/v1/packs/{sku}/payment-intents",
