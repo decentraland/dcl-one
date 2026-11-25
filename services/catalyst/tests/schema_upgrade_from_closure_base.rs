@@ -79,6 +79,7 @@ fn expected_pending_steps() -> Vec<&'static str> {
             "0061_content_processed_snapshot_types",
             "0062_shop_estate_repair_reset",
             "0063_shop_collections_index",
+            "0064_shop_sale_accounting",
             "0067_rental_asset_membership_block",
             "0069_shop_trade_digest",
         ])
@@ -440,6 +441,53 @@ async fn assert_client_events_sequenced(pool: &PgPool, filenode_before: i64) {
         .await
         .unwrap();
     assert!(cursors && gaps && seq_idx && moves_idx && owned);
+}
+
+#[tokio::test]
+async fn sale_accounting_upgrade_preserves_unverified_historical_rows() {
+    let Some(old) = prepared_v2(None).await else {
+        return;
+    };
+    // This captured schema predates the sale event table. Install its legacy
+    // accounting inputs before applying the real incremental step.
+    sqlx::raw_sql("CREATE TABLE shop.sale_event(kind text NOT NULL, price numeric);
+        INSERT INTO shop.sale_event VALUES ('bid_accepted', 150), ('mint', 250);
+        INSERT INTO shop.chain_cursor(indexer,network,start_block,last_block,folded_block,full_history)
+        VALUES('nft','matic',1,99,99,true)")
+        .execute(&old.pool).await.unwrap();
+    let migration = include_str!(concat!(
+        env!("DCL_ONE_ROOT"),
+        "/schemas/migrations/0064_shop_sale_accounting.sql"
+    ));
+    sqlx::raw_sql(migration).execute(&old.pool).await.unwrap();
+    let values: Vec<(String, Option<String>)> =
+        sqlx::query_as("SELECT price::text, bid_fee::text FROM shop.sale_event ORDER BY price")
+            .fetch_all(&old.pool)
+            .await
+            .unwrap();
+    assert_eq!(values, [("150".into(), None), ("250".into(), None)]);
+    let cursor: (i64, Option<i32>, Option<i64>) = sqlx::query_as(
+        "SELECT folded_block,sale_input_version,sale_verified_through FROM shop.chain_cursor WHERE network='matic' AND indexer='nft'")
+        .fetch_one(&old.pool).await.unwrap();
+    assert_eq!(cursor, (99, None, None));
+    assert!(
+        sqlx::query("UPDATE shop.sale_event SET bid_fee=1 WHERE kind='mint'")
+            .execute(&old.pool)
+            .await
+            .is_err()
+    );
+    let validated = || {
+        sqlx::query_scalar::<_, bool>(
+        "SELECT convalidated FROM pg_constraint WHERE conrelid='shop.sale_event'::regclass AND conname='sale_event_bid_fee_check'")
+        .fetch_one(&old.pool)
+    };
+    assert!(!validated().await.unwrap());
+    sqlx::query("ALTER TABLE shop.sale_event VALIDATE CONSTRAINT sale_event_bid_fee_check")
+        .execute(&old.pool)
+        .await
+        .unwrap();
+    assert!(validated().await.unwrap());
+    old.drop().await;
 }
 
 #[tokio::test]

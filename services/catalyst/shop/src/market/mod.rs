@@ -52,8 +52,8 @@
 //! the market federation's signed-action log and its feeds
 //! (`federation.rs`: `/v1/federation/*`, `/federation/market/*`).
 
-pub use crate::chain_index::source::{Source, unavailable};
 pub use crate::chain_index::graph;
+pub use crate::chain_index::source::{Source, unavailable};
 
 pub mod accounts;
 pub mod activity;
@@ -71,6 +71,7 @@ pub mod committee_index;
 pub mod compare_sources;
 pub mod contracts;
 pub mod definitions;
+pub mod ethereum_sales;
 pub mod features;
 pub mod federation;
 pub mod items;
@@ -100,12 +101,17 @@ pub mod rankings;
 pub mod readers;
 pub mod rentals;
 pub mod royalty_notices;
+pub mod sale_fold;
+pub(crate) mod sale_history;
+pub use sale_history::FAMILIES as SALES_REPAIR_METRICS;
 pub mod sale_notices;
+mod sale_terms;
 pub mod sales;
 pub mod sales_index;
 pub mod search;
 pub mod shop;
 pub mod signed;
+mod store_sales;
 pub mod third_party;
 pub mod third_party_registry;
 pub mod tips;
