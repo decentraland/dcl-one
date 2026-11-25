@@ -2818,9 +2818,11 @@ Invariants:
 - The open-listing reads (`unified_trades`, `/v1/bids`) list a trade only
   while its network's trade-events cursor is current
   (`chain_walk::ready_sql_on`), in the same statement. A trade that is sold,
-  cancelled or marked is not listed. The routes refuse with the
-  `trade-events-index` envelope until the index is current on both
-  networks.
+  cancelled or marked is not listed. The routes that list, price or report
+  the status of trades refuse with the `trade-events-index` envelope until
+  the index is current on both networks. `/v1/trades` and
+  `/v1/trades/{id}` serve the stored records, which carry no status, so
+  they wait for the trades mirror only.
 
 ## Curation committee
 

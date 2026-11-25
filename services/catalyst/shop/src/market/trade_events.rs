@@ -21,9 +21,11 @@
 //! The verdicts close a trade only while the network's cursor is published
 //! (`chain_walk::is_ready`): an index still catching up could show a stale
 //! signature index as a cancellation, and would miss the latest executions.
-//! So the open-listing reads fail closed: every route over `shop.trades`
-//! answers the unavailable envelope naming this index until it is current
-//! on every network ([`require_current`], called by `trades::ready`), and
+//! So the open-listing reads fail closed: every route that lists, prices or
+//! reports the status of trades answers the unavailable envelope naming
+//! this index until it is current on every network ([`require_current`],
+//! called by `trades::ready`; the stored records of `/v1/trades` carry no
+//! status and wait for the trades mirror only), and
 //! `unified_trades` lists a trade only while its network's cursor is ready
 //! and no verdict closed it ([`listable_on_chain_sql`]), in the same
 //! statement, so a cursor that falls behind after the gate drops the trade
@@ -918,9 +920,9 @@ pub fn stale_message(stale: &[ChainNet]) -> String {
 }
 
 /// `Err(envelope)` unless the trade-events verdicts are current on every
-/// network ([`stale_networks_on`]): the gate of every route over
-/// `shop.trades` (`trades::ready`). A database error reads as not current:
-/// the envelope, never a guess.
+/// network ([`stale_networks_on`]): the gate of every route that lists,
+/// prices or reports the status of trades (`trades::ready`). A database
+/// error reads as not current: the envelope, never a guess.
 pub async fn require_current(state: &MarketplaceState) -> Result<(), Response> {
     let read = async {
         let mut conn = state.pool.acquire().await?;
@@ -1569,9 +1571,10 @@ pub(crate) mod tests {
     }
 
     /// Publishes the trade-events index on both networks, each on its
-    /// mainnet chain, current now: the state every route over `shop.trades`
-    /// requires ([`require_current`]), for the tests that read trades
-    /// without walking the index. A cursor already there is made current.
+    /// mainnet chain, current now: the state the routes that list, price or
+    /// report the status of trades require ([`require_current`]), for the
+    /// tests that read trades without walking the index. A cursor already
+    /// there is made current.
     pub(crate) async fn publish_cursors(pool: &PgPool) {
         publish_cursors_at(pool, None).await
     }

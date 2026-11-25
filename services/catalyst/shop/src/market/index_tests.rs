@@ -1513,12 +1513,36 @@ async fn a_stored_trade_keeps_its_v3_digest_and_a_v2_one_none() {
     db.drop().await;
 }
 
-/// Every route over `shop.trades` fails closed until the trade-events
-/// index is current on both networks: the envelope names the index and
-/// the networks behind; the open-listing read drops a network's trades as
-/// soon as its cursor falls behind, in the same statement.
+/// The `trades::ready` envelope as `(status, source, message)`.
+async fn listing_gate(st: &MarketplaceState) -> (StatusCode, Option<String>, String) {
+    match super::trades::ready(st).await {
+        Ok(_) => (StatusCode::OK, None, String::new()),
+        Err(response) => {
+            let status = response.status();
+            let body: Value = serde_json::from_slice(
+                &axum::body::to_bytes(response.into_body(), 1 << 16)
+                    .await
+                    .unwrap(),
+            )
+            .unwrap_or(Value::Null);
+            (
+                status,
+                body["source"].as_str().map(str::to_string),
+                body["message"].as_str().unwrap_or_default().to_string(),
+            )
+        }
+    }
+}
+
+/// The routes that list, price or report the status of trades fail closed
+/// until the trade-events index is current on both networks: their gate
+/// (`trades::ready`) answers the envelope naming the index and the networks
+/// behind, and the open-listing read drops a network's trades as soon as
+/// its cursor falls behind, in the same statement. The stored records of
+/// `/v1/trades`, which carry no status, are served on the mirror's pass
+/// alone, whatever the cursors say.
 #[tokio::test]
-async fn the_trade_routes_fail_closed_until_the_trade_events_index_is_current_on_both_networks() {
+async fn the_listing_routes_fail_closed_until_the_trade_events_index_is_current_on_both_networks() {
     let Some(db) = ScratchDb::create().await else {
         return;
     };
@@ -1540,42 +1564,33 @@ async fn the_trade_routes_fail_closed_until_the_trade_events_index_is_current_on
         (1, ZERO, "1"),
     )
     .await;
-    for (path, why) in [
-        ("/v1/trades?first=1".to_string(), "the list"),
-        (format!("/v1/trades/{id}"), "one trade"),
-    ] {
-        let path = path.as_str();
-        let (code, body) = get_json(&app, path).await;
-        assert_eq!(
-            (code, body["source"].as_str()),
-            (StatusCode::SERVICE_UNAVAILABLE, Some("trade-events-index")),
-            "{path} ({why}): {body}"
-        );
-        assert!(
-            body["message"]
-                .as_str()
-                .is_some_and(|m| m.contains("ethereum and matic")),
-            "{body}"
-        );
-    }
+    let records_served = || async {
+        for path in ["/v1/trades?first=1".to_string(), format!("/v1/trades/{id}")] {
+            let (code, body) = get_json(&app, &path).await;
+            assert_eq!(code, StatusCode::OK, "{path}: {body}");
+        }
+    };
+    let (code, source, message) = listing_gate(&st).await;
+    assert_eq!(
+        (code, source.as_deref()),
+        (StatusCode::SERVICE_UNAVAILABLE, Some("trade-events-index")),
+        "{message}"
+    );
+    assert!(message.contains("ethereum and matic"), "{message}");
     assert!(
         listed_ids(&db.pool).await.is_empty(),
         "no cursor, no listing"
     );
+    records_served().await;
 
     // Polygon current, Ethereum not: still refused, naming Ethereum.
     sqlx::query("INSERT INTO shop.chain_cursor (indexer, network, start_block, last_block, fold_through, folded_block, folded_at, full_history, chain_id) VALUES ('trade_events', 'matic', 0, 10, 10, 10, timezone('UTC', now()), true, 137)")
         .execute(&db.pool)
         .await
         .unwrap();
-    let (code, body) = get_json(&app, "/v1/trades?first=1").await;
-    assert_eq!(code, StatusCode::SERVICE_UNAVAILABLE, "{body}");
-    assert!(
-        body["message"]
-            .as_str()
-            .is_some_and(|m| m.contains("on ethereum (")),
-        "{body}"
-    );
+    let (code, _, message) = listing_gate(&st).await;
+    assert_eq!(code, StatusCode::SERVICE_UNAVAILABLE, "{message}");
+    assert!(message.contains("on ethereum ("), "{message}");
     assert_eq!(
         listed_ids(&db.pool).await,
         vec![id.clone()],
@@ -1583,17 +1598,17 @@ async fn the_trade_routes_fail_closed_until_the_trade_events_index_is_current_on
     );
 
     trade_events::tests::publish_cursors(&db.pool).await;
-    let (code, body) = get_json(&app, "/v1/trades?first=1").await;
-    assert_eq!(code, StatusCode::OK, "{body}");
+    assert_eq!(listing_gate(&st).await.0, StatusCode::OK);
 
-    // The cursor falls behind after the gate: the statement drops the trade.
+    // The cursor falls behind after the gate: the statement drops the trade,
+    // and the next gate refuses; the records stay served.
     sqlx::query("UPDATE shop.chain_cursor SET folded_block = NULL WHERE indexer = 'trade_events' AND network = 'matic'")
         .execute(&db.pool)
         .await
         .unwrap();
     assert!(listed_ids(&db.pool).await.is_empty());
-    let (code, _) = get_json(&app, "/v1/trades?first=1").await;
-    assert_eq!(code, StatusCode::SERVICE_UNAVAILABLE);
+    assert_eq!(listing_gate(&st).await.0, StatusCode::SERVICE_UNAVAILABLE);
+    records_served().await;
     db.drop().await;
 }
 
