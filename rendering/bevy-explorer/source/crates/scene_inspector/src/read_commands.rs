@@ -216,7 +216,14 @@ fn scene_logs_cmd(
 
 // --- /scene_entities ---
 
-/// List live entities in the active scene, optionally filtered by component name
+/// List live entities in the active scene, optionally filtered by component name. With `--labels`,
+/// `--name` or `--limit` the reply is JSON: `scene`, `total`, `matched`, `returned`, `truncated`, and
+/// `entities` (`crdtEntityId`, `label`: `gltf <src>`, `mesh <Box|Sphere|...>`, `text "<excerpt>"`,
+/// `hidden`, `parent <id>`, or null), by id, the first `--limit` of them. With `--visible` the
+/// reply is JSON of the entities that draw a mesh and whose bounds meet the camera's view, largest
+/// on screen first: `crdtEntityId`, `label`, `screenRect`, `center`, `coverage`, `distance`,
+/// `distanceToCamera`, `renderers`, with `screen`, `cameraPosition`, `candidates`, `inFrustum`,
+/// `returned`, `truncated` and `occlusion` (not evaluated).
 #[derive(clap::Parser, ConsoleCommand)]
 #[command(name = "/scene_entities")]
 struct SceneEntitiesCommand {
@@ -225,17 +232,45 @@ struct SceneEntitiesCommand {
     panel: bool,
     /// Filter to entities that have this component (PascalCase)
     component: Option<String>,
+    /// Reply JSON with what each entity shows
+    #[arg(long)]
+    labels: bool,
+    /// Keep the entities whose label holds this text, any case (implies --labels)
+    #[arg(long, alias = "filter")]
+    name: Option<String>,
+    /// Most labelled entities to list, lowest id first (1 to 2000, default 200; implies --labels).
+    /// With --visible, most entities to list, largest on screen first (1 to 200, default 25)
+    #[arg(long, value_parser = clap::value_parser!(u32).range(1..=2000))]
+    limit: Option<u32>,
+    /// Reply JSON with the entities of the active scene in the camera's view and where each is
+    /// on screen
+    #[arg(long, conflicts_with_all = ["panel", "component", "labels", "name"])]
+    visible: bool,
+    /// Least share of the screen (0 to 1) an entity must cover to be listed
+    #[arg(long, requires = "visible", default_value_t = 0.0)]
+    min_coverage: f32,
 }
+
+/// How many entities `/scene_entities --labels` lists unless `--limit` says otherwise
+const DEFAULT_LABEL_LIMIT: usize = 200;
 
 fn scene_entities_cmd(
     mut input: ConsoleCommand<SceneEntitiesCommand>,
     panel: Res<crate::panel::InspectionParcel>,
     resolver: SceneResolver,
+    view: crate::visible::View,
     registry: Res<ComponentNameRegistry>,
     mut pending: ResMut<PendingSnapshotRequests>,
     mut console_responses: ResMut<PendingConsoleResponses>,
 ) {
     if let Some(Ok(cmd)) = input.take() {
+        if cmd.visible {
+            match view.list(&resolver, &mut pending, cmd.limit, cmd.min_coverage) {
+                Ok(rx) => console_responses.push_oneshot(rx, |r| r, input.take_responder()),
+                Err(e) => input.reply_failed(e),
+            }
+            return;
+        }
         let filter_id: Option<SceneComponentId> = match &cmd.component {
             None => None,
             Some(name) => match registry.get_by_name(name) {
@@ -253,6 +288,12 @@ fn scene_entities_cmd(
         } else {
             resolver.resolve_entity()
         };
+        let scene = target
+            .as_ref()
+            .ok()
+            .and_then(|root| resolver.scenes.get(*root).ok())
+            .map(|(_, ctx)| ctx.hash.clone())
+            .unwrap_or_default();
         match resolver.request_snapshot_from(target, &mut pending, move |crdt| {
             let entities: Vec<SceneEntityId> = crdt
                 .lww
@@ -280,7 +321,16 @@ fn scene_entities_cmd(
                 .into_iter()
                 .collect();
 
-            let result = if entities.is_empty() {
+            let result = if cmd.labels || cmd.name.is_some() || cmd.limit.is_some() {
+                Ok(labelled_entities(
+                    crdt,
+                    entities,
+                    cmd.name.as_deref(),
+                    cmd.limit
+                        .map_or(DEFAULT_LABEL_LIMIT, |limit| limit as usize),
+                    &scene,
+                ))
+            } else if entities.is_empty() {
                 Ok("(no entities)".to_string())
             } else {
                 let mut lines: Vec<String> = entities.iter().map(entity_alias).collect();
@@ -600,6 +650,59 @@ fn print_tree(
 }
 
 // --- helpers ---
+
+/// The `--labels` reply: the entities with their labels, by id, those matching `name` only, the
+/// first `limit` of them; `matched` counts them all. Without `name` only the listed ones are
+/// labelled.
+fn labelled_entities(
+    crdt: &CrdtStore,
+    mut entities: Vec<SceneEntityId>,
+    name: Option<&str>,
+    limit: usize,
+    scene: &str,
+) -> String {
+    entities.sort_by_key(|e| e.as_proto_u32().unwrap_or(e.id as u32));
+    let total = entities.len();
+    let labelled = |entity: SceneEntityId| (entity, crate::labels::label(crdt, entity));
+    let (matched, listed): (usize, Vec<_>) = match name.map(str::to_lowercase) {
+        None => (
+            total,
+            entities.into_iter().take(limit).map(labelled).collect(),
+        ),
+        Some(needle) => {
+            let mut matching: Vec<_> = entities
+                .into_iter()
+                .map(labelled)
+                .filter(|(_, label)| {
+                    label
+                        .as_ref()
+                        .is_some_and(|label| label.to_lowercase().contains(&needle))
+                })
+                .collect();
+            let matched = matching.len();
+            matching.truncate(limit);
+            (matched, matching)
+        }
+    };
+    let listed: Vec<_> = listed
+        .into_iter()
+        .map(|(entity, label)| {
+            serde_json::json!({
+                "crdtEntityId": entity.as_proto_u32().unwrap_or(entity.id as u32),
+                "label": label,
+            })
+        })
+        .collect();
+    serde_json::json!({
+        "scene": scene,
+        "total": total,
+        "matched": matched,
+        "returned": listed.len(),
+        "truncated": matched > listed.len(),
+        "entities": listed,
+    })
+    .to_string()
+}
 
 fn entity_alias(eid: &SceneEntityId) -> String {
     let id = eid.as_proto_u32().unwrap_or(eid.id as u32);
@@ -998,6 +1101,40 @@ mod tests {
         CrdtType, DclReader,
     };
     use prost::Message;
+
+    #[test]
+    fn the_label_list_counts_every_match_and_lists_the_first_of_them() {
+        let crdt = CrdtStore::default();
+        let entities: Vec<_> = [514, 0, 512, 513]
+            .into_iter()
+            .map(SceneEntityId::from_proto_u32)
+            .collect();
+        let reply = |name, limit| -> serde_json::Value {
+            serde_json::from_str(&labelled_entities(
+                &crdt,
+                entities.clone(),
+                name,
+                limit,
+                "h",
+            ))
+            .unwrap()
+        };
+
+        let listed = reply(None, 2);
+        assert_eq!(listed["total"], 4);
+        assert_eq!(listed["matched"], 4);
+        assert_eq!(listed["returned"], 2);
+        assert_eq!(listed["truncated"], true);
+        assert_eq!(listed["entities"][0]["label"], "scene root");
+        assert_eq!(listed["entities"][1]["crdtEntityId"], 512);
+        assert!(listed["entities"][1]["label"].is_null());
+
+        let named = reply(Some("ROOT"), 2);
+        assert_eq!(named["total"], 4);
+        assert_eq!(named["matched"], 1);
+        assert_eq!(named["returned"], 1);
+        assert_eq!(named["truncated"], false);
+    }
 
     #[test]
     fn grow_only_components_keep_their_name_in_the_snapshot() {

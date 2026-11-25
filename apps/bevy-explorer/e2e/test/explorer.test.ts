@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import { describe, test } from 'node:test'
 import { ConsoleError, FakeConsole, commandOf, redactLine } from '../driver/console.ts'
-import { type CommandRecord, Explorer, parseLiveScenes, parsePortables, parseSmartWearables, type WorldState } from '../driver/explorer.ts'
+import { type CommandRecord, Explorer, quoteWord, parseLiveScenes, parsePortables, parseSmartWearables, type WorldState } from '../driver/explorer.ts'
 import { enterWorld } from '../driver/session.ts'
 
 function world(overrides: Partial<WorldState> = {}): string {
@@ -128,6 +128,28 @@ describe('Explorer', () => {
     assert.deepEqual(await explorer.userData(), { name: 'Jane Doe', address: '0x1111111111111111111111111111111111111111', version: 7, web3: false })
     assert.equal(await explorer.profileVersion(), 7)
     assert.deepEqual(await explorer.position(), { x: 8, y: 0.5, z: -3 })
+  })
+
+  test('sceneEntityLabels and visibleEntities compose their lines', async () => {
+    const fake = new FakeConsole({
+      scene_entities: '{"scene":"h","total":2,"matched":1,"returned":1,"truncated":false,"entities":[{"crdtEntityId":571,"label":"mesh Box"}]}'
+    })
+    const explorer = new Explorer(fake)
+    assert.deepEqual((await explorer.sceneEntityLabels({ name: 'mesh box' })).entities, [{ crdtEntityId: 571, label: 'mesh Box' }])
+    await explorer.sceneEntityLabels({ component: 'MeshRenderer', limit: 50 })
+    await explorer.visibleEntities({ limit: 10, minCoverage: 0.01 })
+    await explorer.visibleEntities()
+    assert.deepEqual(fake.lines, ['/scene_entities --name "mesh box"', '/scene_entities MeshRenderer --labels --limit 50', '/scene_entities --visible --limit 10 --min-coverage 0.01', '/scene_entities --visible'])
+  })
+
+  test('quoteWord quotes what the engine would split or unquote, and escapes inside the quotes', () => {
+    assert.equal(quoteWord('tree.glb'), 'tree.glb')
+    assert.equal(quoteWord(''), '""')
+    assert.equal(quoteWord('mesh box'), '"mesh box"')
+    assert.equal(quoteWord('a\u0085b'), '"a\u0085b"')
+    assert.equal(quoteWord('say "hi"'), '"say \\"hi\\""')
+    assert.equal(quoteWord('a\\ b'), '"a\\\\ b"')
+    assert.equal(quoteWord('a\\b'), 'a\\b')
   })
 
   test('the voice chat actions compose their lines', async () => {

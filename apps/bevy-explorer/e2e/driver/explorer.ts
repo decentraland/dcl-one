@@ -1,7 +1,7 @@
 // The typed API specs use. Every method is one console command (or a command and the wait that
 // makes its effect observable), with the reply parsed as rendering/bevy-explorer/docs/guidelines/
 // running.md ("Test commands") describes it. Specs never see which transport carries the line.
-import { type Console, ConsoleError, redact, redactLine, replaceSecrets, secretsOf } from './console.ts'
+import { CONSOLE_SPACE, type Console, ConsoleError, redact, redactLine, replaceSecrets, secretsOf } from './console.ts'
 import { type AuthIdentity, encodeIdentity } from './identity.ts'
 import { type Selector, describeSelector, selectorArg, toSelectorObject } from './selectors.ts'
 import { sleep, until } from './wait.ts'
@@ -57,6 +57,56 @@ export interface PointerReport {
   entries: { button: string; event: string; hoverText: string | null; enabled: boolean; tooFar: boolean }[]
   events: { event: string; button: string; tick: number }[]
   diagnosis: string | null
+}
+
+/** One entity of `/scene_entities --labels`. */
+export interface LabelledEntity {
+  crdtEntityId: number
+  /** `gltf <src>`, `mesh Box`, `text "..."`, `hidden`, `parent <id>`, joined by `, `; null when nothing describes it */
+  label: string | null
+}
+
+/** `/scene_entities --labels`: `matched` counts every entity the filters keep, `entities` holds
+ *  the first `returned` of them by id. */
+export interface LabelledEntities {
+  scene: string
+  total: number
+  matched: number
+  returned: number
+  truncated: boolean
+  entities: LabelledEntity[]
+}
+
+/** One entity `/scene_entities --visible` lists. */
+export interface VisibleEntity {
+  crdtEntityId: number
+  label: string | null
+  /** logical pixels, clamped to the view; null when nothing of it lands there */
+  screenRect: { x: number; y: number; width: number; height: number } | null
+  center: { x: number; y: number } | null
+  coverage: number
+  distance: number | null
+  distanceToCamera: number
+  renderers: number
+}
+
+/** `/scene_entities --visible`: frustum and bounds only, occlusion is not evaluated. */
+export interface VisibleEntities {
+  scene: string
+  screen: { width: number; height: number; scale: number }
+  cameraPosition: { x: number; y: number; z: number }
+  candidates: number
+  inFrustum: number
+  returned: number
+  truncated: boolean
+  occlusion: string
+  entities: VisibleEntity[]
+}
+
+/** A word of a console line, double-quoted when it holds whitespace or a quote (the conventions
+ *  ADR's quoting rule). */
+export function quoteWord(word: string): string {
+  return word === '' || word.includes('"') || CONSOLE_SPACE.test(word) ? `"${word.replace(/[\\"]/g, '\\$&')}"` : word
 }
 
 /** `/raycast_stats`: the capped tier's budget and last pass, and the uncapped tier's last pass. */
@@ -992,6 +1042,18 @@ export class Explorer {
   async sceneEntities(component?: string): Promise<string[]> {
     const reply = await this.run(component ? `/scene_entities ${component}` : '/scene_entities')
     return reply === '(no entities)' ? [] : reply.split('\n')
+  }
+
+  /** The target scene's entities with what each shows, the first `limit` by id (200 unless given);
+   *  `name` keeps the labels holding it, any case. A long glTF `src` shows its end. */
+  async sceneEntityLabels(options: { component?: string; name?: string; limit?: number } = {}): Promise<LabelledEntities> {
+    const flags = `${options.component ? ` ${quoteWord(options.component)}` : ''}${options.name === undefined ? ' --labels' : ` --name ${quoteWord(options.name)}`}${options.limit === undefined ? '' : ` --limit ${options.limit}`}`
+    return this.json<LabelledEntities>(`/scene_entities${flags}`)
+  }
+
+  /** The scene's mesh and glTF entities in the camera's view, largest coverage first. */
+  visibleEntities(options: { limit?: number; minCoverage?: number } = {}): Promise<VisibleEntities> {
+    return this.json<VisibleEntities>(`/scene_entities --visible${options.limit === undefined ? '' : ` --limit ${options.limit}`}${options.minCoverage === undefined ? '' : ` --min-coverage ${options.minCoverage}`}`)
   }
 
   /** Point the scene commands (`/scene_entities`, `/inspect_component`, `/scene_logs`) at a scene

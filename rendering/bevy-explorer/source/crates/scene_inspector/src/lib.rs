@@ -7,12 +7,14 @@ use scene_runner::update_scene::raycast_result::SuperUserRaycastScene;
 
 mod active_scene;
 mod asset_commands;
+mod labels;
 mod manual_registry;
 mod mobile_ui;
 mod panel;
 mod read_commands;
 mod screen_position;
 pub mod snapshot;
+mod visible;
 mod write_commands;
 
 pub use active_scene::{ActiveInspectionScene, SceneResolver};

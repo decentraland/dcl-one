@@ -142,10 +142,7 @@ fn entity_screen_position_cmd(
 
 /// Whether the scene has put a Transform on `entity`
 fn has_transform(crdt: &CrdtStore, entity: SceneEntityId) -> bool {
-    crdt.lww
-        .get(&SceneComponentId::TRANSFORM)
-        .and_then(|state| state.last_write.get(&entity))
-        .is_some_and(|entry| entry.is_some)
+    crate::labels::has(crdt, SceneComponentId::TRANSFORM, entity)
 }
 
 /// Where a world point lands on the primary camera's view
