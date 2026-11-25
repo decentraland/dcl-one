@@ -330,6 +330,12 @@ impl crate::interfaces::SceneIdentity for TwoScenes {
     ) -> Result<Option<ActiveDeployment>, crate::rooms::ResolveError> {
         Ok(self.world.deployment.clone())
     }
+    async fn world_scene_count(
+        &self,
+        world: &crate::world_identity::WorldName,
+    ) -> Result<usize, crate::rooms::ResolveError> {
+        Ok(usize::from(self.world_active_scene(world).await?.is_some()))
+    }
 }
 
 struct Harness {
@@ -461,6 +467,17 @@ async fn seed_world(pool: &PgPool, world: &WorldName) {
         .execute(pool)
         .await
         .unwrap();
+}
+
+/// `world`'s catalogue place under `id`: a world mints keys only while listed.
+async fn seed_world_place(pool: &PgPool, id: &str, world: &WorldName) {
+    seed_place(
+        pool,
+        id,
+        json!({"world": true, "world_name": world.display(), "positions": ["0,0"]}),
+        "0,0",
+    )
+    .await;
 }
 
 /// A stream credential row as a stream link stores it.
@@ -1459,13 +1476,15 @@ impl crate::interfaces::SceneIdentity for CountedScenes {
 
 /// A world location names one scene: the one on the body's parcel, or the
 /// world's only scene; a multi-scene world needs the parcel (upstream's
-/// `fetchWorldSceneId`), and its stream link carries it. A parcel with no
+/// `fetchWorldSceneId`), and its stream link carries it, unless one scene
+/// room alone has a key (an older `/w/<world>` link). A parcel with no
 /// scene and a world lobby name none. The watcher reads that scene's key.
 #[tokio::test]
 async fn a_multi_scene_world_needs_the_parcel_to_watch_a_scene() {
     let Some(pool) = scratch().await else { return };
     let world = WorldName::parse(&format!("castmulti{}.dcl.eth", tag())).unwrap();
     seed_world(&pool, &world).await;
+    seed_world_place(&pool, &format!("castmulti-place-{}", tag()), &world).await;
     let scene_id = format!("bafkreimulti{}", tag());
     let room = resolved_room(RealmId::World(world.clone()), &scene_id, "3,4");
     let lobby = ResolvedRoom {
@@ -1543,6 +1562,18 @@ async fn a_multi_scene_world_needs_the_parcel_to_watch_a_scene() {
                 assert_eq!(body["roomId"], room.room);
             }
             _ => {
+                // An old `/w/<world>` link reads the world's only keyed room.
+                assert_eq!(status, StatusCode::OK, "the only keyed room: {body}");
+                assert_eq!(body["roomId"], room.room);
+                // With a second keyed scene room, the parcel decides.
+                let other = crate::rooms::worlds_service_scene_room(
+                    &world,
+                    &crate::world_identity::SceneId::parse(&format!("bafkreiother{}", tag()))
+                        .unwrap(),
+                );
+                let place = format!("castmulti-other-{}", tag());
+                seed_access(&pool, &place, Some(&other), chrono::Duration::days(1)).await;
+                let (status, body) = watcher(None).await;
                 assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
                 assert_eq!(
                     body["error"],
@@ -1551,6 +1582,13 @@ async fn a_multi_scene_world_needs_the_parcel_to_watch_a_scene() {
                         world.display()
                     )
                 );
+                sqlx::query(
+                    "UPDATE social.scene_stream_access SET active = false WHERE place_id = $1",
+                )
+                .bind(&place)
+                .execute(&pool)
+                .await
+                .unwrap();
             }
         }
         let (status, body) = watcher(Some("3,4")).await;
@@ -1621,6 +1659,12 @@ impl crate::interfaces::SceneIdentity for SceneAandB {
     ) -> Result<Option<ActiveDeployment>, crate::rooms::ResolveError> {
         self.a.world_active_scene(world).await
     }
+    async fn world_scene_count(
+        &self,
+        world: &crate::world_identity::WorldName,
+    ) -> Result<usize, crate::rooms::ResolveError> {
+        self.a.world_scene_count(world).await
+    }
 }
 
 /// Scene A of a two-scene world, a harness whose resolver knows scene B too,
@@ -1630,15 +1674,30 @@ async fn two_scene_world(
     b_unreadable: bool,
     bans: Option<StubBanStatus>,
 ) -> (Harness, ResolvedRoom, ResolvedRoom, Value) {
+    two_scene_world_with(pool, b_unreadable, bans, false).await
+}
+
+/// [`two_scene_world`]; with `b_retired`, B is a scene retired within the
+/// eviction window: its room resolves, with no identity.
+async fn two_scene_world_with(
+    pool: &PgPool,
+    b_unreadable: bool,
+    bans: Option<StubBanStatus>,
+    b_retired: bool,
+) -> (Harness, ResolvedRoom, ResolvedRoom, Value) {
     let world = WorldName::parse(&format!("casttwo{}.dcl.eth", tag())).unwrap();
     seed_world(pool, &world).await;
+    seed_world_place(pool, &format!("casttwo-place-{}", tag()), &world).await;
     let scene_a = format!("bafkreia{}", tag());
     let a = resolved_room(RealmId::World(world.clone()), &scene_a, "3,4");
-    let b = resolved_room(
+    let mut b = resolved_room(
         RealmId::World(world.clone()),
         &format!("bafkreib{}", tag()),
         "9,9",
     );
+    if b_retired && let Some(deployment) = b.deployment.as_mut() {
+        deployment.namespace = None;
+    }
     let scenes = SceneAandB {
         a: StubScenes {
             room: Ok(a.clone()),
@@ -1669,6 +1728,146 @@ async fn two_scene_world(
 
 fn place_of(room: &ResolvedRoom) -> String {
     room.deployment.as_ref().unwrap().place_key()
+}
+
+/// A key under scene A's place that streams into another scene's room is
+/// revoked while idle by the flag, but not while LiveKit says its ingress is
+/// publishing (a lost `ingress_started`): A's stream link answers 409, mints
+/// nothing and raises the flag.
+#[tokio::test]
+async fn a_held_key_with_a_lost_start_is_kept_and_raised() {
+    let Some(pool) = scratch().await else { return };
+    let (h, a, b, metadata) = two_scene_world(&pool, false, None).await;
+    seed_access(
+        &pool,
+        &place_of(&b),
+        Some(&b.room),
+        chrono::Duration::days(1),
+    )
+    .await;
+    let held = seed_access(
+        &pool,
+        &place_of(&a),
+        Some(&b.room),
+        chrono::Duration::days(1),
+    )
+    .await;
+    let ingress: String = sqlx::query_scalar(
+        "SELECT ingress_id FROM social.scene_stream_access WHERE streaming_key = $1",
+    )
+    .bind(&held)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    h.livekit
+        .ingress_status
+        .lock()
+        .unwrap()
+        .insert(ingress, "ENDPOINT_PUBLISHING".into());
+    let (status, body) = h
+        .signed(KEY, "GET", "/cast/generate-stream-link", &metadata, None)
+        .await;
+    assert_eq!(status, StatusCode::CONFLICT, "{body}");
+    assert!(key_is_active(&pool, &held).await, "the live key stays");
+    let streaming: bool = sqlx::query_scalar(
+        "SELECT streaming FROM social.scene_stream_access WHERE streaming_key = $1",
+    )
+    .bind(&held)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert!(streaming, "the lost start is raised");
+    assert_eq!(h.livekit.ingresses.load(Ordering::SeqCst), 0);
+}
+
+/// A key under scene A's place that streams into the room of a scene
+/// retired within the eviction window is revoked, never moved under the
+/// retired scene's entity id, which no verb reaches.
+#[tokio::test]
+async fn a_held_key_of_a_retired_scene_is_revoked_not_moved() {
+    let Some(pool) = scratch().await else { return };
+    let (h, a, b, metadata) = two_scene_world_with(&pool, false, None, true).await;
+    let held = seed_access(
+        &pool,
+        &place_of(&a),
+        Some(&b.room),
+        chrono::Duration::days(1),
+    )
+    .await;
+    stream_link(&h, KEY, &metadata).await;
+    assert!(!key_is_active(&pool, &held).await, "revoked");
+    let place: String = sqlx::query_scalar(
+        "SELECT place_id FROM social.scene_stream_access WHERE streaming_key = $1",
+    )
+    .bind(&held)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(place, place_of(&a), "not moved");
+}
+
+/// A world with no catalogue place (blocked or removed) mints, resets and
+/// presents nothing; its scene's key can still be revoked.
+#[tokio::test]
+async fn an_unlisted_world_mints_nothing_and_still_revokes() {
+    let Some(pool) = scratch().await else { return };
+    let world = WorldName::parse(&format!("castblocked{}.dcl.eth", tag())).unwrap();
+    seed_world(&pool, &world).await;
+    let scene_id = format!("bafkreiblocked{}", tag());
+    let room = resolved_room(RealmId::World(world.clone()), &scene_id, "3,4");
+    let h = harness(
+        pool.clone(),
+        Some(room.clone()),
+        PermissionDecision::Allowed,
+        None,
+    )
+    .await;
+    let held = seed_access(
+        &pool,
+        &place_of(&room),
+        Some(&room.room),
+        chrono::Duration::days(1),
+    )
+    .await;
+    let metadata = json!({
+        "signer": SCENE_SIGNER,
+        "sceneId": scene_id,
+        "parcel": "3,4",
+        "realm": {"serverName": world.display(), "hostname": "worlds-content-server.example", "protocol": "v3"},
+    });
+    for (method, path) in [
+        ("GET", "/cast/generate-stream-link"),
+        ("POST", "/scene-stream-access"),
+        ("PUT", "/scene-stream-access"),
+    ] {
+        let (status, body) = h.signed(KEY, method, path, &metadata, None).await;
+        assert_eq!(status, StatusCode::NOT_FOUND, "{method} {path}: {body}");
+    }
+    assert_eq!(h.livekit.ingresses.load(Ordering::SeqCst), 0);
+    let (status, body) = h
+        .signed(KEY, "GET", "/cast/presenters", &metadata, None)
+        .await;
+    assert_eq!(status, StatusCode::NOT_FOUND, "presenters: {body}");
+    assert_eq!(
+        body["error"],
+        format!("No place found with id {}", place_of(&room))
+    );
+    // Once listed, the same scene presents.
+    seed_world_place(&pool, &format!("castblocked-place-{}", tag()), &world).await;
+    let (status, body) = h
+        .signed(KEY, "GET", "/cast/presenters", &metadata, None)
+        .await;
+    assert_eq!(status, StatusCode::OK, "listed: {body}");
+    sqlx::query("DELETE FROM explore.place WHERE world AND lower(world_name) = $1")
+        .bind(world.key())
+        .execute(&pool)
+        .await
+        .unwrap();
+    let (status, body) = h
+        .signed(KEY, "DELETE", "/scene-stream-access", &metadata, None)
+        .await;
+    assert_eq!(status, StatusCode::NO_CONTENT, "{body}");
+    assert!(!key_is_active(&pool, &held).await);
 }
 
 /// A key under scene A's place that streams into scene B's room, while B
@@ -1818,6 +2017,7 @@ async fn a_stream_link_reuses_then_replaces_a_world_key_minted_before_per_scene_
     )
     .await;
     let catalogue = format!("cast-legacy-{}", tag());
+    seed_world_place(&pool, &catalogue, &world).await;
     let legacy = seed_access(
         &pool,
         &catalogue,

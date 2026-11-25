@@ -120,9 +120,7 @@ pub trait SceneIdentity: Send + Sync {
     ) -> Result<Option<ActiveDeployment>, ResolveError>;
     /// How many scenes the world has here, counted up to two: a Cast watcher
     /// needs a parcel in a world with several.
-    async fn world_scene_count(&self, world: &WorldName) -> Result<usize, ResolveError> {
-        Ok(usize::from(self.world_active_scene(world).await?.is_some()))
-    }
+    async fn world_scene_count(&self, world: &WorldName) -> Result<usize, ResolveError>;
 }
 
 /// Name ownership is supplied by Shop, which owns both its NFT index and
@@ -662,6 +660,12 @@ pub mod test_support {
             _world: &WorldName,
         ) -> Result<Option<ActiveDeployment>, ResolveError> {
             self.scene.as_ref().cloned().map_err(copy_resolve)
+        }
+        async fn world_scene_count(
+            &self,
+            world: &crate::world_identity::WorldName,
+        ) -> Result<usize, crate::rooms::ResolveError> {
+            Ok(usize::from(self.world_active_scene(world).await?.is_some()))
         }
     }
 

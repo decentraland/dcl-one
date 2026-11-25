@@ -145,6 +145,12 @@ impl SceneIdentity for ToolkitScenes {
         )
         .await
     }
+    async fn world_scene_count(
+        &self,
+        world: &crate::world_identity::WorldName,
+    ) -> Result<usize, crate::rooms::ResolveError> {
+        Ok(usize::from(self.world_active_scene(world).await?.is_some()))
+    }
 }
 
 fn metadata(realm: &str, scene: &str, parcel: &str) -> Value {

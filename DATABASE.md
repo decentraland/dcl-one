@@ -3326,7 +3326,14 @@ key it acts on; a watcher token reads that key alone. Hundreds a day: a
 Genesis key by place (the partial unique index), a world scene's key by room
 (`scene_stream_access_active_room_idx`), over hundreds of active rows. A
 watcher of a world without a parcel, and a stream link of a world scene, count
-the world's `worlds.world_scenes` rows up to two.
+the world's `worlds.world_scenes` rows up to two; a watcher of a multi-scene
+world without a parcel reads the world's active scene-room keys up to two.
+A world scene's mint, reset and presenter routes read whether its world has a
+catalogue place (`explore.place`, `explore.place_world_local`, by
+`world_name`); a revocation whose recheck ended a replaced key reads that
+key's room binding (`explore.world_scene_place`, `explore.world_scene_binding`,
+by primary key). A held row that cannot move is revoked after one LiveKit
+`ListIngress`.
 
 Invariants:
 
@@ -3356,6 +3363,12 @@ Invariants:
 - The notice of a world scene key's cleanup names the world (its catalogue
   place, else the world alone) with the footprint of the scene of the key's
   room, so the holders of its parcels are told; its owner is the world's.
+- Of several active keys streaming into one room, every reader by room
+  takes the one under its own scene's place (`place_id = admin_place_key`),
+  then the newest (`streaming::ROOM_KEY_ORDER`): the verbs and the presenter
+  routes act on the same key.
+- A held row is moved only to a current scene (one with an identity), and
+  revoked only while LiveKit reports its ingress idle.
 - Rollout: stop the old API replicas before the new binaries serve. An old
   replica stores a world key under the world's catalogue place and replaces
   by place, so during a mixed rollout two active keys can stream into one

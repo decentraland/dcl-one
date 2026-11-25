@@ -10,7 +10,8 @@
 //! world scene's place ([`KeyTarget`]). Remove also takes the scene standing
 //! on the signed parcel now, and every verb first rechecks the place's keys,
 //! so the key of a scene a redeploy replaced is revoked by the admins of the
-//! scene standing there now. List, add and reset are refused to
+//! scene standing there now. A world scene lists, adds and resets only while
+//! its world has a catalogue place. List, add and reset are refused to
 //! a platform-banned wallet BEFORE that check, because LiveKit honours the
 //! key without re-checking the wallet, and remove stays ungated (upstream's
 //! `*-scene-stream-access-handler.ts`). One active row per place in
@@ -202,6 +203,13 @@ impl AccessRow {
     }
 }
 
+/// Which of several active keys streaming into one world scene room is the
+/// room's (a mixed rollout can leave two): the one stored under its own
+/// scene's place, then the newest. Every reader by room shares it, so the
+/// verbs and the presenter routes act on the same key.
+pub(super) const ROOM_KEY_ORDER: &str =
+    "(place_id = admin_place_key) IS TRUE DESC, created_at DESC, id DESC";
+
 const ACCESS_COLUMNS: &str = "id, room_id, streaming, streaming_url, streaming_key, ingress_id, created_at, expiration_time, streaming_state_version";
 
 pub async fn scene_stream_access(
@@ -236,7 +244,11 @@ pub async fn scene_stream_access(
     } else {
         // One resolution binds the signed scene to its parcel; the room and the
         // authorizing footprint both come from it.
-        KeyTarget::bound(&state, Context::resolve(&state, &sf.metadata).await?).await?
+        let bound = Context::resolve(&state, &sf.metadata).await?;
+        if let Some((world, _)) = &bound.world_scene {
+            require_world_place(&state.pool, world).await?;
+        }
+        KeyTarget::bound(&state, bound).await?
     };
     match target.decide(&state, &sf.signer).await {
         PermissionDecision::Allowed => {}
@@ -734,6 +746,27 @@ async fn refuse_barred(
 /// The Genesis place holding `parcel`, preferring the one based there. With
 /// `based_there` only a place based on `parcel` counts, so a catalogue that
 /// has not caught up with a redeploy never lends another scene's admins.
+/// Whether `world` has a catalogue place (`explore.place` or
+/// `explore.place_world_local`). A blocked or removed world has none.
+pub(super) async fn world_catalogued(pool: &PgPool, world: &WorldName) -> Result<bool, ApiError> {
+    Ok(sqlx::query_scalar(
+        "SELECT EXISTS (SELECT 1 FROM explore.place WHERE world AND lower(world_name) = lower($1)) \
+         OR EXISTS (SELECT 1 FROM explore.place_world_local WHERE world AND lower(world_name) = lower($1))",
+    )
+    .bind(world.display())
+    .fetch_one(pool)
+    .await?)
+}
+
+/// 404 unless `world` has a catalogue place: a world scene mints, resets and
+/// presents only while its world is listed. Revocation is never gated.
+pub(super) async fn require_world_place(pool: &PgPool, world: &WorldName) -> Result<(), ApiError> {
+    match world_catalogued(pool, world).await? {
+        true => Ok(()),
+        false => Err(ApiError::not_found("place not found for this scene")),
+    }
+}
+
 async fn resolve_place_id(
     pool: &PgPool,
     parcel: &str,
@@ -753,7 +786,7 @@ async fn resolve_place_id(
 
 /// The active credential a verb acts on. A Genesis key is its place's. A
 /// world scene's (`world_room`, its room) is the one streaming into that
-/// room, the row under the scene's place first: a row under that place that
+/// room ([`ROOM_KEY_ORDER`]): a row under the scene's place that
 /// streams into another room is another scene's (a world key stored under a
 /// catalogue id that an imported identity equals), never this scene's.
 async fn active_access(
@@ -769,10 +802,9 @@ async fn active_access(
         .fetch_optional(pool)
         .await,
         Some(room) => sqlx::query_as(sqlx::AssertSqlSafe(format!(
-            "SELECT {ACCESS_COLUMNS} FROM social.scene_stream_access WHERE room_id = $2 AND active \
-                 ORDER BY place_id = $1 DESC, created_at DESC LIMIT 1"
+            "SELECT {ACCESS_COLUMNS} FROM social.scene_stream_access WHERE room_id = $1 AND active \
+                 ORDER BY {ROOM_KEY_ORDER} LIMIT 1"
         )))
-        .bind(place_id)
         .bind(room)
         .fetch_optional(pool)
         .await,
@@ -812,7 +844,13 @@ async fn free_scene_place(
             .resolve(RoomRequest::NamedWorldScene { room: other })
             .await
         {
-            Ok(resolved) => resolved.deployment.map(|deployment| deployment.place_key()),
+            // A scene retired within the eviction window still resolves, with
+            // no identity: its entity id is no place a verb reaches, so the
+            // row is revoked instead.
+            Ok(resolved) => resolved
+                .deployment
+                .filter(|deployment| deployment.namespace.is_some())
+                .map(|deployment| deployment.place_key()),
             Err(crate::rooms::ResolveError::Db(error)) => {
                 return Err(scene_identity_unavailable(&error));
             }
@@ -862,25 +900,42 @@ pub(crate) enum Held {
 
 /// Revokes key `id` while it is still active under `place_id` and idle. A key
 /// a concurrent request moved to its own scene's place is that scene's, and
-/// stays.
+/// stays. Idle means LiveKit, not only the flag, says its ingress is not
+/// publishing: a lost `ingress_started` leaves the flag down on a live
+/// broadcast, which is raised and kept. An ingress state that cannot be read
+/// keeps the key.
 pub(crate) async fn revoke_held(
     state: &SharedState,
     id: Uuid,
     place_id: &str,
 ) -> Result<Held, ApiError> {
-    let current: Option<(bool, i64)> = sqlx::query_as(
-        "SELECT streaming, streaming_state_version FROM social.scene_stream_access \
+    let current: Option<(bool, i64, Option<String>)> = sqlx::query_as(
+        "SELECT streaming, streaming_state_version, ingress_id FROM social.scene_stream_access \
          WHERE id = $1 AND active AND place_id = $2",
     )
     .bind(id)
     .bind(place_id)
     .fetch_optional(&state.pool)
     .await?;
-    match current {
-        None => Ok(Held::Freed),
-        Some((true, _)) => Ok(Held::Live),
-        Some((false, version)) => revoke_at(state, id, place_id, version).await,
+    let (version, ingress_id) = match current {
+        None => return Ok(Held::Freed),
+        Some((true, _, _)) => return Ok(Held::Live),
+        Some((false, version, ingress_id)) => (version, ingress_id.unwrap_or_default()),
+    };
+    if !ingress_id.is_empty() {
+        match state.ingress().is_ingress_streaming(&ingress_id).await {
+            Ok(Some(false)) => {}
+            Ok(Some(true)) => {
+                jobs::raise(&state.pool, id, version).await?;
+                return Ok(Held::Live);
+            }
+            Ok(None) | Err(_) => {
+                tracing::warn!(place_id, access_id = %id, "ingress state unavailable; the held key stays");
+                return Ok(Held::Live);
+            }
+        }
     }
+    revoke_at(state, id, place_id, version).await
 }
 
 /// [`revoke_held`]'s revocation, conditional on the version it read.
@@ -1213,6 +1268,26 @@ async fn reset_access(
     })
 }
 
+/// Whether world scene `room` names a deployment, current or displaced, of
+/// the scene place `place_id` (`explore.world_scene_place`,
+/// `explore.world_scene_binding`).
+async fn room_of_place(pool: &PgPool, room: &str, place_id: &str) -> Result<bool, sqlx::Error> {
+    let Some((world, scene)) = crate::rooms::decode_world_scene_room(room) else {
+        return Ok(false);
+    };
+    sqlx::query_scalar(
+        "SELECT EXISTS (SELECT 1 FROM explore.world_scene_place \
+             WHERE world_name = $1 AND entity_id = $2 AND identity::text = $3) \
+         OR EXISTS (SELECT 1 FROM explore.world_scene_binding \
+             WHERE world_name = $1 AND entity_id = $2 AND identity::text = $3)",
+    )
+    .bind(world.key())
+    .bind(scene.as_str())
+    .bind(place_id)
+    .fetch_one(pool)
+    .await
+}
+
 async fn remove_access(
     state: &SharedState,
     place_id: &str,
@@ -1222,11 +1297,22 @@ async fn remove_access(
     // A key of this scene that the request's recheck ended (its scene
     // replaced by a redeploy, its minter without the place) was revoked by
     // this request: 204 as for any other. A world key streaming into another
-    // scene's room is not this scene's.
-    let ours = revoked.iter().any(|key| match world_room {
-        Some(room) => key.replaced || key.room.as_deref() == Some(room),
-        None => true,
-    });
+    // scene's room is not this scene's; a replaced one is when its room was a
+    // deployment of this scene's place.
+    let mut ours = false;
+    for key in revoked {
+        ours = match (world_room, key.room.as_deref()) {
+            (None, _) => true,
+            (Some(room), Some(revoked)) if revoked == room => true,
+            (Some(_), Some(revoked)) if key.replaced => {
+                room_of_place(&state.pool, revoked, place_id).await?
+            }
+            _ => false,
+        };
+        if ours {
+            break;
+        }
+    }
     let Some(row) = active_access(&state.pool, place_id, world_room).await? else {
         return match ours {
             false => Err(ApiError::not_found(
@@ -1452,6 +1538,88 @@ mod scene_key_tests {
         crate::rooms::worlds_service_scene_room(world, &SceneId::parse(scene).unwrap())
     }
 
+    /// Two active keys streaming into one room (a mixed rollout): the verbs
+    /// and the presenter routes both take the one under the scene's place.
+    #[tokio::test]
+    async fn the_verbs_and_the_presenter_take_the_same_key_of_a_room() {
+        let Some(pool) = crate::db::scratch::pool(2).await else {
+            return;
+        };
+        let tag = Uuid::new_v4().simple().to_string();
+        let world = WorldName::parse(&format!("order{}.dcl.eth", &tag[..10])).unwrap();
+        let scene_room = room(&world, "SceneA");
+        let (scene, catalogue) = (format!("s-{tag}"), format!("c-{tag}"));
+        let own = key(&pool, &scene, &scene_room).await;
+        let newer = key(&pool, &catalogue, &scene_room).await;
+        sqlx::query(
+            "UPDATE social.scene_stream_access SET admin_place_key = $2 WHERE id = ANY($1)",
+        )
+        .bind(vec![own, newer])
+        .bind(&scene)
+        .execute(&pool)
+        .await
+        .unwrap();
+        sqlx::query("UPDATE social.scene_stream_access SET created_at = created_at + interval '1 minute' WHERE id = $1")
+            .bind(newer)
+            .execute(&pool)
+            .await
+            .unwrap();
+        let verbs = active_access(&pool, &scene, Some(&scene_room))
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(verbs.id, own);
+        let identity = |access: Uuid| format!("stream:x:{access}:{}", Uuid::new_v4());
+        assert!(
+            cast::publisher_credential_current(&pool, &scene_room, &identity(own))
+                .await
+                .unwrap()
+        );
+        assert!(
+            !cast::publisher_credential_current(&pool, &scene_room, &identity(newer))
+                .await
+                .unwrap()
+        );
+    }
+
+    /// A revocation whose recheck ended a replaced key answers 204 only when
+    /// that key's room was a deployment of the scene's place; a key of
+    /// another scene's room under a colliding place id answers 404.
+    #[tokio::test]
+    async fn a_revocation_owns_a_replaced_key_only_of_its_own_scene() {
+        let Some(pool) = crate::db::scratch::pool(2).await else {
+            return;
+        };
+        let state = scratch_state(pool.clone());
+        let tag = Uuid::new_v4().simple().to_string();
+        let world = WorldName::parse(&format!("own{}.dcl.eth", &tag[..10])).unwrap();
+        let identity = Uuid::new_v4();
+        sqlx::query("INSERT INTO explore.world_scene_place (world_name, identity, entity_id, parcels) VALUES ($1, $2, 'OldA', '{\"0,0\"}')")
+            .bind(world.key()).bind(identity).execute(&pool).await.unwrap();
+        // A redeploy of the place retains the old binding.
+        sqlx::query("UPDATE explore.world_scene_place SET entity_id = 'NewA' WHERE identity = $1")
+            .bind(identity)
+            .execute(&pool)
+            .await
+            .unwrap();
+        let place = identity.to_string();
+        let current = room(&world, "NewA");
+        let revoked = |scene: &str| {
+            vec![cast::RevokedKey {
+                room: Some(room(&world, scene)),
+                replaced: true,
+            }]
+        };
+        let error = remove_access(&state, &place, Some(&current), &revoked("SceneB"))
+            .await
+            .unwrap_err();
+        assert_eq!(error.code, 404, "another scene's key");
+        let ok = remove_access(&state, &place, Some(&current), &revoked("OldA"))
+            .await
+            .unwrap();
+        assert_eq!(ok.status(), StatusCode::NO_CONTENT, "its replaced key");
+    }
+
     /// A world scene reads the key streaming into its room, its own first,
     /// else one under another place (the world's, from before keys were per
     /// scene); a key under its place streaming elsewhere is not its own.
@@ -1670,6 +1838,15 @@ mod scene_key_tests {
         key(&pool, &format!("a-{tag}"), &world_room).await;
         assert!(
             jobs::replaced(&pool, &format!("world-{tag}"), legacy)
+                .await
+                .unwrap()
+        );
+        // Another scene's key under a colliding place id is no replacement.
+        let collided = key(&pool, &format!("p-{tag}"), &room(&world, "SceneB")).await;
+        retire(collided).await;
+        key(&pool, &format!("p-{tag}"), &room(&world, "SceneC")).await;
+        assert!(
+            !jobs::replaced(&pool, &format!("p-{tag}"), collided)
                 .await
                 .unwrap()
         );

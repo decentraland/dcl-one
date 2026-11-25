@@ -722,17 +722,20 @@ async fn delete_ingress(state: &CommsState, row: &Cleanup, token: Uuid) -> Resul
 }
 
 /// Whether credential `access_id`, stored under `place_id`, has an active
-/// replacement: one under the same place, or, in a world scene room, one
-/// streaming into that room (a world scene's key replacing one stored under
-/// the world's catalogue place).
+/// replacement: in a world scene room, the key streaming into that room
+/// (also a world scene's key replacing one stored under the world's
+/// catalogue place); else one under the same place. Another scene's key
+/// under a colliding place id is no replacement.
 pub(super) async fn replaced(
     pool: &PgPool,
     place_id: &str,
     access_id: Uuid,
 ) -> Result<bool, sqlx::Error> {
     sqlx::query_scalar(
-        "SELECT EXISTS(SELECT 1 FROM social.scene_stream_access n WHERE n.active AND n.id <> $2 AND (n.place_id = $1 \
-         OR n.room_id = (SELECT o.room_id FROM social.scene_stream_access o WHERE o.id = $2 AND starts_with(o.room_id, $3))))",
+        "WITH o AS (SELECT room_id FROM social.scene_stream_access WHERE id = $2 AND starts_with(room_id, $3)) \
+         SELECT EXISTS(SELECT 1 FROM social.scene_stream_access n WHERE n.active AND n.id <> $2 AND CASE \
+             WHEN EXISTS (SELECT 1 FROM o) THEN n.room_id = (SELECT room_id FROM o) \
+             ELSE n.place_id = $1 END)",
     )
     .bind(place_id)
     .bind(access_id)
@@ -1085,6 +1088,69 @@ async fn clear_stale(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A world scene key's notice names the world under the key's place,
+    /// with the footprint of the scene of the key's room; a resolver that
+    /// cannot be read fails it (503), never a notice with fewer holders.
+    #[tokio::test]
+    async fn a_world_key_notice_has_its_scene_footprint_and_fails_closed() {
+        use crate::interfaces::test_support::{StubDirectory, StubPolicy, StubScenes};
+        use crate::rooms::{ActiveDeployment, ResolveError, ResolvedRoom};
+        use crate::world_identity::{Parcel, RealmId, SceneId, WorldName};
+        let Some(pool) = crate::db::scratch::pool(2).await else {
+            return;
+        };
+        let tag = Uuid::new_v4().simple().to_string();
+        let world = WorldName::parse(&format!("ctx{}.dcl.eth", &tag[..10])).unwrap();
+        let scene = SceneId::parse("SceneA").unwrap();
+        let room = crate::rooms::worlds_service_scene_room(&world, &scene);
+        let base = Parcel::parse("3,4").unwrap();
+        let resolved = ResolvedRoom {
+            room: room.clone(),
+            scene_id: Some(scene.clone()),
+            deployment: Some(ActiveDeployment {
+                scene_id: scene,
+                title: None,
+                parcels: [base, Parcel::parse("3,5").unwrap()].into_iter().collect(),
+                base,
+                namespace: None,
+                local: true,
+            }),
+            realm: RealmId::World(world.clone()),
+        };
+        let state = |room: Result<ResolvedRoom, ResolveError>| {
+            CommsState::new(
+                pool.clone(),
+                crate::http::Outbound::for_tests(),
+                crate::gatekeeper::Settings::for_tests(),
+                None,
+                None,
+                Arc::new(StubPolicy::default()),
+                Arc::new(StubScenes {
+                    room,
+                    scene: Ok(None),
+                }),
+                Arc::new(crate::presence::Presence::new()),
+                Arc::new(StubDirectory::default()),
+            )
+        };
+        let feed = RemovedPlaces::new(pool.clone());
+        let context = world_key_context(&state(Ok(resolved)), &feed, "scene-place", &world, &room)
+            .await
+            .unwrap();
+        assert_eq!(context.place_id, "scene-place");
+        assert!(context.world);
+        assert_eq!(context.world_name.as_deref(), Some(world.key()));
+        assert_eq!(context.base_position, "3,4");
+        let mut positions: Vec<String> = serde_json::from_value(context.positions).unwrap();
+        positions.sort();
+        assert_eq!(positions, ["3,4", "3,5"]);
+        let unreadable = Err(ResolveError::Db(sqlx::Error::PoolTimedOut));
+        let error = world_key_context(&state(unreadable), &feed, "scene-place", &world, &room)
+            .await
+            .unwrap_err();
+        assert_eq!(error.code, 503);
+    }
 
     #[tokio::test]
     async fn a_scalar_era_notice_reaches_the_stored_owner_and_every_admin_and_operator_once() {

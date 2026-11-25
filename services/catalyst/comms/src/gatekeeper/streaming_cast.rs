@@ -184,12 +184,13 @@ async fn access_by_key(pool: &PgPool, key: &str) -> Result<Option<KeyedAccess>, 
 /// (`scene_stream_access_active_room_idx`). An expired row the expiry job has
 /// not deactivated yet counts as none.
 async fn access_by_room(pool: &PgPool, room: &str) -> Result<Option<KeyedAccess>, sqlx::Error> {
-    sqlx::query_as(
+    sqlx::query_as(sqlx::AssertSqlSafe(format!(
         "SELECT id, place_id, room_id, generated_by, created_at, expiration_time FROM social.scene_stream_access \
          WHERE room_id = $1 AND active \
          AND COALESCE(expiration_time, created_at + interval '4 days') > timezone('UTC', now()) \
-         ORDER BY created_at DESC LIMIT 1",
-    )
+         ORDER BY {} LIMIT 1",
+        super::ROOM_KEY_ORDER
+    )))
     .bind(room)
     .fetch_optional(pool)
     .await
@@ -672,6 +673,27 @@ async fn key_place(
     }
 }
 
+/// The room of `world`'s only scene with an active, unexpired key; `None`
+/// when no scene room or more than one has one.
+async fn single_keyed_room(
+    pool: &PgPool,
+    world: &WorldName,
+) -> Result<Option<String>, sqlx::Error> {
+    let rooms: Vec<String> = sqlx::query_scalar(
+        "SELECT DISTINCT room_id FROM social.scene_stream_access \
+         WHERE active AND starts_with(room_id, $1) \
+         AND COALESCE(expiration_time, created_at + interval '4 days') > timezone('UTC', now()) \
+         LIMIT 2",
+    )
+    .bind(crate::rooms::world_scene_room_prefix(world.key()))
+    .fetch_all(pool)
+    .await?;
+    Ok(match <[String; 1]>::try_from(rooms) {
+        Ok([room]) => Some(room),
+        Err(_) => None,
+    })
+}
+
 /// The key a watch location reads, with the room of a world scene
 /// ([`active_access`]), and the place it shows. A name ending in `.eth` is a
 /// world: the scene on `parcel`, or without one the world's only scene (a
@@ -709,20 +731,30 @@ async fn watch_place(
                     Err(_) => return Err(not_found()),
                 };
                 if scenes > 1 {
-                    return Err(ApiError::bad_request(format!(
-                        "A parcel is required to resolve a scene in multi-scene world {location}"
-                    )));
+                    // A `/w/<world>` link handed out before keys were per
+                    // scene still reads the world's one key: the only scene
+                    // room of the world with an active key.
+                    let Some(room) = single_keyed_room(pool, &world).await? else {
+                        return Err(ApiError::bad_request(format!(
+                            "A parcel is required to resolve a scene in multi-scene world {location}"
+                        )));
+                    };
+                    state
+                        .scenes
+                        .resolve(RoomRequest::NamedWorldScene { room: &room })
+                        .await
+                } else {
+                    // A world-shaped scene id resolves to the world's active scene.
+                    let scene = crate::world_identity::SceneId::parse(world.display())
+                        .map_err(|_| not_found())?;
+                    state
+                        .scenes
+                        .resolve(RoomRequest::Adapter {
+                            realm: &realm,
+                            scene: &scene,
+                        })
+                        .await
                 }
-                // A world-shaped scene id resolves to the world's active scene.
-                let scene = crate::world_identity::SceneId::parse(world.display())
-                    .map_err(|_| not_found())?;
-                state
-                    .scenes
-                    .resolve(RoomRequest::Adapter {
-                        realm: &realm,
-                        scene: &scene,
-                    })
-                    .await
             }
         };
         let resolved = match resolved {
@@ -1325,6 +1357,9 @@ pub async fn generate_stream_link(
     refuse_barred(&state, &sf.signer, device_id.as_deref(), denied).await?;
     // The room, the key and the authority all come from the one bound scene.
     let bound = Context::resolve(&state, &sf.metadata).await?;
+    if let Some((world, _)) = &bound.world_scene {
+        super::require_world_place(&state.pool, world).await?;
+    }
     let world_base = bound.world_scene.as_ref().map(|(world, _)| {
         let base = bound.footprint.base_position.clone().unwrap_or_default();
         (world.clone(), base)
@@ -2051,10 +2086,15 @@ async fn presenter_room(state: &CommsState, sf: &SignedFetch) -> Result<String, 
         .await?
         .ok_or_else(|| no_active_stream(&room))?;
     // A Genesis key's catalogue place must still exist; a world scene's key
-    // is stored under its scene's place, which is no catalogue row.
+    // is stored under its scene's place, which is no catalogue row, and needs
+    // its world's.
     let stored = PlaceLookup::new(state, &access.place_id, scene::NO_ADMINS);
-    let stored = match bound.world_scene {
-        Some(_) => Ok(Some(&bound.footprint)),
+    let stored = match &bound.world_scene {
+        Some((world, _)) => match super::world_catalogued(&state.pool, world).await {
+            Ok(true) => Ok(Some(&bound.footprint)),
+            Ok(false) => Ok(None),
+            Err(_) => Err("world catalogue unavailable"),
+        },
         None => stored.get().await,
     };
     match stored {

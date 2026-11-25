@@ -176,6 +176,12 @@ impl SceneIdentity for Catalogue {
         )
         .await
     }
+    async fn world_scene_count(
+        &self,
+        world: &crate::world_identity::WorldName,
+    ) -> Result<usize, crate::rooms::ResolveError> {
+        Ok(usize::from(self.world_active_scene(world).await?.is_some()))
+    }
 }
 
 fn canonical_state() -> CommsState {
@@ -254,6 +260,12 @@ impl SceneIdentity for BoundaryCatalogue {
         world: &WorldName,
     ) -> Result<Option<ActiveDeployment>, ResolveError> {
         self.world_scene(world, &self.scene).await
+    }
+    async fn world_scene_count(
+        &self,
+        world: &crate::world_identity::WorldName,
+    ) -> Result<usize, crate::rooms::ResolveError> {
+        Ok(usize::from(self.world_active_scene(world).await?.is_some()))
     }
 }
 
@@ -671,6 +683,12 @@ impl SceneIdentity for RetryCatalogue {
         world: &WorldName,
     ) -> Result<Option<ActiveDeployment>, ResolveError> {
         Catalogue.world_active_scene(world).await
+    }
+    async fn world_scene_count(
+        &self,
+        world: &crate::world_identity::WorldName,
+    ) -> Result<usize, crate::rooms::ResolveError> {
+        Ok(usize::from(self.world_active_scene(world).await?.is_some()))
     }
 }
 
@@ -1335,6 +1353,12 @@ impl SceneIdentity for RedeployCatalogue {
         }
         Catalogue.world_active_scene(world).await
     }
+    async fn world_scene_count(
+        &self,
+        world: &crate::world_identity::WorldName,
+    ) -> Result<usize, crate::rooms::ResolveError> {
+        Ok(usize::from(self.world_active_scene(world).await?.is_some()))
+    }
 }
 
 #[tokio::test]
@@ -1694,6 +1718,12 @@ impl SceneIdentity for FlakySceneB {
         world: &WorldName,
     ) -> Result<Option<ActiveDeployment>, ResolveError> {
         Catalogue.world_active_scene(world).await
+    }
+    async fn world_scene_count(
+        &self,
+        world: &crate::world_identity::WorldName,
+    ) -> Result<usize, crate::rooms::ResolveError> {
+        Ok(usize::from(self.world_active_scene(world).await?.is_some()))
     }
 }
 
