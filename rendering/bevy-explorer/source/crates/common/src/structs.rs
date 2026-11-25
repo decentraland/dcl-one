@@ -702,8 +702,6 @@ pub struct AppConfig {
     pub camera_smoothing: CameraSmoothing,
     /// The language the player chose (BCP-47); `None` follows the system language.
     pub language: Option<String>,
-    /// The chosen audio input's device id; `None` uses the system default.
-    pub microphone: Option<String>,
     /// Base url of an abgen Bevy variants service (prototype), when `--bevy-variants-url` /
     /// `?bevyVariants=` is absent; `None` = the asset-bundle generator's CDN for the base
     /// domain, `off` = off.
@@ -775,7 +773,6 @@ impl Default for AppConfig {
             dm_privacy: None,
             camera_smoothing: Default::default(),
             language: None,
-            microphone: None,
             bevy_variants_url: None,
             settings_generation: SETTINGS_GENERATION,
             inputs_generation: INPUTS_GENERATION,
@@ -1313,6 +1310,8 @@ pub struct AudioSettings {
     pub avatar: i32,
     /// Whether [`Self::microphone_focus`] passes the client window's focus through.
     pub mute_mic_in_background: bool,
+    /// The chosen audio input's device id; `None` uses the system default.
+    pub microphone: Option<String>,
 }
 
 impl Default for AudioSettings {
@@ -1325,6 +1324,7 @@ impl Default for AudioSettings {
             system: 100,
             avatar: 100,
             mute_mic_in_background: true,
+            microphone: None,
         }
     }
 }
@@ -2250,8 +2250,6 @@ pub struct MicrophoneInput {
 struct KnownMicrophone {
     input: MicrophoneInput,
     present: bool,
-    /// How many reports found it gone: after one listing it, or as the first report.
-    absences: u32,
 }
 
 /// Every audio input the host reported this session, in first-report order. An input keeps its
@@ -2259,39 +2257,19 @@ struct KnownMicrophone {
 #[derive(Resource, Default, Debug, Clone, PartialEq, Eq)]
 pub struct MicrophoneDevices {
     known: Vec<KnownMicrophone>,
-    /// The host has reported its inputs at least once.
-    reported: bool,
 }
 
 impl MicrophoneDevices {
-    fn present(&self, id: &str) -> bool {
+    /// Whether the host's latest report listed `id`.
+    pub fn offers(&self, id: &str) -> bool {
         self.known
             .iter()
             .any(|known| known.present && known.input.id == id)
     }
 
-    /// Whether the host reported its inputs and `id` was not among them.
-    pub fn missing(&self, id: &str) -> bool {
-        self.reported && !self.present(id)
-    }
-
-    /// Whether the host reported its inputs and `id` was among them.
-    pub fn offers(&self, id: &str) -> bool {
-        self.reported && self.present(id)
-    }
-
-    /// How many inputs the host offers now; `None` before its first report.
-    pub fn offered(&self) -> Option<usize> {
-        self.reported
-            .then(|| self.known.iter().filter(|known| known.present).count())
-    }
-
-    /// How many reports found `id` gone; a change means it went missing in between.
-    pub fn absences(&self, id: &str) -> u32 {
-        self.known
-            .iter()
-            .find(|known| known.input.id == id)
-            .map_or(0, |known| known.absences)
+    /// How many inputs the host's latest report listed.
+    pub fn offered(&self) -> usize {
+        self.known.iter().filter(|known| known.present).count()
     }
 
     /// Every known input's id, in choice order.
@@ -2302,54 +2280,23 @@ impl MicrophoneDevices {
             .collect()
     }
 
-    /// Every known input's name, in choice order; before the first report nothing is known to be
-    /// unplugged.
+    /// Every known input's name, in choice order.
     pub fn labels(&self) -> Vec<String> {
-        self.known.iter().map(|known| self.shown(known)).collect()
+        self.known.iter().map(Self::shown).collect()
     }
 
-    /// How `id` is named among the choices, if it is one.
-    pub fn label(&self, id: &str) -> Option<String> {
-        self.known
-            .iter()
-            .find(|known| known.input.id == id)
-            .map(|known| self.shown(known))
-    }
-
-    fn shown(&self, known: &KnownMicrophone) -> String {
-        if known.present || !self.reported {
+    fn shown(known: &KnownMicrophone) -> String {
+        if known.present {
             known.input.label.clone()
         } else {
             format!("{} (unplugged)", known.input.label)
         }
     }
 
-    /// Lists a saved choice the host has not reported yet, so the first report that lacks it
-    /// counts as an absence.
-    pub fn remember(&mut self, id: &str) {
-        if !self.known.iter().any(|known| known.input.id == id) {
-            self.known.push(KnownMicrophone {
-                input: MicrophoneInput {
-                    id: id.to_owned(),
-                    label: "Saved microphone".to_owned(),
-                },
-                present: false,
-                absences: 0,
-            });
-        }
-    }
-
     /// Takes the host's current inputs.
     pub fn replace(&mut self, reported: Vec<MicrophoneInput>) {
-        let first = !self.reported;
-        self.reported = true;
         for known in self.known.iter_mut() {
-            if !reported.iter().any(|input| input.id == known.input.id) {
-                if known.present || first {
-                    known.absences += 1;
-                }
-                known.present = false;
-            }
+            known.present = reported.iter().any(|input| input.id == known.input.id);
         }
         for input in reported {
             match self
@@ -2357,14 +2304,10 @@ impl MicrophoneDevices {
                 .iter_mut()
                 .find(|known| known.input.id == input.id)
             {
-                Some(known) => {
-                    known.input.label = input.label;
-                    known.present = true;
-                }
+                Some(known) => known.input.label = input.label,
                 None => self.known.push(KnownMicrophone {
                     input,
                     present: true,
-                    absences: 0,
                 }),
             }
         }
@@ -2948,23 +2891,6 @@ mod tests {
         // a distance under the minimum still yields a strictly increasing config
         let tiny = sun_cascades(ShadowSetting::High, 0.05).unwrap();
         assert!(tiny.bounds.windows(2).all(|w| w[0] < w[1]) && tiny.bounds[0] > MIN_CASCADE);
-    }
-
-    #[test]
-    fn a_first_report_without_the_saved_choice_counts_as_its_absence() {
-        let mut devices = MicrophoneDevices::default();
-        devices.remember("headset");
-        assert_eq!(devices.absences("headset"), 0);
-        assert!(!devices.missing("headset"));
-        devices.replace(Vec::new());
-        assert_eq!(devices.absences("headset"), 1);
-        assert!(devices.missing("headset"));
-        devices.replace(vec![MicrophoneInput {
-            id: "headset".to_owned(),
-            label: "Headset".to_owned(),
-        }]);
-        assert_eq!(devices.absences("headset"), 1);
-        assert!(devices.offers("headset"));
     }
 
     #[test]

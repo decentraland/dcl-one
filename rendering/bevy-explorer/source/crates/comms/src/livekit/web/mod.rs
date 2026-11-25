@@ -316,6 +316,11 @@ pub enum LivekitCommand {
         track: ObjectId,
         enabled: bool,
     },
+    /// Moves a live track to another input in place (`None`: the system default).
+    SetLocalAudioDevice {
+        track: ObjectId,
+        device: Option<String>,
+    },
     StopLocalAudio {
         request: RequestId,
         track: ObjectId,
@@ -355,6 +360,35 @@ pub enum LivekitEvent {
     },
     /// The browser's audio inputs changed.
     MicrophoneDevices(Vec<MicrophoneInput>),
+    /// A local audio track captures from this input: after it is created and after each
+    /// restart, including livekit's fallback when its input ends.
+    MicrophoneTrackInput {
+        track: ObjectId,
+        input: TrackInput,
+    },
+    /// A local audio track was stopped.
+    MicrophoneTrackStopped {
+        track: ObjectId,
+    },
+}
+
+/// The input a local audio track captures from.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TrackInput {
+    /// The browser's device id; `"default"` follows the system default.
+    pub device: String,
+    pub label: String,
+}
+
+/// The input each local audio track captures from, by track, from
+/// [`LivekitEvent::MicrophoneTrackInput`].
+#[derive(Resource, Default, Debug)]
+pub struct MicrophoneTrackInputs(HashMap<ObjectId, TrackInput>);
+
+impl MicrophoneTrackInputs {
+    pub fn get(&self, track: ObjectId) -> Option<&TrackInput> {
+        self.0.get(&track)
+    }
 }
 
 /// The page's answer to a request.
@@ -499,6 +533,7 @@ pub fn dispatch_page_events(
     mut receiver: ResMut<LivekitEventReceiver>,
     mut microphone: ResMut<MicrophoneStatus>,
     mut microphone_devices: ResMut<MicrophoneDevices>,
+    mut track_inputs: ResMut<MicrophoneTrackInputs>,
 ) {
     let Some(receiver) = receiver.0.as_mut() else {
         return;
@@ -542,6 +577,12 @@ pub fn dispatch_page_events(
             }
             LivekitEvent::MicrophoneDevices(devices) => {
                 microphone_devices.replace(devices);
+            }
+            LivekitEvent::MicrophoneTrackInput { track, input } => {
+                track_inputs.0.insert(track, input);
+            }
+            LivekitEvent::MicrophoneTrackStopped { track } => {
+                track_inputs.0.remove(&track);
             }
         }
     }

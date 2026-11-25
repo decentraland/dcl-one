@@ -9,6 +9,7 @@ const DESCRIPTION: &str = "The microphone voice chat captures from.\n\nSystem De
 
 fn choice(ids: &[String], config: &AppConfig) -> f32 {
     config
+        .audio
         .microphone
         .as_ref()
         .and_then(|id| ids.iter().position(|known| known == id))
@@ -45,7 +46,7 @@ fn set_choices(setting: &mut Setting, devices: &MicrophoneDevices, config: &AppC
     setting.apply = Some(Box::new(
         move |config: &mut AppConfig, value: f32| -> Result<(), anyhow::Error> {
             let index = value as usize;
-            config.microphone = match index {
+            config.audio.microphone = match index {
                 0 => None,
                 index => Some(
                     apply_ids
@@ -60,8 +61,8 @@ fn set_choices(setting: &mut Setting, devices: &MicrophoneDevices, config: &AppC
     setting.load = Box::new(move |config: &AppConfig| choice(&ids, config));
 }
 
-/// Adds the setting; its choices follow [`MicrophoneDevices`], which the comms plugin creates,
-/// seeds with the saved choice and fills.
+/// Adds the setting; its choices follow [`MicrophoneDevices`], which the livekit plugin creates and
+/// fills from the page.
 pub(super) fn add(app: &mut App, settings: &mut Settings, config: &AppConfig) {
     let mut setting = Setting {
         info: info(Vec::new(), &[], config),
@@ -74,7 +75,7 @@ pub(super) fn add(app: &mut App, settings: &mut Settings, config: &AppConfig) {
     settings.settings.push(setting);
     app.add_systems(
         Update,
-        sync_choices.run_if(resource_changed::<MicrophoneDevices>),
+        sync_choices.run_if(resource_exists_and_changed::<MicrophoneDevices>),
     );
 }
 
@@ -145,13 +146,17 @@ mod tests {
 
         set(&mut app, 2.0).unwrap();
         assert_eq!(
-            app.world().resource::<AppConfig>().microphone.as_deref(),
+            app.world()
+                .resource::<AppConfig>()
+                .audio
+                .microphone
+                .as_deref(),
             Some("b")
         );
         assert_eq!(shown(&app).value, 2.0);
 
         set(&mut app, 0.0).unwrap();
-        assert_eq!(app.world().resource::<AppConfig>().microphone, None);
+        assert_eq!(app.world().resource::<AppConfig>().audio.microphone, None);
     }
 
     #[test]
@@ -159,11 +164,15 @@ mod tests {
         let mut app = app();
         report(&mut app, &["a"]);
         assert!(set(&mut app, 2.0).is_err());
-        assert_eq!(app.world().resource::<AppConfig>().microphone, None);
+        assert_eq!(app.world().resource::<AppConfig>().audio.microphone, None);
 
         set(&mut app, 1.0).unwrap();
         assert_eq!(
-            app.world().resource::<AppConfig>().microphone.as_deref(),
+            app.world()
+                .resource::<AppConfig>()
+                .audio
+                .microphone
+                .as_deref(),
             Some("a")
         );
     }
@@ -194,45 +203,42 @@ mod tests {
         report(&mut app, &["c", "a"]);
         set(&mut app, 1.0).unwrap();
         assert_eq!(
-            app.world().resource::<AppConfig>().microphone.as_deref(),
+            app.world()
+                .resource::<AppConfig>()
+                .audio
+                .microphone
+                .as_deref(),
             Some("a")
         );
         set(&mut app, 2.0).unwrap();
         assert_eq!(
-            app.world().resource::<AppConfig>().microphone.as_deref(),
+            app.world()
+                .resource::<AppConfig>()
+                .audio
+                .microphone
+                .as_deref(),
             Some("b")
         );
     }
 
     #[test]
-    fn a_saved_choice_not_yet_reported_shows_as_chosen_by_its_saved_name() {
-        let config = AppConfig {
-            microphone: Some("headset".to_owned()),
-            ..Default::default()
-        };
+    fn a_saved_choice_shows_the_system_default_until_the_page_lists_it() {
+        let mut config = AppConfig::default();
+        config.audio.microphone = Some("headset".to_owned());
         let mut app = App::new();
         app.insert_resource(config.clone());
-        // as the comms plugin seeds it
-        let mut devices = MicrophoneDevices::default();
-        devices.remember("headset");
-        app.insert_resource(devices);
+        app.init_resource::<MicrophoneDevices>();
         let mut settings = Settings {
             settings: Vec::default(),
         };
         add(&mut app, &mut settings, &config);
         app.insert_resource(settings);
         app.update();
-        let shown_now = shown(&app);
-        assert_eq!(shown_now.value, 1.0);
-        assert_eq!(shown_now.named_variants[1].name, "Saved microphone");
-        assert!(!app
-            .world()
-            .resource::<MicrophoneDevices>()
-            .missing("headset"));
+        assert_eq!(shown(&app).value, 0.0);
 
         report(&mut app, &["a", "headset"]);
         let shown_now = shown(&app);
-        assert_eq!(shown_now.value, 1.0);
-        assert_eq!(shown_now.named_variants[1].name, "headset label");
+        assert_eq!(shown_now.value, 2.0);
+        assert_eq!(shown_now.named_variants[2].name, "headset label");
     }
 }

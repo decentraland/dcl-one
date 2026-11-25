@@ -15,6 +15,9 @@ var reportMicrophoneDevices = () => {};
 var microphoneListing = 0;
 // a listing has shown the inputs' ids, which the browser hides without permission
 var microphoneIdsShown = false;
+var reportTrackInput = () => {};
+// local audio tracks the engine stopped: never switched, so never captured from again
+const stoppedTracks = new WeakSet();
 const roomPlayback = new WeakMap();
 // Stream and transmitter audio elements whose play() the browser refused, with their room.
 const refusedStreams = new Map();
@@ -116,10 +119,6 @@ function update_gesture_listener() {
  * @param {function} on_change called with the permission state now and whenever it changes
  */
 export function setupMicrophonePermission(on_change) {
-    if (!(navigator.permissions && navigator.permissions.query)) {
-        warn("the microphone permission cannot be queried");
-        return;
-    }
     navigator.permissions.query({ name: "microphone" }).then((permissionState) => {
         microphonePermission = permissionState.state;
         on_change(microphonePermission);
@@ -202,13 +201,7 @@ export function watchMicrophoneDevices(on_change) {
                         device.deviceId !== "default" &&
                         device.deviceId !== "communications"
                 );
-                on_change(
-                    inputs.map((device) => ({
-                        id: device.deviceId,
-                        // from the id, so another input plugged in leaves this name alone
-                        label: device.label || `Microphone ${device.deviceId.slice(0, 6)}`,
-                    }))
-                );
+                on_change(inputs.map((device) => ({ id: device.deviceId, label: device.label })));
             })
             .catch((err) => warn("listing microphones failed", err));
     };
@@ -677,10 +670,48 @@ export function local_track_publication_source(local_track_publication) {
  */
 export async function local_audio_track_new(options) {
     try {
-        return await LivekitClient.createLocalAudioTrack(options);
+        const track = await LivekitClient.createLocalAudioTrack(options);
+        // a restart, including livekit's fallback when the input ends, may change the input
+        track.on("restarted", () => reportTrackInput(track));
+        return track;
     } catch (err) {
         error(err);
     }
+}
+
+/**
+ * Reports each local audio track's input once it carries the engine's id.
+ * @param {function} on_input called with the track's id, device id and label
+ */
+export function watchMicrophoneTrackInputs(on_input) {
+    reportTrackInput = (track) => {
+        const id = track.__bevyLivekitId;
+        if (id === undefined || stoppedTracks.has(track)) {
+            return;
+        }
+        const media = track.mediaStreamTrack;
+        on_input(id, media.getSettings().deviceId ?? "", media.label);
+    };
+}
+
+export function local_audio_track_report_input(track) {
+    reportTrackInput(track);
+}
+
+/**
+ * Moves a live track to another input; null follows the system default. livekit restarts the
+ * capture under the same publication.
+ * @param {livekit.LocalAudioTrack} track
+ * @param {string | null} device_id
+ */
+export function local_audio_track_set_device(track, device_id) {
+    // a restart would open the input again
+    if (stoppedTracks.has(track)) {
+        return;
+    }
+    track
+        .setDeviceId(device_id ? { ideal: device_id } : "default")
+        .catch((err) => warn("switching the microphone input failed", err));
 }
 
 // Disable the actual capture source synchronously. LiveKit's async signaling mute is not a
@@ -690,6 +721,8 @@ export function local_audio_track_set_enabled(track, enabled) {
 }
 
 export function local_audio_track_stop(track) {
+    // livekit also stops a restart still in progress when it completes
+    stoppedTracks.add(track);
     try {
         track.mediaStreamTrack.enabled = false;
     } finally {

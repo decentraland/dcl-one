@@ -20,7 +20,7 @@ use super::{
     LocalAudioTrack, LocalParticipant, LocalTrackPublication, ObjectId, Participant,
     ParticipantIdentity, ParticipantSid, RemoteAudioTrack, RemoteParticipant, RemoteTrack,
     RemoteTrackPublication, RemoteVideoTrack, Reply, RequestId, RoomEvent, RoomId, RoomOptions,
-    TrackKind, TrackPublishOptions, TrackSid, TrackSource, HOST,
+    TrackInput, TrackKind, TrackPublishOptions, TrackSid, TrackSource, HOST,
 };
 
 #[wasm_bindgen(module = "/livekit_web_bindings.js")]
@@ -32,6 +32,8 @@ extern "C" {
     fn prompt_microphone_permission() -> Result<(), JsValue>;
     #[wasm_bindgen(js_name = "watchMicrophoneDevices")]
     fn watch_microphone_devices(on_change: &Closure<dyn FnMut(JsValue)>);
+    #[wasm_bindgen(js_name = "watchMicrophoneTrackInputs")]
+    fn watch_microphone_track_inputs(on_input: &Closure<dyn FnMut(f64, String, String)>);
 
     #[wasm_bindgen(catch)]
     async fn room_connect(
@@ -93,6 +95,10 @@ extern "C" {
     fn local_audio_track_set_enabled(track: &JsValue, enabled: bool) -> Result<(), JsValue>;
     #[wasm_bindgen(catch)]
     fn local_audio_track_stop(track: &JsValue) -> Result<(), JsValue>;
+    fn local_audio_track_report_input(track: &JsValue);
+    #[wasm_bindgen(catch)]
+    fn local_audio_track_set_device(track: &JsValue, device: Option<String>)
+        -> Result<(), JsValue>;
 
     #[wasm_bindgen(catch)]
     fn local_track_publication_sid(local_track_publication: &JsValue) -> Result<String, JsValue>;
@@ -294,6 +300,17 @@ pub fn livekit_host_main() {
         panic!("livekit host already started");
     }
 
+    let input_events = events_tx.clone();
+    let on_input = Closure::new(move |track: f64, device: String, label: String| {
+        let _ = input_events.unbounded_send(LivekitEvent::MicrophoneTrackInput {
+            track: track as ObjectId,
+            input: TrackInput { device, label },
+        });
+    });
+    watch_microphone_track_inputs(&on_input);
+    // lives as long as the page
+    on_input.forget();
+
     wasm_bindgen_futures::spawn_local(async move {
         let host: SharedHost = Rc::default();
         while let Some(command) = commands_rx.next().await {
@@ -436,6 +453,8 @@ fn serve(command: LivekitCommand, host: &SharedHost, events: &UnboundedSender<Li
                     Err(js_error(err))
                 } else {
                     let id = host.borrow_mut().registry.id_of(&track, None);
+                    // stamped with its id now, so the report names it
+                    local_audio_track_report_input(&track);
                     Ok(LocalAudioTrack {
                         id,
                         // assigned when the track is published
@@ -459,6 +478,14 @@ fn serve(command: LivekitCommand, host: &SharedHost, events: &UnboundedSender<Li
                 }
             }
         }
+        LivekitCommand::SetLocalAudioDevice { track, device } => {
+            let track = host.borrow().registry.get(track);
+            if let Some(track) = track {
+                if let Err(err) = local_audio_track_set_device(&track, device) {
+                    warn!("failed to switch the microphone input: {}", js_error(err));
+                }
+            }
+        }
         LivekitCommand::StopLocalAudio {
             request,
             track,
@@ -471,6 +498,7 @@ fn serve(command: LivekitCommand, host: &SharedHost, events: &UnboundedSender<Li
             if release {
                 host.borrow_mut().registry.release(track);
             }
+            let _ = events.unbounded_send(LivekitEvent::MicrophoneTrackStopped { track });
             reply(events, request, Reply::LocalAudioStopped(result));
         }
         LivekitCommand::PublishTrack {
