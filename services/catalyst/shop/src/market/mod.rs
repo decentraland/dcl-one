@@ -101,6 +101,7 @@ pub mod owners;
 pub mod prices;
 pub mod profiles;
 pub mod rankings;
+mod rates;
 pub mod readers;
 pub mod rentals;
 pub mod royalty_notices;
@@ -857,6 +858,7 @@ impl MarketplaceState {
         }
         mirrors::spawn_jobs(self, jobs);
         chain_jobs::spawn_jobs(self, jobs, rentals);
+        crate::mana::history::spawn(self, jobs);
         neighbours::spawn_job(self, jobs);
     }
 
@@ -1302,6 +1304,7 @@ pub fn market_router(state: SharedState) -> Router {
         .route("/v1/sales/summary", get(sales::get_sales_summary))
         .route("/v1/sales", get(sales::get_sales))
         .route("/v1/prices", get(prices::get_prices))
+        .route("/v1/rates/mana-usd", get(rates::get_mana_usd_rates))
         .route("/v1/trendings", get(items::get_trendings))
         .route(
             "/v1/rankings/{entity}/{timeframe}",

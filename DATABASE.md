@@ -1791,6 +1791,24 @@ checkout and a claim takes the checkout first, so the edges add no lock
 cycle. Changing the
 key format, the frozen statuses or either statement updates this section.
 
+## Daily MANA/USD closes
+
+Shop stores one row per UTC day from July 8, 2021 in `shop.mana_usd_daily`.
+The writer selects the last round at or before the end of the day from the
+Polygon MANA/USD oracle using one finalized block hash per pass. Each row keeps
+the phase-aware round ID and the exact decimal rate. A day without a positive
+close stores a null rate. The mainnet sales index process runs a leased job
+that reads at most fourteen consecutive days per pass and commits each
+completed day. A failed read resumes at the first unrecorded day. Once caught
+up, the job adds one row a day.
+
+The rate endpoint scans the date key over at most fifteen years (approximately
+5,500 rows). Seller summaries join the days of the requested sales by that
+same key. They sum gross MANA at the historical closes, round to six decimal
+places and count sales with no rate. Royalty totals use the settlement legs
+recorded for resales of the creator's items. The sales publication and all
+inputs to these calculations are read in the same transaction.
+
 ## Shop open-trades reads that name a contract
 
 Workload: the item page's listing read and the checkout's store-mint and

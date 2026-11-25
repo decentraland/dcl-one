@@ -14,7 +14,12 @@ use crate::land_authz::{ESTATE_REGISTRY_MAINNET, LAND_REGISTRY_MAINNET};
 macro_rules! sales_query {
     ($nets:expr, wallet $param:literal; $($path:literal),+) => {
         sales_query!(@query $nets, concat!(", requested_wallet AS (SELECT ", $param, "::text AS address)",
-            include_str!("wallet_assets.sql")); $($path),+)
+            include_str!("wallet_assets.sql"),
+            ", scoped_assets AS NOT MATERIALIZED (SELECT a.* FROM wallet_keys k JOIN shop.sale_asset a USING(network,block_number,log_index,ordinal))"); $($path),+)
+    };
+    ($nets:expr, summary; $($path:literal),+) => {
+        sales_query!(@query $nets, concat!(", requested_wallet AS (SELECT $7::text AS address)",
+            include_str!("wallet_assets.sql"),include_str!("summary_assets.sql")); $($path),+)
     };
     ($nets:expr, $($path:literal),+) => {
         sales_query!(@query $nets, ", scoped_assets AS NOT MATERIALIZED (SELECT * FROM shop.sale_asset)"; $($path),+)
@@ -171,6 +176,8 @@ pub(crate) async fn require_metadata(
          LEFT JOIN shop.collection_walk collection USING(network)
          LEFT JOIN shop.chain_cursor walk ON walk.network=sales.network AND walk.indexer='collections'
          LEFT JOIN shop.mirror_state copy ON copy.network=sales.network AND copy.mirror=$1
+           AND (copy.chain_id=CASE sales.network WHEN 'ethereum' THEN 1 ELSE 137 END
+                OR (copy.chain_id IS NULL AND copy.pass_block_hash IS NULL))
          WHERE sales.network=ANY($2)
          ORDER BY sales.network",
     )
@@ -272,8 +279,12 @@ struct SellerTotals {
     mints: i64,
     resales: i64,
     earned: String,
+    earned_usd: String,
+    unpriced_sales: i64,
     royalty_resales: i64,
     volume: String,
+    royalty_paid: String,
+    incomplete_royalties: bool,
     by_collection: Json<Vec<super::sales::SalesSummaryCollection>>,
     items: Json<Vec<MintTotals>>,
     incomplete: bool,
@@ -286,8 +297,30 @@ pub(crate) async fn seller_stats(
 ) -> Result<SellerStats, Response> {
     use super::sales::{SalesSummary, SalesSummaryItem, SalesSummaryRoyalties};
     require_metadata(snap, nets, "items", Source::ItemsMirror).await?;
-    let row: SellerTotals = sales_query!(nets, wallet "$7"; "summary.sql")
-        .bind(f.seller.to_lowercase())
+    let seller = f.seller.to_lowercase();
+    if nets.contains(&ChainNet::Ethereum) {
+        let needs_v1_catalogue: bool = sqlx::query_scalar(
+            "SELECT EXISTS (
+                SELECT 1 FROM shop.items
+                WHERE network='ethereum' AND chain_id=1 AND item_type='wearable_v1' AND creator=$1
+            )",
+        )
+        .bind(&seller)
+        .fetch_one(&mut *snap.transaction)
+        .await
+        .map_err(db_error)?;
+        if needs_v1_catalogue {
+            require_metadata(
+                snap,
+                &[ChainNet::Ethereum],
+                "collections",
+                Source::CollectionsMirror,
+            )
+            .await?;
+        }
+    }
+    let row: SellerTotals = sales_query!(nets, summary; "settled_sales.sql", "summary.sql")
+        .bind(seller)
         .bind(f.from)
         .bind(f.to)
         .fetch_one(&mut *snap.transaction)
@@ -297,6 +330,12 @@ pub(crate) async fn seller_stats(
         return Err(unavailable(
             Source::SalesIndex,
             "the published sales history contains an unresolved seller",
+        ));
+    }
+    if row.incomplete_royalties {
+        return Err(unavailable(
+            Source::SalesIndex,
+            "the published creator resales lack a proven creator or royalty split",
         ));
     }
     let mut by_item = Vec::with_capacity(row.items.len());
@@ -319,11 +358,14 @@ pub(crate) async fn seller_stats(
             mints: row.mints,
             resales: row.resales,
             earned_wei: row.earned,
+            earned_usd: row.earned_usd,
+            unpriced_sales: row.unpriced_sales,
             by_collection: row.by_collection.0,
             by_item,
             royalties: SalesSummaryRoyalties {
                 resales: row.royalty_resales,
                 volume_wei: row.volume,
+                royalties_wei: row.royalty_paid,
             },
         },
         window,

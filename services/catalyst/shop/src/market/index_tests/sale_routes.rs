@@ -434,6 +434,48 @@ async fn sales_page_reads_one_published_network_and_refuses_a_withdrawn_warm_pag
     let (code, store) = get_json(&app, &format!("/v1/stores/{ALICE}/stats")).await;
     assert_eq!(code, StatusCode::OK, "{store}");
     assert_eq!(store["data"]["summary"], summary["data"]);
+    assert_eq!(summary["data"]["earnedUsd"], "0.000000");
+    assert_eq!(summary["data"]["unpricedSales"], 2);
+    sqlx::query(
+        "INSERT INTO shop.mana_usd_daily(day,usd,round_id)
+         VALUES ('2023-11-14',0.125,42),('2023-11-15',NULL,43)",
+    )
+    .execute(&db.pool)
+    .await
+    .unwrap();
+    let rates_path = "/v1/rates/mana-usd?from=1699920000001&to=1700092799999";
+    assert_eq!(
+        get_json(&app, rates_path).await,
+        (
+            StatusCode::OK,
+            json!({"data":[{"day":"2023-11-14","usd":"0.125"}]})
+        )
+    );
+    for invalid in [
+        "?from=1",
+        "?from=2&to=1",
+        "?from=0&to=9000000000000",
+        "?from=-1&to=1",
+    ] {
+        assert_eq!(
+            get_json(&app, &format!("/v1/rates/mana-usd{invalid}"))
+                .await
+                .0,
+            StatusCode::BAD_REQUEST,
+        );
+    }
+    let (code, priced) = get_json(&app, &summary_path).await;
+    assert_eq!(code, StatusCode::OK, "{priced}");
+    assert_eq!(
+        priced["data"]["earnedUsd"],
+        "392318858461667547739736838950479151006.397215"
+    );
+    assert_eq!(priced["data"]["unpricedSales"], 0);
+    assert_eq!(
+        priced["data"]["byCollection"][0]["earnedUsd"],
+        "392318858461667547739736838950479151006.397215"
+    );
+    assert_eq!(priced["data"]["byCollection"][0]["unpricedSales"], 0);
     let proceeds_path = format!("/v1/proceeds?seller={ALICE}&network=ETHEREUM");
     assert_eq!(
         get_json(&app, &proceeds_path).await.0,
@@ -615,6 +657,256 @@ async fn sales_page_reads_one_published_network_and_refuses_a_withdrawn_warm_pag
             .0,
         StatusCode::OK
     );
+    // Fold a v1 order from its chain events. Its nullable ledger item ID
+    // stays empty, so the creator lookup has to follow Issue's wearable ID.
+    let v1_block = block as i64 + 1;
+    seed_collection(
+        &db.pool,
+        "ethereum",
+        CARL,
+        block,
+        "v1-collection",
+        "Vintage",
+    )
+    .await;
+    seed_item(
+        &db.pool,
+        "ethereum",
+        CARL,
+        9,
+        "v1-collection:wearable",
+        "Vintage hat",
+        "wearable_v1",
+        "hat",
+    )
+    .await;
+    sqlx::query(
+        "UPDATE shop.collections SET creator=$1 WHERE network='ethereum' AND contract_address=$2",
+    )
+    .bind(BOB)
+    .bind(CARL)
+    .execute(&db.pool)
+    .await
+    .unwrap();
+    sqlx::query(
+        "INSERT INTO shop.nft_contract(network,contract_address,walked_from_block)
+        VALUES('ethereum',$1,$2)",
+    )
+    .bind(CARL)
+    .bind(block as i64)
+    .execute(&db.pool)
+    .await
+    .unwrap();
+    sqlx::query(
+        "INSERT INTO shop.nft_event(network,block_number,log_index,block_time,kind,emitter,
+         contract_address,token_id,from_address,to_address,amount,detail,tx_hash)
+         VALUES('ethereum',$1,0,$2,'issue_v1',$3,$3,42,NULL,$4,42,'wearable',NULL),
+               ('ethereum',$1,1,$2,'order_successful',$5,$3,42,$4,$6,1000,NULL,$7)",
+    )
+    .bind(v1_block)
+    .bind(1700000001i64)
+    .bind(CARL)
+    .bind(ALICE)
+    .bind(nft_index::deployments::Deployments::mainnet(net).markets[0].0)
+    .bind(BOB)
+    .bind(format!("0x{:064x}", 96))
+    .execute(&db.pool)
+    .await
+    .unwrap();
+    sqlx::query(
+        "UPDATE shop.chain_cursor SET last_block=$1,last_block_hash=$2,
+         folded_block=$1,folded_at=timezone('UTC',now()),sale_verified_through=$1
+         WHERE network='ethereum'",
+    )
+    .bind(v1_block)
+    .bind(chain.hash_of(v1_block as u64))
+    .execute(&db.pool)
+    .await
+    .unwrap();
+    sale_fold::pass(&db.pool, &Rpc::at(&state.http, &url), net)
+        .await
+        .unwrap();
+    let item_id: Option<String> = sqlx::query_scalar(
+        "SELECT item_id::text FROM shop.sale_asset WHERE network='ethereum' AND block_number=$1 AND log_index=1"
+    ).bind(v1_block).fetch_one(&db.pool).await.unwrap();
+    assert_eq!(item_id, None);
+    sqlx::query("UPDATE shop.sale_payment SET settled=true WHERE network='ethereum' AND block_number=$1 AND log_index=1")
+        .bind(v1_block).execute(&db.pool).await.unwrap();
+    sqlx::query("INSERT INTO shop.sale_payout(network,block_number,log_index,payment_ordinal,ordinal,role,recipient,amount)
+        VALUES('ethereum',$1,1,0,0,'seller',$2,995),('ethereum',$1,1,0,1,'royalty',$3,5)")
+        .bind(v1_block).bind(ALICE).bind(DAVE).execute(&db.pool).await.unwrap();
+    sqlx::query("UPDATE shop.mirror_state SET last_complete_pass_at=NULL WHERE network='ethereum' AND mirror='collections'")
+        .execute(&db.pool).await.unwrap();
+    let (code, incomplete) = get_json(&app, &format!("/v1/sales/summary?seller={CARL}")).await;
+    assert_eq!(code, StatusCode::SERVICE_UNAVAILABLE, "{incomplete}");
+    assert_eq!(incomplete["source"], "collections-mirror");
+    sqlx::query(
+        "UPDATE shop.mirror_state SET last_complete_pass_at=timezone('UTC',now())
+        WHERE network='ethereum' AND mirror='collections'",
+    )
+    .execute(&db.pool)
+    .await
+    .unwrap();
+    // A completed mirror can still lag the items copy or carry a different
+    // chain's row. Neither proves the collection URN for the known creator item.
+    sqlx::query("DELETE FROM shop.collections WHERE network='ethereum' AND contract_address=$1")
+        .bind(CARL)
+        .execute(&db.pool)
+        .await
+        .unwrap();
+    let (code, incomplete) = get_json(&app, &format!("/v1/sales/summary?seller={CARL}")).await;
+    assert_eq!(code, StatusCode::SERVICE_UNAVAILABLE, "{incomplete}");
+    assert_eq!(incomplete["source"], "sales-index");
+    seed_collection(
+        &db.pool,
+        "ethereum",
+        CARL,
+        block,
+        "v1-collection",
+        "Vintage",
+    )
+    .await;
+    let catalogue_chain = "UPDATE shop.collections SET creator=$1,chain_id=$2
+        WHERE network='ethereum' AND contract_address=$3";
+    sqlx::query(catalogue_chain)
+        .bind(BOB)
+        .bind(11155111)
+        .bind(CARL)
+        .execute(&db.pool)
+        .await
+        .unwrap();
+    let (code, incomplete) = get_json(&app, &format!("/v1/sales/summary?seller={CARL}")).await;
+    assert_eq!(code, StatusCode::SERVICE_UNAVAILABLE, "{incomplete}");
+    assert_eq!(incomplete["source"], "sales-index");
+    sqlx::query(catalogue_chain)
+        .bind(BOB)
+        .bind(1)
+        .bind(CARL)
+        .execute(&db.pool)
+        .await
+        .unwrap();
+    // With the catalogue published, a missing Issue still leaves attribution
+    // unresolved for an item creator who does not own the collection.
+    let move_issue = "UPDATE shop.nft_event SET block_number=$1
+        WHERE network='ethereum' AND kind='issue_v1' AND contract_address=$2";
+    sqlx::query(move_issue)
+        .bind(v1_block + 1)
+        .bind(CARL)
+        .execute(&db.pool)
+        .await
+        .unwrap();
+    let (code, incomplete) = get_json(&app, &format!("/v1/sales/summary?seller={CARL}")).await;
+    assert_eq!(code, StatusCode::SERVICE_UNAVAILABLE, "{incomplete}");
+    assert_eq!(incomplete["source"], "sales-index");
+    sqlx::query(move_issue)
+        .bind(v1_block)
+        .bind(CARL)
+        .execute(&db.pool)
+        .await
+        .unwrap();
+    let (code, creator_summary) = get_json(&app, &format!("/v1/sales/summary?seller={CARL}")).await;
+    assert_eq!(code, StatusCode::OK, "{creator_summary}");
+    assert_eq!(creator_summary["data"]["royalties"]["royaltiesWei"], "5");
+    assert_eq!(creator_summary["data"]["royalties"]["resales"], 1);
+    seed_item(
+        &db.pool,
+        "ethereum",
+        CARL,
+        10,
+        "v1-collection:other",
+        "Other wearable",
+        "wearable_v1",
+        "hat",
+    )
+    .await;
+    sqlx::query("UPDATE shop.items SET creator=$1 WHERE network='ethereum' AND contract_address=$2 AND item_id=10")
+        .bind(DAVE).bind(CARL).execute(&db.pool).await.unwrap();
+    let set_issue = "UPDATE shop.nft_event SET detail=$1 WHERE
+        network='ethereum' AND block_number=$2 AND kind='issue_v1' AND contract_address=$3";
+    sqlx::query(set_issue)
+        .bind("other")
+        .bind(v1_block)
+        .bind(CARL)
+        .execute(&db.pool)
+        .await
+        .unwrap();
+    let (code, other_creator) = get_json(&app, &format!("/v1/sales/summary?seller={CARL}")).await;
+    assert_eq!(code, StatusCode::OK, "{other_creator}");
+    assert_eq!(other_creator["data"]["royalties"]["royaltiesWei"], "0");
+    assert_eq!(other_creator["data"]["royalties"]["resales"], 0);
+    sqlx::query(set_issue)
+        .bind("wearable")
+        .bind(v1_block)
+        .bind(CARL)
+        .execute(&db.pool)
+        .await
+        .unwrap();
+    sqlx::query("UPDATE shop.items SET chain_id=11155111 WHERE network='ethereum' AND contract_address=$1 AND item_id=9")
+        .bind(CARL).execute(&db.pool).await.unwrap();
+    seed_item(
+        &db.pool,
+        "matic",
+        DAVE,
+        58,
+        "foreign-item",
+        "Foreign",
+        "wearable_v2",
+        "hat",
+    )
+    .await;
+    sqlx::query("UPDATE shop.items SET chain_id=80002 WHERE network='matic' AND contract_address=$1 AND item_id=58")
+        .bind(DAVE).execute(&db.pool).await.unwrap();
+    sqlx::query("WITH e AS (INSERT INTO shop.sale_execution(network,block_number,log_index,tx_hash,venue,kind,block_time,receipt_read)
+        VALUES('matic',$1,21,$2,$3,'order',$4,true) RETURNING network,block_number,log_index),
+        a AS (INSERT INTO shop.sale_asset(network,block_number,log_index,ordinal,public_id,beneficiary,kind,contract_address,token_id,item_id,seller,buyer,price,currency)
+        SELECT e.*,0,'foreign-item-resale',$5,'order',$3,1,58,$6,$5,100,$7 FROM e),
+        p AS (INSERT INTO shop.sale_payment(network,block_number,log_index,ordinal,currency,gross,settled)
+        SELECT e.*,0,$7,100,true FROM e RETURNING network,block_number,log_index)
+        INSERT INTO shop.sale_payout(network,block_number,log_index,payment_ordinal,ordinal,role,recipient,amount)
+        SELECT p.*,0,0,'royalty',$8,5 FROM p")
+        .bind(polygon as i64).bind(format!("0x{:064x}",95)).bind(DAVE).bind(day).bind(BOB).bind(ALICE).bind(mana).bind(CARL)
+        .execute(&db.pool).await.unwrap();
+    let (code, foreign) = get_json(&app, &format!("/v1/sales/summary?seller={CARL}")).await;
+    assert_eq!(code, StatusCode::OK, "{foreign}");
+    assert_eq!(foreign["data"]["royalties"]["royaltiesWei"], "0");
+    assert_eq!(foreign["data"]["royalties"]["resales"], 0);
+    sqlx::query("UPDATE shop.items SET chain_id=1 WHERE network='ethereum' AND contract_address=$1 AND item_id=9")
+        .bind(CARL).execute(&db.pool).await.unwrap();
+    sqlx::query(
+        "UPDATE shop.sale_payment SET settled=false WHERE network='ethereum' AND block_number=$1 AND log_index=1",
+    )
+    .bind(v1_block)
+    .execute(&db.pool)
+    .await
+    .unwrap();
+    for path in [
+        format!("/v1/sales/summary?seller={CARL}"),
+        format!("/v1/stores/{CARL}/stats"),
+    ] {
+        let (status, body) = get_json(&app, &path).await;
+        assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE, "{body}");
+        assert_eq!(body["source"], "sales-index");
+    }
+    sqlx::query(
+        "DELETE FROM shop.sale_payout WHERE network='ethereum' AND block_number=$1 AND log_index=1 AND role='royalty'",
+    )
+    .bind(v1_block)
+    .execute(&db.pool)
+    .await
+    .unwrap();
+    sqlx::query(
+        "UPDATE shop.sale_payment SET settled=true WHERE network='ethereum' AND block_number=$1 AND log_index=1",
+    )
+    .bind(v1_block)
+    .execute(&db.pool)
+    .await
+    .unwrap();
+    sqlx::query("UPDATE shop.sale_payout SET amount=amount+5 WHERE network='ethereum' AND block_number=$1 AND log_index=1 AND role='seller'")
+        .bind(v1_block).execute(&db.pool).await.unwrap();
+    let (code, zero) = get_json(&app, &format!("/v1/sales/summary?seller={CARL}")).await;
+    assert_eq!(code, StatusCode::OK, "{zero}");
+    assert_eq!(zero["data"]["royalties"]["royaltiesWei"], "0");
+    assert_eq!(zero["data"]["royalties"]["resales"], 1);
     // A missing payment row cannot turn a sale with unknown proceeds into
     // an empty page or a smaller seller total.
     sqlx::query("DELETE FROM shop.sale_payment WHERE network='ethereum' AND log_index=1")

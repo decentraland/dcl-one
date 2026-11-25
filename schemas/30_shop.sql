@@ -17067,6 +17067,15 @@ CREATE INDEX sale_first_day ON shop.sale_first_purchase(network,first_day);
 
 -- One common source prefix per network. Capture each dependency's revision
 -- independently so that withdrawals invalidate reads at the same height.
+-- The Polygon MANA/USD oracle's close of each UTC day, including
+-- days whose last round had no positive answer.
+CREATE TABLE shop.mana_usd_daily (
+    day date PRIMARY KEY,
+    usd numeric CHECK (usd > 0),
+    round_id numeric(25,0) CHECK (round_id > 0),
+    CONSTRAINT mana_usd_daily_rate_round_check CHECK (usd IS NULL OR round_id IS NOT NULL)
+);
+
 CREATE TABLE shop.sale_publication (
     network text PRIMARY KEY CHECK (network IN ('ethereum', 'matic')),
     block_number bigint NOT NULL,
