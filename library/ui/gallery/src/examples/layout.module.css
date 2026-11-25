@@ -138,3 +138,9 @@
 .strip > * {
   flex: none;
 }
+
+/* Room below a row of selects for an open list. */
+.selectRoom {
+  align-items: flex-start;
+  min-height: 180px;
+}

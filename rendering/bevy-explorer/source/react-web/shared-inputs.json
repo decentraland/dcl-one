@@ -3277,10 +3277,6 @@
           "kind": "regular"
         },
         {
-          "name": "Select.module.css",
-          "kind": "regular"
-        },
-        {
           "name": "Select.tsx",
           "kind": "regular"
         },
@@ -5236,10 +5232,6 @@
         },
         {
           "name": "searchField.test.tsx",
-          "kind": "regular"
-        },
-        {
-          "name": "selectDirection.test.ts",
           "kind": "regular"
         },
         {
@@ -8129,6 +8121,18 @@
         },
         {
           "name": "Dropdown.tsx",
+          "kind": "regular"
+        },
+        {
+          "name": "HudDropdown.direction.test.ts",
+          "kind": "regular"
+        },
+        {
+          "name": "HudDropdown.test.tsx",
+          "kind": "regular"
+        },
+        {
+          "name": "HudDropdown.tsx",
           "kind": "regular"
         }
       ]
@@ -12340,12 +12344,8 @@
       "sha256": "75645745248fdeea5fa0a48d23741ebe92e0add267249ce17e5f54bb99e4b3ef"
     },
     {
-      "path": "library/ui/apps/hud/design/Select.module.css",
-      "sha256": "fb237b4abcb9dfdc2b2a514b4d921828eaee5b0be6dea5f78e990404d8d2d3f7"
-    },
-    {
       "path": "library/ui/apps/hud/design/Select.tsx",
-      "sha256": "11943a5be834aab97ebc6fd97abeb5bad376a62eb7653bed4d3d1a7cc6b74a58"
+      "sha256": "5e752c7cc992a643a9e15392ee53a30976da5b3182cb185b6e7802312a554c11"
     },
     {
       "path": "library/ui/apps/hud/design/Showcase.tsx",
@@ -14352,10 +14352,6 @@
       "sha256": "6f41d23d7c4d842bea4b8ce04faf5be6a8e0997c8a88d2bf2f169e2f44434f19"
     },
     {
-      "path": "library/ui/apps/hud/test/selectDirection.test.ts",
-      "sha256": "bdf78a28714d30b970c1073efb3ba89bb8a6899468f5aa8ebb9dce3a06447af6"
-    },
-    {
       "path": "library/ui/apps/hud/test/setup.ts",
       "sha256": "55ea6499e8c9af49f9d39ce409a34cc1adc338bf98029befc9aa6e3e3de617a0"
     },
@@ -16169,11 +16165,15 @@
     },
     {
       "path": "library/ui/components/Dropdown/Dropdown.module.css",
-      "sha256": "7c19a713536b16fae85d5988e9a005f155eba6f196780614c21002e840e8820f"
+      "sha256": "c6d649954956d57bd68b85578d6d08e4afb3498f6dcf21d37b187b1a847dfbc0"
     },
     {
       "path": "library/ui/components/Dropdown/Dropdown.tsx",
-      "sha256": "779c00e32c6e5b0510e156a8d5de728139bb0f27d5a13fb4e0956be36bd9132d"
+      "sha256": "8f48ba65bb6f7cf15dd679128d872a29bad21fc2a2da4fb6fd76760123f4425e"
+    },
+    {
+      "path": "library/ui/components/Dropdown/HudDropdown.tsx",
+      "sha256": "497cf05a79d44e74a10b3de2de6c6059fab48171d084e1fadf479dc41afea49d"
     },
     {
       "path": "library/ui/components/EventCard/EventCard.module.css",
@@ -21485,17 +21485,17 @@
     },
     {
       "from": "library/ui/apps/hud/design/Select.tsx",
-      "to": "library/ui/apps/hud/design/Select.module.css",
+      "to": "library/ui/index.ts",
       "kind": "native:runtime"
     },
     {
       "from": "library/ui/apps/hud/design/Select.tsx",
-      "to": "library/ui/apps/hud/design/Select.module.css",
+      "to": "library/ui/index.ts",
       "kind": "production:runtime"
     },
     {
       "from": "library/ui/apps/hud/design/Select.tsx",
-      "to": "library/ui/apps/hud/design/Select.module.css",
+      "to": "library/ui/index.ts",
       "kind": "test:runtime"
     },
     {
@@ -51619,21 +51619,6 @@
       "kind": "test:runtime"
     },
     {
-      "from": "library/ui/apps/hud/test/selectDirection.test.ts",
-      "to": "library/ui/apps/hud/design/Select.tsx",
-      "kind": "native:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/test/selectDirection.test.ts",
-      "to": "library/ui/apps/hud/design/Select.tsx",
-      "kind": "production:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/test/selectDirection.test.ts",
-      "to": "library/ui/apps/hud/design/Select.tsx",
-      "kind": "test:runtime"
-    },
-    {
       "from": "library/ui/apps/hud/test/shopPanel.test.tsx",
       "to": "library/ui/apps/hud/features/sidebar/Sidebar.tsx",
       "kind": "native:runtime"
@@ -61940,6 +61925,21 @@
     },
     {
       "from": "library/ui/components/Dropdown/Dropdown.tsx",
+      "to": "library/ui/components/Dropdown/HudDropdown.tsx",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/components/Dropdown/Dropdown.tsx",
+      "to": "library/ui/components/Dropdown/HudDropdown.tsx",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/components/Dropdown/Dropdown.tsx",
+      "to": "library/ui/components/Dropdown/HudDropdown.tsx",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/components/Dropdown/Dropdown.tsx",
       "to": "library/ui/foundations/icons/general.tsx",
       "kind": "native:runtime"
     },
@@ -61951,6 +61951,21 @@
     {
       "from": "library/ui/components/Dropdown/Dropdown.tsx",
       "to": "library/ui/foundations/icons/general.tsx",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/components/Dropdown/HudDropdown.tsx",
+      "to": "library/ui/components/Dropdown/Dropdown.module.css",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/components/Dropdown/HudDropdown.tsx",
+      "to": "library/ui/components/Dropdown/Dropdown.module.css",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/components/Dropdown/HudDropdown.tsx",
+      "to": "library/ui/components/Dropdown/Dropdown.module.css",
       "kind": "test:runtime"
     },
     {
@@ -67965,11 +67980,6 @@
     },
     {
       "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
-      "to": "library/ui/apps/hud/test/selectDirection.test.ts",
-      "kind": "type"
-    },
-    {
-      "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
       "to": "library/ui/apps/hud/test/setup.ts",
       "kind": "type"
     },
@@ -68781,6 +68791,11 @@
     {
       "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
       "to": "library/ui/components/Dropdown/Dropdown.tsx",
+      "kind": "type"
+    },
+    {
+      "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
+      "to": "library/ui/components/Dropdown/HudDropdown.tsx",
       "kind": "type"
     },
     {

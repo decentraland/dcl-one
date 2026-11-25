@@ -94,6 +94,20 @@ function SingleDropdownDemo({ initial }: { initial: Network | null }) {
   )
 }
 
+function HudDropdownDemo({ variant }: { variant: 'dark' | 'light' }) {
+  const [value, setValue] = useState<string>('ethereum')
+  return (
+    <Dropdown
+      appearance="hud"
+      variant={variant}
+      label="Network"
+      value={value}
+      options={networks}
+      onChange={setValue}
+    />
+  )
+}
+
 function MultipleDropdownDemo() {
   const [value, setValue] = useState<Network[]>(['polygon'])
   return (
@@ -416,6 +430,24 @@ export const formEntries: GalleryEntry[] = [
               label="Network"
               options={networks}
               value={null}
+              onChange={() => {}}
+              disabled
+            />
+          </div>
+        )
+      },
+      {
+        id: 'hud',
+        title: 'Explorer HUD: the dark field, the light field and a disabled one',
+        render: () => (
+          <div className={`${layout.row} ${layout.selectRoom}`}>
+            <HudDropdownDemo variant="dark" />
+            <HudDropdownDemo variant="light" />
+            <Dropdown
+              appearance="hud"
+              label="Network"
+              value="ethereum"
+              options={networks}
               onChange={() => {}}
               disabled
             />

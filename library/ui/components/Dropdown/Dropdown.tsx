@@ -1,6 +1,7 @@
 import { useEffect, useId, useLayoutEffect, useRef, useState } from 'react'
-import type { HTMLAttributes, KeyboardEvent, RefObject } from 'react'
+import type { HTMLAttributes, KeyboardEvent, ReactElement, RefObject } from 'react'
 import { GeneralInfoButton } from '../../foundations/icons/general'
+import { HudDropdown, type HudDropdownProps } from './HudDropdown'
 import styles from './Dropdown.module.css'
 
 export type DropdownOption<T extends string = string> = {
@@ -44,7 +45,11 @@ export type DropdownMultipleProps<T extends string> = DropdownCommon<T> & {
   valueText?: (chosen: readonly DropdownOption<T>[]) => string
 }
 
-export type DropdownProps<T extends string = string> = DropdownSingleProps<T> | DropdownMultipleProps<T>
+export type DropdownProps<T extends string = string> = (DropdownSingleProps<T> | DropdownMultipleProps<T>) & {
+  appearance?: 'default'
+}
+
+type WithoutAppearance<P> = P extends unknown ? Omit<P, 'appearance'> : never
 
 const GUTTER = 16
 
@@ -145,8 +150,21 @@ function Help({ id, text, label, onActivate }: { id: string; text: string; label
  * A labelled choice from a list, one option or several: a button with the `combobox` role that
  * opens a `listbox`. The focus stays on the button. Arrow keys, Home, End and typed letters move
  * through the options; Enter or Space chooses; Escape, Tab and a press outside close the list.
+ *
+ * With `appearance="hud"` it is the Explorer HUD's select instead (`HudDropdownProps`): a field that opens a
+ * list of option buttons.
  */
-export function Dropdown<T extends string = string>(props: DropdownProps<T>) {
+export function Dropdown(props: HudDropdownProps): ReactElement
+export function Dropdown<T extends string = string>(props: DropdownProps<T>): ReactElement
+export function Dropdown<T extends string = string>({
+  appearance = 'default',
+  ...props
+}: DropdownProps<T> | HudDropdownProps) {
+  if (appearance === 'hud') return <HudDropdown {...(props as Omit<HudDropdownProps, 'appearance'>)} />
+  return <FigmaDropdown {...(props as WithoutAppearance<DropdownProps<T>>)} />
+}
+
+function FigmaDropdown<T extends string = string>(props: WithoutAppearance<DropdownProps<T>>) {
   const {
     label,
     labelHidden = false,
