@@ -1729,6 +1729,89 @@ def cmd_community_thumbnails(args, sources):
     return int(any(counts[k] for k in ('corrupt', 'invalid', 'failed')))
 
 
+EVENTS = 'events'
+# The upstream poster paths the node's events name, (kind, file) as `explore.poster` keys them.
+EVENT_POSTERS_NAMED = (
+    "WITH named AS (SELECT DISTINCT m[1] AS kind, m[2] AS file FROM explore.event e,"
+    " LATERAL (VALUES (e.raw->>'image'), (e.raw->>'image_vertical')) v(url),"
+    " LATERAL regexp_match(v.url, '^/(poster|poster-vertical)/([A-Za-z0-9][A-Za-z0-9._-]{0,199})$') m"
+    " WHERE m IS NOT NULL)\n")
+EVENT_POSTER_BATCH = 200
+
+
+def cmd_event_posters(args):
+    """`blobs events`: each poster the node's events name on upstream's bucket into the store, then its
+    `explore.poster` row, as the read-through writes it. A row already indexed stays (a local upload or an
+    earlier read-through). `--verify` lists named posters the node cannot serve."""
+    if args.object_metadata or args.refresh or args.retry_missing or args.from_s3:
+        raise MigrationError(f'{EVENTS} blobs take only --to, --verify, --allow-missing and one of --from-url or'
+                             ' --from-dir')
+    if args.from_url and args.from_dir:
+        raise MigrationError('pass at most one of --from-url or --from-dir DIR')
+    blobs = load_blobs_module()
+    store = blobs.Store(storage_root(args))
+    target_url = database_url(args.target_env)
+    if args.verify:
+        rows = [line.split('\t') for line in psql(target_url, EVENT_POSTERS_NAMED + (
+            "SELECT n.kind || '/' || n.file, COALESCE(p.blob_cid, '') FROM named n"
+            " LEFT JOIN explore.poster p ON p.kind = n.kind AND p.file = n.file ORDER BY 1;\n")).splitlines() if line]
+        unindexed = [key for key, cid in rows if not cid]
+        unstored = [key for key, cid in rows if cid and not store.has(cid)]
+        for key in unindexed:
+            print(f'  {key}: not indexed', flush=True)
+        for key in unstored:
+            print(f'  {key}: indexed, blob missing from {store.contents}', flush=True)
+        print(f'{EVENTS}: {len(rows)} posters named, {len(unindexed)} not indexed,'
+              f' {len(unstored)} with their blob missing', flush=True)
+        return int(bool(unindexed or unstored))
+    try:
+        if args.from_dir:
+            upstream = blobs.FolderArtSource(args.from_dir)
+        else:
+            upstream = blobs.HttpArtSource(args.from_url or blobs.EVENT_POSTER_BASE)
+    except (OSError, RuntimeError) as e:
+        raise MigrationError(str(e)) from e
+    todo = [line.strip() for line in psql(target_url, EVENT_POSTERS_NAMED + (
+        "SELECT n.kind || '/' || n.file FROM named n WHERE NOT EXISTS (SELECT 1 FROM explore.poster p"
+        " WHERE p.kind = n.kind AND p.file = n.file) ORDER BY 1;\n")).splitlines() if line.strip()]
+    print(f'{EVENTS}: {len(todo)} posters named by events and not indexed here;'
+          f' reading them from {upstream.describe()} into {store.contents}', flush=True)
+    counts = dict.fromkeys(('copied', 'present', 'missing', 'corrupt', 'invalid', 'failed'), 0)
+    stored = []
+
+    def flush():
+        # Right after the copy, so the storage GC never sees these blobs unreferenced for long. A row indexed
+        # since (an upload or a read-through) wins.
+        if stored:
+            values = ', '.join(
+                f"({literal(kind)}, {literal(file)}, {literal(o.cid)}, {literal(o.content_type)}, {o.size},"
+                " 'upstream', timezone('UTC', now()))"
+                for o in stored for kind, file in [o.key.split('/', 1)])
+            psql(target_url, 'INSERT INTO explore.poster (kind, file, blob_cid, content_type, byte_size, origin,'
+                             f' fetched_at) VALUES {values} ON CONFLICT (kind, file) DO NOTHING;\n')
+            stored.clear()
+
+    try:
+        for outcome in blobs.copy_all(upstream, store, todo, args.workers, copy=blobs.copy_event_poster):
+            counts[outcome.status] += 1
+            if outcome.status in ('copied', 'present'):
+                stored.append(outcome)
+                if len(stored) >= EVENT_POSTER_BATCH:
+                    flush()
+            else:
+                print(f'  {outcome.key}: {outcome.status}: {outcome.reason}', flush=True)
+        flush()
+    except blobs.SourceError as e:
+        flush()
+        raise MigrationError(f'upstream poster bucket: {e}') from e
+    print(f'{EVENTS}: posters copied {counts["copied"]}, already in the store {counts["present"]},'
+          f' absent upstream {counts["missing"]}, not an image {counts["corrupt"] + counts["invalid"]},'
+          f' read failed {counts["failed"]} (a re-run retries every poster still not indexed)', flush=True)
+    # a wrong bucket answers every poster absent: absent ones fail the run until reviewed (--allow-missing)
+    return int(any(counts[k] for k in ('corrupt', 'invalid', 'failed'))
+               or (counts['missing'] > 0 and not args.allow_missing))
+
+
 def cmd_blobs(args, sources):
     if getattr(args, 'object_metadata', None) and args.source != CAMERA:
         raise MigrationError('--object-metadata applies only to Camera snapshot objects')
@@ -1738,6 +1821,8 @@ def cmd_blobs(args, sources):
         return cmd_badge_art(args)
     if args.source == SOCIAL:
         return cmd_community_thumbnails(args, sources)
+    if args.source == EVENTS:
+        return cmd_event_posters(args)
     if args.source not in BLOB_SETS:
         raise MigrationError(f'no blob set for {args.source!r}; known: {", ".join(sorted(BLOB_SETS))}')
     if args.from_url or args.refresh:
@@ -2142,13 +2227,13 @@ def parser():
                      help="the node's STORAGE_ROOT_FOLDER (default: that variable); runs of steps whose rows"
                           ' name blobs end by checking the store holds them')
     blobs = sub.add_parser('blobs', help="copy a source's blobs into the node's store, or --verify them")
-    blobs.add_argument('source', help=f'one of: {", ".join(sorted([*BLOB_SETS, "badges", SOCIAL]))}')
+    blobs.add_argument('source', help=f'one of: {", ".join(sorted([*BLOB_SETS, "badges", SOCIAL, EVENTS]))}')
     blobs.add_argument('--to', help='the node\'s STORAGE_ROOT_FOLDER (default: that variable); for badges,'
                                     ' its BADGES_ASSETS_DIR (default: that variable)')
     blobs.add_argument('--object-metadata', type=Path, help='Camera: required JSONL with literal object_key and original content_type')
     blobs.add_argument('--from-dir', help='upstream storage folder (or a local sync of its bucket)')
-    blobs.add_argument('--from-url', help='badges and social-service-ea: upstream CDN base URL (default: its'
-                                          ' production assets CDN)')
+    blobs.add_argument('--from-url', help='badges, social-service-ea and events: upstream CDN or bucket base URL'
+                                          ' (default: its production one)')
     blobs.add_argument('--refresh', action='store_true',
                        help='badges: copy every texture again, also those already in the directory')
     blobs.add_argument('--from-s3', metavar='BUCKET', help='upstream S3 bucket (needs boto3)')

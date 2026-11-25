@@ -51,8 +51,15 @@ Notes:
   cancellation coverage remains unverified and activation is not ready.
 - Posters on the upstream bucket (`events-assets-<hex>.decentraland.*/poster[-vertical]/<file>`)
   become `/poster[-vertical]/<file>`, the path local writes store. The poster
-  bytes are not in the database: they come through the poster read-through
-  (`EVENTS_POSTER_UPSTREAM_URL`) or a separate bucket copy.
+  bytes are not in the database. The node reads them through from
+  `EVENTS_POSTER_UPSTREAM_URL` only while `EVENTS_MIRROR_UPSTREAM` is on, so
+  `migrate.py blobs events` copies every poster the node's events name from the
+  bucket into the store and indexes it in `explore.poster` (`origin = 'upstream'`,
+  as the read-through writes it). A poster already indexed, a local upload or
+  an earlier read-through, stays. A poster the bucket no longer holds is
+  reported and stays unindexed (404, as the read-through answers). Run it after
+  each `run events` and before the mirror goes off; `blobs events --verify`
+  lists named posters not indexed or whose blob the store lacks.
 - `deleted_at` is `timestamp` (UTC) upstream; the other event and schedule
   timestamps are `timestamptz`. `profile_settings.created_at/updated_at` are
   `timestamp` (gatsby `Type.TimeStampTZ`) and are read as UTC.
@@ -85,5 +92,6 @@ Notes:
 ## Left to the node
 
 `social.event_notification_intents` (written by the node's own transitions and
-occurrence scanner), `explore.mirror_state`, `explore.poster`,
-`explore.seen_nonces`.
+occurrence scanner), `explore.mirror_state`, `explore.seen_nonces`.
+`explore.poster` rows come from `blobs events`, uploads and the read-through,
+not from `run`.
