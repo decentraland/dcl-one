@@ -212,6 +212,18 @@ async fn historical_routes_read_only_the_published_prefix() {
     let (status, _, polygon_head) = post(&app, &historical("head"), Some(&bearer), polygon).await;
     assert_eq!(status, StatusCode::OK, "{polygon_head}");
 
+    let (status, headers, vesting) = post(
+        &app,
+        &historical("head"),
+        Some(&bearer),
+        json!({"squid":"registry","chain":"ethereum","processor":"vesting"}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE, "{vesting}");
+    assert_eq!(headers["retry-after"], "30");
+    assert_eq!(vesting["code"], "unavailable");
+    assert_eq!(vesting["source"], "registry-vesting-index");
+
     sqlx::query("DELETE FROM shop.chain_checkpoint WHERE indexer='third_party_registry'")
         .execute(&db.pool)
         .await

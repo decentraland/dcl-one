@@ -623,8 +623,8 @@ async fn lookup(
 }
 
 async fn head(state: &MarketplaceState, req: Head) -> Result<Value, Failure> {
-    if req.processor.is_some() {
-        return Err(Failure::Unavailable);
+    if let Some(Processor::Vesting) = req.processor {
+        return Err(Failure::SourceUnavailable("registry-vesting-index"));
     }
     let mut db = snapshot(&state.pool).await?;
     let (net, position) = match (req.squid, req.chain) {
