@@ -96,6 +96,58 @@ pub(crate) fn ensure_fresh(expires_at: DateTime<Utc>) -> Result<(), Response> {
     Ok(())
 }
 
+pub(super) async fn top_owners(
+    state: &MarketplaceState,
+    creator: &str,
+    sort: &str,
+    ascending: bool,
+    first: i64,
+    skip: i64,
+) -> Result<super::wire::DataTotal<super::owners::TopOwner>, Response> {
+    if !super::owned_items::walks_here(state) {
+        return Err(super::owned_items::not_ready(
+            "this node does not walk the nft index",
+        ));
+    }
+    let _slot = read_slot(&state.sales_analytics_slots)?;
+    // The sales snapshot requires a fresh, full NFT publication on both
+    // chains. The owner and spend reads share the same snapshot.
+    let (mut snap, nets) = snapshot(state, None).await?;
+    require_metadata(&mut snap, nets, "items", Source::ItemsMirror).await?;
+    require_metadata(
+        &mut snap,
+        &[ChainNet::Ethereum],
+        "collections",
+        Source::CollectionsMirror,
+    )
+    .await?;
+    sqlx::query("SET LOCAL statement_timeout = '5s'")
+        .execute(&mut *snap.transaction)
+        .await
+        .map_err(db_error)?;
+    let (Json(data), total) = sales_query!(nets, "top_owners.sql")
+        .bind(creator)
+        .bind(sort)
+        .bind(ascending)
+        .bind(first)
+        .bind(skip)
+        .bind(nft_index::ZERO_ADDRESS)
+        .fetch_one(&mut *snap.transaction)
+        .await
+        .map_err(|e| {
+            if e.as_database_error()
+                .is_some_and(|d| d.code().as_deref() == Some("57014"))
+            {
+                ApiError::http(503, "This creator holds too many items to rank right now")
+                    .into_response()
+            } else {
+                db_error(e)
+            }
+        })?;
+    ensure_fresh(snap.expires_at)?;
+    Ok(super::wire::DataTotal { data, total })
+}
+
 pub(crate) async fn seller_slot(
     state: &MarketplaceState,
 ) -> Result<tokio::sync::SemaphorePermit<'_>, Response> {
