@@ -88,15 +88,8 @@ export type LandingsEvents = {
   };
   lp_community_created: {
     community_id?: string;
-    stub: true;
+    stub?: true;
   };
-  lp_community_gate_viewed: Record<string, never>;
-  lp_community_review_reached: {
-    places: number;
-    privacy: "private" | "public";
-    visibility: "all" | "unlisted";
-  };
-  lp_community_started: Record<string, never>;
   lp_community_submit_attempted: {
     privacy: "private" | "public";
     visibility: "all" | "unlisted";
@@ -177,36 +170,6 @@ export type LandingsEvents = {
   };
   lp_legal_viewed: {
     doc: "brand" | "content" | "creatorFund" | "credits" | "ethics" | "privacy" | "referral" | "rewards" | "security" | "terms";
-  };
-  lp_rsvp_cancelled: {
-    count: number;
-    event_id: string;
-    stub: boolean;
-  };
-  lp_rsvp_cancelling: {
-    event_id: string;
-  };
-  lp_rsvp_confirmed: {
-    event_id: string;
-  };
-  lp_rsvp_error: {
-    event_id: string;
-    reason: string;
-  };
-  lp_rsvp_going: {
-    count: number;
-    event_id: string;
-    stub: boolean;
-  };
-  lp_rsvp_signin: {
-    event_id: string;
-    simulated: boolean;
-  };
-  lp_rsvp_started: {
-    event_id: string;
-  };
-  lp_rsvp_submitting: {
-    event_id: string;
   };
   lp_whatson_viewed: {
     filter: null | string;

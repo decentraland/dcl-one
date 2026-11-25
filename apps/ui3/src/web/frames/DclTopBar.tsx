@@ -1,12 +1,19 @@
 import {
+  useChromeAuth,
+  useChromeNav,
+  type ChromeTopBarProps,
+  ChromeLink,
+  useSiteLayout,
   decentralandNavigation,
   decentralandNavigationSection,
   type DecentralandNavigationArea,
   type DecentralandNavigationEntry,
+  NavMenuItem,
+  NavMenuTab,
+  NavNotificationsButton,
+  NavProfileButton,
 } from "@dcl/one-ui";
-import type { ReactNode } from "react";
 import { useEffect, useId, useRef, useState } from "react";
-import { NavMenuItem, NavMenuTab, NavNotificationsButton, NavProfileButton } from "@dcl/one-ui";
 import logo from "../../atoms/assets/decentraland-logo.svg?url";
 import { catalystBase, getJSON } from "../../data/catalyst/client";
 import { sameOriginContentUrl } from "../../data/catalyst/profile";
@@ -17,17 +24,13 @@ import {
   parseNotificationsLoose,
   relativeTime,
   type Notification,
-} from "../../data/catalyst/notificationsView";
-import { useChromeAuth } from "./chrome-auth";
-import { useChromeNav, type ChromeNavigate } from "./chrome-nav";
-import ChromeLink from "./ChromeLink";
+} from "@web-core/notifications/notificationsView";
 import AccountMenu from "./AccountMenu";
 import "../../atoms/maskicon.css";
+import "../../components/site-navigation.css";
 import "./dcltopbar.css";
-import { useSiteLayout } from "./SiteLayout";
-import { getAvatarBackgroundColor, getDisplayName } from "../../shop/discovery/lib/avatarColor";
+import { getAvatarBackgroundColor, getDisplayName } from "@web-core/profile/avatarColor";
 
-type DclTopBarVariant = "default" | "sites";
 
 type NavLink = DecentralandNavigationEntry;
 export type DclTopBarNavId = DecentralandNavigationArea;
@@ -47,22 +50,7 @@ type NotifState =
   | { phase: "error" }
   | { phase: "ready"; rows: Notification[] };
 
-export type DclTopBarProps = {
-  variant?: DclTopBarVariant;
-  active?: DclTopBarNavId | "";
-  signedIn?: boolean;
-  account?: string;
-  transparent?: boolean;
-  onSignIn?: () => void;
-  onSignOut?: () => void;
-  signInHref?: string;
-  fetchNotifications?: (signal?: AbortSignal) => Promise<unknown>;
-  onNavigate?: ChromeNavigate;
-  mobileNavigation?: (closeMenu: () => void) => ReactNode;
-  accountControl?: ReactNode;
-  /** Balance chips for a signed-in account, before the bell (the Shop's credits). */
-  balances?: ReactNode;
-};
+export type DclTopBarProps = ChromeTopBarProps;
 
 const accountLinks = (account: string) => [
   { label: "My profile", href: `/profile/${encodeURIComponent(account.toLowerCase())}` },
@@ -432,7 +420,7 @@ function LegacyDclTopBar({
                 ) : top;
               })}
             </nav>
-            {renderMobileNavigation ? <div className="site-layout__mobile-sections">{renderMobileNavigation(() => setMenuOpen(false))}</div> : null}
+            {renderMobileNavigation ? <div className="dtb__mobile-sections">{renderMobileNavigation(() => setMenuOpen(false))}</div> : null}
           </>
         ) : null}
       </div>

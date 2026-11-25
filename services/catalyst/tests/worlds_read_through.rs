@@ -169,6 +169,16 @@ async fn fake_subgraph(
 ) -> Json<Value> {
     let mut st = s.lock();
     st.requests += 1;
+    // The NAME's holder by label (worlds asks who holds a world's NAME).
+    if let Some(label) = body["variables"]["name"].as_str() {
+        let nfts: Vec<Value> = st
+            .names
+            .iter()
+            .filter(|(_, names)| names.iter().any(|n| n.to_lowercase() == label))
+            .map(|(owner, _)| json!({"id": format!("name-{label}"), "owner": {"id": owner}}))
+            .collect();
+        return Json(json!({"data": {"nfts": nfts}}));
+    }
     let owner = body["variables"]["owner"].as_str().unwrap_or_default();
     let first_page = body["variables"]["idFrom"]
         .as_str()
@@ -407,11 +417,10 @@ impl Node {
             },
         ));
         index.allow_loopback_for_tests();
-        let policy = Arc::new(Policy::new(
-            pool.clone(),
-            PersonalWorldsPolicy::disabled(),
-            Some(index),
-        ));
+        let policy = Arc::new(
+            Policy::new(pool.clone(), PersonalWorldsPolicy::disabled(), Some(index))
+                .with_subgraph_names(),
+        );
         let state = Arc::new(WorldsState::new(
             pool,
             storage.clone(),

@@ -10,6 +10,7 @@ chain-index/src/lib.rs	lib	0
 comms/src/lib.rs	lib	72
 config/src/lib.rs	lib	5
 content/src/lib.rs	lib	33
+content/tests/retry_discards_overtaken.rs	test	1
 content/tests/retry_keeps_the_record_until_written.rs	test	1
 content/tests/retry_undecided_and_refused.rs	test	1
 content/tests/sync_client_uses_no_proxy.rs	test	0
@@ -37,6 +38,5 @@ tests/shop/main.rs	test	0
 tests/sockets_1.rs	test	49
 tests/sockets_2.rs	test	33
 tests/sockets_3.rs	test	50
-tests/stats_metrics_engine.rs	test	2
 worlds/src/lib.rs	lib	29
 message-router/src/lib.rs	lib	2

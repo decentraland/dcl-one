@@ -16,6 +16,7 @@ export async function loader({ request }: Route.LoaderArgs) {
     redirectTo: url.searchParams.get("redirectTo"),
     // the method the player already picked in the Explorer, started at once
     loginMethod: requestedOption(url.searchParams.get("loginMethod")),
+    walletSwitch: url.searchParams.get("walletSwitch") === "1",
     layoutVariant: await signInLayoutVariant(),
     // Magic's publishable key: public by design, but deployment configuration, so it comes from the environment.
     magicApiKey: process.env.MAGIC_API_KEY || null,
@@ -23,6 +24,6 @@ export async function loader({ request }: Route.LoaderArgs) {
 }
 
 export default function AuthLoginRoute() {
-  const { redirectTo, layoutVariant, magicApiKey, loginMethod } = useLoaderData<typeof loader>();
-  return <LoginPage redirectTo={redirectTo} layoutVariant={layoutVariant} magicApiKey={magicApiKey} loginMethod={loginMethod} />;
+  const { redirectTo, layoutVariant, magicApiKey, loginMethod, walletSwitch } = useLoaderData<typeof loader>();
+  return <LoginPage redirectTo={redirectTo} layoutVariant={layoutVariant} magicApiKey={magicApiKey} loginMethod={loginMethod} walletSwitch={walletSwitch} />;
 }

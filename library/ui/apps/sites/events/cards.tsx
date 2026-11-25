@@ -23,6 +23,7 @@ import type {
   ExperienceCardProps,
   JumpIn,
   LiveEventCardProps,
+  MyEventCardProps,
   RemindControl
 } from './types'
 
@@ -292,4 +293,29 @@ function DayCard({
   )
 }
 
-export { DayCard, LiveNowCard, UpcomingCard }
+const STATUS_LABEL = { pending: 'Pending', approved: 'Approved', rejected: 'Rejected' } as const
+
+/**
+ * My Events: the day card without actions, opening the event's editor. Its review status sits over the
+ * cover, and the cover of an event still in review is dimmed.
+ */
+function MyEventCard({ title, image, href, creator, time, status }: MyEventCardProps) {
+  const { text } = useEventsCopy()
+  return (
+    <div className={styles.mine} data-status={status} data-cover={image ? '' : undefined}>
+      <span className={styles.status}>{text(STATUS_LABEL[status])}</span>
+      <EventCard
+        variant="day"
+        title={title}
+        href={href}
+        image={image}
+        creator={creatorOf(creator)}
+        byLabel={text('By')}
+        time={time}
+        dimmed={status === 'pending'}
+      />
+    </div>
+  )
+}
+
+export { DayCard, LiveNowCard, MyEventCard, UpcomingCard }

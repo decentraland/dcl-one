@@ -1,7 +1,13 @@
-import { useEventsCopy, type EventsLocale } from "@dcl/one-ui/apps/sites/events/locale";
-import { EventDetailModal } from "@dcl/one-ui/apps/sites/events/DetailModal";
-import { GeneralAdd, GeneralCamera, GeneralInfoButton } from "@dcl/one-ui/foundations/icons";
-import { Button } from "@dcl/one-ui/apps/sites/shared/Button/Button";
+import {
+  useEventsCopy,
+  type EventsLocale,
+  EventDetailModal,
+  Button,
+  Busy,
+  Notice,
+  type NoticeTone,
+} from "@dcl/one-ui";
+import { Button as OneButton, GeneralAdd, GeneralCamera, GeneralDelete, GeneralInfoButton } from "@dcl/one-ui";
 import { useEffect, useRef, useState, type DragEvent } from "react";
 import { useMachine } from "@xstate/react";
 import { Link, useSearchParams } from "react-router";
@@ -13,6 +19,7 @@ import type { HangoutOptions } from "@/data/lib/catalyst/landings/hangout-option
 import { heroWhen, scheduleLine } from "../../components/event-schedule";
 import styles from "./SubmitHangout.module.css";
 import HangoutAssociations from "./HangoutAssociations";
+import SubmitSuccess from "./SubmitSuccess";
 import {
   hangoutMachine,
   HANGOUT_EVENTS,
@@ -43,11 +50,16 @@ type SubmitHangoutProps = {
   onSignIn?: () => void;
   upload?: UploadFn;
   options?: HangoutOptions | null;
-  canEditAny?: boolean;
   privateFieldsEditable?: boolean;
   canChangeCommunity?: boolean;
   editor?: boolean;
   reviewNotice?: string;
+  /** How the notice reads: a rejection is an error, a note on an approved event a warning. */
+  reviewTone?: NoticeTone;
+  /** Edit mode: opens the delete confirmation from the form's actions. */
+  onDelete?: () => void;
+  /** Follows the draft on screen, for a caller that keeps it across a sign-in. */
+  onDraftChange?: (draft: HangoutDraft) => void;
 };
 
 export default function SubmitHangout({
@@ -64,11 +76,13 @@ export default function SubmitHangout({
   onSignIn,
   upload,
   options = null,
-  canEditAny = false,
   privateFieldsEditable = mode === "create",
   canChangeCommunity = mode === "create",
   editor = false,
   reviewNotice,
+  reviewTone = "warning",
+  onDelete,
+  onDraftChange,
 }: SubmitHangoutProps) {
   const [searchParams] = useSearchParams();
 
@@ -81,6 +95,7 @@ export default function SubmitHangout({
       stateId={stateId}
       inline={inline}
       reviewNotice={reviewNotice}
+      reviewTone={reviewTone}
       trackCtx={trackCtx}
       categories={categories}
       categoriesError={categoriesError}
@@ -93,9 +108,10 @@ export default function SubmitHangout({
       onSignIn={onSignIn}
       upload={upload}
       options={options}
-      canEditAny={canEditAny}
       privateFieldsEditable={privateFieldsEditable}
       canChangeCommunity={canChangeCommunity}
+      onDelete={onDelete}
+      onDraftChange={onDraftChange}
     />
   );
 }
@@ -104,6 +120,8 @@ type InnerProps = {
   stateId: HangoutStateId;
   inline: boolean;
   reviewNotice?: string;
+  /** How the notice reads: a rejection is an error, a note on an approved event a warning. */
+  reviewTone?: NoticeTone;
   trackCtx: TrackContext;
   categories: CategoryOption[];
   categoriesError: boolean;
@@ -116,9 +134,10 @@ type InnerProps = {
   onSignIn?: () => void;
   upload?: UploadFn;
   options: HangoutOptions | null;
-  canEditAny: boolean;
   privateFieldsEditable: boolean;
   canChangeCommunity: boolean;
+  onDelete?: () => void;
+  onDraftChange?: (draft: HangoutDraft) => void;
 };
 
 function uiStateFor(value: HangoutStateId): "signin" | "success" | "form" {
@@ -131,6 +150,7 @@ function SubmitHangoutInner({
   stateId,
   inline,
   reviewNotice,
+  reviewTone = "warning",
   trackCtx,
   categories,
   categoriesError,
@@ -143,9 +163,10 @@ function SubmitHangoutInner({
   onSignIn,
   upload,
   options,
-  canEditAny,
   privateFieldsEditable,
   canChangeCommunity,
+  onDelete,
+  onDraftChange,
 }: InnerProps) {
   const { locale, text, errorText } = useEventsCopy();
   const [, setSearchParams] = useSearchParams();
@@ -164,6 +185,7 @@ function SubmitHangoutInner({
   const d = state.context.draft;
   const emitTrack: TrackFn = track ?? state.context.track;
   const needsSignIn = Boolean(onSignIn) && !signedIn;
+  useEffect(() => { onDraftChange?.(d); }, [d, onDraftChange]);
   const trackDirectEntry = useRef(inline && stateId === "review");
   useEffect(() => {
     if (!trackDirectEntry.current) return;
@@ -221,8 +243,8 @@ function SubmitHangoutInner({
   const canSubmit = !uploading && communityAllowed &&
     FORM_ORDER.every((section) => isStepValid(section, d));
   const onEdit = (patch: Partial<HangoutDraft>) => send({ type: "EDIT", patch });
-  const uploadFeedback = uploadError ? <p role="alert">{errorText(uploadError)}</p>
-    : uploading ? <p role="status">{text("Uploading image…")}</p> : null;
+  const uploadFeedback = uploadError ? <Notice tone="error">{errorText(uploadError)}</Notice>
+    : uploading ? <Busy>{text("Uploading image…")}</Busy> : null;
 
   function fields(section: HangoutStateId) {
     return (
@@ -240,33 +262,27 @@ function SubmitHangoutInner({
           inline={editingInline}
         />
         {section === "details" && !editingInline && (
-          <HangoutAssociations draft={d} options={options} canEditAny={canEditAny} canChangeCommunity={canChangeCommunity} onEdit={onEdit} />
+          <HangoutAssociations draft={d} options={options} canChangeCommunity={canChangeCommunity} onEdit={onEdit} />
         )}
-        {section === "details" && !communityAllowed && <p role="alert">{text("Choose a community you manage, or select None.")}</p>}
+        {section === "details" && !communityAllowed && <Notice tone="error">{text("Choose a community you manage, or select None.")}</Notice>}
       </>
     );
   }
 
   return (
     <div className={inline ? `submit-hangout ${styles.authoring}` : "submit-hangout"} data-editor={inline || undefined} data-step={inline ? undefined : step} data-state={value}>
-      <header className={`submit-hangout__header ${inline ? styles.editorHeader : ""}`}>
-        {inline
-          ? <Link to="/events" className={styles.back} aria-label={text("Back to Events")} />
-          : <Link to="/events">{text("Back to Events")}</Link>}
-        <h1>{text(inline
-          ? mode === "edit" ? "Edit Event" : "Submit an Event"
-          : mode === "edit" ? "Edit Hangout" : "Submit a Hangout")}</h1>
-      </header>
+      {inline ? <EditorHeader mode={mode} /> : (
+        <header className="submit-hangout__header">
+          <Link to="/events">{text("Back to Events")}</Link>
+          <h1>{text(mode === "edit" ? "Edit Hangout" : "Submit a Hangout")}</h1>
+        </header>
+      )}
 
       <div className={`submit-hangout__controls ${inline ? styles.editorControls : ""}`} role="group" aria-label={text(inline ? "Event editor" : "Hangout wizard")}>
         {(value === "signinGate" || needsSignIn) && (
-          <button
-            type="button"
-            className="submit-hangout__btn submit-hangout__btn--primary"
-            onClick={() => onSignIn ? onSignIn() : send({ type: "SIGN_IN", inline })}
-          >
+          <OneButton size="md" className={styles.signIn} onClick={() => onSignIn ? onSignIn() : send({ type: "SIGN_IN", inline })}>
             {text("Sign In to continue")}
-          </button>
+          </OneButton>
         )}
 
         {isForm && (
@@ -279,21 +295,26 @@ function SubmitHangoutInner({
                   <fieldset className={styles.editorSection}><legend>{text("Event details")}</legend>{fields("details")}</fieldset>
                 </div>
                 <div className={styles.schedulePanel}>
-                  {reviewNotice && <p className={styles.reviewNotice}>{reviewNotice}</p>}
+                  {reviewNotice && <Notice tone={reviewTone}>{reviewNotice}</Notice>}
                   <div className={styles.sections}>
                     <h2>{text("Event details")}</h2>
                     <fieldset className={styles.editorSection}><legend>{text("Schedule")}</legend>{fields("schedule")}</fieldset>
                     <fieldset className={styles.editorSection}><legend>{text("Location")}</legend>{fields("location")}</fieldset>
-                    <HangoutAssociations draft={d} options={options} canEditAny={canEditAny} canChangeCommunity={canChangeCommunity} onEdit={onEdit} />
+                    <HangoutAssociations draft={d} options={options} canChangeCommunity={canChangeCommunity} onEdit={onEdit} />
                   </div>
                   <div className={styles.editorActions}>
                     <div className={styles.reviewBar}>
                       <p><GeneralInfoButton size={16} aria-hidden="true" />{text("The event submission will be reviewed by our team, you'll be notified by email")}</p>
-                      <Button variant="tertiary" disabled={!canSubmit} onClick={() => send({ type: "PREVIEW" })}>{text("Preview")}</Button>
+                      <Button size="lg" variant="tertiary" disabled={!canSubmit} onClick={() => send({ type: "PREVIEW" })}>{text("Preview")}</Button>
                     </div>
                     <div className={styles.formActions}>
+                      {mode === "edit" && onDelete && (
+                        <Button size="lg" variant="tertiary" className={styles.delete} trailingIcon={<GeneralDelete size={20} aria-hidden="true" />} onClick={onDelete}>
+                          {text("Delete")}
+                        </Button>
+                      )}
                       <Link className={styles.cancel} to={mode === "edit" ? "/events?tab=my" : "/events"}>{text("Cancel")}</Link>
-                      <Button disabled={!canSubmit} onClick={() => send({ type: "SUBMIT" })}>{text(mode === "edit" ? "Save changes" : "Submit Event")}</Button>
+                      <Button size="lg" disabled={!canSubmit} onClick={() => send({ type: "SUBMIT" })}>{text(mode === "edit" ? "Save changes" : "Submit Event")}</Button>
                     </div>
                   </div>
                 </div>
@@ -361,23 +382,45 @@ function SubmitHangoutInner({
         )}
 
         {value === "submitting" && (
-          <p className="submit-hangout__status" role="status">
-            {text("Submitting your hangout for review…")}
-          </p>
+          <Busy>{text("Submitting your hangout for review…")}</Busy>
         )}
-        {value === "submitted" && !needsSignIn && (
-          <div role="status">
-            <p>{mode === "edit" ? text("Your hangout was updated.") : text("Your hangout was created.")}{state.context.result?.approved ? "" : ` ${text("It is pending review.")}`}</p>
-            {state.context.result?.id && <Link to={`/events/edit-event/${encodeURIComponent(state.context.result.id)}`}>{text("Edit hangout")}</Link>}
-          </div>
-        )}
+        {value === "submitted" && !needsSignIn && <SubmitSuccess mode={mode} approved={state.context.result?.approved ?? false} stillRejected={state.context.result?.rejected ?? false} />}
 
         {state.context.error && value === "review" && (
-          <p className="submit-hangout__error" role="alert">
+          <Notice tone="error">
             {text("Submit failed: {error}. Please try again.", { error: errorText(state.context.error) })}
-          </p>
+          </Notice>
         )}
       </div>
+    </div>
+  );
+}
+
+function EditorHeader({ mode }: { mode: "create" | "edit" }) {
+  const { text } = useEventsCopy();
+  return (
+    <header className={`submit-hangout__header ${styles.editorHeader}`}>
+      <Link to="/events" className={styles.back} aria-label={text("Back to Events")} />
+      <h1>{text(mode === "edit" ? "Edit Event" : "Submit an Event")}</h1>
+    </header>
+  );
+}
+
+/**
+ * The editor's page while the event to edit is read, or when that read failed and can be retried:
+ * the same header, so nothing jumps when the form arrives.
+ */
+export function SubmitHangoutLoading({ mode, error, onRetry }: { mode: "create" | "edit"; error?: string | null; onRetry?: () => void }) {
+  const { text, errorText } = useEventsCopy();
+  return (
+    <div className={`submit-hangout ${styles.authoring}`} data-editor>
+      <EditorHeader mode={mode} />
+      {error ? (
+        <div className={styles.loadState}>
+          <Notice tone="error">{errorText(error)}</Notice>
+          {onRetry && <Button size="lg" variant="tertiary" onClick={onRetry}>{text("Retry")}</Button>}
+        </div>
+      ) : <Busy layout="page">{text("Loading your hangout…")}</Busy>}
     </div>
   );
 }
@@ -507,11 +550,11 @@ function StepFields({
             </select>
           </label>
         ) : (
-          <p className="submit-hangout__hint" role="status">
+          <Notice tone={categoriesError ? "warning" : "info"}>
             {categoriesError
               ? text("Categories couldn't be loaded right now — you can continue and pick one later.")
               : text("No categories are available right now — you can continue without one.")}
-          </p>
+          </Notice>
         )}
         {privateFieldsEditable && <>
           <label className={`submit-hangout__fieldlabel ${styles.fieldLabel}`}>{text("Contact email")}<input className={`submit-hangout__field ${styles.field}`} type="email" value={draft.contact} onChange={(event) => onEdit({ contact: event.target.value })} /></label>

@@ -21,8 +21,9 @@ export function ScrollThumb({
   length?: number
   /** Down the scroller's side (y) or along its bottom (x). */
   axis?: 'x' | 'y'
-  /** `dark` fills the pill, for a scroller over a light or busy surface. */
-  tone?: 'outline' | 'dark'
+  /** `dark` fills the pill, for a scroller over a light or busy surface; `solid` is a white pill with no
+   *  outline. */
+  tone?: 'outline' | 'dark' | 'solid'
   className?: string
 }): React.JSX.Element {
   const track = useRef<HTMLSpanElement>(null)
@@ -121,7 +122,7 @@ export function ScrollThumb({
     }
   }, [target, length, axis])
   return (
-    <span ref={track} className={`${styles.track} ${axis === 'x' ? styles.x : ''} ${tone === 'dark' ? styles.dark : ''} ${className ?? ''}`.trim()} aria-hidden="true">
+    <span ref={track} className={`${styles.track} ${axis === 'x' ? styles.x : ''} ${tone !== 'outline' ? styles[tone] : ''} ${className ?? ''}`.trim()} aria-hidden="true">
       <span ref={thumb} className={styles.thumb} />
     </span>
   )

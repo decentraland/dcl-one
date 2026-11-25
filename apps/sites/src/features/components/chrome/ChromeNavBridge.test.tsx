@@ -4,12 +4,11 @@ import { renderToString } from "react-dom/server";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { MemoryRouter } from "react-router";
 
-import SitesChrome from "@ui/web/frames/SitesChrome";
-import SiteLayout from "@ui/web/frames/SiteLayout";
+import SitesLayout from "./SitesLayout";
 import DclTopBar from "@ui/web/frames/DclTopBar";
-import ChromeLink from "@ui/web/frames/ChromeLink";
-import { useChromeNav } from "@ui/web/frames/chrome-nav";
+import { SiteLayout, ChromeLink, useChromeNav } from "@dcl/one-ui";
 import ChromeNavBridge, { chromeHrefTarget, upstreamShopPath } from "./ChromeNavBridge";
+import SitesTopBar from "./SitesTopBar";
 
 const ORIGIN = "https://example.org";
 
@@ -80,7 +79,7 @@ describe("ChromeNavBridge", () => {
     for (const anchor of anchors.slice(1)) expect(anchor).not.toContain("data-discover");
   });
 
-  it("provides the chrome navigator so the top bar renders discoverable in-app links", () => {
+  it("fills the TopBar slot with the Sites top bar, which renders discoverable in-app links", () => {
     const html = renderToString(
       <MemoryRouter initialEntries={["/blog"]}>
         <QueryClientProvider client={new QueryClient()}><ChromeNavBridge>
@@ -95,7 +94,11 @@ describe("ChromeNavBridge", () => {
   });
 
   it("renders plain anchors without the bridge", () => {
-    const html = renderToString(<DclTopBar variant="sites" active="shop" signedIn={false} />);
+    const html = renderToString(
+      <MemoryRouter initialEntries={["/shop"]}>
+        <QueryClientProvider client={new QueryClient()}><SitesTopBar active="shop" signedIn={false} /></QueryClientProvider>
+      </MemoryRouter>,
+    );
     expect(html).not.toContain("data-discover");
     expect(html).toContain('href="/shop/overview"');
   });
@@ -114,17 +117,17 @@ it("selects overlay geometry only for the explicit native header policy", () => 
 it("keeps a legacy overlay flag in flow unless the native header surface is explicitly selected", () => {
   const shell = (children: ReactNode, at = "/") => renderToString(<QueryClientProvider client={new QueryClient()}><MemoryRouter initialEntries={[at]}><ChromeNavBridge>{children}</ChromeNavBridge></MemoryRouter></QueryClientProvider>);
   for (const active of ["legal", "whatson", "play"] as const) {
-    const ordinary = shell(<SitesChrome active={active} overlayNav>Page</SitesChrome>, "/about");
+    const ordinary = shell(<SitesLayout active={active} overlayNav>Page</SitesLayout>, "/about");
     expect(ordinary).toContain('data-header-layout="native"');
     expect(ordinary).not.toContain('data-header-overlay');
     expect(ordinary).toContain('data-surface="solid"');
     expect(ordinary).not.toContain('data-landing');
   }
-  const home = shell(<SitesChrome active="play" overlayNav headerSurface="overlay">Hero</SitesChrome>);
+  const home = shell(<SitesLayout active="play" overlayNav headerSurface="overlay">Hero</SitesLayout>);
   expect(home).toContain('data-header-overlay="true"');
   // The bar's landing look comes from the path, as decentraland.org's Layout derives it: bare while signed out.
   expect(home).toContain('data-landing="true"');
   expect(home).toContain('data-bare="true"');
-  const fallback = renderToString(<SitesChrome active="play" overlayNav headerSurface="overlay">Hero</SitesChrome>);
+  const fallback = renderToString(<QueryClientProvider client={new QueryClient()}><MemoryRouter><SitesLayout active="play" overlayNav headerSurface="overlay">Hero</SitesLayout></MemoryRouter></QueryClientProvider>);
   expect(fallback).not.toContain('data-header-overlay');
 });

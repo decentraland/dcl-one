@@ -713,7 +713,7 @@ async fn has_logs_access(
         .await?,
         RealmId::Shared(_) => sqlx::query_scalar(
             "SELECT EXISTS (SELECT 1 FROM content.deployments WHERE entity_id = $1 AND deleter_deployment IS NULL \
-             AND CASE WHEN $2 = ANY(worlds.logs_permissions_decoded((entity_metadata -> 'logsPermissions')::text)) \
+             AND CASE WHEN $2 = ANY(worlds.logs_permissions_decoded((entity_metadata -> 'v' -> 'logsPermissions')::text)) \
                  THEN land_authz.scene_collaborators_current($3, $4, $5, entity_pointers, entity_timestamp) \
                  ELSE false END)",
         )
@@ -819,6 +819,8 @@ async fn authorize(
         match has_scene_permission(state, target, deployment, signer).await {
             Ok(true) => return Ok(()),
             Ok(false) => {}
+            // The land-authz index not being published is no failed lookup.
+            Err(e @ ApiError::Unavailable(_)) => return Err(e),
             Err(e) => {
                 tracing::warn!(world = target.realm.storage_realm(), error = %e, "world storage: unable to verify world permissions");
                 return Err(ApiError::not_authorized(FAILED_TO_VERIFY_MSG));
@@ -909,10 +911,11 @@ async fn resolve_and_authorize(
     })
 }
 
-/// The old route table (`api_router` plus `/ping`), to nest under
-/// `/world-storage` (the old gateway location, which stripped the prefix and
-/// set `x-original-path`) with the content routes' CORS guard and the query
-/// half of their NUL guard.
+/// The old route table (`api_router`, `/ping` and the `/health/*` status
+/// checks), to nest under `/world-storage` (the old gateway location, which
+/// stripped the prefix and set `x-original-path`) with the query half of the
+/// content routes' NUL guard, and CORS for any origin without credentials
+/// (signed fetch carries its auth in headers).
 pub fn router(state: SharedState) -> Router {
     let largest_value = [
         state.settings.world_limits,
@@ -971,14 +974,18 @@ pub fn router(state: SharedState) -> Router {
                 .delete(erase(handlers::env_delete)),
         )
         .layer(axum::extract::DefaultBodyLimit::max(body_limit))
+        .with_state(state)
+        // The old service's status checks; its component map names the server `server`.
+        .merge(crate::shared::health::status_checks_router_with(
+            crate::shared::health::SERVER_PASS,
+        ))
         // A NUL in a key or player address is the handler's 400, after the
         // credential, as upstream answers it; `validate_key` and
         // `parse_player` keep it from every statement.
         .layer(axum::middleware::from_fn(
             nul_guard::nul_query_guard_middleware,
         ))
-        .layer(axum::middleware::from_fn(cors::cors_middleware))
-        .with_state(state)
+        .layer(axum::middleware::from_fn(cors::cors_without_credentials))
 }
 
 #[cfg(test)]

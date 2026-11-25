@@ -16,7 +16,12 @@ const STREAM: &str = "/social-rpc/v1/stream";
 
 /// A frame (or the same object as upgrade headers) signed by `who` for `get path`.
 async fn signed_frame(who: &PrivateKeySigner, path: &str) -> String {
-    let ts = chrono::Utc::now().timestamp_millis();
+    signed_frame_ahead(who, path, 0).await
+}
+
+/// [`signed_frame`] with a timestamp `ahead_ms` past now.
+async fn signed_frame_ahead(who: &PrivateKeySigner, path: &str, ahead_ms: i64) -> String {
+    let ts = chrono::Utc::now().timestamp_millis() + ahead_ms;
     let payload = crate::shared::signed_fetch::build_payload_v6("get", path, &ts.to_string(), "{}");
     frame_signed(
         who,
@@ -299,6 +304,54 @@ async fn both_handshakes_are_over_the_stream_route_only() {
         .await
         .unwrap();
     assert_eq!(next_json(&mut socket).await, json!({ "type": "ready" }));
+    server.jobs.shutdown(Duration::from_secs(2)).await;
+}
+
+/// Both sockets bound a timestamp ahead of now by the whole signature window,
+/// as the source service does, not by the 60 s cap of other signed routes.
+#[tokio::test]
+async fn the_signature_window_bounds_the_future_side_of_both_sockets() {
+    let settings = Settings {
+        auth_window_secs: 5,
+        ws_auth_signature_expiration_ms: Some(120_000.0),
+        ..Settings::default()
+    };
+    let server = spawn_server_with(None, settings, None).await;
+    let me = PrivateKeySigner::random();
+    for (ahead_ms, accepted) in [(100_000, true), (130_000, false)] {
+        let rpc = signed_frame_ahead(&me, "/", ahead_ms).await;
+        let mut socket = connect(&server, "/social-rpc").await;
+        socket.send(WsMessage::Text(rpc.into())).await.unwrap();
+        let answer = next_message(&mut socket).await;
+        assert_eq!(
+            matches!(answer, WsMessage::Binary(_)),
+            accepted,
+            "rpc {ahead_ms}: {answer:?}"
+        );
+
+        let stream = signed_frame_ahead(&me, "/v1/stream", ahead_ms).await;
+        let mut socket = connect(&server, STREAM).await;
+        socket
+            .send(WsMessage::Text(stream.clone().into()))
+            .await
+            .unwrap();
+        if accepted {
+            assert_eq!(next_json(&mut socket).await, json!({ "type": "ready" }));
+        } else {
+            assert_eq!(close_code(&next_message(&mut socket).await), Some(3003));
+        }
+        match with_headers(&server, &stream).await {
+            Ok(mut socket) => {
+                assert!(accepted, "headers {ahead_ms}");
+                assert_eq!(next_json(&mut socket).await, json!({ "type": "ready" }));
+            }
+            Err(tokio_tungstenite::tungstenite::Error::Http(response)) => {
+                assert!(!accepted, "headers {ahead_ms}");
+                assert_eq!(response.status(), 401);
+            }
+            Err(other) => panic!("{other}"),
+        }
+    }
     server.jobs.shutdown(Duration::from_secs(2)).await;
 }
 

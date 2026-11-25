@@ -1,6 +1,8 @@
 #![forbid(unsafe_code)]
 
 #[cfg(feature = "explorer")]
+use common::sync::MutexExt;
+#[cfg(feature = "explorer")]
 use std::path::PathBuf;
 use std::{collections::VecDeque, f32::consts::PI, time::Duration};
 
@@ -78,6 +80,7 @@ pub mod pause_hidden;
 pub mod point_at_ik;
 #[cfg(feature = "explorer")]
 pub mod point_at_marker;
+mod processing_timing;
 pub mod spring_bones;
 mod two_bone_ik;
 
@@ -113,7 +116,8 @@ use dcl_component::proto_components::{
 #[cfg(feature = "explorer")]
 use dcl_component::{
     proto_components::sdk::components::{
-        PbAssetLoadLoadingState, PbAvatarBase, PbAvatarEquippedData, PbGltfContainerLoadingState,
+        pb_avatar_equipped_data::EquippedWearable, PbAssetLoadLoadingState, PbAvatarBase,
+        PbAvatarEquippedData, PbGltfContainerLoadingState,
     },
     SceneComponentId, SceneEntityId,
 };
@@ -180,6 +184,7 @@ impl Plugin for AvatarRenderPlugin {
         app.init_resource::<SessionGraphics>();
         // read by emote playback; the Explorer's input crate initialises it too
         app.init_resource::<common::structs::SceneDrivenAnimationFeedback>();
+        app.add_plugins(processing_timing::AvatarProcessingTimingPlugin);
         app.add_plugins(MaskMaterialPlugin);
         app.add_plugins(AvatarAnimationPlugin);
         app.add_plugins(spring_bones::SpringBonesPlugin);
@@ -381,6 +386,15 @@ pub fn update_avatar_info(
                             .find(|emote| emote.slot == ix)
                             .map(|emote| emote.urn.clone())
                             .unwrap_or_default()
+                    })
+                    .collect(),
+                // `visible` stays unset: what the outfit hides is known only once it has loaded
+                wearables: avatar
+                    .wearables
+                    .iter()
+                    .map(|urn| EquippedWearable {
+                        urn: urn.clone(),
+                        visible: None,
                     })
                     .collect(),
                 force_render: avatar.force_render.clone().unwrap_or_default(),
@@ -1479,11 +1493,12 @@ fn process_avatar(
     mut meshes: ResMut<Assets<Mesh>>,
     gltfs: Res<Assets<Gltf>>,
     attach_points: Query<&AttachPoints>,
-    (config, inverse_bindposes, mut mat_cache, mut mask_cache): (
+    (config, inverse_bindposes, mut mat_cache, mut mask_cache, mut run): (
         Res<AppConfig>,
         Res<Assets<SkinnedMeshInverseBindposes>>,
         ResMut<AssetCache<AvatarMatKey, SceneMaterial>>,
         ResMut<AssetCache<AvatarMaskKey, MaskMaterial>>,
+        ResMut<processing_timing::AvatarProcessingRun>,
     ),
     mut emote_loader: CollectibleManager<Emote>,
     mut graphs: ResMut<Assets<AnimationGraph>>,
@@ -1503,6 +1518,8 @@ fn process_avatar(
         EventWriter<AvatarLoadReport>,
     ),
 ) {
+    let started = bevy::platform::time::Instant::now();
+    let mut processed = 0;
     for (avatar_ent, root_gt, def, loaded_avatar, root_player_entity) in query.iter() {
         let (def, emote) = (&def.render, &def.emote);
         let not_loaded = !scene_spawner.instance_is_really_ready(loaded_avatar.body_instance)
@@ -1518,6 +1535,7 @@ fn process_avatar(
             debug!("not loaded...");
             continue;
         }
+        processed += 1;
 
         // https://docs.decentraland.org/creator/wearables/creating-wearables/#max-width-height-and-depth-dimension-of-the-wearables
         let aabb_bounds = (
@@ -2121,6 +2139,10 @@ fn process_avatar(
             state: LoadingState::Finished,
         });
     }
+    *run = processing_timing::AvatarProcessingRun {
+        spent: started.elapsed(),
+        processed,
+    };
 }
 
 // derive the scene material for an avatar's gltf material, sharing the asset
@@ -2483,7 +2505,7 @@ fn debug_dump_avatar(
             let count = std::sync::Arc::new(std::sync::Mutex::new((0, 0, 0)));
 
             for content_file in def.content.files() {
-                count.lock().unwrap().0 += 1;
+                count.lock_ignore_poison().0 += 1;
                 let ipfs_path = IpfsPath::new(IpfsType::new_content_file(
                     scene_hash.to_owned(),
                     content_file.to_owned(),
@@ -2498,7 +2520,7 @@ fn debug_dump_avatar(
                 let send = console_relay.send.clone();
                 tasks.push(IoTaskPool::get().spawn(async move {
                     let report = |fail: Option<String>| {
-                        let mut count = count.lock().unwrap();
+                        let mut count = count.lock_ignore_poison();
                         if let Some(fail) = fail {
                             count.2 += 1;
                             let _ = send.send(fail);

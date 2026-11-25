@@ -351,20 +351,24 @@ pub async fn load_trade(
         .map_err(|e| ResolveError::TradeShape(id.to_string(), e.to_string()))
 }
 
-/// The trade-events verdict of a stored trade, when its network is published.
+/// The trade-events verdict of a stored trade, when its network is
+/// published on `chain_id` (the settlement book's chain).
 pub async fn trade_verdict(
     pool: &PgPool,
     net: ChainNet,
+    chain_id: i64,
     trade_id: &str,
 ) -> Result<(Option<(String, i32)>, bool), sqlx::Error> {
     let now = chrono::Utc::now();
-    if chain_walk::ready_cursor(pool, chain_walk::INDEXER_TRADE_EVENTS, net, now)
+    if chain_walk::ready_cursor_on(pool, chain_walk::INDEXER_TRADE_EVENTS, net, chain_id, now)
         .await
         .is_none()
     {
         return Ok((None, false));
     }
-    let row: Option<(String, i32)> = sqlx::query_as("SELECT status, executions FROM shop.trade_chain_state WHERE trade_id = $1::uuid AND folded_block >= 0")
+    // A V3 trade whose cancellation digest could not be established reads
+    // `unverifiable`: its cancellation would go unseen.
+    let row: Option<(String, i32)> = sqlx::query_as("SELECT CASE WHEN status = 'open' AND digest_failed_at IS NOT NULL THEN 'unverifiable' ELSE status END, executions FROM shop.trade_chain_state WHERE trade_id = $1::uuid AND folded_block >= 0")
         .bind(trade_id)
         .fetch_optional(pool)
         .await?;
@@ -1065,7 +1069,7 @@ pub(crate) async fn resolve_trade(
     }
     let hashed_signature = hashed(&trade.signature);
     let (verdict, index_ready) = match chain.net {
-        Some(net) => trade_verdict(pool, net, &trade.id).await?,
+        Some(net) => trade_verdict(pool, net, chain.chain_id.0 as i64, &trade.id).await?,
         None => (None, false),
     };
     let role = contract_role(pool, &chain, asset.contract.address()).await?;

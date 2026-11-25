@@ -1,6 +1,6 @@
 # Stats configured route matching
 
-- Status: Accepted
+- Status: Superseded by [Shared service metrics](2026-11-24-shared-service-metrics.md)
 - Date: 2026-11-12
 
 ## Decision

@@ -1,33 +1,30 @@
 .route-pending {
   position: fixed;
-  inset-block-start: 12px;
+  inset-block-start: var(--dcl-space-12);
   inset-inline-start: 50%;
   transform: translateX(-50%);
-  z-index: var(--z-toast, 200);
+  z-index: 200;
   display: flex;
   align-items: center;
-  gap: 12px;
-  max-inline-size: calc(100vw - 24px);
-  padding: 12px 20px;
-  border: 1px solid var(--line);
-  border-radius: var(--r-control);
-  background: var(--panel);
-  color: var(--text);
-  box-shadow: 0 6px 20px var(--scrim);
-  font: 500 14px/1.4 var(--font-sans);
+  gap: var(--dcl-space-12);
+  max-inline-size: calc(100vw - var(--dcl-space-24));
+  padding: var(--dcl-space-12) var(--dcl-space-24);
+  border: 1px solid var(--dcl-border-subtle);
+  border-radius: var(--dcl-radius-md);
+  background: var(--dcl-bg-page);
+  color: var(--dcl-text-primary);
+  box-shadow: 0 6px 20px var(--dcl-transparencies-black-60);
+  font: 500 var(--dcl-font-size-body-sm)/1.4 Inter, system-ui, sans-serif;
   pointer-events: none;
-}
-@media (prefers-reduced-motion: reduce) {
-  .route-pending .spinner svg { animation: none; }
 }
 .nav-progress,
 html[data-nav-loading] body::before {
   content: "";
   position: fixed;
   inset: 0 0 auto;
-  z-index: calc(var(--z-toast, 200) + 1);
+  z-index: 201;
   block-size: 3px;
-  background: linear-gradient(90deg, transparent, var(--brand, #ff2d55) 40%, var(--brand, #ff2d55) 60%, transparent) 0 0 / 40% 100% no-repeat;
+  background: linear-gradient(90deg, transparent, var(--dcl-action-primary) 40%, var(--dcl-action-primary) 60%, transparent) 0 0 / 40% 100% no-repeat;
   animation: nav-progress 1.1s ease-in-out infinite;
   pointer-events: none;
 }
@@ -38,5 +35,5 @@ html[data-nav-loading] body { cursor: progress; }
 }
 @media (prefers-reduced-motion: reduce) {
   .nav-progress,
-  html[data-nav-loading] body::before { animation: none; background: var(--brand, #ff2d55); opacity: 0.6; }
+  html[data-nav-loading] body::before { animation: none; background: var(--dcl-action-primary); opacity: 0.6; }
 }

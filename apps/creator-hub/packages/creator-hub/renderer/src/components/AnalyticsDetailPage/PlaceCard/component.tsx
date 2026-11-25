@@ -1,7 +1,7 @@
 import { useCallback, useState } from 'react';
 import Button from '@ui/atoms/Button';
 import Text from '@ui/atoms/Text';
-import Tooltip from '@ui/atoms/Tooltip';
+import { Tooltip } from '@dcl/one-ui';
 
 import {
   ArrowForwardIcon,
@@ -17,7 +17,7 @@ import {
 import type { PlaceDetails } from '/shared/types/place-analytics';
 import { PlaceAccess } from '/shared/types/place-analytics';
 
-import { misc } from '#preload';
+import { analytics, misc } from '#preload';
 import { useSnackbar } from '/@/hooks/useSnackbar';
 import { t } from '/@/modules/store/translation/utils';
 import { CREATE_EVENT_URL, getSceneJumpInDeeplink, getSceneJumpInUrl } from '/@/modules/utils';
@@ -49,7 +49,8 @@ export function PlaceCard({ place }: Props) {
   /** Opens the desktop client itself; Copy URL keeps the shareable web link. */
   const handleJumpIn = useCallback(() => {
     void misc.openExternal(getSceneJumpInDeeplink(place.location));
-  }, [place.location]);
+    void analytics.track('Analytics Jump In', { place_id: place.placeId });
+  }, [place.location, place.placeId]);
 
   return (
     <div className="PlaceCard">

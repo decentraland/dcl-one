@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate } from 'react-router';
 import { captureException, setUser } from '@sentry/electron/renderer';
 import { ChainId, type Avatar } from '@dcl/schemas';
 import { useDispatch, useSelector } from '#store';
@@ -20,6 +20,7 @@ import { useSnackbar } from '/@/hooks/useSnackbar';
 import { t } from '/@/modules/store/translation/utils';
 
 AuthServerProvider.setAuthServerUrl(config.get('AUTH_SERVER_URL'));
+AuthServerProvider.setIdentityFetcher(misc.fetchAuthIdentity);
 AuthServerProvider.setAuthDappUrl(config.get('AUTH_DAPP_URL'));
 
 const DEFAULT_CHAIN_ID: ChainId = (Number(config.get('CHAIN_ID')) ||
@@ -258,6 +259,19 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
   useEffect(() => {
     if (wallet && creatorFundEnabled) void dispatch(creatorFundActions.fetchEnrollment());
   }, [wallet, creatorFundEnabled, dispatch]);
+
+  const payoutSetupNeeded = useSelector(
+    state =>
+      state.featureFlags.flags[FeatureFlag.CREATOR_FUND_PAYOUT] === true &&
+      state.creatorFund.enrollment.data?.status === 'active',
+  );
+  const payoutWalletIdle = useSelector(state => state.creatorFund.payoutWallet.status === 'idle');
+  const activePlaceIdle = useSelector(state => state.creatorFund.hasActivePlace.status === 'idle');
+  useEffect(() => {
+    if (!wallet || !payoutSetupNeeded) return;
+    if (payoutWalletIdle) void dispatch(creatorFundActions.fetchPayoutWallet());
+    if (activePlaceIdle) void dispatch(creatorFundActions.fetchHasActivePlace());
+  }, [wallet, payoutSetupNeeded, payoutWalletIdle, activePlaceIdle, dispatch]);
 
   useEffect(() => {
     const handleOnline = () => {

@@ -1,4 +1,4 @@
-import type { ScreenSection } from "@ui/data/screens/section";
+import type { ScreenSection } from "@web-core/freshness/section";
 import { withDeadline } from "../request-deadline";
 
 export function screenSections(signal?: AbortSignal) {

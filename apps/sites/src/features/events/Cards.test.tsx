@@ -1,14 +1,9 @@
 // @vitest-environment jsdom
-import {
-  cleanup,
-  fireEvent,
-  render,
-  screen,
-  waitFor,
-} from "@testing-library/react";
+import { cleanup, render, screen, waitFor } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import type { ComponentProps } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi, type Mock } from "vitest";
-import { DayCard, UpcomingCard } from "@dcl/one-ui/apps/sites/events/cards";
+import { DayCard, UpcomingCard } from "@dcl/one-ui";
 vi.hoisted(() =>
   Object.assign(window, {
     __vite_plugin_react_preamble_installed__: true,
@@ -23,7 +18,10 @@ let copy: Mock<(text: string) => Promise<void>>;
 let open: Mock<() => void>;
 let onJumpIn: Mock<JumpIn>;
 let props: ComponentProps<typeof UpcomingCard>;
+let user: ReturnType<typeof userEvent.setup>;
 beforeEach(() => {
+  // Set up before the clipboard stub below, so the stub, not user-event's own clipboard, is what the card writes to.
+  user = userEvent.setup();
   toggle = vi.fn();
   copy = vi.fn().mockResolvedValue(undefined);
   open = vi.fn();
@@ -110,9 +108,9 @@ describe("when event cards reveal their actions", () => {
     it("should mark the reminder as pressed", () => {
       expect(button.getAttribute("aria-pressed")).toBe("true");
     });
-    it("should disable the reminder so a click does not toggle it", () => {
+    it("should disable the reminder so a click does not toggle it", async () => {
       expect(button.disabled).toBe(true);
-      fireEvent.click(button);
+      await user.click(button);
       expect(toggle).not.toHaveBeenCalled();
     });
   });
@@ -153,10 +151,10 @@ describe("when event cards reveal their actions", () => {
       expect(screen.getByText("LIVE")).toBeDefined();
       expect(screen.getByText("16 online")).toBeDefined();
     });
-    it("should jump in through JUMP IN without opening the card", () => {
+    it("should jump in through JUMP IN without opening the card", async () => {
       const jump = screen.getByRole("link", { name: "Jump in: Poker Night" });
       expect(jump.getAttribute("href")).toBe("/play?position=1,1");
-      fireEvent.click(jump);
+      await user.click(jump);
       expect(onJumpIn).toHaveBeenCalledOnce();
       expect(open).not.toHaveBeenCalled();
     });
@@ -172,7 +170,7 @@ describe("when event cards reveal their actions", () => {
     const href = "/play?realm=gallery.dcl.eth";
 
     describe("and it has a launch destination", () => {
-      it("should expose Jump In independently of the detail link", () => {
+      it("should expose Jump In independently of the detail link", async () => {
         render(
           <DayCard
             {...props}
@@ -184,7 +182,7 @@ describe("when event cards reveal their actions", () => {
         );
         const link = screen.getByRole("link", { name: "Jump in: Poker Night" });
         expect(link.getAttribute("href")).toBe(href);
-        fireEvent.click(link);
+        await user.click(link);
         expect(onJumpIn).toHaveBeenCalledOnce();
         expect(open).not.toHaveBeenCalled();
       });
@@ -233,9 +231,9 @@ describe("when event cards reveal their actions", () => {
     });
   });
   describe("and Remind me is clicked", () => {
-    beforeEach(() => {
+    beforeEach(async () => {
       render(<UpcomingCard {...props} onOpen={open} />);
-      fireEvent.click(
+      await user.click(
         screen.getByRole("button", { name: "Remind me: Poker Night" }),
       );
     });
@@ -248,9 +246,9 @@ describe("when event cards reveal their actions", () => {
   });
   describe("and Copy link is clicked", () => {
     describe("and the clipboard accepts the link", () => {
-      beforeEach(() => {
+      beforeEach(async () => {
         render(<UpcomingCard {...props} onOpen={open} />);
-        fireEvent.click(
+        await user.click(
           screen.getByRole("button", { name: "Copy link: Poker Night" }),
         );
       });
@@ -268,10 +266,10 @@ describe("when event cards reveal their actions", () => {
       });
     });
     describe("and the clipboard denies the write", () => {
-      beforeEach(() => {
+      beforeEach(async () => {
         copy.mockRejectedValue(new Error("denied"));
         render(<UpcomingCard {...props} />);
-        fireEvent.click(
+        await user.click(
           screen.getByRole("button", { name: "Copy link: Poker Night" }),
         );
       });
@@ -288,10 +286,10 @@ describe("when event cards reveal their actions", () => {
       });
     });
     describe("and the clipboard API is missing", () => {
-      beforeEach(() => {
+      beforeEach(async () => {
         vi.stubGlobal("navigator", {});
         render(<UpcomingCard {...props} />);
-        fireEvent.click(
+        await user.click(
           screen.getByRole("button", { name: "Copy link: Poker Night" }),
         );
       });
@@ -310,11 +308,11 @@ describe("when event cards reveal their actions", () => {
         const button = screen.getByRole("button", {
           name: "Copy link: Poker Night",
         });
-        fireEvent.click(button);
+        await user.click(button);
         await waitFor(() =>
           expect(screen.getByRole("status").textContent).toContain("Couldn't copy"),
         );
-        fireEvent.click(button);
+        await user.click(button);
         await waitFor(() =>
           expect(screen.getByRole("status").textContent).toBe("Copied"),
         );

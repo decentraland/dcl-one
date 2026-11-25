@@ -676,8 +676,8 @@ Upstream: `decentraland/catalyst:src/controllers/handlers/get-entity-thumbnail-h
 | `If-None-Match` is `*` or matches `"<hash>"` (weak tags allowed) | 304 | empty | `ETag: "<hash>"`, `Cache-Control: public,max-age=31536000,s-maxage=31536000,immutable`, `Access-Control-Expose-Headers: ETag` | `:28-29`, `utils.ts:88-113` | `:114-116`, `formatters.rs:9-33` | MATCH |
 | The blob is not in storage | 404 | upstream `{"error":"Entity has no thumbnail."}` / `"Entity has no image."` | | `:33-35` | `entity_thumbnail.rs` `serve_content_blob`: the same messages | MATCH (CS-18) |
 | Unsatisfiable `Range` | 416 | empty | `Content-Range: bytes */<total>`, `Access-Control-Expose-Headers: Content-Range` | `:37-42`, `utils.ts:187-195` | `:182-192` | MATCH |
-| Satisfiable `Range` | 206 | the byte range (empty for HEAD) | the content headers plus `Content-Range: bytes s-e/total` and `Content-Length` | `:44-54`, `utils.ts:197-211` | `:193-209` | MATCH |
-| Plain GET or HEAD | 200 | the bytes (empty for HEAD) | `Content-Type` (sniffed; `application/octet-stream` fallback), `ETag: "<hash>"`, `Access-Control-Expose-Headers: ETag, Content-Range, Accept-Ranges, Content-Length`, `Accept-Ranges: bytes`, `Cache-Control: public,max-age=31536000,s-maxage=31536000,immutable`, `Content-Length`. Upstream also sends `Content-Encoding` when the blob is stored compressed. | `utils.ts:115-154` | `:210-231`, `formatters.rs:85-102` | MATCH. Sniffing: upstream uses `file-type` on the stream; dcl-one sniffs the first 32 bytes (`get_content::detect_content_type`). These agree for PNG, JPEG and WebP. dcl-one never sends `Content-Encoding`. |
+| Satisfiable `Range` | 206 | the byte range (empty for HEAD) | the content headers plus `Content-Range: bytes s-e/total` and `Content-Length` | `:44-54`, `utils.ts:197-211` | `serve_content_blob` | DIVERGENT (deliberate, `docs/adr/2026-11-21-stored-files-served-inert.md`): the content headers differ as on a plain GET (next row) |
+| Plain GET or HEAD | 200 | the bytes (empty for HEAD) | `Content-Type` (sniffed; `application/octet-stream` fallback), `ETag: "<hash>"`, `Access-Control-Expose-Headers: ETag, Content-Range, Accept-Ranges, Content-Length`, `Accept-Ranges: bytes`, `Cache-Control: public,max-age=31536000,s-maxage=31536000,immutable`, `Content-Length`. Upstream also sends `Content-Encoding` when the blob is stored compressed. | `utils.ts:115-154` | `serve_content_blob`, `formatters.rs` `content_file_headers` | DIVERGENT (deliberate, `docs/adr/2026-11-21-stored-files-served-inert.md`). Sniffing: both run `file-type` 21.1.1's checks on the stream (`get_content::content_type`; see `content-reads.md` CR-7), except that a document type (`text/*`, `*/xml`, `*+xml` or HTML) is `application/octet-stream`, and the answer is kept per content key and window. dcl-one also sends `Content-Security-Policy: sandbox` and `X-Content-Type-Options: nosniff`, and never sends `Content-Encoding`. |
 | `?width=` on the thumbnail route, not 80/160/320/640/960 | — | upstream ignores it and serves 200 | | — | `entity_thumbnail.rs` `requested_width`: ignored, the stored file is served | MATCH (CS-18) |
 | `?width=` valid | — | upstream serves the original | | — | `:111-113,255-301`: a resized PNG, WebP or JPEG with `ETag: "thumbnail-v1-<w>-<hash>"` and `Cache-Control: public, max-age=300, stale-while-revalidate=86400` | dcl-one only |
 | Pointer or file not local, read-through on | — | upstream 404 | | — | dcl-one fills it from the sync sources first (`:47-52,150-163`) | dcl-one only (a superset) |
@@ -1043,14 +1043,20 @@ catalyst list and its `/about` is healthy.
       (case-insensitive, with or without `/content`) is this node. Until a read succeeds, or when it
       lists no other server, the node syncs from `SYNC_SOURCE` (under mirror the three Decentraland
       peers); a later failure keeps the current list. A changed list goes to the running orchestrator
-      at any time (`sync/orchestrator.rs` `run_sync_job`): a new peer bootstraps from its snapshots
-      while the node keeps its state, a dropped peer's stream stops, running streams download from the
-      new list, and the failed-deployments retry fetches from it. Read-through keeps `SYNC_SOURCE`.
+      at any time (`sync/orchestrator.rs` `run_sync_job`). Added peers bootstrap while retained
+      peers keep their progress, and removed peers' streams stop. Deployments try the advertising
+      peer first, then other current peers. Failed-deployment retries use the current peer list.
+      Read-through keeps `SYNC_SOURCE`.
+    - Steady-state peers poll pointer changes every five seconds by default. Set
+      `SYNC_POINTER_CHANGES_POLL_INTERVAL_SECS` to at least one second to change it.
+      The orchestrator revisits snapshot lists one hour after bootstrap and then every
+      14 days by default. Both `SYNC_SNAPSHOT_RESYNC_INITIAL_DELAY_SECS` and
+      `SYNC_SNAPSHOT_RESYNC_INTERVAL_SECS` require at least 60 seconds.
       Tests: `sync::dao::tests`, `tests/sync_peer_changes.rs`.
     - Left: without `ETH_RPC_URL`, or on a network other than mainnet and sepolia, the node syncs from
       `SYNC_SOURCE` only; `lastSyncWithDAO` stays the sync heartbeat (CS-15). Difference: upstream
-      applies a changed list only after the bootstrap; dcl-one also applies it during the bootstrap
-      (which restarts from the persisted cursors). As upstream
+      applies a changed list only after the bootstrap; dcl-one also applies it during the bootstrap.
+      As upstream
       (`decentraland/catalyst:src/logic/sync-orchestrator/component.ts:45-60`,
       `decentraland/snapshots-fetcher@53e9c07a:src/synchronizer.ts:708-740`), a peer that never answers does not
       hold the node in `Bootstrapping`: the node leaves it once a bootstrap pass over every listed

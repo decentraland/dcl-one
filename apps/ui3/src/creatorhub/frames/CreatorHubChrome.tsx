@@ -1,11 +1,9 @@
 import type { CSSProperties, ReactNode } from "react";
 import { useState } from "react";
-import { useChromeAuth } from "../../web/frames/chrome-auth";
+import { useChromeAuth, ChromeLink, SiteLayout } from "@dcl/one-ui";
 import DclTopBar from "../../web/frames/DclTopBar";
-import ChromeLink from "../../web/frames/ChromeLink";
 import AccountMenu from "../../web/frames/AccountMenu";
 import "./creatorhubchrome.css";
-import SiteLayout from "../../web/frames/SiteLayout";
 import SiteSectionNavigation from "../../web/frames/SiteSectionNavigation";
 import { truncateAddress } from "../../data/format";
 

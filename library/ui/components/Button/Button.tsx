@@ -15,6 +15,7 @@ type Content = { children: NamedContent } | { label: NamedContent } | Accessible
 type Variant =
   | 'primary'
   | 'secondary'
+  | 'secondaryLight'
   | 'outline'
   | 'dark'
   | 'text'
@@ -45,7 +46,8 @@ export type ButtonProps = NativeProps &
     children?: ReactNode
     label?: ReactNode
     size?: 'xl' | 'lg' | 'md' | 'sm'
-    viewport?: 'desktop' | 'mobile'
+    /** Responsive uses the mobile dimensions below 768px or with a coarse primary pointer. */
+    viewport?: 'desktop' | 'mobile' | 'responsive'
     loading?: boolean
     leadingIcon?: ReactNode
     trailingIcon?: ReactNode
@@ -54,13 +56,15 @@ export type ButtonProps = NativeProps &
     forceState?: 'hover' | 'pressed' | 'focus'
     contentLayout?: 'intrinsic' | 'fill'
   } & ({ iconOnly?: false } | ({ iconOnly: true } & AccessibleName)) &
-  ({ variant?: Exclude<Variant, 'iconOnly'> } | ({ variant: 'iconOnly' } & AccessibleName))
+  ({ variant?: Exclude<Variant, 'iconOnly'> } | ({ variant: 'iconOnly' } & AccessibleName)) &
+  ({ tone?: never } | { tone?: 'danger'; variant?: 'primary' | 'outline'; iconOnly?: false })
 
 export function Button({
   children,
   label,
   variant = 'primary',
   size = 'xl',
+  tone,
   viewport = 'desktop',
   loading = false,
   leadingIcon,
@@ -114,6 +118,7 @@ export function Button({
   const common = {
     className: classes,
     'data-variant': appearance,
+    'data-tone': tone,
     'data-size': size,
     'data-viewport': viewport,
     'data-icon-only': compact || undefined,

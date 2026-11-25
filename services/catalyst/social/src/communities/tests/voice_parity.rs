@@ -459,3 +459,63 @@ async fn voice_sql_failures_degrade_separately_from_core_community_failures() {
     .unwrap();
     rig.finish();
 }
+
+#[tokio::test]
+async fn a_leave_succeeds_when_the_real_eviction_fails_in_livekit() {
+    use crate::comms::gatekeeper::{self as gatekeeper, CommsState};
+    use crate::comms::interfaces::test_support::{StubDirectory, StubPolicy, StubScenes};
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    let _voice = VOICE_ROWS.lock().await;
+    let Some(rig) = Rig::new(Settings::for_tests()).await else {
+        return;
+    };
+    let removals = Arc::new(AtomicUsize::new(0));
+    let observed = removals.clone();
+    let fixture = axum::Router::new().route(
+        "/twirp/livekit.RoomService/RemoveParticipant",
+        axum::routing::post(move || {
+            let observed = observed.clone();
+            async move {
+                observed.fetch_add(1, Ordering::SeqCst);
+                (
+                    StatusCode::SERVICE_UNAVAILABLE,
+                    axum::Json(json!({ "code": "unavailable" })),
+                )
+            }
+        }),
+    );
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let mut settings = gatekeeper::Settings::for_tests();
+    settings.livekit.api_url = format!("http://{}", listener.local_addr().unwrap());
+    let livekit = tokio::spawn(async move { axum::serve(listener, fixture).await.unwrap() });
+    rig.state.set_voice_eviction(Arc::new(CommsState::new(
+        rig.pool.clone(),
+        crate::http::Outbound::for_tests(),
+        settings,
+        None,
+        None,
+        Arc::new(StubPolicy::default()),
+        Arc::new(StubScenes::default()),
+        Arc::new(crate::comms::presence::Presence::new()),
+        Arc::new(StubDirectory::default()),
+    )));
+    let (owner, leaver) = (wallet(), wallet());
+    let id = rig.community(&owner, true).await;
+    rig.member(id, &leaver, "member").await;
+    rig.voice(id, &leaver, "connected", false).await;
+    let path = format!("/v1/communities/{id}/members/{}", leaver.address);
+    let (status, _) = hit(&rig.app, Case::new("delete", &path).signed(&leaver).await).await;
+    livekit.abort();
+    assert_eq!(status, StatusCode::NO_CONTENT);
+    assert_eq!(removals.load(Ordering::SeqCst), 1);
+    let left: (i64, i64) = sqlx::query_as(
+        "SELECT (SELECT count(*) FROM social.community_members WHERE community_id=$1 AND member_address=$2), \
+         (SELECT count(*) FROM social.community_voice_chat_users WHERE community_id=$1 AND address=$2)",
+    )
+    .bind(id)
+    .bind(&leaver.address)
+    .fetch_one(&rig.pool)
+    .await
+    .unwrap();
+    assert_eq!(left, (0, 0));
+}

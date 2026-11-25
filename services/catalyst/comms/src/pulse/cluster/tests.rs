@@ -407,7 +407,38 @@ fn a_new_id_is_minted_per_cluster_and_carries_the_configured_prefix() {
 
     let mut ids: Vec<String> = vec![w.cluster_of(0).unwrap(), w.cluster_of(1).unwrap()];
     ids.sort();
-    assert_eq!(ids, vec!["pulse-1".to_string(), "pulse-2".to_string()]);
+    let (boot_id, first_number) = ids[0]
+        .strip_prefix("pulse-")
+        .unwrap()
+        .split_once('-')
+        .unwrap();
+    assert_eq!(first_number, "1");
+    assert_eq!(
+        boot_id,
+        uuid::Uuid::parse_str(boot_id).unwrap().simple().to_string()
+    );
+    assert_eq!(ids[1], format!("pulse-{boot_id}-2"));
+}
+
+#[test]
+fn restarting_pulse_does_not_reuse_an_island_room_name() {
+    let mut before = World::new();
+    before.place(0, "0xa", "r", v3(1.0, 1.0));
+    before.pass();
+    let old_assignment = before.feed.current("0xa", "0xa").unwrap();
+
+    let mut after = World::new();
+    after.place(0, "0xb", "r", v3(1.0, 1.0));
+    after.pass();
+    let new_assignment = after.feed.current("0xb", "0xb").unwrap();
+
+    let old_room = crate::rooms::island_room_name(&old_assignment.cluster_id);
+    let new_room = crate::rooms::island_room_name(&new_assignment.cluster_id);
+    assert_ne!(old_room, new_room);
+    assert!(matches!(
+        crate::rooms::room_scope(&new_room),
+        Some(crate::rooms::RoomScope::Island(_))
+    ));
 }
 
 #[test]
@@ -872,7 +903,7 @@ fn clusters_scale_past_the_pair_count() {
 }
 
 #[test]
-fn two_trackers_over_one_world_mint_the_same_ids() {
+fn two_trackers_over_one_world_mint_cluster_serials_in_the_same_order() {
     let cell = SPATIAL_GRID_CELL_SIZE;
     let build = || {
         let mut w = World::new();
@@ -884,13 +915,17 @@ fn two_trackers_over_one_world_mint_the_same_ids() {
         w.place(20, "0xz", "other-realm", v3(1.0, 1.0));
         w.pass();
         (0..12u32)
-            .map(|i| w.cluster_of(i).unwrap())
+            .chain([20])
+            .map(|i| {
+                let id = w.cluster_of(i).unwrap();
+                id.rsplit_once('-').unwrap().1.parse::<u64>().unwrap()
+            })
             .collect::<Vec<_>>()
     };
 
     assert_eq!(
         build(),
         build(),
-        "cell and realm iteration order is pinned, so minting is reproducible"
+        "cell and realm iteration order determines the cluster serials"
     );
 }

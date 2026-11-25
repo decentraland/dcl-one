@@ -2,9 +2,64 @@ import { readFileSync } from 'node:fs'
 import path from 'node:path'
 import process from 'node:process'
 import react from '@vitejs/plugin-react'
-import { defineConfig } from 'vite'
+import { defineConfig, type Plugin } from 'vite'
 
 const here = import.meta.dirname
+// The Explorer page's core, which the HUD imports.
+const explorerCore = path.resolve(here, '../../explorer-core')
+/**
+ * The names the Explorer HUD (apps/hud) compiles under, as its hosts give them (react-web's vite.shared.ts, Sites'
+ * vite.config.ts), with the library's own HUD test host as `@hud-host`: a web host on decentraland.org that shows
+ * pictures as given and has no Shop of its own. The HUD canvas and the `hud` Vitest project both use them, and
+ * tsconfig.hud.json maps the same paths.
+ */
+export const hudAliases = {
+  '@hud-host': path.resolve(here, '../apps/hud/test/host.ts'),
+  '@hud': path.resolve(here, '../apps/hud'),
+  '@explorer-core': explorerCore
+}
+/**
+ * The packages the Explorer page's core signs with. The HUD hosts install them and library/ui does not, as for the
+ * hosted HUD tests (vitest.config.ts). The HUD code the gallery draws reaches the signer only on demand, in code the
+ * gallery never runs, so the build leaves these packages out and `noHostPackages` fails it if a page would load one.
+ */
+export const HOST_PACKAGES = /^@noble\/(curves|hashes)\//
+
+/** Fails the build when a chunk loads a host package, by import or on demand: the gallery signs nothing. */
+export function noHostPackages(): Plugin {
+  return {
+    name: 'gallery:no-host-packages',
+    generateBundle(_options, bundle) {
+      const loaded = Object.values(bundle).flatMap((file) =>
+        file.type === 'chunk'
+          ? [...file.imports, ...file.dynamicImports]
+              .filter((id) => HOST_PACKAGES.test(id))
+              .map((id) => `${file.fileName} loads ${id}`)
+          : []
+      )
+      if (loaded.length)
+        throw new Error(
+          `${loaded.join('; ')}: only the HUD hosts install it, and the gallery signs nothing`
+        )
+    }
+  }
+}
+const APP_UI = '\0gallery:app-ui'
+/** The gallery showcases shared components. App barrels re-exported by the package root stay out of its build. */
+export function withoutAppBarrels(): Plugin {
+  const entry = path.resolve(here, '../index.ts')
+  return {
+    name: 'gallery:without-app-barrels',
+    enforce: 'pre',
+    resolveId(source, importer) {
+      return importer === entry && /^\.\/apps\/[a-z][a-z0-9-]*$/.test(source) ? APP_UI : null
+    },
+    load(id) {
+      return id === APP_UI ? 'export {}' : null
+    }
+  }
+}
+
 // Only the names of the generated Review's components reach the bundle; the catalog itself stays in figma/.
 const generatedComponents = () =>
   (
@@ -24,7 +79,7 @@ export default defineConfig(({ command, mode }) => {
     // Its own dependency cache: `pnpm review` runs from the same package, and a shared node_modules/.vite would be
     // re-optimized for whichever server started last, breaking the other's prebundled dependencies.
     cacheDir: path.resolve(here, '../node_modules/.vite-gallery'),
-    plugins: [react()],
+    plugins: [react(), noHostPackages(), withoutAppBarrels()],
     define: {
       __GENERATED_COMPONENTS__: JSON.stringify(hosted ? [] : generatedComponents()),
       // The build sits beside the generated Review in one output; `pnpm review` serves it in development.
@@ -39,9 +94,9 @@ export default defineConfig(({ command, mode }) => {
     server: {
       host: '127.0.0.1',
       port: 6020,
-      fs: { strict: true, allow: [path.resolve(here, '..')] }
+      fs: { strict: true, allow: [path.resolve(here, '..'), explorerCore] }
     },
-    resolve: { dedupe: ['react', 'react-dom'] },
+    resolve: { dedupe: ['react', 'react-dom'], alias: hudAliases },
     build: {
       // The hosted preview alone, or beside the generated Review's build (figma/review/review-dist), which the CI
       // artifact uploads whole.
@@ -54,8 +109,10 @@ export default defineConfig(({ command, mode }) => {
       rolldownOptions: {
         input: {
           index: path.resolve(here, 'index.html'),
-          frame: path.resolve(here, 'frame.html')
-        }
+          frame: path.resolve(here, 'frame.html'),
+          hud: path.resolve(here, 'hud.html')
+        },
+        external: [HOST_PACKAGES]
       }
     }
   }

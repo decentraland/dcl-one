@@ -4,7 +4,7 @@ import SignInModalView, {
   type SignInSocialProvider,
 } from "../components/SignInModalView";
 
-import { createIdentityWith } from "../data/auth/identity";
+import { createIdentityWith } from "@web-core/auth/identity";
 import { loginWithIdentity } from "../data/auth/engineLogin";
 import {
   ThirdwebError,
@@ -21,7 +21,7 @@ import {
   personalSign,
   selectWallet,
 } from "../data/auth/wallet";
-import { hasWalletConnect, loadWalletConnectConfig, startWalletConnectSignIn } from "../data/auth/walletconnect";
+import { hasWalletConnect, loadWalletConnectConfig, startWalletConnectSignIn } from "@web-core/auth/walletconnect";
 
 export type SignInFlowProps = {
   onClose: () => void;

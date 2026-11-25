@@ -9,6 +9,9 @@ export interface Console {
   close(): Promise<void>
   /** What the page said and how it looks now, the HUD included, where the transport can tell. */
   evidence?(): Promise<{ console: string[]; screenshot: Buffer | undefined }>
+  /** Lay the page out at `[width, height]` CSS px in the same window, or at the window's size
+   *  again with `null`, and resolve once the app frame has drawn at it. Optional. */
+  resizeView?(size: [number, number] | null): Promise<void>
 }
 
 /** A whole run of base64 characters (either alphabet). */

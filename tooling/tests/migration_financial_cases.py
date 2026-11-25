@@ -49,6 +49,22 @@ class FinancialMigrationCases:
             INSERT INTO stripe_payment_refunds VALUES ('refunded',10,10);''')
         self.sql(db, 'CREATE TEMP TABLE stage AS ' + extract + ';' + load)
 
+    def test_rental_asset_import_resets_source_blocks_only_when_upstream_wins(self):
+        db = self.fresh_db('rental_asset_membership')
+        self.sql(db, (ROOT / 'schemas/32_signatures.sql').read_text())
+        step = self.financial_step('signatures-server', 'rental_assets')
+        stage = self.financial_stage(step)
+        row = """INSERT INTO stage VALUES ('asset',1,'estate-1','ethereum',1,'estate','name',
+                 2,true,3,'2026-01-01','2026-01-01','2026-01-02');"""
+        blocks = 'SELECT membership_block, metadata_block FROM signatures.rental_assets'
+        self.sql(db, stage + row + step.load.read_text())
+        self.assertEqual(self.sql(db, blocks).split(), ['0', '0'])
+        self.sql(db, "UPDATE signatures.rental_assets SET membership_block=120, metadata_block=115, fetched_at='2026-01-03'")
+        self.sql(db, stage + row + step.load.read_text())
+        self.assertEqual(self.sql(db, blocks).split(), ['120', '115'])
+        self.sql(db, stage + row.replace('2026-01-02', '2026-01-04') + step.load.read_text())
+        self.assertEqual(self.sql(db, blocks).split(), ['0', '0'])
+
     def test_when_rental_parent_is_newer_it_should_preserve_listing_and_periods(self):
         db = self.fresh_db('financial_fix_rentals')
         folder = migrate.SOURCES / 'signatures-server'
@@ -236,6 +252,102 @@ class FinancialMigrationCases:
                          [f'{old}\tcancelled', f'{new}\topen'])
         self.assertEqual(self.sql(db, 'SELECT count(*) FROM signatures.rental_listings;\n').strip(), '2')
 
+    def test_when_upstream_updates_a_node_cancellation_it_should_keep_or_clear_its_reason(self):
+        db = self.fresh_db('financial_rental_cancel_reason')
+        self.sql(db, (ROOT / 'schemas/32_signatures.sql').read_text())
+        self.sql(db, '''INSERT INTO signatures.rental_assets(contract_address,token_id,nft_id,network,chain_id,
+                category,search_text,nft_created_at,nft_updated_at,fetched_at)
+            VALUES ('asset',1,'asset','ethereum',1,'parcel','','2026-01-01','2026-01-01','2026-01-01');''')
+        stage = self.financial_stage(self.financial_step('signatures-server', 'rentals'))
+        load = (migrate.SOURCES / 'signatures-server/rentals.load.sql').read_text()
+        rental_id = '11111111-1111-1111-1111-111111111111'
+
+        def row(status, updated):
+            return (f"INSERT INTO stage VALUES ('{rental_id}','asset',1,'ethereum',1,'2027-01-01',ARRAY['0','0','0'],"
+                    f"'sig','contract','{status}','target',NULL,NULL,'2026-01-01','{updated}',NULL,'lessor',NULL);")
+        self.sql(db, stage + row('open', '2026-01-01') + load)
+        self.sql(db, "UPDATE signatures.rentals SET status='cancelled', cancel_reason='expired', updated_at='2026-01-02';")
+        self.sql(db, stage + row('cancelled', '2026-01-03') + load)
+        self.assertEqual(self.sql(db, 'SELECT status, cancel_reason FROM signatures.rentals;\n').strip(),
+                         'cancelled\texpired')
+        self.sql(db, stage + row('executed', '2026-01-04') + load)
+        self.assertEqual(self.sql(db, "SELECT status, coalesce(cancel_reason, '-') FROM signatures.rentals;\n").strip(),
+                         'executed\t-')
+
+    def rental_override_fixture(self, name):
+        db = self.fresh_db(name)
+        self.sql(db, (ROOT / 'schemas/32_signatures.sql').read_text())
+        self.sql(db, '''INSERT INTO signatures.rental_assets(contract_address,token_id,nft_id,network,chain_id,
+                category,search_text,nft_created_at,nft_updated_at,fetched_at)
+            VALUES ('asset',1,'asset','ethereum',1,'parcel','','2026-01-01','2026-01-01','2026-01-01');''')
+        stage = self.financial_stage(self.financial_step('signatures-server', 'rentals'))
+        load = (migrate.SOURCES / 'signatures-server/rentals.load.sql').read_text()
+        rental_id = '11111111-1111-1111-1111-111111111111'
+
+        def run(status, updated, rent="NULL,NULL,'2026-01-01','{updated}',NULL,'lessor',NULL"):
+            self.sql(db, stage + f"INSERT INTO stage VALUES ('{rental_id}','asset',1,'ethereum',1,'2027-01-01',"
+                     f"ARRAY['0','0','0'],'sig','contract','{status}','target'," + rent.format(updated=updated)
+                     + ');' + load)
+
+        def state():
+            return self.sql(db, """SELECT r.status, coalesce(r.cancel_reason, '-'), r.updated_at::date,
+                coalesce(r.rented_days::text, '-'), coalesce(r.started_at::date::text, '-'), coalesce(l.tenant, '-')
+                FROM signatures.rentals r JOIN signatures.rental_listings l USING (id);\n""").strip().split('\t')
+        return db, rental_id, run, state
+
+    def test_when_upstream_rents_a_listing_the_node_cancelled_later_it_should_apply_the_rent(self):
+        rented = "7,NULL,'2026-01-01','{updated}','2026-01-04','lessor','tenant'"
+        for status in ('executed', 'claimed'):
+            for reason in ('expired', 'transferred', 'dissolved', 'nonce', None):
+                with self.subTest(status=status, reason=reason):
+                    db, _, run, state = self.rental_override_fixture('financial_rental_rent_wins')
+                    run('open', '2026-01-01')
+                    self.sql(db, "UPDATE signatures.rentals SET status='cancelled', cancel_reason=%s, "
+                             "updated_at='2026-01-05';" % (f"'{reason}'" if reason else 'NULL'))
+                    run(status, '2026-01-04', rented)
+                    # The reason is cleared and the row is the upstream version, its timestamp included.
+                    self.assertEqual(state(), [status, '-', '2026-01-04', '7', '2026-01-04', 'tenant'])
+
+    def test_when_a_rent_replaced_a_node_cancellation_it_should_follow_later_upstream_versions_only(self):
+        rented = "7,NULL,'2026-01-01','{updated}','2026-01-04','lessor','tenant'"
+        db, rental_id, run, state = self.rental_override_fixture('financial_rental_rent_follow')
+        run('open', '2026-01-01')
+        self.sql(db, "UPDATE signatures.rentals SET status='cancelled', cancel_reason='expired', updated_at='2026-01-06';")
+        run('executed', '2026-01-03', rented)
+        # The periods step joins on the parent's upstream timestamp.
+        periods = self.financial_step('signatures-server', 'rental_periods')
+        self.sql(db, self.financial_stage(periods)
+                 + f"INSERT INTO stage VALUES ('22222222-2222-2222-2222-222222222222','{rental_id}',1,7,100,"
+                 "'sig','2026-01-03');" + (migrate.SOURCES / 'signatures-server/rental_periods.load.sql').read_text())
+        self.assertEqual(self.sql(db, 'SELECT count(*) FROM signatures.rental_periods;\n').strip(), '1')
+        # Upstream versions older than the applied one stay skipped.
+        for status in ('open', 'cancelled'):
+            run(status, '2026-01-02')
+            self.assertEqual(state()[:3], ['executed', '-', '2026-01-03'])
+        # A later upstream version lands although it predates the node's cancellation.
+        run('claimed', '2026-01-04', rented)
+        self.assertEqual(state()[:3], ['claimed', '-', '2026-01-04'])
+
+    def test_when_an_older_upstream_row_is_not_a_rent_it_should_keep_the_node_cancellation(self):
+        db, _, run, state = self.rental_override_fixture('financial_rental_cancel_kept')
+        run('open', '2026-01-01')
+        self.sql(db, "UPDATE signatures.rentals SET status='cancelled', cancel_reason='expired', updated_at='2026-01-05';")
+        for status in ('open', 'cancelled'):
+            with self.subTest(status=status):
+                run(status, '2026-01-04')
+                self.assertEqual(state()[:3], ['cancelled', 'expired', '2026-01-05'])
+
+    def test_when_the_node_closed_a_rented_listing_it_should_skip_an_older_upstream_row(self):
+        for node in ('executed', 'claimed'):
+            for upstream in ('open', 'cancelled', 'executed', 'claimed'):
+                with self.subTest(node=node, upstream=upstream):
+                    db, _, run, state = self.rental_override_fixture('financial_rental_fold_kept')
+                    run('open', '2026-01-01')
+                    self.sql(db, f"UPDATE signatures.rentals SET status='{node}', updated_at='2026-01-05';"
+                             "UPDATE signatures.rental_listings SET tenant='node-tenant';")
+                    run(upstream, '2026-01-04', "3,NULL,'2026-01-01','{updated}','2026-01-04','lessor','other'")
+                    self.assertEqual(state(), [node, '-', '2026-01-05', '-', '-', 'node-tenant'])
+
     def test_when_a_batch_carries_two_open_listings_of_one_asset_it_should_land_the_latest(self):
         db = self.fresh_db('financial_rental_two_open')
         self.sql(db, (ROOT / 'schemas/32_signatures.sql').read_text())
@@ -258,7 +370,7 @@ class FinancialMigrationCases:
         CREATE SCHEMA marketplace;
         CREATE TABLE marketplace.trades (id uuid, network text, chain_id int, signature text, hashed_signature text,
             checks jsonb, signer text, type text, expires_at timestamp, effective_since timestamp, contract text,
-            created_at timestamp);
+            created_at timestamp, trade_digest text);
         CREATE TABLE marketplace.trade_assets (id uuid, trade_id uuid, direction text, asset_type smallint,
             contract_address text, beneficiary text, extra text, created_at timestamp);
         CREATE TABLE marketplace.trade_assets_erc20 (asset_id uuid, amount numeric);
@@ -277,13 +389,19 @@ class FinancialMigrationCases:
         self.sql(src, self.MARKETPLACE_SCHEMA)
         trade, coupon = '11111111-1111-4111-8111-111111111111', '22222222-2222-4222-8222-222222222222'
         sent, received = '33333333-3333-4333-8333-333333333333', '44444444-4444-4444-8444-444444444444'
+        other, other_sent = '55555555-5555-4555-8555-555555555555', '66666666-6666-4666-8666-666666666666'
         signer, contract = '0x' + 'a' * 40, '0x' + 'b' * 40
         self.sql(src, f"""
             INSERT INTO marketplace.trades VALUES ('{trade}', 'polygon', 137, '0xABC', '0xDEF', '{{}}',
-              '{signer.upper().replace('0X', '0x')}', 'public_item_order', '2027-01-01', '2026-01-01', 'c', '2026-01-02');
+              '{signer.upper().replace('0X', '0x')}', 'public_item_order', '2027-01-01', '2026-01-01', 'c', '2026-01-02',
+              '0x{'C' * 64}');
+            INSERT INTO marketplace.trades VALUES ('{other}', 'polygon', 137, '0x123', '0x456', '{{}}',
+              '{signer}', 'bid', '2027-01-01', '2026-01-01', 'c', '2026-01-02', '0xnot-a-digest');
             INSERT INTO marketplace.trade_assets VALUES
               ('{sent}', '{trade}', 'sent', 1, '{contract}', NULL, '0x', '2026-01-02'),
               ('{received}', '{trade}', 'received', 4, '{contract}', '{signer}', '', '2026-01-02');
+            INSERT INTO marketplace.trade_assets VALUES
+              ('{other_sent}', '{other}', 'sent', 1, '{contract}', NULL, '', '2026-01-02');
             INSERT INTO marketplace.trade_assets_erc20 VALUES ('{sent}', 1000000000000000000);
             INSERT INTO marketplace.trade_assets_item VALUES ('{received}', '7');
             INSERT INTO marketplace.coupons VALUES ('{coupon}', 'polygon', 137, '{signer}', '0x01', '0x02', '0x03',
@@ -307,11 +425,14 @@ class FinancialMigrationCases:
             self.sql(tgt, f"INSERT INTO shop.coupon_state VALUES ('{coupon}', 5, false, false, '2026-02-01');")
             code, out = self.migrate('run', 'marketplace-server', '--step', 'coupon_state', sources_dir=migrate.SOURCES)
             self.assertEqual(code, 0, out)
-        self.assertEqual(self.sql(tgt, 'SELECT signature, signer, mirrored_from IS NULL FROM shop.trades;').strip(),
-                         f'0xabc\t{signer}\tt')
+        # The promoted copy takes upstream's V3 digest lowercase; a malformed one is not copied.
+        self.assertEqual(self.sql(tgt, "SELECT signature, signer, mirrored_from IS NULL, COALESCE(trade_digest, 'none') "
+                                       'FROM shop.trades ORDER BY id;').strip().splitlines(),
+                         [f'0xabc\t{signer}\tt\t0x{"c" * 64}', f'0x123\t{signer}\tt\tnone'])
         self.assertEqual(self.sql(tgt, 'SELECT a.id, a.extra, e.amount, i.item_id FROM shop.trade_assets a '
                                        'LEFT JOIN shop.trade_assets_erc20 e ON e.asset_id = a.id '
-                                       'LEFT JOIN shop.trade_assets_item i ON i.asset_id = a.id ORDER BY a.id;')
+                                       'LEFT JOIN shop.trade_assets_item i ON i.asset_id = a.id '
+                                       f"WHERE a.trade_id = '{trade}' ORDER BY a.id;")
                          .strip().splitlines(),
                          [f'{sent}\t\t1000000000000000000\t', f'{received}\t\t\t7'])
         self.assertEqual(self.sql(tgt, 'SELECT uses FROM shop.coupon_state;').strip(), '5')

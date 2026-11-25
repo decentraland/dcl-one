@@ -5,7 +5,7 @@ vi.mock("../auth/signer", () => ({
 }));
 
 import { signedFetch } from "../auth/signer";
-import { CatalystError, getJSON, postJSON, signedGetJSON } from "./client";
+import { buildQuery, CatalystError, getJSON, postJSON, signedGetJSON } from "./client";
 import type { AuthIdentity } from "../auth/types";
 
 const mSignedFetch = vi.mocked(signedFetch);
@@ -197,5 +197,16 @@ describe("signedGetJSON surfaces the server message on authenticated reads", () 
     expect(err).toBeInstanceOf(CatalystError);
     expect(err.status).toBe(403);
     expect(err.message).toBe("checkout does not belong to signer");
+  });
+});
+
+
+describe("buildQuery", () => {
+  describe("when a filter takes repeated values", () => {
+    it("should keep the nonempty values in order", () => {
+      expect(buildQuery({ id: ["one + two", "", "three"], first: 2, ignored: [] })).toBe(
+        "?id=one+%2B+two&id=three&first=2",
+      );
+    });
   });
 });

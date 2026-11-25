@@ -261,7 +261,7 @@ pub async fn load_imposter_remote(
         let mut indices: Vec<usize> = (0..zip.len()).collect();
         indices.sort_by_key(|&i| {
             zip.by_index_raw(i)
-                .is_ok_and(|f| f.name().ends_with("-spec.json"))
+                .is_ok_and(|f| f.name().is_ok_and(|name| name.ends_with("-spec.json")))
         });
         for i in indices {
             use futures_lite::io::AsyncWriteExt;

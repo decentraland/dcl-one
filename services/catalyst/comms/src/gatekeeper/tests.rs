@@ -858,6 +858,47 @@ async fn a_lookup_without_a_device_id_is_widened_to_the_recorded_device() {
     );
 }
 
+/// GET /users/{address}/bans answers an address ban with its record and a
+/// ban of the wallet's recorded device without it, whatever the address casing.
+#[tokio::test]
+async fn the_ban_status_route_reports_what_the_ban_matched_on() {
+    let Some(pool) = scratch().await else { return };
+    let state = state_with(pool, Settings::for_tests());
+    let s = seed_device_ban(&state).await;
+    let app = super::router(state.clone());
+    let status = |address: &str| {
+        let request = Request::get(format!("/users/{address}/bans"))
+            .body(Body::empty())
+            .unwrap();
+        let app = app.clone();
+        async move {
+            let (code, body) = body_json(app.oneshot(request).await.unwrap()).await;
+            assert_eq!(code, StatusCode::OK, "{body}");
+            body["data"].clone()
+        }
+    };
+
+    let own = status(s.banned.as_str()).await;
+    assert_eq!(own["isBanned"], true);
+    assert_eq!(own["matchedOn"], "address");
+    assert_eq!(own["ban"]["bannedAddress"], s.banned.as_str());
+    assert!(own["ban"].get("bannedDeviceId").is_none());
+    // The checksummed form, or upper case when the checksum has no letter to raise.
+    let mut mixed = s.banned.checksummed();
+    if mixed == s.banned.as_str() {
+        mixed = format!("0x{}", s.banned.as_str()[2..].to_ascii_uppercase());
+    }
+    assert_eq!(status(&mixed).await, own, "the path address is lowercased");
+    assert_eq!(
+        status(s.same_device.as_str()).await,
+        serde_json::json!({ "isBanned": true, "matchedOn": "device" })
+    );
+    assert_eq!(
+        status(s.clean.as_str()).await,
+        serde_json::json!({ "isBanned": false })
+    );
+}
+
 #[tokio::test]
 async fn private_voice_credentials_are_refused_when_a_participant_is_platform_banned() {
     let Some(pool) = scratch().await else { return };
@@ -1227,7 +1268,7 @@ async fn allow_local_preview_accepts_a_preview_scene_without_a_deployment() {
             .unwrap();
         let checked = scene::require_genesis_deployment(&state, &resolved).await;
         match checked {
-            Ok(()) => assert!(accepted, "{realm} {scene_id} was accepted"),
+            Ok(_) => assert!(accepted, "{realm} {scene_id} was accepted"),
             Err(error) => {
                 assert!(!accepted, "{realm} {scene_id}: {}", error.message);
                 assert_eq!(error.code, 404);
@@ -1583,6 +1624,12 @@ impl crate::interfaces::SceneIdentity for DeployedGenesis {
     ) -> Result<Option<crate::rooms::ActiveDeployment>, crate::rooms::ResolveError> {
         self.inner.world_active_scene(world).await
     }
+    async fn world_scene_count(
+        &self,
+        world: &crate::world_identity::WorldName,
+    ) -> Result<usize, crate::rooms::ResolveError> {
+        self.inner.world_scene_count(world).await
+    }
 }
 
 fn genesis_state(pool: PgPool) -> SharedState {
@@ -1648,6 +1695,12 @@ impl crate::interfaces::SceneIdentity for ParcelScenes {
         _: &crate::world_identity::WorldName,
     ) -> Result<Option<crate::rooms::ActiveDeployment>, crate::rooms::ResolveError> {
         panic!("must not resolve the newest world scene")
+    }
+    async fn world_scene_count(
+        &self,
+        world: &crate::world_identity::WorldName,
+    ) -> Result<usize, crate::rooms::ResolveError> {
+        Ok(usize::from(self.world_active_scene(world).await?.is_some()))
     }
 }
 
@@ -2033,6 +2086,114 @@ async fn a_mutation_reaches_only_the_rooms_of_the_place_it_is_authorized_on() {
     );
 }
 
+/// The moderator gate reads the `platform_user_moderators` flag on every
+/// check: a wallet dropped from the refreshed document is refused at once,
+/// and the env list applies only while no document is held.
+#[tokio::test]
+async fn a_revoked_platform_moderator_is_refused_without_a_restart() {
+    use super::auth::{ModeratorMode, authorize_moderator};
+    use super::moderation::handlers::moderator_creds;
+    use crate::shared::feature_flags::Snapshot;
+    use crate::shared::signed_fetch::SignedPath;
+
+    fn flags(enabled: bool, variant_enabled: bool, wallets: &str) -> serde_json::Value {
+        serde_json::json!({
+            "flags": { "dapps-platform_user_moderators": enabled },
+            "variants": { "dapps-platform_user_moderators": {
+                "name": "list",
+                "enabled": variant_enabled,
+                "payload": { "type": "string", "value": wallets }
+            } }
+        })
+    }
+    async fn admitted(state: &CommsState) -> bool {
+        let signed_headers = signed(KEY, "get", "/bans", "{}").await;
+        authorize_moderator(
+            &moderator_creds(state),
+            &signed_headers,
+            "get",
+            &SignedPath::local("/bans"),
+            ModeratorMode::Read,
+            None,
+            None,
+        )
+        .await
+        .is_ok()
+    }
+
+    let wallet = address_of(KEY);
+    let other = address_of(OUTSIDER_KEY);
+    let state = lazy_state(Settings {
+        moderator_addresses: vec![Address::parse(&wallet).unwrap()],
+        ..Settings::for_tests()
+    });
+    assert!(admitted(&state).await, "no flags attached: the env list");
+
+    let snapshot = Arc::new(Snapshot::empty());
+    state.set_platform_moderator_flags(snapshot.clone());
+    assert!(
+        admitted(&state).await,
+        "no document fetched yet: the env list"
+    );
+
+    snapshot.replace_sourced(
+        flags(
+            true,
+            true,
+            &format!("{other},\n{}", wallet.to_uppercase().replace("0X", "0x")),
+        ),
+        true,
+    );
+    assert!(admitted(&state).await, "listed in the flag");
+
+    snapshot.replace_sourced(flags(true, true, &other), true);
+    assert!(
+        !admitted(&state).await,
+        "revoked in the flag, though still in the env list"
+    );
+
+    snapshot.replace_sourced(flags(false, true, &wallet), true);
+    assert!(
+        !admitted(&state).await,
+        "a disabled flag lists no moderator"
+    );
+
+    snapshot.replace_sourced(flags(true, false, &wallet), true);
+    assert!(
+        !admitted(&state).await,
+        "a disabled variant lists no moderator"
+    );
+
+    let key = "dapps-platform_user_moderators";
+    for (variant, case) in [
+        (
+            serde_json::Value::Null,
+            "a missing variant lists no moderator",
+        ),
+        (
+            serde_json::json!({ "enabled": true, "payload": { "value": ["0x"] } }),
+            "a non-string payload lists no moderator",
+        ),
+        (
+            serde_json::json!({ "payload": { "value": wallet.clone() } }),
+            "a variant without `enabled` lists no moderator",
+        ),
+    ] {
+        let mut doc = flags(true, true, &wallet);
+        let variants = doc["variants"].as_object_mut().unwrap();
+        if variant.is_null() {
+            variants.remove(key);
+        } else {
+            variants.insert(key.to_string(), variant);
+        }
+        snapshot.replace_sourced(doc, true);
+        assert!(!admitted(&state).await, "{case}");
+    }
+
+    snapshot.replace_sourced(flags(true, true, &wallet), true);
+    assert!(admitted(&state).await, "granted again without a restart");
+}
+
 #[tokio::test]
 async fn the_moderator_routes_need_the_token_or_a_listed_wallet() {
     let Some(pool) = scratch().await else { return };
@@ -2186,9 +2347,9 @@ async fn the_moderator_routes_need_the_token_or_a_listed_wallet() {
 /// loosening the room refuses is stored. Each room failure is counted.
 #[tokio::test(flavor = "current_thread")]
 async fn the_private_messages_privacy_patch_reaches_the_room_or_is_refused() {
-    let recorder = metrics_exporter_prometheus::PrometheusBuilder::new().build_recorder();
+    let recorder = dcl_metrics::PrometheusBuilder::new().build_recorder();
     let series = recorder.handle();
-    let _recording = metrics::set_default_local_recorder(&recorder);
+    let _recording = dcl_metrics::set_default_local_recorder(&recorder);
     let failures = || {
         series
             .render()
@@ -4612,4 +4773,447 @@ async fn webhook_private_join_restart_reconstructs_old_room_after_delete_failure
         .unwrap();
     restarted.voice_db.delete_private_call(next).await.unwrap();
     server.abort();
+}
+
+#[tokio::test]
+async fn community_voice_join_refuses_a_missing_or_unknown_action_before_any_read() {
+    // Every store read fails: a refusal is the body check, not a later 500.
+    let state = lazy_state(Settings::for_tests());
+    let join = |action: Option<&str>| {
+        let mut body = serde_json::json!({
+            "community_id": Uuid::new_v4().to_string(),
+            "user_address": wallet().as_str(),
+            "user_role": "owner",
+        });
+        if let Some(action) = action {
+            body["action"] = serde_json::json!(action);
+        }
+        voice::community_voice_chat_create_or_join(
+            State(state.clone()),
+            Json(serde_json::from_value(body).unwrap()),
+        )
+    };
+    let err = join(None).await.unwrap_err();
+    assert_eq!(
+        (err.code, err.message.as_str()),
+        (400, "The property action is required")
+    );
+    for unknown in ["", "leave", "CREATE", "Join"] {
+        let err = join(Some(unknown)).await.unwrap_err();
+        assert_eq!(
+            (err.code, err.message.as_str()),
+            (400, "The property action is invalid"),
+            "{unknown:?}"
+        );
+    }
+}
+
+#[test]
+fn community_voice_actions_are_upstreams_enum() {
+    for action in [
+        "create",
+        "join",
+        "request-to-speak",
+        "promote-speaker",
+        "demote-speaker",
+        "kick-player",
+    ] {
+        assert_eq!(voice::community_voice_action(Some(action)).unwrap(), action);
+    }
+}
+
+#[tokio::test]
+async fn community_voice_status_routes_answer_inactive_when_the_store_fails() {
+    let state = lazy_state(Settings::for_tests());
+    let community = CommunityId::new();
+    let Json(status) =
+        voice::community_voice_chat_status(State(state.clone()), Path(community.to_string()))
+            .await
+            .expect("a failed read answers inactive");
+    assert_eq!(
+        (
+            status.active,
+            status.participant_count,
+            status.moderator_count
+        ),
+        (false, 0, 0)
+    );
+    let Json(bulk) = voice::community_voice_chat_bulk_status(
+        State(state.clone()),
+        Json(voice::BulkCommunityStatusBody {
+            community_ids: vec![community.to_string(), "not-a-uuid".into()],
+        }),
+    )
+    .await
+    .expect("a failed read answers every id inactive");
+    assert_eq!(
+        bulk,
+        serde_json::json!({ "data": [
+            { "community_id": community.to_string(), "active": false, "participant_count": 0, "moderator_count": 0 },
+            { "community_id": "not-a-uuid", "active": false, "participant_count": 0, "moderator_count": 0 },
+        ]})
+    );
+    let Json(active) = voice::community_voice_chat_active(State(state.clone()))
+        .await
+        .expect("a failed read lists none");
+    assert_eq!(active, serde_json::json!({ "data": [], "total": 0 }));
+    let member = wallet();
+    let Json(user) =
+        voice::check_user_community_status(State(state.clone()), Path(member.to_string()))
+            .await
+            .expect("a failed read answers not in a chat");
+    assert_eq!(
+        user,
+        serde_json::json!({ "userAddress": member.as_str(), "isInCommunityVoiceChat": false })
+    );
+}
+
+/// The webhook replica applies the room event and publishes it for every other
+/// replica; a refused publish never fails the webhook.
+#[tokio::test]
+async fn a_verified_room_event_is_applied_and_published_and_a_refused_publish_is_still_acknowledged()
+ {
+    use super::webhook::test_support::webhook_jwt;
+    use crate::protocol::bus::room_events::{RoomEvent, RoomEventKind, RoomType, SUBJECT};
+    let event = |id: &str, kind: &str| {
+        serde_json::to_vec(&serde_json::json!({ "id": id, "createdAt": 1718900000, "event": kind, "room": { "name": "world-w.dcl.eth" }, "participant": { "identity": "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "sid": "PA_published" } })).unwrap()
+    };
+    let settings = Settings::for_tests();
+    let (key, secret) = (
+        settings.livekit.api_key.clone(),
+        settings.livekit.api_secret.clone(),
+    );
+    let bus = Arc::new(super::bus::InProcessBus::new());
+    let state = Arc::new(
+        CommsState::new(
+            PgPool::connect_lazy("postgres://postgres@127.0.0.1:1/postgres")
+                .expect("a lazy pool never connects"),
+            Outbound::for_tests(),
+            settings,
+            None,
+            None,
+            Arc::new(StubPolicy::default()),
+            Arc::new(known_lobby_scenes("w.dcl.eth")),
+            Arc::new(crate::presence::Presence::new()),
+            Arc::new(crate::interfaces::test_support::StubDirectory::default()),
+        )
+        .with_bus(bus.clone()),
+    );
+    let topology = Arc::new(crate::topology::Topology::default());
+    state.presence.attach_topology(topology.clone());
+    let wallet = "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+    let app = super::router(state);
+    let joined = event("published-join", "participant_joined");
+    assert_eq!(
+        post_webhook(&app, Some(&webhook_jwt(&joined, &key, &secret)), &joined).await,
+        StatusCode::OK
+    );
+    let published = bus.published();
+    assert_eq!(published.len(), 1);
+    assert_eq!(published[0].0, SUBJECT);
+    let decoded = RoomEvent::decode(&published[0].1).unwrap();
+    assert_eq!(decoded.kind, RoomEventKind::Joined as i32);
+    assert_eq!(decoded.room_type, RoomType::World as i32);
+    assert_eq!(decoded.realm_name, "w.dcl.eth");
+    assert_eq!(decoded.event_id, "published-join");
+    assert!(
+        topology.snapshot().is_online(wallet),
+        "applied here at once"
+    );
+
+    bus.refuse_publishes(true);
+    let left = event("refused-leave", "participant_left");
+    assert_eq!(
+        post_webhook(&app, Some(&webhook_jwt(&left, &key, &secret)), &left).await,
+        StatusCode::OK
+    );
+    assert!(
+        !topology.snapshot().is_online(wallet),
+        "applied here even when the publish is refused"
+    );
+}
+
+/// One replica whose webhook feeds an attached online view over `bus`.
+fn presence_webhook_state(
+    bus: Arc<super::bus::InProcessBus>,
+    scenes: Arc<dyn crate::interfaces::SceneIdentity>,
+) -> (
+    axum::Router,
+    Arc<crate::topology::Topology>,
+    Arc<RecordingSink>,
+) {
+    let sink = Arc::new(RecordingSink::default());
+    let state = Arc::new(
+        CommsState::new(
+            PgPool::connect_lazy("postgres://postgres@127.0.0.1:1/postgres")
+                .expect("a lazy pool never connects"),
+            Outbound::for_tests(),
+            Settings::for_tests(),
+            None,
+            None,
+            Arc::new(StubPolicy::default()),
+            scenes,
+            Arc::new(crate::presence::Presence::new()),
+            Arc::new(crate::interfaces::test_support::StubDirectory::default()),
+        )
+        .with_bus(bus)
+        .with_room_event_sink(sink.clone()),
+    );
+    let topology = Arc::new(crate::topology::Topology::default());
+    state.presence.attach_topology(topology.clone());
+    (super::router(state), topology, sink)
+}
+
+async fn signed_participant_event(
+    app: &axum::Router,
+    id: &str,
+    kind: &str,
+    room: &str,
+    sid: &str,
+    at: i64,
+) {
+    use super::webhook::test_support::webhook_jwt;
+    let settings = Settings::for_tests();
+    let body = serde_json::to_vec(&serde_json::json!({ "id": id, "createdAt": at, "event": kind, "room": { "name": room }, "participant": { "identity": "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "sid": sid } })).unwrap();
+    let jwt = webhook_jwt(
+        &body,
+        &settings.livekit.api_key,
+        &settings.livekit.api_secret,
+    );
+    assert_eq!(post_webhook(app, Some(&jwt), &body).await, StatusCode::OK);
+}
+
+/// An old session's leave that the webhook's own ordering supersedes (the
+/// player reconnected) is still applied and published, and leaves the newer
+/// session online.
+#[tokio::test]
+async fn a_superseded_late_leave_is_published_and_the_reconnected_wallet_stays_online() {
+    use crate::protocol::bus::room_events::{RoomEvent, RoomEventKind, SUBJECT};
+    let wallet = "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+    let bus = Arc::new(super::bus::InProcessBus::new());
+    let (app, topology, _) =
+        presence_webhook_state(bus.clone(), Arc::new(known_lobby_scenes("w.dcl.eth")));
+    let room = "world-w.dcl.eth";
+    signed_participant_event(
+        &app,
+        "join-a",
+        "participant_joined",
+        room,
+        "PA_a",
+        1718900000,
+    )
+    .await;
+    signed_participant_event(
+        &app,
+        "join-b",
+        "participant_joined",
+        room,
+        "PA_b",
+        1718900001,
+    )
+    .await;
+    signed_participant_event(
+        &app,
+        "late-leave-a",
+        "participant_left",
+        room,
+        "PA_a",
+        1718900002,
+    )
+    .await;
+    let published: Vec<_> = bus
+        .published()
+        .into_iter()
+        .filter(|(subject, _)| subject == SUBJECT)
+        .map(|(_, payload)| RoomEvent::decode(&payload).unwrap())
+        .collect();
+    assert_eq!(published.len(), 3);
+    assert_eq!(published[2].event_id, "late-leave-a");
+    assert_eq!(published[2].kind, RoomEventKind::Left as i32);
+    assert!(topology.snapshot().is_online(wallet), "PA_b is still live");
+}
+
+/// A room whose LiveKit name is not its canonical name is one occupancy reads
+/// refuse; its events still reach the access log but never online status.
+#[tokio::test]
+async fn an_event_in_a_room_reads_refuse_is_neither_applied_nor_published() {
+    /// Resolves every room to the world's canonical scene room under another name.
+    struct Renamed;
+    #[async_trait::async_trait]
+    impl crate::interfaces::SceneIdentity for Renamed {
+        async fn classify_room(
+            &self,
+            _: &str,
+        ) -> Result<crate::rooms::RoomClassification, crate::rooms::ResolveError> {
+            let world = crate::world_identity::WorldName::parse("w.dcl.eth").unwrap();
+            Ok(crate::rooms::RoomClassification::Canonical(
+                crate::rooms::ResolvedRoom {
+                    room: "w1:9:w.dcl.ethbafycanonical".into(),
+                    realm: crate::world_identity::RealmId::World(world),
+                    scene_id: Some(crate::world_identity::SceneId::parse("bafycanonical").unwrap()),
+                    deployment: None,
+                },
+            ))
+        }
+        async fn resolve(
+            &self,
+            _: crate::rooms::RoomRequest<'_>,
+        ) -> Result<crate::rooms::ResolvedRoom, crate::rooms::ResolveError> {
+            Err(crate::rooms::ResolveError::UnresolvedRoom("fixture".into()))
+        }
+        async fn world_scene(
+            &self,
+            _: &crate::world_identity::WorldName,
+            _: &crate::world_identity::SceneId,
+        ) -> Result<Option<crate::rooms::ActiveDeployment>, crate::rooms::ResolveError> {
+            Ok(None)
+        }
+        async fn world_active_scene(
+            &self,
+            _: &crate::world_identity::WorldName,
+        ) -> Result<Option<crate::rooms::ActiveDeployment>, crate::rooms::ResolveError> {
+            Ok(None)
+        }
+        async fn world_scene_count(
+            &self,
+            world: &crate::world_identity::WorldName,
+        ) -> Result<usize, crate::rooms::ResolveError> {
+            Ok(usize::from(self.world_active_scene(world).await?.is_some()))
+        }
+    }
+    let bus = Arc::new(super::bus::InProcessBus::new());
+    let (app, topology, sink) = presence_webhook_state(bus.clone(), Arc::new(Renamed));
+    signed_participant_event(
+        &app,
+        "legacy-join",
+        "participant_joined",
+        "scene-w.dcl.eth-bafylegacy",
+        "PA_legacy",
+        1718900000,
+    )
+    .await;
+    assert_eq!(
+        sink.0.lock().unwrap().len(),
+        1,
+        "the access log still gets it"
+    );
+    assert!(bus.published().is_empty());
+    assert!(topology.snapshot().wallets.is_empty());
+}
+
+/// Kicks a seated wallet through the moderator route against a
+/// RemoveParticipant fixture answering `status`; returns the route's
+/// outcome and the presence rows left.
+async fn kick_with_removal_status(
+    status: StatusCode,
+) -> Option<(Result<serde_json::Value, super::errors::ApiError>, usize)> {
+    let pool = scratch().await?;
+    let fixture = axum::Router::new().route(
+        "/twirp/livekit.RoomService/RemoveParticipant",
+        axum::routing::post(move || async move {
+            (status, Json(serde_json::json!({ "code": "unavailable" })))
+        }),
+    );
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let mut settings = Settings::for_tests();
+    settings.livekit.api_url = format!("http://{}", listener.local_addr().unwrap());
+    let server = tokio::spawn(async move { axum::serve(listener, fixture).await.unwrap() });
+    let state = state_with(pool.clone(), settings);
+    let community = seed_community(&pool).await;
+    let member = wallet();
+    state
+        .voice_db
+        .join_user_to_community_room(community, &member, false)
+        .await
+        .unwrap();
+    let outcome = voice::community_kick_player(
+        State(state.clone()),
+        Path((community.to_string(), member.as_str().to_owned())),
+    )
+    .await
+    .map(|Json(body)| body);
+    server.abort();
+    let rows = state
+        .voice_db
+        .community_users_in_room(community)
+        .await
+        .unwrap()
+        .len();
+    Some((outcome, rows))
+}
+
+#[tokio::test]
+async fn community_kick_reports_failed_livekit_removal() {
+    let Some((outcome, rows)) = kick_with_removal_status(StatusCode::SERVICE_UNAVAILABLE).await
+    else {
+        return;
+    };
+    let error = outcome.unwrap_err();
+    assert_eq!(error.code, 500);
+    assert!(error.message.contains("livekit remove participant"));
+    assert_eq!(rows, 0);
+}
+
+#[tokio::test]
+async fn community_kick_of_absent_participant_succeeds() {
+    let Some((outcome, rows)) = kick_with_removal_status(StatusCode::NOT_FOUND).await else {
+        return;
+    };
+    assert_eq!(
+        outcome.unwrap()["message"],
+        "User kicked from voice chat successfully"
+    );
+    assert_eq!(rows, 0);
+}
+
+#[tokio::test]
+async fn community_rpc_kick_reports_failed_livekit_removal() {
+    use super::voice::rooms::{VoiceRooms, VoiceUnavailable};
+    let Some(pool) = scratch().await else { return };
+    let member = wallet();
+    let identity = member.as_str().to_owned();
+    let fixture = axum::Router::new()
+        .route(
+            "/twirp/livekit.RoomService/GetParticipant",
+            axum::routing::post(move || {
+                let identity = identity.clone();
+                async move { Json(serde_json::json!({ "identity": identity })) }
+            }),
+        )
+        .route(
+            "/twirp/livekit.RoomService/RemoveParticipant",
+            axum::routing::post(|| async {
+                (
+                    StatusCode::SERVICE_UNAVAILABLE,
+                    Json(serde_json::json!({ "code": "unavailable" })),
+                )
+            }),
+        );
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let mut settings = Settings::for_tests();
+    settings.livekit.api_url = format!("http://{}", listener.local_addr().unwrap());
+    let server = tokio::spawn(async move { axum::serve(listener, fixture).await.unwrap() });
+    let state = comms_state(pool.clone(), settings);
+    let community = seed_community(&pool).await;
+    state
+        .voice_db
+        .join_user_to_community_room(community, &member, false)
+        .await
+        .unwrap();
+    let outcome = state
+        .kick_player(community.as_uuid(), member.as_str())
+        .await;
+    server.abort();
+    assert!(
+        matches!(&outcome, Err(VoiceUnavailable::Failed(m)) if m.contains("livekit remove participant")),
+        "{outcome:?}"
+    );
+    assert!(
+        state
+            .voice_db
+            .community_users_in_room(community)
+            .await
+            .unwrap()
+            .is_empty()
+    );
 }

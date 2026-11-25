@@ -134,15 +134,22 @@ async fn seed_item(pool: &PgPool, contract: &str, item_id: &str, creator: &str) 
         pool,
         super::market::graph::Network::Matic,
         137,
+        false,
         &[collection],
     )
     .await
     .unwrap();
     let mut item = mirrors::items::fixture(contract, item_id, "wearable_v2", "Seeded item");
     item["creator"] = json!(creator);
-    mirrors::items::upsert(pool, super::market::graph::Network::Matic, 137, &[item])
-        .await
-        .unwrap();
+    mirrors::items::upsert(
+        pool,
+        super::market::graph::Network::Matic,
+        137,
+        false,
+        &[item],
+    )
+    .await
+    .unwrap();
 }
 
 async fn cleanup_mirror(pool: &PgPool, contracts: &[String]) {
@@ -689,6 +696,7 @@ async fn campaigns_are_operator_data_read_publicly_with_the_builder_shape() {
         &pool,
         super::market::graph::Network::Matic,
         137,
+        false,
         &[mirrors::collections::fixture(
             &unapproved,
             "Pending",

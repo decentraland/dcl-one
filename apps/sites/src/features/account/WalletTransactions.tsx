@@ -1,6 +1,5 @@
 import { useState } from "react";
-import { WalletTransactions as WalletTransactionsView } from "@dcl/one-ui/apps/sites/account/WalletTransactions";
-import type { WalletNetworkDisplay } from "@dcl/one-ui/apps/sites/account/WalletsPanel";
+import { WalletTransactions as WalletTransactionsView, type WalletNetworkDisplay } from "@dcl/one-ui";
 import { explorerAddressUrl, explorerTxUrl } from "@ui/shop/checkout/chain/config";
 
 import { formatManaAmount, isHistoryUnavailable, WALLET_NETWORKS, type WalletNetwork } from "@/data/lib/account/wallet";

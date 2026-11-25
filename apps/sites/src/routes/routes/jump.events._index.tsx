@@ -1,9 +1,7 @@
-import { JumpCard } from "@dcl/one-ui/apps/sites/jump/JumpCard";
-import { JumpEventActions } from "@dcl/one-ui/apps/sites/jump/JumpEventActions";
-import { JumpPage } from "@dcl/one-ui/apps/sites/jump/JumpPage";
+import { JumpCard, JumpEventActions, JumpPage } from "@dcl/one-ui";
 import { useState } from "react";
 import { redirect } from "react-router";
-import SitesChrome from "@ui/web/frames/SitesChrome";
+import SitesLayout from "@/features/components/chrome/SitesLayout";
 
 import { useAuth } from "@/data/lib/auth/context";
 import { siteUrl } from "@/data/lib/catalyst/bases";
@@ -77,7 +75,7 @@ export function headers() {
 export default function JumpEvents({ loaderData }: Route.ComponentProps) {
   const { eventId, card, state, shareUrl, calendarHref, shareText, launch } = loaderData;
   const { identity } = useAuth();
-  const remind = useRemindMe(identity, eventId, () => openSignIn({ inPlace: true }), state === "upcoming");
+  const remind = useRemindMe(identity, eventId, () => openSignIn(), state === "upcoming");
   const [shareNotice, setShareNotice] = useState<string>();
 
   async function share() {
@@ -113,10 +111,10 @@ export default function JumpEvents({ loaderData }: Route.ComponentProps) {
     );
 
   return (
-    <SitesChrome active="play" overlayNav>
+    <SitesLayout active="play" overlayNav>
       <JumpPage>
         <JumpCard {...card} {...jumpInFor(card.jumpInHref, launch)} when={when} actions={actions} />
       </JumpPage>
-    </SitesChrome>
+    </SitesLayout>
   );
 }

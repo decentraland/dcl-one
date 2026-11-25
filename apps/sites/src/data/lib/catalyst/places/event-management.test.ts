@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 vi.mock("../client", async (original) => ({ ...await original<typeof import("../client")>(), postJSON: vi.fn(), signedGetJSON: vi.fn() }));
-import { postJSON, signedGetJSON } from "../client";
-import { loadEventProfile, loadModerationEvents, loadOwnedEvents, moderateEvent, saveEventPermissions } from "./event-management";
+import { CatalystError, postJSON, signedGetJSON } from "../client";
+import { eventAdminKeys, loadAllOwnedEvents, loadEventAccess, loadEventGrants, loadEventProfile, loadEventProfileSettings, loadModerationEvents, loadOwnedEvents, moderateEvent, saveEventPermissions } from "./event-management";
 import type { AuthIdentity } from "../../auth/types";
 import type { ManagedEvent } from "./event-management";
 
@@ -36,6 +36,33 @@ describe("when managing authenticated hangouts", () => {
     expect(signedGetJSON).toHaveBeenCalledWith("/events/api/events", expect.objectContaining({ identity, query: expect.objectContaining({ owner: true, list: "all", offset: 25, limit: 26, search: "music" }) }));
   });
 
+  describe("and the owner's events span more than one page", () => {
+    // Newest first: the soonest upcoming event was created first, so it is on the last page.
+    const pageOne = Array.from({ length: 101 }, (_, index) => makeEvent(`newer-${index}`));
+    const soonest = { ...makeEvent("soonest"), start_at: "2099-01-01T10:00:00Z" };
+
+    it("should read every page so the soonest event on page two is kept", async () => {
+      vi.mocked(signedGetJSON)
+        .mockResolvedValueOnce({ ok: true, data: pageOne })
+        .mockResolvedValueOnce({ ok: true, data: [soonest] });
+      const events = await loadAllOwnedEvents(identity);
+      expect(events).toHaveLength(101);
+      expect(events.map((event) => event.id)).toContain("soonest");
+      expect(vi.mocked(signedGetJSON).mock.calls.map(([, init]) => (init as unknown as { query: { offset: number } }).query.offset)).toEqual([0, 100]);
+    });
+
+    it("should stop with an error when a page repeats instead of advancing", async () => {
+      vi.mocked(signedGetJSON).mockResolvedValue({ ok: true, data: pageOne });
+      await expect(loadAllOwnedEvents(identity)).rejects.toThrow("did not advance");
+      expect(signedGetJSON).toHaveBeenCalledTimes(2);
+    });
+  });
+
+  it("should read one page when the owner has no events", async () => {
+    await expect(loadAllOwnedEvents(identity)).resolves.toEqual([]);
+    expect(signedGetJSON).toHaveBeenCalledTimes(1);
+  });
+
   describe("and the signed moderation catalogue contains mixed states", () => {
     beforeEach(() => {
       const now = Date.now();
@@ -48,7 +75,7 @@ describe("when managing authenticated hangouts", () => {
         .mockResolvedValueOnce({ ok: true, data: [...firstPage, pending] })
         .mockResolvedValueOnce({ ok: true, data: [
           pending,
-          { ...makeEvent("recurring"), finish_at: insideWindow, next_finish_at: future },
+          { ...makeEvent("recurring"), recurrent: true, finish_at: insideWindow, next_start_at: future, next_finish_at: future },
           { ...makeEvent("approved"), approved: true, updated_at: insideWindow },
           { ...makeEvent("older"), approved: true, updated_at: outsideWindow },
           { ...makeEvent("missing-date"), approved: true },
@@ -61,8 +88,8 @@ describe("when managing authenticated hangouts", () => {
       const result = await loadModerationEvents(identity);
       expect(result.events.map((row) => row.id)).toEqual(["pending", "recurring"]);
       expect(result.recentlyApproved.map((row) => row.id)).toEqual(["approved"]);
-      expect(signedGetJSON).toHaveBeenNthCalledWith(1, "/events/api/events", expect.objectContaining({ identity, query: { list: "active", order: "asc", offset: 0, limit: 101 } }));
-      expect(signedGetJSON).toHaveBeenNthCalledWith(2, "/events/api/events", expect.objectContaining({ identity, query: { list: "active", order: "asc", offset: 100, limit: 101 } }));
+      expect(signedGetJSON).toHaveBeenCalledWith("/events/api/events", expect.objectContaining({ identity, query: { list: "active", order: "asc", offset: 0, limit: 101 } }));
+      expect(signedGetJSON).toHaveBeenCalledWith("/events/api/events", expect.objectContaining({ identity, query: { list: "active", order: "asc", offset: 100, limit: 101 } }));
     });
   });
 
@@ -102,6 +129,32 @@ describe("when managing authenticated hangouts", () => {
     await expect(saveEventPermissions(identity, "invalid", ["approve_any_event"])).rejects.toThrow("valid wallet address");
     expect(postJSON).not.toHaveBeenCalled();
   });
+
+  describe("and reading one wallet's stored grants", () => {
+    const wallet = "0x4444444444444444444444444444444444444444";
+
+    it("should read the wallet's settings, signed, by its lowercased address", async () => {
+      vi.mocked(signedGetJSON).mockResolvedValue({ ok: true, data: { user: wallet, permissions: ["edit_any_schedule"], email: null } });
+      await expect(loadEventProfileSettings(identity, wallet.toUpperCase().replace("0X", "0x"))).resolves.toEqual({ user: wallet, permissions: ["edit_any_schedule"] });
+      expect(signedGetJSON).toHaveBeenCalledWith(`/events/api/profiles/${wallet}/settings`, expect.objectContaining({ identity }));
+    });
+
+    it("should answer null for a wallet that never saved settings", async () => {
+      vi.mocked(signedGetJSON).mockResolvedValue({ ok: true, data: null });
+      await expect(loadEventProfileSettings(identity, wallet)).resolves.toBeNull();
+    });
+
+    it("should fail on a refused read", async () => {
+      vi.mocked(signedGetJSON).mockRejectedValue(new CatalystError("Forbidden", "settings", 403));
+      await expect(loadEventProfileSettings(identity, wallet)).rejects.toThrow("Forbidden");
+    });
+
+    it("should reject an invalid address without reading", async () => {
+      await expect(loadEventProfileSettings(identity, "invalid")).rejects.toThrow("valid wallet address");
+      expect(signedGetJSON).not.toHaveBeenCalled();
+    });
+  });
+
   describe("and moderation was not applied", () => {
     beforeEach(() => { vi.mocked(postJSON).mockResolvedValue({ ok: true, data: { approved: false, rejected: true } }); });
     it("should reject an approval superseded by rejection", async () => {
@@ -140,4 +193,37 @@ describe("when managing authenticated hangouts", () => {
     });
   });
 
+  describe("and reading the account's admin access", () => {
+    const answer = (permissions: string[], list: () => unknown) => {
+      vi.mocked(signedGetJSON).mockImplementation(async (path: string) =>
+        path === "/events/api/profiles/me/settings" ? { ok: true, data: { user: identity.signer, permissions } } : list());
+    };
+
+    it("should read only the account's own grants, even with the profile permission", async () => {
+      answer(["edit_any_profile"], () => { throw new CatalystError("Unavailable", "list", 503); });
+      await expect(loadEventAccess(identity)).resolves.toEqual({ profile: { user: identity.signer, permissions: ["edit_any_profile"] } });
+      expect(signedGetJSON).toHaveBeenCalledTimes(1);
+    });
+
+    it("should read every account's grants for a moderator", async () => {
+      answer(["edit_any_profile"], () => ({ ok: true, data: [{ user: identity.signer, permissions: ["edit_any_profile"] }] }));
+      await expect(loadEventGrants(identity)).resolves.toMatchObject([{ user: identity.signer }]);
+    });
+
+    it("should treat a refused list as no user administration", async () => {
+      answer(["edit_any_profile"], () => { throw new CatalystError("Forbidden", "list", 403); });
+      await expect(loadEventGrants(identity)).resolves.toBeNull();
+    });
+
+    it("should fail on any other list failure", async () => {
+      answer(["edit_any_profile"], () => { throw new CatalystError("Unavailable", "list", 503); });
+      await expect(loadEventGrants(identity)).rejects.toThrow("Unavailable");
+    });
+
+    it("should keep each account's admin reads under its own private key", () => {
+      expect(eventAdminKeys.access("0xABC")).toEqual(["private", "0xabc", "event-admin", "access"]);
+      expect(eventAdminKeys.queue("0xABC")).toEqual(["private", "0xabc", "event-admin", "queue"]);
+      expect(eventAdminKeys.grants("0xABC")).toEqual(["private", "0xabc", "event-admin", "grants"]);
+    });
+  });
 });

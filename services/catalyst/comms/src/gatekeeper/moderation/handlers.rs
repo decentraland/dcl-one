@@ -148,8 +148,9 @@ pub async fn list_admins(
                 scene::get_lease_holders_for_parcels(&state, &place.positions).await
             }
         }),
-        None => (BTreeSet::new(), BTreeSet::new()),
+        None => (Ok(BTreeSet::new()), BTreeSet::new()),
     };
+    let extra_addresses = extra_addresses?;
     let mut all_addresses: BTreeSet<String> =
         admins.iter().map(|a| a.admin.to_lowercase()).collect();
     all_addresses.extend(extra_addresses.iter().cloned());
@@ -641,7 +642,7 @@ impl SchemaValidate for WarnPlayerBody {
 pub(in crate::gatekeeper) fn moderator_creds(state: &CommsState) -> ModeratorCredentials<'_> {
     ModeratorCredentials {
         token: state.settings.moderator_token.as_deref(),
-        addresses: &state.settings.moderator_addresses,
+        addresses: state.platform_moderators(),
     }
 }
 
@@ -898,7 +899,7 @@ mod tests {
         async fn endpoint(headers: HeaderMap) -> axum::response::Response {
             let creds = ModeratorCredentials {
                 token: Some("fixture"),
-                addresses: &[],
+                addresses: std::borrow::Cow::Borrowed(&[]),
             };
             match authorize_moderator(
                 &creds,

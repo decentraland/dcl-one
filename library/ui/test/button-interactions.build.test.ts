@@ -1,7 +1,7 @@
-import path from 'node:path'
-import { createServer, type ViteDevServer } from 'vite'
+import type { ViteDevServer } from 'vite'
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest'
 import { findBrowser, openSession } from '../figma/review/scripts/capture-browser.mjs'
+import { serveConsumerPage } from './consumer-page.helpers'
 
 type Measurement = {
   width: number
@@ -11,6 +11,7 @@ type Measurement = {
   background: string
 }
 let server: ViteDevServer
+let disruptions: string[] = []
 let session: Awaited<ReturnType<typeof openSession>>
 
 async function evaluate<T = unknown>(expression: string): Promise<T> {
@@ -28,26 +29,10 @@ async function evaluate<T = unknown>(expression: string): Promise<T> {
 }
 
 beforeAll(async () => {
-  const root = path.resolve(import.meta.dirname, '..')
-  server = await createServer({
-    configFile: false,
-    root,
-    appType: 'custom',
-    logLevel: 'error',
-    resolve: { dedupe: ['react', 'react-dom'] },
-    server: { host: '127.0.0.1', port: 0 }
-  })
-  server.middlewares.use(async (request, response, next) => {
-    if (request.url !== '/') return next()
-    response.setHeader('Content-Type', 'text/html')
-    response.end(
-      await server.transformIndexHtml(
-        '/',
-        '<!doctype html><style>body{padding:20px;background:white}main{display:flex;flex-direction:column;align-items:flex-start;gap:24px}</style><div id="root"></div><script type="module" src="/test/consumer/button-browser.tsx"></script>'
-      )
-    )
-  })
-  await server.listen()
+  ;({ server, disruptions } = await serveConsumerPage(
+    'test/consumer/button-browser.tsx',
+    '<style>body{padding:20px;background:white}main{display:flex;flex-direction:column;align-items:flex-start;gap:24px}</style>'
+  ))
   session = await openSession(
     await findBrowser([
       process.env.BROWSER_PATH,
@@ -248,5 +233,13 @@ describe('when reduced motion is requested', () => {
         `getComputedStyle(document.querySelector('[data-control="loading"] [data-loading-indicator]')).animationName`
       )
     ).toBe('none')
+  })
+})
+
+describe('when the Button page is served', () => {
+  // A failed dependency scan or a re-optimization reloads the page under the tests above, which then fail with
+  // "Inspected target navigated or closed".
+  it('should load it without a dependency scan error or a dependency reload', () => {
+    expect(disruptions).toEqual([])
   })
 })

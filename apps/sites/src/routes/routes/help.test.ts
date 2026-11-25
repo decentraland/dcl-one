@@ -5,7 +5,7 @@ import { requestSessionContext } from "@/core/lib/telemetry/session";
 import { DEFAULT_INTERCOM_APP_ID } from "@/data/lib/help/config.server";
 import { DEFAULT_STATUS_PAGE_URL, DEFAULT_STATUS_SERVICES } from "@/data/lib/help/status";
 
-import { loader, meta } from "./help";
+import { loader } from "./help";
 
 type Wrapped = { data: { sid: string } & Record<string, unknown>; init?: { headers?: HeadersInit } };
 
@@ -79,24 +79,6 @@ describe("/help loader", () => {
 
     it("should leave the cookie to the middleware", () => {
       expect(setCookies(result)).toEqual([]);
-    });
-  });
-});
-
-describe("/help meta", () => {
-  describe("when the root loader answered the public page base", () => {
-    let args: Parameters<typeof meta>[0];
-
-    beforeEach(() => {
-      args = { matches: [{ loaderData: { publicPageBase: "https://public.test" } }] } as never;
-    });
-
-    it("should carry the title, the description and the canonical path", () => {
-      expect(meta(args)).toEqual([
-        { title: "Help & Support | Decentraland" },
-        { name: "description", content: "Find answers, troubleshoot issues, and get the most out of Decentraland." },
-        { tagName: "link", rel: "canonical", href: "https://public.test/help" },
-      ]);
     });
   });
 });

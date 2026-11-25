@@ -7,9 +7,11 @@
 //! hop through the ERC721Bid contract, or a leg through a broker escrow.
 //! The log keeps no tx hash, so the same-block match stands in for the old
 //! same-transaction one: a sale's Transfer and its event share a block.
-//! Reads stop at the lower published block of the two indexes; the first
-//! pass starts at the newest published transfer, so history is never
-//! announced. Progress is the `transfer_received` row of
+//! Reads stop at the lower published block of the two indexes, read by
+//! each page in the statement that reads its transfers and their sale
+//! evidence, so a rewind between pages never tells a transfer above the
+//! fork from a sale by truncated rows; the first pass starts at the newest
+//! published transfer, so history is never announced. Progress is the `transfer_received` row of
 //! `shop.notification_cursor`, advanced with each page's notifications.
 
 use std::sync::Arc;
@@ -99,68 +101,109 @@ async fn sale_hops(pool: &PgPool, chain_id: i64) -> sqlx::Result<Vec<String>> {
 
 /// One pass over the published transfers after the cursor, a page at a time.
 pub async fn run_once(pool: &PgPool, chain_id: i64) -> anyhow::Result<Pass> {
+    if let Some(why) = start(pool, chain_id).await? {
+        return Ok(Pass::Waiting(why));
+    }
+    pages(pool, chain_id).await
+}
+
+/// Why the pass reads nothing, or `None` once both indexes are ready, and
+/// the first seed at the newest published transfer. Each page reads its own
+/// bound ([`rows_sql`]); these checks only report and seed.
+async fn start(pool: &PgPool, chain_id: i64) -> anyhow::Result<Option<&'static str>> {
     let now = Utc::now();
+    // Gifts are told from sales by matching the two indexes at the same
+    // heights: both must read the same chain, and the nft walk reads
+    // Polygon mainnet only.
+    if chain_id != ChainNet::Matic.chain_id() {
+        return Ok(Some(
+            "transfer notices need both indexes on Polygon mainnet; the nft index reads no other chain",
+        ));
+    }
     let Some(nft) = chain_walk::ready_cursor(pool, INDEXER_NFT, ChainNet::Matic, now).await else {
-        return Ok(Pass::Waiting("the matic nft index is not published"));
+        return Ok(Some("the matic nft index is not published"));
     };
     let Some(trades) =
-        chain_walk::ready_cursor(pool, INDEXER_TRADE_EVENTS, ChainNet::Matic, now).await
+        chain_walk::ready_cursor_on(pool, INDEXER_TRADE_EVENTS, ChainNet::Matic, chain_id, now)
+            .await
     else {
-        return Ok(Pass::Waiting(
+        return Ok(Some(
             "the matic trade_events index is not published (sales cannot be told from gifts)",
         ));
     };
     let upto = nft.last_block.min(trades.last_block);
-    let network = ChainNet::Matic.db_name();
     let latest: Option<(i64, i32)> = sqlx::query_as(
         "SELECT block_number, log_index FROM shop.nft_event \
          WHERE network = $1 AND kind = 'transfer' AND block_number <= $2 \
          ORDER BY block_number DESC, log_index DESC LIMIT 1",
     )
-    .bind(network)
+    .bind(ChainNet::Matic.db_name())
     .bind(upto)
     .fetch_optional(pool)
     .await?;
     let (seed_block, seed_log) = latest.unwrap_or((0, -1));
     notice_cursor::seed(pool, PRODUCER, None, seed_block, seed_log).await?;
+    Ok(None)
+}
+
+/// `$1` network, `$2`/`$3` cursor, `$4` the indexes read (nft,
+/// trade_events), `$5` the zero address, `$6` the sale hops, `$7` page
+/// size, `$8` now. The bound, the lower published block of the two (both
+/// on Polygon mainnet, which [`start`] requires), is read with the
+/// transfers and the sale evidence that excludes them in one statement, so
+/// one snapshot: a rewind of either index that commits after the pass's
+/// checks lowers it (or withdraws the index) before a transfer above the
+/// fork is told from a sale by truncated rows. With either index not ready
+/// there is no bound and no row.
+fn rows_sql() -> String {
+    format!(
+        "WITH bound AS (SELECT min(c.last_block) AS upto FROM shop.chain_cursor c \
+             WHERE c.network = $1 AND c.indexer = ANY($4) AND {ready} HAVING count(*) = 2) \
+         SELECT e.block_number, {key} AS id_key, e.log_index, e.block_time, e.contract_address, \
+                lower(e.from_address) AS from_address, lower(e.to_address) AS to_address, \
+                n.item_id::text AS item_id, n.issued_id::text AS issued_id, \
+                (lower(e.from_address) <> $5 AND lower(e.to_address) <> $5 \
+                 AND lower(e.from_address) <> lower(e.to_address) \
+                 AND NOT lower(e.from_address) = ANY($6) AND NOT lower(e.to_address) = ANY($6) \
+                 AND NOT EXISTS (SELECT 1 FROM shop.nft_event o \
+                    WHERE o.network = e.network AND o.block_number = e.block_number \
+                      AND o.kind = 'order_successful' \
+                      AND o.contract_address = e.contract_address AND o.token_id = e.token_id) \
+                 AND NOT EXISTS (SELECT 1 FROM shop.trade_event t \
+                    CROSS JOIN LATERAL (SELECT jsonb_build_array(jsonb_build_object( \
+                        'assetType', '3', 'contractAddress', e.contract_address, 'value', e.token_id::text)) AS asset) a \
+                    WHERE t.network = e.network AND t.block_number = e.block_number AND t.kind = 'traded' \
+                      AND (t.assets->'sent' @> a.asset OR t.assets->'received' @> a.asset)) \
+                ) IS TRUE AS gift \
+         FROM shop.nft_event e CROSS JOIN bound \
+         LEFT JOIN shop.nft n ON n.network = e.network AND n.contract_address = e.contract_address AND n.token_id = e.token_id \
+         WHERE e.network = $1 AND (e.block_number, e.log_index) > ($2, $3) AND e.block_number <= bound.upto \
+           AND e.kind = 'transfer' \
+         ORDER BY e.block_number, e.log_index LIMIT $7",
+        ready = chain_walk::ready_sql("c", "$8"),
+        key = notice_cursor::token_log_key("e"),
+    )
+}
+
+/// The pages after the cursor, each under its own published bound.
+async fn pages(pool: &PgPool, chain_id: i64) -> anyhow::Result<Pass> {
+    let network = ChainNet::Matic.db_name();
     let hops = sale_hops(pool, chain_id).await?;
     let mut emitted = 0;
     loop {
         let mut txn = pool.begin().await?;
         let (_, since_block, since_log) = notice_cursor::lock(&mut txn, PRODUCER).await?;
-        let rows: Vec<TransferRow> = sqlx::query_as(sqlx::AssertSqlSafe(format!(
-            "SELECT e.block_number, {key} AS id_key, e.log_index, e.block_time, e.contract_address, \
-                    lower(e.from_address) AS from_address, lower(e.to_address) AS to_address, \
-                    n.item_id::text AS item_id, n.issued_id::text AS issued_id, \
-                    (lower(e.from_address) <> $5 AND lower(e.to_address) <> $5 \
-                     AND lower(e.from_address) <> lower(e.to_address) \
-                     AND NOT lower(e.from_address) = ANY($6) AND NOT lower(e.to_address) = ANY($6) \
-                     AND NOT EXISTS (SELECT 1 FROM shop.nft_event o \
-                        WHERE o.network = e.network AND o.block_number = e.block_number \
-                          AND o.kind = 'order_successful' \
-                          AND o.contract_address = e.contract_address AND o.token_id = e.token_id) \
-                     AND NOT EXISTS (SELECT 1 FROM shop.trade_event t \
-                        CROSS JOIN LATERAL (SELECT jsonb_build_array(jsonb_build_object( \
-                            'assetType', '3', 'contractAddress', e.contract_address, 'value', e.token_id::text)) AS asset) a \
-                        WHERE t.network = e.network AND t.block_number = e.block_number AND t.kind = 'traded' \
-                          AND (t.assets->'sent' @> a.asset OR t.assets->'received' @> a.asset)) \
-                    ) IS TRUE AS gift \
-             FROM shop.nft_event e \
-             LEFT JOIN shop.nft n ON n.network = e.network AND n.contract_address = e.contract_address AND n.token_id = e.token_id \
-             WHERE e.network = $1 AND (e.block_number, e.log_index) > ($2, $3) AND e.block_number <= $4 \
-               AND e.kind = 'transfer' \
-             ORDER BY e.block_number, e.log_index LIMIT $7",
-            key = notice_cursor::token_log_key("e"),
-        )))
-        .bind(network)
-        .bind(since_block)
-        .bind(since_log)
-        .bind(upto)
-        .bind(ZERO_ADDRESS)
-        .bind(&hops)
-        .bind(PAGE_SIZE)
-        .fetch_all(&mut *txn)
-        .await?;
+        let rows: Vec<TransferRow> = sqlx::query_as(sqlx::AssertSqlSafe(rows_sql()))
+            .bind(network)
+            .bind(since_block)
+            .bind(since_log)
+            .bind([INDEXER_NFT, INDEXER_TRADE_EVENTS])
+            .bind(ZERO_ADDRESS)
+            .bind(&hops)
+            .bind(PAGE_SIZE)
+            .bind(Utc::now().naive_utc())
+            .fetch_all(&mut *txn)
+            .await?;
         let Some(last) = rows.last() else {
             txn.rollback().await?;
             break;
@@ -286,8 +329,8 @@ pub(crate) mod tests {
         time: i64,
     ) {
         sqlx::query(
-            "INSERT INTO shop.chain_cursor (indexer, network, start_block, last_block, last_block_time, fold_through, folded_block, folded_at, full_history) \
-             VALUES ($1, $2, 0, $3, $4, $3, $3, $5, true) \
+            "INSERT INTO shop.chain_cursor (indexer, network, start_block, last_block, last_block_time, fold_through, folded_block, folded_at, full_history, chain_id) \
+             VALUES ($1, $2, 0, $3, $4, $3, $3, $5, true, CASE $2 WHEN 'ethereum' THEN 1 ELSE 137 END) \
              ON CONFLICT (indexer, network) DO UPDATE SET last_block = $3, last_block_time = $4, fold_through = $3, folded_block = $3, folded_at = $5",
         )
         .bind(indexer)
@@ -344,6 +387,19 @@ pub(crate) mod tests {
             Pass::Waiting(_)
         ));
         publish(&pool, INDEXER_TRADE_EVENTS, "matic", 120, 1_700_000_120).await;
+        // A node whose collections are on Amoy: the nft index reads Polygon
+        // mainnet only, so no pair of indexes matches and nothing moves.
+        assert!(matches!(
+            run_once(&pool, 80_002).await.unwrap(),
+            Pass::Waiting(_)
+        ));
+        let seeded: Option<i64> = sqlx::query_scalar(
+            "SELECT block_number FROM shop.notification_cursor WHERE producer = 'transfer_received'",
+        )
+        .fetch_optional(&pool)
+        .await
+        .unwrap();
+        assert_eq!(seeded, None, "no cursor seeded for an incompatible pair");
         assert_eq!(
             run_once(&pool, 137).await.unwrap(),
             Pass::Emitted(0),
@@ -538,9 +594,20 @@ pub(crate) mod tests {
             .execute(&mut *tx)
             .await
             .unwrap();
-        chain_walk::rewind(&mut tx, INDEXER_NFT, ChainNet::Matic, -1)
+        let at = chain_walk::cursor(&mut *tx, INDEXER_NFT, ChainNet::Matic)
             .await
+            .unwrap()
             .unwrap();
+        chain_walk::rewind(
+            &mut tx,
+            INDEXER_NFT,
+            ChainNet::Matic,
+            (at.last_block, at.last_block_hash.as_deref()),
+            -1,
+            None,
+        )
+        .await
+        .unwrap();
         plan.apply(&mut tx).await.unwrap();
         tx.commit().await.unwrap();
         assert!(
@@ -568,6 +635,120 @@ pub(crate) mod tests {
         assert_eq!(cursor().await, (99, i32::MAX));
         assert_eq!(run_once(&pool, 137).await.unwrap(), Pass::Emitted(1));
         assert_eq!(cursor().await, (102, 4));
+        db.drop().await;
+    }
+
+    /// A trade_events rewind that commits after the pass checked both
+    /// indexes, on another connection, while the nft transfer of a sale
+    /// stays: no page tells the transfer from the sale by the truncated
+    /// trades, so no gift is announced and the cursor stays while the trade
+    /// index does not cover the transfer's block; once the sale is indexed
+    /// and published again, the cursor passes the transfer without a gift.
+    #[tokio::test]
+    async fn a_trade_rewind_after_the_checks_never_turns_a_sale_into_a_gift() {
+        let Some(db) = PrivateDb::create("transferrewind").await else {
+            return;
+        };
+        let pool = db.pool.clone();
+        let collection = "0x00000000000000000000000000000000000c011e";
+        let alice = "0x00000000000000000000000000000000000000a1";
+        let bob = "0x00000000000000000000000000000000000000b0";
+        let sale = || {
+            sqlx::query(
+                "INSERT INTO shop.trade_event (network, block_number, log_index, block_time, marketplace_address, kind, caller, hashed_signature, signer, assets, tx_hash) \
+                 VALUES ('matic', 103, 1, 1700000103, '0x540fb08edb56aae562864b390542c97f562825ba', 'traded', $1, '0xsig', $2, $3, '0xtx')",
+            )
+            .bind(bob)
+            .bind(alice)
+            .bind(json!({
+                "sent": [{"assetType": "3", "contractAddress": collection, "value": "5", "beneficiary": bob}],
+                "received": [{"assetType": "1", "contractAddress": "0xa1c57f48f0deb89f569dfbe6e2b7f46d33606fd4", "value": "1000", "beneficiary": alice}],
+                "uses": "0"
+            }))
+        };
+        let cursor = || {
+            let pool = pool.clone();
+            async move {
+                sqlx::query_as::<_, (i64, i32)>(
+                    "SELECT block_number, log_index FROM shop.notification_cursor WHERE producer = 'transfer_received'",
+                )
+                .fetch_one(&pool)
+                .await
+                .unwrap()
+            }
+        };
+        let gifts = || {
+            let pool = pool.clone();
+            async move {
+                sqlx::query_scalar::<_, i64>(
+                    "SELECT count(*) FROM social.notifications WHERE type = 'transfer_received'",
+                )
+                .fetch_one(&pool)
+                .await
+                .unwrap()
+            }
+        };
+        // An off-chain Traded sale of token 5 at block 103: its nft transfer
+        // and its trade log.
+        sqlx::query(
+            "INSERT INTO shop.nft_event (network, block_number, log_index, block_time, kind, emitter, contract_address, token_id, from_address, to_address) \
+             VALUES ('matic', 103, 0, 1700000103, 'transfer', $1, $1, 5, $2, $3)",
+        )
+        .bind(collection)
+        .bind(alice)
+        .bind(bob)
+        .execute(&pool)
+        .await
+        .unwrap();
+        sale().execute(&pool).await.unwrap();
+        notice_cursor::seed(&pool, PRODUCER, None, 100, i32::MAX)
+            .await
+            .unwrap();
+        publish(&pool, INDEXER_NFT, "matic", 200, 1_700_000_200).await;
+        publish(&pool, INDEXER_TRADE_EVENTS, "matic", 200, 1_700_000_200).await;
+        assert_eq!(start(&pool, 137).await.unwrap(), None, "both ready");
+
+        // On another connection: the trade publication is withdrawn (its
+        // rows still there), then the rewind to the fork at 101 drops the
+        // trade log and publishes there; the nft transfer stays.
+        let mut other = pool.acquire().await.unwrap();
+        sqlx::query(
+            "UPDATE shop.chain_cursor SET folded_block = NULL, folded_at = NULL \
+             WHERE indexer = 'trade_events' AND network = 'matic'",
+        )
+        .execute(&mut *other)
+        .await
+        .unwrap();
+        assert_eq!(pages(&pool, 137).await.unwrap(), Pass::Emitted(0));
+        assert_eq!(cursor().await, (100, i32::MAX), "withdrawn: no bound");
+        let mut rewind = sqlx::Connection::begin(&mut *other).await.unwrap();
+        sqlx::query("DELETE FROM shop.trade_event WHERE network = 'matic' AND block_number > 101")
+            .execute(&mut *rewind)
+            .await
+            .unwrap();
+        sqlx::query(
+            "UPDATE shop.chain_cursor SET last_block = 101, last_block_hash = NULL, fold_through = 101, folded_block = 101, \
+             folded_at = timezone('UTC', now()) WHERE indexer = 'trade_events' AND network = 'matic'",
+        )
+        .execute(&mut *rewind)
+        .await
+        .unwrap();
+        rewind.commit().await.unwrap();
+        drop(other);
+        assert_eq!(pages(&pool, 137).await.unwrap(), Pass::Emitted(0));
+        assert_eq!(
+            cursor().await,
+            (100, i32::MAX),
+            "the transfer above the fork waits"
+        );
+        assert_eq!(gifts().await, 0, "no gift from the truncated trades");
+
+        // The sale indexed and published again: the cursor passes it, no gift.
+        sale().execute(&pool).await.unwrap();
+        publish(&pool, INDEXER_TRADE_EVENTS, "matic", 200, 1_700_000_200).await;
+        assert_eq!(run_once(&pool, 137).await.unwrap(), Pass::Emitted(0));
+        assert_eq!(cursor().await, (103, 0));
+        assert_eq!(gifts().await, 0);
         db.drop().await;
     }
 }
