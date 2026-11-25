@@ -468,8 +468,9 @@ async fn graph_leg(
 }
 
 /// Whether this node serves Polygon's legacy bids from the sales index: it
-/// walks the nft index (whose transfers name a bid's seller) and the sales
-/// index (`MARKETPLACE_SALES_INDEX_ENABLED`) on mainnet.
+/// walks the nft index (whose transfers name a bid's seller) on its
+/// catalogue, mainnet or the Sepolia/Amoy pair (`owned_items::walks_here`),
+/// and the sales index (`MARKETPLACE_SALES_INDEX_ENABLED`).
 pub fn polygon_book_here(state: &MarketplaceState) -> bool {
     owned_items::walks_here(state) && state.settings.market.indexes.sales_enabled
 }
@@ -477,7 +478,7 @@ pub fn polygon_book_here(state: &MarketplaceState) -> bool {
 /// Whether the Polygon sales cursor `c` is published at `now` as the bid
 /// book trusts it: its whole history walked and a fold published within
 /// [`READY_WINDOW`], bound to `chain_id` (the chain the node serves on
-/// Polygon, `IndexSettings::chain_id`) and out of quarantine.
+/// Polygon, `Settings::catalogue`) and out of quarantine.
 /// `shop.nft_bid` changes only in a fold's commit and in a rewind, which
 /// clears the marker, so, as `owned_items::fresh` for the nft index, this
 /// does not compare `folded_block` with `last_block`: each pass advances
@@ -547,8 +548,8 @@ pub(super) async fn bids_snapshot(
     if !polygon {
         return Ok((tx, None, now));
     }
-    let indexes = &state.settings.market.indexes;
-    let chain = indexes.chain_id(ChainNet::Matic);
+    // The node's catalogue: the chain `walks_here` keeps the index settings on.
+    let chain = state.settings.catalogue().chain_id(ChainNet::Matic);
     let sales = chain_walk::cursor(&mut *tx, INDEXER_SALES, ChainNet::Matic)
         .await
         .map_err(db)?;
@@ -718,7 +719,7 @@ async fn polygon_rows(
     bounds: &SellerBounds,
     now_ms: i64,
 ) -> Result<Option<(Vec<Bid>, i64)>, sqlx::Error> {
-    let chain = state.settings.market.indexes.chain_id(ChainNet::Matic);
+    let chain = state.settings.catalogue().chain_id(ChainNet::Matic);
     // The bid contract the sales walk reads on that chain.
     let bid_contract = super::sales_index::SalesIndex::for_chain(chain)
         .map_or(super::sales_index::BID_V2_MATIC, |i| i.bid_contract());

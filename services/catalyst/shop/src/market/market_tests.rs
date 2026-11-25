@@ -5445,6 +5445,106 @@ async fn polygon_bids_come_from_the_bid_book_and_never_without_their_seller() {
     own.drop().await;
 }
 
+/// On the Sepolia/Amoy pair a walking node with the sales index serves
+/// Polygon's legacy bids from the book, never from the subgraph: before
+/// publication the read names the sales index; after it, only bids on the
+/// collections the nft index walks on Amoy (of that chain and verified on
+/// it), with Amoy's `chainId` and bid contract.
+#[tokio::test]
+async fn amoy_bids_come_from_the_bid_book_of_the_served_catalogue() {
+    use super::chain_walk::ChainNet;
+    let up = FakeGraph::new();
+    let url = serve_graph(up.clone()).await;
+    let Some(own) = super::tests::support::OwnDb::create("amoy_bids").await else {
+        return;
+    };
+    let mut settings = super::owned_items::test_support::walking(market_settings(&url, &url, true));
+    settings.eth_network = "sepolia".into();
+    settings.market.indexes.chain_id_ethereum = ChainNet::Ethereum.testnet_chain_id();
+    settings.market.indexes.chain_id_matic = ChainNet::Matic.testnet_chain_id();
+    settings.market.indexes.sales_enabled = true;
+    let state = Arc::new(super::MarketplaceState::new(
+        own.pool.clone(),
+        crate::http::Outbound::for_tests(),
+        settings,
+    ));
+    state.test_allow_loopback.store(true, Ordering::Relaxed);
+    assert!(super::bids::polygon_book_here(&state));
+    let pool = own.pool.clone();
+    super::trade_events::tests::publish_cursors(&pool).await;
+    let app = || market_router(state.clone());
+    let uri = "/v1/bids?network=MATIC";
+    let (status, body) = get(app(), uri).await;
+    assert_eq!(
+        (status, body["source"].as_str()),
+        (StatusCode::SERVICE_UNAVAILABLE, Some("sales-index")),
+        "{body}"
+    );
+    for indexer in ["sales", "nft"] {
+        sqlx::query(
+            "INSERT INTO shop.chain_cursor (indexer, network, start_block, last_block, last_block_hash, fold_through, folded_block, folded_at, full_history, chain_id) \
+             VALUES ($1, 'matic', 1, 200, '0x' || repeat('0', 64), 200, 200, timezone('UTC', now()), true, 80002)",
+        )
+        .bind(indexer)
+        .execute(&pool)
+        .await
+        .unwrap();
+    }
+    let t = tag();
+    let (verified, unverified) = (contract_of(&t, 1), contract_of(&t, 2));
+    for (contract, checked, bid) in [(&verified, true, 10i64), (&unverified, false, 11)] {
+        sqlx::query(
+            "INSERT INTO shop.collections (network, contract_address, chain_id, name, creator, owner, urn, is_completed, is_approved, is_editable, created_at, updated_at, reviewed_at, mirrored_at, testnet_verified) \
+             SELECT 'matic', $1, 80002, 'Pirates', $2, $2, 'urn:decentraland:amoy:collections-v2:' || $1, true, true, false, 1, 1, 1, timezone('UTC', now()), $3",
+        )
+        .bind(contract)
+        .bind(CREATOR)
+        .bind(checked)
+        .execute(&pool)
+        .await
+        .unwrap();
+        sqlx::query(
+            "INSERT INTO shop.nft_bid (network, contract_address, token_id, bidder, bid_id, seller, price, expires_at, status, \
+                 created_block, created_log_index, created_at, updated_block, updated_log_index, updated_at) \
+             VALUES ('matic', $1, 1, $2, '0x' || lpad(to_hex($5), 64, '0'), $3, 100, $4, 'open', 10, 0, 10, 10, 0, 10)",
+        )
+        .bind(contract)
+        .bind(WALLET_B)
+        .bind(WALLET_A)
+        .bind(chrono::Utc::now().timestamp() + 86_400)
+        .bind(bid)
+        .execute(&pool)
+        .await
+        .unwrap();
+    }
+    let (status, body) = get(app(), uri).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let results = body["data"]["results"].as_array().unwrap();
+    assert_eq!(
+        results
+            .iter()
+            .map(|b| (
+                b["contractAddress"].as_str().unwrap().to_string(),
+                b["chainId"].as_i64(),
+                b["bidAddress"].as_str().map(str::to_string),
+            ))
+            .collect::<Vec<_>>(),
+        vec![(
+            verified.clone(),
+            Some(80_002),
+            super::sales_index::SalesIndex::for_chain(80_002).map(|i| i.bid_contract().to_string()),
+        )],
+        "only the verified Amoy collection, on Amoy: {body}"
+    );
+    assert_eq!(body["data"]["total"], 1, "{body}");
+    assert!(
+        !up.requests.lock().unwrap().iter().any(|e| e == "bids"),
+        "no Polygon bid read asks the subgraph: {:?}",
+        up.requests.lock().unwrap()
+    );
+    own.drop().await;
+}
+
 /// The bids of a node that walks the indexes read one snapshot: the trades
 /// mirror's readiness and its bids are read on it, so a trade-events rewind
 /// that lands between them neither drops nor keeps a bid against what the
