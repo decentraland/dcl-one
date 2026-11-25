@@ -6,9 +6,11 @@ with decentraland.org (the `decentraland/sites` SPA) at the revision pinned in
 [`reference-sites.json`](reference-sites.json), page by page, on the same recorded data. A pin is the
 revision production serves on the date it names; moving it means recording a new set against it.
 
-For Shop web and the in-world Shop, the **DCL ONE UI Style Guide** in Figma defines the visual design. This tool captures Shop web. Use the pinned production Shop to check data and flows on the same recording. For example, compare the price shown for the same item and the cart contents after adding it.
+### Reviewing Shop changes
 
-Keep the screenshots and structural report when reviewing shared UI changes. A pixel difference flags an area to inspect against the Style Guide. If the new control matches the design and preserves the expected behavior, record the visual difference as intentional. The [gate](gate.mts) can still fail when that difference exceeds a stored ceiling or changes a page marked identical.
+- **Visual design.** For Shop web and the in-world Shop, look up **DCL ONE UI Style Guide** by name in Figma. See [the UI library’s Figma access instructions](../../library/ui/README.md#the-figma-file-key-is-private). The Shop captures here cover the web UI.
+- **Data and flows.** Compare both web implementations on the same recording using the [pinned Shop reference](reference.json). Check the displayed price for the same item and the cart contents after adding it.
+- **Differences.** Keep the screenshots and structural report. Inspect visual differences against the relevant Style Guide component and document unresolved gaps in the review report. For an agreed design difference, [Shop page specs](pages.mts) support a `regions` entry for a visual area or an `expected` entry for a structural difference. Its `why` identifies the design rule. The [gate criteria](#what-a-run-does) apply to the remaining differences.
 
 The tool is committed; the data it compares is not. Recordings, the gate and every run stay under
 `state/shop-parity/` (gitignored) on the machine that made them, so numbers quoted elsewhere name the
