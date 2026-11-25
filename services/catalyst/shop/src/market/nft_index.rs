@@ -29,6 +29,38 @@
 //! marker in the transaction that commits its rows.
 
 pub(crate) mod deployments;
+
+/// The paired Ethereum and Polygon catalogue served by this database.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum Catalogue {
+    Mainnet,
+    Testnet,
+}
+
+impl Catalogue {
+    pub fn from_land(land: crate::land_authz::LandNetwork) -> Self {
+        if land == crate::land_authz::LAND_SEPOLIA {
+            Self::Testnet
+        } else {
+            Self::Mainnet
+        }
+    }
+
+    pub fn chain_id(self, net: ChainNet) -> i64 {
+        match self {
+            Self::Mainnet => net.chain_id(),
+            Self::Testnet => net.testnet_chain_id(),
+        }
+    }
+
+    pub fn registrar(self) -> &'static str {
+        match self {
+            Self::Mainnet => DCL_REGISTRAR,
+            Self::Testnet => deployments::REGISTRAR_SEPOLIA,
+        }
+    }
+}
+
 mod estate_repair;
 
 use deployments::Deployments;
@@ -833,11 +865,13 @@ impl NftIndex {
 }
 
 /// Whether the collections mirror has completed a pass for `net`: the
-/// address set is only as complete as it.
+/// address set is only as complete as it. Legacy mainnet writers used the
+/// mainnet row tags even for custom URLs, before they recorded a chain here.
 pub async fn mirror_complete(pool: &PgPool, net: ChainNet, chain_id: i64) -> bool {
-    sqlx::query_scalar::<_, bool>("SELECT last_complete_pass_at IS NOT NULL FROM shop.mirror_state WHERE mirror = 'collections' AND network = $1 AND chain_id = $2")
+    sqlx::query_scalar::<_, bool>("SELECT last_complete_pass_at IS NOT NULL FROM shop.mirror_state WHERE mirror = 'collections' AND network = $1 AND (chain_id = $2 OR ($3 AND chain_id IS NULL AND pass_block_hash IS NULL))")
         .bind(net.db_name())
         .bind(chain_id)
+        .bind(chain_id == net.chain_id())
         .fetch_optional(pool)
         .await
         .ok()
@@ -1061,7 +1095,9 @@ impl ChainIndex for NftIndex {
             .await?;
         // The bids fold inferred sellers from these transfers: it infers
         // again the seller of every bid created past the rewind.
-        if self.net == ChainNet::Matic {
+        if self.net == ChainNet::Matic
+            || self.deployments.chain_id == ChainNet::Ethereum.testnet_chain_id()
+        {
             sqlx::query(
                 "INSERT INTO shop.bid_seller_recheck (network, from_block) VALUES ($1, $2)",
             )
@@ -1227,7 +1263,7 @@ impl ChainIndex for NftIndex {
 }
 
 /// The index's state for the operator status route and the tests.
-pub async fn status(pool: &PgPool) -> serde_json::Value {
+pub async fn status(pool: &PgPool, settings: &chain_walk::IndexSettings) -> serde_json::Value {
     let mut out = serde_json::Map::new();
     for net in ChainNet::ALL {
         let c = chain_walk::cursor(pool, INDEXER_NFT, net)
@@ -1244,7 +1280,7 @@ pub async fn status(pool: &PgPool) -> serde_json::Value {
         .unwrap_or(0);
         out.insert(net.db_name().to_string(), json!(c.map(|c| json!({
             "lastBlock": c.last_block, "foldedBlock": c.folded_block, "fullHistory": c.full_history,
-            "ready": chain_walk::is_ready(&c, chrono::Utc::now()), "reorgRewinds": c.reorg_rewinds, "divergedAt": c.diverged_at, "backfillsOwed": owed,
+            "ready": chain_walk::fresh_fold_on(&c, settings.chain_id(net), chrono::Utc::now()).is_some(), "reorgRewinds": c.reorg_rewinds, "divergedAt": c.diverged_at, "backfillsOwed": owed,
         }))));
     }
     serde_json::Value::Object(out)

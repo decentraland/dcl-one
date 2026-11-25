@@ -463,11 +463,10 @@ pub(crate) async fn book_snapshot(
     // The statement above established the snapshot (the land path's already
     // had); every publication it sees was committed before this instant.
     let now = Utc::now();
-    let indexes = &state.settings.market.indexes;
-    owned_items::check_on(
+    owned_items::check(
         &mut tx,
+        state.settings.catalogue(),
         nets,
-        |net| indexes.chain_id(net),
         Rule::Fresh,
         false,
         now,

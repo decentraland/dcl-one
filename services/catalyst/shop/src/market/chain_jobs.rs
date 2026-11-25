@@ -1489,7 +1489,9 @@ fn visit_projections(
             market_cfg(),
         );
     }
-    if settings.sales_enabled && net == ChainNet::Matic {
+    if settings.sales_enabled
+        && (net == ChainNet::Matic || chain_id == ChainNet::Ethereum.testnet_chain_id())
+    {
         let index = super::sales_index::SalesIndex::for_chain(chain_id)
             .expect("validated sales index chain");
         let url = state.catalogue_rpc_url(net);
@@ -1516,7 +1518,7 @@ fn visit_projections(
             "sales-index",
             url,
             Arc::new(move || Arc::new(index)),
-            Some(gate),
+            (net == ChainNet::Matic).then_some(gate),
             market_cfg(),
         );
     }
@@ -1604,14 +1606,19 @@ fn visit_projections(
         }
         // A Sepolia endpoint opts the worker into the separate testnet history.
         if let Some(url) = state.sepolia_rentals_rpc_url() {
+            let fold_listings = settings.chain_id_ethereum == ChainNet::Ethereum.testnet_chain_id();
             add(
                 "rentals-index-sepolia",
                 Some(url),
-                Arc::new(|| Arc::new(RentalsIndex::sepolia())),
+                Arc::new(move || Arc::new(RentalsIndex::sepolia(fold_listings))),
                 None,
-                PeriodicCfg::every(settings.interval)
-                    .with_jitter(Duration::from_secs(20))
-                    .with_error_backoff(Duration::from_secs(1800)),
+                if fold_listings {
+                    market_cfg().with_jitter(Duration::from_secs(20))
+                } else {
+                    PeriodicCfg::every(settings.interval)
+                        .with_jitter(Duration::from_secs(20))
+                        .with_error_backoff(Duration::from_secs(1800))
+                },
             );
         }
     }
@@ -1823,7 +1830,7 @@ fn log_switches(state: &Arc<MarketplaceState>, rentals: Option<bool>) {
     }
     if rentals == Some(false) {
         tracing::info!(
-            "rentals index off (SHOP_RENTALS_INDEX_ENABLED=false): on mainnet NFT walkers, owner pages that include LAND return 503 rentals-index while the Rentals publication is unavailable"
+            "rentals index off (SHOP_RENTALS_INDEX_ENABLED=false): on NFT walkers, owner pages that include LAND return 503 rentals-index while the Rentals publication is unavailable"
         );
     } else if state.venue_rpc_url(1).is_none() {
         let why = "no chain-1 JSON-RPC endpoint is configured (TRADE_RPC_URLS 1=, or ETH_RPC_URL on mainnet)";

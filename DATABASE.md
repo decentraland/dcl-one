@@ -1914,12 +1914,11 @@ metadata source block before using the asset to close a listing or update
 its metadata.
 
 Create and refresh bind the asset read to the signed or stored listing chain.
-On mainnet nodes with the NFT walk enabled, they read the NFT index
+On a node walking its configured catalogue pair, they read the NFT index
 publication and LAND rights in one database snapshot.
 Incomplete mint or transfer times, an unavailable publication, or a document
 beyond the LAND fold returns the unavailable envelope. A transfer beyond the
-NFT publication also waits for metadata to catch up. The NFT index publishes
-Ethereum mainnet metadata. A mainnet NFT walker uses published LAND to
+NFT publication also waits for metadata to catch up. The NFT publication identifies the served Ethereum chain. The walker uses published LAND to
 authorize the direct owner and returns 401 when a third party owns the token.
 It checks the observed LAND revision in the insertion transaction. During a
 Rentals outage an existing open listing still returns 409. A listing by a lessor whose asset is in Rentals
@@ -1934,7 +1933,7 @@ Only a transfer verdict based on venue custody requires the Rentals publication.
 Writes hold shared locks on the observed cursor rows until commit, so a concurrent
 rewind or ordinary cursor update waits for the write transaction.
 
-Nodes that do not walk the NFT index, including Sepolia, read listing assets
+Nodes that do not walk the NFT index read listing assets
 from the configured marketplace subgraph. The subgraph reports transfer time
 in seconds and the block number and time of its estate membership snapshot. A missing or
 unavailable subgraph returns the marketplace-subgraph unavailable envelope.
@@ -2006,14 +2005,15 @@ Invariants:
 - A cancellation that is not a nonce move is never undone, so an unknown never
   cancels. No published index, no indexed token, or an indexed transfer older
   than the listing all leave the listing open.
-- For a token owned by the mainnet Rentals contract, a published rent at or
+- For a token owned by the served chain’s Rentals contract, a published rent at or
   after the latest transfer into the venue identifies its lessor. Once the
   Rentals cursor covers that transfer, an absent or older rent establishes
   that nobody holds custody. Create returns 401 and a later transfer closes
   an open listing as `transferred`. While the cursor trails the arrival,
   create returns the `rentals-index` unavailable response and status leaves
-  the listing open. Sepolia reads ownership from the marketplace subgraph.
-  At its venue, create refuses relisting and status leaves custody unknown.
+  the listing open. On a Sepolia walker the ownership, venue, event network
+  and published Rentals cursor all belong to chain 11155111. A graph-only
+  Sepolia node leaves venue custody unknown.
 - The signatures-server import keeps a node reason only while upstream also
   says `cancelled`, and clears it otherwise. It skips an upstream row older
   than the stored one, except that an upstream `executed` or `claimed`
@@ -2581,7 +2581,9 @@ fold record, a publish and a rewind; the table stays at a dozen rows.
 A catalogue database serves one Ethereum/Polygon pair. The NFT worker uses
 `MARKETPLACE_INDEX_CHAIN_ID_ETHEREUM` and `MARKETPLACE_INDEX_CHAIN_ID_MATIC`
 to select mainnet (1/137) or Sepolia/Amoy (11155111/80002). Its RPC must
-serve that chain. At startup the catalogue writer checks the pair against
+serve that chain. The mirror posture derives the testnet defaults from
+`ETH_NETWORK=sepolia` when the operator leaves the IDs unset. At startup
+the catalogue writer checks the pair against
 `ETH_NETWORK` and the database binding. The API process leaves the binding
 to the index writer, even when they share settings. Each database can have independent
 Ethereum and Sepolia Rentals histories.
@@ -2593,11 +2595,14 @@ hash against the chain-checked RPC. Both mirrors persist that hash with their
 keyset and read every page at that block. Collections supply contract addresses
 and items supply their metadata. A mirror writer can provide this proof even
 when the NFT walker runs on another node. A writer without a catalogue RPC
-leaves a bound pass untouched. A transient read failure retries its pinned block. A graph that rejects the
-block, or a pass that reaches a day in age, restarts from a new confirmed block. Descriptive readers can use the last
-completed copy during this retry. The NFT walk requires a complete collections
-pass for its chain. On testnet it selects addresses from rows the verified
-pass actually fetched. Rows retained from a graph-only source carry no proof.
+leaves a bound pass untouched. A missing or mismatched page hash restarts
+the pass. A transport or GraphQL error retries the same block for up to an
+hour from the start of the pass. A progressing pass can keep its pin for
+one day. Descriptive readers can use the last completed copy during retries.
+The NFT walk requires a complete collections pass for its chain. Mainnet
+accepts a completed legacy copy with neither a chain binding nor a pending
+testnet pin. The testnet walk selects addresses from rows the verified pass
+actually fetched. Rows retained from a graph-only source carry no proof.
 An empty verified pass covers the chain's
 fixed contracts. The Sepolia/Amoy pair omits the mainnet-only committee, collections, third-party registry and MANA transfer walks, even
 when the mirror posture enables them and mainnet RPCs are available. The
@@ -2614,16 +2619,35 @@ testnet pair in one transaction. A database with an existing pair binding,
 NFT history, or other mirror sources refuses the operation. A catalogue
 writer always refuses a conflicting pair on ordinary startup.
 
+Marketplace NFT and NAME readers select the node’s chain pair from its
+configuration. Walkers require complete, fresh, chain-bound folds and read
+them alongside their rows in the page snapshot. A walking cursor may be
+ahead of that fold. Authorization also checks for pending relevant events.
+Non-walking nodes use their configured graph reader. A descriptive item or
+collection mirror accepts legacy unbound copies and checks every recorded
+chain binding against the pair selected by `ETH_NETWORK`. The Amoy address
+book contains no LAND, Estate or NAME registry. Those filters on Amoy
+return an empty page.
+
+On testnet a catalogue item used to describe an owned NFT must carry its
+own verified-row flag. Migration 0072 keeps the descriptive mirror copy
+while restarting any testnet item pass. A complete pass from a writer
+that sets the flag establishes reader readiness, including an empty pass.
+
 On Sepolia the NFT and LAND authorization walks start at LAND proxy
 deployment block 3,831,219. On Amoy the NFT walk starts at marketplace V2
 block 5,706,656, before the collection factory. The historical estate
 repair below runs only on Ethereum mainnet.
 
+The Sepolia bid walk and the Amoy bid and mint walk publish raw sale
+events. Economic routes on testnet keep their configured authority. Raw
+coverage cannot establish sale prices, aggregates, tax, royalties or
+historical settlement terms. The separate sales accounting publication
+runs on mainnet.
+
 On Amoy the sales projection reads BidV2 and prices CollectionStore mints
 against Bought logs from the same store and transaction. Its venue check
-seeds missing Amoy fees on an upgraded database. The Amoy publication covers
-raw mint and bid events. Historical fee terms, Store settlement lines and
-sales accounting publications belong to the mainnet pair. Step
+seeds missing Amoy fees on an upgraded database. Step
 `0071_shop_testnet_sale_and_trade_venues` withdraws
 the old Sepolia trade publication once. Its worker rebuilds from the V1
 deployment at block 6,770,056. V2 and V3 trade verdicts share the same
@@ -4290,7 +4314,7 @@ skewed popularity, 300,000 owners of whom 20 hold about 30,000 tokens each,
   131 ms for the 30,000-token owner, under 1 ms for a typical owner (with the
   names leg when no category is named).
 
-On a mainnet NFT walker, a LAND or estate `/v1/nfts` page reads the LAND
+On a configured NFT walker, a LAND or estate `/v1/nfts` page reads the LAND
 publication and the required NFT publications in one repeatable-read snapshot.
 Both owner searches and ownerless catalogue pages read the collections, NAME
 and LAND sources that their filters can include. This includes unfiltered
@@ -4299,7 +4323,12 @@ for the whole page. The rental-status filter, page, count, estate members,
 rental listings and open order enrichment all use the same snapshot. An empty
 rental filter result is returned only after the publication checks.
 
-An owner filter that includes LAND also reads the mainnet Rentals publication.
+An owner filter that includes LAND also reads the Rentals publication for its
+Ethereum chain. On Sepolia the raw history uses the `rentals_sepolia` cursor
+and `sepolia` rental events. Signed listing enrichment also requires the
+`rental_listing_generation` row in `shop.worker_progress` to match that
+cursor’s owner generation. A newly attached catalogue writer refolds the
+existing archival events before publishing signed listing statuses.
 It finds the wallet's candidate rents with `rental_event_lessor_idx` and the
 latest published rent or claim per asset with `rental_event_asset_idx`.
 An unclaimed rent counts past expiry while the venue owns the token and the
@@ -4307,8 +4336,8 @@ rent covers its latest transfer into custody. Each event query stops at its
 source's published height. Owner pages can use the last fresh Rentals fold
 while the walker processes a newer window. A published claim ends the rental
 match immediately. Direct ownership becomes visible when LAND publishes the
-transfer back. Before routing owner inventory to a mainnet walker, check
-`ethereum.fullHistory` and `ethereum.ready` at
+transfer back. Before routing owner inventory to a walker, check
+`fullHistory` and `ready` for `ethereum` or `sepolia` at
 `GET /signatures-api/v1/rentals-index` on that node. If Rentals has yet to publish
 through a transfer into the venue, the owner page returns the `rentals-index`
 503. Both page and count include these assets, and the NFT still reports its
