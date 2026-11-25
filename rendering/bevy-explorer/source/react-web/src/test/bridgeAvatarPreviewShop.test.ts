@@ -179,6 +179,26 @@ describe("the Shop's avatar nametag", () => {
     expect(set).toHaveBeenCalledTimes(5)
   })
 
+  it('puts the tag on a new preview avatar again, and asks nothing of the one that went', async () => {
+    const shop = await openShop('names')
+    const set = vi.fn()
+    api.setAvatarShapeNametag = set
+    shop.emit({ kind: 'previewNametag', nametag: { name: 'Ada', claimed: true } } as PageToScene)
+    shop.frame()
+    const first = set.mock.calls[0][0]
+
+    // the preview closes and opens again: another avatar, the last one gone with its tag
+    shop.emit({ kind: 'engineViewport', region: 'avatarPreview', rect: null, dpr: 1 } as PageToScene)
+    for (let i = 0; i < 4; i++) shop.frame()
+    shop.emit({ kind: 'engineViewport', region: 'avatarPreview', rect: WINDOW, dpr: 1 } as PageToScene)
+    shop.frame()
+    shop.frame()
+    const [avatar, tag] = set.mock.lastCall!
+    expect(avatar).not.toBe(first)
+    expect(tag).toEqual({ name: 'Ada', claimed: true, scale: SHOP_NAMETAG_SCALE })
+    expect(set.mock.calls.filter(([entity, sent]) => entity === first && sent === null)).toEqual([])
+  })
+
   it('asks nothing of a runtime that predates the call', async () => {
     const shop = await openShop('names')
     delete api.setAvatarShapeNametag

@@ -146,9 +146,10 @@ let cameraEntity: Entity | null = null
 let podiumEntities: Entity[] = []
 // The Shop's stage image on screen (previewStage), in place of the backdrop bands and the podium.
 let shopStage: Rect | null = null
-// The nametag the Shop's page wants over its avatar (previewNametag), and what the engine was last told for which
-// avatar: the tag as JSON, '' for none.
+// The nametag the Shop's page wants over its avatar (previewNametag) and its key (the tag as JSON, '' for none),
+// and what the engine was last told for which avatar.
 let shopNametag: PreviewNametag | null = null
+let shopNametagKey = ''
 let toldNametag: { avatar: Entity; tag: string } | null = null
 // The box the page shows the Backpack's preview in (its modal over the lobby): nothing of it is drawn outside.
 let previewClip: Rect | null = null
@@ -867,6 +868,7 @@ export function registerAvatarPreview(ctx: Ctx): void {
   // up. Told again for a new avatar (the last one took its tag with it) and whenever it reads otherwise.
   ctx.on('previewNametag', (msg) => {
     shopNametag = msg.nametag
+    shopNametagKey = msg.nametag == null ? '' : JSON.stringify(msg.nametag)
   })
   ctx.push(() => {
     const avatar = avatarEntity
@@ -874,8 +876,9 @@ export function registerAvatarPreview(ctx: Ctx): void {
       toldNametag = null
       return
     }
-    const wanted = shopStage != null && stage === 'backpack' ? shopNametag : null
-    const tag = wanted == null ? '' : JSON.stringify(wanted)
+    const shown = shopStage != null && stage === 'backpack'
+    const wanted = shown ? shopNametag : null
+    const tag = shown ? shopNametagKey : ''
     if (toldNametag?.avatar === avatar && toldNametag.tag === tag) return
     // a new avatar has no tag to take away
     if (wanted != null) {

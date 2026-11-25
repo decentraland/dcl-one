@@ -441,6 +441,13 @@ fn a_system_scene_tag_reads_as_a_claimed_or_an_unclaimed_name() {
     );
     assert!(!unclaimed.verified);
     assert_eq!(unclaimed.color, name_color("Ada", ADDRESS, false));
+    // a checksummed address reads as its player's own tag does, in lower case
+    let checksummed = shape(&ADDRESS.replace("ab", "AB"), None);
+    let same = NametagContent::from_system(&system_tag("Ada", false), &checksummed).unwrap();
+    assert_eq!(
+        (same.suffix.as_str(), same.color),
+        ("#12ab", name_color("Ada", ADDRESS, false))
+    );
 
     // a colour given wins
     let chosen = AvatarShapeNametag {
@@ -738,10 +745,11 @@ fn a_tag_drawn_larger_grows_alike() {
         assert_eq!([a[0] * 2.5, a[1] * 2.5, a[2]], b);
     }
     // the uvs stay: a shape is drawn from its own units, so it grows with the quad
-    assert_eq!(
-        format!("{:?}", one.attribute(Mesh::ATTRIBUTE_UV_0)),
-        format!("{:?}", larger.attribute(Mesh::ATTRIBUTE_UV_0))
-    );
+    let uvs = |mesh: &Mesh| match mesh.attribute(Mesh::ATTRIBUTE_UV_0) {
+        Some(bevy::render::mesh::VertexAttributeValues::Float32x2(uvs)) => uvs.clone(),
+        other => panic!("the tag's uvs are two floats each: {other:?}"),
+    };
+    assert_eq!(uvs(&one), uvs(&larger));
 }
 
 /// A world with the camera at the origin looking down -z, and the systems that give each

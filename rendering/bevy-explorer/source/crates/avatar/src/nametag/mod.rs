@@ -319,23 +319,25 @@ impl NametagContent {
 
     /// What a system scene's avatar shows: the tag the scene put on it. A claimed NAME carries
     /// the verified badge and no suffix; one that isn't, the end of the avatar's id, as a scene
-    /// avatar's does. The colour is the given one, else the engine's for that name. `None` for
-    /// a blank name, which asks for no tag.
+    /// avatar's does. The colour is the given one, else the engine's for that name. The id is
+    /// read in lower case, as a player's address is for their own tag, so a checksummed address
+    /// gives the same hue and suffix. `None` for a blank name, which asks for no tag.
     fn from_system(tag: &AvatarShapeNametag, shape: &PbAvatarShape) -> Option<Self> {
         let name = tag.name.split('#').next().unwrap_or_default().trim();
         if name.is_empty() {
             return None;
         }
         let name = capped(name, MAX_NAME_CHARS);
+        let id = shape.id.to_lowercase();
         let color = match &tag.color {
             Some(color) => Color::srgb(color.r, color.g, color.b),
-            None => name_color(&name, &shape.id, tag.claimed),
+            None => name_color(&name, &id, tag.claimed),
         };
         Some(Self {
             color,
             suffix: match tag.claimed {
                 true => String::new(),
-                false => id_suffix(&shape.id),
+                false => id_suffix(&id),
             },
             name,
             verified: tag.claimed,
@@ -370,7 +372,7 @@ fn id_suffix(id: &str) -> String {
 /// (`SystemApi::SetAvatarShapeNametag`). A system scene's avatars get no tag from their
 /// [`AvatarShape`]'s name, only this way. It goes when the shape is removed.
 #[derive(Component, Clone, Debug, PartialEq)]
-pub struct SystemSceneNametag(pub AvatarShapeNametag);
+pub(crate) struct SystemSceneNametag(pub AvatarShapeNametag);
 
 /// On a scene's avatar whose [`AvatarShape`] was read for its nametag, until the shape changes.
 #[derive(Component, Clone, Copy, Debug, PartialEq, Eq)]
@@ -620,70 +622,78 @@ fn resolve_content(
     }
 }
 
-/// The system scene's last word on the tag of one of its entities, kept until the engine has the
-/// entity: the system scenes there were when it was asked, and the tag or none.
-struct PendingNametag {
-    scenes: Vec<Entity>,
-    nametag: Option<AvatarShapeNametag>,
-}
+/// On a system scene's root: its last word on the tag of each of its entities that the engine
+/// doesn't have yet, a tag or none. It goes with the scene.
+#[derive(Component, Default)]
+pub(crate) struct PendingSystemNametags(HashMap<SceneEntityId, Option<AvatarShapeNametag>>);
 
 /// The system scene's word on the tag of one of its avatars: put on it, or taken away. Only the
 /// last word on an entity in an engine update counts. The entity is read in the system scene's
 /// own context, so no other scene's entity can be reached. The scene's word can come before the
-/// engine has the entity: a tag then waits for it, until the scene it was asked in names it, the
-/// entity dies or the scene goes; a word to take it away has nothing to wait for. The scene's
-/// `AvatarShape` may come later still: the tag waits on the entity, and shows once the avatar is
-/// built.
+/// engine has the entity: it waits on the scene's root ([`PendingSystemNametags`]) until the
+/// scene names the entity, and a tag waiting for an entity that died is dropped; a word to take
+/// it away has nothing to wait for. The scene's `AvatarShape` may come later still: the tag waits
+/// on the entity, and shows once the avatar is built.
 fn set_system_scene_nametags(
     mut commands: Commands,
     mut requests: EventReader<SystemApi>,
-    system_scenes: Query<(Entity, &RendererSceneContext), With<SuperUserScene>>,
+    mut system_scenes: Query<
+        (
+            Entity,
+            &RendererSceneContext,
+            Option<&mut PendingSystemNametags>,
+        ),
+        With<SuperUserScene>,
+    >,
     tagged: Query<Option<&SystemSceneNametag>>,
-    mut pending: Local<HashMap<SceneEntityId, PendingNametag>>,
 ) {
-    for request in requests.read() {
-        let SystemApi::SetAvatarShapeNametag { entity, nametag } = request else {
+    let words: Vec<_> = requests
+        .read()
+        .filter_map(|request| match request {
+            SystemApi::SetAvatarShapeNametag { entity, nametag } => {
+                Some((SceneEntityId::from_proto_u32(*entity), nametag.clone()))
+            }
+            _ => None,
+        })
+        .collect();
+    for (root, context, pending) in &mut system_scenes {
+        if words.is_empty() && pending.as_ref().is_none_or(|pending| pending.0.is_empty()) {
             continue;
+        }
+        let mut owned = HashMap::default();
+        let waiting = match pending {
+            Some(pending) => &mut pending.into_inner().0,
+            None => &mut owned,
         };
-        pending.insert(
-            SceneEntityId::from_proto_u32(*entity),
-            PendingNametag {
-                scenes: system_scenes.iter().map(|(root, _)| root).collect(),
-                nametag: nametag.clone(),
-            },
-        );
+        // a later word on an entity replaces an earlier one
+        waiting.extend(words.iter().cloned());
+        waiting.retain(|&entity, nametag| {
+            let Some((avatar, current)) = context
+                .bevy_entity(entity)
+                .and_then(|avatar| tagged.get(avatar).ok().map(|current| (avatar, current)))
+            else {
+                // a tag waits for the entity, unless it died
+                return nametag.is_some() && !context.is_dead(entity);
+            };
+            match nametag {
+                Some(nametag) if current.is_none_or(|current| current.0 != *nametag) => {
+                    commands
+                        .entity(avatar)
+                        .try_insert(SystemSceneNametag(nametag.clone()));
+                }
+                None if current.is_some() => {
+                    commands.entity(avatar).try_remove::<SystemSceneNametag>();
+                }
+                _ => {}
+            }
+            false
+        });
+        if !owned.is_empty() {
+            commands
+                .entity(root)
+                .try_insert(PendingSystemNametags(owned));
+        }
     }
-    pending.retain(|&entity, word| {
-        let contexts = || {
-            word.scenes
-                .iter()
-                .filter_map(|&root| system_scenes.get(root).ok())
-                .map(|(_, context)| context)
-        };
-        // the scene it was asked in went
-        if contexts().next().is_none() {
-            return false;
-        }
-        let found = contexts()
-            .filter_map(|context| context.bevy_entity(entity))
-            .find_map(|avatar| tagged.get(avatar).ok().map(|current| (avatar, current)));
-        let Some((avatar, current)) = found else {
-            // a tag waits for the entity, unless it died
-            return word.nametag.is_some() && !contexts().all(|context| context.is_dead(entity));
-        };
-        match &word.nametag {
-            Some(nametag) if current.is_none_or(|current| current.0 != *nametag) => {
-                commands
-                    .entity(avatar)
-                    .try_insert(SystemSceneNametag(nametag.clone()));
-            }
-            None if current.is_some() => {
-                commands.entity(avatar).try_remove::<SystemSceneNametag>();
-            }
-            _ => {}
-        }
-        false
-    });
 }
 
 /// Names the avatars a scene made, while they have a body that is built: without one the tag
