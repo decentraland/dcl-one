@@ -85,10 +85,28 @@ describe('Explorer', () => {
     assert.ok(fake.sent('world_state').length >= 3)
   })
 
-  test('a teleport timeout is sent in seconds as given: the engine refuses one that is not above 0', async () => {
-    const fake = new FakeConsole({ world_state: () => world({ arrivals: 1 }), teleport: JSON.stringify(settled) })
-    await new Explorer(fake).teleport(1, 2, { timeoutMs: 300 })
-    assert.deepEqual(fake.sent('teleport'), ['/teleport 1 2 --wait --timeout-seconds 0.3'])
+  test('a teleport timeout is sent in seconds as given, inside the engine\'s range', async () => {
+    const fake = Object.assign(new FakeConsole({ world_state: () => world({ arrivals: 1 }), teleport: JSON.stringify(settled) }), {
+      commandTimeoutMs: 400_000
+    })
+    const explorer = new Explorer(fake)
+    await explorer.teleport(1, 2, { timeoutMs: 300 })
+    await explorer.teleport(1, 2, { timeoutMs: 1500 })
+    // the transport would wait 380 s, the engine takes at most 300
+    await explorer.teleport(1, 2, { timeoutMs: 390_000 })
+    assert.deepEqual(fake.sent('teleport'), [
+      '/teleport 1 2 --wait --timeout-seconds 0.3',
+      '/teleport 1 2 --wait --timeout-seconds 1.5',
+      '/teleport 1 2 --wait --timeout-seconds 300'
+    ])
+  })
+
+  test('a settling wait with no time left is refused before anything is sent', async () => {
+    const fake = new FakeConsole({ world_state: () => world({ arrivals: 1 }), teleport: JSON.stringify(settled), reload: JSON.stringify(settled) })
+    const explorer = new Explorer(fake)
+    await assert.rejects(explorer.teleport(1, 2, { timeoutMs: 0 }), /above 0 ms; got 0/)
+    await assert.rejects(explorer.reload({ timeoutMs: -5 }), /above 0 ms; got -5/)
+    assert.deepEqual(fake.lines, [])
   })
 
   test('the engine waits at most 100 s of a longer teleport, under the command timeout', async () => {
@@ -159,9 +177,19 @@ describe('Explorer', () => {
 
   // the arrival gets what the teleport's own reply left of the timeout
   test('teleport times out with the last state when the player never arrives', async () => {
-    const fake = new FakeConsole({ world_state: () => world({ arrivals: 1, inWorld: false }), teleport: JSON.stringify({ ...settled, arrived: false, settled: false }) })
+    const fake = new FakeConsole({
+      world_state: () => world({ arrivals: 1, inWorld: false }),
+      // the engine's wait takes 150 of the 300 ms
+      teleport: () => new Promise((resolve) => setTimeout(() => resolve(JSON.stringify({ ...settled, arrived: false, settled: false })), 150))
+    })
     const explorer = new Explorer(fake)
-    await assert.rejects(explorer.teleport(1, 2, { timeoutMs: 300 }), /timed out after (300|2\d\d) ms waiting for the arrival at 1,2; last: .*"inWorld":false/)
+    const error = await explorer.teleport(1, 2, { timeoutMs: 300 }).then(
+      () => assert.fail('the arrival never happens'),
+      (error: unknown) => error as Error
+    )
+    assert.match(error.message, /waiting for the arrival at 1,2; last: .*"inWorld":false/)
+    const left = Number(/timed out after (\d+) ms/.exec(error.message)?.[1])
+    assert.ok(left >= 0 && left <= 150, `the arrival waits what the teleport left, not the whole 300 ms: ${left}`)
   })
 
   test('community chat commands: the message, the channel edits, and the state', async () => {

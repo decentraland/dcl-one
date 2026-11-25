@@ -631,6 +631,8 @@ const DEFAULT_COMMAND_TIMEOUT_MS = 120_000
 const SETTLE_MARGIN_MS = 20_000
 /** `--timeout-seconds` of `--wait` when the flag is left out. */
 const ENGINE_SETTLE_MS = 60_000
+/** The longest `--timeout-seconds` the engine takes. */
+const ENGINE_MAX_SETTLE_MS = 300_000
 
 /** The error as it may be rethrown: a transport's own error (a timeout, a closed driver) can
  *  quote the line, and the test runner prints the message and the stack. */
@@ -767,9 +769,10 @@ export class Explorer {
    *  what is left of `timeoutMs`. */
   async teleport(x: number, y: number, options: { timeoutMs?: number } = {}): Promise<WorldState & { teleport: TeleportReport }> {
     const timeoutMs = options.timeoutMs ?? DEFAULT_ARRIVAL_TIMEOUT_MS
+    const seconds = this.#settleSeconds(timeoutMs)
     const startedAt = Date.now()
     const before = (await this.worldState()).arrivals
-    const teleport = await this.json<TeleportReport>(`/teleport ${x} ${y} --wait --timeout-seconds ${this.#settleSeconds(timeoutMs)}`)
+    const teleport = await this.json<TeleportReport>(`/teleport ${x} ${y} --wait --timeout-seconds ${seconds}`)
     if (teleport.arrived) return { ...(await this.worldState()), teleport }
     const left = Math.max(0, timeoutMs - (Date.now() - startedAt))
     return { ...(await this.#waitArrival(before, left, `the arrival at ${x},${y}`)), teleport }
@@ -777,7 +780,7 @@ export class Explorer {
 
   /** Reload the parcel scene under the player and wait for the new one to settle
    *  (`/reload --current --wait`); `settled` false with a `warning` when it did not in time. */
-  reload(options: { timeoutMs?: number } = {}): Promise<ReloadReport> {
+  async reload(options: { timeoutMs?: number } = {}): Promise<ReloadReport> {
     // the engine's own default, unless the transport would cut it
     const timeout = options.timeoutMs === undefined && this.#maxSettleMs() >= ENGINE_SETTLE_MS ? '' : ` --timeout-seconds ${this.#settleSeconds(options.timeoutMs ?? ENGINE_SETTLE_MS)}`
     return this.json<ReloadReport>(`/reload --current --wait${timeout}`)
@@ -788,9 +791,12 @@ export class Explorer {
     return Math.max(1000, (this.console.commandTimeoutMs ?? DEFAULT_COMMAND_TIMEOUT_MS) - SETTLE_MARGIN_MS)
   }
 
-  /** `--timeout-seconds` for a wait of `timeoutMs`; the engine refuses one that is not above 0. */
+  /** `--timeout-seconds` for a wait of `timeoutMs`, inside the engine's range (above 0, at most
+   *  300 s) and under the transport's command timeout. A `timeoutMs` that is not above 0 is refused
+   *  here, as the engine would. */
   #settleSeconds(timeoutMs: number): number {
-    return Math.min(timeoutMs, this.#maxSettleMs()) / 1000
+    if (!(timeoutMs > 0)) throw new RangeError(`a settling wait needs a timeout above 0 ms; got ${timeoutMs}`)
+    return Math.min(timeoutMs, this.#maxSettleMs(), ENGINE_MAX_SETTLE_MS) / 1000
   }
 
   /** The parcel scene under the player (its hash, state, what blocks it and whether it is ready)
