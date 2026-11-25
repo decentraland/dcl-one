@@ -552,6 +552,7 @@ pub fn classify_step(stmt: &str) -> Result<StepStatement, String> {
             "a step extends an enum with ALTER TYPE ... ADD VALUE IF NOT EXISTS and changes a type in no other way",
         ),
         ("CREATE", "OR") if k(2) == "REPLACE" && k(3) == "FUNCTION" => Ok(StepStatement::Plain),
+        ("CREATE", "OR") if k(2) == "REPLACE" && k(3) == "TRIGGER" => Ok(StepStatement::Plain),
         ("CREATE", "FUNCTION") => match at(2).split_once('.') {
             Some((schema, name)) if hash_named_prefix(name).is_some() => {
                 Ok(StepStatement::CreateFunction {
@@ -1975,6 +1976,7 @@ mod tests {
             "ALTER TABLE a.t ALTER COLUMN c DROP NOT NULL",
             "ALTER TYPE a.kind ADD VALUE IF NOT EXISTS 'x'",
             "CREATE OR REPLACE FUNCTION a.f() RETURNS int LANGUAGE sql AS $f$ SELECT 1 $f$",
+            "CREATE OR REPLACE TRIGGER a_t AFTER INSERT ON a.t FOR EACH ROW EXECUTE FUNCTION a.f()",
             "CREATE FUNCTION a.f_47d21316abf2(text) RETURNS int LANGUAGE sql RETURN 1",
             "UPDATE a.t SET c = 1 WHERE c IS NULL",
             "COMMENT ON COLUMN a.t.c IS 'x'",

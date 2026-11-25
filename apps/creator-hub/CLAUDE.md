@@ -105,7 +105,7 @@ make protoc        # Regenerate TypeScript from .proto files
 
 - **main/** — Electron main process (Node.js). Manages scenes, runs local servers, handles IPC.
 - **preload/** — Preload scripts bridging main↔renderer via contextBridge.
-- **renderer/** — React SPA with Redux Toolkit, `react-router-dom`, `react-intl` for i18n. The UI is the ui3 atoms through the `@ui` alias, CSS Modules, and the tokens in `renderer/src/themes` (`theme.css`, `ui3-bridge.css`). The app root has no theme provider.
+- **renderer/** — React SPA with Redux Toolkit, `react-router`, `react-intl` for i18n. The UI is the ui3 atoms through the `@ui` alias, CSS Modules, and the tokens in `renderer/src/themes` (`theme.css`, `ui3-bridge.css`). The app root has no theme provider.
 - **shared/** — Shared types and utilities used across main/preload/renderer.
 - Build tool: Vite for all three layers.
 - **Every inspector-iframe RPC channel must share `initRpc`'s transport.** `AuthenticatedMessageTransport` (`renderer/src/modules/rpc/transport.ts`) is what checks sender and origin on inbound messages — `@dcl/mini-rpc`'s own `MessageTransport` uses its `origin` argument only as the `postMessage` target, not as a filter. `initRpc` builds ONE instance and hands it to every channel (`StorageRPC`, `SceneRpc*`, `CodeParserRPC`), so a new channel inherits the check for free. Constructing a fresh transport for a new channel silently opens an unauthenticated path beside the hardened ones.

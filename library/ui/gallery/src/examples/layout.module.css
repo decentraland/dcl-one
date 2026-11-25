@@ -44,6 +44,18 @@
   max-width: 420px;
 }
 
+/* The surface tokens a Tooltip host supplies, from the foundations. A portal tip takes them as its own class. */
+.tooltipHost {
+  --panel: var(--dcl-neutrals-shadow);
+  --text: var(--dcl-neutrals-white);
+  --shadow-panel: 0 8px 24px var(--dcl-transparencies-black-60);
+  --z-overlay: 1;
+}
+
+.tooltipRoom {
+  padding-block: var(--dcl-space-48);
+}
+
 .backdrop {
   position: relative;
   width: 100%;

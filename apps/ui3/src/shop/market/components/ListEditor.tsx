@@ -7,7 +7,7 @@
 import { useQueryClient } from "@tanstack/react-query";
 import { useId, useState } from "react";
 
-import Button from "../../../atoms/Button";
+import { Button } from "@dcl/one-ui";
 import { createList, deleteList, LIST_DESCRIPTION_MAX, LIST_NAME_MAX, updateList, validateListDraft, type FavoriteList, type ListDraft } from "../lib/favorites";
 import { useWrite, WriteStatus } from "./kit";
 
@@ -62,10 +62,10 @@ export function ListEditor({ list, onSaved, onCancel }: { list?: FavoriteList; o
         </label>
       </fieldset>
       <div className="mk-actions">
-        <Button type="submit" disabled={write.busy}>
+        <Button size="md" type="submit" disabled={write.busy}>
           {list ? "Save" : "Create list"}
         </Button>
-        <Button variant="ghost" onClick={onCancel} disabled={write.busy}>
+        <Button size="md" variant="outline" onClick={onCancel} disabled={write.busy}>
           Cancel
         </Button>
       </div>
@@ -80,7 +80,7 @@ export function DeleteList({ list, onDeleted }: { list: FavoriteList; onDeleted:
   const write = useWrite();
   if (!asking)
     return (
-      <Button variant="ghost" tone="danger" size="sm" onClick={() => setAsking(true)}>
+      <Button variant="outline" tone="danger" size="sm" onClick={() => setAsking(true)}>
         Delete list
       </Button>
     );
@@ -103,7 +103,7 @@ export function DeleteList({ list, onDeleted }: { list: FavoriteList; onDeleted:
         >
           Delete
         </Button>
-        <Button size="sm" variant="ghost" onClick={() => setAsking(false)} disabled={write.busy}>
+        <Button size="sm" variant="outline" onClick={() => setAsking(false)} disabled={write.busy}>
           Keep it
         </Button>
       </div>

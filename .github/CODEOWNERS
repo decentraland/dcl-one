@@ -40,6 +40,7 @@
 # shared-backend
 /library/dcl-auth/ @decentraland/apis
 /library/dcl-http/ @decentraland/apis
+/library/dcl-metrics/ @decentraland/apis
 /library/catalyst-api/ @decentraland/apis
 /services/catalyst/fed/ @decentraland/apis
 /services/catalyst/jobs/ @decentraland/apis
@@ -91,6 +92,8 @@
 /library/ui/ @decentraland/web-applications
 /library/web-core/ @decentraland/web-applications
 /tooling/creators-e2e/ @decentraland/web-applications
+/tooling/ui-kit-ceiling.json @decentraland/web-applications
+/tooling/ui-token-floor.json @decentraland/web-applications
 
 # async
 /library/async/ @decentraland/web-applications @decentraland/apis
@@ -107,7 +110,6 @@
 /apps/ui3/src/explorer/ @decentraland/web-applications
 
 # creator-ui
-/apps/ui3/src/editor/ @decentraland/web-applications
 /apps/ui3/editor-scene/ @decentraland/web-applications
 /apps/creator-hub/ @decentraland/web-applications
 /.github/workflows/creator-hub-*.yml @decentraland/web-applications

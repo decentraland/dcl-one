@@ -514,7 +514,7 @@ impl Queue {
 pub(super) struct WebSocket {
     accepted_credit: Option<OutputCredit>,
     assignments: Option<Assignments>,
-    incoming: SharedTransport<Transport>,
+    incoming: SharedTransport<dcl_metrics::ws::Socket>,
     queue: Arc<Queue>,
     state: AppState,
     rate: HeartbeatRate,
@@ -574,7 +574,8 @@ impl WebSocket {
         permit: OwnedSemaphorePermit,
         raw: Option<super::raw_transport::Signal>,
     ) -> Self {
-        let (mut sink, mut incoming) = SharedTransport::pair(socket);
+        let (mut sink, mut incoming) =
+            SharedTransport::pair(dcl_metrics::ws::Socket::new(socket, "archipelago"));
         // The admission snapshot includes any initial HTTP read-ahead once.
         // A new socket's clock starts no earlier than admission itself.
         if let Some(raw) = &raw {

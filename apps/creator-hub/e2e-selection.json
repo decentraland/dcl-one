@@ -12,6 +12,8 @@
     "apps/ui3/src/data/catalyst/client.ts",
     "apps/ui3/src/data/catalyst/landListing.ts",
     "apps/ui3/src/generated/bridge/**",
+    "library/ui/components/Tooltip/**",
+    "library/ui/package.json",
     "library/shop/checkout/chain/selection.ts",
     "library/shop/land/contracts.ts",
     "library/shop/model/address.ts",
@@ -20,6 +22,7 @@
     "library/shop/model/money.ts",
     "library/web-core/shop-chain-env.ts",
     "library/web-core/site.ts",
+    "library/web-core/catalyst/client.ts",
     ".github/workflows/creator-hub-*",
     ".github/actions/creator-hub-*/**",
     "tooling/creator-hub-ci.py",
@@ -99,6 +102,8 @@
     "apps/ui3/src/data/catalyst/client.ts",
     "apps/ui3/src/data/catalyst/landListing.ts",
     "apps/ui3/src/generated/bridge/**",
+    "library/ui/components/Tooltip/**",
+    "library/ui/package.json",
     "library/shop/checkout/chain/selection.ts",
     "library/shop/land/contracts.ts",
     "library/shop/model/address.ts",
@@ -106,6 +111,7 @@
     "library/shop/model/decimal.ts",
     "library/shop/model/money.ts",
     "library/web-core/shop-chain-env.ts",
-    "library/web-core/site.ts"
+    "library/web-core/site.ts",
+    "library/web-core/catalyst/client.ts"
   ]
 }

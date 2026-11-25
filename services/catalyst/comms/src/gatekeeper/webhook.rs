@@ -4,6 +4,8 @@
 //! (`gatekeeper::streaming`), then the live presence and the room event sink.
 //! The room event store receives every verified participant event.
 
+use crate::metrics::declarations;
+
 use axum::body::Bytes;
 use axum::extract::State;
 use axum::http::HeaderMap;
@@ -578,7 +580,9 @@ async fn share_room_event(
         PublishOutcome::Unconfirmed => "unconfirmed",
     };
     if state.bus.is_enabled() {
-        metrics::counter!("comms_room_event_publish_failed_total", "reason" => reason).increment(1);
+        declarations::ROOM_EVENT_PUBLISH_FAILED
+            .handle([reason])
+            .increment(1);
         tracing::debug!(
             ?outcome,
             event_id = event.event_id,

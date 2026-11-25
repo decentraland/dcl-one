@@ -189,9 +189,10 @@ CREATE INDEX world_scenes_logs_permissions_decoded_idx ON worlds.world_scenes
     WHERE mirror_source IS NULL;
 
 -- `GET /collaborator`: the live Genesis scenes listing the signer (partial on
--- the predicate the query repeats; overwritten rows leave the index).
-CREATE INDEX deployments_scene_logs_permissions_decoded_idx ON content.deployments
-    USING gin (worlds.logs_permissions_decoded((entity_metadata -> 'logsPermissions')::text))
+-- the predicate the query repeats; overwritten rows leave the index). Content
+-- stores the metadata as `{"v": metadata}`, so the array is at `v`.
+CREATE INDEX deployments_scene_v_logs_permissions_decoded_idx ON content.deployments
+    USING gin (worlds.logs_permissions_decoded((entity_metadata -> 'v' -> 'logsPermissions')::text))
     WHERE entity_type = 'scene' AND deleter_deployment IS NULL;
 
 -- ── the permission core ────────────────────────────────────────────────────

@@ -33,7 +33,7 @@ use std::collections::HashSet;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use metrics::counter;
+use dcl_metrics::counter;
 use serde::Serialize;
 use sqlx::PgPool;
 use tokio_util::sync::CancellationToken;
@@ -90,6 +90,9 @@ pub struct PruneOptions {
     pub interval: Duration,
     /// `GLOBAL_SCENES_URN`: scenes whose files are never unlinked.
     pub global_scenes_urn: Vec<String>,
+    /// How long an unlink batch waits for the exclusive store lock before the
+    /// pass defers ([`gc::STORE_LOCK_TIMEOUT`]).
+    pub store_lock_wait: Duration,
 }
 
 impl PruneOptions {
@@ -117,6 +120,7 @@ impl PruneOptions {
                 .as_deref()
                 .map(|r| r.split_whitespace().map(str::to_string).collect())
                 .unwrap_or_default(),
+            store_lock_wait: gc::STORE_LOCK_TIMEOUT,
         }
     }
 
@@ -252,13 +256,14 @@ async fn unlink_unreferenced(
     pool: &PgPool,
     storage: &Storage,
     global_scenes_urn: &[String],
+    store_lock_wait: Duration,
     keys: &[String],
     report: &mut PruneReport,
 ) -> anyhow::Result<()> {
     if keys.is_empty() {
         return Ok(());
     }
-    let mut lock = gc::lock_store_exclusive(pool).await?;
+    let mut lock = gc::lock_store_exclusive_within(pool, store_lock_wait).await?;
     let referenced: HashSet<String> =
         gc::referenced_among_on(&mut lock, gc::Pins::new(storage, global_scenes_urn), keys).await?;
     for key in keys {
@@ -285,6 +290,7 @@ async fn unlink_unreferenced(
 /// the start, each select bounded to its window; a full batch continues
 /// inside the window, a short one moves on. The token fires and the report
 /// covers what ran. `Ok` with `skipped` set when the options refuse the run.
+/// A pass that ran counts as a collection run (`dcl_content_garbage_collection_*`).
 async fn run(
     pool: &PgPool,
     storage: &Storage,
@@ -292,6 +298,32 @@ async fn run(
     cancel: Option<&CancellationToken>,
 ) -> anyhow::Result<PruneReport> {
     let started = Instant::now();
+    let result = pass(pool, storage, opts, cancel, started).await;
+    let cancelled = cancel.is_some_and(CancellationToken::is_cancelled);
+    if let Some(outcome) = run_outcome(&result, cancelled) {
+        crate::series::gc_run(outcome);
+    }
+    result
+}
+
+/// How a pass counts: `success`, `deferred` when the exclusive store lock stayed busy, `error`
+/// on any other failure; a pass the options refused or that stopped for shutdown, not at all.
+fn run_outcome(result: &anyhow::Result<PruneReport>, cancelled: bool) -> Option<&'static str> {
+    match result {
+        Ok(report) if report.skipped.is_some() || cancelled => None,
+        Ok(_) => Some("success"),
+        Err(e) if matches!(e.downcast_ref(), Some(gc::GcError::LockTimeout)) => Some("deferred"),
+        Err(_) => Some("error"),
+    }
+}
+
+async fn pass(
+    pool: &PgPool,
+    storage: &Storage,
+    opts: &PruneOptions,
+    cancel: Option<&CancellationToken>,
+    started: Instant,
+) -> anyhow::Result<PruneReport> {
     let mut report = PruneReport::default();
     if let Some(reason) = opts.skip_reason() {
         report.skipped = Some(reason.to_string());
@@ -326,6 +358,7 @@ async fn run(
             pool,
             storage,
             &opts.global_scenes_urn,
+            opts.store_lock_wait,
             &pruned.keys,
             &mut report,
         )
@@ -421,6 +454,33 @@ mod tests {
     use bytes::Bytes;
     use sqlx::postgres::{PgConnectOptions, PgPoolOptions};
 
+    #[test]
+    fn a_pass_counts_by_how_it_ended() {
+        let ran = || Ok(PruneReport::default());
+        assert_eq!(run_outcome(&ran(), false), Some("success"));
+        assert_eq!(run_outcome(&ran(), true), None, "stopped for shutdown");
+        let refused = Ok(PruneReport {
+            skipped: Some("off".into()),
+            ..PruneReport::default()
+        });
+        assert_eq!(run_outcome(&refused, false), None);
+        let busy = Err(anyhow::Error::from(gc::GcError::LockTimeout));
+        assert_eq!(run_outcome(&busy, false), Some("deferred"));
+        let failed = Err(anyhow::anyhow!("database gone"));
+        assert_eq!(run_outcome(&failed, true), Some("error"));
+
+        let recorder = crate::series::test_support::recorder();
+        dcl_metrics::with_local_recorder(&recorder, || crate::series::gc_run("deferred"));
+        assert_eq!(
+            crate::series::test_support::sample(
+                &recorder.handle().render(),
+                crate::series::GC_RUNS.descriptor.name,
+                &[("outcome", "deferred")]
+            ),
+            Some(1.0)
+        );
+    }
+
     /// A pass prunes the whole table, so the per-process scratch database the
     /// other lib tests share is off limits: a database of its own on the
     /// `CATALYST_TEST_DATABASE_URL` cluster, as the collector test does.
@@ -446,6 +506,7 @@ mod tests {
             pause_between_batches: Duration::ZERO,
             interval: Duration::from_secs(3600),
             global_scenes_urn: Vec::new(),
+            store_lock_wait: gc::STORE_LOCK_TIMEOUT,
         }
     }
 
@@ -593,6 +654,8 @@ mod tests {
         assert_eq!(rows, 7);
 
         let grace = Duration::from_secs(86_400);
+        let recorder = crate::series::test_support::recorder();
+        let metrics_guard = dcl_metrics::set_default_local_recorder(&recorder);
         let off = run_once(
             &pool,
             &storage,
@@ -626,6 +689,25 @@ mod tests {
             (4, 1, 0),
             "{report:?}"
         );
+        drop(metrics_guard);
+        {
+            use crate::series::{GC_RUNS, test_support::sample};
+            let rendered = recorder.handle().render();
+            assert_eq!(
+                sample(&rendered, BLOBS_UNLINKED, &[]),
+                Some(4.0),
+                "{rendered}"
+            );
+            assert_eq!(
+                sample(
+                    &rendered,
+                    GC_RUNS.descriptor.name,
+                    &[("outcome", "success")]
+                ),
+                Some(1.0),
+                "the refused pass is not a run"
+            );
+        }
         let freed = [&exclusive, &orphan_file, &superseded_entity, &orphan_entity];
         let expected_bytes: u64 = [
             format!("exclusive {tag}").len(),
@@ -834,6 +916,75 @@ mod tests {
                 .await
                 .unwrap();
         assert_eq!(active, None, "the predecessor is not restored");
+
+        pool.close().await;
+        let _ = sqlx::query(sqlx::AssertSqlSafe(format!(
+            "DROP DATABASE \"{name}\" WITH (FORCE)"
+        )))
+        .execute(&admin)
+        .await;
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// A pass whose unlink batch finds the exclusive store lock held past its wait (a
+    /// deployment holds the shared side) fails with `LockTimeout` and counts as `deferred`.
+    #[tokio::test]
+    async fn a_pass_behind_a_held_store_lock_counts_as_deferred() {
+        let Some((pool, admin, name)) = own_database().await else {
+            return;
+        };
+        let dir = std::env::temp_dir().join(format!(
+            "catalyst-history-prune-deferred-{}",
+            uuid::Uuid::new_v4().simple()
+        ));
+        let storage = Storage::from_config(&dir).await.unwrap();
+        let tag = uuid::Uuid::new_v4().simple().to_string();
+        let blob = put(&storage, format!("deferred {tag}").as_bytes()).await;
+        let entity = crate::auth::hash::hash_bytes_v1(format!("entity deferred {tag}").as_bytes());
+        let orphan = deployment(&pool, &entity, &format!("{tag}:0,0"), 172_800, None).await;
+        content_file(&pool, orphan, &blob, "d.glb").await;
+
+        let mut deploying = pool.begin().await.unwrap();
+        gc::lock_store_shared(&mut deploying).await.unwrap();
+        let recorder = crate::series::test_support::recorder();
+        let metrics_guard = dcl_metrics::set_default_local_recorder(&recorder);
+        let result = run_once(
+            &pool,
+            &storage,
+            &PruneOptions {
+                store_lock_wait: Duration::from_millis(100),
+                ..options(Duration::from_secs(86_400), 10)
+            },
+        )
+        .await;
+        drop(metrics_guard);
+        deploying.rollback().await.unwrap();
+        let err = result.expect_err("the unlink batch cannot take the store lock");
+        assert!(
+            matches!(err.downcast_ref(), Some(gc::GcError::LockTimeout)),
+            "{err:?}"
+        );
+        assert!(storage.exist(&blob).await.unwrap(), "nothing is unlinked");
+        {
+            use crate::series::{GC_RUNS, test_support::sample};
+            let rendered = recorder.handle().render();
+            assert_eq!(
+                sample(
+                    &rendered,
+                    GC_RUNS.descriptor.name,
+                    &[("outcome", "deferred")]
+                ),
+                Some(1.0),
+                "{rendered}"
+            );
+            for outcome in ["success", "error"] {
+                assert_eq!(
+                    sample(&rendered, GC_RUNS.descriptor.name, &[("outcome", outcome)]),
+                    None,
+                    "{rendered}"
+                );
+            }
+        }
 
         pool.close().await;
         let _ = sqlx::query(sqlx::AssertSqlSafe(format!(
