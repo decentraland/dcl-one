@@ -43,6 +43,7 @@ impl Plugin for LivestreamManagerPlugin {
                 .chain(),
         );
         app.add_systems(OnEnter(Receiver::Off), drop_transmissions);
+        app.add_systems(OnEnter(TransmissionKind::Off), clear_automatic_image);
         app.add_systems(
             OnEnter(TransmissionState::Cast),
             enter_transmission_kind::<ManagingAudioCasts>,
@@ -151,7 +152,7 @@ struct ManagingAudioStreams(Vec<Entity>);
 #[relationship(relationship_target = ManagingAudioStreams)]
 struct AudioStreamer(Entity);
 
-fn setup_manager(mut commands: Commands, mut images: ResMut<Assets<Image>>) {
+fn empty_automatic_image() -> Image {
     let mut image = Image::new_fill(
         Extent3d {
             width: 8,
@@ -159,7 +160,7 @@ fn setup_manager(mut commands: Commands, mut images: ResMut<Assets<Image>>) {
             depth_or_array_layers: 1,
         },
         TextureDimension::D2,
-        &[255, 0, 255, 255],
+        &[0, 0, 0, 255],
         TextureFormat::Rgba8UnormSrgb,
         RenderAssetUsages::all(),
     );
@@ -168,7 +169,11 @@ fn setup_manager(mut commands: Commands, mut images: ResMut<Assets<Image>>) {
     {
         image.texture_descriptor.usage |= TextureUsages::RENDER_ATTACHMENT;
     }
-    let handle = images.add(image);
+    image
+}
+
+fn setup_manager(mut commands: Commands, mut images: ResMut<Assets<Image>>) {
+    let handle = images.add(empty_automatic_image());
     let (state_sender, _) = tokio::sync::watch::channel(VideoState::VsLoading);
 
     commands.spawn(LivestreamManager {
@@ -434,6 +439,19 @@ fn drop_transmissions(
     commands
         .entity(*transmission)
         .try_remove::<ActiveTransmitter>();
+}
+
+fn clear_automatic_image(
+    manager: Single<&LivestreamManager>,
+    mut images: ResMut<Assets<Image>>,
+    mut resized: EventWriter<TransmissionImageResized>,
+) {
+    let Some(image) = images.get_mut(&manager.image) else {
+        return;
+    };
+    *image = empty_automatic_image();
+    manager.state.send_replace(VideoState::VsLoading);
+    resized.write(TransmissionImageResized);
 }
 
 fn manage_streams(

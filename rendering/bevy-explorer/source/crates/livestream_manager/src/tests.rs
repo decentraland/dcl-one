@@ -52,6 +52,68 @@ fn test_states(
 }
 
 #[test]
+fn automatic_receiver_clears_the_last_frame_when_the_cast_ends() {
+    let mut app = min_app();
+    app.update();
+    let receiver = app.world_mut().spawn(ActiveReceiver).id();
+    for _ in 0..3 {
+        app.update();
+    }
+    let initial = app.world().get::<ReceiverImage>(receiver).unwrap();
+    let initial_image = app
+        .world()
+        .resource::<Assets<Image>>()
+        .get(&initial.image)
+        .unwrap()
+        .clone();
+    let track = app.world_mut().spawn(TransmitterKind::VideoCast).id();
+    for _ in 0..4 {
+        app.update();
+    }
+    let handle = app
+        .world()
+        .get::<ReceiverImage>(receiver)
+        .unwrap()
+        .image
+        .clone();
+    app.world_mut()
+        .resource_mut::<Assets<Image>>()
+        .get_mut(&handle)
+        .unwrap()
+        .data = Some([12, 34, 56, 255].repeat(64));
+    app.world()
+        .get::<ActiveTransmitter>(track)
+        .unwrap()
+        .state
+        .send_replace(dcl_component::proto_components::sdk::components::VideoState::VsPlaying);
+    app.world_mut().entity_mut(track).despawn();
+    for _ in 0..4 {
+        app.update();
+    }
+    let output = app.world().get::<ReceiverImage>(receiver).unwrap();
+    assert_eq!(output.image, handle);
+    assert_eq!(
+        *output.state.borrow(),
+        dcl_component::proto_components::sdk::components::VideoState::VsLoading
+    );
+    let image = app
+        .world()
+        .resource::<Assets<Image>>()
+        .get(&handle)
+        .unwrap();
+    assert_eq!(image.data, initial_image.data);
+    assert_eq!(image.data, Some([0, 0, 0, 255].repeat(64)));
+    assert_eq!(
+        image.texture_descriptor.size,
+        initial_image.texture_descriptor.size
+    );
+    assert_eq!(
+        image.texture_descriptor.usage,
+        initial_image.texture_descriptor.usage
+    );
+}
+
+#[test]
 #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
 fn test_add_receiver() {
     let mut app = min_app();
