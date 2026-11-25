@@ -62,6 +62,9 @@ does not have yet (durations, waits, entity ids) is added here with its first co
 - `/screenshot` with no option replies raw base64 PNG at full size, which the scene editor's
   thumbnail reads; any option (`--max-width`, `--jpg`, `--world-only`) makes it JSON with a
   `caption` naming the screen and frame the image was scaled from.
+- A capture waits before it takes its frame: two frames, then a camera transition for at most
+  1.5 s. That wait is part of taking the frame, with a fixed bound the caller does not set and
+  the JSON reply reports (`blendWaitMs`). It is not a wait command, so it adds no rule for those.
 
 ## Alternatives considered
 
