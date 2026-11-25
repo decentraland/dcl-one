@@ -1,6 +1,7 @@
 -- Resolve the upstream Places UUID through the imported active catalogue to
 -- the place the node grants on: a Genesis scene's effective base parcel
--- (social.scene_base_parcel), a world scene's identity.
+-- (social.scene_base_parcel over the declared base that content stores at
+-- entity_metadata -> 'v'), a world scene's identity.
 -- A missing or ambiguous identity must stop cutover, never silently drop a ban/grant.
 CREATE TEMP TABLE migration_scene_admin_identity ON COMMIT DROP AS
 WITH candidates AS (
@@ -9,7 +10,7 @@ WITH candidates AS (
     JOIN explore.place p ON p.id = s.place_id AND NOT p.world
     JOIN content.deployments d ON d.entity_id = p.raw->>'deployment_id'
         AND d.entity_type = 'scene' AND d.deleter_deployment IS NULL
-    CROSS JOIN LATERAL (SELECT social.scene_base_parcel(d.entity_pointers, d.entity_metadata #>> '{scene,base}') AS key) base
+    CROSS JOIN LATERAL (SELECT social.scene_base_parcel(d.entity_pointers, d.entity_metadata #>> '{v,scene,base}') AS key) base
     WHERE base.key IS NOT NULL AND EXISTS (SELECT 1 FROM content.active_pointers a WHERE a.entity_id = d.entity_id)
     UNION
     SELECT DISTINCT s.place_id, i.identity::text

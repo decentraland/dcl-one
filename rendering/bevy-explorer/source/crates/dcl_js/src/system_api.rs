@@ -400,6 +400,20 @@ pub async fn op_get_service_urls(
     rx.await.map_err(|e| anyhow::anyhow!(e))
 }
 
+pub async fn op_get_official_wallets(
+    state: Rc<RefCell<impl State>>,
+) -> Result<Vec<String>, anyhow::Error> {
+    let (sx, rx) = RpcResultSender::channel();
+
+    state
+        .borrow_mut()
+        .borrow_mut::<SuperUserScene>()
+        .send(SystemApi::GetOfficialWallets(sx))
+        .unwrap();
+
+    rx.await.map_err(|e| anyhow::anyhow!(e))
+}
+
 pub async fn op_get_welcome(state: Rc<RefCell<impl State>>) -> Result<WelcomeState, anyhow::Error> {
     let (sx, rx) = RpcResultSender::channel();
 

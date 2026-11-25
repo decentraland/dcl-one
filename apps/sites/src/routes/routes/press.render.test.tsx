@@ -1,4 +1,5 @@
 // @vitest-environment jsdom
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { cleanup, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { useState } from "react";
@@ -16,17 +17,35 @@ vi.hoisted(() =>
   }),
 );
 
-const PressRouter = createRoutesStub([{ path: "/press", Component: Press }]);
+const PressStub = createRoutesStub([{ path: "/press", Component: Press }]);
+
+function PressRouter() {
+  const [client] = useState(() => new QueryClient());
+  return (
+    <QueryClientProvider client={client}>
+      <PressStub initialEntries={["/press"]} />
+    </QueryClientProvider>
+  );
+}
 
 function PressWithLanguagePicker() {
   const [locale, onSelect] = useState<SitesLocale>("en");
 
   return (
     <SitesLocaleContext.Provider value={{ locale, onSelect }}>
-      <PressRouter initialEntries={["/press"]} />
+      <PressRouter />
     </SitesLocaleContext.Provider>
   );
 }
+
+const FOOTER_CHANGE_LANGUAGE: Record<string, string> = {
+  English: "Change language",
+  Español: "Cambiar idioma",
+  Français: "Changer de langue",
+  中文: "更改语言",
+  한국어: "언어 변경",
+  日本語: "言語を変更",
+};
 
 describe("/press", () => {
   afterEach(() => {
@@ -36,7 +55,14 @@ describe("/press", () => {
 
   describe("when a visitor opens the page", () => {
     beforeEach(() => {
-      render(<PressRouter initialEntries={["/press"]} />);
+      render(<PressRouter />);
+    });
+
+    it("should show the Sites top bar with no section selected", () => {
+      const banner = within(screen.getByRole("banner", { name: "Decentraland" }));
+      expect(banner.getByRole("button", { name: "Open menu" })).toBeTruthy();
+      expect(banner.queryByRole("button", { name: "Toggle navigation menu" })).toBeNull();
+      expect(document.querySelector('[aria-current="page"]')).toBeNull();
     });
 
     it("should show the English press kit in the main landmark", () => {
@@ -101,6 +127,14 @@ describe("/press", () => {
           main.getByRole("heading", { level: 1, name: heading }),
         ).toBeTruthy();
         expect(main.getByRole("link", { name: download })).toBeTruthy();
+      });
+
+      it("should translate the footer", () => {
+        expect(
+          within(screen.getByRole("contentinfo")).getByRole("button", {
+            name: `${FOOTER_CHANGE_LANGUAGE[language]}: ${language}`,
+          }),
+        ).toBeTruthy();
       });
 
       it("should update the browser title", () => {

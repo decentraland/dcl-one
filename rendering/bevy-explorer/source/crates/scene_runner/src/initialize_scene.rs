@@ -16,11 +16,12 @@ use bevy::{
 
 use common::{
     partition::{scene_partition, Tier},
-    sets::RealmLifecycle,
+    sets::{PostUpdateSets, RealmLifecycle},
     structs::{
         server_mode, AppConfig, AppError, CurrentRealm, EditorMode, GlobalCrdtStateUpdate,
-        IVec2Arg, NearbyVoiceDisabled, PreviewMode, PrimaryCamera, ReadsMapPins, SceneJsFile,
-        SceneLoadDistance, SceneMeta, SceneTime, StartupScenes, WorldHold,
+        IVec2Arg, NearbyVoiceDisabled, PlayerParcelChanged, PreviewMode, PrimaryCamera,
+        ReadsMapPins, SceneJsFile, SceneLoadDistance, SceneMeta, SceneTime, StartupScenes,
+        WorldHold,
     },
     terrain::{Occupancy, TerrainChange, TerrainTargets, BORDER_PADDING},
     util::{TaskExt, TryPushChildrenEx},
@@ -35,7 +36,7 @@ use dcl_component::{
 };
 use dcl_types::{
     interface::{crdt_context::CrdtContext, CrdtComponentInterfaces, CrdtStore, CrdtType},
-    SceneElapsedTime, SceneId, SceneResponse, SceneResponseSender,
+    SceneElapsedTime, SceneId, SceneResponse, SceneResponseSender, SceneWake,
 };
 use ipfs::{
     ipfs_path::IpfsPath, ActiveEntityTask, EntityDefinition, IpfsAssetServer, RealmInitialLocation,
@@ -115,8 +116,19 @@ impl Plugin for SceneLifecyclePlugin {
                 .in_set(SceneSets::Init),
         );
 
+        app.add_event::<PlayerParcelChanged>();
+        app.add_systems(PostUpdate, player_parcel_report());
+
         app.add_systems(PostUpdate, realm_lifecycle_systems().in_set(RealmLifecycle));
     }
+}
+
+/// The player parcel report, where the plugin runs it. A teleport in `Update` moves the player at
+/// once and defers its `OutOfWorld`: here both are in place, with the frame's movement.
+fn player_parcel_report() -> ScheduleConfigs<ScheduleSystem> {
+    report_player_parcel
+        .after(PostUpdateSets::PlayerUpdate)
+        .into_configs()
 }
 
 /// The realm lifecycle, in the order the plugin runs it.
@@ -774,6 +786,7 @@ pub(crate) fn initialize_scene(
             scene_context.platform = Some("mobile".to_owned());
         }
 
+        let wake = SceneWake::default();
         let (main_sx, kill_guard) = spawn_scene(
             context.crdt_store.clone(),
             scene_context,
@@ -786,6 +799,7 @@ pub(crate) fn initialize_scene(
             inspected,
             super_user.map(|_| su_bridge.sender.clone()),
             scene_origin,
+            wake.clone(),
         );
 
         context.inspected = inspected;
@@ -797,6 +811,7 @@ pub(crate) fn initialize_scene(
             handle: SceneThreadHandle {
                 sender: main_sx,
                 kill_guard,
+                wake,
             },
             in_flight: true,
         };
@@ -1316,6 +1331,42 @@ pub fn process_realm_change(
             segment_config.update_realm(realm.to_owned());
         }
     }
+}
+
+/// The player's parcel, the scene the realm lists there and whether the player is in world, as
+/// analytics reports them.
+fn report_player_parcel(
+    // `GlobalTransform` lags this frame's placement until `TransformPropagate`; `in_world` must
+    // match the parcel
+    player: Query<(&Transform, Has<OutOfWorld>), With<PrimaryUser>>,
+    pointers: Res<ScenePointers>,
+    mut last: Local<Option<PlayerParcelChanged>>,
+    mut changes: EventWriter<PlayerParcelChanged>,
+) {
+    let Ok((player, out_of_world)) = player.single() else {
+        return;
+    };
+    let parcel = vec3_to_parcel(player.translation);
+    let in_world = !out_of_world;
+    let scene = pointers.get(parcel).map(|pointer| match pointer {
+        PointerResult::Nothing => None,
+        PointerResult::Exists { hash, .. } => Some(hash.as_str()),
+    });
+    if last.as_ref().is_some_and(|last| {
+        last.parcel == parcel
+            && last.scene.as_ref().map(Option::as_deref) == scene
+            && last.in_world == in_world
+    }) {
+        return;
+    }
+    let change = PlayerParcelChanged {
+        old: last.as_ref().map(|last| last.parcel),
+        parcel,
+        scene: scene.map(|scene| scene.map(str::to_owned)),
+        in_world,
+    };
+    changes.write(change.clone());
+    *last = Some(change);
 }
 
 fn load_active_entities(

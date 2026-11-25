@@ -323,16 +323,17 @@ ends in "we don't do that", so the next person doesn't have to rediscover it.
     again. unity-explorer suppresses on any 401 or 403 from the scene room and lifts it on the
     room's next connect or disconnect; its scene room asks again every 5 s while refused.
 - **The mic pauses while the Explorer lacks focus** (the primary window natively,
-  `document.hasFocus()` on the web), so it never captures while the player is in another app
-  or tab: it stops capturing and publishing for nearby voice and calls alike, and resumes when
-  focus returns. The mic setting does not change, and neither pause nor resume plays the mic
-  on/off sound. The HUD shows the paused mic off: the call panel at once, the nearby mic toggle
-  at its next mic state poll (up to 1 s).
+  `document.hasFocus()` on the web) while the Mute Mic in Background setting (Sounds, on by
+  default) is on, so it never captures while the player is in another app or tab: it stops
+  capturing and publishing for nearby voice and calls alike, and resumes when focus returns.
+  The mic setting does not change, and neither pause nor resume plays the mic on/off sound.
+  The HUD shows the paused mic off: the call panel at once, the nearby mic toggle at its next
+  mic state poll (up to 1 s).
   - In a community stream no `MuteSpeakerFromCommunityVoiceChat` is sent for the pause, so
     other clients keep showing the paused speaker unmuted while no audio arrives; the mute
     entry above holds only for a mute the player chooses.
-  - unity-explorer pauses only the nearby mic and lets the player turn the pause off in
-    settings ("mute mic in background", on by default); the Explorer has no such setting.
+  - With the setting off, the mic stays live without focus, for nearby voice and calls alike.
+  - unity-explorer's setting of the same name pauses only the nearby mic.
 - **Blocked and scene-banned players are not heard nearby.** A player blocked in either
   direction, or banned by the connected scene room, carries `BlockedOrBanned`, and their nearby
   voice track is unsubscribed while it lasts; unity-explorer keeps the track and creates no audio
@@ -661,6 +662,14 @@ ends in "we don't do that", so the next person doesn't have to rediscover it.
   cover in the saved image, as unity-explorer computes it; the catalyst's camera-reel service parses
   the metadata into a struct without that field, so it is not stored. Kept for parity with the
   upstream service's clients.
+- **The photo viewer (#2073).** Its layout and numbers follow unity-explorer's, with four
+  differences. The info panel shows a loading view while a photo's details load; unity-explorer
+  never shows one. The owner's name opens their passport; unity-explorer's owner button cannot be
+  reached. A person's row is disabled for guests, because the
+  profile store cannot tell a profile that is missing from one still loading, which is the case
+  unity-explorer disables. Jump In treats a photo as taken in a World when the HUD's `worldOfRealm`
+  accepts its realm, so hyphenated ENS names and Worlds-server realm URLs count, where
+  unity-explorer's test is `^[a-zA-Z0-9.]+\.eth$` and sends those photos to a Genesis City parcel.
 - **The photo camera stops at scene geometry instead of sliding.** unity-explorer moves a capsule
   character controller, which slides along walls; here the move is swept and refused whole when
   the camera's sphere would cross a scene collider. A collider the camera starts inside (the player
@@ -972,6 +981,44 @@ ends in "we don't do that", so the next person doesn't have to rediscover it.
   nearest to the player takes no place: its bones stay at rest and the place goes to the next
   visible avatar, since a swing nobody sees would cost a place and its transform walks. Do not
   rank hidden avatars to match.
+- **A scene's colliders answer only where the scene is drawn.** The avatar, the pointer and
+  other scenes' world raycasts meet a scene's colliders only over the scene's own parcels, up to
+  the height limit of each connected group of them, and 0.05 m past both: the hard edge of the
+  scene materials. With the out-of-bounds effect on (`graphics.oob`) the materials dissolve what
+  lies past that edge over a wider band; colliders keep to the hard edge. Unity keeps every
+  scene's colliders in one physics world, so a collider that is on is solid wherever it reaches,
+  over a neighbour's parcels too. Each scene here has a collider set of its own, so a query is
+  cut to where the scene applies: the avatar asks a scene only while its capsule touches that
+  space, and a ray or a swept capsule is cast against a scene only over the stretches inside it.
+  Three consequences look like mistakes:
+  - A ray that comes into a scene inside a solid primitive passes through that primitive, as a
+    ray does not hit what its origin is inside. Mesh colliders are surfaces, hit as usual.
+  - An avatar that comes into a scene already overlapping one of its colliders, having walked
+    through the part that is not solid outside, is stopped at the scene's edge when its centre
+    line is inside the collider or the overlap would push it back out. Any other overlap lets it
+    in, and the push-out resolves it as usual: that is how it steps onto ground a little higher
+    than the ground it came from. The top of the drawn space is such an edge: an avatar that
+    falls onto a collider which rises past the height its region is drawn to lands at that
+    height and stands there, on the ground.
+  - A platform that carries the player over the scene's edge drops them once their capsule is
+    clear of the scene.
+
+  A scene's casts at its own colliders (in a world cast too), trigger areas, the proximity
+  lookup and the photo camera are not cut. Neither is collider data without bounds: portables,
+  the terrain, and scenes in a run that draws out-of-bounds geometry. The whole-collider test
+  (below) still turns off a collider that leaves the scene's rectangle.
+- **A scene's `AvatarNametag` plate is bounded before it is laid out.** unity-explorer draws
+  the label and the colours as the scene wrote them. Here the label is cut to its first 128
+  characters, a control character in it reads as a space, and a colour channel is kept between
+  0 and 1 (one that is not a number reads 0), so no scene sets the cost of shaping its label or
+  draws outside the tag. Do not pass them through to match.
+- **One scene entity plates an avatar.** In unity-explorer two entities can ask for a plate on
+  the same avatar: the last write shows, and the plate goes when either entity does. Here a
+  scene has one entity for each player id and only the scene the local player stands in plates
+  anyone, so the case does not arise.
+- **A plate stands clear of the mention ring.** The plate floats 2 units over the name's box,
+  as in unity-explorer, and the ring of a mention reaches 3 units out of that box. While the
+  ring shows, the plate rises by the ring's width, so it never covers the ring's top edge.
 
 ## Deliberate choices that look like mistakes
 
@@ -991,8 +1038,9 @@ ends in "we don't do that", so the next person doesn't have to rediscover it.
   a whole. Unity (`333aa8826979186f1380058cc75f74b9630e4879`) tests the same rectangle, with the
   same allowance at the edge. The height limit splits the same way: colliders take one limit from
   the scene's whole parcel count, as Unity does, while the shaders clip each connected group of
-  parcels at its own, so over a scene in several pieces a collider can be solid above the height
-  its mesh is drawn to (two parcels apart: meshes to 20 m, colliders to 31.7 m). The box tested
+  parcels at its own, so over a scene in several pieces a collider can be on above the height
+  its mesh is drawn to (two parcels apart: meshes to 20 m, colliders to 31.7 m), where only the
+  scene's own raycasts and trigger areas meet it. The box tested
   for a mesh collider is the mesh's own box turned with the collider, which can be larger than the
   mesh: a wall that runs diagonally in its own model can turn off while it is still inside the
   rectangle. Triggers are not tested in either client. Preview, loopback and editor runs draw

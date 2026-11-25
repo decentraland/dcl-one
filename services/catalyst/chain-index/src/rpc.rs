@@ -9,6 +9,11 @@ pub const HEADER_BATCH: usize = 100;
 
 #[derive(Debug, thiserror::Error)]
 pub enum RpcError {
+    #[error("{source}")]
+    Counted {
+        requests: usize,
+        source: Box<RpcError>,
+    },
     #[error("RPC request budget exhausted at range ending {upper}")]
     Budget { upper: u64, requests: usize },
     #[error("rpc transport: {0}")]

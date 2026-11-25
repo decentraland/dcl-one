@@ -31,9 +31,6 @@
 .standInHidden {
   opacity: 0;
 }
-.standInInstant {
-  transition: none;
-}
 .standInBackdrop {
   position: absolute;
   inset: 0;
@@ -258,10 +255,6 @@
 .share {
   position: absolute;
   min-width: 180px;
-}
-.photo {
-  position: absolute;
-  inset: 0;
 }
 .avatarTooltip,
 .friendTooltip {

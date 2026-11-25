@@ -7,6 +7,7 @@ import closeIcon from '../../assets/events/close-icn-thin.png'
 import { CommunitiesPage } from '../communities/CommunitiesPage'
 import { EventsPage } from '../events/EventsPage'
 import { GalleryPage } from '../gallery/GalleryPage'
+import { travelToPhoto } from '../gallery/reelActions'
 import { MapPage } from '../map/MapPage'
 import { PlacesPage } from '../places/PlacesPage'
 import { openPassport } from '../profile/Passport'
@@ -58,7 +59,7 @@ function ExploreSectionModal({ section, onClose }: { section: ExploreSection; on
             profile={session.profile}
             compact={compact}
             onNavigate={ignore}
-            onTeleport={(x, y) => session.map.teleport(x, y)}
+            onJumpIn={(place) => travelToPhoto(place, session.map)}
             onViewProfile={(u) => openPassport(u.address)}
           />
         )}

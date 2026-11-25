@@ -88,15 +88,8 @@ export type LandingsEvents = {
   };
   lp_community_created: {
     community_id?: string;
-    stub: true;
+    stub?: true;
   };
-  lp_community_gate_viewed: Record<string, never>;
-  lp_community_review_reached: {
-    places: number;
-    privacy: "private" | "public";
-    visibility: "all" | "unlisted";
-  };
-  lp_community_started: Record<string, never>;
   lp_community_submit_attempted: {
     privacy: "private" | "public";
     visibility: "all" | "unlisted";

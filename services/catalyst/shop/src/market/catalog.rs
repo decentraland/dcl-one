@@ -207,14 +207,14 @@ const SORT_BY_VALUES: &[&str] = &[
     "suggested",
 ];
 
-pub fn parse_catalog_filters(pairs: &[(String, String)]) -> CatalogFilters {
+pub fn parse_catalog_filters(pairs: &[(String, String)]) -> Result<CatalogFilters, ApiError> {
     let p = Params::new(pairs);
     let is_on_sale = if p.get_boolean("isOnSale") {
         Some(p.get_string("isOnSale", None).as_deref() == Some("true"))
     } else {
         None
     };
-    CatalogFilters {
+    Ok(CatalogFilters {
         first: p
             .get_number("first", Some(DEFAULT_PAGE_SIZE as f64))
             .map(|n| n as i64),
@@ -257,18 +257,14 @@ pub fn parse_catalog_filters(pairs: &[(String, String)]) -> CatalogFilters {
         network: p
             .get_value("network", NETWORK_VALUES, None)
             .and_then(|s| Network::parse(&s)),
-        max_price: p
-            .get_string("maxPrice", None)
-            .filter(|s| !s.trim().is_empty()),
-        min_price: p
-            .get_string("minPrice", None)
-            .filter(|s| !s.trim().is_empty()),
+        max_price: super::items::parse_price_param(&p, "maxPrice")?,
+        min_price: super::items::parse_price_param(&p, "minPrice")?,
         urns: p.get_list("urn", &[]),
         ids: p.get_list("id", &[]),
         include_social_emotes: Some(
             p.get_string("includeSocialEmotes", None).as_deref() != Some("false"),
         ),
-    }
+    })
 }
 
 #[derive(Clone, Debug, Serialize, PartialEq)]
@@ -559,10 +555,12 @@ pub fn uint_or_null(expr: &str) -> String {
 
 /// `unified_trades`: the open off-chain listings of `shop.trades` as
 /// one row per trade with its sent asset resolved to `(contract, item_id,
-/// token_id)` and its received amount. Open = effective, not expired at
+/// token_id)` and its received amount, asset type and token contract. Open = effective, not expired at
 /// `now_p` (a bound timestamp, never `now()`), not in `trade_cancellations`,
-/// and not closed on chain (`trade_events`: sold or cancelled there) while
-/// that network's trade-events index is published; and counted at
+/// and listable on chain (`trade_events::listable_on_chain_sql`: its
+/// network's trade-events index is current and no verdict sold, cancelled
+/// or left it unverifiable; a trade of a network whose index is behind is
+/// left out, never listed on a stale verdict); and counted at
 /// `since_p` (a bound nullable timestamp, `trades::mirrored_since`). An item
 /// order also needs its creator's signature and its marketplace among the
 /// collection's minters, as no other contract can mint the item.
@@ -584,6 +582,7 @@ pub fn unified_trades_cte_of(now_p: &str, since_p: &str, contracts_p: Option<&st
                   COALESCE({item_num}, div({token_num}, {shift}::numeric)) AS item_id, \
                   sent_erc721.token_id AS token_id, \
                   recv.asset_type::int4 AS received_asset_type, \
+                  recv.contract_address AS received_contract, \
                   recv_erc20.amount AS amount_received, \
                   recv.beneficiary AS beneficiary \
            FROM shop.trades t \
@@ -595,7 +594,7 @@ pub fn unified_trades_cte_of(now_p: &str, since_p: &str, contracts_p: Option<&st
            WHERE t.type IN ('public_item_order', 'public_nft_order') \
              AND t.expires_at > {now_p} AND t.effective_since <= {now_p} \
              AND NOT EXISTS (SELECT 1 FROM shop.trade_cancellations c WHERE c.target_hashed_signature = t.hashed_signature) \
-             AND NOT {closed} \
+             AND {listable} \
              AND {counted} \
              AND {served} \
              AND (sent_item.asset_id IS NULL OR {item_num} IS NOT NULL) \
@@ -613,7 +612,7 @@ pub fn unified_trades_cte_of(now_p: &str, since_p: &str, contracts_p: Option<&st
         item_num = uint_or_null("sent_item.item_id"),
         token_num = uint_or_null("sent_erc721.token_id"),
         shift = ITEM_ID_SHIFT,
-        closed = super::trade_events::closed_on_chain_sql("t", now_p),
+        listable = super::trade_events::listable_on_chain_sql("t", now_p),
         counted = super::trades::counted_sql("t.", since_p)
     )
 }
@@ -1206,9 +1205,12 @@ async fn catalog_inner(
     if is_v2 && let Err(envelope) = super::trades::require_ready(&state).await {
         return envelope;
     }
-    let filters = parse_catalog_filters(&pairs);
+    let filters = match parse_catalog_filters(&pairs) {
+        Ok(filters) => filters,
+        Err(e) => return e.into_response(),
+    };
     let route = if is_v2 { "/v2/catalog" } else { "/v1/catalog" };
-    let picked_by = match optional_signer(&headers, "get", route).await {
+    let picked_by = match optional_signer(state.eip1654.as_deref(), &headers, "get", route).await {
         Ok(s) => s,
         Err(e) => return e.into_response(),
     };
@@ -1457,7 +1459,8 @@ mod tests {
             ("first", "34"),
             ("id", "0x7dd2c14796d6a411439f3ed465071fb1626084a8-0"),
             ("id", "0x0bf152a83a6fc55066c2b664b164ca2916ad38f5-2"),
-        ]));
+        ]))
+        .unwrap();
         assert_eq!(f.first, Some(34));
         assert_eq!(f.skip, Some(0));
         assert_eq!(
@@ -1474,13 +1477,26 @@ mod tests {
             ("wearableGender", "male"),
             ("includeSocialEmotes", "false"),
             ("network", "MATIC"),
-        ]));
+        ]))
+        .unwrap();
         assert_eq!(f.is_on_sale, Some(false));
         assert_eq!(f.rarities, vec!["epic"]);
         assert_eq!(f.network, Some(Network::Matic));
         assert_eq!(f.include_social_emotes, Some(false));
-        let f = parse_catalog_filters(&pairs(&[]));
+        let f = parse_catalog_filters(&pairs(&[])).unwrap();
         assert_eq!((f.first, f.skip, f.is_on_sale), (Some(20), Some(0), None));
+        // The price bounds are MANA (the legacy `parseEther`), bound as wei.
+        let f = parse_catalog_filters(&pairs(&[("minPrice", "2"), ("maxPrice", "2.75")])).unwrap();
+        assert_eq!(
+            (f.min_price.as_deref(), f.max_price.as_deref()),
+            (Some("2000000000000000000"), Some("2750000000000000000"))
+        );
+        let f = parse_catalog_filters(&pairs(&[("minPrice", " "), ("maxPrice", "")])).unwrap();
+        assert_eq!((f.min_price, f.max_price), (None, None));
+        for bad in ["abc", "1e18", "0.0000000000000000001"] {
+            let err = parse_catalog_filters(&pairs(&[("minPrice", bad)])).unwrap_err();
+            assert_eq!(err.message(), format!("Invalid minPrice value: {bad}"));
+        }
     }
 
     #[test]
@@ -1600,6 +1616,7 @@ mod tests {
             return;
         };
         let pool = &state.pool;
+        crate::market::trade_events::tests::publish_cursors(pool).await;
         let contract = format!("0xc0ffee00{}", uuid::Uuid::new_v4().simple());
         let signer = test_support::signer().address().to_checksum(None);
         sqlx::query(

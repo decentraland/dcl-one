@@ -54,8 +54,10 @@ async fn ws_upgrade(
         .on_upgrade(move |socket| handle_socket(socket, state, network))
 }
 
-async fn handle_socket(mut socket: WebSocket, state: Shared, network: String) {
-    while let Some(incoming) = socket.recv().await {
+async fn handle_socket(socket: WebSocket, state: Shared, network: String) {
+    use futures::{SinkExt, StreamExt};
+    let mut socket = dcl_metrics::ws::Socket::new(socket, "rpc_relay");
+    while let Some(incoming) = socket.next().await {
         let Ok(msg) = incoming else { break };
         match msg {
             Message::Text(t) => {
@@ -296,6 +298,8 @@ mod tests {
 
     #[tokio::test]
     async fn the_websocket_answers_each_frame_in_order() {
+        let recorder = dcl_metrics::PrometheusBuilder::new().build_recorder();
+        let _recording = dcl_metrics::set_default_local_recorder(&recorder);
         let (url, _upstream) = mock_upstream(true).await;
         let app = crate::ops::rpc::router(test_state(&[("polygon", &url)]));
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -334,6 +338,18 @@ mod tests {
         assert_eq!(replies[1]["error"]["code"], json!(-32700));
         assert_eq!(replies[2][0]["id"], json!("b"));
         assert_eq!(replies[2][0]["result"], json!("0x10"));
+        let scrape = recorder.handle().render();
+        for outcome in ["received", "flushed"] {
+            assert!(
+                scrape
+                    .lines()
+                    .any(|line| line.starts_with("dcl_ws_messages_total{")
+                        && line.contains("protocol=\"rpc_relay\"")
+                        && line.contains(&format!("outcome=\"{outcome}\""))
+                        && line.ends_with(" 3")),
+                "{scrape}"
+            );
+        }
         ws.close(None).await.unwrap();
     }
 

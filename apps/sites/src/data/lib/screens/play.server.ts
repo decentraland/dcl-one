@@ -1,7 +1,7 @@
-import { fetchEquipped, loadBackpack, loadBackpackEmotes, loadOutfits } from "@ui/data/catalyst/backpack";
-import { fetchPlaces } from "@ui/data/catalyst/placesSchema";
-import { fetchEvents } from "@ui/data/catalyst/events";
-import { PLAY_EVENTS_PARAMS, PLAY_UPCOMING_PARAMS, PLAY_FEATURED_PARAMS, PLAY_PLACES_PARAMS, type PlayScreen, type PlaySectionMessage, type PlaySectionName } from "@ui/data/screens/play";
+import { fetchEquipped, loadBackpack, loadBackpackEmotes, loadOutfits } from "@web-core/catalyst/backpack";
+import { fetchPlaces } from "@web-core/catalyst/placesSchema";
+import { fetchEvents } from "@web-core/catalyst/events";
+import { PLAY_EVENTS_PARAMS, PLAY_UPCOMING_PARAMS, PLAY_FEATURED_PARAMS, PLAY_PLACES_PARAMS, type PlayScreen, type PlaySectionMessage, type PlaySectionName } from "@web-core/screens/play";
 import { catalystBase } from "../catalyst/client";
 import { browserCatalystBase } from "../catalyst/bases";
 import { withDeadline } from "../request-deadline";

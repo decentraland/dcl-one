@@ -1,6 +1,7 @@
 """The Explorer's native Cargo cache: keyed by what Cargo's fingerprints depend on, with the workspace crates in it."""
 import importlib.util
 import io
+import json
 import os
 from pathlib import Path
 import re
@@ -217,7 +218,8 @@ class PruneTest(unittest.TestCase):
                 patch('sys.stdout', new_callable=io.StringIO) as stdout:
             cache.main()
         self.assert_pruned()
-        self.assertRegex(stdout.getvalue(), r'^\d+ entries pruned; \d+ MB left in \S+\n$')
+        self.assertRegex(stdout.getvalue(), r'^::warning::no Cargo message in \S+ names a unit: every build generation stays '
+                                            r'in the cache\n\d+ entries pruned; \d+ MB left in \S+\n$')
 
     def test_the_size_does_not_follow_a_link_and_skips_what_it_cannot_read(self):
         # A build script of a git dependency leaves a link to the crate's checkout in its output.
@@ -243,6 +245,179 @@ class PruneTest(unittest.TestCase):
         self.assertEqual(cache.size(self.target / 'absent'), 0)
 
 
+def unit(prefix):
+    return prefix * 8
+
+
+class GenerationTest(unittest.TestCase):
+    """A dependency change leaves the old build of every unit it reaches; the prune keeps only the units Cargo named."""
+    LIVE, STALE = unit('a1'), unit('b2')
+    KEPT = (f'release/deps/libbevy_ecs-{LIVE}.rlib', f'release/deps/libbevy_ecs-{LIVE}.rmeta',
+            f'release/deps/bevy_ecs-{LIVE}.d', f'release/deps/bevy_ecs-{LIVE}.bevy_ecs.abc123-cgu.0.rcgu.o',
+            f'release/.fingerprint/bevy_ecs-{LIVE}/lib-bevy_ecs',
+            f'release/build/openssl-sys-{unit("c3")}/build-script-build',
+            f'release/.fingerprint/openssl-sys-{unit("c3")}/build-script-build-script-build',
+            f'release/build/openssl-sys-{unit("d4")}/out/lib/libssl.a', f'release/build/openssl-sys-{unit("d4")}/output',
+            f'release/.fingerprint/openssl-sys-{unit("d4")}/run-build-script-build-script-build',
+            f'release/.fingerprint/decentra-bevy-{unit("a6")}/bin-decentra-bevy',
+            f'release/.fingerprint/headless-{unit("a8")}/bin-headless',
+            'release/deps/libwebgpu_build.rlib', 'release/deps/libwebgpu_build.so',
+            f'release/.fingerprint/decentra-bevy-{unit("f0")}/lib-webgpu_build',
+            'release/deps/benchmark.exe', f'release/.fingerprint/benchmark-{unit("0f")}/bin-benchmark',
+            'release/.fingerprint/bevy-mtimes.json',
+            f'release/deps/sidecar-{unit("aa")}', f'release/deps/sidecar-{unit("ab")}',
+            f'fork-tests/debug/deps/libbevy_image-{unit("ac")}.rlib',
+            f'wasm32-unknown-unknown/debug/deps/dcl_wasm-{unit("ad")}.wasm')
+    STALE_ENTRIES = (f'release/deps/libbevy_ecs-{STALE}.rlib', f'release/deps/libbevy_ecs-{STALE}.rmeta',
+                     f'release/deps/bevy_ecs-{STALE}.d', f'release/.fingerprint/bevy_ecs-{STALE}/lib-bevy_ecs',
+                     f'release/build/openssl-sys-{unit("e5")}/output',
+                     f'release/.fingerprint/openssl-sys-{unit("e5")}/run-build-script-build-script-build',
+                     f'release/deps/decentra_bevy-{unit("b7")}', f'release/.fingerprint/decentra-bevy-{unit("b7")}/bin-decentra-bevy',
+                     f'release/deps/headless-{unit("b9")}',
+                     f'fork-tests/debug/deps/libbevy_image-{unit("bc")}.rlib',
+                     f'wasm32-unknown-unknown/debug/deps/dcl_wasm-{unit("bd")}.wasm')
+
+    def setUp(self):
+        temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(temporary.cleanup)
+        self.target = Path(temporary.name).resolve() / 'target'
+        for name in self.KEPT + self.STALE_ENTRIES:
+            self.write(name, 'x')
+        # Cargo links a built binary into the profile on Linux and copies it on macOS.
+        self.write('release/decentra-bevy', 'engine')
+        os.link(self.target / 'release/decentra-bevy', self.target / f'release/deps/decentra_bevy-{unit("a6")}')
+        self.write('release/headless', 'headless')
+        self.write(f'release/deps/headless-{unit("a8")}', 'headless')
+        self.write(f'release/deps/headless-{unit("b9")}', 'headless, older')
+        self.write('release/sidecar', 'no deps file holds these bytes')
+        artifact = self.artifact
+        self.messages = [artifact(f'release/deps/libbevy_ecs-{self.LIVE}.rlib', f'release/deps/libbevy_ecs-{self.LIVE}.rmeta'),
+                         artifact(f'release/build/openssl-sys-{unit("c3")}/build-script-build'),
+                         {'reason': 'build-script-executed', 'out_dir': str(self.target / f'release/build/openssl-sys-{unit("d4")}/out')},
+                         artifact('release/decentra-bevy', executable='release/decentra-bevy'),
+                         artifact('release/headless', executable='release/headless'),
+                         artifact('release/sidecar', executable='release/sidecar'),
+                         artifact('release/libwebgpu_build.so', 'release/libwebgpu_build.rlib'),
+                         artifact('release/benchmark.exe', executable='release/benchmark.exe'),
+                         artifact(f'fork-tests/debug/deps/libbevy_image-{unit("ac")}.rlib'),
+                         artifact(f'wasm32-unknown-unknown/debug/deps/dcl_wasm-{unit("ad")}.wasm'),
+                         {'reason': 'compiler-message', 'message': {'rendered': 'warning: unused'}},
+                         {'reason': 'build-finished', 'success': True}]
+
+    def write(self, name, text):
+        path = self.target / name
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(text)
+
+    def artifact(self, *names, executable=None):
+        return {'reason': 'compiler-artifact', 'fresh': True, 'filenames': [str(self.target / name) for name in names],
+                'executable': executable and str(self.target / executable)}
+
+    def prune(self, lines):
+        self.write('cargo-messages/native-tests.jsonl', ''.join(f'{line}\n' for line in lines))
+        with patch('sys.argv', ['bevy-target-cache.py', 'prune', str(self.target)]), \
+                patch('sys.stdout', new_callable=io.StringIO) as stdout:
+            cache.main()
+        return stdout.getvalue()
+
+    def test_the_prune_keeps_the_units_cargo_named_and_removes_the_other_generations(self):
+        output = self.prune(['test result: ok. 3 passed', *map(json.dumps, self.messages)])
+        for name in self.KEPT:
+            self.assertTrue((self.target / name).exists(), name)
+        for name in self.STALE_ENTRIES:
+            self.assertFalse((self.target / name).exists(), name)
+        self.assertFalse((self.target / 'cargo-messages').exists())
+        self.assertRegex(output, r'^\d+ live units; 11 entries of stale generations removed \(\d+ MB\)\n'
+                                 r'\d+ entries pruned; \d+ MB left in \S+\n$')
+
+    def test_an_msvc_executable_keeps_no_hash_so_only_its_live_test_harness_stays(self):
+        live, stale = unit('c1'), unit('c2')
+        kept = ('ci-test/deps/dcl_deno_ipc.exe', f'ci-test/deps/dcl_deno_ipc-{live}.exe', f'ci-test/deps/dcl_deno_ipc-{live}.pdb',
+                f'ci-test/.fingerprint/dcl_deno_ipc-{live}/test-bin-dcl_deno_ipc',
+                f'ci-test/.fingerprint/dcl_deno_ipc-{unit("ce")}/bin-dcl_deno_ipc')
+        gone = (f'ci-test/deps/dcl_deno_ipc-{stale}.exe', f'ci-test/deps/dcl_deno_ipc-{stale}.pdb',
+                f'ci-test/.fingerprint/dcl_deno_ipc-{stale}/test-bin-dcl_deno_ipc')
+        for name in kept + gone:
+            self.write(name, 'harness')
+        self.write('ci-test/deps/dcl_deno_ipc.exe', 'sidecar')
+        os.link(self.target / 'ci-test/deps/dcl_deno_ipc.exe', self.target / 'ci-test/dcl_deno_ipc.exe')
+        self.prune(map(json.dumps, [*self.messages,
+                                    self.artifact('ci-test/dcl_deno_ipc.exe', executable='ci-test/dcl_deno_ipc.exe'),
+                                    self.artifact(f'ci-test/deps/dcl_deno_ipc-{live}.exe', f'ci-test/deps/dcl_deno_ipc-{live}.pdb',
+                                                  executable=f'ci-test/deps/dcl_deno_ipc-{live}.exe')]))
+        for name in kept:
+            self.assertTrue((self.target / name).exists(), name)
+        for name in gone:
+            self.assertFalse((self.target / name).exists(), name)
+
+    def test_a_binary_keeps_its_linked_unit_over_an_equal_copy_and_every_candidate_when_unsure(self):
+        linked, equal, copy, other, gone, also_gone = (unit(p) for p in ('d1', 'd2', 'd3', 'd4', 'd5', 'd6'))
+        self.write(f'release/deps/app-{equal}', 'app')
+        self.write('release/app', 'app')
+        os.link(self.target / 'release/app', self.target / f'release/deps/app-{linked}')
+        for name in (f'release/deps/tool-{copy}', f'release/deps/tool-{other}', 'release/tool'):
+            self.write(name, 'tool')
+        for name in (f'release/deps/gone-{gone}', f'release/deps/gone-{also_gone}'):
+            self.write(name, 'gone')
+        self.prune(map(json.dumps, [*self.messages, *(self.artifact(f'release/{name}', executable=f'release/{name}')
+                                                       for name in ('app', 'tool', 'gone'))]))
+        self.assertTrue((self.target / f'release/deps/app-{linked}').exists())
+        self.assertFalse((self.target / f'release/deps/app-{equal}').exists())
+        for name in (f'tool-{copy}', f'tool-{other}', f'gone-{gone}', f'gone-{also_gone}'):
+            self.assertTrue((self.target / 'release/deps' / name).exists(), name)
+
+    def test_an_uplifted_library_keeps_its_linked_unit(self):
+        live, stale = unit('e1'), unit('e2')
+        for name, text in ((f'release/deps/libpm-{live}.so', 'pm'), (f'release/deps/libpm-{stale}.so', 'pm, older'),
+                           (f'release/.fingerprint/pm-{live}/lib-pm', 'x'), (f'release/.fingerprint/pm-{stale}/lib-pm', 'x')):
+            self.write(name, text)
+        os.link(self.target / f'release/deps/libpm-{live}.so', self.target / 'release/libpm.so')
+        self.prune(map(json.dumps, [*self.messages, self.artifact('release/libpm.so')]))
+        for name in (f'release/deps/libpm-{live}.so', f'release/.fingerprint/pm-{live}/lib-pm'):
+            self.assertTrue((self.target / name).exists(), name)
+        for name in (f'release/deps/libpm-{stale}.so', f'release/.fingerprint/pm-{stale}/lib-pm'):
+            self.assertFalse((self.target / name).exists(), name)
+
+    def test_without_a_message_that_names_a_unit_every_generation_stays(self):
+        for lines in ([], ['not json'], [json.dumps({'reason': 'build-finished', 'success': True})]):
+            with self.subTest(lines=lines):
+                output = self.prune(lines)
+                self.assertTrue(output.startswith('::warning::no Cargo message in '), output)
+                for name in self.KEPT + self.STALE_ENTRIES:
+                    self.assertTrue((self.target / name).exists(), name)
+
+    def test_the_prune_follows_no_link_out_of_the_target(self):
+        outside = self.target.parent / 'elsewhere'
+        kept = (outside / f'profile/deps/libbevy_ecs-{self.STALE}.rlib', outside / f'profile/.fingerprint/bevy_ecs-{self.STALE}/lib',
+                outside / f'deps/libbevy_ecs-{self.STALE}.rmeta')
+        for path in kept:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text('x')
+        os.symlink(outside / 'profile', self.target / 'linked', target_is_directory=True)
+        self.write('linked-deps/.fingerprint/bevy-mtimes.json', '{}')
+        os.symlink(outside / 'deps', self.target / 'linked-deps/deps', target_is_directory=True)
+        self.prune(map(json.dumps, self.messages))
+        for path in kept:
+            self.assertTrue(path.exists(), path)
+
+    def test_an_entry_that_cannot_be_removed_stays_and_is_reported(self):
+        stale = self.target / f'release/deps/libbevy_ecs-{self.STALE}.rlib'
+        remove = cache.remove
+
+        def refuse(path, removed):
+            if path == stale:
+                raise PermissionError(13, 'Access is denied')
+            remove(path, removed)
+        self.write('cargo-messages/native-tests.jsonl', ''.join(f'{json.dumps(m)}\n' for m in self.messages))
+        live = cache.live_units(self.target)
+        with patch.object(cache, 'remove', side_effect=refuse):
+            _, failed = cache.prune_generations(self.target, live, [])
+        self.assertTrue(stale.exists())
+        self.assertEqual(len(failed), 1)
+        self.assertIn('Access is denied', failed[0])
+        self.assertFalse((self.target / f'release/deps/libbevy_ecs-{self.STALE}.rmeta').exists())
+
+
 class WorkflowTest(unittest.TestCase):
     """The native jobs key after their tool steps, build after the restore and save from main's first attempts;
     a pull request saves only when the restored entry was not built for its dependencies."""
@@ -265,7 +440,9 @@ class WorkflowTest(unittest.TestCase):
     def test_native_jobs_restore_after_their_tool_steps_and_save_after_their_uploads(self):
         for name, lane, last_tool, build in (('test', 'test', 'Export CEF distribution', 'cargo test --manifest-path vendor/basisu'),
                                              ('headless-smoke', 'headless', 'Install clang for webrtc-sys', 'build-headless.py'),
-                                             ('clippy', 'clippy', 'Install clang for webrtc-sys', 'cargo clippy')):
+                                             ('clippy', 'clippy', 'Install clang for webrtc-sys', 'cargo clippy'),
+                                             ('relay-wake', 'relay-wake', 'Install the pinned WASM binding generator and its test runner',
+                                              'cargo test --locked -p dcl_wasm')):
             with self.subTest(job=name):
                 job = self.job(name)
                 self.assertIn("CARGO_INCREMENTAL: '0'", job)
@@ -278,8 +455,9 @@ class WorkflowTest(unittest.TestCase):
                 mtimes = job.index('bevy-mtimes.py" restore target', restore)
                 self.assertLess(mtimes, job.index(build))
                 record = job.index('bevy-mtimes.py" record target')
-                prune = job.index('bevy-target-cache.py" prune target')
+                prune = job.index('- name: Prune the ')
                 save = job.index('actions/cache/save@', prune)
+                self.assertLess(job.index('bevy-target-cache.py" prune target', prune), save)
                 self.assertLess(job.index(build), record)
                 self.assertLess(record, prune)
                 self.assertLess(prune, save)
@@ -287,6 +465,66 @@ class WorkflowTest(unittest.TestCase):
                     self.assertLess(job.rindex('actions/upload-artifact@'), prune)
                 self.assertEqual(job.count(self.GUARD), 2)
                 self.assertEqual(job.count(self.PATHS), 2)
+
+    # A Cargo call in shell or in a script's argument list, with global flags and aliases; `metadata` builds nothing.
+    CALL = re.compile(r"""\bcargo['"]?,?\s*['"]?(\+\S+\s+)?(-\S+\s+([^-\s]\S*\s+)?)*(build|test|check|clippy|run|doc|nextest|rustc|bench|[btcrd])\b""")
+    # Scripts the native jobs run that call Cargo, and why their units are still named.
+    CARGO_SCRIPTS = {'apps/bevy-explorer/build-headless.py': 'writes CARGO_MESSAGES',
+                     'tooling/dev-regressions.py': 'runs no Cargo with --bevy-artifacts'}
+
+    def test_every_cargo_call_of_a_native_job_writes_its_messages(self):
+        # A call that writes none loses its units at every save, and every later run rebuilds them.
+        def units(line):
+            # What selects the units: the env prefix and arguments, without test arguments, filters, output-only flags or redirect.
+            start = self.CALL.search(line).start()
+            prefix = re.search(r'((?:[A-Za-z_]\w*=\S*\s+)*)$', line[:start]).group(1)
+            command = re.split(r' -- |\s[>|]', prefix + line[start:])[0]
+            return [word for word in command.split()
+                    if '::' not in word and word not in ('--no-run', '--timings', '--message-format=json-render-diagnostics')]
+        for name in ('test', 'headless-smoke', 'clippy', 'relay-wake'):
+            job = self.job(name)
+            self.assertRegex(job, r'(?m)^    defaults:\n      run:\n(?:        .*\n)*?        working-directory: rendering/bevy-explorer/source$')
+            owners = set()
+            for step in re.split(r'^      - ', job, flags=re.M):
+                step = re.split(r'(?m)^    \S', step)[0]
+                # One file per step, or a later step overwrites the units an earlier one named.
+                for file in set(re.findall(r'target/cargo-messages/([\w.-]+\.jsonl)', step)):
+                    with self.subTest(job=name, file=file):
+                        self.assertNotIn(file, owners)
+                    owners.add(file)
+                if self.CALL.search(step) or 'build-headless.py' in step:
+                    # target/cargo-messages is relative to the job's working directory, the pruned target's parent.
+                    self.assertNotIn('working-directory:', step)
+                listed = None
+                for line in re.sub(r'\\\n\s*', ' ', step).splitlines():
+                    if line.lstrip().startswith('#'):
+                        continue
+                    if not self.CALL.search(line):
+                        if re.search(r'(^|[;&|]\s*)[A-Za-z_]\w*=|\b(export|unset)\s+[A-Za-z_]', line.strip()):
+                            listed = None
+                        continue
+                    # Standard output only: `2>` or `&>` would send the JSON elsewhere or mix in the diagnostics.
+                    writes = ('--message-format=json-render-diagnostics' in line
+                              and re.search(r'(?<![0-9&])> target/cargo-messages/', line))
+                    with self.subTest(job=name, line=line.strip()):
+                        self.assertTrue(writes or units(line) == listed)
+                    if writes and '--no-run' in line:
+                        listed = units(line)
+                if 'build-headless.py' in step:
+                    self.assertIn('CARGO_MESSAGES: ${{ github.workspace }}/rendering/bevy-explorer/source/target/cargo-messages/', step)
+
+    def test_every_script_of_a_native_job_that_calls_cargo_keeps_its_units_named(self):
+        source = ROOT / 'rendering/bevy-explorer/source'
+        for name in ('test', 'headless-smoke', 'clippy', 'relay-wake'):
+            job = self.job(name)
+            paths = {ROOT / token[len('$GITHUB_WORKSPACE/'):] if token.startswith('$GITHUB_WORKSPACE/') else (source / token).resolve()
+                     for token in re.findall(r'[\w$./-]+\.(?:py|sh|js|mjs|cjs)\b', job)}
+            paths |= {ROOT / action / 'action.yml' for action in re.findall(r'uses: \./(\.github/actions/[\w-]+)', job)}
+            for path in sorted(path for path in paths if path.is_file()):
+                script = path.relative_to(ROOT).as_posix()
+                if self.CALL.search(path.read_text(encoding='utf-8')):
+                    with self.subTest(job=name, script=script):
+                        self.assertIn(script, self.CARGO_SCRIPTS)
 
 
 if __name__ == '__main__':

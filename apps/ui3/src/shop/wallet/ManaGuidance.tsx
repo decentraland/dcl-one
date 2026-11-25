@@ -7,7 +7,7 @@
 
 import { useId, useState } from "react";
 
-import Button from "../../atoms/Button";
+import { Button } from "@dcl/one-ui";
 import { shortAddress } from "@shop/model/address";
 import { chainLabel, gasTokenSymbol } from "@shop/model/chain";
 import { formatMana, type ManaWei } from "@shop/model/money";
@@ -135,7 +135,7 @@ export default function ManaGuidance({
                 Connect the wallet for {shortAddress(guidance.account)}
               </Button>
               {!confirmSwitch && (
-                <Button size="sm" variant="ghost" onClick={() => setConfirmSwitch(true)}>
+                <Button size="sm" variant="outline" onClick={() => setConfirmSwitch(true)}>
                   Use a different wallet
                 </Button>
               )}
@@ -156,7 +156,7 @@ export default function ManaGuidance({
                   >
                     Switch to another wallet
                   </Button>
-                  <Button size="sm" variant="ghost" onClick={() => setConfirmSwitch(false)}>
+                  <Button size="sm" variant="outline" onClick={() => setConfirmSwitch(false)}>
                     Keep {shortAddress(guidance.account)}
                   </Button>
                 </div>

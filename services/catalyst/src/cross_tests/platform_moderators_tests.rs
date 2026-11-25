@@ -112,7 +112,7 @@ async fn the_env_list_applies_until_the_first_dapps_document_then_the_flag_decid
     let recorder = crate::comms::metrics::prometheus_builder()
         .unwrap()
         .build_recorder();
-    let _recording = metrics::set_default_local_recorder(&recorder);
+    let _recording = dcl_metrics::set_default_local_recorder(&recorder);
     communities.refresh_flags(&api).await.unwrap();
     assert_eq!(
         listed(&gatekeeper),
