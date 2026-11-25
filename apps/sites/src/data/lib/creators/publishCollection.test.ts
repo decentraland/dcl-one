@@ -447,7 +447,7 @@ describe('publishCollection', () => {
       salt: '0x2222222222222222222222222222222222222222222222222222222222222222'
     })
     expect(toTransaction(send.mock.calls[0][0])).toEqual({
-      to: '0x8052a560e6e6ac86eeb7e711a4497f639b322fb3',
+      to: '0xb65fd692d15c30c3adcacdd5ccf80e1facecfc7c',
       data:
         '0x1863572d' +
         '0000000000000000000000000000000000000000000000000000000000000020' +
