@@ -1622,13 +1622,13 @@ mod tests {
     /// Uploads through `POST /api/poster[-vertical]` as the test wallet, which
     /// needs a profile this node holds (`withAuthProfile()`); the old envelope's
     /// `data.url` is absolute on the events mount, and the event routes store
-    /// its router-local path, which is what this answers.
+    /// its router-local path, which this answers along with `data.url`.
     async fn upload_native_poster(
         pool: &sqlx::PgPool,
         app: &axum::Router,
         vertical: bool,
         public_base: Option<&str>,
-    ) -> (String, Vec<u8>) {
+    ) -> (String, String, Vec<u8>) {
         if super::super::profiles::local_profile(pool, None, &address())
             .await
             .unwrap()
@@ -1663,11 +1663,16 @@ mod tests {
         assert_eq!(status, StatusCode::CREATED, "{body}");
         let filename = body["data"]["filename"].as_str().unwrap();
         let local = format!("/{filename}");
+        let url = body["data"]["url"].as_str().unwrap().to_owned();
         assert_eq!(
-            body["data"]["url"],
-            format!("{}/events-assets-099ac00{local}", public_base.unwrap_or(""))
+            url,
+            format!(
+                "{}/{}{local}",
+                public_base.unwrap_or(""),
+                crate::api::posters::HOST_PREFIX
+            )
         );
-        (local, png)
+        (local, url, png)
     }
 
     /// The `data.url` an upload answers is served by the routes serve merges
@@ -1677,8 +1682,16 @@ mod tests {
         let Some(pool) = crate::db::scratch::pool(6).await else {
             return;
         };
-        let dir = std::env::temp_dir().join(format!("poster-roundtrip-{}", uuid::Uuid::new_v4()));
-        let storage = Arc::new(crate::storage::Storage::from_config(&dir).await.unwrap());
+        struct TempDir(std::path::PathBuf);
+        impl Drop for TempDir {
+            fn drop(&mut self) {
+                let _ = std::fs::remove_dir_all(&self.0);
+            }
+        }
+        let dir = TempDir(
+            std::env::temp_dir().join(format!("poster-roundtrip-{}", uuid::Uuid::new_v4())),
+        );
+        let storage = Arc::new(crate::storage::Storage::from_config(&dir.0).await.unwrap());
         let content = Arc::new(crate::content::ContentState::new(
             pool.clone(),
             crate::content::Settings::for_tests(),
@@ -1703,8 +1716,16 @@ mod tests {
             ))
             .merge(crate::api::router(api.clone()));
             for vertical in [false, true] {
-                let (local, png) = upload_native_poster(&pool, &app, vertical, public_url).await;
-                let path = format!("/events-assets-099ac00{local}");
+                let (local, url, png) =
+                    upload_native_poster(&pool, &app, vertical, public_url).await;
+                let path = url
+                    .strip_prefix(public_url.unwrap_or(""))
+                    .unwrap()
+                    .to_owned();
+                assert_eq!(
+                    path,
+                    format!("/{}{local}", crate::api::posters::HOST_PREFIX)
+                );
                 let response = app
                     .clone()
                     .oneshot(Request::get(&path).body(Body::empty()).unwrap())
@@ -1718,7 +1739,6 @@ mod tests {
                 assert_eq!(body.as_ref(), png.as_slice(), "{path}");
             }
         }
-        let _ = std::fs::remove_dir_all(dir);
     }
 
     /// `withAuthProfile()`: the test wallet needs a profile this node holds to
@@ -2814,8 +2834,8 @@ mod tests {
             let app = router(Arc::new(
                 ExploreState::new(pool.clone(), settings, None).with_storage(storage.clone()),
             ));
-            let (uploaded, _) = upload_native_poster(&pool, &app, false, public_url).await;
-            let (vertical, _) = upload_native_poster(&pool, &app, true, public_url).await;
+            let (uploaded, _, _) = upload_native_poster(&pool, &app, false, public_url).await;
+            let (vertical, _, _) = upload_native_poster(&pool, &app, true, public_url).await;
             let mounted =
                 |key: &str| format!("{}/events-assets-099ac00{key}", public_url.unwrap_or(""));
             for (key, vertical_key, image, image_vertical) in [
@@ -2903,8 +2923,8 @@ mod tests {
         let app = router(Arc::new(
             ExploreState::new(pool.clone(), settings.clone(), None).with_storage(storage.clone()),
         ));
-        let (poster, bytes) = upload_native_poster(&pool, &app, false, None).await;
-        let (vertical, _) = upload_native_poster(&pool, &app, true, None).await;
+        let (poster, _, bytes) = upload_native_poster(&pool, &app, false, None).await;
+        let (vertical, _, _) = upload_native_poster(&pool, &app, true, None).await;
         let cid: String = sqlx::query_scalar(
             "SELECT blob_cid FROM explore.poster WHERE kind='poster' AND file=$1",
         )
@@ -3286,7 +3306,7 @@ mod tests {
             )
             .with_storage(storage),
         ));
-        let (poster, _) = upload_native_poster(&pool, &app, false, None).await;
+        let (poster, _, _) = upload_native_poster(&pool, &app, false, None).await;
         let mut event = new_event();
         event["x"] = json!(41);
         event["y"] = json!(42);
@@ -3477,7 +3497,7 @@ mod tests {
         .await;
         assert_eq!(status, StatusCode::CREATED, "{moved}");
         assert!(moved["data"]["image"].is_null());
-        let (uploaded, _) = upload_native_poster(&pool, &app, false, None).await;
+        let (uploaded, _, _) = upload_native_poster(&pool, &app, false, None).await;
         let (status, poster) = call(
             &app,
             "PATCH",
