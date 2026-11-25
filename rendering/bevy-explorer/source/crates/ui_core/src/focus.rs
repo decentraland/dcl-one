@@ -13,7 +13,7 @@ use common::{
 pub struct Focus;
 
 #[derive(Component)]
-pub struct PopupFocus;
+pub(super) struct PopupFocus;
 
 #[derive(Component)]
 pub struct Focusable(pub Option<Entity>);
