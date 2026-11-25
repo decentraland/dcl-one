@@ -106,7 +106,7 @@ describe('skybox', () => {
     expect(h.session().skybox.progressing).toBe(true)
 
     // locked and open, the menu does not read the clock
-    h.driver.commandReply = () => 'time 22:0 -> 22:0, speed 12 (elapsed: 79200), locked: true'
+    h.driver.commandReply = () => 'time 22:0 -> 22:0, speed 12 (elapsed: 79200)'
     act(() => h.session().skybox.toggle())
     const reads = (): number => h.driver.commands.filter((command) => command.startsWith('/time')).length
     await waitFor(() => expect(reads()).toBe(1))
@@ -145,11 +145,31 @@ describe('skybox', () => {
     expect(h.session().skybox.hours).toBe(22)
   })
 
+  it('forgets the hours it sent once a scene holds the sky, and matches them across midnight', async () => {
+    const h = renderSession()
+    await enterAsGuest(h)
+    h.driver.emit({ kind: 'skyTime', state: { locked: false, speed: 0, fixedHours: 6 } })
+    // sent as the scene takes the sky: the engine never reports this hour back
+    act(() => h.session().skybox.setHours(8))
+    h.driver.emit({ kind: 'skyTime', state: { locked: true, speed: 0, fixedHours: 22 } })
+    expect(h.session().skybox.hours).toBe(22)
+    // out of the scene, the stopped clock really is at eight
+    h.driver.emit({ kind: 'skyTime', state: { locked: false, speed: 0, fixedHours: 8 } })
+    expect(h.session().skybox.hours).toBe(8)
+
+    // 24 is midnight: its report is the slider's own, and leaves nothing behind
+    act(() => h.session().skybox.setHours(24))
+    h.driver.emit({ kind: 'skyTime', state: { locked: false, speed: 0, fixedHours: 0 } })
+    expect(h.session().skybox.hours).toBe(24)
+    h.driver.emit({ kind: 'skyTime', state: { locked: false, speed: 0, fixedHours: 0 } })
+    expect(h.session().skybox.hours).toBe(0)
+  })
+
   it('does not let the read on open overwrite an hour the engine pushed', async () => {
     const h = renderSession()
     await enterAsGuest(h)
     h.driver.emit({ kind: 'skyTime', state: { locked: true, speed: 12, fixedHours: 22 } })
-    h.driver.commandReply = () => 'time 10:0 -> 10:0, speed 12 (elapsed: 36000), locked: false'
+    h.driver.commandReply = () => 'time 10:0 -> 10:0, speed 12 (elapsed: 36000)'
     act(() => h.session().skybox.toggle())
     await waitFor(() => expect(h.driver.commands).toContain('/time'))
     await new Promise((r) => setTimeout(r, 50))

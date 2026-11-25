@@ -2296,7 +2296,12 @@ export function useEngineSession(createDriver: () => LoginDriver, host: SessionH
           // An hour this menu sent comes back as the slider's echo: skipped, with the ones sent
           // before it, so that an older value cannot pull a slider being dragged back. Any other
           // hour is news: a scene's time, or a `/time` typed in the console.
-          const echo = skyboxSent.current.findIndex((sent) => Math.abs((sent % 24) - (hours % 24)) < 0.01)
+          // A scene holding the sky or a running clock answers no hour sent before it.
+          if (msg.state.locked || msg.state.speed !== 0) skyboxSent.current = []
+          const echo = skyboxSent.current.findIndex((sent) => {
+            const apart = Math.abs(sent - (hours % 24))
+            return Math.min(apart, 24 - apart) < 0.01
+          })
           if (echo >= 0) skyboxSent.current.splice(0, echo + 1)
           else setSkyboxHoursState(hours)
           break
@@ -3488,7 +3493,8 @@ export function useEngineSession(createDriver: () => LoginDriver, host: SessionH
     return clock
   }, [])
   const setClock = useCallback((hours: number, speed: number) => {
-    if (speed === 0) skyboxSent.current = [...skyboxSent.current.slice(-31), hours]
+    // as the engine will report it back: what `/time` is sent, within the day
+    skyboxSent.current = speed === 0 ? [...skyboxSent.current.slice(-31), Number(hours.toFixed(2)) % 24] : []
     driverRef.current
       ?.command?.(`/time ${hours.toFixed(2)} ${speed}`)
       .catch((e: unknown) => console.warn('[hud] /time failed:', e))

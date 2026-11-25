@@ -605,6 +605,7 @@ fn timeofday_console_command(
                 SkySource::Clock => None,
             }
             .unwrap_or(running_clock.time)
+            .rem_euclid(TWENTY_FOUR_HOURS)
         };
         let old_time = effective_time(&running_clock);
         if let Some(hours) = command.time {
@@ -624,21 +625,14 @@ fn timeofday_console_command(
         }
 
         let new_time = effective_time(&running_clock);
-        let locked = scene_locks(
-            source(&running_clock),
-            skybox_source,
-            scene_source,
-            allow_override,
-        );
         input.reply_ok(format!(
-            "time {}:{} -> {}:{}, speed {} (elapsed: {}), locked: {}",
+            "time {}:{} -> {}:{}, speed {} (elapsed: {})",
             (old_time as u32 / ONE_HOUR_U32),
             old_time as u32 % ONE_HOUR_U32 / 60,
             (new_time as u32 / ONE_HOUR_U32),
             new_time as u32 % ONE_HOUR_U32 / 60,
             running_clock.speed,
-            new_time,
-            locked
+            new_time
         ));
     }
 }
@@ -835,9 +829,8 @@ mod tests {
     fn elapsed(reply: &str) -> f32 {
         reply
             .rsplit_once("(elapsed: ")
-            .and_then(|(_, rest)| rest.split_once(')'))
+            .and_then(|(_, rest)| rest.strip_suffix(')'))
             .unwrap()
-            .0
             .parse()
             .unwrap()
     }
@@ -904,8 +897,6 @@ mod tests {
             NIGHT,
             "/time reports the time the sky shows"
         );
-        // the reply's last field is what the E2E driver reads
-        assert!(reply.ends_with(", locked: true"));
         assert_eq!(
             pushed(&mut app),
             SkyTimeState {
@@ -1308,6 +1299,11 @@ mod tests {
             .insert(skybox_time(TWENTY_FOUR_HOURS + NIGHT));
         settle(&mut app);
         assert_eq!(pushed(&mut app).fixed_hours, Some(22.));
+        assert_eq!(
+            elapsed(&time(&mut app, "")),
+            NIGHT,
+            "and so is the time reported"
+        );
 
         for args in ["NaN 0", "12 inf"] {
             let (tx, rx) = mpsc::channel();

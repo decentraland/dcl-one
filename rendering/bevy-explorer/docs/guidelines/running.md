@@ -266,9 +266,9 @@ State, in every build:
   with the sender's address and `messageId`, and `total` counting every message so far. Commands,
   emote markers and direct messages are left out; `/dm_history` has those.
 - `/time [hours] [speed] [--force] [--resume]`: the time of day. Bare, it reports
-  `time H:M -> H:M, speed S (elapsed: <seconds since midnight>), locked: <true|false>`: the time
-  the sky shows, and `locked` while the scene the player stands in holds it (the Skybox menu is
-  off and a `/time` without `--force` moves the clock, not the sky). With the "Allow overriding
+  `time H:M -> H:M, speed S (elapsed: <seconds since midnight>)`: the time the sky shows. While
+  the scene the player stands in holds it (`/sky_state` `sceneLocked`), the Skybox menu is off
+  and a `/time` without `--force` moves the clock, not the sky. With the "Allow overriding
   scene controls" setting on nothing is locked and a time the clock is stopped at here wins
   until a scene's time arrives again or the clock runs again. `--force` (with a time) beats a scene's time whatever the setting, until the next
   `/time` that sets a time or a speed; `--resume` runs the clock again and hands the sky back.

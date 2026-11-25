@@ -6702,7 +6702,7 @@
     },
     {
       "path": "library/explorer-core/engine/mockBridge.ts",
-      "sha256": "13f8c51863da335df8dc36e784c908dd1aac98c67a374473f52a434424331e4b"
+      "sha256": "8bb61acb1d26f78c246f9ca9eae95871e3fbeaa16fcde1cdcd693e55741cdf57"
     },
     {
       "path": "library/explorer-core/engine/mockEvents.ts",
@@ -6714,7 +6714,7 @@
     },
     {
       "path": "library/explorer-core/engine/mockSwitches.ts",
-      "sha256": "a5d884dbb337003c8a30d535d091744fcb33d25c64f4a9a7be6121ad1692c08d"
+      "sha256": "61689481212b3b84e6ccf25b1621158b52de2fbb47ac86211d39c3aef233d5d0"
     },
     {
       "path": "library/explorer-core/engine/nameColor.test.ts",
@@ -6842,7 +6842,7 @@
     },
     {
       "path": "library/explorer-core/features/editorHost/host/host.ts",
-      "sha256": "d8369137c9e891ee15c686a99ed336f2a7afc8916413a7718411e768dc982f84"
+      "sha256": "21316003c0a94979682a6f3842c68784fb015052da0e8bd313406a5185261b6d"
     },
     {
       "path": "library/explorer-core/features/editorHost/host/sign.ts",
@@ -10338,7 +10338,7 @@
     },
     {
       "path": "library/ui/apps/hud/features/session/useEngineSession.ts",
-      "sha256": "0ffb2224123e91a0ba85528d8777c222b86f6a0a40e2501166cc77dfbc91c456"
+      "sha256": "958934217aeaf89e75ec48c52837fc694e280438ecd3704a0e29dce61d5dc11d"
     },
     {
       "path": "library/ui/apps/hud/features/settings/KeyBindingsTab.module.css",
@@ -11110,7 +11110,7 @@
     },
     {
       "path": "library/ui/apps/hud/test/hosted/skybox.test.tsx",
-      "sha256": "bca7fe7dc5f5e4716e1906f08b55563c9284f6f1c7b441b1282b0166a891ee74"
+      "sha256": "405d68425de391000538999ac396934617eba1b729a1f58bc5ef1b5b662c2635"
     },
     {
       "path": "library/ui/apps/hud/test/hosted/systemActionShortcuts.test.tsx",

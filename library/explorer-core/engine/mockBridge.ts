@@ -1079,6 +1079,8 @@ export function startMockBridge(opts: Partial<MockOptions> = {}): () => void {
     }
     // ?mockpins=1 → two quest pins on both maps.
     if (new URLSearchParams(location.search).get('mockpins') === '1') reply({ kind: 'mapPins', pins: MOCK_MAP_PINS })
+    // ?mocksky=1 → a scene holds the time of day at 22:00, so the Skybox menu shows locked.
+    if (new URLSearchParams(location.search).get('mocksky') === '1') reply({ kind: 'skyTime', state: { locked: true, speed: 12, fixedHours: 22 } })
     // ?mockportables=1 → the portables list, so the rail button and its popover are exercisable.
     if (new URLSearchParams(location.search).get('mockportables') === '1') sendPortables()
     // ?perm=1 → fire a sample scene permission prompt so the dialog is exercisable in the mock, and

@@ -20,7 +20,7 @@
 //   18 and is enabled. Unity restores the switch only; here the clock is put back as found too.
 //   Where the scene sets the time of day the switch and the slider are disabled and `/time` does
 //   not move the sky, so both scenarios first check that the place they run in does not hold it
-//   (`locked` in the `/time` reply) and fail with that reason otherwise.
+//   (`sceneLocked` in `/sky_state`) and fail with that reason otherwise.
 import assert from 'node:assert/strict'
 import { spec, until, type Explorer, type Selector } from '../driver/index.ts'
 
@@ -85,8 +85,8 @@ async function waitClock(explorer: Explorer, running: boolean): Promise<void> {
 /** These scenarios move the sky with the panel and `/time`, which a scene that holds the time of
  *  day does not allow. */
 async function requirePlayersSky(explorer: Explorer): Promise<void> {
-  const { locked } = await explorer.time()
-  assert.equal(locked, false, 'the scene here holds the time of day: run the Skybox scenarios where no scene does')
+  const { sceneLocked } = await explorer.json<{ sceneLocked: boolean }>('/sky_state')
+  assert.equal(sceneLocked, false, 'the scene here holds the time of day: run the Skybox scenarios where no scene does')
 }
 
 scenario('the Skybox panel shows its title, the switch, the slider and a time', async ({ explorer }) => {

@@ -35,12 +35,6 @@ describe('Explorer', () => {
     assert.deepEqual(fake.lines, ['/connectivity_state', '/connectivity_retry'])
   })
 
-  test('time reads the clock and whether the scene holds the time of day', async () => {
-    const fake = new FakeConsole({ time: 'time 22:0 -> 22:0, speed 12 (elapsed: 79200), locked: true' })
-    assert.deepEqual(await new Explorer(fake).time(), { before: '22:0', after: '22:0', speed: 12, locked: true })
-    assert.deepEqual(fake.lines, ['/time'])
-  })
-
   test('teleport waits for a new arrival in the world', async () => {
     let arrivals = 1
     let teleported = false

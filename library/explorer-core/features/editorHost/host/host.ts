@@ -440,6 +440,8 @@ function publishHost(source: EditorSource, pageDir: string, deps: EditorHostDeps
       await deps.travel(realm, { x: Number(parcel[1]), y: Number(parcel[2]) })
     },
     spawnEditorScene() {
+      // the editor's scene pins the sky: read the clock to put back, whichever call comes first
+      readClock()
       scene ??= (async () => {
         let hash = source.editorSceneEntity
         if (hash == null) {
