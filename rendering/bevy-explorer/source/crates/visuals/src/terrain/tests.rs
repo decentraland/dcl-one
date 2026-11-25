@@ -386,11 +386,22 @@ fn terrain_vertex_compiles() {
     world.spawn((
         Camera3d::default(),
         Camera {
-            target: RenderTarget::Image(target.into()),
+            target: RenderTarget::Image(target.clone().into()),
             ..default()
         },
         DepthPrepass,
         NormalPrepass,
+        Transform::from_xyz(0.0, 50.0, 100.0).looking_at(Vec3::ZERO, Vec3::Y),
+    ));
+    // the avatar outline off: a depth prepass that writes no normals, so it has no fragment output
+    world.spawn((
+        Camera3d::default(),
+        Camera {
+            target: RenderTarget::Image(target.into()),
+            order: 1,
+            ..default()
+        },
+        DepthPrepass,
         Transform::from_xyz(0.0, 50.0, 100.0).looking_at(Vec3::ZERO, Vec3::Y),
     ));
     world.spawn((

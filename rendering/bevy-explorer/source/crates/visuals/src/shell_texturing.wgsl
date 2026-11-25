@@ -1,5 +1,10 @@
 #ifdef PREPASS_PIPELINE
+#ifdef PREPASS_FRAGMENT
     #import bevy_pbr::prepass_io::{VertexOutput, FragmentOutput};
+#else
+    // a depth-only pass (a depth prepass without a normal prepass, a shadow map) has no output
+    #import bevy_pbr::prepass_io::VertexOutput;
+#endif
 #else
     #import bevy_pbr::forward_io::{VertexOutput, FragmentOutput};
     #import bevy_pbr::pbr_fragment::pbr_input_from_vertex_output;
@@ -80,7 +85,16 @@ fn cell_hash2(cell: vec2<i32>) -> vec2<f32> {
 
 
 @fragment
+#ifdef PREPASS_PIPELINE
+#ifdef PREPASS_FRAGMENT
 fn fragment(in: VertexOutput, @builtin(front_facing) is_front: bool) -> FragmentOutput {
+#else
+// depth only: the shells still discard, so the depth has the same holes as the colour
+fn fragment(in: VertexOutput, @builtin(front_facing) is_front: bool) {
+#endif
+#else
+fn fragment(in: VertexOutput, @builtin(front_facing) is_front: bool) -> FragmentOutput {
+#endif
     // metres of ground per pixel, taken before any discard so the derivatives stay uniform
     let footprint = max(fwidth(in.world_position.x), fwidth(in.world_position.z));
 
@@ -142,9 +156,10 @@ fn fragment(in: VertexOutput, @builtin(front_facing) is_front: bool) -> Fragment
         discard;
     }
 
+#ifdef PREPASS_PIPELINE
+#ifdef PREPASS_FRAGMENT
     var out: FragmentOutput;
 
-#ifdef PREPASS_PIPELINE
 #ifdef NORMAL_PREPASS
     let normal = select(-in.world_normal, in.world_normal, is_front);
     out.normal = vec4(normal * 0.5 + vec3(0.5), 1.0);
@@ -153,18 +168,21 @@ fn fragment(in: VertexOutput, @builtin(front_facing) is_front: bool) -> Fragment
 #ifdef UNCLIPPED_DEPTH_ORTHO_EMULATION
     out.frag_depth = in.unclipped_depth;
 #endif // UNCLIPPED_DEPTH_ORTHO_EMULATION
-#endif // PREPASS_PIPELINE
 
-#ifndef PREPASS_PIPELINE
+    return out;
+#endif // PREPASS_FRAGMENT
+#else // PREPASS_PIPELINE
+    var out: FragmentOutput;
+
     var pbr_input = pbr_input_from_vertex_output(in, is_front, true);
     pbr_input.material.reflectance = vec3(0.125);
     pbr_input.material.base_color = mix(shell.root_color, shell.tip_color, color_factor);
 
     out.color = apply_pbr_lighting(pbr_input);
     out.color = main_pass_post_lighting_processing(pbr_input, out.color);
-#endif // PREPASS_PIPELINE
 
     return out;
+#endif // PREPASS_PIPELINE
 }
 
 fn color_attenuation(layers: f32) -> f32 {
