@@ -108,6 +108,8 @@ pub struct LeftDragCamera<'w, 's> {
     ui_target: Option<Res<'w, UiPointerTarget>>,
     action_target: Option<Res<'w, PointerActionTarget>>,
     focus: Option<Res<'w, ClientWindowFocus>>,
+    mouse: Option<Res<'w, ButtonInput<MouseButton>>>,
+    keys: Option<Res<'w, ButtonInput<KeyCode>>>,
     _p: PhantomData<&'s ()>,
 }
 
@@ -164,6 +166,7 @@ impl LeftDragCamera<'_, '_> {
             held: input.is_button_down(pointer, InputPriority::Scene),
             motion: input.get_analog(POINTER_SET, InputPriority::Scroll),
             enabled,
+            press_activates: press && self.press_activates(),
             press_refusal: if press {
                 self.press_refusal(window)
             } else {
@@ -172,6 +175,18 @@ impl LeftDragCamera<'_, '_> {
             blocked,
         };
         self.pan.as_mut().is_some_and(|pan| pan.tick(&frame))
+    }
+
+    /// A mouse button or key went down this frame: the press gives the page user activation, so
+    /// a browser refusing its pointer lock ends the pan. Otherwise it came from a gamepad.
+    fn press_activates(&self) -> bool {
+        self.mouse
+            .as_ref()
+            .is_some_and(|m| m.get_just_pressed().next().is_some())
+            || self
+                .keys
+                .as_ref()
+                .is_some_and(|k| k.get_just_pressed().next().is_some())
     }
 
     fn press_refusal(&self, window: &Window) -> Option<Reason> {

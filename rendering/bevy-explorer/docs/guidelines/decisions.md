@@ -694,8 +694,9 @@ ends in "we don't do that", so the next person doesn't have to rediscover it.
   virtual cursor. unity-explorer's drag is fixed to the left mouse button. Following the action
   keeps the pan on whatever the player binds to the pointer, as every other pointer action is.
   On web a pad press gives the page no user activation, so the browser refuses the pointer
-  lock; the pan then turns the camera without it, and only a lock that was granted and then
-  dropped ends the pan.
+  lock; a pan pressed on the pad then turns the camera without it, and only a lock that was
+  granted and then dropped ends it. A pan pressed with a mouse button or key still ends when
+  the browser refuses the lock, as when Escape released it less than a second before.
 - **Left-drag camera: no pan under any scene camera.** While a scene's camera is active the
   left drag never turns the camera, even when the scene allows manual rotation
   (`allow_manual_rotation`) and the right button still turns it there. The scene owns the view

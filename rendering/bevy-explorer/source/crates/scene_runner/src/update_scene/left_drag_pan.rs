@@ -86,7 +86,8 @@ pub(crate) enum Reason {
     SceneDrag,
     /// The window or page lost focus.
     NoFocus,
-    /// The browser dropped or refused the pointer lock.
+    /// The browser dropped the pointer lock it granted during the pan, or refused it for a press
+    /// made with a mouse button or key. A refusal for a gamepad press is not one.
     LockLost,
     /// A scene changed the pointer lock.
     SceneLock,
@@ -104,7 +105,7 @@ impl Reason {
             Reason::PhotoMode => "photo mode",
             Reason::SceneDrag => "scene drag captured the press",
             Reason::NoFocus => "window focus lost",
-            Reason::LockLost => "browser lock dropped or refused",
+            Reason::LockLost => "browser lock dropped, or refused for a mouse or key press",
             Reason::SceneLock => "scene changed the pointer lock",
         }
     }
@@ -145,6 +146,9 @@ pub(crate) struct Frame {
     pub(crate) motion: Vec2,
     /// The Left-Drag Camera setting is on. Read on the press frame only.
     pub(crate) enabled: bool,
+    /// A mouse button or key went down with the press, which gives the page the user activation
+    /// a browser pointer lock needs. False for a gamepad press. Read on the press frame only.
+    pub(crate) press_activates: bool,
     /// Why this press cannot arm. Sampled on the press frame only.
     pub(crate) press_refusal: Option<Reason>,
     /// Why the pan cannot hold the camera now. Sampled every frame.
@@ -157,6 +161,8 @@ pub(crate) struct LeftDragPan {
     last_reason: Option<Reason>,
     /// The browser granted the pointer lock during this pan.
     lock_granted: bool,
+    /// The press that armed this pan gave the page user activation (see `Frame::press_activates`).
+    press_activates: bool,
 }
 
 impl LeftDragPan {
@@ -174,9 +180,10 @@ impl LeftDragPan {
     }
 
     /// Reads the browser pointer lock (`None` natively) and returns whether a running pan lost
-    /// it: the lock was granted during this pan and is now gone. A refusal before any grant is not
-    /// a loss, so the pan turns the camera without the lock: a gamepad press gives the page no
-    /// user activation, so the browser refuses the lock for a pan pressed on a gamepad.
+    /// it: the lock was granted during this pan and is now gone, or the press gave user activation
+    /// and the browser still refused it. A gamepad press gives the page no user activation, so the
+    /// browser always refuses its lock; that refusal is not a loss, and the pan turns the camera
+    /// without the lock.
     pub(crate) fn lock_lost(&mut self, locked: Option<bool>) -> bool {
         if !self.is_panning() {
             self.lock_granted = false;
@@ -187,7 +194,7 @@ impl LeftDragPan {
                 self.lock_granted = true;
                 false
             }
-            Some(false) => self.lock_granted,
+            Some(false) => self.lock_granted || self.press_activates,
             None => false,
         }
     }
@@ -217,7 +224,10 @@ impl LeftDragPan {
                             self.last_reason = Some(reason);
                         }
                         // the press frame's own motion is not counted
-                        None => self.phase = Phase::Armed { motion: Vec2::ZERO },
+                        None => {
+                            self.phase = Phase::Armed { motion: Vec2::ZERO };
+                            self.press_activates = frame.press_activates;
+                        }
                     }
                 }
                 false
@@ -423,12 +433,26 @@ mod tests {
     }
 
     #[test]
-    fn a_lock_refused_before_any_grant_is_not_lost() {
+    fn a_lock_refused_for_a_pad_press_is_not_lost() {
+        // `panning()` presses with no mouse button or key, as a pad does
         let mut pan = panning();
-        // the request is pending, then refused: the pan keeps the camera without the lock
         assert!(!pan.lock_lost(Some(false)));
         assert!(!pan.lock_lost(Some(false)));
         assert!(pan.tick(&held(Vec2::ZERO)));
+    }
+
+    #[test]
+    fn a_lock_refused_for_a_mouse_press_is_lost() {
+        let mut pan = LeftDragPan::default();
+        let mut frame = press();
+        frame.press_activates = true;
+        assert!(!pan.tick(&frame));
+        assert!(pan.tick(&held(Vec2::new(5.0, 0.0))));
+        assert!(pan.lock_lost(Some(false)));
+        let mut frame = held(Vec2::ZERO);
+        frame.blocked = Some(Reason::LockLost);
+        assert!(!pan.tick(&frame));
+        assert_eq!(pan.last_reason(), Some(Reason::LockLost));
     }
 
     #[test]
