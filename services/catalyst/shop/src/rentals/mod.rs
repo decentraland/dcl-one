@@ -2,7 +2,7 @@
 //! `catalyrst-signatures`, itself the Rust port of
 //! decentraland/signatures-server, moved here from `src/signatures` as
 //! SHOP.md slice 3 asked), over the ONE pool (`signatures.*`,
-//! `schemas/32_signatures.sql`) and the stage-4 marketplace subgraph reader.
+//! `schemas/32_signatures.sql`) and the published land-authz index.
 //!
 //! Where each route reads (the stage-5 data-plane rule: every route names its
 //! source, and a route whose source is unset answers the unavailable
@@ -14,12 +14,11 @@
 //! - `POST /v1/rentals-listings`: local authority behind
 //!   `DATA_WRITES_ENABLED` and signed fetch (ADR-44, the 6.x payload then the
 //!   legacy one, as the old crate accepted); the asset's owner, category and
-//!   LAND search columns come from the marketplace subgraph reader
-//!   ([`nft`], `nfts(where: {contractAddress, tokenId})`, 30 s TTL), which
-//!   replaces the crate's `squid.nft` probe; without
-//!   `MARKETPLACE_SUBGRAPH_URL` the route answers
-//!   `marketplace::unavailable(Source::MarketplaceSubgraph)` (the old 503
-//!   "NFT ownership verification is unavailable"). A listing must name the
+//!   LAND search columns on a node that walks NFTs come from a published land-authz snapshot joined
+//!   to the indexed LAND data and proximity map. Until the index is ready,
+//!   the route answers the unavailable envelope for the missing publication. On a node
+//!   that does not walk NFTs, the configured marketplace subgraph supplies the asset.
+//!   A listing must name the
 //!   served Ethereum chain and its Rentals contract (stored as the
 //!   contract's address); an asset whose last rent at that contract is
 //!   still running answers 409, and an asset the contract still holds may
@@ -40,7 +39,9 @@
 //!   contract's own logs instead of the rentals subgraph the old crate
 //!   configured and never ran), on whenever a chain-1 endpoint is configured
 //!   unless `SHOP_RENTALS_INDEX_ENABLED=false`;
-//!   `GET /v1/rentals-index` reports its cursor. Until it publishes, a
+//!   `GET /v1/rentals-index` reports its cursor. On NFT walkers for either catalogue pair,
+//!   owner pages that can include LAND return the `rentals-index` 503
+//!   while this publication is absent or stale. Until it publishes, a
 //!   listing keeps the status it was posted with and the rent quote
 //!   (`shop::mana`) reads the nonces on chain. The leased
 //!   `rental-listing-status` job ([`status`]) cancels expired open
@@ -74,6 +75,7 @@ pub mod handlers;
 pub mod http;
 pub mod index;
 pub mod nft;
+mod nft_graph;
 pub mod notices;
 pub mod signature;
 pub mod status;
@@ -92,7 +94,6 @@ use sqlx::PgPool;
 
 use crate::auth::eip1654::Eip1654Validator;
 use crate::market::MarketplaceState;
-use crate::shared::cache::TtlMap;
 use crate::shared::signed_fetch::{self, PayloadPolicy, SignedFetchError};
 use crate::shared::writes::DataWrites;
 
@@ -110,12 +111,10 @@ pub struct Settings {
 pub struct State {
     pub settings: Settings,
     pub db: db::Database,
-    /// The stage-4 marketplace state whose `MARKETPLACE_SUBGRAPH_URL` reader
-    /// answers the asset lookups; `None` (or one without that URL) means the
-    /// writes answer the envelope.
+    graph_cache: nft_graph::Cache,
+    /// The served network and marketplace rollout settings.
     market: Option<Arc<MarketplaceState>>,
     eip1654: Option<Arc<dyn Eip1654Validator>>,
-    nft_cache: TtlMap<(String, String), Option<Arc<nft::LandNft>>>,
 }
 
 pub type SharedState = Arc<State>;
@@ -145,9 +144,9 @@ impl State {
         Self {
             settings,
             db: db::Database::new(pool),
+            graph_cache: nft_graph::cache(),
             market,
             eip1654,
-            nft_cache: TtlMap::bounded(nft::NFT_TTL, nft::NFT_CACHE_MAX_ENTRIES),
         }
     }
 
@@ -156,19 +155,74 @@ impl State {
     pub fn reader_configured(&self) -> bool {
         self.market
             .as_ref()
-            .is_some_and(|m| m.settings.marketplace_subgraph_url.is_some())
+            .is_some_and(|m| Self::walks_nfts(m) || m.settings.marketplace_subgraph_url.is_some())
+    }
+
+    fn walks_nfts(market: &MarketplaceState) -> bool {
+        crate::market::owned_items::walks_here(market)
+    }
+
+    fn served_chain(&self) -> Option<i64> {
+        self.market
+            .as_ref()
+            .map(|m| m.settings.market.indexes.chain_id_ethereum)
     }
 
     pub(crate) async fn nft(
         &self,
+        chain_id: i64,
         contract_address: &str,
         token_id: &str,
-    ) -> Result<Option<Arc<nft::LandNft>>, nft::NftReadError> {
+    ) -> Result<Option<nft::LandNft>, nft::NftReadError> {
+        Ok(self
+            .listing_asset(chain_id, contract_address, token_id, None)
+            .await?
+            .map(|(asset, _)| asset))
+    }
+
+    async fn listing_asset(
+        &self,
+        chain_id: i64,
+        contract_address: &str,
+        token_id: &str,
+        custody_at: Option<chrono::DateTime<chrono::Utc>>,
+    ) -> Result<Option<(nft::LandNft, Option<index::RentEvidence>)>, nft::NftReadError> {
+        let market = self.market.as_ref().ok_or_else(|| {
+            nft::NftReadError::Subgraph("no marketplace reader is configured".into())
+        })?;
+        if Some(chain_id) != self.served_chain() {
+            return Err(nft::NftReadError::Unavailable);
+        }
+        let net = nft::listing_network(market.land_network(), chain_id)?;
+        if !Self::walks_nfts(market) {
+            let Some(asset) =
+                nft_graph::read(market, &self.graph_cache, net, contract_address, token_id).await?
+            else {
+                return Ok(None);
+            };
+            let evidence = match custody_at {
+                Some(now) if chain_id == 1 => Some(
+                    index::rent_evidence(
+                        self.db.pool(),
+                        index::RentalsChain::Mainnet,
+                        index::RENTALS_MAINNET,
+                        contract_address,
+                        token_id,
+                        now,
+                    )
+                    .await?,
+                ),
+                _ => None,
+            };
+            return Ok(Some((asset, evidence)));
+        }
         nft::nft_by_contract_token(
-            self.market.as_ref(),
-            &self.nft_cache,
+            self.db.pool(),
+            net,
+            chain_id,
             contract_address,
             token_id,
+            custody_at,
         )
         .await
     }

@@ -17,13 +17,36 @@
   box-sizing: border-box;
 }
 
-/* Above the site nav and the mobile filter sheet (9999): a full-viewport modal. */
+/* A full-viewport modal <dialog> in the top layer, above the site nav and the mobile filter sheet; the z-index is for
+   a browser without modal dialogs. The scrim is its backdrop. A closed dialog keeps the browser's `display: none`. */
 .root {
   position: fixed;
   inset: 0;
   z-index: 10000;
+  width: 100%;
+  height: 100%;
+  max-width: none;
+  max-height: none;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  overflow: hidden;
+}
+
+.root[open] {
   display: flex;
   justify-content: flex-end;
+}
+
+.root::backdrop {
+  background: transparent;
+}
+
+/* The page behind does not scroll. */
+:root:has(.root:modal) {
+  overflow: hidden;
 }
 
 .scrim {

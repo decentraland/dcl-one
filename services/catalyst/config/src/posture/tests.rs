@@ -32,6 +32,34 @@ fn parsed(pairs: &[(&str, &str)]) -> Config {
 }
 
 #[test]
+fn the_mirror_sources_follow_the_catalogue_chain_pair() {
+    let main = expanded(Posture::Mirror, &[]);
+    assert_eq!(
+        main["ETH_COLLECTIONS_SUBGRAPH_URL"],
+        "https://subgraph.decentraland.org/collections-ethereum-mainnet"
+    );
+    assert_eq!(
+        main["MATIC_COLLECTIONS_SUBGRAPH_URL"],
+        "https://subgraph.decentraland.org/collections-matic-mainnet"
+    );
+    let cfg = expanded(
+        Posture::Mirror,
+        &[
+            ("MARKETPLACE_INDEX_CHAIN_ID_ETHEREUM", "11155111"),
+            ("MARKETPLACE_INDEX_CHAIN_ID_MATIC", "80002"),
+        ],
+    );
+    assert_eq!(
+        cfg["ETH_COLLECTIONS_SUBGRAPH_URL"],
+        "https://subgraph.decentraland.org/collections-ethereum-sepolia"
+    );
+    assert_eq!(
+        cfg["MATIC_COLLECTIONS_SUBGRAPH_URL"],
+        "https://subgraph.decentraland.org/collections-matic-amoy"
+    );
+}
+
+#[test]
 fn every_key_is_one_the_binary_reads_and_appears_once() {
     let known = Config::env_names_for_tests();
     let mut seen = std::collections::HashSet::new();
@@ -70,23 +98,18 @@ fn an_explicit_variable_or_its_file_wins_even_empty() {
 fn a_mirror_reads_the_subgraphs_lamb2_defaults_to() {
     let mirror = expanded(Posture::Mirror, &[]);
     assert_eq!(
-        (
-            mirror["MARKETPLACE_SUBGRAPH_URL"].as_str(),
-            mirror["LAND_SUBGRAPH_URL"].as_str()
-        ),
-        (
-            "https://subgraph.decentraland.org/marketplace",
-            "https://subgraph.decentraland.org/land-manager"
-        )
+        mirror["MARKETPLACE_SUBGRAPH_URL"].as_str(),
+        "https://subgraph.decentraland.org/marketplace"
     );
-    for posture in [Posture::Island, Posture::Journey] {
-        assert_eq!(expanded(posture, &[])["LAND_SUBGRAPH_URL"], "");
+    // LAND rights read the land-authz index alone: no posture names the
+    // land-manager subgraph (a value left in an environment is no Config
+    // variable, so the process never reads it).
+    for posture in [Posture::Mirror, Posture::Island, Posture::Journey] {
+        assert!(
+            !expanded(posture, &[]).contains_key("LAND_SUBGRAPH_URL"),
+            "{posture:?}"
+        );
     }
-    let c = parsed(&[("DATABASE_URL", "postgres:///catalyst"), (ENV, "mirror")]);
-    assert_eq!(
-        c.market_upstreams.land_subgraph_url.as_deref(),
-        Some("https://subgraph.decentraland.org/land-manager")
-    );
 }
 
 /// lamb2's defaults for a mirror's profile snapshots and /about parcel
@@ -134,13 +157,21 @@ fn a_mirror_refuses_blank_profile_ownership_readers() {
     // On mainnet the names read the nft index the mirror walks: the
     // marketplace subgraph is no profile ownership source there.
     check_of(&[db, (ENV, "mirror"), ("MARKETPLACE_SUBGRAPH_URL", "")]).unwrap();
-    // Off mainnet it is the names' only source.
+    // A Sepolia mirror also reads its local index. A non-walker needs the graph.
     let sepolia = ("ETH_NETWORK", "sepolia");
     check_of(&[db, (ENV, "mirror"), sepolia]).unwrap();
+    check_of(&[
+        db,
+        (ENV, "mirror"),
+        sepolia,
+        ("MARKETPLACE_SUBGRAPH_URL", ""),
+    ])
+    .unwrap();
     let err = check_of(&[
         db,
         (ENV, "mirror"),
         sepolia,
+        ("MARKETPLACE_NFT_INDEX_ENABLED", "false"),
         ("MARKETPLACE_SUBGRAPH_URL", ""),
     ])
     .unwrap_err()
@@ -259,6 +290,29 @@ fn a_mirror_refuses_blank_profile_ownership_readers() {
     ])
     .unwrap();
     check_of(&[db, (ENV, "island")]).unwrap();
+}
+
+#[test]
+fn a_testnet_catalogue_mirror_accepts_amoy_endpoints() {
+    let vars = [
+        ("DATABASE_URL", "postgres:///catalyst"),
+        (ENV, "mirror"),
+        ("ETH_NETWORK", "sepolia"),
+        ("MARKETPLACE_INDEX_CHAIN_ID_ETHEREUM", "11155111"),
+        ("MARKETPLACE_INDEX_CHAIN_ID_MATIC", "80002"),
+        ("MARKETPLACE_NFT_INDEX_ENABLED", "true"),
+        ("TRADE_RPC_URLS", "80002=https://amoy.example"),
+        ("MARKETPLACE_SUBGRAPH_URL", ""),
+    ];
+    let mut c = parsed(&vars);
+    let values = env(&vars);
+    refuse_unfiltered_profiles(&c, &lookup(&values)).unwrap();
+    refuse_unwalkable_polygon(&c).unwrap();
+    c.marketplace.trade_rpc_urls = Some("137=https://polygon.example".into());
+    c.economy.rpc_endpoint_polygon = None;
+    assert!(refuse_unwalkable_polygon(&c).is_err());
+    c.economy.rpc_endpoint_polygon = Some("https://amoy.example".into());
+    refuse_unwalkable_polygon(&c).unwrap();
 }
 
 #[test]
@@ -763,6 +817,16 @@ fn mirror_follows_decentraland_and_derives_the_trade_rpcs() {
     // The preset leaves the chain endpoints to the binary's default; off
     // mainnet it knows no contract.
     let got = expanded(Posture::Mirror, &[("ETH_NETWORK", "sepolia")]);
+    assert_eq!(got["MARKETPLACE_INDEX_CHAIN_ID_ETHEREUM"], "11155111");
+    assert_eq!(got["MARKETPLACE_INDEX_CHAIN_ID_MATIC"], "80002");
+    assert_eq!(
+        got["ETH_COLLECTIONS_SUBGRAPH_URL"],
+        "https://subgraph.decentraland.org/collections-ethereum-sepolia"
+    );
+    assert_eq!(
+        got["MATIC_COLLECTIONS_SUBGRAPH_URL"],
+        "https://subgraph.decentraland.org/collections-matic-amoy"
+    );
     for key in [
         "ETH_RPC_URL",
         "RPC_ENDPOINT_POLYGON",
@@ -1007,6 +1071,7 @@ fn island_and_journey_refuse_every_follower_switch() {
         .map(|r| r.key)
         .collect();
     followers.push("MARKETPLACE_MANA_TRANSFERS_INDEX_ENABLED");
+    followers.push("MARKETPLACE_COLLECTIONS_INDEX_ENABLED");
     assert!(followers.contains(&"PRICE_POLL_ENABLED") && followers.len() >= 14);
     for posture in ["island", "journey"] {
         for key in &followers {

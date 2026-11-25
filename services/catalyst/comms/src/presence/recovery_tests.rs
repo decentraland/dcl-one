@@ -607,6 +607,12 @@ impl crate::interfaces::SceneIdentity for Catalogue {
     ) -> Result<Option<crate::rooms::ActiveDeployment>, crate::rooms::ResolveError> {
         Ok(None)
     }
+    async fn world_scene_count(
+        &self,
+        world: &crate::world_identity::WorldName,
+    ) -> Result<usize, crate::rooms::ResolveError> {
+        Ok(usize::from(self.world_active_scene(world).await?.is_some()))
+    }
 }
 
 #[tokio::test]
