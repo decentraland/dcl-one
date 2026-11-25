@@ -6,11 +6,17 @@ const MINUTE = 60_000
 const NOW = Date.UTC(2026, 10, 24, 12, 0, 0)
 const BASE = 'https://map.test'
 
-/** What the map API answers: its grid's checkedAt, none, an error status or no answer at all. */
+/**
+ * What the map API answers: its grid's checkedAt, none, an error status (503: its own unavailable
+ * envelope, which means it serves no grid) or no answer at all.
+ */
 let answer: { checkedAt: number } | { status: number } | 'offline' | 'none'
 const answering = async (_url: string, _init?: RequestInit): Promise<Response> => {
   if (answer === 'offline') throw new TypeError('Failed to fetch')
   if (answer === 'none') return Response.json({ lastUpdatedAt: NOW - 600 * MINUTE })
+  if ('status' in answer && answer.status === 503) {
+    return Response.json({ error: 'Service Unavailable', message: 'no grid yet', source: 'map-grid' }, { status: 503 })
+  }
   if ('status' in answer) return new Response(null, { status: answer.status })
   return Response.json({ lastUpdatedAt: NOW - 600 * MINUTE, checkedAt: answer.checkedAt })
 }
@@ -85,6 +91,17 @@ describe('the parcel map age', () => {
     answer = { status: 503 }
     await advance(MINUTE)
     expect(result.current).toBeNull()
+  })
+
+  it("keeps ageing the last answer through a gateway's error, which says nothing about the grid", async () => {
+    answer = { checkedAt: NOW - 30 * MINUTE }
+    const { result } = renderHook(() => useMapGridAge(BASE, true))
+    await advance(0)
+    for (const status of [502, 429]) {
+      answer = { status }
+      await advance(MINUTE)
+    }
+    expect(result.current).toBe('Updated 32 min ago')
   })
 
   it('reads nothing while the map is hidden, and stops reading when it is hidden', async () => {

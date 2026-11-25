@@ -3224,17 +3224,21 @@ builds it from its own indexes.
   at its clock, when a change held back by the publication floor may
   publish, when a failed pass's retry is due (1 minute, doubling to 5), when another
   publisher stored a revision during the last pass, or after 10 minutes
-  without one (a safety net). Moved marks wait while a change is held back
-  (the pass at the floor's end reads every input) and while a failed pass
-  waits for its retry, unless every source turned ready meanwhile; marks
-  that cannot be read move nothing. So a failing read or pass backs off
-  instead of building every 5 s. Because later marks are compared with the
+  without one (a safety net). Moved marks wait while not every source is
+  ready (a pass could not build; the marks move again once they are, and
+  the safety pass still runs and records what it waits for), while a change
+  is held back (the pass at the floor's end reads every input) and while a
+  failed pass waits for its retry, unless every source turned ready
+  meanwhile; marks that cannot be read move nothing. So a failing read or
+  pass backs off instead of building every 5 s, and a source briefly
+  unready (a LAND walk between its commit and its fold) fails no pass. Because later marks are compared with the
   pass's own, a change that lands after its snapshot moves them even when
   a later change reverts it (a rental listed, then closed). A pass that
   could not read its marks vouches for nothing: the next readable marks
   run a pass before any check, and a second such pass in a row backs off
-  as a failed one does. Only marks equal to the pass's record its revision
-  checked again.
+  as a failed one does, as does a pass that finds its body current but
+  cannot record the check. Only marks equal to the pass's record its
+  revision checked again.
   Each mark is a durable counter raised in the transaction that rewrites
   rows in place, a position in an append-only log, or a digest of the very
   rows the build reads, so equal marks mean equal inputs:
@@ -3268,7 +3272,9 @@ builds it from its own indexes.
     finds another revision stored records nothing and runs a pass at once.
     A pass that stores a grid or finds its body equal to the stored one
     sets `checked_at` too. `checked_at` is `/v2/tiles/info`'s `checkedAt`,
-    the time the map's age label reads, and stops moving while a source is
+    the time the map's age label reads (beside `serverNow`, the process's
+    clock when it answers, which the label measures it against: a
+    cross-origin client may not read the `Date` header), and stops moving while a source is
     down or the build is not running. The pass marker, `map-grid` in
     `explore_api.mirror_passes` (`GET /mirrors`), records build passes
     only; a check is not one.

@@ -7,17 +7,25 @@ import MapGridAge from "./MapGridAge";
 const MINUTE = 60_000;
 
 /** Answers the map API's tiles info with `answer`, and records the reads. */
-function serveTilesInfo(answer: () => Promise<Response>) {
+function serveTilesInfo(answer: (signal?: AbortSignal) => Promise<Response>) {
   const reads: string[] = [];
   vi.stubGlobal(
     "fetch",
-    vi.fn(async (url: string) => {
+    vi.fn(async (url: string, init?: RequestInit) => {
       reads.push(url);
-      return answer();
+      return answer(init?.signal ?? undefined);
     }),
   );
   return reads;
 }
+
+/** A read that never answers, rejecting when aborted as `fetch` does. */
+const hanging = (signal?: AbortSignal) =>
+  new Promise<Response>((_, reject) => signal?.addEventListener("abort", () => reject(new DOMException("aborted", "AbortError"))));
+
+/** The map API's own answer while it serves no grid. */
+const unavailable = () =>
+  Response.json({ error: "Service Unavailable", message: "the tile grid has not been built yet", source: "map-grid" }, { status: 503 });
 
 function renderAge() {
   return render(
@@ -50,7 +58,7 @@ describe("MapGridAge", () => {
   it.each([
     ["a grid found current in the last five minutes", () => Response.json({ checkedAt: Date.now() - 4 * MINUTE })],
     ["an answer without checkedAt", () => Response.json({ lastUpdatedAt: Date.now() - 600 * MINUTE })],
-    ["a map API that cannot serve its grid", () => new Response(null, { status: 503 })],
+    ["a map API that cannot serve its grid", unavailable],
     ["a failed read", () => Promise.reject(new TypeError("Failed to fetch"))],
   ])("shows nothing for %s", async (_case, answer) => {
     const reads = serveTilesInfo(async () => answer());
@@ -76,6 +84,45 @@ describe("MapGridAge", () => {
     serveTilesInfo(async () => fromServer({ checkedAt: server - 12 * MINUTE }, server));
     renderAge();
     expect(await screen.findByText("Updated 12 min ago")).toBeInTheDocument();
+  });
+
+  it("keeps the last answer through a gateway's error, which says nothing about the grid", async () => {
+    const server = serverNow();
+    vi.useFakeTimers({ now: server, shouldAdvanceTime: true });
+    let first = true;
+    serveTilesInfo(async () => {
+      if (!first) return new Response(null, { status: 502 });
+      first = false;
+      return fromServer({ checkedAt: server - 30 * MINUTE }, server);
+    });
+    renderAge();
+    expect(await screen.findByText("Updated 30 min ago")).toBeInTheDocument();
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(2 * MINUTE);
+    });
+    expect(fetch).toHaveBeenCalledTimes(3);
+    expect(screen.getByText("Updated 32 min ago")).toBeInTheDocument();
+  });
+
+  it("gives up a read that never settles within a minute, so polling goes on", async () => {
+    const server = serverNow();
+    vi.useFakeTimers({ now: server, shouldAdvanceTime: true });
+    const answers = [
+      async () => fromServer({ checkedAt: server - 30 * MINUTE }, server),
+      hanging,
+      async () => fromServer({ checkedAt: server + MINUTE }, server + 2 * MINUTE),
+    ];
+    let read = 0;
+    serveTilesInfo((signal) => answers[Math.min(read++, answers.length - 1)]!(signal));
+    renderAge();
+    expect(await screen.findByText("Updated 30 min ago")).toBeInTheDocument();
+    // The second read hangs and gives up within the minute; the poll after it (a minute after that
+    // failure, as TanStack counts) reads again and finds the grid current.
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(3 * MINUTE);
+    });
+    expect(fetch).toHaveBeenCalledTimes(3);
+    expect(screen.queryByText(/Updated/)).toBeNull();
   });
 
   it("keeps ageing the last answer while later reads never settle", async () => {

@@ -1944,9 +1944,12 @@ impl map::LandMarket for RewindingLandMarket {
 /// move on every read (`churning`). A `rental` listing shows in the build and
 /// in the marks; `rental_after_next_marks` is listed right after the next
 /// marks read, between the read before a pass and the pass's snapshot.
+/// `answer` makes a source unready for both reads; `build_unready` only for
+/// the build (a source that went unready between the marks and the pass).
 #[derive(Default)]
 struct ScriptedLandMarket {
     answer: Mutex<Option<crate::chain_index::source::Source>>,
+    build_unready: Mutex<Option<crate::chain_index::source::Source>>,
     marks_fail: std::sync::atomic::AtomicBool,
     snapshot_marks_fail: std::sync::atomic::AtomicBool,
     churning: std::sync::atomic::AtomicBool,
@@ -1966,7 +1969,8 @@ impl map::LandMarket for ScriptedLandMarket {
         _estate: &'a str,
         _now: chrono::DateTime<chrono::Utc>,
     ) -> futures::future::BoxFuture<'a, Result<map::LandMarketSnapshot, map::LandMarketError>> {
-        let answer = match *self.answer.lock() {
+        let unready = (*self.answer.lock()).or(*self.build_unready.lock());
+        let answer = match unready {
             None => {
                 self.in_build
                     .store(true, std::sync::atomic::Ordering::SeqCst);
@@ -2322,12 +2326,18 @@ async fn map_grid_is_built_from_the_land_index_and_shop_and_waits_for_unpublishe
     map::run_pass(&node.state, &ctx).await.unwrap();
     let stamp = node.state.map.last_updated_at();
     assert!(stamp > 0);
-    let (status, info) = call_json(&app, "GET", "/api/v2/tiles/info", None).await;
+    let before = chrono::Utc::now().timestamp_millis();
+    let (status, mut info) = call_json(&app, "GET", "/api/v2/tiles/info", None).await;
+    let server_now = info["serverNow"].take().as_i64().expect("serverNow");
+    assert!(
+        (before..=chrono::Utc::now().timestamp_millis()).contains(&server_now),
+        "serverNow is the server's clock when it answers"
+    );
     assert_eq!(
         (status, info),
         (
             StatusCode::OK,
-            json!({"lastUpdatedAt": stamp, "checkedAt": stamp}),
+            json!({"lastUpdatedAt": stamp, "checkedAt": stamp, "serverNow": null}),
         ),
         "a build finds the grid it stores current"
     );
@@ -2989,16 +2999,17 @@ async fn the_map_grid_builds_when_its_inputs_move_and_records_checks() {
         checked_ms,
         "every process reads the check"
     );
-    let (_, info) = call_json(
+    let (_, mut info) = call_json(
         &router(follower.state.clone()),
         "GET",
         "/api/v2/tiles/info",
         None,
     )
     .await;
+    assert!(info["serverNow"].take().as_i64().is_some());
     assert_eq!(
         info,
-        json!({"lastUpdatedAt": first, "checkedAt": checked_ms})
+        json!({"lastUpdatedAt": first, "checkedAt": checked_ms, "serverNow": null})
     );
     let (_, info) = call_json(&app, "GET", "/api/v2/tiles/info", None).await;
     assert!(info["checkedAt"].as_i64().unwrap() >= checked_ms);
@@ -3061,19 +3072,29 @@ async fn the_map_grid_builds_when_its_inputs_move_and_records_checks() {
     );
     assert_eq!(map_marker(&db.pool).await.0, before, "no pass");
 
-    // A source stops publishing: one failed pass, then the retry wait.
+    // A source stops publishing: the marks move, but no pass runs while it
+    // cannot build, so none fails.
     *market.0.lock() = Err(crate::chain_index::source::Source::NftIndex);
     assert_eq!(
         w.tick(&node.state, &ctx, t0 + secs(85)).await,
-        map::Tick::Failed
+        map::Tick::Idle
     );
     assert_eq!(
-        w.tick(&node.state, &ctx, t0 + secs(90)).await,
+        map_marker(&db.pool).await.0,
+        before,
+        "no pass while unready"
+    );
+    // The safety pass runs anyway: it fails naming the source, then retries
+    // on the wait.
+    let t1 = t0 + secs(75) + map::SAFETY_INTERVAL;
+    assert_eq!(w.tick(&node.state, &ctx, t1).await, map::Tick::Failed);
+    assert_eq!(
+        w.tick(&node.state, &ctx, t1 + secs(5)).await,
         map::Tick::Idle,
         "not every tick"
     );
     assert_eq!(
-        w.tick(&node.state, &ctx, t0 + secs(146)).await,
+        w.tick(&node.state, &ctx, t1 + secs(61)).await,
         map::Tick::Failed,
         "after the retry wait"
     );
@@ -3086,18 +3107,19 @@ async fn the_map_grid_builds_when_its_inputs_move_and_records_checks() {
         Some(true)
     );
 
-    // It publishes again: a pass; then nothing moves for the safety interval.
+    // It publishes again: a pass at once; then nothing moves for the safety
+    // interval.
     *market.0.lock() = Ok(priced(1500));
     assert_eq!(
-        w.tick(&node.state, &ctx, t0 + secs(150)).await,
+        w.tick(&node.state, &ctx, t1 + secs(65)).await,
         map::Tick::Built
     );
     assert_eq!(
-        w.tick(&node.state, &ctx, t0 + secs(155)).await,
+        w.tick(&node.state, &ctx, t1 + secs(70)).await,
         map::Tick::Idle
     );
     assert_eq!(
-        w.tick(&node.state, &ctx, t0 + secs(150) + map::SAFETY_INTERVAL)
+        w.tick(&node.state, &ctx, t1 + secs(65) + map::SAFETY_INTERVAL)
             .await,
         map::Tick::Built,
         "the safety pass"
@@ -3269,11 +3291,12 @@ async fn a_failing_marks_read_or_pass_waits_for_its_retry() {
     }
     assert_eq!(map_marker(&db.pool).await.0, passes);
 
-    // Readable again and moving on every read, while a source is not
-    // published: one failed pass, then the retry wait.
+    // Readable again and moving on every read, while the build fails on a
+    // source the marks still see ready (it went unready between the two
+    // reads): one failed pass, then the retry wait.
     market.marks_fail.store(false, SeqCst);
     market.churning.store(true, SeqCst);
-    *market.answer.lock() = Some(crate::chain_index::source::Source::NftIndex);
+    *market.build_unready.lock() = Some(crate::chain_index::source::Source::NftIndex);
     assert_eq!(
         w.tick(&node.state, &ctx, t0 + secs(25)).await,
         map::Tick::Failed
@@ -3296,10 +3319,18 @@ async fn a_failing_marks_read_or_pass_waits_for_its_retry() {
         "the next retry waits twice as long"
     );
 
-    // The source publishes again: a pass at once.
-    *market.answer.lock() = None;
+    // The marks see the source unready (a move that runs no pass), then
+    // ready again: a pass at once, before the retry.
+    *market.answer.lock() = Some(crate::chain_index::source::Source::NftIndex);
     assert_eq!(
         w.tick(&node.state, &ctx, t0 + secs(155)).await,
+        map::Tick::Idle,
+        "a move to unready runs no pass"
+    );
+    *market.answer.lock() = None;
+    *market.build_unready.lock() = None;
+    assert_eq!(
+        w.tick(&node.state, &ctx, t0 + secs(160)).await,
         map::Tick::Built
     );
 
@@ -3533,10 +3564,11 @@ async fn a_check_never_confirms_land_at_a_clock_after_it_stopped_publishing() {
         "checked at {checked}, not before the cursor advanced at {advanced_at}"
     );
 
-    // The next observation sees block 101 unfolded: nothing is checked.
-    assert_ne!(
+    // The next observation sees block 101 unfolded: nothing is checked, and
+    // no pass runs while the index cannot build.
+    assert_eq!(
         w.tick(&node.state, &ctx, t0 + secs(130)).await,
-        map::Tick::Checked
+        map::Tick::Idle
     );
     assert_eq!(grid_checked(&db.pool).await.2, Some(checked));
 
@@ -3582,9 +3614,9 @@ async fn an_estate_name_past_the_fold_waits_for_the_fold() {
         .unwrap();
     let watched = map::watch_marks(&node.state).await.unwrap().unwrap();
     assert!(watched.ready, "no authorization event past the fold");
-    assert_ne!(
+    assert_eq!(
         w.tick(&node.state, &ctx, t0 + Duration::from_secs(5)).await,
-        map::Tick::Built,
+        map::Tick::Idle,
         "the marks do not see it"
     );
     assert_eq!(
@@ -3609,6 +3641,82 @@ async fn an_estate_name_past_the_fold_waits_for_the_fold() {
         "folding it moves the marks"
     );
     assert_ne!(grid_etag(&db.pool).await, folded, "and the grid shows it");
+
+    jobs.shutdown(Duration::from_secs(1)).await;
+    db.teardown().await;
+}
+
+/// A pass that finds its body current but cannot record the check (the
+/// `checked_at` UPDATE fails) is not a failed pass, but it is not an
+/// overtaken one either: the next pass waits for the retry, doubling, instead
+/// of running on the next tick.
+#[tokio::test]
+async fn a_check_that_cannot_be_recorded_backs_off() {
+    use std::time::Instant;
+    let Some(db) = scratch_database().await else {
+        return;
+    };
+    let (jobs, ctx) = job_ctx().await;
+    let settings = crate::land_authz::Settings::for_tests();
+    seed_land(&db.pool, &settings).await;
+    publish_land(&db.pool, &settings).await;
+    let node = node_with_db(Settings::for_tests(Sources::defaults()), db.pool.clone()).await;
+    node.state.attach_land_authz(land_authz_on(&db.pool));
+    node.state
+        .attach_land_market(Arc::new(ScriptedLandMarket::default()));
+    let secs = Duration::from_secs;
+    let t0 = Instant::now();
+    let mut w = map::Watcher::default();
+    assert_eq!(w.tick(&node.state, &ctx, t0).await, map::Tick::Built);
+    let (_, _, checked) = grid_checked(&db.pool).await;
+
+    sqlx::raw_sql(
+        "CREATE FUNCTION explore_api.refuse_check() RETURNS trigger LANGUAGE plpgsql AS \
+         $$ BEGIN RAISE EXCEPTION 'check refused'; END $$; \
+         CREATE TRIGGER refuse_check BEFORE UPDATE OF checked_at ON explore_api.map_grid \
+         FOR EACH ROW EXECUTE FUNCTION explore_api.refuse_check();",
+    )
+    .execute(&db.pool)
+    .await
+    .unwrap();
+    // The safety pass finds the same body and cannot record the check.
+    let t1 = t0 + map::SAFETY_INTERVAL;
+    let (passes, _, _) = map_marker(&db.pool).await;
+    assert_eq!(w.tick(&node.state, &ctx, t1).await, map::Tick::Built);
+    assert_eq!(map_marker(&db.pool).await.0, passes + 1);
+    for s in [5, 30, 55] {
+        assert_eq!(
+            w.tick(&node.state, &ctx, t1 + secs(s)).await,
+            map::Tick::Idle,
+            "not a pass every tick"
+        );
+    }
+    assert_eq!(
+        w.tick(&node.state, &ctx, t1 + secs(60)).await,
+        map::Tick::Built,
+        "the retry"
+    );
+    assert_eq!(
+        w.tick(&node.state, &ctx, t1 + secs(170)).await,
+        map::Tick::Idle,
+        "the next retry waits twice as long"
+    );
+    assert_eq!(grid_checked(&db.pool).await.2, checked);
+
+    // The write works again: the retry records the check.
+    sqlx::raw_sql("DROP TRIGGER refuse_check ON explore_api.map_grid")
+        .execute(&db.pool)
+        .await
+        .unwrap();
+    assert_eq!(
+        w.tick(&node.state, &ctx, t1 + secs(180)).await,
+        map::Tick::Built
+    );
+    assert!(grid_checked(&db.pool).await.2 > checked);
+    assert_eq!(
+        w.tick(&node.state, &ctx, t1 + secs(185)).await,
+        map::Tick::Idle
+    );
 
     jobs.shutdown(Duration::from_secs(1)).await;
     db.teardown().await;

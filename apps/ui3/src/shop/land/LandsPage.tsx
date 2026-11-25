@@ -358,10 +358,12 @@ export default function LandsPage({ client, loadTiles }: LandsPageProps) {
               ) : null}
             </div>
             <ViewToggle isMap onChange={setView} />
-            {/* On phones this bar spans the map's top edge over its status corner: the age shows here instead. */}
-            <div className="shop-lb-maptop__age">
-              <MapGridAge />
-            </div>
+            {/* On phones this bar spans the map's top edge over its status corner: the age shows here instead, while the map does. */}
+            {tiles.status === "error" ? null : (
+              <div className="shop-lb-maptop__age">
+                <MapGridAge />
+              </div>
+            )}
           </div>
           {tiles.status === "loading" ? (
             <p className="shop-lb-map__loading" role="status" aria-live="polite">

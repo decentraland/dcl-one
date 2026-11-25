@@ -543,7 +543,9 @@ Expectations:
   (`/v2/tiles/info` on `mapApi`) are plain fetches; `?mock=1` answers all three from fixed data
   (`fixMapPublicReads`) and reads none of them.
 - **Age label:** the Parcels view shows "Updated N min ago" beside the zoom controls when the map
-  API's `checkedAt` is over five minutes old, measured on the server's clock (the answer's `Date`);
+  API's `checkedAt` is over five minutes old, measured on the server's clock (the answer's `serverNow`,
+  else its `Date`, which a cross-origin read may not expose); only the map API's own 503 envelope
+  clears it, while any other failed read keeps the last answer;
   nothing without `checkedAt`, on the Satellite view or while the page is hidden. It is read when
   shown and every minute (`features/map/useMapGridAge.ts`; the Shop's LAND map reads the same
   explorer-core `gridAge` through TanStack Query), and drawn in HUD styles matching the Shop LAND

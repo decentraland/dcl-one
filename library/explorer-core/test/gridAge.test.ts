@@ -79,11 +79,38 @@ describe('reading the parcel map age', () => {
     await expect(fetchMapGridAge('https://map.test')).resolves.toBeNull()
   })
 
-  it('has no age when the API cannot serve its grid, and releases the answer', async () => {
-    const cancel = vi.fn(async () => undefined)
-    vi.stubGlobal('fetch', vi.fn(async () => ({ ok: false, status: 503, body: { cancel } }) as unknown as Response))
+  it('has no age when the map API says it cannot serve its grid (its unavailable envelope)', async () => {
+    const envelope = { error: 'Service Unavailable', message: 'the tile grid has not been built yet', source: 'map-grid' }
+    vi.stubGlobal('fetch', vi.fn(async () => Response.json(envelope, { status: 503 })))
     await expect(fetchMapGridAge('https://map.test')).resolves.toBeNull()
-    expect(cancel).toHaveBeenCalledOnce()
+  })
+
+  it('fails on any other error answer, releasing it, so a caller keeps its last answer', async () => {
+    for (const status of [502, 429, 503]) {
+      const cancel = vi.fn(async () => undefined)
+      const json = vi.fn(async () => ({ message: 'Bad Gateway' }))
+      vi.stubGlobal('fetch', vi.fn(async () => ({ ok: false, status, json, body: { cancel } }) as unknown as Response))
+      await expect(fetchMapGridAge('https://map.test'), `${status}`).rejects.toThrow(`answered ${status}`)
+      expect(cancel, `${status}`).toHaveBeenCalledOnce()
+    }
+  })
+
+  it("takes the server's clock from the answer's serverNow, with no readable Date", async () => {
+    // A cross-origin answer whose Date this device cannot read; the device runs six minutes ahead.
+    vi.useFakeTimers({ now: NOW + 6 * MINUTE })
+    vi.stubGlobal('fetch', vi.fn(async () => Response.json({ checkedAt: NOW - MINUTE, serverNow: NOW })))
+    const age = await fetchMapGridAge('https://map.test')
+    expect(age).toEqual({ checkedAt: NOW - MINUTE, skew: -6 * MINUTE })
+    expect(mapGridAgeLabel(age!.checkedAt, Date.now() + age!.skew)).toBeNull()
+  })
+
+  it("prefers serverNow to Date, and measures on this device's clock with neither", async () => {
+    vi.useFakeTimers({ now: NOW })
+    const date = new Date(NOW - 10 * MINUTE).toUTCString()
+    vi.stubGlobal('fetch', vi.fn(async () => Response.json({ checkedAt: NOW, serverNow: NOW + 2_000 }, { headers: { date } })))
+    await expect(fetchMapGridAge('https://map.test')).resolves.toEqual({ checkedAt: NOW, skew: 2_000 })
+    vi.stubGlobal('fetch', vi.fn(async () => Response.json({ checkedAt: NOW })))
+    await expect(fetchMapGridAge('https://map.test')).resolves.toEqual({ checkedAt: NOW, skew: 0 })
   })
 
   it('fails when the request does', async () => {

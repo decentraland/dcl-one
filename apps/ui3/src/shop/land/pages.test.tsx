@@ -206,6 +206,27 @@ describe("/shop/lands", () => {
     }
   });
 
+  it("shows no age over the map's load error, in the bar or elsewhere", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => Response.json({ checkedAt: Date.now() - 12 * 60_000 })),
+    );
+    try {
+      render(
+        <QueryClientProvider client={new QueryClient()}>
+          <ShopHarness session="web3" path="/shop/lands?isMap=true" route="/shop/lands">
+            <LandsPage client={stubClient({})} loadTiles={async () => { throw new Error("boom"); }} />
+          </ShopHarness>
+        </QueryClientProvider>,
+      );
+      expect(await screen.findByText("The LAND map could not be loaded.")).toBeInTheDocument();
+      expect(document.querySelector(".shop-lb-maptop__age")).toBeNull();
+      expect(screen.queryByText(/Updated/)).toBeNull();
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
   it("shows the atlas image while the map waits for its tiles", async () => {
     renderLands("web3", "/shop/lands?isMap=true", {}, () => new Promise(() => {}));
     const map = await screen.findByRole("region", { name: /LAND map: drag/ });

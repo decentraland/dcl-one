@@ -306,6 +306,9 @@ pub struct MapState {
     /// snapshot at its clock; `None` when it could not read them. What the
     /// [`Watcher`] compares later marks with.
     pass_marks: parking_lot::Mutex<Option<String>>,
+    /// The last pass found its body current but could not record the check
+    /// (`checked_at`): the [`Watcher`] retries it on the backoff.
+    unrecorded: std::sync::atomic::AtomicBool,
     png_cache: ResponseCache,
     tiles_cache: ResponseCache,
     tiles_flights: parking_lot::Mutex<HashMap<String, Arc<tokio::sync::Mutex<()>>>>,
@@ -333,6 +336,7 @@ impl MapState {
             held_until: parking_lot::Mutex::new(None),
             confirmed: parking_lot::Mutex::new(None),
             pass_marks: parking_lot::Mutex::new(None),
+            unrecorded: Default::default(),
             png_cache: ResponseCache::new(RESPONSE_CACHE_TTL, PNG_CACHE_ENTRIES, PNG_CACHE_BYTES),
             tiles_cache: ResponseCache::new(
                 RESPONSE_CACHE_TTL,
@@ -892,11 +896,16 @@ async fn publish(
             etag: Some(digest_hex),
         };
         // A failed record of the check is bookkeeping, not a failed pass:
-        // the inputs matched the stored body, as `Watcher::tick` treats it.
+        // the inputs matched the stored body. The watcher retries it on the
+        // backoff (`unrecorded`), not on the next tick.
         match confirm_current(state, ctx, &current, now.naive_utc()).await {
             Ok(true) => *state.map.confirmed.lock() = Some(current),
             Ok(false) => {}
             Err(e) => {
+                state
+                    .map
+                    .unrecorded
+                    .store(true, std::sync::atomic::Ordering::SeqCst);
                 tracing::warn!(error = %format!("{e:#}"), "recording the map grid checked failed")
             }
         }
@@ -1133,12 +1142,16 @@ pub enum Tick {
 /// that snapshot moves them even when a later change reverts it (a rental
 /// listed, then closed). A pass that could not read them leaves none, so the
 /// next readable marks run a pass before any check; a second such pass in a
-/// row backs off as a failed one does. Moved marks wait while a change is
-/// held back by the floor (the pass at its end reads every input) and while
-/// a failed pass waits for its retry, unless every source turned ready
-/// meanwhile; marks that cannot be read move nothing. So a failing read or
-/// pass backs off from [`RETRY`] to [`RETRY_MAX`] instead of building every
-/// tick. Otherwise, while every source is ready, the marks equal the last
+/// row backs off as a failed one does, and so does a pass that found its body
+/// current but could not record the check. Moved marks wait while not every
+/// source is ready (a pass could not build: the marks move again when they
+/// are, and a due pass still runs), while a change is held back by the floor
+/// (the pass at its end reads every input) and while a failed pass waits for
+/// its retry, unless every source turned ready meanwhile; marks that cannot
+/// be read move nothing. So a failing read or pass backs off from [`RETRY`]
+/// to [`RETRY_MAX`] instead of building every tick, and a source briefly
+/// unready (a LAND walk between its commit and its fold) fails no pass.
+/// Otherwise, while every source is ready, the marks equal the last
 /// pass's and that pass left a revision current, it records that the
 /// revision still is (`checked_at`, at most every
 /// [`CHECK_RECORD_INTERVAL`]), guarded on that revision.
@@ -1147,13 +1160,14 @@ pub struct Watcher {
     /// The marks the last completed pass read in its snapshot; `None` when
     /// it could not read them.
     seen: Option<String>,
-    /// Every source was ready when the marks before the last pass were read.
+    /// Every source was ready at the last observation whose marks could be
+    /// read.
     ready_seen: bool,
     /// When a pass is due whatever the marks say; `None`: right away.
     due: Option<Instant>,
     retry: Duration,
-    /// The last pass failed, or the last two could not read their marks:
-    /// moved marks wait for its retry.
+    /// The last pass failed, the last two could not read their marks, or the
+    /// last could not record its check: moved marks wait for its retry.
     failing: bool,
     /// The last completed pass could not read its marks.
     unmarked: bool,
@@ -1198,11 +1212,17 @@ impl Watcher {
         let due = self.due.is_none_or(|d| now >= d);
         let holding = self.held_until.is_some_and(|h| now < h);
         let recovered = self.failing && ready && !self.ready_seen;
-        if due || recovered || (moved && !holding && !self.failing) {
+        if watched.is_some() {
             self.ready_seen = ready;
+        }
+        if due || recovered || (moved && ready && !holding && !self.failing) {
             *state.map.held_until.lock() = None;
             *state.map.confirmed.lock() = None;
             *state.map.pass_marks.lock() = None;
+            state
+                .map
+                .unrecorded
+                .store(false, std::sync::atomic::Ordering::SeqCst);
             return match run_pass(state, ctx).await {
                 Ok(()) => {
                     self.held_until = state.map.held_until.lock().take();
@@ -1218,19 +1238,29 @@ impl Watcher {
                         self.last_checked = Some(now);
                     }
                     // Compared from now on with the marks of the snapshot this
-                    // pass built from, not the ones read before it.
+                    // pass built from, not the ones read before it. Without
+                    // them nothing vouches for this revision: the next
+                    // readable marks differ from none and run a pass before
+                    // any check.
                     self.seen = state.map.pass_marks.lock().take();
-                    if self.unmarked && self.seen.is_none() {
-                        // A second pass in a row that could not read its
-                        // marks backs off as a failed one does.
+                    let unmarked = self.seen.is_none();
+                    let unrecorded = state
+                        .map
+                        .unrecorded
+                        .swap(false, std::sync::atomic::Ordering::SeqCst);
+                    // A second pass in a row without its marks, or one that
+                    // could not record its check, backs off as a failed one
+                    // does, whatever `due` was.
+                    let back_off = unrecorded || (self.unmarked && unmarked);
+                    self.unmarked = unmarked;
+                    if back_off {
                         self.failing = true;
-                        self.due = self.due.map(|d| d.min(now + self.retry));
+                        self.due = Some(
+                            self.due
+                                .map_or(now + self.retry, |d| d.min(now + self.retry)),
+                        );
                         self.retry = (self.retry * 2).min(RETRY_MAX);
                     } else {
-                        // Without marks nothing vouches for this revision:
-                        // the next readable marks differ from none and run
-                        // a pass before any check.
-                        self.unmarked = self.seen.is_none();
                         self.failing = false;
                         self.retry = RETRY;
                     }
