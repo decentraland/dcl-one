@@ -3308,7 +3308,9 @@ The other readers of these tables still read them as the mirrors left them:
 - the MANA facts and quote;
 - the policy entry's facts;
 - the NFT pages' catalogue joins and the lists, listings, users, neighbours,
-  stores, coupons and subscriptions reads.
+  stores, coupons and subscriptions reads;
+- the sales index's reads that join them (public sales, item rankings,
+  collection counts, seller evidence and wallet assets).
 
 A network the index owns follows the publish marker. A pass walks before it
 folds and publishes, so `folded_block = last_block` would refuse every read
