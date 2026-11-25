@@ -250,9 +250,9 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Fetch the embedded error-page images and fonts
         run: |
-          # GitHub's LFS batch API times out now and then; retry before failing the job.
+          # GitHub's LFS batch API times out on large batches: ask for 20 objects at a time, and retry before failing the job.
           for attempt in 1 2 3 4; do
-            git lfs pull --include="$ERROR_PAGE_LFS" --exclude='' && exit 0
+            git -c lfs.transfer.batchSize=20 lfs pull --include="$ERROR_PAGE_LFS" --exclude='' && exit 0
             echo "::warning::git lfs pull failed (attempt $attempt of 4); retrying"
             sleep $((attempt * 15))
           done
@@ -406,9 +406,9 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Fetch the pinned docs integration-test diagram and the error-page art, background and Inter files the static pages embed
         run: |
-          # GitHub's LFS batch API times out now and then; retry before failing the job.
+          # GitHub's LFS batch API times out on large batches: ask for 20 objects at a time, and retry before failing the job.
           for attempt in 1 2 3 4; do
-            git lfs pull --include="apps/sites/content/docs/creator/images/wearables-and-emotes/creating-wearables/19_skin_uv.webp,${ERROR_PAGE_LFS}" --exclude='' && exit 0
+            git -c lfs.transfer.batchSize=20 lfs pull --include="apps/sites/content/docs/creator/images/wearables-and-emotes/creating-wearables/19_skin_uv.webp,${ERROR_PAGE_LFS}" --exclude='' && exit 0
             echo "::warning::git lfs pull failed (attempt $attempt of 4); retrying"
             sleep $((attempt * 15))
           done
