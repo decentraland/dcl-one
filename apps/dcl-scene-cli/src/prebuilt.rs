@@ -54,10 +54,8 @@ pub fn locate(project: &Project) -> Option<Prebuilt> {
 /// composite at all (`0,0-cube-spawner` in sdk7-test-scenes), and since the
 /// package is an external of the scene chunk the specifier survives into the
 /// emitted bundle exactly when something reaches it.
-pub fn scene_needs_smart_chunk(project: &Project, scene_chunk: &Path) -> bool {
-    project.is_editor_scene()
-        || chunk_requires(scene_chunk, "@dcl/asset-packs")
-        || !entrypoint::scripts(&project.root, false).is_empty()
+pub fn scene_needs_smart_chunk(project: &Project, scene_chunk: &Path, has_scripts: bool) -> bool {
+    has_scripts || project.is_editor_scene() || chunk_requires(scene_chunk, "@dcl/asset-packs")
 }
 
 fn chunk_requires(chunk: &Path, package: &str) -> bool {

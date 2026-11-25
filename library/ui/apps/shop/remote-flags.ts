@@ -75,19 +75,15 @@ export async function fetchRemoteFlags(signal?: AbortSignal): Promise<Record<str
   return (await readRemoteFlags(signal)).flags;
 }
 
-/** A host the service refuses (sites, on its own origin) refreshes the flags its own way. */
-let hostRefresh: (() => Promise<void>) | null = null;
-
-export function setRemoteFlagsRefresh(refresh: typeof hostRefresh): void {
-  hostRefresh = refresh;
-}
+/** How a host the service refuses (sites, on its own origin) reads the flags; it throws when it has no answer. */
+export type RemoteFlagsReader = (signal: AbortSignal) => Promise<RemoteFlagsAnswer>;
 
 /**
  * Reads the file again unless the flags were primed, a fresh answer is held, a read just failed or one is running.
- * `now` is the clock for all of it: the answer's age and the backoff are both measured from it.
+ * `now` is the clock for all of it: the answer's age and the backoff are both measured from it. A host's `reader` only
+ * replaces the request: its answer is held, retried and backed off as the service's is.
  */
-export function refreshRemoteFlags(now = Date.now()): Promise<void> {
-  if (hostRefresh) return hostRefresh();
+export function refreshRemoteFlags(now = Date.now(), reader: RemoteFlagsReader = readRemoteFlags): Promise<void> {
   if (typeof window === "undefined") return Promise.resolve();
   if (snapshot?.primed || (snapshot && now - snapshot.at < TTL_MS)) return Promise.resolve();
   if (failedAt !== null && now - failedAt < BACKOFF_MS) return Promise.resolve();
@@ -99,7 +95,7 @@ export function refreshRemoteFlags(now = Date.now()): Promise<void> {
   const read: Promise<void> = (async () => {
     for (let attempt = 0; attempt < 2; attempt++) {
       try {
-        const { flags, variants } = await readRemoteFlags(AbortSignal.timeout(TIMEOUT_MS));
+        const { flags, variants } = await reader(AbortSignal.timeout(TIMEOUT_MS));
         if (generation !== started) return;
         failedAt = null;
         publish({ at: stamp(), primed: false, flags, variants });
@@ -164,16 +160,16 @@ export function RemoteFlagsProvider({ answer, children }: { answer: RemoteFlagsA
 
 const skipSubscription = () => () => {};
 
-export function useRemoteFlagsAnswer(enabled = true, refresh = refreshRemoteFlags): RemoteFlagsAnswer | null {
+export function useRemoteFlagsAnswer(enabled = true, reader?: RemoteFlagsReader): RemoteFlagsAnswer | null {
   const requestAnswer = useContext(RequestFlagsContext);
   const browserAnswer = useSyncExternalStore(enabled ? subscribe : skipSubscription, getAnswer, getServerAnswer);
   useEffect(() => {
     if (!enabled || requestAnswer) return;
-    void refresh();
-    const onFocus = () => void refresh();
+    void refreshRemoteFlags(undefined, reader);
+    const onFocus = () => void refreshRemoteFlags(undefined, reader);
     window.addEventListener("focus", onFocus);
     return () => window.removeEventListener("focus", onFocus);
-  }, [enabled, requestAnswer, refresh]);
+  }, [enabled, requestAnswer, reader]);
   return enabled ? requestAnswer ?? browserAnswer : null;
 }
 
@@ -191,7 +187,7 @@ export function remoteFlagState(flag: RemoteFlag): boolean | null {
   return answer ? remoteFlagOn(answer, flag) : null;
 }
 
-export function useRemoteFlagState(flag: RemoteFlag, enabled = true, refresh = refreshRemoteFlags): boolean | null {
-  const answer = useRemoteFlagsAnswer(enabled, refresh);
+export function useRemoteFlagState(flag: RemoteFlag, enabled = true, reader?: RemoteFlagsReader): boolean | null {
+  const answer = useRemoteFlagsAnswer(enabled, reader);
   return answer ? remoteFlagOn(answer, flag) : null;
 }

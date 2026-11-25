@@ -1,13 +1,13 @@
 // Upstream's rollout flags, read from the same feature-flags file: what each answer means, how long it is
 // held, and that "Suggested for you" asks the server for anything only while its flag is on.
 
-import { act, render } from "@testing-library/react";
+import { act, render, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import SuggestedForYouRow from "../components/SuggestedForYouRow";
 import { catalogClient, ShopHarness } from "../fixtures";
 import { invalidateShopQueries } from "../query";
-import { fetchRemoteFlags, parseRemoteFlags, primeRemoteFlags, readRemoteFlags, refreshRemoteFlags, REMOTE_FLAG, remoteFlag, remoteFlagVariant, setRemoteFlagsRefresh, useRemoteFlag } from "./remoteFlags";
+import { fetchRemoteFlags, parseRemoteFlags, primeRemoteFlags, readRemoteFlags, refreshRemoteFlags, REMOTE_FLAG, remoteFlag, remoteFlagVariant, useRemoteFlag, useRemoteFlagState } from "./remoteFlags";
 
 type FlagsWindow = Window & { __SHOP_FEATURE_FLAGS__?: string };
 
@@ -55,12 +55,34 @@ describe("fetchRemoteFlags", () => {
   });
 });
 
-describe("a host that refreshes the flags its own way", () => {
-  it("should take the host's answer and never read the service", async () => {
-    setRemoteFlagsRefresh(async () => primeRemoteFlags(ON));
-    await refreshRemoteFlags().finally(() => setRemoteFlagsRefresh(null));
+describe("a host that reads the flags its own way", () => {
+  it("should hold the host's answer for 60s and never read the service", async () => {
+    const reader = vi.fn(async () => ({ flags: ON, variants: {} }));
+    const now = Date.now();
+    await refreshRemoteFlags(now, reader);
+    await refreshRemoteFlags(now + 59_000, reader);
+    expect(reader).toHaveBeenCalledOnce();
     expect(remoteFlag(REMOTE_FLAG.suggestedForYou)).toBe(true);
+    await refreshRemoteFlags(now + 61_000, reader);
+    expect(reader).toHaveBeenCalledTimes(2);
     expect(flagReads()).toBe(0);
+  });
+
+  it("should answer a gate off when the host's read fails, and wait 10s before the next read", async () => {
+    const reader = vi.fn(async () => ({ flags: ON, variants: {} }));
+    reader.mockRejectedValueOnce(new Error("no answer")).mockRejectedValueOnce(new Error("no answer"));
+    const Gate = () => <>{String(useRemoteFlagState(REMOTE_FLAG.suggestedForYou, true, reader))}</>;
+    const { container } = render(<Gate />);
+    expect(container.textContent).toBe("null");
+    await waitFor(() => expect(container.textContent).toBe("false"));
+    expect(reader).toHaveBeenCalledTimes(2);
+    // A second mount and a window focus inside the backoff ask nothing.
+    render(<Gate />);
+    await act(async () => void window.dispatchEvent(new Event("focus")));
+    expect(reader).toHaveBeenCalledTimes(2);
+    await act(async () => refreshRemoteFlags(Date.now() + 11_000, reader));
+    expect(reader).toHaveBeenCalledTimes(3);
+    expect(container.textContent).toBe("true");
   });
 });
 

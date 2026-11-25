@@ -9,7 +9,7 @@ import { useShopCapabilities } from "@dcl/one-ui/apps/shop/capabilities";
 import { shopSession } from "@dcl/one-ui/apps/shop/session";
 
 import { useAuth } from "../auth/index";
-import { primeDappsFlags } from "../feature-flags.browser";
+import { readDappsFlags } from "../feature-flags.browser";
 import { currentWalletKind, web3Usable } from "../auth/shop-wallet";
 
 const noSubscription = () => () => {};
@@ -21,8 +21,8 @@ export function useMarketplaceHere(chromeSigner: string | null): boolean {
   const hydrated = useSyncExternalStore(noSubscription, () => true, () => false);
   const enabled = hydrated && identity !== null;
   // These pages are not the Shop's, so nothing primed the flags: the service would tell this site's own Referer that
-  // every flag is off, so they come from this server's reading, as a client navigation into the Shop does.
-  const flag = hostOr("marketplaceFeatures", useRemoteFlagState(REMOTE_FLAG.marketplaceFeatures, enabled, primeDappsFlags));
+  // every flag is off, so the library reads them from this server, as a client navigation into the Shop does.
+  const flag = hostOr("marketplaceFeatures", useRemoteFlagState(REMOTE_FLAG.marketplaceFeatures, enabled, readDappsFlags));
   const caps = useShopCapabilities();
   const kind = enabled ? currentWalletKind(identity) : null;
   // The Shop's own session rule (an expired identity is signed out), then its Marketplace rule: a guessed web3 is web2.
