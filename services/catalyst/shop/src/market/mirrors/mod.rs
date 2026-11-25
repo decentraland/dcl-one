@@ -544,37 +544,43 @@ pub async fn ready(
     if networks.is_empty() {
         return Ok(None);
     }
-    state
-        .mirror_ready
-        .get_or_fetch(mirror, || async move {
-            let done: Vec<(String, NaiveDateTime)> = sqlx::query_as(
-                "SELECT network, last_complete_pass_at FROM shop.mirror_state WHERE mirror = $1 AND last_complete_pass_at IS NOT NULL",
-            )
-            .bind(mirror.name())
-            .fetch_all(&state.pool)
-            .await?;
-            Ok::<_, sqlx::Error>(oldest_pass(&networks, &done))
-        })
-        .await
+    copy_for_chain(state, mirror, &networks).await
 }
 
-/// The copy the tables hold with no subgraph configured: the oldest last
-/// complete pass of the networks `shop.mirror_state` records; `None` when
-/// no pass ever completed. Cached 10 s beside [`ready`] (the configuration
-/// is fixed for the process, so one key serves either).
-async fn recorded(
+/// Includes every stored publication in the chain check because a route may
+/// query rows from both networks even when only one graph URL is configured.
+/// An unbound legacy copy remains available to descriptive graph readers.
+async fn copy_for_chain(
     state: &MarketplaceState,
     mirror: Mirror,
+    networks: &[Network],
 ) -> Result<Option<NaiveDateTime>, sqlx::Error> {
+    let pair = crate::land_authz::land_network(&state.settings.eth_network)
+        .map(super::nft_index::Catalogue::from_land);
     state
         .mirror_ready
         .get_or_fetch(mirror, || async move {
-            sqlx::query_scalar::<_, Option<NaiveDateTime>>(
-                "SELECT min(last_complete_pass_at) FROM shop.mirror_state WHERE mirror = $1",
-            )
-            .bind(mirror.name())
-            .fetch_one(&state.pool)
-            .await
+            let rows: Vec<(String, Option<NaiveDateTime>, Option<i64>)> = sqlx::query_as(
+            "SELECT network, last_complete_pass_at, chain_id FROM shop.mirror_state WHERE mirror=$1"
+        ).bind(mirror.name()).fetch_all(&state.pool).await?;
+            let mut done = Vec::new();
+            for (network, at, chain) in rows {
+                if let Some(id) = chain {
+                    let expected = super::chain_walk::ChainNet::parse(&network)
+                        .and_then(|net| pair.map(|pair| pair.chain_id(net)));
+                    if Some(id) != expected {
+                        return Ok(None);
+                    }
+                }
+                if let Some(at) = at {
+                    done.push((network, at));
+                }
+            }
+            Ok(if networks.is_empty() {
+                done.iter().map(|(_, at)| *at).min()
+            } else {
+                oldest_pass(networks, &done)
+            })
         })
         .await
 }
@@ -596,7 +602,7 @@ fn oldest_pass(networks: &[Network], done: &[(String, NaiveDateTime)]) -> Option
 /// (and the answer is stamped with the copy's `as_of`), `Err` the envelope
 /// to answer instead. A descriptive read serves any copy the tables hold:
 /// with no subgraph configured, the networks `shop.mirror_state` records
-/// ([`recorded`]).
+/// ([`copy_for_chain`]).
 pub async fn require_ready(state: &MarketplaceState, mirror: Mirror) -> Result<(), Response> {
     ready_at(state, mirror, Accept::Recorded).await.map(|_| ())
 }
@@ -618,7 +624,7 @@ async fn ready_at(
     if state.settings.collection_networks().is_empty() {
         let recorded = match accept {
             Accept::Configured => None,
-            Accept::Recorded => recorded(state, mirror).await.map_err(|e| {
+            Accept::Recorded => copy_for_chain(state, mirror, &[]).await.map_err(|e| {
                 tracing::error!(error = %e, "mirror_state read failed");
                 super::internal_server_error()
             })?,

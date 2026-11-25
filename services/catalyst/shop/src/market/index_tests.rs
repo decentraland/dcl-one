@@ -1884,6 +1884,47 @@ fn estate_document(
 }
 
 #[tokio::test]
+async fn descriptive_mirror_readers_check_the_chain_of_every_recorded_source() {
+    use super::mirrors::{self, Mirror};
+    let Some(db) = ScratchDb::create().await else {
+        return;
+    };
+    sqlx::query("INSERT INTO shop.mirror_state(mirror,network,source_url,last_complete_pass_at,chain_id)
+        VALUES ('collections','matic','amoy',now(),80002),('collections','ethereum','other',now(),1)")
+        .execute(&db.pool).await.unwrap();
+    for graph in [None, Some("amoy".to_owned())] {
+        let settings = Settings {
+            eth_network: "sepolia".into(),
+            eth_collections_subgraph_url: None,
+            matic_collections_subgraph_url: graph,
+            ..Settings::for_tests()
+        };
+        let state = MarketplaceState::new(
+            db.pool.clone(),
+            crate::http::Outbound::for_tests(),
+            settings,
+        );
+        let error = mirrors::require_ready(&state, Mirror::Collections)
+            .await
+            .unwrap_err();
+        assert_eq!(error.status(), axum::http::StatusCode::SERVICE_UNAVAILABLE);
+        sqlx::query("UPDATE shop.mirror_state SET chain_id=NULL WHERE network='ethereum'")
+            .execute(&db.pool)
+            .await
+            .unwrap();
+        state.mirror_ready.clear();
+        mirrors::require_ready(&state, Mirror::Collections)
+            .await
+            .unwrap();
+        sqlx::query("UPDATE shop.mirror_state SET chain_id=1 WHERE network='ethereum'")
+            .execute(&db.pool)
+            .await
+            .unwrap();
+    }
+    db.drop().await;
+}
+
+#[tokio::test]
 async fn a_testnet_graph_page_proves_its_block_even_when_the_page_is_empty() {
     let chain = FakeChain::new(100, vec![], 100, 100);
     chain.chain_id.store(80_002, Ordering::SeqCst);
