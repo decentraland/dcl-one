@@ -62,6 +62,8 @@ const RUN_CLIP_SPEED = 10;
 
 // New phased / per-locomotion animation set lives in assets/animations/.
 // Locomotion is a real 3-tier system: walk -> jog (default move) -> run (sprint).
+// The engine reads jumps, the glide and the stun for its jump timing and network state from these
+// exact file names (crates/common/src/movement_clip.rs), so a renamed clip is renamed there too.
 const ANIM = 'assets/animations/';
 const CLIP_IDLE = ANIM + 'Idle.glb';
 const CLIP_WALK = ANIM + 'Walk.glb';
@@ -100,8 +102,7 @@ const HARD_LANDING_EXIT_SPEED = 1.2;
 const HARD_LANDING_EXIT_END = 0.2; // fraction of Exit
 const HARD_LANDING_AFTER_BLEND = 0.14; // s, from Exit to the next clip
 
-// Double-jump avatar clips, per take-off locomotion variation. The engine's network state reads the second jump from
-// the `DoubleJump` file name prefix.
+// Double-jump avatar clips, per take-off locomotion variation.
 const DOUBLE_JUMP: Record<JumpVariation, { plain: string; right: string }> = {
   idle: { plain: ANIM + 'DoubleJump_Base.glb', right: ANIM + 'DoubleJump_Base_Right.glb' },
   jog: { plain: ANIM + 'DoubleJump_Jog.glb', right: ANIM + 'DoubleJump_Jog_Right.glb' },

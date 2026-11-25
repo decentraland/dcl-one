@@ -2,6 +2,7 @@ use std::f32::consts::TAU;
 
 use bevy::{
     diagnostic::FrameCount,
+    ecs::query::QueryFilter,
     math::DVec3,
     platform::collections::{HashMap, HashSet},
     prelude::*,
@@ -640,16 +641,10 @@ impl AvatarMovement {
 // so a rotating ground platform's rotation delta composes onto this orientation rather
 // than being overwritten by it.
 pub fn apply_rotation(
-    mut player: Query<(&mut Transform, &ActivePlayerComponent<AvatarMovement>), With<PrimaryUser>>,
+    player: Query<(&mut Transform, &ActivePlayerComponent<AvatarMovement>), With<PrimaryUser>>,
     movement_control: Res<EngineMovementControl>,
 ) {
-    let Ok((mut transform, movement)) = player.single_mut() else {
-        return;
-    };
-
-    if !movement_suppressed(&movement_control, movement.initiated_at) {
-        transform.rotation = movement.component.rotation();
-    }
+    rotate_player(player, &movement_control);
 }
 
 /// Sets the player's rotation as soon as the scene loop picks a new movement, so a scene dispatched
@@ -658,17 +653,29 @@ pub fn apply_rotation(
 /// would continue a different chain of replies, and the avatar would alternate between two
 /// rotations. [`apply_rotation`] sets the same rotation after the loop.
 fn apply_rotation_on_reply(
-    mut player: Query<
-        (&mut Transform, Ref<ActivePlayerComponent<AvatarMovement>>),
-        With<PrimaryUser>,
+    player: Query<
+        (&mut Transform, &ActivePlayerComponent<AvatarMovement>),
+        (
+            With<PrimaryUser>,
+            Changed<ActivePlayerComponent<AvatarMovement>>,
+        ),
     >,
     movement_control: Res<EngineMovementControl>,
+) {
+    rotate_player(player, &movement_control);
+}
+
+/// Turns the player that `player` holds to its movement's rotation, unless the movement is
+/// suppressed.
+fn rotate_player<F: QueryFilter>(
+    mut player: Query<(&mut Transform, &ActivePlayerComponent<AvatarMovement>), F>,
+    movement_control: &EngineMovementControl,
 ) {
     let Ok((mut transform, movement)) = player.single_mut() else {
         return;
     };
 
-    if movement.is_changed() && !movement_suppressed(&movement_control, movement.initiated_at) {
+    if !movement_suppressed(movement_control, movement.initiated_at) {
         transform.rotation = movement.component.rotation();
     }
 }
