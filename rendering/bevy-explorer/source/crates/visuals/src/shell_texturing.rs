@@ -141,8 +141,18 @@ pub struct ShellTexture {
 }
 
 impl Material for ShellTexture {
+    // The shells discard in both passes, so they are a mask material, not an opaque one:
+    // - a camera with a depth prepass and no normal prepass (the avatar outline off) gets a
+    //   prepass pipeline without a fragment stage for opaque materials. Every shell would then
+    //   write solid depth, the main pass would reject the layers below the top one and the
+    //   ground would show black. A mask material keeps its prepass fragment stage.
+    // - the alpha-mask phases draw after the opaque ones: by then the scene's floors and
+    //   buildings are in the depth buffer and the ground and grass fragments behind them fail
+    //   the depth test before their noise runs.
+    // The colour is unchanged: the shader never calls `alpha_discard`, so the cutoff is unused,
+    // and the shells cast no shadows.
     fn alpha_mode(&self) -> AlphaMode {
-        AlphaMode::Opaque
+        AlphaMode::Mask(0.5)
     }
 
     fn vertex_shader() -> ShaderRef {
