@@ -33,7 +33,9 @@
 //! the whole world compared. A deployment counts at its entity timestamp, never
 //! later than its write (the local row's update, the upstream's listed deploy
 //! time) nor than now, and a tie goes to the byte-wise greater entity id; the
-//! same entity on both sides keeps the world local. The newer upstream then
+//! same entity on both sides keeps the world local, as does an upstream scene
+//! listed without a deploy time, a blocked world and one with a publish queued
+//! for forwarding. The newer upstream then
 //! takes the world as a newer publish takes a mirrored one: every local scene
 //! is retired (`worlds.retired_world_scenes`, its place identity kept by the
 //! overlap rule) and the world row is marked mirrored, in the transaction that
@@ -368,13 +370,8 @@ async fn scenes_pass(
                 Ok(Outcome::RefusedLocalPublish { retired }) => {
                     out.refused += 1;
                     out.retired_scenes += retired;
-                    tracing::info!(world = %name, "refused: a scene published to this node is newer than the upstream's");
-                    mark_world(
-                        pool,
-                        &name,
-                        Some("published locally after the upstream; not mirrored"),
-                    )
-                    .await?;
+                    tracing::info!(world = %name, "refused: a scene published to this node stands (newer than the upstream's, being forwarded, or the world is blocked)");
+                    mark_world(pool, &name, Some("a local publish stands; not mirrored")).await?;
                 }
                 Ok(Outcome::NothingUpstream(why)) => {
                     out.skipped += 1;
@@ -430,8 +427,8 @@ async fn scenes_pass(
         .execute(pool)
         .await?;
         ctx.progress(format!(
-            "scenes pass complete: {} worlds, {} synced, {} unchanged, {} refused, {} failed",
-            out.processed, out.synced, out.unchanged, out.refused, out.failed
+            "scenes pass complete: {} worlds, {} synced, {} unchanged, {} refused, {} failed, {} local scenes superseded",
+            out.processed, out.synced, out.unchanged, out.refused, out.failed, out.superseded_local
         ));
     } else {
         tracing::info!(

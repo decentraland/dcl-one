@@ -305,8 +305,11 @@ owner/player/host operations. Guests get scoped storage capabilities, never SQL
 access or other scenes' environment values. Mirroring cannot overwrite local
 saves or grant host authority. One exception: a newer upstream scene that replaces
 a local publish keeps that scene's place identity, and so reaches its storage, by
-the overlap rule below
-([last deploy wins](docs/adr/2026-11-23-worlds-mirror-last-deploy-wins.md)). Keep live CRDT/tick state in the scene runtime;
+the overlap rule above (a scene's stable identity, at the start of this section),
+as a replacing publish does
+([last deploy wins](docs/adr/2026-11-23-worlds-mirror-last-deploy-wins.md)). The
+rule compares footprints only, not who deployed either scene; the user kept it
+unchanged for a takeover on 2026-11-24. Keep live CRDT/tick state in the scene runtime;
 persist only what the restart contract requires. Test cross-scene/player
 isolation, redeploy, revocation and restart.
 
@@ -3747,6 +3750,15 @@ catalogue writes; importing an identity alone cannot clear it. Queue rows
 survive re-adds. The existing world-row lock serializes publication; imports
 lock affected worlds and identities in order and retire only saved bindings
 whose backing scenes are gone. No grant history is inferred from parcel overlap.
+
+A local world's catalogue row pruned because the worlds mirror took the world
+over (`worlds.worlds.mirror_source` set, not blocked) is not a removal while an
+`explore.world_scene_place` of the world is active: the place ids live on, so
+no row is queued and its bans and admin grants stay. This holds whether the
+upstream scenes kept a local identity or not; a local identity a takeover
+retires is left as a replacing publish leaves one, with nothing resolving to it.
+A blocked local world, or one with no active scene place, still queues its
+removal.
 
 ## Scene admin grants
 

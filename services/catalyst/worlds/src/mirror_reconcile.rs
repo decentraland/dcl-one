@@ -1,6 +1,16 @@
 //! Worlds mirror reconcile.
 use super::*;
 
+/// Whether `world` (its key) holds a locally published scene.
+async fn has_local_publish(conn: &mut sqlx::PgConnection, world: &str) -> sqlx::Result<bool> {
+    sqlx::query_scalar(
+        "SELECT EXISTS(SELECT 1 FROM worlds.world_scenes WHERE world_name = $1 AND mirror_source IS NULL)",
+    )
+    .bind(world)
+    .fetch_one(conn)
+    .await
+}
+
 /// A world whose local publish stands holds no mirrored scene: the mirror never
 /// refreshes it again, so what it wrote there before is retired and the world
 /// row says local, as a publish leaves it (core::store::deploy_scene).
@@ -300,13 +310,9 @@ pub(super) async fn mirror_world(
 ) -> Result<Outcome> {
     let source = settings.source.as_str();
     let world_key = name.to_lowercase();
-    let locally_published: bool = sqlx::query_scalar(
-        "SELECT EXISTS(SELECT 1 FROM worlds.world_scenes WHERE world_name = lower($1) AND mirror_source IS NULL)",
-    )
-    .bind(name)
-    .fetch_one(pool)
-    .await
-    .with_context(|| format!("checking local publish for {name}"))?;
+    let locally_published = has_local_publish(&mut *pool.acquire().await?, &world_key)
+        .await
+        .with_context(|| format!("checking local publish for {name}"))?;
     // A read-through never replaces a local publish; a pass does when the upstream deployed last.
     if locally_published && verify.is_some() {
         let retired = retire_beside_local(pool, name).await?;
@@ -404,10 +410,13 @@ pub(super) async fn mirror_world(
     // A local publish the listing does not outdate keeps the world before anything is fetched;
     // the write decides again on the fetched entities, under the world row's lock.
     if locally_published {
-        let now_ms = chrono::Utc::now().timestamp_millis() as f64;
         let newest = newest_deployment(listed.iter().map(|scene| {
-            let at = deployed_ms(scene.timestamp, scene.created_at, scene.updated_at, now_ms);
-            (at, scene.id.as_str())
+            (
+                scene.timestamp,
+                scene.created_at,
+                scene.updated_at,
+                scene.id.as_str(),
+            )
         }));
         let mut conn = pool.acquire().await?;
         if crate::core::store::local_scene_stands(&mut conn, &world_key, newest).await? {
@@ -650,25 +659,20 @@ pub(super) async fn mirror_world(
     // mirrored scenes (last deploy wins, the whole world).
     let cids: Vec<&str> = records.iter().map(|r| r.cid.as_str()).collect();
     let local_stands = match verify {
-        Some(_) => sqlx::query_scalar(
-            "SELECT EXISTS(SELECT 1 FROM worlds.world_scenes WHERE world_name = lower($1) AND mirror_source IS NULL)",
-        )
-        .bind(name)
-        .fetch_one(&mut *tx)
-        .await
-        .with_context(|| format!("re-checking local publish for {name}"))?,
+        Some(_) => has_local_publish(&mut tx, &world_key).await,
         None => {
-            let now_ms = chrono::Utc::now().timestamp_millis() as f64;
             let newest = newest_deployment(records.iter().map(|r| {
-                let ts = crate::core::store::entity_timestamp_number(&r.entity);
-                let at = deployed_ms(ts, r.created_at, r.updated_at, now_ms);
-                (at, r.cid.as_str())
+                (
+                    crate::core::store::entity_timestamp_number(&r.entity),
+                    r.created_at,
+                    r.updated_at,
+                    r.cid.as_str(),
+                )
             }));
-            crate::core::store::local_scene_stands(&mut tx, &world_key, newest)
-                .await
-                .with_context(|| format!("re-checking local publish for {name}"))?
+            crate::core::store::local_scene_stands(&mut tx, &world_key, newest).await
         }
-    };
+    }
+    .with_context(|| format!("re-checking local publish for {name}"))?;
     if local_stands {
         tx.rollback().await.context("rollback tx")?;
         let retired = retire_beside_local(pool, name).await?;
@@ -678,6 +682,9 @@ pub(super) async fn mirror_world(
     let superseded = crate::core::store::retire_local_scenes(&mut tx, &world_key, &cids)
         .await
         .with_context(|| format!("retire the local scenes of {name}"))?;
+    if !superseded.is_empty() {
+        crate::explore::places::derive::mark_world_dirty(&mut tx, &world_key).await?;
+    }
     replace_mirrored_access(&mut tx, &world, &access, holder.as_ref())
         .await
         .with_context(|| format!("access setting of {name}"))?;
@@ -792,6 +799,6 @@ pub(super) async fn mirror_world(
     Ok(Outcome::Synced {
         scenes: records.len(),
         new_blobs,
-        superseded,
+        superseded: superseded.len() as u64,
     })
 }

@@ -462,8 +462,9 @@ pub async fn newer_scene_deployed(
 /// leaves the world local. A local scene counts at the lower of its entity timestamp and its
 /// row's write, its write alone without a numeric timestamp (as [`newer_scene_deployed`]
 /// stores it); it stands when that is later, on a tie when its entity id is byte-wise greater
-/// or equal, and always when it is the same entity.
-pub async fn local_scene_stands(
+/// or equal, and always when it is the same entity. A local world also stands while it is
+/// blocked or a publish of it waits in `worlds.forward_outbox`.
+pub(crate) async fn local_scene_stands(
     conn: &mut sqlx::PgConnection,
     world: &str,
     upstream: Option<(f64, &str)>,
@@ -477,9 +478,13 @@ pub async fn local_scene_stands(
                           (extract(epoch FROM updated_at) * 1000)::float8) AS ts
              FROM worlds.world_scenes
              WHERE world_name = $1 AND mirror_source IS NULL)
-           SELECT EXISTS (SELECT 1 FROM local
-             WHERE $2::float8 IS NULL OR entity_id = $3 OR ts > $2::float8
-                OR (ts = $2::float8 AND entity_id COLLATE "C" > $3))"#,
+           SELECT EXISTS (SELECT 1 FROM local) AND (
+             EXISTS (SELECT 1 FROM worlds.worlds WHERE name = $1 AND blocked_since IS NOT NULL)
+             OR EXISTS (SELECT 1 FROM worlds.forward_outbox
+                        WHERE world_name = $1 AND status IN ('queued', 'sending'))
+             OR EXISTS (SELECT 1 FROM local
+                        WHERE $2::float8 IS NULL OR entity_id = $3 OR ts > $2::float8
+                           OR (ts = $2::float8 AND entity_id COLLATE "C" > $3)))"#,
     )
     .bind(world)
     .bind(timestamp)
@@ -489,20 +494,28 @@ pub async fn local_scene_stands(
 }
 
 /// Retires (into `worlds.retired_world_scenes`, as a replacing publish does) every locally
-/// published scene of `world` (its key) but `keep`, the ids the caller writes in their place.
-pub async fn retire_local_scenes(
+/// published scene of `world` (its key) but `keep`, the ids the caller writes in their place,
+/// and returns the entity ids it retired.
+pub(crate) async fn retire_local_scenes(
     conn: &mut sqlx::PgConnection,
     world: &str,
     keep: &[&str],
-) -> Result<u64, sqlx::Error> {
-    Ok(sqlx::query(retiring!(
-        "DELETE FROM worlds.world_scenes WHERE world_name = $1 AND mirror_source IS NULL AND entity_id <> ALL($2::text[])"
-    ))
+) -> Result<Vec<String>, sqlx::Error> {
+    sqlx::query_scalar(
+        "WITH gone AS (DELETE FROM worlds.world_scenes \
+             WHERE world_name = $1 AND mirror_source IS NULL AND entity_id <> ALL($2::text[]) \
+             RETURNING world_name, entity_id, entity, parcels, mirror_source), \
+         moved AS (INSERT INTO worlds.retired_world_scenes (world_name, entity_id, entity, parcels, mirror_source) \
+             SELECT world_name, entity_id, entity, parcels, mirror_source FROM gone \
+             ON CONFLICT (world_name, entity_id) DO UPDATE SET entity = EXCLUDED.entity, \
+               parcels = EXCLUDED.parcels, mirror_source = EXCLUDED.mirror_source, \
+               retired_at = timezone('UTC', now())) \
+         SELECT entity_id FROM gone",
+    )
     .bind(world)
     .bind(keep)
-    .execute(conn)
-    .await?
-    .rows_affected())
+    .fetch_all(conn)
+    .await
 }
 
 /// Refused publish to a world the operator disabled (`/admin/worlds/{w}/disable`).
