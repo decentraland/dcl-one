@@ -8,6 +8,16 @@ A local Polygon refold fixture replayed 288 legacy sales in 288 distinct blocks 
 
 The index process increments `catalyst_index_sales_repair_failures_total` by indexer and network when a historical sales repair fails. The error log includes the starting block and requests spent. The cursor keeps its last verified boundary.
 
+## Marketplace catalogue mirror proof
+
+`catalyst_catalogue_mirror_proof_outcomes_total` counts mainnet proof
+attempts by `mirror`, `network` and `outcome`. `proof_rejected` records
+a conflicting chain or block hash. `graph_unavailable` records a failed
+graph query or a graph response without usable block metadata.
+`proof_skipped_rpc_unavailable` records an unpinned graph pass started
+after the RPC retry window elapsed. `rpc_auth_failed` counts HTTP 401/403
+responses and accompanies the error log for the configured RPC.
+
 ## Published sales reads
 
 A PostgreSQL 17 fixture held one million synthetic sales across Ethereum and Polygon, plus 32,000 sales for a single seller. The account plan used 40,004 published account totals and the creator plan included 9,900 mints. Timings are SQL execution times from local `EXPLAIN (ANALYZE, BUFFERS)`, measured with the publication present. The request statement budget is 10 seconds.

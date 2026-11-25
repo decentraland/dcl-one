@@ -1,3 +1,4 @@
+use catalyst_shared::network::ChainPair;
 use clap::Args;
 
 use crate::posture::Posture::Mirror;
@@ -32,11 +33,9 @@ pub const DEFAULT_CHECKOUT_FULFILLMENT_MODE: &str = "primary";
 /// rpc.decentraland.org's request logs. It names no node: an operator that
 /// wants its own tag sets both URLs.
 pub fn default_rpc_urls(eth_network: &str) -> (String, String) {
-    let (l1, l2) = if eth_network.trim() == "mainnet" {
-        ("mainnet", "polygon")
-    } else {
-        ("sepolia", "amoy")
-    };
+    let (l1, l2) = ChainPair::from_eth_network(eth_network)
+        .unwrap_or(ChainPair::Testnet)
+        .names();
     let url = |chain: &str| format!("https://rpc.decentraland.org/{chain}?project=dcl-one");
     (url(l1), url(l2))
 }
@@ -124,6 +123,9 @@ impl Config {
             Self::read_secret_file(name, slot)?;
             Self::refuse_short_operator_secret(name, slot.as_deref())?;
         }
+        if let Some(pair) = ChainPair::from_eth_network(&self.node.eth_network) {
+            self.node.eth_network = pair.names().0.into();
+        }
         self.default_rpc_urls();
         self.derive_trade_rpc_urls();
         crate::posture::refuse_remote_secrets(self)
@@ -168,8 +170,6 @@ impl Config {
     /// makes the list. An explicit value, empty included, wins; off mainnet
     /// the chain ids name other chains, so nothing is derived.
     pub fn derive_trade_rpc_urls(&mut self) {
-        // Read as the posture checks read it (trimmed), so a padded value
-        // derives the list the checks then require.
         let mirror = self
             .node
             .node_posture
@@ -177,7 +177,7 @@ impl Config {
             .is_some_and(|p| crate::posture::Posture::parse(p).ok() == Some(Mirror));
         if !mirror
             || self.marketplace.trade_rpc_urls.is_some()
-            || self.node.eth_network.trim() != "mainnet"
+            || ChainPair::from_eth_network(&self.node.eth_network) != Some(ChainPair::Mainnet)
         {
             return;
         }

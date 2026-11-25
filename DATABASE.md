@@ -2616,22 +2616,38 @@ A catalogue database serves one Ethereum/Polygon pair. The NFT worker uses
 to select mainnet (1/137) or Sepolia/Amoy (11155111/80002). Its RPC must
 serve that chain. The mirror posture derives the testnet defaults from
 `ETH_NETWORK=sepolia` when the operator leaves the IDs unset. At startup
+the preset and its RPC defaults resolve `ETH_NETWORK` aliases to the same
+mainnet or testnet pair, ignoring case and surrounding whitespace. Then
 the catalogue writer checks the pair against
 `ETH_NETWORK` and the database binding. The API process leaves the binding
 to the index writer, even when they share settings. Each database can have independent
 Ethereum and Sepolia Rentals histories.
 The `nft_catalogue_pair` row in `shop.worker_progress` identifies the pair.
 `shop.mirror_state.chain_id` identifies each mirror's completed chain-bound
-copy. A new source starts from page one. For testnets the mirror
-checks the graph head on the configured chain by comparing a confirmed block
-hash against the chain-checked RPC. Both mirrors persist that hash with their
-keyset and read every page at that block. Collections supply contract addresses
-and items supply their metadata. A mirror writer can provide this proof even
-when the NFT walker runs on another node. A writer without a catalogue RPC
-leaves a bound pass untouched. A missing or mismatched page hash restarts
-the pass. A transport or GraphQL error retries the same block for up to an
-hour from the start of the pass. A progressing pass can keep its pin for
-one day. Descriptive readers can use the last completed copy during retries.
+copy. A new source starts from page one. When a chain-bound catalogue RPC is
+configured, the mirror compares a confirmed graph block hash against that RPC.
+On mainnet the mirror chooses the block the network's confirmation depth
+behind the lower of the graph and RPC heads. Both mirrors persist that hash
+with their keyset and read every page at that block. Collections supply
+contract addresses and items supply their metadata. A mirror writer can
+provide this proof even when the NFT walker runs on another node.
+
+Mainnet serves its last completed copy while a new proof retries. Its
+mirror jobs with a chain-bound RPC cap retry delays at five minutes. After
+ten minutes of RPC unavailability, a mainnet pass may read from the
+configured graph without a pin to keep prices fresh under the existing
+price freshness budget. Authentication errors and malformed RPC responses
+use the same retry window. A wrong-chain result or a conflicting block hash
+rejects the pass, and later RPC unavailability cannot override that result.
+A graph proof error leaves the RPC outage clock as it was.
+A replacement mainnet writer can finish from a persisted pin even without
+an RPC. New mainnet passes on nodes without an RPC use the configured graph.
+Testnet passes require their configured proof RPC.
+
+A missing or mismatched page hash restarts the pass. An opaque transport or
+GraphQL page error retries the same block. Two consecutive page read
+failures can restart a pin once the pass is an hour old. A pass can keep a
+progressing pin for one day.
 The NFT walk requires a complete collections pass for its chain. Mainnet
 accepts a completed legacy copy with neither a chain binding nor a pending
 testnet pin. The testnet walk selects addresses from rows the verified pass
@@ -2666,6 +2682,20 @@ On testnet a catalogue item used to describe an owned NFT must carry its
 own verified-row flag. Migration 0072 keeps the descriptive mirror copy
 while restarting any testnet item pass. A complete pass from a writer
 that sets the flag establishes reader readiness, including an empty pass.
+Migration 0072 also requires the cursor's `marks_item_rows` flag for a pinned
+mainnet items pass. Row provenance is recorded only by testnet writers.
+
+Stop pre-0072 testnet mirror writers, apply 0072, and deploy the upgraded
+mirror and index writers before enabling the walking readers. An old items
+writer can store a page before it attempts to save its cursor. Newly
+inserted items from that page lack row provenance. Its attempt to save a
+pinned or chain-bound testnet cursor fails with
+`mirror_state_verified_item_rows`. A complete pass by an upgraded writer
+supplies the marked rows and completion marker. Until the required local
+folds and verified item copy publish, walking Sepolia/Amoy NFT, NAME and
+owner routes answer their source's unavailable envelope. A legacy database
+bound to mainnet needs a separate testnet database or, for the eligible
+legacy default mirrors, the rebind described above.
 
 On Sepolia the NFT and LAND authorization walks start at LAND proxy
 deployment block 3,831,219. On Amoy the NFT walk starts at marketplace V2
@@ -2947,6 +2977,26 @@ pass claims the projection again and acts.
          folded_block = NULL, folded_at = NULL, owner_generation = owner_generation + 1
    WHERE indexer = '<indexer>' AND network = '<network>';
   ```
+
+- *Rebuild a quarantined legacy Sepolia trade cursor*. Use this when the
+  legacy V2-start cursor was quarantined and Revalidate cannot prove its
+  checkpoint. Confirm from the deployment configuration that this database
+  holds the Sepolia trade history, especially if Revalidate cleared its
+  chain binding. The script requires a Sepolia LAND cursor and checks any
+  existing catalogue pair binding. Stop its trade writer and use the Sepolia RPC and default
+  V1 start for the replacement. Run
+  `PGOPTIONS="-c rebuild.confirm_sepolia=yes" psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f tooling/migration/rebuild-quarantined-legacy-sepolia-trades.sql`
+  on that database, then restart the writer. The statement only schedules
+  the replay and fences the prior owner. The confirmation supplies the
+  chain binding in place of proving the old checkpoint. Confirming the
+  wrong database can delete its trade history. The new writer checks its
+  RPC chain, clears the old trade log and verdicts in its rebuild
+  transaction, and restarts at block 6,770,056. If the writer refuses the
+  scheduled rebuild, check `quarantine_reason`, correct the writer's chain
+  and start configuration, and request a standard rebuild as above for
+  `trade_events` on `ethereum`. The legacy script only matches the original
+  V2 start. The publication stays withdrawn until the replacement fold
+  completes.
 
 **Deploys.** A binary from before step `0054_shop_chain_cursor_ownership`
 does not check `owner_generation`, and one from before the per-network

@@ -102,7 +102,7 @@ struct BidRow {
 /// primary key reads of `shop.nft_contract` and `shop.collections`.
 fn rows_sql() -> String {
     format!(
-        "WITH bound AS (SELECT min(c.last_block) AS upto FROM shop.chain_cursor c \
+        "WITH bound AS (SELECT min(c.folded_block) AS upto FROM shop.chain_cursor c \
              WHERE c.network = $1 AND c.indexer = ANY($4) AND {ready} HAVING count(*) = 2) \
          SELECT {key} AS id_key, e.block_number, e.log_index, e.block_time, e.contract_address::text AS contract_address, \
                 e.token_id::text AS token_id, lower(e.buyer) AS bidder, e.price::text AS price, \
@@ -118,7 +118,8 @@ fn rows_sql() -> String {
          FROM shop.sale_event e CROSS JOIN bound \
          WHERE e.network = $1 AND e.kind = 'bid_created' AND (e.block_number, e.log_index) > ($2, $3) AND e.block_number <= bound.upto \
          ORDER BY e.block_number, e.log_index LIMIT $5",
-        ready = chain_walk::ready_sql("c", "$6"),
+        ready =
+            chain_walk::published_sql_on("c", "$6", ChainNet::Ethereum.chain_id(), NET.chain_id()),
         key = notice_cursor::tx_log_key(
             "sale_event",
             "e",
@@ -202,18 +203,19 @@ pub async fn run_once(
 /// the first seed at the sales index's published block. Each page reads its
 /// own bound ([`rows_sql`]); these checks only report and seed.
 async fn start(pool: &PgPool, now: DateTime<Utc>) -> anyhow::Result<Option<&'static str>> {
-    let Some(sales) = chain_walk::ready_cursor(pool, INDEXER_SALES, NET, now).await else {
+    let Some(published) =
+        chain_walk::published_block(pool, INDEXER_SALES, NET, NET.chain_id(), now).await?
+    else {
         return Ok(Some("the matic sales index is not published"));
     };
-    if chain_walk::ready_cursor(pool, INDEXER_NFT, NET, now)
-        .await
+    if chain_walk::published_block(pool, INDEXER_NFT, NET, NET.chain_id(), now)
+        .await?
         .is_none()
     {
         return Ok(Some(
             "the matic nft index is not published (a bid's owner is unknown)",
         ));
     }
-    let published = sales.folded_block.unwrap_or(sales.last_block);
     notice_cursor::seed(pool, PRODUCER, None, published, i32::MAX).await?;
     Ok(None)
 }
@@ -559,6 +561,10 @@ mod tests {
             Pass::Waiting(_)
         ));
         publish(pool, INDEXER_NFT, "matic", 120, T0 + 120).await;
+        sqlx::query("UPDATE shop.chain_cursor SET last_block=last_block+100 WHERE network='matic'")
+            .execute(pool)
+            .await
+            .unwrap();
 
         assert_eq!(
             run_once(pool, &s, Utc::now()).await.unwrap(),
