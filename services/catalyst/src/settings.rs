@@ -28,7 +28,7 @@ pub(crate) fn market_settings(
     config: &Config,
     self_hosts: &[String],
 ) -> anyhow::Result<shop::market::Settings> {
-    Ok(shop::market::Settings::from_config(
+    let settings = shop::market::Settings::from_config(
         config,
         &shop::market::Upstreams {
             eth_collections_subgraph_url: config
@@ -40,7 +40,6 @@ pub(crate) fn market_settings(
                 .matic_collections_subgraph_url
                 .clone(),
             marketplace_subgraph_url: config.market_upstreams.marketplace_subgraph_url.clone(),
-            land_subgraph_url: config.market_upstreams.land_subgraph_url.clone(),
             trades_sync_upstream_url: config.market_upstreams.trades_sync_upstream_url.clone(),
             trades_sync_interval_secs: config.market_upstreams.trades_sync_interval_secs,
             trades_sync_pages_per_run: config.market_upstreams.trades_sync_pages_per_run,
@@ -71,6 +70,13 @@ pub(crate) fn market_settings(
             trade_events_enabled: config.marketplace.marketplace_trade_events_index_enabled,
             sales_enabled: config.marketplace.marketplace_sales_index_enabled,
             committee_enabled: config.marketplace.marketplace_committee_index_enabled,
+            third_party_registry_enabled: config
+                .marketplace
+                .marketplace_third_party_registry_index_enabled,
+            collections_enabled: config.marketplace.marketplace_collections_index_enabled,
+            collections_owned: collections_owned(
+                &config.marketplace.marketplace_collections_index_owns,
+            )?,
             interval: Duration::from_secs(
                 config.marketplace.marketplace_index_interval_secs.max(1),
             ),
@@ -109,14 +115,37 @@ pub(crate) fn market_settings(
             config.marketplace.marketplace_tip_max_pending,
         )?)
         .with_trusted_proxies(config.node.http_trusted_proxy_cidrs.clone()),
-    ))
+    );
+    Ok(settings)
 }
 
 fn checked_indexes(
     indexes: shop::market::chain_walk::IndexSettings,
 ) -> anyhow::Result<shop::market::chain_walk::IndexSettings> {
-    indexes.check_chains().map_err(anyhow::Error::msg)?;
+    indexes
+        .check_supported_chain_ids()
+        .map_err(anyhow::Error::msg)?;
     Ok(indexes)
+}
+
+/// `MARKETPLACE_COLLECTIONS_INDEX_OWNS`: the networks the collections index
+/// takes from the mirror. It walks Polygon alone.
+fn collections_owned(value: &str) -> anyhow::Result<Vec<shop::market::chain_walk::ChainNet>> {
+    use shop::market::chain_walk::ChainNet;
+    let mut out = Vec::new();
+    for name in value.split(',').map(str::trim).filter(|n| !n.is_empty()) {
+        match ChainNet::parse(name) {
+            Some(ChainNet::Matic) => out.push(ChainNet::Matic),
+            Some(ChainNet::Ethereum) => anyhow::bail!(
+                "MARKETPLACE_COLLECTIONS_INDEX_OWNS names {name}, but the collections index walks Polygon alone"
+            ),
+            None => anyhow::bail!(
+                "MARKETPLACE_COLLECTIONS_INDEX_OWNS names an unknown network {name:?}"
+            ),
+        }
+    }
+    out.dedup();
+    Ok(out)
 }
 
 pub(crate) fn land_settings(config: &Config) -> anyhow::Result<land_authz::Settings> {
@@ -129,8 +158,16 @@ pub(crate) fn land_settings(config: &Config) -> anyhow::Result<land_authz::Setti
                 )
             })?;
     land_settings.index_enabled = config.land_authz.land_authz_index_enabled;
-    land_settings.interval =
-        Duration::from_secs(config.land_authz.land_authz_index_interval_secs.max(30));
+    let configured_interval = config.land_authz.land_authz_index_interval_secs;
+    let interval = configured_interval.clamp(30, 240);
+    if land_settings.index_enabled && configured_interval > interval {
+        tracing::warn!(
+            configured_interval_secs = configured_interval,
+            effective_interval_secs = interval,
+            "clamping LAND_AUTHZ_INDEX_INTERVAL_SECS to leave retry time within the public LAND freshness window"
+        );
+    }
+    land_settings.interval = Duration::from_secs(interval);
     land_settings.requests_per_pass = config.land_authz.land_authz_index_requests_per_pass.max(1);
     land_settings.replay_from_block = config.land_authz.land_authz_replay_from_block;
     land_settings.stop_block = config.land_authz.land_authz_stop_block;
@@ -141,6 +178,20 @@ pub(crate) fn land_settings(config: &Config) -> anyhow::Result<land_authz::Setti
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_collections_index_owns_polygon_alone() {
+        use shop::market::chain_walk::ChainNet;
+        assert_eq!(collections_owned("").unwrap(), Vec::<ChainNet>::new());
+        assert_eq!(
+            collections_owned(" matic , polygon ").unwrap(),
+            vec![ChainNet::Matic]
+        );
+        let err = collections_owned("ethereum").unwrap_err().to_string();
+        assert!(err.contains("walks Polygon alone"), "{err}");
+        let err = collections_owned("base").unwrap_err().to_string();
+        assert!(err.contains("unknown network"), "{err}");
+    }
 
     #[test]
     fn shared_land_settings_keep_limits_and_replay_bounds() {
@@ -157,6 +208,100 @@ mod tests {
         assert_eq!(settings.replay_from_block, Some(42));
         assert_eq!(settings.stop_block, Some(99));
         assert_eq!(settings.confirmations, 3);
+    }
+
+    #[test]
+    fn land_interval_above_the_public_limit_is_clamped_without_failing_startup() {
+        for enabled in ["true", "false"] {
+            let config = Config::parse_env_for_tests([
+                ("DATABASE_URL", "postgres:///catalyst"),
+                ("LAND_AUTHZ_INDEX_ENABLED", enabled),
+                ("LAND_AUTHZ_INDEX_INTERVAL_SECS", "300"),
+            ])
+            .unwrap();
+            let settings = land_settings(&config).unwrap();
+            assert_eq!(settings.index_enabled, enabled == "true");
+            assert_eq!(settings.interval, Duration::from_secs(240));
+        }
+    }
+
+    #[tokio::test]
+    async fn testnet_mirror_schedules_only_projections_for_its_catalogue_pair() {
+        use catalyst_config::posture::{Posture, expand};
+        use shop::market::{MarketplaceState, chain_jobs, chain_walk::ChainNet};
+        use std::{collections::HashMap, sync::Arc};
+
+        let mut vars = HashMap::from([
+            ("ETH_NETWORK", "sepolia".to_owned()),
+            ("DATABASE_URL", "postgres:///catalyst".to_owned()),
+            ("MARKETPLACE_INDEX_CHAIN_ID_ETHEREUM", "11155111".to_owned()),
+            ("MARKETPLACE_INDEX_CHAIN_ID_MATIC", "80002".to_owned()),
+            ("MARKETPLACE_MANA_TRANSFERS_INDEX_ENABLED", "true".to_owned()),
+            ("MARKETPLACE_COLLECTIONS_INDEX_ENABLED", "true".to_owned()),
+            ("TRADE_RPC_URLS", "1=https://eth.example,137=https://polygon.example,11155111=https://sepolia.example,80002=https://amoy.example".to_owned()),
+        ]);
+        let posture = expand(Posture::Mirror, &|key| vars.get(key).cloned());
+        vars.extend(posture);
+        let config = Config::parse_env_for_tests(vars).unwrap();
+        let settings = market_settings(&config, &[]).unwrap();
+        let indexes = &settings.market.indexes;
+        assert!(
+            indexes.sales_enabled
+                && indexes.committee_enabled
+                && indexes.third_party_registry_enabled
+        );
+        let pool = sqlx::PgPool::connect_lazy("postgres:///catalyst").unwrap();
+        let state = Arc::new(MarketplaceState::new(
+            pool,
+            crate::http::Outbound::for_tests(),
+            settings,
+        ));
+        for (net, chain) in [(ChainNet::Ethereum, 11_155_111), (ChainNet::Matic, 80_002)] {
+            let scheduled = chain_jobs::projections(&state, net, Some(false));
+            let names: Vec<_> = scheduled
+                .iter()
+                .map(|job| {
+                    let index = (job.make)();
+                    assert_eq!(index.chain_id(), chain);
+                    index.indexer()
+                })
+                .collect();
+            let expected: &[&str] = match net {
+                ChainNet::Ethereum => &["nft", "sales", "trade_events"],
+                ChainNet::Matic => &["nft", "sales", "trade_events"],
+            };
+            assert_eq!(names, expected);
+        }
+    }
+
+    #[test]
+    fn only_catalogue_writers_require_eth_network_to_match_the_pair() {
+        for switch in [
+            "MARKETPLACE_NFT_INDEX_ENABLED",
+            "MARKETPLACE_MIRRORS_ENABLED",
+            "MARKETPLACE_SALES_INDEX_ENABLED",
+        ] {
+            for (network, ethereum, matic) in [
+                ("sepolia", "1", "137"),
+                ("mainnet", "11155111", "80002"),
+                ("unsupported", "1", "137"),
+                ("sepolia", "11155111", "137"),
+            ] {
+                let config = Config::parse_env_for_tests([
+                    ("DATABASE_URL", "postgres:///catalyst"),
+                    ("ETH_NETWORK", network),
+                    ("MARKETPLACE_INDEX_CHAIN_ID_ETHEREUM", ethereum),
+                    ("MARKETPLACE_INDEX_CHAIN_ID_MATIC", matic),
+                    (switch, "true"),
+                ])
+                .unwrap();
+                let settings = market_settings(&config, &[]).expect("API settings");
+                assert!(
+                    settings.check_writer_pair().is_err(),
+                    "{network} {ethereum}/{matic}"
+                );
+            }
+        }
     }
 
     #[test]

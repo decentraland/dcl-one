@@ -1,13 +1,14 @@
-import { Router } from '@well-known-components/http-server'
+import type { Router } from '@well-known-components/http-server'
 import * as path from 'path'
 import { Readable } from 'stream'
 import { WearableJson } from '@dcl/schemas/dist/sdk'
-import { Entity, EntityType, Locale, Wearable } from '@dcl/schemas'
+import type { Entity, Locale, Wearable } from '@dcl/schemas'
+import { EntityType } from '@dcl/schemas'
 import { randomUUID } from 'crypto'
 
-import { PreviewComponents } from '../types'
+import type { PreviewComponents } from '../types'
 import { fetchEntityByPointer } from '../../../logic/catalyst-requests'
-import { CliComponents } from '../../../components'
+import type { CliComponents } from '../../../components'
 import {
   b64ContentVersionedHashingFunction,
   b64HashDecodingFunction,
@@ -16,8 +17,8 @@ import {
   projectFilesToContentMappings
 } from '../../../logic/project-files'
 import { getCatalystBaseUrl, getInstalledPackageVersion } from '../../../logic/config'
-import { Workspace } from '../../../logic/workspace-validations'
-import { ProjectUnion, WearableProject } from '../../../logic/project-validations'
+import type { Workspace } from '../../../logic/workspace-validations'
+import type { ProjectUnion, WearableProject } from '../../../logic/project-validations'
 
 type LambdasWearable = Wearable & {
   baseUrl: string

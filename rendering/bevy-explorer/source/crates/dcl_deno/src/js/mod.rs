@@ -1,4 +1,5 @@
 use crate::js::errors::{generic_error, OpError};
+use common::sync::MutexExt;
 use std::{cell::RefCell, collections::HashMap, rc::Rc, time::Duration};
 
 use base64::{prelude::BASE64_URL_SAFE_NO_PAD, Engine};
@@ -271,7 +272,7 @@ pub(crate) fn scene_thread(
 
     // store handle
     let vm_handle = runtime.v8_isolate().thread_safe_handle();
-    let mut guard = VM_HANDLES.lock().unwrap();
+    let mut guard = VM_HANDLES.lock_ignore_poison();
     guard.insert(scene_id, (vm_handle, kill_flag.clone()));
     drop(guard);
 

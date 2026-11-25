@@ -35,25 +35,11 @@ impl content::Source for Documents {
 #[derive(Default)]
 struct Runtime {
     lifecycle: Mutex<http::Lifecycle>,
-    scrapes: AtomicUsize,
-    observations: Mutex<Vec<http::Observation>>,
-    metrics_fail: bool,
 }
 #[async_trait::async_trait]
 impl http::Hooks for Runtime {
-    fn observe(&self, observation: http::Observation) {
-        self.observations.lock().push(observation);
-    }
     async fn probe(&self, _startup: bool) -> http::Lifecycle {
         self.lifecycle.lock().clone()
-    }
-    async fn metrics(&self) -> Result<String, content::Error> {
-        self.scrapes.fetch_add(1, Ordering::SeqCst);
-        if self.metrics_fail {
-            Err(content::Error)
-        } else {
-            Ok("real_counter 7\n".into())
-        }
     }
     async fn diagnostics(&self) -> Result<String, content::Error> {
         Ok(r#"{"peers_total":3}"#.into())
@@ -77,7 +63,6 @@ fn setup() -> (
             content: docs.clone(),
             hooks: runtime.clone(),
             settings: http::Settings::default(),
-            matcher: http::test_support::matcher(),
             now: Arc::new(|| 1234),
             environment: Arc::new(|| ("v".into(), "hash".into())),
         },
@@ -114,431 +99,47 @@ fn publish(bus: &InProcessBus, s: Snapshot) {
     }
 }
 
-#[derive(Default)]
-struct RecordingMatcher {
-    paths: Mutex<Vec<String>>,
-    matches: bool,
-    fails: bool,
-}
-#[async_trait::async_trait]
-impl http::MetricsMatcher for RecordingMatcher {
-    async fn matches(&self, path: &str) -> Result<bool, http::MatcherError> {
-        self.paths.lock().push(path.into());
-        if self.fails {
-            Err(http::MatcherError("controlled failure".into()))
-        } else {
-            Ok(self.matches)
-        }
-    }
-}
-
-struct PendingMatch {
-    path: String,
-    release: tokio::sync::oneshot::Sender<Result<bool, http::MatcherError>>,
-}
-struct GatedMatcher(tokio::sync::mpsc::UnboundedSender<PendingMatch>);
-#[async_trait::async_trait]
-impl http::MetricsMatcher for GatedMatcher {
-    async fn matches(&self, path: &str) -> Result<bool, http::MatcherError> {
-        let (release, result) = tokio::sync::oneshot::channel();
-        self.0
-            .send(PendingMatch {
-                path: path.into(),
-                release,
-            })
-            .expect("selection controller remains alive");
-        result.await.expect("selection is released")
-    }
-}
-async fn release_selection(
-    calls: &mut tokio::sync::mpsc::UnboundedReceiver<PendingMatch>,
-    path: &str,
-    result: Result<bool, http::MatcherError>,
-) -> std::time::Duration {
-    let call = tokio::time::timeout(std::time::Duration::from_secs(5), calls.recv())
-        .await
-        .expect("dispatcher reaches selection")
-        .expect("matcher remains alive");
-    assert_eq!(call.path, path);
-    let held = std::time::Instant::now();
-    tokio::time::sleep(std::time::Duration::from_millis(100)).await;
-    let held = held.elapsed();
-    call.release.send(result).expect("request awaits selection");
-    held
-}
-
 #[tokio::test]
-async fn standalone_selection_duration_includes_match_and_nonmatch() {
-    let mut timings = Vec::new();
-    for (name, matched, bearer, metrics_fail, status, handler, code, scrapes) in [
-        ("match", true, None, false, 200, "/metrics", 200, 1),
-        ("nonmatch", false, None, false, 404, "", 404, 0),
-        (
-            "unauthorized",
-            true,
-            Some("fixture"),
-            false,
-            401,
-            "/metrics",
-            401,
-            0,
-        ),
-        ("handler-error", true, None, true, 500, "/metrics", 200, 1),
-    ] {
-        let (mut state, _, _, _, _sub) = setup();
-        let hooks = Arc::new(Runtime {
-            metrics_fail,
-            ..Default::default()
-        });
-        state.hooks = hooks.clone();
-        state.settings.metrics_bearer_token = bearer.map(str::to_string);
-        let (calls, mut selections) = tokio::sync::mpsc::unbounded_channel();
-        state.matcher = Arc::new(GatedMatcher(calls));
-        let path = if matched { "/metrics" } else { "/unknown" };
-        let started = std::time::Instant::now();
-        let (response, held) = tokio::join!(
-            request(
-                http::standalone(state),
-                "GET",
-                path,
-                &[("content-length", "17")]
-            ),
-            release_selection(&mut selections, path, Ok(matched)),
-        );
-        let elapsed = started.elapsed();
-        assert_eq!(response.0.as_u16(), status, "{name}");
-        let observations = hooks.observations.lock();
-        assert_eq!(observations.len(), 1, "{name}");
-        let observation = &observations[0];
-        assert_eq!(observation.method, "GET");
-        assert_eq!(observation.handler, handler, "{name}");
-        assert_eq!(observation.code, code, "{name}");
-        assert_eq!(observation.request_size, 17.);
-        assert_eq!(hooks.scrapes.load(Ordering::SeqCst), scrapes, "{name}");
-        assert!(selections.try_recv().is_err());
-        println!(
-            "{name}: selection held {held:?}, observed {:?}, request {elapsed:?}",
-            observation.duration
-        );
-        timings.push((name, observation.duration, held, elapsed));
-    }
-    assert!(
-        timings
-            .iter()
-            .all(|(_, observed, held, elapsed)| observed >= held && observed <= elapsed),
-        "selection must be included once: {timings:?}"
-    );
-}
-
-#[tokio::test]
-async fn claimed_root_duration_includes_raw_and_normalized_selection() {
-    let (mut state, _, hooks, _, _sub) = setup();
-    let (calls, mut selections) = tokio::sync::mpsc::unbounded_channel();
-    state.matcher = Arc::new(GatedMatcher(calls));
+async fn method_admission_preserves_the_stats_response_and_bounds_process_labels() {
+    let (state, _, _, _, _sub) = setup();
+    let recorder = dcl_metrics::PrometheusBuilder::new().build_recorder();
+    let _local = dcl_metrics::set_default_local_recorder(&recorder);
     let app = http::mount_services(
-        Router::new().fallback(|| async { "shared" }),
+        Router::new(),
         state.clone(),
         http::standalone(state),
         Router::new(),
     );
-    let started = std::time::Instant::now();
-    let (response, held) = tokio::join!(
-        request(app, "GET", "/Peers/%2e", &[("content-length", "17")]),
-        async {
-            let raw = release_selection(&mut selections, "/Peers/%2e", Ok(false)).await;
-            let normalized = release_selection(&mut selections, "/Peers/", Ok(false)).await;
-            raw + normalized
-        },
-    );
-    let elapsed = started.elapsed();
-    assert_eq!(response.0, 200);
-    assert_eq!(response.2, r#"{"ok":true,"peers":[]}"#);
-    let observations = hooks.observations.lock();
-    assert_eq!(observations.len(), 1);
-    let observation = &observations[0];
-    assert_eq!(observation.handler, "/peers");
-    assert_eq!(observation.code, 200);
-    assert_eq!(observation.request_size, 17.);
-    assert_eq!(hooks.scrapes.load(Ordering::SeqCst), 0);
-    assert!(selections.try_recv().is_err());
-    println!(
-        "claimed root: selections held {held:?}, observed {:?}, request {elapsed:?}",
-        observation.duration
-    );
-    assert!(observation.duration >= held && observation.duration <= elapsed);
-}
-
-#[tokio::test]
-async fn normalized_selection_failure_keeps_raw_selection_duration() {
-    let mut timings = Vec::new();
-    for method in ["GET", "HEAD"] {
-        let (mut state, _, hooks, _, _sub) = setup();
-        let (calls, mut selections) = tokio::sync::mpsc::unbounded_channel();
-        state.matcher = Arc::new(GatedMatcher(calls));
-        let app = http::mount_services(
-            Router::new().fallback(|| async { "shared" }),
-            state.clone(),
-            http::standalone(state),
-            Router::new(),
-        );
-        let started = std::time::Instant::now();
-        let (response, held) = tokio::join!(
-            request(
-                app,
-                method,
-                "/Peers/%2e",
-                &[
-                    ("origin", "https://example.invalid"),
-                    ("content-length", "17")
-                ]
-            ),
-            async {
-                let raw = release_selection(&mut selections, "/Peers/%2e", Ok(false)).await;
-                let normalized = release_selection(
-                    &mut selections,
-                    "/Peers/",
-                    Err(http::MatcherError("controlled normalized failure".into())),
-                )
-                .await;
-                raw + normalized
-            },
-        );
-        let elapsed = started.elapsed();
-        assert_eq!(response.0, 500);
-        assert!(response.2.is_empty());
-        assert!(!response.1.contains_key("content-type"));
-        assert!(!response.1.contains_key("access-control-allow-origin"));
-        if method == "HEAD" {
-            assert!(!response.1.contains_key("content-length"));
-        }
-        let observations = hooks.observations.lock();
-        assert_eq!(observations.len(), 1);
-        let observation = &observations[0];
-        assert_eq!(observation.method, method);
-        assert_eq!(observation.handler, "");
-        assert_eq!(observation.code, 200);
-        assert_eq!(observation.request_size, 17.);
-        assert_eq!(hooks.scrapes.load(Ordering::SeqCst), 0);
-        assert!(selections.try_recv().is_err());
-        println!(
-            "normalized failure {method}: selections held {held:?}, observed {:?}, request {elapsed:?}",
-            observation.duration
-        );
-        timings.push((method, observation.duration, held, elapsed));
-    }
-    assert!(
-        timings
-            .iter()
-            .all(|(_, observed, held, elapsed)| observed >= held && observed <= elapsed),
-        "both selection intervals must be included once: {timings:?}"
-    );
-}
-
-#[tokio::test]
-async fn root_bypasses_non_candidates_and_records_exact_selection_paths() {
-    let (mut state, _, _, _, _sub) = setup();
-    let matcher = Arc::new(RecordingMatcher::default());
-    state.matcher = matcher.clone();
-    let stats = http::standalone(state.clone());
-    let app = http::mount_services(
-        Router::new().fallback(|| async { "shared" }),
-        state,
-        stats,
-        Router::new().fallback(|| async { "connector" }),
-    );
-    for path in [
-        "/content/entities",
-        "/metrics",
-        "/status",
-        "/ping",
-        "/health/live",
-        "/ws",
-        "/archipelago-ea-ws-connector/x",
-    ] {
-        request(app.clone(), "GET", path, &[]).await;
-    }
-    assert!(matcher.paths.lock().is_empty());
-    for (path, expected) in [
-        ("/peers", vec!["/peers"]),
-        ("/Peers/%2e", vec!["/Peers/%2e", "/Peers/"]),
-        ("/peers/id%2Fmore", vec!["/peers/id%2Fmore"]),
-        ("/archipelago-ea-stats/x/../peers", vec!["/peers"]),
-        ("/archipelago-ea-stats/unknown", vec!["/unknown"]),
-    ] {
-        request(app.clone(), "GET", path, &[]).await;
-        assert_eq!(
-            std::mem::take(&mut *matcher.paths.lock()),
-            expected,
-            "{path}"
-        );
-    }
-    request(app.clone(), "OPTIONS", "/archipelago-ea-stats/unknown", &[]).await;
-    request(app, "GET", "/archipelago-ea-stats/health/live", &[]).await;
-    assert!(matcher.paths.lock().is_empty());
-}
-
-#[tokio::test]
-async fn root_collision_suppresses_claim_and_matcher_fault_is_not_a_nonmatch() {
-    let (mut state, _, hooks, _, _sub) = setup();
-    state.matcher = Arc::new(RecordingMatcher {
-        matches: true,
-        ..Default::default()
-    });
-    let shared =
-        Router::new().fallback(|| async { ([("x-shared-handler", "selected")], "shared") });
-    let app = http::merge_root(shared.clone(), state.clone());
-    for method in ["GET", "AAAA_COLLISION", "TRACE", "CONNECT"] {
-        let baseline = request(shared.clone(), method, "/peers", &[]).await;
-        let response = request(app.clone(), method, "/peers", &[]).await;
-        assert_eq!(response.0, StatusCode::OK, "delegated {method}");
-        assert_eq!(
-            response.1["x-shared-handler"], "selected",
-            "delegated {method}"
-        );
-        // Axum suppresses a successful CONNECT body even without Stats middleware.
-        assert_eq!(response.2, baseline.2, "delegated {method}");
-    }
-    assert!(hooks.observations.lock().is_empty());
-    state.matcher = Arc::new(RecordingMatcher {
-        fails: true,
-        ..Default::default()
-    });
-    for root in [false, true] {
-        let app = if root {
-            http::merge_root(Router::new().fallback(|| async { "shared" }), state.clone())
-        } else {
-            http::standalone(state.clone())
-        };
-        for method in ["GET", "HEAD"] {
-            let (status, headers, body) = request(
-                app.clone(),
-                method,
-                "/peers",
-                &[
-                    ("origin", "https://example.invalid"),
-                    ("content-length", "17"),
-                ],
-            )
-            .await;
-            assert_eq!(status, 500);
+    for path in ["/peers", "/archipelago-ea-stats/peers"] {
+        for method in ["UNKNOWN-A", "UNKNOWN-B", "get"] {
+            let (status, headers, body) = request(app.clone(), method, path, &[]).await;
+            assert_eq!(status, StatusCode::BAD_REQUEST);
             assert!(body.is_empty());
-            assert!(!headers.contains_key("content-type"));
             assert!(!headers.contains_key("access-control-allow-origin"));
-            if method == "HEAD" {
-                assert!(!headers.contains_key("content-length"));
-            }
-            let observation = hooks.observations.lock().pop().unwrap();
-            assert_eq!(
-                (
-                    observation.handler.as_str(),
-                    observation.code,
-                    observation.request_size
-                ),
-                ("", 200, 17.)
-            );
         }
-        for method in ["AAAA_FAILURE", "TRACE", "CONNECT"] {
-            let response = request(app.clone(), method, "/peers", &[]).await;
-            let expected = if !root && method == "AAAA_FAILURE" {
-                400
-            } else {
-                500
-            };
-            assert_eq!(response.0.as_u16(), expected, "root={root} {method}");
-            assert!(
-                hooks.observations.lock().is_empty(),
-                "{method} creates no series on a matcher fault"
+        for (method, status) in [
+            ("OPTIONS", 204),
+            ("TRACE", 500),
+            ("CONNECT", 501),
+            ("PROPFIND", 501),
+            ("QUERY", 501),
+        ] {
+            assert_eq!(
+                request(app.clone(), method, path, &[]).await.0.as_u16(),
+                status
             );
         }
     }
-    assert_eq!(hooks.scrapes.load(Ordering::SeqCst), 0);
-}
-
-#[tokio::test]
-async fn method_admission_bounds_labels_without_relabeling_accepted_extensions() {
-    for scope in ["standalone", "root", "stats-alias", "connector-alias"] {
-        let (mut state, _, hooks, _, _sub) = setup();
-        let matcher = Arc::new(RecordingMatcher::default());
-        state.matcher = matcher.clone();
-        let (app, path) = if scope == "standalone" {
-            (http::standalone(state), "/peers")
-        } else {
-            let app = http::mount_services(
-                Router::new().fallback(|| async { "shared" }),
-                state.clone(),
-                http::standalone(state.clone()),
-                http::socket_alias(http::standalone(state.clone()), state),
-            );
-            let path = match scope {
-                "root" => "/peers",
-                "stats-alias" => "/archipelago-ea-stats/peers",
-                _ => "/archipelago-ea-ws-connector/peers",
-            };
-            (app, path)
-        };
-        for method in (0..64)
-            .map(|i| format!("AAAA{i}"))
-            .chain(["TRACK".into(), "get".into()])
-        {
-            let response = request(
-                app.clone(),
-                &method,
-                path,
-                &[("origin", "https://example.invalid")],
-            )
-            .await;
-            assert_eq!(response.0, StatusCode::BAD_REQUEST, "{scope} {method}");
-            assert!(response.2.is_empty());
-            assert!(!response.1.contains_key("access-control-allow-origin"));
-        }
-        if scope == "root" {
-            let paths = matcher.paths.lock();
-            assert_eq!(paths.len(), 66, "root checks ownership once per request");
-            assert!(paths.iter().all(|path| path == "/peers"));
-        } else {
-            assert!(
-                matcher.paths.lock().is_empty(),
-                "{scope}: rejected methods reach no matcher"
-            );
-        }
-        assert!(
-            hooks.observations.lock().is_empty(),
-            "{scope}: rejected methods create no series"
-        );
-        for (method, status) in [("OPTIONS", 204), ("TRACE", 500), ("CONNECT", 501)] {
-            assert_eq!(
-                request(app.clone(), method, path, &[]).await.0.as_u16(),
-                status,
-                "{scope} {method}"
-            );
-        }
-        assert!(hooks.observations.lock().is_empty());
-        let extensions = ["ACL", "PROPFIND", "QUERY", "M-SEARCH"];
-        for method in extensions {
-            assert_eq!(
-                request(app.clone(), method, path, &[]).await.0.as_u16(),
-                501,
-                "{scope} {method}"
-            );
-        }
-        let observations = hooks.observations.lock();
-        assert_eq!(observations.len(), extensions.len());
-        for (observation, method) in observations.iter().zip(extensions) {
-            assert_eq!(observation.method, method);
-            assert_eq!(observation.code, 501);
-            assert!(observation.handler.is_empty());
-        }
-        drop(observations);
-        if scope == "root" {
-            matcher.paths.lock().clear();
-            let before = hooks.observations.lock().len();
-            let response = request(app, "AAAA_DOMAIN", "/other-domain", &[]).await;
-            assert_eq!(response.0, StatusCode::OK);
-            assert_eq!(response.2, "shared");
-            assert!(matcher.paths.lock().is_empty());
-            assert_eq!(hooks.observations.lock().len(), before);
-        }
-    }
+    let body = recorder.handle().render();
+    assert!(
+        body.lines()
+            .any(|l| l.starts_with("dcl_http_requests_total{")
+                && l.contains("method=\"OTHER\"")
+                && l.contains("status_code=\"400\"")
+                && l.ends_with(" 6")),
+        "{body}"
+    );
+    assert!(!body.contains("UNKNOWN-"));
 }
 
 #[tokio::test]
@@ -837,7 +438,7 @@ async fn head_options_method_and_cors_headers_follow_the_original_middleware() {
         );
         assert_eq!(headers["access-control-max-age"], "86400");
     }
-    for path in ["/peers", "/health/live", "/metrics"] {
+    for path in ["/peers", "/health/live"] {
         let r = request(app.clone(), "POST", path, &[]).await;
         assert_eq!(r.0, 405);
         assert_eq!(r.1["allow"], "HEAD, GET");
@@ -853,40 +454,14 @@ async fn head_options_method_and_cors_headers_follow_the_original_middleware() {
     );
 }
 #[tokio::test]
-async fn configured_metrics_auth_scrapes_and_actual_lifecycle_values_are_used() {
-    let (mut state, _, runtime, _, _sub) = setup();
-    state.settings.metrics_path = "/custom/metrics".into();
-    state.matcher = Arc::new(http::test_support::LiteralMatcher("/custom/metrics".into()));
-    state.settings.metrics_bearer_token = Some("secret".into());
+async fn retired_scrapes_follow_the_stats_fallback_and_lifecycle_probes_keep_their_values() {
+    let (state, _, runtime, _, _sub) = setup();
     let app = http::standalone(state);
-    assert_eq!(request(app.clone(), "GET", "/metrics", &[]).await.0, 404);
-    for auth in ["bearer secret", "Bearer  secret", "Bearer secretx", ""] {
-        let r = request(
-            app.clone(),
-            "GET",
-            "/custom/metrics",
-            &[("Authorization", auth)],
-        )
-        .await;
-        assert_eq!(r.0, 401);
-        assert_eq!(r.2, "");
-        assert!(!r.1.contains_key("www-authenticate"));
-        assert!(!r.1.contains_key("content-type"));
+    for path in ["/metrics", "/custom/metrics"] {
+        for method in ["GET", "HEAD", "POST"] {
+            assert_eq!(request(app.clone(), method, path, &[]).await.0, 404);
+        }
     }
-    let r = request(
-        app.clone(),
-        "HEAD",
-        "/custom/metrics",
-        &[("Authorization", "Bearer secret ignored")],
-    )
-    .await;
-    assert_eq!(r.0, 200);
-    assert_eq!(r.2, "");
-    assert_eq!(
-        r.1["content-type"],
-        "text/plain; version=0.0.4; charset=utf-8"
-    );
-    assert_eq!(runtime.scrapes.load(Ordering::SeqCst), 1);
     assert_eq!(
         request(app.clone(), "GET", "/health/live", &[]).await.2,
         "alive"
@@ -1015,32 +590,6 @@ async fn root_projection_preserves_other_service_routes_and_fallback() {
     );
 }
 #[tokio::test]
-async fn metrics_observe_route_templates_skip_probes_and_keep_request_semantics() {
-    let (state, _, runtime, _, _sub) = setup();
-    let app = http::standalone(state);
-    request(app.clone(), "GET", "/health/live", &[]).await;
-    request(app.clone(), "HEAD", "/health/ready", &[]).await;
-    request(app.clone(), "OPTIONS", "/peers", &[]).await;
-    assert!(runtime.observations.lock().is_empty());
-    request(
-        app.clone(),
-        "GET",
-        "/CoMmS/PeErS/Missing/",
-        &[("content-length", "17")],
-    )
-    .await;
-    let records = runtime.observations.lock();
-    assert_eq!(records.len(), 1);
-    assert_eq!(records[0].handler, "/comms/peers/:id");
-    assert_eq!(records[0].request_size, 17.);
-    assert_eq!(records[0].code, 404);
-    drop(records);
-    request(app.clone(), "POST", "/peers", &[]).await;
-    assert_eq!(runtime.observations.lock()[1].handler, "");
-    request(app, "GET", "/metrics", &[]).await;
-    assert_eq!(runtime.observations.lock()[2].handler, "/metrics");
-}
-#[tokio::test]
 async fn nested_head_and_options_do_not_invent_content_length_and_status_reads_each_time() {
     let (mut state, _, _, _, _sub) = setup();
     let version = Arc::new(Mutex::new("first".to_string()));
@@ -1083,6 +632,14 @@ async fn an_empty_origin_sets_credentials_but_does_not_reflect_or_replace_status
     );
 }
 
+#[test]
+fn default_content_url_has_no_trailing_slash() {
+    assert_eq!(
+        http::Settings::default().content_url,
+        "https://peer.decentraland.org/content"
+    );
+}
+
 /// Replays output generated by the pinned TypeScript handlers, preserving JSON bytes.
 #[tokio::test]
 async fn source_handler_fixtures_match_pulse_state_and_all_http_aliases() {
@@ -1094,6 +651,7 @@ async fn source_handler_fixtures_match_pulse_state_and_all_http_aliases() {
     use prost::Message;
     let fixture: Value = serde_json::from_str(include_str!("source-fixtures.json")).unwrap();
     let (mut state, docs, _, bus, _sub) = setup();
+    // The pinned revision predates upstream's trailing-slash strip; replay its base as is.
     state.settings.content_url = fixture["baseUrl"].as_str().unwrap().into();
     let mut store = crate::pulse::statistics::Statistics::default();
     let ProducerReply::Grant(grant) = store.control(ProducerRequest::Begin {
@@ -1316,4 +874,59 @@ async fn status_reports_the_host_commit_hash() {
     let status: Value = serde_json::from_str(&response.2).unwrap();
     assert_eq!(status["commitHash"], "built-commit");
     assert_eq!(status["version"], "v");
+}
+
+#[tokio::test]
+async fn process_http_metrics_cover_claimed_routes_nested_services_and_retired_scrapes() {
+    let (state, _, _, _, _sub) = setup();
+    let recorder = dcl_metrics::PrometheusBuilder::new().build_recorder();
+    let _local = dcl_metrics::set_default_local_recorder(&recorder);
+    let catalog = dcl_metrics::http::component(
+        Router::new().route("/items/{id}", get(|| async { "ok" })),
+        "catalog",
+    );
+    let shared = Router::new().nest("/shop", catalog);
+    let app = http::mount_services(
+        shared,
+        state.clone(),
+        http::standalone(state),
+        Router::new(),
+    );
+    for path in [
+        "/peers/sensitive-peer",
+        "/archipelago-ea-stats/peers/another-private-peer",
+        "/shop/items/secret-item/",
+        "/archipelago-ea-stats/metrics",
+    ] {
+        request(app.clone(), "GET", path, &[]).await;
+    }
+    let body = recorder.handle().render();
+    let counts: Vec<_> = body
+        .lines()
+        .filter(|line| line.starts_with("dcl_http_requests_total{"))
+        .collect();
+    assert_eq!(counts.len(), 3, "{body}");
+    assert!(
+        counts.iter().any(|l| l.contains("component=\"stats\"")
+            && l.contains("route=\"unmatched\"")
+            && l.contains("status_code=\"404\"")),
+        "{body}"
+    );
+    assert!(
+        counts
+            .iter()
+            .any(|line| line.contains("component=\"stats\"")
+                && line.contains("route=\"/peers/{id}\"")
+                && line.ends_with(" 2")),
+        "{body}"
+    );
+    assert!(
+        counts
+            .iter()
+            .any(|line| line.contains("component=\"catalog\"")
+                && line.contains("route=\"/shop/items/{id}\"")
+                && line.ends_with(" 1")),
+        "{body}"
+    );
+    assert!(!body.contains("sensitive-peer") && !body.contains("secret-item"));
 }

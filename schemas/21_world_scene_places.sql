@@ -25,6 +25,33 @@ CREATE UNIQUE INDEX world_scene_place_deployment_idx
 -- The unique index's world prefix also bounds overlap probes, orphan sweeps
 -- and the parked-scope quota check to the active scenes in one world.
 
+-- Exact displaced bindings let legacy stream notices recover their admin
+-- namespace after retirement or redeployment. Distinct incarnations remain
+-- distinct evidence: a reader must refuse an ambiguous entity, never guess.
+-- No FK: these recovery facts survive deletion of the source identity too.
+CREATE TABLE explore.world_scene_binding (
+    world_name text NOT NULL,
+    entity_id text NOT NULL,
+    identity uuid NOT NULL,
+    CONSTRAINT world_scene_binding_pkey PRIMARY KEY (world_name, entity_id, identity)
+);
+
+CREATE FUNCTION explore.retain_world_scene_binding() RETURNS trigger
+LANGUAGE plpgsql AS $$
+BEGIN
+    IF OLD.active AND (TG_OP = 'DELETE' OR NOT NEW.active
+        OR (OLD.world_name, OLD.entity_id, OLD.identity)
+           IS DISTINCT FROM (NEW.world_name, NEW.entity_id, NEW.identity)) THEN
+        INSERT INTO explore.world_scene_binding (world_name, entity_id, identity)
+        VALUES (OLD.world_name, OLD.entity_id, OLD.identity)
+        ON CONFLICT DO NOTHING;
+    END IF;
+    RETURN NULL;
+END;
+$$;
+CREATE TRIGGER world_scene_binding_retained AFTER UPDATE OR DELETE ON explore.world_scene_place
+FOR EACH ROW EXECUTE FUNCTION explore.retain_world_scene_binding();
+
 -- Quota excludes retired UUID namespaces while accepting arbitrary legacy text.
 CREATE INDEX world_scene_place_retired_identity_idx
     ON explore.world_scene_place (world_name, (identity::text)) WHERE NOT active;
@@ -51,3 +78,46 @@ FROM (
     ) END AS entity_id
     FROM worlds.world_scene_identity i
 ) existing;
+
+-- Preserve exact current admin namespaces before the final scene retirement.
+-- Worlds serializes scene changes under its world row lock. Catalogue rows
+-- retain their fetch time; this is local evidence, not a mirror refresh.
+CREATE FUNCTION explore.capture_world_removal_admin_keys() RETURNS trigger
+LANGUAGE plpgsql AS $$
+DECLARE keys text[];
+BEGIN
+    IF OLD.active AND NOT NEW.active AND NOT EXISTS (
+        SELECT 1 FROM worlds.world_scenes WHERE world_name=OLD.world_name
+    ) THEN
+        SELECT array_agg(identity::text ORDER BY identity) INTO keys
+        FROM explore.world_scene_place WHERE world_name=OLD.world_name AND active;
+        UPDATE explore.place SET removal_admin_keys=ARRAY(
+            SELECT DISTINCT unnest(removal_admin_keys || keys) ORDER BY 1
+        ) WHERE world AND lower(world_name)=OLD.world_name;
+        UPDATE explore.place_world_local SET removal_admin_keys=ARRAY(
+            SELECT DISTINCT unnest(removal_admin_keys || keys) ORDER BY 1
+        ) WHERE world AND lower(world_name)=OLD.world_name;
+    END IF;
+    RETURN NEW;
+END;
+$$;
+CREATE TRIGGER world_removal_admin_keys BEFORE UPDATE OF active ON explore.world_scene_place
+FOR EACH ROW EXECUTE FUNCTION explore.capture_world_removal_admin_keys();
+
+-- An imported identity can precede its backing scene. Only a real scene
+-- insertion starts a new live catalogue lifetime; queued events stay frozen.
+CREATE FUNCTION explore.clear_world_removal_admin_keys() RETURNS trigger
+LANGUAGE plpgsql AS $$
+BEGIN
+    -- Keep the identity-before-catalogue lock order used by publication and ranking.
+    PERFORM identity FROM explore.world_scene_place
+    WHERE world_name=NEW.world_name AND active ORDER BY identity FOR UPDATE;
+    UPDATE explore.place SET removal_admin_keys='{}'
+    WHERE world AND lower(world_name)=NEW.world_name AND cardinality(removal_admin_keys)>0;
+    UPDATE explore.place_world_local SET removal_admin_keys='{}'
+    WHERE world AND lower(world_name)=NEW.world_name AND cardinality(removal_admin_keys)>0;
+    RETURN NEW;
+END;
+$$;
+CREATE TRIGGER world_scene_clear_removal_admin_keys AFTER INSERT ON worlds.world_scenes
+FOR EACH ROW EXECUTE FUNCTION explore.clear_world_removal_admin_keys();

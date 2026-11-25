@@ -161,6 +161,30 @@ impl SceneResponseSender {
     }
 }
 
+/// Whether the engine wakes a scene's runtime when it sends the scene something, rather than the
+/// runtime finding it on its next poll: the engine sets it each frame (scene_runner
+/// `update_scene_priority`) and, on the web, the scene's relay reads it before each pump
+/// (dcl_wasm `inner::relay`). Nothing reads it natively. Shared between the engine's handle to the
+/// scene and the runtime, like the kill flag.
+#[derive(Clone, Debug, Default)]
+pub struct SceneWake(std::sync::Arc<std::sync::atomic::AtomicBool>);
+
+impl SceneWake {
+    /// Engine: whether the engine wakes the scene; written only when that changes. A runtime
+    /// that reads a stale value keeps its poll, or waits at most its timeout, until the next
+    /// read, so no ordering with other memory is needed.
+    pub fn set(&self, wakes: bool) {
+        if self.get() != wakes {
+            self.0.store(wakes, std::sync::atomic::Ordering::Relaxed);
+        }
+    }
+
+    /// Runtime: whether the engine wakes the scene.
+    pub fn get(&self) -> bool {
+        self.0.load(std::sync::atomic::Ordering::Relaxed)
+    }
+}
+
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 #[repr(u8)]
 pub enum CommsMessageType {

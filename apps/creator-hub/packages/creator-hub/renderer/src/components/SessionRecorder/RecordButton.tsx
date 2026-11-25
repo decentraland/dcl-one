@@ -1,5 +1,5 @@
 import Spinner from '@ui/atoms/Spinner';
-import Tooltip from '@ui/atoms/Tooltip';
+import { Tooltip } from '@dcl/one-ui';
 
 import type { RecorderStatus } from '/shared/types/ai';
 import { MAX_RECORDING_MS, type RecordingToolsStatus } from '/shared/types/recording';

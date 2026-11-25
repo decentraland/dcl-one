@@ -302,6 +302,7 @@ export type PageToScene =
   | SetPhotoModeRequest
   | TakePhotoRequest
   | GetGalleryPhotoRequest
+  | GetGalleryWearablesRequest
   | DeleteGalleryPhotoRequest
   | SetGalleryPhotoPublicRequest
 
@@ -396,7 +397,7 @@ export interface FocusChatMessage {
   kind: 'focusChat'
 }
 
-/** A nearby player (from the scene's PlayerIdentityData set). */
+/** A player from the scene's PlayerIdentityData set. The roster filters remote players by last known Pulse membership. */
 export interface NearbyMember {
   address: string
   name: string
@@ -884,7 +885,8 @@ export interface MicMessage {
   kind: 'mic'
   enabled: boolean
   available: boolean
-  /** The scene the player stands in turns nearby voice off. */
+  /** Nearby voice is off where the player stands: the scene turns it off with the player's
+   *  `DisableVoice` permission, or its room refused the player as banned. */
   sceneBlocked?: boolean
   /** Counts the mic opens the scene refused. */
   refusals?: number
@@ -1038,6 +1040,17 @@ export interface SigninStageReadyMessage {
   kind: 'signinStageReady'
 }
 
+/** The Backpack's avatar preview has drawn the avatar (scene → page), so the page can open its hole onto it. */
+export interface AvatarPreviewReadyMessage {
+  kind: 'avatarPreviewReady'
+}
+
+/** The minimap's Camera style is drawing its top-down view (scene → page), so the page can open the
+ *  map's hole onto it. Sent again for every camera the scene creates. */
+export interface MinimapReadyMessage {
+  kind: 'minimapReady'
+}
+
 export interface SceneInfoMessage {
   kind: 'sceneInfo'
   title: string
@@ -1077,8 +1090,11 @@ export interface TeleportRequest {
    *  a full reconnect, as for changeRealm, even to the realm the player is in. Omitted: a parcel of
    *  the realm the player is in. */
   realm?: string
-  /** Set with `realm`: the scene answers with a `travelResult` carrying this id. */
+  /** The scene answers with a `travelResult` carrying this id. */
   travelId?: number
+  /** Land on the destination scene's spawn point of this name (compared in lowercase); its default
+   *  spawn without one, or when the scene has none of that name. */
+  spawnPoint?: string
 }
 
 /** Change to a world/realm (page → scene → changeRealm). `realm` is a world name
@@ -1088,10 +1104,13 @@ export interface ChangeRealmRequest {
   realm: string
   /** The scene answers with a `travelResult` carrying this id. */
   travelId?: number
+  /** As for a teleport: the spawn point to land on, by name. */
+  spawnPoint?: string
 }
 
-/** How a realm change the page asked for ended (scene → page). On failure the engine kept the
- *  player in the realm they were in; `message` is the engine's reason. */
+/** How a realm change or a teleport the page asked for ended (scene → page). On failure the engine
+ *  kept the player in the realm they were in; `message` is the engine's reason. `realm` is empty
+ *  for a teleport inside the realm. */
 export interface TravelResultMessage {
   kind: 'travelResult'
   travelId: number
@@ -1307,6 +1326,9 @@ export interface EngineViewportRequest {
   /** Avatar preview region only: the part of `rect` (same units) the avatar is framed in, as it
    *  would be in a rect of that height centred there. The backdrop still fills `rect`. Absent: all of it. */
   focus?: { x: number; y: number; width: number; height: number }
+  /** Avatar preview region only: the box (same units) the page shows the preview in; the scene draws none
+   *  of the preview outside it. Absent: all of `rect`. */
+  clip?: { x: number; y: number; width: number; height: number }
   /** A `LOBBY_STAGE_PRESETS` id; lobby region only. */
   stagePreset?: string
   /** Lobby region only: the pages that borrow the stage leave the avatar still. */
@@ -1937,10 +1959,16 @@ export interface GalleryPerson {
   address: string
   name: string
   isGuest?: boolean
+  /** Urns of the wearables they had on when the photo was taken. */
+  wearables?: string[]
+  /** An official wallet, as the nametags mark it. */
+  official?: boolean
 }
 
 /** Full metadata for one photo (fetched lazily when its detail view opens). */
 export interface GalleryPhotoMeta {
+  /** When it was taken, epoch seconds as a string. */
+  dateTime?: string
   /** Who took the photo. */
   userName?: string
   userAddress?: string
@@ -2033,6 +2061,20 @@ export interface GalleryPhotoMessage {
   meta: GalleryPhotoMeta | null
 }
 
+/** Resolve a photo person's wearable urns, with shop links. Answered by a GalleryWearablesMessage. */
+export interface GetGalleryWearablesRequest {
+  kind: 'getGalleryWearables'
+  requestId: number
+  urns: string[]
+}
+
+export interface GalleryWearablesMessage {
+  kind: 'galleryWearables'
+  requestId: number
+  ok: boolean
+  wearables: Wearable[]
+}
+
 /** Delete one of the local player's photos (signed DELETE). Answered by a GalleryWriteMessage. */
 export interface DeleteGalleryPhotoRequest {
   kind: 'deleteGalleryPhoto'
@@ -2053,7 +2095,7 @@ export interface WatchMapPlayersRequest {
   on: boolean
 }
 
-/** The players near enough for the engine to hold (scene → page), while the page watches. */
+/** Nearby scene players filtered by last known Pulse membership, while the page watches. */
 export interface MapPlayersMessage {
   kind: 'mapPlayers'
   players: MapPlayer[]
@@ -2646,9 +2688,12 @@ export type SceneToPage =
   | SceneInfoMessage
   | LobbyStageReadyMessage
   | SigninStageReadyMessage
+  | AvatarPreviewReadyMessage
+  | MinimapReadyMessage
   | GalleryMessage
   | MapPlayersMessage
   | GalleryPhotoMessage
+  | GalleryWearablesMessage
   | GalleryWriteMessage
   | PermissionRequestMessage
   | PermissionWithdrawnMessage

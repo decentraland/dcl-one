@@ -142,13 +142,13 @@ impl FriendshipMutationLimiter {
                 tracing::error!(
                     "friendship rate limiter expiration is not representable; allowing first increment"
                 );
-                metrics::counter!("friendship_rate_limiter_unavailable").increment(1);
+                dcl_metrics::counter!("friendship_rate_limiter_unavailable").increment(1);
                 true
             }
             Ok((count, _)) => (count as f64) <= limit,
             Err(error) => {
                 tracing::error!(%error, "friendship rate limiter unavailable; allowing action");
-                metrics::counter!("friendship_rate_limiter_unavailable").increment(1);
+                dcl_metrics::counter!("friendship_rate_limiter_unavailable").increment(1);
                 true
             }
         }
@@ -283,7 +283,7 @@ impl Admission {
             if let Some((oldest, protocol)) = state.sockets.pop_front() {
                 let (code, reason) = REPLACED;
                 oldest.end(code, reason);
-                metrics::counter!("ws_admission_evictions", "protocol" => protocol.label())
+                dcl_metrics::counter!("ws_admission_evictions", "protocol" => protocol.label())
                     .increment(1);
                 displaced = true;
             }
@@ -302,7 +302,7 @@ impl Admission {
         };
         state.budget.replenish(&limits, now);
         if state.budget.tokens < 1.0 {
-            metrics::counter!(
+            dcl_metrics::counter!(
                 "ws_admission_rejections",
                 "protocol" => Protocol::Stream.label(),
                 "reason" => "subscriptions"
@@ -431,12 +431,10 @@ mod tests {
             subscription_burst: 2,
             ..AdmissionLimits::default()
         });
-        let recorder = crate::comms::metrics::prometheus_builder()
-            .unwrap()
-            .build_recorder();
+        let recorder = crate::rpc::metrics_builder().unwrap().build_recorder();
         let handle = recorder.handle();
         let first = Arc::new(SocketClose::default());
-        metrics::with_local_recorder(&recorder, || {
+        dcl_metrics::with_local_recorder(&recorder, || {
             assert!(!admission.claim("0xa", first.clone(), Protocol::Rpc));
             assert!(admission.claim("0xa", Arc::new(SocketClose::default()), Protocol::Stream));
             assert!(admission.admit_subscription("0xa"));

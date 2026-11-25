@@ -14,7 +14,6 @@
   "ATLAS_SERVER_API_URL": "https://api.decentraland.org/v2",
   "JUMP_URL": "https://decentraland.org/jump",
   "RPC_URL": "https://rpc.decentraland.org/mainnet",
-  "MARKETPLACE_SUBGRAPH": "https://subgraph.decentraland.org/marketplace",
   "ENS_SUBGRAPH": "https://subgraph.decentraland.org/ens",
   "RENTALS_SUBGRAPH": "https://subgraph.decentraland.org/rentals-ethereum-mainnet",
   "LAND_MANAGER_SUBGRAPH": "https://subgraph.decentraland.org/land-manager",

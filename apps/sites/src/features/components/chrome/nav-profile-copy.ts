@@ -1,5 +1,4 @@
-import type { NavBarLabels } from "@dcl/one-ui";
-import type { SitesLocale } from "@dcl/one-ui/apps/sites/chrome/sites-locale";
+import type { SitesLocale, NavBarLabels } from "@dcl/one-ui";
 
 type NavProfileCopy = {
   labels: Pick<

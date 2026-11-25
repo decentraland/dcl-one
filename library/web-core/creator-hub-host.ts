@@ -10,8 +10,9 @@ export type CreatorHubHost = {
   openLink(url: string): void;
 };
 
-const HOST_KEY = "__dclCreatorHubHost";
-type HostWindow = Window & { [HOST_KEY]?: CreatorHubHost };
+/** The parent window's property where the Explorer's Create panel offers itself to the hub it frames. */
+export const CREATOR_HUB_HOST_KEY = "__dclCreatorHubHost";
+type HostWindow = Window & { [CREATOR_HUB_HOST_KEY]?: CreatorHubHost };
 
 export const CREATOR_HUB_HOME = "/create";
 export const CREATOR_HUB_SCOPE = ["/create"] as const;
@@ -21,16 +22,16 @@ export function isCreatorHubPath(path: string): boolean {
 }
 
 export function installCreatorHubHost(win: Window, host: CreatorHubHost): () => void {
-  (win as HostWindow)[HOST_KEY] = host;
+  (win as HostWindow)[CREATOR_HUB_HOST_KEY] = host;
   return () => {
-    if ((win as HostWindow)[HOST_KEY] === host) delete (win as HostWindow)[HOST_KEY];
+    if ((win as HostWindow)[CREATOR_HUB_HOST_KEY] === host) delete (win as HostWindow)[CREATOR_HUB_HOST_KEY];
   };
 }
 
 export function creatorHubHost(win: Window): CreatorHubHost | null {
   try {
     if (win.parent === win) return null;
-    const host = (win.parent as HostWindow)[HOST_KEY];
+    const host = (win.parent as HostWindow)[CREATOR_HUB_HOST_KEY];
     return host?.version === 1 ? host : null;
   } catch {
     return null;

@@ -133,9 +133,9 @@ impl Queue {
             return;
         }
         if let Some(result) = result {
-            metrics::counter!(name,"result"=>result).increment(1);
+            dcl_metrics::counter!(name,"result"=>result).increment(1);
         } else {
-            metrics::counter!(name).increment(1);
+            dcl_metrics::counter!(name).increment(1);
         }
         #[cfg(test)]
         self.metrics.push(serde_json::json!({"name":name,"labels":result.map(|result|serde_json::json!({"result":result})).unwrap_or_else(||serde_json::json!({}))}));
@@ -149,7 +149,7 @@ impl Queue {
     }
     fn fail(&mut self, error: &str) {
         if self.defer_socket_metrics {
-            metrics::counter!("ws_transport_errors").increment(1);
+            dcl_metrics::counter!("ws_transport_errors").increment(1);
         }
         self.errors.push(error.into());
         self.close();
@@ -201,7 +201,7 @@ impl Queue {
             if matches!(outcome, SendOutcome::Code(_)) {
                 let pending_bytes = buffered();
                 if pending_bytes > 0 && !self.defer_socket_metrics {
-                    metrics::gauge!("ws_queue_vs_backpressure_ratio").set(
+                    dcl_metrics::gauge!("ws_queue_vs_backpressure_ratio").set(
                         queued as f64 / (pending_bytes as f64 / self.config.estimated_message_size),
                     );
                 }
@@ -213,7 +213,7 @@ impl Queue {
                     _ => "dropped",
                 };
                 if !self.defer_socket_metrics {
-                    metrics::histogram!("ws_message_size_bytes","result"=>result)
+                    dcl_metrics::histogram!("ws_message_size_bytes","result"=>result)
                         .record(size as f64);
                 }
             }

@@ -52,6 +52,7 @@ pub fn ops(super_user: bool) -> Vec<OpDecl> {
             op_clear_home_scene(),
             op_set_lobby_stage(),
             op_get_service_urls(),
+            op_get_official_wallets(),
             op_get_welcome(),
             op_accept_terms(),
             op_get_satellite_view(),
@@ -325,6 +326,12 @@ pub async fn op_get_service_urls(
     state: Rc<RefCell<OpState>>,
 ) -> Result<Vec<(String, String)>, OpError> {
     Ok(dcl_js::system_api::op_get_service_urls(state).await?)
+}
+
+#[op2]
+#[serde]
+pub async fn op_get_official_wallets(state: Rc<RefCell<OpState>>) -> Result<Vec<String>, OpError> {
+    Ok(dcl_js::system_api::op_get_official_wallets(state).await?)
 }
 
 #[op2]

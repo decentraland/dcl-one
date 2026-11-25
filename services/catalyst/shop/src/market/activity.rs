@@ -2,12 +2,9 @@
 //! builder signer): one wallet's market history, newest first: the sales
 //! it bought and sold, the bids it placed and received, the orders it
 //! created and filled, and the trades it signed or is a beneficiary of.
-//! Each source is read to its newest 500 (the old internal cap; the
-//! subgraph readers in pages of 100, the trades from the local table), the
-//! events are merged by time, one per transaction and role (or per
-//! token/time/role without a transaction), and paged in memory (`limit` at
-//! most 500, `offset`). A source that cannot be read contributes nothing,
-//! as before.
+//! Each leg contributes up to 500 events. Both sales roles read the same
+//! published snapshot. Activity merges the available legs by time, keeps
+//! one event per transaction and role, and pages the result in memory.
 
 use std::collections::HashSet;
 
@@ -22,7 +19,7 @@ use super::SharedState;
 use super::bids::{Bid, BidFilters, list_bids};
 use super::orders::{Order, OrderFilters, list_orders};
 use super::readers::READER_MAX_FIRST;
-use super::sales::{Sale, SaleFilters, list_sales};
+use super::sales::Sale;
 use super::signed::{MARKETPLACE_AUTH_SIGNERS, require_auth_metadata};
 use super::trades::{Trade, TradeAsset, trades_of_address};
 use super::wire::{ApiError, get_number_parameter};
@@ -69,7 +66,7 @@ fn network_name<T: Serialize>(network: &T) -> String {
         .unwrap_or_default()
 }
 
-/// Every page of a subgraph-backed source up to the internal cap.
+/// Collect the paged bid and order legs up to the internal cap.
 async fn pages<T, F, Fut>(fetch: F) -> Vec<T>
 where
     F: Fn(i64) -> Fut,
@@ -107,26 +104,8 @@ pub async fn user_activity(
         .min(MAX_PAGE_SIZE);
     let offset = offset.filter(|v| *v > 0).unwrap_or(0);
     let lower = address.to_lowercase();
-    let first = Some(READER_MAX_FIRST);
-    let (sales_buyer, sales_seller, bids_bidder, bids_seller, orders_owner, orders_buyer, trades) = tokio::join!(
-        pages(|skip| {
-            let f = SaleFilters {
-                buyer: Some(lower.clone()),
-                first,
-                skip: Some(skip),
-                ..Default::default()
-            };
-            async move { list_sales(state, &f).await }
-        }),
-        pages(|skip| {
-            let f = SaleFilters {
-                seller: Some(lower.clone()),
-                first,
-                skip: Some(skip),
-                ..Default::default()
-            };
-            async move { list_sales(state, &f).await }
-        }),
+    let ((sales_buyer, sales_seller), bids_bidder, bids_seller, orders_owner, orders_buyer, trades) = tokio::join!(
+        super::sale_reads::activity_sales(state, &lower, INTERNAL_FETCH_CAP),
         pages(|skip| {
             let f = BidFilters {
                 bidder: Some(lower.clone()),
@@ -148,7 +127,7 @@ pub async fn user_activity(
         pages(|skip| {
             let f = OrderFilters {
                 owner: Some(lower.clone()),
-                first,
+                first: Some(READER_MAX_FIRST),
                 skip: Some(skip),
                 ..Default::default()
             };
@@ -157,7 +136,7 @@ pub async fn user_activity(
         pages(|skip| {
             let f = OrderFilters {
                 buyer: Some(lower.clone()),
-                first,
+                first: Some(READER_MAX_FIRST),
                 skip: Some(skip),
                 ..Default::default()
             };
@@ -223,7 +202,11 @@ pub async fn get_activity(
 
 /// The old route's own wording and codes, stage by stage: a missing chain or
 /// timestamp is a 400 before the signer allow-list, an expired or failing
-/// signature a 401, an EIP-1654 chain a 501, anything else malformed a 400.
+/// signature a 401 (a contract wallet's chain is checked with the node's
+/// EIP-1654 validator; one its contract refuses is a failing signature), an
+/// EIP-1654 chain on a node without a validator a 501, a contract-wallet
+/// check that cannot run (the RPC failed) a 503, never accepted, one the
+/// client source's budget refused a 429, anything else malformed a 400.
 fn refusal(e: SignedFetchError) -> ApiError {
     match e {
         SignedFetchError::Expired { .. } => ApiError::unauthorized("Expired signature"),
@@ -231,6 +214,14 @@ fn refusal(e: SignedFetchError) -> ApiError {
         SignedFetchError::EipNotImplemented => {
             ApiError::http(501, "EIP-1654 not supported on this route")
         }
+        SignedFetchError::CatalystUnavailable(_) => ApiError::http(
+            503,
+            "The contract-wallet signature cannot be checked right now",
+        ),
+        SignedFetchError::RateLimited => ApiError::http(
+            429,
+            "Too many contract-wallet signature checks; retry later",
+        ),
         _ => ApiError::bad_request("Invalid Auth Chain"),
     }
 }
@@ -251,7 +242,7 @@ async fn activity(
         "get",
         "/v1/activity",
         PayloadPolicy::V6ThenLegacy,
-        None,
+        state.eip1654.as_deref(),
     )
     .await
     .map_err(refusal)?

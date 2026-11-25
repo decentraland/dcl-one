@@ -284,6 +284,11 @@ module.exports.getServiceUrls = async function() {
     return Object.fromEntries(await Deno.core.ops.op_get_service_urls())
 }
 
+// string[]: the official wallets the nametags mark, lowercase 0x addresses
+module.exports.getOfficialWallets = async function() {
+    return await Deno.core.ops.op_get_official_wallets()
+}
+
 // {
 //   terms: boolean, // the terms aren't accepted on this install; the world is held until they are
 //   newProfile: boolean, // the account has no profile; its new one deploys with the next setAvatar
@@ -519,7 +524,8 @@ module.exports.setMicEnabled = function(enabled) {
     Deno.core.ops.op_set_mic_enabled(enabled);
 }
 
-// [{ userId: string, hideAvatar: bool, hideProfile: bool }]
+// [{ userId: string, hideAvatar: bool, hideProfile: bool, pulseAbsent: bool }]
+// An entry can report Pulse absence with both hide flags false.
 module.exports.getAvatarModifiers = async function() {
     return await Deno.core.ops.op_get_avatar_modifiers();
 }

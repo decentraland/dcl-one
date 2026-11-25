@@ -20,7 +20,7 @@ import { exactGrantLock, getManaSpendingAuthorization } from '../../shop/checkou
 import { CHAIN } from '@shop/model/chain'
 import type { StoredLogin } from '@explorer-core/features/auth/sso'
 import { SHOP_PROTOCOL, type ShopOperationEvent } from '@dcl/one-ui/apps/shop/shopProtocol'
-import { createShellShop, RETRY_AFTER_MS, splitQuoteFor, type ShellPurchaseHandlers, type ShellPurchaseView, type ShellShopServices } from '../shell/shop/purchase'
+import { createShellShop, RETRY_AFTER_MS, splitQuoteFor, splitRefusedNotice, type ShellPurchaseHandlers, type ShellPurchaseView, type ShellShopServices } from '../shell/shop/purchase'
 import type { ManaEvidence, ManaExecution } from '../shell/shop/manaEvidence'
 
 const BUYER = BOOK.buyer.toLowerCase()
@@ -450,6 +450,15 @@ describe('the in-world purchase with MANA', () => {
       expect(splitQuoteFor(1000 as UsdCents, 370 as UsdCents, (100n * MANA_WEI) as never, 63n * MANA_WEI - 1n)).toBeNull()
     })
 
+    it('says the balance changed after a refused split only where the new Credits part did', () => {
+      const refused = { creditsCents: 50 as UsdCents, credits: 5, manaWei: 300n as never }
+      expect(splitRefusedNotice(refused, { ...refused, creditsCents: 20 as UsdCents, credits: 2, manaWei: 330n as never })).toBe('Your Credits balance changed, so the split was updated.')
+      expect(splitRefusedNotice(refused, { ...refused })).toBe('The Credits payment couldn’t be authorized. Please review your payment options.')
+      // Only the MANA moved (its price, not the balance): no claim about the balance.
+      expect(splitRefusedNotice(refused, { ...refused, manaWei: 310n as never })).toBe('The Credits payment couldn’t be authorized. Please review your payment options.')
+      expect(splitRefusedNotice(refused, undefined)).toBe('The Credits payment couldn’t be authorized, so paying with Credits and MANA together is no longer available.')
+    })
+
     it('offers both together when the Credits are short of one item and MANA pays the rest', async () => {
       on()
       const w = world()
@@ -575,6 +584,31 @@ describe('the in-world purchase with MANA', () => {
       await vi.waitFor(() => expect(p.shown.filter((s) => s.view.step === 'method')).toHaveLength(2))
       const again = p.shown.at(-1)!
       expect((again.view as { split: { credits: number } }).split.credits).toBe(2)
+      // It says why the parts changed; the first look didn't.
+      expect(again.view).toMatchObject({ notice: 'Your Credits balance changed, so the split was updated.' })
+      expect(first.view).not.toHaveProperty('notice')
+      expect(w.relay.posts).toHaveLength(0)
+    })
+
+    it('says the split is gone when the terms read anew offer only MANA after the node refused the Credits part', async () => {
+      on()
+      const w = world()
+      w.chain.allowances.set(`137:${BUYER}:${MANAGER}`, maxUint256)
+      // The balance read for the terms holds 50 cents; by the authorization it holds none, and every read after says so.
+      let cents = 50
+      const p = page(w, { split: splitOn, creditsBalance: async () => ({ balanceCents: cents as UsdCents, credits: cents / 10 }), services: managed })
+      w.shop = createFakeShop({
+        authorizeCreditBatch: () => {
+          cents = 0
+          return { status: 402, body: { error: 'insufficient', balanceCents: 0, requiredCents: 50 } }
+        }
+      })
+      await p.open()
+      ;(await p.until('method')).handlers.onPay?.('split')
+      await vi.waitFor(() => expect(p.shown.filter((s) => s.view.step === 'method')).toHaveLength(2))
+      const again = p.shown.at(-1)!.view
+      expect(again).not.toHaveProperty('split')
+      expect(again).toMatchObject({ mana: { pays: true }, notice: 'The Credits payment couldn’t be authorized, so paying with Credits and MANA together is no longer available.' })
       expect(w.relay.posts).toHaveLength(0)
     })
 
@@ -635,6 +669,8 @@ describe('the in-world purchase with MANA', () => {
       first.handlers.onPay?.('split')
       await vi.waitFor(() => expect(p.shown.filter((s) => s.view.step === 'method')).toHaveLength(2))
       expect((p.shown.at(-1)!.view as { split: { credits: number } }).split.credits).toBe((first.view as { split: { credits: number } }).split.credits)
+      // Nothing it shows changed: it says only that the Credits weren't authorized, never that the balance changed.
+      expect(p.shown.at(-1)!.view).toMatchObject({ notice: 'The Credits payment couldn’t be authorized. Please review your payment options.' })
       expect(w.relay.posts).toHaveLength(0)
     })
 

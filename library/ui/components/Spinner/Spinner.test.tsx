@@ -10,6 +10,13 @@ describe('Spinner', () => {
     })
   })
 
+  describe('when an inline size is requested', () => {
+    it('should keep a named 16px progress indicator', () => {
+      render(<Spinner size={16} label="Loading balance" />)
+      expect(screen.getByRole('progressbar', { name: 'Loading balance' })).toHaveAttribute('data-size', '16')
+    })
+  })
+
   describe('when rendered with a label and the light variant', () => {
     it('names the progress bar and keeps the consumer class', () => {
       render(<Spinner label="Loading places" variant="light" className="extra" />)

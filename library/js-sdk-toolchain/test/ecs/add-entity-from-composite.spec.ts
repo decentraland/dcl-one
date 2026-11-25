@@ -1,6 +1,7 @@
 import { readFileSync, globSync } from 'fs'
 import path from 'path'
-import { Composite, Engine, Entity, IEngine } from '../../packages/@dcl/ecs/src'
+import type { Entity, IEngine } from '../../packages/@dcl/ecs/src'
+import { Composite, Engine } from '../../packages/@dcl/ecs/src'
 import { components } from '../../packages/@dcl/ecs/src'
 
 const COMPOSITE_BASE_PATH = 'test/ecs/composites'

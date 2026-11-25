@@ -153,7 +153,7 @@ describe('when a native Button becomes unavailable', () => {
 })
 
 describe('when using the native Button contract', () => {
-  it.each(['primary', 'secondary', 'tertiary', 'quaternary', 'inverse'] as const)(
+  it.each(['primary', 'secondary', 'secondaryLight', 'tertiary', 'quaternary', 'inverse'] as const)(
     'should render %s with consumer content and a leading icon',
     (variant) => {
       render(
@@ -162,6 +162,24 @@ describe('when using the native Button contract', () => {
         </Button>
       )
       expect(screen.getByRole('button', { name: 'Join the world' })).toHaveClass('wide')
+    }
+  )
+
+  describe.each(['primary', 'outline'] as const)(
+    'when a destructive %s button is disabled',
+    (variant) => {
+      it('should preserve the destructive tone and block activation', async () => {
+        const click = vi.fn()
+        render(
+          <Button variant={variant} tone="danger" disabled onClick={click}>
+            Remove
+          </Button>
+        )
+        const button = screen.getByRole('button', { name: 'Remove' })
+        expect(button).toHaveAttribute('data-tone', 'danger')
+        await userEvent.click(button)
+        expect(click).not.toHaveBeenCalled()
+      })
     }
   )
 

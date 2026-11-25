@@ -36,9 +36,21 @@ pub(super) fn connector_routes(
 ) -> Router<AppState> {
     Router::new().route(
         "/ws",
-        any(move |method, uri, headers, peer, ws, raw, state| {
-            connector_upgrade(method, uri, headers, peer, ws, raw, state, http.clone())
-        }),
+        any(
+            move |method, uri, headers, extensions, peer, ws, raw, state| {
+                connector_upgrade(
+                    method,
+                    uri,
+                    headers,
+                    extensions,
+                    peer,
+                    ws,
+                    raw,
+                    state,
+                    http.clone(),
+                )
+            },
+        ),
     )
 }
 
@@ -46,6 +58,7 @@ async fn connector_upgrade(
     method: axum::http::Method,
     uri: axum::http::Uri,
     headers: axum::http::HeaderMap,
+    extensions: axum::http::Extensions,
     peer: Peer,
     ws: Result<WebSocketUpgrade, axum::extract::ws::rejection::WebSocketUpgradeRejection>,
     raw: Option<axum::Extension<raw_transport::Signal>>,
@@ -57,7 +70,7 @@ async fn connector_upgrade(
             .get("sec-websocket-key")
             .is_some_and(|key| key.as_bytes().len() == 24)
     {
-        return http.respond(method, uri, headers).await;
+        return http.respond(method, uri, extensions).await;
     }
     match ws {
         Ok(ws) => ws_upgrade(ws, State(state), headers, peer, raw)
@@ -74,7 +87,6 @@ async fn ws_upgrade(
     peer: Peer,
     raw: Option<axum::Extension<raw_transport::Signal>>,
 ) -> impl IntoResponse {
-    let start = std::time::Instant::now();
     let client = crate::shared::client_ip::distinct_client_ip(
         &headers,
         peer.map(|axum::Extension(axum::extract::ConnectInfo(peer))| peer),
@@ -96,23 +108,13 @@ async fn ws_upgrade(
                 .collect::<Vec<_>>()
         })
         .unwrap_or_default();
-    let response = upgrade(
+    upgrade(
         ws,
         state.clone(),
         protocols,
         client.as_deref(),
         raw.map(|axum::Extension(raw)| raw),
-    );
-    state
-        .connector_metrics
-        .observe_connector(crate::stats::http::Observation {
-            method: "GET".into(),
-            handler: "/ws".into(),
-            code: response.status().as_u16(),
-            request_size: 0.,
-            duration: start.elapsed(),
-        });
-    response
+    )
 }
 
 fn upgrade(
@@ -123,6 +125,7 @@ fn upgrade(
     raw: Option<raw_transport::Signal>,
 ) -> axum::response::Response {
     let too_many = || {
+        dcl_metrics::ws::rejected("archipelago", "rate_limited");
         (
             axum::http::StatusCode::TOO_MANY_REQUESTS,
             [(axum::http::header::RETRY_AFTER, "5")],
@@ -139,6 +142,7 @@ fn upgrade(
     let permit = match state.sockets.clone().try_acquire_owned() {
         Ok(permit) if handler.is_ok() && !state.restart.is_cancelled() => permit,
         _ => {
+            dcl_metrics::ws::rejected("archipelago", "unavailable");
             return (
                 axum::http::StatusCode::SERVICE_UNAVAILABLE,
                 [(axum::http::header::RETRY_AFTER, "5")],
@@ -155,18 +159,21 @@ fn upgrade(
         raw.arm();
     }
     let ws = ws.protocols(protocols);
-    ws.read_buffer_size(16 * 1024)
-        .write_buffer_size(0)
-        .max_write_buffer_size(MAX_ASSIGNMENT_BYTES + 1024)
-        .max_message_size(MAX_CLIENT_MESSAGE_BYTES)
-        .max_frame_size(MAX_CLIENT_MESSAGE_BYTES)
-        .on_upgrade(move |socket| async move {
+    // The signed challenge is verified after the upgrade, in the task it
+    // spawns: it keeps the request's client source for the EIP-1654 budget.
+    crate::shared::eip1654_budget::on_upgrade(
+        ws.read_buffer_size(16 * 1024)
+            .write_buffer_size(0)
+            .max_write_buffer_size(MAX_ASSIGNMENT_BYTES + 1024)
+            .max_message_size(MAX_CLIENT_MESSAGE_BYTES)
+            .max_frame_size(MAX_CLIENT_MESSAGE_BYTES),
+        move |socket| async move {
             let _ip_slot = ip_slot;
             let socket = io::WebSocket::new(socket, state.clone(), permit, raw);
             handle_socket(socket, state, pending).await;
             drop(handler);
-        })
-        .into_response()
+        },
+    )
 }
 
 #[derive(Clone, Copy, PartialEq)]
@@ -377,6 +384,7 @@ async fn handle_socket(
                                     Err(_) => break,
                                 };
                                 let Some(issued) = issuance.as_ref() else { break };
+                                crate::shared::eip1654_budget::debug_assert_scoped("the archipelago socket");
                                 let Some(verified) = handshake_operation(
                                     &mut socket, &state, handshake_deadline, &evicted, true,
                                     state.challenges.redeem_and_verify_payload(

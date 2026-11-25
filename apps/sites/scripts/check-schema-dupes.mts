@@ -38,9 +38,9 @@
  * every entry MUST carry a one-line `reason` saying why the duplicate cannot
  * or must not be fixed by import -- `--check` fails on a reasonless entry.
  * The two standing exception classes:
- *   - ui3/src/data: ui3 deliberately carries its own schema tree and has no
- *     import path into sites' generated-schemas (the dependency points the
- *     other way -- sites imports ui3's ts-rs types).
+ *   - ui3/src/data and library/web-core: the schema tree ui3 and Sites share
+ *     has no import path into sites' generated-schemas (web-core and ui3
+ *     never import an app).
  *   - shape collisions: a hand schema for a service that has no ts-rs export
  *     of that shape, flagged only because it happens to share its property
  *     names with an unrelated generated schema.
@@ -62,6 +62,7 @@ const SCAN_ROOTS = [
   join(SITES, "src"),
   join(SITES, "scripts"),
   join(SITES, "..", "ui3", "src"),
+  join(SITES, "..", "..", "library", "web-core"),
 ];
 const BASELINE_PATH = join(SITES, "scripts", "schema-dupes-baseline.json");
 const SKIP_DIRS = new Set(["node_modules", "__snapshots__", "generated-schemas"]);

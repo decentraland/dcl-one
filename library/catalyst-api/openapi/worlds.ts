@@ -2658,6 +2658,17 @@ export interface operations {
                     "application/json": components["schemas"]["LiveDataResponse"];
                 };
             };
+            /** @description No fresh LiveKit observation is available. */
+            503: {
+                headers: {
+                    /** @description Seconds before retrying. */
+                    "Retry-After"?: number;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
         };
     };
     livekit_webhook: {
@@ -2753,8 +2764,11 @@ export interface operations {
                     "application/json": components["schemas"]["ApiErrorBody"];
                 };
             };
-            500: {
+            /** @description No fresh LiveKit observation is available. */
+            503: {
                 headers: {
+                    /** @description Seconds before retrying. */
+                    "Retry-After"?: number;
                     [name: string]: unknown;
                 };
                 content: {

@@ -1,5 +1,5 @@
 import { catalystBase, getJSON, sendJSON, type RequestOpts } from "./client";
-import { field, isRecord, listOf } from "./rows";
+import { field, isRecord, listOf } from "@web-core/catalyst/rows";
 
 const ADDRESS_RE = /^0x[0-9a-f]{40}$/i;
 

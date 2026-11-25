@@ -156,8 +156,7 @@ async fn real_worker_source_down_keeps_http_healthy_expires_then_recovers_and_cl
     let jobs = crate::jobs::Jobs::new().with_fleet_jobs(false);
     let app = router(state.presence.clone());
     let unknown = get(&app, "/live-data").await;
-    assert_eq!(unknown.0, axum::http::StatusCode::OK);
-    assert_eq!(unknown.1["lastUpdated"], "1970-01-01T00:00:00.000Z");
+    assert_eq!(unknown.0, axum::http::StatusCode::SERVICE_UNAVAILABLE);
     assert!(
         state
             .presence
@@ -194,12 +193,12 @@ async fn real_worker_source_down_keeps_http_healthy_expires_then_recovers_and_cl
     elapse(Duration::from_secs(60)).await;
     wait_pass(&jobs, 3).await;
     let (status, expired) = get(&app, "/live-data").await;
-    assert_eq!(status, axum::http::StatusCode::OK);
-    assert_eq!(expired["data"], json!({"totalUsers":0,"perWorld":[]}));
-    assert_eq!(expired["lastUpdated"], initial["lastUpdated"]);
+    assert_eq!(status, axum::http::StatusCode::SERVICE_UNAVAILABLE);
+    assert_eq!(expired["error"], "Service Unavailable");
+    assert_eq!(state.presence.last_updated(), initial["lastUpdated"]);
     assert_eq!(
         get(&app, "/wallet/watch:foo/connected-world").await.0,
-        axum::http::StatusCode::NOT_FOUND
+        axum::http::StatusCode::SERVICE_UNAVAILABLE
     );
 
     // The error retry doubles to its 5 s cap (plus up to 1 s of jitter).
@@ -491,6 +490,11 @@ async fn a_scenes_read_counts_its_world_scene_rooms_and_skips_other_worlds() {
 #[derive(Default)]
 struct Catalogue {
     refusal: Option<(String, RoomRefusal)>,
+    legacy: Option<(
+        String,
+        crate::world_identity::WorldName,
+        crate::world_identity::SceneId,
+    )>,
     unavailable: Option<String>,
     extra: HashMap<String, crate::rooms::ResolvedRoom>,
     classified: Mutex<Vec<String>>,
@@ -513,6 +517,14 @@ impl crate::interfaces::SceneIdentity for Catalogue {
             return Ok(RoomClassification::RelevantRefused {
                 room: room.into(),
                 reason: *reason,
+            });
+        }
+        if let Some((name, world, scene)) = &self.legacy
+            && name == room
+        {
+            return Ok(RoomClassification::LegacyWorldScene {
+                world: world.clone(),
+                scene: scene.clone(),
             });
         }
         if let Some(resolved) = self.extra.get(room) {
@@ -594,6 +606,12 @@ impl crate::interfaces::SceneIdentity for Catalogue {
         _: &crate::world_identity::WorldName,
     ) -> Result<Option<crate::rooms::ActiveDeployment>, crate::rooms::ResolveError> {
         Ok(None)
+    }
+    async fn world_scene_count(
+        &self,
+        world: &crate::world_identity::WorldName,
+    ) -> Result<usize, crate::rooms::ResolveError> {
+        Ok(usize::from(self.world_active_scene(world).await?.is_some()))
     }
 }
 
@@ -718,6 +736,12 @@ async fn baseline_world_lobby_and_scene_counts_remain_scoped() {
         axum::http::StatusCode::OK
     );
     assert_eq!(
+        get(&app, "/wallet/Authoritative-Server/connected-world")
+            .await
+            .0,
+        axum::http::StatusCode::NOT_FOUND
+    );
+    assert_eq!(
         get(&app, "/wallet/shared-wallet/connected-world").await.0,
         axum::http::StatusCode::NOT_FOUND
     );
@@ -772,7 +796,6 @@ async fn a_refused_room_is_left_out_and_keeps_only_its_own_world_undetermined() 
         ),
         ("world-foo.dcl.eth-scene", RoomRefusal::Ambiguous, true),
         ("world-Foo.dcl.eth", RoomRefusal::Noncanonical, true),
-        ("world-foo.dcl.eth-scene", RoomRefusal::Legacy, true),
     ] {
         *source.rooms.lock() = vec![
             (
@@ -842,6 +865,54 @@ async fn a_refused_room_is_left_out_and_keeps_only_its_own_world_undetermined() 
     server.abort();
 }
 
+#[tokio::test]
+async fn a_legacy_scene_room_locates_its_wallet_without_granting_room_authority() {
+    use crate::world_identity::{SceneId, WorldName};
+    let (mut state, source, server) = fixture().await;
+    let room = "world-scene-room-foo.dcl.eth-scene";
+    source.rooms.lock().push((
+        room.into(),
+        "RM_legacy".into(),
+        vec![(
+            "0x00000000000000000000000000000000000000aa".into(),
+            "PA_legacy".into(),
+        )],
+    ));
+    Arc::get_mut(&mut state).unwrap().scenes = Arc::new(Catalogue {
+        legacy: Some((
+            room.into(),
+            WorldName::parse("foo.dcl.eth").unwrap(),
+            SceneId::parse("Scene").unwrap(),
+        )),
+        ..Default::default()
+    });
+    let topology = Arc::new(crate::topology::Topology::default());
+    state.presence.attach_topology(topology.clone());
+    state.presence.recover_complete(&state).await.unwrap();
+    let app = router(state.presence.clone());
+    let (status, connected) = get(
+        &app,
+        "/wallet/0x00000000000000000000000000000000000000aa/connected-world",
+    )
+    .await;
+    assert_eq!(status, axum::http::StatusCode::OK);
+    assert_eq!(connected["world"], "foo.dcl.eth");
+    assert_eq!(get(&app, "/live-data").await.1["data"]["totalUsers"], 1);
+    assert!(matches!(
+        state
+            .presence
+            .admission_occupancy(&state, "foo.dcl.eth", true)
+            .await,
+        Err(RecoveryFailure::Unresolved)
+    ));
+    assert!(
+        !topology
+            .snapshot()
+            .is_online("0x00000000000000000000000000000000000000aa")
+    );
+    server.abort();
+}
+
 #[test]
 fn a_wallet_in_two_worlds_is_in_the_one_it_joined_last() {
     let presence = Presence::new();
@@ -850,6 +921,7 @@ fn a_wallet_in_two_worlds_is_in_the_one_it_joined_last() {
         sid: format!("RM_{world}"),
         realm: world.into(),
         is_world: true,
+        legacy: false,
         scene: None,
         participants: vec![crate::shared::livekit::OccupancyParticipant {
             identity: "0xAaAa".into(),
@@ -877,8 +949,16 @@ fn a_wallet_in_two_worlds_is_in_the_one_it_joined_last() {
         presence.get_peer_world("0xAAAA").unwrap().as_deref(),
         Some("bar.dcl.eth")
     );
-    publish(vec![room("foo.dcl.eth", 2_000), room("bar.dcl.eth", 2_000)]);
-    assert_eq!(presence.get_peer_world("0xaaaa"), Err(AmbiguousWorld));
+    for order in [
+        vec![room("foo.dcl.eth", 2_000), room("bar.dcl.eth", 2_000)],
+        vec![room("bar.dcl.eth", 2_000), room("foo.dcl.eth", 2_000)],
+    ] {
+        publish(order);
+        assert_eq!(
+            presence.get_peer_world("0xaaaa").unwrap().as_deref(),
+            Some("bar.dcl.eth")
+        );
+    }
 }
 
 #[tokio::test]
@@ -1022,8 +1102,7 @@ async fn repeated_not_found_stops_after_one_retry_and_preserves_snapshot_and_tim
 }
 
 #[tokio::test]
-async fn same_wallet_in_distinct_worlds_returns_retryable_503_then_single_world_recovers() {
-    use tower::ServiceExt;
+async fn equal_join_timestamps_select_the_first_world_then_follow_the_remaining_room() {
     let (state, source, server) = fixture().await;
     *source.rooms.lock() = vec![
         (
@@ -1039,31 +1118,10 @@ async fn same_wallet_in_distinct_worlds_returns_retryable_503_then_single_world_
     ];
     state.presence.recover_complete(&state).await.unwrap();
     let before = state.presence.complete();
-    assert_eq!(state.presence.get_peer_world("0xAAAA"), Err(AmbiguousWorld));
     let app = router(state.presence.clone());
-    let response = app
-        .clone()
-        .oneshot(
-            axum::http::Request::get("/wallet/0xAAAA/connected-world")
-                .body(axum::body::Body::empty())
-                .unwrap(),
-        )
-        .await
-        .unwrap();
-    assert_eq!(
-        response.status(),
-        axum::http::StatusCode::SERVICE_UNAVAILABLE
-    );
-    assert_eq!(response.headers()[axum::http::header::RETRY_AFTER], "1");
-    let bytes = axum::body::to_bytes(response.into_body(), 1 << 16)
-        .await
-        .unwrap();
-    let error: Value = serde_json::from_slice(&bytes).unwrap();
-    assert_eq!(error["error"], "Service Unavailable");
-    assert_eq!(
-        error["message"],
-        "Connected world could not be decided; retry shortly."
-    );
+    let (status, body) = get(&app, "/wallet/0xAAAA/connected-world").await;
+    assert_eq!(status, axum::http::StatusCode::OK);
+    assert_eq!(body, json!({"wallet":"0xAAAA","world":"bar.dcl.eth"}));
     assert!(Arc::ptr_eq(&state.presence.complete(), &before));
     assert_eq!(
         state.presence.world_counts(),

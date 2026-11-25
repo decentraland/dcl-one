@@ -58,7 +58,9 @@ secret.
   `infra/packages/catalyst.nix` vendors its crates without loading that workspace
   (`vendoredCrates` in `infra/packages/patched-source.nix`, shared with `bevy-explorer.nix` and `cast-bot.nix`).
 - A deployment runs the binary beside `serve`, with the same `MESSAGE_ROUTER_KEY` on both and
-  `MESSAGE_ROUTER_IDENTITY_PREFIX` on `serve`; no image carries it yet. The process exits
-  non-zero when it cannot stay in the room, so its supervisor must restart it on exit.
+  `MESSAGE_ROUTER_IDENTITY_PREFIX` on `serve`. The APIs image carries it at
+  `/bin/catalyst-message-router` (`infra/packages/message-router.nix`), run as a container of
+  its own with that entrypoint. The process exits non-zero when it cannot stay in the room, so
+  its supervisor must restart it on exit.
 - Behaviour, configuration and metrics are in
   [comms ownership](../../services/catalyst/docs/comms/comms-crate.md#message-router).

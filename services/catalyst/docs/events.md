@@ -10,11 +10,11 @@ Uploaded posters and copied event artwork use `/events-assets-099ac00/poster/<fi
 
 A new poster read-through validates the file signature and records the detected media type. Existing cache entries keep their indexed content type, including generic media types.
 
-The upload needs a signed fetch by a wallet whose profile this node holds (the old `withAuthProfile()`: 404 `Not found profile for "<user>"` otherwise), `DATA_WRITES_ENABLED`, and a blob store (503 `Service unavailable` without one). The refusals keep the old texts: 400 `Poster param is required`, `Multiple files are not allowed`, `Empty files are not allowed`, `Invalid file content; expected one of <types>`; 413 `File size limit has been reached` (horizontal) and `File size limit has been reached (max 500 KB)` (vertical). The size limit is checked before the content type, as the old upload middleware did.
+The upload needs a signed fetch by a wallet whose profile this node holds or reads through (the old `withAuthProfile()`: 404 `Not found profile for "<user>"` otherwise), `DATA_WRITES_ENABLED`, and a blob store (503 `Service unavailable` without one). The refusals keep the old texts: 400 `Poster param is required`, `Multiple files are not allowed`, `Empty files are not allowed`, `Invalid file content; expected one of <types>`; 413 `File size limit has been reached` (horizontal) and `File size limit has been reached (max 500 KB)` (vertical). The size limit is checked before the content type, as the old upload middleware did.
 
 ## Schedules, profile settings, subscriptions and avatars
 
-These routes answer the old events service (`decentraland/events@b60d5bbd`) for its website and other signed-fetch clients. "isAdmin" is a wallet in `explore.moderators`; the `edit_any_schedule` and `edit_any_profile` permissions count once granted (`permissions_granted`): imported, or set through `PATCH /api/profiles/{id}/settings`. A plain signed-fetch body needs no `x-identity-metadata`; when the client signs `body_sha256` the body must match it (400), and when it signs a `nonce` a replay answers 409. Validation failures answer the gatsby validator's text, `Invalid data was sent to the server`.
+These routes answer the old events service (`decentraland/events@b60d5bbd`) for its website and other signed-fetch clients. "isAdmin" is a wallet in `explore.moderators`; the `edit_any_schedule` and `edit_any_profile` permissions count once granted (`permissions_granted`): imported, or set through `PATCH /api/profiles/{id}/settings`. A plain signed-fetch body needs no `x-identity-metadata`; when the client signs `body_sha256` the body must match it (400), and when it signs a `nonce` a replay answers 409. Validation failures answer the gatsby validator's text, `Invalid data was sent to the server`. A profile this node lacks is read through `SYNC_SOURCE` when `READ_THROUGH_ENABLED` is on, as the old service read the catalyst's `/lambdas/profiles`; a profile found nowhere or denylisted, a source that fails, every fill slot busy, a fill past its 8 s wait, a pointer whose fill failed in the last 60 s, or `SYNC_ENTITY_TYPES` without `profile`, is a miss (404 `Not found profile for "<user>"`, or the default avatar).
 
 - `GET /api/schedules` lists the schedules whose `active_until` is still ahead; `GET /api/schedules/{id}` and `/events/sitemap.schedules.xml` read every row, expired ones included.
 - `POST /api/schedules` requires `name`, `active_since` and `active_until`, validates `image` as an http(s) URL or null (the `uri` format plus the event poster's `^https?://` pattern) and `theme` against `null|mvmf_2022|mvfw_2023|pride_2023`, ignores unknown keys, stores `theme: null` and answers the whole record. The body is validated before the permission check (403 `Forbidden`). A signed `ScheduleUpsert` envelope passes the same `image` and `theme` checks after the permission check.
@@ -23,7 +23,7 @@ These routes answer the old events service (`decentraland/events@b60d5bbd`) for 
 - `PATCH /api/profiles/me/settings` takes `email` (RFC-style format), `email_verified`, `use_local_time`, `notify_by_email`, `notify_by_browser` and nothing else. `email_verified: true` is ignored; a changed email is stored unverified with `notify_by_email` off and `email_updated_at` set; `email_verified: false` on the same email un-verifies it the same way.
 - `PATCH /api/profiles/{id}/settings` takes `permissions` only, any of the five, so a grantee may grant or withdraw `edit_any_profile`, its own included (`updateProfileSettings.ts:19-50`); a changed set queues the Slack moderation notice through the same outbox and switch as the event notices (`OPS_WRITES_ENABLED` and `SLACK_WEBHOOK`). The `ProfileSettingsUpdate` envelope, which may also set the target's own fields, stays a moderator's.
 - `GET`/`POST`/`DELETE /api/profiles/subscriptions` keep the deprecated web-push rows (`explore.event_profile_subscriptions`, body `{endpoint,p256dh,auth}`) and the owner's `notify_by_browser` flag in step; both mutations answer `true`. Nothing sends pushes.
-- `GET /api/profile/{user}/face.png` and `/body.png` answer 302 with `Cache-Control: max-age=86400` to the avatar snapshot of the profile this node holds (a stored URL as is, a content hash as this node's `profile-images/entities/<id>/{face,body}.png`), else to `https://decentraland.org/images/male.png`.
+- `GET /api/profile/{user}/face.png` and `/body.png` answer 302 with `Cache-Control: max-age=86400` to the avatar snapshot of the profile this node holds or reads through (a stored URL as is, a content hash as this node's `profile-images/entities/<id>/{face,body}.png`), else to `https://decentraland.org/images/male.png`.
 
 ## Events: lists, reads, create, edit, delete and RSVPs
 
@@ -45,7 +45,7 @@ These routes answer the old events service (`decentraland/events@b60d5bbd`) for 
 
 ### Create (`POST /api/events`, `createEvent.ts`)
 
-A signed fetch by a wallet whose profile this node holds (`withAuthProfile()`: 404 `Not found profile for "<user>"`), behind `DATA_WRITES_ENABLED`. An empty body is 400 `Empty event data`. A falsy `image`, `image_vertical`, `server` or `featured_item` is null; a falsy `url` is the generated jump-in link `https://decentraland.org/jump/events?position=<x>%2C<y>[&realm=<server>]`. The defaulted body is validated against `newEventSchema` (400 `Invalid data was sent to the server` with `data.errors`, `data.messages` and the defaulted body; unknown fields refused), then in the old service's order: a custom `url` must be a public http(s) link (`Invalid event url <url>; only public HTTP(S) URLs are allowed`), a poster must be one this node serves (`Invalid image url <url>, please upload the image through the upload poster endpoint (POST /poster)`; 503 without a blob store), the coordinates must be inside the world limits for every event, world events included (`Event is outside the world limits`), a recurrence whose expansion from `start_at` to now exceeds 50 000 steps is refused, the end must be ahead (`The event end date is already in the past`, `The recurrence end date (Until) must be in the future`), the duration at most 24 hours (`Maximum allowed duration 24Hrs`), the categories known (`Invalid category tag supplied`) and a `community_id` one the signer owns or moderates in `social.communities` (`Failed to validate community ownership: Community "<id>" not found or you don't have access to it`). Any signer may set `url`; `schedules` are always stored as `[]`; a missing `categories` is `[]` (the old service answered 500 there, not reproduced). `estate_id`, `estate_name`, `scene_name` and `place_id` come from this node's `explore.place_indexed` (the scene's title stands for the Land tile name the old service read); `user_name` from the signer's profile. The event is pending approval; the answer is the owner's view.
+A signed fetch by a wallet whose profile this node holds or reads through (`withAuthProfile()`: 404 `Not found profile for "<user>"`), behind `DATA_WRITES_ENABLED`. An empty body is 400 `Empty event data`. A falsy `image`, `image_vertical`, `server` or `featured_item` is null; a falsy `url` is the generated jump-in link `https://decentraland.org/jump/events?position=<x>%2C<y>[&realm=<server>]`. The defaulted body is validated against `newEventSchema` (400 `Invalid data was sent to the server` with `data.errors`, `data.messages` and the defaulted body; unknown fields refused), then in the old service's order: a custom `url` must be a public http(s) link (`Invalid event url <url>; only public HTTP(S) URLs are allowed`), a poster must be one this node serves (`Invalid image url <url>, please upload the image through the upload poster endpoint (POST /poster)`; 503 without a blob store), the coordinates must be inside the world limits for every event, world events included (`Event is outside the world limits`), a recurrence whose expansion from `start_at` to now exceeds 50 000 steps is refused, the end must be ahead (`The event end date is already in the past`, `The recurrence end date (Until) must be in the future`), the duration at most 24 hours (`Maximum allowed duration 24Hrs`), the categories known (`Invalid category tag supplied`) and a `community_id` one the signer owns or moderates in `social.communities` (`Failed to validate community ownership: Community "<id>" not found or you don't have access to it`). Any signer may set `url`; `schedules` are always stored as `[]`; a missing `categories` is `[]` (the old service answered 500 there, not reproduced). `estate_id`, `estate_name`, `scene_name` and `place_id` come from this node's `explore.place_indexed` (the scene's title stands for the Land tile name the old service read); `user_name` from the signer's profile. The event is pending approval; the answer is the owner's view.
 
 `count` and `until` may both bound a recurrence; the stored series holds at most 1 000 occurrences from one day before the present on (the reads project only unfinished occurrences; the extra day lets the community metrics job record an occurrence that ended since its last pass), a local series bounded by `until` (not by `count`) is expanded again from the present by the hourly `explore-event-recurrence` job when its stored window holds 1 000 occurrences and ends within 7 days and before `until` (a shorter window is the whole series and is not read again); the job reads each row again under its lock, so a moderation write is never written over. The reads project the old service's ten. `x`, `y` and `duration` must be whole numbers: a fraction answers the ajv `type: integer` error, and a whole float such as `11.0` is read as `11`.
 
@@ -61,11 +61,66 @@ A signed owner soft-deletes their event (`deleted_by_user`, `deleted_by` the wal
 
 ### Attendees
 
-`GET /api/events/{id}/attendees` reads the event as `GET /api/events/{id}` does for the optional signer (400 for a non-UUID, 404 when hidden; a `Bearer` header is anonymous here) and answers the newest 500 RSVPs. `POST` needs a signed fetch by a wallet whose profile this node holds (404 `Not found profile for "<user>"`), whose name is the row's `user_name`; `DELETE` a signed fetch; both read the event the same way and answer the list. A repeated RSVP is answered idempotently (the old service's duplicate insert error is not reproduced). `total_attendees` and `latest_attendees` (the ten newest) are derived at read time. An RSVP made at the old service is known here only while it is among the event's `latest_attendees` or was made here; `attending`, `only_attendee` and the attendee list see no other.
+`GET /api/events/{id}/attendees` reads the event as `GET /api/events/{id}` does for the optional signer (400 for a non-UUID, 404 when hidden; a `Bearer` header is anonymous here) and answers the newest 500 RSVPs. `POST` needs a signed fetch by a wallet whose profile this node holds or reads through (404 `Not found profile for "<user>"`), whose name is the row's `user_name`; `DELETE` a signed fetch; both read the event the same way and answer the list. A repeated RSVP is answered idempotently (the old service's duplicate insert error is not reproduced). `total_attendees` and `latest_attendees` (the ten newest) are derived at read time. An RSVP made at the old service is known here only while it is among the event's `latest_attendees` or was made here; `attending`, `only_attendee` and the attendee list see no other.
 
 ## Mirror and cut-over
 
 With `EVENTS_MIRROR_UPSTREAM=true` the `events-mirror` job copies the old events service's catalogue from `EVENTS_UPSTREAM_URL` every `EVENTS_MIRROR_INTERVAL_SECS`; rows it writes carry `origin = 'upstream'`, and an owner's edit or delete of such a row answers 409 naming the upstream (the admin's moderation, the admin's delete and RSVPs are local rows on it). The cut-over is an explicit opt-in once the old service stops writing: a start with `EVENTS_MIRROR_UPSTREAM=false` and `EVENTS_MIRROR_ADOPT=true` adopts every row the mirror wrote as `origin = 'local'` (`events/mirror.rs`, `adopt_upstream`), once per database: `explore.mirror_state.adopted_at` records it, so a later start changes nothing with or without the flag, and it runs as the `events-mirror` job under that job's lease, so a replica still mirroring finishes first and the rows it wrote are the ones adopted. After it their owners edit and delete them and their RSVPs and moderation rows stay (`docs/adr/2026-11-05-explore-api-parity-contract.md`, "Deployment posture kept"). The adoption is one-way: a mirror turned on again skips the adopted rows as local and reports their ids as collisions.
+
+### Cutover by import
+
+The catalogue moves by the TS import (`tooling/migration/`, source `events`), not by a long mirror period: the mirror copies approved events only, so schedules, profile settings, browser subscriptions and RSVPs diverge for as long as the legacy service takes writes. The import makes every imported row `origin = 'local'` (`tooling/migration/sources/events/MAPPING.md`); the mirror never overwrites those, so it can stay on while the import repeats.
+
+One `run events` imports every step: `schedule`, `event`, `attendance`, `attendance_reconcile`, `profile_settings` and `profile_subscription`. Posters are a separate copy (`blobs events`) because their bytes live on the legacy bucket, and the poster read-through stops with the mirror.
+
+Before the window, with the mirror on, repeat as often as useful:
+
+```sh
+python3 tooling/migration/migrate.py run events --since last
+python3 tooling/migration/migrate.py blobs events --to "$STORAGE_ROOT_FOLDER"
+```
+
+The window:
+
+1. Freeze the legacy service's writers: its write routes and its cron jobs. Reads can keep serving.
+2. Keep event writes off the node until step 6. Either the events API traffic still goes to the legacy service, so no event write reaches the node, or the node runs with `DATA_WRITES_ENABLED=false` (events, RSVPs, profile settings and subscriptions) and `OPS_WRITES_ENABLED=false` (moderation and schedules); both switches are node-wide and also pause the other user and operator writes the node serves. Restart the target with `EVENTS_MIRROR_UPSTREAM=false` and `FLEET_JOBS_ENABLED=false`, so neither a mirror pass nor a job races the final import.
+3. Catch up: `run events --since last`. `attendance_reconcile` runs after `attendance` and refuses an empty upstream set while imported attendance exists; pass `--allow-empty events/attendance_reconcile` only after confirming the legacy database holds no RSVPs.
+4. Copy the posters added since the last copy: `blobs events --to "$STORAGE_ROOT_FOLDER"`. A poster the bucket does not hold fails the run, since a wrong `--from-url` looks the same; review the listed ones, then re-run with `--allow-missing`. `blobs events --verify` then lists as not indexed only those reviewed posters.
+5. Check keys against legacy (below).
+6. Follow [Activation with imported event history](#activation-with-imported-event-history), then enable event writes and jobs and switch the events API traffic to the node.
+
+Until traffic switches, unfreezing the legacy service aborts the cutover; the imported rows stay local and the next catch-up refreshes them.
+
+The checks export each legacy key set and compare it with the target in both directions. Raw totals differ by design (RSVPs of deleted events are skipped, wallets differing only in case merge), so compare keys, not totals:
+
+```sh
+legacy() { psql "$EVENTS_DATABASE_URL" -X -v ON_ERROR_STOP=1 -c "\\copy ($1) TO '$2'"; }
+legacy 'SELECT id::text FROM events' events.keys
+legacy 'SELECT id::text FROM schedule' schedules.keys
+legacy 'SELECT DISTINCT a.event_id::text, lower(a."user") FROM event_attendees a JOIN events e ON e.id = a.event_id' attendance.keys
+legacy 'SELECT DISTINCT lower("user") FROM profile_settings' settings.keys
+legacy 'SELECT endpoint FROM profile_subscriptions' subscriptions.keys
+psql "$TARGET_DATABASE_URL" -X -v ON_ERROR_STOP=1 \
+  -c 'CREATE TEMP TABLE e (k text); CREATE TEMP TABLE s (k text); CREATE TEMP TABLE a (event_id text, signer text); CREATE TEMP TABLE p (k text); CREATE TEMP TABLE b (k text)' \
+  -c '\copy e FROM events.keys' -c '\copy s FROM schedules.keys' -c '\copy a FROM attendance.keys' \
+  -c '\copy p FROM settings.keys' -c '\copy b FROM subscriptions.keys' \
+  -c "SELECT
+        (SELECT count(*) FROM e WHERE NOT EXISTS (SELECT 1 FROM explore.event t WHERE t.id = e.k AND t.origin = 'local')) AS events_missing,
+        (SELECT count(*) FROM s WHERE NOT EXISTS (SELECT 1 FROM explore.schedules_local t WHERE t.id = s.k)) AS schedules_missing,
+        (SELECT count(*) FROM a WHERE NOT EXISTS (SELECT 1 FROM explore.event_attendance_local t WHERE t.event_id = a.event_id AND t.signer = a.signer)) AS rsvps_missing,
+        (SELECT count(*) FROM p WHERE NOT EXISTS (SELECT 1 FROM explore.event_profile_settings t WHERE t.\"user\" = p.k)) AS settings_missing,
+        (SELECT count(*) FROM b WHERE NOT EXISTS (SELECT 1 FROM explore.event_profile_subscriptions t WHERE t.endpoint = b.k)) AS subscriptions_missing" \
+  -c "SELECT
+        (SELECT count(*) FROM explore.event t WHERE NOT EXISTS (SELECT 1 FROM e WHERE e.k = t.id)) AS events_extra,
+        (SELECT count(*) FROM explore.event WHERE origin = 'upstream') AS events_mirrored,
+        (SELECT count(*) FROM explore.schedules_local t WHERE NOT EXISTS (SELECT 1 FROM s WHERE s.k = t.id)) AS schedules_extra,
+        (SELECT count(*) FROM dcl_migration.event_attendance_loaded l JOIN explore.event_attendance_local t USING (event_id, signer)
+          WHERE t.action = 'going' AND NOT EXISTS (SELECT 1 FROM a WHERE a.event_id = l.event_id AND a.signer = l.signer)) AS rsvps_extra,
+        (SELECT count(*) FROM explore.event_profile_settings t WHERE NOT EXISTS (SELECT 1 FROM p WHERE p.k = t.\"user\")) AS settings_extra,
+        (SELECT count(*) FROM explore.event_profile_subscriptions t WHERE NOT EXISTS (SELECT 1 FROM b WHERE b.k = t.endpoint)) AS subscriptions_extra"
+```
+
+Every `_missing` count must be 0. An `_extra` row exists on the target but not in the frozen legacy database: either it was created on this node, or legacy deleted it after an earlier import, which the import does not propagate (only `attendance_reconcile` removes RSVPs, so `rsvps_extra` is 0 after it unless the node changed them since). Review each extra row before switching. `events_mirrored` counts mirror-written events the import did not take over, all of which legacy no longer holds; delete them, or adopt them as local with `EVENTS_MIRROR_ADOPT=true` (above; adoption runs as the `events-mirror` job, so once jobs are enabled).
 
 ## Background jobs and notifications
 
@@ -84,6 +139,24 @@ Reminder, start, community-created, approval, rejection and deletion notices eac
 Event rows honor in-app preferences at their first insertion. A hidden row is read and stays hidden after later moderation or occurrences, even if the recipient turns in-app back on; a visible row stays visible after in-app is turned off. Email preferences remain independent. Imported RSVPs use the same attendance table and reminder eligibility as locally recorded RSVPs. The import reconciles upstream cancellations only for rows whose imported values remain unchanged; later local cancellations and re-RSVPs take precedence. See the Events import mapping for the historical cutover requirements.
 
 Every newly stored event notice also enters `social.notification_deliveries` for the `email` channel, governed by the recipient's social subscription (`ignore_all_email`, per-type settings, community opt-outs), not by the legacy `notify_by_email` profile flag; the old service's own email and web-push code was dead. See `docs/adr/2026-11-01-event-notification-delivery.md`.
+
+## Who listens to legacy event messages
+
+The legacy events service announces event changes (created, approved, rejected, deleted, starting soon, started, ended) on the platform's shared message bus. This node does not post to that bus, so once the legacy service stops, anything listening for those messages stops hearing them.
+
+| Listener | What it does with them | After the switch |
+| --- | --- | --- |
+| Notifications | Inbox notices | This node sends them itself |
+| Engagement | The same inbox notices | This node sends them itself |
+| Social (event ended only) | Community event metrics | This node records them itself |
+| Badges | Nothing | Safe to drop |
+
+Every other listener on the bus ignores event messages. Two things to keep in mind:
+
+- The discovery service can post the same event messages to the bus, so listeners may keep receiving some of them after the legacy service stops.
+- The badges attendance sync, which is off today, reads the legacy events website directly rather than the bus. It would need a new source if it is turned on.
+
+This list comes from the infrastructure configuration. Before the legacy service stops, check the bus's live subscriptions for anything not listed here.
 
 ## Conditional repair for an early staging default
 

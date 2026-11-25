@@ -10,6 +10,7 @@
 //! exits. A schedule run on the main thread whose systems run on the task pool keeps their time
 //! in its self time.
 
+use common::sync::MutexExt;
 use std::{
     cell::RefCell,
     collections::HashMap,
@@ -122,10 +123,7 @@ static PROFILED_SCOPES_SHARED: LazyLock<ProfiledScopesShared> =
     });
 
 fn lock_orphaned_frame() -> MutexGuard<'static, FrameAccumulations> {
-    PROFILED_SCOPES_SHARED
-        .orphaned_frame
-        .lock()
-        .unwrap_or_else(|poison| poison.into_inner())
+    PROFILED_SCOPES_SHARED.orphaned_frame.lock_ignore_poison()
 }
 
 /// This thread's accumulation, registered with the shared list while the thread lives.
@@ -144,7 +142,7 @@ impl Drop for ThreadFrame {
     fn drop(&mut self) {
         let mut thread_frames = lock_thread_frames();
         let mut orphaned = lock_orphaned_frame();
-        let mut own = self.0.lock().unwrap_or_else(|poison| poison.into_inner());
+        let mut own = self.0.lock_ignore_poison();
         for (key, accum) in own.drain() {
             orphaned.entry(key).or_default().add(&accum);
         }
@@ -158,10 +156,7 @@ thread_local! {
 }
 
 fn lock_thread_frames() -> MutexGuard<'static, Vec<Arc<Mutex<FrameAccumulations>>>> {
-    PROFILED_SCOPES_SHARED
-        .thread_frames
-        .lock()
-        .unwrap_or_else(|poison| poison.into_inner())
+    PROFILED_SCOPES_SHARED.thread_frames.lock_ignore_poison()
 }
 
 /// Serialises the tests that touch the process-wide recording state.
@@ -175,7 +170,7 @@ fn profiler_recording_enabled() -> bool {
 /// Runs `record` on this thread's accumulation; nothing once the thread's locals are destroyed.
 fn with_this_threads_frame(record: impl FnOnce(&mut FrameAccumulations)) {
     THREAD_FRAME
-        .try_with(|frame| record(&mut frame.0.lock().unwrap_or_else(|poison| poison.into_inner())))
+        .try_with(|frame| record(&mut frame.0.lock_ignore_poison()))
         .ok();
 }
 
@@ -184,9 +179,7 @@ fn take_current_frame_accumulations() -> FrameAccumulations {
     let thread_frames = lock_thread_frames();
     let mut merged = std::mem::take(&mut *lock_orphaned_frame());
     for thread_frame in thread_frames.iter() {
-        let mut frame = thread_frame
-            .lock()
-            .unwrap_or_else(|poison| poison.into_inner());
+        let mut frame = thread_frame.lock_ignore_poison();
         for (key, accum) in frame.drain() {
             merged.entry(key).or_default().add(&accum);
         }
@@ -198,10 +191,7 @@ fn clear_current_frame_accumulations() {
     let thread_frames = lock_thread_frames();
     lock_orphaned_frame().clear();
     for thread_frame in thread_frames.iter() {
-        thread_frame
-            .lock()
-            .unwrap_or_else(|poison| poison.into_inner())
-            .clear();
+        thread_frame.lock_ignore_poison().clear();
     }
 }
 
@@ -211,12 +201,9 @@ fn current_frame_accumulations_are_empty() -> bool {
     if !lock_orphaned_frame().is_empty() {
         return false;
     }
-    thread_frames.iter().all(|thread_frame| {
-        thread_frame
-            .lock()
-            .unwrap_or_else(|poison| poison.into_inner())
-            .is_empty()
-    })
+    thread_frames
+        .iter()
+        .all(|thread_frame| thread_frame.lock_ignore_poison().is_empty())
 }
 
 /// An entered scope on this thread.
@@ -571,9 +558,7 @@ mod tests {
         use bevy::log::tracing::{info_span, subscriber::with_default};
         use bevy::log::tracing_subscriber::{layer::SubscriberExt, registry};
 
-        let _shared = SHARED_PROFILER_TEST_LOCK
-            .lock()
-            .unwrap_or_else(|poison| poison.into_inner());
+        let _shared = SHARED_PROFILER_TEST_LOCK.lock_ignore_poison();
         let subscriber = registry().with(profiled_scopes_layer());
         let mut table = ProfiledScopesTable::new();
         with_default(subscriber, || {
@@ -640,9 +625,7 @@ mod tests {
         use bevy::log::tracing::{info_span, subscriber::with_default};
         use bevy::log::tracing_subscriber::{layer::SubscriberExt, registry};
 
-        let _shared = SHARED_PROFILER_TEST_LOCK
-            .lock()
-            .unwrap_or_else(|poison| poison.into_inner());
+        let _shared = SHARED_PROFILER_TEST_LOCK.lock_ignore_poison();
         let subscriber = registry().with(profiled_scopes_layer());
         let mut table = ProfiledScopesTable::new();
         with_default(subscriber, || {
