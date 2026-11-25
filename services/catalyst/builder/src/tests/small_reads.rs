@@ -40,9 +40,7 @@ async fn get(app: &Router, path: &str) -> (StatusCode, HeaderMap, Value) {
 }
 
 fn app_over(state: crate::SharedState) -> Router {
-    Router::new()
-        .merge(crate::root_router(state.clone()))
-        .nest("/builder-api", crate::router(state))
+    super::support::mounted(&state)
 }
 
 async fn rarities_app(subgraph: &FakeCommittee, oracle: Option<&FakeOracle>) -> Router {

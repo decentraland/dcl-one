@@ -58,9 +58,7 @@ async fn send(app: &Router, method: &str, path: &str) -> (StatusCode, Option<Str
 async fn with_writes_off_every_write_is_refused_on_both_mounts_and_reads_answer() {
     let state = state_without_db(None).await;
     assert!(!state.settings.writes_enabled);
-    let app = Router::new()
-        .merge(crate::root_router(state.clone()))
-        .nest("/builder-api", crate::router(state));
+    let app = super::support::mounted(&state);
     let mut answered = Vec::new();
     for mount in ["", "/builder-api"] {
         for (method, path) in WRITES {

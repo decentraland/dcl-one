@@ -15,7 +15,7 @@ use axum::http::{HeaderMap, Request};
 use tower::ServiceExt;
 use uuid::Uuid;
 
-use super::support::{OWNER_KEY, lazy_pool, temp_storage};
+use super::support::{OWNER_KEY, lazy_pool};
 
 const DAPP: &str = "https://create.decentraland.example";
 const APEX: &str = "https://decentraland.example";
@@ -38,21 +38,10 @@ fn raw(origin: Option<&str>, method: Option<&str>) -> crate::RawSettings {
 }
 
 async fn app_with(settings: crate::Settings, tune: impl FnOnce(&mut crate::State)) -> Router {
-    let mut state = crate::State::new(
-        lazy_pool(),
-        temp_storage().await,
-        Arc::default(),
-        dcl_http::Outbound::for_tests(),
-        None,
-        None,
-        settings,
-    )
-    .unwrap();
+    let mut state = super::support::state(lazy_pool(), None, settings).await;
     tune(&mut state);
     let state = Arc::new(state);
-    Router::new()
-        .merge(crate::root_router(state.clone()))
-        .nest("/builder-api", crate::router(state))
+    super::support::mounted(&state)
 }
 
 async fn app(origins: Option<&str>) -> Router {

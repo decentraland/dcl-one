@@ -228,7 +228,7 @@ mod tests {
     use tower::ServiceExt;
 
     use crate::tests::support::{
-        FakeCommittee, OWNER_KEY, address, cleanup, committee_index, request, temp_storage,
+        FakeCommittee, OWNER_KEY, address, cleanup, committee_index, request,
     };
 
     const STRANGER_KEY: &str = "0x2222222222222222222222222222222222222222222222222222222222222222";
@@ -240,16 +240,7 @@ mod tests {
         let fake = FakeCommittee::with(&[committee]);
         let market = committee_index(&fake).await;
         Some(Arc::new(
-            crate::State::new(
-                pool,
-                temp_storage().await,
-                Arc::default(),
-                dcl_http::Outbound::for_tests(),
-                Some(market),
-                None,
-                crate::Settings::default(),
-            )
-            .unwrap(),
+            crate::tests::support::state(pool, Some(market), crate::Settings::default()).await,
         ))
     }
 

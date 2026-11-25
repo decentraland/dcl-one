@@ -15,7 +15,7 @@ use chrono::Duration;
 use tower::ServiceExt;
 use uuid::Uuid;
 
-use super::support::{OWNER_KEY, lazy_pool, request, signed, temp_storage};
+use super::support::{OWNER_KEY, lazy_pool, request, signed};
 use super::validator::{advance, clock, set_clock};
 
 const OTHER_KEY: &str = "0x5555555555555555555555555555555555555555555555555555555555555555";
@@ -36,25 +36,19 @@ pub(super) async fn node_over(
     set_clock(
         chrono::DateTime::from_timestamp_millis(chrono::Utc::now().timestamp_millis()).unwrap(),
     );
-    let mut state = crate::State::new(
+    let mut state = super::support::state(
         pool,
-        temp_storage().await,
-        Arc::default(),
-        dcl_http::Outbound::for_tests(),
-        None,
         None,
         crate::Settings {
             writes_enabled: true,
             ..crate::Settings::default()
         },
     )
-    .unwrap();
+    .await;
     state.now = clock;
     tune(&mut state);
     let state = Arc::new(state);
-    let app = Router::new()
-        .merge(crate::root_router(state.clone()))
-        .nest("/builder-api", crate::router(state.clone()));
+    let app = super::support::mounted(&state);
     (app, state)
 }
 

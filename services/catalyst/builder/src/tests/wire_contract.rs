@@ -57,9 +57,7 @@ const SIGNED: &[(&str, &str, &str)] = &[
 ];
 
 fn app(state: crate::SharedState) -> Router {
-    Router::new()
-        .merge(crate::root_router(state.clone()))
-        .nest("/builder-api", crate::router(state))
+    super::support::mounted(&state)
 }
 
 async fn send(

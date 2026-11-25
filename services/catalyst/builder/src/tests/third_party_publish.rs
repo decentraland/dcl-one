@@ -11,7 +11,7 @@ use serde_json::{Value, json};
 use sqlx::PgPool;
 use uuid::Uuid;
 
-use super::support::{FakeCommittee, FakeRegistry, address, registry_index, temp_storage, wallet};
+use super::support::{FakeCommittee, FakeRegistry, address, registry_index, wallet};
 
 const MANAGER_KEY: &str = "0x8101010101010101010101010101010101010101010101010101010101010101";
 const OTHER_KEY: &str = "0x8202020202020202020202020202020202020202020202020202020202020202";
@@ -36,24 +36,18 @@ async fn world_with(settings: crate::Settings) -> Option<World> {
     super::support::copy_pass(&pool, 0).await;
     let committee = FakeCommittee::with(&[&address(COMMITTEE_KEY)]);
     let registry = FakeRegistry::up();
-    let mut state = crate::State::new(
+    let mut state = super::support::state(
         pool.clone(),
-        temp_storage().await,
-        Arc::default(),
-        dcl_http::Outbound::for_tests(),
         Some(registry_index(&committee, &registry).await),
-        None,
         crate::Settings {
             writes_enabled: true,
             ..settings
         },
     )
-    .unwrap();
+    .await;
     state.guarded = dcl_http::Outbound::for_tests();
     let state = Arc::new(state);
-    let app = Router::new()
-        .merge(crate::root_router(state.clone()))
-        .nest("/builder-api", crate::router(state.clone()));
+    let app = super::support::mounted(&state);
     let app = match state.registry_indexed() {
         true => registry.published(&pool, app),
         false => app,
