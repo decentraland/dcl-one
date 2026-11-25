@@ -149,14 +149,14 @@ pub struct RendererSceneContext {
 
 /// When and in which frame a scene tick was dispatched.
 #[derive(Debug, Clone, Copy)]
-pub struct SentTiming {
+pub(crate) struct SentTiming {
     pub at: web_time::Instant,
     pub frame: u32,
 }
 
 /// When and in which frame the engine received a scene tick's reply.
 #[derive(Debug, Clone, Copy)]
-pub struct ReplyTiming {
+pub(crate) struct ReplyTiming {
     pub sent: SentTiming,
     /// A reply that arrives after its frame's scene loop ended is received at the next loop's
     /// first poll.
@@ -174,7 +174,7 @@ impl ReplyTiming {
 /// For the movement scene's re-dispatch. Every scene root has one, because a scene can become the
 /// movement scene while its tick is in flight.
 #[derive(Component, Debug, Clone, Copy, Default)]
-pub struct SceneTickTiming {
+pub(crate) struct SceneTickTiming {
     pub sent: Option<SentTiming>,
     pub reply: Option<ReplyTiming>,
 }
@@ -182,7 +182,7 @@ pub struct SceneTickTiming {
 impl SceneTickTiming {
     /// The last reply landed in `frame` and answers a tick from an earlier frame. A dispatch in
     /// `frame` is then a re-dispatch.
-    pub fn late_reply_in(&self, frame: u32) -> bool {
+    pub(crate) fn late_reply_in(&self, frame: u32) -> bool {
         self.reply
             .is_some_and(|reply| reply.frame == frame && reply.late())
     }
