@@ -274,20 +274,21 @@ impl IndexSettings {
         pool: &PgPool,
         writes_catalogue: bool,
     ) -> anyhow::Result<()> {
+        if !writes_catalogue {
+            return Ok(());
+        }
         let mut tx = pool.begin().await?;
         let pair = vec![
             self.chain_id_ethereum.to_string(),
             self.chain_id_matic.to_string(),
         ];
-        if writes_catalogue {
-            sqlx::query(
-                "INSERT INTO shop.worker_progress(worker, scope, key_position)
+        sqlx::query(
+            "INSERT INTO shop.worker_progress(worker, scope, key_position)
                          VALUES ('nft_catalogue_pair',0,$1) ON CONFLICT (worker,scope) DO NOTHING",
-            )
-            .bind(&pair)
-            .execute(&mut *tx)
-            .await?;
-        }
+        )
+        .bind(&pair)
+        .execute(&mut *tx)
+        .await?;
         let bound: Option<Vec<String>> = sqlx::query_scalar(
             "SELECT key_position FROM shop.worker_progress
               WHERE worker='nft_catalogue_pair' AND scope=0",
@@ -301,7 +302,7 @@ impl IndexSettings {
         let wrong: Option<(String, String, i64)> = sqlx::query_as(
             "SELECT source, network, chain_id FROM (
                  SELECT indexer AS source, network, chain_id FROM shop.chain_cursor
-                   WHERE indexer NOT IN ('rentals','rentals_sepolia')
+                   WHERE indexer='nft'
                  UNION ALL SELECT mirror, network, chain_id FROM shop.mirror_state
              ) AS bindings WHERE chain_id <> CASE network WHEN 'ethereum' THEN $1::bigint ELSE $2::bigint END LIMIT 1")
              .bind(self.chain_id_ethereum).bind(self.chain_id_matic).fetch_optional(&mut *tx).await?;
@@ -2386,6 +2387,15 @@ mod tests {
             ..defaults.clone()
         };
         assert!(mixed.check_chains().is_err());
+        assert!(
+            IndexSettings {
+                chain_id_ethereum: ChainNet::Ethereum.testnet_chain_id(),
+                chain_id_matic: ChainNet::Matic.chain_id(),
+                ..mixed
+            }
+            .check_chains()
+            .is_err()
+        );
         for (ethereum, matic) in [(137, 137), (1, 1), (1, 80_001), (80_002, 80_002), (1, 0)] {
             let wrong = IndexSettings {
                 chain_id_ethereum: ethereum,

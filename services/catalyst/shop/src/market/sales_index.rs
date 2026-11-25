@@ -459,7 +459,7 @@ impl ChainIndex for SalesIndex {
     }
 
     fn start_block(&self) -> u64 {
-        nft_index::start_block(ChainNet::Matic)
+        nft_index::deployments::Deployments::mainnet(ChainNet::Matic).start
     }
 
     async fn groups(

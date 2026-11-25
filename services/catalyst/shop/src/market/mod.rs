@@ -875,6 +875,9 @@ impl MarketplaceState {
         if let Some(url) = self.settings.market.trade_rpc_urls.for_chain(id) {
             return Some(url.to_string());
         }
+        if id == net.chain_id() {
+            return self.chain_rpc_url(net);
+        }
         let land = self.land_network()?;
         let expected = if land == crate::land_authz::LAND_SEPOLIA {
             net.testnet_chain_id()
@@ -1018,7 +1021,7 @@ async fn get_index_status(
     axum::extract::State(state): axum::extract::State<SharedState>,
 ) -> Json<Value> {
     Json(json!({
-        "nft": nft_index::status(&state.pool, &state.settings.market.indexes).await,
+        "nft": nft_index::status(&state.pool).await,
         "tradeEvents": trade_events::status(&state.pool, &state.settings.market.indexes).await,
         "manaTransfers": mana_transfers::status(&state.pool).await,
         "sales": sales_index::status(&state.pool).await,

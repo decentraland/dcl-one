@@ -10,7 +10,7 @@ use crate::land_authz::{LAND_MAINNET, LAND_SEPOLIA, LandNetwork};
 pub(super) const REGISTRAR_SEPOLIA: &str = "0x7518456ae93eb98f3e64571b689c626616bb7f30";
 
 #[derive(Clone, Copy)]
-pub(super) struct Deployments {
+pub(crate) struct Deployments {
     pub chain_id: i64,
     pub start: u64,
     pub land: Option<LandNetwork>,

@@ -2551,15 +2551,17 @@ to select mainnet (1/137) or Sepolia/Amoy (11155111/80002). Its RPC must
 serve that chain. At startup the catalogue writer checks the pair against
 `ETH_NETWORK` and the database binding. Each database can have independent
 Ethereum and Sepolia Rentals histories.
-Step `0070_shop_mirror_chain` records the chain of each collections/items
-pass. Existing mainnet passes at the same URL retain their keyset and
-publication. A new source starts from page one. For testnets the mirror
+The `nft_catalogue_pair` row in `shop.worker_progress` identifies the pair.
+`shop.mirror_state.chain_id` identifies each mirror's completed chain-bound
+copy. A new source starts from page one. For testnets the mirror
 checks the graph head on the configured chain by comparing a confirmed block
 hash against the chain-checked RPC. Both mirrors persist that hash with their
 keyset and read every page at that block. Collections supply contract addresses
 and items supply their metadata. A mirror writer can provide this proof even
 when the NFT walker runs on another node. A writer without a catalogue RPC
-leaves a bound pass untouched. The NFT walk requires a complete collections
+leaves a bound pass untouched. A transient read failure retries its pinned block. A graph that rejects the
+block, or a pass that reaches a day in age, restarts from a new confirmed block. Descriptive readers can use the last
+completed copy during this retry. The NFT walk requires a complete collections
 pass for its chain. On testnet it selects addresses from rows the verified
 pass actually fetched. Rows retained from a graph-only source carry no proof.
 An empty verified pass covers the chain's
@@ -2567,6 +2569,17 @@ fixed contracts. The Sepolia/Amoy pair omits the mainnet-only sales,
 committee, collections, third-party registry and MANA transfer walks, even
 when the mirror posture enables them and mainnet RPCs are available. The
 separately keyed Ethereum Rentals histories keep their own endpoints.
+
+A Sepolia deployment that mirrored the legacy mainnet default URLs can
+explicitly replace that copy after migration 0070. Check the intended
+database and the URLs in `shop.mirror_state`, stop its catalogue writers,
+and configure the Sepolia and Amoy graph and RPC sources. Run
+`psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f tooling/migration/rebind-legacy-catalogue-to-testnet.sql`
+on that database, then restart its writers. The command logs the rebind,
+clears both descriptive mirrors and their publication, and records the
+testnet pair in one transaction. A database with an existing pair binding,
+NFT history, or other mirror sources refuses the operation. A catalogue
+writer always refuses a conflicting pair on ordinary startup.
 
 On Sepolia the NFT and LAND authorization walks start at LAND proxy
 deployment block 3,831,219. On Amoy the NFT walk starts at marketplace V2
@@ -2706,7 +2719,8 @@ retried. A row in quarantine is not walked, rewound or published.
 - `folded_at` is within 30 minutes;
 - it is bound to the chain the reader expects and is out of quarantine.
 
-The NFT and trade-events walks use the configured catalogue pair. The
+The NFT and trade-events walks use the configured catalogue pair. NFT reader and
+status readiness expect mainnet publications (1/137). The
 Rentals histories have separate mainnet and Sepolia cursors. The other
 walks expect chain 1 or 137. The readers of `trade_events` expect the chain the node
 configures (`MARKETPLACE_INDEX_CHAIN_ID_*`): the Rust readers and the
@@ -2895,7 +2909,8 @@ Invariants:
 Builder's committee routes (the drafts and items of every wallet, another
 wallet's collections and items, the curation console's committee list)
 admit `BUILDER_ADMIN_ADDRESSES` and the current members of the Polygon
-curation committee. Shop's `committee` index
+curation committee. The testnet pair schedules no committee walk. Builder
+uses the configured admin addresses there. Shop's mainnet `committee` index
 (`MARKETPLACE_COMMITTEE_INDEX_ENABLED`) walks the two Committee contracts'
 `MemberSet` logs from the first one's deployment into `shop.committee_event`
 over the `TRADE_RPC_URLS` 137 entry, else on mainnet `RPC_ENDPOINT_POLYGON`,
@@ -3253,8 +3268,7 @@ builds it from its own indexes.
   `signatures.rentals` rows of both registries signed for the grid's chain
   and its Rentals contract, with their periods.
 - **Readiness:** the land-authz index published for the configured
-  registries; the grid's chain being Ethereum mainnet, the chain this grid
-  reader currently covers; the nft index published on Ethereum and bound to chain 1
+  registries; the grid's chain being Ethereum mainnet, the chain this grid reader covers; the nft index published on Ethereum and bound to chain 1
   (`shop.chain_cursor`, `chain_walk::ready_sql`); and `shop.trades`
   readable (a recent complete trades-mirror pass read in the snapshot, or
   local authority); and the trade-events index current on Ethereum, whose

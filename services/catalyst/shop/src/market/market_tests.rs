@@ -492,9 +492,10 @@ async fn upgrading_a_completed_mainnet_mirror_keeps_the_catalogue_available() {
                  VALUES ('items','matic',$1,timezone('UTC',now()),17,'old-key'),
                         ('collections','ethereum','https://subgraph.decentraland.org/collections-ethereum-mainnet',timezone('UTC',now()),19,'key')")
         .bind(&url).execute(&state.pool).await.unwrap();
-    sqlx::raw_sql(include_str!(
-        "../../../../../schemas/migrations/0070_shop_mirror_chain.sql"
-    ))
+    sqlx::raw_sql(include_str!(concat!(
+        env!("DCL_ONE_ROOT"),
+        "/schemas/migrations/0070_shop_mirror_chain.sql"
+    )))
     .execute(&state.pool)
     .await
     .unwrap();
@@ -1992,7 +1993,6 @@ async fn favorites_lists_and_picks_keep_the_old_authorization_and_counting_rules
         &pool,
         super::graph::Network::Matic,
         137,
-        false,
         &[mirrors::items::fixture(
             &contract_of(&t, 1),
             "0",

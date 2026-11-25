@@ -9,4 +9,3 @@ WHERE chain_id IS NULL AND (network, source_url) IN (
 );
 -- A full verified pass may omit rows retained from a previous graph-only source.
 ALTER TABLE shop.collections ADD COLUMN IF NOT EXISTS testnet_verified boolean NOT NULL DEFAULT false;
-ALTER TABLE shop.items ADD COLUMN IF NOT EXISTS testnet_verified boolean NOT NULL DEFAULT false;
