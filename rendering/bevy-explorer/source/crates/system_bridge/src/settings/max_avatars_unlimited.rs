@@ -16,8 +16,8 @@ impl EnumAppSetting for UnlimitedAvatarsSetting {
 
     fn name(&self) -> String {
         match self {
-            Self::Off => "Capped",
-            Self::On => "Unlimited",
+            Self::Off => "Off",
+            Self::On => "On",
         }
         .to_owned()
     }
@@ -33,8 +33,8 @@ impl AppSetting for UnlimitedAvatarsSetting {
     fn description(&self) -> String {
         format!("Unlimited Avatars\n\nWhether to render every avatar nearby instead of only the closest Max Avatars.\n\n{}",
             match self {
-                Self::Off => "Capped: Show only the closest Max Avatars, which keeps frame rate steadier in busy environments.",
-                Self::On => "Unlimited: Render every nearby avatar, other users and scene-created avatars alike. Large crowds will lower your frame rate. Max Avatars is kept and applies again when this is turned off.",
+                Self::Off => "Off: Show only the closest Max Avatars, which keeps frame rate steadier in busy environments.",
+                Self::On => "On: Render every nearby avatar, other users and scene-created avatars alike. Large crowds will lower your frame rate. Max Avatars is kept and applies again when this is turned off.",
             }
         )
     }

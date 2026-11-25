@@ -241,8 +241,9 @@ impl Plugin for SettingBridgePlugin {
             &config,
         );
         add_int_setting::<SceneThreadsSetting>(app, &mut settings, &mut schedule, &config);
-        add_int_setting::<MaxAvatarsSetting>(app, &mut settings, &mut schedule, &config);
+        // before the slider it overrides, so the panel lists the switch first
         add_enum_setting::<UnlimitedAvatarsSetting>(app, &mut settings, &mut schedule, &config);
+        add_int_setting::<MaxAvatarsSetting>(app, &mut settings, &mut schedule, &config);
         add_int_setting::<MasterVolumeSetting>(app, &mut settings, &mut schedule, &config);
         add_int_setting::<SceneVolumeSetting>(app, &mut settings, &mut schedule, &config);
         add_int_setting::<VoiceVolumeSetting>(app, &mut settings, &mut schedule, &config);
