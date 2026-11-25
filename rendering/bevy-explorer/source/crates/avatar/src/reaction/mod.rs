@@ -3,8 +3,8 @@
 //!
 //! The local user's pick plays at once and is sent to the players around them, gathered with
 //! their other picks into one message per emoji. A peer's message is held to what its sender
-//! may send, then its reactions play one at a time. Each one played is passed to the HUD, which
-//! shows it on screen while the "Chat Reactions" setting is on.
+//! may send, then its reactions play one at a time. Each one played is passed to the HUD on a
+//! stream.
 
 mod diagnostics;
 mod traffic;
@@ -14,18 +14,12 @@ mod tests;
 
 use alloy_core::primitives::Address;
 use analytics::{
-    data_definition::{
-        SegmentEvent, SegmentEventReactSituation, SegmentEventReactionVisualization,
-    },
+    data_definition::{SegmentEvent, SegmentEventReactSituation},
     segment_system::{SegmentConfig, SegmentMetricsEvents},
 };
 use ban_block::BanBlock;
 use bevy::{platform::collections::HashMap, prelude::*};
-use common::{
-    rpc::RpcStreamSender,
-    sets::SceneSets,
-    structs::{AppConfig, PrimaryUser},
-};
+use common::{rpc::RpcStreamSender, sets::SceneSets, structs::PrimaryUser};
 use comms::{
     broadcast_to,
     chat_reaction::{atlas_index_to_emoji, canonical_emoji, emoji_atlas_tile},
@@ -60,10 +54,6 @@ impl Plugin for ReactionPlugin {
                     .in_set(SceneSets::PostLoop)
                     // a sender first heard from this frame has its entity by now
                     .after(process_transport_updates),
-            )
-            .add_systems(
-                Update,
-                report_reaction_visualization.run_if(resource_changed::<AppConfig>),
             )
             .add_console_command::<diagnostics::ReactionStateCommand, _>(
                 diagnostics::reaction_state,
@@ -270,13 +260,11 @@ fn flush_reactions(
     }
 }
 
-/// Every reaction played, the local user's included, goes to the HUD to show on screen.
-/// Nothing is passed while the "Chat Reactions" setting is off: the HUD would show none of it.
+/// Every reaction played, the local user's included, goes to the HUD on each stream it opened.
 fn pipe_reactions_to_scene(
     mut played: EventReader<ReactionPlayed>,
     mut requests: EventReader<SystemApi>,
     mut senders: Local<Vec<RpcStreamSender<ReactionData>>>,
-    config: Res<AppConfig>,
     mut stats: ResMut<ReactionStats>,
 ) {
     senders.extend(requests.read().filter_map(|ev| {
@@ -289,7 +277,7 @@ fn pipe_reactions_to_scene(
     senders.retain(|s| !s.is_closed());
     stats.subscribers = senders.len();
 
-    if !config.chat_reactions || senders.is_empty() {
+    if senders.is_empty() {
         played.clear();
         return;
     }
@@ -302,21 +290,5 @@ fn pipe_reactions_to_scene(
             let _ = sender.send(data.clone());
         }
         stats.streamed += 1;
-    }
-}
-
-/// Analytics hear of each change of the "Chat Reactions" setting, whoever made it.
-fn report_reaction_visualization(
-    config: Res<AppConfig>,
-    mut last: Local<Option<bool>>,
-    mut metrics: ResMut<SegmentMetricsEvents>,
-    segment_config: Res<SegmentConfig>,
-) {
-    let state = config.chat_reactions;
-    if last.replace(state).is_some_and(|last| last != state) {
-        metrics.add_event(
-            SegmentEvent::ReactionVisualization(SegmentEventReactionVisualization { state }),
-            segment_config.common(),
-        );
     }
 }

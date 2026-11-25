@@ -39,7 +39,6 @@ fn world() -> World {
     ))
     .add_event::<SystemApi>()
     .add_event::<ReactionEvent>()
-    .init_resource::<AppConfig>()
     // what a block or ban is asked of
     .init_resource::<ban_block::PlatformBanStatus>()
     .init_resource::<ban_block::SceneAdmission>()
@@ -63,7 +62,6 @@ fn world() -> World {
     let (sender, hud) = RpcStreamSender::channel();
     app.world_mut()
         .send_event(SystemApi::GetReactionStream(sender));
-    app.world_mut().resource_mut::<AppConfig>().chat_reactions = true;
     app.update();
 
     World {
@@ -353,65 +351,4 @@ fn a_sender_who_leaves_takes_their_waiting_reactions() {
     world.hear(peer, "👍", 2.0, 1);
     world.run(2.0);
     assert_eq!(world.streamed().len(), 1);
-}
-
-#[test]
-fn the_hud_hears_nothing_while_the_setting_is_off() {
-    let mut world = world();
-    let peer = world.peer();
-    world
-        .app
-        .world_mut()
-        .resource_mut::<AppConfig>()
-        .chat_reactions = false;
-    world.pick("👍");
-    world.hear(peer, "🔥", 1.0, 2);
-    world.run(1.0);
-    assert!(world.streamed().is_empty());
-    // they played all the same
-    assert_eq!(world.stats().played, 3);
-
-    // switched back on, only what plays from then on is passed
-    world
-        .app
-        .world_mut()
-        .resource_mut::<AppConfig>()
-        .chat_reactions = true;
-    world.app.update();
-    assert!(world.streamed().is_empty());
-    world.pick("👍");
-    world.app.update();
-    assert_eq!(world.streamed().len(), 1);
-}
-
-#[test]
-fn analytics_hear_of_the_setting_changing_and_of_nothing_else() {
-    let mut world = world();
-    // the value the session starts with is not a change
-    assert!(world.tracked().is_empty());
-
-    // another setting saved
-    world
-        .app
-        .world_mut()
-        .resource_mut::<AppConfig>()
-        .max_avatars += 1;
-    world.app.update();
-    assert!(world.tracked().is_empty());
-
-    for state in [false, true] {
-        world
-            .app
-            .world_mut()
-            .resource_mut::<AppConfig>()
-            .chat_reactions = state;
-        world.app.update();
-        assert_eq!(
-            world.tracked(),
-            [(
-                "reaction_visualization".to_owned(),
-                serde_json::json!({ "state": state })
-            )]
-        );
-    }
 }

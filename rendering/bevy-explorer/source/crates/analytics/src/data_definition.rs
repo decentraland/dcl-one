@@ -131,7 +131,6 @@ pub enum SegmentEvent {
     VerticalHeightReached(SegmentEventVerticalHeightReached),
     FeatureFlagsResolved(SegmentEventFeatureFlagsResolved),
     ReactSituation(SegmentEventReactSituation),
-    ReactionVisualization(SegmentEventReactionVisualization),
     /// An event the host page reports through `/track`: its name, properties and time as sent.
     Page {
         name: String,
@@ -185,9 +184,6 @@ impl SegmentEvent {
                 ("Feature Flags Resolved", serde_json::to_value(event))
             }
             SegmentEvent::ReactSituation(event) => ("react_situation", serde_json::to_value(event)),
-            SegmentEvent::ReactionVisualization(event) => {
-                ("reaction_visualization", serde_json::to_value(event))
-            }
             SegmentEvent::Page { .. } => return None,
         };
         Some((name.to_string(), properties.unwrap()))
@@ -528,12 +524,6 @@ pub struct SegmentEventVerticalHeightReached {
 #[derive(Serialize)]
 pub struct SegmentEventReactSituation {
     pub reaction_id: i32,
-}
-
-/// The "Chat Reactions" setting changed: `state` is whether reactions now show on screen.
-#[derive(Serialize)]
-pub struct SegmentEventReactionVisualization {
-    pub state: bool,
 }
 
 /// Photo mode opened, from the key or a button.

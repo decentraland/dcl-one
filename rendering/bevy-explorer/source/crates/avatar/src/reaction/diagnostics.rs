@@ -2,10 +2,7 @@
 
 use bevy::prelude::*;
 use bevy_console::ConsoleCommand;
-use common::{
-    structs::{AppConfig, PrimaryPlayerRes},
-    util::AsH160,
-};
+use common::{structs::PrimaryPlayerRes, util::AsH160};
 use comms::{
     chat_reaction::{canonical_emoji, emoji_atlas_tile},
     global_crdt::{ForeignPlayer, ReactionEvent},
@@ -25,7 +22,6 @@ pub const SECTION: DebugSection = DebugSection {
     title: "Situational reactions",
     query: "/reaction_state",
     fields: &[
-        ("Shown on screen (Chat Reactions setting)", "screenLane"),
         ("Picks waiting to be sent", "outbox"),
         ("Picks refused", "refusedPicks"),
         ("Messages sent", "sent"),
@@ -54,15 +50,14 @@ pub const SECTION: DebugSection = DebugSection {
     inputs: &[],
 };
 
-/// Report the reactions as JSON: `screenLane` (the "Chat Reactions" setting passes them to the
-/// HUD), `outbox` (the local user's picks not yet sent), `refusedPicks` (their picks that were
-/// no emoji the wire carries, or had no wallet to send them), `sent` and `received` (messages,
-/// one per emoji per send), `queued` (the reactions waiting to play, and the senders with any
-/// waiting or inside the gap after their last), `played`, `streamed` (the reactions passed to the HUD) to `subscribers` streams, and
-/// `dropped`, by cause: `blocked` (messages and waiting reactions of a sender blocked or
-/// banned), `duplicate` (a message's copy by another room), `unknownEmoji`, `rateLimited`
-/// (messages) and `queueFull` (reactions that gave way to newer ones). The counts are of this
-/// session.
+/// Report the reactions as JSON: `outbox` (the local user's picks not yet sent), `refusedPicks`
+/// (their picks that were no emoji the wire carries, or had no wallet to send them), `sent` and
+/// `received` (messages, one per emoji per send), `queued` (the reactions waiting to play, and
+/// the senders with any waiting or inside the gap after their last), `played`, `streamed` (the
+/// reactions passed to the HUD) to `subscribers` streams, and `dropped`, by cause:
+/// `blocked` (messages and waiting reactions of a sender blocked or banned), `duplicate` (a
+/// message's copy by another room), `unknownEmoji`, `rateLimited` (messages) and `queueFull`
+/// (reactions that gave way to newer ones). The counts are of this session.
 #[derive(clap::Parser, ConsoleCommand)]
 #[command(name = "/reaction_state")]
 pub struct ReactionStateCommand;
@@ -70,7 +65,6 @@ pub struct ReactionStateCommand;
 pub fn reaction_state(
     mut cmd: ConsoleCommand<ReactionStateCommand>,
     stats: Res<ReactionStats>,
-    config: Res<AppConfig>,
     outboxes: Query<&ReactionOutbox>,
     queues: Query<&ReactionQueue>,
 ) {
@@ -79,7 +73,6 @@ pub fn reaction_state(
     };
     cmd.reply_ok(
         json!({
-            "screenLane": config.chat_reactions,
             "outbox": outboxes.iter().map(ReactionOutbox::waiting).sum::<u32>(),
             "refusedPicks": stats.refused_picks,
             "sent": stats.sent,
