@@ -122,15 +122,15 @@ pub(crate) mod tests {
     fn the_index_registry_declares_catalogue_proof_outcomes() {
         let recorder = super::registry()
             .unwrap()
-            .builder(dcl_metrics::PrometheusBuilder::new())
-            .unwrap()
-            .build_recorder();
+            .build_recorder(dcl_metrics::PrometheusBuilder::new())
+            .unwrap();
         let _recording = dcl_metrics::set_default_local_recorder(&recorder);
         dcl_metrics::counter!("catalyst_catalogue_mirror_proof_outcomes_total",
             "mirror" => "items", "network" => "matic", "outcome" => "rpc_auth_failed")
         .increment(1);
-        assert!(recorder.handle().render().contains(
+        let rendered = recorder.handle().render();
+        assert!(rendered.contains(
             "# HELP catalyst_catalogue_mirror_proof_outcomes_total Mainnet catalogue mirror proof failures and skips."
-        ));
+        ), "{rendered}");
     }
 }
