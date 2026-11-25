@@ -1,9 +1,7 @@
-// ControlButton — the small icon control used across the HUD (close, back, menu,
-// emoji toggle, emoji tabs, count pills…). One token-driven primitive so every
-// such button is consistent. Heavier rail buttons (tooltip + badge) compose this
-// via IconButton.
+// ControlButton — the small icon control used across the HUD (close, back, menu, emoji toggle, count
+// pills…), drawn by the shared Button.
 
-import styles from './ControlButton.module.css'
+import { Button } from '@dcl/one-ui'
 
 type Variant = 'ghost' | 'solid' | 'dark' | 'faint'
 type Shape = 'square' | 'circle' | 'pill'
@@ -20,23 +18,8 @@ interface ControlButtonProps extends React.ButtonHTMLAttributes<HTMLButtonElemen
   active?: boolean
 }
 
-export function ControlButton({
-  variant = 'ghost',
-  shape = 'square',
-  size = 'md',
-  active = false,
-  className = '',
-  type = 'button',
-  ...rest
-}: ControlButtonProps): React.JSX.Element {
-  return (
-    <button
-      type={type}
-      className={`${styles.btn} ${styles[variant]} ${styles[shape]} ${styles[size]} ${
-        active ? styles.active : ''
-      } ${className}`.trim()}
-      aria-pressed={active}
-      {...rest}
-    />
-  )
+type SharedProps = Extract<React.ComponentProps<typeof Button>, { appearance: 'hud'; control: Shape; href?: undefined }>
+
+export function ControlButton({ shape = 'square', ...rest }: ControlButtonProps): React.JSX.Element {
+  return <Button {...({ ...rest, appearance: 'hud', control: shape } as SharedProps)} />
 }

@@ -87,16 +87,50 @@ type DefaultLook = {
 } & ({ iconOnly?: false } | ({ iconOnly: true } & AccessibleName)) &
   ({ variant?: Exclude<Variant, 'iconOnly'> } | ({ variant: 'iconOnly' } & AccessibleName))
 
+/** The fill of the Explorer HUD's icon control. */
+export type ButtonHudControlVariant = 'ghost' | 'solid' | 'dark' | 'faint'
+
 /**
  * Not in Figma: the Explorer HUD's button. Its content is the button's own children, laid out in a
  * row 8px apart, and it has no loading state or icon slots.
  */
 type HudLook = {
   appearance: 'hud'
+  control?: never
+  active?: never
   variant?: ButtonHudVariant
   size?: ButtonHudSize
   /** Overrides the size's corner radius. */
   radius?: 'md' | 'button' | 'pill'
+}
+
+/**
+ * Not in Figma: the Explorer HUD's icon control (close, back, a menu's toggle, a count). `square`,
+ * `circle` and `pill` are a 30px box (`sm` 26px, `lg` 32px; a pill grows to its content) with a
+ * `ghost` fill unless `variant` says otherwise. It sets `aria-pressed` from `active`; pass
+ * `aria-pressed={undefined}` for a control that is not a toggle.
+ */
+type HudControlLook = {
+  appearance: 'hud'
+  control: 'square' | 'circle' | 'pill'
+  variant?: ButtonHudControlVariant
+  size?: 'sm' | 'md' | 'lg'
+  /** The selected or pressed look. */
+  active?: boolean
+  radius?: never
+}
+
+/**
+ * Not in Figma: the dark button of a full-screen HUD header, with a faint ring that keeps it
+ * readable over a busy background. `header` is a 40px circle and `headerPill` a 46px pill.
+ */
+type HudHeaderLook = {
+  appearance: 'hud'
+  control: 'header' | 'headerPill'
+  variant?: never
+  size?: never
+  active?: never
+  radius?: never
 }
 
 export type ButtonProps = NativeProps &
@@ -108,32 +142,57 @@ export type ButtonProps = NativeProps &
     dangerouslySetInnerHTML?: never
     children?: ReactNode
     label?: ReactNode
-  } & (DefaultLook | HudLook)
+  } & (DefaultLook | HudLook | HudControlLook | HudHeaderLook)
 
 type HudProps<T = ButtonProps> = T extends { appearance: 'hud' } ? Omit<T, 'appearance'> : never
 type DefaultProps<T = ButtonProps> = T extends { appearance: 'hud' } ? never : Omit<T, 'appearance'>
 
+function hudLook(
+  control: HudProps['control'],
+  variant: HudProps['variant'],
+  size: HudProps['size'],
+  radius: HudProps['radius'],
+  active: boolean
+) {
+  if (control === undefined)
+    return {
+      className: styles.hud,
+      'data-variant': variant ?? 'primary',
+      'data-size': size ?? 'md',
+      'data-radius': radius
+    }
+  if (control === 'header' || control === 'headerPill')
+    return { className: styles.hudHeader, 'data-shape': control === 'header' ? 'circle' : 'pill' }
+  return {
+    className: styles.hudControl,
+    'data-shape': control,
+    'data-variant': variant ?? 'ghost',
+    'data-size': size ?? 'md',
+    'data-active': active || undefined
+  }
+}
+
 function HudButton({
-  variant = 'primary',
-  size = 'md',
+  variant,
+  size,
   radius,
+  control,
+  active = false,
   className,
   children,
   label,
   disabled = false,
   ...native
 }: HudProps) {
-  const common = {
-    className: [styles.hud, className].filter(Boolean).join(' '),
-    'data-variant': variant,
-    'data-size': size,
-    'data-radius': radius
-  }
+  const look = hudLook(control, variant, size, radius, active)
+  const common = { ...look, className: [look.className, className].filter(Boolean).join(' ') }
+  const toggle = control === 'square' || control === 'circle' || control === 'pill'
   const content = children === undefined ? label : children
   if (typeof native.href === 'string') {
     const { href, target, rel, onClick, ...anchor } = native
     return (
       <a
+        aria-pressed={toggle ? active : undefined}
         {...anchor}
         {...common}
         dangerouslySetInnerHTML={undefined}
@@ -156,6 +215,7 @@ function HudButton({
   }
   return (
     <button
+      aria-pressed={toggle ? active : undefined}
       {...button}
       {...common}
       dangerouslySetInnerHTML={undefined}

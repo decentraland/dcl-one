@@ -196,6 +196,58 @@ export const actionEntries: GalleryEntry[] = [
         )
       },
       {
+        id: 'hud-controls',
+        title: 'Explorer HUD controls',
+        render: () => (
+          <div className={layout.rows}>
+            <div className={layout.strip}>
+              {(['ghost', 'solid', 'dark', 'faint'] as const).map((variant) => (
+                <Button
+                  key={variant}
+                  appearance="hud"
+                  control="square"
+                  variant={variant}
+                  aria-label={`${variant} control`}
+                >
+                  ×
+                </Button>
+              ))}
+              <Button appearance="hud" control="square" variant="solid" active aria-label="Active">
+                ×
+              </Button>
+              <Button appearance="hud" control="square" disabled aria-label="Disabled">
+                ×
+              </Button>
+            </div>
+            <div className={layout.strip}>
+              {(['sm', 'md', 'lg'] as const).map((size) => (
+                <Button
+                  key={size}
+                  appearance="hud"
+                  control="circle"
+                  variant="solid"
+                  size={size}
+                  aria-label={`${size} circle`}
+                >
+                  ×
+                </Button>
+              ))}
+              <Button appearance="hud" control="pill" variant="dark">
+                12 online
+              </Button>
+            </div>
+            <div className={layout.strip}>
+              <Button appearance="hud" control="header" aria-label="Close">
+                ×
+              </Button>
+              <Button appearance="hud" control="headerPill" style={{ padding: '0 16px' }}>
+                Ada
+              </Button>
+            </div>
+          </div>
+        )
+      },
+      {
         id: 'content',
         title: 'Icons, links and icon-only',
         render: () => (

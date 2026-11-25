@@ -13,7 +13,7 @@ export const ARM_MS = 500
 
 /** Every prop of the HUD Button's `<button>` form (variant, size, radius and the element's own), with a plain onClick. */
 type ArmedButtonProps = Omit<
-  Extract<React.ComponentProps<typeof Button>, { appearance: 'hud'; href?: undefined }>,
+  Extract<React.ComponentProps<typeof Button>, { appearance: 'hud'; control?: undefined; href?: undefined }>,
   'appearance' | 'onClick' | 'children' | 'label'
 > & {
   onClick?: () => void

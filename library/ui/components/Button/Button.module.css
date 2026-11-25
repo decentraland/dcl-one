@@ -665,3 +665,116 @@
     transform: none;
   }
 }
+
+/* Not in Figma: the Explorer HUD's icon control (`control="square" | "circle" | "pill"`) and its header
+   button (`control="header" | "headerPill"`). These rules sit outside the layer and each has the
+   specificity of the HUD rule it replaced, so a HUD stylesheet that restyles a control keeps the
+   precedence it had. The HUD's 0.82rem label, its timings, and the chat's and the header's fills have no
+   token. */
+.hudControl {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  border: none;
+  cursor: pointer;
+  color: var(--dcl-neutrals-snow);
+  font-family: inherit;
+  font-size: 0.82rem;
+  font-weight: 600;
+  line-height: 1;
+  transition:
+    background-color 140ms ease,
+    color 140ms ease;
+}
+.hudControl:disabled,
+.hudControl[data-disabled] {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+/* A disabled link: `:disabled` does not match an anchor, so it takes no pointer. */
+.hudControl[data-disabled] {
+  pointer-events: none;
+}
+
+:where(.hudControl)[data-size='sm'] {
+  width: 26px;
+  height: 26px;
+}
+:where(.hudControl)[data-size='md'] {
+  width: 30px;
+  height: 30px;
+}
+:where(.hudControl)[data-size='lg'] {
+  width: 32px;
+  height: 32px;
+}
+/* a pill grows to fit a label or a count, keeping the size's height */
+.hudControl[data-shape='pill'] {
+  width: auto;
+  padding: 0 10px;
+}
+
+:where(.hudControl)[data-shape='square'] {
+  border-radius: var(--dcl-radius-sm);
+}
+:where(.hudControl)[data-shape='circle'] {
+  border-radius: var(--dcl-radius-full);
+}
+:where(.hudControl)[data-shape='pill'] {
+  border-radius: 10px;
+}
+
+:where(.hudControl)[data-variant='ghost'],
+:where(.hudControl)[data-variant='faint'] {
+  background: transparent;
+}
+:where(.hudControl)[data-variant='solid'],
+:where(.hudControl)[data-variant='dark'] {
+  background: var(--dcl-neutrals-black);
+}
+:where(.hudControl)[data-variant='ghost']:hover:not(:disabled),
+:where(.hudControl)[data-variant='ghost'][data-active],
+:where(.hudControl)[data-variant='solid']:hover:not(:disabled),
+:where(.hudControl)[data-variant='solid'][data-active] {
+  background: var(--dcl-transparencies-white-10);
+}
+:where(.hudControl)[data-variant='dark']:hover:not(:disabled),
+:where(.hudControl)[data-variant='dark'][data-active],
+:where(.hudControl)[data-variant='faint']:hover:not(:disabled),
+:where(.hudControl)[data-variant='faint'][data-active] {
+  background: rgba(255, 255, 255, 0.24);
+}
+:where(.hudControl)[data-variant='dark']:active:not(:disabled),
+:where(.hudControl)[data-variant='faint']:active:not(:disabled) {
+  background: rgba(255, 255, 255, 0.18);
+}
+
+.hudHeader {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 0;
+  border-radius: var(--dcl-radius-full);
+  background: var(--dcl-neutrals-black);
+  box-shadow: inset 0 0 0 2px rgba(255, 255, 255, 0.18);
+  color: var(--dcl-neutrals-white);
+  font: inherit;
+  cursor: pointer;
+  transition: background-color 100ms linear;
+}
+.hudHeader:hover {
+  background: rgb(31, 31, 31);
+}
+.hudHeader:focus-visible {
+  outline: 2px solid var(--dcl-brand-orange);
+  outline-offset: 2px;
+}
+:where(.hudHeader)[data-shape='circle'] {
+  width: 40px;
+  height: 40px;
+}
+:where(.hudHeader)[data-shape='pill'] {
+  height: 46px;
+  padding: 0 3px;
+}

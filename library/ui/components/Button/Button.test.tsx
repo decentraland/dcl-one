@@ -751,6 +751,112 @@ describe('when a Button takes the hud appearance', () => {
   })
 })
 
+describe('when a hud Button is an icon control', () => {
+  it('should default to the ghost fill and the md size, and report that it is not pressed', () => {
+    render(<Button appearance="hud" control="square" aria-label="Close" />)
+    const button = screen.getByRole('button', { name: 'Close' })
+    expect(button).toHaveAttribute('type', 'button')
+    expect(button).toHaveAttribute('data-shape', 'square')
+    expect(button).toHaveAttribute('data-variant', 'ghost')
+    expect(button).toHaveAttribute('data-size', 'md')
+    expect(button).not.toHaveAttribute('data-active')
+    expect(button).toHaveAttribute('aria-pressed', 'false')
+    expect(button).not.toHaveAttribute('control')
+  })
+
+  it("should carry its shape, fill and size and keep the caller's class", () => {
+    render(
+      <Button appearance="hud" control="pill" variant="faint" size="sm" className="mine">
+        3 online
+      </Button>
+    )
+    const button = screen.getByRole('button', { name: '3 online' })
+    expect(button).toHaveAttribute('data-shape', 'pill')
+    expect(button).toHaveAttribute('data-variant', 'faint')
+    expect(button).toHaveAttribute('data-size', 'sm')
+    expect(button).toHaveClass('mine')
+  })
+
+  it('should not take the class of the plain hud button', () => {
+    render(
+      <>
+        <Button appearance="hud">Plain</Button>
+        <Button appearance="hud" control="circle" aria-label="Menu" />
+      </>
+    )
+    const plain = screen.getByRole('button', { name: 'Plain' }).className
+    expect(screen.getByRole('button', { name: 'Menu' }).className).not.toBe(plain)
+  })
+
+  it('should mark an active control and report it as pressed', () => {
+    render(<Button appearance="hud" control="circle" active aria-label="People" />)
+    const button = screen.getByRole('button', { name: 'People' })
+    expect(button).toHaveAttribute('data-active')
+    expect(button).toHaveAttribute('aria-pressed', 'true')
+  })
+
+  it('should drop aria-pressed when the caller clears it', () => {
+    render(
+      <Button
+        appearance="hud"
+        control="square"
+        active
+        aria-pressed={undefined}
+        aria-expanded
+        aria-label="More options"
+      />
+    )
+    const button = screen.getByRole('button', { name: 'More options' })
+    expect(button).not.toHaveAttribute('aria-pressed')
+    expect(button).toHaveAttribute('data-active')
+  })
+
+  it('should not call onClick while disabled', async () => {
+    const onClick = vi.fn()
+    render(
+      <Button appearance="hud" control="circle" disabled onClick={onClick} aria-label="Mute" />
+    )
+    const button = screen.getByRole('button', { name: 'Mute' })
+    expect(button).toBeDisabled()
+    await userEvent.click(button)
+    expect(onClick).not.toHaveBeenCalled()
+  })
+
+  it('should drop the destination of a disabled link', () => {
+    render(
+      <Button appearance="hud" control="pill" href="/shop" disabled>
+        Shop
+      </Button>
+    )
+    const link = screen.getByText('Shop')
+    expect(link).not.toHaveAttribute('href')
+    expect(link).toHaveAttribute('data-disabled')
+  })
+})
+
+describe('when a hud Button is a header button', () => {
+  it('should render a circle with no fill, size or pressed state', () => {
+    render(<Button appearance="hud" control="header" aria-label="Close" />)
+    const button = screen.getByRole('button', { name: 'Close' })
+    expect(button).toHaveAttribute('data-shape', 'circle')
+    expect(button).not.toHaveAttribute('data-variant')
+    expect(button).not.toHaveAttribute('data-size')
+    expect(button).not.toHaveAttribute('aria-pressed')
+  })
+
+  it('should render a pill around its children', () => {
+    render(
+      <Button appearance="hud" control="headerPill" className="mine">
+        <span>Ada</span>
+      </Button>
+    )
+    const button = screen.getByRole('button', { name: 'Ada' })
+    expect(button).toHaveAttribute('data-shape', 'pill')
+    expect(button).toHaveClass('mine')
+    expect(button.querySelector('[data-button-label]')).toBeNull()
+  })
+})
+
 describe('when a Button names the default appearance', () => {
   it('should render as it does without the prop', () => {
     render(<Button appearance="default">Join</Button>)

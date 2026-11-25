@@ -3085,10 +3085,6 @@
           "kind": "regular"
         },
         {
-          "name": "ControlButton.module.css",
-          "kind": "regular"
-        },
-        {
           "name": "ControlButton.tsx",
           "kind": "regular"
         },
@@ -3146,10 +3142,6 @@
         },
         {
           "name": "Glyphs.tsx",
-          "kind": "regular"
-        },
-        {
-          "name": "HeaderButton.module.css",
           "kind": "regular"
         },
         {
@@ -9707,7 +9699,7 @@
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/src/test/showcaseChunk.test.ts",
-      "sha256": "72a8b58a1e846968ef09d7a4be7b8e55da02e62ce3d4f792da13474d884b356a"
+      "sha256": "5446f5df52649ecd835f75294111124d7b2904e8c0b5cb03d6eb9ab8e490e502"
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/src/test/sidebar.test.tsx",
@@ -12106,7 +12098,7 @@
     },
     {
       "path": "library/ui/apps/hud/design/ArmedButton.tsx",
-      "sha256": "6826f49ca8e26b677dcbce3c99a7ae6200541d1b95a814d0185c6bc4c685e3bf"
+      "sha256": "7552abac0417d441de356dbcfadcf269119225645a277946bac395052e495338"
     },
     {
       "path": "library/ui/apps/hud/design/Avatar.tsx",
@@ -12161,12 +12153,8 @@
       "sha256": "ee48ec7544bd7edf4e1ec5b51ccc121ad2df67c0bea998c2ca8b27fb0366ade4"
     },
     {
-      "path": "library/ui/apps/hud/design/ControlButton.module.css",
-      "sha256": "7d326c7d617bbbb42021b10e4fb8f6a6a8fb2602d5c91f1cc9d075d9fe721033"
-    },
-    {
       "path": "library/ui/apps/hud/design/ControlButton.tsx",
-      "sha256": "e06ce47a6769168893f4dfac224b6a7d12daa2b1ea37bab3be318228ff9199e7"
+      "sha256": "9164feebd1b6426c649adbb111c220751d275e68478a185bec2d72ef67117d57"
     },
     {
       "path": "library/ui/apps/hud/design/CountBadge.module.css",
@@ -12225,12 +12213,8 @@
       "sha256": "3e92a0d343bc86964eb5c521deb8804bc9e069d9280b6744317764a8dcaaec35"
     },
     {
-      "path": "library/ui/apps/hud/design/HeaderButton.module.css",
-      "sha256": "1ccb5c90f9c64d5078de8fbb171f3f10a8f7f7fee45d47566936826e6419ba6d"
-    },
-    {
       "path": "library/ui/apps/hud/design/HeaderButton.tsx",
-      "sha256": "8878e2c1ca6d36b508015cebe700ecb21e5b83eea1968cd4cc17896c23b571a9"
+      "sha256": "d9c24c0b7d680277ff0648a2cde8907a18d3f5835ea0422c63ee33e3e3fa1340"
     },
     {
       "path": "library/ui/apps/hud/design/HintsButton.module.css",
@@ -16086,15 +16070,15 @@
     },
     {
       "path": "library/ui/components/Button/Button.module.css",
-      "sha256": "6b8fe078d68c478cb3a0cb3331af609d0c9e4552bef2c66bfd4cb1d42fe9b150"
+      "sha256": "e5eeb2da1649e23b50b2e4da9b3348726fb357ae01f4d39ab303480457f9d5ce"
     },
     {
       "path": "library/ui/components/Button/Button.module.css.d.ts",
-      "sha256": "bd87701914b8c66dfc270f2d6feb78a0a679e879829e8fc26da67bda8d5e9240"
+      "sha256": "5923039a68df472549277bd90b7d08117ae09ee3f4f904dd07e74776f020c77b"
     },
     {
       "path": "library/ui/components/Button/Button.tsx",
-      "sha256": "5c488c6ea1c45e3c8053a1ce39f24a939d4b7a952d823364608ce4e5196b6df3"
+      "sha256": "59752b6d5610b4776bf76d970da1c4fc9ad56225d353f3af7f20c98e63f3e6e4"
     },
     {
       "path": "library/ui/components/CardActionButton/CardActionButton.module.css",
@@ -20736,17 +20720,17 @@
     },
     {
       "from": "library/ui/apps/hud/design/ControlButton.tsx",
-      "to": "library/ui/apps/hud/design/ControlButton.module.css",
+      "to": "library/ui/index.ts",
       "kind": "native:runtime"
     },
     {
       "from": "library/ui/apps/hud/design/ControlButton.tsx",
-      "to": "library/ui/apps/hud/design/ControlButton.module.css",
+      "to": "library/ui/index.ts",
       "kind": "production:runtime"
     },
     {
       "from": "library/ui/apps/hud/design/ControlButton.tsx",
-      "to": "library/ui/apps/hud/design/ControlButton.module.css",
+      "to": "library/ui/index.ts",
       "kind": "test:runtime"
     },
     {
@@ -20901,17 +20885,17 @@
     },
     {
       "from": "library/ui/apps/hud/design/HeaderButton.tsx",
-      "to": "library/ui/apps/hud/design/HeaderButton.module.css",
+      "to": "library/ui/index.ts",
       "kind": "native:runtime"
     },
     {
       "from": "library/ui/apps/hud/design/HeaderButton.tsx",
-      "to": "library/ui/apps/hud/design/HeaderButton.module.css",
+      "to": "library/ui/index.ts",
       "kind": "production:runtime"
     },
     {
       "from": "library/ui/apps/hud/design/HeaderButton.tsx",
-      "to": "library/ui/apps/hud/design/HeaderButton.module.css",
+      "to": "library/ui/index.ts",
       "kind": "test:runtime"
     },
     {
