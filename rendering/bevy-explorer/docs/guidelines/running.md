@@ -289,8 +289,9 @@ State, in every build:
   reads or sets, for the session, whether a wallet's nametag carries the official badge.
 - `/reaction_state`: the situational reactions, as JSON: `screenLane` (the Chat Reactions setting
   passes them to the HUD), `outbox` (the local user's picks not yet sent), `refusedPicks`, `sent`
-  and `received` (messages, one per emoji per send), `queued` (the reactions waiting to play and
-  the senders they wait on), `played`, `streamed` (the reactions passed to the HUD) to
+  and `received` (messages, one per emoji per send), `queued` (the reactions waiting to play, and
+  the senders with any waiting or inside the gap after their last), `played`, `streamed` (the
+  reactions passed to the HUD) to
   `subscribers` streams, and `dropped` by cause: `blocked`, `duplicate`, `unknownEmoji`,
   `rateLimited` and `queueFull`. The counts are of the session.
   `/reaction_send <emoji>` reacts as the local user, the way the system API's `sendReaction` does:

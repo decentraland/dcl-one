@@ -256,9 +256,32 @@ fn a_peers_reactions_play_one_at_a_time() {
     world.run(0.5);
     let peer_address = format!("{PEER:#x}");
     assert_eq!(world.streamed(), vec![(peer_address, "🔥".to_owned()); 3]);
-    // nothing waits on a peer with nothing left to play
-    assert!(world.app.world().get::<ReactionQueue>(peer).is_none());
     assert_eq!(world.stats().played, 3);
+    // nothing is kept on a peer once the gap after their last has run out
+    world.run(0.3);
+    assert!(world.app.world().get::<ReactionQueue>(peer).is_none());
+}
+
+#[test]
+fn messages_of_one_reaction_each_play_a_gap_apart_too() {
+    let mut world = world();
+    let peer = world.peer();
+    // a message a frame, each with a stamp of its own
+    for message in 0..4 {
+        world.hear(peer, "🔥", 1.0 + message as f32, 1);
+        world.app.update();
+        // the first at once; the next two arrive inside its gap and wait
+        if message < 3 {
+            assert_eq!(world.stats().played, 1);
+        }
+    }
+    // then one for each gap that runs out
+    world.run(0.15);
+    assert_eq!(world.stats().played, 2);
+    for played in 3..=4 {
+        world.run(0.2);
+        assert_eq!(world.stats().played, played);
+    }
 }
 
 #[test]

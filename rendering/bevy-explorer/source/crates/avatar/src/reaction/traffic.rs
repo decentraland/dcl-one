@@ -171,7 +171,8 @@ impl ReactionGuard {
     }
 }
 
-/// A sender's reactions waiting to play, one at a time: on the sender while any wait.
+/// A sender's reactions waiting to play, one at a time: on the sender while any wait and until
+/// the gap after the last has run out, so one that follows it waits the gap out too.
 #[derive(Component)]
 pub struct ReactionQueue {
     /// Who the wire said sent them.
@@ -221,8 +222,9 @@ impl ReactionQueue {
         self.waiting.len()
     }
 
-    pub fn is_empty(&self) -> bool {
-        self.waiting.is_empty()
+    /// Nothing waits and the gap after the last has run out.
+    pub fn done(&self) -> bool {
+        self.waiting.is_empty() && self.timer <= 0.0
     }
 }
 
@@ -423,7 +425,25 @@ mod tests {
         assert_eq!(queue.tick(STAGGER * 2.0), ["👍", "🔥"]);
         assert_eq!(queue.len(), 2);
         assert_eq!(queue.tick(60.0), ["🔥", "🔥"]);
-        assert!(queue.is_empty());
+        assert!(queue.done());
+    }
+
+    #[test]
+    fn a_reaction_that_follows_the_last_waits_out_the_gap() {
+        let mut queue = ReactionQueue::new(Address::ZERO);
+        queue.push("🔥", 1);
+        assert_eq!(queue.tick(0.0), ["🔥"]);
+        // nothing waits, and the gap has only begun
+        assert_eq!(queue.len(), 0);
+        assert!(!queue.done());
+
+        // the next message's reaction, a moment later
+        queue.push("👍", 1);
+        assert!(queue.tick(STAGGER * 0.5).is_empty());
+        assert_eq!(queue.tick(STAGGER * 0.5), ["👍"]);
+        assert!(!queue.done());
+        assert!(queue.tick(STAGGER).is_empty());
+        assert!(queue.done());
     }
 
     #[test]

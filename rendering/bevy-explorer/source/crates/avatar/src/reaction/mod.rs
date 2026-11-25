@@ -204,7 +204,8 @@ fn receive_reactions(
     }
 }
 
-/// Each sender's queue plays what is due, and goes once it is empty.
+/// Each sender's queue plays what is due. It goes once nothing waits and the gap after the last
+/// has run out: gone sooner, the sender's next message would play at once.
 fn play_queued_reactions(
     mut commands: Commands,
     time: Res<Time>,
@@ -228,7 +229,7 @@ fn play_queued_reactions(
             });
             stats.played += 1;
         }
-        if queue.is_empty() {
+        if queue.done() {
             commands.entity(player).try_remove::<ReactionQueue>();
         }
     }
