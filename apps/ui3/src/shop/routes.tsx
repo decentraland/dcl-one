@@ -2,7 +2,7 @@
 import { lazy, Suspense, useMemo, type ComponentType, type ReactNode } from "react";
 import { Navigate, useLocation, useParams, useRoutes, type RouteObject } from "react-router";
 
-import Spinner from "../atoms/Spinner";
+import { Spinner } from "@dcl/one-ui";
 import { SHOP_ALIASES, SHOP_BASE, resolveShopAliasTarget, type ShopAlias } from "@shop/route-aliases";
 
 export { SHOP_ALIASES, SHOP_BASE, aliasTarget, renamedTarget, resolveShopAlias } from "@shop/route-aliases";
@@ -164,7 +164,7 @@ function AliasRoute({ alias, opts }: { alias: ShopAlias; opts: ShopRouteOptions 
 export function shopRouteObjects(opts: ShopRouteOptions = {}, modules?: Record<string, () => Promise<PageModule>>): RouteObject[] {
   const fallback = opts.fallback ?? (
     <div className="page-loading" aria-busy="true">
-      <Spinner size={24} />
+      <Spinner variant="light" size={24} />
     </div>
   );
   const routes: RouteObject[] = [];

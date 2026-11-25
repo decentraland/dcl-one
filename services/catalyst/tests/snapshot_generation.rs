@@ -45,6 +45,32 @@ const SEED: &str = include_str!("fixtures/snapshots/seed.sql");
 const GOLDEN: &str = include_str!("fixtures/snapshots/old-generator.json");
 const DAY: i64 = 86_400_000;
 
+/// A recorder with the content server's declared series, made the test thread's default.
+fn content_recorder() -> dcl_metrics::PrometheusRecorder {
+    dcl_metrics::Registry::new(&[catalyst::content::series::FAMILIES])
+        .unwrap()
+        .builder(dcl_metrics::PrometheusBuilder::new())
+        .unwrap()
+        .build_recorder()
+}
+
+/// The windows `dcl_content_server_snapshot_generation_time` counted with `labels`, summed
+/// over the labels left out.
+fn generations(recorder: &dcl_metrics::PrometheusRecorder, labels: &[(&str, &str)]) -> f64 {
+    recorder
+        .handle()
+        .render()
+        .lines()
+        .filter(|line| line.starts_with("dcl_content_server_snapshot_generation_time_count{"))
+        .filter(|line| {
+            labels
+                .iter()
+                .all(|(k, v)| line.contains(&format!("{k}=\"{v}\"")))
+        })
+        .filter_map(|line| line.rsplit_once(' ')?.1.parse::<f64>().ok())
+        .sum()
+}
+
 fn temp_dir(tag: &str) -> std::path::PathBuf {
     std::env::temp_dir().join(format!(
         "catalyst-snapgen-{tag}-{}-{}",
@@ -374,6 +400,8 @@ async fn generation_matches_the_old_generator_golden() {
     let root = temp_dir("golden");
     let state = content_state(&db.pool, &root).await;
     let generator = SnapshotGenerator::new(state.clone(), false, settings(1000));
+    let recorder = content_recorder();
+    let _metrics = dcl_metrics::set_default_local_recorder(&recorder);
 
     let (end1, golden1) = golden_pass(0);
     let (rows, summary) = generator.generate(end1).await.unwrap();
@@ -396,6 +424,15 @@ async fn generation_matches_the_old_generator_golden() {
         (5, 2, 3, 0)
     );
     assert_matches_golden(&state, &rows, &golden2).await;
+    assert_eq!(
+        generations(
+            &recorder,
+            &[("result", "success"), ("reason", "cover_time_range")]
+        ),
+        6.0,
+        "every window written had no saved window covering it"
+    );
+    assert_eq!(generations(&recorder, &[("interval_size", "year")]), 1.0);
     let day = &golden1[3].hash;
     assert!(
         state.storage.exist(day).await.unwrap(),
@@ -466,7 +503,17 @@ async fn a_pass_reuses_regenerates_prunes_and_rekeys() {
         None,
     )
     .await;
+    let recorder = content_recorder();
+    let metrics = dcl_metrics::set_default_local_recorder(&recorder);
     let (rows, summary) = generator.generate(end).await.unwrap();
+    drop(metrics);
+    assert_eq!(
+        generations(
+            &recorder,
+            &[("interval_size", "week"), ("reason", "is_outdated")]
+        ),
+        1.0
+    );
     assert_eq!((summary.generated, summary.reused), (1, 3));
     assert_ne!(rows[2].hash, golden[2].hash);
     assert_eq!(rows[2].number_of_entities, 4);
@@ -628,7 +675,17 @@ async fn a_month_old_window_listing_an_overwritten_entity_is_regenerated() {
     assert_eq!(year_row(&rows), kept);
 
     // Over a month old with fewer active entities than it lists: regenerated.
+    let recorder = content_recorder();
+    let metrics = dcl_metrics::set_default_local_recorder(&recorder);
     let (rows, _) = generator.generate(generated + month + DAY).await.unwrap();
+    drop(metrics);
+    assert_eq!(
+        generations(
+            &recorder,
+            &[("interval_size", "year"), ("reason", "inactive_entities")]
+        ),
+        1.0
+    );
     let rebuilt = year_row(&rows);
     assert_eq!(rebuilt.number_of_entities, golden[0].entities - 1);
     assert_ne!(rebuilt.hash, kept.hash);
@@ -641,6 +698,63 @@ async fn a_month_old_window_listing_an_overwritten_entity_is_regenerated() {
     // The new row is younger than a month: the next pass reuses it.
     let (rows, _) = generator.generate(generated + month + DAY).await.unwrap();
     assert_eq!(year_row(&rows), rebuilt);
+
+    db.teardown().await;
+    let _ = std::fs::remove_dir_all(root);
+}
+
+/// A month-old window that lists an overwritten entity and is also marked outdated is
+/// labelled `inactive_entities`, as upstream's, which checks inactive entities before
+/// the outdated mark.
+#[tokio::test]
+async fn an_outdated_window_with_inactive_entities_is_labelled_inactive_entities() {
+    let Some(db) = db::scratch_database().await else {
+        return;
+    };
+    sqlx::raw_sql(SEED).execute(&db.pool).await.unwrap();
+    let root = temp_dir("outdated-inactive");
+    let state = content_state(&db.pool, &root).await;
+    let generator = SnapshotGenerator::new(state.clone(), false, settings(1000));
+    let (end, golden) = golden_pass(0);
+    let year = golden[0].range;
+    let (first, _) = generator.generate(end).await.unwrap();
+    assert_eq!(first[0].hash, golden[0].hash);
+
+    // As in `a_month_old_window_listing_an_overwritten_entity_is_regenerated`, plus the
+    // deleter repair's mark.
+    let generated = sqlx::query_scalar::<_, chrono::NaiveDateTime>(
+        "UPDATE content.snapshots SET generation_time = '2021-01-07 07:00', outdated = true
+         WHERE init_timestamp = to_timestamp($1 / 1000.0) AT TIME ZONE 'UTC'
+         RETURNING generation_time",
+    )
+    .bind(year.init_timestamp as f64)
+    .fetch_one(&db.pool)
+    .await
+    .unwrap()
+    .and_utc()
+    .timestamp_millis();
+    sqlx::query("UPDATE content.deployments SET deleter_deployment = 0 WHERE entity_id = 'bafkreiprofile000001'")
+        .execute(&db.pool)
+        .await
+        .unwrap();
+
+    let recorder = content_recorder();
+    let metrics = dcl_metrics::set_default_local_recorder(&recorder);
+    let (rows, _) = generator
+        .generate(generated + 28 * DAY + DAY)
+        .await
+        .unwrap();
+    drop(metrics);
+    assert_eq!(
+        generations(
+            &recorder,
+            &[("interval_size", "year"), ("reason", "inactive_entities")]
+        ),
+        1.0
+    );
+    assert_eq!(generations(&recorder, &[("reason", "is_outdated")]), 0.0);
+    let rebuilt = rows.iter().find(|r| r.time_range == year).unwrap();
+    assert_eq!(rebuilt.number_of_entities, golden[0].entities - 1);
 
     db.teardown().await;
     let _ = std::fs::remove_dir_all(root);

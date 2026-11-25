@@ -136,9 +136,31 @@ fn set(lookup: &Lookup, key: &str) -> Option<String> {
     lookup(key).filter(|v| !v.trim().is_empty())
 }
 
-/// The chain endpoints and contracts the mirror preset knows are mainnet's.
+/// Some mirror preset jobs and endpoints cover only mainnet.
 fn mainnet(lookup: &Lookup) -> bool {
     lookup("ETH_NETWORK").is_none_or(|n| n.trim().is_empty() || n.trim() == "mainnet")
+}
+
+fn eth_collections_source(lookup: &Lookup) -> Option<String> {
+    Some(
+        if set(lookup, "MARKETPLACE_INDEX_CHAIN_ID_ETHEREUM").as_deref() == Some("11155111") {
+            "https://subgraph.decentraland.org/collections-ethereum-sepolia"
+        } else {
+            "https://subgraph.decentraland.org/collections-ethereum-mainnet"
+        }
+        .into(),
+    )
+}
+
+fn matic_collections_source(lookup: &Lookup) -> Option<String> {
+    Some(
+        if set(lookup, "MARKETPLACE_INDEX_CHAIN_ID_MATIC").as_deref() == Some("80002") {
+            "https://subgraph.decentraland.org/collections-matic-amoy"
+        } else {
+            "https://subgraph.decentraland.org/collections-matic-mainnet"
+        }
+        .into(),
+    )
 }
 
 fn third_party_registry_subgraph(lookup: &Lookup) -> Option<String> {
@@ -281,11 +303,6 @@ const ROWS: &[Row] = &[
     ),
     upstream(
         "mirrors",
-        "EXPLORER_MAP_SOURCE_URL",
-        "https://api.decentraland.org",
-    ),
-    upstream(
-        "mirrors",
         "WORLD_MANIFEST_UPSTREAM_URL",
         "https://places-dcf8abb.s3.amazonaws.com/WorldManifest.json",
     ),
@@ -297,15 +314,25 @@ const ROWS: &[Row] = &[
     ),
     // Development only: no posture serves an order book before its first complete pass.
     same("mirrors", "TRADES_SERVE_PARTIAL", "false"),
-    upstream(
+    row(
         "mirrors",
         "ETH_COLLECTIONS_SUBGRAPH_URL",
-        "https://subgraph.decentraland.org/collections-ethereum-mainnet",
+        From(
+            "collections subgraph of the served ethereum chain",
+            eth_collections_source,
+        ),
+        Is(""),
+        Is(""),
     ),
-    upstream(
+    row(
         "mirrors",
         "MATIC_COLLECTIONS_SUBGRAPH_URL",
-        "https://subgraph.decentraland.org/collections-matic-mainnet",
+        From(
+            "collections subgraph of the served matic chain",
+            matic_collections_source,
+        ),
+        Is(""),
+        Is(""),
     ),
     upstream(
         "mirrors",
@@ -337,18 +364,14 @@ const ROWS: &[Row] = &[
     // lamb2's `/collections/wearables` takes `collectionId`, `wearableId`
     // and `textSearch` by default; operators can opt in to extended filters.
     same("lambdas", "LAMBDAS_CATALOG_EXTENSIONS_ENABLED", "false"),
-    // lamb2's LAND subgraph: parcel operators and permissions until the
-    // land-authz index is published.
-    upstream(
-        "mirrors",
-        "LAND_SUBGRAPH_URL",
-        "https://subgraph.decentraland.org/land-manager",
-    ),
     mirrored("indexes", "MARKETPLACE_NFT_INDEX_ENABLED"),
     mirrored("indexes", "MARKETPLACE_TRADE_EVENTS_INDEX_ENABLED"),
     mirrored("indexes", "MARKETPLACE_SALES_INDEX_ENABLED"),
     mirrored("indexes", "MARKETPLACE_COMMITTEE_INDEX_ENABLED"),
     mirrored("indexes", "MARKETPLACE_THIRD_PARTY_REGISTRY_INDEX_ENABLED"),
+    // The collections walk keeps a log nothing reads yet: an operator's
+    // opt-in under every posture.
+    same("indexes", "MARKETPLACE_COLLECTIONS_INDEX_ENABLED", "false"),
     // The MANA transfer walk stays an operator's opt-in under every posture.
     same(
         "indexes",
@@ -808,12 +831,12 @@ pub fn unchecked_profile_items(config: &Config) -> Option<&'static str> {
 }
 
 /// A mirror replaces a Catalyst whose lambdas always check the profiles'
-/// items and names against their owner. On mainnet (the chains the walk
-/// reads) the wearables, emotes and DCL NAMEs all read the nft index, so the
+/// items and names against their owner. On mainnet the wearables, emotes
+/// and DCL NAMEs all read the nft index, so the
 /// index stays on with a JSON-RPC endpoint for chain 137 (`TRADE_RPC_URLS`;
 /// chain 1 falls back to `ETH_RPC_URL`, which a mirror always has). Off
-/// mainnet the index walks nothing: the names read the marketplace subgraph,
-/// which may not be blanked there, and the items are served as deployed. An
+/// mainnet profile readers use the marketplace subgraph for names while the
+/// testnet NFT walks populate the catalogue. Items are served as deployed. An
 /// island, with no ownership source, serves both as deployed.
 fn refuse_unfiltered_profiles(config: &Config, env: &Lookup) -> anyhow::Result<()> {
     if config.node.eth_network.trim() != "mainnet" {
@@ -935,7 +958,10 @@ fn refuse_followers(posture: Posture, env: &Lookup) -> anyhow::Result<()> {
         .iter()
         .filter(|row| follows(row))
         .map(|row| row.key)
-        .chain(["MARKETPLACE_MANA_TRANSFERS_INDEX_ENABLED"])
+        .chain([
+            "MARKETPLACE_MANA_TRANSFERS_INDEX_ENABLED",
+            "MARKETPLACE_COLLECTIONS_INDEX_ENABLED",
+        ])
         .filter(|key| env(key).is_some_and(|v| switched_on(&v)))
         .collect();
     if !on.is_empty() {

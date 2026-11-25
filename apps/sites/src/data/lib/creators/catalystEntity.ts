@@ -116,7 +116,7 @@ export function buildItemEntityMetadata(collection: Collection, item: Item, cont
   }
 }
 
-/** The leaf of the third party's Merkle tree for one item, as `@dcl/content-hash-tree` computes it. */
+/** The leaf of the third party's Merkle tree for one item, as `contentHashTree` computes it. */
 export type LinkedMerkleProof = { index: number; proof: string[]; entityHash: string }
 
 /**

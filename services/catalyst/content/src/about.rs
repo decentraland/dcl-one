@@ -117,7 +117,7 @@ fn network_id(eth_network: &str) -> u64 {
     }
 }
 
-fn content_is_healthy(sync_state: &str) -> bool {
+pub(crate) fn content_is_healthy(sync_state: &str) -> bool {
     sync_state == "Syncing"
 }
 

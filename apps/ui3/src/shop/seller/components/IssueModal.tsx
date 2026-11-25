@@ -5,7 +5,7 @@
 import { useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 
-import Button from "../../../atoms/Button";
+import { Button } from "@dcl/one-ui";
 import type { ChainId } from "@shop/model/chain";
 import { useShopProvider, useWalletBlock, useWrite, WriteStatus } from "../../market/components/kit";
 import type { PublishableItem } from "../lib/builder";
@@ -28,7 +28,7 @@ export function IssueForm({ item, chainId = settlementChainId(), onClose }: { it
         <p role="status">
           Issued {total} {total === 1 ? "copy" : "copies"} of “{item.name}”.
         </p>
-        <Button size="sm" variant="ghost" onClick={onClose}>
+        <Button size="sm" variant="outline" onClick={onClose}>
           Close
         </Button>
       </div>
@@ -61,7 +61,7 @@ export function IssueForm({ item, chainId = settlementChainId(), onClose }: { it
             <input type="number" min={1} value={row.amount} onChange={(e) => setRows(rows.map((r, j) => (j === i ? { ...r, amount: Number(e.target.value) } : r)))} disabled={write.busy} />
           </label>
           {rows.length > 1 ? (
-            <Button size="sm" variant="ghost" onClick={() => setRows(rows.filter((_, j) => j !== i))} disabled={write.busy}>
+            <Button size="sm" variant="outline" onClick={() => setRows(rows.filter((_, j) => j !== i))} disabled={write.busy}>
               Remove recipient
             </Button>
           ) : null}
@@ -77,10 +77,10 @@ export function IssueForm({ item, chainId = settlementChainId(), onClose }: { it
       </div>
       {total > item.remainingSupply ? <p className="mk-field__error">You can issue at most {item.remainingSupply} more copies of this item.</p> : null}
       <div className="mk-actions">
-        <Button type="submit" disabled={!valid || write.busy}>
+        <Button size="md" type="submit" disabled={!valid || write.busy}>
           {write.busy ? "Issuing…" : `Issue ${total} ${total === 1 ? "copy" : "copies"}`}
         </Button>
-        <Button variant="ghost" onClick={onClose} disabled={write.busy}>
+        <Button size="md" variant="outline" onClick={onClose} disabled={write.busy}>
           Cancel
         </Button>
       </div>

@@ -56,13 +56,15 @@ export type ButtonProps = NativeProps &
     forceState?: 'hover' | 'pressed' | 'focus'
     contentLayout?: 'intrinsic' | 'fill'
   } & ({ iconOnly?: false } | ({ iconOnly: true } & AccessibleName)) &
-  ({ variant?: Exclude<Variant, 'iconOnly'> } | ({ variant: 'iconOnly' } & AccessibleName))
+  ({ variant?: Exclude<Variant, 'iconOnly'> } | ({ variant: 'iconOnly' } & AccessibleName)) &
+  ({ tone?: never } | { tone?: 'danger'; variant?: 'primary' | 'outline'; iconOnly?: false })
 
 export function Button({
   children,
   label,
   variant = 'primary',
   size = 'xl',
+  tone,
   viewport = 'desktop',
   loading = false,
   leadingIcon,
@@ -116,6 +118,7 @@ export function Button({
   const common = {
     className: classes,
     'data-variant': appearance,
+    'data-tone': tone,
     'data-size': size,
     'data-viewport': viewport,
     'data-icon-only': compact || undefined,

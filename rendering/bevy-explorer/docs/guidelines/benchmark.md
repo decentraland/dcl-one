@@ -30,10 +30,17 @@ CI* run, whose artifacts hold the builds ([The workflow](#the-workflow)).
   with a web app built (`workflow_run`). CI builds the web app when the pull request changes a web
   input (the engine, the HUD, the page), so a run that built none, such as a backend-only change,
   starts nothing.
-- **By hand.** *Run workflow* on *Bevy Explorer / Benchmark* (`workflow_dispatch`) with `pr` (its
-  number or its URL) and optionally `change_sha` (a commit of the pull request; its head by
-  default), `base_sha` (a commit on main; by default the newest main build that has each
-  artifact) and `runs` (1 to 3). Starting one takes write access.
+- **Main, nightly.** A `schedule` run measures main's newest web build against the
+  [latest release](#the-latest-release), so regressions that several merged pull requests add up
+  to are measured on main. It skips silently when that build is the release's.
+- **By hand, for a pull request.** *Run workflow* on *Bevy Explorer / Benchmark*
+  (`workflow_dispatch`) with `pr` (its number or its URL) and optionally `change_sha` (a commit of
+  the pull request; its head by default), `base_sha` (a commit on main; by default the newest main
+  build that has each artifact) and `runs` (1 to 3). Starting one takes write access.
+- **By hand, for main.** The same with `pr` empty runs main against the latest release, as the
+  nightly run does. `change_sha` may name any commit with a passed CI run and a web app (only its
+  web app is taken; the runners come from main) and `base_sha` a commit on main in place of the
+  release.
 - **Optimized builds only.** CI builds every web app with wasm-opt, on pull requests as on main,
   unless `BENCHMARK_ENABLED_RUNNERS` is `none`: then a pull request that compiles the engine skips
   it, while one that reuses main's compiled engine stays optimized. Setup reads `engine.optimized`
@@ -48,6 +55,21 @@ CI* run, whose artifacts hold the builds ([The workflow](#the-workflow)).
   change or base build, no passed main run that still has a web app, no Linux runner to write the
   report, or no laptop enabled; by hand, also no passed CI run of the commit yet, or no web app in
   it (CI built none, or the artifact expired).
+- **Runs of main queue.** Nightly and manual runs of main share one concurrency group: a new one
+  waits for the running one, so they never share the laptops, and GitHub keeps only the newest
+  waiting run. A nightly run that a later manual run replaces while it waits is cancelled, not
+  failed: that night is not measured and nothing reports it. A manual run of main takes `pr`
+  empty; a `pr` of spaces is refused.
+- **A run of main that cannot measure fails** with setup's notes as the error (no release rollout,
+  a release version that names no CI run, an expired release build, no runner, no enabled laptop,
+  an unoptimized build, a manual run that names the same commit on both sides), so a nightly
+  never stays green without measuring. It skips and passes when main is unchanged since the
+  release, when main's newest passed web build predates the release's CI run (a release whose run
+  failed a guard), or when `BENCHMARK_ENABLED_RUNNERS` is `none` (any letter case). A report in which nothing was
+  compared (no base leg produced data), or one without a known **Overall** line, fails the
+  regression job too. The one quiet case is the [queue watchdog](#the-fleet): a laptop that never
+  starts its leg leaves the run *cancelled*, which GitHub does not notify; the watchdog's job
+  summary names the laptop.
 - **One run per pull request.** The next run for the same pull request cancels one in progress:
   any passed CI run of it that a `pull_request` event started (a re-run of an older commit's
   included, which then skips), or a manual run naming it by number (one naming it by URL is a
@@ -565,13 +587,14 @@ They use `GITHUB_TOKEN` only, with no permission at the top and each job's own:
 
 | Job | Runs on | Permissions | Does |
 | --- | --- | --- | --- |
-| *Inputs* (`setup`) | GitHub-hosted | read contents, actions, pull requests | Runs [`tooling/benchmark-inputs.py`](../../../../tooling/benchmark-inputs.py) on the event: decides whether the benchmark runs and finds the builds, the runners and the legs. |
-| *Notice* | GitHub-hosted | write pull requests | When nothing runs and setup left notes, writes them into the performance section (*Not run*). |
-| *Running* | GitHub-hosted | write pull requests | When the benchmark runs, sets the performance section to *Running* with the run, the builds and the legs. |
-| *Queue watchdog* | GitHub-hosted | write actions, pull requests | Cancels the run when a leg never starts, saying so in the performance section ([The fleet](#the-fleet)). |
+| *Inputs* (`setup`) | GitHub-hosted | read contents, actions, pull requests, deployments | Runs [`tooling/benchmark-inputs.py`](../../../../tooling/benchmark-inputs.py) on the event: decides whether the benchmark runs and finds the builds, the runners and the legs. |
+| *Notice* | GitHub-hosted | write pull requests | For a pull request, when nothing runs and setup left notes, writes them into the performance section (*Not run*). |
+| *Running* | GitHub-hosted | write pull requests | When a pull request's benchmark runs, sets the performance section to *Running* with the run, the builds and the legs. |
+| *Queue watchdog* | GitHub-hosted | write actions, pull requests | Cancels the run when a leg never starts, saying so in the job summary and, for a pull request, the performance section ([The fleet](#the-fleet)). |
 | `<label>` / *Chrome* (`leg`) | the laptop | read actions | [What a leg runs](#what-a-leg-runs); a failed leg does not stop the others. |
 | *Report* (`gather`) | GitHub-hosted | read actions | Unless the run was cancelled: downloads every `benchmark-result-*` and the Linux runner, writes the report and uploads it as `benchmark-report`. |
-| *Post* | GitHub-hosted | write pull requests | Unless the run was cancelled, after a report: downloads `benchmark-report`, puts a badge read from its *Overall* line above it and writes it into the performance section. |
+| *Post* | GitHub-hosted | write pull requests | For a pull request, unless the run was cancelled, after a report: downloads `benchmark-report`, puts a badge read from its *Overall* line above it and writes it into the performance section. |
+| *Regression issue* | GitHub-hosted | write issues | For main, unless the run was cancelled, after a report: opens or updates the [regression issue](#the-regression-issue); fails on a report without data. |
 
 The jobs that write to the pull request use the repository's
 [`bevy-explorer-ci-status`](../../../../.github/actions/bevy-explorer-ci-status/action.yml) action, which keeps
@@ -586,8 +609,8 @@ its merge commit.
 | --- | --- | --- |
 | `bevy-explorer-web-<sha>` | the web app, `apps/bevy-explorer/dist/web/`, with its `build-info.json` | CI's web job; 90 days on main, 7 otherwise |
 | `bevy-explorer-benchmark-<os>-<arch>-<sha>` | the `benchmark` binary | CI's *Test Suite* ([The runner](#the-runner)) |
-| `benchmark-result-<label>` | a leg's `runs_on.txt` and run files | the leg; 7 days |
-| `benchmark-report` | the report, `report.md` | the report job; 7 days |
+| `benchmark-result-<label>` | a leg's `runs_on.txt` and run files | the leg; 90 days for main, 7 for a pull request |
+| `benchmark-report` | the report, `report.md` | the report job; 90 days for main, 7 for a pull request |
 
 **What setup finds**, after the checks in [How a run starts](#how-a-run-starts):
 
@@ -595,16 +618,32 @@ its merge commit.
   CI run of its branch) and its web app: the run's one artifact named `bevy-explorer-web-` and a
   40-character commit.
 - **The base:** the newest passed `push` run on main that still has a web app, among the latest
-  100; with `base_sha`, a passed main run of that commit.
+  100; with `base_sha`, a passed main run of that commit. For main, the change is that newest main
+  build and the base the latest release's.
+- **The latest release:** <a id="the-latest-release"></a>the newest GitHub deployment to the
+  `org` environment whose payload names `@dcl-regenesislabs/bevy-explorer-web` (`prefix`) at 100%
+  and whose newest `success` status no `failure` or `error` follows (a newer deployment may mark it
+  `inactive`; it stays the release): the record
+  [`bevy-explorer-rollout-manual.yml`](../../../../.github/workflows/bevy-explorer-rollout-manual.yml)
+  writes when it rolls a version out to decentraland.org. The deployment's own commit is where the
+  rollout was dispatched from, not the build: the build is the CI run its `version` names
+  (`<semver>-<CI run ID>.commit-<short commit>`; a newest release without that suffix fails the
+  run rather than fall back to an older one), which must be a CI run of that commit in this
+  repository and supplies the web app, kept 90 days on main. Neither its status nor its conclusion
+  matters: a release may roll out while its run is still going, and on main a failed guard does not
+  stop the web package from being published.
 - **The runners,** for each operating system the legs need and for Linux, which writes the report:
   from the change run when it has one, so a pull request that changes the runner is measured with
-  its own, else from main's runs, searched as for the base. A laptop whose operating system has no
+  its own, else from main's runs, searched as for the base (for main, main's newest push run that
+  has it, which may be the release's; a given `change_sha`'s run is never searched: the runner reads
+  both builds' files). A laptop whose operating system has no
   runner is left out, with a note in the report; without a Linux runner nothing runs.
 - **The legs:** the fleet's laptops that `BENCHMARK_ENABLED_RUNNERS` enables, each with its runner
   and both web apps; their labels, which the report expects; and the runs per build.
 
 **The report job** runs `benchmark report results` with `PR_NUMBER`, `CHANGE_DESCRIPTION`
-(`#<pr> at <commit>`), `BASE_DESCRIPTION` (`main at <commit>`), `RUN_URL`, `EXPECTED_RUNS` and
+(`#<pr> at <commit>`, or `main at <commit>`), `BASE_DESCRIPTION` (`main at <commit>`, or
+`release <version> at <commit>`), `RUN_URL`, `EXPECTED_RUNS` and
 `EXPECTED_LABELS`, appends setup's notes, copies the result to the job summary and uploads it, with
 the report's exit code as a job output. The post job then puts a badge above it, read from the
 **Overall** line (*Regression*, *Improved*, *No change*, *Not compared*; *No data* on exit 2), and
@@ -614,6 +653,16 @@ a write it cannot confirm after five attempts warns and does not fail the job. A
 data (exit 2) is written, then fails the post job. A cancelled run, by the watchdog or by a newer
 run of the pull request, writes no report, so the section keeps what the watchdog or the newer
 run wrote.
+
+<a id="the-regression-issue"></a>**The regression issue.** For a run of main, a report whose **Overall** line is 🔴 (the
+[verdict](#reading-the-results) threshold) opens the one open issue titled *Bevy Explorer:
+performance regression on main against the latest release* that this workflow opened (an issue of
+the same title opened by anyone else is ignored), or, when it is open, replaces its body
+with the newest report and comments with the run. A run that measures the same pair of commits
+again, a nightly while main has no new web build, replaces the report without a comment. A manual run that names `change_sha` or
+`base_sha` uses an issue titled after its own comparison instead. Close it once main is back within the threshold;
+the next regression opens a new one. A report longer than an issue holds points to the run's
+`benchmark-report` artifact instead.
 
 **Trust.** This repository is public. Benchmark legs execute the selected revision's app and may execute its runner. Before enabling self-hosted runners, verify the current workflow event filters, ref selection, token permissions and runner-group access. Keep untrusted PR code off persistent machines that hold credentials or can reach private resources. Fork filtering alone does not establish trust in a same-repository branch. Use an explicitly reviewed revision and an isolated runner environment. Jobs that consume untrusted artifacts must not gain write permissions; a comment-only job must treat the report as data. Repository settings and runner authorization require an administrator's verification, not an assumption from this guide.
 

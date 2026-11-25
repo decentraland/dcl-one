@@ -38,8 +38,13 @@ fn schema() {
 fn serve(address: String) {
     for stream in TcpListener::bind(address).unwrap().incoming() {
         let mut stream = stream.unwrap();
-        let _ = stream.read(&mut [0; 4096]);
-        let body = format!("{{\"version\":\"{VERSION}\"}}");
+        let mut request = [0; 4096];
+        let read = stream.read(&mut request).unwrap();
+        let body = if request[..read].starts_with(b"GET /health ") {
+            r#"{"status":"pass","details":{"postgres":{"status":"pass","required":false},"comms":{"status":"pass","required":false}}}"#.to_owned()
+        } else {
+            format!("{{\"version\":\"{VERSION}\"}}")
+        };
         let _ = write!(stream, "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}", body.len());
     }
 }
