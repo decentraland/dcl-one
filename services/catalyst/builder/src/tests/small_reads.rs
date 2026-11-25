@@ -259,6 +259,7 @@ async fn db() -> Option<Db> {
     .execute(&pool)
     .await
     .unwrap();
+    crate::tests::support::publish_registry_index(&mut *pool.acquire().await.unwrap(), false).await;
     let store = temp_storage().await;
     let state = Arc::new(
         crate::State::new(

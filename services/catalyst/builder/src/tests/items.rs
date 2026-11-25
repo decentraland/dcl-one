@@ -37,6 +37,7 @@ async fn app() -> Option<App> {
     .execute(&pool)
     .await
     .unwrap();
+    crate::tests::support::publish_registry_index(&mut *pool.acquire().await.unwrap(), false).await;
     sqlx::query(
         "INSERT INTO builder.virtual_third_parties (id, managers, raw_metadata) VALUES ($1, $2, 'tp:1:Items test:')",
     )

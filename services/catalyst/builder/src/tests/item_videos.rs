@@ -170,6 +170,7 @@ async fn isolated_node(configure: impl FnOnce(&mut crate::State)) -> Option<Node
     .execute(&pool)
     .await
     .unwrap();
+    crate::tests::support::publish_registry_index(&mut *pool.acquire().await.unwrap(), false).await;
     node_on(pool, configure, true).await
 }
 

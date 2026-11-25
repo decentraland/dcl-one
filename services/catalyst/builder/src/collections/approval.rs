@@ -18,7 +18,6 @@ use uuid::Uuid;
 
 use crate::State;
 use crate::access::ApprovalRead;
-use crate::chain_index;
 use crate::cheques::{self, Cheque};
 use crate::http::ApiError;
 use crate::third_parties;
@@ -104,19 +103,12 @@ pub async fn approval_data(state: &State, read: &ApprovalRead) -> Result<Approva
         .third_parties
         .registry(state, crate::kept::Since::write())
         .await?;
-    let market = state
-        .market
-        .as_deref()
-        .ok_or_else(|| ApiError::service_unavailable(UNAVAILABLE))?;
     let root = match (third_parties::provider(&registry, &provider), virtual_party) {
         (Some(record), _) => record.root.clone().map_or(Value::Null, Value::String),
         (None, true) => json!(""),
         (None, false) => return Err(ApiError::http(200, "The Third Party doesn't exists.")),
     };
-    let url = state
-        .registry_subgraph()
-        .ok_or_else(|| ApiError::service_unavailable(UNAVAILABLE))?;
-    let consumed = chain_index::third_parties::receipt_exists(market, &url, &receipt)
+    let consumed = third_parties::cheque_consumed(state, &cheque_provider, &receipt)
         .await
         .map_err(|error| {
             tracing::warn!(%error, "the third-party registry's receipts were not read");

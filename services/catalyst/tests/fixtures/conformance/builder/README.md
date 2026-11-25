@@ -198,8 +198,8 @@ both sides insert them as virtual third party rows (`tp:1:<name>:`).
 `registry` names the providers the third-party registry lists, each with its
 managers, whether it is programmatic and, with `approved: false`, an
 unapproved one (approved otherwise): the capture serves them from its fake
-third-party subgraph to upstream, and the replay from a loopback registry to
-the node. A provider can be in both. The
+third-party subgraph to upstream, and the replay seeds them into the node's
+third-party registry index. A provider can be in both. The
 `admin` wallet is upstream's `ADMIN_ADDRESSES`. `chain` names, once, what
 the Polygon collections subgraph holds: the committee's roles, its
 collections (contract, name, creator and owner roles, approval, manager and

@@ -69,8 +69,8 @@ async fn node_with(own: bool) -> Option<Node> {
     state.content_sync.set_own_content_authority(own);
     let state = Arc::new(state);
     Some(Node {
+        app: registry.published(&pool, crate::root_router(state.clone())),
         pool,
-        app: crate::root_router(state.clone()),
         state,
         denylist,
         provider,

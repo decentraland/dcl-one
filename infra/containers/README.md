@@ -219,6 +219,8 @@ mainnet RPC via `TRADE_RPC_URLS` (chain 137) or, on mainnet, `RPC_ENDPOINT_POLYG
 API replicas can keep their existing `THIRD_PARTY_REGISTRY_L2_SUBGRAPH_URL` to serve provider lists.
 Testnet mirrors default to the Polygon registry subgraph. Once `catalyst index` publishes the full
 registry history, API replicas prefer the native index and can serve manager and slot details.
+On Polygon the builder reads the registry from this index alone, so its third-party routes answer 503
+until the index publishes.
 The NFT worker supplies wallet holdings for open mappings.
 
 Escrow lease upgrade: escrow leases (`shop.usage_grants`) no longer count as item ownership on

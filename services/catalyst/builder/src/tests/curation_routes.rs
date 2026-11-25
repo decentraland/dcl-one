@@ -163,9 +163,12 @@ async fn node_over(pool: PgPool, options: Options) -> Node {
     .unwrap();
     state.guarded = dcl_http::Outbound::for_tests();
     let state = Arc::new(state);
-    let app = Router::new()
-        .merge(crate::root_router(state.clone()))
-        .nest("/builder-api", crate::router(state.clone()));
+    let app = options.registry.published(
+        &pool,
+        Router::new()
+            .merge(crate::root_router(state.clone()))
+            .nest("/builder-api", crate::router(state.clone())),
+    );
     Node { pool, app, state }
 }
 
@@ -184,6 +187,7 @@ async fn own_pool() -> Option<PgPool> {
     .execute(&pool)
     .await
     .unwrap();
+    crate::tests::support::publish_registry_index(&mut *pool.acquire().await.unwrap(), false).await;
     Some(pool)
 }
 
@@ -845,14 +849,17 @@ async fn a_former_committee_member_and_an_admin_address_get_no_curation() {
 #[tokio::test]
 async fn a_registry_that_cant_be_read_answers_503_to_third_party_curations() {
     let registry = FakeRegistry::up();
-    let Some(n) = node(Options {
-        registry: registry.clone(),
-        ..Options::default()
-    })
-    .await
-    else {
+    let Some(pool) = own_pool().await else {
         return;
     };
+    let n = node_over(
+        pool,
+        Options {
+            registry: registry.clone(),
+            ..Options::default()
+        },
+    )
+    .await;
     let (collection, item) = third_party(&n.pool, false).await;
     item_curation(&n.pool, item, "approved").await;
     registry.fail(true);

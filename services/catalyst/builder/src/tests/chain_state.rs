@@ -77,7 +77,9 @@ async fn copy_row(
 }
 
 async fn pool() -> Option<PgPool> {
-    crate::db::scratch::pool(4).await
+    let pool = crate::db::scratch::pool(4).await?;
+    super::support::publish_registry_index(&mut *pool.acquire().await.unwrap(), false).await;
+    Some(pool)
 }
 
 #[tokio::test]
@@ -468,6 +470,7 @@ async fn no_route_reads_or_writes_derived_state_while_the_copy_cannot_tell() {
     let Some(pool) = crate::db::scratch::isolated_pool(4).await else {
         return;
     };
+    super::support::publish_registry_index(&mut *pool.acquire().await.unwrap(), false).await;
     let owner = format!("{:#x}", wallet(OWNER_KEY).address());
     let (collection, item, created, created_item) = (
         Uuid::new_v4(),
