@@ -1,19 +1,43 @@
-import React from 'react';
+import React, { useMemo } from 'react';
 import { MdChevronLeft as BackIcon, MdChevronRight as ChevronIcon } from 'react-icons/md';
 import { cx } from '../../../lib/utils/cx';
 import { AssetSearchField } from '../../AssetSearchField';
+import { Dropdown } from '../../ui/Dropdown';
 import type { Props } from './types';
 
 import './Header.css';
 
-const Header: React.FC<Props> = ({ selectedTheme, search, onChangeTheme, onSearch }) => {
-  const isMainHeader = !search && !selectedTheme;
+const ALL_CATEGORIES = '';
+
+const Header: React.FC<Props> = ({
+  selectedTheme,
+  search,
+  categories,
+  selectedCategory,
+  onChangeTheme,
+  onChangeCategory,
+  onSearch,
+}) => {
+  const isMainHeader = !search && !selectedTheme && !selectedCategory;
   const placeholder = selectedTheme ? `Search ${selectedTheme.name}` : 'Search Asset Packs';
 
   const goToPacks = () => {
     onSearch('');
+    onChangeCategory();
     onChangeTheme();
   };
+
+  const categoryOptions = useMemo(
+    () => [
+      { value: ALL_CATEGORIES, label: 'All categories' },
+      ...categories.map(({ name, count }) => ({
+        value: name,
+        label: name.charAt(0).toUpperCase() + name.slice(1),
+        secondaryText: count.toString(),
+      })),
+    ],
+    [categories],
+  );
 
   const goToPack = () => onSearch('');
 
@@ -44,6 +68,13 @@ const Header: React.FC<Props> = ({ selectedTheme, search, onChangeTheme, onSearc
           placeholder={placeholder}
           onChange={onSearch}
           debounceMs={300}
+        />
+        <Dropdown
+          className="assets-catalog-header-category"
+          aria-label="Category"
+          options={categoryOptions}
+          value={selectedCategory ?? ALL_CATEGORIES}
+          onChange={event => onChangeCategory((event.target.value as string) || undefined)}
         />
         {!isMainHeader && (
           <nav

@@ -1,12 +1,11 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 
-import type { AssetPack } from '../../lib/logic/catalog';
+import { getAssetsByCategory, getCategory, type AssetPack } from '../../lib/logic/catalog';
 import { analytics, Event } from '../../lib/logic/analytics';
 
 import { Header } from './Header';
 import { Themes } from './Themes';
 import { Categories } from './Categories';
-import { Assets } from './Assets';
 
 import type { Props } from './types';
 
@@ -15,6 +14,8 @@ import './AssetsCatalog.css';
 const AssetsCatalog: React.FC<Props> = ({ catalog, onAddToFilesystem }) => {
   const [selectedTheme, setSelectedTheme] = useState<AssetPack>();
   const [search, setSearch] = useState<string>('');
+  const [category, setCategory] = useState<string>();
+  const [collapsed, setCollapsed] = useState<ReadonlySet<string>>(new Set());
 
   const handleThemeChange = useCallback(
     (value?: AssetPack) => setSelectedTheme(value),
@@ -28,12 +29,39 @@ const AssetsCatalog: React.FC<Props> = ({ catalog, onAddToFilesystem }) => {
     [setSearch],
   );
 
+  const handleToggleCategory = useCallback((value: string) => {
+    setCollapsed(current => {
+      const next = new Set(current);
+      if (!next.delete(value)) next.add(value);
+      return next;
+    });
+  }, []);
+
+  const scopeAssets = useMemo(
+    () => (selectedTheme ? selectedTheme.assets : catalog.flatMap(theme => theme.assets)),
+    [catalog, selectedTheme],
+  );
+
+  // The categories the pack being browsed has (or the whole catalog, outside a pack).
+  const categories = useMemo(
+    () =>
+      Array.from(getAssetsByCategory(scopeAssets))
+        .filter(([, assets]) => assets.length > 0)
+        .map(([name, assets]) => ({ name, count: assets.length })),
+    [scopeAssets],
+  );
+
+  // A category picked in one pack does not follow into a pack that lacks it.
+  const activeCategory = categories.some($ => $.name === category) ? category : undefined;
+
   const filteredCatalog = useMemo(() => {
+    const assets = activeCategory
+      ? scopeAssets.filter(asset => getCategory(asset) === activeCategory)
+      : scopeAssets;
     const trimmedSearch = search.trim();
-    if (!trimmedSearch) return [];
+    if (!trimmedSearch) return assets;
 
     const searchLower = trimmedSearch.toLowerCase();
-    const assets = selectedTheme ? selectedTheme.assets : catalog.flatMap(theme => theme.assets);
 
     const starts: AssetPack['assets'] = [];
     const includes: AssetPack['assets'] = [];
@@ -63,7 +91,7 @@ const AssetsCatalog: React.FC<Props> = ({ catalog, onAddToFilesystem }) => {
 
     // Return high-priority matches first, then lower-priority matches
     return [...starts, ...includes];
-  }, [catalog, selectedTheme, search]);
+  }, [scopeAssets, activeCategory, search]);
 
   useEffect(() => {
     if (search) {
@@ -75,40 +103,33 @@ const AssetsCatalog: React.FC<Props> = ({ catalog, onAddToFilesystem }) => {
     }
   }, [search, filteredCatalog]);
 
-  const renderEmptySearch = useCallback(() => {
-    const ctaMethod = selectedTheme ? handleThemeChange : () => undefined;
-    const ctaText = selectedTheme
-      ? 'search all categories'
-      : 'upload your own asset by drag & drop';
+  const renderEmptySearch = () => {
+    const cta = activeCategory
+      ? { text: 'search every category', onClick: () => setCategory(undefined) }
+      : selectedTheme
+        ? { text: 'search all asset packs', onClick: () => handleThemeChange() }
+        : { text: 'upload your own asset by drag & drop' };
     return (
       <div className="empty-search">
         <span>No results for '{search}'.</span>
         <span>
-          Try using another words or{' '}
-          <span
-            className="empty-search-cta"
-            onClick={() => ctaMethod()}
-          >
-            {ctaText}
-          </span>
+          Try other words or{' '}
+          {cta.onClick ? (
+            <button
+              type="button"
+              className="empty-search-cta"
+              onClick={cta.onClick}
+            >
+              {cta.text}
+            </button>
+          ) : (
+            cta.text
+          )}
           .
         </span>
       </div>
     );
-  }, [search, selectedTheme, handleThemeChange]);
-
-  const renderAssets = useCallback(() => {
-    if (filteredCatalog.length > 0) {
-      return (
-        <Assets
-          assets={filteredCatalog}
-          onAddToFilesystem={onAddToFilesystem}
-        />
-      );
-    }
-
-    return renderEmptySearch();
-  }, [filteredCatalog, renderEmptySearch, onAddToFilesystem]);
+  };
 
   if (!catalog) {
     return null;
@@ -119,17 +140,23 @@ const AssetsCatalog: React.FC<Props> = ({ catalog, onAddToFilesystem }) => {
       <Header
         search={search}
         selectedTheme={selectedTheme}
+        categories={categories}
+        selectedCategory={activeCategory}
         onChangeTheme={handleThemeChange}
+        onChangeCategory={setCategory}
         onSearch={handleSearchAssets}
       />
-      {search ? (
-        renderAssets()
-      ) : selectedTheme ? (
-        <Categories
-          onGoBack={handleThemeChange}
-          value={selectedTheme}
-          onAddToFilesystem={onAddToFilesystem}
-        />
+      {search || selectedTheme || activeCategory ? (
+        filteredCatalog.length > 0 ? (
+          <Categories
+            assets={filteredCatalog}
+            collapsed={collapsed}
+            onToggle={handleToggleCategory}
+            onAddToFilesystem={onAddToFilesystem}
+          />
+        ) : (
+          renderEmptySearch()
+        )
       ) : (
         <div className="assets-catalog-theme-container">
           <Themes

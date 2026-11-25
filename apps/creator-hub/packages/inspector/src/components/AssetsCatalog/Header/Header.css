@@ -8,3 +8,14 @@
   flex: 1;
   padding: 0;
 }
+
+/* The category filter sits beside the search field and sizes to its longest option. */
+.assets-catalog-header .Dropdown.Field {
+  flex: none;
+  width: 170px;
+}
+
+.assets-catalog-header .Dropdown.Field .DropdownContainer {
+  height: 28px;
+  border-radius: 8px;
+}

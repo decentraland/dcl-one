@@ -186,5 +186,22 @@ export const useComponentClipboard = <T>(
     }
   }, [target, component, sdk, pushNotification]);
 
-  return { onCopyValues, onPasteValues, enabled };
+  const canReset = enabled && isLastWriteWinComponent(component);
+
+  const onResetValues = useCallback(async () => {
+    if (!sdk || !component || !target || !isLastWriteWinComponent(component)) return;
+    const targetName = getDisplayName(component.componentName);
+    try {
+      for (const entity of toEntities(target)) {
+        sdk.operations.resetComponent(entity, component);
+      }
+      await sdk.operations.dispatch();
+      await pushNotification('success', `${targetName} values reset`);
+    } catch (error) {
+      console.error('Failed to reset component values', error);
+      await pushNotification('error', 'Failed to reset values');
+    }
+  }, [target, component, sdk, pushNotification]);
+
+  return { onCopyValues, onPasteValues, onResetValues, enabled, canReset };
 };

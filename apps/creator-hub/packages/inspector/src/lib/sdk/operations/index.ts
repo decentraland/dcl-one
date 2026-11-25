@@ -14,6 +14,7 @@ import getSelectedEntities from './get-selected-entities';
 import addAsset from './add-asset';
 import addComponent from './add-component';
 import removeComponent from './remove-component';
+import resetComponent from './reset-component';
 import duplicateEntity from './duplicate-entity';
 import setGround from './set-ground';
 import lock from './lock';
@@ -35,6 +36,7 @@ export function createOperations(engine: IEngine) {
     reorder: reorder(engine),
     addComponent: addComponent(engine),
     removeComponent: removeComponent(engine),
+    resetComponent: resetComponent(engine),
     updateSelectedEntity: updateSelectedEntity(engine),
     removeSelectedEntities: removeSelectedEntities(engine),
     duplicateEntity: duplicateEntity(engine),

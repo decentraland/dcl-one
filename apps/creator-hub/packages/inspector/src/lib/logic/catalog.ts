@@ -99,18 +99,20 @@ export function getAnimatedPreviewUrl(asset: Asset): string | undefined {
   return hash ? getContentsUrl(hash) : undefined;
 }
 
+// Packs spell some categories with different capitals ("Text", "text"); one name is one group.
+export function getCategory(asset: Pick<Asset, 'category'>): string {
+  return (asset.category || 'other').toLowerCase();
+}
+
 export function getAssetsByCategory(assets: Asset[]) {
-  const categories = new Map<Asset['category'], Asset[]>(CATEGORIES.map($ => [$, []]));
+  const categories = new Map<string, Asset[]>(CATEGORIES.map($ => [$, []]));
   for (const asset of assets) {
-    const list = categories.get(asset.category);
+    const category = getCategory(asset);
+    const list = categories.get(category);
     if (list) {
       list.push(asset);
     } else {
-      if (asset.category) {
-        categories.set(asset.category, [asset]);
-      } else {
-        categories.set('other', [asset]);
-      }
+      categories.set(category, [asset]);
     }
   }
 
