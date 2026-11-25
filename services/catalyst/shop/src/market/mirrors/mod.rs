@@ -639,34 +639,54 @@ async fn copy_for_chain(
     mirror: Mirror,
     networks: &[Network],
 ) -> Result<Option<NaiveDateTime>, sqlx::Error> {
-    let pair = crate::land_authz::land_network(&state.settings.eth_network)
-        .map(super::nft_index::Catalogue::from_land);
     state
         .mirror_ready
         .get_or_fetch(mirror, || async move {
-            let rows: Vec<(String, Option<NaiveDateTime>, Option<i64>)> = sqlx::query_as(
-            "SELECT network, last_complete_pass_at, chain_id FROM shop.mirror_state WHERE mirror=$1"
-        ).bind(mirror.name()).fetch_all(&state.pool).await?;
-            let mut done = Vec::new();
-            for (network, at, chain) in rows {
-                if let Some(id) = chain {
-                    let expected = super::chain_walk::ChainNet::parse(&network)
-                        .and_then(|net| pair.map(|pair| pair.chain_id(net)));
-                    if Some(id) != expected {
-                        return Ok(None);
-                    }
-                }
-                if let Some(at) = at {
-                    done.push((network, at));
-                }
-            }
-            Ok(if networks.is_empty() {
-                done.iter().map(|(_, at)| *at).min()
-            } else {
-                oldest_pass(networks, &done)
-            })
+            let rows: Vec<PassRow> = sqlx::query_as(
+                "SELECT network, last_complete_pass_at, chain_id FROM shop.mirror_state WHERE mirror=$1",
+            )
+            .bind(mirror.name())
+            .fetch_all(&state.pool)
+            .await?;
+            Ok(copy_of(state, &rows, networks))
         })
         .await
+}
+
+/// One network's row of a mirror's `shop.mirror_state`: its last complete
+/// pass and the chain the pass was proven on.
+pub(crate) type PassRow = (String, Option<NaiveDateTime>, Option<i64>);
+
+/// The copy a mirror's `rows` give a reader of `networks` (empty: every
+/// network the rows record): `None` when a row is bound to another chain
+/// than the one this node serves, or when one of `networks` has no complete
+/// pass; otherwise the oldest pass. The rule [`require_ready`] and the
+/// catalogue gate ([`super::catalogue::begin`]) both apply.
+pub(crate) fn copy_of(
+    state: &MarketplaceState,
+    rows: &[PassRow],
+    networks: &[Network],
+) -> Option<NaiveDateTime> {
+    let pair = crate::land_authz::land_network(&state.settings.eth_network)
+        .map(super::nft_index::Catalogue::from_land);
+    let mut done = Vec::new();
+    for (network, at, chain) in rows {
+        if let Some(id) = chain {
+            let expected = super::chain_walk::ChainNet::parse(network)
+                .and_then(|net| pair.map(|pair| pair.chain_id(net)));
+            if Some(*id) != expected {
+                return None;
+            }
+        }
+        if let Some(at) = at {
+            done.push((network.clone(), *at));
+        }
+    }
+    if networks.is_empty() {
+        done.iter().map(|(_, at)| *at).min()
+    } else {
+        oldest_pass(networks, &done)
+    }
 }
 
 fn oldest_pass(networks: &[Network], done: &[(String, NaiveDateTime)]) -> Option<NaiveDateTime> {

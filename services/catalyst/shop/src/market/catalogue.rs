@@ -160,13 +160,21 @@ pub struct NetworkState {
     pub walked_past: bool,
     pub collections_pass: Option<NaiveDateTime>,
     pub items_pass: Option<NaiveDateTime>,
+    /// The chain each mirror's pass was proven on.
+    pub collections_chain: Option<i64>,
+    pub items_chain: Option<i64>,
 }
 
 impl NetworkState {
-    fn pass(&self, mirror: Mirror) -> Option<NaiveDateTime> {
+    /// `mirror`'s row for this network, as [`mirrors::copy_of`] reads it.
+    fn pass_row(&self, mirror: Mirror) -> mirrors::PassRow {
         match mirror {
-            Mirror::Collections => self.collections_pass,
-            Mirror::Items => self.items_pass,
+            Mirror::Collections => (
+                self.network.clone(),
+                self.collections_pass,
+                self.collections_chain,
+            ),
+            Mirror::Items => (self.network.clone(), self.items_pass, self.items_chain),
         }
     }
 }
@@ -243,10 +251,12 @@ pub fn index_verdict(
 }
 
 /// The mirrors' verdict over the networks they serve (`served`, the
-/// configured networks the index does not own), as [`mirrors::require_ready`]
-/// and [`mirrors::require_priced`] decide it: the oldest last complete pass
-/// of each mirror the read needs; with no subgraph configured, a descriptive
-/// read serves the passes the tables record.
+/// configured networks the index does not own), by the rule
+/// [`mirrors::require_ready`] and [`mirrors::require_priced`] apply
+/// ([`mirrors::copy_of`]: every pass bound to the served chain, then the
+/// oldest last complete pass of each mirror the read needs) over the rows of
+/// the networks the index does not own; with no subgraph configured, a
+/// descriptive read serves the passes the tables record.
 fn mirror_verdict(
     state: &MarketplaceState,
     states: &[NetworkState],
@@ -258,30 +268,21 @@ fn mirror_verdict(
 ) -> Result<Copy, axum::response::Response> {
     let mut oldest: Option<NaiveDateTime> = None;
     for mirror in needs {
-        let passes: Vec<Option<NaiveDateTime>> = if configured {
-            served
-                .iter()
-                .map(|n| {
-                    states
-                        .iter()
-                        .find(|s| s.network == n.db_name())
-                        .and_then(|s| s.pass(*mirror))
-                })
-                .collect()
+        let rows: Vec<mirrors::PassRow> = states
+            .iter()
+            .filter(|s| !s.owned)
+            .map(|s| s.pass_row(*mirror))
+            .collect();
+        let at = if configured {
+            if served.is_empty() {
+                None
+            } else {
+                mirrors::copy_of(state, &rows, served)
+            }
         } else if purpose == Purpose::Describe {
-            states
-                .iter()
-                .filter(|s| !s.owned)
-                .filter_map(|s| s.pass(*mirror))
-                .map(Some)
-                .collect()
+            mirrors::copy_of(state, &rows, &[])
         } else {
-            vec![None]
-        };
-        let at = if passes.is_empty() || passes.iter().any(Option::is_none) {
             None
-        } else {
-            passes.into_iter().flatten().min()
         };
         let Some(at) = at else {
             return Err(if configured {
@@ -326,13 +327,13 @@ async fn read_states(
                 EXISTS (SELECT 1 FROM shop.collection_event e \
                         WHERE e.network = n.network AND e.block_number > c.folded_block \
                           AND e.block_number <= c.last_block) AS walked_past, \
-                (SELECT m.last_complete_pass_at FROM shop.mirror_state m \
-                  WHERE m.mirror = 'collections' AND m.network = n.network) AS collections_pass, \
-                (SELECT m.last_complete_pass_at FROM shop.mirror_state m \
-                  WHERE m.mirror = 'items' AND m.network = n.network) AS items_pass \
+                mc.last_complete_pass_at AS collections_pass, mc.chain_id AS collections_chain, \
+                mi.last_complete_pass_at AS items_pass, mi.chain_id AS items_chain \
          FROM unnest(ARRAY['ethereum', 'matic']) AS n(network) \
          LEFT JOIN shop.collection_projection p ON p.network = n.network \
-         LEFT JOIN shop.chain_cursor c ON c.indexer = $1 AND c.network = n.network",
+         LEFT JOIN shop.chain_cursor c ON c.indexer = $1 AND c.network = n.network \
+         LEFT JOIN shop.mirror_state mc ON mc.mirror = 'collections' AND mc.network = n.network \
+         LEFT JOIN shop.mirror_state mi ON mi.mirror = 'items' AND mi.network = n.network",
     )
     .bind(INDEXER_COLLECTIONS)
     .fetch_all(&mut **tx)
@@ -355,6 +356,8 @@ async fn read_states(
                 walked_past: r.try_get("walked_past")?,
                 collections_pass: r.try_get("collections_pass")?,
                 items_pass: r.try_get("items_pass")?,
+                collections_chain: r.try_get("collections_chain")?,
+                items_chain: r.try_get("items_chain")?,
             })
         })
         .collect()
@@ -485,6 +488,8 @@ mod tests {
             walked_past: false,
             collections_pass: None,
             items_pass: None,
+            collections_chain: None,
+            items_chain: None,
         }
     }
 
@@ -833,6 +838,38 @@ mod tests {
             .unwrap();
         let refused = open(&state, Purpose::Priced).await.err().unwrap();
         assert_eq!(source_of(refused).await, "collections-subgraph:matic");
+    }
+
+    /// The mirrors' rule binds every pass they serve to this node's chain
+    /// ([`mirrors::copy_of`]): one proven on another chain refuses a read of
+    /// a network they serve, and is ignored on a network the index owns.
+    #[tokio::test]
+    async fn a_mirror_pass_of_another_chain_refuses_only_where_the_mirror_serves() {
+        let Some((pool, state)) = owned_polygon().await else {
+            return;
+        };
+        let bind = |network: &'static str, chain: i64| {
+            let pool = pool.clone();
+            async move {
+                // A testnet items pass marks its item rows (`mirror_state_verified_item_rows`).
+                sqlx::query(
+                    "UPDATE shop.mirror_state SET chain_id = $2, \
+                            marks_item_rows = (mirror = 'items' AND $2 IN (11155111, 80002)) \
+                     WHERE network = $1",
+                )
+                .bind(network)
+                .bind(chain)
+                .execute(&pool)
+                .await
+                .unwrap();
+            }
+        };
+        bind("matic", 80002).await;
+        bind("ethereum", 1).await;
+        assert!(open(&state, Purpose::Describe).await.is_ok());
+        bind("ethereum", 11155111).await;
+        let refused = open(&state, Purpose::Describe).await.err().unwrap();
+        assert_eq!(source_of(refused).await, "items-mirror");
     }
 
     #[test]
