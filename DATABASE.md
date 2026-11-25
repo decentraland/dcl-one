@@ -2944,10 +2944,14 @@ keeps that height and hash, and until it is `verified`, before each attempt:
 - a row with no hash (written before hashes were kept) is undone without a
   read: it becomes provisional again, to be read again;
 - at or below the cursor of a walk with its full history, the walk's own log
-  decides, with no header asked. The collection's `ProxyCreated` walked at
-  or before that height proves the row (`verified`; from then a rewind below
-  it undoes it). None means the walked branch does not hold it there, and it
-  is undone;
+  decides, slot by slot, with no header asked. A factory's list grows only by
+  the push after each `ProxyCreated` it emits (both factories'
+  `createCollection`), so slot i is the factory's i-th walked `ProxyCreated`
+  in (block, log index) order. That one naming the row's address, at or
+  before that height, proves the row (`verified`; from then a rewind below it
+  undoes it). Anything else is undone, and the slot is read again: with
+  CREATE2 a collection keeps its address on a branch that created it in
+  another order, so the address alone proves nothing;
 - otherwise (ahead of the walk, or on a walk without its full history,
   whose log lacks the older collections) the endpoint's hash at that height
   is asked. Another hash undoes the row; the same one leaves it as it is. A

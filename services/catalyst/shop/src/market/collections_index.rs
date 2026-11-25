@@ -1205,10 +1205,13 @@ async fn block_hashes(rpc: &Rpc<'_>, heights: &[u64]) -> anyhow::Result<HashMap<
 /// - one with no hash (written before hashes were kept) is undone without a
 ///   read: it becomes provisional again, to be read again;
 /// - at or below the walk's cursor, on a walk with its full history, the
-///   walk's own log decides. The collection's `ProxyCreated` walked at or
-///   before that height proves the row (`verified`; from then a rewind below
-///   it undoes it). None means the walked branch does not hold it there, and
-///   the row is undone;
+///   walk's own log decides, slot by slot: a factory's list grows only by
+///   the push after each `ProxyCreated` it emits, so slot i is its i-th
+///   walked `ProxyCreated`. That `ProxyCreated` naming the row's address, at
+///   or before that height, proves the row (`verified`; from then a rewind
+///   below it undoes it). Anything else (another address in that slot, or
+///   none yet) means the walked branch does not hold it there, and the row is
+///   undone, to be read again into the slot the walk has it in;
 /// - otherwise (ahead of the walk, or on a walk without its full history,
 ///   whose log lacks the older collections) the endpoint's hash at that
 ///   height is asked. Another hash undoes the row; the same one leaves it as
@@ -1315,11 +1318,26 @@ pub async fn revalidate_reads(
                AND h.read_block <= c.last_block "
         };
     }
+    // A factory's list grows by one push per `createCollection`, right after
+    // the one `ProxyCreated` it emits, and nothing else writes it: slot i is
+    // the factory's i-th `ProxyCreated` in the walk's log. With CREATE2 an
+    // address may keep its identity on a branch that created it in another
+    // order, so the row's exact slot is checked, not the address alone.
+    // Every factory's slots, ranked once for the statement.
+    macro_rules! slots {
+        () => {
+            "WITH slots AS MATERIALIZED ( \
+                 SELECT e.account AS factory, e.contract_address AS address, e.block_number, \
+                        row_number() OVER (PARTITION BY e.account ORDER BY e.block_number, e.log_index) - 1 AS slot \
+                 FROM shop.collection_event e WHERE e.network = $1 AND e.kind = 'proxy_created' \
+             ) "
+        };
+    }
     macro_rules! created {
         () => {
-            "EXISTS (SELECT 1 FROM shop.collection_event e \
-             WHERE e.network = h.network AND e.kind = 'proxy_created' \
-               AND e.contract_address = h.address AND e.block_number <= h.read_block)"
+            "EXISTS (SELECT 1 FROM slots s \
+             WHERE s.factory = h.factory AND s.slot = h.idx AND s.address = h.address \
+               AND s.block_number <= h.read_block)"
         };
     }
     let mut undone = sqlx::query(concat!(
@@ -1332,6 +1350,7 @@ pub async fn revalidate_reads(
     .await?
     .rows_affected() as usize;
     sqlx::query(concat!(
+        slots!(),
         "UPDATE shop.collection_hint h SET verified = true ",
         walked_through!(),
         "AND ",
@@ -1342,6 +1361,7 @@ pub async fn revalidate_reads(
     .execute(&mut *tx)
     .await?;
     undone += sqlx::query(concat!(
+        slots!(),
         demote!(),
         walked_through!(),
         "AND NOT ",
@@ -2736,8 +2756,9 @@ mod tests {
         };
         let elsewhere = "0x00000000000000000000000000000000000000e9";
         let read_at = 97_800_000u64;
-        hint_read(&pool, 1, CREATED, read_at, &left_branch()).await;
-        hint_read(&pool, 2, elsewhere, read_at, &left_branch()).await;
+        // CREATED is the first collection V3 created in this walk's log.
+        hint_read(&pool, 0, CREATED, read_at, &left_branch()).await;
+        hint_read(&pool, 1, elsewhere, read_at, &left_branch()).await;
         let settings = walk_settings();
         let ix = CollectionsIndex::new();
         let owner = chain_walk::test_owner(&pool, &ix, &settings).await;
@@ -2790,6 +2811,116 @@ mod tests {
                 (elsewhere.to_string(), false, false)
             ]
         );
+    }
+
+    /// With CREATE2 an address keeps its identity on a branch that created
+    /// it in another order, so the walk's own order of a factory's
+    /// `ProxyCreated` decides each slot. Branch A listed [Z, X]; the walked
+    /// branch created X, then Y. Y's window fails until the gate undoes the
+    /// rows read on A and reads the slots again as (0, X) and (1, Y); then it
+    /// commits, with no rebuild.
+    #[tokio::test]
+    async fn a_changed_creation_order_is_read_into_the_walks_slots() {
+        let Some(pool) = crate::db::scratch::isolated_pool(2).await else {
+            return;
+        };
+        let (z, y) = (
+            "0x00000000000000000000000000000000000000a7",
+            "0x00000000000000000000000000000000000000b8",
+        );
+        let read_at = 97_800_000u64;
+        hint_read(&pool, 0, z, read_at, &left_branch()).await;
+        hint_read(&pool, 1, CREATED, read_at, &left_branch()).await;
+        // The walked branch: the fixture's creation of CREATED by V3 at
+        // 97,707,994, then V3's creation of Y.
+        let mut logs = fixture();
+        logs.push(rpc_log(
+            V3,
+            Factory::ProxyCreated {
+                _address: y.parse().unwrap(),
+                _salt: B256::ZERO,
+            }
+            .encode_log_data(),
+            97_810_000,
+            0,
+        ));
+        let branch = |finalized| Chain {
+            logs: logs.clone(),
+            finalized,
+        };
+        let settings = walk_settings();
+        let ix = CollectionsIndex::new();
+        let owner = chain_walk::test_owner(&pool, &ix, &settings).await;
+        chain_walk::run_pass(
+            &pool,
+            &branch(97_800_000),
+            &ix,
+            &settings,
+            &owner,
+            None,
+            &|_| {},
+        )
+        .await
+        .unwrap();
+        // As a walk from the factories' deployment holds it: here CREATED is
+        // V3's first collection.
+        sqlx::query(
+            "UPDATE shop.chain_cursor SET full_history = true WHERE indexer = 'collections' AND network = 'matic'",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        let err = chain_walk::run_pass(
+            &pool,
+            &branch(97_895_000),
+            &ix,
+            &settings,
+            &owner,
+            None,
+            &|_| {},
+        )
+        .await
+        .unwrap_err();
+        assert!(format!("{err:#}").contains(y), "{err:#}");
+
+        let at = format!("0x{:x}", 97_895_000);
+        let mut calls = gate_calls(97_895_000);
+        calls.insert(call_key(V3, nth(0), &at), addr(CREATED));
+        calls.insert(call_key(V3, nth(1), &at), addr(y));
+        let url = fake_rpc(
+            Arc::new(std::sync::Mutex::new(calls)),
+            Batches::Upto(100),
+            Arc::default(),
+        )
+        .await;
+        let http = crate::http::Outbound::for_tests();
+        assert_eq!(gate(&pool, &Rpc::at(&http, &url)).await.unwrap(), None);
+        let finals: Vec<(i32, String)> = sqlx::query_as(
+            "SELECT idx, address FROM shop.collection_hint WHERE finalized ORDER BY idx",
+        )
+        .fetch_all(&pool)
+        .await
+        .unwrap();
+        assert_eq!(finals, vec![(0, CREATED.to_string()), (1, y.to_string())]);
+        chain_walk::run_pass(
+            &pool,
+            &branch(97_895_000),
+            &ix,
+            &settings,
+            &owner,
+            None,
+            &|_| {},
+        )
+        .await
+        .unwrap();
+        let walked: i64 = sqlx::query_scalar(
+            "SELECT count(*) FROM shop.collection_event WHERE kind = 'proxy_created' AND contract_address = $1",
+        )
+        .bind(y)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(walked, 1, "Y's window committed");
     }
 
     /// An endpoint that takes no batches still has its headers read, one

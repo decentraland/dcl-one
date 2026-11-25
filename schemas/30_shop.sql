@@ -17118,9 +17118,9 @@ CREATE TABLE shop.collection_hint (
     -- hash (both NULL for a provisional row, and for a final row written
     -- before they were recorded). Until the row is `verified`: at or below
     -- the cursor of a walk with its full history, the walk's log decides
-    -- (the collection's ProxyCreated walked by that height proves it, none
-    -- undoes it); otherwise the gate asks the hash at that height, and
-    -- another one undoes it. A missing hash, or a rewind below the height,
+    -- (the factory's idx-th walked ProxyCreated naming this address by that
+    -- height proves it; anything else undoes it); otherwise the gate asks
+    -- the hash at that height, and another one undoes it. A missing hash, or a rewind below the height,
     -- undoes it too. Undone, the row is provisional again, to be read on
     -- the branch the chain took.
     read_block bigint,
