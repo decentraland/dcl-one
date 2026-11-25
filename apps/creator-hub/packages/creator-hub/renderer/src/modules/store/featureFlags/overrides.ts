@@ -1,4 +1,4 @@
-import { type AiSharingDevEnv, devAiSharingUrl } from '/@/lib/aiSharingDevUrl';
+import { type AiSharingDevEnv, buildEnv, devAiSharingUrl } from '/@/lib/aiSharingDevUrl';
 
 import { FeatureFlag } from './types';
 
@@ -21,7 +21,7 @@ export const FLAG_OVERRIDES_KEY = 'creator-hub:feature-flags';
 export function applyFlagOverrides(
   serviceFlags: Record<string, boolean>,
   storage: Pick<Storage, 'getItem'> = localStorage,
-  env: AiSharingDevEnv = import.meta.env,
+  env: AiSharingDevEnv = buildEnv(),
 ): Record<string, boolean> {
   if (!env.DEV) return serviceFlags;
 

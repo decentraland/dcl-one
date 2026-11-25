@@ -133,6 +133,12 @@ export function SharingStatusChip({
     setConfirmingErase(false);
   };
   const setThisChatShared = (shared: boolean) => {
+    // The switch reads off while the confirmation is open, but the chat is still shared: turning
+    // it back on is a cancel, not a write.
+    if (confirmingErase) {
+      if (shared) setConfirmingErase(false);
+      return;
+    }
     if (!shared && sharing.conversationHasShared === true) setConfirmingErase(true);
     else onSetConversationShared?.(shared);
   };

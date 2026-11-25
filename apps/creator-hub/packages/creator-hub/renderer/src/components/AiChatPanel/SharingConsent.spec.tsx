@@ -167,6 +167,24 @@ describe('when sharing is on', () => {
     expect(rule('.menuConfirmActions > *')).toMatch(/flex:\s*1 1 auto/);
   });
 
+  it('should treat turning the switch back on during the confirmation as a cancel', () => {
+    const { onSetConversationShared } = renderBoth({
+      status: 'on',
+      conversationExcluded: false,
+      conversationHasShared: true,
+    });
+    openMenu();
+    const thisChat = screen.getByRole('switch', { name: copy.menu_share_chat });
+    fireEvent.click(thisChat);
+    expect(thisChat.getAttribute('aria-checked')).toBe('false');
+
+    fireEvent.click(thisChat);
+
+    expect(onSetConversationShared).not.toHaveBeenCalled();
+    expect(screen.queryByRole('alertdialog')).toBeNull();
+    expect(thisChat.getAttribute('aria-checked')).toBe('true');
+  });
+
   it('should keep sharing a chat when the creator cancels', () => {
     const { onSetConversationShared } = renderBoth({
       status: 'on',
