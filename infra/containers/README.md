@@ -227,7 +227,7 @@ Step `0063_shop_collections_index` admits the `collections` index in `shop.chain
 posture enables `MARKETPLACE_COLLECTIONS_INDEX_ENABLED`. A Polygon RPC in `TRADE_RPC_URLS` (chain 137)
 lets it walk from block 15,202,000. Polygon accounts and lifetime creator rankings return HTTP 503
 until the collections and sales indexes publish their required history. The catalogue continues to
-read the collections mirror.
+read the collections mirror unless the on-chain projection owns that network.
 
 Trade digest upgrade: run `catalyst schema migrate` before deploying. Step `0069_shop_trade_digest` adds
 `shop.trades.trade_digest` and `shop.trade_chain_state.digest_failed_at`, and needs no backfill: the next

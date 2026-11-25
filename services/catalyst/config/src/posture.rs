@@ -371,6 +371,8 @@ const ROWS: &[Row] = &[
     mirrored("indexes", "MARKETPLACE_THIRD_PARTY_REGISTRY_INDEX_ENABLED"),
     // Account inventory and lifetime creator rankings require the factory walk.
     mirrored("indexes", "MARKETPLACE_COLLECTIONS_INDEX_ENABLED"),
+    // Taking a network's catalogue from the mirror is an operator's step.
+    same("indexes", "MARKETPLACE_COLLECTIONS_INDEX_OWNS", ""),
     // The MANA transfer walk stays an operator's opt-in under every posture.
     same(
         "indexes",

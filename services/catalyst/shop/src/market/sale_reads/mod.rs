@@ -113,29 +113,50 @@ pub(crate) async fn snapshot(
     Ok((snap, nets))
 }
 
-pub(crate) async fn require_mirror(
+pub(crate) async fn require_metadata(
     tx: &mut sqlx::PgConnection,
     nets: &[ChainNet],
     mirror: &'static str,
     source: Source,
-) -> Result<Vec<chrono::NaiveDateTime>, Response> {
-    let passes: Vec<chrono::NaiveDateTime> = sqlx::query_scalar(
-        "SELECT last_complete_pass_at FROM shop.mirror_state
-         WHERE mirror=$1 AND network=ANY($2) AND last_complete_pass_at IS NOT NULL
-         ORDER BY network",
+) -> Result<Vec<String>, Response> {
+    let proofs: Vec<(bool, Option<String>)> = sqlx::query_as(
+        "SELECT projection.owned_at IS NOT NULL,
+           CASE WHEN projection.owned_at IS NOT NULL THEN
+             CASE WHEN projection.pending=0 AND projection.projected_through>=sales.block_number
+                        AND walk.folded_block>=sales.block_number AND walk.full_history
+                        AND walk.chain_id=CASE WHEN sales.network='matic' THEN 137 ELSE 1 END
+                        AND walk.folded_at BETWEEN $3 AND $4
+                        AND walk.diverged_at IS NULL AND walk.quarantined_at IS NULL
+                        AND walk.rebuild_requested_at IS NULL THEN 'index:'||projection.generation END
+           ELSE 'mirror:'||copy.last_complete_pass_at END AS proof
+         FROM shop.sale_publication sales
+         LEFT JOIN shop.collection_projection projection USING(network)
+         LEFT JOIN shop.chain_cursor walk ON walk.network=sales.network AND walk.indexer='collections'
+         LEFT JOIN shop.mirror_state copy ON copy.network=sales.network AND copy.mirror=$1
+         WHERE sales.network=ANY($2)
+         ORDER BY sales.network",
     )
-    .bind(mirror)
-    .bind(nets.iter().map(|n| n.db_name()).collect::<Vec<_>>())
-    .fetch_all(tx)
-    .await
-    .map_err(db_error)?;
-    if passes.len() != nets.len() {
-        return Err(unavailable(
-            source,
-            "the requested marketplace metadata has no complete mirror pass",
-        ));
-    }
-    Ok(passes)
+    .bind(mirror).bind(nets.iter().map(|n|n.db_name()).collect::<Vec<_>>())
+    .bind((Utc::now()-super::chain_walk::READY_WINDOW).naive_utc()).bind(Utc::now().naive_utc())
+    .fetch_all(tx).await.map_err(db_error)?;
+    proofs
+        .into_iter()
+        .map(|(native, proof)| {
+            proof.ok_or_else(|| {
+                if native {
+                    unavailable(
+                        Source::CollectionsIndex,
+                        "the native catalogue does not cover the published sales",
+                    )
+                } else {
+                    unavailable(
+                        source,
+                        "the requested marketplace metadata has no complete mirror pass",
+                    )
+                }
+            })
+        })
+        .collect()
 }
 
 async fn require_collections(
@@ -222,7 +243,7 @@ pub(crate) async fn seller_stats(
     f: &super::sales::SalesSummaryFilters,
 ) -> Result<SellerStats, Response> {
     use super::sales::{SalesSummary, SalesSummaryItem, SalesSummaryRoyalties};
-    require_mirror(&mut snap.transaction, nets, "items", Source::ItemsMirror).await?;
+    require_metadata(&mut snap.transaction, nets, "items", Source::ItemsMirror).await?;
     let row: SellerTotals = sales_query!(nets, wallet "$7"; "summary.sql")
         .bind(f.seller.to_lowercase())
         .bind(f.from)
@@ -291,7 +312,7 @@ pub(super) async fn list(
         .iter()
         .any(|c| matches!(c.as_str(), "wearable" | "emote"))
     {
-        require_mirror(&mut snap.transaction, nets, "items", Source::ItemsMirror).await?;
+        require_metadata(&mut snap.transaction, nets, "items", Source::ItemsMirror).await?;
     }
     sale_page(&mut snap, nets, f, first, skip).await
 }

@@ -258,6 +258,37 @@ async fn sales_page_reads_one_published_network_and_refuses_a_withdrawn_warm_pag
         assert_eq!(code, StatusCode::OK, "{url} {resp}");
         assert_eq!(resp["data"], expected, "{url}");
     }
+    // A native catalogue takes precedence over a previously complete
+    // mirror. Its publication is checked even for a warm rank result.
+    let ranked_path = "/v1/rankings/emotes/all";
+    assert_eq!(get_json(&app, ranked_path).await.0, StatusCode::OK);
+    sqlx::query(
+        "INSERT INTO shop.collection_projection(network,owned_at,projected_through)
+        VALUES('matic',timezone('UTC',now()),NULL)",
+    )
+    .execute(&db.pool)
+    .await
+    .unwrap();
+    let (code, pending) = get_json(&app, ranked_path).await;
+    assert_eq!(code, StatusCode::SERVICE_UNAVAILABLE, "{pending}");
+    assert_eq!(pending["source"], "collections-index");
+    sqlx::query("INSERT INTO shop.chain_cursor(indexer,network,chain_id,start_block,last_block,last_block_hash,full_history,folded_block,folded_at)
+        SELECT 'collections',network,chain_id,start_block,last_block,last_block_hash,true,folded_block,folded_at
+        FROM shop.chain_cursor WHERE indexer='nft' AND network='matic'").execute(&db.pool).await.unwrap();
+    sqlx::query("UPDATE shop.collection_projection SET projected_through=$1 WHERE network='matic'")
+        .bind(polygon as i64)
+        .execute(&db.pool)
+        .await
+        .unwrap();
+    assert_eq!(get_json(&app, ranked_path).await.0, StatusCode::OK);
+    sqlx::query("DELETE FROM shop.collection_projection WHERE network='matic'")
+        .execute(&db.pool)
+        .await
+        .unwrap();
+    sqlx::query("DELETE FROM shop.chain_cursor WHERE indexer='collections' AND network='matic'")
+        .execute(&db.pool)
+        .await
+        .unwrap();
     let (code, collectors) = get_json(&app, "/v1/rankings/collectors/all?sortBy=most_sales").await;
     assert_eq!(code, StatusCode::OK, "{collectors}");
     assert_eq!(

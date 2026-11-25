@@ -1,6 +1,6 @@
 use super::{
     analytics_slot, cached_analytics, db_error, listings, nft_index, require_collections,
-    require_mirror, snapshot,
+    require_metadata, snapshot,
 };
 use crate::land_authz::{ESTATE_REGISTRY_MAINNET, LAND_REGISTRY_MAINNET};
 use crate::market::{MarketplaceState, Source, unavailable};
@@ -16,7 +16,7 @@ pub(in crate::market) async fn item_rankings(
 
     let _slot = analytics_slot(state)?;
     let (mut snap, nets) = snapshot(state, None).await?;
-    let items = require_mirror(&mut snap.transaction, nets, "items", Source::ItemsMirror).await?;
+    let items = require_metadata(&mut snap.transaction, nets, "items", Source::ItemsMirror).await?;
     let key = format!(
         "published-items-rank/{entity:?}/{filters:?}/{:?}/{items:?}",
         snap.generations
@@ -51,7 +51,7 @@ pub(in crate::market) async fn collector_rankings(
     use crate::market::rankings::{RankingResponse, RankingsSortBy};
     let _slot = analytics_slot(state)?;
     let (mut snap, nets) = snapshot(state, None).await?;
-    let items = require_mirror(&mut snap.transaction, nets, "items", Source::ItemsMirror).await?;
+    let items = require_metadata(&mut snap.transaction, nets, "items", Source::ItemsMirror).await?;
     let key = format!(
         "published-collector-rank/{filters:?}/{:?}/{items:?}",
         snap.generations
@@ -86,7 +86,7 @@ pub(in crate::market) async fn creator_rankings(
     let (mut snap, nets) = snapshot(state, None).await?;
     let dependencies = if filters.from == 0 {
         let items =
-            require_mirror(&mut snap.transaction, nets, "items", Source::ItemsMirror).await?;
+            require_metadata(&mut snap.transaction, nets, "items", Source::ItemsMirror).await?;
         Some((items, require_collections(state, &mut snap).await?))
     } else {
         None

@@ -87,7 +87,7 @@ pub(crate) async fn proceeds_summary(
     f: &ProceedsFilters,
 ) -> Result<ProceedsSummary, Response> {
     let (mut snap, nets) = snapshot(state, f.network).await?;
-    require_mirror(&mut snap.transaction, nets, "items", Source::ItemsMirror).await?;
+    require_metadata(&mut snap.transaction, nets, "items", Source::ItemsMirror).await?;
     let r: Totals = sales_query!(
         nets, wallet "$7";
         "settled_sales.sql",

@@ -241,7 +241,7 @@ pub async fn store_stats(
     let (mut snapshot, nets) = crate::market::sale_reads::snapshot(state, None).await?;
     let crate::market::sale_reads::SellerStats { summary, window } =
         crate::market::sale_reads::seller_stats(&mut snapshot, nets, filters).await?;
-    crate::market::sale_reads::require_mirror(
+    crate::market::sale_reads::require_metadata(
         &mut snapshot.transaction,
         nets,
         "collections",
