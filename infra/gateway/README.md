@@ -104,8 +104,8 @@ path already under the target prefix is not prefixed twice. On `credits`, the
 paths credits-server itself serves under `/credits` (the bare `/credits`,
 `/credits/packs`, `/credits/checkout`, `/credits/orders/...` and
 `/credits/authorize...`) are prefixed too, since the node serves them under its
-`/credits` mount. `/credits/authorize-publication` and `/credits/iap/...` are
-prefixed the same way for parity, though the node does not serve them yet.
+`/credits` mount. `/credits/iap/...` is prefixed the same way for parity,
+though the node does not serve it yet.
 Any other `/credits/...` path is taken as already prefixed: Stripe's
 `/credits/webhook`, and the node's own `/credits/packs/{sku}/...` and
 `/credits/checkout/{id}`. A scene builds a service

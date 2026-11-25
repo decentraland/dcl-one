@@ -43,6 +43,9 @@
 //!   `CREDITS_MANAGER_CONTRACT`, and minting only while the CreditUsed index
 //!   (`usage.rs`, `credits.usages`) is ready: 503 naming
 //!   `credits-usage-index` otherwise; the index consumes the pledges;
+//! - `/credits/authorize-publication`: a collection's publication fee
+//!   (`publication.rs`), under the same lane, with
+//!   `CREDITS_EXTERNAL_CALL_SIGNER_KEY_FILE` and the builder `serve` attaches;
 //! - `/usage-index/status`: the index's cursor, readiness and lag.
 //!
 //! Money: every balance and amount is `numeric` in SQL and a decimal string
@@ -102,6 +105,7 @@ pub mod money;
 pub mod orders;
 pub mod packs;
 pub mod pricing;
+pub mod publication;
 pub mod purchase_audit;
 pub mod purchase_intent;
 pub mod receipts;
@@ -119,6 +123,8 @@ pub mod writes;
 
 #[cfg(test)]
 mod metrics_tests;
+#[cfg(test)]
+mod publication_tests;
 #[cfg(test)]
 mod receipts_tests;
 #[cfg(test)]
@@ -762,6 +768,9 @@ pub struct State {
     /// once by [`Self::start_receipts`]: `serve` builds the mailer after
     /// this state.
     pub receipts: std::sync::OnceLock<Arc<receipts::Sender>>,
+    /// The builder's publications ([`publication::Publications`]); unattached, a publication authorization
+    /// answers 503.
+    pub(crate) publications: std::sync::OnceLock<Arc<dyn publication::Publications>>,
 }
 
 pub type SharedState = Arc<State>;
@@ -882,6 +891,7 @@ impl State {
             feed,
             goals_chain: chain,
             dapps_flags: None,
+            publications: std::sync::OnceLock::new(),
             balance_changes: stream::BalanceChanges::default(),
             receipts: std::sync::OnceLock::new(),
         }
@@ -913,6 +923,11 @@ impl State {
     pub fn with_dapps_flags(mut self, flags: Arc<crate::market::features::DappsFlags>) -> Self {
         self.dapps_flags = Some(flags);
         self
+    }
+
+    /// Attaches this node's builder, which prices a publication; `false` when one is already attached.
+    pub fn attach_publications(&self, publications: Arc<dyn publication::Publications>) -> bool {
+        self.publications.set(publications).is_ok()
     }
 
     /// The tests' gate in place of the chain read.
@@ -1138,6 +1153,10 @@ pub fn router(state: SharedState) -> Router {
             post(handlers::authorize::authorize_batch),
         )
         .route(
+            "/credits/authorize-publication",
+            post(handlers::publication::authorize_publication),
+        )
+        .route(
             "/credits/authorize/cancel",
             post(handlers::authorize::cancel),
         )
@@ -1265,6 +1284,10 @@ pub fn shop_router(state: SharedState) -> Router {
         .route(
             "/v1/credit-authorizations/batch",
             post(handlers::authorize::authorize_batch),
+        )
+        .route(
+            "/v1/credit-authorizations/publication",
+            post(handlers::publication::authorize_publication),
         )
         .route(
             "/v1/credit-authorizations/cancel",

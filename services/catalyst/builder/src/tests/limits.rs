@@ -1520,6 +1520,7 @@ fn the_builder_doc_states_each_bound_the_code_enforces() {
         "review::MAX_EVENTS",
         "review::MAX_PAGE",
         "publication::MAX_ITEMS",
+        "publication_fee::WEI_PER_USD_CENT",
         "validator::MAX_ITEMS",
         "validator::DAILY_REQUESTS",
         "validator::LEASE",

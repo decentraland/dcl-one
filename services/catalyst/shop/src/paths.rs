@@ -50,6 +50,7 @@ pub const ALIASES: &[&str] = &[
     "GET /shop-api/v1/pack-orders/{id}/cancel-return /credits/credits/orders/{id}/cancel-return",
     "POST /shop-api/v1/credit-authorizations /credits/credits/authorize",
     "POST /shop-api/v1/credit-authorizations/batch /credits/credits/authorize/batch",
+    "POST /shop-api/v1/credit-authorizations/publication /credits/credits/authorize-publication",
     "POST /shop-api/v1/credit-authorizations/cancel /credits/credits/authorize/cancel",
     "POST /shop-api/v1/credit-authorizations/submitted /credits/credits/authorize/submitted",
     "GET /shop-api/v1/credit-authorizations/{salt} /credits/credits/authorize/{salt}",
@@ -186,6 +187,14 @@ pub const CREDIT_PATHS: &[CreditPath] = &[
             "/credits/credits/authorize/batch",
         ],
         "policy::guard_group_credit_spend with AuthorizeCredit (credits::batch)",
+    ),
+    credit(
+        "POST",
+        &[
+            "/shop-api/v1/credit-authorizations/publication",
+            "/credits/credits/authorize-publication",
+        ],
+        "credits::publication::authorize: the builder's publisher grant and fee, the issuance gate with check_publication",
     ),
     credit(
         "POST",

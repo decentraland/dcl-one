@@ -1170,10 +1170,12 @@ fn credit_settled(call: &ExternalCall) -> Result<Vec<(AssetId, ContractRef)>, Re
                 target: venue.contract,
                 selector: *selector,
             }),
-            CustomEffect::Opaque => Err(Refusal::UndecodedCustomCall {
-                target: venue.contract,
-                selector: *selector,
-            }),
+            CustomEffect::Opaque | CustomEffect::CollectionPublication { .. } => {
+                Err(Refusal::UndecodedCustomCall {
+                    target: venue.contract,
+                    selector: *selector,
+                })
+            }
         },
     }
 }

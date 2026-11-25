@@ -192,8 +192,8 @@ BADGES_MOUNTS = ("assets", "badges", "categories", "status", "users")
 # at the same subpaths of its /credits mount. CREDITS_SERVER_PATHS match only
 # the bare path (the pack list, the pack purchase): the node's own /packs/...
 # and /checkout/{id} keep their already-prefixed form. CREDITS_SERVER_MOUNTS
-# take any tail (the orders, the credit authorizations). The publication fee
-# and the app-store purchases are prefixed for parity; the node does not serve
+# take any tail (the orders, the credit authorizations, the publication fee).
+# The app-store purchases are prefixed for parity; the node does not serve
 # them yet. Any other /credits/... path is taken as already prefixed: Stripe
 # posts credits-server's webhook to /credits/webhook, which the node serves as
 # its mount's /webhook.

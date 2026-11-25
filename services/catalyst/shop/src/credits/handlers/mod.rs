@@ -17,6 +17,7 @@ pub mod history;
 pub mod orders;
 pub mod packs;
 pub mod prices;
+pub mod publication;
 pub mod reports;
 pub mod stripe;
 pub mod topup;
