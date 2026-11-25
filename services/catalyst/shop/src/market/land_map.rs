@@ -219,8 +219,8 @@ fn marks_sql() -> String {
     format!(
         "WITH {cte} \
          SELECT EXISTS (SELECT 1 FROM shop.chain_cursor c WHERE c.indexer = 'nft' AND c.network = 'ethereum' AND {nft_ready}) AS nft_ready, \
+           EXISTS (SELECT 1 FROM shop.chain_cursor c WHERE c.indexer = 'trade_events' AND c.network = 'ethereum' AND {verdicts_ready}) AS verdicts_ready, \
            concat_ws('|', \
-             EXISTS (SELECT 1 FROM shop.chain_cursor c WHERE c.indexer = 'trade_events' AND c.network = 'ethereum' AND {verdicts_ready}), \
              coalesce((SELECT c.reorg_rewinds || '.' || c.rebuilds FROM shop.chain_cursor c WHERE c.indexer = 'nft' AND c.network = 'ethereum'), '-'), \
              (SELECT count(*) FILTER (WHERE status = 'open' AND floor((expires_at::numeric + 500) / 1000) > $2) FROM shop.nft_order WHERE {orders}), \
              coalesce((SELECT updated_block || '.' || updated_log FROM shop.nft_order WHERE {orders} \
@@ -272,19 +272,23 @@ pub async fn land_market_marks(
     };
     let contracts = vec![land.to_ascii_lowercase(), estate.to_ascii_lowercase()];
     let naive_now = now.naive_utc();
-    let (nft_ready, marks): (bool, String) = sqlx::query_as(sqlx::AssertSqlSafe(marks_sql()))
-        .bind(naive_now)
-        .bind((now.timestamp_millis() + 500).div_euclid(1000))
-        .bind(&contracts)
-        .bind(super::trades::mirrored_since(&state.settings, naive_now))
-        .bind(mana)
-        .bind(chain_id as i32)
-        .bind(rentals_contract(chain_id as u64))
-        .fetch_one(&mut *conn)
-        .await?;
+    let (nft_ready, verdicts_ready, marks): (bool, bool, String) =
+        sqlx::query_as(sqlx::AssertSqlSafe(marks_sql()))
+            .bind(naive_now)
+            .bind((now.timestamp_millis() + 500).div_euclid(1000))
+            .bind(&contracts)
+            .bind(super::trades::mirrored_since(&state.settings, naive_now))
+            .bind(mana)
+            .bind(chain_id as i32)
+            .bind(rentals_contract(chain_id as u64))
+            .fetch_one(&mut *conn)
+            .await?;
+    // Every source the build's `check_ready` asks for, the trade-events
+    // verdicts current on Ethereum included (`trade_events::stale_networks_on`
+    // over the same `verdicts_ready_sql`).
     Ok(LandMarketMarks {
-        ready: nft_ready && trades_ready,
-        marks: format!("{nft_ready}|{trades_ready}|{marks}"),
+        ready: nft_ready && trades_ready && verdicts_ready,
+        marks: format!("{nft_ready}|{trades_ready}|{verdicts_ready}|{marks}"),
     })
 }
 
@@ -931,9 +935,22 @@ mod tests {
         drop(tx);
 
         publish_nft(&db.pool).await;
+        let nft_only = marks_at(&state, Utc::now()).await;
+        assert!(
+            !nft_only.ready,
+            "the trade-events verdicts are not published yet, so the build would not run"
+        );
+        assert_ne!(nft_only.marks, unpublished.marks, "publication moves them");
+        sqlx::query(
+            "INSERT INTO shop.chain_cursor (indexer, network, start_block, last_block, fold_through, folded_block, folded_at, full_history, chain_id) \
+             VALUES ('trade_events', 'ethereum', 1, 10, 10, 10, timezone('UTC', now()), true, 1)",
+        )
+        .execute(&db.pool)
+        .await
+        .unwrap();
         let mut last = marks_at(&state, Utc::now()).await;
-        assert!(last.ready);
-        assert_ne!(last.marks, unpublished.marks, "publication moves them");
+        assert!(last.ready, "every source the build needs is published");
+        assert_ne!(last.marks, nft_only.marks, "and so does the verdicts'");
         // Each step must move the marks.
         fn step(last: &mut LandMarketMarks, what: &str, next: LandMarketMarks) {
             assert_ne!(next.marks, last.marks, "{what} moves the marks");
@@ -1002,16 +1019,9 @@ mod tests {
         .execute(&db.pool)
         .await
         .unwrap();
-        sqlx::query(
-            "INSERT INTO shop.chain_cursor (indexer, network, start_block, last_block, fold_through, folded_block, folded_at, full_history, chain_id) \
-             VALUES ('trade_events', 'ethereum', 1, 10, 10, 10, timezone('UTC', now()), true, 1)",
-        )
-        .execute(&db.pool)
-        .await
-        .unwrap();
         step(
             &mut last,
-            "a published sale verdict",
+            "a folded sale verdict",
             marks_at(&state, Utc::now()).await,
         );
         rental(
@@ -1199,6 +1209,20 @@ mod tests {
             .unwrap();
         let published = marks_at(&state, Utc::now()).await;
         assert!(published.ready);
+        // Stale trade-events verdicts withdraw it too, as they withdraw the
+        // build (`check_ready`).
+        sqlx::query("UPDATE shop.chain_cursor SET folded_at = folded_at - interval '31 minutes' WHERE indexer = 'trade_events'")
+            .execute(&db.pool)
+            .await
+            .unwrap();
+        let stale = marks_at(&state, Utc::now()).await;
+        assert!(!stale.ready, "stale verdicts are not ready");
+        assert_ne!(stale.marks, published.marks);
+        sqlx::query("UPDATE shop.chain_cursor SET folded_at = timezone('UTC', now()) WHERE indexer = 'trade_events'")
+            .execute(&db.pool)
+            .await
+            .unwrap();
+        assert!(marks_at(&state, Utc::now()).await.ready);
         sqlx::query("UPDATE shop.chain_cursor SET folded_block = NULL, folded_at = NULL WHERE indexer = 'nft'")
             .execute(&db.pool)
             .await
