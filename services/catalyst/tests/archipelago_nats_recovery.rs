@@ -3,14 +3,12 @@
 //! subscriber by call, so what crosses the broker for them is the subscriber's lookup of each
 //! announced session (`peer.{wallet}.cluster_lookup`): an observer subscribed to it stands in
 //! for Pulse.
-#[path = "support/archipelago.rs"]
-mod archipelago;
+use crate::archipelago;
 #[path = "support/db.rs"]
 mod db;
 #[path = "support/gate.rs"]
 mod gate;
-#[path = "support/nats_broker.rs"]
-mod nats_broker;
+use crate::nats_broker;
 #[path = "support/pulse_tracker.rs"]
 mod pulse_tracker;
 use alloy::signers::{SignerSync, local::PrivateKeySigner};

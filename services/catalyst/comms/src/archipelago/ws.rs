@@ -54,6 +54,8 @@ pub(super) fn connector_routes(
     )
 }
 
+// Takes the upgrade route's extractors as-is.
+#[allow(clippy::too_many_arguments)]
 async fn connector_upgrade(
     method: axum::http::Method,
     uri: axum::http::Uri,
@@ -545,6 +547,9 @@ async fn handle_socket(
     }
 }
 
+#[cfg(feature = "test-support")]
+pub use io::assignment_test_support;
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -660,6 +665,3 @@ mod tests {
         ));
     }
 }
-
-#[cfg(feature = "test-support")]
-pub use io::assignment_test_support;

@@ -25,8 +25,7 @@ use catalyst::explore::places::mirror as places_mirror;
 use catalyst::explore::places::voting_power::MIN_USER_ACTIVITY;
 use catalyst::explore::{ExploreState, Settings, router};
 
-#[path = "support/db.rs"]
-mod db;
+use crate::db;
 
 const PLACES_ADMIN_TOKEN: &str = "harness-places-admin-token";
 const DATA_TEAM_TOKEN: &str = "harness-data-team-token";

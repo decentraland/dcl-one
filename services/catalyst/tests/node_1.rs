@@ -3,6 +3,10 @@
 // explore_parity needs it.
 #![recursion_limit = "256"]
 
+// Support shared by several modules, loaded once; the modules `use crate::<name>`.
+#[path = "support/db.rs"]
+mod db;
+
 #[path = "content_live.rs"]
 mod content_live;
 #[path = "explore_mirrors.rs"]
