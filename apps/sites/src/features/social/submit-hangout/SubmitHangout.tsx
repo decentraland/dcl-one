@@ -2,7 +2,7 @@ import {
   useEventsCopy,
   type EventsLocale,
   EventDetailModal,
-  SitesButton as Button,
+  Button,
   Busy,
   Notice,
   type NoticeTone,
@@ -305,16 +305,16 @@ function SubmitHangoutInner({
                   <div className={styles.editorActions}>
                     <div className={styles.reviewBar}>
                       <p><GeneralInfoButton size={16} aria-hidden="true" />{text("The event submission will be reviewed by our team, you'll be notified by email")}</p>
-                      <Button variant="tertiary" disabled={!canSubmit} onClick={() => send({ type: "PREVIEW" })}>{text("Preview")}</Button>
+                      <Button size="lg" variant="tertiary" disabled={!canSubmit} onClick={() => send({ type: "PREVIEW" })}>{text("Preview")}</Button>
                     </div>
                     <div className={styles.formActions}>
                       {mode === "edit" && onDelete && (
-                        <Button variant="tertiary" className={styles.delete} onClick={onDelete}>
-                          {text("Delete")}<GeneralDelete size={20} aria-hidden="true" />
+                        <Button size="lg" variant="tertiary" className={styles.delete} trailingIcon={<GeneralDelete size={20} aria-hidden="true" />} onClick={onDelete}>
+                          {text("Delete")}
                         </Button>
                       )}
                       <Link className={styles.cancel} to={mode === "edit" ? "/events?tab=my" : "/events"}>{text("Cancel")}</Link>
-                      <Button disabled={!canSubmit} onClick={() => send({ type: "SUBMIT" })}>{text(mode === "edit" ? "Save changes" : "Submit Event")}</Button>
+                      <Button size="lg" disabled={!canSubmit} onClick={() => send({ type: "SUBMIT" })}>{text(mode === "edit" ? "Save changes" : "Submit Event")}</Button>
                     </div>
                   </div>
                 </div>
@@ -418,7 +418,7 @@ export function SubmitHangoutLoading({ mode, error, onRetry }: { mode: "create" 
       {error ? (
         <div className={styles.loadState}>
           <Notice tone="error">{errorText(error)}</Notice>
-          {onRetry && <Button variant="tertiary" onClick={onRetry}>{text("Retry")}</Button>}
+          {onRetry && <Button size="lg" variant="tertiary" onClick={onRetry}>{text("Retry")}</Button>}
         </div>
       ) : <Busy layout="page">{text("Loading your hangout…")}</Busy>}
     </div>
