@@ -984,10 +984,25 @@ pub async fn get_items(
         Ok(read) => read,
         Err(envelope) => return envelope,
     };
-    match list_items(&state, &mut read, &filters).await {
-        Ok((data, total)) => Json(DataTotal { data, total }).into_response(),
-        Err(e) => e.into_response(),
+    let (mut data, total) = match list_items(&state, &mut read, &filters).await {
+        Ok(page) => page,
+        Err(e) => return e.into_response(),
+    };
+    // The picks are no catalogue rows: the read's connection goes back first,
+    // so their pool read never waits on the one this request holds.
+    drop(read);
+    let ids = data.iter().map(|item| item.id.clone()).collect::<Vec<_>>();
+    let counts = match super::lists::picks_stats(&state.pool, &ids, None).await {
+        Ok(stats) => stats
+            .into_iter()
+            .map(|s| (s.item_id, s.count))
+            .collect::<HashMap<_, _>>(),
+        Err(e) => return e.into_response(),
+    };
+    for item in &mut data {
+        item.picks.count = counts.get(&item.id).copied().unwrap_or_default();
     }
+    Json(DataTotal { data, total }).into_response()
 }
 
 /// `/v3/catalog/items` for these parameters: the page and its total, or the

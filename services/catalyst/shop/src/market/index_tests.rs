@@ -5138,6 +5138,62 @@ async fn a_reindexed_order_only_gains_its_missing_transaction_hash() {
     db.drop().await;
 }
 
+/// A transfer indexed before the walk recorded transfers' transactions
+/// gains its hash when the same log is read again, and keeps it after; a
+/// different log at its position never supplies one.
+#[tokio::test]
+async fn a_reindexed_transfer_gains_its_missing_transaction_hash() {
+    let Some(db) = ScratchDb::create().await else {
+        return;
+    };
+    let transfer = |token: &str, tx_hash: Option<&str>| nft_index::NftEvent {
+        block_number: 100,
+        log_index: 0,
+        block_time: 1,
+        kind: nft_index::KIND_TRANSFER,
+        emitter: "0xnft".into(),
+        contract_address: "0xnft".into(),
+        token_id: token.into(),
+        from_address: Some("0xseller".into()),
+        to_address: Some("0xbuyer".into()),
+        amount: None,
+        expires_at: None,
+        detail: None,
+        tx_hash: tx_hash.map(str::to_string),
+    };
+    let (a, b) = (
+        format!("0x{}", "a".repeat(64)),
+        format!("0x{}", "b".repeat(64)),
+    );
+    let mut conn = db.pool.acquire().await.unwrap();
+    let mut write = async |row| {
+        nft_index::insert_events(&mut conn, ChainNet::Matic, &[row])
+            .await
+            .unwrap()
+    };
+    assert_eq!(write(transfer("7", None)).await, 1);
+    assert_eq!(
+        write(transfer("8", Some(&b))).await,
+        0,
+        "another token's log at the position"
+    );
+    assert_eq!(
+        write(transfer("7", Some(&a))).await,
+        1,
+        "the hash is filled"
+    );
+    assert_eq!(write(transfer("7", Some(&b))).await, 0, "a kept hash stays");
+    drop(conn);
+    let kept: Option<String> = sqlx::query_scalar(
+        "SELECT tx_hash FROM shop.nft_event WHERE network = 'matic' AND block_number = 100",
+    )
+    .fetch_one(&db.pool)
+    .await
+    .unwrap();
+    assert_eq!(kept, Some(a));
+    db.drop().await;
+}
+
 #[tokio::test]
 async fn ethereum_names_v1_wearables_land_data_and_the_land_routes() {
     let Some(db) = ScratchDb::create().await else {
@@ -14817,4 +14873,6 @@ mod compare_sources_tests {
 
 mod sale_accounting;
 
+mod cancelled_trades;
+mod royalties;
 mod sale_routes;

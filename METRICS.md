@@ -32,6 +32,25 @@ A larger fixture included 5.3 million collection mint events, 6,200 factory crea
 
 The timestamp and price indexes occupied 54 MiB and 114 MiB on the sales fixture. Daily sale counts supply the total for unfiltered pages. Filtered sales count up to the page window cap. Indexed wallet and item lookups narrow rows before enriching them with payment evidence. Accounts, rankings and volume have a 30-second cache keyed by checked publications.
 
+## Wallet activity transfers
+
+A synthetic PostgreSQL 17.6 fixture on a laptop held 5M Polygon and 1M Ethereum transfers in `shop.nft_event` among 400,000 wallets. 30% of them settled a sale, giving 1.83M single-asset executions in the sales ledger. The older half of each network's transfers had no transaction hash. Timings are for the leg's statement on one network: both sides capped at 500, with the public-sale checks against the ledger. The leg runs the two networks concurrently.
+
+| Index | Size | Concurrent build | Build in the migration transaction |
+| --- | ---: | ---: | ---: |
+| `nft_event_transfer_from_idx` | 601 MB | 35.6 s (first build, cold cache) | 15.7 s |
+| `nft_event_transfer_to_idx` | 601 MB | 14.7 s | not measured |
+
+| Wallet | Network | Rows returned | Cached | Cold |
+| --- | --- | ---: | ---: | ---: |
+| 400 transfers | Polygon | 232 | 8.4 ms | 128 ms |
+| 400 transfers | Ethereum | 42 | 9.0 ms | 37 ms |
+| 50,000 transfers, 90% of them sales | Polygon | 1,000 | 78 ms | 1.15 s |
+| 50,000 transfers, 90% of them sales | Ethereum | 668 | 38 ms | 1.53 s |
+| Three random wallets | Polygon | 19 to 25 | 1.1 to 2.2 ms | 18 to 24 ms |
+
+Each side walks its index in the order the activity merges in (time, then position), with no sort step. On Polygon, each side of the 50,000-transfer wallet walked about 4,800 index rows to find 500 transfers that were not sales. Each walked row made one `sale_asset_read_token` probe and, when it found a sale, one probe of the execution's primary key. Other agents' builds were running during these measurements.
+
 ## Marketplace sales day rollups
 
 On PostgreSQL 17.6, a temporary table held 200,000 executions on one network,
