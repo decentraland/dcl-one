@@ -994,5 +994,4 @@ mod tests {
         assert_eq!(set.get(&entity_2).unwrap(), &entity_2);
         assert_eq!(set.get(&entity_3).unwrap(), &entity_3);
     }
-
 }
