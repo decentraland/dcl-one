@@ -364,7 +364,7 @@ impl Settings {
     /// transactions API that is being retired. A testnet relay may still
     /// forward there (the testnet development profile does).
     pub fn validate(&self) -> anyhow::Result<()> {
-        if self.collections_chain_id == POLYGON_MAINNET
+        if crate::types::ChainId(self.collections_chain_id) == crate::types::ChainId::POLYGON
             && Self::has(&self.transactions_upstream_url)
         {
             anyhow::bail!(
@@ -405,9 +405,6 @@ impl Settings {
         Ok(())
     }
 }
-
-/// The chain of a mainnet relay (`COLLECTIONS_CHAIN_ID`).
-const POLYGON_MAINNET: u64 = 137;
 
 pub struct State {
     pub pool: PgPool,
