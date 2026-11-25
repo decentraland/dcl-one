@@ -506,8 +506,10 @@ CREATE TABLE shop.nft_contract (
 -- nftAddress for the three legacy order kinds, whose emitter is the
 -- marketplace); `amount` is the order price or the v1 issued id; `detail`
 -- the legacy order id, the v1 wearable id, the registered subdomain or the
--- registry's data string; `tx_hash` the transaction of an `order_successful`
--- (NULL on other kinds and on rows indexed before it was recorded).
+-- registry's data string; `tx_hash` the log's transaction, NULL on a row
+-- indexed before the walk recorded it (an `order_successful` before 0040,
+-- another kind before transfers' transactions were recorded) until a replay
+-- of the same log fills it.
 CREATE TABLE shop.nft_event (
     network text NOT NULL,
     block_number bigint NOT NULL,
@@ -539,10 +541,10 @@ CREATE INDEX nft_event_token_idx ON shop.nft_event (network, contract_address, t
 CREATE INDEX nft_event_successful_order ON shop.nft_event(network,block_number) WHERE kind='order_successful';
 
 -- The transfer leg of /v1/activity (`activity_transfers`): a wallet's
--- newest transfers out and in on one network, each side walked newest
--- first to its cap.
-CREATE INDEX nft_event_transfer_from_idx ON shop.nft_event (network, from_address, block_number DESC, log_index DESC) WHERE kind = 'transfer';
-CREATE INDEX nft_event_transfer_to_idx ON shop.nft_event (network, to_address, block_number DESC, log_index DESC) WHERE kind = 'transfer';
+-- newest transfers out and in on one network, each side walked by time
+-- (then position; a legacy row can carry time 0) to its cap.
+CREATE INDEX nft_event_transfer_from_idx ON shop.nft_event (network, from_address, block_time DESC, block_number DESC, log_index DESC) WHERE kind = 'transfer';
+CREATE INDEX nft_event_transfer_to_idx ON shop.nft_event (network, to_address, block_time DESC, block_number DESC, log_index DESC) WHERE kind = 'transfer';
 
 -- The ownership fold of the collections' and names' transfers: owner is the
 -- latest Transfer's `to` (NULL once burned), the mint the first; item_id and

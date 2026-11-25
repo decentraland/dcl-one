@@ -85,7 +85,9 @@ struct Row {
 
 /// `$1` the wallet, `$2` the network, `$3` the cap of each side, `$4` the
 /// zero address, `$5` the DCL registrar, `$6` the network's MANA, `$7` its
-/// chain. Each side walks its own address index newest first.
+/// chain. Each side walks its own address index newest first, by time
+/// then position, the order the activity merges in: a legacy row indexed
+/// with time 0 sorts last on its side as it does in the merge.
 fn rows_sql(net: ChainNet) -> String {
     let side = |sent: bool| {
         let (mine, other) = if sent {
@@ -104,7 +106,7 @@ fn rows_sql(net: ChainNet) -> String {
               FROM shop.nft_event e CROSS JOIN publication p \
               WHERE e.network = $2 AND e.kind = 'transfer' AND e.{mine} = $1 AND e.{other} <> $1{mint} \
                 AND e.block_number <= p.upto AND NOT {settled} \
-              ORDER BY e.block_number DESC, e.log_index DESC LIMIT $3)",
+              ORDER BY e.block_time DESC, e.block_number DESC, e.log_index DESC LIMIT $3)",
             settled = settled_sql("e"),
         )
     };
@@ -406,6 +408,44 @@ mod tests {
 
     fn unavailable(legs: &TransferLegs) -> Vec<&'static str> {
         legs.unavailable.iter().copied().collect()
+    }
+
+    /// Each side keeps its newest transfers by time before its cap: a
+    /// legacy row indexed with time 0 at the highest position sorts last,
+    /// as in the merge, and never displaces a newer transfer.
+    #[tokio::test]
+    async fn a_legacy_row_without_a_time_never_displaces_a_newer_transfer_from_the_cap() {
+        let Some(db) = OwnDb::create("activity_transfers_cap").await else {
+            return;
+        };
+        let pool = &db.pool;
+        publish_ledger(pool).await;
+        let b = height() - 600;
+        sqlx::query(
+            "INSERT INTO shop.nft_event (network, block_number, log_index, block_time, kind, emitter, contract_address, token_id, from_address, to_address, tx_hash) \
+             SELECT 'matic', $1 + g, 0, CASE WHEN g = 501 THEN 0 ELSE 1700000000 + g END, 'transfer', $2, $2, g, $3, $4, \
+                    '0x' || lpad(to_hex(g), 64, '0') \
+             FROM generate_series(1, 501) g",
+        )
+        .bind(b)
+        .bind(WEARABLES)
+        .bind(ME)
+        .bind(OTHER)
+        .execute(pool)
+        .await
+        .unwrap();
+        let legs = transfers_of_address(&*node(pool, true).await, ME, 500).await;
+        let sent = ids(&legs.sent);
+        assert_eq!(
+            (sent.len(), sent.first().cloned(), sent.last().cloned()),
+            (
+                500,
+                Some(format!("matic-{}-0", b + 500)),
+                Some(format!("matic-{}-0", b + 1))
+            )
+        );
+        assert!(!sent.contains(&format!("matic-{}-0", b + 501)));
+        db.drop().await;
     }
 
     /// Sent (a burn included) and received (a mint left out), never one to

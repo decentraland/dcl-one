@@ -2279,7 +2279,7 @@ The schema object pass creates the sales read indexes. On an existing large ledg
 
 The transfer leg of `/v1/activity` reads `shop.nft_event` transfers: the collections' wearables and emotes on both networks, and DCL names. LAND and Estate transfers live in `land_authz.authz_event`, which keeps no sender or transaction hash, so the leg does not read them ([#2363](https://github.com/decentraland/dcl-one/issues/2363)). Each network is read inside its sales publication snapshot (`sale_fold::snapshot`, REPEATABLE READ, READ ONLY), up to the published block. The sales fold has proven the settlement inputs of the `nft`, `sales` and `trade_events` walks through that block, on the published branch. A network without a valid publication contributes no transfers, so a testnet node or a node without the sales index serves none.
 
-Each side of a wallet walks its own partial index, newest first, until it has 500 rows. `nft_event_transfer_from_idx` covers transfers out and `nft_event_transfer_to_idx` covers transfers in, both on `(network, address, block_number DESC, log_index DESC) WHERE kind = 'transfer'`. Each candidate is checked against the ledger's public sales of the token in its block (`sale_asset_read_token`, then the execution's primary key). A wallet whose recent transfers are mostly sales walks more rows to fill its cap.
+Each side of a wallet walks its own partial index, newest first, until it has 500 rows. `nft_event_transfer_from_idx` covers transfers out and `nft_event_transfer_to_idx` covers transfers in, both on `(network, address, block_time DESC, block_number DESC, log_index DESC) WHERE kind = 'transfer'`. They walk in the order the activity merges in, so a legacy row with time 0 cannot displace a newer transfer from the cap. Each candidate is checked against the ledger's public sales of the token in its block (`sale_asset_read_token`, then the execution's primary key). A wallet whose recent transfers are mostly sales walks more rows to fill its cap.
 
 The nft walk records each log's transaction hash. Rows indexed before this change keep NULL until their log is read again. A replay fills a missing hash only from the same log (same emitter, token, parties and payload) and never replaces one.
 
@@ -2287,9 +2287,9 @@ On a populated deployment, the schema object pass creates both indexes. To keep 
 
 ```sql
 CREATE INDEX CONCURRENTLY IF NOT EXISTS nft_event_transfer_from_idx
-ON shop.nft_event (network, from_address, block_number DESC, log_index DESC) WHERE kind = 'transfer';
+ON shop.nft_event (network, from_address, block_time DESC, block_number DESC, log_index DESC) WHERE kind = 'transfer';
 CREATE INDEX CONCURRENTLY IF NOT EXISTS nft_event_transfer_to_idx
-ON shop.nft_event (network, to_address, block_number DESC, log_index DESC) WHERE kind = 'transfer';
+ON shop.nft_event (network, to_address, block_time DESC, block_number DESC, log_index DESC) WHERE kind = 'transfer';
 ```
 
 See the [synthetic fixture measurements](METRICS.md#wallet-activity-transfers) for index sizes, build times and reads. Production table sizes have not been measured.

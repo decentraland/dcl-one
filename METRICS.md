@@ -28,18 +28,18 @@ A synthetic PostgreSQL 17.6 fixture on a laptop held 5M Polygon and 1M Ethereum 
 
 | Index | Size | Concurrent build | Build in the migration transaction |
 | --- | ---: | ---: | ---: |
-| `nft_event_transfer_from_idx` | 546 MB | 20.5 s | 12.2 s |
-| `nft_event_transfer_to_idx` | 546 MB | 20.3 s | not measured |
+| `nft_event_transfer_from_idx` | 601 MB | 35.6 s (first build, cold cache) | 15.7 s |
+| `nft_event_transfer_to_idx` | 601 MB | 14.7 s | not measured |
 
 | Wallet | Network | Rows returned | Cached | Cold |
 | --- | --- | ---: | ---: | ---: |
-| 400 transfers | Polygon | 244 | 2.7 ms | 136 ms |
-| 400 transfers | Ethereum | 46 | 2.0 ms | 35 ms |
-| 50,000 transfers, 90% of them sales | Polygon | 1,000 | 57 ms | 994 ms |
-| 50,000 transfers, 90% of them sales | Ethereum | 668 | 35 ms | 455 ms |
-| Three random wallets | Polygon | 21 to 25 | 0.4 to 1.5 ms | 9.8 to 11.2 ms |
+| 400 transfers | Polygon | 232 | 8.4 ms | 128 ms |
+| 400 transfers | Ethereum | 42 | 9.0 ms | 37 ms |
+| 50,000 transfers, 90% of them sales | Polygon | 1,000 | 78 ms | 1.15 s |
+| 50,000 transfers, 90% of them sales | Ethereum | 668 | 38 ms | 1.53 s |
+| Three random wallets | Polygon | 19 to 25 | 1.1 to 2.2 ms | 18 to 24 ms |
 
-On Polygon, each side of the 50,000-transfer wallet walked about 4,800 index rows to find 500 transfers that were not sales. Each walked row made one `sale_asset_read_token` probe (0.04 to 0.07 ms) and, when it found a sale, one probe of the execution's primary key.
+Each side walks its index in the order the activity merges in (time, then position), with no sort step. On Polygon, each side of the 50,000-transfer wallet walked about 4,800 index rows to find 500 transfers that were not sales. Each walked row made one `sale_asset_read_token` probe and, when it found a sale, one probe of the execution's primary key. Other agents' builds were running during these measurements.
 
 ## Marketplace sales day rollups
 
