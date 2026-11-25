@@ -76,11 +76,14 @@ jobs:
         env:
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
         run: python3 tooling/dev-ci.py
+      # These suites read files outside push.paths, so every pull request runs them.
+      - name: Run the workflow tests
+        run: python3 -m unittest tooling.tests.test_dev_workflow tooling.tests.test_ci_local tooling.tests.test_ui_gallery_receipt.WorkflowTest tooling.tests.test_image_cache.CompileWorkflowTest
   rust:
     name: Rust tests
     needs: changes
     # Runs whatever the plan's outcome unless it found nothing to test or no input of the Rust tests; without a
-    # plan (other events, a failed plan job) it runs. PRs run on Linux; main and the ci:macos label add macOS.
+    # plan (other events, a failed plan step) it runs. PRs run on Linux; main and the ci:macos label add macOS.
     if: ${{ !cancelled() && needs.changes.outputs.run != 'false' && needs.changes.outputs.rust != 'false' }}
     strategy:
       fail-fast: false

@@ -22,7 +22,7 @@ CREATOR_HUB = WORKFLOW.with_name('creator-hub-ci.yml')
 
 def jobs():
     source = WORKFLOW.read_text().split('jobs:\n', 1)[1]
-    return dict(re.findall(r'(?ms)^  (\w+):\n(.*?)(?=^  \w+:|\Z)', source))
+    return dict(re.findall(r'(?ms)^  ([\w-]+):\n(.*?)(?=^  [\w-]+:|\Z)', source))
 
 
 def disk_steps():
@@ -629,6 +629,16 @@ class DevelopmentWorkflowTest(unittest.TestCase):
             with self.subTest(name=name):
                 self.assertIn(dry_run, found[name])
                 self.assertRegex(found[name], r'(?m)^    needs: \[ changes, ')
+
+    def test_every_pull_request_runs_the_workflow_tests(self):
+        changes = jobs()['changes']
+        self.assertNotIn('continue-on-error', changes)
+        last = re.split(r'(?m)^      - ', changes)[-1]
+        self.assertEqual([line for line in last.splitlines() if line.strip() and not line.lstrip().startswith('#')],
+                         ['name: Run the workflow tests',
+                          '        run: python3 -m unittest tooling.tests.test_dev_workflow tooling.tests.test_ci_local '
+                          'tooling.tests.test_ui_gallery_receipt.WorkflowTest '
+                          'tooling.tests.test_image_cache.CompileWorkflowTest'])
 
     def test_only_unit_suites_are_gated_by_web_selection(self):
         web = jobs()['web']
