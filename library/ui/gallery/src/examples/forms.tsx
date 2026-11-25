@@ -14,7 +14,8 @@ import {
   CharCounter,
   CodeInput,
   FieldLabel,
-  SubmitField
+  SubmitField,
+  Slider
 } from '@dcl/one-ui'
 import type { GalleryEntry } from '../registry'
 import layout from './layout.module.css'
@@ -552,6 +553,19 @@ export const formEntries: GalleryEntry[] = [
     ]
   },
   {
+    name: 'Slider',
+    group: 'Forms',
+    summary: 'A range input with a ruby fill, in four tracks, with optional steppers.',
+    components: ['Slider'],
+    examples: [
+      {
+        id: 'variants',
+        title: 'Thin, thick with steppers, pin with steppers, rail, and disabled',
+        render: () => <SliderExample />
+      }
+    ]
+  },
+  {
     name: 'SubmitField',
     group: 'Forms',
     summary: 'A light text field with its submit button inside it.',
@@ -634,6 +648,21 @@ function SubmitFieldExample() {
           canSubmit={false}
           error="Invalid email"
         />
+      </div>
+    </div>
+  )
+}
+
+function SliderExample() {
+  const [value, setValue] = useState(40)
+  return (
+    <div className={layout.narrow}>
+      <div className={layout.stack}>
+        <Slider value={value} onChange={setValue} aria-label="Thin" />
+        <Slider variant="thick" arrows value={value} onChange={setValue} aria-label="Thick" />
+        <Slider variant="pin" arrows value={value} onChange={setValue} aria-label="Pin" />
+        <Slider variant="rail" value={value} onChange={setValue} aria-label="Rail" />
+        <Slider value={value} disabled onChange={setValue} aria-label="Disabled" />
       </div>
     </div>
   )

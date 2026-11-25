@@ -18,7 +18,8 @@ import {
   TitleBar,
   decentralandPublicNavSections,
   type TitleBarProps,
-  type TitleBarSection
+  type TitleBarSection,
+  Pager
 } from '@dcl/one-ui'
 import type { GalleryEntry } from '../registry'
 import { covers, people, placeholderFace } from './data'
@@ -461,5 +462,32 @@ export const navigationEntries: GalleryEntry[] = [
       title: controls.variant[0]!.toUpperCase() + controls.variant.slice(1),
       render: () => <TitleBarDemo controls={controls} />
     }))
+  },
+  {
+    name: 'Pager',
+    group: 'Navigation',
+    summary: 'Previous and next arrows around a window of page numbers.',
+    components: ['Pager'],
+    examples: [
+      {
+        id: 'variants',
+        title: 'The two variants, on the third of nine pages',
+        render: () => <PagerExample />
+      }
+    ]
   }
 ]
+
+function PagerExample() {
+  const [page, setPage] = useState(2)
+  return (
+    <div className={layout.rows}>
+      <div className={layout.strip}>
+        <Pager page={page} count={9} onChange={setPage} />
+      </div>
+      <div className={layout.strip}>
+        <Pager variant="shop" page={page} count={9} onChange={setPage} />
+      </div>
+    </div>
+  )
+}

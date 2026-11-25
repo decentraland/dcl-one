@@ -1,25 +1,30 @@
-.slider {
+/* Not in Figma: the Explorer HUD's slider. These rules sit outside the cascade layer and keep the specificity
+   of the HUD rules they replaced: the HUD's skybox menu restyles the track and the steppers through element
+   selectors, and keeps the precedence it had. A caller sets `--slider-rail-track` on an ancestor to change the
+   unfilled colour of the `rail` track. The stepper's black washes and the 19 % and 42 % white tracks have no
+   token. */
+.root {
   -webkit-appearance: none;
   appearance: none;
   width: 100%;
   height: 6px;
-  border-radius: var(--r-pill);
-  background: linear-gradient(to right, var(--brand) var(--pct), var(--fill-4) var(--pct));
+  border-radius: var(--dcl-radius-full);
+  background: linear-gradient(to right, var(--dcl-brand-ruby) var(--pct), var(--dcl-transparencies-white-10) var(--pct));
   cursor: pointer;
   outline: none;
 }
-.slider:disabled {
+.root:disabled {
   opacity: 0.45;
   cursor: not-allowed;
 }
 
-.slider::-webkit-slider-thumb {
+.root::-webkit-slider-thumb {
   -webkit-appearance: none;
   appearance: none;
   width: 18px;
   height: 18px;
-  border-radius: var(--r-pill);
-  background: #fff;
+  border-radius: var(--dcl-radius-full);
+  background: var(--dcl-neutrals-white);
   box-shadow: 0 1px 3px rgba(0, 0, 0, 0.4);
   cursor: pointer;
 }
@@ -37,9 +42,9 @@
   width: 28px;
   height: 28px;
   border: none;
-  border-radius: 8px;
+  border-radius: var(--dcl-radius-sm);
   background: rgba(0, 0, 0, 0.25);
-  color: var(--text);
+  color: var(--dcl-neutrals-snow);
   font-size: 18px;
   line-height: 1;
   cursor: pointer;
@@ -52,12 +57,12 @@
   cursor: not-allowed;
 }
 
-.slider::-moz-range-thumb {
+.root::-moz-range-thumb {
   width: 18px;
   height: 18px;
   border: none;
-  border-radius: var(--r-pill);
-  background: #fff;
+  border-radius: var(--dcl-radius-full);
+  background: var(--dcl-neutrals-white);
   box-shadow: 0 1px 3px rgba(0, 0, 0, 0.4);
   cursor: pointer;
 }
@@ -65,25 +70,25 @@
 .thick {
   height: 22px;
   margin: 0;
-  border-radius: var(--r-xs);
-  background: linear-gradient(to right, var(--brand) var(--pct), var(--slider-track) var(--pct));
+  border-radius: var(--dcl-radius-xs);
+  background: linear-gradient(to right, var(--dcl-brand-ruby) var(--pct), rgba(255, 255, 255, 0.19) /* = HUD --slider-track */ var(--pct));
 }
 .thick::-webkit-slider-thumb {
   width: 18px;
   height: 31px;
   border-radius: 0;
-  background: var(--row-press);
+  background: var(--dcl-neutrals-gray);
   box-shadow: none;
-  -webkit-mask: url('../assets/voice/slider-handle.webp') center / contain no-repeat;
-  mask: url('../assets/voice/slider-handle.webp') center / contain no-repeat;
+  -webkit-mask: url('./slider-handle.webp') center / contain no-repeat;
+  mask: url('./slider-handle.webp') center / contain no-repeat;
   transform: translateY(-1.5px);
 }
 .thick::-moz-range-thumb {
   width: 18px;
   height: 31px;
   border-radius: 0;
-  background: var(--row-press);
-  mask: url('../assets/voice/slider-handle.webp') center / contain no-repeat;
+  background: var(--dcl-neutrals-gray);
+  mask: url('./slider-handle.webp') center / contain no-repeat;
 }
 
 /* pin: the settings slider. A 30px track, a pin handle whose centre runs from one end of the
@@ -98,7 +103,7 @@
   height: 30px;
   margin: 0;
   border-radius: 6px;
-  background: linear-gradient(to right, var(--brand) var(--pct), var(--control-track) var(--pct));
+  background: linear-gradient(to right, var(--dcl-brand-ruby) var(--pct), rgba(255, 255, 255, 0.42) /* = HUD --control-track */ var(--pct));
 }
 .pin::-webkit-slider-thumb {
   width: 22px;
@@ -140,7 +145,7 @@
   left: 50%;
   width: 9px;
   height: 9px;
-  border: solid var(--text);
+  border: solid var(--dcl-neutrals-snow);
   border-width: 0 0 3px 3px;
   border-radius: 1px;
   transform: translate(-25%, -50%) rotate(45deg);
@@ -159,18 +164,18 @@
   --rail-pin: path('M0 3.98C0 1.78 1.78 0 3.98 0H8.02C10.22 0 12 1.78 12 3.98V18.9C12 19.94 11.59 20.94 10.87 21.69L7.9 24.73C6.86 25.79 5.14 25.79 4.1 24.73L1.13 21.69C0.41 20.94 0 19.94 0 18.9Z');
   height: 12px;
   margin: 0;
-  border-radius: var(--r-xs);
+  border-radius: var(--dcl-radius-xs);
   background: linear-gradient(
     to right,
-    var(--brand) calc(6px + (100% - 12px) * var(--frac)),
-    var(--slider-rail-track, var(--fill-4)) calc(6px + (100% - 12px) * var(--frac))
+    var(--dcl-brand-ruby) calc(6px + (100% - 12px) * var(--frac)),
+    var(--slider-rail-track, var(--dcl-transparencies-white-10)) calc(6px + (100% - 12px) * var(--frac))
   );
 }
 .rail::-webkit-slider-thumb {
   width: 12px;
   height: 26px;
   border-radius: 0;
-  background: var(--text);
+  background: var(--dcl-neutrals-snow);
   box-shadow: none;
   clip-path: var(--rail-pin);
 }
@@ -178,7 +183,7 @@
   width: 12px;
   height: 26px;
   border-radius: 0;
-  background: var(--text);
+  background: var(--dcl-neutrals-snow);
   box-shadow: none;
   clip-path: var(--rail-pin);
 }

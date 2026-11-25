@@ -3,9 +3,9 @@
 // (light Select / ruby Switch / arrow Slider). Data + actions via the bridge relay
 // of BevyApi.getSettings / setSetting.
 
-import { Switch, Tooltip } from '@dcl/one-ui'
+import { Slider, Switch, Tooltip } from '@dcl/one-ui'
 import { memo, useEffect, useId, useMemo, useState } from 'react'
-import { Select, Slider, Tabs, showConfirm } from '../../design'
+import { Select, Tabs, showConfirm } from '../../design'
 import { MainMenuShell } from '../menu/MainMenuShell'
 import type { Setting } from '@explorer-core/engine/protocol'
 import type { BindingsState, EngineSession, ProfileState, SettingsState } from '../session/useEngineSession'

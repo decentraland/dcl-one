@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { pageWindow } from '../design'
+import { pageWindow } from '@dcl/one-ui'
 
 // pageWindow is a sliding window of up to 5 consecutive 0-based page indices (bevy-ui-scene style);
 // the UI shows each +1. The current page stays centered once past the first half, clamped at ends.

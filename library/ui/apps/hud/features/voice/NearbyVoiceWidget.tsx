@@ -2,9 +2,9 @@
 // volume, and a Speak toggle. It opens up and to the right of the button. Closes on an outside
 // click or Cancel; turning hearing off closes it too.
 
-import { Switch } from '@dcl/one-ui'
+import { Slider, Switch } from '@dcl/one-ui'
 import { useEffect, useLayoutEffect, useRef, useState } from 'react'
-import { MaskIcon, Slider } from '../../design'
+import { MaskIcon } from '../../design'
 import { registerCancelLayer } from '@explorer-core/lib/cancelLayers'
 import hearIcon from '../../assets/voice/hear.webp'
 import speakerIcon from '../../assets/voice/speaker.webp'

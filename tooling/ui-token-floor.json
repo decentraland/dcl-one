@@ -739,6 +739,10 @@
     "primitives": 0,
     "tokens": 1
   },
+  "library/ui/components/Pager/Pager.module.css": {
+    "primitives": 0,
+    "tokens": 7
+  },
   "library/ui/components/PlaceCard/PlaceCard.module.css": {
     "primitives": 0,
     "tokens": 55
@@ -766,6 +770,10 @@
   "library/ui/components/Skeleton/Skeleton.module.css": {
     "primitives": 0,
     "tokens": 8
+  },
+  "library/ui/components/Slider/Slider.module.css": {
+    "primitives": 0,
+    "tokens": 20
   },
   "library/ui/components/Spinner/Spinner.module.css": {
     "primitives": 0,

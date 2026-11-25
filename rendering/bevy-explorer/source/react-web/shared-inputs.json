@@ -2959,10 +2959,6 @@
           "kind": "regular"
         },
         {
-          "name": "slider-handle.webp",
-          "kind": "regular"
-        },
-        {
           "name": "speak.webp",
           "kind": "regular"
         },
@@ -3173,10 +3169,6 @@
           "kind": "regular"
         },
         {
-          "name": "Pager.module.css",
-          "kind": "regular"
-        },
-        {
           "name": "Pager.tsx",
           "kind": "regular"
         },
@@ -3218,14 +3210,6 @@
         },
         {
           "name": "ShowcaseIndex.ts",
-          "kind": "regular"
-        },
-        {
-          "name": "Slider.module.css",
-          "kind": "regular"
-        },
-        {
-          "name": "Slider.tsx",
           "kind": "regular"
         },
         {
@@ -7674,6 +7658,10 @@
           "kind": "directory"
         },
         {
+          "name": "Pager",
+          "kind": "directory"
+        },
+        {
           "name": "PlaceCard",
           "kind": "directory"
         },
@@ -7695,6 +7683,10 @@
         },
         {
           "name": "Skeleton",
+          "kind": "directory"
+        },
+        {
+          "name": "Slider",
           "kind": "directory"
         },
         {
@@ -8562,6 +8554,23 @@
       ]
     },
     {
+      "path": "library/ui/components/Pager",
+      "entries": [
+        {
+          "name": "Pager.module.css",
+          "kind": "regular"
+        },
+        {
+          "name": "Pager.test.tsx",
+          "kind": "regular"
+        },
+        {
+          "name": "Pager.tsx",
+          "kind": "regular"
+        }
+      ]
+    },
+    {
       "path": "library/ui/components/PlaceCard",
       "entries": [
         {
@@ -8691,6 +8700,27 @@
         },
         {
           "name": "Skeleton.tsx",
+          "kind": "regular"
+        }
+      ]
+    },
+    {
+      "path": "library/ui/components/Slider",
+      "entries": [
+        {
+          "name": "Slider.module.css",
+          "kind": "regular"
+        },
+        {
+          "name": "Slider.test.tsx",
+          "kind": "regular"
+        },
+        {
+          "name": "Slider.tsx",
+          "kind": "regular"
+        },
+        {
+          "name": "slider-handle.webp",
           "kind": "regular"
         }
       ]
@@ -12123,10 +12153,6 @@
       "sha256": "3bd26a3b4bc53a13244d8a7353f773c0f75d5ff8b705056c0f2f853fb4ae6492"
     },
     {
-      "path": "library/ui/apps/hud/assets/voice/slider-handle.webp",
-      "sha256": "ced34ad97ae0a62e41f5fd96d7653cda2d23bc970e9c1b2ee007081106a4ec93"
-    },
-    {
       "path": "library/ui/apps/hud/assets/voice/speak.webp",
       "sha256": "9a69285e7528ce0e67f0da495ea17e57e60bfd0518963fee49faa6d8e198bf2a"
     },
@@ -12327,12 +12353,8 @@
       "sha256": "15ebfba2b6346e67dc123a7d2115404ec285cc23626b7fd7400903c35c55480d"
     },
     {
-      "path": "library/ui/apps/hud/design/Pager.module.css",
-      "sha256": "bb0e27e492745bf52eeb289021e62b591243a1644e0a5999894650a6a76d119d"
-    },
-    {
       "path": "library/ui/apps/hud/design/Pager.tsx",
-      "sha256": "713dcaa06d923be2d8e0a08250c26165808d4a6ac2d5c4dd38bfd12977c85d28"
+      "sha256": "937c0d8c855edef74d30ceb745714ea680b8154454b696fba84667fe53fbf94e"
     },
     {
       "path": "library/ui/apps/hud/design/Panel.module.css",
@@ -12368,19 +12390,11 @@
     },
     {
       "path": "library/ui/apps/hud/design/Showcase.tsx",
-      "sha256": "18296188e364d4971e4ce7df4f29784fe2b00b9623b2accfe64de38ff1464e96"
+      "sha256": "fee81fdcb3240e2ecd081826af24fb09b76b96a31ed0c7b156e030f29d804471"
     },
     {
       "path": "library/ui/apps/hud/design/ShowcaseIndex.ts",
-      "sha256": "51a5f1bbdfe36e6df4beeecdbb7c96cb2862be57e089940c52be26898101eac5"
-    },
-    {
-      "path": "library/ui/apps/hud/design/Slider.module.css",
-      "sha256": "08b32d5bc41420adfbc97627cde535897d1352075e09d6dae029c4dbc1cf4acf"
-    },
-    {
-      "path": "library/ui/apps/hud/design/Slider.tsx",
-      "sha256": "6dc5cb0754485f86797ef9ab218cb289c50271ffe688b0b7d2f6e361e1d3a7ab"
+      "sha256": "939d057eba84444194a00264fda7c294ba73a732e226898f4c71d917f0ee48ef"
     },
     {
       "path": "library/ui/apps/hud/design/Submenu.module.css",
@@ -12448,7 +12462,7 @@
     },
     {
       "path": "library/ui/apps/hud/design/index.ts",
-      "sha256": "a9fc281e00049f6503604bb69277307e2e6bb41e3efa81639141a99dcf017c4f"
+      "sha256": "b079501994e398d2477c56773e779c265de3cd17fdaa2cc7273d6b4c3862fd1c"
     },
     {
       "path": "library/ui/apps/hud/design/popups.module.css",
@@ -13484,7 +13498,7 @@
     },
     {
       "path": "library/ui/apps/hud/features/settings/SettingsPanel.tsx",
-      "sha256": "91bbe5ced2f6815e0b80dc00b7ea2dbd99cf280cf23d117280d13150cf378c91"
+      "sha256": "eeb3b03644a875e8a70bdf029e4a6508c10d580bb69ecdaac6386f55eebec721"
     },
     {
       "path": "library/ui/apps/hud/features/settings/askBeforeLeaving.ts",
@@ -13504,7 +13518,7 @@
     },
     {
       "path": "library/ui/apps/hud/features/sidebar/Sidebar.tsx",
-      "sha256": "d82d61b7d495d53c690b43416eca6357b0ce2ce988dd396a5c42fdb6c13e9e03"
+      "sha256": "3c6f0e28408c4bac948af4969d630c2731e918e7713fa3c383a2edcd6f2a64dc"
     },
     {
       "path": "library/ui/apps/hud/features/sidebar/inviteLink.ts",
@@ -13560,7 +13574,7 @@
     },
     {
       "path": "library/ui/apps/hud/features/skybox/SkyboxMenu.tsx",
-      "sha256": "9aba0417d88c5c22ff396b2f0287ffe4445db514bb86f12adc17b9b0d71a6580"
+      "sha256": "85e7165ed8edbf2a65c5d1efba9560503eb78036d67270344c964d7f563313e1"
     },
     {
       "path": "library/ui/apps/hud/features/startup/GuestOrSignUp.module.css",
@@ -13668,7 +13682,7 @@
     },
     {
       "path": "library/ui/apps/hud/features/voice/NearbyVoiceWidget.tsx",
-      "sha256": "75966761280322bb4472459095b6823895495312a0fb28aa59d1f3276617c3ce"
+      "sha256": "63f8e904139f4f1310710664faf3ede565befe4e18708dfdac01a73a13696d5a"
     },
     {
       "path": "library/ui/apps/hud/features/voice/useNearbyVoice.ts",
@@ -14304,7 +14318,7 @@
     },
     {
       "path": "library/ui/apps/hud/test/pageWindow.test.ts",
-      "sha256": "cf5cd9e9e4653e9b72e4ca7908194e4708d3a39ffa6c3bb3a715a230192e6293"
+      "sha256": "13067595423fedd01681a6b2e8d55585a71e129cee279c40834c056fededeb20"
     },
     {
       "path": "library/ui/apps/hud/test/photoDetail.test.tsx",
@@ -16375,6 +16389,14 @@
       "sha256": "6c2d4987ca2bd9fedfd9bdd7163a6623081343236019aa1b83c22b8cdd71e271"
     },
     {
+      "path": "library/ui/components/Pager/Pager.module.css",
+      "sha256": "4a422fb79a91cc075373d6a0851abf257e1c531f25f945832376ddee2f68e5d6"
+    },
+    {
+      "path": "library/ui/components/Pager/Pager.tsx",
+      "sha256": "252a2477ce625243fe4ce50b530e0720e5c8ed05ea31feda02c74d39887b7680"
+    },
+    {
       "path": "library/ui/components/PlaceCard/PlaceCard.module.css",
       "sha256": "0e67648743935b41664200d9270bb163331c00471afb9c958ae019ea2a107f24"
     },
@@ -16429,6 +16451,18 @@
     {
       "path": "library/ui/components/Skeleton/Skeleton.tsx",
       "sha256": "17ee7e7d61b1a4d01052d1e326a2163afb962be0c2928c2b2b2b9d1793d9e24f"
+    },
+    {
+      "path": "library/ui/components/Slider/Slider.module.css",
+      "sha256": "f585fa09bcd03f2fb4a10f8fcadd5f67653ef45dfd7abd63ccb099edd547a496"
+    },
+    {
+      "path": "library/ui/components/Slider/Slider.tsx",
+      "sha256": "4509d51ec698afa416645386c2b45f5689b753ce8972a015855065ec73091d56"
+    },
+    {
+      "path": "library/ui/components/Slider/slider-handle.webp",
+      "sha256": "ced34ad97ae0a62e41f5fd96d7653cda2d23bc970e9c1b2ee007081106a4ec93"
     },
     {
       "path": "library/ui/components/Spinner/Spinner.module.css",
@@ -16636,7 +16670,7 @@
     },
     {
       "path": "library/ui/index.ts",
-      "sha256": "f57e20806100176a5412f2fe9adb20aed246041e490d48f678fbc7b846910faa"
+      "sha256": "cfc5b943ce7cfe4774a58409a1e41f5d01a80b00999f7f9ee9054867bfba1643"
     },
     {
       "path": "library/ui/link.helpers.ts",
@@ -21309,17 +21343,17 @@
     },
     {
       "from": "library/ui/apps/hud/design/Pager.tsx",
-      "to": "library/ui/apps/hud/design/Pager.module.css",
+      "to": "library/ui/index.ts",
       "kind": "native:runtime"
     },
     {
       "from": "library/ui/apps/hud/design/Pager.tsx",
-      "to": "library/ui/apps/hud/design/Pager.module.css",
+      "to": "library/ui/index.ts",
       "kind": "production:runtime"
     },
     {
       "from": "library/ui/apps/hud/design/Pager.tsx",
-      "to": "library/ui/apps/hud/design/Pager.module.css",
+      "to": "library/ui/index.ts",
       "kind": "test:runtime"
     },
     {
@@ -21680,21 +21714,6 @@
     {
       "from": "library/ui/apps/hud/design/Showcase.tsx",
       "to": "library/ui/index.ts",
-      "kind": "test:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/design/Slider.tsx",
-      "to": "library/ui/apps/hud/design/Slider.module.css",
-      "kind": "native:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/design/Slider.tsx",
-      "to": "library/ui/apps/hud/design/Slider.module.css",
-      "kind": "production:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/design/Slider.tsx",
-      "to": "library/ui/apps/hud/design/Slider.module.css",
       "kind": "test:runtime"
     },
     {
@@ -22700,21 +22719,6 @@
     {
       "from": "library/ui/apps/hud/design/index.ts",
       "to": "library/ui/apps/hud/design/Select.tsx",
-      "kind": "test:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/design/index.ts",
-      "to": "library/ui/apps/hud/design/Slider.tsx",
-      "kind": "native:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/design/index.ts",
-      "to": "library/ui/apps/hud/design/Slider.tsx",
-      "kind": "production:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/design/index.ts",
-      "to": "library/ui/apps/hud/design/Slider.tsx",
       "kind": "test:runtime"
     },
     {
@@ -50919,17 +50923,17 @@
     },
     {
       "from": "library/ui/apps/hud/test/pageWindow.test.ts",
-      "to": "library/ui/apps/hud/design/index.ts",
+      "to": "library/ui/index.ts",
       "kind": "native:runtime"
     },
     {
       "from": "library/ui/apps/hud/test/pageWindow.test.ts",
-      "to": "library/ui/apps/hud/design/index.ts",
+      "to": "library/ui/index.ts",
       "kind": "production:runtime"
     },
     {
       "from": "library/ui/apps/hud/test/pageWindow.test.ts",
-      "to": "library/ui/apps/hud/design/index.ts",
+      "to": "library/ui/index.ts",
       "kind": "test:runtime"
     },
     {
@@ -62528,6 +62532,21 @@
       "kind": "test:runtime"
     },
     {
+      "from": "library/ui/components/Pager/Pager.tsx",
+      "to": "library/ui/components/Pager/Pager.module.css",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/components/Pager/Pager.tsx",
+      "to": "library/ui/components/Pager/Pager.module.css",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/components/Pager/Pager.tsx",
+      "to": "library/ui/components/Pager/Pager.module.css",
+      "kind": "test:runtime"
+    },
+    {
       "from": "library/ui/components/PlaceCard/PlaceCard.tsx",
       "to": "library/ui/components/PlaceCard/PlaceCard.module.css",
       "kind": "native:runtime"
@@ -62735,6 +62754,21 @@
     {
       "from": "library/ui/components/Skeleton/Skeleton.tsx",
       "to": "library/ui/components/Skeleton/Skeleton.module.css",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/components/Slider/Slider.tsx",
+      "to": "library/ui/components/Slider/Slider.module.css",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/components/Slider/Slider.tsx",
+      "to": "library/ui/components/Slider/Slider.module.css",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/components/Slider/Slider.tsx",
+      "to": "library/ui/components/Slider/Slider.module.css",
       "kind": "test:runtime"
     },
     {
@@ -64054,6 +64088,21 @@
     },
     {
       "from": "library/ui/index.ts",
+      "to": "library/ui/components/Pager/Pager.tsx",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/index.ts",
+      "to": "library/ui/components/Pager/Pager.tsx",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/index.ts",
+      "to": "library/ui/components/Pager/Pager.tsx",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/index.ts",
       "to": "library/ui/components/PlaceCard/PlaceCard.tsx",
       "kind": "native:runtime"
     },
@@ -64155,6 +64204,21 @@
     {
       "from": "library/ui/index.ts",
       "to": "library/ui/components/Skeleton/Skeleton.tsx",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/index.ts",
+      "to": "library/ui/components/Slider/Slider.tsx",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/index.ts",
+      "to": "library/ui/components/Slider/Slider.tsx",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/index.ts",
+      "to": "library/ui/components/Slider/Slider.tsx",
       "kind": "test:runtime"
     },
     {
@@ -66160,11 +66224,6 @@
     {
       "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
       "to": "library/ui/apps/hud/design/ShowcaseIndex.ts",
-      "kind": "type"
-    },
-    {
-      "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
-      "to": "library/ui/apps/hud/design/Slider.tsx",
       "kind": "type"
     },
     {
@@ -69024,6 +69083,11 @@
     },
     {
       "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
+      "to": "library/ui/components/Pager/Pager.tsx",
+      "kind": "type"
+    },
+    {
+      "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
       "to": "library/ui/components/PlaceCard/PlaceCard.tsx",
       "kind": "type"
     },
@@ -69055,6 +69119,11 @@
     {
       "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
       "to": "library/ui/components/Skeleton/Skeleton.tsx",
+      "kind": "type"
+    },
+    {
+      "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
+      "to": "library/ui/components/Slider/Slider.tsx",
       "kind": "type"
     },
     {
@@ -74999,21 +75068,6 @@
     },
     {
       "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
-      "to": "library/ui/apps/hud/assets/voice/slider-handle.webp",
-      "kind": "native:asset"
-    },
-    {
-      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
-      "to": "library/ui/apps/hud/assets/voice/slider-handle.webp",
-      "kind": "production:asset"
-    },
-    {
-      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
-      "to": "library/ui/apps/hud/assets/voice/slider-handle.webp",
-      "kind": "test:asset"
-    },
-    {
-      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
       "to": "library/ui/apps/hud/assets/voice/speak.webp",
       "kind": "native:asset"
     },
@@ -75740,6 +75794,21 @@
     {
       "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
       "to": "library/ui/assets/skeleton-sweep.webp",
+      "kind": "test:asset"
+    },
+    {
+      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
+      "to": "library/ui/components/Slider/slider-handle.webp",
+      "kind": "native:asset"
+    },
+    {
+      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
+      "to": "library/ui/components/Slider/slider-handle.webp",
+      "kind": "production:asset"
+    },
+    {
+      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
+      "to": "library/ui/components/Slider/slider-handle.webp",
       "kind": "test:asset"
     }
   ]

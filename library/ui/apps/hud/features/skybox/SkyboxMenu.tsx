@@ -1,9 +1,9 @@
 // Skybox menu — the sidebar's NIGHT/DAY panel: "Auto" lets the engine's day cycle
 // run; the "Custom" time-of-day slider is locked meanwhile.
 
-import { Switch } from '@dcl/one-ui'
+import { Slider, Switch } from '@dcl/one-ui'
 import { useEffect } from 'react'
-import { Panel, Slider, hasOpenPopup } from '../../design'
+import { Panel, hasOpenPopup } from '../../design'
 import type { SkyboxState } from '../session/useEngineSession'
 import styles from './SkyboxMenu.module.css'
 
