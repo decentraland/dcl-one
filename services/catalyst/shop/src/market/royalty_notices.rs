@@ -236,7 +236,7 @@ async fn drain(
         let mut txn = pool.begin().await?;
         let (_, since_block, since_log) = notice_cursor::lock(&mut txn, producer).await?;
         let now = chrono::Utc::now();
-        let page = sqlx::query(sqlx::AssertSqlSafe(&page_sql))
+        let page = sqlx::query(sqlx::AssertSqlSafe(page_sql.as_str()))
             .bind(NET.db_name())
             .bind(since_block)
             .bind(since_log)
