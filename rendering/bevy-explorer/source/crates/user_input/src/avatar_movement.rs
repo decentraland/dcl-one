@@ -73,6 +73,7 @@ impl Plugin for AvatarMovementPlugin {
         app.init_resource::<AvatarMovementInfo>();
         app.init_resource::<LastMovementStep>();
         app.register_required_components::<PrimaryUser, LocomotionSpeeds>();
+        app.register_required_components::<PrimaryUser, LastMovementClip>();
         app.register_required_components::<RendererSceneContext, MovementPeriod>();
         app.init_resource::<CollisionPush>();
         app.init_resource::<CentralCollisions>();
@@ -978,7 +979,6 @@ fn record_own_movement(
 
 // (scene entity, collider id) of collider player is standing on
 #[derive(Component, Default)]
-#[require(LastMovementClip)]
 pub struct GroundCollider(pub Option<(Entity, ColliderId, GlobalTransform)>);
 
 fn apply_ground_collider_movement(
@@ -1335,6 +1335,7 @@ mod tests {
                 movement,
                 AvatarDynamicState::default(),
                 GroundCollider::default(),
+                LastMovementClip::default(),
                 Transform::from_translation(start),
             ))
             .id();

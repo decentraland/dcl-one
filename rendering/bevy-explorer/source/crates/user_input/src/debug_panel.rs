@@ -227,7 +227,9 @@ mod tests {
 
     #[test]
     fn a_moving_step_reports_its_actual_velocity_after_the_next_broadcast() {
-        use crate::avatar_movement::{apply_movement, CentralCollisions, GroundCollider};
+        use crate::avatar_movement::{
+            apply_movement, CentralCollisions, GroundCollider, LastMovementClip,
+        };
         use bevy::time::{TimePlugin, TimeUpdateStrategy};
         use common::structs::EngineMovementControl;
         use scene_runner::initialize_scene::{LiveScenes, PortableScenes, ScenePointers};
@@ -268,6 +270,7 @@ mod tests {
             movement,
             AvatarDynamicState::default(),
             GroundCollider::default(),
+            LastMovementClip::default(),
             Transform::from_xyz(0.0, 1.0, 0.0),
         ));
         app.update();
