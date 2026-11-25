@@ -1,5 +1,5 @@
 , seller_days AS (
-    SELECT network,seller AS id,block_time/86400 AS day,count(*) AS sales,sum(net) AS earned,
+    SELECT network,seller AS id,block_time/86400 AS day,count(*) AS sales,sum(net) FILTER (WHERE $7=0 OR kind='mint') AS earned,
            count(*) FILTER (WHERE kind='mint') AS mints
     FROM sold WHERE block_time >= $7 GROUP BY network,seller,block_time/86400
 ), sellers AS (

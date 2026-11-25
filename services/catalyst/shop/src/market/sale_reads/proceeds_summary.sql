@@ -6,6 +6,7 @@ SELECT count(*) AS sales, count(*) FILTER (WHERE kind='mint') AS mints, count(*)
        (SELECT count(*) FROM royalty_resales) AS royalty_resales,
        (SELECT coalesce(sum(royalties),0)::text FROM royalty_resales) AS royalties_earned_wei,
        min(block_time)*1000 AS first_sale_at,max(block_time)*1000 AS last_sale_at,
-       EXISTS(SELECT FROM proceeds WHERE seller IS NULL) OR EXISTS(SELECT FROM own WHERE NOT settled)
+       EXISTS(SELECT FROM proceeds s JOIN seller_evidence ev USING(network,block_number,log_index,ordinal)
+           WHERE s.seller IS NULL AND ev.address=$7) OR EXISTS(SELECT FROM own WHERE NOT settled)
            OR EXISTS(SELECT FROM royalty_resales WHERE NOT settled) AS incomplete
 FROM own

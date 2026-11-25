@@ -25,18 +25,12 @@ pub(in crate::market) async fn item_rankings(
     Ok(RankingResponse::Items(rows))
 }
 
-fn ranking_limit(filters: &crate::market::rankings::RankingsFilters) -> Option<i64> {
+fn ranking_limit(filters: &crate::market::rankings::RankingsFilters) -> i64 {
     use crate::market::rankings::LIFETIME_MAX_ROWS;
-    if filters.from == 0 {
-        Some(
-            filters
-                .first
-                .unwrap_or(LIFETIME_MAX_ROWS)
-                .clamp(0, LIFETIME_MAX_ROWS),
-        )
-    } else {
-        filters.first.map(|first| first.max(0))
-    }
+    filters
+        .first
+        .unwrap_or(LIFETIME_MAX_ROWS)
+        .clamp(0, LIFETIME_MAX_ROWS)
 }
 
 pub(in crate::market) async fn collector_rankings(

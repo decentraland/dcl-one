@@ -21,5 +21,9 @@ SELECT total,mints,totals.resales,earned,royalties.resales AS royalty_resales,vo
           ORDER BY contract_address) FROM collections),'[]'::jsonb) AS by_collection,
        coalesce((SELECT jsonb_agg(jsonb_build_object('contract_address',contract_address,'item_id',item_id,
           'lifetime',lifetime,'sold',sold,'earned',earned) ORDER BY contract_address,item_id) FROM items),'[]'::jsonb) AS items,
-       EXISTS (SELECT FROM sales WHERE seller IS NULL) AS incomplete
+       EXISTS (SELECT FROM sales s WHERE s.seller IS NULL
+         AND ((($8 IS NULL OR s.block_time*1000 >= $8) AND ($9 IS NULL OR s.block_time*1000 <= $9))
+              OR (s.kind='mint' AND s.item_id IS NOT NULL))
+         AND EXISTS (SELECT FROM seller_evidence ev WHERE ev.address=$7 AND
+             (ev.network,ev.block_number,ev.log_index,ev.ordinal)=(s.network,s.block_number,s.log_index,s.ordinal))) AS incomplete
 FROM totals CROSS JOIN royalties

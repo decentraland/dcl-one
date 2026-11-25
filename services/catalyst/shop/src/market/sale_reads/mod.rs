@@ -12,8 +12,15 @@ use super::{MarketplaceState, Source, listings, nft_index, readers, sale_fold, u
 use crate::land_authz::{ESTATE_REGISTRY_MAINNET, LAND_REGISTRY_MAINNET};
 
 macro_rules! sales_query {
+    ($nets:expr, wallet $param:literal; $($path:literal),+) => {
+        sales_query!(@query $nets, concat!(", requested_wallet AS (SELECT ", $param, "::text AS address)",
+            include_str!("wallet_assets.sql")); $($path),+)
+    };
     ($nets:expr, $($path:literal),+) => {
-        sqlx::query_as(concat!(include_str!("public_sales.sql"),$(include_str!($path)),+))
+        sales_query!(@query $nets, ", scoped_assets AS NOT MATERIALIZED (SELECT * FROM shop.sale_asset)"; $($path),+)
+    };
+    (@query $nets:expr, $scope:expr; $($path:literal),+) => {
+        sqlx::query_as(concat!(include_str!("seller_evidence.sql"), $scope, include_str!("public_sales.sql"),$(include_str!($path)),+))
             .bind($nets.iter().map(|n|n.db_name()).collect::<Vec<_>>())
             .bind(listings::mana_token(1)).bind(listings::mana_token(137))
             .bind(LAND_REGISTRY_MAINNET).bind(ESTATE_REGISTRY_MAINNET).bind(nft_index::DCL_REGISTRAR)
@@ -23,8 +30,17 @@ macro_rules! sales_query {
 mod proceeds;
 pub(crate) use proceeds::{proceeds_page, proceeds_summary};
 
-fn db_error(error: impl std::fmt::Display) -> Response {
-    ApiError::internal(error.to_string()).into_response()
+fn db_error(error: impl Into<anyhow::Error>) -> Response {
+    let error = error.into();
+    if error
+        .downcast_ref::<sqlx::Error>()
+        .and_then(sqlx::Error::as_database_error)
+        .is_some_and(|e| e.code().as_deref() == Some("57014"))
+    {
+        return super::nft_reads::timed_out();
+    }
+    tracing::error!(%error, "reading published marketplace sales");
+    ApiError::internal("database error").into_response()
 }
 
 pub(crate) async fn snapshot(
@@ -160,7 +176,7 @@ pub(crate) async fn seller_stats(
 ) -> Result<SellerStats, Response> {
     use super::sales::{SalesSummary, SalesSummaryItem, SalesSummaryRoyalties};
     require_mirror(&mut snap.transaction, nets, "items", Source::ItemsMirror).await?;
-    let row: SellerTotals = sales_query!(nets, "summary.sql")
+    let row: SellerTotals = sales_query!(nets, wallet "$7"; "summary.sql")
         .bind(f.seller.to_lowercase())
         .bind(f.from)
         .bind(f.to)
@@ -263,7 +279,25 @@ async fn sale_page(
     first: i64,
     skip: i64,
 ) -> Result<(Vec<Sale>, i64), Response> {
-    let (total, incomplete, rows): (i64, bool, Value) = sales_query!(nets, "list.sql")
+    let unfiltered = f.sale_type.is_none()
+        && f.buyer.is_none()
+        && f.seller.is_none()
+        && f.contract_address.is_none()
+        && f.token_id.is_none()
+        && f.item_id.is_none()
+        && f.from.is_none()
+        && f.to.is_none()
+        && f.min_price.is_none()
+        && f.max_price.is_none()
+        && f.categories.is_empty();
+    let query = if f.seller.is_some() {
+        sales_query!(nets, wallet "$9"; "list.sql")
+    } else if unfiltered && f.sort_by != Some(SaleSortBy::MostExpensive) {
+        sales_query!(@query nets, include_str!("recent_assets.sql"); "list.sql")
+    } else {
+        sales_query!(nets, "list.sql")
+    };
+    let (total, incomplete, rows): (i64, bool, Value) = query
         .bind(f.sale_type.map(|t| t.as_str()))
         .bind(&f.buyer)
         .bind(&f.seller)
@@ -278,6 +312,7 @@ async fn sale_page(
         .bind(f.sort_by == Some(SaleSortBy::MostExpensive))
         .bind(first)
         .bind(skip)
+        .bind(unfiltered)
         .fetch_one(&mut *snap.transaction)
         .await
         .map_err(db_error)?;

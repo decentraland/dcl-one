@@ -14,10 +14,10 @@ pub(crate) async fn proceeds_page(
     state: &MarketplaceState,
     f: &ProceedsFilters,
 ) -> Result<(Vec<ProceedsRow>, i64), Response> {
-    let (first, skip) = readers::deep_page(f.first, f.skip, 100)?;
+    let (first, skip) = readers::deep_page(f.first, f.skip, 24)?;
     let (mut snap, nets) = snapshot(state, f.network).await?;
     let (total, incomplete, rows): (i64, bool, Value) = sales_query!(
-        nets,
+        nets, wallet "$7";
         "settled_sales.sql",
         "proceeds.sql",
         "proceeds_page.sql"
@@ -89,7 +89,7 @@ pub(crate) async fn proceeds_summary(
     let (mut snap, nets) = snapshot(state, f.network).await?;
     require_mirror(&mut snap.transaction, nets, "items", Source::ItemsMirror).await?;
     let r: Totals = sales_query!(
-        nets,
+        nets, wallet "$7";
         "settled_sales.sql",
         "proceeds.sql",
         "proceeds_summary.sql"

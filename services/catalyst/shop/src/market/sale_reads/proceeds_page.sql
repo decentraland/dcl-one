@@ -1,4 +1,6 @@
-, own AS MATERIALIZED (SELECT * FROM proceeds WHERE seller=$7 OR seller IS NULL),
+, own AS MATERIALIZED (SELECT * FROM proceeds s WHERE seller=$7 OR (seller IS NULL AND EXISTS
+    (SELECT FROM seller_evidence ev WHERE ev.address=$7 AND
+      (ev.network,ev.block_number,ev.log_index,ev.ordinal)=(s.network,s.block_number,s.log_index,s.ordinal)))),
 page AS (SELECT * FROM own ORDER BY block_time DESC,public_id LIMIT $10 OFFSET $11)
 SELECT (SELECT count(*) FROM own),
        EXISTS(SELECT FROM own WHERE seller IS NULL) OR EXISTS(SELECT FROM page WHERE NOT settled),

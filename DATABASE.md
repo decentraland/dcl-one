@@ -2259,6 +2259,10 @@ The fold groups payments by currency. UTC-day rows keep gross volume, counts, NA
 
 Sales publication version 2 sums gross volume from positively priced NFT assets. A store payment belongs to its explicitly priced line ordinal. Multiple consideration payments for one trade NFT must reconcile to its price in the same currency. NAME registration fees are accounted for separately. When a network has a version 1 publication, the next fold identifies affected UTC days from local assets and payments, replaces their aggregates and account totals, and publishes version 2 in the same transaction. The routes require version 2 on each requested network. The upgrade reuses the existing executions and receipts.
 
+A wallet-filtered sale with an unresolved seller withholds a response only when indexed evidence ties that wallet to the sale. Candidates come from the asset, the consideration beneficiary for its line, the item or collection creator, collection seeds and published creatorship transfers. An unresolved sale without a candidate stays out of address lookups. An unfiltered sales page that contains it returns HTTP 503. The fold logs a warning with the count of sales without a candidate on the days it recomputed.
+
+The published sales readers use a 10-second PostgreSQL statement timeout. Recent unfiltered pages select asset keys in timestamp order and obtain the count from published daily rollups. Wallet lookups use indexes on the buyer, seller, payment beneficiary and collection item before enrichment.
+
 ### Badge processor
 
 The writers of evaluated progress are four leased jobs

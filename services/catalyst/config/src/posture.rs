@@ -337,9 +337,8 @@ const ROWS: &[Row] = &[
     mirrored("indexes", "MARKETPLACE_SALES_INDEX_ENABLED"),
     mirrored("indexes", "MARKETPLACE_COMMITTEE_INDEX_ENABLED"),
     mirrored("indexes", "MARKETPLACE_THIRD_PARTY_REGISTRY_INDEX_ENABLED"),
-    // The collections walk keeps a log nothing reads yet: an operator's
-    // opt-in under every posture.
-    same("indexes", "MARKETPLACE_COLLECTIONS_INDEX_ENABLED", "false"),
+    // Account inventory and lifetime creator rankings require the factory walk.
+    mirrored("indexes", "MARKETPLACE_COLLECTIONS_INDEX_ENABLED"),
     // The MANA transfer walk stays an operator's opt-in under every posture.
     same(
         "indexes",
@@ -926,10 +925,7 @@ fn refuse_followers(posture: Posture, env: &Lookup) -> anyhow::Result<()> {
         .iter()
         .filter(|row| follows(row))
         .map(|row| row.key)
-        .chain([
-            "MARKETPLACE_MANA_TRANSFERS_INDEX_ENABLED",
-            "MARKETPLACE_COLLECTIONS_INDEX_ENABLED",
-        ])
+        .chain(["MARKETPLACE_MANA_TRANSFERS_INDEX_ENABLED"])
         .filter(|key| env(key).is_some_and(|v| switched_on(&v)))
         .collect();
     if !on.is_empty() {

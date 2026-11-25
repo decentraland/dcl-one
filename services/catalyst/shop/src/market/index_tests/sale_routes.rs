@@ -52,6 +52,22 @@ async fn sales_page_reads_one_published_network_and_refuses_a_withdrawn_warm_pag
     sale_fold::pass(&db.pool, &Rpc::at(&state.http, &url), net)
         .await
         .unwrap();
+    let mut snapshot = sale_fold::snapshot(&db.pool, &[net], chrono::Utc::now())
+        .await
+        .unwrap()
+        .unwrap();
+    let timeout: String = sqlx::query_scalar("SHOW statement_timeout")
+        .fetch_one(&mut *snapshot.transaction)
+        .await
+        .unwrap();
+    assert_eq!(
+        timeout,
+        format!(
+            "{}s",
+            crate::market::nft_reads::READ_STATEMENT_TIMEOUT.as_secs()
+        )
+    );
+    drop(snapshot);
     let path =
         "/v1/sales?network=ETHEREUM&category=parcel&type=order&sortBy=most_expensive&first=1";
     let (status, first) = get_json(&app, path).await;
@@ -67,6 +83,39 @@ async fn sales_page_reads_one_published_network_and_refuses_a_withdrawn_warm_pag
         assert_eq!(rows[0]["seller"], ALICE);
         assert!(!rows[0]["id"].as_str().unwrap().is_empty());
     }
+    assert_eq!(
+        first["data"][0],
+        json!({"id":first["data"][0]["id"],"itemId":null,
+        "contractAddress":LAND_REGISTRY_MAINNET,"buyer":BOB,"chainId":1,"network":"ETHEREUM",
+        "price":price,"seller":ALICE,"timestamp":1700000000000i64,"tokenId":"1",
+        "txHash":format!("0x{:064x}",73),"type":"order"})
+    );
+    let exact = format!(
+        "/v1/sales?network=ETHEREUM&buyer={BOB}&contractAddress={LAND_REGISTRY_MAINNET}&tokenId=1&from=1700000000000&to=1700000000000&minPrice={price}&maxPrice={price}"
+    );
+    let (status, filtered) = get_json(&app, &exact).await;
+    assert_eq!(status, StatusCode::OK, "{filtered}");
+    assert_eq!(filtered["data"], first["data"]);
+    for filter in [
+        format!("buyer={ALICE}"),
+        "itemId=7".into(),
+        "tokenId=3".into(),
+        "from=1700000001000".into(),
+        "to=1699999999000".into(),
+        "maxPrice=1".into(),
+        "category=estate".into(),
+    ] {
+        let (status, filtered) =
+            get_json(&app, &format!("/v1/sales?network=ETHEREUM&{filter}")).await;
+        assert_eq!(status, StatusCode::OK, "{filter}: {filtered}");
+        assert_eq!(filtered["total"], 0, "{filter}");
+    }
+    assert_eq!(
+        get_json(&app, "/v1/sales?network=ETHEREUM&minPrice=abc")
+            .await
+            .0,
+        StatusCode::BAD_REQUEST
+    );
     assert_ne!(first["data"][0]["tokenId"], second["data"][0]["tokenId"]);
     assert_ne!(first["data"][0]["id"], second["data"][0]["id"]);
     assert_eq!(get_json(&app, path).await.1, first);
@@ -390,6 +439,47 @@ async fn sales_page_reads_one_published_network_and_refuses_a_withdrawn_warm_pag
         })
         .collect();
     assert_eq!(net_amounts, [("90", "80"), ("41", "40")]);
+    // Only CARL is a candidate for this unresolved store seller. A different
+    // wallet, even on the same network, keeps its valid empty response.
+    sqlx::query("WITH e AS (INSERT INTO shop.sale_execution(network,block_number,log_index,tx_hash,venue,kind,block_time,receipt_read)
+        VALUES('matic',$1,10,$2,$3,'store',$4,true) RETURNING network,block_number,log_index),
+        a AS (INSERT INTO shop.sale_asset(network,block_number,log_index,ordinal,public_id,beneficiary,kind,contract_address,token_id,item_id,seller,buyer,price,currency)
+        SELECT e.*,0,'uncertain-store-line',$5,'mint',$6,1,99,NULL,$5,100,$7 FROM e)
+        INSERT INTO shop.sale_payment(network,block_number,log_index,ordinal,currency,beneficiary,gross,settled)
+        SELECT e.*,0,$7,$3,100,false FROM e")
+        .bind(polygon as i64).bind(format!("0x{:064x}",94)).bind(CARL).bind(day+10).bind(BOB).bind(DAVE).bind(mana)
+        .execute(&db.pool).await.unwrap();
+    for endpoint in [
+        "/v1/sales/summary",
+        "/v1/proceeds",
+        "/v1/proceeds/summary",
+        "/v1/sales",
+    ] {
+        for (seller, expected) in [
+            (CARL, StatusCode::SERVICE_UNAVAILABLE),
+            (ALICE, StatusCode::OK),
+        ] {
+            let (status, body) =
+                get_json(&app, &format!("{endpoint}?seller={seller}&network=MATIC")).await;
+            assert_eq!(status, expected, "{endpoint} {seller} {body}");
+        }
+    }
+    assert_eq!(
+        get_json(&app, "/v1/sales?network=MATIC&first=1").await.0,
+        StatusCode::SERVICE_UNAVAILABLE
+    );
+    sqlx::query(
+        "UPDATE shop.sale_payment SET beneficiary=NULL WHERE network='matic' AND log_index=10",
+    )
+    .execute(&db.pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        get_json(&app, &format!("/v1/proceeds?seller={CARL}&network=MATIC"))
+            .await
+            .0,
+        StatusCode::OK
+    );
     // A missing payment row cannot turn a sale with unknown proceeds into
     // an empty page or a smaller seller total.
     sqlx::query("DELETE FROM shop.sale_payment WHERE network='ethereum' AND log_index=1")
@@ -457,6 +547,10 @@ async fn deep_sales_pages_keep_equal_timestamps_in_id_order_across_networks() {
             SELECT network,block_number,log_index,0,network||'-'||tx_hash||'-0-0',$4,'order',$3,log_index,$5,$4,1,$6 FROM executions")
             .bind(net.db_name()).bind(height as i64).bind(CARL).bind(ALICE).bind(BOB)
             .bind(crate::market::listings::mana_token(net.chain_id())).bind(count).execute(&db.pool).await.unwrap();
+        sqlx::query("INSERT INTO shop.sale_analytics_day(network,day,currency,sales,volume,name_fees,creator_earnings,venue_fees,store_fees,burn_fees,unknown_splits,unallocated_executions)
+            SELECT e.network,e.block_time/86400*86400,a.currency,count(*),sum(price),0,0,0,0,0,0,0
+            FROM shop.sale_execution e JOIN shop.sale_asset a USING(network,block_number,log_index) WHERE e.network=$1 GROUP BY 1,2,3")
+            .bind(net.db_name()).execute(&db.pool).await.unwrap();
         expected.extend((0..count).map(|i| (i / 3, format!("{}-0x{i:064x}-0-0", net.db_name()))));
     }
     let router = market_router(state_over(
@@ -522,12 +616,21 @@ async fn deep_sales_pages_keep_equal_timestamps_in_id_order_across_networks() {
         INSERT INTO shop.sale_payout(network,block_number,log_index,payment_ordinal,ordinal,role,recipient,amount)
         SELECT network,block_number,log_index,ordinal,0,'seller',$1,gross FROM payments")
         .bind(BOB).execute(&db.pool).await.unwrap();
+    // Bulk seeding above runs before autovacuum can collect normal planner statistics.
+    for analyze in [
+        "ANALYZE shop.sale_asset",
+        "ANALYZE shop.sale_execution",
+        "ANALYZE shop.sale_payment",
+        "ANALYZE shop.sale_payout",
+    ] {
+        sqlx::query(analyze).execute(&db.pool).await.unwrap();
+    }
     for (route, count_field, wei_field) in [
         ("/v1/sales/summary", "total", "earnedWei"),
         ("/v1/proceeds/summary", "sales", "netWei"),
     ] {
         let (code, page) = get_json(&router, &format!("{route}?seller={BOB}")).await;
-        assert_eq!(code, StatusCode::OK, "{page}");
+        assert_eq!(code, StatusCode::OK, "{route}: {page}");
         assert_eq!(page["data"][count_field], expected.len());
         assert_eq!(page["data"][wei_field], expected.len().to_string());
     }

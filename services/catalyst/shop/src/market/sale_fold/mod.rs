@@ -223,6 +223,13 @@ pub async fn snapshot(
     sqlx::query("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY")
         .execute(&mut *tx)
         .await?;
+    sqlx::query("SELECT set_config('statement_timeout', $1, true)")
+        .bind(format!(
+            "{}ms",
+            super::nft_reads::READ_STATEMENT_TIMEOUT.as_millis()
+        ))
+        .execute(&mut *tx)
+        .await?;
     let mut deadline = now + chain_walk::READY_WINDOW;
     let mut generations = Vec::with_capacity(nets.len());
     for &net in nets {
@@ -572,6 +579,21 @@ pub(super) async fn pass(pool: &PgPool, rpc: &Rpc<'_>, net: ChainNet) -> anyhow:
         input_revisions=EXCLUDED.input_revisions,late_collections=EXCLUDED.late_collections,published_at=EXCLUDED.published_at")
         .bind(net.db_name()).bind(to).bind(hash).bind(PUBLICATION_VERSION).bind(start.epochs()).bind(start.revisions())
         .bind(start.late_collections).bind(published_at).bind(!same_history || from!=to || !days.is_empty()).execute(&mut *tx).await?;
+    if !days.is_empty() {
+        let unknown: i64 = sqlx::query_scalar(concat!(
+            include_str!("../sale_reads/seller_evidence.sql"),
+            "SELECT count(*) FROM unresolved u JOIN shop.sale_execution e USING(network,block_number,log_index)
+             WHERE e.block_time/86400*86400=ANY($2) AND NOT EXISTS (SELECT FROM seller_evidence c
+             WHERE (c.network,c.block_number,c.log_index,c.ordinal)=(u.network,u.block_number,u.log_index,u.ordinal))"
+        )).bind(&[net.db_name()][..]).bind(&days).fetch_one(&mut *tx).await?;
+        if unknown > 0 {
+            tracing::warn!(
+                network = net.db_name(),
+                sales = unknown,
+                "published sales with no seller candidate on the refolded days"
+            );
+        }
+    }
     tx.commit().await?;
     Ok(())
 }
