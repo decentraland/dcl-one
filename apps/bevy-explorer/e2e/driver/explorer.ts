@@ -76,7 +76,6 @@ export interface MediaPlayerRow {
   scene: string | null
   source: string
   lastPlaybackState?: string | null
-  appliedVolume?: number | null
   textureSize?: [number, number] | null
   retryAttempt?: number | null
   retryFailures?: number | null

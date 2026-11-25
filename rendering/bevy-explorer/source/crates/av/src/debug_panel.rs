@@ -81,11 +81,6 @@ fn media_state(
     player: Query<Entity, With<PrimaryUser>>,
     containing: ContainingScene,
     receivers: Query<&livestream_manager::ReceiverImage>,
-    audio_transmitters: Query<
-        &livestream_manager::AudioTransmitterVolume,
-        With<livestream_manager::ActiveAudioTransmitter>,
-    >,
-    audio_settings: Option<Res<common::structs::AudioSettings>>,
     #[cfg(any(feature = "ffmpeg", feature = "html"))] images: Res<Assets<Image>>,
     #[cfg(any(feature = "ffmpeg", feature = "html"))] video_sinks: Query<&AVSinks<VideoPlayer>>,
     #[cfg(any(feature = "ffmpeg", feature = "html"))] audio_sinks: Query<&AVSinks<AudioStream>>,
@@ -118,13 +113,6 @@ fn media_state(
         add_sink(&mut item, video_sinks.get(_ent).ok(), &images);
         if let Ok(receiver) = receivers.get(_ent) {
             item["lastPlaybackState"] = json!(receiver.state.borrow().as_str_name());
-            item["appliedVolume"] = json!(audio_settings.as_ref().map(|settings| {
-                audio_transmitters
-                    .iter()
-                    .map(|volume| **volume)
-                    .fold(0., f32::max)
-                    * settings.scene()
-            }));
             #[cfg(any(feature = "ffmpeg", feature = "html"))]
             {
                 item["textureSize"] = json!(images

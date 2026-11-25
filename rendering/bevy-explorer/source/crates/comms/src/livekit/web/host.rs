@@ -420,18 +420,35 @@ fn serve(command: LivekitCommand, host: &SharedHost, events: &UnboundedSender<Li
                 Some(element) => {
                     // Each output owns its element: disposing a selected screen must not
                     // pause the automatic showcase or another screen using this track.
-                    let copy = element
-                        .clone_node()
-                        .ok()
-                        .and_then(|node| node.dyn_into::<HtmlVideoElement>().ok());
-                    if let Some(copy) = copy {
-                        if let Ok(stream) = Reflect::get(&element, &"srcObject".into()) {
-                            if Reflect::set(&copy, &"srcObject".into(), &stream).is_ok() {
-                                copy.set_autoplay(true);
-                                copy.set_muted(true);
-                                media::host::adopt_video_element(media_id, copy);
+                    let copy = match element.clone_node() {
+                        Ok(node) => match node.dyn_into::<HtmlVideoElement>() {
+                            Ok(copy) => copy,
+                            Err(_) => {
+                                error!("remote video track {track}: cloned node is not a video element");
+                                return;
                             }
+                        },
+                        Err(err) => {
+                            error!("remote video track {track}: clone failed: {err:?}");
+                            return;
                         }
+                    };
+                    let stream = match Reflect::get(&element, &"srcObject".into()) {
+                        Ok(stream) => stream,
+                        Err(err) => {
+                            error!("remote video track {track}: reading srcObject failed: {err:?}");
+                            return;
+                        }
+                    };
+                    match Reflect::set(&copy, &"srcObject".into(), &stream) {
+                        Ok(true) => {
+                            copy.set_autoplay(true);
+                            copy.set_muted(true);
+                            media::host::adopt_video_element(media_id, copy);
+                        }
+                        result => error!(
+                            "remote video track {track}: setting srcObject failed: {result:?}"
+                        ),
                     }
                 }
                 None => error!("remote video track {track} has no video element to attach"),
