@@ -59,7 +59,9 @@ fn prepare(snapshot: &Value, signer: &str) -> Result<LinkedPublicationPreparatio
     let urn = draft
         .urn
         .ok_or_else(|| ApiError::bad_request("Choose a linked collection"))?;
-    let provider = urn.rsplit_once(':').unwrap().0;
+    let Some((provider, _)) = urn.rsplit_once(':') else {
+        return Err(ApiError::bad_request("Choose a linked collection"));
+    };
     if collection["third_party_id"].as_str() != Some(provider) {
         return Err(ApiError::bad_request(
             "Collection provider does not match its URN",
