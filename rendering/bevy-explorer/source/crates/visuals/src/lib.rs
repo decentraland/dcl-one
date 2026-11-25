@@ -877,6 +877,9 @@ fn bloom_console_command(
 }
 
 #[cfg(test)]
+mod skinned_pipelines_test;
+
+#[cfg(test)]
 mod tests {
     use super::{advance_sky_clouds, apply_cloud_settings, next_shadow_bias, CloudCover};
     use crate::stylized_sky::StylizedSky;
