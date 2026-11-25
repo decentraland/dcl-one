@@ -18,7 +18,8 @@
 //!
 //! The index keeps the current state of each authorization, not its event
 //! history, so each list holds one entry per counterparty, registry and kind
-//! (what the client reduced the subgraph's history to). Parcel names come
+//! (what the client reduced the subgraph's history to); its `timestamp` is
+//! `"0"` where the index has no block time for it. Parcel names come
 //! from the shop's `land_data` (the nft index's LAND `Update` data), estate
 //! names from the Estate registry's data events; both are display only.
 
@@ -192,12 +193,21 @@ impl ParcelList<'_> {
         if matches!(self.pick, Pick::TokenIds(ids) if ids.is_empty()) {
             return Ok(Vec::new());
         }
+        // The owner and grantor lists hold parcels outside any estate, as the
+        // subgraph's `estate: null` did: a parcel inside one is the estate's
+        // (owned by the Estate registry, which is an address too). The
+        // operator, approved and rental lists admit estate members.
+        let outside_estates = if matches!(self.pick, Pick::Owner(_) | Pick::Grantors(_)) {
+            " AND NOT EXISTS (SELECT 1 FROM land_authz.estate_land el WHERE el.land_token_id = pt.token_id)"
+        } else {
+            ""
+        };
         let sql = format!(
             "SELECT pt.token_id::text, pt.x, pt.y, pt.owner, pt.operator, pt.update_operator, \
                     ld.name, ld.description, ld.token_id IS NOT NULL \
              FROM land_authz.token_right pt \
              LEFT JOIN shop.land_data ld ON ld.token_address = pt.token_address AND ld.token_id = pt.token_id \
-             WHERE pt.token_address = $1 AND pt.x IS NOT NULL AND pt.y IS NOT NULL AND {} \
+             WHERE pt.token_address = $1 AND pt.x IS NOT NULL AND pt.y IS NOT NULL AND {}{outside_estates} \
              ORDER BY pt.token_id",
             self.pick.predicate("pt")
         );
@@ -305,10 +315,12 @@ fn authorization_type(kind: &str) -> &'static str {
 }
 
 /// The subgraph's ordering key: the authorization's block time in
-/// microseconds plus its log index (its block number when the event row is
-/// gone), so a later authorization always sorts higher.
+/// microseconds plus its log index. `"0"` when the index has no block time
+/// for it (no event row, or one whose time the timestamp repair has not
+/// filled yet): the lists hold the current state, one entry per
+/// counterparty, registry and kind, so nothing is ordered by it.
 const TIMESTAMP_SQL: &str =
-    "(COALESCE(e.block_time, ar.updated_block) * 1000000 + ar.updated_log)::text";
+    "(CASE WHEN e.block_time > 0 THEN e.block_time * 1000000 + ar.updated_log ELSE 0 END)::text";
 
 async fn owner_authorizations_on(
     conn: &mut PgConnection,

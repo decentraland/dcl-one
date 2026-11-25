@@ -150,59 +150,48 @@ const estateFields = (id: string, parcelOperators: Array<string | null>) => ({
   data: null,
 });
 
-/** The `lands-access` route's answer: every list empty unless `data` names it. */
 const landQuery = (data: Record<string, unknown>) => ({
   ok: true,
   status: 200,
   json: () =>
     Promise.resolve({
-      tenantParcels: [],
-      tenantEstates: [],
-      lessorParcels: [],
-      lessorEstates: [],
-      ownerParcels: [],
-      ownerEstates: [],
-      updateOperatorParcels: [],
-      updateOperatorEstates: [],
-      approvedParcels: [],
-      approvedEstates: [],
-      ownerAuthorizations: [],
-      operatorAuthorizations: [],
-      grantorParcels: [],
-      grantorEstates: [],
-      ...data,
+      data: {
+        tenantParcels: [],
+        tenantEstates: [],
+        lessorParcels: [],
+        lessorEstates: [],
+        ownerParcels: [],
+        ownerEstates: [],
+        updateOperatorParcels: [],
+        updateOperatorEstates: [],
+        approvedParcels: [],
+        approvedEstates: [],
+        ownerAuthorizations: [],
+        operatorAuthorizations: [],
+        ...data,
+      },
     }),
 });
 
 const grantorParcels = [parcelFields(2, 2)];
 const grantorEstates = [estateFields('7', [null])];
 
-type Grant = {
-  owner: { address: string };
-  isApproved: boolean;
-  tokenAddress: string;
-  timestamp: string;
-};
-
-/** Whether `owner`'s latest grant on `registry` is approved, as the index keeps it. */
-const grantsOn = (grants: Grant[], owner: string, registry: string) => {
-  const latest = grants
-    .filter(grant => grant.owner.address === owner && grant.tokenAddress === registry)
-    .sort((a, b) => Number(BigInt(b.timestamp) - BigInt(a.timestamp)))[0];
-  return latest?.isApproved ?? false;
-};
-
-/** The route, with the grantors' land the index answers for the grants in `data`. */
-const answerSubgraph = (data: { operatorAuthorizations?: Grant[] } & Record<string, unknown>) => {
-  const grants = data.operatorAuthorizations ?? [];
-  fetchMock.mockResolvedValue(
-    landQuery({
-      ...data,
-      grantorParcels: grantsOn(grants, '0xowner', '0xland') ? grantorParcels : [],
-      grantorEstates: grantsOn(grants, '0xowner', '0xestate') ? grantorEstates : [],
-    }),
-  );
-};
+const answerSubgraph = (data: Record<string, unknown>) =>
+  fetchMock.mockImplementation((_url: string, init: { body: string }) => {
+    const { query, variables } = JSON.parse(init.body);
+    if (!query.includes('query GrantorLand')) return Promise.resolve(landQuery(data));
+    return Promise.resolve({
+      ok: true,
+      status: 200,
+      json: () =>
+        Promise.resolve({
+          data: {
+            parcels: variables.parcelOwners.includes('0xowner') ? grantorParcels : [],
+            estates: variables.estateOwners.includes('0xowner') ? grantorEstates : [],
+          },
+        }),
+    });
+  });
 
 const grantedBy = (tokenAddress: string, isApproved: boolean, timestamp = '100') => ({
   type: 'UpdateManager',
@@ -217,34 +206,29 @@ describe('Lands.fetchLand', () => {
     fetchMock.mockReset();
   });
 
-  describe('when it asks for the LAND list', () => {
+  describe('when it asks the subgraph for UpdateManager authorizations', () => {
     beforeEach(() => {
       fetchMock.mockResolvedValue(landQuery({}));
     });
 
-    it("should POST the wallet's rentals to the content server's lands-access route", async () => {
-      await new Lands().fetchLand('0xME', ['1'], ['2']);
+    it("should ask for both newest first, so the first page holds each pair's latest grant or revoke", async () => {
+      await new Lands().fetchLand('0xme');
 
-      const [url, init, timeout] = fetchMock.mock.calls[0];
-      expect(url).toBe('https://peer.example.org/lambdas/users/0xme/lands-access');
-      expect(init.method).toBe('POST');
-      expect(JSON.parse(init.body)).toEqual({ tenantTokenIds: ['1'], lessorTokenIds: ['2'] });
-      expect(timeout).toBe(30_000);
-      expect(fetchMock).toHaveBeenCalledTimes(1);
-    });
-  });
-
-  describe('when the content server cannot answer the LAND list', () => {
-    let cancel: ReturnType<typeof vi.fn>;
-
-    beforeEach(() => {
-      cancel = vi.fn().mockResolvedValue(undefined);
-      fetchMock.mockResolvedValue({ ok: false, status: 503, body: { cancel } });
-    });
-
-    it('should fail rather than answer no LAND, releasing the unread body', async () => {
-      await expect(new Lands().fetchLand('0xme')).rejects.toThrow('503');
-      expect(cancel).toHaveBeenCalledTimes(1);
+      const [, init] = fetchMock.mock.calls[0];
+      const { query } = JSON.parse(init.body);
+      const authorizationArgs = [
+        ...query.matchAll(/(\w+Authorizations): authorizations\(([^)]*)\)/g),
+      ].map(([, field, args]) => [field, args]);
+      expect(authorizationArgs).toEqual([
+        [
+          'ownerAuthorizations',
+          expect.stringContaining('orderBy: timestamp, orderDirection: desc'),
+        ],
+        [
+          'operatorAuthorizations',
+          expect.stringContaining('orderBy: timestamp, orderDirection: desc'),
+        ],
+      ]);
     });
   });
 
@@ -304,7 +288,7 @@ describe('Lands.fetchLand', () => {
     });
   });
 
-  describe('when the list carries both the UpdateManager grant and its later revoke', () => {
+  describe('when the subgraph returns both the UpdateManager grant and its later revoke', () => {
     const managedBy = (isApproved: boolean, timestamp: string) =>
       grantedBy('0xland', isApproved, timestamp);
 
@@ -407,6 +391,13 @@ describe('Lands.fetchLand', () => {
       fetchMock.mockResolvedValue(
         landQuery({ ownerEstates: [estateFields('7', ['0xparcel-op', ZERO, null])] }),
       );
+    });
+
+    it('should ask the subgraph for each estate parcel operator', async () => {
+      await new Lands().fetchLand('0xme');
+
+      const { query } = JSON.parse(fetchMock.mock.calls[0][1].body);
+      expect(query).toMatch(/parcels\(first: 1000\) \{[^}]*updateOperator/);
     });
 
     it('should keep it on that parcel, and no operator on the others', async () => {

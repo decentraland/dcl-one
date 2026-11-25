@@ -5462,6 +5462,8 @@ async fn lands_access_answers_the_creator_hubs_lists_from_the_index() {
         (ESTATE, CARL, ALICE, "approved_for_all", true, 8),
         (ESTATE, OWNER, ALICE, "approved_for_all", false, 9),
         (LAND, ALICE, DANA, "update_manager", true, 10),
+        // The Estate registry, an address too, holds the estate parcels.
+        (LAND, ESTATE, ALICE, "update_manager", true, 11),
     ] {
         sqlx::query("INSERT INTO land_authz.account_right (token_address, account, operator, kind, is_approved, updated_block, updated_log) VALUES ($1, $2, $3, $4, $5, $6, 2)")
             .bind(registry).bind(account).bind(operator).bind(kind).bind(approved).bind(block)
@@ -5531,7 +5533,7 @@ async fn lands_access_answers_the_creator_hubs_lists_from_the_index() {
     assert_eq!(
         coords("grantorParcels"),
         ["3,3", "4,4", "5,5"],
-        "Bob's land, per the LAND grant"
+        "Bob's land, per the LAND grant; not the estate parcels the registry's grant reaches"
     );
     assert_eq!(
         ids("grantorEstates"),
@@ -5546,6 +5548,16 @@ async fn lands_access_answers_the_creator_hubs_lists_from_the_index() {
     ] {
         assert_eq!(body[list], json!([]), "{list}");
     }
+    let bob = body["operatorAuthorizations"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|a| a["owner"]["address"] == BOB)
+        .unwrap();
+    assert_eq!(
+        bob["timestamp"], "0",
+        "no event row: no block time to report"
+    );
     assert_eq!(
         body["ownerAuthorizations"],
         json!([{"type": "UpdateManager", "operator": DANA, "isApproved": true, "tokenAddress": LAND, "timestamp": "1700000000000002"}])
@@ -5567,6 +5579,7 @@ async fn lands_access_answers_the_creator_hubs_lists_from_the_index() {
         [
             ("ApprovalForAll".to_string(), OWNER.to_string(), false),
             ("ApprovalForAll".to_string(), CARL.to_string(), true),
+            ("UpdateManager".to_string(), ESTATE.to_string(), true),
             ("UpdateManager".to_string(), BOB.to_string(), true),
         ],
         "every grant naming Alice, revoked ones included, so the client sees the latest state"
@@ -5587,5 +5600,37 @@ async fn lands_access_answers_the_creator_hubs_lists_from_the_index() {
     }
     let (status, _, _) = post_json(&app, "/lambdas/users/0x123/lands-access", json!({})).await;
     assert_eq!(status, StatusCode::BAD_REQUEST, "a bad address");
+
+    // The Estate registry's own list: the estate parcels are the estate's.
+    let (status, _, body) = post_json(
+        &app,
+        &format!("/lambdas/users/{ESTATE}/lands-access"),
+        json!({}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(
+        body["ownerParcels"],
+        json!([]),
+        "estate members are not owned outright"
+    );
+
+    // A bare POST asks for no rentals.
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri(&path)
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        resp.status(),
+        StatusCode::OK,
+        "an absent body is no rentals"
+    );
     db.drop().await;
 }

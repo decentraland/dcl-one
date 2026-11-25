@@ -16,6 +16,7 @@
   "RPC_URL": "https://rpc.decentraland.org/sepolia",
   "ENS_SUBGRAPH": "https://subgraph.decentraland.org/ens-sepolia",
   "RENTALS_SUBGRAPH": "https://subgraph.decentraland.org/rentals-ethereum-sepolia",
+  "LAND_MANAGER_SUBGRAPH": "https://subgraph.decentraland.org/land-manager-sepolia",
   "LAND_REGISTRY_ADDRESS": "0x42f4ba48791e2de32f5fbf553441c2672864bb33",
   "ESTATE_REGISTRY_ADDRESS": "0x369a7fbe718c870c79f99fb423882e8dd8b20486",
   "RENTALS_ADDRESS": "0xe70db6319e9cee3f604909bdade58d1f5c1cf702",

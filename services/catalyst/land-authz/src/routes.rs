@@ -264,7 +264,7 @@ pub struct BatchParcelPermissionsRequest {
 }
 
 /// The token ids of the wallet's rentals, which the Creator Hub reads from
-/// the rentals source; both lists optional.
+/// the rentals source; the body and both lists are optional.
 #[derive(serde::Deserialize, Default)]
 #[serde(rename_all = "camelCase", default)]
 pub struct LandsAccessRequest {
@@ -283,12 +283,21 @@ fn is_token_id(raw: &str) -> bool {
 async fn user_lands_access(
     State(state): State<SharedState>,
     Path(address): Path<String>,
-    Json(body): Json<LandsAccessRequest>,
+    body: axum::body::Bytes,
 ) -> Response {
     let address = address.to_lowercase();
     if !is_address(&address) {
         return bad_request("Address must be a valid Ethereum address");
     }
+    // No body is no rentals; a body is JSON whatever its content type says.
+    let body: LandsAccessRequest = if body.iter().all(u8::is_ascii_whitespace) {
+        LandsAccessRequest::default()
+    } else {
+        match serde_json::from_slice(&body) {
+            Ok(body) => body,
+            Err(e) => return bad_request(&format!("Invalid body: {e}")),
+        }
+    };
     for (field, ids) in [
         ("tenantTokenIds", &body.tenant_token_ids),
         ("lessorTokenIds", &body.lessor_token_ids),
