@@ -4,7 +4,7 @@
 
 import { useEffect } from 'react'
 import type { EventData } from '@explorer-core/engine/protocol'
-import { MaskIcon, openPopup } from '../../design'
+import { openPopup } from '../../design'
 import closeIcon from '../../assets/events/close-icn-thin.png'
 import calendarAddIcon from '../../assets/events/add-to-calendar-icn.png'
 import jumpInIcon from '../../assets/events/jump-in-outline.png'
@@ -15,7 +15,7 @@ import { EventActionButtons, EventImage } from './EventCard'
 import { eventPlaceText, eventTimeText, scheduleDates, scheduleText } from './eventFormat'
 import { useEventActions } from './useEventActions'
 import styles from './EventDetail.module.css'
-import { Button } from '@dcl/one-ui'
+import { Button, MaskIcon } from '@dcl/one-ui'
 
 /** Travels to the event; false when it could not, and the detail stays open. */
 export type EventJumpIn = (event: EventData) => boolean

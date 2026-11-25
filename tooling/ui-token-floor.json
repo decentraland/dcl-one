@@ -767,6 +767,10 @@
     "primitives": 0,
     "tokens": 6
   },
+  "library/ui/components/ScrollThumb/ScrollThumb.module.css": {
+    "primitives": 0,
+    "tokens": 3
+  },
   "library/ui/components/SearchBar/SearchBar.module.css": {
     "primitives": 0,
     "tokens": 26

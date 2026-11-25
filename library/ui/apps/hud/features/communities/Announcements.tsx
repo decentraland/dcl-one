@@ -3,9 +3,9 @@
 // announcement and an author their own (asked first), and anyone who sees the list likes and
 // unlikes. Pages of 10 load as the list's end comes into view; failures are toasted by the session.
 
-import { Button, Spinner } from '@dcl/one-ui'
+import { Button, DclLogo, MaskIcon, Spinner } from '@dcl/one-ui'
 import { useRef, useState } from 'react'
-import { Avatar, DclLogo, MaskIcon, TextArea, Trash, VerifiedBadge, showConfirm } from '../../design'
+import { Avatar, TextArea, Trash, VerifiedBadge, showConfirm } from '../../design'
 import heartOutline from '../../assets/communities/favourite-outline.png'
 import heartSolid from '../../assets/communities/favourite-solid.png'
 import { splitName } from '@explorer-core/lib/identity'

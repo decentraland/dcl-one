@@ -3,7 +3,7 @@
 // the top bar is identical and consistent. Pages pass their content as children.
 
 import { useContext, useEffect, useState } from 'react'
-import { DclLogo, Icon, type IconName } from '../../design'
+import { Icon, type IconName } from '../../design'
 import { keyHintFor, useBindingsSnapshot } from '../../lib/bindingLabels'
 import { EDITOR_BUILD } from '@explorer-core/features/editorHost/config'
 import { EditorOffered } from '../editorHost/EditorOffered'
@@ -19,7 +19,7 @@ import onShop from '../../assets/menu-on/shop.webp'
 import onMap from '../../assets/menu-on/map.webp'
 import onSettings from '../../assets/menu-on/settings.webp'
 import onGallery from '../../assets/menu-on/gallery.webp'
-import { Button } from '@dcl/one-ui'
+import { Button, DclLogo } from '@dcl/one-ui'
 
 // The selected tab's full-colour artwork, and its display size (the map and settings art sit in a
 // larger canvas).

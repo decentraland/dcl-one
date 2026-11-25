@@ -1,11 +1,10 @@
 // A Shop card's actions, shown on hover in place of its price row: trying it on (TAKE OFF or STOP while
 // it is on), then BUY when it is bought in-world, else VIEW on the web Shop.
 
-import { MaskIcon } from '@hud/design'
 import externalIcon from '../assets/external.svg'
 import { pressedWith, type PressedWith } from './pressedWith'
 import styles from './ShopCardActions.module.css'
-import { Button } from '@dcl/one-ui'
+import { Button, MaskIcon } from '@dcl/one-ui'
 
 export function ShopCardActions({
   tryOn,

@@ -3,9 +3,9 @@
 // actions; blocked shows an empty placeholder. Data + actions come from the bridge
 // relay of the scene social state (BevyApi.social.*), guest-disabled.
 
-import { Button, Spinner, Tooltip } from '@dcl/one-ui'
+import { Button, MaskIcon, Spinner, Tooltip } from '@dcl/one-ui'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { Avatar, BlockedUser, ControlButton, Envelope, Kebab, MaskIcon, Tabs, VerifiedBadge, hasOpenPopup, type TabItem } from '../../design'
+import { Avatar, BlockedUser, ControlButton, Envelope, Kebab, Tabs, VerifiedBadge, hasOpenPopup, type TabItem } from '../../design'
 import { shortAddr, splitName, userColor } from '@explorer-core/lib/identity'
 import type { BlockedUser as Blocked, Friend, FriendRequest } from '@explorer-core/engine/protocol'
 import type { FriendLocation } from '@explorer-core/features/friends/friendLocation'

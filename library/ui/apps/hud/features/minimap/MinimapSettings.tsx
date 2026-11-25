@@ -3,10 +3,9 @@
 // settings", which opens the rotation mode and the visualisation style. Which markers show is the
 // full map's Layers panel's.
 
-import { Switch } from '@dcl/one-ui'
+import { MaskIcon, Switch } from '@dcl/one-ui'
 import { useState } from 'react'
 import { Check, ChevronDown, ChevronRight } from '../../design'
-import { MaskIcon } from '../../design/MaskIcon'
 import reloadIcon from '../../assets/minimap/reload.png'
 import type { MinimapRotation, MinimapStyle } from '@explorer-core/engine/protocol'
 import { LinkMark } from './icons'

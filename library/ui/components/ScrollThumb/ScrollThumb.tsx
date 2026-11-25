@@ -1,31 +1,37 @@
-// ScrollThumb — the Shop's scrollbar: a 14px outlined pill drawn beside a scroller whose own scrollbar is
-// hidden, down its side (`axis` y, the default) or along its bottom (x). It follows the scroller by writing
-// its own style on scroll and resize (no React render), and hides while everything fits. A drag of the pill
-// scrolls, and a press on the track beside it brings the pill under the pointer first. Place it with the
-// parent's layout; it fills the parent's height (or width, along x) as track.
-
-import { useEffect, useRef } from 'react'
+import { useEffect, useRef, type RefObject } from 'react'
 import styles from './ScrollThumb.module.css'
 
 const MIN_THUMB = 40
 
+export type ScrollThumbProps = {
+  /** The scroller the handle follows. Its own scrollbar is the caller's to hide. */
+  target: RefObject<HTMLElement | null>
+  /** A fixed handle length in pixels. By default it shows how much of the content is in view. */
+  length?: number
+  /** Down the scroller's side (`y`) or along its bottom (`x`). */
+  axis?: 'x' | 'y'
+  /**
+   * `outline` is a translucent pill with a white rim. `dark` fills the pill, for a scroller over a
+   * light or busy surface. `solid` is a white pill with no rim.
+   */
+  tone?: 'outline' | 'dark' | 'solid'
+  className?: string
+}
+
+/**
+ * A 14px pill drawn beside a scroller whose own scrollbar is hidden. It follows the scroller by
+ * writing its own style on scroll and resize, with no React render, and hides while everything
+ * fits. A drag of the pill scrolls, and a press on the track beside it brings the pill under the
+ * pointer first. It is hidden from assistive technology: the scroller stays keyboard scrollable.
+ * Place it with the parent's layout; it fills the parent's height (or width, along `x`) as its track.
+ */
 export function ScrollThumb({
   target,
   length,
   axis = 'y',
   tone = 'outline',
   className
-}: {
-  target: React.RefObject<HTMLElement | null>
-  /** A fixed thumb length (px), as a design draws it; by default it shows how much of the content is in view. */
-  length?: number
-  /** Down the scroller's side (y) or along its bottom (x). */
-  axis?: 'x' | 'y'
-  /** `dark` fills the pill, for a scroller over a light or busy surface; `solid` is a white pill with no
-   *  outline. */
-  tone?: 'outline' | 'dark' | 'solid'
-  className?: string
-}): React.JSX.Element {
+}: ScrollThumbProps) {
   const track = useRef<HTMLSpanElement>(null)
   const thumb = useRef<HTMLSpanElement>(null)
   useEffect(() => {
@@ -62,16 +68,17 @@ export function ScrollThumb({
     }
     sync()
     el.addEventListener('scroll', sync, { passive: true })
-    const ro = new ResizeObserver(sync)
-    ro.observe(el)
-    ro.observe(tr)
+    // Without ResizeObserver the handle still follows a scroll and a change of the scroller's children.
+    const ro = typeof ResizeObserver === 'undefined' ? undefined : new ResizeObserver(sync)
+    ro?.observe(el)
+    ro?.observe(tr)
     // The scroller's own box keeps its size when its content is swapped (loading → grid → empty), so each
     // child that comes in is watched too, and the thumb follows at once.
-    for (const child of Array.from(el.children)) ro.observe(child)
+    for (const child of Array.from(el.children)) ro?.observe(child)
     const mo = new MutationObserver((changes) => {
       for (const change of changes) {
-        change.removedNodes.forEach((n) => n instanceof Element && ro.unobserve(n))
-        change.addedNodes.forEach((n) => n instanceof Element && ro.observe(n))
+        change.removedNodes.forEach((n) => n instanceof Element && ro?.unobserve(n))
+        change.addedNodes.forEach((n) => n instanceof Element && ro?.observe(n))
       }
       sync()
     })
@@ -117,12 +124,20 @@ export function ScrollThumb({
       tr.removeEventListener('pointerup', up)
       tr.removeEventListener('pointercancel', up)
       el.removeEventListener('scroll', sync)
-      ro.disconnect()
+      ro?.disconnect()
       mo.disconnect()
     }
   }, [target, length, axis])
   return (
-    <span ref={track} className={`${styles.track} ${axis === 'x' ? styles.x : ''} ${tone !== 'outline' ? styles[tone] : ''} ${className ?? ''}`.trim()} aria-hidden="true">
+    <span
+      ref={track}
+      className={[styles.root, axis === 'x' && styles.x, tone !== 'outline' && styles[tone], className]
+        .filter(Boolean)
+        .join(' ')}
+      data-axis={axis}
+      data-tone={tone}
+      aria-hidden="true"
+    >
       <span ref={thumb} className={styles.thumb} />
     </span>
   )

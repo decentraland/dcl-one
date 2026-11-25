@@ -4,9 +4,8 @@
 
 import { Avatar } from './Avatar'
 import { Icon, type IconName } from './icons'
-import { MaskIcon } from './MaskIcon'
 import styles from './IconButton.module.css'
-import { Tooltip } from '@dcl/one-ui'
+import { MaskIcon, Tooltip } from '@dcl/one-ui'
 
 interface IconButtonProps
   extends Omit<React.ButtonHTMLAttributes<HTMLButtonElement>, 'title'> {

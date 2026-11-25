@@ -168,3 +168,8 @@
   max-width: 360px;
   padding: 10px;
 }
+
+/* Where a ScrollThumb example puts its track: the right edge of its positioned parent. */
+.thumbRight {
+  right: 0;
+}

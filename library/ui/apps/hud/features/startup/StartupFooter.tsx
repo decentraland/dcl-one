@@ -1,6 +1,6 @@
 // The sign-in screens' corner: Exit, mute the music,
 // help, and the build.
-import { Icon, MaskIcon } from '../../design'
+import { Icon } from '../../design'
 import { bugReportUrl } from '@explorer-core/lib/bugReport'
 import { BUILD_VERSION, isNativeHud } from '@hud-host'
 import { useSession } from '../session/SessionContext'
@@ -10,7 +10,7 @@ import audioOn from '../../assets/startup/audio-on.png'
 import audioOff from '../../assets/startup/audio-off.png'
 import type { LoginMusic } from './useLoginMusic'
 import styles from './StartupFooter.module.css'
-import { Button } from '@dcl/one-ui'
+import { Button, MaskIcon } from '@dcl/one-ui'
 
 export function StartupFooter({ music }: { music: LoginMusic }): React.JSX.Element {
   const session = useSession()

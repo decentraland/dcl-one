@@ -1,6 +1,5 @@
 // One day's events, in a grid of big cards.
 
-import { MaskIcon } from '../../design'
 import type { EventData } from '@explorer-core/engine/protocol'
 import arrowLeftIcon from '../../assets/events/arrow-left.png'
 import emptyArt from '../../assets/events/empty-events-img.png'
@@ -9,7 +8,7 @@ import { dayLabel } from './eventFormat'
 import type { EventCardContext } from './EventsCalendar'
 import type { QueryStatus } from './eventsStore'
 import styles from './EventsByDay.module.css'
-import { Button, EmptyState } from '@dcl/one-ui'
+import { Button, EmptyState, MaskIcon } from '@dcl/one-ui'
 
 const SKELETON_CARDS = 10
 

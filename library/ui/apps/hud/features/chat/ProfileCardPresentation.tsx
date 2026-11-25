@@ -7,7 +7,7 @@
 // then Block · Report, then Invite to Community.
 
 import { useEffect, useId, useLayoutEffect, useRef, useState } from 'react'
-import { Avatar, BlockUserIcon, ContextMenu, MaskIcon, ReportFlag, Submenu, VerifiedBadge, type ContextMenuItem } from '../../design'
+import { Avatar, BlockUserIcon, ContextMenu, ReportFlag, Submenu, VerifiedBadge, type ContextMenuItem } from '../../design'
 import { inviteSubmenuItem } from '../communities/InviteToCommunity'
 import callIcon from '../../assets/voice/call.png'
 import giftIcon from '../../assets/gifting/gift.png'
@@ -19,7 +19,7 @@ import { looksClaimed, mentionName } from '@explorer-core/engine/mention'
 import { peekProfile } from '../session/profileStore'
 import type { Relationship } from '@explorer-core/lib/relationship'
 import styles from './ProfileCard.module.css'
-import { Tooltip } from '@dcl/one-ui'
+import { MaskIcon, Tooltip } from '@dcl/one-ui'
 
 export type { Relationship } from '@explorer-core/lib/relationship'
 

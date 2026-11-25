@@ -7,9 +7,9 @@
 // failure is a toast with the form left as it was. An edit sends only what changed; only the owner
 // can change the name, membership and discoverability.
 
-import { CharCounter, Spinner } from '@dcl/one-ui'
+import { CharCounter, MaskIcon, Spinner } from '@dcl/one-ui'
 import { useEffect, useRef, useState } from 'react'
-import { MaskIcon, Select, TextArea, openPopup, showConfirm, showToast } from '../../design'
+import { Select, TextArea, openPopup, showConfirm, showToast } from '../../design'
 import type { Community, CommunityPlaceOption, CommunityPlaceOptionsMessage } from '@explorer-core/engine/protocol'
 import closeIcon from '../../assets/backpack/icon-close.webp'
 import type { CommunitySave, CreateCommunityInput, UpdateCommunityInput } from '../session/useEngineSession'

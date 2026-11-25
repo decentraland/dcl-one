@@ -2,7 +2,7 @@
 // over from the modal.
 
 import { useEffect } from 'react'
-import { MaskIcon, openPopup } from '../../design'
+import { openPopup } from '../../design'
 import closeIcon from '../../assets/events/close-icn-thin.png'
 import { CommunitiesPage } from '../communities/CommunitiesPage'
 import { EventsPage } from '../events/EventsPage'
@@ -14,7 +14,7 @@ import { openPassport } from '../profile/Passport'
 import { useSession } from '../session/SessionContext'
 import { SettingsPanel } from '../settings/SettingsPanel'
 import styles from './ExploreSectionModal.module.css'
-import { Button } from '@dcl/one-ui'
+import { Button, MaskIcon } from '@dcl/one-ui'
 
 export type ExploreSection = 'map' | 'places' | 'events' | 'communities' | 'gallery' | 'settings'
 

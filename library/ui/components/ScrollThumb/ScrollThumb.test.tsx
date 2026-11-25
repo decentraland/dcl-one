@@ -1,7 +1,8 @@
+import '@testing-library/jest-dom/vitest'
 import { act, fireEvent, render } from '@testing-library/react'
 import { useRef, useState } from 'react'
-import { describe, expect, it } from 'vitest'
-import { ScrollThumb } from '../design'
+import { afterEach, describe, expect, it, vi } from 'vitest'
+import { ScrollThumb } from './ScrollThumb'
 
 // jsdom lays nothing out: the scroller's heights are set by hand, as a browser would measure them.
 function sized(el: HTMLElement, view: number, content: number): void {
@@ -9,7 +10,7 @@ function sized(el: HTMLElement, view: number, content: number): void {
   Object.defineProperty(el, 'scrollHeight', { configurable: true, value: content })
 }
 
-function Scroller({ swap }: { swap: React.MutableRefObject<(long: boolean) => void> }): React.JSX.Element {
+function Scroller({ swap }: { swap: { current: (long: boolean) => void } }) {
   const ref = useRef<HTMLDivElement>(null)
   const [long, setLong] = useState(false)
   swap.current = setLong
@@ -21,9 +22,29 @@ function Scroller({ swap }: { swap: React.MutableRefObject<(long: boolean) => vo
   )
 }
 
+class ResizeObserverStub {
+  observe() {}
+  unobserve() {}
+  disconnect() {}
+}
+
+afterEach(() => {
+  vi.unstubAllGlobals()
+})
+
 describe('ScrollThumb', () => {
+  it('is hidden from assistive technology and reports its axis and tone', () => {
+    const swap = { current: (() => {}) as (long: boolean) => void }
+    const { container } = render(<Scroller swap={swap} />)
+    const track = container.querySelector('[aria-hidden="true"]') as HTMLElement
+    expect(track).toHaveAttribute('data-axis', 'y')
+    expect(track).toHaveAttribute('data-tone', 'outline')
+    expect(track).not.toHaveAttribute('data-scrolls')
+  })
+
   it('follows content swapped inside a scroller whose own box keeps its size', async () => {
-    const swap = { current: (_: boolean) => {} }
+    vi.stubGlobal('ResizeObserver', ResizeObserverStub)
+    const swap = { current: (() => {}) as (long: boolean) => void }
     const { getByTestId, container } = render(<Scroller swap={swap} />)
     const scroller = getByTestId('scroller')
     const thumb = container.querySelector('[aria-hidden="true"] > span') as HTMLElement
@@ -41,7 +62,8 @@ describe('ScrollThumb', () => {
   })
 
   it('scrolls by a drag of the pill and by a press on its track', async () => {
-    const swap = { current: (_: boolean) => {} }
+    vi.stubGlobal('ResizeObserver', ResizeObserverStub)
+    const swap = { current: (() => {}) as (long: boolean) => void }
     const { getByTestId, container } = render(<Scroller swap={swap} />)
     const scroller = getByTestId('scroller')
     const thumb = container.querySelector('[aria-hidden="true"] > span') as HTMLElement
@@ -73,5 +95,18 @@ describe('ScrollThumb', () => {
     await act(async () => swap.current(false))
     await act(async () => {})
     expect(track.hasAttribute('data-scrolls')).toBe(false)
+  })
+
+  it('follows a swap of content where ResizeObserver does not exist', async () => {
+    vi.stubGlobal('ResizeObserver', undefined)
+    const swap = { current: (() => {}) as (long: boolean) => void }
+    const { getByTestId, container } = render(<Scroller swap={swap} />)
+    const scroller = getByTestId('scroller')
+    const thumb = container.querySelector('[aria-hidden="true"] > span') as HTMLElement
+    Object.defineProperty(thumb.parentElement!, 'clientHeight', { configurable: true, value: 100 })
+    sized(scroller, 100, 400)
+    await act(async () => swap.current(true))
+    await act(async () => {})
+    expect(thumb.style.visibility).toBe('visible')
   })
 })

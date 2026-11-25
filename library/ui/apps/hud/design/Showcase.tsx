@@ -6,8 +6,8 @@
 // features import them: that test watches the entry. Sections use local data only: no network,
 // wallet or engine call.
 
-import { Button, CharCounter, CodeInput, CountBadge, EmptyState, FieldLabel, Panel, Slider, Spinner, SubmitField, Switch } from '@dcl/one-ui'
-import { useId, useRef, useState, useSyncExternalStore } from 'react'
+import { Button, CharCounter, CodeInput, CountBadge, DclLogo, EmptyState, FieldLabel, MaskIcon, Panel, Slider, Spinner, SubmitField, Switch } from '@dcl/one-ui'
+import { useId, useState, useSyncExternalStore } from 'react'
 import { getHudScale, subscribeHudScale } from '@explorer-core/lib/hudScale'
 import {
   AnchoredMenu,
@@ -25,7 +25,6 @@ import {
   ContextMenu,
   ControlButton,
   DateField,
-  DclLogo,
   Dropdown,
   EquippedItemCard,
   HeaderButton,
@@ -35,7 +34,6 @@ import {
   KebabMenu,
   KeyCap,
   LogoPattern,
-  MaskIcon,
   MenuDivider,
   MenuList,
   MenuPanel,
@@ -50,7 +48,6 @@ import {
   Pin,
   PopupHost,
   Rail,
-  ScrollThumb,
   SearchField,
   Select,
   showConfirm,
@@ -446,17 +443,6 @@ const RENDER: Record<ShowcaseName, () => React.JSX.Element> = {
 
   AnchoredMenu: () => <AnchoredMenuDemo />,
 
-  MaskIcon: () => (
-    <div style={{ ...row, gap: 16 }}>
-      {[reelShareIcon, reelLinkIcon, reelDownloadIcon, reelDeleteIcon].map((src) => (
-        <MaskIcon key={src} src={src} size={24} />
-      ))}
-      <span style={{ ...row, color: 'var(--brand)' }}>
-        <MaskIcon src={reelDeleteIcon} size={24} /> in the text colour
-      </span>
-    </div>
-  ),
-
   KebabMenu: () => (
     <div style={{ display: 'flex', gap: 16, paddingBottom: 120 }}>
       <KebabMenu label="Conversation options" items={(close) => [{ label: 'View Community', onClick: close }, { label: 'Delete chat history', danger: true, onClick: close }]} />
@@ -579,14 +565,6 @@ const RENDER: Record<ShowcaseName, () => React.JSX.Element> = {
           />
         ))}
       </div>
-    </>
-  ),
-
-  ScrollThumb: () => (
-    <>
-      <ShowcaseScroller />
-      <ShowcaseRowScroller />
-      <ShowcaseScroller tone="solid" />
     </>
   ),
 
@@ -925,35 +903,7 @@ const liveScale = (): string =>
   `Live viewport: ${window.innerWidth}×${window.innerHeight}px → ×${getHudScale().toFixed(3)}`
 
 // A short scroller with a fixed-length thumb beside it.
-function ShowcaseScroller({ tone }: { tone?: 'solid' }): React.JSX.Element {
-  const ref = useRef<HTMLDivElement>(null)
-  return (
-    <div style={{ position: 'relative', width: 440, height: 320 }}>
-      <div ref={ref} style={{ height: '100%', overflowY: 'auto', scrollbarWidth: 'none', display: 'grid', gridTemplateColumns: 'repeat(2, 197px)', gap: 20 }}>
-        {Array.from({ length: 6 }, (_, i) => (
-          <div key={i} style={{ height: 200, borderRadius: 16, background: 'var(--white-10)' }} />
-        ))}
-      </div>
-      <ScrollThumb target={ref} length={80} tone={tone} className={undefined} />
-    </div>
-  )
-}
-
 // A short row that scrolls sideways, its thumb along the bottom.
-function ShowcaseRowScroller(): React.JSX.Element {
-  const ref = useRef<HTMLDivElement>(null)
-  return (
-    <div style={{ position: 'relative', width: 440, height: 140 }}>
-      <div ref={ref} style={{ display: 'flex', gap: 16, overflowX: 'auto', scrollbarWidth: 'none' }}>
-        {Array.from({ length: 6 }, (_, i) => (
-          <div key={i} style={{ flex: 'none', width: 110, height: 110, borderRadius: 16, background: 'var(--white-10)' }} />
-        ))}
-      </div>
-      <ScrollThumb target={ref} length={80} axis="x" className={undefined} />
-    </div>
-  )
-}
-
 /** ArmedButton mounted again by SHOW AGAIN, so its wait can be tried: a press before ARM_MS counts nothing. */
 function ArmedShowcase(): React.JSX.Element {
   const [shown, setShown] = useState(0)

@@ -6,7 +6,7 @@
 // the People view in its place. Actions go to the engine, whose next snapshot
 // moves the panel.
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { Avatar, ControlButton, KebabMenu, MaskIcon, SearchField, VerifiedBadge, type ContextMenuItem } from '../../design'
+import { Avatar, ControlButton, KebabMenu, SearchField, VerifiedBadge, type ContextMenuItem } from '../../design'
 import type { VoiceChatParticipant, VoiceChatState } from '@explorer-core/engine/protocol'
 import { nameColor, splitName } from '@explorer-core/lib/identity'
 import { openProfileCard } from '../profileCard/ProfileCard'
@@ -30,7 +30,7 @@ import rejectRequestIcon from '../../assets/voice/reject-request.png'
 import speakingFeedbackIcon from '../../assets/voice/speaking-feedback.png'
 import { Mark } from '../../design/Glyphs'
 import styles from './VoiceChatPanel.module.css'
-import { Tooltip } from '@dcl/one-ui'
+import { MaskIcon, Tooltip } from '@dcl/one-ui'
 
 /** The speakers shown in the grid. */
 const MAX_VISIBLE_SPEAKERS = 8

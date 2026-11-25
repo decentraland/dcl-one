@@ -2,7 +2,6 @@
 // events beside it, and one day's events in a grid. Every visit opens on the calendar at today.
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { MaskIcon } from '../../design'
 import type { EventData } from '@explorer-core/engine/protocol'
 import { track } from '@explorer-core/lib/analytics'
 import { MainMenuShell } from '../menu/MainMenuShell'
@@ -16,7 +15,7 @@ import { EventsCalendar, type EventCardContext } from './EventsCalendar'
 import { calendarColumns, dayEvents, highlightedEvents } from './eventsStore'
 import { useEventActions } from './useEventActions'
 import styles from './EventsPage.module.css'
-import { Button } from '@dcl/one-ui'
+import { Button, MaskIcon } from '@dcl/one-ui'
 
 /** The days a calendar shows; the highlighted carousel takes the last one's place. */
 export const CALENDAR_DAYS = 5

@@ -1,4 +1,8 @@
-.track {
+/* Not in Figma: the Explorer HUD's scroll handle. These rules sit outside the cascade layer with the specificity
+   they had: each caller places the track with its own class, and keeps the precedence it had. A caller sets
+   `--scroll-thumb-w` to narrow the `solid` handle. The 10px corners and the 68 % black of the `dark` handle have
+   no token. */
+.root {
   position: absolute;
   top: 0;
   bottom: 0;
@@ -7,7 +11,7 @@
   touch-action: none;
 }
 /* Only while there is something to scroll: a track with a hidden pill takes no press. */
-.track[data-scrolls] {
+.root[data-scrolls] {
   pointer-events: auto;
 }
 .thumb {
@@ -15,9 +19,9 @@
   top: 0;
   left: 0;
   width: 14px;
-  border: 1px solid var(--text);
-  border-radius: var(--r-control);
-  background: var(--black-40);
+  border: 1px solid var(--dcl-neutrals-snow);
+  border-radius: 10px; /* = HUD --r-control */
+  background: var(--dcl-transparencies-black-40);
   visibility: hidden;
   will-change: transform;
 }
@@ -36,7 +40,7 @@
   height: 14px;
 }
 .dark .thumb {
-  background: var(--scroll-thumb-dark);
+  background: rgba(0, 0, 0, 0.68);
 }
 /* A caller may narrow it with --scroll-thumb-w (default 14px). */
 .solid,
@@ -45,5 +49,5 @@
 }
 .solid .thumb {
   border: none;
-  background: var(--text);
+  background: var(--dcl-neutrals-snow);
 }

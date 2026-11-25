@@ -1,8 +1,7 @@
 // The sign-in screens' BACK: a chevron in a faint square, then the word.
-import { MaskIcon } from '../../design'
 import arrowLeft from '../../assets/startup/arrow-left.png'
 import styles from './StartupBack.module.css'
-import { Button } from '@dcl/one-ui'
+import { Button, MaskIcon } from '@dcl/one-ui'
 
 export function StartupBack({ onClick, className }: { onClick: () => void; className?: string }): React.JSX.Element {
   return (

@@ -4,7 +4,7 @@
 
 import { useId } from 'react'
 import type { ChatState, CommunityConversation, Conversation } from '../session/useEngineSession'
-import { Avatar, ControlButton, DclLogo, MaskIcon } from '../../design'
+import { Avatar, ControlButton } from '../../design'
 import { useOptionalSession } from '../session/SessionContext'
 import { inCommunityStream } from '../voiceChat/callGate'
 import { splitName, usePartner } from './chatIdentity'
@@ -12,7 +12,7 @@ import closeIcon from '../../assets/chat/close-thin.png'
 import streamActiveIcon from '../../assets/voice/stream-active.png'
 import streamListeningIcon from '../../assets/voice/stream-listening.png'
 import styles from './Chat.module.css'
-import { Tooltip } from '@dcl/one-ui'
+import { DclLogo, MaskIcon, Tooltip } from '@dcl/one-ui'
 
 function badge(count: number): React.JSX.Element | null {
   return count > 0 ? <span className={styles.railBadge}>{count > 9 ? '9+' : count}</span> : null

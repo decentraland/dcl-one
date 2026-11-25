@@ -520,7 +520,6 @@
      Alphas are the sRGB equivalents of overlays designed for linear-space blending, each worked
      out over the surface it sits on. */
   --events-dot: rgba(255, 255, 255, 0.32); /* a carousel dot that is not the current one */
-  --scroll-thumb-dark: rgba(0, 0, 0, 0.68); /* a column's scroll handle, under its white rim */
   --modal-scrim-deep: rgba(0, 0, 0, 0.68);
   --tint-shade: rgba(0, 0, 0, 0.54);
   --tint-veil: rgba(255, 255, 255, 0.15); /* the detail's buttons, over its picture's shade */

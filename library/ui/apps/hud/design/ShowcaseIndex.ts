@@ -39,7 +39,6 @@ export const SHOWCASE_INDEX = [
   { name: 'ContextMenu', title: 'ContextMenu (items · submenu · exclusive options)', components: ['ContextMenu'] },
   { name: 'Submenu', title: 'Submenu (a menu row that opens a list beside it: hover or press it)', components: ['Submenu'] },
   { name: 'AnchoredMenu', title: 'AnchoredMenu (a ContextMenu opened from a button, as the photo options use it)', components: ['AnchoredMenu'] },
-  { name: 'MaskIcon', title: 'MaskIcon (a picture drawn in the text colour)', components: ['MaskIcon'] },
   { name: 'KebabMenu', title: 'KebabMenu (md · sm)', components: ['KebabMenu'] },
   { name: 'HintsButton', title: 'HintsButton (opens upward) and KeyCap', components: ['HintsButton', 'KeyCap'] },
   { name: 'Rail', title: 'Rail', components: ['Rail'] },
@@ -49,12 +48,11 @@ export const SHOWCASE_INDEX = [
   { name: 'BrowsePage', title: 'Browse page (BrowseToolbar · BrowseControl · BrowsePanel · BrowseLoading)', components: ['BrowseToolbar', 'BrowseControl', 'BrowsePanel', 'BrowseLoading', 'Tabs', 'SearchField', 'Dropdown'] },
   { name: 'ColorPicker', title: 'ColorPicker (avatar colors)', components: ['ColorPicker'] },
   { name: 'NameColorPicker', title: 'ColorPicker (swatch, hue only: name colour)', components: ['ColorPicker'] },
-  { name: 'Brand', title: 'Brand', components: ['DclLogo'] },
+  { name: 'Brand', title: 'Brand', components: [] },
   { name: 'Avatar', title: 'Avatar', components: ['Avatar'] },
   { name: 'WearableCard', title: 'WearableCard (backpack)', components: ['WearableCard'] },
   { name: 'WearableCardPick', title: 'WearableCard pick (gift picker)', components: ['WearableCard'] },
   { name: 'EquippedItemCard', title: 'EquippedItemCard (passport)', components: ['EquippedItemCard', 'Icon'] },
-  { name: 'ScrollThumb', title: 'ScrollThumb (fixed length, as the Shop draws it)', components: ['ScrollThumb'] },
   { name: 'Toast', title: 'Toast (plain · error · keyed progress · action + dismiss)', components: ['ToastHost'] },
   { name: 'Chat', title: 'Chat components', components: [] }
 ] as const satisfies readonly ShowcaseEntry[]

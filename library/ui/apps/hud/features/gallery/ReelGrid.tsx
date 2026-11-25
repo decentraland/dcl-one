@@ -1,7 +1,7 @@
 // Rows have fixed heights, so only the ones near the viewport are mounted.
 
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
-import { AnchoredMenu, MaskIcon, type ContextMenuItem } from '../../design'
+import { AnchoredMenu, type ContextMenuItem } from '../../design'
 import { photoTime } from '../session/useEngineSession'
 import { useOptionalSession } from '../session/SessionContext'
 import type { GalleryPhoto } from '@explorer-core/engine/protocol'
@@ -12,7 +12,7 @@ import linkIcon from '../../assets/camera-reel/copy-link.png'
 import downloadIcon from '../../assets/camera-reel/download.png'
 import deleteIcon from '../../assets/camera-reel/delete.png'
 import styles from './ReelGrid.module.css'
-import { Button } from '@dcl/one-ui'
+import { Button, MaskIcon } from '@dcl/one-ui'
 
 export interface ReelGridLayout {
   columns: number

@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useRef, useState } from 'react'
 import {
   Button,
   ConnectionStatus,
@@ -23,7 +23,10 @@ import {
   EmptyState,
   Panel,
   SwapLabel,
-  VoiceBars
+  VoiceBars,
+  DclLogo,
+  MaskIcon,
+  ScrollThumb
 } from '@dcl/one-ui'
 import type { GalleryEntry } from '../registry'
 import { covers, people } from './data'
@@ -541,6 +544,67 @@ export const feedbackEntries: GalleryEntry[] = [
     ]
   },
   {
+    name: 'DclLogo',
+    group: 'Feedback',
+    summary: 'The Decentraland logo mark.',
+    components: ['DclLogo'],
+    examples: [
+      {
+        id: 'sizes',
+        title: '24, 32 and 48 pixels',
+        render: () => (
+          <div className={layout.row}>
+            <DclLogo />
+            <DclLogo size={32} />
+            <DclLogo size={48} />
+          </div>
+        )
+      }
+    ]
+  },
+  {
+    name: 'MaskIcon',
+    group: 'Feedback',
+    summary: 'An image drawn in the text colour.',
+    components: ['MaskIcon'],
+    examples: [
+      {
+        id: 'colours',
+        title: 'One image in three text colours and two sizes',
+        render: () => (
+          <div className={layout.row}>
+            <MaskIcon src={MASK_EXAMPLE} />
+            <span style={{ color: 'var(--dcl-brand-ruby)', display: 'inline-flex' }}>
+              <MaskIcon src={MASK_EXAMPLE} />
+            </span>
+            <span style={{ color: 'var(--dcl-brand-orange)', display: 'inline-flex' }}>
+              <MaskIcon src={MASK_EXAMPLE} size={40} />
+            </span>
+          </div>
+        )
+      }
+    ]
+  },
+  {
+    name: 'ScrollThumb',
+    group: 'Feedback',
+    summary: 'A pill that follows a scroller whose own scrollbar is hidden.',
+    components: ['ScrollThumb'],
+    examples: [
+      {
+        id: 'tones',
+        title: 'Outline, dark and solid, beside a list that scrolls',
+        render: () => (
+          <div className={layout.row}>
+            <ScrollThumbExample tone="outline" />
+            <ScrollThumbExample tone="dark" />
+            <ScrollThumbExample tone="solid" />
+          </div>
+        )
+      }
+    ]
+  },
+  {
     name: 'Tag',
     group: 'Feedback',
     summary: 'A short status or attribute label; some variants take a count.',
@@ -724,3 +788,29 @@ export const feedbackEntries: GalleryEntry[] = [
     ]
   }
 ]
+
+/** A white-on-transparent star, as a data URI: the gallery has no image asset of its own to mask. */
+const MASK_EXAMPLE =
+  "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath fill='%23fff' d='M12 2l3 7 7 .6-5.3 4.6 1.6 7L12 17.5 5.7 21.2l1.6-7L2 9.600l7-.6z'/%3E%3C/svg%3E"
+
+function ScrollThumbExample({ tone }: { tone: 'outline' | 'dark' | 'solid' }) {
+  const scroller = useRef<HTMLDivElement>(null)
+  return (
+    <div style={{ position: 'relative', width: 140, height: 120 }}>
+      <div
+        ref={scroller}
+        tabIndex={0}
+        role="group"
+        aria-label={`A list that scrolls, ${tone} handle`}
+        style={{ height: '100%', overflowY: 'auto', scrollbarWidth: 'none', paddingRight: 24 }}
+      >
+        {Array.from({ length: 12 }, (_, index) => (
+          <p key={index} style={{ margin: 0, lineHeight: '28px' }}>
+            Row {index + 1}
+          </p>
+        ))}
+      </div>
+      <ScrollThumb target={scroller} tone={tone} length={40} className={layout.thumbRight} />
+    </div>
+  )
+}

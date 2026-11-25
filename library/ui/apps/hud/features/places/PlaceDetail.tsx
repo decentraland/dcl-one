@@ -2,7 +2,7 @@
 // (`usePlaceActions`, which also holds the votes, favourite, home, share and JUMP IN).
 
 import { useMemo, useState, useSyncExternalStore, type CSSProperties } from 'react'
-import { MaskIcon, openPopup } from '../../design'
+import { openPopup } from '../../design'
 import closeIcon from '../../assets/events/close-icn-thin.png'
 import defaultPlace from '../../assets/map/panel/default-place.png'
 import navigationIcon from '../../assets/map/panel/navigation.png'
@@ -26,7 +26,7 @@ import { useProfile } from '../session/profileStore'
 import { compactNumber, creatorFallback, isWorldPlace, likeRateText, updatedText } from './placeDetailFormat'
 import { PlaceActionButtons, PlaceJumpIn, usePlaceActions, type DetailPlace } from './PlaceActions'
 import styles from './PlaceDetail.module.css'
-import { Button } from '@dcl/one-ui'
+import { Button, MaskIcon } from '@dcl/one-ui'
 
 export type { DetailPlace }
 

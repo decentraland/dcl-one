@@ -4,9 +4,9 @@
 // Camera, Nearby Voice and Chat. Me, Discover, Shop, System, Volume and Camera each open a panel
 // beside the column, one at a time; Map shows and hides the minimap.
 
-import { Panel, Slider, Switch } from '@dcl/one-ui'
+import { MaskIcon, Panel, Slider, Switch } from '@dcl/one-ui'
 import { useCallback, useContext, useEffect, useState } from 'react'
-import { ControlButton, IconButton, MaskIcon, MenuList, MenuPanel, MenuRow } from '../../design'
+import { ControlButton, IconButton, MenuList, MenuPanel, MenuRow } from '../../design'
 import { toggleDebugPanel, useDebugPanelState } from '../debug/useDebugPanel'
 import { debugPanelLauncherEnabled } from '@explorer-core/lib/debugPanelLauncher'
 import { keyHintFor, useBindingsSnapshot } from '../../lib/bindingLabels'

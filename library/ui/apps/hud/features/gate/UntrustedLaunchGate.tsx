@@ -13,11 +13,11 @@
 // here having already clicked something the attacker gave them.
 
 import { useState } from 'react'
-import { DclLogo, ModalShell } from '../../design'
+import { ModalShell } from '../../design'
 import styles from './UntrustedLaunchGate.module.css'
 import type { UntrustedParam } from '@explorer-core/hostContract'
 import { exitApplication } from './exitApplication'
-import { Button } from '@dcl/one-ui'
+import { Button, DclLogo } from '@dcl/one-ui'
 
 const TITLE = 'This Launch Link Is Not Trusted'
 

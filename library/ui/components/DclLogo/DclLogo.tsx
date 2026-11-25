@@ -1,15 +1,16 @@
-// Decentraland logo mark (official sunset disc). useId keeps the gradient/clip IDs
-// unique so multiple instances on a page don't cross-reference each other's defs.
-
 import { useId } from 'react'
 
-export function DclLogo({
-  size = 24,
-  className
-}: {
+export type DclLogoProps = {
+  /** The mark's box in pixels. 24 by default. */
   size?: number
   className?: string
-}): React.JSX.Element {
+}
+
+/**
+ * The Decentraland logo mark: the sunset disc. It is decorative and hidden from assistive technology.
+ * Each instance has its own gradient and clip ids, so several on a page do not share definitions.
+ */
+export function DclLogo({ size = 24, className }: DclLogoProps) {
   const uid = useId().replace(/:/g, '')
   const bg = `dcl-bg-${uid}`
   const p1 = `dcl-p1-${uid}`

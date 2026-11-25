@@ -8,7 +8,7 @@
 
 import { useEffect, useRef, useState, type CSSProperties } from 'react'
 import { DEFAULT_REALM } from '@hud-host'
-import { ContextMenu, MaskIcon, openPopup, showToast } from '../../design'
+import { ContextMenu, openPopup, showToast } from '../../design'
 import linkIcon from '../../assets/events/link-icn.png'
 import xIcon from '../../assets/events/x-icn.png'
 import dislikeOutline from '../../assets/map/panel/dislike-outline.png'
@@ -30,7 +30,7 @@ import { useSession } from '../session/SessionContext'
 import type { TravelOutcome } from '../session/useEngineSession'
 import { isWorldPlace, placeJumpLink, placeShareUrl } from './placeDetailFormat'
 import styles from './PlaceDetail.module.css'
-import { Button } from '@dcl/one-ui'
+import { Button, MaskIcon } from '@dcl/one-ui'
 
 export type DetailPlace = DiscoverPlace & { connected_addresses?: string[] | null }
 

@@ -2,9 +2,9 @@
 // owner, place, people in the shot) that the info button slides away. Opened through usePhotoViewer,
 // as a popup of its own.
 
-import { Spinner, Skeleton, Switch } from '@dcl/one-ui'
+import { MaskIcon, ScrollThumb, Skeleton, Spinner, Switch } from '@dcl/one-ui'
 import { useEffect, useRef, useState } from 'react'
-import { ControlButton, MaskIcon, ScrollThumb } from '../../design'
+import { ControlButton } from '../../design'
 import { useWindowKeyDown } from '../../lib/useWindowKeyDown'
 import { track } from '@explorer-core/lib/analytics'
 import { photoTime } from '../session/useEngineSession'

@@ -7,7 +7,7 @@
 import { Fragment, memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import type { ChatLine, ChatState, Conversation } from '../session/useEngineSession'
 import type { DmUserState, MessageReaction, NearbyMember } from '@explorer-core/engine/protocol'
-import { Avatar, ControlButton, DclLogo, MaskIcon, Translate, VerifiedBadge } from '../../design'
+import { Avatar, ControlButton, Translate, VerifiedBadge } from '../../design'
 import { EmojiPicker, useCloseEmojiPanelOnOutsidePress } from './EmojiPicker'
 import { EmojiButton } from './EmojiButton'
 import { EmojiSuggestList, emojiSuggestionAt, moveSelection, tokenAtCaret } from './EmojiSuggestList'
@@ -41,7 +41,7 @@ import { useOptionalSession } from '../session/SessionContext'
 import { CommunityStreamBanner } from './CommunityStreamBanner'
 import styles from './Chat.module.css'
 import { dmRefusal } from './dmStateCopy'
-import { Tooltip, VoiceBars } from '@dcl/one-ui'
+import { DclLogo, MaskIcon, Tooltip, VoiceBars } from '@dcl/one-ui'
 
 const MAX_LEN = 500
 

@@ -5,12 +5,12 @@
 
 import { createPortal } from 'react-dom'
 import type { CommunityConversation } from '../session/useEngineSession'
-import { Avatar, ContextMenu, ControlButton, MaskIcon } from '../../design'
+import { Avatar, ContextMenu, ControlButton } from '../../design'
 import { openCommunityModal } from '../communities/CommunityModal'
 import { ConversationMenu, MENU_LAYER, useAnchoredMenu } from './ConversationMenu'
 import playersIcon from '../../assets/chat/players.png'
 import styles from './Chat.module.css'
-import { Button } from '@dcl/one-ui'
+import { Button, MaskIcon } from '@dcl/one-ui'
 
 export function CommunityHeader({
   community,

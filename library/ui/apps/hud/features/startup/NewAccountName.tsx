@@ -3,9 +3,8 @@
 // account with its look and goes straight in; Back signs out of the new account.
 //
 // Laid out on the startup screens' canvas, its 1080 rows centred vertically.
-import { Button, Checkbox, Spinner } from '@dcl/one-ui'
+import { Button, Checkbox, MaskIcon, Spinner } from '@dcl/one-ui'
 import { useEffect, useRef, useState } from 'react'
-import { MaskIcon } from '../../design'
 import { StartupBack } from './StartupBack'
 import logo from '../../assets/loading/logo-icon.webp'
 import warning from '../../assets/startup/warning.png'

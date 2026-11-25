@@ -2,8 +2,7 @@
 // uncontrolled (`defaultValue`), with an Enter handler.
 
 import { useState } from 'react'
-import { SearchBar } from '@dcl/one-ui'
-import { MaskIcon } from './MaskIcon'
+import { MaskIcon, SearchBar } from '@dcl/one-ui'
 import closeIcon from '../assets/backpack/icon-close.webp'
 
 interface SearchFieldProps {
