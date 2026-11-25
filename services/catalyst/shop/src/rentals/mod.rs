@@ -39,7 +39,7 @@
 //!   contract's own logs instead of the rentals subgraph the old crate
 //!   configured and never ran), on whenever a chain-1 endpoint is configured
 //!   unless `SHOP_RENTALS_INDEX_ENABLED=false`;
-//!   `GET /v1/rentals-index` reports its cursor. On mainnet NFT walkers,
+//!   `GET /v1/rentals-index` reports its cursor. On NFT walkers for either catalogue pair,
 //!   owner pages that can include LAND return the `rentals-index` 503
 //!   while this publication is absent or stale. Until it publishes, a
 //!   listing keeps the status it was posted with and the rent quote
@@ -159,8 +159,7 @@ impl State {
     }
 
     fn walks_nfts(market: &MarketplaceState) -> bool {
-        market.settings.market.indexes.nft_enabled
-            && market.settings.eth_network.trim() == "mainnet"
+        crate::market::owned_items::walks_here(market)
     }
 
     fn served_chain(&self) -> Option<i64> {
@@ -259,7 +258,8 @@ impl State {
     }
 
     /// The lowercased signer of a write; every refusal is the old 401 with
-    /// [`wire_message`].
+    /// [`wire_message`], except a contract-wallet check the client source's
+    /// budget refused (429).
     pub async fn require_signer(
         &self,
         headers: &HeaderMap,
@@ -268,6 +268,9 @@ impl State {
     ) -> Result<String, ApiError> {
         self.verify(headers, method, path).await.map_err(|e| {
             tracing::debug!(error = %e, "auth chain verification failed on a rentals route");
+            if matches!(e, SignedFetchError::RateLimited) {
+                return ApiError::http(429, e.to_string());
+            }
             ApiError::unauthorized(wire_message(&e))
         })
     }

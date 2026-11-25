@@ -10,7 +10,7 @@ const isDocument = (source: string) => /export\s+default\b|export\s*\{[^}]*\bdef
 
 /**
  * A document route a shared cache may store renders root data too, and the root middleware only drops
- * the cookie: the sid in that data is dropped only when the route calls `markPublicResponse`.
+ * the cookie: the sid and wallet in that data are dropped only when the route calls `markPublicResponse`.
  */
 describe("public document routes", () => {
   describe("when reading the route modules", () => {
@@ -24,7 +24,7 @@ describe("public document routes", () => {
       expect(files.length).toBeGreaterThan(50);
     });
 
-    it("should have each public document route mark itself public, so root data carries no sid", () => {
+    it("should have each public document route mark itself public, so root data carries no sid or wallet", () => {
       const unmarked = files.filter((f) => {
         const source = fs.readFileSync(path.join(ROUTES, f), "utf8");
         return isDocument(source) && PUBLIC_CACHE.test(source) && !source.includes("markPublicResponse(");
