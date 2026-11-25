@@ -222,6 +222,30 @@ fn expiry_bound(now: NaiveDateTime, expiration_ms: i64) -> NaiveDateTime {
     now - ChronoDuration::milliseconds(expiration_ms)
 }
 
+fn private_voice_preflight_sql() -> String {
+    format!(
+        r#"SELECT
+                 EXISTS (
+                   SELECT 1 FROM social.blocks
+                   WHERE (blocker_address = $1 AND blocked_address = $2)
+                      OR (blocker_address = $2 AND blocked_address = $1)
+                 ) AS blocked,
+                 (SELECT private_messages_privacy FROM social.user_settings WHERE address = $1) AS caller_privacy,
+                 (SELECT private_messages_privacy FROM social.user_settings WHERE address = $2) AS callee_privacy,
+                 (SELECT is_active FROM social.friendships WHERE {PAIR_COND} LIMIT 1) AS friends,
+                 EXISTS (
+                   SELECT 1 FROM social.private_voice_chats c
+                   WHERE NOT EXISTS (SELECT 1 FROM social.private_voice_chat_participants p WHERE p.call_id=c.id)
+                     AND (caller_address IN ($1, $2) OR callee_address IN ($1, $2))
+                 ) AS busy,
+                 EXISTS (SELECT 1 FROM social.community_voice_chat_users p WHERE p.address = $1 AND {live}) AS caller_in_community_voice,
+                 EXISTS (SELECT 1 FROM social.community_voice_chat_users p WHERE p.address = $2 AND {live}) AS callee_in_community_voice,
+                 EXISTS (SELECT 1 FROM social.private_voice_chat_participants p WHERE p.address = $1 AND {live}) AS caller_in_voice,
+                 EXISTS (SELECT 1 FROM social.private_voice_chat_participants p WHERE p.address = $2 AND {live}) AS callee_in_voice"#,
+        live = crate::comms::gatekeeper::voice::db::VoiceDbConfig::connected_sql("p", "$3", "$4"),
+    )
+}
+
 impl Db {
     pub fn new(pool: PgPool) -> Self {
         Self {
@@ -488,57 +512,37 @@ impl Db {
         me: &str,
         other: &str,
     ) -> Result<FriendshipProbe, DbError> {
-        let row = sqlx::query(sqlx::AssertSqlSafe(format!(
-            r#"
-            SELECT f.id AS friendship_id, f.is_active AS is_active,
-                   fa.action AS action, fa.acting_user AS acting_user,
-                   EXISTS (SELECT 1 FROM social.blocks
-                           WHERE blocker_address = $1 AND blocked_address = $2) AS blocked,
-                   EXISTS (SELECT 1 FROM social.blocks
-                           WHERE blocker_address = $2 AND blocked_address = $1) AS blocked_by
-            FROM (SELECT 1) AS one
-            LEFT JOIN LATERAL (
-              SELECT id, is_active FROM social.friendships
-              WHERE {PAIR_COND}
-              LIMIT 1
-            ) f ON TRUE
-            LEFT JOIN LATERAL (
-              SELECT action, acting_user FROM social.friendship_actions
-              WHERE friendship_id = f.id ORDER BY "timestamp" DESC, id DESC LIMIT 1
-            ) fa ON TRUE
-            "#
-        )))
-        .bind(me.to_lowercase())
-        .bind(other.to_lowercase())
-        .fetch_one(&self.pool)
-        .await?;
-        Ok(FriendshipProbe {
-            last: row
-                .get::<Option<Uuid>, _>("friendship_id")
-                .map(|_| last_action_from_row(&row)),
-            blocked: row.get::<bool, _>("blocked"),
-            blocked_by: row.get::<bool, _>("blocked_by"),
-        })
+        friendship_probe_on(&self.pool, me, other).await
     }
 
     /// Records the block and reads the previous action; the transactional
     /// block_user_recording_action also appends the matching friendship action.
-    pub async fn block_user_and_last(
+    #[cfg(test)]
+    pub(super) async fn block_user_and_last(
         &self,
         blocker: &str,
         blocked: &str,
     ) -> Result<(DateTime<Utc>, Option<LastAction>), DbError> {
-        block_and_last(&self.pool, blocker, blocked).await
+        let mut tx = self.pool.begin().await?;
+        lock_friendship_pair(&mut tx, blocker, blocked).await?;
+        let out = block_and_last(&mut *tx, blocker, blocked).await?;
+        tx.commit().await?;
+        Ok(out)
     }
 
     /// Removes a block and reads the previous action; use
     /// unblock_user_recording_action to append its delete action atomically.
-    pub async fn unblock_user_and_last(
+    #[cfg(test)]
+    pub(super) async fn unblock_user_and_last(
         &self,
         blocker: &str,
         blocked: &str,
     ) -> Result<Option<Option<LastAction>>, DbError> {
-        unblock_and_last(&self.pool, blocker, blocked).await
+        let mut tx = self.pool.begin().await?;
+        lock_friendship_pair(&mut tx, blocker, blocked).await?;
+        let out = unblock_and_last(&mut *tx, blocker, blocked).await?;
+        tx.commit().await?;
+        Ok(out)
     }
 
     /// The block and, when the pair has a friendship, its `block` action
@@ -552,6 +556,7 @@ impl Db {
         blocked: &str,
     ) -> Result<(DateTime<Utc>, bool), DbError> {
         let mut tx = self.pool.begin().await?;
+        lock_friendship_pair(&mut tx, blocker, blocked).await?;
         let (blocked_at, last) = block_and_last(&mut *tx, blocker, blocked).await?;
         if let Some(last) = &last {
             record_friendship_action(
@@ -580,6 +585,7 @@ impl Db {
         blocked: &str,
     ) -> Result<Option<bool>, DbError> {
         let mut tx = self.pool.begin().await?;
+        lock_friendship_pair(&mut tx, blocker, blocked).await?;
         let Some(last) = unblock_and_last(&mut *tx, blocker, blocked).await? else {
             return Ok(None);
         };
@@ -613,8 +619,10 @@ impl Db {
         message: Option<&str>,
     ) -> Result<(Uuid, DateTime<Utc>, Uuid), DbError> {
         let action_id = Uuid::new_v4();
+        let mut tx = self.pool.begin().await?;
+        lock_friendship_pair(&mut tx, acting_user, other).await?;
         let (id, at) = record_friendship_action(
-            &self.pool,
+            &mut *tx,
             action_id,
             acting_user,
             other,
@@ -624,20 +632,8 @@ impl Db {
             message,
         )
         .await?;
+        tx.commit().await?;
         Ok((id, at, action_id))
-    }
-
-    pub async fn is_friendship_blocked(&self, a: &str, b: &str) -> Result<bool, DbError> {
-        let blocked: bool = sqlx::query_scalar(
-            "SELECT EXISTS (SELECT 1 FROM social.blocks \
-             WHERE (blocker_address = $1 AND blocked_address = $2) \
-                OR (blocker_address = $2 AND blocked_address = $1))",
-        )
-        .bind(a.to_lowercase())
-        .bind(b.to_lowercase())
-        .fetch_one(&self.pool)
-        .await?;
-        Ok(blocked)
     }
 
     pub async fn is_blocked(&self, blocker: &str, blocked: &str) -> Result<bool, DbError> {
@@ -650,27 +646,16 @@ impl Db {
         Ok(found)
     }
 
-    pub async fn block_user(&self, blocker: &str, blocked: &str) -> Result<(), DbError> {
-        sqlx::query(
-            "INSERT INTO social.blocks (blocker_address, blocked_address) VALUES ($1, $2) \
-             ON CONFLICT (blocker_address, blocked_address) DO NOTHING",
-        )
-        .bind(blocker.to_lowercase())
-        .bind(blocked.to_lowercase())
-        .execute(&self.pool)
-        .await?;
-        Ok(())
+    #[cfg(test)]
+    pub(super) async fn block_user(&self, blocker: &str, blocked: &str) -> Result<(), DbError> {
+        self.block_user_and_last(blocker, blocked).await.map(|_| ())
     }
 
-    pub async fn unblock_user(&self, blocker: &str, blocked: &str) -> Result<(), DbError> {
-        sqlx::query(
-            "DELETE FROM social.blocks WHERE blocker_address = $1 AND blocked_address = $2",
-        )
-        .bind(blocker.to_lowercase())
-        .bind(blocked.to_lowercase())
-        .execute(&self.pool)
-        .await?;
-        Ok(())
+    #[cfg(test)]
+    pub(super) async fn unblock_user(&self, blocker: &str, blocked: &str) -> Result<(), DbError> {
+        self.unblock_user_and_last(blocker, blocked)
+            .await
+            .map(|_| ())
     }
 
     pub async fn get_blocked_users(
@@ -891,28 +876,7 @@ impl Db {
     ) -> Result<PrivateVoicePreflight, DbError> {
         let caller = caller.to_lowercase();
         let callee = callee.to_lowercase();
-        let sql = format!(
-            r#"SELECT
-                 EXISTS (
-                   SELECT 1 FROM social.blocks
-                   WHERE (blocker_address = $1 AND blocked_address = $2)
-                      OR (blocker_address = $2 AND blocked_address = $1)
-                 ) AS blocked,
-                 (SELECT private_messages_privacy FROM social.user_settings WHERE address = $1) AS caller_privacy,
-                 (SELECT private_messages_privacy FROM social.user_settings WHERE address = $2) AS callee_privacy,
-                 (SELECT is_active FROM social.friendships WHERE {PAIR_COND} LIMIT 1) AS friends,
-                 EXISTS (
-                   SELECT 1 FROM social.private_voice_chats c
-                   WHERE NOT EXISTS (SELECT 1 FROM social.private_voice_chat_participants p WHERE p.call_id=c.id)
-                     AND (caller_address IN ($1, $2) OR callee_address IN ($1, $2))
-                 ) AS busy,
-                 EXISTS (SELECT 1 FROM social.community_voice_chat_users p WHERE p.address = $1 AND {live}) AS caller_in_community_voice,
-                 EXISTS (SELECT 1 FROM social.community_voice_chat_users p WHERE p.address = $2 AND {live}) AS callee_in_community_voice,
-                 EXISTS (SELECT 1 FROM social.private_voice_chat_participants p WHERE p.address = $1 AND {live}) AS caller_in_voice,
-                 EXISTS (SELECT 1 FROM social.private_voice_chat_participants p WHERE p.address = $2 AND {live}) AS callee_in_voice"#,
-            live =
-                crate::comms::gatekeeper::voice::db::VoiceDbConfig::connected_sql("p", "$3", "$4"),
-        );
+        let sql = private_voice_preflight_sql();
         let (interrupted, initial) = presence.sql_cutoffs();
         let row = sqlx::query(sqlx::AssertSqlSafe(sql))
             .bind(&caller)
@@ -1039,28 +1003,6 @@ impl Db {
             .collect())
     }
 
-    /// The stored role in an ACTIVE community; a soft-deleted community grants
-    /// no role to anyone (tests/community_voice_soft_delete.rs).
-    pub async fn community_role(
-        &self,
-        community_id: &str,
-        address: &str,
-    ) -> Result<Option<String>, DbError> {
-        let Ok(cid) = Uuid::parse_str(community_id) else {
-            return Ok(None);
-        };
-        let role: Option<String> = sqlx::query_scalar(
-            "SELECT role FROM social.community_members \
-             WHERE community_id = $1 AND member_address = $2 \
-               AND EXISTS (SELECT 1 FROM social.communities c WHERE c.id = $1 AND c.active)",
-        )
-        .bind(cid)
-        .bind(address.to_lowercase())
-        .fetch_optional(&self.pool)
-        .await?;
-        Ok(role)
-    }
-
     /// Live ban status from `community_bans`; a ban deletes the membership
     /// row, so a role captured before the ban is the stale value being raced.
     pub async fn is_member_banned(
@@ -1128,14 +1070,24 @@ impl Db {
             .await?)
     }
 
-    pub async fn connectivity_member_allowed(
+    /// The actor's membership, if the recipient is a member of the active community.
+    pub async fn connectivity_community_membership(
         &self,
         actor: &str,
         recipient: &str,
         community: Uuid,
-    ) -> Result<bool, DbError> {
-        Ok(sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM social.communities c JOIN social.community_members a ON a.community_id=c.id AND a.member_address=$1 JOIN social.community_members r ON r.community_id=c.id AND r.member_address=$2 WHERE c.id=$3 AND c.active)")
-            .bind(actor.to_lowercase()).bind(recipient.to_lowercase()).bind(community).fetch_one(&self.pool).await?)
+    ) -> Result<Option<bool>, DbError> {
+        Ok(sqlx::query_scalar(
+            "SELECT a.member_address IS NOT NULL FROM social.communities c \
+             JOIN social.community_members r ON r.community_id=c.id AND r.member_address=$2 \
+             LEFT JOIN social.community_members a ON a.community_id=c.id AND a.member_address=$1 \
+             WHERE c.id=$3 AND c.active",
+        )
+        .bind(actor.to_lowercase())
+        .bind(recipient.to_lowercase())
+        .bind(community)
+        .fetch_optional(&self.pool)
+        .await?)
     }
 
     /// The membership PK (community_id, member_address) is the stable two-column cursor.
@@ -1152,28 +1104,6 @@ impl Db {
              WHERE m.member_address <> $1 AND (m.community_id, m.member_address) > ($2, $3) \
              ORDER BY m.community_id, m.member_address LIMIT 256"
         ).bind(address.to_lowercase()).bind(community).bind(member).fetch_all(&self.pool).await?)
-    }
-
-    /// Active friends with no block in either direction.
-    pub async fn friend_addresses_unblocked(&self, address: &str) -> Result<Vec<String>, DbError> {
-        let rows: Vec<String> = sqlx::query_scalar(
-            r#"
-            SELECT CASE WHEN address_requester = $1 THEN address_requested ELSE address_requester END AS friend
-            FROM social.friendships
-            WHERE is_active = TRUE
-              AND ($1 IN (address_requester, address_requested))
-              AND NOT EXISTS (
-                SELECT 1 FROM social.blocks b
-                WHERE (b.blocker_address = $1 AND b.blocked_address = CASE
-                          WHEN address_requester = $1 THEN address_requested ELSE address_requester END)
-                   OR (b.blocked_address = $1 AND b.blocker_address = CASE
-                          WHEN address_requester = $1 THEN address_requested ELSE address_requester END))
-            "#,
-        )
-        .bind(address.to_lowercase())
-        .fetch_all(&self.pool)
-        .await?;
-        Ok(rows)
     }
 
     /// One read behind every community-voice gate: the ACTIVE community's
@@ -1256,8 +1186,70 @@ impl Db {
     }
 }
 
-/// [`Db::block_user_and_last`] on any executor (the pool, or the block's
-/// transaction).
+/// Serializes friendship and block writes on one unordered pair until the
+/// transaction ends, so a probe and the write it decides stay consistent.
+/// The wait is bounded like the membership lock's.
+pub(crate) async fn lock_friendship_pair(
+    tx: &mut sqlx::PgConnection,
+    a: &str,
+    b: &str,
+) -> Result<(), DbError> {
+    sqlx::query("SET LOCAL lock_timeout = '750ms'")
+        .execute(&mut *tx)
+        .await?;
+    sqlx::query(
+        "SELECT pg_advisory_xact_lock(hashtextextended('social.friendship:' || LEAST($1, $2) || ':' || GREATEST($1, $2), 0))",
+    )
+    .bind(a.to_lowercase())
+    .bind(b.to_lowercase())
+    .execute(&mut *tx)
+    .await?;
+    Ok(())
+}
+
+/// [`Db::friendship_probe`] on any executor.
+pub(crate) async fn friendship_probe_on<'e, E>(
+    executor: E,
+    me: &str,
+    other: &str,
+) -> Result<FriendshipProbe, DbError>
+where
+    E: sqlx::Executor<'e, Database = sqlx::Postgres>,
+{
+    let row = sqlx::query(sqlx::AssertSqlSafe(format!(
+        r#"
+        SELECT f.id AS friendship_id, f.is_active AS is_active,
+               fa.action AS action, fa.acting_user AS acting_user,
+               EXISTS (SELECT 1 FROM social.blocks
+                       WHERE blocker_address = $1 AND blocked_address = $2) AS blocked,
+               EXISTS (SELECT 1 FROM social.blocks
+                       WHERE blocker_address = $2 AND blocked_address = $1) AS blocked_by
+        FROM (SELECT 1) AS one
+        LEFT JOIN LATERAL (
+          SELECT id, is_active FROM social.friendships
+          WHERE {PAIR_COND}
+          LIMIT 1
+        ) f ON TRUE
+        LEFT JOIN LATERAL (
+          SELECT action, acting_user FROM social.friendship_actions
+          WHERE friendship_id = f.id ORDER BY "timestamp" DESC, id DESC LIMIT 1
+        ) fa ON TRUE
+        "#
+    )))
+    .bind(me.to_lowercase())
+    .bind(other.to_lowercase())
+    .fetch_one(executor)
+    .await?;
+    Ok(FriendshipProbe {
+        last: row
+            .get::<Option<Uuid>, _>("friendship_id")
+            .map(|_| last_action_from_row(&row)),
+        blocked: row.get::<bool, _>("blocked"),
+        blocked_by: row.get::<bool, _>("blocked_by"),
+    })
+}
+
+/// Records a block and reads the previous action on the supplied executor.
 async fn block_and_last<'e, E>(
     executor: E,
     blocker: &str,
@@ -1293,7 +1285,7 @@ where
     ))
 }
 
-/// [`Db::unblock_user_and_last`] on any executor.
+/// Removes a block and reads the previous action on the supplied executor.
 async fn unblock_and_last<'e, E>(
     executor: E,
     blocker: &str,
@@ -1546,5 +1538,40 @@ impl Db {
     pub(crate) async fn expire_social_event_payloads(&self) -> Result<u64, DbError> {
         Ok(sqlx::query("DELETE FROM social.event_payloads WHERE id IN (SELECT id FROM social.event_payloads WHERE expires_at<=timezone('UTC',now()) ORDER BY expires_at,id LIMIT 64 FOR UPDATE SKIP LOCKED)")
             .execute(&self.pool).await?.rows_affected())
+    }
+}
+
+#[cfg(test)]
+mod preflight_plan_tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn wallet_indexes_support_social_voice_preflight() {
+        let Some(pool) = crate::db::scratch::pool(1).await else {
+            return;
+        };
+        let mut tx = pool.begin().await.unwrap();
+        sqlx::query("SET LOCAL enable_seqscan = off")
+            .execute(&mut *tx)
+            .await
+            .unwrap();
+        let sql = format!("EXPLAIN {}", private_voice_preflight_sql());
+        let plan: Vec<String> = sqlx::query_scalar(sqlx::AssertSqlSafe(sql))
+            .bind("caller")
+            .bind("callee")
+            .bind(now_naive())
+            .bind(now_naive())
+            .fetch_all(&mut *tx)
+            .await
+            .unwrap();
+        for index in [
+            "private_voice_chat_participants_address_idx",
+            "community_voice_chat_users_address_idx",
+        ] {
+            assert!(
+                plan.iter().filter(|line| line.contains(index)).count() >= 2,
+                "expected indexed probes for caller and callee: {plan:?}"
+            );
+        }
     }
 }

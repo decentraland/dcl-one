@@ -1,6 +1,6 @@
 import * as BABYLON from '@babylonjs/core';
-import type { IFuture } from 'fp-future';
-import future from 'fp-future';
+import type { IFuture } from '../../utils/future';
+import { future } from '../../utils/future';
 import type {
   ComponentDefinition,
   Entity,

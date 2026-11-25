@@ -5,10 +5,14 @@
 //! `/v2/addresses/{address}/contributions`) and the probes (`/ping`,
 //! `/ready`). The old handlers read the squid `parcel`/`estate`/`data`
 //! tables; v2 has no squid database, so the token id, the name and the
-//! estate membership come from the mirrored tile grid (upstream fills a
-//! tile's `name` and `tokenId` from the same LAND data), the token id is
+//! estate membership come from the built tile grid (which fills a tile's
+//! `name` and `tokenId` from the same LAND data), the token id is
 //! derived from the coordinates when the grid carries none, and the
-//! description is empty (the grid has no description column). The district
+//! description is empty (the grid has no description column). An estate the
+//! grid does not hold answers from the LAND index when that index proves it
+//! minted and holding no LAND (a dissolved estate, size 0), named by its
+//! latest Estate data document; that answer, and the 404 of an estate
+//! neither source holds, is not validated on the grid stamp. The district
 //! and contribution documents are upstream's vendored data at the revision
 //! production still serves (42 districts, 1,695 contributing addresses; the
 //! old crate and atlas-server `8b2c3620`, #142, ship them as `[]`/`{}` while
@@ -21,13 +25,14 @@ use std::sync::OnceLock;
 use alloy_primitives::U256;
 use axum::Json;
 use axum::extract::{Path, State};
-use axum::http::{HeaderMap, StatusCode};
+use axum::http::{HeaderMap, HeaderValue, StatusCode, header};
 use axum::response::{IntoResponse, Response};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
 use super::super::Shared;
 use super::{Grid, http_cache};
+use crate::land_authz::DissolvedEstate;
 
 #[derive(Debug, Clone, Serialize)]
 #[cfg_attr(feature = "ts", derive(ts_rs::TS), ts(export, export_to = "map/"))]
@@ -167,10 +172,6 @@ fn finalize(mut resp: Response, last: i64) -> Response {
     resp
 }
 
-fn not_ready() -> Response {
-    (StatusCode::SERVICE_UNAVAILABLE, "Not ready").into_response()
-}
-
 fn not_found() -> Response {
     (
         StatusCode::NOT_FOUND,
@@ -251,14 +252,31 @@ pub(crate) fn estate_nft(state: &Shared, grid: &Grid, id: &str) -> Option<NftMet
         .filter_map(|t| t.name.clone())
         .find(|n| !n.is_empty())
         .unwrap_or_default();
+    Some(estate_document(state, id, name, &coords))
+}
+
+/// An estate the LAND index proves minted and empty (the atlas's
+/// `buildDissolvedEstate`): its latest data document's name and
+/// description, size 0, no proximity.
+pub(crate) fn dissolved_estate_nft(
+    state: &Shared,
+    id: &str,
+    data: crate::land_authz::EstateData,
+) -> NftMetadata {
+    let mut nft = estate_document(state, id, data.name, &[]);
+    nft.description = data.description;
+    nft
+}
+
+fn estate_document(state: &Shared, id: &str, name: String, coords: &[(i32, i32)]) -> NftMetadata {
     let mut attributes = vec![NftAttribute {
         trait_type: "Size".into(),
         value: coords.len() as i64,
         display_type: "number".into(),
     }];
-    append_proximity(&mut attributes, &coords);
+    append_proximity(&mut attributes, coords);
     let s = &state.settings;
-    Some(NftMetadata {
+    NftMetadata {
         id: id.to_string(),
         name,
         description: String::new(),
@@ -272,24 +290,76 @@ pub(crate) fn estate_nft(state: &Shared, grid: &Grid, id: &str) -> Option<NftMet
             .map(|b| format!("{b}/contracts/{}/tokens/{id}", s.estate_contract_address)),
         background_color: "000000".into(),
         attributes,
-    })
+    }
 }
 
-fn with_grid(state: &Shared, headers: &HeaderMap, f: impl FnOnce(&Grid) -> Response) -> Response {
-    let last = state.map.last_updated_at();
-    if let Some(r) = http_cache::not_modified(
+/// A grid answer: 304 when the request's `If-Modified-Since` covers the
+/// grid stamp, else `resp` with that stamp as its validator.
+fn validated(headers: &HeaderMap, last: i64, resp: impl FnOnce() -> Response) -> Response {
+    match http_cache::not_modified(
         headers,
         last,
         http_cache::DEFAULT_MAX_AGE,
         http_cache::DEFAULT_SWR,
     ) {
-        return r;
+        Some(not_modified) => not_modified,
+        None => finalize(resp(), last),
     }
-    let resp = match state.map.snapshot() {
-        Some(grid) => f(&grid),
-        None => not_ready(),
+}
+
+/// A grid answer, or, without a grid, the unavailable envelope as it is:
+/// never a 304 or a cache policy, which would keep it past the first grid.
+fn with_grid(state: &Shared, headers: &HeaderMap, f: impl FnOnce(&Grid) -> Response) -> Response {
+    let Some(grid) = state.map.snapshot() else {
+        return state.map.unavailable();
     };
-    finalize(resp, last)
+    validated(headers, grid.last_updated_at, || f(&grid))
+}
+
+/// An estate id as the grid and the LAND index both spell it: the decimal
+/// of the number, so `0500` and `+500` name estate `500`. `None` when `id`
+/// is not a number.
+pub(crate) fn canonical_estate_id(id: &str) -> Option<String> {
+    id.parse::<i64>().ok().map(|n| n.to_string())
+}
+
+/// The document of estate `id` (canonical decimal). One the grid holds is a grid
+/// answer ([`validated`]). One it does not hold answers from the LAND index:
+/// 200 when dissolved, 404 otherwise. The grid stamp says nothing of the
+/// index, so that answer carries the cache policy without `Last-Modified`
+/// and is never 304. A 404 the index could not decide (none attached, not
+/// ready, a database error) is `no-store`: only a definite one (never
+/// minted, holding LAND) may be cached downstream.
+async fn estate_response(
+    state: &Shared,
+    headers: &HeaderMap,
+    last: i64,
+    grid: &Grid,
+    id: &str,
+) -> Response {
+    if let Some(nft) = estate_nft(state, grid, id) {
+        return validated(headers, last, || ok_nft(nft));
+    }
+    let dissolved = match state.land_authz.get() {
+        Some(land) => land.dissolved_estate(id).await,
+        None => DissolvedEstate::Unknown,
+    };
+    let mut resp = match dissolved {
+        DissolvedEstate::Dissolved(data) => ok_nft(dissolved_estate_nft(state, id, data)),
+        DissolvedEstate::NotDissolved => not_found(),
+        DissolvedEstate::Unknown => {
+            let mut resp = not_found();
+            resp.headers_mut()
+                .insert(header::CACHE_CONTROL, HeaderValue::from_static("no-store"));
+            return resp;
+        }
+    };
+    http_cache::apply_policy(
+        &mut resp,
+        http_cache::DEFAULT_MAX_AGE,
+        http_cache::DEFAULT_SWR,
+    );
+    resp
 }
 
 pub async fn get_parcel(
@@ -313,15 +383,16 @@ pub async fn get_estate(
     headers: HeaderMap,
     Path(id): Path<String>,
 ) -> Response {
-    with_grid(&state, &headers, |grid| {
-        if id.parse::<i64>().is_err() {
-            return (StatusCode::FORBIDDEN, "Invalid id").into_response();
-        }
-        match estate_nft(&state, grid, &id) {
-            Some(nft) => ok_nft(nft),
-            None => not_found(),
-        }
-    })
+    let Some(grid) = state.map.snapshot() else {
+        return state.map.unavailable();
+    };
+    let last = grid.last_updated_at;
+    let Some(id) = canonical_estate_id(&id) else {
+        return validated(&headers, last, || {
+            (StatusCode::FORBIDDEN, "Invalid id").into_response()
+        });
+    };
+    estate_response(&state, &headers, last, &grid, &id).await
 }
 
 /// A LAND token answers its parcel (immutable: the coordinates are the
@@ -331,7 +402,16 @@ pub async fn get_token(
     headers: HeaderMap,
     Path((address, id)): Path<(String, String)>,
 ) -> Response {
-    let last = state.map.last_updated_at();
+    let Some(grid) = state.map.snapshot() else {
+        return state.map.unavailable();
+    };
+    let last = grid.last_updated_at;
+    let addr = address.to_lowercase();
+    if addr == state.settings.estate_contract_address
+        && let Some(id) = canonical_estate_id(&id)
+    {
+        return estate_response(&state, &headers, last, &grid, &id).await;
+    }
     if let Some(r) = http_cache::not_modified(
         &headers,
         last,
@@ -340,10 +420,6 @@ pub async fn get_token(
     ) {
         return r;
     }
-    let Some(grid) = state.map.snapshot() else {
-        return finalize(not_ready(), last);
-    };
-    let addr = address.to_lowercase();
     if addr == state.settings.land_contract_address {
         let Some((x, y)) = decode_land_token_id(&id) else {
             return finalize(not_found(), last);
@@ -360,14 +436,6 @@ pub async fn get_token(
             }
             None => finalize(not_found(), last),
         };
-    }
-    if addr == state.settings.estate_contract_address && id.parse::<i64>().is_ok() {
-        return finalize(
-            estate_nft(&state, &grid, &id)
-                .map(ok_nft)
-                .unwrap_or_else(not_found),
-            last,
-        );
     }
     finalize(not_found(), last)
 }
@@ -437,13 +505,14 @@ pub async fn ready(State(state): State<Shared>) -> Response {
     if state.map.is_ready() {
         (StatusCode::OK, "ok").into_response()
     } else {
-        not_ready()
+        state.map.unavailable()
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use axum::http::header;
 
     #[test]
     fn land_token_ids_round_trip_with_the_contract_encoding() {
@@ -572,6 +641,260 @@ mod tests {
             json!([]),
             "the contributions capture's address has no rows"
         );
+    }
+
+    fn grid_with_estate(id: &str) -> Grid {
+        let tile: super::super::tiles::Tile = serde_json::from_value(json!({
+            "id": "1,1", "x": 1, "y": 1, "type": "owned", "top": false, "left": false,
+            "topLeft": false, "updatedAt": 0, "estateId": id, "name": "Kept"
+        }))
+        .unwrap();
+        Grid::from_tiles(
+            [("1,1".to_string(), tile)].into(),
+            1,
+            chrono::Utc::now().naive_utc(),
+        )
+    }
+
+    /// `/v2/estates/{id}` and the Estate registry's `/v2/contracts/.../tokens/{id}`.
+    async fn estate_and_token_responses(
+        state: &Shared,
+        id: &str,
+        headers: &HeaderMap,
+    ) -> [Response; 2] {
+        let estate = get_estate(State(state.clone()), headers.clone(), Path(id.into())).await;
+        let token = get_token(
+            State(state.clone()),
+            headers.clone(),
+            Path((
+                state.settings.estate_contract_address.to_uppercase(),
+                id.into(),
+            )),
+        )
+        .await;
+        [estate, token]
+    }
+
+    async fn estate_and_token(state: &Shared, id: &str) -> [(StatusCode, Value); 2] {
+        let body = |resp: Response| async move {
+            let status = resp.status();
+            let bytes = axum::body::to_bytes(resp.into_body(), 1 << 20)
+                .await
+                .unwrap();
+            (
+                status,
+                serde_json::from_slice(&bytes).unwrap_or(Value::Null),
+            )
+        };
+        let [estate, token] = estate_and_token_responses(state, id, &HeaderMap::new()).await;
+        [body(estate).await, body(token).await]
+    }
+
+    /// `If-Modified-Since` an hour ahead: the grid stamp never passes it.
+    fn revalidating() -> HeaderMap {
+        let ahead = chrono::Utc::now().timestamp_millis() + 3_600_000;
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            header::IF_MODIFIED_SINCE,
+            http_cache::format_http_date(ahead).parse().unwrap(),
+        );
+        headers
+    }
+
+    /// The grid stamp validates only what the grid answers: an estate it
+    /// holds is revalidated as 304, one it does not hold gets its full
+    /// answer without `Last-Modified`; with no LAND index attached that 404
+    /// decides nothing of the estate and is `no-store`.
+    #[tokio::test]
+    async fn only_a_grid_estate_is_revalidated_on_the_grid_stamp() {
+        let state = crate::api::tests_support::state_without_db().await;
+        state.map.set(grid_with_estate("500"));
+        for resp in estate_and_token_responses(&state, "500", &revalidating()).await {
+            assert_eq!(resp.status(), StatusCode::NOT_MODIFIED);
+            assert!(resp.headers().contains_key(header::LAST_MODIFIED));
+        }
+        for resp in estate_and_token_responses(&state, "500", &HeaderMap::new()).await {
+            assert_eq!(resp.status(), StatusCode::OK);
+            assert!(resp.headers().contains_key(header::LAST_MODIFIED));
+        }
+        for headers in [revalidating(), HeaderMap::new()] {
+            for resp in estate_and_token_responses(&state, "501", &headers).await {
+                assert_eq!(resp.status(), StatusCode::NOT_FOUND, "no LAND index");
+                assert!(!resp.headers().contains_key(header::LAST_MODIFIED));
+                assert_eq!(resp.headers()[header::CACHE_CONTROL], "no-store");
+            }
+        }
+    }
+
+    /// Every spelling of an estate's number answers that estate's document,
+    /// from the grid as from the LAND index; what is not a number keeps its
+    /// answer on each route.
+    #[tokio::test]
+    async fn an_estate_id_is_read_as_its_number() {
+        let state = crate::api::tests_support::state_without_db().await;
+        state.map.set(grid_with_estate("500"));
+        let canonical = estate_and_token(&state, "500").await;
+        for id in ["0500", "+500", "000500"] {
+            let answers = estate_and_token(&state, id).await;
+            for (status, body) in &answers {
+                assert_eq!(*status, StatusCode::OK, "{id}");
+                assert_eq!(body["id"], "500", "{id}");
+                assert_eq!(body["name"], "Kept", "{id}");
+            }
+            assert_eq!(answers, canonical, "{id}");
+        }
+        for id in ["abc", "5e2", "500 ", "99999999999999999999"] {
+            let [(estate, _), (token, _)] = estate_and_token(&state, id).await;
+            assert_eq!(estate, StatusCode::FORBIDDEN, "{id}");
+            assert_eq!(token, StatusCode::NOT_FOUND, "{id}");
+        }
+    }
+
+    /// Without a LAND index an estate the grid does not hold stays 404 on
+    /// both routes; one it holds answers 200.
+    #[tokio::test]
+    async fn an_estate_outside_the_grid_is_not_found_without_the_land_index() {
+        let state = crate::api::tests_support::state_without_db().await;
+        state.map.set(grid_with_estate("500"));
+        for (status, body) in estate_and_token(&state, "501").await {
+            assert_eq!(status, StatusCode::NOT_FOUND);
+            assert_eq!(body, json!({"ok": false, "error": "Not Found"}));
+        }
+        for (status, body) in estate_and_token(&state, "500").await {
+            assert_eq!(status, StatusCode::OK);
+            assert_eq!(body["name"], "Kept");
+            assert_eq!(body["attributes"][0]["value"], 1);
+        }
+    }
+
+    /// atlas-server `handlers.ts` `estateRequestHandler`/`tokenRequestHandler`
+    /// and `buildDissolvedEstate`: an estate the grid does not hold answers
+    /// 200 when the LAND index proves it minted and empty, named by its
+    /// latest data document (empty strings without one); never minted or
+    /// still holding LAND answers a cacheable 404, an unready index a
+    /// `no-store` one.
+    #[tokio::test]
+    async fn a_dissolved_estate_answers_from_the_land_index() {
+        let Some(db) = crate::api::tests_support::scratch_database().await else {
+            return;
+        };
+        let mut settings = crate::api::Settings::for_tests(crate::api::Sources::defaults());
+        settings.map_image_base_url = "https://img.example/v2".into();
+        settings.map_external_base_url = Some("https://market.example".into());
+        let state = crate::api::tests::node_on_pool_state(settings, db.pool.clone()).await;
+        state.map.set(grid_with_estate("500"));
+        let land_settings = crate::land_authz::Settings::for_tests();
+        let estate = land_settings.estate_registry.clone();
+        sqlx::query(
+            "INSERT INTO land_authz.token_right (token_address, token_id, updated_block, updated_log) \
+             VALUES ($1, 501, 1, 0), ($1, 502, 1, 1), ($1, 503, 1, 3)",
+        )
+        .bind(&estate)
+        .execute(&db.pool)
+        .await
+        .unwrap();
+        sqlx::query(
+            "INSERT INTO land_authz.estate_land (land_token_id, estate_token_id, updated_block, updated_log) \
+             VALUES (7, 502, 1, 2)",
+        )
+        .execute(&db.pool)
+        .await
+        .unwrap();
+        sqlx::query(
+            "INSERT INTO land_authz.estate_data_event (block_number, log_index, token_address, estate_id, name, description) \
+             VALUES (1, 4, $1, 501, 'First', 'first words'), (1, 5, $1, 501, 'Dissolved', 'Once an estate')",
+        )
+        .bind(&estate)
+        .execute(&db.pool)
+        .await
+        .unwrap();
+        assert!(state.attach_land_authz(std::sync::Arc::new(
+            crate::land_authz::LandAuthzState::new(
+                db.pool.clone(),
+                crate::http::Outbound::for_tests(),
+                land_settings.clone(),
+            )
+        )));
+        for (status, _) in estate_and_token(&state, "501").await {
+            assert_eq!(status, StatusCode::NOT_FOUND, "the index is not ready");
+        }
+        for resp in estate_and_token_responses(&state, "501", &revalidating()).await {
+            assert_eq!(
+                resp.status(),
+                StatusCode::NOT_FOUND,
+                "an unready index is never revalidated on the grid stamp"
+            );
+            assert!(!resp.headers().contains_key(header::LAST_MODIFIED));
+            assert_eq!(
+                resp.headers()[header::CACHE_CONTROL],
+                "no-store",
+                "a 404 the index could not decide is not cached"
+            );
+        }
+        sqlx::query("INSERT INTO land_authz.index_cursor (network, land_registry, estate_registry, last_block, folded_block, folded_at, full_replay_started) VALUES ($1, $2, $3, 1, 1, timezone('UTC', now()), true)")
+            .bind(&land_settings.network)
+            .bind(&land_settings.land_registry)
+            .bind(&estate)
+            .execute(&db.pool)
+            .await
+            .unwrap();
+        for (id, name, description) in [("501", "Dissolved", "Once an estate"), ("503", "", "")] {
+            for (status, body) in estate_and_token(&state, id).await {
+                assert_eq!(status, StatusCode::OK, "{id}");
+                assert_eq!(
+                    body,
+                    json!({
+                        "id": id,
+                        "name": name,
+                        "description": description,
+                        "image": format!("https://img.example/v2/estates/{id}/map.png?size=24&width=1024&height=1024"),
+                        "external_url": format!("https://market.example/contracts/{estate}/tokens/{id}"),
+                        "background_color": "000000",
+                        "attributes": [{"trait_type": "Size", "value": 0, "display_type": "number"}],
+                    })
+                );
+            }
+        }
+        // Another spelling of a dissolved estate's number is that estate.
+        let canonical = estate_and_token(&state, "501").await;
+        for id in ["0501", "+501"] {
+            let answers = estate_and_token(&state, id).await;
+            assert_eq!(answers[0].0, StatusCode::OK, "{id}");
+            assert_eq!(answers[0].1["id"], "501", "{id}");
+            assert_eq!(answers, canonical, "{id}");
+        }
+        // Holding LAND, and never minted: a definite 404, cached as any
+        // other answer of the index.
+        for id in ["502", "999"] {
+            for resp in estate_and_token_responses(&state, id, &revalidating()).await {
+                assert_eq!(resp.status(), StatusCode::NOT_FOUND, "{id}");
+                assert!(!resp.headers().contains_key(header::LAST_MODIFIED));
+                assert_eq!(
+                    resp.headers()[header::CACHE_CONTROL],
+                    "max-age=120, s-maxage=120, stale-while-revalidate=180, public",
+                    "{id}"
+                );
+            }
+        }
+        // The grid stamp says nothing of the index: a conditional request
+        // gets the whole document, without a validator.
+        for resp in estate_and_token_responses(&state, "501", &revalidating()).await {
+            assert_eq!(resp.status(), StatusCode::OK);
+            assert!(!resp.headers().contains_key(header::LAST_MODIFIED));
+            assert_eq!(
+                resp.headers()[header::CACHE_CONTROL],
+                "max-age=120, s-maxage=120, stale-while-revalidate=180, public"
+            );
+            let bytes = axum::body::to_bytes(resp.into_body(), 1 << 20)
+                .await
+                .unwrap();
+            let body: Value = serde_json::from_slice(&bytes).unwrap();
+            assert_eq!(body["name"], "Dissolved");
+        }
+        for resp in estate_and_token_responses(&state, "500", &revalidating()).await {
+            assert_eq!(resp.status(), StatusCode::NOT_MODIFIED, "a grid estate");
+        }
+        db.teardown().await;
     }
 
     /// The wire shape the old parity test pinned (`fixtures/nft_parcel.json`).

@@ -11,6 +11,101 @@ function error(...args) {
 var audioContext = null;
 var microphonePermission = "denied";
 const roomPlayback = new WeakMap();
+// Stream and transmitter audio elements whose play() the browser refused, with their room.
+const refusedStreams = new Map();
+const warnedRooms = new WeakSet();
+var gestureListenerArmed = false;
+
+// The events that can carry user activation: a touch or pen grants it on release, a mouse on
+// press, a key on press (Escape excepted).
+const GESTURE_EVENTS = ["pointerdown", "pointerup", "touchend", "keydown", "click"];
+
+/**
+ * Plays a stream's audio element (`TrackSubscribed`). A refusal by the autoplay policy is
+ * retried on every later gesture until it plays, as the media host does for scene media
+ * (`crates/media/src/html/host.rs`). The voice rigs' elements stay muted and are not played
+ * here: their sound goes through the panner and gain graph.
+ * @param {livekit.Room} room
+ * @param {livekit.RemoteAudioTrack} track
+ */
+function play_stream_audio(room, track) {
+    const element = track.audioElement;
+    if (!element || !roomPlayback.get(room)?.has(track)) return;
+    Promise.resolve()
+        .then(() => element.play())
+        .then(
+            () => {
+                if (refusedStreams.delete(track)) {
+                    log(`Stream audio ${track.sid} started.`);
+                    update_gesture_listener();
+                }
+            },
+            (err) => {
+                // a room dropped or a track rebuilt meanwhile is not retried
+                const current = roomPlayback.get(room)?.has(track) && track.audioElement === element;
+                if (current && err?.name === "NotAllowedError") {
+                    if (!warnedRooms.has(room)) {
+                        warnedRooms.add(room);
+                        warn(`Audio playback blocked in room ${room.name}; retrying on the next user gesture.`);
+                    }
+                    refusedStreams.set(track, room);
+                } else {
+                    refusedStreams.delete(track);
+                }
+                update_gesture_listener();
+            },
+        );
+}
+
+function forget_refused_stream(track) {
+    if (refusedStreams.delete(track)) update_gesture_listener();
+}
+
+/**
+ * The AudioContext of the nearby voice rigs. While it is not running (created before a user
+ * gesture, or suspended by the browser later) every gesture tries to resume it.
+ */
+function shared_audio_context() {
+    if (!audioContext) {
+        audioContext = new (window.AudioContext || window.webkitAudioContext)();
+        audioContext.addEventListener?.("statechange", update_gesture_listener);
+    }
+    update_gesture_listener();
+    return audioContext;
+}
+
+function audio_context_waiting() {
+    return !!audioContext && audioContext.state !== "running" && audioContext.state !== "closed";
+}
+
+function on_gesture() {
+    for (const [track, room] of refusedStreams) {
+        if (roomPlayback.get(room)?.has(track)) {
+            play_stream_audio(room, track);
+        } else {
+            refusedStreams.delete(track);
+        }
+    }
+    if (audio_context_waiting()) {
+        audioContext.resume().then(update_gesture_listener, (err) => warn("Could not resume the audio context:", err));
+    }
+    update_gesture_listener();
+}
+
+/** Keeps one page gesture listener registered while any audio waits for user activation. */
+function update_gesture_listener() {
+    if (typeof document === "undefined") return;
+    const wanted = refusedStreams.size > 0 || audio_context_waiting();
+    if (wanted === gestureListenerArmed) return;
+    gestureListenerArmed = wanted;
+    for (const event of GESTURE_EVENTS) {
+        if (wanted) {
+            document.addEventListener(event, on_gesture, true);
+        } else {
+            document.removeEventListener(event, on_gesture, true);
+        }
+    }
+}
 
 /**
  * @param {function} on_change called with the permission state now and whenever it changes
@@ -44,11 +139,17 @@ export function microphonePermissionState() {
 }
 
 /**
- * Prompts for microphone permission
+ * Prompts for microphone permission and stops the stream it opens, so the prompt leaves no
+ * capture running
  */
 export function promptMicrophonePermission() {
     if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
-        navigator.mediaDevices.getUserMedia({ audio: true });
+        Promise.resolve()
+            .then(() => navigator.mediaDevices.getUserMedia({ audio: true }))
+            .then(
+                (stream) => stream.getTracks().forEach((track) => track.stop()),
+                (err) => warn("microphone permission prompt failed", err),
+            );
     }
 }
 
@@ -258,14 +359,11 @@ function set_room_event_handler(room, handler, tracks) {
             }
             tracks.add(remote_track);
             if (remote_track.kind === "audio") {
-                if (!audioContext) {
-                    audioContext = new (window.AudioContext || window.webkitAudioContext)();
-                }
-
                 if (remote_participant.identity.endsWith("-streamer") || remote_participant.identity.startsWith("stream:") || remote_participant.identity.startsWith("presentation-bot:")) {
                     const audioElement = remote_track.attach();
                     audioElement.volume = 0;
                     remote_track.audioElement = audioElement;
+                    play_stream_audio(room, remote_track);
                 } else {
                     track_rig_new(remote_track);
                 }
@@ -345,6 +443,16 @@ export async function local_participant_publish_data(local_participant, payload,
  */
 export async function local_participant_publish_track(local_participant, local_track, track_publishing_option) {
     return await local_participant.publishTrack(local_track, track_publishing_option);
+}
+
+/**
+ * Whether the room's token lets this participant publish at all. A listen-only
+ * room (a stage, a world the token admits as audience) says no, and the host
+ * then refuses the publish request (`src/livekit/web/host.rs`), so no track of
+ * this participant reaches the SDK.
+ */
+export function local_participant_can_publish(local_participant) {
+    return local_participant.permissions?.canPublish ?? true;
 }
 
 /**
@@ -519,8 +627,11 @@ export function local_audio_track_set_enabled(track, enabled) {
 }
 
 export function local_audio_track_stop(track) {
-    track.mediaStreamTrack.enabled = false;
-    track.stop();
+    try {
+        track.mediaStreamTrack.enabled = false;
+    } finally {
+        track.stop();
+    }
 }
 
 /**
@@ -536,16 +647,17 @@ function track_rig_new(remote_track) {
 
     // use the track internal stream in playback
     const stream = new MediaStream([remote_track.mediaStreamTrack]);
-    const source = audioContext.createMediaStreamSource(stream);
-    const pannerNode = audioContext.createStereoPanner();
-    const gainNode = audioContext.createGain();
+    const context = shared_audio_context();
+    const source = context.createMediaStreamSource(stream);
+    const pannerNode = context.createStereoPanner();
+    const gainNode = context.createGain();
     // The engine applies playback gain after subscription arrives.
     gainNode.gain.value = 0;
 
     // Connect the audio graph: source -> panner -> gain -> destination
     source.connect(pannerNode);
     pannerNode.connect(gainNode);
-    gainNode.connect(audioContext.destination);
+    gainNode.connect(context.destination);
 
     // Store the nodes for later control
     remote_track.trackRig = {
@@ -578,6 +690,7 @@ function track_rig_drop(remote_track) {
 }
 
 function drop_track_playback(track) {
+    forget_refused_stream(track);
     track_rig_drop(track);
     for (const key of ["audioElement", "videoElement"]) {
         const element = track[key];
@@ -600,9 +713,8 @@ export function remote_track_pan_and_volume(remote_track, pan, volume) {
     const track_rig = remote_track.trackRig;
     if (!track_rig) return;
     // kira's 0 (left) .. 1 (right) to the stereo panner's -1 .. 1
-    track_rig.pannerNode.pan.value = Math.max(-1, Math.min(1, pan * 2 - 1));
-    // Volume should be between 0 and 1 (or higher for boost)
-    track_rig.gainNode.gain.value = Math.max(0, volume);
+    track_rig.pannerNode.pan.value = clamp(pan * 2 - 1, -1, 1, 0);
+    track_rig.gainNode.gain.value = clamp(volume, 0, MAX_GAIN, 0);
 
     // nodes.analyser.getByteTimeDomainData(nodes.dataArray);
 
@@ -625,8 +737,17 @@ export function remote_track_pan_and_volume(remote_track, pan, volume) {
  */
 export function remote_audio_track_set_volume(remote_audio_track, volume) {
     if (remote_audio_track.trackRig) {
-        remote_audio_track.trackRig.gainNode.gain.value = Math.max(0, volume);
+        remote_audio_track.trackRig.gainNode.gain.value = clamp(volume, 0, MAX_GAIN, 0);
     } else if (remote_audio_track.audioElement) {
-        remote_audio_track.setVolume(volume);
+        // HTMLMediaElement.volume throws outside 0..1
+        remote_audio_track.setVolume(clamp(volume, 0, 1, 0));
     }
+}
+
+// Gain may boost above 1, but never without bound.
+const MAX_GAIN = 4;
+
+// AudioParam and element setters throw on non-finite values; those fall back to `otherwise`.
+function clamp(value, min, max, otherwise) {
+    return Number.isFinite(value) ? Math.max(min, Math.min(max, value)) : otherwise;
 }

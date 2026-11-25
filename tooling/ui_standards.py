@@ -4,8 +4,47 @@
 Best effort: a pass means no CSS-in-JS import or new same-name component
 stylesheet was detected in the changed files, not that they follow every rule
 in docs/ui-standards.md.
+
+`--tokens PATH...` is a report instead of a check (exit 0): for every stylesheet
+and CSS Module under the given paths it counts the raw colour literals (hex,
+rgb/rgba, hsl/hsla and named colours other than transparent, currentColor and
+inherit), the px lengths equal to a `--dcl-space-*` or `--dcl-radius-*` token,
+the `font-family` declarations, the `var(--dcl-` uses and the `no token` drift
+comments, then prints the totals. It measures how far a surface has moved onto
+the shared foundations (docs/ui-standards.md, "Verification").
+
+`--token-floor` is a check: for every stylesheet under FLOOR_PATHS it fails when
+the `var(--dcl-` uses drop below, or the `var()` uses of an apps/ui3
+atoms/primitives.css property rise above, what tooling/ui-token-floor.json
+records (a stylesheet it does not list may use no primitives property), and
+when the file records a stylesheet that is not there, so a move or a removal
+is a reviewed change of the floor. `--write-token-floor` records the current
+counts after a deliberate change; it leaves out a stylesheet with no use of
+either kind, which is the floor of an unlisted one.
+
+`--shared-imports` is a check over the whole tree: a script under apps/, library/
+(outside library/ui itself) or tooling/ that names a `@dcl/one-ui/<path>` module
+fails, because shared UI comes only from the `@dcl/one-ui` entry
+(docs/ui-standards.md, "Shared UI: library/ui"). Stylesheets (`.css`) keep their
+paths. The in-world Shop and HUD UI (`@dcl/one-ui/apps/shop/`, `apps/hud/`) are
+not exported yet: they resolve their host's aliases, which the entry cannot.
+A script under apps/ that imports a library/ui module by a relative path
+(`import`, `export ... from`, `import()`, `require()`, `vi.mock()`) fails the same
+way; stylesheets and the Node-only Figma review tooling listed in
+SHARED_RELATIVE_TOOLING keep their paths.
+
+`--kit-ceiling` is a check: for every component kit under KIT_PATHS (app-owned
+kits whose consumers can already import library/ui/components) it fails when the
+number of tracked component files differs from what tooling/ui-kit-ceiling.json
+records, and when that file records a higher ceiling than the base revision's
+(`--base`, default: the merge base with origin/main). A kit may only shrink, and
+a smaller kit lowers its ceiling in the same change: `--write-kit-ceiling`
+records the current counts and refuses one above the recorded or the base
+ceiling (docs/adr/2026-11-24-library-ui-single-source.md).
 """
 import argparse
+import json
+import posixpath
 import re
 import subprocess
 import sys
@@ -336,11 +375,363 @@ def check(base='HEAD', staged=False):
     return issues
 
 
+SHARED_IMPORT_ROOTS = ('apps/', 'library/', 'tooling/')
+SHARED_IMPORT_EXTENSIONS = SCRIPT_EXTENSIONS + ('.mts', '.cts')
+SHARED_UI_DEEP = re.compile(r'^@dcl/one-ui/(?!apps/(?:shop|hud)/)(?!\S*\.css(?:\?\S*)?$)[\w.-]\S*$')
+# Preserve the isolated lazy chunk and mock the exact module that LivePromo loads.
+LAZY_ANIMATED_BACKGROUND = '@dcl/one-ui/components/AnimatedBackground/AnimatedBackground'
+SHARED_IMPORT_KEPT = frozenset(
+    (f'apps/ui3/src/shop/discovery/components/{name}', LAZY_ANIMATED_BACKGROUND)
+    for name in ('LivePromo.tsx', 'LivePromo.test.tsx')
+) | {
+    ('apps/creator-hub/packages/inspector/src/components/ui/Tooltip.ts',
+     '@dcl/one-ui/components/Tooltip/Tooltip'),
+}
+
+
+# library/ui files apps/ may import by relative path: Node-only Figma review tooling, not UI, which the entry does
+# not export (library/ui/package.json, "Node-only Figma tooling in figma/").
+SHARED_RELATIVE_TOOLING = frozenset({
+    'library/ui/figma/review/scripts/capture-browser.mjs',  # the headless browser launcher of the capture tests
+})
+STYLESHEET_SPECIFIER = re.compile(r'\.css(?:\?\S*)?$')
+
+
+def module_specifiers(text):
+    """The string literals in source text that name a module: import/export ... from, side-effect import, import(),
+    require() and vi.mock()/vi.doMock(). Comments are dropped and other strings (a path for fs, a test fixture) are
+    not specifiers."""
+    items = tokens(text)
+    found = []
+    for index, (kind, value) in enumerate(items):
+        if kind != 'string':
+            continue
+        before = [item[1] for item in items[max(0, index - 4):index]]
+        if before[-1:] in (['from'], ['import']):
+            found.append(value)
+        elif before[-1:] == ['('] and (before[-2:-1] in (['import'], ['require'])
+                                       or before[-4:-1] in (['vi', '.', 'mock'], ['vi', '.', 'doMock'])):
+            found.append(value)
+    return found
+
+
+def relative_shared_imports(name, text):
+    """The relative specifiers in a file's source that reach into library/ui for a module other than a stylesheet or
+    the listed tooling."""
+    found = []
+    for specifier in module_specifiers(text):
+        if not specifier.startswith(('./', '../')) or STYLESHEET_SPECIFIER.search(specifier):
+            continue
+        target = posixpath.normpath(posixpath.join(posixpath.dirname(name), specifier.split('?')[0]))
+        if (target == 'library/ui' or target.startswith('library/ui/')) and target not in SHARED_RELATIVE_TOOLING:
+            found.append(specifier)
+    return found
+
+
+def deep_shared_imports(text):
+    """The @dcl/one-ui/<path> specifiers in source text that name shared code, comments excluded."""
+    return [value for kind, value in tokens(text) if kind == 'string' and SHARED_UI_DEEP.match(value)]
+
+
+def shared_import_issues(paths, read):
+    """One issue per file in scope that imports shared UI by path instead of from @dcl/one-ui."""
+    issues = []
+    for name in sorted(paths):
+        if (not name.startswith(SHARED_IMPORT_ROOTS) or name.startswith('library/ui/')
+                or not name.endswith(SHARED_IMPORT_EXTENSIONS)):
+            continue
+        text = read(name)
+        if name.startswith('apps/') and 'library/ui' in text:
+            for specifier in relative_shared_imports(name, text):
+                issues.append(f"{name}: import {specifier!r} from '@dcl/one-ui' instead")
+        if '@dcl/one-ui/' not in text:
+            continue
+        for specifier in deep_shared_imports(text):
+            if (name, specifier) in SHARED_IMPORT_KEPT:
+                continue
+            issues.append(f"{name}: import {specifier!r} from '@dcl/one-ui' instead")
+    return issues
+
+
+TOKENS_CSS = ROOT / 'library' / 'ui' / 'foundations' / 'spacing' / 'spacing.css'
+SKIPPED_DIRECTORIES = {'node_modules', 'build', 'dist', '.react-router'}
+# The CSS named colours, less the keywords that are not a literal value (transparent, currentColor, inherit).
+NAMED_COLOURS = frozenset("""
+aliceblue antiquewhite aqua aquamarine azure beige bisque black blanchedalmond blue blueviolet brown burlywood
+cadetblue chartreuse chocolate coral cornflowerblue cornsilk crimson cyan darkblue darkcyan darkgoldenrod darkgray
+darkgreen darkgrey darkkhaki darkmagenta darkolivegreen darkorange darkorchid darkred darksalmon darkseagreen
+darkslateblue darkslategray darkslategrey darkturquoise darkviolet deeppink deepskyblue dimgray dimgrey dodgerblue
+firebrick floralwhite forestgreen fuchsia gainsboro ghostwhite gold goldenrod gray green greenyellow grey honeydew
+hotpink indianred indigo ivory khaki lavender lavenderblush lawngreen lemonchiffon lightblue lightcoral lightcyan
+lightgoldenrodyellow lightgray lightgreen lightgrey lightpink lightsalmon lightseagreen lightskyblue lightslategray
+lightslategrey lightsteelblue lightyellow lime limegreen linen magenta maroon mediumaquamarine mediumblue
+mediumorchid mediumpurple mediumseagreen mediumslateblue mediumspringgreen mediumturquoise mediumvioletred
+midnightblue mintcream mistyrose moccasin navajowhite navy oldlace olive olivedrab orange orangered orchid
+palegoldenrod palegreen paleturquoise palevioletred papayawhip peachpuff peru pink plum powderblue purple
+rebeccapurple red rosybrown royalblue saddlebrown salmon sandybrown seagreen seashell sienna silver skyblue
+slateblue slategray slategrey snow springgreen steelblue tan teal thistle tomato turquoise violet wheat white
+whitesmoke yellow yellowgreen
+""".split())
+CSS_COMMENT = re.compile(r'/\*.*?\*/', re.S)
+# A declaration: a property (custom properties included) and its value, up to the next ; { or }.
+DECLARATION = re.compile(r'(?<![\w-])((?:--)?[\w-]+)\s*:\s*([^;{}]*)')
+QUOTED_OR_URL = re.compile(r'url\([^)]*\)|"(?:\\.|[^"\\])*"|\'(?:\\.|[^\'\\])*\'')
+VAR_NAME = re.compile(r'var\(\s*--[\w-]+')
+HEX_COLOUR = re.compile(r'#[0-9a-fA-F]{3,8}\b')
+FUNCTION_COLOUR = re.compile(r'\b(?:rgba?|hsla?)\(')
+WORD = re.compile(r'[A-Za-z]+')
+PX_LENGTH = re.compile(r'(?<![\w.-])(\d+(?:\.\d+)?)px\b')
+TOKEN_USE = re.compile(r'var\(\s*--dcl-')
+TOKEN_LENGTH = re.compile(r'--dcl-(?:space|radius)-[\w-]+:\s*(\d+(?:\.\d+)?)px')
+COLUMNS = ('colours', 'lengths', 'fonts', 'tokens', 'drift')
+HEADINGS = ('colour literals', 'token px', 'font-family', 'var(--dcl-', 'no token')
+
+
+def token_lengths(css=None):
+    """The px values of the --dcl-space-* and --dcl-radius-* tokens, read from the foundations' spacing.css."""
+    text = TOKENS_CSS.read_text(encoding='utf-8') if css is None else css
+    return {float(value) for value in TOKEN_LENGTH.findall(text)}
+
+
+def colour_literals(value):
+    """Count the raw colours in a declaration value: hex, rgb()/hsl() calls and named colours."""
+    value = VAR_NAME.sub('var(', QUOTED_OR_URL.sub(' ', value))
+    named = sum(1 for word in WORD.findall(value) if word.lower() in NAMED_COLOURS)
+    return len(HEX_COLOUR.findall(value)) + len(FUNCTION_COLOUR.findall(value)) + named
+
+
+def stylesheet_report(text, lengths):
+    """Per-stylesheet counts: colour literals, token-equal px lengths, font-family declarations, token uses, drift comments."""
+    body = CSS_COMMENT.sub(' ', text)
+    counts = {'colours': 0, 'lengths': 0, 'fonts': 0, 'tokens': len(TOKEN_USE.findall(body)),
+              'drift': sum(1 for comment in CSS_COMMENT.findall(text) if 'no token' in comment.lower())}
+    for prop, value in DECLARATION.findall(body):
+        if prop == 'font-family':
+            counts['fonts'] += 1
+        counts['colours'] += colour_literals(value)
+        counts['lengths'] += sum(1 for px in PX_LENGTH.findall(QUOTED_OR_URL.sub(' ', value)) if float(px) in lengths)
+    return counts
+
+
+def stylesheets(paths):
+    """Every .css file under the given files and directories, in path order, skipping build output."""
+    result = set()
+    for given in paths:
+        path = ROOT / given
+        if path.is_file():
+            if path.suffix == '.css':
+                result.add(path)
+            continue
+        for file in path.rglob('*.css'):
+            if not SKIPPED_DIRECTORIES.intersection(file.relative_to(path).parts):
+                result.add(file)
+    return sorted(result)
+
+
+def relative(path):
+    try:
+        return path.relative_to(ROOT).as_posix()
+    except ValueError:
+        return path.as_posix()
+
+
+def tokens_report(paths, lengths=None):
+    """The --tokens report as lines: one per stylesheet, then the totals."""
+    lengths = token_lengths() if lengths is None else lengths
+    rows = [(relative(file), stylesheet_report(file.read_text(encoding='utf-8', errors='replace'), lengths))
+            for file in stylesheets(paths)]
+    rows.append((f'total ({len(rows)} files)', {column: sum(counts[column] for _, counts in rows) for column in COLUMNS}))
+    width = max(len(name) for name, _ in rows)
+    lines = [' '.join([' ' * width] + [heading.rjust(15) for heading in HEADINGS]).rstrip()]
+    for name, counts in rows:
+        lines.append(' '.join([name.ljust(width)] + [str(counts[column]).rjust(15) for column in COLUMNS]))
+    return lines
+
+
+FLOOR_FILE = ROOT / 'tooling' / 'ui-token-floor.json'
+PRIMITIVES_CSS = ROOT / 'apps' / 'ui3' / 'src' / 'atoms' / 'primitives.css'
+# The parity pages, their chrome and the shared components: surfaces that have moved onto library/ui.
+FLOOR_PATHS = ('apps/sites/src/features', 'apps/sites/src/pages', 'apps/ui3/src/web', 'apps/ui3/src/explorer/pages',
+               'apps/ui3/src/landings', 'library/ui/components', 'library/ui/apps/sites/profile',
+               'library/ui/apps/sites/CopyAddress.module.css', 'library/ui/apps/sites/cast',
+               'library/ui/apps/sites/social')
+PROPERTY_DEFINITION = re.compile(r'(?<![\w-])(--[\w-]+)\s*:')
+VAR_USE = re.compile(r'var\(\s*(--[\w-]+)')
+
+
+def primitive_names(css=None):
+    """The custom properties apps/ui3 atoms/primitives.css defines."""
+    text = PRIMITIVES_CSS.read_text(encoding='utf-8') if css is None else css
+    return set(PROPERTY_DEFINITION.findall(CSS_COMMENT.sub(' ', text)))
+
+
+def floor_counts(text, primitives):
+    """A stylesheet's var(--dcl- uses and its var() uses of a primitives property."""
+    body = CSS_COMMENT.sub(' ', text)
+    return {'tokens': len(TOKEN_USE.findall(body)),
+            'primitives': sum(1 for name in VAR_USE.findall(body) if name in primitives)}
+
+
+def current_floor(primitives=None):
+    primitives = primitive_names() if primitives is None else primitives
+    return {relative(file): floor_counts(file.read_text(encoding='utf-8', errors='replace'), primitives)
+            for file in stylesheets(FLOOR_PATHS)}
+
+
+def recorded_floor(current):
+    """The floor to write: every stylesheet that uses a token or a primitives property."""
+    return {name: counts for name, counts in current.items() if any(counts.values())}
+
+
+def floor_issues(floor, current):
+    """Each stylesheet whose token uses fell below, or whose primitives uses rose above, its floor,
+    and each floor entry whose stylesheet is gone."""
+    issues = [f'{name}: the floor records a stylesheet that is not there; run --write-token-floor'
+              for name in sorted(floor.keys() - current.keys())]
+    for name, counts in sorted(current.items()):
+        recorded = floor.get(name, {'tokens': 0, 'primitives': 0})
+        if counts['tokens'] < recorded['tokens']:
+            issues.append(f"{name}: {counts['tokens']} var(--dcl- uses, the floor is {recorded['tokens']}")
+        if counts['primitives'] > recorded['primitives']:
+            issues.append(f"{name}: {counts['primitives']} uses of atoms/primitives.css properties, "
+                          f"the ceiling is {recorded['primitives']}")
+    return issues
+
+
+KIT_FILE = 'tooling/ui-kit-ceiling.json'
+# App-owned component kits that library/ui/components replaces, and whose consumers can already import
+# @dcl/one-ui. The apps/ui3 atoms, the Explorer HUD's kit and the inspector's join when the surfaces that
+# build from them can (docs/adr/2026-11-24-library-ui-single-source.md).
+KIT_PATHS = ('apps/ui3/src/components', 'library/ui/apps/sites/shared')
+KIT_TEST = re.compile(r'\.(?:test|spec|stories)\.[jt]sx$')
+
+
+def kit_counts(files, paths=KIT_PATHS):
+    """The number of component files (.tsx and .jsx, tests and stories aside) among the given paths under each kit."""
+    components = [name for name in files if name.endswith(COMPONENT_EXTENSIONS) and not KIT_TEST.search(name)]
+    return {kit: sum(1 for name in components if name.startswith(kit + '/')) for kit in paths}
+
+
+def tracked_kit_files(paths=KIT_PATHS):
+    """The tracked files under the kits that are in the working tree, so the count is what CI sees."""
+    return sorted(name for name in names(('ls-files',), '--', *paths) if (ROOT / name).is_file())
+
+
+def read_kit_ceiling(text):
+    """The recorded ceiling, or ValueError when it is not an object of whole, non-negative counts."""
+    ceiling = json.loads(text)
+    if not isinstance(ceiling, dict) or not all(
+            type(count) is int and count >= 0 for count in ceiling.values()):
+        raise ValueError('expected an object that maps each kit path to a whole number')
+    return ceiling
+
+
+def base_kit_ceiling(base):
+    """The ceiling the base revision records, or None when it records none."""
+    try:
+        text = git('show', f'{base}:{KIT_FILE}')
+    except subprocess.CalledProcessError:
+        return None
+    return read_kit_ceiling(text)
+
+
+def kit_issues(ceiling, current):
+    """Each kit that grew above its ceiling, each kit that shrank without lowering it, and each ceiling
+    entry that names no kit."""
+    issues = [f'{name}: the ceiling records a kit that is not in KIT_PATHS; run --write-kit-ceiling'
+              for name in sorted(ceiling.keys() - current.keys())]
+    for name, count in sorted(current.items()):
+        recorded = ceiling.get(name, 0)
+        if count > recorded:
+            issues.append(f'{name}: {count} component files, the ceiling is {recorded}; '
+                          'add shared components to library/ui/components instead')
+        elif count < recorded:
+            issues.append(f'{name}: {count} component files, the ceiling is {recorded}; '
+                          'lower it with --write-kit-ceiling')
+    return issues
+
+
+def raised_ceilings(limits, values):
+    """Each kit whose value is above the limit recorded for it. A kit without a limit is new and passes."""
+    return [f'{name}: {value} is above the recorded ceiling of {limits[name]}; a ceiling is never raised'
+            for name, value in sorted(values.items()) if name in limits and value > limits[name]]
+
+
+def kit_ceiling(base, write=False):
+    """The issues of the kit ceiling check against the working tree and the base revision. With `write`,
+    record the current counts instead when none of them is above the recorded or the base ceiling."""
+    file = ROOT / KIT_FILE
+    recorded = read_kit_ceiling(file.read_text(encoding='utf-8')) if file.exists() else None
+    earlier = base_kit_ceiling(base) or {}
+    current = kit_counts(tracked_kit_files())
+    if write:
+        limits = dict(earlier)
+        for name, count in (recorded or {}).items():
+            limits[name] = min(count, limits.get(name, count))
+        issues = raised_ceilings(limits, current)
+        if not issues:
+            file.write_text(json.dumps(current, indent=2, sort_keys=True) + '\n', encoding='utf-8')
+        return issues
+    if recorded is None:
+        raise ValueError(f'{KIT_FILE} is missing')
+    return kit_issues(recorded, current) + raised_ceilings(earlier, recorded)
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--base', help='Compare changes with this Git revision (default: merge base with origin/main)')
     parser.add_argument('--staged', action='store_true', help='Check the index instead of the working tree')
+    parser.add_argument('--tokens', nargs='+', metavar='PATH',
+                        help='Report token coverage for the stylesheets under these paths instead of checking')
+    parser.add_argument('--token-floor', action='store_true',
+                        help='Check the token floor of the stylesheets under FLOOR_PATHS instead')
+    parser.add_argument('--write-token-floor', action='store_true',
+                        help='Record the current token counts as the floor')
+    parser.add_argument('--shared-imports', action='store_true',
+                        help='Check that shared UI is imported from @dcl/one-ui, not by path')
+    parser.add_argument('--kit-ceiling', action='store_true',
+                        help='Check that the component kits under KIT_PATHS have not grown')
+    parser.add_argument('--write-kit-ceiling', action='store_true',
+                        help='Record the current kit sizes as the ceiling')
     args = parser.parse_args()
+    if args.write_kit_ceiling or args.kit_ceiling:
+        try:
+            base = resolve_base(args.base) if args.base else default_base()
+            issues = kit_ceiling(base, write=args.write_kit_ceiling)
+        except (OSError, ValueError, subprocess.CalledProcessError) as error:
+            print(f'UI standards kit ceiling could not run: {error}', file=sys.stderr)
+            return 2
+        if issues:
+            print('\n'.join(issues), file=sys.stderr)
+            return 1
+        if args.kit_ceiling:
+            print(f'UI standards: kit ceiling holds for {len(KIT_PATHS)} component kits')
+        return 0
+    if args.shared_imports:
+        def read(name):
+            return (ROOT / name).read_text(encoding='utf-8', errors='replace')
+        tracked = names(('ls-files',), '--', *SHARED_IMPORT_ROOTS)
+        issues = shared_import_issues({name for name in tracked if (ROOT / name).is_file()}, read)
+        if issues:
+            print('\n'.join(issues), file=sys.stderr)
+            return 1
+        print('UI standards: shared UI is imported from @dcl/one-ui')
+        return 0
+    if args.tokens:
+        print('\n'.join(tokens_report(args.tokens)))
+        return 0
+    if args.write_token_floor:
+        FLOOR_FILE.write_text(json.dumps(recorded_floor(current_floor()), indent=2, sort_keys=True) + '\n',
+                              encoding='utf-8')
+        return 0
+    if args.token_floor:
+        current = current_floor()
+        issues = floor_issues(json.loads(FLOOR_FILE.read_text(encoding='utf-8')), current)
+        if issues:
+            print('\n'.join(issues), file=sys.stderr)
+            return 1
+        print(f'UI standards: token floor holds for {len(current)} stylesheets')
+        return 0
     try:
         issues = check(args.base or default_base(), staged=args.staged)
     except (OSError, ValueError, subprocess.CalledProcessError) as error:

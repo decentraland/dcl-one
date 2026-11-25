@@ -74,3 +74,61 @@ class HostAliasTest(unittest.TestCase):
             with self.subTest(path=path):
                 self.assertEqual(route("worlds-content-server.example.test", path),
                                  ("/worlds-content-server" + path, path))
+
+    def test_realm_hosts_pass_the_services_a_scene_builds_from_its_realm_base(self):
+        # A scene asks `<realm base URL>/<service>/...`; a realm base is one of these hosts.
+        for host in ["worlds-content-server", "realm-provider", "realm-provider-ea"]:
+            for path in ["/comms-gatekeeper/scene-admin", "/cast-presenter-service/presentations?x=1"]:
+                with self.subTest(host=host, path=path):
+                    self.assertEqual(route(host + ".example.test", path), (path.split("?")[0], path))
+        # The host's own paths and every other host keep the prefix.
+        for host, path in [("worlds-content-server", "/comms-gatekeeper"),
+                           ("worlds-content-server", "/comms-gatekeeperx/a"),
+                           ("realm-provider-ea", "/main/comms-gatekeeper/a"),
+                           ("places", "/comms-gatekeeper/scene-admin")]:
+            with self.subTest(host=host, path=path):
+                self.assertEqual(route(host + ".example.test", path), (f"/{host}{path}", path))
+
+
+    def test_auth_relay_owns_cors_on_both_mounts(self):
+        cfg = gateway.settings({"GATEWAY_RESOLVERS": "127.0.0.1", "GATEWAY_DOMAIN": "example.test"})
+        config = gateway.render(TABLE, cfg, "/mime.types")
+        maps = nginx_map.parse(config)
+        for host, path, expected in [
+            ("example.test", "/auth-api/x", ""),
+            ("example.test", "/auth-api", ""),
+            ("auth-api.example.test", "/x", ""),
+            ("example.test", "/places/x", "*"),
+        ]:
+            with self.subTest(host=host, path=path):
+                uri, _ = nginx_map.route(config, host, path)
+                request = nginx_map.Request(maps, uri=uri, upstream_http_access_control_allow_origin="")
+                self.assertEqual(request["cors_fallback"], expected)
+
+    def test_auth_relay_socket_uses_the_affinity_upstream_for_both_mounts(self):
+        cfg = gateway.settings({"GATEWAY_RESOLVERS": "127.0.0.1", "GATEWAY_DOMAIN": "example.test"})
+        config = gateway.render(TABLE, cfg, "/mime.types")
+        prefixes = dict(re.findall(r"^location (?:\^~ )?(/\S*) \{\nproxy_pass http://(\w+);", config, re.M))
+        self.assertIn("location ^~ /auth-api/socket.io/ {", config)
+        for host, path in [("example.test", "/auth-api/socket.io/"),
+                           ("auth-api.example.test", "/socket.io/")]:
+            with self.subTest(host=host, path=path):
+                uri, _ = nginx_map.route(config, host, path + "?EIO=4&transport=polling")
+                match = max((prefix for prefix in prefixes if uri.startswith(prefix)), key=len)
+                self.assertEqual(match, "/auth-api/socket.io/")
+                self.assertEqual(prefixes[match], "auth_socket")
+
+
+class AccountHostTest(unittest.TestCase):
+    def test_account_host_reaches_the_sites_confirmation_pages(self):
+        root = Path(__file__).parents[3]
+        sites = sorted(path.name for path in (root / "apps/sites/src/routes/routes").iterdir())
+        cfg = gateway.settings({"GATEWAY_RESOLVERS": "127.0.0.1", "GATEWAY_DOMAIN": "example.test"})
+        config = gateway.render({**TABLE, "sites": sites}, cfg, "/mime.types")
+        uri = "/confirm-email-challenge/abc?address=0x1&source=account"
+        self.assertEqual(nginx_map.route(config, "account.example.test", uri),
+                         ("/account/confirm-email-challenge/abc", uri))
+        self.assertIn("location /account/ {\nproxy_pass http://sites;", config)
+        # The confirm request itself stays the node's on the apex host.
+        self.assertEqual(nginx_map.route(config, "example.test", "/notifications/confirm-email")[0],
+                         "/notifications/confirm-email")

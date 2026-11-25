@@ -9,11 +9,10 @@
 //! connector announces each session the same way, by call
 //! ([`CommsState::announce_session`](crate::gatekeeper::CommsState::announce_session)),
 //! and the subscriber asks Pulse for its current cluster
-//! (`peer.*.cluster_lookup`). A wallet a configured legacy socket
-//! owns goes through the realm-lane fence instead (`fence`, over the
-//! `social.archipelago_v4_*` rows `comms::archipelago::control_v4` claims):
-//! the token carries the fence and the assignment is committed to the row
-//! the legacy socket reads. `/island-refresh` (`gatekeeper::admission::island_refresh`)
+//! (`peer.*.cluster_lookup`). With a configured audience, Gatekeeper acquires a
+//! positively selected realm binding (`fence`, over `social.archipelago_v4_*`):
+//! the token carries the exact fence and the assignment is committed to the row
+//! an independently registered signaling socket can read. `/island-refresh` (`gatekeeper::admission::island_refresh`)
 //! re-mints the fenced credential of the current row.
 //!
 //! `serve` starts it in the primary only, the one process that holds the
@@ -26,6 +25,7 @@
 
 pub mod fence;
 pub mod gateway;
+pub mod generation;
 pub mod metrics;
 pub mod peer_state;
 pub mod safety;
@@ -45,6 +45,8 @@ pub const DEFAULT_TAKEOVER_RETRY_DELAY_MS: u64 = 100;
 /// Long enough for a mint and the lookups around it to finish, short enough that one request with
 /// no timeout of its own cannot hold shutdown open.
 pub const DEFAULT_DRAIN_TIMEOUT_MS: u64 = 5_000;
+/// Soft deadline for one reconnect recovery; committed cleanup still runs to settlement.
+const DEFAULT_RECOVERY_DEADLINE_MS: u64 = 10_000;
 
 #[derive(Debug, Clone)]
 pub struct ClusterConfig {
@@ -65,6 +67,8 @@ pub struct ClusterConfig {
     /// `ARCHIPELAGO_CONTROL_V4_AUDIENCE`: the realm-lane fence's audience (the old
     /// `COMMS_CONTROL_V4_AUDIENCE`, one value now that comms and archipelago share a process).
     pub control_v4_audience: Option<String>,
+    /// Soft recovery deadline in milliseconds. Defaults to 10 seconds.
+    pub recovery_deadline_ms: u64,
 }
 
 impl Default for ClusterConfig {
@@ -78,6 +82,7 @@ impl Default for ClusterConfig {
             peer_state_max: peer_state::DEFAULT_PEER_STATE_MAX,
             peer_state_ttl_ms: peer_state::DEFAULT_PEER_STATE_TTL_MS,
             control_v4_audience: None,
+            recovery_deadline_ms: DEFAULT_RECOVERY_DEADLINE_MS,
         }
     }
 }
@@ -98,6 +103,9 @@ impl ClusterConfig {
         }
         if self.peer_state_ttl_ms == 0 {
             self.peer_state_ttl_ms = d.peer_state_ttl_ms;
+        }
+        if self.recovery_deadline_ms == 0 {
+            self.recovery_deadline_ms = d.recovery_deadline_ms;
         }
         self.nats_url = self
             .nats_url
@@ -134,7 +142,7 @@ pub fn fence_for(
     config.validate()?;
     match config.control_v4_audience.clone() {
         Some(audience) => Ok(Some(Arc::new(
-            fence::PgAssignmentFence::new(pool, audience)
+            fence::PgAssignmentFence::with_limit(pool, audience, config.peer_state_max)
                 .map_err(|e| anyhow::anyhow!("ARCHIPELAGO_CONTROL_V4_AUDIENCE: {e}"))?,
         ))),
         None => Ok(None),
@@ -170,10 +178,18 @@ impl ClusterRuntime {
         self.subscriber.start();
         let subscriber = self.subscriber.clone();
         jobs.spawn("comms-cluster-subscriber", move |ctx| async move {
+            let discovery = subscriber.recover_selection_views();
+            tokio::pin!(discovery);
             loop {
                 tokio::select! {
                     _=ctx.cancel.cancelled()=>break,
-                    _=tokio::time::sleep(std::time::Duration::from_secs(1))=>subscriber.replay_due().await,
+                    _ = &mut discovery => break,
+                    _=tokio::time::sleep(std::time::Duration::from_secs(1))=>{},
+                    _=subscriber.maintenance_capacity_changed()=>{},
+                }
+                tokio::select! {
+                    _ = ctx.cancel.cancelled() => break,
+                    _ = subscriber.replay_due() => {},
                 }
             }
             subscriber.stop().await;
@@ -211,6 +227,7 @@ mod config_tests {
             island_token_ttl_seconds: 600,
             peer_state_max: 0,
             nats_url: Some(" ".into()),
+            recovery_deadline_ms: 0,
             ..ClusterConfig::default()
         }
         .normalized();
@@ -219,6 +236,12 @@ mod config_tests {
             MAX_ISLAND_TOKEN_TTL_SECONDS
         );
         assert_eq!(config.peer_state_max, peer_state::DEFAULT_PEER_STATE_MAX);
+        assert_eq!(config.recovery_deadline_ms, 10_000);
         assert_eq!(config.nats_url, None);
+    }
+
+    #[test]
+    fn production_recovery_deadline_is_ten_seconds() {
+        assert_eq!(ClusterConfig::default().recovery_deadline_ms, 10_000);
     }
 }

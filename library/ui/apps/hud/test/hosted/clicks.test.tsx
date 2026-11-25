@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest'
-import { render, screen } from '@testing-library/react'
+import { render, screen, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { Sidebar } from '../../features/sidebar/Sidebar'
 import { Chat } from '../../features/chat/Chat'
@@ -17,12 +17,7 @@ vi.mock('../../features/friends/friendDialogs', () => ({ confirmUnblock: vi.fn(a
 // these complete the click → API-call chain through real DOM events.
 describe('sidebar clicks', () => {
   const cases: [string, (s: EngineSession) => () => void][] = [
-    ['Profile', (s) => s.profile.toggle],
     ['Notifications', (s) => s.notifications.toggle],
-    ['Communities', (s) => s.communities.toggle],
-    ['Backpack', (s) => s.backpack.toggle],
-    ['Gallery', (s) => s.gallery.toggle],
-    ['Settings', (s) => s.settings.toggle],
     ['Emotes', (s) => s.emotes.toggle],
     ['Friends', (s) => s.friends.toggle],
     ['Chat', (s) => s.chat.toggle]
@@ -35,55 +30,89 @@ describe('sidebar clicks', () => {
     expect(vi.mocked(pick(s))).toHaveBeenCalledTimes(1)
   })
 
-  it('lists the reference rail, in order (Map lives in the menu, not the rail)', async () => {
+  // The pages open from a row of the panel a bar button opens (a dialog named as the button).
+  const rows: [string, string, (s: EngineSession) => (...args: never[]) => void][] = [
+    ['Me', 'Backpack', (s) => s.backpack.toggle],
+    ['Me', 'Profile', (s) => s.profile.toggle],
+    ['Discover', 'Events', (s) => s.events.toggle],
+    ['Discover', 'Places', (s) => s.places.toggle],
+    ['Discover', 'Communities', (s) => s.communities.toggle],
+    ['System', 'Settings', (s) => s.settings.toggle],
+    ['Camera', 'Gallery', (s) => s.gallery.toggle]
+  ]
+
+  it.each(rows)('%s, then its %s row, triggers the session action and closes the panel', async (button, row, pick) => {
+    const s = fakeSession()
+    await renderSettled(<Sidebar session={s} />)
+    await userEvent.click(screen.getByRole('button', { name: button }))
+    await userEvent.click(within(screen.getByRole('dialog', { name: button })).getByRole('button', { name: row }))
+    expect(vi.mocked(pick(s))).toHaveBeenCalledTimes(1)
+    expect(screen.queryByRole('dialog', { name: button })).toBeNull()
+  })
+
+  it('the Events row opens the page as the sidebar\'s entry', async () => {
+    const s = fakeSession()
+    await renderSettled(<Sidebar session={s} />)
+    await userEvent.click(screen.getByRole('button', { name: 'Discover' }))
+    await userEvent.click(screen.getByRole('button', { name: 'Events' }))
+    expect(vi.mocked(s.events.toggle)).toHaveBeenCalledWith('sidebar')
+  })
+
+  it('lists the bar\'s buttons in order: the top group, then the bottom group', async () => {
     await renderSettled(<Sidebar session={fakeSession()} />)
     const labels = screen.getAllByRole('button').map((b) => b.getAttribute('aria-label'))
     expect(labels).toEqual([
-      'Sidebar settings', 'Profile', 'Notifications', 'Events', 'Places', 'Communities', 'Backpack', 'Shop', 'Camera', 'Gallery', 'Settings',
-      'Help & Support', 'Report a bug', 'Nearby Voice', 'Skybox', 'Scene permissions', 'Emotes', 'Friends', 'Chat'
+      'Sidebar settings', 'Me', 'Map', 'Discover', 'Shop', 'System', 'Notifications',
+      'Scene permissions', 'Skybox', 'Volume', 'Emotes', 'Friends', 'Camera', 'Nearby Voice', 'Chat'
     ])
   })
 
   it('the "..." panel closes on an outside click', async () => {
     await renderSettled(<Sidebar session={fakeSession()} />)
     await userEvent.click(screen.getByRole('button', { name: 'Sidebar settings' }))
-    await userEvent.click(screen.getByRole('switch', { name: 'Auto-hide sidebar' }))
+    await userEvent.click(screen.getByRole('switch', { name: 'Hide Sidebar Automatically' }))
     expect(screen.getByRole('dialog', { name: 'Sidebar settings' })).toBeInTheDocument()
     await userEvent.click(document.body)
     expect(screen.queryByRole('dialog', { name: 'Sidebar settings' })).toBeNull()
   })
 
   it('every rail button has a tooltip naming it', async () => {
-    await renderSettled(<Sidebar session={fakeSession()} />)
+    // with the chat closed: a button whose own panel is open drops its tooltip (sidebar.test.tsx)
+    const s = fakeSession()
+    s.chat = { ...s.chat, open: false }
+    await renderSettled(<Sidebar session={s} />)
+    // a hint that says more than the name: Camera names both of its rows
+    const hints: Record<string, string> = { Camera: 'Camera / Gallery' }
     for (const b of screen.getAllByRole('button')) {
       const label = b.getAttribute('aria-label') ?? ''
       if (label === 'Sidebar settings') continue
-      expect(b.parentElement?.querySelector('[role="tooltip"]')).toHaveTextContent(label)
+      expect(b.parentElement?.querySelector('[role="tooltip"]')).toHaveTextContent(hints[label] ?? label)
     }
   })
 
-  it('Profile opens the passport (onViewProfile) when provided, not the small panel', async () => {
+  it('the Me panel\'s Profile row opens the passport (onViewProfile) when provided, not the small panel', async () => {
     const s = fakeSession()
     const onViewProfile = vi.fn()
     await renderSettled(<Sidebar session={s} onViewProfile={onViewProfile} />)
+    await userEvent.click(screen.getByRole('button', { name: 'Me' }))
     await userEvent.click(screen.getByRole('button', { name: 'Profile' }))
     expect(onViewProfile).toHaveBeenCalledTimes(1)
     expect(vi.mocked(s.profile.toggle)).not.toHaveBeenCalled()
   })
 
-  it('Profile shows the player avatar once the profile has loaded', async () => {
+  it('Me shows the player avatar once the profile has loaded', async () => {
     const s = fakeSession()
     s.profile.data = { address: '0xabc', name: 'Mojito', picture: 'https://example.com/face.png', hasClaimedName: true, isGuest: false }
     await renderSettled(<Sidebar session={s} />)
-    const button = screen.getByRole('button', { name: 'Profile' })
+    const button = screen.getByRole('button', { name: 'Me' })
     expect(button.querySelector('img')).toHaveAttribute('src', 'https://example.com/face.png')
   })
 
-  it('Profile keeps the generic icon while the profile is loading', async () => {
+  it('Me keeps the generic icon while the profile is loading', async () => {
     const s = fakeSession()
     s.profile.data = null
     await renderSettled(<Sidebar session={s} />)
-    expect(screen.getByRole('button', { name: 'Profile' }).querySelector('img')).toBeNull()
+    expect(screen.getByRole('button', { name: 'Me' }).querySelector('img')).toBeNull()
   })
 })
 

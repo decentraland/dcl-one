@@ -20,13 +20,22 @@ sees a `cfg`. Backend functionality that only one caller needs lives next to tha
 (the livekit bridge in `comms`, the page-event dispatch), behind a `cfg` there, not in
 `platform`. Either way the platform-specific part is a leaf; the logic that uses it is shared.
 
+- **Window focus goes through `ClientWindowFocus`.** Read the client's focus from the
+  `ClientWindowFocus` resource (the OS's focus report natively, `document.hasFocus()` on the
+  web) and ask for focus with `commands.trigger(RequestClientWindowFocus)`. Nothing else reads
+  or writes `Window::focused`: it also holds focus requests the OS may refuse, and on the web it
+  is the canvas's focus, not the page's. `ClientWindowFocusPlugin` is the only code that touches
+  it.
+
 ## Web
 
 - **Chrome only.** Design against Chrome's feature set (multi-memory, JSPI, `Atomics.waitAsync`)
   and do not add cross-browser hedges.
 - **No threads as you know them.** `TaskPool::spawn` runs on the JS event loop: no `Send`,
   no blocking, no `std::thread`, no busy-waiting. Use `web_time` for clocks. The engine worker
-  runs the app world; the render world lives in its own worker.
+  runs the app world; the render world lives in its own worker. The scene loop may sleep for a
+  bounded wait between passes (`SCENE_REPLY_POLL`) because it runs on the engine worker; other
+  systems and tasks may not block.
 - **The log level is compiled in.** `RUST_LOG` does nothing at runtime on wasm. A debug log you
   want to see needs a rebuild with the filter changed.
 - **Engine switches are page params, not launch options.** A web-only knob is a `?param=` the
@@ -50,6 +59,14 @@ sees a `cfg`. Backend functionality that only one caller needs lives next to tha
 - **Exit work runs before `Last`.** On `AppExit`, `close_rooms_on_app_exit` blocks in `Last`
   (`comms`), so on web a system in `Last` may never run again. Anything that must reach the page
   at exit, such as the benchmark stream's final bytes, runs in `Update`.
+- **Content cache writes go through `web_cache`.** Every write to the Cache API cache
+  `ipfs-path-cache-v2` goes through `web_cache::store` or `web_cache::put`
+  (`crates/ipfs/src/web_cache.rs`; outside that file, `store` is reached through `keep` and
+  `share`). There the write is counted toward the next trim, retried after a trim when it fails
+  for quota, and recorded as a use. A write that bypasses them is none of these: the cache can
+  outgrow its cap unnoticed, and the entry ranks as unused until it is read. Reads go through
+  `web_cache::find`, which records the use. How the cap and the least-recently-used eviction
+  work is in `web_cache.rs` and `deploy/web/service_worker.js`.
 - **Two GPUs: Chrome takes the low-power one.** On a laptop with integrated and discrete GPUs,
   Chrome's WebGPU renders on the integrated one while native wgpu takes the discrete one: on one
   laptop the same web build ran much slower (measurements (evidence supplied for the task)).
@@ -93,7 +110,9 @@ sees a `cfg`. Backend functionality that only one caller needs lives next to tha
   `export CEF_PATH="$(cygpath -w ~/.local/share/cef)"` after `just setup-cef`.
 - **A PR runs the Windows and macOS tests only for platform inputs.** A Rust change under
   `rendering/bevy-explorer/source` runs clippy, the native test suite on Linux, the headless smoke
-  test and the web build (`tooling/bevy-ci.py` at the dcl-one root selects them). The suite adds
+  test and the web build (`tooling/bevy-ci.py` at the dcl-one root selects them). A draft does not
+  run the test suite and the headless smoke test: they start when the PR is marked ready for
+  review, or on the next push with the `ci:engine` label. The suite adds
   Windows and macOS when the PR changes the root `Cargo.toml`, a `build*.rs`, `.cargo`, the
   toolchain, `local-harness/benchmark`, `local-harness/web-driver`, a file or folder named
   `windows` or `macos`, the locked package set in `Cargo.lock`, or a CI input outside the engine
@@ -141,19 +160,19 @@ failure by reducing quality. That allowance should remain distinguishable from m
 ## GPU timestamps
 
 The benchmark's GPU time (`gpu/frame_time`, see [GPU time](benchmark.md#gpu-time)) is the
-difference of two timestamps that empty compute passes write with `timestamp_writes`, which needs
+difference of two timestamps that compute passes write with `timestamp_writes`, which needs
 `wgpu::Features::TIMESTAMP_QUERY` on the render device. The engine sets no `WgpuSettings` of its
 own (the web render worker uses the default too), so Bevy's default `Functionality` priority
 requests every feature the adapter reports, and the feature is on wherever the backend exposes
-it. Without it the engine logs one info line under `gpu_time` and has no GPU time. In the fork's
-wgpu (`robtfm/wgpu` `e25f3d4`, 24.0.5):
+it. Without it the engine logs one info line under `gpu_time` and has no GPU time. In the
+Explorer's wgpu (upstream `v24.0.5` plus the series in `rendering/bevy-explorer/patches/wgpu`):
 
 | Backend | `TIMESTAMP_QUERY` | Tick period | Checked on hardware |
 |---|---|---|---|
 | DX12 (Windows) | always | the queue's timestamp frequency | Windows, RTX 5080 Laptop GPU: the GPU tests, and the packaged release standalone with FXC and `--no_gltf` |
 | Vulkan (Windows, Linux) | always | the device's `timestampPeriod` limit | Windows, the same GPU: the GPU tests and the packaged release standalone, which picks Vulkan by itself; Linux not |
-| Metal (macOS) | when the device samples counters at stage boundaries (macOS 11 or newer) | fixed: 1 ns, 83.333 ns when the device name starts with "Intel" | not checked |
-| WebGPU (Chrome) | when the browser's adapter lists `timestamp-query` | 1 ns (WebGPU reports nanoseconds) | Chrome on Windows (RTX 5080 Laptop GPU) |
+| Metal (macOS) | when the device samples counters at stage boundaries (macOS 11 or newer) | fixed: 1 ns, 83.333 ns when the device name starts with "Intel" | Apple M4 Max: the GPU tests |
+| WebGPU (Chrome) | when the browser's adapter lists `timestamp-query` | 1 ns (WebGPU reports nanoseconds) | Chrome on Windows (RTX 5080 Laptop GPU); Chrome 157 on macOS (Apple M1 Pro) |
 
 - **DX12 and Vulkan** set the feature for every device: `wgpu-hal/src/dx12/adapter.rs` lists it
   among the features "always available on d3d12", and `wgpu-hal/src/vulkan/adapter.rs` sets it
@@ -168,11 +187,18 @@ wgpu (`robtfm/wgpu` `e25f3d4`, 24.0.5):
   is unaffected.
 - **Metal.** A compute pass's `timestamp_writes` become the encoder's start and end samples
   (`wgpu-hal/src/metal/command.rs`), which stage-boundary sampling covers
-  (`wgpu-hal/src/metal/adapter.rs`). Whether an empty pass writes its samples is not checked.
+  (`wgpu-hal/src/metal/adapter.rs`). The GPU tests pass on native Metal (Apple M4 Max).
   wgpu does not convert Metal's GPU timestamps to CPU time; it hard-codes the period, and its own
   comment names Apple silicon (M1, M2) and AMD for the 1 ns. Not checked here.
 - **WebGPU.** `wgpu/src/backend/webgpu.rs` maps the feature to `timestamp-query` and passes the
-  pass `timestampWrites` through.
+  pass `timestampWrites` through. In Chrome on macOS (Apple M1 Pro, Metal) a compute pass that
+  holds no work does not write its end timestamp, so each bracket pass dispatches one workgroup
+  of a shader that does nothing; with it samples arrive, but some frames still read back an end
+  earlier than their begin and a run can sit on one value. A web build on macOS therefore marks
+  the GPU frame time unreliable (`common::gpu_time::GpuFrameTimeUnreliable`): the panel, the CSV,
+  `gpuFrameMs` and the GPU element of `frameTimeBreakdown` keep the readings, and the
+  performance snapshot, the analytics event built from it, the benchmark summary and the
+  bottleneck take none.
 - **Chrome quantises timestamps** unless its "WebGPU Developer Features" flag is on
   (`chrome://flags/#enable-webgpu-developer-features`;
   [Chrome's WebGPU 121 notes](https://developer.chrome.com/blog/new-in-webgpu-121) give 100 µs).

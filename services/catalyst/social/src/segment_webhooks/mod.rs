@@ -40,11 +40,13 @@
 //! | `POST /forward-onboarding-checkpoint` | Segment HMAC | nothing |
 //!
 //! Recorded differences from the notifier:
-//! - a client event's auth chain is verified (signatures and the ephemeral
-//!   expiry, `dcl_auth::verify_auth_chain`) besides the owner check, and only
-//!   the explorer's login chain `[SIGNER, ECDSA_EPHEMERAL]` is one: a chain
+//! - a client event's auth chain is verified as a login (signatures, the
+//!   ephemeral expiry and the `Decentraland Login` first line,
+//!   `dcl_auth::verify_login_chain`) besides the owner check, and only the
+//!   explorer's login chain `[SIGNER, ECDSA_EPHEMERAL]` is one: a chain
 //!   ending in a signed entity, which content servers publish with every
-//!   deployment, is 401; the notifier checked the chain's shape and owner only;
+//!   deployment, is 401, and so is a delegation with another first line; the
+//!   notifier checked the chain's shape and owner only;
 //! - 400 where the notifier published or crashed: a body that is not JSON,
 //!   an event without a string `messageId` or without a parsable RFC 3339
 //!   `receivedAt`/`timestamp` (the notifier's `NaN` timestamps), a web
@@ -92,10 +94,10 @@ mod web;
 use std::sync::Arc;
 use std::time::Duration;
 
+use crate::shared::routing::post;
 use axum::Router;
 use axum::http::{HeaderMap, StatusCode, header};
 use axum::response::{IntoResponse, Response};
-use axum::routing::post;
 use serde_json::{Value, json};
 use sqlx::PgPool;
 

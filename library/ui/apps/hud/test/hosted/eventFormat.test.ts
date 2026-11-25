@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
   addDays,
   calendarRange,
@@ -18,7 +18,7 @@ import {
   startOfDay
 } from '../../features/events/eventFormat'
 import { BASE_DOMAIN } from '@hud-host'
-import { eventDestination } from '@explorer-core/features/events/eventsApi'
+import { eventDestination, fetchEvents } from '@explorer-core/features/events/eventsApi'
 import { eventAt } from './eventFixtures'
 
 // local dates throughout, so the suite reads the same in any time zone
@@ -149,5 +149,29 @@ describe('event links', () => {
     expect(url.searchParams.get('dates')).toBe('20260909T180000Z/20260909T200000Z')
     const later = new URL(eventCalendarUrl(upcoming, null, new Date(Date.UTC(2026, 8, 16, 18, 0, 0)))!)
     expect(later.searchParams.get('dates')).toBe('20260916T180000Z/20260916T200000Z')
+  })
+})
+
+describe('the events request', () => {
+  afterEach(() => vi.unstubAllGlobals())
+
+  const request = (answer: Partial<Response>): ReturnType<typeof vi.fn> => {
+    const fetched = vi.fn(async () => answer as Response)
+    vi.stubGlobal('fetch', fetched)
+    return fetched
+  }
+
+  it('asks for who is at each event only when told to', async () => {
+    const fetched = request({ ok: true, json: async () => ({ ok: true, data: [] }) })
+    await fetchEvents('live', { connected: true })
+    await fetchEvents('live')
+    expect(fetched.mock.calls.map(([url]) => String(url).split('?')[1])).toEqual(['list=live&with_connected_users=true', 'list=live'])
+  })
+
+  it('releases the body of an answer it refuses', async () => {
+    const cancel = vi.fn(async () => {})
+    request({ ok: false, status: 503, body: { cancel } as unknown as Response['body'] })
+    await expect(fetchEvents('upcoming')).rejects.toThrow('503')
+    expect(cancel).toHaveBeenCalledOnce()
   })
 })

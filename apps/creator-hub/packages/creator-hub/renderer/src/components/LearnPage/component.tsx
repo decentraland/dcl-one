@@ -1,12 +1,16 @@
-import { useNavigate } from 'react-router-dom';
-import { Button, Typography } from 'decentraland-ui2';
+import { useNavigate } from 'react-router';
+import { cx } from '/@/lib/cx';
+import Button from '@ui/atoms/Button';
+import Text from '@ui/atoms/Text';
 import { t } from '/@/modules/store/translation/utils';
 import { tutorials } from '/@/modules/tutorials';
-import { misc } from '#preload';
+import { openLearnResource } from '/@/lib/openLearnResource';
 
 import { Container } from '../Container';
 import { Navbar, NavbarItem } from '../Navbar';
 import { Image } from '../Image';
+import styles from './component.module.css';
+
 import './styles.css';
 
 function Video(props: { id: string; list: string; title: string }) {
@@ -14,7 +18,7 @@ function Video(props: { id: string; list: string; title: string }) {
   return (
     <div
       className="link"
-      onClick={() => misc.openExternal(url)}
+      onClick={() => openLearnResource('learn', 'video', props.title, url)}
     >
       <div className="thumbnail-wrapper">
         <Image
@@ -31,7 +35,7 @@ function Link(props: { url: string; title: string }) {
   return (
     <div
       className="link"
-      onClick={() => misc.openExternal(props.url)}
+      onClick={() => openLearnResource('learn', 'doc', props.title, props.url)}
     >
       <i className="icon" />
       <span className="title">{props.title}</span>
@@ -46,12 +50,12 @@ export function LearnPage() {
       <Navbar active={NavbarItem.LEARN} />
       <Container>
         <div className="content">
-          <Typography
+          <Text
             variant="h3"
-            mb="48px"
+            className={styles.title}
           >
             {t('learn.header.title')}
-          </Typography>
+          </Text>
           <div className="sections">
             <div className="section videos">
               <div
@@ -72,8 +76,8 @@ export function LearnPage() {
                 ))}
               </div>
               <Button
-                className="see-all"
-                disableRipple
+                className={cx('see-all', styles.seeAll)}
+                variant="text"
                 onClick={() => navigate('/learn/videos')}
               >
                 {t('learn.see_all')}
@@ -114,9 +118,9 @@ export function LearnPage() {
                 />
               </div>
               <Button
-                className="see-all"
+                className={cx('see-all', styles.seeAll)}
+                variant="text"
                 onClick={() => navigate('/learn/docs')}
-                disableRipple
               >
                 {t('learn.see_all')}
               </Button>

@@ -42,6 +42,9 @@ import {
 import { updateCanSave } from '../../../redux/app';
 import { getConfig } from '../../logic/config';
 import { withAssetDir } from '../../data-layer/host/fs-utils';
+import type { SessionRecorder } from '../../recorder';
+import { isSdkTooOld } from '../../sdk/operations/add-asset/compatibility';
+import { getSdkRequirement } from '../../sdk/operations/add-asset/scene-sdk';
 import {
   fromSceneSpawnPoint,
   isSceneSpawnAxis,
@@ -94,6 +97,7 @@ enum Method {
   SET_SCENE_SETTINGS = 'set_scene_settings',
   GET_VIEWPORT_RECT = 'get_viewport_rect',
   SAVE_SCENE = 'save_scene',
+  SET_RECORDING = 'set_recording',
 }
 
 // A row in the Smart Items catalog, as returned by search_catalog.
@@ -157,6 +161,7 @@ type Params = {
   [Method.SET_SCENE_SETTINGS]: Record<string, unknown>;
   [Method.GET_VIEWPORT_RECT]: Record<string, never>;
   [Method.SAVE_SCENE]: Record<string, never>;
+  [Method.SET_RECORDING]: { enabled: boolean };
 };
 
 type Result = {
@@ -200,6 +205,7 @@ type Result = {
   [Method.SET_SCENE_SETTINGS]: { settings: Record<string, unknown> };
   [Method.GET_VIEWPORT_RECT]: { rect: ViewportRect | null };
   [Method.SAVE_SCENE]: void;
+  [Method.SET_RECORDING]: { ok: true };
 };
 
 // Validate an AI-supplied entity id before branding it as an Entity. The id comes from the
@@ -277,6 +283,11 @@ export class SceneServer extends RPC<Method, Params, Result> {
     engine?: IEngine,
     // Network-id allocator, needed by addAsset for Smart Items with sync components.
     enumEntity?: EnumEntity,
+    // Hides the editor's gizmos and helpers for a Babylon capture; returns what puts them back.
+    hideEditorHelpers?: () => () => void,
+    // Session recording for the AI assistant. Absent in test/standalone setups, where
+    // set_recording acknowledges without capturing anything.
+    recorder?: Pick<SessionRecorder, 'setEnabled'>,
   ) {
     super('SceneRpcInbound', transport);
 
@@ -333,12 +344,19 @@ export class SceneServer extends RPC<Method, Params, Result> {
         camera.setTarget(new Vector3(x, y, z));
       });
 
+      // The capture copies the canvas on the next rendered frame, so whatever is hidden now
+      // stays out of the picture, and the helpers come back once it is taken.
       this.handle('take_screenshot', async ({ width, height, precision }) => {
-        return ScreenshotTools.CreateScreenshotAsync(renderer.engine, camera, {
-          width,
-          height,
-          precision,
-        });
+        const restoreEditorHelpers = hideEditorHelpers?.();
+        try {
+          return await ScreenshotTools.CreateScreenshotAsync(renderer.engine, camera, {
+            width,
+            height,
+            precision,
+          });
+        } finally {
+          restoreEditorHelpers?.();
+        }
       });
     } else if (takeScreenshot) {
       // Non-Babylon renderer (Bevy): no camera control, but it can still capture
@@ -410,6 +428,13 @@ export class SceneServer extends RPC<Method, Params, Result> {
     // compositor screenshot to just the viewport — the Bevy screenshot fallback (#1526).
     // DOM-only, so it's available for both renderers regardless of the operations layer.
     this.handle('get_viewport_rect', async () => ({ rect: getViewportRect() }));
+
+    // Resolves only after a stop has flushed what was captured, so the host can read its
+    // timeline as complete once this returns.
+    this.handle('set_recording', async ({ enabled }) => {
+      await recorder?.setEnabled(enabled);
+      return { ok: true as const };
+    });
 
     // Scene-graph mutations (AI assistant). Only wired when the operations layer + engine
     // are provided (i.e. embedded in a host). Each mutation runs the inspector's real
@@ -531,6 +556,14 @@ export class SceneServer extends RPC<Method, Params, Result> {
         if (isFileOnly(asset)) {
           throw new Error(
             `"${asset.name}" is a file-only asset (e.g. an avatar animation) with no entity to place. Ask the user to drag it into the scene, which adds its files to the local assets, then reference the file from scene code.`,
+          );
+        }
+        // The same SDK check a drop from the catalog runs: the item's script needs components
+        // an older scene SDK doesn't have.
+        const sdkRequirement = await getSdkRequirement(asset.minSdkVersion);
+        if (isSdkTooOld(sdkRequirement)) {
+          throw new Error(
+            `"${asset.name}" needs @dcl/sdk ${sdkRequirement.required} or newer, and this scene has ${sdkRequirement.installed}. Ask the user to update the scene's SDK first, then place it again.`,
           );
         }
         const dataLayer = getDataLayerInterface();

@@ -8,13 +8,23 @@
 use std::collections::HashSet;
 use std::sync::Arc;
 
-use futures::TryStreamExt;
 use sqlx::PgPool;
 
 use super::{SyncError, SyncStatus, Timestamp};
 use crate::bloom_filter::BloomFilter;
 
-const DEPLOYED_ENTITY_IDS_SQL: &str = "SELECT entity_id FROM content.deployments";
+/// One page of deployed entity ids after a key, on the `deployments_entity_id_key` unique index.
+const DEPLOYED_ENTITY_IDS_PAGE_SQL: &str = "SELECT entity_id FROM content.deployments \
+     WHERE entity_id > $1 ORDER BY entity_id LIMIT $2";
+/// Ids per seeding statement: each page is its own statement, so the pool's statement timeout
+/// bounds a page, never the whole table.
+const SEED_PAGE: i64 = 20_000;
+/// Tries per page before the seed fails the sync job. A slow database (another workload holding
+/// the disk) can push one page past the statement timeout; retrying that page, halved each time,
+/// keeps the ids already seeded instead of restarting the job from the first page.
+const SEED_PAGE_ATTEMPTS: u32 = 4;
+const SEED_PAGE_MIN: i64 = 1_000;
+const SEED_RETRY_BASE: std::time::Duration = std::time::Duration::from_secs(2);
 
 pub struct LiveDeploymentRepository {
     pool: PgPool,
@@ -27,25 +37,46 @@ impl LiveDeploymentRepository {
     }
 
     /// Seeds the batch deployer's bloom filter at startup: every deployed
-    /// entity id, streamed into `bloom` row by row over one connection (the
-    /// socket is the backpressure) instead of a `Vec` of all ids first. A
-    /// bloom hit still verifies against the table (`is_entity_deployed`).
-    /// Returns the number of ids seeded.
+    /// entity id, read in keyset pages of [`SEED_PAGE`] ids on the unique
+    /// `entity_id` index. One statement over the whole table outlives the
+    /// pool's statement timeout once the table holds a full sync (a million
+    /// rows on a slow volume), and the sync worker then never starts. A bloom
+    /// hit still verifies against the table (`is_entity_deployed`). Returns the
+    /// number of ids seeded.
     pub async fn seed_deployed_entity_ids(
         &self,
         bloom: &mut BloomFilter,
     ) -> Result<u64, SyncError> {
-        let mut ids = sqlx::query_scalar::<_, String>(DEPLOYED_ENTITY_IDS_SQL).fetch(&self.pool);
+        self.seed_in_pages(bloom, SEED_PAGE).await
+    }
+
+    async fn seed_in_pages(
+        &self,
+        bloom: &mut BloomFilter,
+        page_size: i64,
+    ) -> Result<u64, SyncError> {
         let mut count = 0u64;
-        while let Some(id) = ids
-            .try_next()
-            .await
-            .map_err(|e| SyncError::Storage(e.to_string()))?
-        {
-            bloom.add(&id);
-            count += 1;
+        let mut after = String::new();
+        loop {
+            let (page, requested) = retry_page(page_size, SEED_RETRY_BASE, |size| {
+                sqlx::query_scalar::<_, String>(DEPLOYED_ENTITY_IDS_PAGE_SQL)
+                    .bind(after.clone())
+                    .bind(size)
+                    .fetch_all(&self.pool)
+            })
+            .await?;
+            let Some(last) = page.last() else {
+                return Ok(count);
+            };
+            after = last.clone();
+            for id in &page {
+                bloom.add(id);
+            }
+            count += page.len() as u64;
+            if (page.len() as i64) < requested {
+                return Ok(count);
+            }
         }
-        Ok(count)
     }
 
     pub async fn is_entity_deployed(
@@ -56,6 +87,9 @@ impl LiveDeploymentRepository {
         crate::sync_deployer::is_entity_deployed(&self.pool, entity_id, timestamp_ms).await
     }
 
+    /// The persisted global frontier, for tests: nothing in the node reads it back (a peer resumes
+    /// from its own cursor, and the in-memory copy follows the writes).
+    #[cfg(any(test, feature = "test-support"))]
     pub async fn get_sync_frontier(&self) -> Result<Timestamp, SyncError> {
         let row: Option<String> = sqlx::query_scalar(
             "SELECT value FROM content.system_properties WHERE key = 'sync_frontier'",
@@ -134,6 +168,9 @@ impl LiveDeploymentRepository {
         .execute(&self.pool)
         .await
         .map_err(|e| SyncError::Storage(e.to_string()))?;
+        crate::metrics::SYNC_HEARTBEAT
+            .handle([])
+            .set(timestamp as f64 / 1000.);
         self.status.set_heartbeat_ms(timestamp);
         Ok(())
     }
@@ -289,13 +326,20 @@ impl LiveProcessedSnapshotStore {
         Self { pool }
     }
 
-    pub async fn filter_processed(&self, hashes: &[String]) -> Result<HashSet<String>, SyncError> {
-        let rows: Vec<String> =
-            sqlx::query_scalar("SELECT hash FROM content.processed_snapshots WHERE hash = ANY($1)")
-                .bind(hashes)
-                .fetch_all(&self.pool)
-                .await
-                .map_err(|e| SyncError::Storage(e.to_string()))?;
+    async fn filter_processed(
+        &self,
+        hashes: &[String],
+        entity_types: Option<&[String]>,
+    ) -> Result<HashSet<String>, SyncError> {
+        let rows: Vec<String> = sqlx::query_scalar(
+            "SELECT hash FROM content.processed_snapshots
+             WHERE hash = ANY($1) AND (entity_types IS NULL OR entity_types @> $2::text[])",
+        )
+        .bind(hashes)
+        .bind(entity_types)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|e| SyncError::Storage(e.to_string()))?;
         Ok(rows.into_iter().collect())
     }
 
@@ -305,18 +349,26 @@ impl LiveProcessedSnapshotStore {
     pub async fn filter_processed_in_chunks(
         &self,
         hashes: impl IntoIterator<Item = String>,
+        entity_types: Option<&HashSet<String>>,
     ) -> Result<HashSet<String>, SyncError> {
+        let entity_types = entity_types.map(|types| types.iter().cloned().collect::<Vec<_>>());
         let mut processed = HashSet::new();
         let mut chunk: Vec<String> = Vec::with_capacity(PROCESSED_SNAPSHOT_LOOKUP_CHUNK_SIZE);
         for hash in hashes {
             chunk.push(hash);
             if chunk.len() == PROCESSED_SNAPSHOT_LOOKUP_CHUNK_SIZE {
-                processed.extend(self.filter_processed(&chunk).await?);
+                processed.extend(
+                    self.filter_processed(&chunk, entity_types.as_deref())
+                        .await?,
+                );
                 chunk.clear();
             }
         }
         if !chunk.is_empty() {
-            processed.extend(self.filter_processed(&chunk).await?);
+            processed.extend(
+                self.filter_processed(&chunk, entity_types.as_deref())
+                    .await?,
+            );
         }
         Ok(processed)
     }
@@ -343,21 +395,30 @@ impl LiveProcessedSnapshotStore {
         Ok(rows.into_iter().collect())
     }
 
-    pub async fn mark_processed(&self, hash: &str) -> Result<(), SyncError> {
-        self.mark_processed_many(std::slice::from_ref(&hash.to_string()))
-            .await
-    }
-
-    pub async fn mark_processed_many(&self, hashes: &[String]) -> Result<(), SyncError> {
+    /// Record coverage per hash. NULL means every entity type, while an empty
+    /// legacy receipt has no known coverage. Concurrent passes can only add coverage.
+    pub async fn mark_processed_many(
+        &self,
+        hashes: &[String],
+        entity_types: Option<&HashSet<String>>,
+    ) -> Result<(), SyncError> {
         if hashes.is_empty() {
             return Ok(());
         }
+        let entity_types = entity_types.map(|types| types.iter().cloned().collect::<Vec<_>>());
         sqlx::query(
-            "INSERT INTO content.processed_snapshots (hash, process_time)
-             SELECT h, timezone('UTC', now()) FROM unnest($1::text[]) AS h
-             ON CONFLICT DO NOTHING",
+            "INSERT INTO content.processed_snapshots AS saved (hash, process_time, entity_types)
+             SELECT DISTINCT h, timezone('UTC', now()), $2::text[] FROM unnest($1::text[]) AS h
+             ON CONFLICT (hash) DO UPDATE SET
+                 process_time = EXCLUDED.process_time,
+                 entity_types = CASE WHEN EXCLUDED.entity_types IS NULL THEN NULL
+                     ELSE ARRAY(SELECT DISTINCT t FROM unnest(saved.entity_types || EXCLUDED.entity_types) AS t ORDER BY t)
+                 END
+             WHERE saved.entity_types IS NOT NULL
+               AND (EXCLUDED.entity_types IS NULL OR NOT saved.entity_types @> EXCLUDED.entity_types)",
         )
         .bind(hashes)
+        .bind(entity_types)
         .execute(&self.pool)
         .await
         .map_err(|e| SyncError::Storage(e.to_string()))?;
@@ -365,10 +426,72 @@ impl LiveProcessedSnapshotStore {
     }
 }
 
+/// Runs one seed page, retrying a failed page up to [`SEED_PAGE_ATTEMPTS`] times with half the
+/// size (not below [`SEED_PAGE_MIN`]) after a doubling pause. Returns the rows and the size that
+/// produced them, so the caller knows whether a short page was the last one.
+async fn retry_page<T, F, Fut>(
+    page_size: i64,
+    base: std::time::Duration,
+    mut fetch: F,
+) -> Result<(Vec<T>, i64), SyncError>
+where
+    F: FnMut(i64) -> Fut,
+    Fut: std::future::Future<Output = Result<Vec<T>, sqlx::Error>>,
+{
+    let mut size = page_size;
+    let mut pause = base;
+    let mut attempt = 1;
+    loop {
+        match fetch(size).await {
+            Ok(rows) => return Ok((rows, size)),
+            Err(e) if attempt < SEED_PAGE_ATTEMPTS => {
+                tracing::warn!(attempt, page_size = size, error = %e, "bloom seed page failed; retrying");
+                tokio::time::sleep(pause).await;
+                pause *= 2;
+                size = (size / 2).max(SEED_PAGE_MIN.min(page_size));
+                attempt += 1;
+            }
+            Err(e) => return Err(SyncError::Storage(e.to_string())),
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::sync_test_support::{test_pool, unique};
+
+    #[tokio::test(start_paused = true)]
+    async fn a_failed_seed_page_is_retried_smaller() {
+        let mut sizes = Vec::new();
+        let (rows, requested) = retry_page(20_000, SEED_RETRY_BASE, |size| {
+            sizes.push(size);
+            let failing = sizes.len() <= 2;
+            async move {
+                if failing {
+                    Err(sqlx::Error::PoolTimedOut)
+                } else {
+                    Ok(vec![size])
+                }
+            }
+        })
+        .await
+        .expect("third attempt succeeds");
+        assert_eq!(sizes, vec![20_000, 10_000, 5_000]);
+        assert_eq!((rows, requested), (vec![5_000], 5_000));
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn a_seed_page_fails_after_its_last_attempt() {
+        let mut sizes = Vec::new();
+        let result = retry_page::<i64, _, _>(2_000, SEED_RETRY_BASE, |size| {
+            sizes.push(size);
+            async { Err(sqlx::Error::PoolTimedOut) }
+        })
+        .await;
+        assert!(matches!(result, Err(SyncError::Storage(_))));
+        assert_eq!(sizes, vec![2_000, 1_000, 1_000, 1_000]);
+    }
 
     #[test]
     fn sync_frontier_upsert_is_greatest_monotonic() {
@@ -400,16 +523,12 @@ mod tests {
             .await
             .unwrap();
         let name = format!("catalyst_test_repair_{}", &unique()[..12]);
-        sqlx::query(sqlx::AssertSqlSafe(format!("CREATE DATABASE \"{name}\"")))
-            .execute(&admin)
-            .await
-            .unwrap();
+        crate::db::scratch::create_database_with_schema(&admin, &name).await;
         let pool = sqlx::postgres::PgPoolOptions::new()
             .max_connections(6)
             .connect_with(opts.database(&name))
             .await
             .unwrap();
-        crate::db::apply_schema(&pool).await.unwrap();
         Some((admin, pool, name))
     }
 
@@ -795,12 +914,21 @@ mod tests {
         let store = LiveProcessedSnapshotStore::new(pool.clone());
         let tag = unique();
         let hashes: Vec<String> = (0..2_005).map(|i| format!("snap-{tag}-{i}")).collect();
-        store.mark_processed_many(&hashes[..1_500]).await.unwrap();
-        store.mark_processed(&hashes[1_500]).await.unwrap();
-        store.mark_processed(&hashes[1_500]).await.unwrap();
+        store
+            .mark_processed_many(&hashes[..1_500], None)
+            .await
+            .unwrap();
+        store
+            .mark_processed_many(&hashes[1_500..1_501], None)
+            .await
+            .unwrap();
+        store
+            .mark_processed_many(&hashes[1_500..1_501], None)
+            .await
+            .unwrap();
 
         let processed = store
-            .filter_processed_in_chunks(hashes.iter().cloned())
+            .filter_processed_in_chunks(hashes.iter().cloned(), None)
             .await
             .unwrap();
         assert_eq!(processed.len(), 1_501);
@@ -809,6 +937,59 @@ mod tests {
 
         sqlx::query("DELETE FROM content.processed_snapshots WHERE hash LIKE $1")
             .bind(format!("snap-{tag}-%"))
+            .execute(&pool)
+            .await
+            .unwrap();
+    }
+
+    #[tokio::test]
+    async fn snapshot_receipts_skip_only_covered_entity_types() {
+        let Some(pool) = test_pool(2).await else {
+            return;
+        };
+        let store = LiveProcessedSnapshotStore::new(pool.clone());
+        let hash = format!("snap-scope-{}", unique());
+        let hashes = std::slice::from_ref(&hash);
+        let scene = HashSet::from(["scene".to_string()]);
+        let profile = HashSet::from(["profile".to_string()]);
+        let widened = HashSet::from(["scene".to_string(), "profile".to_string()]);
+        sqlx::query(
+            "INSERT INTO content.processed_snapshots (hash, process_time) VALUES ($1, now())",
+        )
+        .bind(&hash)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        let covered = |scope| store.filter_processed_in_chunks(hashes.iter().cloned(), scope);
+        assert!(covered(Some(&scene)).await.unwrap().is_empty());
+        assert!(covered(None).await.unwrap().is_empty());
+
+        store
+            .mark_processed_many(hashes, Some(&scene))
+            .await
+            .unwrap();
+        assert!(covered(Some(&scene)).await.unwrap().contains(&hash));
+        assert!(covered(Some(&widened)).await.unwrap().is_empty());
+        assert!(covered(None).await.unwrap().is_empty());
+
+        store
+            .mark_processed_many(hashes, Some(&profile))
+            .await
+            .unwrap();
+        assert!(covered(Some(&widened)).await.unwrap().contains(&hash));
+        assert!(covered(None).await.unwrap().is_empty());
+
+        store.mark_processed_many(hashes, None).await.unwrap();
+        store
+            .mark_processed_many(hashes, Some(&scene))
+            .await
+            .unwrap();
+        assert!(covered(Some(&widened)).await.unwrap().contains(&hash));
+        assert!(covered(None).await.unwrap().contains(&hash));
+
+        sqlx::query("DELETE FROM content.processed_snapshots WHERE hash = $1")
+            .bind(&hash)
             .execute(&pool)
             .await
             .unwrap();
@@ -875,6 +1056,14 @@ mod tests {
             .await
             .unwrap();
         }
+
+        // Pages of two cross a page boundary and end on a short page.
+        let mut paged = BloomFilter::with_capacity(100_000);
+        assert_eq!(
+            repo.seed_in_pages(&mut paged, 2).await.unwrap(),
+            ids.len() as u64
+        );
+        assert!(ids.iter().all(|id| paged.maybe_contains(id)));
 
         let mut bloom = BloomFilter::with_capacity(100_000);
         let seeded = repo.seed_deployed_entity_ids(&mut bloom).await.unwrap();

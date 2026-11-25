@@ -48,7 +48,7 @@ Files read:
     `test/unit/name-deny-list-checker.spec.ts`
 - dcl-one (`services/catalyst/`):
   - `worlds/src/core/mod.rs` (routes), `worlds/src/lib.rs` (`app_router`), `worlds/src/writes.rs`
-  - `worlds/src/core/{deploy,deploy_form,deploy_validate,partial,upload_limits,upload_spool,scenes,store,quota,auth,http}.rs`
+  - `worlds/src/core/{deploy,deploy_form,deploy_validate,partial,upload_limits,scenes,store,quota,auth,http}.rs`, `storage/src/upload_spool.rs`
   - `worlds/src/core/tests.rs`, `worlds/src/core/tests/partial_uploads.rs` (test names only)
   - `comms/src/worlds_envelope.rs`, `comms/src/signed_fetch.rs`, `shared/src/signed_fetch.rs`,
     `comms/src/world_identity.rs` (`WorldName`, `Parcel`)
@@ -66,7 +66,7 @@ Common notes:
 - **Writes switch.** Every route in this area is a write behind `WORLDS_WRITES_ENABLED`
   (`worlds/src/writes.rs` `is_gated`), default `false` (`config/src/worlds.rs` `worlds_writes_enabled`). Off, each answers 503
   `{"ok":false,"error":"Service Unavailable","message":…}` with `Retry-After: 3600`
-  (`writes.rs` `refused_response`). The rows below assume the switch is on (WD-03).
+  (`writes.rs` `disabled_response`). The rows below assume the switch is on (WD-03).
 - **Error envelope.** Upstream answers a thrown `InvalidRequestError` with
   `400 {"error":"Bad request","message":…}`, `NotAuthorizedError` with `401 {"error":"Not Authorized",…}`
   and anything else with `500 {"error":"Internal Server Error"}` (`@dcl/http-commons` 2.0.0
@@ -366,10 +366,9 @@ dcl-one (`scenes.rs` `delete_scene`): world name parsed first, the strict signed
    - Upstream: no switch.
    - dcl-one: `WORLDS_WRITES_ENABLED` defaults to `false`; while off every route here answers
      503 `{"ok":false,"error":"Service Unavailable","message":…}` with `Retry-After: 3600`
-     (`services/catalyst/worlds/src/writes.rs` `is_gated`, `refused_response`; `config/src/worlds.rs`
+     (`services/catalyst/worlds/src/writes.rs` `is_gated`, `disabled_response`; `config/src/worlds.rs`
      `worlds_writes_enabled`). Listed under "Writes
-     switch", one line for every worlds write route (WW-27): DATABASE.md requires a demonstrated
-     restore before local authority is accepted.
+     switch", one line for every worlds write route (WW-27).
    - Severity: none (closed).
 
 4. **WD-04 · `POST /entities` · multipart field, part and file caps.** Status: MATCH, no work.

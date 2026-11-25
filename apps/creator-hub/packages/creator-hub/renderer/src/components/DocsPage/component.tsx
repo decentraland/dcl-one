@@ -1,18 +1,19 @@
-import { useNavigate } from 'react-router-dom';
-import { Grid } from 'decentraland-ui2';
+import { useNavigate } from 'react-router';
 import { t } from '/@/modules/store/translation/utils';
-import { misc } from '#preload';
+import { openLearnResource } from '/@/lib/openLearnResource';
 
 import { Container } from '../Container';
 import { Title } from '../Title';
 import { Navbar, NavbarItem } from '../Navbar';
+import styles from './component.module.css';
+
 import './styles.css';
 
 function Link(props: { url: string; title: string }) {
   return (
     <div
       className="link"
-      onClick={() => misc.openExternal(props.url)}
+      onClick={() => openLearnResource('docs', 'doc', props.title, props.url)}
     >
       <i className="icon" />
       <span className="title">{props.title}</span>
@@ -52,18 +53,8 @@ export function DocsPage() {
             </div>
           </div>
           <div className="sections">
-            <Grid
-              container
-              spacing={4}
-            >
-              <Grid
-                item
-                xs={12}
-                sm={12}
-                md={6}
-                lg={4}
-                xl={3}
-              >
+            <div className={styles.grid}>
+              <div className={styles.item}>
                 <div className="section">
                   <h4>Wearables & Emotes</h4>
                   <h5>Wearables</h5>
@@ -95,15 +86,8 @@ export function DocsPage() {
                     />
                   </div>
                 </div>
-              </Grid>
-              <Grid
-                item
-                xs={12}
-                sm={12}
-                md={6}
-                lg={4}
-                xl={3}
-              >
+              </div>
+              <div className={styles.item}>
                 <div className="section">
                   <h4>Tutorials & Examples</h4>
                   <div className="links vertical">
@@ -121,15 +105,8 @@ export function DocsPage() {
                     />
                   </div>
                 </div>
-              </Grid>
-              <Grid
-                item
-                xs={12}
-                sm={12}
-                md={6}
-                lg={4}
-                xl={3}
-              >
+              </div>
+              <div className={styles.item}>
                 <div className="section">
                   <h4>SDK</h4>
                   <div className="links vertical">
@@ -155,15 +132,8 @@ export function DocsPage() {
                     />
                   </div>
                 </div>
-              </Grid>
-              <Grid
-                item
-                xs={12}
-                sm={12}
-                md={6}
-                lg={4}
-                xl={3}
-              >
+              </div>
+              <div className={styles.item}>
                 <div className="section">
                   <h4>3D Modeling & Animations</h4>
                   <div className="links vertical">
@@ -197,8 +167,8 @@ export function DocsPage() {
                     />
                   </div>
                 </div>
-              </Grid>
-            </Grid>
+              </div>
+            </div>
           </div>
         </div>
       </Container>

@@ -4,6 +4,8 @@
 //! `ts-rs` (scripts/gen-ts-bindings.sh) to generate the TypeScript the react-web
 //! page and bridge scene consume. `system_bridge` re-exports everything here.
 
+#![forbid(unsafe_code)]
+
 pub mod languages;
 pub mod launch_options;
 pub mod services;
@@ -69,8 +71,8 @@ impl ClearableColor3 {
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 #[ts(export)]
 pub struct SetAvatarData {
-    /// Body shape, colors and name. An empty `body_shape_urn` and absent colors are "unchanged",
-    /// so a name-only edit needn't restate the avatar.
+    /// An empty body shape or name and absent colors keep their current values.
+    /// Only a nonempty name can change the claimed-name flag.
     #[ts(optional)]
     pub base: Option<PbAvatarBase>,
     #[ts(optional)]
@@ -124,6 +126,20 @@ pub struct PortableInfo {
     pub source: Option<SmartWearableSource>,
 }
 
+/// A map pin (`MapPin`) of a portable experience whose scene.json declares
+/// `isPortableExperience: true`.
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, ts_rs::TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct MapPinInfo {
+    /// `<scene hash>:<scene entity>`.
+    pub id: String,
+    pub x: i32,
+    pub y: i32,
+    /// At most 100 characters.
+    pub title: String,
+}
+
 #[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq, ts_rs::TS)]
 #[serde(rename_all = "camelCase")]
 #[ts(export)]
@@ -161,6 +177,25 @@ pub enum SmartWearableSource {
 pub struct HomeScene {
     pub realm: String,
     pub parcel: Vector2,
+    /// False when the account has no home: `realm` and `parcel` are then where it starts, the
+    /// default realm on 0,0.
+    pub pinned: bool,
+    /// False when no account is signed in or the session is a guest with no account: setting and
+    /// clearing a home then change nothing.
+    pub pinnable: bool,
+}
+
+/// The lobby's 3D stage, drawn around the system scene's preview avatar for the camera that
+/// renders the scene's `layer`.
+#[derive(Serialize, Deserialize, Clone, Debug, ts_rs::TS)]
+#[ts(export)]
+pub struct LobbyStage {
+    /// The look's id, as the HUD's Settings lists it; an unknown id shows the first look.
+    pub preset: String,
+    /// The system scene's camera layer the preview camera and avatar render on.
+    pub layer: u32,
+    /// The avatar's feet, in the system scene's coordinates.
+    pub feet: Vector3,
 }
 
 /// What the welcome page must show for the signed-in account.
@@ -185,6 +220,16 @@ pub struct SatelliteView {
     pub base_url: String,
     pub suffix_url: String,
     pub top_left_offset: Vector2,
+}
+
+/// A community whose chat channel the local user listens to.
+#[derive(Clone, Debug, Serialize, Deserialize, ts_rs::TS)]
+#[ts(export)]
+pub struct ListenedCommunity {
+    pub id: String,
+    /// The community's name, shown with its messages over their authors' nametags; `None`
+    /// when the HUD doesn't know it.
+    pub name: Option<String>,
 }
 
 #[derive(Clone, Serialize, Deserialize, ts_rs::TS)]
@@ -568,6 +613,40 @@ pub struct AnalyticsEvent {
     pub properties: serde_json::Value,
 }
 
+/// Where the preview server's background texture import is: encoding, finished with new
+/// optimized files in place (the scene shows them on its next reload), or failed.
+#[derive(Clone, Copy, Serialize, Deserialize, Debug, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+#[derive(ts_rs::TS)]
+#[ts(export)]
+pub enum TextureOptimizationState {
+    Running,
+    Ready,
+    Failed,
+}
+
+/// The preview server's texture import status for one scene, as the preview socket delivered it
+/// (its `TEXTURE_OPTIMIZATION` text frame). `done`, `total` and `failed` count this run's
+/// textures; `bytesBefore` and `bytesAfter` are the converted images' source and KTX2 sizes;
+/// `enabled` is whether the project serves the optimized files. `replay` marks the server's last
+/// status, sent again as the socket (re)connected, not news.
+#[derive(Clone, Serialize, Deserialize, Debug, PartialEq)]
+#[serde(rename_all = "camelCase")]
+#[derive(ts_rs::TS)]
+#[ts(export)]
+pub struct TextureOptimizationStatus {
+    pub scene_id: String,
+    pub state: TextureOptimizationState,
+    pub done: u32,
+    pub total: u32,
+    pub failed: u32,
+    // f64: a plain JS number on every runtime (exact below 2^53 bytes)
+    pub bytes_before: f64,
+    pub bytes_after: f64,
+    pub enabled: bool,
+    pub replay: bool,
+}
+
 #[derive(Serialize, Deserialize, Clone, Debug)]
 #[serde(rename_all = "camelCase")]
 #[derive(ts_rs::TS)]
@@ -576,6 +655,7 @@ pub struct AvatarModifierState {
     pub user_id: String,
     pub hide_avatar: bool,
     pub hide_profile: bool,
+    pub pulse_absent: bool,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -764,6 +844,20 @@ pub struct FriendConnectivityEvent {
     pub status: String,
 }
 
+/// The signed-in wallet's platform ban. `banned` is false while the check is unknown or
+/// failed. Dates are the gatekeeper's ISO strings.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+#[derive(ts_rs::TS)]
+#[ts(export)]
+pub struct PlatformBanNotice {
+    pub banned: bool,
+    /// Empty when the record was withheld or the ban is known only from a refusal
+    pub reason: String,
+    pub custom_message: Option<String>,
+    pub expires_at: Option<String>,
+}
+
 /// The engine needs a password to enter a world (see `ipfs::world_access`); answered with
 /// `SetWorldPassword`.
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -788,6 +882,20 @@ pub enum WorldAccessEvent {
     /// The prompt no longer needs an answer: the realm change it was for is over
     #[serde(rename = "cancelled")]
     Cancelled,
+}
+
+/// Whether the local user may enter a world, by the check a realm change runs before entering.
+/// `invited`: let in by its allow-list. `failed`: the check could not tell; the world decides on
+/// arrival.
+#[derive(Serialize, Deserialize, Clone, Copy, PartialEq, Eq, Debug, ts_rs::TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub enum WorldAccessVerdict {
+    Allowed,
+    Invited,
+    Denied,
+    Password,
+    Failed,
 }
 
 #[derive(Serialize, Deserialize, Clone, Copy, PartialEq, Eq, Hash, Debug, ts_rs::TS)]
@@ -852,6 +960,48 @@ pub enum PermissionRequestEvent {
     Cancelled { id: usize },
 }
 
+/// A scene asked to open the purchase confirmation for one item. The engine has applied its
+/// gates and parsed the item from the scene's urn; `item` is None when the urn names no
+/// purchasable collection item. The HUD answers each request with [`SetItemPurchaseState`].
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, ts_rs::TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct ItemPurchaseRequest {
+    pub id: u32,
+    pub item: Option<ItemPurchaseItem>,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, ts_rs::TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct ItemPurchaseItem {
+    /// collection contract, `0x` + 40 hex digits
+    pub contract: String,
+    /// the item's id within the collection, decimal digits
+    pub item_id: String,
+}
+
+/// The HUD's report on an [`ItemPurchaseRequest`]: first `accepted` (the confirmation is
+/// showing) or `unavailable` (this host cannot buy), then for an accepted request exactly one
+/// of the outcomes.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, ts_rs::TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub enum ItemPurchaseState {
+    Accepted,
+    Unavailable,
+    Purchased,
+    Dismissed,
+    Failed,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, ts_rs::TS)]
+#[ts(export)]
+pub struct SetItemPurchaseState {
+    pub id: u32,
+    pub state: ItemPurchaseState,
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize, ts_rs::TS)]
 #[ts(export)]
 pub struct SetSinglePermission {
@@ -888,4 +1038,74 @@ pub struct SettingInfo {
     pub step_size: f32,
     pub value: f32,
     pub default: f32,
+    /// True while another setting's value overrides this one.
+    pub disabled: bool,
+}
+
+/// A color as the catalyst `outfits` entity stores it. Other explorers read a missing `a` as 0.
+#[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq, ts_rs::TS)]
+#[ts(export)]
+pub struct OutfitColor {
+    pub r: f32,
+    pub g: f32,
+    pub b: f32,
+    #[serde(default = "opaque")]
+    pub a: f32,
+}
+
+fn opaque() -> f32 {
+    1.0
+}
+
+#[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq, ts_rs::TS)]
+#[ts(export)]
+pub struct OutfitColored {
+    pub color: OutfitColor,
+}
+
+/// One saved look, as the catalyst `outfits` entity stores it.
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, ts_rs::TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct OutfitData {
+    pub body_shape: String,
+    pub eyes: OutfitColored,
+    pub hair: OutfitColored,
+    pub skin: OutfitColored,
+    pub wearables: Vec<String>,
+    #[serde(default)]
+    pub force_render: Vec<String>,
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, ts_rs::TS)]
+#[ts(export)]
+pub struct OutfitSlotData {
+    pub slot: u32,
+    pub outfit: OutfitData,
+}
+
+/// The local player's saved outfits: the metadata of their catalyst `outfits` entity. Fields
+/// other explorers add are dropped on the next deploy.
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, ts_rs::TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct OutfitsData {
+    pub outfits: Vec<OutfitSlotData>,
+    pub names_for_extra_slots: Vec<String>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::SetAvatarData;
+
+    #[test]
+    fn an_equip_without_the_wearables_list_deserializes() {
+        let patch: SetAvatarData = serde_json::from_value(serde_json::json!({
+            "equip": { "wearableUrns": ["urn:hat"], "emoteUrns": [], "forceRender": ["hair"] }
+        }))
+        .unwrap();
+        let equip = patch.equip.unwrap();
+        assert_eq!(equip.force_render, vec!["hair"]);
+        assert!(equip.wearables.is_empty());
+    }
 }

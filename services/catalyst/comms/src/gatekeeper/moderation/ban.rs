@@ -1,7 +1,7 @@
 //! Offered ban answer: comms owns platform/device/scene bans, worlds owns operator blocks.
 use crate::access::Ban;
+use crate::access::SceneBanKey;
 use crate::interfaces::AccessPolicy;
-use crate::world_identity::SceneId;
 use crate::{Address, AuthorityNotEstablished};
 use chrono::NaiveDateTime;
 
@@ -10,7 +10,7 @@ pub trait BanStatus: Send + Sync {
     async fn ban(
         &self,
         actor: &Address,
-        scene: Option<&SceneId>,
+        scene: Option<&SceneBanKey>,
         device: Option<&str>,
         now: NaiveDateTime,
     ) -> Result<Option<Ban>, AuthorityNotEstablished>;
@@ -21,7 +21,7 @@ pub async fn admission_ban(
     policy: &dyn AccessPolicy,
     bans: &dyn BanStatus,
     actor: &Address,
-    scene: Option<&SceneId>,
+    scene: Option<&SceneBanKey>,
     device: Option<&str>,
     now: NaiveDateTime,
 ) -> Result<Option<Ban>, AuthorityNotEstablished> {
@@ -63,7 +63,7 @@ pub mod test_support {
         async fn ban(
             &self,
             _: &Address,
-            _: Option<&SceneId>,
+            _: Option<&SceneBanKey>,
             _: Option<&str>,
             _: NaiveDateTime,
         ) -> Result<Option<Ban>, AuthorityNotEstablished> {
@@ -155,14 +155,14 @@ mod tests {
         );
     }
 
-    type ProbeCalls = Vec<(Address, Option<SceneId>, Option<String>, NaiveDateTime)>;
+    type ProbeCalls = Vec<(Address, Option<SceneBanKey>, Option<String>, NaiveDateTime)>;
     struct Probe(Mutex<ProbeCalls>);
     #[async_trait::async_trait]
     impl BanStatus for Probe {
         async fn ban(
             &self,
             actor: &Address,
-            scene: Option<&SceneId>,
+            scene: Option<&SceneBanKey>,
             device: Option<&str>,
             now: NaiveDateTime,
         ) -> Result<Option<Ban>, AuthorityNotEstablished> {
@@ -179,7 +179,8 @@ mod tests {
     async fn full_answer_forwards_scope_device_and_clock_exactly_once() {
         let probe = Probe(Mutex::new(vec![]));
         let actor = wallet();
-        let scene = SceneId::parse("scene-under-test").unwrap();
+        let scene =
+            SceneBanKey::scene(&crate::world_identity::SceneId::parse("scene-under-test").unwrap());
         let now = chrono::Utc::now().naive_utc();
         assert_eq!(
             admission_ban(
@@ -221,7 +222,13 @@ mod tests {
             Address::parse(&format!("0x00000000{}", uuid::Uuid::new_v4().simple())).unwrap();
         let other =
             Address::parse(&format!("0x00000000{}", uuid::Uuid::new_v4().simple())).unwrap();
-        let scene = SceneId::parse(&format!("scene-{}", uuid::Uuid::new_v4().simple())).unwrap();
+        let scene = SceneBanKey::scene(
+            &crate::world_identity::SceneId::parse(&format!(
+                "scene-{}",
+                uuid::Uuid::new_v4().simple()
+            ))
+            .unwrap(),
+        );
         let device = uuid::Uuid::new_v4().to_string();
         let now = chrono::Utc::now().naive_utc();
         let bans = super::super::Moderation::new(pool.clone());
@@ -252,11 +259,12 @@ mod tests {
             bans.ban(&actor, Some(&scene), None, now).await.unwrap(),
             Some(Ban::Platform)
         );
+        // A sent device id never hides the recorded one.
         assert_eq!(
             bans.ban(&actor, Some(&scene), Some("different-device"), now)
                 .await
                 .unwrap(),
-            Some(Ban::Scene)
+            Some(Ban::Platform)
         );
         assert_eq!(
             bans.ban(&other, None, None, now).await.unwrap(),

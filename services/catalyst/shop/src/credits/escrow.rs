@@ -35,7 +35,18 @@ pub enum ManaPaymentVerification {
         from: String,
         to: String,
         value_wei: String,
+        block: TransferBlock,
     },
+}
+
+/// Where a confirmed payment was mined, as of the verification.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct TransferBlock {
+    pub number: u64,
+    /// Unix seconds.
+    pub timestamp: i64,
+    /// Blocks mined on top of it.
+    pub confirmations: u64,
 }
 
 pub fn parse_verification(v: &Value) -> Result<ManaPaymentVerification, ApiError> {
@@ -54,10 +65,22 @@ pub fn parse_verification(v: &Value) -> Result<ManaPaymentVerification, ApiError
                         ))
                     })
             };
+            let number = |name: &str| {
+                v.get(name).and_then(Value::as_i64).ok_or_else(|| {
+                    ApiError::Internal(format!(
+                        "economy verify 'confirmed' response missing {name}"
+                    ))
+                })
+            };
             Ok(ManaPaymentVerification::Confirmed {
                 from: field("from")?,
                 to: field("to")?,
                 value_wei: field("valueWei")?,
+                block: TransferBlock {
+                    number: number("blockNumber")?.max(0) as u64,
+                    timestamp: number("blockTimestamp")?,
+                    confirmations: number("confirmations")?.max(0) as u64,
+                },
             })
         }
         other => Err(ApiError::Internal(format!(
@@ -105,6 +128,16 @@ pub trait Broker: Send + Sync {
 
     /// Delivers the line into escrow; `Ok` is the forward transaction hash.
     async fn buy(&self, req: &BuyRequest) -> Result<String, BrokerError>;
+
+    /// Drives the buy already claimed under `idempotency_key` to escrow
+    /// custody from its recorded state alone, re-checking nothing about the
+    /// item or trade; `Ok` is the forward transaction hash.
+    async fn resume(&self, idempotency_key: &str) -> Result<String, BrokerError>;
+
+    /// Whether a buy released as dead under `idempotency_key` mined
+    /// successfully after all, so the line spent MANA and must not be
+    /// refunded. A reverted one spent nothing.
+    async fn released_buy_mined(&self, idempotency_key: &str) -> Result<bool, ApiError>;
 
     async fn reclaim(
         &self,
@@ -164,6 +197,18 @@ impl EconomyBroker {
         (status, message)
     }
 
+    /// A broker refusal as the outbox sees it: timeouts, conflicts, rate
+    /// limits and server errors are worth another attempt.
+    fn broker_error(e: crate::evm::errors::ApiError) -> BrokerError {
+        let (code, msg) = Self::status_and_message(e);
+        let msg = format!("broker status {code}: {msg}");
+        if code == 408 || code == 409 || code == 429 || (500..600).contains(&code) {
+            BrokerError::Retryable(msg)
+        } else {
+            BrokerError::Terminal(msg)
+        }
+    }
+
     fn tx_hash_of(v: &Value) -> Result<String, ApiError> {
         v.get("txHash")
             .and_then(|v| v.as_str())
@@ -220,16 +265,37 @@ impl Broker for EconomyBroker {
         match crate::checkout::broker::buy(State(self.state.clone()), headers, Ok(Json(body))).await
         {
             Ok(Json(v)) => Self::tx_hash_of(&v).map_err(|e| BrokerError::Retryable(e.to_string())),
-            Err(e) => {
-                let (code, msg) = Self::status_and_message(e);
-                let msg = format!("broker status {code}: {msg}");
-                if code == 408 || code == 409 || code == 429 || (500..600).contains(&code) {
-                    Err(BrokerError::Retryable(msg))
-                } else {
-                    Err(BrokerError::Terminal(msg))
-                }
-            }
+            Err(e) => Err(Self::broker_error(e)),
         }
+    }
+
+    async fn resume(&self, idempotency_key: &str) -> Result<String, BrokerError> {
+        if !self.state.settings.data_writes_enabled {
+            return Err(BrokerError::Retryable(
+                "DATA_WRITES_ENABLED=false: the economy broker resumes no buys on this node".into(),
+            ));
+        }
+        crate::checkout::broker::resume(&self.state, idempotency_key)
+            .await
+            .map_err(Self::broker_error)
+    }
+
+    async fn released_buy_mined(&self, idempotency_key: &str) -> Result<bool, ApiError> {
+        let Some(signer) = self.state.transaction.direct_signer() else {
+            return Err(ApiError::ServiceUnavailable(
+                "checking a released broker buy requires the direct JSON-RPC signer".into(),
+            ));
+        };
+        crate::checkout::broker::mined_released_tx(&self.state, signer, idempotency_key)
+            .await
+            // A released buy that reverted spent nothing: the line stays refundable.
+            .map(|mined| {
+                matches!(
+                    mined,
+                    Some((_, crate::evm::signer::ReceiptOutcome::Confirmed))
+                )
+            })
+            .map_err(|e| ApiError::BadGateway(format!("released broker buy look failed: {e}")))
     }
 
     async fn reclaim(
@@ -327,6 +393,18 @@ impl Broker for NoBroker {
         ))
     }
 
+    async fn resume(&self, _idempotency_key: &str) -> Result<String, BrokerError> {
+        Err(BrokerError::Retryable(
+            "the economy broker is not configured on this node".into(),
+        ))
+    }
+
+    async fn released_buy_mined(&self, _idempotency_key: &str) -> Result<bool, ApiError> {
+        Err(ApiError::ServiceUnavailable(
+            "the economy broker is not configured on this node".into(),
+        ))
+    }
+
     async fn reclaim(
         &self,
         _collection: &str,
@@ -408,25 +486,7 @@ impl ReleaseWorker {
         if !self.broker.configured() {
             return Ok(0);
         }
-        let due: Vec<DueGrant> = sqlx::query(
-            "SELECT id, grantee_address, urn, token_id, collection \
-             FROM shop.usage_grants \
-             WHERE status = 'active' AND unlock_at <= $1 \
-             ORDER BY id LIMIT $2",
-        )
-        .bind(now())
-        .bind(RELEASE_BATCH_LIMIT)
-        .fetch_all(&self.credits.pool)
-        .await?
-        .into_iter()
-        .map(|r| DueGrant {
-            id: r.get("id"),
-            buyer: r.get("grantee_address"),
-            urn: r.get("urn"),
-            token_id: r.get("token_id"),
-            collection: r.get("collection"),
-        })
-        .collect();
+        let due = release_batch(&self.credits.pool, now()).await?;
 
         let mut released = 0usize;
         for g in due {
@@ -508,13 +568,31 @@ mod tests {
                 "from": "0xAAAA567890123456789012345678901234567890",
                 "to": "0xbbbb567890123456789012345678901234567890",
                 "valueWei": "2500000000000000000",
+                "blockNumber": 100,
+                "blockTimestamp": 1_700_000_000,
+                "confirmations": 12,
             }))
             .unwrap(),
             ManaPaymentVerification::Confirmed {
                 from: "0xaaaa567890123456789012345678901234567890".into(),
                 to: "0xbbbb567890123456789012345678901234567890".into(),
                 value_wei: "2500000000000000000".into(),
+                block: TransferBlock {
+                    number: 100,
+                    timestamp: 1_700_000_000,
+                    confirmations: 12,
+                },
             }
+        );
+        assert!(
+            parse_verification(&json!({
+                "status": "confirmed",
+                "from": "0xaaaa567890123456789012345678901234567890",
+                "to": "0xbbbb567890123456789012345678901234567890",
+                "valueWei": "1",
+            }))
+            .is_err(),
+            "a confirmation without its block is refused"
         );
     }
 
@@ -566,5 +644,71 @@ mod tests {
             .await
             .unwrap_err();
         assert!(matches!(err, ApiError::NotImplemented(_)), "{err:?}");
+    }
+}
+
+async fn release_batch(
+    pool: &sqlx::PgPool,
+    clock: chrono::NaiveDateTime,
+) -> Result<Vec<DueGrant>, sqlx::Error> {
+    let mut sweep = crate::worker_progress::Sweep::begin(pool, "escrow_release", 0).await?;
+    let mut rows = Vec::new();
+    for _ in 0..2 {
+        if sweep.position >= sweep.ceiling {
+            sweep.position = 0;
+            sweep.ceiling = sqlx::query_scalar("SELECT COALESCE(max(id), 0) FROM shop.usage_grants WHERE status = 'active' AND unlock_at <= $1")
+                .bind(clock).fetch_one(&mut *sweep.tx).await?;
+        }
+        rows = sqlx::query("SELECT id, grantee_address, urn, token_id, collection FROM shop.usage_grants WHERE status = 'active' AND unlock_at <= $1 AND id > $2 AND id <= $3 ORDER BY id LIMIT $4")
+            .bind(clock).bind(sweep.position).bind(sweep.ceiling).bind(RELEASE_BATCH_LIMIT).fetch_all(&mut *sweep.tx).await?;
+        if let Some(last) = rows.last() {
+            sweep.position = last.get("id");
+            break;
+        }
+        sweep.position = sweep.ceiling;
+    }
+    sweep.commit().await?;
+    Ok(rows
+        .into_iter()
+        .map(|r| DueGrant {
+            id: r.get("id"),
+            buyer: r.get("grantee_address"),
+            urn: r.get("urn"),
+            token_id: r.get("token_id"),
+            collection: r.get("collection"),
+        })
+        .collect())
+}
+
+#[cfg(test)]
+mod progress_tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn release_sweep_reaches_ready_tail_and_retries_after_continuous_arrivals() {
+        let Some(db) = crate::test_db::OwnDatabase::create("release_sweep").await else {
+            return;
+        };
+        sqlx::query("INSERT INTO shop.usage_grants (grantee_address, urn, category, unlock_at, token_id, collection) SELECT '0x0000000000000000000000000000000000000001', 'urn:' || n, 'wearable', timezone('UTC', now()) - interval '1 hour', CASE WHEN n = 51 THEN '1' END, '0x0000000000000000000000000000000000000001' FROM generate_series(1, 51) n").execute(&db.pool).await.unwrap();
+        let first = release_batch(&db.pool, now()).await.unwrap();
+        assert_eq!(first.len(), 50);
+        assert!(first.iter().all(|g| g.token_id.is_none()));
+        // Selection committed, process died before attempting the prefix.
+        // New arrivals must not keep pushing its retry horizon away.
+        for expected in [51, 1, 51] {
+            sqlx::query("INSERT INTO shop.usage_grants (grantee_address, urn, category, unlock_at) SELECT '0x0000000000000000000000000000000000000001', 'new:' || n, 'wearable', timezone('UTC', now()) - interval '1 hour' FROM generate_series(1, 60) n").execute(&db.pool).await.unwrap();
+            let next = release_batch(&db.pool, now()).await.unwrap();
+            assert_eq!(next[0].id, expected);
+            if expected == 51 {
+                assert_eq!(next[0].token_id.as_deref(), Some("1"));
+            }
+        }
+        let count: i64 =
+            sqlx::query_scalar("SELECT count(*) FROM shop.usage_grants WHERE status = 'active'")
+                .fetch_one(&db.pool)
+                .await
+                .unwrap();
+        assert_eq!(count, 231, "selection must retain every pending obligation");
+        db.drop().await;
     }
 }

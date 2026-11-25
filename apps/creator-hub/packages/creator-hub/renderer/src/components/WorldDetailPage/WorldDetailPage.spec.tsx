@@ -1,10 +1,9 @@
 import type { ButtonHTMLAttributes } from 'react';
 import { Provider } from 'react-redux';
-import { Link, MemoryRouter, Route, Routes } from 'react-router-dom';
+import { Link, MemoryRouter, Route, Routes } from 'react-router';
 import { act, cleanup, fireEvent, render, screen, within } from '@testing-library/react';
-import { flatten } from 'flat';
+import { flatten } from '/@/modules/store/translation/flatten';
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
-import { dark, ThemeProvider } from 'decentraland-ui2/dist/theme';
 
 import { useAuth } from '/@/hooks/useAuth';
 import { WorldRoleType } from '/@/lib/worlds';
@@ -19,6 +18,7 @@ import { en } from '/@/modules/store/translation/locales';
 import { setCurrentLocale } from '/@/modules/store/translation/utils';
 import { ManagedProjectType, type ManagedProject } from '/shared/types/manage';
 
+import { TestProviders } from '../../../tests/utils/TestProviders';
 import { createTestStore } from '../../../tests/utils/testStore';
 import { WorldDetailPage } from '.';
 
@@ -62,10 +62,6 @@ vi.mock('/@/lib/worlds', async importOriginal => {
     },
   };
 });
-vi.mock('decentraland-ui2', async importOriginal => ({
-  ...(await importOriginal<object>()),
-  AvatarFace: () => null,
-}));
 
 const WALLET = '0x00000000000000000000000000000000000000c3';
 const OTHER = '0x00000000000000000000000000000000000000d4';
@@ -148,7 +144,7 @@ function renderPage(path: string) {
   render(
     <Provider store={store as never}>
       <MemoryRouter initialEntries={[path]}>
-        <ThemeProvider theme={dark}>
+        <TestProviders>
           <Routes>
             <Route
               path="/manage/world/:name/:tab?"
@@ -157,7 +153,7 @@ function renderPage(path: string) {
           </Routes>
           <Link to="/manage/world/plaza.dcl.eth/details">Go to plaza</Link>
           <Link to="/manage/world/deep.dcl.eth/details">Go to deep</Link>
-        </ThemeProvider>
+        </TestProviders>
       </MemoryRouter>
     </Provider>,
   );

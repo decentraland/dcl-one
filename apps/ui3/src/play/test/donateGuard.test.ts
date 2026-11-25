@@ -120,6 +120,19 @@ describe('the tip wallet', () => {
     expect(stale.reached('eth_signTypedData_v4')).toBe(false)
   })
 
+  it('drops a signature that comes back once the sign-in changed, before anything relays it', async () => {
+    let current = true
+    const w = fakeWallet()
+    const wallet: Eip1193Provider = {
+      request: async (a) => {
+        const r = await w.provider.request(a)
+        if (a.method === 'eth_signTypedData_v4') current = false
+        return r
+      }
+    }
+    await expect(signTypedData(guardedDonationProvider(wallet, intent({ current: () => current })), FROM, typedFor(transfer(CREATOR, WEI)))).rejects.toThrow(/sign-in changed/)
+  })
+
   it('refuses anything else', async () => {
     const w = fakeWallet()
     const p = guardedDonationProvider(w.provider, intent())

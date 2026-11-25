@@ -24,7 +24,7 @@
 
 import { spawn, spawnSync } from 'node:child_process';
 import { realpathSync, statSync } from 'node:fs';
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdir, mkdtemp, rm } from 'node:fs/promises';
 import { homedir, tmpdir } from 'node:os';
 import path from 'node:path';
 import readline from 'node:readline';
@@ -36,6 +36,10 @@ const DEFAULT_TIMEOUT_MS = 120_000;
 const CLOSE_TIMEOUT_MS = 5_000;
 const POLL_MS = 100;
 const PRESENT_TIMEOUT_MS = 5_000;
+/** A frame's viewport, as JSON. */
+const VIEWPORT = 'JSON.stringify([window.innerWidth, window.innerHeight])';
+/** Resolves with true once the frame has run two animation frames. */
+const ANIMATION_FRAMES = 'new Promise((done) => requestAnimationFrame(() => requestAnimationFrame(() => done(true))))';
 
 // The bits of the `modifiers` field of CDP's input events.
 const MODIFIER_BITS = { Alt: 1, Control: 2, Meta: 4, Shift: 8 };
@@ -44,6 +48,11 @@ const MOUSE_BUTTONS = { left: 1, right: 2, middle: 4 };
 // The targets that hold frames of the page: the page itself and an out-of-process iframe. Others
 // (workers) are let go.
 const FRAME_TARGETS = new Set(['page', 'iframe']);
+// What a console command fails with when the document it runs in is replaced or closed before it
+// answers, as a click that loads the page again does.
+export const APP_GONE = 'the app frame went away before it answered: its document was replaced or closed';
+// How Chrome answers a call into a context that has just been destroyed.
+const CONTEXT_GONE = /context was destroyed|target navigated or closed|cannot find context/i;
 
 // Chrome as the benchmark runner finds it (local-harness/benchmark/src/chrome.rs `find`).
 function chromeCandidates(env) {
@@ -201,6 +210,11 @@ const debug = process.env.DCL_WEB_DRIVER_DEBUG
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
+// Whether two [width, height] pairs are equal.
+function sameSize(a, b) {
+  return a[0] === b[0] && a[1] === b[1];
+}
+
 // `promise`, or a rejection with `message` after `ms`.
 async function within(promise, ms, message) {
   let timer;
@@ -282,16 +296,22 @@ class Pipe {
 class Driver {
   #proc;
   #profile;
+  #keepProfile;
   #origin;
   #pipe;
   #exit;
   #stderr = [];
   #sessions = new Map();
   #contexts = new Map();
+  // what waits for a context to go away, by the context's key
+  #ends = new Map();
   #page = null;
   #app = null;
+  // the page's viewport at the window's size, and whether the app frame fills it (resizeView)
+  #windowView = null;
   #held = new Set();
-  #shown = new WeakSet();
+  // each document's first drawn frame, as #presented waits for it
+  #shown = new WeakMap();
   #console = [];
   // the credentials the lines run so far carried (`secretsOf`): a page may quote one
   #secrets = new Set();
@@ -300,9 +320,10 @@ class Driver {
   /** Chrome's own name and version, once launched, e.g. `Chrome/156.0.8078.48`. */
   product = '';
 
-  constructor(proc, profile, url) {
+  constructor(proc, profile, keepProfile, url) {
     this.#proc = proc;
     this.#profile = profile;
+    this.#keepProfile = keepProfile;
     this.#origin = new URL(url).origin;
     this.url = url;
     this.#pipe = new Pipe(proc.stdio[3], proc.stdio[4], (event) => this.#onEvent(event));
@@ -385,7 +406,7 @@ class Driver {
       case 'Target.detachedFromTarget':
         this.#sessions.delete(params.sessionId);
         for (const [key, context] of this.#contexts) {
-          if (context.session.id === params.sessionId) this.#contexts.delete(key);
+          if (context.session.id === params.sessionId) this.#forget(key);
         }
         break;
       case 'Runtime.executionContextCreated': {
@@ -403,11 +424,11 @@ class Driver {
         break;
       }
       case 'Runtime.executionContextDestroyed':
-        this.#contexts.delete(`${sessionId}:${params.executionContextId}`);
+        this.#forget(`${sessionId}:${params.executionContextId}`);
         break;
       case 'Runtime.executionContextsCleared':
         for (const [key, context] of this.#contexts) {
-          if (context.session.id === sessionId) this.#contexts.delete(key);
+          if (context.session.id === sessionId) this.#forget(key);
         }
         break;
       case 'Runtime.consoleAPICalled':
@@ -495,7 +516,82 @@ class Driver {
     return Buffer.from(data, 'base64');
   }
 
+  /** Lay the page out at `width` x `height` CSS px, inside the same window; `null` returns it to
+   *  the window's size. Resolves once the page is at that size, the app frame too when it filled
+   *  the page at the window's size, and the app frame has run two animation frames since. Rejects
+   *  once `timeout` has passed. */
+  async resizeView(size, { timeout = PRESENT_TIMEOUT_MS } = {}) {
+    const deadline = Date.now() + timeout;
+    const late = () => `the app frame did not settle at ${size ? size.join('x') : "the window's size"} within ${timeout} ms`;
+    // the window's own view, and whether the app frame fills it: read once, before any override
+    while (this.#windowView == null) {
+      const view = await within(this.#readView(), Math.max(1, deadline - Date.now()), late);
+      if (view) this.#windowView = { size: view.page, fills: sameSize(view.page, view.app) };
+      else if (Date.now() >= deadline) throw new Error(late());
+      else await sleep(POLL_MS);
+    }
+    if (size === null) await this.#send('Emulation.clearDeviceMetricsOverride', {}, this.#page);
+    else await this.#send('Emulation.setDeviceMetricsOverride', { width: size[0], height: size[1], deviceScaleFactor: 0, mobile: false }, this.#page);
+    const want = size ?? this.#windowView.size;
+    for (;;) {
+      // retries until the deadline: one read can find the page and the app frame at different sizes
+      const left = () => Math.max(1, deadline - Date.now());
+      const view = await within(this.#readView(), left(), late);
+      const settled = view && sameSize(view.page, want) && (!this.#windowView.fills || sameSize(view.app, want));
+      if (settled && (await within(this.#evaluateInApp(view.context, ANIMATION_FRAMES, true), left(), late)) === true) return;
+      if (Date.now() >= deadline) throw new Error(late());
+      await sleep(POLL_MS);
+    }
+  }
+
+  /** The page's and the app frame's viewports, and the app frame's context; null while there is
+   *  no app frame to ask. */
+  async #readView() {
+    const page = await this.#send('Runtime.evaluate', { expression: VIEWPORT, returnByValue: true }, this.#page);
+    const context = await this.#findApp();
+    const app = context && (await this.#evaluateInApp(context, VIEWPORT, false));
+    return app == null ? null : { page: JSON.parse(page.result.value), app: JSON.parse(app), context };
+  }
+
+  /** `expression`'s value in the app frame's `context`; undefined when the evaluate fails or the
+   *  context goes away first, without waiting for its answer. */
+  async #evaluateInApp(context, expression, awaitPromise) {
+    const gone = this.#gone(context);
+    try {
+      const evaluated = this.#send('Runtime.evaluate', { expression, contextId: context.id, awaitPromise, returnByValue: true }, context.session);
+      const answer = await Promise.race([evaluated, gone.promise]).catch(() => undefined);
+      return answer?.result?.value;
+    } finally {
+      gone.cancel();
+    }
+  }
+
   // --- the app frame: ready and console commands ---
+
+  #forget(key) {
+    this.#contexts.delete(key);
+    const ends = this.#ends.get(key);
+    this.#ends.delete(key);
+    for (const end of ends ?? []) end();
+  }
+
+  // A rejection with APP_GONE once `context` goes away. Chrome may never answer a call into an
+  // out-of-process frame whose target detaches, so a command must not wait on that answer alone.
+  #gone(context) {
+    const key = `${context.session.id}:${context.id}`;
+    let end;
+    const promise = new Promise((_, reject) => {
+      end = () => reject(new Error(APP_GONE));
+    });
+    promise.catch(() => {});
+    if (!this.#contexts.has(key)) {
+      end();
+      return { promise, cancel: () => {} };
+    }
+    if (!this.#ends.has(key)) this.#ends.set(key, new Set());
+    this.#ends.get(key).add(end);
+    return { promise, cancel: () => this.#ends.get(key)?.delete(end) };
+  }
 
   // The context that has the console and the binding: the app frame's, not the shell's.
   async #findApp() {
@@ -518,7 +614,8 @@ class Driver {
   }
 
   /** Resolves once a context of the page's origin has both `window.engine_console_command` and
-   *  `window.__dclTrustedInput`. */
+   *  `window.__dclTrustedInput`, and the page has drawn that document (`#presented`): input
+   *  can then be aimed at it. */
   async ready({ timeout = DEFAULT_TIMEOUT_MS } = {}) {
     const deadline = Date.now() + timeout;
     const exited = this.#exit.then((info) => {
@@ -527,7 +624,15 @@ class Driver {
     exited.catch(() => {});
     for (;;) {
       const app = await Promise.race([this.#findApp(), exited]);
-      if (app) return;
+      if (app) {
+        const left = Math.max(1, deadline - Date.now());
+        await within(
+          Promise.race([this.#presented(app), exited]),
+          left,
+          () => `${this.url} did not draw its ${this.#origin} frame in the ${left} ms that remained of ${timeout} ms`
+        );
+        return;
+      }
       if (Date.now() >= deadline) {
         const seen = [...this.#contexts.values()]
           .filter((context) => context.isDefault)
@@ -561,14 +666,24 @@ class Driver {
       throw new Error(this.#goneMessage(info));
     });
     exited.catch(() => {});
-    const answer = await within(
-      Promise.race([
-        this.#send('Runtime.evaluate', { expression, contextId: context.id, awaitPromise: true, returnByValue: true }, context.session),
-        exited
-      ]),
-      Math.max(1, timeout - (Date.now() - started)),
-      () => `\`${line}\` did not finish within ${timeout} ms`
-    );
+    const gone = this.#gone(context);
+    const evaluated = this.#send('Runtime.evaluate', { expression, contextId: context.id, awaitPromise: true, returnByValue: true }, context.session)
+      .catch((error) => {
+        if (!CONTEXT_GONE.test(error.message)) throw error;
+        // the answer can come before the event that says so: no later command may go to it
+        this.#forget(`${context.session.id}:${context.id}`);
+        throw new Error(APP_GONE);
+      });
+    let answer;
+    try {
+      answer = await within(
+        Promise.race([evaluated, exited, gone.promise]),
+        Math.max(1, timeout - (Date.now() - started)),
+        () => `\`${line}\` did not finish within ${timeout} ms`
+      );
+    } finally {
+      gone.cancel();
+    }
     if (answer.exceptionDetails) {
       throw new Error(answer.exceptionDetails.exception?.description ?? answer.exceptionDetails.text);
     }
@@ -625,21 +740,32 @@ class Driver {
   // A frame that has only just appeared is not hit-testable until its first frame is composited:
   // a click sent before then goes to the frame under it and is lost (about one first click in five
   // with several browsers starting at once). A screenshot of the page waits for that frame, so one
-  // is taken before the first click on each document; the engine's own start-up takes longer than
-  // that, but a fixture's does not.
-  async #presented(context) {
-    if (this.#shown.has(context)) return;
-    this.#shown.add(context);
-    const shot = this.#send('Page.captureScreenshot', { format: 'jpeg', quality: 1, optimizeForSpeed: true }, this.#page);
-    // best effort: a window that cannot be drawn must not hold up the input
-    await within(shot, PRESENT_TIMEOUT_MS, () => 'no first frame').catch((error) => debug(error.message));
+  // is taken of each document, once. `ready()` waits for it for as long as its caller gives the
+  // page to start: a browser's first start on a machine draws its first frame seconds after the
+  // page's scripts have run, and the page waits less than that for a click's answer.
+  #presented(context) {
+    let shown = this.#shown.get(context);
+    if (shown === undefined) {
+      shown = this.#send('Page.captureScreenshot', { format: 'jpeg', quality: 1, optimizeForSpeed: true }, this.#page).then(
+        () => {},
+        // best effort: a page the browser cannot capture must not hold up the input
+        (error) => debug('no first frame:', error.message)
+      );
+      this.#shown.set(context, shown);
+    }
+    return shown;
   }
 
   async #click(context, { x, y, button }) {
     if (!Number.isFinite(x) || !Number.isFinite(y)) throw new Error('a trusted click needs numeric "x" and "y"');
     const bit = MOUSE_BUTTONS[button];
     if (bit == null) throw new Error(`unknown button \`${button}\`: use left, right or middle`);
-    await this.#presented(context);
+    // settled already for a document `ready()` has seen; a call from another waits here, for less
+    // than the page waits for its answer, and only once for each document
+    await within(this.#presented(context), PRESENT_TIMEOUT_MS, () => 'no first frame').catch((error) => {
+      debug(error.message);
+      this.#shown.set(context, Promise.resolve());
+    });
     const offset = await this.#frameOffset(context);
     const at = { x: offset.x + x, y: offset.y + y, modifiers: this.#modifiers };
     const mouse = (type, extra) => this.#send('Input.dispatchMouseEvent', { type, ...at, ...extra }, this.#page);
@@ -720,7 +846,8 @@ class Driver {
 
   // --- closing ---
 
-  /** `Browser.close`, a kill after 5 s, and the temporary profile removed. */
+  /** `Browser.close`, a kill after 5 s, and the temporary profile removed; a profile the caller
+   *  named stays. */
   close() {
     this.#closing ??= (async () => {
       this.#pipe.send('Browser.close').catch(() => {});
@@ -732,6 +859,7 @@ class Driver {
       }
       this.#pipe.fail(new Error('the driver is closed'));
       for (const stream of this.#proc.stdio) stream?.destroy();
+      if (this.#keepProfile) return;
       try {
         await rm(this.#profile, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 });
       } catch (error) {
@@ -752,12 +880,16 @@ class Driver {
   }
 }
 
-/** Start Chrome on `url` and drive it. `args` are extra Chrome flags, after the driver's own. */
-export async function launch({ url, chrome, headless = true, args = [], windowSize = [1600, 900] } = {}) {
+/** Start Chrome on `url` and drive it. `args` are extra Chrome flags, after the driver's own.
+ *  `profile` names a directory for Chrome's profile that is kept when the driver closes, so the
+ *  page's storage and caches carry over to the next launch with it; without one, each launch
+ *  has a temporary profile of its own. One Chrome at a time uses a profile. */
+export async function launch({ url, chrome, headless = true, args = [], windowSize = [1600, 900], profile: kept } = {}) {
   if (typeof url !== 'string' || url === '') throw new TypeError('launch needs the url to open');
   const executable = chrome ?? findChrome();
   if (executable == null) throw new Error(noChromeMessage(process.env));
-  const profile = await mkdtemp(path.join(tmpdir(), 'dcl-web-driver-'));
+  const profile = kept == null ? await mkdtemp(path.join(tmpdir(), 'dcl-web-driver-')) : path.resolve(kept);
+  if (kept != null) await mkdir(profile, { recursive: true });
   const flags = [
     '--remote-debugging-pipe',
     `--user-data-dir=${profile}`,
@@ -774,7 +906,7 @@ export async function launch({ url, chrome, headless = true, args = [], windowSi
     ...args
   ];
   const proc = spawn(executable, flags, { stdio: ['ignore', 'ignore', 'pipe', 'pipe', 'pipe'] });
-  const driver = new Driver(proc, profile, url);
+  const driver = new Driver(proc, profile, kept != null, url);
   try {
     await driver.open();
   } catch (error) {

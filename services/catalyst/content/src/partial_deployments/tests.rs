@@ -14,7 +14,7 @@ use serde_json::{Value, json};
 use tower::ServiceExt;
 
 use super::*;
-use crate::tests::support::require_test_db;
+use crate::tests::support::{require_test_db, store_lock_waiters};
 use crate::write_deployer::WriteDeployer;
 use crate::{ContentState, Settings, SharedState, SyncState, build_router};
 
@@ -37,8 +37,38 @@ impl Node {
         .await
     }
 
+    /// [`Node::new`] over a database of its own: no other test's deploy holds
+    /// its store lock, and no other test's cleanup takes its uploads.
+    async fn isolated(tag: &str, limits: Limits) -> Option<Self> {
+        let pool = crate::db::scratch::isolated_pool(6).await?;
+        let settings = Settings {
+            partial_uploads: limits,
+            ..Settings::for_tests()
+        };
+        Some(Self::on(pool, tag, settings, None).await)
+    }
+
     async fn with_settings(tag: &str, settings: Settings) -> Option<Self> {
+        Self::with_contract_wallets(tag, settings, None).await
+    }
+
+    /// [`Self::with_settings`] whose deployer asks `eip1654` about contract
+    /// wallets.
+    async fn with_contract_wallets(
+        tag: &str,
+        settings: Settings,
+        eip1654: Option<Arc<dyn crate::auth::Eip1654Validator>>,
+    ) -> Option<Self> {
         let pool = crate::db::scratch::pool(6).await?;
+        Some(Self::on(pool, tag, settings, eip1654).await)
+    }
+
+    async fn on(
+        pool: PgPool,
+        tag: &str,
+        settings: Settings,
+        eip1654: Option<Arc<dyn crate::auth::Eip1654Validator>>,
+    ) -> Self {
         let tmp = std::env::temp_dir().join(format!(
             "catalyst-partial-{tag}-{}-{}",
             std::process::id(),
@@ -47,10 +77,10 @@ impl Node {
         let storage = Arc::new(Storage::from_config(&tmp).await.unwrap());
         let state = Arc::new(ContentState::new(pool.clone(), settings, storage.clone()));
         state.sync.set_state(SyncState::Syncing);
-        let deployer = WriteDeployer::with_optional_eip1654(pool, storage, None)
+        let deployer = WriteDeployer::with_partial_validation_for_tests(pool, storage, eip1654)
             .with_denylist(state.denylist.clone());
         assert!(state.attach_writes(true, Arc::new(deployer)));
-        Some(Self { state, tmp })
+        Self { state, tmp }
     }
 
     fn router(&self) -> Router {
@@ -128,16 +158,17 @@ async fn make_scene_listing(signer: &PrivateKeySigner, files: &[&[u8]], extra: &
     scene
 }
 
-/// Backdates a stored blob past the collector's age floor.
-async fn age_blob(storage: &Storage, hash: &str) {
-    let path = storage.file_path(hash).await.unwrap().expect("stored");
-    let past = std::time::SystemTime::now() - Duration::from_secs(3 * 3600);
-    std::fs::File::options()
-        .write(true)
-        .open(path)
-        .unwrap()
-        .set_modified(past)
-        .unwrap();
+/// A scene with `files` as its content on `pointers` (another fixture's parcels).
+async fn make_scene_on(signer: &PrivateKeySigner, files: &[&[u8]], pointers: &[String]) -> Scene {
+    let mut scene = make_scene(signer, files, "scene").await;
+    let mut entity: Value = serde_json::from_slice(&scene.bytes).unwrap();
+    entity["pointers"] = json!(pointers);
+    entity["metadata"] = json!({"scene": {"base": pointers[0], "parcels": pointers}});
+    scene.bytes = Bytes::from(serde_json::to_vec(&entity).unwrap());
+    scene.id = hash_bytes_v1(&scene.bytes);
+    scene.chain = chain_for(signer, &scene.id).await;
+    scene.pointers = pointers.to_vec();
+    scene
 }
 
 /// Cleanup reclaims every expired upload in the process's shared scratch
@@ -263,6 +294,8 @@ fn entity_file(scene: &Scene) -> (String, Bytes) {
 #[tokio::test]
 async fn a_scene_uploaded_in_batches_is_published_by_its_last_batch() {
     require_test_db!(Some(node) = Node::new("roundtrip", Limits::default()).await);
+    let recorder = crate::series::test_support::recorder();
+    let _metrics = dcl_metrics::set_default_local_recorder(&recorder);
     let router = node.router();
     let signer = PrivateKeySigner::random();
     let mut scene = make_scene(&signer, &[b"partial-a", b"partial-b"], "scene").await;
@@ -288,9 +321,12 @@ async fn a_scene_uploaded_in_batches_is_published_by_its_last_batch() {
         node.state.storage.clone(),
     ));
     state.sync.set_state(SyncState::Syncing);
-    let deployer =
-        WriteDeployer::with_optional_eip1654(state.pool.clone(), state.storage.clone(), None)
-            .with_denylist(state.denylist.clone());
+    let deployer = WriteDeployer::with_partial_validation_for_tests(
+        state.pool.clone(),
+        state.storage.clone(),
+        None,
+    )
+    .with_denylist(state.denylist.clone());
     assert!(state.attach_writes(true, Arc::new(deployer)));
     let router = build_router(state.clone());
 
@@ -330,6 +366,71 @@ async fn a_scene_uploaded_in_batches_is_published_by_its_last_batch() {
         Some(scene.bytes.clone())
     );
 
+    let (status, _, body) = send(&router, &scene, &scene.chain, vec![]).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(
+        body["creationTimestamp"], created,
+        "a replay answers the stored timestamp"
+    );
+
+    use crate::series::*;
+    let rendered = recorder.handle().render();
+    let sample =
+        |name: &str, labels: &[(&str, &str)]| test_support::sample(&rendered, name, labels);
+    for kind in ["accepted", "validation_error", "finalized", "replayed"] {
+        assert_eq!(
+            sample(PARTIAL_STAGING.descriptor.name, &[("kind", kind)]),
+            Some(1.0),
+            "{kind}"
+        );
+    }
+    assert_eq!(sample(PARTIAL_STARTED.descriptor.name, &[]), Some(1.0));
+    assert_eq!(sample(PARTIAL_COMPLETED.descriptor.name, &[]), Some(1.0));
+    assert_eq!(
+        sample(
+            PARTIAL_BATCHES.descriptor.name,
+            &[("outcome", "incomplete")]
+        ),
+        Some(1.0)
+    );
+    assert_eq!(
+        sample(
+            &format!("{}_count", PARTIAL_BATCHES_PER_UPLOAD.descriptor.name),
+            &[]
+        ),
+        Some(1.0)
+    );
+    assert_eq!(
+        sample(&format!("{}_count", PARTIAL_DURATION.descriptor.name), &[]),
+        Some(1.0)
+    );
+    for stage in [
+        "hash",
+        "validate",
+        "lock_wait",
+        "inventory",
+        "accounting",
+        "store",
+        "progress",
+    ] {
+        assert!(
+            sample(
+                &format!("{}_count", PARTIAL_STAGE_DURATION.descriptor.name),
+                &[("stage", stage)]
+            )
+            .is_some_and(|n| n >= 1.0),
+            "{stage}: {rendered}"
+        );
+    }
+    assert_eq!(
+        sample(
+            &format!("{}_count", PARTIAL_STAGE_DURATION.descriptor.name),
+            &[("stage", "finalize_deploy")]
+        ),
+        Some(2.0),
+        "the refused completion and the publication"
+    );
+
     let req = Request::post("/content/entities/active")
         .header(header::CONTENT_TYPE, "application/json")
         .body(Body::from(json!({"pointers": scene.pointers}).to_string()))
@@ -343,12 +444,138 @@ async fn a_scene_uploaded_in_batches_is_published_by_its_last_batch() {
             .await
             .unwrap();
     assert_eq!(rows, 0, "a published upload leaves no pending row");
+}
+
+/// A replay batch, which may carry no entity file, is answered the stored
+/// timestamp only once its chain signs the id; otherwise it gets the
+/// signature error a fresh batch gets.
+#[tokio::test]
+async fn a_replay_batch_needs_a_chain_that_signs_the_id() {
+    require_test_db!(Some(node) = Node::new("replay", Limits::default()).await);
+    let router = node.router();
+    let signer = PrivateKeySigner::random();
+    let scene = make_scene(&signer, &[b"partial-replay"], "scene").await;
+    let mut files = vec![entity_file(&scene)];
+    files.extend(scene.files.iter().cloned());
+    let (status, _, body) = send(&router, &scene, &scene.chain, files).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let created = body["creationTimestamp"].clone();
 
     let (status, _, body) = send(&router, &scene, &scene.chain, vec![]).await;
-    assert_eq!(status, StatusCode::OK);
     assert_eq!(
-        body["creationTimestamp"], created,
-        "a replay answers the stored timestamp"
+        (status, &body["creationTimestamp"]),
+        (StatusCode::OK, &created)
+    );
+    let stranger = PrivateKeySigner::random();
+    for chain in [
+        chain_for(&stranger, "bafkreiotherentity").await,
+        json!([{"type": "SIGNER", "payload": format!("{:#x}", stranger.address()), "signature": ""}]),
+    ] {
+        let (status, _, body) = send(&router, &scene, &chain, vec![]).await;
+        assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
+        assert!(
+            body["errors"][0]
+                .as_str()
+                .is_some_and(|e| e.starts_with("The signature is invalid.")),
+            "{body}"
+        );
+    }
+}
+
+/// An id, content hash or pointer denylisted after the deploy gets the
+/// regular path's denylist 400 on a replay batch, which may carry no entity
+/// file: the stored entity's hashes and pointers are checked.
+#[tokio::test]
+async fn a_replay_batch_of_a_denylisted_entity_is_refused() {
+    require_test_db!(Some(node) = Node::new("replay-denylisted", Limits::default()).await);
+    let router = node.router();
+    let signer = PrivateKeySigner::random();
+    let scene = make_scene(&signer, &[b"partial-replay-denylisted"], "scene").await;
+    let mut files = vec![entity_file(&scene)];
+    files.extend(scene.files.iter().cloned());
+    let (status, _, body) = send(&router, &scene, &scene.chain, files).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let created = body["creationTimestamp"].clone();
+
+    let hash = &scene.files[0].0;
+    let pointer = &scene.pointers[0];
+    for (listed, error) in [
+        (
+            &scene.id,
+            format!("The entity {} is denylisted on this node.", scene.id),
+        ),
+        (
+            hash,
+            format!("These content files are denylisted on this node: {hash}"),
+        ),
+        (
+            pointer,
+            format!("These pointers are denylisted on this node: {pointer}"),
+        ),
+    ] {
+        node.state.denylist.operator_insert(listed);
+        let (status, _, body) = send(&router, &scene, &scene.chain, vec![]).await;
+        node.state.denylist.operator_remove(listed);
+        assert_eq!(
+            (status, body),
+            (StatusCode::BAD_REQUEST, json!({"errors": [error]}))
+        );
+    }
+    let (status, _, body) = send(&router, &scene, &scene.chain, vec![]).await;
+    assert_eq!(
+        (status, &body["creationTimestamp"]),
+        (StatusCode::OK, &created)
+    );
+}
+
+/// A replay batch is checked at the stored entity's timestamp: a chain whose
+/// ephemeral key expired after the entity was signed still replays.
+#[tokio::test]
+async fn a_replay_batch_is_checked_at_the_stored_entity_timestamp() {
+    require_test_db!(Some(node) = Node::new("replay-expired", Limits::default()).await);
+    let router = node.router();
+    let signer = PrivateKeySigner::random();
+    let mut scene = make_scene(&signer, &[b"partial-replay-expired"], "scene").await;
+    let signed_at = now_ms() - 120_000;
+    let mut entity: Value = serde_json::from_slice(&scene.bytes).unwrap();
+    entity["timestamp"] = json!(signed_at);
+    scene.bytes = Bytes::from(serde_json::to_vec(&entity).unwrap());
+    scene.id = hash_bytes_v1(&scene.bytes);
+    scene.chain = chain_for(&signer, &scene.id).await;
+    let mut files = vec![entity_file(&scene)];
+    files.extend(scene.files.iter().cloned());
+    let (status, _, body) = send(&router, &scene, &scene.chain, files).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let created = body["creationTimestamp"].clone();
+
+    let ephemeral = PrivateKeySigner::random();
+    let expiration = chrono::DateTime::from_timestamp_millis(signed_at + 60_000)
+        .unwrap()
+        .to_rfc3339_opts(chrono::SecondsFormat::Millis, true);
+    let ephemeral_payload = format!(
+        "Decentraland Login\nEphemeral address: {:#x}\nExpiration: {expiration}",
+        ephemeral.address()
+    );
+    let expired = json!([
+        {"type": "SIGNER", "payload": format!("{:#x}", signer.address()), "signature": ""},
+        {"type": "ECDSA_EPHEMERAL", "payload": ephemeral_payload,
+         "signature": signer.sign_message(ephemeral_payload.as_bytes()).await.unwrap().to_string()},
+        {"type": "ECDSA_SIGNED_ENTITY", "payload": scene.id,
+         "signature": ephemeral.sign_message(scene.id.as_bytes()).await.unwrap().to_string()},
+    ]);
+    let deployer = node.state.deployer().unwrap();
+    let parsed: AuthChain = serde_json::from_value(expired.clone()).unwrap();
+    assert!(
+        deployer
+            .check_signature(&scene.id, &parsed, now_ms())
+            .await
+            .is_err(),
+        "the ephemeral key has expired by now"
+    );
+    let (status, _, body) = send(&router, &scene, &expired, vec![]).await;
+    assert_eq!(
+        (status, &body["creationTimestamp"]),
+        (StatusCode::OK, &created)
     );
 }
 
@@ -494,6 +721,8 @@ async fn an_account_over_its_upload_cap_waits() {
         ..Limits::default()
     };
     require_test_db!(Some(node) = Node::new("account-cap", limits).await);
+    let recorder = crate::series::test_support::recorder();
+    let _metrics = dcl_metrics::set_default_local_recorder(&recorder);
     let router = node.router();
     let signer = PrivateKeySigner::random();
     let first = make_scene(&signer, &[b"cap-a"], "scene").await;
@@ -508,10 +737,49 @@ async fn an_account_over_its_upload_cap_waits() {
         "Too many partial uploads in progress for this account (max 1). Complete an upload or wait for expired uploads to be cleaned up."
     );
     assert!(headers.contains_key(header::RETRY_AFTER));
+    assert_throttled(&recorder, "uploads_per_account");
 }
 
-/// An expired upload refuses its next batch; the cleanup job deletes it and
-/// unlinks its staged blobs.
+/// One 429 counted in the staging counter as `throttled` and in
+/// `dcl_partial_upload_throttled_total` by `reason`.
+fn assert_throttled(recorder: &dcl_metrics::PrometheusRecorder, reason: &str) {
+    use crate::series::{PARTIAL_STAGING, PARTIAL_THROTTLED, test_support::sample};
+    let rendered = recorder.handle().render();
+    assert_eq!(
+        sample(
+            &rendered,
+            PARTIAL_STAGING.descriptor.name,
+            &[("kind", "throttled")]
+        ),
+        Some(1.0),
+        "{rendered}"
+    );
+    assert_eq!(
+        sample(
+            &rendered,
+            PARTIAL_THROTTLED.descriptor.name,
+            &[("reason", reason)]
+        ),
+        Some(1.0),
+        "{rendered}"
+    );
+}
+
+/// The status of a GET and a HEAD of `/contents/{hash}`.
+async fn served(router: &Router, hash: &str) -> (StatusCode, StatusCode) {
+    let get = Request::get(format!("/content/contents/{hash}"))
+        .body(Body::empty())
+        .unwrap();
+    let head = Request::head(format!("/content/contents/{hash}"))
+        .body(Body::empty())
+        .unwrap();
+    (call(router, get).await.0, call(router, head).await.0)
+}
+
+/// An expired upload refuses its next batch; the cleanup job deletes it and,
+/// as upstream, unlinks the staged blobs it wrote that nothing else names,
+/// however young: `/contents/{hash}` serves them while the upload is open
+/// (as upstream) and answers 404 once it is reclaimed.
 #[tokio::test]
 async fn an_expired_upload_is_refused_and_reclaimed() {
     require_test_db!(Some(node) = Node::new("expiry", Limits::default()).await);
@@ -526,6 +794,13 @@ async fn an_expired_upload_is_refused_and_reclaimed() {
     )
     .await;
     assert_eq!(status, StatusCode::ACCEPTED);
+    for key in [&scene.files[0].0, &scene.id] {
+        assert_eq!(
+            served(&router, key).await,
+            (StatusCode::OK, StatusCode::OK),
+            "an open upload's staged blob is served"
+        );
+    }
     let _reclaim = RECLAIM.lock().await;
     expire(&node.state.pool, &scene.id).await;
     let (status, _, body) = send(
@@ -541,17 +816,422 @@ async fn an_expired_upload_is_refused_and_reclaimed() {
         "This upload expired. Create a new entity with a fresh timestamp."
     );
 
-    // Younger than the collector's floor, the staged blobs are left to it.
     let storage = &node.state.storage;
     cleanup_expired(&node.state.pool, storage, &Limits::default())
         .await
         .unwrap();
     assert_eq!(pending_rows(&node.state.pool, &scene.id).await, 0);
-    assert!(storage.exist(&scene.files[0].0).await.unwrap());
-    assert!(storage.exist(&scene.id).await.unwrap());
+    for key in [&scene.files[0].0, &scene.id] {
+        assert!(!storage.exist(key).await.unwrap(), "{key} is unlinked");
+        assert_eq!(
+            served(&router, key).await,
+            (StatusCode::NOT_FOUND, StatusCode::NOT_FOUND)
+        );
+    }
+}
 
-    // Past it, the next expired upload's blobs go.
-    let scene = make_scene(&signer, &[b"expiry-c", b"expiry-d"], "scene").await;
+/// A staged blob an expired upload wrote stays while a deployment or another
+/// open upload names it; the blobs only it named go.
+#[tokio::test]
+async fn cleanup_keeps_staged_blobs_a_deployment_or_another_upload_names() {
+    require_test_db!(Some(node) = Node::new("shared", Limits::default()).await);
+    let router = node.router();
+    let pool = &node.state.pool;
+    let storage = &node.state.storage;
+    let signer = PrivateKeySigner::random();
+    let tag = uuid::Uuid::new_v4().simple().to_string();
+    let (unique, deployed, open) = (
+        format!("shared-unique-{tag}"),
+        format!("shared-deployed-{tag}"),
+        format!("shared-open-{tag}"),
+    );
+    let expiring = make_scene(
+        &signer,
+        &[
+            unique.as_bytes(),
+            deployed.as_bytes(),
+            open.as_bytes(),
+            b"shared-never-sent",
+        ],
+        "scene",
+    )
+    .await;
+    let (status, _, body) = send(
+        &router,
+        &expiring,
+        &expiring.chain,
+        vec![
+            entity_file(&expiring),
+            expiring.files[0].clone(),
+            expiring.files[1].clone(),
+            expiring.files[2].clone(),
+        ],
+    )
+    .await;
+    assert_eq!(status, StatusCode::ACCEPTED, "{body}");
+
+    // A scene listing one staged blob is published; another upload listing
+    // a second one stays open.
+    let published = make_scene_listing(&signer, &[], &[&expiring.files[1].0]).await;
+    let (status, _, body) = send(
+        &router,
+        &published,
+        &published.chain,
+        vec![entity_file(&published)],
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let still_open =
+        make_scene_listing(&signer, &[b"shared-open-missing"], &[&expiring.files[2].0]).await;
+    let (status, _, body) = send(
+        &router,
+        &still_open,
+        &still_open.chain,
+        vec![entity_file(&still_open)],
+    )
+    .await;
+    assert_eq!(status, StatusCode::ACCEPTED, "{body}");
+
+    let _reclaim = RECLAIM.lock().await;
+    expire(pool, &expiring.id).await;
+    cleanup_expired(pool, storage, &Limits::default())
+        .await
+        .unwrap();
+    assert_eq!(pending_rows(pool, &expiring.id).await, 0);
+    assert!(
+        !storage.exist(&expiring.files[0].0).await.unwrap(),
+        "its own blob goes"
+    );
+    assert!(
+        !storage.exist(&expiring.id).await.unwrap(),
+        "its entity file goes"
+    );
+    assert!(
+        storage.exist(&expiring.files[1].0).await.unwrap(),
+        "a deployment names it"
+    );
+    assert!(
+        storage.exist(&expiring.files[2].0).await.unwrap(),
+        "an open upload names it"
+    );
+    assert_eq!(pending_rows(pool, &still_open.id).await, 1);
+}
+
+/// An upload whose entity a sync or read-through download of this process
+/// holds stays until the hold ends; a staged blob already gone from the store
+/// does not keep the upload from being reclaimed.
+#[tokio::test]
+async fn cleanup_waits_for_a_sync_hold_and_tolerates_a_missing_blob() {
+    require_test_db!(Some(node) = Node::new("sync-hold", Limits::default()).await);
+    let router = node.router();
+    let pool = &node.state.pool;
+    let storage = &node.state.storage;
+    let signer = PrivateKeySigner::random();
+    let scene = make_scene(&signer, &[b"hold-a", b"hold-b", b"hold-missing"], "scene").await;
+    let (status, _, _) = send(
+        &router,
+        &scene,
+        &scene.chain,
+        vec![
+            entity_file(&scene),
+            scene.files[0].clone(),
+            scene.files[1].clone(),
+        ],
+    )
+    .await;
+    assert_eq!(status, StatusCode::ACCEPTED);
+    storage.delete_strict(&scene.files[1].0).await.unwrap();
+    let _reclaim = RECLAIM.lock().await;
+    expire(pool, &scene.id).await;
+
+    let hold = crate::sync_deployer::hold_buffered(&scene.id);
+    cleanup_expired(pool, storage, &Limits::default())
+        .await
+        .unwrap();
+    assert_eq!(
+        pending_rows(pool, &scene.id).await,
+        1,
+        "a held upload stays"
+    );
+    assert!(storage.exist(&scene.files[0].0).await.unwrap());
+
+    drop(hold);
+    cleanup_expired(pool, storage, &Limits::default())
+        .await
+        .unwrap();
+    assert_eq!(pending_rows(pool, &scene.id).await, 0);
+    assert!(!storage.exist(&scene.files[0].0).await.unwrap());
+    assert!(!storage.exist(&scene.id).await.unwrap());
+}
+
+/// Waits until a session queues for the exclusive side of the store lock.
+async fn wait_for_exclusive_store_lock(pool: &PgPool) {
+    for _ in 0..200 {
+        if !store_lock_waiters(pool, "ExclusiveLock").await.is_empty() {
+            return;
+        }
+        tokio::time::sleep(Duration::from_millis(25)).await;
+    }
+    panic!("cleanup never queued on the store lock");
+}
+
+/// Cleanup waits for a deploy holding the store lock's shared side and reads
+/// the references only once it has the exclusive one: an upload that names a
+/// staged blob while cleanup waits keeps it.
+#[tokio::test]
+async fn cleanup_reads_references_under_the_store_lock() {
+    require_test_db!(Some(node) = Node::new("store-lock", Limits::default()).await);
+    let router = node.router();
+    let pool = &node.state.pool;
+    let storage = &node.state.storage;
+    let signer = PrivateKeySigner::random();
+    let tag = uuid::Uuid::new_v4().simple().to_string();
+    let (shared, unique) = (format!("lock-shared-{tag}"), format!("lock-unique-{tag}"));
+    let expiring = make_scene(
+        &signer,
+        &[shared.as_bytes(), unique.as_bytes(), b"lock-never-sent"],
+        "scene",
+    )
+    .await;
+    let (status, _, _) = send(
+        &router,
+        &expiring,
+        &expiring.chain,
+        vec![
+            entity_file(&expiring),
+            expiring.files[0].clone(),
+            expiring.files[1].clone(),
+        ],
+    )
+    .await;
+    assert_eq!(status, StatusCode::ACCEPTED);
+    let _reclaim = RECLAIM.lock().await;
+    expire(pool, &expiring.id).await;
+
+    // A deploy holds the shared side while another upload names a staged blob.
+    let mut deploy = pool.begin().await.unwrap();
+    gc::lock_store_shared(&mut deploy).await.unwrap();
+    let naming = make_scene_listing(&signer, &[b"lock-missing"], &[&expiring.files[0].0]).await;
+    let limits = Limits::default();
+    let (cleaned, ()) = tokio::join!(cleanup_expired(pool, storage, &limits), async {
+        wait_for_exclusive_store_lock(pool).await;
+        assert_eq!(
+            pending_rows(pool, &expiring.id).await,
+            1,
+            "nothing went yet"
+        );
+        let (status, _, body) =
+            send(&router, &naming, &naming.chain, vec![entity_file(&naming)]).await;
+        assert_eq!(status, StatusCode::ACCEPTED, "{body}");
+        deploy.commit().await.unwrap();
+    });
+    cleaned.unwrap();
+    assert_eq!(pending_rows(pool, &expiring.id).await, 0);
+    assert!(
+        storage.exist(&expiring.files[0].0).await.unwrap(),
+        "the open upload names it"
+    );
+    assert!(!storage.exist(&expiring.files[1].0).await.unwrap());
+}
+
+/// A world scene's content list naming a staged blob keeps it, whether it
+/// was committed before the cleanup ran (read before the store lock) or while
+/// the cleanup waited for the lock (re-read under it, past the fence).
+#[tokio::test]
+async fn cleanup_keeps_staged_blobs_a_world_scene_names() {
+    require_test_db!(Some(node) = Node::new("world-scene", Limits::default()).await);
+    let router = node.router();
+    let pool = &node.state.pool;
+    let storage = &node.state.storage;
+    let signer = PrivateKeySigner::random();
+    let tag = uuid::Uuid::new_v4().simple().to_string();
+    let (before, during, unique) = (
+        format!("world-before-{tag}"),
+        format!("world-during-{tag}"),
+        format!("world-unique-{tag}"),
+    );
+    let expiring = make_scene(
+        &signer,
+        &[
+            before.as_bytes(),
+            during.as_bytes(),
+            unique.as_bytes(),
+            b"world-never-sent",
+        ],
+        "scene",
+    )
+    .await;
+    let mut parts = vec![entity_file(&expiring)];
+    parts.extend(expiring.files[..3].iter().cloned());
+    let (status, _, body) = send(&router, &expiring, &expiring.chain, parts).await;
+    assert_eq!(status, StatusCode::ACCEPTED, "{body}");
+    let world = format!("cleanup{tag}.dcl.eth");
+    sqlx::query("INSERT INTO worlds.worlds (name) VALUES ($1)")
+        .bind(&world)
+        .execute(pool)
+        .await
+        .unwrap();
+    let name_in_scene = |entity_id: String, hash: String| {
+        let world = world.clone();
+        async move {
+            sqlx::query(
+                "INSERT INTO worlds.world_scenes (world_name, entity_id, deployment_auth_chain, entity, deployer, parcels, size) \
+                 VALUES ($1, $2, '[]'::json, $3, '0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa', '{\"0,0\"}', 1)",
+            )
+            .bind(&world)
+            .bind(entity_id)
+            .bind(json!({ "content": [{ "file": "a", "hash": hash }] }))
+            .execute(pool)
+            .await
+            .unwrap();
+        }
+    };
+    name_in_scene(format!("before-{tag}"), expiring.files[0].0.clone()).await;
+    let _reclaim = RECLAIM.lock().await;
+    expire(pool, &expiring.id).await;
+
+    let mut deploy = pool.begin().await.unwrap();
+    gc::lock_store_shared(&mut deploy).await.unwrap();
+    let limits = Limits::default();
+    let (cleaned, ()) = tokio::join!(cleanup_expired(pool, storage, &limits), async {
+        wait_for_exclusive_store_lock(pool).await;
+        name_in_scene(format!("during-{tag}"), expiring.files[1].0.clone()).await;
+        deploy.commit().await.unwrap();
+    });
+    cleaned.unwrap();
+    assert_eq!(pending_rows(pool, &expiring.id).await, 0);
+    assert!(
+        storage.exist(&expiring.files[0].0).await.unwrap(),
+        "named before the run"
+    );
+    assert!(
+        storage.exist(&expiring.files[1].0).await.unwrap(),
+        "named while it waited"
+    );
+    assert!(!storage.exist(&expiring.files[2].0).await.unwrap());
+    sqlx::query("DELETE FROM worlds.worlds WHERE name = $1")
+        .bind(&world)
+        .execute(pool)
+        .await
+        .unwrap();
+}
+
+/// Inserts expired uploads (no files) straight into `pool`'s database.
+async fn insert_expired(pool: &PgPool, ids: &[String]) {
+    sqlx::query(
+        "INSERT INTO content.pending_deployments
+           (entity_id, entity_type, pointers, content_hashes, deployer_address, created_at)
+         SELECT id, 'scene', '{}', '{}', '0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+                timezone('UTC', now()) - interval '2 hours'
+         FROM unnest($1::text[]) AS id",
+    )
+    .bind(ids)
+    .execute(pool)
+    .await
+    .unwrap();
+}
+
+/// Stores a blob of its own for each upload `ids` names and records it as
+/// written by that upload; answers the keys.
+async fn insert_written(pool: &PgPool, storage: &Storage, ids: &[String]) -> Vec<String> {
+    let mut keys = Vec::new();
+    for id in ids {
+        let bytes = Bytes::from(format!("written-by-{id}"));
+        let key = hash_bytes_v1(&bytes);
+        storage.store(&key, bytes).await.unwrap();
+        sqlx::query(
+            "INSERT INTO content.pending_deployment_files (entity_id, hash, size, stored, written)
+             VALUES ($1, $2, 1, true, true)",
+        )
+        .bind(id)
+        .bind(&key)
+        .execute(pool)
+        .await
+        .unwrap();
+        keys.push(key);
+    }
+    keys
+}
+
+async fn pending_among(pool: &PgPool, ids: &[String]) -> i64 {
+    sqlx::query_scalar("SELECT count(*) FROM content.pending_deployments WHERE entity_id = ANY($1)")
+        .bind(ids)
+        .fetch_one(pool)
+        .await
+        .unwrap()
+}
+
+/// Uploads that wrote no blob go without the store lock: deploys holding its
+/// shared side do not delay them.
+#[tokio::test]
+async fn uploads_that_wrote_nothing_go_without_the_store_lock() {
+    require_test_db!(Some(pool) = crate::db::scratch::isolated_pool(4).await);
+    let tmp = std::env::temp_dir().join(format!(
+        "catalyst-partial-unwritten-{}",
+        uuid::Uuid::new_v4().simple()
+    ));
+    let storage = Storage::from_config(&tmp).await.unwrap();
+    let tag = uuid::Uuid::new_v4().simple().to_string();
+    let ids = vec![format!("unwritten-{tag}-a"), format!("unwritten-{tag}-b")];
+    insert_expired(&pool, &ids).await;
+    let limits = Limits {
+        store_lock_wait: Duration::from_millis(300),
+        ..Limits::default()
+    };
+
+    let mut deploy = pool.begin().await.unwrap();
+    gc::lock_store_shared(&mut deploy).await.unwrap();
+    assert_eq!(
+        cleanup_expired(&pool, &storage, &limits).await.unwrap(),
+        ids.len()
+    );
+    assert_eq!(pending_among(&pool, &ids).await, 0);
+    deploy.commit().await.unwrap();
+    let _ = std::fs::remove_dir_all(&tmp);
+}
+
+/// A superseded upload that staged no blob goes within its request.
+#[tokio::test]
+async fn a_released_upload_that_staged_no_blob_is_deleted_at_once() {
+    require_test_db!(Some(node) = Node::new("release-unstaged", Limits::default()).await);
+    let pool = &node.state.pool;
+    let signer = PrivateKeySigner::random();
+    let scene = make_scene(&signer, &[b"release-unstaged-a"], "scene").await;
+    let (status, _, _) = send(
+        &node.router(),
+        &scene,
+        &scene.chain,
+        vec![entity_file(&scene)],
+    )
+    .await;
+    assert_eq!(status, StatusCode::ACCEPTED);
+    sqlx::query("UPDATE content.pending_deployment_files SET written = false WHERE entity_id = $1")
+        .bind(&scene.id)
+        .execute(pool)
+        .await
+        .unwrap();
+    let lock = EntityLock::try_acquire(pool, &scene.id)
+        .await
+        .unwrap()
+        .expect("no batch holds it");
+    release_upload(pool, &scene.id).await;
+    lock.release().await;
+    assert_eq!(pending_rows(pool, &scene.id).await, 0);
+}
+
+/// A superseded upload that staged blobs is left to the cleanup job: its
+/// request never asks for the store lock, even while a deploy holds the
+/// shared side, and marks the upload expired; a retry is refused as
+/// overtaken, not as expired; the next cleanup run reclaims it with the
+/// blobs only it named.
+#[tokio::test]
+async fn a_superseded_upload_is_left_to_the_cleanup_job_and_refused_as_overtaken() {
+    require_test_db!(Some(node) = Node::isolated("superseded-busy", Limits::default()).await);
+    let router = node.router();
+    let pool = &node.state.pool;
+    let storage = &node.state.storage;
+    let signer = PrivateKeySigner::random();
+    let scene = make_scene(&signer, &[b"superseded-a", b"superseded-b"], "scene").await;
     let (status, _, _) = send(
         &router,
         &scene,
@@ -560,15 +1240,312 @@ async fn an_expired_upload_is_refused_and_reclaimed() {
     )
     .await;
     assert_eq!(status, StatusCode::ACCEPTED);
-    age_blob(storage, &scene.files[0].0).await;
-    age_blob(storage, &scene.id).await;
-    expire(&node.state.pool, &scene.id).await;
-    cleanup_expired(&node.state.pool, storage, &Limits::default())
+    let mut newer: Value = serde_json::from_slice(&scene.bytes).unwrap();
+    newer["timestamp"] = json!(newer["timestamp"].as_u64().unwrap() + 1);
+    let newer = Bytes::from(serde_json::to_vec(&newer).unwrap());
+    let newer_id = hash_bytes_v1(&newer);
+    node.state
+        .writes
+        .get()
+        .unwrap()
+        .deployer
+        .deploy_entity(
+            vec![newer, scene.files[0].1.clone(), scene.files[1].1.clone()],
+            &newer_id,
+            chain_for(&signer, &newer_id).await,
+            "LOCAL",
+        )
         .await
         .unwrap();
-    assert_eq!(pending_rows(&node.state.pool, &scene.id).await, 0);
-    assert!(!storage.exist(&scene.files[0].0).await.unwrap());
-    assert!(!storage.exist(&scene.id).await.unwrap());
+
+    let mut entity: Entity = serde_json::from_slice(&scene.bytes).unwrap();
+    entity.id = scene.id.clone();
+    let overtaken = json!({"errors": [crate::write_deployer::newer_entity_message(&entity)]});
+
+    let mut deploy = pool.begin().await.unwrap();
+    gc::lock_store_shared(&mut deploy).await.unwrap();
+    let (status, _, body) = send(&router, &scene, &scene.chain, vec![scene.files[1].clone()]).await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
+    assert_eq!(body, overtaken);
+    assert!(store_lock_waiters(pool, "ExclusiveLock").await.is_empty());
+    let marked: bool = sqlx::query_scalar(
+        "SELECT created_at = 'epoch' FROM content.pending_deployments WHERE entity_id = $1",
+    )
+    .bind(&scene.id)
+    .fetch_one(pool)
+    .await
+    .unwrap();
+    assert!(marked, "left to the cleanup job, already expired");
+    assert!(storage.exist(&scene.id).await.unwrap());
+    let (status, _, body) = send(
+        &router,
+        &scene,
+        &scene.chain,
+        vec![entity_file(&scene), scene.files[1].clone()],
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
+    assert_eq!(body, overtaken, "a retry is refused as overtaken");
+
+    deploy.commit().await.unwrap();
+    cleanup_expired(pool, storage, &Limits::default())
+        .await
+        .unwrap();
+    assert_eq!(pending_rows(pool, &scene.id).await, 0);
+    assert!(
+        !storage.exist(&scene.id).await.unwrap(),
+        "the entity file only the upload named goes"
+    );
+    assert!(
+        storage.exist(&scene.files[0].0).await.unwrap(),
+        "the newer deployment names it"
+    );
+}
+
+/// While deploys keep the store lock's shared side past the cleanup's wait,
+/// the run stops after one exclusive attempt instead of queueing another for
+/// each batch of uploads (each would hold new deploys behind it); every
+/// upload stays, and the next run reclaims them.
+#[tokio::test]
+async fn a_busy_store_lock_ends_the_cleanup_run() {
+    // A database of its own: only this run's waits are on its store lock.
+    require_test_db!(Some(pool) = crate::db::scratch::isolated_pool(6).await);
+    let recorder = crate::series::test_support::recorder();
+    let _metrics = dcl_metrics::set_default_local_recorder(&recorder);
+    let tmp = std::env::temp_dir().join(format!(
+        "catalyst-partial-deferred-{}",
+        uuid::Uuid::new_v4().simple()
+    ));
+    let storage = Storage::from_config(&tmp).await.unwrap();
+    let tag = uuid::Uuid::new_v4().simple().to_string();
+    // More than one store lock hold's worth.
+    let ids: Vec<String> = (0..=RECLAIM_BATCH)
+        .map(|i| format!("deferred-{tag}-{i}"))
+        .collect();
+    insert_expired(&pool, &ids).await;
+    insert_written(&pool, &storage, &ids).await;
+    sqlx::query(
+        "UPDATE content.pending_deployments SET reserved_bytes = 10 WHERE entity_id = ANY($1)",
+    )
+    .bind(&ids)
+    .execute(&pool)
+    .await
+    .unwrap();
+    let limits = Limits {
+        store_lock_wait: Duration::from_millis(300),
+        ..Limits::default()
+    };
+
+    let mut deploy = pool.begin().await.unwrap();
+    gc::lock_store_shared(&mut deploy).await.unwrap();
+    let done = std::sync::atomic::AtomicBool::new(false);
+    let (cleaned, attempts) = tokio::join!(
+        async {
+            let cleaned = cleanup_expired(&pool, &storage, &limits).await;
+            done.store(true, Ordering::SeqCst);
+            cleaned
+        },
+        async {
+            // Each attempt is a transaction of its own queued on the exclusive side.
+            let mut seen = std::collections::HashSet::new();
+            while !done.load(Ordering::SeqCst) {
+                seen.extend(store_lock_waiters(&pool, "ExclusiveLock").await);
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+            seen
+        }
+    );
+    assert_eq!(cleaned.unwrap(), 0);
+    assert_eq!(attempts.len(), 1, "one exclusive attempt: {attempts:?}");
+    assert_eq!(pending_among(&pool, &ids).await, ids.len() as i64);
+    let held = (10 * ids.len()) as f64;
+    for name in [
+        crate::series::PARTIAL_RESERVED.descriptor.name,
+        crate::series::PARTIAL_CLEANUP_BACKLOG.descriptor.name,
+    ] {
+        assert_eq!(
+            crate::series::test_support::sample(&recorder.handle().render(), name, &[]),
+            Some(held),
+            "{name}: the expired uploads still hold their bytes"
+        );
+    }
+
+    deploy.commit().await.unwrap();
+    assert_eq!(
+        cleanup_expired(&pool, &storage, &limits).await.unwrap(),
+        ids.len()
+    );
+    assert_eq!(pending_among(&pool, &ids).await, 0);
+    use crate::series::*;
+    let rendered = recorder.handle().render();
+    let sample =
+        |name: &str, labels: &[(&str, &str)]| test_support::sample(&rendered, name, labels);
+    assert_eq!(
+        sample(
+            PARTIAL_CLEANUP_RUNS.descriptor.name,
+            &[("outcome", "deferred")]
+        ),
+        Some(1.0)
+    );
+    assert_eq!(
+        sample(
+            PARTIAL_CLEANUP_RUNS.descriptor.name,
+            &[("outcome", "success")]
+        ),
+        Some(1.0)
+    );
+    assert_eq!(
+        sample(
+            crate::storage::gc::LOCK_WRITER_TIMEOUTS.descriptor.name,
+            &[]
+        ),
+        Some(1.0)
+    );
+    assert_eq!(
+        sample(PARTIAL_EXPIRED.descriptor.name, &[]),
+        Some(ids.len() as f64)
+    );
+    assert_eq!(
+        sample(PARTIAL_PENDING.descriptor.name, &[("state", "expired")]),
+        Some(0.0)
+    );
+    assert_eq!(sample(PARTIAL_RESERVED.descriptor.name, &[]), Some(0.0));
+    assert_eq!(
+        sample(PARTIAL_CLEANUP_BACKLOG.descriptor.name, &[]),
+        Some(0.0)
+    );
+    assert!(sample(PARTIAL_CLEANUP_LAST_SUCCESS.descriptor.name, &[]).is_some_and(|t| t > 0.0));
+    let _ = std::fs::remove_dir_all(&tmp);
+}
+
+/// A failed reference read (here an unreadable world-scene content list)
+/// ends the run at its first batch instead of repeating the scans for every
+/// batch: every upload stays, the one past the first batch included, and the
+/// run that follows the fix reclaims them all.
+#[tokio::test]
+async fn an_unreadable_content_list_ends_the_cleanup_run() {
+    require_test_db!(Some(pool) = crate::db::scratch::isolated_pool(4).await);
+    let tmp = std::env::temp_dir().join(format!(
+        "catalyst-partial-unreadable-{}",
+        uuid::Uuid::new_v4().simple()
+    ));
+    let storage = Storage::from_config(&tmp).await.unwrap();
+    let tag = uuid::Uuid::new_v4().simple().to_string();
+    let first: Vec<String> = (0..RECLAIM_BATCH)
+        .map(|i| format!("unreadable-{tag}-{i}"))
+        .collect();
+    insert_expired(&pool, &first).await;
+    insert_written(&pool, &storage, &first).await;
+    // Created after the first batch, so it is reclaimed in a later one, with no lock.
+    let later = vec![format!("unreadable-{tag}-later")];
+    insert_expired(&pool, &later).await;
+    let world = format!("unreadable-{tag}.dcl.eth");
+    sqlx::query("INSERT INTO worlds.worlds (name) VALUES ($1)")
+        .bind(&world)
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query(
+        "INSERT INTO worlds.world_scenes (world_name, entity_id, deployment_auth_chain, entity, deployer, parcels, size) \
+         VALUES ($1, $2, '[]'::json, $3, '0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa', '{\"0,0\"}', 1)",
+    )
+    .bind(&world)
+    .bind(format!("unreadable-scene-{tag}"))
+    .bind(json!({ "content": "not a list" }))
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    let error = cleanup_expired(&pool, &storage, &Limits::default())
+        .await
+        .unwrap_err();
+    assert!(error.to_string().contains("content list"), "{error}");
+    assert_eq!(pending_among(&pool, &first).await, first.len() as i64);
+    assert_eq!(pending_among(&pool, &later).await, 1, "the run stopped");
+
+    sqlx::query("DELETE FROM worlds.world_scenes WHERE world_name = $1")
+        .bind(&world)
+        .execute(&pool)
+        .await
+        .unwrap();
+    assert_eq!(
+        cleanup_expired(&pool, &storage, &Limits::default())
+            .await
+            .unwrap(),
+        first.len() + 1
+    );
+    let _ = std::fs::remove_dir_all(&tmp);
+}
+
+/// An upload a blob of which cannot be unlinked keeps its row for the next
+/// run; the uploads reclaimed under the same lock go.
+#[tokio::test]
+async fn an_unlink_failure_keeps_only_its_upload() {
+    require_test_db!(Some(pool) = crate::db::scratch::isolated_pool(4).await);
+    let recorder = crate::series::test_support::recorder();
+    let _metrics = dcl_metrics::set_default_local_recorder(&recorder);
+    let tmp = std::env::temp_dir().join(format!(
+        "catalyst-partial-unlink-{}",
+        uuid::Uuid::new_v4().simple()
+    ));
+    let storage = Storage::from_config(&tmp).await.unwrap();
+    let tag = uuid::Uuid::new_v4().simple().to_string();
+    let ids = vec![format!("unlinks-{tag}"), format!("fails-{tag}")];
+    insert_expired(&pool, &ids).await;
+    let keys = insert_written(&pool, &storage, &ids).await;
+    // A directory where the second blob was: removing it as a file fails.
+    let path = storage.file_path(&keys[1]).await.unwrap().expect("stored");
+    std::fs::remove_file(&path).unwrap();
+    std::fs::create_dir(&path).unwrap();
+
+    assert!(
+        cleanup_expired(&pool, &storage, &Limits::default())
+            .await
+            .is_err()
+    );
+    assert!(!storage.exist(&keys[0]).await.unwrap());
+    assert_eq!(pending_among(&pool, &ids[..1]).await, 0);
+    assert_eq!(
+        pending_among(&pool, &ids[1..]).await,
+        1,
+        "kept for the next run"
+    );
+
+    std::fs::remove_dir(&path).unwrap();
+    assert_eq!(
+        cleanup_expired(&pool, &storage, &Limits::default())
+            .await
+            .unwrap(),
+        1
+    );
+    assert_eq!(pending_among(&pool, &ids).await, 0);
+    use crate::series::*;
+    let rendered = recorder.handle().render();
+    let sample =
+        |name: &str, labels: &[(&str, &str)]| test_support::sample(&rendered, name, labels);
+    assert_eq!(
+        sample(
+            PARTIAL_CLEANUP_RUNS.descriptor.name,
+            &[("outcome", "error")]
+        ),
+        Some(1.0)
+    );
+    assert_eq!(
+        sample(
+            PARTIAL_CLEANUP_RUNS.descriptor.name,
+            &[("outcome", "success")]
+        ),
+        Some(1.0)
+    );
+    assert_eq!(
+        sample(
+            PARTIAL_CLEANUP_FAILURES.descriptor.name,
+            &[("reason", "storage")]
+        ),
+        Some(1.0)
+    );
+    assert_eq!(sample(PARTIAL_EXPIRED.descriptor.name, &[]), Some(2.0));
+    let _ = std::fs::remove_dir_all(&tmp);
 }
 
 /// Cleanup unlinks only what an upload wrote, and never what the collector
@@ -578,7 +1555,7 @@ async fn an_expired_upload_is_refused_and_reclaimed() {
 /// as written is still kept by the collector's fixed references.
 #[tokio::test]
 async fn cleanup_leaves_blobs_the_upload_did_not_write_and_the_collectors_fixed_set() {
-    require_test_db!(Some(node) = Node::new("fixed-set", Limits::default()).await);
+    require_test_db!(Some(node) = Node::isolated("fixed-set", Limits::default()).await);
     let router = node.router();
     let pool = &node.state.pool;
     let storage = &node.state.storage;
@@ -626,16 +1603,6 @@ async fn cleanup_leaves_blobs_the_upload_did_not_write_and_the_collectors_fixed_
         let ours = *hash == scene.id || *hash == scene.files[0].0;
         assert_eq!(*written, ours, "{hash}");
     }
-    for hash in [
-        &global_hash,
-        &global_id,
-        &other_hash,
-        &scene.files[0].0,
-        &scene.id,
-    ] {
-        age_blob(storage, hash).await;
-    }
-    let _reclaim = RECLAIM.lock().await;
     expire(pool, &scene.id).await;
     cleanup_expired(pool, storage, &limits).await.unwrap();
     assert_eq!(pending_rows(pool, &scene.id).await, 0);
@@ -647,8 +1614,7 @@ async fn cleanup_leaves_blobs_the_upload_did_not_write_and_the_collectors_fixed_
         assert!(storage.exist(kept).await.unwrap(), "{kept} is kept");
     }
 
-    // Defence in depth: a receipt claiming the global scene's blob as
-    // written, released (live, so no other test's cleanup takes it).
+    // Defence in depth: a receipt claiming the global scene's blob as written.
     let scene = make_scene_listing(
         &signer,
         &[b"fixed-own-2", b"fixed-missing-2"],
@@ -668,13 +1634,8 @@ async fn cleanup_leaves_blobs_the_upload_did_not_write_and_the_collectors_fixed_
         .execute(pool)
         .await
         .unwrap();
-    age_blob(storage, &scene.files[0].0).await;
-    let lock = EntityLock::try_acquire(pool, &scene.id)
-        .await
-        .unwrap()
-        .expect("free");
-    release_upload(pool, storage, &limits, &scene.id).await;
-    lock.release().await;
+    expire(pool, &scene.id).await;
+    cleanup_expired(pool, storage, &limits).await.unwrap();
     assert_eq!(pending_rows(pool, &scene.id).await, 0);
     assert!(!storage.exist(&scene.files[0].0).await.unwrap());
     assert!(
@@ -708,7 +1669,6 @@ async fn cleanup_skips_an_upload_whose_lock_is_held() {
         .expect("free");
     let _reclaim = RECLAIM.lock().await;
     expire(pool, &scene.id).await;
-    age_blob(storage, &scene.files[0].0).await;
     assert!(
         EntityLock::try_acquire(pool, &scene.id)
             .await
@@ -856,6 +1816,109 @@ async fn the_daily_quota_counts_partial_batches_as_upstream() {
     );
 }
 
+/// A contract wallet that accepts every signature while `up`, and cannot be
+/// asked otherwise; `calls` counts the questions.
+#[derive(Default)]
+struct Wallets {
+    up: std::sync::atomic::AtomicBool,
+    calls: AtomicUsize,
+}
+
+#[async_trait::async_trait]
+impl crate::auth::Eip1654Validator for Wallets {
+    async fn validate_signature(
+        &self,
+        _contract_address: &str,
+        _hash: &[u8],
+        _signature: &[u8],
+    ) -> Result<bool, crate::auth::AuthError> {
+        self.calls.fetch_add(1, Ordering::Relaxed);
+        if self.up.load(Ordering::Relaxed) {
+            Ok(true)
+        } else {
+            Err(crate::auth::AuthError::Eip1654ValidationFailed(
+                "rpc down".into(),
+            ))
+        }
+    }
+}
+
+/// A replay batch counts, as a regular replay does, when it asked a contract
+/// wallet or is not answered its timestamp. A spent source's contract-wallet
+/// replay is refused before the contract is asked; its own chain still
+/// replays.
+#[tokio::test]
+async fn a_replay_batch_that_asks_a_contract_wallet_counts() {
+    let settings = Settings {
+        post_entities_daily_quota_max: 3,
+        ..Settings::for_tests()
+    };
+    let wallets = Arc::new(Wallets::default());
+    wallets.up.store(true, Ordering::Relaxed);
+    require_test_db!(
+        Some(node) =
+            Node::with_contract_wallets("replay-quota", settings, Some(wallets.clone())).await
+    );
+    let router = node.router();
+    let ip = "203.0.113.7";
+    let quota = &node.state.deploy_quota;
+    let signer = PrivateKeySigner::random();
+    let scene = make_scene(&signer, &[b"replay-quota"], "scene").await;
+    let mut files = vec![entity_file(&scene)];
+    files.extend(scene.files.iter().cloned());
+    let (status, _, body) = send(&router, &scene, &scene.chain, files).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let created = body["creationTimestamp"].clone();
+    assert_eq!(quota.counted_for(ip), 1);
+
+    let contract = serde_json::to_value(
+        crate::sync_test_support::signed_chain_behind_contract(
+            &scene.id,
+            &(chrono::Utc::now() + chrono::Duration::days(1)).to_rfc3339(),
+        )
+        .await,
+    )
+    .unwrap();
+    let (status, _, body) = send(&router, &scene, &contract, vec![]).await;
+    assert_eq!(
+        (status, &body["creationTimestamp"]),
+        (StatusCode::OK, &created)
+    );
+    assert_eq!(
+        quota.counted_for(ip),
+        2,
+        "an answered contract-wallet replay counts"
+    );
+
+    wallets.up.store(false, Ordering::Relaxed);
+    let (status, _, body) = send(&router, &scene, &contract, vec![]).await;
+    assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE, "{body}");
+    assert_eq!(quota.counted_for(ip), 3, "a refused replay counts");
+
+    let asked = wallets.calls.load(Ordering::Relaxed);
+    let (status, headers, body) = send(&router, &scene, &contract, vec![]).await;
+    assert_eq!(
+        (status, &body["errors"][0]),
+        (
+            StatusCode::TOO_MANY_REQUESTS,
+            &json!(
+                "The daily deployment quota for this client is exhausted. A replay signed by a contract wallet is checked only within the quota."
+            )
+        )
+    );
+    assert!(headers.contains_key(header::RETRY_AFTER));
+    assert_eq!(
+        wallets.calls.load(Ordering::Relaxed),
+        asked,
+        "a spent source's contract-wallet replay asks no contract"
+    );
+    let (status, _, body) = send(&router, &scene, &scene.chain, vec![]).await;
+    assert_eq!(
+        (status, &body["creationTimestamp"]),
+        (StatusCode::OK, &created)
+    );
+}
+
 /// An account whose byte-rate window is over its limit is turned away
 /// before its next batch's files are read.
 #[tokio::test]
@@ -865,6 +1928,8 @@ async fn an_account_over_its_byte_rate_waits() {
         ..Limits::default()
     };
     require_test_db!(Some(node) = Node::new("byte-rate", limits).await);
+    let recorder = crate::series::test_support::recorder();
+    let _metrics = dcl_metrics::set_default_local_recorder(&recorder);
     let router = node.router();
     let signer = PrivateKeySigner::random();
     let scene = make_scene(&signer, &[b"rate-a"], "scene").await;
@@ -891,6 +1956,209 @@ async fn an_account_over_its_byte_rate_waits() {
         "{body}"
     );
     assert!(headers.contains_key(header::RETRY_AFTER));
+    assert_throttled(&recorder, "bytes_per_minute");
+}
+
+/// A parcel with as many uploads in progress as `max_per_pointer` turns away another
+/// account's upload there.
+#[tokio::test]
+async fn a_full_parcel_turns_away_another_upload() {
+    let limits = Limits {
+        max_per_pointer: 1,
+        ..Limits::default()
+    };
+    require_test_db!(Some(node) = Node::new("pointer-cap", limits).await);
+    let recorder = crate::series::test_support::recorder();
+    let _metrics = dcl_metrics::set_default_local_recorder(&recorder);
+    let router = node.router();
+    let first = make_scene(&PrivateKeySigner::random(), &[b"pointer-cap-a"], "scene").await;
+    let (status, _, _) = send(&router, &first, &first.chain, vec![entity_file(&first)]).await;
+    assert_eq!(status, StatusCode::ACCEPTED);
+    let second = make_scene_on(
+        &PrivateKeySigner::random(),
+        &[b"pointer-cap-b"],
+        &first.pointers,
+    )
+    .await;
+    let (status, headers, body) =
+        send(&router, &second, &second.chain, vec![entity_file(&second)]).await;
+    assert_eq!(status, StatusCode::TOO_MANY_REQUESTS, "{body}");
+    assert_eq!(
+        body["errors"][0],
+        format!(
+            "Too many partial uploads in progress for parcels {} (max 1 per parcel). Complete an upload or wait for one to expire.",
+            first.pointers[0]
+        )
+    );
+    assert!(headers.contains_key(header::RETRY_AFTER));
+    assert_throttled(&recorder, "uploads_per_pointer");
+}
+
+/// One account holds at most `max_per_pointer - 1` uploads on a parcel.
+#[tokio::test]
+async fn an_account_full_on_a_parcel_waits() {
+    let limits = Limits {
+        max_per_pointer: 2,
+        ..Limits::default()
+    };
+    require_test_db!(Some(node) = Node::new("pointer-account-cap", limits).await);
+    let recorder = crate::series::test_support::recorder();
+    let _metrics = dcl_metrics::set_default_local_recorder(&recorder);
+    let router = node.router();
+    let signer = PrivateKeySigner::random();
+    let first = make_scene(&signer, &[b"pointer-account-a"], "scene").await;
+    let (status, _, _) = send(&router, &first, &first.chain, vec![entity_file(&first)]).await;
+    assert_eq!(status, StatusCode::ACCEPTED);
+    let second = make_scene_on(&signer, &[b"pointer-account-b"], &first.pointers).await;
+    let (status, headers, body) =
+        send(&router, &second, &second.chain, vec![entity_file(&second)]).await;
+    assert_eq!(status, StatusCode::TOO_MANY_REQUESTS, "{body}");
+    assert_eq!(
+        body["errors"][0],
+        format!(
+            "Too many partial uploads in progress for this account on parcels {} (max 1 per parcel). Complete an upload or wait for one to expire.",
+            first.pointers[0]
+        )
+    );
+    assert!(headers.contains_key(header::RETRY_AFTER));
+    assert_throttled(&recorder, "uploads_per_pointer_account");
+}
+
+/// An account whose staged bytes would pass its budget waits; each upload alone fits.
+#[tokio::test]
+async fn an_account_over_its_byte_budget_waits() {
+    let signer = PrivateKeySigner::random();
+    let first = make_scene(&signer, &[b"account-bytes-a"], "scene").await;
+    let second = make_scene(&signer, &[b"account-bytes-b"], "scene").await;
+    // Each batch charges the entity file it sends.
+    let budget = (first.bytes.len() + second.bytes.len() - 1) as i64;
+    let limits = Limits {
+        account_bytes: budget,
+        ..Limits::default()
+    };
+    require_test_db!(Some(node) = Node::new("account-bytes", limits).await);
+    let recorder = crate::series::test_support::recorder();
+    let _metrics = dcl_metrics::set_default_local_recorder(&recorder);
+    let router = node.router();
+    let (status, _, _) = send(&router, &first, &first.chain, vec![entity_file(&first)]).await;
+    assert_eq!(status, StatusCode::ACCEPTED);
+    let (status, headers, body) =
+        send(&router, &second, &second.chain, vec![entity_file(&second)]).await;
+    assert_eq!(status, StatusCode::TOO_MANY_REQUESTS, "{body}");
+    assert_eq!(
+        body["errors"][0],
+        format!(
+            "Partial upload storage budget exceeded for this account: {} bytes staged with this batch, max {budget}. Complete uploads or wait for cleanup.",
+            budget + 1
+        )
+    );
+    assert!(headers.contains_key(header::RETRY_AFTER));
+    assert_throttled(&recorder, "bytes_per_account");
+}
+
+/// A server whose staged bytes would pass its budget turns away another account's upload.
+#[tokio::test]
+async fn a_full_server_turns_away_an_upload() {
+    let first = make_scene(&PrivateKeySigner::random(), &[b"server-bytes-a"], "scene").await;
+    let second = make_scene(&PrivateKeySigner::random(), &[b"server-bytes-b"], "scene").await;
+    let limits = Limits {
+        global_bytes: (first.bytes.len() + second.bytes.len() - 1) as i64,
+        ..Limits::default()
+    };
+    // The server total reads every upload: a database of its own.
+    require_test_db!(Some(node) = Node::isolated("server-bytes", limits).await);
+    let recorder = crate::series::test_support::recorder();
+    let _metrics = dcl_metrics::set_default_local_recorder(&recorder);
+    let router = node.router();
+    let (status, _, _) = send(&router, &first, &first.chain, vec![entity_file(&first)]).await;
+    assert_eq!(status, StatusCode::ACCEPTED);
+    let (status, headers, body) =
+        send(&router, &second, &second.chain, vec![entity_file(&second)]).await;
+    assert_eq!(status, StatusCode::TOO_MANY_REQUESTS, "{body}");
+    assert_eq!(
+        body["errors"][0],
+        "Partial upload storage on this server is full. Retry later."
+    );
+    assert!(headers.contains_key(header::RETRY_AFTER));
+    assert_throttled(&recorder, "bytes_per_server");
+}
+
+/// A new upload on pointers a deployment just rate limited waits before anything is staged.
+#[tokio::test]
+async fn an_upload_on_rate_limited_pointers_waits() {
+    require_test_db!(Some(node) = Node::new("entity-rate", Limits::default()).await);
+    let recorder = crate::series::test_support::recorder();
+    let _metrics = dcl_metrics::set_default_local_recorder(&recorder);
+    let router = node.router();
+    let signer = PrivateKeySigner::random();
+    let scene = make_scene(&signer, &[b"entity-rate-content"], "scene").await;
+    let (_, bytes) = &scene.files[0];
+    let mut earlier: Value = serde_json::from_slice(&scene.bytes).unwrap();
+    earlier["timestamp"] = json!(earlier["timestamp"].as_i64().unwrap() - 1);
+    let earlier = Bytes::from(serde_json::to_vec(&earlier).unwrap());
+    let earlier_id = hash_bytes_v1(&earlier);
+    node.state
+        .writes
+        .get()
+        .unwrap()
+        .deployer
+        .deploy_entity(
+            vec![earlier, bytes.clone()],
+            &earlier_id,
+            chain_for(&signer, &earlier_id).await,
+            "LOCAL",
+        )
+        .await
+        .unwrap();
+    let (status, headers, body) =
+        send(&router, &scene, &scene.chain, vec![entity_file(&scene)]).await;
+    assert_eq!(status, StatusCode::TOO_MANY_REQUESTS, "{body}");
+    assert_eq!(
+        body["errors"][0],
+        format!(
+            "Entity rate limited (entityId={} pointers={}).",
+            scene.id,
+            scene.pointers.join(",")
+        )
+    );
+    assert!(headers.contains_key(header::RETRY_AFTER));
+    assert_eq!(pending_rows(&node.state.pool, &scene.id).await, 0);
+    assert_throttled(&recorder, "entity_rate_limit");
+}
+
+/// The batch that completes an upload whose pointers another deploy holds waits out the
+/// conflict retries and answers 429, the upload kept.
+#[tokio::test]
+async fn a_completing_batch_on_held_pointers_waits() {
+    require_test_db!(Some(node) = Node::new("pointer-conflict", Limits::default()).await);
+    let recorder = crate::series::test_support::recorder();
+    let _metrics = dcl_metrics::set_default_local_recorder(&recorder);
+    let router = node.router();
+    let scene = make_scene(
+        &PrivateKeySigner::random(),
+        &[b"pointer-conflict-content"],
+        "scene",
+    )
+    .await;
+    let (status, _, _) = send(&router, &scene, &scene.chain, vec![entity_file(&scene)]).await;
+    assert_eq!(status, StatusCode::ACCEPTED);
+    let deployer = &node.state.writes.get().unwrap().deployer;
+    let _claim = deployer.hold_pointers_for_tests("scene", &scene.pointers);
+    let (status, headers, body) = send(&router, &scene, &scene.chain, scene.files.clone()).await;
+    assert_eq!(status, StatusCode::TOO_MANY_REQUESTS, "{body}");
+    assert_eq!(
+        body["errors"][0],
+        format!(
+            "The following pointers are currently being deployed: '{}'. Please try again in a few seconds.",
+            scene.pointers.join(",")
+        )
+    );
+    assert_eq!(
+        headers[header::RETRY_AFTER],
+        POINTER_CONFLICT_RETRY_AFTER_SECS.to_string()
+    );
+    assert_eq!(pending_rows(&node.state.pool, &scene.id).await, 1);
+    assert_throttled(&recorder, "pointer_conflict");
 }
 
 /// Every replica reads the last cleanup run from the database.
@@ -917,6 +2185,48 @@ fn ipfs_v2_ids_are_base32_cid_v1() {
         "QmYwAPJzv5CZsnA625s3Xf2nemtYgPpHdWEz79ojWnPbdG"
     ));
     assert!(!is_ipfs_v2("bafkrei"));
+    assert!(is_ipfs_v2(&format!("bag{}", "a".repeat(56))));
+}
+
+/// The entity id is held to `IPFSv2.validate` only: a 59-character `ba...`
+/// id of another CID prefix reaches the file checks, a short one is refused.
+#[tokio::test]
+async fn a_batch_entity_id_is_any_ipfs_v2_hash() {
+    require_test_db!(Some(node) = Node::new("ipfs-v2-id", Limits::default()).await);
+    let router = node.router();
+    let signer = PrivateKeySigner::random();
+    let wrong = ("bafkreiaaaa".to_string(), Bytes::from_static(b"x"));
+
+    let other_prefix = format!("bag{}", "a".repeat(56));
+    let chain = chain_for(&signer, &other_prefix).await;
+    let request = batch_request(
+        "?partial=true",
+        &other_prefix,
+        &chain,
+        &[wrong.clone()],
+        true,
+    );
+    let (status, _, body) = call(&router, request).await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert_eq!(
+        body["errors"][0],
+        format!(
+            "The uploaded file 'bafkreiaaaa' does not match its content hash (computed {}).",
+            hash_bytes_v1(b"x")
+        )
+    );
+
+    let short = format!("bafy{}", "a".repeat(20));
+    let chain = chain_for(&signer, &short).await;
+    let request = batch_request("?partial=true", &short, &chain, &[wrong], true);
+    let (status, _, body) = call(&router, request).await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert_eq!(
+        body["errors"][0],
+        format!(
+            "The entity id '{short}' is not a valid IPFS v2 hash. Partial deployments require IPFS v2 entities."
+        )
+    );
 }
 
 #[test]
@@ -938,18 +2248,20 @@ fn pointer_quotas_name_the_full_parcels() {
         oldest: 1_000,
         deployer_oldest: Some(2_000),
     };
-    let (message, retry) = check_pointer_quotas(&[usage(4, 0)], 4, 1_000, 60_000).unwrap();
+    let (reason, message, retry) = check_pointer_quotas(&[usage(4, 0)], 4, 1_000, 60_000).unwrap();
     assert_eq!(
         message,
         "Too many partial uploads in progress for parcels 1,1 (max 4 per parcel). Complete an upload or wait for one to expire."
     );
     assert_eq!(retry, 60);
-    let (message, retry) = check_pointer_quotas(&[usage(3, 3)], 4, 1_000, 60_000).unwrap();
+    assert_eq!(reason, "uploads_per_pointer");
+    let (reason, message, retry) = check_pointer_quotas(&[usage(3, 3)], 4, 1_000, 60_000).unwrap();
     assert_eq!(
         message,
         "Too many partial uploads in progress for this account on parcels 1,1 (max 3 per parcel). Complete an upload or wait for one to expire."
     );
     assert_eq!(retry, 61);
+    assert_eq!(reason, "uploads_per_pointer_account");
     assert!(check_pointer_quotas(&[usage(2, 2)], 4, 1_000, 60_000).is_none());
 }
 
@@ -970,4 +2282,242 @@ fn quota_retry_waits_for_the_cleanup_after_the_oldest_upload_expires() {
         seconds_until_cleanup_frees_quota(10, None, 3_600_000, None, 300_000),
         300
     );
+}
+
+/// The rate-limit 429 that only publication sees (a deploy landed after the batch's own
+/// check) is reached by calling `finalize`; it is counted through `Refusal::answer`, as
+/// `handle` answers it.
+#[tokio::test]
+async fn finalization_retains_rate_limited_uploads_and_releases_superseded_ones() {
+    require_test_db!(Some(node) = Node::isolated("finalize-kinds", Limits::default()).await);
+    let recorder = crate::series::test_support::recorder();
+    let _metrics = dcl_metrics::set_default_local_recorder(&recorder);
+    let signer = PrivateKeySigner::random();
+    let scene = make_scene(&signer, &[b"finalize-kinds-content"], "scene").await;
+    let (status, _, _) = send(
+        &node.router(),
+        &scene,
+        &scene.chain,
+        vec![entity_file(&scene)],
+    )
+    .await;
+    assert_eq!(status, StatusCode::ACCEPTED);
+    let (hash, bytes) = &scene.files[0];
+    node.state.storage.store(hash, bytes.clone()).await.unwrap();
+    let deployer = &node.state.writes.get().unwrap().deployer;
+    let mut entity: Entity = serde_json::from_slice(&scene.bytes).unwrap();
+    entity.id = scene.id.clone();
+    let pending = pending(&node.state.pool, &scene.id).await.unwrap().unwrap();
+    let limits = &node.state.settings.partial_uploads;
+    let hashes = vec![hash.clone()];
+    let mut other: Value = serde_json::from_slice(&scene.bytes).unwrap();
+    other["timestamp"] = json!(entity.timestamp - 1);
+    let earlier = Bytes::from(serde_json::to_vec(&other).unwrap());
+    let earlier_id = hash_bytes_v1(&earlier);
+    deployer
+        .deploy_entity(
+            vec![earlier, bytes.clone()],
+            &earlier_id,
+            chain_for(&signer, &earlier_id).await,
+            "LOCAL",
+        )
+        .await
+        .unwrap();
+    let refusal = finalize(
+        deployer,
+        &entity,
+        scene.bytes.clone(),
+        scene.chain.clone(),
+        &hashes,
+        (pending.created_at, pending.created_at + limits.ttl_ms),
+        1,
+    )
+    .await
+    .err()
+    .unwrap();
+    let response = refusal.answer();
+    assert_eq!(response.status(), StatusCode::TOO_MANY_REQUESTS);
+    assert!(
+        response.headers()[header::RETRY_AFTER]
+            .to_str()
+            .unwrap()
+            .parse::<u64>()
+            .unwrap()
+            >= 1
+    );
+    let body = to_bytes(response.into_body(), 4096).await.unwrap();
+    assert_eq!(
+        serde_json::from_slice::<Value>(&body).unwrap(),
+        json!({"errors": [format!("Entity rate limited (entityId={} pointers={}).", scene.id, scene.pointers.join(","))]})
+    );
+    assert_eq!(pending_rows(&node.state.pool, &scene.id).await, 1);
+    assert_throttled(&recorder, "entity_rate_limit");
+
+    deployer.clear_rate_limits();
+    other["timestamp"] = json!(entity.timestamp + 1);
+    let newer = Bytes::from(serde_json::to_vec(&other).unwrap());
+    let newer_id = hash_bytes_v1(&newer);
+    deployer
+        .deploy_entity(
+            vec![newer, bytes.clone()],
+            &newer_id,
+            chain_for(&signer, &newer_id).await,
+            "LOCAL",
+        )
+        .await
+        .unwrap();
+    let refusal = finalize(
+        deployer,
+        &entity,
+        scene.bytes.clone(),
+        scene.chain.clone(),
+        &hashes,
+        (pending.created_at, pending.created_at + limits.ttl_ms),
+        1,
+    )
+    .await
+    .err()
+    .unwrap();
+    let response = refusal.into_response();
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    assert!(response.headers().get(header::RETRY_AFTER).is_none());
+    let body = to_bytes(response.into_body(), 4096).await.unwrap();
+    assert_eq!(
+        serde_json::from_slice::<Value>(&body).unwrap(),
+        json!({"errors": [crate::write_deployer::newer_entity_message(&entity)]})
+    );
+    // It staged its entity file, so the cleanup job reclaims it.
+    let released: bool = sqlx::query_scalar(
+        "SELECT created_at = 'epoch' FROM content.pending_deployments WHERE entity_id = $1",
+    )
+    .bind(&scene.id)
+    .fetch_one(&node.state.pool)
+    .await
+    .unwrap();
+    assert!(released);
+}
+
+#[tokio::test]
+async fn terminal_pointer_contention_waits_then_retains_the_upload() {
+    require_test_db!(Some(node) = Node::new("finalize-contention", Limits::default()).await);
+    let signer = PrivateKeySigner::random();
+    let scene = make_scene(&signer, &[b"contention-content"], "scene").await;
+    let (status, _, _) = send(
+        &node.router(),
+        &scene,
+        &scene.chain,
+        vec![entity_file(&scene)],
+    )
+    .await;
+    assert_eq!(status, StatusCode::ACCEPTED);
+    let (hash, bytes) = &scene.files[0];
+    node.state.storage.store(hash, bytes.clone()).await.unwrap();
+    let deployer = &node.state.writes.get().unwrap().deployer;
+    let _claim = deployer.hold_pointers_for_tests("scene", &scene.pointers);
+    let mut entity: Entity = serde_json::from_slice(&scene.bytes).unwrap();
+    entity.id = scene.id.clone();
+    let pending = pending(&node.state.pool, &scene.id).await.unwrap().unwrap();
+    let limits = &node.state.settings.partial_uploads;
+    let hashes = vec![hash.clone()];
+    let started = tokio::time::Instant::now();
+    let refusal = tokio::time::timeout(
+        Duration::from_secs(10),
+        finalize(
+            deployer,
+            &entity,
+            scene.bytes.clone(),
+            scene.chain.clone(),
+            &hashes,
+            (pending.created_at, pending.created_at + limits.ttl_ms),
+            1,
+        ),
+    )
+    .await
+    .expect("contention retries are bounded")
+    .err()
+    .unwrap();
+    assert!(
+        started.elapsed() >= FINALIZE_POINTER_CONFLICT_DELAY * FINALIZE_POINTER_CONFLICT_RETRIES
+    );
+    let response = refusal.into_response();
+    assert_eq!(response.status(), StatusCode::TOO_MANY_REQUESTS);
+    assert_eq!(
+        response.headers()[header::RETRY_AFTER],
+        POINTER_CONFLICT_RETRY_AFTER_SECS.to_string()
+    );
+    let body = to_bytes(response.into_body(), 4096).await.unwrap();
+    assert_eq!(
+        serde_json::from_slice::<Value>(&body).unwrap(),
+        json!({"errors": [format!("The following pointers are currently being deployed: '{}'. Please try again in a few seconds.", scene.pointers.join(","))]})
+    );
+    assert_eq!(pending_rows(&node.state.pool, &scene.id).await, 1);
+}
+
+/// A contract wallet that refuses at latest and signed at every past block; `past` counts
+/// the past-block questions.
+#[derive(Default)]
+struct RemovedKey {
+    past: AtomicUsize,
+}
+
+#[async_trait::async_trait]
+impl crate::auth::Eip1654Validator for RemovedKey {
+    async fn validate_signature(
+        &self,
+        _: &str,
+        _: &[u8],
+        _: &[u8],
+    ) -> Result<bool, crate::auth::AuthError> {
+        Ok(false)
+    }
+
+    async fn validate_signature_at_block(
+        &self,
+        _: &str,
+        _: &[u8],
+        _: &[u8],
+        _: u64,
+    ) -> Result<bool, crate::auth::AuthError> {
+        self.past.fetch_add(1, Ordering::Relaxed);
+        Ok(true)
+    }
+
+    async fn verification_time_block(&self, _: i64) -> Result<Option<u64>, crate::auth::AuthError> {
+        Ok(Some(7))
+    }
+}
+
+/// A batch without the entity file is authenticated at now with its contract wallet asked
+/// at latest only: a wallet refused there is refused, never asked at a past block.
+#[tokio::test]
+async fn a_batch_without_the_entity_file_asks_its_contract_wallet_at_latest() {
+    let wallet = Arc::new(RemovedKey::default());
+    require_test_db!(
+        Some(node) = Node::with_contract_wallets(
+            "resume-latest",
+            Settings::for_tests(),
+            Some(wallet.clone())
+        )
+        .await
+    );
+    let router = node.router();
+    let scene = make_scene(&PrivateKeySigner::random(), &[b"resume-latest"], "scene").await;
+    let contract = serde_json::to_value(
+        crate::sync_test_support::signed_chain_behind_contract(
+            &scene.id,
+            &(chrono::Utc::now() + chrono::Duration::days(1)).to_rfc3339(),
+        )
+        .await,
+    )
+    .unwrap();
+
+    let (status, _, body) = send(&router, &scene, &contract, scene.files.clone()).await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
+    assert!(
+        body["errors"][0]
+            .as_str()
+            .is_some_and(|e| e.starts_with("The signature is invalid.")),
+        "{body}"
+    );
+    assert_eq!(wallet.past.load(Ordering::Relaxed), 0);
 }

@@ -1,6 +1,6 @@
 import { delay, makeStepSlugs } from "@/core/lib/stories/index";
 import { toErrorMessage } from "@/core/lib/errors";
-import { assign, fromPromise, setup } from "xstate";
+import { and, assign, fromPromise, setup } from "xstate";
 
 import { track as defaultTrack, type TrackContext, type TrackFn } from "@/core/lib/telemetry/track";
 
@@ -17,7 +17,7 @@ type StreamerCredentials = {
   url: string;
   token: string;
   roomId: string;
-  identity: string;
+  identity?: string;
 };
 
 type DeviceSelection = {
@@ -26,7 +26,8 @@ type DeviceSelection = {
   camera: string;
 };
 
-export type TokenResult = { info: StreamInfo; credentials: StreamerCredentials };
+/** The stream link checked; credentials come with it only where the token is minted up front. */
+export type TokenResult = { info: StreamInfo; credentials?: StreamerCredentials };
 
 export type ResolveTokenFn = (args: {
   token: string;
@@ -41,6 +42,16 @@ export type RequestPermissionsFn = (args: {
 
 export type EndCastFn = (args: { signal?: AbortSignal }) => Promise<void>;
 
+/** Joins the room as the streamer (token, connect, publish) and answers the credentials used. */
+export type GoLiveFn = (args: {
+  token: string;
+  identity: string;
+  devices: DeviceSelection;
+  signal?: AbortSignal;
+}) => Promise<StreamerCredentials>;
+
+export type StopShareFn = () => void;
+
 export type ShareScreenFn = (args: {
   signal?: AbortSignal;
 }) => Promise<{ published: boolean }>;
@@ -53,6 +64,8 @@ type CastInput = {
   requestPermissions?: RequestPermissionsFn;
   endCast?: EndCastFn;
   shareScreen?: ShareScreenFn;
+  goLive?: GoLiveFn;
+  stopShare?: StopShareFn;
   track?: TrackFn;
 };
 
@@ -64,23 +77,33 @@ type CastContext = {
   requestPermissions: RequestPermissionsFn;
   endCast: EndCastFn;
   shareScreen: ShareScreenFn;
+  goLive: GoLiveFn;
+  stopShare: StopShareFn;
   track: TrackFn;
   info?: StreamInfo;
   credentials?: StreamerCredentials;
   devices: DeviceSelection;
   permissionsDenied: boolean;
+  /** The devices were chosen with the page's one join action: go live once access is granted. */
+  joinOnGrant: boolean;
   screenSharing: boolean;
   screenShareFailed: boolean;
+  joinError?: string;
+  /** The room went away while live (closed, removed, or reconnection gave up). */
+  connectionLost: boolean;
   invalidReason?: string;
 };
 
 type CastEvent =
-  | { type: "SELECT_DEVICES"; devices: DeviceSelection }
+  /** `join`: the page's one join action chose the devices; join as soon as access is granted. */
+  | { type: "SELECT_DEVICES"; devices: DeviceSelection; name?: string; join?: boolean }
   | { type: "GRANT" }
   | { type: "RETRY_PERMISSIONS" }
-  | { type: "JOIN" }
+  | { type: "JOIN"; name?: string }
   | { type: "BACK" }
   | { type: "TOGGLE_SCREENSHARE" }
+  | { type: "SHARE_ENDED" }
+  | { type: "CONNECTION_LOST" }
   | { type: "LEAVE" }
   | { type: "RETRY" };
 
@@ -93,6 +116,8 @@ export const CAST_EVENTS = {
   permissionsDenied: "cast_permissions_denied",
   previewReady: "cast_preview_ready",
   joinRequested: "cast_join_requested",
+  joinFailed: "cast_join_failed",
+  connectionLost: "cast_connection_lost",
   wentLive: "cast_went_live",
   screenshareStarted: "cast_screenshare_started",
   screenshareFailed: "cast_screenshare_failed",
@@ -105,6 +130,7 @@ export const STATE_TO_SLUG = {
   deviceSelect: "device-select",
   permissions: "permissions",
   preview: "preview",
+  joining: "joining",
   live: "live",
   ending: "ending",
   ended: "ended",
@@ -171,6 +197,18 @@ export const simulateShareScreen: ShareScreenFn = async ({ signal }) => {
   return { published: true };
 };
 
+const simulateGoLive: GoLiveFn = async ({ identity, signal }) => {
+  await delay(300, signal);
+  return {
+    url: "wss://livekit.decentraland.org",
+    token: `SIMULATED.${btoaSafe(`${identity || "Speaker"}:${SIM_STREAM_INFO.location}`)}.stub-livekit-jwt`,
+    roomId: `scene-${SIM_STREAM_INFO.location}-${slugifyRoom(SIM_STREAM_INFO.placeName)}`,
+    identity: identity || "Speaker",
+  };
+};
+
+const noStopShare: StopShareFn = () => {};
+
 function btoaSafe(s: string): string {
   try {
     if (typeof btoa === "function") {
@@ -188,6 +226,19 @@ function slugifyRoom(name: string): string {
   return name.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "");
 }
 
+function isStub(context: CastContext): boolean {
+  return context.goLive === simulateGoLive;
+}
+
+/** An invocation whose actor was stopped (a React StrictMode remount, leaving the page) never
+ * settles: its abort must not reach the restarted machine as a failure. */
+function unlessAborted<T>(signal: AbortSignal, run: () => Promise<T>): Promise<T> {
+  return run().catch((err: unknown) => {
+    if (signal.aborted) return new Promise<T>(() => {});
+    throw err;
+  });
+}
+
 export const castMachine = setup({
   types: {
     context: {} as CastContext,
@@ -199,19 +250,34 @@ export const castMachine = setup({
       TokenResult,
       { token: string; identity: string; resolveToken: ResolveTokenFn }
     >(({ input, signal }) =>
-      input.resolveToken({ token: input.token, identity: input.identity, signal }),
+      unlessAborted(signal, () =>
+        input.resolveToken({ token: input.token, identity: input.identity, signal }),
+      ),
     ),
     requestPermissions: fromPromise<
       { granted: boolean },
       { devices: DeviceSelection; requestPermissions: RequestPermissionsFn }
     >(({ input, signal }) =>
-      input.requestPermissions({ devices: input.devices, signal }),
+      unlessAborted(signal, () => input.requestPermissions({ devices: input.devices, signal })),
     ),
     endCast: fromPromise<void, { endCast: EndCastFn }>(({ input, signal }) =>
-      input.endCast({ signal }),
+      unlessAborted(signal, () => input.endCast({ signal })),
     ),
     shareScreen: fromPromise<{ published: boolean }, { shareScreen: ShareScreenFn }>(
-      ({ input, signal }) => input.shareScreen({ signal }),
+      ({ input, signal }) => unlessAborted(signal, () => input.shareScreen({ signal })),
+    ),
+    goLive: fromPromise<
+      StreamerCredentials,
+      { token: string; identity: string; devices: DeviceSelection; goLive: GoLiveFn }
+    >(({ input, signal }) =>
+      unlessAborted(signal, () =>
+        input.goLive({
+          token: input.token,
+          identity: input.identity,
+          devices: input.devices,
+          signal,
+        }),
+      ),
     ),
   },
   actions: {
@@ -247,6 +313,15 @@ export const castMachine = setup({
     setDevices: assign({
       devices: ({ context, event }) =>
         event.type === "SELECT_DEVICES" ? event.devices : context.devices,
+      identity: ({ context, event }) =>
+        event.type === "SELECT_DEVICES" && event.name?.trim()
+          ? event.name.trim()
+          : context.identity,
+      joinOnGrant: ({ event }) => event.type === "SELECT_DEVICES" && event.join === true,
+    }),
+    setJoinName: assign({
+      identity: ({ context, event }) =>
+        event.type === "JOIN" && event.name?.trim() ? event.name.trim() : context.identity,
     }),
     trackDevicesSelected: ({ context }) =>
       context.track(
@@ -268,10 +343,30 @@ export const castMachine = setup({
       context.track(CAST_EVENTS.previewReady, {}, context.trackCtx),
     trackJoinRequested: ({ context }) =>
       context.track(CAST_EVENTS.joinRequested, {}, context.trackCtx),
+    setLiveCredentials: assign({
+      credentials: ({ context, event }) =>
+        "output" in event ? (event.output as StreamerCredentials) : context.credentials,
+      joinError: undefined,
+    }),
+    setJoinError: assign({
+      joinError: ({ event }) =>
+        toErrorMessage("error" in event ? (event as { error: unknown }).error : null, "Could not join the cast"),
+    }),
+    trackJoinFailed: ({ context }) =>
+      context.track(CAST_EVENTS.joinFailed, { reason: context.joinError }, context.trackCtx),
+    stopShare: ({ context }) => context.stopShare(),
+    clearJoinError: assign({ joinError: undefined }),
+    setConnectionLost: assign({ connectionLost: true, screenSharing: false }),
+    trackConnectionLost: ({ context }) =>
+      context.track(
+        CAST_EVENTS.connectionLost,
+        { room_id: context.credentials?.roomId },
+        context.trackCtx,
+      ),
     trackWentLive: ({ context }) =>
       context.track(
         CAST_EVENTS.wentLive,
-        { room_id: context.credentials?.roomId, stub: true },
+        { room_id: context.credentials?.roomId, stub: isStub(context) },
         context.trackCtx,
       ),
     setSharing: assign({ screenSharing: true, screenShareFailed: false }),
@@ -280,23 +375,24 @@ export const castMachine = setup({
     trackScreenshareStarted: ({ context }) =>
       context.track(
         CAST_EVENTS.screenshareStarted,
-        { room_id: context.credentials?.roomId, stub: true },
+        { room_id: context.credentials?.roomId, stub: isStub(context) },
         context.trackCtx,
       ),
     trackScreenshareFailed: ({ context }) =>
       context.track(
         CAST_EVENTS.screenshareFailed,
-        { room_id: context.credentials?.roomId, stub: true },
+        { room_id: context.credentials?.roomId, stub: isStub(context) },
         context.trackCtx,
       ),
     trackEnding: ({ context }) =>
       context.track(CAST_EVENTS.ending, {}, context.trackCtx),
     trackEnded: ({ context }) =>
-      context.track(CAST_EVENTS.ended, { stub: true }, context.trackCtx),
+      context.track(CAST_EVENTS.ended, { stub: isStub(context) }, context.trackCtx),
   },
   guards: {
     granted: ({ event }) =>
       "output" in event && (event.output as { granted: boolean }).granted === true,
+    joinOnGrant: ({ context }) => context.joinOnGrant,
     published: ({ event }) =>
       "output" in event && (event.output as { published: boolean }).published === true,
   },
@@ -310,11 +406,15 @@ export const castMachine = setup({
     requestPermissions: input.requestPermissions ?? simulateGrant,
     endCast: input.endCast ?? simulateEndCast,
     shareScreen: input.shareScreen ?? simulateShareScreen,
+    goLive: input.goLive ?? simulateGoLive,
+    stopShare: input.stopShare ?? noStopShare,
     track: input.track ?? defaultTrack,
     devices: DEFAULT_DEVICES,
     permissionsDenied: false,
+    joinOnGrant: false,
     screenSharing: false,
     screenShareFailed: false,
+    connectionLost: false,
   }),
   initial: "tokenCheck",
   states: {
@@ -340,6 +440,7 @@ export const castMachine = setup({
     },
 
     deviceSelect: {
+      entry: "clearJoinError",
       on: {
         SELECT_DEVICES: {
           target: "permissions",
@@ -358,6 +459,11 @@ export const castMachine = setup({
           requestPermissions: context.requestPermissions,
         }),
         onDone: [
+          {
+            guard: and(["granted", "joinOnGrant"]),
+            target: "joining",
+            actions: ["trackPermissionsGranted", "clearJoinError", "trackJoinRequested"],
+          },
           {
             guard: "granted",
             target: "preview",
@@ -380,8 +486,26 @@ export const castMachine = setup({
     preview: {
       entry: "trackPreviewReady",
       on: {
-        JOIN: { target: "live", actions: "trackJoinRequested" },
+        JOIN: {
+          target: "joining",
+          actions: ["setJoinName", "clearJoinError", "trackJoinRequested"],
+        },
         BACK: { target: "deviceSelect" },
+      },
+    },
+
+    joining: {
+      invoke: {
+        id: "goLive",
+        src: "goLive",
+        input: ({ context }) => ({
+          token: context.token,
+          identity: context.identity,
+          devices: context.devices,
+          goLive: context.goLive,
+        }),
+        onDone: { target: "live", actions: "setLiveCredentials" },
+        onError: { target: "preview", actions: ["setJoinError", "trackJoinFailed"] },
       },
     },
 
@@ -390,6 +514,7 @@ export const castMachine = setup({
       initial: "idle",
       on: {
         LEAVE: { target: "ending", actions: "trackEnding" },
+        CONNECTION_LOST: { target: "ended", actions: ["setConnectionLost", "trackConnectionLost"] },
       },
       states: {
         idle: {
@@ -421,7 +546,9 @@ export const castMachine = setup({
         },
         sharing: {
           on: {
-            TOGGLE_SCREENSHARE: { target: "idle", actions: "clearSharing" },
+            TOGGLE_SCREENSHARE: { target: "idle", actions: ["stopShare", "clearSharing"] },
+            // The browser's own "Stop sharing" ended the capture.
+            SHARE_ENDED: { target: "idle", actions: "clearSharing" },
           },
         },
       },
@@ -459,6 +586,8 @@ export function resolveCastSnapshot(args: {
   requestPermissions?: RequestPermissionsFn;
   endCast?: EndCastFn;
   shareScreen?: ShareScreenFn;
+  goLive?: GoLiveFn;
+  stopShare?: StopShareFn;
   track?: TrackFn;
 }) {
   const {
@@ -470,9 +599,12 @@ export function resolveCastSnapshot(args: {
     requestPermissions,
     endCast,
     shareScreen,
+    goLive,
+    stopShare,
     track,
   } = args;
-  if (step === "tokenCheck") return undefined;
+  // A step that runs a request starts from the beginning of the real flow.
+  if (step === "tokenCheck" || step === "joining") return undefined;
 
   const context: CastContext = {
     trackCtx,
@@ -482,11 +614,15 @@ export function resolveCastSnapshot(args: {
     requestPermissions: requestPermissions ?? simulateGrant,
     endCast: endCast ?? simulateEndCast,
     shareScreen: shareScreen ?? simulateShareScreen,
+    goLive: goLive ?? simulateGoLive,
+    stopShare: stopShare ?? noStopShare,
     track: track ?? defaultTrack,
     devices: DEFAULT_DEVICES,
     permissionsDenied: false,
+    joinOnGrant: false,
     screenSharing: false,
     screenShareFailed: false,
+    connectionLost: false,
     info: SIM_STREAM_INFO,
     credentials: {
       url: "wss://livekit.decentraland.org",

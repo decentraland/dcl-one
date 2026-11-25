@@ -1,6 +1,9 @@
 import type { ReactNode } from 'react';
-import InfoOutlinedIcon from '@mui/icons-material/InfoOutlined';
-import { Box, IconButton, Tooltip, Typography } from 'decentraland-ui2';
+import IconButton from '@ui/atoms/IconButton';
+import Text from '@ui/atoms/Text';
+import { Tooltip } from '@dcl/one-ui';
+
+import { InfoOutlinedIcon } from '@ui/atoms/icons-material';
 
 import './styles.css';
 
@@ -11,47 +14,55 @@ export type Metric = {
   value: ReactNode;
   /** Set beside the value at regular weight, e.g. "min". */
   unit?: string;
-  /** MUI palette path for the value, e.g. "success.main". */
+  /** Palette path for the value, e.g. "success.main", or a CSS color. */
   color?: string;
+};
+
+const PALETTE_COLORS: Record<string, string> = {
+  'success.main': 'var(--success)',
+  'primary.main': 'var(--primary)',
 };
 
 /** A labelled figure: the label with its info tooltip, then the value. */
 export function MetricDisplay({ label, tooltip, value, unit, color }: Metric) {
   return (
-    <Box className="MetricDisplay">
-      <Box className="MetricLabel">
-        <Typography
+    <div className="MetricDisplay">
+      <div className="MetricLabel">
+        <Text
           variant="body2"
           className="Label"
         >
           {label}
-        </Typography>
+        </Text>
         <Tooltip
-          title={tooltip}
-          placement="top"
+          label={tooltip}
+          side="top"
           arrow
-          slotProps={{
-            tooltip: { className: 'MetricTooltip' },
-            arrow: { className: 'MetricTooltipArrow' },
-          }}
+          portal
+          keepInViewport
+          snap
+          maxWidth={300}
+          tipClassName="MetricTooltip"
         >
           <IconButton
             className="MetricInfo"
-            disableFocusRipple
+            aria-label={tooltip}
           >
             <InfoOutlinedIcon />
           </IconButton>
         </Tooltip>
-      </Box>
-      <Typography
+      </div>
+      <Text
         variant="h4"
-        component="p"
+        as="p"
         className="MetricValue"
-        color={color ?? 'var(--palette-neutral-softWhite)'}
+        style={{
+          color: color ? (PALETTE_COLORS[color] ?? color) : 'var(--palette-neutral-softWhite)',
+        }}
       >
         {value}
         {unit && <span className="MetricUnit"> {unit}</span>}
-      </Typography>
-    </Box>
+      </Text>
+    </div>
   );
 }

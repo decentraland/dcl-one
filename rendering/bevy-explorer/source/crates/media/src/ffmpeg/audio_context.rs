@@ -64,24 +64,21 @@ impl SampleFormatHelper for AVSampleFormat {
             AVSampleFormat::AV_SAMPLE_FMT_U8 | AVSampleFormat::AV_SAMPLE_FMT_U8P => {
                 (data[0] as f32 / 255.0 - 0.5) * 2.0
             }
-            AVSampleFormat::AV_SAMPLE_FMT_S16 | AVSampleFormat::AV_SAMPLE_FMT_S16P => unsafe {
-                std::slice::from_raw_parts(data.as_ptr() as *const i16, 1)[0] as f32
-                    / i16::MAX as f32
-            },
-            AVSampleFormat::AV_SAMPLE_FMT_S32 | AVSampleFormat::AV_SAMPLE_FMT_S32P => unsafe {
-                std::slice::from_raw_parts(data.as_ptr() as *const i32, 1)[0] as f32
-                    / i32::MAX as f32
-            },
-            AVSampleFormat::AV_SAMPLE_FMT_FLT | AVSampleFormat::AV_SAMPLE_FMT_FLTP => unsafe {
-                std::slice::from_raw_parts(data.as_ptr() as *const f32, 1)[0]
-            },
-            AVSampleFormat::AV_SAMPLE_FMT_DBL | AVSampleFormat::AV_SAMPLE_FMT_DBLP => unsafe {
-                std::slice::from_raw_parts(data.as_ptr() as *const f64, 1)[0] as f32
-            },
-            AVSampleFormat::AV_SAMPLE_FMT_S64 | AVSampleFormat::AV_SAMPLE_FMT_S64P => unsafe {
-                std::slice::from_raw_parts(data.as_ptr() as *const i64, 1)[0] as f32
-                    / i64::MAX as f32
-            },
+            AVSampleFormat::AV_SAMPLE_FMT_S16 | AVSampleFormat::AV_SAMPLE_FMT_S16P => {
+                i16::from_ne_bytes(data.try_into().unwrap()) as f32 / i16::MAX as f32
+            }
+            AVSampleFormat::AV_SAMPLE_FMT_S32 | AVSampleFormat::AV_SAMPLE_FMT_S32P => {
+                i32::from_ne_bytes(data.try_into().unwrap()) as f32 / i32::MAX as f32
+            }
+            AVSampleFormat::AV_SAMPLE_FMT_FLT | AVSampleFormat::AV_SAMPLE_FMT_FLTP => {
+                f32::from_ne_bytes(data.try_into().unwrap())
+            }
+            AVSampleFormat::AV_SAMPLE_FMT_DBL | AVSampleFormat::AV_SAMPLE_FMT_DBLP => {
+                f64::from_ne_bytes(data.try_into().unwrap()) as f32
+            }
+            AVSampleFormat::AV_SAMPLE_FMT_S64 | AVSampleFormat::AV_SAMPLE_FMT_S64P => {
+                i64::from_ne_bytes(data.try_into().unwrap()) as f32 / i64::MAX as f32
+            }
             AVSampleFormat::AV_SAMPLE_FMT_NONE | AVSampleFormat::AV_SAMPLE_FMT_NB => panic!(),
         }
     }
@@ -256,9 +253,9 @@ impl AudioContext {
             decoder.channels()
         );
 
-        let p = input_stream.parameters();
-        let p_raw_sample_rate = unsafe { (*p.as_ptr()).sample_rate } as u32;
-        let format: AVSampleFormat = unsafe { std::mem::transmute((*p.as_ptr()).format) };
+        // the decoder's own rate and format, which its frames arrive in
+        let p_raw_sample_rate = decoder.rate();
+        let format: AVSampleFormat = decoder.format().into();
 
         let frame_rate = p_raw_sample_rate as f64 / decoder.frame_size() as f64;
         let length = (input_stream.frames() as f64) / frame_rate;
@@ -320,10 +317,6 @@ impl FfmpegContext for AudioContext {
             self.buffer.push_back(decoded);
         }
         Ok(())
-    }
-
-    fn has_frame(&self) -> bool {
-        !self.buffer.is_empty()
     }
 
     fn buffered_time(&self) -> f64 {

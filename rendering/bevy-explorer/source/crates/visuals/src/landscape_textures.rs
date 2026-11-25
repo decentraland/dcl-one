@@ -76,8 +76,8 @@ const FLAT_GROUND: [u8; 4] = [77, 115, 51, 255];
 const PLAIN_ROCK: [u8; 4] = [110, 105, 102, 255];
 
 /// Each texture's file under `embedded://landscape/`, what it holds, and the one texel drawn in
-/// its place until it loads, or for good if it fails (for example an LFS pointer embedded in place
-/// of the image): together they give the ground and cliffs their former flat colours.
+/// its place until it loads, or for good if it fails to decode: together they give the ground and
+/// cliffs their former flat colours.
 const SOURCES: [(&str, TexelKind, [u8; 4]); 5] = [
     // all ground, no sand
     ("ground/splat.png", TexelKind::Data, [255, 0, 0, 0]),

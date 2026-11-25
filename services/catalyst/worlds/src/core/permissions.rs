@@ -16,6 +16,7 @@ use serde::Serialize;
 use serde_json::{Value, json};
 use uuid::Uuid;
 
+use crate::auth::is_eth_address;
 use crate::comms::world_identity::{Parcel, ParcelError, ParcelSet, WorldName};
 use crate::content::validation;
 use crate::policy::Permission;
@@ -76,9 +77,7 @@ fn parse_address(raw: &str) -> Result<Address, ApiError> {
 /// A path `:address`, as upstream's `EthAddress.validate`: exactly
 /// `^0x[a-fA-F0-9]{40}$` (no padding, no `0X`).
 fn parse_path_address(raw: &str) -> Result<Address, ApiError> {
-    let strict =
-        raw.len() == 42 && raw.starts_with("0x") && raw[2..].bytes().all(|b| b.is_ascii_hexdigit());
-    if !strict {
+    if !is_eth_address(raw) {
         return Err(ApiError::bad_request(format!("Invalid address: {raw}.")));
     }
     parse_address(raw)
@@ -203,12 +202,11 @@ fn parse_permission(raw: &str) -> Option<Permission> {
     Permission::parse(raw)
 }
 
-/// The most addresses one permission edit notifies per direction.
-pub const MAX_NOTICES_PER_EDIT: usize = 50;
+/// The most addresses per notification write.
+const NOTICE_BATCH_SIZE: usize = 50;
 
 /// Notifies the addresses the edit in `tx` actually `added` or `removed`
-/// (the old permission events, at most [`MAX_NOTICES_PER_EDIT`] each) in the
-/// same transaction, then commits.
+/// in bounded batches in the same transaction, then commits.
 async fn commit_with_notices(
     state: &SharedState,
     mut tx: sqlx::Transaction<'_, sqlx::Postgres>,
@@ -218,22 +216,14 @@ async fn commit_with_notices(
     removed: &[String],
 ) -> Result<(), ApiError> {
     let now = chrono::Utc::now().naive_utc();
-    let capped = |a: &'_ [String]| a.len().min(MAX_NOTICES_PER_EDIT);
-    let mut notices = state.notices.permission_changed(
-        false,
-        world,
-        permission,
-        &removed[..capped(removed)],
-        now,
-    );
-    notices.extend(state.notices.permission_changed(
-        true,
-        world,
-        permission,
-        &added[..capped(added)],
-        now,
-    ));
-    state.notices.send(&mut tx, &notices).await?;
+    for (granted, addresses) in [(false, removed), (true, added)] {
+        for batch in addresses.chunks(NOTICE_BATCH_SIZE) {
+            let notices = state
+                .notices
+                .permission_changed(granted, world, permission, batch, now);
+            state.notices.send(&mut tx, &notices).await?;
+        }
+    }
     tx.commit().await?;
     Ok(())
 }
@@ -337,9 +327,19 @@ fn metadata_strings(meta: &Value, key: &str) -> Vec<String> {
 }
 
 fn metadata_wallets(meta: &Value) -> Result<Vec<Address>, ApiError> {
-    metadata_strings(meta, "wallets")
+    let Some(wallets) = meta.get("wallets").filter(|wallets| !wallets.is_null()) else {
+        return Ok(Vec::new());
+    };
+    wallets
+        .as_array()
+        .ok_or_else(|| ApiError::bad_request("wallets must be an array of addresses."))?
         .iter()
-        .map(|w| parse_address(w))
+        .map(|wallet| {
+            let raw = wallet
+                .as_str()
+                .ok_or_else(|| ApiError::bad_request("wallets must be an array of addresses."))?;
+            parse_address(raw)
+        })
         .collect()
 }
 

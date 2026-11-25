@@ -1,4 +1,9 @@
 use super::*;
+use crate::{
+    failed_remotes::Repeat, ipfs_path::IpfsType, ContentMap, EndpointConfig, IpfsEntity,
+    RealmConfig, ServerAbout,
+};
+use common::sync::MutexExt;
 use tokio::{
     io::{AsyncBufReadExt, AsyncWriteExt, BufReader},
     net::{TcpListener, TcpStream},
@@ -201,9 +206,9 @@ async fn preview_delay_leaves_the_slot_free_and_shared_readers_can_cancel() {
         assert!(Arc::ptr_eq(&first.download, &second.download));
         assert_eq!(io.request_slots.available_permits(), 1);
         drop(first);
-        assert_eq!(io.in_flight.lock().unwrap().len(), 1);
+        assert_eq!(io.in_flight.lock_ignore_poison().len(), 1);
         drop(second);
-        until(|| io.in_flight.lock().unwrap().is_empty()).await;
+        until(|| io.in_flight.lock_ignore_poison().is_empty()).await;
         assert_eq!(io.request_metrics.attempts.load(Ordering::Relaxed), 0);
         assert_eq!(io.request_slots.available_permits(), 1);
     })
@@ -234,7 +239,7 @@ async fn a_503_without_retry_after_is_retried_after_a_growing_wait() {
                     },
                     None,
                     move |delay| {
-                        waits.lock().unwrap().push(delay);
+                        waits.lock_ignore_poison().push(delay);
                         async {}
                     },
                 )
@@ -247,7 +252,7 @@ async fn a_503_without_retry_after_is_retried_after_a_growing_wait() {
         server.reply("flaky", OK).await;
         assert!(matches!(fetched.await.unwrap(), Ok(response) if response.body == b"x"));
         assert_eq!(
-            *waits.lock().unwrap(),
+            *waits.lock_ignore_poison(),
             [Duration::from_millis(500), Duration::from_millis(1000)]
         );
     })
@@ -299,7 +304,7 @@ async fn dropping_shared_readers_withdraws_only_the_last_claim_of_each_owner() {
         assert_eq!(mid.await.unwrap().unwrap().as_ref(), b"x");
         let mut result = far.result();
         assert!(matches!(&*result.wait_for(Option::is_some).await.unwrap(), Some(Ok(bytes)) if bytes.as_ref() == b"x"));
-        assert!(io.in_flight.lock().unwrap().is_empty());
+        assert!(io.in_flight.lock_ignore_poison().is_empty());
     }).await.expect("shared reader priority did not settle");
 }
 
@@ -313,7 +318,8 @@ async fn last_shared_reader_cancels_a_queued_attempt_and_a_retry_timer() {
         until(|| io.request_slots.has_waiters()).await;
         let queued_handle = queued.download.clone();
         drop(queued);
-        until(|| !io.request_slots.has_waiters() && io.in_flight.lock().unwrap().is_empty()).await;
+        until(|| !io.request_slots.has_waiters() && io.in_flight.lock_ignore_poison().is_empty())
+            .await;
         assert_eq!(io.request_metrics.attempts.load(Ordering::Relaxed), 0);
         drop(queued_handle);
         drop(blocker);
@@ -323,7 +329,7 @@ async fn last_shared_reader_cancels_a_queued_attempt_and_a_retry_timer() {
         until(|| io.request_metrics.status_failures.load(Ordering::Relaxed) == 1).await;
         let sleeping_handle = sleeping.download.clone();
         drop(sleeping);
-        until(|| io.in_flight.lock().unwrap().is_empty()).await;
+        until(|| io.in_flight.lock_ignore_poison().is_empty()).await;
         drop(sleeping_handle);
         assert_eq!(io.request_metrics.attempts.load(Ordering::Relaxed), 1);
         assert_eq!(io.request_metrics.retries.load(Ordering::Relaxed), 0);
@@ -391,7 +397,7 @@ async fn a_stale_upgrade_cannot_revive_a_download_after_its_last_reader_left() {
         assert!(old_result.changed().await.is_err());
         drop(stale);
         until(|| io.request_slots.has_waiters()).await;
-        assert_eq!(io.in_flight.lock().unwrap().len(), 1, "old cleanup must preserve the replacement");
+        assert_eq!(io.in_flight.lock_ignore_poison().len(), 1, "old cleanup must preserve the replacement");
         drop(blocker);
         server.reply("same", OK).await;
         let mut result = new.result();
@@ -490,4 +496,464 @@ async fn shared_downloads_keep_arrival_order_when_workers_poll_in_reverse() {
     })
     .await
     .expect("shared downloads did not finish in FIFO order");
+}
+
+fn status_only(status: &str) -> Vec<u8> {
+    format!("HTTP/1.1 {status}\r\nContent-Length: 0\r\nConnection: close\r\n\r\n").into_bytes()
+}
+
+/// A content download keyed by `key`, run to its failure.
+async fn fail_shared(
+    io: &Arc<IpfsIo>,
+    server: &Server,
+    path: &str,
+    key: CacheKey,
+    status: &str,
+) -> AssetReaderError {
+    let (reader, task) = io.share_download(key, 1, path.into(), server.url(path), None);
+    IoTaskPool::get().spawn_compat(task.unwrap()).detach();
+    server.reply(path, &status_only(status)).await;
+    let mut result = reader.result();
+    let result = result
+        .wait_for(Option::is_some)
+        .await
+        .unwrap()
+        .clone()
+        .unwrap();
+    result.err().expect("the download failed")
+}
+
+#[tokio::test]
+async fn a_content_hash_that_answers_a_client_error_is_remembered_for_the_session() {
+    timeout(LIMIT, async {
+        let io = ipfs();
+        let server = Server::start().await;
+        let later = Instant::now() + Duration::from_secs(3600);
+        for (path, status, code) in [
+            ("missing", "404 Not Found", 404),
+            ("gone", "410 Gone", 410),
+            ("bad", "400 Bad Request", 400),
+        ] {
+            let key = CacheKey::Content(format!("bafk{path}"));
+            let error = fail_shared(&io, &server, path, key, status).await;
+            assert!(error.to_string().contains(&code.to_string()), "{error}");
+            let repeat =
+                io.failed_remotes
+                    .lock_ignore_poison()
+                    .repeat(&server.url(path), later, true);
+            assert_eq!(
+                repeat,
+                Some(Repeat::Session(
+                    reqwest::StatusCode::from_u16(code).unwrap()
+                )),
+                "{path}"
+            );
+        }
+        assert_eq!(io.request_metrics.attempts.load(Ordering::Relaxed), 3);
+    })
+    .await
+    .expect("definitive failures were not remembered");
+}
+
+#[tokio::test]
+async fn transient_and_url_keyed_failures_keep_the_retry_window() {
+    timeout(LIMIT, async {
+        let io = ipfs();
+        let server = Server::start().await;
+        let mut urls = Vec::new();
+        for (path, status) in [
+            ("timeout", "408 Request Timeout"),
+            ("busy", "429 Too Many Requests"),
+            ("forbidden", "403 Forbidden"),
+        ] {
+            let key = CacheKey::Content(format!("bafk{path}"));
+            fail_shared(&io, &server, path, key, status).await;
+            urls.push(server.url(path));
+        }
+        fail_shared(
+            &io,
+            &server,
+            "missing-url",
+            CacheKey::Url("missing-url".into()),
+            "404 Not Found",
+        )
+        .await;
+        urls.push(server.url("missing-url"));
+        let uncached = asset(&io, &server, "uncached", None);
+        server
+            .reply("uncached", &status_only("404 Not Found"))
+            .await;
+        assert!(uncached.await.unwrap().is_err());
+        urls.push(server.url("uncached"));
+
+        let mut failed = io.failed_remotes.lock_ignore_poison();
+        for url in &urls {
+            assert_eq!(
+                failed.repeat(url, Instant::now(), false),
+                Some(Repeat::Recent),
+                "{url}"
+            );
+            assert_eq!(
+                failed.repeat(url, Instant::now() + Duration::from_secs(11), false),
+                None,
+                "{url}"
+            );
+        }
+        assert_eq!(failed.session_len(), 0);
+        drop(failed);
+        assert_eq!(io.request_metrics.attempts.load(Ordering::Relaxed), 5);
+    })
+    .await
+    .expect("transient failures were not kept for the retry window");
+}
+
+const SCENE: &str = "bafkreiscene";
+const MISSING: &str = "bafkreimissing";
+
+/// A realm on `server` with one scene whose `missing.png` is [`MISSING`]; returns its path.
+async fn loopback_realm(io: &Arc<IpfsIo>, server: &Server) -> PathBuf {
+    let about = ServerAbout {
+        content: Some(EndpointConfig {
+            healthy: true,
+            public_url: format!("http://{}", server.0.local_addr().unwrap()),
+        }),
+        ..Default::default()
+    };
+    {
+        let mut context = io.context.write().await;
+        context.about = Some(about.clone());
+        context.entities.insert(
+            SCENE.to_owned(),
+            IpfsEntity {
+                collection: ContentMap::new_single("missing.png".to_owned(), MISSING.to_owned()),
+                metadata: None,
+            },
+        );
+    }
+    io.realm_config_sender.send_replace(Some(RealmConfig {
+        about_url: String::new(),
+        address: String::new(),
+        about,
+        connected: true,
+        secret: None,
+        spawn_parcel: None,
+    }));
+    PathBuf::from(&IpfsPath::new(IpfsType::new_content_file(
+        SCENE.to_owned(),
+        "missing.png".to_owned(),
+    )))
+}
+
+/// One read of the missing file, answered by `server` with a 404.
+async fn read_missing(
+    io: &Arc<IpfsIo>,
+    server: &Server,
+    path: &Path,
+) -> Result<(), AssetReaderError> {
+    let request = format!("contents/{MISSING}");
+    let not_found = status_only("404 Not Found");
+    let (read, ()) = tokio::join!(
+        async { io.read(path).await.map(|_| ()) },
+        server.reply(&request, &not_found)
+    );
+    read
+}
+
+#[tokio::test]
+async fn a_preview_client_asks_again_for_a_missing_file_at_once() {
+    timeout(LIMIT, async {
+        let mut io = ipfs();
+        Arc::get_mut(&mut io).unwrap().is_preview = true;
+        let server = Server::start().await;
+        let path = loopback_realm(&io, &server).await;
+        for _ in 0..2 {
+            assert!(read_missing(&io, &server, &path).await.is_err());
+        }
+        assert_eq!(io.request_metrics.attempts.load(Ordering::Relaxed), 2);
+        assert_eq!(io.failed_remotes.lock_ignore_poison().session_len(), 0);
+    })
+    .await
+    .expect("preview did not ask again");
+}
+
+#[tokio::test]
+async fn a_preview_client_does_not_keep_a_content_failure_for_the_session() {
+    timeout(LIMIT, async {
+        let mut io = ipfs();
+        Arc::get_mut(&mut io).unwrap().is_preview = true;
+        let server = Server::start().await;
+        let key = CacheKey::Content("bafkmissing".into());
+        fail_shared(&io, &server, "missing", key, "404 Not Found").await;
+        let mut failed = io.failed_remotes.lock_ignore_poison();
+        assert_eq!(failed.session_len(), 0);
+        assert_eq!(
+            failed.repeat(&server.url("missing"), Instant::now(), false),
+            Some(Repeat::Recent)
+        );
+    })
+    .await
+    .expect("preview kept a session failure");
+}
+
+fn seed_session_404(io: &Arc<IpfsIo>, server: &Server) {
+    seed_session_404_at(io, server, Instant::now());
+}
+
+fn seed_session_404_at(io: &Arc<IpfsIo>, server: &Server, at: Instant) {
+    let url = format!(
+        "http://{}/contents/{MISSING}",
+        server.0.local_addr().unwrap()
+    );
+    io.failed_remotes
+        .lock_ignore_poison()
+        .record(url, Some(reqwest::StatusCode::NOT_FOUND), at);
+}
+
+#[tokio::test]
+async fn a_session_failure_is_answered_by_read_without_a_request() {
+    timeout(LIMIT, async {
+        let io = ipfs();
+        let server = Server::start().await;
+        let path = loopback_realm(&io, &server).await;
+        seed_session_404(&io, &server);
+        // a loopback read has no content key, so the entry answers it only within the retry window
+        let error = io.read(&path).await.map(|_| ()).unwrap_err();
+        assert!(
+            error.to_string().contains("repeat request for failed"),
+            "{error}"
+        );
+        assert!(timeout(Duration::from_millis(200), server.0.accept())
+            .await
+            .is_err());
+        assert_eq!(io.request_metrics.attempts.load(Ordering::Relaxed), 0);
+    })
+    .await
+    .expect("a session failure was not answered from memory");
+}
+
+#[tokio::test]
+async fn a_session_failure_answers_only_content_reads() {
+    timeout(LIMIT, async {
+        let io = ipfs();
+        let server = Server::start().await;
+        let path = loopback_realm(&io, &server).await;
+        let long_ago = Instant::now().checked_sub(Duration::from_secs(11)).unwrap();
+        seed_session_404_at(&io, &server, long_ago);
+        // a loopback read has no content key, so the entry is not its answer
+        assert!(read_missing(&io, &server, &path).await.is_err());
+        assert_eq!(io.request_metrics.attempts.load(Ordering::Relaxed), 1);
+        let url = format!(
+            "http://{}/contents/{MISSING}",
+            server.0.local_addr().unwrap()
+        );
+        assert_eq!(
+            io.failed_remotes
+                .lock_ignore_poison()
+                .repeat(&url, Instant::now(), true),
+            Some(Repeat::Session(reqwest::StatusCode::NOT_FOUND))
+        );
+    })
+    .await
+    .expect("a session failure answered a read that is not a content read");
+}
+
+#[tokio::test]
+async fn a_successful_download_clears_a_failure_of_its_url() {
+    timeout(LIMIT, async {
+        let io = ipfs();
+        let server = Server::start().await;
+        let url = server.url("found");
+        io.failed_remotes.lock_ignore_poison().record(
+            url.clone(),
+            Some(reqwest::StatusCode::NOT_FOUND),
+            Instant::now(),
+        );
+        let download = asset(&io, &server, "found", None);
+        server.reply("found", OK).await;
+        assert!(download.await.unwrap().is_ok());
+        let mut failed = io.failed_remotes.lock_ignore_poison();
+        assert_eq!(failed.repeat(&url, Instant::now(), true), None);
+        assert_eq!(failed.session_len(), 0);
+    })
+    .await
+    .expect("a success did not clear the failure");
+}
+
+#[tokio::test]
+async fn a_preview_client_ignores_a_session_failure() {
+    timeout(LIMIT, async {
+        let mut io = ipfs();
+        Arc::get_mut(&mut io).unwrap().is_preview = true;
+        let server = Server::start().await;
+        let path = loopback_realm(&io, &server).await;
+        seed_session_404(&io, &server);
+        assert!(read_missing(&io, &server, &path).await.is_err());
+        assert_eq!(io.request_metrics.attempts.load(Ordering::Relaxed), 1);
+    })
+    .await
+    .expect("preview did not ask again");
+}
+
+#[tokio::test]
+async fn a_loopback_404_is_answered_from_memory_only_within_the_retry_window() {
+    timeout(LIMIT, async {
+        let io = ipfs();
+        let server = Server::start().await;
+        let path = loopback_realm(&io, &server).await;
+        assert!(read_missing(&io, &server, &path).await.is_err());
+        let second = io.read(&path).await.map(|_| ()).unwrap_err();
+        assert!(
+            second.to_string().contains("repeat request for failed"),
+            "{second}"
+        );
+        assert!(timeout(Duration::from_millis(200), server.0.accept())
+            .await
+            .is_err());
+        assert_eq!(io.request_metrics.attempts.load(Ordering::Relaxed), 1);
+        let url = format!(
+            "http://{}/contents/{MISSING}",
+            server.0.local_addr().unwrap()
+        );
+        assert_eq!(
+            io.failed_remotes.lock_ignore_poison().repeat(
+                &url,
+                Instant::now() + Duration::from_secs(11),
+                false
+            ),
+            None
+        );
+    })
+    .await
+    .expect("loopback failure was not answered from memory");
+}
+
+#[tokio::test]
+async fn a_poisoned_failure_memory_keeps_answering() {
+    timeout(LIMIT, async {
+        let io = ipfs();
+        let server = Server::start().await;
+        let path = loopback_realm(&io, &server).await;
+        let poisoner = std::thread::scope(|scope| {
+            scope
+                .spawn(|| {
+                    let _held = io.failed_remotes.lock_ignore_poison();
+                    panic!("poison the failure memory");
+                })
+                .join()
+        });
+        assert!(poisoner.is_err());
+        assert!(io.failed_remotes.is_poisoned());
+        assert!(read_missing(&io, &server, &path).await.is_err());
+        let second = io.read(&path).await.map(|_| ()).unwrap_err();
+        assert!(
+            second.to_string().contains("repeat request for failed"),
+            "{second}"
+        );
+        assert_eq!(io.request_metrics.attempts.load(Ordering::Relaxed), 1);
+    })
+    .await
+    .expect("a poisoned failure memory stopped answering");
+}
+
+/// One shared download of `path` keyed by `key`, answered with [`OK`] (the byte `x`).
+async fn download_x(
+    io: &Arc<IpfsIo>,
+    server: &Server,
+    path: &str,
+    key: CacheKey,
+) -> Result<SharedBytes, AssetReaderError> {
+    let (reader, task) = io.share_download(key, 1, path.into(), server.url(path), None);
+    IoTaskPool::get().spawn_compat(task.unwrap()).detach();
+    server.reply(path, OK).await;
+    let mut result = reader.result();
+    let result = result.wait_for(Option::is_some).await.unwrap().clone();
+    result.unwrap()
+}
+
+#[tokio::test]
+async fn a_download_that_does_not_match_its_hash_fails_and_is_not_cached() {
+    timeout(LIMIT, async {
+        let (io, dir) = cache_fixture("hash-mismatch");
+        let server = Server::start().await;
+        let hash = crate::content_hash::raw_cid(b"y");
+        let error = download_x(&io, &server, "other", CacheKey::Content(hash.clone()))
+            .await
+            .err()
+            .expect("bytes that are not the hash's fail the read");
+        assert!(error.to_string().contains("does not hash to"), "{error}");
+        assert!(!dir.join(&hash).exists());
+        assert_eq!(std::fs::read_dir(&dir).unwrap().count(), 0);
+        std::fs::remove_dir(dir).unwrap();
+    })
+    .await
+    .expect("the mismatched download did not finish");
+}
+
+#[tokio::test]
+async fn a_hash_mismatch_is_asked_for_again_after_the_retry_window() {
+    timeout(LIMIT, async {
+        let io = ipfs();
+        let server = Server::start().await;
+        let url = server.url("flaky");
+        let wrong = CacheKey::Content(crate::content_hash::raw_cid(b"y"));
+        assert!(download_x(&io, &server, "flaky", wrong).await.is_err());
+        {
+            let mut failed = io.failed_remotes.lock_ignore_poison();
+            assert_eq!(
+                failed.repeat(&url, Instant::now(), true),
+                Some(Repeat::Recent)
+            );
+            assert_eq!(
+                failed.repeat(&url, Instant::now() + Duration::from_secs(11), true),
+                None
+            );
+            assert_eq!(failed.session_len(), 0);
+        }
+        // the next download of the url, answered with the right bytes, is read
+        let right = CacheKey::Content(crate::content_hash::raw_cid(b"x"));
+        let bytes = download_x(&io, &server, "flaky", right).await.unwrap();
+        assert_eq!(bytes.as_ref(), b"x");
+        assert_eq!(io.request_metrics.attempts.load(Ordering::Relaxed), 2);
+    })
+    .await
+    .expect("a hash mismatch was not retried");
+}
+
+#[tokio::test]
+async fn a_download_that_matches_its_hash_is_read_and_cached() {
+    timeout(LIMIT, async {
+        let (io, dir) = cache_fixture("hash-match");
+        let server = Server::start().await;
+        let hash = crate::content_hash::raw_cid(b"x");
+        let bytes = download_x(&io, &server, "same", CacheKey::Content(hash.clone()))
+            .await
+            .unwrap();
+        assert_eq!(bytes.as_ref(), b"x");
+        assert_eq!(std::fs::read(dir.join(&hash)).unwrap(), b"x");
+        std::fs::remove_file(dir.join(&hash)).unwrap();
+        std::fs::remove_dir(dir).unwrap();
+    })
+    .await
+    .expect("the matching download did not finish");
+}
+
+#[tokio::test]
+async fn a_name_the_hash_check_cannot_verify_is_read_and_not_cached() {
+    timeout(LIMIT, async {
+        let (io, dir) = cache_fixture("hash-unknown");
+        let server = Server::start().await;
+        // not a hash `content_hash` computes: a realm's own name, a cid of another codec or hash
+        let short_qm = "Qm".to_owned() + &crate::content_hash::raw_cid(b"y")[2..20];
+        let blake3 = "bafkr4i".to_owned() + &crate::content_hash::raw_cid(b"y")[7..];
+        for name in ["realm-file-1".to_owned(), short_qm, blake3] {
+            let key = CacheKey::Content(name.clone());
+            let bytes = download_x(&io, &server, &name, key).await.unwrap();
+            assert_eq!(bytes.as_ref(), b"x", "{name}");
+        }
+        assert_eq!(std::fs::read_dir(&dir).unwrap().count(), 0);
+        assert_eq!(io.failed_remotes.lock_ignore_poison().session_len(), 0);
+        std::fs::remove_dir(dir).unwrap();
+    })
+    .await
+    .expect("an unverifiable download did not finish");
 }

@@ -1,10 +1,10 @@
 import type { ButtonHTMLAttributes } from 'react';
 import { Provider } from 'react-redux';
-import { MemoryRouter } from 'react-router-dom';
+import { MemoryRouter } from 'react-router';
 import { act, cleanup, fireEvent, render, screen } from '@testing-library/react';
-import { flatten } from 'flat';
+import { flatten } from '/@/modules/store/translation/flatten';
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
-import { dark, ThemeProvider } from 'decentraland-ui2/dist/theme';
+import { TestProviders } from '../../../../tests/utils/TestProviders';
 
 import { useAuth } from '/@/hooks/useAuth';
 import { LandType, RoleType, type Land } from '/@/lib/land';
@@ -69,7 +69,7 @@ function renderTab(mode: 'edit' | 'read', subject: Land = land, store = createTe
   render(
     <Provider store={store as never}>
       <MemoryRouter>
-        <ThemeProvider theme={dark}>
+        <TestProviders>
           <DetailShell
             title="Manage - Land Name"
             basePath="/manage/land/96%2C15"
@@ -83,7 +83,7 @@ function renderTab(mode: 'edit' | 'read', subject: Land = land, store = createTe
               mode={mode}
             />
           </DetailShell>
-        </ThemeProvider>
+        </TestProviders>
       </MemoryRouter>
     </Provider>,
   );

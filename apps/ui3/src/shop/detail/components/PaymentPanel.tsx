@@ -4,8 +4,9 @@
 import { useEffect, useId, useState } from "react";
 import { Link } from "react-router";
 
-import Button from "../../../atoms/Button";
+import { Button } from "@dcl/one-ui";
 import Icon from "../../discovery/components/Icon";
+import { useCreditsManaSplit } from "../../discovery/flags";
 import { pdpText } from "../copy";
 import { chainLabel } from "@shop/model/chain";
 import { creditsCeil, formatMana, type ManaWei, type UsdCents } from "@shop/model/money";
@@ -85,7 +86,8 @@ function OptionPrice({ row, listing, network, testId = `price-${row.method}` }: 
 export default function PaymentPanel(props: PaymentPanelProps) {
   const { offer, status, listing, session, wallet, item } = props;
   const groupName = useId();
-  const presentation = offer ? presentPayment(offer, session, { creditsBalance: props.creditsBalance, manaBalance: props.manaBalance }) : null;
+  const split = useCreditsManaSplit();
+  const presentation = offer ? presentPayment(offer, session, { creditsBalance: props.creditsBalance, manaBalance: props.manaBalance, split }) : null;
   const quoteFailed = !offer && (status === "routeMissing" || status === "failed");
   const deferToSignIn = quoteFailed && session.kind === "signedOut" && !!wallet.onSignIn;
   const outage = quoteFailed && !deferToSignIn;

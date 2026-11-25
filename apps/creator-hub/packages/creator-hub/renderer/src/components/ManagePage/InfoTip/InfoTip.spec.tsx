@@ -1,19 +1,19 @@
 import { act, cleanup, fireEvent, render, screen } from '@testing-library/react';
 import { afterEach, describe, expect, it } from 'vitest';
-import { dark, ThemeProvider } from 'decentraland-ui2/dist/theme';
 
 import { InfoTip } from '.';
+import { TestProviders } from '../../../../tests/utils/TestProviders';
 
 function glyphFontSize(size?: 'small' | 'medium') {
   render(
-    <ThemeProvider theme={dark}>
+    <TestProviders>
       <InfoTip
         label="About this"
         size={size}
       >
         Tip
       </InfoTip>
-    </ThemeProvider>,
+    </TestProviders>,
   );
   const glyph = screen.getByRole('button', { name: 'About this' }).querySelector('svg')!;
   return getComputedStyle(glyph).fontSize;
@@ -21,9 +21,9 @@ function glyphFontSize(size?: 'small' | 'medium') {
 
 function renderTip() {
   render(
-    <ThemeProvider theme={dark}>
+    <TestProviders>
       <InfoTip label="About Space Used">Total storage is calculated from your holdings.</InfoTip>
-    </ThemeProvider>,
+    </TestProviders>,
   );
   return screen.getByRole('button', { name: 'About Space Used' });
 }

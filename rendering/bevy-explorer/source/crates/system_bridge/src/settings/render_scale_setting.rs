@@ -1,7 +1,9 @@
-use common::structs::AppConfig;
+use common::structs::{AppConfig, GraphicsSettings};
 
 use super::{AppSetting, IntAppSetting, SettingCategory};
 
+/// Render resolution in steps of the window's width and height
+/// ([`GraphicsSettings::RENDER_SCALE_STEPS`] per whole window).
 #[derive(Debug, PartialEq, Eq)]
 pub struct RenderScaleSetting(i32);
 
@@ -14,17 +16,20 @@ impl IntAppSetting for RenderScaleSetting {
         self.0
     }
 
-    // Players stop at 50%; hosts may go lower for the session (SessionGraphics::MIN_RENDER_SCALE).
     fn min() -> i32 {
-        50
+        GraphicsSettings::MIN_PLAYER_RENDER_SCALE_STEPS
     }
 
     fn max() -> i32 {
-        100
+        GraphicsSettings::RENDER_SCALE_STEPS
+    }
+
+    fn scale() -> f32 {
+        100.0 / GraphicsSettings::RENDER_SCALE_STEPS as f32
     }
 
     fn display(&self) -> String {
-        format!("{}%", self.0)
+        format!("{}%", self.0 as f32 * Self::scale())
     }
 }
 
@@ -40,16 +45,44 @@ impl AppSetting for RenderScaleSetting {
     }
 
     fn description(&self) -> String {
-        "Render Resolution\n\nShare of the screen's pixels the world is drawn at, stretched to fill the window. Lower values reduce GPU load, most on high-density screens, and make the 3D view and in-world UI softer.".to_owned()
+        "Render Resolution\n\nShare of the window's pixels the world is drawn at, upscaled with FSR to fill the window. Lower values reduce GPU load, most on high-density screens, and make the 3D view softer; the interface stays sharp.".to_owned()
     }
 
     fn save(&self, config: &mut AppConfig) {
-        config.graphics.render_scale = self.0 as f32 / 100.0;
+        config.graphics.set_render_scale_steps(self.0);
     }
 
     fn load(config: &AppConfig) -> Self {
-        Self(
-            ((config.graphics.render_scale * 100.0).round() as i32).clamp(Self::min(), Self::max()),
-        )
+        Self(config.graphics.render_scale_steps())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::settings::Settings;
+
+    fn render_resolution(settings: &Settings) -> &system_api_types::SettingInfo {
+        &settings.settings[0].info
+    }
+
+    #[test]
+    fn moves_in_ten_percent_steps() {
+        let mut settings = Settings { settings: vec![] };
+        let mut config = AppConfig::default();
+        settings.add_int_setting::<RenderScaleSetting>(&config);
+        let info = render_resolution(&settings);
+        assert_eq!(
+            (info.min_value, info.max_value, info.step_size, info.value),
+            (50.0, 100.0, 10.0, 100.0)
+        );
+
+        let name = RenderScaleSetting::title();
+        for (requested, shown, saved) in [(90.0, 90.0, 0.9), (73.0, 70.0, 0.7), (100.0, 100.0, 1.0)]
+        {
+            settings.set_value(&mut config, &name, requested).unwrap();
+            assert_eq!(render_resolution(&settings).value, shown);
+            assert_eq!(config.graphics.render_scale, saved);
+        }
     }
 }

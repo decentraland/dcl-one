@@ -1,0 +1,137 @@
+@layer dcl.reset, dcl.foundations, dcl.components;
+@layer dcl.components {
+  .root {
+    box-sizing: border-box;
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: space-between;
+    align-items: center;
+    gap: var(--dcl-space-16);
+    min-width: 0;
+    min-height: 68px;
+    padding: var(--dcl-space-12) 20px;
+    background: var(--dcl-transparencies-black-40);
+    color: var(--dcl-neutrals-snow);
+  }
+  .primary {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 20px;
+    min-width: 0;
+    max-width: 100%;
+  }
+  /* explorer/title (36px/600) at the 44px line box of the Figma frame. */
+  .title {
+    composes: text6578706c6f7265722f7469746c65 from '../../foundations/typography/text-styles.module.css';
+    flex: none;
+    margin: 0;
+    line-height: 44px;
+    overflow-wrap: anywhere;
+    max-width: 100%;
+  }
+  .sections {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 14px;
+    min-width: 0;
+    max-width: 100%;
+  }
+  .root[data-variant='backpack'] .sections,
+  .root[data-variant='shop'] .sections {
+    gap: 10px;
+  }
+  /* Figma title-bar (16959:168) toggle-icon-text-button, explorer product: body/md-strong label, 20px icon,
+     8px gap, 16px inline padding (15px inside a 1px transparent border that forced colors draw as the target
+     boundary). The 44px minimum keeps the native target (Figma draws 42px). */
+  .section {
+    composes: text626f64792f6d642d7374726f6e67 from '../../foundations/typography/text-styles.module.css';
+    position: relative;
+    box-sizing: border-box;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    flex: none;
+    gap: var(--dcl-space-8);
+    min-height: 44px;
+    max-width: 100%;
+    border: 1px solid transparent;
+    border-radius: var(--dcl-radius-md);
+    padding: 0 calc(var(--dcl-space-16) - 1px);
+    background: var(--dcl-transparencies-white-10);
+    color: var(--dcl-neutrals-snow);
+    text-align: start;
+    text-decoration: none;
+    overflow-wrap: anywhere;
+    cursor: pointer;
+  }
+  /* aria-current also covers route adapters that forward it but not data-active. Snow on primary-alt is
+     2.62:1: accessibility exception titlebar-selected-contrast in docs/ui-standards.md. */
+  .section:is([data-active], [aria-current='page']) {
+    background: var(--dcl-primary-alt-primary-alt);
+    color: var(--dcl-neutrals-snow);
+  }
+  .section:focus-visible {
+    outline: 2px solid var(--dcl-neutrals-snow);
+    outline-offset: 2px;
+  }
+  .icon {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    flex: none;
+    width: 20px;
+    height: 20px;
+  }
+  .controls {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 14px;
+    min-width: 0;
+    max-width: 100%;
+  }
+  .root[data-variant='events'] .controls {
+    gap: 20px;
+  }
+  .slot {
+    position: relative;
+    box-sizing: border-box;
+    flex: 0 1 auto;
+    min-width: 0;
+    max-width: 100%;
+  }
+  /* Figma sizes the triggers, date, create and cart controls to their content; only search is fixed. */
+  .slot[data-control='search'] {
+    flex: 0 1 396px;
+    width: 396px;
+  }
+  .filterMenu {
+    position: absolute;
+    top: calc(100% + var(--dcl-space-12));
+    inset-inline-start: 0;
+    z-index: 1;
+    width: 240px;
+    max-width: calc(100vw - 40px);
+  }
+}
+
+@layer dcl.components {
+  @media (forced-colors: active) {
+    .section {
+      border-color: CanvasText;
+    }
+    .section:is([data-active], [aria-current='page'])::after {
+      content: '';
+      position: absolute;
+      inset: 1px;
+      border: 2px solid CanvasText;
+      border-radius: inherit;
+      pointer-events: none;
+    }
+    .section:focus-visible {
+      outline-color: Highlight;
+    }
+  }
+}

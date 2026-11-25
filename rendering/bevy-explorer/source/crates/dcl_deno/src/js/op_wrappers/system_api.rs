@@ -12,10 +12,12 @@ use system_bridge::{
     BlockingStatusData, ChatMessage, ChatReactionData, CommunityMemberConnectivityData,
     CommunityVoiceUpdate, ConnectivitySnapshot, DmHistoryEntryData, DmUserStateData,
     FriendConnectivityEvent, FriendData, FriendRequestData, FriendStatusData,
-    FriendshipEventUpdate, HomeScene, HoverEvent, LiveSceneInfo, PermanentPermissionItem,
-    PermissionRequestEvent, PhotoModeState, PortableInfo, ProfileChangedEvent, ProximityEvent,
-    SatelliteView, SceneLoadingUi, SetAvatarData, VoiceChatAction, VoiceChatState, VoiceMessage,
-    WelcomeState, WorldAccessEvent,
+    FriendshipEventUpdate, HomeScene, HoverEvent, ItemPurchaseRequest, ItemPurchaseState,
+    ListenedCommunity, LiveSceneInfo, LobbyStage, MapPinInfo, OutfitsData, PermanentPermissionItem,
+    PermissionRequestEvent, PhotoModeState, PlatformBanNotice, PortableInfo, ProfileChangedEvent,
+    ProximityEvent, SatelliteView, SceneLoadingUi, SetAvatarData, SetAvatarResult,
+    TextureOptimizationStatus, VoiceChatAction, VoiceChatState, VoiceMessage, WelcomeState,
+    WorldAccessEvent, WorldAccessVerdict,
 };
 
 // list of op declarations
@@ -36,6 +38,7 @@ pub fn ops(super_user: bool) -> Vec<OpDecl> {
             op_set_setting(),
             op_kernel_fetch_headers(),
             op_set_avatar(),
+            op_deploy_outfits(),
             op_native_input(),
             op_get_bindings(),
             op_set_bindings(),
@@ -44,15 +47,21 @@ pub fn ops(super_user: bool) -> Vec<OpDecl> {
             op_live_scene_info(),
             op_get_home_scene(),
             op_set_home_scene(),
+            op_clear_home_scene(),
+            op_set_lobby_stage(),
             op_get_service_urls(),
+            op_get_official_wallets(),
             op_get_welcome(),
             op_accept_terms(),
             op_get_satellite_view(),
+            op_get_satellite_tile(),
+            op_get_world_access(),
             op_get_system_action_stream(),
             op_read_system_action_stream(),
             op_get_chat_stream(),
             op_read_chat_stream(),
             op_send_chat(),
+            op_set_chat_bubble_text(),
             op_get_chat_reaction_stream(),
             op_read_chat_reaction_stream(),
             op_send_chat_reaction(),
@@ -67,6 +76,9 @@ pub fn ops(super_user: bool) -> Vec<OpDecl> {
             op_get_permission_used_stream(),
             op_read_permission_used_stream(),
             op_set_single_permission(),
+            op_get_item_purchase_request_stream(),
+            op_read_item_purchase_request_stream(),
+            op_set_item_purchase_state(),
             op_set_permanent_permission(),
             op_get_permanent_permissions(),
             op_get_permission_types(),
@@ -90,15 +102,21 @@ pub fn ops(super_user: bool) -> Vec<OpDecl> {
             op_read_photo_mode_stream(),
             op_get_world_access_stream(),
             op_read_world_access_stream(),
+            op_get_platform_ban_stream(),
+            op_read_platform_ban_stream(),
             op_set_world_password(),
             op_get_portables_stream(),
             op_read_portables_stream(),
+            op_get_map_pins_stream(),
+            op_read_map_pins_stream(),
             op_get_profile_changed_stream(),
             op_read_profile_changed_stream(),
             op_get_scene_loading_ui_stream(),
             op_read_scene_loading_ui_stream(),
             op_get_analytics_event_stream(),
             op_read_analytics_event_stream(),
+            op_get_texture_optimization_stream(),
+            op_read_texture_optimization_stream(),
             op_get_avatar_modifiers(),
             // Social / Friends
             op_get_friendship_event_stream(),
@@ -231,16 +249,18 @@ pub async fn op_kernel_fetch_headers(
 }
 
 #[op2(async)]
+#[serde]
 pub async fn op_set_avatar(
     state: Rc<RefCell<OpState>>,
+    #[string] owner: String,
     #[serde] avatar: SetAvatarData,
-) -> Result<u32, anyhow::Error> {
-    dcl_js::system_api::op_set_avatar(state, avatar).await
+) -> Result<SetAvatarResult, anyhow::Error> {
+    dcl_js::system_api::op_set_avatar(state, owner, avatar).await
 }
 
 #[op2(async)]
 #[string]
-pub async fn op_native_input(state: Rc<RefCell<OpState>>) -> String {
+pub async fn op_native_input(state: Rc<RefCell<OpState>>) -> Result<String, anyhow::Error> {
     dcl_js::system_api::op_native_input(state).await
 }
 
@@ -305,6 +325,14 @@ pub async fn op_get_service_urls(
 
 #[op2(async)]
 #[serde]
+pub async fn op_get_official_wallets(
+    state: Rc<RefCell<OpState>>,
+) -> Result<Vec<String>, anyhow::Error> {
+    dcl_js::system_api::op_get_official_wallets(state).await
+}
+
+#[op2(async)]
+#[serde]
 pub async fn op_get_welcome(state: Rc<RefCell<OpState>>) -> Result<WelcomeState, anyhow::Error> {
     dcl_js::system_api::op_get_welcome(state).await
 }
@@ -316,10 +344,33 @@ pub async fn op_accept_terms(state: Rc<RefCell<OpState>>) -> Result<(), anyhow::
 
 #[op2(async)]
 #[serde]
+pub async fn op_get_world_access(
+    state: Rc<RefCell<OpState>>,
+    #[string] world: String,
+) -> Result<WorldAccessVerdict, anyhow::Error> {
+    dcl_js::system_api::op_get_world_access(state, world).await
+}
+
+#[op2(async)]
+#[string]
+pub async fn op_get_satellite_tile(
+    state: Rc<RefCell<OpState>>,
+    #[string] path: String,
+) -> Result<String, anyhow::Error> {
+    dcl_js::system_api::op_get_satellite_tile(state, path).await
+}
+
+#[op2(async)]
+#[serde]
 pub async fn op_get_satellite_view(
     state: Rc<RefCell<OpState>>,
 ) -> Result<Option<SatelliteView>, anyhow::Error> {
     dcl_js::system_api::op_get_satellite_view(state).await
+}
+
+#[op2]
+pub fn op_set_lobby_stage(state: Rc<RefCell<OpState>>, #[serde] stage: Option<LobbyStage>) {
+    dcl_js::system_api::op_set_lobby_stage(state, stage);
 }
 
 #[op2]
@@ -329,6 +380,11 @@ pub fn op_set_home_scene(
     #[serde] parcel: Vector2,
 ) {
     dcl_js::system_api::op_set_home_scene(state, realm, parcel);
+}
+
+#[op2(fast)]
+pub fn op_clear_home_scene(state: Rc<RefCell<OpState>>) {
+    dcl_js::system_api::op_clear_home_scene(state);
 }
 
 #[op2(async)]
@@ -366,6 +422,15 @@ pub fn op_send_chat(
     #[string] channel: String,
 ) {
     dcl_js::system_api::op_send_chat(state, message, channel)
+}
+
+#[op2(fast)]
+pub fn op_set_chat_bubble_text(
+    state: Rc<RefCell<OpState>>,
+    #[string] message_id: String,
+    #[string] message: String,
+) {
+    dcl_js::system_api::op_set_chat_bubble_text(state, message_id, message)
 }
 
 #[op2(async)]
@@ -466,6 +531,29 @@ pub async fn op_read_permission_used_stream(
 #[op2(fast)]
 pub fn op_set_single_permission(state: Rc<RefCell<OpState>>, #[bigint] id: usize, allow: bool) {
     dcl_js::system_api::op_set_single_permission(state, id, allow);
+}
+
+#[op2(async)]
+pub async fn op_get_item_purchase_request_stream(state: Rc<RefCell<OpState>>) -> u32 {
+    dcl_js::system_api::op_get_item_purchase_request_stream(state).await
+}
+
+#[op2(async)]
+#[serde]
+pub async fn op_read_item_purchase_request_stream(
+    state: Rc<RefCell<OpState>>,
+    rid: u32,
+) -> Result<Option<ItemPurchaseRequest>, deno_core::anyhow::Error> {
+    dcl_js::system_api::op_read_item_purchase_request_stream(state, rid).await
+}
+
+#[op2]
+pub fn op_set_item_purchase_state(
+    state: Rc<RefCell<OpState>>,
+    id: u32,
+    #[serde] purchase_state: ItemPurchaseState,
+) {
+    dcl_js::system_api::op_set_item_purchase_state(state, id, purchase_state);
 }
 
 #[op2]
@@ -636,6 +724,20 @@ pub async fn op_read_world_access_stream(
     dcl_js::system_api::op_read_world_access_stream(state, rid).await
 }
 
+#[op2(async)]
+pub async fn op_get_platform_ban_stream(state: Rc<RefCell<OpState>>) -> u32 {
+    dcl_js::system_api::op_get_platform_ban_stream(state).await
+}
+
+#[op2(async)]
+#[serde]
+pub async fn op_read_platform_ban_stream(
+    state: Rc<RefCell<OpState>>,
+    rid: u32,
+) -> Result<Option<PlatformBanNotice>, deno_core::anyhow::Error> {
+    dcl_js::system_api::op_read_platform_ban_stream(state, rid).await
+}
+
 #[op2]
 pub fn op_set_world_password(state: Rc<RefCell<OpState>>, #[string] password: Option<String>) {
     dcl_js::system_api::op_set_world_password(state, password);
@@ -681,6 +783,20 @@ pub async fn op_read_analytics_event_stream(
     rid: u32,
 ) -> Result<Option<AnalyticsEvent>, deno_core::anyhow::Error> {
     dcl_js::system_api::op_read_analytics_event_stream(state, rid).await
+}
+
+#[op2(async)]
+pub async fn op_get_texture_optimization_stream(state: Rc<RefCell<OpState>>) -> u32 {
+    dcl_js::system_api::op_get_texture_optimization_stream(state).await
+}
+
+#[op2(async)]
+#[serde]
+pub async fn op_read_texture_optimization_stream(
+    state: Rc<RefCell<OpState>>,
+    rid: u32,
+) -> Result<Option<TextureOptimizationStatus>, deno_core::anyhow::Error> {
+    dcl_js::system_api::op_read_texture_optimization_stream(state, rid).await
 }
 
 #[op2(async)]
@@ -941,8 +1057,11 @@ pub async fn op_read_community_connectivity_stream(
 }
 
 #[op2]
-pub fn op_set_community_channels(state: Rc<RefCell<OpState>>, #[serde] ids: Vec<String>) {
-    dcl_js::system_api::op_set_community_channels(state, ids)
+pub fn op_set_community_channels(
+    state: Rc<RefCell<OpState>>,
+    #[serde] communities: Vec<ListenedCommunity>,
+) {
+    dcl_js::system_api::op_set_community_channels(state, communities)
 }
 
 #[op2(async)]
@@ -960,6 +1079,15 @@ pub async fn op_read_block_update_stream(
 }
 
 #[op2(async)]
+pub async fn op_deploy_outfits(
+    state: Rc<RefCell<OpState>>,
+    #[string] address: String,
+    #[serde] outfits: OutfitsData,
+) -> Result<(), anyhow::Error> {
+    dcl_js::system_api::op_deploy_outfits(state, address, outfits).await
+}
+
+#[op2(async)]
 pub async fn op_get_portables_stream(state: Rc<RefCell<OpState>>) -> u32 {
     dcl_js::system_api::op_get_portables_stream(state).await
 }
@@ -971,4 +1099,18 @@ pub async fn op_read_portables_stream(
     rid: u32,
 ) -> Result<Option<Vec<PortableInfo>>, anyhow::Error> {
     dcl_js::system_api::op_read_portables_stream(state, rid).await
+}
+
+#[op2(async)]
+pub async fn op_get_map_pins_stream(state: Rc<RefCell<OpState>>) -> u32 {
+    dcl_js::system_api::op_get_map_pins_stream(state).await
+}
+
+#[op2(async)]
+#[serde]
+pub async fn op_read_map_pins_stream(
+    state: Rc<RefCell<OpState>>,
+    rid: u32,
+) -> Result<Option<Vec<MapPinInfo>>, anyhow::Error> {
+    dcl_js::system_api::op_read_map_pins_stream(state, rid).await
 }

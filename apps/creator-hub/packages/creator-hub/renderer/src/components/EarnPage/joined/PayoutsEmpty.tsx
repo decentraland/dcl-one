@@ -5,41 +5,34 @@ import { selectors } from '/@/modules/store/creatorFund';
 import { formatCycleDays } from '/@/modules/store/creatorFund/utils';
 import { t } from '/@/modules/store/translation/utils';
 
-import {
-  EmptyArea,
-  EmptyArt,
-  EmptyBody,
-  EmptyCopy,
-  EmptyHead,
-  EmptyLine,
-  EmptyTitle,
-} from './PayoutsTab.styled';
+import styles from './PayoutsTab.module.css';
 
 /** Before the first payout: when it comes, over the character art. */
 export function PayoutsEmpty() {
   const locale = useSelector(state => state.translation.locale);
   const cycle = useSelector(selectors.getFirstPayoutCycle);
   return (
-    <EmptyArea>
-      <EmptyArt
+    <section className={styles.emptyArea}>
+      <img
+        className={styles.emptyArt}
         src={emptyArt}
         alt=""
         width={1361}
         height={822}
       />
-      <EmptyCopy>
-        <EmptyHead>
-          <EmptyTitle>{t('earn.joined.payouts.empty.title')}</EmptyTitle>
+      <div className={styles.emptyCopy}>
+        <div className={styles.emptyHead}>
+          <h2 className={styles.emptyTitle}>{t('earn.joined.payouts.empty.title')}</h2>
           {cycle && (
-            <EmptyLine>
+            <p className={styles.emptyLine}>
               {t('earn.joined.payouts.empty.first_payout', {
                 cycle: formatCycleDays(cycle, locale),
               })}
-            </EmptyLine>
+            </p>
           )}
-        </EmptyHead>
-        <EmptyBody>{t('earn.joined.payouts.empty.body')}</EmptyBody>
-      </EmptyCopy>
-    </EmptyArea>
+        </div>
+        <p className={styles.emptyBody}>{t('earn.joined.payouts.empty.body')}</p>
+      </div>
+    </section>
   );
 }

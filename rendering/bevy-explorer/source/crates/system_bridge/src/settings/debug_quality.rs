@@ -1,4 +1,4 @@
-use super::{AppConfig, Settings};
+use super::{AppConfig, SettingInfo, Settings};
 use bevy::prelude::*;
 use bevy_console::ConsoleCommand;
 use console::{AddDebugSection, DebugInput, DebugInputKind, DebugSection, DoAddConsoleCommand};
@@ -12,28 +12,37 @@ const GROUPS: &[(&str, &str)] = &[
     ("Audio", "Audio settings"),
 ];
 
-// Settings use whole steps (including tenths and twentieths). Convert the step count
-// to HTML's f64 numbers without widening a binary f32 approximation of e.g. 0.05.
+// Settings use whole steps (including tens, tenths and twentieths). Convert the step count
+// to HTML's f64 numbers without widening a binary f32 approximation of e.g. 0.05 or 1/10.
 fn panel_number(value: f32, step: f32) -> f64 {
-    f64::from((value / step).round()) / f64::from(step.recip())
-}
-
-pub(super) fn register(app: &mut App, settings: &Settings) {
-    app.add_console_command::<QualityCommand, _>(quality);
-    for &(category, title) in GROUPS {
-        register_group(app, settings, category, title);
+    let steps = f64::from((value / step).round());
+    if step >= 1.0 {
+        steps * f64::from(step)
+    } else {
+        steps / f64::from(step.recip())
     }
 }
 
-fn register_group(app: &mut App, settings: &Settings, category: &str, title: &str) {
+pub(super) struct DebugQualityPlugin;
+
+impl Plugin for DebugQualityPlugin {
+    fn build(&self, app: &mut App) {
+        app.add_console_command::<QualityCommand, _>(quality);
+        let settings = app.world().resource::<Settings>().get();
+        for &(category, title) in GROUPS {
+            register_group(app, &settings, category, title);
+        }
+    }
+}
+
+fn register_group(app: &mut App, settings: &[SettingInfo], category: &str, title: &str) {
     let rows: Vec<_> = settings
-        .settings
         .iter()
         .enumerate()
-        .filter(|(_, s)| s.info.category == category)
+        .filter(|(_, s)| s.category == category)
         .map(|(i, s)| {
             (
-                &s.info,
+                s,
                 i.to_string(),
                 format!("/debug_settings {category} {i} {{value}}"),
             )
@@ -148,7 +157,9 @@ fn quality(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::settings::player_settings::WalkSpeedSetting;
+    use crate::settings::{
+        player_settings::WalkSpeedSetting, render_scale_setting::RenderScaleSetting,
+    };
 
     #[test]
     fn gameplay_numbers_use_the_player_settings_decimal_steps() {
@@ -163,5 +174,18 @@ mod tests {
         assert_eq!(panel_number(info.min_value, info.step_size), 0.1);
         assert_eq!(panel_number(1.9, 0.05), 1.9);
         assert_eq!(panel_number(0.05, 0.05), 0.05);
+    }
+
+    #[test]
+    fn render_resolution_numbers_use_whole_ten_percent_steps() {
+        let mut settings = Settings {
+            settings: Vec::new(),
+        };
+        settings.add_int_setting::<RenderScaleSetting>(&AppConfig::default());
+        let info = &settings.settings[0].info;
+        assert_eq!(panel_number(info.min_value, info.step_size), 50.0);
+        assert_eq!(panel_number(info.max_value, info.step_size), 100.0);
+        assert_eq!(panel_number(info.step_size, info.step_size), 10.0);
+        assert_eq!(panel_number(70.0, info.step_size), 70.0);
     }
 }

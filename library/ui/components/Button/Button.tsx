@@ -7,6 +7,7 @@ import type {
   Ref
 } from 'react'
 import styles from './Button.module.css'
+import { secureRel } from '../../link.helpers'
 
 type AccessibleName = { 'aria-label': string } | { 'aria-labelledby': string }
 type NamedContent = Exclude<ReactNode, null | undefined | boolean>
@@ -14,6 +15,7 @@ type Content = { children: NamedContent } | { label: NamedContent } | Accessible
 type Variant =
   | 'primary'
   | 'secondary'
+  | 'secondaryLight'
   | 'outline'
   | 'dark'
   | 'text'
@@ -36,31 +38,33 @@ type NativeProps =
 
 export type ButtonProps = NativeProps &
   Content & {
+    /**
+     * Button owns its content, so native HTML cannot replace it. Omit this key before spreading a
+     * typed `ButtonHTMLAttributes` or `AnchorHTMLAttributes` object into Button.
+     */
+    dangerouslySetInnerHTML?: never
     children?: ReactNode
     label?: ReactNode
     size?: 'xl' | 'lg' | 'md' | 'sm'
-    viewport?: 'desktop' | 'mobile'
+    /** Responsive uses the mobile dimensions below 768px or with a coarse primary pointer. */
+    viewport?: 'desktop' | 'mobile' | 'responsive'
     loading?: boolean
     leadingIcon?: ReactNode
     trailingIcon?: ReactNode
     startIcon?: ReactNode
     endIcon?: ReactNode
     forceState?: 'hover' | 'pressed' | 'focus'
+    contentLayout?: 'intrinsic' | 'fill'
   } & ({ iconOnly?: false } | ({ iconOnly: true } & AccessibleName)) &
-  ({ variant?: Exclude<Variant, 'iconOnly'> } | ({ variant: 'iconOnly' } & AccessibleName))
-
-function secureRel(target: string | undefined, rel: string | undefined): string | undefined {
-  if (!target || ['_self', '_parent', '_top'].includes(target.toLowerCase())) return rel
-  return [...new Set([...(rel ?? '').split(/\s+/).filter(Boolean), 'noopener', 'noreferrer'])].join(
-    ' '
-  )
-}
+  ({ variant?: Exclude<Variant, 'iconOnly'> } | ({ variant: 'iconOnly' } & AccessibleName)) &
+  ({ tone?: never } | { tone?: 'danger'; variant?: 'primary' | 'outline'; iconOnly?: false })
 
 export function Button({
   children,
   label,
   variant = 'primary',
   size = 'xl',
+  tone,
   viewport = 'desktop',
   loading = false,
   leadingIcon,
@@ -70,9 +74,11 @@ export function Button({
   iconOnly = false,
   forceState,
   className,
+  contentLayout = 'intrinsic',
   disabled = false,
   ...native
 }: ButtonProps) {
+  const layout = contentLayout === 'fill' ? 'fill' : 'intrinsic'
   const compact = iconOnly || variant === 'iconOnly'
   const unavailable =
     disabled || loading || native['aria-disabled'] === true || native['aria-disabled'] === 'true'
@@ -87,7 +93,11 @@ export function Button({
           : variant
   const content = (
     <>
-      <span className={styles.content} data-loading={loading || undefined}>
+      <span
+        className={styles.content}
+        data-loading={loading || undefined}
+        data-content-layout={compact ? 'intrinsic' : layout}
+      >
         {(leadingIcon ?? startIcon) != null && (
           <span className={styles.icon} aria-hidden="true">
             {leadingIcon ?? startIcon}
@@ -108,6 +118,7 @@ export function Button({
   const common = {
     className: classes,
     'data-variant': appearance,
+    'data-tone': tone,
     'data-size': size,
     'data-viewport': viewport,
     'data-icon-only': compact || undefined,
@@ -139,6 +150,7 @@ export function Button({
       <a
         {...anchor}
         {...common}
+        dangerouslySetInnerHTML={undefined}
         href={unavailable ? undefined : href}
         target={target}
         rel={secureRel(target, rel)}
@@ -163,6 +175,7 @@ export function Button({
     <button
       {...button}
       {...common}
+      dangerouslySetInnerHTML={undefined}
       type={type}
       disabled={disabled}
       onClick={guardClick(onClick)}

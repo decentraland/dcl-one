@@ -1,5 +1,4 @@
-//! Checks downloaded bytes against the content hash they were requested by, so a cache keyed on
-//! the hash alone only ever holds what the hash names.
+//! Checks downloaded bytes against a supplied content hash.
 //!
 //! Covers the hashes decentraland deployments use (`@dcl/hashing`):
 //! - `Qm…`: the sha-256 of the bytes in a CIDv0 wrapper (decentraland's own scheme, not an ipfs
@@ -7,8 +6,11 @@
 //! - `bafkrei…`: CIDv1 of the raw bytes. Deployments use it for files of up to one chunk; a raw
 //!   CID names the sha-256 of all the bytes whatever their size.
 //! - `bafybei…`: CIDv1 of the unixfs file node over 256KiB raw chunks, at most 174 links per
-//!   node. Ipfs allows other chunkings, which give other hashes for the same bytes: those are
-//!   reported as not matching.
+//!   node. Ipfs allows other chunkings, which give other hashes for the same bytes: a file
+//!   hashed that way would not match. None did across 4574 files of live scenes, worlds,
+//!   wearables and emotes (2026-11).
+//!
+//! Any other name (a realm's own file names, another codec or hash function) is treated as unknown.
 
 use multihash_codetable::{Code, MultihashDigest};
 
@@ -17,18 +19,38 @@ const MAX_LINKS: usize = 174;
 const RAW: u8 = 0x55;
 const DAG_PB: u8 = 0x70;
 
-pub fn matches_content_hash(hash: &str, bytes: &[u8]) -> bool {
-    if hash.starts_with("Qm") {
-        let mut multihash = vec![0x12, 0x20];
-        multihash.extend(sha256(bytes));
-        hash == base58(&multihash)
-    } else if hash.starts_with("bafkrei") {
-        hash == format!("b{}", base32(&cid(RAW, bytes)))
-    } else if hash.starts_with("baf") {
-        hash == format!("b{}", base32(&file_cid(bytes)))
+/// What a content hash says about some bytes.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Check {
+    /// The bytes are what the hash names.
+    Matches,
+    /// The hash is one this module computes, and it names other bytes.
+    Differs,
+    /// Not a hash this module computes: it says nothing about the bytes.
+    Unknown,
+}
+
+pub(crate) fn check_content_hash(hash: &str, bytes: &[u8]) -> Check {
+    // base58 of a sha-256 multihash, and base32 of a sha-256 CIDv1 behind its `b` prefix
+    let computed = match hash.len() {
+        46 if hash.starts_with("Qm") => {
+            let mut multihash = vec![0x12, 0x20];
+            multihash.extend(sha256(bytes));
+            base58(&multihash)
+        }
+        59 if hash.starts_with("bafkrei") => format!("b{}", base32(&cid(RAW, bytes))),
+        59 if hash.starts_with("bafybei") => format!("b{}", base32(&file_cid(bytes))),
+        _ => return Check::Unknown,
+    };
+    if hash == computed {
+        Check::Matches
     } else {
-        false
+        Check::Differs
     }
+}
+
+pub fn matches_content_hash(hash: &str, bytes: &[u8]) -> bool {
+    check_content_hash(hash, bytes) == Check::Matches
 }
 
 /// The raw-leaf CIDv1 (`bafkrei…`) of `bytes`, for fixtures that need a matching hash.
@@ -266,5 +288,34 @@ mod tests {
         // not a content hash: the url digests of `IpfsType::UrlCached`, preview's `b64-` ids
         assert!(!matches_content_hash("b64-L1VzZXJz", &bytes));
         assert!(!matches_content_hash("", &bytes));
+    }
+
+    #[test]
+    fn only_the_hashes_this_module_computes_are_checked() {
+        let bytes = content(1000);
+        let v1 = "bafkreicojquuwmy7piqjti3zx3buxh47ya64i2vumxmzr5gwqpnfgsd6nu";
+        let v0 = "QmTcHsGD2NnEbei2GLnpWibHQf7VFbCCh8BwwDsCbizyEc";
+        let chunked = "bafybeiexg2oqkfnj56l7fcmawswqbijt5shq4b5rg6a546uwpkqqzwjioi";
+        assert_eq!(check_content_hash(v1, &bytes), Check::Matches);
+        assert_eq!(check_content_hash(v0, &bytes), Check::Matches);
+        for hash in [v1, v0, chunked] {
+            assert_eq!(
+                check_content_hash(hash, &bytes[1..]),
+                Check::Differs,
+                "{hash}"
+            );
+        }
+        for name in [
+            "b64-L1VzZXJz",
+            "",
+            "scene.glb",
+            // another hash function or codec, or the right prefix at the wrong length
+            &format!("bafkr4i{}", &v1[7..]),
+            &format!("bafyreih{}", &v1[8..]),
+            &v0[..20],
+            &format!("{v1}a"),
+        ] {
+            assert_eq!(check_content_hash(name, &bytes), Check::Unknown, "{name}");
+        }
     }
 }

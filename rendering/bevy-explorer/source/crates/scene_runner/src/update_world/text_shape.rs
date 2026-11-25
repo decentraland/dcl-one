@@ -52,7 +52,7 @@ bevy: not implemented
 
     lineCount?: number | undefined;
 foundation: when textWrapping is true, works. causes some strange re-interpretation of paddingTop/paddingBottom.
-bevy: acts like height
+bevy: limits visible layout lines; unset or zero is unlimited, negative values display one line
 
     textWrapping?: boolean | undefined;
 foundation + bevy: works
@@ -170,7 +170,10 @@ impl Plugin for TextShapePlugin {
         // chained: the rebuild sees the shapes built this frame
         app.add_systems(
             Update,
-            (update_text_shapes, maintain_glyph_atlases)
+            (
+                update_text_shapes,
+                maintain_glyph_atlases.in_set(GlyphAtlasMaintenance),
+            )
                 .chain()
                 .in_set(SceneLoopSets::UpdateWorld),
         );
@@ -205,6 +208,26 @@ pub struct TextShapeMesh {
     meshes: Vec<Entity>,
     layout: ShapeLayout,
     generation: u32,
+}
+
+/// The glyphs an entity outside the text shapes draws from an atlas: a rebuild of that atlas
+/// keeps them. The entity rebuilds its mesh when the atlas [`GlyphAtlas::generation`] moves on.
+#[derive(Component)]
+pub struct AtlasGlyphUse {
+    atlas: AtlasKey,
+    glyphs: Vec<CacheKey>,
+}
+
+impl AtlasGlyphUse {
+    pub fn new<'a>(atlas: AtlasKey, texts: impl IntoIterator<Item = &'a LaidOutText>) -> Self {
+        Self {
+            atlas,
+            glyphs: texts
+                .into_iter()
+                .flat_map(|text| text.glyphs.iter().map(|glyph| glyph.key))
+                .collect(),
+        }
+    }
 }
 
 /// Waiting to be built; oldest first.
@@ -303,8 +326,10 @@ impl ImposterBakeMaterialExtension for TextSdf {
 }
 
 mod decl {
-    // temporary for ShaderType macro, remove in future
-    #![allow(dead_code)]
+    #![expect(
+        dead_code,
+        reason = "the ShaderType derive emits a never-called check fn per field"
+    )]
 
     use bevy::{math::Vec4, render::render_resource::ShaderType};
 
@@ -491,6 +516,8 @@ impl TextSdfParams {
 pub enum AtlasKey {
     Builtin(FontName),
     Scene(FamilyKey),
+    /// An engine feature's own atlas, named by the feature: scene text can't evict its glyphs.
+    Engine(&'static str),
 }
 
 impl From<&TextFontFamily> for AtlasKey {
@@ -502,11 +529,16 @@ impl From<&TextFontFamily> for AtlasKey {
     }
 }
 
+/// The rebuild of the atlases that ran out of room. Whatever else draws from an atlas in a
+/// frame orders itself after this: a rebuild moves every glyph.
+#[derive(SystemSet, Debug, Clone, PartialEq, Eq, Hash)]
+pub struct GlyphAtlasMaintenance;
+
 #[derive(Default, Resource)]
 pub struct GlyphAtlases(HashMap<AtlasKey, GlyphAtlas>);
 
 impl GlyphAtlases {
-    fn get_or_create(&mut self, key: AtlasKey, images: &mut Assets<Image>) -> &mut GlyphAtlas {
+    pub fn get_or_create(&mut self, key: AtlasKey, images: &mut Assets<Image>) -> &mut GlyphAtlas {
         self.0.entry(key).or_insert_with(|| GlyphAtlas::new(images))
     }
 }
@@ -556,7 +588,7 @@ impl GlyphSlot {
 /// The texture a glyph is rastered into: distance fields for outline glyphs, bitmaps for
 /// colour (emoji) glyphs.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-enum Page {
+pub enum Page {
     Sdf,
     Color,
 }
@@ -595,8 +627,8 @@ enum Wait {
 }
 
 /// The block is waiting for glyphs; whether every one of them has been requested.
-struct Pending {
-    all_requested: bool,
+pub struct Pending {
+    pub all_requested: bool,
 }
 
 /// A glyph rastered on the compute pool: the page it goes on, the raster's placement relative
@@ -905,7 +937,7 @@ impl GlyphAtlas {
     /// 16MB of rgba.
     const COLOR_MAX_SIZE: u32 = 2048;
     /// Distance range either side of a glyph's ink, in pixels; the margin around each raster.
-    const SPREAD: u32 = 8;
+    pub const SPREAD: u32 = 8;
     /// A block of "inside" at the top left of the distance-field page for the untextured quads
     /// (extras) to sample; big enough that a shadow offset stays within it.
     const WHITE: URect = URect {
@@ -935,6 +967,16 @@ impl GlyphAtlas {
         };
         atlas.add_white(images);
         atlas
+    }
+
+    /// Bumped by every rebuild: meshes built against an earlier generation sample stale rects.
+    pub fn generation(&self) -> u32 {
+        self.generation
+    }
+
+    /// A page's texture and its size in pixels; `None` for a page not made yet.
+    pub fn page_image(&self, page: Page) -> Option<(&Handle<Image>, u32)> {
+        self.page(page).map(|page| (&page.image, page.size))
     }
 
     /// The uv of the white block's centre, in pixels.
@@ -1227,26 +1269,26 @@ fn span_iter(
 /// An axis-aligned quad in text pixels (y down from the block's top left), with its atlas
 /// rect in pixels.
 #[derive(Clone)]
-struct TextQuad {
-    min: Vec2,
-    max: Vec2,
+pub struct TextQuad {
+    pub min: Vec2,
+    pub max: Vec2,
     /// Offset towards the viewer, in meters: the quads write depth, so extras over or under
     /// the glyphs must not share their plane.
-    z: f32,
-    uv_min: Vec2,
-    uv_max: Vec2,
-    color: LinearRgba,
+    pub z: f32,
+    pub uv_min: Vec2,
+    pub uv_max: Vec2,
+    pub color: LinearRgba,
 }
 
 /// A laid out block in text pixels: a glyph per glyph and a quad per extra (underline etc),
 /// and what placing it in the world needs.
 #[derive(Clone)]
-struct LaidOutText {
+pub struct LaidOutText {
     glyphs: Vec<LaidOutGlyph>,
     /// Untextured quads sampling the white block: marks and lines.
     bars: Vec<TextQuad>,
     /// Width of the widest line and height of all the lines.
-    size: Vec2,
+    pub size: Vec2,
     /// The point size the block is scaled by.
     effective_pt: f32,
     /// Every colour (spans and marks) is fully opaque.
@@ -1265,13 +1307,13 @@ struct LaidOutGlyph {
 /// Lay the spans out: a glyph per glyph and a quad per extra. `width` wraps (if `linebreak`
 /// allows it) and is the width lines are justified within; unbounded text is justified within
 /// its widest line.
-#[allow(clippy::too_many_arguments)]
-fn layout_text(
+pub fn layout_text(
     entity: Entity,
     spans: &[TextSpanData],
     justify: JustifyText,
     linebreak: LineBreak,
     width: Option<f32>,
+    line_count: Option<i32>,
     effective_pt: f32,
     opaque: bool,
     text_pipeline: &mut TextPipeline,
@@ -1321,7 +1363,13 @@ fn layout_text(
         opaque,
     };
 
-    for run in computed.buffer().layout_runs() {
+    // Limit visual lines after wrapping, including empty lines. Keep the complete
+    // block's alignment and sizing; only glyphs and decorations beyond the cap hide.
+    let visible_lines = match line_count {
+        None | Some(0) => usize::MAX,
+        Some(count) => count.max(1) as usize,
+    };
+    for run in computed.buffer().layout_runs().take(visible_lines) {
         // extras cover the run's glyphs of each span, as one segment per span
         let mut segment: Option<(usize, f32, f32)> = None;
         let flush = |segment: Option<(usize, f32, f32)>, quads: &mut Vec<TextQuad>| {
@@ -1391,7 +1439,7 @@ fn layout_text(
 /// and bars) and those sampling the bitmap page. Glyphs not in the atlas yet are queued for
 /// rastering (as `in_flight` allows), all of them, and the block is `Pending` until they land.
 /// Once `all_requested`, the walk stops at the first glyph not ready.
-fn glyph_quads(
+pub fn glyph_quads(
     text: &LaidOutText,
     atlas: &mut GlyphAtlas,
     images: &mut Assets<Image>,
@@ -1500,7 +1548,6 @@ fn quad_mesh(quads: &[TextQuad], offset: Vec2, to_world: impl Fn(Vec2) -> Vec2) 
     (mesh, aabb)
 }
 
-#[allow(clippy::too_many_arguments, clippy::type_complexity)]
 fn update_text_shapes(
     mut commands: Commands,
     query: Query<
@@ -1762,6 +1809,7 @@ fn update_text_shapes(
                         LineBreak::NoWrap
                     },
                     wrap_width,
+                    text_shape.0.line_count,
                     effective_pt,
                     opaque,
                     &mut text_pipeline,
@@ -1920,13 +1968,37 @@ fn update_text_shapes(
     debug!("built: {built}, deferred: {deferred}");
 }
 
+/// The atlases' upkeep alone, for a test of something that draws from an atlas without scene
+/// text.
+pub fn add_glyph_atlas_maintenance(app: &mut App) {
+    // what the text shapes' own build does first each frame
+    fn collect_rasters(mut atlases: ResMut<GlyphAtlases>, mut images: ResMut<Assets<Image>>) {
+        for atlas in atlases.0.values_mut() {
+            atlas.collect(&mut images);
+        }
+    }
+
+    app.init_resource::<GlyphAtlases>()
+        .init_asset::<TextSdfMaterial>()
+        .add_systems(
+            Update,
+            (collect_rasters, maintain_glyph_atlases)
+                .chain()
+                .in_set(GlyphAtlasMaintenance),
+        );
+}
+
+#[cfg(test)]
+#[path = "text_shape_line_tests.rs"]
+mod line_tests;
+
 /// After the frame's builds have been applied: rebuild the atlases that ran out of room from
 /// the glyphs every shape (including this frame's) draws, and tidy up.
-#[allow(clippy::too_many_arguments)]
 fn maintain_glyph_atlases(
     mut commands: Commands,
     shapes: Query<(Entity, &TextShapeMesh, Has<RetryTextShape>)>,
     pending: Query<&RetryTextShape>,
+    other_uses: Query<&AtlasGlyphUse>,
     scenes: Query<&RendererSceneContext>,
     mut material_caches: Query<&mut TextShapeMaterials>,
     frame: Res<FrameCount>,
@@ -1953,6 +2025,12 @@ fn maintain_glyph_atlases(
                 .chain(pending.iter().filter_map(|retry| retry.layout.as_ref()))
                 .filter(|layout| layout.atlas == *key)
                 .flat_map(|layout| layout.text.glyphs.iter().map(|glyph| glyph.key))
+                .chain(
+                    other_uses
+                        .iter()
+                        .filter(|glyph_use| glyph_use.atlas == *key)
+                        .flat_map(|glyph_use| glyph_use.glyphs.iter().copied()),
+                )
                 .collect::<HashSet<_>>();
             // only inked glyphs take room
             let freeable = atlas
@@ -2009,7 +2087,7 @@ fn maintain_glyph_atlases(
     // materials of dead atlases and old generations: meshes still using them keep them (and
     // the old texture) alive
     atlases.0.retain(|key, atlas| match key {
-        AtlasKey::Builtin(_) => true,
+        AtlasKey::Builtin(_) | AtlasKey::Engine(_) => true,
         AtlasKey::Scene(family) => {
             let keep = scenes.contains(family.scene());
             if !keep {
@@ -2279,7 +2357,7 @@ pub struct TextExtras {
     mark: Option<Color>,
 }
 
-type TextSpanData = (TextSpan, TextFont, TextColor, Option<TextExtras>);
+pub type TextSpanData = (TextSpan, TextFont, TextColor, Option<TextExtras>);
 
 fn build_text_spans(
     text: &str,

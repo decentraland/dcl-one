@@ -1,6 +1,6 @@
 //! `/satellite/{z}/{x}/{y}`: the 256 px satellite pyramid (zoom 0 to 9 over
 //! the 512x512-parcel world), painted from the 17x17-parcel top-down region
-//! renders over the parcel grid of the mirrored tile grid.
+//! renders over the parcel grid of the built tile grid.
 //!
 //! The renders come out of the rendering rig behind the dev gateway, not from
 //! this node. The old `catalyrst-satellite-mirror` timer copied them into a
@@ -241,7 +241,7 @@ struct CachedTile {
 pub struct SatelliteState {
     index: RwLock<Arc<Index>>,
     sources: Mutex<Lru<String, Arc<Region>>>,
-    decoding: Mutex<HashMap<String, Arc<tokio::sync::Mutex<()>>>>,
+    decoding: crate::keyed_locks::KeyedLocks<String>,
     output: Mutex<Lru<TileKey, CachedTile>>,
     empty_png: Bytes,
     #[cfg(test)]
@@ -256,7 +256,7 @@ impl SatelliteState {
         Self {
             index: RwLock::new(Arc::new(Index::default())),
             sources: Mutex::new(Lru::new(source_budget_bytes)),
-            decoding: Mutex::new(HashMap::new()),
+            decoding: crate::keyed_locks::KeyedLocks::default(),
             output: Mutex::new(Lru::new(output_entries)),
             empty_png: Bytes::from(empty),
             #[cfg(test)]
@@ -419,12 +419,7 @@ impl SatelliteState {
         if let Some(r) = self.sources.lock().get(&cid.to_string()) {
             return Ok(Some(r));
         }
-        let lock = self
-            .decoding
-            .lock()
-            .entry(cid.to_string())
-            .or_default()
-            .clone();
+        let lock = self.decoding.claim(&cid.to_string());
         let result = async {
             let _guard = lock.lock().await;
             if let Some(r) = self.sources.lock().get(&cid.to_string()) {
@@ -447,11 +442,6 @@ impl SatelliteState {
             Ok(Some(region))
         }
         .await;
-        let mut map = self.decoding.lock();
-        drop(lock);
-        if map.get(cid).is_some_and(|l| Arc::strong_count(l) == 1) {
-            map.remove(cid);
-        }
         result
     }
 
@@ -1112,7 +1102,6 @@ mod tests {
         Arc::new(Grid::from_tiles(
             tiles,
             stamp,
-            None,
             chrono::Utc::now().naive_utc(),
         ))
     }

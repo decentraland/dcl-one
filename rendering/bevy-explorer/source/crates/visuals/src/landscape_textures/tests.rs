@@ -103,9 +103,8 @@ fn stand_ins_are_bound_from_the_start() {
     }
 }
 
-/// A file that does not decode (here an LFS pointer embedded in place of the image, as in a
-/// checkout without `git lfs pull`) leaves its flat stand-in bound, in the handle the materials
-/// use, and the debug reading says so; the other textures still load.
+/// A file that does not decode leaves its flat stand-in bound, in the handle the materials use,
+/// and the debug reading says so; the other textures still load.
 #[test]
 fn a_texture_that_fails_keeps_its_flat_stand_in() {
     let mut app = App::new();
@@ -118,12 +117,12 @@ fn a_texture_that_fails_keeps_its_flat_stand_in() {
     app.world_mut()
         .resource_mut::<EmbeddedAssetRegistry>()
         .insert_asset(
-            "pointer.jpg".into(),
-            std::path::Path::new("landscape/test/pointer.jpg"),
-            b"version https://git-lfs.github.com/spec/v1\noid sha256:0\nsize 1\n".as_slice(),
+            "broken.jpg".into(),
+            std::path::Path::new("landscape/test/broken.jpg"),
+            b"not an image".as_slice(),
         );
     let mut paths = SOURCES.map(|(path, _, _)| path);
-    paths[1] = "test/pointer.jpg";
+    paths[1] = "test/broken.jpg";
     let textures = LandscapeTextures::load(app.world_mut(), paths);
     app.insert_resource(textures)
         .add_plugins(LandscapeTexturesPlugin);

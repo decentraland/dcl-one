@@ -111,13 +111,14 @@ printf 'LAUNCHED soft=%s hard=%s\n' "$(ulimit -Sn)" "$(ulimit -Hn)"
                 self.assertIn(f"LAUNCHED soft={soft}", result.stdout)
 
     def test_macos_checks_kernel_ceiling_even_with_unlimited_rlimits(self):
-        for kernel in ["10240", "unknown"]:
+        for kernel in ["10240", "61440", "unknown"]:
             with self.subTest(kernel=kernel):
                 result = self.run_prerequisite("unlimited", "unlimited",
                                                platform="Darwin", kernel=kernel)
                 self.assertNotEqual(result.returncode, 0)
                 self.assertNotIn("LAUNCHED", result.stdout)
                 self.assertIn("kernel per-process limit", result.stderr)
+                self.assertIn("sudo sysctl -w kern.maxfilesperproc=65536", result.stderr)
         result = self.run_prerequisite("10240", "unlimited", platform="Darwin")
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn("kern.maxfilesperproc=65536", result.stdout)

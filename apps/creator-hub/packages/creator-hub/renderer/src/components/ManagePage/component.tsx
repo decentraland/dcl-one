@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useId, useRef, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate } from 'react-router';
+import { cx } from '/@/lib/cx';
 import { analytics, misc } from '#preload';
 import { useDispatch, useSelector } from '#store';
 import { t } from '/@/modules/store/translation/utils';
@@ -22,7 +23,8 @@ import { EmptyState } from './EmptyState';
 import { SpaceUsed } from './SpaceUsed';
 import { getManageTabId, MANAGE_PANEL_ID, ManageViewBar } from './ViewBar';
 import { CLAIM_NAME_URL, getEmptyKind, getManageEmptyState } from './manageEmptyState';
-import { Content, Page, Panel, Title } from './component.styled';
+
+import styles from './component.module.css';
 
 const LANDS_MARKETPLACE_URL = 'https://decentraland.org/marketplace/lands';
 
@@ -159,19 +161,18 @@ export function ManagePage() {
   };
 
   return (
-    <Page className="ManagePage">
+    <main className={cx('ManagePage', styles.page)}>
       <Navbar active={NavbarItem.MANAGE} />
       <Container>
-        <Content>
-          <Title
+        <div className={styles.content}>
+          <h1
             id={titleId}
             ref={headingRef}
+            className={styles.title}
             tabIndex={-1}
-            variant="h3"
-            component="h1"
           >
             {t('manage.header.title')}
-          </Title>
+          </h1>
           {!isSignedIn && !isSigningIn ? (
             <EmptyState
               icon="wave"
@@ -193,16 +194,17 @@ export function ManagePage() {
                 onSearch={handleSearch}
               />
               {isWorlds && emptyKind !== 'none' && <SpaceUsed />}
-              <Panel
+              <div
+                className={styles.panel}
                 role="tabpanel"
                 id={MANAGE_PANEL_ID}
                 aria-labelledby={getManageTabId(tab)}
               >
                 {renderList()}
-              </Panel>
+              </div>
             </>
           )}
-        </Content>
+        </div>
       </Container>
       {transfer && (
         <TransferLandModal
@@ -213,6 +215,6 @@ export function ManagePage() {
           onClose={() => setTransfer({ ...transfer, open: false })}
         />
       )}
-    </Page>
+    </main>
   );
 }

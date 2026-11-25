@@ -78,10 +78,6 @@ impl Drop for Scratch {
     }
 }
 
-/// The tests that write `social.profile_images` rows: the budget sweep drops
-/// rows across the whole table, so it never runs beside another writer.
-static PROFILE_IMAGE_ROWS: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
-
 fn app(pool: PgPool, storage: Arc<Storage>, settings: Settings) -> Router {
     app_state(pool, storage, settings).0
 }
@@ -309,7 +305,6 @@ async fn the_origin_is_the_last_resort_and_its_answers_are_kept_in_the_blob_stor
     let Some(pool) = crate::db::scratch::pool(2).await else {
         return;
     };
-    let _rows = PROFILE_IMAGE_ROWS.lock().await;
     let (entity, gone, broken) = (fake_cid(), fake_cid(), fake_cid());
     let calls = Arc::new(AtomicUsize::new(0));
     let seen = calls.clone();
@@ -425,7 +420,6 @@ async fn an_entity_not_held_is_filled_only_when_the_origin_has_no_image() {
     let Some(pool) = crate::db::scratch::pool(2).await else {
         return;
     };
-    let _rows = PROFILE_IMAGE_ROWS.lock().await;
     let asked = Arc::new(std::sync::Mutex::new(Vec::<serde_json::Value>::new()));
     let seen = asked.clone();
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -458,7 +452,7 @@ async fn an_entity_not_held_is_filled_only_when_the_origin_has_no_image() {
     let read_through = Arc::new(crate::content::read_through::ReadThrough::new(
         pool.clone(),
         store.clone(),
-        reqwest::Client::new(),
+        crate::content::sync::test_sync_client(reqwest::Client::new()),
         vec![format!("http://{peer}/content")],
         None,
         crate::content::read_through::Fills::new(4, std::time::Duration::from_secs(10)),
@@ -493,7 +487,6 @@ async fn a_stored_image_past_its_ttl_is_a_miss() {
     let Some(pool) = crate::db::scratch::pool(2).await else {
         return;
     };
-    let _rows = PROFILE_IMAGE_ROWS.lock().await;
     let store = scratch.storage("ttl").await;
     let (aging, forever) = (
         ImageCache::new(pool.clone(), store.clone(), 3600, None),
@@ -520,10 +513,10 @@ async fn a_stored_image_past_its_ttl_is_a_miss() {
 /// drops the rest; under it, it drops nothing.
 #[tokio::test]
 async fn the_sweep_keeps_the_newest_images_within_the_budget() {
-    let Some(pool) = crate::db::scratch::pool(2).await else {
+    use crate::db::scratch::{OwnedDatabase, Schema};
+    let Some(db) = OwnedDatabase::new("profile_images", Schema::Full, 2).await else {
         return;
     };
-    let _rows = PROFILE_IMAGE_ROWS.lock().await;
     let entities: Vec<String> = (0..10).map(|_| fake_cid()).collect();
     for (i, entity) in entities.iter().enumerate() {
         sqlx::query(
@@ -532,16 +525,16 @@ async fn the_sweep_keeps_the_newest_images_within_the_budget() {
         )
         .bind(entity)
         .bind(i as f64)
-        .execute(&pool)
+        .execute(&db.pool)
         .await
         .unwrap();
     }
-    assert!(sweep_to_budget(&pool, 5000).await.unwrap() >= 6);
+    assert_eq!(sweep_to_budget(&db.pool, 5000).await.unwrap(), 6);
     let left: Vec<String> = sqlx::query_scalar(
         "SELECT entity_id FROM social.profile_images WHERE entity_id = ANY($1) ORDER BY stored_at",
     )
     .bind(&entities)
-    .fetch_all(&pool)
+    .fetch_all(&db.pool)
     .await
     .unwrap();
     assert_eq!(
@@ -549,12 +542,8 @@ async fn the_sweep_keeps_the_newest_images_within_the_budget() {
         entities[6..].to_vec(),
         "the four newest fit 4500 bytes"
     );
-    assert_eq!(sweep_to_budget(&pool, 5000).await.unwrap(), 0);
-    sqlx::query("DELETE FROM social.profile_images WHERE entity_id = ANY($1)")
-        .bind(&entities)
-        .execute(&pool)
-        .await
-        .unwrap();
+    assert_eq!(sweep_to_budget(&db.pool, 5000).await.unwrap(), 0);
+    db.drop().await;
 }
 
 #[test]
@@ -793,8 +782,18 @@ async fn concurrent_first_requests_share_one_fetch() {
     let Some(pool) = crate::db::scratch::pool(4).await else {
         return;
     };
-    let _rows = PROFILE_IMAGE_ROWS.lock().await;
-    let (addr, calls) = scripted_origin(vec![], std::time::Duration::from_millis(300)).await;
+    let (release, held) = tokio::sync::watch::channel(false);
+    let calls = Arc::new(AtomicUsize::new(0));
+    let seen = calls.clone();
+    let addr = spawn_origin(get(move || {
+        let (seen, mut held) = (seen.clone(), held.clone());
+        async move {
+            seen.fetch_add(1, Ordering::SeqCst);
+            let _ = held.wait_for(|released| *released).await;
+            (StatusCode::OK, Bytes::from_static(PNG))
+        }
+    }))
+    .await;
     let (app, state) = app_state(
         pool,
         scratch.storage("single").await,
@@ -802,7 +801,21 @@ async fn concurrent_first_requests_share_one_fetch() {
     );
     let entity = fake_cid();
     let path = format!("/entities/{entity}/face.png");
-    let answers = futures::future::join_all((0..10).map(|_| get_image(&app, &path))).await;
+    let counters = &state.producer.counters;
+    let readers = futures::future::join_all((0..10).map(|_| get_image(&app, &path)));
+    let mut readers = std::pin::pin!(readers);
+    // The origin answers once all ten readers are in the production: one
+    // that came after the image was stored would read it from the store and
+    // share nothing. The readers run only inside this poll, so the check
+    // after it sees each of them arrive.
+    let answers = std::future::poll_fn(|cx| {
+        let polled = readers.as_mut().poll(cx);
+        if count(&counters.produced) + count(&counters.joined) == 10 {
+            release.send_replace(true);
+        }
+        polled
+    })
+    .await;
     for (status, _, _, bytes) in answers {
         assert_eq!((status, &bytes[..]), (StatusCode::OK, PNG));
     }
@@ -819,7 +832,6 @@ async fn transient_origin_failures_are_retried_within_the_budget() {
     let Some(pool) = crate::db::scratch::pool(2).await else {
         return;
     };
-    let _rows = PROFILE_IMAGE_ROWS.lock().await;
     let (addr, calls) = scripted_origin(
         vec![
             (StatusCode::SERVICE_UNAVAILABLE, None),
@@ -852,7 +864,6 @@ async fn a_source_slower_than_the_budget_is_a_503_and_still_lands() {
     let Some(pool) = crate::db::scratch::pool(2).await else {
         return;
     };
-    let _rows = PROFILE_IMAGE_ROWS.lock().await;
     let (addr, calls) = scripted_origin(vec![], std::time::Duration::from_millis(1500)).await;
     let (app, state) = app_state(
         pool,
@@ -964,7 +975,7 @@ fn slow_read_through(
     Arc::new(crate::content::read_through::ReadThrough::new(
         pool,
         store,
-        reqwest::Client::new(),
+        crate::content::sync::test_sync_client(reqwest::Client::new()),
         vec![format!("http://{peer}/content")],
         None,
         crate::content::read_through::Fills::new(4, std::time::Duration::from_secs(1)),
@@ -980,7 +991,6 @@ async fn a_fresh_profile_waits_for_the_origin_to_draw_it() {
     let Some(pool) = crate::db::scratch::pool(2).await else {
         return;
     };
-    let _rows = PROFILE_IMAGE_ROWS.lock().await;
     let (addr, calls) = scripted_origin(
         vec![(StatusCode::NOT_FOUND, None), (StatusCode::NOT_FOUND, None)],
         std::time::Duration::ZERO,
@@ -1031,7 +1041,6 @@ async fn a_warmed_face_is_stored_before_it_is_asked_for() {
     let Some(pool) = crate::db::scratch::pool(2).await else {
         return;
     };
-    let _rows = PROFILE_IMAGE_ROWS.lock().await;
     let (addr, calls) = scripted_origin(vec![], std::time::Duration::ZERO).await;
     let (app, state) = app_state(
         pool,

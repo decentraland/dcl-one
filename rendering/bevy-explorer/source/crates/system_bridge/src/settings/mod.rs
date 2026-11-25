@@ -14,25 +14,27 @@ use avatar_ghosts_setting::AvatarGhostsSetting;
 use avatar_outline_setting::AvatarOutlineSetting;
 use bevy::{
     app::{Plugin, Update},
+    core_pipeline::prepass::{DepthPrepass, NormalPrepass},
     ecs::{
         schedule::ScheduleLabel,
         system::{StaticSystemParam, SystemParam, SystemParamItem},
     },
+    pbr::ScreenSpaceAmbientOcclusion,
     platform::collections::HashSet,
     prelude::*,
 };
 #[cfg(not(target_arch = "wasm32"))]
 use cache_size::CacheSizeSetting;
-use cel_shading_setting::CelShadingSetting;
 use common::structs::DmPrivacy;
 #[cfg(not(target_arch = "wasm32"))]
 use common::structs::SsaoSetting;
 use common::{
     sets::SceneSets,
     structs::{
-        AaSetting, AppConfig, BloomSetting, CameraSmoothing, DofSetting, FogSetting,
-        ParcelGrassConfig, ParcelGrassSetting, PlayerLanguage, PointAtMarkerVisibility,
-        PreviewMode, SessionGraphics, ShadowSetting, SkyReflectionSetting, WindowSetting,
+        AaSetting, AppConfig, BloomSetting, CameraSmoothing, ChatBubbleVisibility, DofSetting,
+        FogSetting, GraphicsSettings, ParcelGrassConfig, ParcelGrassSetting, PlayerLanguage,
+        PointAtMarkerVisibility, PreviewMode, PrimaryCamera, SessionGraphics, ShadowSetting,
+        SkyReflectionSetting, WindowSetting,
     },
 };
 use constrain_ui::ConstrainUiSetting;
@@ -41,10 +43,14 @@ use language_setting::LanguageSetting;
 use load_distance::{LoadDistanceSetting, UnloadDistanceSetting};
 use max_avatars::MaxAvatarsSetting;
 use max_downloads::MaxDownloadsSetting;
+use max_lods::{MaxFarLodsSetting, MaxNearLodsSetting};
+use mute_mic_in_background_setting::MuteMicInBackgroundSetting;
 use oob_setting::OobSetting;
 use player_settings::{JumpSetting, RunSpeedSetting, WalkSpeedSetting};
+use rings::{FarLodRingSetting, LiveSceneRingSetting, NearLodRingSetting};
 use scene_threads::SceneThreadsSetting;
 use shadow_settings::{LightCountSetting, ShadowCasterCountSetting, ShadowDistanceSetting};
+use spring_bones_setting::SpringBonesSetting;
 use video_threads::VideoThreadsSetting;
 use volume_settings::{
     AvatarVolumeSetting, MasterVolumeSetting, SceneVolumeSetting, SystemVolumeSetting,
@@ -58,7 +64,7 @@ pub mod avatar_outline_setting;
 pub mod bloom_settings;
 pub mod cache_size;
 pub mod camera_smoothing;
-pub mod cel_shading_setting;
+pub mod chat_bubble_visibility;
 pub mod constrain_ui;
 mod debug_quality;
 pub mod dm_privacy;
@@ -67,23 +73,52 @@ pub mod fog_settings;
 pub mod frame_rate;
 pub mod imposter_settings;
 pub mod language_setting;
+pub mod lens_flare_setting;
 pub mod load_distance;
 pub mod max_avatars;
 pub mod max_downloads;
+pub mod max_lods;
+pub mod mute_mic_in_background_setting;
 pub mod oob_setting;
 pub mod parcel_grass_settings;
 pub mod player_settings;
 pub mod point_at_marker_visibility;
-#[cfg(target_arch = "wasm32")]
 pub mod render_scale_setting;
+mod rings;
 pub mod scene_threads;
 pub mod sensitivity;
 pub mod shadow_settings;
 pub mod sky_reflection_setting;
+pub mod spring_bones_setting;
 pub mod ssao_setting;
 pub mod video_threads;
 pub mod volume_settings;
+#[cfg(not(target_arch = "wasm32"))]
+pub mod vsync_setting;
 pub mod window_settings;
+
+/// Inserts both prepasses while the avatar outline (edge detection) is on or the camera has SSAO
+/// (native only), and removes them otherwise, keeping the primary camera's depth prepass, which
+/// the jump marker reads. Nothing else needs them: DoF, stars and the fork's focus target use the
+/// main-pass depth, and the hover glow follows whatever prepasses the view has.
+///
+/// SSAO is read from the camera when the command applies, so the outline and SSAO settings reach
+/// the same result in either order.
+pub fn sync_prepasses(cmds: &mut EntityCommands, graphics: &GraphicsSettings) {
+    if graphics.avatar_outline {
+        cmds.try_insert((DepthPrepass, NormalPrepass));
+    } else {
+        cmds.queue(|mut camera: EntityWorldMut| {
+            if camera.contains::<ScreenSpaceAmbientOcclusion>() {
+                camera.insert((DepthPrepass, NormalPrepass));
+            } else if camera.contains::<PrimaryCamera>() {
+                camera.remove::<NormalPrepass>();
+            } else {
+                camera.remove::<(DepthPrepass, NormalPrepass)>();
+            }
+        });
+    }
+}
 
 pub struct SettingBridgePlugin;
 
@@ -168,10 +203,16 @@ impl Plugin for SettingBridgePlugin {
         #[cfg(not(target_arch = "wasm32"))]
         add_enum_setting::<SsaoSetting>(app, &mut settings, &mut schedule, &config);
         add_enum_setting::<SkyReflectionSetting>(app, &mut settings, &mut schedule, &config);
+        add_enum_setting::<lens_flare_setting::LensFlareSetting>(
+            app,
+            &mut settings,
+            &mut schedule,
+            &config,
+        );
         add_enum_setting::<OobSetting>(app, &mut settings, &mut schedule, &config);
-        add_enum_setting::<CelShadingSetting>(app, &mut settings, &mut schedule, &config);
         add_enum_setting::<AvatarOutlineSetting>(app, &mut settings, &mut schedule, &config);
         add_enum_setting::<AvatarGhostsSetting>(app, &mut settings, &mut schedule, &config);
+        add_enum_setting::<SpringBonesSetting>(app, &mut settings, &mut schedule, &config);
         add_enum_setting::<AaSetting>(app, &mut settings, &mut schedule, &config);
         add_int_setting::<AmbientSetting>(app, &mut settings, &mut schedule, &config);
         if is_fullscreen_available() {
@@ -181,11 +222,16 @@ impl Plugin for SettingBridgePlugin {
         if !is_preview {
             add_int_setting::<LoadDistanceSetting>(app, &mut settings, &mut schedule, &config);
             add_int_setting::<UnloadDistanceSetting>(app, &mut settings, &mut schedule, &config);
+            add_int_setting::<MaxNearLodsSetting>(app, &mut settings, &mut schedule, &config);
+            add_int_setting::<MaxFarLodsSetting>(app, &mut settings, &mut schedule, &config);
+            add_int_setting::<LiveSceneRingSetting>(app, &mut settings, &mut schedule, &config);
+            add_int_setting::<NearLodRingSetting>(app, &mut settings, &mut schedule, &config);
+            add_int_setting::<FarLodRingSetting>(app, &mut settings, &mut schedule, &config);
         }
 
         add_enum_setting::<FpsTargetSetting>(app, &mut settings, &mut schedule, &config);
-        // only the web canvas can be drawn at a share of the screen
-        #[cfg(target_arch = "wasm32")]
+        #[cfg(not(target_arch = "wasm32"))]
+        add_enum_setting::<vsync_setting::VsyncSetting>(app, &mut settings, &mut schedule, &config);
         add_int_setting::<render_scale_setting::RenderScaleSetting>(
             app,
             &mut settings,
@@ -200,6 +246,7 @@ impl Plugin for SettingBridgePlugin {
         add_int_setting::<VoiceChatVolumeSetting>(app, &mut settings, &mut schedule, &config);
         add_int_setting::<SystemVolumeSetting>(app, &mut settings, &mut schedule, &config);
         add_int_setting::<AvatarVolumeSetting>(app, &mut settings, &mut schedule, &config);
+        add_enum_setting::<MuteMicInBackgroundSetting>(app, &mut settings, &mut schedule, &config);
 
         add_enum_setting::<DmPrivacy>(app, &mut settings, &mut schedule, &config);
         app.init_resource::<PlayerLanguage>();
@@ -225,9 +272,10 @@ impl Plugin for SettingBridgePlugin {
         #[cfg(not(target_arch = "wasm32"))]
         add_enum_setting::<CacheSizeSetting>(app, &mut settings, &mut schedule, &config);
         add_enum_setting::<PointAtMarkerVisibility>(app, &mut settings, &mut schedule, &config);
+        add_enum_setting::<ChatBubbleVisibility>(app, &mut settings, &mut schedule, &config);
 
-        debug_quality::register(app, &settings);
         app.insert_resource(settings);
+        app.add_plugins(debug_quality::DebugQualityPlugin);
         app.insert_resource(ApplyAppSettingsSchedule(schedule));
         app.init_resource::<ActiveCameras>();
         app.init_resource::<SessionGraphics>();
@@ -273,6 +321,10 @@ pub trait AppSetting: Eq + Send + Sync + 'static {
     fn category() -> SettingCategory;
     fn load(config: &AppConfig) -> Self;
     fn save(&self, config: &mut AppConfig);
+    /// True while another setting's value overrides this one.
+    fn is_disabled(_config: &AppConfig) -> bool {
+        false
+    }
     fn apply(
         &self,
         param: SystemParamItem<Self::Param>,
@@ -319,10 +371,11 @@ pub use system_api_types::{NamedVariant, SettingInfo};
 pub struct Setting {
     pub info: SettingInfo,
     apply: Option<
-        Box<dyn Fn(&mut AppConfig, f32) -> Result<f32, anyhow::Error> + Send + Sync + 'static>,
+        Box<dyn Fn(&mut AppConfig, f32) -> Result<(), anyhow::Error> + Send + Sync + 'static>,
     >,
     /// The displayed value for the current config, for settings changed outside `set_value`.
     load: Box<dyn Fn(&AppConfig) -> f32 + Send + Sync + 'static>,
+    is_disabled: fn(&AppConfig) -> bool,
 }
 
 #[derive(Resource)]
@@ -349,7 +402,7 @@ impl Settings {
             .apply
             .take()
             .unwrap();
-        let res = (apply)(config, value)?;
+        let applied = (apply)(config, value);
         let setting = self
             .settings
             .iter_mut()
@@ -357,14 +410,17 @@ impl Settings {
             .unwrap();
 
         setting.apply = Some(apply);
-        setting.info.value = res;
+        applied?;
+        // a value can change any setting's `disabled` flag: re-read them all now
+        self.refresh(config);
         Ok(())
     }
 
-    /// Re-reads every displayed value from `config`.
+    /// Re-reads every displayed value and `disabled` flag from `config`.
     pub fn refresh(&mut self, config: &AppConfig) {
         for setting in self.settings.iter_mut() {
             setting.info.value = (setting.load)(config);
+            setting.info.disabled = (setting.is_disabled)(config);
         }
     }
 
@@ -381,15 +437,16 @@ impl Settings {
                 value: value.value() as f32 * S::scale(),
                 default: S::load(&AppConfig::default()).value() as f32 * S::scale(),
                 step_size: S::scale().abs(),
+                disabled: S::is_disabled(config),
             },
             apply: Some(Box::new(
-                |config: &mut AppConfig, value: f32| -> Result<f32, anyhow::Error> {
-                    let new_value = S::from_int((value / S::scale()).round() as i32);
-                    new_value.save(config);
-                    Ok(new_value.value() as f32 * S::scale())
+                |config: &mut AppConfig, value: f32| -> Result<(), anyhow::Error> {
+                    S::from_int((value / S::scale()).round() as i32).save(config);
+                    Ok(())
                 },
             )),
             load: Box::new(|config: &AppConfig| S::load(config).value() as f32 * S::scale()),
+            is_disabled: S::is_disabled,
         });
     }
 
@@ -423,17 +480,19 @@ impl Settings {
                 value: displayed::<S>(config),
                 default: default_index as f32,
                 step_size: 1.0,
+                disabled: S::is_disabled(config),
             },
             apply: Some(Box::new(
-                |config: &mut AppConfig, value: f32| -> Result<f32, anyhow::Error> {
+                |config: &mut AppConfig, value: f32| -> Result<(), anyhow::Error> {
                     S::variants()
                         .get(value as usize)
                         .ok_or(anyhow::anyhow!("invalid variant index"))?
                         .save(config);
-                    Ok(value as usize as f32)
+                    Ok(())
                 },
             )),
             load: Box::new(|config: &AppConfig| displayed::<S>(config)),
+            is_disabled: S::is_disabled,
         });
     }
 }
@@ -544,4 +603,161 @@ fn is_fullscreen_available() -> bool {
 #[inline(always)]
 fn is_fullscreen_available() -> bool {
     false
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // MSAA variants exist only on native
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn msaa_disables_depth_of_field() {
+        let mut config = AppConfig::default();
+        let mut settings = Settings {
+            settings: Vec::default(),
+        };
+        settings.add_enum_setting::<AaSetting>(&config);
+        settings.add_enum_setting::<DofSetting>(&config);
+        let index =
+            |names: Vec<String>, name: &str| names.iter().position(|n| n == name).unwrap() as f32;
+        let aa = |name: &str| {
+            index(
+                AaSetting::variants().iter().map(|v| v.name()).collect(),
+                name,
+            )
+        };
+        let high = index(
+            DofSetting::variants().iter().map(|v| v.name()).collect(),
+            "High",
+        );
+        let dof = |settings: &Settings| {
+            settings
+                .get()
+                .into_iter()
+                .find(|s| s.name == DofSetting::title())
+                .unwrap()
+        };
+
+        settings
+            .set_value(&mut config, &AaSetting::title(), aa("FXAA (High)"))
+            .unwrap();
+        settings
+            .set_value(&mut config, &DofSetting::title(), high)
+            .unwrap();
+        assert!(!dof(&settings).disabled);
+
+        settings
+            .set_value(&mut config, &AaSetting::title(), aa("MSAA 4x"))
+            .unwrap();
+        let info = dof(&settings);
+        assert!(info.disabled);
+        // the stored value is kept
+        assert_eq!(info.value, high);
+
+        settings
+            .set_value(&mut config, &AaSetting::title(), aa("FXAA (High)"))
+            .unwrap();
+        let info = dof(&settings);
+        assert!(!info.disabled);
+        assert_eq!(info.value, high);
+        assert_eq!(config.graphics.dof, DofSetting::High);
+    }
+
+    #[test]
+    fn prepasses_follow_the_avatar_outline() {
+        let mut world = World::new();
+        let primary = world
+            .spawn((PrimaryCamera::default(), DepthPrepass, NormalPrepass))
+            .id();
+        let texture = world.spawn((DepthPrepass, NormalPrepass)).id();
+        let off = GraphicsSettings {
+            avatar_outline: false,
+            ..Default::default()
+        };
+        let on = GraphicsSettings {
+            avatar_outline: true,
+            ..Default::default()
+        };
+        let mut commands = world.commands();
+        sync_prepasses(&mut commands.entity(primary), &off);
+        sync_prepasses(&mut commands.entity(texture), &off);
+        world.flush();
+        assert!(world.entity(primary).contains::<DepthPrepass>());
+        assert!(!world.entity(primary).contains::<NormalPrepass>());
+        assert!(!world.entity(texture).contains::<DepthPrepass>());
+        assert!(!world.entity(texture).contains::<NormalPrepass>());
+
+        let mut commands = world.commands();
+        sync_prepasses(&mut commands.entity(primary), &on);
+        sync_prepasses(&mut commands.entity(texture), &on);
+        world.flush();
+        for camera in [primary, texture] {
+            assert!(world.entity(camera).contains::<DepthPrepass>());
+            assert!(world.entity(camera).contains::<NormalPrepass>());
+        }
+    }
+
+    #[test]
+    fn ssao_keeps_both_prepasses_with_the_outline_off() {
+        let mut world = World::new();
+        let primary = world.spawn((PrimaryCamera::default(), DepthPrepass)).id();
+        let texture = world.spawn_empty().id();
+        let off = GraphicsSettings {
+            avatar_outline: false,
+            ..Default::default()
+        };
+
+        // the outline setting applies after SSAO reached the cameras
+        for camera in [primary, texture] {
+            world
+                .entity_mut(camera)
+                .insert(ScreenSpaceAmbientOcclusion::default());
+        }
+        let mut commands = world.commands();
+        sync_prepasses(&mut commands.entity(primary), &off);
+        sync_prepasses(&mut commands.entity(texture), &off);
+        world.flush();
+        for camera in [primary, texture] {
+            assert!(world.entity(camera).contains::<DepthPrepass>());
+            assert!(world.entity(camera).contains::<NormalPrepass>());
+        }
+
+        // the outline setting applies first and strips them, then SSAO arrives
+        for camera in [primary, texture] {
+            world
+                .entity_mut(camera)
+                .remove::<ScreenSpaceAmbientOcclusion>();
+        }
+        let mut commands = world.commands();
+        sync_prepasses(&mut commands.entity(primary), &off);
+        sync_prepasses(&mut commands.entity(texture), &off);
+        world.flush();
+        assert!(!world.entity(primary).contains::<NormalPrepass>());
+        assert!(!world.entity(texture).contains::<DepthPrepass>());
+        let mut commands = world.commands();
+        for camera in [primary, texture] {
+            let mut cmds = commands.entity(camera);
+            cmds.try_insert(ScreenSpaceAmbientOcclusion::default());
+            sync_prepasses(&mut cmds, &off);
+        }
+        world.flush();
+        for camera in [primary, texture] {
+            assert!(world.entity(camera).contains::<DepthPrepass>());
+            assert!(world.entity(camera).contains::<NormalPrepass>());
+        }
+
+        // SSAO off again: back to the outline-off layout
+        let mut commands = world.commands();
+        for camera in [primary, texture] {
+            let mut cmds = commands.entity(camera);
+            cmds.remove::<ScreenSpaceAmbientOcclusion>();
+            sync_prepasses(&mut cmds, &off);
+        }
+        world.flush();
+        assert!(world.entity(primary).contains::<DepthPrepass>());
+        assert!(!world.entity(primary).contains::<NormalPrepass>());
+        assert!(!world.entity(texture).contains::<DepthPrepass>());
+        assert!(!world.entity(texture).contains::<NormalPrepass>());
+    }
 }

@@ -1,5 +1,5 @@
 import { createElement, createRef } from 'react'
-import type { NavBarProps, NavBarSection } from '@dcl/one-ui'
+import type { ButtonProps, NavBarProps, NavBarSection } from '@dcl/one-ui'
 
 const sections: NavBarSection[] = [
   { label: 'Discover', items: [{ label: 'Jump in', href: '/play/' }] },
@@ -131,7 +131,16 @@ const link: import('@dcl/one-ui').ButtonProps = {
 const invalidLink: import('@dcl/one-ui').ButtonProps = { href: '/jump', type: 'submit' }
 // @ts-expect-error Only supported button variants are public.
 const invalidVariant: import('@dcl/one-ui').ButtonProps = { variant: 'unknown' }
-void [button, link, invalidLink, invalidVariant]
+const destructiveText = { variant: 'text', tone: 'danger', label: 'Delete' } as const
+// @ts-expect-error The destructive tone is available on labelled primary and outline buttons.
+const invalidDanger: import('@dcl/one-ui').ButtonProps = destructiveText
+// @ts-expect-error Icon-only controls do not have a destructive appearance.
+const invalidDangerIcon: import('@dcl/one-ui').ButtonProps = {
+  tone: 'danger',
+  iconOnly: true,
+  'aria-label': 'Delete'
+}
+void [button, link, invalidLink, invalidVariant, invalidDanger, invalidDangerIcon]
 
 const nativeButtonRef: import('@dcl/one-ui').ButtonProps = {
   children: 'Save',
@@ -167,3 +176,15 @@ const rendererAppearanceButton: import('@dcl/one-ui').ButtonProps = {
   appearance: 'inverse'
 }
 void rendererAppearanceButton
+
+const html = { __html: 'replace' }
+// @ts-expect-error Button owns its content; native HTML cannot replace it.
+const buttonHtml: ButtonProps = { children: 'Save', dangerouslySetInnerHTML: html }
+// @ts-expect-error Link-mode Button owns the same content structure.
+const linkHtml: ButtonProps = { href: '/save', children: 'Save', dangerouslySetInnerHTML: html }
+const htmlSpread = { children: 'Save', dangerouslySetInnerHTML: html }
+// @ts-expect-error HTML remains unsupported when supplied through a typed spread.
+const spreadButtonHtml: ButtonProps = { ...htmlSpread }
+// @ts-expect-error Link-mode spreads cannot override owned content either.
+const spreadLinkHtml: ButtonProps = { href: '/save', ...htmlSpread }
+void [buttonHtml, linkHtml, spreadButtonHtml, spreadLinkHtml]

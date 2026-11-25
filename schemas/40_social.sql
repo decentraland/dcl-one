@@ -214,6 +214,10 @@ CREATE TABLE social.private_voice_chat_participants (
 CREATE INDEX private_voice_chat_participants_status_idx
     ON social.private_voice_chat_participants (status, status_updated_at);
 
+-- Wallet-scoped live-presence probes and current-call selection.
+CREATE INDEX private_voice_chat_participants_address_idx
+    ON social.private_voice_chat_participants (address);
+
 -- ── communities ────────────────────────────────────────────────────────────
 
 -- active = false is the (federation-visible) deletion; suspended is the local
@@ -353,14 +357,17 @@ CREATE INDEX community_requests_community_idx
 CREATE INDEX community_requests_member_idx
     ON social.community_requests (member_address, status, created_at DESC);
 
--- place_id is explore.place.id (uuid text) or a world name; no cross-schema
--- FK: a place the mirror dropped is filtered on read.
+-- place_id is explore.place.id (uuid text) or a world name, lowercased as
+-- explore keys both; no cross-schema FK: a place the mirror dropped is
+-- filtered on read. An existing database gains the check from
+-- schemas/releases/community-place-ids-lowercase.sql.
 CREATE TABLE social.community_places (
     place_id text NOT NULL,
     community_id uuid NOT NULL REFERENCES social.communities (id) ON DELETE CASCADE,
     added_by text NOT NULL,
     added_at timestamp without time zone NOT NULL DEFAULT timezone('UTC', now()),
-    CONSTRAINT community_places_pkey PRIMARY KEY (place_id, community_id)
+    CONSTRAINT community_places_pkey PRIMARY KEY (place_id, community_id),
+    CONSTRAINT community_places_place_id_lowercase CHECK (place_id = lower(place_id))
 );
 
 -- The community's places listing (ORDER BY added_at DESC) and count.
@@ -416,10 +423,49 @@ CREATE TABLE social.community_voice_chat_users (
 CREATE INDEX community_voice_chat_users_status_idx
     ON social.community_voice_chat_users (status, status_updated_at);
 
+-- Wallet-scoped live-presence probes before call admission.
+CREATE INDEX community_voice_chat_users_address_idx
+    ON social.community_voice_chat_users (address);
+
 -- ── scene moderation (comms-gatekeeper, place-scoped) ──────────────────────
 
 -- Ownership of a place is resolved through explore/worlds, not stored here.
--- These three move to `worlds` unchanged when worlds/comms lands.
+-- Social owns these tables; the comms gatekeeper writes them and the worlds
+-- policy reads them (`worlds::policy`), both by shared SQL.
+--
+-- scene_admins.place_id is the scene's place, the storage scope the room
+-- resolver reads from the active deployment: a world scene's identity
+-- (explore.world_scene_place.identity as text), a Genesis scene's canonical
+-- base parcel "x,y". A redeploy of the same place and an owner change write
+-- nothing here, so the grants stay; another place has none. Read by primary
+-- key on every scene-signed gatekeeper request of a non-owner; written by
+-- POST/DELETE /scene-admin and the place removal cleanup (DATABASE.md
+-- "Scene admin grants").
+-- The effective base parcel "x,y" of a scene footprint: the declared base
+-- when it is one of the parcels, else the numerically first parcel; NULL
+-- when no parcel parses. This is the one SQL copy of the room resolver's
+-- ParcelSet::effective_base over Parcel::parse (comms/src/world_identity.rs)
+-- for the release scripts and the import loads; a test compares the two.
+-- W is the White_Space that Rust's trim strips (\s excludes NBSP on some
+-- locales). Leading zeros go before the bounded cast, so a long padding
+-- parses and an oversized magnitude never overflows.
+CREATE FUNCTION social.scene_base_parcel(parcels text[], declared_base text) RETURNS text
+LANGUAGE sql IMMUTABLE AS $$
+  WITH coordinates AS (
+    SELECT declared, x, y, x::text || ',' || y::text AS canonical
+      FROM (SELECT declared,
+                   CASE WHEN length(m[2]) <= 10 THEN (m[1] || m[2])::bigint END AS x,
+                   CASE WHEN length(m[4]) <= 10 THEN (m[3] || m[4])::bigint END AS y
+              FROM (SELECT p AS pointer, false AS declared FROM unnest(parcels) p
+                    UNION ALL SELECT declared_base, true) inputs,
+                   regexp_match(pointer, replace('^W(-?)0*([0-9]+)W,W(-?)0*([0-9]+)W$', 'W',
+                       U&'[\0009-\000D\0020\0085\00A0\1680\2000-\200A\2028\2029\202F\205F\3000]*')) m) bounded
+     WHERE x BETWEEN -2147483648 AND 2147483647 AND y BETWEEN -2147483648 AND 2147483647)
+  SELECT f.canonical FROM coordinates f WHERE NOT f.declared
+   ORDER BY f.canonical IS DISTINCT FROM (SELECT canonical FROM coordinates WHERE declared), f.x, f.y
+   LIMIT 1
+$$;
+
 CREATE TABLE social.scene_admins (
     place_id text NOT NULL,
     admin_address text NOT NULL,
@@ -454,6 +500,7 @@ CREATE TABLE social.scene_stream_access (
     streaming_key text NOT NULL,
     ingress_id text,
     room_id text,
+    admin_place_key text,
     generated_by text NOT NULL,
     created_at timestamp without time zone NOT NULL DEFAULT timezone('UTC', now()),
     expiration_time timestamp without time zone,
@@ -474,6 +521,35 @@ CREATE UNIQUE INDEX scene_stream_access_active_place_key
 CREATE INDEX scene_stream_access_active_ingress_idx
     ON social.scene_stream_access (ingress_id) WHERE active;
 
+-- Cast 2.0: the streamer, presentation-bot and stream-info lookups of a
+-- streaming key (stream-info is unauthenticated), and the presenter routes'
+-- lookup of the active credential streaming into a room. Active rows only:
+-- at most one per place, while replaced rows accumulate.
+CREATE INDEX scene_stream_access_active_key_idx
+    ON social.scene_stream_access (streaming_key) WHERE active;
+CREATE INDEX scene_stream_access_active_room_idx
+    ON social.scene_stream_access (room_id) WHERE active;
+
+-- A world scene's key is stored under its scene's place. An older binary
+-- stores a new world key under the world's catalogue place (with the scene in
+-- `admin_place_key`): that insert is refused, so a mixed rollout cannot leave
+-- two keys streaming into one room. Rows already stored, imported rows
+-- (`admin_place_key` NULL) and updates are untouched.
+CREATE FUNCTION social.scene_stream_access_scene_place() RETURNS trigger AS $$
+BEGIN
+    IF starts_with(NEW.room_id, 'w1:') AND NEW.admin_place_key IS NOT NULL
+       AND NEW.admin_place_key <> '' AND NEW.place_id <> NEW.admin_place_key THEN
+        RAISE EXCEPTION 'a world scene stream key is stored under its scene place'
+            USING ERRCODE = 'check_violation';
+    END IF;
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE TRIGGER scene_stream_access_scene_place
+    BEFORE INSERT ON social.scene_stream_access
+    FOR EACH ROW EXECUTE FUNCTION social.scene_stream_access_scene_place();
+
 -- Comms-owned streaming cleanup intents: no FK, so revocation survives place/access removal.
 CREATE TABLE social.scene_stream_cleanup (
  access_id uuid PRIMARY KEY, place_id text NOT NULL, ingress_id text,
@@ -481,7 +557,10 @@ CREATE TABLE social.scene_stream_cleanup (
  occurred_at timestamp without time zone NOT NULL, due_at timestamp without time zone NOT NULL,
  claim_token uuid, claim_until timestamp without time zone,
  attempts integer NOT NULL DEFAULT 0 CHECK (attempts >= 0), ingress_deleted boolean NOT NULL DEFAULT false,
- recipient text, metadata jsonb, source_context jsonb
+ recipient text, metadata jsonb, source_context jsonb,
+ recipients text[] NOT NULL DEFAULT '{}', recipients_resolved boolean NOT NULL DEFAULT false,
+ recipient_cursor integer NOT NULL DEFAULT 0 CHECK (recipient_cursor >= 0),
+ notification_started boolean NOT NULL DEFAULT false
 );
 -- Bounded ordered cleanup retries.
 CREATE INDEX scene_stream_cleanup_due_idx ON social.scene_stream_cleanup (due_at, access_id);
@@ -631,7 +710,10 @@ CREATE INDEX player_reports_created_idx ON social.player_reports (created_at DES
 CREATE INDEX player_reports_reporter_idx ON social.player_reports (reporter_address, created_at);
 
 -- One slot per declared evidence file; `content_hash` is the CID of the
--- bytes in the ONE blob store, set with `uploaded_at` by the upload.
+-- bytes in the ONE blob store, set with `uploaded_at` by the one upload the
+-- slot takes. `source_key` is the client address bucket of the presign (an
+-- IPv4 address or an IPv6 /64), for the address's share of the node's bound;
+-- a presign clears it on slots older than the bound's 24 hours.
 CREATE TABLE social.player_report_evidence (
     report_id uuid NOT NULL,
     evidence_key text NOT NULL,
@@ -642,14 +724,20 @@ CREATE TABLE social.player_report_evidence (
     content_hash text,
     uploaded_at timestamp without time zone,
     created_at timestamp without time zone NOT NULL DEFAULT timezone('UTC', now()),
+    source_key text,
     CONSTRAINT player_report_evidence_pkey PRIMARY KEY (report_id, evidence_key),
     CONSTRAINT player_report_evidence_upload_check CHECK ((uploaded_at IS NULL) = (content_hash IS NULL))
 );
 
 -- The per-reporter pending-slot quota.
 CREATE INDEX player_report_evidence_reporter_idx ON social.player_report_evidence (reporter_address, created_at);
--- The orphan sweep (oldest unsubmitted slots first, in batches).
+-- The orphan sweep (oldest unsubmitted slots first, in batches) and the
+-- node bound's slots still in their upload time.
 CREATE INDEX player_report_evidence_created_idx ON social.player_report_evidence (created_at);
+-- The node bound's slots that hold a file, over the last 24 hours.
+CREATE INDEX player_report_evidence_uploaded_idx ON social.player_report_evidence (created_at) WHERE content_hash IS NOT NULL;
+-- The slots whose address bucket is still to clear (oldest first, in batches).
+CREATE INDEX player_report_evidence_source_idx ON social.player_report_evidence (created_at) WHERE content_hash IS NOT NULL AND source_key IS NOT NULL;
 
 -- ── notifications ──────────────────────────────────────────────────────────
 
@@ -679,6 +767,11 @@ CREATE INDEX notifications_address_time_idx
 -- partial predicate, and carries the keyset tie-breaker).
 CREATE INDEX notifications_unread_idx
     ON social.notifications (address, occurred_at DESC, id DESC) WHERE NOT read;
+-- Event history adoption probes one wallet/type/event in created order.
+-- Keyed carriers leave this index; other producers without an eventId do not enter it.
+CREATE INDEX notifications_event_history_idx
+    ON social.notifications (address, type, (metadata->>'eventId'), created_at, id)
+    WHERE broadcast_key IS NULL AND metadata->>'eventId' IS NOT NULL;
 -- A re-run broadcast is idempotent per recipient.
 CREATE UNIQUE INDEX notifications_broadcast_uidx
     ON social.notifications (address, broadcast_key) WHERE broadcast_key IS NOT NULL;
@@ -899,7 +992,8 @@ CREATE TABLE social.badge_admin_audit (
 -- The badge processor's durable read positions, one row per source, advanced
 -- in the transaction that writes the progress the rows it passed produced:
 -- `client_events` (social.client_events.seq), `deployments`
--- (content.deployments.id), `sales:<table>:<network>` (block_number,
+-- (content.deployments.id), `friend_first_wear` (content.deployments.id, for
+-- the notification producer), `sales:<table>:<network>` (block_number,
 -- log_index of a shop log) and the recount passes (`position` counts the
 -- passes, the first of which writes no notification; `resume_after` is the
 -- last wallet the pass in progress recounted, NULL between passes).
@@ -912,8 +1006,8 @@ CREATE TABLE social.badge_cursors (
     CONSTRAINT badge_cursors_pkey PRIMARY KEY (source)
 );
 
--- Ids an id cursor (`client_events`, `deployments`) passed without seeing
--- their rows, `lo..=hi`: a value drawn by a transaction still open when the
+-- Ids an id cursor (`client_events`, `deployments`, `friend_first_wear`)
+-- passed without seeing their rows, `lo..=hi`: a value drawn by a transaction still open when the
 -- cursor read past it (sequence order is not commit order), or one that
 -- never commits (a rollback, an ON CONFLICT that burned it). Every batch
 -- re-reads them and processes a row that appeared; a gap is dropped once
@@ -1219,7 +1313,9 @@ CREATE TABLE social.profile_images (
 -- role), the post digest (post_delete, post_like, post_unlike), the place
 -- (place) or the request (request_status); `role` the old role-log text;
 -- `action` a place's add|remove or a request's settled status;
--- `content_hash` a post body's sha256 (community_contents).
+-- `content_hash` a post body's sha256 (community_contents);
+-- `public_at_entry` whether the community was public when the entry was
+-- written: the public feeds and bodies publish only those entries.
 CREATE TABLE social.community_signed_actions (
     signature_hash text NOT NULL,
     seq bigint GENERATED ALWAYS AS IDENTITY,
@@ -1234,6 +1330,7 @@ CREATE TABLE social.community_signed_actions (
     signed_at bigint NOT NULL,
     payload jsonb NOT NULL,
     received_at timestamp without time zone NOT NULL DEFAULT timezone('UTC', now()),
+    public_at_entry boolean NOT NULL DEFAULT true,
     CONSTRAINT community_signed_actions_pkey PRIMARY KEY (signature_hash),
     CONSTRAINT community_signed_actions_seq_key UNIQUE (seq),
     CONSTRAINT community_signed_actions_kind_check CHECK (kind IN ('create', 'update', 'delete', 'role', 'post', 'post_delete', 'post_like', 'post_unlike', 'place', 'request_status')),
@@ -1280,6 +1377,24 @@ CREATE TABLE social.community_contents (
     CONSTRAINT community_contents_hash_shape CHECK (content_hash ~ '^[0-9a-f]{64}$'),
     CONSTRAINT community_contents_size_check CHECK (size >= 0 AND size <= 262144)
 );
+
+-- Who uploaded a federation post body: a post takes only a body its own
+-- signer uploaded, and the public read serves a body only for a public
+-- post whose signer uploaded it. `posted_at` is set when that post lands;
+-- unposted rows count toward the upload budgets (the partial index) and
+-- `community-content-gc` drops them after the blob age floor.
+CREATE TABLE social.community_content_uploads (
+    content_hash text NOT NULL,
+    uploader text NOT NULL,
+    size integer NOT NULL,
+    uploaded_at timestamp without time zone NOT NULL DEFAULT timezone('UTC', now()),
+    posted_at timestamp without time zone,
+    CONSTRAINT community_content_uploads_pkey PRIMARY KEY (content_hash, uploader),
+    CONSTRAINT community_content_uploads_uploader_lowercase CHECK (uploader = lower(uploader)),
+    CONSTRAINT community_content_uploads_size_check CHECK (size >= 0 AND size <= 262144)
+);
+CREATE INDEX community_content_uploads_unposted_idx
+    ON social.community_content_uploads (uploader) INCLUDE (content_hash, size) WHERE posted_at IS NULL;
 
 -- The upstream communities mirror (src/social/communities/mirror.rs), the
 -- explore mirrors' pattern: an operator job pages an upstream social API's
@@ -1438,6 +1553,14 @@ CREATE TABLE social.archipelago_v4_meta (
 -- The per-connection epoch a `/ws/v4` owner claims with.
 CREATE SEQUENCE social.archipelago_v4_connection_epoch;
 
+-- Root/jobs writes only deployment authority metadata, never Pulse assignment state.
+CREATE TABLE social.pulse_authority_generation (
+    deployment_audience text NOT NULL PRIMARY KEY,
+    epoch bigint NOT NULL CHECK (epoch > 0),
+    source_incarnation uuid NOT NULL,
+    updated_at timestamp without time zone NOT NULL DEFAULT timezone('UTC', now())
+);
+
 CREATE TABLE social.archipelago_v4_assignments (
     deployment_audience text NOT NULL,
     owner_address text NOT NULL,
@@ -1467,6 +1590,22 @@ CREATE TABLE social.worn_history (
     CONSTRAINT worn_history_pkey PRIMARY KEY (address, urn)
 );
 
+-- Notification preparation can fail after the wear is claimed. The claim and
+-- obligation commit together; completion deletes this row with its notices.
+CREATE TABLE social.first_wear_outbox (
+    address text NOT NULL,
+    urn text NOT NULL,
+    wearer text,
+    attempts integer NOT NULL DEFAULT 0,
+    created_at timestamp without time zone NOT NULL DEFAULT timezone('UTC', clock_timestamp()),
+    retry_at timestamp without time zone NOT NULL DEFAULT timezone('UTC', clock_timestamp()),
+    CONSTRAINT first_wear_outbox_pkey PRIMARY KEY (address, urn),
+    CONSTRAINT first_wear_outbox_history_fkey FOREIGN KEY (address, urn)
+        REFERENCES social.worn_history (address, urn) ON DELETE CASCADE
+);
+CREATE INDEX first_wear_outbox_due_idx
+    ON social.first_wear_outbox (retry_at, address, urn);
+
 -- A wallet with a row is eligible; its first profile seen seeds worn_history
 -- silently (an empty outfit still gets a row, or its real first wear would be
 -- swallowed by the seed path).
@@ -1476,8 +1615,8 @@ CREATE TABLE social.first_wear_baseline (
     CONSTRAINT first_wear_baseline_pkey PRIMARY KEY (address)
 );
 
--- The entity_timestamp high-water mark over content.deployments profiles;
--- initialised to now on the first pass so history is never replayed.
+-- The producer's former entity_timestamp high-water mark; no longer read
+-- (the producer's cursor is social.badge_cursors source friend_first_wear).
 CREATE TABLE social.first_wear_cursor (
     id integer NOT NULL DEFAULT 1,
     last_seen timestamp without time zone NOT NULL,
@@ -1686,7 +1825,11 @@ FROM (VALUES
 ) AS t (badge_id, tier_id, tier_name, description, slot, steps, ordinal);
 -- ==== end section: badges ====
 
+-- The reconciliation reads the 20 credentials checked longest ago of each
+-- kind: the streaming ones (a lost ingress_ended), then the idle ones (a lost
+-- ingress_started). DATABASE.md "Stream state reconciliation".
 CREATE INDEX scene_stream_access_reconcile_idx ON social.scene_stream_access (streaming_checked_at NULLS FIRST, id) WHERE active AND streaming;
+CREATE INDEX scene_stream_access_reconcile_idle_idx ON social.scene_stream_access (streaming_checked_at NULLS FIRST, id) WHERE active AND NOT streaming;
 
 -- Workload: rare island cleanup transitions and exact-wallet credential checks;
 -- no position writes. Historical wallet/attempt counts and write cost unmeasured.

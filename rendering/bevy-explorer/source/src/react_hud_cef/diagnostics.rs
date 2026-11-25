@@ -7,32 +7,34 @@ use std::collections::VecDeque;
 use std::time::{Duration, Instant};
 
 const WINDOW: Duration = Duration::from_secs(2);
-// The HUD's CEF browser requests at most 60 paints per second.
-const MAX_SAMPLES: usize = 128;
 
-pub(super) fn register(app: &mut App) {
-    app.init_resource::<HudPaintStats>()
-        .add_console_command::<CefHudPerfCommand, _>(cef_hud_perf)
-        .add_debug_section(DebugSection {
-            title: "CEF HUD",
-            query: "/cef_hud_perf",
-            fields: &[
-                ("Paint buffer (px) (Width / Height)", "paintSize"),
-                ("Paint rate (paints/s, last 2 s)", "paintsPerSecond"),
-                ("Bitmap traffic (MiB/s, last 2 s)", "bitmapMiBPerSecond"),
-                ("CEF bitmap copy (ms) (Mean / Max)", "timings.copy"),
-                (
-                    "Copy to engine handoff (ms) (Mean / Max)",
-                    "timings.handoff",
-                ),
-                (
-                    "Bevy image preparation (ms) (Mean / Max)",
-                    "timings.prepare",
-                ),
-            ],
-            actions: &[],
-            inputs: &[],
-        });
+pub(super) struct CefHudDiagnosticsPlugin;
+
+impl Plugin for CefHudDiagnosticsPlugin {
+    fn build(&self, app: &mut App) {
+        app.init_resource::<HudPaintStats>()
+            .add_console_command::<CefHudPerfCommand, _>(cef_hud_perf)
+            .add_debug_section(DebugSection {
+                title: "CEF HUD",
+                query: "/cef_hud_perf",
+                fields: &[
+                    ("Paint buffer (px) (Width / Height)", "paintSize"),
+                    ("Paint rate (paints/s, last 2 s)", "paintsPerSecond"),
+                    ("Bitmap traffic (MiB/s, last 2 s)", "bitmapMiBPerSecond"),
+                    ("CEF bitmap copy (ms) (Mean / Max)", "timings.copy"),
+                    (
+                        "Copy to engine handoff (ms) (Mean / Max)",
+                        "timings.handoff",
+                    ),
+                    (
+                        "Bevy image preparation (ms) (Mean / Max)",
+                        "timings.prepare",
+                    ),
+                ],
+                actions: &[],
+                inputs: &[],
+            });
+    }
 }
 
 /// Read timings for fullscreen CEF HUD paints applied to the Bevy image.
@@ -70,15 +72,20 @@ impl HudPaintStats {
         if texture.ty != RenderPaintElementType::View {
             return;
         }
-        if self.samples.len() == MAX_SAMPLES {
+        let at = texture.bitmap_copied_at;
+        while self
+            .samples
+            .front()
+            .is_some_and(|sample| at.saturating_duration_since(sample.at) >= WINDOW)
+        {
             self.samples.pop_front();
         }
         self.samples.push_back(PaintSample {
-            at: texture.bitmap_copied_at,
+            at,
             size: [texture.width, texture.height],
             bytes: texture.buffer.len() as u64,
             copy: texture.bitmap_copy_time,
-            handoff: engine_started_at.saturating_duration_since(texture.bitmap_copied_at),
+            handoff: engine_started_at.saturating_duration_since(at),
             prepare,
         });
     }
@@ -164,6 +171,23 @@ mod tests {
             bitmap_copy_time: Duration::from_millis(copy_ms),
             bitmap_copied_at: at,
         }
+    }
+
+    #[test]
+    fn reports_the_full_two_second_window_at_120_paints_per_second() {
+        let mut stats = HudPaintStats::default();
+        let start = Instant::now();
+        let mut texture = paint(start, RenderPaintElementType::View, 1);
+
+        for frame in 1..=360 {
+            let at = start + Duration::from_nanos(frame * 1_000_000_000 / 120);
+            texture.bitmap_copied_at = at;
+            stats.record(&texture, at, Duration::ZERO);
+        }
+
+        let active = stats.readings(start + Duration::from_secs(3));
+        assert_eq!(active["paintsPerSecond"], 120.0);
+        assert_eq!(active["bitmapMiBPerSecond"], 120.0);
     }
 
     #[test]

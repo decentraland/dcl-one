@@ -1,4 +1,5 @@
 use super::*;
+use common::sync::MutexExt;
 use priority_gate::{DownloadAttempts, DownloadReaders, GateClosed, Registration};
 use std::sync::Mutex;
 use tokio::sync::oneshot;
@@ -54,7 +55,14 @@ impl IpfsIo {
         SharedReader,
         Option<impl ConditionalSendFuture<Output = ()> + 'static>,
     ) {
-        self.share_download_with(key, token, path, remote, scene, FetchPolicy::CONTENT)
+        // a far LOD the client named is a variant: one short attempt, the scene's own meshes
+        // being the fallback
+        let policy = if self.is_named_far_lod(&remote) {
+            crate::bevy_variants::VARIANT_FETCH
+        } else {
+            FetchPolicy::CONTENT
+        };
+        self.share_download_with(key, token, path, remote, scene, policy)
     }
 
     /// [`Self::share_download`] under its own timeouts and attempts. Readers that join an
@@ -71,7 +79,7 @@ impl IpfsIo {
         SharedReader,
         Option<impl ConditionalSendFuture<Output = ()> + 'static>,
     ) {
-        let mut entries = self.in_flight.lock().unwrap();
+        let mut entries = self.in_flight.lock_ignore_poison();
         if let Some(download) = entries.get(&remote).and_then(Weak::upgrade) {
             if let Some(reader) = download.readers.try_register(scene.clone()) {
                 debug!("[{token:?}]: remote url: `{remote}` joining in-flight download");
@@ -112,7 +120,7 @@ impl IpfsIo {
                 )) => Some(result),
             };
             // Another reader may already have started a new generation for the same URL.
-            let mut entries = io.in_flight.lock().unwrap();
+            let mut entries = io.in_flight.lock_ignore_poison();
             if entries
                 .get(&remote)
                 .is_some_and(|entry| entry.ptr_eq(&identity))
@@ -330,26 +338,13 @@ impl IpfsIo {
             #[cfg(feature = "ipfs_debug")]
             start,
         };
-        // in wasm we add a custom header to allow the service worker to cache ipfs requests across content servers
-        #[cfg(target_arch = "wasm32")]
-        let sw_caches = cache_key.is_some();
 
         debug!("[{token:?}]: remote url: `{remote}` awaiting a request slot");
         // a request slot, granted nearest scene first
         let _deferred_in_flight = DeferredDropper::new(&IPFS_IN_FLIGHT);
         let mut no_cache = false;
-        // whether the service worker answered from its cache
-        #[cfg(target_arch = "wasm32")]
-        let sw_cached;
         let client = &self.client;
         let request = client.get(&remote);
-
-        #[cfg(target_arch = "wasm32")]
-        let request = if sw_caches {
-            request.header("X-IPFS", "true")
-        } else {
-            request
-        };
 
         let request = ipfs_io_read_state.send_failure(request.build().map_err(|e| {
             AssetReaderError::Io(Arc::new(std::io::Error::other(format!("[{token:?}]: {e}"))))
@@ -383,10 +378,27 @@ impl IpfsIo {
                 {
                     self.request_metrics
                         .downloads
-                        .lock()
-                        .unwrap()
+                        .lock_ignore_poison()
                         .connect_failed += 1;
                 }
+                self.far_lod_fetched(
+                    &remote,
+                    Err(match &e {
+                        platform::FetchError::Status(status, _) => Some(*status),
+                        _ => None,
+                    }),
+                );
+                // a catalyst only activates an entity once it holds all of its files, so a server
+                // that says a content hash's url is wrong says so for the rest of the session;
+                // preview always asks again
+                let session = match (&e, &cache_key) {
+                    (platform::FetchError::Status(status, _), Some(CacheKey::Content(_)))
+                        if !self.is_preview && failed_remotes::is_definitive(*status) =>
+                    {
+                        Some(*status)
+                    }
+                    _ => None,
+                };
                 let detail = match e {
                     platform::FetchError::Headers => "timed out awaiting headers".to_owned(),
                     platform::FetchError::Stalled => {
@@ -398,11 +410,11 @@ impl IpfsIo {
                     }
                     platform::FetchError::Body(e) => format!("body stream error: {e}"),
                 };
-                self.context
-                    .write()
-                    .await
-                    .failed_remotes
-                    .insert(remote.clone(), Instant::now());
+                self.failed_remotes.lock_ignore_poison().record(
+                    remote.clone(),
+                    session,
+                    Instant::now(),
+                );
                 return ipfs_io_read_state.send_failure(Err(AssetReaderError::Io(Arc::new(
                     std::io::Error::other(format!(
                         "[{token:?}] failed to retrieve `{remote}`: {detail}"
@@ -421,50 +433,49 @@ impl IpfsIo {
             }
         }
 
-        #[cfg(target_arch = "wasm32")]
-        {
-            sw_cached = fetched.headers.contains_key(web_cache::CACHED_HEADER);
-        }
-
-        #[cfg(not(target_arch = "wasm32"))]
-        let sw_cached = false;
-        if !sw_cached {
-            if let Some(start) = timing.started {
-                self.request_metrics.downloads.lock().unwrap().download(
-                    fetched.body.len(),
-                    start.elapsed(),
-                    timing.first_byte,
-                );
-            }
+        if let Some(start) = timing.started {
+            self.request_metrics
+                .downloads
+                .lock_ignore_poison()
+                .download(fetched.body.len(), start.elapsed(), timing.first_byte);
         }
         let data = SharedBytes(Arc::new(fetched.body));
 
-        // A cache keyed on the hash alone answers for every server, so it only takes bytes
-        // that are what the hash names: any server (and on web any scene, through the service
-        // worker) can otherwise file its own bytes under another's hash.
-        let cacheable = |key: &CacheKey| match key {
-            CacheKey::Url(_) => true,
-            CacheKey::Content(hash) => {
-                let matches = content_hash::matches_content_hash(hash, &data);
-                if !matches {
-                    // not expected from a decentraland deployment: either the server sent
-                    // other bytes, or the hash was made in a way `content_hash` doesn't know
-                    warn!(
-                        "`{remote}` ({} bytes) does not hash to `{hash}`: not caching it under that hash",
+        // The starting read's key determines the check for every reader sharing the download.
+        // A cached content hash answers for every server, so only verified bytes belong under it.
+        let verified = match &cache_key {
+            Some(CacheKey::Content(hash)) => match content_hash::check_content_hash(hash, &data) {
+                content_hash::Check::Matches => true,
+                content_hash::Check::Differs => {
+                    let message = format!(
+                        "[{token:?}] `{remote}` ({} bytes) does not hash to `{hash}`",
                         data.len()
                     );
+                    warn!("{message}");
+                    self.failed_remotes.lock_ignore_poison().record(
+                        remote.clone(),
+                        None,
+                        Instant::now(),
+                    );
+                    return ipfs_io_read_state.send_failure(Err(AssetReaderError::Io(Arc::new(
+                        std::io::Error::other(message),
+                    ))));
                 }
-                matches
-            }
+                content_hash::Check::Unknown => {
+                    warn!("`{remote}` is named `{hash}`, which is not a content hash this client checks: not caching it");
+                    false
+                }
+            },
+            _ => true,
         };
 
-        // the worker only answers from its cache; fill it: content under its hash, for every
-        // server, once checked; a url under its own key
+        // fill the web cache, which callers read before they download: content under its hash,
+        // for every server, once checked; a url under its own key
         #[cfg(target_arch = "wasm32")]
-        if sw_caches && !sw_cached {
+        {
             let kept = match &cache_key {
-                Some(key @ CacheKey::Content(_)) => {
-                    web_cache::share(&remote, key.name(), &data, || cacheable(key)).await
+                Some(CacheKey::Content(hash)) if verified => {
+                    web_cache::share(&remote, hash, &data).await
                 }
                 Some(CacheKey::Url(_)) if !no_cache => web_cache::keep(&remote, &data).await,
                 _ => Ok(()),
@@ -479,7 +490,7 @@ impl IpfsIo {
             .as_ref()
             .filter(|_| !no_cache && self.cache_path().is_some())
         {
-            if cacheable(key) {
+            if verified {
                 if let Err(error) = self.cache_bytes(key.name(), &data).await {
                     warn!("failed to cache `{remote}`: {error}");
                 }
@@ -487,6 +498,8 @@ impl IpfsIo {
         }
 
         debug!("[{token:?}]: completed remote url: `{remote}`");
+        self.far_lod_fetched(&remote, Ok(()));
+        self.failed_remotes.lock_ignore_poison().forget(&remote);
         ipfs_io_read_state.send_success(data.len());
         Ok(data)
     }

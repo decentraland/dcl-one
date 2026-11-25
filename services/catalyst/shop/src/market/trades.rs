@@ -34,6 +34,13 @@
 //! `/v3/catalog` feeds) answers the `trades-mirror` envelope until the
 //! configured upstream has one complete pass (`trades_mirror.completed_at`,
 //! cached 10 s): a table 0.3% through its first pass is not the order book.
+//! A route that lists, prices or reports the status of trades then answers
+//! the `trade-events-index` envelope until that index is current on every
+//! network (`trade_events::require_current`): without its verdicts a sold or
+//! cancelled trade cannot be told from an open one. `/v1/trades` and
+//! `/v1/trades/{id}` serve the stored records, which carry no status and
+//! read no verdict, so they wait for the mirror's pass only
+//! ([`require_mirror_ready`]).
 //! Trades are money data, so a pass also has a freshness budget
 //! ([`max_age`]): past it (a dead or failing mirror) the same routes answer
 //! the envelope naming the pass's age instead of a stale order book.
@@ -83,10 +90,9 @@ const REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
 /// The whole-list answer at a constrained link: the old poller's budget.
 const LIST_TIMEOUT: Duration = Duration::from_secs(300);
 
-pub const ASSET_TYPE_ERC20: i32 = 1;
-pub const ASSET_TYPE_USD_PEGGED_MANA: i32 = 2;
-pub const ASSET_TYPE_ERC721: i32 = 3;
-pub const ASSET_TYPE_COLLECTION_ITEM: i32 = 4;
+use crate::types::{
+    ASSET_TYPE_COLLECTION_ITEM, ASSET_TYPE_ERC20, ASSET_TYPE_ERC721, ASSET_TYPE_USD_PEGGED_MANA,
+};
 
 #[derive(Debug, Clone)]
 pub struct UpstreamTradeHead {
@@ -172,15 +178,27 @@ fn parse_asset(v: &Value, direction: &'static str) -> Result<UpstreamTradeAsset,
         .get("assetType")
         .and_then(|x| x.as_i64())
         .ok_or("asset missing assetType")?;
+    // The readers cast and compare these as text, so a number in any other
+    // spelling is not stored (`listings::is_canonical_uint`).
+    let uint_field = |key: &str| {
+        let value = str_field(v, key)?;
+        if super::listings::is_canonical_uint(&value) {
+            Ok(value)
+        } else {
+            Err(format!(
+                "{key} {value:?} is not a canonical decimal uint256"
+            ))
+        }
+    };
     let value = match asset_type {
         1 | 2 => AssetValue::Erc20 {
-            amount: str_field(v, "amount")?,
+            amount: uint_field("amount")?,
         },
         3 => AssetValue::Erc721 {
-            token_id: str_field(v, "tokenId")?,
+            token_id: uint_field("tokenId")?,
         },
         4 => AssetValue::Item {
-            item_id: str_field(v, "itemId")?,
+            item_id: uint_field("itemId")?,
         },
         other => return Err(format!("unsupported assetType {other}")),
     };
@@ -381,54 +399,145 @@ pub fn counted_sql(alias: &str, since_p: &str) -> String {
     )
 }
 
+/// Why `shop.trades` may not be read as the truth ([`readiness`]).
+#[derive(Debug)]
+pub enum NotReady {
+    /// No source, or no recent complete pass: the envelope's message.
+    Refused(String),
+    /// The pass marker could not be read.
+    Database(sqlx::Error),
+}
+
 /// Whether `shop.trades` may be read as the truth, or the envelope to
 /// answer instead. `trades_mirror.completed_at` for the configured upstream
 /// (a completed pass stays completed while the next one runs), cached 10 s,
-/// within [`max_age`] of now.
+/// within [`max_age`] of now; then the trade-events verdicts current on
+/// every network (`trade_events::require_current`), which the open-listing
+/// reads close sold and cancelled trades by.
 pub async fn ready(state: &MarketplaceState) -> Result<Readiness, Response> {
-    let Some(upstream) = state.settings.trades_sync_upstream_url.clone() else {
-        if state.settings.data_writes_enabled {
-            return Ok(Readiness::LocalAuthority);
-        }
-        return Err(unavailable(
-            Source::TradesMirror,
-            "no trades upstream is configured and this node accepts no local trades (DATA_WRITES_ENABLED=false), so shop.trades has no source",
-        ));
-    };
-    if state.settings.trades_serve_partial {
-        // TRADES_SERVE_PARTIAL: a development stack reads what has arrived.
-        return Ok(Readiness::Mirrored);
-    }
-    let completed = state
-        .trades_ready
-        .get_or_fetch((), || async move {
-            sqlx::query_scalar::<_, Option<NaiveDateTime>>(
-                "SELECT completed_at FROM shop.trades_mirror WHERE id = 1 AND upstream_url = $1",
-            )
-            .bind(upstream)
-            .fetch_optional(&state.pool)
-            .await
-            .map(Option::flatten)
-        })
-        .await;
-    match completed {
-        Ok(completed_at) => pass_verdict(
-            completed_at,
-            Utc::now(),
-            max_age(state.settings.trades_sync_interval),
-        )
-        .map(|()| Readiness::Mirrored)
-        .map_err(|why| unavailable(Source::TradesMirror, &why)),
-        Err(e) => {
+    let readiness = readiness(state).await.map_err(not_ready_response)?;
+    super::trade_events::require_current(state).await?;
+    Ok(readiness)
+}
+
+/// [`ready`] on `conn` at `now`: the mirror's pass marker (uncached) and the
+/// trade-events verdicts read on the snapshot the reads that follow run on
+/// (the nft pages read from the database).
+pub async fn ready_on(
+    state: &MarketplaceState,
+    conn: &mut sqlx::PgConnection,
+    now: DateTime<Utc>,
+) -> Result<Readiness, Response> {
+    let readiness = readiness_on(state, conn, now)
+        .await
+        .map_err(not_ready_response)?;
+    super::trade_events::require_current_on(conn, now).await?;
+    Ok(readiness)
+}
+
+/// The answer to a [`NotReady`] pass marker: the `trades-mirror` envelope.
+pub(super) fn not_ready_response(not_ready: NotReady) -> Response {
+    match not_ready {
+        NotReady::Refused(why) => unavailable(Source::TradesMirror, &why),
+        NotReady::Database(e) => {
             tracing::error!(error = %e, "trades_mirror read failed");
-            Err(super::internal_server_error())
+            super::internal_server_error()
         }
     }
 }
 
-/// The gate every route over `shop.trades` passes first.
+/// The marker of a configured upstream's last complete pass.
+const PASS_SQL: &str =
+    "SELECT completed_at FROM shop.trades_mirror WHERE id = 1 AND upstream_url = $1";
+
+/// What [`ready`] decides from the settings alone, or `Err(upstream)`: the
+/// upstream whose pass marker decides.
+fn settled(state: &MarketplaceState) -> Result<Result<Readiness, NotReady>, String> {
+    let Some(upstream) = state.settings.trades_sync_upstream_url.clone() else {
+        if state.settings.data_writes_enabled {
+            return Ok(Ok(Readiness::LocalAuthority));
+        }
+        return Ok(Err(NotReady::Refused(
+            "no trades upstream is configured and this node accepts no local trades (DATA_WRITES_ENABLED=false), so shop.trades has no source".to_string(),
+        )));
+    };
+    if state.settings.trades_serve_partial {
+        // TRADES_SERVE_PARTIAL: a development stack reads what has arrived.
+        return Ok(Ok(Readiness::Mirrored));
+    }
+    Err(upstream)
+}
+
+fn marker_verdict(
+    state: &MarketplaceState,
+    completed_at: Option<NaiveDateTime>,
+    now: DateTime<Utc>,
+) -> Result<Readiness, NotReady> {
+    pass_verdict(
+        completed_at,
+        now,
+        max_age(state.settings.trades_sync_interval),
+    )
+    .map(|()| Readiness::Mirrored)
+    .map_err(NotReady::Refused)
+}
+
+/// [`ready`]'s verdict without the HTTP answer, the pass marker cached 10 s.
+pub async fn readiness(state: &MarketplaceState) -> Result<Readiness, NotReady> {
+    let upstream = match settled(state) {
+        Ok(decided) => return decided,
+        Err(upstream) => upstream,
+    };
+    let completed = state
+        .trades_ready
+        .get_or_fetch((), || async move {
+            sqlx::query_scalar::<_, Option<NaiveDateTime>>(PASS_SQL)
+                .bind(upstream)
+                .fetch_optional(&state.pool)
+                .await
+                .map(Option::flatten)
+        })
+        .await
+        .map_err(NotReady::Database)?;
+    marker_verdict(state, completed, Utc::now())
+}
+
+/// [`readiness`] with the pass marker read on `conn`, uncached, at `now`: a
+/// reader that runs its reads in one snapshot (the explorer map's LAND
+/// listings, `land_map`) decides on the marker that snapshot sees, on that
+/// snapshot's clock.
+pub async fn readiness_on(
+    state: &MarketplaceState,
+    conn: &mut sqlx::PgConnection,
+    now: DateTime<Utc>,
+) -> Result<Readiness, NotReady> {
+    let upstream = match settled(state) {
+        Ok(decided) => return decided,
+        Err(upstream) => upstream,
+    };
+    let completed = sqlx::query_scalar::<_, Option<NaiveDateTime>>(PASS_SQL)
+        .bind(upstream)
+        .fetch_optional(conn)
+        .await
+        .map(Option::flatten)
+        .map_err(NotReady::Database)?;
+    marker_verdict(state, completed, now)
+}
+
+/// The gate every route that lists, prices or reports the status of trades
+/// passes first ([`ready`]).
 pub async fn require_ready(state: &MarketplaceState) -> Result<(), Response> {
     ready(state).await.map(|_| ())
+}
+
+/// The gate of the routes that serve the stored trade records, which carry
+/// no status (`/v1/trades`, `/v1/trades/{id}`): the mirror's pass only. The
+/// trade-events verdicts do not change what they answer.
+pub async fn require_mirror_ready(state: &MarketplaceState) -> Result<(), Response> {
+    readiness(state)
+        .await
+        .map(|_| ())
+        .map_err(not_ready_response)
 }
 
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
@@ -1085,9 +1194,10 @@ pub async fn list_trades(
     let limit = first.unwrap_or(100).clamp(0, 1000);
     let offset = skip.unwrap_or(0).max(0);
     let counted = counted_sql("", "$3");
+    let served = super::catalog::served_trade_sql("t");
     let rows = sqlx::query(sqlx::AssertSqlSafe(format!(
         "SELECT {TRADE_COLUMNS}, COUNT(*) OVER()::int8 AS total \
-         FROM shop.trades WHERE {counted} ORDER BY created_at DESC LIMIT $1 OFFSET $2"
+         FROM shop.trades t WHERE {counted} AND {served} ORDER BY created_at DESC LIMIT $1 OFFSET $2"
     )))
     .bind(limit)
     .bind(offset)
@@ -1099,8 +1209,9 @@ pub async fn list_trades(
         // An empty page past the end (or a zero-row page) says nothing about the total.
         None if offset > 0 || limit == 0 => {
             let counted = counted_sql("", "$1");
+            let served = super::catalog::served_trade_sql("t");
             sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
-                "SELECT COUNT(*) FROM shop.trades WHERE {counted}"
+                "SELECT COUNT(*) FROM shop.trades t WHERE {counted} AND {served}"
             )))
             .bind(since)
             .fetch_one(pool)
@@ -1158,13 +1269,15 @@ pub async fn trades_of_address(
     let heads = sqlx::query(sqlx::AssertSqlSafe(format!(
         "SELECT {TRADE_COLUMNS} FROM shop.trades \
          WHERE id IN ( \
-            (SELECT id FROM shop.trades WHERE signer = $1 AND {signer_counted} ORDER BY created_at DESC LIMIT $2) \
+            (SELECT s.id FROM shop.trades s WHERE s.signer = $1 AND {signer_counted} AND {signer_served} ORDER BY s.created_at DESC LIMIT $2) \
             UNION \
             (SELECT ta.trade_id FROM shop.trade_assets ta JOIN shop.trades t ON t.id = ta.trade_id \
-             WHERE ta.beneficiary = $1 AND {beneficiary_counted} ORDER BY ta.created_at DESC LIMIT $2)) \
+             WHERE ta.beneficiary = $1 AND {beneficiary_counted} AND {beneficiary_served} ORDER BY ta.created_at DESC LIMIT $2)) \
          ORDER BY created_at DESC LIMIT $2",
-        signer_counted = counted_sql("", "$3"),
+        signer_counted = counted_sql("s.", "$3"),
         beneficiary_counted = counted_sql("t.", "$3"),
+        signer_served = super::catalog::served_trade_sql("s"),
+        beneficiary_served = super::catalog::served_trade_sql("t"),
     )))
     .bind(&address)
     .bind(limit)
@@ -1226,15 +1339,31 @@ pub async fn trades_of_address(
         .collect())
 }
 
-/// The trade `id` with its assets, when it counts at `since` ([`counted_sql`]).
+/// Which stored trades a lookup by id may answer.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TradeScope {
+    /// Only the trades this node serves ([`super::catalog::served_trade_sql`]):
+    /// what it lists or prices.
+    Served,
+    /// Any stored trade: cancelling or answering one must keep working.
+    Any,
+}
+
+/// The trade `id` with its assets, when it counts at `since` ([`counted_sql`])
+/// and is in `scope`.
 pub async fn get_trade_by_id(
     pool: &PgPool,
     id: &str,
     since: Option<NaiveDateTime>,
+    scope: TradeScope,
 ) -> Result<Option<Trade>, sqlx::Error> {
     let counted = counted_sql("", "$2");
+    let served = match scope {
+        TradeScope::Served => super::catalog::served_trade_sql("t"),
+        TradeScope::Any => "TRUE".to_string(),
+    };
     let Some(head) = sqlx::query(sqlx::AssertSqlSafe(format!(
-        "SELECT {TRADE_COLUMNS} FROM shop.trades WHERE id = $1::uuid AND {counted}"
+        "SELECT {TRADE_COLUMNS} FROM shop.trades t WHERE id = $1::uuid AND {counted} AND {served}"
     )))
     .bind(id)
     .bind(since)
@@ -1319,7 +1448,7 @@ pub async fn get_trades(
         Ok(v) => v,
         Err(r) => return r,
     };
-    if let Err(envelope) = require_ready(&state).await {
+    if let Err(envelope) = require_mirror_ready(&state).await {
         return envelope;
     }
     let since = mirrored_since(&state.settings, Utc::now().naive_utc());
@@ -1339,11 +1468,11 @@ pub async fn get_trade(State(state): State<SharedState>, Path(id): Path<String>)
         )
             .into_response();
     }
-    if let Err(envelope) = require_ready(&state).await {
+    if let Err(envelope) = require_mirror_ready(&state).await {
         return envelope;
     }
     let since = mirrored_since(&state.settings, Utc::now().naive_utc());
-    match get_trade_by_id(&state.pool, &id, since).await {
+    match get_trade_by_id(&state.pool, &id, since, TradeScope::Served).await {
         Ok(Some(trade)) => Json(json!({ "ok": true, "data": trade })).into_response(),
         Ok(None) => (
             axum::http::StatusCode::NOT_FOUND,

@@ -19,7 +19,7 @@ You own `packages/inspector`. `docs/DESIGN.md` and the `vars.css` token block be
 | Generated | Produced by |
 | --- | --- |
 | `src/lib/data-layer/proto/gen/` | `make protoc` from `data-layer.proto` |
-| `public/` bundle | `npm run build` / `npm run start` |
+| `public/` bundle | `pnpm run build` / `pnpm run start` |
 | `node_modules/@dcl/asset-packs` content | `make build-asset-packs` (edit the source in `packages/asset-packs`) |
 
 ## Traps (details in CLAUDE.md → "Inspector")
@@ -32,7 +32,7 @@ You own `packages/inspector`. `docs/DESIGN.md` and the `vars.css` token block be
 - Never put editor metadata in a react-ecs `key`.
 - `inspector::` components ship inside the scene. Put state there only when it must survive a reopen.
 - Bevy reload is decided by file names, never timing. Never read engine state on a frozen scene.
-- Asset-packs value imports and the vitest suite see the **built** `dist/`. Run `npm run build:lib` in `packages/asset-packs` after any upstream edit.
+- Asset-packs value imports and the vitest suite see the **built** `dist/`. Run `pnpm run build:lib` in `packages/asset-packs` after any upstream edit.
 
 ## Completion gate
 
@@ -40,15 +40,15 @@ Don't report success until all of these pass. Paste the tail of each output:
 
 ```bash
 make build-inspector
-(cd packages/inspector && npm run typecheck && VITEST_MAX_THREADS=2 VITEST_MIN_THREADS=1 npm test)
-npx eslint <every touched .ts/.tsx>    # same rules as make lint, scoped to your files
+(cd packages/inspector && pnpm run typecheck && VITEST_MAX_WORKERS=2 pnpm test)
+node scripts/rolldown.js oxlint <every touched .ts/.tsx>    # same rules as make lint, scoped to your files
 ```
 
-For any behavior or UI change, verify it in a browser with Playwright against the standalone inspector (`npm run start` with `VITE_INSPECTOR_PORT` set; see `docs/UIDesigner.md` and `docs/testing-standards.md`). Screenshot each surface you'll touch before you edit it, and again after; include the pairs in your reply, compared against the Figma frame for UI work. They go in the PR's Screenshots section, never into the repo, and carry fixture data only: never a signed-in profile's wallet, email, or scene names.
+For any behavior or UI change, verify it in a browser with Playwright against the standalone inspector (`pnpm run start` with `VITE_INSPECTOR_PORT` set; see `docs/UIDesigner.md` and `docs/testing-standards.md`). Screenshot each surface you'll touch before you edit it, and again after; include the pairs in your reply, compared against the Figma frame for UI work. They go in the PR's Screenshots section, never into the repo, and carry fixture data only: never a signed-in profile's wallet, email, or scene names.
 
 When js-sdk-toolchain consumes this change, follow `.ai/skills/local-package-chain/SKILL.md` steps 1 and 2, and report the inspector tarball path that step 2 prints as its last line. Step 1 only builds and packs asset-packs without editing it, so run it even for an inspector-only change. Skip it only when the architect hands you an asset-packs tarball that's newer than any asset-packs edit.
 
-Running alone: before you commit, also run the repo gate from the root (`make format`, `npm run lint`). Then commit only your paths (`git add -- <paths>`, never `-A`), push, and open the PR. Under the architect: **don't commit**. List your changed paths in the handoff, and the architect commits each layer in turn. Two specialists committing in one working tree would sweep up each other's files with anything broader than explicit paths. No AI attribution in commits or PRs.
+Running alone: before you commit, also run the repo gate from the root (`make format`, `pnpm run lint`). Then commit only your paths (`git add -- <paths>`, never `-A`), push, and open the PR. Under the architect: **don't commit**. List your changed paths in the handoff, and the architect commits each layer in turn. Two specialists committing in one working tree would sweep up each other's files with anything broader than explicit paths. No AI attribution in commits or PRs.
 
 ## Handoff block
 

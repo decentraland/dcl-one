@@ -23,19 +23,17 @@ pub struct Links {
     /// `JUMP_IN_SITE_URL` (`:13-16`): a stored url under it is the generated
     /// jump-in link the submission notice labels with the place.
     pub jump_in_site_url: String,
-    /// The events asset mount a stored poster path (`/poster/<file>`, the
-    /// default asset) is served under: Slack's `image_url` must be absolute.
+    /// The events asset mount (`<origin>/events`) the bundled default image is served on.
     pub asset_base: String,
+    /// `PUBLIC_URL` as the read projection uses it for poster URLs.
+    pub public_base: Option<String>,
 }
 
 impl Links {
-    /// A stored poster path on the asset mount; any other image as stored.
+    /// A stored image for a notice: posters on the node's poster mount (absolute when
+    /// `PUBLIC_URL` is set), the default on the asset mount, anything else as stored.
     fn image(&self, image: &str) -> String {
-        if image.starts_with('/') {
-            format!("{}{image}", self.asset_base.trim_end_matches('/'))
-        } else {
-            image.to_owned()
-        }
+        crate::node_assets::notice_image_url(image, self.public_base.as_deref(), &self.asset_base)
     }
 
     /// `eventReviewSlackUrl` (`Slack/utils.ts:23-27`).
@@ -295,10 +293,11 @@ fn message(event_id: &str, kind: &str, event: &Value, links: &Links) -> Value {
                     }
                 ),
             );
-            let image = text(event, "image");
-            if !image.is_empty() {
+            let image = links.image(text(event, "image"));
+            // Slack refuses the whole message over a relative `image_url` (no `PUBLIC_URL`).
+            if image.starts_with("https://") || image.starts_with("http://") {
                 let scene = text(event, "scene_name");
-                details["accessory"] = json!({"type":"image","image_url":links.image(image),
+                details["accessory"] = json!({"type":"image","image_url":image,
                     "alt_text":if scene.is_empty(){"Decentraland"}else{scene}});
             }
             let mut at = vec![format!("at <{review}|Events page>")];
@@ -528,6 +527,7 @@ mod tests {
             base: "https://example.org".into(),
             jump_in_site_url: "https://decentraland.org/jump".into(),
             asset_base: "https://assets.example.org/events/".into(),
+            public_base: Some("https://assets.example.org".into()),
         }
     }
 
@@ -594,12 +594,15 @@ mod tests {
             block_text(&custom, 2),
             "at <https://example.org/whats-on/admin/pending-events?id=ev-2|Events page>\nat https://example.com/x?a=1&amp;b=&lt;2&gt;"
         );
-        // A stored poster is a path on the events mount (`/poster/<file>`,
-        // the default asset); Slack's `image_url` must be absolute.
+        // Slack's `image_url` must be absolute: posters on the node's poster mount.
         for (stored, absolute) in [
             (
                 "/poster/abc.webp",
-                "https://assets.example.org/events/poster/abc.webp",
+                "https://assets.example.org/events-assets-099ac00/poster/abc.webp",
+            ),
+            (
+                "/poster-vertical/abc.webp",
+                "https://assets.example.org/events-assets-099ac00/poster-vertical/abc.webp",
             ),
             (
                 "/assets/event-default.webp",
@@ -621,6 +624,25 @@ mod tests {
                 "{stored}"
             );
         }
+        // A root-relative image that is not a poster is dropped, as on read: no image.
+        let notice = message(
+            "ev-5",
+            "submitted",
+            &labels(&json!({"name":"Other","image":"/other/a.webp"})),
+            &links(),
+        );
+        assert!(notice["blocks"][1].get("accessory").is_none());
+        // Without `PUBLIC_URL` a poster is root-relative: the notice goes out without the image.
+        let notice = message(
+            "ev-4",
+            "submitted",
+            &labels(&json!({"name":"Poster","image":"/poster/abc.webp"})),
+            &Links {
+                public_base: None,
+                ..links()
+            },
+        );
+        assert!(notice["blocks"][1].get("accessory").is_none());
     }
 
     /// `Slack/utils.ts:83-220`: approved (self-approval suffix), rejected and
@@ -789,8 +811,7 @@ mod tests {
 
     #[tokio::test]
     async fn concurrent_first_captures_and_backward_clock_samples_never_precede_activation() {
-        let _guard = TEST_LOCK.lock().await;
-        let Some(pool) = crate::db::scratch::pool(6).await else {
+        let Some(pool) = crate::db::scratch::isolated_pool(6).await else {
             return;
         };
         sqlx::query("DELETE FROM explore.moderation_hook_activation")
@@ -873,23 +894,6 @@ mod tests {
         let clock_eligible:bool=sqlx::query_scalar("SELECT h.created_at=a.activated_at FROM explore.moderation_hooks h CROSS JOIN explore.moderation_hook_activation a WHERE h.subject=$1")
             .bind(format!("{prefix}-clock")).fetch_one(&mut *tx).await.unwrap();
         tx.rollback().await.unwrap();
-        sqlx::query("DROP TRIGGER test_hook_capture_barrier ON explore.moderation_hook_activation")
-            .execute(&pool)
-            .await
-            .unwrap();
-        sqlx::query("DROP FUNCTION explore.test_hook_capture_barrier()")
-            .execute(&pool)
-            .await
-            .unwrap();
-        sqlx::query("DELETE FROM explore.moderation_hooks WHERE subject LIKE $1")
-            .bind(format!("{prefix}-%"))
-            .execute(&pool)
-            .await
-            .unwrap();
-        sqlx::query("DELETE FROM explore.moderation_hook_activation")
-            .execute(&pool)
-            .await
-            .unwrap();
         assert!(
             concurrent_eligible,
             "a delayed first writer must not fall behind another writer's activation"
@@ -902,8 +906,7 @@ mod tests {
 
     #[tokio::test]
     async fn capture_activates_with_the_database_clock_before_the_first_worker_tick() {
-        let _guard = TEST_LOCK.lock().await;
-        let Some(pool) = crate::db::scratch::pool(6).await else {
+        let Some(pool) = crate::db::scratch::isolated_pool(6).await else {
             return;
         };
         sqlx::query("DELETE FROM explore.moderation_hook_activation")
@@ -946,15 +949,6 @@ mod tests {
             "first captured intent is not discarded on leader activation"
         );
         assert_eq!(completed, None);
-        sqlx::query("DELETE FROM explore.moderation_hooks WHERE subject=$1")
-            .bind(id)
-            .execute(&pool)
-            .await
-            .unwrap();
-        sqlx::query("DELETE FROM explore.moderation_hook_activation")
-            .execute(&pool)
-            .await
-            .unwrap();
     }
 
     #[tokio::test]
@@ -1244,13 +1238,12 @@ mod tests {
     #[tokio::test]
     async fn disabled_delivery_cleans_expired_history_in_bounded_unlocked_batches_and_retains_retries()
      {
-        let _guard = TEST_LOCK.lock().await;
-        let Some(pool) = crate::db::scratch::pool(6).await else {
+        let Some(pool) = crate::db::scratch::isolated_pool(6).await else {
             return;
         };
         let now = Utc::now().naive_utc();
         let prefix = Uuid::new_v4().to_string();
-        // This integration test owns the activation singleton while holding TEST_LOCK.
+        // This integration test owns the activation singleton of its own database.
         sqlx::query("DELETE FROM explore.moderation_hook_activation")
             .execute(&pool)
             .await
@@ -1317,15 +1310,6 @@ mod tests {
         );
         held.rollback().await.unwrap();
         assert_eq!(cleanup(&pool, now).await.unwrap(), 1);
-        sqlx::query("DELETE FROM explore.moderation_hooks WHERE subject LIKE $1")
-            .bind(format!("{prefix}-%"))
-            .execute(&pool)
-            .await
-            .unwrap();
-        sqlx::query("DELETE FROM explore.moderation_hook_activation")
-            .execute(&pool)
-            .await
-            .unwrap();
     }
 
     #[tokio::test]

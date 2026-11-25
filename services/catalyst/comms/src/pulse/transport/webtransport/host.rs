@@ -9,6 +9,7 @@ use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender, unbounded_channel};
 
 use crate::pulse::transport::webtransport::quic::{
     Event as QuicEvent, Host as QuicHost, HostConfig as QuicConfig,
+    IDLE_TIMEOUT as QUIC_IDLE_TIMEOUT,
 };
 
 use crate::pulse::hardening::DisconnectReason;
@@ -44,6 +45,10 @@ enum Outbound {
     },
     Disconnect {
         peer: u32,
+        reason: u32,
+    },
+    RefuseConnection {
+        connection: u64,
         reason: u32,
     },
 }
@@ -83,6 +88,7 @@ impl WtHost {
             bind_addr: config.bind_addr,
             cert_pem: config.cert_pem.clone(),
             key_pem: config.key_pem.clone(),
+            idle_timeout: QUIC_IDLE_TIMEOUT,
         })
         .map_err(|e| anyhow::anyhow!("webtransport host bind: {e}"))?;
         let local_addr = quic.local_addr();
@@ -183,6 +189,12 @@ impl WtHost {
         let _ = self.outbound_tx.send(Outbound::Disconnect { peer, reason });
     }
 
+    pub(in crate::pulse::transport) fn refuse_connection(&self, connection: u64, reason: u32) {
+        let _ = self
+            .outbound_tx
+            .send(Outbound::RefuseConnection { connection, reason });
+    }
+
     pub fn local_addr(&self) -> SocketAddr {
         self.local_addr
     }
@@ -245,6 +257,9 @@ fn run_loop(
                     if let Some(&qid) = sessions.quic_by_peer.get(&peer) {
                         quic.disconnect(qid, reason);
                     }
+                }
+                Outbound::RefuseConnection { connection, reason } => {
+                    quic.disconnect(connection, reason);
                 }
                 Outbound::Send { peer, packet } => {
                     let Some(&qid) = sessions.quic_by_peer.get(&peer) else {
@@ -389,6 +404,7 @@ fn handle_connect(
         Event::Connect {
             peer: slot as PeerId,
             ip: Some(parse_ip(&remote_addr)),
+            webtransport_connection: Some(peer_id),
         },
     )
 }
@@ -417,14 +433,21 @@ fn handle_stream(
                 )?;
             }
             Ok(None) => return Ok(()),
-            Err(_overrun) => {
+            Err(overrun) if overrun.ends_session() => {
                 return send_event(
                     events_tx,
-                    Event::Corrupt {
+                    Event::Oversized {
                         peer: peer as PeerId,
                     },
                 );
             }
+            // The reader skips the payload; the frames after it are still read.
+            Err(_overrun) => send_event(
+                events_tx,
+                Event::Corrupt {
+                    peer: peer as PeerId,
+                },
+            )?,
         }
     }
 }

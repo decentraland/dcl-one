@@ -26,7 +26,7 @@ pub enum SocialError {
     Internal(String),
     #[error("not authenticated")]
     Unauthenticated,
-    /// `SOCIAL_WRITES_ENABLED` is off, or the restore stamps hold it.
+    /// `SOCIAL_WRITES_ENABLED` is off.
     #[error("{0}")]
     WritesDisabled(std::borrow::Cow<'static, str>),
 }
@@ -265,7 +265,7 @@ where
 {
     let (generator, yielder) = Generator::create();
     let mut rx = pubsub.subscribe_updates::<T>(address);
-    tokio::spawn(async move {
+    crate::shared::task::spawn(async move {
         loop {
             let event = tokio::select! {
                 _ = cancellation.cancelled() => break,

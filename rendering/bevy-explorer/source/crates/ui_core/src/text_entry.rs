@@ -72,7 +72,6 @@ impl Plugin for TextEntryPlugin {
 #[derive(Component)]
 struct TextEntryEntity(Entity);
 
-#[allow(clippy::type_complexity)]
 fn update_text_entry_components(
     mut commands: Commands,
     text_entries: Query<(Entity, Ref<TextEntry>, Option<&TextEntryEntity>), Changed<TextEntry>>,

@@ -25,12 +25,16 @@ export type SpendableCredit = {
   contract?: string;
 };
 
-export type CreditPurchase = { trade: SignedTrade; coupon?: ListingCoupon; credits: SpendableCredit[]; maxCreditedValue: string };
+/**
+ * `maxUncreditedValue`, set only on a credits + MANA purchase: the MANA the buyer confirmed paying from the wallet beside
+ * the credits, encoded as given (see `wrapInUseCredits`).
+ */
+export type CreditPurchase = { trade: SignedTrade; coupon?: ListingCoupon; credits: SpendableCredit[]; maxCreditedValue: string; maxUncreditedValue?: string };
 
 /** A CollectionStore mint; `priceWei` is read as late as possible, the store re-validates it on chain. */
 export type StoreItemToBuy = { collection: string; itemId: string; priceWei: string };
 
-export type StorePurchase = { item: StoreItemToBuy; credits: SpendableCredit[]; maxCreditedValue: string; chainId: number };
+export type StorePurchase = { item: StoreItemToBuy; credits: SpendableCredit[]; maxCreditedValue: string; chainId: number; maxUncreditedValue?: string };
 
 const ZERO32 = `0x${"0".repeat(64)}` as Hex;
 
@@ -197,12 +201,17 @@ function randomSalt(): Hex {
   return toHex(bytes);
 }
 
-export type EnvelopeOptions = { now?: () => number; salt?: () => Hex };
+/**
+ * `maxUncreditedValue`: the MANA a credits + MANA purchase pays from the wallet, as the buyer confirmed it; the envelope
+ * encodes it as given, apart from `maxCreditedValue`.
+ */
+export type EnvelopeOptions = { now?: () => number; salt?: () => Hex; maxUncreditedValue?: bigint };
 
 /**
  * The shared useCredits envelope. `maxUncreditedValue` (MANA the buyer pays from the wallet) is derived
  * from the server-sized `maxCreditedValue` minus what the credits hold, never from an item price: a
- * price-derived gap silently charges the difference in MANA.
+ * price-derived gap silently charges the difference in MANA. A credits + MANA purchase names it instead
+ * (`env.maxUncreditedValue`, the gap the buyer confirmed), beside a `maxCreditedValue` that is the credit's own.
  */
 export function wrapInUseCredits(
   opts: { target: string; call: ExternalCallBody; credits: SpendableCredit[]; maxCreditedValue: string },
@@ -211,7 +220,8 @@ export function wrapInUseCredits(
   const now = env.now ?? Date.now;
   const sumAvailable = opts.credits.reduce((acc, c) => acc + BigInt(c.availableAmount), 0n);
   const maxCredited = BigInt(opts.maxCreditedValue);
-  const uncredited = maxCredited - sumAvailable;
+  if (env.maxUncreditedValue !== undefined && env.maxUncreditedValue <= 0n) throw new Error("A credits + MANA purchase names a positive MANA gap");
+  const uncredited = env.maxUncreditedValue ?? maxCredited - sumAvailable;
   return {
     credits: opts.credits.map((c) => ({ value: BigInt(c.amount), expiresAt: BigInt(Math.floor(Number(c.expiresAt))), salt: idToSalt(c.id) })),
     creditsSignatures: opts.credits.map((c) => c.signature as Hex),

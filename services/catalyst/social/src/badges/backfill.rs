@@ -22,9 +22,10 @@
 //! tiers and the completion. Unlike upstream, the merge reads the progress
 //! under the lock, earned tiers and completion are never taken back, a
 //! reached tier or target the merger left unstamped is stamped now, and a
-//! wallet listed twice is merged twice in order. The gateway caps request
-//! bodies at 1 MB, so callers send their registries in batches.
+//! wallet listed twice is merged twice in order. The body is capped at
+//! [`super::MAX_BACKFILL_BODY_BYTES`] here and at the gateway.
 
+use std::collections::hash_map::Entry;
 use std::collections::{HashMap, HashSet};
 
 use axum::Json;
@@ -311,16 +312,20 @@ fn truthy(v: Option<i64>) -> Option<i64> {
     v.filter(|t| *t != 0)
 }
 
-/// `getUniqueSortedItems`: the last instant given per id, in first-seen
-/// order, then stably sorted by instant.
-fn unique_sorted(items: impl IntoIterator<Item = (String, i64)>) -> Vec<(String, i64)> {
+/// `getUniqueSortedItems`: the last instant given per id (compared by
+/// `key`, as the evaluators compare it), in first-seen order, then stably
+/// sorted by instant.
+fn unique_sorted(
+    items: impl IntoIterator<Item = (String, i64)>,
+    key: fn(&str) -> String,
+) -> Vec<(String, i64)> {
     let mut out: Vec<(String, i64)> = Vec::new();
     let mut index: HashMap<String, usize> = HashMap::new();
     for (id, ts) in items {
-        match index.get(&id) {
-            Some(&i) => out[i].1 = ts,
-            None => {
-                index.insert(id.clone(), out.len());
+        match index.entry(key(&id)) {
+            Entry::Occupied(i) => out[*i.get()].1 = ts,
+            Entry::Vacant(slot) => {
+                slot.insert(out.len());
                 out.push((id, ts));
             }
         }
@@ -392,7 +397,11 @@ pub fn merge(
         ) => {
             let (_, key, id_key, ts_key) = item_keys(kind).ok_or("no item keys")?;
             let stored = stored_pairs(&user.doc, key, id_key, ts_key);
-            let sorted = unique_sorted(stored.into_iter().chain(items.iter().cloned()));
+            let same_id = match kind {
+                Kind::EmoteCreator | Kind::WearableDesigner => super::evaluators::item_key,
+                _ => str::to_ascii_lowercase,
+            };
+            let sorted = unique_sorted(stored.into_iter().chain(items.iter().cloned()), same_id);
             user.steps = sorted.len() as i64;
             let list = sorted
                 .iter()
@@ -1101,6 +1110,30 @@ mod tests {
         assert!(validate(&merged, &def).is_empty());
         let again = merge(Kind::Emotionista, &def, Some(merged.clone()), &data, NOW).unwrap();
         assert_eq!(again, merged, "a re-run changes nothing");
+    }
+
+    #[test]
+    fn creator_items_count_once_in_either_id_form() {
+        let def = tiered(&[1, 3]);
+        let current = UserState {
+            steps: 1,
+            doc: Map::from_iter([(
+                "published_emotes".into(),
+                json!([{ "itemId": "urn:decentraland:matic:collections-v2:0xAB:1", "createdAt": 10 }]),
+            )]),
+            tiers: vec![("t0".into(), 10)],
+            completed_at: None,
+        };
+        let data = input(
+            Kind::EmoteCreator,
+            &def,
+            json!({ "emotesPublished": [
+                { "itemId": "0xab-1", "createdAt": 10 },
+                { "itemId": "0xab-2", "createdAt": 20 }
+            ] }),
+        );
+        let merged = merge(Kind::EmoteCreator, &def, Some(current), &data, NOW).unwrap();
+        assert_eq!(merged.steps, 2);
     }
 
     #[test]

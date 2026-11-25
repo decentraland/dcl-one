@@ -45,6 +45,10 @@ export class FreeGizmo implements IGizmoTransformer {
     private utilityLayer: UtilityLayerRenderer = new UtilityLayerRenderer(scene),
   ) {}
 
+  getUtilityLayer(): UtilityLayerRenderer {
+    return this.utilityLayer;
+  }
+
   setup(): void {
     this.cleanup();
     this.setupSceneObservers();

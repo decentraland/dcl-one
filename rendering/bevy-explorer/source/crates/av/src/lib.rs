@@ -1,3 +1,5 @@
+#![forbid(unsafe_code)]
+
 pub mod plugin;
 #[cfg(test)]
 pub mod test;
@@ -60,6 +62,15 @@ pub trait AVPlayer: Component {
     fn position(&self) -> Self::Position;
 }
 
+/// A scene's volume as a player volume: unset is full, non-finite is silent, the rest 0..=1.
+pub(crate) fn scene_volume(volume: Option<f32>) -> f32 {
+    match volume {
+        None => 1.,
+        Some(volume) if volume.is_finite() => volume.clamp(0., 1.),
+        Some(_) => 0.,
+    }
+}
+
 pub trait AVPlayerConfig {
     fn playing(&self) -> bool;
     fn volume(&self) -> f32;
@@ -93,6 +104,9 @@ pub struct AVSinks<T: AVPlayer> {
     /// The last volume sent, to send only changes.
     pub sent_volume: Option<f32>,
     pub sent_state: VideoState,
+    /// The web source's reopen state.
+    #[cfg(feature = "html")]
+    pub retry: watch::Receiver<media::MediaRetryStatus>,
     pub _phantom: PhantomData<T>,
 }
 
@@ -146,7 +160,7 @@ impl AVPlayer for AudioStream {
     fn config(&self) -> Self::Config {
         AudioStreamConfig {
             playing: self.playing.unwrap_or(true),
-            volume: self.volume.unwrap_or(1.),
+            volume: scene_volume(self.volume),
         }
     }
 
@@ -184,7 +198,7 @@ impl AVPlayer for VideoPlayer {
     fn config(&self) -> Self::Config {
         VideoPlayerConfig {
             playing: self.playing.unwrap_or(true),
-            volume: self.volume.unwrap_or(1.),
+            volume: scene_volume(self.volume),
             playback_rate: self.playback_rate.unwrap_or(1.),
             r#loop: self.r#loop.unwrap_or(false),
         }
@@ -226,7 +240,7 @@ impl<T: Borrow<AudioStream>> From<T> for AudioStreamConfig {
         let borrow = value.borrow();
         Self {
             playing: borrow.playing.unwrap_or(true),
-            volume: borrow.volume.unwrap_or(1.),
+            volume: scene_volume(borrow.volume),
         }
     }
 }
@@ -300,7 +314,7 @@ impl<T: Borrow<VideoPlayer>> From<T> for VideoPlayerConfig {
         let borrow = value.borrow();
         Self {
             playing: borrow.playing.unwrap_or(true),
-            volume: borrow.volume.unwrap_or(1.),
+            volume: scene_volume(borrow.volume),
             playback_rate: borrow.playback_rate.unwrap_or(1.),
             r#loop: borrow.r#loop.unwrap_or(false),
         }
@@ -352,3 +366,18 @@ pub struct InScene;
 
 #[derive(Debug, Component)]
 pub struct Stream;
+
+#[cfg(test)]
+mod tests {
+    use super::scene_volume;
+
+    #[test]
+    fn scene_volume_is_finite_and_within_unit_range() {
+        assert_eq!(scene_volume(None), 1.);
+        assert_eq!(scene_volume(Some(0.25)), 0.25);
+        assert_eq!(scene_volume(Some(4.)), 1.);
+        assert_eq!(scene_volume(Some(-1.)), 0.);
+        assert_eq!(scene_volume(Some(f32::NAN)), 0.);
+        assert_eq!(scene_volume(Some(f32::INFINITY)), 0.);
+    }
+}

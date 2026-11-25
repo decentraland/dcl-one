@@ -16,7 +16,7 @@ Files read (upstream lamb2):
 Upstream catalyst: `src/adapters/pointers-repository/component.ts`, `src/controllers/routes.ts`.
 
 Files read (dcl-one, under `services/catalyst/`):
-`shop/src/market/{mod,user_items,lambdas_explorer,lambdas_catalog,third_party,base_wearables,definitions,readers}.rs`, `config/src/{shop,posture}.rs`, `shop/src/market/mirrors/mod.rs`, `chain-index/src/{graph,source}.rs`, `shared/src/{query_params,http_util,cors}.rs`, `content/src/queries.rs` (projection and prefix query), `src/serve.rs` (mounts and trailing-slash layer), the fixtures `shop/src/market/fixtures/{users-wearables-*,users-emotes-200-unknown-address,collections-wearables-by-owner-200-unknown}.json`.
+`shop/src/market/{mod,user_items,owned_items,lambdas_explorer,lambdas_catalog,third_party,base_wearables,definitions,readers}.rs`, `config/src/{shop,posture}.rs`, `shop/src/market/mirrors/mod.rs`, `chain-index/src/{graph,source}.rs`, `shared/src/{query_params,http_util,cors}.rs`, `content/src/queries.rs` (projection and prefix query), `src/serve.rs` (mounts and trailing-slash layer), the fixtures `shop/src/market/fixtures/{users-wearables-*,users-emotes-200-unknown-address,collections-wearables-by-owner-200-unknown}.json`.
 `shop/src/market/nft_reads.rs` and `shop/src/market/collections.rs` serve the marketplace-server `/v1/*` routes, not the lambdas routes in this area. They are listed only under "dcl-one extras" and are not compared.
 
 ## Conventions that apply to every endpoint here
@@ -45,9 +45,9 @@ Notes:
 
 | Data | Upstream lamb2 | dcl-one | Equal for the same chain state? |
 |---|---|---|---|
-| On-chain wearables/emotes an address owns | **Primary:** marketplace-server `GET {MARKETPLACE_API_URL}/v1/users/<addr>/{wearables,emotes}/grouped` (decentraland/lamb2:src/adapters/marketplace-api-fetcher.ts:395-472). This is the marketplace's own indexed DB, and its order and total come from there. **Fallback**, on any `MarketplaceApiError`: the TheGraph collections subgraphs, L1 + L2 for wearables and L2 only for emotes. The fallback walks `nfts` by `id_gt`, with no page cap (decentraland/lamb2:src/logic/fetch-elements/fetch-items.ts:237-336; decentraland/lamb2:src/logic/fetch-elements/fetch-elements.ts:13-46). The marketplace is abandoned above 100 pages of 1,000 groups (marketplace-api-fetcher.ts:362-385), and the fallback then runs. | TheGraph collections subgraphs only, L1 + L2 for both categories, through `chain-index` (services/catalyst/chain-index/src/graph.rs:236-378). It has no chain index of its own for collection NFTs. It walks every page, like the upstream fallback, with a runaway guard of 1,000 pages (1,000,000 tokens) per network past which the read fails (502) rather than truncate (graph.rs `OWNED_MAX_PAGES`, `walk_owned_pages`). Request cost: one subgraph request per 1,000 tokens (`n / 1000 + 1` per network, sequential per network, the two networks in parallel), memoized for 30 s per owner and category (graph.rs `OWNED_TTL`). With `EXPLORER_ESCROW_GRANTS_ENABLED` (off under `NODE_POSTURE=mirror`, on under island and journey and without a posture) the explorer adds rows from `shop.usage_grants` (escrow grants) (services/catalyst/shop/src/market/lambdas_explorer.rs `fetch_owned_items`). | **Same set of tokens** when the marketplace DB agrees with the subgraph and the owner holds ≤ 1,000,000 tokens per network. **Different** in: above that guard (dcl-one answers 502; upstream walks everything); the fallback's grouping and `individualData` order (subgraph `id` ascending; dcl-one follows the marketplace's, rarest first then urn, newest transfer first); explorer items granted by escrow where `EXPLORER_ESCROW_GRANTS_ENABLED` is on (never under the mirror posture); and subgraph/marketplace indexing lag. |
-| Third-party registry (providers) | TheGraph third-party registry subgraph, `thirdParties(where:{isApproved:true})`, default `first` (100) (decentraland/lamb2:src/adapters/third-party-providers-graph-fetcher.ts:12-29). Cached 6 h; an error with no stale value raises `FetcherError` (decentraland/lamb2:src/logic/third-party-providers-storage.ts:33-52). | Same subgraph and the same query for providers (services/catalyst/shop/src/market/third_party.rs:146-162, 205-223), cached 6 h. A failed read serves the last list however old, and with none is an error answered with lamb2's 502 (third_party.rs `third_party_providers`). The integrations query asks `first: 1000` (third_party.rs `TPI_QUERY`). | Same providers (≤ 100) and the same failure answers. Different when there are more than 100 approved providers (integrations list). |
-| Linked-wearable ownership (v2 mappings) | NFT worker `POST {NFT_WORKER_BASE_URL}/wallets/<owner>/networks/<network>/nfts` with the provider contract list. It returns every `network:contract:tokenId` the wallet holds (decentraland/lamb2:src/adapters/alchemy-nft-fetcher.ts:16-54) for every `ContractNetwork` (`mainnet`, `sepolia`, `matic`, `amoy`). Mappings are matched with `createMappingsHelper.includesNft` (decentraland/lamb2:src/logic/linked-wearables-mapper.ts:6-21). There is no Merkle-proof or resolver path in this revision. | With `NFT_WORKER_BASE_URL` (set to the same worker under `NODE_POSTURE=mirror`, services/catalyst/config/src/posture.rs:277-281): the same `POST <base>/wallets/<owner>/networks/<network>/nfts` per `ContractNetwork`, only the providers whose contracts returned a token are read, and mappings are matched with `mappings_includes_nft` (services/catalyst/shop/src/market/third_party.rs:877-935, 1029-1047, 225-262). A non-2xx answer reports nothing for that network; a transport failure or an unreadable body fails the read (502). Without it: JSON-RPC over each network's endpoint (`TRADE_RPC_URLS`, else `ETH_RPC_URL` for the L1 and `RPC_ENDPOINT_POLYGON` for the L2 of `ETH_NETWORK`; third_party.rs:358-377): per contract `balanceOf` plus ERC-165 probes, the whole `tokenOfOwnerByIndex` walk of an enumerable ERC-721 up to 50,000 tokens (past that the read fails), else `ownerOf`/`balanceOfBatch` on the mapped ids, with a `range` expanded only up to 2,048 ids (third_party.rs:275-339, 468-553, 622-695). An `any` or wider `range` mapping on a plain ERC-721 or an ERC-1155 is logged as unresolved and left out (third_party.rs:513-535). A network with no endpoint reports nothing (third_party.rs:407-411). A failed contract read (transport, non-2xx, a JSON-RPC error other than a revert) fails the read (third_party.rs:757-870). No Merkle-proof path. | With `NFT_WORKER_BASE_URL`: **equal**, apart from upstream's stale serving. Without it: equal for `single`/`multiple`/small-`range` mappings and enumerable ERC-721; **different** for `any` or wide `range` mappings (more than 2,048 ids) on a plain ERC-721 or an ERC-1155, for enumerable holdings above 50,000 (502), and for networks with no RPC endpoint (nothing owned). |
+| On-chain wearables/emotes an address owns | **Primary:** marketplace-server `GET {MARKETPLACE_API_URL}/v1/users/<addr>/{wearables,emotes}/grouped` (decentraland/lamb2:src/adapters/marketplace-api-fetcher.ts:395-472). This is the marketplace's own indexed DB, and its order and total come from there. **Fallback**, on any `MarketplaceApiError`: the TheGraph collections subgraphs, L1 + L2 for wearables and L2 only for emotes. The fallback walks `nfts` by `id_gt`, with no page cap (decentraland/lamb2:src/logic/fetch-elements/fetch-items.ts:237-336; decentraland/lamb2:src/logic/fetch-elements/fetch-elements.ts:13-46). The marketplace is abandoned above 100 pages of 1,000 groups (marketplace-api-fetcher.ts:362-385), and the fallback then runs. | The nft index (`shop.nft`), dcl-one's own walk of the collections' Transfer and v1 Issue logs on L1 and L2, joined to the `shop.items` mirror for name, rarity, category, price and item type (services/catalyst/shop/src/market/owned_items.rs `owned_copies`): L1 + L2 for wearables, L2 for emotes. No collections subgraph is asked. One query per owner and category, memoized for 30 s, read once the index is published within 30 minutes on those networks and the items mirror has completed a pass; before that the routes answer the `nft-index` envelope (503). With `EXPLORER_ESCROW_GRANTS_ENABLED` (off under every posture and without one, on only when the operator sets it) the explorer adds rows from `shop.usage_grants` (escrow grants) (services/catalyst/shop/src/market/lambdas_explorer.rs `fetch_owned_items`). | **Same set of tokens** when the marketplace DB and the index agree. **Different** in: an item the items mirror does not hold yet (left out until its pass); explorer items granted by escrow where the operator turns `EXPLORER_ESCROW_GRANTS_ENABLED` on; indexing lag (the index trails the head by the confirmation depth, 12 blocks on L1 and 64 on L2, plus a pass). |
+| Third-party registry (providers) | TheGraph third-party registry subgraph, `thirdParties(where:{isApproved:true})`, default `first` (100) (decentraland/lamb2:src/adapters/third-party-providers-graph-fetcher.ts:12-29). Cached 6 h; an error with no stale value raises `FetcherError` (decentraland/lamb2:src/logic/third-party-providers-storage.ts:33-52). | The published Polygon registry index under `NODE_POSTURE=mirror`. When the index is unavailable or disabled, a configured registry subgraph serves cached GraphQL provider reads. Testnet mirrors configure it by default. | The index follows the contract approval flag independently of the Merkle root. The subgraph requires a root for approval. Index publication and subgraph cache timing can differ. |
+| Linked-wearable ownership (v2 mappings) | NFT worker `POST {NFT_WORKER_BASE_URL}/wallets/<owner>/networks/<network>/nfts` with the provider contract list. It returns every `network:contract:tokenId` the wallet holds (decentraland/lamb2:src/adapters/alchemy-nft-fetcher.ts:16-54) for every `ContractNetwork` (`mainnet`, `sepolia`, `matic`, `amoy`). Mappings are matched with `createMappingsHelper.includesNft` (decentraland/lamb2:src/logic/linked-wearables-mapper.ts:6-21). There is no Merkle-proof or resolver path in this revision. | With `NFT_WORKER_BASE_URL` (set to the same worker under `NODE_POSTURE=mirror`, services/catalyst/config/src/posture.rs:277-281): the same `POST <base>/wallets/<owner>/networks/<network>/nfts` per `ContractNetwork`, only the providers whose contracts returned a token are read, and mappings are matched with `mappings_includes_nft` (services/catalyst/shop/src/market/third_party.rs:877-935, 1029-1047, 225-262). A non-2xx answer reports nothing for that network; a transport failure or an unreadable body fails the read (502). Without it: JSON-RPC over each network's endpoint (`TRADE_RPC_URLS`, else `ETH_RPC_URL` for the L1 and `RPC_ENDPOINT_POLYGON` for the L2 of `ETH_NETWORK`; third_party.rs:358-377): per contract `balanceOf` plus ERC-165 probes, the whole `tokenOfOwnerByIndex` walk of an enumerable ERC-721 up to 50,000 tokens (past that the read fails), else `ownerOf`/`balanceOfBatch` on the mapped ids, with individual `balanceOf` reads if an ERC-1155 batch reverts or has an invalid return, with a `range` expanded only up to 2,048 ids (third_party.rs:275-339, 468-553, 622-695). An `any` or wider `range` mapping on a plain ERC-721 or an ERC-1155 is logged as unresolved and left out (third_party.rs:513-535). A network with no endpoint reports nothing (third_party.rs:407-411). A failed contract read (transport, non-2xx, a JSON-RPC error other than a revert) fails the read (third_party.rs:757-870). No Merkle-proof path. | With `NFT_WORKER_BASE_URL`: **equal**, apart from upstream's stale serving. Without it: equal for `single`/`multiple`/small-`range` mappings and enumerable ERC-721; **different** for `any` or wide `range` mappings (more than 2,048 ids) on a plain ERC-721 or an ERC-1155, for enumerable holdings above 50,000 (502), and for networks with no RPC endpoint (nothing owned). |
 | Third-party entities of a provider | Content server `GET /entities/active/collections/<providerUrn>?pageSize=1000&pageNum=n` (decentraland/lamb2:src/adapters/entities-fetcher.ts:62-80). That is `pointer LIKE '<prefix>%'` (decentraland/catalyst:src/adapters/pointers-repository/component.ts:14-27). | Local content DB, with the same `pointer LIKE '<prefix>%'` (services/catalyst/content/src/queries.rs:277-311), 1,000 per page, keeping only entities with `metadata.mappings` (third_party.rs:1158-1195). | Equal for the same synced content. |
 | Definitions and entities (`includeDefinitions`, `includeEntities`, explorer `entity`) | Content server `POST /entities/active` by pointer (decentraland/lamb2:src/adapters/definitions-fetcher.ts), mapped by `extractWearableDefinitionFromEntity` / `extractEmoteDefinitionFromEntity` with `CONTENT_URL` (lowercased, trailing `/` stripped) + `/contents/<hash>` (decentraland/lamb2:src/adapters/definitions.ts:4-102). | Local content DB `active_entity_docs_by_pointers` (services/catalyst/content/src/queries.rs:233-238), mapped by `extract_*_definition` with `content_public_url` + `contents/<hash>` (services/catalyst/shop/src/market/definitions.rs:53-160). | Equal when the content DB is synced, apart from the edge mappings in LI-14. |
 | Collections list | Live L1 + L2 subgraph `collections(first:1000, orderBy:urn)` (decentraland/lamb2:src/controllers/handlers/all-collections-handler.ts:7-36). | `shop.collections` mirror filled from the same subgraphs by a periodic job (services/catalyst/shop/src/market/mirrors/mod.rs:1-31). | Equal after a complete mirror pass; lags by up to the mirror interval (default 300 s). |
@@ -108,19 +108,19 @@ Auth: none. Rate limit: none (C4).
 | Bad sort (when `orderBy` is present) | 400 | C1, `Invalid sorting requested: <sort> <DIR>` (sort lowercased, DIR uppercased, no quotes) | json | sorting.ts:120-129 | user_items.rs:160 | MATCH |
 | Bad `direction` without `orderBy` | 200 (both) | — | — | utils.ts:45-48 | user_items.rs `validate_and_sort` | MATCH |
 | Invalid address | 200 empty (both) | — | — | (no check) | user_items.rs `owned_items_response` | MATCH (LI-16) |
-| Marketplace and subgraph both fail | 502 (C3), both | — | — | elements-fetcher.ts:272-273 | user_items.rs `owned_items_response` | MATCH (dcl-one has no marketplace leg: a failed subgraph read, or an inventory past the 1,000,000-token runaway guard per network, is the 502) |
-| A collections subgraph is not configured | dcl-one only: 503 envelope `{"error":"Service Unavailable","message":"the <net> collections subgraph reader is not configured on this node, and a route without a network filter answers for both networks","source","configure"}`, `Retry-After: 60` | — | — | n/a | services/catalyst/shop/src/market/readers.rs:131-148 | dcl-one only |
+| Marketplace and subgraph both fail | 502 (C3), both | — | — | elements-fetcher.ts:272-273 | user_items.rs `owned_items_response` | MATCH (dcl-one has no marketplace leg: a failed index read is the 502) |
+| The nft index is not published within 30 minutes on a network the route reads, or the items mirror has no complete pass | dcl-one only: 503 envelope `{"error":"Service Unavailable","message":"the <net> nft index is not published ...","source":"nft-index","configure":"MARKETPLACE_NFT_INDEX_ENABLED"}`, `Retry-After: 60` | — | — | n/a | services/catalyst/shop/src/market/owned_items.rs `require_inventory` | dcl-one only |
 | Marketplace bulkhead saturated | upstream 503 (C4) | — | — | marketplace-api-fetcher.ts:307-318 | — | MISSING in dcl-one (P2) |
 | Unhandled | 500 (C5) | — | — | errorHandler.ts:66-76 | — | C5 |
 
 Field-level comparison of the success body:
 
-- `urn`. Upstream: as the marketplace or subgraph spells it. dcl-one: subgraph URN with `:mainnet:` rewritten to `:ethereum:` (services/catalyst/chain-index/src/graph.rs:158-164). The collections subgraphs already spell L1 as `ethereum`. MATCH.
+- `urn`. Upstream: as the marketplace or subgraph spells it. dcl-one: the `shop.items` mirror's URN, which spells L1 `ethereum` as the subgraphs do. MATCH.
 - `amount`. Both: number, `individualData.length` (wearables-handler.ts:9; user_items.rs:180). MATCH.
 - `individualData[].id`. Both: `<urn>:<tokenId>`. MATCH.
-- `individualData[].transferredAt`. Both: string. Upstream passes the source value through, either the marketplace string or the subgraph BigInt string. dcl-one parses to `i64` and back (services/catalyst/chain-index/src/graph.rs:252-259, 279), so a non-numeric or null value becomes `"0"`. MATCH for normal data.
-- `individualData[].price`. Both: string. dcl-one uses `"0"` when the subgraph `item` is null (graph.rs:280-283). The upstream fallback throws on a null `item` (fetch-items.ts:170), which gives 502. Edge.
-- `individualData` order. Upstream: the marketplace's, newest transfer first (`captures/lambdas-items/LI-18-*.json`); subgraph `id` ascending in the fallback (fetch-items.ts:157-195). dcl-one: newest transfer first, ties by `tokenId` then `price` (graph.rs). MATCH with the marketplace (LI-18).
+- `individualData[].transferredAt`. Both: string. Upstream passes the source value through, either the marketplace string or the subgraph BigInt string. dcl-one answers the latest Transfer's block time in seconds (`shop.nft.transferred_at`). MATCH for normal data.
+- `individualData[].price`. Both: string. dcl-one answers the mirrored item's price (`"0"` when it has none); a copy whose item the mirror does not hold is left out. The upstream fallback throws on a null `item` (fetch-items.ts:170), which gives 502. Edge.
+- `individualData` order. Upstream: the marketplace's, newest transfer first (`captures/lambdas-items/LI-18-*.json`); subgraph `id` ascending in the fallback (fetch-items.ts:157-195). dcl-one: newest transfer first, ties by `tokenId` then `price` (owned_items.rs `sort_copies`). MATCH with the marketplace (LI-18).
 - `name`/`category`/`rarity`. Upstream: from the first row of the group (fallback) or the marketplace group. dcl-one: from the newest copy (user_items.rs:61-94). Equal for a single item.
 - Element order. Without `orderBy`, the marketplace's: rarest first, then urn, in both (LI-18). With `orderBy`, dcl-one equals the upstream fallback comparators: rarity uses `SORTED_RARITIES` index with unknown = -1, then `localeCompare(urn)`; ASC is the full reverse; `date DESC` uses max transfer, then urn asc; `date ASC` uses min transfer, then urn **desc** (sorting.ts:8-36; user_items.rs:128-159). Edge: upstream `earliestDate` treats 0 as undated (fetch-items.ts:197-200); dcl-one takes the plain `min` including 0 (user_items.rs:85).
 - `totalAmount`. Upstream: the marketplace `total` (or `elements.length` when 0), or the fallback's filtered group count. dcl-one: the filtered group count. MATCH for the same data.
@@ -136,7 +136,7 @@ Example success body (both trees, dcl-one key order alphabetical per C6):
 
 ### Data dependency
 
-dcl-one needs both collections subgraph URLs (L1, L2) configured (readers.rs:131-148) and reachable. For `includeDefinitions`/`includeEntities` it also needs the wearable entities in its content DB. It has both sources. It does not use a marketplace-server API, so the upstream primary source has no equivalent; the subgraph path is the upstream fallback.
+dcl-one needs its nft index published on L1 and L2 (`MARKETPLACE_NFT_INDEX_ENABLED`, a JSON-RPC endpoint per chain) and the `shop.items` mirror's complete pass (owned_items.rs `require_inventory`). For `includeDefinitions`/`includeEntities` it also needs the wearable entities in its content DB. It does not use a marketplace-server API or the collections subgraphs; its index stands in for the marketplace's indexed DB.
 
 ---
 
@@ -146,10 +146,10 @@ Same handler logic as §1 in both trees (decentraland/lamb2:src/controllers/hand
 
 | Topic | Upstream | dcl-one | Verdict |
 |---|---|---|---|
-| Source networks | Marketplace emotes; fallback **L2 only** (fetch-items.ts:262-275). | L1 + L2 subgraphs, `category: "emote"` (services/catalyst/chain-index/src/graph.rs:236-247, 363-368). L1 has no emote NFTs. | MATCH in result |
+| Source networks | Marketplace emotes; fallback **L2 only** (fetch-items.ts:262-275). | L2 only: the nft index's Polygon tokens whose mirrored item is an `emote_v1` (owned_items.rs `category_networks`). | MATCH |
 | Category filter | `searchEmoteCategory` enum, lowercased (graph-pagination.ts:23-25). | Lowercased, equality with `metadata.emote.category` (user_items.rs `owned_filters`). | MATCH |
 | `definition` | `extractEmoteDefinitionFromEntity` (definitions.ts:61-102). | `extract_emote_definition` (services/catalyst/shop/src/market/definitions.rs:125-160). | See LI-14 |
-| Reader requirement | — | Both collections subgraphs required (user_items.rs:251-253), even though emotes live on L2 only. | DIVERGENT (dcl-one returns 503 if only L1 is missing) |
+| Reader requirement | — | The nft index published on L2 and the items mirror's pass on L2 (owned_items.rs `require_inventory`). | MATCH |
 
 Example success: as in §1, with `"category":"dance"` and `"rarity":"rare"`.
 
@@ -198,7 +198,7 @@ Upstream merges duplicates by URN, last one winning (fetch-third-party-wearables
 ### Data dependency
 
 - Upstream: the third-party registry subgraph, the NFT worker, and the content server's collection prefix query.
-- dcl-one: the registry subgraph (`THIRD_PARTY_REGISTRY_L2_SUBGRAPH_URL`, set to lamb2's default `tpr-matic-mainnet` under `NODE_POSTURE=mirror`, which refuses it empty), synced third-party entities in its content DB, and either the NFT worker (`NFT_WORKER_BASE_URL`, set under `NODE_POSTURE=mirror`) or the JSON-RPC endpoints of each `ContractNetwork` (`TRADE_RPC_URLS`, `ETH_RPC_URL`, `RPC_ENDPOINT_POLYGON`). On the RPC path, a network with no endpoint is logged and reports nothing owned (third_party.rs:407-411).
+- dcl-one: the Polygon registry index (`MARKETPLACE_THIRD_PARTY_REGISTRY_INDEX_ENABLED`, enabled by `NODE_POSTURE=mirror`) or an explicitly configured registry subgraph on nodes without the index, synced third-party entities in its content DB, and either the NFT worker (`NFT_WORKER_BASE_URL`, set under `NODE_POSTURE=mirror`) or the JSON-RPC endpoints of each `ContractNetwork` (`TRADE_RPC_URLS`, `ETH_RPC_URL`, `RPC_ENDPOINT_POLYGON`). On the RPC path, a network with no endpoint is logged and reports nothing owned (third_party.rs:407-411).
 
 ---
 
@@ -209,13 +209,13 @@ Upstream merges duplicates by URN, last one winning (fetch-third-party-wearables
 | Param | Upstream (third-party-wearables-handler.ts:76-128) | dcl-one (third_party.rs:1272-1304) | Verdict |
 |---|---|---|---|
 | `:address` | Not validated. | Not validated (LI-16). | MATCH |
-| `:collectionId` | Cut to the first 5 `:` parts, then parsed with `@dcl/urn-resolver` (which validates the network segment). Unparseable gives 400 `Invalid collection id: <collectionId> not a valid URN`. Parseable but not `blockchain-collection-third-party-name` gives 400 `Invalid collection id: not a blockchain-collection-third-party-name nor blockchain-collection-third-party-collection URN` (lines 85-97). | Cut to 5 parts. The structural check is `urn:decentraland:<any>:collections-thirdparty:<non-empty>` (services/catalyst/shop/src/market/user_items.rs:403-410). Any failure gives 400 `Invalid collection id: <collectionId> not a valid URN` (third_party.rs:1280-1289). | DIVERGENT: the second message is never produced, and the network segment is not validated (P2) |
+| `:collectionId` | Cut to the first 5 `:` parts, then parsed with `@dcl/urn-resolver` (which validates the network segment). Unparseable gives 400 `Invalid collection id: <collectionId> not a valid URN`. Parseable but not `blockchain-collection-third-party-name` gives 400 `Invalid collection id: not a blockchain-collection-third-party-name nor blockchain-collection-third-party-collection URN` (lines 85-97). | Uses the provider prefix and validates the registry network (`matic`, `amoy`, `mumbai`). Any failure gives 400 `Invalid collection id: <collectionId> not a valid URN` (`third_party.rs` `collection_provider`). | DIVERGENT: the second message is never produced (P2) |
 | `pageSize` | Default 100, max `Number.MAX_VALUE`. | No maximum. | MATCH (LI-11) |
 | `pageNum` | Pass-through. | Pass-through. | MATCH |
 | `includeDefinitions` | Presence. | Presence. | MATCH |
 | `category`, `name`, `orderBy` | Not read. No filter and **no sort**: elements come in fetcher order (entity insertion order, lines 102-105). | Not read; fetcher order, unsorted (third_party.rs `user_third_party_collection_wearables`). | MATCH (LI-12) |
 
-Upstream filtering: it takes the owner's full third-party list and keeps the wearables whose URN parses to `blockchain-collection-third-party` and whose `thirdPartyName` equals the requested one (fetch-third-party-wearables.ts:156-176). dcl-one fetches only the providers whose id has that name at part 4 (third_party.rs:1010-1011). The resulting set is the same.
+Upstream filtering: it takes the owner's full third-party list and keeps the wearables whose URN parses to `blockchain-collection-third-party` and whose `thirdPartyName` equals the requested one (fetch-third-party-wearables.ts:156-176). dcl-one fetches providers by name across the supported registry networks (`third_party.rs` `fetch_all_third_party_wearables`). The resulting set is the same.
 
 ### Responses
 
@@ -241,15 +241,15 @@ No parameters, no auth.
 
 | Trigger | Status | Body | Upstream | dcl-one | Verdict |
 |---|---|---|---|---|---|
-| Success | 200 | `{"data":[{"name":string,"description":string,"urn":string}]}` in subgraph order. Both read the provider list (`thirdParties(where:{isApproved:true})`, default `first`, so at most 100). | third-party-wearables-handler.ts:143-156; third-party-providers-graph-fetcher.ts:12-29 | third_party.rs `third_party_integrations` | MATCH (LI-27) |
+| Success | 200 | `{"data":[{"name":string,"description":string,"urn":string}]}` in provider ID order on the indexed path. Upstream uses the registry subgraph. | third-party-wearables-handler.ts:143-156; third-party-providers-graph-fetcher.ts:12-29 | third_party.rs `third_party_integrations` | MATCH (LI-27) |
 | `name`/`description` null in the subgraph | 200 | `null`, or the key omitted if undefined (both). | | third_party.rs `integration_of` | MATCH (LI-27) |
-| Registry fails, no cached value | 502 `{"error":"The requested items cannot be fetched right now","message":"Cannot fetch third party providers"}` (both); with a cached value, both serve it | — | third-party-providers-storage.ts:46-52 | third_party.rs `third_party_integrations` | MATCH (LI-10) |
-| Registry URL not configured | dcl-one only: 200 `{"data":[]}` | — | — | third_party.rs:1379-1384 | dcl-one only |
+| Registry unavailable | 502 `{"error":"The requested items cannot be fetched right now","message":"Cannot fetch third party providers"}`. The subgraph reader can serve a cached value during an upstream failure. | — | third-party-providers-storage.ts:46-52 | third_party.rs `third_party_integrations` | MATCH (LI-10) |
+| Index disabled and registry URL absent | dcl-one only: 200 `{"data":[]}` | — | — | third_party.rs:1379-1384 | dcl-one only |
 | Contracts | Upstream lowercases `contracts[].network/address` (decentraland/lamb2:src/logic/utils.ts:73-82). They are not part of this response. | n/a | | | n/a |
 
 Example: `{"data":[{"name":"Example Provider","description":"Linked wearables","urn":"urn:decentraland:matic:collections-thirdparty:example"}]}`
 
-Data dependency: the third-party registry subgraph, in both trees. The cache is 6 h in both.
+Data dependency: the Polygon registry index on a mirror. Upstream and the optional GraphQL reader use the registry subgraph with a six-hour cache.
 
 ---
 
@@ -266,9 +266,9 @@ Data dependency: the third-party registry subgraph, in both trees. The cache is 
 | `rarity` | First value, lowercased, validated against `SORTED_RARITIES`: 400 `Invalid rarity requested: '<rarity>'.` Items without a rarity (base, third-party) are excluded (items-commons.ts:16-24). | Same message and rule (lambdas_explorer.rs:108-111, 426-430; services/catalyst/shop/src/market/definitions.rs:19-25). | MATCH |
 | `orderBy`/`direction` | `createCombinedSorting`: default `rarity` (DESC). An invalid value gives 400 `Invalid sorting requested: '<sort> <DIR>'. Valid options are '[rarity, name, date] [ASC, DESC]'.` (sorting.ts:148-167). | Same default and message (definitions.rs:31-43; lambdas_explorer.rs:112-119). | MATCH |
 | `collectionType` | `getAll`, default all three. Any value outside the set gives 400 `Invalid collection type. Valid types are: base-wearable, on-chain, third-party.` (lines 23, 177-195). | Same (lambdas_explorer.rs:80-89). | MATCH |
-| `thirdPartyCollectionId` | `getAll`, deduplicated as strings. When present, the third-party leg holds only those providers' wearables (5-part cut; invalid ids dropped; a name no approved provider has is a 502 `Third Party not found: <name>`). Two distinct values naming one provider list its wearables twice. No count limit (lines 106-143, 180-182). No count limit, but each provider is listed once however many values name it (lambdas_explorer.rs `third_party_provider_names`), so the value list cannot multiply the answer. The cache key holds the provider names, not the raw values. The URN check is structural: the network segment is not validated. | DIVERGENT: a provider named by two distinct values is listed once (LI-2) |
+| `thirdPartyCollectionId` | `getAll`, deduplicated as strings. When present, the third-party leg holds only those providers' wearables (5-part cut; invalid ids dropped; a name no approved provider has is a 502 `Third Party not found: <name>`). Two distinct values naming one provider list its wearables twice. No count limit (lines 106-143, 180-182). No count limit, but each provider is listed once however many values name it (lambdas_explorer.rs `third_party_provider_names`), so the value list cannot multiply the answer. The cache key holds the provider names, not the raw values. The URN check validates the registry network before extracting the provider name. | DIVERGENT: a provider named by two distinct values is listed once (LI-2) |
 | `trimmed` | `true` or `1` (lines 183-184). | Same (lambdas_explorer.rs:120, 135). | MATCH |
-| `isSmartWearable` | `true` or `1`: the on-chain leg asks `itemType=smartWearable` (only `smart_wearable_v1`), and **base and third-party are skipped** (lines 75-79, 145-157, 185-186). | Same: the owned copies are kept by their item type (the subgraph `itemType`, else the `shop.items` mirror), and the base and third-party legs are skipped (lambdas_explorer.rs:137, 148-158, 734-756). | MATCH |
+| `isSmartWearable` | `true` or `1`: the on-chain leg asks `itemType=smartWearable` (only `smart_wearable_v1`), and **base and third-party are skipped** (lines 75-79, 145-157, 185-186). | Same: the owned copies are kept by their item type (the `shop.items` mirror's), and the base and third-party legs are skipped (lambdas_explorer.rs:137, 148-158, 734-756). | MATCH |
 | `network` | `ETHEREUM` or `MATIC` (exact case; anything else is ignored). The on-chain leg is limited to that network's item types (`wearable_v1` for ETHEREUM; `wearable_v2`+`smart_wearable_v1` for MATIC), and base and third-party are skipped (lines 187-189; marketplace-api-fetcher.ts:282-297; graph-pagination.ts:35-56). | Same values, item types and skipped legs (lambdas_explorer.rs:121-125, 148-158, 734-756). An owned copy whose item type neither source knows is dropped by either filter. | MATCH |
 | `includeAmount` | `true` or `1`: trimmed elements carry `amount`. Without it, `amount` is absent (lines 190-191, 209-216). | Same, `amount = individualData.length` (lambdas_explorer.rs:136, 569-571). | MATCH |
 
@@ -282,8 +282,8 @@ Validation order. Upstream: pageSize → rarity → sort → collectionType. dcl
 | Success, trimmed | 200 | Upstream elements: `{"entity":{"id":entity.id,"thumbnail":<hash>|absent,"individualData":[...],"metadata":{"id","name","rarity"?,"isSmart":bool,"data":{"category","representations":[{"bodyShapes":[...]}]}}},"amount"?:number}` (decentraland/lamb2:src/logic/utils.ts:84-114) | lines 208-225 | `item_to_trimmed_value` (lambdas_explorer.rs:497-573): the same keys, each left out when the entity has none, `isSmart` from the item type | MATCH (field 1) |
 | Invalid rarity / sort / collectionType / pageSize | 400 | C1 with the messages above | items-commons.ts:18-20; sorting.ts:164-166; explorer-handler.ts:193-195; pagination.ts:12-14 | lambdas_explorer.rs:85-119 | MATCH (messages) |
 | Invalid address | 200 (base wearables), both | — | — | lambdas_explorer.rs `explorer_items` | MATCH (LI-16) |
-| Owned fetch fails | 502 `{"error":"The requested items cannot be fetched right now","message":"Cannot fetch elements for <address>"}` (both) | — | elements-fetcher.ts:272-273 | lambdas_explorer.rs:716-719, 770 | MATCH |
-| Collections subgraph not configured and on-chain requested | dcl-one 503 envelope | — | — | lambdas_explorer.rs:667-671 | dcl-one only |
+| Owned fetch fails | 502 `{"error":"The requested items cannot be fetched right now","message":"Cannot fetch elements for <address>"}` (both) | — | elements-fetcher.ts:272-273 | lambdas_explorer.rs `explorer_items`, `compute_explorer_items` | MATCH |
+| nft index not published (or items mirror without a pass) and on-chain requested | dcl-one 503 envelope (`nft-index`) | — | — | lambdas_explorer.rs `explorer_items` | dcl-one only |
 | Third-party registry fails, no cached value | 502 `Cannot fetch elements for <address>` (both) | — | third-party-providers-storage.ts:51 | third_party.rs `third_party_providers`; lambdas_explorer.rs `explorer_items` | MATCH (LI-10) |
 | A provider's holdings cannot be read (NFT worker transport failure, or an RPC failure on the chain path) | upstream 502 (C3). dcl-one: the same 502 with `NFT_WORKER_BASE_URL`; on the chain path (no worker) that contract's items are left out (logged) and the rest is served | — | elements-fetcher.ts:265-274 | lambdas_explorer.rs `compute_explorer_items`; third_party.rs `fetch_all_third_party_wearables` | MATCH with the worker, which a mirror requires; the island and journey chain path is kept by decision (LI-9) |
 
@@ -295,10 +295,10 @@ Field-level differences:
    - Sources: utils.ts:84-145; lambdas_explorer.rs:497-573.
    - Verdict: MATCH.
 2. **`amount` in trimmed.** Present only with `includeAmount`, as `individualData.length` (`|| 0` upstream), in both. MATCH.
-3. **On-chain `itemType`.** Upstream: the marketplace `itemType`, or the subgraph `itemType` in the fallback, absent if missing. dcl-one: the subgraph `itemType` of the owned copies, else the `shop.items` mirror, and `""` when neither knows it (services/catalyst/chain-index/src/graph.rs:242, 289; lambdas_explorer.rs:197-204, 313-315, 321-333, 481-486). P2.
+3. **On-chain `itemType`.** Upstream: the marketplace `itemType`, or the subgraph `itemType` in the fallback, absent if missing. dcl-one: the `shop.items` mirror's `item_type` of the owned copies (owned_items.rs `owned_copies`; lambdas_explorer.rs `fetch_owned_items`); an escrow grant with no mirrored item has none. P2.
 4. **On-chain `amount`.** Upstream: the marketplace `amount` (`toFiniteNumber(amount, individualData.length)`, marketplace-api-fetcher.ts:160). dcl-one: the count of copies. MATCH for consistent data.
-5. **On-chain `name`/`category`/`rarity`.** Upstream: marketplace or subgraph item metadata. dcl-one: `name`/`category` come from the content entity metadata (with an `i18n[0].text` fallback), and `rarity` from the subgraph item (lambdas_explorer.rs:335-367). Equal when the entity and the subgraph agree.
-6. **Extra on-chain rows.** dcl-one adds active escrow grants from `shop.usage_grants` as owned copies, with `price: ""` and `transferredAt` = grant time (lambdas_explorer.rs:209-229). Upstream has no such source. DIVERGENT (P1, a dcl-one extension).
+5. **On-chain `name`/`category`/`rarity`.** Upstream: marketplace or subgraph item metadata. dcl-one: `name`/`category` come from the content entity metadata (with an `i18n[0].text` fallback), and `rarity` from the mirrored item (lambdas_explorer.rs:335-367). Equal when the entity and the mirror agree.
+6. **Extra on-chain rows.** Where the operator turns `EXPLORER_ESCROW_GRANTS_ENABLED` on, dcl-one adds active escrow grants from `shop.usage_grants` as owned copies, with `price: ""` and `transferredAt` = grant time (lambdas_explorer.rs `fetch_owned_items`). Upstream has no such source. MATCH by default; DIVERGENT (P1, a dcl-one extension) with the opt-in.
 7. **Item without an entity.** Dropped in both (explorer-handler.ts:61-71, 93-103; lambdas_explorer.rs:305-307). MATCH.
 8. **Rarity sort.**
    - Upstream `rarestOptional` treats any non-empty `rarity` string as "has rarity" (rank -1 when unknown) (sorting.ts:38-56).
@@ -324,7 +324,7 @@ Example (non-trimmed, one base element):
 ### Data dependency
 
 - Base wearable entities in the content DB.
-- Both collections subgraphs (on-chain).
+- The nft index published on L1 and L2, and the `shop.items` mirror's pass (on-chain).
 - The `shop.items` mirror (`itemType`).
 - `shop.usage_grants` (dcl-one only).
 - The third-party registry and RPC (§3).
@@ -358,7 +358,7 @@ Upstream: decentraland/lamb2:src/controllers/handlers/explorer-emotes-handler.ts
 
 Field detail: an emote's `category` comes from the subgraph or the marketplace upstream. dcl-one takes it from `metadata.emoteDataADR74.category`, falling back to `emoteDataV0.category`, which v0 emotes do not carry, so the result is `""` (lambdas_explorer.rs:352-358). A v0 emote then fails every `category` filter in dcl-one. P2.
 
-Data dependency: emote entities in the content DB, both collections subgraphs, and `shop.usage_grants` (`category = 'emote'`).
+Data dependency: emote entities in the content DB, the nft index on L2 with the `shop.items` mirror, and `shop.usage_grants` (`category = 'emote'`).
 
 ---
 
@@ -391,7 +391,7 @@ Data dependency: dcl-one needs the `shop.collections` mirror (job `collections-m
 |---|---|---|---|
 | `:owner` | Not validated | Not validated; lowercased for the subgraph | MATCH |
 | `includeDefinitions` | Presence only; `includeDefinitions=false` still enables it (items-by-owner.ts:29-31) | Raw query scan for `includeDefinitions` or `includeDefinitions=` (user_items.rs:390-396). A percent-encoded key (`include%44efinitions`) is not recognized | MATCH (P2 edge) |
-| `collectionId` | `get` (first value). An empty string means on-chain. Otherwise the 5-part cut, which must parse as `blockchain-collection-third-party-name`, else 400 `'collectionId' must be a valid third-party collection URN` (items-by-owner.ts:32-36, 54-63) | First value; empty gives `None`. Structural check, same message (user_items.rs:398-422, 432-436) | MATCH (the network segment is not validated in dcl-one, P2) |
+| `collectionId` | `get` (first value). An empty string means on-chain. Otherwise the 5-part cut, which must parse as `blockchain-collection-third-party-name`, else 400 `'collectionId' must be a valid third-party collection URN` (items-by-owner.ts:32-36, 54-63) | First value; empty gives `None`. Validates the registry network and matches the provider by name, with the same error message (user_items.rs:398-422, 432-436) | MATCH |
 | Pagination | None. A flat array of every item | None | MATCH |
 
 ### Responses
@@ -405,7 +405,7 @@ Data dependency: dcl-one needs the `shop.collections` mirror (job `collections-m
 | Third-party holdings cannot be read | 502 `Cannot fetch elements for <owner>` (both) | | elements-fetcher.ts:265-274 | user_items.rs:438-441; third_party.rs:1060-1063 | MATCH |
 | Bad `collectionId` | 400 | C1, `'collectionId' must be a valid third-party collection URN` | items-by-owner.ts:61-63 | user_items.rs:434-436 | MATCH |
 | Owned fetch fails | 502 `Cannot fetch elements for <owner>` (C3), both | | elements-fetcher.ts:272-273 | user_items.rs `items_by_owner` | MATCH (LI-15) |
-| Subgraph not configured | dcl-one 503 envelope | | | user_items.rs:454-456 | dcl-one only |
+| nft index not published, or items mirror without a pass | dcl-one 503 envelope (`nft-index`) | | | user_items.rs `items_by_owner` | dcl-one only |
 
 Example: `[{"urn":"urn:decentraland:matic:collections-v2:0x00000000000000000000000000000000000000c1:0","amount":2}]`. The existing fixture `services/catalyst/shop/src/market/fixtures/collections-wearables-by-owner-200-unknown.json` (`[]` for an unknown owner) agrees with upstream. It is hand-authored, not captured.
 
@@ -422,11 +422,11 @@ Data dependency: as in §1. For `collectionId`, as in §3.
 | `collectionId` | `getAll`, lowercased | `qs_get_array`, lowercased | MATCH |
 | `wearableId` | `getAll`, lowercased | Same | MATCH |
 | `textSearch` | `get`, lowercased; an empty string means absent; a value shorter than 3 (UTF-16 length) gives 400 `The text search must be at least 3 characters long` | Same message, but counts **chars** (lambdas_catalog.rs:353-357) | MATCH (P2 for astral characters) |
-| No filter | 400 `You must use one of the filters: 'textSearch', 'collectionId' or 'wearableId'` | Same message. With `LAMBDAS_CATALOG_EXTENSIONS_ENABLED` (on except under the mirror posture) any **extended** filter (`collectionType`, `category`, `rarity`, `name`) also satisfies the requirement (lambdas_catalog.rs `parse_catalog_query`) | MATCH under `NODE_POSTURE=mirror` (LI-22) |
+| No filter | 400 `You must use one of the filters: 'textSearch', 'collectionId' or 'wearableId'` | Same message. With `LAMBDAS_CATALOG_EXTENSIONS_ENABLED` (opt-in) any **extended** filter (`collectionType`, `category`, `rarity`, `name`) also satisfies the requirement (lambdas_catalog.rs `parse_catalog_query`) | MATCH by default (LI-22) |
 | More than 500 ids | 400 `You can't ask for more than 500 wearables` / `You can't filter for more than 500 collection ids` | Same | MATCH |
 | `limit` | `parseInt`; NaN, ≤0 or >500 give 500 (items-catalog.ts:88-97) | `parse_int_js`, same clamp (lambdas_catalog.rs `clamp_limit`) | MATCH (LI-26) |
 | `lastId` | `get`, lowercased; empty means absent | Same (lambdas_catalog.rs:381) | MATCH |
-| `collectionType`, `category`, `rarity`, `name`, `orderBy`, `direction` | **Ignored** | Ignored under `NODE_POSTURE=mirror` (`LAMBDAS_CATALOG_EXTENSIONS_ENABLED=false`). With the flag on: parsed and validated; `collectionType=xyz` gives 400 `Invalid collectionType 'xyz'. ...`; an invalid rarity or sort gives 400; `orderBy` without exactly one `collectionType` gives 400 (lambdas_catalog.rs `parse_extended_filters`) | MATCH under the mirror posture (LI-22); a dcl-one extension elsewhere |
+| `collectionType`, `category`, `rarity`, `name`, `orderBy`, `direction` | **Ignored** | Ignored by default (`LAMBDAS_CATALOG_EXTENSIONS_ENABLED=false`). With the flag on: parsed and validated; `collectionType=xyz` gives 400 `Invalid collectionType 'xyz'. ...`; an invalid rarity or sort gives 400; `orderBy` without exactly one `collectionType` gives 400 (lambdas_catalog.rs `parse_extended_filters`) | MATCH by default (LI-22) |
 
 ### Responses
 
@@ -498,7 +498,7 @@ Data dependency: the `shop.items` mirror (or the collections subgraphs) and emot
 
 - Status: MATCH, no work.
 - Upstream (decentraland/lamb2:src/controllers/handlers/explorer-handler.ts:145-157, 185-189; decentraland/lamb2:src/adapters/marketplace-api-fetcher.ts:282-297; decentraland/lamb2:src/logic/fetch-elements/graph-pagination.ts:35-56): `isSmartWearable=true|1` keeps `smart_wearable_v1`; `network=ETHEREUM` keeps `wearable_v1`, `network=MATIC` keeps `wearable_v2`+`smart_wearable_v1`; either drops the base and third-party legs; any other `network` value is ignored.
-- dcl-one: the same rule on the owned copies' item type, read from the subgraph `itemType` (services/catalyst/chain-index/src/graph.rs:242, 289) or the `shop.items` mirror, with both params in the cache key (services/catalyst/shop/src/market/lambdas_explorer.rs:121-125, 148-158, 677-686, 734-756).
+- dcl-one: the same rule on the owned copies' item type, read from the `shop.items` mirror, with both params in the cache key (services/catalyst/shop/src/market/lambdas_explorer.rs:121-125, 148-158, 677-686, 734-756).
 - Severity: none (closed).
 
 **LI-2 (P2). `/explorer/:address/wearables`: `thirdPartyCollectionId` network segment.**
@@ -527,16 +527,16 @@ Data dependency: the `shop.items` mirror (or the collections subgraphs) and emot
 
 **LI-5 (no work). Explorer on-chain items include escrow grants only where `EXPLORER_ESCROW_GRANTS_ENABLED` is on.**
 
-- Status: MATCH, no work (under `NODE_POSTURE=mirror`).
+- Status: MATCH, no work (by default).
 - Upstream reports only chain-owned tokens (explorer-handler.ts:74-104).
-- dcl-one: `EXPLORER_ESCROW_GRANTS_ENABLED` gates the `shop.usage_grants` rows in `fetch_owned_items` (services/catalyst/shop/src/market/lambdas_explorer.rs). The mirror posture sets it `false`; island, journey and a node without a posture keep the dcl-one extension on (services/catalyst/config/src/posture.rs).
+- dcl-one: `EXPLORER_ESCROW_GRANTS_ENABLED` gates the `shop.usage_grants` rows in `fetch_owned_items` (services/catalyst/shop/src/market/lambdas_explorer.rs). It defaults to `false` and every posture sets it `false`, so the dcl-one extension runs only on an operator's opt-in (services/catalyst/config/src/shop.rs, services/catalyst/config/src/posture.rs).
 - Severity: none (closed).
 
 **LI-6 (no work). Explorer on-chain `itemType` is left out when neither the subgraph nor the `shop.items` mirror knows it.**
 
 - Status: MATCH, no work.
 - Upstream: the source `itemType` (`wearable_v1|wearable_v2|smart_wearable_v1`), absent if unknown (decentraland/lamb2:src/adapters/marketplace-api-fetcher.ts:168; decentraland/lamb2:src/logic/fetch-elements/fetch-items.ts:184).
-- dcl-one: the subgraph `itemType`, then the mirror's; with neither, `item_to_value` leaves the key out (services/catalyst/shop/src/market/lambdas_explorer.rs).
+- dcl-one: the mirror's `item_type`; without it (an escrow grant of an item the mirror does not hold), `item_to_value` leaves the key out (services/catalyst/shop/src/market/lambdas_explorer.rs).
 - Severity: none (closed).
 
 **LI-7 (no work). `/users/:address/{wearables,emotes}`: `category` and `rarity` filters are lowercased.**
@@ -558,7 +558,7 @@ Data dependency: the `shop.items` mirror (or the collections subgraphs) and emot
 - Status: MATCH, no work (by decision: the worker is required under `NODE_POSTURE=mirror`).
 - Expected: every token the wallet holds on each provider contract, on every `ContractNetwork` (`mainnet`, `sepolia`, `matic`, `amoy`), as the NFT worker returns it, matched against mappings with `includesNft`; a non-2xx worker answer is nothing for that network, a thrown request a 502 `FetcherError` (decentraland/lamb2:src/adapters/alchemy-nft-fetcher.ts:16-54; decentraland/lamb2:src/logic/fetch-elements/fetch-third-party-wearables.ts:80-139; decentraland/lamb2:src/adapters/elements-fetcher.ts:265-274).
 - dcl-one with `NFT_WORKER_BASE_URL` asks the worker the same way and answers the same, the explorer included: a worker read that fails is the 502 there too (`fetch_third_party_items` with `OnFailure::Fail` in services/catalyst/shop/src/market/lambdas_explorer.rs).
-- `NODE_POSTURE=mirror`, the posture that replaces a Catalyst and serves these routes publicly, sets it to the same worker and refuses to start when it is blanked (`refuse_chain_read_third_party` in services/catalyst/config/src/posture.rs; pinned by `a_mirror_refuses_a_blank_nft_worker`).
+- `NODE_POSTURE=mirror`, the posture that replaces a Catalyst and serves these routes publicly, sets it to the same worker and refuses to start when it is blanked (`refuse_blank_nft_worker` in services/catalyst/config/src/posture.rs; pinned by `a_mirror_refuses_a_blank_nft_worker`).
 - Kept by decision: island and journey, and a node with no posture, still read the chain without a worker (services/catalyst/shop/src/market/third_party.rs `owned_via_rpc`), which lamb2 has no twin of. There an `any` or wide-`range` mapping confirms only its explicitly mapped ids, an enumerable ERC-721 balance above 50,000 is a 502, a network with no RPC endpoint reports nothing owned, and the explorer leaves out a contract it cannot read (`OnFailure::Skip`).
 - Severity: none (closed).
 
@@ -566,7 +566,7 @@ Data dependency: the `shop.items` mirror (or the collections subgraphs) and emot
 
 - Status: MATCH, no work.
 - Upstream (decentraland/lamb2:src/logic/third-party-providers-storage.ts:33-52; decentraland/lamb2:src/adapters/elements-fetcher.ts:265-274): a failed registry read serves the cached list however old; with none, the listings, the explorer and `/collections/*-by-owner/:owner?collectionId=` answer 502 `Cannot fetch elements for <address>` and `/third-party-integrations` 502 `Cannot fetch third party providers`.
-- dcl-one: the same (`third_party_providers`, `fetch_all_third_party_wearables`, `third_party_integrations` in services/catalyst/shop/src/market/third_party.rs; `TtlMap::get_stale` in services/catalyst/shared/src/cache.rs). With no registry URL configured (possible only outside `NODE_POSTURE=mirror`) the routes answer an empty list.
+- dcl-one uses the subgraph when one is configured and the registry index is disabled or unavailable. When both reads fail, it keeps the same 502 envelope. The subgraph reader can serve a cached list after an upstream failure. The routes answer an empty list when both sources are disabled.
 - Severity: none (closed).
 
 **LI-11 (no work). Third-party routes have no `pageSize` maximum.**
@@ -617,19 +617,18 @@ Data dependency: the `shop.items` mirror (or the collections subgraphs) and emot
 - dcl-one: the same. A string that is not an Ethereum address owns nothing and is answered without a reader call, after the query is validated: `owned_items_response` in services/catalyst/shop/src/market/user_items.rs, `fetch_all_third_party_wearables` in services/catalyst/shop/src/market/third_party.rs (a `:collectionId` naming no provider is still the 502), and `explorer_items` in services/catalyst/shop/src/market/lambdas_explorer.rs. `/lambdas/users/{address}/names` (lambdas-land) keeps its 400.
 - Severity: none (closed).
 
-**LI-17 (no work). Owned copies walk every page.**
+**LI-17 (no work). Owned copies are read whole.**
 
 - Status: MATCH, no work.
 - Upstream: the fallback walks every page (decentraland/lamb2:src/logic/fetch-elements/fetch-elements.ts:13-46).
-- dcl-one: `walk_owned_pages` in services/catalyst/chain-index/src/graph.rs reads until a short page. Its only bound is a runaway guard of 1,000 pages (1,000,000 tokens) per network, past which the read fails with lamb2's 502 instead of a truncated `totalAmount`.
-- Request cost: one subgraph request per 1,000 tokens an owner holds on a network (`n / 1000 + 1`), sequential per network, the two networks in parallel, memoized 30 s per owner and category. A few hundred KiB per page.
+- dcl-one: one query of the nft index per owner and category (services/catalyst/shop/src/market/owned_items.rs `owned_copies`), no page or token bound, memoized 30 s. A 30,000-token owner reads in about 0.1 s on a 3.5M-token index (DATABASE.md "Wearable and emote ownership workload").
 - Severity: none (closed).
 
 **LI-18 (no work). Group and `individualData` order of `/users/:address/{wearables,emotes}`.**
 
 - Status: MATCH, no work.
 - Upstream: the marketplace API's order. The 2026-11-04 captures (`captures/lambdas-items/LI-18-lambdas-wearables.json`, `LI-18-marketplace-api-wearables-grouped.json`) show groups rarest first, then by urn, and each `individualData` newest transfer first; lamb2 passes both through unchanged.
-- dcl-one: without `orderBy`, `validate_and_sort` (services/catalyst/shop/src/market/user_items.rs) puts the groups rarest first, then by urn (`localeCompare`); the copies stay newest transfer first (services/catalyst/chain-index/src/graph.rs). Copies with the same transfer time are ordered by `tokenId` then `price`; the capture does not show the marketplace's tie order.
+- dcl-one: without `orderBy`, `validate_and_sort` (services/catalyst/shop/src/market/user_items.rs) puts the groups rarest first, then by urn (`localeCompare`); the copies stay newest transfer first (services/catalyst/shop/src/market/owned_items.rs `sort_copies`). Copies with the same transfer time are ordered by `tokenId` then `price`; the capture does not show the marketplace's tie order.
 - The subgraph fallback (`id` ascending) is not followed: production answers from the marketplace.
 - Severity: none (closed).
 
@@ -654,11 +653,11 @@ Data dependency: the `shop.items` mirror (or the collections subgraphs) and emot
 - dcl-one: the items mirror copies `Item.searchText` into `shop.items.search_text` (step `schemas/migrations/0028_shop_items_search_text.sql`; services/catalyst/shop/src/market/mirrors/items.rs), and `fetch_item_urns` (services/catalyst/shop/src/market/lambdas_catalog.rs) matches `COALESCE(search_text, lower(name)) LIKE '%<textSearch>%'`, case-sensitive like `_contains`. A row the mirror has not refilled since the step falls back to its lowercased name until the next pass.
 - Severity: none (closed).
 
-**LI-22 (no work). `/collections/wearables`: the extended filters follow the posture.**
+**LI-22 (no work). `/collections/wearables`: the extended filters are opt-in.**
 
-- Status: MATCH, no work (under `NODE_POSTURE=mirror`).
+- Status: MATCH by default.
 - Upstream: `collectionType`, `category`, `rarity`, `name`, `orderBy` and `direction` are ignored, and alone they do not satisfy "one of the filters" (decentraland/lamb2:src/logic/items-catalog.ts:14-43).
-- dcl-one: `LAMBDAS_CATALOG_EXTENSIONS_ENABLED` gates them (`wearables_query` in services/catalyst/shop/src/market/lambdas_catalog.rs). The mirror posture sets it `false`, and the query is lamb2's; island, journey and a node without a posture keep the dcl-one extension (services/catalyst/config/src/posture.rs). No dcl-one app calls this route.
+- dcl-one: `LAMBDAS_CATALOG_EXTENSIONS_ENABLED` gates them (`wearables_query` in services/catalyst/shop/src/market/lambdas_catalog.rs). Every posture and standalone nodes default to `false`. Operators can opt in by setting it to `true` (services/catalyst/config/src/posture.rs).
 - Severity: none (closed).
 
 **LI-23 (no work). Catalog ordering uses `localeCompare`.**
@@ -738,8 +737,8 @@ Data dependency: the `shop.items` mirror (or the collections subgraphs) and emot
 
 - `GET /lambdas/collections`: alias of `/lambdas/nfts/collections` (services/catalyst/shop/src/market/mod.rs:941-944).
 - `GET /explorer/{address}/wearables` and `GET /explorer/{address}/emotes` at the root, besides the `/lambdas` paths (mod.rs:967-974).
-- `/collections/wearables` extended filters, where `LAMBDAS_CATALOG_EXTENSIONS_ENABLED` is on (off under the mirror posture): `collectionType`, `category`, `rarity`, `name`, `orderBy`, `direction`, with their 400 messages and `filters` echo keys `collectionTypes`, `categories`, `rarity`, `name`, `orderBy`, `direction` (services/catalyst/shop/src/market/lambdas_catalog.rs:161-264).
-- Explorer escrow grants (`shop.usage_grants`) merged into the on-chain leg when `EXPLORER_ESCROW_GRANTS_ENABLED` is on (off under the mirror posture) (services/catalyst/shop/src/market/lambdas_explorer.rs `fetch_owned_items`).
+- `/collections/wearables` extended filters, where `LAMBDAS_CATALOG_EXTENSIONS_ENABLED` is enabled explicitly: `collectionType`, `category`, `rarity`, `name`, `orderBy`, `direction`, with their 400 messages and `filters` echo keys `collectionTypes`, `categories`, `rarity`, `name`, `orderBy`, `direction` (services/catalyst/shop/src/market/lambdas_catalog.rs:161-264).
+- Explorer escrow grants (`shop.usage_grants`) merged into the on-chain leg when the operator turns `EXPLORER_ESCROW_GRANTS_ENABLED` on (off by default and under every posture) (services/catalyst/shop/src/market/lambdas_explorer.rs `fetch_owned_items`).
 - `x-as-of` and `x-stale-after-secs` headers on mirror-backed answers (services/catalyst/shop/src/market/mirrors/mod.rs `stamp_copies`).
 - The unavailable envelope (`source`, `configure`, `Retry-After: 60`) when a reader or mirror is not configured or not ready (services/catalyst/chain-index/src/source.rs:88-103).
 - The marketplace-server routes in `shop/src/market/collections.rs` and `nft_reads.rs` (`/v1/collections`, `/v1/nfts`, …, under `/shop-api` and `/marketplace-api`) are outside the lambdas surface. They are not compared here.

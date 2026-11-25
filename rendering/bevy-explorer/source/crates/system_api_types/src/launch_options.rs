@@ -61,6 +61,11 @@ pub struct LaunchOptions {
     #[arg(long, value_name = "true|false", help_heading = SETTINGS)]
     pub log_fps: Option<bool>,
 
+    /// `;`-separated portable/startup scene sources; absent = `basiccontroller.dcl.eth`
+    /// (DEFAULT_PORTABLES)
+    #[arg(long, value_name = "a;b", help_heading = SYSTEM_SCENES)]
+    pub portables: Option<String>,
+
     /// Override the content server only (normally a function of the realm)
     #[arg(long, value_name = "url", help_heading = DEBUG)]
     pub content_server: Option<String>,
@@ -72,6 +77,18 @@ pub struct LaunchOptions {
     pub services: ServiceOverrides,
 }
 
+impl LaunchOptions {
+    /// The startup portable sources: `portables`, else [`DEFAULT_PORTABLES`].
+    ///
+    /// [`DEFAULT_PORTABLES`]: crate::web_params::DEFAULT_PORTABLES
+    pub fn portable_sources(&self) -> impl Iterator<Item = &str> {
+        self.portables
+            .as_deref()
+            .unwrap_or(crate::web_params::DEFAULT_PORTABLES)
+            .split(';')
+    }
+}
+
 /// The options only a rendering client (native, web) has a use for.
 #[derive(clap::Args, Deserialize, Serialize, Default, Clone, PartialEq, Debug)]
 #[serde(rename_all = "camelCase", default)]
@@ -81,11 +98,6 @@ pub struct ClientOptions {
     /// HUD
     #[arg(long, value_name = "scene|none", help_heading = SYSTEM_SCENES)]
     pub system_scene: Option<String>,
-
-    /// `;`-separated portable/startup scene sources; absent = `basiccontroller.dcl.eth`
-    /// (DEFAULT_PORTABLES)
-    #[arg(long, value_name = "a;b", help_heading = SYSTEM_SCENES)]
-    pub portables: Option<String>,
 
     /// Cap per-frame gpu uploads; absent = the saved setting (10 MB by default), 0 = unlimited
     #[arg(long, value_name = "bytes", help_heading = SETTINGS)]
@@ -137,6 +149,13 @@ pub struct ClientOptions {
     #[arg(long, value_name = "uuid", help_heading = HOST)]
     pub campaign_anon_user_id: Option<String>,
 
+    /// Override the remote feature flags, a comma list: `name` forces a flag on, `name:variant`
+    /// on with that variant, `-name` off; `-*` ignores the service entirely (nothing is fetched
+    /// and every flag not forced on is off). Names the client does not read are dropped. A link
+    /// may set it: a flag only hides or shows a feature, never a permission
+    #[arg(long, value_name = "list", help_heading = DEBUG)]
+    pub ff: Option<String>,
+
     /// A `decentraland://` link as the scheme handler or the launcher passes it: `realm`,
     /// `position` and `dclenv` fill the matching launch options (main.rs)
     #[arg(hide = true, value_name = "decentraland://…")]
@@ -185,12 +204,13 @@ impl EngineRunOptions {
             &mut self.launch.position,
             &mut self.launch.content_server,
             &mut self.launch.base_domain,
+            &mut self.launch.portables,
             &mut self.client.system_scene,
-            &mut self.client.portables,
             &mut self.client.imposter_source,
             &mut self.client.bevy_variants,
             &mut self.client.session_id,
             &mut self.client.campaign_anon_user_id,
+            &mut self.client.ff,
         ] {
             if value.as_deref() == Some("") {
                 *value = None;

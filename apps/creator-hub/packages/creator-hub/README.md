@@ -52,31 +52,31 @@ See the [Scripts](#scripts) section below for building from source.
 **Install dependencies**
 
 ```bash
-npm install
+pnpm install
 ```
 
 **Start development**
 
 ```bash
-npm start
+pnpm start
 ```
 
 - **Build webapp**
 
 ```bash
-npm run build
+pnpm run build
 ```
 
 - **Compile executable** (`.exe` in windows, `.app` in MacOS)
 
 ```bash
-npm run compile
+pnpm run compile
 ```
 
 - **Compile installer** (`.dmg` on MacOS)
 
 ```bash
-npm run compile:installer
+pnpm run compile:installer
 ```
 
 ### Code Architecture
@@ -89,7 +89,7 @@ There are three packages each compiled individually:
 
 ### Debugging
 
-While developing locally you will get the Browser's logs on the DevTools and the NodeJS logs on the console running the `npm start`.
+While developing locally you will get the Browser's logs on the DevTools and the NodeJS logs on the console running the `pnpm start`.
 
 When debugging the production build (executables) you can open the DevTools via View > DevTools and the NodeJS logs are available on a logs file.
 
@@ -123,14 +123,16 @@ On Windows you can also create a shortcut to the app with the parameter added au
 open /Applications/Decentraland\ Creator\ Hub.app --args --env=dev
 ```
 
-The app will use the specified environment APIs. If no `--env` argument is provided, the app will use the default environment (prod). Valid values for `--env` are `dev` and `prod`.
+The app will use the specified environment APIs. If no `--env` argument is provided, the app will use the default environment (prod). Valid values for `--env` are `dev`, `dcl-one` and `prod`.
+
+`--env=dcl-one` behaves like production (Ethereum mainnet, production contracts and subgraphs) but points the Decentraland services at the `dcl.dev` gateway (`https://dcl.dev/<service>`). Its config lives in `renderer/src/config/env/dcl-one.json`.
 
 On development watch mode, you can also pass the `--env` argument when starting the app. In this case, the default environment is `dev`, but you can override it to `prod` if needed:
 
 ```bash
-npm start -- -- --env=prod
+pnpm start --env=prod
 # or
-npm run watch -- --env=prod
+pnpm run watch --env=prod
 ```
 
 ## Installation Process

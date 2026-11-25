@@ -1,9 +1,14 @@
 const { execSync } = require('child_process');
 const path = require('path');
 
-// On PRs (dry-run) skip the slow .dmg build and ship only the unsigned .zip; electron-builder
-// already skips code signing on PRs, so this keeps a downloadable per-PR build for a fraction
-// of the time. Release builds (not dry-run) still produce the signed, notarized dmg + zip.
+// electron-builder lists the app's dependencies by Node's own lookup ("traversal"); every process it starts inherits this.
+process.env.npm_config_user_agent = 'traversal';
+
+// Every build but a release is a dry run: it skips the slow .dmg build and ships only the unsigned
+// .zip, so a pull request gets a downloadable build for a fraction of the time. electron-builder
+// skips code signing on a pull request by itself; `identity: null` makes it skip on the other dry
+// runs (main, manual), where it would stop on the empty certificate. Release builds (not dry-run)
+// still produce the signed, notarized dmg + zip.
 const isDryRun = process.env.DRY_RUN === 'true';
 
 const config = {
@@ -25,6 +30,13 @@ const config = {
     'main/dist/**',
     'preload/dist/**',
     'renderer/dist/**',
+    // Source maps are for the build and for Sentry, not for the packed app. No module is loaded
+    // from a TypeScript source, and nothing imports the MCP SDK examples. For modules the packer
+    // reads only the negated patterns, so a positive pattern cannot bring a file back. npm and
+    // node-pty are copied whole: scene tooling runs from them on disk.
+    '!{main,preload,renderer}/dist/**/*.map',
+    '!node_modules/!(npm|node-pty)/**/*.{map,tsbuildinfo,ts,tsx,mts,cts}',
+    '!node_modules/@modelcontextprotocol/sdk/dist/{cjs,esm}/examples{,/**/*}',
     {
       from: 'node_modules/npm',
       to: 'node_modules/npm',
@@ -41,6 +53,8 @@ const config = {
   // The optimizer toolchain (sharp, gltf-transform, …) is NOT packaged: it is downloaded on
   // first use into userData (main/src/modules/optimizer/tools.ts).
   asarUnpack: ['node_modules/npm/**/*', 'node_modules/node-pty/**/*'],
+  // The languages the renderer has translations for (renderer/src/modules/store/translation/locales).
+  electronLanguages: ['en', 'es', 'zh'],
   extraResources: [
     {
       from: 'devtools-frontend',
@@ -48,16 +62,30 @@ const config = {
       filter: ['**/*'],
     },
     // Real Node.js binary, fetched by the beforePack hook. Scene tooling is spawned on this
-    // instead of Electron so the multiplayer server gets a runtime whose ABI matches the
-    // native builds it depends on. TEMPORARY: remove with the Bevy migration.
+    // instead of Electron: the optimizer's native tools ship builds for Node's ABIs only.
     {
       from: 'node-bin',
       to: 'node-bin',
       filter: ['**/*'],
     },
   ],
+  // The AppImage with this runtime needs no libfuse2, which Ubuntu does not install, and its
+  // launcher starts the app without the Chromium sandbox where the system forbids it.
+  toolsets: {
+    appimage: '1.0.3',
+  },
+  // The AppImage runs on any distribution, and the deb installs on Debian and Ubuntu. Linux has
+  // no code signing step.
+  // Keep AppImage before deb, and before any other package target: a package target writes
+  // resources/package-type into the unpacked app that the AppImage is made from, and an AppImage
+  // with that file updates itself as that package (creator-hub-desktop.yml checks it).
   linux: {
-    target: 'deb',
+    target: [
+      { target: 'AppImage', arch: ['x64'] },
+      { target: 'deb', arch: ['x64'] },
+    ],
+    icon: 'buildResources/icon.png',
+    category: 'Development',
   },
   productName: 'Decentraland Creator Hub',
   artifactName: '${productName}-${version}-${os}-${arch}.${ext}',
@@ -113,6 +141,17 @@ const config = {
     writeUpdateInfo: false,
   },
   mac: {
+    // Electron 45 does not start on macOS 12. With this value macOS refuses to open the app there and says why.
+    minimumSystemVersion: '13.0',
+    ...(isDryRun ? { identity: null } : {}),
+    // The defaults plus microphone access, which the hardened runtime needs for the session
+    // recorder; the usage string is what macOS shows when it asks the user.
+    entitlements: path.join(__dirname, 'buildResources', 'entitlements.mac.plist'),
+    entitlementsInherit: path.join(__dirname, 'buildResources', 'entitlements.mac.plist'),
+    extendInfo: {
+      NSMicrophoneUsageDescription:
+        'Creator Hub records your voice only while you press Record in the editor, so the AI assistant can follow what you say.',
+    },
     target: isDryRun
       ? [
           { target: 'zip', arch: 'arm64' },

@@ -37,7 +37,6 @@ uuid.workspace = true
 tokio-util.workspace = true
 dashmap.workspace = true
 hashlink.workspace = true
-dragonbox_ecma.workspace = true
 parking_lot.workspace = true
 hex.workspace = true
 sha2.workspace = true
@@ -49,7 +48,7 @@ v8.workspace = true
 aes-gcm.workspace = true
 rand.workspace = true
 toml.workspace = true
-metrics.workspace = true
+dcl-metrics.workspace = true
 multer.workspace = true
 ts-rs = { workspace = true, optional = true }
 
@@ -66,7 +65,7 @@ catalyst-land-authz = { path = "../land-authz", features = ["test-support"] }
 catalyst-content = { path = "../content", features = ["test-support"] }
 catalyst-explore = { path = "../explore", features = ["test-support"] }
 catalyst-comms = { path = "../comms", features = ["test-support"] }
-catalyst-db = { path = "../db", features = ["scratch"] }
+catalyst-db = { path = "../db", features = ["test-support"] }
 tokio = { workspace = true, features = ["test-util"] }
 tower = { version = "0.5", features = ["util"] }
 alloy = { version = "2", default-features = false, features = ["std", "signer-local"] }

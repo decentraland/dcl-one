@@ -1,0 +1,94 @@
+/* A notification category, as decentraland.org's notification accordion: a translucent black panel
+ * with a soft white glow on hover, the category icon and name, and the types once opened. The design
+ * system has no accordion yet. The source's header hover (white at 4%) has no token; the 10% hover
+ * token stands in for it. */
+.root {
+  overflow: hidden;
+  box-sizing: border-box;
+  width: 100%;
+  border-radius: var(--dcl-radius-md);
+  background: var(--dcl-transparencies-black-20);
+  transition: box-shadow 0.2s ease;
+}
+
+@media (hover: hover) {
+  .root:hover {
+    box-shadow: 0 2px 12px 12px var(--dcl-transparencies-white-20);
+  }
+
+  .header:hover {
+    background: var(--dcl-bg-hover);
+  }
+}
+
+.heading {
+  margin: 0;
+}
+
+.header {
+  composes: text626f64792f6d64 from '@dcl/one-ui/text-styles.module.css';
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--dcl-space-8);
+  box-sizing: border-box;
+  width: 100%;
+  padding: var(--dcl-space-16);
+  border: 0;
+  background: transparent;
+  color: var(--dcl-text-primary);
+  font-weight: 500;
+  text-align: left;
+  cursor: pointer;
+  transition: background 0.2s ease;
+}
+
+.header:focus-visible {
+  outline: 2px solid var(--dcl-transparencies-white-60);
+  outline-offset: -2px;
+}
+
+.label {
+  display: flex;
+  align-items: center;
+  gap: var(--dcl-space-12);
+  min-width: 0;
+}
+
+.icon,
+.chevron {
+  flex-shrink: 0;
+  color: var(--dcl-text-secondary);
+}
+
+.chevron {
+  transition: transform 0.2s ease;
+}
+
+.header[aria-expanded='true'] .chevron {
+  transform: rotate(180deg);
+}
+
+.content {
+  padding: 0 var(--dcl-space-16) var(--dcl-space-8);
+}
+
+.types {
+  display: flex;
+  flex-direction: column;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.typeSwitch {
+  width: 100%;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .root,
+  .header,
+  .chevron {
+    transition: none;
+  }
+}

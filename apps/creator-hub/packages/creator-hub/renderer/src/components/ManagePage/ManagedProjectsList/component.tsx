@@ -1,14 +1,15 @@
 import React, { useCallback, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
-import { Box, Button as DCLButton } from 'decentraland-ui2';
+import { useNavigate } from 'react-router';
+import Button from '@ui/atoms/Button';
 import { useSnackbar } from '/@/hooks/useSnackbar';
 import { t } from '/@/modules/store/translation/utils';
 import { type ManagedProject } from '/shared/types/manage';
-import { Grid } from '../Grid.styled';
 import { PlaceCard } from '../PlaceCard';
 import { UnpublishWorldModal } from './UnpublishWorldModal';
 import { toWorldCard } from './worldCard';
 import { getWorldMenuOptions } from './worldMenu';
+
+import grid from '../Grid.module.css';
 import './styles.css';
 
 type Props = {
@@ -30,7 +31,7 @@ const ManagedProjectsList: React.FC<Props> = React.memo(props => {
 
   return (
     <div className="ManagedProjectsList">
-      <Grid>
+      <div className={grid.grid}>
         {projects.map(project => (
           <PlaceCard
             key={project.id}
@@ -42,17 +43,19 @@ const ManagedProjectsList: React.FC<Props> = React.memo(props => {
             onViewScenes={handleViewScenes}
           />
         ))}
-      </Grid>
+      </div>
       {hasMore && (
-        <Box className="LoadMoreContainer">
-          <DCLButton
+        <div className="LoadMoreContainer">
+          <Button
+            className="LoadMore"
+            variant="text"
+            tone="neutral"
             disabled={isLoading}
             onClick={onLoadMore}
-            color="secondary"
           >
             {t('manage.load_more')}
-          </DCLButton>
-        </Box>
+          </Button>
+        </div>
       )}
 
       <UnpublishWorldModal

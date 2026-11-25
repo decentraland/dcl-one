@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { RawNode } from '../ir/raw-components.js'
 import type { ColorResolver } from './colors.js'
 import { buildView, type ViewEnv } from './views.js'
@@ -41,59 +41,91 @@ describe('when an auto-layout frame distributes its children with space-between'
     }
   })
 
-  it('should drop the stale item spacing of a row so the trailing child stays inside the frame', () => {
-    const view = buildView(bar({}, [logo, signIn]), env)
-
-    expect(decl(view, 'justify-content')).toBe('space-between')
-    expect(decl(view, 'gap')).toBeUndefined()
+  afterEach(() => {
+    vi.resetAllMocks()
   })
 
-  it('should drop the stale item spacing of a column', () => {
-    const view = buildView(bar({ mode: 'VERTICAL' }, [logo, signIn]), env)
+  describe('and the frame is a row', () => {
+    let view: View
 
-    expect(decl(view, 'flex-direction')).toBe('column')
-    expect(decl(view, 'gap')).toBeUndefined()
+    beforeEach(() => {
+      view = buildView(bar({}, [logo, signIn]), env)
+    })
+
+    it('should distribute the children with space-between', () => {
+      expect(decl(view, 'justify-content')).toBe('space-between')
+    })
+
+    it('should drop the stale item spacing so the trailing child stays inside the frame', () => {
+      expect(decl(view, 'gap')).toBeUndefined()
+    })
   })
 
-  it('should not overlap the children when the stored spacing is negative', () => {
-    const view = buildView(bar({ gap: -8 }, [logo, signIn]), env)
+  describe('and the frame is a column', () => {
+    let view: View
 
-    expect(view.children?.map((child) => decl(child, 'margin-left'))).toEqual([
-      undefined,
-      undefined
-    ])
+    beforeEach(() => {
+      view = buildView(bar({ mode: 'VERTICAL' }, [logo, signIn]), env)
+    })
+
+    it('should lay the children out as a column', () => {
+      expect(decl(view, 'flex-direction')).toBe('column')
+    })
+
+    it('should drop the stale item spacing of a column', () => {
+      expect(decl(view, 'gap')).toBeUndefined()
+    })
   })
 
-  it('should still overlap the children of a packed frame with negative spacing', () => {
-    const view = buildView(bar({ main: 'MIN', gap: -8 }, [logo, signIn]), env)
+  describe('and the stored spacing is negative', () => {
+    it('should not overlap the children', () => {
+      const view = buildView(bar({ gap: -8 }, [logo, signIn]), env)
 
-    expect(view.children?.map((child) => decl(child, 'margin-left'))).toEqual([
-      undefined,
-      'calc(var(--dcl-space-8) * -1)'
-    ])
+      expect(view.children?.map((child) => decl(child, 'margin-left'))).toEqual([
+        undefined,
+        undefined
+      ])
+    })
   })
 
-  it('should keep the gap of a packed frame whose cross axis is not space-between', () => {
-    const view = buildView(bar({ main: 'MIN', cross: 'CENTER', gap: 8 }, [logo, signIn]), env)
+  describe('and the frame is packed instead', () => {
+    describe('and its spacing is negative', () => {
+      it('should still overlap the children', () => {
+        const view = buildView(bar({ main: 'MIN', gap: -8 }, [logo, signIn]), env)
 
-    expect(decl(view, 'gap')).toBe('var(--dcl-space-8)')
+        expect(view.children?.map((child) => decl(child, 'margin-left'))).toEqual([
+          undefined,
+          'calc(var(--dcl-space-8) * -1)'
+        ])
+      })
+    })
+
+    describe('and its cross axis is not space-between', () => {
+      it('should keep the gap', () => {
+        const view = buildView(bar({ main: 'MIN', cross: 'CENTER', gap: 8 }, [logo, signIn]), env)
+
+        expect(decl(view, 'gap')).toBe('var(--dcl-space-8)')
+      })
+    })
   })
 
   // Wrapped track spacing is counterAxisSpacing, which the capture does not record yet.
-  it('should leave a wrapped space-between frame as it was', () => {
-    const view = buildView(bar({ gap: 8, wrap: true }, [logo, signIn]), env)
+  describe('and the frame wraps', () => {
+    it('should leave the frame as it was', () => {
+      const view = buildView(bar({ gap: 8, wrap: true }, [logo, signIn]), env)
 
-    expect(view.css.decls).toEqual([
-      ['display', 'flex'],
-      ['box-sizing', 'border-box'],
-      ['flex-direction', 'row'],
-      ['justify-content', 'space-between'],
-      ['align-items', 'flex-start'],
-      ['flex-wrap', 'wrap'],
-      ['gap', 'var(--dcl-space-8)'],
-      ['padding', '12px 16px 12px 16px'],
-      ['width', '390px'],
-      ['height', '72px']
-    ])
+      expect(view.css.decls).toEqual([
+        ['display', 'flex'],
+        ['box-sizing', 'border-box'],
+        ['flex-direction', 'row'],
+        ['justify-content', 'space-between'],
+        ['align-items', 'flex-start'],
+        ['flex-wrap', 'wrap'],
+        ['gap', 'var(--dcl-space-8)'],
+        ['padding', '12px 16px 12px 16px'],
+        ['width', '390px'],
+        ['height', '72px']
+      ])
+    })
   })
 })

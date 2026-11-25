@@ -15,8 +15,9 @@
   Fixture commands, in every mode:
     /fixture_events   the recorded events, as JSON
     /fixture_reset    clear them, reset the field ({"value": "..."}, default "old") and the focus
-    /fixture_state    {crossOriginIsolated, hasFocus, active, value}
+    /fixture_state    {crossOriginIsolated, hasFocus, active, value, size: [innerWidth, innerHeight]}
     /fixture_log      console.log the text ({"text": "..."}), for the driver's console capture
+    /fixture_reload   load the whole page again and never answer, as a confirmed sign-out does
 -->
 <html lang="en">
 <head>
@@ -74,6 +75,16 @@
           return 'logged'
         }
       },
+      '/fixture_reload': {
+        args: [],
+        help: 'load the page again; the command never answers',
+        run: () => {
+          // a navigation, not reload(): an isolated frame is another agent cluster, which may set
+          // the top's location but not call its methods
+          setTimeout(() => { top.location.href = new URL(`/${location.search}`, location.href).href }, 0)
+          return new Promise(() => {})
+        }
+      },
       '/fixture_state': {
         args: [],
         help: 'what the frame is like',
@@ -81,7 +92,8 @@
           crossOriginIsolated: window.crossOriginIsolated,
           hasFocus: document.hasFocus(),
           active: document.activeElement?.id || document.activeElement?.tagName.toLowerCase(),
-          value: search.value
+          value: search.value,
+          size: [window.innerWidth, window.innerHeight]
         })
       }
     }

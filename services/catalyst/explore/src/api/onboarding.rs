@@ -1,22 +1,24 @@
 //! The onboarding checkpoints a client reports (`reached`, `completed`, 1-7)
 //! and the nudges a mailer pulls (`pending-nudges?sequence=1..3`: 12, 24, 36 h
-//! after the latest checkpoint of a user with an email). Process state, as
-//! the old service kept it: a restart forgets the checkpoints, the store
-//! holds at most [`MAX_CHECKPOINTS`] rows (the oldest evicted first) and a
-//! checkpoint's metadata at most [`MAX_METADATA_BYTES`] as JSON. Both routes
-//! need `ONBOARDING_API_KEY` as a bearer (compared in constant time); without
-//! the key they answer 401.
+//! after the latest checkpoint of a user with an email), as the auth server's
+//! onboarding component keeps them (`decentraland/auth-server`,
+//! `src/ports/onboarding/component.ts`). The rows live in
+//! `explore_api.onboarding_checkpoints`, so every replica reads what any one
+//! wrote and a restart keeps them; a row is kept [`RETENTION_DAYS`] after it
+//! was first reached (DATABASE.md, "Onboarding checkpoints workload") and a
+//! checkpoint's metadata is at most [`MAX_METADATA_BYTES`] as JSON. Both
+//! routes need `ONBOARDING_API_KEY` as a bearer (compared in constant time);
+//! without the key they answer 401.
 
+use crate::shared::routing::{get, post};
 use axum::body::Bytes;
 use axum::extract::{Query, State};
 use axum::http::{HeaderMap, StatusCode};
 use axum::response::{IntoResponse, Response};
-use axum::routing::{get, post};
 use axum::{Json, Router};
 use chrono::{DateTime, Duration, Utc};
-use parking_lot::Mutex;
 use serde::{Deserialize, Serialize};
-use std::collections::{HashMap, HashSet, VecDeque};
+use sqlx::PgPool;
 
 use crate::api::Shared as AppState;
 
@@ -27,21 +29,13 @@ const MAX_USER_IDENTIFIER_LEN: usize = 255;
 const MAX_EMAIL_LEN: usize = 255;
 const MAX_WALLET_LEN: usize = 255;
 const MAX_SOURCE_LEN: usize = 50;
-/// The rows the store holds; one more evicts the oldest.
-pub const MAX_CHECKPOINTS: usize = 10_000;
 /// A checkpoint's `metadata`, serialized compact.
 pub const MAX_METADATA_BYTES: usize = 4 * 1024;
-
-#[derive(Debug, Clone)]
-struct CheckpointRow {
-    user_id: String,
-    email: Option<String>,
-    wallet: Option<String>,
-    checkpoint: i64,
-    reached_at: DateTime<Utc>,
-    completed_at: Option<DateTime<Utc>>,
-    metadata: Option<serde_json::Value>,
-}
+/// A row is deleted this long after its checkpoint was first reached.
+pub const RETENTION_DAYS: i64 = 30;
+/// The oldest rows a write looks at for expiry: more than one per insert, so
+/// the deletions keep up with the rows the inserts of a retention ago left.
+const SWEEP_BATCH: i64 = 16;
 
 #[derive(Debug, Clone)]
 struct CheckpointPayload {
@@ -54,7 +48,7 @@ struct CheckpointPayload {
     metadata: Option<serde_json::Value>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, sqlx::FromRow)]
 #[serde(rename_all = "camelCase")]
 struct PendingNudge {
     user_id: String,
@@ -74,277 +68,6 @@ struct PendingNudgesResponse {
     nudges: Vec<PendingNudge>,
 }
 
-/// Rows are unique per (user_id, checkpoint) and evicted oldest first past
-/// [`MAX_CHECKPOINTS`]; `by_key` finds the one row an upsert touches, `by_wallet`
-/// the rows a wallet-only checkpoint resolves through (one entry per row with a
-/// wallet), and `latest` each user's highest checkpoint, the only row a nudge
-/// can target.
-#[derive(Default)]
-struct OnboardingStore {
-    checkpoints: Rows,
-    by_key: HashMap<(String, i64), usize>,
-    by_wallet: HashMap<String, Vec<usize>>,
-    latest: HashMap<String, usize>,
-    sent_nudges: HashSet<(String, i64, i64)>,
-}
-
-/// The checkpoint rows, reached only by id (an id never changes while its
-/// row lives), so a test can count how many rows an operation touches: a
-/// constant number per upsert and one per user for the nudge list, never a
-/// walk of every row.
-#[derive(Default)]
-struct Rows {
-    rows: VecDeque<CheckpointRow>,
-    /// The id of the oldest row held.
-    first: usize,
-    #[cfg(test)]
-    touched: std::sync::atomic::AtomicUsize,
-}
-
-impl Rows {
-    fn len(&self) -> usize {
-        self.rows.len()
-    }
-
-    /// The id the next pushed row takes.
-    fn next_id(&self) -> usize {
-        self.first + self.rows.len()
-    }
-
-    fn push(&mut self, row: CheckpointRow) {
-        self.rows.push_back(row);
-    }
-
-    /// The oldest row and its id, removed.
-    fn pop_oldest(&mut self) -> Option<(usize, CheckpointRow)> {
-        let row = self.rows.pop_front()?;
-        let id = self.first;
-        self.first += 1;
-        Some((id, row))
-    }
-
-    #[cfg(test)]
-    fn iter(&self) -> impl Iterator<Item = &CheckpointRow> {
-        self.rows.iter()
-    }
-
-    /// The rows indexed since the last call.
-    #[cfg(test)]
-    fn take_touched(&self) -> usize {
-        self.touched.swap(0, std::sync::atomic::Ordering::Relaxed)
-    }
-}
-
-impl std::ops::Index<usize> for Rows {
-    type Output = CheckpointRow;
-
-    fn index(&self, id: usize) -> &CheckpointRow {
-        #[cfg(test)]
-        self.touched
-            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-        &self.rows[id - self.first]
-    }
-}
-
-impl std::ops::IndexMut<usize> for Rows {
-    fn index_mut(&mut self, id: usize) -> &mut CheckpointRow {
-        #[cfg(test)]
-        {
-            *self.touched.get_mut() += 1;
-        }
-        &mut self.rows[id - self.first]
-    }
-}
-
-impl OnboardingStore {
-    fn resolve_wallet_identity(&self, wallet_address: &str) -> Option<(String, String)> {
-        self.by_wallet
-            .get(wallet_address)?
-            .iter()
-            .map(|&i| (i, &self.checkpoints[i]))
-            .filter(|(_, r)| r.wallet.as_deref() == Some(wallet_address) && r.email.is_some())
-            .min_by_key(|(i, r)| (r.checkpoint, *i))
-            .map(|(_, r)| (r.user_id.clone(), r.email.clone().unwrap_or_default()))
-    }
-
-    fn set_wallet(&mut self, i: usize, wallet: &Option<String>) {
-        let Some(w) = wallet else { return };
-        let row = &mut self.checkpoints[i];
-        if row.wallet.as_deref() == Some(w.as_str()) {
-            return;
-        }
-        let previous = row.wallet.replace(w.clone());
-        if let Some(previous) = previous {
-            self.unlink_wallet(&previous, i);
-        }
-        self.by_wallet.entry(w.clone()).or_default().push(i);
-    }
-
-    fn unlink_wallet(&mut self, wallet: &str, i: usize) {
-        if let Some(ids) = self.by_wallet.get_mut(wallet) {
-            ids.retain(|&j| j != i);
-            if ids.is_empty() {
-                self.by_wallet.remove(wallet);
-            }
-        }
-    }
-
-    /// Drops the oldest row, its index entries and its nudge marks; a user
-    /// whose latest row it was falls back to their highest remaining checkpoint.
-    fn evict_oldest(&mut self) {
-        let Some((i, row)) = self.checkpoints.pop_oldest() else {
-            return;
-        };
-        self.by_key.remove(&(row.user_id.clone(), row.checkpoint));
-        for sequence in 1..SEQUENCE_HOURS.len() as i64 {
-            self.sent_nudges
-                .remove(&(row.user_id.clone(), row.checkpoint, sequence));
-        }
-        if let Some(w) = &row.wallet {
-            self.unlink_wallet(w, i);
-        }
-        if self.latest.get(&row.user_id) == Some(&i) {
-            let remaining = (MIN_CHECKPOINT..=MAX_CHECKPOINT)
-                .rev()
-                .find_map(|c| self.by_key.get(&(row.user_id.clone(), c)).copied());
-            match remaining {
-                Some(latest) => {
-                    self.latest.insert(row.user_id, latest);
-                }
-                None => {
-                    self.latest.remove(&row.user_id);
-                }
-            }
-        }
-    }
-
-    fn push_row(&mut self, row: CheckpointRow) {
-        if self.checkpoints.len() >= MAX_CHECKPOINTS {
-            self.evict_oldest();
-        }
-        let i = self.checkpoints.next_id();
-        self.by_key.insert((row.user_id.clone(), row.checkpoint), i);
-        if let Some(w) = &row.wallet {
-            self.by_wallet.entry(w.clone()).or_default().push(i);
-        }
-        match self.latest.get(&row.user_id) {
-            Some(&latest) if self.checkpoints[latest].checkpoint >= row.checkpoint => {}
-            _ => {
-                self.latest.insert(row.user_id.clone(), i);
-            }
-        }
-        self.checkpoints.push(row);
-    }
-
-    fn record_checkpoint(&mut self, payload: CheckpointPayload, now: DateTime<Utc>) {
-        let CheckpointPayload {
-            mut user_identifier,
-            identifier_type,
-            checkpoint_id,
-            action,
-            mut email,
-            mut wallet,
-            metadata,
-        } = payload;
-
-        if let Some(w) = wallet.as_mut() {
-            *w = w.to_lowercase();
-        }
-
-        if identifier_type == "wallet" {
-            let lowered = user_identifier.to_lowercase();
-            if email.is_none()
-                && let Some((resolved_user, resolved_email)) =
-                    self.resolve_wallet_identity(&lowered)
-            {
-                user_identifier = resolved_user;
-                email = Some(resolved_email);
-            }
-            // The identifier is the wallet: a body without the `wallet` field
-            // binds it too, so a later wallet-identified checkpoint finds the row.
-            wallet = Some(wallet.unwrap_or(lowered));
-        }
-
-        let key = (user_identifier.clone(), checkpoint_id);
-        if action == "completed" {
-            if let Some(&i) = self.by_key.get(&key)
-                && self.checkpoints[i].completed_at.is_none()
-            {
-                self.checkpoints[i].completed_at = Some(now);
-                if email.is_some() {
-                    self.checkpoints[i].email = email.clone();
-                }
-                self.set_wallet(i, &wallet);
-            }
-            return;
-        }
-
-        if let Some(&i) = self.by_key.get(&key) {
-            if email.is_some() {
-                self.checkpoints[i].email = email.clone();
-            }
-            self.set_wallet(i, &wallet);
-            if metadata.is_some() {
-                self.checkpoints[i].metadata = metadata.clone();
-            }
-        } else {
-            // A wallet no email is bound to can never be nudged: no row for
-            // it, so a throwaway wallet evicts no user's pending row.
-            if identifier_type == "wallet" && email.is_none() {
-                return;
-            }
-            self.push_row(CheckpointRow {
-                user_id: user_identifier.clone(),
-                email: email.clone(),
-                wallet: wallet.clone(),
-                checkpoint: checkpoint_id,
-                reached_at: now,
-                completed_at: None,
-                metadata: metadata.clone(),
-            });
-        }
-
-        if checkpoint_id > 1
-            && let Some(&i) = self.by_key.get(&(user_identifier, checkpoint_id - 1))
-            && self.checkpoints[i].completed_at.is_none()
-        {
-            self.checkpoints[i].completed_at = Some(now);
-        }
-    }
-
-    fn pending_nudges(&self, sequence: i64, now: DateTime<Utc>) -> Vec<PendingNudge> {
-        let hours = SEQUENCE_HOURS[sequence as usize];
-        let threshold = now - Duration::hours(hours);
-
-        let mut latest: Vec<usize> = self.latest.values().copied().collect();
-        latest.sort_unstable();
-        latest
-            .into_iter()
-            .filter_map(|i| {
-                let oc = &self.checkpoints[i];
-                let email = oc.email.as_ref()?;
-                if oc.completed_at.is_some() {
-                    return None;
-                }
-                if oc.reached_at >= threshold {
-                    return None;
-                }
-                if self
-                    .sent_nudges
-                    .contains(&(oc.user_id.clone(), oc.checkpoint, sequence))
-                {
-                    return None;
-                }
-                Some(PendingNudge {
-                    user_id: oc.user_id.clone(),
-                    checkpoint_id: oc.checkpoint,
-                    email: email.clone(),
-                })
-            })
-            .collect()
-    }
-}
-
 /// A recorded checkpoint as [`OnboardingState::checkpoint_state`] reports it.
 #[cfg(any(test, feature = "test-support"))]
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -355,19 +78,180 @@ pub struct CheckpointState {
     pub metadata: Option<serde_json::Value>,
 }
 
-#[derive(Default)]
-pub struct OnboardingState {
-    inner: Mutex<OnboardingStore>,
+/// Why a checkpoint was not recorded.
+#[derive(Debug)]
+pub enum CheckpointError {
+    /// The body breaks a rule of `POST /onboarding/checkpoint` (a 400).
+    Invalid(String),
+    /// The store failed (a 500).
+    Store(sqlx::Error),
 }
 
+impl std::fmt::Display for CheckpointError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Invalid(msg) => f.write_str(msg),
+            Self::Store(error) => write!(f, "onboarding store: {error}"),
+        }
+    }
+}
+
+impl std::error::Error for CheckpointError {}
+
+/// The checkpoints in `explore_api.onboarding_checkpoints`, over the explore
+/// pool: no process state, so any replica answers for every other.
+pub struct OnboardingState {
+    pool: PgPool,
+}
+
+/// The lowest checkpoint (then the oldest row) a wallet is bound to with an
+/// email, through `onboarding_checkpoints_wallet_idx`.
+const RESOLVE_WALLET: &str = "SELECT user_id, email FROM explore_api.onboarding_checkpoints \
+     WHERE wallet = $1 AND email IS NOT NULL ORDER BY checkpoint, id LIMIT 1";
+
+/// A `completed` marks the row once; email and wallet fill in when given.
+const COMPLETE: &str = "UPDATE explore_api.onboarding_checkpoints \
+     SET completed_at = $3, email = COALESCE($4, email), wallet = COALESCE($5, wallet) \
+     WHERE user_id = $1 AND checkpoint = $2 AND completed_at IS NULL";
+
+/// A `reached` inserts the row or fills in the email, wallet and metadata
+/// given; `reached_at` keeps the first.
+const UPSERT: &str = "INSERT INTO explore_api.onboarding_checkpoints \
+     (user_id, checkpoint, email, wallet, reached_at, metadata) VALUES ($1, $2, $3, $4, $5, $6) \
+     ON CONFLICT (user_id, checkpoint) DO UPDATE SET \
+     email = COALESCE(EXCLUDED.email, onboarding_checkpoints.email), \
+     wallet = COALESCE(EXCLUDED.wallet, onboarding_checkpoints.wallet), \
+     metadata = COALESCE(EXCLUDED.metadata, onboarding_checkpoints.metadata)";
+
+/// A `reached` of a wallet no email is bound to updates a row it already has
+/// and inserts none: a row no nudge can reach.
+const UPDATE_ONLY: &str = "UPDATE explore_api.onboarding_checkpoints \
+     SET wallet = COALESCE($3, wallet), metadata = COALESCE($4, metadata) \
+     WHERE user_id = $1 AND checkpoint = $2";
+
+/// Reaching checkpoint N completes N-1.
+const COMPLETE_PREVIOUS: &str = "UPDATE explore_api.onboarding_checkpoints \
+     SET completed_at = $3 WHERE user_id = $1 AND checkpoint = $2 AND completed_at IS NULL";
+
+/// Each user's highest checkpoint, open, with an email and reached before
+/// `$1`, in insertion order: `onboarding_checkpoints_pending_idx` for the
+/// candidates, the `(user_id, checkpoint)` key for the later-checkpoint probe.
+const PENDING: &str = "SELECT oc.user_id, oc.checkpoint::bigint AS checkpoint_id, oc.email \
+     FROM explore_api.onboarding_checkpoints oc \
+     WHERE oc.email IS NOT NULL AND oc.completed_at IS NULL AND oc.reached_at < $1 \
+     AND NOT EXISTS (SELECT 1 FROM explore_api.onboarding_checkpoints later \
+                     WHERE later.user_id = oc.user_id AND later.checkpoint > oc.checkpoint) \
+     ORDER BY oc.id";
+
+/// The oldest rows by insertion order, deleted when past the retention.
+/// `reached_at` follows `id` (both are taken at the insert), so the head of
+/// the primary key is where expired rows are; a row another writer holds is
+/// skipped, never waited for.
+const SWEEP: &str = "DELETE FROM explore_api.onboarding_checkpoints WHERE reached_at < $1 \
+     AND id IN (SELECT id FROM explore_api.onboarding_checkpoints ORDER BY id LIMIT $2 \
+                FOR UPDATE SKIP LOCKED)";
+
 impl OnboardingState {
-    fn record(&self, payload: CheckpointPayload, now: DateTime<Utc>) {
-        self.inner.lock().record_checkpoint(payload, now);
+    pub fn new(pool: PgPool) -> Self {
+        Self { pool }
+    }
+
+    /// One checkpoint in one transaction: the wallet's resolution, the row's
+    /// upsert and the previous checkpoint's completion commit together. The
+    /// retention sweep follows, outside it.
+    async fn record(&self, payload: CheckpointPayload, now: DateTime<Utc>) -> sqlx::Result<()> {
+        let CheckpointPayload {
+            mut user_identifier,
+            identifier_type,
+            checkpoint_id,
+            action,
+            mut email,
+            wallet,
+            metadata,
+        } = payload;
+        let checkpoint = checkpoint_id as i16;
+        let mut wallet = wallet.map(|w| w.to_lowercase());
+        let by_wallet = identifier_type == "wallet";
+
+        let mut tx = self.pool.begin().await?;
+        if by_wallet {
+            let lowered = user_identifier.to_lowercase();
+            if email.is_none()
+                && let Some((user, bound)) = sqlx::query_as::<_, (String, String)>(RESOLVE_WALLET)
+                    .bind(&lowered)
+                    .fetch_optional(&mut *tx)
+                    .await?
+            {
+                user_identifier = user;
+                email = Some(bound);
+            }
+            // The identifier is the wallet: a body without the `wallet` field
+            // binds it too, so a later wallet-identified checkpoint finds the row.
+            wallet = Some(wallet.unwrap_or(lowered));
+        }
+
+        if action == "completed" {
+            sqlx::query(COMPLETE)
+                .bind(&user_identifier)
+                .bind(checkpoint)
+                .bind(now)
+                .bind(&email)
+                .bind(&wallet)
+                .execute(&mut *tx)
+                .await?;
+            return tx.commit().await;
+        }
+
+        let metadata = metadata.map(sqlx::types::Json);
+        if by_wallet && email.is_none() {
+            sqlx::query(UPDATE_ONLY)
+                .bind(&user_identifier)
+                .bind(checkpoint)
+                .bind(&wallet)
+                .bind(&metadata)
+                .execute(&mut *tx)
+                .await?;
+        } else {
+            sqlx::query(UPSERT)
+                .bind(&user_identifier)
+                .bind(checkpoint)
+                .bind(&email)
+                .bind(&wallet)
+                .bind(now)
+                .bind(&metadata)
+                .execute(&mut *tx)
+                .await?;
+        }
+        if checkpoint > 1 {
+            sqlx::query(COMPLETE_PREVIOUS)
+                .bind(&user_identifier)
+                .bind(checkpoint - 1)
+                .bind(now)
+                .execute(&mut *tx)
+                .await?;
+        }
+        tx.commit().await?;
+
+        if let Err(error) = self.sweep(now).await {
+            tracing::warn!(%error, "onboarding checkpoints: retention sweep failed");
+        }
+        Ok(())
+    }
+
+    /// Deletes up to [`SWEEP_BATCH`] of the oldest rows past the retention.
+    async fn sweep(&self, now: DateTime<Utc>) -> sqlx::Result<u64> {
+        let cutoff = now - Duration::days(RETENTION_DAYS);
+        Ok(sqlx::query(SWEEP)
+            .bind(cutoff)
+            .bind(SWEEP_BATCH)
+            .execute(&self.pool)
+            .await?
+            .rows_affected())
     }
 
     /// Validates `req` as `POST /onboarding/checkpoint` does, then records it.
-    pub fn record_checkpoint(&self, req: CheckpointRequest) -> Result<(), String> {
-        validate_checkpoint(&req)?;
+    pub async fn record_checkpoint(&self, req: CheckpointRequest) -> Result<(), CheckpointError> {
+        validate_checkpoint(&req).map_err(CheckpointError::Invalid)?;
         self.record(
             CheckpointPayload {
                 user_identifier: req.user_identifier,
@@ -379,33 +263,51 @@ impl OnboardingState {
                 metadata: req.metadata,
             },
             Utc::now(),
-        );
-        Ok(())
+        )
+        .await
+        .map_err(CheckpointError::Store)
     }
 
     /// The recorded checkpoint of `user_id`, for the tests of what records one.
     #[cfg(any(test, feature = "test-support"))]
-    pub fn checkpoint_state(&self, user_id: &str, checkpoint: i64) -> Option<CheckpointState> {
-        let store = self.inner.lock();
-        let row = &store.checkpoints[*store.by_key.get(&(user_id.to_string(), checkpoint))?];
-        Some(CheckpointState {
-            completed: row.completed_at.is_some(),
-            email: row.email.clone(),
-            wallet: row.wallet.clone(),
-            metadata: row.metadata.clone(),
+    pub async fn checkpoint_state(
+        &self,
+        user_id: &str,
+        checkpoint: i64,
+    ) -> Option<CheckpointState> {
+        type Row = (
+            bool,
+            Option<String>,
+            Option<String>,
+            Option<sqlx::types::Json<serde_json::Value>>,
+        );
+        let row: Option<Row> = sqlx::query_as(
+            "SELECT completed_at IS NOT NULL, email, wallet, metadata \
+             FROM explore_api.onboarding_checkpoints WHERE user_id = $1 AND checkpoint = $2",
+        )
+        .bind(user_id)
+        .bind(checkpoint as i16)
+        .fetch_optional(&self.pool)
+        .await
+        .expect("reading an onboarding checkpoint");
+        row.map(|(completed, email, wallet, metadata)| CheckpointState {
+            completed,
+            email,
+            wallet,
+            metadata: metadata.map(|m| m.0),
         })
     }
 
-    fn pending_nudges(&self, sequence: i64, now: DateTime<Utc>) -> Vec<PendingNudge> {
-        self.inner.lock().pending_nudges(sequence, now)
-    }
-
-    #[cfg(test)]
-    fn mark_nudge_sent(&self, user_id: &str, checkpoint: i64, sequence: i64) {
-        self.inner
-            .lock()
-            .sent_nudges
-            .insert((user_id.to_string(), checkpoint, sequence));
+    async fn pending_nudges(
+        &self,
+        sequence: i64,
+        now: DateTime<Utc>,
+    ) -> sqlx::Result<Vec<PendingNudge>> {
+        let threshold = now - Duration::hours(SEQUENCE_HOURS[sequence as usize]);
+        sqlx::query_as(PENDING)
+            .bind(threshold)
+            .fetch_all(&self.pool)
+            .await
     }
 }
 
@@ -439,16 +341,44 @@ pub struct CheckpointRequest {
     pub metadata: Option<serde_json::Value>,
 }
 
+/// Whether a key or a string anywhere in `value` holds a NUL.
+fn json_has_nul(value: &serde_json::Value) -> bool {
+    match value {
+        serde_json::Value::String(text) => text.contains('\0'),
+        serde_json::Value::Array(items) => items.iter().any(json_has_nul),
+        serde_json::Value::Object(fields) => fields
+            .iter()
+            .any(|(key, value)| key.contains('\0') || json_has_nul(value)),
+        _ => false,
+    }
+}
+
 fn validate_checkpoint(body: &CheckpointRequest) -> Result<(), String> {
     if body.checkpoint_id < MIN_CHECKPOINT || body.checkpoint_id > MAX_CHECKPOINT {
         return Err("checkpointId must be an integer between 1 and 7".to_string());
     }
-    let ulen = body.user_identifier.chars().count();
-    if !(1..=MAX_USER_IDENTIFIER_LEN).contains(&ulen) {
-        return Err("userIdentifier must be between 1 and 255 characters".to_string());
-    }
     if body.identifier_type != "email" && body.identifier_type != "wallet" {
         return Err("identifierType must be one of 'email', 'wallet'".to_string());
+    }
+    // PostgreSQL stores no NUL in text or jsonb: refused here, not a 500 at the insert.
+    let texts = [
+        Some(&body.user_identifier),
+        body.email.as_ref(),
+        body.wallet.as_ref(),
+        body.source.as_ref(),
+    ];
+    if texts.into_iter().flatten().any(|text| text.contains('\0')) {
+        return Err("text fields must not contain NUL characters".to_string());
+    }
+    // A wallet identifier is stored lowercased, and lowercasing can lengthen a
+    // string ('İ' is two characters lowercased): the stored form is measured.
+    let ulen = if body.identifier_type == "wallet" {
+        body.user_identifier.to_lowercase().chars().count()
+    } else {
+        body.user_identifier.chars().count()
+    };
+    if !(1..=MAX_USER_IDENTIFIER_LEN).contains(&ulen) {
+        return Err("userIdentifier must be between 1 and 255 characters".to_string());
     }
     if body.action != "reached" && body.action != "completed" {
         return Err("action must be one of 'reached', 'completed'".to_string());
@@ -459,7 +389,7 @@ fn validate_checkpoint(body: &CheckpointRequest) -> Result<(), String> {
         return Err("email must be at most 255 characters".to_string());
     }
     if let Some(wallet) = &body.wallet
-        && wallet.chars().count() > MAX_WALLET_LEN
+        && wallet.to_lowercase().chars().count() > MAX_WALLET_LEN
     {
         return Err("wallet must be at most 255 characters".to_string());
     }
@@ -471,6 +401,10 @@ fn validate_checkpoint(body: &CheckpointRequest) -> Result<(), String> {
     if let Some(metadata) = &body.metadata {
         if !metadata.is_object() {
             return Err("metadata must be an object".to_string());
+        }
+        // jsonb refuses a NUL, in a key or a value alike.
+        if json_has_nul(metadata) {
+            return Err("metadata must not contain NUL characters".to_string());
         }
         if metadata.to_string().len() > MAX_METADATA_BYTES {
             return Err(format!(
@@ -494,8 +428,13 @@ async fn post_checkpoint(
         Ok(req) => req,
         Err(e) => return bad_request(&e.to_string()),
     };
-    if let Err(msg) = state.onboarding.record_checkpoint(req) {
-        return bad_request(&msg);
+    match state.onboarding.record_checkpoint(req).await {
+        Ok(()) => {}
+        Err(CheckpointError::Invalid(msg)) => return bad_request(&msg),
+        Err(error) => {
+            tracing::error!(%error, "onboarding checkpoint not recorded");
+            return internal_error("Internal server error");
+        }
     }
 
     (StatusCode::OK, Json(CheckpointAck { success: true })).into_response()
@@ -521,7 +460,13 @@ async fn get_pending_nudges(
         return bad_request("sequence must be 1, 2, or 3");
     }
 
-    let nudges = state.onboarding.pending_nudges(sequence, Utc::now());
+    let nudges = match state.onboarding.pending_nudges(sequence, Utc::now()).await {
+        Ok(nudges) => nudges,
+        Err(error) => {
+            tracing::error!(%error, "onboarding pending nudges not read");
+            return internal_error("Failed to query pending nudges");
+        }
+    };
     (
         StatusCode::OK,
         Json(PendingNudgesResponse {
@@ -546,6 +491,14 @@ fn unauthorized() -> Response {
         .into_response()
 }
 
+fn internal_error(msg: &str) -> Response {
+    (
+        StatusCode::INTERNAL_SERVER_ERROR,
+        Json(serde_json::json!({ "error": msg })),
+    )
+        .into_response()
+}
+
 fn bad_request(msg: &str) -> Response {
     (
         StatusCode::BAD_REQUEST,
@@ -561,6 +514,8 @@ mod tests {
     fn t(secs: i64) -> DateTime<Utc> {
         DateTime::<Utc>::from_timestamp(1_700_000_000 + secs, 0).unwrap()
     }
+
+    const H: i64 = 3600;
 
     fn reached(
         user: &str,
@@ -580,297 +535,383 @@ mod tests {
         }
     }
 
-    #[test]
-    fn reached_then_pending_after_interval() {
-        let mut store = OnboardingStore::default();
-        store.record_checkpoint(reached("a@b.com", "email", 1, Some("a@b.com"), None), t(0));
+    fn completed(user: &str, checkpoint: i64) -> CheckpointPayload {
+        CheckpointPayload {
+            action: "completed".to_string(),
+            ..reached(user, "email", checkpoint, None, None)
+        }
+    }
 
-        assert!(store.pending_nudges(1, t(60)).is_empty());
+    /// A store over a database of its own (the nudge read is table-wide);
+    /// `None` skips without `CATALYST_TEST_DATABASE_URL`.
+    async fn store() -> Option<OnboardingState> {
+        crate::db::scratch::isolated_pool(4)
+            .await
+            .map(OnboardingState::new)
+    }
+
+    impl OnboardingState {
+        async fn put(&self, payload: CheckpointPayload, now: DateTime<Utc>) {
+            self.record(payload, now).await.unwrap();
+        }
+
+        async fn nudges(&self, sequence: i64, now: DateTime<Utc>) -> Vec<PendingNudge> {
+            self.pending_nudges(sequence, now).await.unwrap()
+        }
+
+        /// The user id and email of the one row at `checkpoint`.
+        async fn row_at(&self, checkpoint: i64) -> Option<(String, Option<String>)> {
+            sqlx::query_as(
+                "SELECT user_id, email FROM explore_api.onboarding_checkpoints WHERE checkpoint = $1",
+            )
+            .bind(checkpoint as i16)
+            .fetch_optional(&self.pool)
+            .await
+            .unwrap()
+        }
+
+        async fn resolve(&self, wallet: &str) -> Option<(String, String)> {
+            sqlx::query_as(RESOLVE_WALLET)
+                .bind(wallet)
+                .fetch_optional(&self.pool)
+                .await
+                .unwrap()
+        }
+
+        async fn rows(&self) -> i64 {
+            sqlx::query_scalar("SELECT count(*) FROM explore_api.onboarding_checkpoints")
+                .fetch_one(&self.pool)
+                .await
+                .unwrap()
+        }
+    }
+
+    #[tokio::test]
+    async fn reached_then_pending_after_interval() {
+        let Some(store) = store().await else { return };
+        store
+            .put(reached("a@b.com", "email", 1, Some("a@b.com"), None), t(0))
+            .await;
+
+        assert!(store.nudges(1, t(60)).await.is_empty());
         assert_eq!(
-            store.pending_nudges(1, t(13 * 3600)),
+            store.nudges(1, t(13 * H)).await,
             vec![PendingNudge {
                 user_id: "a@b.com".to_string(),
                 checkpoint_id: 1,
                 email: "a@b.com".to_string(),
             }]
         );
-
-        assert!(store.pending_nudges(2, t(13 * 3600)).is_empty());
-        assert_eq!(store.pending_nudges(2, t(25 * 3600)).len(), 1);
+        assert!(store.nudges(2, t(13 * H)).await.is_empty());
+        assert_eq!(store.nudges(2, t(25 * H)).await.len(), 1);
+        assert!(store.nudges(3, t(25 * H)).await.is_empty());
+        assert_eq!(store.nudges(3, t(37 * H)).await.len(), 1);
     }
 
-    #[test]
-    fn checkpoint_without_email_is_not_pending() {
-        let mut store = OnboardingStore::default();
-        store.record_checkpoint(reached("0xabc", "wallet", 1, None, None), t(0));
-        assert!(store.pending_nudges(1, t(13 * 3600)).is_empty());
+    #[tokio::test]
+    async fn checkpoint_without_email_is_not_pending() {
+        let Some(store) = store().await else { return };
+        store.put(reached("u", "email", 1, None, None), t(0)).await;
+        assert_eq!(store.rows().await, 1);
+        assert!(store.nudges(1, t(13 * H)).await.is_empty());
     }
 
-    #[test]
-    fn reaching_next_checkpoint_completes_previous_and_supersedes_it() {
-        let mut store = OnboardingStore::default();
-        store.record_checkpoint(reached("a@b.com", "email", 1, Some("a@b.com"), None), t(0));
-        store.record_checkpoint(reached("a@b.com", "email", 2, Some("a@b.com"), None), t(10));
+    #[tokio::test]
+    async fn reaching_next_checkpoint_completes_previous_and_supersedes_it() {
+        let Some(store) = store().await else { return };
+        store
+            .put(reached("a@b.com", "email", 1, Some("a@b.com"), None), t(0))
+            .await;
+        store
+            .put(reached("a@b.com", "email", 2, Some("a@b.com"), None), t(10))
+            .await;
 
-        let pending = store.pending_nudges(1, t(13 * 3600));
+        assert!(
+            store
+                .checkpoint_state("a@b.com", 1)
+                .await
+                .unwrap()
+                .completed
+        );
+        let pending = store.nudges(1, t(13 * H)).await;
         assert_eq!(pending.len(), 1);
         assert_eq!(pending[0].checkpoint_id, 2);
     }
 
-    #[test]
-    fn completed_action_marks_completion() {
-        let mut store = OnboardingStore::default();
-        store.record_checkpoint(reached("a@b.com", "email", 3, Some("a@b.com"), None), t(0));
-        assert_eq!(store.pending_nudges(1, t(13 * 3600)).len(), 1);
-
-        store.record_checkpoint(
-            CheckpointPayload {
-                action: "completed".to_string(),
-                ..reached("a@b.com", "email", 3, None, None)
-            },
-            t(20),
-        );
-        assert!(store.pending_nudges(1, t(13 * 3600)).is_empty());
+    /// A user's highest checkpoint is the only one a nudge can target, even
+    /// when a lower one is still open (reached out of order).
+    #[tokio::test]
+    async fn a_lower_open_checkpoint_is_superseded_by_a_higher_one() {
+        let Some(store) = store().await else { return };
+        store
+            .put(reached("a@b.com", "email", 3, Some("a@b.com"), None), t(0))
+            .await;
+        store
+            .put(reached("a@b.com", "email", 1, Some("a@b.com"), None), t(1))
+            .await;
+        let pending = store.nudges(1, t(13 * H)).await;
+        assert_eq!(pending.len(), 1);
+        assert_eq!(pending[0].checkpoint_id, 3);
     }
 
-    #[test]
-    fn wallet_checkpoint_resolves_to_email_user_id() {
-        let mut store = OnboardingStore::default();
-        store.record_checkpoint(
-            reached("a@b.com", "email", 1, Some("a@b.com"), Some("0xABC")),
-            t(0),
+    #[tokio::test]
+    async fn completed_action_marks_completion() {
+        let Some(store) = store().await else { return };
+        store
+            .put(reached("a@b.com", "email", 3, Some("a@b.com"), None), t(0))
+            .await;
+        assert_eq!(store.nudges(1, t(13 * H)).await.len(), 1);
+        store.put(completed("a@b.com", 3), t(20)).await;
+        assert!(store.nudges(1, t(13 * H)).await.is_empty());
+        store.put(completed("nobody", 3), t(21)).await;
+        assert_eq!(store.rows().await, 1, "a completed inserts no row");
+    }
+
+    #[tokio::test]
+    async fn wallet_checkpoint_resolves_to_email_user_id() {
+        let Some(store) = store().await else { return };
+        store
+            .put(
+                reached("a@b.com", "email", 1, Some("a@b.com"), Some("0xABC")),
+                t(0),
+            )
+            .await;
+        store
+            .put(reached("0xAbC", "wallet", 2, None, None), t(10))
+            .await;
+
+        assert_eq!(
+            store.row_at(2).await,
+            Some(("a@b.com".to_string(), Some("a@b.com".to_string())))
         );
-        store.record_checkpoint(reached("0xAbC", "wallet", 2, None, None), t(10));
-
-        let uid2 = store
-            .checkpoints
-            .iter()
-            .find(|r| r.checkpoint == 2)
-            .map(|r| r.user_id.clone());
-        assert_eq!(uid2.as_deref(), Some("a@b.com"));
-
-        let pending = store.pending_nudges(1, t(13 * 3600));
+        let pending = store.nudges(1, t(13 * H)).await;
         assert_eq!(pending.len(), 1);
         assert_eq!(pending[0].checkpoint_id, 2);
         assert_eq!(pending[0].user_id, "a@b.com");
     }
 
-    #[test]
-    fn upsert_coalesces_email_and_wallet() {
-        let mut store = OnboardingStore::default();
-        store.record_checkpoint(reached("u", "wallet", 1, Some("late@b.com"), None), t(0));
-        store.record_checkpoint(reached("u", "wallet", 1, None, Some("0xabc")), t(5));
+    #[tokio::test]
+    async fn upsert_coalesces_email_wallet_and_metadata() {
+        let Some(store) = store().await else { return };
+        let mut first = reached("u", "wallet", 1, Some("late@b.com"), None);
+        first.metadata = Some(serde_json::json!({ "step": "profile" }));
+        store.put(first, t(0)).await;
+        store
+            .put(reached("u", "wallet", 1, None, Some("0xabc")), t(5))
+            .await;
 
-        let row = store
-            .checkpoints
-            .iter()
-            .find(|r| r.checkpoint == 1)
-            .unwrap();
+        let row = store.checkpoint_state("u", 1).await.unwrap();
         assert_eq!(row.email.as_deref(), Some("late@b.com"));
         assert_eq!(row.wallet.as_deref(), Some("0xabc"));
+        assert_eq!(row.metadata, Some(serde_json::json!({ "step": "profile" })));
+        assert_eq!(
+            store.nudges(1, t(12 * H + 1)).await.len(),
+            1,
+            "reached_at is the first reached, not the upsert's"
+        );
     }
 
     /// An email body identified by the wallet (`identifierType: "wallet"`, no
     /// `wallet` field) binds that wallet, so the explorer's CP7 for it lands
     /// on the user's row.
-    #[test]
-    fn an_email_body_identified_by_a_wallet_binds_that_wallet() {
-        let mut store = OnboardingStore::default();
-        store.record_checkpoint(
-            reached("0xABC", "wallet", 1, Some("late@b.com"), None),
-            t(0),
-        );
-        let row = store
-            .checkpoints
-            .iter()
-            .find(|r| r.checkpoint == 1)
-            .unwrap();
-        assert_eq!(row.wallet.as_deref(), Some("0xabc"));
-        store.record_checkpoint(reached("0xabc", "wallet", 7, None, None), t(5));
-        let row = store
-            .checkpoints
-            .iter()
-            .find(|r| r.checkpoint == 7)
-            .unwrap();
+    #[tokio::test]
+    async fn an_email_body_identified_by_a_wallet_binds_that_wallet() {
+        let Some(store) = store().await else { return };
+        store
+            .put(
+                reached("0xABC", "wallet", 1, Some("late@b.com"), None),
+                t(0),
+            )
+            .await;
         assert_eq!(
-            (row.user_id.as_str(), row.email.as_deref()),
-            ("0xABC", Some("late@b.com"))
+            store
+                .checkpoint_state("0xABC", 1)
+                .await
+                .unwrap()
+                .wallet
+                .as_deref(),
+            Some("0xabc")
+        );
+        store
+            .put(reached("0xabc", "wallet", 7, None, None), t(5))
+            .await;
+        assert_eq!(
+            store.row_at(7).await,
+            Some(("0xABC".to_string(), Some("late@b.com".to_string())))
         );
     }
 
-    #[test]
-    fn an_explicit_wallet_field_wins_over_the_identifier() {
-        let mut store = OnboardingStore::default();
-        store.record_checkpoint(
-            reached("0xabc", "wallet", 1, Some("a@b.com"), Some("0xDEF")),
-            t(0),
-        );
-        let row = store
-            .checkpoints
-            .iter()
-            .find(|r| r.checkpoint == 1)
-            .unwrap();
-        assert_eq!(row.wallet.as_deref(), Some("0xdef"));
-        assert_eq!(store.resolve_wallet_identity("0xabc"), None);
+    #[tokio::test]
+    async fn an_explicit_wallet_field_wins_over_the_identifier() {
+        let Some(store) = store().await else { return };
+        store
+            .put(
+                reached("0xabc", "wallet", 1, Some("a@b.com"), Some("0xDEF")),
+                t(0),
+            )
+            .await;
         assert_eq!(
-            store.resolve_wallet_identity("0xdef"),
+            store
+                .checkpoint_state("0xabc", 1)
+                .await
+                .unwrap()
+                .wallet
+                .as_deref(),
+            Some("0xdef")
+        );
+        assert_eq!(store.resolve("0xabc").await, None);
+        assert_eq!(
+            store.resolve("0xdef").await,
             Some(("0xabc".to_string(), "a@b.com".to_string()))
         );
     }
 
-    #[test]
-    fn a_wallet_checkpoint_with_no_bound_email_leaves_no_row() {
-        let mut store = OnboardingStore::default();
-        store.record_checkpoint(reached("0xabc", "wallet", 7, None, None), t(0));
+    #[tokio::test]
+    async fn a_wallet_checkpoint_with_no_bound_email_leaves_no_row() {
+        let Some(store) = store().await else { return };
+        store
+            .put(reached("0xabc", "wallet", 7, None, None), t(0))
+            .await;
+        assert_eq!(store.rows().await, 0, "a row no nudge can reach");
+        store
+            .put(
+                reached("a@b.com", "email", 1, Some("a@b.com"), Some("0xabc")),
+                t(1),
+            )
+            .await;
+        store
+            .put(reached("0xabc", "wallet", 7, None, None), t(2))
+            .await;
         assert_eq!(
-            store.checkpoints.len(),
-            0,
-            "a row no nudge can reach would only evict a user's"
+            store.row_at(7).await,
+            Some(("a@b.com".to_string(), Some("a@b.com".to_string())))
         );
-        store.record_checkpoint(
-            reached("a@b.com", "email", 1, Some("a@b.com"), Some("0xabc")),
-            t(1),
+    }
+
+    #[tokio::test]
+    async fn wallet_learned_late_still_resolves_and_prefers_the_lowest_checkpoint() {
+        let Some(store) = store().await else { return };
+        store
+            .put(reached("b@b.com", "email", 3, Some("b@b.com"), None), t(0))
+            .await;
+        store
+            .put(reached("a@b.com", "email", 2, Some("a@b.com"), None), t(1))
+            .await;
+        store
+            .put(reached("b@b.com", "email", 3, None, Some("0xABC")), t(2))
+            .await;
+        store
+            .put(reached("a@b.com", "email", 2, None, Some("0xabc")), t(3))
+            .await;
+
+        assert_eq!(
+            store.resolve("0xabc").await,
+            Some(("a@b.com".to_string(), "a@b.com".to_string()))
         );
-        store.record_checkpoint(reached("0xabc", "wallet", 7, None, None), t(2));
-        let row = store
-            .checkpoints
-            .iter()
-            .find(|r| r.checkpoint == 7)
+        store
+            .put(reached("0xABC", "wallet", 4, None, None), t(10))
+            .await;
+        assert_eq!(
+            store.row_at(4).await,
+            Some(("a@b.com".to_string(), Some("a@b.com".to_string())))
+        );
+    }
+
+    #[tokio::test]
+    async fn nudges_keep_insertion_order() {
+        let Some(store) = store().await else { return };
+        for i in (0..40).rev() {
+            let user = format!("user-{i:02}");
+            store
+                .put(reached(&user, "email", 1, Some(&user), None), t(40 - i))
+                .await;
+        }
+        let users: Vec<String> = store
+            .nudges(1, t(13 * H))
+            .await
+            .into_iter()
+            .map(|n| n.user_id)
+            .collect();
+        let expected: Vec<String> = (0..40).rev().map(|i| format!("user-{i:02}")).collect();
+        assert_eq!(users, expected);
+    }
+
+    /// The same checkpoint reported at once by many requests (replicas) is
+    /// one row, and every request succeeds.
+    #[tokio::test]
+    async fn concurrent_reports_of_one_checkpoint_upsert_one_row() {
+        let Some(store) = store().await else { return };
+        let store = std::sync::Arc::new(store);
+        let mut tasks = Vec::new();
+        for i in 0..16 {
+            let store = store.clone();
+            tasks.push(tokio::spawn(async move {
+                let mut payload = reached("a@b.com", "email", 2, Some("a@b.com"), None);
+                payload.metadata = Some(serde_json::json!({ "n": i }));
+                store.record(payload, t(i)).await
+            }));
+        }
+        for task in tasks {
+            task.await.unwrap().unwrap();
+        }
+        assert_eq!(store.rows().await, 1);
+    }
+
+    #[tokio::test]
+    async fn rows_past_the_retention_are_swept_by_later_writes() {
+        let Some(store) = store().await else { return };
+        for i in 0..20 {
+            let user = format!("old-{i:02}");
+            store
+                .put(reached(&user, "email", 1, Some(&user), None), t(i))
+                .await;
+        }
+        let later = t(RETENTION_DAYS * 24 * H + 100);
+        store
+            .put(reached("new", "email", 1, Some("new@b.com"), None), later)
+            .await;
+        assert_eq!(store.rows().await, 21 - SWEEP_BATCH);
+        store
+            .put(reached("new", "email", 2, Some("new@b.com"), None), later)
+            .await;
+        assert_eq!(store.rows().await, 2, "only the rows within the retention");
+        assert!(store.checkpoint_state("new", 1).await.is_some());
+    }
+
+    /// The nudge read and the wallet resolution reach their rows through the
+    /// indexes (with sequential scans priced out, as on a table too large for
+    /// one).
+    #[tokio::test]
+    async fn the_nudge_read_and_the_wallet_resolution_are_indexed() {
+        let Some(store) = store().await else { return };
+        let mut conn = store.pool.acquire().await.unwrap();
+        sqlx::query("SET enable_seqscan = off")
+            .execute(&mut *conn)
+            .await
             .unwrap();
-        assert_eq!(row.user_id, "a@b.com");
-        assert_eq!(row.email.as_deref(), Some("a@b.com"));
-    }
-
-    #[test]
-    fn sent_nudge_is_excluded() {
-        let state = OnboardingState::default();
-        state.record(reached("a@b.com", "email", 1, Some("a@b.com"), None), t(0));
-        assert_eq!(state.pending_nudges(1, t(13 * 3600)).len(), 1);
-        state.mark_nudge_sent("a@b.com", 1, 1);
-        assert!(state.pending_nudges(1, t(13 * 3600)).is_empty());
-        assert_eq!(state.pending_nudges(2, t(25 * 3600)).len(), 1);
-    }
-
-    #[test]
-    fn pending_nudges_is_linear_not_quadratic() {
-        let mut store = OnboardingStore::default();
-        for i in 0..MAX_CHECKPOINTS {
-            let user = format!("user-{i:05}");
-            let email = format!("u{i}@example.com");
-            store.record_checkpoint(reached(&user, "email", 1, Some(&email), None), t(0));
-        }
-        store.checkpoints.take_touched();
-        let nudges = store.pending_nudges(1, t(13 * 3600));
-        assert_eq!(nudges.len(), MAX_CHECKPOINTS);
-        assert_eq!(nudges[0].user_id, "user-00000", "insertion order is kept");
-        assert_eq!(
-            store.checkpoints.take_touched(),
-            MAX_CHECKPOINTS,
-            "pending_nudges reads each user's latest row once"
-        );
-    }
-
-    #[test]
-    fn record_checkpoint_is_indexed_not_a_scan() {
-        let users = MAX_CHECKPOINTS / 2;
-        let mut store = OnboardingStore::default();
-        for i in 0..users {
-            let user = format!("user-{i:05}");
-            store.record_checkpoint(reached(&user, "email", 1, Some(&user), None), t(0));
-        }
-        store.checkpoints.take_touched();
-        for i in 0..users {
-            let user = format!("user-{i:05}");
-            store.record_checkpoint(reached(&user, "email", 2, Some(&user), None), t(10));
-        }
-        let touched = store.checkpoints.take_touched();
+        let lines: Vec<String> =
+            sqlx::query_scalar(sqlx::AssertSqlSafe(format!("EXPLAIN {PENDING}")))
+                .bind(t(0))
+                .fetch_all(&mut *conn)
+                .await
+                .unwrap();
+        let pending = lines.join("\n");
         assert!(
-            touched <= 3 * users,
-            "{users} upserts touched {touched} rows: an upsert walks the rows instead of its index"
+            pending.contains("onboarding_checkpoints_pending_idx")
+                && pending.contains("onboarding_checkpoints_user_checkpoint_key"),
+            "{pending}"
         );
-        assert_eq!(store.by_key.len(), 2 * users);
-        let pending = store.pending_nudges(1, t(13 * 3600));
-        assert_eq!(pending.len(), users);
-        assert!(pending.iter().all(|n| n.checkpoint_id == 2));
-    }
-
-    #[test]
-    fn the_store_holds_max_checkpoints_and_evicts_the_oldest_rows() {
-        let mut store = OnboardingStore::default();
-        store.record_checkpoint(reached("late", "email", 2, Some("late@b.com"), None), t(0));
-        store.record_checkpoint(reached("late", "email", 1, Some("late@b.com"), None), t(1));
-        store.record_checkpoint(
-            reached("first", "email", 1, Some("first@b.com"), Some("0xABC")),
-            t(2),
-        );
-        for i in 0..MAX_CHECKPOINTS - 3 {
-            let user = format!("user-{i:05}");
-            store.record_checkpoint(reached(&user, "email", 1, Some(&user), None), t(3));
-        }
-        assert_eq!(store.checkpoints.len(), MAX_CHECKPOINTS);
-        assert_eq!(
-            store.resolve_wallet_identity("0xabc"),
-            Some(("first".to_string(), "first@b.com".to_string()))
-        );
-
-        store.record_checkpoint(reached("more-0", "email", 1, Some("m0@b.com"), None), t(4));
-        assert_eq!(store.checkpoints.len(), MAX_CHECKPOINTS);
+        let lines: Vec<String> =
+            sqlx::query_scalar(sqlx::AssertSqlSafe(format!("EXPLAIN {RESOLVE_WALLET}")))
+                .bind("0xabc")
+                .fetch_all(&mut *conn)
+                .await
+                .unwrap();
+        let resolve = lines.join("\n");
         assert!(
-            !store.by_key.contains_key(&("late".to_string(), 2)),
-            "the oldest row is evicted"
+            resolve.contains("onboarding_checkpoints_wallet_idx"),
+            "{resolve}"
         );
-        assert_eq!(
-            store.checkpoints[store.latest["late"]].checkpoint, 1,
-            "a user's latest falls back to their highest remaining checkpoint"
-        );
-
-        store.record_checkpoint(reached("more-1", "email", 1, Some("m1@b.com"), None), t(5));
-        store.record_checkpoint(reached("more-2", "email", 1, Some("m2@b.com"), None), t(6));
-        assert_eq!(store.checkpoints.len(), MAX_CHECKPOINTS);
-        assert!(!store.latest.contains_key("late"));
-        assert_eq!(
-            store.resolve_wallet_identity("0xabc"),
-            None,
-            "an evicted wallet is forgotten"
-        );
-        assert!(store.by_wallet.is_empty());
-        assert_eq!(store.by_key.len(), MAX_CHECKPOINTS);
-        assert_eq!(store.pending_nudges(1, t(13 * 3600)).len(), MAX_CHECKPOINTS);
-        assert_eq!(
-            store.checkpoints[store.latest["more-2"]].user_id, "more-2",
-            "ids stay valid across evictions"
-        );
-    }
-
-    #[test]
-    fn eviction_drops_the_rows_nudge_marks() {
-        let mut store = OnboardingStore::default();
-        store.record_checkpoint(
-            reached("first", "email", 1, Some("first@b.com"), None),
-            t(0),
-        );
-        store.sent_nudges.insert(("first".to_string(), 1, 1));
-        for i in 0..MAX_CHECKPOINTS {
-            let user = format!("user-{i:05}");
-            store.record_checkpoint(reached(&user, "email", 1, Some(&user), None), t(1));
-        }
-        assert!(!store.by_key.contains_key(&("first".to_string(), 1)));
-        assert!(
-            store.sent_nudges.is_empty(),
-            "an evicted row's nudge marks go with it"
-        );
-    }
-
-    #[test]
-    fn a_wallet_change_moves_the_row_between_wallet_indexes() {
-        let mut store = OnboardingStore::default();
-        store.record_checkpoint(
-            reached("u", "email", 1, Some("u@b.com"), Some("0xold")),
-            t(0),
-        );
-        store.record_checkpoint(reached("u", "email", 1, None, Some("0xnew")), t(1));
-        assert!(!store.by_wallet.contains_key("0xold"));
-        assert_eq!(store.by_wallet["0xnew"].len(), 1);
     }
 
     #[test]
@@ -891,28 +932,6 @@ mod tests {
             validate_checkpoint(&request(padded)).unwrap_err(),
             format!("metadata must be at most {MAX_METADATA_BYTES} bytes as JSON")
         );
-    }
-
-    #[test]
-    fn wallet_learned_late_still_resolves_and_prefers_the_lowest_checkpoint() {
-        let mut store = OnboardingStore::default();
-        store.record_checkpoint(reached("b@b.com", "email", 3, Some("b@b.com"), None), t(0));
-        store.record_checkpoint(reached("a@b.com", "email", 2, Some("a@b.com"), None), t(1));
-        store.record_checkpoint(reached("b@b.com", "email", 3, None, Some("0xABC")), t(2));
-        store.record_checkpoint(reached("a@b.com", "email", 2, None, Some("0xabc")), t(3));
-
-        assert_eq!(
-            store.resolve_wallet_identity("0xabc"),
-            Some(("a@b.com".to_string(), "a@b.com".to_string()))
-        );
-        store.record_checkpoint(reached("0xABC", "wallet", 4, None, None), t(10));
-        let row = store
-            .checkpoints
-            .iter()
-            .find(|r| r.checkpoint == 4)
-            .unwrap();
-        assert_eq!(row.user_id, "a@b.com");
-        assert_eq!(row.email.as_deref(), Some("a@b.com"));
     }
 
     #[test]
@@ -938,6 +957,68 @@ mod tests {
         empty_user.user_identifier = String::new();
         assert!(validate_checkpoint(&empty_user).is_err());
     }
+
+    /// What PostgreSQL would refuse at the insert is a 400 here, not a 500 there.
+    #[test]
+    fn validation_refuses_what_the_table_cannot_store() {
+        let base = || CheckpointRequest {
+            checkpoint_id: 1,
+            user_identifier: "u".to_string(),
+            identifier_type: "wallet".to_string(),
+            action: "reached".to_string(),
+            email: None,
+            wallet: None,
+            source: None,
+            metadata: None,
+        };
+        let nul = "a\0b".to_string();
+        for set in [
+            (|r: &mut CheckpointRequest, v: String| r.user_identifier = v)
+                as fn(&mut CheckpointRequest, String),
+            |r, v| r.email = Some(v),
+            |r, v| r.wallet = Some(v),
+            |r, v| r.source = Some(v),
+        ] {
+            let mut request = base();
+            set(&mut request, nul.clone());
+            assert_eq!(
+                validate_checkpoint(&request).unwrap_err(),
+                "text fields must not contain NUL characters"
+            );
+        }
+        for metadata in [
+            serde_json::json!({ "k": "a\0b" }),
+            serde_json::json!({ "a\0b": 1 }),
+            serde_json::json!({ "k": ["a\0"] }),
+        ] {
+            let mut request = base();
+            request.metadata = Some(metadata);
+            assert_eq!(
+                validate_checkpoint(&request).unwrap_err(),
+                "metadata must not contain NUL characters"
+            );
+        }
+        // a literal backslash-u text is no NUL
+        let mut escaped = base();
+        escaped.metadata = Some(serde_json::json!({ "k": "\\u0000" }));
+        assert!(validate_checkpoint(&escaped).is_ok());
+
+        // 'İ' lowercases to two characters: 255 of them store as 510
+        let mut wallet = base();
+        wallet.wallet = Some("İ".repeat(MAX_WALLET_LEN));
+        assert_eq!(
+            validate_checkpoint(&wallet).unwrap_err(),
+            "wallet must be at most 255 characters"
+        );
+        let mut identifier = base();
+        identifier.user_identifier = "İ".repeat(MAX_USER_IDENTIFIER_LEN);
+        assert!(validate_checkpoint(&identifier).is_err());
+        identifier.identifier_type = "email".to_string();
+        assert!(
+            validate_checkpoint(&identifier).is_ok(),
+            "an email identifier is stored as sent"
+        );
+    }
 }
 
 #[cfg(test)]
@@ -945,13 +1026,32 @@ mod route_tests {
     use super::*;
     use axum::body::Body;
     use axum::http::Request;
+    use sqlx::postgres::PgPoolOptions;
     use tower::ServiceExt;
 
-    async fn app(key: Option<&str>) -> Router {
+    fn settings(key: Option<&str>) -> crate::api::Settings {
         let mut settings = crate::api::Settings::for_tests(crate::api::Sources::defaults());
         settings.onboarding_api_key = key.map(str::to_string);
-        let state = crate::api::tests::node_without_db_state(settings).await;
+        settings
+    }
+
+    fn mount(state: AppState) -> Router {
         Router::new().nest("/onboarding", routes().with_state(state))
+    }
+
+    async fn app(key: Option<&str>) -> Router {
+        mount(crate::api::tests::node_without_db_state(settings(key)).await)
+    }
+
+    /// A replica: its own pool and state over the database `pool` names.
+    async fn replica(pool: &PgPool, key: &str) -> (Router, AppState) {
+        let pool = PgPoolOptions::new()
+            .max_connections(4)
+            .connect_with((*pool.connect_options()).clone())
+            .await
+            .unwrap();
+        let state = crate::api::tests::node_with_db_state(settings(Some(key)), pool).await;
+        (mount(state.clone()), state)
     }
 
     async fn send(
@@ -981,6 +1081,17 @@ mod route_tests {
             status,
             serde_json::from_slice(&bytes).unwrap_or(serde_json::Value::Null),
         )
+    }
+
+    /// Moves every checkpoint `hours` into the past, as time would.
+    async fn age(pool: &PgPool, hours: i32) {
+        sqlx::query(
+            "UPDATE explore_api.onboarding_checkpoints SET reached_at = reached_at - make_interval(hours => $1)",
+        )
+        .bind(hours)
+        .execute(pool)
+        .await
+        .unwrap();
     }
 
     const BODY: &str = r#"{"checkpointId":1,"userIdentifier":"a@b.com","identifierType":"email","action":"reached","email":"a@b.com"}"#;
@@ -1021,14 +1132,11 @@ mod route_tests {
         );
     }
 
+    /// Validation answers before the store is reached: these hold with no
+    /// database behind the node.
     #[tokio::test]
-    async fn a_checkpoint_is_recorded_and_validated() {
+    async fn a_checkpoint_and_a_sequence_are_validated() {
         let app = app(Some("k")).await;
-        let (status, body) = send(&app, "POST", "/onboarding/checkpoint", Some("k"), BODY).await;
-        assert_eq!(
-            (status, body),
-            (StatusCode::OK, serde_json::json!({ "success": true }))
-        );
         let (status, body) = send(&app, "POST", "/onboarding/checkpoint", Some("k"), r#"{"checkpointId":9,"userIdentifier":"u","identifierType":"email","action":"reached"}"#).await;
         assert_eq!(
             (status, body["error"].as_str()),
@@ -1046,16 +1154,6 @@ mod route_tests {
         let (status, body) = send(
             &app,
             "GET",
-            "/onboarding/pending-nudges?sequence=1",
-            Some("k"),
-            "",
-        )
-        .await;
-        assert_eq!(status, StatusCode::OK);
-        assert_eq!(body["count"], 0, "reached a moment ago: nothing due yet");
-        let (status, body) = send(
-            &app,
-            "GET",
             "/onboarding/pending-nudges?sequence=4",
             Some("k"),
             "",
@@ -1064,6 +1162,127 @@ mod route_tests {
         assert_eq!(
             (status, body["error"].as_str()),
             (StatusCode::BAD_REQUEST, Some("sequence must be 1, 2, or 3"))
+        );
+    }
+
+    /// The store unreachable is a 500 with the auth server's bodies.
+    #[tokio::test]
+    async fn a_store_failure_is_a_500() {
+        let app = app(Some("k")).await;
+        let (status, body) = send(&app, "POST", "/onboarding/checkpoint", Some("k"), BODY).await;
+        assert_eq!(
+            (status, body),
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                serde_json::json!({ "error": "Internal server error" })
+            )
+        );
+        let (status, body) = send(&app, "GET", "/onboarding/pending-nudges", Some("k"), "").await;
+        assert_eq!(
+            (status, body),
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                serde_json::json!({ "error": "Failed to query pending nudges" })
+            )
+        );
+    }
+
+    /// The gateway sends each request to any replica: a checkpoint one
+    /// records is a nudge the other lists, and a completion the other
+    /// records clears it for the first.
+    #[tokio::test]
+    async fn replicas_share_the_checkpoints() {
+        let Some(pool) = crate::db::scratch::isolated_pool(2).await else {
+            return;
+        };
+        let (a, _) = replica(&pool, "k").await;
+        let (b, _) = replica(&pool, "k").await;
+
+        let (status, body) = send(&a, "POST", "/onboarding/checkpoint", Some("k"), BODY).await;
+        assert_eq!(
+            (status, body),
+            (StatusCode::OK, serde_json::json!({ "success": true }))
+        );
+        let pending = "/onboarding/pending-nudges?sequence=1";
+        let (status, body) = send(&b, "GET", pending, Some("k"), "").await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(body["count"], 0, "reached a moment ago: nothing due yet");
+
+        age(&pool, 13).await;
+        let (status, body) = send(&b, "GET", pending, Some("k"), "").await;
+        assert_eq!(
+            (status, body),
+            (
+                StatusCode::OK,
+                serde_json::json!({
+                    "sequence": 1,
+                    "count": 1,
+                    "nudges": [{ "userId": "a@b.com", "checkpointId": 1, "email": "a@b.com" }],
+                })
+            )
+        );
+        let (_, body) = send(&a, "GET", "/onboarding/pending-nudges", Some("k"), "").await;
+        assert_eq!(body["sequence"], 1, "sequence defaults to 1");
+        assert_eq!(body["count"], 1);
+
+        let completed = r#"{"checkpointId":1,"userIdentifier":"a@b.com","identifierType":"email","action":"completed"}"#;
+        assert_eq!(
+            send(&b, "POST", "/onboarding/checkpoint", Some("k"), completed)
+                .await
+                .0,
+            StatusCode::OK
+        );
+        let (_, body) = send(&a, "GET", pending, Some("k"), "").await;
+        assert_eq!(body["count"], 0);
+    }
+
+    /// A new process (a restart, a new replica) reads what an earlier one wrote.
+    #[tokio::test]
+    async fn checkpoints_survive_a_new_state() {
+        let Some(pool) = crate::db::scratch::isolated_pool(2).await else {
+            return;
+        };
+        let (first, state) = replica(&pool, "k").await;
+        let body = r#"{"checkpointId":2,"userIdentifier":"a@b.com","identifierType":"email","action":"reached","email":"a@b.com","wallet":"0xABC","metadata":{"step":"name"}}"#;
+        assert_eq!(
+            send(&first, "POST", "/onboarding/checkpoint", Some("k"), body)
+                .await
+                .0,
+            StatusCode::OK
+        );
+        state.pool.close().await;
+        drop((first, state));
+
+        let (second, state) = replica(&pool, "k").await;
+        assert_eq!(
+            state.onboarding.checkpoint_state("a@b.com", 2).await,
+            Some(CheckpointState {
+                completed: false,
+                email: Some("a@b.com".into()),
+                wallet: Some("0xabc".into()),
+                metadata: Some(serde_json::json!({ "step": "name" })),
+            })
+        );
+        let cp7 = r#"{"checkpointId":7,"userIdentifier":"0xAbc","identifierType":"wallet","action":"reached"}"#;
+        assert_eq!(
+            send(&second, "POST", "/onboarding/checkpoint", Some("k"), cp7)
+                .await
+                .0,
+            StatusCode::OK
+        );
+        age(&pool, 25).await;
+        let (_, body) = send(
+            &second,
+            "GET",
+            "/onboarding/pending-nudges?sequence=2",
+            Some("k"),
+            "",
+        )
+        .await;
+        assert_eq!(
+            body["nudges"],
+            serde_json::json!([{ "userId": "a@b.com", "checkpointId": 7, "email": "a@b.com" }]),
+            "the wallet bound before the restart resolves after it"
         );
     }
 }

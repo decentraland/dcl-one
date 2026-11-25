@@ -1,5 +1,5 @@
-// The one loopback realm of the specs under this folder: every scene of `scenes/dcl-workspace.json`,
-// built and served at its own parcel. `visualRealm()` starts it once per process, on the realm
+// The one loopback realm of the specs under this folder: every scene of `scenes/dcl-workspace.json`
+// but `video`, built and served at its own parcel. `visualRealm()` starts it once per process, on the realm
 // port, and registers its close for the end of the run; the spec files share the process
 // (`--test-isolation=none`), so a second server on that port would fail.
 import path from 'node:path'
@@ -17,20 +17,20 @@ async function build(id: string): Promise<BuiltScene> {
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error)
     if (message.includes('build the scene first')) {
-      throw new Error(`the scene "${id}" is not built (${message}); run \`npm run build-scenes\` in apps/bevy-explorer/e2e`, { cause: error })
+      throw new Error(`the scene "${id}" is not built (${message}); run \`pnpm run build-scenes\` in apps/bevy-explorer/e2e`, { cause: error })
     }
     throw error
   }
 }
 
 async function start(): Promise<RealmServer> {
-  const ids = await workspaceFolders()
+  const ids = (await workspaceFolders()).filter((id) => id !== 'video')
   const realm = await serveRealm({ scenes: await Promise.all(ids.map(build)), port: readTarget().ports.realm })
   after(() => realm.close())
   return realm
 }
 
-/** The realm, serving every workspace scene; started once per process. */
+/** The realm, serving every workspace scene except `video`; started once per process. */
 export function visualRealm(): Promise<RealmServer> {
   server ??= start()
   return server

@@ -37,13 +37,17 @@
   margin-left: 20px;
 }
 
+/* The tooltip anchor carries the gap, so the tip is centred on the icon. */
+.Editor .Header .refresh-tip {
+  margin-left: 12px;
+}
+
 .Editor .Header .refresh {
   display: inline-flex;
   align-items: center;
   justify-content: center;
   width: 32px;
   height: 32px;
-  margin-left: 12px;
   border-radius: 100%;
   cursor: pointer;
   color: var(--text);
@@ -70,43 +74,36 @@
   gap: 10px;
 }
 
-/* the shared Button sheet adds margin-left between adjacent buttons/groups; the title bar spaces
+/* the hub-button sheet adds margin-left between adjacent buttons/groups; the title bar spaces
    its controls with the flex gap above, so that margin would double up between two buttons */
-.Editor .Header .actions .MuiButton-root + .MuiButton-root,
-.Editor .Header .actions .MuiButton-root + .MuiButtonGroup-root,
-.Editor .Header .actions .MuiButtonGroup-root + .MuiButton-root,
-.Editor .Header .actions .MuiButtonGroup-root + .MuiButtonGroup-root {
+.Editor .Header .actions .hub-button + .hub-button,
+.Editor .Header .actions .hub-button + .SplitButton,
+.Editor .Header .actions .SplitButton + .hub-button,
+.Editor .Header .actions .SplitButton + .SplitButton {
   margin-left: 0;
 }
 
-/* flat title bar: the ui2 theme raises a hovered contained button with an outset shadow (the
-   grouped ones already suppress it), which reads as the button growing next to its neighbours */
-.Editor .Header .actions .Button.MuiButton-root,
-.Editor .Header .actions .Button.MuiButton-root:hover {
-  box-shadow: none !important;
-}
-
-.Editor .Header .actions .MuiButtonGroup-root {
+.Editor .Header .actions .SplitButton {
   height: 32px;
 }
 
-.Editor .Header .actions .MuiButtonGroup-root .MuiButton-root {
+.Editor .Header .actions .SplitButton .hub-button {
   height: 32px;
 }
 
 /* every title-bar control shares an 8px radius; a group rounds only its outer corners (the
-   shared Button sheet squares the inner edges where the main button meets its dropdown) */
-.Editor .Header .actions .Button.MuiButton-root:not(.MuiButtonGroup-grouped) {
+   hub-button sheet squares the inner edges where the main button meets its dropdown) */
+.Editor .Header .actions .hub-button.btn:not(.SplitButton .hub-button) {
   border-radius: 8px;
 }
 
-.Editor .Header .actions .Button.MuiButton-root.MuiButtonGroup-grouped:not(.extra-button) {
+.Editor .Header .actions .SplitButton .hub-button.btn:not(.SplitButton-menu) {
   border-top-left-radius: 8px;
   border-bottom-left-radius: 8px;
   border-right: 1px solid rgba(255, 255, 255, 0.2);
 }
 
-.Editor .Header .actions .Button.extra-button {
+.Editor .Header .actions .hub-button.SplitButton-menu {
   border-top-right-radius: 8px;
   border-bottom-right-radius: 8px;
 }
@@ -148,11 +145,12 @@
    than replacing it — over the black header a bare rgba(255,255,255,0.1) would read darker
    than the idle state. A pseudo-element (not background-image) so it fades, and so the
    grouped Preview buttons' own background rules can't cancel it. */
-.Editor .Header .actions .Button.MuiButton-colorSecondary {
+.Editor .Header .actions .hub-button.btn.hub-button--secondary {
+  position: relative;
   background-color: var(--title-bar-button) !important;
 }
 
-.Editor .Header .actions .Button.MuiButton-colorSecondary::after {
+.Editor .Header .actions .hub-button.btn.hub-button--secondary::after {
   content: "";
   position: absolute;
   inset: 0;
@@ -163,25 +161,25 @@
   transition: opacity 0.15s ease-in-out;
 }
 
-.Editor .Header .actions .Button.MuiButton-colorSecondary:hover::after {
+.Editor .Header .actions .hub-button.btn.hub-button--secondary:hover::after {
   opacity: 1;
 }
 
-.Editor .Header .actions .Button.MuiButton-colorPrimary:hover {
-  background-color: var(--dcl-hover) !important;
+.Editor .Header .actions .hub-button.btn.hub-button--primary:hover {
+  background-color: var(--primary-hover) !important;
 }
 
 /* Title-bar design: Optimize / Code are square icon-only buttons whose label lives in the
-   tooltip. The icon is the button's content (not a startIcon) so MUI adds no gap. */
-.Editor .Header .actions .Button.icon-only,
-.Editor .Header .actions .Button.extra-button {
+   tooltip. The icon is the content of the button (not a startIcon), so no icon gap is added. */
+.Editor .Header .actions .hub-button.icon-only,
+.Editor .Header .actions .hub-button.SplitButton-menu {
   width: 32px;
   min-width: 32px !important;
   height: 32px;
   padding: 0 !important;
 }
 
-.Editor .Header .actions .Button.icon-only svg {
+.Editor .Header .actions .hub-button.icon-only svg {
   width: 20px;
   height: 20px;
 }
@@ -321,37 +319,102 @@
   box-sizing: border-box;
 }
 
-.PreviewOptions .options .MuiFormControlLabel-root {
+.PreviewOptions .options .control {
   flex: 1;
-  margin: 0;
+  align-items: center;
   gap: 5px;
-}
-
-.PreviewOptions .options .MuiRadio-root,
-.PreviewOptions .options .MuiCheckbox-root {
-  padding: 0;
-}
-
-.PreviewOptions .options .MuiFormControlLabel-label {
   font-size: 14px;
+  line-height: 1.5;
+  letter-spacing: 0.00938em;
   color: #fcfcfc;
 }
 
-.PreviewOptions .options .MuiListItemButton-root {
+/* The box is drawn in a 24px area and has the shape it had before: a 2px line, 2px corners, the mark
+   cut out of the fill. */
+.PreviewOptions .options .control.checkbox .checkbox__box {
+  position: relative;
+  margin: 3px;
+  border: 2px solid var(--text-tone-secondary);
+  border-radius: 2px;
+}
+
+.PreviewOptions .options .control.checkbox .checkbox__box.is-checked {
+  border-color: transparent;
+  background: transparent;
+}
+
+.PreviewOptions .options .control.checkbox .checkbox__box.is-checked::before {
+  content: '';
+  position: absolute;
+  inset: -2px;
+  background: var(--brand);
+  mask: var(--checkbox-checked-mask) center / 18px 18px no-repeat;
+}
+
+.PreviewOptions .options .control.checkbox .checkbox__box.is-checked svg {
+  display: none;
+}
+
+.PreviewOptions .options .control.checkbox .checkbox__label {
+  line-height: 1.5;
+}
+
+.PreviewOptions .options .control:not(.checkbox) > span[aria-hidden="true"] {
+  margin: 2px;
+}
+
+.PreviewOptions .tooltip-row {
+  display: flex;
+}
+
+.PreviewOptions .tooltip-row > .checkbox-row {
+  flex: 1;
+}
+
+.PreviewOptions .options .option,
+.PublishOptions .option {
+  display: flex;
+  align-items: center;
+  width: 100%;
+  padding: 8px 16px;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition: background-color 150ms cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.PreviewOptions .options .option:hover,
+.PublishOptions .option:hover {
+  background-color: var(--fill-3);
+}
+
+.PreviewOptions .options .option > span,
+.PublishOptions .option > span {
+  flex: 1 1 auto;
+  min-width: 0;
+  margin: 4px 0;
+}
+
+.PreviewOptions .options .option {
   height: 38px;
   min-height: 38px;
   padding: 0 10px;
   border-radius: 8px;
 }
 
-.PreviewOptions .options .MuiListItemText-primary {
+.PreviewOptions .options .option > span {
   font-size: 14px;
   color: #fcfcfc;
 }
 
-.PreviewOptions .MuiDivider-root {
+.PreviewOptions .divider {
+  flex-shrink: 0;
   margin: 0;
-  border-color: rgba(255, 255, 255, 0.1);
+  border: 0;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.1);
 }
 
 .PreviewOptions .title {

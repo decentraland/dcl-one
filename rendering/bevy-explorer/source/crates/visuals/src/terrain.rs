@@ -1,6 +1,7 @@
-//! Empty-parcel terrain. Step targets are resolved in `ScenePointers`; this eases them, feeds the
-//! eased values to the ground and grass vertex shader, and builds the player's ground collider from
-//! the same values so what you see is what you stand on.
+//! Empty-parcel terrain. Step targets are resolved in `ScenePointers`; this feeds them to the
+//! ground and grass vertex shader, and builds the player's ground collider from the same values so
+//! what you see is what you stand on. Heights take their value in the frame they resolve, also
+//! for the pointer batches that keep arriving after the loading screen lifts.
 
 use crate::landscape_textures::{ground_shader_defs, LandscapeTextures};
 use bevy::{
@@ -26,7 +27,7 @@ use bevy::{
 };
 use common::{
     sets::PostUpdateSets,
-    structs::{CurrentRealm, EngineMovementControl, PrimaryUser},
+    structs::{CurrentRealm, EngineMovementControl, LandscapeDistance, PrimaryUser},
     terrain::{
         height, texel_value, uv_size, PlayerTerrainHeight, TerrainChange, TerrainTargets,
         MAX_STEPS, ZERO,
@@ -43,8 +44,6 @@ use scene_runner::{
 pub(crate) const TERRAIN_TEXTURE: Handle<Image> =
     weak_handle!("540a82e9-5602-4123-9dc7-3d76e0aec0e5");
 
-/// Eased change of a parcel's step value per second. One step is 1.8 m of height.
-const EASE_STEPS_PER_SECOND: f32 = 1.0;
 /// Side of the player's collider patch in metres, at 1 m spacing.
 const COLLIDER_SIZE: i32 = 64;
 /// The collider patch recentres on this grid (metres).
@@ -60,6 +59,7 @@ impl Plugin for TerrainPlugin {
         embed_shaders(app);
 
         app.init_resource::<TerrainSurface>()
+            .init_resource::<LandscapeDistance>()
             .init_resource::<PlayerTerrainHeight>()
             .init_resource::<TerrainTextureWrites>()
             .add_plugins(ExtractResourcePlugin::<TerrainTextureWrites>::default())
@@ -68,16 +68,14 @@ impl Plugin for TerrainPlugin {
             .add_systems(
                 PostUpdate,
                 (
-                    (sync, ease, (update_texture, player_height))
+                    (sync, (update_texture, player_height))
                         .chain()
                         .in_set(TerrainSet)
                         .before(PostUpdateSets::ColliderUpdate),
                     update_collider.in_set(PostUpdateSets::ColliderUpdate),
-                    floor_player
-                        .after(PostUpdateSets::PlayerUpdate)
-                        .before(PostUpdateSets::CameraUpdate),
                 ),
             );
+        add_player_floor(app);
 
         if let Some(render_app) = app.get_sub_app_mut(RenderApp) {
             render_app.add_systems(
@@ -109,8 +107,10 @@ pub(crate) fn terrain_vertex_shader() -> ShaderRef {
 }
 
 mod decl {
-    // temporary for ShaderType macro, remove in future
-    #![allow(dead_code)]
+    #![expect(
+        dead_code,
+        reason = "the ShaderType derive emits a never-called check fn per field"
+    )]
 
     use bevy::{
         math::{IVec2, Vec2, Vec4},
@@ -130,26 +130,29 @@ mod decl {
         /// coast bounds in unity x/z metres (min x, min z, max x, max z); the ground ends at the
         /// cliffs
         pub coast: Vec4,
-    }
-
-    /// Coast bounds that no point is beyond.
-    pub const NO_COAST: Vec4 = Vec4::new(-1.0e7, -1.0e7, 1.0e7, 1.0e7);
-
-    impl Default for TerrainParams {
-        fn default() -> Self {
-            Self {
-                min: IVec2::ZERO,
-                size: IVec2::ZERO,
-                max_steps: 0.0,
-                uv_size: 0.0,
-                player_parcel: IVec2::ZERO,
-                player_offset: Vec2::ZERO,
-                coast: NO_COAST,
-            }
-        }
+        /// hills are displaced out to this many metres from the player (`hill_reach`)
+        pub hill_reach: f32,
     }
 }
 pub use decl::*;
+
+/// Coast bounds that no point is beyond.
+pub const NO_COAST: Vec4 = Vec4::new(-1.0e7, -1.0e7, 1.0e7, 1.0e7);
+
+impl Default for TerrainParams {
+    fn default() -> Self {
+        Self {
+            min: IVec2::ZERO,
+            size: IVec2::ZERO,
+            max_steps: 0.0,
+            uv_size: 0.0,
+            player_parcel: IVec2::ZERO,
+            player_offset: Vec2::ZERO,
+            coast: NO_COAST,
+            hill_reach: hill_reach(LandscapeDistance::default().0),
+        }
+    }
+}
 
 /// The ground without grass shells (used when parcel grass is off), textured from the splat and
 /// displaced like the grass.
@@ -231,28 +234,23 @@ pub struct SurfaceChanges {
     pub params: bool,
     /// Only the player's position within its parcel changed, which the shader's detail morph uses.
     pub player: bool,
-    /// Parcels whose eased value changed.
-    pub eased: Option<(IVec2, IVec2)>,
-    /// Parcels whose target changed.
+    /// Parcels whose step value changed.
     pub targets: Option<(IVec2, IVec2)>,
 }
 
-/// Eased per-parcel step values over the terrain bounds.
+/// Per-parcel step values over the terrain bounds.
 #[derive(Resource)]
 pub struct TerrainSurface {
     epoch: Option<u64>,
     enabled: bool,
     bounds: Option<(IVec2, IVec2)>,
     target: Vec<i8>,
-    eased: Vec<f32>,
-    active: Vec<usize>,
-    is_active: Vec<bool>,
-    max_steps_target: f32,
     max_steps: f32,
     uv_size: f32,
     player_parcel: IVec2,
     player_offset: Vec2,
     coast: Vec4,
+    hill_reach: f32,
     changes: SurfaceChanges,
 }
 
@@ -263,15 +261,12 @@ impl Default for TerrainSurface {
             enabled: true,
             bounds: None,
             target: Vec::new(),
-            eased: Vec::new(),
-            active: Vec::new(),
-            is_active: Vec::new(),
-            max_steps_target: f32::from(MAX_STEPS),
             max_steps: f32::from(MAX_STEPS),
             uv_size: 1.0,
             player_parcel: IVec2::ZERO,
             player_offset: Vec2::ZERO,
             coast: NO_COAST,
+            hill_reach: TerrainParams::default().hill_reach,
             changes: SurfaceChanges::default(),
         }
     }
@@ -287,6 +282,15 @@ fn union(rect: Option<(IVec2, IVec2)>, min: IVec2, max: IVec2) -> Option<(IVec2,
 impl TerrainSurface {
     pub fn changes(&self) -> &SurfaceChanges {
         &self.changes
+    }
+
+    /// Displace the hills out to `hill_reach(distance)`.
+    pub fn set_landscape_distance(&mut self, distance: f32) {
+        let reach = hill_reach(distance);
+        if reach != self.hill_reach {
+            self.hill_reach = reach;
+            self.changes.params = true;
+        }
     }
 
     /// Coast bounds in unity x/z metres (min x, min z, max x, max z), if there is a coast.
@@ -317,6 +321,7 @@ impl TerrainSurface {
                 player_parcel: self.player_parcel,
                 player_offset: self.player_offset,
                 coast: self.coast,
+                hill_reach: self.hill_reach,
             },
             None => TerrainParams {
                 min: IVec2::ZERO,
@@ -326,23 +331,25 @@ impl TerrainSurface {
                 player_parcel: self.player_parcel,
                 player_offset: self.player_offset,
                 coast: self.coast,
+                hill_reach: self.hill_reach,
             },
         }
     }
 
     fn texel(&self, parcel: IVec2) -> f32 {
-        self.index(parcel)
-            .map_or(0.0, |index| texel_value(self.eased[index], self.max_steps))
+        self.index(parcel).map_or(0.0, |index| {
+            texel_value(f32::from(self.target[index]), self.max_steps)
+        })
     }
 
-    /// Current (eased) height at Unity x/z.
+    /// Height at parcel-space x/z, where z is the negated world z.
     pub fn height(&self, x: f32, unity_z: f32) -> f32 {
         height(x, unity_z, self.max_steps, self.uv_size, |parcel| {
             self.texel(parcel)
         })
     }
 
-    /// Current (eased) height below a Bevy position.
+    /// Height below a Bevy position.
     pub fn height_at(&self, position: Vec3) -> f32 {
         self.height(position.x, -position.z)
     }
@@ -370,7 +377,7 @@ impl TerrainSurface {
         self.enabled && self.index(parcel).is_some()
     }
 
-    /// True if the parcel will be flat at height 0 once eased: no neighbouring target rises.
+    /// True if the parcel is flat at height 0: no neighbouring step rises.
     pub fn is_flat(&self, parcel: IVec2) -> bool {
         (-1..=1).all(|y| {
             (-1..=1).all(|x| {
@@ -380,15 +387,8 @@ impl TerrainSurface {
         })
     }
 
-    fn activate(&mut self, index: usize) {
-        if !self.is_active[index] && self.eased[index] != f32::from(self.target[index]) {
-            self.is_active[index] = true;
-            self.active.push(index);
-        }
-    }
-
     fn apply(&mut self, targets: &TerrainTargets, change: Option<TerrainChange>, enabled: bool) {
-        let snap = self.epoch != Some(targets.epoch()) || self.enabled != enabled;
+        let reset = self.epoch != Some(targets.epoch()) || self.enabled != enabled;
         let target = |parcel| {
             if enabled {
                 targets.steps(parcel)
@@ -396,44 +396,20 @@ impl TerrainSurface {
                 ZERO
             }
         };
-        if snap || self.bounds != targets.bounds() || change == Some(TerrainChange::Full) {
-            let old_bounds = self.bounds;
-            let old_width = self.width();
-            let old_eased = std::mem::take(&mut self.eased);
-            let old_index = |parcel: IVec2| {
-                let (min, max) = old_bounds?;
-                if parcel.cmplt(min).any() || parcel.cmpgt(max).any() {
-                    return None;
-                }
-                let offset = parcel - min;
-                Some((offset.y * old_width + offset.x) as usize)
-            };
+        if reset || self.bounds != targets.bounds() || change == Some(TerrainChange::Full) {
             self.bounds = targets.bounds();
             self.uv_size = self.bounds.map_or(1.0, uv_size);
-            self.active.clear();
             self.target.clear();
             if let Some((min, max)) = self.bounds {
                 for y in min.y..=max.y {
                     for x in min.x..=max.x {
-                        let parcel = IVec2::new(x, y);
-                        let steps = target(parcel);
-                        self.target.push(steps);
-                        self.eased.push(if snap {
-                            f32::from(steps)
-                        } else {
-                            old_index(parcel).map_or(f32::from(ZERO), |index| old_eased[index])
-                        });
+                        self.target.push(target(IVec2::new(x, y)));
                     }
                 }
-            }
-            self.is_active = vec![false; self.target.len()];
-            for index in 0..self.target.len() {
-                self.activate(index);
             }
             self.changes.relayout = true;
             self.changes.params = true;
             self.changes.targets = self.bounds;
-            self.changes.eased = self.bounds;
         } else if let Some(TerrainChange::Rect(min, max)) = change {
             for y in min.y..=max.y {
                 for x in min.x..=max.x {
@@ -442,74 +418,18 @@ impl TerrainSurface {
                     let steps = target(parcel);
                     if self.target[index] != steps {
                         self.target[index] = steps;
-                        self.activate(index);
                         self.changes.targets = union(self.changes.targets, parcel, parcel);
                     }
                 }
             }
         }
-        self.max_steps_target = f32::from(targets.max_steps());
-        if snap {
-            self.max_steps = self.max_steps_target;
+        let max_steps = f32::from(targets.max_steps());
+        if self.max_steps != max_steps {
+            self.max_steps = max_steps;
+            self.changes.params = true;
         }
         self.epoch = Some(targets.epoch());
         self.enabled = enabled;
-    }
-
-    /// Move eased values toward their targets. Occupied (`ZERO`) texels lie far below the floor,
-    /// so leaving `ZERO` jumps straight to step 0: every neighbour of an occupied parcel is at
-    /// step 0 or below, so no height changes at the jump.
-    fn ease(&mut self, dt: f32) {
-        let step = dt * EASE_STEPS_PER_SECOND;
-        let mut changed = self.changes.eased;
-        let Self {
-            bounds,
-            target,
-            eased,
-            active,
-            is_active,
-            ..
-        } = self;
-        let width = bounds.map_or(0, |(min, max)| max.x - min.x + 1);
-        active.retain(|&index| {
-            let goal = f32::from(target[index]);
-            let value = &mut eased[index];
-            let before = *value;
-            if target[index] == ZERO {
-                *value = if *value - step <= 0.0 {
-                    goal
-                } else {
-                    *value - step
-                };
-            } else {
-                let from = value.max(0.0);
-                *value = if from < goal {
-                    (from + step).min(goal)
-                } else {
-                    (from - step).max(goal)
-                };
-            }
-            if *value != before {
-                let parcel =
-                    bounds.unwrap().0 + IVec2::new(index as i32 % width, index as i32 / width);
-                changed = union(changed, parcel, parcel);
-            }
-            let settled = *value == goal;
-            if settled {
-                is_active[index] = false;
-            }
-            !settled
-        });
-        self.changes.eased = changed;
-
-        if self.max_steps != self.max_steps_target {
-            self.max_steps = if self.max_steps < self.max_steps_target {
-                (self.max_steps + step).min(self.max_steps_target)
-            } else {
-                (self.max_steps - step).max(self.max_steps_target)
-            };
-            self.changes.params = true;
-        }
     }
 
     fn rect_bytes(&self, min: IVec2, max: IVec2) -> Vec<u8> {
@@ -517,7 +437,7 @@ impl TerrainSurface {
         for y in min.y..=max.y {
             for x in min.x..=max.x {
                 let index = self.index(IVec2::new(x, y)).unwrap();
-                bytes.extend_from_slice(&self.eased[index].to_le_bytes());
+                bytes.extend_from_slice(&f32::from(self.target[index]).to_le_bytes());
             }
         }
         bytes
@@ -586,9 +506,11 @@ fn sync(
     // when the scene unloads
     mut enabled: Local<Option<bool>>,
     mut surface: ResMut<TerrainSurface>,
+    distance: Res<LandscapeDistance>,
     player: Query<&GlobalTransform, With<PrimaryUser>>,
 ) {
     surface.changes = SurfaceChanges::default();
+    surface.set_landscape_distance(distance.0);
     if let Ok(player) = player.single() {
         let translation = player.translation();
         let parcel = vec3_to_parcel(translation);
@@ -635,10 +557,6 @@ fn sync(
     }
 }
 
-fn ease(time: Res<Time>, mut surface: ResMut<TerrainSurface>) {
-    surface.ease(time.delta_secs());
-}
-
 fn player_height(
     surface: Res<TerrainSurface>,
     player: Query<&GlobalTransform, With<PrimaryUser>>,
@@ -671,7 +589,7 @@ fn update_texture(
         if !writes.writes.is_empty() {
             writes.writes.clear();
         }
-    } else if let Some((min, max)) = changes.eased {
+    } else if let Some((min, max)) = changes.targets {
         let (bounds_min, bounds_max) = surface.bounds.unwrap();
         *writes = TerrainTextureWrites {
             size: bounds_max - bounds_min + 1,
@@ -797,7 +715,7 @@ pub(crate) fn update_collider(
     let affected = changes.relayout
         || changes.params
         || changes
-            .eased
+            .targets
             .is_some_and(|(min, max)| min.cmple(covered.1).all() && max.cmpge(covered.0).all());
     if state.centre == Some(centre) && !affected {
         return;
@@ -814,8 +732,25 @@ pub(crate) fn update_collider(
     );
 }
 
-/// Keep the player on or above the terrain of an empty parcel after movement each tick, as
-/// movement already floors at zero. The avatar then rides rising ground up instead of fighting
+/// Floor the player twice a tick. Before movement, against the heights the collider was just
+/// rebuilt from: collision resolution would push the player out of a rise instead, and the
+/// movement scene reads that push as a launch velocity. After movement, so it ends on the ground.
+pub(crate) fn add_player_floor(app: &mut App) {
+    app.add_systems(
+        PostUpdate,
+        (
+            floor_player
+                .after(PostUpdateSets::ColliderUpdate)
+                .before(PostUpdateSets::PlayerUpdate),
+            floor_player
+                .after(PostUpdateSets::PlayerUpdate)
+                .before(PostUpdateSets::CameraUpdate),
+        ),
+    );
+}
+
+/// Keep the player on or above the terrain of an empty parcel, as movement already floors at
+/// zero. The avatar then rides rising ground up instead of fighting
 /// it through collision; the heightfield collider stays for scene raycasts.
 fn floor_player(
     surface: Res<TerrainSurface>,
@@ -925,10 +860,18 @@ pub(crate) const GROUND_NEAR_MIN: i32 = -13;
 pub(crate) const GROUND_NEAR_MAX: i32 = 12;
 /// Cell size of the first rings around the per-parcel grids; each further ring doubles it.
 const RING_CELL: f32 = 16.0;
-/// Rings at `RING_CELL`, which follow the terrain: their cells move with the player in whole cells,
-/// so they sit on the same points. Coarser rings beyond would slide over it, so the ground there is
-/// flat (terrain_vertex.wgsl FLAT_REACH).
+/// Rings at `RING_CELL`. The ground moves with the player in whole parcels, so their cells sit on
+/// the same terrain points; terrain_vertex.wgsl snaps each coarser ring to its own cell size
+/// (`ring_origin`) so that its cells do too.
 const TERRAIN_RINGS: u32 = 2;
+/// Rings beyond the parcel grass area, out to 13 km: past where the hills flatten at the longest
+/// Landscape Distance.
+pub(crate) const GROUND_RINGS: u32 = 6;
+
+/// How far the hills are displaced for a Landscape Distance: never short of the `RING_CELL` rings.
+pub(crate) fn hill_reach(distance_m: f32) -> f32 {
+    distance_m.max(ground_extent(TERRAIN_RINGS))
+}
 
 /// Flat ground relative to the player's parcel corner (Unity x/z). Parcels near the player get
 /// `segments(offset)` cells a side, matching the parcel grass over them, so both share vertices.

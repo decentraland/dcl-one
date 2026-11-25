@@ -13,7 +13,7 @@ import {
   parseOwnedEmotes,
   rarityLabel,
   sortLoadout,
-} from "./backpack";
+} from "@web-core/catalyst/backpack";
 import { normalizeCommunity } from "./communitiesSchema";
 import {
   eventCoords,
@@ -23,27 +23,26 @@ import {
   isAttending,
   normalizeEvent,
   normalizeEventAttendee,
-} from "./events";
+} from "@web-core/catalyst/events";
 import { isUsableNotification, parseNotifications } from "./notifications";
-import { categoryForType, humanizeType, unreadCount } from "./notificationsView";
-import type { Notification } from "./notificationsView";
+import { categoryForType, humanizeType, unreadCount } from "@web-core/notifications/notificationsView";
+import type { Notification } from "@web-core/notifications/notificationsView";
 import {
   isRenderablePlace,
   isRenderablePlaceCategory,
   normalizePlace,
   normalizePlaceCategory,
   toCategoryView,
-  toPlaceDetail,
   toPlaceView,
-} from "./places";
+} from "@web-core/catalyst/places";
 import { normalizeProfileEnvelope } from "./profile";
-import { field, hasId, isRecord, keepRow, keepRows, listOf } from "./rows";
-import type { RowGuard } from "./rows";
-import { EmoteSchema, SlotBindingSchema, WearableSchema } from "./schemas/backpack";
+import { field, hasId, isRecord, keepRow, keepRows, listOf } from "@web-core/catalyst/rows";
+import type { RowGuard } from "@web-core/catalyst/rows";
+import { EmoteSchema, SlotBindingSchema, WearableSchema } from "@web-core/catalyst/schemas/backpack";
 import { CommunitySchema } from "./schemas/communities";
-import { EventAttendeeSchema, EventSchema } from "./schemas/events";
+import { EventAttendeeSchema, EventSchema } from "@web-core/catalyst/schemas/events";
 import { NotificationSchema } from "./schemas/notifications";
-import { CategorySchema, PlaceSchema } from "./schemas/places";
+import { CategorySchema, PlaceSchema } from "@web-core/catalyst/schemas/places";
 import type { AvatarWire, ProfileEnvelopeWire } from "./schemas/profile";
 
 type GuardCase = {
@@ -61,8 +60,7 @@ const CASES: GuardCase[] = [
     guard: isRenderablePlace,
     minimal: { id: "", base_position: "", positions: [], categories: [] },
     map: (row) => {
-      const view = toPlaceView(normalizePlace(row as never));
-      return toPlaceDetail(view);
+      return toPlaceView(normalizePlace(row as never));
     },
     edges: [
       { id: "", base_position: "", positions: [], categories: [] },

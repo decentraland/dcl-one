@@ -84,13 +84,11 @@ describe('session domain', () => {
     expect(driver.launches).toHaveLength(1)
   })
 
-  it('jump-in reuses the stored login', async () => {
+  it('a stored login goes in by itself, then the lobby', async () => {
     const h = renderSession({ userId: '0xabc' })
     await waitFor(() => expect(h.session().login.status).toBe('reuse-login-or-new'))
-    act(() => h.session().login.jumpIn())
-    // Jump in signs in and shows the lobby.
-    await waitFor(() => expect(h.session().phase).toBe('lobby'))
     await waitFor(() => expect(h.driver.calls).toContain('jumpIn'))
+    await waitFor(() => expect(h.session().phase).toBe('lobby'))
   })
 
   // A ?realm/?position launch goes straight in — never the Places picker. The /about probe blocks
@@ -112,7 +110,7 @@ describe('session domain', () => {
       await waitFor(() => expect(driver.launches).toHaveLength(1))
       expect(h.session().phase).toBe('entering')
       expect(driver.launches[0]).toEqual(['http://127.0.0.1:8000', '0,0'])
-      expect(fetchSpy).toHaveBeenCalledWith('http://127.0.0.1:8000/about')
+      expect(fetchSpy).toHaveBeenCalledWith('http://127.0.0.1:8000/about', expect.objectContaining({ signal: expect.any(AbortSignal) }))
     } finally {
       fetchSpy.mockRestore()
       history.replaceState(null, '', url.pathname + url.search)
@@ -177,7 +175,7 @@ describe('session domain', () => {
         })
       )
       expect(driver.launches).toHaveLength(0)
-      expect(fetchSpy).toHaveBeenCalledWith('https://worlds-content-server.decentraland.org/world/nope.dcl.eth/about')
+      expect(fetchSpy).toHaveBeenCalledWith('https://worlds-content-server.decentraland.org/world/nope.dcl.eth/about', expect.objectContaining({ signal: expect.any(AbortSignal) }))
     } finally {
       fetchSpy.mockRestore()
       history.replaceState(null, '', url.pathname + url.search)
@@ -275,8 +273,9 @@ describe('session domain', () => {
     await waitFor(() => expect(h.session().login.busy).toBe(false))
     h.driver.sent.length = 0
     act(() => h.session().pickDestination({ kind: 'parcel', x: 10, y: 20 }))
-    // the engine keeps the parcel as the realm's landing target, so it isn't held for playerReady
-    expect(h.driver.sentOf('teleport')).toEqual([{ kind: 'teleport', realm: DEFAULT_REALM, x: 10, y: 20, travelId: 2 }])
+    // the engine keeps the parcel as the realm's landing target, so it isn't held for playerReady;
+    // the sign-out took an id of its own
+    expect(h.driver.sentOf('teleport')).toEqual([{ kind: 'teleport', realm: DEFAULT_REALM, x: 10, y: 20, travelId: 3 }])
   })
 
   it('a runtime crash from the watchdog sets a dismissable fatal; dismiss re-arms the watchdog', async () => {
@@ -369,6 +368,18 @@ describe('embedded auto-boot (?guest=1 / ?systemScene=)', () => {
     // No exploreAsGuest() call in the test — the flag alone drives it. With no
     // URL destination it lands in the lobby (a positioned embed skips that too).
     await waitFor(() => expect(h.session().phase).toBe('lobby'))
+  })
+
+  it('offers the boot guest no Sign Out: a reload would only sign it in again', async () => {
+    window.history.replaceState(null, '', '/?guest=1')
+    const h = renderSession({ userId: null })
+    await waitFor(() => expect(h.session().phase).toBe('lobby'))
+    // once the sign-in has landed (its promise chain settled), it still offers none
+    await waitFor(() => expect(h.session().login.busy).toBe(false))
+    await act(async () => {
+      await new Promise((r) => setTimeout(r, 0))
+    })
+    expect(h.session().login.signedInAs).toBeNull()
   })
 
   it('with a ?position, drives a guest straight into the world', async () => {

@@ -1,8 +1,8 @@
 //! Partial (multi-request) publishes: `POST /entities` with `partial=true`,
 //! worlds-content-server's `docs/partial-deployment-contract.md`. The signed
 //! entity id keys the upload; every batch is authenticated like a publish
-//! (the auth chain over the entity id) and serialized per entity in this
-//! process (each staging step is atomic across replicas). A batch
+//! (the auth chain over the entity id) and serialized per entity across replicas on one pooled session.
+//! Staging steps commit independently while that session remains held. A batch
 //! carrying the manifest passes the staging checks (everything but
 //! completeness and size, the permission included unless the upload's own
 //! signer resumes it); a batch without it is accepted only from the
@@ -34,7 +34,8 @@ use axum::response::{IntoResponse, Response};
 use chrono::NaiveDateTime;
 use serde::Serialize;
 use serde_json::Value;
-use sqlx::{PgConnection, PgPool};
+use sqlx::pool::PoolConnection;
+use sqlx::{Connection, PgConnection, PgPool};
 
 use crate::shared::identity::Address;
 
@@ -45,8 +46,8 @@ use super::deploy::{
 use super::metrics as worlds_metrics;
 use super::store::{PARTIAL_UPLOAD_EXPIRED, PartialCompletion};
 use super::upload_limits;
-use super::upload_spool::SpooledFile;
 use super::{CoreState, SharedState};
+use catalyst_storage::upload_spool::SpooledFile;
 
 pub const QUERY_WITHOUT_FIELD_MESSAGE: &str =
     "The 'partial=true' query parameter requires the 'partial=true' form field";
@@ -194,10 +195,18 @@ tokio::task_local! {
     pub(super) static REPLICA: &'static str;
     /// Pauses this request after upsert returns a row, before reservation starts.
     pub(super) static AFTER_UPSERT: (Arc<tokio::sync::Notify>, Arc<tokio::sync::Notify>);
+    /// Pauses after stored-file progress commits and before the pending/completion decision.
+    pub(super) static AFTER_STORED: (Arc<tokio::sync::Notify>, Arc<tokio::sync::Notify>);
     /// Pauses after reservation reads the owner, before charging and taking its transaction locks.
     pub(super) static AFTER_OWNER_LOOKUP: (Arc<tokio::sync::Notify>, Arc<tokio::sync::Notify>);
     /// Signals that this request reached its completing publish.
     pub(super) static PUBLISH_REACHED: Arc<tokio::sync::Notify>;
+    /// A different session owns this entity; this attempt released its checkout.
+    pub(super) static ENTITY_LOCK_BUSY: Arc<tokio::sync::Notify>;
+    /// Pauses after acquisition while the session is still owned by its drop guard.
+    static ENTITY_LOCK_ACQUIRED: (Arc<tokio::sync::Notify>, Arc<tokio::sync::Notify>);
+    /// Pauses release with the session still inside its drop guard.
+    static ENTITY_UNLOCKING: (Arc<tokio::sync::Notify>, Arc<tokio::sync::Notify>);
 }
 
 async fn lock_entity(entity_id: &str) -> EntityGuard {
@@ -211,6 +220,90 @@ async fn lock_entity(entity_id: &str) -> EntityGuard {
     EntityGuard {
         key,
         _guard: lock.lock_owned().await,
+    }
+}
+
+/// Owns a pooled session until its entity lock is certainly released. Unknown lock state
+/// (including a cancelled lock statement or unlock) closes the session instead of pooling it.
+struct SessionEntityGuard {
+    conn: Option<PoolConnection<sqlx::Postgres>>,
+    permit: Option<tokio::sync::OwnedSemaphorePermit>,
+    key: String,
+}
+
+impl SessionEntityGuard {
+    async fn acquire(
+        pool: &PgPool,
+        slots: &Arc<tokio::sync::Semaphore>,
+        entity_id: &str,
+    ) -> Result<Self, sqlx::Error> {
+        let key = format!("worlds-partial-entity:{entity_id}");
+        let mut pause = Duration::from_millis(20);
+        // Both permit and entity-lock waits remain inside the request's existing
+        // deployment-processing timeout; cancellation drops any held resources.
+        loop {
+            let permit = slots
+                .clone()
+                .acquire_owned()
+                .await
+                .expect("partial session budget is never closed");
+            let mut guard = Self {
+                conn: Some(pool.acquire().await?),
+                permit: Some(permit),
+                key: key.clone(),
+            };
+            let taken: bool =
+                sqlx::query_scalar("SELECT pg_try_advisory_lock(hashtextextended($1, 0))")
+                    .bind(&guard.key)
+                    .fetch_one(&mut **guard.conn.as_mut().expect("owned session"))
+                    .await?;
+            if taken {
+                #[cfg(test)]
+                if let Ok((reached, resume)) = ENTITY_LOCK_ACQUIRED.try_with(Clone::clone) {
+                    reached.notify_one();
+                    resume.notified().await;
+                }
+                return Ok(guard);
+            }
+            // A waiter never holds a checkout while sleeping behind another replica.
+            drop(guard.conn.take());
+            drop(guard.permit.take());
+            #[cfg(test)]
+            let _ = ENTITY_LOCK_BUSY.try_with(|busy| busy.notify_one());
+            tokio::time::sleep(pause).await;
+            pause = (pause * 2).min(Duration::from_millis(500));
+        }
+    }
+
+    async fn release(&mut self) {
+        let Some(conn) = self.conn.as_mut() else {
+            return;
+        };
+        #[cfg(test)]
+        if let Ok((reached, resume)) = ENTITY_UNLOCKING.try_with(Clone::clone) {
+            reached.notify_one();
+            resume.notified().await;
+        }
+        // Keep ownership in the close-on-drop guard across this await.
+        let unlocked: Result<bool, _> =
+            sqlx::query_scalar("SELECT pg_advisory_unlock(hashtextextended($1, 0))")
+                .bind(&self.key)
+                .fetch_one(&mut **conn)
+                .await;
+        if !matches!(&unlocked, Ok(true)) {
+            tracing::warn!(key = %self.key, ?unlocked, "closing partial upload session after uncertain unlock");
+            conn.close_on_drop();
+        }
+        drop(self.conn.take());
+        drop(self.permit.take());
+    }
+}
+
+impl Drop for SessionEntityGuard {
+    fn drop(&mut self) {
+        if let Some(conn) = self.conn.as_mut() {
+            conn.close_on_drop();
+        }
     }
 }
 
@@ -334,7 +427,7 @@ const PENDING_COLUMNS: &str = "deployer, created_at, initialized";
 
 /// The live upload of `entity_id` (instance clock), without renewing it.
 async fn live_upload(
-    pool: &PgPool,
+    conn: &mut PgConnection,
     limits: &PartialUploadLimits,
     entity_id: &str,
 ) -> Result<Option<PendingRow>, sqlx::Error> {
@@ -343,7 +436,7 @@ async fn live_upload(
     )))
     .bind(entity_id)
     .bind(naive(now_ms() - limits.ttl_ms()))
-    .fetch_optional(pool)
+    .fetch_optional(&mut *conn)
     .await
 }
 
@@ -360,6 +453,7 @@ struct Receipt {
 /// original signer, else the live scene for any signer.
 async fn replay(
     state: &CoreState,
+    conn: &mut PgConnection,
     entity_id: &str,
     signer: &Address,
 ) -> Result<Option<Response>, sqlx::Error> {
@@ -371,7 +465,7 @@ async fn replay(
     .bind(entity_id)
     .bind(signer.as_str())
     .bind(naive(now_ms() - limits.completed_upload_ttl_ms as i64))
-    .fetch_optional(&state.pool)
+    .fetch_optional(&mut *conn)
     .await?;
     if let Some((world_name, parcels, creation_timestamp)) = completed {
         return Ok(Some(success(
@@ -381,14 +475,15 @@ async fn replay(
             &parcels,
         )));
     }
-    Ok(find_publication(state, entity_id)
+    Ok(find_publication(state, &mut *conn, entity_id)
         .await?
         .map(|(created_ms, world_name, parcels)| success(state, created_ms, &world_name, &parcels)))
 }
 
 /// The scene of `entity_id` published here (not mirrored): its creation time (ms), world and scene parcels.
 async fn find_publication(
-    state: &CoreState,
+    _state: &CoreState,
+    conn: &mut PgConnection,
     entity_id: &str,
 ) -> Result<Option<(i64, String, Vec<String>)>, sqlx::Error> {
     let row: Option<(String, Value, Vec<String>, i64)> = sqlx::query_as(
@@ -397,7 +492,7 @@ async fn find_publication(
          ORDER BY created_at DESC LIMIT 1",
     )
     .bind(entity_id)
-    .fetch_optional(&state.pool)
+    .fetch_optional(&mut *conn)
     .await?;
     Ok(row.map(|(world_name, entity, parcels, created_ms)| {
         let name = entity
@@ -461,16 +556,47 @@ async fn stage_batch(
     files: &[SpooledFile],
     now_ms: i64,
 ) -> Result<Response, Response> {
+    let _local = lock_entity(entity_id).await;
+    let mut session = SessionEntityGuard::acquire(&state.pool, &state.partial_sessions, entity_id)
+        .await
+        .map_err(db_error)?;
+    let response = stage_batch_on(
+        state,
+        &mut session,
+        headers,
+        entity_id,
+        chain,
+        signer,
+        files,
+        now_ms,
+    )
+    .await;
+    session.release().await;
+    response
+}
+
+async fn stage_batch_on(
+    state: &SharedState,
+    session: &mut SessionEntityGuard,
+    headers: &HeaderMap,
+    entity_id: &str,
+    chain: &Value,
+    signer: &Address,
+    files: &[SpooledFile],
+    now_ms: i64,
+) -> Result<Response, Response> {
     let limits = state.settings.partial_uploads;
     let uploads = Uploads::new(files);
 
-    // Batches of one entity run one at a time in this process; each step below is atomic across replicas.
-    let entity_lock = lock_entity(entity_id).await;
+    let conn = &mut **session.conn.as_mut().expect("entity session held");
 
-    let pending = live_upload(&state.pool, &limits, entity_id)
+    let pending = live_upload(&mut *conn, &limits, entity_id)
         .await
         .map_err(db_error)?;
-    if let Some(resp) = replay(state, entity_id, signer).await.map_err(db_error)? {
+    if let Some(resp) = replay(state, &mut *conn, entity_id, signer)
+        .await
+        .map_err(db_error)?
+    {
         return Ok(resp);
     }
     let own_upload = pending.as_ref().filter(|p| p.deployer == signer.as_str());
@@ -498,6 +624,7 @@ async fn stage_batch(
     let admitted_ms = pending.as_ref().map_or(now_ms, |p| millis(p.created_at));
     let staged = deploy::validate(
         state,
+        Some(&mut *conn),
         &entity,
         signer,
         entity_id,
@@ -522,14 +649,15 @@ async fn stage_batch(
                 "SELECT EXISTS (SELECT 1 FROM worlds.worlds WHERE name = $1 AND mirror_source IS NULL)",
             )
             .bind(staged.world.key())
-            .fetch_one(&state.pool)
+            .fetch_one(&mut *conn)
             .await
             .map_err(db_error)?;
             if !hosted {
                 return Err(err_one(PERSONAL_FIRST_MESSAGE));
             }
         }
-        deploy::refuse_if_newer_scene(state, &staged.world, &parcels, entity_id, &entity).await?;
+        deploy::refuse_if_newer_scene_on(&mut *conn, &staged.world, &parcels, entity_id, &entity)
+            .await?;
     }
 
     let mut content: Vec<String> = Vec::new();
@@ -553,7 +681,7 @@ async fn stage_batch(
         }
         let keys: Vec<String> = in_storage.iter().map(|(h, _)| h.clone()).collect();
         // Stored content is free only when published content keeps it.
-        let published = catalyst_storage::gc::published_among(&state.pool, pins(state), &keys)
+        let published = catalyst_storage::gc::published_among_on(&mut *conn, pins(state), &keys)
             .await
             .map_err(db_error)?;
         receipts.extend(in_storage.into_iter().map(|(hash, size)| Receipt {
@@ -564,7 +692,7 @@ async fn stage_batch(
         }));
     }
     let stored = match pending {
-        Some(_) => progress(&state.pool, entity_id).await.map_err(db_error)?,
+        Some(_) => progress(&mut *conn, entity_id).await.map_err(db_error)?,
         None => HashMap::new(),
     };
     // A file already held, before the upload or from an earlier batch, is not stored again.
@@ -592,6 +720,7 @@ async fn stage_batch(
 
     let (upload, created) = match upsert(
         state,
+        &mut *conn,
         &limits,
         UpsertInput {
             entity_id,
@@ -608,7 +737,7 @@ async fn stage_batch(
     {
         Upsert::Row(upload, created) => (upload, created),
         Upsert::Vanished => {
-            return replay(state, entity_id, signer)
+            return replay(state, &mut *conn, entity_id, signer)
                 .await
                 .map_err(db_error)?
                 .ok_or_else(expired);
@@ -621,6 +750,7 @@ async fn stage_batch(
     }
     match reserve(
         state,
+        &mut *conn,
         &limits,
         entity_id,
         &receipts,
@@ -633,7 +763,7 @@ async fn stage_batch(
     {
         Ok(Reservation::Reserved) => {}
         Ok(Reservation::Vanished) => {
-            return replay(state, entity_id, signer)
+            return replay(state, &mut *conn, entity_id, signer)
                 .await
                 .map_err(db_error)?
                 .ok_or_else(|| err_one(NOT_FOUND_MESSAGE));
@@ -641,7 +771,7 @@ async fn stage_batch(
         Err(resp) => {
             // An upload this batch created and could not admit must not keep holding a slot.
             if created {
-                discard_unadmitted(&state.pool, entity_id).await;
+                discard_unadmitted(&mut *conn, entity_id).await;
             }
             return Err(resp);
         }
@@ -664,17 +794,24 @@ async fn stage_batch(
         }
     }
     let hashes: Vec<String> = to_store.iter().map(|f| f.hash.clone()).collect();
-    let Some(batches) = record_stored(&state.pool, entity_id, &hashes)
+    let Some((batches, progress)) = record_stored(&mut *conn, entity_id, &hashes)
         .await
         .map_err(db_error)?
     else {
         // Completed or reclaimed since this batch was admitted.
-        return match replay(state, entity_id, signer).await.map_err(db_error)? {
+        return match replay(state, &mut *conn, entity_id, signer)
+            .await
+            .map_err(db_error)?
+        {
             Some(resp) => Ok(resp),
             None => Err(expired()),
         };
     };
-    let progress = progress(&state.pool, entity_id).await.map_err(db_error)?;
+    #[cfg(test)]
+    if let Ok((reached, resume)) = AFTER_STORED.try_with(Clone::clone) {
+        reached.notify_one();
+        resume.notified().await;
+    }
     let missing: Vec<String> = content
         .iter()
         .filter(|h| !progress.contains_key(*h))
@@ -689,6 +826,7 @@ async fn stage_batch(
     let created_ms = millis(upload.created_at);
     let validated = deploy::validate(
         state,
+        Some(&mut *conn),
         &entity,
         signer,
         entity_id,
@@ -706,9 +844,9 @@ async fn stage_batch(
     };
     #[cfg(test)]
     let _ = PUBLISH_REACHED.try_with(|reached| reached.notify_one());
-    let creation_timestamp = match deploy::publish(
+    let deployed = match deploy::persist_publish_on(
         state,
-        headers,
+        &mut *conn,
         entity_id,
         &entity,
         signer,
@@ -723,7 +861,9 @@ async fn stage_batch(
             // A publish of the same entity that won the race answers for this one.
             if resp.status() == StatusCode::BAD_REQUEST
                 && let Some((created, world, parcels)) =
-                    find_publication(state, entity_id).await.map_err(db_error)?
+                    find_publication(state, &mut *conn, entity_id)
+                        .await
+                        .map_err(db_error)?
             {
                 return Ok(success(state, created, &world, &parcels));
             }
@@ -733,7 +873,7 @@ async fn stage_batch(
                 StatusCode::BAD_REQUEST | StatusCode::SERVICE_UNAVAILABLE
             ) {
                 // Only for an upload still live: an expired one is answered as such.
-                if let Some(missing) = vanished(state, entity_id, &content).await?
+                if let Some(missing) = vanished(state, &mut *conn, entity_id, &content).await?
                     && !missing.is_empty()
                 {
                     return Ok(
@@ -745,11 +885,15 @@ async fn stage_batch(
             return Err(resp);
         }
     };
+    session.release().await;
+    let creation_timestamp = deploy::finish_publish(
+        state, headers, entity_id, signer, &validated, true, deployed,
+    )
+    .await;
     worlds_metrics::partial_completed(
         Duration::from_millis((now_ms - created_ms).max(0) as u64),
         batches,
     );
-    drop(entity_lock);
     Ok(success(
         state,
         creation_timestamp,
@@ -780,6 +924,7 @@ fn client_source(headers: &HeaderMap) -> Option<String> {
 /// upload is expired or gone (database clock).
 async fn vanished(
     state: &CoreState,
+    conn: &mut PgConnection,
     entity_id: &str,
     content: &[String],
 ) -> Result<Option<Vec<String>>, Response> {
@@ -794,7 +939,7 @@ async fn vanished(
         .filter(|h| !present.get(h.as_str()).copied().unwrap_or(false))
         .cloned()
         .collect();
-    let mut tx = state.pool.begin().await.map_err(db_error)?;
+    let mut tx = conn.begin().await.map_err(db_error)?;
     // Held to commit, so the cleanup cannot reclaim the upload in between.
     let live: Option<i32> = sqlx::query_scalar(
         "SELECT 1 FROM worlds.pending_scenes WHERE entity_id = $1 \
@@ -832,11 +977,12 @@ enum Upsert {
 }
 
 async fn upsert(
-    state: &CoreState,
+    _state: &CoreState,
+    conn: &mut PgConnection,
     limits: &PartialUploadLimits,
     input: UpsertInput<'_>,
 ) -> Result<Upsert, Response> {
-    let mut tx = state.pool.begin().await.map_err(db_error)?;
+    let mut tx = conn.begin().await.map_err(db_error)?;
     let deployer = input.deployer;
     lock_key(&mut tx, &format!("worlds-partial-deployer:{deployer}"))
         .await
@@ -967,6 +1113,7 @@ enum Reservation {
 /// scene cap and the account, world, source and node staging budgets, atomically.
 async fn reserve(
     state: &CoreState,
+    conn: &mut PgConnection,
     limits: &PartialUploadLimits,
     entity_id: &str,
     receipts: &[Receipt],
@@ -978,7 +1125,7 @@ async fn reserve(
         "SELECT deployer, world_name, created_at, source FROM worlds.pending_scenes WHERE entity_id = $1",
     )
     .bind(entity_id)
-    .fetch_optional(&state.pool)
+    .fetch_optional(&mut *conn)
     .await
     .map_err(db_error)?;
     let Some((deployer, world_name, created_at, source)) = owner else {
@@ -1007,7 +1154,7 @@ async fn reserve(
     )
     .bind(&deployer)
     .bind(incoming)
-    .fetch_one(&state.pool)
+    .fetch_one(&mut *conn)
     .await
     .map_err(db_error)?;
     let per_minute = limits.max_bytes_per_minute as i64;
@@ -1030,7 +1177,7 @@ async fn reserve(
         ));
     }
 
-    let mut tx = state.pool.begin().await.map_err(db_error)?;
+    let mut tx = conn.begin().await.map_err(db_error)?;
     // The upload's row names its content now: a file still present under the shared lock stays.
     catalyst_storage::gc::lock_store_shared(&mut tx)
         .await
@@ -1202,13 +1349,13 @@ async fn reserve(
 }
 
 /// Drops a new upload whose first batch was refused before anything was charged to it.
-async fn discard_unadmitted(pool: &PgPool, entity_id: &str) {
+async fn discard_unadmitted(conn: &mut PgConnection, entity_id: &str) {
     if let Err(error) = sqlx::query(
         "DELETE FROM worlds.pending_scenes p WHERE entity_id = $1 AND reserved_bytes = 0 \
          AND NOT EXISTS (SELECT 1 FROM worlds.pending_scene_files f WHERE f.entity_id = p.entity_id)",
     )
     .bind(entity_id)
-    .execute(pool)
+    .execute(&mut *conn)
     .await
     {
         tracing::warn!(%error, entity_id, "partial upload: could not discard an unadmitted upload");
@@ -1216,13 +1363,25 @@ async fn discard_unadmitted(pool: &PgPool, entity_id: &str) {
 }
 
 /// Marks the batch's files stored by this upload and counts it; the upload's stored batches
-/// so far, `None` once its row is gone.
+/// so far and its stored files with their sizes, `None` once its row is gone.
 async fn record_stored(
-    pool: &PgPool,
+    conn: &mut PgConnection,
     entity_id: &str,
     hashes: &[String],
-) -> Result<Option<i32>, sqlx::Error> {
-    let mut tx = pool.begin().await?;
+) -> Result<Option<(i32, HashMap<String, i64>)>, sqlx::Error> {
+    let mut tx = conn.begin().await?;
+    // A publish on another replica deletes the row and, by cascade, its files. The row lock makes
+    // that delete wait for this commit: the files read below are never the empty set of a consumed
+    // upload, and the delete cannot hold the row while it waits for a file row locked here.
+    let pending: Option<i32> = sqlx::query_scalar(
+        "SELECT 1 FROM worlds.pending_scenes WHERE entity_id = $1 FOR KEY SHARE",
+    )
+    .bind(entity_id)
+    .fetch_optional(&mut *tx)
+    .await?;
+    if pending.is_none() {
+        return Ok(None);
+    }
     sqlx::query(
         "UPDATE worlds.pending_scene_files SET stored = true, written = true \
          WHERE entity_id = $1 AND hash = ANY($2::text[])",
@@ -1231,24 +1390,28 @@ async fn record_stored(
     .bind(hashes)
     .execute(&mut *tx)
     .await?;
-    let batches: Option<i32> = sqlx::query_scalar(
+    let batches: i32 = sqlx::query_scalar(
         "UPDATE worlds.pending_scenes SET batches = batches + 1, initialized = true \
          WHERE entity_id = $1 RETURNING batches",
     )
     .bind(entity_id)
-    .fetch_optional(&mut *tx)
+    .fetch_one(&mut *tx)
     .await?;
+    let stored = progress(&mut *tx, entity_id).await?;
     tx.commit().await?;
-    Ok(batches)
+    Ok(Some((batches, stored)))
 }
 
 /// The upload's stored files and their sizes.
-async fn progress(pool: &PgPool, entity_id: &str) -> Result<HashMap<String, i64>, sqlx::Error> {
+async fn progress<'e>(
+    db: impl sqlx::PgExecutor<'e>,
+    entity_id: &str,
+) -> Result<HashMap<String, i64>, sqlx::Error> {
     let rows: Vec<(String, i64)> = sqlx::query_as(
         "SELECT hash, size FROM worlds.pending_scene_files WHERE entity_id = $1 AND stored",
     )
     .bind(entity_id)
-    .fetch_all(pool)
+    .fetch_all(db)
     .await?;
     Ok(rows.into_iter().collect())
 }
@@ -1610,5 +1773,171 @@ mod tests {
         let wait = retry_after(&limits, Some(soon));
         assert!((9..=11).contains(&wait), "{wait}");
         assert!(retry_after(&limits, Some(naive(0))) >= 1);
+    }
+}
+
+#[cfg(test)]
+mod session_guard_tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn cancelled_acquisition_closes_a_session_that_acquired_the_lock() {
+        let Some(pool) = crate::db::scratch::pool(1).await else {
+            return;
+        };
+        let slots = Arc::new(tokio::sync::Semaphore::new(1));
+        let id = format!("acquisition-cancel-{}", uuid::Uuid::new_v4());
+        let original_pid: i32 = sqlx::query_scalar("SELECT pg_backend_pid()")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        let reached = Arc::new(tokio::sync::Notify::new());
+        let resume = Arc::new(tokio::sync::Notify::new());
+        let mut acquiring = Box::pin(ENTITY_LOCK_ACQUIRED.scope(
+            (reached.clone(), resume),
+            SessionEntityGuard::acquire(&pool, &slots, &id),
+        ));
+        tokio::select! {
+            _ = reached.notified() => {},
+            _ = &mut acquiring => panic!("acquisition escaped the cancellation point"),
+        }
+        drop(acquiring);
+        let mut retry = tokio::time::timeout(
+            Duration::from_secs(5),
+            SessionEntityGuard::acquire(&pool, &slots, &id),
+        )
+        .await
+        .expect("cancelled acquisition must recover pool capacity")
+        .unwrap();
+        let retry_pid: i32 = sqlx::query_scalar("SELECT pg_backend_pid()")
+            .fetch_one(&mut **retry.conn.as_mut().unwrap())
+            .await
+            .unwrap();
+        assert_ne!(
+            retry_pid, original_pid,
+            "an uncertain acquisition must close its session"
+        );
+        retry.release().await;
+    }
+
+    #[tokio::test]
+    async fn cancelled_release_does_not_return_a_locked_session_to_the_pool() {
+        let Some(pool) = crate::db::scratch::pool(1).await else {
+            return;
+        };
+        let slots = Arc::new(tokio::sync::Semaphore::new(1));
+        let id = format!("release-cancel-{}", uuid::Uuid::new_v4());
+        let mut guard = SessionEntityGuard::acquire(&pool, &slots, &id)
+            .await
+            .unwrap();
+        let original_pid: i32 = sqlx::query_scalar("SELECT pg_backend_pid()")
+            .fetch_one(&mut **guard.conn.as_mut().unwrap())
+            .await
+            .unwrap();
+        let reached = Arc::new(tokio::sync::Notify::new());
+        let resume = Arc::new(tokio::sync::Notify::new());
+        let mut releasing = Box::pin(ENTITY_UNLOCKING.scope(
+            (reached.clone(), resume),
+            async move {
+                guard.release().await;
+            },
+        ));
+        tokio::select! {
+            _ = reached.notified() => {},
+            _ = &mut releasing => panic!("release escaped the cancellation point"),
+        }
+        drop(releasing);
+        let mut retry = tokio::time::timeout(
+            Duration::from_secs(5),
+            SessionEntityGuard::acquire(&pool, &slots, &id),
+        )
+        .await
+        .expect("cancelled release must recover pool capacity")
+        .unwrap();
+        let retry_pid: i32 = sqlx::query_scalar("SELECT pg_backend_pid()")
+            .fetch_one(&mut **retry.conn.as_mut().unwrap())
+            .await
+            .unwrap();
+        assert_ne!(
+            retry_pid, original_pid,
+            "the held session must be closed instead of pooled"
+        );
+        retry.release().await;
+    }
+    #[tokio::test]
+    async fn session_budget_waiters_leave_pool_capacity_for_other_queries() {
+        let Some(pool) = crate::db::scratch::pool(4).await else {
+            return;
+        };
+        let slots = Arc::new(tokio::sync::Semaphore::new(1));
+        let a = format!("budget-a-{}", uuid::Uuid::new_v4());
+        let b = format!("budget-b-{}", uuid::Uuid::new_v4());
+        let mut first = SessionEntityGuard::acquire(&pool, &slots, &a)
+            .await
+            .unwrap();
+        let waiting = SessionEntityGuard::acquire(&pool, &slots, &b);
+        tokio::pin!(waiting);
+        tokio::select! {
+            biased;
+            _ = &mut waiting => panic!("a second session owner must wait for the permit"),
+            probes = tokio::time::timeout(Duration::from_secs(5), async {
+                let a = pool.acquire().await.unwrap();
+                let b = pool.acquire().await.unwrap();
+                let mut c = pool.acquire().await.unwrap();
+                let answer: i32 = sqlx::query_scalar("SELECT 7").fetch_one(&mut *c).await.unwrap();
+                assert_eq!(answer, 7);
+                (a, b, c)
+            }) => { drop(probes.expect("a permit waiter must not check out a pool connection")); },
+        }
+        first.release().await;
+        let mut next = tokio::time::timeout(Duration::from_secs(5), waiting)
+            .await
+            .expect("unlock must release the session permit")
+            .unwrap();
+        next.release().await;
+    }
+
+    #[tokio::test]
+    async fn a_busy_entity_returns_its_session_permit_before_retrying() {
+        let Some(pool) = crate::db::scratch::pool(2).await else {
+            return;
+        };
+        let slots = Arc::new(tokio::sync::Semaphore::new(1));
+        let id = format!("busy-permit-{}", uuid::Uuid::new_v4());
+        let key = format!("worlds-partial-entity:{id}");
+        let mut blocker = pool.acquire().await.unwrap();
+        sqlx::query("SELECT pg_advisory_lock(hashtextextended($1, 0))")
+            .bind(&key)
+            .execute(&mut *blocker)
+            .await
+            .unwrap();
+        let busy = Arc::new(tokio::sync::Notify::new());
+        let (guard, ()) = tokio::join!(
+            ENTITY_LOCK_BUSY.scope(
+                busy.clone(),
+                SessionEntityGuard::acquire(&pool, &slots, &id)
+            ),
+            async {
+                busy.notified().await;
+                let permit =
+                    tokio::time::timeout(Duration::from_secs(5), slots.clone().acquire_owned())
+                        .await
+                        .expect("a failed entity attempt must return its permit")
+                        .unwrap();
+                let conn = tokio::time::timeout(Duration::from_secs(5), pool.acquire())
+                    .await
+                    .expect("a failed entity attempt must return its checkout")
+                    .unwrap();
+                drop(conn);
+                sqlx::query("SELECT pg_advisory_unlock(hashtextextended($1, 0))")
+                    .bind(&key)
+                    .execute(&mut *blocker)
+                    .await
+                    .unwrap();
+                drop(permit);
+            },
+        );
+        let mut guard = guard.unwrap();
+        guard.release().await;
     }
 }

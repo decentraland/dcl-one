@@ -1,0 +1,31 @@
+nodeLinker: hoisted
+packages:
+  - .
+  - ../../../../../library/hashing
+overrides:
+  '@dcl/hashing': workspace:*
+  "protobufjs": "7.6.6"
+  "minimatch@9.0.3": "9.0.7"
+  "cookie": "^0.7.2"
+  "@dcl/sdk-commands>esbuild": "0.28.1"
+  # @dcl/sdk-commands starts i18next with its file backend and calls only t().
+  '@dcl/sdk-commands>i18next': ^26.3.4
+  # @dcl/asset-packs lists glob for its own build scripts; no published file loads it.
+  '@dcl/asset-packs>glob': '-'
+  '@dcl/asset-packs>@types/glob': '-'
+  # extract-zip 2 has no fixed release. Creator Hub's zip-extract has the same call and makes no link.
+  extract-zip: file:../../../../../apps/creator-hub/packages/zip-extract
+minimumReleaseAge: 1440
+# The SDK snapshot this scene pins, published from decentraland/js-sdk-toolchain's experimental-bevy,
+# and the protocol it depends on. Drop each entry once the version is a day old.
+minimumReleaseAgeExclude:
+  - '@dcl/ecs@7.33.1-45449076924.commit-76c9960'
+  - '@dcl/js-runtime@7.33.1-45449076924.commit-76c9960'
+  - '@dcl/protocol@1.0.0-45443187908.commit-ad382e2'
+  - '@dcl/react-ecs@7.33.1-45449076924.commit-76c9960'
+  - '@dcl/sdk@7.33.1-45449076924.commit-76c9960'
+  - '@dcl/sdk-commands@7.33.1-45449076924.commit-76c9960'
+allowBuilds:
+  '@dcl/sdk-commands': false
+  esbuild: false
+  protobufjs: false

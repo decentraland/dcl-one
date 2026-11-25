@@ -24,13 +24,12 @@ use super::orders::{Order, OrderFilters, list_orders};
 use super::readers::READER_MAX_FIRST;
 use super::sales::{Sale, SaleFilters, list_sales};
 use super::signed::{MARKETPLACE_AUTH_SIGNERS, require_auth_metadata};
-use super::trades::{
-    ASSET_TYPE_ERC20, ASSET_TYPE_USD_PEGGED_MANA, Trade, TradeAsset, trades_of_address,
-};
+use super::trades::{Trade, TradeAsset, trades_of_address};
 use super::wire::{ApiError, get_number_parameter};
 use crate::shared::signed_fetch::{
     self, AUTH_CHAIN_HEADER_PREFIX, AUTH_TIMESTAMP_HEADER, PayloadPolicy, SignedFetchError,
 };
+use crate::types::{ASSET_TYPE_ERC20, ASSET_TYPE_USD_PEGGED_MANA};
 
 const INTERNAL_FETCH_CAP: i64 = 500;
 const MAX_PAGE_SIZE: i64 = 500;
@@ -224,7 +223,11 @@ pub async fn get_activity(
 
 /// The old route's own wording and codes, stage by stage: a missing chain or
 /// timestamp is a 400 before the signer allow-list, an expired or failing
-/// signature a 401, an EIP-1654 chain a 501, anything else malformed a 400.
+/// signature a 401 (a contract wallet's chain is checked with the node's
+/// EIP-1654 validator; one its contract refuses is a failing signature), an
+/// EIP-1654 chain on a node without a validator a 501, a contract-wallet
+/// check that cannot run (the RPC failed) a 503, never accepted, anything
+/// else malformed a 400.
 fn refusal(e: SignedFetchError) -> ApiError {
     match e {
         SignedFetchError::Expired { .. } => ApiError::unauthorized("Expired signature"),
@@ -232,6 +235,10 @@ fn refusal(e: SignedFetchError) -> ApiError {
         SignedFetchError::EipNotImplemented => {
             ApiError::http(501, "EIP-1654 not supported on this route")
         }
+        SignedFetchError::CatalystUnavailable(_) => ApiError::http(
+            503,
+            "The contract-wallet signature cannot be checked right now",
+        ),
         _ => ApiError::bad_request("Invalid Auth Chain"),
     }
 }
@@ -247,12 +254,13 @@ async fn activity(
         return Err(ApiError::bad_request("Invalid Auth Chain"));
     }
     require_auth_metadata(headers, MARKETPLACE_AUTH_SIGNERS, None)?;
+    super::signed::admit_contract_wallet_check(state.eip1654.as_deref(), headers)?;
     let recovered = signed_fetch::require_signer(
         headers,
         "get",
         "/v1/activity",
         PayloadPolicy::V6ThenLegacy,
-        None,
+        state.eip1654.as_deref(),
     )
     .await
     .map_err(refusal)?

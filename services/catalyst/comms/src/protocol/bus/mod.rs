@@ -7,6 +7,7 @@
 //! |---|---|---|---|
 //! | cluster change | `peer.{wallet}.cluster_change` | Pulse -> gatekeeper | [`cluster::ClusterChange`] |
 //! | cluster lookup | `peer.{wallet}.cluster_lookup`, reply on a private `_INBOX.` subject | gatekeeper -> Pulse | [`cluster::ClusterLookup`] |
+//! | selection retirement | `peer.{wallet}.selection_retirement`, private reply | gatekeeper -> Pulse | [`cluster::SelectionRetirementLookup`] |
 //! | islands snapshot | `engine.islands` | Pulse -> connector | [`topology`] |
 //! | discovery beacon | `engine.discovery` | Pulse -> connector | [`topology`] |
 //! | control position | `archipelago.control.position.v1` | connector -> Pulse | [`control_position::ControlPosition`] |
@@ -14,7 +15,7 @@
 //! | statistics producer control | `archipelago.statistics.producer.v2` | connector <-> Pulse | [`statistics::ProducerRequest`], [`statistics::ProducerReply`] |
 //! | statistics observation | `archipelago.statistics.observations.v2` | connector -> Pulse | [`statistics::Observation`] |
 //! | statistics snapshot chunks | `archipelago.statistics.snapshots.v1` | Pulse -> statistics readers | [`statistics::Snapshot`] |
-//! | room event | `comms.room_events.v1` | gatekeeper -> `multiplayer-hosting` | [`room_events::RoomEvent`] |
+//! | room event | `comms.room_events.v1` | gatekeeper -> every `serve`, `multiplayer-hosting` | [`room_events::RoomEvent`] |
 //!
 //! A session's connect and its island assignment are not messages: inside `serve` the
 //! connector and the gatekeeper's island subscriber exchange them by call. Their former
@@ -40,6 +41,7 @@ use std::time::Duration;
 pub mod cluster;
 pub mod control_position;
 pub mod room_events;
+pub mod selection_view;
 pub mod statistics;
 pub mod topology;
 

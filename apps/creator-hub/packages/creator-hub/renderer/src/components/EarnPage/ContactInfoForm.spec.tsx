@@ -1,14 +1,15 @@
 import { StrictMode } from 'react';
 import { cleanup, fireEvent, render, screen, within } from '@testing-library/react';
-import { flatten } from 'flat';
+import { flatten } from '/@/modules/store/translation/flatten';
 import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
-import { dark, ThemeProvider } from 'decentraland-ui2/dist/theme';
+import Dialog from '@ui/atoms/Dialog';
 
 import { en } from '/@/modules/store/translation/locales';
 import { setCurrentLocale } from '/@/modules/store/translation/utils';
 
+import { TestProviders } from '../../../tests/utils/TestProviders';
 import { ContactInfoForm } from './ContactInfoForm';
-import { WelcomePaper, WelcomeRoot } from './EarnModal.styled';
+import modal from './EarnModal.module.css';
 
 type Props = Partial<React.ComponentProps<typeof ContactInfoForm>>;
 
@@ -16,13 +17,13 @@ const renderForm = (props: Props = {}) => {
   const onSubmit = props.onSubmit ?? vi.fn();
   const onCancel = props.onCancel ?? vi.fn();
   const view = render(
-    <ThemeProvider theme={dark}>
+    <TestProviders>
       <ContactInfoForm
         onSubmit={onSubmit}
         onCancel={onCancel}
         {...props}
       />
-    </ThemeProvider>,
+    </TestProviders>,
   );
   return { ...view, onSubmit, onCancel };
 };
@@ -38,7 +39,7 @@ function fillValid() {
 }
 
 /*
- * Each case renders MUI modals and queries them by role and accessible name, which takes seconds
+ * Each case renders modals and queries them by role and accessible name, which takes seconds
  * on a loaded CI runner; vitest's default 5 s cut cases off there while they were passing.
  */
 vi.setConfig({ testTimeout: 15_000 });
@@ -72,16 +73,19 @@ describe('ContactInfoForm', () => {
 
       render(
         <StrictMode>
-          <ThemeProvider theme={dark}>
-            <WelcomeRoot open>
-              <WelcomePaper>
-                <ContactInfoForm
-                  onSubmit={vi.fn()}
-                  onCancel={vi.fn()}
-                />
-              </WelcomePaper>
-            </WelcomeRoot>
-          </ThemeProvider>
+          <TestProviders>
+            <Dialog
+              bare
+              open
+              className={modal.welcomePaper}
+              backdropClassName={modal.welcomeRoot}
+            >
+              <ContactInfoForm
+                onSubmit={vi.fn()}
+                onCancel={vi.fn()}
+              />
+            </Dialog>
+          </TestProviders>
         </StrictMode>,
       );
 

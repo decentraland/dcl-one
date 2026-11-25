@@ -1,3 +1,5 @@
+import { GENERATED } from './ownership.js'
+import { previewCleanupPlan } from './preview-cleanup.js'
 import { invalidFingerprints } from './fingerprints.js'
 import { sharedInputConflicts } from './shared-inputs.js'
 import { planRetirements, componentForArtifact } from './apply-retirements.js'
@@ -75,6 +77,8 @@ type ScopeInput = {
   removalsOnly?: readonly string[]
   // Overrides the base ledger read from baseDir (developer cleanup validates against the committed one).
   baseLedger?: Ledger
+  // Explicit developer-only cleanup of excluded generated Preview derivatives, never Figma identities.
+  prunePreview?: boolean
   // The repository a workspace stage publishes into, for consumers outside the staged roots.
   consumerRoot?: string
 }
@@ -208,6 +212,28 @@ async function checkScope(input: ScopeInput): Promise<ScopeResult> {
       (artifact) => runKind === 'developer' || inCaptureCache(artifact)
     )
   )
+  if (input.prunePreview) {
+    if (runKind !== 'developer' || partial)
+      add({
+        path: GENERATED,
+        owner: null,
+        kind: 'out-of-scope-change',
+        cause: 'Preview cleanup requires a complete developer stage'
+      })
+    else {
+      try {
+        const plan = await previewCleanupPlan(baseDir, stagedDir, true)
+        for (const artifact of plan.artifacts) removable.add(artifact)
+      } catch (error) {
+        add({
+          path: GENERATED,
+          owner: null,
+          kind: 'out-of-scope-change',
+          cause: `Preview cleanup validation failed: ${String(error)}`
+        })
+      }
+    }
+  }
   const removalsOnly = input.removalsOnly ?? []
   const directories = [...(input.directories ?? GUARDED_DIRECTORIES), ...removalsOnly]
   // A watched library root includes its entry, as upstream's library src folder does (layout.ts).

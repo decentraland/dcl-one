@@ -8,7 +8,7 @@ use axum::extract::{OriginalUri, Path, Query, State};
 use axum::http::{HeaderMap, Method};
 use sqlx::Row;
 
-use super::rows::{place_columns, row_to_place, viewer_columns};
+use super::rows::{place_columns, row_to_place, viewer_columns, world_thumbnail_key};
 use super::{PlaceRow, PlacesComponent};
 use crate::SharedState;
 use crate::shared::errors::{ApiDataTotal, ApiError};
@@ -20,7 +20,14 @@ const PARENT_VISIBILITY: &str = "NOT EXISTS (SELECT 1 FROM explore.place_indexed
 const PARENT_PRESENT_OR_INCOMPLETE: &str = "(NOT EXISTS (SELECT 1 FROM explore.mirror_state WHERE mirror = 'worlds' AND last_complete_pass_at IS NOT NULL) OR EXISTS (SELECT 1 FROM explore.place_indexed parent WHERE parent.world AND lower(parent.world_name) = w.name))";
 
 pub(super) fn scene_row(row: sqlx::postgres::PgRow, places: &PlacesComponent) -> Option<PlaceRow> {
-    let mut place = row_to_place(row, places.content_origin());
+    let thumbnail_hash: Option<String> = row.get("world_thumbnail_hash");
+    let mut place = row_to_place(row, places.content_origin(), places.asset_base());
+    if let Some(base) = places.asset_base()
+        && let Some(hash) = thumbnail_hash.as_deref()
+        && world_thumbnail_key(hash).is_some()
+    {
+        place.image = Some(format!("{base}/worlds-content-server/contents/{hash}"));
+    }
     place.scene_place = true;
     let parse = |value: &str| -> Option<(i32, i32)> {
         let (x, y) = crate::auth::pointer::parse_pointer(value)?;
@@ -78,7 +85,7 @@ impl PlacesComponent {
            0::integer AS likes, 0::integer AS dislikes, 0::integer AS favorites,
            s.created_at AS deployed_at, false AS disabled,
            COALESCE(m.highlighted, wm.highlighted, false) AS highlighted,
-           true AS world, w.name AS world_name,
+           true AS world, w.name AS world_name, w.thumbnail_hash AS world_thumbnail_hash,
            {local} AS local,
            jsonb_build_object(
                'positions', to_jsonb(s.parcels),
@@ -144,9 +151,10 @@ impl PlacesComponent {
         ));
         let columns = "id, base_position, title, description, creator_address, content_rating, categories, likes, dislikes, favorites, deployed_at, disabled, highlighted, raw, world_name, world, like_score_num, like_rate_num, ranking_num, skybox_time_num, user_count_num, user_visits_num, settings_version_num, created_at_ts, updated_at_ts, disabled_at_ts, textsearch";
         let local = crate::copies::origin::world_scene_rows_sql();
+        let shadowed = super::scene_identity::is_scene_id_sql("explore.place_indexed.id");
         super::ListSource {
             prefix: format!(
-                "WITH scene_catalogue AS (SELECT {columns}, false AS canonical_scene FROM explore.place_indexed WHERE NOT EXISTS (SELECT 1 FROM explore.world_scene_place p WHERE p.identity = CASE WHEN pg_input_is_valid(regexp_replace(explore.place_indexed.id, '^urn:uuid:', '', 'i'), 'uuid') THEN regexp_replace(explore.place_indexed.id, '^urn:uuid:', '', 'i')::uuid END) UNION ALL SELECT {columns}, true AS canonical_scene FROM ({rows}) scene_rows WHERE true {local}) "
+                "WITH scene_catalogue AS (SELECT {columns}, false AS canonical_scene FROM explore.place_indexed WHERE NOT {shadowed} UNION ALL SELECT {columns}, true AS canonical_scene FROM ({rows}) scene_rows WHERE true {local}) "
             ),
             relation: "scene_catalogue AS place_indexed",
             scene_projection: true,
@@ -217,7 +225,7 @@ impl PlacesComponent {
             .collect();
         let scene_rows = typed_scene_rows(&self.scene_rows_sql(3));
         let sql = format!(
-            "SELECT {}{} FROM ({scene_rows}) place_indexed WHERE place_identity = ANY($1){}",
+            "SELECT {}, world_thumbnail_hash{} FROM ({scene_rows}) place_indexed WHERE place_identity = ANY($1){}",
             place_columns(),
             viewer_columns(2),
             if local_only { " AND local" } else { "" }
@@ -247,7 +255,7 @@ impl PlacesComponent {
         // so a concurrent retirement cannot cause a fallback to upstream.
         let scene_rows = typed_scene_rows(&self.scene_rows_sql(3));
         let sql = format!(
-            "WITH scene AS (SELECT {}{} FROM ({scene_rows}) place_indexed WHERE place_identity = $1) \
+            "WITH scene AS (SELECT {}, world_thumbnail_hash{} FROM ({scene_rows}) place_indexed WHERE place_identity = $1) \
              SELECT scene.*, p.identity::text AS canonical_id FROM explore.world_scene_place p \
              LEFT JOIN scene ON scene.id = p.identity::text WHERE p.identity = $1",
             place_columns(),
@@ -295,7 +303,7 @@ impl PlacesComponent {
         self.require_discoverable_world(&world).await?;
         let scene_rows = typed_scene_rows(&self.scene_rows_sql(3));
         let sql = format!(
-            "WITH visible AS (SELECT {}{} FROM ({scene_rows}) place_indexed WHERE world_name = $1{}), \
+            "WITH visible AS (SELECT {}, world_thumbnail_hash{} FROM ({scene_rows}) place_indexed WHERE world_name = $1{}), \
              page AS (SELECT * FROM visible ORDER BY deployed_at DESC NULLS LAST, id LIMIT $4 OFFSET $5) \
              SELECT page.*, totals.total FROM (SELECT count(*)::bigint AS total FROM visible) totals \
              LEFT JOIN page ON true ORDER BY deployed_at DESC NULLS LAST, id",
@@ -442,18 +450,12 @@ mod tests {
             .await
             .unwrap();
         let database = format!("dcl_scene_discovery_{}", uuid::Uuid::new_v4().simple());
-        sqlx::query(sqlx::AssertSqlSafe(format!(
-            "CREATE DATABASE \"{database}\""
-        )))
-        .execute(&admin)
-        .await
-        .unwrap();
+        crate::db::scratch::create_database_with_schema(&admin, &database).await;
         let pool = sqlx::postgres::PgPoolOptions::new()
             .max_connections(4)
             .connect_with(options.database(&database))
             .await
             .unwrap();
-        crate::db::apply_schema(&pool).await.unwrap();
         (admin, pool, database)
     }
 
@@ -892,7 +894,7 @@ mod tests {
                 .is_none()
         );
         let standalone =
-            super::super::PlacesComponent::new(pool.clone(), "https://content.example");
+            super::super::PlacesComponent::new(pool.clone(), "https://content.example", None);
         assert!(
             standalone
                 .find_by_id_for(&mirrored_id, None)
@@ -1083,7 +1085,8 @@ mod tests {
         sqlx::query("INSERT INTO explore.user_favorites (\"user\",entity_id) SELECT '0xprofile',md5('scene-' || i)::uuid::text FROM generate_series(0,9) i").execute(&pool).await.unwrap();
         sqlx::query("INSERT INTO explore.user_favorites (\"user\",entity_id) VALUES ('0xprofile','not-a-uuid')").execute(&pool).await.unwrap();
         sqlx::query("ANALYZE").execute(&pool).await.unwrap();
-        let places = super::super::PlacesComponent::new(pool.clone(), "https://content.example");
+        let places =
+            super::super::PlacesComponent::new(pool.clone(), "https://content.example", None);
         let selected: String = sqlx::query_scalar("SELECT md5('scene-1')::uuid::text")
             .fetch_one(&pool)
             .await

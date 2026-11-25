@@ -26,7 +26,8 @@ export function defineAvatarEquippedDataComponent(
   const origSerialize = patchedSchema.serialize
   // `??` also covers a `null` written through getMutable
   patchedSchema.serialize = (value: DeepReadonly<AvatarEquippedDataType>, builder: ByteBuffer) => {
-    origSerialize({ ...value, forceRender: value.forceRender ?? [] }, builder)
+    // a composite written before `wearables` existed carries none
+    origSerialize({ ...value, wearables: value.wearables ?? [], forceRender: value.forceRender ?? [] }, builder)
   }
 
   const theComponent = engine.defineComponentFromSchema('core::AvatarEquippedData', patchedSchema)

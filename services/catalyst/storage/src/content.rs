@@ -129,7 +129,7 @@ impl Storage {
                 if COPY_FALLBACKS.fetch_add(1, Ordering::Relaxed) == 0 {
                     warn!(%error, src = %src.display(), "store_file: hard link failed, copying instead (is the upload spool on another filesystem?)");
                 }
-                metrics::counter!("storage_store_file_copy_fallbacks").increment(1);
+                crate::COPY_FALLBACKS.handle([]).increment(1);
                 std::fs::copy(&src, &staging_target)?;
             }
             // Windows requires a writable handle to flush the staged bytes.
@@ -183,6 +183,27 @@ impl Storage {
     pub async fn exist(&self, hash: &str) -> Result<bool, StorageError> {
         let path = resolve_file_path(&self.root, hash)?;
         Ok(stat_for_read(&self.known_shards, &path).await?.is_some())
+    }
+
+    /// Sets a present blob's modified time to now, so the collector's age floor counts from this
+    /// call: a writer that names a blob it did not store in a row it commits later touches it
+    /// first. `Ok(false)` when the blob is absent, under the same miss-vs-fault rules as
+    /// [`exist`](Self::exist). On unix both timestamps are set to now (`utimensat` with no
+    /// times), which needs write permission on the blob or its ownership; a blob that grants
+    /// neither (another uid's `0644` file) answers [`std::io::ErrorKind::PermissionDenied`].
+    pub async fn touch(&self, hash: &str) -> Result<bool, StorageError> {
+        let path = resolve_file_path(&self.root, hash)?;
+        if stat_for_read(&self.known_shards, &path).await?.is_none() {
+            return Ok(false);
+        }
+        let touched = tokio::task::spawn_blocking(move || set_times_to_now(&path))
+            .await
+            .map_err(std::io::Error::other)?;
+        match touched {
+            Ok(()) => Ok(true),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(false),
+            Err(e) => Err(e.into()),
+        }
     }
 
     /// Batch existence probe for `/available-content`: a provably-invalid id is a per-id miss that
@@ -446,6 +467,29 @@ impl OpenedContent {
             futures::stream::iter([Ok::<_, std::io::Error>(consumed)]).chain(rest),
         )
     }
+}
+
+#[cfg(unix)]
+fn set_times_to_now(path: &Path) -> std::io::Result<()> {
+    use std::os::unix::ffi::OsStrExt;
+
+    let path =
+        std::ffi::CString::new(path.as_os_str().as_bytes()).map_err(std::io::Error::other)?;
+    // SAFETY: `path` is a valid NUL-terminated string; a null `times` means "now".
+    let rc = unsafe { libc::utimensat(libc::AT_FDCWD, path.as_ptr(), std::ptr::null(), 0) };
+    if rc == 0 {
+        Ok(())
+    } else {
+        Err(std::io::Error::last_os_error())
+    }
+}
+
+#[cfg(not(unix))]
+fn set_times_to_now(path: &Path) -> std::io::Result<()> {
+    std::fs::File::options()
+        .write(true)
+        .open(path)?
+        .set_modified(std::time::SystemTime::now())
 }
 
 #[cfg(test)]

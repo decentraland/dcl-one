@@ -26,35 +26,35 @@ ASSET_PACKS_PATH = packages/asset-packs
 # own node_modules pinned to the engine's companion SDK. The inspector build
 # exports it into public/bevy-agent, so it must be installed + built first.
 BEVY_AGENT_PATH = packages/inspector/agents/bevy
-SYNC_PACK = node_modules/.bin/syncpack
+# One install covers every workspace package; CI installs exactly what the lock records.
+PNPM_INSTALL = pnpm install $(if $(CI),--frozen-lockfile)
 
 install:
-	npm i
-	make install-protoc
-	make install-asset-packs
-	make install-inspector
-	make install-creator-hub
-
-install-asset-packs:
-	cd $(ASSET_PACKS_PATH); npm i
-
-install-inspector:
+	$(PNPM_INSTALL)
 	make install-protoc
 	make install-bevy-agent
-	cd $(INSPECTOR_PATH); npm i
+	make fetch-devtools
+
+install-asset-packs:
+	$(PNPM_INSTALL)
+
+install-inspector:
+	$(PNPM_INSTALL)
+	make install-protoc
+	make install-bevy-agent
 
 install-bevy-agent:
-	cd $(BEVY_AGENT_PATH); npm i
+	cd $(BEVY_AGENT_PATH); $(PNPM_INSTALL)
 
 install-creator-hub:
-	cd $(CH_PATH); npm i
+	$(PNPM_INSTALL)
 	make fetch-devtools
 
 fetch-devtools:
 	node $(CH_PATH)/scripts/fetch-devtools.js
 
 install-skills:
-	npx --yes skills@1.7.0 experimental_install -y
+	pnpm dlx skills@1.7.0 experimental_install -y
 	mkdir -p .claude/skills
 	for s in .agents/skills/*/; do \
 		[ -d "$$s" ] || continue; \
@@ -98,17 +98,17 @@ build:
 	make build-creator-hub
 
 build-asset-packs:
-	cd $(ASSET_PACKS_PATH); npm run build;
+	cd $(ASSET_PACKS_PATH); pnpm run build;
 
 build-inspector:
 	make build-bevy-agent
-	cd $(INSPECTOR_PATH); npm run build;
+	cd $(INSPECTOR_PATH); pnpm run build;
 
 build-bevy-agent: install-bevy-agent
-	cd $(BEVY_AGENT_PATH); npm run build;
+	cd $(BEVY_AGENT_PATH); pnpm run build;
 
 build-creator-hub:
-	cd $(CH_PATH); npm run build;
+	cd $(CH_PATH); pnpm run build;
 
 init:
 	make clean
@@ -117,31 +117,25 @@ init:
 	make build
 
 lint:
-	npm run lint
+	pnpm run lint
 
 lint-fix:
-	make sync-deps
-	npm run lint:fix
-
-sync-deps:
-	npm run syncpack:format
-	npm run syncpack:fix
+	pnpm run lint:fix
 
 lint-packages:
-	npm run syncpack:list-mismatches
-	npm run syncpack:format
+	node scripts/check-dep-versions.js
 
 typecheck:
-	npm run typecheck --if-present
+	pnpm run typecheck
 
 test:
-	npm run test
+	pnpm run test
 
 validate-asset-packs:
-	cd $(ASSET_PACKS_PATH); npm run validate
+	cd $(ASSET_PACKS_PATH); pnpm run validate
 
 upload-asset-packs:
-	cd $(ASSET_PACKS_PATH); npm run upload
+	cd $(ASSET_PACKS_PATH); pnpm run upload
 
 
 test-e2e:
@@ -149,28 +143,28 @@ test-e2e:
 	make test-creator-hub-e2e
 
 test-inspector-e2e:
-	cd $(INSPECTOR_PATH)/; npm run test:e2e
+	cd $(INSPECTOR_PATH)/; pnpm run test:e2e
 
 test-creator-hub-e2e:
-	cd $(CH_PATH); npm run test:e2e
+	cd $(CH_PATH); pnpm run test:e2e
 
-# CI variant: runs test:e2e:ci, which skips the `npm run build` that test:e2e runs
+# CI variant: runs test:e2e:ci, which skips the `pnpm run build` that test:e2e runs
 # but still runs electron-builder to package the app the suite launches.
 # Contract: the caller MUST ensure packages/creator-hub/{main,preload,renderer}/dist
 # already exist. CI provides them via the download-build action (built once by the
 # build job); locally, run `make build-creator-hub` first. Without those the packaging
 # step has nothing to bundle and the suite fails.
 test-creator-hub-e2e-ci:
-	cd $(CH_PATH); npm run test:e2e:ci
+	cd $(CH_PATH); pnpm run test:e2e:ci
 
 test-creator-hub-e2e-ci-live:
-	cd $(CH_PATH); npm run test:e2e:ci:live
+	cd $(CH_PATH); pnpm run test:e2e:ci:live
 
 format:
-	npm run format
+	pnpm run format
 
 format-fix:
-	npm run format:fix
+	pnpm run format:fix
 
 deep-clean:
 	rm -rf node_modules/ \

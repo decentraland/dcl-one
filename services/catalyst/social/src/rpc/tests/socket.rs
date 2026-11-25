@@ -620,13 +620,26 @@ fn source_numeric_auth_timer_buckets_remain_independent_from_signature_windows()
             "{}",
             case["raw"]
         );
-        assert_eq!(
-            settings.auth_signature_expiration_ms(),
-            number,
-            "{}",
-            case["raw"]
-        );
+        let window = settings.auth_signature_expiration();
+        if number.is_nan() || number <= 0.0 {
+            assert_eq!(window, Duration::ZERO, "{}", case["raw"]);
+        } else if window != Duration::MAX {
+            assert!(
+                (window.as_secs_f64() * 1000.0 - number).abs() <= 1e-6 * number.max(1.0),
+                "{}",
+                case["raw"]
+            );
+        }
     }
+    assert_eq!(
+        Settings::default().auth_signature_expiration(),
+        Duration::from_secs(300)
+    );
+    let legacy = Settings {
+        auth_window_secs: 7,
+        ..Settings::default()
+    };
+    assert_eq!(legacy.auth_signature_expiration(), Duration::from_secs(7));
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
@@ -648,7 +661,9 @@ async fn ordinary_large_reader_case(idle_only: bool) {
     let settings = Settings {
         // Queue capacity uses the raw number; the physical writer wraps to 1024.
         ws_max_backpressure_bytes: 4294968320.5,
-        ws_idle_timeout_secs: if idle_only { 8 } else { 300 },
+        // The ping queues behind the healthy 8 MiB response, so allow time for
+        // that frame to drain on a loaded runner.
+        ws_idle_timeout_secs: if idle_only { 5 } else { 300 },
         ordinary_transport: crate::shared::rpc::ws::OrdinaryQueueConfig {
             retry_delay_ms: 10.0,
             max_retry_attempts: 3.0,
@@ -904,4 +919,107 @@ async fn socket_paths_preserve_source_cases_and_exact_legacy_mounted_aliases() {
         }
     }
     server.jobs.shutdown(Duration::from_secs(2)).await;
+}
+
+/// The source's timestamp captures under the shared verifier: digits only, then
+/// the window. Other forms a JavaScript Number reads (`0x…`, `…e0`, padding) are refused.
+#[tokio::test]
+async fn source_timestamp_cases_follow_the_digits_only_verdicts() {
+    use crate::shared::rpc::handshake::test_support::{ROOT_WALLET, frame_with};
+    use crate::shared::rpc::handshake::{frame_fields, frame_parts};
+    use crate::shared::signed_fetch::{SignedPath, build_payload_v6};
+
+    let fixture: serde_json::Value = serde_json::from_str(include_str!(concat!(
+        env!("DCL_ONE_ROOT"),
+        "/services/catalyst/tests/fixtures/conformance/social/ws-numbers-source-cases.json"
+    )))
+    .unwrap();
+    let now = fixture["now"].as_i64().unwrap();
+    let mut refused_forms = 0;
+    let mut negative_window_at_now = 0;
+    // Digit forms around the current time, which the capture does not hold: checked against
+    // the rules only.
+    // The future side runs to the whole window, as the source's.
+    let at = |offset: i64| (now + offset).to_string();
+    let local = [
+        (at(1), "0", false),
+        (at(1), "1.5", true),
+        (at(2), "1.5", false),
+        (at(300_000), "300000", true),
+        (at(300_001), "300000", false),
+        (at(-300_000), "300000", true),
+        (at(-300_001), "300000", false),
+        (at(3_600_000), "Infinity", true),
+        ("9".repeat(30), "Infinity", true),
+        (at(-1), "1.5", true),
+        (at(-2), "1.5", false),
+    ]
+    .map(|(raw, window, accepted)| {
+        serde_json::json!({ "raw": raw, "window": window, "accepted": accepted, "local": true })
+    });
+    for case in fixture["timestamps"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .chain(&local)
+    {
+        let raw = case["raw"].as_str();
+        let payload = build_payload_v6("get", "/", raw.unwrap_or(""), "{}");
+        let (_, frame) = frame_with(&ROOT_WALLET, now, &payload, "{}").await;
+        let mut fields = frame_fields(&frame).unwrap();
+        match raw {
+            Some(raw) => fields.insert("x-identity-timestamp".into(), raw.into()),
+            None => fields.remove("x-identity-timestamp"),
+        };
+        let window = case["window"]
+            .as_f64()
+            .unwrap_or_else(|| case["window"].as_str().unwrap().parse().unwrap());
+        let expiration = Settings {
+            ws_auth_signature_expiration_ms: Some(window),
+            ..Settings::default()
+        }
+        .auth_signature_expiration();
+        let options = crate::request_auth::build(
+            crate::request_auth::builder(None)
+                .expiration(expiration)
+                .future_bound_follows_window(true),
+        );
+        let parts = frame_parts(&fields, "get", SignedPath::local("/"));
+        let result = crate::auth::request::verify_request_at(&parts, &options, now).await;
+
+        // Absent or empty reads as 0; the window bounds both sides, an infinite one neither.
+        let text = raw.filter(|r| !r.is_empty()).unwrap_or("0");
+        let digits = Some(text)
+            .filter(|r| r.bytes().all(|b| b.is_ascii_digit()))
+            .map(|r| r.parse::<i128>().unwrap_or(i128::MAX));
+        let window_ms = expiration.as_millis() as i128;
+        let now_ms = i128::from(now);
+        let expected = digits
+            .is_some_and(|ts| expiration == Duration::MAX || (ts - now_ms).abs() <= window_ms);
+        assert_eq!(result.is_ok(), expected, "{case} {result:?}");
+
+        let source_accepted = case["accepted"].as_bool().unwrap();
+        if case["local"] == true {
+            assert_eq!(result.is_ok(), source_accepted, "{case} {result:?}");
+            continue;
+        }
+        match digits {
+            None if source_accepted => refused_forms += 1,
+            None => {}
+            // A negative window still passes the current time; the source refuses it.
+            Some(ts) if window < 0.0 && ts == now_ms => {
+                assert!(result.is_ok() && !source_accepted, "{case} {result:?}");
+                negative_window_at_now += 1;
+            }
+            Some(_) => assert_eq!(result.is_ok(), source_accepted, "{case} {result:?}"),
+        }
+    }
+    assert!(
+        negative_window_at_now > 0,
+        "the capture holds a negative window at the current time"
+    );
+    assert!(
+        refused_forms > 0,
+        "the capture holds forms only the source accepts"
+    );
 }

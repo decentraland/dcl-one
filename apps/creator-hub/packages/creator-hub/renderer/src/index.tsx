@@ -2,7 +2,7 @@ import React from 'react';
 import { createRoot } from 'react-dom/client';
 import { Provider as StoreProvider } from 'react-redux';
 
-import { MemoryRouter as Router, Routes, Route } from 'react-router-dom';
+import { MemoryRouter as Router, Routes, Route } from 'react-router';
 import { init as reactInit } from '@sentry/react';
 import {
   init as SentryInit,
@@ -13,10 +13,11 @@ import {
   browserTracingIntegration,
   replayIntegration,
 } from '@sentry/electron/renderer';
-import { dark, ThemeProvider } from 'decentraland-ui2/dist/theme';
 import { TranslationProvider } from '/@/components/TranslationProvider';
 
 import { AuthProvider } from '/@/components/AuthProvider';
+import { PageViewTracker } from '/@/components/PageViewTracker';
+import { AiSharingUploader } from '/@/hooks/useAiSharingUploader';
 
 import { AiChatWindow } from '/@/components/AiChatWindow';
 import { ConsoleWindow } from '/@/components/ConsoleWindow';
@@ -65,6 +66,9 @@ if (import.meta.env.PROD) {
         replayIntegration({
           mutationLimit: 500,
           blockAllMedia: true,
+          // Set explicitly so an SDK default change can't start recording AI prompts and replies.
+          maskAllText: true,
+          maskAllInputs: true,
           beforeErrorSampling(event) {
             const source = event.tags?.source;
             // Only capture replays for UX-critical errors
@@ -102,9 +106,7 @@ if (isAiChatWindow || isConsoleWindow) {
       <AppErrorBoundary name={isConsoleWindow ? 'console-window' : 'ai-chat-window'}>
         <StoreProvider store={store}>
           <TranslationProvider>
-            <ThemeProvider theme={dark}>
-              {isConsoleWindow ? <ConsoleWindow /> : <AiChatWindow />}
-            </ThemeProvider>
+            {isConsoleWindow ? <ConsoleWindow /> : <AiChatWindow />}
           </TranslationProvider>
         </StoreProvider>
       </AppErrorBoundary>
@@ -116,88 +118,89 @@ if (isAiChatWindow || isConsoleWindow) {
       <AppErrorBoundary name="app">
         <StoreProvider store={store}>
           <TranslationProvider>
-            <ThemeProvider theme={dark}>
-              <main className="Main">
-                <Router>
-                  <ScrollToTop />
-                  <AuthProvider>
-                    <RouteErrorBoundary>
-                      <Routes>
-                        <Route
-                          path="/"
-                          element={<HomePage />}
-                        />
-                        <Route
-                          path="/home"
-                          element={<HomePage />}
-                        />
-                        <Route
-                          path="/scenes"
-                          element={<ScenesPage />}
-                        />
-                        <Route
-                          path="/templates"
-                          element={<TemplatesPage />}
-                        />
-                        <Route
-                          path="/collections"
-                          element={<CollectionsPage />}
-                        />
-                        <Route
-                          path="/analytics"
-                          element={<AnalyticsPage />}
-                        />
-                        <Route
-                          path="/analytics/:placeId"
-                          element={<AnalyticsDetailPage />}
-                        />
-                        <Route
-                          path="/manage"
-                          element={<ManagePage />}
-                        />
-                        <Route
-                          path="/manage/land/:id/:tab?"
-                          element={<LandDetailPage />}
-                        />
-                        <Route
-                          path="/manage/world/:name/:tab?"
-                          element={<WorldDetailPage />}
-                        />
-                        <Route
-                          path="/earn"
-                          element={<EarnPage />}
-                        />
-                        <Route
-                          path="/learn"
-                          element={<LearnPage />}
-                        />
-                        <Route
-                          path="/learn/videos"
-                          element={<VideosPage />}
-                        />
-                        <Route
-                          path="/learn/docs"
-                          element={<DocsPage />}
-                        />
-                        <Route
-                          path="/more"
-                          element={<MorePage />}
-                        />
-                        <Route
-                          path="/editor"
-                          element={<EditorPage />}
-                        />
-                        <Route
-                          path="/sign-in"
-                          element={<SignInPage />}
-                        />
-                      </Routes>
-                    </RouteErrorBoundary>
-                    <Snackbar />
-                  </AuthProvider>
-                </Router>
-              </main>
-            </ThemeProvider>
+            <main className="Main">
+              {/* Route changes commit at once, in the same render as the state set beside them. */}
+              <Router useTransitions={false}>
+                <ScrollToTop />
+                <PageViewTracker />
+                <AuthProvider>
+                  <AiSharingUploader />
+                  <RouteErrorBoundary>
+                    <Routes>
+                      <Route
+                        path="/"
+                        element={<HomePage />}
+                      />
+                      <Route
+                        path="/home"
+                        element={<HomePage />}
+                      />
+                      <Route
+                        path="/scenes"
+                        element={<ScenesPage />}
+                      />
+                      <Route
+                        path="/templates"
+                        element={<TemplatesPage />}
+                      />
+                      <Route
+                        path="/collections"
+                        element={<CollectionsPage />}
+                      />
+                      <Route
+                        path="/analytics"
+                        element={<AnalyticsPage />}
+                      />
+                      <Route
+                        path="/analytics/:placeId"
+                        element={<AnalyticsDetailPage />}
+                      />
+                      <Route
+                        path="/manage"
+                        element={<ManagePage />}
+                      />
+                      <Route
+                        path="/manage/land/:id/:tab?"
+                        element={<LandDetailPage />}
+                      />
+                      <Route
+                        path="/manage/world/:name/:tab?"
+                        element={<WorldDetailPage />}
+                      />
+                      <Route
+                        path="/earn"
+                        element={<EarnPage />}
+                      />
+                      <Route
+                        path="/learn"
+                        element={<LearnPage />}
+                      />
+                      <Route
+                        path="/learn/videos"
+                        element={<VideosPage />}
+                      />
+                      <Route
+                        path="/learn/docs"
+                        element={<DocsPage />}
+                      />
+                      <Route
+                        path="/more"
+                        element={<MorePage />}
+                      />
+                      <Route
+                        path="/editor"
+                        element={<EditorPage />}
+                      />
+                      <Route
+                        path="/sign-in"
+                        element={<SignInPage />}
+                      />
+                    </Routes>
+                  </RouteErrorBoundary>
+                  <Snackbar />
+                </AuthProvider>
+              </Router>
+            </main>
           </TranslationProvider>
         </StoreProvider>
       </AppErrorBoundary>

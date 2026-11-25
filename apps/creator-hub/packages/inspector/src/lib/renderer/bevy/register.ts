@@ -19,6 +19,8 @@ import { isTransformInputArmed } from '../../logic/transform-input';
 import { consoleCommand } from './console';
 import { BevyRenderer } from './BevyRenderer';
 import { mountBevyEngine } from './engine-iframe';
+import { createActivityBridge } from './activity-bridge';
+import { combineActivitySources, createSceneObserver } from './scene-observer';
 import { createCameraBridge } from './camera-bridge';
 import { createDropPointBridge } from './drop-point-bridge';
 import { createForwardEditBridge } from './forward-edits';
@@ -208,6 +210,10 @@ export function registerBevyRenderer(): void {
       // held in mutable holders and rebuilt against the new window on reload (the
       // bus-based bridges below survive a reboot, and `modifiers` is retargeted).
       let forwardBridge: ReturnType<typeof createForwardEditBridge> | null = null;
+      // Editing = the scene is stopped (frozen at its initial state; a Pause keeps
+      // the scene as it was) and the user drives the free fly-camera.
+      const isEditingWithFreeCamera = () =>
+        sceneRunBridge.isStopped() && bevy.editorCamera.getMode() === 'free';
       let disconnectPreview = () => {};
       let disconnectInputFocus = () => {};
       let disconnectFlyInput = () => {};
@@ -220,6 +226,11 @@ export function registerBevyRenderer(): void {
       // polled (a running scene can create more code entities). Tracks the live engine
       // window across reboots.
       let liveEngineWindow = engine.engineWindow;
+      // The last entity list the engine reported. When it changes (the scene's
+      // main() ran after a load or a Stop, or a running scene made entities), the
+      // forward bridge re-reads what the scene's code made: camera attachments and
+      // root lighting exist only in the engine.
+      let lastSceneEntities: string | null = null;
       const updateEntityIdFloor = async () => {
         let reply: string;
         try {
@@ -229,10 +240,17 @@ export function registerBevyRenderer(): void {
         }
         const max = parseMaxLiveEntityId(reply);
         if (max > 0) setEntityIdFloor(max + 1);
+        if (reply !== lastSceneEntities) {
+          lastSceneEntities = reply;
+          forwardBridge?.refreshEngineScene();
+        }
       };
 
       const rewireEngineBindings = (engineWindow: typeof engine.engineWindow) => {
         forwardBridge?.disconnect();
+        // A rebooted engine reloaded the scene: its first entity list must trigger a
+        // re-read even when it matches the list from before the reboot.
+        lastSceneEntities = null;
         disconnectPreview();
         disconnectInputFocus();
         disconnectFlyInput();
@@ -256,6 +274,8 @@ export function registerBevyRenderer(): void {
           engineWindow,
           // On arm, pause loaded Animator clips if the scene is frozen (#1382).
           isFrozen: () => !sceneRunBridge.isRunning(),
+          isStopped: () => sceneRunBridge.isStopped(),
+          hideCameraAttachments: isEditingWithFreeCamera,
         });
 
         // Live gizmo preview: a drag emits `previewTransforms` every frame (merged
@@ -347,6 +367,19 @@ export function registerBevyRenderer(): void {
         },
       });
 
+      // Session recorder: the agent reports the pointer target, clicks on the running
+      // scene and player moves while a tracker is subscribed (see activity-bridge.ts).
+      const activityBridge = createActivityBridge();
+      // ...and what the running scene's code creates and removes, read from the engine console
+      // (see scene-observer.ts). Follows the engine window across reboots.
+      const sceneObserver = createSceneObserver({
+        command: (cmd, args) => consoleCommand(liveEngineWindow, cmd, args),
+        isRunning: () => bevy.sceneRun.isRunning(),
+      });
+      bevy.setActivitySource(
+        combineActivitySources([activityBridge, sceneObserver], sceneObserver.describeEntity),
+      );
+
       // Forward the inspector's selection to the agent so its gizmo attaches to
       // the selected entity (from a viewport pick OR a tree click). The gizmos
       // handle carries the "align to world" setting; the snap handle carries the
@@ -408,19 +441,31 @@ export function registerBevyRenderer(): void {
         // which also restarts the agent, so its avatar-visibility state is re-sent.
         onReady: () => {
           bevy.camera.reset();
-          syncAvatarVisibility();
+          syncEditCameraVisibility();
+          // A rebooted agent starts with editing on; restate the Interact toggle so
+          // it neither draws the gizmo nor intercepts clicks while Interact is on.
+          cameraBridge.setEditingEnabled(bevy.interaction.isEditingEnabled());
+          // Its boot also pinned the day clock at noon, which a running scene must not keep.
+          forwardBridge?.syncSceneClock();
+          // The scene is pinned now: re-read what its code made, in case the read when
+          // forwarding armed came too early (a reboot while stopped, during agent login).
+          forwardBridge?.refreshEngineScene();
         },
       });
-      // The player's avatar is only shown while the scene RUNS or the user drives
-      // the player camera. An avatar standing at the spawn point while you edit a
-      // frozen scene reads as scene content (and the free camera's keys must never
-      // walk it — see fly-input-bridge.ts). The agent enacts it (set-avatar-visible).
-      const syncAvatarVisibility = () =>
-        cameraBridge.setAvatarVisible(
-          bevy.sceneRun.isRunning() || bevy.editorCamera.getMode() === 'avatar',
-        );
-      const offAvatarVisibilityMode = bevy.editorCamera.onModeChange(syncAvatarVisibility);
-      const offAvatarVisibilityRun = bevy.sceneRun.onRunChange(syncAvatarVisibility);
+      // The player's avatar is hidden while the scene is stopped and the user drives
+      // the free camera; Play, a Pause and the player camera show it. An avatar
+      // standing at the spawn point while you edit a stopped scene reads as scene
+      // content (and the free camera's keys must never walk it — see
+      // fly-input-bridge.ts). The agent enacts it (set-avatar-visible).
+      // For the same reason, entities the scene attaches to its camera are hidden
+      // then: the engine's camera entity is the editor's fly-camera, so they would
+      // hang in front of the view (the forward bridge enacts it).
+      const syncEditCameraVisibility = () => {
+        cameraBridge.setAvatarVisible(!isEditingWithFreeCamera());
+        forwardBridge?.refreshCameraAttachments();
+      };
+      const offEditCameraVisibilityMode = bevy.editorCamera.onModeChange(syncEditCameraVisibility);
+      const offEditCameraVisibilityRun = bevy.sceneRun.onRunChange(syncEditCameraVisibility);
       bevy.setCameraModePoster(mode => cameraBridge.setMode(mode));
       bevy.setFocusPoster(position => cameraBridge.focus(position));
       bevy.setResetPoster(position => cameraBridge.reset(position));
@@ -444,6 +489,10 @@ export function registerBevyRenderer(): void {
         // lands on an unpinned scene). reconcileAfterReload re-freezes animations as
         // part of re-applying overrides.
         onResetComplete: () => {
+          // A Play waiting on the reset (a reload before Play) runs the reloaded scene
+          // at once: it is not stopped, so the reconcile skips the stopped-only
+          // replays (placeholders, editor lighting) that Play would swap back.
+          if (bevy.hasPendingRun()) sceneRunBridge.markRunPending();
           forwardBridge?.reconcileAfterReload();
           bevy.notifyResetComplete();
         },
@@ -531,8 +580,9 @@ export function registerBevyRenderer(): void {
         }
         sceneRunBridge.setRunning(running);
         // #1382: freezing stops the SDK7 tick but not the engine's GLTF animation
-        // playback — so also pause/resume Animator clips with the run state.
-        forwardBridge?.setAnimationsFrozen(!running);
+        // playback — so also pause/resume Animator clips with the run state, and
+        // show editor Placeholders only while frozen.
+        forwardBridge?.setSceneFrozen(!running);
       });
 
       // Wire the engine-window bindings for the initial boot. Re-run on reboot.
@@ -563,7 +613,11 @@ export function registerBevyRenderer(): void {
       const disconnectLayoutReload = createLayoutReloadBridge({
         context: bevy.context,
         reboot: rebootEngine,
-        onReloaded: () => sceneRunBridge.setRunning(sceneRunBridge.isRunning()),
+        onReloaded: () => {
+          // The reboot restarted the scene from its initial state.
+          sceneRunBridge.markRestarted();
+          sceneRunBridge.setRunning(sceneRunBridge.isRunning());
+        },
       });
 
       // Stop/reset (#1376): restart the inspected scene to its initial state, then
@@ -598,6 +652,12 @@ export function registerBevyRenderer(): void {
         // reconcile at reset-complete does it once the scene is pinned again.)
         sceneRunBridge.setRunning(false);
         sceneRunBridge.reset();
+        // Edits from here until reset-complete are not in the bundle it reloads.
+        forwardBridge?.noteReloadStarted();
+        // Stopped now, also from a Pause (which kept the avatar shown): hide it in the
+        // free camera. The camera attachments are re-hidden on the reloaded scene by
+        // reconcileAfterReload.
+        cameraBridge.setAvatarVisible(!isEditingWithFreeCamera());
       });
 
       // Spawn-point handle: the controller shows/hides the move-handle via the
@@ -672,8 +732,8 @@ export function registerBevyRenderer(): void {
           disconnectWheelZoom();
           disconnectFlyInput();
           disconnectInputFocus();
-          offAvatarVisibilityMode();
-          offAvatarVisibilityRun();
+          offEditCameraVisibilityMode();
+          offEditCameraVisibilityRun();
           disconnectShiftSnap();
           modifiers.disconnect();
           disconnectPreview();
@@ -686,6 +746,8 @@ export function registerBevyRenderer(): void {
           disconnectSelection();
           disconnectPick();
           disconnectHoverHint();
+          activityBridge.disconnect();
+          sceneObserver.disconnect();
           disconnectLayoutReload();
           buildReload.disconnect();
           offScriptEdits();

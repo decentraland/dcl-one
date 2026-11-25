@@ -1,358 +1,140 @@
-// React HUD sidebar — replaces the SDK7 scene's nav rail. Matches the Explorer 2.0
-// design: a 46px rail with a top group (nav/menus) and a bottom group (world tools
-// + social). Chat toggles the React chat directly; the other items drive the
-// scene's existing menus/popups over the bridge (session.nav) until each is
-// migrated to React.
+// The HUD's navigation column: loose 42px circles down the left edge. The top group holds the
+// "..." handle, Me, Map, Discover, Shop, System and the notifications bell; the bottom group holds
+// the world tools (scene permissions, portable experiences, skybox), Volume, Emotes, Friends,
+// Camera, Nearby Voice and Chat. Me, Discover, Shop, System, Volume and Camera each open a panel
+// beside the column, one at a time; Map shows and hides the minimap.
 
 import { useCallback, useContext, useEffect, useState } from 'react'
-import { createPortal } from 'react-dom'
-import { Button, ControlButton, IconButton, Panel, Toggle } from '../../design'
-import { useDebugPanel } from '../debug/useDebugPanel'
-import type { IconName } from '../../design'
-import type { NavAction } from '@explorer-core/engine/protocol'
-import { keyHintFor, useBindingsSnapshot, type BindingsSnapshot } from '../../lib/bindingLabels'
+import { ControlButton, IconButton, MaskIcon, MenuList, MenuPanel, MenuRow, Panel, Slider, Toggle } from '../../design'
+import { toggleDebugPanel, useDebugPanelState } from '../debug/useDebugPanel'
+import { debugPanelLauncherEnabled } from '@explorer-core/lib/debugPanelLauncher'
+import { keyHintFor, useBindingsSnapshot } from '../../lib/bindingLabels'
 import { userColor } from '@explorer-core/lib/identity'
+import { getPref, PREF, setPref } from '@explorer-core/lib/prefs'
 import type { EngineSession } from '../session/useEngineSession'
+import type { PassportTab } from '../profile/ProfilePassport'
 import { EDITOR_BUILD } from '@explorer-core/features/editorHost/config'
 import { EditorOffered } from '../editorHost/EditorOffered'
 import { useLiveEventCount } from '../events/useLiveEventCount'
+import { exitApplication } from '../gate/exitApplication'
+import { signOutOfWorld } from '../gate/signOutOfWorld'
 import { useAutoHide } from './useAutoHide'
+import { useRailPopover } from './useRailPopover'
 import { hudInsetRef } from '../../lib/hudInset'
 import styles from './Sidebar.module.css'
-import notificationsArt from '../../assets/sidebar-rail/notifications.webp'
-import eventsArt from '../../assets/sidebar-rail/events.webp'
-import placesArt from '../../assets/sidebar-rail/places.webp'
-import communitiesArt from '../../assets/sidebar-rail/communities.webp'
-import backpackArt from '../../assets/sidebar-rail/backpack.webp'
-import marketplaceArt from '../../assets/sidebar-rail/marketplace.webp'
-import galleryArt from '../../assets/sidebar-rail/gallery.webp'
-import settingsArt from '../../assets/sidebar-rail/settings.webp'
-import helpArt from '../../assets/sidebar-rail/help.webp'
-import bugArt from '../../assets/sidebar-rail/bug.webp'
-import debugIcon from '../../assets/sidebar-icons/debug.png'
+import { boltArt } from './railIcons'
+import { MePanel } from './panels/MePanel'
+import { inviteLink } from './inviteLink'
+import { MapPanel } from './panels/MapPanel'
+import { DiscoverPanel } from './panels/DiscoverPanel'
+import { ShopPanel } from './panels/ShopPanel'
+import { SystemPanel } from './panels/SystemPanel'
+import mapArt from '../../assets/sidebar-rail/map.svg?no-inline'
+import mapOnArt from '../../assets/sidebar-rail/map-on.svg?no-inline'
+import discoverArt from '../../assets/sidebar-rail/discover.svg?no-inline'
+import discoverOnArt from '../../assets/sidebar-rail/discover-on.svg?no-inline'
+import shopArt from '../../assets/sidebar-rail/shop.svg?no-inline'
+import shopOnArt from '../../assets/sidebar-rail/shop-on.svg?no-inline'
+import systemArt from '../../assets/sidebar-rail/system.svg?no-inline'
+import systemOnArt from '../../assets/sidebar-rail/system-on.svg?no-inline'
+import bellArt from '../../assets/sidebar-rail/bell.svg?no-inline'
+import bellOnArt from '../../assets/sidebar-rail/bell-on.svg?no-inline'
+import volumeArt from '../../assets/sidebar-rail/volume.svg?no-inline'
+import friendsArt from '../../assets/sidebar-rail/friends.svg?no-inline'
+import friendsOnArt from '../../assets/sidebar-rail/friends-on.svg?no-inline'
+import cameraArt from '../../assets/sidebar-rail/camera.svg?no-inline'
+import cameraOnArt from '../../assets/sidebar-rail/camera-on.svg?no-inline'
+import cameraShotIcon from '../../assets/sidebar-rail/camera-shot.svg?no-inline'
+import cameraGalleryIcon from '../../assets/sidebar-rail/camera-gallery.svg?no-inline'
+import voiceArt from '../../assets/sidebar-rail/voice.svg?no-inline'
+import voiceFaceArt from '../../assets/sidebar-rail/voice-face.svg?no-inline'
+import chatArt from '../../assets/sidebar-rail/chat.svg?no-inline'
+import chatOnArt from '../../assets/sidebar-rail/chat-on.svg?no-inline'
 import skyboxArt from '../../assets/sidebar-rail/skybox.webp'
 import emotesArt from '../../assets/sidebar-rail/emotes.webp'
-import friendsArt from '../../assets/sidebar-rail/friends.webp'
-import chatArt from '../../assets/sidebar-rail/chat.webp'
-import voiceOffArt from '../../assets/sidebar-rail/voice-off.webp'
-import voiceHearingArt from '../../assets/sidebar-rail/voice-hearing.webp'
-import voiceSpeakingArt from '../../assets/sidebar-rail/voice-speaking.webp'
-import { bugReportUrl } from '@explorer-core/lib/bugReport'
+import debugIcon from '../../assets/sidebar-icons/debug.png'
 import { registerCancelLayer } from '@explorer-core/lib/cancelLayers'
 import { NearbyVoiceWidget } from '../voice/NearbyVoiceWidget'
 import { PermissionsPopover } from '../permissions/PermissionsPopover'
 import { PortablesPopover, portablesTooltip, showPortables } from '../portables/PortablesPopover'
-import { useNearbyVoice, type NearbyVoice } from '../voice/useNearbyVoice'
+import { useNearbyVoice } from '../voice/useNearbyVoice'
 import { withUtm } from '@explorer-core/lib/utm'
-import { IN_WORLD_SHOP, siteUrl } from '@hud-host'
-import streamBadge from '../../assets/voice/stream-badge.png'
+import { IN_WORLD_SHOP, isNativeHud, siteUrl } from '@hud-host'
 
-// `hotkey` names the engine SystemAction whose live binding renders as the tooltip hint.
-type Item =
-  | { kind: 'nav'; icon: IconName; label: string; action: NavAction; hotkey?: string }
-  | { kind: 'chat'; icon: IconName; label: string; hotkey?: string }
-  | { kind: 'friends'; icon: IconName; label: string; hotkey?: string }
-  | { kind: 'emotes'; icon: IconName; label: string; hotkey?: string }
-  | { kind: 'mic'; icon: IconName; label: string }
-  | { kind: 'settings'; icon: IconName; label: string; hotkey?: string }
-  | { kind: 'profile'; icon: IconName; label: string }
-  | { kind: 'notifications'; icon: IconName; label: string }
-  | { kind: 'backpack'; icon: IconName; label: string; hotkey?: string }
-  | { kind: 'communities'; icon: IconName; label: string; hotkey?: string }
-  | { kind: 'places'; icon: IconName; label: string; hotkey?: string }
-  | { kind: 'events'; icon: IconName; label: string; hotkey?: string }
-  | { kind: 'skybox'; icon: IconName; label: string }
-  | { kind: 'permissions'; icon: IconName; label: string }
-  | { kind: 'portables'; icon: IconName; label: string }
-  | { kind: 'gallery'; icon: IconName; label: string; hotkey?: string }
-  | { kind: 'shop'; icon: IconName; label: string }
-  | { kind: 'camera'; icon: IconName; label: string; hotkey?: string }
-  | { kind: 'create'; icon: IconName; label: string }
-  | { kind: 'link'; icon: IconName; label: string; url: string | (() => string) }
-  | { kind: 'divider' }
+/** A glyph of the design, drawn as it is in the 32px box inside the circle. */
+const glyph = (src: string): { src: string; size: number; color: true } => ({ src, size: 32, color: true })
 
+/** The panels the column opens beside itself, one at a time. */
+type PanelId = 'me' | 'discover' | 'shop' | 'system' | 'volume' | 'camera'
 
-// The reference rail's own idle icons, each at the size it draws them.
-const RAIL_ART: Partial<Record<IconName, { src: string; size: number; color?: boolean }>> = {
-  'notifications': { src: notificationsArt, size: 30 },
-  'events': { src: eventsArt, size: 32 },
-  'places': { src: placesArt, size: 32 },
-  'communities': { src: communitiesArt, size: 32 },
-  'backpack': { src: backpackArt, size: 28 },
-  'marketplace': { src: marketplaceArt, size: 32 },
-  'gallery': { src: galleryArt, size: 28 },
-  'settings': { src: settingsArt, size: 28 },
-  'help': { src: helpArt, size: 32 },
-  'bug': { src: bugArt, size: 30 },
-  'skybox': { src: skyboxArt, size: 30 },
-  'emotes': { src: emotesArt, size: 32 },
-  'friends': { src: friendsArt, size: 30 },
-  'chat': { src: chatArt, size: 26 },
-  'voice-off': { src: voiceOffArt, size: 34, color: true },
-  'voice-hearing': { src: voiceHearingArt, size: 34, color: true },
-  'voice-speaking': { src: voiceSpeakingArt, size: 34, color: true }
-}
+/** How far above its button's top a panel's top lies, in reference px (the design's frames).
+ *  Volume has none: its popover is centred on the button. */
+const PANEL_RISE: Record<PanelId, number | undefined> = { me: 13, discover: 3, shop: 151, system: 3, volume: undefined, camera: 1 }
 
-function RailButton(props: React.ComponentProps<typeof IconButton>): React.JSX.Element {
-  return <IconButton art={RAIL_ART[props.icon]} {...props} />
-}
+/** The panels that open over the place the minimap takes. */
+const OVER_MAP: ReadonlySet<PanelId> = new Set<PanelId>(['me', 'discover', 'shop', 'system'])
 
-const TOP: Item[] = [
-  { kind: 'profile', icon: 'profile', label: 'Profile' },
-  { kind: 'notifications', icon: 'notifications', label: 'Notifications' },
-  { kind: 'divider' },
-  { kind: 'events', icon: 'events', label: 'Events', hotkey: 'Events' },
-  { kind: 'places', icon: 'places', label: 'Places', hotkey: 'Places' },
-  { kind: 'communities', icon: 'communities', label: 'Communities', hotkey: 'Communities' },
-  { kind: 'backpack', icon: 'backpack', label: 'Backpack', hotkey: 'Backpack' },
-  { kind: 'shop', icon: 'marketplace', label: 'Shop' },
-  { kind: 'camera', icon: 'camera', label: 'Camera', hotkey: 'PhotoMode' },
-  { kind: 'gallery', icon: 'gallery', label: 'Gallery', hotkey: 'Gallery' },
-  { kind: 'settings', icon: 'settings', label: 'Settings', hotkey: 'Settings' },
-  { kind: 'create', icon: 'create', label: 'Create' },
-  { kind: 'divider' },
-  { kind: 'link', icon: 'help', label: 'Help & Support', url: siteUrl('/help/') },
-  { kind: 'link', icon: 'bug', label: 'Report a bug', url: bugReportUrl }
-]
+/** The mock HUD (`?mock=1`: no engine, no session to shop with) draws the Shop panel on a host
+ *  without the in-world Shop too, so the panel can be seen beside the bar. */
+const mockHud = (): boolean => new URLSearchParams(location.search).get('mock') === '1'
 
-const BOTTOM: Item[] = [
-  { kind: 'mic', icon: 'mic', label: 'Voice chat' },
-  { kind: 'skybox', icon: 'skybox', label: 'Skybox' },
-  { kind: 'permissions', icon: 'permissions', label: 'Scene permissions' },
-  { kind: 'portables', icon: 'portables', label: 'Portable experiences' },
-  { kind: 'divider' },
-  { kind: 'emotes', icon: 'emotes', label: 'Emotes', hotkey: 'Emote' },
-  { kind: 'divider' },
-  { kind: 'friends', icon: 'friends', label: 'Friends', hotkey: 'Friends' },
-  { kind: 'chat', icon: 'chat', label: 'Chat', hotkey: 'ChatPanel' }
-]
+/** The engine's name for the setting the Volume popover moves (`volume_settings.rs`: "<name> Volume"). */
+const MASTER_VOLUME = 'Master Volume'
 
-type VoiceProps = NearbyVoice & { onOpen: (button: HTMLElement) => void }
-type PopoverProps = { open: boolean; onOpen: (button: HTMLElement) => void }
-type Popovers = { permissions: PopoverProps; portables: PopoverProps }
-
-function renderItem(item: Item, i: number, session: EngineSession, snap: BindingsSnapshot, liveEvents: number, voice: VoiceProps, popovers: Popovers, create: boolean, onViewProfile?: () => void): React.JSX.Element | null {
-  if (item.kind === 'divider') return <div key={`d${i}`} className={styles.divider} />
-  const shortcut = 'hotkey' in item && item.hotkey != null ? keyHintFor(snap, item.hotkey) : undefined
-  if (item.kind === 'chat')
-    return (
-      <RailButton
-        key="chat"
-        icon={item.icon}
-        label={item.label}
-        shortcut={shortcut}
-        badge={session.chat.unread}
-        active={session.chat.open}
-        onClick={session.chat.toggle}
-      />
-    )
-  if (item.kind === 'friends')
-    return (
-      <RailButton
-        key="friends"
-        icon={item.icon}
-        label={item.label}
-        shortcut={shortcut}
-        badge={session.friends.received.length}
-        badgeMax={9}
-        active={session.friends.open}
-        onClick={session.friends.toggle}
-      />
-    )
-  if (item.kind === 'settings')
-    return (
-      <RailButton
-        key="settings"
-        icon={item.icon}
-        label={item.label}
-        shortcut={shortcut}
-        active={session.settings.open}
-        onClick={session.settings.toggle}
-      />
-    )
-  if (item.kind === 'profile') {
-    const p = session.profile.data
-    return (
-      <RailButton
-        key="profile"
-        icon={item.icon}
-        avatar={p ? { src: p.picture, name: p.name, color: userColor(p.address, p.name, p.hasClaimedName, p.nameColor) } : undefined}
-        label={item.label}
-        active={session.profile.open}
-        onClick={onViewProfile ?? session.profile.toggle}
-      />
-    )
-  }
-  if (item.kind === 'backpack')
-    return (
-      <RailButton
-        key="backpack"
-        icon={item.icon}
-        label={item.label}
-        shortcut={shortcut}
-        active={session.backpack.open}
-        onClick={session.backpack.toggle}
-      />
-    )
-  if (item.kind === 'communities')
-    return (
-      <RailButton
-        key="communities"
-        icon={item.icon}
-        label={item.label}
-        shortcut={shortcut}
-        active={session.communities.open}
-        onClick={session.communities.toggle}
-        cornerArt={session.voiceChat.active.some((c) => c.isMember) ? { src: streamBadge, label: 'A community stream is live' } : undefined}
-      />
-    )
-  if (item.kind === 'places')
-    return (
-      <RailButton
-        key="places"
-        icon={item.icon}
-        label={item.label}
-        shortcut={shortcut}
-        active={session.places.open}
-        onClick={session.places.toggle}
-      />
-    )
-  // The in-world Shop page where this HUD runs it (always, unless `?shop=old`); otherwise the web Shop in a new tab.
-  if (item.kind === 'shop')
-    return IN_WORLD_SHOP ? (
-      <RailButton key="shop" icon={item.icon} label={item.label} active={session.shop.open} onClick={session.shop.toggle} />
-    ) : (
-      <RailButton key="shop" icon={item.icon} label={item.label} onClick={() => window.open(withUtm(siteUrl('/shop')), '_blank', 'noopener')} />
-    )
-  if (item.kind === 'camera')
-    return (
-      <RailButton key="camera" icon={item.icon} label={item.label} shortcut={shortcut} onClick={() => session.photoMode.set(true, 'button')} />
-    )
-  if (item.kind === 'gallery')
-    return (
-      <RailButton
-        key="gallery"
-        icon={item.icon}
-        label={item.label}
-        shortcut={shortcut}
-        active={session.gallery.open}
-        onClick={session.gallery.toggle}
-      />
-    )
-  if (item.kind === 'notifications')
-    return (
-      <RailButton
-        key="notifications"
-        icon={item.icon}
-        label={item.label}
-        badge={session.notifications.unread}
-        active={session.notifications.open}
-        onClick={session.notifications.toggle}
-      />
-    )
-  if (item.kind === 'emotes')
-    return (
-      <RailButton
-        key="emotes"
-        icon={item.icon}
-        label={item.label}
-        shortcut={shortcut}
-        active={session.emotes.open}
-        onClick={session.emotes.toggle}
-      />
-    )
-  if (item.kind === 'mic') {
-    const state = !voice.hearing ? 'off' : voice.speaking ? 'speaking' : 'hearing'
-    return (
-      <RailButton
-        key="mic"
-        icon={`voice-${state}`}
-        size={34}
-        label="Nearby Voice"
-        data-voice={state}
-        indicator={state !== 'off'}
-        onClick={(e) => voice.onOpen(e.currentTarget)}
-      >
-        {state === 'speaking' && (
-          <span className={styles.bars} data-live={voice.talking} aria-hidden="true">
-            <i />
-            <i />
-            <i />
-          </span>
-        )}
-      </RailButton>
-    )
-  }
-  if (item.kind === 'create')
-    return EDITOR_BUILD && create ? <RailButton key="create" icon={item.icon} label={item.label} active={session.create.open} onClick={session.create.toggle} /> : null
-  if (item.kind === 'skybox')
-    return <RailButton key="skybox" icon={item.icon} label={item.label} active={session.skybox.open} onClick={session.skybox.toggle} />
-  if (item.kind === 'permissions') {
-    // the badge counts refusals a stored rule decided that the player has not looked at
-    return (
-      <RailButton
-        key="permissions"
-        icon={item.icon}
-        label={item.label}
-        badge={session.permissions.unseenDenied}
-        active={popovers.permissions.open}
-        onClick={(e) => popovers.permissions.onOpen(e.currentTarget)}
-      />
-    )
-  }
-  if (item.kind === 'portables') {
-    // only while the engine lists a portable (a smart wearable, or one a scene spawned)
-    if (!showPortables(session.portables.list)) return null
-    return (
-      <RailButton
-        key="portables"
-        icon={item.icon}
-        label={item.label}
-        tooltip={portablesTooltip(session.portables.list)}
-        active={popovers.portables.open}
-        onClick={(e) => popovers.portables.onOpen(e.currentTarget)}
-      />
-    )
-  }
-  if (item.kind === 'events')
-    return (
-      <RailButton
-        key="events"
-        icon={item.icon}
-        label={item.label}
-        shortcut={shortcut}
-        badge={liveEvents}
-        badgeTone="lavender"
-        active={session.events.open}
-        onClick={() => session.events.toggle('sidebar')}
-      />
-    )
-  if (item.kind === 'link')
-    return (
-      <RailButton
-        key={item.label}
-        icon={item.icon}
-        label={item.label}
-        onClick={() => window.open(typeof item.url === 'string' ? item.url : item.url(), '_blank', 'noopener')}
-      />
-    )
+// A raster glyph's strokes are antialiased thin: a second copy laid over the first brings them up
+// to solid white. The design's own glyphs are vectors and need none.
+function RasterButton({ src, size, ...props }: Omit<React.ComponentProps<typeof IconButton>, 'art'> & { src: string; size: number }): React.JSX.Element {
   return (
-    <RailButton
-      key={item.action}
-      icon={item.icon}
-      label={item.label}
-      shortcut={shortcut}
-      onClick={() => session.nav(item.action)}
-    />
+    <IconButton art={{ src, size }} {...props}>
+      <MaskIcon src={src} size={size} className={styles.overlay} />
+    </IconButton>
   )
 }
 
+// The Map button closes the open panel itself (toggleMap) and decides from what shows when pressed.
+const MAP_BUTTON = '[data-rail-map]'
+
+/** Places what a button opens beside the column, and closes it on an outside press or Cancel. */
+function PanelHost({ anchor, rise, onClose, children }: { anchor: HTMLElement; rise?: number; onClose: () => void; children: React.ReactNode }): React.JSX.Element {
+  const { ref, style } = useRailPopover(anchor, onClose, rise, MAP_BUTTON)
+  return (
+    <div ref={ref} className={`${styles.panelHost} ${rise == null ? styles.centred : ''}`.trim()} style={style}>
+      {children}
+    </div>
+  )
+}
+
+/** The Volume popover: the engine's master volume, when the engine lists it. */
+function VolumePanel({ settings }: { settings: EngineSession['settings'] }): React.JSX.Element {
+  const master = settings.list.find((s) => s.name === MASTER_VOLUME)
+  return (
+    <Panel role="dialog" aria-label="Volume" className={styles.volume}>
+      <span className={styles.volumeLabel}>Master</span>
+      {master != null && (
+        <div className={styles.volumeSlider}>
+          <Slider
+            variant="rail"
+            value={master.value}
+            min={master.minValue}
+            max={master.maxValue}
+            step={master.stepSize || 1}
+            onChange={(v) => settings.set(MASTER_VOLUME, v)}
+            aria-label="Master"
+          />
+        </div>
+      )}
+    </Panel>
+  )
+}
+
+const rowArt = (src: string): React.JSX.Element => <img src={src} alt="" width={28} height={28} draggable={false} />
+
 function DotsGlyph(): React.JSX.Element {
   return (
-    <svg viewBox="0 0 24 8" width="18" height="6" fill="currentColor" aria-hidden="true">
-      <circle cx="4" cy="4" r="3" />
-      <circle cx="12" cy="4" r="3" />
-      <circle cx="20" cy="4" r="3" />
+    <svg viewBox="0 0 22.48 4.42" width="22.48" height="4.42" fill="currentColor" aria-hidden="true">
+      <ellipse cx="2.3" cy="2.21" rx="2.3" ry="2.21" />
+      <ellipse cx="11.24" cy="2.21" rx="2.3" ry="2.21" />
+      <ellipse cx="20.18" cy="2.21" rx="2.3" ry="2.21" />
     </svg>
   )
 }
@@ -362,43 +144,52 @@ export function Sidebar({
   onViewProfile
 }: {
   session: EngineSession
-  /** Open the local player's passport (the profile icon). */
-  onViewProfile?: () => void
+  /** Open the local player's passport: the Me panel's Profile row, and its Badges row on that tab. */
+  onViewProfile?: (tab?: PassportTab) => void
 }): React.JSX.Element {
   const snap = useBindingsSnapshot()
   const liveEvents = useLiveEventCount()
   const create = useContext(EditorOffered)
   const [configOpen, setConfigOpen] = useState(false)
-  const debugPanel = useDebugPanel(session)
+  const debugPanelOpen = useDebugPanelState() != null
+  const [panel, setPanel] = useState<{ id: PanelId; anchor: HTMLElement } | null>(null)
+  const [mapShown, setMapShown] = useState(() => getPref(PREF.sidebarMap) === '1')
   const [voiceAnchor, setVoiceAnchor] = useState<HTMLElement | null>(null)
   const [permissionsAnchor, setPermissionsAnchor] = useState<HTMLElement | null>(null)
   const [portablesAnchor, setPortablesAnchor] = useState<HTMLElement | null>(null)
-  const autoHide = useAutoHide(configOpen || voiceAnchor != null || permissionsAnchor != null || portablesAnchor != null)
+  const autoHide = useAutoHide(configOpen || panel != null || voiceAnchor != null || permissionsAnchor != null || portablesAnchor != null)
   const nearby = useNearbyVoice(session)
-  const voice: VoiceProps = { ...nearby, onOpen: (button) => setVoiceAnchor((a) => (a == null ? button : null)) }
+  const closePanel = useCallback(() => setPanel(null), [])
   const closeVoice = useCallback(() => setVoiceAnchor(null), [])
-  const popovers: Popovers = {
-    permissions: {
-      open: permissionsAnchor != null,
-      onOpen: (button) => {
-        session.permissions.markSeen()
-        session.permissions.loadRules()
-        setPermissionsAnchor((a) => (a == null ? button : null))
-      }
-    },
-    portables: {
-      open: portablesAnchor != null,
-      onOpen: (button) => setPortablesAnchor((a) => (a == null ? button : null))
-    }
-  }
   const closePermissions = useCallback(() => setPermissionsAnchor(null), [])
   const closePortables = useCallback(() => setPortablesAnchor(null), [])
-  // The button leaves the rail once the engine lists no portable; its popover goes with it.
+  const isOpen = (id: PanelId): boolean => panel?.id === id
+  const [shopPanel] = useState(() => IN_WORLD_SHOP || mockHud())
+  // The notifications lie where the top panels and the minimap open, and no outside press closes
+  // them: whichever of those opens next takes their place.
+  const closeNotifications = (): void => {
+    if (session.notifications.open) session.notifications.toggle()
+  }
+  const togglePanel = (id: PanelId) => (e: React.MouseEvent<HTMLElement>): void => {
+    const anchor = e.currentTarget
+    if (panel?.id !== id && OVER_MAP.has(id)) closeNotifications()
+    setPanel((p) => (p?.id === id ? null : { id, anchor }))
+  }
+  // The minimap gives its place to a panel that opens over it, and to the notifications.
+  const mapVisible = mapShown && !(panel != null && OVER_MAP.has(panel.id)) && !session.notifications.open
+  const toggleMap = (): void => {
+    const next = !mapVisible
+    if (next) closeNotifications()
+    setPanel(null)
+    setMapShown(next)
+    setPref(PREF.sidebarMap, next ? '1' : '0')
+  }
+  // The popover closes once the engine lists no portable.
   const portablesShown = showPortables(session.portables.list)
   useEffect(() => {
     if (!portablesShown) setPortablesAnchor(null)
   }, [portablesShown])
-  // The "..." panel closes on an outside click or Cancel, like the other popovers.
+  // The "..." menu closes on an outside press or Cancel, like the panels.
   useEffect(() => {
     if (!configOpen) return
     const close = (): void => setConfigOpen(false)
@@ -412,42 +203,251 @@ export function Sidebar({
       off()
     }
   }, [configOpen])
-  const launcher = debugPanel.developmentBuild && (
+
+  const profile = session.profile.data
+  // Sign Out is for a sign-in on the web, a guest's included: as unity-explorer's, a guest that signs
+  // out is kept, and PLAY AS GUEST brings it back. The desktop client cannot end its engine session
+  // from the page, and a sign-in the scene owns is not the page's to end.
+  const signOutOffered = session.login.signedInAs != null && !isNativeHud()
+  const voiceState = nearby.blocked ? 'blocked' : !nearby.hearing ? 'off' : nearby.speaking ? 'speaking' : 'hearing'
+  const voiceOn = voiceState === 'hearing' || voiceState === 'speaking'
+  const launcher = debugPanelLauncherEnabled() && (
     <ControlButton variant="dark" className={styles.debugLauncher} aria-label="Toggle debug panel"
-      title="Toggle debug panel" active={debugPanel.launcherLayer != null} onClick={() => debugPanel.toggle()}>
+      title="Toggle debug panel" active={debugPanelOpen} onClick={() => toggleDebugPanel()}>
       <img src={debugIcon} width={28} height={28} alt="" draggable={false} />
     </ControlButton>
   )
   return (
     <>
-      {/* Keep the toggle clickable and inside the popup's focus trap while the panel is open. */}
-      {debugPanel.launcherLayer ? createPortal(launcher, debugPanel.launcherLayer) : launcher}
+      {launcher}
       {autoHide.hidden && <div className={styles.reveal} data-testid="sidebar-reveal" onPointerEnter={autoHide.onPointerEnter} />}
       <nav
         ref={hudInsetRef}
         className={styles.root}
         aria-label="Main navigation"
         data-hidden={autoHide.hidden}
+        data-autohide={autoHide.enabled}
         onPointerEnter={autoHide.onPointerEnter}
         onPointerLeave={autoHide.onPointerLeave}
       >
-        <div className={styles.group}>
+        <div className={`${styles.group} ${styles.top}`}>
           <ControlButton
-            size="sm"
-            shape="pill"
-            variant="solid"
-            className={styles.configButton}
+            className={styles.handle}
             aria-label="Sidebar settings"
             aria-expanded={configOpen}
             active={configOpen}
+            title="Sidebar settings"
             onClick={() => setConfigOpen((o) => !o)}
           >
-            <DotsGlyph />
+            <span className={styles.handlePill}>
+              <DotsGlyph />
+            </span>
           </ControlButton>
-          {TOP.map((item, i) => renderItem(item, i, session, snap, liveEvents, voice, popovers, create, onViewProfile))}
+          <IconButton
+            icon="profile"
+            avatar={profile ? { src: profile.picture, name: profile.name, color: userColor(profile.address, profile.name, profile.hasClaimedName, profile.nameColor) } : undefined}
+            label="Me"
+            active={isOpen('me')}
+            quiet={isOpen('me')}
+            onClick={togglePanel('me')}
+          />
+          <IconButton icon="map" art={glyph(mapVisible ? mapOnArt : mapArt)} label="Map" active={mapVisible} quiet={mapVisible} onClick={toggleMap} data-rail-map="" />
+          <IconButton
+            icon="places"
+            art={glyph(isOpen('discover') ? discoverOnArt : discoverArt)}
+            label="Discover"
+            active={isOpen('discover')}
+            quiet={isOpen('discover')}
+            onClick={togglePanel('discover')}
+          />
+          {/* The Shop panel where this HUD runs the in-world Shop (always, unless `?shop=old`) and in the mock HUD; otherwise the web Shop in a new tab. */}
+          {shopPanel ? (
+            <IconButton icon="marketplace" art={glyph(isOpen('shop') ? shopOnArt : shopArt)} label="Shop" active={isOpen('shop')} quiet={isOpen('shop')} onClick={togglePanel('shop')} />
+          ) : (
+            <IconButton icon="marketplace" art={glyph(shopArt)} label="Shop" onClick={() => window.open(withUtm(siteUrl('/shop')), '_blank', 'noopener')} />
+          )}
+          <IconButton
+            icon="settings"
+            art={glyph(isOpen('system') ? systemOnArt : systemArt)}
+            label="System"
+            active={isOpen('system')}
+            quiet={isOpen('system')}
+            onClick={togglePanel('system')}
+          />
+          <IconButton
+            icon="notifications"
+            art={glyph(session.notifications.open ? bellOnArt : bellArt)}
+            label="Notifications"
+            badge={session.notifications.unread}
+            active={session.notifications.open}
+            quiet={session.notifications.open}
+            onClick={session.notifications.toggle}
+          />
         </div>
-        <div className={styles.group}>{BOTTOM.map((item, i) => renderItem(item, i, session, snap, liveEvents, voice, popovers, create, onViewProfile))}</div>
+        <div className={styles.group}>
+          {/* the badge counts refusals a stored rule decided that the player has not looked at */}
+          <IconButton
+            icon="permissions"
+            label="Scene permissions"
+            badge={session.permissions.unseenDenied}
+            active={permissionsAnchor != null}
+            quiet={permissionsAnchor != null}
+            onClick={(e) => {
+              const button = e.currentTarget
+              session.permissions.markSeen()
+              session.permissions.loadRules()
+              setPermissionsAnchor((a) => (a == null ? button : null))
+            }}
+          />
+          {/* in the column only while the engine lists a portable */}
+          {portablesShown && (
+            <IconButton
+              icon="portables"
+              art={glyph(boltArt)}
+              label="Portable experiences"
+              tooltip={portablesTooltip(session.portables.list)}
+              active={portablesAnchor != null}
+              quiet={portablesAnchor != null}
+              onClick={(e) => {
+                const button = e.currentTarget
+                setPortablesAnchor((a) => (a == null ? button : null))
+              }}
+            />
+          )}
+          <RasterButton icon="skybox" src={skyboxArt} size={30} label="Skybox" active={session.skybox.open} quiet={session.skybox.open} onClick={session.skybox.toggle} />
+          <IconButton
+            icon="settings"
+            art={glyph(volumeArt)}
+            label="Volume"
+            active={isOpen('volume')}
+            quiet={isOpen('volume')}
+            onClick={(e) => {
+              // the engine sends its settings once asked
+              session.settings.load()
+              togglePanel('volume')(e)
+            }}
+          />
+          <RasterButton icon="emotes" src={emotesArt} size={32} label="Emotes" shortcut={keyHintFor(snap, 'Emote')} active={session.emotes.open} onClick={session.emotes.toggle} />
+          <IconButton
+            icon="friends"
+            art={glyph(session.friends.open ? friendsOnArt : friendsArt)}
+            label="Friends"
+            shortcut={keyHintFor(snap, 'Friends')}
+            badge={session.friends.received.length}
+            badgeMax={9}
+            active={session.friends.open}
+            quiet={session.friends.open}
+            onClick={session.friends.toggle}
+          />
+          <IconButton
+            icon="camera"
+            art={glyph(isOpen('camera') ? cameraOnArt : cameraArt)}
+            label="Camera"
+            tooltip="Camera / Gallery"
+            active={isOpen('camera')}
+            quiet={isOpen('camera')}
+            onClick={togglePanel('camera')}
+          />
+          <IconButton
+            icon="mic"
+            art={glyph(voiceState === 'speaking' ? voiceFaceArt : voiceArt)}
+            className={voiceOn ? undefined : styles.voiceOff}
+            label="Nearby Voice"
+            data-voice={voiceState}
+            indicator={voiceOn}
+            active={voiceAnchor != null}
+            quiet={voiceAnchor != null}
+            onClick={(e) => {
+              const button = e.currentTarget
+              setVoiceAnchor((a) => (a == null ? button : null))
+            }}
+          >
+            {voiceState === 'speaking' && (
+              <span className={styles.bars} data-live={nearby.talking} aria-hidden="true">
+                <i />
+                <i />
+                <i />
+              </span>
+            )}
+          </IconButton>
+          {/* the count shows only while the chat is closed */}
+          <IconButton
+            icon="chat"
+            art={glyph(session.chat.open ? chatOnArt : chatArt)}
+            label="Chat"
+            shortcut={keyHintFor(snap, 'ChatPanel')}
+            badge={session.chat.open ? undefined : session.chat.unread}
+            active={session.chat.open}
+            quiet={session.chat.open}
+            onClick={session.chat.toggle}
+          />
+        </div>
       </nav>
+      {mapVisible && <MapPanel minimap={session.minimap} map={session.map} referrer={profile?.address} setEngineViewport={session.setEngineViewport} />}
+      {panel != null && (
+        <PanelHost key={panel.id} anchor={panel.anchor} rise={PANEL_RISE[panel.id]} onClose={closePanel}>
+          {panel.id === 'me' && (
+            <MePanel
+              profile={profile}
+              backpackKey={keyHintFor(snap, 'Backpack')}
+              inviteLink={inviteLink(profile)}
+              onBackpack={session.backpack.toggle}
+              onProfile={onViewProfile != null ? () => onViewProfile() : session.profile.toggle}
+              onBadges={onViewProfile != null ? () => onViewProfile('badges') : undefined}
+              onSignOut={signOutOffered ? signOutOfWorld : undefined}
+              onExit={exitApplication}
+              onClose={closePanel}
+            />
+          )}
+          {panel.id === 'discover' && (
+            <DiscoverPanel
+              eventsKey={keyHintFor(snap, 'Events')}
+              placesKey={keyHintFor(snap, 'Places')}
+              communitiesKey={keyHintFor(snap, 'Communities')}
+              liveEvents={liveEvents}
+              communityStreamLive={session.voiceChat.active.some((c) => c.isMember)}
+              onEvents={() => session.events.toggle('sidebar')}
+              onPlaces={session.places.toggle}
+              onCommunities={session.communities.toggle}
+              onClose={closePanel}
+            />
+          )}
+          {panel.id === 'shop' && <ShopPanel explore={{ wearables: session.shop.toggle }} onClose={closePanel} />}
+          {panel.id === 'system' && (
+            <SystemPanel
+              settingsKey={keyHintFor(snap, 'Settings')}
+              onSettings={session.settings.toggle}
+              onCreate={EDITOR_BUILD && create ? session.create.toggle : undefined}
+              onClose={closePanel}
+            />
+          )}
+          {panel.id === 'volume' && <VolumePanel settings={session.settings} />}
+          {panel.id === 'camera' && (
+            <MenuPanel label="Camera" title="CAMERA">
+              <MenuList>
+                <MenuRow
+                  icon={rowArt(cameraShotIcon)}
+                  label="Take A Shot"
+                  hint={keyHintFor(snap, 'PhotoMode')}
+                  onClick={() => {
+                    closePanel()
+                    session.photoMode.set(true, 'button')
+                  }}
+                />
+                <MenuRow
+                  icon={rowArt(cameraGalleryIcon)}
+                  label="Gallery"
+                  hint={keyHintFor(snap, 'Gallery')}
+                  onClick={() => {
+                    closePanel()
+                    session.gallery.toggle()
+                  }}
+                />
+              </MenuList>
+            </MenuPanel>
+          )}
+        </PanelHost>
+      )}
       {voiceAnchor != null && (
         <NearbyVoiceWidget
           anchor={voiceAnchor}
@@ -461,6 +461,7 @@ export function Sidebar({
           speaking={nearby.speaking}
           talking={nearby.talking}
           micAvailable={nearby.micAvailable}
+          blocked={nearby.blocked}
           onSpeakToggle={nearby.toggleSpeak}
           talkKey={keyHintFor(snap, 'Microphone')}
           onClose={closeVoice}
@@ -488,14 +489,18 @@ export function Sidebar({
           onClose={closePortables}
         />
       )}
+      {configOpen && <div className={styles.configBackdrop} aria-hidden="true" />}
       {configOpen && (
         <Panel className={styles.config} role="dialog" aria-label="Sidebar settings">
-          <span>Auto-hide sidebar</span>
-          <Toggle checked={autoHide.enabled} onChange={autoHide.setEnabled} aria-label="Auto-hide sidebar" />
-          <Button size="sm" variant="secondary" onClick={() => {
+          <div className={styles.configRow}>
+            <span>Hide Sidebar Automatically</span>
+            <Toggle size="sm" checked={autoHide.enabled} onChange={autoHide.setEnabled} aria-label="Hide Sidebar Automatically" />
+          </div>
+          {/* `/debug` in the chat opens the same panel. */}
+          <button type="button" className={styles.configExtra} onClick={() => {
             setConfigOpen(false)
-            debugPanel.toggle()
-          }}>Debug panel</Button>
+            toggleDebugPanel()
+          }}>Debug panel</button>
         </Panel>
       )}
     </>

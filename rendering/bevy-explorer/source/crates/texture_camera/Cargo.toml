@@ -3,6 +3,9 @@ name = "texture_camera"
 version = "0.1.0"
 edition = "2021"
 
+[lints]
+workspace = true
+
 [lib]
 
 [dependencies]
@@ -16,4 +19,4 @@ platform = { workspace = true }
 
 bevy = { workspace = true }
 
-bevy_atmosphere = { git = "https://github.com/robtfm/bevy_atmosphere", branch = "0.16-2" }
+bevy_atmosphere = { workspace = true }

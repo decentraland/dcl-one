@@ -1,6 +1,6 @@
 import { useCallback, useMemo, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
-import { Typography } from 'decentraland-ui2';
+import { useNavigate } from 'react-router';
+import Text from '@ui/atoms/Text';
 
 import type { Project } from '/shared/types/projects';
 import { misc } from '#preload';
@@ -211,12 +211,12 @@ function NoScenes() {
     <div className="no-scenes-container">
       <div className="no-scenes-card">
         <div className="no-scenes-card-text">
-          <Typography
+          <Text
             variant="h3"
             className="no-scenes-title"
           >
             {t('scene_list.no_scenes.title')}
-          </Typography>
+          </Text>
           <span className="no-scenes-description">
             {t('scene_list.no_scenes.description', { a: NoScenesAnchor })}
           </span>

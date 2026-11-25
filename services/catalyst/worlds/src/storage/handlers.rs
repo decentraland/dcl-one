@@ -18,6 +18,7 @@ use axum::http::{HeaderMap, StatusCode, Uri, header};
 use serde_json::{Value, json};
 
 use crate::shared::identity::Address;
+use crate::shared::query_params::js_parse_int;
 
 use super::errors::ApiError;
 use super::js_json::{self, Doc};
@@ -119,36 +120,12 @@ pub(super) fn query_params(query: Option<&str>) -> HashMap<String, String> {
     params
 }
 
-/// `parseInt(v, 10)`: optional leading whitespace and sign, then the leading
-/// digits (saturating); `None` when there are none.
-fn parse_int_prefix(v: &str) -> Option<i64> {
-    let v = v.trim_start_matches(|c: char| {
-        matches!(c,
-        '\u{0009}'..='\u{000d}' | '\u{0020}' | '\u{00a0}' | '\u{1680}' |
-        '\u{2000}'..='\u{200a}' | '\u{2028}' | '\u{2029}' | '\u{202f}' |
-        '\u{205f}' | '\u{3000}' | '\u{feff}')
-    });
-    let (negative, digits) = match v.as_bytes().first() {
-        Some(b'-') => (true, &v[1..]),
-        Some(b'+') => (false, &v[1..]),
-        _ => (false, v),
-    };
-    let digits = &digits[..digits.bytes().take_while(u8::is_ascii_digit).count()];
-    if digits.is_empty() {
-        return None;
-    }
-    let n = digits.bytes().fold(0i64, |n, d| {
-        n.saturating_mul(10).saturating_add(i64::from(d - b'0'))
-    });
-    Some(if negative { -n } else { n })
-}
-
 /// As `@dcl/http-commons` 2.0.1: `limit` in 1..=100 (anything else is 100),
 /// `offset` >= 0 clamped to [`MAX_OFFSET`] (anything else 0), both parsed with
 /// `parseInt` semantics; `prefix` when non-empty; a `page` parameter is
 /// ignored, as the old service did.
 pub fn parse_pagination(params: &HashMap<String, String>) -> Pagination {
-    let int = |name: &str| params.get(name).and_then(|v| parse_int_prefix(v));
+    let int = |name: &str| params.get(name).and_then(|v| js_parse_int(v, false));
     let limit = match int("limit") {
         Some(n) if n > 0 && n <= MAX_LIMIT => n,
         _ => MAX_LIMIT,
@@ -165,8 +142,16 @@ pub fn parse_pagination(params: &HashMap<String, String>) -> Pagination {
     }
 }
 
+/// As legacy's `!headers.get(...)`: missing or empty after Fetch's
+/// whitespace trim is a 400. Only the first value is read, so a repeated
+/// header whose first value is empty is refused (legacy joined the values).
 pub fn require_confirm_delete_all(headers: &HeaderMap) -> Result<(), ApiError> {
-    if headers.get(CONFIRM_DELETE_ALL_HEADER).is_none() {
+    let confirmed = headers.get(CONFIRM_DELETE_ALL_HEADER).is_some_and(|v| {
+        v.as_bytes()
+            .iter()
+            .any(|b| !matches!(b, b' ' | b'\t' | b'\r' | b'\n'))
+    });
+    if !confirmed {
         return Err(ApiError::bad_request(
             "Missing required header: X-Confirm-Delete-All",
         ));
@@ -174,37 +159,14 @@ pub fn require_confirm_delete_all(headers: &HeaderMap) -> Result<(), ApiError> {
     Ok(())
 }
 
-/// `@dcl/schema-validator-component`'s check: the media type of the
-/// `Content-Type` (repeated headers joined as `Headers.get` joins them),
-/// trimmed and lowercased, is `application/json` or an RFC 6839
-/// `type/subtype+json`.
+/// `@dcl/schema-validator-component`'s check on the request's first
+/// `Content-Type` (Node keeps only the first of a repeated one).
 pub fn is_json_content_type(headers: &HeaderMap) -> bool {
-    let values: Vec<&str> = headers
-        .get_all(header::CONTENT_TYPE)
-        .iter()
-        .filter_map(|v| v.to_str().ok())
-        .collect();
-    if values.is_empty() {
-        return false;
-    }
-    let joined = values.join(", ");
-    let media = joined
-        .split(';')
-        .next()
-        .unwrap_or_default()
-        .trim()
-        .to_ascii_lowercase();
-    if media == "application/json" {
-        return true;
-    }
-    let plain = |s: &str| !s.is_empty() && !s.contains(|c: char| c == '/' || c.is_whitespace());
-    media.split_once('/').is_some_and(|(kind, subtype)| {
-        plain(kind)
-            && plain(subtype)
-            && subtype
-                .strip_suffix("+json")
-                .is_some_and(|name| !name.is_empty())
-    })
+    crate::content::validation::is_json_content_type(
+        headers
+            .get(header::CONTENT_TYPE)
+            .and_then(|v| v.to_str().ok()),
+    )
 }
 
 /// Which upsert schema the body must satisfy.
@@ -910,6 +872,7 @@ pub async fn usage_env(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use axum::http::HeaderValue;
     use axum::response::IntoResponse;
 
     #[test]
@@ -985,6 +948,27 @@ mod tests {
         let err = check_content_length(&headers, 100).unwrap_err();
         assert!(matches!(err, ApiError::PayloadTooLarge(_)));
         assert_eq!(err.into_response().status(), StatusCode::PAYLOAD_TOO_LARGE);
+    }
+
+    #[test]
+    fn confirm_delete_all_requires_a_non_empty_header() {
+        let mut headers = HeaderMap::new();
+        let err = require_confirm_delete_all(&headers).unwrap_err();
+        assert_eq!(err.into_response().status(), StatusCode::BAD_REQUEST);
+
+        headers.insert(CONFIRM_DELETE_ALL_HEADER, HeaderValue::from_static(""));
+        let err = require_confirm_delete_all(&headers).unwrap_err();
+        assert_eq!(err.into_response().status(), StatusCode::BAD_REQUEST);
+
+        headers.insert(CONFIRM_DELETE_ALL_HEADER, HeaderValue::from_static(" \t "));
+        assert!(require_confirm_delete_all(&headers).is_err());
+
+        headers.insert(CONFIRM_DELETE_ALL_HEADER, HeaderValue::from_static("1"));
+        assert!(require_confirm_delete_all(&headers).is_ok());
+
+        headers.insert(CONFIRM_DELETE_ALL_HEADER, HeaderValue::from_static(""));
+        headers.append(CONFIRM_DELETE_ALL_HEADER, HeaderValue::from_static("1"));
+        assert!(require_confirm_delete_all(&headers).is_err());
     }
 
     #[tokio::test]
@@ -1108,7 +1092,9 @@ mod tests {
             assert!(!check(&[refused]), "{refused:?}");
         }
         assert!(!check(&[]));
-        assert!(!check(&["application/json", "text/plain"]));
+        // Node keeps only the first `Content-Type` of a request.
+        assert!(check(&["application/json", "text/plain"]));
+        assert!(!check(&["text/plain", "application/json"]));
     }
 
     fn params(pairs: &[(&str, &str)]) -> HashMap<String, String> {
@@ -1122,8 +1108,11 @@ mod tests {
     fn pagination_uses_js_whitespace_and_the_first_query_value() {
         let p = parse_pagination(&query_params(Some("limit=5&limit=9&offset=2&offset=7")));
         assert_eq!((p.limit, p.offset), (5, 2));
-        assert_eq!(parse_int_prefix("\u{feff}7"), Some(7));
-        assert_eq!(parse_int_prefix("\u{0085}7"), None);
+        // `parseInt` skips U+FEFF but not U+0085.
+        let p = parse_pagination(&query_params(Some("limit=%EF%BB%BF7")));
+        assert_eq!(p.limit, 7);
+        let p = parse_pagination(&query_params(Some("limit=%C2%857")));
+        assert_eq!(p.limit, MAX_LIMIT);
     }
 
     #[test]

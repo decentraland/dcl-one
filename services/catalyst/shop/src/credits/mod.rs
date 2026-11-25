@@ -11,7 +11,7 @@
 //! `/topup/mana[/quote]`, `/credits/checkout`, `/credits/orders/{id}`,
 //! `/credits/authorize[/cancel]`, `/stripe/webhook`, `/cart`,
 //! `/cart/items[/{collection}/{item}]`, `/checkout[/{id}]`, `/prices/quote`,
-//! `/seasons` (static since the seasons domain was removed), `/captcha`, and
+//! `/seasons`, seasonal photo goals and `/captcha`, and
 //! the operator routes `/admin/credits/{grant,revoke}`,
 //! `/admin/users/{a}/block`, `/admin/packs[/{sku}]`, `/admin/purchases`,
 //! `/admin/checkouts[/{id}/{refund,force-fulfill}]`, `/admin/ledger`,
@@ -63,7 +63,7 @@
 //! (with `CREDITS_USAGE_INDEX_ENABLED`, `RPC_ENDPOINT_POLYGON` and
 //! `CREDITS_MANAGER_CONTRACT`; it debits the ledger it folds, as the old
 //! reconciler did, so it is local authority too: it runs in `serve` and
-//! folds only with `OPS_WRITES_ENABLED` and fresh restore stamps, indexing
+//! folds only with `OPS_WRITES_ENABLED`, indexing
 //! the log either way). Not carried: the `ts-rs`
 //! bindings, the per-service `/health`, `/ping` (the content server owns
 //! them), `CREDITS_PG_CONNECTION_STRING`, `MARKET_BASE_URL`,
@@ -82,6 +82,8 @@ pub mod dto;
 pub mod errors;
 pub mod escrow;
 pub mod feed;
+pub mod fulfillment;
+pub mod goals;
 pub mod handlers;
 pub mod history;
 pub mod money;
@@ -107,8 +109,8 @@ mod usage_tests;
 use std::sync::Arc;
 use std::time::Duration;
 
+use crate::shared::routing::{delete, erase, get, post};
 use axum::Router;
-use axum::routing::{delete, get, post};
 use sqlx::PgPool;
 
 use crate::auth::eip1654::Eip1654Validator;
@@ -128,11 +130,14 @@ pub const DEFAULT_CHECKOUT_WORKER_INTERVAL_SECS: u64 = 30;
 pub const DEFAULT_CHECKOUT_MAX_ATTEMPTS: i32 = 5;
 pub const DEFAULT_ESCROW_LOCK_DAYS: i32 = 15;
 pub const DEFAULT_REQUIRE_PURCHASE_INTENT: bool = true;
+pub const DEFAULT_TOPUP_MIN_CONFIRMATIONS: u64 = 64;
+const CHAIN_SEPOLIA: i64 = 11_155_111;
 
 /// The raw values `main.rs` reads from `Config` (the old env names; the
 /// secrets through `<NAME>_FILE`). No `Debug`: five fields are credentials.
 #[derive(Clone)]
 pub struct RawSettings {
+    pub goal_flags_source: goals::flags::Source,
     /// `OPS_WRITES_ENABLED` (false).
     pub writes_enabled: bool,
     /// `CATALYRST_CREDITS_ADMIN_TOKEN` (or `_FILE`): the operator bearer; unset refuses the admin routes.
@@ -191,6 +196,12 @@ pub struct RawSettings {
     pub usage_chain_id: i64,
     /// `CREDITS_USAGE_START_BLOCK`: unset, the chain's known start (`usage::Settings::default_start_block`).
     pub usage_start_block: Option<u64>,
+    /// `CREDITS_TOPUP_START_BLOCK`: a MANA top-up mined before it is refused.
+    pub topup_start_block: Option<u64>,
+    /// MANA top-ups can verify payments: the economy bearer, broadcasting and a relayer key.
+    pub topups_enabled: bool,
+    /// `CREDITS_TOPUP_MIN_CONFIRMATIONS` (64).
+    pub topup_min_confirmations: u64,
     /// `CREDITS_USAGE_INDEX_INTERVAL_SECS` (30).
     pub usage_interval_secs: u64,
     /// `CREDITS_USAGE_INDEX_REQUESTS_PER_PASS` (50).
@@ -213,11 +224,14 @@ pub struct RawSettings {
     pub trial_buyers: Option<String>,
     /// `SHOP_BASE_URL`: the grant notification's link (the old `${DECENTRALAND_URL}/shop`).
     pub shop_base_url: String,
+    /// `NOTIFICATIONS_CDN_URL`: base of the credits notification icon (the old `CDN_URL`).
+    pub notifications_cdn_url: String,
 }
 
 impl Default for RawSettings {
     fn default() -> Self {
         Self {
+            goal_flags_source: goals::flags::Source::default(),
             writes_enabled: false,
             admin_token: None,
             captcha_secret: None,
@@ -247,6 +261,9 @@ impl Default for RawSettings {
             usage_rpc_url: None,
             usage_chain_id: usage::CHAIN_POLYGON,
             usage_start_block: None,
+            topup_start_block: None,
+            topups_enabled: false,
+            topup_min_confirmations: DEFAULT_TOPUP_MIN_CONFIRMATIONS,
             usage_interval_secs: 30,
             usage_requests_per_pass: 50,
             usage_replay_from_block: None,
@@ -258,12 +275,14 @@ impl Default for RawSettings {
             trial_mode: false,
             trial_buyers: None,
             shop_base_url: crate::subscriptions::DEFAULT_SHOP_BASE_URL.to_string(),
+            notifications_cdn_url: crate::shared::notifications::DEFAULT_CDN_URL.to_string(),
         }
     }
 }
 
 #[derive(Clone)]
 pub struct Settings {
+    pub goal_flags_source: goals::flags::Source,
     pub writes_enabled: bool,
     pub admin_token: Option<String>,
     pub captcha_secret: Option<String>,
@@ -291,6 +310,8 @@ pub struct Settings {
     pub checkout_builder_urls: Option<(String, String)>,
     /// The CreditUsed index (`usage.rs`); its contract is `credits_manager_contract`.
     pub usage: usage::Settings,
+    /// Which MANA top-up transfers are credited (`handlers::topup`).
+    pub topup: handlers::topup::TopupPolicy,
     pub credit_ttl_seconds: u64,
     pub credit_cap_headroom_pct: u32,
     pub credit_buffer_bps: u32,
@@ -299,6 +320,7 @@ pub struct Settings {
     /// the MANA top-up routes refuse.
     pub trial: Option<trial::TrialBuyers>,
     pub shop_base_url: String,
+    pub notifications_cdn_url: String,
 }
 
 fn non_empty(v: Option<String>) -> Option<String> {
@@ -326,6 +348,7 @@ impl Settings {
     /// Names the variable in every refusal, never a value. The two external
     /// endpoints (Stripe, hCaptcha) must be public https: both carry a secret.
     pub fn parse(raw: RawSettings) -> anyhow::Result<Self> {
+        let goal_flags_source = raw.goal_flags_source.normalize()?;
         let stripe_api_base = raw.stripe_api_base.trim().trim_end_matches('/').to_string();
         let stripe_api_base = if stripe_api_base.is_empty() {
             stripe::DEFAULT_STRIPE_API_BASE.to_string()
@@ -403,6 +426,17 @@ impl Settings {
         // The mock card grants credits for nothing. On a chain where credits are worth something, the
         // on-chain authorization, or any later spending path, would turn those into real MANA paid by the
         // treasury, so the mock routes run only where the credits chain is a testnet (Amoy).
+        // Without a start block, every earlier MANA transfer to the relayer could be claimed.
+        if raw.topups_enabled
+            && !raw.trial_mode
+            && raw.topup_start_block.is_none()
+            && !matches!(raw.usage_chain_id, usage::CHAIN_AMOY | CHAIN_SEPOLIA)
+        {
+            anyhow::bail!(
+                "CREDITS_TOPUP_START_BLOCK is required on chain {} while MANA top-ups are enabled: set it to the block at which top-ups start for the relayer address",
+                raw.usage_chain_id
+            );
+        }
         if raw.mock_card && raw.usage_chain_id != usage::CHAIN_AMOY {
             anyhow::bail!(
                 "CREDITS_MOCK_CARD grants credits without a charge and runs only on Amoy ({}); COLLECTIONS_CHAIN_ID is {}",
@@ -510,6 +544,7 @@ impl Settings {
             None
         };
         Ok(Self {
+            goal_flags_source,
             writes_enabled: raw.writes_enabled,
             admin_token: non_empty(raw.admin_token),
             captcha_secret,
@@ -540,6 +575,10 @@ impl Settings {
             checkout_builder_urls: non_empty(raw.checkout_success_url_builder)
                 .zip(non_empty(raw.checkout_cancel_url_builder)),
             usage,
+            topup: handlers::topup::TopupPolicy {
+                start_block: raw.topup_start_block,
+                min_confirmations: raw.topup_min_confirmations,
+            },
             credit_ttl_seconds: raw.credit_ttl_seconds,
             credit_cap_headroom_pct: raw.credit_cap_headroom_pct,
             credit_buffer_bps: raw.credit_buffer_bps,
@@ -549,6 +588,8 @@ impl Settings {
                 .unwrap_or_else(|| crate::subscriptions::DEFAULT_SHOP_BASE_URL.to_string())
                 .trim_end_matches('/')
                 .to_string(),
+            notifications_cdn_url: non_empty(Some(raw.notifications_cdn_url))
+                .unwrap_or_else(|| crate::shared::notifications::DEFAULT_CDN_URL.to_string()),
         })
     }
 
@@ -600,6 +641,20 @@ pub struct State {
     pub revoker: Option<Arc<settlement::Revoker>>,
     /// The MANA/USD feed a USD-pegged group's marketplace settles at (`feed.rs`).
     pub feed: Arc<dyn feed::MarketplaceFeed>,
+    /// Existing chain transport for the seasonal program paused() view.
+    pub goals_chain: Option<Arc<crate::evm::chain::ChainComponent>>,
+    pub goal_flags: goals::flags::Flags,
+    /// Rotating in-process scan hint; receipts alone acknowledge source events.
+    pub(crate) goal_scan_after: std::sync::atomic::AtomicI64,
+    /// Fixed upper bound for the current round, so arrivals cannot postpone retries.
+    pub(crate) goal_scan_horizon: std::sync::atomic::AtomicI64,
+    pub(crate) goal_scan_reconcile_at_ms: std::sync::atomic::AtomicI64,
+    /// An event failed since the last round started: the next round starts
+    /// from the beginning without waiting for the reconcile interval.
+    pub(crate) goal_scan_retry: std::sync::atomic::AtomicBool,
+    /// The `dapps` rollout flags the market reads (`market::features`); none without a market, and then every
+    /// flag reads off.
+    pub(crate) dapps_flags: Option<Arc<crate::market::features::DappsFlags>>,
 }
 
 pub type SharedState = Arc<State>;
@@ -612,6 +667,7 @@ impl State {
         sources: Sources,
         eip1654: Option<Arc<dyn Eip1654Validator>>,
     ) -> Self {
+        let dapps_flags = sources.market.as_ref().map(|m| m.dapps_flags());
         let market: Arc<dyn pricing::Market> = Arc::new(pricing::LocalMarket {
             pool: pool.clone(),
             market: sources.market,
@@ -622,7 +678,9 @@ impl State {
             Some(economy) => Arc::new(escrow::EconomyBroker::new(economy)),
             None => Arc::new(escrow::NoBroker),
         };
-        Self::with_sources(pool, http, settings, market, broker, eip1654)
+        let mut state = Self::with_sources(pool, http, settings, market, broker, eip1654);
+        state.dapps_flags = dapps_flags;
+        state
     }
 
     /// The constructor the tests use with a fake market and broker.
@@ -644,7 +702,9 @@ impl State {
             market,
             settings.marketplace_markup_bps,
         ));
-        let mut credits = Credits::new(pool).with_shop_base_url(&settings.shop_base_url);
+        let mut credits = Credits::new(pool)
+            .with_shop_base_url(&settings.shop_base_url)
+            .with_notifications_cdn_url(&settings.notifications_cdn_url);
         if settings.usage.is_configured() {
             credits = credits.with_usage_index(settings.usage.chain_id);
         }
@@ -694,7 +754,13 @@ impl State {
             },
             _ => None,
         };
+        let goal_flags = goals::flags::Flags::new(settings.goal_flags_source.clone(), http);
         Self {
+            goal_flags,
+            goal_scan_after: std::sync::atomic::AtomicI64::new(0),
+            goal_scan_horizon: std::sync::atomic::AtomicI64::new(0),
+            goal_scan_reconcile_at_ms: std::sync::atomic::AtomicI64::new(0),
+            goal_scan_retry: std::sync::atomic::AtomicBool::new(false),
             credits,
             usage,
             pricing,
@@ -707,7 +773,23 @@ impl State {
             gate,
             revoker,
             feed,
+            goals_chain: chain,
+            dapps_flags: None,
         }
+    }
+
+    /// Whether this node takes a Credits part (`creditsCents`): the market's `dapps-shop-credits-mana-split`
+    /// (`market::features::CREDITS_MANA_SPLIT`). Off without the market's flags.
+    pub fn credits_mana_split(&self) -> bool {
+        self.dapps_flags
+            .as_ref()
+            .is_some_and(|flags| flags.credits_mana_split())
+    }
+
+    /// The tests' `dapps` flags in place of the market's.
+    pub fn with_dapps_flags(mut self, flags: Arc<crate::market::features::DappsFlags>) -> Self {
+        self.dapps_flags = Some(flags);
+        self
     }
 
     /// The tests' gate in place of the chain read.
@@ -726,10 +808,9 @@ impl State {
     /// escrow release worker (only with one), the settlement job, the
     /// wallet flags listener and the CreditUsed index, all under the shared
     /// lifecycle. `serve` runs them: the usage index's fold debits the
-    /// ledger, so it runs beside the other credits writers, under the
-    /// restore stamps `serve` installs before its jobs start.
+    /// ledger, so it runs beside the other credits writers.
     pub fn spawn_jobs(self: &Arc<Self>, jobs: &Jobs) {
-        checkout::OutboxWorker {
+        fulfillment::OutboxWorker {
             credits: self.credits.clone(),
             pricing: self.pricing.clone(),
             broker: self.broker.clone(),
@@ -767,11 +848,9 @@ impl State {
     /// RPC and the contract are set: one pass per interval with a 5 s
     /// first-fire jitter, a failing pass backing off to ten minutes at most
     /// (the authorize lane closes once the fold is 10 minutes old). The fold
-    /// debits wallets, so with `OPS_WRITES_ENABLED` off, or a pass the
-    /// restore stamps hold, the job indexes the log (regenerable from the
-    /// chain) and publishes nothing: the lane stays closed. Private: only
-    /// [`Self::spawn_jobs`] starts it, in a process whose restore stamps are
-    /// installed.
+    /// debits wallets, so with `OPS_WRITES_ENABLED` off the job indexes the
+    /// log (regenerable from the chain) and publishes nothing: the lane stays
+    /// closed. Private: only [`Self::spawn_jobs`] starts it.
     fn spawn_usage_index(self: &Arc<Self>, jobs: &Jobs) {
         let settings = &self.settings.usage;
         if !settings.enabled {
@@ -785,10 +864,7 @@ impl State {
         }
         let index = self.usage.clone();
         let writes_enabled = self.settings.writes_enabled;
-        let gate = Arc::new(crate::shared::writes::PassGate::new(
-            usage::JOB_NAME,
-            crate::shared::writes::ops_refusal,
-        ));
+        let gate = Arc::new(crate::shared::writes::PassGate::new(usage::JOB_NAME));
         let interval = settings.interval;
         tracing::info!(chain_id = settings.chain_id, contract = ?settings.contract, start_block = settings.start_block, "credits usage index started");
         jobs.spawn_periodic_leased(
@@ -855,8 +931,8 @@ impl State {
     }
 
     /// The fulfilment worker as a value, for a test driving `run_once` by hand.
-    pub fn outbox_worker(&self) -> checkout::OutboxWorker {
-        checkout::OutboxWorker {
+    pub fn outbox_worker(&self) -> fulfillment::OutboxWorker {
+        fulfillment::OutboxWorker {
             credits: self.credits.clone(),
             pricing: self.pricing.clone(),
             broker: self.broker.clone(),
@@ -877,6 +953,8 @@ pub fn router(state: SharedState) -> Router {
     let writes_enabled = state.settings.writes_enabled;
     let api = Router::new()
         .route("/users", post(handlers::users::enroll))
+        .route("/users/{wallet_id}", delete(handlers::users::unregister))
+        .route("/users/{wallet_id}/status", get(handlers::users::status))
         .route(
             "/users/{wallet_id}/progress",
             get(handlers::users::progress),
@@ -950,9 +1028,10 @@ pub fn router(state: SharedState) -> Router {
         .route("/checkout/{id}", get(handlers::cart::get_checkout))
         .route("/prices/quote", post(handlers::prices::quote))
         .route("/seasons", get(handlers::users::seasons))
+        .route("/season", get(handlers::users::season))
         .route(
             "/captcha",
-            get(handlers::captcha::generate).post(handlers::captcha::claim),
+            get(handlers::captcha::generate).post(erase(handlers::captcha::claim)),
         )
         .route(
             "/usage-index/status",
@@ -978,6 +1057,8 @@ pub fn shop_router(state: SharedState) -> Router {
     let writes_enabled = state.settings.writes_enabled;
     let api = Router::new()
         .route("/v1/users", post(handlers::users::enroll))
+        .route("/v1/users/{wallet_id}", delete(handlers::users::unregister))
+        .route("/v1/users/{wallet_id}/status", get(handlers::users::status))
         .route(
             "/v1/users/{wallet_id}/progress",
             get(handlers::users::progress),
@@ -1056,9 +1137,10 @@ pub fn shop_router(state: SharedState) -> Router {
         .route("/v1/checkouts/{id}", get(handlers::cart::get_checkout))
         .route("/v1/credit-quotes", post(handlers::prices::quote))
         .route("/v1/credit-program/seasons", get(handlers::users::seasons))
+        .route("/v1/credit-program/season", get(handlers::users::season))
         .route(
             "/v1/captcha",
-            get(handlers::captcha::generate).post(handlers::captcha::claim),
+            get(handlers::captcha::generate).post(erase(handlers::captcha::claim)),
         )
         .route(
             "/dev/packs/{sku}/mock-purchase",

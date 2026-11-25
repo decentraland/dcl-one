@@ -13,7 +13,7 @@ import { useAppDispatch, useAppSelector } from '../../../redux/hooks';
 import { getDataLayerInterface, importAsset } from '../../../redux/data-layer';
 import { selectAssetCatalog } from '../../../redux/app';
 import { retry } from '../../../lib/utils/retry';
-import { isMissingScriptFile } from '../../../lib/utils/script-files';
+import { isMissingSceneFile, isMissingScriptFile } from '../../../lib/utils/script-files';
 import { analytics, Event } from '../../../lib/logic/analytics';
 import { getScriptParams, mergeLayout, parseLayout } from '../../../lib/sdk/script-params';
 import { Container } from '../../Container';
@@ -133,7 +133,9 @@ export default withSdk<Props>(({ sdk, entity: entityId, initialOpen = true }) =>
     (scriptPath: string, param: ScriptParamUnion) =>
       sceneFiles &&
       param.type === 'string' &&
-      isMissingScriptFile(scriptPath, param.value, sceneFiles)
+      (param.format && param.format !== 'wallet'
+        ? isMissingSceneFile(param.value, sceneFiles)
+        : isMissingScriptFile(scriptPath, param.value, sceneFiles))
         ? `"${param.value}" is missing`
         : undefined,
     [sceneFiles],
@@ -425,6 +427,7 @@ export default withSdk<Props>(({ sdk, entity: entityId, initialOpen = true }) =>
       if (!layout) return null;
       const paramsEntries = Object.entries(layout.params);
       if (paramsEntries.length === 0) return null;
+      const values = Object.fromEntries(paramsEntries.map(([name, param]) => [name, param.value]));
 
       return (
         <Container
@@ -438,6 +441,7 @@ export default withSdk<Props>(({ sdk, entity: entityId, initialOpen = true }) =>
                 key={name}
                 name={name}
                 param={param}
+                siblings={values}
                 getError={leaf => getMissingFileError(scripts[index].path, leaf)}
                 onUpdate={update => handleUpdateDynamicField(index, name, update)}
               />
@@ -513,6 +517,8 @@ export default withSdk<Props>(({ sdk, entity: entityId, initialOpen = true }) =>
               rightContent={
                 <>
                   <Button
+                    variant="secondary"
+                    size="sm"
                     className="CodeButton"
                     onClick={e => handleEditScript(e, index)}
                   >
@@ -520,7 +526,11 @@ export default withSdk<Props>(({ sdk, entity: entityId, initialOpen = true }) =>
                     Code
                   </Button>
                   <MoreOptionsMenu>
-                    <Button onClick={() => handleRemoveScript(index)}>
+                    <Button
+                      variant="secondary"
+                      size="sm"
+                      onClick={() => handleRemoveScript(index)}
+                    >
                       <RemoveIcon />
                       Delete Script Module
                     </Button>
@@ -576,6 +586,8 @@ export default withSdk<Props>(({ sdk, entity: entityId, initialOpen = true }) =>
             <div className="asks">
               {reactionEvents.map(event => (
                 <Button
+                  variant="secondary"
+                  size="sm"
                   key={event}
                   className="ReactionButton"
                   onClick={() => promptReaction(l => `${capitalize(eventClause(event, l))}, `)}
@@ -587,6 +599,8 @@ export default withSdk<Props>(({ sdk, entity: entityId, initialOpen = true }) =>
             <div className="chips">
               {ACTION_CHIPS.map(verb => (
                 <Button
+                  variant="secondary"
+                  size="sm"
                   key={verb}
                   className="ReactionChip"
                   onClick={() =>
@@ -609,7 +623,11 @@ export default withSdk<Props>(({ sdk, entity: entityId, initialOpen = true }) =>
           rightContent={
             scripts.length > 0 ? (
               <MoreOptionsMenu>
-                <Button onClick={() => handleScriptModuleMode(undefined)}>
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  onClick={() => handleScriptModuleMode(undefined)}
+                >
                   <RemoveIcon />
                   Delete Script Module
                 </Button>
@@ -640,11 +658,19 @@ export default withSdk<Props>(({ sdk, entity: entityId, initialOpen = true }) =>
             className="ScriptActionsMenu"
             icon={<>⌄</>}
           >
-            <Button onClick={() => handleScriptModuleMode('import')}>
+            <Button
+              variant="secondary"
+              size="sm"
+              onClick={() => handleScriptModuleMode('import')}
+            >
               <FileUploadIcon />
               Import Script File
             </Button>
-            <Button onClick={() => setShowCreateModal(true)}>
+            <Button
+              variant="secondary"
+              size="sm"
+              onClick={() => setShowCreateModal(true)}
+            >
               <EditIcon />
               Create a new Script File
             </Button>

@@ -69,7 +69,6 @@ fn whole_pixel_size(node: &ComputedNode) -> Vec2 {
     node.unrounded_size().round()
 }
 
-#[allow(clippy::type_complexity)]
 fn update_slices(
     mut commands: Commands,
     images: Res<Assets<Image>>,
@@ -163,7 +162,10 @@ fn update_slices(
 }
 
 mod decl {
-    #![allow(dead_code)]
+    #![expect(
+        dead_code,
+        reason = "the ShaderType derive emits a never-called check fn per field"
+    )]
     use bevy::{math::Vec4, render::render_resource::ShaderType};
     #[derive(ShaderType, Debug, Clone)]
     pub(super) struct GpuSliceData {

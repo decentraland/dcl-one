@@ -7,7 +7,7 @@ bevy-explorer-backup/
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
-# export-static output (regenerate with `npm run export-static`)
+# export-static output (regenerate with `pnpm run export-static`)
 static/
 static-native/
 # sdk-commands build context (regenerated on every build)

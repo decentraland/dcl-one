@@ -1,16 +1,17 @@
 import { useCallback } from 'react';
-import { useNavigate } from 'react-router-dom';
-import { MenuItem, type SelectChangeEvent, Typography } from 'decentraland-ui2';
+import { useNavigate } from 'react-router';
+import { SelectOption } from '@ui/atoms/Select';
+import Text from '@ui/atoms/Text';
 
 import { SortBy } from '/shared/types/projects';
 import { t } from '/@/modules/store/translation/utils';
 import { useWorkspace } from '/@/hooks/useWorkspace';
 
-import { Button } from '../Button';
+import Button from '@ui/atoms/Button';
 import { Column } from '../Column';
 import { FiltersBar } from '../FiltersBar';
 import { Row } from '../Row';
-import { Select } from '../Select';
+import { ToolbarSelect } from '../ToolbarSelect';
 import { Projects } from './Projects';
 import type { Props } from './types';
 
@@ -28,38 +29,37 @@ export function SceneList({ projects, sortBy, onSort }: Props) {
   );
 
   const handleDropdownChange = useCallback(
-    (e: SelectChangeEvent<SortBy>) => {
-      sort(e.target.value as SortBy);
+    (value: SortBy) => {
+      sort(value);
     },
     [sort],
   );
 
   const renderSortDropdown = () => {
     return (
-      <Select
-        variant="standard"
+      <ToolbarSelect
         value={sortBy}
         onChange={handleDropdownChange}
       >
-        <MenuItem
+        <SelectOption
           className="sort-item"
           value={SortBy.NEWEST}
         >
           {t('scene_list.sort.newest')}
-        </MenuItem>
-        <MenuItem
+        </SelectOption>
+        <SelectOption
           className="sort-item"
           value={SortBy.NAME}
         >
           {t('scene_list.sort.name')}
-        </MenuItem>
-        <MenuItem
+        </SelectOption>
+        <SelectOption
           className="sort-item"
           value={SortBy.SIZE}
         >
           {t('scene_list.sort.size')}
-        </MenuItem>
-      </Select>
+        </SelectOption>
+      </ToolbarSelect>
     );
   };
 
@@ -67,21 +67,21 @@ export function SceneList({ projects, sortBy, onSort }: Props) {
     <div className="SceneList">
       <Column className="projects-menu">
         <Row>
-          <Typography variant="h3">{t('scene_list.my_scenes')}</Typography>
+          <Text variant="h3">{t('scene_list.my_scenes')}</Text>
           <Row className="actions">
             <Button
-              className="action-button import-button"
+              variant="text"
+              className="hub-button hub-button--secondary action-button import-button"
               startIcon={<i className="icon import-icon" />}
-              color="secondary"
               data-testid="scene-list-import-button"
               onClick={importProject}
             >
               {t('scene_list.import_scene')}
             </Button>
             <Button
-              className="action-button templates-button"
+              variant="text"
+              className="hub-button hub-button--primary action-button templates-button"
               startIcon={<i className="icon template-icon" />}
-              color="primary"
               data-testid="scene-list-templates-button"
               onClick={() => navigate('/templates')}
             >
@@ -91,9 +91,7 @@ export function SceneList({ projects, sortBy, onSort }: Props) {
         </Row>
         {projects.length > 0 ? (
           <FiltersBar>
-            <Typography variant="h6">
-              {t('scene_list.results', { count: projects.length })}
-            </Typography>
+            <Text variant="h6">{t('scene_list.results', { count: projects.length })}</Text>
             <>
               <p>{t('scene_list.sort_by')}</p>
               {renderSortDropdown()}

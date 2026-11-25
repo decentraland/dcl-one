@@ -712,9 +712,12 @@ fn launch(st: Arc<AppState>, root: PathBuf, id: u64) {
         no_browser: true,
         ci: false,
         port: None,
+        signing: crate::linker::SigningBind::LOCAL,
         quiet: true,
         host_signer,
         identity,
+        // the project's stored texture setting: what this preview serves
+        textures: crate::textures::Overrides::default(),
         programmatic: false,
         deploy_token: None,
     };

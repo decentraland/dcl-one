@@ -1,6 +1,5 @@
 
 import { z } from "zod";
-import type { SimDraftFile, SimStore } from "./catalyst/builder/sim-collection-items";
 import type { ThirdwebSession } from "./auth/thirdweb/session";
 import type { AuthIdentity } from "./auth/types";
 
@@ -30,17 +29,6 @@ export const ThirdwebSessionSchema = z.looseObject({
   address: z.string(),
 });
 
-const SimDraftFileSchema = z.looseObject({
-  name: z.string(),
-  size: z.number(),
-  fileType: z.string(),
-});
-
-export const SimCollectionItemsStoreSchema = z.record(
-  z.string(),
-  z.looseObject({ ts: z.number(), files: z.array(SimDraftFileSchema) }),
-);
-
 export const DevSignerKeySchema = z.string().regex(/^0x[0-9a-fA-F]{64}$/);
 
 type AssignableTo<Sub, Sup> = Sub extends Sup ? true : false;
@@ -57,11 +45,4 @@ export type _AssertThirdwebSession = Assert<
   Mutual<ThirdwebSession, z.infer<typeof ThirdwebSessionSchema>>
 >;
 
-export type _AssertSimDraftFile = Assert<
-  Mutual<SimDraftFile, z.infer<typeof SimDraftFileSchema>>
->;
-
-export type _AssertSimCollectionItemsStore = Assert<
-  Mutual<SimStore, z.infer<typeof SimCollectionItemsStoreSchema>>
->;
 

@@ -3,8 +3,8 @@
 
 import styles from './Button.module.css'
 
-type Variant = 'primary' | 'secondary' | 'ghost' | 'light' | 'outline' | 'accent' | 'dark' | 'tint' | 'scrim' | 'faint' | 'veil' | 'glass' | 'shade' | 'clear'
-type Size = 'sm' | 'md' | 'lg' | 'row' | 'card' | 'cardSm' | 'header' | 'modal' | 'cta' | 'bare'
+type Variant = 'primary' | 'secondary' | 'ghost' | 'light' | 'outline' | 'accent' | 'dark' | 'tint' | 'scrim' | 'faint' | 'veil' | 'glass' | 'shade' | 'clear' | 'darkOutline' | 'whisper' | 'method' | 'navigate' | 'navigateExit'
+type Size = 'sm' | 'md' | 'lg' | 'row' | 'card' | 'cardSm' | 'header' | 'modal' | 'dialog' | 'cta' | 'start' | 'bare'
 /** Overrides the size's corner radius. */
 type Radius = 'md' | 'button' | 'pill'
 
@@ -16,7 +16,7 @@ interface Common {
 // Renders a <button>, or — when `href` is given — an <a> styled identically, so links that need the
 // pill CTA reuse the primitive instead of re-rolling its CSS.
 type ButtonProps =
-  | (Common & React.ButtonHTMLAttributes<HTMLButtonElement> & { href?: undefined })
+  | (Common & React.ButtonHTMLAttributes<HTMLButtonElement> & { href?: undefined; ref?: React.Ref<HTMLButtonElement> })
   | (Common & React.AnchorHTMLAttributes<HTMLAnchorElement> & { href: string })
 
 const RADIUS = { md: 'radiusMd', button: 'radiusButton', pill: 'radiusPill' } as const

@@ -1,0 +1,340 @@
+/* The Shop's item panel (Figma info-panel-marketplace): 382 wide on its rarity's glow, the image on
+   top, the details under it and the actions pinned to the bottom. --rarity and --rarity-light come
+   from data-rarity. */
+.panel {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  flex: none;
+  align-self: flex-start;
+  width: 382px;
+  height: 838px;
+  max-height: 100%;
+  overflow: hidden;
+  border-radius: var(--r-lg);
+  /* The design's fills, top to bottom: the rarity's glow behind the image, its Light glow along the
+     bottom edge (placed from it, so a shorter panel keeps it), and the rarity at 20% under both. */
+  background:
+    radial-gradient(
+      433.97px 421.58px at 191px 53.17px,
+      color-mix(in srgb, var(--rarity) 99%, transparent),
+      color-mix(in srgb, var(--rarity) 97.1%, transparent) 15%,
+      color-mix(in srgb, var(--rarity) 87.7%, transparent) 30%,
+      color-mix(in srgb, var(--rarity) 64.4%, transparent) 45%,
+      color-mix(in srgb, var(--rarity) 33.2%, transparent) 60%,
+      color-mix(in srgb, var(--rarity) 10.6%, transparent) 75%,
+      color-mix(in srgb, var(--rarity) 1.9%, transparent) 90%,
+      transparent
+    ),
+    radial-gradient(
+      531.89px 227.11px at 191.5px calc(100% + 14.99px),
+      color-mix(in srgb, var(--rarity-light) 39.9%, transparent),
+      color-mix(in srgb, var(--rarity-light) 36%, transparent) 15%,
+      color-mix(in srgb, var(--rarity-light) 26.2%, transparent) 30%,
+      color-mix(in srgb, var(--rarity-light) 15.2%, transparent) 45%,
+      color-mix(in srgb, var(--rarity-light) 6.9%, transparent) 60%,
+      color-mix(in srgb, var(--rarity-light) 2.4%, transparent) 75%,
+      color-mix(in srgb, var(--rarity-light) 0.6%, transparent) 90%,
+      transparent
+    ),
+    color-mix(in srgb, var(--rarity) 20%, transparent);
+  pointer-events: auto;
+}
+/* The design's light behind the image: Snow (--text), added (plus-lighter) over the fills. */
+.panel::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  background: radial-gradient(
+    187.59px 179.98px at 191px 134.33px,
+    color-mix(in srgb, var(--text) 40.1%, transparent),
+    color-mix(in srgb, var(--text) 36.1%, transparent) 15%,
+    color-mix(in srgb, var(--text) 26.2%, transparent) 30%,
+    color-mix(in srgb, var(--text) 15.2%, transparent) 45%,
+    color-mix(in srgb, var(--text) 7%, transparent) 60%,
+    color-mix(in srgb, var(--text) 2.5%, transparent) 75%,
+    color-mix(in srgb, var(--text) 0.7%, transparent) 90%,
+    transparent
+  );
+  mix-blend-mode: plus-lighter;
+  pointer-events: none;
+}
+.panel > * {
+  position: relative;
+  z-index: 1;
+}
+
+.favourite,
+.close {
+  position: absolute;
+  top: 16px;
+  z-index: 2;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border: none;
+  border-radius: var(--r-md);
+  background: var(--black-40);
+  color: var(--text);
+  cursor: pointer;
+}
+.favourite {
+  left: 16px;
+  width: 40px;
+  height: 40px;
+}
+.favourite:disabled {
+  cursor: default;
+}
+.close {
+  right: 16px;
+  width: 40px;
+  height: 40px;
+}
+.close:hover {
+  background: var(--panel);
+}
+
+.image {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+  width: 302px;
+  height: 302px;
+  margin: 24px auto 0;
+}
+.image img {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+}
+
+.info {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 18px;
+  padding: 0 24px;
+  min-height: 0;
+  overflow-y: auto;
+  scrollbar-width: thin;
+  scrollbar-color: var(--divider-strong) transparent;
+}
+/* The details scroll rather than squeeze: each keeps its height when they don't all fit. */
+.info > * {
+  flex-shrink: 0;
+}
+.title {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+.name {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  font-size: var(--type-24);
+  font-weight: var(--fw-semibold);
+  line-height: 1.25;
+  color: var(--text);
+}
+.name > span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+/* The prices, right-aligned 4px apart: the credits, and under them the MANA equivalent (Figma "Price"). */
+.prices {
+  display: flex;
+  flex: none;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 4px;
+}
+.manaPrice {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  color: var(--silver);
+  font-size: var(--type-14);
+  font-weight: var(--fw-semibold);
+  line-height: 1.5;
+  white-space: nowrap;
+}
+/* The MANA mark in Snow, beside the grey amount. */
+.manaPrice > svg {
+  flex: none;
+  color: var(--text);
+}
+.price {
+  display: inline-flex;
+  flex: none;
+  padding: 4px;
+  font-size: var(--type-24);
+  font-weight: var(--fw-semibold);
+  line-height: 1.25;
+  color: var(--text);
+}
+.price > span {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+/* The rarity and the copies left, 8px apart (Figma rarity-tag-solid with count). */
+.rarity {
+  align-self: flex-start;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  box-sizing: border-box;
+  height: 32px;
+  padding: 4px 8px;
+  border-radius: var(--r-sm);
+  background: var(--rarity);
+  color: var(--text);
+  font-size: var(--type-14);
+  font-weight: var(--fw-semibold);
+  line-height: normal;
+  text-transform: uppercase;
+}
+.rule {
+  width: 100%;
+  height: 0;
+  margin: 0;
+  border: none;
+  border-top: 1px solid var(--divider-strong);
+}
+/* The design keeps an empty divider's slot above the creator: one more gap. */
+.creator {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 8px;
+  padding: 8px 0;
+  font-size: var(--type-16);
+  line-height: 1.5;
+  color: var(--text);
+}
+.by {
+  font-weight: var(--fw-regular);
+}
+.face {
+  flex: none;
+  box-sizing: border-box;
+  width: 32px;
+  height: 32px;
+  border: 2px solid var(--shop-face-rim);
+  border-radius: var(--r-pill);
+  background: var(--white-10);
+  object-fit: cover;
+}
+.section {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 8px 0;
+}
+.hidesSection {
+  padding: 24px 0 16px;
+}
+.label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: var(--type-14);
+  font-weight: var(--fw-semibold);
+  line-height: 1.25;
+  letter-spacing: 0.5px;
+  color: var(--ink-6);
+  text-transform: uppercase;
+}
+.description {
+  margin: 0;
+  font-size: var(--type-16);
+  font-weight: var(--fw-regular);
+  line-height: 1.5;
+  color: var(--text);
+}
+.hides {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+/* Figma item-category-tag: a 26px pill, the part's icon and its name. */
+.hide {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  box-sizing: border-box;
+  height: 26px;
+  padding: 0 8px;
+  border-radius: var(--r-pill);
+  background: var(--shop-chip-bg);
+  color: var(--text);
+  font-size: var(--type-12);
+  font-weight: var(--fw-semibold);
+  line-height: 1.25;
+  letter-spacing: 0.5px;
+  text-transform: uppercase;
+}
+
+.actions {
+  display: flex;
+  gap: 12px;
+  margin-top: auto;
+  padding: 0 16px 24px;
+}
+.cart,
+.buy,
+.resale {
+  display: flex;
+  flex: 1;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  /* Half the row each, as the design's: a label wider than its padding allows stays centred over it. */
+  min-width: 0;
+  height: 48px;
+  padding: 0 24px;
+  border: none;
+  border-radius: var(--r-md);
+  color: var(--text);
+  font-family: inherit;
+  font-size: var(--type-15);
+  font-weight: var(--fw-bold);
+  line-height: 1.25;
+  letter-spacing: 0.5px;
+  text-transform: uppercase;
+  white-space: nowrap;
+  cursor: pointer;
+}
+.cart {
+  background: var(--black-40);
+}
+.buy {
+  background: var(--brand);
+}
+.buy:hover:not(:disabled) {
+  background: var(--brand-hover);
+}
+.cart:disabled,
+.buy:disabled {
+  cursor: default;
+}
+.resale {
+  border: 2px solid var(--text);
+  background: transparent;
+  gap: 8px;
+}
+.resale:hover {
+  background: var(--white-10);
+}
+.creatorName {
+  color: var(--creator-color, var(--text));
+  font-weight: var(--fw-semibold);
+}

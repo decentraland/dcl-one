@@ -27,7 +27,7 @@ fn render_after_resync(resync_with_delta: bool, known_seq: u32) -> String {
         .expect("bucket override accepted")
         .build_recorder();
     let handle = recorder.handle();
-    metrics::with_local_recorder(&recorder, || {
+    dcl_metrics::with_local_recorder(&recorder, || {
         let _ = tick(&mut sim, &mut w, 2);
     });
     handle.render()
@@ -131,7 +131,7 @@ fn both_outcome_series_render_before_the_first_resync() {
         .expect("bucket override accepted")
         .build_recorder();
     let handle = recorder.handle();
-    metrics::with_local_recorder(
+    dcl_metrics::with_local_recorder(
         &recorder,
         crate::pulse::metrics::register_resync_seq_gap_series,
     );

@@ -18,7 +18,7 @@ capture, so every expectation can be re-read in the pinned source.
 ```sh
 cd services/catalyst
 CATALYST_TEST_DATABASE_URL=postgresql://user:pass@localhost:5432/postgres \
-  cargo test -p catalyst --test explore_parity -- --nocapture
+  cargo test -p catalyst --test node_1 -- explore_parity:: --nocapture
 ```
 
 Without `CATALYST_TEST_DATABASE_URL` the test skips. Every entry runs against a
@@ -72,7 +72,7 @@ shared row key sets (`expected.body.item_keys`, named by other entries'
 carry `harness.skip`; any other skip is `BAD` (`SKIPPED` in
 `tests/explore_parity.rs`).
 
-Fourteen entries record dcl-one's accepted answer rather than the old service's
+Eleven entries record dcl-one's accepted answer rather than the old service's
 (`ACCEPTED_ENTRIES` in the harness). Two are `GET /api/status`: the old services mount
 the framework's `status()` without a handler of their own (`events@b60d5bbd
 src/server.ts:48-58`, `places@e660fbc2 src/server.ts:78`, `decentraland-gatsby@9.0.1
@@ -95,12 +95,7 @@ dcl-one requires the event poster's `^https?://` pattern (`Event/schemas.ts:562-
 design and answers the `pattern` keyword (`events.schedules.post_image_not_http`). Two are the rating
 code `RP`, which the old places service stores and answers but refuses in a PUT body
 (`places.put_rating.rp_accepted`, `worlds.put_rating.rp_accepted`: dcl-one
-accepts `PR` and `RP` and answers the code verbatim). Three are the old `edit_any_profile`
-delegation (`ProfileSettings/utils.ts:4-11`): dcl-one keeps private profile reads and
-permission grants moderator-only, so a grantee is 403 on `GET /api/profiles/settings` and on
-`GET` and `PATCH /api/profiles/{id}/settings` (`events.profiles.list_edit_any_profile`,
-`events.profiles.get_by_id_edit_any_profile`, `events.profiles.patch_by_id_edit_any_profile`).
-They are checked like
+accepts `PR` and `RP` and answers the code verbatim). They are checked like
 every other entry but are excluded from the ratchet: they can never appear in
 `known_gaps.json`, so a failure there is a regression, not a gap. Every other
 entry must have `source.kind: "source"`.

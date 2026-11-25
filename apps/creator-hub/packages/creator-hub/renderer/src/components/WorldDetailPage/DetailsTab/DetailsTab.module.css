@@ -1,0 +1,99 @@
+.columns {
+  display: flex;
+  align-items: flex-start;
+  gap: 50px;
+  padding-top: 9px;
+}
+
+.form {
+  display: flex;
+  flex: 1 1 0;
+  flex-direction: column;
+  gap: 40px;
+  min-width: 0;
+  max-width: 1044px;
+}
+
+/* The popup is 4px under the field and FieldSelect adds 6px; 16px stay free under the menu. */
+.menu.menu {
+  max-height: calc(100dvh - var(--popover-top, 100dvh) - 22px);
+}
+
+/* The first measure is of an empty box, so the menu opens under the field and its list starts at the top. */
+.menu.menu:not([data-placed]) {
+  max-height: 0;
+  padding-block: 0;
+}
+
+.thumbnailColumn {
+  display: flex;
+  flex: 0 0 630px;
+  flex-direction: column;
+  gap: 20px;
+}
+
+.thumbnailTitle {
+  margin: 0;
+  color: #fff;
+  font-size: 1rem;
+  font-weight: 600;
+  line-height: normal;
+}
+
+.thumbnailHint {
+  margin: 0;
+  color: rgba(255, 255, 255, 0.7);
+  font-size: 1rem;
+  line-height: normal;
+}
+
+.thumbnailBox {
+  position: relative;
+  width: 100%;
+  height: 354px;
+  overflow: hidden;
+  border-radius: 16px;
+}
+
+.thumbnailBox img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.noImage {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  height: 100%;
+  background-color: rgba(255, 255, 255, 0.05);
+  color: var(--dcl-silver);
+  font-size: 1rem;
+}
+
+.editButton.editButton {
+  position: absolute;
+  top: 10px;
+  right: 10px;
+  width: 46px;
+  height: 46px;
+  border-radius: 12px;
+  background-color: var(--black-60);
+  color: var(--palette-neutral-softWhite);
+}
+
+.editButton.editButton:hover:not(:disabled) {
+  background-color: var(--black-60);
+}
+
+.editButton.editButton:focus-visible {
+  outline: 2px solid var(--palette-info-light);
+  outline-offset: 2px;
+}
+
+.editButton.editButton svg {
+  width: 20px;
+  height: 20px;
+}

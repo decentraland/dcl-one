@@ -23,9 +23,11 @@ use super::errors::{ApiError, NotificationsError, parse_json};
 use super::store::SetEmailOutcome;
 use super::types::{
     BroadcastResponse, CommunityOptOutStatus, MarkReadResponse, NotificationsListResponse,
-    Subscription, is_known_type, normalize_details, subscription_update,
+    Subscription, is_known_type, subscription_update,
 };
+use crate::auth::request::{RequestParts, VerifyOptions};
 use crate::identity::Address;
+use crate::request_auth;
 use crate::shared::signed_fetch;
 
 type AppState = Arc<super::State>;
@@ -35,10 +37,10 @@ const MAX_LIMIT: i64 = 50;
 const MAX_ADDRESSES: usize = 10_000;
 const SCOPE_COMMUNITY: &str = "community";
 
-/// The verified signer, or the signed-fetch refusal as the envelope (400
+/// The verified signer, or the verifier's refusal as the envelope (400
 /// malformed, 401 unauthenticated, 503 when a contract wallet cannot be
-/// asked; the old Rust port collapsed all three to 401). Current payload
-/// only, as upstream's every route but `PUT /notifications/read`.
+/// asked). Current payload only, as upstream's every route but
+/// `PUT /notifications/read`.
 async fn signer(
     state: &AppState,
     headers: &HeaderMap,
@@ -46,39 +48,32 @@ async fn signer(
     uri: &OriginalUri,
     local: &Uri,
 ) -> Result<Address, NotificationsError> {
-    verify(
-        state,
-        headers,
-        method,
-        uri,
-        local,
-        signed_fetch::PayloadPolicy::V6Only,
-    )
-    .await
+    let options = request_auth::options(state.eip1654.as_ref());
+    verify(headers, method, uri, local, &options).await
 }
 
 async fn verify(
-    state: &AppState,
     headers: &HeaderMap,
     method: &str,
     uri: &OriginalUri,
     local: &Uri,
-    policy: signed_fetch::PayloadPolicy,
+    options: &VerifyOptions,
 ) -> Result<Address, NotificationsError> {
-    signed_fetch::require_signer_at(
-        headers,
+    let parts = RequestParts::from_headers(
         method,
-        &signed_fetch::SignedPath::from_uris(uri, local),
-        policy,
-        state.eip1654.as_deref(),
-    )
-    .await
-    .map(|s| Address::from_signer(&s))
-    .map_err(|e| {
-        tracing::warn!(error = %e, "signed-fetch rejected");
-        let (status, error) = e.http_status_and_message();
-        NotificationsError::SignedFetch { status, error }
-    })
+        signed_fetch::SignedPath::from_uris(uri, local),
+        headers,
+    );
+    request_auth::require(&parts, options)
+        .await
+        .map(|verified| Address::from_verified(&verified))
+        .map_err(|e| {
+            tracing::warn!(error = %e, "signed-fetch rejected");
+            NotificationsError::SignedFetch {
+                status: e.status(),
+                error: e.to_string(),
+            }
+        })
 }
 
 /// Upstream's `status-handler.ts`: unset values answer `""`.
@@ -147,9 +142,10 @@ pub async fn get_notifications(
     }))
 }
 
-/// The one route that also accepts the pre-6.0 payload, behind the
-/// canonical-`signer` guard (upstream's `READ_NOTIFICATIONS_CANONICAL_METADATA_KEYS`):
-/// decentraland-dapps and godot-explorer still sign it here.
+/// The one route that also accepts the pre-6.0.0 payload, for metadata whose
+/// `signer` key is spelled so (upstream's `READ_NOTIFICATIONS_CANONICAL_METADATA_KEYS`;
+/// `signer` is the one key read, by the scene gate): decentraland-dapps signs
+/// it here over metadata carrying `notificationIds`.
 pub async fn put_read(
     State(state): State<AppState>,
     headers: HeaderMap,
@@ -157,8 +153,10 @@ pub async fn put_read(
     local: Uri,
     body: Bytes,
 ) -> Result<impl IntoResponse, NotificationsError> {
-    let policy = signed_fetch::PayloadPolicy::V6ThenLegacy;
-    let signer = verify(&state, &headers, "put", &uri, &local, policy).await?;
+    let options = request_auth::build(
+        request_auth::builder(state.eip1654.as_ref()).canonical_metadata_keys(["signer"]),
+    );
+    let signer = verify(&headers, "put", &uri, &local, &options).await?;
     let body = parse_json(&body)?;
     let ids = match body.get("notificationIds").and_then(JsonValue::as_array) {
         Some(ids) if !ids.is_empty() => ids,
@@ -180,16 +178,7 @@ pub async fn get_subscription(
     local: Uri,
 ) -> Result<Json<Subscription>, NotificationsError> {
     let signer = signer(&state, &headers, "get", &uri, &local).await?;
-    let sub = match state.store.get_subscription(&signer).await? {
-        Some(sub) => sub,
-        None => Subscription {
-            address: signer.into_string(),
-            email: None,
-            unconfirmed_email: None,
-            details: normalize_details(&serde_json::json!({})),
-        },
-    };
-    Ok(Json(sub))
+    Ok(Json(state.store.get_subscription(&signer).await?))
 }
 
 pub async fn put_subscription(
@@ -228,8 +217,7 @@ pub async fn put_set_email(
     Json(body): Json<SetEmailBody>,
 ) -> Result<impl IntoResponse, NotificationsError> {
     let signer = signer(&state, &headers, "put", &uri, &local).await?;
-    let email = body.email.as_deref().map(str::trim);
-    let email = match email {
+    let email = match body.email.as_deref() {
         Some("") => "",
         Some(e) if email::is_valid_email(e) => e,
         _ => return Err(ApiError::bad_request(email::INVALID_EMAIL).into()),
@@ -493,6 +481,7 @@ pub struct BroadcastBody {
     /// The idempotency key of this broadcast (`notifications_broadcast_uidx`):
     /// a retried POST with the same id reaches no recipient twice. Absent, the
     /// server mints a uuid per request, as the old admin route did.
+    /// The `event-notice:` prefix is reserved for event delivery.
     #[serde(rename = "broadcastId", default)]
     pub broadcast_id: Option<String>,
 }
@@ -544,6 +533,11 @@ pub async fn post_broadcast(
     };
     let broadcast_id = match body.broadcast_id.as_deref().map(str::trim) {
         None => Uuid::new_v4().to_string(),
+        Some(id) if id.starts_with("event-notice:") => {
+            return Err(
+                ApiError::bad_request("broadcastId prefix event-notice: is reserved").into(),
+            );
+        }
         Some(id) if !id.is_empty() && id.chars().count() <= MAX_BROADCAST_ID_CHARS => {
             id.to_string()
         }

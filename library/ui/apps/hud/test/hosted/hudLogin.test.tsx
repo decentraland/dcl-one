@@ -217,6 +217,8 @@ describe('/hud_login through the session', () => {
     expect(h.session().login.error).toBeNull()
     // the identity is the page's stored sign-in now
     expect(h.session().login.account).toBe(ADDRESS)
+    // and the session knows it as an account, which is what the Me panel's Sign Out row asks
+    expect(h.session().login.signedInAs).toBe('fully_registered')
 
     // signed in: a second sign-in is refused, with the way out
     await expect(login(ENCODED)).rejects.toThrow('already signed in: /hud_logout first')
@@ -232,6 +234,7 @@ describe('/hud_login through the session', () => {
     expect(driver.sentOf('acceptWelcome')).toEqual([{ kind: 'acceptWelcome', name: 'tester' }])
     expect(driver.sentOf('teleport')).toEqual([])
     expect(h.session().phase).toBe('lobby')
+    expect(h.session().login.signedInAs).toBe('guest')
   })
 
   it('a parcel alone goes to the main realm from the lobby', async () => {
@@ -309,9 +312,10 @@ describe('/hud_login through the session', () => {
       await waitFor(() => expect(h.session().login.engineReady).toBe(true))
       await expect(login(ENCODED)).rejects.toThrow('profile fetch failed: 503')
       await waitFor(() => expect(h.session().phase).toBe('login'))
-      // the profile arrives: the stored account is not jumped into on the runner's behalf
-      profileArrives(new Response('{}', { status: 404 }))
-      await waitFor(() => expect(h.session().login.profile.settled).toBe(true))
+      // the failure leaves the first screen, and the profile arriving after it doesn't jump the
+      // stored account in on the runner's behalf
+      expect(h.session().login.status).toBe('sign-in-or-guest')
+      await act(async () => profileArrives(new Response('{}', { status: 404 })))
       expect(driver.calls).not.toContain('jumpIn')
       expect(h.session().phase).toBe('login')
     } finally {
@@ -352,6 +356,15 @@ describe('/hud_login through the session', () => {
     await waitFor(() => expect(driver.identityLogins).toHaveLength(1))
     driver.release()
     await expect(first).resolves.toMatchObject({ phase: 'lobby' })
+  })
+
+  it('Sign Out drops the sign-in the engine keeps; a cancelled sign-in keeps it', async () => {
+    const driver = new IdentityDriver()
+    const h = await ready(driver)
+    act(() => h.session().login.cancelSignIn())
+    expect(driver.logouts).toEqual([false])
+    act(() => h.session().logout())
+    expect(driver.logouts).toEqual([false, true])
   })
 
   it('answers a pending sign-in that a sign-out ended, and says so until the engine has answered it', async () => {
@@ -522,8 +535,8 @@ describe('/hud_login through the session', () => {
       await expect(login(`${ENCODED} --name tester --look 1`)).rejects.toThrow("isn't reachable right now")
       await waitFor(() => expect(h.session().phase).toBe('login'))
       // a person goes in with the page's own sign-in: their welcome page is theirs to answer
-      act(() => h.session().login.jumpIn())
-      await waitFor(() => expect(driver.calls).toContain('jumpIn'))
+      act(() => h.session().login.exploreAsGuest())
+      await waitFor(() => expect(driver.calls).toContain('loginGuest'))
       await waitFor(() => expect(h.session().phase).toBe('welcome'))
       expect(driver.sentOf('acceptWelcome')).toEqual([])
     } finally {
@@ -667,6 +680,7 @@ describe('/hud_logout', () => {
     expect(driver.calls).toContain('logout')
     await waitFor(() => expect(h.session().phase).toBe('login'))
     expect(h.session().login.account).toBeNull()
+    expect(h.session().login.signedInAs).toBeNull()
     await expect(login(ENCODED)).resolves.toMatchObject({ phase: 'lobby' })
     expect(driver.identityLogins).toHaveLength(2)
   })

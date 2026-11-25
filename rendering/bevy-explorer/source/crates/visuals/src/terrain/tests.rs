@@ -55,7 +55,7 @@ fn mesh_split_matches_unity() {
         let Some(Indices::U32(indices)) = mesh.indices() else {
             panic!("indices");
         };
-        for triangle in indices.chunks_exact(3) {
+        for triangle in indices.as_chunks::<3>().0 {
             let corners: [Vec3; 3] =
                 std::array::from_fn(|i| Vec3::from(positions[triangle[i] as usize]));
             // front faces point up
@@ -136,44 +136,6 @@ fn collider_follows_the_height_function_at_grid_points() {
 }
 
 #[test]
-fn easing_rises_one_step_per_second_and_settles_on_the_targets() {
-    let (targets, mut surface) = surface(12);
-    // a new realm snaps; clear it to watch a reveal ease in
-    let mut revealed = TerrainSurface {
-        epoch: surface.epoch,
-        enabled: true,
-        ..Default::default()
-    };
-    revealed.apply(&targets, Some(TerrainChange::Full), true);
-    let parcel = IVec2::new(6, 6);
-    let x = parcel.x as f32 * 16.0 + 8.0;
-    let z = parcel.y as f32 * 16.0 + 8.0;
-    let final_height = surface.height(x, z);
-    assert!(final_height > 5.0);
-    assert_eq!(revealed.height(x, z), 0.0);
-
-    let mut previous = 0.0;
-    for _ in 0..(f32::from(MAX_STEPS) / 0.1) as usize + 2 {
-        revealed.ease(0.1);
-        let height = revealed.height(x, z);
-        assert!(height >= previous - 1e-4);
-        // one step is 1.8 m; the noise weight (up to ~4.4 m) also ramps in over the first
-        // 0.4 steps
-        assert!(
-            height - previous <= 0.1 * 1.8 + 0.25 * 4.5,
-            "{previous} -> {height}"
-        );
-        previous = height;
-    }
-    assert!((previous - final_height).abs() < 1e-4);
-    assert!(revealed.active.is_empty());
-    // a snapped surface has nothing to ease
-    surface.changes = SurfaceChanges::default();
-    surface.ease(1.0);
-    assert!(surface.changes.eased.is_none());
-}
-
-#[test]
 fn scene_casts_hit_the_heightfield() {
     use bevy::math::DVec3;
     use dcl_component::proto_components::sdk::components::ColliderLayer;
@@ -231,6 +193,284 @@ fn scene_casts_hit_the_heightfield() {
     }
 }
 
+/// Heights that resolve after the loading screen lifts (the rest of the realm's pointers arrive
+/// in batches) take their value in the frame they arrive, with nothing left to rise.
+#[test]
+fn a_late_reveal_takes_its_heights_at_once() {
+    let (targets, settled) = surface(12);
+    // the same realm, its targets not applied yet
+    let mut revealed = TerrainSurface {
+        epoch: settled.epoch,
+        enabled: true,
+        ..Default::default()
+    };
+    revealed.apply(&targets, Some(TerrainChange::Full), true);
+    let (x, z) = (6.0 * 16.0 + 8.0, 6.0 * 16.0 + 8.0);
+    assert!(settled.height(x, z) > 5.0);
+    assert_eq!(revealed.height(x, z), settled.height(x, z));
+    assert_eq!(revealed.changes.targets, revealed.bounds);
+}
+
+/// A parcel that resolves as empty inside the current bounds raises its neighbourhood at once.
+#[test]
+fn a_late_parcel_takes_its_heights_at_once() {
+    let mut targets = TerrainTargets::default();
+    targets.reset(false);
+    let corners = [IVec2::splat(-12), IVec2::splat(12)];
+    let unknown = IVec2::new(6, 6);
+    let occupancy = |resolved: bool| {
+        move |parcel: IVec2| {
+            if parcel == IVec2::ZERO || corners.contains(&parcel) {
+                Occupancy::Occupied
+            } else if parcel == unknown && !resolved {
+                Occupancy::Unknown
+            } else {
+                Occupancy::Empty
+            }
+        }
+    };
+    let occupied = [IVec2::ZERO, corners[0], corners[1]];
+    let change = targets.resolve(occupancy(false), occupied.into_iter());
+    let mut terrain = TerrainSurface::default();
+    terrain.apply(&targets, change, true);
+    let (x, z) = (6.0 * 16.0 + 8.0, 6.0 * 16.0 + 8.0);
+    let before = terrain.height(x, z);
+
+    targets.mark(unknown, false);
+    let change = targets.resolve(occupancy(true), occupied.into_iter());
+    assert!(matches!(change, Some(TerrainChange::Rect(..))));
+    terrain.changes = SurfaceChanges::default();
+    terrain.apply(&targets, change, true);
+    let (_, settled) = surface(12);
+    assert!(terrain.height(x, z) > before + 1.0);
+    assert_eq!(terrain.height(x, z), settled.height(x, z));
+    assert!(terrain.changes.targets.is_some());
+}
+
+/// Ground that rises under the player is floored before collisions resolve. Pushing the player
+/// out of it instead would reach the movement scene as a launch velocity.
+#[test]
+fn rising_ground_lifts_the_player_before_collisions_resolve() {
+    #[derive(Resource, Default)]
+    struct SeenByCollisions(Option<f32>);
+
+    let (_, surface) = surface(12);
+    let (x, z) = (6.0 * 16.0 + 8.0, -(6.0 * 16.0 + 8.0));
+    let ground = surface.cell_height_at(Vec3::new(x, 0.0, z));
+    assert!(ground > 1.0);
+    let mut pointers = ScenePointers::default();
+    // a one-parcel realm: the player's parcel lies outside it, so it is empty
+    pointers.set_realm(IVec2::ZERO, IVec2::ZERO);
+
+    let mut app = App::new();
+    app.insert_resource(surface)
+        .insert_resource(pointers)
+        .init_resource::<EngineMovementControl>()
+        .init_resource::<SeenByCollisions>()
+        .configure_sets(
+            PostUpdate,
+            (
+                PostUpdateSets::ColliderUpdate,
+                PostUpdateSets::PlayerUpdate,
+                PostUpdateSets::CameraUpdate,
+            )
+                .chain(),
+        )
+        .add_systems(
+            PostUpdate,
+            (|player: Single<&Transform, With<PrimaryUser>>,
+              mut seen: ResMut<SeenByCollisions>| {
+                seen.0 = Some(player.translation.y);
+            })
+            .in_set(PostUpdateSets::PlayerUpdate),
+        );
+    add_player_floor(&mut app);
+    app.world_mut()
+        .spawn((PrimaryUser::default(), Transform::from_xyz(x, 0.0, z)));
+    app.update();
+    assert_eq!(app.world().resource::<SeenByCollisions>().0, Some(ground));
+}
+
+/// The shortest Landscape Distance still displaces the hills across the `RING_CELL` rings.
+#[test]
+fn hill_reach_never_below_832() {
+    assert_eq!(hill_reach(LandscapeDistance::MIN), 832.0);
+    assert_eq!(hill_reach(832.0), 832.0);
+    assert_eq!(hill_reach(1000.0), 1000.0);
+    assert_eq!(hill_reach(LandscapeDistance::MAX), 7000.0);
+
+    let mut surface = TerrainSurface::default();
+    assert_eq!(surface.params().hill_reach, 1000.0);
+    surface.set_landscape_distance(500.0);
+    assert!(surface.changes().params);
+    assert_eq!(surface.params().hill_reach, 832.0);
+    surface.changes = SurfaceChanges::default();
+    surface.set_landscape_distance(500.0);
+    assert!(!surface.changes().params);
+    surface.set_landscape_distance(7000.0);
+    assert_eq!(surface.params().hill_reach, 7000.0);
+    surface.set_landscape_distance(500.0);
+    assert_eq!(surface.params().hill_reach, 832.0);
+}
+
+/// The ground mesh reaches past where the hills flatten at the longest Landscape Distance, so
+/// they never run to its edge.
+#[test]
+fn ground_reaches_the_longest_hill_reach() {
+    assert!(ground_extent(GROUND_RINGS) >= hill_reach(LandscapeDistance::MAX) * 1.1);
+}
+
+/// Every terrain vertex shader variant (flat ground and grass shells, main pass, prepasses and
+/// shadows) compiles. Needs a GPU:
+/// `cargo test -p visuals terrain_vertex_compiles -- --ignored --nocapture`.
+#[test]
+#[ignore = "needs a GPU"]
+fn terrain_vertex_compiles() {
+    use bevy::{
+        core_pipeline::prepass::{DepthPrepass, NormalPrepass},
+        log::LogPlugin,
+        render::{
+            camera::RenderTarget,
+            mesh::MeshTag,
+            pipelined_rendering::PipelinedRenderingPlugin,
+            render_resource::{
+                CachedPipelineState, PipelineCache, PipelineCacheError, PipelineDescriptor,
+                TextureUsages,
+            },
+        },
+        window::ExitCondition,
+        winit::WinitPlugin,
+    };
+
+    use crate::{
+        landscape_textures::{LandscapeTextures, LandscapeTexturesPlugin},
+        shell_texturing::{self, ShellTexture},
+    };
+
+    let mut app = App::new();
+    app.add_plugins(
+        DefaultPlugins
+            .build()
+            .disable::<LogPlugin>()
+            .disable::<WinitPlugin>()
+            .disable::<PipelinedRenderingPlugin>()
+            .set(WindowPlugin {
+                primary_window: None,
+                exit_condition: ExitCondition::DontExit,
+                close_when_requested: false,
+            }),
+    )
+    .add_plugins((assets::EmbedAssetsPlugin, LandscapeTexturesPlugin))
+    .add_plugins((
+        MaterialPlugin::<TerrainFlatMaterial>::default(),
+        MaterialPlugin::<ShellTexture>::default(),
+    ));
+    embed_shaders(&mut app);
+    shell_texturing::embed_shaders(&mut app);
+    app.finish();
+    app.cleanup();
+
+    let world = app.world_mut();
+    let textures = world.resource::<LandscapeTextures>().clone();
+    let mut target = Image::new_fill(
+        Extent3d {
+            width: 64,
+            height: 64,
+            depth_or_array_layers: 1,
+        },
+        TextureDimension::D2,
+        &[0; 4],
+        TextureFormat::Bgra8UnormSrgb,
+        RenderAssetUsages::default(),
+    );
+    target.texture_descriptor.usage |= TextureUsages::RENDER_ATTACHMENT;
+    let mut images = world.resource_mut::<Assets<Image>>();
+    let target = images.add(target);
+    images.insert(TERRAIN_TEXTURE.id(), TerrainSurface::default().image());
+    world.spawn((
+        Camera3d::default(),
+        Camera {
+            target: RenderTarget::Image(target.into()),
+            ..default()
+        },
+        DepthPrepass,
+        NormalPrepass,
+        Transform::from_xyz(0.0, 50.0, 100.0).looking_at(Vec3::ZERO, Vec3::Y),
+    ));
+    world.spawn((
+        DirectionalLight {
+            shadows_enabled: true,
+            ..default()
+        },
+        Transform::from_xyz(1.0, 2.0, 1.0).looking_at(Vec3::ZERO, Vec3::Y),
+    ));
+    let mut meshes = world.resource_mut::<Assets<Mesh>>();
+    let ground = meshes.add(ground_mesh(|_| 4, GROUND_RINGS));
+    let parcel = meshes.add(parcel_mesh(4));
+    let flat = world
+        .resource_mut::<Assets<TerrainFlatMaterial>>()
+        .add(TerrainFlatMaterial {
+            base: StandardMaterial::default(),
+            extension: TerrainExtension::new(&textures),
+        });
+    let shells = world
+        .resource_mut::<Assets<ShellTexture>>()
+        .add(ShellTexture::new(
+            &default(),
+            4,
+            TerrainParams::default(),
+            &textures,
+        ));
+    world.spawn((Mesh3d(ground.clone()), MeshMaterial3d(flat)));
+    for mesh in [ground, parcel] {
+        world.spawn((
+            Mesh3d(mesh),
+            MeshMaterial3d(shells.clone()),
+            MeshTag(1 << 16),
+        ));
+    }
+    let ShaderRef::Path(path) = terrain_vertex_shader() else {
+        unreachable!("the terrain vertex shader is embedded");
+    };
+    let vertex = world.resource::<AssetServer>().load::<Shader>(path).id();
+
+    let mut seen = 0;
+    for _ in 0..2000 {
+        app.update();
+        let cache = app.sub_app(RenderApp).world().resource::<PipelineCache>();
+        let terrain: Vec<_> = cache
+            .pipelines()
+            .filter(|pipeline| {
+                matches!(&pipeline.descriptor,
+                    PipelineDescriptor::RenderPipelineDescriptor(descriptor)
+                        if descriptor.vertex.shader.id() == vertex)
+            })
+            .collect();
+        for pipeline in &terrain {
+            if let CachedPipelineState::Err(error) = &pipeline.state {
+                // both clear once the shader and its imports have loaded
+                if !matches!(
+                    error,
+                    PipelineCacheError::ShaderNotLoaded(_)
+                        | PipelineCacheError::ShaderImportNotYetAvailable
+                ) {
+                    panic!("a terrain pipeline failed to compile: {error}");
+                }
+            }
+        }
+        seen = terrain.len();
+        let ready = terrain
+            .iter()
+            .all(|pipeline| matches!(pipeline.state, CachedPipelineState::Ok(_)));
+        // each material's main pass, prepass and shadow pass
+        if seen >= 4 && ready && cache.waiting_pipelines().next().is_none() {
+            return;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(5));
+    }
+    panic!("the terrain pipelines did not finish compiling ({seen} seen)");
+}
+
 /// The textured ground compiles in every pipeline it is drawn with: the flat ground (grass off)
 /// and a ground shell (grass on), each with the prepasses and shadows. Needs a GPU, so `#[ignore]`d
 /// and skipped by CI:
@@ -242,14 +482,14 @@ fn scene_casts_hit_the_heightfield() {
 #[ignore = "needs a GPU; run with --ignored"]
 fn ground_shader_compiles() {
     use crate::{
+        landscape_pipeline_test,
         landscape_textures::LandscapeTextures,
-        pipeline_test,
         shell_texturing::{self, ShellTexture},
     };
     use bevy::render::mesh::MeshTag;
     use common::structs::ParcelGrassSetting;
 
-    let mut app = pipeline_test::app();
+    let mut app = landscape_pipeline_test::app();
     embed_shaders(&mut app);
     shell_texturing::embed_shaders(&mut app);
     app.add_plugins((
@@ -292,7 +532,7 @@ fn ground_shader_compiles() {
         Transform::from_xyz(0.0, 0.1, 0.0),
     ));
 
-    pipeline_test::assert_pipelines_compile(
+    landscape_pipeline_test::assert_pipelines_compile(
         &mut app,
         Vec3::new(0.0, 3.0, 6.0),
         Vec3::ZERO,

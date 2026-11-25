@@ -232,4 +232,32 @@ mod tests {
         assert!(pull(&pool, &authority).await.unwrap());
         assert_eq!(authority.state_name(), "Failed");
     }
+
+    /// A leader that lost the lease stops exporting its own last state: once it is no longer the
+    /// authority, its mirror exports what the new leader published.
+    #[tokio::test]
+    async fn a_former_leader_exports_the_state_its_successor_published() {
+        let Some(pool) = catalyst_db::scratch::isolated_pool(2).await else {
+            return;
+        };
+        let (_metrics, handle) = crate::sync::metrics::local_recorder();
+        let gauge =
+            || crate::sync::metrics::sample(&handle.render(), "dcl_content_server_sync_state");
+        let successor = SyncStatus::default();
+        successor.set_authority(true);
+        successor.set_state(SyncState::Bootstrapping);
+        publish(&pool, &successor, "successor:1").await.unwrap();
+
+        let former = SyncStatus::default();
+        former.set_authority(true);
+        former.set_state(SyncState::Syncing);
+        assert_eq!(gauge(), Some(1.0));
+        assert!(pull(&pool, &former).await.unwrap());
+        assert_eq!(gauge(), Some(1.0), "the authority keeps its own state");
+
+        former.set_authority(false);
+        assert!(pull(&pool, &former).await.unwrap());
+        assert_eq!(former.state_name(), "Bootstrapping");
+        assert_eq!(gauge(), Some(0.0));
+    }
 }

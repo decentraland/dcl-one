@@ -1,4 +1,3 @@
-import deepmerge from 'deepmerge';
 import { type AppSettings } from './settings';
 import {
   DEFAULT_DEPENDENCY_UPDATE_STRATEGY,
@@ -56,16 +55,36 @@ export const DEFAULT_CONFIG: Config = {
   editors: [],
 };
 
+function isPlainObject(value: unknown): value is Record<string, unknown> {
+  if (typeof value !== 'object' || value === null) return false;
+  const prototype = Object.getPrototypeOf(value);
+  return prototype === Object.prototype || prototype === null;
+}
+
+/**
+ * Gives a new object with the stored values on top of the defaults. Objects merge key by key.
+ * Any other stored value replaces the default as it is: an array is not joined with the
+ * default array, and an empty string or `null` stays.
+ */
+function mergeOver(defaults: unknown, stored: unknown): unknown {
+  if (!isPlainObject(stored)) return stored;
+  const base = isPlainObject(defaults) ? defaults : {};
+  const merged: Record<string, unknown> = {};
+  for (const key of Object.keys(base)) merged[key] = mergeOver(undefined, base[key]);
+  for (const key of Object.keys(stored)) {
+    // A key such as `__proto__` comes from the prototype of `base`: writing it would change
+    // the prototype of the result.
+    if (key in base && !Object.hasOwn(base, key)) continue;
+    const value = stored[key];
+    // A stored scenes path that is not text gives way to the default path.
+    const useDefault = key === 'scenesPath' && typeof value === 'object' && value !== null;
+    merged[key] = (useDefault && base[key]) || mergeOver(base[key], value);
+  }
+  return merged;
+}
+
 export function mergeConfig(target: Partial<Config>, source: Config): Config {
-  return deepmerge(source, target, {
-    customMerge: key => {
-      if (key === 'scenesPath') {
-        // Avoid overwriting scenesPath with empty string, use default (sourcePath) instead.
-        return (targetPath: string, sourcePath: string) => targetPath || sourcePath;
-      }
-    },
-    arrayMerge: (_, sourceArray) => sourceArray,
-  });
+  return mergeOver(source, target) as Config;
 }
 
 export function dropGuiEditorSetting(settings: Partial<AppSettings> | undefined): void {
@@ -89,6 +108,36 @@ export function promoteAiAssistantSetting(settings: Partial<AppSettings> | undef
     settings.aiAssistant = true;
     settings.aiAssistantPromoted = true;
   }
+}
+
+const withoutTrailingSeparator = (value: string) => value.replace(/[\\/]+$/, '');
+
+/**
+ * Moves the scenes folder off the hidden app data folder, once, in place on merged settings
+ * not yet promoted. Only an install whose old folder holds no scenes moves: one that holds
+ * scenes keeps them where they are, and a folder the user chose is never touched. A user can
+ * still move to the new folder from Settings (Reset).
+ */
+export function promoteScenesPath(
+  settings: Partial<AppSettings> | undefined,
+  {
+    storedPath,
+    legacyPath,
+    defaultPath,
+    legacyHasScenes,
+  }: {
+    /** The folder the stored config names, before defaults are merged in; none means the old one. */
+    storedPath: string | undefined;
+    legacyPath: string;
+    defaultPath: string;
+    legacyHasScenes: boolean;
+  },
+): void {
+  if (!settings || settings.scenesPathPromoted) return;
+  const current = storedPath || legacyPath;
+  const isLegacy = withoutTrailingSeparator(current) === withoutTrailingSeparator(legacyPath);
+  if (isLegacy) settings.scenesPath = legacyHasScenes ? legacyPath : defaultPath;
+  settings.scenesPathPromoted = true;
 }
 
 /** Enables the debug console once, in place, on merged settings not yet promoted — the

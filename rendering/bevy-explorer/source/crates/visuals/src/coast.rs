@@ -22,7 +22,7 @@ use bevy::{
 };
 use common::{
     sets::PostUpdateSets,
-    structs::{PrimaryCamera, PrimaryUser},
+    structs::{LandscapeDistance, PrimaryCamera, PrimaryUser},
 };
 use dcl_component::SceneEntityId;
 use scene_runner::{
@@ -40,7 +40,8 @@ use crate::{
 pub const SEA_LEVEL: f32 = -19.0;
 /// Cliffs are built in chunks of this length along each side.
 const CHUNK: f32 = 64.0;
-/// Cliff chunks within this distance of the player's parcel centre are built.
+/// Cliff chunks within this distance of the player's parcel centre are built, or within the
+/// Landscape Distance when that is nearer (`cliff_range`).
 const CLIFF_RANGE: f32 = 768.0;
 /// Profile columns along each side are this far apart.
 const COLUMN: f32 = 1.0;
@@ -243,7 +244,6 @@ fn setup(
     commands.insert_resource(CoastAssets { cliff, water });
 }
 
-#[allow(clippy::too_many_arguments)]
 fn update(
     mut commands: Commands,
     surface: Res<TerrainSurface>,
@@ -258,6 +258,7 @@ fn update(
     underground: Single<(&mut Transform, &mut Visibility), UndergroundOnly>,
     cliffs: Query<(Entity, &Cliff)>,
     walls: Single<&mut SceneColliderData, With<CoastWalls>>,
+    distance: Res<LandscapeDistance>,
 ) {
     let bounds = surface.coast();
     let changed = bounds != state.bounds;
@@ -316,11 +317,10 @@ fn update(
         visibility.set_if_neq(Visibility::Inherited);
     }
 
-    let mut desired: HashSet<_> = near_chunks(bounds, parcel, CLIFF_RANGE)
-        .into_iter()
-        .collect();
+    let range = cliff_range(distance.0);
+    let mut desired: HashSet<_> = near_chunks(bounds, parcel, range).into_iter().collect();
     // built chunks are kept for another parcel, so stepping back and forth doesn't rebuild them
-    let keep: HashSet<_> = near_chunks(bounds, parcel, CLIFF_RANGE + PARCEL_SIZE)
+    let keep: HashSet<_> = near_chunks(bounds, parcel, range + PARCEL_SIZE)
         .into_iter()
         .collect();
     for (entity, cliff) in &cliffs {
@@ -348,6 +348,11 @@ fn update(
             Transform::default(),
         ));
     }
+}
+
+/// How far from the player's parcel cliffs are built for a Landscape Distance.
+fn cliff_range(distance: f32) -> f32 {
+    CLIFF_RANGE.min(distance)
 }
 
 /// Deterministic value in [0, 1] (pcg hash).

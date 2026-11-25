@@ -1,13 +1,17 @@
 import { useCallback } from 'react';
-import { useNavigate } from 'react-router-dom';
-import { Button, Grid, Typography } from 'decentraland-ui2';
-import { ChevronLeftOutlined } from '@mui/icons-material';
+import { useNavigate } from 'react-router';
+import { cx } from '/@/lib/cx';
+import Button from '@ui/atoms/Button';
+import Text from '@ui/atoms/Text';
+import { ChevronLeftOutlinedIcon as ChevronLeftOutlined } from '@ui/atoms/icons-material';
 import { t } from '/@/modules/store/translation/utils';
 import { useAuth } from '/@/hooks/useAuth';
 import { Row } from '../Row';
 import { Column } from '../Column';
 
 import EditorImage from '/assets/images/editor.png';
+
+import styles from './component.module.css';
 
 import './styles.css';
 
@@ -49,50 +53,44 @@ export function SignInPage() {
   );
 
   return (
-    <Grid
-      className="SignIn"
+    <div
+      className={cx('SignIn', styles.page)}
       data-testid="sign-in-page"
-      container
-      direction="row"
-      alignItems="center"
-      height={'100hv'}
     >
       <div className="background"></div>
-      <Grid
-        className="content"
-        xs={9}
-        item
-      >
+      <div className={cx('content', styles.content)}>
         <Button
-          className="back"
-          variant="contained"
+          className={cx('back', styles.back)}
+          variant="primary"
           onClick={handleBack}
         >
           <ChevronLeftOutlined /> {t('sign_in.back')}
         </Button>
         <Row className="content-row">
           <Column className="text-column">
-            <Typography
+            <Text
               variant="h3"
-              gutterBottom
+              className={styles.gutter}
             >
               {t('sign_in.content.title')}
-            </Typography>
-            <Typography variant="h6">{t('sign_in.content.body', { br: () => <br /> })}</Typography>
-            <Typography
+            </Text>
+            <Text variant="h6">{t('sign_in.content.body', { br: () => <br /> })}</Text>
+            <Text
               className="reopen"
               variant="body1"
             >
               {t('sign_in.content.reopen', { a: reopenAnchor, b: copyAnchor })}
-            </Typography>
+            </Text>
           </Column>
           <img
             className="illustration"
             src={EditorImage}
+            width={744}
+            height={729}
             alt="Decentraland Creator Hub illustration"
           />
         </Row>
-      </Grid>
-    </Grid>
+      </div>
+    </div>
   );
 }

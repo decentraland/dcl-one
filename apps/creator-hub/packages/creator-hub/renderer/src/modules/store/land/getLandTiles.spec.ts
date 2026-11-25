@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import type { AtlasTileProps } from 'decentraland-ui2/dist/components/Atlas/Atlas.types';
 
 import type { EstateFields, Land, LandQueryResult, ParcelFields, RentalFields } from '/@/lib/land';
+import type { AtlasTileProps } from './slice';
 
 const LAND_REGISTRY = '0x000000000000000000000000000000000000a1a0';
 const ESTATE_REGISTRY = '0x000000000000000000000000000000000000e57a';

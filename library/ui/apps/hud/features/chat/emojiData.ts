@@ -25,9 +25,19 @@ export interface EmojiGroup {
   emojis: Emoji[]
 }
 
+// The faces in the order the picker lists them; a section's other emoji follow in
+// the dataset's order.
+const FACE_ORDER =
+  '😀 😃 😄 😁 😆 😅 😂 🤣 😭 😉 😗 😙 😚 😘 🥰 😍 🤩 🥳 🫠 🙃 🙂 🥲 🥹 😊 ☺️ 😌 😏 😴 😪 🤤 😋 😛 😝 😜 🤪 🥴 😔 🥺 😬 😑 😐 😶 🫥 🤐 🫡 🤔 🤫 🫢 🤭 🥱 🤗 🫣 😱 🤨 🧐 😒 🙄 😮‍💨 😤 😠 😡 🤬 😞 😓 😟 😥 😢 ☹️ 🙁 🫤 😕 😰 😨 😧 😦 😮 😯 😲 😳 🤯 😖 😣 😩 😫 😵 😵‍💫 😶‍🌫️ 🫨 🥶 🥵 🤢 🤮 😷 🤒 🤕 🤧 🤥 😇 🤠 🤑 🤓 😎 🥸 🤡'.split(
+    ' '
+  )
+const FACE_RANK = new Map(FACE_ORDER.map((glyph, i) => [glyph, i]))
+const rank = (e: Emoji): number => FACE_RANK.get(e.emoji) ?? FACE_ORDER.length
+
 export const EMOJI_GROUPS: EmojiGroup[] = (data.categories as RawCategory[]).map((c) => ({
   name: c.name,
-  emojis: ALL.filter((e) => e.category === c.name)
+  // the sort is stable: emoji outside the list keep the dataset's order
+  emojis: ALL.filter((e) => e.category === c.name).sort((x, y) => rank(x) - rank(y))
 }))
 
 export const EMOJI_BY_CODE: Map<string, Emoji> = new Map(ALL.map((e) => [e.code, e]))

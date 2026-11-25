@@ -33,6 +33,8 @@ pub const PREFIX: &str = "/shop-api";
 /// `POST /v1/payments/verify`.
 pub const ALIASES: &[&str] = &[
     "POST /shop-api/v1/users /credits/users",
+    "DELETE /shop-api/v1/users/{address} /credits/users/{address}",
+    "GET /shop-api/v1/users/{address}/status /credits/users/{address}/status",
     "GET /shop-api/v1/users/{address}/progress /credits/users/{address}/progress",
     "GET /shop-api/v1/users/{address}/credits /credits/users/{address}/credits",
     "GET /shop-api/v1/users/{address}/purchases /credits/users/{address}/purchases",
@@ -64,6 +66,7 @@ pub const ALIASES: &[&str] = &[
     "GET /shop-api/v1/checkouts/{id} /credits/checkout/{id}",
     "POST /shop-api/v1/credit-quotes /credits/prices/quote",
     "GET /shop-api/v1/credit-program/seasons /credits/seasons",
+    "GET /shop-api/v1/credit-program/season /credits/season",
     "GET /shop-api/v1/captcha /credits/captcha",
     "POST /shop-api/v1/captcha /credits/captcha",
     "POST /shop-api/dev/packs/{sku}/mock-purchase /credits/packs/{sku}/mock-purchase",
@@ -245,7 +248,7 @@ pub const CREDIT_PATHS: &[CreditPath] = &[
 ];
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use std::sync::Arc;
 
     use axum::Router;
@@ -256,6 +259,26 @@ mod tests {
     use tower::ServiceExt;
 
     use super::*;
+
+    /// The deliveries worker's mailer with no SendGrid settings.
+    struct UnconfiguredMailer;
+
+    #[async_trait::async_trait]
+    impl subscriptions::AvailabilityMailer for UnconfiguredMailer {
+        fn is_configured(&self) -> bool {
+            false
+        }
+        async fn send_html(
+            &self,
+            _: &str,
+            _: &str,
+            _: &str,
+            _: &str,
+            _: &serde_json::Value,
+        ) -> Result<Option<String>, crate::shared::notifications::SendFailure> {
+            Err(crate::shared::notifications::SendFailure::NotConfigured)
+        }
+    }
     use crate::http::Outbound;
     use crate::{checkout, credits, evm, mana, market, outfits, rentals, subscriptions, treasury};
 
@@ -273,10 +296,6 @@ mod tests {
     async fn mounted(storage_root: &std::path::Path) -> Router {
         let pool = lazy_pool();
         let http = Outbound::for_tests();
-        let market = market::tests::support::state_without_db();
-        let economy = Arc::new(
-            evm::State::new(pool.clone(), http.clone(), evm::Settings::for_tests()).unwrap(),
-        );
         let credits = Arc::new(credits::State::new(
             pool.clone(),
             http.clone(),
@@ -288,6 +307,27 @@ mod tests {
             },
             None,
         ));
+        mounted_with_credits(storage_root, credits)
+            .await
+            .route_layer(from_fn(|_: Request, _: Next| async {
+                StatusCode::NO_CONTENT
+            }))
+            // `route_layer` also wraps each path's wrong-method fallback; this
+            // puts a bare 405 back in its place.
+            .method_not_allowed_fallback(|| async { StatusCode::METHOD_NOT_ALLOWED })
+    }
+
+    /// Build the whole production Shop tree with real Credits handlers.
+    pub(crate) async fn mounted_with_credits(
+        storage_root: &std::path::Path,
+        credits: credits::SharedState,
+    ) -> Router {
+        let pool = credits.credits.pool.clone();
+        let http = Outbound::for_tests();
+        let market = market::tests::support::state_without_db();
+        let economy = Arc::new(
+            evm::State::new(pool.clone(), http.clone(), evm::Settings::for_tests()).unwrap(),
+        );
         let signatures = Arc::new(rentals::State::new(
             pool.clone(),
             Some(market.clone()),
@@ -303,16 +343,14 @@ mod tests {
             pool.clone(),
             Arc::new(storage),
             outfits::Settings {
-                creators: Vec::new(),
+                creators: None,
                 writes_enabled: true,
             },
             None,
         ));
-        let mailer =
-            crate::social::notifications::email::EmailSender::new(Default::default(), http.clone());
         let subscriptions = Arc::new(subscriptions::State::new(
             pool.clone(),
-            Arc::new(mailer),
+            Arc::new(UnconfiguredMailer),
             subscriptions::Settings {
                 shop_base_url: String::new(),
                 delivery_interval: std::time::Duration::from_secs(60),
@@ -356,12 +394,6 @@ mod tests {
             .merge(rentals::router(signatures.clone()))
             .nest("/signatures-api", rentals::router(signatures))
             .nest("/credits", credits::router(credits))
-            .route_layer(from_fn(|_: Request, _: Next| async {
-                StatusCode::NO_CONTENT
-            }))
-            // `route_layer` also wraps each path's wrong-method fallback; this
-            // puts a bare 405 back in its place.
-            .method_not_allowed_fallback(|| async { StatusCode::METHOD_NOT_ALLOWED })
     }
 
     /// `method path` for every request the mounted trees do not route.
@@ -383,6 +415,78 @@ mod tests {
             }
         }
         out
+    }
+
+    /// A signed request's preflight to the relay, waitlist, outfits and rentals routes, at each
+    /// mount, answers 204 to a Decentraland origin with that origin, credentials and the requested
+    /// `x-identity-*` headers, and grants any other origin no allow-origin, method or header.
+    #[tokio::test]
+    async fn signed_preflights_answer_the_decentraland_origins_only() {
+        let root =
+            std::env::temp_dir().join(format!("catalyst-shop-cors-{}", uuid::Uuid::new_v4()));
+        let credits = Arc::new(credits::State::new(
+            lazy_pool(),
+            Outbound::for_tests(),
+            credits::Settings::for_tests(),
+            credits::Sources {
+                market: None,
+                price: None,
+                economy: None,
+            },
+            None,
+        ));
+        let app = mounted_with_credits(&root, credits).await;
+        let requested = "content-type,x-identity-auth-chain-0,x-identity-auth-chain-1,x-identity-metadata,x-identity-timestamp";
+        for path in [
+            "/v1/transactions",
+            "/transactions-api/v1/transactions",
+            "/shop-api/v1/outfits",
+            "/shop-api/v1/outfits/thumbnails",
+            "/shop-api/v1/notify-requests",
+            "/v1/rentals-listings",
+            "/signatures-api/v1/rentals-listings",
+            "/shop-api/v1/rentals-listings",
+        ] {
+            for (origin, listed) in [
+                ("https://decentraland.org", true),
+                ("https://example.org", false),
+            ] {
+                let preflight = Request::builder()
+                    .method(Method::OPTIONS)
+                    .uri(path)
+                    .header("origin", origin)
+                    .header("access-control-request-method", "POST")
+                    .header("access-control-request-headers", requested)
+                    .body(Body::empty())
+                    .unwrap();
+                let resp = app.clone().oneshot(preflight).await.unwrap();
+                assert_eq!(resp.status(), StatusCode::NO_CONTENT, "{path} {origin}");
+                let h = resp.headers();
+                assert_eq!(
+                    h.get("access-control-allow-headers")
+                        .map(|v| v.to_str().unwrap()),
+                    listed.then_some(requested),
+                    "{path} {origin}"
+                );
+                assert_eq!(
+                    h.contains_key("access-control-allow-methods"),
+                    listed,
+                    "{path} {origin}"
+                );
+                assert_eq!(
+                    h.get("access-control-allow-origin")
+                        .map(|v| v.to_str().unwrap()),
+                    listed.then_some(origin),
+                    "{path}"
+                );
+                assert_eq!(
+                    h.contains_key("access-control-allow-credentials"),
+                    listed,
+                    "{path} {origin}"
+                );
+            }
+        }
+        let _ = std::fs::remove_dir_all(&root);
     }
 
     #[tokio::test]

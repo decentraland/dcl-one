@@ -1,5 +1,6 @@
 import { useEffect } from "react";
 
+import { SAME_ORIGIN_FRAMES } from "../lib/play-framing";
 import type { Route } from "./+types/play";
 
 // The web Explorer's shell page: the top-level document that keeps the sign-in key and embeds
@@ -31,7 +32,7 @@ export function links() {
 }
 
 export function headers(): Record<string, string> {
-  return { "Cache-Control": "private, no-store" };
+  return { "Cache-Control": "private, no-store", ...SAME_ORIGIN_FRAMES };
 }
 
 const SHELL_STYLE = `

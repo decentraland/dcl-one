@@ -2,32 +2,72 @@
 //!
 //! A facade over the crates that produce each fact. Social blocks live in the social client,
 //! the local user's scene admission and the scene room's ban and admin lists in comms, and the
-//! only state this crate owns is the platform-ban check. [`BanBlock`] reads them all as one
+//! platform ban in `common::platform_ban`, which this crate checks and writes. [`BanBlock`] reads them all as one
 //! system parameter. There are no events of its own: every fact it answers from is a resource
 //! or a component.
 
+#![forbid(unsafe_code)]
+
+mod ban_stream;
 mod debug;
 mod platform_ban;
 
 use alloy_core::primitives::Address;
 use bevy::{
-    app::{App, Plugin},
-    ecs::system::{Query, Res, SystemParam},
+    app::{App, Plugin, Update},
+    ecs::{
+        entity::Entity,
+        query::Has,
+        system::{Commands, Query, Res, SystemParam},
+    },
     platform::collections::HashSet,
 };
+use comms::{global_crdt::ForeignPlayer, BlockedOrBanned};
 use serde::Serialize;
 use social::SocialClient;
 use wallet::Wallet;
 
+pub use common::platform_ban::{
+    PlatformBanInfo, PlatformBanSource, PlatformBanState, PlatformBanStatus,
+};
 pub use comms::{AdmissionView, BanScope, SceneAdmission, SceneRoomModeration};
-pub use platform_ban::{PlatformBanInfo, PlatformBanSource, PlatformBanState, PlatformBanStatus};
 
 pub struct BanBlockPlugin;
 
 impl Plugin for BanBlockPlugin {
     fn build(&self, app: &mut App) {
-        platform_ban::register(app);
-        debug::register(app);
+        app.add_plugins(platform_ban::PlatformBanPlugin);
+        app.add_plugins(ban_stream::PlatformBanStreamPlugin);
+        app.add_plugins(debug::BanBlockDebugPlugin);
+        app.add_systems(Update, mark_hidden_players);
+    }
+}
+
+/// True when the local user must not see `addr`: either side blocked the other, or the
+/// connected scene room bans them. Unknown blocks and a room that is down hide no one.
+fn hides_player(blocks: &Blocks, room: &SceneRoomView, addr: Address) -> bool {
+    blocks.is_blocked_either_way(addr) || room.is_addr_banned_in_scene(addr)
+}
+
+/// Keeps [`BlockedOrBanned`] on exactly the remote players [`hides_player`] answers for,
+/// so they disappear on a block or ban and come back when it is lifted.
+fn mark_hidden_players(
+    mut commands: Commands,
+    ban_block: BanBlock,
+    players: Query<(Entity, &ForeignPlayer, Has<BlockedOrBanned>)>,
+) {
+    let blocks = ban_block.blocks();
+    let room = ban_block.scene_room();
+    for (entity, player, hidden) in &players {
+        match (hides_player(&blocks, &room, player.address), hidden) {
+            (true, false) => {
+                commands.entity(entity).try_insert(BlockedOrBanned);
+            }
+            (false, true) => {
+                commands.entity(entity).try_remove::<BlockedOrBanned>();
+            }
+            _ => (),
+        }
     }
 }
 
@@ -38,6 +78,15 @@ pub struct BanBlock<'w, 's> {
     wallet: Res<'w, Wallet>,
     platform_ban: Res<'w, PlatformBanStatus>,
     admission: Res<'w, SceneAdmission>,
+    #[cfg(feature = "livekit")]
+    recovery: Query<
+        'w,
+        's,
+        (
+            &'static comms::SceneRoom,
+            &'static comms::room_connection::RoomRecovery,
+        ),
+    >,
     #[cfg(feature = "livekit")]
     room: Query<
         'w,
@@ -58,8 +107,7 @@ pub enum SceneRoomView<'a> {
     NotConnected,
     Connected {
         scene_id: &'a str,
-        banned_addresses: &'a HashSet<Address>,
-        scene_admins: &'a HashSet<Address>,
+        moderation: &'a SceneRoomModeration,
     },
 }
 
@@ -74,13 +122,13 @@ pub enum AdminPermissionsStatus {
 impl SceneRoomView<'_> {
     /// True only for a connected room that lists `addr`; a room that is down answers false.
     pub fn is_addr_banned_in_scene(&self, addr: Address) -> bool {
-        matches!(self, SceneRoomView::Connected { banned_addresses, .. } if banned_addresses.contains(&addr))
+        matches!(self, SceneRoomView::Connected { moderation, .. } if moderation.is_banned(addr))
     }
 
     pub fn admin_permissions_for_addr(&self, addr: Address) -> AdminPermissionsStatus {
         match self {
             SceneRoomView::NotConnected => AdminPermissionsStatus::NotLoadedYet,
-            SceneRoomView::Connected { scene_admins, .. } if scene_admins.contains(&addr) => {
+            SceneRoomView::Connected { moderation, .. } if moderation.is_admin(addr) => {
                 AdminPermissionsStatus::Admin
             }
             SceneRoomView::Connected { .. } => AdminPermissionsStatus::NotAdmin,
@@ -214,6 +262,16 @@ impl BanBlock<'_, '_> {
         &self.admission
     }
 
+    pub(crate) fn scene_retry_due(&self, scene_id: &str, checkpoint: f64) -> f64 {
+        #[cfg(feature = "livekit")]
+        if let Some((_, recovery)) = self.recovery.iter().find(|(room, _)| room.0 == scene_id) {
+            return recovery.retry.due;
+        }
+        #[cfg(not(feature = "livekit"))]
+        let _ = scene_id;
+        checkpoint
+    }
+
     /// The scene room's lists while it is connected; a reconnecting or absent room is
     /// `NotConnected`.
     pub fn scene_room(&self) -> SceneRoomView<'_> {
@@ -222,8 +280,7 @@ impl BanBlock<'_, '_> {
             if status.state() == comms::room_connection::RoomState::Connected {
                 return SceneRoomView::Connected {
                     scene_id: &scene.0,
-                    banned_addresses: &moderation.banned_addresses,
-                    scene_admins: &moderation.scene_admins,
+                    moderation,
                 };
             }
         }
@@ -286,10 +343,13 @@ mod tests {
     fn a_room_answers_only_while_connected() {
         let banned = HashSet::from_iter([address(1)]);
         let admins = HashSet::from_iter([address(2)]);
+        let moderation = SceneRoomModeration {
+            banned_addresses: banned,
+            scene_admins: admins,
+        };
         let connected = SceneRoomView::Connected {
             scene_id: "scene",
-            banned_addresses: &banned,
-            scene_admins: &admins,
+            moderation: &moderation,
         };
         assert!(connected.is_addr_banned_in_scene(address(1)));
         assert!(!connected.is_addr_banned_in_scene(address(2)));
@@ -352,6 +412,46 @@ mod tests {
             world.run_system_once(read).unwrap(),
             AdminPermissionsStatus::Admin
         );
+    }
+
+    #[test]
+    fn a_player_is_hidden_when_blocked_either_way_or_banned_from_the_scene() {
+        let blocked = HashSet::from_iter([address(1)]);
+        let blocked_by = HashSet::from_iter([address(2)]);
+        let blocks = Blocks::from_client(true, &blocked, &blocked_by);
+        let banned = HashSet::from_iter([address(3)]);
+        let admins = HashSet::new();
+        let moderation = SceneRoomModeration {
+            banned_addresses: banned,
+            scene_admins: admins,
+        };
+        let room = SceneRoomView::Connected {
+            scene_id: "scene",
+            moderation: &moderation,
+        };
+        assert!(hides_player(&blocks, &room, address(1)));
+        assert!(hides_player(&blocks, &room, address(2)));
+        assert!(hides_player(&blocks, &room, address(3)));
+        assert!(!hides_player(&blocks, &room, address(4)));
+    }
+
+    #[test]
+    fn unknown_blocks_and_a_room_that_is_down_hide_no_one() {
+        let set = HashSet::from_iter([address(1)]);
+        let unknown = Blocks::from_client(false, &set, &set);
+        assert!(!hides_player(
+            &unknown,
+            &SceneRoomView::NotConnected,
+            address(1)
+        ));
+        // a lifted block shows the player again
+        let none = HashSet::new();
+        let lifted = Blocks::from_client(true, &none, &none);
+        assert!(!hides_player(
+            &lifted,
+            &SceneRoomView::NotConnected,
+            address(1)
+        ));
     }
 
     #[test]

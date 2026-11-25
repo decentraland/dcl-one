@@ -46,7 +46,7 @@ fn cliffs_face_outward_and_stay_outside_the_ground() {
         };
         let points = positions(&mesh);
         assert!(!points.is_empty());
-        for (index, triangle) in points.chunks_exact(3).enumerate() {
+        for (index, triangle) in points.as_chunks::<3>().0.iter().enumerate() {
             let p = [0, 1, 2].map(|i| Vec3::from_array(triangle[i]));
             let n = Vec3::from_array(normals[index * 3]);
             if p.iter().all(|point| point.y == UNDERGROUND) {
@@ -212,9 +212,9 @@ fn ripples_tile_and_are_deterministic() {
 #[test]
 #[ignore = "needs a GPU; run with --ignored"]
 fn cliff_shader_compiles() {
-    use crate::{landscape_textures::LandscapeTextures, pipeline_test, terrain};
+    use crate::{landscape_pipeline_test, landscape_textures::LandscapeTextures, terrain};
 
-    let mut app = pipeline_test::app();
+    let mut app = landscape_pipeline_test::app();
     terrain::embed_shaders(&mut app);
     embed_shaders(&mut app);
     app.add_plugins(MaterialPlugin::<CliffMaterial>::default());
@@ -233,10 +233,28 @@ fn cliff_shader_compiles() {
     world.spawn((Mesh3d(mesh), MeshMaterial3d(material), Transform::default()));
 
     let crest = Vec3::new(8.0, 0.0, -8.0);
-    pipeline_test::assert_pipelines_compile(
+    landscape_pipeline_test::assert_pipelines_compile(
         &mut app,
         crest + Vec3::new(0.0, 20.0, 60.0),
         crest,
         &["coast_cliff.wgsl"],
     );
+}
+
+/// Cliffs are built no farther than the Landscape Distance.
+#[test]
+fn cliffs_culled_beyond_distance() {
+    let bounds = bounds(IVec2::splat(-150), IVec2::splat(150));
+    // 600 m in from the west side, far from the others
+    let parcel = Vec3::new(bounds.x + 600.0, 0.0, 0.0);
+    let west = |range: f32| {
+        near_chunks(bounds, parcel, range)
+            .into_iter()
+            .filter(|(side, _)| *side == 3)
+            .count()
+    };
+    assert_eq!(west(cliff_range(500.0)), 0);
+    assert!(west(cliff_range(1000.0)) > 0);
+    // the longest distance builds no farther than CLIFF_RANGE
+    assert_eq!(cliff_range(LandscapeDistance::MAX), CLIFF_RANGE);
 }
