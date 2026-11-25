@@ -218,7 +218,7 @@ const mergeValues = (values: any[]): any => {
   return result;
 };
 
-const mergeComponentValues = <ComponentValueType extends object, InputType extends Input>(
+export const mergeComponentValues = <ComponentValueType extends object, InputType extends Input>(
   values: ComponentValueType[],
   fromComponentValueToInput: (componentValue: ComponentValueType) => InputType,
 ): InputType => {
