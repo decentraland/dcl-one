@@ -5109,6 +5109,77 @@ async fn a_partial_activity_names_the_unavailable_sources() {
     own.drop().await;
 }
 
+/// A node that does not walk the nft index reads its v3 listings beside the
+/// subgraph on one short snapshot: the trades readiness and the rows are one
+/// read, so a trade-events quarantine that lands after the check neither
+/// empties the checked leg nor goes unseen; the next read answers its
+/// envelope.
+#[tokio::test]
+async fn unguarded_listings_read_the_snapshot_their_readiness_checked() {
+    let Some(own) = super::tests::support::OwnDb::create("unguarded_listings").await else {
+        return;
+    };
+    let url = serve_empty_graph().await;
+    let state = Arc::new(super::MarketplaceState::new(
+        own.pool.clone(),
+        crate::http::Outbound::for_tests(),
+        market_settings(&url, &url, true),
+    ));
+    state.test_allow_loopback.store(true, Ordering::Relaxed);
+    assert!(!super::owned_items::walks_here(&state));
+    let pool = own.pool.clone();
+    super::trade_events::tests::publish_cursors(&pool).await;
+    let (listing, _) = insert_trade(
+        &pool,
+        "public_nft_order",
+        WALLET_A,
+        Asset {
+            asset_type: 3,
+            contract: contract_of(&tag(), 1),
+            value: "1".into(),
+        },
+        Asset {
+            asset_type: 1,
+            contract: "0x2222222222222222222222222222222222222222".into(),
+            value: "1000".into(),
+        },
+    )
+    .await;
+    let (mut tx, now) = match super::orders::trades_snapshot(&state).await {
+        Ok(snapshot) => snapshot,
+        Err(r) => panic!("the trades mirror is ready: {}", r.status()),
+    };
+    sqlx::query(
+        "UPDATE shop.chain_cursor SET quarantined_at = timezone('UTC', now()), quarantine_reason = 'test' \
+         WHERE indexer = 'trade_events' AND network = 'matic'",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+    let rows = super::orders::read_trades(
+        &mut tx,
+        &state,
+        &super::orders::OrderFilters::default(),
+        super::orders::OwnerCheck::Unchecked,
+        now,
+    )
+    .await
+    .unwrap();
+    tx.rollback().await.unwrap();
+    assert_eq!(
+        rows.into_iter().map(|k| k.order.id).collect::<Vec<_>>(),
+        vec![listing],
+        "the rows are the checked snapshot's"
+    );
+    let (status, body) = get(market_router(state.clone()), "/v1/orders?network=MATIC").await;
+    assert_eq!(
+        (status, body["source"].as_str()),
+        (StatusCode::SERVICE_UNAVAILABLE, Some("trade-events-index")),
+        "{body}"
+    );
+    own.drop().await;
+}
+
 /// On the Sepolia/Amoy pair a walking node reads its orders from the book,
 /// never 1/137 by default and never from the subgraph: before publication
 /// `/v1/orders`, open-by-items and the activity orders leg name the nft
@@ -5320,6 +5391,45 @@ async fn the_order_book_reads_the_served_testnet_pair() {
     )
     .await;
     assert_eq!(status, StatusCode::OK, "{body}");
+    // An Ethereum item filter reads the v1 wearable's item, which must be
+    // of the served chain and verified there too, as the collection is.
+    let v1 = contract_of(&t, 4);
+    let urn = "urn:decentraland:sepolia:collections-v1:halloween";
+    sqlx::raw_sql(sqlx::AssertSqlSafe(format!(
+        "INSERT INTO shop.collections (network, contract_address, chain_id, name, creator, owner, urn, is_completed, is_approved, is_editable, created_at, updated_at, reviewed_at, mirrored_at, testnet_verified)
+         VALUES ('ethereum', '{v1}', 11155111, 'Halloween', '{CREATOR}', '{CREATOR}', '{urn}', true, true, false, 1, 1, 1, timezone('UTC', now()), true);
+         INSERT INTO shop.nft (network, contract_address, token_id, owner, wearable_id, minted_block, minted_at, transferred_block, transferred_log, transferred_at)
+         VALUES ('ethereum', '{v1}', 9, '{WALLET_A}', 'hat', 1, 1, 1, 0, 1);
+         INSERT INTO shop.legacy_order (network, marketplace_address, order_id, contract_address, token_id, seller, buyer, price, expires_at, status,
+             created_block, created_log, created_at, updated_block, updated_log, updated_at)
+         VALUES ('ethereum', '0xmarket', 'hat', '{v1}', 9, '{WALLET_A}', '{WALLET_B}', 10, 0, 'sold', 1, 0, 1, 1, 0, 1)"
+    )))
+    .execute(&pool)
+    .await
+    .unwrap();
+    for (chain, checked, expected) in [(11_155_111, false, 0), (1, true, 0), (11_155_111, true, 1)]
+    {
+        sqlx::query(
+            "INSERT INTO shop.items (network, contract_address, item_id, chain_id, item_type, urn, creator, rarity, total_supply, max_supply, available, \
+                 price, name, category, created_at, updated_at, reviewed_at, mirrored_at, testnet_verified) \
+             VALUES ('ethereum', $1, 5, $2, 'wearable_v1', $3 || ':hat', $4, 'common', 1, 1, 0, 0, 'Hat', 'hat', 1, 1, 1, timezone('UTC', now()), $5) \
+             ON CONFLICT (network, contract_address, item_id) DO UPDATE SET chain_id = EXCLUDED.chain_id, testnet_verified = EXCLUDED.testnet_verified",
+        )
+        .bind(&v1)
+        .bind(chain)
+        .bind(urn)
+        .bind(CREATOR)
+        .bind(checked)
+        .execute(&pool)
+        .await
+        .unwrap();
+        let (page, total) = read(format!("/v1/orders?status=sold&itemId={v1}-5")).await;
+        assert_eq!(
+            (page.len(), total),
+            (expected, Some(expected.to_string())),
+            "an item of chain {chain}, verified {checked}"
+        );
+    }
     let (status, named) = activity().await;
     assert_eq!(status, StatusCode::OK);
     assert!(

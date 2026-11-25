@@ -153,9 +153,14 @@ pub async fn fold(conn: &mut PgConnection, net: ChainNet, since: i64) -> sqlx::R
 
 /// Whether `net`'s order book may be read beside the published nft fold on
 /// `conn`'s snapshot: it stands (its marker's recovery point keeps the hash
-/// it recorded) and its marker is at or past the nft cursor's
-/// `folded_block`. False while the book has not caught up with nft folds
-/// that ran without it, and when an earlier binary rewound the walk under it.
+/// it recorded) and its marker, written in the fold's transaction, is the
+/// nft cursor's published `folded_block`. False while the book has not
+/// caught up with nft folds that ran without it, when an earlier binary
+/// rewound the walk under it, and between a fold's commit and its
+/// publication: the rows then already hold the next fold, which is not
+/// published yet (the walk publishes only after its head reads, which can
+/// stall). A walk that advanced without folding leaves the book at the
+/// published block, which stays readable.
 pub async fn caught_up(conn: &mut PgConnection, net: ChainNet) -> sqlx::Result<bool> {
     let stands: Option<i64> = sqlx::query_scalar(STANDS_SQL)
         .bind(net.db_name())
@@ -173,7 +178,7 @@ pub async fn caught_up(conn: &mut PgConnection, net: ChainNet) -> sqlx::Result<b
     .fetch_optional(&mut *conn)
     .await?
     .flatten();
-    Ok(through >= published.unwrap_or(0))
+    Ok(published == Some(through))
 }
 
 /// Deletes `net`'s orders of the tokens (`contracts[i]`, `tokens[i]`) a
@@ -697,6 +702,38 @@ mod tests {
             "b's sale at 30 is folded too"
         );
         assert_eq!(book_through(&db.pool).await, Some(100));
+        db.drop().await;
+    }
+
+    /// The book is read only at the published nft fold. A walk that advanced
+    /// without folding leaves it at the published block, still readable;
+    /// a fold committed past that block (its head reads before publishing
+    /// stalled) is not read until it is published.
+    #[tokio::test]
+    async fn a_fold_committed_before_its_publication_is_not_read_until_published() {
+        let Some(db) =
+            crate::market::tests::support::OwnDb::create("legacy_orders_unpublished").await
+        else {
+            return;
+        };
+        seed_log(&db.pool, 100).await;
+        nft_cursor(&db.pool, 100, None, None).await;
+        fold_matic(&db.pool, -1).await;
+        nft_cursor(&db.pool, 100, Some(100), Some(100)).await;
+        assert!(stands(&db.pool).await, "the published fold at 100");
+        nft_cursor(&db.pool, 120, Some(100), Some(100)).await;
+        assert!(
+            stands(&db.pool).await,
+            "the walk advanced to 120 without folding: the book stays at the published 100"
+        );
+        fold_matic(&db.pool, 100).await;
+        assert_eq!(book_through(&db.pool).await, Some(120));
+        assert!(
+            !stands(&db.pool).await,
+            "the fold through 120 committed while 100 is still the published fold"
+        );
+        nft_cursor(&db.pool, 120, Some(120), Some(120)).await;
+        assert!(stands(&db.pool).await, "published at 120");
         db.drop().await;
     }
 
