@@ -396,10 +396,9 @@ fn nets_of(network: Option<Network>) -> &'static [ChainNet] {
 
 /// Whether `contract` is one of the node's LAND or Estate registries.
 fn is_land_registry(state: &MarketplaceState, contract: &str) -> bool {
-    state.land_network().is_some_and(|land| {
-        contract.eq_ignore_ascii_case(land.land_registry)
-            || contract.eq_ignore_ascii_case(land.estate_registry)
-    })
+    let r = registries(state);
+    !r.land.is_empty()
+        && (contract.eq_ignore_ascii_case(&r.land) || contract.eq_ignore_ascii_case(&r.estate))
 }
 
 /// Whether a read of `f` could answer an open (or `transferred`) LAND or
@@ -412,7 +411,7 @@ fn reads_land(state: &MarketplaceState, f: &OrderFilters) -> bool {
         && !matches!(f.status.as_deref(), Some(s) if s != "open" && s != "transferred");
     let land_possible = match &f.contract_address {
         Some(c) => is_land_registry(state, c),
-        None => state.land_network().is_some(),
+        None => !registries(state).land.is_empty(),
     };
     open_possible && land_possible && f.network != Some(Network::Matic)
 }
@@ -606,18 +605,38 @@ pub async fn trades_leg(
     }
 }
 
-/// The node's LAND and Estate registries, lowercase (empty without a LAND
-/// network: no order of theirs is served).
-fn registries(state: &MarketplaceState) -> (String, String) {
-    state
-        .land_network()
+/// The Ethereum registries whose orders the book serves beside the
+/// collections', lowercase: LAND, Estate and the names registrar of the
+/// chain the node serves on Ethereum (`IndexSettings::chain_id`); empty
+/// where that chain has none, so no order of theirs is served.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+struct Registries {
+    land: String,
+    estate: String,
+    names: String,
+}
+
+fn registries(state: &MarketplaceState) -> Registries {
+    let chain = state.settings.market.indexes.chain_id(ChainNet::Ethereum);
+    let Some(deployments) =
+        super::nft_index::deployments::Deployments::for_chain(ChainNet::Ethereum, chain)
+    else {
+        return Registries::default();
+    };
+    let (land, estate) = deployments
+        .land
         .map(|n| {
             (
                 n.land_registry.to_lowercase(),
                 n.estate_registry.to_lowercase(),
             )
         })
-        .unwrap_or_default()
+        .unwrap_or_default();
+    Registries {
+        land,
+        estate,
+        names: deployments.registrar().unwrap_or_default().to_lowercase(),
+    }
 }
 
 /// Whether `s` is a decimal `uint256` as the index stores token and item ids.
@@ -631,7 +650,7 @@ fn is_uint(s: &str) -> bool {
 /// decides `transferred` for LAND and estate orders; without it no open
 /// LAND or estate order may be read ([`reads_land`]).
 fn book_from(
-    registries: &(String, String),
+    registries: &Registries,
     f: &OrderFilters,
     now_ms: i64,
     land: bool,
@@ -641,13 +660,17 @@ fn book_from(
         binds.push(v);
         format!("${}", binds.len())
     };
-    let (land_registry, estate_registry) = registries.clone();
+    let Registries {
+        land: land_registry,
+        estate: estate_registry,
+        names: names_registry,
+    } = registries.clone();
     let served = format!(
         "(EXISTS (SELECT 1 FROM shop.collections c WHERE c.network = o.network AND c.contract_address = o.contract_address) \
           OR (o.network = 'ethereum' AND o.contract_address IN ({}, {}, {})))",
         next(&mut binds, land_registry),
         next(&mut binds, estate_registry),
-        next(&mut binds, super::nft_index::DCL_REGISTRAR.to_string()),
+        next(&mut binds, names_registry),
     );
     let mut sql = format!(
         "FROM shop.legacy_order o \
@@ -1362,7 +1385,11 @@ mod tests {
 
     #[test]
     fn the_book_reads_the_served_contracts_with_the_subgraph_status_rules() {
-        let registries = ("0xland".to_string(), "0xestate".to_string());
+        let registries = Registries {
+            land: "0xland".to_string(),
+            estate: "0xestate".to_string(),
+            names: "0xnames".to_string(),
+        };
         let open = parse_filters(&pairs(&[
             ("owner", "0xABC"),
             ("status", "open"),
@@ -1387,7 +1414,7 @@ mod tests {
             vec![
                 "0xland".to_string(),
                 "0xestate".to_string(),
-                super::super::nft_index::DCL_REGISTRAR.to_string(),
+                "0xnames".to_string(),
                 "0xabc".to_string(),
                 "1000".to_string()
             ]

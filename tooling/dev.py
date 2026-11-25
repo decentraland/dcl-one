@@ -753,8 +753,7 @@ def testnet_env(config, refuse_exposed_relayer=True):
         'MARKETPLACE_INDEX_INTERVAL_SECS': '5',
         'MARKETPLACE_INDEX_CHAIN_ID_MATIC': '80002',
         'MARKETPLACE_INDEX_CHAIN_ID_ETHEREUM': '11155111',
-        # The NFT index walks chains 1/137 only, with no chain-id check: Matic has no endpoint here, and Ethereum
-        # would read Sepolia through ETH_RPC_URL and store its logs as mainnet rows.
+        # This testnet stack uses its configured graph readers.
         'MARKETPLACE_NFT_INDEX_ENABLED': 'false',
         # The Rentals contract is mainnet's; there is no chain-1 endpoint here.
         'SHOP_RENTALS_INDEX_ENABLED': 'false',

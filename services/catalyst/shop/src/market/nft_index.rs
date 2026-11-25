@@ -28,7 +28,10 @@
 //! with no backfill owed, and a fold that still owes one clears the publish
 //! marker in the transaction that commits its rows.
 
+pub(crate) mod deployments;
 mod estate_repair;
+
+use deployments::Deployments;
 
 use crate::market::chain_walk::{topic_address, topic_u256};
 use std::collections::{HashMap, HashSet};
@@ -43,7 +46,7 @@ use sqlx::{PgConnection, PgPool, Row};
 use super::chain_walk::{self, ChainIndex, ChainNet, INDEXER_NFT, LogGroup};
 use crate::chain_index::rpc::RpcLog;
 use crate::land_authz::events::{TOPIC_CREATE_ESTATE, parse_estate_data};
-use crate::land_authz::{ESTATE_REGISTRY_MAINNET, LAND_REGISTRY_MAINNET, LAND_START_BLOCK_MAINNET};
+use crate::land_authz::{ESTATE_REGISTRY_MAINNET, ESTATE_REGISTRY_SEPOLIA};
 
 pub const TOPIC_TRANSFER: &str =
     "0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef";
@@ -76,36 +79,6 @@ pub const KIND_LAND_DATA: &str = "land_data";
 
 pub const DCL_REGISTRAR: &str = "0x2a187453064356c898cae034eaed119e1663acb8";
 pub const ZERO_ADDRESS: &str = "0x0000000000000000000000000000000000000000";
-
-/// The legacy Marketplace deployments per network with their deployment
-/// block (`eth_getCode` bisection, 2026-09-25; the squid's address books).
-pub fn legacy_marketplaces(net: ChainNet) -> &'static [(&'static str, u64)] {
-    match net {
-        ChainNet::Ethereum => &[("0x8e5660b4ab70168b5a6feea0e0315cb49c8cd539", 6_496_012)],
-        ChainNet::Matic => &[
-            ("0x02080031b45a3c67d338dd4a2cc309d28756a160", 15_202_565),
-            ("0x480a0f4e360e8964e68858dd231c2922f1df45ef", 22_513_570),
-        ],
-    }
-}
-
-/// The contracts walked from their deployment regardless of the mirror.
-pub fn fixed_contracts(net: ChainNet) -> Vec<(&'static str, u64)> {
-    let mut out: Vec<(&'static str, u64)> = legacy_marketplaces(net).to_vec();
-    if net == ChainNet::Ethereum {
-        out.push((DCL_REGISTRAR, 9_412_979));
-    }
-    out
-}
-
-/// Where a full history starts: the LAND registry on Ethereum (its Update
-/// data), the squid's collection-factory block on Polygon.
-pub fn start_block(net: ChainNet) -> u64 {
-    match net {
-        ChainNet::Ethereum => LAND_START_BLOCK_MAINNET,
-        ChainNet::Matic => 15_202_000,
-    }
-}
 
 fn collection_topics(net: ChainNet) -> serde_json::Value {
     match net {
@@ -663,7 +636,7 @@ pub async fn fold(
 pub(super) const LAND_DATA_SQL: &str = "WITH w AS MATERIALIZED (\
     SELECT contract_address, token_id, detail, block_number, log_index FROM shop.nft_event \
     WHERE network = 'ethereum' AND kind = 'land_data' AND block_number > $1 AND ($2::text IS NULL OR contract_address = $2) \
-      AND (to_address IS NULL OR block_number > COALESCE((SELECT ceiling FROM shop.worker_progress \
+      AND (to_address IS NULL OR contract_address <> $3 OR block_number > COALESCE((SELECT ceiling FROM shop.worker_progress \
            WHERE worker='nft_estate_creations' AND scope=1 AND position < ceiling), -1))) \
 SELECT w.contract_address, w.token_id::text AS token_id, w.detail, w.block_number, w.log_index \
 FROM w ORDER BY w.contract_address, w.token_id, w.block_number DESC, w.log_index DESC";
@@ -688,6 +661,7 @@ async fn fold_registry_data(
     let mut rows = sqlx::query(LAND_DATA_SQL)
         .bind(since)
         .bind(registry)
+        .bind(ESTATE_REGISTRY_MAINNET)
         .fetch(&mut *conn);
     type Columns = (
         Vec<String>,
@@ -706,7 +680,10 @@ async fn fold_registry_data(
             continue;
         }
         let raw = r.get::<Option<&str>, _>("detail");
-        let (name, description) = if contract == ESTATE_REGISTRY_MAINNET {
+        let (name, description) = if matches!(
+            contract.as_str(),
+            ESTATE_REGISTRY_MAINNET | ESTATE_REGISTRY_SEPOLIA
+        ) {
             let Some(fields) = raw.and_then(parse_estate_data) else {
                 continue;
             };
@@ -775,6 +752,7 @@ impl WalkedContract {
 /// window (the same transaction records them).
 pub struct NftIndex {
     pub net: ChainNet,
+    deployments: Deployments,
     pending: Mutex<Vec<(String, i64, Option<i64>)>>,
     collections: Mutex<Option<Vec<Collection>>>,
     walked: Mutex<Option<HashMap<String, i64>>>,
@@ -785,8 +763,20 @@ pub struct NftIndex {
 
 impl NftIndex {
     pub fn new(net: ChainNet) -> Self {
+        Self::with_deployments(net, Deployments::mainnet(net))
+    }
+
+    pub fn for_chain(net: ChainNet, chain_id: i64) -> Option<Self> {
+        Some(Self::with_deployments(
+            net,
+            Deployments::for_chain(net, chain_id)?,
+        ))
+    }
+
+    fn with_deployments(net: ChainNet, deployments: Deployments) -> Self {
         Self {
             net,
+            deployments,
             pending: Mutex::new(Vec::new()),
             collections: Mutex::new(None),
             walked: Mutex::new(None),
@@ -803,8 +793,10 @@ impl NftIndex {
         ) {
             return Ok((c, w));
         }
-        let rows = sqlx::query("SELECT contract_address, created_at FROM shop.collections WHERE network = $1 ORDER BY created_at, contract_address")
+        let rows = sqlx::query("SELECT contract_address, created_at FROM shop.collections WHERE network = $1 AND chain_id = $2 AND ($3 OR testnet_verified) ORDER BY created_at, contract_address")
             .bind(self.net.db_name())
+            .bind(self.deployments.chain_id as i32)
+            .bind(self.deployments.chain_id == self.net.chain_id())
             .fetch_all(pool)
             .await?;
         let collections: Vec<Collection> = rows
@@ -824,7 +816,7 @@ impl NftIndex {
         .collect();
         let start = chain_walk::cursor(pool, INDEXER_NFT, self.net)
             .await?
-            .map_or(start_block(self.net), |c| c.start_block.max(0) as u64);
+            .map_or(self.deployments.start, |c| c.start_block.max(0) as u64);
         *self.walk_start.lock().unwrap() = Some(start);
         *self.collections.lock().unwrap() = Some(collections.clone());
         *self.walked.lock().unwrap() = Some(walked.clone());
@@ -842,9 +834,10 @@ impl NftIndex {
 
 /// Whether the collections mirror has completed a pass for `net`: the
 /// address set is only as complete as it.
-pub async fn mirror_complete(pool: &PgPool, net: ChainNet) -> bool {
-    sqlx::query_scalar::<_, bool>("SELECT last_complete_pass_at IS NOT NULL FROM shop.mirror_state WHERE mirror = 'collections' AND network = $1")
+pub async fn mirror_complete(pool: &PgPool, net: ChainNet, chain_id: i64) -> bool {
+    sqlx::query_scalar::<_, bool>("SELECT last_complete_pass_at IS NOT NULL FROM shop.mirror_state WHERE mirror = 'collections' AND network = $1 AND chain_id = $2")
         .bind(net.db_name())
+        .bind(chain_id)
         .fetch_optional(pool)
         .await
         .ok()
@@ -882,8 +875,12 @@ impl ChainIndex for NftIndex {
         self.net
     }
 
+    fn chain_id(&self) -> i64 {
+        self.deployments.chain_id
+    }
+
     fn start_block(&self) -> u64 {
-        start_block(self.net)
+        self.deployments.start
     }
 
     async fn groups(
@@ -898,10 +895,12 @@ impl ChainIndex for NftIndex {
             .walk_start
             .lock()
             .unwrap()
-            .unwrap_or(start_block(self.net));
+            .unwrap_or(self.deployments.start);
         let bound = chain_walk::time_at_most(self.net, anchor, to);
         let before_from = chain_walk::time_at_most(self.net, anchor, from.saturating_sub(1));
-        let mut addresses: Vec<String> = fixed_contracts(self.net)
+        let mut addresses: Vec<String> = self
+            .deployments
+            .fixed_contracts()
             .into_iter()
             .filter(|(_, deployed)| *deployed <= to)
             .map(|(a, _)| a.to_string())
@@ -930,13 +929,13 @@ impl ChainIndex for NftIndex {
             addresses,
             topics: collection_topics(self.net),
         }];
-        if self.net == ChainNet::Ethereum {
+        if let Some(registries) = self.deployments.land {
             groups.push(LogGroup {
-                addresses: vec![LAND_REGISTRY_MAINNET.to_string()],
+                addresses: vec![registries.land_registry.to_string()],
                 topics: json!([[TOPIC_LAND_UPDATE]]),
             });
             groups.push(LogGroup {
-                addresses: vec![ESTATE_REGISTRY_MAINNET.to_string()],
+                addresses: vec![registries.estate_registry.to_string()],
                 topics: json!([[TOPIC_CREATE_ESTATE, TOPIC_LAND_UPDATE]]),
             });
         }
@@ -1001,7 +1000,7 @@ impl ChainIndex for NftIndex {
         previous: (i64, Option<&str>),
         end: &crate::chain_index::rpc::BlockHeader,
     ) -> anyhow::Result<()> {
-        if self.net == ChainNet::Ethereum {
+        if self.chain_id() == ChainNet::Ethereum.chain_id() {
             estate_repair::record(conn, previous, (end.number as i64, Some(&end.hash))).await?;
         }
         Ok(())
@@ -1042,7 +1041,9 @@ impl ChainIndex for NftIndex {
         // out would otherwise keep a row past the cursor. The rebuild below
         // restores the rows of every key that still has one.
         if self.net == ChainNet::Ethereum {
-            estate_repair::rewind(conn, to).await?;
+            if self.chain_id() == ChainNet::Ethereum.chain_id() {
+                estate_repair::rewind(conn, to).await?;
+            }
             sqlx::query(
                 "DELETE FROM shop.land_data l USING UNNEST($1::text[], $2::text[]) AS g(c, t) \
                  WHERE l.token_address = g.c AND l.token_id = g.t::numeric",
@@ -1101,7 +1102,7 @@ impl ChainIndex for NftIndex {
         window_blocks: u64,
         remaining: usize,
     ) -> anyhow::Result<usize> {
-        if self.net == ChainNet::Ethereum {
+        if self.chain_id() == ChainNet::Ethereum.chain_id() {
             estate_repair::step(pool, source, owner, window_blocks, remaining).await
         } else {
             Ok(0)
@@ -1269,6 +1270,7 @@ pub async fn ready_networks(
 #[cfg(test)]
 pub(crate) mod tests {
     use super::*;
+    use crate::land_authz::LAND_REGISTRY_MAINNET;
     use alloy_primitives::{Address, FixedBytes, U256, keccak256};
     use alloy_sol_types::SolValue;
     use std::str::FromStr;
@@ -1440,7 +1442,7 @@ pub(crate) mod tests {
                 Some("pixelgolf")
             )
         );
-        let market = legacy_marketplaces(ChainNet::Ethereum)[0].0;
+        let market = Deployments::mainnet(ChainNet::Ethereum).markets[0].0;
         let nft = Address::from_str(LAND_REGISTRY_MAINNET).unwrap();
         let id = FixedBytes::<32>::repeat_byte(0x42);
         let created = log(

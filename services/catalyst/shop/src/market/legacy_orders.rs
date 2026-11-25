@@ -219,7 +219,7 @@ mod tests {
     const BUYER: &str = "0xbbbb000000000000000000000000000000000003";
 
     fn markets() -> (&'static str, &'static str) {
-        let m = nft_index::legacy_marketplaces(ChainNet::Matic);
+        let m = nft_index::deployments::Deployments::mainnet(ChainNet::Matic).markets;
         (m[0].0, m[1].0)
     }
 

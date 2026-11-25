@@ -152,6 +152,7 @@ CREATE TABLE shop.collections (
     reviewed_at bigint NOT NULL,
     first_listed_at bigint,
     mirrored_at timestamp without time zone NOT NULL,
+    testnet_verified boolean NOT NULL DEFAULT false,
     PRIMARY KEY (network, contract_address),
     CONSTRAINT collections_network_known CHECK (network IN ('ethereum', 'matic')),
     CONSTRAINT collections_contract_lowercase CHECK (contract_address = lower(contract_address)),
@@ -240,6 +241,8 @@ CREATE TABLE shop.mirror_state (
     last_complete_pass_rows bigint,
     last_error text,
     updated_at timestamp without time zone NOT NULL DEFAULT timezone('UTC', now()),
+    chain_id bigint,
+    pass_block_hash text,
     PRIMARY KEY (mirror, network),
     CONSTRAINT mirror_state_known_mirror CHECK (mirror IN ('collections', 'items')),
     CONSTRAINT mirror_state_network_known CHECK (network IN ('ethereum', 'matic'))

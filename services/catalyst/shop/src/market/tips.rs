@@ -584,7 +584,7 @@ async fn evict(
         unmatched(),
         INDEXER_MANA,
         NET.db_name(),
-        chain_walk::mainnet_chain(NET)
+        NET.chain_id()
     )))
     .bind(sender)
     .bind(min_age_secs as f64)

@@ -169,8 +169,7 @@ pub enum Rule {
 
 impl Rule {
     pub fn holds(self, c: &Cursor, now: DateTime<Utc>) -> bool {
-        ChainNet::parse(&c.network)
-            .is_some_and(|net| self.holds_on(c, chain_walk::mainnet_chain(net), now))
+        ChainNet::parse(&c.network).is_some_and(|net| self.holds_on(c, net.chain_id(), now))
     }
 
     /// [`Rule::holds`] for a reader that serves `chain_id` on the cursor's
@@ -187,7 +186,7 @@ impl Rule {
 /// unpublish since, read from the chain the network names and out of
 /// quarantine (as [`chain_walk::is_ready_on`] requires of every index).
 pub fn complete(c: &Cursor) -> bool {
-    ChainNet::parse(&c.network).is_some_and(|net| complete_on(c, chain_walk::mainnet_chain(net)))
+    ChainNet::parse(&c.network).is_some_and(|net| complete_on(c, net.chain_id()))
 }
 
 /// [`complete`], read from `chain_id`.
@@ -202,7 +201,7 @@ pub fn complete_on(c: &Cursor, chain_id: i64) -> bool {
 
 /// [`complete`], published within [`READY_WINDOW`] at `now`.
 pub fn fresh(c: &Cursor, now: DateTime<Utc>) -> bool {
-    ChainNet::parse(&c.network).is_some_and(|net| fresh_on(c, chain_walk::mainnet_chain(net), now))
+    ChainNet::parse(&c.network).is_some_and(|net| fresh_on(c, net.chain_id(), now))
 }
 
 /// [`fresh`], read from `chain_id`.
@@ -279,7 +278,7 @@ pub async fn check(
     items: bool,
     now: DateTime<Utc>,
 ) -> Result<(), ReadError> {
-    check_on(conn, nets, chain_walk::mainnet_chain, rule, items, now).await
+    check_on(conn, nets, ChainNet::chain_id, rule, items, now).await
 }
 
 /// [`check`] for a reader that serves `chain(net)` on each network
@@ -782,7 +781,7 @@ pub(crate) mod test_support {
             )
             .bind(net.db_name())
             .bind(age.as_secs_f64())
-            .bind(chain_walk::mainnet_chain(*net))
+            .bind(net.chain_id())
             .execute(pool)
             .await
             .unwrap();
