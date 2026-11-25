@@ -48,7 +48,7 @@ async function publishThroughWizard({ page }: App, method: 'mana' | 'credits' = 
 }
 
 /** CreditsManager on Amoy: what a credits payment calls, with the publish as its external call. */
-const CREDITS_MANAGER = '0x8052a560e6e6ac86eeb7e711a4497f639b322fb3'
+const CREDITS_MANAGER = '0xb65fd692d15c30c3adcacdd5ccf80e1facecfc7c'
 const COLLECTION_MANAGER = '0x5309ae874fc4eb21adcd63f8b6c3f766cc3b1849'
 const CREATE_COLLECTION_SELECTOR = '0x35a629c2'
 

@@ -7,6 +7,7 @@ import {
   authorizePublication,
   cancelCreditsOrder,
   createCreditsCheckout,
+  creditsUrl,
   fetchCreditsBalance,
   pollCreditsOrder
 } from './credits'
@@ -30,7 +31,7 @@ describe('fetchCreditsBalance', () => {
     await expect(fetchCreditsBalance(ADDRESS)).resolves.toEqual({ credits: 560, balanceCents: 5600 })
     const [address, baseUrl, path] = mockedFetch.mock.calls[0]
     expect(address).toBe(ADDRESS)
-    expect(baseUrl).toBe('https://credits.decentraland.zone')
+    expect(baseUrl).toBe(`${window.location.origin}/credits`)
     expect(path).toBe(`/users/${ADDRESS}/credits`)
   })
 
@@ -49,7 +50,7 @@ describe('authorizePublication', () => {
   const params = {
     usdPriceCents: 3000,
     chainId: 80002,
-    creditsManagerAddress: '0x8052a560e6e6ac86eeb7e711a4497f639b322fb3',
+    creditsManagerAddress: '0xb65fd692d15c30c3adcacdd5ccf80e1facecfc7c',
     externalCall: { target: '0x1', selector: '0x12345678', data: '0x', expiresAt: 1, salt: '0x2' }
   }
   const authorization = {
@@ -149,4 +150,26 @@ describe('cancelCreditsOrder', () => {
     expect(mockedFetch.mock.calls[0][2]).toBe('/credits/orders/order-1/cancel')
     expect(mockedFetch.mock.calls[0][3]?.method).toBe('POST')
   })
+})
+
+describe('creditsUrl', () => {
+  afterEach(() => {
+    delete (window as Window & { __CATALYST_BASE__?: string }).__CATALYST_BASE__
+  })
+
+  describe('when the page names no node', () => {
+    it("should be the credits of the node behind the page's origin", () => {
+      expect(creditsUrl()).toBe(`${window.location.origin}/credits`)
+    })
+  })
+
+  describe.each(['https://node.example/', 'https://decentraland.zone', 'https://decentraland.org', 'https://dcl.dev'])(
+    'when the page names the node %s',
+    node => {
+      it("should be that node's credits, never a hosted credits service", () => {
+        ;(window as Window & { __CATALYST_BASE__?: string }).__CATALYST_BASE__ = node
+        expect(creditsUrl()).toBe(`${node.replace(/\/$/, '')}/credits`)
+      })
+    }
+  )
 })
