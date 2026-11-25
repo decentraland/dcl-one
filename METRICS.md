@@ -22,6 +22,24 @@ A larger fixture included 5.3 million collection mint events, 6,200 factory crea
 
 The timestamp and price indexes occupied 54 MiB and 114 MiB on the sales fixture. Daily sale counts supply the total for unfiltered pages. Filtered sales count up to the page window cap. Indexed wallet and item lookups narrow rows before enriching them with payment evidence. Accounts, rankings and volume have a 30-second cache keyed by checked publications.
 
+## Wallet activity transfers
+
+A synthetic PostgreSQL 17.6 fixture on a laptop held 5M Polygon and 1M Ethereum transfers in `shop.nft_event` among 400,000 wallets. 30% of the transfers settled a sale: 611,000 legacy orders, 306,000 accepted bids and 916,000 trades. The older half of each network's transfers had no transaction hash. Timings are for the leg's statement: both sides capped at 500, both networks read, the sale checks included.
+
+| Index | Size | Concurrent build | Build in the migration transaction |
+| --- | ---: | ---: | ---: |
+| `nft_event_transfer_from_idx` | 443 MB | 11.0 s | 9.7 s |
+| `nft_event_transfer_to_idx` | 443 MB | 12.1 s | not measured |
+| `trade_event_traded_tx_idx` | 92 MB | 2.6 s | 2.9 s |
+
+| Wallet | Rows returned | Cached | Cold |
+| --- | ---: | ---: | ---: |
+| 400 transfers | 274 | 14 ms | 143 ms |
+| 50,000 transfers, 90% of them sales | 1,000 | 132 to 543 ms | 4.4 s |
+| Three random wallets | 17 to 26 | 1.0 to 1.3 ms | 14 to 41 ms |
+
+For the 50,000-transfer wallet, each side walked about 4,900 index rows to find 500 transfers that were not sales. It ran about 4,000 to 4,900 probes of each sale source per side, from the token indexes and from the trade index's transaction or block arm.
+
 ## Marketplace sales day rollups
 
 On PostgreSQL 17.6, a temporary table held 200,000 executions on one network,

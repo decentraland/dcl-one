@@ -145,8 +145,9 @@ pub struct NftEvent {
     pub amount: Option<String>,
     pub expires_at: Option<i64>,
     pub detail: Option<String>,
-    /// The transaction of an `order_successful` (NULL on other kinds and on
-    /// rows indexed before 0040).
+    /// The log's transaction: NULL on an `order_successful` indexed before
+    /// 0040 and on another kind's row indexed before the walk recorded it,
+    /// until a replay of the log fills it ([`insert_events`]).
     pub tx_hash: Option<String>,
 }
 
@@ -204,7 +205,10 @@ pub fn decode_log(log: &RpcLog, block_time: i64) -> Result<Option<NftEvent>, Dec
         amount: None,
         expires_at: None,
         detail: None,
-        tx_hash: None,
+        tx_hash: log
+            .transaction_hash
+            .as_ref()
+            .map(|h| h.to_ascii_lowercase()),
     };
     let event = match topic0.as_str() {
         TOPIC_TRANSFER => {
@@ -287,10 +291,6 @@ pub fn decode_log(log: &RpcLog, block_time: i64) -> Result<Option<NftEvent>, Dec
                 to_address: buyer,
                 amount: Some(price.to_string()),
                 detail: Some(format!("{id:#x}")),
-                tx_hash: log
-                    .transaction_hash
-                    .as_ref()
-                    .map(|h| h.to_ascii_lowercase()),
                 ..base(KIND_ORDER_SUCCESSFUL, format!("{nft:#x}"), token)
             }
         }
@@ -1388,17 +1388,24 @@ pub(crate) mod tests {
     fn a_transfer_decodes_with_the_token_in_a_topic_or_in_the_data() {
         let c = "0x00000000000000000000000000000000000000c1";
         let a = "0x00000000000000000000000000000000000000a1";
-        let ev = decode_log(&transfer_log(c, ZERO_ADDRESS, a, U256::from(5u8), 10, 1), 7)
-            .unwrap()
-            .unwrap();
+        let mut minted = transfer_log(c, ZERO_ADDRESS, a, U256::from(5u8), 10, 1);
+        minted.transaction_hash = Some(format!("0x{}", "CD".repeat(32)));
+        let ev = decode_log(&minted, 7).unwrap().unwrap();
         assert_eq!(
             (
                 ev.kind,
                 ev.token_id.as_str(),
                 ev.to_address.as_deref(),
-                ev.from_address.as_deref()
+                ev.from_address.as_deref(),
+                ev.tx_hash
             ),
-            (KIND_TRANSFER, "5", Some(a), Some(ZERO_ADDRESS))
+            (
+                KIND_TRANSFER,
+                "5",
+                Some(a),
+                Some(ZERO_ADDRESS),
+                Some(format!("0x{}", "cd".repeat(32)))
+            )
         );
         let legacy = log(
             c,

@@ -48,7 +48,8 @@
 //! index (`owned_items.rs`). Local: `POST /v1/trades` (`listings.rs`, the old EIP-712
 //! policy, `ownerOf` on `TRADE_RPC_URLS`), lists and picks (`lists.rs`), the
 //! operator moderation (`admin.rs`, `MARKET_ADMIN_TOKEN`), a wallet's
-//! `/v1/activity` over the readers and the local trades (`activity.rs`),
+//! `/v1/activity` over the readers, the local trades and the nft index's
+//! transfers (`activity.rs`, `activity_transfers.rs`),
 //! the `/v1/nfts` rental legs over the local rentals listings (`rentals.rs`),
 //! the market federation's signed-action log and its feeds
 //! (`federation.rs`: `/v1/federation/*`, `/federation/market/*`).
@@ -58,6 +59,7 @@ pub use crate::chain_index::source::{Source, unavailable};
 
 pub mod accounts;
 pub mod activity;
+pub mod activity_transfers;
 pub mod admin;
 pub mod base_wearables;
 pub mod bid_notices;
