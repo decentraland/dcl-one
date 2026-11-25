@@ -24,7 +24,7 @@ use dcl_component::proto_components::{
     social_service::v2::PrivateMessagePrivacySetting,
 };
 pub use platform::{
-    default_color_grading, scatter_bloom, BLOOM_SCATTER, GRADING_MIDTONES_RANGE,
+    default_color_grading, scatter_bloom, scatter_lerp, BLOOM_SCATTER, GRADING_MIDTONES_RANGE,
     GRADING_SHADOWS_WEIGHT,
 };
 use serde::{Deserialize, Serialize};
@@ -1457,11 +1457,11 @@ pub enum FogSetting {
 }
 
 /// Bloom is on or off. A saved config may name one of the two levels there used to be: both
-/// read as on.
+/// read as on. On is saved as `High`, the old level it draws, so an older client reads it.
 #[derive(Serialize, Deserialize, Clone, Copy, PartialEq, Eq, Debug)]
 pub enum BloomSetting {
     Off,
-    #[serde(alias = "Low", alias = "High")]
+    #[serde(rename = "High", alias = "Low", alias = "On")]
     On,
 }
 
@@ -2793,22 +2793,26 @@ mod tests {
 
     #[test]
     fn bloom_weighs_mips_by_scatter() {
-        let b = scatter_bloom();
-        assert_eq!(b.prefilter.threshold, 1.0);
-        // the knee is threshold * 0.5; bevy: knee = threshold * softness
-        assert_eq!(b.prefilter.threshold_softness, 0.5);
-        assert_eq!(b.high_pass_frequency, 1.0);
-        // a scatter bloom folds lerp(fine, coarse, s) over the chain and adds the result once: mip i weighs
-        // (1 - s) s^i. bevy adds mip i with weight blend(0) * blend(1) * .. * blend(i).
-        let max_mip = 7.0;
-        let mut weight = 1.0;
-        for mip in 0..=7 {
-            weight *= bevy_bloom_blend(&b, mip as f32, max_mip);
-            let scatter = (1.0 - BLOOM_SCATTER) * BLOOM_SCATTER.powi(mip);
-            assert!(
-                (weight - scatter).abs() < 0.002,
-                "mip {mip}: bevy {weight} vs scatter {scatter}"
-            );
+        // the Explorer's scatter and the avatar preview's
+        for setting in [BLOOM_SCATTER, 0.6] {
+            let b = scatter_bloom(setting);
+            assert_eq!(b.prefilter.threshold, 1.0);
+            // the knee is threshold * 0.5; bevy: knee = threshold * softness
+            assert_eq!(b.prefilter.threshold_softness, 0.5);
+            assert_eq!(b.high_pass_frequency, 1.0);
+            // a scatter bloom folds lerp(fine, coarse, s) over the chain and adds the result once:
+            // mip i weighs (1 - s) s^i. bevy adds mip i with weight blend(0) * blend(1) * .. * blend(i).
+            let s = scatter_lerp(setting);
+            let max_mip = 7.0;
+            let mut weight = 1.0;
+            for mip in 0..=7 {
+                weight *= bevy_bloom_blend(&b, mip as f32, max_mip);
+                let scatter = (1.0 - s) * s.powi(mip);
+                assert!(
+                    (weight - scatter).abs() < 0.002,
+                    "scatter {setting}, mip {mip}: bevy {weight} vs scatter {scatter}"
+                );
+            }
         }
     }
 
@@ -3076,6 +3080,10 @@ mod tests {
         assert_eq!(read(r#""High""#), BloomSetting::On);
         assert_eq!(read(r#""On""#), BloomSetting::On);
         assert_eq!(read(r#""Off""#), BloomSetting::Off);
+        // saved under the old name an older client reads
+        let write = |setting| serde_json::to_string(&setting).unwrap();
+        assert_eq!(write(BloomSetting::On), r#""High""#);
+        assert_eq!(write(BloomSetting::Off), r#""Off""#);
     }
 
     #[test]

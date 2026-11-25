@@ -202,14 +202,8 @@ pub fn dress_camera(camera: &mut EntityCommands, flags: &StageFlags) {
     } else {
         // the Unity preview's bloom: threshold 1, so only what is brighter than white blooms
         // (emissive parts), intensity 1 and scatter 0.6. That is the Explorer's bloom with
-        // a wider scatter; `platform::scatter_bloom` derives the two weights, and
-        // `size_bloom_to_view` sets how far it reaches
-        let scatter = 0.05 + 0.9 * 0.6;
-        camera.insert(bevy::core_pipeline::bloom::Bloom {
-            intensity: 1.0 - scatter,
-            low_frequency_boost: scatter - (1.0 - scatter),
-            ..platform::scatter_bloom()
-        });
+        // a wider scatter; `size_bloom_to_view` sets how far it reaches
+        camera.insert(platform::scatter_bloom(0.6));
     }
     if flags.no_msaa {
         camera.insert(Msaa::Off);

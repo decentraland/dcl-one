@@ -1,6 +1,6 @@
 use super::SettingCategory;
 use bevy::{core_pipeline::bloom::Bloom, ecs::system::SystemParamItem, prelude::*};
-use common::structs::{scatter_bloom, AppConfig, BloomSetting, StageCamera};
+use common::structs::{scatter_bloom, AppConfig, BloomSetting, StageCamera, BLOOM_SCATTER};
 
 use super::{AppSetting, EnumAppSetting};
 
@@ -57,7 +57,7 @@ impl AppSetting for BloomSetting {
 
         let bloom = match self {
             BloomSetting::Off => None,
-            BloomSetting::On => Some(scatter_bloom()),
+            BloomSetting::On => Some(scatter_bloom(BLOOM_SCATTER)),
         };
         // read when the command applies, so the stage's marker counts whichever system ran first
         cmds.queue_silenced(move |mut camera: EntityWorldMut| {

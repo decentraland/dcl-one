@@ -46,24 +46,31 @@ pub fn default_color_grading() -> ColorGrading {
     }
 }
 
-/// The bloom's scatter setting, 0.5, as the lerp factor towards the coarser mip on each
-/// upsample: `lerp(0.05, 0.95, scatter)`.
-pub const BLOOM_SCATTER: f32 = 0.05 + 0.9 * 0.5;
+/// The Explorer's bloom scatter setting, the one the Bloom setting turns on.
+pub const BLOOM_SCATTER: f32 = 0.5;
 
-/// The bloom the Bloom setting turns on: threshold 1, intensity 1, scatter 0.5.
+/// A scatter setting as the lerp factor towards the coarser mip on each upsample:
+/// `lerp(0.05, 0.95, scatter)`.
+pub fn scatter_lerp(scatter: f32) -> f32 {
+    0.05 + 0.9 * scatter
+}
+
+/// A bloom with threshold 1, intensity 1 and the given scatter setting.
 ///
-/// A scatter bloom upsamples with `lerp(fine, coarse, SCATTER)` folded over the mip chain and
-/// adds the result once, so mip `i` weighs `(1 - s) s^i`. bevy's `Additive` mode adds each mip
-/// with its own blend constant (`compute_blend_factor`): `intensity` for mip 0 and
-/// `intensity + low_frequency_boost` for the rest (the boost curve is a near-step at mip 1 with
-/// curvature 0.99), and the weights multiply down the chain. So intensity is `1 - s` and the
-/// boost brings the other mips to `s`; bevy's intensity 1 would instead sum eight mips at
-/// weights above 1 and wash the frame out. The prefilter knee is `threshold * 0.5`.
-pub fn scatter_bloom() -> Bloom {
-    let intensity = 1.0 - BLOOM_SCATTER;
+/// A scatter bloom upsamples with `lerp(fine, coarse, s)` folded over the mip chain, where `s`
+/// is `scatter_lerp(scatter)`, and adds the result once, so mip `i` weighs `(1 - s) s^i`. bevy's
+/// `Additive` mode adds each mip with its own blend constant (`compute_blend_factor`):
+/// `intensity` for mip 0 and `intensity + low_frequency_boost` for the rest (the boost curve is
+/// a near-step at mip 1 with curvature 0.99), and the weights multiply down the chain. So
+/// intensity is `1 - s` and the boost brings the other mips to `s`; bevy's intensity 1 would
+/// instead sum eight mips at weights above 1 and wash the frame out. The prefilter knee is
+/// `threshold * 0.5`.
+pub fn scatter_bloom(scatter: f32) -> Bloom {
+    let s = scatter_lerp(scatter);
+    let intensity = 1.0 - s;
     Bloom {
         intensity,
-        low_frequency_boost: BLOOM_SCATTER - intensity,
+        low_frequency_boost: s - intensity,
         low_frequency_boost_curvature: 0.99,
         high_pass_frequency: 1.0,
         prefilter: BloomPrefilter {
