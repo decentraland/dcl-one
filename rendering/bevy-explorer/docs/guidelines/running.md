@@ -294,10 +294,11 @@ State, in every build:
   `dropped` by cause: `blocked`, `duplicate`, `unknownEmoji`, `rateLimited` and `queueFull`. The
   counts are of the session.
   `/reaction_send <emoji>` reacts as the local user, the way the system API's `sendReaction` does:
-  an emoji the wire has no index for does nothing. `/reaction_simulate <local|nearest|address>
-  <emoji> [count]` takes a message as if that player had sent it, through the checks a peer's
-  message passes, and sends nothing to anyone; it replies with the `target` taken and the emoji's
-  wire `index`.
+  the reaction is sent to the players nearby and reported to analytics as a pick is, and an emoji
+  the wire has no index for does nothing. The debug panel's "React with a heart" runs it.
+  `/reaction_simulate <local|nearest|address> <emoji> [count]` takes a message as if that player
+  had sent it, through the checks a peer's message passes, and sends nothing to anyone; it
+  replies with the `target` taken and the emoji's wire `index`.
 - `/nearby_mutes`: the wallets whose nearby voice the account muted (`muted`, the first 32 of
   `count`), the `account` and where its saved list stands (`load`: `idle` signed out, `loading`,
   `loaded`, `failed`). `/nearby_mute on|off <address>` mutes or unmutes one, as the profile
