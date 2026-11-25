@@ -5,7 +5,7 @@ import { act, cleanup, fireEvent, render, screen } from "@testing-library/react"
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 
 import type { CatalogItem } from "@shop/discovery/lib/catalogItem";
-import { invalidateShopQueries } from "../../discovery/query";
+import { invalidateShopQueries, primeShopQuery } from "../../discovery/query";
 import { primeRemoteFlags } from "../../discovery/lib/remoteFlags";
 import ItemPreview from "./ItemPreview";
 
@@ -225,6 +225,26 @@ describe("talking to the iframe", () => {
 
     expect(frame()).not.toBeNull();
     expect(frame()).not.toBe(first);
+    expect(thumb()).not.toBeNull();
+    expect(screen.queryByTestId("preview-toggle")).toBeNull();
+    fromPreview({ type: "load", payload: { renderer: "babylon" } });
+    expect(thumb()).toBeNull();
+  });
+
+  test("with the profile already read, signing in and out before the account's frame draws covers the new guest frame", () => {
+    flag(false);
+    primeShopQuery(["wearer-profile", ACCOUNT], { avatar: { bodyShape: MALE, wearables: [] } });
+    const view = render(<ItemPreview item={item()} renderer="full" />);
+    fromPreview({ type: "load", payload: { renderer: "babylon" } });
+    expect(thumb()).toBeNull();
+
+    env.account = ACCOUNT;
+    view.rerender(<ItemPreview item={item()} renderer="full" />);
+    expect(params().get("profile")).toBe(ACCOUNT);
+    env.account = null;
+    view.rerender(<ItemPreview item={item()} renderer="full" />);
+
+    expect(params().get("profile")).toBe("default");
     expect(thumb()).not.toBeNull();
     expect(screen.queryByTestId("preview-toggle")).toBeNull();
     fromPreview({ type: "load", payload: { renderer: "babylon" } });

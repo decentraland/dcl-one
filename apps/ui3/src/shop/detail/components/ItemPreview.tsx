@@ -229,10 +229,10 @@ function WebItemPreview({ item, avatarShape = null, renderer }: ItemPreviewProps
     setUnityFailed(false);
     setFailedFrame(null);
   }, [urn]);
-  // What a retired frame drew is not the next one's, even when the next one comes back under the same key.
+  // What a retired or replaced frame drew is not the next one's, even when the next one comes back under the same key.
   useEffect(() => {
-    if (!mounted) setDrawn(null);
-  }, [mounted]);
+    setDrawn(null);
+  }, [mounted, frame]);
 
   const options: PreviewFrameOptions = {
     urns: urn ? [urn] : [],
