@@ -591,11 +591,12 @@ function CodeInputExample() {
   )
 }
 
+/** The ring of a focused or invalid field sits 6px outside it, so the example leaves that room. */
 function SubmitFieldExample() {
   const [email, setEmail] = useState('ada@example.com')
   const noop = () => {}
   return (
-    <div className={layout.narrow}>
+    <div className={layout.narrow} style={{ boxSizing: 'border-box', padding: 10 }}>
       <div className={layout.stack}>
         <SubmitField
           aria-label="Email"

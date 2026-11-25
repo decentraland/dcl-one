@@ -46,11 +46,11 @@
   }
 
   .root[data-state='success'] .slot {
-    background: #e9ffd3; /* = HUD --signin-code-success */
+    background: #e9ffd3;
   }
 
   .root[data-state='error'] .slot {
-    background: #ffd3df; /* = HUD --signin-code-error */
+    background: #ffd3df;
   }
 
   .root[data-state='error'] {

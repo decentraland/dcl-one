@@ -3237,10 +3237,6 @@
           "kind": "regular"
         },
         {
-          "name": "SubmitField.tsx",
-          "kind": "regular"
-        },
-        {
           "name": "SwapLabel.module.css",
           "kind": "regular"
         },
@@ -12368,11 +12364,11 @@
     },
     {
       "path": "library/ui/apps/hud/design/Showcase.tsx",
-      "sha256": "18296188e364d4971e4ce7df4f29784fe2b00b9623b2accfe64de38ff1464e96"
+      "sha256": "1f7e5782246963592bd13ae182e8af2a31523b025d61d474504857f4b83ad1c8"
     },
     {
       "path": "library/ui/apps/hud/design/ShowcaseIndex.ts",
-      "sha256": "51a5f1bbdfe36e6df4beeecdbb7c96cb2862be57e089940c52be26898101eac5"
+      "sha256": "3cbbd472079da9d2f05bab37bf4d43982d4af930cedb05a556c23fff438d56c7"
     },
     {
       "path": "library/ui/apps/hud/design/Slider.module.css",
@@ -12389,10 +12385,6 @@
     {
       "path": "library/ui/apps/hud/design/Submenu.tsx",
       "sha256": "8d0acddb022a8e9e980e4f232730bdbfe2f69ecf0c6067c92f0a56305913f384"
-    },
-    {
-      "path": "library/ui/apps/hud/design/SubmitField.tsx",
-      "sha256": "9c6b7d9aefda42cef5eb96cc02aefa16683eecc68127ee2a6dab08a450962a6a"
     },
     {
       "path": "library/ui/apps/hud/design/SwapLabel.module.css",
@@ -12448,7 +12440,7 @@
     },
     {
       "path": "library/ui/apps/hud/design/index.ts",
-      "sha256": "a9fc281e00049f6503604bb69277307e2e6bb41e3efa81639141a99dcf017c4f"
+      "sha256": "7dd3ea5e8a9691b1ed2f8c5d633d1fc5e79408a215d584959b18ae5f017739c6"
     },
     {
       "path": "library/ui/apps/hud/design/popups.module.css",
@@ -13576,7 +13568,7 @@
     },
     {
       "path": "library/ui/apps/hud/features/startup/LoginSelection.tsx",
-      "sha256": "0a544cce8711f702fdebba13188afa15aff0caf24b07eb4da9c153cccb56d3c6"
+      "sha256": "3bf81121477c625992c4005430b3616c9d5994bc3b7a4f5b46442037d1a66576"
     },
     {
       "path": "library/ui/apps/hud/features/startup/NewAccountLook.module.css",
@@ -13736,7 +13728,7 @@
     },
     {
       "path": "library/ui/apps/hud/styles/tokens.css",
-      "sha256": "67eedff4ab08fbf974e045f11e0b747eb074732a89afbdec6104ac6b6b61125b"
+      "sha256": "63c4f5647e8ffd4b9d41568754a736c0efc8756cd6d6af869b42dd675d1af303"
     },
     {
       "path": "library/ui/apps/hud/test/armedButton.test.tsx",
@@ -16152,7 +16144,7 @@
     },
     {
       "path": "library/ui/components/CharCounter/CharCounter.tsx",
-      "sha256": "6c28917e55c75182ce1fda4cc4decd4fd3ce263e34d9a8d9c64320f4ae6388b0"
+      "sha256": "4c5b0860bd281f18d4d488542a7ee30fe858d1f70fc0fde1791a83e2e7432e4d"
     },
     {
       "path": "library/ui/components/Checkbox/Checkbox.module.css",
@@ -16188,7 +16180,7 @@
     },
     {
       "path": "library/ui/components/CodeInput/CodeInput.module.css",
-      "sha256": "5c3a46985289d48c58335787e6150f73c0d4566c3a10c3dde3d6092467c65c86"
+      "sha256": "528e474aa381b1b22e61a5429f5fed2c6772af54a7f050087340f3e67f7a9191"
     },
     {
       "path": "library/ui/components/CodeInput/CodeInput.tsx",
@@ -16440,11 +16432,11 @@
     },
     {
       "path": "library/ui/components/SubmitField/SubmitField.module.css",
-      "sha256": "2e7e0400277370c433ee1004f233911bc789c3ca0e3d66f100e4c1e2a2ef81ba"
+      "sha256": "109e77652f693a3209f40d12abeaffa5ee270793ac446d2970bacba16abe6d1f"
     },
     {
       "path": "library/ui/components/SubmitField/SubmitField.tsx",
-      "sha256": "e2f385eb52a18e91fa4077b60a90b877c5373e54c502d1f2aa5514a5daa98666"
+      "sha256": "8ab4721d609f5149c1699b74aa65d55897193ab1f00ed14dce4aea43b5428ecb"
     },
     {
       "path": "library/ui/components/Switch/Switch.module.css",
@@ -21728,36 +21720,6 @@
       "kind": "test:runtime"
     },
     {
-      "from": "library/ui/apps/hud/design/SubmitField.tsx",
-      "to": "library/ui/apps/hud/design/MaskIcon.tsx",
-      "kind": "native:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/design/SubmitField.tsx",
-      "to": "library/ui/apps/hud/design/MaskIcon.tsx",
-      "kind": "production:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/design/SubmitField.tsx",
-      "to": "library/ui/apps/hud/design/MaskIcon.tsx",
-      "kind": "test:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/design/SubmitField.tsx",
-      "to": "library/ui/index.ts",
-      "kind": "native:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/design/SubmitField.tsx",
-      "to": "library/ui/index.ts",
-      "kind": "production:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/design/SubmitField.tsx",
-      "to": "library/ui/index.ts",
-      "kind": "test:runtime"
-    },
-    {
       "from": "library/ui/apps/hud/design/SwapLabel.tsx",
       "to": "library/ui/apps/hud/design/SwapLabel.module.css",
       "kind": "native:runtime"
@@ -22730,21 +22692,6 @@
     {
       "from": "library/ui/apps/hud/design/index.ts",
       "to": "library/ui/apps/hud/design/Submenu.tsx",
-      "kind": "test:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/design/index.ts",
-      "to": "library/ui/apps/hud/design/SubmitField.tsx",
-      "kind": "native:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/design/index.ts",
-      "to": "library/ui/apps/hud/design/SubmitField.tsx",
-      "kind": "production:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/design/index.ts",
-      "to": "library/ui/apps/hud/design/SubmitField.tsx",
       "kind": "test:runtime"
     },
     {
@@ -66170,11 +66117,6 @@
     {
       "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
       "to": "library/ui/apps/hud/design/Submenu.tsx",
-      "kind": "type"
-    },
-    {
-      "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
-      "to": "library/ui/apps/hud/design/SubmitField.tsx",
       "kind": "type"
     },
     {

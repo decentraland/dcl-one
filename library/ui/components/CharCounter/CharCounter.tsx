@@ -3,6 +3,7 @@ import styles from './CharCounter.module.css'
 
 export type CharCounterProps = Omit<HTMLAttributes<HTMLDivElement>, 'children'> & {
   current?: number
+  /** Without it the readout is the count alone, in every format. */
   max?: number
   /** `slash` is "3/10", `spaced` "3 / 10" and `words` "(3 out of 10 characters)". */
   format?: 'slash' | 'spaced' | 'words'
@@ -20,11 +21,13 @@ export function CharCounter({
   ...rest
 }: CharCounterProps) {
   const text =
-    format === 'spaced'
-      ? `${current} / ${max}`
-      : format === 'words'
-        ? `(${current} out of ${max} characters)`
-        : `${current}/${max}`
+    max == null
+      ? `${current}`
+      : format === 'spaced'
+        ? `${current} / ${max}`
+        : format === 'words'
+          ? `(${current} out of ${max} characters)`
+          : `${current}/${max}`
   const isOver = over && max != null && current > max
   return (
     <div
