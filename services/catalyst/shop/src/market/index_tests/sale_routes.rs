@@ -56,6 +56,16 @@ async fn sales_page_reads_one_published_network_and_refuses_a_withdrawn_warm_pag
         .await
         .unwrap()
         .unwrap();
+    let mut testnet = state_over(
+        db.pool.clone(),
+        &url,
+        state.settings.market.indexes.clone(),
+        false,
+    );
+    Arc::get_mut(&mut testnet).unwrap().settings.eth_network = "sepolia".into();
+    let (code, disabled) = get_json(&market_router(testnet), "/v1/sales?network=ETHEREUM").await;
+    assert_eq!(code, StatusCode::SERVICE_UNAVAILABLE, "{disabled}");
+    assert_eq!(disabled["message"], "the mainnet sales index is disabled");
     let timeout: String = sqlx::query_scalar("SHOW statement_timeout")
         .fetch_one(&mut *snapshot.transaction)
         .await
@@ -252,6 +262,20 @@ async fn sales_page_reads_one_published_network_and_refuses_a_withdrawn_warm_pag
     assert_eq!(code, StatusCode::SERVICE_UNAVAILABLE, "{busy}");
     assert_eq!(busy["message"], "sales analytics is busy");
     drop(slots);
+    sqlx::query("UPDATE shop.sale_publication SET published_at=NULL WHERE network='matic'")
+        .execute(&db.pool)
+        .await
+        .unwrap();
+    sale_fold::pass(&db.pool, &polygon_rpc, ChainNet::Matic)
+        .await
+        .unwrap();
+    let restored = sqlx::query_scalar::<_, uuid::Uuid>(
+        "SELECT generation FROM shop.sale_publication WHERE network='matic' AND published_at IS NOT NULL",
+    )
+    .fetch_one(&db.pool)
+    .await
+    .unwrap();
+    assert_ne!(restored, updated);
     // Both item categories share an address and have equal sales. Their public
     // rankings split by item type and honor the rarity and UTC-day filters.
     seed_item(
@@ -733,7 +757,23 @@ async fn deep_sales_pages_keep_equal_timestamps_in_id_order_across_networks() {
         get_json(&router, "/v1/sales?tokenId=1e2").await.0,
         StatusCode::BAD_REQUEST
     );
-    let slots = state.sales_seller_slots.try_acquire_many(2).unwrap();
+    // Two dashboards with two windows each can acquire permits together.
+    // Holding all four demonstrates what the endpoints do after the queue timeout.
+    let (one, two, three, four) = tokio::try_join!(
+        crate::market::sale_reads::seller_slot(&state),
+        crate::market::sale_reads::seller_slot(&state),
+        crate::market::sale_reads::seller_slot(&state),
+        crate::market::sale_reads::seller_slot(&state),
+    )
+    .unwrap();
+    let waiting = crate::market::sale_reads::seller_slot(&state);
+    tokio::pin!(waiting);
+    tokio::select! {
+        _ = &mut waiting => panic!("the request should wait for a seller permit"),
+        _ = tokio::time::sleep(std::time::Duration::from_millis(20)) => {}
+    }
+    drop(one);
+    let one = waiting.await.unwrap();
     for path in [
         format!("/v1/sales/summary?seller={BOB}"),
         format!("/v1/proceeds?seller={BOB}"),
@@ -742,11 +782,11 @@ async fn deep_sales_pages_keep_equal_timestamps_in_id_order_across_networks() {
     ] {
         let (code, busy) = get_json(&router, &path).await;
         assert_eq!(code, StatusCode::SERVICE_UNAVAILABLE, "{path} {busy}");
-        assert_eq!(busy["message"], "sales analytics is busy");
+        assert_eq!(busy["message"], "seller sales queries are busy");
     }
     let (bought, sold) = crate::market::sale_reads::activity_sales(&state, BOB, 100).await;
     assert!(bought.is_empty() && sold.is_empty());
-    drop(slots);
+    drop((one, two, three, four));
     // Aggregates cover every published sale, including a seller beyond the
     // list's 25,000-row paging window on a single network.
     sqlx::query(

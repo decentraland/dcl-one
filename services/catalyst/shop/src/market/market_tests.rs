@@ -3745,6 +3745,16 @@ async fn account_inventory_pages_indexed_participants_and_excludes_sender_only_w
     let (status, busy) = get(app.clone(), "/v1/accounts?first=10&skip=995").await;
     assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE, "{busy}");
     assert_eq!(busy["message"], "sales analytics is busy");
+    let too_many = (0..51)
+        .map(|i| format!("address=0x{i:040x}"))
+        .collect::<Vec<_>>()
+        .join("&");
+    assert_eq!(
+        get(app.clone(), &format!("/v1/accounts?{too_many}"))
+            .await
+            .0,
+        StatusCode::BAD_REQUEST
+    );
     drop(analytics_slots);
     drop(accounts_slot);
     let earned: Vec<_> = before["data"]

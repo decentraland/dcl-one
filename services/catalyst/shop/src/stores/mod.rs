@@ -238,7 +238,7 @@ pub async fn store_stats(
     filters: &SalesSummaryFilters,
 ) -> Result<StoreStats, Response> {
     let seller = filters.seller.to_lowercase();
-    let _slot = crate::market::sale_reads::seller_slot(state)?;
+    let _slot = crate::market::sale_reads::seller_slot(state).await?;
     let (mut snapshot, nets) = crate::market::sale_reads::snapshot(state, None).await?;
     let crate::market::sale_reads::SellerStats { summary, window } =
         crate::market::sale_reads::seller_stats(&mut snapshot, nets, filters).await?;

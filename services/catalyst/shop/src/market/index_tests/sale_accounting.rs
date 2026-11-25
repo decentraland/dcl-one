@@ -1243,6 +1243,12 @@ async fn sales_delayed_receipt_corrects_checkout_buyer_and_first_purchase_day() 
     };
     sale_fold::pass(&db.pool, &rpc, net).await.unwrap();
     assert_eq!(firsts().await.unwrap(), [(CHECKOUT.into(), 86400)]);
+    let generation = sqlx::query_scalar::<_, uuid::Uuid>(
+        "SELECT generation FROM shop.sale_publication WHERE network='matic'",
+    )
+    .fetch_one(&db.pool)
+    .await
+    .unwrap();
     let barter_fact: (bool, String, i64) = sqlx::query_as(
         "SELECT e.receipt_read,a.token_id::text,
         (SELECT count(*) FROM shop.sale_payment WHERE block_number=$1)
@@ -1330,6 +1336,13 @@ async fn sales_delayed_receipt_corrects_checkout_buyer_and_first_purchase_day() 
         JOIN shop.sale_payment p USING(network,block_number,log_index,ordinal) WHERE block_number=$1")
         .bind(b as i64).fetch_one(&db.pool).await.unwrap();
     assert_eq!(paid, (true, "500".into(), "123".into(), CHECKOUT.into()));
+    let corrected = sqlx::query_scalar::<_, uuid::Uuid>(
+        "SELECT generation FROM shop.sale_publication WHERE network='matic'",
+    )
+    .fetch_one(&db.pool)
+    .await
+    .unwrap();
+    assert_ne!(corrected, generation);
     db.drop().await;
 }
 

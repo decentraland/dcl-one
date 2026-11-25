@@ -114,6 +114,7 @@ pub async fn proceeds_summary(
 }
 
 /// `GET /v1/proceeds?seller=&first=&skip=&from=&to=&network=`.
+/// The response total is capped at 5,000 or 25,000 according to the page window.
 pub async fn get_proceeds(
     State(state): State<SharedState>,
     Query(pairs): Query<Vec<(String, String)>>,

@@ -96,10 +96,27 @@ pub(crate) fn ensure_fresh(expires_at: DateTime<Utc>) -> Result<(), Response> {
     Ok(())
 }
 
-pub(crate) fn seller_slot(
+pub(crate) async fn seller_slot(
     state: &MarketplaceState,
 ) -> Result<tokio::sync::SemaphorePermit<'_>, Response> {
-    read_slot(&state.sales_seller_slots)
+    // The 7-day and 30-day dashboards each ask for two windows. Wait
+    // briefly for a slot before opening a database connection.
+    let slot = tokio::time::timeout(
+        std::time::Duration::from_millis(250),
+        state.sales_seller_slots.acquire(),
+    )
+    .await;
+    match slot {
+        Ok(Ok(permit)) => Ok(permit),
+        _ => Err(unavailable(
+            Source::SalesIndex,
+            "seller sales queries are busy",
+        )),
+    }
+}
+
+fn enabled(state: &MarketplaceState) -> bool {
+    state.settings.market.indexes.sales_enabled && state.settings.eth_network.trim() == "mainnet"
 }
 
 pub(crate) async fn snapshot(
@@ -111,9 +128,7 @@ pub(crate) async fn snapshot(
         Some(Network::Matic) => &[ChainNet::Matic],
         None => &ChainNet::ALL,
     };
-    if !state.settings.market.indexes.sales_enabled
-        || state.settings.eth_network.trim() != "mainnet"
-    {
+    if !enabled(state) {
         return Err(unavailable(
             Source::SalesIndex,
             "the mainnet sales index is disabled",
@@ -351,11 +366,19 @@ pub(super) async fn activity_sales(
     address: &str,
     limit: i64,
 ) -> (Vec<Sale>, Vec<Sale>) {
-    let Ok(_slot) = seller_slot(state) else {
+    if !enabled(state) {
+        return (Vec::new(), Vec::new());
+    }
+    let Ok(_slot) = seller_slot(state).await else {
+        tracing::warn!("activity omitted sales while seller sales queries were busy");
         return (Vec::new(), Vec::new());
     };
-    let Ok((mut snap, nets)) = snapshot(state, None).await else {
-        return (Vec::new(), Vec::new());
+    let (mut snap, nets) = match snapshot(state, None).await {
+        Ok(snapshot) => snapshot,
+        Err(response) => {
+            tracing::debug!(status=%response.status(), "activity omitted sales without a usable publication");
+            return (Vec::new(), Vec::new());
+        }
     };
     let bought = SaleFilters {
         buyer: Some(address.to_owned()),
@@ -365,14 +388,20 @@ pub(super) async fn activity_sales(
         seller: Some(address.to_owned()),
         ..Default::default()
     };
-    let buyers = sale_page(&mut snap, nets, &bought, limit, 0, true)
-        .await
-        .unwrap_or_default()
-        .0;
-    let sellers = sale_page(&mut snap, nets, &sold, limit, 0, true)
-        .await
-        .unwrap_or_default()
-        .0;
+    let mut legs = [Vec::new(), Vec::new()];
+    for (sales, filters) in legs.iter_mut().zip([bought, sold]) {
+        match sale_page(&mut snap, nets, &filters, limit, 0, true).await {
+            Ok((rows, _)) => *sales = rows,
+            Err(response) => {
+                tracing::warn!(
+                    status=%response.status(),
+                    buyer=filters.buyer.is_some(),
+                    "activity omitted a failed sales read"
+                );
+            }
+        }
+    }
+    let [buyers, sellers] = legs;
     (buyers, sellers)
 }
 

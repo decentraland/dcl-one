@@ -735,7 +735,7 @@ impl MarketplaceState {
             readers: readers::Caches::default(),
             sales_analytics_slots: tokio::sync::Semaphore::new(2),
             sales_accounts_slots: tokio::sync::Semaphore::new(1),
-            sales_seller_slots: tokio::sync::Semaphore::new(2),
+            sales_seller_slots: tokio::sync::Semaphore::new(4),
             sales_pages_slots: tokio::sync::Semaphore::new(4),
             mirror_ready: TtlMap::bounded(mirrors::READY_TTL, 8),
             trades_ready: TtlMap::bounded(mirrors::READY_TTL, 1),

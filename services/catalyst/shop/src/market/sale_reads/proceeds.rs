@@ -15,7 +15,7 @@ pub(crate) async fn proceeds_page(
     f: &ProceedsFilters,
 ) -> Result<(Vec<ProceedsRow>, i64), Response> {
     let (first, skip) = readers::deep_page(f.first, f.skip, 24)?;
-    let _slot = seller_slot(state)?;
+    let _slot = seller_slot(state).await?;
     let (mut snap, nets) = snapshot(state, f.network).await?;
     let (total, incomplete, rows): (i64, bool, Value) = sales_query!(
         nets, wallet "$7";
@@ -89,7 +89,7 @@ pub(crate) async fn proceeds_summary(
     state: &MarketplaceState,
     f: &ProceedsFilters,
 ) -> Result<ProceedsSummary, Response> {
-    let _slot = seller_slot(state)?;
+    let _slot = seller_slot(state).await?;
     let (mut snap, nets) = snapshot(state, f.network).await?;
     require_metadata(&mut snap, nets, "items", Source::ItemsMirror).await?;
     let r: Totals = sales_query!(

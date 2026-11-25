@@ -256,7 +256,7 @@ pub async fn sales_summary(
     state: &MarketplaceState,
     f: &SalesSummaryFilters,
 ) -> Result<SalesSummary, Response> {
-    let _slot = super::sale_reads::seller_slot(state)?;
+    let _slot = super::sale_reads::seller_slot(state).await?;
     let (mut snapshot, nets) = super::sale_reads::snapshot(state, None).await?;
     Ok(super::sale_reads::seller_stats(&mut snapshot, nets, f)
         .await?
