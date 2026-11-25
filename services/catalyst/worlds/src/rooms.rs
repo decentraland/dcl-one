@@ -162,6 +162,18 @@ pub async fn world_active_scene(
     row.map(|r| world_row(world, &r)).transpose()
 }
 
+/// How many scenes the world has, up to two: the rows `world_active_scene`
+/// chooses from.
+pub async fn world_scene_count(pool: &PgPool, world: &WorldName) -> Result<usize, ResolveError> {
+    let count: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM (SELECT 1 FROM worlds.world_scenes WHERE world_name = $1 LIMIT 2) s",
+    )
+    .bind(world.key())
+    .fetch_one(pool)
+    .await?;
+    Ok(count as usize)
+}
+
 /// A named scene of a world, when deployed there or retired within
 /// `SCENE_EVICTION_TTL_MS` (WCS resolves recently undeployed scenes' comms);
 /// a retired scene has no identity, so no storage scope.
@@ -591,6 +603,10 @@ impl crate::comms::interfaces::SceneIdentity for SceneResolver {
     ) -> Result<Option<ActiveDeployment>, ResolveError> {
         world_active_scene(&self.pool, world).await
     }
+
+    async fn world_scene_count(&self, world: &WorldName) -> Result<usize, ResolveError> {
+        world_scene_count(&self.pool, world).await
+    }
 }
 
 #[cfg(test)]
@@ -600,6 +616,22 @@ mod tests {
 
     fn scene(id: &str) -> SceneId {
         SceneId::parse(id).unwrap()
+    }
+
+    /// The count a Cast watcher reads: the world's scenes, up to two.
+    #[tokio::test]
+    async fn a_world_counts_its_scenes_up_to_two() {
+        let Some(pool) = crate::db::scratch::pool(4).await else {
+            return;
+        };
+        let world = unique_world();
+        assert_eq!(world_scene_count(&pool, &world).await.unwrap(), 0);
+        seed_world_scene(&pool, &world, "CountA", &["0,0"], None, false, 0).await;
+        assert_eq!(world_scene_count(&pool, &world).await.unwrap(), 1);
+        seed_world_scene(&pool, &world, "CountB", &["5,5"], None, false, 1).await;
+        seed_world_scene(&pool, &world, "CountC", &["9,9"], None, false, 2).await;
+        assert_eq!(world_scene_count(&pool, &world).await.unwrap(), 2);
+        assert_eq!(world_scene_count(&pool, &unique_world()).await.unwrap(), 0);
     }
 
     #[tokio::test]
