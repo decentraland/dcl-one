@@ -1,8 +1,8 @@
-import { Scene } from '@dcl/schemas'
+import type { Scene } from '@dcl/schemas'
 import path from 'path'
 import i18next from 'i18next'
 
-import { CliComponents } from '../components'
+import type { CliComponents } from '../components'
 import { colors } from '../components/log'
 import { printProgressInfo } from './beautiful-logs'
 import { CliError } from './error'

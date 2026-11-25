@@ -1,4 +1,5 @@
-import { Engine, Entity, components, InputAction } from '../../../packages/@dcl/ecs/src'
+import type { Entity } from '../../../packages/@dcl/ecs/src'
+import { Engine, components, InputAction } from '../../../packages/@dcl/ecs/src'
 import { testComponentSerialization } from './assertion'
 
 const ROOT_ENTITY = 0 as Entity

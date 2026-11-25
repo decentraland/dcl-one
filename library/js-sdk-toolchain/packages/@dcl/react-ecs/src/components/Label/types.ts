@@ -1,5 +1,5 @@
-import { Color4 } from '@dcl/ecs/dist/components/generated/pb/decentraland/common/colors.gen'
-import { ScaleUnit } from '../types'
+import type { Color4 } from '@dcl/ecs/dist/components/generated/pb/decentraland/common/colors.gen'
+import type { ScaleUnit } from '../types'
 
 /**
  * Label component props

@@ -1,10 +1,8 @@
-import { Engine, Entity, IEngine, components, PointerEventType, InputAction } from '../../../packages/@dcl/ecs/src'
+import type { Entity, IEngine } from '../../../packages/@dcl/ecs/src'
+import { Engine, components, PointerEventType, InputAction } from '../../../packages/@dcl/ecs/src'
 import { createInputSystem } from '../../../packages/@dcl/ecs/src/engine/input'
-import {
-  createPointerEventsSystem,
-  getDefaultOpts,
-  PointerEventsSystem
-} from '../../../packages/@dcl/ecs/src/systems/events'
+import type { PointerEventsSystem } from '../../../packages/@dcl/ecs/src/systems/events'
+import { createPointerEventsSystem, getDefaultOpts } from '../../../packages/@dcl/ecs/src/systems/events'
 import { createTestPointerDownCommand } from './utils'
 
 let engine: IEngine

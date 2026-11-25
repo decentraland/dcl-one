@@ -1,5 +1,5 @@
-import { Entity } from '@dcl/schemas'
-import { CliComponents } from '../components'
+import type { Entity } from '@dcl/schemas'
+import type { CliComponents } from '../components'
 import { getCatalystBaseUrl } from './config'
 import { drainResponse } from './fetch'
 

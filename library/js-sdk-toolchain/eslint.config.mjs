@@ -25,6 +25,10 @@ export default [
     rules: {
       'no-param-reassign': 'warn',
       'no-console': 'error',
+      '@typescript-eslint/consistent-type-imports': [
+        'error',
+        { prefer: 'type-imports', fixStyle: 'separate-type-imports', disallowTypeAnnotations: false }
+      ],
       '@typescript-eslint/no-unused-vars': [
         'warn',
         {

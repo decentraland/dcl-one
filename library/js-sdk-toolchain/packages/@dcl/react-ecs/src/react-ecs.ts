@@ -1,7 +1,7 @@
 /* eslint-disable @typescript-eslint/no-empty-interface */
-import { PBUiBackground, PBUiText, PBUiTransform, PBUiInput, PBUiDropdown, PBUiInputBinding } from '@dcl/ecs'
+import type { PBUiBackground, PBUiText, PBUiTransform, PBUiInput, PBUiDropdown, PBUiInputBinding } from '@dcl/ecs'
 import React from 'react'
-import { Callback, Key } from './components'
+import type { Callback, Key } from './components'
 
 /**
  * @public

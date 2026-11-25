@@ -1,5 +1,6 @@
-import { BackgroundTextureMode, PBUiBackground, TextureFilterMode, TextureWrapMode } from '@dcl/ecs'
-import { UiBackgroundProps, TextureWrapType, TextureFilterType, TextureMode } from './types'
+import type { PBUiBackground } from '@dcl/ecs'
+import { BackgroundTextureMode, TextureFilterMode, TextureWrapMode } from '@dcl/ecs'
+import type { UiBackgroundProps, TextureWrapType, TextureFilterType, TextureMode } from './types'
 
 const parseTextureMode: Readonly<Record<TextureMode, BackgroundTextureMode>> = {
   'nine-slices': BackgroundTextureMode.NINE_SLICES,

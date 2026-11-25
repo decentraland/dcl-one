@@ -1,9 +1,9 @@
-import { PBUiInput } from '@dcl/ecs'
+import type { PBUiInput } from '@dcl/ecs'
 
 import { parseProps } from '../utils'
 import { ReactEcs } from '../../react-ecs'
-import { EntityPropTypes } from '../types'
-import { UiInputProps } from './types'
+import type { EntityPropTypes } from '../types'
+import type { UiInputProps } from './types'
 import { getTextAlign, getFont, getFontSize } from '../Label/utils'
 
 function parseUiInput(props: Partial<UiInputProps>): PBUiInput {

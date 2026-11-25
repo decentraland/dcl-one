@@ -761,6 +761,7 @@ fn mirror_follows_decentraland_and_derives_the_trade_rpcs() {
     assert!(c.content.sync_source.contains("peer.decentraland.org"));
     assert!(c.explore.explorer_mirrors_enabled && c.social.communities_mirror_upstream);
     assert!(c.marketplace.marketplace_nft_index_enabled && c.land_authz.land_authz_index_enabled);
+    assert!(c.marketplace.marketplace_collections_index_enabled);
     assert!(c.shop.credits_usage_index_enabled);
     assert_eq!(c.shop.shop_rentals_index_enabled, Some(true));
     assert_eq!(
@@ -1071,7 +1072,7 @@ fn island_and_journey_refuse_every_follower_switch() {
         .map(|r| r.key)
         .collect();
     followers.push("MARKETPLACE_MANA_TRANSFERS_INDEX_ENABLED");
-    followers.push("MARKETPLACE_COLLECTIONS_INDEX_ENABLED");
+    assert!(followers.contains(&"MARKETPLACE_COLLECTIONS_INDEX_ENABLED"));
     assert!(followers.contains(&"PRICE_POLL_ENABLED") && followers.len() >= 14);
     for posture in ["island", "journey"] {
         for key in &followers {

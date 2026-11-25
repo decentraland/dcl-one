@@ -1,10 +1,10 @@
-import { Entity, IEngine, TransformType, engine } from '@dcl/ecs'
+import type { Entity, IEngine, TransformType } from '@dcl/ecs'
+import { engine } from '@dcl/ecs'
+import type { PBAvatarBase, PBAvatarEquippedData } from '@dcl/ecs/dist/components'
 import {
   PlayerIdentityData as definePlayerIdenityData,
   AvatarBase as defineAvatarBase,
   AvatarEquippedData as defineAvatarEquippedData,
-  PBAvatarBase,
-  PBAvatarEquippedData,
   Transform as defineTransform
 } from '@dcl/ecs/dist/components'
 import { getSceneInformation } from '~system/Runtime'

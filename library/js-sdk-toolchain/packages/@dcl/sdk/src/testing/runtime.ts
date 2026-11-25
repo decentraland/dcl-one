@@ -2,7 +2,8 @@
  * This module provides a createTestRuntime function that returns an object with a test function that can be used to define tests.
  */
 
-import { IEngine, Transform } from '@dcl/ecs'
+import type { IEngine } from '@dcl/ecs'
+import { Transform } from '@dcl/ecs'
 import { assertEquals } from './assert'
 import type { TestingModule, TestFunction, TestHelpers } from './types'
 

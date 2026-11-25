@@ -1,4 +1,4 @@
-import { PBPointerEventsResult } from '@dcl/ecs'
+import type { PBPointerEventsResult } from '@dcl/ecs'
 
 /**
  * Callback function to be triggered on a specified event. Receives the pointer event that

@@ -1,6 +1,6 @@
-import { Result } from 'arg'
-import { args as startArgs } from '.'
-import { CliComponents } from '../../components'
+import type { Result } from 'arg'
+import type { args as startArgs } from '.'
+import type { CliComponents } from '../../components'
 
 const isWindows = /^win/.test(process.platform)
 

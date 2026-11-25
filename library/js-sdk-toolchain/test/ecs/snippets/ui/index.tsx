@@ -1,6 +1,6 @@
 /* eslint-disable no-console */
+import type { Entity } from '@dcl/sdk/ecs'
 import {
-  Entity,
   engine,
   Transform,
   MeshRenderer,

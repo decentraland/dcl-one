@@ -1,8 +1,8 @@
-import { PBUiDropdown } from '@dcl/ecs'
+import type { PBUiDropdown } from '@dcl/ecs'
 
 import { parseProps } from '../utils'
 import { ReactEcs } from '../../react-ecs'
-import { UiDropdownProps } from './types'
+import type { UiDropdownProps } from './types'
 import { getFont, getFontSize, getTextAlign } from '../Label/utils'
 
 function parseUiDropdown(props: UiDropdownProps): PBUiDropdown {

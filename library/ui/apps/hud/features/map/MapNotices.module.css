@@ -1,5 +1,5 @@
-/* Notices over the map: the worlds warning at the top, the destination banner and the credits
-   at the bottom. */
+/* Notices over the map: the worlds warning at the top, the destination banner, the credits and
+   the parcels map's age at the bottom. */
 .warning {
   position: absolute;
   top: 10px;
@@ -122,6 +122,30 @@
   outline-offset: 2px;
 }
 
+/* The parcels map's age, beside the zoom controls and under the layers panel when that is open. It
+   matches the Shop LAND map's age label (the shared library's location tag sized on the overlay
+   surface), drawn in HUD styles since the HUD keeps its own until its move to the shared library:
+   23px high, radius 6px, a 14px clock and 12px text on Transparencies/Overlay 80 (`--map-age`). */
+.age {
+  position: absolute;
+  left: 64px;
+  bottom: 13px;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  box-sizing: border-box;
+  height: 23px;
+  padding: 0 8px 0 4px;
+  border-radius: var(--r-xs);
+  background: var(--map-age);
+  color: var(--text);
+  font-size: var(--type-12);
+  font-weight: var(--fw-regular);
+  line-height: 1.25;
+  white-space: nowrap;
+  pointer-events: none;
+}
+
 .credits {
   position: absolute;
   right: 4px;
@@ -135,6 +159,12 @@
   font-weight: var(--fw-semibold);
   line-height: 20px;
   text-align: center;
+}
+
+@media (forced-colors: active) {
+  .age {
+    border: 1px solid CanvasText;
+  }
 }
 
 @media (prefers-reduced-motion: reduce) {
