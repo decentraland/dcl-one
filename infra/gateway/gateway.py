@@ -186,12 +186,12 @@ WORLDS_LIMIT = "limit_req zone=worlds burst=60 nodelay;"
 # First path segments of social's badges router (services/catalyst/social/src/badges/mod.rs).
 BADGES_MOUNTS = ("assets", "badges", "categories", "status", "users")
 # credits-server's own paths under /credits (the pack list, the pack purchase,
-# its orders and the credit authorizations): the node serves them at the same
+# its orders, the credit authorizations and the app-store purchases): the node serves them at the same
 # subpaths of its /credits mount, so on the credits host they are prefixed
 # like the rest of credits-server's paths. Any other /credits/... path is taken
 # as already prefixed: Stripe posts credits-server's webhook to /credits/webhook,
 # which the node serves as its mount's /webhook.
-CREDITS_SERVER_MOUNTS = ("authorize", "authorize-publication", "checkout", "orders", "packs")
+CREDITS_SERVER_MOUNTS = ("authorize", "authorize-publication", "checkout", "iap", "orders", "packs")
 
 
 # Sites pages under a prefix that an API alias serves (root-aliases.nix): Sites has the

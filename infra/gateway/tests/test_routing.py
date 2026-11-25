@@ -76,7 +76,8 @@ class HostAliasTest(unittest.TestCase):
         for path in ["/credits", "/credits/packs", "/credits/checkout", "/credits/orders/ord_1",
                      "/credits/orders/ord_1/cancel-return", "/credits/orders/ord_1/resume",
                      "/credits/authorize", "/credits/authorize/batch",
-                     "/credits/authorize-publication", "/users/0xab/credits", "/seasons"]:
+                     "/credits/authorize-publication", "/credits/iap/quote", "/users/0xab/credits",
+                     "/seasons"]:
             with self.subTest(path=path):
                 self.assertEqual(route("credits.example.test", path), ("/credits" + path, path))
 
@@ -89,10 +90,13 @@ class HostAliasTest(unittest.TestCase):
                 self.assertEqual(route("credits.example.test", path), (path, path))
 
     def test_credits_server_mounts_cover_the_credits_router(self):
-        # Every /credits/<x> route the node's credits mount serves is one of
+        # Every /credits/<x> route the node's credits mount serves, and every
+        # /credits/credits/<x> path the Shop's path table lists, is one of
         # credits-server's own paths, so the credits host reaches it.
-        router = (Path(__file__).parents[3] / "services/catalyst/shop/src/credits/mod.rs").read_text()
+        shop = Path(__file__).parents[3] / "services/catalyst/shop/src"
+        router = (shop / "credits/mod.rs").read_text()
         mounts = set(re.findall(r'\.route\(\s*"/credits/([^/"{]+)', router))
+        mounts |= set(re.findall(r'/credits/credits/([a-z-]+)', (shop / "paths.rs").read_text()))
         self.assertTrue(mounts, "the credits router's /credits/... routes")
         self.assertLessEqual(mounts, set(gateway.CREDITS_SERVER_MOUNTS))
 

@@ -98,8 +98,8 @@ upstream host names served under another prefix: `abcdn` and `abgen-cdn` →
 `worlds` are the root. `gateway.<domain>/<sub>/...` uses the same table, and a
 path already under the target prefix is not prefixed twice. On `credits`, the
 paths credits-server itself serves under `/credits` (the bare `/credits`, and
-`/credits/packs`, `/credits/checkout`, `/credits/orders/...` and
-`/credits/authorize...`) are prefixed too, since the node serves them under its
+`/credits/packs`, `/credits/checkout`, `/credits/orders/...`,
+`/credits/authorize...` and `/credits/iap/...`) are prefixed too, since the node serves them under its
 `/credits` mount; any other `/credits/...` path, Stripe's `/credits/webhook`
 among them, is taken as already prefixed. A scene builds a service
 URL from its realm base URL, so the realm hosts `worlds-content-server`,
