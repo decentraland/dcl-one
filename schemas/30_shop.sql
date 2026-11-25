@@ -17147,17 +17147,25 @@ CREATE TABLE shop.collection_seed (
 );
 
 -- One row per network the collections index folds into shop.collections and
--- shop.items. `owned_at` is set once, in the transaction of the fold's first
--- projection: from then the fold is the network's only writer of both
--- tables, and the collections mirror refuses to write it (both take the
--- network's advisory lock, the mirror shared and the fold exclusive, around
--- the check and the write). `projected_through` is the block the projected
--- rows stand at; NULL (after a rewind, or before the first projection) makes
--- the next fold rebuild the network's rows from the whole log.
+-- shop.items (MARKETPLACE_COLLECTIONS_INDEX_OWNS). `owned_at` is set in the
+-- transaction of the fold's first projection: from then the fold is the
+-- network's only writer of both tables, and the collections mirror refuses
+-- to write it (both take the network's advisory lock, the mirror shared and
+-- the fold exclusive, around the check and the write); a hand-back clears
+-- it. `projected_through` is the block the projected rows stand at; NULL
+-- (after a rewind, or before the first projection) makes the next fold
+-- rebuild the network's rows from the whole log. `pending` counts the walked
+-- collections without a row at that block (waiting for their creation read):
+-- the catalogue is complete only at 0. `generation` grows with every
+-- projection and hand-back, so two reads under the same generation read the
+-- same rows.
 CREATE TABLE shop.collection_projection (
     network text PRIMARY KEY,
     owned_at timestamp without time zone,
     projected_through bigint,
+    pending integer NOT NULL DEFAULT 0,
+    generation bigint NOT NULL DEFAULT 0,
     updated_at timestamp without time zone NOT NULL DEFAULT timezone('UTC', now()),
-    CONSTRAINT collection_projection_network_known CHECK (network IN ('ethereum', 'matic'))
+    CONSTRAINT collection_projection_network_known CHECK (network IN ('ethereum', 'matic')),
+    CONSTRAINT collection_projection_pending_nonneg CHECK (pending >= 0)
 );

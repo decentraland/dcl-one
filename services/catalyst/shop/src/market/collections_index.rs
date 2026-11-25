@@ -72,6 +72,11 @@ pub struct Refreshed {
     pub provisional_unread: usize,
 }
 
+/// The first key of the creation reads' advisory lock (with the network's
+/// chain id): `seed`. A rewind holds it exclusive, a write of creation reads
+/// shared.
+pub const SEED_LOCK: i32 = 0x7365_6564;
+
 /// Calls per JSON-RPC batch the gate sends (one HTTP request each).
 pub const CALLS_PER_BATCH: usize = 100;
 
@@ -590,8 +595,23 @@ impl ChainIndex for CollectionsIndex {
         insert_events(conn, ChainNet::Matic, &rows).await
     }
 
+    /// Deletes the log past `to`, the creation reads taken past it (a branch
+    /// the chain may have left) and the projection's block. It holds the
+    /// creation-read lock exclusive first, so a read written while it runs
+    /// is deleted by it, and one written after it is refused
+    /// ([`write_seeds`]).
     async fn rewind(&self, conn: &mut PgConnection, to: i64) -> anyhow::Result<()> {
+        sqlx::query("SELECT pg_advisory_xact_lock($1, $2)")
+            .bind(SEED_LOCK)
+            .bind(ChainNet::Matic.chain_id() as i32)
+            .execute(&mut *conn)
+            .await?;
         sqlx::query("DELETE FROM shop.collection_event WHERE network = $1 AND block_number > $2")
+            .bind(ChainNet::Matic.db_name())
+            .bind(to)
+            .execute(&mut *conn)
+            .await?;
+        sqlx::query("DELETE FROM shop.collection_seed WHERE network = $1 AND read_block > $2")
             .bind(ChainNet::Matic.db_name())
             .bind(to)
             .execute(&mut *conn)
@@ -956,6 +976,7 @@ pub fn seed_of(contract: &str, answers: &[Answer], read_block: u64) -> Option<Se
 /// a call was refused for, waits for the next gate. Returns the seeds added.
 pub async fn read_seeds(pool: &PgPool, rpc: &Rpc<'_>, finalized: u64) -> anyhow::Result<usize> {
     let net = ChainNet::Matic;
+    let token = seed_token(pool, net).await?;
     let pending: Vec<String> = sqlx::query_scalar(
         "SELECT address FROM ( \
              SELECT e.contract_address AS address, 0 AS walked_first, e.block_number AS position \
@@ -997,15 +1018,55 @@ pub async fn read_seeds(pool: &PgPool, rpc: &Rpc<'_>, finalized: u64) -> anyhow:
         .zip(answers.chunks(selectors.len()))
         .filter_map(|(c, a)| seed_of(c, a, finalized))
         .collect();
-    write_seeds(pool, net, &seeds).await
+    write_seeds(pool, net, &seeds, token).await
 }
 
-/// Inserts `seeds`; a collection's first read stands.
-pub async fn write_seeds(pool: &PgPool, net: ChainNet, seeds: &[Seed]) -> anyhow::Result<usize> {
+/// What a write of creation reads checks has not moved since the reads
+/// began: the walk's owner generation and rewind count (`None` before the
+/// walk has a cursor).
+pub type SeedToken = Option<(i64, i32)>;
+
+/// The walk's [`SeedToken`] now.
+pub async fn seed_token<'e>(
+    executor: impl sqlx::PgExecutor<'e>,
+    net: ChainNet,
+) -> sqlx::Result<SeedToken> {
+    sqlx::query_as(
+        "SELECT owner_generation, reorg_rewinds FROM shop.chain_cursor WHERE indexer = $1 AND network = $2",
+    )
+    .bind(INDEXER_COLLECTIONS)
+    .bind(net.db_name())
+    .fetch_optional(executor)
+    .await
+}
+
+/// Inserts `seeds`, read since `token` was taken; a collection's first read
+/// stands. Under the creation-read lock, shared, it writes nothing when a
+/// rewind or a new owner moved the walk since `token`: those reads may be
+/// of a branch the rewind left.
+pub async fn write_seeds(
+    pool: &PgPool,
+    net: ChainNet,
+    seeds: &[Seed],
+    token: SeedToken,
+) -> anyhow::Result<usize> {
     if seeds.is_empty() {
         return Ok(0);
     }
-    Ok(sqlx::query(
+    let mut tx = pool.begin().await?;
+    sqlx::query("SELECT pg_advisory_xact_lock_shared($1, $2)")
+        .bind(SEED_LOCK)
+        .bind(net.chain_id() as i32)
+        .execute(&mut *tx)
+        .await?;
+    if seed_token(&mut *tx, net).await? != token {
+        tracing::info!(
+            network = net.db_name(),
+            "collections: the walk moved while the creation reads were taken; they are read again"
+        );
+        return Ok(0);
+    }
+    let written = sqlx::query(
         "INSERT INTO shop.collection_seed (network, contract_address, name, symbol, creator, is_approved, is_editable, read_block) \
          SELECT $1, c, n, s, cr, a, e, b FROM UNNEST($2::text[], $3::text[], $4::text[], $5::text[], $6::bool[], $7::bool[], $8::bigint[]) \
               AS u(c, n, s, cr, a, e, b) \
@@ -1019,9 +1080,11 @@ pub async fn write_seeds(pool: &PgPool, net: ChainNet, seeds: &[Seed]) -> anyhow
     .bind(seeds.iter().map(|s| s.is_approved).collect::<Vec<_>>())
     .bind(seeds.iter().map(|s| s.is_editable).collect::<Vec<_>>())
     .bind(seeds.iter().map(|s| s.read_block).collect::<Vec<_>>())
-    .execute(pool)
+    .execute(&mut *tx)
     .await?
-    .rows_affected() as usize)
+    .rows_affected() as usize;
+    tx.commit().await?;
+    Ok(written)
 }
 
 /// The gate before each attempt: the endpoint must serve Polygon (the

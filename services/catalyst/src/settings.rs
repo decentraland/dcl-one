@@ -75,6 +75,9 @@ pub(crate) fn market_settings(
                 .marketplace
                 .marketplace_third_party_registry_index_enabled,
             collections_enabled: config.marketplace.marketplace_collections_index_enabled,
+            collections_owned: collections_owned(
+                &config.marketplace.marketplace_collections_index_owns,
+            )?,
             interval: Duration::from_secs(
                 config.marketplace.marketplace_index_interval_secs.max(1),
             ),
@@ -123,6 +126,26 @@ fn checked_indexes(
     Ok(indexes)
 }
 
+/// `MARKETPLACE_COLLECTIONS_INDEX_OWNS`: the networks the collections index
+/// takes from the mirror. It walks Polygon alone.
+fn collections_owned(value: &str) -> anyhow::Result<Vec<shop::market::chain_walk::ChainNet>> {
+    use shop::market::chain_walk::ChainNet;
+    let mut out = Vec::new();
+    for name in value.split(',').map(str::trim).filter(|n| !n.is_empty()) {
+        match ChainNet::parse(name) {
+            Some(ChainNet::Matic) => out.push(ChainNet::Matic),
+            Some(ChainNet::Ethereum) => anyhow::bail!(
+                "MARKETPLACE_COLLECTIONS_INDEX_OWNS names {name}, but the collections index walks Polygon alone"
+            ),
+            None => anyhow::bail!(
+                "MARKETPLACE_COLLECTIONS_INDEX_OWNS names an unknown network {name:?}"
+            ),
+        }
+    }
+    out.dedup();
+    Ok(out)
+}
+
 pub(crate) fn land_settings(config: &Config) -> anyhow::Result<land_authz::Settings> {
     let mut land_settings =
         land_authz::Settings::for_network(&config.node.eth_network, config.content.eth_rpc_url()?)
@@ -153,6 +176,20 @@ pub(crate) fn land_settings(config: &Config) -> anyhow::Result<land_authz::Setti
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_collections_index_owns_polygon_alone() {
+        use shop::market::chain_walk::ChainNet;
+        assert_eq!(collections_owned("").unwrap(), Vec::<ChainNet>::new());
+        assert_eq!(
+            collections_owned(" matic , polygon ").unwrap(),
+            vec![ChainNet::Matic]
+        );
+        let err = collections_owned("ethereum").unwrap_err().to_string();
+        assert!(err.contains("walks Polygon alone"), "{err}");
+        let err = collections_owned("base").unwrap_err().to_string();
+        assert!(err.contains("unknown network"), "{err}");
+    }
 
     #[test]
     fn shared_land_settings_keep_limits_and_replay_bounds() {

@@ -7,7 +7,8 @@
 //!
 //! On-chain state follows the contract (`ERC721BaseCollectionV2`):
 //! - global and item minters and managers are sets: an account is one while
-//!   its newest grant set it;
+//!   its newest grant set it, listed in address order (so the rows are the
+//!   same wherever a fold resumed);
 //! - an item minter's allowance is its newest `SetItemMinter` value, less one
 //!   for each later `Issue` it called while it was neither the creator nor a
 //!   global minter, unless the allowance is `uint256` max (`_issueToken`);
@@ -477,11 +478,13 @@ impl CollectionState {
             .filter_map(|(id, item)| {
                 let meta = item.meta?;
                 let item_urn = format!("{urn}:{id}");
-                let held: Vec<(String, U256)> = item
+                let mut held: Vec<(String, U256)> = item
                     .allowances
                     .into_iter()
                     .filter(|(_, left)| !left.is_zero())
                     .collect();
+                // In address order: the same rows wherever a fold resumed.
+                held.sort();
                 Some(ItemRow {
                     item_id: id,
                     item_type: meta.item_type,
@@ -494,7 +497,7 @@ impl CollectionState {
                     available: item.max_supply.saturating_sub(item.max_issued),
                     max_supply: item.max_supply,
                     price: item.price,
-                    search_text: format!("{} {}", meta.name, meta.description).to_lowercase(),
+                    search_text: format!("{} {}", meta.name, meta.description).to_ascii_lowercase(),
                     name: meta.name,
                     description: meta.description,
                     category: meta.category,
@@ -516,9 +519,12 @@ impl CollectionState {
                 })
             })
             .collect();
+        let (mut minters, mut managers) = (self.minters.0, self.managers.0);
+        minters.sort();
+        managers.sort();
         let collection = CollectionRow {
             urn,
-            search_text: self.name.to_lowercase(),
+            search_text: self.name.to_ascii_lowercase(),
             contract_address: self.contract,
             name: self.name,
             symbol: self.symbol,
@@ -529,8 +535,8 @@ impl CollectionState {
             is_editable: self.editable,
             items_count: self.items_count,
             search_is_store_minter: store_global,
-            minters: self.minters.0,
-            managers: self.managers.0,
+            minters,
+            managers,
             created_at: self.created_at,
             updated_at: self.updated_at,
             reviewed_at: self.reviewed_at,
@@ -995,7 +1001,8 @@ mod tests {
     }
 
     /// Intended difference: a minter or manager is listed once while its
-    /// newest grant set it (the subgraph appends on every grant).
+    /// newest grant set it, in address order (the subgraph appends on every
+    /// grant, in grant order).
     #[test]
     fn minters_and_managers_are_sets() {
         let mut events = created(10);
@@ -1008,7 +1015,7 @@ mod tests {
             grant(KIND_SET_GLOBAL_MANAGER, 16, OTHER, true),
         ]);
         let (c, _) = folded(events);
-        assert_eq!(c.minters, [OTHER, MINTER]);
+        assert_eq!(c.minters, [MINTER, OTHER], "in address order");
         assert_eq!(c.managers, [OTHER]);
     }
 
@@ -1263,6 +1270,57 @@ mod tests {
             let resumed = resume(c, items, rest).unwrap();
             assert_eq!(resumed, whole, "cut after {} events", cut);
         }
+    }
+
+    /// Grants, a revoke and a regrant give the same minters and managers
+    /// whether the fold resumes before or after any of them.
+    #[test]
+    fn grants_list_the_same_minters_at_any_cut() {
+        let a = "0x00000000000000000000000000000000000000d1";
+        let b = "0x00000000000000000000000000000000000000d2";
+        let mut history = created(0);
+        for kind in [KIND_SET_GLOBAL_MINTER, KIND_SET_GLOBAL_MANAGER] {
+            history.extend([
+                grant(kind, 0, a, true),
+                grant(kind, 0, b, true),
+                grant(kind, 0, a, false),
+                grant(kind, 0, a, true),
+            ]);
+        }
+        let history = numbered(history);
+        let read = seed(1);
+        let end = history.last().unwrap().block_number;
+        let whole = fold_all(&history, &read, end);
+        assert_eq!(
+            (whole.0.minters.clone(), whole.0.managers.clone()),
+            (
+                vec![a.to_string(), b.to_string()],
+                vec![a.to_string(), b.to_string()]
+            )
+        );
+        for cut in 2..history.len() {
+            let (done, rest) = history.split_at(cut);
+            let (c, items) = fold_all(done, &read, done.last().unwrap().block_number);
+            assert_eq!(
+                resume(c, items, rest).unwrap(),
+                whole,
+                "cut after {cut} events"
+            );
+        }
+    }
+
+    /// Search text folds ASCII letters alone, as the subgraph's helper does.
+    #[test]
+    fn search_text_folds_ascii_letters_alone() {
+        let mut events = created(10);
+        events.push(add(11, 0, "1:w:Élan Hat:Ö Cap:hat:BaseMale"));
+        let read = Seed {
+            name: "Élan Vital".into(),
+            ..seed(1)
+        };
+        let (c, items) = fold(C, &events, Some(&read), &HashMap::new(), 1_000).unwrap();
+        assert_eq!(c.search_text, "Élan vital");
+        assert_eq!(items[0].search_text, "Élan hat Ö cap");
     }
 
     /// An event naming an item the rows lack (its metadata took no type)

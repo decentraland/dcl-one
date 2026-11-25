@@ -1540,9 +1540,9 @@ fn visit_projections(
             "collections-index",
             url,
             {
-                // The mirror and the fold never both write the catalogue: a
-                // process running the collections mirror keeps the log alone.
-                let project = !state.settings.market.mirrors_enabled;
+                // Only a network the operator hands it is projected: the
+                // mirror and the fold never both write a network's rows.
+                let project = settings.collections_owned.contains(&ChainNet::Matic);
                 Arc::new(move || {
                     Arc::new(super::collections_index::CollectionsIndex::projecting(
                         project,

@@ -2930,19 +2930,28 @@ log of a walked topic that does not decode fails its window instead of
 being skipped. A `ProxyCreated` from any contract other than the two
 factories fails it too. Strings are read as lossy UTF-8, with NUL removed.
 
-**Projection.** When a pass closes, the fold writes Polygon's catalogue rows
-from the log and the creation reads, in one transaction fenced by the
-walk's owner. `shop.collection_projection` holds one row per network:
-- `owned_at` is set once, in the transaction of the first projection. From
-  then the fold is the only writer of the network's rows in both tables.
+**Projection.** A network the operator hands the index
+(`MARKETPLACE_COLLECTIONS_INDEX_OWNS`, `matic` or empty, independent of
+`MARKETPLACE_MIRRORS_ENABLED`) is projected. When a pass closes, the fold
+writes Polygon's catalogue rows from the log and the creation reads, in one
+transaction fenced by the walk's owner. Without that setting the walk keeps
+its log alone, whatever the mirror switch says. `shop.collection_projection`
+holds one row per network:
+- `owned_at` is set in the transaction of the first projection. From then
+  the fold is the only writer of the network's rows in both tables. A
+  hand-back clears it.
 - `projected_through` is the block the rows stand at.
+- `pending` counts the walked collections without a row at that block,
+  waiting for their creation read. The catalogue is complete only at 0.
+- `generation` grows with every projection and hand-back, so two reads under
+  the same generation read the same rows.
 
-The mirror refuses to write a network the fold owns, and its job skips it.
-Both take the network's advisory lock (`pg_advisory_xact_lock(0x636f6c6c,
-<chain id>)`) around the ownership check and the write: the mirror shared,
-for each page, and the fold exclusive. So a page that read the network as
-unowned commits before the projection that takes it, and none commits
-after.
+The mirror refuses to write a network the fold owns, and its job skips that
+network: no page is read. It keeps walking the others. Both take the
+network's advisory lock (`pg_advisory_xact_lock(0x636f6c6c, <chain id>)`)
+around the ownership check and the write: the mirror shared, for each page,
+and the fold exclusive. So a page that read the network as unowned commits
+before the projection that takes it, and none commits after.
 
 A projection folds the events past `projected_through` onto the stored
 rows. It folds a collection again from its creation in three cases:
@@ -2952,6 +2961,15 @@ rows. It folds a collection again from its creation in three cases:
 - the walk rewound. A rewind clears `projected_through`, and the next fold
   rebuilds every row of the network in one transaction, replacing the rows
   it does not produce, the mirror's included.
+
+A rewind also deletes the creation reads taken past its point: a read of a
+branch the chain left is read again on the new one. It holds the
+creation-read lock (`pg_advisory_xact_lock(0x73656564, <chain id>)`)
+exclusive, and a write of creation reads holds it shared. That write also
+checks that the walk's owner generation and rewind count did not move since
+its reads began. So a read taken before a rewind is never written after it,
+and one written while it runs is deleted by it. An operator's rebuild
+deletes them all.
 
 A collection waits, with no row and without holding the publication back,
 in either case:
@@ -2972,7 +2990,7 @@ A rebuild aggregates the whole log once. A resume reads only the events past
 
 The rows follow the contract where the collections subgraph differs:
 - global and item minters and managers are sets; an account is listed once,
-  while its newest grant set it;
+  while its newest grant set it, in address order;
 - the store sells an item while it is a global minter or holds an allowance
   for the item, and an item it can sell from its addition is listed from
   then (`first_listed_at`);
@@ -2985,8 +3003,9 @@ The rows follow the contract where the collections subgraph differs:
 Item metadata follows the subgraph's format: `w`, `sw` and `e` items,
 wearables with a known category, emotes with an unknown category as `dance`,
 and an emote's social outcome as `simple_outcome`, `multiple_outcome` or
-`random_outcome`. `sold_at` is the newest primary sale only; secondary sales
-come with the sales index.
+`random_outcome`. Search text folds ASCII letters alone, as the subgraph's
+helper does. `sold_at` is the newest primary sale only; secondary sales come
+with the sales index.
 
 The catalogue routes still decide readiness from the mirror's passes
 (`shop.mirror_state`), so no network is taken from the mirror while they do.
@@ -2999,15 +3018,36 @@ Deploys are manual, one process at a time:
    process that runs the mirror, and wait until the `collections` cursor on
    `matic` publishes. That is the catch-up, from block 15,202,000. The
    mirror keeps serving meanwhile.
-2. Stop that process, set `MARKETPLACE_MIRRORS_ENABLED=false`, and start it
-   again (two processes must never write the catalogue under different
-   settings). The next pass's fold rebuilds the network's rows from the log
+2. Stop that process, set `MARKETPLACE_COLLECTIONS_INDEX_OWNS=matic`, and
+   start it again. Two processes must never write the catalogue under
+   different settings. The mirror switch stays as it was: the mirror keeps
+   walking Ethereum. The next pass's fold rebuilds Polygon's rows from the log
    and takes the network.
-3. Check `SELECT owned_at, projected_through FROM shop.collection_projection`.
+3. Check `SELECT owned_at, projected_through, pending, generation FROM
+   shop.collection_projection`.
 
-To hand a network back to the mirror, stop the index process, run
-`DELETE FROM shop.collection_projection WHERE network = '<network>'`, and run
-the mirror until its next complete pass.
+**Handing a network back to the mirror.**
+1. Stop the index process, remove the network from
+   `MARKETPLACE_COLLECTIONS_INDEX_OWNS`, and start it again. Its fold keeps
+   the log alone from then.
+2. Run this transaction. It takes the exclusive catalogue lock, and removes
+   the network's rows, the mirror's pass markers and the ownership together:
+
+   ```sql
+   BEGIN;
+   SELECT pg_advisory_xact_lock(1668246636, 137);
+   DELETE FROM shop.items WHERE network = 'matic';
+   DELETE FROM shop.collections WHERE network = 'matic';
+   DELETE FROM shop.mirror_state WHERE network = 'matic' AND mirror IN ('collections', 'items');
+   UPDATE shop.collection_projection SET owned_at = NULL, projected_through = NULL, pending = 0,
+          generation = generation + 1, updated_at = timezone('UTC', now()) WHERE network = 'matic';
+   COMMIT;
+   ```
+
+Every read of the network then answers the unavailable envelope until the
+mirror's next complete collections and items passes, which rewrite it with
+the mirror's rows alone (`collections_projection::hand_back` runs the same
+statements).
 
 ## Auth API relay state workload
 

@@ -165,15 +165,43 @@ pub async fn project(
     };
     sqlx::query(
         "UPDATE shop.collection_projection SET owned_at = COALESCE(owned_at, timezone('UTC', now())), \
-         projected_through = $2, updated_at = timezone('UTC', now()) WHERE network = $1",
+         projected_through = $2, pending = $3, generation = generation + 1, \
+         updated_at = timezone('UTC', now()) WHERE network = $1",
     )
     .bind(net.db_name())
     .bind(upto)
+    .bind(out.waiting as i32)
     .execute(&mut *tx)
     .await?;
     owner.check(&mut tx).await?;
     tx.commit().await?;
     Ok(out)
+}
+
+/// Hands `net`'s catalogue back to the collections mirror, in one
+/// transaction under the exclusive catalogue lock: the network's rows and
+/// the mirror's pass markers go, and the ownership is cleared. Every read of
+/// the network then waits for the mirror's next complete passes, which
+/// rewrite it whole. Run it after the index process stops owning the network
+/// (`MARKETPLACE_COLLECTIONS_INDEX_OWNS` without it), or its next fold takes
+/// the network again.
+pub async fn hand_back(pool: &PgPool, net: ChainNet) -> anyhow::Result<()> {
+    let mut tx = pool.begin().await?;
+    lock(&mut tx, net, true).await?;
+    for sql in [
+        "DELETE FROM shop.items WHERE network = $1",
+        "DELETE FROM shop.collections WHERE network = $1",
+        "DELETE FROM shop.mirror_state WHERE network = $1 AND mirror IN ('collections', 'items')",
+        "UPDATE shop.collection_projection SET owned_at = NULL, projected_through = NULL, pending = 0, \
+         generation = generation + 1, updated_at = timezone('UTC', now()) WHERE network = $1",
+    ] {
+        sqlx::query(sql)
+            .bind(net.db_name())
+            .execute(&mut *tx)
+            .await?;
+    }
+    tx.commit().await?;
+    Ok(())
 }
 
 /// Clears the block the projection stands at, in the transaction of a
@@ -682,6 +710,10 @@ mod tests {
             .collect()
     }
 
+    async fn seed_token(pool: &PgPool) -> collections_index::SeedToken {
+        collections_index::seed_token(pool, NET).await.unwrap()
+    }
+
     fn seed() -> Seed {
         Seed {
             contract_address: CREATED.into(),
@@ -705,7 +737,7 @@ mod tests {
             .unwrap();
         drop(conn);
         if seeded {
-            collections_index::write_seeds(&pool, NET, &[seed()])
+            collections_index::write_seeds(&pool, NET, &[seed()], seed_token(&pool).await)
                 .await
                 .unwrap();
         }
@@ -885,7 +917,12 @@ mod tests {
         let out = project(&pool, &owner, NET, 97_895_000).await.unwrap();
         assert_eq!((out.collections, out.waiting), (0, 1));
         assert_eq!(catalogue(&pool).await, (vec![], vec![]));
-        collections_index::write_seeds(&pool, NET, &[seed()])
+        assert_eq!(
+            completeness(&pool).await,
+            (1, 1),
+            "one collection pending: not complete"
+        );
+        collections_index::write_seeds(&pool, NET, &[seed()], seed_token(&pool).await)
             .await
             .unwrap();
         let out = project(&pool, &owner, NET, 97_895_000).await.unwrap();
@@ -894,6 +931,133 @@ mod tests {
             (false, 1, 1, 0)
         );
         assert_eq!(catalogue(&pool).await.1.len(), 2);
+        assert_eq!(
+            completeness(&pool).await,
+            (0, 2),
+            "the late read at the same block completes it"
+        );
+    }
+
+    /// The marker's pending count and generation, for the next change's reads.
+    async fn completeness(pool: &PgPool) -> (i32, i64) {
+        sqlx::query_as(
+            "SELECT pending, generation FROM shop.collection_projection WHERE network = 'matic'",
+        )
+        .fetch_one(pool)
+        .await
+        .unwrap()
+    }
+
+    async fn approved(pool: &PgPool) -> bool {
+        sqlx::query_scalar("SELECT is_approved FROM shop.collections WHERE network = 'matic'")
+            .fetch_one(pool)
+            .await
+            .unwrap()
+    }
+
+    async fn seeds(pool: &PgPool) -> i64 {
+        sqlx::query_scalar("SELECT count(*) FROM shop.collection_seed")
+            .fetch_one(pool)
+            .await
+            .unwrap()
+    }
+
+    async fn rewind_to(pool: &PgPool, to: i64) {
+        let ix = CollectionsIndex::projecting(true);
+        let mut tx = pool.begin().await.unwrap();
+        crate::market::chain_walk::ChainIndex::rewind(&ix, &mut tx, to)
+            .await
+            .unwrap();
+        tx.commit().await.unwrap();
+    }
+
+    /// A rewind drops the creation reads taken past it: a read of a branch
+    /// the chain left (one that saw an approval the new branch lacks) is
+    /// read again, and the fold takes the new one.
+    #[tokio::test]
+    async fn a_rewind_drops_the_creation_reads_past_it() {
+        let Some((pool, owner)) = setup(false).await else {
+            return;
+        };
+        let read_after_approval = Seed {
+            read_block: 97_740_000,
+            ..seed()
+        };
+        collections_index::write_seeds(&pool, NET, &[read_after_approval], seed_token(&pool).await)
+            .await
+            .unwrap();
+        project(&pool, &owner, NET, 97_895_000).await.unwrap();
+        assert!(approved(&pool).await);
+        // The branch past 97,720,000, the approval at 97,732,808 with it, is gone.
+        rewind_to(&pool, 97_720_000).await;
+        assert_eq!(seeds(&pool).await, 0);
+        let new_branch = Seed {
+            is_approved: false,
+            read_block: 97_721_000,
+            ..seed()
+        };
+        collections_index::write_seeds(&pool, NET, &[new_branch], seed_token(&pool).await)
+            .await
+            .unwrap();
+        let out = project(&pool, &owner, NET, 97_721_000).await.unwrap();
+        assert!(out.rebuilt);
+        assert!(
+            !approved(&pool).await,
+            "the new branch's read, not the old one's"
+        );
+    }
+
+    /// Creation reads taken before a rewind (or a new owner) are not
+    /// written after it; one written while it runs is deleted by it.
+    #[tokio::test]
+    async fn creation_reads_never_outlive_the_rewind_they_raced() {
+        let Some((pool, _owner)) = setup(false).await else {
+            return;
+        };
+        let before = seed_token(&pool).await;
+        sqlx::query(
+            "UPDATE shop.chain_cursor SET reorg_rewinds = reorg_rewinds + 1 WHERE indexer = 'collections'",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        assert_eq!(
+            collections_index::write_seeds(&pool, NET, &[seed()], before)
+                .await
+                .unwrap(),
+            0,
+            "taken before the rewind"
+        );
+
+        let mut writing = pool.begin().await.unwrap();
+        sqlx::query("SELECT pg_advisory_xact_lock_shared($1, 137)")
+            .bind(collections_index::SEED_LOCK)
+            .execute(&mut *writing)
+            .await
+            .unwrap();
+        sqlx::query(
+            "INSERT INTO shop.collection_seed (network, contract_address, name, symbol, creator, is_approved, is_editable, read_block) \
+             VALUES ('matic', $1, 'n', 's', '0x23be90335e79d3245615985d91f69814f98a0fab', true, true, 97800000)",
+        )
+        .bind(CREATED)
+        .execute(&mut *writing)
+        .await
+        .unwrap();
+        let rewinding = {
+            let pool = pool.clone();
+            tokio::spawn(async move { rewind_to(&pool, 97_720_000).await })
+        };
+        tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+        assert!(
+            !rewinding.is_finished(),
+            "the rewind waits for the write in flight"
+        );
+        writing.commit().await.unwrap();
+        tokio::time::timeout(std::time::Duration::from_secs(10), rewinding)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(seeds(&pool).await, 0, "deleted by the rewind it raced");
     }
 
     /// A mirror page that read the network as unowned holds the shared lock

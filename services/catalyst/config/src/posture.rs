@@ -347,6 +347,8 @@ const ROWS: &[Row] = &[
     // The collections walk keeps a log nothing reads yet: an operator's
     // opt-in under every posture.
     same("indexes", "MARKETPLACE_COLLECTIONS_INDEX_ENABLED", "false"),
+    // Taking a network's catalogue from the mirror is an operator's step.
+    same("indexes", "MARKETPLACE_COLLECTIONS_INDEX_OWNS", ""),
     // The MANA transfer walk stays an operator's opt-in under every posture.
     same(
         "indexes",
