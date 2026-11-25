@@ -36,8 +36,8 @@ Scene raycast requests run in two tiers each frame (`update_scene/raycast_budget
   at its own scene. See [Decisions](decisions.md).
 - **A world cast of the avatar's shape asks the scenes its capsule touches.** A ray asks the
   scenes on its line. An `RS_AVATAR` cast also asks those with a parcel within 0.35 m of the
-  line: the capsule's radius and the 0.05 m a scene is drawn past its parcels
-  (`ContainingScene::get_swept`). That is the reach the per-scene cut gives the capsule, so a
+  line along x and along z, so up to about 0.5 m from a parcel's corner: the capsule's radius
+  and the 0.05 m a scene is drawn past its parcels (`ContainingScene::get_swept`). That is the reach the per-scene cut gives the capsule, so a
   step of the scene beside the player answers `movement-scene`'s ground cast as it does the
   engine's own sweep.
 - **Budget.** A tenth of the target frame: `SceneUpdates::frame_target`, which `run_scene_loop`

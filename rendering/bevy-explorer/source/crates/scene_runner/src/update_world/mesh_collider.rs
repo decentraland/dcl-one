@@ -44,7 +44,7 @@ use super::AddCrdtInterfaceExt;
 mod bounds;
 use bounds::ColliderBounds;
 mod volume;
-pub(crate) use volume::parcel_touch_distance;
+pub(crate) use volume::parcel_answer_distance;
 use volume::SceneVolume;
 
 pub struct MeshColliderPlugin;
