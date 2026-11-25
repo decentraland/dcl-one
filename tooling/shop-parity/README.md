@@ -6,6 +6,10 @@ with decentraland.org (the `decentraland/sites` SPA) at the revision pinned in
 [`reference-sites.json`](reference-sites.json), page by page, on the same recorded data. A pin is the
 revision production serves on the date it names; moving it means recording a new set against it.
 
+For Shop web and the in-world Shop, the **DCL ONE UI Style Guide** in Figma defines the visual design. This tool captures Shop web. Use the pinned production Shop to check data and flows on the same recording. For example, compare the price shown for the same item and the cart contents after adding it.
+
+Keep the screenshots and structural report when reviewing shared UI changes. A pixel difference flags an area to inspect against the Style Guide. If the new control matches the design and preserves the expected behavior, record the visual difference as intentional. The [gate](gate.mts) can still fail when that difference exceeds a stored ceiling or changes a page marked identical.
+
 The tool is committed; the data it compares is not. Recordings, the gate and every run stay under
 `state/shop-parity/` (gitignored) on the machine that made them, so numbers quoted elsewhere name the
 recording they were measured on.
