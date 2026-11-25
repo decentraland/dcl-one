@@ -160,6 +160,37 @@ describe("updates", () => {
     expect(onLoad).toHaveBeenCalledTimes(1);
   });
 
+  test("under Unity a frame that boots again is replaced by a fresh one, whose start failing is reported", () => {
+    const { change, onLoad, onError } = mount({ urns: [HOODIE], profile: "default", ...UNITY }, 45_000);
+    const { win, updates } = booted("unity");
+    change({ urns: [HAT], profile: "default", ...UNITY });
+    expect(updates()).toHaveLength(1);
+    fromPreview({ type: "load", payload: { renderer: "unity" } });
+    expect(onLoad).toHaveBeenCalledTimes(2);
+
+    // The same iframe boots again: it has lost its scene, and the next one is drawn in a fresh iframe.
+    fromPreview({ type: "ready" });
+    expect(frame().contentWindow).not.toBe(win);
+    expect(params().getAll("urn")).toEqual([HAT]);
+
+    change({ urns: [HOODIE, HAT], profile: "default", ...UNITY });
+    fromPreview({ type: "ready" });
+    fromPreview({ type: "error", payload: { message: "unity could not start" } });
+    expect(onError).toHaveBeenCalledTimes(1);
+  });
+
+  test("under Unity the fresh frame after a second boot has a load deadline of its own", () => {
+    vi.useFakeTimers();
+    const { onError } = mount({ urns: [HOODIE], profile: "default", ...UNITY }, 45_000);
+    booted("unity");
+    act(() => vi.advanceTimersByTime(30_000));
+    fromPreview({ type: "ready" });
+    act(() => vi.advanceTimersByTime(44_999));
+    expect(onError).not.toHaveBeenCalled();
+    act(() => vi.advanceTimersByTime(1));
+    expect(onError).toHaveBeenCalledTimes(1);
+  });
+
   test("over Babylon an update goes at once: Babylon drops the answer for a scene it was sent past", () => {
     const { change } = mount({ urns: [HOODIE], profile: "default" });
     const { updates } = booted("babylon");

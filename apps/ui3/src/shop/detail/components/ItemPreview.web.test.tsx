@@ -170,6 +170,8 @@ describe("talking to the iframe", () => {
   });
 
   test("a frame that boots again with nothing changed since its mount is not sent an update", () => {
+    // Babylon: a Unity frame that boots again is replaced instead (PreviewFrame).
+    flag(false);
     render(<ItemPreview item={item()} renderer="full" />);
     const posted = vi.spyOn(frame()!.contentWindow!, "postMessage");
     fromPreview({ type: "ready" });

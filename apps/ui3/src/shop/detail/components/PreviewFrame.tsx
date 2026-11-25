@@ -160,6 +160,8 @@ export default function PreviewFrame({ options, replay = 0, loadTimeoutMs, onLoa
   // The options the page shows now: an answer counts only for them.
   const latest = useRef(serialized);
   latest.current = serialized;
+  const latestOptions = useRef(options);
+  latestOptions.current = options;
   const callbacks = useRef({ onLoad, onError });
   callbacks.current = { onLoad, onError };
   const retry = useRef<number | undefined>(undefined);
@@ -207,9 +209,14 @@ export default function PreviewFrame({ options, replay = 0, loadTimeoutMs, onLoa
       const now = live.current;
       if (now.n !== mount.n || event.source !== frame.current?.contentWindow || event.origin !== origin) return;
       const { type, payload } = (event.data ?? {}) as { type?: string; payload?: { renderer?: string; message?: string } };
-      if (type === "ready") {
-        // Every boot, the first or a reload of the frame, starts again from the URL: what it has lost goes again.
-        // What it draws first is the mount URL's scene.
+      if (type === "ready" && now.ready && mount.options.unity === true) {
+        // Unity booting again has lost its scene, and its answer to the first one belongs to the boot before: a fresh
+        // iframe with the current options starts over, with a deadline of its own.
+        live.current = liveFor(mount.n + 1, latest.current, latestOptions.current);
+        setMount(mountWith(mount.n + 1, latestOptions.current));
+      } else if (type === "ready") {
+        // Every boot, the first or (under Babylon) a reload of the frame, starts again from the URL: what it has lost goes
+        // again. What it draws first is the mount URL's scene.
         now.ready = true;
         now.delivered = mount.serialized;
         now.held = setKeys(mount.options);
