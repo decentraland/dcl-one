@@ -207,14 +207,14 @@ const SORT_BY_VALUES: &[&str] = &[
     "suggested",
 ];
 
-pub fn parse_catalog_filters(pairs: &[(String, String)]) -> CatalogFilters {
+pub fn parse_catalog_filters(pairs: &[(String, String)]) -> Result<CatalogFilters, ApiError> {
     let p = Params::new(pairs);
     let is_on_sale = if p.get_boolean("isOnSale") {
         Some(p.get_string("isOnSale", None).as_deref() == Some("true"))
     } else {
         None
     };
-    CatalogFilters {
+    Ok(CatalogFilters {
         first: p
             .get_number("first", Some(DEFAULT_PAGE_SIZE as f64))
             .map(|n| n as i64),
@@ -257,18 +257,14 @@ pub fn parse_catalog_filters(pairs: &[(String, String)]) -> CatalogFilters {
         network: p
             .get_value("network", NETWORK_VALUES, None)
             .and_then(|s| Network::parse(&s)),
-        max_price: p
-            .get_string("maxPrice", None)
-            .filter(|s| !s.trim().is_empty()),
-        min_price: p
-            .get_string("minPrice", None)
-            .filter(|s| !s.trim().is_empty()),
+        max_price: super::items::parse_price_param(&p, "maxPrice")?,
+        min_price: super::items::parse_price_param(&p, "minPrice")?,
         urns: p.get_list("urn", &[]),
         ids: p.get_list("id", &[]),
         include_social_emotes: Some(
             p.get_string("includeSocialEmotes", None).as_deref() != Some("false"),
         ),
-    }
+    })
 }
 
 #[derive(Clone, Debug, Serialize, PartialEq)]
@@ -1209,9 +1205,12 @@ async fn catalog_inner(
     if is_v2 && let Err(envelope) = super::trades::require_ready(&state).await {
         return envelope;
     }
-    let filters = parse_catalog_filters(&pairs);
+    let filters = match parse_catalog_filters(&pairs) {
+        Ok(filters) => filters,
+        Err(e) => return e.into_response(),
+    };
     let route = if is_v2 { "/v2/catalog" } else { "/v1/catalog" };
-    let picked_by = match optional_signer(&headers, "get", route).await {
+    let picked_by = match optional_signer(state.eip1654.as_deref(), &headers, "get", route).await {
         Ok(s) => s,
         Err(e) => return e.into_response(),
     };
@@ -1460,7 +1459,8 @@ mod tests {
             ("first", "34"),
             ("id", "0x7dd2c14796d6a411439f3ed465071fb1626084a8-0"),
             ("id", "0x0bf152a83a6fc55066c2b664b164ca2916ad38f5-2"),
-        ]));
+        ]))
+        .unwrap();
         assert_eq!(f.first, Some(34));
         assert_eq!(f.skip, Some(0));
         assert_eq!(
@@ -1477,13 +1477,26 @@ mod tests {
             ("wearableGender", "male"),
             ("includeSocialEmotes", "false"),
             ("network", "MATIC"),
-        ]));
+        ]))
+        .unwrap();
         assert_eq!(f.is_on_sale, Some(false));
         assert_eq!(f.rarities, vec!["epic"]);
         assert_eq!(f.network, Some(Network::Matic));
         assert_eq!(f.include_social_emotes, Some(false));
-        let f = parse_catalog_filters(&pairs(&[]));
+        let f = parse_catalog_filters(&pairs(&[])).unwrap();
         assert_eq!((f.first, f.skip, f.is_on_sale), (Some(20), Some(0), None));
+        // The price bounds are MANA (the legacy `parseEther`), bound as wei.
+        let f = parse_catalog_filters(&pairs(&[("minPrice", "2"), ("maxPrice", "2.75")])).unwrap();
+        assert_eq!(
+            (f.min_price.as_deref(), f.max_price.as_deref()),
+            (Some("2000000000000000000"), Some("2750000000000000000"))
+        );
+        let f = parse_catalog_filters(&pairs(&[("minPrice", " "), ("maxPrice", "")])).unwrap();
+        assert_eq!((f.min_price, f.max_price), (None, None));
+        for bad in ["abc", "1e18", "0.0000000000000000001"] {
+            let err = parse_catalog_filters(&pairs(&[("minPrice", bad)])).unwrap_err();
+            assert_eq!(err.message(), format!("Invalid minPrice value: {bad}"));
+        }
     }
 
     #[test]

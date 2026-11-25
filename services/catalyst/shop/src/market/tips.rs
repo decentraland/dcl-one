@@ -80,7 +80,7 @@ pub const PREAUTH_PER_MINUTE: u32 = 120;
 /// Unauthenticated requests every /64 of one IPv6 /48 may send a minute together.
 pub const PREAUTH_PER_MINUTE_PER_48: u32 = 480;
 /// Limiter keys kept; past it the least recently used goes.
-const LIMITER_KEYS: usize = 10_000;
+pub(super) const LIMITER_KEYS: usize = 10_000;
 pub const MAX_PENDING_PER_SENDER: i64 = 20;
 /// Claims one resolve pass settles at most.
 const RESOLVE_LIMIT: i64 = 500;
@@ -164,7 +164,7 @@ struct Bucket {
 /// Token buckets, at most `max_keys`: a key is stored only when a request
 /// spends from it, and past the cap the least recently used goes, so keys a
 /// denied flood invents never displace the buckets it exhausted.
-struct ForwardLimiter {
+pub(super) struct ForwardLimiter {
     max_keys: usize,
     inner: Mutex<Buckets>,
 }
@@ -177,7 +177,7 @@ struct Buckets {
 }
 
 impl ForwardLimiter {
-    fn new(max_keys: usize) -> Self {
+    pub(super) fn new(max_keys: usize) -> Self {
         Self {
             max_keys: max_keys.max(2),
             inner: Mutex::new(Buckets::default()),
@@ -185,7 +185,7 @@ impl ForwardLimiter {
     }
 
     /// Spends one token of every `(key, budget a minute)`, or none.
-    fn allow(&self, keys: &[(String, u32)]) -> bool {
+    pub(super) fn allow(&self, keys: &[(String, u32)]) -> bool {
         let now = Instant::now();
         let mut b = self.inner.lock();
         let Buckets { clock, map, order } = &mut *b;
@@ -232,7 +232,7 @@ impl ForwardLimiter {
 }
 
 /// The pre-auth keys of a client address and their budgets a minute.
-fn source_keys(ip: &str) -> Vec<(String, u32)> {
+pub(super) fn source_keys(ip: &str) -> Vec<(String, u32)> {
     let mut keys = vec![(crate::shared::client_ip::source_key(ip), PREAUTH_PER_MINUTE)];
     if let Ok(IpAddr::V6(v6)) = ip.parse::<IpAddr>()
         && v6.to_ipv4_mapped().is_none()
