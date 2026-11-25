@@ -17,11 +17,13 @@ import { flush } from './upload';
 
 export * from './selectors';
 
-/** Backoff between failed uploads: 1, 2, 4… minutes, capped at an hour. */
+/** Backoff between failed uploads: 1, 2, 4… minutes, capped at an hour before the jitter below. */
 const MIN_BACKOFF_MS = 60_000;
 const MAX_BACKOFF_MS = 60 * 60_000;
 // Each wait is stretched by a random 0–20%, so clients that failed together (an outage, the
-// day's quota) don't all come back in the same second. Never shortened: Retry-After holds.
+// day's quota) don't all come back in the same second. Never shortened: Retry-After holds. So the
+// longest wait is 72 minutes; clamping after the jitter would bring every capped client back at
+// the same instant again.
 export const BACKOFF_JITTER = 0.2;
 
 export type DeleteStatus = 'idle' | 'confirming' | 'deleting' | 'deleted' | 'failed';
