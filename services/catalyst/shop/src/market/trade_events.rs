@@ -266,6 +266,7 @@ fn assets_json(assets: &[AssetTuple]) -> Value {
                     "contractAddress": format!("{:#x}", a.contractAddress),
                     "value": a.value.to_string(),
                     "beneficiary": format!("{:#x}", a.beneficiary),
+                    "extra": format!("0x{}", hex::encode(&a.extra)),
                 })
             })
             .collect(),
@@ -366,7 +367,7 @@ pub fn decode_log(log: &RpcLog, block_time: i64) -> Result<Option<TradeEvent>, D
     }))
 }
 
-/// Appends a window's rows (`ON CONFLICT (network, block_number, log_index) DO NOTHING`).
+/// Appends a window's logs. Replaying the same execution can complete older asset data.
 pub async fn insert_events(
     conn: &mut PgConnection,
     net: ChainNet,
@@ -380,7 +381,16 @@ pub async fn insert_events(
              SELECT $1, b, i, t, m, k, c, h, n::numeric, s, a, x \
              FROM UNNEST($2::bigint[], $3::int[], $4::bigint[], $5::text[], $6::text[], $7::text[], $8::text[], $9::text[], $10::text[], $11::jsonb[], $12::text[]) \
                   AS u(b, i, t, m, k, c, h, n, s, a, x) \
-             ON CONFLICT (network, block_number, log_index) DO NOTHING",
+             ON CONFLICT (network, block_number, log_index) DO UPDATE SET assets = EXCLUDED.assets, tx_hash=EXCLUDED.tx_hash, \
+                 block_time=EXCLUDED.block_time, caller=EXCLUDED.caller \
+             WHERE trade_event.kind = 'traded' AND EXCLUDED.kind = 'traded' \
+               AND (trade_event.tx_hash='' OR trade_event.tx_hash=EXCLUDED.tx_hash) \
+               AND trade_event.marketplace_address=EXCLUDED.marketplace_address AND trade_event.signer=EXCLUDED.signer \
+               AND trade_event.hashed_signature = EXCLUDED.hashed_signature \
+               AND (trade_event.caller='' OR trade_event.caller=EXCLUDED.caller) \
+               AND (trade_event.block_time=0 OR trade_event.block_time=EXCLUDED.block_time) \
+               AND (trade_event.assets,trade_event.tx_hash,trade_event.block_time,trade_event.caller) IS DISTINCT FROM \
+                   (EXCLUDED.assets,EXCLUDED.tx_hash,EXCLUDED.block_time,EXCLUDED.caller)",
         )
         .bind(net.db_name())
         .bind(chunk.iter().map(|r| r.block_number).collect::<Vec<_>>())
@@ -1505,7 +1515,7 @@ pub fn parse_address(s: &str) -> Option<Address> {
 pub(crate) mod tests {
     use super::*;
     use alloy_primitives::{B256, FixedBytes, U256, keccak256};
-    use alloy_sol_types::SolValue;
+    use alloy_sol_types::{SolValue, sol_data};
 
     #[test]
     fn the_topics_are_the_keccak_of_their_signatures() {
@@ -1662,7 +1672,13 @@ pub(crate) mod tests {
                     .unwrap(),
                 value: U256::from(10u8).pow(U256::from(18u8)),
                 beneficiary: Address::from_str(signer).unwrap(),
-                extra: vec![].into(),
+                extra: (
+                    false,
+                    U256::from(1u8),
+                    vec![Address::from_str(signer).unwrap()],
+                )
+                    .abi_encode_params()
+                    .into(),
             }],
         };
         let data = (trade,).abi_encode_params();
@@ -1719,6 +1735,23 @@ pub(crate) mod tests {
             assert_eq!(assets["sent"][0]["assetType"], "3");
             assert_eq!(assets["sent"][0]["value"], "7");
             assert_eq!(assets["received"][0]["value"], "1000000000000000000");
+            assert_eq!(assets["sent"][0]["extra"], "0x");
+            let extra = assets["received"][0]["extra"].as_str().unwrap();
+            let encoded = hex::decode(extra.strip_prefix("0x").unwrap()).unwrap();
+            let royalties = <(
+                sol_data::Bool,
+                sol_data::Uint<256>,
+                sol_data::Array<sol_data::Address>,
+            )>::abi_decode_params(&encoded)
+            .unwrap();
+            assert_eq!(
+                royalties,
+                (
+                    false,
+                    U256::from(1u8),
+                    vec![Address::from_str(signer).unwrap()]
+                )
+            );
             assert_eq!(assets["uses"], "3");
             assert_eq!((ev.block_number, ev.log_index, ev.block_time), (100, 2, 55));
         }

@@ -244,6 +244,7 @@ async fn populated_voice_notification_upgrade_preserves_facts_and_replays_its_le
             "0061_content_processed_snapshot_types",
             "0062_shop_estate_repair_reset",
             "0063_shop_collections_index",
+            "0064_shop_sale_accounting",
             "0066_map_grid_change_marks",
             "0067_rental_asset_membership_block",
             "0069_shop_trade_digest",

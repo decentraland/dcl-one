@@ -46,6 +46,7 @@ use crate::chain_index::rpc::{Rpc, RpcError};
 impl From<RpcError> for IndexError {
     fn from(error: RpcError) -> Self {
         match error {
+            RpcError::Counted { source, .. } => Self::from(*source),
             RpcError::Budget { upper, requests } => Self::Budget { upper, requests },
             RpcError::Transport(message) => Self::Transport(message),
             RpcError::Rpc(message) | RpcError::Malformed(message) => Self::Rpc(message),
