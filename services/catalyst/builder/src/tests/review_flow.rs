@@ -653,7 +653,11 @@ async fn a_sweep_meeting_a_verdict_on_the_same_collection_waits_for_it_without_a
         verdict_tx.commit().await.unwrap();
         locked
     };
-    let (swept, locked) = tokio::join!(crate::validator::sweep(&node.state), verdict_side);
+    let (swept, locked) = tokio::time::timeout(std::time::Duration::from_secs(30), async {
+        tokio::join!(crate::validator::sweep(&node.state), verdict_side)
+    })
+    .await
+    .expect("the sweep waits for the collection the verdict holds");
     assert!(locked.is_ok(), "the verdict's request lock: {locked:?}");
     assert!(swept.is_ok(), "the sweep: {swept:?}");
     assert_eq!(
@@ -1310,6 +1314,18 @@ async fn creator_text_is_bounded_per_collection_and_per_caller_each_utc_day() {
     let Some(node) = unbounded_flow_node().await else {
         return;
     };
+    use crate::review::{
+        APPEALS_PER_CALLER, APPEALS_PER_COLLECTION, COMMENTS_PER_CALLER, COMMENTS_PER_COLLECTION,
+    };
+    assert_eq!(
+        (
+            COMMENTS_PER_COLLECTION,
+            COMMENTS_PER_CALLER,
+            APPEALS_PER_COLLECTION,
+            APPEALS_PER_CALLER
+        ),
+        (200, 200, 5, 20)
+    );
     set_clock(clock().date_naive().and_hms_opt(1, 0, 0).unwrap().and_utc());
     let (appealed, _) = rejected_by_validator(&node, "Appeals", 1).await;
     let (first, _) = published(&node, "Chatty", 1).await;
@@ -1318,7 +1334,7 @@ async fn creator_text_is_bounded_per_collection_and_per_caller_each_utc_day() {
         collection_curation(&node.pool, id, "pending").await;
     }
     let comment = json!({ "message": "again" });
-    for n in 0..crate::review::COMMENTS_PER_COLLECTION {
+    for n in 0..COMMENTS_PER_COLLECTION {
         let (status, body) = post(&node, OWNER_KEY, first, "comments", comment.clone()).await;
         assert_eq!(status, 200, "comment {n}: {body}");
     }
@@ -1329,7 +1345,7 @@ async fn creator_text_is_bounded_per_collection_and_per_caller_each_utc_day() {
     );
     let (status, _) = post(&node, CURATOR_KEY, first, "comments", comment.clone()).await;
     assert_eq!(status, 429, "the collection's bound holds for everyone");
-    let caller_left = crate::review::COMMENTS_PER_CALLER - crate::review::COMMENTS_PER_COLLECTION;
+    let caller_left = COMMENTS_PER_CALLER - COMMENTS_PER_COLLECTION;
     for _ in 0..caller_left {
         assert_eq!(
             post(&node, OWNER_KEY, second, "comments", comment.clone())
@@ -1359,7 +1375,7 @@ async fn creator_text_is_bounded_per_collection_and_per_caller_each_utc_day() {
         200
     );
 
-    for n in 0..crate::review::APPEALS_PER_COLLECTION {
+    for n in 0..APPEALS_PER_COLLECTION {
         let (status, body) = post(&node, OWNER_KEY, appealed, "curation/appeal", json!({})).await;
         assert_eq!(status, 200, "appeal {n}: {body}");
         reject_as_curator(&node, appealed).await;
