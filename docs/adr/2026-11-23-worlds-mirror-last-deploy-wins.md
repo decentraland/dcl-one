@@ -34,8 +34,9 @@ deployment to a world name wins, with the whole world compared.
   is queued or being sent upstream (`worlds.forward_outbox`), so a forward is never
   dropped and an operator block is never lifted by the mirror.
 - **Ties.** Equal times go to the byte-wise greater entity id, as publishes order
-  them. The same entity on both sides (a publish this node forwarded, a row the
-  worlds import wrote as local) keeps the world local.
+  them. The same entity on both sides (a row the worlds import wrote as local, a
+  forwarded publish the upstream did not accept) keeps the world local. A publish
+  the upstream accepted is handed over instead (below).
 - **Newer upstream.** In the transaction that writes the upstream's scenes, under the
   world row's lock, every local scene of the world is retired into
   `worlds.retired_world_scenes`, as a replacing publish retires scenes. A local scene
@@ -65,6 +66,40 @@ deployment to a world name wins, with the whole world compared.
 - **Place removal.** The explore catalogue then prunes the world's local row. That is
   not a place removal while the world is mirrored and one of its scene places is
   active, so no removal is queued and the world's bans and scene admin grants stay.
+
+## Forwarded publishes
+
+With `WORLDS_FORWARD_UPSTREAM_URL` set, the upstream is the one authority per world
+name: this node forwards every local publish and shows the upstream's whole view of
+the world.
+
+- **Rule.** A local scene whose forward the upstream accepted
+  (`worlds.forward_outbox.status = 'accepted'` for its entity id) and whose entity id
+  is in the upstream's current `/scenes` listing is handed over: it no longer holds
+  the world local, and no timestamp comparison applies to it. The outbox row is
+  found by its unique `entity_id`, a key lookup.
+- **Handover.** When no other local scene stands, the scheduled pass takes the world
+  as a newer upstream deployment does. The handed-over rows become mirrored rows in
+  place, keeping their place identity and storage as the same entity; every other
+  upstream scene is written and the world row is marked mirrored. From then on the
+  world follows the upstream like any mirrored world. The pass counts handed-over
+  scenes apart from superseded ones.
+- **Unchanged.** A blocked world stands, and so does one with a publish queued or
+  being sent. A local scene that is not accepted and listed (rejected, failed,
+  superseded, without an outbox row, or accepted but no longer listed) is judged by
+  the comparison above, its same-entity and tie rules included. A read-through fill
+  never replaces a local publish.
+
+Consequences:
+
+- After a handover, undeploys, settings, access and permissions of the world are
+  managed upstream; this node shows what the upstream holds.
+- A deployment grant that exists only here is unknown upstream, so such a publish is
+  `rejected` and the world stays local, showing only the local scene.
+- An upstream removal that lands between acceptance and the first pass that hands the
+  world over is not seen until a newer upstream deployment: the accepted scene is no
+  longer listed, so the comparison judges it and it stands until a newer upstream
+  deployment.
 
 ## Consequences
 

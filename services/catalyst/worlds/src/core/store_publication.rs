@@ -463,11 +463,15 @@ pub async fn newer_scene_deployed(
 /// row's write, its write alone without a numeric timestamp (as [`newer_scene_deployed`]
 /// stores it); it stands when that is later, on a tie when its entity id is byte-wise greater
 /// or equal, and always when it is the same entity. A local world also stands while it is
-/// blocked or a publish of it waits in `worlds.forward_outbox`.
+/// blocked or a publish of it waits in `worlds.forward_outbox`. A local scene the upstream
+/// accepted (its outbox row is `accepted`) and still lists (`listed`, the ids of the upstream's
+/// current scenes) is handed over: it does not hold the world, and the mirror keeps it as the
+/// mirrored row of the same entity.
 pub(crate) async fn local_scene_stands(
     conn: &mut sqlx::PgConnection,
     world: &str,
     upstream: Option<(f64, &str)>,
+    listed: &[&str],
 ) -> Result<bool, sqlx::Error> {
     let (timestamp, entity_id) = upstream.unzip();
     sqlx::query_scalar(
@@ -483,12 +487,17 @@ pub(crate) async fn local_scene_stands(
              OR EXISTS (SELECT 1 FROM worlds.forward_outbox
                         WHERE world_name = $1 AND status IN ('queued', 'sending'))
              OR EXISTS (SELECT 1 FROM local
-                        WHERE $2::float8 IS NULL OR entity_id = $3 OR ts > $2::float8
-                           OR (ts = $2::float8 AND entity_id COLLATE "C" > $3)))"#,
+                        WHERE NOT (entity_id = ANY($4::text[])
+                                   AND EXISTS (SELECT 1 FROM worlds.forward_outbox o
+                                               WHERE o.entity_id = local.entity_id
+                                                 AND o.status = 'accepted'))
+                          AND ($2::float8 IS NULL OR entity_id = $3 OR ts > $2::float8
+                               OR (ts = $2::float8 AND entity_id COLLATE "C" > $3))))"#,
     )
     .bind(world)
     .bind(timestamp)
     .bind(entity_id)
+    .bind(listed)
     .fetch_one(conn)
     .await
 }

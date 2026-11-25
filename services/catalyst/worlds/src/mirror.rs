@@ -35,9 +35,15 @@
 //! time) nor than now, and a tie goes to the byte-wise greater entity id; the
 //! same entity on both sides keeps the world local, as does an upstream scene
 //! listed without a deploy time, a blocked world and one with a publish queued
-//! for forwarding. The newer upstream then
+//! for forwarding. A local scene the upstream accepted from this node's forward
+//! (`worlds.forward_outbox` `accepted`) and still lists is handed over: it holds
+//! no world local and no comparison applies to it. When no other local scene
+//! stands, the pass takes the world, the handed-over rows becoming mirrored rows
+//! in place (the upsert sets `mirror_source`, the place identity and storage
+//! stay, as it is the same entity), and from then on the world follows the
+//! upstream. A newer upstream otherwise
 //! takes the world as a newer publish takes a mirrored one: every local scene
-//! is retired (`worlds.retired_world_scenes`, its place identity kept only by
+//! not listed is retired (`worlds.retired_world_scenes`, its place identity kept only by
 //! an upstream scene covering its whole footprint) and the world row is marked
 //! mirrored, in the transaction that
 //! writes the upstream's scenes. Otherwise the world is refused and only the
@@ -155,6 +161,9 @@ pub struct ScenesOutcome {
     pub refused: usize,
     /// Local scenes a newer upstream deployment retired.
     pub superseded_local: u64,
+    /// Local scenes handed over to the mirror: published here, accepted by the upstream and
+    /// listed by it.
+    pub handed_over: u64,
     pub skipped: usize,
     pub failed: usize,
     pub retired_scenes: u64,
@@ -234,6 +243,8 @@ enum Outcome {
         new_blobs: usize,
         /// Local scenes the upstream's newer deployment retired.
         superseded: u64,
+        /// Local scenes the upstream accepted from this node and lists, now mirrored rows.
+        handed_over: u64,
     },
     Unchanged,
     /// A local publish the upstream did not outdate, or on a read-through any local publish
@@ -354,11 +365,16 @@ async fn scenes_pass(
                     scenes,
                     new_blobs,
                     superseded,
+                    handed_over,
                 }) => {
                     out.synced += 1;
                     out.scenes += scenes;
                     out.new_blobs += new_blobs;
                     out.superseded_local += superseded;
+                    out.handed_over += handed_over;
+                    if handed_over > 0 {
+                        tracing::info!(world = %name, handed_over, "the upstream holds this node's forwarded publish: the world follows the upstream");
+                    }
                     if superseded > 0 {
                         tracing::info!(world = %name, superseded, "the upstream deployed last: its scenes replace the local publish");
                     }
@@ -428,8 +444,14 @@ async fn scenes_pass(
         .execute(pool)
         .await?;
         ctx.progress(format!(
-            "scenes pass complete: {} worlds, {} synced, {} unchanged, {} refused, {} failed, {} local scenes superseded",
-            out.processed, out.synced, out.unchanged, out.refused, out.failed, out.superseded_local
+            "scenes pass complete: {} worlds, {} synced, {} unchanged, {} refused, {} failed, {} local scenes superseded, {} handed over",
+            out.processed,
+            out.synced,
+            out.unchanged,
+            out.refused,
+            out.failed,
+            out.superseded_local,
+            out.handed_over
         ));
     } else {
         tracing::info!(

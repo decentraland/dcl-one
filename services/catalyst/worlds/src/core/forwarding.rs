@@ -4,6 +4,11 @@
 //! worlds content server's `POST /entities`. The operator reads the records
 //! under `/admin/forwarding` and requeues one at
 //! `/admin/forwarding/{entity_id}/retry`, behind `CATALYRST_WORLDS_ADMIN_TOKEN`.
+//!
+//! Once the upstream accepts a publish and lists its scene, the scheduled worlds
+//! mirror hands the world over: the local scene becomes the mirrored row of the
+//! same entity and the world follows the upstream (`worlds::mirror`). A rejected
+//! or failed publish stays local and is judged by last deploy wins.
 
 use axum::Json;
 use axum::extract::{Path, Query, State};

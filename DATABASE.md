@@ -121,6 +121,16 @@ or several creates a new identity. When the worlds mirror takes over a local
 world, a retired local scene's identity passes only to a scene covering its
 whole footprint (below). Retired identities keep their storage rows.
 
+The worlds mirror decides whether a local scene holds its world
+(`core::store::local_scene_stands`): a blocked world, a queued or sending
+`worlds.forward_outbox` row of the world, and a local scene newer than the
+upstream's newest (or the same entity) hold it. A local scene whose outbox row is
+`accepted` and whose entity id the upstream's `/scenes` listing names is handed
+over and holds nothing: the pass takes the world and its row becomes the mirrored
+row of the same entity. The probe is `forward_outbox_entity_id_key`
+(`entity_id` is unique), one key lookup per local scene of a world, once per
+mirror pass and again under the world lock, for worlds that hold a local scene only.
+
 Partial batches for one entity hold a session advisory lock from their first
 pending-upload/replay read through the staging or committed-publication decision.
 The guard owns one connection from the shared pool, and every guarded query and

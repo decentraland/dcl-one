@@ -300,6 +300,13 @@ A difference not listed here is a gap, not a decision.
   only when it covers that scene's whole footprint. A read-through fill never
   replaces a local publish
   ([ADR](../../../docs/adr/2026-11-23-worlds-mirror-last-deploy-wins.md)).
+- **Forwarded publishes are handed over.** A local scene the forward target
+  accepted (`worlds.forward_outbox` `accepted`) and still lists is no longer a
+  local publish for the mirror: when no other local scene stands, the pass
+  takes the world, the scene staying as the same entity, and the world then
+  follows the upstream, which manages its undeploys, settings and access. A
+  publish the upstream rejected, or one waiting to be sent, keeps the world
+  local.
 - **Validation errors** report the first failure only, and scene schema
   errors name the failing path.
 - **Scene pointers** are capped at 90,601 (every in-bounds parcel once); a

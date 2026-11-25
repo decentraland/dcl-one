@@ -2646,7 +2646,8 @@ async fn an_older_upstream_deployment_leaves_a_local_publish() {
 }
 
 /// Equal timestamps go to the byte-wise greater entity id, as a publish orders them; the same
-/// entity on both sides (a publish this node forwarded, an imported row) keeps the world local.
+/// entity on both sides (an imported row, a publish the upstream has not accepted) keeps the
+/// world local.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn equal_timestamps_go_to_the_greater_entity_id() {
     let Some(scratch) = db::scratch_database().await else {
@@ -2814,6 +2815,199 @@ async fn a_forwarding_or_blocked_local_world_is_not_superseded() {
     .unwrap();
     let summary = node.pass(&node.ctx().await).await;
     assert_eq!(summary.scenes.superseded_local, 1, "{summary:?}");
+
+    node.jobs.shutdown(std::time::Duration::from_secs(1)).await;
+    drop(node);
+    scratch.teardown().await;
+}
+
+/// A forwarding record of `id` in `world` with `status`, as the worker leaves it.
+async fn forwarded(pool: &PgPool, world: &str, id: &str, status: &str) {
+    sqlx::query(
+        "INSERT INTO worlds.forward_outbox (entity_id, world_name, target, status) \
+         VALUES ($1, $2, 'https://upstream.example', $3)",
+    )
+    .bind(id)
+    .bind(world)
+    .bind(status)
+    .execute(pool)
+    .await
+    .unwrap();
+}
+
+/// A local publish the upstream accepted and lists is handed over: the pass takes the world, the
+/// local row becomes the mirrored row of the same entity (same place identity), the upstream's
+/// other scene is written, and a second pass writes nothing. The world then follows the upstream:
+/// a scene it drops is retired here.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn an_accepted_and_listed_publish_is_handed_over_to_the_mirror() {
+    let Some(scratch) = db::scratch_database().await else {
+        eprintln!("skipping: CATALYST_TEST_DATABASE_URL not set");
+        return;
+    };
+    let fake = start_fake().await;
+    let node = Node::new(scratch.pool.clone(), &fake.base, "handover").await;
+    let world = "ho.dcl.eth";
+    let at = now_ms() - 3_600_000;
+    let (kept, other, other_file) = {
+        let mut st = fake.state.lock();
+        let (kept, _) = deploy_upstream(&mut st, world, "S", &["0,0"], at);
+        let (other, file) = deploy_upstream(&mut st, world, "O", &["5,5"], at - 1_800_000);
+        (kept, other, file)
+    };
+    let identity = publish_here(&node.pool, world, &kept, &["0,0"], at).await;
+    forwarded(&node.pool, world, &kept, "accepted").await;
+
+    let ctx = node.ctx().await;
+    let summary = node.pass(&ctx).await;
+    assert_eq!(
+        (
+            summary.scenes.synced,
+            summary.scenes.refused,
+            summary.scenes.superseded_local,
+            summary.scenes.handed_over
+        ),
+        (1, 0, 0, 1),
+        "{summary:?}"
+    );
+    assert_eq!(
+        world_mirror_source(&node.pool, world).await,
+        Some(fake.base.clone())
+    );
+    let rows = node.scene_rows(world).await;
+    let mut ids: Vec<&str> = rows.iter().map(|(id, _, _)| id.as_str()).collect();
+    ids.sort();
+    let mut expected = vec![kept.as_str(), other.as_str()];
+    expected.sort();
+    assert_eq!(ids, expected, "the upstream's whole world is here");
+    assert!(
+        rows.iter().all(|(_, _, source)| source.as_ref() == Some(&fake.base)),
+        "the handed-over row is a mirrored row: {rows:?}"
+    );
+    assert_eq!(
+        active_identity(&node.pool, world, &kept).await,
+        Some(identity),
+        "the handed-over scene keeps its place identity"
+    );
+    let other_identity = active_identity(&node.pool, world, &other).await;
+    assert!(other_identity.is_some() && other_identity != Some(identity));
+    assert!(
+        retired_ids(&node.pool, world).await.is_empty(),
+        "nothing is retired: the local scene is the same entity"
+    );
+    assert!(node.storage.exist(&hash_bytes_v1(&other_file)).await.unwrap());
+
+    let stamps = |pool: PgPool| async move {
+        sqlx::query_as::<_, (String, chrono::NaiveDateTime)>(
+            "SELECT entity_id, updated_at FROM worlds.world_scenes WHERE world_name = $1 ORDER BY entity_id",
+        )
+        .bind(world)
+        .fetch_all(&pool)
+        .await
+        .unwrap()
+    };
+    let before = stamps(node.pool.clone()).await;
+    let summary = node.pass(&ctx).await;
+    assert_eq!(
+        (
+            summary.scenes.unchanged,
+            summary.scenes.synced,
+            summary.scenes.handed_over
+        ),
+        (1, 0, 0),
+        "{summary:?}"
+    );
+    assert_eq!(
+        stamps(node.pool.clone()).await,
+        before,
+        "a second pass writes no scene"
+    );
+
+    // The world now follows the upstream: a scene it drops is retired here.
+    fake.state
+        .lock()
+        .worlds
+        .get_mut(world)
+        .unwrap()
+        .retain(|scene| scene.id != other);
+    node.pass(&ctx).await;
+    let rows = node.scene_rows(world).await;
+    assert_eq!(
+        rows.iter().map(|(id, _, _)| id.as_str()).collect::<Vec<_>>(),
+        vec![kept.as_str()],
+        "{rows:?}"
+    );
+    assert_eq!(active_identity(&node.pool, world, &other).await, None);
+    assert_eq!(
+        active_identity(&node.pool, world, &kept).await,
+        Some(identity)
+    );
+
+    node.jobs.shutdown(std::time::Duration::from_secs(1)).await;
+    drop(node);
+    scratch.teardown().await;
+}
+
+/// Only an accepted forward hands a world over: the same entity listed upstream beside a
+/// `rejected` record, or none, keeps the world local, and so does an accepted scene beside a
+/// newer local scene the upstream did not accept.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn only_an_accepted_listed_publish_is_handed_over() {
+    let Some(scratch) = db::scratch_database().await else {
+        eprintln!("skipping: CATALYST_TEST_DATABASE_URL not set");
+        return;
+    };
+    let fake = start_fake().await;
+    let node = Node::new(scratch.pool.clone(), &fake.base, "handover-no").await;
+    let at = now_ms() - 3_600_000;
+    let (rejected, bare, beside) = {
+        let mut st = fake.state.lock();
+        let (rejected, _) = deploy_upstream(&mut st, "rej.dcl.eth", "R", &["0,0"], at);
+        let (bare, _) = deploy_upstream(&mut st, "bare.dcl.eth", "B", &["0,0"], at);
+        let (beside, _) = deploy_upstream(&mut st, "beside.dcl.eth", "S", &["0,0"], at);
+        deploy_upstream(&mut st, "beside.dcl.eth", "T", &["5,5"], at - 1_800_000);
+        (rejected, bare, beside)
+    };
+    publish_here(&node.pool, "rej.dcl.eth", &rejected, &["0,0"], at).await;
+    forwarded(&node.pool, "rej.dcl.eth", &rejected, "rejected").await;
+    publish_here(&node.pool, "bare.dcl.eth", &bare, &["0,0"], at).await;
+    publish_here(&node.pool, "beside.dcl.eth", &beside, &["0,0"], at).await;
+    forwarded(&node.pool, "beside.dcl.eth", &beside, "accepted").await;
+    // Newer than the upstream's newest scene, never forwarded.
+    publish_here(
+        &node.pool,
+        "beside.dcl.eth",
+        "bafkreilocalnewer",
+        &["9,9"],
+        at + 1_800_000,
+    )
+    .await;
+
+    let summary = node.pass(&node.ctx().await).await;
+    assert_eq!(
+        (
+            summary.scenes.synced,
+            summary.scenes.refused,
+            summary.scenes.handed_over
+        ),
+        (0, 3, 0),
+        "{summary:?}"
+    );
+    for (world, id) in [("rej.dcl.eth", &rejected), ("bare.dcl.eth", &bare)] {
+        assert_eq!(
+            node.scene_rows(world).await,
+            vec![(id.clone(), "0xabc".to_string(), None)],
+            "{world}"
+        );
+        assert_eq!(world_mirror_source(&node.pool, world).await, None);
+    }
+    let rows = node.scene_rows("beside.dcl.eth").await;
+    assert_eq!(rows.len(), 2, "{rows:?}");
+    assert!(
+        rows.iter().all(|(_, _, source)| source.is_none()),
+        "the world stays local: {rows:?}"
+    );
+    assert_eq!(world_mirror_source(&node.pool, "beside.dcl.eth").await, None);
 
     node.jobs.shutdown(std::time::Duration::from_secs(1)).await;
     drop(node);

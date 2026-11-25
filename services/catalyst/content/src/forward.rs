@@ -27,6 +27,11 @@
 //! it receives, so an old scene sent late would roll the world back, and a
 //! scene its LAND holder took down stays down. Unpublishes are not forwarded.
 //!
+//! After `accepted`, the worlds upstream is the authority over the world: its
+//! scenes, settings and access reach this node through the worlds mirror, which
+//! takes a world over once no local scene but accepted, upstream-listed ones
+//! hold it (`worlds::mirror`), the accepted scene staying as the same entity.
+//!
 //! Both upstreams refuse an entity signed too long ago ([`Lane::max_age_ms`]:
 //! catalyst 20 minutes, a worlds server 5), so a forward has that long from
 //! the signature: an entity past it is `failed` unsent (after a long outage,

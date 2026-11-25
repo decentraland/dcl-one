@@ -418,8 +418,11 @@ pub(super) async fn mirror_world(
                 scene.id.as_str(),
             )
         }));
+        let listed_ids: Vec<&str> = listed.iter().map(|scene| scene.id.as_str()).collect();
         let mut conn = pool.acquire().await?;
-        if crate::core::store::local_scene_stands(&mut conn, &world_key, newest).await? {
+        if crate::core::store::local_scene_stands(&mut conn, &world_key, newest, &listed_ids)
+            .await?
+        {
             drop(conn);
             let retired = retire_beside_local(pool, name).await?;
             return Ok(Outcome::RefusedLocalPublish { retired });
@@ -669,7 +672,7 @@ pub(super) async fn mirror_world(
                     r.cid.as_str(),
                 )
             }));
-            crate::core::store::local_scene_stands(&mut tx, &world_key, newest).await
+            crate::core::store::local_scene_stands(&mut tx, &world_key, newest, &cids).await
         }
     }
     .with_context(|| format!("re-checking local publish for {name}"))?;
@@ -678,7 +681,17 @@ pub(super) async fn mirror_world(
         let retired = retire_beside_local(pool, name).await?;
         return Ok(Outcome::RefusedLocalPublish { retired });
     }
-    // A local scene the upstream lists too becomes the mirrored row below.
+    // A local scene the upstream lists too (one it accepted from this node's forward, or a
+    // row the import wrote) becomes the mirrored row below, in place.
+    let handed_over: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM worlds.world_scenes \
+         WHERE world_name = $1 AND mirror_source IS NULL AND entity_id = ANY($2::text[])",
+    )
+    .bind(&world_key)
+    .bind(&cids)
+    .fetch_one(&mut *tx)
+    .await
+    .with_context(|| format!("counting the local scenes of {name} the upstream lists"))?;
     let superseded = crate::core::store::retire_local_scenes(&mut tx, &world_key, &cids)
         .await
         .with_context(|| format!("retire the local scenes of {name}"))?;
@@ -815,5 +828,6 @@ pub(super) async fn mirror_world(
         scenes: records.len(),
         new_blobs,
         superseded: superseded.len() as u64,
+        handed_over: handed_over as u64,
     })
 }
