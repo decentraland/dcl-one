@@ -1139,7 +1139,9 @@ async fn trade_events_walk_under_a_budget_resume_after_a_kill_fold_the_verdicts_
         "{bids:?}"
     );
 
-    // A stale publish is not trusted: the verdicts fall back to open.
+    // A stale publish is not trusted, and the listings fail closed: no
+    // trade of the network is listed, the sold one never again as open,
+    // and no bid of it is reported.
     sqlx::query("UPDATE shop.chain_cursor SET folded_at = folded_at - interval '31 minutes' WHERE indexer = 'trade_events'").execute(&db.pool).await.unwrap();
     let open_ids: Vec<String> = sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
         "WITH {} SELECT id::text FROM unified_trades",
@@ -1151,9 +1153,17 @@ async fn trade_events_walk_under_a_budget_resume_after_a_kill_fold_the_verdicts_
     .await
     .unwrap();
     assert!(
-        open_ids.contains(&sold.0) && open_ids.contains(&index_moved.0),
-        "an unpublished verdict is ignored: {open_ids:?}"
+        open_ids.is_empty(),
+        "a stale index lists nothing of its network: {open_ids:?}"
     );
+    let bids: Vec<(String, String)> =
+        sqlx::query_as(sqlx::AssertSqlSafe(super::bids::test_trades_bids_sql()))
+            .bind(chrono::Utc::now().naive_utc())
+            .bind(None::<chrono::NaiveDateTime>)
+            .fetch_all(&db.pool)
+            .await
+            .unwrap();
+    assert!(bids.is_empty(), "{bids:?}");
     db.drop().await;
 }
 
@@ -1244,6 +1254,479 @@ async fn a_v3_cancellation_names_the_digest_the_fold_recomputes_from_the_stored_
         (Some(digest.clone()), "cancelled".to_string()),
         "the rebuild matches a clean walk"
     );
+    db.drop().await;
+}
+
+/// A V3 trade on `net`'s mainnet signed by the test wallet (`salt` makes it
+/// distinct), stored as `POST /v1/trades` stores it: with its digest.
+async fn stored_v3_trade(pool: &PgPool, net: ChainNet, salt: &str) -> (String, String) {
+    let chain_id = net.chain_id();
+    let v3 = listings::offchain_marketplace_v3(chain_id).unwrap();
+    let wallet = listings::test_support::signer().address().to_checksum(None);
+    let mut trade = listings::test_support::parse(&listings::test_support::trade_json_on(
+        &wallet, "0x00", chain_id,
+    ));
+    trade.checks.salt = salt.to_string();
+    trade.network = net.db_name().to_ascii_uppercase();
+    listings::test_support::sign(&mut trade, &v3);
+    let digest = format!("{:#x}", listings::signing_hash(&trade, &v3).unwrap());
+    let network = trade.network.clone();
+    let id = match listings::insert_trade(pool, &trade, &network, v3.address).await {
+        Ok(id) => id,
+        Err(e) => panic!("the fixture trade is stored: {e}"),
+    };
+    (id, digest)
+}
+
+async fn chain_state(pool: &PgPool, id: &str) -> (Option<String>, String, bool) {
+    sqlx::query_as(
+        "SELECT digest, status, digest_failed_at IS NOT NULL FROM shop.trade_chain_state WHERE trade_id = $1::uuid",
+    )
+    .bind(id)
+    .fetch_one(pool)
+    .await
+    .unwrap()
+}
+
+async fn listed_ids(pool: &PgPool) -> Vec<String> {
+    sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
+        "WITH {} SELECT id::text FROM unified_trades",
+        super::catalog::unified_trades_cte("$1", "$2")
+    )))
+    .bind(chrono::Utc::now().naive_utc())
+    .bind(None::<chrono::NaiveDateTime>)
+    .fetch_all(pool)
+    .await
+    .unwrap()
+}
+
+/// On both walks, a V3 cancellation applies on the digest the trade stored
+/// at creation even when the row can no longer be rebuilt into the signed
+/// struct; a stored digest the signature does not recover the signer over
+/// is not used (the rebuild is); a V3 trade with no verified digest is
+/// marked, left out of the listings and read `unverifiable` by the MANA
+/// facts; and a row the fold already holds without a digest (an older
+/// failure, or one from before failures were marked) gets its digest on a
+/// later fold, past the backoff, with the cancellation already in the log
+/// applied, without a rebuild.
+#[tokio::test]
+async fn a_v3_cancellation_applies_on_the_stored_digest_and_a_trade_without_one_is_not_listed() {
+    for net in [ChainNet::Matic, ChainNet::Ethereum] {
+        let Some(db) = ScratchDb::create().await else {
+            return;
+        };
+        let chain_id = net.chain_id();
+        let v3 = listings::offchain_marketplace_v3(chain_id).unwrap();
+        let v3_block = trade_events::deployments(chain_id)
+            .iter()
+            .find(|(_, _, v3)| *v3)
+            .unwrap()
+            .1;
+        let signer = listings::test_support::signer()
+            .address()
+            .to_string()
+            .to_ascii_lowercase();
+        // kept: its checks no longer parse, its stored digest keys the cancellation.
+        let kept = stored_v3_trade(&db.pool, net, "0x1235").await;
+        // bogus: a stored digest the signature does not recover over; the row rebuilds.
+        let bogus = stored_v3_trade(&db.pool, net, "0x1236").await;
+        // late: no stored digest and a row that does not rebuild, until an import brings it.
+        let late = stored_v3_trade(&db.pool, net, "0x1237").await;
+        // open: nothing closes it.
+        let open = stored_v3_trade(&db.pool, net, "0x1238").await;
+        sqlx::query("UPDATE shop.trades SET checks = '{}'::jsonb WHERE id = ANY($1::uuid[])")
+            .bind(vec![kept.0.clone(), late.0.clone()])
+            .execute(&db.pool)
+            .await
+            .unwrap();
+        sqlx::query("UPDATE shop.trades SET trade_digest = NULL WHERE id = $1::uuid")
+            .bind(&late.0)
+            .execute(&db.pool)
+            .await
+            .unwrap();
+        sqlx::query("UPDATE shop.trades SET trade_digest = $2 WHERE id = $1::uuid")
+            .bind(&bogus.0)
+            .bind(format!("0x{}", "11".repeat(32)))
+            .execute(&db.pool)
+            .await
+            .unwrap();
+        let head = v3_block + 200;
+        let chain = FakeChain::new(
+            head,
+            vec![
+                cancelled(v3_block + 10, v3.address, &signer, &kept.1),
+                cancelled(v3_block + 11, v3.address, &signer, &bogus.1),
+                cancelled(v3_block + 12, v3.address, &signer, &late.1),
+            ],
+            1_000_000_000,
+            10,
+        );
+        chain.chain_id.store(chain_id as u64, Ordering::SeqCst);
+        let url = serve(chain).await;
+        let st = state_over(
+            db.pool.clone(),
+            &url,
+            IndexSettings {
+                window_blocks: 20_000_000,
+                requests_per_pass: 50,
+                ..index_settings(50, 20_000_000)
+            },
+            true,
+        );
+        let ix = TradeEventsIndex::mainnet(net);
+        let mut last = PassOutcome::default();
+        for _ in 0..10 {
+            last = pass(&st, &url, &ix).await;
+            if last.published {
+                break;
+            }
+        }
+        assert!(last.published, "{net:?}: {last:?}");
+        assert_eq!(
+            chain_state(&db.pool, &kept.0).await,
+            (Some(kept.1.clone()), "cancelled".to_string(), false),
+            "{net:?}: the stored digest keys the cancellation"
+        );
+        assert_eq!(
+            chain_state(&db.pool, &bogus.0).await,
+            (Some(bogus.1.clone()), "cancelled".to_string(), false),
+            "{net:?}: the rebuilt digest, not the one that does not recover the signer"
+        );
+        assert_eq!(
+            chain_state(&db.pool, &late.0).await,
+            (None, "open".to_string(), true),
+            "{net:?}: no verified digest: marked"
+        );
+        assert_eq!(
+            listed_ids(&db.pool).await,
+            vec![open.0.clone()],
+            "{net:?}: neither the cancelled trades nor the unverifiable one is listed"
+        );
+        let verdict = crate::mana::facts::trade_verdict(&db.pool, net, chain_id, &late.0)
+            .await
+            .unwrap();
+        assert_eq!(
+            verdict,
+            (Some(("unverifiable".to_string(), 0)), true),
+            "{net:?}"
+        );
+
+        // The import brings the late trade's digest; within the backoff the
+        // fold does not try again, past it the digest is verified and the
+        // cancellation already in the log applies.
+        sqlx::query("UPDATE shop.trades SET trade_digest = $2 WHERE id = $1::uuid")
+            .bind(&late.0)
+            .bind(&late.1)
+            .execute(&db.pool)
+            .await
+            .unwrap();
+        let owner = chain_walk::test_owner(&db.pool, &ix, &st.settings.market.indexes).await;
+        trade_events::fold(
+            &db.pool,
+            net,
+            chain_id,
+            Some(head as i64),
+            head as i64,
+            &owner,
+        )
+        .await
+        .unwrap();
+        assert_eq!(
+            chain_state(&db.pool, &late.0).await,
+            (None, "open".to_string(), true),
+            "{net:?}: within the backoff"
+        );
+        sqlx::query("UPDATE shop.trade_chain_state SET digest_failed_at = digest_failed_at - interval '11 minutes' WHERE trade_id = $1::uuid")
+            .bind(&late.0)
+            .execute(&db.pool)
+            .await
+            .unwrap();
+        trade_events::fold(
+            &db.pool,
+            net,
+            chain_id,
+            Some(head as i64),
+            head as i64,
+            &owner,
+        )
+        .await
+        .unwrap();
+        assert_eq!(
+            chain_state(&db.pool, &late.0).await,
+            (Some(late.1.clone()), "cancelled".to_string(), false),
+            "{net:?}: past the backoff"
+        );
+
+        // A row held without a digest and never marked (as an older binary
+        // left it) is settled on the next fold.
+        sqlx::query("UPDATE shop.trade_chain_state SET digest = NULL, status = 'open', digest_failed_at = NULL WHERE trade_id = $1::uuid")
+            .bind(&kept.0)
+            .execute(&db.pool)
+            .await
+            .unwrap();
+        trade_events::fold(
+            &db.pool,
+            net,
+            chain_id,
+            Some(head as i64),
+            head as i64,
+            &owner,
+        )
+        .await
+        .unwrap();
+        assert_eq!(
+            chain_state(&db.pool, &kept.0).await,
+            (Some(kept.1.clone()), "cancelled".to_string(), false),
+            "{net:?}: an unmarked row without a digest is retried at once"
+        );
+        db.drop().await;
+    }
+}
+
+/// `POST /v1/trades` stores a V3 trade's cancellation digest, the hash the
+/// signature verified over; a V2 trade, which cancels by signature, none.
+#[tokio::test]
+async fn a_stored_trade_keeps_its_v3_digest_and_a_v2_one_none() {
+    let Some(db) = ScratchDb::create().await else {
+        return;
+    };
+    let (v3_id, digest) = stored_v3_trade(&db.pool, ChainNet::Matic, "0x1240").await;
+    let v2 = listings::offchain_marketplace_v2(137).unwrap();
+    let v2_trade = listings::test_support::signed_trade_on(137, &v2);
+    let v2_id = listings::insert_trade(&db.pool, &v2_trade, "MATIC", v2.address)
+        .await
+        .unwrap_or_else(|e| panic!("stored: {e}"));
+    let stored = |id: String| {
+        let pool = db.pool.clone();
+        async move {
+            sqlx::query_scalar::<_, Option<String>>(
+                "SELECT trade_digest FROM shop.trades WHERE id = $1::uuid",
+            )
+            .bind(id)
+            .fetch_one(&pool)
+            .await
+            .unwrap()
+        }
+    };
+    assert_eq!(stored(v3_id).await, Some(digest));
+    assert_eq!(stored(v2_id).await, None);
+    db.drop().await;
+}
+
+/// The `trades::ready` envelope as `(status, source, message)`.
+async fn listing_gate(st: &MarketplaceState) -> (StatusCode, Option<String>, String) {
+    match super::trades::ready(st).await {
+        Ok(_) => (StatusCode::OK, None, String::new()),
+        Err(response) => {
+            let status = response.status();
+            let body: Value = serde_json::from_slice(
+                &axum::body::to_bytes(response.into_body(), 1 << 16)
+                    .await
+                    .unwrap(),
+            )
+            .unwrap_or(Value::Null);
+            (
+                status,
+                body["source"].as_str().map(str::to_string),
+                body["message"].as_str().unwrap_or_default().to_string(),
+            )
+        }
+    }
+}
+
+/// The routes that list, price or report the status of trades fail closed
+/// until the trade-events index is current on both networks: their gate
+/// (`trades::ready`) answers the envelope naming the index and the networks
+/// behind, and the open-listing read drops a network's trades as soon as
+/// its cursor falls behind, in the same statement. The stored records of
+/// `/v1/trades`, which carry no status, are served on the mirror's pass
+/// alone, whatever the cursors say.
+#[tokio::test]
+async fn the_listing_routes_fail_closed_until_the_trade_events_index_is_current_on_both_networks() {
+    let Some(db) = ScratchDb::create().await else {
+        return;
+    };
+    let st = state_over(
+        db.pool.clone(),
+        "http://127.0.0.1:9/",
+        index_settings(1, 1),
+        true,
+    );
+    let app = super::market_router(st.clone());
+    let (id, _) = seed_trade(
+        &db.pool,
+        "public_nft_order",
+        ALICE,
+        "0x00000000000000000000000000000000000000aa",
+        1,
+        0,
+        (3, "0x00000000000000000000000000000000000000c1", "1"),
+        (1, ZERO, "1"),
+    )
+    .await;
+    let records_served = || async {
+        for path in ["/v1/trades?first=1".to_string(), format!("/v1/trades/{id}")] {
+            let (code, body) = get_json(&app, &path).await;
+            assert_eq!(code, StatusCode::OK, "{path}: {body}");
+        }
+    };
+    let (code, source, message) = listing_gate(&st).await;
+    assert_eq!(
+        (code, source.as_deref()),
+        (StatusCode::SERVICE_UNAVAILABLE, Some("trade-events-index")),
+        "{message}"
+    );
+    assert!(message.contains("ethereum and matic"), "{message}");
+    assert!(
+        listed_ids(&db.pool).await.is_empty(),
+        "no cursor, no listing"
+    );
+    records_served().await;
+
+    // Polygon current, Ethereum not: still refused, naming Ethereum.
+    sqlx::query("INSERT INTO shop.chain_cursor (indexer, network, start_block, last_block, fold_through, folded_block, folded_at, full_history, chain_id) VALUES ('trade_events', 'matic', 0, 10, 10, 10, timezone('UTC', now()), true, 137)")
+        .execute(&db.pool)
+        .await
+        .unwrap();
+    let (code, _, message) = listing_gate(&st).await;
+    assert_eq!(code, StatusCode::SERVICE_UNAVAILABLE, "{message}");
+    assert!(message.contains("fold on ethereum within"), "{message}");
+    assert_eq!(
+        listed_ids(&db.pool).await,
+        vec![id.clone()],
+        "the read itself asks only the trade's network"
+    );
+
+    trade_events::tests::publish_cursors(&db.pool).await;
+    assert_eq!(listing_gate(&st).await.0, StatusCode::OK);
+
+    // A pass in progress (its windows advanced `last_block`, its fold has not
+    // published yet) keeps the previous publish: the routes serve, the trade
+    // stays listed, and a sold one stays closed.
+    let (sold, _) = seed_trade(
+        &db.pool,
+        "public_nft_order",
+        ALICE,
+        "0x00000000000000000000000000000000000000aa",
+        1,
+        0,
+        (3, "0x00000000000000000000000000000000000000c1", "2"),
+        (1, ZERO, "1"),
+    )
+    .await;
+    sqlx::query("INSERT INTO shop.trade_chain_state (trade_id, network, executions, status, folded_block) VALUES ($1::uuid, 'matic', 1, 'sold', 10)")
+        .bind(&sold)
+        .execute(&db.pool)
+        .await
+        .unwrap();
+    sqlx::query(
+        "UPDATE shop.chain_cursor SET last_block = last_block + 500 WHERE indexer = 'trade_events'",
+    )
+    .execute(&db.pool)
+    .await
+    .unwrap();
+    assert_eq!(listing_gate(&st).await.0, StatusCode::OK, "mid-pass");
+    assert_eq!(listed_ids(&db.pool).await, vec![id.clone()], "mid-pass");
+
+    // The walker's clock a few minutes ahead of the reader's still counts;
+    // past the skew allowance it does not.
+    sqlx::query("UPDATE shop.chain_cursor SET folded_at = timezone('UTC', now()) + interval '5 minutes' WHERE indexer = 'trade_events'")
+        .execute(&db.pool)
+        .await
+        .unwrap();
+    assert_eq!(listing_gate(&st).await.0, StatusCode::OK, "within the skew");
+    assert_eq!(listed_ids(&db.pool).await, vec![id.clone()]);
+    sqlx::query("UPDATE shop.chain_cursor SET folded_at = timezone('UTC', now()) + interval '11 minutes' WHERE indexer = 'trade_events'")
+        .execute(&db.pool)
+        .await
+        .unwrap();
+    assert_eq!(
+        listing_gate(&st).await.0,
+        StatusCode::SERVICE_UNAVAILABLE,
+        "past the skew"
+    );
+    assert!(listed_ids(&db.pool).await.is_empty());
+    trade_events::tests::publish_cursors(&db.pool).await;
+
+    // The publish is withdrawn after the gate (a rewind, a divergence): the
+    // statement drops the trade, and the next gate refuses; the records stay
+    // served.
+    sqlx::query("UPDATE shop.chain_cursor SET folded_block = NULL WHERE indexer = 'trade_events' AND network = 'matic'")
+        .execute(&db.pool)
+        .await
+        .unwrap();
+    assert!(listed_ids(&db.pool).await.is_empty());
+    assert_eq!(listing_gate(&st).await.0, StatusCode::SERVICE_UNAVAILABLE);
+    records_served().await;
+    db.drop().await;
+}
+
+/// `/v1/bids` reports a bid only while its network's trade-events index is
+/// current, and never a V3 bid whose cancellation digest could not be
+/// established: its cancellation would go unseen. A pass in progress keeps
+/// the previous publish: a sold bid stays `sold`, never `open`.
+#[tokio::test]
+async fn an_unverifiable_v3_bid_is_not_reported() {
+    let Some(db) = ScratchDb::create().await else {
+        return;
+    };
+    let mana = "0xa1c57f48f0deb89f569dfbe6e2b7f46d33606fd4";
+    let item = "0x00000000000000000000000000000000000000c1";
+    let bid = |token: &'static str| {
+        let pool = db.pool.clone();
+        async move {
+            seed_trade(
+                &pool,
+                "bid",
+                ALICE,
+                "0x00000000000000000000000000000000000000aa",
+                1,
+                0,
+                (1, mana, "1000"),
+                (3, item, token),
+            )
+            .await
+            .0
+        }
+    };
+    let (kept, unverifiable, sold) = (bid("1").await, bid("2").await, bid("3").await);
+    sqlx::query("INSERT INTO shop.trade_chain_state (trade_id, network, status, folded_block, digest_failed_at) VALUES ($1::uuid, 'matic', 'open', 10, timezone('UTC', now()))")
+        .bind(&unverifiable)
+        .execute(&db.pool)
+        .await
+        .unwrap();
+    sqlx::query("INSERT INTO shop.trade_chain_state (trade_id, network, executions, status, folded_block) VALUES ($1::uuid, 'matic', 1, 'sold', 10)")
+        .bind(&sold)
+        .execute(&db.pool)
+        .await
+        .unwrap();
+    let reported = || async {
+        let mut rows: Vec<(String, String)> = sqlx::query_as::<_, (String, String)>(
+            sqlx::AssertSqlSafe(super::bids::test_trades_bids_sql()),
+        )
+        .bind(chrono::Utc::now().naive_utc())
+        .bind(None::<chrono::NaiveDateTime>)
+        .fetch_all(&db.pool)
+        .await
+        .unwrap();
+        rows.sort();
+        rows
+    };
+    assert!(reported().await.is_empty(), "no cursor, no bid");
+    trade_events::tests::publish_cursors(&db.pool).await;
+    let mut want = vec![
+        (kept.clone(), "open".to_string()),
+        (sold.clone(), "sold".to_string()),
+    ];
+    want.sort();
+    assert_eq!(reported().await, want);
+    sqlx::query(
+        "UPDATE shop.chain_cursor SET last_block = last_block + 500 WHERE indexer = 'trade_events'",
+    )
+    .execute(&db.pool)
+    .await
+    .unwrap();
+    assert_eq!(reported().await, want, "mid-pass");
     db.drop().await;
 }
 
@@ -2077,6 +2560,7 @@ async fn the_nft_walk_folds_owners_orders_and_resumes_a_kill_backfills_a_late_co
     let Some(db) = ScratchDb::create().await else {
         return;
     };
+    trade_events::tests::publish_cursors(&db.pool).await;
     let s = nft_index::start_block(ChainNet::Matic);
     let c1 = "0x00000000000000000000000000000000000000c1";
     let c2 = "0x00000000000000000000000000000000000000c2";
@@ -3236,6 +3720,7 @@ async fn ethereum_names_v1_wearables_land_data_and_the_land_routes() {
     let Some(db) = ScratchDb::create().await else {
         return;
     };
+    trade_events::tests::publish_cursors(&db.pool).await;
     // Past the registrar's deployment (9,412,979), the walk's first
     // fixed contracts, so every log below is in the address set.
     let s = 9_420_000u64;

@@ -490,6 +490,7 @@ async fn the_mirrors_walk_the_subgraph_and_every_market_route_answers_over_them(
         return;
     };
     let pool = state.pool.clone();
+    super::trade_events::tests::publish_cursors(&pool).await;
     let t = tag();
     let (c1, c2, c_nft) = (contract_of(&t, 1), contract_of(&t, 2), contract_of(&t, 3));
     let v3_minter = listings::offchain_marketplace_v3(137).unwrap().address;
@@ -2195,6 +2196,7 @@ async fn a_signed_item_order_is_stored_once_and_only_behind_the_write_switch() {
         return;
     };
     let pool = state.pool.clone();
+    super::trade_events::tests::publish_cursors(&pool).await;
     let t = tag();
     let contract = contract_of(&t, 9);
     let marketplace = listings::offchain_marketplace_v3(137).unwrap();
@@ -2607,6 +2609,24 @@ async fn a_second_open_order_or_bid_on_the_same_asset_is_refused() {
         err.to_string(),
         "There is already an open order for this Item"
     );
+    // A first order without a verified V3 digest is left out of the
+    // listings, but still counts: it may still execute on chain, or be
+    // verified later, and two open orders would then be listed.
+    sqlx::query("INSERT INTO shop.trade_chain_state (trade_id, network, status, folded_block, digest_failed_at) VALUES ($1::uuid, 'matic', 'open', 10, timezone('UTC', now()))")
+        .bind(&first)
+        .execute(&pool)
+        .await
+        .unwrap();
+    let marked = create(signed(item_order_json(&signer, &contract), "0x03")).await;
+    assert!(
+        matches!(marked, Err(listings::TradeCreationError::DuplicateOpen(_))),
+        "{marked:?}"
+    );
+    sqlx::query("DELETE FROM shop.trade_chain_state WHERE trade_id = $1::uuid")
+        .bind(&first)
+        .execute(&pool)
+        .await
+        .unwrap();
     // Once the first order is closed, the item can be listed again.
     sqlx::query("UPDATE shop.trades SET expires_at = '2000-01-01' WHERE id = $1::uuid")
         .bind(&first)
@@ -2733,6 +2753,7 @@ async fn a_stored_malformed_token_id_does_not_break_the_bid_or_listing_reads() {
         return;
     };
     let pool = state.pool.clone();
+    super::trade_events::tests::publish_cursors(&pool).await;
     let t = tag();
     let contract = contract_of(&t, 3);
     let marketplace = listings::offchain_marketplace_v3(137).unwrap();
@@ -2812,6 +2833,7 @@ async fn a_read_naming_a_contract_keeps_the_rows_of_the_whole_read() {
         return;
     };
     let pool = state.pool.clone();
+    super::trade_events::tests::publish_cursors(&pool).await;
     let t = tag();
     let (c1, c2) = (contract_of(&t, 1), contract_of(&t, 2));
     for (c, item) in [(&c1, "0"), (&c1, "1"), (&c2, "0")] {
@@ -3420,6 +3442,7 @@ async fn an_open_listing_stays_only_while_its_signer_holds_that_token() {
         return;
     };
     let pool = state.pool.clone();
+    super::trade_events::tests::publish_cursors(&pool).await;
     let t = tag();
     let c = contract_of(&t, 7);
     let unindexed = contract_of(&t, 8);
@@ -3587,6 +3610,7 @@ async fn a_sold_listing_stays_out_through_a_rewind_and_its_refill() {
         return;
     };
     let pool = state.pool.clone();
+    super::trade_events::tests::publish_cursors(&pool).await;
     let c = contract_of(&tag(), 9);
     let token = (alloy_primitives::U256::from(3u64) << 216u32 | alloy_primitives::U256::from(1u64))
         .to_string();
@@ -3713,6 +3737,7 @@ async fn shop_feed_totals_survive_exact_and_past_end_offsets() {
     let Some(db) = crate::test_db::OwnDatabase::create("shop_page_totals").await else {
         return;
     };
+    super::trade_events::tests::publish_cursors(&db.pool).await;
     // Prices, names, timestamps, relevance and discount each induce a different order.
     let fixture = tag();
     for (id, name, price, created) in [
@@ -3959,6 +3984,38 @@ async fn land_pages_read_the_published_catalogue_and_enrich_the_same_snapshot() 
     let (code, result) = get(unavailable_trades, "/v1/nfts?first=24").await;
     assert_eq!(code, StatusCode::OK, "{result}");
     assert_eq!(result["total"], 3);
+    // The node's own trades are readable (no upstream, writes on), but the
+    // trade-events verdicts are not published: both readers of a page's v3
+    // orders on the LAND snapshot answer that index's envelope instead of
+    // dropping the orders; once it publishes on both networks they serve.
+    let local_trades = {
+        let mut settings = Settings::for_tests();
+        settings.eth_network = "mainnet".into();
+        settings.market.indexes.nft_enabled = true;
+        settings.data_writes_enabled = true;
+        settings.marketplace_subgraph_url = Some(url.clone());
+        let state = super::MarketplaceState::new(
+            db.pool.clone(),
+            crate::http::Outbound::for_tests(),
+            settings,
+        );
+        state.test_allow_loopback.store(true, Ordering::Relaxed);
+        market_router(Arc::new(state))
+    };
+    let order_reads = [
+        "isOnSale=true".to_owned(),
+        format!("contractAddress={land}&tokenId={parcel}"),
+    ];
+    for query in &order_reads {
+        let (code, result) = get(local_trades.clone(), &format!("/v1/nfts?{query}")).await;
+        assert_eq!(code, StatusCode::SERVICE_UNAVAILABLE, "{query}: {result}");
+        assert_eq!(result["source"], "trade-events-index", "{query}");
+    }
+    super::trade_events::tests::publish_cursors(&db.pool).await;
+    for query in &order_reads {
+        let (code, result) = get(local_trades.clone(), &format!("/v1/nfts?{query}")).await;
+        assert_eq!(code, StatusCode::OK, "{query}: {result}");
+    }
     let mixed_contracts = format!("/v1/nfts?contractAddress={estate}&contractAddress={WALLET_B}");
     let (code, result) = get(walker.clone(), &mixed_contracts).await;
     assert_eq!(code, StatusCode::OK, "{result}");

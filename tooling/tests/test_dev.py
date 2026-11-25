@@ -960,12 +960,16 @@ class DevTest(unittest.TestCase):
         self.assertEqual(env['WORLDS_READ_THROUGH_TRUST_UPSTREAM_GRANTS'], 'true')
         self.assertNotIn('WORLDS_READ_THROUGH_TRUST_UPSTREAM_GRANTS', dev.runtime_env(self.config))
         for key in ('SYNC_ENABLED', 'WORLDS_CONTENT_MIRROR_ENABLED', 'SCENE_HOST_ENABLED',
-                    'MARKETPLACE_TRADE_EVENTS_INDEX_ENABLED', 'CREDITS_USAGE_INDEX_ENABLED'):
+                    'CREDITS_USAGE_INDEX_ENABLED'):
             self.assertEqual(env[key], 'false', key)
-        # The Shop's catalogue follows the public subgraphs and chain, as `posture show mirror` does.
+        # The Shop's catalogue follows the public subgraphs and chain, as `posture show mirror` does; its
+        # listings wait for the trade-events index, which walks mainnet over the tagged endpoints.
         for key in ('MARKETPLACE_MIRRORS_ENABLED', 'MARKETPLACE_NFT_INDEX_ENABLED', 'LAND_AUTHZ_INDEX_ENABLED',
-                    'SHOP_RENTALS_INDEX_ENABLED', 'MARKETPLACE_COMMITTEE_INDEX_ENABLED'):
+                    'SHOP_RENTALS_INDEX_ENABLED', 'MARKETPLACE_COMMITTEE_INDEX_ENABLED',
+                    'MARKETPLACE_TRADE_EVENTS_INDEX_ENABLED'):
             self.assertEqual(env[key], 'true', key)
+        self.assertEqual(sorted(e.split('=', 1)[0] for e in env['TRADE_RPC_URLS'].split(',')), ['1', '137'])
+        self.assertTrue(all(e.endswith('?project=dcl-one-dev') for e in env['TRADE_RPC_URLS'].split(',')))
         # The mirror posture's pause between index passes, and the tag naming dev stacks in the RPC's logs.
         self.assertEqual(env['MARKETPLACE_INDEX_INTERVAL_SECS'], '30')
         for key in ('ETH_RPC_URL', 'RPC_ENDPOINT_POLYGON'):
@@ -1008,7 +1012,7 @@ class DevTest(unittest.TestCase):
         self.assertEqual((env['MARKETPLACE_INDEX_CHAIN_ID_MATIC'], env['MARKETPLACE_INDEX_CHAIN_ID_ETHEREUM']), ('80002', '11155111'))
         # A trade signed into the stack closes within seconds: the testnet keeps the binary's pause, not the mirror's.
         self.assertEqual((env['MARKETPLACE_INDEX_INTERVAL_SECS'], mirror['MARKETPLACE_INDEX_INTERVAL_SECS']), ('5', '30'))
-        self.assertEqual(mirror['MARKETPLACE_TRADE_EVENTS_INDEX_ENABLED'], 'false')
+        self.assertEqual(mirror['MARKETPLACE_TRADE_EVENTS_INDEX_ENABLED'], 'true')
         self.assertNotIn('MARKETPLACE_INDEX_CHAIN_ID_MATIC', mirror)
         # The NFT index knows mainnet's contracts only, so it does not walk the testnets.
         self.assertEqual(env['MARKETPLACE_NFT_INDEX_ENABLED'], 'false')

@@ -34,6 +34,13 @@
 //! `/v3/catalog` feeds) answers the `trades-mirror` envelope until the
 //! configured upstream has one complete pass (`trades_mirror.completed_at`,
 //! cached 10 s): a table 0.3% through its first pass is not the order book.
+//! A route that lists, prices or reports the status of trades then answers
+//! the `trade-events-index` envelope until that index is current on every
+//! network (`trade_events::require_current`): without its verdicts a sold or
+//! cancelled trade cannot be told from an open one. `/v1/trades` and
+//! `/v1/trades/{id}` serve the stored records, which carry no status and
+//! read no verdict, so they wait for the mirror's pass only
+//! ([`require_mirror_ready`]).
 //! Trades are money data, so a pass also has a freshness budget
 //! ([`max_age`]): past it (a dead or failing mirror) the same routes answer
 //! the envelope naming the pass's age instead of a stale order book.
@@ -404,11 +411,31 @@ pub enum NotReady {
 /// Whether `shop.trades` may be read as the truth, or the envelope to
 /// answer instead. `trades_mirror.completed_at` for the configured upstream
 /// (a completed pass stays completed while the next one runs), cached 10 s,
-/// within [`max_age`] of now.
+/// within [`max_age`] of now; then the trade-events verdicts current on
+/// every network (`trade_events::require_current`), which the open-listing
+/// reads close sold and cancelled trades by.
 pub async fn ready(state: &MarketplaceState) -> Result<Readiness, Response> {
-    readiness(state).await.map_err(not_ready_response)
+    let readiness = readiness(state).await.map_err(not_ready_response)?;
+    super::trade_events::require_current(state).await?;
+    Ok(readiness)
 }
 
+/// [`ready`] on `conn` at `now`: the mirror's pass marker (uncached) and the
+/// trade-events verdicts read on the snapshot the reads that follow run on
+/// (the nft pages read from the database).
+pub async fn ready_on(
+    state: &MarketplaceState,
+    conn: &mut sqlx::PgConnection,
+    now: DateTime<Utc>,
+) -> Result<Readiness, Response> {
+    let readiness = readiness_on(state, conn, now)
+        .await
+        .map_err(not_ready_response)?;
+    super::trade_events::require_current_on(conn, now).await?;
+    Ok(readiness)
+}
+
+/// The answer to a [`NotReady`] pass marker: the `trades-mirror` envelope.
 pub(super) fn not_ready_response(not_ready: NotReady) -> Response {
     match not_ready {
         NotReady::Refused(why) => unavailable(Source::TradesMirror, &why),
@@ -497,9 +524,20 @@ pub async fn readiness_on(
     marker_verdict(state, completed, now)
 }
 
-/// The gate every route over `shop.trades` passes first.
+/// The gate every route that lists, prices or reports the status of trades
+/// passes first ([`ready`]).
 pub async fn require_ready(state: &MarketplaceState) -> Result<(), Response> {
     ready(state).await.map(|_| ())
+}
+
+/// The gate of the routes that serve the stored trade records, which carry
+/// no status (`/v1/trades`, `/v1/trades/{id}`): the mirror's pass only. The
+/// trade-events verdicts do not change what they answer.
+pub async fn require_mirror_ready(state: &MarketplaceState) -> Result<(), Response> {
+    readiness(state)
+        .await
+        .map(|_| ())
+        .map_err(not_ready_response)
 }
 
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
@@ -1410,7 +1448,7 @@ pub async fn get_trades(
         Ok(v) => v,
         Err(r) => return r,
     };
-    if let Err(envelope) = require_ready(&state).await {
+    if let Err(envelope) = require_mirror_ready(&state).await {
         return envelope;
     }
     let since = mirrored_since(&state.settings, Utc::now().naive_utc());
@@ -1430,7 +1468,7 @@ pub async fn get_trade(State(state): State<SharedState>, Path(id): Path<String>)
         )
             .into_response();
     }
-    if let Err(envelope) = require_ready(&state).await {
+    if let Err(envelope) = require_mirror_ready(&state).await {
         return envelope;
     }
     let since = mirrored_since(&state.settings, Utc::now().naive_utc());

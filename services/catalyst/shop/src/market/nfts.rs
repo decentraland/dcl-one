@@ -840,9 +840,7 @@ pub async fn list_nfts(
             if let Some((conn, _)) = snapshot.as_mut() {
                 // A price/order filter already checked this snapshot before reading the page.
                 if !super::nft_reads::needs_orders(f) {
-                    super::trades::readiness_on(state, conn, chrono::Utc::now())
-                        .await
-                        .map_err(super::trades::not_ready_response)?;
+                    super::trades::ready_on(state, conn, chrono::Utc::now()).await?;
                 }
                 return super::orders::open_trade_orders_on(state, &mut **conn, &unlisted)
                     .await
