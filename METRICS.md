@@ -8,6 +8,14 @@ A local Polygon refold fixture replayed 288 legacy sales in 288 distinct blocks 
 
 The index process increments `catalyst_index_sales_repair_failures_total` by indexer and network when a historical sales repair fails. The error log includes the starting block and requests spent. The cursor keeps its last verified boundary.
 
+## Marketplace catalogue mirror proof
+
+`catalyst_catalogue_mirror_proof_outcomes_total` counts mainnet proof
+attempts by `mirror`, `network` and `outcome`. `proof_rejected` records
+invalid proof, including a conflicting chain or block hash.
+`proof_skipped_rpc_unavailable` records an unpinned graph pass started
+after the RPC retry window elapsed.
+
 ## Marketplace sales day rollups
 
 On PostgreSQL 17.6, a temporary table held 200,000 executions on one network,

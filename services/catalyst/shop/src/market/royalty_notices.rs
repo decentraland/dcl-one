@@ -226,6 +226,7 @@ async fn drain(
             .execute(&mut *txn)
             .await?;
         let (_, since_block, since_log) = notice_cursor::lock(&mut txn, producer).await?;
+        let now = chrono::Utc::now();
         let Some(current) =
             chain_walk::published_block(&mut *txn, venue.indexer(), NET, NET.chain_id(), now)
                 .await?

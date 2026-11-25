@@ -2023,12 +2023,25 @@ async fn a_testnet_graph_page_proves_its_block_even_when_the_page_is_empty() {
         prove()
             .await
             .unwrap_err()
+            .to_string()
             .contains("differs from the configured chain")
     );
     *meta.lock() = Value::Null;
-    assert!(prove().await.unwrap_err().contains("no block number"));
+    assert!(
+        prove()
+            .await
+            .unwrap_err()
+            .to_string()
+            .contains("no block number")
+    );
     *meta.lock() = json!({"number":90});
-    assert!(prove().await.unwrap_err().contains("no block hash"));
+    assert!(
+        prove()
+            .await
+            .unwrap_err()
+            .to_string()
+            .contains("no block hash")
+    );
     *meta.lock() = json!({"number":90,"hash":good});
     chain.fail_chain_id.store(true, Ordering::SeqCst);
     assert!(prove().await.is_err());
@@ -2069,7 +2082,13 @@ async fn a_testnet_graph_page_proves_its_block_even_when_the_page_is_empty() {
     }
     *meta.lock() = json!({"number":90,"hash":good});
     chain.chain_id.store(137, Ordering::SeqCst);
-    assert!(prove().await.unwrap_err().contains("serves chain 137"));
+    assert!(
+        prove()
+            .await
+            .unwrap_err()
+            .to_string()
+            .contains("serves chain 137")
+    );
 }
 
 #[tokio::test]
@@ -2306,6 +2325,156 @@ async fn a_mainnet_mirror_keeps_serving_and_finishes_a_pinned_pass_during_an_rpc
     assert_eq!(resumed.pass_block_hash, first_page.pass_block_hash);
     assert!(!resumed.in_progress());
     assert!(nft_index::mirror_complete(&db.pool, net, net.chain_id()).await);
+
+    chain.fail_chain_id.store(false, Ordering::SeqCst);
+    chain.fail_headers.store(false, Ordering::SeqCst);
+    chain.head_reads_left.store(1, Ordering::SeqCst);
+    mirrors::run_tick(&state, Mirror::Collections, &ctx)
+        .await
+        .unwrap();
+    let first_page = read().await.unwrap().unwrap();
+    assert!(first_page.in_progress());
+    state.settings.polygon_rpc_url = None;
+    let calls = chain.requests.load(Ordering::SeqCst);
+    mirrors::run_tick(&state, Mirror::Collections, &ctx)
+        .await
+        .unwrap();
+    let resumed = read().await.unwrap().unwrap();
+    assert_eq!(chain.requests.load(Ordering::SeqCst), calls);
+    assert_eq!(resumed.pass_started_at, first_page.pass_started_at);
+    assert_eq!(resumed.pass_block_hash, first_page.pass_block_hash);
+    assert!(!resumed.in_progress());
+    db.drop().await;
+}
+
+#[tokio::test]
+async fn mainnet_items_retry_then_refresh_prices_during_an_extended_rpc_outage() {
+    use super::{
+        graph::Network,
+        mirrors::{self, Mirror},
+    };
+    let Some(db) = ScratchDb::create().await else {
+        return;
+    };
+    let chain = FakeChain::new(200, vec![], 100, 100);
+    let hash = chain.hash_of(100);
+    let price = Arc::new(AtomicUsize::new(100));
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let graph = format!("http://{}/", listener.local_addr().unwrap());
+    let app = Router::new().route("/", post(
+        |State((hash, price)): State<(String, Arc<AtomicUsize>)>, axum::Json(body): axum::Json<Value>| async move {
+            let vars = &body["variables"];
+            let block = if vars["number"] == 100 || vars["block"].is_object() {
+                json!({"number":100,"hash":hash})
+            } else {
+                json!({"number":100+ChainNet::Matic.confirmations()})
+            };
+            let items = if vars["idFrom"] == "" {
+                (1..=mirrors::PAGE_SIZE).map(|id| json!({
+                    "id":format!("item-{id:04}"), "blockchainId":id.to_string(), "itemType":"wearable_v2",
+                    "collection":{"id":format!("0x{:040x}", 1)},
+                    "price":price.load(Ordering::SeqCst).to_string(),
+                })).collect::<Vec<_>>()
+            } else {
+                Vec::new()
+            };
+            axum::Json(json!({"data":{"items":items,"_meta":{"block":block}}}))
+        }
+    )).with_state((hash, price.clone()));
+    tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+    let mut config = Settings::for_tests();
+    config.matic_collections_subgraph_url = Some(graph);
+    config.polygon_rpc_url = Some(serve(chain.clone()).await);
+    config.market.mirror_pages_per_tick = 1;
+    let state = MarketplaceState::new(db.pool.clone(), crate::http::Outbound::for_tests(), config);
+    state.index.allow_loopback_for_tests();
+    let jobs = crate::jobs::Jobs::new();
+    let ctx = super::market_tests::job_ctx(&jobs).await;
+    let tick = || mirrors::run_tick(&state, Mirror::Items, &ctx);
+    let read = || mirrors::load(&db.pool, Mirror::Items, Network::Matic);
+    let stored_price = || {
+        sqlx::query_scalar::<_, String>(
+            "SELECT price::text FROM shop.items WHERE network='matic' AND item_id=1",
+        )
+        .fetch_one(&db.pool)
+    };
+
+    tick().await.unwrap();
+    tick().await.unwrap();
+    assert_eq!(stored_price().await.unwrap(), "100");
+    let completed = read().await.unwrap().unwrap();
+    price.store(200, Ordering::SeqCst);
+    chain.fail_chain_id.store(true, Ordering::SeqCst);
+    assert!(
+        tick()
+            .await
+            .unwrap_err()
+            .to_string()
+            .contains("upstream refused")
+    );
+    assert_eq!(
+        read().await.unwrap().unwrap().last_complete_pass_at,
+        completed.last_complete_pass_at
+    );
+    assert_eq!(stored_price().await.unwrap(), "100");
+    assert!(mirrors::require_priced(&state).await.is_ok());
+
+    // Advance the persisted outage clock and restart the pass using the
+    // same stored decision, without waiting out PostgreSQL wall time.
+    let age_proof = || {
+        sqlx::query(
+            "UPDATE shop.mirror_state SET
+        pass_started_at=timezone('UTC',now())-interval '11 minutes',
+        last_complete_pass_at=timezone('UTC',now())-interval '29 minutes'
+        WHERE mirror='items' AND network='matic'",
+        )
+        .execute(&db.pool)
+    };
+    age_proof().await.unwrap();
+    tick().await.unwrap();
+    let partial = read().await.unwrap().unwrap();
+    assert!(partial.in_progress() && partial.pass_block_hash.is_none());
+    let calls = chain.requests.load(Ordering::SeqCst);
+    tick().await.unwrap();
+    assert_eq!(chain.requests.load(Ordering::SeqCst), calls);
+    let fallback = read().await.unwrap().unwrap();
+    assert!(!fallback.in_progress() && fallback.pass_block_hash.is_none());
+    assert_eq!(stored_price().await.unwrap(), "200");
+    assert!(
+        mirrors::price_verdict(
+            fallback.last_complete_pass_at.unwrap(),
+            chrono::Utc::now(),
+            mirrors::price_max_age(&state.settings)
+        )
+        .is_ok()
+    );
+
+    price.store(300, Ordering::SeqCst);
+    chain.fail_chain_id.store(false, Ordering::SeqCst);
+    chain.chain_id.store(80_002, Ordering::SeqCst);
+    assert!(
+        tick()
+            .await
+            .unwrap_err()
+            .to_string()
+            .contains("serves chain 80002")
+    );
+    age_proof().await.unwrap();
+    let rejected = read().await.unwrap().unwrap();
+    assert!(
+        tick()
+            .await
+            .unwrap_err()
+            .to_string()
+            .contains("serves chain 80002")
+    );
+    chain.fail_chain_id.store(true, Ordering::SeqCst);
+    assert!(tick().await.is_err());
+    assert_eq!(
+        read().await.unwrap().unwrap().last_complete_pass_at,
+        rejected.last_complete_pass_at
+    );
+    assert_eq!(stored_price().await.unwrap(), "200");
     db.drop().await;
 }
 
@@ -2400,12 +2569,26 @@ async fn a_split_mirror_resumes_the_pinned_graph_block_without_another_rpc_read(
         assert_eq!(row.cursor_id.as_deref(), (!reset).then_some("old"));
         assert!(row.last_complete_pass_at.is_some());
         if pin == "orphan" {
-            sqlx::query(
-                "UPDATE shop.mirror_state SET last_error='upsert failed: interrupted connection'",
-            )
-            .execute(&db.pool)
-            .await
-            .unwrap();
+            // A successful read of the old pin followed by a real write
+            // failure leaves the first opaque read retry available.
+            sqlx::query("UPDATE shop.mirror_state SET pass_started_at=timezone('UTC',now())-interval '2 hours',
+                         pass_block_hash=$1, cursor_id=NULL")
+                .bind(&hash).execute(&db.pool).await.unwrap();
+            sqlx::query("ALTER TABLE shop.collections ADD CONSTRAINT reject_test_upsert CHECK (false) NOT VALID")
+                .execute(&db.pool).await.unwrap();
+            let error = mirrors::run_tick(&state(), Mirror::Collections, &ctx)
+                .await
+                .unwrap_err();
+            assert!(error.to_string().contains("upsert"));
+            let failed = mirrors::load(&db.pool, Mirror::Collections, Network::Matic)
+                .await
+                .unwrap()
+                .unwrap();
+            assert!(failed.last_error.unwrap().contains("reject_test_upsert"));
+            sqlx::query("ALTER TABLE shop.collections DROP CONSTRAINT reject_test_upsert")
+                .execute(&db.pool)
+                .await
+                .unwrap();
         }
     }
     chain.fail_chain_id.store(false, Ordering::SeqCst);
