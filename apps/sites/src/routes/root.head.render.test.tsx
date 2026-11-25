@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { act, render } from "@testing-library/react";
+import { act } from "@testing-library/react";
 import { hydrateRoot } from "react-dom/client";
 import { renderToString } from "react-dom/server";
 import { createRoutesStub } from "react-router";
@@ -29,16 +29,19 @@ describe("root document head", () => {
     expect(head).toContain("<script>/*cart*/</script>");
   });
 
-  it("keeps a route's head script through hydration, and no client render draws it again", async () => {
-    const Stub = createRoutesStub([{ id: "root", path: "/", Component: () => <div><RouteHeadScripts /></div>, handle: { headScript: "/*cart*/" } }]);
+  it("hydrates the empty text of the browser bundle over the server's script, without a mismatch", async () => {
+    const page = (headScript: string) =>
+      createRoutesStub([{ id: "root", path: "/", Component: () => <div><RouteHeadScripts /><p>after</p></div>, handle: { headScript } }]);
+    const Server = page("/*cart*/");
+    const Browser = page("");
     const container = document.createElement("div");
-    container.innerHTML = renderToString(<Stub initialEntries={["/"]} />);
-    expect(container.querySelector("script")?.textContent).toBe("/*cart*/");
+    container.innerHTML = renderToString(<Server initialEntries={["/"]} />);
     const onRecoverableError = vi.fn();
-    await act(async () => void hydrateRoot(container, <Stub initialEntries={["/"]} />, { onRecoverableError }));
+    const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
+    await act(async () => void hydrateRoot(container, <Browser initialEntries={["/"]} />, { onRecoverableError }));
     expect(onRecoverableError).not.toHaveBeenCalled();
-    expect(container.querySelector("script")).toBeNull();
-    const client = render(<Stub initialEntries={["/"]} />);
-    expect(client.container.querySelector("script")).toBeNull();
+    expect(consoleError).not.toHaveBeenCalled();
+    expect(container.querySelector("script")?.textContent).toBe("/*cart*/");
+    consoleError.mockRestore();
   });
 });

@@ -5,7 +5,7 @@ import type { CreatorHubHost } from "@web-core/creator-hub-host";
 import type { AuthIdentity } from "@/data/lib/auth/types";
 import { adoptExplorerHost, followExplorerIdentity, reloadingForAccount } from "@/features/components/chrome/explorer-host";
 
-import { shouldRevalidate } from "./root";
+import { noteRootSid, shouldRevalidate } from "./root";
 
 const next: AuthIdentity = {
   signer: `0x${"a".repeat(40)}`,
@@ -14,7 +14,10 @@ const next: AuthIdentity = {
   authChain: [],
 };
 
-/** A navigation from one path to another, with the answer React Router would give by default. */
+/**
+ * A navigation from one path to another, with the answer React Router would give by default. Single fetch gives
+ * true on every navigation that is not after an action (react-router dom/ssr/single-fetch.js).
+ */
 function args(from: string, to: string, defaultShouldRevalidate: boolean, formMethod?: ShouldRevalidateFunctionArgs["formMethod"]): ShouldRevalidateFunctionArgs {
   return { currentUrl: new URL(`https://sites.test${from}`), currentParams: {}, nextUrl: new URL(`https://sites.test${to}`), nextParams: {}, formMethod, defaultShouldRevalidate };
 }
@@ -75,4 +78,16 @@ it("keeps root's data between Shop pages and reloads it when the visitor leaves 
   expect(shouldRevalidate(args("/places", "/shop/overview", true))).toBe(true);
   expect(shouldRevalidate(args("/shop/overview", "/shopping", true))).toBe(true);
   expect(shouldRevalidate(args("/shop/cart", "/create/scenes", true))).toBe(true);
+});
+
+it("reloads root's data that names no visitor (the cart's shared document) on the next move, also to a Shop page", () => {
+  noteRootSid(null);
+  try {
+    expect(shouldRevalidate(args("/shop/cart", "/shop/overview", true))).toBe(true);
+    expect(shouldRevalidate(args("/shop/cart", "/places", false))).toBe(true);
+    expect(shouldRevalidate(args("/shop/cart", "/shop/cart", true))).toBe(false);
+  } finally {
+    noteRootSid("visitor-sid");
+  }
+  expect(shouldRevalidate(args("/shop/cart", "/shop/overview", true))).toBe(false);
 });

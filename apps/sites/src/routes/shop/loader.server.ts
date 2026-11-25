@@ -16,13 +16,10 @@ export async function shopLoader(
   params: Record<string, string | undefined>,
   context: Readonly<RouterContextProvider>,
 ) {
-  // A document a shared cache may keep carries no session id.
-  if (context.get(publicResponseContext)) {
-    const shared = await loadShopPage(page, { request, params });
-    return data(shared.data, { status: shared.status });
-  }
-  const session = sidLoader(request, context);
   const load = await loadShopPage(page, { request, params });
+  // A document a shared cache may keep carries no session id.
+  if (context.get(publicResponseContext)) return data(load.data, { status: load.status });
+  const session = sidLoader(request, context);
   const url = new URL(request.url);
   // A friend-first-wear notification links the item page (src=ffw): its landing is that funnel's metric.
   if (page === "itemDetail" && url.searchParams.get("src") === "ffw") {
@@ -30,7 +27,7 @@ export async function shopLoader(
     track(
       "ffw_shop_landing",
       { item_id: `${params.contractAddress ?? ""}-${params.itemId ?? ""}`.toLowerCase(), nid: url.searchParams.get("nid") ?? "", on_sale: !!listing?.[1] },
-      { sid: session.sid, story: "notifications/first-wear"},
+      { sid: session.sid, story: "notifications/first-wear", requestUserAgent: request.headers.get("user-agent") },
     );
   }
   return session.wrap({ ...load.data, sid: session.sid }, { status: load.status });

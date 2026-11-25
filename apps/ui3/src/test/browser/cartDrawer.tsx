@@ -5,25 +5,23 @@ import { evmAddress } from "@shop/model/address";
 import { itemAsset } from "@shop/model/asset";
 import { CHAIN } from "@shop/model/chain";
 import "../../atoms/primitives.css";
-import { createCartDrawer, type CartDrawerStore } from "../../shop/cart/drawer";
+import { createCartDrawer } from "../../shop/cart/drawer";
 import { createCartStore } from "../../shop/cart/store";
 import CartDrawer from "../../shop/checkout/components/CartDrawer";
 
-declare global {
-  interface Window { cartDrawer: CartDrawerStore }
-}
-
 const cart = createCartStore({ storage: () => null });
 cart.add({ asset: itemAsset(CHAIN.POLYGON, evmAddress("0x000000000000000000000000000000000000c011"), 7n), listing: { acquisition: "store" }, display: { name: "Rainbow Hat", priceCredits: 12 } });
-window.cartDrawer = createCartDrawer();
+// The test reads the drawer's state as `window.cartDrawer`.
+const drawer = createCartDrawer();
+Object.assign(window, { cartDrawer: drawer });
 
 createRoot(document.getElementById("root")!).render(
   <MemoryRouter initialEntries={["/shop/items"]}>
     <div style={{ height: 1500 }} />
-    <button type="button" id="opener" onClick={() => window.cartDrawer.open()}>
+    <button type="button" id="opener" onClick={() => drawer.open()}>
       Cart
     </button>
     <div style={{ height: 3000 }} />
-    <CartDrawer cart={cart} drawer={window.cartDrawer} />
+    <CartDrawer cart={cart} drawer={drawer} />
   </MemoryRouter>,
 );

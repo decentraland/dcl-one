@@ -1,5 +1,5 @@
 // @vitest-environment node
-import { createRequestHandler, type ServerBuild } from "react-router";
+import { Suspense, use } from "react";
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { evmAddress } from "@shop/model/address";
@@ -7,11 +7,13 @@ import { itemAsset } from "@shop/model/asset";
 import { CHAIN } from "@shop/model/chain";
 import { createCartStore, type CartStorage } from "@ui/shop/cart/store";
 
+import { testRequestHandler } from "@/core/lib/server-build.test-helper";
+
 import * as entry from "../entry.server";
 import * as root from "../root";
 import * as shop from "../routes/shop";
 import * as cart from "../routes/shop.cart";
-import { SHARED_CART_CACHE_CONTROL, SHARED_CART_VARY } from "./shared-cart";
+import { SHARED_CART_CACHE_CONTROL, SHARED_CART_CDN_CACHE_CONTROL, SHARED_CART_VARY, sharedCartMiddleware } from "./shared-cart";
 
 const A = "0xa11ce00000000000000000000000000000a11ce1";
 const SID_A = "sid-of-visitor-a-5f0c";
@@ -42,23 +44,29 @@ const flags = (async (input: RequestInfo | URL) =>
   String(input).endsWith("/dapps.json") ? Response.json({ flags: { "dapps-shop-my-store": true } }) : new Response(null, { status: 404 })) as typeof fetch;
 
 /** The pipeline `react-router-serve` runs (`createRequestHandler`) over the real entry, root, Shop layout and cart. */
-const handler = (() => {
-  const ids: [id: string, parentId: string | undefined, path: string, module: object, loader: boolean][] = [
-    ["root", undefined, "", root, true],
-    ["routes/shop", "root", "shop", shop, false],
-    ["routes/shop.cart", "routes/shop", "cart", cart, true],
-  ];
-  const routes = Object.fromEntries(ids.map(([id, parentId, path, module]) => [id, { id, parentId, path, module }]));
-  const manifest = Object.fromEntries(ids.map(([id, parentId, path, , loader]) => [id, {
-    id, parentId, path, module: `/${id}.js`, imports: [], css: [], hasAction: false, hasLoader: loader, hasClientAction: false,
-    hasClientLoader: id === "routes/shop.cart", hasClientMiddleware: false, hasErrorBoundary: id === "root",
-  }]));
-  return createRequestHandler({
-    entry: { module: entry }, routes, assets: { entry: { module: "/entry.js", imports: [] }, url: "/manifest.js", version: "test", routes: manifest },
-    publicPath: "/", assetsBuildDirectory: "build/client", basename: "/", future: {}, ssr: true, isSpaMode: false, prerender: [],
-    routeDiscovery: { mode: "initial" },
-  } as unknown as ServerBuild, "production");
-})();
+const handler = testRequestHandler(entry, [
+  { id: "root", path: "", module: root },
+  { id: "routes/shop", parentId: "root", path: "shop", module: shop, loader: false },
+  { id: "routes/shop.cart", parentId: "routes/shop", path: "cart", module: cart, clientLoader: true },
+]);
+
+/** A page whose render fails after the first part of the page is ready: its one boundary waits, then throws. */
+let failing: Promise<never> | undefined;
+function Late(): null {
+  use((failing ??= new Promise<never>((_, reject) => setTimeout(() => reject(new Error("late render error")), 10))));
+  return null;
+}
+
+/** The same pipeline over root and that page, with the shared cart's middleware. */
+const lateHandler = testRequestHandler(entry, [
+  { id: "root", path: "", module: root },
+  {
+    id: "routes/late",
+    parentId: "root",
+    path: "late",
+    module: { middleware: [sharedCartMiddleware], loader: () => null, default: () => <Suspense fallback={null}><Late /></Suspense> },
+  },
+]);
 
 type Answer = { response: Response; body: string };
 
@@ -85,7 +93,10 @@ beforeAll(() => vi.stubGlobal("fetch", flags));
 afterEach(() => vi.unstubAllEnvs());
 
 describe("when the shared cart setting is on", () => {
-  beforeEach(() => vi.stubEnv("SHOP_CART_SHARED_CACHE", "true"));
+  beforeEach(() => {
+    vi.stubEnv("SHOP_CART_SHARED_CACHE", "true");
+    vi.stubEnv("PUBLIC_CATALYST_URL", "https://dcl.test");
+  });
 
   describe("and a signed-in visitor with a cart line and a signed-out first visitor open the cart", () => {
     let a: Answer;
@@ -93,10 +104,10 @@ describe("when the shared cart setting is on", () => {
 
     beforeEach(async () => {
       a = await visitorA("/shop/cart", NAVIGATION);
-      b = await visitorB("/shop/cart", NAVIGATION);
+      b = await visitorB("/shop/cart", { ...NAVIGATION, "x-forwarded-proto": "http" });
     });
 
-    it("should send both the same cart page, byte for byte", () => {
+    it("should send both the same cart page, byte for byte, also when a request names another scheme", () => {
       expect(a.response.status).toBe(200);
       expect(a.body).toContain("shop-chrome");
       expect(a.body).toBe(b.body);
@@ -111,6 +122,7 @@ describe("when the shared cart setting is on", () => {
     it("should let a shared cache keep both answers, with no cookie and no COEP", () => {
       for (const { response } of [a, b]) {
         expect(response.headers.get("Cache-Control")).toBe(SHARED_CART_CACHE_CONTROL);
+        expect(response.headers.get("CDN-Cache-Control")).toBe(SHARED_CART_CDN_CACHE_CONTROL);
         expect(response.headers.get("Vary")).toBe(SHARED_CART_VARY);
         expect(response.headers.get("Set-Cookie")).toBeNull();
         expect(response.headers.get("Cross-Origin-Embedder-Policy")).toBeNull();
@@ -143,6 +155,21 @@ describe("when the shared cart setting is on", () => {
     });
   });
 
+  describe("and the shared document's render fails after the first part of the page", () => {
+    afterEach(() => {
+      failing = undefined;
+    });
+
+    it("should answer a 500 that no cache keeps", async () => {
+      vi.spyOn(console, "error").mockImplementation(() => {});
+      const response = await lateHandler(new Request("https://dcl.test/late", { headers: NAVIGATION }));
+      await response.text();
+      expect(response.status).toBe(500);
+      expect(response.headers.get("Cache-Control")).toBe("no-store");
+      expect(response.headers.get("CDN-Cache-Control")).toBeNull();
+    });
+  });
+
   describe("and a first visitor's client sends no fetch metadata", () => {
     it("should answer the private document and set the session cookie", async () => {
       const b = await visitorB("/shop/cart", { accept: "text/html" });
@@ -171,5 +198,15 @@ describe("when the shared cart setting is off", () => {
     it("should set the session cookie on the first visit", () => {
       expect(b.response.headers.get("Set-Cookie")).toMatch(/^sid=/);
     });
+  });
+});
+
+describe("when the shared cart setting is on without PUBLIC_CATALYST_URL", () => {
+  it("should keep the private document, as its own address would come from the request", async () => {
+    vi.stubEnv("SHOP_CART_SHARED_CACHE", "true");
+    vi.stubEnv("PUBLIC_CATALYST_URL", "");
+    const b = await visitorB("/shop/cart", NAVIGATION);
+    expect(b.response.headers.get("Cache-Control")).toBe("private, no-store");
+    expect(b.response.headers.get("Set-Cookie")).toMatch(/^sid=/);
   });
 });

@@ -406,6 +406,7 @@ mod tests {
         TransportType,
     };
     use bevy_console::ConsoleCommandEntered;
+    use common::sync::MutexExt;
     use std::sync::{Arc, Mutex};
 
     fn spawn_island(app: &mut App) -> Entity {
@@ -430,11 +431,11 @@ mod tests {
             command_name: name.into(),
             args: args.iter().map(|arg| arg.to_string()).collect(),
             responder: Some(Arc::new(move |result| {
-                *writer.lock().unwrap() = Some(result)
+                *writer.lock_ignore_poison() = Some(result)
             })),
         });
         app.update();
-        let result = reply.lock().unwrap().take().unwrap();
+        let result = reply.lock_ignore_poison().take().unwrap();
         result
     }
 
@@ -452,6 +453,8 @@ mod tests {
             crate::automation::CommsAutomationPlugin,
         ))
         .init_resource::<common::structs::MicState>()
+        .init_resource::<common::structs::AudioSettings>()
+        .insert_resource(common::structs::ClientWindowFocus::Focused)
         .init_resource::<wallet::Wallet>()
         .add_event::<crate::global_crdt::ChatEvent>()
         .insert_resource(State::new(ConnectionAvailability::Available))

@@ -1,7 +1,7 @@
 import Page from "@ui/shop/pages/Cart";
 
 import type { HeadScriptHandle } from "../root";
-import { CART_PICTURES_SCRIPT } from "../shop/cart-pictures";
+import { cartPicturesHeadScript } from "../shop/cart-pictures";
 import { shopLoader } from "../shop/loader.server";
 import { ShopPage, shopClientLoader, shopHeaders, shopMeta } from "../shop/page";
 import { sharedCartMiddleware } from "../shop/shared-cart";
@@ -13,7 +13,8 @@ export const loader = ({ request, params, context }: Route.LoaderArgs) => shopLo
 export const clientLoader = shopClientLoader;
 export const meta = shopMeta("cart");
 export const headers = shopHeaders;
-export const handle: HeadScriptHandle = { headScript: CART_PICTURES_SCRIPT };
+// Only the document that the server sends runs a head script (RouteHeadScripts), so the browser bundle carries an empty one.
+export const handle: HeadScriptHandle = { headScript: import.meta.env.SSR ? cartPicturesHeadScript() : "" };
 
 export default function ShopCartRoute({ loaderData }: Route.ComponentProps) {
   return (

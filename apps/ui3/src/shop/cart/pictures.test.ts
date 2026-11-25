@@ -1,23 +1,11 @@
 import { afterEach, describe, expect, it } from "vitest";
 
-import { evmAddress } from "@shop/model/address";
-import { itemAsset } from "@shop/model/asset";
-import { CHAIN } from "@shop/model/chain";
-
 import { cartPicturesScript, PRIORITY_LINE_COUNT } from "./pictures";
+import { hat, picture, preloaded, preloads, SIGNED_OUT } from "./pictures.test-helper";
 import { ANONYMOUS, CART_KEY_PREFIX, createCartStore } from "./store";
 
 // No session here: apps/sites/src/routes/shop/cart-pictures.test.ts signs in with the site's own session writers.
-const SESSION = { own: "test:identity", shared: "test-shared-", host: "__testHost" };
-const collection = evmAddress("0x000000000000000000000000000000000000c011");
-const picture = (n: number) => `https://example.test/${n}.png`;
-const hat = (n: number, pictured = true) => ({
-  asset: itemAsset(CHAIN.POLYGON, collection, BigInt(n)),
-  listing: { acquisition: "store" as const },
-  display: { name: `Hat ${n}`, ...(pictured ? { thumbnail: picture(n) } : {}) },
-});
-const preloads = () => [...document.head.querySelectorAll<HTMLLinkElement>('link[rel="preload"][as="image"]')];
-const run = () => new Function(cartPicturesScript(SESSION))();
+const run = () => new Function(cartPicturesScript(SIGNED_OUT))();
 
 /** The pictures of the first lines as the cart store reads them back: the lines the cart page draws first. */
 function storeFirst(): string[] {
@@ -43,8 +31,8 @@ describe("the stored cart's pictures, before the page's code", () => {
     const cart = createCartStore();
     [hat(1), hat(2, false), hat(3), hat(4), hat(5)].forEach((line) => cart.add(line));
     run();
-    expect(preloads().map((link) => link.getAttribute("href"))).toEqual([picture(1), picture(3)]);
-    expect(preloads().map((link) => link.getAttribute("href"))).toEqual(storeFirst());
+    expect(preloaded()).toEqual([picture(1), picture(3)]);
+    expect(preloaded()).toEqual(storeFirst());
     expect(preloads().every((link) => link.getAttribute("fetchpriority") === "high")).toBe(true);
   });
 
@@ -58,8 +46,8 @@ describe("the stored cart's pictures, before the page's code", () => {
       lines[3]!.method = "card";
     });
     run();
-    expect(preloads().map((link) => link.getAttribute("href"))).toEqual([picture(99), picture(4), picture(5)]);
-    expect(preloads().map((link) => link.getAttribute("href"))).toEqual(storeFirst());
+    expect(preloaded()).toEqual([picture(99), picture(4), picture(5)]);
+    expect(preloaded()).toEqual(storeFirst());
   });
 
   it("does nothing for a record of another version, a broken record or a cart without pictures", () => {
@@ -79,14 +67,11 @@ describe("the stored cart's pictures, before the page's code", () => {
     expect(preloads()).toEqual([]);
   });
 
-  it("runs in a scope of its own, with its embedded text safe in a script element", () => {
+  it("runs in a scope of its own", () => {
     const globals = Object.keys(window).length;
     createCartStore().add(hat(1));
     run();
     expect(Object.keys(window)).toHaveLength(globals);
     expect(preloads()).toHaveLength(1);
-    const script = cartPicturesScript({ ...SESSION, own: "</script><script>alert(1)//" });
-    expect(script).not.toContain("</script");
-    expect(script).toContain("\\u003c/script>");
   });
 });

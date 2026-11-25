@@ -188,7 +188,8 @@ compared, stand in one place first with `--setup "/move_player_to <x> <y> <z>"`.
 Each stdout line is one step: `count`, `built` (`-1` when the avatars did not finish building
 within `--load-timeout`), `shown` (demo avatars not hidden, by the cap say) and `drawn` (those with
 a mesh in the camera's view or a shadow's at the end of the window), `loadSeconds` (spawn to every avatar built), the condition (`cap`,
-`emote`, `nametags`, `layout`, `seed`), and `fps`, `frameMs` and `gpuFrameMs` as `{median, p95, max}` over the
+`emote`, `nametags`, `layout`, `seed`), `samples` and `gpuSamples` (the window's samples, and how many of
+them carried a GPU frame time), and `fps`, `frameMs` and `gpuFrameMs` as `{median, p95, max}` over the
 window, with the last `engineMemoryMiB` and `hiccups`. Compare `frameMs.p95` across counts at
 `cap: "all"` for the cost of drawn avatars, and `cap: 20` against `all` for what avatars hidden by
 the cap still cost. Run it on each GPU class (discrete, integrated) the cap must hold on, and give
@@ -342,6 +343,12 @@ session: the page loads again without the stored sign-in and without `position`,
 console. Its scenario has a session of its own (`E2eSignOut`), waits until `/world_state` reads
 `signedIn` false, and closes that session.
 
+On the web, `specs/navbar.test.ts` also lays the page out at 700x900 and then 1600x400 inside the
+same window (the web driver's `resizeView`, which returns once the HUD has drawn at that size) and
+waits until every rail button lies wholly inside the view and a click would land on it: the HUD's
+scale fits any window shape. The view returns to the window's size afterwards. The standalone's
+window is not resized, so that scenario is skipped there.
+
 Specs with no explorer-automation counterpart, outside the counts above:
 
 | Spec | Scenarios | Needs |
@@ -370,9 +377,12 @@ InWorld spec `smart-wearables` previews ([scenes/README.md](scenes/README.md)).
 960x540 window, turns the nametags off and holds the landscape's trees still (`/nametags false`:
 the scenes hide avatars, not the nametag over the hidden guest, whose name changes every run;
 `/tree_wind false`: the trees and bushes sway in the wind, so no two frames of them agree),
-clears the sky (`/cloud 0 0`: the clouds drift from boot, seeded by the day of the month), turns
-the empty parcels' grass off for the session (`/session_graphics grass off`: its stacked shells
-are not drawn in a fixed order, so its pixels move with each bevy pin), teleports to each scene, waits for its entities and its settle time, and compares the engine's frame (`/screenshot`, the canvas without the HUD) with `references/<id>.png`: a pixel
+clears the sky (`/cloud 0 0`: cover 0 clears the cloud strips, and speed 0 holds them and the
+horizon noise in a fixed pose; the stars keep twinkling, though the scenes are at noon and show
+none), turns the empty parcels' grass off for the session (`/session_graphics grass off`: its
+stacked shells are not drawn in a fixed order, so its pixels move with each bevy pin), teleports
+to each scene, waits for its entities and its settle time, and compares the engine's frame
+(`/screenshot`, the canvas without the HUD) with `references/<id>.png`: a pixel
 differs when any RGB channel differs by more than 8, and the scene passes when at most 0.3% of the
 pixels differ (1.5% for `avatar-shape`), as explorer-automation compared. A last scenario turns
 the nametags back on at `avatar-shape` and reads `/nametag_state` until the scene's five avatars

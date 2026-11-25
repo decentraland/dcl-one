@@ -1,4 +1,4 @@
-import { useEffect, useState, useSyncExternalStore } from "react";
+import { useEffect, useState } from "react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import {
   isRouteErrorResponse,
@@ -95,15 +95,23 @@ export async function loader({ request, context }: Route.LoaderArgs) {
     committee,
     /**
      * The session id, also on a first visit, for a page whose own loader does not run on a client
-     * navigation. Null on a response a shared cache may store (the docs).
+     * navigation. Null on a response a shared cache may store (the docs, the cart's shared document).
      */
     sid: pageSid(request, context),
     /**
      * Segment's `userId`: the wallet the server verified (`dcl_wallet_verified`), never the display
      * cookie `wallet` comes from, which the browser writes. Null when none, and on a shared-cacheable response.
      */
-    analyticsUserId: context.get(publicResponseContext) ? null : readVerifiedWallet(request),
+    analyticsUserId: shared ? null : readVerifiedWallet(request),
   };
+}
+
+/** Root's data on this page came from a response a shared cache may store, so it names no visitor. */
+let rootNamesNoVisitor = false;
+
+/** App gives root's session id here: null only on a response a shared cache may store (`pageSid`). */
+export function noteRootSid(sid: string | null | undefined): void {
+  rootNamesNoVisitor = sid === null;
 }
 
 // Case-insensitive, as React Router matches routes.
@@ -138,6 +146,10 @@ export function shouldRevalidate({
   if (isPublicResponsePath(currentUrl.pathname) && !isPublicResponsePath(nextUrl.pathname)) {
     return true;
   }
+  // The same after the cart's shared document (shared-cart.ts), also on a move to another Shop page.
+  if (rootNamesNoVisitor) {
+    return true;
+  }
   // Entering the Creator Hub reads the committee seat the page before it did not.
   if (isCreatorPath(nextUrl.pathname) && !isCreatorPath(currentUrl.pathname)) {
     return true;
@@ -146,6 +158,8 @@ export function shouldRevalidate({
   if (isShopPath(currentUrl.pathname) && isShopPath(nextUrl.pathname)) {
     return false;
   }
+  // Single fetch gives true on every navigation that is not after an action (react-router
+  // dom/ssr/single-fetch.js), so a move out of the Shop reads root's data again.
   return defaultShouldRevalidate;
 }
 
@@ -161,20 +175,18 @@ export function meta({ error }: Route.MetaArgs) {
 /** A route's inline script for the document head: it runs while the document parses, before the page's code. */
 export type HeadScriptHandle = { headScript?: string };
 
-const unsubscribed = () => () => {};
-
 /**
- * The matched routes' head scripts, on the server and during hydration only. After hydration, and on a client
- * navigation, no render draws them, so no client render runs one.
+ * The matched routes' head scripts. Only the document that the server sends runs them: React makes a script that a
+ * client render adds through `innerHTML`, so the browser does not run it. Thus a route gives the browser bundle an
+ * empty text, and hydration keeps the server's text in the element.
  */
 export function RouteHeadScripts() {
-  const firstRender = useSyncExternalStore(unsubscribed, () => false, () => true);
-  const matches = useMatches();
-  if (!firstRender) return null;
-  return matches.map(({ id, handle }) => {
+  return useMatches().map(({ id, handle }) => {
     const script = (handle as HeadScriptHandle | undefined)?.headScript;
-    // eslint-disable-next-line react/no-danger
-    return script ? <script key={id} dangerouslySetInnerHTML={{ __html: script }} /> : null;
+    return script === undefined ? null : (
+      // eslint-disable-next-line react/no-danger
+      <script key={id} suppressHydrationWarning dangerouslySetInnerHTML={{ __html: script }} />
+    );
   });
 }
 
@@ -364,6 +376,8 @@ export default function App() {
   const [queryClient] = useState(() => new QueryClient(QUERY_CLIENT_CONFIG));
   useRoutePageView();
   useSessionChangeRevalidation();
+  const rootSid = (useRouteLoaderData("root") as { sid?: string | null } | undefined)?.sid;
+  useEffect(() => noteRootSid(rootSid), [rootSid]);
   useEffect(() => {
     appHydrated = true;
     document.documentElement.removeAttribute("data-nav-loading");

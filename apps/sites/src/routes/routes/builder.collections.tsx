@@ -21,7 +21,7 @@ export async function loader({ request, context }: Route.LoaderArgs) {
   track(
     "creator_builder_redirect",
     { from: FROM, to, query },
-    { sid, story: STORY },
+    { sid, story: STORY, requestUserAgent: request.headers.get("user-agent") },
   );
 
   return redirect(

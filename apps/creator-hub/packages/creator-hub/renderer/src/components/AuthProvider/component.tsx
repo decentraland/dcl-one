@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate } from 'react-router';
 import { captureException, setUser } from '@sentry/electron/renderer';
 import { ChainId, type Avatar } from '@dcl/schemas';
 import { useDispatch, useSelector } from '#store';
@@ -20,6 +20,7 @@ import { useSnackbar } from '/@/hooks/useSnackbar';
 import { t } from '/@/modules/store/translation/utils';
 
 AuthServerProvider.setAuthServerUrl(config.get('AUTH_SERVER_URL'));
+AuthServerProvider.setIdentityFetcher(misc.fetchAuthIdentity);
 AuthServerProvider.setAuthDappUrl(config.get('AUTH_DAPP_URL'));
 
 const DEFAULT_CHAIN_ID: ChainId = (Number(config.get('CHAIN_ID')) ||

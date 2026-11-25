@@ -1,8 +1,8 @@
 // @vitest-environment node
 import fs from "node:fs";
-import { createRequestHandler, type ServerBuild } from "react-router";
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 
+import { testRequestHandler } from "@/core/lib/server-build.test-helper";
 import { writeDocsFixture } from "@/data/lib/docs/fixture.test-helper";
 import * as entry from "../entry.server";
 import * as root from "../root";
@@ -27,44 +27,10 @@ afterAll(() => {
  */
 function app(marked: boolean) {
   const page = marked ? docs : { ...docs, middleware: undefined, headers: () => ({ "Cache-Control": "private, no-store" }) };
-  const route = (id: string, parentId: string | undefined, path: string, module: object) =>
-    ({ id, parentId, path, index: undefined, caseSensitive: undefined, module });
-  const manifest = (id: string, parentId?: string) => ({
-    id,
-    parentId,
-    path: undefined,
-    module: `/${id}.js`,
-    imports: [],
-    css: [],
-    hasAction: false,
-    hasLoader: true,
-    hasClientAction: false,
-    hasClientLoader: false,
-    hasClientMiddleware: false,
-    hasErrorBoundary: id === "root",
-  });
-  const build = {
-    entry: { module: entry },
-    routes: {
-      root: route("root", undefined, "", root),
-      "routes/docs.$": route("routes/docs.$", "root", "docs/*", page),
-    },
-    assets: {
-      entry: { module: "/entry.js", imports: [] },
-      url: "/manifest.js",
-      version: "test",
-      routes: { root: manifest("root"), "routes/docs.$": manifest("routes/docs.$", "root") },
-    },
-    publicPath: "/",
-    assetsBuildDirectory: "build/client",
-    basename: "/",
-    future: {},
-    ssr: true,
-    isSpaMode: false,
-    prerender: [],
-    routeDiscovery: { mode: "initial" },
-  } as unknown as ServerBuild;
-  return createRequestHandler(build, "production");
+  return testRequestHandler(entry, [
+    { id: "root", path: "", module: root },
+    { id: "routes/docs.$", parentId: "root", path: "docs/*", module: page },
+  ]);
 }
 
 const visit = (marked: boolean, path: string) =>

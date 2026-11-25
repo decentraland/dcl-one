@@ -32,13 +32,13 @@ function setup() {
   const storage = memory();
   const cart = createCartStore({ storage: () => storage, now: () => 1 });
   const drawer = createCartDrawer();
-  render(
+  const { unmount } = render(
     <MemoryRouter initialEntries={["/shop/items"]}>
       <Navigator />
       <CartDrawer cart={cart} drawer={drawer} />
     </MemoryRouter>,
   );
-  return { cart, drawer };
+  return { cart, drawer, unmount };
 }
 
 const dialog = () => screen.getByRole("dialog", { name: "Shopping cart" });
@@ -127,14 +127,15 @@ describe("the cart drawer, as upstream's CartPopover", () => {
   it("is a native modal dialog, closed by its own close() before it leaves the document, so the browser gives focus back", () => {
     // jsdom has no modal dialogs: these stand in for the browser's, which move focus in, keep it inside and give it
     // back on close (Esc, focus and scroll: CartDrawer.browser.test.ts).
-    const calls: string[] = [];
+    let modal = false;
+    let closedInDocument = false;
     nativeDialog({
       showModal(this: HTMLDialogElement) {
-        calls.push("showModal");
+        modal = true;
         this.setAttribute("open", "");
       },
       close(this: HTMLDialogElement) {
-        calls.push(this.isConnected ? "close" : "close outside the document");
+        closedInDocument = this.isConnected;
         expect(within(this).getByRole("button", { name: "Continue shopping" })).toBeTruthy();
         this.removeAttribute("open");
       },
@@ -148,9 +149,9 @@ describe("the cart drawer, as upstream's CartPopover", () => {
       cart.add(hat);
       drawer.added();
     });
-    expect(calls).toEqual(["showModal"]);
+    expect(modal).toBe(true);
     fireEvent.click(within(dialog()).getByRole("button", { name: "Continue shopping" }));
-    expect(calls).toEqual(["showModal", "close"]);
+    expect(closedInDocument).toBe(true);
     expect(screen.queryByTestId("cart-drawer")).toBeNull();
     expect(drawer.getSnapshot().open).toBe(false);
     expect(focus).not.toHaveBeenCalled();
@@ -168,6 +169,16 @@ describe("the cart drawer, as upstream's CartPopover", () => {
     // Opened again on the new page, it stays open there.
     act(() => drawer.open());
     expect(dialog()).toBeTruthy();
+  });
+
+  it("closes when the Shop unmounts it (back to a page outside the Shop), so the next Shop page does not open it", () => {
+    const { cart, drawer, unmount } = setup();
+    act(() => {
+      cart.add(hat);
+      drawer.added();
+    });
+    unmount();
+    expect(drawer.getSnapshot().open).toBe(false);
   });
 
   it("Go to cart only navigates: the dialog closes on the cart page, so the click does not wait for the close", () => {
@@ -216,7 +227,7 @@ describe("the cart drawer, as upstream's CartPopover", () => {
     expect(within(dialog()).queryByText(/^Total:/)).toBeNull();
   });
 
-  it("Continue shopping, the scrim's outside click and Escape (the dialog's cancel) close it", () => {
+  it("Continue shopping and the scrim's outside click close it", () => {
     const { cart, drawer } = setup();
     act(() => {
       cart.add(hat);
@@ -227,13 +238,10 @@ describe("the cart drawer, as upstream's CartPopover", () => {
     act(() => drawer.open());
     fireEvent.click(dialog().firstElementChild!);
     expect(screen.queryByRole("dialog")).toBeNull();
-    act(() => drawer.open());
-    fireEvent(dialog(), new Event("cancel"));
-    expect(screen.queryByRole("dialog")).toBeNull();
     expect(drawer.getSnapshot().open).toBe(false);
   });
 
-  it("follows a close the browser makes itself, unless the drawer is open again by then", () => {
+  it("follows a close the browser makes itself (Escape), unless the drawer is open again by then", () => {
     const { cart, drawer } = setup();
     act(() => {
       cart.add(hat);

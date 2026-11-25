@@ -32,12 +32,32 @@ pub(in crate::gatekeeper) fn place_info(context: &PlaceContext) -> scene::PlaceI
 
 /// What a streaming notice is about, which decides the scene admins it
 /// reaches besides the place's owner and operators.
+#[derive(Clone, Copy)]
 pub(in crate::gatekeeper) enum Scope<'a> {
-    /// A stream key; `room` is its room, which names the key's scene.
+    /// A stream key; `room` is its room, which names the key's scene while
+    /// that scene is deployed.
     Key { room: Option<&'a str> },
+    /// A stream key whose scene place was saved (`admin_place_key`) or
+    /// recovered from a unique retained binding, so it survives the scene's
+    /// retirement. `None`: the binding is definitively missing or ambiguous,
+    /// and no scene admin is told. A grant revoked after `at` still counts.
+    /// `grants` are the scene's [admin, granter] pairs saved when the notice
+    /// was prepared: a later re-grant overwrites the row's granter and time.
+    KeyScene {
+        place: Option<&'a str>,
+        at: NaiveDateTime,
+        grants: &'a [(String, String)],
+    },
     /// The removal of the place at `revoked_at`: the grants that removal
-    /// ended are still told, so a retry after its cleanup reaches them.
-    Removal { revoked_at: NaiveDateTime },
+    /// ended are still told, so a retry after its cleanup reaches them,
+    /// including those on the exact scene places it froze (`admin_keys`) and
+    /// the [admin, granter] pairs it froze (`admin_grants`), whose rows a
+    /// later re-grant or scene retirement can no longer show.
+    Removal {
+        revoked_at: NaiveDateTime,
+        admin_keys: &'a [String],
+        grants: &'a [(String, String)],
+    },
 }
 
 /// Everyone a streaming notice for `context` goes to, `owner` included, as
@@ -46,8 +66,8 @@ pub(in crate::gatekeeper) enum Scope<'a> {
 /// managers; for a world its owner, the deployment/streaming grantees of its
 /// parcels, and the scene admins of the key's scene (of every active scene
 /// for a removal) whose granter still holds the world-wide authority
-/// (`streaming::world_authority`). With per-scene world keys (#1948) the
-/// admins of the key's scene are exactly those who hold it. A surface that
+/// (`streaming::KeyTarget::world_wide`), as for the key itself: the admins of
+/// the key's scene are exactly those who hold it. A surface that
 /// cannot be read is an error, never a smaller set.
 pub(in crate::gatekeeper) async fn recipients(
     state: &CommsState,
@@ -59,8 +79,8 @@ pub(in crate::gatekeeper) async fn recipients(
     let extra = scene::try_get_extra_addresses(state, &place_info(context)).await?;
     out.extend(extra.iter().filter_map(|a| Address::parse(a).ok()));
     let revoked_at = match scope {
-        Scope::Removal { revoked_at } => Some(revoked_at),
-        Scope::Key { .. } => None,
+        Scope::Removal { revoked_at, .. } => Some(revoked_at),
+        Scope::Key { .. } | Scope::KeyScene { .. } => None,
     };
     let world = context
         .world_name
@@ -79,30 +99,59 @@ pub(in crate::gatekeeper) async fn recipients(
         }
         return Ok(out);
     };
-    let admins: Vec<(String, String)> = match scope {
+    let mut admins: Vec<(String, String)> = match scope {
         Scope::Key { room } => match key_scene_place(state, &world, room).await? {
             Some(key) => state.moderation.notice_admins(&key, None).await?,
             None => Vec::new(),
         },
+        Scope::KeyScene { place: None, .. } => Vec::new(),
+        Scope::KeyScene {
+            place: Some(place),
+            at,
+            ..
+        } => {
+            sqlx::query_as(
+                "SELECT admin_address, added_by FROM social.scene_admins \
+                 WHERE place_id = $1 AND added_at <= $2 AND (active OR removed_at >= $2)",
+            )
+            .bind(place)
+            .bind(at)
+            .fetch_all(&state.pool)
+            .await?
+        }
         // The grants of the active scenes, and those this removal ended on
-        // any scene of the world: a scene that left since still has them.
-        Scope::Removal { revoked_at } => {
+        // any scene of the world or on a scene place it froze: a scene that
+        // left since still has them.
+        Scope::Removal {
+            revoked_at,
+            admin_keys,
+            ..
+        } => {
             sqlx::query_as(
                 "SELECT a.admin_address, a.added_by FROM social.scene_admins a \
              JOIN explore.world_scene_place p ON a.place_id = p.identity::text \
-             WHERE p.world_name = $1 AND ((a.active AND p.active) OR a.removed_at = $2)",
+             WHERE p.world_name = $1 AND ((a.active AND p.active) OR a.removed_at = $2) \
+             UNION SELECT admin_address, added_by FROM social.scene_admins \
+             WHERE place_id = ANY($3) AND removed_at = $2",
             )
             .bind(world.key())
             .bind(revoked_at)
+            .bind(admin_keys)
             .fetch_all(&state.pool)
             .await?
         }
     };
-    let authority = super::world_authority(state, &context.place_id, &world);
+    // Saved pairs keep their original granter, checked like every live one.
+    if let Scope::KeyScene { grants, .. } | Scope::Removal { grants, .. } = scope {
+        admins.extend(grants.iter().cloned());
+    }
+    let authority = super::KeyTarget::world_wide(state, &context.place_id, &world);
     // Most grants share a granter (the owner): one decision for each.
     let mut decided: std::collections::HashMap<Address, bool> = Default::default();
     for (admin, granter) in admins {
-        let (Ok(admin), Ok(granter)) = (Address::parse(&admin), Address::parse(&granter)) else {
+        // Historical rows may carry a padded or upper-case address.
+        let parse = |a: &str| Address::parse(&a.trim().to_ascii_lowercase());
+        let (Ok(admin), Ok(granter)) = (parse(&admin), parse(&granter)) else {
             continue;
         };
         let holds = match decided.get(&granter) {
@@ -122,6 +171,22 @@ pub(in crate::gatekeeper) async fn recipients(
         }
     }
     Ok(out)
+}
+
+/// The [admin, granter] pairs saved as a JSON array of two-string arrays;
+/// anything else in it is ignored.
+pub(in crate::gatekeeper) fn grant_pairs(saved: Option<&Value>) -> Vec<(String, String)> {
+    saved
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(|pair| match pair.as_array().map(Vec::as_slice) {
+            Some([Value::String(admin), Value::String(granter)]) => {
+                Some((admin.clone(), granter.clone()))
+            }
+            _ => None,
+        })
+        .collect()
 }
 
 /// The place (`ActiveDeployment::place_key`) of the world scene a key's room
@@ -146,7 +211,8 @@ async fn key_scene_place(
 }
 
 /// `event` for each of `recipients`, its metadata naming that recipient.
-pub(in crate::gatekeeper) fn to_each(
+#[cfg(test)]
+fn to_each(
     event: &StreamingNotification,
     recipients: &BTreeSet<Address>,
 ) -> Vec<StreamingNotification> {
@@ -254,23 +320,6 @@ pub(in crate::gatekeeper) fn notification(
         occurred_at: at,
         metadata: json!({"title": title, "description": description, "position": context.base_position, "worldName": context.world_name, "isWorld": context.world, "url": format!("https://decentraland.org/jump/?{query}"), "address": recipient.as_str(), "image": "https://assets-cdn.decentraland.org/streaming/streaming-notification.png"}),
     }
-}
-
-pub(in crate::gatekeeper) async fn prepare_streaming_for_context(
-    state: &CommsState,
-    context: &PlaceContext,
-    event_key: &str,
-    kind: StreamingNotificationKind,
-    occurred_at: NaiveDateTime,
-) -> Result<StreamingNotification, ApiError> {
-    let recipient = owner(state, context).await?;
-    Ok(notification(
-        context,
-        recipient,
-        event_key,
-        kind,
-        occurred_at,
-    ))
 }
 
 #[cfg(test)]
@@ -593,6 +642,8 @@ mod tests {
             address('a'),
             Scope::Removal {
                 revoked_at: removed_at,
+                admin_keys: &[],
+                grants: &[],
             },
         )
         .await

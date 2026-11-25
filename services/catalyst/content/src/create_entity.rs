@@ -498,11 +498,20 @@ async fn read_form(
     Ok(Form::Read(fields, files))
 }
 
+/// Removes the spool directories under `root` older than `stale_after` (those of `POST
+/// /entities` requests a crashed process left) and counts them.
+pub async fn reclaim_stale_spool(root: &std::path::Path, stale_after: std::time::Duration) {
+    let swept = crate::storage::upload_spool::sweep_stale(root, stale_after).await;
+    crate::series::upload_spool_reclaimed(swept);
+}
+
 /// Upstream's 503 for a spool the disk refuses (full, failing): the cause
 /// is logged, the client told to retry.
 fn spool_unavailable(e: &std::io::Error) -> Response {
     tracing::error!(error = %e, "POST /entities: the upload spool could not be written");
-    metrics::counter!("upload_spool_failures_total", "route" => SPOOL_ROUTE).increment(1);
+    crate::metrics::SPOOL_FAILURES
+        .handle([SPOOL_ROUTE])
+        .increment(1);
     with_retry_after(
         super::errors::json_error(StatusCode::SERVICE_UNAVAILABLE, SPOOL_UNAVAILABLE_MESSAGE),
         header::HeaderValue::from_static(writes::UNAVAILABLE_RETRY_AFTER_SECS),
@@ -513,7 +522,7 @@ fn spool_unavailable(e: &std::io::Error) -> Response {
 /// the bytes it sent, which a retrying client sends again, are recorded in
 /// `upload_budget_refused_received_bytes`.
 fn budget_exhausted_after(received: u64) -> Response {
-    metrics::histogram!("upload_budget_refused_received_bytes", "route" => SPOOL_ROUTE)
+    dcl_metrics::histogram!(crate::metrics::REFUSED_BYTES, "route" => SPOOL_ROUTE)
         .record(received as f64);
     budget_exhausted()
 }
@@ -545,6 +554,9 @@ async fn uploads_of(
         .get("entityId")
         .and_then(|id| parts.iter().position(|part| part.names(id)));
     let received: u64 = parts.iter().map(|part| part.len() as u64).sum();
+    // A partial batch whose entity file cannot be read back is counted as its staging answer;
+    // one the memory budget sheds is not, as upstream's handler takes that share before staging.
+    let partial = fields.get("partial").map(String::as_str) == Some("true");
     if !memory.grow(super::upload_admission::MIN_UPLOAD_RESERVATION_BYTES) {
         return Err(budget_exhausted_after(received));
     }
@@ -554,7 +566,12 @@ async fn uploads_of(
         if !memory.grow(memory.bytes() + part.len() as u64) {
             return Err(budget_exhausted_after(received));
         }
-        let bytes = Bytes::from(part.read().await.map_err(|e| spool_unavailable(&e))?);
+        let bytes = Bytes::from(part.read().await.map_err(|e| {
+            if partial {
+                crate::series::partial_answered("error", None);
+            }
+            spool_unavailable(&e)
+        })?);
         let inspected = serde_json::from_slice::<crate::entity::Entity>(&bytes)
             .map(|parsed| {
                 let hashes = crate::validator::rules::inspected_hashes(&parsed);
@@ -887,7 +904,9 @@ pub async fn create_entity(
         return Ok(source_busy());
     };
     let received = Arc::new(AtomicU64::new(0));
-    let multipart = Multipart::from_request(counting_body(request, Arc::clone(&received)), &())
+    let aborted = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let body = counting_body(request, Arc::clone(&received), Arc::clone(&aborted));
+    let multipart = Multipart::from_request(body, &())
         .await
         .map_err(|_| invalid(NOT_MULTIPART_MESSAGE))?;
     if declared_length(&headers)
@@ -908,6 +927,7 @@ pub async fn create_entity(
         },
         started: request_started,
         received: &received,
+        aborted: &aborted,
     };
     deploy_form(
         &state,
@@ -933,15 +953,19 @@ fn source_busy() -> Response {
 }
 
 /// `request` with its body's bytes added to `received` as they arrive.
+/// A failed chunk is the connection closed or broken under the body: one
+/// client abort, counted once in `aborted`.
 fn counting_body(
     request: axum::extract::Request,
     received: Arc<AtomicU64>,
+    aborted: Arc<std::sync::atomic::AtomicBool>,
 ) -> axum::extract::Request {
     request.map(|body| {
-        axum::body::Body::from_stream(body.into_data_stream().inspect(move |chunk| {
-            if let Ok(chunk) = chunk {
+        axum::body::Body::from_stream(body.into_data_stream().inspect(move |chunk| match chunk {
+            Ok(chunk) => {
                 received.fetch_add(chunk.len() as u64, Ordering::Relaxed);
             }
+            Err(_) => crate::series::body_aborted(&aborted),
         }))
     })
 }
@@ -1002,6 +1026,8 @@ struct Request<'a> {
     started: std::time::Instant,
     /// The body's bytes read so far.
     received: &'a AtomicU64,
+    /// Set once the client's close was counted ([`crate::series::body_aborted`]).
+    aborted: &'a Arc<std::sync::atomic::AtomicBool>,
 }
 
 /// An admitted deploy's answer: [`Answer::Undecided`] is the deployer's
@@ -1058,7 +1084,11 @@ async fn deploy_form(
         },
     );
     let timeout = settings.multipart_upload_timeout;
-    let Ok(form) = tokio::time::timeout(timeout, read).await else {
+    let receiving = crate::series::ReceivingBody::start(Arc::clone(request.aborted));
+    let read = tokio::time::timeout(timeout, read).await;
+    receiving.settled();
+    let Ok(form) = read else {
+        crate::series::multipart_timed_out();
         return Ok(upload_timed_out(
             timeout,
             request.received.load(Ordering::Relaxed),
@@ -1093,6 +1123,7 @@ async fn deploy_form(
     let deploy = deploy_regular(state, &deployer, request, fields, uploads, entity);
     let Ok(answer) = tokio::time::timeout(settings.deployment_processing_timeout, deploy).await
     else {
+        crate::series::deployment_answered("error");
         // Counted: the client may have chosen what stalled (its contract
         // wallet's RPC), and the deploy may yet have committed.
         return Ok(processing_timed_out(settings.deployment_processing_timeout));
@@ -1126,6 +1157,10 @@ async fn deploy_regular(
         .clone();
     let auth_chain = auth_chain_of(&fields)?;
     let failed = |failure: DeployFailure, refundable: bool| {
+        crate::series::deployment_answered(match failure {
+            DeployFailure::Rejected(..) => "validation_error",
+            DeployFailure::Unavailable(_) | DeployFailure::Unverifiable(_) => "error",
+        });
         tracing::warn!(entity_id = %entity_id, errors = ?failure.errors(), "POST /entities - Deployment failed");
         let undecided = refundable && matches!(failure, DeployFailure::Unavailable(_));
         let response = deployment_failure_response(failure);
@@ -1153,6 +1188,7 @@ async fn deploy_regular(
                 return Ok(failed(failure, refundable));
             }
             tracing::info!(entity_id = %entity_id, "POST /entities - Entity already deployed");
+            crate::series::deployment_answered("success");
             return Ok(Answer::Decided(created_response(creation_timestamp)));
         }
         Ok(None) => {}
@@ -1197,6 +1233,7 @@ async fn deploy_regular(
     {
         Ok(creation_timestamp) => {
             tracing::info!(entity_id = %entity_id, "POST /entities - Deployment successful");
+            crate::series::deployment_answered("success");
             state.deployments_cache.clear();
             tracing::debug!(
                 target: "catalyst_perf",
@@ -1270,7 +1307,10 @@ async fn partial_batch(
         ),
     )
     .await
-    .unwrap_or_else(|_| processing_timed_out(timeout));
+    .unwrap_or_else(|_| {
+        crate::series::partial_answered("error", None);
+        processing_timed_out(timeout)
+    });
     if admission.created
         || admission.counted_replay
         || (response.status() == StatusCode::BAD_REQUEST && !admission.admitted)
@@ -1287,6 +1327,36 @@ async fn partial_batch(
 mod tests {
     use super::*;
 
+    /// Startup counts each spool directory of an exited process it removes, and leaves the
+    /// rest of the folder.
+    #[tokio::test]
+    async fn stale_spool_directories_are_reclaimed_and_counted() {
+        let root = std::env::temp_dir().join(format!(
+            "catalyst-spool-reclaim-{}",
+            uuid::Uuid::new_v4().simple()
+        ));
+        for name in [
+            format!("1-{}", uuid::Uuid::new_v4().simple()),
+            format!("2-{}", uuid::Uuid::new_v4().simple()),
+            "operator-files".to_string(),
+        ] {
+            std::fs::create_dir_all(root.join(name)).unwrap();
+        }
+        let recorder = crate::series::test_support::recorder();
+        let _metrics = dcl_metrics::set_default_local_recorder(&recorder);
+        reclaim_stale_spool(&root, std::time::Duration::ZERO).await;
+        assert_eq!(
+            crate::series::test_support::sample(
+                &recorder.handle().render(),
+                crate::series::UPLOAD_SPOOL_RECLAIMED.descriptor.name,
+                &[]
+            ),
+            Some(2.0)
+        );
+        assert!(root.join("operator-files").exists());
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
     /// The route's read of a spooled form: the entity file comes onto the
     /// heap, the reservation grows by it and by the thumbnail its validation
     /// reads (never by the other parts), a budget without that room is the
@@ -1297,9 +1367,10 @@ mod tests {
         let dir =
             std::env::temp_dir().join(format!("catalyst-uploads-of-{}", uuid::Uuid::new_v4()));
         std::fs::create_dir_all(&dir).unwrap();
+        let thumbnail_hash = crate::auth::hash_bytes_v1(&[7; 3000]);
         let entity = serde_json::to_vec(&json!({
             "version": "v3", "type": "wearable", "pointers": ["urn:x"], "timestamp": 1,
-            "content": [{"file": "thumbnail.png", "hash": "bafythumb"}],
+            "content": [{"file": "thumbnail.png", "hash": thumbnail_hash}],
             "metadata": {"thumbnail": "thumbnail.png"}
         }))
         .unwrap();
@@ -1315,14 +1386,14 @@ mod tests {
         };
         let parts = vec![
             part("bafyentity", "bafyentity", &entity),
-            part("bafythumb", "bafythumb", &[7; 3000]),
+            part("thumbnail", &thumbnail_hash, &[7; 3000]),
             part("bafymodel", "bafymodel", &[9; 50_000]),
         ];
         let fields = fields(&[("entityId", "bafyentity")]);
         let min = super::super::upload_admission::MIN_UPLOAD_RESERVATION_BYTES;
         let most = min + entity.len() as u64 + 3000;
 
-        let budget = super::super::upload_admission::UploadBudget::new(most);
+        let budget = super::super::upload_admission::UploadBudget::new("memory", most);
         let mut memory = budget.try_reserve(0).unwrap();
         let (uploads, read) = uploads_of(&fields, parts.clone(), &mut memory)
             .await
@@ -1337,10 +1408,10 @@ mod tests {
         );
         drop(memory);
 
-        let small = super::super::upload_admission::UploadBudget::new(most - 1);
+        let small = super::super::upload_admission::UploadBudget::new("memory", most - 1);
         let mut memory = small.try_reserve(0).unwrap();
-        let recorder = metrics_exporter_prometheus::PrometheusBuilder::new().build_recorder();
-        let guard = metrics::set_default_local_recorder(&recorder);
+        let recorder = dcl_metrics::PrometheusBuilder::new().build_recorder();
+        let guard = dcl_metrics::set_default_local_recorder(&recorder);
         let refused = uploads_of(&fields, parts.clone(), &mut memory)
             .await
             .unwrap_err();

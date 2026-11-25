@@ -43,6 +43,7 @@ export default function CartDrawer({ cart = shopCart, drawer = shopCartDrawer }:
     }
     if (pathname !== openedOn.current) drawer.close();
   }, [open, pathname, drawer]);
+  useEffect(() => () => drawer.close(), [drawer]);
 
   const getContents = () => {
     const viewLines: ShopCartDrawerLine[] = lines.map((line) => {

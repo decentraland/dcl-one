@@ -112,6 +112,7 @@ CREATE TABLE content.failed_deployments (
 CREATE TABLE content.processed_snapshots (
     hash text NOT NULL,
     process_time timestamp without time zone NOT NULL,
+    entity_types text[] DEFAULT '{}',
     CONSTRAINT processed_snapshots_pkey PRIMARY KEY (hash)
 );
 

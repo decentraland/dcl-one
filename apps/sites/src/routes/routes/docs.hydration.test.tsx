@@ -117,12 +117,6 @@ describe("when a signed-in visitor's docs document hydrates", () => {
     vi.unstubAllGlobals();
   });
 
-  it("should serve markup that names no visitor", () => {
-    expect(markup).not.toContain(WALLET);
-    expect(markup).not.toContain("Ada");
-    expect(markup).toContain("Sign in");
-  });
-
   it("should hydrate the page without a mismatch", () => {
     expect(recover).not.toHaveBeenCalled();
     expect(within(container).getByRole("heading", { name: "Why?" })).toBeTruthy();

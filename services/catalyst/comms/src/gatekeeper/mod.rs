@@ -129,8 +129,10 @@ pub struct RawSettings {
     pub gatekeeper_auth_token: Option<String>,
     /// `COMMS_LAND_OPERATORS_URL`: a lambdas base whose
     /// `/parcels/{x}/{y}/operators` protects LAND owners/operators from scene
-    /// bans (the old `LAMBDAS_URL`); unset protects none (the old degraded
-    /// mode without a places database).
+    /// bans (the old `LAMBDAS_URL`), read only when the permission core has
+    /// no land-authz index attached (`catalyst serve` always attaches it);
+    /// unset there protects none (the old degraded mode without a places
+    /// database).
     pub land_operators_url: Option<String>,
     /// `LEASE_AUTHORIZATIONS_URL`: the linker-server lease document; unset
     /// lists no lease holder.
@@ -432,6 +434,9 @@ crate::shared::send_sync_once! {
         pub marketplace: Option<Arc<crate::chain_index::ChainIndex>>,
         /// Shop's source-complete names owner reader for moderation writes.
         pub name_owners: Option<Arc<dyn crate::interfaces::NameOwnerReader>>,
+        /// The node's DCL NAME source, for the display names of the scene's
+        /// participants (`scene_policy::names_for`); `None` answers empty names.
+        pub name_authority: Option<Arc<dyn crate::chain_index::names::NameAuthority>>,
         /// The worlds permission core: world access, protected wallets and
         /// scene ownership; `serve` hands in the ONE instance the worlds routes
         /// share.
@@ -511,6 +516,7 @@ impl CommsState {
             settings,
             marketplace,
             name_owners: None,
+            name_authority: None,
             eip1654,
             caches: admission::scene::SceneCaches::default(),
             content_denylist: Arc::default(),
@@ -573,6 +579,15 @@ impl CommsState {
         reader: Arc<dyn crate::interfaces::NameOwnerReader>,
     ) -> Self {
         self.name_owners = Some(reader);
+        self
+    }
+
+    /// The node's DCL NAME source (selected once, by the shop).
+    pub fn with_name_authority(
+        mut self,
+        authority: Option<Arc<dyn crate::chain_index::names::NameAuthority>>,
+    ) -> Self {
+        self.name_authority = authority;
         self
     }
 

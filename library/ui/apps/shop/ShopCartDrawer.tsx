@@ -245,7 +245,6 @@ export function ShopCartDrawer({
       className={styles.root}
       aria-label="Shopping cart"
       data-testid="cart-drawer"
-      onCancel={close}
       onClose={() => {
         if (!dialogRef.current?.open) close()
       }}

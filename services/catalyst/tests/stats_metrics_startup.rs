@@ -18,8 +18,7 @@ fn invoke(args: &[&str], variables: &[(&str, &str)]) -> (i32, String, String) {
     // prevent database access or listener binding if configuration is accepted.
     command
         .env("DATABASE_URL", "invalid-database-url")
-        .env("SERVE_METRICS_BIND", "invalid-bind")
-        .env("WKC_METRICS_PUBLIC_PATH", ":");
+        .env("SERVE_METRICS_BIND", "invalid-bind");
     for (key, value) in variables {
         command.env(key, value);
     }
@@ -59,7 +58,7 @@ fn invoke(args: &[&str], variables: &[(&str, &str)]) -> (i32, String, String) {
 }
 
 #[test]
-fn stats_compilation_is_serve_only_and_follows_cli_refusals() {
+fn cli_preflight_precedes_role_startup() {
     for args in [
         &["--help"][..],
         &["serve", "--help"],
@@ -71,7 +70,6 @@ fn stats_compilation_is_serve_only_and_follows_cli_refusals() {
         assert_eq!(code, 0, "{args:?}: {stderr}");
         assert!(stderr.is_empty(), "{args:?}: {stderr}");
         assert!(!stdout.is_empty());
-        assert!(!stdout.contains("compiling WKC_METRICS_PUBLIC_PATH"));
         eprintln!(
             "CLI {args:?}: exit={code} stdout_bytes={} stderr_bytes={}",
             stdout.len(),
@@ -87,7 +85,6 @@ fn stats_compilation_is_serve_only_and_follows_cli_refusals() {
         assert_eq!(code, 2, "{args:?}: {stderr}");
         assert!(stdout.is_empty());
         assert!(stderr.contains("Usage:"));
-        assert!(!stderr.contains("compiling WKC_METRICS_PUBLIC_PATH"));
         eprintln!(
             "CLI {args:?}: exit={code} stdout_bytes={} stderr_bytes={}",
             stdout.len(),
@@ -107,8 +104,8 @@ fn stats_compilation_is_serve_only_and_follows_cli_refusals() {
         ),
         (
             &["index"][..],
-            vec![],
-            "connecting index worker to DATABASE_URL",
+            vec![("INDEX_METRICS_BIND", "invalid-bind")],
+            "INDEX_METRICS_BIND",
         ),
         (
             &["pulse"][..],
@@ -120,24 +117,45 @@ fn stats_compilation_is_serve_only_and_follows_cli_refusals() {
         assert_eq!(code, 1);
         let text = format!("{stdout}{stderr}");
         assert!(text.contains(expected), "{args:?}: {text}");
-        assert!(!text.contains("compiling WKC_METRICS_PUBLIC_PATH"));
         assert!(!text.contains("fixture-secret"));
     }
     let (code, stdout, stderr) = invoke(&["serve"], &[]);
     assert_eq!(code, 1);
-    assert!(stdout.is_empty());
-    let text = stderr;
-    assert!(text.contains("compiling WKC_METRICS_PUBLIC_PATH"), "{text}");
-    assert!(text.contains("Missing parameter name"));
-    assert!(!text.contains("metrics listening"));
-    let (code, stdout, stderr) =
-        invoke(&["serve"], &[("WKC_METRICS_PUBLIC_PATH", "/scrape/:name?")]);
-    assert_eq!(code, 1);
     let text = format!("{stdout}{stderr}");
     assert!(text.contains("SERVE_METRICS_BIND"), "{text}");
-    assert!(!text.contains("compiling WKC_METRICS_PUBLIC_PATH"));
+    assert!(!text.contains("retired metrics settings"));
     assert!(!text.contains("metrics listening"));
-    eprintln!(
-        "startup: help/schema unaffected, Pulse/index skip matcher, argv/posture precede compiler, invalid pattern fails before bind, valid optional pattern reaches metrics-bind validation"
+}
+
+#[test]
+fn serve_warns_once_with_only_the_names_of_retired_metrics_settings() {
+    let settings = [
+        "WKC_METRICS_PUBLIC_PATH",
+        "WKC_METRICS_PUBLIC_PATH_FILE",
+        "WKC_METRICS_BEARER_TOKEN",
+        "WKC_METRICS_BEARER_TOKEN_FILE",
+        "WKC_METRICS_COLLECT_DEFAULT",
+        "WKC_METRICS_COLLECT_DEFAULT_FILE",
+        "WKC_METRICS_RESET_AT_NIGHT",
+        "WKC_METRICS_RESET_AT_NIGHT_FILE",
+        "CAMERA_REEL_METRICS_BEARER_TOKEN",
+        "CAMERA_REEL_METRICS_BEARER_TOKEN_FILE",
+    ];
+    let variables = settings.map(|name| (name, "private-fixture-value-or-path"));
+    let (code, stdout, stderr) = invoke(&["serve"], &variables);
+    let output = format!("{stdout}{stderr}");
+    assert_eq!(code, 1);
+    assert!(output.contains("SERVE_METRICS_BIND"));
+    let mut warnings = output
+        .lines()
+        .filter(|line| line.contains("retired metrics settings"));
+    let warning = warnings
+        .next()
+        .expect("expected a startup deprecation warning");
+    assert!(warnings.next().is_none(), "{output}");
+    assert!(warning.contains(&settings.join(", ")), "{warning}");
+    assert!(
+        !output.contains("private-fixture-value-or-path"),
+        "{output}"
     );
 }

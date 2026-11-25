@@ -187,6 +187,11 @@ pub async fn op_get_service_urls(state: &WorkerContext) -> Result<JsValue, WasmE
 }
 
 #[wasm_bindgen]
+pub async fn op_get_official_wallets(state: &WorkerContext) -> Result<JsValue, WasmError> {
+    serde_result!(dcl_js::system_api::op_get_official_wallets(state.rc()).await)
+}
+
+#[wasm_bindgen]
 pub async fn op_get_welcome(state: &WorkerContext) -> Result<JsValue, WasmError> {
     serde_result!(dcl_js::system_api::op_get_welcome(state.rc()).await)
 }

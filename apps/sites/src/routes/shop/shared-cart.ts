@@ -1,4 +1,5 @@
-// The /shop/cart document for a shared cache (a CDN), behind SHOP_CART_SHARED_CACHE=true (off when unset).
+// The /shop/cart document for a shared cache (a CDN), behind SHOP_CART_SHARED_CACHE=true (off when unset) and
+// PUBLIC_CATALYST_URL.
 // The cart's server render holds no cart: the lines, the session and the wallet are in the browser, and the
 // page reads them after hydration through its own private requests. With the setting on, a top-level
 // navigation gets one visitor-free document that a shared cache may keep: root data without the session id,
@@ -7,10 +8,16 @@
 import type { MiddlewareFunction } from "react-router";
 
 import { markPublicResponse } from "@/core/lib/telemetry/session";
-import { processEnv, type BaseEnv } from "@/data/lib/catalyst/bases";
+import { browserCatalystBase, processEnv, type BaseEnv } from "@/data/lib/catalyst/bases";
 
-/** Short, so a deploy or a flag change reaches every visitor soon; a stale copy is served while one refreshes. */
-export const SHARED_CART_CACHE_CONTROL = "public, max-age=60, stale-while-revalidate=300";
+/**
+ * A shared cache keeps the document for 60 s, so a flag change reaches every visitor soon. A browser keeps none: it
+ * asks again on each visit, so the purge on a deploy reaches it at once and no old document names old build files.
+ */
+export const SHARED_CART_CACHE_CONTROL = "public, max-age=0, s-maxage=60";
+
+/** The same 60 s for a CDN only (RFC 9213), which also serves a stale copy while it gets a new one. */
+export const SHARED_CART_CDN_CACHE_CONTROL = "max-age=60, stale-while-revalidate=300";
 
 /**
  * What selects the shared document: a frame gets the private one, with COEP when it is same-origin
@@ -18,8 +25,12 @@ export const SHARED_CART_CACHE_CONTROL = "public, max-age=60, stale-while-revali
  */
 export const SHARED_CART_VARY = "Sec-Fetch-Dest";
 
+/**
+ * The document's own address must not come from a request's headers (root's `publicPageBase`, the page's `publicPageUrl`):
+ * one request would then set it for every visitor. Thus the setting needs PUBLIC_CATALYST_URL.
+ */
 export function sharedCartEnabled(env: BaseEnv = processEnv()): boolean {
-  return env.SHOP_CART_SHARED_CACHE?.trim() === "true";
+  return env.SHOP_CART_SHARED_CACHE?.trim() === "true" && browserCatalystBase(env) !== "";
 }
 
 /**
@@ -39,6 +50,7 @@ export const sharedCartMiddleware: MiddlewareFunction<Response> = async ({ reque
   // An error or a redirect keeps the route's private headers.
   if (response.status !== 200 || !response.headers.get("Content-Type")?.startsWith("text/html")) return response;
   response.headers.set("Cache-Control", SHARED_CART_CACHE_CONTROL);
+  response.headers.set("CDN-Cache-Control", SHARED_CART_CDN_CACHE_CONTROL);
   response.headers.set("Vary", SHARED_CART_VARY);
   return response;
 };
