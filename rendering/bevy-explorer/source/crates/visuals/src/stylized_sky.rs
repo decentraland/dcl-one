@@ -536,8 +536,9 @@ impl Material for StylizedSkyMaterial {
         _layout: &MeshVertexBufferLayoutRef,
         key: MaterialPipelineKey<Self>,
     ) -> Result<(), SpecializedMeshPipelineError> {
-        // as bevy_atmosphere's skybox: the sky's pixels keep the cleared depth, so the stars can
-        // tell the sky from geometry, while the main pass still tests it against the geometry
+        // as bevy_atmosphere's skybox: the sky's pixels keep the cleared depth, so depth of field
+        // and the stars can tell the sky from geometry, while the main pass still tests it
+        // against the geometry
         if let Some(depth_stencil) = &mut descriptor.depth_stencil {
             depth_stencil.depth_write_enabled = false;
             depth_stencil.depth_compare = CompareFunction::GreaterEqual;
@@ -1326,7 +1327,24 @@ mod tests {
     #[test]
     #[ignore = "needs a GPU; run with --ignored"]
     fn the_screen_draws_the_sky_per_pixel() {
-        assert_sharp_disc(&sky_row_through_the_disc());
+        assert_sharp_disc(&sky_row_through_the_disc(()));
+    }
+
+    /// Depth of field leaves the sky sharp: the sky writes no depth, and the fork's depth of field
+    /// keeps cleared depth in focus away from geometry. The explorer's High setting would
+    /// otherwise blur the sky by its widest circle, 20 pixels.
+    #[test]
+    #[ignore = "needs a GPU; run with --ignored"]
+    fn depth_of_field_leaves_the_sky_sharp() {
+        use bevy::core_pipeline::dof::{DepthOfField, DepthOfFieldMode};
+        assert_sharp_disc(&sky_row_through_the_disc(DepthOfField {
+            mode: DepthOfFieldMode::Gaussian,
+            focal_distance: 55.0,
+            aperture_f_stops: 0.05,
+            max_depth: 250.0,
+            max_circle_of_confusion_diameter: 20.0,
+            sensor_height: 0.06,
+        }));
     }
 
     /// The disc's edges are single steps between pixels 20 and 21, and 42 and 43.
@@ -1351,25 +1369,15 @@ mod tests {
         );
     }
 
-    /// The red of the middle row of a 64 pixel camera, ten degrees tall, that looks up at the
-    /// dimmed noon disc.
-    fn sky_row_through_the_disc() -> Vec<u8> {
-        use bevy::{
-            core_pipeline::tonemapping::Tonemapping,
-            render::{
-                camera::RenderTarget,
-                view::screenshot::{Screenshot, ScreenshotCaptured},
-            },
-        };
+    /// The red of the middle row of a 64 pixel camera, ten degrees tall and carrying `extra`,
+    /// that looks up at the dimmed noon disc.
+    fn sky_row_through_the_disc(extra: impl Bundle) -> Vec<u8> {
+        use bevy::{core_pipeline::tonemapping::Tonemapping, render::camera::RenderTarget};
         use bevy_atmosphere::prelude::AtmosphereCamera;
         use pipeline_test::render_target;
 
-        #[derive(Resource, Default)]
-        struct Captured(Option<Image>);
-
         let mut app = sky_test_app(64);
-        app.add_plugins(StylizedSkyMaterialPlugin)
-            .init_resource::<Captured>();
+        app.add_plugins(StylizedSkyMaterialPlugin);
         start_sky(&mut app);
         let target = render_target(&mut app);
         app.world_mut().spawn((
@@ -1386,6 +1394,7 @@ mod tests {
             Msaa::Off,
             AtmosphereCamera::default(),
             Transform::default().looking_at(Vec3::Y, Vec3::Z),
+            extra,
         ));
         let noon = day_fraction(12.0);
         draw_sky(&mut app, |sky| {
@@ -1396,7 +1405,127 @@ mod tests {
             sky.disc_color = Vec3::splat(0.3);
         });
         assert!((disc_params(noon, false).size * 0.3 - 0.03).abs() < 1e-6);
+        red_of_the_middle_row(&mut app, &target)
+    }
 
+    /// Depth of field fades distant geometry into the sky instead of leaving it a sharp outline,
+    /// and leaves the sky sharp beyond the geometry's blur. Two cameras, one with the client's
+    /// High setting, look at the same sky over the edge of a black wall 400 m away, past
+    /// `max_depth`, that covers the left half of the view. Without depth of field the edge is
+    /// one step. With it, the wall's circle of confusion, 20 pixels here, spreads into the sky:
+    /// the edge ramps over several pixels, and the sky beyond its reach is unchanged.
+    #[test]
+    #[ignore = "needs a GPU; run with --ignored"]
+    fn depth_of_field_fades_distant_geometry_into_the_sky() {
+        use bevy::{
+            core_pipeline::{
+                dof::{DepthOfField, DepthOfFieldMode},
+                tonemapping::Tonemapping,
+            },
+            render::camera::RenderTarget,
+        };
+        use bevy_atmosphere::prelude::AtmosphereCamera;
+        use pipeline_test::render_target;
+
+        let mut app = sky_test_app(64);
+        app.add_plugins(StylizedSkyMaterialPlugin);
+        start_sky(&mut app);
+
+        // away from the noon sun, so its disc stays out of view
+        let view = Transform::default().looking_to(Vec3::new(0.0, 0.5, -1.0), Vec3::Y);
+        let targets = [false, true].map(|depth_of_field| {
+            let target = render_target(&mut app);
+            let mut camera = app.world_mut().spawn((
+                Camera3d::default(),
+                Tonemapping::None,
+                Camera {
+                    target: RenderTarget::Image(target.clone().into()),
+                    ..default()
+                },
+                Projection::Perspective(PerspectiveProjection {
+                    fov: 10f32.to_radians(),
+                    ..default()
+                }),
+                Msaa::Off,
+                AtmosphereCamera::default(),
+                view,
+            ));
+            if depth_of_field {
+                camera.insert(DepthOfField {
+                    mode: DepthOfFieldMode::Gaussian,
+                    focal_distance: 55.0,
+                    aperture_f_stops: 0.05,
+                    max_depth: 250.0,
+                    max_circle_of_confusion_diameter: 20.0,
+                    sensor_height: 0.06,
+                });
+            }
+            target
+        });
+
+        // a wall facing the cameras, its right edge on the middle of the view
+        let wall = app
+            .world_mut()
+            .resource_mut::<Assets<Mesh>>()
+            .add(Cuboid::new(200.0, 200.0, 1.0));
+        let black = app
+            .world_mut()
+            .resource_mut::<Assets<StandardMaterial>>()
+            .add(StandardMaterial {
+                base_color: Color::BLACK,
+                unlit: true,
+                ..default()
+            });
+        app.world_mut().spawn((
+            Mesh3d(wall),
+            MeshMaterial3d(black),
+            Transform {
+                translation: view.forward() * 400.0 - view.right() * 100.0,
+                rotation: view.rotation,
+                ..default()
+            },
+        ));
+
+        let noon = day_fraction(12.0);
+        draw_sky(&mut app, |sky| {
+            sky.phase = time_to_phase(noon);
+            sky.body_direction = Vec3::Y;
+            sky.set_disc(&disc_params(noon, false));
+        });
+        let [sharp, blurred] = targets.map(|target| red_of_the_middle_row(&mut app, &target));
+
+        let step = |row: &[u8], x: usize| (row[x + 1] as i32 - row[x] as i32).abs();
+        // without depth of field the edge is one step, after pixel 31
+        let contrast = step(&sharp, 31);
+        assert!(
+            contrast > 40 && sharp[..32].iter().all(|&red| red < 8),
+            "the wall is not black against the sky; row {sharp:?}"
+        );
+        // with it, no step near the edge is more than a third of that
+        let widest = (24..40).map(|x| step(&blurred, x)).max().unwrap();
+        assert!(
+            widest * 3 < contrast,
+            "the edge stays sharp: a step of {widest} against {contrast}; row {blurred:?}"
+        );
+        // and the sky beyond the circle's reach is as sharp as without it
+        for x in 53..64 {
+            assert!(
+                sharp[x].abs_diff(blurred[x]) <= 2,
+                "pixel {x} of the sky is blurred: {} against {}; rows {sharp:?} and {blurred:?}",
+                blurred[x],
+                sharp[x]
+            );
+        }
+    }
+
+    /// The red of the middle row of the 64 pixel `target`, from a screenshot.
+    fn red_of_the_middle_row(app: &mut App, target: &Handle<Image>) -> Vec<u8> {
+        use bevy::render::view::screenshot::{Screenshot, ScreenshotCaptured};
+
+        #[derive(Resource, Default)]
+        struct Captured(Option<Image>);
+
+        app.init_resource::<Captured>();
         app.world_mut()
             .spawn(Screenshot::image(target.clone()))
             .observe(

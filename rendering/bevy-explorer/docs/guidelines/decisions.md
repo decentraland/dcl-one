@@ -969,7 +969,9 @@ ends in "we don't do that", so the next person doesn't have to rediscover it.
   wgpu validation. While MSAA is on, the camera has no depth of field and the stars draw before
   the transparent pass. Unlike Unity, which has none, the presets keep depth of field on, because
   it hides the lack of detail in distant imposters, and they use FXAA so it stays on: the yield
-  only applies when a player picks MSAA. SSAO is off in every preset: bevy 0.16's SSAO is not
+  only applies when a player picks MSAA. The sky stays sharp under it: the fork keeps cleared
+  depth in focus, except within the blur of nearby geometry, so distant imposters fade into the
+  sky rather than show a cut-out outline. The stars therefore draw before bloom and glow. SSAO is off in every preset: bevy 0.16's SSAO is not
   good enough to put in one.
 - **VSync caps the frame rate; it does not set it.** Unity's `vSyncCount` hands the rate to the
   monitor and ignores the frame limit. Here VSync only removes tearing: the explorer paces to the

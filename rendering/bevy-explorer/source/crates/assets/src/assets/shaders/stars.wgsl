@@ -1,9 +1,10 @@
-// The star field and the shooting stars, added at screen resolution: after depth of field where
-// the view has it, else before the transparent pass (see stars.rs). Each pixel of clear sky
-// looks up the star cells around its view direction on a cube grid, so a star keeps one angular
-// size everywhere. The stars belong under the clouds: the sky cube's alpha, its cloud cover,
-// fades them. The sky is composited on authored sRGB values and decoded to linear last, and the
-// stars belong before that decode, so each adds what the decode makes of it over the sky behind
+// The star field and the shooting stars, added at screen resolution before bloom: at the end of
+// the main pass where the view has depth of field, else before the transparent pass (see
+// stars.rs). Each pixel of clear sky looks up the star cells around its view direction on a cube
+// grid, so a star keeps one angular size everywhere. The stars belong under the clouds: the sky
+// cube's alpha, its cloud cover, fades them. The sky is composited on authored sRGB values and
+// decoded to linear last, and the stars belong before that decode, so each adds what the decode
+// makes of it over the sky behind
 // it. The output is blended additively, so pixels with no star are discarded.
 
 #import bevy_core_pipeline::fullscreen_vertex_shader::FullscreenVertexOutput

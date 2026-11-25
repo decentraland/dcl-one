@@ -13709,7 +13709,7 @@ dependencies = [
  "ipfs",
  "naga_oil",
  "pipeline_test",
- "scene_material",
+ "platform",
  "scene_runner",
  "serde_json",
 ]
