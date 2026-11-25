@@ -189,10 +189,12 @@ describe('Generated ParticleSystem ProtoBuf', () => {
       ...emptyPS,
       rate: 10,
       lifetime: 5,
-      bursts: { values: [
-        { time: 0, count: 20, cycles: 3, interval: 0.5, probability: 1.0 },
-        { time: 2.0, count: 50, cycles: undefined, interval: undefined, probability: undefined }
-      ] }
+      bursts: {
+        values: [
+          { time: 0, count: 20, cycles: 3, interval: 0.5, probability: 1.0 },
+          { time: 2.0, count: 50, cycles: undefined, interval: undefined, probability: undefined }
+        ]
+      }
     })
   })
 

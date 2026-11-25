@@ -5,8 +5,7 @@ import { MeshRenderer } from '../generated/index.gen'
 /**
  * @public
  */
-export interface MeshRendererComponentDefinitionExtended
-  extends LastWriteWinElementSetComponentDefinition<PBMeshRenderer> {
+export interface MeshRendererComponentDefinitionExtended extends LastWriteWinElementSetComponentDefinition<PBMeshRenderer> {
   /**
    * @public
    * Set a box in the MeshRenderer component

@@ -7,13 +7,15 @@ import fs from 'fs'
 const args = process.argv.slice(2)
 const shouldFix = args.includes('--fix')
 
-// Packages that should be linted
+// Directories that should be linted
 const packages = [
   'packages/@dcl/ecs',
   'packages/@dcl/sdk',
   'packages/@dcl/sdk-commands',
-  'packages/@dcl/react-ecs'
+  'packages/@dcl/react-ecs',
   // 'packages/@dcl/js-runtime' - This package is ignored by ESLint
+  'test',
+  'scripts'
 ]
 
 console.log(`🔍 Linting packages individually${shouldFix ? ' with auto-fix' : ''}...\n`)
@@ -33,13 +35,9 @@ for (const pkg of packages) {
       })
       console.log(`✅ ${pkg} - No issues found\n`)
     } catch (error: any) {
-      // Check if it's just warnings (exit code 1) vs actual errors (exit code 2)
-      if (error.status === 1) {
-        console.log(`⚠️  ${pkg} - Linting completed with warnings\n`)
-      } else {
-        console.log(`❌ ${pkg} - Linting failed\n`)
-        hasErrors = true
-      }
+      // ESLint exits 0 when it finds only warnings, 1 when a rule reports an error and 2 when it cannot run.
+      console.log(`❌ ${pkg} - ${error.status === 1 ? 'Lint errors found' : 'Linting failed'}\n`)
+      hasErrors = true
     }
   } else {
     console.log(`⚠️  ${pkg} - Package not found, skipping\n`)

@@ -1,4 +1,3 @@
-/* eslint-disable @typescript-eslint/no-empty-interface */
 import type { PBUiBackground, PBUiText, PBUiTransform, PBUiInput, PBUiDropdown, PBUiInputBinding } from '@dcl/ecs'
 import React from 'react'
 import type { Callback, Key } from './components'

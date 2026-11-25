@@ -6,8 +6,7 @@ import type { PBAudioSource } from '../generated/pb/decentraland/sdk/components/
 /**
  * @public
  */
-export interface AudioSourceComponentDefinitionExtended
-  extends LastWriteWinElementSetComponentDefinition<PBAudioSource> {
+export interface AudioSourceComponentDefinitionExtended extends LastWriteWinElementSetComponentDefinition<PBAudioSource> {
   /**
    * @public
    *
@@ -46,7 +45,7 @@ export function defineAudioSourceComponent(
         ...existing,
         audioClipUrl: src,
         playing: true,
-        currentTime: resetCursor ? 0 : existing?.currentTime ?? 0
+        currentTime: resetCursor ? 0 : (existing?.currentTime ?? 0)
       })
 
       return true

@@ -4,7 +4,7 @@ import { colors } from '../components/log'
 import type { ProjectUnion } from './project-validations'
 import type { Workspace } from './workspace-validations'
 
-// eslint-disable-next-line @typescript-eslint/no-var-requires
+// eslint-disable-next-line @typescript-eslint/no-require-imports
 const { name, version } = require('../../package.json')
 
 export function printProgressStep(logger: ILoggerComponent.ILogger, log: string, currentStep: number, maxStep: number) {

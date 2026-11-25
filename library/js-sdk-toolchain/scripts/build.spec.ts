@@ -49,7 +49,6 @@ flow('build-all', () => {
   commonChecks()
 
   flow('@dcl/js-runtime', () => {
-
     it('compile protos', async () => {
       const rpcProtoPath = path.resolve(__dirname, 'rpc-api-generation', 'src', 'proto')
       removeSync(rpcProtoPath)

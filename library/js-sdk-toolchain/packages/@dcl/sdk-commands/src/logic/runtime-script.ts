@@ -4,7 +4,6 @@ import type { ActionRef } from '@dcl/asset-packs'
 import { getActionEvents } from '@dcl/asset-packs/dist/events'
 
 declare global {
-  // eslint-disable-next-line no-var
   var __DCL_SCRIPT_INSTANCES__: Map<string, { instance: any; entity: Entity; path: string }>
 }
 

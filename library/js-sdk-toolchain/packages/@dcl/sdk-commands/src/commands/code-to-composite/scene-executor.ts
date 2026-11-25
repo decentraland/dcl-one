@@ -339,7 +339,7 @@ function setupRequireHook(engine: IEngine, transport: Transport, mainCrdt: Uint8
  */
 async function loadAndExecuteBundle(bundlePath: string): Promise<void> {
   delete require.cache[require.resolve(bundlePath)]
-  // eslint-disable-next-line @typescript-eslint/no-var-requires
+  // eslint-disable-next-line @typescript-eslint/no-require-imports
   const sceneModule = require(bundlePath)
 
   if (typeof sceneModule.onStart === 'function') {

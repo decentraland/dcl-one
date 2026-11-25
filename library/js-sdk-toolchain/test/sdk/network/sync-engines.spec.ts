@@ -9,10 +9,7 @@ import type {
   CrdtMessage,
   Entity
 } from '../../../packages/@dcl/ecs/dist'
-import {
-  Engine,
-  CrdtMessageType
-} from '../../../packages/@dcl/ecs/dist'
+import { Engine, CrdtMessageType } from '../../../packages/@dcl/ecs/dist'
 import * as components from '../../../packages/@dcl/ecs/src/components'
 import { addSyncTransport } from '../../../packages/@dcl/sdk/network/message-bus-sync'
 import { CommsMessage, encodeString } from '../../../packages/@dcl/sdk/network/binary-message-bus'
@@ -130,8 +127,18 @@ describe('Network Parenting', () => {
   let entityCache: Entity
   const buffer = new ReadWriteByteBuffer()
   it('should get the engines ready', async () => {
-    componentsA.EngineInfo.create(engineA.RootEntity, { tickNumber: 400, frameNumber: 400, totalRuntime: 1, sceneHidden: false })
-    componentsB.EngineInfo.create(engineB.RootEntity, { tickNumber: 400, frameNumber: 400, totalRuntime: 1, sceneHidden: false })
+    componentsA.EngineInfo.create(engineA.RootEntity, {
+      tickNumber: 400,
+      frameNumber: 400,
+      totalRuntime: 1,
+      sceneHidden: false
+    })
+    componentsB.EngineInfo.create(engineB.RootEntity, {
+      tickNumber: 400,
+      frameNumber: 400,
+      totalRuntime: 1,
+      sceneHidden: false
+    })
     // Dance of sync
     await tick()
     await tick()

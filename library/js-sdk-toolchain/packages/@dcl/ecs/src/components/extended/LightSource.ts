@@ -21,8 +21,7 @@ export interface LightSourceHelper {
 /**
  * @public
  */
-export interface LightSourceComponentDefinitionExtended
-  extends LastWriteWinElementSetComponentDefinition<PBLightSource> {
+export interface LightSourceComponentDefinitionExtended extends LastWriteWinElementSetComponentDefinition<PBLightSource> {
   /**
    * LightSource helper with constructor
    */

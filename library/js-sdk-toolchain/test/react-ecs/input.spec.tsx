@@ -16,7 +16,9 @@ describe('Ui Input - smooth typing', () => {
       <Input
         uiTransform={{ width: 100 }}
         value={inputValue}
-        onChange={(val) => { inputValue = val ?? '' }}
+        onChange={(val) => {
+          inputValue = val ?? ''
+        }}
         placeholder="type here"
       />
     )
@@ -47,7 +49,9 @@ describe('Ui Input - smooth typing', () => {
       <Input
         uiTransform={{ width: 100 }}
         value={inputValue}
-        onChange={(val) => { inputValue = val ?? '' }}
+        onChange={(val) => {
+          inputValue = val ?? ''
+        }}
         placeholder="type here"
       />
     )

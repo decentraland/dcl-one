@@ -16,8 +16,7 @@ export interface InputModifierHelper {
 /**
  * @public
  */
-export interface InputModifierComponentDefinitionExtended
-  extends LastWriteWinElementSetComponentDefinition<PBInputModifier> {
+export interface InputModifierComponentDefinitionExtended extends LastWriteWinElementSetComponentDefinition<PBInputModifier> {
   /**
    * InputModifier helper with constructor
    */

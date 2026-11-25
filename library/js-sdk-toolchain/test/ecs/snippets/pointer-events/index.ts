@@ -47,7 +47,7 @@ createCube(13, 1, 15, [
       priority: 0
     },
     interactionType: InteractionType.CURSOR
-    }
+  }
 ])
 
 createCube(11, 1, 15, [

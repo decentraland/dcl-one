@@ -59,14 +59,7 @@ export type JustifyType = 'flex-start' | 'center' | 'flex-end' | 'space-between'
  * @public
  */
 export type AlignType =
-  | 'auto'
-  | 'flex-start'
-  | 'center'
-  | 'flex-end'
-  | 'stretch'
-  | 'baseline'
-  | 'space-between'
-  | 'space-around'
+  'auto' | 'flex-start' | 'center' | 'flex-end' | 'stretch' | 'baseline' | 'space-between' | 'space-around'
 
 /**
  * @public

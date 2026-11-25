@@ -19,10 +19,13 @@ export const IOneOf = <T extends Spec>(specs: T): ISchema<OneOfType<T>> => {
     dict[key] = index
     return dict
   }, {})
-  const specReflection = specKeys.reduce((specReflection, currentKey) => {
-    specReflection[currentKey] = specs[currentKey].jsonSchema
-    return specReflection
-  }, {} as Record<string, any>)
+  const specReflection = specKeys.reduce(
+    (specReflection, currentKey) => {
+      specReflection[currentKey] = specs[currentKey].jsonSchema
+      return specReflection
+    },
+    {} as Record<string, any>
+  )
 
   return {
     serialize({ $case, value }: DeepReadonly<OneOfType<T>>, builder: ByteBuffer): void {

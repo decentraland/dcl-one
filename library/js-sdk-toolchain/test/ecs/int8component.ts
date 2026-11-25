@@ -53,11 +53,11 @@ export const int8Component = (engine: IEngine) => {
     },
     create: function (entity: Entity, val?: number) {
       if (data.has(entity)) throw new Error(`Entity already has component`)
-      data.set(entity, (val || 0) % 256 | 0)
+      data.set(entity, ((val || 0) % 256) | 0)
       dirtyIterator.add(entity)
     },
     createOrReplace: function (entity: Entity, val?: any) {
-      data.set(entity, (val || 0) % 256 | 0)
+      data.set(entity, ((val || 0) % 256) | 0)
       dirtyIterator.add(entity)
       lastSentData.delete(entity)
     },

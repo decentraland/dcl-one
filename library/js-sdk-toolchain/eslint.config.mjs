@@ -29,6 +29,9 @@ export default [
         'error',
         { prefer: 'type-imports', fixStyle: 'separate-type-imports', disallowTypeAnnotations: false }
       ],
+      // `callback && callback()` and a JSX namespace's empty interfaces are deliberate here.
+      '@typescript-eslint/no-unused-expressions': ['error', { allowShortCircuit: true, allowTernary: true }],
+      '@typescript-eslint/no-empty-object-type': ['error', { allowInterfaces: 'always' }],
       '@typescript-eslint/no-unused-vars': [
         'warn',
         {
@@ -45,12 +48,22 @@ export default [
     rules: { 'no-console': 'off' }
   },
   {
+    // Tests load modules with `require` after `jest.doMock`, and scene fixtures hold bare expressions.
+    files: ['test/**/*.ts', 'test/**/*.tsx'],
+    rules: {
+      '@typescript-eslint/no-require-imports': 'off',
+      '@typescript-eslint/no-unused-expressions': 'off'
+    }
+  },
+  {
     ignores: [
       '**/*.gen.ts',
       '**/dist/**',
       '**/node_modules/**',
       '**/*.d.ts',
       '**/*.js',
+      '**/*.cjs',
+      '**/*.mjs',
       'packages/@dcl/ecs/dist/**',
       'packages/@dcl/ecs/src/components/generated',
       'packages/@dcl/js-runtime',

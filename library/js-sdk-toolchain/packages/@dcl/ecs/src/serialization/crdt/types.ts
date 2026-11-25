@@ -168,9 +168,7 @@ export type CrdtMessage =
  * @public
  */
 export type CrdtNetworkMessageBody =
-  | PutNetworkComponentMessageBody
-  | DeleteComponentNetworkMessageBody
-  | DeleteEntityNetworkMessageBody
+  PutNetworkComponentMessageBody | DeleteComponentNetworkMessageBody | DeleteEntityNetworkMessageBody
 
 /**
  * @public

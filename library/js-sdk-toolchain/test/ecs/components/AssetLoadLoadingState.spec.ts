@@ -8,31 +8,31 @@ describe('Generated AssetLoadLoadingState ProtoBuf', () => {
 
     testSchemaSerializationIdentity(AssetLoadLoadingState.schema, {
       timestamp: 5,
-      asset: "asset1",
+      asset: 'asset1',
       currentState: LoadingState.LOADING
     })
 
     testSchemaSerializationIdentity(AssetLoadLoadingState.schema, {
       timestamp: 10,
-      asset: "asset1",
+      asset: 'asset1',
       currentState: LoadingState.FINISHED_WITH_ERROR
     })
 
     testSchemaSerializationIdentity(AssetLoadLoadingState.schema, {
       timestamp: 30,
-      asset: "asset1",
+      asset: 'asset1',
       currentState: LoadingState.NOT_FOUND
     })
 
     testSchemaSerializationIdentity(AssetLoadLoadingState.schema, {
       timestamp: 30,
-      asset: "asset1",
+      asset: 'asset1',
       currentState: LoadingState.UNKNOWN
     })
 
     testSchemaSerializationIdentity(AssetLoadLoadingState.schema, {
       timestamp: 30,
-      asset: "asset1",
+      asset: 'asset1',
       currentState: LoadingState.FINISHED
     })
 

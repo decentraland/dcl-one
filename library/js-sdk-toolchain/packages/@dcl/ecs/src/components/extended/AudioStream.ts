@@ -7,8 +7,7 @@ import type { PBAudioStream } from '../generated/pb/decentraland/sdk/components/
 /**
  * @public
  */
-export interface AudioStreamComponentDefinitionExtended
-  extends LastWriteWinElementSetComponentDefinition<PBAudioStream> {
+export interface AudioStreamComponentDefinitionExtended extends LastWriteWinElementSetComponentDefinition<PBAudioStream> {
   /**
    * @public
    *

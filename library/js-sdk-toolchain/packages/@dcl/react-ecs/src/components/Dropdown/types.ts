@@ -7,8 +7,7 @@ import type { EntityPropTypes, ScaleUnit } from '../types'
  * Dropdown Props
  */
 export interface UiDropdownProps
-  extends EntityPropTypes,
-    Omit<Partial<PBUiDropdown>, 'textAlign' | 'font' | 'fontSize'> {
+  extends EntityPropTypes, Omit<Partial<PBUiDropdown>, 'textAlign' | 'font' | 'fontSize'> {
   onChange?(value: number): void
   font?: UiFontType
   textAlign?: TextAlignType

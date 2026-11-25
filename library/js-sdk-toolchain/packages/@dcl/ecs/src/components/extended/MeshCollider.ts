@@ -5,8 +5,7 @@ import { MeshCollider } from '../generated/index.gen'
 /**
  * @public
  */
-export interface MeshColliderComponentDefinitionExtended
-  extends LastWriteWinElementSetComponentDefinition<PBMeshCollider> {
+export interface MeshColliderComponentDefinitionExtended extends LastWriteWinElementSetComponentDefinition<PBMeshCollider> {
   /**
    * @public
    * Set a box in the MeshCollider component
