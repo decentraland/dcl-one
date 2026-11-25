@@ -4698,6 +4698,11 @@ checks:
   the `sales-index` envelope. `folded_block` is not compared with
   `last_block`, as for the nft index's readers: a pass advances the latter
   before it folds;
+- the bid book holds that published fold: `shop.nft_bid_cursor`, written in
+  the fold's transaction, names the published block. The walk publishes a
+  fold only after it commits and reads the head, so between the two the rows
+  hold an unpublished fold and the read answers the `sales-index` envelope;
+  a walk that advanced without folding leaves the book readable;
 - the nft index is fresh on Polygon, on that same chain (otherwise the
   `nft-index` envelope);
 - every bid in the request's scope (its filters but the seller's) has a
@@ -4723,6 +4728,12 @@ filter. That happens while the sales walk is ahead of the nft walk.
 Statuses are the subgraph's: an acceptance reads `sold`, and a bid the
 contract dropped when another bid on its token was accepted reads
 `cancelled`.
+
+A mirror (v3) bid on an item names the item's creator as its seller only
+from an item row of the trade's chain, verified there on a testnet. On a
+node that does not walk the indexes, the trades readiness and the mirror's
+bids are one short read-only snapshot, released before the subgraph is
+awaited, whose instant the subgraph's filter takes.
 
 Measured on 60,000 synthetic bids over 2,000 catalogued contracts, plus
 3,000 bids on 200 contracts outside the catalogue, with 2M transfers and

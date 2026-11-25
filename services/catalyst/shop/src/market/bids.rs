@@ -214,6 +214,7 @@ const TRADES_BIDS_SQL: &str = "SELECT t.id::text AS id, t.contract AS trade_cont
  LEFT JOIN shop.trade_assets_item recv_item ON recv_item.asset_id = recv.id \
  LEFT JOIN shop.items i ON i.contract_address = recv.contract_address AND i.network = lower(t.network) \
       AND i.item_id = COALESCE(ITEM_NUM, div(TOKEN_NUM, SHIFT::numeric)) \
+      AND i.chain_id = t.chain_id AND (t.chain_id IN (1, 137) OR i.testnet_verified) \
  LEFT JOIN shop.nft n ON recv_erc721.token_id IS NOT NULL AND n.network = lower(t.network) AND n.contract_address = recv.contract_address \
       AND n.token_id = TOKEN_NUM \
  LEFT JOIN land_authz.token_right tr ON recv_erc721.token_id IS NOT NULL AND tr.token_address = recv.contract_address AND tr.token_id = TOKEN_NUM \
@@ -371,6 +372,12 @@ fn legacy_order(sort_by: Option<BidSortBy>) -> (&'static str, &'static str) {
 }
 
 pub fn bid_from_graph(b: &Value, network: Network) -> Bid {
+    bid_from_graph_on(b, network, network.chain_id())
+}
+
+/// [`bid_from_graph`] labelled with `chain_id`: the chain a walking node
+/// serves on the network, rather than the `ETHEREUM_CHAIN_ID` alias.
+fn bid_from_graph_on(b: &Value, network: Network, chain_id: ChainId) -> Bid {
     let ms = |key: &str| {
         let raw = readers::int_of(b, key);
         if raw != 0 && raw < 100_000_000_000 {
@@ -389,7 +396,7 @@ pub fn bid_from_graph(b: &Value, network: Network) -> Bid {
         status: readers::opt_str_of(b, "status").unwrap_or_else(|| "open".to_string()),
         seller: readers::str_of(b, "seller"),
         network,
-        chain_id: network.chain_id(),
+        chain_id,
         contract_address: readers::str_of(b, "nftAddress"),
         expires_at: ms("expiresAt"),
         token_id: readers::opt_str_of(b, "tokenId"),
@@ -412,17 +419,20 @@ async fn legacy_leg(
         Some(n) => vec![n.graph()],
         None => vec![graph::Network::Ethereum, graph::Network::Matic],
     };
-    graph_leg(state, f, window, networks, now_ms).await
+    graph_leg(state, f, window, networks, now_ms, false).await
 }
 
 /// The subgraph reader's legacy bids of `networks` unexpired at `now_ms`
-/// over the merged window and their capped total.
+/// over the merged window and their capped total. `served` labels each row
+/// with the chain the node serves on its network (a walking node's
+/// catalogue), else with the network's configured chain.
 async fn graph_leg(
     state: &MarketplaceState,
     f: &BidFilters,
     window: i64,
     networks: Vec<graph::Network>,
     now_ms: i64,
+    served: bool,
 ) -> Result<(Vec<Bid>, i64), Response> {
     if f.item_id.is_some() || f.network_db_filter.as_ref().is_some_and(|n| n.is_empty()) {
         return Ok((Vec::new(), 0));
@@ -459,10 +469,17 @@ async fn graph_leg(
         )
         .await
         .map_err(|e| readers::upstream_failed("/v1/bids", &e))?;
-        rows.extend(
-            got.iter()
-                .map(|b| bid_from_graph(b, Network::from(network))),
-        );
+        let wire = Network::from(network);
+        let chain_id = if served {
+            let net = match wire {
+                Network::Ethereum => ChainNet::Ethereum,
+                Network::Matic => ChainNet::Matic,
+            };
+            wire_chain(state.settings.catalogue().chain_id(net), wire)
+        } else {
+            wire.chain_id()
+        };
+        rows.extend(got.iter().map(|b| bid_from_graph_on(b, wire, chain_id)));
     }
     Ok((rows, total))
 }
@@ -553,10 +570,27 @@ pub(super) async fn bids_snapshot(
     let sales = chain_walk::cursor(&mut *tx, INDEXER_SALES, ChainNet::Matic)
         .await
         .map_err(db)?;
-    if !sales.is_some_and(|c| sales_published(&c, chain, now)) {
+    let Some(published) = sales
+        .filter(|c| sales_published(c, chain, now))
+        .and_then(|c| c.folded_block)
+    else {
         return Err(unavailable(
             Source::SalesIndex,
             "the matic sales index is not published (catching up, rewound after a reorg, stopped, or MARKETPLACE_SALES_INDEX_ENABLED off)",
+        ));
+    };
+    // The book's rows are the fold its marker names, written with them; the
+    // walk publishes that fold only after its head reads, which can stall.
+    let book: Option<i64> = sqlx::query_scalar(
+        "SELECT folded_through FROM shop.nft_bid_cursor WHERE network = 'matic'",
+    )
+    .fetch_optional(&mut *tx)
+    .await
+    .map_err(db)?;
+    if book != Some(published) {
+        return Err(unavailable(
+            Source::SalesIndex,
+            "the matic bid book holds a fold the sales index has not published yet",
         ));
     }
     owned_items::check(
@@ -897,25 +931,28 @@ pub async fn list_bids(
             )
         })?;
         if ethereum {
-            let (more, more_total) =
-                graph_leg(state, f, window, vec![graph::Network::Ethereum], now_ms).await?;
+            let (more, more_total) = graph_leg(
+                state,
+                f,
+                window,
+                vec![graph::Network::Ethereum],
+                now_ms,
+                true,
+            )
+            .await?;
             rows.extend(more);
             total += more_total;
         }
         (rows, total, trades)
     } else {
         readers::require_networks(state, f.network.map(|n| n.graph()))?;
-        super::trades::require_ready(state).await?;
-        let now = Utc::now();
+        // The trades readiness and rows on one short snapshot, released
+        // before the subgraph is awaited, whose filter takes its instant.
+        let (mut tx, _, now) = bids_snapshot(state, false).await?;
+        let trades = trades_rows(&mut tx, state, f, now).await;
+        tx.rollback().await.ok();
+        let trades = trades.map_err(read_error)?;
         let (rows, total) = legacy_leg(state, f, window, now.timestamp_millis()).await?;
-        let mut conn = state
-            .pool
-            .acquire()
-            .await
-            .map_err(|e| ApiError::from(e).into_response())?;
-        let trades = trades_rows(&mut conn, state, f, now)
-            .await
-            .map_err(|e| ApiError::from(e).into_response())?;
         (rows, total, trades)
     };
     let total = legacy_total + trades.len() as i64;

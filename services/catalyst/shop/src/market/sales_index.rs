@@ -506,6 +506,18 @@ pub async fn fold(
             .execute(&mut *tx)
             .await?;
     }
+    // The block these rows are folded through (the walk folds at its last
+    // block), written with them: the walk publishes the fold only later, so
+    // a reader serves `shop.nft_bid` only while this is the published block.
+    sqlx::query(
+        "INSERT INTO shop.nft_bid_cursor (network, folded_through) \
+         SELECT network, last_block FROM shop.chain_cursor WHERE indexer = $2 AND network = $1 \
+         ON CONFLICT (network) DO UPDATE SET folded_through = EXCLUDED.folded_through",
+    )
+    .bind(owner.net.db_name())
+    .bind(owner.indexer)
+    .execute(&mut *tx)
+    .await?;
     owner.check(&mut tx).await?;
     tx.commit().await?;
     Ok(bids)
