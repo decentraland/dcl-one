@@ -26,7 +26,7 @@ use crate::{
     },
     update_world::{
         gltf_container::GLTF_LOADING,
-        mesh_collider::{GlobalGroundCollider, RaycastResult, SceneColliderData, AVATAR_REACH},
+        mesh_collider::{GlobalGroundCollider, RaycastResult, SceneColliderData},
         raycast::Raycast,
     },
     ContainingScene, RendererSceneContext, SceneEntity, SceneSets, SceneUpdates,
@@ -398,11 +398,12 @@ fn world_scenes(
     full_ray: Vec3,
     shape: RaycastShape,
 ) -> Vec<(Entity, f32)> {
-    let reach = match shape {
-        RaycastShape::RsRay => 0.0,
-        RaycastShape::RsAvatar => AVATAR_REACH,
-    };
-    containing_scene.get_swept(origin, full_ray, reach)
+    match shape {
+        RaycastShape::RsRay => containing_scene.get_ray(origin, full_ray),
+        RaycastShape::RsAvatar => {
+            containing_scene.get_swept(origin, full_ray, PLAYER_COLLIDER_RADIUS)
+        }
+    }
 }
 
 /// What preparing a due raycast request found.
@@ -784,7 +785,7 @@ fn run_raycasts(
 mod world_target_tests {
     use super::*;
     use crate::{
-        initialize_scene::{LiveScenes, PointerResult, PortableScenes, ScenePointers},
+        get_ray_tests::world_with_scenes,
         update_world::mesh_collider::{regions_of_parcels, ColliderId},
     };
     use bevy::ecs::system::RunSystemOnce;
@@ -967,19 +968,7 @@ mod world_target_tests {
     #[test]
     fn a_world_avatar_cast_hits_a_step_of_the_scene_beside_its_ray() {
         // the caster's scene is parcel (0, 0); east of it, parcel (1, 0) starts at world x = 16
-        let mut world = World::new();
-        let caster = world.spawn_empty().id();
-        let east = world.spawn_empty().id();
-        let mut pointers = ScenePointers::default();
-        let mut live = LiveScenes::default();
-        for (scene, parcel) in [(caster, IVec2::ZERO), (east, IVec2::X)] {
-            let hash = parcel.to_string();
-            live.scenes.insert(hash.clone(), scene);
-            pointers.insert(parcel, PointerResult::Exists { hash, urn: None });
-        }
-        world.insert_resource(pointers);
-        world.insert_resource(live);
-        world.init_resource::<PortableScenes>();
+        let (mut world, [caster, east]) = world_with_scenes([(0, 0), (1, 0)]);
 
         // a step of east along the edge, x from 16 to 18, its top at 0.5 m
         let mut colliders = SceneColliderData::for_regions(&regions_of_parcels(&[(1, 0)]), 1);

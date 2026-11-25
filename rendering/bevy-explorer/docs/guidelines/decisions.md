@@ -997,8 +997,9 @@ ends in "we don't do that", so the next person doesn't have to rediscover it.
   space, and a ray or a swept capsule is cast against a scene only over the stretches inside it.
   A ray is cut exactly. The avatar is not: while its capsule touches the space it meets all of
   the scene's colliders, so they still act on it within the capsule's width (0.6 m) outside the
-  scene's edge, and within its height (2 m) above a region's height limit. The whole-collider
-  test (below) keeps what can stand in that band small. Three consequences look like mistakes:
+  edge the scene is drawn to, and within its height (2 m) above the height a region is drawn
+  to. The whole-collider test (below) keeps what can stand in that band small. Three
+  consequences look like mistakes:
   - A ray that comes into a scene inside a solid primitive passes through that primitive, as a
     ray does not hit what its origin is inside. Mesh colliders are surfaces, hit as usual.
   - An avatar that comes into a scene already overlapping one of its colliders, having walked

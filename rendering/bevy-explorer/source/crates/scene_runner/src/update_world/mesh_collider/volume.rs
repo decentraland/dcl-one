@@ -1,4 +1,4 @@
-use bevy::math::{DVec2, DVec3, Vec3Swizzles};
+use bevy::math::{DVec2, DVec3, IVec2, Vec3Swizzles};
 use itertools::Either;
 use scene_material::BoundRegion;
 
@@ -35,13 +35,8 @@ impl SceneVolume {
             regions
                 .iter()
                 .map(|region| {
-                    let min = region.world_min().as_dvec3();
-                    let max = region.world_max().as_dvec3();
-                    Block {
-                        min: min.xz() - DRAWN_PAST_BOUNDS,
-                        max: max.xz() + DRAWN_PAST_BOUNDS,
-                        top: max.y + DRAWN_PAST_BOUNDS,
-                    }
+                    let height = f64::from(region.world_max().y);
+                    Block::over(region, height + DRAWN_PAST_BOUNDS)
                 })
                 .collect(),
         )
@@ -106,7 +101,31 @@ impl SceneVolume {
     }
 }
 
+/// The distance along a sweep at which the swept shape first touches the space a scene on
+/// `parcel` is drawn in, if it does: where [`SceneVolume::stretches`] starts for that parcel,
+/// whatever the height its scene is drawn to.
+pub(crate) fn parcel_touch_distance(
+    parcel: IVec2,
+    bottom: DVec3,
+    direction: DVec3,
+    distance: f64,
+    radius: f64,
+) -> Option<f64> {
+    Block::over(&BoundRegion::new(parcel, parcel, 1), f64::INFINITY)
+        .span(bottom, direction, distance, radius)
+        .map(|stretch| stretch.start)
+}
+
 impl Block {
+    /// The block over `region`, up to `top`.
+    fn over(region: &BoundRegion, top: f64) -> Self {
+        Self {
+            min: region.world_min().as_dvec3().xz() - DRAWN_PAST_BOUNDS,
+            max: region.world_max().as_dvec3().xz() + DRAWN_PAST_BOUNDS,
+            top,
+        }
+    }
+
     /// The part of a sweep during which the swept shape touches the block. The shape counts as
     /// a square of `radius` to each side, which is at most 0.4 `radius` generous at a corner.
     fn span(&self, bottom: DVec3, direction: DVec3, distance: f64, radius: f64) -> Option<Stretch> {

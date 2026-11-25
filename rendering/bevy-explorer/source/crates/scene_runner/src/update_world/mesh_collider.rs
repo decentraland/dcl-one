@@ -44,6 +44,7 @@ use super::AddCrdtInterfaceExt;
 mod bounds;
 use bounds::ColliderBounds;
 mod volume;
+pub(crate) use volume::parcel_touch_distance;
 use volume::SceneVolume;
 
 pub struct MeshColliderPlugin;
@@ -1252,10 +1253,6 @@ fn each_nearest(
 
     results
 }
-
-/// How far to each side of its path the avatar's capsule touches the space a scene is drawn in,
-/// in metres.
-pub(crate) const AVATAR_REACH: f32 = PLAYER_COLLIDER_RADIUS + volume::DRAWN_PAST_BOUNDS as f32;
 
 /// A sweep stopped at the edge of a scene stops this far from it, in metres: more than the
 /// rounding of the player's position, so the next frame finds the scene out of the player's
