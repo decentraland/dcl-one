@@ -25,15 +25,7 @@ export const AIR_DRAG = 0.2;
 export const EXTERNAL_ENV_DRAG = 1.5;
 export const EXTERNAL_GROUND_FRICTION = 4;
 export const MAX_EXTERNAL_SPEED = 50;
-export const FRAME_TIME_SMOOTHING = 0.1; // weight of the newest sample in the frame-time average
 export const MAX_TICK_TIME = 0.25; // s, longest tick the model integrates
-// Height tracking: a reply that lands earlier or later than estimated leaves a height error that adds up over a jump.
-// Each reply adds that error / VERTICAL_TRACK_TIME (s), at most VERTICAL_TRACK_MAX (m/s).
-export const VERTICAL_TRACK_TIME: number = 0.15;
-export const VERTICAL_TRACK_MAX: number = 2;
-// m/s. If the applied vertical velocity differs from the requested one by more, the avatar hit something, and
-// tracking stops for the rest of the jump.
-export const VERTICAL_TRACK_BLOCK: number = 0.5;
 // While the vertical speed of pushes and gravity points up, it fades with VERTICAL_DAMP_TIME (s) and slows by
 // VERTICAL_STOP_DECEL (m/s^2) on top of gravity. A fall is not damped.
 export const VERTICAL_DAMP_TIME = 0.75;
@@ -92,7 +84,7 @@ export const SLOPE_SPEED_MAX_ANGLE = 55; // degrees
 export const MAX_STEP_HEIGHT = 0.45; // highest step player can walk up (player may still walk up slightly higher steps if approached at an angle)
 export const MIN_STEP_HEIGHT = 0.05; // rises up to this need no step (the capsule slides over them)
 export const STEP_UP_PLAN_SPEED = 5.5; // m/s, the least speed that plans the climb ahead of the riser
-export const STEP_UP_REACH_TIME = 0.1; // s ahead of the riser, plus twice the reply delay
+export const STEP_UP_REACH_TIME = 0.1; // s ahead of the riser
 export const STEP_UP_TIME = 0.1; // s, a slower climb from the riser's face
 export const GROUND_SNAP_HEIGHT = 0.40 // drop ahead at which the engine walk stops (walk.ts)
 // m. On the ground the avatar follows a drop under its centre up to this much beyond the slope. A larger drop is an edge.

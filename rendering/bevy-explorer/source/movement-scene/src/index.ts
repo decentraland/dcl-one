@@ -177,13 +177,6 @@ export var horizontalResync = false;
 // What we published last frame. Compared against prevRequestedVelocity in
 // initFrame to detect engine takeover (resync to prevActual when they differ).
 var lastPublished = Vector3.Zero();
-// The replies published before it, newest first. A late reply gets a tick on the frame it lands on, so the frame before
-// a tick may have applied one of these. That is a late reply, not a takeover.
-const PUBLISHED_HISTORY = 2;
-const earlierPublished: Vector3.MutableVector3[] = [];
-for (let i = 0; i < PUBLISHED_HISTORY; i++) earlierPublished.push(Vector3.Zero());
-// Frames the last reply was still in flight after the frame before this tick (0: it was applied there).
-var replyLateFrames = 0;
 
 function initFrame() {
   tick += 1;
@@ -202,12 +195,7 @@ function initFrame() {
     prevStepTime = movementInfo.previousStepTime;
   }
   tickTime = Math.min(prevStepTime > 0 ? prevStepTime : stepTime, MAX_TICK_TIME);
-  replyLateFrames = -1;
-  if (Vector3.distance(lastPublished, prevRequestedVelocity) <= 0.1) replyLateFrames = 0;
-  else for (let i = 0; i < PUBLISHED_HISTORY && replyLateFrames < 0; i++) {
-    if (Vector3.distance(earlierPublished[i], prevRequestedVelocity) <= 0.1) replyLateFrames = i + 1;
-  }
-  beginTick(tickTime, stepTime, prevStepTime, Math.max(0, replyLateFrames));
+  beginTick(tickTime, stepTime);
   time += tickTime;
 
   initParameters(movementInfo?.activeAvatarLocomotionSettings, movementInfo?.activeInputModifier);
@@ -217,7 +205,7 @@ function initFrame() {
   // published), resync velocity to prevActual.
   // A missing requestedVelocity also means the engine applied zero. If the scene published zero, that is not a
   // takeover, so the horizontal model resyncs only on a real mismatch.
-  horizontalResync = replyLateFrames < 0;
+  horizontalResync = Vector3.distance(lastPublished, prevRequestedVelocity) > 0.1;
   const notInControl = horizontalResync || movementInfo?.requestedVelocity === undefined;
   if (notInControl) {
     Vector3.copyFrom(prevActualVelocity, velocity);
@@ -786,8 +774,6 @@ function writeMovement() {
     animation,
   })
 
-  for (let i = PUBLISHED_HISTORY - 1; i > 0; i--) Vector3.copyFrom(earlierPublished[i - 1], earlierPublished[i]);
-  Vector3.copyFrom(lastPublished, earlierPublished[0]);
   Vector3.copyFrom(velocity, lastPublished);
 }
 

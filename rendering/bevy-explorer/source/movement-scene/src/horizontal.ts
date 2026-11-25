@@ -9,9 +9,9 @@ import {
 import { horizontalResync, playerRotation, prevActualVelocity, prevExternalVelocity, tickTime, velocity } from '.';
 import { grounded, GROUNDED_ANGLE_Y_LEN, groundNormal, groundRayNormal } from './ground';
 import { disableOrientation, glidingSpeed, jogSpeed, sprintSpeed, walkSpeed } from './parameters';
-import { airLaunchTime, isGliding, landingStuns, launchAhead, leftEdge, predictedLandFrame, steepAhead, stunEndTime, stunned, wallContact } from './vertical';
+import { airLaunchTime, isGliding, leftEdge, steepAhead, stunEndTime, stunned, wallContact } from './vertical';
 import { getWalkAxis } from './walk';
-import { frameTime, oneStep, replyDelay, stepsFor, tickAdvance } from './clock';
+import { oneStep, stepsFor, tickAdvance } from './clock';
 import { settings } from './settings';
 
 export var orientation = 0;
@@ -24,12 +24,10 @@ var horizontalVelocity = Vector3.Zero();
 // camera-relative horizontal unit vectors
 var fwd = Vector3.Zero();
 var right = Vector3.Zero();
-// stun: a landing stun holds from the first step (the steps after a predicted touchdown)
-type StepInput = { x: number; z: number; limit: number; grounded: boolean; stun: boolean };
-const input: StepInput = { x: 0, z: 0, limit: 0, grounded: true, stun: false };
+type StepInput = { x: number; z: number; limit: number; grounded: boolean };
+const input: StepInput = { x: 0, z: 0, limit: 0, grounded: true };
 // The steps that cover the time up to this tick's frame use the previous tick's input.
-const prevInput: StepInput = { x: 0, z: 0, limit: 0, grounded: true, stun: false };
-const landInput: StepInput = { x: 0, z: 0, limit: 0, grounded: true, stun: false };
+const prevInput: StepInput = { x: 0, z: 0, limit: 0, grounded: true };
 
 function readInput() {
   const camera = Transform.get(engine.CameraEntity);
@@ -100,22 +98,11 @@ function copyInput(from: StepInput, to: StepInput) {
 // t0: start of the last step.
 type State = { ax: number; az: number; adx: number; adz: number; weight: number; vx: number; vz: number; ex: number; ez: number; t: number; t0: number };
 const state: State = { ax: 0, az: 0, adx: 0, adz: 0, weight: 0, vx: 0, vz: 0, ex: 0, ez: 0, t: 0, t0: 0 };
-const probe: State = { ax: 0, az: 0, adx: 0, adz: 0, weight: 0, vx: 0, vz: 0, ex: 0, ez: 0, t: 0, t0: 0 };
 // The air jump's launch time from the vertical model, read once per tick.
 var launchTime = -1e9;
-// Horizontal velocity of the last reply (ramp guard).
-var lastReplyX = 0, lastReplyZ = 0;
 // Steps starting before this time are stunned, read once per tick.
 var stunEnd = -1e9;
-// Start of the step the last reply was predicted for, and whether that step was stunned.
-var lastReplyT0 = -1e9;
-var lastReplyStun = false;
 const EPS = 1e-6;
-
-function copyState(from: State, to: State) {
-  to.ax = from.ax; to.az = from.az; to.adx = from.adx; to.adz = from.adz; to.weight = from.weight;
-  to.vx = from.vx; to.vz = from.vz; to.ex = from.ex; to.ez = from.ez; to.t = from.t; to.t0 = from.t0;
-}
 
 function moveTowards(current: number, target: number, maxDelta: number): number {
   return Math.abs(target - current) <= maxDelta ? target : current + Math.sign(target - current) * maxDelta;
@@ -152,7 +139,7 @@ function step(s: State, c: StepInput, h: number) {
   const t0 = s.t;
   s.t0 = t0;
   s.t = t0 + h;
-  const stun = c.stun || t0 < stunEnd - EPS;
+  const stun = t0 < stunEnd - EPS;
   const launch = t0 >= launchTime - EPS && prevT0 < launchTime - EPS;
   const xTarget = c.limit * c.x;
   const zTarget = c.limit * c.z;
@@ -253,75 +240,13 @@ export function updateHorizontalVelocity() {
   if (leftEdge) prevInput.grounded = false;
   advance(state, prevInput, tickAdvance);
 
-  // Reply with the state predicted, on this tick's input, for the last frame that the engine holds the reply.
   let ox = state.vx + state.ex, oz = state.vz + state.ez;
-  // the move velocity alone, without pushes and before the cuts below: the avatar faces its heading
-  let mx = state.vx, mz = state.vz;
-  let replyT0 = state.t0, replyStun = false;
-  if (replyDelay > 0 && frameTime > 0) {
-    copyState(state, probe);
-    const frames = 2 * replyDelay;
-    if (!input.grounded && predictedLandFrame >= 0 && predictedLandFrame < replyDelay) {
-      // A touchdown before the reply lands makes the steps after it ground steps. A touchdown inside the held frames
-      // keeps the air velocity, so the touchdown frame still moves at air speed.
-      copyInput(input, landInput);
-      landInput.grounded = true;
-      landInput.stun = landingStuns();
-      advance(probe, input, predictedLandFrame * frameTime);
-      advance(probe, landInput, (frames - predictedLandFrame) * frameTime);
-      replyStun = landInput.stun;
-    } else {
-      advance(probe, input, frames * frameTime);
-    }
-    ox = probe.vx + probe.ex; oz = probe.vz + probe.ez;
-    mx = probe.vx; mz = probe.vz;
-    replyT0 = probe.t0;
-  } else if (launchAhead) {
-    // the vertical reply carries a launch ahead of the committed steps, so this one does too, on this tick's input, so a
-    // jump with the keys released goes straight up
-    copyState(state, probe);
-    advance(probe, input, oneStep());
-    ox = probe.vx + probe.ex; oz = probe.vz + probe.ez;
-    mx = probe.vx; mz = probe.vz;
-    replyT0 = probe.t0;
-  }
-  // A reply from a stunned step: the guard below does not hold the speed from before the stun, only the end of the
-  // stun once a reply has already passed it.
-  replyStun = replyStun || replyT0 < stunEnd - EPS;
-  // a stun a reply has published holds: until the committed landing, a later reply that does not reach the touchdown
-  // keeps it
-  if (!replyStun && lastReplyStun && landingStuns()) {
-    ox = state.ex; oz = state.ez;
-    mx = 0; mz = 0;
-    replyStun = true;
-  }
-
-  // Ramp guard: the delay estimate does not predict this reply's delay, so replies alternate between the predicted and
-  // the committed state, which the camera shows as a jerk during a ground acceleration. While the same input is held on
-  // the ground and the model still accelerates, a reply never slows below the last one.
-  if (!horizontalResync && !(replyStun && lastReplyT0 < stunEnd - EPS) && (input.x !== 0 || input.z !== 0) && input.grounded && prevInput.grounded
-    && input.x === prevInput.x && input.z === prevInput.z && input.limit === prevInput.limit
-    && state.ex === 0 && state.ez === 0) {
-    const committed = Math.sqrt(state.vx * state.vx + state.vz * state.vz);
-    const out = Math.sqrt(ox * ox + oz * oz);
-    const last = Math.sqrt(lastReplyX * lastReplyX + lastReplyZ * lastReplyZ);
-    if (committed < input.limit - 1e-3 && out < last) {
-      if (out < 1e-6) {
-        // the committed steps have not started yet: keep the last reply
-        const f = Math.min(1, input.limit / last);
-        ox = lastReplyX * f; oz = lastReplyZ * f;
-      } else if (ox * lastReplyX + oz * lastReplyZ > 0) {
-        const f = Math.min(last, input.limit) / out;
-        ox *= f; oz *= f;
-      }
-    }
-  }
   // Slope limit: on the ground, cut the speed into a steep slope ahead so that the avatar reaches it no sooner than the
   // next reply lands.
   const steep = input.grounded ? steepAhead() : null;
   if (steep !== null) {
     const into = -(ox * steep.x + oz * steep.z);
-    const allowed = steep.distance / ((2 * replyDelay + 1) * oneStep());
+    const allowed = steep.distance / oneStep();
     if (into > allowed) {
       ox += (into - allowed) * steep.x;
       oz += (into - allowed) * steep.z;
@@ -336,13 +261,13 @@ export function updateHorizontalVelocity() {
     if (into > 0) { ox *= 1 - into; oz *= 1 - into; }
   }
 
-  lastReplyX = ox; lastReplyZ = oz; lastReplyT0 = replyT0; lastReplyStun = replyStun;
   copyInput(input, prevInput);
 
   velocity.x = ox;
   velocity.z = oz;
   Vector3.multiplyToRef(velocity, VEC3_HORIZONTAL_MASK, horizontalVelocity);
-  setOrientation(mx, mz, replyStun || stunned());
+  // the move velocity alone, without pushes and before the cuts above: the avatar faces its heading
+  setOrientation(state.vx, state.vz, stunned());
 }
 
 // ---------------------------------------------------------------- orientation
