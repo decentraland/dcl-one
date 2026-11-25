@@ -4724,13 +4724,20 @@ async fn ethereum_names_v1_wearables_land_data_and_the_land_routes() {
         ),
         (Some("PixelGolf"), Some("PixelGolf"), Some(BOB))
     );
-    // The NAME browse's price range is in wei and bounds the open listing; `cheapest` sorts by it.
-    // A search reads this index (without one the subgraph serves, its `where` checked in nfts.rs).
+    // The NAME browse's price range is in MANA (read as wei, as the legacy `parsePrice`) and
+    // bounds the open listing, here 5000 wei; `cheapest` sorts by it. A search reads this index
+    // (without one the subgraph serves, its `where` checked in nfts.rs).
     for (range, listed) in [
-        ("minPrice=5000&maxPrice=5000", true),
-        ("minPrice=1&maxPrice=9000", true),
-        ("minPrice=5001", false),
-        ("maxPrice=4999", false),
+        (
+            "minPrice=0.000000000000005&maxPrice=0.000000000000005",
+            true,
+        ),
+        (
+            "minPrice=0.000000000000000001&maxPrice=0.000000000000009",
+            true,
+        ),
+        ("minPrice=0.000000000000005001", false),
+        ("maxPrice=0.000000000000004999", false),
     ] {
         let (code, body) = get_json(
             &app,
@@ -4929,6 +4936,19 @@ async fn ethereum_names_v1_wearables_land_data_and_the_land_routes() {
         (StatusCode::OK, json!({ "2": 1 })),
         "{body}"
     );
+    // The price bounds are MANA, as the legacy `parseEther`: a decimal amount
+    // reads, one ethers would not parse is a 400 naming the parameter.
+    let (code, body) = get_json(&app, "/v1/stats/estate/size?minPrice=0.5&maxPrice=12").await;
+    assert_eq!(code, StatusCode::OK, "{body}");
+    for (key, bad) in [("minPrice", "abc"), ("maxPrice", "1e18")] {
+        let (code, body) = get_json(&app, &format!("/v1/stats/estate/size?{key}={bad}")).await;
+        assert_eq!(code, StatusCode::BAD_REQUEST, "{body}");
+        assert_eq!(
+            body["message"].as_str(),
+            Some(format!("Invalid {key} value: {bad}").as_str()),
+            "{body}"
+        );
+    }
     // The geography filters read the squid's static LAND map (none of these
     // parcels is in it: distance -1, no road), with the squid's semantics:
     // `<= max` keeps a -1, `>= min` and `adjacentToRoad` drop it.
@@ -5447,6 +5467,37 @@ async fn amoy_sales_use_the_local_store_bid_and_collection_chain() {
         "Polygon",
     )
     .await;
+    seed_collection(
+        &db.pool,
+        "matic",
+        DAVE,
+        block - 10,
+        "urn:test:unproven",
+        "Unproven",
+    )
+    .await;
+    sqlx::query("UPDATE shop.collections SET chain_id=80002 WHERE contract_address=$1")
+        .bind(DAVE)
+        .execute(&db.pool)
+        .await
+        .unwrap();
+    for (through, deployed) in [(5_706_661, false), (5_706_662, true)] {
+        let groups = index
+            .groups(
+                &db.pool,
+                index.start_block(),
+                through,
+                (through, time_of(through)),
+            )
+            .await
+            .unwrap();
+        assert_eq!(
+            groups
+                .iter()
+                .any(|g| g.addresses.iter().any(|addr| addr == bid)),
+            deployed
+        );
+    }
     sqlx::query("UPDATE shop.collections SET chain_id = 80002, testnet_verified=true WHERE contract_address = $1")
         .bind(ALICE)
         .execute(&db.pool)
@@ -5466,6 +5517,7 @@ async fn amoy_sales_use_the_local_store_bid_and_collection_chain() {
         block + 1000,
         vec![
             sales_index::tests::issue_log(ALICE, BOB, token, 0, store, block, 0),
+            sales_index::tests::issue_log(DAVE, BOB, token, 0, store, block, 4),
             purchase,
             offer,
             sales_index::tests::issue_log(CARL, BOB, token, 0, store, block, 2),
@@ -5514,6 +5566,17 @@ async fn amoy_sales_use_the_local_store_bid_and_collection_chain() {
             ("mint".into(), "125".into()),
             ("bid_created".into(), "19".into())
         ]
+    );
+    assert_eq!(
+        bids_of(&db.pool).await,
+        [(
+            token.to_string(),
+            BOB.to_owned(),
+            bid_id(17),
+            None,
+            "19".into(),
+            "open".into()
+        )]
     );
     let has_accounting: bool = sqlx::query_scalar(
         "SELECT EXISTS(SELECT FROM shop.store_sale_line) OR EXISTS(SELECT FROM shop.sale_fee_change)"
@@ -5654,6 +5717,32 @@ async fn sepolia_v1_upgrade_rebuilds_once_and_fences_the_old_trade_writer() {
         .unwrap();
     assert_eq!(rebound.chain_id, Some(ix.chain_id));
     assert!(rebound.rebuild_requested_at.is_none());
+    // A pre-binding cursor is invisible to 0071 until a matching RPC proves
+    // its history (here the legacy cursor is still at its start). Adoption fences the old owner and schedules replay.
+    sqlx::query(
+        "UPDATE shop.chain_cursor SET chain_id=NULL, sepolia_trade_v1=false, start_block=9455328,
+        last_block=9455327, last_block_hash=NULL, folded_at=NULL, folded_block=NULL
+        WHERE indexer='trade_events' AND network='ethereum'",
+    )
+    .execute(&db.pool)
+    .await
+    .unwrap();
+    let error = try_pass(&st, &url, &ix).await.unwrap_err();
+    assert!(
+        error.downcast_ref::<chain_walk::Fenced>().is_some(),
+        "{error:#}"
+    );
+    let adopted = chain_walk::cursor(&db.pool, INDEXER_TRADE_EVENTS, eth)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        (adopted.chain_id, adopted.start_block, adopted.last_block),
+        (Some(ix.chain_id), start as i64, start as i64 - 1)
+    );
+    assert!(adopted.rebuild_requested_at.is_some());
+    assert!(pass(&st, &url, &ix).await.rebuilt);
+    assert!(pass(&st, &url, &ix).await.published);
     db.drop().await;
 }
 

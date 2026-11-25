@@ -2136,7 +2136,8 @@ mod tests {
             vec![],
             vec![("category", "wearable")],
             vec![("isOnSale", "true")],
-            vec![("minPrice", "12")],
+            // 12 wei, in MANA as the route reads it.
+            vec![("minPrice", "0.000000000000000012")],
             vec![("owner", a)],
             vec![("emoteOutcomeType", "so")],
             vec![("isOnSale", "false")],

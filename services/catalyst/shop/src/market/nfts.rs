@@ -265,22 +265,6 @@ fn parse_optional_bool(p: &Params, key: &str) -> Option<bool> {
     }
 }
 
-/// `minPrice`/`maxPrice`: MANA in wei (marketplace-server's unit), a whole number. Anything else
-/// is a 400 here rather than a failed `::numeric` cast in the read.
-fn wei_param(p: &Params, key: &str) -> Result<Option<String>, ApiError> {
-    match p.get_string(key, None) {
-        Some(raw) if !raw.trim().is_empty() => {
-            let digits = raw.trim();
-            if digits.len() <= 78 && digits.bytes().all(|b| b.is_ascii_digit()) {
-                Ok(Some(digits.to_string()))
-            } else {
-                Err(ApiError::bad_request(format!("Invalid {key} value: {raw}")))
-            }
-        }
-        _ => Ok(None),
-    }
-}
-
 pub fn parse_filters(pairs: &[(String, String)]) -> Result<NftFilters, ApiError> {
     let p = Params::new(pairs);
     let category = p
@@ -345,8 +329,8 @@ pub fn parse_filters(pairs: &[(String, String)]) -> Result<NftFilters, ApiError>
         max_distance_to_plaza: p.get_number("maxDistanceToPlaza", None),
         min_estate_size: p.get_number("minEstateSize", None),
         max_estate_size: p.get_number("maxEstateSize", None),
-        min_price: wei_param(&p, "minPrice")?,
-        max_price: wei_param(&p, "maxPrice")?,
+        min_price: super::items::parse_price_param(&p, "minPrice")?,
+        max_price: super::items::parse_price_param(&p, "maxPrice")?,
         emote_has_geometry: p.get_boolean("emoteHasGeometry"),
         emote_has_sound: p.get_boolean("emoteHasSound"),
         emote_outcome_type: p.get_string("emoteOutcomeType", None),
@@ -1046,14 +1030,15 @@ mod tests {
             .collect()
     }
 
-    /// The NAME browse's price range and sort: wei bounds kept as given, `cheapest` read as the
-    /// listing-price order, and a bound that is not a whole number of wei refused with a 400.
+    /// The NAME browse's price range and sort: MANA bounds read as wei (the legacy `parsePrice`),
+    /// `cheapest` read as the listing-price order, and a bound ethers would not parse refused
+    /// with a 400.
     #[test]
-    fn the_price_range_is_whole_wei_and_cheapest_sorts_by_price() {
+    fn the_price_range_is_mana_and_cheapest_sorts_by_price() {
         let f = parse_filters(&pairs(&[
             ("category", "ens"),
-            ("minPrice", " 1000000000000000000 "),
-            ("maxPrice", "25000000000000000000"),
+            ("minPrice", "1"),
+            ("maxPrice", "25"),
             ("sortBy", "cheapest"),
         ]))
         .unwrap();
@@ -1071,7 +1056,16 @@ mod tests {
         assert_eq!(graph_sort(f.sort_by), ("searchOrderPrice", "asc"));
         let blank = parse_filters(&pairs(&[("minPrice", ""), ("maxPrice", " ")])).unwrap();
         assert_eq!((blank.min_price, blank.max_price), (None, None));
-        for bad in ["abc", "1e18", "1.5", "-1", "0x10", &"9".repeat(79)] {
+        let decimal = parse_filters(&pairs(&[
+            ("minPrice", "1.5"),
+            ("maxPrice", "0.000000000000000001"),
+        ]))
+        .unwrap();
+        assert_eq!(
+            (decimal.min_price.as_deref(), decimal.max_price.as_deref()),
+            (Some("1500000000000000000"), Some("1"))
+        );
+        for bad in ["abc", "1e18", " 1 ", "0x10", "1.0000000000000000001"] {
             let Err(err) = parse_filters(&pairs(&[("minPrice", bad)])) else {
                 panic!("minPrice={bad} was accepted")
             };

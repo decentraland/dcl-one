@@ -68,6 +68,8 @@ describe("shop screen data", () => {
     const { data, serverTiming } = await read();
     expect(fetchCatalog).toHaveBeenCalledTimes(3);
     expect(vi.mocked(fetchCatalog).mock.calls.map(([p]) => p?.first).sort()).toEqual([6, 8, 8]);
+    // `minPrice` is MANA: every rail asks for its smallest positive amount, priced items only.
+    expect(vi.mocked(fetchCatalog).mock.calls.map(([p]) => p?.minPrice)).toEqual(Array(3).fill("0.000000000000000001"));
     expect(data.cards).toHaveLength(8);
     expect(data.topCards).toHaveLength(6);
     expect(data.trendingCards).toHaveLength(8);
