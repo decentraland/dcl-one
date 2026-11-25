@@ -80,7 +80,8 @@ the GPU.
   The two-ring margin is the hysteresis: a step across a parcel edge moves each scene's ring by
   at most one, so it never reverses a swap between stand-ins in view. Lowering the setting stops
   the farthest over it, those behind the camera first. The cost of a stand-in is not known
-  before its files arrive, and a guess from the download misleads (a scene of flat PNGs takes ten times its download in memory), so the cap counts scenes.
+  before its files arrive, and a guess from the download misleads (a scene of flat PNGs takes
+  ten times its download in memory), so the cap counts scenes.
 - **Definition.** A stand-in starts by loading the scene's entity definition as the live scene
   does, by hash or by the realm's urn, so the live scene gets the same handle and the entity
   file is fetched once. Nothing about a scene is kept before its stand-in starts: until then
