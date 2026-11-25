@@ -687,8 +687,8 @@ fn sealed_scene_rejections_raised_by_an_array_setter_do_not_abort() {
     });
 }
 
-/// deno_core's timer clock reads at the same 2 ms resolution as `performance.now()`, both
-/// called directly and through the timer fields a prototype setter can observe.
+/// deno_core's timer clock reads at the same 2 ms resolution as `performance.now()`, called
+/// directly and as stored on a new timer. A re-armed list still gets deno_core's raw clock.
 #[test]
 fn timer_clock_has_two_millisecond_granularity() {
     let mut runtime = client_runtime();
