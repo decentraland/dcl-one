@@ -117,7 +117,9 @@ realm/scene/namespace and player scope. Keep the storage namespace distinct
 from a deployment's content hash. Each world scene has a stable identity
 (`explore.world_scene_place`) following Places' overlap rule: overlapping
 exactly one active scene retains it, including a moved base; overlapping none
-or several creates a new identity. Retired identities keep their storage rows.
+or several creates a new identity. When the worlds mirror takes over a local
+world, a retired local scene's identity passes only to a scene covering its
+whole footprint (below). Retired identities keep their storage rows.
 
 Partial batches for one entity hold a session advisory lock from their first
 pending-upload/replay read through the staging or committed-publication decision.
@@ -304,12 +306,13 @@ Genesis scenes need a valid scope too. Use one permission core with explicit
 owner/player/host operations. Guests get scoped storage capabilities, never SQL
 access or other scenes' environment values. Mirroring cannot overwrite local
 saves or grant host authority. One exception: a newer upstream scene that replaces
-a local publish keeps that scene's place identity, and so reaches its storage, by
-the overlap rule above (a scene's stable identity, at the start of this section),
-as a replacing publish does
-([last deploy wins](docs/adr/2026-11-23-worlds-mirror-last-deploy-wins.md)). The
-rule compares footprints only, not who deployed either scene; the user kept it
-unchanged for a takeover on 2026-11-24. Keep live CRDT/tick state in the scene runtime;
+a local publish keeps that scene's place identity, and so reaches its storage, only
+when the overlap rule above (a scene's stable identity, at the start of this
+section) keeps it and the upstream scene covers the local scene's whole footprint
+([last deploy wins](docs/adr/2026-11-23-worlds-mirror-last-deploy-wins.md)), as
+replacing a scene upstream takes permission over its whole footprint. Otherwise
+the upstream scene gets a new identity and the local one retires with its rows
+kept. Keep live CRDT/tick state in the scene runtime;
 persist only what the restart contract requires. Test cross-scene/player
 isolation, redeploy, revocation and restart.
 

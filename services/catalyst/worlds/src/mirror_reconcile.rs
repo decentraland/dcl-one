@@ -695,6 +695,20 @@ pub(super) async fn mirror_world(
         .with_context(|| format!("change log of {name}"))?;
         crate::explore::places::derive::mark_world_dirty(&mut tx, &world_key).await?;
     }
+    // Read before the assignments below rebind them.
+    let must_cover: Vec<uuid::Uuid> = if superseded.is_empty() {
+        Vec::new()
+    } else {
+        let retired: Vec<&str> = superseded.iter().map(|s| s.entity_id.as_str()).collect();
+        sqlx::query_scalar(
+            "SELECT identity FROM explore.world_scene_place WHERE world_name = $1 AND active AND entity_id = ANY($2::text[])",
+        )
+        .bind(&world_key)
+        .bind(&retired)
+        .fetch_all(&mut *tx)
+        .await
+        .with_context(|| format!("identities of the retired local scenes of {name}"))?
+    };
     replace_mirrored_access(&mut tx, &world, &access, holder.as_ref())
         .await
         .with_context(|| format!("access setting of {name}"))?;
@@ -788,6 +802,7 @@ pub(super) async fn mirror_world(
     // Apply the overlap rule in deployment order:
     // a replacement must inherit its predecessor before a later scene takes
     // a parcel that predecessor vacated. CID breaks timestamp ties stably.
+    // A retired local scene's identity passes only to a scene covering its whole footprint.
     let mut chronological: Vec<_> = records.iter().collect();
     chronological.sort_by(|a, b| {
         let ts =
@@ -797,7 +812,7 @@ pub(super) async fn mirror_world(
             .then_with(|| a.cid.cmp(&b.cid))
     });
     for record in chronological {
-        scene_identity::assign(&mut tx, &world, &record.cid, &record.parcels)
+        scene_identity::assign_covering(&mut tx, &world, &record.cid, &record.parcels, &must_cover)
             .await
             .with_context(|| format!("storage identity of {} in {name}", record.cid))?;
     }

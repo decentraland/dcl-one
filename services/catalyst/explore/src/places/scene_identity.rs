@@ -10,6 +10,8 @@
 //! is deactivated. Every `worlds.world_scenes` write calls [`assign`] for the
 //! scenes it wrote and [`retire_orphans`] after its deletes, in its own
 //! transaction under the world row; storage rows are never deleted here.
+//! A mirror takeover uses [`assign_covering`]: an identity of a retired local
+//! scene passes only to a scene covering its whole footprint.
 
 use sqlx::PgConnection;
 use uuid::Uuid;
@@ -51,19 +53,37 @@ pub async fn assign(
     entity_id: &str,
     parcels: &[String],
 ) -> Result<Option<Uuid>, sqlx::Error> {
+    assign_covering(conn, world, entity_id, parcels, &[]).await
+}
+
+/// [`assign`], except that an identity in `must_cover` passes on only when
+/// `parcels` cover its whole footprint; otherwise it is deactivated and a new
+/// identity is minted. Replacing a scene upstream takes permission over its
+/// whole footprint (`decentraland/worlds-content-server` at
+/// `04c8eea2ab96d35703ceae76140106da821ee409`,
+/// `src/logic/validations/scene.ts`); a mirror takeover compares footprints.
+pub async fn assign_covering(
+    conn: &mut PgConnection,
+    world: &str,
+    entity_id: &str,
+    parcels: &[String],
+    must_cover: &[Uuid],
+) -> Result<Option<Uuid>, sqlx::Error> {
     if parcels.is_empty() {
         return Ok(None);
     }
     lock_worlds(conn, std::slice::from_ref(&world.to_string())).await?;
-    let overlapped: Vec<Uuid> = sqlx::query_scalar(
-        "SELECT identity FROM explore.world_scene_place \
+    let overlapped: Vec<(Uuid, bool)> = sqlx::query_as(
+        "SELECT identity, parcels <@ $2::text[] FROM explore.world_scene_place \
          WHERE world_name = $1 AND active AND parcels && $2::text[] ORDER BY identity FOR UPDATE",
     )
     .bind(world)
     .bind(parcels)
     .fetch_all(&mut *conn)
     .await?;
-    if let [kept] = overlapped[..] {
+    if let [(kept, covered)] = overlapped[..]
+        && (covered || !must_cover.contains(&kept))
+    {
         sqlx::query(
             "UPDATE explore.world_scene_place SET parcels = $2::text[], entity_id = $3, updated_at = timezone('UTC', now()) \
              WHERE identity = $1 AND (parcels IS DISTINCT FROM $2::text[] OR entity_id IS DISTINCT FROM $3)",
@@ -75,6 +95,10 @@ pub async fn assign(
         .await?;
         return Ok(Some(kept));
     }
+    let overlapped: Vec<Uuid> = overlapped
+        .into_iter()
+        .map(|(identity, _)| identity)
+        .collect();
     sqlx::query(
         "UPDATE explore.world_scene_place SET active = false, entity_id = NULL, updated_at = timezone('UTC', now()) \
          WHERE identity = ANY($1)",
