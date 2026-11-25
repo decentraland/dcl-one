@@ -35,9 +35,10 @@ function renderAge() {
   );
 }
 
-/** The server's clock on a whole second, as a `Date` header carries it. */
-const serverNow = () => Math.floor(Date.now() / 1000) * 1000;
-const fromServer = (body: unknown, at: number) => Response.json(body, { headers: { date: new Date(at).toUTCString() } });
+/** The server's clock now. */
+const serverNow = () => Date.now();
+/** The map API's answer as a cross-origin read sees it: its clock in the body (`serverNow`), no readable `Date`. */
+const fromServer = (body: object, at: number) => Response.json({ ...body, serverNow: at });
 
 afterEach(() => {
   vi.useRealTimers();

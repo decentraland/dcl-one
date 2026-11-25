@@ -1946,10 +1946,13 @@ impl map::LandMarket for RewindingLandMarket {
 /// marks read, between the read before a pass and the pass's snapshot.
 /// `answer` makes a source unready for both reads; `build_unready` only for
 /// the build (a source that went unready between the marks and the pass).
+/// `overtake_in_build` stores another revision of the grid on that pool
+/// while the next build reads its marks, as another publisher would.
 #[derive(Default)]
 struct ScriptedLandMarket {
     answer: Mutex<Option<crate::chain_index::source::Source>>,
     build_unready: Mutex<Option<crate::chain_index::source::Source>>,
+    overtake_in_build: Mutex<Option<PgPool>>,
     marks_fail: std::sync::atomic::AtomicBool,
     snapshot_marks_fail: std::sync::atomic::AtomicBool,
     churning: std::sync::atomic::AtomicBool,
@@ -2016,7 +2019,22 @@ impl map::LandMarket for ScriptedLandMarket {
         if let Some(rental) = self.rental_after_next_marks.lock().take() {
             *self.rental.lock() = Some(rental);
         }
-        Box::pin(async move { result })
+        let overtake = if in_build {
+            self.overtake_in_build.lock().take()
+        } else {
+            None
+        };
+        Box::pin(async move {
+            if let Some(pool) = overtake {
+                sqlx::query(
+                    "UPDATE explore_api.map_grid SET last_updated_at = last_updated_at + 1000, etag = 'another' WHERE id = 1",
+                )
+                .execute(&pool)
+                .await
+                .unwrap();
+            }
+            result
+        })
     }
 }
 
@@ -3716,6 +3734,59 @@ async fn a_check_that_cannot_be_recorded_backs_off() {
     assert_eq!(
         w.tick(&node.state, &ctx, t1 + secs(185)).await,
         map::Tick::Idle
+    );
+
+    jobs.shutdown(Duration::from_secs(1)).await;
+    db.teardown().await;
+}
+
+/// A second pass in a row without its own marks backs off even when it
+/// leaves nothing due: here another publisher overtook it (`due` would be
+/// right away), and it still waits for the retry.
+#[tokio::test]
+async fn a_second_pass_without_its_marks_backs_off_even_when_overtaken() {
+    use std::sync::atomic::Ordering::SeqCst;
+    use std::time::Instant;
+    let Some(db) = scratch_database().await else {
+        return;
+    };
+    let (jobs, ctx) = job_ctx().await;
+    let settings = crate::land_authz::Settings::for_tests();
+    seed_land(&db.pool, &settings).await;
+    publish_land(&db.pool, &settings).await;
+    let node = node_with_db(Settings::for_tests(Sources::defaults()), db.pool.clone()).await;
+    node.state.attach_land_authz(land_authz_on(&db.pool));
+    let market = Arc::new(ScriptedLandMarket::default());
+    node.state.attach_land_market(market.clone());
+    let secs = Duration::from_secs;
+    let t0 = Instant::now();
+    let mut w = map::Watcher::default();
+    assert_eq!(w.tick(&node.state, &ctx, t0).await, map::Tick::Built);
+
+    // The safety pass cannot read its marks in its snapshot.
+    market.snapshot_marks_fail.store(true, SeqCst);
+    let t1 = t0 + map::SAFETY_INTERVAL;
+    assert_eq!(w.tick(&node.state, &ctx, t1).await, map::Tick::Built);
+    // The next readable marks run a pass at once; it cannot read its marks
+    // either, and another publisher stores a revision meanwhile.
+    *market.overtake_in_build.lock() = Some(db.pool.clone());
+    assert_eq!(
+        w.tick(&node.state, &ctx, t1 + secs(5)).await,
+        map::Tick::Built
+    );
+    assert!(
+        market.overtake_in_build.lock().is_none(),
+        "it overtook that pass"
+    );
+    assert_eq!(
+        w.tick(&node.state, &ctx, t1 + secs(10)).await,
+        map::Tick::Idle,
+        "the retry wait, not a pass right away"
+    );
+    assert_eq!(
+        w.tick(&node.state, &ctx, t1 + secs(65)).await,
+        map::Tick::Built,
+        "the retry"
     );
 
     jobs.shutdown(Duration::from_secs(1)).await;

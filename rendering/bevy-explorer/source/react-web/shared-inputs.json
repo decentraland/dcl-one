@@ -10633,7 +10633,7 @@
     },
     {
       "path": "library/ui/apps/hud/styles/tokens.css",
-      "sha256": "1494e2143959891fb90107af4fd28bcc9c214909987a5d812daa4535c11059f6"
+      "sha256": "faf08458e955ac3d8d1bc3d015ca13d4767cb5f0454435e37588dcc74d02316c"
     },
     {
       "path": "library/ui/apps/hud/test/armedButton.test.tsx",
@@ -11189,7 +11189,7 @@
     },
     {
       "path": "library/ui/apps/hud/test/mapGridAge.test.tsx",
-      "sha256": "75a45b78edfabf6c2cc2aac9c3345d37d8d552d88a89a09fe9c4d875f4ff92b0"
+      "sha256": "bbda1a67c5b91b2322cb72010d2fb688c1157d6f3abdb0036f5f9b047f486503"
     },
     {
       "path": "library/ui/apps/hud/test/mapPins.test.tsx",

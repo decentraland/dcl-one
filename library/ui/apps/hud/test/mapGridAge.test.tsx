@@ -146,9 +146,8 @@ describe('the parcel map age', () => {
   it("measures the age on the server's clock, so a device clock ahead shows no stale label", async () => {
     // This device runs six minutes ahead of the server, whose grid was checked a minute ago.
     vi.setSystemTime(NOW + 6 * MINUTE)
-    fetch.mockImplementation(async () =>
-      Response.json({ checkedAt: NOW - MINUTE }, { headers: { date: new Date(NOW).toUTCString() } })
-    )
+    // As a cross-origin answer reaches it: the server's clock in the body, no readable Date.
+    fetch.mockImplementation(async () => Response.json({ checkedAt: NOW - MINUTE, serverNow: NOW }))
     const { result } = renderHook(() => useMapGridAge(BASE, true))
     await advance(0)
     expect(result.current).toBeNull()
@@ -157,9 +156,7 @@ describe('the parcel map age', () => {
   it("measures the age on the server's clock, so a device clock behind still shows a stale grid", async () => {
     // This device runs ten minutes behind the server, whose grid was checked twelve minutes ago.
     vi.setSystemTime(NOW - 10 * MINUTE)
-    fetch.mockImplementation(async () =>
-      Response.json({ checkedAt: NOW - 12 * MINUTE }, { headers: { date: new Date(NOW).toUTCString() } })
-    )
+    fetch.mockImplementation(async () => Response.json({ checkedAt: NOW - 12 * MINUTE, serverNow: NOW }))
     const { result } = renderHook(() => useMapGridAge(BASE, true))
     await advance(0)
     expect(result.current).toBe('Updated 12 min ago')
