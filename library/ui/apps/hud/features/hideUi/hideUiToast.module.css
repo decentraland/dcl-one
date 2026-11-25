@@ -1,0 +1,7 @@
+/* one line: the key cap is a flex box, so the sentence lays out as a row around it */
+.line {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  white-space: nowrap;
+}

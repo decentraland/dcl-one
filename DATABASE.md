@@ -214,8 +214,9 @@ access excludes clears, `/env*` and `/usage*`.
 `GET /world-storage/collaborator` is a rare, user-initiated, self-scoped listing.
 It derives membership at read time through `worlds.logs_permissions_decoded`, with no
 stored projection. The partial GIN `world_scenes_logs_permissions_decoded_idx` covers
-local world scenes; `deployments_scene_logs_permissions_decoded_idx` covers live
-Genesis scenes, followed by an `active_pointers_entity_id_idx` probe per match.
+local world scenes; `deployments_scene_v_logs_permissions_decoded_idx` covers live
+Genesis scenes (content stores metadata as `{"v": metadata}`, so it indexes
+`entity_metadata -> 'v' -> 'logsPermissions'`), followed by an `active_pointers_entity_id_idx` probe per match.
 Superseded Genesis rows leave the index. One statement counts and pages the
 matches by `deployed_at DESC, scene_id` with `LIMIT/OFFSET`.
 The function decodes JSON escapes as `JSON.parse` does and leaves out an entry
@@ -224,10 +225,12 @@ can fail an insert through an index. It reads the escapes as Unicode, so the dat
 must use the `UTF8` server encoding (the one `catalyst` supports): under another
 encoding a non-ASCII escape would fail the insert or the index build. `schema apply`
 and `schema migrate` check the server encoding before any schema changes. A database stamped before it keeps the
-superseded `worlds.logs_permissions` and its two indexes, which `catalyst schema
-status` does not report, until their release drops them. Run it once, with the
-administrative role, after `catalyst schema migrate` created the decoded function
-and every replica runs a binary that queries it (an older `serve` calls the old
+superseded `worlds.logs_permissions` and its two indexes, and a database migrated
+before the `v` path keeps `deployments_scene_logs_permissions_decoded_idx` on the
+unwrapped path; `catalyst schema status` reports none of them. Their release drops
+them. Run it with the administrative role, after `catalyst schema migrate` created
+the decoded function and its current indexes and every replica runs a binary that
+queries them (an older `serve` calls the old
 function from its storage grant and `GET /collaborator`, which fail after the
 drop); it refuses a database without the decoded function and both its indexes
 built and valid, and drops the old indexes concurrently, outside a transaction
@@ -237,7 +240,7 @@ built and valid, and drops the old indexes concurrently, outside a transaction
 psql "$DATABASE_URL" -X -f schemas/releases/worlds-logs-permissions-retired.sql
 ```
 
-The object pass builds `deployments_scene_logs_permissions_decoded_idx` on
+The object pass builds `deployments_scene_v_logs_permissions_decoded_idx` on
 `content.deployments` in the migrate transaction, not concurrently, so writes to
 that table wait for the build (unmeasured on production). To build it outside
 that window, run beforehand, with the same definition as `schemas/20_worlds.sql`
@@ -245,9 +248,9 @@ that window, run beforehand, with the same definition as `schemas/20_worlds.sql`
 
 ```sql
 CREATE FUNCTION worlds.logs_permissions_decoded(text) ... ; -- as in schemas/20_worlds.sql
-CREATE INDEX CONCURRENTLY deployments_scene_logs_permissions_decoded_idx
+CREATE INDEX CONCURRENTLY deployments_scene_v_logs_permissions_decoded_idx
     ON content.deployments
-    USING gin (worlds.logs_permissions_decoded((entity_metadata -> 'logsPermissions')::text))
+    USING gin (worlds.logs_permissions_decoded((entity_metadata -> 'v' -> 'logsPermissions')::text))
     WHERE entity_type = 'scene' AND deleter_deployment IS NULL;
 ```
 
@@ -303,6 +306,11 @@ access or other scenes' environment values. Mirroring cannot overwrite local
 saves or grant host authority. Keep live CRDT/tick state in the scene runtime;
 persist only what the restart contract requires. Test cross-scene/player
 isolation, redeploy, revocation and restart.
+
+A Genesis scene's storage scope (realm `main`) is its effective base
+parcel: the declared `metadata.scene.base` when it is one of the scene's parcels,
+else its least parcel. The resolver reads it at `entity_metadata -> 'v'`, where
+content stores the metadata as `{"v": metadata}`.
 
 Places owns one active identity row per world scene, explicitly bound to its
 current `(world_name, entity_id)` deployment. Worlds calls the Places identity
@@ -2497,13 +2505,65 @@ revokes, whose `address` a catalog write does not have.
 ## Market chain index cursors
 
 `shop.chain_cursor` holds one row per projection: an index (`nft`,
-`trade_events`, `rentals`, `rentals_sepolia`, `mana_transfers`, `sales`, `committee`) on one
-network (`ethereum`, `matic`). A window commit writes it once, and so do a
+`trade_events`, `rentals`, `rentals_sepolia`, `mana_transfers`, `sales`, `committee`,
+`third_party_registry`, `collections`) on one network (`ethereum`, `matic`). A window commit writes it once, and so do a
 fold record, a publish and a rewind; the table stays at a dozen rows.
 `shop.chain_checkpoint` holds each projection's recovery points (see
 "Reorgs").
 
-Each index process reads these bounded cursor
+`shop.land_data` stores the latest parcel Update and the latest valid estate
+document. A malformed parcel Update clears the fields at its log position.
+The Ethereum NFT walk reads estate names at creation and on update. After
+an upgrade, a published cursor can already be past creations that the old
+walk skipped.
+Using spare log budget after publication, each pass reads one window of
+`CreateEstate` from the Estate registry, starting at deployment block 6,236,547.
+The `nft_estate_creations` row in `shop.worker_progress` records the last
+repaired block, its hash, and the original cursor height. Each archive window
+is checked against the published cursor and the hashes of its creation logs.
+The marker also records the forward NFT checkpoint and the cursor's rewind
+count. In its worker_progress arrays, key_ceiling[1] and [2] hold the
+forward block and hash; key_position[1] and [2] hold the archive predecessor
+hash and the rewind count. An upgraded writer moves both in its fenced cursor
+transactions.
+
+The repair intentionally writes shop.land_data even though land_authz also
+stores estate documents. Existing estate and parcel readers consume the
+published NFT projection from shop.land_data; using land_authz here would
+require changing those readers and would leave the historical gap dependent
+on an operator replay. The repair instead self-heals that projection after
+publication without delaying ownership or profile reads.
+
+Historical names keep their existing values until the final window rebuilds
+the estate rows by block and log index. Estate documents with valid empty
+fields are stored as empty strings, including descriptions; rejected
+documents do not clear the previous valid estate data. Estates with only
+rejected documents then have no row. Ownership and profiles remain available
+during the repair. A rewind removes orphaned events and shortens the repair
+range before the walk resumes. If the rewind removes the remaining archive
+windows, it reconciles the retained estates in its own fenced transaction.
+Migration 0062 installs a reset trigger for the repair marker. It invalidates
+the marker only when the Ethereum NFT cursor completes a full rebuild reset to
+its start block; ordinary reorg rewinds preserve the repaired prefix and are
+reconciled by the walker.
+
+The default window is at most 10,000 blocks. The historical prefix is roughly
+17 million blocks, so it takes at least about 1,700 successful repair passes;
+archive retries and dense creation blocks can extend that time. A pass runs
+one archive window only when its log budget has room, and uses the remaining
+budget to cap extra per-creation block-header reads. The safety bracket still
+uses the chain id and up to eight header/window reads, so a repair can exceed
+the leftover log budget by that bounded amount. A provider may internally
+split one eth_getLogs window into several RPC requests as well. Failed or
+timed-out repair attempts are retried and omitted from the pass request count.
+
+An operator can see completion when the marker's position equals its ceiling:
+SELECT position, ceiling FROM shop.worker_progress
+WHERE worker = 'nft_estate_creations' AND scope = 1;
+The final registry replacement commits in the same transaction that reaches
+equality. A missing marker means the next published pass must initialize or
+reopen the repair.
+With `INDEX_METRICS_BIND` set, each index process reads these bounded cursor
 tables once per minute. It samples the height, stored history mode, fold
 publication and quarantine from `shop.chain_cursor` and the height, replay
 mode and fold from `land_authz.index_cursor` for its configured registries
@@ -2717,6 +2777,14 @@ cover a point below the cursor.) Such a binary also leaves `diverged_at` as
 it finds it; the newer binary's next pass that finds the cursor block on its
 stored hash clears it.
 
+The schema migration object pass adds the Ethereum NFT cursor's estate
+repair trigger. It clears the marker when a writer completes a requested
+rebuild by resetting the cursor to its start. During a reorg the upgraded
+writer shortens the archived prefix and records the new rewind count.
+An older writer can advance past missing creations, or rewind and replay
+to the very same height and hash. On upgrade, a checkpoint or rewind-count
+mismatch automatically reopens the historical prefix through that tip.
+
 ## Curation committee
 
 Builder's committee routes (the drafts and items of every wallet, another
@@ -2767,6 +2835,98 @@ publication cannot be served. An empty result from a current publication
 means there are no matching providers. The index exposes on-chain slot
 availability as the maximum less consumed slots. Publish reservations and
 submission state still belong to the service that processes the submission.
+
+## Collections index
+
+The Polygon `collections` walk (`MARKETPLACE_COLLECTIONS_INDEX_ENABLED`, off
+under every posture) reads the `TRADE_RPC_URLS` 137 entry. It walks two kinds
+of log from the first factory's start block (15,202,000), on the shared
+`shop.chain_cursor` (see "Market chain index cursors"):
+- the collection factories' `ProxyCreated`;
+- the events of every collection the factories created.
+
+Those events are the items added, rescued and edited, the mints (`Issue`),
+the global and item minters and managers, approval, editability,
+completion, creatorship and ownership. The walk keeps them in
+`shop.collection_event`, appended with each window's cursor advance and
+deleted past a rewind. Its publication means the log is complete to
+`folded_block`. No route reads these tables yet: `shop.collections` and
+`shop.items` are still the collections subgraph's copy (`mirrors`).
+
+**Workload.** Polygon holds about 6,200 collections, 12,000 items and 5.3
+million mints, so the log is about 5.3 million rows, nearly all `issue`.
+Averaged since the first factory (2021), that is about 3,000 mints a day.
+Every mint is kept: an item's supply and its minters' allowances are exact
+only from them. Measured on Postgres 17 with one million rows shaped like
+the walk's `issue` rows, a row takes 174 bytes in the table and 41 in the
+primary key. 5.3 million rows therefore take about 1.1 GB. A window writes its rows
+in batches of 1,000 inside the cursor's transaction. The primary key
+(network, block, log index) serves the rewind's range delete. The partial
+index on `proxy_created` lists the walked collections for the address
+filter and the creation reads.
+
+**Address filter.** A window's filter is fixed before its logs are read. A
+collection created inside a window emits its `initialize` events right after
+the factory's `ProxyCreated`, in the same transaction, so the walked
+`ProxyCreated` logs cannot supply the filter for that window.
+
+The filter takes the factories' own lists instead: `collectionsSize()` and
+`collections(i)`, read by the gate before each attempt into
+`shop.collection_hint`, one row per address, about 6,200 rows that only
+grow. That is a superset of what any window can create. A factory's
+collections enter the filter from the block the factory was deployed. Each
+index is read once at the finalized block and marked final; the indexes
+past it are read at the latest block at every refresh until the finalized
+block reaches them, so the filter already takes a collection the walk can
+reach. A provisional address that a reorg replaced stays as a hint the
+filter takes in vain, and the address read at the finalized block is added
+beside it. Once every list is final up to the finalized block, a refresh
+costs the four `collectionsSize()` reads.
+
+A refresh reads at most 1,000 indexes, in chunks of 200 kept as soon as
+they are read. Both lists' indexes below their finalized sizes come first,
+and the provisional ones get what is left. While those final indexes are
+not read whole, the attempt waits for the next interval; a fresh node's
+lists take about seven attempts. Provisional indexes the budget leaves
+unread never hold an attempt back; a window that walks one of their
+collections still fails.
+
+A size past 1,000,000 fails the refresh before any index is read. The
+indexes to read are found from the stored rows, so a refresh's work is
+bounded by the table and the budget whatever an endpoint answers. If any
+index does not answer, the refresh fails the attempt, so no window walks on
+a list that was not read whole. A JSON-RPC batch the endpoint refuses, or
+answers only in part (geth answers a batch past its limit with one error),
+is halved and sent again; a single call it refuses as a batch goes as a
+plain request, and an endpoint that answers batches with nothing gets single
+calls. Holes are counted below the finalized size the endpoint answers, so a
+final row stored past it does not hide one. A window that walks a `ProxyCreated` of an address outside its
+filter fails before it commits, and the next attempt reads the lists again.
+Every pass reads the hints from the table again, alone or shared. A
+hint is only a filter: a collection exists for the index once its
+`ProxyCreated` is walked. The gate first checks that the endpoint serves
+chain 137.
+
+**Creation state.** `initialize` sets a collection's name, symbol, creator,
+approval and editability without an event. The gate reads them once per
+collection into `shop.collection_seed`:
+- walked collections first, then final hints (a provisional one may never
+  exist);
+- at most 500 collections per attempt, ten JSON-RPC batches of 100 calls
+  for each 200 collections;
+- at Polygon's finalized block, recorded in `read_block`.
+
+A collection with no code at that block waits for a later attempt. A read
+that fails is logged and does not stop the walk. Rows are never rewound:
+they are a finalized block's state. Whatever folds the log takes a value
+from the last walked event that sets it. It takes the read only when no
+event does and `read_block` is at or below the block it folds to; then the
+value has not changed since creation.
+
+**Decoding.** Every factory collection shares one ABI for these topics. A
+log of a walked topic that does not decode fails its window instead of
+being skipped. A `ProxyCreated` from any contract other than the two
+factories fails it too. Strings are read as lossy UTF-8, with NUL removed.
 
 ## Auth API relay state workload
 
@@ -2940,6 +3100,121 @@ closed. Its duration is not measured. Completeness check: `SELECT
 min(block_number) FROM land_authz.estate_data_event` is at or below the
 first `CreateEstate` block.
 
+## Map grid build workload
+
+`explore_api.map_grid` (`schemas/11_explore_api.sql`) holds the tile grid
+behind the explorer map routes (`/api/v{1,2}/tiles`, `/api/v2/tiles/info`,
+`map.png`, the minimaps and the parcel and estate metadata). The node
+builds it from its own indexes.
+
+- **Job:** `explorer-map-grid` (`explore/src/api/map/mod.rs`, `run_pass`),
+  leased, every 60 s with 10 s of jitter, started once the land-authz index
+  and Shop's reader are attached. A failed pass backs off up to 5 minutes.
+  It runs whatever `EXPLORER_MIRRORS_ENABLED` says. Its pass
+  marker is `map-grid` in `explore_api.mirror_passes` (`GET /mirrors`).
+  Every process also runs `explorer-map-grid-reload` every 60 s (`follow`):
+  one primary-key read of the row's stamp, a reload only when another
+  process stored a newer grid, and one read of the pass marker for what the
+  build waits for.
+- **One snapshot:** every read below runs in one REPEATABLE READ, READ ONLY
+  transaction, the one the land-authz index opens once it finds itself
+  published for the configured registries
+  (`indexer::ready_snapshot`; a database error fails the pass as itself,
+  not as an unpublished index). The build's clock is that snapshot's
+  `now()`: every comparison the build makes (the readiness windows, expiry,
+  the stamp, the publication floor) uses that one PostgreSQL transaction
+  clock. Shop's readiness checks and rows run
+  on the same connection, which `serve` hands to Shop through
+  `src/serve_adapters.rs` (Shop sits above Explore). The LAND facts, the
+  index cursors and Shop's rows are therefore one state of the database: a
+  rewind committed during the build, a withdrawn publication or deleted
+  rows, is invisible to it, and the next pass sees it whole.
+- **LAND reads** (`explore/src/api/map/build.rs`): every LAND `token_right`
+  row with coordinates, its `estate_land` row and the `authz_event` row its
+  `(updated_block, updated_log)` names, by primary key, for the time of its
+  last rights event. Every Estate `token_right` row that holds LAND, with
+  the same event join and the name of its latest `estate_data_event`
+  (`estate_data_event_estate_idx`, one probe per estate).
+- **Shop reads** (`shop/src/market/land_map.rs`): the Ethereum
+  `shop.nft_order` rows of the LAND and Estate registries, whatever their
+  status (primary-key range). The `shop.land_data` rows of both registries,
+  with the `shop.nft_event` row their `(updated_block, updated_log)` names,
+  by primary key. The open `public_nft_order` trades that sell a token of
+  either registry (`catalog::unified_trades_cte_of` scoped to the two
+  contracts, `idx_trade_assets_sent_contract`), priced in MANA: received
+  as an ERC-20 (asset type 1) whose token is the chain's MANA
+  (`listings::mana_token`); another token or a USD-pegged price is not a
+  MANA amount. The open, unexpired
+  `signatures.rentals` rows of both registries signed for the grid's chain
+  and its Rentals contract, with their periods.
+- **Readiness:** the land-authz index published for the configured
+  registries; the grid's chain being Ethereum mainnet, the only chain the
+  nft index walks (a Sepolia LAND index reports the nft index as not
+  ready); the nft index published on Ethereum and bound to chain 1
+  (`shop.chain_cursor`, `chain_walk::ready_sql`); and `shop.trades`
+  readable (a recent complete trades-mirror pass read in the snapshot, or
+  local authority). The trade-events verdicts (`shop.trade_chain_state`)
+  close a sold or cancelled trade while that index is published on
+  Ethereum, as in the Shop's own listings. A source that is not ready fails
+  the pass, naming it in the marker's `last_error`, and nothing is built.
+  The held grid keeps serving. Until a grid exists, every map route answers
+  the unavailable envelope (503, `Retry-After: 60`, `no-store`, no
+  validators, even to a conditional request), naming the source the build
+  recorded, or the grid itself (`map-grid`, no `configure`) before any
+  build has.
+- **Write:** the stored row is the grid's revision. `etag` holds the hex
+  SHA-256 of the body a build stored (the canonical JSON, tiles in key
+  order), and `last_updated_at` its stamp, which only grows. A pass reads
+  the row (or its absence) in its input snapshot, as the revision its
+  inputs follow, and compares its body with that revision, not with what
+  its process holds. An equal body writes nothing, and a process holding an
+  older grid reloads the row. A different body waits until that revision
+  was built 5 minutes earlier (`fetched_at`, `MIN_PUBLISH_INTERVAL`), so a
+  token relisted every
+  minute does not write a 4.4 MB row and make every process reload it every
+  minute. Then it is gzipped and written with an `UPDATE` guarded on that
+  revision's stamp and `etag` (an `INSERT ...
+  ON CONFLICT DO NOTHING` when it saw none), stamped with the current time
+  in milliseconds and at least one second past it. A leased build runs that
+  write on its lease's own session (`LeaseControl::with_connection`): it
+  commits while the process holds the lease or not at all, and a lease lost
+  while the statement waits takes the statement with it. If another publisher
+  stored a revision after the snapshot began, the write stores nothing and
+  the build is discarded: a pass never overwrites a revision published
+  since its snapshot. A process serves a grid only if its stamp
+  is newer than the one it holds, decided under its grid lock, so a slow
+  reload never brings back an older revision. An order or rental that
+  expires changes the body on the next pass, published under the same
+  5-minute floor. A PNG answer takes one grid
+  for its validators, cache key and body, and for an estate's
+  dissolved-estate redirect.
+- **Rules:** atlas-server's `buildTile`, `addSpecialTiles`,
+  `getEstateFlags` and `applyTrades`, with its roads and plazas vendored
+  (`special_tiles.json`). The rules and the known differences are in the
+  `build.rs` module docs. An order whose seller no longer owns the token
+  shows no price, while the atlas still prices it until it expires: 19 of
+  the 412 tiles the atlas priced by a legacy order on 2026-11-24. Bids do
+  not move `updatedAt`. Rental listings are this node's own, and a listing
+  is not checked against the token's current owner: the
+  `rental-listing-status` job cancels one whose asset left its lessor.
+  While a source is not ready, the held grid keeps its prices and listings,
+  including ones that expire meanwhile, until a pass builds again.
+- **Volume and cost:** mainnet holds 92,598 LAND, 65,086 of them in about
+  2,700 estates. On a synthetic database of that size (1.02M rights
+  events, 30,866 orders, 69,448 names among 1.07M `nft_event` rows, 52,000
+  trades), measured on a laptop with Postgres 17 and a release build: the
+  LAND snapshot read takes 0.47 s, the estates 16 ms, the orders 10 ms, the
+  names 34 ms and the trades 16 ms. Composing the grid takes 0.14 s,
+  serializing it 0.19 s (a 36.5 MB body) and gzip 0.04 s (4.4 MB stored).
+- **Deploy:** no schema step. Stop every process of a binary that runs
+  the `explorer-map-mirror` job before this one's first build: that job
+  rewrites the row's stamp without a guard. An environment that still sets
+  `EXPLORER_MAP_SOURCE_URL` or `EXPLORER_MAP_MIN_REFRESH_SECS` starts, as
+  the binary and the posture checks read neither. A node without the
+  land-authz index, the nft index (`MARKETPLACE_NFT_INDEX_ENABLED`, mainnet
+  only) or a trades source never builds a grid, and its map routes answer
+  the envelope.
+
 ## Place removal feed
 
 `explore.place_removal_pending` (`schemas/10_explore.sql`) is a sparse outbox
@@ -2996,8 +3271,9 @@ whose backing scenes are gone. No grant history is inferred from parcel overlap.
 scene, one row for each `(place_id, admin_address)`. `place_id` is the place of
 the scene, read from the active deployment by the room resolver
 (`ActiveDeployment::place_key`): the `explore.world_scene_place` identity of a
-world scene, the canonical base parcel of a Genesis scene. These are the keys
-that scene storage uses.
+world scene, the canonical base parcel of a Genesis scene (its declared base,
+read at `entity_metadata -> 'v'`, when the scene holds that parcel; otherwise
+its first parcel). These are the keys that scene storage uses.
 
 Workload: one primary-key read for each scene-signed gatekeeper request of a
 wallet that is not the owner (`Policy::is_admin`: `/scene-admin`, `/scene-bans`,
@@ -3038,7 +3314,21 @@ Invariants:
   the grant. For one place and wallet the script keeps an active grant before
   a revoked one, then the row with the newest change
   (`COALESCE(removed_at, added_at)`), also against a row the place already
-  has. It removes each entity row that it moved.
+  has. It removes each entity row that it moved. It can run again: it moves
+  only rows that have an entity key, and never changes the key of a row that
+  is on a parcel or a world-scene identity.
+- A Genesis grant on its scene's least parcel, while the scene's place is
+  another declared base, is read by no request of that scene, and no script
+  moves it: the same row can be a grant made for an earlier scene whose base
+  was that parcel and that the place removal cleanup has not revoked, which
+  this scene does not inherit. A database that holds
+  Genesis grants on parcel keys when it takes the release can hold such
+  rows. The operator lists them with the check in
+  `infra/containers/README.md` "Scene admin upgrade" (active Genesis
+  deployments whose `social.scene_base_parcel` over `{v,scene,base}` differs
+  from the one over no declared base, joined to the active grants on the
+  latter) and sets `place_id` to the place on each row made for the listed
+  scene.
 - A row keeps the entity key when its entity is not deployed, or has no
   parcel that parses. A world scene with no active identity reads its grants
   by entity id, so a retired world scene still reads such a row inside its
@@ -3048,7 +3338,9 @@ Invariants:
   the effective base parcel that the room resolver computes
   (`ParcelSet::effective_base`). The release script and the import loads of
   scene admins and scene bans call it; `the_sql_base_parcel_is_the_resolvers`
-  compares the two.
+  compares the two. Its callers pass the declared base from where it is
+  stored: `entity_metadata #>> '{v,scene,base}'` for a Genesis scene,
+  `entity #>> '{metadata,scene,base}'` for a world scene.
 
 ## Scene bans
 
@@ -3100,7 +3392,11 @@ Invariants:
   not supported after the move; restore the matching backup. A row of an
   entity that is not deployed, or has no parcel that parses, keeps its key,
   and no request reads it. A local preview scene, which has no deployment,
-  keeps its entity id.
+  keeps its entity id. A ban on a scene's least parcel while the scene's
+  place is another declared base stays where it is, as an admin grant does
+  ("Scene admin grants"), and no longer refuses its wallet; the same operator
+  check lists it, and the upgrade re-keys it before players are admitted
+  (`infra/containers/README.md`, "Scene admin upgrade").
 - A kick intent queued before the release names the entity id; the removal
   job reads its ban again on the scene's place (`legacy_ban_key`).
 

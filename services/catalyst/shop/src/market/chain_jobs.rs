@@ -701,7 +701,7 @@ fn dispatch_close(
     i: usize,
     slot: &mut Slot,
     out: PassOutcome,
-    fold_since: Option<i64>,
+    close_options: chain_walk::Close,
     tasks: &mut JoinSet<Done>,
     running: &mut HashMap<tokio::task::Id, Running>,
 ) {
@@ -718,10 +718,16 @@ fn dispatch_close(
     let handle = tasks.spawn(async move {
         let close = async {
             let projection = &sup.projections[i];
-            let source = chain_walk::RpcSource::new(crate::chain_index::rpc::Rpc::at(
-                &sup.http,
-                &projection.url,
-            ));
+            let source = Shadowed::new(
+                AdmittedPortal::new(
+                    chain_walk::RpcSource::new(crate::chain_index::rpc::Rpc::at(
+                        &sup.http,
+                        &projection.url,
+                    )),
+                    sup.portal.as_deref(),
+                ),
+                sup.shadow.as_deref(),
+            );
             let owner = holdings
                 .owner(&sup.pool, lease.as_ref(), index.as_ref(), &sup.settings)
                 .await?;
@@ -732,7 +738,7 @@ fn dispatch_close(
                 index.as_ref(),
                 &sup.settings,
                 &owner,
-                fold_since,
+                close_options,
                 &mut out,
             )
             .await;
@@ -1515,6 +1521,29 @@ fn visit_projections(
             market_cfg(),
         );
     }
+    if settings.collections_enabled && net == ChainNet::Matic {
+        let url = state.chain_rpc_url(net);
+        // The factories' lists (the walk's filter) and the collections'
+        // creation state, read before each attempt.
+        let gate: Gate = {
+            let (state, url) = (state.clone(), url.clone().unwrap_or_default());
+            Arc::new(move || {
+                let (state, url) = (state.clone(), url.clone());
+                async move {
+                    let rpc = crate::chain_index::rpc::Rpc::at(&state.http, &url);
+                    super::collections_index::gate(&state.pool, &rpc).await
+                }
+                .boxed()
+            })
+        };
+        add(
+            "collections-index",
+            url,
+            Arc::new(|| Arc::new(super::collections_index::CollectionsIndex::new())),
+            Some(gate),
+            market_cfg(),
+        );
+    }
     if settings.third_party_registry_enabled && net == ChainNet::Matic {
         add(
             "third-party-registry-index",
@@ -1706,6 +1735,12 @@ fn log_switches(state: &Arc<MarketplaceState>, rentals: Option<bool>) {
         tracing::warn!(
             job = "committee-index",
             "committee index enabled but no Polygon JSON-RPC endpoint is configured (TRADE_RPC_URLS 137=, or RPC_ENDPOINT_POLYGON on mainnet): it stays off"
+        );
+    }
+    if settings.collections_enabled && state.chain_rpc_url(ChainNet::Matic).is_none() {
+        tracing::warn!(
+            job = "collections-index",
+            "collections index enabled but no Polygon JSON-RPC endpoint is configured (TRADE_RPC_URLS 137=): it stays off"
         );
     }
     if settings.third_party_registry_enabled && state.polygon_mainnet_rpc_url().is_none() {

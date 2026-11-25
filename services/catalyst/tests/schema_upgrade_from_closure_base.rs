@@ -77,6 +77,8 @@ fn expected_pending_steps() -> Vec<&'static str> {
         .chain([
             "0060_shop_third_party_registry_index",
             "0061_content_processed_snapshot_types",
+            "0062_shop_estate_repair_reset",
+            "0063_shop_collections_index",
         ])
         .collect()
 }
@@ -671,6 +673,17 @@ async fn a_database_stamped_with_the_closure_base_upgrades_to_head_with_its_rows
         "only steps the prepared capture lacks run; historical steps never replay"
     );
     assert_only_pending_steps_added(&historical_ledger, &step_ledger(pool).await);
+    let estate_trigger: bool = sqlx::query_scalar(
+        "SELECT EXISTS(SELECT FROM pg_trigger WHERE tgrelid='shop.chain_cursor'::regclass
+         AND tgname='reset_estate_creation_repair' AND tgenabled='O')",
+    )
+    .fetch_one(pool)
+    .await
+    .unwrap();
+    assert!(
+        estate_trigger,
+        "upgrading installs the estate rebuild trigger"
+    );
     let snapshots = catalyst::content::sync::LiveProcessedSnapshotStore::new(pool.clone());
     let hashes = [legacy_snapshot];
     let recorded_coverage: Vec<String> =
@@ -1930,11 +1943,22 @@ async fn the_logs_permissions_release_waits_for_the_decoded_function_then_drops_
             "the object pass keeps {index}"
         );
     }
+    // A database the previous binary migrated also holds the decoded index
+    // on the unwrapped metadata path, which no query reads.
+    let unwrapped = "content.deployments_scene_logs_permissions_decoded_idx";
+    sqlx::query(
+        "CREATE INDEX deployments_scene_logs_permissions_decoded_idx ON content.deployments
+             USING gin (worlds.logs_permissions_decoded((entity_metadata -> 'logsPermissions')::text))
+             WHERE entity_type = 'scene' AND deleter_deployment IS NULL",
+    )
+    .execute(pool)
+    .await
+    .unwrap();
     // An invalid decoded index, as a failed concurrent build leaves, is refused.
     let set_valid = |valid: bool| async move {
         sqlx::query(
             "UPDATE pg_index SET indisvalid = $1
-             WHERE indexrelid = 'content.deployments_scene_logs_permissions_decoded_idx'::regclass",
+             WHERE indexrelid = 'content.deployments_scene_v_logs_permissions_decoded_idx'::regclass",
         )
         .bind(valid)
         .execute(pool)
@@ -1947,7 +1971,7 @@ async fn the_logs_permissions_release_waits_for_the_decoded_function_then_drops_
     set_valid(true).await;
     release_statements(pool, &release).await.unwrap();
     assert!(!has_function("worlds.logs_permissions(text)").await);
-    for index in old_objects {
+    for index in old_objects.into_iter().chain([unwrapped]) {
         assert!(!has_relation(pool, index).await, "{index} is dropped");
     }
     assert!(has_function("worlds.logs_permissions_decoded(text)").await);
@@ -1955,7 +1979,7 @@ async fn the_logs_permissions_release_waits_for_the_decoded_function_then_drops_
     assert!(
         has_relation(
             pool,
-            "content.deployments_scene_logs_permissions_decoded_idx"
+            "content.deployments_scene_v_logs_permissions_decoded_idx"
         )
         .await
     );

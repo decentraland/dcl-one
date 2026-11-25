@@ -47,6 +47,8 @@ pub const INDEXER_MANA: &str = "mana_transfers";
 
 pub const INDEXER_COMMITTEE: &str = "committee";
 
+pub const INDEXER_COLLECTIONS: &str = "collections";
+
 pub const INDEXER_NFT: &str = "nft";
 pub const INDEXER_SALES: &str = "sales";
 pub const INDEXER_TRADE_EVENTS: &str = "trade_events";
@@ -142,6 +144,8 @@ pub struct IndexSettings {
     pub committee_enabled: bool,
     /// `MARKETPLACE_THIRD_PARTY_REGISTRY_INDEX_ENABLED`: Polygon providers and slots.
     pub third_party_registry_enabled: bool,
+    /// `MARKETPLACE_COLLECTIONS_INDEX_ENABLED`: the Polygon collection factories and collections.
+    pub collections_enabled: bool,
     /// `MARKETPLACE_INDEX_INTERVAL_SECS` (5; 30 under the mirror posture): pause between passes.
     pub interval: Duration,
     /// `MARKETPLACE_INDEX_REQUESTS_PER_PASS` (100): `eth_getLogs` calls one
@@ -180,6 +184,7 @@ impl Default for IndexSettings {
             sales_enabled: false,
             committee_enabled: false,
             third_party_registry_enabled: false,
+            collections_enabled: false,
             interval: Duration::from_secs(5),
             requests_per_pass: 100,
             window_blocks: 10_000,
@@ -1117,6 +1122,15 @@ pub trait ChainIndex: Send + Sync {
         logs: &[RpcLog],
         times: &HashMap<i64, i64>,
     ) -> anyhow::Result<usize>;
+    /// Record filter-specific coverage in the same transaction as the cursor advance.
+    async fn record_coverage(
+        &self,
+        _conn: &mut PgConnection,
+        _previous: (i64, Option<&str>),
+        _end: &BlockHeader,
+    ) -> anyhow::Result<()> {
+        Ok(())
+    }
     /// Deletes the log past `to` and refolds what it touched, in the
     /// transaction that rewinds the cursor.
     async fn rewind(&self, conn: &mut PgConnection, to: i64) -> anyhow::Result<()>;
@@ -1162,6 +1176,17 @@ pub trait ChainIndex: Send + Sync {
         _cursor: Option<(u64, &str)>,
     ) -> anyhow::Result<Spent> {
         Ok(Spent::default())
+    }
+    /// One optional historical log window after publication, using spare log budget.
+    async fn after_publish(
+        &self,
+        _pool: &PgPool,
+        _source: &dyn LogSource,
+        _owner: &Owner,
+        _window_blocks: u64,
+        _remaining: usize,
+    ) -> anyhow::Result<usize> {
+        Ok(0)
     }
     /// Forgets what the index keeps in memory between its calls (the nft
     /// walk's collection set and pending contracts) after a pass failed past
@@ -1890,6 +1915,7 @@ pub(crate) async fn commit_window(
     advance(&mut tx, ix.indexer(), ix.net(), expected, header)
         .await
         .context("advancing the cursor")?;
+    ix.record_coverage(&mut tx, expected, header).await?;
     owner.check(&mut tx).await?;
     tx.commit().await?;
     Ok(written)
@@ -2076,7 +2102,10 @@ async fn walk(
         ix,
         settings,
         owner,
-        cur.fold_through,
+        Close {
+            fold_since: cur.fold_through,
+            remaining: total.saturating_sub(log_requests),
+        },
         &mut out,
     )
     .await?;
@@ -2113,6 +2142,11 @@ async fn diverged(
     Ok(out)
 }
 
+pub struct Close {
+    pub fold_since: Option<i64>,
+    pub remaining: usize,
+}
+
 /// The close of a pass that reached its target at `out.indexed_to`: the fold
 /// of what was touched since `fold_since`, its record, a fresh read of the
 /// heads, and the publish (or its withdrawal) against them.
@@ -2122,13 +2156,13 @@ pub(crate) async fn close(
     ix: &dyn ChainIndex,
     settings: &IndexSettings,
     owner: &Owner,
-    fold_since: Option<i64>,
+    close: Close,
     out: &mut PassOutcome,
 ) -> anyhow::Result<()> {
     let net = ix.net();
     let stop = settings.stop_block(net);
     let may_publish = ix
-        .fold(pool, fold_since, out.indexed_to, owner)
+        .fold(pool, close.fold_since, out.indexed_to, owner)
         .await
         .context("folding")?;
     record_fold(pool, owner, out.indexed_to).await?;
@@ -2160,6 +2194,29 @@ pub(crate) async fn close(
         out.published = mark_folded(pool, owner, out.indexed_to, Utc::now()).await?;
     } else {
         unpublish(pool, owner, out.indexed_to).await?;
+    }
+    if out.published && close.remaining > 0 {
+        match ix
+            .after_publish(
+                pool,
+                source,
+                owner,
+                settings.window_blocks.max(1),
+                close.remaining,
+            )
+            .await
+        {
+            Ok(requests) => out.requests += requests,
+            Err(e)
+                if e.chain()
+                    .any(|cause| cause.downcast_ref::<Fenced>().is_some()) =>
+            {
+                return Err(e);
+            }
+            Err(e) => {
+                tracing::warn!(indexer = ix.indexer(), error = %e, "post-publication repair will retry")
+            }
+        }
     }
     Ok(())
 }
