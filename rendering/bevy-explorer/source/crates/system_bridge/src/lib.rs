@@ -78,6 +78,8 @@ pub struct SetAvatarError {
 
 pub type SetAvatarResult = Result<u32, SetAvatarError>;
 
+// SetAvatar is a rare call, and boxing it only moves the lint to the enums that hold a SystemApi
+#[allow(clippy::large_enum_variant)]
 #[derive(Event, Clone, Debug, Serialize, Deserialize)]
 pub enum SystemApi {
     ConsoleCommand(String, Vec<String>, RpcResultSender<Result<String, String>>),

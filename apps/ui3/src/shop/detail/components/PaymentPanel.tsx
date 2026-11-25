@@ -4,7 +4,7 @@
 import { useEffect, useId, useState } from "react";
 import { Link } from "react-router";
 
-import Button from "../../../atoms/Button";
+import { Button } from "@dcl/one-ui";
 import Icon from "../../discovery/components/Icon";
 import { useCreditsManaSplit } from "../../discovery/flags";
 import { pdpText } from "../copy";

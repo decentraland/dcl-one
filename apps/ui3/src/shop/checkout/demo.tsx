@@ -45,6 +45,8 @@ export type DemoScenario = {
   path?: string;
   handlers?: FakeHandlers;
   resolvers?: Partial<SettlementResolvers>;
+  /** Where the cart keeps its lines: a store of its own unless a test reads them back. */
+  storage?: CartStorage;
 };
 
 function memoryStorage(): CartStorage {
@@ -74,7 +76,7 @@ function bump(offer: PurchaseOffer): PurchaseOffer {
 
 export function createDemo(s: DemoScenario) {
   const session = sessionOf(s.session);
-  const storage = memoryStorage();
+  const storage = s.storage ?? memoryStorage();
   const cart = createCartStore({ storage: () => storage });
   if (session.kind !== "signedOut") cart.scopeTo(BOOK.buyer);
   const lines = (s.lines ?? []).map((l) => {

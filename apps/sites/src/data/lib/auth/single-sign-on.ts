@@ -169,7 +169,7 @@ export function walletSessionFor(address: string, now = Date.now()): AuthIdentit
   return k && store ? readSession(store, k, now, WALLET_SESSION_PREFIX) : null;
 }
 
-/** The freshest unexpired shared session on this origin (the account signed in last), or null. */
+/** The freshest unexpired shared session on this origin (the account signed in last), or null. `head-account.ts` repeats it. */
 export function freshestShared(now = Date.now()): AuthIdentity | null {
   const store = storage();
   if (!store) return null;

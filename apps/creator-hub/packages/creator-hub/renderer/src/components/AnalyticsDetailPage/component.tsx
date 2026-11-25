@@ -1,10 +1,10 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { useNavigate, useParams } from 'react-router-dom';
+import { useNavigate, useParams } from 'react-router';
 import Button from '@ui/atoms/Button';
 import { SelectOption } from '@ui/atoms/Select';
 import { Tab, Tabs } from '@ui/atoms/Tabs';
 import Text from '@ui/atoms/Text';
-import Tooltip from '@ui/atoms/Tooltip';
+import { Tooltip } from '@dcl/one-ui';
 
 import { FileDownloadOutlinedIcon as DownloadIcon } from '@ui/atoms/icons-material';
 

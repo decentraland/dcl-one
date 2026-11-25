@@ -1,5 +1,6 @@
 """Development CI keeps platform coverage and reusable, isolated build snapshots."""
 from pathlib import Path
+import fnmatch
 import json
 import os
 import re
@@ -461,6 +462,9 @@ class DevelopmentWorkflowTest(unittest.TestCase):
         prefix = 'foundation-dev-v2-smoke-decentraland/dcl-one-Linux-X64-'
         deps = 'v0-rust-dev-tests-'
         bevy = 'v0-rust-bevy-explorer-native-ci-test-test-Linux-x64-'
+
+        def native(lane, generation):
+            return f'bevy-native-v1-{lane}-Linux-X64-' + '-'.join(['0' * 16] * 3 + [generation * 16])
         caches = [
             {'id': 1, 'ref': 'refs/heads/main', 'key': prefix + 'old'},
             {'id': 2, 'ref': 'refs/heads/main', 'key': prefix + 'new'},
@@ -486,6 +490,14 @@ class DevelopmentWorkflowTest(unittest.TestCase):
             {'id': 22, 'ref': 'refs/pull/11/merge', 'key': 'bevy-web-unopt-v1-pr-' + 'a' * 64},
             {'id': 23, 'ref': 'refs/pull/11/merge', 'key': 'bevy-web-unopt-v1-pr-' + 'c' * 64},
             {'id': 24, 'ref': 'refs/pull/10/merge', 'key': 'bevy-web-unopt-v1-pr-' + 'a' * 64},
+            # A hyphenated lane is one family per ref, apart from the other lanes of the same platform.
+            {'id': 25, 'ref': 'refs/heads/main', 'key': native('relay-wake', '1')},
+            {'id': 26, 'ref': 'refs/heads/main', 'key': native('relay-wake', '2')},
+            {'id': 27, 'ref': 'refs/heads/main', 'key': native('relay-wake', '3')},
+            {'id': 28, 'ref': 'refs/heads/main', 'key': native('test', '1')},
+            {'id': 29, 'ref': 'refs/heads/main', 'key': native('test', '2')},
+            {'id': 30, 'ref': 'refs/pull/11/merge', 'key': native('relay-wake', '1')},
+            {'id': 31, 'ref': 'refs/pull/11/merge', 'key': native('relay-wake', '2')},
         ]
         with patch.dict(os.environ, {'GITHUB_EVENT_NAME': 'schedule', 'PR_NUMBER': '',
                                      'GITHUB_REPOSITORY': 'decentraland/dcl-one'}), \
@@ -502,6 +514,10 @@ class DevelopmentWorkflowTest(unittest.TestCase):
             'repos/decentraland/dcl-one/actions/caches/20',
             'repos/decentraland/dcl-one/actions/caches/22',
             'repos/decentraland/dcl-one/actions/caches/24',
+            'repos/decentraland/dcl-one/actions/caches/25',
+            'repos/decentraland/dcl-one/actions/caches/26',
+            'repos/decentraland/dcl-one/actions/caches/28',
+            'repos/decentraland/dcl-one/actions/caches/30',
         ])
         self.assertEqual(sum('graphql' in call.args[0] for call in cli.call_args_list), 1)
 
@@ -544,6 +560,39 @@ class DevelopmentWorkflowTest(unittest.TestCase):
                     current = fingerprint()
                     self.assertNotEqual(previous, current)
                     previous = current
+
+    def test_creator_hub_workflows_track_shared_tooltip_sources(self):
+        ci = CREATOR_HUB.read_text()
+        push_patterns = re.findall(r"^      - '([^']+)'$", ci, re.M)
+        pr_pattern = re.search(r"grep -qE '([^']+)'", ci)[1]
+        shared_filter = {'library/ui/components/Tooltip/**', 'library/ui/package.json'}
+        def ui_paths(paths):
+            return {path for path in paths if path.startswith('library/ui/')}
+
+        self.assertEqual(ui_paths(push_patterns), shared_filter)
+        for path in ['library/ui/components/Tooltip/Tooltip.tsx',
+                     'library/ui/components/Tooltip/Tooltip.module.css', 'library/ui/package.json']:
+            with self.subTest(path=path):
+                self.assertTrue(any(fnmatch.fnmatch(path, pattern) for pattern in push_patterns))
+                self.assertRegex(path, pr_pattern)
+        for unrelated in ['docs/ui-components.md', 'library/ui/components/Button/Button.tsx',
+                          'library/ui/index.ts', 'library/ui/pnpm-lock.yaml']:
+            self.assertNotRegex(unrelated, pr_pattern)
+
+        for workflow in ['build', 'e2e']:
+            source = CREATOR_HUB.with_name(f'creator-hub-{workflow}.yml').read_text()
+            cached = re.findall(r"'(library/ui/[^']+)'", source)
+            self.assertEqual(set(cached), shared_filter, workflow)
+        sources = {path.removesuffix('/**') for path in shared_filter}
+        for workflow in ['inspector', 'desktop']:
+            source = CREATOR_HUB.with_name(f'creator-hub-{workflow}.yml').read_text()
+            version_paths = re.search(r'change_path: "([^"]+)"', source)[1].split()
+            self.assertEqual(ui_paths(version_paths), sources, workflow)
+            if workflow == 'inspector':
+                note_paths = re.search(r"paths: '([^']+)'", source)[1].split(',')
+                sections = re.search(r"section_names: '([^']+)'", source)[1].split(',')
+                self.assertEqual(set(version_paths), set(note_paths))
+                self.assertEqual(len(note_paths), len(sections))
 
     def test_creator_hub_desktop_builds_need_the_label_on_pull_requests(self):
         source = CREATOR_HUB.read_text().split('jobs:\n', 1)[1]
