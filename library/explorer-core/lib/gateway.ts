@@ -36,14 +36,15 @@ export const DECENTRALAND_DOMAINS: readonly string[] = ['decentraland.org', 'dec
 
 /**
  * Whether a link may select this gateway with no prompt, for a session on `baseDomain`
- * (`Gateway::parse_link`): the page's own origin, or `https://gateway.<baseDomain>` with no port
+ * (`Gateway::parse_link`): the page's own origin when it is outside Decentraland's domains (a node
+ * serving /play), or `https://gateway.<baseDomain>` with no port
  * or path when that is one of Decentraland's own deployments. Their apex is the website, not a
  * gateway. A path is never trusted: a node proxies other hosts under one (`/_scene/<host>`) with
  * the request's signature headers.
  */
 export function isTrustedGatewayPrefix(prefix: string, baseDomain: string, ownOrigin: string | null = null): boolean {
-  if (prefix === ownOrigin) return true
   const url = new URL(prefix)
+  if (prefix === ownOrigin && !isDecentralandHost(url.hostname)) return true
   return (
     url.protocol === 'https:' &&
     url.port === '' &&
@@ -152,6 +153,10 @@ export function gatewaySignedPath(gateway: Gateway, raw: string, serviceBases: I
   // the proxy strips only the first segment, and only when a slash follows it
   const cut = rest.indexOf('/')
   return `/${cut < 0 ? rest : rest.slice(cut + 1)}`
+}
+
+function isDecentralandHost(host: string): boolean {
+  return DECENTRALAND_DOMAINS.some((d) => host === d || host.endsWith(`.${d}`))
 }
 
 // The proxy decodes escaped separators before normalizing its path.

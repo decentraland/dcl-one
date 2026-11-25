@@ -34,7 +34,7 @@ Trust follows the base domain:
 - On web, any gateway other than `https://gateway.<base>`, with no port or
   path, where `<base>` is the session's base domain and one of `decentraland.org` and
   `decentraland.zone`, stops the boot on the untrusted-launch prompt. `/play` also trusts its own
-  origin. The apex of those domains is the website, not a gateway, so it is not trusted; an apex
+  origin outside those domains. The apex of those domains is the website, not a gateway, so it is not trusted; an apex
   gateway elsewhere takes `--gateway` or the prompt.
 - The native client takes from a link only such a gateway, because a link starts it without a
   prompt. A link with any other gateway stops the launch with a usage error rather than starting

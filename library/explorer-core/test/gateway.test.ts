@@ -66,10 +66,12 @@ describe('gatewayProfileImage', () => {
 })
 
 describe('isTrustedGatewayPrefix', () => {
-  it("trusts the page's origin and an https origin of the session's Decentraland deployment", () => {
+  it("trusts the page's origin and https://gateway.<base> of the session's Decentraland deployment", () => {
     expect(isTrustedGatewayPrefix('https://gateway.decentraland.org', 'decentraland.org')).toBe(true)
     expect(isTrustedGatewayPrefix('https://gateway.decentraland.zone', 'decentraland.zone')).toBe(true)
-    // the apex is the website, not a gateway
+    // the apex is the website, not a gateway, even when the page is served from it
+    expect(isTrustedGatewayPrefix('https://decentraland.org', 'decentraland.org', 'https://decentraland.org')).toBe(false)
+    expect(isTrustedGatewayPrefix('https://play.decentraland.org', 'decentraland.org', 'https://play.decentraland.org')).toBe(false)
     expect(isTrustedGatewayPrefix('https://decentraland.org', 'decentraland.org')).toBe(false)
     expect(isTrustedGatewayPrefix('http://node.example.test', 'node.example.test', 'http://node.example.test')).toBe(true)
     for (const [prefix, domain] of [

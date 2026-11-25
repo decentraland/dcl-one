@@ -76,7 +76,7 @@ with the segments from the engine's service table (`library/explorer-core/lib/ga
 hand the gateway to the engine; both sign the paths a `gateway.` host forwards. A link with any
 gateway other than `https://gateway.<base>`, with no port or path, for a
 session on `decentraland.org` or `decentraland.zone`, stops on the untrusted-launch prompt; on
-`/play`, the page's own origin is trusted too. A gateway with a path is never trusted,
+`/play`, the page's own origin outside those domains is trusted too. A gateway with a path is never trusted,
 since a node proxies other hosts under `/_scene/<host>`. A `decentraland://` link selects one with
 `gateway=<url>`. The native client accepts from a link only such a gateway of its base domain,
 since a link reaches it without a prompt, and refuses to start with any other. An explicit `--gateway` takes precedence over the link's.

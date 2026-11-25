@@ -376,7 +376,7 @@ mod gateway_tests {
     }
 
     #[test]
-    fn a_link_selects_only_its_decentraland_deployments_gateway_or_apex() {
+    fn a_link_selects_only_its_decentraland_deployments_gateway() {
         for (raw, domain) in [
             ("https://gateway.decentraland.org", "decentraland.org"),
             ("https://gateway.decentraland.zone/", "decentraland.zone"),
