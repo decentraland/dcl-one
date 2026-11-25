@@ -1,4 +1,5 @@
-//! Readiness of the services mounted in this serve process.
+//! Required checks govern traffic to this replica. Diagnostics report shared
+//! dependency state without withdrawing every replica from service.
 use std::collections::BTreeMap;
 use std::convert::Infallible;
 use std::future::{Future, ready};
@@ -27,6 +28,7 @@ enum Status {
 #[derive(Clone, Serialize)]
 struct CheckResult {
     status: Status,
+    required: bool,
 }
 
 #[derive(Clone, Serialize)]
@@ -37,38 +39,51 @@ struct Report {
 
 type Check = Box<dyn Fn() -> BoxFuture<'static, bool> + Send + Sync>;
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum CheckMode {
+    Required,
+    Diagnostic,
+}
+
+use CheckMode::{Diagnostic, Required};
+
 #[derive(Default)]
-struct Checks(BTreeMap<&'static str, Check>);
+struct Checks(BTreeMap<&'static str, (CheckMode, Check)>);
 
 impl Checks {
-    fn register<F, Fut>(&mut self, name: &'static str, check: F)
+    fn register<F, Fut>(&mut self, name: &'static str, mode: CheckMode, check: F)
     where
         F: Fn() -> Fut + Send + Sync + 'static,
         Fut: Future<Output = bool> + Send + 'static,
     {
         let check: Check = Box::new(move || Box::pin(check()));
         assert!(
-            self.0.insert(name, check).is_none(),
+            self.0.insert(name, (mode, check)).is_none(),
             "duplicate readiness check {name}"
         );
     }
 
     async fn report(&self) -> Report {
-        let details: BTreeMap<_, _> = join_all(self.0.iter().map(|(&name, check)| async move {
-            let passed = tokio::time::timeout(CHECK_TIMEOUT, check())
-                .await
-                .unwrap_or(false);
-            (
-                name,
-                CheckResult {
-                    status: if passed { Status::Pass } else { Status::Fail },
-                },
-            )
-        }))
-        .await
-        .into_iter()
-        .collect();
-        let status = if details.values().all(|result| result.status == Status::Pass) {
+        let details: BTreeMap<_, _> =
+            join_all(self.0.iter().map(|(&name, (mode, check))| async move {
+                let passed = tokio::time::timeout(CHECK_TIMEOUT, check())
+                    .await
+                    .unwrap_or(false);
+                (
+                    name,
+                    CheckResult {
+                        required: *mode == Required,
+                        status: if passed { Status::Pass } else { Status::Fail },
+                    },
+                )
+            }))
+            .await
+            .into_iter()
+            .collect();
+        let status = if details
+            .values()
+            .all(|result| !result.required || result.status == Status::Pass)
+        {
             Status::Pass
         } else {
             Status::Fail
@@ -110,25 +125,29 @@ fn map_is_configured(land: &land_authz::Settings, market: &shop::market::Setting
 pub(super) fn router(config: &Config, routes: &Routes<'_>) -> Router {
     let mut checks = Checks::default();
     let pool = routes.content.pool.clone();
-    checks.register("postgres", move || {
+    checks.register("postgres", Diagnostic, move || {
         let pool = pool.clone();
         async move { database_ready(&pool).await }
     });
     let listener = routes.archipelago_state.clone();
-    checks.register("server", move || ready(listener.listener_ready()));
+    checks.register("server", Required, move || ready(listener.listener_ready()));
     let rpc = routes.social.rpc.clone();
-    checks.register("social-rpc", move || ready(rpc.initial_fanout_ready()));
+    checks.register("social-rpc", Required, move || {
+        ready(rpc.initial_fanout_ready())
+    });
     if !config.node.serve_unsynced {
-        // A replica without a local worker observes the leader's sync state.
+        // Sync state can describe another replica, including during a lease handoff.
         let sync = routes.content.sync.clone();
-        checks.register("content", move || ready(sync.is_ready()));
+        checks.register("content", Diagnostic, move || ready(sync.is_ready()));
     }
     if let Some(about_comms) = routes.content.about_comms().cloned() {
-        checks.register("comms", move || ready(about_comms.probe().healthy));
+        checks.register("comms", Diagnostic, move || {
+            ready(about_comms.probe().healthy)
+        });
     }
     if map_is_configured(&routes.land.settings, &routes.market.settings) {
         let api = routes.explorer_api.clone();
-        checks.register("map", move || ready(api.map.is_ready()));
+        checks.register("map", Required, move || ready(api.map.is_ready()));
     }
     checks.router()
 }
@@ -181,8 +200,8 @@ mod tests {
         let calls = Arc::new(AtomicUsize::new(0));
         let available = Arc::new(AtomicBool::new(false));
         let mut checks = Checks::default();
-        checks.register("server", || ready(true));
-        checks.register("reader", {
+        checks.register("server", Required, || ready(true));
+        checks.register("reader", Required, {
             let calls = calls.clone();
             let available = available.clone();
             move || {
@@ -203,7 +222,11 @@ mod tests {
             (
                 StatusCode::SERVICE_UNAVAILABLE,
                 json!({
-                    "status":"fail","details":{"reader":{"status":"fail"},"server":{"status":"pass"}}
+                    "status": "fail",
+                    "details": {
+                        "reader": {"required": true, "status": "fail"},
+                        "server": {"required": true, "status": "pass"}
+                    }
                 })
             )
         );
@@ -214,25 +237,32 @@ mod tests {
             (
                 StatusCode::OK,
                 json!({
-                    "status":"pass","details":{"reader":{"status":"pass"},"server":{"status":"pass"}}
+                    "status": "pass",
+                    "details": {
+                        "reader": {"required": true, "status": "pass"},
+                        "server": {"required": true, "status": "pass"}
+                    }
                 })
             )
         );
     }
 
     #[tokio::test(start_paused = true)]
-    async fn node_readiness_times_out_slow_checks_together() {
+    async fn node_readiness_stays_ready_when_diagnostics_time_out_together() {
         let mut checks = Checks::default();
-        checks.register("first", std::future::pending);
-        checks.register("second", std::future::pending);
-        checks.register("server", || ready(true));
+        checks.register("first", Diagnostic, std::future::pending);
+        checks.register("second", Diagnostic, std::future::pending);
+        checks.register("server", Required, || ready(true));
         let started = tokio::time::Instant::now();
         let (status, body) = probe(&checks.router()).await;
-        assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE);
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(body["status"], "pass");
         assert_eq!(
             body["details"],
             json!({
-                "first":{"status":"fail"},"second":{"status":"fail"},"server":{"status":"pass"}
+                "first": {"required": false, "status": "fail"},
+                "second": {"required": false, "status": "fail"},
+                "server": {"required": true, "status": "pass"}
             })
         );
         assert_eq!(started.elapsed(), CHECK_TIMEOUT);

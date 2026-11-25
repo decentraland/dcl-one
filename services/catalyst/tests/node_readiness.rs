@@ -10,18 +10,20 @@ async fn wait_for(
     child: &mut Child,
     client: &reqwest::Client,
     url: &str,
-    expected: StatusCode,
+    content_status: Option<&str>,
 ) -> Value {
     tokio::time::timeout(Duration::from_secs(45), async {
         loop {
             assert!(
                 child.try_wait().unwrap().is_none(),
-                "serve exited before {url} reported {expected}"
+                "serve exited before {url} reported content {content_status:?}"
             );
-            if let Ok(resp) = client.get(url).send().await
-                && resp.status() == expected
-            {
-                return resp.json().await.unwrap();
+            if let Ok(resp) = client.get(url).send().await {
+                assert_eq!(resp.status(), StatusCode::OK);
+                let report: Value = resp.json().await.unwrap();
+                if report["details"]["content"]["status"].as_str() == content_status {
+                    return report;
+                }
             }
             tokio::time::sleep(Duration::from_millis(200)).await;
         }
@@ -67,16 +69,23 @@ async fn node_readiness_uses_the_configured_services_on_a_real_replica() {
             .env("PROFILE_IMAGES_CACHE_DIR", root.join("profiles"))
             .kill_on_drop(true)
             .stdout(Stdio::null());
+        if !standalone {
+            cmd.env("COMMS_FIXED_ADAPTER", "archipelago:ws://127.0.0.1/ws");
+        }
         let mut child = cmd.spawn().unwrap();
         let mut expected = json!({
-            "status":"pass",
-            "details":{"server":{"status":"pass"},"postgres":{"status":"pass"},"social-rpc":{"status":"pass"}}
+            "status": "pass",
+            "details": {
+                "server": {"required": true, "status": "pass"},
+                "postgres": {"required": false, "status": "pass"},
+                "social-rpc": {"required": true, "status": "pass"}
+            }
         });
         if !standalone {
-            expected["status"] = json!("fail");
-            expected["details"]["content"] = json!({"status":"fail"});
+            expected["details"]["comms"] = json!({"required": false, "status": "fail"});
+            expected["details"]["content"] = json!({"required": false, "status": "fail"});
             assert_eq!(
-                wait_for(&mut child, &client, &url, StatusCode::SERVICE_UNAVAILABLE).await,
+                wait_for(&mut child, &client, &url, Some("fail")).await,
                 expected
             );
             let sync = catalyst::content::SyncStatus::default();
@@ -84,11 +93,10 @@ async fn node_readiness_uses_the_configured_services_on_a_real_replica() {
             catalyst::content::sync::status_mirror::publish(&db.pool, &sync, "test-leader")
                 .await
                 .unwrap();
-            expected["status"] = json!("pass");
-            expected["details"]["content"] = json!({"status":"pass"});
+            expected["details"]["content"] = json!({"required": false, "status": "pass"});
         }
         assert_eq!(
-            wait_for(&mut child, &client, &url, StatusCode::OK).await,
+            wait_for(&mut child, &client, &url, (!standalone).then_some("pass")).await,
             expected
         );
         child.kill().await.unwrap();
