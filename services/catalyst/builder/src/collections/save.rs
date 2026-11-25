@@ -21,24 +21,12 @@ use crate::chain_index::third_parties::LinkedContract;
 use crate::chain_state;
 use crate::http::ApiError;
 use crate::items::ItemsComponent;
+use crate::items::schema::{MAPPING_NETWORKS, URN_NETWORKS};
 use crate::network::Network;
 use crate::third_parties::{parse_raw_metadata, raw_metadata};
 
 use super::{contract, project, row};
 
-const NETWORKS: [&str; 6] = ["mainnet", "goerli", "sepolia", "matic", "mumbai", "amoy"];
-const CONTRACT_NETWORKS: [&str; 10] = [
-    "mainnet",
-    "base_mainnet",
-    "base_sepolia",
-    "monad_mainnet",
-    "monad_testnet",
-    "ape_mainnet",
-    "ape_caldera",
-    "matic",
-    "sepolia",
-    "amoy",
-];
 pub(crate) const TEXT_MAX: usize = 256;
 pub(crate) const LIST_MAX: usize = 1000;
 pub(crate) const DATA_MAX: usize = 1 << 20;
@@ -62,7 +50,7 @@ pub fn third_party_urn(urn: &str) -> Option<(&str, &str)> {
     let slot = |s: &str| !s.is_empty() && !s.chars().any(|c| c == '|' || c.is_whitespace());
     (parts.len() == 6
         && parts[..2] == ["urn", "decentraland"]
-        && NETWORKS.contains(&parts[2])
+        && URN_NETWORKS.contains(&parts[2])
         && parts[3] == "collections-thirdparty"
         && slot(parts[4])
         && slot(parts[5]))
@@ -73,7 +61,7 @@ fn standard_urn(urn: &str) -> bool {
     let parts: Vec<&str> = urn.split(':').collect();
     parts.len() == 5
         && parts[..2] == ["urn", "decentraland"]
-        && NETWORKS.contains(&parts[2])
+        && URN_NETWORKS.contains(&parts[2])
         && parts[3] == "collections-v2"
         && dcl_auth::is_eth_address(parts[4])
 }
@@ -110,7 +98,7 @@ fn field_ok(key: &str, v: &Value) -> bool {
             v.is_null() || v.as_i64().is_some() || v.as_f64().is_some_and(|f| f.fract() == 0.0)
         }
         "linked_contract_address" => nullable(v, dcl_auth::is_eth_address),
-        "linked_contract_network" => nullable(v, |s| CONTRACT_NETWORKS.contains(&s)),
+        "linked_contract_network" => nullable(v, |s| MAPPING_NETWORKS.contains(&s)),
         _ => false,
     }
 }
