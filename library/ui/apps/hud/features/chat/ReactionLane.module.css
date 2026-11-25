@@ -1,0 +1,119 @@
+/* The lane of reactions on screen: over the chat, scaled as the HUD is, taking no pointer. A
+   reaction is four boxes with one movement each, so each runs on the compositor: the rise (the
+   lift nearly balances the drag from the start, so it is steady), the drift (eased out as the
+   kick is spent), the sway, and the glyph's size and fade. */
+.lane {
+  position: fixed;
+  left: 0;
+  top: 0;
+  z-index: calc(var(--z-hud) + 1);
+  width: 0;
+  height: 0;
+  transform: scale(var(--ui-scale));
+  transform-origin: top left;
+  pointer-events: none;
+}
+.particle {
+  position: absolute;
+  animation: rise var(--life) linear both;
+}
+.drift {
+  display: block;
+  animation: drift var(--life) var(--ease-outcubic) both;
+}
+.sway {
+  display: block;
+  animation: sway var(--sway-period) var(--ease-inout) var(--sway-at) infinite alternate;
+}
+/* A square of the reaction's size about its point. */
+.glyph {
+  display: block;
+  width: var(--size);
+  height: var(--size);
+  margin: calc(var(--size) / -2) 0 0 calc(var(--size) / -2);
+  font-family: var(--font-emoji);
+  font-size: var(--size);
+  line-height: var(--size);
+  text-align: center;
+  animation: swell var(--life) linear both;
+}
+
+@keyframes rise {
+  to {
+    transform: translateY(var(--rise));
+  }
+}
+@keyframes drift {
+  to {
+    transform: translateX(var(--drift));
+  }
+}
+@keyframes sway {
+  from {
+    transform: translateX(calc(var(--sway) * -1));
+  }
+  to {
+    transform: translateX(var(--sway));
+  }
+}
+/* It pops in, breathes, swells once near the end and shrinks to nothing; it has faded in by a
+   tenth of its life and fades out over the last. */
+@keyframes swell {
+  0% {
+    transform: scale(0.07);
+    opacity: 0;
+  }
+  4.7% {
+    transform: scale(0.44);
+  }
+  10% {
+    opacity: 1;
+  }
+  18.6% {
+    transform: scale(0.59);
+  }
+  33.1% {
+    transform: scale(0.86);
+  }
+  50% {
+    transform: scale(0.82);
+  }
+  62.7% {
+    transform: scale(1.01);
+  }
+  77.7% {
+    transform: scale(0.89);
+  }
+  90% {
+    opacity: 1;
+  }
+  94.1% {
+    transform: scale(1.75);
+  }
+  100% {
+    transform: scale(0);
+    opacity: 0;
+  }
+}
+@keyframes fade {
+  0%,
+  100% {
+    opacity: 0;
+  }
+  10%,
+  90% {
+    opacity: 1;
+  }
+}
+
+/* Still, where it started: it only fades in and out. */
+@media (prefers-reduced-motion: reduce) {
+  .particle,
+  .drift,
+  .sway {
+    animation: none;
+  }
+  .glyph {
+    animation-name: fade;
+  }
+}

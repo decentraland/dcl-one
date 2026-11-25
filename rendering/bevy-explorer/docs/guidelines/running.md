@@ -288,14 +288,15 @@ State, in every build:
   through `SystemApi::SetChatBubbleText`); `/nametag_official <address> [bool]`
   reads or sets, for the session, whether a wallet's nametag carries the official badge.
 - `/reaction_state`: the situational reactions, as JSON: `world` (the chat bubbles setting lets
-  them show over avatars), `outbox` (the local user's picks not yet sent), `refusedPicks`, `sent`
-  (messages put on a room's transport, one per emoji per send: none with no room to carry it),
-  `received` (peers' messages), `queued` (the reactions waiting to play, and the senders with any
-  waiting or inside the gap after their last), `played`, `particles` (alive, drawn as of the last
-  frame, and waiting for their emoji's glyphs), `atlas` (the size in pixels of the glyph atlas
-  page the emoji are drawn from), `streamed` (the reactions passed to the HUD) to `subscribers`
-  streams, and `dropped` by cause: `blocked`, `duplicate`, `unknownEmoji`, `rateLimited`,
-  `queueFull` and `particleCap`. The counts are of the session.
+  them show over avatars), `screenLane` (the Chat Reactions setting passes them to the HUD),
+  `outbox` (the local user's picks not yet sent), `refusedPicks`, `sent` (messages put on a room's
+  transport, one per emoji per send: none with no room to carry it), `received` (peers'
+  messages), `queued` (the reactions waiting to play, and the senders with any waiting or inside
+  the gap after their last), `played`, `particles` (alive, drawn as of the last frame, and
+  waiting for their emoji's glyphs), `atlas` (the size in pixels of the glyph atlas page the
+  emoji are drawn from), `streamed` (the reactions passed to the HUD) to `subscribers` streams,
+  and `dropped` by cause: `blocked`, `duplicate`, `unknownEmoji`, `rateLimited`, `queueFull` and
+  `particleCap`. The counts are of the session.
   `/reaction_send <emoji>` reacts as the local user, the way the HUD's Reactions button does: the
   reaction is sent to the players nearby and reported to analytics, and an emoji the wire has no
   index for does nothing. The debug panel's "React with a heart" runs it.

@@ -2,10 +2,13 @@ import { afterEach, describe, it, expect, vi } from 'vitest'
 import { render, screen, fireEvent, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { dispatchCancelLayer } from '@explorer-core/lib/cancelLayers'
+import { CHAT_REACTIONS_SETTING } from '@explorer-core/features/chat/reactions'
 import { PREF, getPref, setPref } from '@explorer-core/lib/prefs'
+import type { Setting } from '@explorer-core/engine/protocol'
 import { Chat } from '../../features/chat/Chat'
 import { EMOJI_GROUPS, QUICK_REACTIONS } from '../../features/chat/emojiData'
-import type { ChatState } from '../../features/session/useEngineSession'
+import { SessionProvider } from '../../features/session/SessionContext'
+import type { ChatState, EngineSession } from '../../features/session/useEngineSession'
 import { fakeSession } from '../harness'
 
 const HEART = QUICK_REACTIONS[0]
@@ -16,9 +19,12 @@ function chatState(over: Partial<ChatState> = {}): ChatState {
   return { ...fakeSession().chat, open: true, sendReaction: vi.fn(), react: vi.fn(), ...over }
 }
 
-function renderChat(over: Partial<ChatState> = {}): { chat: ChatState; rerender: (over: Partial<ChatState>, hidden?: boolean) => void } {
+function renderChat(over: Partial<ChatState> = {}, session?: EngineSession): { chat: ChatState; rerender: (over: Partial<ChatState>, hidden?: boolean) => void } {
   const chat = chatState(over)
-  const tree = (state: ChatState, hidden = false): React.JSX.Element => <Chat chat={state} hidden={hidden} />
+  const tree = (state: ChatState, hidden = false): React.JSX.Element => {
+    const ui = <Chat chat={state} hidden={hidden} />
+    return session != null ? <SessionProvider value={session}>{ui}</SessionProvider> : ui
+  }
   const { container, rerender } = render(tree(chat))
   fireEvent.mouseEnter(container.firstChild as Element)
   return { chat, rerender: (next, hidden) => rerender(tree({ ...chat, ...next }, hidden)) }
@@ -27,6 +33,15 @@ function renderChat(over: Partial<ChatState> = {}): { chat: ChatState; rerender:
 const reactions = (): HTMLElement => screen.getByRole('button', { name: 'Reactions' })
 const bar = (): HTMLElement | null => screen.queryByRole('dialog', { name: 'Reactions' })
 const sent = (chat: ChatState): string[] => vi.mocked(chat.sendReaction).mock.calls.map((c) => c[0])
+
+function reactionsSetting(value: number): Setting {
+  return { name: CHAT_REACTIONS_SETTING, category: 'Chat', description: '', minValue: 0, maxValue: 1, namedVariants: [{ name: 'Off', description: '' }, { name: 'On', description: '' }], value, default: 0, stepSize: 1, disabled: false }
+}
+
+function sessionWith(list: Setting[]): EngineSession {
+  const session = fakeSession()
+  return { ...session, settings: { ...session.settings, list } }
+}
 
 afterEach(() => {
   setPref(PREF.emojiRecents, '[]')
@@ -158,5 +173,42 @@ describe('the reactions bar and a message\'s', () => {
     await userEvent.click(reactions())
     expect(screen.queryByRole('dialog', { name: 'React' })).not.toBeInTheDocument()
     expect(bar()).not.toBeInTheDocument()
+  })
+})
+
+describe('the Chat Reactions switch in the bar', () => {
+  it('is not there when the chat renders on its own', async () => {
+    renderChat()
+    await userEvent.click(reactions())
+    expect(screen.queryByRole('switch', { name: 'Chat Reactions' })).not.toBeInTheDocument()
+  })
+
+  it('is not there where the engine lists no such setting', async () => {
+    renderChat({}, sessionWith([]))
+    await userEvent.click(reactions())
+    expect(screen.queryByRole('switch', { name: 'Chat Reactions' })).not.toBeInTheDocument()
+  })
+
+  it.each([
+    [0, false, 1],
+    [1, true, 0]
+  ])('shows the setting at %i and asks the engine for the other value', async (value, checked, asked) => {
+    const session = sessionWith([reactionsSetting(value)])
+    renderChat({}, session)
+    await userEvent.click(reactions())
+    expect(vi.mocked(session.settings.load)).toHaveBeenCalled()
+    const toggle = screen.getByRole('switch', { name: 'Chat Reactions' })
+    expect(toggle).toHaveAttribute('aria-checked', String(checked))
+    await userEvent.click(toggle)
+    expect(vi.mocked(session.settings.set)).toHaveBeenCalledWith(CHAT_REACTIONS_SETTING, asked)
+    // the engine's answer moves it, not the press
+    expect(toggle).toHaveAttribute('aria-checked', String(checked))
+    expect(bar()).toBeInTheDocument()
+  })
+
+  it('waits for a value the engine does not know yet', async () => {
+    renderChat({}, sessionWith([reactionsSetting(-1)]))
+    await userEvent.click(reactions())
+    expect(screen.getByRole('switch', { name: 'Chat Reactions' })).toBeDisabled()
   })
 })

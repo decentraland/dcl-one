@@ -5,11 +5,13 @@
 // Incoming messages come from the bridge getChatStream relay; sends go via BevyApi.sendChat.
 
 import { Fragment, memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import { createPortal } from 'react-dom'
 import type { ChatLine, ChatState, Conversation } from '../session/useEngineSession'
 import type { DmUserState, MessageReaction, NearbyMember } from '@explorer-core/engine/protocol'
-import { Avatar, ControlButton, DclLogo, MaskIcon, Tooltip, Translate, VerifiedBadge, VoiceBars } from '../../design'
+import { Avatar, ControlButton, DclLogo, MaskIcon, Toggle, Tooltip, Translate, VerifiedBadge, VoiceBars } from '../../design'
 import { EmojiPicker, useCloseEmojiPanelOnOutsidePress } from './EmojiPicker'
 import { EmojiButton } from './EmojiButton'
+import { ReactionLane } from './ReactionLane'
 import { EmojiSuggestList, emojiSuggestionAt, moveSelection, tokenAtCaret } from './EmojiSuggestList'
 import { ConversationMenu, MENU_LAYER } from './ConversationMenu'
 import { HeartIcon } from './ChatIcons'
@@ -22,6 +24,7 @@ import { displaySender, isSystem, memberLabel, senderColor, shortAddr, splitName
 import { EMOJI_BY_CODE, EMOJI_BY_GLYPH, QUICK_REACTIONS, loadRecents, type Emoji } from './emojiData'
 import { MessageText } from './chatText'
 import { mentionsMe } from '@explorer-core/features/chat/chatParse'
+import { CHAT_REACTIONS_SETTING } from '@explorer-core/features/chat/reactions'
 import { registerCancelLayer } from '@explorer-core/lib/cancelLayers'
 import { autoTranslates, clearAutoTranslate, getTranslation, hasTranslatableText, languageName, requestTranslation, showOriginal, type Translation } from '@explorer-core/features/chat/translation'
 import { useTranslationPrefs, useTranslations } from './useTranslation'
@@ -401,7 +404,8 @@ function ReactionBar({
   className = '',
   style,
   onPick,
-  onMore
+  onMore,
+  children
 }: {
   line?: ChatLine
   me?: string
@@ -411,6 +415,8 @@ function ReactionBar({
   style?: React.CSSProperties
   onPick: (emoji: string) => void
   onMore: () => void
+  /** Shown above the emoji. */
+  children?: React.ReactNode
 }): React.JSX.Element {
   const MAX_RECENT = 3
   const recent = useMemo(
@@ -437,12 +443,37 @@ function ReactionBar({
   )
   return (
     <div className={`${styles.reactionBar} ${className}`.trim()} style={style} role="dialog" aria-label={label}>
-      {QUICK_REACTIONS.map(item)}
-      {recent.length > 0 && <span className={styles.barDivider} aria-hidden="true" />}
-      {recent.map(item)}
-      <button type="button" className={styles.barMore} aria-label="More emoji" onClick={onMore}>
-        +
-      </button>
+      {children}
+      <div className={styles.barRow}>
+        {QUICK_REACTIONS.map(item)}
+        {recent.length > 0 && <span className={styles.barDivider} aria-hidden="true" />}
+        {recent.map(item)}
+        <button type="button" className={styles.barMore} aria-label="More emoji" onClick={onMore}>
+          +
+        </button>
+      </div>
+    </div>
+  )
+}
+
+/** The "Chat Reactions" setting's switch, in the reactions button's bar: whether reactions show
+ *  on screen too. Nothing where the engine lists no such setting. */
+function ScreenReactionsSwitch(): React.JSX.Element | null {
+  const settings = useOptionalSession()?.settings
+  const load = settings?.load
+  useEffect(() => load?.(), [load])
+  const setting = settings?.list.find((s) => s.name === CHAT_REACTIONS_SETTING)
+  if (settings == null || setting == null) return null
+  return (
+    <div className={styles.barOptions}>
+      <span aria-hidden="true">Chat Reactions</span>
+      <Toggle
+        size="sm"
+        checked={setting.value >= 1}
+        disabled={setting.value < 0 || setting.disabled}
+        aria-label="Chat Reactions"
+        onChange={(on) => settings.set(CHAT_REACTIONS_SETTING, on ? 1 : 0)}
+      />
     </div>
   )
 }
@@ -1387,6 +1418,8 @@ export function Chat({
           </ControlButton>
         )}
       </span>
+      {/* on the page itself: the panel clips what it paints, and reactions rise out of it */}
+      {createPortal(<ReactionLane subscribe={chat.onReaction} anchor={heartRef} />, document.body)}
       {open && pillTip != null && <PillTip label={pillTip.label} top={pillTip.top} center={pillTip.center} />}
       {open && reactingLine != null && reacting?.kind === 'line' && !reactPicker && (
         <div ref={reactRef} className={styles.reactionLayer}>
@@ -1402,7 +1435,9 @@ export function Chat({
       {open && situational && !reactPicker && (
         // a press here takes no focus: a key meant for the world would press the emoji again
         <div ref={reactRef} className={styles.reactionLayer} onMouseDown={(e) => e.preventDefault()}>
-          <ReactionBar label="Reactions" className={styles.reactionBarAnchored} onPick={pickReaction} onMore={() => setReactPicker(true)} />
+          <ReactionBar label="Reactions" className={styles.reactionBarAnchored} onPick={pickReaction} onMore={() => setReactPicker(true)}>
+            <ScreenReactionsSwitch />
+          </ReactionBar>
         </div>
       )}
     </div>

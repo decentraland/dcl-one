@@ -362,7 +362,8 @@ shows them and stops or restarts them (`bridge-scene/src/domains/portables.ts`).
 
 A situational reaction is an emoji the player picks from the chat's Reactions button. The engine
 shows it over their avatar and tells the players around them (`crates/avatar/src/reaction`); the
-HUD offers the pick (`bridge-scene/src/domains/reactions.ts`). Expectations:
+HUD offers the pick and shows each reaction the engine plays on screen
+(`bridge-scene/src/domains/reactions.ts`). Expectations:
 
 - **Button**: the heart in the chat's strip, named `Reactions`, pressed while its bar is open. It
   shows while the chat is open and not showing the nearby list, in every conversation, a blocked
@@ -373,9 +374,18 @@ HUD offers the pick (`bridge-scene/src/domains/reactions.ts`). Expectations:
   recent, and the picker stays open too. A press outside, the button again, another conversation,
   the nearby list, or the chat closing or giving way to a panel closes it; Cancel closes the
   picker, then the bar. It and a message's bar are never both open.
-- An emoji the wire has no index for (a flag) plays nowhere: the engine drops the pick.
-- Tests: `library/ui/apps/hud/test/hosted/chatReactions.test.tsx` and
-  `chatReactions.clicks.test.tsx`, `src/test/bridgeReactions.test.ts`.
+- **Chat Reactions switch**: in the bar, bound to the engine's `Chat Reactions` setting (off until
+  the player turns it on; the Settings page lists it too). Absent on an engine with no such
+  setting.
+- **On screen**: while the setting is on the engine passes each reaction it plays (`reaction`),
+  the player's own included, and each rises from beside the button for about two seconds
+  (`features/chat/ReactionLane.tsx`, its numbers in `reactionMotion.ts`). At most 30 fly at once;
+  more are not shown. An emoji the wire has no index for (a flag) plays nowhere, so the HUD shows
+  none of its own accord. With reduced motion a reaction fades in place.
+- Mock: `?mock=1&mockreactions=1` (the setting on and the nearby players reacting). Tests:
+  `library/ui/apps/hud/test/hosted/chatReactions.test.tsx`, `chatReactions.clicks.test.tsx` and
+  `chatReactionLane.test.tsx`, `library/ui/apps/hud/features/chat/reactionMotion.test.ts`,
+  `src/test/bridgeReactions.test.ts`.
 
 ## Analytics
 

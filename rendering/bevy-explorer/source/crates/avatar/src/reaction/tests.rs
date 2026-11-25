@@ -72,6 +72,7 @@ fn harness() -> Harness {
     let (sender, hud) = RpcStreamSender::channel();
     app.world_mut()
         .send_event(SystemApi::GetReactionStream(sender));
+    app.world_mut().resource_mut::<AppConfig>().chat_reactions = true;
     app.update();
 
     Harness {
@@ -396,6 +397,35 @@ fn a_sender_who_leaves_takes_their_waiting_reactions() {
     // a message of theirs still on its way in finds no one
     harness.hear(peer, "👍", 2.0, 1);
     harness.run(2.0);
+    assert_eq!(harness.streamed().len(), 1);
+}
+
+#[test]
+fn the_hud_hears_nothing_while_the_setting_is_off() {
+    let mut harness = harness();
+    let peer = harness.peer();
+    harness
+        .app
+        .world_mut()
+        .resource_mut::<AppConfig>()
+        .chat_reactions = false;
+    harness.pick("👍");
+    harness.hear(peer, "🔥", 1.0, 2);
+    harness.run(1.0);
+    assert!(harness.streamed().is_empty());
+    // they played all the same
+    assert_eq!(harness.stats().played, 3);
+
+    // switched back on, only what plays from then on is passed
+    harness
+        .app
+        .world_mut()
+        .resource_mut::<AppConfig>()
+        .chat_reactions = true;
+    harness.app.update();
+    assert!(harness.streamed().is_empty());
+    harness.pick("👍");
+    harness.app.update();
     assert_eq!(harness.streamed().len(), 1);
 }
 

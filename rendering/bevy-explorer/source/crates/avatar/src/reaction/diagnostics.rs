@@ -26,6 +26,7 @@ pub const SECTION: DebugSection = DebugSection {
     query: "/reaction_state",
     fields: &[
         ("Shown over avatars (chat bubbles setting)", "world"),
+        ("Shown on screen (Chat Reactions setting)", "screenLane"),
         ("Picks waiting to be sent", "outbox"),
         ("Picks refused", "refusedPicks"),
         ("Messages sent", "sent"),
@@ -61,18 +62,19 @@ pub const SECTION: DebugSection = DebugSection {
 };
 
 /// Report the reactions as JSON: `world` (the chat bubbles setting lets them show over
-/// avatars), `outbox` (the local user's picks not yet sent), `refusedPicks` (their picks that
-/// were no emoji the wire carries, or had no wallet to send them), `sent` (messages put on a
-/// room's transport, one per emoji per send: none with no room to carry it), `received` (peers'
-/// messages), `queued` (the reactions waiting to play, and the senders with any waiting or
-/// inside the gap after their last), `played`, `particles` (those alive, those of them drawn as
-/// of the last frame, and those waiting for their emoji's glyphs), `atlas` (the size in pixels
-/// of the glyph atlas page the emoji are drawn from, 0 before the first), `streamed` (the
-/// reactions passed to the HUD) to `subscribers` streams, and `dropped`, by cause: `blocked`
-/// (messages and waiting reactions of a sender blocked or banned), `duplicate` (a message's
-/// copy by another room), `unknownEmoji`, `rateLimited` (messages), `queueFull` (reactions that
-/// gave way to newer ones) and `particleCap` (reactions that played with no particle, as many
-/// as may be being alive). The counts are of this session.
+/// avatars), `screenLane` (the "Chat Reactions" setting passes them to the HUD), `outbox` (the
+/// local user's picks not yet sent), `refusedPicks` (their picks that were no emoji the wire
+/// carries, or had no wallet to send them), `sent` (messages put on a room's transport, one per
+/// emoji per send: none with no room to carry it), `received` (peers' messages), `queued` (the
+/// reactions waiting to play, and the senders with any waiting or inside the gap after their
+/// last), `played`, `particles` (those alive, those of them drawn as of the last frame, and
+/// those waiting for their emoji's glyphs), `atlas` (the size in pixels of the glyph atlas page
+/// the emoji are drawn from, 0 before the first), `streamed` (the reactions passed to the HUD)
+/// to `subscribers` streams, and `dropped`, by cause: `blocked` (messages and waiting reactions
+/// of a sender blocked or banned), `duplicate` (a message's copy by another room),
+/// `unknownEmoji`, `rateLimited` (messages), `queueFull` (reactions that gave way to newer
+/// ones) and `particleCap` (reactions that played with no particle, as many as may be being
+/// alive). The counts are of this session.
 #[derive(clap::Parser, ConsoleCommand)]
 #[command(name = "/reaction_state")]
 pub struct ReactionStateCommand;
@@ -98,6 +100,7 @@ pub fn reaction_state(
     cmd.reply_ok(
         json!({
             "world": config.chat_bubble_visibility != ChatBubbleVisibility::None,
+            "screenLane": config.chat_reactions,
             "outbox": outboxes.iter().map(ReactionOutbox::waiting).sum::<u32>(),
             "refusedPicks": stats.refused_picks,
             "sent": stats.sent,

@@ -11,7 +11,7 @@ import { type GotoTarget, randomParcel, worldOfRealm } from '@explorer-core/feat
 import { answerItemPurchase, type PurchaseSceneItem } from '../itemPurchase/answer'
 import type { PlatformBanNotice, PortableInfo, PortableState, SatelliteView, WorldAccessVerdict } from '@explorer-core/engine/generated'
 import type { AvatarLook } from '@explorer-core/engine/avatarEquip'
-import { PLATFORM_BANNED_REFUSAL, type UiSound, type EngineViewportRegion, type GiftingPageMessage, type GiftingQueryRequest, type PhotoModeSnapshot, type PhotoModeSource, type PreviewFocus } from '@explorer-core/engine/protocol'
+import { PLATFORM_BANNED_REFUSAL, type UiSound, type EngineViewportRegion, type GiftingPageMessage, type GiftingQueryRequest, type PhotoModeSnapshot, type PhotoModeSource, type PreviewFocus, type SituationalReaction } from '@explorer-core/engine/protocol'
 import { clickButton, screenViewed, sessionId, track } from '@explorer-core/lib/analytics'
 import { useStoredProfile } from '../login/useStoredProfile'
 import { inShell, postToShell } from '@explorer-core/lib/shell'
@@ -915,6 +915,9 @@ export interface ChatState {
   react: (messageId: string, emoji: string, remove: boolean) => void
   /** Reacts with an emoji, shown over the local user's avatar. An emoji the wire does not carry does nothing. */
   sendReaction: (emoji: string) => void
+  /** Hears each situational reaction as it plays, the local user's included, until the returned
+   *  function is called. None arrive while the "Chat Reactions" setting is off. */
+  onReaction: (listener: (reaction: SituationalReaction) => void) => () => void
   /** The Nearby lines, whichever channel is shown. */
   nearby: ChatLine[]
   /** Redraws the bubble over a Nearby sender's head with other words, while it is still that message's. */
@@ -1522,6 +1525,7 @@ export function useEngineSession(createDriver: () => LoginDriver, host: SessionH
   // Reactions to Nearby lines, by message id; a DM tab's come with its stored history.
   const [nearbyReactions, setNearbyReactions] = useState<Record<string, MessageReaction[]>>({})
   const nearbyIdsRef = useRef<Set<string>>(new Set())
+  const reactionListeners = useRef(new Set<(reaction: SituationalReaction) => void>())
   // Every community the local user is a member of, as chat tabs (closed ones included: `closed`
   // says which are hidden), most recently active first. The handler reads the refs.
   const [communityConvos, setCommunityConvos] = useState<CommunityConversation[]>([])
@@ -2078,6 +2082,10 @@ export function useEngineSession(createDriver: () => LoginDriver, host: SessionH
           })
           break
         }
+        case 'reaction':
+          // straight to whoever shows them: a reaction that plays is no state of the session
+          for (const listener of reactionListeners.current) listener(msg.reaction)
+          break
         case 'chatReaction': {
           const r = msg.reaction
           if (r.channel === 'Nearby') {
@@ -3355,6 +3363,12 @@ export function useEngineSession(createDriver: () => LoginDriver, host: SessionH
   }, [])
   const sendReaction = useCallback((emoji: string) => {
     driverRef.current?.send({ kind: 'sendReaction', emoji })
+  }, [])
+  const onReaction = useCallback((listener: (reaction: SituationalReaction) => void) => {
+    reactionListeners.current.add(listener)
+    return () => {
+      reactionListeners.current.delete(listener)
+    }
   }, [])
   const bubbleText = useCallback((sender: string, messageId: string, message: string) => {
     driverRef.current?.send({ kind: 'chatBubbleText', sender, messageId, message })
@@ -5488,6 +5502,7 @@ export function useEngineSession(createDriver: () => LoginDriver, host: SessionH
       playSound: playUiSound,
       react: reactInChat,
       sendReaction,
+      onReaction,
       nearby: messages,
       bubbleText,
       channel,

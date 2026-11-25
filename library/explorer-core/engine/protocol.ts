@@ -108,7 +108,8 @@ export interface SendChatReactionRequest {
 }
 
 /** React with an emoji, shown over the local user's avatar (page → engine via the scene's
- *  BevyApi.sendReaction). An emoji the wire does not carry does nothing. */
+ *  BevyApi.sendReaction). An emoji the wire does not carry does nothing. One that plays comes back
+ *  as a ReactionMessage while the "Chat Reactions" setting is on. */
 export interface SendReactionRequest {
   kind: 'sendReaction'
   emoji: string
@@ -385,6 +386,19 @@ export interface ChatReaction {
 export interface ChatReactionMessage {
   kind: 'chatReaction'
   reaction: ChatReaction
+}
+
+/** A situational reaction as it plays: an emoji shown for `from`, the local user or a peer. */
+export interface SituationalReaction {
+  from: string
+  emoji: string
+}
+
+/** Streamed situational reactions (scene → page): one for each that plays, the local user's
+ *  included, and none while the "Chat Reactions" setting is off. */
+export interface ReactionMessage {
+  kind: 'reaction'
+  reaction: SituationalReaction
 }
 
 /** Streamed incoming chat messages (scene → page). */
@@ -2618,6 +2632,7 @@ export type SceneToPage =
   | TextureOptimizationMessage
   | ChatRelayMessage
   | ChatReactionMessage
+  | ReactionMessage
   | ConsoleReplyMessage
   | ChatVisibilityMessage
   | FocusChatMessage

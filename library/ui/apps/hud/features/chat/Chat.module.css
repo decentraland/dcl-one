@@ -704,19 +704,37 @@ button.translationMark {
   left: 8px;
   z-index: 2;
   display: flex;
-  align-items: center;
-  gap: 2px;
-  height: 40px;
+  flex-direction: column;
   padding: 0 6px;
   box-sizing: border-box;
   border-radius: var(--r-md);
   background: var(--panel);
 }
-/* The reactions button's bar: 4px above the button and ending where it does. */
+.barRow {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  height: 40px;
+}
+/* The reactions button's bar: 4px above the button and ending where it does, its option over
+   its emoji. */
 .reactionBarAnchored {
   left: auto;
   right: 5px;
   bottom: 47px;
+}
+.barOptions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  height: 32px;
+  padding: 0 4px;
+  box-sizing: border-box;
+  border-bottom: 1px solid var(--white-10);
+  color: var(--white);
+  font-size: var(--type-12);
+  font-weight: var(--fw-semibold);
 }
 .barEmoji,
 .barMore {

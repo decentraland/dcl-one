@@ -38,6 +38,7 @@ import {
 } from './protocol'
 import { applyProfileEdit } from './profileEdit'
 import { mentionName } from './mention'
+import { CHAT_REACTIONS_SETTING } from '../features/chat/reactions'
 import { mockEventList, mockEventPlaces, setMockReminder } from './mockEvents'
 import type { Color3, PortableInfo, PortableState } from './generated/index'
 import { GENESIS_SATELLITE_VIEW } from '../features/map/atlas'
@@ -405,6 +406,8 @@ const ON_OFF = ['Off', 'On']
 // names, order and values are the reference client's settings pages (Graphics, Sounds, Controls,
 // Chat); 'Master Volume' and 'Voice Volume' keep the engine's names, which the rail's Volume
 // popover and the nearby-voice panel read.
+/** Whether the mock passes reactions to the page: its "Chat Reactions" setting. */
+const reactionsShown = (): boolean => (mockSettings.find((s) => s.name === CHAT_REACTIONS_SETTING)?.value ?? 0) >= 1
 const mockSettings: Setting[] = [
   choice('Experimental Lobby (requires restart)', 'graphics', ON_OFF, 1),
   choice('Graphics Preset', 'graphics', ['Low', 'Medium', 'High', 'Custom'], 3),
@@ -442,7 +445,7 @@ const mockSettings: Setting[] = [
   choice('Exchange DMs & Calls with', 'chat', ['Everyone', 'Only Friends'], 0),
   choice('In-World Chat Bubbles & Reactions', 'chat', ['All Chats', 'Nearby Only', 'None'], 0),
   choice('Language', 'chat', ['English', 'Español', 'Français', 'Deutsch', 'Português', '中文', '日本語', '한국어'], 0),
-  choice('Chat Reactions', 'chat', ON_OFF, 0)
+  choice(CHAT_REACTIONS_SETTING, 'chat', ON_OFF, 0)
 ]
 
 // The engine's default binding table (mirrors InputMap::default() in crates/common/src/inputs.rs)
@@ -1054,6 +1057,20 @@ export function startMockBridge(opts: Partial<MockOptions> = {}): () => void {
       }
     })
 
+    // ?mockreactions=1 → the "Chat Reactions" setting starts on and the players nearby react every
+    // so often, so the on-screen lane has something to show without a second player.
+    if (new URLSearchParams(location.search).get('mockreactions') === '1') {
+      const setting = mockSettings.find((s) => s.name === CHAT_REACTIONS_SETTING)
+      if (setting != null) setting.value = 1
+      const emoji = ['\u{2665}\u{fe0f}', '\u{1f44f}', '\u{1f525}', '\u{1f923}']
+      let played = 0
+      if (!alone) setInterval(() => {
+        if (!reactionsShown()) return
+        reply({ kind: 'reaction', reaction: { from: samples[played % samples.length][0], emoji: emoji[played % emoji.length] } })
+        played++
+      }, 700)
+    }
+
     // ?worldpw=1 → fire a sample world password prompt so the dialog is exercisable in the mock; a
     // wrong answer (anything but "open-sesame") re-asks with the reason, as the engine does.
     if (new URLSearchParams(location.search).get('worldpw') === '1') {
@@ -1227,6 +1244,11 @@ export function startMockBridge(opts: Partial<MockOptions> = {}): () => void {
           { address: '0x6723dcb07f3ca735223cd1c0acfa62dd994a1bb4', name: 'Sharknado' }
         ]
       })
+      return
+    }
+    if (msg.kind === 'sendReaction') {
+      // Play the local player's reaction back, as the engine does while the setting is on.
+      if (reactionsShown()) reply({ kind: 'reaction', reaction: { from: o.userId.toLowerCase(), emoji: msg.emoji } })
       return
     }
     if (msg.kind === 'getSettings') {

@@ -17,5 +17,7 @@ export const MOCK_SWITCHES = [
   'mockcall',
   'mockstream',
   'mockportables',
-  'mockEvents'
+  'mockEvents',
+  // the players nearby reacting, with reactions shown on screen
+  'mockreactions'
 ] as const

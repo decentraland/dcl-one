@@ -413,7 +413,9 @@ ends in "we don't do that", so the next person doesn't have to rediscover it.
   reactions play 0.2 s apart whichever messages they came in; unity-explorer starts the gap
   afresh for a message that finds none of theirs waiting, which lets a sender of one-reaction
   messages play twenty a second. In the HUD, Cancel closes the bar, the full picker takes the
-  bar's place while it is open, and a pick with no index still becomes a recent emoji.
+  bar's place while it is open, and a pick with no index still becomes a recent emoji. The
+  reactions on screen scale with the HUD, are solved to where each ends and animated to there,
+  fade in place under reduced motion and are drawn in the system's emoji.
 - **Community creation and editing.** The form follows unity-explorer's (fields, limits, texts,
   the content check's two refusal screens, every HTTP 400 read as the check's answer), with
   these differences. CANCEL on the refusal screen asks "Discard this community?" first, as the
