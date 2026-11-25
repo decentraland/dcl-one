@@ -4625,13 +4625,20 @@ async fn ethereum_names_v1_wearables_land_data_and_the_land_routes() {
         ),
         (Some("PixelGolf"), Some("PixelGolf"), Some(BOB))
     );
-    // The NAME browse's price range is in wei and bounds the open listing; `cheapest` sorts by it.
-    // A search reads this index (without one the subgraph serves, its `where` checked in nfts.rs).
+    // The NAME browse's price range is in MANA (read as wei, as the legacy `parsePrice`) and
+    // bounds the open listing, here 5000 wei; `cheapest` sorts by it. A search reads this index
+    // (without one the subgraph serves, its `where` checked in nfts.rs).
     for (range, listed) in [
-        ("minPrice=5000&maxPrice=5000", true),
-        ("minPrice=1&maxPrice=9000", true),
-        ("minPrice=5001", false),
-        ("maxPrice=4999", false),
+        (
+            "minPrice=0.000000000000005&maxPrice=0.000000000000005",
+            true,
+        ),
+        (
+            "minPrice=0.000000000000000001&maxPrice=0.000000000000009",
+            true,
+        ),
+        ("minPrice=0.000000000000005001", false),
+        ("maxPrice=0.000000000000004999", false),
     ] {
         let (code, body) = get_json(
             &app,
@@ -4830,6 +4837,19 @@ async fn ethereum_names_v1_wearables_land_data_and_the_land_routes() {
         (StatusCode::OK, json!({ "2": 1 })),
         "{body}"
     );
+    // The price bounds are MANA, as the legacy `parseEther`: a decimal amount
+    // reads, one ethers would not parse is a 400 naming the parameter.
+    let (code, body) = get_json(&app, "/v1/stats/estate/size?minPrice=0.5&maxPrice=12").await;
+    assert_eq!(code, StatusCode::OK, "{body}");
+    for (key, bad) in [("minPrice", "abc"), ("maxPrice", "1e18")] {
+        let (code, body) = get_json(&app, &format!("/v1/stats/estate/size?{key}={bad}")).await;
+        assert_eq!(code, StatusCode::BAD_REQUEST, "{body}");
+        assert_eq!(
+            body["message"].as_str(),
+            Some(format!("Invalid {key} value: {bad}").as_str()),
+            "{body}"
+        );
+    }
     // The geography filters read the squid's static LAND map (none of these
     // parcels is in it: distance -1, no road), with the squid's semantics:
     // `<= max` keeps a -1, `>= min` and `adjacentToRoad` drop it.
