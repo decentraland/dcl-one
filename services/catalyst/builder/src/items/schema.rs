@@ -32,7 +32,7 @@ const RARITIES: &[&str] = &[
     "uncommon",
     "common",
 ];
-const WEARABLE_CATEGORIES: &[&str] = &[
+pub(crate) const WEARABLE_CATEGORIES: &[&str] = &[
     "eyebrows",
     "eyes",
     "facial_hair",
@@ -52,7 +52,7 @@ const WEARABLE_CATEGORIES: &[&str] = &[
     "skin",
     "hands_wear",
 ];
-const EMOTE_CATEGORIES: &[&str] = &[
+pub(crate) const EMOTE_CATEGORIES: &[&str] = &[
     "dance",
     "stunt",
     "greetings",
@@ -66,14 +66,15 @@ const BODY_SHAPES: &[&str] = &[
     "urn:decentraland:off-chain:base-avatars:BaseMale",
     "urn:decentraland:off-chain:base-avatars:BaseFemale",
 ];
-const URN_NETWORKS: &[&str] = &["mainnet", "goerli", "sepolia", "matic", "mumbai", "amoy"];
+pub(crate) const URN_NETWORKS: &[&str] =
+    &["mainnet", "goerli", "sepolia", "matic", "mumbai", "amoy"];
 /// Mapping entries one item may hold: upstream's largest has one.
 pub const MAX_MAPPINGS: usize = 100;
 /// Token ids one item's mappings may name, `single` and `multiple` entries
 /// together: upstream's largest names 2,232.
 pub const MAX_MAPPING_IDS: usize = 10_000;
 
-const MAPPING_NETWORKS: &[&str] = &[
+pub(crate) const MAPPING_NETWORKS: &[&str] = &[
     "mainnet",
     "base_mainnet",
     "base_sepolia",

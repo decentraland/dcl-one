@@ -262,38 +262,10 @@ fn prepare_item(row: &Value, signer: &str) -> Result<PublicationItem, ApiError> 
         return Err(invalid("upload the thumbnail before publishing"));
     }
     let category = item.data["category"].as_str().unwrap_or_default();
-    let categories: &[&str] = if item.item_type == "emote" {
-        &[
-            "dance",
-            "stunt",
-            "greetings",
-            "fun",
-            "poses",
-            "reactions",
-            "horror",
-            "miscellaneous",
-        ]
+    let categories = if item.item_type == "emote" {
+        crate::items::schema::EMOTE_CATEGORIES
     } else {
-        &[
-            "eyebrows",
-            "eyes",
-            "facial_hair",
-            "hair",
-            "body_shape",
-            "mouth",
-            "upper_body",
-            "lower_body",
-            "feet",
-            "earring",
-            "eyewear",
-            "hat",
-            "helmet",
-            "mask",
-            "tiara",
-            "top_head",
-            "skin",
-            "hands_wear",
-        ]
+        crate::items::schema::WEARABLE_CATEGORIES
     };
     if !categories.contains(&category) {
         return Err(invalid("choose a valid category"));
