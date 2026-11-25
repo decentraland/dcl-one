@@ -653,13 +653,15 @@ impl Settings {
 }
 
 /// `url` with `query` appended after `?`, or after `&` when it has one
-/// (credits-server's `appendQuery`).
+/// (credits-server's `appendQuery`). A `#` fragment stays last, so the query
+/// still reaches the page's server.
 fn append_query(url: &str, query: &str) -> String {
     if query.is_empty() {
         return url.to_string();
     }
-    let separator = if url.contains('?') { '&' } else { '?' };
-    format!("{url}{separator}{query}")
+    let (base, fragment) = url.split_at(url.find('#').unwrap_or(url.len()));
+    let separator = if base.contains('?') { '&' } else { '?' };
+    format!("{base}{separator}{query}{fragment}")
 }
 
 /// The sources a credits state is built over: the marketplace and price
