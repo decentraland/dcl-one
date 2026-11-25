@@ -3,8 +3,7 @@
 // warning a user gets before the browser silently stops accepting characters. Its stylesheet only stacks the two.
 
 import { useState } from 'react'
-import { CharCounter } from './CharCounter'
-import { InputExplorerNames } from '@dcl/one-ui'
+import { CharCounter, InputExplorerNames } from '@dcl/one-ui'
 import styles from './TextArea.module.css'
 
 export interface TextAreaProps extends Omit<React.TextareaHTMLAttributes<HTMLTextAreaElement>, 'onChange' | 'value'> {

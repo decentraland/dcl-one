@@ -3045,23 +3045,7 @@
           "kind": "regular"
         },
         {
-          "name": "CharCounter.module.css",
-          "kind": "regular"
-        },
-        {
-          "name": "CharCounter.tsx",
-          "kind": "regular"
-        },
-        {
           "name": "Chip.tsx",
-          "kind": "regular"
-        },
-        {
-          "name": "CodeInput.module.css",
-          "kind": "regular"
-        },
-        {
-          "name": "CodeInput.tsx",
           "kind": "regular"
         },
         {
@@ -3114,14 +3098,6 @@
         },
         {
           "name": "EquippedItemCard.tsx",
-          "kind": "regular"
-        },
-        {
-          "name": "FieldLabel.module.css",
-          "kind": "regular"
-        },
-        {
-          "name": "FieldLabel.tsx",
           "kind": "regular"
         },
         {
@@ -3258,10 +3234,6 @@
         },
         {
           "name": "Submenu.tsx",
-          "kind": "regular"
-        },
-        {
-          "name": "SubmitField.module.css",
           "kind": "regular"
         },
         {
@@ -7598,6 +7570,10 @@
           "kind": "directory"
         },
         {
+          "name": "CharCounter",
+          "kind": "directory"
+        },
+        {
           "name": "Checkbox",
           "kind": "directory"
         },
@@ -7611,6 +7587,10 @@
         },
         {
           "name": "CloseButton",
+          "kind": "directory"
+        },
+        {
+          "name": "CodeInput",
           "kind": "directory"
         },
         {
@@ -7631,6 +7611,10 @@
         },
         {
           "name": "EventCard",
+          "kind": "directory"
+        },
+        {
+          "name": "FieldLabel",
           "kind": "directory"
         },
         {
@@ -7715,6 +7699,10 @@
         },
         {
           "name": "Spinner",
+          "kind": "directory"
+        },
+        {
+          "name": "SubmitField",
           "kind": "directory"
         },
         {
@@ -7972,6 +7960,23 @@
       ]
     },
     {
+      "path": "library/ui/components/CharCounter",
+      "entries": [
+        {
+          "name": "CharCounter.module.css",
+          "kind": "regular"
+        },
+        {
+          "name": "CharCounter.test.tsx",
+          "kind": "regular"
+        },
+        {
+          "name": "CharCounter.tsx",
+          "kind": "regular"
+        }
+      ]
+    },
+    {
       "path": "library/ui/components/Checkbox",
       "entries": [
         {
@@ -8055,6 +8060,23 @@
         },
         {
           "name": "CloseButtonStyle.figma.ts",
+          "kind": "regular"
+        }
+      ]
+    },
+    {
+      "path": "library/ui/components/CodeInput",
+      "entries": [
+        {
+          "name": "CodeInput.module.css",
+          "kind": "regular"
+        },
+        {
+          "name": "CodeInput.test.tsx",
+          "kind": "regular"
+        },
+        {
+          "name": "CodeInput.tsx",
           "kind": "regular"
         }
       ]
@@ -8164,6 +8186,23 @@
         },
         {
           "name": "EventCard.tsx",
+          "kind": "regular"
+        }
+      ]
+    },
+    {
+      "path": "library/ui/components/FieldLabel",
+      "entries": [
+        {
+          "name": "FieldLabel.module.css",
+          "kind": "regular"
+        },
+        {
+          "name": "FieldLabel.test.tsx",
+          "kind": "regular"
+        },
+        {
+          "name": "FieldLabel.tsx",
           "kind": "regular"
         }
       ]
@@ -8673,6 +8712,23 @@
         },
         {
           "name": "Spinner.tsx",
+          "kind": "regular"
+        }
+      ]
+    },
+    {
+      "path": "library/ui/components/SubmitField",
+      "entries": [
+        {
+          "name": "SubmitField.module.css",
+          "kind": "regular"
+        },
+        {
+          "name": "SubmitField.test.tsx",
+          "kind": "regular"
+        },
+        {
+          "name": "SubmitField.tsx",
           "kind": "regular"
         }
       ]
@@ -12143,24 +12199,8 @@
       "sha256": "edd036a052031f2bfb98b4b2fb9089a3d5beb96c5a2d76dabd5c2f2e2c691b6b"
     },
     {
-      "path": "library/ui/apps/hud/design/CharCounter.module.css",
-      "sha256": "f2848d55dcee9bc376dff0c775d24f2d8122ecb15008201e6ec6346819ad4adb"
-    },
-    {
-      "path": "library/ui/apps/hud/design/CharCounter.tsx",
-      "sha256": "75c5a48abeabfaa3a7a3a189d43d0e731a7998663587dd6bcd13a0a00d176b9c"
-    },
-    {
       "path": "library/ui/apps/hud/design/Chip.tsx",
       "sha256": "45f5948e1d8794907dd45ea9d73fdcb754e377111015140c383d1fb27714cef6"
-    },
-    {
-      "path": "library/ui/apps/hud/design/CodeInput.module.css",
-      "sha256": "8348fd1bb220bbe707a237a238297f108ca02e0f38236e11e968909bc3ec6f1d"
-    },
-    {
-      "path": "library/ui/apps/hud/design/CodeInput.tsx",
-      "sha256": "f2f7fa8d775f5ea9b12bcf2e59ae0f5d4cbf869057b3207d4982b6bfd7189258"
     },
     {
       "path": "library/ui/apps/hud/design/ColorPicker.module.css",
@@ -12213,14 +12253,6 @@
     {
       "path": "library/ui/apps/hud/design/EquippedItemCard.tsx",
       "sha256": "0f5dde2054d0298545de346a0a93cade3cce45f9586e7c44259d02fc2025684d"
-    },
-    {
-      "path": "library/ui/apps/hud/design/FieldLabel.module.css",
-      "sha256": "9cf11ba3660b2c079d2c52708e5d1d2e0363f130758044183b63ef20effe7da4"
-    },
-    {
-      "path": "library/ui/apps/hud/design/FieldLabel.tsx",
-      "sha256": "2349abe3be090b0d9a2448aa693093e46c48324160ce739574489fa0d743cf38"
     },
     {
       "path": "library/ui/apps/hud/design/Glyphs.module.css",
@@ -12336,11 +12368,11 @@
     },
     {
       "path": "library/ui/apps/hud/design/Showcase.tsx",
-      "sha256": "adcecadf4f307dd866aafccb80f86ce94694c036e70954aa6f9680d82f2644ee"
+      "sha256": "18296188e364d4971e4ce7df4f29784fe2b00b9623b2accfe64de38ff1464e96"
     },
     {
       "path": "library/ui/apps/hud/design/ShowcaseIndex.ts",
-      "sha256": "3b0e93efdc01c46fdf8ddaa5a605cb95e26210d6905148a790a9b6a4a3f7686c"
+      "sha256": "51a5f1bbdfe36e6df4beeecdbb7c96cb2862be57e089940c52be26898101eac5"
     },
     {
       "path": "library/ui/apps/hud/design/Slider.module.css",
@@ -12359,12 +12391,8 @@
       "sha256": "8d0acddb022a8e9e980e4f232730bdbfe2f69ecf0c6067c92f0a56305913f384"
     },
     {
-      "path": "library/ui/apps/hud/design/SubmitField.module.css",
-      "sha256": "95d0a51098ef2873262ac3d03f63a3fe65a1ce88e1df11be6df677b16577dc2f"
-    },
-    {
       "path": "library/ui/apps/hud/design/SubmitField.tsx",
-      "sha256": "02ddb923a980eefb29de371d3bf324e0939365c46c57382d0f3df60cf764927c"
+      "sha256": "9c6b7d9aefda42cef5eb96cc02aefa16683eecc68127ee2a6dab08a450962a6a"
     },
     {
       "path": "library/ui/apps/hud/design/SwapLabel.module.css",
@@ -12384,7 +12412,7 @@
     },
     {
       "path": "library/ui/apps/hud/design/TextArea.tsx",
-      "sha256": "22d938c64b191aafbb19535705f9fc8c605b73a582631247a0540444a3a4dc9b"
+      "sha256": "69d931fd876f82a457310a771336593a524ccba175ee44b7209996d7a821b47f"
     },
     {
       "path": "library/ui/apps/hud/design/TextInput.tsx",
@@ -12420,7 +12448,7 @@
     },
     {
       "path": "library/ui/apps/hud/design/index.ts",
-      "sha256": "a4daf1ae659d60d169d6c84a19215895a090f323f230cdedb49c8752e856f4c9"
+      "sha256": "a9fc281e00049f6503604bb69277307e2e6bb41e3efa81639141a99dcf017c4f"
     },
     {
       "path": "library/ui/apps/hud/design/popups.module.css",
@@ -12584,7 +12612,7 @@
     },
     {
       "path": "library/ui/apps/hud/features/communities/CommunityCreateModal.tsx",
-      "sha256": "e123dbfbae14b746747eb8ad8ff2aee221b624018c1460297572d4bf994dddb3"
+      "sha256": "218e374b8ec1d68a63dcc67db875bc419caf5a7321c7463e8c02bbc65ccea2f8"
     },
     {
       "path": "library/ui/apps/hud/features/communities/CommunityModal.module.css",
@@ -13368,7 +13396,7 @@
     },
     {
       "path": "library/ui/apps/hud/features/profile/ProfileEditForm.tsx",
-      "sha256": "1991a803baf8464090d3bf32d4a728c00f308950a4b5b8a036e3d837f39ada51"
+      "sha256": "10f4cb425fe904701be9db04363746212f4446fca96fc711a4cc383a2c3111f1"
     },
     {
       "path": "library/ui/apps/hud/features/profile/ProfilePanel.module.css",
@@ -13604,7 +13632,7 @@
     },
     {
       "path": "library/ui/apps/hud/features/startup/VerificationOtp.tsx",
-      "sha256": "482bc8d78a37ea7a08749c93d1b403dac5fced532f1888c99f1d2c2efbaa6249"
+      "sha256": "dfb5acc9bb126d7d727e5aabcb62bfcad6e520c952a8fe069945c8cda63d3d24"
     },
     {
       "path": "library/ui/apps/hud/features/startup/Verifying.module.css",
@@ -13748,7 +13776,7 @@
     },
     {
       "path": "library/ui/apps/hud/test/design.ported.test.tsx",
-      "sha256": "460bca1be18ceaefc054638d44cce1a268de4cd25178baf50db78cff2e8a0bb2"
+      "sha256": "e0d016817ec525cc0cd82812f74d4c3e2aaec1d9bc3fba59a405b1ea0a4d6e55"
     },
     {
       "path": "library/ui/apps/hud/test/donate.test.tsx",
@@ -16119,6 +16147,14 @@
       "sha256": "9551455d4c805966a94f83e4779566423704c33e17c6c3161db3946582274f18"
     },
     {
+      "path": "library/ui/components/CharCounter/CharCounter.module.css",
+      "sha256": "9a6336cdf68773251d2edeb83184a1225c80c7f54a0fcdc6859fc24f14a43762"
+    },
+    {
+      "path": "library/ui/components/CharCounter/CharCounter.tsx",
+      "sha256": "6c28917e55c75182ce1fda4cc4decd4fd3ce263e34d9a8d9c64320f4ae6388b0"
+    },
+    {
       "path": "library/ui/components/Checkbox/Checkbox.module.css",
       "sha256": "702b6c9a66882778dc08143066668cd08459f00abd464dd01fd9f3e2d418b63a"
     },
@@ -16149,6 +16185,14 @@
     {
       "path": "library/ui/components/CloseButton/CloseButton.tsx",
       "sha256": "c3e49d320f8c45649bd5bc647f2948fe329348b7c86500eb79857f865c1f7233"
+    },
+    {
+      "path": "library/ui/components/CodeInput/CodeInput.module.css",
+      "sha256": "5c3a46985289d48c58335787e6150f73c0d4566c3a10c3dde3d6092467c65c86"
+    },
+    {
+      "path": "library/ui/components/CodeInput/CodeInput.tsx",
+      "sha256": "ee6bc3230966414ffb062abaa0936d5c88e2f7c2e8ca0418860afd4fed299945"
     },
     {
       "path": "library/ui/components/CommunityCard/CommunityCard.module.css",
@@ -16193,6 +16237,14 @@
     {
       "path": "library/ui/components/EventCard/EventCard.tsx",
       "sha256": "7b0307f570c4e9b1a25f80df523af9bc186f7d7ea9b607e3f1dea35687dd4589"
+    },
+    {
+      "path": "library/ui/components/FieldLabel/FieldLabel.module.css",
+      "sha256": "6fe49f96e02a234687a4fb5e0308ebd3839f36d231c1904220f6562bf2ffb98e"
+    },
+    {
+      "path": "library/ui/components/FieldLabel/FieldLabel.tsx",
+      "sha256": "be49aa0bb181350d299c9ef028baf9b28c87c1e1b5940b243bd456c5dbc1676b"
     },
     {
       "path": "library/ui/components/FriendCTA/FriendCTA.module.css",
@@ -16387,6 +16439,14 @@
       "sha256": "6fe908366a625c7740029793873e0b1afaae71417b6704818b2d83d0e18e1f83"
     },
     {
+      "path": "library/ui/components/SubmitField/SubmitField.module.css",
+      "sha256": "2e7e0400277370c433ee1004f233911bc789c3ca0e3d66f100e4c1e2a2ef81ba"
+    },
+    {
+      "path": "library/ui/components/SubmitField/SubmitField.tsx",
+      "sha256": "e2f385eb52a18e91fa4077b60a90b877c5373e54c502d1f2aa5514a5daa98666"
+    },
+    {
       "path": "library/ui/components/Switch/Switch.module.css",
       "sha256": "f8ff73ff9ce457a087e0107255cc6fd24459c76ada484ae93f2f21b7c2bfefbb"
     },
@@ -16576,7 +16636,7 @@
     },
     {
       "path": "library/ui/index.ts",
-      "sha256": "369d0336641eafec1a7e05b894b27ab5a5ccafb8e4ee960b08994b43e61dbc7a"
+      "sha256": "f57e20806100176a5412f2fe9adb20aed246041e490d48f678fbc7b846910faa"
     },
     {
       "path": "library/ui/link.helpers.ts",
@@ -20573,21 +20633,6 @@
       "kind": "test:runtime"
     },
     {
-      "from": "library/ui/apps/hud/design/CharCounter.tsx",
-      "to": "library/ui/apps/hud/design/CharCounter.module.css",
-      "kind": "native:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/design/CharCounter.tsx",
-      "to": "library/ui/apps/hud/design/CharCounter.module.css",
-      "kind": "production:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/design/CharCounter.tsx",
-      "to": "library/ui/apps/hud/design/CharCounter.module.css",
-      "kind": "test:runtime"
-    },
-    {
       "from": "library/ui/apps/hud/design/Chip.tsx",
       "to": "library/ui/apps/hud/assets/backpack/icon-close.webp",
       "kind": "native:runtime"
@@ -20630,21 +20675,6 @@
     {
       "from": "library/ui/apps/hud/design/Chip.tsx",
       "to": "library/ui/index.ts",
-      "kind": "test:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/design/CodeInput.tsx",
-      "to": "library/ui/apps/hud/design/CodeInput.module.css",
-      "kind": "native:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/design/CodeInput.tsx",
-      "to": "library/ui/apps/hud/design/CodeInput.module.css",
-      "kind": "production:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/design/CodeInput.tsx",
-      "to": "library/ui/apps/hud/design/CodeInput.module.css",
       "kind": "test:runtime"
     },
     {
@@ -20870,21 +20900,6 @@
     {
       "from": "library/ui/apps/hud/design/EquippedItemCard.tsx",
       "to": "library/ui/index.ts",
-      "kind": "test:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/design/FieldLabel.tsx",
-      "to": "library/ui/apps/hud/design/FieldLabel.module.css",
-      "kind": "native:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/design/FieldLabel.tsx",
-      "to": "library/ui/apps/hud/design/FieldLabel.module.css",
-      "kind": "production:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/design/FieldLabel.tsx",
-      "to": "library/ui/apps/hud/design/FieldLabel.module.css",
       "kind": "test:runtime"
     },
     {
@@ -21729,21 +21744,6 @@
     },
     {
       "from": "library/ui/apps/hud/design/SubmitField.tsx",
-      "to": "library/ui/apps/hud/design/SubmitField.module.css",
-      "kind": "native:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/design/SubmitField.tsx",
-      "to": "library/ui/apps/hud/design/SubmitField.module.css",
-      "kind": "production:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/design/SubmitField.tsx",
-      "to": "library/ui/apps/hud/design/SubmitField.module.css",
-      "kind": "test:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/design/SubmitField.tsx",
       "to": "library/ui/index.ts",
       "kind": "native:runtime"
     },
@@ -21785,21 +21785,6 @@
     {
       "from": "library/ui/apps/hud/design/Tabs.tsx",
       "to": "library/ui/index.ts",
-      "kind": "test:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/design/TextArea.tsx",
-      "to": "library/ui/apps/hud/design/CharCounter.tsx",
-      "kind": "native:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/design/TextArea.tsx",
-      "to": "library/ui/apps/hud/design/CharCounter.tsx",
-      "kind": "production:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/design/TextArea.tsx",
-      "to": "library/ui/apps/hud/design/CharCounter.tsx",
       "kind": "test:runtime"
     },
     {
@@ -22344,21 +22329,6 @@
     },
     {
       "from": "library/ui/apps/hud/design/index.ts",
-      "to": "library/ui/apps/hud/design/CharCounter.tsx",
-      "kind": "native:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/design/index.ts",
-      "to": "library/ui/apps/hud/design/CharCounter.tsx",
-      "kind": "production:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/design/index.ts",
-      "to": "library/ui/apps/hud/design/CharCounter.tsx",
-      "kind": "test:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/design/index.ts",
       "to": "library/ui/apps/hud/design/Chip.tsx",
       "kind": "native:runtime"
     },
@@ -22370,21 +22340,6 @@
     {
       "from": "library/ui/apps/hud/design/index.ts",
       "to": "library/ui/apps/hud/design/Chip.tsx",
-      "kind": "test:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/design/index.ts",
-      "to": "library/ui/apps/hud/design/CodeInput.tsx",
-      "kind": "native:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/design/index.ts",
-      "to": "library/ui/apps/hud/design/CodeInput.tsx",
-      "kind": "production:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/design/index.ts",
-      "to": "library/ui/apps/hud/design/CodeInput.tsx",
       "kind": "test:runtime"
     },
     {
@@ -22505,21 +22460,6 @@
     {
       "from": "library/ui/apps/hud/design/index.ts",
       "to": "library/ui/apps/hud/design/EquippedItemCard.tsx",
-      "kind": "test:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/design/index.ts",
-      "to": "library/ui/apps/hud/design/FieldLabel.tsx",
-      "kind": "native:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/design/index.ts",
-      "to": "library/ui/apps/hud/design/FieldLabel.tsx",
-      "kind": "production:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/design/index.ts",
-      "to": "library/ui/apps/hud/design/FieldLabel.tsx",
       "kind": "test:runtime"
     },
     {
@@ -61628,6 +61568,21 @@
       "kind": "test:runtime"
     },
     {
+      "from": "library/ui/components/CharCounter/CharCounter.tsx",
+      "to": "library/ui/components/CharCounter/CharCounter.module.css",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/components/CharCounter/CharCounter.tsx",
+      "to": "library/ui/components/CharCounter/CharCounter.module.css",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/components/CharCounter/CharCounter.tsx",
+      "to": "library/ui/components/CharCounter/CharCounter.module.css",
+      "kind": "test:runtime"
+    },
+    {
       "from": "library/ui/components/Checkbox/Checkbox.tsx",
       "to": "library/ui/components/Checkbox/Checkbox.module.css",
       "kind": "native:runtime"
@@ -61760,6 +61715,21 @@
     {
       "from": "library/ui/components/CloseButton/CloseButton.tsx",
       "to": "library/ui/foundations/icons/general.tsx",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/components/CodeInput/CodeInput.tsx",
+      "to": "library/ui/components/CodeInput/CodeInput.module.css",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/components/CodeInput/CodeInput.tsx",
+      "to": "library/ui/components/CodeInput/CodeInput.module.css",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/components/CodeInput/CodeInput.tsx",
+      "to": "library/ui/components/CodeInput/CodeInput.module.css",
       "kind": "test:runtime"
     },
     {
@@ -62015,6 +61985,21 @@
     {
       "from": "library/ui/components/EventCard/EventCard.tsx",
       "to": "library/ui/foundations/icons/general.tsx",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/components/FieldLabel/FieldLabel.tsx",
+      "to": "library/ui/components/FieldLabel/FieldLabel.module.css",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/components/FieldLabel/FieldLabel.tsx",
+      "to": "library/ui/components/FieldLabel/FieldLabel.module.css",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/components/FieldLabel/FieldLabel.tsx",
+      "to": "library/ui/components/FieldLabel/FieldLabel.module.css",
       "kind": "test:runtime"
     },
     {
@@ -62765,6 +62750,36 @@
     {
       "from": "library/ui/components/Spinner/Spinner.tsx",
       "to": "library/ui/components/Spinner/Spinner.module.css",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/components/SubmitField/SubmitField.tsx",
+      "to": "library/ui/components/Spinner/Spinner.tsx",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/components/SubmitField/SubmitField.tsx",
+      "to": "library/ui/components/Spinner/Spinner.tsx",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/components/SubmitField/SubmitField.tsx",
+      "to": "library/ui/components/Spinner/Spinner.tsx",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/components/SubmitField/SubmitField.tsx",
+      "to": "library/ui/components/SubmitField/SubmitField.module.css",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/components/SubmitField/SubmitField.tsx",
+      "to": "library/ui/components/SubmitField/SubmitField.module.css",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/components/SubmitField/SubmitField.tsx",
+      "to": "library/ui/components/SubmitField/SubmitField.module.css",
       "kind": "test:runtime"
     },
     {
@@ -63634,6 +63649,21 @@
     },
     {
       "from": "library/ui/index.ts",
+      "to": "library/ui/components/CharCounter/CharCounter.tsx",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/index.ts",
+      "to": "library/ui/components/CharCounter/CharCounter.tsx",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/index.ts",
+      "to": "library/ui/components/CharCounter/CharCounter.tsx",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/index.ts",
       "to": "library/ui/components/Checkbox/Checkbox.tsx",
       "kind": "native:runtime"
     },
@@ -63690,6 +63720,21 @@
     {
       "from": "library/ui/index.ts",
       "to": "library/ui/components/CloseButton/CloseButton.tsx",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/index.ts",
+      "to": "library/ui/components/CodeInput/CodeInput.tsx",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/index.ts",
+      "to": "library/ui/components/CodeInput/CodeInput.tsx",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/index.ts",
+      "to": "library/ui/components/CodeInput/CodeInput.tsx",
       "kind": "test:runtime"
     },
     {
@@ -63765,6 +63810,21 @@
     {
       "from": "library/ui/index.ts",
       "to": "library/ui/components/EventCard/EventCard.tsx",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/index.ts",
+      "to": "library/ui/components/FieldLabel/FieldLabel.tsx",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/index.ts",
+      "to": "library/ui/components/FieldLabel/FieldLabel.tsx",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/index.ts",
+      "to": "library/ui/components/FieldLabel/FieldLabel.tsx",
       "kind": "test:runtime"
     },
     {
@@ -64110,6 +64170,21 @@
     {
       "from": "library/ui/index.ts",
       "to": "library/ui/components/Spinner/Spinner.tsx",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/index.ts",
+      "to": "library/ui/components/SubmitField/SubmitField.tsx",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/index.ts",
+      "to": "library/ui/components/SubmitField/SubmitField.tsx",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/index.ts",
+      "to": "library/ui/components/SubmitField/SubmitField.tsx",
       "kind": "test:runtime"
     },
     {
@@ -65954,17 +66029,7 @@
     },
     {
       "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
-      "to": "library/ui/apps/hud/design/CharCounter.tsx",
-      "kind": "type"
-    },
-    {
-      "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
       "to": "library/ui/apps/hud/design/Chip.tsx",
-      "kind": "type"
-    },
-    {
-      "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
-      "to": "library/ui/apps/hud/design/CodeInput.tsx",
       "kind": "type"
     },
     {
@@ -66005,11 +66070,6 @@
     {
       "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
       "to": "library/ui/apps/hud/design/EquippedItemCard.tsx",
-      "kind": "type"
-    },
-    {
-      "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
-      "to": "library/ui/apps/hud/design/FieldLabel.tsx",
       "kind": "type"
     },
     {
@@ -68809,6 +68869,11 @@
     },
     {
       "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
+      "to": "library/ui/components/CharCounter/CharCounter.tsx",
+      "kind": "type"
+    },
+    {
+      "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
       "to": "library/ui/components/Checkbox/Checkbox.tsx",
       "kind": "type"
     },
@@ -68825,6 +68890,11 @@
     {
       "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
       "to": "library/ui/components/CloseButton/CloseButton.tsx",
+      "kind": "type"
+    },
+    {
+      "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
+      "to": "library/ui/components/CodeInput/CodeInput.tsx",
       "kind": "type"
     },
     {
@@ -68855,6 +68925,11 @@
     {
       "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
       "to": "library/ui/components/EventCard/EventCard.tsx",
+      "kind": "type"
+    },
+    {
+      "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
+      "to": "library/ui/components/FieldLabel/FieldLabel.tsx",
       "kind": "type"
     },
     {
@@ -68985,6 +69060,11 @@
     {
       "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
       "to": "library/ui/components/Spinner/Spinner.tsx",
+      "kind": "type"
+    },
+    {
+      "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
+      "to": "library/ui/components/SubmitField/SubmitField.tsx",
       "kind": "type"
     },
     {

@@ -95,10 +95,18 @@ export type {
 export { ProfilePic } from './components/ProfilePic/ProfilePic'
 export type { ProfilePicProps, ProfilePicSize } from './components/ProfilePic/ProfilePic'
 
+export { CharCounter } from './components/CharCounter/CharCounter'
+export type { CharCounterProps } from './components/CharCounter/CharCounter'
 export { Chip } from './components/Chip/Chip'
 export type { ChipProps } from './components/Chip/Chip'
+export { CodeInput } from './components/CodeInput/CodeInput'
+export type { CodeInputProps } from './components/CodeInput/CodeInput'
 export { CountBadge } from './components/CountBadge/CountBadge'
 export type { CountBadgeProps } from './components/CountBadge/CountBadge'
+export { FieldLabel } from './components/FieldLabel/FieldLabel'
+export type { FieldLabelProps } from './components/FieldLabel/FieldLabel'
+export { SubmitField } from './components/SubmitField/SubmitField'
+export type { SubmitFieldProps } from './components/SubmitField/SubmitField'
 export { Tag } from './components/Tag/Tag'
 export type { TagProps, TagVariant } from './components/Tag/Tag'
 

@@ -10,7 +10,11 @@ import {
   Switch,
   WebSelect,
   WebTextarea,
-  type InputWebCreatorToolsProps
+  type InputWebCreatorToolsProps,
+  CharCounter,
+  CodeInput,
+  FieldLabel,
+  SubmitField
 } from '@dcl/one-ui'
 import type { GalleryEntry } from '../registry'
 import layout from './layout.module.css'
@@ -493,5 +497,144 @@ export const formEntries: GalleryEntry[] = [
         )
       }
     ]
+  },
+  {
+    name: 'FieldLabel',
+    group: 'Forms',
+    summary: 'A field label with an optional notice and helper line.',
+    components: ['FieldLabel'],
+    examples: [
+      {
+        id: 'forms',
+        title: 'Plain, and with a notice and a helper line',
+        render: () => (
+          <div className={layout.stack}>
+            <FieldLabel>Name</FieldLabel>
+            <FieldLabel notice="Optional" sublabel="Shown on your passport">
+              Country
+            </FieldLabel>
+          </div>
+        )
+      }
+    ]
+  },
+  {
+    name: 'CharCounter',
+    group: 'Forms',
+    summary: 'The current/max readout under a text field.',
+    components: ['CharCounter'],
+    examples: [
+      {
+        id: 'formats',
+        title: 'The three formats, and a count above its maximum',
+        render: () => (
+          <div className={layout.narrow}>
+            <CharCounter current={3} max={10} />
+            <CharCounter current={3} max={10} format="spaced" />
+            <CharCounter current={3} max={10} format="words" />
+            <CharCounter current={12} max={10} />
+          </div>
+        )
+      }
+    ]
+  },
+  {
+    name: 'CodeInput',
+    group: 'Forms',
+    summary: 'A one-time code typed into a row of slots.',
+    components: ['CodeInput'],
+    examples: [
+      {
+        id: 'states',
+        title: 'Typing, accepted and refused',
+        render: () => <CodeInputExample />
+      }
+    ]
+  },
+  {
+    name: 'SubmitField',
+    group: 'Forms',
+    summary: 'A light text field with its submit button inside it.',
+    components: ['SubmitField'],
+    examples: [
+      {
+        id: 'states',
+        title: 'Ready, held, busy and with an error',
+        render: () => <SubmitFieldExample />
+      }
+    ]
   }
 ]
+
+function CodeInputExample() {
+  const [code, setCode] = useState('12')
+  return (
+    <div className={layout.strip}>
+      <div className={layout.stack}>
+        <CodeInput value={code} onChange={setCode} />
+        <CodeInput
+          value="123456"
+          onChange={() => {}}
+          state="success"
+          disabled
+          aria-label="Accepted code"
+        />
+        <CodeInput
+          value="123456"
+          onChange={() => {}}
+          state="error"
+          disabled
+          aria-label="Refused code"
+        />
+      </div>
+    </div>
+  )
+}
+
+function SubmitFieldExample() {
+  const [email, setEmail] = useState('ada@example.com')
+  const noop = () => {}
+  return (
+    <div className={layout.narrow}>
+      <div className={layout.stack}>
+        <SubmitField
+          aria-label="Email"
+          type="email"
+          placeholder="your@email.com"
+          value={email}
+          onChange={setEmail}
+          onSubmit={noop}
+          submitLabel="NEXT"
+          canSubmit
+        />
+        <SubmitField
+          aria-label="Email, held"
+          value=""
+          placeholder="your@email.com"
+          onChange={noop}
+          onSubmit={noop}
+          submitLabel="NEXT"
+          canSubmit={false}
+        />
+        <SubmitField
+          aria-label="Email, busy"
+          value="ada@example.com"
+          onChange={noop}
+          onSubmit={noop}
+          submitLabel="NEXT"
+          canSubmit
+          busy
+        />
+        <SubmitField
+          aria-label="Email, invalid"
+          value="ada@"
+          onChange={noop}
+          onSubmit={noop}
+          submitLabel="NEXT"
+          canSubmit={false}
+          error="Invalid email"
+        />
+      </div>
+    </div>
+  )
+}

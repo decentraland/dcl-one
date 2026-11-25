@@ -6,7 +6,7 @@
 //
 // Laid out on the startup screens' canvas, its 1080 rows centred vertically.
 import { useEffect, useRef, useState } from 'react'
-import { CodeInput, MaskIcon } from '../../design'
+import { MaskIcon } from '../../design'
 import { emailLoginErrorCode } from '@explorer-core/features/auth/thirdweb'
 import type { LoginFlow } from '../session/useEngineSession'
 import { StartupBack } from './StartupBack'
@@ -16,7 +16,7 @@ import padlock from '../../assets/startup/padlock.webp'
 import successIcon from '../../assets/startup/success.png'
 import incorrectIcon from '../../assets/startup/incorrect.png'
 import styles from './VerificationOtp.module.css'
-import { Button } from '@dcl/one-ui'
+import { Button, CodeInput } from '@dcl/one-ui'
 
 // how long a refused code shows before the row clears
 const REFUSED_MS = 1500
