@@ -26,6 +26,12 @@ to `~/.local/share/cef` at runtime; on Linux the loader needs `LD_LIBRARY_PATH` 
 `source/readme.md`), and on Windows the desktop workflow's staging shows what CEF needs; there
 `CEF_PATH` takes a Windows path, and `just` runs from Git Bash (see [Platforms](platforms.md#native)).
 
+For an isolated native session, set `DCL_PROFILE_DIR` to an absolute directory before launching.
+Config, logs, content cache and embedded-browser data use that directory instead of the OS
+profile. Relative or empty values fail before opening the profile. With the variable unset,
+the client uses its normal OS profile. Automation runs should place the directory beneath
+their temporary workspace; this does not redirect explicit scene exports to local projects.
+
 With Nix, `nix develop .#explorer` from the repository root has the tools and libraries of this
 loop on Linux and macOS, and one Cargo build directory for every worktree (see `source/readme.md`).
 
