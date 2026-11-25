@@ -280,7 +280,6 @@
   --shop-panel-cta: linear-gradient(180.67deg, #ff7439 2.82%, #ff2d55 97.47%); /* a banner's button */
   --shadow-shop-panel-coin: 1.077px 1.077px 1.347px rgba(0, 0, 0, 0.25);
   /* compact switches / thick sliders / nearby voice (sRGB equivalents of linear blends) */
-  --switch-off: rgba(255, 255, 255, 0.38);
   --slider-track: rgba(255, 255, 255, 0.19);
   --control-track: rgba(255, 255, 255, 0.42); /* a settings switch or slider while off or unfilled */
   --switch-off-menu: #454545; /* a switch in a menu sheet, off */
