@@ -2589,11 +2589,11 @@ to the index writer, even when they share settings. Each database can have indep
 Ethereum and Sepolia Rentals histories.
 The `nft_catalogue_pair` row in `shop.worker_progress` identifies the pair.
 `shop.mirror_state.chain_id` identifies each mirror's completed chain-bound
-copy. A new source starts from page one. When a catalogue chain RPC is
-configured the mirror
-checks the graph head on the configured chain by comparing a confirmed block
-hash against the chain-checked RPC. Both mirrors persist that hash with their
-keyset and read every page at that block. Collections supply contract addresses
+copy. A new source starts from page one. When a chain-bound catalogue RPC is
+configured, the mirror compares a confirmed graph block hash against that RPC.
+On mainnet the mirror chooses the block the network's confirmation depth
+behind the lower of the graph and RPC heads. Both mirrors persist that hash
+with their keyset and read every page at that block. Collections supply contract addresses
 and items supply their metadata. A mirror writer can provide this proof even
 when the NFT walker runs on another node. A writer needs the catalogue RPC
 to resume an in-progress pinned pass. After a completed mainnet pass, a
@@ -2601,7 +2601,9 @@ writer without the RPC can start a fresh graph-only pass from its configured
 source. A missing or mismatched page hash restarts
 the pass. An opaque transport or GraphQL error retries the same block. Two
 consecutive page read failures can restart a pin once the pass is an hour old. A pass
-can keep a progressing pin for one day. Descriptive readers can use the last completed copy during retries.
+can keep a progressing pin for one day. A proof failure leaves the last
+completed copy available during retries. A pass with a persisted pin can
+read its remaining graph pages during an RPC outage.
 The NFT walk requires a complete collections pass for its chain. Mainnet
 accepts a completed legacy copy with neither a chain binding nor a pending
 testnet pin. The testnet walk selects addresses from rows the verified pass

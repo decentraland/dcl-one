@@ -230,8 +230,9 @@ fn catalogue_proof_rpc(
     })
 }
 
-/// Pin the pass below the graph head on the configured chain. Persisting the
-/// hash with the keyset lets later ticks and replacement workers resume it.
+/// Pin the pass below the graph head on the configured chain. Mainnet also
+/// bounds the pin by the RPC head because the two providers can lag independently.
+/// Persisting the hash with the keyset lets later ticks resume without RPC.
 pub(super) async fn catalogue_pass_hash(
     state: &MarketplaceState,
     net: super::chain_walk::ChainNet,
@@ -241,10 +242,24 @@ pub(super) async fn catalogue_pass_hash(
     use serde_json::json;
     let head =
         super::readers::query(state, url, "{ _meta { block { number } } }", json!({})).await?;
-    let number = head["_meta"]["block"]["number"]
+    let graph_head = head["_meta"]["block"]["number"]
         .as_u64()
-        .ok_or("collections graph has no block number")?
-        .saturating_sub(net.confirmations());
+        .ok_or("collections graph has no block number")?;
+    let endpoint =
+        catalogue_proof_rpc(state, net).ok_or("no RPC for the configured catalogue chain")?;
+    let source =
+        super::chain_walk::RpcSource::new(crate::chain_index::rpc::Rpc::at(&state.http, &endpoint));
+    let indexes = &state.settings.market.indexes;
+    super::ensure_chain(&source, indexes.chain_id(net))
+        .await
+        .map_err(|e| e.to_string())?;
+    let head = if indexes.serves_mainnet(net) {
+        let rpc_head = source.head().await.map_err(|e| e.to_string())?.value;
+        graph_head.min(rpc_head)
+    } else {
+        graph_head
+    };
+    let number = head.saturating_sub(net.confirmations());
     let data = super::readers::query(state, url,
         "query CatalogueBlock($number: Int!) { _meta(block: {number: $number}) { block { number hash } } }",
         json!({"number":number})).await?;
@@ -255,13 +270,6 @@ pub(super) async fn catalogue_pass_hash(
     let hash = block["hash"]
         .as_str()
         .ok_or("collections graph has no block hash")?;
-    let endpoint =
-        catalogue_proof_rpc(state, net).ok_or("no RPC for the configured catalogue chain")?;
-    let source =
-        super::chain_walk::RpcSource::new(crate::chain_index::rpc::Rpc::at(&state.http, &endpoint));
-    super::ensure_chain(&source, state.settings.market.indexes.chain_id(net))
-        .await
-        .map_err(|e| e.to_string())?;
     let header = source.header(number).await.map_err(|e| e.to_string())?;
     if header.value.number != number || !header.value.hash.eq_ignore_ascii_case(hash) {
         return Err(format!(

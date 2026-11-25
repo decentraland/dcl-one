@@ -2073,7 +2073,7 @@ async fn a_testnet_graph_page_proves_its_block_even_when_the_page_is_empty() {
 }
 
 #[tokio::test]
-async fn an_rpc_backed_mainnet_mirror_requires_a_matching_graph_hash() {
+async fn a_lagging_mainnet_rpc_pins_a_matching_confirmed_block() {
     use super::{
         graph::Network,
         mirrors::{self, Mirror},
@@ -2085,7 +2085,7 @@ async fn an_rpc_backed_mainnet_mirror_requires_a_matching_graph_hash() {
         (ChainNet::Ethereum, Network::Ethereum),
         (ChainNet::Matic, Network::Matic),
     ] {
-        let chain = FakeChain::new(200, vec![], 100, 100);
+        let chain = FakeChain::new(100 + net.confirmations(), vec![], 100, 100);
         chain
             .chain_id
             .store(net.chain_id() as u64, Ordering::SeqCst);
@@ -2104,7 +2104,7 @@ async fn an_rpc_backed_mainnet_mirror_requires_a_matching_graph_hash() {
                         let block = if vars["number"] == 100 || vars["block"].is_object() {
                             json!({"number":100,"hash":hash})
                         } else {
-                            json!({"number":100+net.confirmations()})
+                            json!({"number":200+net.confirmations()})
                         };
                         axum::Json(json!({"data":{"collections":[],"_meta":{"block":block}}}))
                     },
@@ -2135,6 +2135,7 @@ async fn an_rpc_backed_mainnet_mirror_requires_a_matching_graph_hash() {
             .await
             .unwrap_err();
         assert!(format!("{err:#}").contains("differs from the configured chain"));
+        assert_eq!(*chain.calls.lock(), ["chain id", "head", "header 100"]);
         assert!(!nft_index::mirror_complete(&db.pool, net, net.chain_id()).await);
         let hash = chain.hash_of(100);
         *published_hash.lock() = Some(hash.clone());
@@ -2147,6 +2148,31 @@ async fn an_rpc_backed_mainnet_mirror_requires_a_matching_graph_hash() {
             .unwrap();
         assert_eq!(copy.pass_block_hash.as_deref(), Some(hash.as_str()));
         assert!(nft_index::mirror_complete(&db.pool, net, net.chain_id()).await);
+
+        // Starting a replacement pass during an RPC failure keeps the last
+        // completed publication and retries the proof on the next tick.
+        chain.fail_headers.store(true, Ordering::SeqCst);
+        let err = mirrors::run_tick(&state, Mirror::Collections, &ctx)
+            .await
+            .unwrap_err();
+        assert!(format!("{err:#}").contains("header unavailable"));
+        let pending = mirrors::load(&db.pool, Mirror::Collections, network)
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(pending.pass_block_hash.is_none());
+        assert_eq!(pending.last_complete_pass_at, copy.last_complete_pass_at);
+        assert!(nft_index::mirror_complete(&db.pool, net, net.chain_id()).await);
+        chain.fail_headers.store(false, Ordering::SeqCst);
+        mirrors::run_tick(&state, Mirror::Collections, &ctx)
+            .await
+            .unwrap();
+        let copy = mirrors::load(&db.pool, Mirror::Collections, network)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(copy.pass_block_hash.as_deref(), Some(hash.as_str()));
+        assert!(!copy.in_progress());
 
         // The next pass had been paged at that hash. Losing its proof clears
         // its keyset, and leaves the prior completed copy available.
@@ -2185,22 +2211,7 @@ async fn an_rpc_backed_mainnet_mirror_requires_a_matching_graph_hash() {
     db.drop().await;
 }
 
-#[tokio::test]
-async fn a_split_mirror_resumes_the_pinned_graph_block_without_another_rpc_read() {
-    use super::{
-        graph::Network,
-        mirrors::{self, Mirror},
-    };
-    let Some(db) = ScratchDb::create().await else {
-        return;
-    };
-    let net = ChainNet::Matic;
-    let chain = FakeChain::new(200, vec![], 100, 100);
-    chain
-        .chain_id
-        .store(net.testnet_chain_id() as u64, Ordering::SeqCst);
-    let rpc = serve(chain.clone()).await;
-    let hash = chain.hash_of(100);
+async fn serve_split_collections_graph(hash: String) -> String {
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let graph = format!("http://{}/", listener.local_addr().unwrap());
     let app = Router::new()
@@ -2219,7 +2230,7 @@ async fn a_split_mirror_resumes_the_pinned_graph_block_without_another_rpc_read(
                         }
                         assert!(doc.contains("collections(block: $block"));
                         let rows = if vars["idFrom"] == "" {
-                            (1..=mirrors::PAGE_SIZE)
+                            (1..=super::mirrors::PAGE_SIZE)
                                 .map(|i| json!({"id":format!("0x{i:040x}")}))
                                 .collect::<Vec<_>>()
                         } else {
@@ -2235,8 +2246,86 @@ async fn a_split_mirror_resumes_the_pinned_graph_block_without_another_rpc_read(
                 },
             ),
         )
-        .with_state(hash.clone());
+        .with_state(hash);
     tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+    graph
+}
+
+#[tokio::test]
+async fn a_mainnet_mirror_keeps_serving_and_finishes_a_pinned_pass_during_an_rpc_failure() {
+    use super::{
+        graph::Network,
+        mirrors::{self, Mirror},
+    };
+    let Some(db) = ScratchDb::create().await else {
+        return;
+    };
+    let net = ChainNet::Matic;
+    let chain = FakeChain::new(200, vec![], 100, 100);
+    let hash = chain.hash_of(100);
+    let mut config = Settings::for_tests();
+    config.matic_collections_subgraph_url = Some(serve_split_collections_graph(hash.clone()).await);
+    config.polygon_rpc_url = Some(serve(chain.clone()).await);
+    config.market.mirror_pages_per_tick = 2;
+    let mut state =
+        MarketplaceState::new(db.pool.clone(), crate::http::Outbound::for_tests(), config);
+    state.index.allow_loopback_for_tests();
+    let jobs = crate::jobs::Jobs::new();
+    let ctx = super::market_tests::job_ctx(&jobs).await;
+    let read = || mirrors::load(&db.pool, Mirror::Collections, Network::Matic);
+
+    mirrors::run_tick(&state, Mirror::Collections, &ctx)
+        .await
+        .unwrap();
+    let completed = read().await.unwrap().unwrap();
+    assert!(!completed.in_progress());
+
+    state.settings.market.mirror_pages_per_tick = 1;
+    mirrors::run_tick(&state, Mirror::Collections, &ctx)
+        .await
+        .unwrap();
+    let first_page = read().await.unwrap().unwrap();
+    assert!(first_page.in_progress() && first_page.cursor_id.is_some());
+    assert_eq!(first_page.pass_block_hash.as_deref(), Some(hash.as_str()));
+    assert_eq!(
+        first_page.last_complete_pass_at,
+        completed.last_complete_pass_at
+    );
+
+    chain.fail_chain_id.store(true, Ordering::SeqCst);
+    chain.fail_headers.store(true, Ordering::SeqCst);
+    chain.head_reads_left.store(0, Ordering::SeqCst);
+    let calls = chain.requests.load(Ordering::SeqCst);
+    assert!(nft_index::mirror_complete(&db.pool, net, net.chain_id()).await);
+    mirrors::run_tick(&state, Mirror::Collections, &ctx)
+        .await
+        .unwrap();
+    assert_eq!(chain.requests.load(Ordering::SeqCst), calls);
+    let resumed = read().await.unwrap().unwrap();
+    assert_eq!(resumed.pass_started_at, first_page.pass_started_at);
+    assert_eq!(resumed.pass_block_hash, first_page.pass_block_hash);
+    assert!(!resumed.in_progress());
+    assert!(nft_index::mirror_complete(&db.pool, net, net.chain_id()).await);
+    db.drop().await;
+}
+
+#[tokio::test]
+async fn a_split_mirror_resumes_the_pinned_graph_block_without_another_rpc_read() {
+    use super::{
+        graph::Network,
+        mirrors::{self, Mirror},
+    };
+    let Some(db) = ScratchDb::create().await else {
+        return;
+    };
+    let net = ChainNet::Matic;
+    let chain = FakeChain::new(200, vec![], 100, 100);
+    chain
+        .chain_id
+        .store(net.testnet_chain_id() as u64, Ordering::SeqCst);
+    let rpc = serve(chain.clone()).await;
+    let hash = chain.hash_of(100);
+    let graph = serve_split_collections_graph(hash.clone()).await;
     let state = || {
         let mut config = Settings::for_tests();
         config.matic_collections_subgraph_url = Some(graph.clone());
