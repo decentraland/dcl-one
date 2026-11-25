@@ -959,17 +959,28 @@ mod tests {
         let source = archive(logs, None);
         sqlx::query("DELETE FROM shop.chain_checkpoint WHERE indexer=$1 AND network='matic' AND block_number=$2")
             .bind(index.indexer()).bind(START + 1).execute(pool).await.unwrap();
-        let error = index
-            .after_publish(pool, &source, &owner, 10, 10)
-            .await
-            .unwrap_err();
-        assert!(
-            error
-                .to_string()
-                .contains("no matching published checkpoint"),
-            "{error:#}"
+        assert_eq!(
+            index
+                .after_publish(pool, &source, &owner, 10, 10)
+                .await
+                .unwrap(),
+            4
         );
-        assert_eq!(flags().await.unwrap(), pending);
+        assert_eq!(flags().await.unwrap(), [Some(false), None, Some(false)]);
+        let request_count = source.tip_reads.load(std::sync::atomic::Ordering::Relaxed);
+        assert_eq!(
+            index
+                .after_publish(pool, &source, &owner, 10, 10)
+                .await
+                .unwrap(),
+            0
+        );
+        assert_eq!(
+            source.tip_reads.load(std::sync::atomic::Ordering::Relaxed),
+            request_count
+        );
+        assert_eq!(flags().await.unwrap(), [Some(false), None, Some(false)]);
+
         sqlx::query(checkpoint)
             .bind(index.indexer())
             .bind(START + 1)
@@ -977,6 +988,13 @@ mod tests {
             .execute(pool)
             .await
             .unwrap();
+        sqlx::query(
+            "UPDATE shop.third_party_registry_event SET is_review=NULL WHERE block_number=$1",
+        )
+        .bind(START)
+        .execute(pool)
+        .await
+        .unwrap();
         assert_eq!(
             index
                 .after_publish(pool, &source, &owner, 10, 4)

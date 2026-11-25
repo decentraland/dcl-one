@@ -2250,7 +2250,8 @@ hash when it writes its fold marker. The third-party writer marks review
 events explicitly. Old registry versions have a null review flag until the
 registry job classifies them from an archive window bracketed by the published
 checkpoint. Each event block must match an indexed checkpoint in that
-publication. An omitted event or uncovered block leaves the window pending. Existing
+publication. The replay stops before the first block without a checkpoint and
+leaves omitted events pending. Existing
 current-provider readers continue using the same state snapshots. Historical
 readers require every relevant version through their block to be classified.
 A review without a stored root reads as unapproved, as in the registry squid.

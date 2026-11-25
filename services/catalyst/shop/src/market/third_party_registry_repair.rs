@@ -17,26 +17,44 @@ pub(super) async fn backfill_reviews(
     if remaining < 4 {
         return Ok(0);
     }
-    let Some((head, hash, from)) = sqlx::query_as::<_, (i64, String, i64)>(
-        "SELECT p.block_number,p.block_hash,old.block_number
+    let window_span = window_blocks.saturating_sub(1);
+    let Some((head, hash, from, first_uncovered)) =
+        sqlx::query_as::<_, (i64, String, i64, Option<i64>)>(
+        "SELECT p.block_number,p.block_hash,old.block_number,uncovered.block_number
          FROM shop.chain_cursor c
          JOIN shop.chain_checkpoint p ON (p.indexer,p.network,p.block_number)=(c.indexer,c.network,c.folded_block)
          CROSS JOIN LATERAL (
              SELECT block_number FROM shop.third_party_registry_event
              WHERE is_review IS NULL AND block_number<=p.block_number ORDER BY block_number LIMIT 1
          ) old
+         LEFT JOIN LATERAL (
+             SELECT e.block_number FROM shop.third_party_registry_event e
+             WHERE e.is_review IS NULL AND e.block_number BETWEEN old.block_number AND p.block_number
+               AND e.block_number-old.block_number<=$2 AND NOT EXISTS (
+                 SELECT 1 FROM shop.chain_checkpoint known
+                 WHERE (known.indexer,known.network,known.block_number)=(c.indexer,c.network,e.block_number)
+               )
+             ORDER BY e.block_number LIMIT 1
+         ) uncovered ON true
          WHERE c.indexer=$1 AND c.network='matic' AND c.chain_id=137 AND c.full_history
            AND c.quarantined_at IS NULL AND c.diverged_at IS NULL AND c.rebuild_requested_at IS NULL",
     )
     .bind(INDEXER_THIRD_PARTY_REGISTRY)
+    .bind(i64::try_from(window_span).unwrap_or(i64::MAX))
     .fetch_optional(pool)
     .await?
     else {
         return Ok(0);
     };
+    if first_uncovered == Some(from) {
+        return Ok(0);
+    }
     let from = u64::try_from(from)?;
     let tip = u64::try_from(head)?;
-    let to = tip.min(from.saturating_add(window_blocks - 1));
+    let mut to = tip.min(from.saturating_add(window_span));
+    if let Some(block) = first_uncovered {
+        to = to.min(u64::try_from(block - 1)?);
+    }
     let before = source.header(tip).await?;
     ensure!(
         before.value.hash == hash,
