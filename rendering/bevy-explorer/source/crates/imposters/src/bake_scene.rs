@@ -54,8 +54,11 @@ pub const IMPOSTERCEPTION_LAYER: RenderLayers = RenderLayers::layer(5);
 
 impl Plugin for DclImposterBakeScenePlugin {
     fn build(&self, app: &mut App) {
-        app.add_plugins(ImposterBakePlugin)
-            .init_resource::<ImposterBakeList>()
+        // the landscape's tree impostors may have added it already
+        if !app.is_plugin_added::<ImposterBakePlugin>() {
+            app.add_plugins(ImposterBakePlugin);
+        }
+        app.init_resource::<ImposterBakeList>()
             .init_resource::<CurrentImposterImposter>()
             .add_systems(
                 Update,

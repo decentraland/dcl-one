@@ -21,6 +21,7 @@ ipfs = { workspace = true }
 bevy = { workspace = true }
 bevy_atmosphere = { workspace = true }
 bevy_console = { workspace = true }
+boimp = { workspace = true }
 
 clap = { workspace = true }
 half = { workspace = true }

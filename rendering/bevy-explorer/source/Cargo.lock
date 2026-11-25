@@ -13700,6 +13700,7 @@ dependencies = [
  "bevy",
  "bevy_atmosphere",
  "bevy_console",
+ "boimp",
  "clap",
  "common",
  "console 0.1.0",
