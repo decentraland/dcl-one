@@ -673,6 +673,25 @@ async fn create_refresh_and_list_from_the_published_land_index() {
         )
     );
 
+    sqlx::query("UPDATE shop.chain_cursor SET folded_block=NULL WHERE indexer='rentals'")
+        .execute(&pool)
+        .await
+        .unwrap();
+    let (status, _, out) = send(
+        app(),
+        "POST",
+        path,
+        signed_headers(&w, "post", path).await,
+        Some(creation_json(&relisted)),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CONFLICT, "{out}");
+    assert_eq!(out["error"], super::db::Conflict::OpenListing.message());
+    sqlx::query("UPDATE shop.chain_cursor SET folded_block=last_block WHERE indexer='rentals'")
+        .execute(&pool)
+        .await
+        .unwrap();
+
     // A tampered body fails the EIP-712 check before any read.
     let mut tampered = doc.clone();
     tampered["tokenId"] = Value::String(random_token_id());
@@ -1650,7 +1669,8 @@ async fn a_signed_mainnet_listing_cannot_use_sepolia_registry_rights() {
             LAND_SEPOLIA,
             11155111,
             &body.contract_address,
-            "17"
+            "17",
+            None
         )
         .await,
         Err(super::nft::NftReadError::MetadataUnavailable)

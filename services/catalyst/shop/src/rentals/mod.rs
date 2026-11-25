@@ -173,6 +173,19 @@ impl State {
         contract_address: &str,
         token_id: &str,
     ) -> Result<Option<nft::LandNft>, nft::NftReadError> {
+        Ok(self
+            .listing_asset(chain_id, contract_address, token_id, None)
+            .await?
+            .map(|(asset, _)| asset))
+    }
+
+    async fn listing_asset(
+        &self,
+        chain_id: i64,
+        contract_address: &str,
+        token_id: &str,
+        custody_at: Option<chrono::DateTime<chrono::Utc>>,
+    ) -> Result<Option<(nft::LandNft, Option<index::RentEvidence>)>, nft::NftReadError> {
         let market = self.market.as_ref().ok_or_else(|| {
             nft::NftReadError::Subgraph("no marketplace reader is configured".into())
         })?;
@@ -181,10 +194,36 @@ impl State {
         }
         let net = nft::listing_network(market.land_network(), chain_id)?;
         if !Self::walks_nfts(market) {
-            return nft_graph::read(market, &self.graph_cache, net, contract_address, token_id)
-                .await;
+            let Some(asset) =
+                nft_graph::read(market, &self.graph_cache, net, contract_address, token_id).await?
+            else {
+                return Ok(None);
+            };
+            let evidence = match custody_at {
+                Some(now) if chain_id == 1 => Some(
+                    index::rent_evidence(
+                        self.db.pool(),
+                        index::RentalsChain::Mainnet,
+                        index::RENTALS_MAINNET,
+                        contract_address,
+                        token_id,
+                        now,
+                    )
+                    .await?,
+                ),
+                _ => None,
+            };
+            return Ok(Some((asset, evidence)));
         }
-        nft::nft_by_contract_token(self.db.pool(), net, chain_id, contract_address, token_id).await
+        nft::nft_by_contract_token(
+            self.db.pool(),
+            net,
+            chain_id,
+            contract_address,
+            token_id,
+            custody_at,
+        )
+        .await
     }
 
     async fn verify(

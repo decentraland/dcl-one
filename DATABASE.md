@@ -1997,18 +1997,14 @@ Invariants:
 - A cancellation that is not a nonce move is never undone, so an unknown never
   cancels. No published index, no indexed token, or an indexed transfer older
   than the listing all leave the listing open.
-- A token the Rentals contract owns keeps its listing unless an indexed rent
-  shows that the contract holds it for another lessor. The asset's latest
-  `rented` row in `shop.rental_event` counts only when it is no older than
-  the token's arrival in the contract, because an older rent means the
-  `rentals` index has not reached the rent the token arrived under (an
-  accepted offer, for example). The job requires the rent's `block_number` to
-  be at or after that of the latest folded `transfer` in
-  `land_authz.authz_event`: both indexes commit whole blocks of the same
-  chain, and a rent either moves the token in its own transaction or finds
-  it already in the contract. Create and refresh compare the rent's block with the
-  latest transfer into custody and verify the Rentals publication covers both.
-  While the `rentals` index is not published, neither path reads custody.
+- For a token owned by the mainnet Rentals contract, a published rent at or
+  after the latest transfer into the venue identifies its lessor. Once the
+  Rentals cursor covers that transfer, an absent or older rent establishes
+  that nobody holds custody. Create returns 401 and a later transfer closes
+  an open listing as `transferred`. While the cursor trails the arrival,
+  create returns the `rentals-index` unavailable response and status leaves
+  the listing open. Sepolia reads ownership from the marketplace subgraph.
+  At its venue, create refuses relisting and status leaves custody unknown.
 - The signatures-server import keeps a node reason only while upstream also
   says `cancelled`, and clears it otherwise. It skips an upstream row older
   than the stored one, except that an upstream `executed` or `claimed`

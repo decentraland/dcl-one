@@ -53,14 +53,6 @@ pub(super) enum RentalsChain {
 }
 
 impl RentalsChain {
-    pub(super) fn from_id(id: i64) -> Option<Self> {
-        match id {
-            1 => Some(Self::Mainnet),
-            11_155_111 => Some(Self::Sepolia),
-            _ => None,
-        }
-    }
-
     pub(super) fn from_land_network(network: &str) -> Option<Self> {
         match network {
             "ethereum" | "ethereum-mainnet" => Some(Self::Mainnet),
@@ -655,8 +647,7 @@ pub(super) async fn lock_cursor(
     .await
 }
 
-/// The walk of one Ethereum Rentals deployment. Each deployment folds the
-/// statuses of listings signed for its chain.
+/// The walk of one Rentals deployment. Only mainnet folds listing statuses.
 pub struct RentalsIndex {
     pub venue: String,
     pub start: u64,
@@ -751,8 +742,10 @@ impl ChainIndex for RentalsIndex {
         _upto: i64,
         owner: &chain_walk::Owner,
     ) -> anyhow::Result<bool> {
-        let written = fold(pool, self.chain, &self.venue, since, Utc::now(), owner).await?;
-        tracing::info!(venue = %self.venue, listings = written, "rentals index: folded");
+        if matches!(self.chain, RentalsChain::Mainnet) {
+            let written = fold(pool, self.chain, &self.venue, since, Utc::now(), owner).await?;
+            tracing::info!(venue = %self.venue, listings = written, "rentals index: folded");
+        }
         Ok(true)
     }
 }
@@ -830,22 +823,24 @@ pub(super) async fn rent_evidence(
     sqlx::query("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ")
         .execute(&mut *tx)
         .await?;
-    let cursor = chain_walk::cursor(&mut *tx, chain.indexer(), ChainNet::Ethereum).await?;
-    let published_through = cursor
-        .as_ref()
-        .filter(|cursor| chain_walk::is_ready_on(cursor, chain.id(), now))
-        .and_then(|cursor| cursor.folded_block);
-    let evidence = rent_evidence_at(
-        &mut tx,
-        chain,
-        venue,
-        contract_address,
-        token_id,
-        published_through,
-    )
-    .await?;
+    let evidence = published_rent(&mut tx, chain, venue, contract_address, token_id, now).await?;
     tx.commit().await?;
     Ok(evidence)
+}
+
+pub(super) async fn published_rent(
+    conn: &mut PgConnection,
+    chain: RentalsChain,
+    venue: &str,
+    contract_address: &str,
+    token_id: &str,
+    now: DateTime<Utc>,
+) -> sqlx::Result<RentEvidence> {
+    let cursor = chain_walk::cursor(&mut *conn, chain.indexer(), ChainNet::Ethereum).await?;
+    let head = cursor
+        .filter(|c| chain_walk::is_ready_on(c, chain.id(), now))
+        .and_then(|c| c.folded_block);
+    rent_evidence_at(conn, chain, venue, contract_address, token_id, head).await
 }
 
 pub(super) async fn rent_evidence_at(

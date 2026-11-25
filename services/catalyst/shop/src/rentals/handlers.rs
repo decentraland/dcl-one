@@ -277,12 +277,6 @@ pub async fn create_rentals_listing(
             "There is no rentals contract for chain id {served_chain}"
         )));
     };
-    let rentals_chain = super::index::RentalsChain::from_id(served_chain);
-    if super::index::walks(rentals) && rentals_chain.is_none() {
-        return Err(ApiError::bad_request(format!(
-            "There is no rentals index for chain id {served_chain}"
-        )));
-    }
     if !body.rental_contract_address.eq_ignore_ascii_case(rentals) {
         return Err(ApiError::bad_request(
             "The rental contract address does not match the Rentals contract of the given chain",
@@ -304,8 +298,13 @@ pub async fn create_rentals_listing(
         }
         Err(e) => return Err(ApiError::bad_request(e.to_string())),
     }
-    let nft = match state
-        .nft(body.chain_id, &body.contract_address, &body.token_id)
+    let (nft, rent_evidence) = match state
+        .listing_asset(
+            body.chain_id,
+            &body.contract_address,
+            &body.token_id,
+            Some(now),
+        )
         .await
     {
         Ok(Some(nft)) => nft,
@@ -313,22 +312,6 @@ pub async fn create_rentals_listing(
         Err(e) => return Ok(reader_unavailable(e)),
     };
 
-    // Only the indexed contract has rents to read; elsewhere a rented asset is the contract's, so the owner check refuses it.
-    let rent_evidence = if super::index::walks(rentals) {
-        Some(
-            super::index::rent_evidence(
-                state.db.pool(),
-                rentals_chain.expect("the walking Rentals venue has a chain"),
-                rentals,
-                &body.contract_address,
-                &body.token_id,
-                now,
-            )
-            .await?,
-        )
-    } else {
-        None
-    };
     // A raw active rent can conservatively block a duplicate listing while
     // the Rentals cursor is unavailable; only published evidence can name
     // the lessor or authorize custody.
@@ -346,6 +329,17 @@ pub async fn create_rentals_listing(
             .as_ref()
             .is_some_and(|evidence| evidence.published_through.is_some())
     {
+        let existing: Option<String> = sqlx::query_scalar(
+            "SELECT signature FROM signatures.rentals WHERE contract_address=lower($1) AND token_id=$2::numeric AND chain_id=$3 AND status='open'",
+        ).bind(&body.contract_address).bind(&body.token_id).bind(served_chain).fetch_optional(state.db.pool()).await?;
+        if let Some(signature) = existing {
+            let conflict = if signature.eq_ignore_ascii_case(&body.signature) {
+                super::db::Conflict::Signature
+            } else {
+                super::db::Conflict::OpenListing
+            };
+            return Err(ApiError::conflict(conflict.message()));
+        }
         return Ok(unavailable(
             Source::RentalsIndex,
             "The Rentals index for the listing chain is not ready",

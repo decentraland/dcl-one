@@ -47,7 +47,7 @@ const POLL_SECS: u64 = 60;
 /// `owner` is the asset's current owner (`None`: unknown);
 /// `custody_lessor` the lessor of the rent the Rentals contract holds the
 /// asset under, read only when the owner is that contract (`None`: unknown,
-/// which includes a latest indexed rent older than the asset's arrival).
+/// an empty string means the published arrival has no covering rent).
 pub fn cancel_reason(
     expired: bool,
     dissolved: bool,
@@ -401,7 +401,8 @@ pub async fn sync_listing(
     let Some(row) = row else {
         return Ok(true);
     };
-    let chain = index::RentalsChain::from_id(row.get("chain_id")).filter(|_| index::walks(&venue));
+    let chain = (row.get::<i64, _>("chain_id") == 1 && index::walks(&venue))
+        .then_some(index::RentalsChain::Mainnet);
     if let Some(chain) = chain
         && index::fold_listing(pool, chain, &venue, id, now)
             .await?
@@ -1205,6 +1206,31 @@ mod tests {
             venue,
         )
         .await;
+        // The shared fixture defaults to mainnet. Exercise the signed Sepolia chain.
+        sqlx::query("UPDATE signatures.rentals SET chain_id=11155111 WHERE id=$1")
+            .bind(id)
+            .execute(pool)
+            .await
+            .unwrap();
+        sqlx::query(
+            "UPDATE signatures.rental_assets SET chain_id=11155111 WHERE contract_address=$1",
+        )
+        .bind(LAND_SEPOLIA.land_registry)
+        .execute(pool)
+        .await
+        .unwrap();
+        let ix = index::RentalsIndex::sepolia();
+        use crate::market::chain_walk::{ChainIndex, IndexSettings, test_owner};
+        let owner = test_owner(pool, &ix, &IndexSettings::default()).await;
+        sqlx::query("INSERT INTO shop.rental_event (network, block_number, log_index, block_time, rentals_address, kind, contract_address, token_id, signer, tenant, rental_days, price_per_day, signature, tx_hash)
+                SELECT 'sepolia', 40, 0, 1800000000, rental_contract_address, 'rented', contract_address, token_id, $2, $3, 1, 1, signature, '0xtx' FROM signatures.rentals WHERE id=$1")
+            .bind(id).bind(LESSOR).bind(OTHER).execute(pool).await.unwrap();
+        ix.fold(pool, None, 40, &owner).await.unwrap();
+        assert_eq!(
+            state_of(pool, id).await,
+            open(),
+            "the Sepolia log walk only supplies wallet history"
+        );
         let now = Utc::now().timestamp();
         sqlx::query(
             "INSERT INTO land_authz.index_cursor (network, land_registry, estate_registry, last_block, folded_block, folded_at, full_replay_started) \

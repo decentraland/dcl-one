@@ -61,7 +61,8 @@ pub(super) async fn nft_by_contract_token(
     chain_id: i64,
     contract_address: &str,
     token_id: &str,
-) -> Result<Option<LandNft>, NftReadError> {
+    custody_at: Option<chrono::DateTime<chrono::Utc>>,
+) -> Result<Option<(LandNft, Option<super::index::RentEvidence>)>, NftReadError> {
     let mut snapshot = crate::land_authz::indexer::ready_snapshot(
         pool,
         net.network,
@@ -163,5 +164,19 @@ pub(super) async fn nft_by_contract_token(
     {
         return Err(NftReadError::MetadataUnavailable);
     }
-    Ok(Some(row.asset))
+    let rent = match custody_at {
+        Some(now) => Some(
+            super::index::published_rent(
+                &mut snapshot.tx,
+                super::index::RentalsChain::Mainnet,
+                super::index::RENTALS_MAINNET,
+                contract_address,
+                token_id,
+                now,
+            )
+            .await?,
+        ),
+        None => None,
+    };
+    Ok(Some((row.asset, rent)))
 }
