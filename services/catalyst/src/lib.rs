@@ -11,7 +11,6 @@ pub mod presence;
 pub mod scene_proxy;
 pub use catalyst_db::schema_migrate;
 pub mod index;
-pub mod metrics_matcher;
 pub mod serve;
 mod settings;
 

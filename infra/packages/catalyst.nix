@@ -66,6 +66,10 @@ let
   cargoArtifacts = craneLib.buildDepsOnly (common // { inherit cargoVendorDir; });
 in craneLib.buildPackage (common // {
   inherit cargoArtifacts cargoVendorDir;
-  passthru = { inherit cargoArtifacts cargoVendorDir vendorGit; };
+  # `workspace`: what message-router.nix builds its member of this workspace from.
+  passthru = {
+    inherit cargoArtifacts cargoVendorDir vendorGit;
+    workspace = { inherit (common) src version cargoToml cargoLock postUnpack; };
+  };
   meta.mainProgram = "catalyst";
 })

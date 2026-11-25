@@ -3,7 +3,7 @@ import Button from '@ui/atoms/Button';
 import IconButton from '@ui/atoms/IconButton';
 import Popover from '@ui/atoms/Popover';
 import Toggle from '@ui/atoms/Toggle';
-import Tooltip from '@ui/atoms/Tooltip';
+import { Tooltip } from '@dcl/one-ui';
 import {
   ChevronRightIcon,
   CloseIcon,

@@ -10,6 +10,7 @@ import {
   Spinner,
   Tag,
   Toast,
+  Tooltip,
   type ModalProps,
   type ProfilePicSize,
   type TagVariant,
@@ -161,6 +162,49 @@ export const feedbackEntries: GalleryEntry[] = [
       title: variant[0]!.toUpperCase() + variant.slice(1),
       render: () => <ToastDemo variant={variant} />
     }))
+  },
+  {
+    name: 'Tooltip',
+    group: 'Feedback',
+    summary: 'A short label or note beside its anchor, shown on hover and keyboard focus.',
+    components: ['Tooltip'],
+    examples: [
+      {
+        id: 'sides',
+        title: 'Sides',
+        render: () => (
+          <div className={`${layout.row} ${layout.tooltipHost} ${layout.tooltipRoom}`}>
+            {(['top', 'right', 'bottom', 'left'] as const).map((side) => (
+              <Tooltip key={side} label={`On the ${side}`} side={side} arrow>
+                <Button size="md" variant="secondary">
+                  {side}
+                </Button>
+              </Tooltip>
+            ))}
+          </div>
+        )
+      },
+      {
+        id: 'rich',
+        title: 'Rich content in a portal',
+        render: () => (
+          <div className={`${layout.row} ${layout.tooltipHost} ${layout.tooltipRoom}`}>
+            <Tooltip
+              portal
+              keepInViewport
+              side="top"
+              maxWidth={240}
+              tipClassName={layout.tooltipHost}
+              content={<span>Wraps at 240px and stays inside the window.</span>}
+            >
+              <Button size="md" variant="secondary">
+                Details
+              </Button>
+            </Tooltip>
+          </div>
+        )
+      }
+    ]
   },
   {
     name: 'Spinner',

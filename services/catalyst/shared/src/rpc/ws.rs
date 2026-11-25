@@ -154,14 +154,21 @@ impl AxumWsTransport {
     /// Opt-in source ordinary queue, sharing the existing writer and byte budget.
     /// The source Social handler also forwards authenticated text frames as
     /// their UTF-8 bytes; the legacy constructors keep dropping text frames.
-    pub fn spawn_with_ordinary_queue(
-        socket: WebSocket,
+    pub fn spawn_with_ordinary_queue<S>(
+        socket: S,
         address: String,
         close: Arc<SocketClose>,
         idle: IdleTimer,
         max_backpressure: f64,
         ordinary: OrdinaryQueueConfig,
-    ) -> (Self, JoinHandle<()>) {
+    ) -> (Self, JoinHandle<()>)
+    where
+        S: futures::Stream<Item = Result<Message, axum::Error>>
+            + futures::Sink<Message, Error = axum::Error>
+            + Unpin
+            + Send
+            + 'static,
+    {
         ordinary
             .capacity(max_backpressure)
             .expect("validated ordinary queue");
@@ -175,14 +182,21 @@ impl AxumWsTransport {
         )
     }
 
-    fn spawn_configured(
-        socket: WebSocket,
+    fn spawn_configured<S>(
+        socket: S,
         address: String,
         close: Arc<SocketClose>,
         idle: IdleTimer,
         max_backpressure: usize,
         ordinary_config: Option<(OrdinaryQueueConfig, f64)>,
-    ) -> (Self, JoinHandle<()>) {
+    ) -> (Self, JoinHandle<()>)
+    where
+        S: futures::Stream<Item = Result<Message, axum::Error>>
+            + futures::Sink<Message, Error = axum::Error>
+            + Unpin
+            + Send
+            + 'static,
+    {
         let (mut sink, mut stream) = socket.split();
         let (inbound_tx, inbound_rx) = unbounded_channel::<TransportMessage>();
         let (outbound_tx, outbound_rx) = unbounded_channel::<OrdinaryOutbound>();
@@ -213,13 +227,13 @@ impl AxumWsTransport {
                         if matches!(&msg, Some(Ok(_))) { reader_idle.activity(); }
                         match msg {
                         Some(Ok(Message::Binary(b))) => {
-                            if forward_text { metrics::counter!("ws_messages_received").increment(1); }
+                            if forward_text { dcl_metrics::counter!("ws_messages_received").increment(1); }
                             if inbound_tx.send(b.to_vec()).is_err() {
                                 break;
                             }
                         }
                         Some(Ok(Message::Text(text))) if forward_text => {
-                            metrics::counter!("ws_messages_received").increment(1);
+                            dcl_metrics::counter!("ws_messages_received").increment(1);
                             if inbound_tx.send(text.as_bytes().to_vec()).is_err() { break; }
                         }
                         Some(Ok(Message::Text(_))) | Some(Ok(Message::Ping(_))) | Some(Ok(Message::Pong(_))) => {}
@@ -460,8 +474,8 @@ where
     let size = bytes.len();
     std::pin::Pin::new(&mut *sink).start_send(Message::Binary(bytes.into()))?;
     if social_metrics {
-        metrics::counter!("ws_messages_sent").increment(1);
-        metrics::histogram!("ws_message_size_bytes", "result" => "success").record(size as f64);
+        dcl_metrics::counter!("ws_messages_sent").increment(1);
+        dcl_metrics::histogram!("ws_message_size_bytes", "result" => "success").record(size as f64);
     }
     futures::future::poll_fn(|cx| std::pin::Pin::new(&mut *sink).poll_flush(cx)).await
 }
@@ -597,7 +611,7 @@ mod guarded_tests {
         sent: std::sync::atomic::AtomicU64,
         bytes: std::sync::atomic::AtomicU64,
     }
-    impl metrics::CounterFn for AcceptedMetrics {
+    impl dcl_metrics::CounterFn for AcceptedMetrics {
         fn increment(&self, value: u64) {
             self.sent.fetch_add(value, Ordering::Relaxed);
         }
@@ -605,53 +619,57 @@ mod guarded_tests {
             self.sent.store(value, Ordering::Relaxed);
         }
     }
-    impl metrics::HistogramFn for AcceptedMetrics {
+    impl dcl_metrics::HistogramFn for AcceptedMetrics {
         fn record(&self, value: f64) {
             self.bytes.fetch_add(value as u64, Ordering::Relaxed);
         }
     }
     struct AcceptedRecorder(Arc<AcceptedMetrics>);
-    impl metrics::Recorder for AcceptedRecorder {
+    impl dcl_metrics::Recorder for AcceptedRecorder {
         fn describe_counter(
             &self,
-            _: metrics::KeyName,
-            _: Option<metrics::Unit>,
-            _: metrics::SharedString,
+            _: dcl_metrics::KeyName,
+            _: Option<dcl_metrics::Unit>,
+            _: dcl_metrics::SharedString,
         ) {
         }
         fn describe_gauge(
             &self,
-            _: metrics::KeyName,
-            _: Option<metrics::Unit>,
-            _: metrics::SharedString,
+            _: dcl_metrics::KeyName,
+            _: Option<dcl_metrics::Unit>,
+            _: dcl_metrics::SharedString,
         ) {
         }
         fn describe_histogram(
             &self,
-            _: metrics::KeyName,
-            _: Option<metrics::Unit>,
-            _: metrics::SharedString,
+            _: dcl_metrics::KeyName,
+            _: Option<dcl_metrics::Unit>,
+            _: dcl_metrics::SharedString,
         ) {
         }
         fn register_counter(
             &self,
-            key: &metrics::Key,
-            _: &metrics::Metadata<'_>,
-        ) -> metrics::Counter {
+            key: &dcl_metrics::Key,
+            _: &dcl_metrics::Metadata<'_>,
+        ) -> dcl_metrics::Counter {
             if key.name() == "ws_messages_sent" {
-                metrics::Counter::from_arc(self.0.clone())
+                dcl_metrics::Counter::from_arc(self.0.clone())
             } else {
-                metrics::Counter::noop()
+                dcl_metrics::Counter::noop()
             }
         }
-        fn register_gauge(&self, _: &metrics::Key, _: &metrics::Metadata<'_>) -> metrics::Gauge {
-            metrics::Gauge::noop()
+        fn register_gauge(
+            &self,
+            _: &dcl_metrics::Key,
+            _: &dcl_metrics::Metadata<'_>,
+        ) -> dcl_metrics::Gauge {
+            dcl_metrics::Gauge::noop()
         }
         fn register_histogram(
             &self,
-            key: &metrics::Key,
-            _: &metrics::Metadata<'_>,
-        ) -> metrics::Histogram {
+            key: &dcl_metrics::Key,
+            _: &dcl_metrics::Metadata<'_>,
+        ) -> dcl_metrics::Histogram {
             if key.name() == "ws_message_size_bytes" {
                 assert_eq!(
                     key.labels()
@@ -659,9 +677,9 @@ mod guarded_tests {
                         .collect::<Vec<_>>(),
                     [("result", "success")]
                 );
-                metrics::Histogram::from_arc(self.0.clone())
+                dcl_metrics::Histogram::from_arc(self.0.clone())
             } else {
-                metrics::Histogram::noop()
+                dcl_metrics::Histogram::noop()
             }
         }
     }
@@ -675,7 +693,7 @@ mod guarded_tests {
             let state = SinkState::new(flush);
             state.reject.store(reject, Ordering::SeqCst);
             let recorder = AcceptedRecorder(Arc::new(AcceptedMetrics::default()));
-            let _recording = metrics::set_default_local_recorder(&recorder);
+            let _recording = dcl_metrics::set_default_local_recorder(&recorder);
             let (completion, receiver) = tokio::sync::oneshot::channel();
             let envelope = GuardedOutbound {
                 social_metrics,
@@ -709,7 +727,7 @@ mod guarded_tests {
     #[tokio::test(start_paused = true)]
     async fn ordinary_social_metrics_defer_admission_and_count_physical_acceptance_once() {
         let recorder = AcceptedRecorder(Arc::new(AcceptedMetrics::default()));
-        let _recording = metrics::set_default_local_recorder(&recorder);
+        let _recording = dcl_metrics::set_default_local_recorder(&recorder);
         let (output, mut frames) = unbounded_channel();
         let close = Arc::new(SocketClose::default());
         let lane = ordinary::OrdinaryLane::new(

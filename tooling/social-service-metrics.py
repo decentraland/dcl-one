@@ -70,10 +70,10 @@ def inventory():
         'baseline': source['baseline'],
         'scope': 'Static literal name/type/label inventory across entire production Rust files, excluding dedicated test paths. Inline test-module hits are possible and require source review. Presence does not establish production execution, runtime event meaning, series initialization, histogram buckets, dynamic-name sites or sample values. Missing literals remain candidates until dynamic sites are checked.',
         'known_differences': [
-            'WKC_METRICS_RESET_AT_NIGHT=true is accepted but the social view does not reset; the global recorder is preserved for other domains.',
+            'Social records process-lifetime measurements into the private Catalyst Serve scrape. The source HTTP scrape path, bearer token and midnight reset are retired.',
             'Node/V8/process default collectors are not fabricated by the Rust exporter. Their runtime-specific families are outside this declared-family inventory.',
-            'The filtered shared recorder can include shared-family labels emitted by other domains; source-compatible per-family instrumentation and labels require review.',
-            'The Social view renders all 44 source HELP/TYPE declarations and seeds only the 16 captured unlabelled counter/gauge zeros; the other 28 declarations have no invented initial samples. Registration and literal presence do not prove event or value equality.',
+            'Shared-family labels can include observations from multiple services in the process.',
+            'Social registers 44 source descriptors and seeds 16 captured unlabelled counter/gauge zeros. Registration and literal presence do not prove event or value equality.',
             'Portable ordinary/guarded acceptance is observed after the Tokio sink accepts a frame, before flush. Native uWS backpressure/drop/drain/buffer observations remain unavailable; the success label does not establish native buffering equivalence.',
             'Source logger event coverage and LOG_LEVEL filtering remain incomplete. Source authentication-race completion, stale subscriber reconciliation, and stream producer errors represented as ordinary Generator termination remain explicit event gaps.'
         ],

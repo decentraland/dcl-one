@@ -1,18 +1,12 @@
-import {
-  useEffect,
-  useRef,
-  useState,
-  type AnchorHTMLAttributes,
-  type ComponentType,
-  type ReactNode
-} from 'react'
+import { useEffect, useState, type ComponentType, type ReactNode } from 'react'
+import { TabsBar, type TabsBarItem, type TabsBarLinkProps } from '../../components/TabsBar/TabsBar'
 import ChromeBody from '../../components/AppChrome/ChromeBody'
 import SiteLayout from '../../components/AppChrome/SiteLayout'
 
 export type ShopSection =
   'overview' | 'event' | 'collectibles' | 'names' | 'lands' | 'my-items' | 'activity'
 export type ShopNavSet = 'shop' | 'marketplace'
-export type ShopNavTab = { id: ShopSection; label: string; href: string; mobileOnly?: boolean }
+export type ShopNavTab = TabsBarItem & { id: ShopSection }
 
 type ShopChromeProps = {
   topbar?: ReactNode
@@ -37,7 +31,8 @@ type ShopNavigationProps = {
   iap: boolean
   set: ShopNavSet
   label: string
-  Link: ComponentType<Omit<AnchorHTMLAttributes<HTMLAnchorElement>, 'href'> & { to: string }>
+  Link: ComponentType<TabsBarLinkProps>
+  search: ReactNode
   children?: ReactNode
 }
 
@@ -48,19 +43,10 @@ export function ShopNavigation({
   set,
   label,
   Link,
+  search,
   children
 }: ShopNavigationProps) {
-  const tabsRef = useRef<HTMLElement>(null)
   const scrolled = useScrolled()
-  useEffect(() => {
-    const nav = tabsRef.current
-    const current = nav?.querySelector<HTMLElement>('[aria-current="page"]')
-    if (!nav || !current || nav.scrollWidth <= nav.clientWidth) return
-    const left = current.offsetLeft - nav.offsetLeft
-    if (left < nav.scrollLeft || left + current.offsetWidth > nav.scrollLeft + nav.clientWidth) {
-      nav.scrollLeft = Math.max(0, left - (nav.clientWidth - current.offsetWidth) / 2)
-    }
-  }, [active, tabs])
   return (
     <div
       className="shop-subnav"
@@ -69,21 +55,19 @@ export function ShopNavigation({
       data-set={set}
       data-scrolled={scrolled || undefined}
     >
-      <nav ref={tabsRef} className="shop-subnav__tabs" aria-label={label} data-testid="subnav-tabs">
-        {tabs.map((tab) => (
-          <Link
-            key={tab.id}
-            to={tab.href}
-            className={tab.id === active ? 'active' : undefined}
-            aria-current={tab.id === active ? 'page' : undefined}
-            data-event={tab.id === 'event' || undefined}
-            data-mobile-only={tab.mobileOnly || undefined}
-          >
-            {tab.label}
-          </Link>
-        ))}
-      </nav>
+      <div className="shop-subnav__tabs" data-testid="subnav-tabs">
+        <TabsBar
+          mode="navigation"
+          page="shop"
+          layout="links"
+          label={label}
+          items={tabs}
+          activeId={active ?? null}
+          LinkComponent={Link}
+        />
+      </div>
       <hr className="shop-subnav__divider" aria-hidden="true" />
+      {search}
       {children}
     </div>
   )

@@ -1,7 +1,6 @@
 import { config } from '/@/config';
 import { fetch } from '/shared/fetch';
-
-const BATCH_SIZE = 1000;
+import { createLimit } from '/shared/limit';
 
 export type Domain = { name: string };
 export type DomainsQueryResult = { data: { domains: Domain[] } } | { errors: any };
@@ -102,133 +101,94 @@ export class ENS {
   }
 }
 
-export type DCLDomainsQueryResult =
-  | { data: { nfts: { ens: { subdomain: string } }[] } }
-  | { errors: any };
-
-export type DCLOwnerByNameTuple = {
-  owner: {
-    address: string;
-  };
-  ens: {
-    subdomain: string;
-  };
-};
-export type DCLOwnerByNameQueryResult = {
-  data: {
-    nfts: DCLOwnerByNameTuple[];
-  };
+/** A page of the content server's `/lambdas/users/{address}/names` (lamb2's shape). */
+type DCLNamesPage = {
+  elements: { name: string }[];
+  totalAmount: number;
 };
 
+/** lamb2's largest `pageSize` for `/lambdas/users/{address}/names`. */
+const NAMES_PAGE_SIZE = 1000;
+
+/** How many `/lambdas/names/{name}/owner` lookups run at once. */
+const OWNER_LOOKUPS = createLimit(8);
+
+/**
+ * DCL NAMEs from the content server's lambdas (`PEER_URL`), the node's own NAME source: on a
+ * dcl-one node its nft index, on another catalyst lamb2's reader.
+ */
 export class DCLNames {
-  private subgraph = config.get('MARKETPLACE_SUBGRAPH');
-  private subgraphTimeout = 10000;
+  private lambdas = `${config.get('PEER_URL')}/lambdas`;
+  private timeout = 10000;
 
+  /** Every DCL NAME `address` holds, as `<name>.dcl.eth`, walked page by page. */
   public async fetchNames(address: string) {
-    let results: string[] = [];
-    let offset = 0;
-    let nextPage = true;
-
-    while (nextPage) {
+    const owner = encodeURIComponent(address.toLowerCase());
+    const results: string[] = [];
+    for (let pageNum = 1; ; pageNum++) {
       const response: Response = await fetch(
-        this.subgraph,
-        {
-          method: 'POST',
-          body: JSON.stringify({
-            query: `{
-            nfts(
-              first: ${BATCH_SIZE},
-              skip: ${offset},
-              where: {
-                owner_: { id: "${address.toLowerCase()}" },
-                category: ens
-              }
-            ) {
-              ens {
-                subdomain
-              }
-            }
-          }`,
-          }),
-        },
-        this.subgraphTimeout,
+        `${this.lambdas}/users/${owner}/names?pageSize=${NAMES_PAGE_SIZE}&pageNum=${pageNum}`,
+        undefined,
+        this.timeout,
       );
-
       if (!response.ok) {
+        await discard(response);
         throw new Error(response.status.toString());
       }
-
-      const queryResult: DCLDomainsQueryResult = await response.json();
-
-      if ('errors' in queryResult) {
-        throw new Error(JSON.stringify(queryResult.errors));
-      }
-      const domains: string[] = queryResult.data.nfts.map(
-        nft => `${nft.ens.subdomain.toString()}.dcl.eth`,
-      );
-      results = results.concat(domains);
-
-      if (domains.length === BATCH_SIZE) {
-        offset += BATCH_SIZE;
-      } else {
-        nextPage = false;
+      const page: DCLNamesPage = await response.json();
+      results.push(...page.elements.map(({ name }) => `${name}.dcl.eth`));
+      if (page.elements.length < NAMES_PAGE_SIZE || results.length >= page.totalAmount) {
+        return results;
       }
     }
-
-    return results;
   }
 
-  public async fetchNamesOwners(domains: string[]) {
-    if (!domains) {
-      return {};
-    }
-
+  /**
+   * The holder of each NAME in `names` (bare labels, no `.dcl.eth`), keyed by the lowercased
+   * label; a NAME nobody holds is left out. One request per distinct NAME (the lambdas have no
+   * batch owner route; a contributable list is a handful), at most 8 at once. Any failed lookup
+   * fails the whole read, and the lookups still queued behind it are not sent.
+   */
+  public async fetchNamesOwners(names: string[]): Promise<Record<string, string>> {
     const results: Record<string, string> = {};
-    let offset = 0;
-    let nextPage = true;
-
-    while (nextPage) {
-      const response: Response = await fetch(
-        this.subgraph,
-        {
-          method: 'POST',
-          body: JSON.stringify({
-            query: `query getOwners($domains: [String!], $offset: Int) {
-            nfts(first: ${BATCH_SIZE}, skip: $offset, where: { name_in: $domains, category: ens }) {
-              owner {
-                address
-              }
-              ens {
-                subdomain
-              }
+    const labels = [...new Set(names.map(name => name.toLowerCase()))];
+    let failed = false;
+    await Promise.all(
+      labels.map(label =>
+        OWNER_LOOKUPS(async () => {
+          if (failed) {
+            return;
+          }
+          try {
+            const response: Response = await fetch(
+              `${this.lambdas}/names/${encodeURIComponent(label)}/owner`,
+              undefined,
+              this.timeout,
+            );
+            if (response.status === 404) {
+              await discard(response);
+              return;
             }
-          }`,
-            variables: { domains, offset },
-          }),
-        },
-        this.subgraphTimeout,
-      );
-
-      if (!response.ok) {
-        throw new Error(response.status.toString());
-      }
-
-      const queryResult: DCLOwnerByNameQueryResult = await response.json();
-
-      if ('errors' in queryResult) {
-        throw new Error(JSON.stringify(queryResult.errors));
-      }
-      queryResult.data.nfts.forEach(({ ens, owner }) => {
-        results[ens.subdomain] = owner.address;
-      });
-
-      if (queryResult.data.nfts.length === BATCH_SIZE) {
-        offset += BATCH_SIZE;
-      } else {
-        nextPage = false;
-      }
-    }
-
+            if (!response.ok) {
+              await discard(response);
+              throw new Error(response.status.toString());
+            }
+            const { owner }: { owner?: string } = await response.json();
+            if (owner) {
+              results[label] = owner;
+            }
+          } catch (error) {
+            failed = true;
+            throw error;
+          }
+        }),
+      ),
+    );
     return results;
   }
+}
+
+/** Releases a response whose body is not read, so its connection is not held until collected. */
+async function discard(response: Response) {
+  await response.body?.cancel().catch(() => undefined);
 }

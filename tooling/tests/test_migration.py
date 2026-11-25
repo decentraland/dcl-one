@@ -1811,7 +1811,7 @@ class AgainstPostgres(CommsMigrationCases, SocialMigrationCases, WorldsMigration
         # The stale place's active scene moved west; it declares the same (outside) base.
         content = ("INSERT INTO content.deployments (deployer_address, version, entity_type, entity_id, entity_metadata,"
                    " entity_timestamp, entity_pointers, local_timestamp, auth_chain) VALUES ('0x0', 'v3', 'scene', 'bafy1',"
-                   " '{\"scene\": {\"base\": \"30,30\"}}', now(), ARRAY['19,20', '20,20'], now(), '[]');\n"
+                   " '{\"v\": {\"scene\": {\"base\": \"30,30\"}}}', now(), ARRAY['19,20', '20,20'], now(), '[]');\n"
                    "INSERT INTO content.active_pointers (pointer, entity_id) VALUES ('19,20', 'bafy1'), ('20,20', 'bafy1');\n")
         self.sql(tgt, place.format(self.OUTSIDE, self.INSIDE, self.STALE, self.DISABLED) + content)
         env = {'WORLD_STORAGE_DATABASE_URL': self.url(src), 'TARGET_DATABASE_URL': self.url(tgt)}

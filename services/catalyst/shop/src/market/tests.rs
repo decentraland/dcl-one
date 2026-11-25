@@ -606,10 +606,6 @@ async fn the_lambdas_answer_the_envelope_without_a_reader() {
             "nft-index",
         ),
         (
-            "/lambdas/users/0xdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef/names",
-            "marketplace-subgraph",
-        ),
-        (
             "/lambdas/collections/wearables-by-owner/0xdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef",
             "nft-index",
         ),
@@ -625,6 +621,25 @@ async fn the_lambdas_answer_the_envelope_without_a_reader() {
             "{uri}: {body}"
         );
     }
+    // The NAMEs on mainnet read the nft index, which another process may
+    // publish into this database: one that cannot be read is lamb2's 502.
+    // Off mainnet, without the subgraph, there is no NAME source at all.
+    let names = "/lambdas/users/0xdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef/names";
+    let (status, body) = get_json(router(state.clone()), names).await;
+    assert_eq!(status, StatusCode::BAD_GATEWAY, "{body}");
+    let testnet = support::state_without_db_settings(Settings {
+        eth_network: "sepolia".into(),
+        ..Settings::for_tests()
+    });
+    let (status, body) = get_json(router(testnet), names).await;
+    assert_eq!(
+        (status, body["source"].as_str()),
+        (
+            StatusCode::SERVICE_UNAVAILABLE,
+            Some("marketplace-subgraph")
+        ),
+        "{body}"
+    );
     let subgraphs_only = support::state_without_db_settings(Settings {
         eth_collections_subgraph_url: Some("https://subgraph.example/eth".into()),
         matic_collections_subgraph_url: Some("https://subgraph.example/matic".into()),
@@ -1470,6 +1485,7 @@ async fn mirrored_rows_never_overwrite_a_local_trade_and_the_routes_serve_them()
             ..Settings::for_tests()
         },
     ));
+    super::trade_events::tests::publish_cursors(pool).await;
     assert_eq!(
         trades::ready(&local_only).await.unwrap(),
         trades::Readiness::LocalAuthority,
@@ -1601,7 +1617,7 @@ async fn a_development_stack_reads_a_partial_order_book_only_when_asked() {
     };
     let state = support::state_without_db_settings(settings);
     assert_eq!(
-        trades::ready(&state).await.unwrap(),
+        trades::readiness(&state).await.unwrap(),
         trades::Readiness::Mirrored
     );
     assert!(
@@ -1623,6 +1639,7 @@ async fn a_leftover_mirrored_trade_counts_under_local_authority_only_within_the_
     let Some(state) = state_with_db(settings.clone()).await else {
         return;
     };
+    super::trade_events::tests::publish_cursors(&state.pool).await;
     assert_eq!(
         trades::ready(&state).await.unwrap(),
         trades::Readiness::LocalAuthority

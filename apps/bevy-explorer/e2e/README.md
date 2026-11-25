@@ -161,6 +161,7 @@ pnpm run avatar-sweep --profile ~/.cache/dcl-avatar-sweep-profile --port 8765   
 | `--nametags` | `on` | `on`, `off`, or `on,off` for both (`/nametags`) |
 | `--layout` | `grid` | `grid` stands the demo avatars in front of the player, each row filled from straight ahead outwards; `around` fills a disc centred on the player, nearest first, so part of the crowd is behind the camera (`/avatar_demo layout`) |
 | `--seed` | `1` | The crowd: with a number, the avatar at each position has the same look in every run (`/avatar_demo seed`), so two builds are compared on the same avatars; `none` draws a new crowd each time |
+| `--wearables` | none | A text file of wearable URNs, one per line (blank lines and `#` lines ignored): the demo avatars wear random ones from it, not base wearables (`/avatar_demo catalog`) |
 | `--setup` | none | A console line to run once before the first step, such as an engine tunable under comparison; repeat it for several |
 | `--window`, `--settle`, `--load-timeout` | `10`, `3`, `180` | Seconds |
 | `--realm`, `--position` | the `genesispng.dcl.eth` world on zone, `0,0` | Where to stand |
@@ -168,7 +169,7 @@ pnpm run avatar-sweep --profile ~/.cache/dcl-avatar-sweep-profile --port 8765   
 | `--port` | `0` (a free one) | The port `--web-app` is served on. A fixed one keeps the page's origin from run to run |
 | `--profile` | none (a temporary one, removed at the end) | A directory for Chrome's profile, kept between runs; needs a fixed `--port` (see below) |
 
-The demo avatars wear random base wearables: a few hundred models and textures from the
+The demo avatars wear random base wearables, or with `--wearables <file>` random ones from the URNs in that file, eight each; the catalog is cleared at the end. Either way, they are a few hundred models and textures from the
 catalyst, which a crowd of several hundred asks for all at once. Run after run, that is more than
 the catalyst allows one client, and it then refuses content files for hours. For anything beyond
 a single run, pass `--profile <dir>` and a fixed `--port`: Chrome keeps its profile in `<dir>`
@@ -188,7 +189,8 @@ compared, stand in one place first with `--setup "/move_player_to <x> <y> <z>"`.
 Each stdout line is one step: `count`, `built` (`-1` when the avatars did not finish building
 within `--load-timeout`), `shown` (demo avatars not hidden, by the cap say) and `drawn` (those with
 a mesh in the camera's view or a shadow's at the end of the window), `loadSeconds` (spawn to every avatar built), the condition (`cap`,
-`emote`, `nametags`, `layout`, `seed`), and `fps`, `frameMs` and `gpuFrameMs` as `{median, p95, max}` over the
+`emote`, `nametags`, `layout`, `seed`, `wearables`: the file's name or `null`), `samples` and `gpuSamples` (the
+window's samples, and how many of them carried a GPU frame time), and `fps`, `frameMs` and `gpuFrameMs` as `{median, p95, max}` over the
 window, with the last `engineMemoryMiB` and `hiccups`. Compare `frameMs.p95` across counts at
 `cap: "all"` for the cost of drawn avatars, and `cap: 20` against `all` for what avatars hidden by
 the cap still cost. Run it on each GPU class (discrete, integrated) the cap must hold on, and give
@@ -376,9 +378,12 @@ InWorld spec `smart-wearables` previews ([scenes/README.md](scenes/README.md)).
 960x540 window, turns the nametags off and holds the landscape's trees still (`/nametags false`:
 the scenes hide avatars, not the nametag over the hidden guest, whose name changes every run;
 `/tree_wind false`: the trees and bushes sway in the wind, so no two frames of them agree),
-clears the sky (`/cloud 0 0`: the clouds drift from boot, seeded by the day of the month), turns
-the empty parcels' grass off for the session (`/session_graphics grass off`: its stacked shells
-are not drawn in a fixed order, so its pixels move with each bevy pin), teleports to each scene, waits for its entities and its settle time, and compares the engine's frame (`/screenshot`, the canvas without the HUD) with `references/<id>.png`: a pixel
+clears the sky (`/cloud 0 0`: cover 0 clears the cloud strips, and speed 0 holds them and the
+horizon noise in a fixed pose; the stars keep twinkling, though the scenes are at noon and show
+none), turns the empty parcels' grass off for the session (`/session_graphics grass off`: its
+stacked shells are not drawn in a fixed order, so its pixels move with each bevy pin), teleports
+to each scene, waits for its entities and its settle time, and compares the engine's frame
+(`/screenshot`, the canvas without the HUD) with `references/<id>.png`: a pixel
 differs when any RGB channel differs by more than 8, and the scene passes when at most 0.3% of the
 pixels differ (1.5% for `avatar-shape`), as explorer-automation compared. A last scenario turns
 the nametags back on at `avatar-shape` and reads `/nametag_state` until the scene's five avatars

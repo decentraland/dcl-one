@@ -29,7 +29,6 @@ async fn server_with(settings: Settings) -> (u16, AppState) {
         state.clone(),
         true,
         Default::default(),
-        catalyst::comms::stats::http::test_support::matcher(),
         std::sync::Arc::new(catalyst::content::Denylist::default()),
     );
     let app = axum::Router::new()
@@ -2151,7 +2150,6 @@ async fn proxied_server(settings: Settings) -> (u16, AppState) {
         state.clone(),
         true,
         Default::default(),
-        catalyst::comms::stats::http::test_support::matcher(),
         std::sync::Arc::new(catalyst::content::Denylist::default()),
     );
     let app = axum::Router::new().merge(mounts.root);
