@@ -167,8 +167,8 @@ export const formEntries: GalleryEntry[] = [
               </div>
             ))}
             <div className={layout.row}>
-              <Checkbox aria-label="hud" variant="hud" defaultChecked />
-              <Checkbox aria-label="hud off" variant="hud" />
+              <Checkbox aria-label="hud" appearance="hud" defaultChecked />
+              <Checkbox aria-label="hud off" appearance="hud" />
             </div>
           </div>
         )

@@ -93,7 +93,7 @@ export function NewAccountName({
         {email != null && (
           <div className={styles.row}>
             <Checkbox
-              variant="hud"
+              appearance="hud"
               checked={newsletter}
               onCheckedChange={setNewsletter}
               aria-label="Subscribe to newsletter"
@@ -106,7 +106,7 @@ export function NewAccountName({
         )}
         <div className={styles.row}>
           <Checkbox
-            variant="hud"
+            appearance="hud"
             checked={terms}
             onCheckedChange={setTerms}
             aria-label="I agree with the Terms of Use and Privacy Policy"

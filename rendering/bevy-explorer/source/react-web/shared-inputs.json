@@ -13625,7 +13625,7 @@
     },
     {
       "path": "library/ui/apps/hud/features/startup/NewAccountName.tsx",
-      "sha256": "45317127041c8b9cfc953f4a45c63a68293bfdebfe86f1357199b4d10061d52f"
+      "sha256": "5322d947ea9ed6d6ef60d2d7fe0a7bcb99dd73b9c8c4af7f7189d4758025507f"
     },
     {
       "path": "library/ui/apps/hud/features/startup/StartupBack.module.css",
@@ -16169,11 +16169,11 @@
     },
     {
       "path": "library/ui/components/Checkbox/Checkbox.module.css",
-      "sha256": "aabcd67ae6acbd6386fc81fd771c531351b132460eaaa5501bad1fe5e13230be"
+      "sha256": "702b6c9a66882778dc08143066668cd08459f00abd464dd01fd9f3e2d418b63a"
     },
     {
       "path": "library/ui/components/Checkbox/Checkbox.tsx",
-      "sha256": "955c1fe96a409727e20e8a88e301987c118c0b20fdc22af7c293eb88c252fd5c"
+      "sha256": "4cba0db9d3d00a32309a5aa85e0b6e834af5ce6ef6e18559fd4acf5f55714558"
     },
     {
       "path": "library/ui/components/CheckboxLabel/CheckboxLabel.module.css",
