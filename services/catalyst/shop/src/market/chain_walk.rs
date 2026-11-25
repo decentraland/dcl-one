@@ -1654,7 +1654,7 @@ async fn rebuild(
              fold_through = NULL, folded_block = NULL, folded_at = NULL, full_history = $4, chain_id = $5, \
              sepolia_trade_v1 = sepolia_trade_v1 OR ($1 = 'trade_events' AND $5 = 11155111), \
              quarantined_at = NULL, quarantine_reason = NULL, rebuild_requested_at = NULL, diverged_at = NULL, \
-             updated_at = timezone('UTC', now()) \
+             rebuilds = rebuilds + 1, updated_at = timezone('UTC', now()) \
          WHERE indexer = $1 AND network = $2",
     )
     .bind(owner.indexer)
