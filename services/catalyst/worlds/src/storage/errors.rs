@@ -151,13 +151,22 @@ impl ApiError {
     }
 }
 
+/// What world storage answers while the land-authz index has no fresh
+/// published fold: land-authz's own wording.
+pub use crate::land_authz::NOT_READY_MSG as LAND_INDEX_NOT_READY_MSG;
+
 /// A permission refusal keeps its own status: 401 "not authorized to perform
 /// operations on this world", 401 "Failed to verify world permissions" for
-/// "could not tell" (upstream's answer when the lookup throws) and 503 for
-/// "not configured".
+/// "could not tell" (upstream's answer when the lookup throws), and 503 for
+/// "not configured" and for a land-authz index that is not published yet.
 impl From<AuthorityNotEstablished> for ApiError {
     fn from(why: AuthorityNotEstablished) -> Self {
         match &why {
+            // No upstream answer exists for an index that is not published
+            // yet: a retryable 503 naming it, never "not authorized".
+            why if why.is_land_index_not_ready() => {
+                ApiError::Unavailable(LAND_INDEX_NOT_READY_MSG.to_string())
+            }
             AuthorityNotEstablished::UndeterminedStoreUnavailable {
                 store,
                 reason_for_operators,

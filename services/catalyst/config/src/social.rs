@@ -555,7 +555,10 @@ pub struct SocialConfig {
     pub comms_gatekeeper_auth_token: Option<String>,
 
     /// Lambdas base whose `/parcels/{x}/{y}/operators` protects LAND
-    /// owners/operators from scene bans (old LAMBDAS_URL); unset protects none.
+    /// owners/operators from scene bans (old LAMBDAS_URL), read only by a
+    /// permission core without the land-authz index. `catalyst serve` always
+    /// attaches the index, whose published fold is then the only LAND
+    /// authority, so the URL is not read there.
     #[arg(long, env = "COMMS_LAND_OPERATORS_URL")]
     pub comms_land_operators_url: Option<String>,
 

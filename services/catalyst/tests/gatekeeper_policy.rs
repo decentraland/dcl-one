@@ -14,7 +14,6 @@ mod tests {
 
     use axum::Json;
     use axum::extract::{Query, State};
-    use axum::http::StatusCode;
     use sqlx::PgPool;
     use uuid::Uuid;
 
@@ -120,77 +119,45 @@ mod tests {
         Some(axum::Extension(catalyst::comms::writes::Switch(true)))
     }
 
-    /// A marketplace subgraph on the loopback answering `parcelsAt` from a fixed
-    /// parcel list (any other document gets an empty page), or, when `fail` is
-    /// set, HTTP 500 with `Retry-After: 0`, so the reader spends its retries
-    /// without waiting through the backoff ladder.
-    async fn fake_land_subgraph(
-        parcels: serde_json::Value,
-        fail: Arc<std::sync::atomic::AtomicBool>,
-    ) -> String {
-        use axum::Router;
-        use axum::response::IntoResponse;
-        use axum::routing::post;
-        async fn answer(
-            State((parcels, fail)): State<(
-                Arc<serde_json::Value>,
-                Arc<std::sync::atomic::AtomicBool>,
-            )>,
-            Json(body): Json<serde_json::Value>,
-        ) -> axum::response::Response {
-            if fail.load(std::sync::atomic::Ordering::Relaxed) {
-                return (
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    [(axum::http::header::RETRY_AFTER, "0")],
-                    "boom",
-                )
-                    .into_response();
-            }
-            let query = body["query"].as_str().unwrap_or("");
-            let nfts = if query.contains("parcelsAt") {
-                let xs: Vec<String> = body["variables"]["xs"]
-                    .as_array()
-                    .unwrap()
-                    .iter()
-                    .map(|v| v.as_str().unwrap().to_string())
-                    .collect();
-                let ys: Vec<String> = body["variables"]["ys"]
-                    .as_array()
-                    .unwrap()
-                    .iter()
-                    .map(|v| v.as_str().unwrap().to_string())
-                    .collect();
-                parcels
-                    .as_array()
-                    .unwrap()
-                    .iter()
-                    .filter(|p| {
-                        xs.contains(&p["searchParcelX"].as_str().unwrap().to_string())
-                            && ys.contains(&p["searchParcelY"].as_str().unwrap().to_string())
-                    })
-                    .cloned()
-                    .collect::<Vec<_>>()
-            } else {
-                Vec::new()
-            };
-            Json(serde_json::json!({ "data": { "nfts": nfts } })).into_response()
+    /// A published land-authz index on `pool`: `parcel_owner` holds (10,20),
+    /// estate 500 (owned by `estate_owner`) holds (10,21), and `bystander`
+    /// holds (11,20).
+    async fn seed_land_index(
+        pool: &PgPool,
+        settings: &catalyst::land_authz::Settings,
+        parcel_owner: &Address,
+        estate_owner: &Address,
+        bystander: &Address,
+    ) {
+        sqlx::query("INSERT INTO land_authz.index_cursor (network, land_registry, estate_registry, last_block, folded_block, folded_at, full_replay_started) VALUES ($1, $2, $3, 1, 1, timezone('UTC', now()), true)")
+            .bind(&settings.network).bind(&settings.land_registry).bind(&settings.estate_registry)
+            .execute(pool).await.unwrap();
+        for (x, y, owner) in [
+            (10, 20, parcel_owner.as_str()),
+            (10, 21, settings.estate_registry.as_str()),
+            (11, 20, bystander.as_str()),
+        ] {
+            sqlx::query("INSERT INTO land_authz.token_right (token_address, token_id, x, y, owner, updated_block, updated_log) VALUES ($1, $2::int::numeric * 340282366920938463463374607431768211456 + $3::int::numeric, $2, $3, $4, 1, 0)")
+                .bind(&settings.land_registry).bind(x).bind(y).bind(owner)
+                .execute(pool).await.unwrap();
         }
-        let app = Router::new()
-            .route("/subgraph", post(answer))
-            .with_state((Arc::new(parcels), fail));
-        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let addr = listener.local_addr().unwrap();
-        tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
-        format!("http://{addr}/subgraph")
+        sqlx::query("INSERT INTO land_authz.token_right (token_address, token_id, owner, updated_block, updated_log) VALUES ($1, 500, $2, 1, 0)")
+            .bind(&settings.estate_registry).bind(estate_owner.as_str())
+            .execute(pool).await.unwrap();
+        sqlx::query("INSERT INTO land_authz.estate_land (land_token_id, estate_token_id, updated_block, updated_log) VALUES (10::numeric * 340282366920938463463374607431768211456 + 21, 500, 1, 0)")
+            .execute(pool).await.unwrap();
     }
 
-    fn state_with_marketplace(pool: PgPool, subgraph: Option<String>) -> SharedState {
-        let settings = catalyst::chain_index::IndexSettings {
-            marketplace_subgraph_url: subgraph,
-            ..catalyst::chain_index::IndexSettings::for_tests()
-        };
-        let market = catalyst::chain_index::ChainIndex::new(Outbound::for_tests(), settings);
-        market.allow_loopback_for_tests();
+    /// Comms over `pool` whose scene policy reads LAND rights from `land`
+    /// alone (`None`: no LAND source attached).
+    fn state_with_land(
+        pool: PgPool,
+        land: Option<Arc<catalyst::land_authz::LandAuthzState>>,
+    ) -> SharedState {
+        let market = catalyst::chain_index::ChainIndex::new(
+            Outbound::for_tests(),
+            catalyst::chain_index::IndexSettings::for_tests(),
+        );
         let market = Arc::new(market);
         Arc::new(CommsState::new(
             pool.clone(),
@@ -200,7 +167,8 @@ mod tests {
             None,
             Arc::new(
                 Policy::new(pool.clone(), PersonalWorldsPolicy::disabled(), Some(market))
-                    .with_subgraph_names(),
+                    .with_subgraph_names()
+                    .with_land_authz(land),
             ),
             Arc::new(SceneResolver::new(pool)),
             Arc::new(catalyst::comms::presence::Presence::new()),
@@ -208,25 +176,27 @@ mod tests {
         ))
     }
 
-    /// Genesis City moderation: a parcel owner and an estate owner are scene
-    /// owners without an admin row (so they can add the first admin, ban and
-    /// unban), a bystander is refused, a reader that cannot be asked is 503.
+    /// Genesis City moderation, from the land-authz index: a parcel owner and
+    /// an estate owner are scene owners without an admin row (so they can add
+    /// the first admin, ban and unban), a bystander is refused, an index that
+    /// is not published is 503 and no LAND source is a refusal.
     #[tokio::test]
     async fn a_land_owner_moderates_a_genesis_scene_without_an_admin_row() {
-        let Some(pool) = scratch().await else { return };
+        // Readiness is global per network: a database of its own keeps this
+        // fixture from replacing a concurrent test's LAND source.
+        let Some(pool) = catalyst::db::scratch::isolated_pool(8).await else {
+            return;
+        };
         let (parcel_owner, estate_owner, bystander, first_admin) =
             (wallet(), wallet(), wallet(), wallet());
-        let fail = Arc::new(std::sync::atomic::AtomicBool::new(false));
-        let subgraph = fake_land_subgraph(
-            serde_json::json!([
-                { "id": "0xland-a", "searchParcelX": "10", "searchParcelY": "20", "owner": { "id": parcel_owner.as_str().to_uppercase() }, "parcel": { "estate": null } },
-                { "id": "0xland-b", "searchParcelX": "10", "searchParcelY": "21", "owner": { "id": "0xestatecontract" }, "parcel": { "estate": { "owner": { "id": estate_owner.as_str() } } } },
-                { "id": "0xland-c", "searchParcelX": "11", "searchParcelY": "20", "owner": { "id": bystander.as_str() }, "parcel": { "estate": null } }
-            ]),
-            fail.clone(),
-        )
-        .await;
-        let state = state_with_marketplace(pool.clone(), Some(subgraph));
+        let settings = catalyst::land_authz::Settings::for_tests();
+        seed_land_index(&pool, &settings, &parcel_owner, &estate_owner, &bystander).await;
+        let land = Arc::new(catalyst::land_authz::LandAuthzState::new(
+            pool.clone(),
+            Outbound::for_tests(),
+            settings,
+        ));
+        let state = state_with_land(pool.clone(), Some(land));
         let place_id = format!("genesis-{}", tag());
         // The place covers (10,20) and (10,21); (11,20) is the bystander's parcel next door.
         seed_place(
@@ -275,9 +245,12 @@ mod tests {
             .await
             .expect_err("an owner cannot be banned");
         assert_eq!(err.code, 400);
-        // A reader that cannot be asked is a 503, never a refusal (the cache
-        // holds the answered set; a new place misses it).
-        fail.store(true, std::sync::atomic::Ordering::Relaxed);
+        // An index that stops being published is a 503, never a refusal (the
+        // cache holds the answered set; a new place misses it).
+        sqlx::query("DELETE FROM land_authz.index_cursor")
+            .execute(&pool)
+            .await
+            .unwrap();
         let other_place = format!("genesis-{}", tag());
         seed_place(
             &pool,
@@ -292,8 +265,18 @@ mod tests {
             .into_result()
             .unwrap_err();
         assert_eq!(undetermined.http_status(), 503, "{undetermined}");
-        // No marketplace subgraph configured: an explicit refusal, as for worlds.
-        let unconfigured = state_with_marketplace(pool.clone(), None);
+        assert!(
+            undetermined.to_string().contains("land-authz-index"),
+            "the refusal names the index: {undetermined}"
+        );
+        // A ban cannot tell whether its target holds LAND there either.
+        let err = scene::ensure_target_not_protected(&state, &other, &bystander)
+            .await
+            .expect_err("a ban target cannot be checked");
+        assert_eq!(err.code, 503, "{}", err.message);
+        assert!(err.message.contains("land-authz-index"), "{}", err.message);
+        // No LAND source attached: an explicit refusal, as for worlds.
+        let unconfigured = state_with_land(pool.clone(), None);
         let place = PlaceLookup::new(&unconfigured, &place_id, &place_id);
         assert!(
             !scene::scene_owner_or_admin_decision(&unconfigured, &place, &parcel_owner)

@@ -93,17 +93,6 @@ pub struct OwnedName {
     pub price: Option<String>,
 }
 
-/// A Genesis parcel as the marketplace subgraph indexes it: the parcel NFT's
-/// owner (the estate contract when the parcel sits in an estate) and, then,
-/// the estate's owner.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct LandParcel {
-    pub x: i32,
-    pub y: i32,
-    pub owner: String,
-    pub estate_owner: Option<String>,
-}
-
 /// One parcel or estate NFT the owner holds, as the marketplace subgraph
 /// indexes it: the columns the old `/lambdas/users/{a}/lands` row projected.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -130,8 +119,6 @@ pub struct Caches {
     pub names: TtlMap<String, Arc<Vec<OwnedName>>>,
     /// `owner` -> every ENS name the owner holds ([`FULL_WALK_PAGES`]).
     all_names: TtlMap<String, Arc<Vec<OwnedName>>>,
-    /// The sorted coordinate list of a place -> its parcels and their owners.
-    land: TtlMap<Vec<(i32, i32)>, Arc<Vec<LandParcel>>>,
     /// lowercased DCL name -> its holder.
     pub name_owner: TtlMap<String, Arc<Option<String>>>,
     /// `owner` -> the parcels and estates the owner holds, newest transfer first.
@@ -154,7 +141,6 @@ impl Default for Caches {
         Self {
             names: TtlMap::bounded(OWNED_TTL, OWNED_CACHE_MAX_ENTRIES),
             all_names: TtlMap::bounded(OWNED_TTL, OWNED_CACHE_MAX_ENTRIES),
-            land: TtlMap::bounded(OWNED_TTL, OWNED_CACHE_MAX_ENTRIES),
             name_owner: TtlMap::bounded(OWNED_TTL, OWNED_CACHE_MAX_ENTRIES),
             lands: TtlMap::bounded(OWNED_TTL, OWNED_CACHE_MAX_ENTRIES),
         }
@@ -559,105 +545,6 @@ pub async fn owned_names_or_stale(
     })
 }
 
-/// The parcel NFTs standing on the requested coordinates. `searchParcelX_in`
-/// x `searchParcelY_in` is a superset (the cross product of the distinct
-/// columns and rows), filtered back to the requested pairs here; the old
-/// comms crate ran the same shape over the squid `nft` table
-/// (`search_parcel_x/y`, `search_parcel_estate_id`).
-const QUERY_PARCELS_AT: &str = r#"
-query parcelsAt($xs: [BigInt!]!, $ys: [BigInt!]!, $idFrom: ID!, $first: Int!) {
-  nfts(where: { category: parcel, searchParcelX_in: $xs, searchParcelY_in: $ys, id_gt: $idFrom }, orderBy: id, orderDirection: asc, first: $first) {
-    id
-    searchParcelX
-    searchParcelY
-    owner { id }
-    parcel { estate { owner { id } } }
-  }
-}"#;
-
-pub(crate) fn parse_parcels(data: &Value) -> Vec<LandParcel> {
-    data.get("nfts")
-        .and_then(Value::as_array)
-        .into_iter()
-        .flatten()
-        .filter_map(|nft| {
-            let coord = |key: &str| -> Option<i32> {
-                match nft.get(key)? {
-                    Value::String(s) => s.parse().ok(),
-                    Value::Number(n) => i32::try_from(n.as_i64()?).ok(),
-                    _ => None,
-                }
-            };
-            let (x, y) = (coord("searchParcelX")?, coord("searchParcelY")?);
-            let owner = nft.get("owner")?.get("id")?.as_str()?.to_lowercase();
-            let estate_owner = nft
-                .pointer("/parcel/estate/owner/id")
-                .and_then(Value::as_str)
-                .map(str::to_lowercase);
-            Some(LandParcel {
-                x,
-                y,
-                owner,
-                estate_owner,
-            })
-        })
-        .collect()
-}
-
-/// The parcels at `coords` (deduplicated, sorted), from the marketplace
-/// subgraph. `Ok(empty)` when no marketplace subgraph is configured, so a
-/// caller deciding ownership refuses rather than guesses.
-pub async fn parcels_at(
-    state: &ChainIndex,
-    coords: &[(i32, i32)],
-) -> Result<Arc<Vec<LandParcel>>, String> {
-    let mut key: Vec<(i32, i32)> = coords.to_vec();
-    key.sort_unstable();
-    key.dedup();
-    if key.is_empty() {
-        return Ok(Arc::new(Vec::new()));
-    }
-    state
-        .graph
-        .land
-        .get_or_fetch(key.clone(), || async move {
-            let Some(url) = state.settings.marketplace_subgraph_url.as_deref() else {
-                return Ok(Arc::new(Vec::new()));
-            };
-            let mut xs: Vec<String> = key.iter().map(|(x, _)| x.to_string()).collect();
-            let mut ys: Vec<String> = key.iter().map(|(_, y)| y.to_string()).collect();
-            xs.sort_unstable();
-            xs.dedup();
-            ys.sort_unstable();
-            ys.dedup();
-            let mut out = Vec::new();
-            let mut id_from = String::new();
-            for _ in 0..MAX_PAGES {
-                let data = graph_query(
-                    state,
-                    url,
-                    QUERY_PARCELS_AT,
-                    json!({ "xs": xs, "ys": ys, "idFrom": id_from, "first": THE_GRAPH_PAGE_SIZE }),
-                )
-                .await?;
-                let next = next_nft_cursor(&data, &id_from)?;
-                out.extend(
-                    parse_parcels(&data)
-                        .into_iter()
-                        .filter(|p| key.binary_search(&(p.x, p.y)).is_ok()),
-                );
-                match next {
-                    Some(id) => id_from = id,
-                    None => return Ok(Arc::new(out)),
-                }
-            }
-            Err(format!(
-                "no terminal parcel NFT page after {MAX_PAGES} pages"
-            ))
-        })
-        .await
-}
-
 /// The ENS name's holder: `searchText` is the subgraph's lowercased name, so
 /// the match is case-insensitive like the old `lower(name) = lower($1)`.
 const QUERY_NAME_OWNER: &str = r#"
@@ -896,23 +783,6 @@ pub async fn owned_lands_or_stale(
     })
 }
 
-/// Whether `owner` holds any of the parcels at `coords`, directly or through
-/// the estate the parcel sits in: the LAND half of "scene owner".
-pub async fn owns_land_at(
-    state: &ChainIndex,
-    owner: &str,
-    coords: &[(i32, i32)],
-) -> Result<bool, String> {
-    if !is_valid_eth_address(owner) {
-        return Ok(false);
-    }
-    let owner = owner.to_lowercase();
-    let parcels = parcels_at(state, coords).await?;
-    Ok(parcels
-        .iter()
-        .any(|p| p.owner == owner || p.estate_owner.as_deref() == Some(owner.as_str())))
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -977,35 +847,6 @@ mod tests {
             lands[2].description,
             Some(None),
             "a null description stays null"
-        );
-    }
-
-    #[test]
-    fn parcels_parse_the_owner_and_the_estate_owner() {
-        let data = json!({ "nfts": [
-            { "id": "0xland-1", "searchParcelX": "10", "searchParcelY": "20", "owner": { "id": "0xAAAA" }, "parcel": { "estate": null } },
-            { "id": "0xland-2", "searchParcelX": 10, "searchParcelY": 21, "owner": { "id": "0xestatecontract" },
-              "parcel": { "estate": { "owner": { "id": "0xBBBB" } } } },
-            { "id": "no-coords", "owner": { "id": "0xcccc" } },
-            { "id": "no-owner", "searchParcelX": "1", "searchParcelY": "1" }
-        ]});
-        let parcels = parse_parcels(&data);
-        assert_eq!(
-            parcels,
-            vec![
-                LandParcel {
-                    x: 10,
-                    y: 20,
-                    owner: "0xaaaa".into(),
-                    estate_owner: None
-                },
-                LandParcel {
-                    x: 10,
-                    y: 21,
-                    owner: "0xestatecontract".into(),
-                    estate_owner: Some("0xbbbb".into())
-                },
-            ]
         );
     }
 
