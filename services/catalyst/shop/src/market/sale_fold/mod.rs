@@ -14,6 +14,37 @@ use super::chain_walk::{self, ChainNet};
 use super::{ethereum_sales, listings, nft_index, sale_history, sales_index, trade_events};
 use crate::chain_index::rpc::Rpc;
 
+// The input decoder version is independent of how the published ID is formed.
+const PUBLICATION_VERSION: i32 = 2;
+
+fn venue_query(
+    net: ChainNet,
+    from: i64,
+    to: i64,
+    sql: &'static str,
+) -> sqlx::query::Query<'static, Postgres, sqlx::postgres::PgArguments> {
+    let orders: Vec<_> = nft_index::legacy_marketplaces(net)
+        .iter()
+        .map(|d| d.0)
+        .collect();
+    let trades: Vec<_> = trade_events::marketplaces(net)
+        .iter()
+        .map(|d| d.0)
+        .collect();
+    let bid = match net {
+        ChainNet::Ethereum => ethereum_sales::ERC721_BID,
+        ChainNet::Matic => sales_index::BID_V2_MATIC,
+    };
+    sqlx::query(sql)
+        .bind(net.db_name())
+        .bind(from)
+        .bind(to)
+        .bind(orders)
+        .bind(bid)
+        .bind(trades)
+        .bind(&ethereum_sales::NAME_CONTROLLERS[..])
+}
+
 #[derive(FromRow)]
 struct Input {
     indexer: String,
@@ -58,7 +89,7 @@ impl Inputs {
     }
 
     fn reusable_prefix(&self, marker: &Marker) -> Option<i64> {
-        if marker.input_version != sale_history::VERSION
+        if !matches!(marker.input_version, 1 | PUBLICATION_VERSION)
             || marker.input_epochs.get(..self.rows.len()) != self.epochs().get(..self.rows.len())
             || marker.input_revisions.len() < self.rows.len()
         {
@@ -77,7 +108,7 @@ impl Inputs {
     }
 
     fn covers(&self, marker: &Marker) -> bool {
-        marker.input_version == sale_history::VERSION
+        matches!(marker.input_version, 1 | PUBLICATION_VERSION)
             && marker.input_epochs.starts_with(&self.epochs())
             && marker.input_revisions.starts_with(&self.revisions())
             && marker.late_collections == self.late_collections
@@ -231,7 +262,11 @@ pub async fn snapshot(
         let Some(at) = marker.published_at else {
             return Ok(None);
         };
-        if inputs.factory.is_some() || !inputs.covers(&marker) || at > now.naive_utc() {
+        if marker.input_version != PUBLICATION_VERSION
+            || inputs.factory.is_some()
+            || !inputs.covers(&marker)
+            || at > now.naive_utc()
+        {
             return Ok(None);
         }
         generations.push((net, marker.generation));
@@ -250,18 +285,6 @@ pub async fn snapshot(
 }
 
 async fn write_rows(c: &mut PgConnection, net: ChainNet, from: i64, to: i64) -> anyhow::Result<()> {
-    let orders: Vec<_> = nft_index::legacy_marketplaces(net)
-        .iter()
-        .map(|d| d.0)
-        .collect();
-    let trades: Vec<_> = trade_events::marketplaces(net)
-        .iter()
-        .map(|d| d.0)
-        .collect();
-    let bid = match net {
-        ChainNet::Ethereum => ethereum_sales::ERC721_BID,
-        ChainNet::Matic => sales_index::BID_V2_MATIC,
-    };
     let registry_assets: &[&str] = match net {
         ChainNet::Ethereum => &[
             crate::land_authz::LAND_REGISTRY_MAINNET,
@@ -270,25 +293,23 @@ async fn write_rows(c: &mut PgConnection, net: ChainNet, from: i64, to: i64) -> 
         ],
         ChainNet::Matic => &[],
     };
-    sqlx::query(include_str!("executions.sql"))
-        .bind(net.db_name())
-        .bind(from)
-        .bind(to)
-        .bind(orders)
-        .bind(bid)
+    venue_query(net, from, to, include_str!("executions.sql"))
         .bind(sales_index::STORE_MATIC)
-        .bind(&ethereum_sales::NAME_CONTROLLERS[..])
-        .bind(trades)
         .bind(registry_assets)
         .execute(&mut *c)
         .await?;
-    sqlx::query(include_str!("legs.sql"))
-        .bind(net.db_name())
-        .bind(from)
-        .bind(to)
-        .bind(listings::mana_token(net.chain_id()).context("missing MANA deployment")?)
-        .execute(&mut *c)
-        .await?;
+    venue_query(
+        net,
+        from,
+        to,
+        concat!(
+            include_str!("venue_positions.sql"),
+            include_str!("legs.sql")
+        ),
+    )
+    .bind(listings::mana_token(net.chain_id()).context("missing MANA deployment")?)
+    .execute(&mut *c)
+    .await?;
     sqlx::query(
         "UPDATE shop.sale_asset a SET item_id=n.item_id FROM shop.nft n
         WHERE a.network=$1 AND a.block_number>$2 AND a.block_number<=$3 AND a.item_id IS NULL
@@ -300,6 +321,38 @@ async fn write_rows(c: &mut PgConnection, net: ChainNet, from: i64, to: i64) -> 
     .bind(to)
     .execute(&mut *c)
     .await?;
+    Ok(())
+}
+
+async fn repair_ids(c: &mut PgConnection, net: ChainNet, through: i64) -> anyhow::Result<()> {
+    // The old and new IDs share a unique namespace. Stage the changed rows
+    // before exchanging IDs so an old fill cannot occupy another's new ID.
+    venue_query(net, -1_i64, through, concat!(
+        "CREATE TEMP TABLE sale_id_repair ON COMMIT DROP AS ",
+        include_str!("venue_positions.sql"),
+        "SELECT a.network,a.block_number,a.log_index,a.ordinal,
+                CASE WHEN v.fill IS NOT NULL THEN concat(e.network,'-',e.tx_hash,'-',v.fill,'-',a.ordinal) END AS new_id
+         FROM shop.sale_execution e JOIN shop.sale_asset a USING(network,block_number,log_index)
+         LEFT JOIN positions v USING(block_number,tx_hash,log_index)
+         WHERE e.network=$1 AND e.block_number<=$3
+           AND (v.fill IS NULL OR a.public_id<>concat(e.network,'-',e.tx_hash,'-',v.fill,'-',a.ordinal))"
+    )).execute(&mut *c).await?;
+    ensure!(
+        !sqlx::query_scalar::<_, bool>(
+            "SELECT EXISTS (SELECT FROM sale_id_repair WHERE new_id IS NULL)"
+        )
+        .fetch_one(&mut *c)
+        .await?,
+        "published sale is missing its raw venue event"
+    );
+    for update in [
+        "UPDATE shop.sale_asset a SET public_id='pending/'||a.public_id FROM sale_id_repair r WHERE
+         (a.network,a.block_number,a.log_index,a.ordinal)=(r.network,r.block_number,r.log_index,r.ordinal)",
+        "UPDATE shop.sale_asset a SET public_id=r.new_id FROM sale_id_repair r WHERE
+         (a.network,a.block_number,a.log_index,a.ordinal)=(r.network,r.block_number,r.log_index,r.ordinal)",
+    ] {
+        sqlx::query(update).execute(&mut *c).await?;
+    }
     Ok(())
 }
 
@@ -421,6 +474,10 @@ pub(super) async fn pass(pool: &PgPool, rpc: &Rpc<'_>, net: ChainNet) -> anyhow:
             SELECT DISTINCT block_time/86400*86400 FROM removed")
             .bind(net.db_name()).bind(from).fetch_all(&mut *tx).await?;
     }
+    let upgrading_ids = previous.as_ref().is_some_and(|m| m.input_version == 1);
+    if upgrading_ids {
+        repair_ids(&mut tx, net, from).await?;
+    }
     write_rows(&mut tx, net, from, to).await?;
     days.extend(creators::write(&mut tx, rpc, net, from, to).await?);
     days.extend(settlements::write(&mut tx, rpc, net, from, to).await?);
@@ -541,8 +598,8 @@ pub(super) async fn pass(pool: &PgPool, rpc: &Rpc<'_>, net: ChainNet) -> anyhow:
         generation=CASE WHEN $9 THEN EXCLUDED.generation ELSE sale_publication.generation END,
         block_hash=EXCLUDED.block_hash,input_version=EXCLUDED.input_version,input_epochs=EXCLUDED.input_epochs,
         input_revisions=EXCLUDED.input_revisions,late_collections=EXCLUDED.late_collections,published_at=EXCLUDED.published_at")
-        .bind(net.db_name()).bind(to).bind(hash).bind(sale_history::VERSION).bind(start.epochs()).bind(start.revisions())
-        .bind(start.late_collections).bind(published_at).bind(!same_history || from!=to || !days.is_empty()).execute(&mut *tx).await?;
+        .bind(net.db_name()).bind(to).bind(hash).bind(PUBLICATION_VERSION).bind(start.epochs()).bind(start.revisions())
+        .bind(start.late_collections).bind(published_at).bind(upgrading_ids || !same_history || from!=to || !days.is_empty()).execute(&mut *tx).await?;
     tx.commit().await?;
     Ok(())
 }
