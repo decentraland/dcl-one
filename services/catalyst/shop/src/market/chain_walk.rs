@@ -2321,6 +2321,12 @@ mod tests {
             ..defaults.clone()
         };
         assert!(testnet.check_chains().is_ok());
+        let mixed = IndexSettings {
+            nft_enabled: true,
+            chain_id_matic: 80_002,
+            ..defaults.clone()
+        };
+        assert!(mixed.check_chains().is_err());
         for (ethereum, matic) in [(137, 137), (1, 1), (1, 80_001), (80_002, 80_002), (1, 0)] {
             let wrong = IndexSettings {
                 chain_id_ethereum: ethereum,

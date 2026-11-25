@@ -2551,12 +2551,16 @@ to select mainnet (1/137) or Sepolia/Amoy (11155111/80002). Its RPC must
 serve that chain. A cursor bound to a different chain is quarantined.
 Step `0070_shop_mirror_chain` records the chain of each collections/items
 mirror pass in `shop.mirror_state.chain_id`. A source URL or chain change
-restarts pagination. An existing unbound pass starts again at the first
-page. The NFT walk waits for a complete collections pass for its chain
+restarts pagination. Step 0070 retains established mainnet posture markers.
+A custom mainnet source at the same URL retains its published copy while
+pagination restarts. A testnet source starts a proven pass from page one. The NFT walk waits for a complete collections pass for its chain
 and takes addresses only from collection rows bearing that chain ID.
-A testnet NFT node checks the block hash returned alongside each graph page
+A testnet mirror with a catalogue RPC checks the block hash returned alongside each graph page
 against its chain-checked RPC before saving the page. Graph-only testnet
-passes have no chain binding. An empty verified pass covers the chain's
+passes have no chain binding. A writer without the RPC leaves a verified pass
+alone. A lagging RPC retries the graph page on the next tick. A change of chain
+pair requires a separate database: the mirrors upsert and retain prior rows.
+An empty verified pass covers the chain's
 fixed contracts. The Sepolia/Amoy pair omits the mainnet-only sales,
 committee, collections, third-party registry and MANA transfer walks, even
 when the mirror posture enables them and mainnet RPCs are available. The

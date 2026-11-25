@@ -1878,7 +1878,12 @@ async fn a_testnet_graph_page_proves_its_block_even_when_the_page_is_empty() {
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let graph = format!("http://{}/", listener.local_addr().unwrap());
     let app = Router::new().route("/", post(|State(hash): State<Arc<Mutex<String>>>| async move {
-        axum::Json(json!({"data":{"collections":[],"_meta":{"block":{"number":90,"hash":hash.lock().clone()}}}}))
+        let hash = hash.lock().clone();
+        if hash.is_empty() {
+            axum::Json(json!({"data":{"collections":[]}}))
+        } else {
+            axum::Json(json!({"data":{"collections":[],"_meta":{"block":{"number":90,"hash":hash}}}}))
+        }
     })).with_state(hash.clone());
     tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
     let mut state = super::tests::support::state_without_db();
@@ -1902,10 +1907,35 @@ async fn a_testnet_graph_page_proves_its_block_even_when_the_page_is_empty() {
             .unwrap_err()
             .contains("differs from the configured chain")
     );
+    hash.lock().clear();
+    assert!(read().await.unwrap_err().contains("no block number"));
     *hash.lock() = good;
     assert_eq!(read().await.unwrap()["collections"], json!([]));
     chain.chain_id.store(137, Ordering::SeqCst);
     assert!(read().await.unwrap_err().contains("serves chain 137"));
+}
+
+#[tokio::test]
+async fn the_rpc_fallback_is_bound_to_the_configured_catalogue_pair() {
+    let mut state = super::tests::support::state_without_db();
+    let settings = &mut Arc::get_mut(&mut state).unwrap().settings;
+    settings.eth_network = "sepolia".into();
+    settings.market.indexes.chain_id_ethereum = 11_155_111;
+    settings.market.indexes.chain_id_matic = 80_002;
+    settings.market.trade_rpc_urls = RpcEndpoints::from_env(None);
+    settings.eth_rpc_url = Some("https://sepolia.example".into());
+    settings.polygon_rpc_url = Some("https://amoy.example".into());
+    assert_eq!(
+        state.catalogue_rpc_url(ChainNet::Ethereum).as_deref(),
+        Some("https://sepolia.example")
+    );
+    assert_eq!(
+        state.catalogue_rpc_url(ChainNet::Matic).as_deref(),
+        Some("https://amoy.example")
+    );
+    Arc::get_mut(&mut state).unwrap().settings.eth_network = "mainnet".into();
+    assert!(state.catalogue_rpc_url(ChainNet::Ethereum).is_none());
+    assert!(state.catalogue_rpc_url(ChainNet::Matic).is_none());
 }
 
 #[tokio::test]

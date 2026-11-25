@@ -202,8 +202,8 @@ pub async fn save(pool: &PgPool, c: &Cursor) -> Result<(), sqlx::Error> {
 /// when it returns no collections. Prove the block in the page against the
 /// same chain-checked RPC the NFT walk uses.
 fn verify_testnet(state: &MarketplaceState, net: super::chain_walk::ChainNet) -> bool {
-    state.settings.market.indexes.nft_enabled
-        && state.settings.market.indexes.chain_id(net) != net.chain_id()
+    state.settings.market.indexes.chain_id(net) != net.chain_id()
+        && state.catalogue_rpc_url(net).is_some()
 }
 
 pub(super) async fn read_catalogue_page(
@@ -260,9 +260,25 @@ async fn cursor_for(
     network: Network,
     url: &str,
     chain_id: Option<i64>,
-) -> Result<Cursor, sqlx::Error> {
+) -> anyhow::Result<Cursor> {
     Ok(match load(pool, mirror, network).await? {
         Some(c) if c.source_url == url && c.chain_id == chain_id => c,
+        Some(c)
+            if c.source_url == url
+                && c.chain_id.is_none()
+                && chain_id == Some(super::chain_walk::ChainNet::from(network).chain_id()) =>
+        {
+            // The same legacy mainnet source may be a custom deployment.
+            // Keep its serving watermark while the first bound pass rescans.
+            Cursor {
+                last_complete_pass_at: c.last_complete_pass_at,
+                last_complete_pass_rows: c.last_complete_pass_rows,
+                ..Cursor::fresh(mirror, network, url)
+            }
+        }
+        Some(c) if c.chain_id.is_some() && chain_id.is_none() => {
+            anyhow::bail!("a verified catalogue mirror requires its chain RPC to continue");
+        }
         Some(c) => {
             tracing::warn!(mirror = mirror.name(), network = network.db_name(), old = %c.source_url, "mirror source or chain changed; the cursor restarts");
             Cursor::fresh(mirror, network, url)

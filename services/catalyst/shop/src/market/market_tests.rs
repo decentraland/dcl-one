@@ -483,6 +483,63 @@ async fn cleanup_mirror(pool: &PgPool, contracts: &[String]) {
 }
 
 #[tokio::test]
+async fn upgrading_a_completed_mainnet_mirror_keeps_the_catalogue_available() {
+    let url = format!("{}missing", serve_graph(FakeGraph::new()).await);
+    let Some((state, own)) = state_over_own(&url, true).await else {
+        return;
+    };
+    sqlx::query("INSERT INTO shop.mirror_state(mirror,network,source_url,last_complete_pass_at,last_complete_pass_rows,cursor_id)
+                 VALUES ('items','matic',$1,timezone('UTC',now()),17,'old-key'),
+                        ('collections','ethereum','https://subgraph.decentraland.org/collections-ethereum-mainnet',timezone('UTC',now()),19,'key')")
+        .bind(&url).execute(&state.pool).await.unwrap();
+    sqlx::raw_sql(include_str!(
+        "../../../../../schemas/migrations/0070_shop_mirror_chain.sql"
+    ))
+    .execute(&state.pool)
+    .await
+    .unwrap();
+    assert!(
+        super::nft_index::mirror_complete(&state.pool, super::chain_walk::ChainNet::Ethereum, 1)
+            .await
+    );
+    let before = mirrors::load(
+        &state.pool,
+        mirrors::Mirror::Items,
+        super::graph::Network::Matic,
+    )
+    .await
+    .unwrap()
+    .unwrap();
+    // The first page at the custom mainnet source fails. The already served
+    // copy must remain published through a full rescan and any retry.
+    let jobs = crate::jobs::Jobs::new();
+    let ctx = job_ctx(&jobs).await;
+    assert!(
+        mirrors::run_tick(&state, mirrors::Mirror::Items, &ctx)
+            .await
+            .is_err()
+    );
+    let after = mirrors::load(
+        &state.pool,
+        mirrors::Mirror::Items,
+        super::graph::Network::Matic,
+    )
+    .await
+    .unwrap()
+    .unwrap();
+    assert_eq!(after.chain_id, Some(137));
+    assert_eq!(after.last_complete_pass_at, before.last_complete_pass_at);
+    assert_eq!(after.last_complete_pass_rows, Some(17));
+    assert!(after.cursor_id.is_none());
+    assert!(
+        mirrors::require_ready(&state, mirrors::Mirror::Items)
+            .await
+            .is_ok()
+    );
+    own.drop().await;
+}
+
+#[tokio::test]
 async fn the_mirrors_walk_the_subgraph_and_every_market_route_answers_over_them() {
     let up = FakeGraph::new();
     let url = serve_graph(up.clone()).await;
