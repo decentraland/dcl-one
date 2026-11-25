@@ -30,7 +30,7 @@ use axum::http::{HeaderMap, StatusCode};
 use axum::response::{IntoResponse, Response};
 use serde_json::{Value, json};
 
-use crate::content::queries::{active_entity_docs_by_pointers, retain_non_denylisted};
+use crate::content::read_through::active_entity_docs;
 
 use super::owned_items::{self, Rule};
 use super::third_party;
@@ -647,14 +647,17 @@ pub(super) async fn active_entities(
     if pointers.is_empty() {
         return Ok(Vec::new());
     }
-    let mut docs = match &state.read_through {
-        Some(read_through) => read_through.active_docs(false, pointers).await,
-        None => active_entity_docs_by_pointers(&state.pool, pointers).await,
-    }
+    let docs = active_entity_docs(
+        &state.pool,
+        state.read_through.as_deref(),
+        false,
+        pointers,
+        Some(&state.denylist),
+    )
+    .await
     .map_err(|e| {
         tracing::error!(error = %e, "lambdas: active entities query failed");
     })?;
-    retain_non_denylisted(&mut docs, &state.denylist);
     Ok(docs.iter().filter_map(|d| d.to_value()).collect())
 }
 

@@ -705,6 +705,26 @@ ends in "we don't do that", so the next person doesn't have to rediscover it.
   unity-explorer scales the scroll delta by 50 everywhere but macOS, per frame; here a wheel line
   (16 pixels of a trackpad's scroll, on every platform including web) zooms as Unity's 60 fps frame
   would, and a held bumper zooms at Unity's per-second rate, so neither depends on the frame rate.
+- **What a scene is doing to the player is listed with its permissions.** A held camera, a
+  hidden avatar or passport and changed movement all happen under a permission that allows by
+  default, so nothing asks. The permissions popover lists them under "In force now" for the
+  scene the player stands in, and each row opens that scene's rule, so the player can refuse
+  it there. There is no separate restrictions list.
+  - The engine reports a start and an end on the permission-used stream (`inForce`), read
+    from the effect itself, not from the grant: a granted camera permission with no camera
+    held lists nothing. A stream that attaches is sent everything in force.
+  - Each effect is reported under the scene that causes it, recorded where it is applied
+    (`PrimaryCamera.scene_override_owner`, `PlayerModifiers.hide_scenes` and
+    `locomotion_scenes`), so the row's rule is the one that controls it. A hidden nametag
+    counts like a hidden avatar or passport.
+  - Movement is listed only while a setting or a block is on: an area with nothing set, or an
+    input modifier whose flags are all off, lists nothing.
+  - A row opens a stored rule, never "This visit": that answer forgets the rules of every
+    level and would not end what the scene is doing.
+  - The popover lists the scene the player stands in. What a portable experience or a
+    neighbouring scene's area does to the player is reported under that scene and is not
+    shown there; `/permissions_in_force` has it.
+  - A rule changed from the row applies from the next visit to the scene.
 - **Smart wearable permissions are asked on use, not at equip.** unity-explorer asks once, when a
   smart wearable is equipped (or at login for one already worn), to allow the permissions its
   `requiredPermissions` declares, and refuses what it did not declare. Here a smart wearable is a

@@ -2265,7 +2265,11 @@ Sales publication version 3 sums gross volume from positively priced NFT assets.
 
 A wallet-filtered sale with an unresolved seller withholds a response only when indexed evidence ties that wallet to the sale. Candidates come from the asset, the consideration beneficiary for its line, the item or collection creator, collection seeds and published creatorship transfers. An unresolved sale without a candidate stays out of address lookups. An unfiltered sales page that contains it returns HTTP 503. The fold logs a warning with the count of sales without a candidate on the days it recomputed.
 
+`/v1/sales/royalties` reads a creator's published, priced resales and settled royalty legs in one snapshot. The route sums the proven payouts in wei and returns a collector address when one address received a positive royalty. Zero-royalty sales and payments split across several recipients carry a null collector. The sales ledger excludes bundles without an attributable per-asset price from the public sale set. An unresolved settlement in the requested window makes the whole read unavailable. The total sale count and royalty sum cover the window regardless of pagination.
+
 The published sales readers use a 10-second PostgreSQL statement timeout. Recent unfiltered pages select asset keys in timestamp order and obtain the count from published daily rollups. Wallet lookups use indexes on the buyer, seller, payment beneficiary and collection item before enrichment. Filtered sales and proceeds pages cap the returned total at 5,000 or 25,000 for the requested page window. Sorting proceeds and checking unresolved seller evidence may still scan the seller's history. Seller summaries and store totals include the entire published history in scope.
+
+`/v1/owners/top` ranks a creator's current holders using the NFT folds and current item and collection metadata. Both mainnet sales publications must be ready. The same snapshot supplies MANA spend from the published sales of the creator's items. Ethereum v1 Issue logs identify an item within its collection and Polygon v2 token IDs encode the item ID. The query aggregates and ranks holders before paging, within a five-second statement timeout. The 30-second page cache is keyed by both NFT publications, the sales generations and heights, and the metadata proofs, including native catalogue projection generations and heights. Every request rechecks the publications on its snapshot. One cold owner-ranking request can run concurrently on its own permit. `/v1/items` reads distinct pickers for the returned item IDs using `picks_item_idx`. Picks by the same wallet on multiple lists count once.
 
 Accounts, rankings and volume cache successful answers for 30 seconds across append-only advances. Each request checks the current publication and auxiliary sources in one snapshot. A rewind, replaced source identity, backfilled history or correction to a published sale changes the cache key. A withdrawn or expired required publication returns HTTP 503 even for a cached query. Warm hits bypass the query limits. Cold accounts and other analytics have separate limits of one and two concurrent reads. Sales pages have four. Seller summary, store stats, proceeds and the sales leg of activity share four slots. A request waits up to 250 milliseconds for a seller slot before opening the read transaction. Excess read requests receive HTTP 503. Activity logs when the wait expires and returns its available legs. The accounts address selector accepts up to 50 distinct wallets. Lifetime creator rankings require seller and settlement evidence for every relevant mint in the requested history.
 
@@ -2274,6 +2278,25 @@ Accounts read `shop.sale_account_total` for monetary totals. The sale fold credi
 The special-execution index supports scans of store, trade and NAME-fee executions by network, kind and published block. The unresolved-asset index bounds the seller-evidence scans to priced bids and assets whose seller is missing. Token history uses the priced token lookup, with contract as a further constraint, and sale-type pages use the priced kind and block lookup.
 
 The schema object pass creates the sales read indexes. On an existing large ledger, prebuild the definitions in `schemas/30_shop.sql` with `CREATE INDEX CONCURRENTLY` outside a transaction before running `catalyst schema migrate`. Inspect `pg_index.indisvalid` and `pg_get_indexdef(indexrelid)` for each prebuilt index. If a build was interrupted, drop its invalid index concurrently and rebuild it before the migration's name-based check.
+
+### Wallet activity transfers
+
+The transfer leg of `/v1/activity` reads `shop.nft_event` transfers: the collections' wearables and emotes on both networks, and DCL names. LAND and Estate transfers live in `land_authz.authz_event`, which keeps no sender or transaction hash, so the leg does not read them ([#2363](https://github.com/decentraland/dcl-one/issues/2363)). Each network is read inside its sales publication snapshot (`sale_fold::snapshot`, REPEATABLE READ, READ ONLY), up to the published block. The sales fold has proven the settlement inputs of the `nft`, `sales` and `trade_events` walks through that block, on the published branch. A network without a valid publication contributes no transfers, so a testnet node or a node without the sales index serves none.
+
+Each side of a wallet walks its own partial index, newest first, until it has 500 rows. `nft_event_transfer_from_idx` covers transfers out and `nft_event_transfer_to_idx` covers transfers in, both on `(network, address, block_time DESC, block_number DESC, log_index DESC) WHERE kind = 'transfer'`. They walk in the order the activity merges in, so a legacy row with time 0 cannot displace a newer transfer from the cap. Each candidate is checked against the ledger's public sales of the token in its block (`sale_asset_read_token`, then the execution's primary key). A wallet whose recent transfers are mostly sales walks more rows to fill its cap.
+
+The nft walk records each log's transaction hash. Rows indexed before this change keep NULL until their log is read again. A replay fills a missing hash only from the same log (same emitter, token, parties and payload) and never replaces one.
+
+On a populated deployment, the schema object pass creates both indexes. To keep writes available during the build, run these statements outside a transaction before `catalyst schema migrate`.
+
+```sql
+CREATE INDEX CONCURRENTLY IF NOT EXISTS nft_event_transfer_from_idx
+ON shop.nft_event (network, from_address, block_time DESC, block_number DESC, log_index DESC) WHERE kind = 'transfer';
+CREATE INDEX CONCURRENTLY IF NOT EXISTS nft_event_transfer_to_idx
+ON shop.nft_event (network, to_address, block_time DESC, block_number DESC, log_index DESC) WHERE kind = 'transfer';
+```
+
+See the [synthetic fixture measurements](METRICS.md#wallet-activity-transfers) for index sizes, build times and reads. Production table sizes have not been measured.
 
 ### Badge processor
 
@@ -2308,7 +2331,7 @@ default, and social writes are), each a reader of tables other areas own, with o
   its `beneficiary` in `trade_event.assets`; a legacy order bought by a fiat
   or cross-chain relay, a fee-taking order router or a CreditsManager counts
   for the recipient of the relay's own first `transfer` of the token after
-  the order in the same block (transfer rows keep no transaction hash), and
+  the order in the same block (older transfer rows keep no transaction hash), and
   for nobody while a relay holds it (one `nft_event_token_idx` probe per
   such order). Step
   `0040_shop_nft_event_tx_hash` adds `tx_hash` as a nullable column without
@@ -3014,6 +3037,15 @@ A V3 marketplace keys a cancellation on the trade's EIP-712 digest.
 over: `POST /v1/trades` writes it, and the marketplace-server import copies
 upstream's. The mirror cannot copy it, because upstream's API does not
 expose it.
+
+`/v1/cancelled-trades` scopes the read to the authenticated signer. It
+uses the published trade-event heights to find the first contract signature
+index bump past each trade's signed index. The counters immediately before
+that event and the earlier uses and cancellations establish whether the bump
+cancelled the trade. The same snapshot filters out expired trades, assets
+the signer cannot re-list or bid on, and newer signatures for the same asset
+on venues the bump did not reach. LAND and estate eligibility uses the
+matching published LAND authorization fold.
 
 The digest step selects at most 2,000 V3 trades of the network per
 statement: those without a verdict row, and those whose row has no digest

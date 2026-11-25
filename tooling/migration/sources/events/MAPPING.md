@@ -91,7 +91,8 @@ Notes:
 - `explore.events_local`, `explore.signed_actions`: upstream stores no signed
   payloads, and none are fabricated.
 - `explore.moderators`: upstream admins are the `ADMIN_ADDRESSES` setting,
-  not a table; seed it by hand.
+  not a table; seed it at the cut-over with `catalyst explore moderators-add`
+  (`services/catalyst/docs/events.md`, "Events moderators").
 
 ## Left to the node
 
