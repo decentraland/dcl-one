@@ -184,6 +184,12 @@ impl<T: Send + Sync + 'static> Permission<'_, '_, T> {
         }
     }
 
+    /// Withdraws every question of type `ty` still waiting for the player: dropping it closes
+    /// its prompt, and no use is recorded.
+    pub fn withdraw_all(&mut self, ty: PermissionType) {
+        self.pending.retain(|(_, pending_ty, ..)| *pending_ty != ty);
+    }
+
     pub fn check_unique(
         &mut self,
         ty: PermissionType,

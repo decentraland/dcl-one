@@ -479,14 +479,25 @@ impl Settings {
         }
     }
 
+    /// The catalogue pair selected by the validated chain settings.
+    pub fn catalogue(&self) -> nft_index::Catalogue {
+        if self.market.indexes.chain_id_ethereum == crate::types::ChainId::SEPOLIA.0 as i64 {
+            nft_index::Catalogue::Testnet
+        } else {
+            nft_index::Catalogue::Mainnet
+        }
+    }
+
+    fn walks_catalogue(&self) -> bool {
+        self.market.indexes.nft_enabled
+            && chain_walk::ChainNet::ALL
+                .into_iter()
+                .all(|net| self.catalogue_chain(net) == Some(self.market.indexes.chain_id(net)))
+    }
+
     pub fn catalogue_chain(&self, net: chain_walk::ChainNet) -> Option<i64> {
-        crate::land_authz::land_network(&self.eth_network).map(|land| {
-            if land == crate::land_authz::LAND_SEPOLIA {
-                net.testnet_chain_id()
-            } else {
-                net.chain_id()
-            }
-        })
+        crate::land_authz::land_network(&self.eth_network)
+            .map(|land| nft_index::Catalogue::from_land(land).chain_id(net))
     }
 
     pub fn writes_catalogue(&self) -> bool {
@@ -594,8 +605,11 @@ pub fn select_name_authority(
     index: &Arc<ChainIndex>,
 ) -> Option<Arc<dyn crate::chain_index::names::NameAuthority>> {
     let mainnet = settings.eth_network.trim() == "mainnet";
-    if mainnet && settings.market.indexes.nft_enabled {
-        return Some(Arc::new(names::IndexNames::new(pool.clone())));
+    if settings.walks_catalogue() {
+        return Some(Arc::new(names::IndexNames::for_catalogue(
+            pool.clone(),
+            settings.catalogue(),
+        )));
     }
     if settings.marketplace_subgraph_url.is_some() {
         return Some(Arc::new(crate::chain_index::names::SubgraphNames(
@@ -707,7 +721,7 @@ impl MarketplaceState {
     pub fn new(pool: PgPool, http: crate::http::Outbound, settings: Settings) -> Self {
         let index = Arc::new(ChainIndex::new(http.clone(), settings.index_settings()));
         let name_authority = select_name_authority(&settings, &pool, &index);
-        let walks = settings.market.indexes.nft_enabled && settings.eth_network.trim() == "mainnet";
+        let walks = settings.walks_catalogue();
         let authorizing_names = name_authority
             .clone()
             .filter(|_| walks || settings.marketplace_subgraph_url.is_some());
@@ -1061,7 +1075,7 @@ async fn get_index_status(
     axum::extract::State(state): axum::extract::State<SharedState>,
 ) -> Json<Value> {
     Json(json!({
-        "nft": nft_index::status(&state.pool).await,
+        "nft": nft_index::status(&state.pool, &state.settings.market.indexes).await,
         "tradeEvents": trade_events::status(&state.pool, &state.settings.market.indexes).await,
         "manaTransfers": mana_transfers::status(&state.pool).await,
         "sales": sales_index::status(&state.pool, &state.settings.market.indexes).await,
