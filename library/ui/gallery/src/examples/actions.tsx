@@ -258,6 +258,16 @@ export const actionEntries: GalleryEntry[] = [
         )
       },
       {
+        id: 'hud',
+        title: 'Explorer HUD appearance, large and small',
+        render: () => (
+          <div className={layout.row}>
+            <JumpInCTA appearance="hud" size="xl" label="JUMP IN" style={{ width: 240 }} />
+            <JumpInCTA appearance="hud" size="md" label="JUMP IN" style={{ width: 200 }} />
+          </div>
+        )
+      },
+      {
         id: 'states',
         title: 'Link, disabled and loading',
         render: () => (

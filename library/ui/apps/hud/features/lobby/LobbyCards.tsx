@@ -15,7 +15,7 @@ import reminderOn from '../../assets/map/panel/reminder-on.png'
 import shareIcon from '../../assets/map/panel/share.png'
 import timeIcon from '../../assets/lobby/time-icn.png'
 import verifiedIcon from '../../assets/lobby/icon-verified.png'
-import { CardActionButton } from '@dcl/one-ui'
+import { CardActionButton, JumpInCTA } from '@dcl/one-ui'
 import { MaskIcon } from '../../design'
 import { useCreatorName } from '../places/useCreatorName'
 import styles from './LobbyCards.module.css'
@@ -82,19 +82,19 @@ export function ConnectedFriends({ friends, onHover }: { friends: ConnectedFrien
 
 function JumpInButton({ size, className, disabled, onClick, label }: { size: 'large' | 'small'; className: string; disabled?: boolean; onClick: () => void; label: string }): React.JSX.Element {
   return (
-    <button
-      type="button"
-      className={cx(styles.jumpIn, size === 'large' ? styles.jumpInLarge : styles.jumpInSmall, className)}
+    <JumpInCTA
+      appearance="hud"
+      size={size === 'large' ? 'xl' : 'md'}
+      className={cx(styles.jumpIn, className)}
       disabled={disabled}
       aria-label={label}
+      label="JUMP IN"
+      icon={<MaskIcon src={jumpIn} size={size === 'large' ? 24 : 22} />}
       onClick={(e) => {
         e.stopPropagation()
         onClick()
       }}
-    >
-      <span className={styles.jumpInText}>JUMP IN</span>
-      <MaskIcon src={jumpIn} size={size === 'large' ? 24 : 22} />
-    </button>
+    />
   )
 }
 

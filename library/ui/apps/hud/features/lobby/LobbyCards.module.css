@@ -10,7 +10,6 @@
   cursor: pointer;
 }
 .cover:focus-visible,
-.jumpIn:focus-visible,
 .join:focus-visible,
 .view:focus-visible {
   outline: 2px solid var(--lobby-snow);
@@ -154,45 +153,9 @@
   color: var(--lobby-snow);
 }
 
+/* The shared JumpInCTA paints the button; the cards place it. */
 .jumpIn {
   position: absolute;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  padding: 0;
-  border: 0;
-  border-radius: 6px;
-  background: var(--lobby-accent);
-  box-shadow: 0 2px 2px rgba(0, 0, 0, 0.05);
-  color: var(--lobby-snow);
-  font-family: inherit;
-  font-weight: var(--fw-bold, 700);
-  cursor: pointer;
-  transition: background-color var(--lobby-dur-press);
-}
-.jumpIn:hover {
-  background: var(--lobby-accent-hover);
-}
-.jumpIn:active {
-  background: var(--lobby-accent-pressed);
-}
-.jumpIn:disabled {
-  opacity: 0.5;
-  cursor: default;
-}
-.jumpInLarge {
-  height: 46px;
-  font-size: var(--type-16);
-}
-.jumpInLarge .jumpInText {
-  margin-right: 8px;
-}
-.jumpInSmall {
-  height: 40px;
-  font-size: var(--type-14);
-}
-.jumpInSmall .jumpInText {
-  margin-right: 6px;
 }
 
 .landing {
