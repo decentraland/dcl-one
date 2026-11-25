@@ -325,6 +325,10 @@ fn spawn_ground(mut commands: Commands, mut materials: ResMut<Assets<TerrainFlat
                 metallic: 0.0,
                 depth_bias: -100.0,
                 fog_enabled: false,
+                // the shader discards beyond the coast in both passes: a mask material keeps
+                // its fragment stage in a depth prepass without a normal prepass (see
+                // `ShellTexture::alpha_mode`). The colour is opaque, so the cutoff discards nothing
+                alpha_mode: AlphaMode::Mask(0.5),
                 ..Default::default()
             },
             extension: TerrainExtension::default(),
@@ -828,7 +832,10 @@ mod test {
         let ground = world
             .resource_mut::<Assets<TerrainFlatMaterial>>()
             .add(TerrainFlatMaterial {
-                base: StandardMaterial::default(),
+                base: StandardMaterial {
+                    alpha_mode: AlphaMode::Mask(0.5),
+                    ..default()
+                },
                 extension: TerrainExtension::default(),
             });
         let cliff = world
@@ -857,12 +864,25 @@ mod test {
         world.spawn((
             Camera3d::default(),
             Camera {
-                target: RenderTarget::Image(target.into()),
+                target: RenderTarget::Image(target.clone().into()),
                 hdr: true,
                 ..default()
             },
             DepthPrepass,
             NormalPrepass,
+            Transform::from_xyz(0.0, 2.0, 6.0).looking_at(Vec3::ZERO, Vec3::Y),
+        ));
+        // the avatar outline off: a depth prepass that writes no normals, so it has no fragment
+        // output
+        world.spawn((
+            Camera3d::default(),
+            Camera {
+                target: RenderTarget::Image(target.into()),
+                hdr: true,
+                order: 1,
+                ..default()
+            },
+            DepthPrepass,
             Transform::from_xyz(0.0, 2.0, 6.0).looking_at(Vec3::ZERO, Vec3::Y),
         ));
         world.spawn((

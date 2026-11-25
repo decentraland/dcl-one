@@ -417,7 +417,10 @@ fn terrain_vertex_compiles() {
     let flat = world
         .resource_mut::<Assets<TerrainFlatMaterial>>()
         .add(TerrainFlatMaterial {
-            base: StandardMaterial::default(),
+            base: StandardMaterial {
+                alpha_mode: AlphaMode::Mask(0.5),
+                ..default()
+            },
             extension: TerrainExtension::default(),
         });
     let shells = world
