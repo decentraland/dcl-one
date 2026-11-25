@@ -33,7 +33,9 @@
 use serde::Serialize;
 use sqlx::Row;
 
+use super::authorize::LIVE_STATUSES;
 use super::errors::ApiError;
+use super::money::saturating_cents as cents;
 use super::store::Credits;
 
 const TRENDS_WINDOW_DAYS: i32 = 90;
@@ -199,16 +201,6 @@ pub struct ManaTopSpender {
     pub consumptions: i64,
 }
 
-/// A NUMERIC sum read as text, as integer cents. Sums are rounded in SQL; a
-/// value past a bigint saturates instead of failing the whole report.
-pub(crate) fn cents(text: &str) -> i64 {
-    match text.parse::<i64>() {
-        Ok(v) => v,
-        Err(_) if text.starts_with('-') => i64::MIN,
-        Err(_) => i64::MAX,
-    }
-}
-
 /// The old buckets' labels: the first is `≤ 7d`, each later one starts
 /// where the previous ended (`7–30d`).
 fn bucket_label(lower: i32, upper: i32) -> String {
@@ -229,7 +221,7 @@ impl Credits {
                     round((COALESCE(SUM(amount) FILTER (WHERE kind = 'spend'), 0) \
                          - COALESCE(SUM(amount) FILTER (WHERE kind = 'refund'), 0)) * 10)::text AS settled, \
                     (SELECT COALESCE(SUM(usd_cents), 0)::text FROM credits.authorizations \
-                      WHERE status IN ('authorized', 'retired')) AS pending \
+                      WHERE status IN {LIVE_STATUSES}) AS pending \
              FROM credits.ledger"
         )))
         .fetch_one(&mut *tx)
@@ -435,49 +427,57 @@ impl Credits {
         &self,
         tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
     ) -> Result<Legacy, ApiError> {
-        const PER_CREDIT: &str = "WITH c AS ( \
-                 SELECT g.amount_wei, g.expires_at, \
+        // Claimed credits only: a goal grant is delivered once claimed, as every other reader counts it.
+        let [w0, w1, w2] = EXPIRING_WINDOWS_DAYS;
+        let r = sqlx::query(
+            "WITH c AS ( \
+                 SELECT g.amount_wei, g.expires_at - timezone('UTC', now()) AS left_for, \
                         COALESCE((SELECT SUM(u.value_wei) FROM credits.usages u WHERE u.salt = g.salt), 0) AS used \
-                 FROM credits.goal_grants g )";
-        let r = sqlx::query(sqlx::AssertSqlSafe(format!(
-            "{PER_CREDIT} \
+                 FROM credits.goal_grants g WHERE g.claimed_at IS NOT NULL ), \
+             r AS (SELECT *, GREATEST(amount_wei - used, 0) AS remaining FROM c) \
              SELECT COALESCE(SUM(amount_wei), 0)::text AS issued, \
                     COALESCE(SUM(used), 0)::text AS consumed, \
                     CASE WHEN COALESCE(SUM(amount_wei), 0) > 0 \
                          THEN LEAST(1, trunc(COALESCE(SUM(used), 0) * 10000 / SUM(amount_wei)) / 10000) \
                          ELSE 0 END::float8 AS rate, \
-                    COALESCE(SUM(GREATEST(amount_wei - used, 0)) \
-                        FILTER (WHERE expires_at < timezone('UTC', now())), 0)::text AS breakage \
-             FROM c"
-        )))
+                    COALESCE(SUM(remaining) FILTER (WHERE left_for < interval '0'), 0)::text AS breakage, \
+                    count(*) FILTER (WHERE remaining > 0 AND left_for > interval '0' \
+                                     AND left_for <= make_interval(days => $1)) AS n0, \
+                    COALESCE(SUM(remaining) FILTER (WHERE left_for > interval '0' \
+                                     AND left_for <= make_interval(days => $1)), 0)::text AS w0, \
+                    count(*) FILTER (WHERE remaining > 0 AND left_for > make_interval(days => $1) \
+                                     AND left_for <= make_interval(days => $2)) AS n1, \
+                    COALESCE(SUM(remaining) FILTER (WHERE left_for > make_interval(days => $1) \
+                                     AND left_for <= make_interval(days => $2)), 0)::text AS w1, \
+                    count(*) FILTER (WHERE remaining > 0 AND left_for > make_interval(days => $2) \
+                                     AND left_for <= make_interval(days => $3)) AS n2, \
+                    COALESCE(SUM(remaining) FILTER (WHERE left_for > make_interval(days => $2) \
+                                     AND left_for <= make_interval(days => $3)), 0)::text AS w2 \
+             FROM r",
+        )
+        .bind(w0)
+        .bind(w1)
+        .bind(w2)
         .fetch_one(&mut **tx)
         .await?;
-
-        let mut expiring = Vec::with_capacity(EXPIRING_WINDOWS_DAYS.len());
-        let mut lower = 0;
-        for upper in EXPIRING_WINDOWS_DAYS {
-            let b = sqlx::query(sqlx::AssertSqlSafe(format!(
-                "{PER_CREDIT} \
-                 SELECT count(*) AS count, COALESCE(SUM(GREATEST(amount_wei - used, 0)), 0)::text AS wei \
-                 FROM c WHERE expires_at > timezone('UTC', now()) + make_interval(days => $1) \
-                          AND expires_at <= timezone('UTC', now()) + make_interval(days => $2)"
-            )))
-            .bind(lower)
-            .bind(upper)
-            .fetch_one(&mut **tx)
-            .await?;
-            expiring.push(ExpiringBucket {
-                label: bucket_label(lower, upper),
-                within_days: upper,
-                count: b.get("count"),
-                mana_wei: b.get("wei"),
-            });
-            lower = upper;
-        }
+        let expiring = [
+            (0, w0, "n0", "w0"),
+            (w0, w1, "n1", "w1"),
+            (w1, w2, "n2", "w2"),
+        ]
+        .into_iter()
+        .map(|(lower, upper, n, w)| ExpiringBucket {
+            label: bucket_label(lower, upper),
+            within_days: upper,
+            count: r.get(n),
+            mana_wei: r.get(w),
+        })
+        .collect();
 
         let top_spenders = sqlx::query(
             "SELECT u.sender AS address, SUM(u.value_wei)::text AS wei, count(*) AS consumptions \
              FROM credits.usages u JOIN credits.goal_grants g ON g.salt = u.salt \
+             WHERE g.claimed_at IS NOT NULL \
              GROUP BY u.sender ORDER BY SUM(u.value_wei) DESC, u.sender LIMIT $1",
         )
         .bind(TOP_LIMIT)
@@ -507,14 +507,6 @@ impl Credits {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn cents_saturate_instead_of_failing() {
-        assert_eq!(cents("1234"), 1234);
-        assert_eq!(cents("-5"), -5);
-        assert_eq!(cents("99999999999999999999999"), i64::MAX);
-        assert_eq!(cents("-99999999999999999999999"), i64::MIN);
-    }
 
     #[test]
     fn buckets_are_labelled_like_the_old_server() {

@@ -89,14 +89,14 @@ pub mod fulfillment;
 pub mod goals;
 pub mod handlers;
 pub mod history;
+pub mod ledger_stats;
 pub mod money;
 pub mod orders;
 pub mod packs;
 pub mod pricing;
+pub mod purchase_audit;
 pub mod purchase_intent;
 pub mod reconcile;
-pub mod ledger_stats;
-pub mod purchase_audit;
 pub mod reports;
 pub mod settlement;
 pub mod store;
@@ -1051,7 +1051,10 @@ pub fn router(state: SharedState) -> Router {
         .route("/credits", get(handlers::reports::list_credits))
         .route("/credit-reasons", get(handlers::reports::credit_reasons))
         .route("/admin/ledger-stats", get(handlers::reports::ledger_stats))
-        .route("/admin/purchase-audit", get(handlers::reports::purchase_audit))
+        .route(
+            "/admin/purchase-audit",
+            get(handlers::reports::purchase_audit),
+        )
         .route("/packs/{sku}/intent", post(handlers::packs::create_intent))
         .route("/credits/checkout", post(handlers::orders::create_checkout))
         .route(

@@ -25,7 +25,7 @@ use serde_json::Value;
 use sqlx::Row;
 
 use super::errors::ApiError;
-use super::ledger_stats::cents;
+use super::money::saturating_cents as cents;
 use super::store::Credits;
 
 /// The columns the audit sorts by, as the dashboard names them.
@@ -74,10 +74,13 @@ impl AuditSort {
         match self {
             Self::SettledAt => "MIN(c.at)".into(),
             Self::Buyer => "MIN(a.address)".into(),
-            Self::Items => "count(*)".into(),
+            Self::Items => "SUM(c.lines)".into(),
             Self::Charged => "SUM(c.reserved)".into(),
             Self::Consumed => format!("SUM({CONSUMED})"),
-            Self::Retained => format!("SUM(c.reserved) - SUM({CONSUMED})"),
+            // As the response shows it: consumed rounded once, the difference never below 0.
+            Self::Retained => {
+                format!("GREATEST(round(SUM(c.reserved)) - round(SUM({CONSUMED})), 0)")
+            }
         }
     }
 }
@@ -102,7 +105,8 @@ fn per_credit() -> &'static str {
     "WITH c AS ( \
          SELECT u.salt, u.tx_hash, MIN(u.block_number) AS block, \
                 MIN(COALESCE(u.block_time, u.indexed_at)) AS at, SUM(u.value_wei) AS wei, \
-                COALESCE(SUM(s.debited_credits), 0) * 10 AS reserved \
+                COALESCE(SUM(s.debited_credits), 0) * 10 AS reserved, \
+                (SELECT count(*) FROM credits.authorization_lines l WHERE l.authorization_id = u.salt) AS lines \
          FROM credits.usages u \
          JOIN credits.authorizations a ON a.id = u.salt \
          LEFT JOIN credits.usage_settlements s \
@@ -128,7 +132,7 @@ impl Credits {
             "{cte} \
              SELECT c.tx_hash, MIN(a.address) AS buyer, MIN(c.block) AS block, \
                     (extract(epoch FROM MIN(c.at)) * 1000)::bigint AS settled_ms, \
-                    round(SUM(c.reserved))::text AS reserved, SUM({CONSUMED})::text AS consumed, \
+                    round(SUM(c.reserved))::text AS reserved, round(SUM({CONSUMED}))::text AS consumed, \
                     json_agg(json_build_object( \
                         'creditId', a.id, \
                         'intentId', a.id, \
@@ -168,7 +172,7 @@ impl Credits {
             .into_iter()
             .map(|r| {
                 let reserved = cents(r.get::<String, _>("reserved").as_str());
-                let consumed = round_cents(r.get::<String, _>("consumed").as_str());
+                let consumed = cents(r.get::<String, _>("consumed").as_str());
                 AuditTransaction {
                     tx_hash: r.get("tx_hash"),
                     buyer_address: r.get("buyer"),
@@ -185,18 +189,6 @@ impl Credits {
     }
 }
 
-/// An exact NUMERIC amount of cents, rounded half away from zero once.
-fn round_cents(text: &str) -> i64 {
-    let (whole, frac) = text.split_once('.').unwrap_or((text, ""));
-    let base = cents(whole);
-    let up = frac.as_bytes().first().is_some_and(|d| *d >= b'5');
-    match (up, whole.starts_with('-')) {
-        (false, _) => base,
-        (true, false) => base.saturating_add(1),
-        (true, true) => base.saturating_sub(1),
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -207,13 +199,5 @@ mod tests {
             assert_eq!(AuditSort::parse(key).unwrap().key(), *key);
         }
         assert_eq!(AuditSort::parse("constructor"), None);
-    }
-
-    #[test]
-    fn consumption_rounds_once() {
-        assert_eq!(round_cents("880.4999"), 880);
-        assert_eq!(round_cents("880.5"), 881);
-        assert_eq!(round_cents("880"), 880);
-        assert_eq!(round_cents("-0.6"), -1);
     }
 }

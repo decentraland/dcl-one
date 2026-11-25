@@ -46,7 +46,7 @@ fn bearer() -> HeaderMap {
     h
 }
 
-/// A take-photo credit for `address` in season 1, with each of `consumed`
+/// A claimed take-photo credit for `address` in season 1, with each of `consumed`
 /// spent on chain in its own CreditUsed log.
 async fn goal_credit(pool: &sqlx::PgPool, address: &str, wei: &str, consumed: &[&str]) -> String {
     sqlx::query("INSERT INTO credits.seasons(id,name,start_date,end_date,max_mana_wei) VALUES(1,'Season One',timezone('UTC',now())-interval '1 day',timezone('UTC',now())+interval '30 days',0) ON CONFLICT DO NOTHING")
@@ -62,10 +62,10 @@ async fn goal_credit(pool: &sqlx::PgPool, address: &str, wei: &str, consumed: &[
         .bind(address).bind(now()).execute(pool).await.unwrap();
     let salt = format!("0x{}{}", "1".repeat(24), &address[2..]);
     let contract = "0x00000000000000000000000000000000000000cc";
-    sqlx::query("INSERT INTO credits.goal_grants(address,season_id,week_id,goal_id,salt,chain_id,contract,credit_hash,amount_wei,signature,created_at,expires_at) VALUES($1,1,1,'take-photo',$2,137,$3,$2,$4::numeric,'0xsig',$5,$5 + interval '30 days')")
+    sqlx::query("INSERT INTO credits.goal_grants(address,season_id,week_id,goal_id,salt,chain_id,contract,credit_hash,amount_wei,signature,created_at,expires_at,claimed_at) VALUES($1,1,1,'take-photo',$2,137,$3,$2,$4::numeric,'0xsig',$5,$5 + interval '30 days',$5)")
         .bind(address).bind(&salt).bind(contract).bind(wei).bind(now()).execute(pool).await.unwrap();
     for (i, part) in consumed.iter().enumerate() {
-        sqlx::query("INSERT INTO credits.usages(chain_id,block_number,log_index,contract,tx_hash,sender,credit_id,salt,credit_value,credit_expires_at,value_wei) VALUES(137,1,$1,$2,$3,$4,$3,$5,$6::numeric,0,$7::numeric)")
+        sqlx::query("INSERT INTO credits.usages(chain_id,block_number,log_index,contract,tx_hash,sender,credit_id,salt,credit_value,credit_expires_at,value_wei) VALUES(137,$8,$1,$2,$3,$4,$3,$5,$6::numeric,0,$7::numeric)")
             .bind(i as i32)
             .bind(contract)
             .bind(format!("0x{}", "ab".repeat(32)))
@@ -73,6 +73,8 @@ async fn goal_credit(pool: &sqlx::PgPool, address: &str, wei: &str, consumed: &[
             .bind(&salt)
             .bind(wei)
             .bind(*part)
+            // One block per wallet, so two wallets' credits never share a log key.
+            .bind(i64::from_str_radix(&address[2..9], 16).unwrap())
             .execute(pool)
             .await
             .unwrap();
@@ -422,6 +424,23 @@ async fn migrated_grants_filters_and_pages() {
     )
     .await;
     assert_eq!(v["total"], 0, "{v}");
+    // A completed goal that was never claimed is not a delivered credit.
+    let unclaimed = scratch_wallet();
+    goal_credit(&pool, &unclaimed.address, "9", &[]).await;
+    sqlx::query("UPDATE credits.goal_grants SET claimed_at = NULL WHERE address = $1")
+        .bind(&unclaimed.address)
+        .execute(&pool)
+        .await
+        .unwrap();
+    let (_, _, v) = send(
+        &app,
+        "GET",
+        "/credits/credits?season_id=1&source=goal",
+        bearer(),
+        None,
+    )
+    .await;
+    assert_eq!(v["total"], 1, "{v}");
 
     // The old pagination: a non-numeric limit falls back, and the cap is 100.
     let (status, _, v) = send(&app, "GET", "/credits/credits?limit=abc", bearer(), None).await;
@@ -746,6 +765,17 @@ async fn ledger_stats_add_up_the_ledger_orders_and_seasonal_credits() {
     }
     let earner = scratch_wallet();
     goal_credit(&pool, &earner.address, "5000", &["700", "500"]).await;
+    // Fully spent: no remaining MANA, so not counted as expiring.
+    let spent = scratch_wallet();
+    goal_credit(&pool, &spent.address, "100", &["100"]).await;
+    // Completed but never claimed: not a delivered credit, so in none of the figures.
+    let unclaimed = scratch_wallet();
+    goal_credit(&pool, &unclaimed.address, "9000", &[]).await;
+    sqlx::query("UPDATE credits.goal_grants SET claimed_at = NULL WHERE address = $1")
+        .bind(&unclaimed.address)
+        .execute(&pool)
+        .await
+        .unwrap();
 
     let (status, _, _) = send(
         &app,
@@ -795,10 +825,18 @@ async fn ledger_stats_add_up_the_ledger_orders_and_seasonal_credits() {
     );
     let trends = &v["analytics"]["usdTrends"];
     assert_eq!(trends["windowDays"], 90);
-    assert_eq!(trends["daily"].as_array().unwrap().len(), 1, "{trends}");
-    assert_eq!(trends["daily"][0]["issuedUsdCents"], 950);
-    assert_eq!(trends["daily"][0]["spentUsdCents"], 150);
-    assert_eq!(trends["daily"][0]["stripeGrossCents"], 4500);
+    // Summed over the days, so a run that crosses UTC midnight still adds up.
+    let total = |key: &str| -> i64 {
+        trends["daily"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|d| d[key].as_i64().unwrap())
+            .sum()
+    };
+    assert_eq!(total("issuedUsdCents"), 950, "{trends}");
+    assert_eq!(total("spentUsdCents"), 150);
+    assert_eq!(total("stripeGrossCents"), 4500);
     assert_eq!(
         v["analytics"]["usdTopSpenders"],
         json!([{ "address": a.address, "spentUsdCents": 150, "purchases": 1 }])
@@ -817,9 +855,9 @@ async fn ledger_stats_add_up_the_ledger_orders_and_seasonal_credits() {
             .ends_with('Z')
     );
     let legacy = &v["analytics"]["legacy"];
-    assert_eq!(legacy["redemption"]["issuedManaWei"], "5000");
-    assert_eq!(legacy["redemption"]["consumedManaWei"], "1200");
-    assert_eq!(legacy["redemption"]["redemptionRate"], 0.24);
+    assert_eq!(legacy["redemption"]["issuedManaWei"], "5100");
+    assert_eq!(legacy["redemption"]["consumedManaWei"], "1300");
+    assert_eq!(legacy["redemption"]["redemptionRate"], 0.2549);
     assert_eq!(legacy["redemption"]["breakageManaWei"], "0");
     assert_eq!(
         legacy["redemption"]["expiring"],
@@ -831,7 +869,10 @@ async fn ledger_stats_add_up_the_ledger_orders_and_seasonal_credits() {
     );
     assert_eq!(
         legacy["topSpenders"],
-        json!([{ "address": earner.address, "consumedManaWei": "1200", "consumptions": 2 }])
+        json!([
+            { "address": earner.address, "consumedManaWei": "1200", "consumptions": 2 },
+            { "address": spent.address, "consumedManaWei": "100", "consumptions": 1 }
+        ])
     );
     assert!(v["generatedAt"].as_i64().unwrap() > 0);
 }
@@ -917,6 +958,15 @@ async fn the_purchase_audit_reconciles_per_transaction() {
         Some("10"),
     )
     .await;
+    // What each credit bought: the cart's first credit two items, the others one each.
+    for (salt, position) in [(hash(1), 0), (hash(1), 1), (hash(2), 0), (hash(3), 0)] {
+        sqlx::query("INSERT INTO credits.authorization_lines (authorization_id, position, quoted_cents, charged_cents, sale_kind, asset_kind, asset_chain_id, asset_contract) VALUES ($1, $2, 100, 100, 'primary_mint', 'wearable', 137, '0x00000000000000000000000000000000000000c1')")
+            .bind(salt)
+            .bind(position)
+            .execute(&pool)
+            .await
+            .unwrap();
+    }
     // A credit nobody on this node signed is not a purchase here.
     used(
         &pool,
@@ -973,8 +1023,30 @@ async fn the_purchase_audit_reconciles_per_transaction() {
         let headers = signed_headers(&admin, "get", path).await;
         send(&app, "GET", &format!("{path}?{q}"), headers, None).await
     };
-    let (_, _, v) = get("sortBy=retained&sortDirection=asc").await;
-    assert_eq!(v["transactions"][0]["txHash"], hash(0xb2), "{v}");
+    // Every sort against the database: the cart (3 items, $11.80 charged, $9.05 spent,
+    // $2.75 kept) against the single credit (1 item, $1.00, $0.09, $0.91).
+    let cart_first_by_buyer = if buyer.address < other.address {
+        hash(0xa1)
+    } else {
+        hash(0xb2)
+    };
+    for (q, first) in [
+        ("sortBy=retained&sortDirection=asc", hash(0xb2)),
+        ("sortBy=retained&sortDirection=desc", hash(0xa1)),
+        ("sortBy=items&sortDirection=desc", hash(0xa1)),
+        ("sortBy=items&sortDirection=asc", hash(0xb2)),
+        ("sortBy=charged&sortDirection=desc", hash(0xa1)),
+        ("sortBy=consumed&sortDirection=asc", hash(0xb2)),
+        ("sortBy=settledAt&sortDirection=asc", hash(0xa1)),
+        (
+            "sortBy=buyer&sortDirection=asc",
+            cart_first_by_buyer.clone(),
+        ),
+    ] {
+        let (_, _, v) = get(q).await;
+        assert_eq!(v["transactions"][0]["txHash"], first, "{q}: {v}");
+        assert_eq!(v["page"]["total"], 2, "{q}");
+    }
     let (_, _, v) = get("limit=1&offset=1").await;
     assert_eq!(v["page"]["count"], 1);
     assert_eq!(v["page"]["total"], 2);
@@ -1010,13 +1082,14 @@ async fn the_purchase_audit_reconciles_per_transaction() {
     }
 }
 
-/// Both reports answer at the same local path under `/shop-api`.
+/// Both reports answer at the same local path under `/shop-api`, to the read
+/// admins only.
 #[tokio::test]
 async fn the_canonical_mount_serves_the_reports() {
     let Some(pool) = crate::db::scratch::isolated_pool(4).await else {
         return;
     };
-    let admin = scratch_wallet();
+    let (admin, outsider) = (scratch_wallet(), scratch_wallet());
     let shop = axum::Router::new().nest(
         "/shop-api",
         super::shop_router(reports_state(pool, &admin.address)),
@@ -1028,5 +1101,16 @@ async fn the_canonical_mount_serves_the_reports() {
         let headers = signed_headers(&admin, "get", path).await;
         let (status, _, v) = send(&shop, "GET", path, headers, None).await;
         assert_eq!(status, StatusCode::OK, "{path}: {v}");
+
+        // Unsigned, a wallet off the list, and the admin's signature over another path.
+        let (status, _, _) = send(&shop, "GET", path, HeaderMap::new(), None).await;
+        assert_eq!(status, StatusCode::UNAUTHORIZED, "{path}");
+        let headers = signed_headers(&outsider, "get", path).await;
+        let (status, _, _) = send(&shop, "GET", path, headers, None).await;
+        assert_eq!(status, StatusCode::UNAUTHORIZED, "{path}");
+        let mut headers = signed_headers(&admin, "get", "/elsewhere").await;
+        headers.insert("x-original-path", "/elsewhere".parse().unwrap());
+        let (status, _, _) = send(&shop, "GET", path, headers, None).await;
+        assert_eq!(status, StatusCode::UNAUTHORIZED, "{path}");
     }
 }

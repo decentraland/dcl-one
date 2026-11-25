@@ -410,6 +410,70 @@ mod tests {
         q
     }
 
+    fn audit(pairs: &[(&str, &str)]) -> Result<AuditRequest, String> {
+        let mut q = AuditQuery::default();
+        for (k, v) in pairs {
+            let v = Some(v.to_string());
+            match *k {
+                "limit" => q.limit = v,
+                "offset" => q.offset = v,
+                "address" => q.address = v,
+                "sortBy" => q.sort_by = v,
+                "sortDirection" => q.sort_direction = v,
+                _ => panic!("{k}"),
+            }
+        }
+        audit_request(&q).map_err(|e| e.public_message())
+    }
+
+    #[test]
+    fn the_audit_request_validates_like_the_old_server() {
+        let d = audit(&[]).unwrap();
+        assert_eq!(
+            (d.limit, d.offset, d.sort, d.descending, d.buyer),
+            (50, 0, AuditSort::SettledAt, true, None)
+        );
+        let r = audit(&[
+            ("limit", "12.9"),
+            ("offset", "40000"),
+            ("sortBy", "items"),
+            ("sortDirection", "asc"),
+        ])
+        .unwrap();
+        assert_eq!(
+            (r.limit, r.offset, r.sort, r.descending),
+            (12, 10_000, AuditSort::Items, false)
+        );
+        assert_eq!(
+            audit(&[("limit", "0"), ("offset", "-1")]).unwrap().limit,
+            50
+        );
+        assert_eq!(audit(&[("limit", "1e9")]).unwrap().limit, 200);
+        let a = audit(&[("address", "0xAbCdEf0000000000000000000000000000000001")]).unwrap();
+        assert_eq!(
+            a.buyer.as_deref(),
+            Some("0xabcdef0000000000000000000000000000000001")
+        );
+        assert_eq!(
+            audit(&[("address", "")]).unwrap().buyer,
+            None,
+            "an empty address is no filter"
+        );
+        assert_eq!(
+            audit(&[("address", "nope")]).unwrap_err(),
+            "Invalid address"
+        );
+        assert!(
+            audit(&[("sortBy", "")])
+                .unwrap_err()
+                .starts_with("Invalid sortBy. Valid: settledAt,")
+        );
+        assert_eq!(
+            audit(&[("sortDirection", "DESC")]).unwrap_err(),
+            "Invalid sortDirection. Valid: asc, desc"
+        );
+    }
+
     #[test]
     fn pagination_follows_the_old_server() {
         assert_eq!(legacy_page(None, None), (100, 0));
