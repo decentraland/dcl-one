@@ -46,4 +46,14 @@ describe('SearchField', () => {
     fireEvent.keyDown(field, { key: 'Enter' })
     expect(onSubmit).toHaveBeenCalledWith('plaza')
   })
+
+  it('passes its variant and size to the field', () => {
+    const { rerender } = render(<SearchField variant="light" size="sm" />)
+    const root = (): HTMLElement => screen.getByRole('textbox', { name: 'Search' }).parentElement!
+    expect(root().getAttribute('data-variant')).toBe('light')
+    expect(root().getAttribute('data-size')).toBe('sm')
+    rerender(<SearchField />)
+    expect(root().getAttribute('data-variant')).toBe('dark')
+    expect(root().getAttribute('data-size')).toBe('md')
+  })
 })

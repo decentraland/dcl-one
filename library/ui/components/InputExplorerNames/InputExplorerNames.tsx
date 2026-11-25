@@ -20,7 +20,7 @@ type HudProps = Omit<
   variant?: 'dark' | 'light'
   /** `lg` is display-sized text, for a field that is the point of its page. */
   fieldSize?: 'md' | 'lg'
-  /** A ruby border and `aria-invalid`, for a value the reader still has to fix. */
+  /** A red border and `aria-invalid`, for a value the reader still has to fix. */
   invalid?: boolean
   /**
    * An icon button inside the field's right edge. `disabled` holds it while the field stays editable; `size` is

@@ -5267,6 +5267,10 @@
           "kind": "regular"
         },
         {
+          "name": "textInput.test.tsx",
+          "kind": "regular"
+        },
+        {
           "name": "textureOptimization.test.tsx",
           "kind": "regular"
         }
@@ -14345,7 +14349,7 @@
     },
     {
       "path": "library/ui/apps/hud/test/searchField.test.tsx",
-      "sha256": "187ba926eb34cae807051251b3ac64c9625c16a5499f3b7923f215bdb0794ce3"
+      "sha256": "6f41d23d7c4d842bea4b8ce04faf5be6a8e0997c8a88d2bf2f169e2f44434f19"
     },
     {
       "path": "library/ui/apps/hud/test/selectDirection.test.ts",
@@ -14374,6 +14378,10 @@
     {
       "path": "library/ui/apps/hud/test/surfaceBoundary.test.tsx",
       "sha256": "73563cfc7b7e1c0dcc210360e9377b9f699caa4aef902198e46d1e9e88245871"
+    },
+    {
+      "path": "library/ui/apps/hud/test/textInput.test.tsx",
+      "sha256": "e1d93be882595e8997918e1060e7eef2bda170a6bb748e8da0542c0d497657ce"
     },
     {
       "path": "library/ui/apps/hud/test/textureOptimization.test.tsx",
@@ -16189,7 +16197,7 @@
     },
     {
       "path": "library/ui/components/InputExplorerNames/InputExplorerNames.tsx",
-      "sha256": "d0eda29492a17f0693d367cb6e5c85e28e01fd9565fba07c431a61217d5bf40c"
+      "sha256": "1719b27a342e6da2c48909ec174e3b2ee2cbdaff2fd0494d832f863b4ddba89c"
     },
     {
       "path": "library/ui/components/InputField/InputField.icons.tsx",
@@ -51746,6 +51754,21 @@
       "kind": "test:runtime"
     },
     {
+      "from": "library/ui/apps/hud/test/textInput.test.tsx",
+      "to": "library/ui/apps/hud/design/index.ts",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/textInput.test.tsx",
+      "to": "library/ui/apps/hud/design/index.ts",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/textInput.test.tsx",
+      "to": "library/ui/apps/hud/design/index.ts",
+      "kind": "test:runtime"
+    },
+    {
       "from": "library/ui/apps/hud/test/textureOptimization.test.tsx",
       "to": "library/ui/apps/hud/design/index.ts",
       "kind": "native:runtime"
@@ -67973,6 +67996,11 @@
     {
       "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
       "to": "library/ui/apps/hud/test/surfaceBoundary.test.tsx",
+      "kind": "type"
+    },
+    {
+      "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
+      "to": "library/ui/apps/hud/test/textInput.test.tsx",
       "kind": "type"
     },
     {

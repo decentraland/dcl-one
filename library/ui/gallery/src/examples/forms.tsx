@@ -321,7 +321,7 @@ export const formEntries: GalleryEntry[] = [
               defaultValue="robtfm"
               fieldAction={{
                 icon: <GeneralSearch size={18} aria-hidden="true" />,
-                label: 'Pick another',
+                label: 'Search',
                 onClick: () => {}
               }}
             />
