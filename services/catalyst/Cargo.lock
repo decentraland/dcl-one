@@ -1911,6 +1911,7 @@ name = "catalyst-config"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "catalyst-shared",
  "clap",
  "ipnet",
  "serde_json",

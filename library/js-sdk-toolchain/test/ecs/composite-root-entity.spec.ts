@@ -1,5 +1,6 @@
 import { Composite, components } from '../../packages/@dcl/ecs/src'
-import { Engine, Entity } from '../../packages/@dcl/ecs/src/engine'
+import type { Entity } from '../../packages/@dcl/ecs/src/engine'
+import { Engine } from '../../packages/@dcl/ecs/src/engine'
 
 const COMPOSITE_SOURCE = 'two-children.composite'
 

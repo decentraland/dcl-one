@@ -427,6 +427,9 @@ CREATE TABLE shop.chain_cursor (
     -- cleared by the rewind or by a pass that proves the cursor again.
     -- Readers of the height without the publication skip it meanwhile.
     diverged_at timestamp without time zone,
+    -- Raised by the rebuild that clears the projection and by the estate
+    -- repair's refold: with reorg_rewinds, every rewrite of rows in place.
+    rebuilds integer NOT NULL DEFAULT 0,
     -- An old binary omits this column when claiming its lease. It cannot
     -- take the Sepolia trades cursor and publish a history missing V1.
     sepolia_trade_v1 boolean NOT NULL DEFAULT false,
@@ -16946,6 +16949,9 @@ CREATE TABLE shop.sale_execution (
     block_time bigint NOT NULL,
     PRIMARY KEY (network, block_number, log_index)
 );
+CREATE INDEX sale_execution_read_special
+    ON shop.sale_execution (network, kind, block_number, log_index) WHERE kind IN ('store', 'trade', 'name_fee');
+CREATE INDEX sale_execution_read_time ON shop.sale_execution (block_time DESC,network,block_number,log_index);
 CREATE INDEX sale_execution_tx ON shop.sale_execution (network, tx_hash, log_index);
 CREATE INDEX sale_execution_day ON shop.sale_execution (network, ((block_time / 86400) * 86400));
 CREATE INDEX sale_execution_pending_creator ON shop.sale_execution (network, creator_attempted_at NULLS FIRST, block_number) WHERE kind='store' AND NOT creator_checked;
@@ -16973,6 +16979,14 @@ CREATE TABLE shop.sale_asset (
     FOREIGN KEY (network, block_number, log_index)
        REFERENCES shop.sale_execution ON DELETE CASCADE
 );
+CREATE INDEX sale_asset_read_unresolved
+    ON shop.sale_asset (network, block_number, log_index, ordinal) WHERE price > 0 AND (seller IS NULL OR kind = 'bid');
+CREATE INDEX sale_asset_read_seller ON shop.sale_asset (network,seller,block_number) WHERE price>0;
+CREATE INDEX sale_asset_read_buyer ON shop.sale_asset (network,buyer,block_number) WHERE price>0;
+CREATE INDEX sale_asset_read_token ON shop.sale_asset (network, token_id, contract_address) WHERE price > 0;
+CREATE INDEX sale_asset_read_kind ON shop.sale_asset (network, kind, block_number) WHERE price > 0;
+CREATE INDEX sale_asset_read_item ON shop.sale_asset (network,contract_address,item_id) WHERE price>0;
+CREATE INDEX sale_asset_read_price ON shop.sale_asset (price DESC,public_id) WHERE price>0;
 
 CREATE INDEX sale_asset_priced_buyer ON shop.sale_asset(network,buyer,seller,contract_address,currency) WHERE price>0 AND seller IS NOT NULL;
 
@@ -16994,6 +17008,7 @@ CREATE TABLE shop.sale_payment (
     FOREIGN KEY (network, block_number, log_index)
        REFERENCES shop.sale_execution ON DELETE CASCADE
 );
+CREATE INDEX sale_payment_read_beneficiary ON shop.sale_payment (network,beneficiary,block_number) WHERE consideration;
 CREATE TABLE shop.sale_payout (
     network text NOT NULL,
     block_number bigint NOT NULL,
@@ -17129,8 +17144,9 @@ CREATE TABLE shop.name_purchase (
 -- CollectionStore (`mint`: a mirrored collection's Issue whose `_caller` is
 -- the store; `buyer` the beneficiary, `item_id` the item sold, `price` what
 -- the store's `Bought` in the same transaction charged for it, NULL on rows
--- indexed before it was read) and the ERC721BidV2 lifecycle (`bid_created` with the
--- bidder in `buyer`, the price and the expiry in unix seconds;
+-- indexed before it was read) and the bid lifecycle of ERC721BidV2 on Polygon
+-- and ERC721Bid on Ethereum (`bid_created` with the
+-- bidder in `buyer`, the price, the expiry in unix seconds and the fingerprint;
 -- `bid_accepted` with the seller and the price; `bid_cancelled`), each with
 -- the venue in `emitter`, the asset and its transaction. Workload: one row
 -- per kept log, appended with the cursor advance (hundreds a day at the
@@ -17155,6 +17171,9 @@ CREATE TABLE shop.sale_event (
     expires_at bigint,
     tx_hash varchar(66) NOT NULL,
     bid_fee numeric(78,0) CHECK (bid_fee IS NULL OR (bid_fee >= 0 AND kind = 'bid_accepted')),
+    -- A BidCreated's `_fingerprint`, as 0x-prefixed hex ('0x' when empty);
+    -- NULL on every other kind and on a creation walked before it was kept.
+    fingerprint text CHECK (fingerprint IS NULL OR kind = 'bid_created'),
     PRIMARY KEY (network, block_number, log_index),
     CONSTRAINT sale_event_network_known CHECK (network IN ('ethereum', 'matic')),
     CONSTRAINT sale_event_kind_known CHECK (kind IN ('mint', 'bid_created', 'bid_accepted', 'bid_cancelled')),
@@ -17171,8 +17190,8 @@ CREATE INDEX sale_event_bid_accepted ON shop.sale_event(network,block_number) WH
 -- (contract_address, token_id, buyer) ORDER BY block_number, log_index).
 CREATE INDEX sale_event_bidder_idx ON shop.sale_event (network, contract_address, token_id, buyer, block_number, log_index) WHERE kind <> 'mint';
 
--- The bids fold: one row per bidder and token, as the ERC721BidV2 contract
--- keeps them (`bidIdByTokenAndBidder`: a new bid by the same bidder on the
+-- The bids fold, per network: one row per bidder and token, as the bid
+-- contracts keep them (`bidIdByTokenAndBidder`: a new bid by the same bidder on the
 -- same token replaces the old one without a cancellation). `bid_id`, price
 -- and expiry come from the latest `bid_created` of the key; `status` from
 -- the latest event at or after it (open, accepted, cancelled), or
@@ -17199,6 +17218,8 @@ CREATE TABLE shop.nft_bid (
     updated_block bigint NOT NULL,
     updated_log_index integer NOT NULL,
     updated_at bigint NOT NULL,
+    -- The defining creation's fingerprint (`sale_event.fingerprint`).
+    fingerprint text,
     PRIMARY KEY (network, contract_address, token_id, bidder),
     CONSTRAINT nft_bid_id_unique UNIQUE (network, bid_id),
     CONSTRAINT nft_bid_network_known CHECK (network IN ('ethereum', 'matic')),
@@ -17334,6 +17355,10 @@ CREATE TABLE shop.collection_event (
 -- take them first.
 CREATE INDEX collection_event_created_idx ON shop.collection_event (network, contract_address)
     WHERE kind = 'proxy_created';
+CREATE INDEX collection_event_creator_account_idx
+    ON shop.collection_event (network, account, block_number) WHERE kind = 'creatorship_transferred';
+CREATE INDEX collection_event_creator_previous_idx
+    ON shop.collection_event (network, previous_account, block_number) WHERE kind = 'creatorship_transferred';
 
 -- A collection's history in chain order, mints aside (a few hundred thousand
 -- rows): the fold of the collections it replays from their creation.

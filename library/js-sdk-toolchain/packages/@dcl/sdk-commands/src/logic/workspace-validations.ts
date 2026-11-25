@@ -1,10 +1,12 @@
 import path, { resolve } from 'path'
-import { generateLazyValidator, JSONSchema, ValidateFunction } from '@dcl/schemas'
+import type { JSONSchema, ValidateFunction } from '@dcl/schemas'
+import { generateLazyValidator } from '@dcl/schemas'
 import i18next from 'i18next'
 
 import { CliError } from './error'
-import { CliComponents } from '../components'
-import { assertValidProjectFolder, ProjectUnion } from './project-validations'
+import type { CliComponents } from '../components'
+import type { ProjectUnion } from './project-validations'
+import { assertValidProjectFolder } from './project-validations'
 
 export type WorkspaceJson = {
   folders: Array<{ path: string }>

@@ -1088,18 +1088,13 @@ impl ChainIndex for NftIndex {
             .execute(&mut *conn)
             .await?;
         // The bids fold inferred sellers from these transfers: it infers
-        // again the seller of every bid created past the rewind.
-        if self.net == ChainNet::Matic
-            || self.deployments.chain_id == ChainNet::Ethereum.testnet_chain_id()
-        {
-            sqlx::query(
-                "INSERT INTO shop.bid_seller_recheck (network, from_block) VALUES ($1, $2)",
-            )
+        // again the seller of every bid created past the rewind. Every
+        // network's sales walk folds bids.
+        sqlx::query("INSERT INTO shop.bid_seller_recheck (network, from_block) VALUES ($1, $2)")
             .bind(self.net.db_name())
             .bind(to)
             .execute(&mut *conn)
             .await?;
-        }
         // The cleared marker makes the next fold a rebuild, which also
         // restores the deleted keys' rows from their remaining history.
         Ok(())

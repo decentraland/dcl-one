@@ -934,7 +934,11 @@ async fn sales_history_repair_resumes_at_the_next_window_and_discovers_store_iss
     .fetch_one(&db.pool)
     .await
     .unwrap();
-    assert_eq!(excluded, (false, false, false, false, "105".into()));
+    assert_eq!(
+        excluded,
+        (false, false, false, false, "88".into()),
+        "only the two issued NFTs contribute volume; the unmatched 17 remains payment evidence"
+    );
 
     let sellers: Vec<String> =
         sqlx::query_scalar("SELECT seller FROM shop.sale_asset ORDER BY log_index")
@@ -1059,6 +1063,74 @@ async fn sales_accounting_keeps_unallocated_evidence_out_of_public_totals() {
          (SELECT count(*) FROM shop.sale_account_day),(SELECT count(*) FROM shop.sale_item_day)")
         .fetch_one(&db.pool).await.unwrap();
     assert_eq!(counts, (4, 0, 5, 0, 0, 0));
+    sqlx::query(
+        "INSERT INTO shop.mirror_state(mirror,network,source_url,last_complete_pass_at)
+        VALUES('items','ethereum','test',timezone('UTC',now()))",
+    )
+    .execute(&db.pool)
+    .await
+    .unwrap();
+    let mut settings = index_settings(100, 10);
+    settings.sales_enabled = true;
+    let app = crate::market::market_router(state_over(db.pool.clone(), &url, settings, false));
+    let (code, page) = get_json(&app, "/v1/sales?network=ETHEREUM").await;
+    assert_eq!(code, StatusCode::OK, "{page}");
+    assert_eq!(page["total"], 0);
+    let (code, proceeds) = get_json(
+        &app,
+        &format!("/v1/proceeds/summary?seller={ALICE}&network=ETHEREUM"),
+    )
+    .await;
+    assert_eq!(code, StatusCode::OK, "{proceeds}");
+    assert_eq!(proceeds["data"]["sales"], 0);
+    assert_eq!(proceeds["data"]["netWei"], "0");
+
+    // A single catalogue NFT has an exact price when several payments in
+    // the same currency cross from the opposite side.
+    let mut bid = trade_events::decode_log(&log, 86401).unwrap().unwrap();
+    bid.block_number = (b + 1) as i64;
+    bid.log_index = 2;
+    bid.tx_hash = format!("0x{:064x}", 435);
+    bid.signer = Some(BOB.into());
+    bid.caller = ALICE.into();
+    bid.assets = Some(
+        json!({"sent":[asset("1",mana,"10",DAVE),asset("1",mana,"15",CARL)],
+        "received":[asset("3",DAVE,"99",BOB)],"uses":"1"}),
+    );
+    let mut c = db.pool.acquire().await.unwrap();
+    trade_events::insert_events(&mut c, net, &[bid])
+        .await
+        .unwrap();
+    drop(c);
+    *chain.head.lock() = b + 13;
+    sqlx::query("UPDATE shop.chain_cursor SET last_block=$1,last_block_hash=$2,folded_block=$1,sale_verified_through=$1")
+        .bind((b+1) as i64).bind(chain.hash_of(b+1)).execute(&db.pool).await.unwrap();
+    crate::market::sale_fold::pass(&db.pool, &rpc, net)
+        .await
+        .unwrap();
+    let (code, page) = get_json(
+        &app,
+        &format!("/v1/sales?network=ETHEREUM&type=bid&seller={DAVE}"),
+    )
+    .await;
+    assert_eq!(code, StatusCode::OK, "{page}");
+    assert_eq!(page["total"], 1);
+    assert_eq!(page["data"][0]["price"], "25");
+    assert_eq!(page["data"][0]["buyer"], BOB);
+    let endpoint = format!("/v1/proceeds?seller={DAVE}&network=ETHEREUM");
+    assert_eq!(
+        get_json(&app, &endpoint).await.0,
+        StatusCode::SERVICE_UNAVAILABLE
+    );
+    sqlx::query("WITH paid AS (UPDATE shop.sale_payment SET settled=true WHERE network='ethereum' AND block_number=$1
+        RETURNING network,block_number,log_index,ordinal,gross)
+        INSERT INTO shop.sale_payout(network,block_number,log_index,payment_ordinal,ordinal,role,recipient,amount)
+        SELECT network,block_number,log_index,ordinal,0,'seller',CASE WHEN ordinal=0 THEN $2 ELSE $3 END,gross FROM paid")
+        .bind((b+1) as i64).bind(DAVE).bind(CARL).execute(&db.pool).await.unwrap();
+    let (code, proceeds) = get_json(&app, &endpoint).await;
+    assert_eq!(code, StatusCode::OK, "{proceeds}");
+    assert_eq!(proceeds["total"], 1);
+    assert_eq!(proceeds["data"][0]["netWei"], "25");
     db.drop().await;
 }
 
@@ -1171,6 +1243,12 @@ async fn sales_delayed_receipt_corrects_checkout_buyer_and_first_purchase_day() 
     };
     sale_fold::pass(&db.pool, &rpc, net).await.unwrap();
     assert_eq!(firsts().await.unwrap(), [(CHECKOUT.into(), 86400)]);
+    let generation = sqlx::query_scalar::<_, uuid::Uuid>(
+        "SELECT generation FROM shop.sale_publication WHERE network='matic'",
+    )
+    .fetch_one(&db.pool)
+    .await
+    .unwrap();
     let barter_fact: (bool, String, i64) = sqlx::query_as(
         "SELECT e.receipt_read,a.token_id::text,
         (SELECT count(*) FROM shop.sale_payment WHERE block_number=$1)
@@ -1258,6 +1336,13 @@ async fn sales_delayed_receipt_corrects_checkout_buyer_and_first_purchase_day() 
         JOIN shop.sale_payment p USING(network,block_number,log_index,ordinal) WHERE block_number=$1")
         .bind(b as i64).fetch_one(&db.pool).await.unwrap();
     assert_eq!(paid, (true, "500".into(), "123".into(), CHECKOUT.into()));
+    let corrected = sqlx::query_scalar::<_, uuid::Uuid>(
+        "SELECT generation FROM shop.sale_publication WHERE network='matic'",
+    )
+    .fetch_one(&db.pool)
+    .await
+    .unwrap();
+    assert_ne!(corrected, generation);
     db.drop().await;
 }
 
@@ -1854,5 +1939,172 @@ async fn sale_ids_survive_catalogue_discovery_and_reinclusion_at_different_log_p
             .await
             .unwrap();
     assert_eq!(remaining, 2);
+    db.drop().await;
+}
+
+/// A sales cursor walked when Ethereum's walk read only `BidAccepted` gets
+/// the bid contract's earlier creations and cancellations after
+/// publication, in bounded windows; the book refolds every bid in the last
+/// window's transaction and reads complete only then. Sales accounting and
+/// the forward folds go on meanwhile. A marker that no longer explains the
+/// cursor reopens the repair, and a rewind keeps a completed one.
+#[tokio::test]
+async fn an_advanced_ethereum_sales_cursor_repairs_the_bid_lifecycle_after_publication() {
+    use crate::market::ethereum_bid_history::{self, DEPLOYMENT};
+    use crate::market::ethereum_sales::{ERC721_BID, EthereumSalesIndex};
+    let Some(db) = ScratchDb::create().await else {
+        return;
+    };
+    let ix = EthereumSalesIndex;
+    let first = DEPLOYMENT as u64;
+    let last = first + 6;
+    let on_bid = |mut log: crate::chain_index::rpc::RpcLog| {
+        log.address = ERC721_BID.into();
+        log
+    };
+    let expires = 4_000_000_000;
+    let history = vec![
+        on_bid(sales_index::tests::bid_created_log(
+            ALICE,
+            U256::from(1),
+            BOB,
+            0x01,
+            10,
+            expires,
+            first + 1,
+            0,
+        )),
+        on_bid(sales_index::tests::bid_created_log(
+            ALICE,
+            U256::from(2),
+            BOB,
+            0x02,
+            20,
+            expires,
+            first + 3,
+            0,
+        )),
+        on_bid(sales_index::tests::bid_cancelled_log(
+            ALICE,
+            U256::from(2),
+            BOB,
+            0x02,
+            first + 4,
+            0,
+        )),
+        on_bid(sales_index::tests::bid_accepted_log(
+            ALICE,
+            U256::from(1),
+            BOB,
+            CARL,
+            0x01,
+            10,
+            first + 5,
+            0,
+        )),
+    ];
+    let chain = FakeChain::new(last + 12, history, 2_000_000, 100);
+    chain.chain_id.store(1, Ordering::SeqCst);
+    let url = serve(chain.clone()).await;
+    let wide = state_over(db.pool.clone(), &url, index_settings(100, 2_000_000), false);
+    let book = || {
+        sqlx::query_as::<_, (String, String, Option<String>, Option<String>)>(
+            "SELECT token_id::text, status, seller, fingerprint FROM shop.nft_bid WHERE network = 'ethereum' ORDER BY token_id",
+        )
+        .fetch_all(&db.pool)
+    };
+    let complete = || async {
+        let mut conn = db.pool.acquire().await.unwrap();
+        ethereum_bid_history::complete_on(&mut conn).await.unwrap()
+    };
+    let marker = || {
+        sqlx::query_as::<_, (i64, i64)>(
+            "SELECT position, ceiling FROM shop.worker_progress WHERE worker = 'ethereum_bid_history' AND scope = 1",
+        )
+        .fetch_one(&db.pool)
+    };
+    // A walk that reads the lifecycle from the start owes no repair.
+    assert!(publish(&wide, &url, &ix).await.published);
+    let whole = vec![
+        (
+            "1".to_string(),
+            "accepted".to_string(),
+            Some(CARL.to_string()),
+            Some("0x".to_string()),
+        ),
+        (
+            "2".to_string(),
+            "cancelled".to_string(),
+            None,
+            Some("0x".to_string()),
+        ),
+    ];
+    assert_eq!(book().await.unwrap(), whole);
+    assert!(complete().await);
+
+    // The database an earlier binary walked: acceptances only, no marker,
+    // no Ethereum bid book.
+    for statement in [
+        "DELETE FROM shop.worker_progress WHERE worker = 'ethereum_bid_history'",
+        "DELETE FROM shop.sale_event WHERE network = 'ethereum' AND kind IN ('bid_created', 'bid_cancelled')",
+        "DELETE FROM shop.nft_bid WHERE network = 'ethereum'",
+    ] {
+        sqlx::query(statement).execute(&db.pool).await.unwrap();
+    }
+    assert!(!complete().await);
+    // A bid created after the upgrade: the forward walk and fold take it.
+    chain
+        .logs
+        .lock()
+        .push(log_json(&on_bid(sales_index::tests::bid_created_log(
+            ALICE,
+            U256::from(3),
+            DAVE,
+            0x03,
+            30,
+            expires,
+            last + 2,
+            0,
+        ))));
+    *chain.head.lock() = last + 2 + 12;
+    let busy = state_over(db.pool.clone(), &url, index_settings(1, 2), false);
+    assert!(pass(&busy, &url, &ix).await.published);
+    assert_eq!(marker().await.unwrap(), (DEPLOYMENT - 1, last as i64));
+    let forward = (
+        "3".to_string(),
+        "open".to_string(),
+        None,
+        Some("0x".to_string()),
+    );
+    assert_eq!(book().await.unwrap(), vec![forward.clone()]);
+    assert!(!complete().await);
+    // Two-block windows: the repaired creations stay out of the book until
+    // the last window refolds it.
+    let small = state_over(db.pool.clone(), &url, index_settings(20, 2), false);
+    for position in [first + 1, first + 3, first + 5, last] {
+        assert!(pass(&small, &url, &ix).await.published);
+        assert_eq!(marker().await.unwrap(), (position as i64, last as i64));
+        if position < last {
+            assert_eq!(book().await.unwrap(), vec![forward.clone()]);
+            assert!(!complete().await);
+        }
+    }
+    let mut repaired = whole.clone();
+    repaired.push(forward);
+    assert_eq!(book().await.unwrap(), repaired);
+    assert!(complete().await);
+    let reads = chain.get_logs.load(Ordering::SeqCst);
+    assert!(pass(&small, &url, &ix).await.published);
+    assert!(
+        chain.get_logs.load(Ordering::SeqCst) <= reads + 1,
+        "a complete repair reads nothing more"
+    );
+
+    // A reorg past the repaired range drops the forward bid; the repair
+    // stays complete and the rebuilt book keeps the history.
+    chain.fork(last + 1, 0xb1, vec![]);
+    assert!(publish(&small, &url, &ix).await.published);
+    assert_eq!(book().await.unwrap(), whole);
+    assert!(complete().await);
     db.drop().await;
 }

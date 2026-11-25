@@ -1,7 +1,7 @@
 // this file is tested extensively to build scenes in the `make test` command
 // but since it runs outiside the testing harness, coverage is not collected
 
-import { Scene } from '@dcl/schemas'
+import type { Scene } from '@dcl/schemas'
 import child_process from 'child_process'
 import esbuild from 'esbuild'
 import { future } from './future'
@@ -11,7 +11,7 @@ import path from 'path'
 import { pathToFileURL } from 'url'
 import i18next from 'i18next'
 
-import { CliComponents } from '../components'
+import type { CliComponents } from '../components'
 import { colors } from '../components/log'
 import { printProgressInfo, printProgressStep, printWarning } from './beautiful-logs'
 import { CliError } from './error'

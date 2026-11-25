@@ -1,24 +1,24 @@
--- The caller replaces these UTC days and their affected lifetime totals together.
-WITH execution AS MATERIALIZED (
-    SELECT *, block_time / 86400 * 86400 AS day FROM shop.sale_execution
-    WHERE network=$1 AND (block_time / 86400 * 86400)=ANY($2)
-), priced AS MATERIALIZED (
-    SELECT a.*,e.day,e.kind AS venue_kind FROM execution e JOIN shop.sale_asset a USING (network,block_number,log_index)
-    WHERE a.price>0
-), money AS MATERIALIZED (
-    SELECT p.*,e.day,e.kind,e.venue FROM execution e JOIN shop.sale_payment p USING (network,block_number,log_index)
-    WHERE p.consideration AND (e.kind <> 'trade' OR EXISTS (
-        SELECT FROM priced a WHERE (a.network,a.block_number,a.log_index,a.currency) =
-                                   (p.network,p.block_number,p.log_index,p.currency)))
+, money AS MATERIALIZED (
+    SELECT * FROM classified WHERE allocated
 ), payout AS MATERIALIZED (
     SELECT po.*,p.currency,p.day,p.kind,p.venue FROM money p JOIN shop.sale_payout po
       ON (p.network,p.block_number,p.log_index,p.ordinal)=(po.network,po.block_number,po.log_index,po.payment_ordinal)
+), seller_money AS (
+    SELECT p.network,p.block_number,p.log_index,p.asset_ordinal,
+           bool_and(p.settled) AS settled,(array_agg(p.beneficiary ORDER BY p.ordinal))[1] AS beneficiary,
+           coalesce(sum((SELECT sum(po.amount) FROM shop.sale_payout po
+               WHERE (po.network,po.block_number,po.log_index,po.payment_ordinal)=(p.network,p.block_number,p.log_index,p.ordinal)
+                 AND po.role='seller')),0) AS amount
+    FROM money p WHERE p.asset_ordinal IS NOT NULL
+    GROUP BY p.network,p.block_number,p.log_index,p.asset_ordinal
 ), analytics AS (
-    SELECT day,currency,count(*) AS sales,0::numeric AS volume,0::numeric AS names,0::numeric AS creator,
-        0::numeric AS venue,0::numeric AS store,0::numeric AS burn,0::bigint AS unknowns,0::bigint AS unallocated
-    FROM priced GROUP BY day,currency
+    SELECT a.day,a.currency,count(*) AS sales,sum(a.price) AS volume,0::numeric AS names,0::numeric AS creator,
+        0::numeric AS venue,0::numeric AS store,0::numeric AS burn,count(*) FILTER (WHERE net.asset_ordinal IS NULL) AS unknowns,0::bigint AS unallocated
+    FROM priced a LEFT JOIN seller_money net ON
+        (net.network,net.block_number,net.log_index,net.asset_ordinal)=(a.network,a.block_number,a.log_index,a.ordinal)
+    GROUP BY a.day,a.currency
     UNION ALL
-    SELECT day,currency,0,coalesce(sum(gross) FILTER (WHERE kind<>'name_fee'),0),
+    SELECT day,currency,0,0,
         coalesce(sum(gross) FILTER (WHERE kind='name_fee'),0),0,0,0,
         coalesce(sum(gross) FILTER (WHERE kind='name_fee' AND venue=$3),0),
         count(*) FILTER (WHERE NOT settled),0::bigint
@@ -50,18 +50,14 @@ WITH execution AS MATERIALIZED (
            0::numeric AS net_sold,0 AS unknown_proceeds,0::numeric AS received,0::numeric AS royalties,0::numeric AS fees_received
     FROM priced
     UNION ALL
-    SELECT a.day,a.currency,a.seller,1,0,0,a.price,net.amount,
+    SELECT a.day,a.currency,s.address,1,0,0,a.price,coalesce(net.amount,0),
            CASE WHEN net.settled THEN 0 ELSE 1 END,0,0,0
     FROM priced a
-    CROSS JOIN LATERAL (
-        SELECT bool_and(p.settled) AS settled,
-               coalesce(sum((SELECT sum(po.amount) FROM shop.sale_payout po
-                   WHERE (po.network,po.block_number,po.log_index,po.payment_ordinal)=(p.network,p.block_number,p.log_index,p.ordinal)
-                     AND po.role='seller')),0) AS amount
-        FROM shop.sale_payment p
-        WHERE (p.network,p.block_number,p.log_index,p.currency)=(a.network,a.block_number,a.log_index,a.currency)
-          AND (a.venue_kind<>'store' OR p.ordinal=a.ordinal)
-    ) net WHERE a.seller IS NOT NULL
+    LEFT JOIN seller_money net ON
+        (net.network,net.block_number,net.log_index,net.asset_ordinal)=(a.network,a.block_number,a.log_index,a.ordinal)
+    CROSS JOIN LATERAL (SELECT CASE WHEN a.venue_kind='trade' AND a.kind='bid'
+        THEN net.beneficiary ELSE a.seller END AS address) s
+    WHERE s.address IS NOT NULL
     UNION ALL SELECT day,currency,recipient,0,0,0,0,0,0,amount,
         CASE WHEN role='royalty' THEN amount ELSE 0 END,
         CASE WHEN role IN ('venue_fee','store_fee') THEN amount ELSE 0 END

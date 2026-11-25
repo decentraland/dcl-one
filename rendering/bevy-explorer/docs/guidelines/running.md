@@ -268,7 +268,7 @@ State, in every build:
   with the sender's address and `messageId`, and `total` counting every message so far. Commands,
   emote markers and direct messages are left out; `/dm_history` has those.
 - `/voice_state`: the mic (`available`, `enabled`, and `sceneBlocked` while the scene the player
-  stands in turns nearby voice off) and, in LiveKit builds, each voice room's state
+  stands in turns nearby voice off or its room refuses the player) and, in LiveKit builds, each voice room's state
   and the addresses speaking.
 - `/nametag_state`: the nametags, as JSON: `visible` (the `/nametags [bool]` toggle), `shown`,
   `sceneAvatars` (of those shown, the tags over a scene's avatars), `plates` (of those shown, the

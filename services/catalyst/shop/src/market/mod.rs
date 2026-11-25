@@ -40,9 +40,11 @@
 //! skip ≤ 5000, id-keyset counts capped at 5000, per-route TTL buckets):
 //! the LAND, estate and name pages of `/v1/nfts`, the legacy legs of
 //! `/v1/orders` and `/v1/bids` (Polygon's bids come from the sales index on
-//! a node that walks it, `bids.rs`), `/v1/sales`, `/v1/owners`, `/v1/accounts`,
-//! `/v1/rankings`, `/v1/volume`, the sales signal of the trending and
-//! creators rails, and the `/v1/users` names over `graph.rs`. Wearable and
+//! a node that walks it, `bids.rs`), `/v1/owners`, the sales signal of the
+//! trending and creators rails, and the `/v1/users` names over `graph.rs`.
+//! Sales, seller summaries, proceeds, accounts, rankings, volume, store
+//! statistics and the sales leg of activity read the published shop sales
+//! index. Wearable and
 //! emote ownership (`/v1/nfts`, `/v1/users`, the `/v1/orders` owner guard,
 //! the lambdas lists, profiles, outfits and the backpack) reads the nft
 //! index (`owned_items.rs`). Local: `POST /v1/trades` (`listings.rs`, the old EIP-712
@@ -74,6 +76,7 @@ pub mod committee_index;
 pub mod compare_sources;
 pub mod contracts;
 pub mod definitions;
+pub mod ethereum_bid_history;
 pub mod ethereum_sales;
 pub mod features;
 pub mod federation;
@@ -108,6 +111,7 @@ pub mod sale_fold;
 pub(crate) mod sale_history;
 pub use sale_history::FAMILIES as SALES_REPAIR_METRICS;
 pub mod sale_notices;
+pub(crate) mod sale_reads;
 mod sale_terms;
 pub mod sales;
 pub mod sales_index;
@@ -511,7 +515,7 @@ impl Settings {
         if self.writes_catalogue() {
             self.market
                 .indexes
-                .check_chains()
+                .check_catalogue_pair()
                 .map_err(anyhow::Error::msg)?;
             for net in chain_walk::ChainNet::ALL {
                 let expected = self
@@ -605,7 +609,8 @@ pub fn select_name_authority(
     pool: &PgPool,
     index: &Arc<ChainIndex>,
 ) -> Option<Arc<dyn crate::chain_index::names::NameAuthority>> {
-    let mainnet = settings.eth_network.trim() == "mainnet";
+    let mainnet = crate::shared::network::ChainPair::from_eth_network(&settings.eth_network)
+        == Some(crate::shared::network::ChainPair::Mainnet);
     if settings.walks_catalogue() {
         return Some(Arc::new(names::IndexNames::for_catalogue(
             pool.clone(),
@@ -647,6 +652,11 @@ pub struct MarketplaceState {
     pub(crate) contracts: contracts::Caches,
     /// The readers' memo, one map per freshness budget (`readers::Ttl`).
     pub readers: readers::Caches,
+    /// Bounds concurrent expensive sales analytics independently of other Shop reads.
+    pub(crate) sales_analytics_slots: tokio::sync::Semaphore,
+    pub(crate) sales_accounts_slots: tokio::sync::Semaphore,
+    sales_seller_slots: tokio::sync::Semaphore,
+    pub(crate) sales_pages_slots: tokio::sync::Semaphore,
     /// `mirror_state.last_complete_pass_at` per mirror, cached 10 s.
     pub(crate) mirror_ready: TtlMap<mirrors::Mirror, Option<chrono::NaiveDateTime>>,
     /// `trades_mirror.completed_at` for the configured upstream, cached 10 s
@@ -741,6 +751,10 @@ impl MarketplaceState {
             by_owner_cache: TtlMap::bounded(Duration::from_secs(30), 50_000),
             contracts: contracts::Caches::default(),
             readers: readers::Caches::default(),
+            sales_analytics_slots: tokio::sync::Semaphore::new(2),
+            sales_accounts_slots: tokio::sync::Semaphore::new(1),
+            sales_seller_slots: tokio::sync::Semaphore::new(4),
+            sales_pages_slots: tokio::sync::Semaphore::new(4),
             mirror_ready: TtlMap::bounded(mirrors::READY_TTL, 8),
             trades_ready: TtlMap::bounded(mirrors::READY_TTL, 1),
             trades_list: std::sync::Mutex::new(None),
@@ -905,7 +919,9 @@ impl MarketplaceState {
             }
             _ => return None,
         };
-        if self.settings.eth_network.trim() != "mainnet" {
+        if crate::shared::network::ChainPair::from_eth_network(&self.settings.eth_network)
+            != Some(crate::shared::network::ChainPair::Mainnet)
+        {
             return self
                 .settings
                 .market
@@ -919,7 +935,7 @@ impl MarketplaceState {
     /// Sepolia rentals use an explicit chain endpoint, or the node's Ethereum
     /// RPC only when it is configured for Sepolia.
     pub(crate) fn sepolia_rentals_rpc_url(&self) -> Option<String> {
-        if self.settings.eth_network.eq_ignore_ascii_case("sepolia") {
+        if self.land_network() == Some(crate::land_authz::LAND_SEPOLIA) {
             return self.rpc_url_for(chain_walk::ChainNet::Ethereum, 11_155_111);
         }
         self.settings
@@ -936,7 +952,7 @@ impl MarketplaceState {
         if let Some(url) = self.settings.market.trade_rpc_urls.for_chain(id) {
             return Some(url.to_string());
         }
-        if id == net.chain_id() {
+        if self.settings.market.indexes.serves_mainnet(net) {
             return self.chain_rpc_url(net);
         }
         if self.settings.catalogue_chain(net)? != id {
@@ -959,7 +975,7 @@ impl MarketplaceState {
     /// fallback when `ETH_NETWORK` is mainnet. Callers verify the chain ID.
     pub fn polygon_mainnet_rpc_url(&self) -> Option<String> {
         self.chain_rpc_url(chain_walk::ChainNet::Matic).or_else(|| {
-            (self.settings.eth_network.trim() == "mainnet")
+            (self.land_network() == Some(crate::land_authz::LAND_MAINNET))
                 .then(|| self.settings.polygon_rpc_url.clone())
                 .flatten()
         })
@@ -1387,10 +1403,6 @@ pub fn market_router(state: SharedState) -> Router {
         .merge(super::market_extensions())
         .layer(axum::middleware::from_fn(mirrors::stamp_copies))
         .layer(axum::middleware::from_fn(signed::mounted_path))
-        .layer(axum::middleware::from_fn_with_state(
-            state.clone(),
-            signed::client_source,
-        ))
         .layer(axum::middleware::from_fn(nul_guard::nul_guard_middleware))
         .layer(axum::middleware::from_fn(cors::cors_middleware));
     let app = if let Some(timeout) = request_timeout {
