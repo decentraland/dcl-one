@@ -1,4 +1,4 @@
-use crate::{default_color_grading, scatter_bloom};
+use crate::{default_color_grading, scatter_bloom, BLOOM_SCATTER};
 use async_tungstenite::{async_std::ConnectStream, WebSocketStream};
 use bevy::{
     core_pipeline::tonemapping::{DebandDither, Tonemapping},
@@ -219,7 +219,7 @@ pub fn default_camera_components() -> impl Bundle {
         Tonemapping::AcesFitted,
         DebandDither::Enabled,
         default_color_grading(),
-        scatter_bloom(),
+        scatter_bloom(BLOOM_SCATTER),
         ShadowFilteringMethod::Gaussian,
     )
 }
