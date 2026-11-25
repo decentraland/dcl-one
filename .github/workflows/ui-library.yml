@@ -110,7 +110,14 @@ jobs:
           lfs: false
           persist-credentials: false
       # The shared fonts and the shared images are the package's LFS inputs.
-      - run: git lfs pull --include "library/ui/foundations/typography/fonts/**,library/ui/assets/**"
+      - run: |
+          # GitHub's LFS batch API times out now and then; retry before failing the job.
+          for attempt in 1 2 3 4; do
+            git lfs pull --include "library/ui/foundations/typography/fonts/**,library/ui/assets/**" && exit 0
+            echo "::warning::git lfs pull failed (attempt $attempt of 4); retrying"
+            sleep $((attempt * 15))
+          done
+          exit 1
       - uses: cachix/install-nix-action@3dc140bfc76c49fbd4dd958429132e3746bcb086 # v31.11.5
       - run: nix build 'git+file:.?lfs=1#ui-gallery' --no-link -L
 
@@ -127,7 +134,14 @@ jobs:
           ref: ${{ github.sha }}
           lfs: false
       # Hydrate only library/ui's LFS objects (the foundation fonts and the shared images), never the whole monorepo's.
-      - run: git lfs pull --include "library/ui/**"
+      - run: |
+          # GitHub's LFS batch API times out now and then; retry before failing the job.
+          for attempt in 1 2 3 4; do
+            git lfs pull --include "library/ui/**" && exit 0
+            echo "::warning::git lfs pull failed (attempt $attempt of 4); retrying"
+            sleep $((attempt * 15))
+          done
+          exit 1
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: 24
