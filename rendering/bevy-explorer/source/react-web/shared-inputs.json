@@ -5235,6 +5235,10 @@
           "kind": "regular"
         },
         {
+          "name": "select.test.tsx",
+          "kind": "regular"
+        },
+        {
           "name": "setup.ts",
           "kind": "regular"
         },
@@ -8124,7 +8128,7 @@
           "kind": "regular"
         },
         {
-          "name": "HudDropdown.direction.test.ts",
+          "name": "HudDropdown.direction.test.tsx",
           "kind": "regular"
         },
         {
@@ -14352,6 +14356,10 @@
       "sha256": "6f41d23d7c4d842bea4b8ce04faf5be6a8e0997c8a88d2bf2f169e2f44434f19"
     },
     {
+      "path": "library/ui/apps/hud/test/select.test.tsx",
+      "sha256": "fd0d3659a02585d9d980fa081a5eceaa9c54b90afb06d90ebcc2e7f3320ea1ef"
+    },
+    {
       "path": "library/ui/apps/hud/test/setup.ts",
       "sha256": "55ea6499e8c9af49f9d39ce409a34cc1adc338bf98029befc9aa6e3e3de617a0"
     },
@@ -16557,7 +16565,7 @@
     },
     {
       "path": "library/ui/index.ts",
-      "sha256": "4b17d7b577de1dca7541b160e3ee81890499181c923749a633bb8143a3d4ad8d"
+      "sha256": "eb34d953d19fff8c2a999428fffd7878646c72034c9cd29b2f938de16be45c5f"
     },
     {
       "path": "library/ui/link.helpers.ts",
@@ -51619,6 +51627,21 @@
       "kind": "test:runtime"
     },
     {
+      "from": "library/ui/apps/hud/test/select.test.tsx",
+      "to": "library/ui/apps/hud/design/index.ts",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/select.test.tsx",
+      "to": "library/ui/apps/hud/design/index.ts",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/select.test.tsx",
+      "to": "library/ui/apps/hud/design/index.ts",
+      "kind": "test:runtime"
+    },
+    {
       "from": "library/ui/apps/hud/test/shopPanel.test.tsx",
       "to": "library/ui/apps/hud/features/sidebar/Sidebar.tsx",
       "kind": "native:runtime"
@@ -67976,6 +67999,11 @@
     {
       "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
       "to": "library/ui/apps/hud/test/searchField.test.tsx",
+      "kind": "type"
+    },
+    {
+      "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
+      "to": "library/ui/apps/hud/test/select.test.tsx",
       "kind": "type"
     },
     {

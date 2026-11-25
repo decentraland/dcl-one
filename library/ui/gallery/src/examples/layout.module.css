@@ -139,8 +139,10 @@
   flex: none;
 }
 
-/* Room below a row of selects for an open list. */
+/* Room below a row of selects for an open list, and the layer the host gives that list. */
 .selectRoom {
+  --z-overlay: 1;
+
   align-items: flex-start;
   min-height: 180px;
 }
