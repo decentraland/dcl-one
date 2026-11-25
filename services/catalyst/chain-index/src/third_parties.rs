@@ -7,7 +7,8 @@
 //! a string but whose other fields break the shape stands for a provider
 //! nobody manages, reported once; one without a string id is left out. An
 //! answer that breaks the walk fails the whole read, so no decision is made
-//! on part of the registry.
+//! on part of the registry. A record of the published Polygon index
+//! ([`crate::third_party_index`]) becomes a provider under the same rule.
 
 use std::collections::HashSet;
 use std::sync::{LazyLock, Mutex};
@@ -110,22 +111,7 @@ pub async fn registry(index: &ChainIndex, url: &str) -> Result<Vec<Provider>, St
             .and_then(Value::as_array)
             .ok_or("registry answered no thirdParties")?;
         let id_from_count = providers.len();
-        for record in page {
-            match (parse(record), record.get("id").and_then(Value::as_str)) {
-                (Ok(provider), _) => providers.push(provider),
-                (Err(error), Some(id)) => {
-                    if first_report(id) {
-                        tracing::warn!(%error, "third-party registry record unreadable; nobody manages it");
-                    }
-                    providers.push(nobody_manages(id));
-                }
-                (Err(error), None) => {
-                    if first_report("") {
-                        tracing::warn!(%error, "third-party registry record without an id left out");
-                    }
-                }
-            }
-        }
+        providers.extend(page.iter().filter_map(read));
         if providers[id_from_count..].iter().any(|p| p.id <= id_from) {
             return Err("registry answered a provider before the page's start".into());
         }
@@ -141,6 +127,44 @@ pub async fn registry(index: &ChainIndex, url: &str) -> Result<Vec<Provider>, St
         }
     }
     Err(format!("registry longer than {MAX_PAGES} pages"))
+}
+
+/// A registry record under the shape rule: a provider nobody manages when
+/// it breaks the shape, none when it has no string id.
+fn read(record: &Value) -> Option<Provider> {
+    match (parse(record), record.get("id").and_then(Value::as_str)) {
+        (Ok(provider), _) => Some(provider),
+        (Err(error), Some(id)) => {
+            if first_report(id) {
+                tracing::warn!(%error, "third-party registry record unreadable; nobody manages it");
+            }
+            Some(nobody_manages(id))
+        }
+        (Err(error), None) => {
+            if first_report("") {
+                tracing::warn!(%error, "third-party registry record without an id left out");
+            }
+            None
+        }
+    }
+}
+
+/// The published index's record of a provider, under the shape rule the
+/// subgraph's records pass.
+impl From<crate::third_party_index::Provider> for Provider {
+    fn from(indexed: crate::third_party_index::Provider) -> Self {
+        let id = indexed.id.clone();
+        read(&json!({
+            "id": indexed.id,
+            "root": indexed.root,
+            "managers": indexed.managers,
+            "maxItems": indexed.max_items,
+            "isApproved": indexed.approved,
+            "isProgrammatic": indexed.programmatic,
+            "metadata": { "thirdParty": indexed.metadata },
+        }))
+        .unwrap_or_else(|| nobody_manages(&id))
+    }
 }
 
 const RECEIPT: &str = "query receipt($id: ID!) { receipts(first: 1, where: { id: $id }) { id } }";
@@ -641,6 +665,67 @@ mod tests {
         let fake = Fake::default();
         set(&fake, Some(vec![record(P1), record(P1)]));
         assert!(read(&fake).await.unwrap_err().contains("twice"));
+    }
+
+    #[test]
+    fn an_indexed_record_passes_the_same_shape_rule() {
+        use crate::third_party_index as index;
+        let indexed = |id: &str, contract: &str| index::Provider {
+            id: id.into(),
+            approved: true,
+            root: Some(format!("0x{}", "ab".repeat(32))),
+            resolver: None,
+            raw_metadata: String::new(),
+            metadata: Some(index::Metadata {
+                name: "Alpha".into(),
+                description: "d".into(),
+                contracts: vec![index::Contract {
+                    network: "matic".into(),
+                    address: contract.into(),
+                }],
+            }),
+            managers: [M1.to_string()].into(),
+            programmatic: true,
+            max_items: "100".into(),
+            consumed_slots: "3".into(),
+        };
+        let contract = "0x00000000000000000000000000000000000000c0";
+        assert_eq!(
+            Provider::from(indexed(P1, contract)),
+            Provider {
+                id: P1.into(),
+                root: Some(format!("0x{}", "ab".repeat(32))),
+                managers: vec![M1.into()],
+                max_items: "100".into(),
+                is_approved: true,
+                is_programmatic: true,
+                name: "Alpha".into(),
+                description: "d".into(),
+                contracts: vec![LinkedContract {
+                    address: contract.into(),
+                    network: "matic".into(),
+                }],
+            }
+        );
+        let unparsed = index::Provider {
+            metadata: None,
+            ..indexed(P2, contract)
+        };
+        let provider = Provider::from(unparsed);
+        assert_eq!((provider.name.as_str(), provider.managers.len()), ("", 1));
+        for (id, contract) in [
+            (P1, "0xabc"),
+            (
+                "urn:decentraland:matic:collections-linked-wearables:alpha",
+                contract,
+            ),
+        ] {
+            assert_eq!(
+                Provider::from(indexed(id, contract)),
+                nobody_manages(id),
+                "{id} {contract}"
+            );
+        }
     }
 
     #[test]

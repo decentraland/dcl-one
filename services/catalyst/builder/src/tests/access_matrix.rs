@@ -1711,6 +1711,7 @@ async fn fresh_pass(pool: &PgPool, minutes_ago: i64) {
     .execute(pool)
     .await
     .unwrap();
+    crate::tests::support::publish_registry_index(&mut pool.acquire().await.unwrap(), false).await;
 }
 
 async fn matrix(committee: &FakeCommittee) -> Option<Matrix> {

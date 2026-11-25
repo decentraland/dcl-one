@@ -141,6 +141,7 @@ async fn own_pool() -> Option<PgPool> {
     .execute(&pool)
     .await
     .unwrap();
+    crate::tests::support::publish_registry_index(&mut pool.acquire().await.unwrap(), false).await;
     Some(pool)
 }
 
