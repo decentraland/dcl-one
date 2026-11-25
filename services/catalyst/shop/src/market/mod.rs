@@ -74,6 +74,7 @@ pub mod committee_index;
 pub mod compare_sources;
 pub mod contracts;
 pub mod definitions;
+pub mod ethereum_bid_history;
 pub mod ethereum_sales;
 pub mod features;
 pub mod federation;

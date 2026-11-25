@@ -17144,8 +17144,9 @@ CREATE TABLE shop.name_purchase (
 -- CollectionStore (`mint`: a mirrored collection's Issue whose `_caller` is
 -- the store; `buyer` the beneficiary, `item_id` the item sold, `price` what
 -- the store's `Bought` in the same transaction charged for it, NULL on rows
--- indexed before it was read) and the ERC721BidV2 lifecycle (`bid_created` with the
--- bidder in `buyer`, the price and the expiry in unix seconds;
+-- indexed before it was read) and the bid lifecycle of ERC721BidV2 on Polygon
+-- and ERC721Bid on Ethereum (`bid_created` with the
+-- bidder in `buyer`, the price, the expiry in unix seconds and the fingerprint;
 -- `bid_accepted` with the seller and the price; `bid_cancelled`), each with
 -- the venue in `emitter`, the asset and its transaction. Workload: one row
 -- per kept log, appended with the cursor advance (hundreds a day at the
@@ -17170,6 +17171,9 @@ CREATE TABLE shop.sale_event (
     expires_at bigint,
     tx_hash varchar(66) NOT NULL,
     bid_fee numeric(78,0) CHECK (bid_fee IS NULL OR (bid_fee >= 0 AND kind = 'bid_accepted')),
+    -- A BidCreated's `_fingerprint`, as 0x-prefixed hex ('0x' when empty);
+    -- NULL on every other kind and on a creation walked before it was kept.
+    fingerprint text CHECK (fingerprint IS NULL OR kind = 'bid_created'),
     PRIMARY KEY (network, block_number, log_index),
     CONSTRAINT sale_event_network_known CHECK (network IN ('ethereum', 'matic')),
     CONSTRAINT sale_event_kind_known CHECK (kind IN ('mint', 'bid_created', 'bid_accepted', 'bid_cancelled')),
@@ -17186,8 +17190,8 @@ CREATE INDEX sale_event_bid_accepted ON shop.sale_event(network,block_number) WH
 -- (contract_address, token_id, buyer) ORDER BY block_number, log_index).
 CREATE INDEX sale_event_bidder_idx ON shop.sale_event (network, contract_address, token_id, buyer, block_number, log_index) WHERE kind <> 'mint';
 
--- The bids fold: one row per bidder and token, as the ERC721BidV2 contract
--- keeps them (`bidIdByTokenAndBidder`: a new bid by the same bidder on the
+-- The bids fold, per network: one row per bidder and token, as the bid
+-- contracts keep them (`bidIdByTokenAndBidder`: a new bid by the same bidder on the
 -- same token replaces the old one without a cancellation). `bid_id`, price
 -- and expiry come from the latest `bid_created` of the key; `status` from
 -- the latest event at or after it (open, accepted, cancelled), or
@@ -17213,6 +17217,8 @@ CREATE TABLE shop.nft_bid (
     updated_block bigint NOT NULL,
     updated_log_index integer NOT NULL,
     updated_at bigint NOT NULL,
+    -- The defining creation's fingerprint (`sale_event.fingerprint`).
+    fingerprint text,
     PRIMARY KEY (network, contract_address, token_id, bidder),
     CONSTRAINT nft_bid_id_unique UNIQUE (network, bid_id),
     CONSTRAINT nft_bid_network_known CHECK (network IN ('ethereum', 'matic')),
