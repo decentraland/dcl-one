@@ -456,8 +456,8 @@ fn apply_remote_move_kind(
             }
         }
         Some(k) => {
-            if matches!(k, MoveKind::DoubleJump | MoveKind::Glide) && dynamic_state.jump_time <= 0.0
-            {
+            // `k` is DoubleJump or Glide: `remote_move_kind` yields no other kind.
+            if dynamic_state.jump_time <= 0.0 {
                 dynamic_state.jump_time = now;
             }
             dynamic_state.move_kind = k;
