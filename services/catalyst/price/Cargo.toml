@@ -19,6 +19,7 @@ chrono.workspace = true
 tracing.workspace = true
 anyhow.workspace = true
 uuid.workspace = true
+parking_lot.workspace = true
 tower = { version = "0.5", features = ["util"], optional = true }
 
 [features]

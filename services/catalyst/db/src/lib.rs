@@ -1,7 +1,7 @@
 pub mod schema_migrate;
 
+use parking_lot::Mutex;
 use std::collections::HashMap;
-use std::sync::Mutex;
 
 use sqlx::postgres::{PgConnectOptions, PgPool, PgPoolOptions};
 use thiserror::Error;
@@ -92,17 +92,12 @@ fn pool_key(opts: &PgConnectOptions) -> String {
 }
 
 fn verified_stamp(key: &str) -> Option<SchemaStamp> {
-    VERIFIED
-        .lock()
-        .unwrap()
-        .as_ref()
-        .and_then(|m| m.get(key).cloned())
+    VERIFIED.lock().as_ref().and_then(|m| m.get(key).cloned())
 }
 
 fn remember_stamp(key: String, stamp: SchemaStamp) {
     VERIFIED
         .lock()
-        .unwrap()
         .get_or_insert_with(HashMap::new)
         .insert(key, stamp);
 }

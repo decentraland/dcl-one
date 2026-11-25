@@ -5,7 +5,7 @@ use tokio::sync::{Notify, Semaphore};
 
 pub(super) struct ByteBudget {
     limit: usize,
-    used: std::sync::Mutex<usize>,
+    used: parking_lot::Mutex<usize>,
     changed: Notify,
     // A guarded waiter keeps its fair admission turn while existing bytes
     // drain. Ordinary retries cannot continually refill ahead of it.
@@ -39,7 +39,7 @@ impl ByteBudget {
     pub(super) fn new(limit: usize) -> Arc<Self> {
         Arc::new(Self {
             limit,
-            used: std::sync::Mutex::new(0),
+            used: parking_lot::Mutex::new(0),
             changed: Notify::new(),
             admission: Semaphore::new(1),
         })
@@ -54,7 +54,7 @@ impl ByteBudget {
             tokio::pin!(changed);
             changed.as_mut().enable();
             {
-                let mut used = self.used.lock().unwrap();
+                let mut used = self.used.lock();
                 if *used == 0 || bytes <= self.limit.saturating_sub(*used) {
                     *used += bytes;
                     return Permit {
@@ -74,7 +74,7 @@ impl ByteBudget {
             .admission
             .try_acquire()
             .map_err(|_| Refused::Contended)?;
-        let mut used = self.used.lock().unwrap();
+        let mut used = self.used.lock();
         if *used > self.limit {
             return Err(Refused::Full);
         }
@@ -91,12 +91,12 @@ impl ByteBudget {
         self.changed.notified()
     }
     pub(super) fn used(&self) -> usize {
-        *self.used.lock().unwrap()
+        *self.used.lock()
     }
 }
 impl Drop for Permit {
     fn drop(&mut self) {
-        *self.budget.used.lock().unwrap() -= self.bytes;
+        *self.budget.used.lock() -= self.bytes;
         self.budget.changed.notify_waiters();
     }
 }
