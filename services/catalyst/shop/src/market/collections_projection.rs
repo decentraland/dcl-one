@@ -881,7 +881,7 @@ mod tests {
             "Overwritten",
         )];
         assert_eq!(
-            mirrors::items::upsert(&pool, Network::Matic, 137, &items)
+            mirrors::items::upsert(&pool, Network::Matic, 137, false, &items)
                 .await
                 .unwrap(),
             0

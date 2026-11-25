@@ -73,7 +73,8 @@ jobs:
                                or 'secondary rate limit' in lowered
                                or ' 500' in lowered or ' 502' in lowered
                                or ' 503' in lowered or ' 504' in lowered
-                               or 'gateway timeout' in lowered or 'timed out' in lowered)
+                               or 'gateway timeout' in lowered or 'timed out' in lowered
+                               or 'something went wrong while executing your query' in lowered)
                   # Retrying the primary limit inside the job cannot help, so surface it.
                   if not transient and 'rate limit' in lowered and 'exceeded' in lowered:
                       raise RateLimited(error[:300])
@@ -165,7 +166,7 @@ jobs:
               match = re.fullmatch(r'refs/pull/([1-9][0-9]*)/merge', cache.get('ref', ''))
               if match and not targeted:
                   pull_refs[match[1]] = True
-          closed = {}
+          closed, state_failure = {}, None
           if pull_refs:
               try:
                   states = pull_request_states(repository, pull_refs)
@@ -174,6 +175,9 @@ jobs:
                   print(f'::warning::rate limited resolving PR states, closed-PR cleanup '
                         f'deferred to the next sweep: {error}')
                   states = {}
+              except RuntimeError as error:
+                  # Prune without PR states, then fail the run: unlike a rate limit, this may not clear by itself.
+                  states, state_failure = {}, error
               for pr, state in states.items():
                   closed[pr] = state in ('CLOSED', 'MERGED')
           for cache in caches:
@@ -248,4 +252,7 @@ jobs:
               print(f'::warning::stopped with {len(deferred)} entries left to free; '
                     f'rate budget {budget["left"]} remaining, '
                     f'{time.monotonic() - STARTED:.0f}s elapsed, resuming next sweep')
+          if state_failure is not None:
+              print(f'::error::PR states unresolved, closed-PR cleanup skipped: {str(state_failure).split(" -> ", 1)[-1]}')
+              raise SystemExit(1)
           PY

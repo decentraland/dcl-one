@@ -1260,6 +1260,7 @@ async fn read_outfits(
         );
         let (owned, mut names, observed) = super::owned_items::owned_tokens_and_names(
             &state.pool,
+            state.settings.catalogue(),
             &requested,
             std::slice::from_ref(&owner),
             super::owned_items::Rule::Fresh,
@@ -1378,6 +1379,7 @@ async fn sanitize_outfits(
             let requested = outfit_requested(&owner, outfits);
             super::owned_items::owned_tokens_observed(
                 &state.pool,
+                state.settings.catalogue(),
                 &requested,
                 super::owned_items::Rule::Fresh,
             )

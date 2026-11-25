@@ -541,6 +541,7 @@ async fn process_profiles_observed(
                         // snapshot.
                         owned_items::owned_tokens_and_names(
                             &state.pool,
+                            state.settings.catalogue(),
                             &requested,
                             &addresses,
                             Rule::Complete,
@@ -549,10 +550,15 @@ async fn process_profiles_observed(
                         .map(|(owned, names, seen)| (owned, Some(names), Some(seen)))
                         .map_err(|e| e.to_string())
                     } else if collections && !requested.is_empty() {
-                        owned_items::owned_tokens_observed(&state.pool, &requested, Rule::Complete)
-                            .await
-                            .map(|(owned, seen)| (owned, None, seen))
-                            .map_err(|e| e.to_string())
+                        owned_items::owned_tokens_observed(
+                            &state.pool,
+                            state.settings.catalogue(),
+                            &requested,
+                            Rule::Complete,
+                        )
+                        .await
+                        .map(|(owned, seen)| (owned, None, seen))
+                        .map_err(|e| e.to_string())
                     } else {
                         Ok((HashMap::new(), None, None))
                     }
