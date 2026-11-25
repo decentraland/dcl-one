@@ -505,6 +505,23 @@ pub(super) async fn write(
           AND (receipt_attempted_at IS NULL OR receipt_attempted_at<timezone('UTC',now()) - interval '5 minutes')
         ORDER BY receipt_attempted_at NULLS FIRST,block_number LIMIT 48")
        .bind(net.db_name()).bind(from).fetch_all(&mut *conn).await?;
+    // An exchange of existing ERC-721s supplies every token ID in Traded.
+    // Complete its receipt work in the inserting transaction, or on its
+    // first eligible retry if an earlier version left the execution pending.
+    sqlx::query(
+        "UPDATE shop.sale_execution e SET receipt_read=true FROM shop.trade_event t
+         WHERE e.network=$1 AND e.kind='trade' AND NOT e.receipt_read
+           AND ((e.block_number>$2 AND e.block_number<=$3) OR e.tx_hash=ANY($4))
+           AND (t.network,t.block_number,t.log_index)=(e.network,e.block_number,e.log_index)
+           AND (SELECT bool_and((leg->>'assetType') IS NOT DISTINCT FROM '3')
+                FROM jsonb_array_elements((t.assets->'sent') || (t.assets->'received')) leg)",
+    )
+    .bind(net.db_name())
+    .bind(from)
+    .bind(to)
+    .bind(&retry)
+    .execute(&mut *conn)
+    .await?;
     let rows: Vec<Payment> = sqlx::query_as(include_str!("settlements.sql"))
         .bind(net.db_name())
         .bind(from)

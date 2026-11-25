@@ -496,7 +496,8 @@ impl ChainIndex for SalesIndex {
             match decode_log(log, times.get(&block).copied().unwrap_or(0)) {
                 Ok(Some(row)) => rows.push(row),
                 Ok(None) => {}
-                // A malformed log is logged and skipped, never a stalled walk.
+                // Keep valid rows in this window. The walker withholds sales
+                // coverage when an accounting event cannot be decoded.
                 Err(e) => {
                     tracing::warn!(error = %e, "sales index: skipping a log it cannot decode")
                 }

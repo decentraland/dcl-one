@@ -1078,7 +1078,17 @@ async fn sales_delayed_receipt_corrects_checkout_buyer_and_first_purchase_day() 
         "received":[{"assetType":"3","contractAddress":DAVE,"value":"24","beneficiary":ALICE,"extra":"0x"}]}),
     );
     let mut c = db.pool.acquire().await.unwrap();
-    trade_events::insert_events(&mut c, net, &[gift])
+    let swap_block = barter - 1;
+    let mut swap = trade_events::decode_log(&traded(swap_block), 86400)
+        .unwrap()
+        .unwrap();
+    swap.signer = Some(ALICE.into());
+    swap.caller = BOB.into();
+    swap.assets = Some(json!({
+        "sent":[{"assetType":"3","contractAddress":DAVE,"value":"11","beneficiary":BOB,"extra":"0x"}],
+        "received":[{"assetType":"3","contractAddress":DAVE,"value":"24","beneficiary":ALICE,"extra":"0x"}]
+    }));
+    trade_events::insert_events(&mut c, net, &[gift, swap])
         .await
         .unwrap();
     drop(c);
@@ -1114,6 +1124,23 @@ async fn sales_delayed_receipt_corrects_checkout_buyer_and_first_purchase_day() 
     .await
     .unwrap();
     assert_eq!(barter_fact, (true, "122".into(), 0));
+    // The swap has no receipt in the RPC fixture. Its event already supplied
+    // both token IDs, so the first fold completes it without a receipt request.
+    let swap: (bool, bool, Vec<String>) = sqlx::query_as(
+        "SELECT e.receipt_read,e.receipt_attempted_at IS NULL,
+                ARRAY(SELECT a.token_id::text FROM shop.sale_asset a
+                      WHERE (a.network,a.block_number,a.log_index)=(e.network,e.block_number,e.log_index)
+                      ORDER BY a.ordinal)
+         FROM shop.sale_execution e WHERE e.network='matic' AND e.block_number=$1",
+    )
+    .bind(swap_block as i64)
+    .fetch_one(&db.pool)
+    .await
+    .unwrap();
+    assert_eq!(swap, (true, true, vec!["11".into(), "24".into()]));
+    // Older folds can leave the same swap queued.
+    sqlx::query("UPDATE shop.sale_execution SET receipt_read=false WHERE network='matic' AND block_number=$1")
+        .bind(swap_block as i64).execute(&db.pool).await.unwrap();
     let issue = sales_index::tests::issue_log(DAVE, CHECKOUT, U256::from(123), 3, venue, b, 3);
     let mut malformed = issue.clone();
     malformed.address = BOB.into();
@@ -1158,6 +1185,16 @@ async fn sales_delayed_receipt_corrects_checkout_buyer_and_first_purchase_day() 
     assert_eq!(
         firsts().await.unwrap(),
         [(CARL.into(), 86400), (CHECKOUT.into(), 172800)]
+    );
+    assert!(
+        sqlx::query_scalar::<_, bool>(
+            "SELECT receipt_read AND receipt_attempted_at IS NULL FROM shop.sale_execution
+             WHERE network='matic' AND block_number=$1",
+        )
+        .bind(swap_block as i64)
+        .fetch_one(&db.pool)
+        .await
+        .unwrap()
     );
     let paid:(bool,String,String,String)=sqlx::query_as("SELECT p.settled,p.gross::text,a.token_id::text,a.beneficiary FROM shop.sale_asset a
         JOIN shop.sale_payment p USING(network,block_number,log_index,ordinal) WHERE block_number=$1")
