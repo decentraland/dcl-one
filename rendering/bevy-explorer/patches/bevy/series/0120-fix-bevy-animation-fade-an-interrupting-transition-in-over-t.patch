@@ -4,7 +4,7 @@ Date: 2026-11-18T22:50:46+00:00
 
 ---
 diff --git a/crates/bevy_animation/src/transition.rs b/crates/bevy_animation/src/transition.rs
-index 494855970441dd75f6e79f4b8637e2d3a6bc39b3..96d08908bd9d03345c22bf6d5a72bc17b63cd4a3 100644
+index 494855970441dd75f6e79f4b8637e2d3a6bc39b3..5bd58db5bd23694688d83859384283ce3788268a 100644
 --- a/crates/bevy_animation/src/transition.rs
 +++ b/crates/bevy_animation/src/transition.rs
 @@ -14,13 +14,19 @@ use core::time::Duration;
@@ -90,7 +90,7 @@ index 494855970441dd75f6e79f4b8637e2d3a6bc39b3..96d08908bd9d03345c22bf6d5a72bc17
      ///
      /// Pass [`Duration::ZERO`] to instantly switch to a new animation, avoiding
      /// any transition.
-@@ -81,80 +87,109 @@ impl AnimationTransitions {
+@@ -81,80 +87,112 @@ impl AnimationTransitions {
          new_animation: AnimationNodeIndex,
          transition_duration: Duration,
      ) -> &'p mut ActiveAnimation {
@@ -102,15 +102,17 @@ index 494855970441dd75f6e79f4b8637e2d3a6bc39b3..96d08908bd9d03345c22bf6d5a72bc17
 -                        weight_decline_per_sec: 1.0 / transition_duration.as_secs_f32(),
 -                        animation: old_animation_index,
 -                    });
--                }
 +        if self.get_main_animation() != Some(new_animation) {
-+            // A paused main animation is not faded out.
-+            if self.layers.last().is_some_and(|main| {
-+                player
-+                    .animation(main.animation)
-+                    .is_none_or(ActiveAnimation::is_paused)
-+            }) {
-+                self.layers.pop();
++            // A paused main animation is not faded out: it leaves the blend at
++            // once, so the weights still sum to 1.
++            if let Some(main) = self.layers.last() {
++                let animation = player.animation_mut(main.animation);
++                if animation.as_ref().is_none_or(|animation| animation.is_paused()) {
++                    if let Some(animation) = animation {
++                        animation.weight = 0.0;
++                    }
++                    self.layers.pop();
+                 }
              }
 -        }
  
