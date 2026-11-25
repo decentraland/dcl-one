@@ -1,0 +1,32 @@
+/* How old the atlas is, over a LAND map. A local label, not a shared Tag variant: the one-ui Tag
+   mirrors the style guide's Tags page, which has no such tag. It takes the location tag's size and
+   text (23px, radius 6px, a 14px mark and 12px text) on the overlay surface, so it reads over the
+   map. */
+.root {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--dcl-space-4);
+  box-sizing: border-box;
+  height: 23px;
+  padding: 0 var(--dcl-space-8) 0 var(--dcl-space-4);
+  border-radius: var(--dcl-radius-xs);
+  background: var(--dcl-bg-surface-overlay);
+  color: var(--dcl-text-primary);
+  font-size: var(--dcl-font-size-label-tag);
+  font-weight: 400;
+  line-height: 1.25;
+  white-space: nowrap;
+}
+
+.icon {
+  flex: none;
+}
+
+@media (forced-colors: active) {
+  .root {
+    border: 1px solid CanvasText;
+    background: Canvas;
+    color: CanvasText;
+    forced-color-adjust: none;
+  }
+}

@@ -161,13 +161,13 @@ async fn ethereum_sales_walk_withdraws_name_fees_on_a_reorg_and_publishes_the_re
     let st = state_over(db.pool.clone(), &url, index_settings(100, 10), false);
     assert!(publish(&st, &url, &ix).await.published);
     assert_eq!(
-        sales_index::status(&db.pool).await["ethereum"]["ready"],
+        sales_index::status(&db.pool, &IndexSettings::default()).await["ethereum"]["ready"],
         true
     );
     chain.fork(block, 0xee, vec![purchase(200)]);
     assert!(pass(&st, &url, &ix).await.reorg_rewound_to.is_some());
     assert_eq!(
-        sales_index::status(&db.pool).await["ethereum"]["ready"],
+        sales_index::status(&db.pool, &IndexSettings::default()).await["ethereum"]["ready"],
         false
     );
     let count: i64 = sqlx::query_scalar("SELECT count(*) FROM shop.name_purchase")
@@ -622,7 +622,7 @@ async fn sales_history_repair_resumes_at_the_next_window_and_discovers_store_iss
     let Some(db) = ScratchDb::create().await else {
         return;
     };
-    let s = SalesIndex.start_block();
+    let s = sales_index::POLYGON.start_block();
     let b = s + 10_020;
     seed_collection(
         &db.pool,
@@ -710,7 +710,9 @@ async fn sales_history_repair_resumes_at_the_next_window_and_discovers_store_iss
         .bind(s as i64).bind(tip as i64).bind(&anchor).execute(&db.pool).await.unwrap();
     let source = chain_walk::RpcSource::new(Rpc::at(&st.http, &url));
     assert_eq!(
-        sale_history::pending(&db.pool, &SalesIndex).await.unwrap(),
+        sale_history::pending(&db.pool, &sales_index::POLYGON)
+            .await
+            .unwrap(),
         Some(s as i64)
     );
     // Multiple address chunks share one archive budget, even if a later
@@ -728,11 +730,11 @@ async fn sales_history_repair_resumes_at_the_next_window_and_discovers_store_iss
         crate::chain_index::rpc::RpcError::Budget { requests: 1, .. }
     ));
     assert_eq!(chain.get_logs.load(Ordering::SeqCst) - before_reads, 1);
-    let owner = chain_walk::test_owner(&db.pool, &SalesIndex, &settings).await;
+    let owner = chain_walk::test_owner(&db.pool, &sales_index::POLYGON, &settings).await;
     let charged = sale_history::repair(
         &db.pool,
         &source,
-        &SalesIndex,
+        &sales_index::POLYGON,
         &owner,
         Some((tip, &anchor)),
         2,
@@ -742,11 +744,11 @@ async fn sales_history_repair_resumes_at_the_next_window_and_discovers_store_iss
     .unwrap();
     assert_eq!(charged, chain_walk::Spent::default());
     for (expected, calls) in [(Some((s + 10_000) as i64), 0), (None, 5)] {
-        let owner = chain_walk::test_owner(&db.pool, &SalesIndex, &settings).await;
+        let owner = chain_walk::test_owner(&db.pool, &sales_index::POLYGON, &settings).await;
         sale_history::repair(
             &db.pool,
             &source,
-            &SalesIndex,
+            &sales_index::POLYGON,
             &owner,
             Some((tip, &anchor)),
             150,
@@ -755,7 +757,9 @@ async fn sales_history_repair_resumes_at_the_next_window_and_discovers_store_iss
         .await
         .unwrap();
         assert_eq!(
-            sale_history::pending(&db.pool, &SalesIndex).await.unwrap(),
+            sale_history::pending(&db.pool, &sales_index::POLYGON)
+                .await
+                .unwrap(),
             expected
         );
         assert_eq!(
@@ -786,14 +790,16 @@ async fn sales_history_repair_resumes_at_the_next_window_and_discovers_store_iss
         .await
         .unwrap();
     assert_eq!(
-        sale_history::pending(&db.pool, &SalesIndex).await.unwrap(),
+        sale_history::pending(&db.pool, &sales_index::POLYGON)
+            .await
+            .unwrap(),
         Some(b as i64)
     );
-    let owner = chain_walk::test_owner(&db.pool, &SalesIndex, &settings).await;
+    let owner = chain_walk::test_owner(&db.pool, &sales_index::POLYGON, &settings).await;
     sale_history::repair(
         &db.pool,
         &source,
-        &SalesIndex,
+        &sales_index::POLYGON,
         &owner,
         Some((tip, &anchor)),
         100,
@@ -928,7 +934,11 @@ async fn sales_history_repair_resumes_at_the_next_window_and_discovers_store_iss
     .fetch_one(&db.pool)
     .await
     .unwrap();
-    assert_eq!(excluded, (false, false, false, false, "105".into()));
+    assert_eq!(
+        excluded,
+        (false, false, false, false, "88".into()),
+        "only the two issued NFTs contribute volume; the unmatched 17 remains payment evidence"
+    );
 
     let sellers: Vec<String> =
         sqlx::query_scalar("SELECT seller FROM shop.sale_asset ORDER BY log_index")
@@ -941,7 +951,9 @@ async fn sales_history_repair_resumes_at_the_next_window_and_discovers_store_iss
         "both mints preceded the same-block change to DAVE"
     );
     assert_eq!(
-        sale_history::pending(&db.pool, &SalesIndex).await.unwrap(),
+        sale_history::pending(&db.pool, &sales_index::POLYGON)
+            .await
+            .unwrap(),
         None
     );
     // Historical discovery behind that attested prefix reopens the line.
@@ -954,7 +966,9 @@ async fn sales_history_repair_resumes_at_the_next_window_and_discovers_store_iss
     .await
     .unwrap();
     assert_eq!(
-        sale_history::pending(&db.pool, &SalesIndex).await.unwrap(),
+        sale_history::pending(&db.pool, &sales_index::POLYGON)
+            .await
+            .unwrap(),
         Some(b as i64)
     );
     assert!(
@@ -1049,6 +1063,74 @@ async fn sales_accounting_keeps_unallocated_evidence_out_of_public_totals() {
          (SELECT count(*) FROM shop.sale_account_day),(SELECT count(*) FROM shop.sale_item_day)")
         .fetch_one(&db.pool).await.unwrap();
     assert_eq!(counts, (4, 0, 5, 0, 0, 0));
+    sqlx::query(
+        "INSERT INTO shop.mirror_state(mirror,network,source_url,last_complete_pass_at)
+        VALUES('items','ethereum','test',timezone('UTC',now()))",
+    )
+    .execute(&db.pool)
+    .await
+    .unwrap();
+    let mut settings = index_settings(100, 10);
+    settings.sales_enabled = true;
+    let app = crate::market::market_router(state_over(db.pool.clone(), &url, settings, false));
+    let (code, page) = get_json(&app, "/v1/sales?network=ETHEREUM").await;
+    assert_eq!(code, StatusCode::OK, "{page}");
+    assert_eq!(page["total"], 0);
+    let (code, proceeds) = get_json(
+        &app,
+        &format!("/v1/proceeds/summary?seller={ALICE}&network=ETHEREUM"),
+    )
+    .await;
+    assert_eq!(code, StatusCode::OK, "{proceeds}");
+    assert_eq!(proceeds["data"]["sales"], 0);
+    assert_eq!(proceeds["data"]["netWei"], "0");
+
+    // A single catalogue NFT has an exact price when several payments in
+    // the same currency cross from the opposite side.
+    let mut bid = trade_events::decode_log(&log, 86401).unwrap().unwrap();
+    bid.block_number = (b + 1) as i64;
+    bid.log_index = 2;
+    bid.tx_hash = format!("0x{:064x}", 435);
+    bid.signer = Some(BOB.into());
+    bid.caller = ALICE.into();
+    bid.assets = Some(
+        json!({"sent":[asset("1",mana,"10",DAVE),asset("1",mana,"15",CARL)],
+        "received":[asset("3",DAVE,"99",BOB)],"uses":"1"}),
+    );
+    let mut c = db.pool.acquire().await.unwrap();
+    trade_events::insert_events(&mut c, net, &[bid])
+        .await
+        .unwrap();
+    drop(c);
+    *chain.head.lock() = b + 13;
+    sqlx::query("UPDATE shop.chain_cursor SET last_block=$1,last_block_hash=$2,folded_block=$1,sale_verified_through=$1")
+        .bind((b+1) as i64).bind(chain.hash_of(b+1)).execute(&db.pool).await.unwrap();
+    crate::market::sale_fold::pass(&db.pool, &rpc, net)
+        .await
+        .unwrap();
+    let (code, page) = get_json(
+        &app,
+        &format!("/v1/sales?network=ETHEREUM&type=bid&seller={DAVE}"),
+    )
+    .await;
+    assert_eq!(code, StatusCode::OK, "{page}");
+    assert_eq!(page["total"], 1);
+    assert_eq!(page["data"][0]["price"], "25");
+    assert_eq!(page["data"][0]["buyer"], BOB);
+    let endpoint = format!("/v1/proceeds?seller={DAVE}&network=ETHEREUM");
+    assert_eq!(
+        get_json(&app, &endpoint).await.0,
+        StatusCode::SERVICE_UNAVAILABLE
+    );
+    sqlx::query("WITH paid AS (UPDATE shop.sale_payment SET settled=true WHERE network='ethereum' AND block_number=$1
+        RETURNING network,block_number,log_index,ordinal,gross)
+        INSERT INTO shop.sale_payout(network,block_number,log_index,payment_ordinal,ordinal,role,recipient,amount)
+        SELECT network,block_number,log_index,ordinal,0,'seller',CASE WHEN ordinal=0 THEN $2 ELSE $3 END,gross FROM paid")
+        .bind((b+1) as i64).bind(DAVE).bind(CARL).execute(&db.pool).await.unwrap();
+    let (code, proceeds) = get_json(&app, &endpoint).await;
+    assert_eq!(code, StatusCode::OK, "{proceeds}");
+    assert_eq!(proceeds["total"], 1);
+    assert_eq!(proceeds["data"][0]["netWei"], "25");
     db.drop().await;
 }
 
@@ -1161,6 +1243,12 @@ async fn sales_delayed_receipt_corrects_checkout_buyer_and_first_purchase_day() 
     };
     sale_fold::pass(&db.pool, &rpc, net).await.unwrap();
     assert_eq!(firsts().await.unwrap(), [(CHECKOUT.into(), 86400)]);
+    let generation = sqlx::query_scalar::<_, uuid::Uuid>(
+        "SELECT generation FROM shop.sale_publication WHERE network='matic'",
+    )
+    .fetch_one(&db.pool)
+    .await
+    .unwrap();
     let barter_fact: (bool, String, i64) = sqlx::query_as(
         "SELECT e.receipt_read,a.token_id::text,
         (SELECT count(*) FROM shop.sale_payment WHERE block_number=$1)
@@ -1248,6 +1336,13 @@ async fn sales_delayed_receipt_corrects_checkout_buyer_and_first_purchase_day() 
         JOIN shop.sale_payment p USING(network,block_number,log_index,ordinal) WHERE block_number=$1")
         .bind(b as i64).fetch_one(&db.pool).await.unwrap();
     assert_eq!(paid, (true, "500".into(), "123".into(), CHECKOUT.into()));
+    let corrected = sqlx::query_scalar::<_, uuid::Uuid>(
+        "SELECT generation FROM shop.sale_publication WHERE network='matic'",
+    )
+    .fetch_one(&db.pool)
+    .await
+    .unwrap();
+    assert_ne!(corrected, generation);
     db.drop().await;
 }
 
@@ -1297,7 +1392,7 @@ async fn incomplete_sales_evidence_keeps_the_primary_walk_live_and_the_proof_at_
     settings.sales_enabled = true;
     let enabled = state_over(db.pool.clone(), &url, settings, false);
     let nft = NftIndex::new(net);
-    for ix in [&SalesIndex as &dyn ChainIndex, &nft] {
+    for ix in [&sales_index::POLYGON as &dyn ChainIndex, &nft] {
         sqlx::query("INSERT INTO shop.chain_cursor(indexer,network,chain_id,start_block,last_block,last_block_hash,full_history,folded_block,folded_at,sale_input_version,sale_verified_through,sale_covered_rewinds)
             VALUES($1,'matic',137,$2,$3,$4,true,$3,timezone('UTC',now()),1,$3,0)")
             .bind(ix.indexer()).bind(ix.start_block() as i64).bind(b as i64-1).bind(chain.hash_of(b-1)).execute(&db.pool).await.unwrap();
@@ -1305,7 +1400,7 @@ async fn incomplete_sales_evidence_keeps_the_primary_walk_live_and_the_proof_at_
     // A Polygon sale with its fee evidence missing must still allow a valid
     // bid in the same window to reach the existing notice and badge readers.
     assert!(
-        try_pass(&disabled, &url, &SalesIndex)
+        try_pass(&disabled, &url, &sales_index::POLYGON)
             .await
             .unwrap()
             .published
@@ -1322,7 +1417,7 @@ async fn incomplete_sales_evidence_keeps_the_primary_walk_live_and_the_proof_at_
     // Start with an unverified old window, then advance live again. A failing
     // sales replay cannot keep either projection at its previous checkpoint.
     *chain.head.lock() += 1;
-    for ix in [&SalesIndex as &dyn ChainIndex, &nft] {
+    for ix in [&sales_index::POLYGON as &dyn ChainIndex, &nft] {
         let out = try_pass(&enabled, &url, ix).await.unwrap();
         assert_eq!(out.indexed_to, b as i64 + 1);
         let row:(i64,Option<i64>, Option<i64>)=sqlx::query_as("SELECT last_block,folded_block,sale_verified_through FROM shop.chain_cursor WHERE network='matic' AND indexer=$1")
@@ -1347,7 +1442,7 @@ async fn incomplete_sales_evidence_keeps_the_primary_walk_live_and_the_proof_at_
     );
     chain.logs.lock().retain(|log| log["logIndex"] == "0x3");
     chain.logs.lock().push(log_json(&order));
-    for ix in [&SalesIndex as &dyn ChainIndex, &nft] {
+    for ix in [&sales_index::POLYGON as &dyn ChainIndex, &nft] {
         try_pass(&enabled, &url, ix).await.unwrap();
         assert_eq!(sqlx::query_scalar::<_,Option<i64>>("SELECT sale_verified_through FROM shop.chain_cursor WHERE network='matic' AND indexer=$1")
             .bind(ix.indexer()).fetch_one(&db.pool).await.unwrap(),Some(b as i64+1));
@@ -1483,7 +1578,7 @@ async fn archive_repair_carries_a_narrowed_range_across_passes() {
     let Some(db) = ScratchDb::create().await else {
         return;
     };
-    let first = SalesIndex.start_block();
+    let first = sales_index::POLYGON.start_block();
     let tip = first + 500;
     let chain = FakeChain::new(tip + 64, vec![], 1, 100);
     chain.omit_range_hint.store(true, Ordering::SeqCst);
@@ -1497,11 +1592,11 @@ async fn archive_repair_carries_a_narrowed_range_across_passes() {
     let source = chain_walk::RpcSource::new(Rpc::at(&st.http, &url));
     let mut previous = tip as i64;
     for _ in 0..8 {
-        let owner = chain_walk::test_owner(&db.pool, &SalesIndex, &settings).await;
+        let owner = chain_walk::test_owner(&db.pool, &sales_index::POLYGON, &settings).await;
         let spent = crate::market::sale_history::repair(
             &db.pool,
             &source,
-            &SalesIndex,
+            &sales_index::POLYGON,
             &owner,
             Some((tip, &hash)),
             7,
@@ -1583,7 +1678,7 @@ async fn a_store_purchase_and_order_in_one_receipt_settle_after_a_failed_batch()
     };
     let net = ChainNet::Matic;
     let (order_venue, deployed) = nft_index::deployments::Deployments::mainnet(net).markets[0];
-    let block = deployed.max(SalesIndex.start_block()) + 100;
+    let block = deployed.max(sales_index::POLYGON.start_block()) + 100;
     let chain = FakeChain::new(block + 5, vec![], 1000, 100);
     let url = serve(chain.clone()).await;
     let st = state_over(db.pool.clone(), &url, index_settings(100, 100), false);
@@ -1709,5 +1804,140 @@ async fn a_store_purchase_and_order_in_one_receipt_settle_after_a_failed_batch()
             (4, DAVE.into(), "75".into())
         ]
     );
+    db.drop().await;
+}
+
+#[tokio::test]
+async fn sale_ids_survive_catalogue_discovery_and_reinclusion_at_different_log_positions() {
+    use crate::market::{sale_fold, sale_history};
+    let Some(db) = ScratchDb::create().await else {
+        return;
+    };
+    let net = ChainNet::Ethereum;
+    let block = nft_index::deployments::Deployments::mainnet(net).start + 20;
+    let chain = FakeChain::new(block + 12, vec![], 1000, 100);
+    chain.chain_id.store(1, Ordering::SeqCst);
+    let url = serve(chain.clone()).await;
+    let state = state_over(db.pool.clone(), &url, index_settings(100, 20), false);
+    let rpc = Rpc::at(&state.http, &url);
+    let hash = format!("0x{:064x}", 123);
+    let venue = nft_index::deployments::Deployments::mainnet(net).markets[0].0;
+    let kept = crate::land_authz::LAND_REGISTRY_MAINNET;
+    sqlx::query("INSERT INTO shop.chain_cursor(indexer,network,chain_id,start_block,last_block,last_block_hash,
+        full_history,folded_block,folded_at,sale_input_version,sale_verified_through,sale_covered_rewinds)
+        SELECT ix,'ethereum',1,1,$1,$2,true,$1,timezone('UTC',now()),$3,$1,0 FROM unnest(ARRAY['nft','sales','trade_events']) ix")
+        .bind(block as i64).bind(chain.hash_of(block)).bind(sale_history::VERSION).execute(&db.pool).await.unwrap();
+    // The venue log exists even though neither of the first two contracts
+    // is in the catalogue. Only the later LAND order is initially retained.
+    sqlx::query("INSERT INTO shop.nft_event(network,block_number,log_index,block_time,kind,emitter,contract_address,token_id,from_address,to_address,amount,tx_hash)
+        SELECT 'ethereum',$1,v.n,86400,'order_successful',$2,v.c,v.n,$3,$4,50,$5
+        FROM (VALUES(4,$6::text),(9,$7::text)) v(n,c)")
+        .bind(block as i64).bind(venue).bind(ALICE).bind(BOB).bind(&hash).bind(CARL).bind(kept).execute(&db.pool).await.unwrap();
+    let mut traded = trade_events::tests::traded_log(
+        block,
+        2,
+        trade_events::marketplaces(net)[0].0,
+        BOB,
+        ALICE,
+        "0x01",
+        1,
+        false,
+    );
+    traded.transaction_hash = Some(hash.clone());
+    let mut trade = trade_events::decode_log(&traded, 86400).unwrap().unwrap();
+    trade.assets = Some(
+        json!({"sent":[{"assetType":"3","contractAddress":DAVE,"value":"1","beneficiary":BOB,"extra":"0x"}],
+        "received":[{"assetType":"1","contractAddress":listings::mana_token(1),"value":"12","beneficiary":ALICE,"extra":"0x"}],"uses":"1"}),
+    );
+    let mut conn = db.pool.acquire().await.unwrap();
+    trade_events::insert_events(&mut conn, net, &[trade])
+        .await
+        .unwrap();
+    drop(conn);
+    let expected = format!("ethereum-{hash}-2-0");
+    let read_id = || {
+        sqlx::query_scalar::<_, String>(
+            "SELECT public_id FROM shop.sale_asset WHERE contract_address=$1",
+        )
+        .bind(kept)
+        .fetch_one(&db.pool)
+    };
+    sale_fold::pass(&db.pool, &rpc, net).await.unwrap();
+    assert_eq!(read_id().await.unwrap(), expected);
+
+    // Upgrade a version-one marker with an ID numbered only over retained
+    // executions. Repair uses persisted venue rows on this unchanged tip.
+    sqlx::query("UPDATE shop.sale_asset SET public_id=$1")
+        .bind(format!("ethereum-{hash}-0-0"))
+        .execute(&db.pool)
+        .await
+        .unwrap();
+    sqlx::query("UPDATE shop.sale_publication SET input_version=1")
+        .execute(&db.pool)
+        .await
+        .unwrap();
+    assert!(
+        sale_fold::snapshot(&db.pool, &[net], chrono::Utc::now())
+            .await
+            .unwrap()
+            .is_none()
+    );
+    sale_fold::pass(&db.pool, &rpc, net).await.unwrap();
+    assert_eq!(read_id().await.unwrap(), expected);
+    assert!(
+        sale_fold::snapshot(&db.pool, &[net], chrono::Utc::now())
+            .await
+            .unwrap()
+            .is_some()
+    );
+
+    sqlx::query("INSERT INTO shop.nft_contract(network,contract_address,walked_from_block,backfill_from_block,backfilled_to_block)
+        VALUES('ethereum',$1,$2+1::bigint,$2,$2)").bind(CARL).bind(block as i64).execute(&db.pool).await.unwrap();
+    sale_fold::pass(&db.pool, &rpc, net).await.unwrap();
+    assert_eq!(read_id().await.unwrap(), expected);
+    let added: String =
+        sqlx::query_scalar("SELECT public_id FROM shop.sale_asset WHERE contract_address=$1")
+            .bind(CARL)
+            .fetch_one(&db.pool)
+            .await
+            .unwrap();
+    assert_eq!(added, format!("ethereum-{hash}-1-0"));
+
+    // With both catalogue orders retained, the old fills were 0 and 1.
+    // Moving the first to 1 has to release the second row's old unique ID.
+    sqlx::query("UPDATE shop.sale_asset SET public_id=$1 WHERE contract_address=$2")
+        .bind(format!("ethereum-{hash}-0-0"))
+        .bind(CARL)
+        .execute(&db.pool)
+        .await
+        .unwrap();
+    sqlx::query("UPDATE shop.sale_asset SET public_id=$1 WHERE contract_address=$2")
+        .bind(format!("ethereum-{hash}-1-0"))
+        .bind(kept)
+        .execute(&db.pool)
+        .await
+        .unwrap();
+    sqlx::query("UPDATE shop.sale_publication SET input_version=1")
+        .execute(&db.pool)
+        .await
+        .unwrap();
+    sale_fold::pass(&db.pool, &rpc, net).await.unwrap();
+    assert_eq!(read_id().await.unwrap(), expected);
+
+    // The same transaction is re-included one block later after 30 more logs.
+    sqlx::query("UPDATE shop.nft_event SET block_number=block_number+1,log_index=log_index+30 WHERE tx_hash=$1").bind(&hash).execute(&db.pool).await.unwrap();
+    sqlx::query("UPDATE shop.trade_event SET block_number=block_number+1,log_index=log_index+30 WHERE tx_hash=$1").bind(&hash).execute(&db.pool).await.unwrap();
+    sqlx::query("UPDATE shop.chain_cursor SET last_block=$1,last_block_hash=$2,folded_block=$1,sale_verified_through=$1,
+        sale_history_revision=sale_history_revision+1,sale_dirty_from=$3")
+        .bind(block as i64+1).bind(chain.hash_of(block+1)).bind(block as i64).execute(&db.pool).await.unwrap();
+    sale_fold::pass(&db.pool, &rpc, net).await.unwrap();
+    assert_eq!(read_id().await.unwrap(), expected);
+    let remaining: i64 =
+        sqlx::query_scalar("SELECT count(*) FROM shop.sale_asset WHERE block_number=$1")
+            .bind(block as i64 + 1)
+            .fetch_one(&db.pool)
+            .await
+            .unwrap();
+    assert_eq!(remaining, 2);
     db.drop().await;
 }

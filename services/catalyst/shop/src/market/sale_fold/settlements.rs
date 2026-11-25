@@ -511,7 +511,7 @@ pub(super) async fn write(
     net: ChainNet,
     from: i64,
     to: i64,
-) -> anyhow::Result<Vec<i64>> {
+) -> anyhow::Result<(Vec<i64>, bool)> {
     let retry:Vec<String>=sqlx::query_scalar(
        "SELECT tx_hash FROM shop.sale_execution WHERE network=$1 AND block_number <= $2 AND NOT receipt_read
           AND (receipt_attempted_at IS NULL OR receipt_attempted_at<timezone('UTC',now()) - interval '5 minutes')
@@ -570,6 +570,7 @@ pub(super) async fn write(
     sqlx::query("UPDATE shop.sale_execution SET receipt_attempted_at=timezone('UTC',now()) WHERE network=$1 AND tx_hash=ANY($2) AND NOT receipt_read")
         .bind(net.db_name()).bind(&hashes).execute(&mut *conn).await?;
     let mut updated = Vec::new();
+    let mut corrected_prefix = false;
     // Only one response body is retained. Split an unreadable batch into
     // individual envelopes, each subject to the same transport limit.
     let mut pending: std::collections::VecDeque<_> =
@@ -715,12 +716,13 @@ pub(super) async fn write(
             .execute(&mut *conn)
             .await?;
             updated.push(expected);
+            corrected_prefix |= first.block <= from;
         }
     }
     let days=sqlx::query_scalar(
         "SELECT DISTINCT block_time/86400*86400 FROM shop.sale_execution WHERE network=$1 AND (tx_hash=ANY($2) OR (block_number>$3 AND block_number<=$4))")
         .bind(net.db_name()).bind(updated).bind(from).bind(to).fetch_all(&mut *conn).await?;
-    Ok(days)
+    Ok((days, corrected_prefix))
 }
 
 #[cfg(test)]

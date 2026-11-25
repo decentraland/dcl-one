@@ -1,6 +1,6 @@
 import * as components from '../components'
-import { IEngine } from '../engine'
-import { Vector3Type } from '../schemas'
+import type { IEngine } from '../engine'
+import type { Vector3Type } from '../schemas'
 import { Vector3 } from '../runtime/helpers'
 
 /**

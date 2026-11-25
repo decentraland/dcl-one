@@ -1,11 +1,10 @@
+import type { Entity, PBPointerEvents_Entry } from '@dcl/sdk/ecs'
 import {
-  Entity,
   engine,
   Transform,
   MeshRenderer,
   MeshCollider,
   InputAction,
-  PBPointerEvents_Entry,
   PointerEvents,
   PointerEventType
 } from '@dcl/sdk/ecs'

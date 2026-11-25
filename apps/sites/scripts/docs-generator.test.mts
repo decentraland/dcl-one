@@ -32,7 +32,7 @@ it("repairs upstream content, validates links and pinned media, and detects drif
   write(output, fallback, fs.readFileSync(path.join(process.cwd(), "content/docs", fallback)));
   execFileSync("git", ["init", "-q", source]);
   execFileSync("git", ["-C", source, "add", "."]);
-  execFileSync("git", ["-C", source, "-c", "user.name=Docs test", "-c", "user.email=docs-test@example.invalid", "commit", "-qm", "fixture"]);
+  execFileSync("git", ["-C", source, "-c", "user.name=Docs test", "-c", "user.email=docs-test@example.invalid", "-c", "commit.gpgsign=false", "commit", "-qm", "fixture"]);
   const result = run();
   expect(result.status, result.stderr).toBe(0);
   const player = fs.readFileSync(path.join(output, "player/index.md"), "utf8");

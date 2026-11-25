@@ -64,6 +64,21 @@ tokio::task_local! {
     pub(crate) static RPC_BUDGET: Arc<RpcBudget>;
 }
 
+/// Admits one JSON-RPC call, or refuses it with the error the call then fails with.
+pub type CallGate = Arc<dyn Fn() -> Result<(), AuthError> + Send + Sync>;
+
+tokio::task_local! {
+    static CALL_GATE: CallGate;
+}
+
+/// `future` with every JSON-RPC call an [`RpcEip1654Validator`] makes in it
+/// admitted by `gate` first: a refused call fails with the gate's error before
+/// it is sent, and counts toward no [`RpcBudget`]. For work whose number of
+/// calls is not known up front, such as a verification-block lookup.
+pub async fn with_call_gate<F: std::future::Future>(gate: CallGate, future: F) -> F::Output {
+    CALL_GATE.scope(gate, future).await
+}
+
 /// ERC-1271 answers one ABI word at most: `0x` and up to 32 bytes of hex.
 fn is_signature_call_result(result: &str) -> bool {
     result.strip_prefix("0x").is_some_and(|hex| {
@@ -198,6 +213,9 @@ impl RpcEip1654Validator {
     }
 
     async fn rpc(&self, method: &str, params: Value) -> Result<Value, EthCallError> {
+        if let Ok(Err(refused)) = CALL_GATE.try_with(|gate| gate()) {
+            return Err(EthCallError::Failed(refused));
+        }
         let budget = RPC_BUDGET.try_with(Arc::clone).ok();
         let mut timeout = self.timeout;
         if let Some(budget) = &budget {

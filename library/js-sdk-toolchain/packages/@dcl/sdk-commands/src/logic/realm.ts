@@ -1,5 +1,5 @@
 import type { AboutResponse } from '@dcl/protocol/out-ts/decentraland/realm/about.gen'
-import { CliComponents } from '../components'
+import type { CliComponents } from '../components'
 import { getCatalystBaseUrl } from './config'
 
 export async function createStaticRealm(components: Pick<CliComponents, 'config'>): Promise<AboutResponse> {
