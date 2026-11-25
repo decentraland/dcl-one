@@ -13,7 +13,7 @@ mod traffic;
 mod tests;
 
 use alloy_core::primitives::Address;
-use ban_block::BanBlock;
+use ban_block::{BanBlock, PlatformBanStatus};
 use bevy::{platform::collections::HashMap, prelude::*};
 use common::{
     rpc::RpcStreamSender,
@@ -47,7 +47,11 @@ impl Plugin for ReactionPlugin {
                 Update,
                 (
                     accept_local_reactions,
-                    receive_reactions.run_if(on_event::<ReactionEvent>),
+                    // a peer's reactions are taken only where the block and ban lists are
+                    // kept: an app without them (the offline avatar renderer) hears no one
+                    receive_reactions.run_if(
+                        on_event::<ReactionEvent>.and(resource_exists::<PlatformBanStatus>),
+                    ),
                     // asks who is blocked, which only an app that keeps the lists can answer: it runs
                     // while a sender has a queue
                     play_queued_reactions.run_if(any_with_component::<ReactionQueue>),

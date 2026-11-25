@@ -339,6 +339,25 @@ fn a_blocked_sender_plays_nothing() {
 }
 
 #[test]
+fn an_app_that_keeps_no_block_list_takes_no_peers_reactions() {
+    let mut harness = harness();
+    harness
+        .app
+        .world_mut()
+        .remove_resource::<ban_block::PlatformBanStatus>();
+    let peer = harness.peer();
+    harness.hear(peer, "🔥", 1.0, 2);
+    // nothing is asked of a list that is not there
+    harness.run(1.0);
+    assert_eq!(harness.stats().received, 0);
+    assert_eq!(harness.stats().played, 0);
+    // the local user's own picks play all the same
+    harness.pick("👍");
+    harness.app.update();
+    assert_eq!(harness.stats().played, 1);
+}
+
+#[test]
 fn a_sender_blocked_while_their_reactions_wait_plays_no_more() {
     let mut harness = harness();
     let peer = harness.peer();
