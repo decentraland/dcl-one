@@ -681,6 +681,7 @@ pub(crate) fn apply_movement(
             &mut AvatarDynamicState,
             &ActivePlayerComponent<AvatarMovement>,
             &mut GroundCollider,
+            &mut LastMovementClip,
         ),
         With<PrimaryUser>,
     >,
@@ -691,9 +692,9 @@ pub(crate) fn apply_movement(
     mut last_step: ResMut<LastMovementStep>,
     movement_control: Res<EngineMovementControl>,
     central: Res<CentralCollisions>,
-    mut last_clip: Local<Option<String>>,
 ) {
-    let Ok((player, mut transform, mut dynamic_state, movement, mut ground)) = player.single_mut()
+    let Ok((player, mut transform, mut dynamic_state, movement, mut ground, mut last_clip)) =
+        player.single_mut()
     else {
         return;
     };
@@ -851,6 +852,11 @@ fn find_ground(
     (height, collider)
 }
 
+/// The scene's clip on the player's previous movement step, `None` when no scene drove the
+/// animation: [`JumpCue::of_step`] compares the next step's clip with it.
+#[derive(Component, Default)]
+pub(crate) struct LastMovementClip(Option<String>);
+
 /// What marks the player's jumps on a movement step.
 #[derive(Clone, Copy, Debug)]
 enum JumpCue {
@@ -865,7 +871,7 @@ impl JumpCue {
     /// `last_clip` holds the scene's clip of the previous step, and takes this step's.
     fn of_step(
         animation: Option<&MovementAnimation>,
-        last_clip: &mut Option<String>,
+        LastMovementClip(last_clip): &mut LastMovementClip,
         rose: bool,
     ) -> Self {
         let Some(animation) = animation else {
@@ -965,6 +971,7 @@ fn record_own_movement(
 
 // (scene entity, collider id) of collider player is standing on
 #[derive(Component, Default)]
+#[require(LastMovementClip)]
 pub struct GroundCollider(pub Option<(Entity, ColliderId, GlobalTransform)>);
 
 fn apply_ground_collider_movement(
@@ -1803,7 +1810,7 @@ mod jump_tests {
     #[derive(Default)]
     struct Steps {
         state: AvatarDynamicState,
-        last_clip: Option<String>,
+        last_clip: LastMovementClip,
         frame: u32,
     }
 
