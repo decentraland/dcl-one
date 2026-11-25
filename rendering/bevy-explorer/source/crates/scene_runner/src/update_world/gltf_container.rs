@@ -434,7 +434,7 @@ fn collider_gltf_loader_settings(s: &mut GltfLoaderSettings) {
     s.include_source = false;
 }
 
-fn update_gltf(
+pub(crate) fn update_gltf(
     mut commands: Commands,
     mut commands2: Commands,
     new_gltfs: Query<

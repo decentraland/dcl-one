@@ -27,6 +27,7 @@ use multihash_codetable::MultihashDigest;
 use crate::{
     initialize_scene::{LiveScenes, PointerResult, ScenePointers, SuperUserScene},
     renderer_context::RendererSceneContext,
+    update_world::gltf_container::update_gltf,
     ContainingScene, Toaster,
 };
 
@@ -56,8 +57,8 @@ impl Plugin for SceneUtilPlugin {
                     preview_model::remove_model,
                     preview_model::reload_model,
                 )
-                    .chain()
-                    .before(SceneSets::PostLoop),
+                    .in_set(SceneSets::PostLoop)
+                    .before(update_gltf),
             ),
         );
     }
