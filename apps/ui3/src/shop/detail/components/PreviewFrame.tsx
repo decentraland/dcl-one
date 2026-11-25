@@ -1,6 +1,7 @@
 // The Shop's avatars in the wearable-preview iframe, the page decentraland.org's Shop and Sites' creators preview also
-// embed. Its options travel in the URL it mounts with, and later changes as `update` messages (the @dcl/schemas
-// preview protocol), so a change of view or of items reloads the scene in place instead of the iframe.
+// embed, or in the Bevy avatar preview Sites serves at /avatar-preview/, which speaks the same protocol. Its options
+// travel in the URL it mounts with, and later changes as `update` messages (the @dcl/schemas preview protocol), so a
+// change of view or of items reloads the scene in place instead of the iframe.
 
 import { useEffect, useRef, useState } from "react";
 
@@ -9,7 +10,7 @@ import styles from "./PreviewFrame.module.css";
 const MAINNET_PREVIEW = "https://wearable-preview.decentraland.org";
 const TESTNET_PREVIEW = "https://wearable-preview.decentraland.zone";
 
-export type PreviewRendererName = "unity" | "babylon";
+export type PreviewRendererName = "unity" | "babylon" | "bevy";
 
 export type PreviewFrameOptions = {
   urns: string[];
@@ -30,6 +31,11 @@ export type PreviewFrameOptions = {
   wheelZoom?: number;
   wheelStart?: number;
   unity?: boolean;
+  /**
+   * The Bevy avatar preview (rendering/avatar-preview), from this site's /avatar-preview/ in place of wearable-preview.
+   * It reads the same options, Unity's mode among them; this one only picks the page and is not sent.
+   */
+  bevy?: boolean;
   /** Unity's mode: `marketplace` for an item on an avatar, `builder` for a mannequin dressed in a set of items. */
   unityMode?: "marketplace" | "builder";
 };
@@ -44,24 +50,44 @@ const PARAM_NAMES: Record<string, string> = { urns: "urn", base64s: "base64", un
  */
 export const UNITY_LOAD_TIMEOUT_MS = 45_000;
 
+const onTestnet = (urns: string[]) => urns.some((urn) => /^urn:decentraland:(amoy|sepolia|mumbai|goerli):/i.test(urn));
+
 /** The preview that resolves these items: a testnet item is only on the testnet peers the .zone preview reads. */
 export function previewBase(urns: string[]): string {
-  return urns.some((urn) => /^urn:decentraland:(amoy|sepolia|mumbai|goerli):/i.test(urn)) ? TESTNET_PREVIEW : MAINNET_PREVIEW;
+  return onTestnet(urns) ? TESTNET_PREVIEW : MAINNET_PREVIEW;
+}
+
+/** The Bevy avatar preview, from the site serving this page (Sites, through the gateway's /avatar-preview route). */
+export function bevyPreviewBase(): string {
+  return `${window.location.origin}/avatar-preview`;
+}
+
+/** The page these options mount: Bevy's when asked for, otherwise the wearable-preview that resolves their items. */
+function baseFor(options: PreviewFrameOptions): string {
+  return options.bevy === true ? bevyPreviewBase() : previewBase(options.urns);
 }
 
 export function previewUrl(base: string, options: PreviewFrameOptions): string {
   const params = new URLSearchParams();
   for (const [key, value] of Object.entries(options)) {
-    if (value === undefined || value === null || value === "") continue;
+    if (key === "bevy" || value === undefined || value === null || value === "") continue;
     for (const item of Array.isArray(value) ? value : [value]) params.append(PARAM_NAMES[key] ?? key, String(item));
   }
-  if (base === TESTNET_PREVIEW) params.set("env", "dev");
+  // Testnet items on testnet peers: the .zone wearable-preview, or the Bevy page told so.
+  if (base === TESTNET_PREVIEW || (base !== MAINNET_PREVIEW && onTestnet(options.urns))) params.set("env", "dev");
   return `${base}/?${params}`;
 }
 
 // The renderer and its mode are picked once, from the mount URL; a different one mounts again. An update never carries
 // them: Unity has no mapping for `unity` there, and logs each one it is sent.
-const RENDERER_KEYS = ["unity", "unityMode"] as const;
+const RENDERER_KEYS = ["unity", "bevy", "unityMode"] as const;
+
+/**
+ * Whether the mounted preview answers every reload, a superseded one included, so that its scenes go one at a time.
+ * Unity does. So does Bevy: each update starts a reload of its own and none is called off, so the engine's `load` for an
+ * earlier scene can come after a later one was sent. Babylon drops the superseded answer itself.
+ */
+const answersEveryReload = (options: PreviewFrameOptions) => options.unity === true || options.bevy === true;
 
 // The options Unity applies from an update (wearable-preview@6f1e470 src/lib/unity/messages.ts: PROPERTY_METHOD_MAP and
 // SPECIAL_PROPERTIES). Any other, `disableFadeEffect` among them, reaches Unity only through the mount URL: sent in an
@@ -71,7 +97,7 @@ const UNITY_UPDATE_KEYS = new Set(["urns", "base64s", "profile", "bodyShape", "s
 type Mount = { n: number; base: string; src: string; options: PreviewFrameOptions; serialized: string };
 
 function mountWith(n: number, options: PreviewFrameOptions): Mount {
-  const base = previewBase(options.urns);
+  const base = baseFor(options);
   return { n, base, src: previewUrl(base, options), options, serialized: JSON.stringify(options) };
 }
 
@@ -83,7 +109,7 @@ const isSet = (value: unknown) => value !== undefined && value !== null && value
  * unset one, so the option would keep its old value there (Babylon takes the update whole).
  */
 function needsMount(mount: Mount, held: ReadonlySet<string>, options: PreviewFrameOptions): boolean {
-  if (previewBase(options.urns) !== mount.base) return true;
+  if (baseFor(options) !== mount.base || onTestnet(options.urns) !== onTestnet(mount.options.urns)) return true;
   if (RENDERER_KEYS.some((key) => options[key] !== mount.options[key])) return true;
   if (mount.options.unity !== true) return false;
   const value = (from: PreviewFrameOptions, key: string) => (isSet(from[key as keyof PreviewFrameOptions]) ? JSON.stringify(from[key as keyof PreviewFrameOptions]) : undefined);
@@ -111,9 +137,9 @@ function updateFor(mount: Mount, options: PreviewFrameOptions): Record<string, u
 }
 
 /**
- * How long an update under Unity waits for the answer to the scene before it. Unity answers every reload with a `load`,
- * a superseded one included (Babylon drops those itself), so it is sent one scene at a time to tell which scene an answer
- * is for. A slow scene should not hold the next one for long: past this the next one mounts a fresh iframe instead, whose
+ * How long an update under Unity (or Bevy, answersEveryReload) waits for the answer to the scene before it. Unity
+ * answers every reload with a `load`, a superseded one included (Babylon drops those itself), so it is sent one scene at a
+ * time to tell which scene an answer is for. A slow scene should not hold the next one for long: past this the next one mounts a fresh iframe instead, whose
  * answers cannot be confused with the retired one's. (A change only to the camera reloads nothing and gets no answer, so
  * the change after it mounts again too; the Shop makes none.)
  */
@@ -193,9 +219,10 @@ export default function PreviewFrame({ options, replay = 0, loadTimeoutMs, onLoa
       return;
     }
     if (!now.ready) return;
-    if (mount.options.unity === true && now.awaiting !== null) {
+    if (answersEveryReload(mount.options) && now.awaiting !== null) {
       // Unity applies no update before its first scene has loaded, so until that scene answers (or the load timeout
-      // gives up on it) an update waits for it however long it takes.
+      // gives up on it) an update waits for it however long it takes. Bevy would take one, but its answer could not be
+      // told from the first scene's.
       if (!now.answered) return;
       const waited = performance.now() - now.sentAt;
       if (waited < UNITY_ANSWER_WAIT_MS) {
@@ -225,7 +252,7 @@ export default function PreviewFrame({ options, replay = 0, loadTimeoutMs, onLoa
       const { type, payload } = (event.data ?? {}) as { type?: string; payload?: { renderer?: string; message?: string; type?: string } };
       if (type === "emote_event") {
         if (callbacks.current.ambient && payload?.type === "animation_end") control("play");
-      } else if (type === "ready" && now.ready && mount.options.unity === true) {
+      } else if (type === "ready" && now.ready && answersEveryReload(mount.options)) {
         // Unity booting again has lost its scene, and its answer to the first one belongs to the boot before: a fresh
         // iframe with the current options starts over, with a deadline of its own.
         live.current = liveFor(mount.n + 1, latest.current, latestOptions.current);
@@ -242,20 +269,21 @@ export default function PreviewFrame({ options, replay = 0, loadTimeoutMs, onLoa
       } else if (type === "load" || type === "error") {
         const first = !now.answered;
         now.answered = true;
-        // Under Unity an answer is for the scene it was drawing; one for options the page has moved on from is not the
-        // page's. Babylon answers only for the scene it was last sent (Preview.tsx drops a superseded one).
+        // Under Unity or Bevy an answer is for the scene it was drawing; one for options the page has moved on from is not
+        // the page's. Babylon answers only for the scene it was last sent (Preview.tsx drops a superseded one).
         const answeredFor = now.awaiting;
         now.awaiting = null;
-        // Except a failed first scene: Unity that could not start applies no update after it, whatever options it was for.
+        // Except a failed first scene: a renderer that could not start applies no update after it, whatever options it was
+        // for.
         const failedToStart = type === "error" && first;
-        if (mount.options.unity !== true || answeredFor === null || answeredFor === latest.current || failedToStart) {
+        if (!answersEveryReload(mount.options) || answeredFor === null || answeredFor === latest.current || failedToStart) {
           if (type === "load") {
             if (callbacks.current.ambient) control("disableSound");
             const renderer = payload?.renderer;
-            callbacks.current.onLoad(renderer === "unity" || renderer === "babylon" ? renderer : undefined);
+            callbacks.current.onLoad(renderer === "unity" || renderer === "babylon" || renderer === "bevy" ? renderer : undefined);
           } else callbacks.current.onError(payload?.message ?? "");
         }
-        if (!(mount.options.unity === true && failedToStart)) push.current();
+        if (!(answersEveryReload(mount.options) && failedToStart)) push.current();
       }
     };
     window.addEventListener("message", onMessage);

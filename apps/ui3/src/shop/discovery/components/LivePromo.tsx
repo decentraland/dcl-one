@@ -5,8 +5,9 @@
 import { lazy, Suspense, useEffect, useRef, useState } from "react";
 import { Link } from "react-router";
 
-import PreviewFrame, { type PreviewFrameOptions } from "../../detail/components/PreviewFrame";
+import PreviewFrame, { UNITY_LOAD_TIMEOUT_MS, type PreviewFrameOptions } from "../../detail/components/PreviewFrame";
 import { pickRenderer } from "../../detail/lib/pickRenderer";
+import { REMOTE_FLAG, useRemoteFlagState } from "../lib/remoteFlags";
 import "./livepromo.css";
 
 // The module path, not the "@dcl/one-ui" barrel: import() of the barrel keeps its whole namespace, which loses this
@@ -21,12 +22,14 @@ const ZOOM = 100;
 const WHEEL_ZOOM = 2.5;
 
 /**
- * The tile's avatar, as upstream draws it: Babylon whatever the Unity flag says, a default body in the promo's items doing
+ * The tile's avatar, as upstream draws it: Babylon whatever the Unity flag says (the Bevy avatar preview where its own
+ * flag is on, in upstream's marketplace mode), a default body in the promo's items doing
  * PreviewEmote.FASHION (an emote item among the urns, listed first, plays instead). The urns are mainnet's, so the iframe
  * reads mainnet's peer and marketplace whatever the Shop's environment (previewBase).
  */
-function previewOptions(urns: string[]): PreviewFrameOptions {
-  return { urns, profile: "default", type: "avatar", emote: "fashion", zoom: ZOOM, wheelZoom: WHEEL_ZOOM, disableBackground: true };
+function previewOptions(urns: string[], bevy: boolean): PreviewFrameOptions {
+  const options: PreviewFrameOptions = { urns, profile: "default", type: "avatar", emote: "fashion", zoom: ZOOM, wheelZoom: WHEEL_ZOOM, disableBackground: true };
+  return bevy ? { ...options, bevy: true, unityMode: "marketplace" } : options;
 }
 
 type Props = {
@@ -48,6 +51,10 @@ export default function LivePromo({ to, urns, title, cta, ariaLabel, fallback, f
   const [onScreen, setOnScreen] = useState(false);
   const [ready, setReady] = useState(false);
   const [failed, setFailed] = useState(false);
+  // Bevy failing gives way to Babylon for the rest of the tile's life.
+  const [bevyFailed, setBevyFailed] = useState(false);
+  const bevyFlag = useRemoteFlagState(REMOTE_FLAG.bevyAvatarPreview, allowed);
+  const bevy = bevyFlag === true && !bevyFailed;
 
   useEffect(() => {
     if (typeof window.matchMedia === "function" && window.matchMedia("(prefers-reduced-motion: reduce)").matches) return;
@@ -72,7 +79,8 @@ export default function LivePromo({ to, urns, title, cta, ariaLabel, fallback, f
   const live = allowed && !failed;
   // The iframe lives only while the tile is on screen: off screen its render loop runs at full speed for nobody. A hidden
   // tab keeps it, since the browser all but stops its frames there.
-  const mounted = live && onScreen;
+  // Mounted once the flag has said which renderer, so the tile never loads one and then the other.
+  const mounted = live && onScreen && bevyFlag !== null;
   // A new iframe has drawn nothing: back on screen, the picture stays until it has.
   if (!mounted && ready) setReady(false);
   const show = mounted && ready;
@@ -95,7 +103,18 @@ export default function LivePromo({ to, urns, title, cta, ariaLabel, fallback, f
       </span>
       {mounted ? (
         <span className="shop-promo__avatar" data-ready={show || undefined} aria-hidden>
-          <PreviewFrame options={previewOptions(urns)} ambient onLoad={() => setReady(true)} onError={() => setFailed(true)} />
+          <PreviewFrame
+            key={bevy ? "bevy" : "babylon"}
+            options={previewOptions(urns, bevy)}
+            ambient
+            loadTimeoutMs={bevy ? UNITY_LOAD_TIMEOUT_MS : undefined}
+            onLoad={() => setReady(true)}
+            onError={() => {
+              setReady(false);
+              if (bevy) setBevyFailed(true);
+              else setFailed(true);
+            }}
+          />
         </span>
       ) : null}
     </Link>

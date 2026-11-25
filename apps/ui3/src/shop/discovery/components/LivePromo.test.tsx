@@ -160,6 +160,36 @@ describe("LivePromo", () => {
     expect(frame()).toBeNull();
   });
 
+  it("with the Bevy flag on draws with Bevy, and Bevy failing gives way to Babylon, covered until it draws", () => {
+    primeRemoteFlags({ "dapps-shop-bevy-avatar-preview": true });
+    tile();
+    intersect(true);
+    expect(new URL(frame()!.src).pathname).toBe("/avatar-preview/");
+    expect(params().get("mode")).toBe("marketplace");
+    expect(params().get("zoom")).toBe("100");
+    const fromBevy = (data: unknown) =>
+      act(() => {
+        window.dispatchEvent(new MessageEvent("message", { data, source: frame()!.contentWindow, origin: window.location.origin }));
+      });
+    fromBevy({ type: "load", payload: { renderer: "bevy" } });
+    expect(fallback().hasAttribute("data-hidden")).toBe(true);
+
+    fromBevy({ type: "error", payload: { message: "lost the device" } });
+    expect(new URL(frame()!.src).origin).toBe(PREVIEW);
+    expect(params().has("mode")).toBe(false);
+    expect(fallback().hasAttribute("data-hidden")).toBe(false);
+    fromPreview({ type: "load", payload: { renderer: "babylon" } });
+    expect(fallback().hasAttribute("data-hidden")).toBe(true);
+  });
+
+  it("waits for the flags before mounting, so it never loads one renderer and then the other", () => {
+    primeRemoteFlags(null);
+    vi.stubGlobal("fetch", () => new Promise(() => {}));
+    tile();
+    intersect(true);
+    expect(frame()).toBeNull();
+  });
+
   it("draws the fitting room's drifting backdrop under the avatar while on screen, at tiling 1", async () => {
     tile();
     expect(screen.queryByTestId("backdrop")).toBeNull();
