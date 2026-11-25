@@ -18,7 +18,7 @@
 //! whose signer no longer holds that exact token drops out, while a token
 //! the index does not hold (LAND, an estate) passes.
 //!
-//! A node that does not walk the index (its switch off, [`book_here`]) serves
+//! A node that does not walk the index (switch off, or not mainnet) serves
 //! the legacy `orders` of the collections subgraph reader (first ≤ 100,
 //! 30 s; past the graph's 5,000 skip by keyset up to `readers::DEEP_WINDOW`)
 //! and the v3 listings without the guard; the `x-listings-owner-check`
@@ -385,21 +385,6 @@ fn keyed(order: Order, sort_token_id: String) -> Keyed {
     }
 }
 
-/// Whether this node folds the legacy order book and serves its orders
-/// from it: the nft walk is on (`MARKETPLACE_NFT_INDEX_ENABLED`) and both
-/// chains it serves have the deployments the walk reads (the mainnet pair or
-/// Sepolia/Amoy, `IndexSettings::chain_id`), the rule `chain_jobs` schedules
-/// the walk by. A node with the switch off keeps the collections subgraph
-/// reader and serves the v3 listings unguarded.
-pub fn book_here(state: &MarketplaceState) -> bool {
-    let indexes = &state.settings.market.indexes;
-    indexes.nft_enabled
-        && ChainNet::ALL.iter().all(|&net| {
-            super::nft_index::deployments::Deployments::for_chain(net, indexes.chain_id(net))
-                .is_some()
-        })
-}
-
 /// The networks a read of `network` names (both without a filter).
 fn nets_of(network: Option<Network>) -> &'static [ChainNet] {
     match network {
@@ -600,7 +585,7 @@ pub async fn trades_leg(
     state: &MarketplaceState,
     f: &OrderFilters,
 ) -> Result<(Vec<Keyed>, OwnerCheck), Response> {
-    if book_here(state) {
+    if owned_items::walks_here(state) {
         let (mut tx, now) = book_snapshot(state, nets_of(f.network), false, false).await?;
         let rows = read_trades(&mut tx, state, f, OwnerCheck::Checked, now)
             .await
@@ -1070,7 +1055,7 @@ pub async fn list_orders_checked(
     let offset = clamp_skip(f.skip);
     readers::check_window(limit, offset)?;
     let window = offset + limit;
-    let (mut merged, legacy_total, trades, check) = if book_here(state) {
+    let (mut merged, legacy_total, trades, check) = if owned_items::walks_here(state) {
         let land = reads_land(state, f);
         let (mut tx, now) = book_snapshot(state, nets_of(f.network), land, true).await?;
         let now_ms = now.timestamp_millis();
@@ -1168,7 +1153,7 @@ pub async fn open_orders_by_items_checked(
         ..Default::default()
     };
     let mut per: Vec<(String, Vec<Keyed>)> = Vec::with_capacity(contracts.len());
-    let check = if book_here(state) {
+    let check = if owned_items::walks_here(state) {
         let land = contracts.iter().any(|c| is_land_registry(state, c));
         let (mut tx, now) = book_snapshot(state, &ChainNet::ALL, land, true).await?;
         for contract in &contracts {
@@ -1464,6 +1449,44 @@ mod tests {
             let f = parse_filters(&pairs(&[bad])).unwrap();
             assert!(book_from(&registries, &f, 0, false).is_none(), "{bad:?}");
         }
+    }
+
+    /// The served-contracts filter names the registries of the chain the
+    /// node serves on Ethereum, never mainnet's by default: on the
+    /// Sepolia/Amoy pair, Sepolia's LAND, Estate and names registrar.
+    #[tokio::test]
+    async fn the_served_registries_follow_the_served_ethereum_chain() {
+        let pool = sqlx::postgres::PgPoolOptions::new()
+            .connect_lazy("postgres://postgres@127.0.0.1:1/unused")
+            .unwrap();
+        let state = |chain: i64| {
+            let mut settings = super::super::Settings::for_tests();
+            settings.market.indexes.chain_id_ethereum = chain;
+            MarketplaceState::new(pool.clone(), crate::http::Outbound::for_tests(), settings)
+        };
+        let deployments = |chain| {
+            super::super::nft_index::deployments::Deployments::for_chain(ChainNet::Ethereum, chain)
+                .unwrap()
+        };
+        for chain in [
+            ChainNet::Ethereum.chain_id(),
+            ChainNet::Ethereum.testnet_chain_id(),
+        ] {
+            let land = deployments(chain).land.unwrap();
+            assert_eq!(
+                registries(&state(chain)),
+                Registries {
+                    land: land.land_registry.to_lowercase(),
+                    estate: land.estate_registry.to_lowercase(),
+                    names: deployments(chain).registrar().unwrap().to_lowercase(),
+                },
+                "{chain}"
+            );
+        }
+        assert_ne!(
+            registries(&state(ChainNet::Ethereum.testnet_chain_id())).land,
+            registries(&state(ChainNet::Ethereum.chain_id())).land
+        );
     }
 
     #[test]

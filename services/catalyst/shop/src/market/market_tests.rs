@@ -4990,179 +4990,83 @@ async fn a_partial_activity_names_the_unavailable_sources() {
     own.drop().await;
 }
 
-/// A node that walks the nft index on Sepolia/Amoy folds the legacy order
-/// book there and serves `/v1/orders`, `/v1/orders/open-by-items` and the
-/// activity orders legs from it, as a mainnet walker does: the `nft-index`
-/// envelope before the testnet fold is published, the book after, and never
-/// an order read of the collections subgraph.
+/// The order book's readiness reads the chains the node serves, never
+/// 1/137 by default: on the Sepolia/Amoy pair its snapshot takes nft
+/// publications bound to that pair (with the book caught up on them) and
+/// refuses ones bound to the mainnets. The routes reach this snapshot once
+/// the shared walk predicate counts a testnet walker; until then such a node
+/// keeps the subgraph reader.
 #[tokio::test]
-async fn a_testnet_walker_serves_orders_from_the_book_and_never_the_subgraph() {
-    let up = FakeGraph::new();
-    up.set("orders", vec![json!({ "id": "graph-order", "marketplaceAddress": "0xm", "nftAddress": "0xc", "tokenId": "1", "owner": WALLET_A, "buyer": null, "price": "1", "status": "open", "expiresAt": "9999999999999", "createdAt": "1", "updatedAt": "1", "nft": { "issuedId": "1" } })]);
-    let url = serve_graph(up.clone()).await;
-    let Some(own) = super::tests::support::OwnDb::create("testnet_book").await else {
+async fn the_order_book_readiness_reads_the_served_testnet_pair() {
+    use super::chain_walk::ChainNet;
+    let Some(own) = super::tests::support::OwnDb::create("testnet_readiness").await else {
         return;
     };
-    let eth_url = serve_empty_graph().await;
-    let mut settings =
-        super::owned_items::test_support::walking(market_settings(&url, &eth_url, true));
+    let url = serve_empty_graph().await;
+    let mut settings = super::owned_items::test_support::walking(market_settings(&url, &url, true));
     settings.eth_network = "sepolia".into();
-    settings.market.indexes.chain_id_ethereum =
-        super::chain_walk::ChainNet::Ethereum.testnet_chain_id();
-    settings.market.indexes.chain_id_matic = super::chain_walk::ChainNet::Matic.testnet_chain_id();
-    let state = Arc::new(super::MarketplaceState::new(
+    settings.market.indexes.chain_id_ethereum = ChainNet::Ethereum.testnet_chain_id();
+    settings.market.indexes.chain_id_matic = ChainNet::Matic.testnet_chain_id();
+    let state = super::MarketplaceState::new(
         own.pool.clone(),
         crate::http::Outbound::for_tests(),
         settings,
-    ));
-    state.test_allow_loopback.store(true, Ordering::Relaxed);
-    assert!(super::orders::book_here(&state));
-    let pool = state.pool.clone();
-    // The trade-events verdicts, current on the chains this process serves
-    // them for (`catalog::served_chains`, process-wide).
+    );
+    let pool = own.pool.clone();
     super::trade_events::tests::publish_cursors(&pool).await;
-    let c = contract_of(&tag(), 7);
-    let token = (alloy_primitives::U256::from(3u64) << 216u32 | alloy_primitives::U256::from(1u64))
-        .to_string();
-    sqlx::query(
-        "INSERT INTO shop.collections (network, contract_address, chain_id, name, creator, owner, urn, is_completed, is_approved, is_editable, created_at, updated_at, reviewed_at, mirrored_at) \
-         SELECT 'matic', $1, 80002, 'Amoy', $2, $2, 'urn:decentraland:amoy:collections-v2:' || $1, true, true, false, 1, 1, 1, timezone('UTC', now())",
-    )
-    .bind(&c)
-    .bind(CREATOR)
-    .execute(&pool)
-    .await
-    .unwrap();
-    sqlx::query(
-        "INSERT INTO shop.legacy_order (network, marketplace_address, order_id, contract_address, token_id, seller, price, expires_at, status, \
-             created_block, created_log, created_at, updated_block, updated_log, updated_at) \
-         VALUES ('matic', '0x0c8ad1f6aadf89d2eb19f01a100a6143108fe2b0', 'amoy-order', $1, $2::numeric, $3, 7, $4, 'open', 50, 0, 50, 50, 0, 50)",
-    )
-    .bind(&c)
-    .bind(&token)
-    .bind(WALLET_A)
-    .bind((chrono::Utc::now().timestamp() + 86_400) * 1000)
-    .execute(&pool)
-    .await
-    .unwrap();
-    sqlx::query(
-        "INSERT INTO shop.nft (network, contract_address, token_id, owner, item_id, issued_id, minted_block, minted_at, transferred_block, transferred_log, transferred_at) \
-         VALUES ('matic', $1, $2::numeric, $3, 3, 1, 1, 1, 1, 0, 1)",
-    )
-    .bind(&c)
-    .bind(&token)
-    .bind(WALLET_A)
-    .execute(&pool)
-    .await
-    .unwrap();
-    let app = || market_router(state.clone());
-    let activity = || {
-        let state = state.clone();
+    let publish = |testnet: bool| {
+        let pool = pool.clone();
         async move {
-            let headers = signed_headers(
-                "get",
-                "/v1/activity",
-                r#"{"signer":"dcl:marketplace"}"#,
-                true,
-            )
-            .await;
-            let signer = crate::shared::signed_fetch::test_support::address();
-            let mut req = Request::builder().uri(format!("/v1/activity?address={signer}"));
-            for (k, v) in headers.iter() {
-                req = req.header(k, v);
-            }
-            let resp = market_router(state)
-                .oneshot(req.body(Body::empty()).unwrap())
+            for net in ChainNet::ALL {
+                let chain = if testnet {
+                    net.testnet_chain_id()
+                } else {
+                    net.chain_id()
+                };
+                sqlx::query(
+                    "INSERT INTO shop.chain_cursor (indexer, network, start_block, last_block, last_block_hash, fold_through, folded_block, folded_at, full_history, chain_id) \
+                     VALUES ('nft', $1, 1, 100, '0x' || repeat('0', 64), 100, 100, timezone('UTC', now()), true, $2) \
+                     ON CONFLICT (indexer, network) DO UPDATE SET chain_id = EXCLUDED.chain_id",
+                )
+                .bind(net.db_name())
+                .bind(chain)
+                .execute(&pool)
                 .await
                 .unwrap();
-            (
-                resp.status(),
-                resp.headers()
-                    .get(super::activity::UNAVAILABLE_SOURCES_HEADER)
-                    .map(|v| v.to_str().unwrap().to_string()),
-            )
+                sqlx::query(
+                    "INSERT INTO shop.chain_checkpoint (indexer, network, block_number, block_hash, block_time) VALUES ('nft', $1, 100, '0x' || repeat('0', 64), 0) ON CONFLICT DO NOTHING",
+                )
+                .bind(net.db_name())
+                .execute(&pool)
+                .await
+                .unwrap();
+                sqlx::query(
+                    "INSERT INTO shop.legacy_order_cursor (network, folded_through, through_hash) VALUES ($1, 100, '0x' || repeat('0', 64)) ON CONFLICT DO NOTHING",
+                )
+                .bind(net.db_name())
+                .execute(&pool)
+                .await
+                .unwrap();
+            }
         }
     };
-    let order_reads = || {
-        up.requests
-            .lock()
-            .unwrap()
-            .iter()
-            .filter(|e| e.as_str() == "orders")
-            .count()
-    };
-    // Before the testnet fold is published: the envelope, not the graph.
-    for uri in [
-        "/v1/orders?network=MATIC".to_string(),
-        format!("/v1/orders/open-by-items?item={c}-3"),
-    ] {
-        let (status, body) = get(app(), &uri).await;
-        assert_eq!(
-            (status, body["source"].as_str()),
-            (StatusCode::SERVICE_UNAVAILABLE, Some("nft-index")),
-            "{uri}: {body}"
-        );
-    }
-    let (status, named) = activity().await;
-    assert_eq!(status, StatusCode::OK);
-    assert!(
-        named.as_deref().is_some_and(|n| n.contains("nft-index")),
-        "{named:?}"
-    );
-    // The testnet fold publishes, its book folded through it.
-    for net in super::chain_walk::ChainNet::ALL {
-        sqlx::query(
-            "INSERT INTO shop.chain_cursor (indexer, network, start_block, last_block, last_block_hash, fold_through, folded_block, folded_at, full_history, chain_id) \
-             VALUES ('nft', $1, 1, 100, '0x' || repeat('0', 64), 100, 100, timezone('UTC', now()), true, $2)",
-        )
-        .bind(net.db_name())
-        .bind(net.testnet_chain_id())
-        .execute(&pool)
-        .await
-        .unwrap();
-        sqlx::query(
-            "INSERT INTO shop.chain_checkpoint (indexer, network, block_number, block_hash, block_time) VALUES ('nft', $1, 100, '0x' || repeat('0', 64), 0); \
-             ",
-        )
-        .bind(net.db_name())
-        .execute(&pool)
-        .await
-        .unwrap();
-        sqlx::query(
-            "INSERT INTO shop.legacy_order_cursor (network, folded_through, through_hash) VALUES ($1, 100, '0x' || repeat('0', 64))",
-        )
-        .bind(net.db_name())
-        .execute(&pool)
-        .await
-        .unwrap();
-    }
-    let (status, body) = get(app(), "/v1/orders?network=MATIC").await;
-    assert_eq!(status, StatusCode::OK, "{body}");
-    assert_eq!(
-        (
-            body["data"][0]["id"].as_str(),
-            body["data"][0]["status"].as_str(),
-            body["total"].as_str()
+    publish(true).await;
+    let snapshot = super::orders::book_snapshot(&state, &ChainNet::ALL, false, true).await;
+    let held = match snapshot {
+        Ok((tx, _)) => tx,
+        Err(r) => panic!(
+            "the testnet publications are the served chains' ones: {}",
+            r.status()
         ),
-        (Some("amoy-order"), Some("open"), Some("1")),
-        "{body}"
-    );
-    let (status, body) = get(app(), &format!("/v1/orders/open-by-items?item={c}-3")).await;
+    };
+    // The snapshot holds a connection of the test pool until released.
+    held.rollback().await.unwrap();
+    publish(false).await;
+    let snapshot = super::orders::book_snapshot(&state, &ChainNet::ALL, false, true).await;
     assert_eq!(
-        (status, body["total"].as_str()),
-        (StatusCode::OK, Some("1")),
-        "{body}"
-    );
-    let (status, named) = activity().await;
-    assert_eq!(status, StatusCode::OK);
-    assert!(
-        !named.as_deref().is_some_and(|n| n.contains("nft-index")),
-        "the order legs read the published book: {named:?}"
-    );
-    assert_eq!(
-        order_reads(),
-        0,
-        "no order read reached the collections subgraph"
+        snapshot.err().map(|r| r.status()),
+        Some(StatusCode::SERVICE_UNAVAILABLE),
+        "a mainnet-bound publication does not serve a testnet node"
     );
     own.drop().await;
 }

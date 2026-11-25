@@ -4258,8 +4258,7 @@ Its size and the lookup time on production data are unmeasured.
 
 `shop.legacy_order` is the legacy on-chain order book of `/v1/orders`,
 `/v1/orders/open-by-items` (and credits pricing through it) and the activity
-feed's orders leg on a node that walks the nft index (the switch on, on the
-mainnet pair or Sepolia/Amoy, as the walk is scheduled). It is one row per
+feed's orders leg on a node that walks the nft index. It is one row per
 `OrderCreated` of the Marketplace contracts the nft walk takes in, folded
 from `shop.nft_event` by `services/catalyst/shop/src/market/legacy_orders.rs`
 in the nft fold's transaction, so it is published with the ownership it is

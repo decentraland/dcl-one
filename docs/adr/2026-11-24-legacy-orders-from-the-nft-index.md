@@ -51,12 +51,9 @@ is established (so a fold published while the request waited is not read as
 published in the future), and its total counts each network up to the
 reader's cap and sums them, as the subgraph reader did.
 
-A node reads the book exactly when it walks the nft index: the switch on
-and both chains it serves supported by the walk, the mainnet pair or
-Sepolia/Amoy, the rule the walk is scheduled by. A testnet walker therefore
-serves its testnet book under the same readiness. A node with the switch off
-keeps the collections subgraph reader for its legacy orders and serves the
-v3 listings unguarded, as before.
+A node that does not walk the index (the switch off, or a network other
+than mainnet) keeps the collections subgraph reader for its legacy orders
+and serves the v3 listings unguarded, as before.
 
 The book keeps its own marker per network (`shop.legacy_order_cursor`): the
 nft walk's last block when the order fold last ran, and that block's hash.
