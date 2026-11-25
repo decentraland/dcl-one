@@ -17102,8 +17102,6 @@ CREATE TABLE shop.nft_last_sale (
 );
 -- The rows a changed history deletes: WHERE network = $1 AND block_number > $2.
 CREATE INDEX nft_last_sale_block ON shop.nft_last_sale (network, block_number);
--- A network's tokens by their latest sale.
-CREATE INDEX nft_last_sale_recent ON shop.nft_last_sale (network, sold_at DESC);
 
 -- Sparse fee configuration changes. Look up the last event before a
 -- particular execution, including a change earlier in the same block.
