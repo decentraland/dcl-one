@@ -76,8 +76,6 @@ pub(super) async fn run_pass(
     url: &str,
 ) -> anyhow::Result<()> {
     let pool = state.pool.clone();
-    let chain_id = state.settings.market.indexes.chain_id(network.into()) as i32;
-    let verified = super::verify_testnet(state, network.into());
     walk(
         state,
         ctx,
@@ -99,7 +97,7 @@ pub(super) async fn run_pass(
                 last_id,
             })
         },
-        |rows| {
+        |rows, chain_id, verified| {
             let pool = pool.clone();
             async move { upsert(&pool, network, chain_id, verified, &rows).await }
         },

@@ -71,6 +71,7 @@ pub mod committee_index;
 pub mod compare_sources;
 pub mod contracts;
 pub mod definitions;
+pub mod ethereum_sales;
 pub mod features;
 pub mod federation;
 pub mod items;
@@ -100,12 +101,17 @@ pub mod rankings;
 pub mod readers;
 pub mod rentals;
 pub mod royalty_notices;
+pub mod sale_fold;
+pub(crate) mod sale_history;
+pub use sale_history::FAMILIES as SALES_REPAIR_METRICS;
 pub mod sale_notices;
+mod sale_terms;
 pub mod sales;
 pub mod sales_index;
 pub mod search;
 pub mod shop;
 pub mod signed;
+mod store_sales;
 pub mod third_party;
 pub mod third_party_registry;
 pub mod tips;
@@ -482,12 +488,42 @@ impl Settings {
 
     fn walks_catalogue(&self) -> bool {
         self.market.indexes.nft_enabled
-            && crate::land_authz::land_network(&self.eth_network).is_some_and(|land| {
-                let pair = nft_index::Catalogue::from_land(land);
-                chain_walk::ChainNet::ALL
-                    .iter()
-                    .all(|&net| pair.chain_id(net) == self.market.indexes.chain_id(net))
-            })
+            && chain_walk::ChainNet::ALL
+                .into_iter()
+                .all(|net| self.catalogue_chain(net) == Some(self.market.indexes.chain_id(net)))
+    }
+
+    pub fn catalogue_chain(&self, net: chain_walk::ChainNet) -> Option<i64> {
+        crate::land_authz::land_network(&self.eth_network)
+            .map(|land| nft_index::Catalogue::from_land(land).chain_id(net))
+    }
+
+    pub fn writes_catalogue(&self) -> bool {
+        self.market.indexes.nft_enabled
+            || self.market.indexes.sales_enabled
+            || self.market.mirrors_enabled
+    }
+
+    pub fn check_writer_pair(&self) -> anyhow::Result<()> {
+        if self.writes_catalogue() {
+            self.market
+                .indexes
+                .check_chains()
+                .map_err(anyhow::Error::msg)?;
+            for net in chain_walk::ChainNet::ALL {
+                let expected = self
+                    .catalogue_chain(net)
+                    .ok_or_else(|| anyhow::anyhow!("ETH_NETWORK names no supported catalogue"))?;
+                let configured = self.market.indexes.chain_id(net);
+                anyhow::ensure!(
+                    configured == expected,
+                    "ETH_NETWORK={} requires the {} catalogue chain {expected}, configured {configured}",
+                    self.eth_network,
+                    net.db_name()
+                );
+            }
+        }
+        Ok(())
     }
 
     /// The collections subgraphs configured, in the order the mirrors walk them.
@@ -897,13 +933,10 @@ impl MarketplaceState {
         if let Some(url) = self.settings.market.trade_rpc_urls.for_chain(id) {
             return Some(url.to_string());
         }
-        let land = self.land_network()?;
-        let expected = if land == crate::land_authz::LAND_SEPOLIA {
-            net.testnet_chain_id()
-        } else {
-            net.chain_id()
-        };
-        if expected != id {
+        if id == net.chain_id() {
+            return self.chain_rpc_url(net);
+        }
+        if self.settings.catalogue_chain(net)? != id {
             return None;
         }
         match net {

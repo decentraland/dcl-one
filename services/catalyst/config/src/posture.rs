@@ -842,14 +842,9 @@ pub fn unchecked_profile_items(config: &Config) -> Option<&'static str> {
     )
 }
 
-/// A mirror replaces a Catalyst whose lambdas always check the profiles'
-/// items and names against their owner. On mainnet (the chains the walk
-/// reads) the wearables, emotes and DCL NAMEs all read the nft index, so the
-/// index stays on with a JSON-RPC endpoint for chain 137 (`TRADE_RPC_URLS`;
-/// chain 1 falls back to `ETH_RPC_URL`, which a mirror always has). Off
-/// mainnet the index walks nothing: the names read the marketplace subgraph,
-/// which may not be blanked there, and the items are served as deployed. An
-/// island, with no ownership source, serves both as deployed.
+/// A walking mirror checks wearables, emotes and DCL NAMEs against the
+/// catalogue for its chain pair. A testnet mirror without a walk checks
+/// names through the configured graph and serves items as deployed.
 fn refuse_unfiltered_profiles(config: &Config, env: &Lookup) -> anyhow::Result<()> {
     if !walks_catalogue(config) && config.node.eth_network.trim() != "mainnet" {
         if Config::non_empty(&config.market_upstreams.marketplace_subgraph_url).is_none() {
@@ -899,7 +894,8 @@ fn refuse_unfiltered_profiles(config: &Config, env: &Lookup) -> anyhow::Result<(
     let from_file = env("TRADE_RPC_URLS_FILE").is_some_and(|v| !v.trim().is_empty());
     if let Some(raw) = config.marketplace.trade_rpc_urls.as_deref()
         && !from_file
-        && !names_polygon(raw)
+        && config.marketplace.marketplace_index_chain_id_matic == 137
+        && !names_chain(raw, 137)
     {
         anyhow::bail!(
             "{ENV}=mirror walks the nft index on chains 1 and 137, but TRADE_RPC_URLS names no \
@@ -909,27 +905,29 @@ fn refuse_unfiltered_profiles(config: &Config, env: &Lookup) -> anyhow::Result<(
     Ok(())
 }
 
-/// Whether a `TRADE_RPC_URLS` list names a chain 137 endpoint.
-fn names_polygon(raw: &str) -> bool {
+/// Whether the list binds an endpoint to this chain.
+fn names_chain(raw: &str, expected: u64) -> bool {
     raw.split(',').any(|entry| {
-        entry
-            .split_once('=')
-            .is_some_and(|(chain, url)| chain.trim() == "137" && !url.trim().is_empty())
+        entry.split_once('=').is_some_and(|(chain, url)| {
+            chain.trim().parse::<u64>() == Ok(expected) && !url.trim().is_empty()
+        })
     })
 }
 
-/// The chain 137 check of [`refuse_unfiltered_profiles`] on the list this
-/// node will use, once the secret files are read and the list derived
-/// (`Config::resolve_secret_files` runs this last): a `TRADE_RPC_URLS_FILE`
-/// naming chain 1 alone, or no list at all, would leave the Polygon walk
-/// without an endpoint, and Polygon ownership never published.
+/// Check the resolved endpoints after secret files and network defaults
+/// have been read. The Amoy walk also accepts the node's Polygon endpoint.
 fn refuse_unwalkable_polygon(config: &Config) -> anyhow::Result<()> {
-    if config.node.eth_network.trim() != "mainnet"
-        || !config.marketplace.marketplace_nft_index_enabled
-    {
+    if !walks_catalogue(config) {
         return Ok(());
     }
-    if !names_polygon(config.marketplace.trade_rpc_urls.as_deref().unwrap_or("")) {
+    let raw = config.marketplace.trade_rpc_urls.as_deref().unwrap_or("");
+    if config.marketplace.marketplace_index_chain_id_matic == 80002 {
+        anyhow::ensure!(
+            names_chain(raw, 80002)
+                || Config::non_empty(&config.economy.rpc_endpoint_polygon).is_some(),
+            "{ENV}=mirror needs an Amoy endpoint in TRADE_RPC_URLS or RPC_ENDPOINT_POLYGON"
+        );
+    } else if !names_chain(raw, 137) {
         anyhow::bail!(
             "{ENV}=mirror walks the nft index on chains 1 and 137, but the TRADE_RPC_URLS it read \
              (TRADE_RPC_URLS_FILE included) names no 137= endpoint: add one, or unset both to use \

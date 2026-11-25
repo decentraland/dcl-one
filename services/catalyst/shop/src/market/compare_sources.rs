@@ -244,10 +244,13 @@ impl Report {
 pub fn index_for(indexer: &str, net: ChainNet) -> anyhow::Result<Box<dyn ChainIndex>> {
     Ok(match (indexer, net) {
         (chain_walk::INDEXER_NFT, _) => Box::new(super::nft_index::NftIndex::new(net)),
+        (chain_walk::INDEXER_SALES, ChainNet::Ethereum) => {
+            Box::new(super::ethereum_sales::EthereumSalesIndex)
+        }
         (chain_walk::INDEXER_SALES, ChainNet::Matic) => Box::new(super::sales_index::POLYGON),
         (chain_walk::INDEXER_TRADE_EVENTS, _) => Box::new(super::trade_events::TradeEventsIndex {
             net,
-            chain_id: chain_walk::mainnet_chain(net),
+            chain_id: net.chain_id(),
         }),
         (chain_walk::INDEXER_COMMITTEE, ChainNet::Matic) => {
             Box::new(super::committee_index::CommitteeIndex)
@@ -413,7 +416,7 @@ async fn measure(
     // The projection, the dataset, the database's cursor and the RPC must
     // name one chain before any window is read; the dataset is known
     // before any read.
-    let projection = chain_walk::mainnet_chain(req.net) as u64;
+    let projection = req.net.chain_id() as u64;
     if req.reader.chain() != projection {
         out.refused = Some(format!(
             "the dataset {} serves chain {}, the {} {} projection reads chain {projection}",

@@ -57,6 +57,9 @@ pub const DEFAULT_PAGES_PER_TICK: usize = 50;
 pub const READY_TTL: Duration = Duration::from_secs(10);
 /// The subgraphs' page cap, the keyset step.
 pub const PAGE_SIZE: i64 = 1000;
+/// Retry transient errors at the same keyset. An old failing pin may have
+/// been pruned or orphaned, so the next tick starts a new verified pass.
+const MAX_PIN_AGE: chrono::Duration = chrono::Duration::days(1);
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum Mirror {
@@ -126,6 +129,13 @@ impl Cursor {
             last_error: None,
             updated_at: None,
         }
+    }
+
+    fn restart_pagination(&mut self) {
+        self.pass_started_at = None;
+        self.pass_block_hash = None;
+        self.cursor_id = None;
+        self.cursor_updated_at = None;
     }
 
     /// A pass started and not completed since.
@@ -286,7 +296,24 @@ pub(super) async fn cursor_for(
     chain_id: Option<i64>,
 ) -> anyhow::Result<Cursor> {
     Ok(match load(pool, mirror, network).await? {
-        Some(c) if c.source_url == url && c.chain_id == chain_id => c,
+        Some(c) if chain_id.is_none() && (c.chain_id.is_some() || c.pass_block_hash.is_some()) => {
+            anyhow::bail!("a verified catalogue mirror requires its chain RPC to continue");
+        }
+        Some(c)
+            if c.chain_id.is_none()
+                && c.pass_block_hash.is_some()
+                && chain_id
+                    != Some(super::chain_walk::ChainNet::from(network).testnet_chain_id()) =>
+        {
+            anyhow::bail!("an unbound pinned catalogue pass requires its testnet chain");
+        }
+        Some(c)
+            if c.source_url == url
+                && (c.chain_id == chain_id
+                    || (c.chain_id.is_none() && c.pass_block_hash.is_some())) =>
+        {
+            c
+        }
         Some(c)
             if c.source_url == url
                 && c.chain_id.is_none()
@@ -302,8 +329,14 @@ pub(super) async fn cursor_for(
         {
             anyhow::bail!("catalogue mirror is already bound to a different chain");
         }
-        Some(c) if c.chain_id.is_some() && chain_id.is_none() => {
-            anyhow::bail!("a verified catalogue mirror requires its chain RPC to continue");
+        Some(c) if c.source_url == url && c.chain_id.is_none() => {
+            // Descriptive readers can continue serving the old copy. The
+            // NFT gate needs a completed pass with a proven chain ID.
+            Cursor {
+                last_complete_pass_at: c.last_complete_pass_at,
+                last_complete_pass_rows: c.last_complete_pass_rows,
+                ..Cursor::fresh(mirror, network, url)
+            }
         }
         Some(c) => {
             tracing::warn!(mirror = mirror.name(), network = network.db_name(), old = %c.source_url, "mirror source or chain changed; the cursor restarts");
@@ -341,16 +374,30 @@ pub(super) async fn walk<F, FF, U, UF>(
 where
     F: Fn(Option<i64>, Option<String>, Option<String>) -> FF,
     FF: std::future::Future<Output = Result<Page, String>>,
-    U: Fn(Vec<Value>) -> UF,
+    U: Fn(Vec<Value>, i32, bool) -> UF,
     UF: std::future::Future<Output = Result<i64, sqlx::Error>>,
 {
     let pool = &state.pool;
     let net = super::chain_walk::ChainNet::from(network);
     let configured = state.settings.market.indexes.chain_id(net);
-    let binding =
-        (configured == net.chain_id() || verify_testnet(state, net)).then_some(configured);
+    let verified = verify_testnet(state, net);
+    let binding = (configured == net.chain_id() || verified).then_some(configured);
     let mut c = cursor_for(pool, mirror, network, url, binding).await?;
-    c.chain_id = binding;
+    if configured == net.chain_id() {
+        c.chain_id = binding;
+    }
+    if c.in_progress()
+        && c.pass_block_hash.is_some()
+        && c.pass_started_at
+            .is_some_and(|start| now_utc() - start >= MAX_PIN_AGE)
+    {
+        tracing::warn!(
+            mirror = mirror.name(),
+            network = network.db_name(),
+            "catalogue pass exceeded its pin age"
+        );
+        c.restart_pagination();
+    }
     if !c.in_progress() {
         c.pass_block_hash = None;
         c.pass_started_at = Some(now_utc());
@@ -370,7 +417,7 @@ where
     } else {
         tracing::info!(mirror = mirror.name(), network = network.db_name(), cursor = ?c.cursor_id, "mirror pass resumes at the persisted cursor");
     }
-    if verify_testnet(state, net) && c.pass_block_hash.is_none() {
+    if verified && c.pass_block_hash.is_none() {
         match catalogue_pass_hash(state, net, url).await {
             Ok(hash) => c.pass_block_hash = Some(hash),
             Err(error) => {
@@ -401,6 +448,25 @@ where
             Ok(p) => p,
             Err(e) => {
                 c.last_error = Some(e.clone());
+                let message = e.to_ascii_lowercase();
+                if c.pass_block_hash.is_some()
+                    && [
+                        "block not found",
+                        "unknown block",
+                        "no block with",
+                        "no block found",
+                        "differs from the pinned block",
+                    ]
+                    .iter()
+                    .any(|reason| message.contains(reason))
+                {
+                    tracing::warn!(
+                        mirror = mirror.name(),
+                        network = network.db_name(),
+                        "graph cannot serve the pinned block; restarting catalogue pass"
+                    );
+                    c.restart_pagination();
+                }
                 save(pool, &c).await?;
                 anyhow::bail!(
                     "{} mirror ({}): page after {:?}: {e}",
@@ -412,7 +478,7 @@ where
         };
         let fetched = page.rows.len() as i64;
         let short = fetched < PAGE_SIZE;
-        let upserted = match upsert(page.rows).await {
+        let upserted = match upsert(page.rows, configured as i32, verified).await {
             Ok(n) => n,
             Err(e) => {
                 c.last_error = Some(format!("upsert failed: {e}"));
@@ -434,6 +500,7 @@ where
             c.cursor_id = Some(id);
         }
         if short {
+            c.chain_id = binding;
             c.last_complete_pass_at = Some(now_utc());
             c.last_complete_pass_rows = Some(c.rows_upserted);
             if !incremental {

@@ -285,6 +285,29 @@ fn a_mirror_refuses_blank_profile_ownership_readers() {
 }
 
 #[test]
+fn a_testnet_catalogue_mirror_accepts_amoy_endpoints() {
+    let vars = [
+        ("DATABASE_URL", "postgres:///catalyst"),
+        (ENV, "mirror"),
+        ("ETH_NETWORK", "sepolia"),
+        ("MARKETPLACE_INDEX_CHAIN_ID_ETHEREUM", "11155111"),
+        ("MARKETPLACE_INDEX_CHAIN_ID_MATIC", "80002"),
+        ("MARKETPLACE_NFT_INDEX_ENABLED", "true"),
+        ("TRADE_RPC_URLS", "80002=https://amoy.example"),
+        ("MARKETPLACE_SUBGRAPH_URL", ""),
+    ];
+    let mut c = parsed(&vars);
+    let values = env(&vars);
+    refuse_unfiltered_profiles(&c, &lookup(&values)).unwrap();
+    refuse_unwalkable_polygon(&c).unwrap();
+    c.marketplace.trade_rpc_urls = Some("137=https://polygon.example".into());
+    c.economy.rpc_endpoint_polygon = None;
+    assert!(refuse_unwalkable_polygon(&c).is_err());
+    c.economy.rpc_endpoint_polygon = Some("https://amoy.example".into());
+    refuse_unwalkable_polygon(&c).unwrap();
+}
+
+#[test]
 fn a_mirror_reads_third_party_holdings_from_the_nft_worker() {
     assert_eq!(
         expanded(Posture::Mirror, &[])["NFT_WORKER_BASE_URL"],

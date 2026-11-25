@@ -770,7 +770,7 @@ pub(crate) mod test_support {
             )
             .bind(net.db_name())
             .bind(age.as_secs_f64())
-            .bind(chain_walk::mainnet_chain(*net))
+            .bind(net.chain_id())
             .execute(pool)
             .await
             .unwrap();

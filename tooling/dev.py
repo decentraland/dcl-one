@@ -753,7 +753,7 @@ def testnet_env(config, refuse_exposed_relayer=True):
         'MARKETPLACE_INDEX_INTERVAL_SECS': '5',
         'MARKETPLACE_INDEX_CHAIN_ID_MATIC': '80002',
         'MARKETPLACE_INDEX_CHAIN_ID_ETHEREUM': '11155111',
-        # This testnet stack keeps the configured graph readers until the catalogue reader cutover.
+        # This testnet stack uses its configured graph readers.
         'MARKETPLACE_NFT_INDEX_ENABLED': 'false',
         # The Rentals contract is mainnet's; there is no chain-1 endpoint here.
         'SHOP_RENTALS_INDEX_ENABLED': 'false',
