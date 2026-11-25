@@ -1591,6 +1591,48 @@ async fn wait_for_blocked_request(pool: &sqlx::PgPool, blocker: i32) {
 }
 
 #[tokio::test]
+async fn the_land_write_fence_accepts_the_same_publications_as_the_asset_reader() {
+    let Some(pool) = crate::db::scratch::isolated_pool(4).await else {
+        return;
+    };
+    use crate::land_authz::{LAND_MAINNET, indexer::ready_snapshot};
+    publish_land(&pool).await;
+    let revision = sqlx::query_scalar("SELECT updated_at FROM land_authz.index_cursor")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    for stage in 0..3 {
+        if stage == 1 {
+            sqlx::query("UPDATE land_authz.index_cursor SET last_block=101")
+                .execute(&pool)
+                .await
+                .unwrap();
+        }
+        if stage == 2 {
+            transfer(&pool, LAND, "5", LESSOR, 101, 1700000000).await;
+        }
+        let read_ready = ready_snapshot(&pool, LAND_MAINNET.network, LAND, ESTATE)
+            .await
+            .unwrap()
+            .is_some();
+        let mut tx = pool.begin().await.unwrap();
+        let write_ready = super::status::land_publication_matches(&mut tx, revision)
+            .await
+            .unwrap();
+        assert_eq!(
+            write_ready, read_ready,
+            "read and write readiness diverged at stage {stage}"
+        );
+        if stage == 0 {
+            assert!(write_ready);
+        }
+        if stage == 2 {
+            assert!(!write_ready);
+        }
+    }
+}
+
+#[tokio::test]
 async fn patch_discards_the_observed_transfer_when_land_rewinds_before_cancellation() {
     let Some(pool) = crate::db::scratch::isolated_pool(4).await else {
         return;

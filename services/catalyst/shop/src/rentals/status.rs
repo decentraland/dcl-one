@@ -314,24 +314,9 @@ async fn cancel_if_published_snapshot(
         return Ok(Some(0));
     }
     let mut tx = pool.begin().await?;
-    let current_land: Option<crate::land_authz::indexer::Cursor> = sqlx::query_as(
-        "SELECT network, land_registry, estate_registry, last_block, folded_block, folded_at, full_replay_started, updated_at \
-         FROM land_authz.index_cursor WHERE network=$1 FOR SHARE",
-    )
-    .bind(snapshot.land.network)
-    .fetch_optional(&mut *tx)
-    .await?;
+    let current_land = lock_land_publication(&mut tx, snapshot.land).await?;
+    let land_matches = current_land.as_ref() == Some(snapshot.land_cursor);
     let current_rentals = index::lock_cursor(&mut tx, snapshot.rentals_chain).await?;
-    let land_matches = current_land.as_ref().is_some_and(|cursor| {
-        cursor == snapshot.land_cursor
-            && cursor
-                .land_registry
-                .eq_ignore_ascii_case(snapshot.land.land_registry)
-            && cursor
-                .estate_registry
-                .eq_ignore_ascii_case(snapshot.land.estate_registry)
-            && crate::land_authz::indexer::index_ready(cursor, now)
-    });
     let rentals_matches = current_rentals.as_ref().is_some_and(|cursor| {
         cursor == snapshot.rentals_cursor
             && crate::market::chain_walk::is_ready_on(cursor, snapshot.rentals_chain.id(), now)
@@ -419,7 +404,7 @@ pub async fn sync_listing(
     }
     let mut tx = pool.begin().await?;
     if let Some(expected) = nft.and_then(|n| n.land_cursor_updated_at)
-        && (chain.is_none() || !land_publication_matches(&mut tx, expected, now).await?)
+        && (chain.is_none() || !land_publication_matches(&mut tx, expected).await?)
     {
         tx.rollback().await?;
         return Ok(SyncOutcome::LandUnavailable);
@@ -517,25 +502,32 @@ pub async fn sync_listing(
 pub(super) async fn land_publication_matches(
     conn: &mut PgConnection,
     expected_updated_at: NaiveDateTime,
-    now: DateTime<Utc>,
 ) -> Result<bool, sqlx::Error> {
-    let current_land: Option<crate::land_authz::indexer::Cursor> = sqlx::query_as(
-            "SELECT network, land_registry, estate_registry, last_block, folded_block, folded_at, full_replay_started, updated_at \
-             FROM land_authz.index_cursor WHERE network=$1 FOR SHARE",
-        )
-        .bind(crate::land_authz::LAND_MAINNET.network)
-        .fetch_optional(&mut *conn)
-        .await?;
-    Ok(current_land.is_some_and(|cursor| {
-        cursor.updated_at == expected_updated_at
-            && cursor
-                .land_registry
-                .eq_ignore_ascii_case(crate::land_authz::LAND_MAINNET.land_registry)
-            && cursor
-                .estate_registry
-                .eq_ignore_ascii_case(crate::land_authz::LAND_MAINNET.estate_registry)
-            && crate::land_authz::indexer::index_ready(&cursor, now)
-    }))
+    Ok(lock_land_publication(conn, crate::land_authz::LAND_MAINNET)
+        .await?
+        .is_some_and(|cursor| cursor.updated_at == expected_updated_at))
+}
+
+/// Hold the cursor stable while applying the same observation as the asset reader.
+async fn lock_land_publication(
+    conn: &mut PgConnection,
+    land: LandNetwork,
+) -> Result<Option<crate::land_authz::indexer::Cursor>, sqlx::Error> {
+    use crate::land_authz::indexer::{cursor_observed, observation_ready};
+    let locked =
+        sqlx::query("SELECT network FROM land_authz.index_cursor WHERE network=$1 FOR SHARE")
+            .bind(land.network)
+            .fetch_optional(&mut *conn)
+            .await?;
+    if locked.is_none() {
+        return Ok(None);
+    }
+    Ok(cursor_observed(&mut *conn, land.network)
+        .await?
+        .filter(|observation| {
+            observation_ready(observation, land.land_registry, land.estate_registry)
+        })
+        .map(|observation| observation.cursor))
 }
 
 /// Attaches the leased `rental-listing-status` job: [`run_pass`] every

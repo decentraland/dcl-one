@@ -384,7 +384,7 @@ pub async fn create_rentals_listing(
     let mut tx = state.db.pool().begin().await?;
     let write_time = chrono::Utc::now();
     if let Some(expected) = nft.land_cursor_updated_at
-        && !super::status::land_publication_matches(&mut tx, expected, write_time).await?
+        && !super::status::land_publication_matches(&mut tx, expected).await?
     {
         return Ok(reader_unavailable(NftReadError::Unavailable));
     }
