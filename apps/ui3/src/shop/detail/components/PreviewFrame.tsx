@@ -117,7 +117,9 @@ type Props = {
   replay?: number;
   /**
    * How long a mount may go without its first `load` or `error` before it counts as failed. The preview does not always
-   * say: Unity whose config cannot be read shows the error on its own canvas and posts nothing.
+   * say: Unity whose config cannot be read shows the error on its own canvas and posts nothing. Only the mount's first
+   * answer is timed, not the reload an update starts, and only while the page is visible: a hidden tab runs no animation
+   * frames, so the preview cannot draw there.
    */
   loadTimeoutMs?: number;
   onLoad: (renderer: PreviewRendererName | undefined) => void;
@@ -181,11 +183,39 @@ export default function PreviewFrame({ options, replay = 0, loadTimeoutMs, onLoa
 
   useEffect(() => {
     if (loadTimeoutMs === undefined) return;
-    const timer = window.setTimeout(() => {
+    // The visible time left, and whether the timeout has run: a page hidden just as the time ran out, before the
+    // timeout could run, still has it to run (at once) when it is shown again; one that has run never runs again.
+    // Visible time is measured on the monotonic clock, so a change to the wall clock neither spends nor extends it.
+    let left = loadTimeoutMs;
+    let expired = false;
+    let since = 0;
+    let timer: number | undefined;
+    const expire = () => {
+      timer = undefined;
+      expired = true;
       const now = live.current;
       if (now.n === mount.n && !now.answered) callbacks.current.onError("The preview did not load in time.");
-    }, loadTimeoutMs);
-    return () => window.clearTimeout(timer);
+    };
+    const run = () => {
+      since = performance.now();
+      timer = window.setTimeout(expire, left);
+    };
+    const pause = () => {
+      window.clearTimeout(timer);
+      timer = undefined;
+      left = Math.max(0, left - (performance.now() - since));
+    };
+    const onVisibility = () => {
+      if (document.hidden) {
+        if (timer !== undefined) pause();
+      } else if (timer === undefined && !expired) run();
+    };
+    if (!document.hidden) run();
+    document.addEventListener("visibilitychange", onVisibility);
+    return () => {
+      document.removeEventListener("visibilitychange", onVisibility);
+      window.clearTimeout(timer);
+    };
   }, [mount, loadTimeoutMs]);
 
   useEffect(() => {
