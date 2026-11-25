@@ -168,6 +168,28 @@ impl Database {
         lessor: &str,
         now: NaiveDateTime,
     ) -> Result<RentalListing, sqlx::Error> {
+        let mut conn = self.pool.acquire().await?;
+        Self::insert_listing_on(
+            &mut conn,
+            nft_id,
+            metadata,
+            nft_created_at,
+            rental,
+            lessor,
+            now,
+        )
+        .await
+    }
+
+    pub(super) async fn insert_listing_on(
+        conn: &mut sqlx::PgConnection,
+        nft_id: &str,
+        metadata: &ListingMetadata<'_>,
+        nft_created_at: NaiveDateTime,
+        rental: &RentalListingCreation,
+        lessor: &str,
+        now: NaiveDateTime,
+    ) -> Result<RentalListing, sqlx::Error> {
         let expiration = millis_to_naive(rental.expiration, now);
         let min_days: Vec<i32> = rental.periods.iter().map(|p| p.min_days as i32).collect();
         let max_days: Vec<i32> = rental.periods.iter().map(|p| p.max_days as i32).collect();
@@ -202,7 +224,7 @@ impl Database {
             .bind(prices)
             .bind(metadata.membership_block)
             .bind(metadata.metadata_block)
-            .fetch_one(&self.pool)
+            .fetch_one(conn)
             .await?;
         Ok(row_to_listing(&row))
     }

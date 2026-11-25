@@ -1578,6 +1578,111 @@ async fn graph_refresh_dates_membership_guards_concurrent_fills_and_retries_inva
     );
 }
 
+async fn wait_for_blocked_request(pool: &sqlx::PgPool, blocker: i32) {
+    tokio::time::timeout(std::time::Duration::from_secs(10), async {
+        loop {
+            let blocked: bool = sqlx::query_scalar(
+                "SELECT EXISTS (SELECT FROM pg_stat_activity WHERE datname=current_database() AND $1=ANY(pg_blocking_pids(pid)) AND query ILIKE '%FOR SHARE%')",
+            ).bind(blocker).fetch_one(pool).await.unwrap();
+            if blocked { break; }
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
+    }).await.expect("the route reached its cursor lock");
+}
+
+#[tokio::test]
+async fn patch_discards_the_observed_transfer_when_land_rewinds_before_cancellation() {
+    let Some(pool) = crate::db::scratch::isolated_pool(4).await else {
+        return;
+    };
+    publish_land(&pool).await;
+    sqlx::query("INSERT INTO shop.chain_cursor(indexer,network,start_block,last_block,folded_block,folded_at,full_history,chain_id) VALUES ('rentals','ethereum',0,100,100,timezone('UTC',now()),true,1)").execute(&pool).await.unwrap();
+    let id =
+        super::index::tests::seed_listing(&pool, LAND, "35", ["0"; 3], "0x35", LESSOR, RENTALS)
+            .await;
+    transfer(
+        &pool,
+        LAND,
+        "35",
+        ESTATE,
+        5,
+        chrono::Utc::now().timestamp() + 60,
+    )
+    .await;
+    let app = router(state_over(pool.clone(), Some(market()), true));
+    let mut rewind = pool.begin().await.unwrap();
+    let pid: i32 =
+        sqlx::query_scalar("SELECT pg_backend_pid() FROM land_authz.index_cursor FOR UPDATE")
+            .fetch_one(&mut *rewind)
+            .await
+            .unwrap();
+    let path = format!("/v1/rentals-listings/{id}");
+    let refresh = tokio::spawn(async move { send(app, "PATCH", &path, vec![], None).await });
+    wait_for_blocked_request(&pool, pid).await;
+    sqlx::query(
+        "UPDATE land_authz.index_cursor SET folded_block=NULL, updated_at=timezone('UTC',now())",
+    )
+    .execute(&mut *rewind)
+    .await
+    .unwrap();
+    rewind.commit().await.unwrap();
+    let (code, _, response) = refresh.await.unwrap();
+    assert_eq!(code, StatusCode::SERVICE_UNAVAILABLE, "{response}");
+    assert_eq!(response["source"], "land-authz-index");
+    let status: String =
+        sqlx::query_scalar("SELECT status::text FROM signatures.rentals WHERE id=$1")
+            .bind(id)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(status, "open");
+}
+
+#[tokio::test]
+async fn post_rejects_custody_from_a_replaced_rentals_publication() {
+    let Some(pool) = crate::db::scratch::isolated_pool(4).await else {
+        return;
+    };
+    publish_land(&pool).await;
+    let w = wallet();
+    transfer(&pool, LAND, "42", RENTALS, 4, 1700000000).await;
+    sqlx::query("INSERT INTO shop.chain_cursor(indexer,network,start_block,last_block,folded_block,folded_at,full_history,chain_id) VALUES ('rentals','ethereum',0,100,100,timezone('UTC',now()),true,1)").execute(&pool).await.unwrap();
+    sqlx::query("INSERT INTO shop.rental_event(network,block_number,log_index,block_time,rentals_address,kind,contract_address,token_id,signer,tenant,rental_days,price_per_day,signature,tx_hash) VALUES ('ethereum',4,0,1700000000,$1,'rented',$2,42,$3,$4,1,1,'0x42','0x42')").bind(RENTALS).bind(LAND).bind(&w.address).bind(ESTATE).execute(&pool).await.unwrap();
+    let path = "/v1/rentals-listings";
+    let mut body = creation("42", "");
+    body.signature = sign_listing(&w, &body).await;
+    let headers = signed_headers(&w, "post", path).await;
+    let app = router(state_over(pool.clone(), Some(market()), true));
+    let mut rewrite = pool.begin().await.unwrap();
+    let pid: i32 = sqlx::query_scalar(
+        "SELECT pg_backend_pid() FROM shop.chain_cursor WHERE indexer='rentals' FOR UPDATE",
+    )
+    .fetch_one(&mut *rewrite)
+    .await
+    .unwrap();
+    let create =
+        tokio::spawn(
+            async move { send(app, "POST", path, headers, Some(creation_json(&body))).await },
+        );
+    wait_for_blocked_request(&pool, pid).await;
+    sqlx::query("UPDATE shop.rental_event SET signer=$1 WHERE token_id=42")
+        .bind(ESTATE)
+        .execute(&mut *rewrite)
+        .await
+        .unwrap();
+    sqlx::query(
+        "UPDATE shop.chain_cursor SET reorg_rewinds=reorg_rewinds+1 WHERE indexer='rentals'",
+    )
+    .execute(&mut *rewrite)
+    .await
+    .unwrap();
+    rewrite.commit().await.unwrap();
+    let (code, _, response) = create.await.unwrap();
+    assert_eq!(code, StatusCode::SERVICE_UNAVAILABLE, "{response}");
+    assert_eq!(response["source"], "rentals-index");
+    assert_eq!(counts(&pool, "42").await, (0, 0, 0, 0));
+}
+
 #[tokio::test]
 async fn repeated_patch_resolves_custody_when_only_the_rentals_publication_changes() {
     let Some(pool) = crate::db::scratch::isolated_pool(4).await else {

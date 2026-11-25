@@ -760,8 +760,8 @@ pub fn walks(venue: &str) -> bool {
 }
 
 /// The latest rent and the publication that vouches for it, from one SQL snapshot.
-#[derive(sqlx::FromRow)]
 pub(super) struct RentEvidence {
+    pub(super) cursor: Option<chain_walk::Cursor>,
     pub(super) published_through: Option<i64>,
     pub(super) has_unpublished_rent: bool,
     pub(super) rent_block: Option<i64>,
@@ -842,9 +842,13 @@ pub(super) async fn published_rent(
 ) -> sqlx::Result<RentEvidence> {
     let cursor = chain_walk::cursor(&mut *conn, chain.indexer(), ChainNet::Ethereum).await?;
     let head = cursor
+        .as_ref()
         .filter(|c| chain_walk::is_ready_on(c, chain.id(), now))
         .and_then(|c| c.folded_block);
-    rent_evidence_at(conn, chain, venue, contract_address, token_id, head).await
+    let mut evidence =
+        rent_evidence_at(conn, chain, venue, contract_address, token_id, head).await?;
+    evidence.cursor = cursor;
+    Ok(evidence)
 }
 
 pub(super) async fn rent_evidence_at(
@@ -896,6 +900,7 @@ pub(super) async fn rent_evidence_at(
     .fetch_one(&mut *conn)
     .await?;
     Ok(RentEvidence {
+        cursor: None,
         published_through,
         has_unpublished_rent: rows.has_unpublished_rent,
         rent_block: rows.rent_block,
@@ -954,6 +959,7 @@ pub(crate) mod tests {
     #[test]
     fn graph_custody_requires_a_published_rent_covering_the_reported_transfer_time() {
         let mut rent = RentEvidence {
+            cursor: None,
             published_through: Some(12),
             has_unpublished_rent: false,
             rent_block: Some(12),

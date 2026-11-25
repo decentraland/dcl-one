@@ -381,20 +381,43 @@ pub async fn create_rentals_listing(
     }
 
     let now_naive = now.naive_utc();
-    let inserted = state
-        .db
-        .insert_listing(
-            &nft.nft_id,
-            &listing_metadata(&nft, now_naive),
-            naive_secs(nft.created_at, now_naive),
-            &body,
-            &signer,
-            now_naive,
-        )
-        .await;
+    let mut tx = state.db.pool().begin().await?;
+    let write_time = chrono::Utc::now();
+    if let Some(expected) = nft.land_cursor_updated_at
+        && !super::status::land_publication_matches(&mut tx, expected, write_time).await?
+    {
+        return Ok(reader_unavailable(NftReadError::Unavailable));
+    }
+    if let Some(evidence) = &rent_evidence {
+        let chain = super::index::RentalsChain::Mainnet;
+        let cursor = super::index::lock_cursor(&mut tx, chain).await?;
+        if cursor != evidence.cursor
+            || !cursor
+                .as_ref()
+                .is_some_and(|c| crate::market::chain_walk::is_ready_on(c, chain.id(), write_time))
+        {
+            return Ok(unavailable(
+                Source::RentalsIndex,
+                "The Rentals publication changed before the listing could be created",
+            ));
+        }
+    }
+    let inserted = Database::insert_listing_on(
+        &mut tx,
+        &nft.nft_id,
+        &listing_metadata(&nft, now_naive),
+        naive_secs(nft.created_at, now_naive),
+        &body,
+        &signer,
+        now_naive,
+    )
+    .await;
 
     match inserted {
-        Ok(listing) => Ok(Ok2(StatusCode::CREATED, listing).into_response()),
+        Ok(listing) => {
+            tx.commit().await?;
+            Ok(Ok2(StatusCode::CREATED, listing).into_response())
+        }
         Err(e) => match Database::conflict(&e) {
             Some(conflict) => Err(ApiError::conflict(conflict.message())),
             None => Err(ApiError::from(e)),
@@ -413,13 +436,20 @@ pub async fn refresh_rentals_listing(
     let clock = chrono::Utc::now();
     let now = clock.naive_utc();
     let nft = state.nft(chain_id, &contract_address, &token_id).await;
-    if let (Ok(nft), Ok(uuid)) = (&nft, uuid::Uuid::parse_str(&id))
-        && !super::status::sync_listing(state.db.pool(), uuid, nft.as_ref(), clock).await?
-    {
-        return Ok(unavailable(
-            Source::RentalsIndex,
-            "The Rentals index for the listing chain is not ready",
-        ));
+    if let (Ok(nft), Ok(uuid)) = (&nft, uuid::Uuid::parse_str(&id)) {
+        use super::status::SyncOutcome;
+        match super::status::sync_listing(state.db.pool(), uuid, nft.as_ref(), clock).await? {
+            SyncOutcome::Applied => {}
+            SyncOutcome::LandUnavailable => {
+                return Ok(reader_unavailable(NftReadError::Unavailable));
+            }
+            SyncOutcome::RentalsUnavailable => {
+                return Ok(unavailable(
+                    Source::RentalsIndex,
+                    "The Rentals index for the listing chain is not ready",
+                ));
+            }
+        }
     }
     match nft {
         Ok(Some(nft)) => {

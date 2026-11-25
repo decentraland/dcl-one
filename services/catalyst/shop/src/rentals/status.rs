@@ -367,6 +367,13 @@ pub async fn run_pass(
     Ok(Pass { expired, moved })
 }
 
+#[derive(Debug, PartialEq, Eq)]
+pub enum SyncOutcome {
+    Applied,
+    LandUnavailable,
+    RentalsUnavailable,
+}
+
 /// The refresh route's status sync of one listing: its own Rentals logs
 /// first (while the rentals index is published), then, if it is still
 /// open, expiry and the asset row the route has just read (`nft`; `None`
@@ -378,14 +385,14 @@ pub async fn sync_listing(
     id: Uuid,
     nft: Option<&LandNft>,
     now: DateTime<Utc>,
-) -> Result<bool, sqlx::Error> {
+) -> Result<SyncOutcome, sqlx::Error> {
     let venue: Option<String> =
         sqlx::query_scalar("SELECT rental_contract_address FROM signatures.rentals WHERE id = $1")
             .bind(id)
             .fetch_optional(pool)
             .await?;
     let Some(venue) = venue else {
-        return Ok(true);
+        return Ok(SyncOutcome::Applied);
     };
     let row = sqlx::query(
         "SELECT r.status::text AS status, r.expiration < $2 AS expired, l.lessor, \
@@ -399,7 +406,7 @@ pub async fn sync_listing(
     .fetch_optional(pool)
     .await?;
     let Some(row) = row else {
-        return Ok(true);
+        return Ok(SyncOutcome::Applied);
     };
     let chain = (row.get::<i64, _>("chain_id") == 1 && index::walks(&venue))
         .then_some(index::RentalsChain::Mainnet);
@@ -408,52 +415,28 @@ pub async fn sync_listing(
             .await?
             .is_none()
     {
-        return Ok(false);
+        return Ok(SyncOutcome::RentalsUnavailable);
     }
     let mut tx = pool.begin().await?;
+    if let Some(expected) = nft.and_then(|n| n.land_cursor_updated_at)
+        && (chain.is_none() || !land_publication_matches(&mut tx, expected, now).await?)
+    {
+        tx.rollback().await?;
+        return Ok(SyncOutcome::LandUnavailable);
+    }
     let rentals_cursor = if let Some(chain) = chain {
         let Some(cursor) = index::lock_cursor(&mut tx, chain).await? else {
             tx.rollback().await?;
-            return Ok(false);
+            return Ok(SyncOutcome::RentalsUnavailable);
         };
         if !crate::market::chain_walk::is_ready_on(&cursor, chain.id(), now) {
             tx.rollback().await?;
-            return Ok(false);
+            return Ok(SyncOutcome::RentalsUnavailable);
         }
         Some(cursor)
     } else {
         None
     };
-    if let Some(expected_updated_at) = nft.and_then(|n| n.land_cursor_updated_at) {
-        let land_network = match chain {
-            Some(index::RentalsChain::Mainnet) => crate::land_authz::LAND_MAINNET.network,
-            Some(index::RentalsChain::Sepolia) | None => {
-                tx.rollback().await?;
-                return Ok(false);
-            }
-        };
-        let current_land: Option<crate::land_authz::indexer::Cursor> = sqlx::query_as(
-            "SELECT network, land_registry, estate_registry, last_block, folded_block, folded_at, full_replay_started, updated_at \
-             FROM land_authz.index_cursor WHERE network=$1 FOR SHARE",
-        )
-        .bind(land_network)
-        .fetch_optional(&mut *tx)
-        .await?;
-        let current_matches = current_land.is_some_and(|cursor| {
-            cursor.updated_at == expected_updated_at
-                && cursor
-                    .land_registry
-                    .eq_ignore_ascii_case(crate::land_authz::LAND_MAINNET.land_registry)
-                && cursor
-                    .estate_registry
-                    .eq_ignore_ascii_case(crate::land_authz::LAND_MAINNET.estate_registry)
-                && crate::land_authz::indexer::index_ready(&cursor, now)
-        });
-        if !current_matches {
-            tx.rollback().await?;
-            return Ok(false);
-        }
-    }
     let still_open: bool =
         sqlx::query_scalar("SELECT status = 'open' FROM signatures.rentals WHERE id = $1")
             .bind(id)
@@ -462,7 +445,7 @@ pub async fn sync_listing(
             .unwrap_or(false);
     if !still_open {
         tx.rollback().await?;
-        return Ok(true);
+        return Ok(SyncOutcome::Applied);
     }
     let lessor: String = row.get("lessor");
     // Compare published source versions independently from legacy metadata timestamps.
@@ -528,7 +511,31 @@ pub async fn sync_listing(
         .await?;
     }
     tx.commit().await?;
-    Ok(true)
+    Ok(SyncOutcome::Applied)
+}
+
+pub(super) async fn land_publication_matches(
+    conn: &mut PgConnection,
+    expected_updated_at: NaiveDateTime,
+    now: DateTime<Utc>,
+) -> Result<bool, sqlx::Error> {
+    let current_land: Option<crate::land_authz::indexer::Cursor> = sqlx::query_as(
+            "SELECT network, land_registry, estate_registry, last_block, folded_block, folded_at, full_replay_started, updated_at \
+             FROM land_authz.index_cursor WHERE network=$1 FOR SHARE",
+        )
+        .bind(crate::land_authz::LAND_MAINNET.network)
+        .fetch_optional(&mut *conn)
+        .await?;
+    Ok(current_land.is_some_and(|cursor| {
+        cursor.updated_at == expected_updated_at
+            && cursor
+                .land_registry
+                .eq_ignore_ascii_case(crate::land_authz::LAND_MAINNET.land_registry)
+            && cursor
+                .estate_registry
+                .eq_ignore_ascii_case(crate::land_authz::LAND_MAINNET.estate_registry)
+            && crate::land_authz::indexer::index_ready(&cursor, now)
+    }))
 }
 
 /// Attaches the leased `rental-listing-status` job: [`run_pass`] every
@@ -1071,7 +1078,10 @@ mod tests {
         .unwrap();
         lock.commit().await.unwrap();
 
-        assert!(!refresh.await.unwrap().unwrap());
+        assert_eq!(
+            refresh.await.unwrap().unwrap(),
+            SyncOutcome::RentalsUnavailable
+        );
         assert_eq!(state_of(pool, id).await, open());
         db.drop().await;
     }
@@ -1198,7 +1208,10 @@ mod tests {
             .unwrap();
         lock.commit().await.unwrap();
 
-        assert!(!refresh.await.unwrap().unwrap());
+        assert_eq!(
+            refresh.await.unwrap().unwrap(),
+            SyncOutcome::LandUnavailable
+        );
         assert_eq!(state_of(pool, id).await, open());
         db.drop().await;
     }
