@@ -3091,8 +3091,12 @@ and in the single requests they fall back to alike: what is read and the
 hash it is stored with are one block's, and an endpoint that left that block
 refuses the read. Only the provisional reads go to `latest`. A final row
 keeps that height and hash, and until it is `verified`, before each attempt:
-- a row with no hash (written before hashes were kept) is undone without a
-  read: it becomes provisional again, to be read again;
+- a row with no hash (written by an index published before hashes were
+  kept) needs no read where a walk with its full history holds its exact
+  slot (below): it is proven there, with the creation's block as its height,
+  so a published walk does not wait for its lists to be read again. Any
+  other is undone without a read: it becomes provisional again, to be read
+  again;
 - at or below the cursor of a walk with its full history, the walk's own log
   decides, slot by slot, with no header asked. A factory's list grows only by
   the push after each `ProxyCreated` it emits (both factories'

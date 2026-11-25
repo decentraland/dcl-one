@@ -1202,8 +1202,11 @@ async fn block_hashes(rpc: &Rpc<'_>, heights: &[u64]) -> anyhow::Result<HashMap<
 /// Checks the final factory list rows against the chain. Each keeps the
 /// height and hash of the finalized block it was read at ([`at_block`]);
 /// until it is `verified`:
-/// - one with no hash (written before hashes were kept) is undone without a
-///   read: it becomes provisional again, to be read again;
+/// - one with no hash (written before hashes were kept, by an index
+///   already published) is proven by the walk's log when the walk has its
+///   full history and holds its exact slot (its height becomes that
+///   creation's block); otherwise it is undone without a read: it becomes
+///   provisional again, to be read again;
 /// - at or below the walk's cursor, on a walk with its full history, the
 ///   walk's own log decides, slot by slot: a factory's list grows only by
 ///   the push after each `ProxyCreated` it emits, so slot i is its i-th
@@ -1340,6 +1343,23 @@ pub async fn revalidate_reads(
                AND s.block_number <= h.read_block)"
         };
     }
+    // A row written before reads kept their block (an index already
+    // published) needs no read where the walk holds its slot: proven there,
+    // with the creation's block as its height, so a rewind below the
+    // creation undoes it.
+    sqlx::query(concat!(
+        slots!(),
+        "UPDATE shop.collection_hint h SET verified = true, read_block = s.block_number \
+         FROM shop.chain_cursor c, slots s \
+         WHERE h.network = $1 AND h.finalized AND NOT h.verified \
+           AND (h.read_hash IS NULL OR h.read_block IS NULL) \
+           AND c.indexer = $2 AND c.network = h.network AND c.full_history \
+           AND s.factory = h.factory AND s.slot = h.idx AND s.address = h.address"
+    ))
+    .bind(net.db_name())
+    .bind(INDEXER_COLLECTIONS)
+    .execute(&mut *tx)
+    .await?;
     let mut undone = sqlx::query(concat!(
         demote!(),
         "WHERE h.network = $1 AND h.finalized AND NOT h.verified \
@@ -2806,6 +2826,60 @@ mod tests {
             vec![
                 (CREATED.to_string(), true, true),
                 (elsewhere.to_string(), false, false)
+            ]
+        );
+    }
+
+    /// A list row written before reads kept their block (by an index
+    /// already published) needs no read where a full-history walk holds its
+    /// exact slot: it is proven, with the creation's block as its height, so
+    /// the published walk does not wait for its lists to be read again. One
+    /// the walk does not hold is undone, to be read again.
+    #[tokio::test]
+    async fn legacy_list_rows_the_walk_holds_need_no_read() {
+        let Some(pool) = crate::db::scratch::isolated_pool(2).await else {
+            return;
+        };
+        let elsewhere = "0x00000000000000000000000000000000000000e9";
+        hint(&pool, 0, CREATED).await;
+        hint(&pool, 1, elsewhere).await;
+        let settings = walk_settings();
+        let ix = CollectionsIndex::new();
+        let owner = chain_walk::test_owner(&pool, &ix, &settings).await;
+        let chain = Chain {
+            logs: fixture(),
+            finalized: 97_895_000,
+        };
+        chain_walk::run_pass(&pool, &chain, &ix, &settings, &owner, None, &|_| {})
+            .await
+            .unwrap();
+        // As a walk from the factories' deployment holds it: here CREATED is
+        // V3's first collection.
+        sqlx::query(
+            "UPDATE shop.chain_cursor SET full_history = true WHERE indexer = 'collections' AND network = 'matic'",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        let url = fake_rpc(Arc::default(), Batches::Upto(100), Arc::default()).await;
+        let http = crate::http::Outbound::for_tests();
+        assert_eq!(
+            revalidate_reads(&pool, &Rpc::at(&http, &url), HEIGHTS_PER_GATE)
+                .await
+                .unwrap(),
+            1
+        );
+        let rows: Vec<(String, bool, bool, Option<i64>)> = sqlx::query_as(
+            "SELECT address, finalized, verified, read_block FROM shop.collection_hint ORDER BY idx",
+        )
+        .fetch_all(&pool)
+        .await
+        .unwrap();
+        assert_eq!(
+            rows,
+            vec![
+                (CREATED.to_string(), true, true, Some(97_707_994)),
+                (elsewhere.to_string(), false, false, None)
             ]
         );
     }

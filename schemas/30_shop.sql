@@ -17344,9 +17344,11 @@ CREATE TABLE shop.collection_hint (
     -- the cursor of a walk with its full history, the walk's log decides
     -- (the factory's idx-th walked ProxyCreated naming this address by that
     -- height proves it; anything else undoes it); otherwise the gate asks
-    -- the hash at that height, and another one undoes it. A missing hash, or a rewind below the height,
-    -- undoes it too. Undone, the row is provisional again, to be read on
-    -- the branch the chain took.
+    -- the hash at that height, and another one undoes it. A row with no
+    -- hash is proven by the walk's log where the walk holds its slot (its
+    -- height becomes the creation's block), else undone. A rewind below the
+    -- height undoes a row too. Undone, the row is provisional again, to be
+    -- read on the branch the chain took.
     read_block bigint,
     read_hash text,
     verified boolean NOT NULL DEFAULT false,
