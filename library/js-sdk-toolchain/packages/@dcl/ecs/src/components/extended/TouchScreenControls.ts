@@ -22,8 +22,7 @@ const ALL_BUTTONS: InputAction[] = [
  * TouchScreenControls with convenience helpers. All helpers write the component onto the
  * RootEntity (where the client reads it) and merge with the current value.
  */
-export interface TouchScreenControlsComponentDefinitionExtended
-  extends LastWriteWinElementSetComponentDefinition<PBTouchScreenControls> {
+export interface TouchScreenControlsComponentDefinitionExtended extends LastWriteWinElementSetComponentDefinition<PBTouchScreenControls> {
   /** Hide every on-screen gamepad button. */
   hideAll(): void
   /**

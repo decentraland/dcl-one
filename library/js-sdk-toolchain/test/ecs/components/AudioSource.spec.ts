@@ -109,5 +109,4 @@ describe('Generated AudioSource ProtoBuf', () => {
     expect(secondPlayMessages).toHaveLength(1)
     expect(secondPlayMessages[0].type).toBe(CrdtMessageType.PUT_COMPONENT)
   })
-
 })

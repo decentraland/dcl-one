@@ -1,9 +1,5 @@
 import type { IEngine, PhysicsSystem } from '../../../packages/@dcl/ecs/src'
-import {
-  components,
-  createPhysicsSystem,
-  Engine
-} from '../../../packages/@dcl/ecs/src'
+import { components, createPhysicsSystem, Engine } from '../../../packages/@dcl/ecs/src'
 
 describe('Physics force helper system should', () => {
   function setup() {
@@ -163,7 +159,11 @@ describe('Physics force helper system should', () => {
     physics.applyForceToPlayer(srcB, { x: 0, y: 1, z: 0 })
     expect(spy).toHaveBeenCalledWith(
       expect.stringMatching(/modified externally/),
-      expect.anything(), expect.anything(), expect.anything(), expect.anything(), expect.anything()
+      expect.anything(),
+      expect.anything(),
+      expect.anything(),
+      expect.anything(),
+      expect.anything()
     )
     spy.mockRestore()
   })

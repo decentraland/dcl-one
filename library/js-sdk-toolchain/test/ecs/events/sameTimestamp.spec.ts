@@ -1,10 +1,5 @@
 import type { IEngine } from '../../../packages/@dcl/ecs/src'
-import {
-  Engine,
-  components,
-  PointerEventType,
-  InputAction
-} from '../../../packages/@dcl/ecs/src'
+import { Engine, components, PointerEventType, InputAction } from '../../../packages/@dcl/ecs/src'
 import type { IInputSystem } from '../../../packages/@dcl/ecs/src/engine/input'
 import { createInputSystem } from '../../../packages/@dcl/ecs/src/engine/input'
 import { createTestPointerDownCommand } from './utils'
@@ -24,8 +19,14 @@ describe('Same-timestamp input system behavior', () => {
     it('should detect all triggered events when multiple buttons fire in the same tick', async () => {
       const entity = engine.addEntity()
 
-      PointerEventsResult.addValue(entity, createTestPointerDownCommand(entity, 1, PointerEventType.PET_DOWN, InputAction.IA_POINTER))
-      PointerEventsResult.addValue(entity, createTestPointerDownCommand(entity, 1, PointerEventType.PET_DOWN, InputAction.IA_PRIMARY))
+      PointerEventsResult.addValue(
+        entity,
+        createTestPointerDownCommand(entity, 1, PointerEventType.PET_DOWN, InputAction.IA_POINTER)
+      )
+      PointerEventsResult.addValue(
+        entity,
+        createTestPointerDownCommand(entity, 1, PointerEventType.PET_DOWN, InputAction.IA_PRIMARY)
+      )
 
       await engine.update(1)
 
@@ -38,8 +39,14 @@ describe('Same-timestamp input system behavior', () => {
     it('should track pressed state for all buttons when fired with the same timestamp', async () => {
       const entity = engine.addEntity()
 
-      PointerEventsResult.addValue(entity, createTestPointerDownCommand(entity, 1, PointerEventType.PET_DOWN, InputAction.IA_POINTER))
-      PointerEventsResult.addValue(entity, createTestPointerDownCommand(entity, 1, PointerEventType.PET_DOWN, InputAction.IA_PRIMARY))
+      PointerEventsResult.addValue(
+        entity,
+        createTestPointerDownCommand(entity, 1, PointerEventType.PET_DOWN, InputAction.IA_POINTER)
+      )
+      PointerEventsResult.addValue(
+        entity,
+        createTestPointerDownCommand(entity, 1, PointerEventType.PET_DOWN, InputAction.IA_PRIMARY)
+      )
 
       await engine.update(1)
 
@@ -52,8 +59,14 @@ describe('Same-timestamp input system behavior', () => {
     it('should detect a click when DOWN and UP have the same timestamp', async () => {
       const entity = engine.addEntity()
 
-      PointerEventsResult.addValue(entity, createTestPointerDownCommand(entity, 1, PointerEventType.PET_DOWN, InputAction.IA_POINTER))
-      PointerEventsResult.addValue(entity, createTestPointerDownCommand(entity, 1, PointerEventType.PET_UP, InputAction.IA_POINTER))
+      PointerEventsResult.addValue(
+        entity,
+        createTestPointerDownCommand(entity, 1, PointerEventType.PET_DOWN, InputAction.IA_POINTER)
+      )
+      PointerEventsResult.addValue(
+        entity,
+        createTestPointerDownCommand(entity, 1, PointerEventType.PET_UP, InputAction.IA_POINTER)
+      )
 
       await engine.update(1)
 
@@ -63,8 +76,14 @@ describe('Same-timestamp input system behavior', () => {
     it('should return click info when DOWN and UP share the same timestamp', async () => {
       const entity = engine.addEntity()
 
-      PointerEventsResult.addValue(entity, createTestPointerDownCommand(entity, 1, PointerEventType.PET_DOWN, InputAction.IA_POINTER))
-      PointerEventsResult.addValue(entity, createTestPointerDownCommand(entity, 1, PointerEventType.PET_UP, InputAction.IA_POINTER))
+      PointerEventsResult.addValue(
+        entity,
+        createTestPointerDownCommand(entity, 1, PointerEventType.PET_DOWN, InputAction.IA_POINTER)
+      )
+      PointerEventsResult.addValue(
+        entity,
+        createTestPointerDownCommand(entity, 1, PointerEventType.PET_UP, InputAction.IA_POINTER)
+      )
 
       await engine.update(1)
 
@@ -80,13 +99,22 @@ describe('Same-timestamp input system behavior', () => {
       const entity = engine.addEntity()
 
       // Tick 1: press IA_POINTER
-      PointerEventsResult.addValue(entity, createTestPointerDownCommand(entity, 1, PointerEventType.PET_DOWN, InputAction.IA_POINTER))
+      PointerEventsResult.addValue(
+        entity,
+        createTestPointerDownCommand(entity, 1, PointerEventType.PET_DOWN, InputAction.IA_POINTER)
+      )
       await engine.update(1)
       expect(inputSystem.isPressed(InputAction.IA_POINTER)).toBe(true)
 
       // Tick 2: release IA_POINTER AND press IA_PRIMARY — both with same timestamp
-      PointerEventsResult.addValue(entity, createTestPointerDownCommand(entity, 2, PointerEventType.PET_UP, InputAction.IA_POINTER))
-      PointerEventsResult.addValue(entity, createTestPointerDownCommand(entity, 2, PointerEventType.PET_DOWN, InputAction.IA_PRIMARY))
+      PointerEventsResult.addValue(
+        entity,
+        createTestPointerDownCommand(entity, 2, PointerEventType.PET_UP, InputAction.IA_POINTER)
+      )
+      PointerEventsResult.addValue(
+        entity,
+        createTestPointerDownCommand(entity, 2, PointerEventType.PET_DOWN, InputAction.IA_PRIMARY)
+      )
       await engine.update(1)
 
       expect(inputSystem.isPressed(InputAction.IA_POINTER)).toBe(false)

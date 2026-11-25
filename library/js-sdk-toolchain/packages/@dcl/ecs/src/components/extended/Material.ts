@@ -5,9 +5,7 @@ import type {
   PBMaterial_PbrMaterial,
   PBMaterial_UnlitMaterial
 } from '../generated/index.gen'
-import {
-  Material
-} from '../generated/index.gen'
+import { Material } from '../generated/index.gen'
 import type {
   AvatarTexture,
   Texture,
@@ -485,7 +483,10 @@ function ensureTextureStructure(mat: PBMaterial, field: TextureField): Texture {
  * Provides getters/setters that read/write to the nested material structure.
  */
 class FlatTextureAccessor implements FlatTexture {
-  constructor(private getMaterial: () => PBMaterial, private field: TextureField) {}
+  constructor(
+    private getMaterial: () => PBMaterial,
+    private field: TextureField
+  ) {}
 
   get src(): string | undefined {
     const mat = this.getMaterial()
@@ -732,7 +733,10 @@ class FlatMaterialAccessor implements FlatMaterial {
  * Provides only getters for read-only access to the nested material structure.
  */
 class ReadonlyFlatTextureAccessor implements ReadonlyFlatTexture {
-  constructor(private getMaterial: () => PBMaterial, private field: TextureField) {}
+  constructor(
+    private getMaterial: () => PBMaterial,
+    private field: TextureField
+  ) {}
 
   get src(): string | undefined {
     const mat = this.getMaterial()

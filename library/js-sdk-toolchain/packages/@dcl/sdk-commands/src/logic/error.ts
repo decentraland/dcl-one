@@ -73,7 +73,11 @@ export type CliErrorName =
   | 'CODE_TO_COMPOSITE_EXECUTION_FAILED'
 
 export class CliError<T extends CliErrorName> extends Error {
-  constructor(public name: T = 'CliError' as T, public message: string = '', public stack?: string) {
+  constructor(
+    public name: T = 'CliError' as T,
+    public message: string = '',
+    public stack?: string
+  ) {
     super()
   }
 }

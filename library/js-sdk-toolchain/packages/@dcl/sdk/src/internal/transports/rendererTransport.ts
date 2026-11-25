@@ -26,7 +26,7 @@ export function createRendererTransport(engineApi: EngineApiForTransport): Trans
         await sendToRenderer(message as Uint8Array)
       } catch (error) {
         // this is the console.error of the scene
-        // eslint-disable-next-line no-console
+
         console.error(error)
         debugger
       }

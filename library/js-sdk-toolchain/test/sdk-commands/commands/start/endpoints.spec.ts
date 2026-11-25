@@ -155,7 +155,7 @@ describe('start/server/endpoints', () => {
       })
 
       it('should emit both scenes in workspace order, letting the first project claim the shared parcel', () => {
-        expect(body.map(entity => entity.metadata.scene.base)).toEqual(['0,0', '1,0'])
+        expect(body.map((entity) => entity.metadata.scene.base)).toEqual(['0,0', '1,0'])
       })
     })
   })

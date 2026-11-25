@@ -6,11 +6,7 @@ import type {
   PBParticleSystem_Cone,
   PBParticleSystem_Box
 } from '../generated/index.gen'
-import {
-  ParticleSystem,
-  PBParticleSystem_BlendMode,
-  PBParticleSystem_PlaybackState
-} from '../generated/index.gen'
+import { ParticleSystem, PBParticleSystem_BlendMode, PBParticleSystem_PlaybackState } from '../generated/index.gen'
 import {} from '../generated/ParticleSystem.gen'
 
 export {
@@ -35,8 +31,7 @@ export interface ParticleSystemHelper {
 /**
  * @public
  */
-export interface ParticleSystemComponentDefinitionExtended
-  extends LastWriteWinElementSetComponentDefinition<PBParticleSystem> {
+export interface ParticleSystemComponentDefinitionExtended extends LastWriteWinElementSetComponentDefinition<PBParticleSystem> {
   /** Helpers for constructing emitter shapes */
   Shape: ParticleSystemHelper
 }

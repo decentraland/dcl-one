@@ -27,9 +27,18 @@ describe('GrowOnlyValueSet same-timestamp behavior', () => {
     it('should preserve all values when multiple appends share the same timestamp', () => {
       const entity = engine.addEntity()
 
-      PointerEventsResult.addValue(entity, createTestPointerDownCommand(entity, 10, PointerEventType.PET_DOWN, InputAction.IA_POINTER))
-      PointerEventsResult.addValue(entity, createTestPointerDownCommand(entity, 10, PointerEventType.PET_HOVER_ENTER, InputAction.IA_POINTER))
-      PointerEventsResult.addValue(entity, createTestPointerDownCommand(entity, 10, PointerEventType.PET_DOWN, InputAction.IA_PRIMARY))
+      PointerEventsResult.addValue(
+        entity,
+        createTestPointerDownCommand(entity, 10, PointerEventType.PET_DOWN, InputAction.IA_POINTER)
+      )
+      PointerEventsResult.addValue(
+        entity,
+        createTestPointerDownCommand(entity, 10, PointerEventType.PET_HOVER_ENTER, InputAction.IA_POINTER)
+      )
+      PointerEventsResult.addValue(
+        entity,
+        createTestPointerDownCommand(entity, 10, PointerEventType.PET_DOWN, InputAction.IA_PRIMARY)
+      )
 
       const results = Array.from(PointerEventsResult.get(entity))
       expect(results).toHaveLength(3)
@@ -38,9 +47,18 @@ describe('GrowOnlyValueSet same-timestamp behavior', () => {
     it('should maintain insertion order for elements with equal timestamps', () => {
       const entity = engine.addEntity()
 
-      PointerEventsResult.addValue(entity, createTestPointerDownCommand(entity, 5, PointerEventType.PET_DOWN, InputAction.IA_POINTER))
-      PointerEventsResult.addValue(entity, createTestPointerDownCommand(entity, 5, PointerEventType.PET_UP, InputAction.IA_POINTER))
-      PointerEventsResult.addValue(entity, createTestPointerDownCommand(entity, 5, PointerEventType.PET_HOVER_ENTER, InputAction.IA_POINTER))
+      PointerEventsResult.addValue(
+        entity,
+        createTestPointerDownCommand(entity, 5, PointerEventType.PET_DOWN, InputAction.IA_POINTER)
+      )
+      PointerEventsResult.addValue(
+        entity,
+        createTestPointerDownCommand(entity, 5, PointerEventType.PET_UP, InputAction.IA_POINTER)
+      )
+      PointerEventsResult.addValue(
+        entity,
+        createTestPointerDownCommand(entity, 5, PointerEventType.PET_HOVER_ENTER, InputAction.IA_POINTER)
+      )
 
       const results = Array.from(PointerEventsResult.get(entity))
       expect(results).toHaveLength(3)
@@ -63,9 +81,27 @@ describe('GrowOnlyValueSet same-timestamp behavior', () => {
     it('should preserve all values when multiple video events share the same timestamp', () => {
       const entity = engine.addEntity()
 
-      VideoEvent.addValue(entity, { state: VideoState.VS_LOADING, currentOffset: 0, videoLength: 10, timestamp: 5, tickNumber: 5 })
-      VideoEvent.addValue(entity, { state: VideoState.VS_BUFFERING, currentOffset: 0, videoLength: 10, timestamp: 5, tickNumber: 5 })
-      VideoEvent.addValue(entity, { state: VideoState.VS_PLAYING, currentOffset: 0, videoLength: 10, timestamp: 5, tickNumber: 5 })
+      VideoEvent.addValue(entity, {
+        state: VideoState.VS_LOADING,
+        currentOffset: 0,
+        videoLength: 10,
+        timestamp: 5,
+        tickNumber: 5
+      })
+      VideoEvent.addValue(entity, {
+        state: VideoState.VS_BUFFERING,
+        currentOffset: 0,
+        videoLength: 10,
+        timestamp: 5,
+        tickNumber: 5
+      })
+      VideoEvent.addValue(entity, {
+        state: VideoState.VS_PLAYING,
+        currentOffset: 0,
+        videoLength: 10,
+        timestamp: 5,
+        tickNumber: 5
+      })
 
       const results = Array.from(VideoEvent.get(entity))
       expect(results).toHaveLength(3)
@@ -74,9 +110,27 @@ describe('GrowOnlyValueSet same-timestamp behavior', () => {
     it('should maintain insertion order for same-timestamp video events', () => {
       const entity = engine.addEntity()
 
-      VideoEvent.addValue(entity, { state: VideoState.VS_LOADING, currentOffset: 0, videoLength: 10, timestamp: 5, tickNumber: 5 })
-      VideoEvent.addValue(entity, { state: VideoState.VS_BUFFERING, currentOffset: 0, videoLength: 10, timestamp: 5, tickNumber: 5 })
-      VideoEvent.addValue(entity, { state: VideoState.VS_PLAYING, currentOffset: 1, videoLength: 10, timestamp: 5, tickNumber: 5 })
+      VideoEvent.addValue(entity, {
+        state: VideoState.VS_LOADING,
+        currentOffset: 0,
+        videoLength: 10,
+        timestamp: 5,
+        tickNumber: 5
+      })
+      VideoEvent.addValue(entity, {
+        state: VideoState.VS_BUFFERING,
+        currentOffset: 0,
+        videoLength: 10,
+        timestamp: 5,
+        tickNumber: 5
+      })
+      VideoEvent.addValue(entity, {
+        state: VideoState.VS_PLAYING,
+        currentOffset: 1,
+        videoLength: 10,
+        timestamp: 5,
+        tickNumber: 5
+      })
 
       const results = Array.from(VideoEvent.get(entity))
       expect(results[0].state).toBe(VideoState.VS_LOADING)
@@ -91,8 +145,20 @@ describe('GrowOnlyValueSet same-timestamp behavior', () => {
       const entity = engine.addEntity()
       VideoPlayer.create(entity)
 
-      VideoEvent.addValue(entity, { state: VideoState.VS_LOADING, currentOffset: 0, videoLength: 10, timestamp: 1, tickNumber: 1 })
-      VideoEvent.addValue(entity, { state: VideoState.VS_PLAYING, currentOffset: 0, videoLength: 10, timestamp: 1, tickNumber: 1 })
+      VideoEvent.addValue(entity, {
+        state: VideoState.VS_LOADING,
+        currentOffset: 0,
+        videoLength: 10,
+        timestamp: 1,
+        tickNumber: 1
+      })
+      VideoEvent.addValue(entity, {
+        state: VideoState.VS_PLAYING,
+        currentOffset: 0,
+        videoLength: 10,
+        timestamp: 1,
+        tickNumber: 1
+      })
 
       await engine.update(1)
 
@@ -336,7 +402,11 @@ describe('GrowOnlyValueSet same-timestamp behavior', () => {
       const entity = engine.addEntity()
 
       AssetLoadLoadingState.addValue(entity, { currentState: LoadingState.LOADING, asset: 'model.glb', timestamp: 3 })
-      AssetLoadLoadingState.addValue(entity, { currentState: LoadingState.FINISHED, asset: 'texture.png', timestamp: 3 })
+      AssetLoadLoadingState.addValue(entity, {
+        currentState: LoadingState.FINISHED,
+        asset: 'texture.png',
+        timestamp: 3
+      })
 
       const results = Array.from(AssetLoadLoadingState.get(entity))
       expect(results).toHaveLength(2)
@@ -346,8 +416,16 @@ describe('GrowOnlyValueSet same-timestamp behavior', () => {
       const entity = engine.addEntity()
 
       AssetLoadLoadingState.addValue(entity, { currentState: LoadingState.LOADING, asset: 'model.glb', timestamp: 3 })
-      AssetLoadLoadingState.addValue(entity, { currentState: LoadingState.FINISHED, asset: 'texture.png', timestamp: 3 })
-      AssetLoadLoadingState.addValue(entity, { currentState: LoadingState.FINISHED_WITH_ERROR, asset: 'audio.mp3', timestamp: 3 })
+      AssetLoadLoadingState.addValue(entity, {
+        currentState: LoadingState.FINISHED,
+        asset: 'texture.png',
+        timestamp: 3
+      })
+      AssetLoadLoadingState.addValue(entity, {
+        currentState: LoadingState.FINISHED_WITH_ERROR,
+        asset: 'audio.mp3',
+        timestamp: 3
+      })
 
       const results = Array.from(AssetLoadLoadingState.get(entity))
       expect(results[0].asset).toBe('model.glb')

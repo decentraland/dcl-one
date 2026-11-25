@@ -1,10 +1,5 @@
 import type { IEngine, Entity } from '../../../packages/@dcl/ecs/src'
-import {
-  Engine,
-  components,
-  TriggerAreaEventType,
-  createTriggerAreaEventsSystem
-} from '../../../packages/@dcl/ecs/src'
+import { Engine, components, TriggerAreaEventType, createTriggerAreaEventsSystem } from '../../../packages/@dcl/ecs/src'
 import { Quaternion, Vector3 } from '../../../packages/@dcl/sdk/math'
 
 describe('Trigger Area Events Helper System should', () => {
@@ -44,7 +39,10 @@ describe('Trigger Area Events Helper System should', () => {
     triggererEntity?: Entity,
     position?: { x: number; y: number; z: number }
   ) {
-    triggerAreaResultComponent.addValue(entity, makeTriggerResult(entity, eventType, timestamp, triggererEntity, position))
+    triggerAreaResultComponent.addValue(
+      entity,
+      makeTriggerResult(entity, eventType, timestamp, triggererEntity, position)
+    )
   }
 
   it('run callback on trigger enter', async () => {

@@ -5,8 +5,7 @@ import { TriggerArea, TriggerAreaMeshType } from '../generated/index.gen'
 /**
  * @public
  */
-export interface TriggerAreaComponentDefinitionExtended
-  extends LastWriteWinElementSetComponentDefinition<PBTriggerArea> {
+export interface TriggerAreaComponentDefinitionExtended extends LastWriteWinElementSetComponentDefinition<PBTriggerArea> {
   /**
    * @public
    * Set a box in the MeshCollider component

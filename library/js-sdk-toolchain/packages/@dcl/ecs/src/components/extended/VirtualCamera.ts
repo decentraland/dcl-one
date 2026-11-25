@@ -20,8 +20,7 @@ export interface CameraTransitionHelper {
 /**
  * @public
  */
-export interface VirtualCameraComponentDefinitionExtended
-  extends LastWriteWinElementSetComponentDefinition<PBVirtualCamera> {
+export interface VirtualCameraComponentDefinitionExtended extends LastWriteWinElementSetComponentDefinition<PBVirtualCamera> {
   /**
    * Camera transition helper for time and speed modes
    */

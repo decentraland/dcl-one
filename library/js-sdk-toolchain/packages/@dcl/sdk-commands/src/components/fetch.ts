@@ -4,6 +4,7 @@ export type IFetchComponent = {
 
 export function createFetchComponent(): IFetchComponent {
   return {
-    fetch: (url: string, init?: Omit<RequestInit, 'dispatcher'> & { dispatcher?: unknown }) => fetch(url, init as RequestInit)
+    fetch: (url: string, init?: Omit<RequestInit, 'dispatcher'> & { dispatcher?: unknown }) =>
+      fetch(url, init as RequestInit)
   }
 }

@@ -4,7 +4,7 @@ import { readStringConfig } from '../components/config'
 import { readJson } from './fs'
 import { getPackageJson } from './project-files'
 
-// eslint-disable-next-line @typescript-eslint/no-var-requires
+// eslint-disable-next-line @typescript-eslint/no-require-imports
 const { version: sdkCommandsVersion } = require('../../package.json')
 
 /**

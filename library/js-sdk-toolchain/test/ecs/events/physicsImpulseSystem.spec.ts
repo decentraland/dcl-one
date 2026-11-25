@@ -1,9 +1,5 @@
 import type { IEngine, PhysicsSystem } from '../../../packages/@dcl/ecs/src'
-import {
-  components,
-  createPhysicsSystem,
-  Engine
-} from '../../../packages/@dcl/ecs/src'
+import { components, createPhysicsSystem, Engine } from '../../../packages/@dcl/ecs/src'
 
 describe('Physics impulse helper system should', () => {
   function setup() {
