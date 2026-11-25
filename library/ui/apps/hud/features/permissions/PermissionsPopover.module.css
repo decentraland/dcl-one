@@ -58,6 +58,13 @@
 .row:hover {
   background: var(--row-hover);
 }
+/* an "In force now" row before the scene's rules have loaded */
+.row:disabled {
+  cursor: default;
+}
+.row:disabled:hover {
+  background: none;
+}
 /* a row the scene ran into this visit: the answer or rule that decided it */
 .row[data-hit] {
   background: var(--fill-2);

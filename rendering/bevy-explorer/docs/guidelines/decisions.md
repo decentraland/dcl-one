@@ -614,10 +614,15 @@ ends in "we don't do that", so the next person doesn't have to rediscover it.
   scene the player stands in, and each row opens that scene's rule, so the player can refuse
   it there. There is no separate restrictions list.
   - The engine reports a start and an end on the permission-used stream (`inForce`), read
-    from the effect itself (`PrimaryCamera.scene_override`, `PlayerModifiers`), not from the
-    grant: a granted camera permission with no camera held lists nothing.
-  - Each is counted for the parcel scene the player stands in. An avatar modifier area of a
-    neighbouring scene that reaches the player is listed under the scene the player stands in.
+    from the effect itself, not from the grant: a granted camera permission with no camera
+    held lists nothing. A stream that attaches is sent everything in force.
+  - Each effect is reported under the scene that causes it, recorded where it is applied
+    (`PrimaryCamera.scene_override_owner`, `PlayerModifiers.hide_scenes` and
+    `locomotion_scenes`), so the row's rule is the one that controls it. A hidden nametag
+    counts like a hidden avatar or passport.
+  - The popover lists the scene the player stands in. What a portable experience or a
+    neighbouring scene's area does to the player is reported under that scene and is not
+    shown there; `/permissions_in_force` has it.
   - A rule changed from the row applies from the next visit to the scene.
 - **Smart wearable permissions are asked on use, not at equip.** unity-explorer asks once, when a
   smart wearable is equipped (or at login for one already worn), to allow the permissions its

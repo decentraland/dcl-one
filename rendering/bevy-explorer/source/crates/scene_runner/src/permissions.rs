@@ -7,9 +7,8 @@ use common::{
     dynamics::PLAYER_COLLIDER_RADIUS,
     rpc::{RpcResultReceiver, RpcResultSender},
     structs::{
-        AppConfig, CurrentRealm, PermissionType, PermissionUsed, PermissionValue,
-        PermissionsInForce, PlayerModifiers, PrimaryCamera, PrimaryPlayerRes, PrimaryUser,
-        StartupScenes,
+        AppConfig, CurrentRealm, PermissionType, PermissionUsed, PermissionValue, PlayerModifiers,
+        PrimaryCamera, PrimaryPlayerRes, PrimaryUser, StartupScenes,
     },
 };
 use tokio::sync::oneshot::error::TryRecvError;
@@ -296,95 +295,103 @@ impl<T: Send + Sync + 'static> Permission<'_, '_, T> {
     }
 }
 
-/// The permissions acting on the player, read from what they changed: the camera a scene holds,
-/// the avatar modifiers applied to the player.
-fn types_in_force(camera_held: bool, modifiers: Option<&PlayerModifiers>) -> Vec<PermissionType> {
-    let mut types = Vec::new();
-    if camera_held {
-        types.push(PermissionType::ForceCamera);
-    }
-    if let Some(modifiers) = modifiers {
-        if modifiers.hide || modifiers.hide_profile {
-            types.push(PermissionType::HideAvatarsNametags);
-        }
-        let moves = modifiers.block_all
-            || modifiers.block_walk
-            || modifiers.block_run
-            || modifiers.block_jump
-            || modifiers.block_emote
-            || modifiers.walk_speed.is_some()
-            || modifiers.run_speed.is_some()
-            || modifiers.friction.is_some()
-            || modifiers.gravity.is_some()
-            || modifiers.jump_height.is_some()
-            || modifiers.fall_speed.is_some()
-            || modifiers.control_type.is_some()
-            || modifiers.turn_speed.is_some();
-        if moves {
-            types.push(PermissionType::SetLocomotion);
-        }
-    }
-    types
-}
+/// The permissions whose effect acts on the player now, each with the hash of the scene that
+/// causes it: sorted, and without repeats. `system_ui` sends it to a stream that attaches.
+#[derive(Resource, Default, Debug, Clone, PartialEq, Eq)]
+pub struct PermissionsInForce(pub Vec<(String, PermissionType)>);
 
-/// What to tell the permission-used streams when the permissions in force go from `old` to
-/// `new`: an end for each one that stopped or whose scene the player left, a start for each new
-/// one.
-fn in_force_changes(old: &PermissionsInForce, new: &PermissionsInForce) -> Vec<PermissionUsed> {
-    let change = |scene: &Option<String>, ty: PermissionType, in_force: bool| {
-        scene.as_ref().map(|scene| PermissionUsed {
+impl PermissionsInForce {
+    /// From the scenes behind each effect; `hash` names a scene, and one it does not know (a
+    /// scene that is gone) is left out.
+    fn new(
+        camera: Option<Entity>,
+        hide: &[Entity],
+        locomotion: &[Entity],
+        hash: impl Fn(Entity) -> Option<String>,
+    ) -> Self {
+        let of = |scenes: &[Entity], ty: PermissionType| {
+            scenes
+                .iter()
+                .filter_map(|scene| Some((hash(*scene)?, ty)))
+                .collect::<Vec<_>>()
+        };
+        let mut list = of(camera.as_slice(), PermissionType::ForceCamera);
+        list.extend(of(hide, PermissionType::HideAvatarsNametags));
+        list.extend(of(locomotion, PermissionType::SetLocomotion));
+        list.sort_by(|(a_scene, a_ty), (b_scene, b_ty)| {
+            (a_scene, *a_ty as u8).cmp(&(b_scene, *b_ty as u8))
+        });
+        list.dedup();
+        Self(list)
+    }
+
+    /// What tells a permission-used stream that `ty` started (`in_force`) or stopped acting on
+    /// the player in `scene`.
+    fn report(scene: &str, ty: PermissionType, in_force: bool) -> PermissionUsed {
+        PermissionUsed {
             ty,
             additional: None,
-            scene: scene.clone(),
+            scene: scene.to_owned(),
             was_allowed: true,
             in_force: Some(in_force),
-        })
-    };
-    let same_scene = old.scene == new.scene;
-    let ended = old
-        .types
-        .iter()
-        .filter(|ty| !same_scene || !new.types.contains(ty))
-        .filter_map(|ty| change(&old.scene, *ty, false));
-    let started = new
-        .types
-        .iter()
-        .filter(|ty| !same_scene || !old.types.contains(ty))
-        .filter_map(|ty| change(&new.scene, *ty, true));
-    ended.chain(started).collect()
+        }
+    }
+
+    /// A start for each permission in force: what a stream that attaches now has missed.
+    pub fn starts(&self) -> impl Iterator<Item = PermissionUsed> + '_ {
+        self.0
+            .iter()
+            .map(|(scene, ty)| Self::report(scene, *ty, true))
+    }
+
+    /// What to tell the permission-used streams when the permissions in force go from `self`
+    /// to `new`: an end for each one that stopped, then a start for each new one.
+    fn changes_to(&self, new: &Self) -> Vec<PermissionUsed> {
+        let ended = self
+            .0
+            .iter()
+            .filter(|entry| !new.0.contains(entry))
+            .map(|(scene, ty)| Self::report(scene, *ty, false));
+        let started = new
+            .0
+            .iter()
+            .filter(|entry| !self.0.contains(entry))
+            .map(|(scene, ty)| Self::report(scene, *ty, true));
+        ended.chain(started).collect()
+    }
 }
 
-/// Reports on the permission-used streams which permissions act on the player now. They are
-/// counted for the parcel scene the player stands in, whose permissions the HUD lists; outside
-/// any parcel scene nothing is reported.
+/// Reports on the permission-used streams which permissions act on the player now, each under
+/// the scene that causes it: the scene behind the held camera, and the scenes whose avatar
+/// modifiers are applied to the player.
 pub(crate) fn publish_permissions_in_force(
-    player: Query<(Entity, Option<&PlayerModifiers>), With<PrimaryUser>>,
+    player: Query<Option<&PlayerModifiers>, With<PrimaryUser>>,
     camera: Query<&PrimaryCamera>,
-    containing_scene: ContainingScene,
     scenes: Query<&RendererSceneContext>,
     mut in_force: ResMut<PermissionsInForce>,
     mut uses: EventWriter<PermissionUsed>,
 ) {
-    let Ok((player, modifiers)) = player.single() else {
+    let Ok(modifiers) = player.single() else {
         return;
     };
-    let scene = containing_scene
-        .get_parcel(player)
-        .and_then(|scene| scenes.get(scene).ok())
-        .map(|context| context.hash.to_string());
-    let camera_held = camera
+    let camera = camera
         .single()
-        .is_ok_and(|camera| camera.scene_override.is_some());
-    let now = PermissionsInForce {
-        types: if scene.is_some() {
-            types_in_force(camera_held, modifiers)
-        } else {
-            Vec::new()
+        .ok()
+        .filter(|camera| camera.scene_override.is_some())
+        .and_then(|camera| camera.scene_override_owner);
+    let now = PermissionsInForce::new(
+        camera,
+        modifiers.map_or(&[], |modifiers| &modifiers.hide_scenes),
+        modifiers.map_or(&[], |modifiers| &modifiers.locomotion_scenes),
+        |scene| {
+            scenes
+                .get(scene)
+                .ok()
+                .map(|context| context.hash.to_string())
         },
-        scene,
-    };
+    );
     if *in_force != now {
-        uses.write_batch(in_force_changes(&in_force, &now));
+        uses.write_batch(in_force.changes_to(&now));
         *in_force = now;
     }
 }
@@ -393,18 +400,35 @@ pub(crate) fn publish_permissions_in_force(
 mod tests {
     use super::*;
 
-    fn in_force(scene: Option<&str>, types: &[PermissionType]) -> PermissionsInForce {
-        PermissionsInForce {
-            scene: scene.map(str::to_owned),
-            types: types.to_vec(),
-        }
+    const PARCEL: Entity = Entity::from_raw(1);
+    const NEIGHBOUR: Entity = Entity::from_raw(2);
+    const PORTABLE: Entity = Entity::from_raw(3);
+
+    fn hash(scene: Entity) -> Option<String> {
+        [
+            (PARCEL, "parcel"),
+            (NEIGHBOUR, "neighbour"),
+            (PORTABLE, "portable"),
+        ]
+        .into_iter()
+        .find(|(known, _)| *known == scene)
+        .map(|(_, hash)| hash.to_owned())
+    }
+
+    fn in_force(entries: &[(&str, PermissionType)]) -> PermissionsInForce {
+        PermissionsInForce(
+            entries
+                .iter()
+                .map(|(scene, ty)| ((*scene).to_owned(), *ty))
+                .collect(),
+        )
     }
 
     fn changes(
         old: &PermissionsInForce,
         new: &PermissionsInForce,
     ) -> Vec<(String, PermissionType, bool)> {
-        in_force_changes(old, new)
+        old.changes_to(new)
             .into_iter()
             .map(|used| {
                 assert!(used.was_allowed);
@@ -414,38 +438,41 @@ mod tests {
     }
 
     #[test]
-    fn the_permissions_in_force_are_read_from_the_camera_and_the_avatar_modifiers() {
+    fn each_effect_is_listed_under_the_scene_that_causes_it() {
         use PermissionType::*;
-        assert!(types_in_force(false, None).is_empty());
-        assert!(types_in_force(false, Some(&PlayerModifiers::default())).is_empty());
-        assert_eq!(types_in_force(true, None), [ForceCamera]);
-        let hidden = PlayerModifiers {
-            hide_profile: true,
-            ..Default::default()
-        };
-        assert_eq!(types_in_force(false, Some(&hidden)), [HideAvatarsNametags]);
-        let slowed = PlayerModifiers {
-            walk_speed: Some(1.0),
-            ..Default::default()
-        };
-        assert_eq!(types_in_force(false, Some(&slowed)), [SetLocomotion]);
-        let all = PlayerModifiers {
-            hide: true,
-            block_jump: true,
-            ..Default::default()
-        };
+        assert_eq!(PermissionsInForce::new(None, &[], &[], hash), in_force(&[]));
+        // a portable holds the camera, a neighbour's area reaches the player and the parcel
+        // scene blocks movement: none of them is the parcel scene's but the last
         assert_eq!(
-            types_in_force(true, Some(&all)),
-            [ForceCamera, HideAvatarsNametags, SetLocomotion]
+            PermissionsInForce::new(Some(PORTABLE), &[NEIGHBOUR], &[PARCEL], hash),
+            in_force(&[
+                ("neighbour", HideAvatarsNametags),
+                ("parcel", SetLocomotion),
+                ("portable", ForceCamera),
+            ])
+        );
+        // two areas of one scene are one entry, and a scene that is gone is none
+        assert_eq!(
+            PermissionsInForce::new(
+                Some(Entity::from_raw(9)),
+                &[PARCEL, PARCEL],
+                &[PARCEL, PORTABLE],
+                hash
+            ),
+            in_force(&[
+                ("parcel", SetLocomotion),
+                ("parcel", HideAvatarsNametags),
+                ("portable", SetLocomotion),
+            ])
         );
     }
 
     #[test]
     fn a_change_of_the_permissions_in_force_reports_each_start_and_end_once() {
         use PermissionType::*;
-        let none = in_force(Some("a"), &[]);
-        let camera = in_force(Some("a"), &[ForceCamera]);
-        let both = in_force(Some("a"), &[ForceCamera, SetLocomotion]);
+        let none = in_force(&[]);
+        let camera = in_force(&[("a", ForceCamera)]);
+        let both = in_force(&[("a", ForceCamera), ("a", SetLocomotion)]);
         assert_eq!(
             changes(&none, &camera),
             [("a".to_owned(), ForceCamera, true)]
@@ -462,11 +489,10 @@ mod tests {
     }
 
     #[test]
-    fn leaving_a_scene_ends_what_was_in_force_there() {
+    fn the_same_permission_passing_to_another_scene_ends_in_one_and_starts_in_the_other() {
         use PermissionType::*;
-        let a = in_force(Some("a"), &[ForceCamera]);
-        // the next scene holds the camera too: an end for the one left, a start for the new one
-        let b = in_force(Some("b"), &[ForceCamera]);
+        let a = in_force(&[("a", ForceCamera)]);
+        let b = in_force(&[("b", ForceCamera)]);
         assert_eq!(
             changes(&a, &b),
             [
@@ -475,11 +501,27 @@ mod tests {
             ]
         );
         assert_eq!(
-            changes(&a, &in_force(None, &[])),
+            changes(&a, &in_force(&[])),
             [("a".to_owned(), ForceCamera, false)]
         );
     }
 
+    #[test]
+    fn a_stream_that_attaches_is_told_everything_in_force() {
+        use PermissionType::*;
+        let now = in_force(&[("a", ForceCamera), ("b", SetLocomotion)]);
+        let starts = now
+            .starts()
+            .map(|used| (used.scene, used.ty, used.in_force))
+            .collect::<Vec<_>>();
+        assert_eq!(
+            starts,
+            [
+                ("a".to_owned(), ForceCamera, Some(true)),
+                ("b".to_owned(), SetLocomotion, Some(true))
+            ]
+        );
+    }
     fn config_with(rules: &[(PermissionType, PermissionValue)]) -> AppConfig {
         let mut config = AppConfig::default();
         config

@@ -15,7 +15,7 @@ const { registerPermissions } = await import('../../bridge-scene/src/domains/per
 
 type Use = (use: PermissionUsedRaw) => Promise<void>
 
-function bridge(): { sent: unknown[]; on: Map<string, () => void>; use: Use } {
+function bridge(): { sent: unknown[]; on: Map<string, () => void>; use: Use; open: () => Promise<unknown> } {
   const sent: unknown[] = []
   const on = new Map<string, () => void>()
   registerPermissions({
@@ -24,7 +24,7 @@ function bridge(): { sent: unknown[]; on: Map<string, () => void>; use: Use } {
     push: () => undefined
   })
   const used = relay.mock.calls.find(([name]) => name === 'permissionsUsed')
-  return { sent, on, use: used?.[2] as Use }
+  return { sent, on, use: used?.[2] as Use, open: used?.[1] as () => Promise<unknown> }
 }
 
 const camera = (inForce?: boolean): PermissionUsedRaw => ({ ty: 'ForceCamera', additional: null, scene: 'bafkscene', wasAllowed: true, inForce })
@@ -59,6 +59,19 @@ describe('bridge permissions in force', () => {
     b.sent.length = 0
     b.on.get('hello')?.()
     expect(b.sent).toEqual([{ ...message(true), ty: 'SetLocomotion' }])
+  })
+
+  it('ends everything it holds when the stream is opened again, for the engine to list afresh', async () => {
+    const b = bridge()
+    await b.open()
+    expect(b.sent).toEqual([])
+    await b.use(camera(true))
+    b.sent.length = 0
+    await b.open()
+    expect(b.sent).toEqual([message(false)])
+    b.sent.length = 0
+    b.on.get('hello')?.()
+    expect(b.sent).toEqual([])
   })
 
   it('sends nothing on hello while nothing is in force', () => {

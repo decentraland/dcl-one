@@ -480,13 +480,15 @@ impl Plugin for SceneRunnerPlugin {
         app.add_plugins(AssetPreloadPlugin);
         app.add_plugins(scene_spawn_slice::SceneSpawnSlicePlugin);
 
-        app.init_resource::<common::structs::PermissionsInForce>();
+        app.init_resource::<permissions::PermissionsInForce>();
         app.add_systems(
             Update,
             (
                 update_scene_room,
                 update_scene_voice_block,
-                permissions::publish_permissions_in_force,
+                permissions::publish_permissions_in_force
+                    .after(update_world::camera_mode_area::update_camera_mode_area)
+                    .after(update_world::avatar_modifier_area::update_avatar_modifier_area),
             )
                 .in_set(SceneSets::PostLoop),
         );

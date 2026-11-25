@@ -289,6 +289,18 @@ describe('triggered uses + badge', () => {
     expect(h.session().permissions.unseenDenied).toBe(0)
     h.driver.emit({ ...USED, ty: 'ForceCamera', allowed: true, inForce: false })
     expect(h.session().permissions.inForce).toEqual(['SetLocomotion'])
+    // the player crosses into the other scene: its start, kept until now, shows
+    h.driver.emit({ ...SCENE_INFO, title: 'Next door', scene: 'bafkotherscene' })
+    expect(h.session().permissions.inForce).toEqual(['HideAvatarsNametags'])
+  })
+
+  it('forgets what was in force when the bridge starts again', async () => {
+    const h = renderSession()
+    await enter(h)
+    h.driver.emit({ ...USED, ty: 'ForceCamera', allowed: true, inForce: true })
+    expect(h.session().permissions.inForce).toEqual(['ForceCamera'])
+    h.driver.emit({ kind: 'bridgeReady' })
+    expect(h.session().permissions.inForce).toEqual([])
   })
 
   it('is cleared with the visit answers when the player moves to another scene or reloads', async () => {
@@ -547,7 +559,35 @@ describe('sidebar permissions button', () => {
     expect(screen.getByRole('alertdialog', { name: 'Scene permission review' })).toBeInTheDocument()
     await userEvent.click(screen.getByRole('button', { name: 'Deny' }))
     const subject = { ty: 'ForceCamera', sceneName: '', scene: 'bafkscenehash', realm: USED.realm, scope: 'scene', value: 'Allow' }
-    expect(session.permissions.setRule).toHaveBeenCalledWith(subject, false, expect.anything())
+    expect(session.permissions.setRule).toHaveBeenCalledWith(subject, false, 'scene')
+  })
+
+  it('an in-force row opens the review on what the scene rule already says', async () => {
+    const session = fakeSession()
+    session.permissions.inForce = ['ForceCamera']
+    session.permissions.rules = { scene: 'bafkscenehash', realm: USED.realm, rules: { scene: [{ ty: 'ForceCamera', allow: 'Deny' }], realm: [], global: [] } }
+    await renderSettled(
+      <>
+        <Sidebar session={session} />
+        <PopupHost />
+      </>
+    )
+    await userEvent.click(screen.getByRole('button', { name: 'Scene permissions' }))
+    await userEvent.click(screen.getByRole('button', { name: /active$/ }))
+    await userEvent.click(screen.getByRole('button', { name: 'Allow' }))
+    const subject = { ty: 'ForceCamera', sceneName: '', scene: 'bafkscenehash', realm: USED.realm, scope: 'scene', value: 'Deny' }
+    expect(session.permissions.setRule).toHaveBeenCalledWith(subject, true, 'scene')
+  })
+
+  it('asks for the rules again when the player crosses into another scene with the list open', async () => {
+    const session = fakeSession()
+    session.permissions.inForce = ['ForceCamera']
+    session.permissions.rules = { scene: 'bafkscenehash', realm: USED.realm, rules: { scene: [], realm: [], global: [] } }
+    const { rerender } = await renderSettled(<Sidebar session={session} />)
+    await userEvent.click(screen.getByRole('button', { name: 'Scene permissions' }))
+    expect(session.permissions.loadRules).toHaveBeenCalledTimes(1)
+    rerender(<Sidebar session={{ ...session, permissions: { ...session.permissions, rules: null } }} />)
+    expect(session.permissions.loadRules).toHaveBeenCalledTimes(2)
   })
 
   it('an in-force row waits for the scene rules before it can be opened', async () => {

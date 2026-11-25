@@ -163,7 +163,7 @@ impl Plugin for SceneDebugPanelPlugin {
             .add_debug_section(DebugSection {
                 title: "Scene permissions in force",
                 query: "/permissions_in_force",
-                fields: &[("Scene", "scene"), ("In force now", "types")],
+                fields: &[("In force now (scene, permission)", "inForce")],
                 actions: &[],
                 inputs: &[],
             })
@@ -559,18 +559,23 @@ fn scene_content(
         "collidersOutOfBounds": colliders.map_or(0, SceneColliderData::out_of_bounds_count)}).to_string());
 }
 
-/// Report, as JSON, the permissions whose effect acts on the player now (`types`) and the hash
-/// of the parcel scene they are counted for (`scene`, null outside any).
+/// Report, as JSON, the permissions whose effect acts on the player now: `inForce`, a list of
+/// `scene` (the hash of the scene that causes it) and `type`.
 #[derive(clap::Parser, ConsoleCommand)]
 #[command(name = "/permissions_in_force")]
 struct PermissionsInForceState;
 
 fn permissions_in_force_state(
     mut input: ConsoleCommand<PermissionsInForceState>,
-    in_force: Res<common::structs::PermissionsInForce>,
+    in_force: Res<crate::permissions::PermissionsInForce>,
 ) {
     if let Some(Ok(_)) = input.take() {
-        input.reply_ok(json!({"scene": in_force.scene, "types": in_force.types}).to_string());
+        let list = in_force
+            .0
+            .iter()
+            .map(|(scene, ty)| json!({"scene": scene, "type": ty}))
+            .collect::<Vec<_>>();
+        input.reply_ok(json!({ "inForce": list }).to_string());
     }
 }
 

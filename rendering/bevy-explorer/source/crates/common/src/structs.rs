@@ -109,6 +109,10 @@ pub struct PlayerModifiers {
     pub block_jump: bool,
     pub block_emote: bool,
     pub areas: Vec<ActiveAvatarArea>,
+    /// The scenes whose areas hide this player's avatar, passport or nametag now.
+    pub hide_scenes: Vec<Entity>,
+    /// The scenes whose areas or input modifiers change or block this player's movement now.
+    pub locomotion_scenes: Vec<Entity>,
 }
 
 #[derive(Clone, Debug)]
@@ -464,6 +468,8 @@ pub struct PrimaryCamera {
     pub roll: f32,
     // override
     pub scene_override: Option<CameraOverride>,
+    /// The scene whose camera mode area or virtual camera set `scene_override`.
+    pub scene_override_owner: Option<Entity>,
 }
 
 /// Where the camera sits relative to the player, with a scene's override applied.
@@ -541,6 +547,7 @@ impl Default for PrimaryCamera {
             roll: Default::default(),
             distance: 1.0,
             scene_override: None,
+            scene_override_owner: None,
         }
     }
 }
@@ -1849,14 +1856,6 @@ pub struct PermissionUsed {
     /// such as a camera the scene holds.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub in_force: Option<bool>,
-}
-
-/// The permissions whose effect acts on the player now, and the scene they are counted for: the
-/// parcel scene the player stands in.
-#[derive(Resource, Default, Debug, Clone, PartialEq, Eq)]
-pub struct PermissionsInForce {
-    pub scene: Option<String>,
-    pub types: Vec<PermissionType>,
 }
 
 #[derive(Resource)]

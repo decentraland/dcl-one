@@ -7,7 +7,7 @@
 //   from: SystemApi.getPermissionRequestStream / getPermissionUsedStream / setSinglePermission /
 //   setPermanentPermission / getPermanentPermissions / consoleCommand('reset_permissions').
 import { getRealm } from '~system/Runtime'
-import { BevyApi } from '../bevy-api'
+import { BevyApi, type PermissionUsedRaw } from '../bevy-api'
 import { relay } from '../system-helpers'
 import type { Ctx } from '../bridge'
 import type { PermissionUsedMessage } from '@explorer-core/engine/protocol'
@@ -83,7 +83,14 @@ export function registerPermissions(ctx: Ctx): void {
   ctx.on('hello', () => {
     for (const msg of inForce.values()) ctx.send(msg)
   })
-  relay('permissionsUsed', async () => await BevyApi.getPermissionUsedStream(), async (use) => {
+  const openUsed = async (): Promise<AsyncIterable<PermissionUsedRaw>> => {
+    // A stream opened again may have missed an end. The engine sends what is in force to a
+    // stream that attaches, so everything held is ended first and the engine's list restores it.
+    for (const msg of inForce.values()) ctx.send({ ...msg, inForce: false })
+    inForce.clear()
+    return await BevyApi.getPermissionUsedStream()
+  }
+  relay('permissionsUsed', openUsed, async (use) => {
     if (use.inForce != null) {
       // a start or an end, not a use: each one counts, so the repeat window does not apply
       const key = `${use.scene}|${use.ty}`

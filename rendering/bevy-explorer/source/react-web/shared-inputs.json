@@ -6115,7 +6115,7 @@
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/bridge-scene/src/domains/permissions.ts",
-      "sha256": "d7d244f5f457a9f6642b5f4fb04c25bfe668048ac74221734700ab7d27f01a34"
+      "sha256": "c22471ae32a5e5fcdad64a18b3e1a94b8e36218fdad865d0aa79cc8f17bae84c"
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/bridge-scene/src/domains/places.ts",
@@ -6371,7 +6371,7 @@
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/src/test/bridgePermissionsInForce.test.ts",
-      "sha256": "b9fdc9752356ad8d4fdcf0f453552086f69685dcf0aaee4d3510b37cea62b8dc"
+      "sha256": "4df11c8d368a1114f085b1066c001145aea17152e4c79585e2f2936e3db737bc"
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/src/test/bridgePlaces.test.ts",
@@ -6702,7 +6702,7 @@
     },
     {
       "path": "library/explorer-core/engine/mockBridge.ts",
-      "sha256": "13f8c51863da335df8dc36e784c908dd1aac98c67a374473f52a434424331e4b"
+      "sha256": "929660a2025341063297a8322c6b6d3eb6b991a5efec4e7d970c0b640f3eb27f"
     },
     {
       "path": "library/explorer-core/engine/mockEvents.ts",
@@ -10166,11 +10166,11 @@
     },
     {
       "path": "library/ui/apps/hud/features/permissions/PermissionsPopover.module.css",
-      "sha256": "8b36d1337361da793b4722bb4af4597329c8ace641b426b8d6a7678a2565db49"
+      "sha256": "aa54976a1abd76e81b93c305443e74572977d5ebc64c1c0c205c499c3dc826e5"
     },
     {
       "path": "library/ui/apps/hud/features/permissions/PermissionsPopover.tsx",
-      "sha256": "1df239615f979c731debf46d9ffe75c28af3981316e92da3dfba39e5f005ed34"
+      "sha256": "57152cf2b09b02a7259a98d066b1228532c725204224d11819edb965f1cb649e"
     },
     {
       "path": "library/ui/apps/hud/features/photoMode/PhotoModeOverlay.module.css",
@@ -10338,7 +10338,7 @@
     },
     {
       "path": "library/ui/apps/hud/features/session/useEngineSession.ts",
-      "sha256": "44924ea38ec8827b8316a41a7419aed9874289969b919eb33fa4deea850a3ed1"
+      "sha256": "37062e92172c77005cbb89594a6fedc3a3180c429000c3c96275b2941d8610e2"
     },
     {
       "path": "library/ui/apps/hud/features/settings/KeyBindingsTab.module.css",
@@ -10382,7 +10382,7 @@
     },
     {
       "path": "library/ui/apps/hud/features/sidebar/Sidebar.tsx",
-      "sha256": "c3ce6292c0f8a50f4b5d1d72dc09f08f4bb693681b2ee9ac454228c97ac7159f"
+      "sha256": "09be13ae1e076ac8f6f33ba0c4aadae570165bddde4839bf9fd515fe7ad0c72e"
     },
     {
       "path": "library/ui/apps/hud/features/sidebar/inviteLink.ts",
@@ -11034,7 +11034,7 @@
     },
     {
       "path": "library/ui/apps/hud/test/hosted/permissions.test.tsx",
-      "sha256": "1f3bf1aa47cb3cc1e095b9daac5a8f5622dd0bea98f84c65f7b950c634a7027f"
+      "sha256": "02112918b5f8ee3d7b3ad9df5836584af63ac8ea5334049743549fed249651d5"
     },
     {
       "path": "library/ui/apps/hud/test/hosted/photoMode.test.tsx",

@@ -2201,6 +2201,8 @@ export function useEngineSession(createDriver: () => LoginDriver, host: SessionH
           break
         case 'bridgeReady':
           setBridgeAnswered(true)
+          // a bridge that starts again reports what is in force from scratch
+          setPermissionsInForce([])
           break
         case 'bridgeUnavailable':
           // no answer is coming: Verifying's clock runs, so a sign-in waiting on it gives up

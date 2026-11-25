@@ -79,7 +79,7 @@ impl Plugin for AvatarModifierAreaPlugin {
 #[derive(Component)]
 pub struct HiddenNametag;
 
-fn update_avatar_modifier_area(
+pub(crate) fn update_avatar_modifier_area(
     mut commands: Commands,
     mut players: Query<
         (
@@ -255,6 +255,16 @@ fn update_avatar_modifier_area(
 
                 if permit {
                     // apply modifiers
+                    let acts = [
+                        AvatarModifierType::AmtHideAvatars,
+                        AvatarModifierType::AmtDisablePassports,
+                        AvatarModifierType::AmtHideNametags,
+                    ]
+                    .iter()
+                    .any(|modifier| area.0.modifiers.contains(&(*modifier as i32)));
+                    if acts && !modifiers.hide_scenes.contains(&scene_ent.root) {
+                        modifiers.hide_scenes.push(scene_ent.root);
+                    }
                     modifiers.hide |= area
                         .0
                         .modifiers
@@ -289,6 +299,11 @@ fn update_avatar_modifier_area(
                     };
 
                 if permit {
+                    if maybe_foreign.is_none()
+                        && !modifiers.locomotion_scenes.contains(&scene_ent.root)
+                    {
+                        modifiers.locomotion_scenes.push(scene_ent.root);
+                    }
                     if movement.control_mode.is_some() {
                         modifiers.control_type = Some(match movement.control_mode() {
                             AvatarControlType::CctNone => AvatarControl::None,
@@ -331,6 +346,11 @@ fn update_avatar_modifier_area(
                     };
 
                 if permit {
+                    if maybe_foreign.is_none()
+                        && !modifiers.locomotion_scenes.contains(&scene_ent.root)
+                    {
+                        modifiers.locomotion_scenes.push(scene_ent.root);
+                    }
                     modifiers.block_all |= modifier.disable_all();
                     modifiers.block_run |= modifier.disable_all() || modifier.disable_run();
                     modifiers.block_walk |= modifier.disable_all() || modifier.disable_walk();
@@ -586,5 +606,102 @@ mod tests {
             .hide = false;
         app.update();
         assert_eq!(visibility(&app), Visibility::Inherited);
+    }
+
+    #[test]
+    fn a_neighbours_nametag_area_is_in_force_under_the_neighbour() {
+        use crate::{
+            initialize_scene::{LiveScenes, PointerResult, PortableScenes, ScenePointers},
+            permissions::{publish_permissions_in_force, PermissionManager, PermissionsInForce},
+        };
+        use common::structs::{
+            AppConfig, PermissionType, PermissionUsed, PrimaryCamera, PrimaryUser,
+        };
+        use dcl_types::SceneId;
+
+        let mut app = App::new();
+        app.init_resource::<ScenePointers>()
+            .init_resource::<LiveScenes>()
+            .init_resource::<PortableScenes>()
+            .init_resource::<AppConfig>()
+            .init_resource::<CurrentRealm>()
+            .init_resource::<PermissionManager>()
+            .init_resource::<PermissionsInForce>()
+            .init_resource::<Wallet>()
+            .add_event::<PermissionUsed>()
+            .add_systems(
+                Update,
+                (update_avatar_modifier_area, publish_permissions_in_force).chain(),
+            );
+        // the player stands in the parcel scene, a step from the neighbour's parcel
+        let at = GlobalTransform::from_xyz(15.9, 0.0, -8.0);
+        let player = app.world_mut().spawn((PrimaryUser::default(), at)).id();
+        app.insert_resource(PrimaryPlayerRes(player));
+        app.world_mut().spawn(PrimaryCamera::default());
+
+        let mut scene = |hash: &str, parcel: IVec2| {
+            let scene = app.world_mut().spawn_empty().id();
+            let context = RendererSceneContext::new(
+                SceneId::DUMMY,
+                hash.to_owned(),
+                "storage_root".to_owned(),
+                false,
+                0,
+                "title".to_owned(),
+                parcel,
+                HashSet::from_iter([parcel]),
+                vec![],
+                Default::default(),
+                vec![],
+                scene,
+                0.0,
+                false,
+                "sdk_version",
+                false,
+                false,
+            );
+            app.world_mut().entity_mut(scene).insert(context);
+            app.world_mut()
+                .resource_mut::<LiveScenes>()
+                .scenes
+                .insert(hash.to_owned(), scene);
+            app.world_mut().resource_mut::<ScenePointers>().insert(
+                parcel,
+                PointerResult::Exists {
+                    hash: hash.to_owned(),
+                    urn: None,
+                },
+            );
+            scene
+        };
+        scene("parcel", IVec2::ZERO);
+        let neighbour = scene("neighbour", IVec2::new(1, 0));
+        // the neighbour's area hides nametags only, and reaches over the border
+        app.world_mut().spawn((
+            SceneEntity {
+                root: neighbour,
+                scene_id: SceneId::DUMMY,
+                id: SceneEntityId::from_proto_u32(600),
+            },
+            AvatarModifierArea(PbAvatarModifierArea {
+                area: Some(dcl_component::proto_components::common::Vector3 {
+                    x: 4.0,
+                    y: 4.0,
+                    z: 4.0,
+                }),
+                modifiers: vec![AvatarModifierType::AmtHideNametags as i32],
+                ..Default::default()
+            }),
+            at,
+        ));
+
+        for _ in 0..4 {
+            app.update();
+        }
+        assert!(app.world().entity(player).contains::<HiddenNametag>());
+        assert_eq!(
+            app.world().resource::<PermissionsInForce>().0,
+            [("neighbour".to_owned(), PermissionType::HideAvatarsNametags)]
+        );
     }
 }

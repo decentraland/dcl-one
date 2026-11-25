@@ -103,7 +103,9 @@ export function PermissionsPopover({
               disabled={rules == null}
               onClick={() => {
                 if (rules == null) return
-                review({ ty, sceneName, scene: rules.scene, realm: rules.realm, scope: 'scene', value: 'Allow' }, 'scene')
+                // a rule stored for the scene may already refuse it, from the next visit on
+                const value = rules.rules.scene.find((r) => r.ty === ty)?.allow ?? 'Allow'
+                review({ ty, sceneName, scene: rules.scene, realm: rules.realm, scope: 'scene', value }, 'scene')
               }}
             >
               {describePermission(ty)}

@@ -4,7 +4,7 @@
 // Camera, Nearby Voice and Chat. Me, Discover, Shop, System, Volume and Camera each open a panel
 // beside the column, one at a time; Map shows and hides the minimap.
 
-import { useCallback, useContext, useEffect, useState } from 'react'
+import { useCallback, useContext, useEffect, useRef, useState } from 'react'
 import { ControlButton, IconButton, MaskIcon, MenuList, MenuPanel, MenuRow, Panel, Slider, Toggle } from '../../design'
 import { toggleDebugPanel, useDebugPanelState } from '../debug/useDebugPanel'
 import { debugPanelLauncherEnabled } from '@explorer-core/lib/debugPanelLauncher'
@@ -162,6 +162,14 @@ export function Sidebar({
   const closePanel = useCallback(() => setPanel(null), [])
   const closeVoice = useCallback(() => setVoiceAnchor(null), [])
   const closePermissions = useCallback(() => setPermissionsAnchor(null), [])
+  // The rules are the current scene's and are dropped when the player crosses into another one:
+  // with the list open they are asked for again, or its "In force now" rows would stay off.
+  const { rules: permissionRules, loadRules: loadPermissionRules } = session.permissions
+  const hadPermissionRules = useRef(permissionRules != null)
+  useEffect(() => {
+    if (permissionsAnchor != null && hadPermissionRules.current && permissionRules == null) loadPermissionRules()
+    hadPermissionRules.current = permissionRules != null
+  }, [permissionsAnchor, permissionRules, loadPermissionRules])
   const closePortables = useCallback(() => setPortablesAnchor(null), [])
   const isOpen = (id: PanelId): boolean => panel?.id === id
   const [shopPanel] = useState(() => IN_WORLD_SHOP || mockHud())

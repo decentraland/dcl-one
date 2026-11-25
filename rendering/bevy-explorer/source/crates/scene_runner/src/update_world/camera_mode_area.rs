@@ -224,6 +224,7 @@ pub fn update_camera_mode_area(
         };
 
         if permitted {
+            camera.scene_override_owner = Some(scene_ent.root);
             match maybe_area.map(|area| area.0.mode()) {
                 Some(CameraType::CtFirstPerson) => {
                     camera.scene_override = Some(CameraOverride::Distance(0.0))
@@ -294,6 +295,7 @@ pub fn update_camera_mode_area(
     } else {
         // no camera areas
         camera.scene_override = None;
+        camera.scene_override_owner = None;
     }
 
     if current_areas.is_empty() {
