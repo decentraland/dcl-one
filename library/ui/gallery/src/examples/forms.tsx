@@ -605,51 +605,48 @@ function CodeInputExample() {
   )
 }
 
-/** The ring of a focused or invalid field sits 6px outside it, so the example leaves that room. */
 function SubmitFieldExample() {
   const [email, setEmail] = useState('ada@example.com')
   const noop = () => {}
   return (
-    <div className={layout.narrow} style={{ boxSizing: 'border-box', padding: 10 }}>
-      <div className={layout.stack}>
-        <SubmitField
-          aria-label="Email"
-          type="email"
-          placeholder="your@email.com"
-          value={email}
-          onChange={setEmail}
-          onSubmit={noop}
-          submitLabel="NEXT"
-          canSubmit
-        />
-        <SubmitField
-          aria-label="Email, held"
-          value=""
-          placeholder="your@email.com"
-          onChange={noop}
-          onSubmit={noop}
-          submitLabel="NEXT"
-          canSubmit={false}
-        />
-        <SubmitField
-          aria-label="Email, busy"
-          value="ada@example.com"
-          onChange={noop}
-          onSubmit={noop}
-          submitLabel="NEXT"
-          canSubmit
-          busy
-        />
-        <SubmitField
-          aria-label="Email, invalid"
-          value="ada@"
-          onChange={noop}
-          onSubmit={noop}
-          submitLabel="NEXT"
-          canSubmit={false}
-          error="Invalid email"
-        />
-      </div>
+    <div className={layout.ringRoom}>
+      <SubmitField
+        aria-label="Email"
+        type="email"
+        placeholder="your@email.com"
+        value={email}
+        onChange={setEmail}
+        onSubmit={noop}
+        submitLabel="NEXT"
+        canSubmit
+      />
+      <SubmitField
+        aria-label="Email, held"
+        value=""
+        placeholder="your@email.com"
+        onChange={noop}
+        onSubmit={noop}
+        submitLabel="NEXT"
+        canSubmit={false}
+      />
+      <SubmitField
+        aria-label="Email, busy"
+        value="ada@example.com"
+        onChange={noop}
+        onSubmit={noop}
+        submitLabel="NEXT"
+        canSubmit
+        busy
+      />
+      <SubmitField
+        aria-label="Email, invalid"
+        value="ada@"
+        onChange={noop}
+        onSubmit={noop}
+        submitLabel="NEXT"
+        canSubmit={false}
+        error="Invalid email"
+      />
     </div>
   )
 }
