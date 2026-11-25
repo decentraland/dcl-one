@@ -1774,6 +1774,8 @@ enum ContractWallet {
     Accepts,
     Refuses,
     Unreachable,
+    /// The client source spent its contract-wallet checks (`eip1654_budget`).
+    RateLimited,
 }
 
 struct StubEip1654(ContractWallet);
@@ -1797,6 +1799,7 @@ impl crate::auth::eip1654::Eip1654Validator for StubEip1654 {
             ContractWallet::Unreachable => Err(crate::auth::AuthError::Eip1654ValidationFailed(
                 "rpc unavailable".into(),
             )),
+            ContractWallet::RateLimited => Err(crate::auth::AuthError::Eip1654RateLimited),
         }
     }
 }
@@ -1848,8 +1851,9 @@ async fn contract_wallet_headers_with(
 /// A contract wallet (EIP-1654) picks an item and reads its picks as an EOA
 /// does, through the node's validator (`isValidSignature`), as upstream's
 /// crypto middleware verified it. A contract that refuses the signature is a
-/// 401, and a check that cannot run (the RPC failed) is a 503: never the
-/// signer, on the required (POST) and the optional (GET) route alike.
+/// 401, a check that cannot run (the RPC failed) is a 503 and one the client
+/// source's budget refused is a 429: never the signer, on the required (POST)
+/// and the optional (GET) route alike.
 #[tokio::test]
 async fn a_contract_wallet_picks_through_the_eip1654_validator() {
     let Some(mut state) = state_with_db(Settings {
@@ -1911,6 +1915,7 @@ async fn a_contract_wallet_picks_through_the_eip1654_validator() {
     for (wallet, code) in [
         (ContractWallet::Refuses, StatusCode::UNAUTHORIZED),
         (ContractWallet::Unreachable, StatusCode::SERVICE_UNAVAILABLE),
+        (ContractWallet::RateLimited, StatusCode::TOO_MANY_REQUESTS),
     ] {
         with(&mut state, wallet);
         let (status, body) = call(
@@ -1942,6 +1947,7 @@ async fn a_contract_wallet_picks_through_the_eip1654_validator() {
         (ContractWallet::Accepts, StatusCode::OK),
         (ContractWallet::Refuses, StatusCode::UNAUTHORIZED),
         (ContractWallet::Unreachable, StatusCode::SERVICE_UNAVAILABLE),
+        (ContractWallet::RateLimited, StatusCode::TOO_MANY_REQUESTS),
     ] {
         with(&mut state, wallet);
         let (status, body) = call(
@@ -2024,8 +2030,9 @@ async fn contract_wallet_checks_are_budgeted_per_source_before_any_rpc_call() {
             app.oneshot(req).await.unwrap().status()
         }
     };
+    let started = std::time::Instant::now();
     let mut tripped = None;
-    for sent in 0..200 {
+    for sent in 0..400 {
         let before = counter.0.load(Ordering::SeqCst);
         let status = get_from("203.0.113.77:40000").await;
         if status == StatusCode::TOO_MANY_REQUESTS {
@@ -2036,10 +2043,10 @@ async fn contract_wallet_checks_are_budgeted_per_source_before_any_rpc_call() {
     }
     let (sent, before, after) = tripped.expect("the source's budget trips");
     assert!(sent > 0, "refused contracts first");
-    assert_eq!(
-        before,
-        crate::shared::limits::PREAUTH_PER_MINUTE as usize,
-        "the /forward-blockchain pre-auth budget of isValidSignature calls"
+    let admitted = crate::shared::eip1654_budget::admitted_within(started.elapsed());
+    assert!(
+        admitted.contains(&before),
+        "the /forward-blockchain pre-auth budget of isValidSignature calls: {before}, {admitted:?}"
     );
     assert_eq!(
         before, after,

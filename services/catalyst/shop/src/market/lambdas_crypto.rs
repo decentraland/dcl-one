@@ -598,6 +598,51 @@ mod tests {
         );
     }
 
+    /// A contract-wallet check the client source's budget refused is a 429 in
+    /// the middleware envelope, not a `valid: false` verdict: a rate limit
+    /// says nothing about the signature.
+    #[tokio::test]
+    async fn a_rate_limited_contract_check_is_a_429_not_a_verdict() {
+        struct RateLimited;
+        #[async_trait::async_trait]
+        impl crate::auth::eip1654::Eip1654Validator for RateLimited {
+            async fn validate_signature(
+                &self,
+                _: &str,
+                _: &[u8],
+                _: &[u8],
+            ) -> Result<bool, AuthError> {
+                Err(AuthError::Eip1654RateLimited)
+            }
+        }
+        let message = "validate me";
+        let chain = vec![
+            signer_link("0x00000000000000000000000000000000000c0de1"),
+            AuthLink {
+                link_type: AuthLinkType::EcdsaEip1654SignedEntity,
+                payload: message.into(),
+                signature: Some(format!("0x{}", "11".repeat(65))),
+            },
+        ];
+        let mut state = super::super::tests::support::state_without_db();
+        std::sync::Arc::get_mut(&mut state)
+            .expect("an unshared state")
+            .eip1654 = Some(std::sync::Arc::new(RateLimited));
+        let body = Bytes::from(json!({ "signedMessage": message, "authChain": chain }).to_string());
+        let resp = validate_signature(State(state), json_headers(), body).await;
+        assert_eq!(resp.status(), StatusCode::TOO_MANY_REQUESTS);
+        let v: serde_json::Value = serde_json::from_slice(
+            &axum::body::to_bytes(resp.into_body(), usize::MAX)
+                .await
+                .unwrap(),
+        )
+        .unwrap();
+        assert_eq!(
+            v,
+            json!({ "ok": false, "message": "Too many contract-wallet signature checks; retry later" })
+        );
+    }
+
     #[tokio::test]
     async fn a_signed_chain_validates_and_a_forged_one_does_not() {
         use alloy_signer::SignerSync;

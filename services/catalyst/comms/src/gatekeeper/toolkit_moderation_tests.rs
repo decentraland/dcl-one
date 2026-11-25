@@ -1231,6 +1231,7 @@ async fn contract_wallet_checks_are_budgeted_per_source_before_any_rpc_call() {
         let app = app.clone();
         async move { app.oneshot(request).await.unwrap().status() }
     };
+    let started = std::time::Instant::now();
     let mut refused = 0;
     loop {
         match send("203.0.113.90:5000").await {
@@ -1238,13 +1239,17 @@ async fn contract_wallet_checks_are_budgeted_per_source_before_any_rpc_call() {
             StatusCode::TOO_MANY_REQUESTS => break,
             other => panic!("unexpected {other}"),
         }
-        assert!(refused <= PREAUTH_PER_MINUTE, "the source's budget trips");
+        assert!(
+            refused <= 2 * PREAUTH_PER_MINUTE,
+            "the source's budget trips"
+        );
     }
     let spent = calls.0.load(SeqCst);
     assert!(refused > 0, "refused contracts first");
-    assert_eq!(
-        spent, PREAUTH_PER_MINUTE as usize,
-        "the pre-auth budget of isValidSignature calls"
+    let admitted = crate::shared::eip1654_budget::admitted_within(started.elapsed());
+    assert!(
+        admitted.contains(&spent),
+        "the pre-auth budget of isValidSignature calls: {spent}, {admitted:?}"
     );
     assert_eq!(
         send("203.0.113.90:5000").await,

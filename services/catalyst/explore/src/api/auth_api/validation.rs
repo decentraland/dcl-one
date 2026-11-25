@@ -840,6 +840,16 @@ mod tests {
         }
     }
 
+    /// The node's budget of contract-wallet checks refusing below this
+    /// route's own is the same 429, never an invalid chain.
+    #[test]
+    fn a_rate_limited_contract_check_is_throttled() {
+        assert_eq!(
+            refusal(AuthError::Eip1654RateLimited),
+            ChainRefusal::Throttled(Spent::Network)
+        );
+    }
+
     #[tokio::test]
     async fn eoa_chains_need_no_validator() {
         let chain = delegated_chain(SIGNER_KEY, EPHEMERAL_KEY, "2100-01-01T00:00:00.000Z");

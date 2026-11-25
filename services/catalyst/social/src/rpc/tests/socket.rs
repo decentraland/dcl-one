@@ -122,7 +122,7 @@ async fn a_field_outside_the_identity_headers_does_not_stop_the_handshake() {
 
 /// The handshake verifies after the upgrade, in the task the upgrade spawns:
 /// its contract-wallet check still runs under the upgrading request's client
-/// source (`eip1654_budget::carry`), here a trusted proxy's `X-Real-IP`, so
+/// source (`eip1654_budget::on_upgrade`), here a trusted proxy's `X-Real-IP`, so
 /// the node's budget of contract-wallet checks counts it.
 #[tokio::test]
 async fn a_socket_handshake_checks_a_contract_wallet_under_its_client_source() {

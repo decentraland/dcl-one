@@ -3141,9 +3141,11 @@ once per window when that happens. During an RPC outage, after 20 failed calls
 (about 10 sign-ins) a network sees that 429 instead of the 503 for up to a
 minute. Below this budget, the node's shared validator applies its own to every
 contract-wallet check that reaches the RPC on any route
-(`shared::eip1654_budget`, also in memory): 120 calls per client source a
-minute (an IPv6 caller by its /64) and 480 per IPv6 /48, with a 429 before the
-RPC past it; a cached acceptance spends nothing.
+(`shared::eip1654_budget`, also in memory): 120 RPC calls per client source a
+minute (an IPv6 caller by its /64) and 480 per IPv6 /48, each admitted before it
+is sent, with a 429 past it; a cached acceptance spends nothing. An
+`isValidSignature` check is one call; a verification-block lookup spends one
+per call it makes.
 
 Expiry compares the stored instant with the handling replica's clock, so
 replicas need synchronized clocks (NTP). The periodic

@@ -6,11 +6,13 @@
 //! contract wallet's request into a 503.
 //!
 //! [`SourceBudgeted`] wraps the RPC validator below the acceptance cache
-//! (`cached_budgeted_validator`): each call that would reach the RPC first
-//! spends one token of the request's client source, by the pre-auth budgets
-//! of `limits::preauth_keys` (the `/forward-blockchain` ones), and a spent
-//! budget is [`AuthError::Eip1654RateLimited`] before any RPC call. A cached
-//! acceptance spends nothing.
+//! (`cached_budgeted_validator`): each RPC call a contract check would make
+//! first spends one token of the request's client source, by the pre-auth
+//! budgets of `limits::preauth_keys` (the `/forward-blockchain` ones), and a
+//! spent budget is [`AuthError::Eip1654RateLimited`] before that call. An
+//! `isValidSignature` check is one call; a verification-block lookup makes
+//! several (its refinement included), each admitted as it is made
+//! (`auth::with_call_gate`). A cached acceptance spends nothing.
 //!
 //! The client source is the server's own record of who is asking, a
 //! task-local set once for every request ([`scope_client_source`]): a trusted
@@ -116,6 +118,16 @@ pub fn debug_assert_scoped(what: &str) {
     );
 }
 
+/// The calls one client source's budget admits over `elapsed`: the pre-auth
+/// budget plus what refills meanwhile. For tests that spend a budget in real
+/// time, where a slow run earns tokens back.
+#[cfg(any(test, feature = "test-support"))]
+pub fn admitted_within(elapsed: std::time::Duration) -> std::ops::RangeInclusive<usize> {
+    let per_minute = crate::limits::PREAUTH_PER_MINUTE;
+    let refill = (elapsed.as_secs_f64() * f64::from(per_minute) / 60.0).ceil() as usize;
+    per_minute as usize..=per_minute as usize + refill
+}
+
 /// The shared validator of a serving node: the RPC check behind the budget,
 /// behind the acceptance cache, over the process-wide reqwest client.
 pub fn cached_budgeted_validator(
@@ -138,12 +150,24 @@ impl Budget {
     /// One token of the current client source, or the refusal; work with no
     /// source is not counted.
     fn admit(&self) -> Result<(), AuthError> {
-        match current_source() {
-            Some(source) if !self.limiter.allow(&preauth_keys(&source)) => {
-                Err(AuthError::Eip1654RateLimited)
-            }
-            _ => Ok(()),
+        admit(&self.limiter)
+    }
+
+    /// `future` with each RPC call the inner validator makes in it spending one
+    /// token first: for the verification-block lookup, whose number of calls
+    /// depends on the chain.
+    async fn per_call<F: Future>(&self, future: F) -> F::Output {
+        let limiter = self.limiter.clone();
+        crate::auth::with_call_gate(Arc::new(move || admit(&limiter)), future).await
+    }
+}
+
+fn admit(limiter: &KeyedLimiter) -> Result<(), AuthError> {
+    match current_source() {
+        Some(source) if !limiter.allow(&preauth_keys(&source)) => {
+            Err(AuthError::Eip1654RateLimited)
         }
+        _ => Ok(()),
     }
 }
 
@@ -211,8 +235,9 @@ impl Eip1654Validator for SourceBudgeted {
     }
 
     async fn verification_time_block(&self, started_ms: i64) -> Result<Option<u64>, AuthError> {
-        self.budget.admit()?;
-        self.budget.inner.verification_time_block(started_ms).await
+        self.budget
+            .per_call(self.budget.inner.verification_time_block(started_ms))
+            .await
     }
 }
 
@@ -259,8 +284,10 @@ impl Eip1654Validator for FreshBudgeted {
     }
 
     async fn verification_time_block(&self, started_ms: i64) -> Result<Option<u64>, AuthError> {
-        self.0.admit()?;
-        self.fresh()?.verification_time_block(started_ms).await
+        let fresh = self.fresh()?;
+        self.0
+            .per_call(fresh.verification_time_block(started_ms))
+            .await
     }
 }
 
@@ -345,10 +372,6 @@ mod tests {
             ));
             assert!(matches!(
                 v.validate_signature_at_block(WALLET, &[0], &[0], 7).await,
-                Err(AuthError::Eip1654RateLimited)
-            ));
-            assert!(matches!(
-                v.verification_time_block(0).await,
                 Err(AuthError::Eip1654RateLimited)
             ));
         })
@@ -579,5 +602,85 @@ mod tests {
             "the other client behind the same proxy"
         );
         assert_eq!(inner.calls(), PREAUTH_PER_MINUTE as usize + 1);
+    }
+
+    /// A JSON-RPC node at a fixed head, counting the calls it answers.
+    async fn fake_node(calls: Arc<AtomicUsize>) -> String {
+        use axum::routing::post;
+        let app = axum::Router::new().route(
+            "/",
+            post(move |axum::Json(request): axum::Json<serde_json::Value>| {
+                let calls = calls.clone();
+                async move {
+                    calls.fetch_add(1, Ordering::SeqCst);
+                    let result = match request["method"].as_str() {
+                        Some("eth_blockNumber") => serde_json::json!("0x64"),
+                        _ => serde_json::json!({ "timestamp": "0x6553f100" }),
+                    };
+                    axum::Json(serde_json::json!({
+                        "jsonrpc": "2.0",
+                        "id": request["id"],
+                        "result": result,
+                    }))
+                }
+            }),
+        );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let url = format!("http://{}/", listener.local_addr().unwrap());
+        tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+        url
+    }
+
+    /// A verification-block lookup spends one token per RPC call it makes,
+    /// each admitted before it is sent: the node answers exactly the budget's
+    /// calls, and the lookup that would pass it is refused mid-way, as
+    /// rate-limited, never as unavailable.
+    #[tokio::test]
+    async fn a_block_lookup_spends_one_token_per_rpc_call() {
+        let calls = Arc::new(AtomicUsize::new(0));
+        let rpc = Arc::new(crate::auth::RpcEip1654Validator::new(
+            fake_node(calls.clone()).await,
+            crate::auth::rpc_client().unwrap(),
+        ));
+        let v = crate::auth::ValidationCache::new(Arc::new(SourceBudgeted::new(rpc)));
+        let started = std::time::Instant::now();
+        let lookups = with_source(Some("203.0.113.30".into()), async {
+            let mut lookups = 0;
+            loop {
+                match v.verification_time_block(0).await {
+                    Ok(_) => lookups += 1,
+                    Err(AuthError::Eip1654RateLimited) => break lookups,
+                    Err(e) => panic!("{e}"),
+                }
+                assert!(lookups <= 2 * PREAUTH_PER_MINUTE, "the budget trips");
+            }
+        })
+        .await;
+        assert!(lookups > 0);
+        let sent = calls.load(Ordering::SeqCst);
+        let admitted = admitted_within(started.elapsed());
+        assert!(
+            admitted.contains(&sent),
+            "every call spent a token, and none was sent past the budget: {sent}, {admitted:?}"
+        );
+        let fresh = v.fresh_validator().expect("the fresh path is forwarded");
+        let refused = with_source(
+            Some("203.0.113.30".into()),
+            fresh.verification_time_block(0),
+        )
+        .await;
+        assert!(matches!(refused, Err(AuthError::Eip1654RateLimited)));
+        let sent = calls.load(Ordering::SeqCst);
+        let admitted = admitted_within(started.elapsed());
+        assert!(
+            admitted.contains(&sent),
+            "one budget for both paths: {sent}, {admitted:?}"
+        );
+        assert!(
+            with_source(None, v.verification_time_block(0))
+                .await
+                .is_ok(),
+            "work with no source is not counted"
+        );
     }
 }

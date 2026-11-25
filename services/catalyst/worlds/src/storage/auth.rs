@@ -791,6 +791,7 @@ mod tests {
                 verify_request(&headers, "get", &paths, Some(&validator)),
             )
         };
+        let started = std::time::Instant::now();
         let mut refused = 0;
         let tripped = loop {
             let err = verify("203.0.113.61").await.err().expect("refused");
@@ -799,11 +800,15 @@ mod tests {
             }
             assert_eq!(err.status_code(), 401, "{err:?}");
             refused += 1;
-            assert!(refused <= PREAUTH_PER_MINUTE, "the source's budget trips");
+            assert!(
+                refused <= 2 * PREAUTH_PER_MINUTE,
+                "the source's budget trips"
+            );
         };
         assert_eq!(tripped, AuthChainError::RateLimited);
         let spent = inner.calls.load(SeqCst);
-        assert_eq!(spent, PREAUTH_PER_MINUTE as usize);
+        let admitted = crate::shared::eip1654_budget::admitted_within(started.elapsed());
+        assert!(admitted.contains(&spent), "{spent}, {admitted:?}");
         let again = verify("203.0.113.61").await.err().expect("refused");
         assert_eq!(again.status_code(), 429);
         assert_eq!(inner.calls.load(SeqCst), spent, "no call past the budget");
