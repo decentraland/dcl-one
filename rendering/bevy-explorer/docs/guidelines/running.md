@@ -382,8 +382,11 @@ State, in every build:
   [--dir <path>]`: a sequence of `N` frames (1 to 20) `S` seconds apart (0.05 to 2, default
   0.5; the burst spans at most 20 s), each scaled to `--max-width` (default 640).
   `--interval-seconds` and `--dir` need `--count`. The schedule
-  runs from the first frame, so encoding never delays the next. Natively the frames are files in
-  `--dir` (created; a relative path is the client's working directory's) or a new
+  runs from the first frame. At most six frames wait at the window's full size for the encoder:
+  while six do, the next is not asked for, so an encoder that falls behind makes later frames
+  `late` instead of holding every frame in memory. Natively the frames are files in
+  `--dir` (created on the IO task pool before the first frame; a relative path is the client's
+  working directory's; one that cannot be created ends the capture with a refusal) or a new
   `captures/capture-<ms>` folder in the client's cache, and `directory` and each `path` are
   absolute. A `--dir` that already holds frames is written over from `frame-000`; the capture
   deletes nothing, so an earlier, longer sequence's higher-numbered frames stay, and the reply

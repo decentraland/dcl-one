@@ -1,13 +1,19 @@
 //! `/screenshot`, one frame or with `--count` a timed sequence: frames of the primary window, read
-//! back at the end of the frame they were rendered in, through one capture job at a time (the gate; a second capture
-//! is refused and the refusal names the holder). A job waits two frames, then for the camera's
-//! transition (at most 1.5 s), then captures; the frames are scaled and encoded by
-//! `common::frame`, as `/texture_camera_screenshot` and the camera reel's photo are, on the IO
-//! task pool, which is off the main thread natively and on the engine's own thread on the web.
-//! `--world-only` hides the native HUD and the scenes' window UI while the job runs, the scene UI
-//! through `HiddenSceneUis`, the rule `/show_ui` uses.
+//! back at the end of the frame they were rendered in, through one capture job at a time (the
+//! gate; a second capture is refused and the refusal names the holder). A job waits two frames,
+//! then for the camera's transition (at most 1.5 s), then captures. The frames are scaled and
+//! encoded by `common::frame`, the helper `/texture_camera_screenshot` and the camera reel's
+//! photo use too. Here that work runs on the IO task pool, and so does a sequence's file work:
+//! making its folder, writing its frames, counting the frames an earlier sequence left there. The
+//! pool is off the main thread natively and on the engine's own thread on the web.
+//! (`/texture_camera_screenshot` scales and encodes its one small image on the main thread, when
+//! the console polls its reply.) `--world-only` hides the native HUD and the scenes' window UI
+//! while the job runs, the scene UI through `HiddenSceneUis`, the rule `/show_ui` uses.
 
-use std::path::PathBuf;
+use std::{
+    future::Future,
+    path::{Path, PathBuf},
+};
 
 use base64::{prelude::BASE64_STANDARD, Engine};
 use bevy::{
@@ -39,8 +45,13 @@ use crate::active_scene::SceneResolver;
 const SETTLE_FRAMES: u32 = 2;
 const BLEND_DEADLINE_SECONDS: f64 = 1.5;
 const SEQUENCE_MAX_BURST_SECONDS: f32 = 20.0;
-/// How long a job may wait for its frames after the last was asked for.
+/// How long a job may wait for the IO task pool and the GPU: for its folder after it started, and
+/// for its frames, and the search of its folder, after the last frame was asked for.
 const READBACK_TIMEOUT_SECONDS: f64 = 10.0;
+/// The frames of a sequence that may wait, at the window's full size, to be read back and encoded.
+/// The next frame is not asked for while this many do: an encoder that falls behind makes later
+/// frames late, which the reply says, where it would otherwise keep every frame in memory.
+const MAX_FRAMES_IN_FLIGHT: usize = 6;
 
 pub(crate) struct CapturePlugin;
 
@@ -82,15 +93,15 @@ pub struct WorldOnlyCapture;
 /// another capture runs.
 ///
 /// `--count` captures a sequence instead: that many frames `--interval-seconds` apart (0.5 by
-/// default), scheduled from the first frame so encoding never delays the next, each at most
-/// `--max-width` wide (640 by default). Natively the frames are files under `--dir` (default: a
-/// new folder in the client's cache); a `--dir` that already holds frames is written over from
-/// `frame-000`, the rest left alone and counted in `staleFrames`. On the web they stay in memory,
-/// the last sequence only, and `--frame <path>` reads one as raw base64. JSON reply: `directory`
-/// (absolute), `stored` (disk or memory), `count`, `requestedIntervalSeconds`,
-/// `meanIntervalSeconds`, `late` (frames taken more than half an interval after their time),
-/// `screen`, `frames` (`path`, `tick` of the scene, `engineFrame`, `atSeconds`, `late`, ...). No
-/// image is inline.
+/// default), scheduled from the first frame, each at most `--max-width` wide (640 by default).
+/// Encoding delays the next frame only when six frames already wait for the encoder. Natively
+/// the frames are files under `--dir` (default: a new folder in the client's cache); a `--dir`
+/// that already holds frames is written over from `frame-000`, the rest left alone and counted
+/// in `staleFrames`. On the web they stay in memory, the last sequence only, and `--frame <path>`
+/// reads one as raw base64. JSON reply: `directory` (absolute), `stored` (disk or memory),
+/// `count`, `requestedIntervalSeconds`, `meanIntervalSeconds`, `late` (frames taken more than
+/// half an interval after their time), `screen`, `frames` (`path`, `tick` of the scene,
+/// `engineFrame`, `atSeconds`, `late`, ...). No image is inline.
 ///
 /// `--state` captures nothing and replies with the capture gate, for the debug panel: `holder`
 /// (`screenshot`, `screenshot --count` or `none`), `framesTaken` and `count` of the running
@@ -162,7 +173,11 @@ fn screenshot_cmd(
         input.reply_failed(refusal);
         return;
     }
-    let format = Format::from_jpg(cmd.jpg);
+    let format = if cmd.jpg {
+        Encoding::Jpeg(frame::JPEG_QUALITY)
+    } else {
+        Encoding::Png
+    };
     let (kind, max_width) = match cmd.count {
         None => (
             Kind::Shot {
@@ -227,7 +242,8 @@ fn check_burst(count: u32, interval: f32) -> Result<(), String> {
 }
 
 /// Where a sequence's frames go: a folder (given, or new under the cache) natively; memory on the
-/// web, which cannot write the host's disk.
+/// web, which cannot write the host's disk. The folder is made on the IO task pool, and the job
+/// waits for it before it asks for a frame.
 fn capture_target(dir: Option<PathBuf>, store: &mut CaptureStore) -> Result<Target, String> {
     let folder = match dir {
         Some(dir) if cfg!(target_arch = "wasm32") => {
@@ -248,12 +264,10 @@ fn capture_target(dir: Option<PathBuf>, store: &mut CaptureStore) -> Result<Targ
         }),
     };
     match folder {
-        Some(folder) => {
-            std::fs::create_dir_all(&folder)
-                .map_err(|e| format!("cannot create {}: {e}", folder.display()))?;
-            // a relative `--dir` is the client's working directory's: the reply names it in full
-            Ok(Target::Disk(std::path::absolute(&folder).unwrap_or(folder)))
-        }
+        // a relative `--dir` is the client's working directory's: the reply names it in full
+        Some(folder) => Ok(Target::Disk(Folder::make(
+            std::path::absolute(&folder).unwrap_or(folder),
+        ))),
         None => {
             store.sequence += 1;
             store.frames.clear();
@@ -323,45 +337,63 @@ impl CaptureStore {
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub(crate) enum Format {
-    Png,
-    Jpg,
-}
-
-impl Format {
-    fn from_jpg(jpg: bool) -> Self {
-        if jpg {
-            Self::Jpg
-        } else {
-            Self::Png
-        }
-    }
-
-    fn name(self) -> &'static str {
-        match self {
-            Self::Png => "png",
-            Self::Jpg => "jpg",
-        }
-    }
-
-    fn encoding(self) -> Encoding {
-        match self {
-            Self::Png => Encoding::Png,
-            Self::Jpg => Encoding::Jpeg(frame::JPEG_QUALITY),
-        }
-    }
-}
-
 struct Options {
     max_width: Option<u32>,
-    format: Format,
+    format: Encoding,
     world_only: bool,
 }
 
 enum Target {
-    Disk(PathBuf),
+    Disk(Folder),
     Memory(u32),
+}
+
+/// A sequence's folder on disk. The IO task pool makes it and, once the frames are written,
+/// counts the frames an earlier sequence left in it. The job waits for the first before it asks
+/// for a frame, and for the second before it replies.
+struct Folder {
+    path: PathBuf,
+    made: Io<Result<(), String>>,
+    stale: Option<Io<usize>>,
+}
+
+impl Folder {
+    fn make(path: PathBuf) -> Self {
+        let folder = path.clone();
+        let made = Io::spawn(async move {
+            std::fs::create_dir_all(&folder)
+                .map_err(|e| format!("cannot create {}: {e}", folder.display()))
+        });
+        Self {
+            path,
+            made,
+            stale: None,
+        }
+    }
+}
+
+/// A value the IO task pool works out, which the job polls each frame.
+enum Io<T> {
+    Running(Task<T>),
+    Done(T),
+}
+
+impl<T: Send + 'static> Io<T> {
+    fn spawn(work: impl Future<Output = T> + Send + 'static) -> Self {
+        Self::Running(IoTaskPool::get().spawn(work))
+    }
+
+    /// The value, once the pool has it.
+    fn poll(&mut self) -> Option<&T> {
+        if let Self::Running(task) = self {
+            let value = task.complete()?;
+            *self = Self::Done(value);
+        }
+        match self {
+            Self::Done(value) => Some(value),
+            Self::Running(_) => None,
+        }
+    }
 }
 
 enum Kind {
@@ -480,10 +512,59 @@ impl CaptureJob {
         true
     }
 
+    /// Whether a sequence on disk has its folder: `Ok(false)` while the IO task pool is making
+    /// it, and the failure when it could not be made or was not within
+    /// `READBACK_TIMEOUT_SECONDS` of the capture's start. A capture with no folder has all it
+    /// needs.
+    fn folder_made(&mut self, now: f64) -> Result<bool, String> {
+        let started = self.started;
+        let Kind::Sequence {
+            target: Target::Disk(folder),
+            ..
+        } = &mut self.kind
+        else {
+            return Ok(true);
+        };
+        match folder.made.poll() {
+            Some(Ok(())) => Ok(true),
+            Some(Err(reason)) => Err(reply::refusal(reason.clone(), None)),
+            None if now - started > READBACK_TIMEOUT_SECONDS => Err(format!(
+                "{} was not made within {READBACK_TIMEOUT_SECONDS} s",
+                folder.path.display()
+            )),
+            None => Ok(false),
+        }
+    }
+
+    /// Whether the reply has what it reads from disk: for a sequence in a folder, the count of
+    /// the frame files there that it did not write. The IO task pool counts them; the first call,
+    /// made once every frame is written, asks for it.
+    fn folder_searched(&mut self) -> bool {
+        let (count, format) = (self.count(), self.options.format);
+        let Kind::Sequence {
+            target: Target::Disk(folder),
+            ..
+        } = &mut self.kind
+        else {
+            return true;
+        };
+        let stale = folder.stale.get_or_insert_with(|| {
+            let path = folder.path.clone();
+            let written: Vec<String> = (0..count).map(|index| frame_name(index, format)).collect();
+            Io::spawn(async move { stale_frames(&path, &written) })
+        });
+        stale.poll().is_some()
+    }
+
     /// When the next frame is due, if one is: the first at once, then one per interval from the
-    /// first frame's time.
+    /// first frame's time. None is due while `MAX_FRAMES_IN_FLIGHT` wait for the encoder.
     fn next_due(&self) -> Option<f64> {
-        if self.frames.len() >= self.count() {
+        let in_flight = self
+            .frames
+            .iter()
+            .filter(|slot| !matches!(slot.state, SlotState::Done(_)))
+            .count();
+        if self.frames.len() >= self.count() || in_flight >= MAX_FRAMES_IN_FLIGHT {
             return None;
         }
         match (&self.kind, self.frames.first()) {
@@ -499,15 +580,20 @@ impl CaptureJob {
         let Kind::Sequence { target, .. } = &self.kind else {
             return None;
         };
-        let name = format!("frame-{index:03}.{}", self.options.format.name());
+        let name = frame_name(index, self.options.format);
         Some(match target {
             Target::Disk(folder) => {
-                let file = folder.join(name);
+                let file = folder.path.join(name);
                 (file.display().to_string(), Some(file))
             }
             Target::Memory(sequence) => (format!("capture://{sequence}/{name}"), None),
         })
     }
+}
+
+/// The file name of a sequence's frame `index`.
+fn frame_name(index: usize, format: Encoding) -> String {
+    format!("frame-{index:03}.{}", format.extension())
 }
 
 /// What the primary camera carries of a transition.
@@ -537,6 +623,20 @@ fn drive_capture(
         return;
     };
     let now = time.elapsed_secs_f64();
+    // polled from the first frame, so a folder that cannot be made fails the capture at once
+    let has_folder = match job.folder_made(now) {
+        Ok(made) => made,
+        Err(reason) => {
+            finish(
+                &mut commands,
+                &mut gate,
+                &mut store,
+                &mut scene_uis.reborrow(),
+                Err(reason),
+            );
+            return;
+        }
+    };
     if job.options.world_only && !scene_uis.suspended {
         scene_uis.suspended = true;
     }
@@ -544,7 +644,7 @@ fn drive_capture(
         job.settle_frames -= 1;
         return;
     }
-    if !job.camera_ready(camera_tweens.iter().any(is_blending), now) {
+    if !job.camera_ready(camera_tweens.iter().any(is_blending), now) || !has_folder {
         return;
     }
 
@@ -604,7 +704,14 @@ fn drive_capture(
         .frames
         .iter()
         .all(|slot| matches!(slot.state, SlotState::Done(_)));
-    if all_asked && all_done {
+    let written = all_asked && all_done;
+    // a frame held back by `MAX_FRAMES_IN_FLIGHT` waits on the ones before it, so the newest
+    // frame's age bounds the wait whether or not every frame was asked for
+    let overdue = job
+        .frames
+        .last()
+        .is_some_and(|last| now - last.at > READBACK_TIMEOUT_SECONDS);
+    if written && job.folder_searched() {
         let screen = windows.single().ok().map(|(_, window)| Screen::of(window));
         let parcel = player
             .single()
@@ -618,18 +725,19 @@ fn drive_capture(
             &mut scene_uis.reborrow(),
             result,
         );
-    } else if job
-        .frames
-        .last()
-        .is_some_and(|last| all_asked && now - last.at > READBACK_TIMEOUT_SECONDS)
-    {
+    } else if overdue {
+        let waited_for = if written {
+            "the capture folder was not searched"
+        } else {
+            "the frames were not read back"
+        };
         finish(
             &mut commands,
             &mut gate,
             &mut store,
             &mut scene_uis.reborrow(),
             Err(format!(
-                "the frames were not read back within {READBACK_TIMEOUT_SECONDS} s of the last capture"
+                "{waited_for} within {READBACK_TIMEOUT_SECONDS} s of the last capture"
             )),
         );
     }
@@ -672,7 +780,7 @@ fn finish(
 fn encode(
     image: Image,
     max_width: Option<u32>,
-    format: Format,
+    format: Encoding,
     path: Option<(String, Option<PathBuf>)>,
 ) -> Result<Encoded, String> {
     let pixels = frame::pixels(image)?;
@@ -680,7 +788,7 @@ fn encode(
     let scaled = max_width
         .map_or(Scale::Full, Scale::max_width)
         .apply(pixels);
-    let bytes = frame::encode(&scaled, format.encoding())?;
+    let bytes = frame::encode(&scaled, format)?;
     let path = match path {
         Some((name, Some(file))) => {
             std::fs::write(&file, &bytes)
@@ -775,7 +883,7 @@ fn build_reply(
             let size = UVec2::new(shot.width, shot.height);
             let mut reply = json!({
                 "caption": caption(size, screen, shot.frame, world_only, parcel, job.blend),
-                "format": format.name(),
+                "format": format.extension(),
                 "width": shot.width,
                 "height": shot.height,
                 "frame": { "width": shot.frame.x, "height": shot.frame.y },
@@ -821,31 +929,35 @@ fn build_reply(
                 let last = job.frames.last().map_or(first_at, |slot| slot.at);
                 reply::round_fine(((last - first_at) / (*count - 1) as f64) as f32)
             });
-            let stale = match target {
-                Target::Disk(folder) => stale_frames(folder, &encoded),
-                Target::Memory(_) => 0,
-            };
-            let (directory, stored) = match target {
-                Target::Disk(folder) => (folder.display().to_string(), "disk"),
+            let (directory, stored, read, stale) = match target {
+                Target::Disk(folder) => (
+                    folder.path.display().to_string(),
+                    "disk",
+                    "frames are files, read only the ones you need",
+                    // counted by the IO task pool before the reply is built
+                    match folder.stale {
+                        Some(Io::Done(stale)) => stale,
+                        _ => 0,
+                    },
+                ),
                 Target::Memory(_) => {
                     store.frames = encoded
                         .into_iter()
                         .filter_map(|frame| frame.path.map(|path| (path, frame.bytes)))
                         .collect();
-                    (store.directory(), "memory")
-                }
-            };
-            let read = match target {
-                Target::Disk(_) => "frames are files, read only the ones you need",
-                Target::Memory(_) => {
-                    "frames stay in memory until the next sequence; read one with /screenshot --frame <path>"
+                    (
+                        store.directory(),
+                        "memory",
+                        "frames stay in memory until the next sequence; read one with /screenshot --frame <path>",
+                        0,
+                    )
                 }
             };
             let mut reply = json!({
                 "directory": directory,
                 "stored": stored,
                 "count": count,
-                "format": format.name(),
+                "format": format.extension(),
                 "worldOnly": world_only,
                 "requestedIntervalSeconds": reply::round_fine(*interval as f32),
                 "meanIntervalSeconds": mean,
@@ -872,22 +984,16 @@ fn build_reply(
     }
 }
 
-/// The `frame-*` files in `folder` that are not among `written`: an earlier sequence's, left alone.
-fn stale_frames(folder: &std::path::Path, written: &[Encoded]) -> usize {
+/// The `frame-*` files in `folder` whose names are not among `written`: an earlier sequence's,
+/// left alone. Reads the folder, so it runs on the IO task pool.
+fn stale_frames(folder: &Path, written: &[String]) -> usize {
     let Ok(entries) = std::fs::read_dir(folder) else {
         return 0;
     };
     entries
         .flatten()
-        .map(|entry| entry.path())
-        .filter(|file| {
-            file.file_name()
-                .and_then(|name| name.to_str())
-                .is_some_and(|name| name.starts_with("frame-"))
-                && !written
-                    .iter()
-                    .any(|frame| frame.path.as_deref() == file.to_str())
-        })
+        .filter_map(|entry| entry.file_name().into_string().ok())
+        .filter(|name| name.starts_with("frame-") && !written.contains(name))
         .count()
 }
 
@@ -994,19 +1100,16 @@ mod tests {
         )
     }
 
+    /// The scale rule itself is tested in `common::frame`: here, that a frame read back as an
+    /// `Image` goes through it and the reply keeps the size it was read at.
     #[test]
-    fn a_frame_is_scaled_down_to_the_width_never_up_and_encoded() {
-        let wide = encode(frame(320, 160), Some(64), Format::Jpg, None).unwrap();
+    fn a_frame_read_back_is_scaled_and_encoded_and_keeps_its_read_size() {
+        let jpeg = Encoding::Jpeg(frame::JPEG_QUALITY);
+        let wide = encode(frame(320, 160), Some(64), jpeg, None).unwrap();
         assert_eq!((wide.width, wide.height), (64, 32));
         assert_eq!(wide.frame, UVec2::new(320, 160));
         assert_eq!(&wide.bytes[..2], &[0xFF, 0xD8]);
-
-        let narrow = encode(frame(48, 24), Some(64), Format::Png, None).unwrap();
-        assert_eq!((narrow.width, narrow.height), (48, 24));
-        assert_eq!(&narrow.bytes[1..4], b"PNG");
-
-        let full = encode(frame(320, 160), None, Format::Png, None).unwrap();
-        assert_eq!((full.width, full.height), (320, 160));
+        assert!(wide.path.is_none());
     }
 
     fn job(kind: Kind, world_only: bool, world: &mut World) -> CaptureJob {
@@ -1016,7 +1119,7 @@ mod tests {
             kind,
             Options {
                 max_width: Some(320),
-                format: Format::Png,
+                format: Encoding::Png,
                 world_only,
             },
             tx,
@@ -1144,6 +1247,204 @@ mod tests {
         assert_eq!(store.frames.len(), 3);
     }
 
+    fn done(path: Option<String>) -> SlotState {
+        SlotState::Done(Ok(Encoded {
+            bytes: vec![0; 4],
+            width: 320,
+            height: 160,
+            frame: UVec2::new(640, 320),
+            path,
+        }))
+    }
+
+    fn slot(at: f64, state: SlotState) -> Slot {
+        Slot {
+            scheduled: at,
+            at,
+            engine_frame: 0,
+            tick: None,
+            state,
+        }
+    }
+
+    #[test]
+    fn a_sequence_asks_for_no_frame_while_six_wait_for_the_encoder() {
+        let mut world = World::new();
+        let mut job = job(sequence(10, 0.1), false, &mut world);
+        assert_eq!(job.next_due(), Some(f64::NEG_INFINITY));
+        for index in 0..MAX_FRAMES_IN_FLIGHT {
+            // a frame still being read back: its sender is kept so the channel stays open
+            let (tx, rx) = oneshot::channel::<Image>();
+            std::mem::forget(tx);
+            job.frames
+                .push(slot(1.0 + 0.1 * index as f64, SlotState::Reading(rx)));
+        }
+        assert_eq!(job.next_due(), None);
+
+        // one frame encoded: the next is due at its own time on the first frame's schedule
+        job.frames[0].state = done(None);
+        let due = job.next_due().unwrap();
+        assert!((due - 1.6).abs() < 1e-9, "{due}");
+
+        // and none once every frame was asked for
+        while job.frames.len() < 10 {
+            job.frames.push(slot(2.0, done(None)));
+        }
+        assert_eq!(job.next_due(), None);
+    }
+
+    /// The IO task pool the capture's file work runs on; the app's `TaskPoolPlugin` makes it.
+    fn io_pool() {
+        IoTaskPool::get_or_init(bevy::tasks::TaskPool::new);
+    }
+
+    /// Polls until `ready` answers, as the capture system does once a frame.
+    fn wait_for<T>(mut ready: impl FnMut() -> Option<T>) -> T {
+        let give_up = std::time::Instant::now() + std::time::Duration::from_secs(30);
+        loop {
+            if let Some(value) = ready() {
+                return value;
+            }
+            assert!(
+                std::time::Instant::now() < give_up,
+                "the IO task did not finish"
+            );
+            std::thread::sleep(std::time::Duration::from_millis(1));
+        }
+    }
+
+    /// A new, empty folder for one test, under the system's temporary folder.
+    fn scratch(name: &str) -> PathBuf {
+        let folder =
+            std::env::temp_dir().join(format!("dcl-capture-test-{}-{name}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&folder);
+        std::fs::create_dir_all(&folder).unwrap();
+        folder
+    }
+
+    fn on_disk(count: usize, folder: Folder) -> Kind {
+        Kind::Sequence {
+            count,
+            interval: 0.1,
+            target: Target::Disk(folder),
+        }
+    }
+
+    #[test]
+    fn a_sequence_waits_for_its_folder_and_fails_when_it_cannot_be_made() {
+        io_pool();
+        let scratch = scratch("folder");
+        let mut world = World::new();
+
+        // a capture with no folder has nothing to wait for
+        let mut shot = job(Kind::Shot { json: false }, false, &mut world);
+        assert_eq!(shot.folder_made(0.0), Ok(true));
+        let mut in_memory = job(sequence(2, 0.1), false, &mut world);
+        assert_eq!(in_memory.folder_made(0.0), Ok(true));
+
+        // a folder the pool makes, parents included
+        let nested = scratch.join("a").join("b");
+        let mut made = job(on_disk(2, Folder::make(nested.clone())), false, &mut world);
+        assert!(wait_for(|| made.folder_made(0.0).unwrap().then_some(true)));
+        assert!(nested.is_dir());
+
+        // a folder that cannot be made: its parent is a file
+        let file = scratch.join("file");
+        std::fs::write(&file, b"x").unwrap();
+        let mut blocked = job(
+            on_disk(2, Folder::make(file.join("frames"))),
+            false,
+            &mut world,
+        );
+        let refusal = wait_for(|| match blocked.folder_made(0.0) {
+            Ok(false) => None,
+            other => Some(other),
+        })
+        .unwrap_err();
+        let refusal: Value = serde_json::from_str(&refusal).unwrap();
+        let reason = refusal["refused"].as_str().unwrap();
+        assert!(reason.starts_with("cannot create "), "{reason}");
+        assert!(reason.contains("frames"), "{reason}");
+
+        // a folder the pool never answers for: the wait ends at the limit
+        let stuck = Folder {
+            path: scratch.join("stuck"),
+            made: Io::spawn(std::future::pending()),
+            stale: None,
+        };
+        let mut stuck = job(on_disk(2, stuck), false, &mut world);
+        assert_eq!(stuck.folder_made(READBACK_TIMEOUT_SECONDS), Ok(false));
+        let late = stuck
+            .folder_made(READBACK_TIMEOUT_SECONDS + 0.1)
+            .unwrap_err();
+        assert!(late.ends_with("was not made within 10 s"), "{late}");
+
+        std::fs::remove_dir_all(&scratch).unwrap();
+    }
+
+    #[test]
+    fn the_frames_an_earlier_sequence_left_are_counted_off_the_main_thread() {
+        io_pool();
+        let scratch = scratch("stale");
+        for name in [
+            "frame-000.png",
+            "frame-001.png",
+            "frame-002.png",
+            "frame-000.jpg",
+            "notes.txt",
+        ] {
+            std::fs::write(scratch.join(name), b"x").unwrap();
+        }
+        let folder = Folder {
+            path: scratch.clone(),
+            made: Io::Done(Ok(())),
+            stale: None,
+        };
+        let mut world = World::new();
+        let mut job = job(on_disk(2, folder), false, &mut world);
+        for index in 0..2 {
+            let path = job.frame_path(index).map(|(name, _)| name);
+            job.frames.push(slot(1.0 + 0.1 * index as f64, done(path)));
+        }
+
+        // the first call asks the pool; the reply is built only once the count is in
+        wait_for(|| job.folder_searched().then_some(()));
+        let mut store = CaptureStore::default();
+        let reply: Value =
+            serde_json::from_str(&build_reply(&mut job, None, None, &mut store).unwrap()).unwrap();
+        // the third png and the jpg are an earlier sequence's; the text file is no frame
+        assert_eq!(reply["staleFrames"], 2);
+        assert_eq!(reply["stored"], "disk");
+        assert_eq!(reply["directory"], scratch.display().to_string());
+        assert_eq!(
+            reply["frames"][1]["path"],
+            scratch.join("frame-001.png").display().to_string()
+        );
+        let warning = reply["warning"].as_str().unwrap();
+        assert!(warning.contains("also holds 2 frame file(s)"), "{warning}");
+        assert!(store.frames.is_empty());
+
+        // a folder that holds only this sequence's frames carries neither field
+        std::fs::remove_file(scratch.join("frame-002.png")).unwrap();
+        std::fs::remove_file(scratch.join("frame-000.jpg")).unwrap();
+        let clean = Folder {
+            path: scratch.clone(),
+            made: Io::Done(Ok(())),
+            stale: None,
+        };
+        let mut job = self::job(on_disk(2, clean), false, &mut world);
+        for index in 0..2 {
+            let path = job.frame_path(index).map(|(name, _)| name);
+            job.frames.push(slot(1.0 + 0.1 * index as f64, done(path)));
+        }
+        wait_for(|| job.folder_searched().then_some(()));
+        let reply: Value =
+            serde_json::from_str(&build_reply(&mut job, None, None, &mut store).unwrap()).unwrap();
+        assert!(reply.get("staleFrames").is_none() && reply.get("warning").is_none());
+
+        std::fs::remove_dir_all(&scratch).unwrap();
+    }
+
     /// Runs `finish` on a world-only or full-view sequence with `result`; returns the reply,
     /// whether the scene UI is still suspended, whether `HiddenSceneUis` was written, and the HUD
     /// markers left.
@@ -1162,7 +1463,7 @@ mod tests {
             sequence(2, 0.1),
             Options {
                 max_width: None,
-                format: Format::Png,
+                format: Encoding::Png,
                 world_only,
             },
             tx,
@@ -1232,7 +1533,7 @@ mod tests {
             },
             Options {
                 max_width: Some(320),
-                format: Format::Png,
+                format: Encoding::Png,
                 world_only: false,
             },
             tx,

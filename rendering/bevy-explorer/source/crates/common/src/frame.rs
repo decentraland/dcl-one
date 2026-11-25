@@ -53,6 +53,16 @@ pub enum Encoding {
     Jpeg(u8),
 }
 
+impl Encoding {
+    /// The extension of a file encoded this way, which is also the name a reply gives the format.
+    pub fn extension(self) -> &'static str {
+        match self {
+            Self::Png => "png",
+            Self::Jpeg(_) => "jpg",
+        }
+    }
+}
+
 /// Ask for `shot` at the end of the frame. The receiver yields the frame once it is read back,
 /// and closes if it never is.
 pub fn read_back(commands: &mut Commands, shot: Screenshot) -> oneshot::Receiver<Image> {
