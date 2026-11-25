@@ -1,4 +1,5 @@
-import { PointerEventType, InputAction, Entity, PBPointerEventsResult } from '../../../packages/@dcl/ecs/src'
+import type { PointerEventType, Entity, PBPointerEventsResult } from '../../../packages/@dcl/ecs/src'
+import { InputAction } from '../../../packages/@dcl/ecs/src'
 
 export function createTestPointerDownCommand(
   entity: Entity,

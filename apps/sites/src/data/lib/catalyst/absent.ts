@@ -1,4 +1,4 @@
-import { z } from "zod";
+import type { z } from "zod";
 
 /**
  * A field the upstream may omit or send as an explicit `null` (the lambdas

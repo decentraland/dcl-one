@@ -1,10 +1,9 @@
+import type { IEngine, RaycastSystem } from '../../../packages/@dcl/ecs/src'
 import {
   ColliderLayer,
   components,
   createRaycastSystem,
   Engine,
-  IEngine,
-  RaycastSystem,
   RaycastQueryType
 } from '../../../packages/@dcl/ecs/src'
 import { Vector3 } from '../../../packages/@dcl/sdk/math'

@@ -318,6 +318,8 @@ pub struct ExploreState {
     /// The Snapshot voting-power client the favorite and like writes score
     /// their signer with (`places::voting_power`).
     pub voting_power: places::voting_power::Client,
+    /// The content read-through event profiles fall back to; `None` reads this node's alone.
+    pub read_through: Option<Arc<content::read_through::ReadThrough>>,
 }
 
 pub type SharedState = Arc<ExploreState>;
@@ -363,12 +365,22 @@ impl ExploreState {
             eip1654,
             storage: None,
             cors: Arc::new(cors::Policy::upstream()),
+            read_through: None,
         }
     }
 
     /// The blob store the poster uploads land in.
     pub fn with_storage(mut self, storage: Arc<crate::storage::Storage>) -> Self {
         self.storage = Some(storage);
+        self
+    }
+
+    /// The content read-through event profiles fall back to.
+    pub fn with_read_through(
+        mut self,
+        read_through: Option<Arc<content::read_through::ReadThrough>>,
+    ) -> Self {
+        self.read_through = read_through;
         self
     }
 
@@ -464,6 +476,7 @@ impl ExploreState {
                 E::CatalystUnavailable(_) => {
                     ApiError::service_unavailable("Signature verification unavailable")
                 }
+                E::RateLimited => ApiError::http(429, e.to_string()),
             }
         })
     }

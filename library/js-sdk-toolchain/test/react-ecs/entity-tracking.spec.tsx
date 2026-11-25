@@ -1,5 +1,5 @@
-import { Entity, IEngine } from '../../packages/@dcl/ecs/src'
-import { ReactBasedUiSystem } from '../../packages/@dcl/react-ecs/src/system'
+import type { Entity, IEngine } from '../../packages/@dcl/ecs/src'
+import type { ReactBasedUiSystem } from '../../packages/@dcl/react-ecs/src/system'
 import { ReactEcs, UiEntity } from '../../packages/@dcl/react-ecs/src'
 import { setupEngine } from './utils'
 
