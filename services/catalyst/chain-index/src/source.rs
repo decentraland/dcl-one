@@ -28,6 +28,8 @@ pub enum Source {
     LandAuthzIndex,
     /// `shop.nft*` after a published fold (`nft_index`).
     NftIndex,
+    /// Polygon collection factories and creatorship events.
+    CollectionsIndex,
     /// `shop.trade_event` after a published fold (`trade_events`).
     TradeEventsIndex,
     /// `shop.rental_event` after a published fold (`rentals::index`).
@@ -52,6 +54,7 @@ impl Source {
             Self::TradesMirror => "trades-mirror",
             Self::LandAuthzIndex => "land-authz-index",
             Self::NftIndex => "nft-index",
+            Self::CollectionsIndex => "collections-index",
             Self::TradeEventsIndex => "trade-events-index",
             Self::RentalsIndex => "rentals-index",
             Self::ThirdPartyRegistryIndex => "third-party-registry-index",
@@ -76,6 +79,7 @@ impl Source {
             Self::TradesMirror => Some("TRADES_SYNC_UPSTREAM_URL"),
             Self::LandAuthzIndex => Some("LAND_AUTHZ_INDEX_ENABLED"),
             Self::NftIndex => Some("MARKETPLACE_NFT_INDEX_ENABLED"),
+            Self::CollectionsIndex => Some("MARKETPLACE_COLLECTIONS_INDEX_ENABLED"),
             Self::TradeEventsIndex => Some("MARKETPLACE_TRADE_EVENTS_INDEX_ENABLED"),
             Self::RentalsIndex => Some("SHOP_RENTALS_INDEX_ENABLED"),
             Self::ThirdPartyRegistryIndex => Some("MARKETPLACE_THIRD_PARTY_REGISTRY_INDEX_ENABLED"),

@@ -33,8 +33,9 @@ use crate::content::Denylist;
 use crate::content::queries::non_denylisted;
 
 use super::catalog::escape_like;
+use super::catalogue::{self, Access, CatalogueRead, Purpose};
 use super::items::{self, CreditCatalogItem};
-use super::mirrors::{Mirror, require_ready};
+use super::mirrors::Mirror;
 use super::readers::{RefreshClaim, Ttl, cached};
 use super::wire::{ApiError, Params};
 use super::{MarketplaceState, SharedState};
@@ -198,29 +199,52 @@ const DIRECTORY_RETRY_AFTER: Duration = Duration::from_secs(30);
 /// one (kept up to [`DIRECTORY_STALE_FOR`]) while one background read refreshes it; else, with
 /// none yet, that read for at most [`DIRECTORY_WAIT`], and only by the feed that started it.
 /// `None` answers without inline profiles, and the cards ask for them. Only one read runs at a
-/// time, and a failed one is retried after [`DIRECTORY_RETRY_AFTER`].
-pub async fn directory_snapshot(state: &SharedState) -> Option<Arc<Value>> {
+/// time, and a failed one is retried after [`DIRECTORY_RETRY_AFTER`]. `sources` is what the
+/// feed's own catalogue read saw ([`CatalogueRead::sources`]): a directory read from another
+/// source (before an ownership change) is never served.
+pub async fn directory_snapshot(state: &SharedState, sources: &str) -> Option<Arc<Value>> {
     let readers = &state.readers;
-    if let Some(fresh) = readers.fresh(Ttl::M15, CREATOR_DIRECTORY_KEY) {
+    let key = directory_key(sources);
+    if let Some(fresh) = readers.fresh(Ttl::M15, &key) {
         return Some(fresh);
     }
     let refresh = readers
-        .begin_refresh(CREATOR_DIRECTORY_KEY, DIRECTORY_RETRY_AFTER)
+        .begin_refresh(&key, DIRECTORY_RETRY_AFTER)
         .map(|id| {
             // Released however the read ends, a panic included, and even when the task never
             // runs (a runtime shutting down drops it).
-            let mut claim = RefreshClaim::new(Arc::clone(state), CREATOR_DIRECTORY_KEY, id);
+            let mut claim = RefreshClaim::new(Arc::clone(state), key.clone(), id);
             let state = Arc::clone(state);
+            let sources = sources.to_string();
             tokio::spawn(async move {
                 // A read that hangs (a stuck connection, a lock) ends as failed at the limit, so
                 // the claim falls to the backoff instead of being held until a restart.
-                let read = tokio::time::timeout(DIRECTORY_READ_LIMIT, directory_value(&state))
+                let read = tokio::time::timeout(DIRECTORY_READ_LIMIT, async {
+                    let mut read = catalogue::begin(
+                        &state,
+                        Purpose::Describe,
+                        &[Mirror::Items],
+                        None,
+                        Access::ReadOnly,
+                    )
                     .await
-                    .unwrap_or_else(|_| {
-                        Err(ApiError::Internal(format!(
-                            "the creator directory read took over {DIRECTORY_READ_LIMIT:?}"
-                        )))
-                    });
+                    .map_err(|_| ApiError::Internal("the catalogue cannot be read".into()))?;
+                    let directory = directory_value(&state, &mut read).await?;
+                    // Read after an ownership change: filed under its own sources, and not
+                    // this claim's.
+                    if read.sources() != sources {
+                        return Err(ApiError::Internal(
+                            "the catalogue's sources changed during the directory read".into(),
+                        ));
+                    }
+                    Ok(directory)
+                })
+                .await
+                .unwrap_or_else(|_| {
+                    Err(ApiError::Internal(format!(
+                        "the creator directory read took over {DIRECTORY_READ_LIMIT:?}"
+                    )))
+                });
                 match &read {
                     Ok(_) => claim.succeeded(),
                     Err(e) => tracing::warn!(error = ?e, "creator directory unavailable; feeds answer without creator profiles"),
@@ -228,7 +252,7 @@ pub async fn directory_snapshot(state: &SharedState) -> Option<Arc<Value>> {
                 read.ok()
             })
         });
-    if let Some(kept) = readers.kept_within(CREATOR_DIRECTORY_KEY, DIRECTORY_STALE_FOR) {
+    if let Some(kept) = readers.kept_within(&key, DIRECTORY_STALE_FOR) {
         return Some(kept);
     }
     // With no copy yet, a feed that did not start the read answers without profiles rather than
@@ -321,9 +345,12 @@ fn face_url(state: &MarketplaceState, entity_id: &str, face: Option<&str>) -> Op
         .map(str::to_string)
 }
 
-/// The cached directory, after the content denylist.
-pub async fn creator_directory(state: &MarketplaceState) -> Result<Vec<CreatorEntry>, ApiError> {
-    let value = directory_value(state).await?;
+/// The cached directory, read in `read`'s snapshot, after the content denylist.
+pub async fn creator_directory(
+    state: &MarketplaceState,
+    read: &mut CatalogueRead,
+) -> Result<Vec<CreatorEntry>, ApiError> {
+    let value = directory_value(state, read).await?;
     let entries: Vec<CreatorEntry> = serde_json::from_value(Arc::unwrap_or_clone(value))
         .map_err(|e| ApiError::Internal(e.to_string()))?;
     Ok(entries
@@ -332,54 +359,59 @@ pub async fn creator_directory(state: &MarketplaceState) -> Result<Vec<CreatorEn
         .collect())
 }
 
-/// The creator directory's memo key, under [`Ttl::M15`].
+/// The creator directory's memo key prefix, under [`Ttl::M15`].
 pub(crate) const CREATOR_DIRECTORY_KEY: &str = "search:creator-directory";
 
-async fn directory_value(state: &MarketplaceState) -> Result<Arc<Value>, ApiError> {
-    cached(
-        state,
-        Ttl::M15,
-        CREATOR_DIRECTORY_KEY.to_string(),
-        || async {
-            let rows = sqlx::query(CREATOR_DIRECTORY_SQL)
-                .fetch_all(&state.pool)
-                .await
-                .map_err(|e| e.to_string())?;
-            let entries: Vec<CreatorEntry> = rows
-                .iter()
-                .map(|r| {
-                    let entity_id: Option<String> = r.get("entity_id");
-                    let face: Option<String> = r.get("face");
-                    let mut names: Vec<String> = r.get("names");
-                    names.truncate(CREATOR_MAX_NAMES);
-                    CreatorEntry {
-                        address: r.get("address"),
-                        name: r.get("name"),
-                        face: entity_id
-                            .as_deref()
-                            .and_then(|id| face_url(state, id, face.as_deref())),
-                        entity_id,
-                        claimed: r.get("claimed"),
-                        names,
-                        items: r.get("items"),
-                        collections: r.get("collections"),
-                    }
-                })
-                .collect();
-            state.warm_faces(
-                rows.iter()
-                    .filter_map(|r| r.get::<Option<String>, _>("entity_id")),
-            );
-            serde_json::to_value(entries).map_err(|e| e.to_string())
-        },
-    )
+/// The directory's memo key for the catalogue `sources` it was read from
+/// ([`CatalogueRead::sources`]). A display aggregate: within one source it
+/// keeps its stated staleness ([`Ttl::M15`], kept up to
+/// [`DIRECTORY_STALE_FOR`]); an ownership change, a hand-back included,
+/// files it anew.
+pub(crate) fn directory_key(sources: &str) -> String {
+    format!("{CREATOR_DIRECTORY_KEY}:{sources}")
+}
+
+async fn directory_value(
+    state: &MarketplaceState,
+    read: &mut CatalogueRead,
+) -> Result<Arc<Value>, ApiError> {
+    let key = directory_key(&read.sources());
+    let conn = &mut *read.tx;
+    cached(state, Ttl::M15, key.clone(), || async move {
+        let rows = sqlx::query(CREATOR_DIRECTORY_SQL)
+            .fetch_all(conn)
+            .await
+            .map_err(|e| e.to_string())?;
+        let entries: Vec<CreatorEntry> = rows
+            .iter()
+            .map(|r| {
+                let entity_id: Option<String> = r.get("entity_id");
+                let face: Option<String> = r.get("face");
+                let mut names: Vec<String> = r.get("names");
+                names.truncate(CREATOR_MAX_NAMES);
+                CreatorEntry {
+                    address: r.get("address"),
+                    name: r.get("name"),
+                    face: entity_id
+                        .as_deref()
+                        .and_then(|id| face_url(state, id, face.as_deref())),
+                    entity_id,
+                    claimed: r.get("claimed"),
+                    names,
+                    items: r.get("items"),
+                    collections: r.get("collections"),
+                }
+            })
+            .collect();
+        state.warm_faces(
+            rows.iter()
+                .filter_map(|r| r.get::<Option<String>, _>("entity_id")),
+        );
+        serde_json::to_value(entries).map_err(|e| e.to_string())
+    })
     .await
     .map_err(ApiError::Internal)
-    .inspect(|directory| {
-        state
-            .readers
-            .keep(CREATOR_DIRECTORY_KEY, Arc::clone(directory))
-    })
+    .inspect(|directory| state.readers.keep(&key, Arc::clone(directory)))
 }
 
 /// Creators whose profile name or a NAME matches every term, best first:
@@ -437,9 +469,18 @@ pub async fn get_creator_search(
     State(state): State<SharedState>,
     Query(pairs): Query<Vec<(String, String)>>,
 ) -> Response {
-    if let Err(envelope) = require_ready(&state, Mirror::Items).await {
-        return envelope;
-    }
+    let mut read = match catalogue::begin(
+        &state,
+        Purpose::Describe,
+        &[Mirror::Items],
+        None,
+        Access::ReadOnly,
+    )
+    .await
+    {
+        Ok(read) => read,
+        Err(envelope) => return envelope,
+    };
     let p = Params::new(&pairs);
     let search = p.get_string("search", None).unwrap_or_default();
     let first = clamp(
@@ -454,7 +495,7 @@ pub async fn get_creator_search(
         )
             .into_response();
     }
-    match creator_directory(&state).await {
+    match creator_directory(&state, &mut read).await {
         Ok(directory) => (
             [(CACHE_CONTROL, SUGGEST_CACHE)],
             Json(json!({ "data": rank_creators(&directory, &search, first) })),
@@ -486,6 +527,7 @@ pub struct SuggestedCollection {
 /// address.
 pub async fn search_collections(
     state: &MarketplaceState,
+    conn: &mut sqlx::PgConnection,
     search: &str,
     first: usize,
     directory: &[CreatorEntry],
@@ -507,7 +549,7 @@ pub async fn search_collections(
          GROUP BY c.contract_address, c.name, c.creator",
     )
     .bind(&patterns)
-    .fetch_all(&state.pool)
+    .fetch_all(&mut *conn)
     .await?;
     let sales = collection_sales(state).await;
     let query = forms(&terms.join(" "));
@@ -595,7 +637,12 @@ pub async fn get_search_suggest(
     if query_terms(&search).is_empty() {
         return ([(CACHE_CONTROL, SUGGEST_CACHE)], Json(empty)).into_response();
     }
-    let directory = match creator_directory(&state).await {
+    // One snapshot answers the three sections: the items carry prices.
+    let mut read = match items::priced_read(&state, None).await {
+        Ok(read) => read,
+        Err(envelope) => return envelope,
+    };
+    let directory = match creator_directory(&state, &mut read).await {
         Ok(d) => d,
         Err(e) => return e.into_response(),
     };
@@ -603,10 +650,9 @@ pub async fn get_search_suggest(
         ("search".to_string(), search.clone()),
         ("first".to_string(), items_first.to_string()),
     ];
-    let (items_page, collections) = tokio::join!(
-        items::catalog_items_page(&state, &item_pairs),
-        search_collections(&state, &search, collections_first, &directory)
-    );
+    let items_page = items::catalog_items_page(&state, &mut read, &item_pairs).await;
+    let collections =
+        search_collections(&state, &mut read.tx, &search, collections_first, &directory).await;
     let (item_rows, total) = match items_page {
         Ok(page) => page,
         Err(r) => return r,
@@ -665,9 +711,18 @@ mod tests {
         };
         let state =
             crate::market::tests::support::state_with_empty_readers(Some(pool.clone())).await;
+        // The background read passes the catalogue gate: the mirrors' passes.
+        sqlx::query(
+            "INSERT INTO shop.mirror_state (mirror, network, source_url, last_complete_pass_at) \
+             SELECT m, n, 'test', timezone('UTC', now()) \
+             FROM unnest(ARRAY['collections', 'items']) m CROSS JOIN unnest(ARRAY['ethereum', 'matic']) n",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
         let until_fresh = |state: SharedState| async move {
             tokio::time::timeout(Duration::from_secs(20), async {
-                while !state.readers.holds(Ttl::M15, CREATOR_DIRECTORY_KEY) {
+                while !state.readers.holds(Ttl::M15, &directory_key("mirror")) {
                     tokio::time::sleep(Duration::from_millis(20)).await;
                 }
             })
@@ -681,9 +736,12 @@ mod tests {
             .await
             .unwrap();
         let asked = std::time::Instant::now();
-        let held = tokio::time::timeout(Duration::from_secs(10), directory_snapshot(&state))
-            .await
-            .expect("the feed is not held up by the directory's read");
+        let held = tokio::time::timeout(
+            Duration::from_secs(10),
+            directory_snapshot(&state, "mirror"),
+        )
+        .await
+        .expect("the feed is not held up by the directory's read");
         assert!(held.is_none());
         assert!(
             asked.elapsed() < DIRECTORY_WAIT + Duration::from_secs(5),
@@ -693,28 +751,28 @@ mod tests {
         // Another feed while that read is still held up does not lead a read of its own: it
         // answers without profiles at once.
         let follower = std::time::Instant::now();
-        assert!(directory_snapshot(&state).await.is_none());
+        assert!(directory_snapshot(&state, "mirror").await.is_none());
         assert!(
             follower.elapsed() < DIRECTORY_WAIT,
             "{:?}",
             follower.elapsed()
         );
-        assert!(!state.readers.holds(Ttl::M15, CREATOR_DIRECTORY_KEY));
+        assert!(!state.readers.holds(Ttl::M15, &directory_key("mirror")));
         lock.rollback().await.unwrap();
         until_fresh(state.clone()).await;
-        let read = directory_snapshot(&state)
+        let read = directory_snapshot(&state, "mirror")
             .await
             .expect("the fresh directory");
 
-        state.readers.forget(Ttl::M15, CREATOR_DIRECTORY_KEY);
-        assert!(!state.readers.holds(Ttl::M15, CREATOR_DIRECTORY_KEY));
+        state.readers.forget(Ttl::M15, &directory_key("mirror"));
+        assert!(!state.readers.holds(Ttl::M15, &directory_key("mirror")));
         let mut lock = pool.begin().await.unwrap();
         sqlx::query("LOCK TABLE shop.items IN ACCESS EXCLUSIVE MODE")
             .execute(&mut *lock)
             .await
             .unwrap();
         assert_eq!(
-            directory_snapshot(&state).await,
+            directory_snapshot(&state, "mirror").await,
             Some(read),
             "the expired copy answers while its refresh is held up"
         );
@@ -723,9 +781,9 @@ mod tests {
 
         // The kept copy serves for an hour from its read, and no longer: past it, with the cache
         // entry expired and the refresh held up, a feed answers without profiles.
-        state.readers.forget(Ttl::M15, CREATOR_DIRECTORY_KEY);
+        state.readers.forget(Ttl::M15, &directory_key("mirror"));
         state.readers.backdate_kept(
-            CREATOR_DIRECTORY_KEY,
+            &directory_key("mirror"),
             DIRECTORY_STALE_FOR + Duration::from_secs(1),
         );
         let mut lock = pool.begin().await.unwrap();
@@ -733,9 +791,12 @@ mod tests {
             .execute(&mut *lock)
             .await
             .unwrap();
-        let held = tokio::time::timeout(Duration::from_secs(10), directory_snapshot(&state))
-            .await
-            .expect("the feed is not held up by the directory's read");
+        let held = tokio::time::timeout(
+            Duration::from_secs(10),
+            directory_snapshot(&state, "mirror"),
+        )
+        .await
+        .expect("the feed is not held up by the directory's read");
         assert!(held.is_none(), "a copy older than the hour is not served");
         lock.rollback().await.unwrap();
         until_fresh(state.clone()).await;
@@ -750,20 +811,29 @@ mod tests {
         };
         let state =
             crate::market::tests::support::state_with_empty_readers(Some(pool.clone())).await;
+        // The background read passes the catalogue gate: the mirrors' passes.
+        sqlx::query(
+            "INSERT INTO shop.mirror_state (mirror, network, source_url, last_complete_pass_at) \
+             SELECT m, n, 'test', timezone('UTC', now()) \
+             FROM unnest(ARRAY['collections', 'items']) m CROSS JOIN unnest(ARRAY['ethereum', 'matic']) n",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
         let mut lock = pool.begin().await.unwrap();
         sqlx::query("LOCK TABLE shop.items IN ACCESS EXCLUSIVE MODE")
             .execute(&mut *lock)
             .await
             .unwrap();
         let started = std::time::Instant::now();
-        assert!(directory_snapshot(&state).await.is_none());
+        assert!(directory_snapshot(&state, "mirror").await.is_none());
         // With the table still locked the read cannot succeed, so a claim this test can take
         // means the read ended as failed and released it.
         let claim = tokio::time::timeout(Duration::from_secs(20), async {
             loop {
                 if let Some(claim) = state
                     .readers
-                    .begin_refresh(CREATOR_DIRECTORY_KEY, Duration::ZERO)
+                    .begin_refresh(&directory_key("mirror"), Duration::ZERO)
                 {
                     break claim;
                 }
@@ -779,7 +849,7 @@ mod tests {
         );
         state
             .readers
-            .end_refresh(CREATOR_DIRECTORY_KEY, claim, true);
+            .end_refresh(&directory_key("mirror"), claim, true);
         lock.rollback().await.unwrap();
     }
 
@@ -968,7 +1038,12 @@ mod tests {
         .execute(&pool)
         .await
         .unwrap();
-        let directory = creator_directory(&state).await.unwrap();
+        let directory = creator_directory(
+            &state,
+            &mut crate::market::catalogue::begin_unchecked(&state).await,
+        )
+        .await
+        .unwrap();
         let entry = directory
             .iter()
             .find(|c| c.address == creator)
@@ -982,7 +1057,7 @@ mod tests {
             ),
             (Some("Quackmaster"), 1, 1, true)
         );
-        let snapshot = directory_snapshot(&state).await.unwrap();
+        let snapshot = directory_snapshot(&state, "mirror").await.unwrap();
         let wanted = HashSet::from([creator.clone()]);
         let profiles = creator_profiles(&snapshot, &wanted, &state.denylist);
         assert_eq!(profiles[&creator].name, "Quackmaster");
@@ -1003,7 +1078,12 @@ mod tests {
         // once, as /lambdas/profiles leaves it out; the NAMEs stay.
         let listed = "https://registry.example/denylist";
         state.denylist.set_remote(listed, [entity.clone()]);
-        let directory = creator_directory(&state).await.unwrap();
+        let directory = creator_directory(
+            &state,
+            &mut crate::market::catalogue::begin_unchecked(&state).await,
+        )
+        .await
+        .unwrap();
         let entry = directory.iter().find(|c| c.address == creator).unwrap();
         assert_eq!(
             (entry.name.as_deref(), entry.face.as_deref(), entry.claimed),

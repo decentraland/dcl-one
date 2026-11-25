@@ -29,7 +29,8 @@ use super::catalog::{
     Builder, FRAGMENT_SMART_WEARABLE_V1, FRAGMENT_WEARABLE_V1, FRAGMENT_WEARABLE_V2,
     WEARABLE_ITEM_TYPES, escape_like, expand_urn_network_forms, unified_trades_cte, v3_minter_expr,
 };
-use super::mirrors::require_priced;
+use super::catalogue::{self, Access, CatalogueRead, Purpose};
+use super::mirrors::Mirror;
 use super::readers::{self, Ttl, cached, int_of, str_of};
 use super::shop::{MAX_USD_WEI, SHOP_SORT_VALUES, ShopSortBy};
 use super::wire::{
@@ -827,6 +828,7 @@ fn key_fixed_rows(f: &ItemFilters) -> Option<i64> {
 /// first page came back short, one key-only count when it is full.
 async fn run_items(
     state: &MarketplaceState,
+    conn: &mut sqlx::PgConnection,
     f: &ItemFilters,
     rate: Option<&str>,
     catalog: Option<&CatalogItemsParams>,
@@ -847,7 +849,7 @@ async fn run_items(
         false,
     );
     let mut rows = sqlx::query_with(sqlx::AssertSqlSafe(sql), args)
-        .fetch_all(&state.pool)
+        .fetch_all(&mut *conn)
         .await?;
     let (limit, offset) = (clamp_first(f.first, DEFAULT_LIMIT), clamp_skip(f.skip));
     let total = if whole.is_some() {
@@ -863,18 +865,20 @@ async fn run_items(
     } else {
         let (sql, args) = build_items_query(f, rate, catalog, now, since, true);
         sqlx::query_with(sqlx::AssertSqlSafe(sql), args)
-            .fetch_one(&state.pool)
+            .fetch_one(&mut *conn)
             .await?
             .get("count")
     };
     Ok((rows, total))
 }
 
+/// The items `f` selects, read in `conn` (a catalogue read's snapshot).
 pub async fn list_items(
     state: &MarketplaceState,
+    conn: &mut sqlx::PgConnection,
     f: &ItemFilters,
 ) -> Result<(Vec<Item>, i64), ApiError> {
-    let (rows, total) = run_items(state, f, None, None).await?;
+    let (rows, total) = run_items(state, conn, f, None, None).await?;
     Ok((rows.iter().map(row_to_item).collect(), total))
 }
 
@@ -936,26 +940,39 @@ pub async fn mana_usd_rate(state: &MarketplaceState) -> Result<ManaUsdRate, Resp
     }
 }
 
-/// The items mirror and the trades mirror (the open item trade every row
-/// carries: `tradeId`, the trade price, `isOnSale`) must both have a pass,
-/// the items one within its money budget (the minter price).
-async fn require_sources(state: &MarketplaceState) -> Result<(), Response> {
-    require_priced(state).await?;
-    super::trades::require_ready(state).await
+/// The read an items route answers from: the catalogue (every row carries
+/// the minter price and `available`, so priced: [`catalogue::begin`]) over
+/// `scope`, and the trades mirror's pass (the open item trade every row
+/// carries: `tradeId`, the trade price, `isOnSale`).
+pub(crate) async fn priced_read(
+    state: &MarketplaceState,
+    scope: Option<Network>,
+) -> Result<CatalogueRead, Response> {
+    let read = catalogue::begin(
+        state,
+        Purpose::Priced,
+        &[Mirror::Items],
+        scope.map(Network::graph),
+        Access::ReadOnly,
+    )
+    .await?;
+    super::trades::require_ready(state).await?;
+    Ok(read)
 }
 
 pub async fn get_items(
     State(state): State<SharedState>,
     Query(pairs): Query<Vec<(String, String)>>,
 ) -> Response {
-    if let Err(envelope) = require_sources(&state).await {
-        return envelope;
-    }
     let filters = match parse_filters(&pairs) {
         Ok(f) => f,
         Err(e) => return e.into_response(),
     };
-    match list_items(&state, &filters).await {
+    let mut read = match priced_read(&state, filters.network).await {
+        Ok(read) => read,
+        Err(envelope) => return envelope,
+    };
+    match list_items(&state, &mut read.tx, &filters).await {
         Ok((data, total)) => Json(DataTotal { data, total }).into_response(),
         Err(e) => e.into_response(),
     }
@@ -967,13 +984,13 @@ pub async fn get_items(
 #[allow(clippy::result_large_err)]
 pub async fn catalog_items_page(
     state: &MarketplaceState,
+    read: &mut CatalogueRead,
     pairs: &[(String, String)],
 ) -> Result<(Vec<CreditCatalogItem>, i64), Response> {
-    require_sources(state).await?;
     let filters = parse_filters(pairs).map_err(IntoResponse::into_response)?;
     let catalog = parse_catalog_items_params(pairs);
     let rate = rate_to_numeric_string(mana_usd_rate(state).await?);
-    let (rows, total) = run_items(state, &filters, Some(&rate), Some(&catalog))
+    let (rows, total) = run_items(state, &mut read.tx, &filters, Some(&rate), Some(&catalog))
         .await
         .map_err(IntoResponse::into_response)?;
     let data = rows
@@ -990,7 +1007,15 @@ pub async fn get_catalog_items(
     State(state): State<SharedState>,
     Query(pairs): Query<Vec<(String, String)>>,
 ) -> Response {
-    match catalog_items_page(&state, &pairs).await {
+    let scope = match parse_filters(&pairs) {
+        Ok(f) => f.network,
+        Err(e) => return e.into_response(),
+    };
+    let mut read = match priced_read(&state, scope).await {
+        Ok(read) => read,
+        Err(envelope) => return envelope,
+    };
+    match catalog_items_page(&state, &mut read, &pairs).await {
         Ok((data, total)) => Json(DataTotal { data, total }).into_response(),
         Err(r) => r,
     }
@@ -1148,9 +1173,10 @@ pub async fn get_trendings(
         .unwrap_or(TRENDING_DEFAULT_SIZE);
     let include_social_emotes =
         p.get_string("includeSocialEmotes", None).as_deref() != Some("false");
-    if let Err(envelope) = require_sources(&state).await {
-        return envelope;
-    }
+    let mut read = match priced_read(&state, None).await {
+        Ok(read) => read,
+        Err(envelope) => return envelope,
+    };
     let cache_control = [(CACHE_CONTROL, "public,max-age=3600,s-maxage=3600")];
     if size <= 0 {
         return (cache_control, Json(json!({ "data": [] }))).into_response();
@@ -1182,7 +1208,7 @@ pub async fn get_trendings(
         include_social_emotes,
         ..Default::default()
     };
-    let got = match list_items(&state, &filters).await {
+    let got = match list_items(&state, &mut read.tx, &filters).await {
         Ok((items, _)) => items,
         Err(e) => return e.into_response(),
     };

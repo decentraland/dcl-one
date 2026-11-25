@@ -23,19 +23,19 @@ use axum::Json;
 use axum::extract::{Path, Request, State};
 use axum::response::{IntoResponse, Response};
 use serde_json::{Map, Value, json};
-use sqlx::PgPool;
 
 use crate::shared::cache::TtlMap;
 use crate::shared::http_util::lambdas_internal_error;
 use crate::shared::query_params::{parse_int_js, parse_query_string, qs_get_array, qs_get_string};
 
 use super::base_wearables::{self, BASE_AVATARS_COLLECTION_ID, BaseWearable};
+use super::catalogue::{self, Access, CatalogueRead, Purpose};
 use super::definitions::{
     SORTED_RARITIES, default_sort_direction, extract_emote_definition, extract_wearable_definition,
     locale_cmp, validate_rarity, validate_sort,
 };
 use super::graph::{self, Network, THE_GRAPH_PAGE_SIZE, graph_query};
-use super::mirrors::{self, Mirror};
+use super::mirrors::Mirror;
 use super::{MarketplaceState, SharedState, Source, bad_request, not_found, unavailable};
 
 const COLLECTIONS_TTL: Duration = Duration::from_secs(300);
@@ -49,7 +49,9 @@ const COLLECTIONS_PER_NETWORK: i64 = 1000;
 
 /// The catalogue's memo.
 pub struct Caches {
-    collections: TtlMap<(), Value>,
+    /// `/lambdas/collections`, filed under the catalogue read it came from.
+    collections: TtlMap<String, Value>,
+    /// Catalogue pages, filed under their source and the read it came from.
     catalog: TtlMap<String, Value>,
     /// The on-chain URN leg from the subgraphs, per query, while the mirror has no pass.
     catalog_urns: TtlMap<String, Arc<Vec<String>>>,
@@ -64,7 +66,7 @@ pub struct Caches {
 impl Default for Caches {
     fn default() -> Self {
         Self {
-            collections: TtlMap::bounded(COLLECTIONS_TTL, 1),
+            collections: TtlMap::bounded(COLLECTIONS_TTL, 4),
             catalog: TtlMap::bounded(CATALOG_TTL, 4096),
             catalog_urns: TtlMap::bounded(CATALOG_TTL, 4096),
             base_wearables: TtlMap::bounded(BASE_WEARABLES_TTL, 1),
@@ -431,7 +433,7 @@ enum Bind {
 /// in byte order (the Rust merge's order). The mirror is a few tens of
 /// thousands of rows: the filters scan it.
 async fn fetch_item_urns(
-    pool: &PgPool,
+    conn: &mut sqlx::PgConnection,
     item_type_prefix: &str,
     filters: &CatalogFilters,
     limit: i64,
@@ -533,21 +535,38 @@ async fn fetch_item_urns(
             Bind::Int(n) => query.bind(n),
         };
     }
-    query.fetch_all(pool).await
+    query.fetch_all(conn).await
 }
 
 /// Where the on-chain leg's URNs come from.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum UrnSource {
-    /// `shop.items` after a complete pass.
-    Mirror,
+    /// `shop.items`, read in the catalogue gate's snapshot.
+    Catalogue(Box<CatalogueRead>),
     /// The configured collections subgraphs, asked per request.
     Subgraphs,
 }
 
+impl UrnSource {
+    /// What the URNs were read from, for a memo key.
+    fn key(&self) -> String {
+        match self {
+            UrnSource::Catalogue(read) => format!("catalogue:{}", read.key()),
+            UrnSource::Subgraphs => "subgraphs".to_string(),
+        }
+    }
+}
+
 async fn urn_source(state: &MarketplaceState) -> Result<UrnSource, Response> {
-    match mirrors::require_ready(state, Mirror::Items).await {
-        Ok(()) => Ok(UrnSource::Mirror),
+    match catalogue::begin(
+        state,
+        Purpose::Describe,
+        &[Mirror::Items],
+        None,
+        Access::ReadOnly,
+    )
+    .await
+    {
+        Ok(read) => Ok(UrnSource::Catalogue(Box::new(read))),
         Err(_) if graph::any_collections_reader(&state.index) => Ok(UrnSource::Subgraphs),
         Err(envelope) => Err(envelope),
     }
@@ -555,15 +574,15 @@ async fn urn_source(state: &MarketplaceState) -> Result<UrnSource, Response> {
 
 async fn item_urns(
     state: &MarketplaceState,
-    source: UrnSource,
+    source: &mut UrnSource,
     item_type_prefix: &str,
     filters: &CatalogFilters,
     limit: i64,
     last_id: &Option<String>,
 ) -> Result<Vec<String>, Response> {
     match source {
-        UrnSource::Mirror => {
-            fetch_item_urns(&state.pool, item_type_prefix, filters, limit, last_id)
+        UrnSource::Catalogue(read) => {
+            fetch_item_urns(&mut read.tx, item_type_prefix, filters, limit, last_id)
                 .await
                 .map_err(|e| {
                     tracing::error!(error = %e, "lambdas catalogue query failed");
@@ -914,7 +933,7 @@ async fn catalog_wearables_with_base(state: &MarketplaceState, query: CatalogQue
         query.last_id.clone()
     };
     let want_on_chain = !only_base_collection && filters.extended.allows(CollectionType::OnChain);
-    let source = if want_on_chain {
+    let mut source = if want_on_chain {
         match urn_source(state).await {
             Ok(s) => Some(s),
             Err(envelope) => return envelope,
@@ -938,7 +957,7 @@ async fn catalog_wearables_with_base(state: &MarketplaceState, query: CatalogQue
         )
     };
     let urns_leg = async {
-        match source {
+        match source.as_mut() {
             Some(source) => {
                 item_urns(
                     state,
@@ -988,12 +1007,13 @@ async fn catalog(
     items_key: &str,
     extract: fn(&Value, &str) -> Option<Value>,
 ) -> Response {
-    let source = match urn_source(state).await {
+    let mut source = match urn_source(state).await {
         Ok(s) => s,
         Err(envelope) => return envelope,
     };
     let key = format!(
-        "{item_type_prefix}|{}|{}|{:?}",
+        "{item_type_prefix}|{}|{}|{}|{:?}",
+        source.key(),
         query.limit,
         query.last_id.as_deref().unwrap_or(""),
         query.filters
@@ -1004,7 +1024,7 @@ async fn catalog(
         .get_or_fetch(key, || async {
             let urns = item_urns(
                 state,
-                source,
+                &mut source,
                 item_type_prefix,
                 &query.filters,
                 query.limit,
@@ -1092,14 +1112,16 @@ fn base_collections() -> Vec<Value> {
 
 /// The first 1,000 collections of each network in urn byte order, the old
 /// squid query's page (`collections_from_squid`).
-async fn mirrored_collections(pool: &PgPool) -> Result<Vec<(String, String)>, sqlx::Error> {
+async fn mirrored_collections(
+    conn: &mut sqlx::PgConnection,
+) -> Result<Vec<(String, String)>, sqlx::Error> {
     sqlx::query_as(
         "(SELECT urn, name FROM shop.collections WHERE network = 'ethereum' ORDER BY urn COLLATE \"C\" LIMIT $1) \
          UNION ALL \
          (SELECT urn, name FROM shop.collections WHERE network = 'matic' ORDER BY urn COLLATE \"C\" LIMIT $1)",
     )
     .bind(COLLECTIONS_PER_NETWORK)
-    .fetch_all(pool)
+    .fetch_all(conn)
     .await
 }
 
@@ -1107,15 +1129,26 @@ async fn mirrored_collections(pool: &PgPool) -> Result<Vec<(String, String)>, sq
 /// collections and the mirrored ones; before the mirror's first complete pass
 /// the unavailable envelope.
 pub async fn nfts_collections(State(state): State<SharedState>) -> Response {
-    if let Err(envelope) = mirrors::require_ready(&state, Mirror::Collections).await {
-        return envelope;
-    }
+    let mut read = match catalogue::begin(
+        &state,
+        Purpose::Describe,
+        &[Mirror::Collections],
+        None,
+        Access::ReadOnly,
+    )
+    .await
+    {
+        Ok(read) => read,
+        Err(envelope) => return envelope,
+    };
+    let key = read.key();
+    let conn = &mut *read.tx;
     let cached = state
         .lambdas
         .collections
-        .get_or_fetch((), || async {
+        .get_or_fetch(key, || async move {
             let mut collections = base_collections();
-            let items = mirrored_collections(&state.pool).await?;
+            let items = mirrored_collections(conn).await?;
             collections.extend(
                 items
                     .into_iter()

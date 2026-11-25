@@ -1651,7 +1651,7 @@ async fn the_mirrors_walk_the_subgraph_and_every_market_route_answers_over_them(
     assert!(!carries_primary(&body), "{body}");
     // A read that names its item never reads the creator directory; a browse read does.
     use super::readers::Ttl;
-    use super::search::CREATOR_DIRECTORY_KEY;
+    let directory = super::search::directory_key("mirror");
     state.readers.clear();
     let (status, body) = get(
         app(),
@@ -1659,13 +1659,13 @@ async fn the_mirrors_walk_the_subgraph_and_every_market_route_answers_over_them(
     )
     .await;
     assert_eq!(status, StatusCode::OK, "{body}");
-    assert!(!state.readers.holds(Ttl::M15, CREATOR_DIRECTORY_KEY));
+    assert!(!state.readers.holds(Ttl::M15, &directory));
     let (status, body) = get(app(), "/v3/catalog/unified?groupBy=item&first=3").await;
     assert_eq!(status, StatusCode::OK, "{body}");
     // The browse read started the directory's read in the background; it may land after the
     // answer, which waits at most 500 ms for it.
     tokio::time::timeout(Duration::from_secs(20), async {
-        while !state.readers.holds(Ttl::M15, CREATOR_DIRECTORY_KEY) {
+        while !state.readers.holds(Ttl::M15, &directory) {
             tokio::time::sleep(Duration::from_millis(20)).await;
         }
     })
@@ -1696,7 +1696,13 @@ async fn the_mirrors_walk_the_subgraph_and_every_market_route_answers_over_them(
     // Read the directory first, through the dropdown's own path, which has no 500 ms bound: the
     // feeds below then find it fresh, start no refresh of their own, and never depend on how
     // fast a cold read is.
-    super::search::creator_directory(&state).await.unwrap();
+    {
+        // Dropped at once: an open snapshot would hold its connection to the end.
+        let mut read = super::catalogue::begin_unchecked(&state).await;
+        super::search::creator_directory(&state, &mut read)
+            .await
+            .unwrap();
+    }
     let feeds = [
         "/v3/catalog/unified?groupBy=item&first=12",
         "/v3/catalog/trending?first=10&days=3650",
@@ -1756,7 +1762,7 @@ async fn the_mirrors_walk_the_subgraph_and_every_market_route_answers_over_them(
     state.readers.clear();
     let hold = state
         .readers
-        .begin_refresh(CREATOR_DIRECTORY_KEY, Duration::ZERO)
+        .begin_refresh(&directory, Duration::ZERO)
         .expect("a reset frees the directory's refresh");
     for uri in [
         "/v3/catalog/trending?first=10&days=3650",
@@ -1773,7 +1779,7 @@ async fn the_mirrors_walk_the_subgraph_and_every_market_route_answers_over_them(
         );
         assert_eq!(cache, "public,max-age=60,s-maxage=60", "{uri}");
     }
-    state.readers.end_refresh(CREATOR_DIRECTORY_KEY, hold, true);
+    state.readers.end_refresh(&directory, hold, true);
 
     sqlx::query("DELETE FROM shop.usage_grants WHERE grantee_address = $1")
         .bind(WALLET_A)
@@ -2573,7 +2579,8 @@ async fn an_item_on_two_networks_keeps_its_total_on_every_page() {
         };
         let state = state.clone();
         async move {
-            let (items, total) = list_items(&state, &f).await.unwrap();
+            let mut read = crate::market::catalogue::begin_unchecked(&state).await;
+            let (items, total) = list_items(&state, &mut read.tx, &f).await.unwrap();
             let chains: Vec<i64> = items
                 .iter()
                 .map(|i| {
@@ -3633,18 +3640,17 @@ async fn every_reader_route_names_its_missing_source_instead_of_answering_empty(
         ("/v1/accounts", "collections-subgraph:matic"),
         ("/v1/rankings/wearables/week", "collections-subgraph:matic"),
         ("/v1/volume/week", "collections-subgraph:matic"),
-        ("/v1/trendings", "collections-subgraph:matic"),
         (
             "/v1/users/0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/wearables",
             "nft-index",
         ),
-        ("/v1/catalog", "collections-subgraph:matic"),
-        ("/v1/items", "collections-subgraph:matic"),
-        // `/v1/collections` and `/v1/contracts` serve the copy their tables
-        // record, so they need the database
-        // (`tests::without_a_subgraph_descriptive_reads_serve_the_recorded_copy`).
-        ("/v3/catalog/shop", "collections-subgraph:matic"),
-        ("/v1/prices?category=wearable", "collections-subgraph:matic"),
+        // The catalogue routes (`/v1/collections`, `/v1/contracts`,
+        // `/v1/catalog`, `/v1/items`, `/v1/trendings`, `/v3/catalog/shop`,
+        // the item prices)
+        // read which source owns each network from the database: an index
+        // that owns one answers without a subgraph
+        // (`tests::without_a_subgraph_descriptive_reads_serve_the_recorded_copy`,
+        // `catalogue::tests::without_a_subgraph_a_priced_read_needs_a_source_per_network`).
         ("/v1/nfts?search=hat", "nft-index"),
         ("/v1/nfts?first=1&skip=6000", "nft-index"),
         ("/v1/stats/estate/size", "nft-index"),
@@ -4485,6 +4491,126 @@ async fn the_mirror_walks_ethereum_while_the_index_owns_polygon_then_takes_polyg
     .await
     .unwrap();
     assert_eq!(generation, 2);
+    own.drop().await;
+}
+
+/// A catalogue route answers owned Polygon from the index's publication and
+/// Ethereum from the mirror in one read: a rewind on Polygon makes it answer
+/// the index's envelope, its republication answers again, and after a
+/// hand-back it follows the mirror, which has no Polygon pass yet.
+#[tokio::test]
+async fn a_route_reads_owned_polygon_beside_mirrored_ethereum() {
+    let Some(own) = super::tests::support::OwnDb::create("collections-readers").await else {
+        return;
+    };
+    let pool = own.pool.clone();
+    let state = Arc::new(super::MarketplaceState::new(
+        pool.clone(),
+        crate::http::Outbound::for_tests(),
+        market_settings("http://127.0.0.1:9", "http://127.0.0.1:9", false),
+    ));
+    let t = tag();
+    let (polygon, ethereum) = (contract_of(&t, 1), contract_of(&t, 2));
+    for (network, chain, contract) in [
+        (super::graph::Network::Matic, 137, &polygon),
+        (super::graph::Network::Ethereum, 1, &ethereum),
+    ] {
+        mirrors::collections::upsert(
+            &pool,
+            network,
+            chain,
+            false,
+            &[mirrors::collections::fixture(contract, "C", CREATOR, true)],
+        )
+        .await
+        .unwrap();
+    }
+    sqlx::query(
+        "INSERT INTO shop.mirror_state (mirror, network, source_url, last_complete_pass_at) \
+         SELECT m, n, 'test', timezone('UTC', now()) \
+         FROM unnest(ARRAY['collections', 'items']) m CROSS JOIN unnest(ARRAY['ethereum', 'matic']) n",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+    sqlx::query(
+        "INSERT INTO shop.chain_cursor (indexer, network, start_block, last_block, last_block_hash, \
+                full_history, chain_id, folded_block, folded_at) \
+         VALUES ('collections', 'matic', 1, 100, '0xabababababababababababababababababababababababababababababababab', true, 137, 100, timezone('UTC', now()))",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+    sqlx::query(
+        "INSERT INTO shop.collection_projection (network, owned_at, projected_through, pending, generation) \
+         VALUES ('matic', timezone('UTC', now()), 100, 0, 1)",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+    let app = || market_router(state.clone());
+    let contracts = |body: &Value| -> Vec<String> {
+        let mut out: Vec<String> = body["data"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|c| c["contractAddress"].as_str().unwrap().to_string())
+            .collect();
+        out.sort();
+        out
+    };
+    let mut both = vec![polygon.clone(), ethereum.clone()];
+    both.sort();
+
+    let (code, body) = get(app(), "/v1/collections").await;
+    assert_eq!(code, StatusCode::OK, "{body}");
+    assert_eq!(contracts(&body), both);
+
+    sqlx::query("UPDATE shop.chain_cursor SET folded_block = NULL, folded_at = NULL WHERE indexer = 'collections'")
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query(
+        "UPDATE shop.collection_projection SET projected_through = NULL WHERE network = 'matic'",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+    let (code, body) = get(app(), "/v1/collections").await;
+    assert_eq!(code, StatusCode::SERVICE_UNAVAILABLE, "{body}");
+    assert_eq!(body["source"], "collections-index");
+    let (code, _) = get(app(), "/v1/collections?network=ETHEREUM").await;
+    assert_eq!(
+        code,
+        StatusCode::OK,
+        "a read of Ethereum alone does not wait on Polygon's index"
+    );
+
+    sqlx::query(
+        "UPDATE shop.chain_cursor SET folded_block = 100, folded_at = timezone('UTC', now()) \
+         WHERE indexer = 'collections'",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+    sqlx::query(
+        "UPDATE shop.collection_projection SET projected_through = 100 WHERE network = 'matic'",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+    let (code, body) = get(app(), "/v1/collections").await;
+    assert_eq!(code, StatusCode::OK, "{body}");
+    assert_eq!(contracts(&body), both);
+
+    assert!(
+        super::collections_projection::hand_back(&pool, super::chain_walk::ChainNet::Matic)
+            .await
+            .unwrap()
+    );
+    let (code, body) = get(app(), "/v1/collections").await;
+    assert_eq!(code, StatusCode::SERVICE_UNAVAILABLE, "{body}");
+    assert_eq!(body["source"], "collections-mirror");
     own.drop().await;
 }
 

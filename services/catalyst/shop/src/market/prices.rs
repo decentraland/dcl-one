@@ -17,7 +17,8 @@ use serde_json::Value;
 use sqlx::Row;
 
 use super::catalog::{CatalogFilters, MAX_NUMERIC_NUMBER, build_catalog_query};
-use super::mirrors::require_priced;
+use super::catalogue::{self, Access, Purpose};
+use super::mirrors::Mirror;
 use super::nfts::NftFilters;
 use super::readers::{Ttl, cached};
 use super::wire::{
@@ -173,15 +174,23 @@ pub async fn prices(
         return Ok(histogram_from(&value));
     }
     // The item prices read the trade legs too (`build_catalog_query`).
-    require_priced(state).await?;
+    let mut read = catalogue::begin(
+        state,
+        Purpose::Priced,
+        &[Mirror::Items],
+        f.network.map(super::wire::Network::graph),
+        Access::ReadOnly,
+    )
+    .await?;
     super::trades::require_ready(state).await?;
-    let key = format!("prices:{f:?}");
-    let value = cached(state, Ttl::M5, key, || async {
+    let key = format!("prices:{f:?}:{}", read.key());
+    let conn = &mut *read.tx;
+    let value = cached(state, Ttl::M5, key, || async move {
         let now = Utc::now().naive_utc();
         let since = super::trades::mirrored_since(&state.settings, now);
         let (sql, args) = build_prices_query(f, now, since);
         let rows = sqlx::query_with(sqlx::AssertSqlSafe(sql), args)
-            .fetch_all(&state.pool)
+            .fetch_all(conn)
             .await
             .map_err(|e| e.to_string())?;
         let prices: Vec<String> = rows

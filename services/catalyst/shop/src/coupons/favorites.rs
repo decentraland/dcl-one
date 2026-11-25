@@ -333,6 +333,16 @@ async fn catalogue_listings(
 ) -> anyhow::Result<Vec<Discounted>> {
     let coupon_id = coupon.id.to_string();
     let mut out: HashMap<String, Discounted> = HashMap::new();
+    // The discounts are prices: one priced catalogue read covers every page.
+    let mut read = crate::market::catalogue::begin(
+        state,
+        crate::market::catalogue::Purpose::Priced,
+        &[crate::market::mirrors::Mirror::Items],
+        None,
+        crate::market::catalogue::Access::ReadOnly,
+    )
+    .await
+    .map_err(|_| anyhow::anyhow!("the shop catalogue cannot price the coupon's listings yet"))?;
     for contract in &coupon.collections {
         let mut skip = 0;
         loop {
@@ -345,7 +355,7 @@ async fn catalogue_listings(
                 skip: Some(skip),
                 ..Default::default()
             };
-            let (page, total) = crate::market::shop::shop_listings(state, &filters)
+            let (page, total) = crate::market::shop::shop_listings(state, &mut read.tx, &filters)
                 .await
                 .map_err(|e| anyhow::anyhow!("shop catalogue: {e:?}"))?;
             for l in page {

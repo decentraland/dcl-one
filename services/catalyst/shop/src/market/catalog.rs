@@ -15,13 +15,13 @@
 //! `listings`/`minListingPrice`/`maxListingPrice` on v1 are the no-orders
 //! shape; the `owners` count and the `suggested` sort (per-item nft owners,
 //! `wearable_last_seen`) are deferred with the nft indexer, `owners` reads
-//! null and `sortBy=suggested` orders as `newest`. Both routes answer the
-//! unavailable envelope until the items mirror has a complete pass for
-//! every configured network, and v2 until the trades mirror has one too
+//! null and `sortBy=suggested` orders as `newest`. Both routes carry prices,
+//! so they read the catalogue through its priced gate
+//! ([`super::catalogue::begin`]: the items mirror's pass within its money
+//! budget, or the collections index's fresh publication where it owns the
+//! network), and v2 also waits for the trades mirror's pass
 //! (`trades::require_ready`): its `price`, `isOnSale`, `tradeId` and listing
-//! counts come from `shop.trades`. Both carry prices, so a copy of the
-//! items past its money budget answers the envelope too
-//! (`mirrors::require_priced`).
+//! counts come from `shop.trades`.
 
 use std::collections::HashMap;
 use std::sync::{Arc, LazyLock};
@@ -40,8 +40,9 @@ use sqlx::postgres::PgArguments;
 
 use crate::shared::cache::TtlMap;
 
+use super::catalogue::{self, Access, CatalogueRead, Purpose};
 use super::lists::{PickStats, picks_stats};
-use super::mirrors::require_priced;
+use super::mirrors::Mirror;
 use super::signed::optional_signer;
 use super::wire::{
     ApiError, ChainId, MAX_PAGE_LIMIT, NETWORK_VALUES, NFT_CATEGORY_VALUES, Network, NftCategory,
@@ -384,11 +385,12 @@ impl Serialize for CatalogPage {
 
 type Page = Arc<(Vec<CatalogItem>, i64)>;
 
-/// Pages keyed by `(is_v2, filters)` and anonymous pick stats keyed by the
-/// page's ids, under `MARKETPLACE_CATALOG_CACHE_TTL_SECS` (0 disables).
+/// Pages keyed by `(is_v2, filters, the catalogue read's copy)`
+/// ([`CatalogueRead::key`]) and anonymous pick stats keyed by the page's
+/// ids, under `MARKETPLACE_CATALOG_CACHE_TTL_SECS` (0 disables).
 pub struct Cache {
     enabled: bool,
-    pages: TtlMap<(bool, CatalogFilters), Page>,
+    pages: TtlMap<(bool, CatalogFilters, String), Page>,
     picks: TtlMap<Vec<String>, Arc<Vec<PickStats>>>,
 }
 
@@ -420,7 +422,7 @@ impl Cache {
 
     async fn page_or_fetch<F, Fut>(
         &self,
-        key: (bool, CatalogFilters),
+        key: (bool, CatalogFilters, String),
         fetch: F,
     ) -> Result<Page, ApiError>
     where
@@ -1162,6 +1164,7 @@ fn row_to_item(r: &sqlx::postgres::PgRow) -> CatalogItem {
 
 pub async fn fetch_page(
     state: &MarketplaceState,
+    read: &mut CatalogueRead,
     f: &CatalogFilters,
     is_v2: bool,
 ) -> Result<(Vec<CatalogItem>, i64), ApiError> {
@@ -1169,7 +1172,7 @@ pub async fn fetch_page(
     let since = super::trades::mirrored_since(&state.settings, now);
     let (sql, args) = build_catalog_query(f, is_v2, now, since, false);
     let rows = sqlx::query_with(sqlx::AssertSqlSafe(sql), args)
-        .fetch_all(&state.pool)
+        .fetch_all(&mut *read.tx)
         .await
         .map_err(|e| {
             tracing::error!(error = ?e, "catalog query failed");
@@ -1180,7 +1183,7 @@ pub async fn fetch_page(
         None if clamp_skip(f.skip) > 0 => {
             let (sql, args) = build_catalog_query(f, is_v2, now, since, true);
             sqlx::query_with(sqlx::AssertSqlSafe(sql), args)
-                .fetch_one(&state.pool)
+                .fetch_one(&mut *read.tx)
                 .await
                 .map(|r| r.get::<i64, _>("total"))
                 .unwrap_or(0)
@@ -1196,29 +1199,40 @@ async fn catalog_inner(
     pairs: Vec<(String, String)>,
     is_v2: bool,
 ) -> Response {
+    let filters = match parse_catalog_filters(&pairs) {
+        Ok(filters) => filters,
+        Err(e) => return e.into_response(),
+    };
     // Every row carries the item's minter price: the money rule.
-    if let Err(envelope) = require_priced(&state).await {
-        return envelope;
-    }
+    let mut read = match catalogue::begin(
+        &state,
+        Purpose::Priced,
+        &[Mirror::Items],
+        filters.network.map(Network::graph),
+        Access::ReadOnly,
+    )
+    .await
+    {
+        Ok(read) => read,
+        Err(envelope) => return envelope,
+    };
     // The v2 legs (price, isOnSale, tradeId, the listing counts) are computed
     // from shop.trades: a partial mirror is not the order book.
     if is_v2 && let Err(envelope) = super::trades::require_ready(&state).await {
         return envelope;
     }
-    let filters = match parse_catalog_filters(&pairs) {
-        Ok(filters) => filters,
-        Err(e) => return e.into_response(),
-    };
     let route = if is_v2 { "/v2/catalog" } else { "/v1/catalog" };
     let picked_by = match optional_signer(state.eip1654.as_deref(), &headers, "get", route).await {
         Ok(s) => s,
         Err(e) => return e.into_response(),
     };
-    let key = (is_v2, filters.clone());
+    let key = (is_v2, filters.clone(), read.key());
     let page = match state
         .catalog_cache
         .page_or_fetch(key, || async {
-            fetch_page(&state, &filters, is_v2).await.map(Arc::new)
+            fetch_page(&state, &mut read, &filters, is_v2)
+                .await
+                .map(Arc::new)
         })
         .await
     {

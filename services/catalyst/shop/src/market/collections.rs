@@ -11,7 +11,8 @@ use axum::response::{IntoResponse, Response};
 use serde::Serialize;
 use sqlx::Row;
 
-use super::mirrors::{Mirror, require_ready};
+use super::catalogue::{self, Access, CatalogueRead, Purpose};
+use super::mirrors::Mirror;
 use super::readers::{Ttl, cached};
 use super::wire::{
     ApiError, ChainId, Contract, DataTotal, NETWORK_VALUES, NFT_CATEGORY_VALUES, Network,
@@ -276,15 +277,21 @@ pub fn marketplace_contracts(chain_id: ChainId) -> Vec<Contract> {
 }
 
 /// Every approved collection as a `Contract` (category wearable), name order
-/// (`COLLATE "C"`, the old sort), memoized 15 min: the old route cached the
-/// whole list for an hour and the mirror moves every 15 min anyway.
-pub async fn all_collection_contracts(state: &MarketplaceState) -> Result<Vec<Contract>, ApiError> {
-    let value = cached(state, Ttl::M15, "collections:contracts".into(), || async {
+/// (`COLLATE "C"`, the old sort), read in `read`'s snapshot and memoized
+/// 15 min under what it read: the old route cached the whole list for an
+/// hour and the mirror moves every 15 min anyway.
+pub async fn all_collection_contracts(
+    state: &MarketplaceState,
+    read: &mut CatalogueRead,
+) -> Result<Vec<Contract>, ApiError> {
+    let key = format!("collections:contracts:{}", read.key());
+    let conn = &mut *read.tx;
+    let value = cached(state, Ttl::M15, key, || async move {
         let rows = sqlx::query(
             "SELECT contract_address, name, chain_id, network FROM shop.collections \
              WHERE is_approved ORDER BY name COLLATE \"C\" ASC, contract_address ASC",
         )
-        .fetch_all(&state.pool)
+        .fetch_all(conn)
         .await
         .map_err(|e| e.to_string())?;
         let out: Vec<Contract> = rows
@@ -322,10 +329,19 @@ pub async fn get_contracts(
     let should_fetch_all = filters.category.is_none_or(|c| c == NftCategory::Wearable)
         && filters.network.is_none_or(|n| n == Network::Matic);
     if should_fetch_all {
-        if let Err(envelope) = require_ready(&state, Mirror::Collections).await {
-            return envelope;
-        }
-        match all_collection_contracts(&state).await {
+        let mut read = match catalogue::begin(
+            &state,
+            Purpose::Describe,
+            &[Mirror::Collections],
+            None,
+            Access::ReadOnly,
+        )
+        .await
+        {
+            Ok(read) => read,
+            Err(envelope) => return envelope,
+        };
+        match all_collection_contracts(&state, &mut read).await {
             Ok(collections) => all.extend(collections),
             Err(e) => return e.into_response(),
         }
@@ -444,7 +460,7 @@ pub fn from_seconds_to_milliseconds(time: i64) -> i64 {
 }
 
 pub async fn list_collections(
-    state: &MarketplaceState,
+    conn: &mut sqlx::PgConnection,
     f: &CollectionFilters,
 ) -> Result<(Vec<Collection>, i64), ApiError> {
     let limit = clamp_first(f.first, 1000);
@@ -504,7 +520,7 @@ pub async fn list_collections(
     for b in &binds {
         q = q.bind(b);
     }
-    let rows = q.bind(limit).bind(offset).fetch_all(&state.pool).await?;
+    let rows = q.bind(limit).bind(offset).fetch_all(&mut *conn).await?;
     let total = match rows.first() {
         Some(r) => r.get::<i64, _>("total"),
         None if offset > 0 => {
@@ -514,7 +530,7 @@ pub async fn list_collections(
             for b in &binds {
                 cq = cq.bind(b);
             }
-            cq.fetch_one(&state.pool).await.unwrap_or(0)
+            cq.fetch_one(&mut *conn).await.unwrap_or(0)
         }
         None => 0,
     };
@@ -547,11 +563,20 @@ pub async fn get_collections(
     State(state): State<SharedState>,
     Query(pairs): Query<Vec<(String, String)>>,
 ) -> Response {
-    if let Err(envelope) = require_ready(&state, Mirror::Collections).await {
-        return envelope;
-    }
     let filters = parse_collection_filters(&pairs);
-    match list_collections(&state, &filters).await {
+    let mut read = match catalogue::begin(
+        &state,
+        Purpose::Describe,
+        &[Mirror::Collections],
+        filters.network.map(Network::graph),
+        Access::ReadOnly,
+    )
+    .await
+    {
+        Ok(read) => read,
+        Err(envelope) => return envelope,
+    };
+    match list_collections(&mut read.tx, &filters).await {
         Ok((data, total)) => Json(DataTotal { data, total }).into_response(),
         Err(e) => e.into_response(),
     }

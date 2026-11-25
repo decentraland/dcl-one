@@ -3235,8 +3235,44 @@ and an emote's social outcome as `simple_outcome`, `multiple_outcome` or
 helper does. `sold_at` is the newest primary sale only; secondary sales come
 with the sales index.
 
-The catalogue routes still decide readiness from the mirror's passes
-(`shop.mirror_state`), so no network is taken from the mirror while they do.
+**Reading the catalogue.** Every route that reads `shop.collections` or
+`shop.items` opens one `REPEATABLE READ` transaction first
+(`market::catalogue::begin`). In it, it reads per network the ownership marker,
+the `collections` cursor, the projection's row and the mirrors' passes. It
+decides readiness by the source that owns each network, then reads its rows in
+the same snapshot, so a rewind, a republication or a hand-back that commits
+meanwhile never splits an answer.
+
+A network the index owns follows the publish marker. A pass walks before it
+folds and publishes, so `folded_block = last_block` would refuse every read
+while one runs; the marker does not. Every purpose needs:
+- the cursor bound to the network's chain, out of quarantine, not diverged;
+- its whole history walked, and a fold published;
+- the projection standing at that fold (`projected_through = folded_block`);
+- no collection waiting for its creation read (`pending = 0`).
+
+On top of that:
+- a priced read (a minter price, `available`, a credit price) needs the
+  publication within 30 minutes;
+- an authorizing read (the import check) needs that too, and no collections
+  event walked past the publication;
+- a descriptive read serves the last publication however old.
+
+Between a fold and its publication (the pass reads the chain's heads in
+between), `projected_through` is ahead of `folded_block`, and the network
+refuses reads until the publication.
+
+A network the mirrors serve keeps their rule, over the configured networks
+the index does not own: a complete pass of each mirror the route reads, the
+items one within its money budget for a priced read. With no subgraph
+configured, a network an index owns still answers. A read for every network
+then names the subgraph of the network without a source.
+
+A memo over catalogue rows is filed under what its read saw: the mirrors'
+pass, and each owned network's publication and projection generation. The
+creator directory is a display aggregate that keeps its stated staleness
+(15 minutes, kept up to an hour), so it is filed under which source serves
+each network: an ownership change files it anew.
 
 **Switching a network from the mirror.** Run this after the catalogue routes
 follow the index and the NFT and sales walks take their contracts from it.

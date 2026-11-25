@@ -190,9 +190,17 @@ impl Market for LocalMarket {
                 "the item catalogue is not configured on this node (MARKETPLACE_MIRRORS_ENABLED)",
             ));
         };
-        crate::market::mirrors::require_priced(market)
-            .await
-            .map_err(|r| ApiError::service_unavailable(envelope_message(r)))?;
+        // What the credits charge is a price: the catalogue's priced read,
+        // whose snapshot the items are read in.
+        let mut read = crate::market::catalogue::begin(
+            market,
+            crate::market::catalogue::Purpose::Priced,
+            &[crate::market::mirrors::Mirror::Items],
+            None,
+            crate::market::catalogue::Access::ReadOnly,
+        )
+        .await
+        .map_err(|r| ApiError::service_unavailable(envelope_message(r)))?;
         let mut ids: Vec<String> = Vec::new();
         for (collection, item_id) in pairs {
             let id = format!("{}-{}", collection.to_ascii_lowercase(), item_id);
@@ -205,7 +213,7 @@ impl Market for LocalMarket {
             first: Some((ids.len() * 2).clamp(1, 100) as i64),
             ..Default::default()
         };
-        let (items, _) = crate::market::items::list_items(market, &filters)
+        let (items, _) = crate::market::items::list_items(market, &mut read.tx, &filters)
             .await
             .map_err(|e| ApiError::Internal(format!("items mirror read failed: {e}")))?;
         let mut by_key: HashMap<(String, String), Vec<ItemInfo>> = HashMap::new();

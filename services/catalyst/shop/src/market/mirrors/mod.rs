@@ -706,38 +706,50 @@ async fn ready_at(
             note_copy(state, mirror, at);
             return Ok(at);
         }
-        return Err(unavailable(
-            Source::CollectionsSubgraph(Network::Matic),
-            &format!(
-                "no collections subgraph is configured, so the {} mirror has nothing to walk",
-                mirror.name()
-            ),
-        ));
+        return Err(not_ready(state, mirror, false));
     }
     match ready(state, mirror).await {
         Ok(Some(at)) => {
             note_copy(state, mirror, at);
             Ok(at)
         }
-        Ok(None) if !state.settings.market.mirrors_enabled => Err(unavailable(
-            mirror.source(),
-            &format!(
-                "the {} mirror has no complete pass in this database and the mirror job is not enabled on this node",
-                mirror.name()
-            ),
-        )),
-        Ok(None) => Err(unavailable(
-            mirror.source(),
-            &format!(
-                "the {} mirror has no complete pass yet for every configured network",
-                mirror.name()
-            ),
-        )),
+        Ok(None) => Err(not_ready(state, mirror, true)),
         Err(e) => {
             tracing::error!(error = %e, "mirror_state read failed");
             Err(super::internal_server_error())
         }
     }
+}
+
+/// The envelope of a mirror without the pass a read needs: none configured
+/// (`configured` false: nothing says which networks a pass must cover), the
+/// job off on this node, or a configured network without a complete pass.
+pub(crate) fn not_ready(state: &MarketplaceState, mirror: Mirror, configured: bool) -> Response {
+    if !configured {
+        return unavailable(
+            Source::CollectionsSubgraph(Network::Matic),
+            &format!(
+                "no collections subgraph is configured, so the {} mirror has nothing to walk",
+                mirror.name()
+            ),
+        );
+    }
+    if !state.settings.market.mirrors_enabled {
+        return unavailable(
+            mirror.source(),
+            &format!(
+                "the {} mirror has no complete pass in this database and the mirror job is not enabled on this node",
+                mirror.name()
+            ),
+        );
+    }
+    unavailable(
+        mirror.source(),
+        &format!(
+            "the {} mirror has no complete pass yet for every configured network",
+            mirror.name()
+        ),
+    )
 }
 
 /// The money budget of the item prices the items copy carries: four items
@@ -803,8 +815,30 @@ pub fn stale_after(settings: &super::Settings, mirror: Mirror) -> Duration {
 }
 
 fn note_copy(state: &MarketplaceState, mirror: Mirror, at: NaiveDateTime) {
-    let budget = chrono::Duration::from_std(stale_after(&state.settings, mirror))
-        .unwrap_or(chrono::Duration::MAX);
+    note_read(at, stale_after(&state.settings, mirror));
+}
+
+/// [`note_copy`] for the catalogue gate ([`super::catalogue::begin`]).
+pub(crate) fn note_copy_at(state: &MarketplaceState, mirror: Mirror, at: NaiveDateTime) {
+    note_copy(state, mirror, at);
+}
+
+/// The collections index's published fold, read by the catalogue gate: it
+/// goes stale past [`super::chain_walk::READY_WINDOW`], when a price may no
+/// longer be read from it.
+pub(crate) fn note_index_copy(folded_at: NaiveDateTime) {
+    note_read(
+        folded_at,
+        super::chain_walk::READY_WINDOW
+            .to_std()
+            .unwrap_or(Duration::MAX),
+    );
+}
+
+/// Records, for [`stamp_copies`], a copy read at `at` that goes stale after
+/// `stale_after`.
+fn note_read(at: NaiveDateTime, stale_after: Duration) {
+    let budget = chrono::Duration::from_std(stale_after).unwrap_or(chrono::Duration::MAX);
     let stale_at = at.checked_add_signed(budget).unwrap_or(NaiveDateTime::MAX);
     let _ = COPY_AS_OF.try_with(|c| {
         c.set(Some(match c.get() {

@@ -35,7 +35,8 @@ use serde_json::{Value, json};
 use sqlx::{PgPool, Row};
 
 use super::market::admin::require_admin;
-use super::market::mirrors::{Mirror, require_ready};
+use super::market::catalogue::{self, Access, Purpose};
+use super::market::mirrors::Mirror;
 use super::market::wire::ApiError;
 use super::market::{MarketplaceState, SharedState, is_valid_eth_address};
 
@@ -304,12 +305,13 @@ pub struct CollectionsBody {
     pub contracts: Vec<String>,
 }
 
-/// Replaces the tag's set with the approved collections named, in one
-/// transaction; a contract the mirror does not hold as an approved
-/// collection is a 400 naming it (a campaign never points at a collection
-/// the catalog cannot show).
+/// Replaces the tag's set with the approved collections named, in `conn`
+/// (the catalogue read's transaction, so the approval it checks and the set
+/// it writes are one snapshot's); a contract the catalogue does not hold as
+/// an approved collection is a 400 naming it (a campaign never points at a
+/// collection the catalog cannot show).
 pub async fn set_tag_collections(
-    pool: &PgPool,
+    conn: &mut sqlx::PgConnection,
     tag: &str,
     contracts: &[String],
     actor: &str,
@@ -329,7 +331,7 @@ pub async fn set_tag_collections(
     }
     let approved: Vec<(String, String)> = sqlx::query_as("SELECT contract_address, network FROM shop.collections WHERE contract_address = ANY($1) AND is_approved ORDER BY contract_address, network")
         .bind(&wanted)
-        .fetch_all(pool)
+        .fetch_all(&mut *conn)
         .await?;
     if let Some(missing) = wanted
         .iter()
@@ -340,10 +342,9 @@ pub async fn set_tag_collections(
         )));
     }
     let (addresses, networks): (Vec<String>, Vec<String>) = approved.iter().cloned().unzip();
-    let mut tx = pool.begin().await?;
     sqlx::query("DELETE FROM shop.campaign_collections WHERE tag = $1")
         .bind(tag)
-        .execute(&mut *tx)
+        .execute(&mut *conn)
         .await?;
     sqlx::query(
         "INSERT INTO shop.campaign_collections (tag, network, contract_address, added_by) \
@@ -353,9 +354,8 @@ pub async fn set_tag_collections(
     .bind(&addresses)
     .bind(&networks)
     .bind(actor)
-    .execute(&mut *tx)
+    .execute(&mut *conn)
     .await?;
-    tx.commit().await?;
     Ok(approved
         .into_iter()
         .map(|(contract_address, network)| CampaignCollection {
@@ -480,9 +480,18 @@ pub async fn put_collections(
         Ok(a) => a,
         Err(r) => return r,
     };
-    if let Err(r) = require_ready(&state, Mirror::Collections).await {
-        return r;
-    }
+    let mut read = match catalogue::begin(
+        &state,
+        Purpose::Describe,
+        &[Mirror::Collections],
+        None,
+        Access::ReadWrite,
+    )
+    .await
+    {
+        Ok(read) => read,
+        Err(r) => return r,
+    };
     let campaign = match get_campaign(&state.pool, &id).await {
         Ok(Some(c)) => c,
         Ok(None) => return ApiError::not_found("campaign not found").into_response(),
@@ -491,8 +500,11 @@ pub async fn put_collections(
     let Some(Json(body)) = body else {
         return ApiError::bad_request("contracts is required").into_response();
     };
-    match set_tag_collections(&state.pool, &campaign.main_tag, &body.contracts, &actor).await {
-        Ok(rows) => (StatusCode::OK, ok(rows)).into_response(),
+    match set_tag_collections(&mut read.tx, &campaign.main_tag, &body.contracts, &actor).await {
+        Ok(rows) => match read.tx.commit().await {
+            Ok(()) => (StatusCode::OK, ok(rows)).into_response(),
+            Err(e) => ApiError::from(e).into_response(),
+        },
         Err(e) => e.into_response(),
     }
 }

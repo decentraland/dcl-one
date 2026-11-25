@@ -306,6 +306,7 @@ pub(super) fn rerank_for_diversity(
 
 pub(super) async fn personal_rows(
     state: &MarketplaceState,
+    conn: &mut sqlx::PgConnection,
     p: &Params<'_>,
     verified: Option<&str>,
     filters: &UnifiedCatalogFilters,
@@ -366,7 +367,7 @@ pub(super) async fn personal_rows(
     )
     .bind(&contracts)
     .bind(&items)
-    .fetch_all(&state.pool)
+    .fetch_all(&mut *conn)
     .await?;
     let mut seeds: Vec<(String, String, String, f64)> = Vec::new();
     let (mut wearable_weight, mut total_weight) = (0.0f64, 0.0f64);
@@ -406,7 +407,7 @@ pub(super) async fn personal_rows(
         return Ok(Vec::new());
     }
     let ids: Vec<String> = scored.iter().map(|s| s.id.clone()).collect();
-    let hydrated = items_by_ids(state, &ids, filters, rate).await?;
+    let hydrated = items_by_ids(state, conn, &ids, filters, rate).await?;
     let by_id: HashMap<String, &UnifiedItem> = hydrated
         .iter()
         .map(|i| {

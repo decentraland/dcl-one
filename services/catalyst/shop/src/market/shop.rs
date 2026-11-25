@@ -72,7 +72,10 @@ use sqlx::postgres::PgRow;
 use super::catalog::{
     Builder, ITEM_ID_SHIFT, MAX_NUMERIC_NUMBER, escape_like, unified_trades_cte_of,
 };
-use super::items::{USD_WEI_PER_CREDIT, mana_usd_rate, rate_to_numeric_string, recent_sales};
+use super::catalogue::CatalogueRead;
+use super::items::{
+    USD_WEI_PER_CREDIT, mana_usd_rate, priced_read, rate_to_numeric_string, recent_sales,
+};
 use super::readers::{self, Ttl, cached, memoized};
 use super::search::{CreatorProfile, creator_profiles, directory_snapshot};
 use super::wire::{
@@ -968,9 +971,10 @@ pub struct SuggestionsResponse {
 
 pub const SUGGESTIONS_ALGORITHM_VERSION: &str = "v1";
 
-async fn fetch(state: &MarketplaceState, b: Builder) -> Result<Vec<PgRow>, ApiError> {
+/// `b`'s rows, read in `conn` (a catalogue read's snapshot).
+async fn fetch(conn: &mut sqlx::PgConnection, b: Builder) -> Result<Vec<PgRow>, ApiError> {
     Ok(sqlx::query_with(sqlx::AssertSqlSafe(b.sql), b.args)
-        .fetch_all(&state.pool)
+        .fetch_all(conn)
         .await?)
 }
 
@@ -984,9 +988,11 @@ fn counted_page(mut rows: Vec<PgRow>) -> (Vec<PgRow>, i64) {
 
 pub async fn shop_listings(
     state: &MarketplaceState,
+    conn: &mut sqlx::PgConnection,
     f: &ShopCatalogFilters,
 ) -> Result<(Vec<ShopListing>, i64), ApiError> {
-    let (rows, total) = counted_page(fetch(state, build_shop_listings_sql(f, since(state))).await?);
+    let (rows, total) =
+        counted_page(fetch(&mut *conn, build_shop_listings_sql(f, since(state))).await?);
     let data = rows
         .iter()
         .map(|r| {
@@ -1020,10 +1026,11 @@ pub async fn shop_listings(
 
 pub async fn legacy_listings(
     state: &MarketplaceState,
+    conn: &mut sqlx::PgConnection,
     f: &LegacyCatalogFilters,
 ) -> Result<(Vec<LegacyListing>, i64), ApiError> {
     let (rows, total) =
-        counted_page(fetch(state, build_legacy_listings_sql(f, since(state))).await?);
+        counted_page(fetch(&mut *conn, build_legacy_listings_sql(f, since(state))).await?);
     let data = rows
         .iter()
         .map(|r| {
@@ -1057,9 +1064,14 @@ pub async fn legacy_listings(
 
 pub async fn importable_listings(
     state: &MarketplaceState,
+    conn: &mut sqlx::PgConnection,
     seller: &str,
 ) -> Result<Vec<ImportableListing>, ApiError> {
-    let rows = fetch(state, build_importable_listings_sql(seller, since(state))).await?;
+    let rows = fetch(
+        &mut *conn,
+        build_importable_listings_sql(seller, since(state)),
+    )
+    .await?;
     Ok(rows
         .iter()
         .map(|r| {
@@ -1091,26 +1103,34 @@ pub async fn importable_listings(
 
 pub async fn unified_listings(
     state: &MarketplaceState,
+    conn: &mut sqlx::PgConnection,
     f: &UnifiedCatalogFilters,
     rate: ManaUsdRate,
 ) -> Result<(Vec<UnifiedListing>, i64), ApiError> {
-    let (rows, total) =
-        counted_page(fetch(state, build_unified_listings_sql(f, rate, since(state))).await?);
+    let (rows, total) = counted_page(
+        fetch(
+            &mut *conn,
+            build_unified_listings_sql(f, rate, since(state)),
+        )
+        .await?,
+    );
     Ok((rows.iter().map(map_unified_listing).collect(), total))
 }
 
 pub async fn unified_items(
     state: &MarketplaceState,
+    conn: &mut sqlx::PgConnection,
     f: &UnifiedCatalogFilters,
     rate: ManaUsdRate,
 ) -> Result<(Vec<UnifiedItem>, i64), ApiError> {
     let (rows, total) =
-        counted_page(fetch(state, build_unified_items_sql(f, rate, since(state))).await?);
+        counted_page(fetch(&mut *conn, build_unified_items_sql(f, rate, since(state))).await?);
     Ok((rows.iter().map(map_unified_item).collect(), total))
 }
 
 pub async fn items_by_ids(
     state: &MarketplaceState,
+    conn: &mut sqlx::PgConnection,
     ids: &[String],
     f: &UnifiedCatalogFilters,
     rate: ManaUsdRate,
@@ -1118,19 +1138,23 @@ pub async fn items_by_ids(
     if ids.is_empty() {
         return Ok(Vec::new());
     }
-    let rows = fetch(state, build_items_by_ids_sql(ids, f, rate, since(state))).await?;
+    let rows = fetch(
+        &mut *conn,
+        build_items_by_ids_sql(ids, f, rate, since(state)),
+    )
+    .await?;
     Ok(rows.iter().map(map_unified_item).collect())
 }
 
 async fn reference_item(
-    state: &MarketplaceState,
+    conn: &mut sqlx::PgConnection,
     contract_address: &str,
     item_id: &str,
 ) -> Result<Option<ReferenceItem>, ApiError> {
     let row: Option<(String, String, String)> = sqlx::query_as("SELECT rarity, item_type, category FROM shop.items WHERE contract_address = $1 AND item_id = $2::numeric LIMIT 1")
         .bind(contract_address.to_lowercase())
         .bind(item_id)
-        .fetch_optional(&state.pool)
+        .fetch_optional(&mut *conn)
         .await?;
     Ok(row.map(|(rarity, item_type, category)| ReferenceItem {
         category: top_level_category(Some(&item_type)),
@@ -1141,17 +1165,18 @@ async fn reference_item(
 
 pub async fn related_items(
     state: &MarketplaceState,
+    conn: &mut sqlx::PgConnection,
     contract_address: &str,
     item_id: &str,
     first: Option<i64>,
     rail: &RelatedItemsFilters,
     rate: ManaUsdRate,
 ) -> Result<Vec<UnifiedItem>, ApiError> {
-    let Some(reference) = reference_item(state, contract_address, item_id).await? else {
+    let Some(reference) = reference_item(&mut *conn, contract_address, item_id).await? else {
         return Ok(Vec::new());
     };
     let rows = fetch(
-        state,
+        &mut *conn,
         build_related_items_sql(
             contract_address,
             item_id,
@@ -1176,6 +1201,7 @@ pub struct SaleSignal {
 
 pub async fn trending_items(
     state: &MarketplaceState,
+    conn: &mut sqlx::PgConnection,
     first: Option<i64>,
     days: Option<i64>,
     filters: &UnifiedCatalogFilters,
@@ -1186,7 +1212,7 @@ pub async fn trending_items(
     let sales = recent_sales(state, days).await?;
     let signals = aggregate_sales(&sales);
     let ids: Vec<String> = signals.keys().cloned().collect();
-    let items = items_by_ids(state, &ids, filters, rate)
+    let items = items_by_ids(state, conn, &ids, filters, rate)
         .await
         .map_err(IntoResponse::into_response)?;
     Ok(rank_trending(items, &signals, first))
@@ -1198,14 +1224,16 @@ pub async fn trending_items(
 /// browse off the rail.
 pub async fn top_creators(
     state: &MarketplaceState,
+    read: &mut CatalogueRead,
     first: Option<i64>,
     days: Option<i64>,
 ) -> Result<Vec<TopCreator>, Response> {
     let first = top_creators_clamp_first(first);
     let days = top_creators_clamp_days(days);
     let min_sales = top_creators_min_sales(days);
-    let key = format!("creators:{first}:{days}");
-    let value = cached(state, Ttl::M15, key, || async {
+    let key = format!("creators:{first}:{days}:{}", read.key());
+    let conn = &mut *read.tx;
+    let value = cached(state, Ttl::M15, key, || async move {
         let sales = recent_sales(state, days).await.map_err(|_| "sales reader unavailable".to_string())?;
         let mut ranked: HashMap<String, (u128, i64)> = HashMap::new();
         for sale in &sales {
@@ -1220,7 +1248,7 @@ pub async fn top_creators(
              FROM shop.items WHERE search_is_collection_approved = true AND creator = ANY($1) GROUP BY creator",
         )
         .bind(&creators)
-        .fetch_all(&state.pool)
+        .fetch_all(conn)
         .await
         .map_err(|e| e.to_string())?;
         let catalogue: HashMap<String, (i64, i64)> = catalogue.into_iter().map(|(c, items, collections)| (c, (items, collections))).collect();
@@ -1241,21 +1269,15 @@ pub async fn top_creators(
     serde_json::from_value((*value).clone()).map_err(|_| super::internal_server_error())
 }
 
-/// Every feed joins the items mirror to the open trades: both need a pass,
-/// the items one within its money budget (the minter price).
-async fn ready(state: &MarketplaceState) -> Result<(), Response> {
-    super::mirrors::require_priced(state).await?;
-    super::trades::require_ready(state).await
-}
-
 pub async fn get_shop_catalog(
     State(state): State<SharedState>,
     Query(pairs): Query<Vec<(String, String)>>,
 ) -> Response {
-    if let Err(r) = ready(&state).await {
-        return r;
-    }
-    match shop_listings(&state, &parse_shop_filters(&pairs)).await {
+    let mut read = match priced_read(&state, None).await {
+        Ok(read) => read,
+        Err(r) => return r,
+    };
+    match shop_listings(&state, &mut read.tx, &parse_shop_filters(&pairs)).await {
         Ok((data, total)) => Json(DataTotal { data, total }).into_response(),
         Err(e) => e.into_response(),
     }
@@ -1265,10 +1287,11 @@ pub async fn get_legacy_catalog(
     State(state): State<SharedState>,
     Query(pairs): Query<Vec<(String, String)>>,
 ) -> Response {
-    if let Err(r) = ready(&state).await {
-        return r;
-    }
-    match legacy_listings(&state, &parse_legacy_filters(&pairs)).await {
+    let mut read = match priced_read(&state, None).await {
+        Ok(read) => read,
+        Err(r) => return r,
+    };
+    match legacy_listings(&state, &mut read.tx, &parse_legacy_filters(&pairs)).await {
         Ok((data, total)) => Json(DataTotal { data, total }).into_response(),
         Err(e) => e.into_response(),
     }
@@ -1341,9 +1364,10 @@ pub async fn get_unified_catalog(
     State(state): State<SharedState>,
     Query(pairs): Query<Vec<(String, String)>>,
 ) -> Response {
-    if let Err(r) = ready(&state).await {
-        return r;
-    }
+    let mut read = match priced_read(&state, None).await {
+        Ok(read) => read,
+        Err(r) => return r,
+    };
     let filters = parse_unified_filters(&pairs);
     let group_by = parse_unified_group_by(&pairs);
     let rate = match mana_usd_rate(&state).await {
@@ -1354,12 +1378,14 @@ pub async fn get_unified_catalog(
     // Every browse read carries its creators' profiles, memoized or not; a read that names its
     // rows never waits on the creator directory.
     let with_profiles = !names_its_rows(&filters);
-    let read = || async {
+    let (copy, sources) = (read.key(), read.sources());
+    let (st, flt, conn) = (&*state, &filters, &mut *read.tx);
+    let page = || async move {
         match group_by {
-            UnifiedGroupBy::Item => unified_items(&state, &filters, rate)
+            UnifiedGroupBy::Item => unified_items(st, conn, flt, rate)
                 .await
                 .and_then(|(data, total)| body_of(DataTotal { data, total })),
-            UnifiedGroupBy::Listing => unified_listings(&state, &filters, rate)
+            UnifiedGroupBy::Listing => unified_listings(st, conn, flt, rate)
                 .await
                 .and_then(|(data, total)| body_of(DataTotal { data, total })),
         }
@@ -1368,13 +1394,13 @@ pub async fn get_unified_catalog(
     let (result, directory) = tokio::join!(
         async {
             match browse_key {
-                Some(key) => memoized(&state, Ttl::S30, key, read).await,
-                None => read().await.map(Arc::new),
+                Some(key) => memoized(&state, Ttl::S30, format!("{key}:{copy}"), page).await,
+                None => page().await.map(Arc::new),
             }
         },
         async {
             match with_profiles {
-                true => directory_snapshot(&state).await,
+                true => directory_snapshot(&state, &sources).await,
                 false => None,
             }
         }
@@ -1389,12 +1415,13 @@ pub async fn get_importable_listings(
     State(state): State<SharedState>,
     Query(pairs): Query<Vec<(String, String)>>,
 ) -> Response {
-    if let Err(r) = ready(&state).await {
-        return r;
-    }
+    let mut read = match priced_read(&state, None).await {
+        Ok(read) => read,
+        Err(r) => return r,
+    };
     let seller = Params::new(&pairs).get_address("seller", true, None);
     let data = match seller {
-        Some(seller) => match importable_listings(&state, &seller).await {
+        Some(seller) => match importable_listings(&state, &mut read.tx, &seller).await {
             Ok(data) => data,
             Err(e) => return e.into_response(),
         },
@@ -1413,9 +1440,10 @@ pub async fn get_related_catalog(
     State(state): State<SharedState>,
     Query(pairs): Query<Vec<(String, String)>>,
 ) -> Response {
-    if let Err(r) = ready(&state).await {
-        return r;
-    }
+    let mut read = match priced_read(&state, None).await {
+        Ok(read) => read,
+        Err(r) => return r,
+    };
     let p = Params::new(&pairs);
     let contract_address = p.get_address("contractAddress", true, None);
     let item_id = p.get_string("itemId", None);
@@ -1428,6 +1456,7 @@ pub async fn get_related_catalog(
             };
             match related_items(
                 &state,
+                &mut read.tx,
                 &contract_address,
                 &item_id,
                 first,
@@ -1451,9 +1480,10 @@ pub async fn get_trending_catalog(
     State(state): State<SharedState>,
     Query(pairs): Query<Vec<(String, String)>>,
 ) -> Response {
-    if let Err(r) = ready(&state).await {
-        return r;
-    }
+    let mut read = match priced_read(&state, None).await {
+        Ok(read) => read,
+        Err(r) => return r,
+    };
     let req = parse_trending_filters(&pairs);
     let rate = match mana_usd_rate(&state).await {
         Ok(rate) => rate,
@@ -1463,21 +1493,23 @@ pub async fn get_trending_catalog(
         trending_clamp_first(req.first),
         trending_clamp_days(req.days),
     );
-    let read = || async {
-        let data = trending_items(&state, Some(first), Some(days), &req.filters, rate).await?;
+    let (copy, sources) = (read.key(), read.sources());
+    let (st, flt, conn) = (&*state, &req.filters, &mut *read.tx);
+    let page = || async move {
+        let data = trending_items(st, conn, Some(first), Some(days), flt, rate).await?;
         body_of(TrendingResponseBody { data }).map_err(IntoResponse::into_response)
     };
     // As the browse memo, only over the rails' filters: free text a client varies reads fresh.
     let key = rail_filters(&req.filters.base)
-        .then(|| format!("trending:{first}:{days}:{:?}", req.filters));
+        .then(|| format!("trending:{first}:{days}:{:?}:{copy}", req.filters));
     let (body, directory) = tokio::join!(
         async {
             match key {
-                Some(key) => memoized(&state, Ttl::S30, key, read).await,
-                None => read().await.map(Arc::new),
+                Some(key) => memoized(&state, Ttl::S30, key, page).await,
+                None => page().await.map(Arc::new),
             }
         },
-        directory_snapshot(&state)
+        directory_snapshot(&state, &sources)
     );
     match body {
         Ok(body) => with_creator_profiles(&state, body, directory.as_deref(), Some(brief_cache())),
@@ -1577,9 +1609,10 @@ pub async fn get_suggested_catalog(
     headers: HeaderMap,
     Query(pairs): Query<Vec<(String, String)>>,
 ) -> Response {
-    if let Err(r) = ready(&state).await {
-        return r;
-    }
+    let mut read = match priced_read(&state, None).await {
+        Ok(read) => read,
+        Err(r) => return r,
+    };
     let verified = match super::signed::optional_signer(
         state.eip1654.as_deref(),
         &headers,
@@ -1608,7 +1641,17 @@ pub async fn get_suggested_catalog(
     };
     let mut data: Vec<SuggestedItem> = Vec::new();
     if super::neighbours::built(&state.pool).await {
-        match personal_rows(&state, &p, verified.as_deref(), &filters, rate, limit).await {
+        match personal_rows(
+            &state,
+            &mut read.tx,
+            &p,
+            verified.as_deref(),
+            &filters,
+            rate,
+            limit,
+        )
+        .await
+        {
             Ok(rows) if rows.len() >= MIN_PERSONAL_ROWS => data = rows,
             Ok(_) => {}
             Err(e) => return e.into_response(),
@@ -1616,7 +1659,16 @@ pub async fn get_suggested_catalog(
     }
     let personalized = !data.is_empty();
     if data.len() < limit {
-        match trending_items(&state, Some(limit as i64 * 2), None, &filters, rate).await {
+        match trending_items(
+            &state,
+            &mut read.tx,
+            Some(limit as i64 * 2),
+            None,
+            &filters,
+            rate,
+        )
+        .await
+        {
             Ok(items) => {
                 for t in items {
                     if data.len() >= limit {
@@ -1665,17 +1717,20 @@ pub async fn get_top_creators(
     State(state): State<SharedState>,
     Query(pairs): Query<Vec<(String, String)>>,
 ) -> Response {
-    if let Err(r) = ready(&state).await {
-        return r;
-    }
+    let mut read = match priced_read(&state, None).await {
+        Ok(read) => read,
+        Err(r) => return r,
+    };
     let p = Params::new(&pairs);
+    let sources = read.sources();
     let (ranked, directory) = tokio::join!(
         top_creators(
             &state,
+            &mut read,
             finite_i64(p.get_number("first", None)),
             finite_i64(p.get_number("days", None)),
         ),
-        directory_snapshot(&state)
+        directory_snapshot(&state, &sources)
     );
     match ranked {
         Ok(mut data) => {

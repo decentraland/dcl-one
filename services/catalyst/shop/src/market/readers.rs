@@ -215,13 +215,13 @@ impl Caches {
 /// ended, a panic included: as failed unless [`RefreshClaim::succeeded`] was called.
 pub struct RefreshClaim {
     state: super::SharedState,
-    key: &'static str,
+    key: String,
     claim: ClaimId,
     succeeded: bool,
 }
 
 impl RefreshClaim {
-    pub fn new(state: super::SharedState, key: &'static str, claim: ClaimId) -> Self {
+    pub fn new(state: super::SharedState, key: String, claim: ClaimId) -> Self {
         Self {
             state,
             key,
@@ -239,7 +239,7 @@ impl Drop for RefreshClaim {
     fn drop(&mut self) {
         self.state
             .readers
-            .end_refresh(self.key, self.claim, self.succeeded);
+            .end_refresh(&self.key, self.claim, self.succeeded);
     }
 }
 
@@ -919,7 +919,7 @@ mod refresh_tests {
         let third = readers.begin_refresh(KEY, Duration::ZERO).expect("claimed");
         let held = Arc::clone(&state);
         let refresh = tokio::spawn(async move {
-            let _claim = RefreshClaim::new(held, KEY, third);
+            let _claim = RefreshClaim::new(held, KEY.to_string(), third);
             panic!("a row that does not decode");
         });
         assert!(refresh.await.is_err());
