@@ -304,6 +304,12 @@ ends in "we don't do that", so the next person doesn't have to rediscover it.
 - **A scene can turn nearby voice off.** `featureToggles.nearbyVoiceChat` in `scene.json` is on
   when absent, not a string, empty or `enabled` (any case); any other string turns nearby voice off for a player
   standing in that parcel scene. An empty parcel and a portable experience never do.
+  - The setting is the scene's request for the `DisableVoice` permission, asked once per visit.
+    The permission allows by default; a player who refuses it for the scene, the realm or
+    everywhere keeps nearby voice there, and the use shows in the HUD's permissions popover
+    like any other. Nothing is turned off while the player has not answered. A question the
+    player leaves the scene without answering is withdrawn, and records no use. A teleport
+    that lands in the same scene is the same visit.
   - Don't leave the mic open: entering closes it, the `Microphone` key and the HUD cannot open it,
     and leaving does not reopen it. Each refused open counts in `MicState.refusals`, and the HUD
     toasts "Nearby voice chat unavailable in this scene." when the count goes up.
@@ -1055,6 +1061,21 @@ ends in "we don't do that", so the next person doesn't have to rediscover it.
   thicken with a shorter scene load distance, so the edge of the loaded scenes shows through it,
   and a scene's global light does not tint it. A scene sets fog colour and density with its fog
   component. The Off setting is no fog at all.
+- **Scene labels lay out as in the Unity client, not as in CSS (#1976).** A label with an `auto`
+  axis (every react-ecs node since `@dcl/sdk` 7.5.0) sizes to its text, and its entity's
+  `justifyContent` and `alignItems` place it; `textAlign` acts only inside the text's own box, so
+  an unstyled label stretched across a row is not centred. A label sized in px or % on an axis is
+  a box its text aligns inside by `textAlign`. A label with no size draws over its entity and
+  takes no space. Every label's text box has the margin (top 4, right 4, bottom 2, left 2 px)
+  and padding (top 4, right 2, bottom 4, left 1 px) that the Unity client's default runtime UI
+  theme gives scene labels; CSS adds none. They are logical pixels like every other scene size,
+  so on a display with a scale factor of 2 they are twice the size the Unity client draws, which
+  counts them in device pixels. Scenes are authored against the Unity client, so its label
+  spacing is kept. A scene input's text is inset 2 px from its sides, CSS's default
+  `padding-inline`, not the Unity theme's 12 px; a larger inset belongs in react-ecs, where a
+  scene can see and override it. The label spacing is an engine default that a scene cannot
+  override; if react-ecs starts sending a default label margin and padding, both clients drop
+  theirs at the same time, or new scenes get the spacing twice.
 - **glTF occlusion textures are ignored.** Scene materials drop a glTF's occlusion texture, so
   baked ambient occlusion does not darken the ambient light. The Unity client's scene shader
   does not sample it either, and content is authored against that look.

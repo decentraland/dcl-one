@@ -212,6 +212,55 @@ pub struct UiTransform {
     block_pointer: bool,
 }
 
+impl UiTransform {
+    /// Sets the node's border colour. Bevy paints a background only inside the border, while
+    /// a scene's background also lies under it, so each edge is drawn as its colour over the
+    /// solid background: a transparent or translucent border then shows the background and
+    /// the node keeps its full visible size.
+    fn apply_border_color(
+        &self,
+        cmds: &mut bevy::ecs::system::EntityCommands,
+        background: Option<Color>,
+        opacity: f32,
+    ) {
+        let background = background.filter(|_| self.border != UiRect::ZERO);
+        let over = |edge: Color| -> Color {
+            let mut edge = edge.to_linear();
+            edge.alpha *= opacity;
+            let Some(background) = background else {
+                return edge.into();
+            };
+            let mut back = background.to_linear();
+            back.alpha *= opacity;
+            let alpha = edge.alpha + back.alpha * (1.0 - edge.alpha);
+            if alpha <= 0.0 {
+                return Color::NONE;
+            }
+            let mix =
+                |e: f32, b: f32| (e * edge.alpha + b * back.alpha * (1.0 - edge.alpha)) / alpha;
+            LinearRgba::new(
+                mix(edge.red, back.red),
+                mix(edge.green, back.green),
+                mix(edge.blue, back.blue),
+                alpha,
+            )
+            .into()
+        };
+        let edges = self.border_color;
+        let border_color = BorderColor {
+            top: over(edges.top),
+            right: over(edges.right),
+            bottom: over(edges.bottom),
+            left: over(edges.left),
+        };
+        if border_color.is_fully_transparent() {
+            cmds.remove::<BorderColor>();
+        } else {
+            cmds.try_insert(border_color);
+        }
+    }
+}
+
 impl From<PbUiTransform> for UiTransform {
     fn from(value: PbUiTransform) -> Self {
         Self {
@@ -1052,6 +1101,7 @@ fn layout_scene_ui(
     ui_nodes: Query<(&SceneEntity, Ref<UiTransform>, &ChildOf)>,
     mut removed_transforms: RemovedComponents<UiTransform>,
     ui_links: Query<&UiLink>,
+    backgrounds: Query<&UiBackground>,
     dui: Res<DuiRegistry>,
 ) {
     let current_scenes = ui_scenes(
@@ -1366,22 +1416,11 @@ fn layout_scene_ui(
                 let mut cmds = commands.entity(link.ui_entity);
                 cmds.try_insert(style);
 
-                if ui_transform.border_color != BorderColor::DEFAULT {
-                    let mut border_color = ui_transform.border_color;
-                    for edge in [
-                        &mut border_color.left,
-                        &mut border_color.top,
-                        &mut border_color.right,
-                        &mut border_color.bottom,
-                    ] {
-                        let mut srgba = edge.to_srgba();
-                        srgba.alpha *= link.opacity.0;
-                        *edge = srgba.into();
-                    }
-                    cmds.try_insert(border_color);
-                } else {
-                    cmds.remove::<BorderColor>();
-                }
+                let background = backgrounds
+                    .get(bevy_entity)
+                    .ok()
+                    .and_then(UiBackground::solid_color);
+                ui_transform.apply_border_color(&mut cmds, background, link.opacity.0);
 
                 if ui_transform.border_radius != BorderRadius::DEFAULT {
                     cmds.try_insert(ui_transform.border_radius);

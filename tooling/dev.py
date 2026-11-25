@@ -753,9 +753,10 @@ def testnet_env(config, refuse_exposed_relayer=True):
         'MARKETPLACE_INDEX_INTERVAL_SECS': '5',
         'MARKETPLACE_INDEX_CHAIN_ID_MATIC': '80002',
         'MARKETPLACE_INDEX_CHAIN_ID_ETHEREUM': '11155111',
-        # This testnet stack uses its configured graph readers.
+        # The local dev profile serves the catalogue immediately through its configured
+        # graph readers. A testnet mirror with the NFT walk enabled waits for the local folds.
         'MARKETPLACE_NFT_INDEX_ENABLED': 'false',
-        # The Rentals contract is mainnet's; there is no chain-1 endpoint here.
+        # This non-walking dev profile uses the graph for rental assets.
         'SHOP_RENTALS_INDEX_ENABLED': 'false',
         # The Committee contracts are Polygon mainnet's; RPC_ENDPOINT_POLYGON is Amoy here.
         'MARKETPLACE_COMMITTEE_INDEX_ENABLED': 'false',
@@ -963,8 +964,8 @@ def project(config, postgres_only=False):
         return {'version': '0.5', 'processes': {'postgres': postgres}}
     api = process('api', {'postgres': 'process_healthy', 'api-build': 'process_completed_successfully',
                           'web-install': 'process_completed_successfully', 'nats': 'process_healthy'})
-    # Process readiness gates Pulse on schema/state/listener setup. /about also needs
-    # Pulse's heartbeat, so it remains the final whole-stack gate in wait_ready.
+    # Pulse needs a listening API before it can publish its heartbeat. Use process
+    # startup here and check aggregate readiness in wait_ready after Pulse starts.
     api['readiness_probe'] = {'http_get': {'host': '127.0.0.1', 'port': config['port'], 'path': '/status'},
                              'period_seconds': 2, 'failure_threshold': 1800}
     pulse = process('pulse', {'api': 'process_healthy', 'nats': 'process_healthy'})
@@ -1529,7 +1530,12 @@ def progress(processes, elapsed, log_positions=None):
 
 def wait_ready(timeout, postgres_only=False):
     config = settings()
-    urls = [f"http://127.0.0.1:{config['port']}/about", f"http://127.0.0.1:{config['port'] + 2}/"]
+    if not postgres_only:
+        # A fresh local mirror can serve traffic while its historical map indexes
+        # catch up. Its launch gate checks realm availability during that warmup.
+        api_probe = '/about' if config['profile'] == 'mirror' else '/health'
+        api_url = f"http://127.0.0.1:{config['port']}{api_probe}"
+        sites_url = f"http://127.0.0.1:{config['port'] + 2}/"
     started = reported = time.monotonic()
     deadline = started + timeout
     log_positions = {name: log_position(STATE / f'{name}.log') for name in ('web-install', 'api-build')}
@@ -1563,13 +1569,18 @@ def wait_ready(timeout, postgres_only=False):
             restarting = [process['name'] for process in listing if process.get('status') == 'Restarting']
             if restarting:
                 raise RuntimeError('A process is restarting')
-            for url in urls:
+            for url in (api_url, sites_url):
                 with urllib.request.urlopen(url, timeout=3) as response:
                     if response.status != 200:
                         raise RuntimeError('Service not ready')
+                    if url == api_url and api_probe == '/health':
+                        # A usable local stack needs the database and Pulse as well as an API replica.
+                        checks = json.load(response)['details']
+                        if any(checks[name]['status'] != 'pass' for name in ('postgres', 'comms')):
+                            raise RuntimeError('Waiting for the database and Pulse')
             print('API and Sites are ready.')
             return wait_first_mirror_pass(config, deadline)
-        except (urllib.error.URLError, TimeoutError, OSError, RuntimeError, subprocess.CalledProcessError):
+        except (urllib.error.URLError, TimeoutError, OSError, RuntimeError, ValueError, KeyError, subprocess.CalledProcessError):
             delay = next(delays, None)
             if delay is None:
                 break
