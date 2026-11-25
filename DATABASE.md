@@ -2577,7 +2577,9 @@ fold record, a publish and a rewind; the table stays at a dozen rows.
 A catalogue database serves one Ethereum/Polygon pair. The NFT worker uses
 `MARKETPLACE_INDEX_CHAIN_ID_ETHEREUM` and `MARKETPLACE_INDEX_CHAIN_ID_MATIC`
 to select mainnet (1/137) or Sepolia/Amoy (11155111/80002). Its RPC must
-serve that chain. At startup the catalogue writer checks the pair against
+serve that chain. The mirror posture derives the testnet defaults from
+`ETH_NETWORK=sepolia` when the operator leaves the IDs unset. At startup
+the catalogue writer checks the pair against
 `ETH_NETWORK` and the database binding. The API process leaves the binding
 to the index writer, even when they share settings. Each database can have independent
 Ethereum and Sepolia Rentals histories.
@@ -2589,11 +2591,14 @@ hash against the chain-checked RPC. Both mirrors persist that hash with their
 keyset and read every page at that block. Collections supply contract addresses
 and items supply their metadata. A mirror writer can provide this proof even
 when the NFT walker runs on another node. A writer without a catalogue RPC
-leaves a bound pass untouched. A transient read failure retries its pinned block. A graph that rejects the
-block, or a pass that reaches a day in age, restarts from a new confirmed block. Descriptive readers can use the last
-completed copy during this retry. The NFT walk requires a complete collections
-pass for its chain. On testnet it selects addresses from rows the verified
-pass actually fetched. Rows retained from a graph-only source carry no proof.
+leaves a bound pass untouched. A missing or mismatched page hash restarts
+the pass. A transport or GraphQL error retries the same block for up to an
+hour from the start of the pass. A progressing pass can keep its pin for
+one day. Descriptive readers can use the last completed copy during retries.
+The NFT walk requires a complete collections pass for its chain. Mainnet
+accepts a completed legacy copy with neither a chain binding nor a pending
+testnet pin. The testnet walk selects addresses from rows the verified pass
+actually fetched. Rows retained from a graph-only source carry no proof.
 An empty verified pass covers the chain's
 fixed contracts. The Sepolia/Amoy pair omits the mainnet-only committee, collections, third-party registry and MANA transfer walks, even
 when the mirror posture enables them and mainnet RPCs are available. The

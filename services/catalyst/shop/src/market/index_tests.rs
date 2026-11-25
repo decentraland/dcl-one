@@ -2065,7 +2065,7 @@ async fn a_testnet_graph_page_proves_its_block_even_when_the_page_is_empty() {
         )
         .await
         .unwrap_err();
-        assert!(error.contains(reason), "{error}");
+        assert!(error.to_string().contains(reason), "{error}");
     }
     *meta.lock() = json!({"number":90,"hash":good});
     chain.chain_id.store(137, Ordering::SeqCst);
@@ -2098,8 +2098,11 @@ async fn a_split_mirror_resumes_the_pinned_graph_block_without_another_rpc_read(
                     let vars = &body["variables"];
                     let doc = body["query"].as_str().unwrap();
                     let data = if vars.get("idFrom").is_some() {
+                        if vars["block"]["hash"] == "orphan" {
+                            return axum::Json(json!({"data":{"collections":[],"_meta":{"block":null}}}));
+                        }
                         if vars["block"]["hash"] != hash {
-                            return axum::Json(json!({"errors":[{"message":"block not found"}]}));
+                            return axum::Json(json!({"errors":[{"message":"could not resolve the requested page"}]}));
                         }
                         assert!(doc.contains("collections(block: $block"));
                         let rows = if vars["idFrom"] == "" {
@@ -2168,21 +2171,29 @@ async fn a_split_mirror_resumes_the_pinned_graph_block_without_another_rpc_read(
             .is_err()
     );
     assert!(nft_index::mirror_complete(&db.pool, net, net.testnet_chain_id()).await);
-    // A block a redeployment no longer serves cannot pin a failed pass forever.
-    sqlx::query("UPDATE shop.mirror_state SET last_complete_pass_at=timezone('UTC',now())-interval '3 days',
-        pass_started_at=timezone('UTC',now()),pass_block_hash='orphan',cursor_id='old'")
-        .execute(&db.pool).await.unwrap();
-    assert!(
-        mirrors::run_tick(&state(), Mirror::Collections, &ctx)
+    // Missing proof restarts immediately. An opaque graph error keeps its
+    // keyset for a young pass and restarts once the failed pin is old.
+    for (pin, age_hours, reset) in [
+        ("orphan", 0, true),
+        ("opaque", 0, false),
+        ("opaque", 2, true),
+    ] {
+        sqlx::query("UPDATE shop.mirror_state SET last_complete_pass_at=timezone('UTC',now())-interval '3 days',
+            pass_started_at=timezone('UTC',now())-make_interval(hours => $2), pass_block_hash=$1, cursor_id='old'")
+            .bind(pin).bind(age_hours).execute(&db.pool).await.unwrap();
+        assert!(
+            mirrors::run_tick(&state(), Mirror::Collections, &ctx)
+                .await
+                .is_err()
+        );
+        let row = mirrors::load(&db.pool, Mirror::Collections, Network::Matic)
             .await
-            .is_err()
-    );
-    let reset = mirrors::load(&db.pool, Mirror::Collections, Network::Matic)
-        .await
-        .unwrap()
-        .unwrap();
-    assert!(reset.pass_block_hash.is_none() && reset.cursor_id.is_none());
-    assert!(reset.last_complete_pass_at.is_some());
+            .unwrap()
+            .unwrap();
+        assert_eq!(row.pass_block_hash.as_deref(), (!reset).then_some(pin));
+        assert_eq!(row.cursor_id.as_deref(), (!reset).then_some("old"));
+        assert!(row.last_complete_pass_at.is_some());
+    }
     chain.fail_chain_id.store(false, Ordering::SeqCst);
     mirrors::run_tick(&state(), Mirror::Collections, &ctx)
         .await
@@ -2538,6 +2549,29 @@ async fn the_rpc_fallback_is_bound_to_the_configured_catalogue_pair() {
     Arc::get_mut(&mut state).unwrap().settings.eth_network = "mainnet".into();
     assert!(state.catalogue_rpc_url(ChainNet::Ethereum).is_none());
     assert!(state.catalogue_rpc_url(ChainNet::Matic).is_none());
+}
+
+#[tokio::test]
+async fn a_legacy_unbound_collection_copy_can_supply_mainnet_but_not_testnet() {
+    let Some(db) = ScratchDb::create().await else {
+        return;
+    };
+    let net = ChainNet::Matic;
+    sqlx::query(
+        "INSERT INTO shop.mirror_state(mirror,network,source_url,last_complete_pass_at)
+        VALUES ('collections','matic','custom-mainnet',timezone('UTC',now()))",
+    )
+    .execute(&db.pool)
+    .await
+    .unwrap();
+    assert!(nft_index::mirror_complete(&db.pool, net, net.chain_id()).await);
+    assert!(!nft_index::mirror_complete(&db.pool, net, net.testnet_chain_id()).await);
+    sqlx::query("UPDATE shop.mirror_state SET pass_block_hash='pending-testnet-pin'")
+        .execute(&db.pool)
+        .await
+        .unwrap();
+    assert!(!nft_index::mirror_complete(&db.pool, net, net.chain_id()).await);
+    db.drop().await;
 }
 
 #[tokio::test]

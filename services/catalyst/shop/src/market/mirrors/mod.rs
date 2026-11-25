@@ -60,6 +60,7 @@ pub const PAGE_SIZE: i64 = 1000;
 /// Retry transient errors at the same keyset. An old failing pin may have
 /// been pruned or orphaned, so the next tick starts a new verified pass.
 const MAX_PIN_AGE: chrono::Duration = chrono::Duration::days(1);
+const MAX_FAILED_PIN_AGE: chrono::Duration = chrono::Duration::hours(1);
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum Mirror {
@@ -263,23 +264,33 @@ pub(super) async fn catalogue_pass_hash(
     Ok(header.value.hash)
 }
 
+#[derive(Debug, thiserror::Error)]
+pub(super) enum PageReadError {
+    #[error("{0}")]
+    Fetch(String),
+    #[error("collections graph page has no block hash")]
+    MissingHash,
+    #[error("collections graph page differs from the pinned block")]
+    HashMismatch,
+}
+
 pub(super) async fn read_catalogue_page(
     state: &MarketplaceState,
     url: &str,
     query: &str,
     from: Option<String>,
     hash: Option<String>,
-) -> Result<Value, String> {
+) -> Result<Value, PageReadError> {
     let data = super::readers::query(state, url, query, serde_json::json!({
         "idFrom": from.unwrap_or_default(), "first": PAGE_SIZE,
         "verifyChain": hash.is_some(), "block": hash.as_ref().map(|h| serde_json::json!({"hash":h}))
-    })).await?;
+    })).await.map_err(PageReadError::Fetch)?;
     if let Some(expected) = hash {
         let actual = data["_meta"]["block"]["hash"]
             .as_str()
-            .ok_or("collections graph has no block hash")?;
+            .ok_or(PageReadError::MissingHash)?;
         if !actual.eq_ignore_ascii_case(&expected) {
-            return Err("collections graph page differs from the pinned block".into());
+            return Err(PageReadError::HashMismatch);
         }
     }
     Ok(data)
@@ -373,7 +384,7 @@ pub(super) async fn walk<F, FF, U, UF>(
 ) -> anyhow::Result<()>
 where
     F: Fn(Option<i64>, Option<String>, Option<String>) -> FF,
-    FF: std::future::Future<Output = Result<Page, String>>,
+    FF: std::future::Future<Output = Result<Page, PageReadError>>,
     U: Fn(Vec<Value>, i32, bool) -> UF,
     UF: std::future::Future<Output = Result<i64, sqlx::Error>>,
 {
@@ -447,18 +458,11 @@ where
         {
             Ok(p) => p,
             Err(e) => {
-                c.last_error = Some(e.clone());
-                let message = e.to_ascii_lowercase();
+                c.last_error = Some(e.to_string());
                 if c.pass_block_hash.is_some()
-                    && [
-                        "block not found",
-                        "unknown block",
-                        "no block with",
-                        "no block found",
-                        "differs from the pinned block",
-                    ]
-                    .iter()
-                    .any(|reason| message.contains(reason))
+                    && (matches!(e, PageReadError::MissingHash | PageReadError::HashMismatch)
+                        || c.pass_started_at
+                            .is_some_and(|start| now_utc() - start >= MAX_FAILED_PIN_AGE))
                 {
                     tracing::warn!(
                         mirror = mirror.name(),

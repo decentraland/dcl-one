@@ -141,6 +141,15 @@ fn mainnet(lookup: &Lookup) -> bool {
     lookup("ETH_NETWORK").is_none_or(|n| n.trim().is_empty() || n.trim() == "mainnet")
 }
 
+fn sepolia(lookup: &Lookup) -> bool {
+    set(lookup, "ETH_NETWORK").is_some_and(|n| {
+        matches!(
+            n.trim().to_ascii_lowercase().as_str(),
+            "sepolia" | "ethereum-sepolia"
+        )
+    })
+}
+
 fn eth_collections_source(lookup: &Lookup) -> Option<String> {
     Some(
         if set(lookup, "MARKETPLACE_INDEX_CHAIN_ID_ETHEREUM").as_deref() == Some("11155111") {
@@ -314,6 +323,24 @@ const ROWS: &[Row] = &[
     ),
     // Development only: no posture serves an order book before its first complete pass.
     same("mirrors", "TRADES_SERVE_PARTIAL", "false"),
+    row(
+        "mirrors",
+        "MARKETPLACE_INDEX_CHAIN_ID_ETHEREUM",
+        From("Sepolia when ETH_NETWORK selects it", |env| {
+            sepolia(env).then(|| "11155111".into())
+        }),
+        Default("Ethereum mainnet"),
+        Default("Ethereum mainnet"),
+    ),
+    row(
+        "mirrors",
+        "MARKETPLACE_INDEX_CHAIN_ID_MATIC",
+        From("Amoy when ETH_NETWORK selects Sepolia", |env| {
+            sepolia(env).then(|| "80002".into())
+        }),
+        Default("Polygon mainnet"),
+        Default("Polygon mainnet"),
+    ),
     row(
         "mirrors",
         "ETH_COLLECTIONS_SUBGRAPH_URL",

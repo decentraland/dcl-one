@@ -860,11 +860,13 @@ impl NftIndex {
 }
 
 /// Whether the collections mirror has completed a pass for `net`: the
-/// address set is only as complete as it.
+/// address set is only as complete as it. Legacy mainnet writers used the
+/// mainnet row tags even for custom URLs, before they recorded a chain here.
 pub async fn mirror_complete(pool: &PgPool, net: ChainNet, chain_id: i64) -> bool {
-    sqlx::query_scalar::<_, bool>("SELECT last_complete_pass_at IS NOT NULL FROM shop.mirror_state WHERE mirror = 'collections' AND network = $1 AND chain_id = $2")
+    sqlx::query_scalar::<_, bool>("SELECT last_complete_pass_at IS NOT NULL FROM shop.mirror_state WHERE mirror = 'collections' AND network = $1 AND (chain_id = $2 OR ($3 AND chain_id IS NULL AND pass_block_hash IS NULL))")
         .bind(net.db_name())
         .bind(chain_id)
+        .bind(chain_id == net.chain_id())
         .fetch_optional(pool)
         .await
         .ok()

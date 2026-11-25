@@ -157,13 +157,21 @@ fn a_mirror_refuses_blank_profile_ownership_readers() {
     // On mainnet the names read the nft index the mirror walks: the
     // marketplace subgraph is no profile ownership source there.
     check_of(&[db, (ENV, "mirror"), ("MARKETPLACE_SUBGRAPH_URL", "")]).unwrap();
-    // Off mainnet it is the names' only source.
+    // A Sepolia mirror also reads its local index. A non-walker needs the graph.
     let sepolia = ("ETH_NETWORK", "sepolia");
     check_of(&[db, (ENV, "mirror"), sepolia]).unwrap();
+    check_of(&[
+        db,
+        (ENV, "mirror"),
+        sepolia,
+        ("MARKETPLACE_SUBGRAPH_URL", ""),
+    ])
+    .unwrap();
     let err = check_of(&[
         db,
         (ENV, "mirror"),
         sepolia,
+        ("MARKETPLACE_NFT_INDEX_ENABLED", "false"),
         ("MARKETPLACE_SUBGRAPH_URL", ""),
     ])
     .unwrap_err()
@@ -809,6 +817,16 @@ fn mirror_follows_decentraland_and_derives_the_trade_rpcs() {
     // The preset leaves the chain endpoints to the binary's default; off
     // mainnet it knows no contract.
     let got = expanded(Posture::Mirror, &[("ETH_NETWORK", "sepolia")]);
+    assert_eq!(got["MARKETPLACE_INDEX_CHAIN_ID_ETHEREUM"], "11155111");
+    assert_eq!(got["MARKETPLACE_INDEX_CHAIN_ID_MATIC"], "80002");
+    assert_eq!(
+        got["ETH_COLLECTIONS_SUBGRAPH_URL"],
+        "https://subgraph.decentraland.org/collections-ethereum-sepolia"
+    );
+    assert_eq!(
+        got["MATIC_COLLECTIONS_SUBGRAPH_URL"],
+        "https://subgraph.decentraland.org/collections-matic-amoy"
+    );
     for key in [
         "ETH_RPC_URL",
         "RPC_ENDPOINT_POLYGON",
