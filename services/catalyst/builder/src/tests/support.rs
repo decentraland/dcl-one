@@ -63,7 +63,7 @@ pub async fn copy_pass(pool: &sqlx::PgPool, minutes_ago: i64) {
 /// index, so derived chain state and the registry answer.
 pub async fn fresh_pass(pool: &sqlx::PgPool, minutes_ago: i64) {
     copy_pass(pool, minutes_ago).await;
-    publish_registry_index(&mut *pool.acquire().await.unwrap(), false).await;
+    publish_registry_index(&mut pool.acquire().await.unwrap(), false).await;
 }
 
 /// The process's scratch database after a [`fresh_pass`]; `None` (skip)

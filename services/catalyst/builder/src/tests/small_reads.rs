@@ -249,15 +249,7 @@ struct Db {
 }
 
 async fn db() -> Option<Db> {
-    let pool = crate::db::scratch::isolated_pool(4).await?;
-    sqlx::query(
-        "INSERT INTO shop.mirror_state (mirror, network, source_url, last_complete_pass_at, pass_started_at) \
-         VALUES ('collections', 'matic', 'https://subgraph.example', timezone('UTC', now()), timezone('UTC', now()))",
-    )
-    .execute(&pool)
-    .await
-    .unwrap();
-    crate::tests::support::publish_registry_index(&mut *pool.acquire().await.unwrap(), false).await;
+    let pool = super::support::own_pool(4).await?;
     let store = temp_storage().await;
     let state = Arc::new(
         crate::State::new(
