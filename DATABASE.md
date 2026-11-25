@@ -2228,6 +2228,31 @@ target (no unearned tier on the next write), and a completed single badge
 reads its target as reached. The rest of upstream's
 catalog reaches it through the TS database import.
 
+### Historical holdings
+
+The five bearer-authenticated marketplace historical reads accept up to
+10,000 wallet or asset keys and return up to 1,000 results, ordered by their
+legacy string IDs. Two reads can run per process. Each uses one repeatable-read
+snapshot with a 10-second SQL statement timeout. NFT and rental lookups derive
+candidate assets from events naming the requested addresses, then find the
+last event of each asset at the requested block before checking ownership.
+Estate sizes sum the bounded add and remove events. Parcel lists resolve the
+latest membership of just the parcels once held by the requested estates.
+
+The local Ethereum NFT, LAND authorization, Ethereum rental and Polygon
+registry publications bound the corresponding histories, independent of
+how far the next walk has advanced. NFT reads also require the catalogue
+projection or a completed, block-pinned mirror pass that covers the requested
+block. When a mirror publishes below the NFT walk, the marketplace head uses
+the earlier block after proving the hashes share an ancestor. Pending transfer
+backfills are checked by block interval before any holdings are returned. The LAND cursor keeps the published
+hash when it writes its fold marker. The third-party writer marks review
+events explicitly. Old registry versions have a null review flag until the
+registry job classifies them from an archive window bracketed by the published
+checkpoint. A missing archive event leaves that window pending. Existing
+current-provider readers continue using the same state snapshots. Historical
+readers require every relevant version through their block to be classified.
+
 ### Historical marketplace sale inputs
 
 The Ethereum sales cursor watches accepted bids at the ERC721Bid contract, purchases at both names controllers, and changes to venue fees and recipients in `shop.sale_fee_change`. An accepted bid occupies one row in `shop.sale_event`. Each `NameBought` occupies one row in `shop.name_purchase` with its caller, beneficiary, name and fee in MANA base units. The original controller burns the price. The second pays its configured fee collector. Multiple purchases in one transaction have distinct log positions. The walk inserts its rows with its cursor advance. A rewind deletes all three tables' Ethereum rows above the retained block in the same transaction.

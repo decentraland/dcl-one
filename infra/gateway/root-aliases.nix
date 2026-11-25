@@ -273,6 +273,15 @@
     ];
   }
   {
+    key = "^~ /v1/historical/";
+    to = "/marketplace-api$uri";
+    probe = [
+      "POST"
+      "/v1/historical/head"
+      "/marketplace-api/v1/historical/head"
+    ];
+  }
+  {
     key = "^~ /v1/nfts";
     to = "/marketplace-api$uri";
     probe = [

@@ -105,6 +105,10 @@ pub struct MarketplaceConfig {
     #[arg(long, env = "MARKET_ADMIN_TOKEN", hide_env_values = true)]
     pub market_admin_token: Option<String>,
 
+    /// Bearer of the marketplace historical holdings reads. Unset disables the routes.
+    #[arg(long, env = "HISTORICAL_API_TOKEN", hide_env_values = true)]
+    pub historical_api_token: Option<String>,
+
     /// 0 disables the catalog page cache.
     #[arg(long, env = "MARKETPLACE_CATALOG_CACHE_TTL_SECS", default_value_t = 30)]
     pub marketplace_catalog_cache_ttl_secs: u64,

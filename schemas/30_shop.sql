@@ -17299,6 +17299,7 @@ CREATE TABLE shop.third_party_registry_event (
     provider_id text NOT NULL,
     state jsonb NOT NULL,
     receipt jsonb,
+    is_review boolean,
     PRIMARY KEY (block_number, log_index)
 );
 

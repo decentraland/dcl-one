@@ -15,7 +15,9 @@ use serde_json::{Value, json};
 use sqlx::types::Json as SqlJson;
 use sqlx::{PgConnection, PgPool};
 
-use super::chain_walk::{ChainIndex, ChainNet, INDEXER_THIRD_PARTY_REGISTRY, LogGroup, Owner};
+use super::chain_walk::{
+    ChainIndex, ChainNet, INDEXER_THIRD_PARTY_REGISTRY, LogGroup, LogSource, Owner,
+};
 use super::third_party::{ThirdPartyProvider, TpContract};
 use super::{MarketplaceState, SharedState, Source, lambdas_error, unavailable};
 use crate::chain_index::rpc::{RpcLog, hex_to_i64};
@@ -36,6 +38,9 @@ sol! {
         event ThirdPartyAdded(string id, string metadata, string resolver, bool approved, address[] managers, uint256 slots, address sender);
     }
 }
+
+#[path = "third_party_registry_repair.rs"]
+mod repair;
 
 const TOPICS: [B256; 7] = [
     Registry::ThirdPartyAdded::SIGNATURE_HASH,
@@ -352,6 +357,14 @@ fn apply(
     Ok(Some((provider, receipt)))
 }
 
+fn log_group() -> LogGroup {
+    let topics: Vec<String> = TOPICS.iter().map(|topic| format!("{topic:#x}")).collect();
+    LogGroup {
+        addresses: vec![CONTRACT.into()],
+        topics: json!([topics]),
+    }
+}
+
 pub struct ThirdPartyRegistryIndex;
 
 #[async_trait::async_trait]
@@ -375,11 +388,7 @@ impl ChainIndex for ThirdPartyRegistryIndex {
         _: u64,
         _: (u64, i64),
     ) -> anyhow::Result<Vec<LogGroup>> {
-        let topics: Vec<String> = TOPICS.iter().map(|topic| format!("{topic:#x}")).collect();
-        Ok(vec![LogGroup {
-            addresses: vec![CONTRACT.into()],
-            topics: json!([topics]),
-        }])
+        Ok(vec![log_group()])
     }
 
     async fn write(
@@ -409,11 +418,12 @@ impl ChainIndex for ThirdPartyRegistryIndex {
             .fetch_optional(&mut *conn)
             .await?
             .map(|state| state.0);
+            let is_review = matches!(event.change, Change::Reviewed { .. });
             if let Some((provider, receipt)) = apply(event.id, event.change, previous)? {
                 written += sqlx::query(
                     "INSERT INTO shop.third_party_registry_event
-                     (block_number, log_index, block_time, provider_id, state, receipt)
-                     VALUES ($1, $2, $3, $4, $5, $6)
+                     (block_number, log_index, block_time, provider_id, state, receipt, is_review)
+                     VALUES ($1, $2, $3, $4, $5, $6, $7)
                      ON CONFLICT (block_number, log_index) DO NOTHING",
                 )
                 .bind(event.block)
@@ -426,12 +436,24 @@ impl ChainIndex for ThirdPartyRegistryIndex {
                 .bind(&provider.id)
                 .bind(SqlJson(&provider))
                 .bind(receipt.map(SqlJson))
+                .bind(is_review)
                 .execute(&mut *conn)
                 .await?
                 .rows_affected();
             }
         }
         Ok(written as usize)
+    }
+
+    async fn after_publish(
+        &self,
+        pool: &PgPool,
+        source: &dyn LogSource,
+        owner: &Owner,
+        window_blocks: u64,
+        remaining: usize,
+    ) -> anyhow::Result<usize> {
+        repair::backfill_reviews(pool, source, owner, window_blocks, remaining).await
     }
 
     async fn rewind(&self, conn: &mut PgConnection, to: i64) -> anyhow::Result<()> {

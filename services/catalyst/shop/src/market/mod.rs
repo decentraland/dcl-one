@@ -79,6 +79,7 @@ pub mod definitions;
 pub mod ethereum_sales;
 pub mod features;
 pub mod federation;
+mod historical;
 pub mod items;
 pub mod lambdas_catalog;
 pub mod lambdas_crypto;
@@ -235,6 +236,7 @@ pub struct Settings {
     /// local writes (signed trades, lists and picks, cancellations,
     /// moderation; the economy, signatures and presence writes read it too).
     pub data_writes_enabled: bool,
+    pub historical_api_token: Option<String>,
     /// The stage-5 market surface's own knobs (`MarketSettings`); `main.rs`
     /// fills them with [`Settings::with_market`], the defaults keep the
     /// mirrors off and the admin routes disabled.
@@ -464,6 +466,11 @@ impl Settings {
             trades_serve_partial: upstreams.trades_serve_partial,
             request_timeout: content.request_timeout,
             data_writes_enabled: config.writes.data_writes_enabled,
+            historical_api_token: config
+                .marketplace
+                .historical_api_token
+                .clone()
+                .filter(|token| !token.is_empty()),
             market: MarketSettings::default(),
         })
     }
@@ -568,6 +575,7 @@ impl Settings {
             trades_serve_partial: false,
             request_timeout: None,
             data_writes_enabled: false,
+            historical_api_token: None,
             market: MarketSettings::default(),
         }
     }
@@ -655,6 +663,7 @@ pub struct MarketplaceState {
     pub(crate) sales_analytics_slots: tokio::sync::Semaphore,
     pub(crate) sales_accounts_slots: tokio::sync::Semaphore,
     sales_seller_slots: tokio::sync::Semaphore,
+    historical_slots: tokio::sync::Semaphore,
     pub(crate) sales_pages_slots: tokio::sync::Semaphore,
     /// `mirror_state.last_complete_pass_at` per mirror, cached 10 s.
     pub(crate) mirror_ready: TtlMap<mirrors::Mirror, Option<chrono::NaiveDateTime>>,
@@ -753,6 +762,7 @@ impl MarketplaceState {
             sales_analytics_slots: tokio::sync::Semaphore::new(2),
             sales_accounts_slots: tokio::sync::Semaphore::new(1),
             sales_seller_slots: tokio::sync::Semaphore::new(4),
+            historical_slots: tokio::sync::Semaphore::new(2),
             sales_pages_slots: tokio::sync::Semaphore::new(4),
             mirror_ready: TtlMap::bounded(mirrors::READY_TTL, 8),
             trades_ready: TtlMap::bounded(mirrors::READY_TTL, 1),
@@ -1399,6 +1409,9 @@ pub fn market_router(state: SharedState) -> Router {
         )
         .route("/v1/admin/audit", get(admin::list_audit))
         .route("/v1/activity", get(activity::get_activity))
+        .merge(historical::routes(
+            state.settings.historical_api_token.is_some(),
+        ))
         .merge(super::market_extensions())
         .layer(axum::middleware::from_fn(mirrors::stamp_copies))
         .layer(axum::middleware::from_fn(signed::mounted_path))
@@ -1412,5 +1425,9 @@ pub fn market_router(state: SharedState) -> Router {
     } else {
         app
     };
-    DataWrites::guard(app.with_state(state), writes_enabled)
+    DataWrites::guard_open(
+        app.with_state(state),
+        writes_enabled,
+        historical::READ_PATHS,
+    )
 }
