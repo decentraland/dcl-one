@@ -1,5 +1,6 @@
-// The item preview while the worn outfit loads: after the wearer's profile the scene mounts under the thumbnail and
-// loads nothing until the outfit comes; the thumbnail stays until the first drawn frame, and failures show over it.
+// The item preview inside the Explorer, while the worn outfit loads: after the wearer's profile the scene mounts under
+// the thumbnail and loads nothing until the outfit comes; the thumbnail stays until the first drawn frame, and failures
+// show over it. The web preview, the wearable-preview iframe, is ItemPreview.web.test.tsx.
 
 import { act, cleanup, render, screen } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
@@ -46,6 +47,8 @@ const last = () => previews.props.at(-1)!;
 const thumb = () => screen.queryByRole("img", { name: "Hoodie" });
 
 beforeEach(() => {
+  // The Explorer announces its preview host; the page then draws its own scene.
+  window.dclAvatarPreviewExpected = true;
   previews.props.length = 0;
   previews.mounts = 0;
   reads.profile = null;
@@ -53,7 +56,10 @@ beforeEach(() => {
   reads.rulesBase = undefined;
   invalidateShopQueries();
 });
-afterEach(cleanup);
+afterEach(() => {
+  cleanup();
+  delete window.dclAvatarPreviewExpected;
+});
 
 test("the scene mounts after the profile, during the outfit's entity read, with its loads held under the thumbnail, and gets the outfit once it is read", async () => {
   render(<ItemPreview item={ITEM} renderer="full" />);

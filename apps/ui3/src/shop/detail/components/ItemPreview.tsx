@@ -1,4 +1,5 @@
-// Shop item preview with avatar, wearable, and emote states.
+// Shop item preview with avatar, wearable, and emote states. On the web the avatar is the wearable-preview iframe that
+// decentraland.org's Shop embeds; inside the Explorer it is the Explorer's own preview host, fed the worn outfit.
 
 import { useEffect, useState } from "react";
 
@@ -15,14 +16,45 @@ import { itemUrn } from "@shop/detail/lib/urn";
 import { fetchWearableRules, keepEquipped, sharedEntityBase } from "../lib/wearable-rules";
 import { fetchEmoteClipUrl } from "../lib/emoteBase64";
 import { useShopQuery } from "../../discovery/query";
+import { REMOTE_FLAG, useRemoteFlagState } from "../../discovery/lib/remoteFlags";
+import PreviewFrame, { type PreviewFrameOptions, type PreviewRendererName } from "./PreviewFrame";
 import "./itempreview.css";
 
 const VIEW_TEXT = { previewMode: "Preview mode", onAvatar: "On avatar", itemView: "Item", playEmote: "Play emote" };
 
-// The three.js scene starts loading with the page, beside the outfit reads, not after them; only where this page
-// draws it (WebGL, and no Explorer preview host).
-if (typeof window !== "undefined" && pickRenderer().reason !== "no-webgl" && !window.dclAvatarPreviewExpected && !window.dclAvatarPreview) {
-  void import("../../../wearable-preview/avatar").catch(() => {});
+// The Explorer draws the preview itself and announces it before it is ready (bevy-host.ts).
+const insideExplorer = () => typeof window !== "undefined" && (!!window.dclAvatarPreview || !!window.dclAvatarPreviewExpected);
+
+function ViewToggle({ view, onView }: { view: "avatar" | "item"; onView: (view: "avatar" | "item") => void }) {
+  return (
+    <div className="shop-preview__toggle" role="group" aria-label={VIEW_TEXT.previewMode} data-testid="preview-toggle">
+      <button type="button" data-active={view === "avatar" || undefined} aria-pressed={view === "avatar"} aria-label={VIEW_TEXT.onAvatar} onClick={() => onView("avatar")}>
+        <span className="shop-preview__toggle-label">{VIEW_TEXT.onAvatar}</span>
+        <span className="shop-preview__toggle-ico" aria-hidden>
+          <svg viewBox="0 0 20 20" width="18" height="18" fill="currentColor"><circle cx="10" cy="5" r="3" /><path d="M4 18c0-4 2.7-7 6-7s6 3 6 7z" /></svg>
+        </span>
+      </button>
+      <button type="button" data-active={view === "item" || undefined} aria-pressed={view === "item"} aria-label={VIEW_TEXT.itemView} onClick={() => onView("item")}>
+        <span className="shop-preview__toggle-label">{VIEW_TEXT.itemView}</span>
+        <span className="shop-preview__toggle-ico" aria-hidden>
+          <svg viewBox="0 0 20 20" width="18" height="18" fill="currentColor"><path d="M7 3 3 5.5 4.5 9 6 8.3V17h8V8.3l1.5.7L17 5.5 13 3c-.5 1.3-1.6 2-3 2s-2.5-.7-3-2z" /></svg>
+        </span>
+      </button>
+    </div>
+  );
+}
+
+function EmotePlaybar({ replay, onReplay }: { replay: number; onReplay: () => void }) {
+  return (
+    <div className="shop-preview__playbar" data-testid="emote-playbar">
+      <button type="button" className="shop-preview__play" onClick={onReplay} aria-label={VIEW_TEXT.playEmote}>
+        <svg viewBox="0 0 20 20" width="16" height="16" fill="currentColor" aria-hidden><path d="M6 4v12l10-6z" /></svg>
+      </button>
+      <span className="shop-preview__track" aria-hidden>
+        <span key={replay} className="shop-preview__knob" />
+      </span>
+    </div>
+  );
 }
 
 const wornItemUrn = (urn: string) => {
@@ -56,7 +88,9 @@ function defaultProfileFor(key: string): string {
   return `default${(h % 159) + 1}`;
 }
 
-export default function ItemPreview({ item, avatarShape = null, renderer }: { item: CatalogItem; avatarShape?: BodyShapeUrn | null; renderer?: "full" | "lite" }) {
+type ItemPreviewProps = { item: CatalogItem; avatarShape?: BodyShapeUrn | null; renderer?: "full" | "lite" };
+
+function ExplorerItemPreview({ item, avatarShape = null, renderer }: ItemPreviewProps) {
   const [show3d, setShow3d] = useState(renderer === "full");
   useEffect(() => {
     if (!renderer && pickRenderer().reason !== "no-webgl") setShow3d(true);
@@ -124,32 +158,8 @@ export default function ItemPreview({ item, avatarShape = null, renderer }: { it
           {t("itemDetail.previewUnavailable")}
         </p>
       ) : null}
-      {show3d && canPreview && !failed && !isEmote ? (
-        <div className="shop-preview__toggle" role="group" aria-label={VIEW_TEXT.previewMode} data-testid="preview-toggle">
-          <button type="button" data-active={view === "avatar" || undefined} aria-pressed={view === "avatar"} aria-label={VIEW_TEXT.onAvatar} onClick={() => setView("avatar")}>
-            <span className="shop-preview__toggle-label">{VIEW_TEXT.onAvatar}</span>
-            <span className="shop-preview__toggle-ico" aria-hidden>
-              <svg viewBox="0 0 20 20" width="18" height="18" fill="currentColor"><circle cx="10" cy="5" r="3" /><path d="M4 18c0-4 2.7-7 6-7s6 3 6 7z" /></svg>
-            </span>
-          </button>
-          <button type="button" data-active={view === "item" || undefined} aria-pressed={view === "item"} aria-label={VIEW_TEXT.itemView} onClick={() => setView("item")}>
-            <span className="shop-preview__toggle-label">{VIEW_TEXT.itemView}</span>
-            <span className="shop-preview__toggle-ico" aria-hidden>
-              <svg viewBox="0 0 20 20" width="18" height="18" fill="currentColor"><path d="M7 3 3 5.5 4.5 9 6 8.3V17h8V8.3l1.5.7L17 5.5 13 3c-.5 1.3-1.6 2-3 2s-2.5-.7-3-2z" /></svg>
-            </span>
-          </button>
-        </div>
-      ) : null}
-      {show3d && canPreview && !failed && isEmote && status === "ready" ? (
-        <div className="shop-preview__playbar" data-testid="emote-playbar">
-          <button type="button" className="shop-preview__play" onClick={() => setReplay((n) => n + 1)} aria-label={VIEW_TEXT.playEmote}>
-            <svg viewBox="0 0 20 20" width="16" height="16" fill="currentColor" aria-hidden><path d="M6 4v12l10-6z" /></svg>
-          </button>
-          <span className="shop-preview__track" aria-hidden>
-            <span key={replay} className="shop-preview__knob" />
-          </span>
-        </div>
-      ) : null}
+      {show3d && canPreview && !failed && !isEmote ? <ViewToggle view={view} onView={setView} /> : null}
+      {show3d && canPreview && !failed && isEmote && status === "ready" ? <EmotePlaybar replay={replay} onReplay={() => setReplay((n) => n + 1)} /> : null}
       {!show3d && canPreview ? (
         <button type="button" className="shop-preview__show" onClick={() => setShow3d(true)} data-testid="show-3d">
           {t("itemDetail.showPreview")}
@@ -162,4 +172,118 @@ export default function ItemPreview({ item, avatarShape = null, renderer }: { it
       ) : null}
     </div>
   );
+}
+
+// The web preview, as decentraland.org's Shop draws it (shop@3a322cf9 ItemPreview): the shopper's own avatar when it
+// can wear the item, otherwise a default one of a shape the item fits; the item alone in the item view; an emote on the
+// avatar. The Unity renderer where the `unity-wearable-preview` flag and this device allow it, Babylon otherwise and
+// when Unity fails to load. Unity ships its own view and emote controls, so the page draws its own only over Babylon.
+function WebItemPreview({ item, avatarShape = null, renderer }: ItemPreviewProps) {
+  const [show3d, setShow3d] = useState(renderer === "full");
+  // Read on the client only: the device decides between Unity and Babylon, and whether to mount at all without WebGL.
+  const [fullDevice, setFullDevice] = useState<boolean | null>(renderer ? renderer === "full" : null);
+  useEffect(() => {
+    const decision = pickRenderer();
+    if (!renderer) {
+      setFullDevice(decision.renderer === "full");
+      if (decision.reason !== "no-webgl") setShow3d(true);
+    }
+  }, [renderer]);
+  const [view, setView] = useState<"avatar" | "item">("avatar");
+  const [status, setStatus] = useState<"loading" | "ready" | "error">("loading");
+  const [drawnBy, setDrawnBy] = useState<PreviewRendererName | undefined>(undefined);
+  const [unityFailed, setUnityFailed] = useState(false);
+  const [replay, setReplay] = useState(0);
+  const urn = item.urn ?? itemUrn(item);
+  const canPreview = !!urn && item.category !== "ens";
+  const isEmote = item.category === "emote";
+  const { account } = useShopWallet();
+  const wanted = canPreview && show3d;
+  const profile = useShopQuery(wanted && account ? ["wearer-profile", account] : null, (signal) => fetchProfile(account!, { signal }), { staleMs: 5 * 60_000 });
+  const unityFlag = useRemoteFlagState(REMOTE_FLAG.unityWearablePreview, wanted);
+  const ownBody = account ? profile.data?.avatar?.bodyShape : null;
+  const ownShape = ownBody ? profileShape({ avatar: { bodyShape: ownBody } }) : null;
+  const shopperShape = avatarShape ?? ownShape;
+  const shapes = itemShapes(item);
+  const body = shopperShape && shapes.includes(shopperShape) ? shopperShape : (shapes[0] ?? BASE_MALE);
+  const mismatch = !isEmote && !!shopperShape && !shapes.includes(shopperShape);
+  const wearsOwn = !!ownShape && (isEmote || shapes.includes(ownShape));
+  const itemAlone = !isEmote && view === "item";
+  // Mounted once with its final avatar and renderer, so the preview never loads a default and then the shopper's.
+  const settled = !(account && profile.isLoading) && unityFlag !== null && fullDevice !== null;
+  const unity = !unityFailed && unityFlag === true && fullDevice === true;
+  const failed = status === "error";
+  const mounted = wanted && settled && !failed;
+
+  // A new item or view reloads the scene in place; the thumbnail covers it until the preview says it has drawn.
+  useEffect(() => {
+    setStatus("loading");
+  }, [urn, itemAlone]);
+  useEffect(() => {
+    setView("avatar");
+    setUnityFailed(false);
+  }, [urn]);
+
+  const options: PreviewFrameOptions = {
+    urns: urn ? [urn] : [],
+    profile: itemAlone ? undefined : wearsOwn ? account! : "default",
+    bodyShape: itemAlone || wearsOwn ? undefined : body,
+    type: isEmote ? undefined : itemAlone ? "wearable" : "avatar",
+    emote: isEmote || itemAlone ? undefined : "fashion",
+    disableBackground: true,
+    wheelZoom: isEmote ? 1.5 : undefined,
+    wheelStart: isEmote ? 100 : undefined,
+    unity: unity || undefined,
+    unityMode: unity ? "marketplace" : undefined,
+  };
+  const ownControls = status === "ready" && drawnBy === "babylon";
+
+  return (
+    <div className="shop-preview" data-status={show3d ? status : "thumbnail"} data-renderer={drawnBy}>
+      {mounted ? (
+        <PreviewFrame
+          key={unity ? "unity" : "babylon"}
+          options={options}
+          replay={replay}
+          onLoad={(by) => {
+            setDrawnBy(by ?? (unity ? "unity" : "babylon"));
+            setStatus("ready");
+          }}
+          onError={() => {
+            if (unity) setUnityFailed(true);
+            else setStatus("error");
+          }}
+        />
+      ) : null}
+      {item.thumbnail && (!mounted || status !== "ready") ? (
+        <img className={mounted ? "shop-preview__thumb shop-preview__thumb--cover" : "shop-preview__thumb"} src={item.thumbnail} alt={item.name} />
+      ) : null}
+      {mounted && status === "loading" && !item.thumbnail ? (
+        <div className="shop-preview__loading" role="status">
+          {t("itemDetail.previewLoading")}
+        </div>
+      ) : null}
+      {show3d && failed ? (
+        <p className="shop-preview__note" role="status">
+          {t("itemDetail.previewUnavailable")}
+        </p>
+      ) : null}
+      {ownControls && !isEmote ? <ViewToggle view={view} onView={setView} /> : null}
+      {ownControls && isEmote ? <EmotePlaybar replay={replay} onReplay={() => setReplay((n) => n + 1)} /> : null}
+      {!show3d && canPreview ? (
+        <button type="button" className="shop-preview__show" onClick={() => setShow3d(true)} data-testid="show-3d">
+          {t("itemDetail.showPreview")}
+        </button>
+      ) : null}
+      {mismatch && !itemAlone ? (
+        <p className="shop-preview__note" data-testid="shape-note">
+          {t("itemDetail.shownOnBody", { shape: shapeLabel(body) })}
+        </p>
+      ) : null}
+    </div>
+  );
+}
+
+export default function ItemPreview(props: ItemPreviewProps) {
+  return insideExplorer() ? <ExplorerItemPreview {...props} /> : <WebItemPreview {...props} />;
 }
