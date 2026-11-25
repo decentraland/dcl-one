@@ -448,6 +448,47 @@ export const feedbackEntries: GalleryEntry[] = [
         )
       },
       {
+        id: 'hud',
+        title:
+          'Explorer HUD: any diameter, a status dot at either corner, a framed picture and the initial',
+        render: () => (
+          <div className={layout.row}>
+            <ProfilePic
+              appearance="hud"
+              name={people.ada.name}
+              src={people.ada.picture}
+              nameColor={people.ada.color}
+              size={53}
+              status="online"
+            />
+            <ProfilePic
+              appearance="hud"
+              name={people.ada.name}
+              src={people.ada.picture}
+              nameColor={people.ada.color}
+              size={40}
+              status="offline"
+              dotPosition="top"
+            />
+            <ProfilePic
+              appearance="hud"
+              name={people.ada.name}
+              src={people.ada.picture}
+              nameColor={people.ada.color}
+              size={42}
+              framed
+            />
+            <ProfilePic
+              appearance="hud"
+              name="@mojito"
+              nameColor={people.ada.color}
+              size={36}
+              status="away"
+            />
+          </div>
+        )
+      },
+      {
         id: 'fallback',
         title: 'Initial fallback, compact on mobile and connection status',
         render: () => (

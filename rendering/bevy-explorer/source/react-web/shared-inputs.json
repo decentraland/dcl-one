@@ -3033,10 +3033,6 @@
           "kind": "regular"
         },
         {
-          "name": "Avatar.module.css",
-          "kind": "regular"
-        },
-        {
           "name": "Avatar.tsx",
           "kind": "regular"
         },
@@ -12092,12 +12088,8 @@
       "sha256": "6826f49ca8e26b677dcbce3c99a7ae6200541d1b95a814d0185c6bc4c685e3bf"
     },
     {
-      "path": "library/ui/apps/hud/design/Avatar.module.css",
-      "sha256": "3087982b5d172f10fc366f47336964de0e07b6617130abe17281d81cf5426920"
-    },
-    {
       "path": "library/ui/apps/hud/design/Avatar.tsx",
-      "sha256": "43df7b8d8e8aae685f7877a10536187fac7e8e30fa439bf7178c669ea116ed32"
+      "sha256": "ddb47721732d50170a03154674121754e71ee898bc0beafaad21a113a7b6d8af"
     },
     {
       "path": "library/ui/apps/hud/design/BrowsePage.module.css",
@@ -16317,11 +16309,11 @@
     },
     {
       "path": "library/ui/components/ProfilePic/ProfilePic.module.css",
-      "sha256": "dedf27479227fe1acddd381ae8d15687ea524fd8b2180e0deca39d22e03eaa43"
+      "sha256": "f98adfa84cfc41ac00b920ee82c1abdc5a89c49966a148192d530c0c5584f11c"
     },
     {
       "path": "library/ui/components/ProfilePic/ProfilePic.tsx",
-      "sha256": "e98d5a902c278af2026970ef1676606726e96f964888769ebdc07cc300b386fd"
+      "sha256": "5c9185a73015c9f4954f55a26c27b42030d53147544ce530ba7321cfa871a23f"
     },
     {
       "path": "library/ui/components/ProgressBar/ProgressBar.module.css",
@@ -20506,17 +20498,17 @@
     },
     {
       "from": "library/ui/apps/hud/design/Avatar.tsx",
-      "to": "library/ui/apps/hud/design/Avatar.module.css",
+      "to": "library/ui/index.ts",
       "kind": "native:runtime"
     },
     {
       "from": "library/ui/apps/hud/design/Avatar.tsx",
-      "to": "library/ui/apps/hud/design/Avatar.module.css",
+      "to": "library/ui/index.ts",
       "kind": "production:runtime"
     },
     {
       "from": "library/ui/apps/hud/design/Avatar.tsx",
-      "to": "library/ui/apps/hud/design/Avatar.module.css",
+      "to": "library/ui/index.ts",
       "kind": "test:runtime"
     },
     {
