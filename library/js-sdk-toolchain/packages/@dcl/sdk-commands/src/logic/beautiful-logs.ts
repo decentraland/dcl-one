@@ -1,8 +1,8 @@
-import { ILoggerComponent } from '@well-known-components/interfaces'
+import type { ILoggerComponent } from '@well-known-components/interfaces'
 import path from 'path'
 import { colors } from '../components/log'
-import { ProjectUnion } from './project-validations'
-import { Workspace } from './workspace-validations'
+import type { ProjectUnion } from './project-validations'
+import type { Workspace } from './workspace-validations'
 
 // eslint-disable-next-line @typescript-eslint/no-var-requires
 const { name, version } = require('../../package.json')

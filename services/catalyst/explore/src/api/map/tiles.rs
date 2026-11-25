@@ -426,6 +426,21 @@ pub async fn get_legacy_tiles(
     serve_tiles(&state, &headers, &q, true).await
 }
 
+/// `/v2/tiles/info`: the grid's content stamp, and when the build last
+/// found it current against its sources (`checkedAt`, ms; absent before any
+/// check), what the map's age label reads.
+/// `/v2/tiles/info`'s body. `serverNow` is this process's clock when it
+/// answers (ms), so a client measures `checkedAt`'s age on the server's
+/// clock without reading the `Date` header, which a cross-origin client may
+/// not be allowed to.
+fn info_body(last_updated_at: i64, checked_at: i64, server_now: i64) -> Value {
+    let mut body = json!({ "lastUpdatedAt": last_updated_at, "serverNow": server_now });
+    if checked_at > 0 {
+        body["checkedAt"] = json!(checked_at);
+    }
+    body
+}
+
 pub async fn tiles_info(State(state): State<Shared>) -> Response {
     if !state.map.is_ready() {
         return state.map.unavailable();
@@ -433,7 +448,11 @@ pub async fn tiles_info(State(state): State<Shared>) -> Response {
     (
         StatusCode::OK,
         [("cache-control", "no-cache")],
-        Json(json!({ "lastUpdatedAt": state.map.last_updated_at() })),
+        Json(info_body(
+            state.map.last_updated_at(),
+            state.map.checked_at(),
+            chrono::Utc::now().timestamp_millis(),
+        )),
     )
         .into_response()
 }

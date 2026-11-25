@@ -334,8 +334,6 @@ async fn preflight<T: TypedMessage + DeserializeOwned>(
     body: &[u8],
 ) -> Result<(Signed<T>, String), Response> {
     let eip1654 = super::signed::fresh(state.eip1654.as_deref());
-    super::signed::admit_contract_wallet_check(eip1654, headers)
-        .map_err(|e| err_json(StatusCode::TOO_MANY_REQUESTS, e.message()))?;
     let outer =
         signed_fetch::require_signer(headers, "post", path, PayloadPolicy::V6ThenLegacy, eip1654)
             .await
@@ -345,6 +343,10 @@ async fn preflight<T: TypedMessage + DeserializeOwned>(
                     StatusCode::SERVICE_UNAVAILABLE,
                     "The contract-wallet signature cannot be checked right now".to_string(),
                 ),
+                // The client source spent its contract-wallet checks, before any RPC call.
+                e @ signed_fetch::SignedFetchError::RateLimited => {
+                    err_json(StatusCode::TOO_MANY_REQUESTS, e.to_string())
+                }
                 e => err_json(StatusCode::UNAUTHORIZED, format!("auth chain: {e}")),
             })?
             .into_string();
@@ -1066,6 +1068,56 @@ mod tests {
 
     fn to_json<T: Serialize>(v: &T) -> Value {
         serde_json::to_value(v).unwrap()
+    }
+
+    /// A contract wallet whose checks the client source's budget refused,
+    /// on the uncached path a write takes.
+    struct RateLimited;
+
+    #[async_trait::async_trait]
+    impl crate::auth::eip1654::Eip1654Validator for RateLimited {
+        fn fresh_validator(&self) -> Option<&dyn crate::auth::eip1654::Eip1654Validator> {
+            Some(self)
+        }
+        async fn validate_signature(
+            &self,
+            _: &str,
+            _: &[u8],
+            _: &[u8],
+        ) -> Result<bool, crate::auth::AuthError> {
+            Err(crate::auth::AuthError::Eip1654RateLimited)
+        }
+    }
+
+    /// The preflight answers a contract-wallet check the client source's
+    /// budget refused with a 429, before the body is read, never as a bad chain.
+    #[tokio::test]
+    async fn a_rate_limited_contract_check_is_a_429_in_the_preflight() {
+        let path = "/v1/federation/bid";
+        let timestamp = chrono::Utc::now().timestamp_millis().to_string();
+        let payload = crate::shared::signed_fetch::build_payload_v6("post", path, &timestamp, "{}");
+        let links = [
+            json!({"type": "SIGNER", "payload": "0x00000000000000000000000000000000000c0de1", "signature": ""}),
+            json!({"type": "ECDSA_EIP_1654_SIGNED_ENTITY", "payload": payload,
+                "signature": format!("0x{}", "11".repeat(65))}),
+        ];
+        let mut headers = HeaderMap::new();
+        for (index, link) in links.iter().enumerate() {
+            headers.insert(
+                axum::http::HeaderName::try_from(format!("x-identity-auth-chain-{index}")).unwrap(),
+                link.to_string().parse().unwrap(),
+            );
+        }
+        headers.insert("x-identity-timestamp", timestamp.parse().unwrap());
+        headers.insert("x-identity-metadata", "{}".parse().unwrap());
+        let mut state = crate::market::tests::support::state_without_db();
+        std::sync::Arc::get_mut(&mut state)
+            .expect("an unshared state")
+            .eip1654 = Some(std::sync::Arc::new(RateLimited));
+        let Err(refused) = preflight::<BidPlace>(&state, &headers, path, b"{}").await else {
+            panic!("a rate-limited contract check passed the preflight");
+        };
+        assert_eq!(refused.status(), StatusCode::TOO_MANY_REQUESTS);
     }
 
     #[test]

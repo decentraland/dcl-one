@@ -162,7 +162,7 @@ pub struct MarketplaceConfig {
     pub marketplace_third_party_registry_index_enabled: bool,
 
     /// Walk the Polygon collection factories and their collections' events into
-    /// `shop.collection_event` over the `TRADE_RPC_URLS` 137 entry. Nothing reads it yet.
+    /// `shop.collection_event` over the `TRADE_RPC_URLS` 137 entry for collection counts and sales analytics.
     #[arg(long, env = "MARKETPLACE_COLLECTIONS_INDEX_ENABLED", default_value_t = false, action = clap::ArgAction::Set)]
     pub marketplace_collections_index_enabled: bool,
 
@@ -441,6 +441,13 @@ pub struct ShopConfig {
     #[arg(long, env = "CATALYRST_CREDITS_ADMIN_TOKEN", hide_env_values = true)]
     pub catalyrst_credits_admin_token: Option<String>,
 
+    /// Wallets whose signed requests may read the credits reports (the
+    /// cross-wallet credits list and its grant reasons), comma-separated: the
+    /// old credits server's `READ_ONLY_ADMIN_ADDRESSES` and
+    /// `READ_WRITE_ADMIN_ADDRESSES` together. Empty leaves them to the bearer.
+    #[arg(long, env = "CREDITS_READ_ADMIN_ADDRESSES", default_value = "")]
+    pub credits_read_admin_addresses: String,
+
     /// The hCaptcha secret (or `_FILE`); unset skips the token check.
     #[arg(long, env = "CREDITS_CAPTCHA_SECRET", hide_env_values = true)]
     pub credits_captcha_secret: Option<String>,
@@ -567,10 +574,14 @@ pub struct ShopConfig {
     #[arg(long, env = "CREDITS_TRIAL_RELAY_ALL_WALLETS", default_value_t = false, action = clap::ArgAction::Set)]
     pub credits_trial_relay_all_wallets: bool,
 
+    /// The Shop's page a paid pack order returns to, with `order=<id>` appended.
     /// Empty: the Stripe Checkout order flow answers 503.
     #[arg(long, env = "CREDITS_CHECKOUT_SUCCESS_URL", default_value = "")]
     pub credits_checkout_success_url: String,
 
+    /// The Shop's page an abandoned pack order lands on, with
+    /// `order=<id>&canceled=1`: Stripe sends the buyer to the order's
+    /// cancel-return under `PUBLIC_URL` first, or straight here without one.
     #[arg(long, env = "CREDITS_CHECKOUT_CANCEL_URL", default_value = "")]
     pub credits_checkout_cancel_url: String,
 
