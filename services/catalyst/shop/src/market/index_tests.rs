@@ -5068,10 +5068,10 @@ async fn sepolia_v1_upgrade_rebuilds_once_and_fences_the_old_trade_writer() {
     const MIGRATION: &str = include_str!(
         "../../../../../schemas/migrations/0071_shop_testnet_sale_and_trade_venues.sql"
     );
-    let legacy_sql = "INSERT INTO shop.chain_cursor (indexer,network,start_block,last_block,folded_block,folded_at,full_history,chain_id)
+    let seed_sql = "INSERT INTO shop.chain_cursor (indexer,network,start_block,last_block,folded_block,folded_at,full_history,chain_id)
                       VALUES ('trade_events','ethereum',9455328,9455350,9455350,timezone('UTC',now()),true,$1)
                       ON CONFLICT (indexer,network) DO UPDATE SET owner_generation = shop.chain_cursor.owner_generation + 1";
-    sqlx::query(legacy_sql)
+    sqlx::query(seed_sql)
         .bind(1_i64)
         .execute(&db.pool)
         .await
@@ -5111,7 +5111,17 @@ async fn sepolia_v1_upgrade_rebuilds_once_and_fences_the_old_trade_writer() {
         (6_770_056, None, 1)
     );
     assert!(cur.rebuild_requested_at.is_some());
-    let rejected = sqlx::query(legacy_sql)
+    // Use the exact pre-0071 claim with a conflicting primary key. PostgreSQL
+    // checks the proposed INSERT tuple before it reaches ON CONFLICT.
+    let old_claim = "INSERT INTO shop.chain_cursor (indexer, network, start_block, last_block, full_history, chain_id, owner_generation) \
+         VALUES ($1, $2, $3, $3 - 1, $4, $5, 1) \
+         ON CONFLICT (indexer, network) DO UPDATE SET owner_generation = shop.chain_cursor.owner_generation + 1 \
+         RETURNING owner_generation";
+    let rejected = sqlx::query(old_claim)
+        .bind(INDEXER_TRADE_EVENTS)
+        .bind(eth.db_name())
+        .bind(9_455_328_i64)
+        .bind(true)
         .bind(11_155_111_i64)
         .execute(&db.pool)
         .await
@@ -5121,6 +5131,14 @@ async fn sepolia_v1_upgrade_rebuilds_once_and_fences_the_old_trade_writer() {
         Some("chain_cursor_sepolia_trade_v1")
     );
 
+    assert_eq!(
+        chain_walk::cursor(&db.pool, INDEXER_TRADE_EVENTS, eth)
+            .await
+            .unwrap()
+            .unwrap()
+            .owner_generation,
+        cur.owner_generation
+    );
     let ix = TradeEventsIndex {
         net: eth,
         chain_id: 11_155_111,
