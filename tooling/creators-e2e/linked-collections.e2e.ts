@@ -65,7 +65,7 @@ describe('linked collections', () => {
     expect(app.transactions).toHaveLength(0)
     expect(items.map(item => app!.builder.itemCurations.get(item.id)?.status)).toEqual(['pending', 'pending'])
     expect(app.builder.slots[THIRD_PARTY_ID]).toBe(8)
-    expect(app.writes).toContain(`POST /v1/collections/${draft.id}/tos`)
+    expect(app.writes).toContain(`POST /builder-api/v1/collections/${draft.id}/tos`)
     await app.waitForEvent('bd_linked_items_published', { collection_id: draft.id, items: 2 })
   })
 })

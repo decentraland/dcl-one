@@ -171,7 +171,7 @@ describe('add items to a collection', () => {
     expect(item.contents).toHaveProperty('video.mp4')
     expect(Object.keys(item.contents).some(path => path.endsWith('bin/game.js'))).toBe(true)
     expect(uploaded(app, item.contents)).toBe(true)
-    expect(app.writes).toContain(`POST /v1/items/${item.id}/videos`)
+    expect(app.writes).toContain(`POST /builder-api/v1/items/${item.id}/videos`)
     await waitForTestId(app.page, 'item-row-smart')
   })
 })

@@ -1,4 +1,4 @@
-import { keccak256, toHex } from 'viem'
+import { concat, getContractAddress, keccak256, toHex, type Hex } from 'viem'
 import {
   RARITIES,
   collection,
@@ -135,6 +135,10 @@ const isLocked = (row: RemoteCollectionRow | undefined) =>
   !!row?.lock && !row.is_published && Date.parse(row.lock) + LOCK_MS > Date.now()
 const now = () => new Date().toISOString()
 const hashOf = (text: string) => keccak256(toHex(text))
+
+const AMOY_COLLECTION_FACTORY = '0x802de0c509add2ee29de24de7225daaff4741c43'
+const AMOY_FORWARDER = '0x7b1fe9de545b22cb553766817b84d655ce8121c9'
+const AMOY_COLLECTION_CODE_HASH = '0xe8aa6287567a0945907cc65108e8b18ba8cd8bff5675eb3b3d405125525ed1cf'
 
 /**
  * An in-memory builder-server: reads answer from the store and writes mutate it, so a reload shows what was
@@ -274,7 +278,12 @@ export function createBuilderServer(seed: BuilderSeed = {}) {
     // The real server derives both from the factory and the initialize calldata.
     if (data && !saved.is_published) {
       saved.salt = hashOf(id)
-      saved.contract_address = '0x' + hashOf(`${saved.salt}${data}`).slice(-40)
+      saved.contract_address = getContractAddress({
+        opcode: 'CREATE2',
+        from: AMOY_COLLECTION_FACTORY,
+        salt: keccak256(concat([saved.salt as Hex, AMOY_FORWARDER, data as Hex])),
+        bytecodeHash: AMOY_COLLECTION_CODE_HASH
+      }).toLowerCase()
     }
     collections.set(id, saved)
     return ok(withCount(saved))

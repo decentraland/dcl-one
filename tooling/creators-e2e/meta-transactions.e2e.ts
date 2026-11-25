@@ -33,7 +33,7 @@ describe('meta-transactions', () => {
 
     await waitForTestId(page, 'success-modal-modal', 30_000)
     // The wallet only signed: the relayer sent the call to the collection on Polygon.
-    expect(app.writes).toContain('POST /v1/transactions')
+    expect(app.writes).toContain('POST /transactions-api/v1/transactions')
     expect(app.transactions).toHaveLength(1)
     const [sent] = app.transactions
     expect(sent).toMatchObject({ fn: 'issueTokens', to: live.contract_address, relayed: true })
