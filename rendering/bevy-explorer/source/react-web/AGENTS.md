@@ -31,10 +31,13 @@ Design source of truth: the checked-in tokens and design primitives, together wi
   component. The only raw values allowed are layout primitives with no token
   (e.g. a one-off `gap: 4px`) — and even those should prefer a token when one fits.
 
-- **Primitives.** Reusable interactive elements and surfaces use the
-  components in `@hud/design` — `Button`, `IconButton`, `ControlButton`, `Panel`,
-  `Icon`, not a bespoke `<button>` + CSS for something a primitive already
-  covers (close/back/menu/toggle buttons, nav controls, cards, popovers).
+- **Primitives.** Reusable interactive elements and surfaces use the shared
+  components with the HUD's look (`Button`, `Tooltip`, `Switch`, `Checkbox`,
+  `TabsBar`, `Spinner` and `Skeleton` from `@dcl/one-ui`, with `appearance="hud"`
+  or their HUD variants) and the components in `@hud/design` — `IconButton`,
+  `ControlButton`, `Panel`, `Icon`, not a bespoke `<button>` + CSS for something
+  a primitive already covers (close/back/menu/toggle buttons, nav controls,
+  cards, popovers).
 
 - **Pull the shared UI's Git LFS assets once per clone**: `git lfs pull --include "library/ui/assets/**,library/ui/apps/sites/assets/**"`. The HUD's input graph lists them, and `pnpm dev`, the tests and the native build refuse a pointer.
 - **Use the shared component when one exists.** Import it from `@dcl/one-ui` (`library/ui/components`); do not add a HUD copy of a component the library already has. A look the HUD needs is a variant on the shared component (`docs/ui-standards.md`).
