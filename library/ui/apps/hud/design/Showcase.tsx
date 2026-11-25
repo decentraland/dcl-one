@@ -6,6 +6,7 @@
 // features import them: that test watches the entry. Sections use local data only: no network,
 // wallet or engine call.
 
+import { Spinner } from '@dcl/one-ui'
 import { useId, useRef, useState, useSyncExternalStore } from 'react'
 import { getHudScale, subscribeHudScale } from '@explorer-core/lib/hudScale'
 import {
@@ -69,7 +70,6 @@ import {
   showToast,
   Skeleton,
   Slider,
-  Spinner,
   Submenu,
   SubmitField,
   SwapLabel,

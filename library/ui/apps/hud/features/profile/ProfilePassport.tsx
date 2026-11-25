@@ -7,8 +7,9 @@
 // NOTE: backend follow-up for OTHER users — the bridge must fetch their rich profile
 // (badges/info/mutuals) by address; the 2D picture is the fallback meanwhile.
 
+import { Spinner } from '@dcl/one-ui'
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { Avatar, BlockUserIcon, Button, Close, ColorPicker, ContextMenu, ControlButton, EmptyState, EquippedItemCard, Icon, Kebab, MaskIcon, Pencil, ReportFlag, ScrollThumb, Search, Spinner, Tabs, Tooltip, showConfirm, type ContextMenuItem, type EquippedItemCardProps, type TabItem, NameSeal } from '../../design'
+import { Avatar, BlockUserIcon, Button, Close, ColorPicker, ContextMenu, ControlButton, EmptyState, EquippedItemCard, Icon, Kebab, MaskIcon, Pencil, ReportFlag, ScrollThumb, Search, Tabs, Tooltip, showConfirm, type ContextMenuItem, type EquippedItemCardProps, type TabItem, NameSeal } from '../../design'
 import giftIcon from '../../assets/gifting/gift.png'
 import jumpInIcon from '../../assets/friends/jump-in.png'
 import { registerCancelLayer } from '@explorer-core/lib/cancelLayers'
@@ -271,7 +272,7 @@ function CreationsSection({ address }: { address: string }): React.JSX.Element {
     return (
       <section className={`${styles.card} ${styles.cardFill}`}>
         <div className={styles.emptyState}>
-          <Spinner size={34} />
+          <Spinner variant="thin" size={34} />
         </div>
       </section>
     )

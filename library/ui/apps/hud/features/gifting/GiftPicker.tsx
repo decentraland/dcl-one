@@ -7,11 +7,12 @@
 // only with a spare copy, and the token sent is the newest-transferred one neither equipped nor pending. An item that
 // isn't a Polygon collection item is refused: a gift is a gasless Polygon meta-transaction.
 
+import { Spinner } from '@dcl/one-ui'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { gifting } from '@hud-host'
 import type { CatalogKind, GiftableItem, GiftingPageMessage } from '@explorer-core/engine/protocol'
 import { GIFT_PAGE_SIZE, NOT_TRANSFERABLE, DEFAULT_INFO, bestToken, giftRows, transferable } from '@explorer-core/features/gifting/picker'
-import { Avatar, Button, Close, ControlButton, Copy, Modal, SearchField, Spinner, Tabs, WearableCard, openPopup, rarityOf, showToast, type TabItem } from '../../design'
+import { Avatar, Button, Close, ControlButton, Copy, Modal, SearchField, Tabs, WearableCard, openPopup, rarityOf, showToast, type TabItem } from '../../design'
 import { useSession } from '../session/SessionContext'
 import { knownUserColor, useProfile } from '../session/profileStore'
 import { CategoryIcon } from '../backpack/categoryIcons'
@@ -146,7 +147,7 @@ export function GiftPicker({ recipient, onClose }: { recipient: GiftRecipient; o
       <div className={styles.grid} role="group" aria-label={tab === 'wearables' ? 'Wearables' : 'Emotes'}>
         {grid.loading && grid.items.length === 0 && (
           <div className={styles.centre}>
-            <Spinner />
+            <Spinner variant="thin" />
           </div>
         )}
         {empty && <p className={styles.centre}>No assets match your search terms.</p>}

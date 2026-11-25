@@ -4,9 +4,10 @@
 // KEEP IN SYNC with deploy/web/index.html: the store/Chrome URLs and the Apple/Google/Chrome SVGs are
 // duplicated there (the engine loader gates before react-web mounts, so it can't import from here).
 
+import { Spinner } from '@dcl/one-ui'
 import { mobilePlatform } from '@explorer-core/lib/isMobile'
 import { publicUrl } from '@hud-host'
-import { Button, Spinner } from '../../design'
+import { Button } from '../../design'
 import { FlagStep } from './FlagStep'
 import styles from './MobileGate.module.css'
 
@@ -67,7 +68,7 @@ function tryAnyway(): void {
 export function GateChecking(): React.JSX.Element {
   return (
     <div className={styles.root}>
-      <Spinner />
+      <Spinner variant="thin" />
     </div>
   )
 }

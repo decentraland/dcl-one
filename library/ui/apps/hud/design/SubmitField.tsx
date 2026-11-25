@@ -1,9 +1,9 @@
 // SubmitField — a light field with its submit button inside its right edge (the sign-in screen's email
 // box and NEXT): an icon on its left, a ring outside it while focused, and an error under it that turns
 // the ring red. Enter submits too. While `busy` a spinner takes the button's place.
+import { Spinner } from '@dcl/one-ui'
 import { useEffect, useRef } from 'react'
 import { MaskIcon } from './MaskIcon'
-import { Spinner } from './Spinner'
 import styles from './SubmitField.module.css'
 
 interface SubmitFieldProps {

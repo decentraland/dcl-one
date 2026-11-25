@@ -7,8 +7,9 @@
 // it, and its description on hover. The sidebar's Invites & Requests opens the user's invites, the
 // join requests their communities received and their own requests.
 
+import { Spinner } from '@dcl/one-ui'
 import { useEffect, useRef, useState } from 'react'
-import { Avatar, Button, Chip, CountBadge, EmptyState, SearchField, Spinner, SwapLabel, Tooltip } from '../../design'
+import { Avatar, Button, Chip, CountBadge, EmptyState, SearchField, SwapLabel, Tooltip } from '../../design'
 import { nameColor } from '@explorer-core/lib/identity'
 import { MainMenuShell } from '../menu/MainMenuShell'
 import { MenuBackdrop } from '../menu/MenuBackdrop'
@@ -217,7 +218,7 @@ function InvitesAndRequests({
   /** Read the section again (a list could not be read). */
   onRetry: () => void
 }): React.JSX.Element {
-  if (invites == null) return <div className={styles.loading}><Spinner /></div>
+  if (invites == null) return <div className={styles.loading}><Spinner variant="thin" /></div>
   // a list that could not be read says so, rather than claiming nothing is pending
   const failed = (list: CommunityInvitesMessage['failed'][number]): boolean => invites.failed.includes(list)
   const unread = <EmptyState variant="inline" tone="error" title={SECTION_LOAD_ERROR} actions={[{ label: 'RETRY', variant: 'outline', onClick: onRetry }]} />
@@ -437,7 +438,7 @@ export function CommunitiesPage({
             {count !== '' && <span className={styles.count}>{count}</span>}
           </div>
           {!showingMine && browse.loading ? (
-            <div className={styles.loading}><Spinner /></div>
+            <div className={styles.loading}><Spinner variant="thin" /></div>
           ) : !showingMine && browse.failed === true ? null : gridList.length === 0 ? (
             <div className={styles.empty}>{showingMine ? 'You haven’t joined any communities yet.' : 'No Communities match your search terms.'}</div>
           ) : (
@@ -448,7 +449,7 @@ export function CommunitiesPage({
                 ))}
               </div>
               {!showingMine && browse.items.length < browse.total && <LoadMore count={browse.items.length} onVisible={loadMoreBrowse} />}
-              {!showingMine && browse.loadingMore && <div className={styles.loadingMore}><Spinner size={22} /></div>}
+              {!showingMine && browse.loadingMore && <div className={styles.loadingMore}><Spinner variant="thin" size={22} /></div>}
             </>
           )}
           </>

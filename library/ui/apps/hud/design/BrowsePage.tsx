@@ -2,8 +2,8 @@
 // section tabs on the left and search/sort controls on the right, over a purple grid panel
 // (decentraland-ui2 GridPanel).
 
+import { Spinner } from '@dcl/one-ui'
 import type { ReactNode } from 'react'
-import { Spinner } from './Spinner'
 import styles from './BrowsePage.module.css'
 
 export function BrowseToolbar({ tabs, children }: { tabs: ReactNode; children?: ReactNode }): React.JSX.Element {
@@ -33,7 +33,7 @@ export function BrowsePanel({ children, label, busy }: { children: ReactNode; la
 export function BrowseLoading(): React.JSX.Element {
   return (
     <div className={styles.center}>
-      <Spinner size={34} />
+      <Spinner variant="thin" size={34} />
     </div>
   )
 }

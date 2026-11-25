@@ -219,6 +219,16 @@ export const feedbackEntries: GalleryEntry[] = [
         render: () => <Spinner variant="thin" size={26} />
       },
       {
+        id: 'thick',
+        title: 'Thick, sized (in-world Shop)',
+        render: () => <Spinner variant="thick" size={64} />
+      },
+      {
+        id: 'chase',
+        title: 'Chase, sized (sign-in)',
+        render: () => <Spinner variant="chase" size={40} />
+      },
+      {
         id: 'dark',
         title: 'Dark (light surface)',
         surface: 'light',

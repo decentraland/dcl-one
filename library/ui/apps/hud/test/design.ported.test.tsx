@@ -1,6 +1,7 @@
 // Smoke test for the design primitives ported from eordano/dcl-react-ui: each must
 // mount and render without throwing. Behaviour lives with its consumers; this just
 // guards the port (compiles AND renders).
+import { Spinner } from '@dcl/one-ui'
 import { act, render, screen } from '@testing-library/react'
 import { describe, it, expect } from 'vitest'
 import { dispatchCancelLayer } from '@explorer-core/lib/cancelLayers'
@@ -10,7 +11,6 @@ import {
   ModalActions,
   ModalShell,
   Checkbox,
-  Spinner,
   SearchField,
   FieldLabel,
   CharCounter,
@@ -39,7 +39,7 @@ describe('ported design primitives', () => {
           <button>ok</button>
         </ModalActions>
         <Checkbox checked onChange={() => {}}>label</Checkbox>
-        <Spinner />
+        <Spinner variant="thin" />
         <SearchField value="" onChange={() => {}} />
         <FieldLabel htmlFor="x">Field</FieldLabel>
         <CharCounter current={3} max={10} />

@@ -153,9 +153,13 @@
   color: var(--lobby-snow);
 }
 
-/* The shared JumpInCTA paints the button; the cards place it. */
+/* The shared JumpInCTA paints the button; the cards place it. A disabled one stays dimmed on a card that hides
+   it at rest, as before. */
 .jumpIn {
   position: absolute;
+}
+.jumpIn:disabled {
+  opacity: 0.5;
 }
 
 .landing {

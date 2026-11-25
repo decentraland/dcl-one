@@ -1,7 +1,8 @@
 // The reel is read unsigned, so even your own passport lists only PUBLIC photos.
 
+import { Spinner } from '@dcl/one-ui'
 import { useCallback, useState } from 'react'
-import { EmptyState, Spinner } from '../../design'
+import { EmptyState } from '../../design'
 import type { GalleryPhotoMeta, Wearable } from '@explorer-core/engine/protocol'
 import type { ReelWrite } from '../session/useEngineSession'
 import type { ChatUser } from '../chat/ProfileCardPresentation'
@@ -95,7 +96,7 @@ export function PassportPhotos({
     <section className={styles.section}>
       {!list.loaded ? (
         <div className={styles.center}>
-          <Spinner size={34} />
+          <Spinner variant="thin" size={34} />
         </div>
       ) : list.error && list.photos.length === 0 ? (
         <EmptyState variant="inline" tone="error" title="Photos couldn't be loaded" actions={[{ label: 'RETRY', onClick: list.retry }]} />

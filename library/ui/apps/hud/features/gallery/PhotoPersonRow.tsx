@@ -1,8 +1,9 @@
 // One person in a photo. The wearables are the ones they had on when the photo was taken, not their
 // current outfit. A guest has no passport and no wearables.
 
+import { Spinner } from '@dcl/one-ui'
 import { useEffect, useRef, useState } from 'react'
-import { Avatar, Button, DclLogo, MaskIcon, Spinner, VerifiedBadge, rarityTile } from '../../design'
+import { Avatar, Button, DclLogo, MaskIcon, VerifiedBadge, rarityTile } from '../../design'
 import { track } from '@explorer-core/lib/analytics'
 import { userColor } from '@explorer-core/lib/identity'
 import type { GalleryPerson, Wearable } from '@explorer-core/engine/protocol'

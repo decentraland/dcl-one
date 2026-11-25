@@ -3,8 +3,9 @@
 // actions; blocked shows an empty placeholder. Data + actions come from the bridge
 // relay of the scene social state (BevyApi.social.*), guest-disabled.
 
+import { Spinner } from '@dcl/one-ui'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { Avatar, BlockedUser, Button, ControlButton, Envelope, Kebab, MaskIcon, Spinner, Tabs, Tooltip, VerifiedBadge, hasOpenPopup, type TabItem } from '../../design'
+import { Avatar, BlockedUser, Button, ControlButton, Envelope, Kebab, MaskIcon, Tabs, Tooltip, VerifiedBadge, hasOpenPopup, type TabItem } from '../../design'
 import { shortAddr, splitName, userColor } from '@explorer-core/lib/identity'
 import type { BlockedUser as Blocked, Friend, FriendRequest } from '@explorer-core/engine/protocol'
 import type { FriendLocation } from '@explorer-core/features/friends/friendLocation'
@@ -431,7 +432,7 @@ export function FriendsPanel({
       <div className={styles.body}>
         {friends.loading ? (
           <div className={styles.placeholder}>
-            <Spinner />
+            <Spinner variant="thin" />
           </div>
         ) : !friends.available ? (
           <div className={styles.placeholder}>

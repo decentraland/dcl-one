@@ -7,8 +7,9 @@
 // failure is a toast with the form left as it was. An edit sends only what changed; only the owner
 // can change the name, membership and discoverability.
 
+import { Spinner } from '@dcl/one-ui'
 import { useEffect, useRef, useState } from 'react'
-import { CharCounter, MaskIcon, Select, Spinner, TextArea, openPopup, showConfirm, showToast } from '../../design'
+import { CharCounter, MaskIcon, Select, TextArea, openPopup, showConfirm, showToast } from '../../design'
 import type { Community, CommunityPlaceOption, CommunityPlaceOptionsMessage } from '@explorer-core/engine/protocol'
 import closeIcon from '../../assets/backpack/icon-close.webp'
 import type { CommunitySave, CreateCommunityInput, UpdateCommunityInput } from '../session/useEngineSession'
@@ -319,7 +320,7 @@ export function CommunityCreateModal({
 
       {loadingPlaces ? (
         <div className={styles.loading}>
-          <Spinner size={28} />
+          <Spinner variant="thin" size={28} />
         </div>
       ) : (
       <div className={styles.scroll}>
@@ -449,7 +450,7 @@ export function CommunityCreateModal({
 
       {saving && (
         <div className={styles.checking} role="status">
-          <Spinner size={20} />
+          <Spinner variant="thin" size={20} />
           <span>Running Content Policy check. This may take a moment.</span>
         </div>
       )}

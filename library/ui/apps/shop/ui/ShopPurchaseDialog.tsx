@@ -27,8 +27,8 @@
 import { useRef, useState } from 'react'
 import { formatCreditsFull } from '@shop/checkout/lib/currency'
 import { formatMana, formatManaPrice, type ManaWei } from '@shop/model/money'
-import { GeneralDecentralandColor, GeneralPolygonMana } from '@dcl/one-ui'
-import { ArmedButton, Button, ScrollThumb, Spinner } from '@hud/design'
+import { GeneralDecentralandColor, GeneralPolygonMana, Spinner } from '@dcl/one-ui'
+import { ArmedButton, Button, ScrollThumb } from '@hud/design'
 import balanceCredit from '../assets/modal/balance-credit-small.svg'
 import creditsCoin from '../assets/modal/credits-coin.svg'
 import illustrationCredits from '../assets/modal/illustration-credits.png'
@@ -450,7 +450,7 @@ export function ShopPurchaseDialog({
               )}
               {/* The design's button in its loading state: the label kept out of sight, the spinner in its place. */}
               <span className={styles.waiting} role="status" aria-label="Waiting for your wallet">
-                <Spinner variant="shop" size={22.667} />
+                <Spinner variant="thick" size={22.667} />
               </span>
             </>
           }
@@ -745,7 +745,7 @@ function ItemRow({ item }: { item: ShopPurchaseItem }): React.JSX.Element {
 function Working({ label, size }: { label: string; size?: 'small' }): React.JSX.Element {
   return (
     <div className={`${styles.working} ${size === 'small' ? styles.workingSmall : ''}`.trim()} role="status" aria-label={label}>
-      <Spinner variant="shop" size={30} />
+      <Spinner variant="thick" size={30} />
     </div>
   )
 }

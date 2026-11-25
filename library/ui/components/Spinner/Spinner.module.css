@@ -25,8 +25,10 @@
     border-left-color: var(--dcl-transparencies-white-40);
   }
 
-  /* Not in Figma: the Explorer HUD's ring, drawn as an SVG so the arc has round ends. */
-  .thin {
+  /* Not in Figma: the Explorer HUD's rings, drawn as SVG so the arcs have round ends. */
+  .thin,
+  .thick,
+  .chase {
     display: inline-flex;
     width: 28px;
     height: 28px;
@@ -36,18 +38,47 @@
     animation: none;
   }
 
-  .thin svg {
+  .thin svg,
+  .thick svg {
+    animation: hud-turn 900ms linear infinite;
+  }
+
+  .thin svg,
+  .chase svg {
     width: 100%;
     height: 100%;
-    animation: thin-turn 900ms linear infinite;
+  }
+
+  /* Stroked on the box's edge: the image is larger than the box by a stroke, and centred on it. */
+  .thick svg {
+    flex: none;
+    width: calc(100% * 72.5333 / 64);
+    height: calc(100% * 72.5333 / 64);
+    margin: calc(-100% * 4.2667 / 64);
   }
 
   .thinTrack {
     stroke: rgba(255, 255, 255, 0.12); /* the HUD's 12 % white track; no token */
   }
 
-  .thinArc {
+  .thickTrack {
+    stroke: var(--dcl-transparencies-black-40);
+  }
+
+  .arc {
     stroke: var(--dcl-primary-primary);
+  }
+
+  /* The head runs round in the first third of each second, the tail after it in the next half. */
+  .chase svg {
+    transform: rotate(-90deg);
+  }
+
+  .chaseArc {
+    stroke-dasharray: 0 100;
+    animation:
+      hud-chase 1s linear infinite,
+      hud-chase-colour 3s steps(1, end) infinite;
   }
 
   /* Not in Figma. The ring is the only sign of progress, so it keeps turning under reduced motion, at a
@@ -57,15 +88,62 @@
       animation-duration: 4s;
     }
 
-    .thin svg {
+    .thin svg,
+    .thick svg {
       animation-duration: 3600ms;
+    }
+
+    .chaseArc {
+      animation-duration: 4s, 12s;
     }
   }
 }
 
-@keyframes thin-turn {
+@keyframes hud-turn {
   to {
     transform: rotate(360deg);
+  }
+}
+
+@keyframes hud-chase {
+  0% {
+    stroke-dasharray: 0 100;
+    stroke-dashoffset: 0;
+  }
+
+  33.3% {
+    stroke-dasharray: 100 0;
+    stroke-dashoffset: 0;
+  }
+
+  50% {
+    stroke-dasharray: 100 0;
+    stroke-dashoffset: 0;
+  }
+
+  83.3% {
+    stroke-dasharray: 0 100;
+    stroke-dashoffset: -100;
+  }
+
+  100% {
+    stroke-dasharray: 0 100;
+    stroke-dashoffset: -100;
+  }
+}
+
+/* The sign-in spinner's first colour, #ffbc5b, has no token. */
+@keyframes hud-chase-colour {
+  0% {
+    stroke: #ffbc5b;
+  }
+
+  33.33% {
+    stroke: var(--dcl-primary-primary);
+  }
+
+  66.67% {
+    stroke: var(--dcl-brand-purple);
   }
 }
 

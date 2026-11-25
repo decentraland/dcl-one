@@ -22,7 +22,7 @@ export const SHOWCASE_INDEX = [
   { name: 'Button', title: 'Button', components: ['Button'] },
   { name: 'ArmedButton', title: "ArmedButton (a confirm that spends or gives away what can't be taken back: SEND GIFT, SEND TIP, BUY ITEM)", components: ['ArmedButton', 'Button'] },
   { name: 'StartButton', title: "Button (start: the sign-in screens' CTA)", components: ['Button'] },
-  { name: 'SignIn', title: 'Sign-in: SubmitField, method buttons, CodeInput, chase spinner', components: ['SubmitField', 'Button', 'CodeInput', 'Spinner', 'Checkbox'] },
+  { name: 'SignIn', title: 'Sign-in: SubmitField, method buttons, CodeInput, chase spinner', components: ['SubmitField', 'Button', 'CodeInput', 'Checkbox'] },
   { name: 'LogoPattern', title: 'Logo pattern (the loading and sign-in backdrop)', components: ['LogoPattern'] },
   { name: 'BareButton', title: 'Button (bare: a translucent fill, sized by the caller)', components: ['Button'] },
   { name: 'Skeleton', title: 'Skeleton', components: ['Skeleton'] },

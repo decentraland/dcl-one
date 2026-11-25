@@ -4,8 +4,9 @@
 // meanwhile (`inProgress`).
 //
 // Laid out on the startup screens' canvas, its 1080 rows centred vertically.
+import { Spinner } from '@dcl/one-ui'
 import { useEffect, useRef, useState } from 'react'
-import { Button, MaskIcon, Spinner, SubmitField } from '../../design'
+import { Button, MaskIcon, SubmitField } from '../../design'
 import { EMAIL_MAX, EMAIL_PATTERN } from '@explorer-core/features/auth/email'
 import { emailLoginErrorCode } from '@explorer-core/features/auth/thirdweb'
 import type { LoginMethod } from '@explorer-core/features/auth/sso'

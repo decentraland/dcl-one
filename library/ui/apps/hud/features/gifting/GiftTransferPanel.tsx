@@ -4,7 +4,8 @@
 // the activity page), then "Gift Sent to <name>!" with rays and OK, or "Something went wrong" with TRY AGAIN and
 // Contact Support. The host resolves the recipient and the item itself.
 
-import { ArmedButton, Avatar, Button, Modal, ModalActions, ModalTitle, Spinner, VerifiedBadge } from '../../design'
+import { Spinner } from '@dcl/one-ui'
+import { ArmedButton, Avatar, Button, Modal, ModalActions, ModalTitle, VerifiedBadge } from '../../design'
 import { ItemTile, RaysPopup } from '../rewards/RewardPopup'
 import styles from './GiftTransferPanel.module.css'
 
@@ -66,7 +67,7 @@ export function GiftTransferPanel({ view, handlers }: { view: GiftTransferView; 
       return (
         <Modal width={420} ariaLabel="Preparing Gift">
           <div className={styles.centre}>
-            <Spinner />
+            <Spinner variant="thin" />
           </div>
         </Modal>
       )
@@ -111,7 +112,7 @@ export function GiftTransferPanel({ view, handlers }: { view: GiftTransferView; 
             <ItemTile rarity={view.item.rarity} image={view.item.image} category={view.item.category} />
             <span className={styles.itemName}>{view.item.name}</span>
             <div className={styles.status} role="status">
-              <Spinner size={18} />
+              <Spinner variant="thin" size={18} />
               <span>{view.status}</span>
             </div>
             {view.slow && (

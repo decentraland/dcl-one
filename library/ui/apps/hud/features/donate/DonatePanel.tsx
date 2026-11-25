@@ -3,8 +3,9 @@
 // Its steps: loading, the form, the tip being prepared (the wallet's window), processing (an outcome not yet
 // known), sent (rays, OK) and failed (TRY AGAIN, Contact Support).
 
+import { Spinner } from '@dcl/one-ui'
 import { useState } from 'react'
-import { ArmedButton, Avatar, Button, Modal, ModalActions, ModalTitle, Spinner, VerifiedBadge } from '../../design'
+import { ArmedButton, Avatar, Button, Modal, ModalActions, ModalTitle, VerifiedBadge } from '../../design'
 import { MIN_TIP, TIP_AMOUNT, type DonateCreator, type DonateHandlers, type DonateView } from './types'
 import styles from './DonatePanel.module.css'
 
@@ -169,7 +170,7 @@ export function DonatePanel({ view, handlers }: { view: DonateView; handlers: Do
         <Modal ariaLabel={label} width={480}>
           <ModalTitle title="Send a Tip" onClose={handlers.onClose} />
           <div className={styles.loading}>
-            <Spinner />
+            <Spinner variant="thin" />
           </div>
         </Modal>
       )
@@ -186,7 +187,7 @@ export function DonatePanel({ view, handlers }: { view: DonateView; handlers: Do
           <div className={styles.status} role="status">
             <span className={styles.title}>Preparing {view.amount} MANA Tip for</span>
             <Creator creator={view.creator} />
-            {!(view.step === 'processing' && view.final) && <Spinner />}
+            {!(view.step === 'processing' && view.final) && <Spinner variant="thin" />}
             <span className={styles.note}>
               {view.step === 'sending'
                 ? 'A browser window should open for you to confirm this transfer.'
@@ -221,7 +222,7 @@ export function DonatePanel({ view, handlers }: { view: DonateView; handlers: Do
         <Modal ariaLabel={label} width={480}>
           <div className={styles.status} role="status">
             <span className={styles.title}>A tip is in progress in another tab</span>
-            <Spinner />
+            <Spinner variant="thin" />
             <span className={styles.note}>This panel continues once it finishes. You can close it meanwhile.</span>
           </div>
           <ModalActions>

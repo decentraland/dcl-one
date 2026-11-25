@@ -1,6 +1,7 @@
 // "Verifying your account...": the sign-in and the account are being loaded. Cancel goes back to the
 // first screen (the stored sign-in kept); it gives up on its own after a while (useEngineSession).
-import { Button, Spinner } from '../../design'
+import { Spinner } from '@dcl/one-ui'
+import { Button } from '../../design'
 import styles from './Verifying.module.css'
 
 export function Verifying({ onCancel }: { onCancel?: () => void }): React.JSX.Element {

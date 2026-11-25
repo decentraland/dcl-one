@@ -1,8 +1,9 @@
 // Friend request popup: send one (with an intro message), or look at one received / sent. The
 // result screens ("Friend Request Sent To", "You And X Are Now Friends!") show only once the
 // friends service accepted the action, then close by themselves.
+import { Spinner } from '@dcl/one-ui'
 import { useEffect, useRef, useState } from 'react'
-import { Avatar, Button, ModalShell, Spinner, TextArea, openPopup } from '../../design'
+import { Avatar, Button, ModalShell, TextArea, openPopup } from '../../design'
 import { splitName, userColor } from '@explorer-core/lib/identity'
 import { useSession } from '../session/SessionContext'
 import { knownUserColor } from '../session/profileStore'
@@ -122,7 +123,7 @@ function FriendRequestPopup({ mode, user, onClose }: { mode: RequestMode; user: 
     return (
       <ModalShell onClose={onClose} title="Accepting Friend Request" centeredTitle>
         <div className={styles.pair}>
-          <Spinner />
+          <Spinner variant="thin" />
         </div>
       </ModalShell>
     )
