@@ -321,10 +321,18 @@ impl Metas {
         let network = net.db_name();
         let mut metas = Metas::default();
         if !nfts.is_empty() {
-            metas.nfts = trade_events::nft_metas(pool, &links.land_images, network, &nfts).await?;
+            metas.nfts = trade_events::nft_metas(
+                pool,
+                &links.land_images,
+                network,
+                links.chain(source, net),
+                &nfts,
+            )
+            .await?;
         }
         if !items.is_empty() {
-            metas.items = trade_events::item_metas(pool, network, &items).await?;
+            metas.items =
+                trade_events::item_metas(pool, network, links.chain(source, net), &items).await?;
         }
         Ok(metas)
     }

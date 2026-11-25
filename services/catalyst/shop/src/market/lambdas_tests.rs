@@ -2014,7 +2014,7 @@ async fn user_lands_read_the_registries_of_the_configured_network() {
     .unwrap();
     sqlx::query(
         "INSERT INTO shop.chain_cursor (indexer, network, start_block, last_block, folded_block, folded_at, full_history, chain_id) \
-         VALUES ('nft', 'ethereum', 0, 10, 10, $1, true, 1)",
+         VALUES ('nft', 'ethereum', 0, 11, 10, $1, true, 11155111)",
     )
     .bind(now)
     .execute(&db.pool)
@@ -2036,6 +2036,14 @@ async fn user_lands_read_the_registries_of_the_configured_network() {
             crate::http::Outbound::for_tests(),
             Settings {
                 eth_network: network.to_string(),
+                market: super::MarketSettings {
+                    indexes: super::chain_walk::IndexSettings {
+                        chain_id_ethereum: if network == "sepolia" { 11155111 } else { 1 },
+                        chain_id_matic: if network == "sepolia" { 80002 } else { 137 },
+                        ..Default::default()
+                    },
+                    ..Default::default()
+                },
                 ..Settings::for_tests()
             },
         ))
@@ -2088,8 +2096,8 @@ async fn user_lands_read_the_registries_of_the_configured_network() {
     .await;
     assert_eq!(
         (status, body["source"].as_str()),
-        (StatusCode::SERVICE_UNAVAILABLE, Some("land-authz-index")),
-        "no mainnet cursor: {body}"
+        (StatusCode::SERVICE_UNAVAILABLE, Some("nft-index")),
+        "the mainnet NFT publication is missing: {body}"
     );
     db.drop().await;
 }
