@@ -1416,7 +1416,6 @@ name = "avatar"
 version = "0.1.0"
 dependencies = [
  "alloy-core",
- "analytics",
  "anyhow",
  "assets",
  "ban_block",

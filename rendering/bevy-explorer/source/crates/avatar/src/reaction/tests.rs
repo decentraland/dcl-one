@@ -3,7 +3,6 @@ use std::time::Duration;
 use bevy::time::TimeUpdateStrategy;
 use common::{rpc::RpcStreamReceiver, structs::PrimaryPlayerRes};
 use comms::{chat_reaction::emoji_to_atlas_index, NetworkMessage, TransportType};
-use system_bridge::AnalyticsEvent;
 use tokio::sync::mpsc;
 
 use super::*;
@@ -11,24 +10,22 @@ use super::*;
 const PEER: Address = Address::repeat_byte(0xab);
 const FRAME: f32 = 0.05;
 
-/// The plugin in an app of its own, with a signed-in local player, a stream to the HUD and a
-/// listener on analytics.
+/// The plugin in an app of its own, with a signed-in local player and a stream to the HUD.
 struct World {
     app: App,
     local: Entity,
     me: Address,
     hud: RpcStreamReceiver<ReactionData>,
-    analytics: RpcStreamReceiver<AnalyticsEvent>,
 }
+
+/// The wire index of each reaction the local player was reported to make, in order.
+#[derive(Resource, Default)]
+struct Reported(Vec<i32>);
 
 fn world() -> World {
     let mut wallet = Wallet::default();
     wallet.finalize_as_guest_with_seed([3; 32]);
     let me = wallet.address().unwrap();
-
-    let (listener, analytics) = RpcStreamSender::channel();
-    let mut metrics = SegmentMetricsEvents::default();
-    metrics.add_listener(listener);
 
     let mut app = App::new();
     app.add_plugins((
@@ -43,18 +40,19 @@ fn world() -> World {
     .init_resource::<ban_block::PlatformBanStatus>()
     .init_resource::<ban_block::SceneAdmission>()
     .insert_resource(wallet)
-    .insert_resource(metrics)
-    .insert_resource(SegmentConfig::new(
-        "user".into(),
-        "session".into(),
-        "1.0".into(),
-        None,
-        false,
-    ))
+    .init_resource::<Reported>()
     .insert_resource(TimeUpdateStrategy::ManualDuration(Duration::from_secs_f32(
         FRAME,
     )))
-    .add_plugins(ReactionPlugin);
+    .add_plugins(ReactionPlugin)
+    .add_systems(
+        Update,
+        |mut reacted: EventReader<PlayerReacted>, mut reported: ResMut<Reported>| {
+            reported
+                .0
+                .extend(reacted.read().map(|reaction| reaction.emoji_index));
+        },
+    );
     // as the engine spawns them: the outbox is the plugin's to add
     let local = app.world_mut().spawn(PrimaryUser::default()).id();
     app.insert_resource(PrimaryPlayerRes(local));
@@ -69,7 +67,6 @@ fn world() -> World {
         local,
         me,
         hud,
-        analytics,
     }
 }
 
@@ -124,10 +121,9 @@ impl World {
             .collect()
     }
 
-    fn tracked(&mut self) -> Vec<(String, serde_json::Value)> {
-        std::iter::from_fn(|| self.analytics.try_recv().ok())
-            .map(|event| (event.event, event.properties))
-            .collect()
+    /// What analytics would hear of: the reactions reported since the last call.
+    fn reported(&mut self) -> Vec<i32> {
+        std::mem::take(&mut self.app.world_mut().resource_mut::<Reported>().0)
     }
 
     fn stats(&self) -> &ReactionStats {
@@ -180,12 +176,9 @@ fn a_pick_plays_at_once_and_is_sent_once_the_picks_stop() {
     world.run(1.0);
     assert!(sent(&mut wire).is_empty());
 
-    let tracked = world.tracked();
-    assert_eq!(tracked.len(), 3);
-    for (event, properties) in tracked {
-        assert_eq!(event, "react_situation");
-        assert!(properties["reaction_id"].is_i64());
-    }
+    // each pick is reported once, as the index it is sent as
+    let (thumb, fire) = (emoji_to_atlas_index("👍"), emoji_to_atlas_index("🔥"));
+    assert_eq!(world.reported(), [thumb, thumb, fire]);
 }
 
 #[test]
@@ -213,7 +206,7 @@ fn an_emoji_the_wire_does_not_carry_does_nothing_anywhere() {
     world.run(1.0);
     assert!(world.streamed().is_empty());
     assert!(sent(&mut wire).is_empty());
-    assert!(world.tracked().is_empty());
+    assert!(world.reported().is_empty());
     assert_eq!(world.stats().refused_picks, 4);
     assert_eq!(world.stats().played, 0);
 }

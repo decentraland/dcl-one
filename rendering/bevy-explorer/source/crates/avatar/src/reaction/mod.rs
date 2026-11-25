@@ -13,13 +13,13 @@ mod traffic;
 mod tests;
 
 use alloy_core::primitives::Address;
-use analytics::{
-    data_definition::{SegmentEvent, SegmentEventReactSituation},
-    segment_system::{SegmentConfig, SegmentMetricsEvents},
-};
 use ban_block::BanBlock;
 use bevy::{platform::collections::HashMap, prelude::*};
-use common::{rpc::RpcStreamSender, sets::SceneSets, structs::PrimaryUser};
+use common::{
+    rpc::RpcStreamSender,
+    sets::SceneSets,
+    structs::{PlayerReacted, PrimaryUser},
+};
 use comms::{
     broadcast_to,
     chat_reaction::{atlas_index_to_emoji, canonical_emoji, emoji_atlas_tile},
@@ -38,6 +38,8 @@ pub struct ReactionPlugin;
 impl Plugin for ReactionPlugin {
     fn build(&self, app: &mut App) {
         app.add_event::<ReactionPlayed>()
+            // read by analytics, which registers it too
+            .add_event::<PlayerReacted>()
             .init_resource::<ReactionStats>()
             .register_required_components::<ForeignPlayer, ReactionGuard>()
             .register_required_components::<PrimaryUser, ReactionOutbox>()
@@ -110,9 +112,8 @@ fn accept_local_reactions(
     wallet: Res<Wallet>,
     mut local: Query<(Entity, &mut ReactionOutbox), With<PrimaryUser>>,
     mut played: EventWriter<ReactionPlayed>,
+    mut reacted: EventWriter<PlayerReacted>,
     mut stats: ResMut<ReactionStats>,
-    mut metrics: ResMut<SegmentMetricsEvents>,
-    segment_config: Res<SegmentConfig>,
 ) {
     for request in requests.read() {
         let SystemApi::SendReaction(picked) = request else {
@@ -137,10 +138,7 @@ fn accept_local_reactions(
             emoji,
         });
         stats.played += 1;
-        metrics.add_event(
-            SegmentEvent::ReactSituation(SegmentEventReactSituation { reaction_id: tile }),
-            segment_config.common(),
-        );
+        reacted.write(PlayerReacted { emoji_index: tile });
     }
 }
 
