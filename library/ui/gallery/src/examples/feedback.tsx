@@ -157,11 +157,39 @@ export const feedbackEntries: GalleryEntry[] = [
     group: 'Feedback',
     summary: 'A status or alert message, shown inline here with no timeout.',
     components: ['Toast'],
-    examples: toastVariants.map((variant) => ({
-      id: variant,
-      title: variant[0]!.toUpperCase() + variant.slice(1),
-      render: () => <ToastDemo variant={variant} />
-    }))
+    examples: [
+      ...toastVariants.map((variant) => ({
+        id: variant,
+        title: variant[0]!.toUpperCase() + variant.slice(1),
+        render: () => <ToastDemo variant={variant} />
+      })),
+      {
+        id: 'hud',
+        title: 'Explorer HUD: a notice, an error and a notice with an action',
+        render: () => (
+          <div className={layout.stack}>
+            <Toast appearance="hud" placement="inline" duration={0}>
+              <b>Mojito</b> is online
+            </Toast>
+            <Toast appearance="hud" placement="inline" variant="error" duration={0}>
+              Something went wrong.
+            </Toast>
+            <Toast
+              appearance="hud"
+              placement="inline"
+              duration={0}
+              action={
+                <Button appearance="hud" variant="secondary" size="sm">
+                  Reload
+                </Button>
+              }
+            >
+              Textures optimized
+            </Toast>
+          </div>
+        )
+      }
+    ]
   },
   {
     name: 'Tooltip',

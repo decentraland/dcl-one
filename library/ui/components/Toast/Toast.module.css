@@ -67,9 +67,55 @@
 
 
 
+  /* Not in Figma: the Explorer HUD's notice (`appearance="hud"`). It takes the pointer only when it holds an
+     action or a close button. Its 10px gap and padding and its 480px width have no token. */
+  .toast[data-appearance='hud'] {
+    display: flex;
+    gap: 10px;
+    max-width: 480px;
+    min-height: auto;
+    padding: 10px var(--dcl-space-16);
+    border: 0;
+    box-shadow: none;
+    font-family: 'Inter Variable', 'Inter', system-ui, -apple-system, sans-serif;
+    font-size: var(--dcl-font-size-body-sm);
+    line-height: 18px;
+    pointer-events: none;
+  }
+
+  .toast[data-appearance='hud'][data-variant='error'] {
+    border: 1px solid var(--dcl-brand-ruby);
+  }
+
+  .toast[data-appearance='hud'][data-rich] {
+    pointer-events: auto;
+  }
+
+  .toast[data-appearance='hud'] .message {
+    min-width: auto;
+    font: inherit;
+    letter-spacing: inherit;
+    overflow-wrap: normal;
+  }
+
+  .toast[data-appearance='hud'] .message b {
+    font-weight: 600;
+  }
+
   @media (prefers-reduced-motion: no-preference) {
     .toast {
       animation: appear 150ms ease-out;
+    }
+
+    .toast[data-appearance='hud'] {
+      animation: hud-appear 140ms ease-out;
+    }
+  }
+
+  @keyframes hud-appear {
+    from {
+      opacity: 0;
+      transform: translateY(-6px);
     }
   }
 

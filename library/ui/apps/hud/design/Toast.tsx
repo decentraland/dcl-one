@@ -1,6 +1,6 @@
-// Toast — a transient notice at the top of the screen (friend blocked, "X is online", a failed
-// action). Imperative like the popups: showToast() from anywhere, <ToastHost/> mounted once. Unlike a
-// popup it holds no input focus and never counts as an open popup.
+// Toast — the HUD's queue of transient notices at the top of the screen (friend blocked, "X is online", a
+// failed action), each drawn by the shared Toast. Imperative like the popups: showToast() from anywhere,
+// <ToastHost/> mounted once. Unlike a popup it holds no input focus and never counts as an open popup.
 //
 // A keyed toast is one notice that changes: showing it again under the same key replaces it in
 // place (a progress count), and dismissToast(key) takes it down. One can stay until dismissed
@@ -10,7 +10,7 @@ import { useSyncExternalStore, type ReactNode } from 'react'
 import { ControlButton } from './ControlButton'
 import { Close } from './Glyphs'
 import styles from './Toast.module.css'
-import { Button } from '@dcl/one-ui'
+import { Button, Toast } from '@dcl/one-ui'
 
 export interface ToastAction {
   label: string
@@ -85,34 +85,44 @@ export function ToastHost(): React.JSX.Element {
   const list = useSyncExternalStore(subscribe, getSnapshot)
   return (
     <div className={styles.host} aria-live="polite">
-      {list.map((t) => {
-        const interactive = t.action != null || t.dismissible === true
-        const cls = [styles.toast, t.tone === 'error' ? styles.error : '', interactive ? styles.interactive : ''].filter(Boolean).join(' ')
-        return (
-          <div key={t.id} className={cls} role="status" aria-busy={t.busy === true ? true : undefined}>
-            {t.icon}
-            <span className={styles.text}>{t.content}</span>
-            {t.action != null && (
-              <Button appearance="hud"
-                variant="secondary"
-                size="sm"
-                aria-label={t.action.ariaLabel}
-                onClick={() => {
-                  remove(t.id)
-                  t.action?.onClick()
-                }}
-              >
-                {t.action.label}
-              </Button>
-            )}
-            {t.dismissible === true && (
-              <ControlButton size="sm" shape="circle" aria-label="Dismiss" aria-pressed={undefined} onClick={() => remove(t.id)}>
-                <Close size={14} />
-              </ControlButton>
-            )}
-          </div>
-        )
-      })}
+      {list.map((t) => (
+        <Toast
+          key={t.id}
+          appearance="hud"
+          placement="inline"
+          variant={t.tone === 'error' ? 'error' : 'text'}
+          duration={0}
+          icon={t.icon}
+          aria-busy={t.busy === true ? true : undefined}
+          action={
+            t.action != null || t.dismissible === true ? (
+              <>
+                {t.action != null && (
+                  <Button
+                    appearance="hud"
+                    variant="secondary"
+                    size="sm"
+                    aria-label={t.action.ariaLabel}
+                    onClick={() => {
+                      remove(t.id)
+                      t.action?.onClick()
+                    }}
+                  >
+                    {t.action.label}
+                  </Button>
+                )}
+                {t.dismissible === true && (
+                  <ControlButton size="sm" shape="circle" aria-label="Dismiss" aria-pressed={undefined} onClick={() => remove(t.id)}>
+                    <Close size={14} />
+                  </ControlButton>
+                )}
+              </>
+            ) : undefined
+          }
+        >
+          {t.content}
+        </Toast>
+      ))}
     </div>
   )
 }
