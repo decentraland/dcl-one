@@ -229,6 +229,10 @@ function WebItemPreview({ item, avatarShape = null, renderer }: ItemPreviewProps
     setUnityFailed(false);
     setFailedFrame(null);
   }, [urn]);
+  // What a retired frame drew is not the next one's, even when the next one comes back under the same key.
+  useEffect(() => {
+    if (!mounted) setDrawn(null);
+  }, [mounted]);
 
   const options: PreviewFrameOptions = {
     urns: urn ? [urn] : [],
@@ -253,12 +257,13 @@ function WebItemPreview({ item, avatarShape = null, renderer }: ItemPreviewProps
           replay={replay}
           onLoad={(by) => setDrawn({ scene, by: by ?? (unity ? "unity" : "babylon") })}
           onError={() => {
-            if (unity) setUnityFailed(true);
-            // The item alone failed where the avatar had drawn: back to the avatar, in a fresh frame.
-            else if (itemAlone) {
+            // The item alone failed where the avatar had drawn: back to the avatar, in a fresh frame. Before the
+            // renderer: a preview that asked for Unity and drew with Babylon got this far on Babylon.
+            if (itemAlone) {
               setView("avatar");
               setGeneration((n) => n + 1);
-            } else setFailedFrame(frame);
+            } else if (unity) setUnityFailed(true);
+            else setFailedFrame(frame);
           }}
         />
       ) : null}

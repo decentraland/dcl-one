@@ -210,6 +210,39 @@ describe("talking to the iframe", () => {
     expect(screen.queryByTestId("preview-toggle")).toBeNull();
   });
 
+  test("signing in and out before the profile is read mounts a new guest frame, covered until it draws", () => {
+    flag(false);
+    const view = render(<ItemPreview item={item()} renderer="full" />);
+    const first = frame();
+    fromPreview({ type: "load", payload: { renderer: "babylon" } });
+    expect(thumb()).toBeNull();
+
+    env.account = ACCOUNT;
+    view.rerender(<ItemPreview item={item()} renderer="full" />);
+    expect(frame()).toBeNull();
+    env.account = null;
+    view.rerender(<ItemPreview item={item()} renderer="full" />);
+
+    expect(frame()).not.toBeNull();
+    expect(frame()).not.toBe(first);
+    expect(thumb()).not.toBeNull();
+    expect(screen.queryByTestId("preview-toggle")).toBeNull();
+    fromPreview({ type: "load", payload: { renderer: "babylon" } });
+    expect(thumb()).toBeNull();
+  });
+
+  test("a Unity request that drew with Babylon goes back to the avatar when the item alone fails, not to the item again", () => {
+    render(<ItemPreview item={item()} renderer="full" />);
+    expect(params().get("unity")).toBe("true");
+    fromPreview({ type: "ready" });
+    fromPreview({ type: "load", payload: { renderer: "babylon" } });
+    fireEvent.click(screen.getByRole("button", { name: "Item" }));
+    fromPreview({ type: "error", payload: { message: "no item alone" } });
+
+    expect(params().get("type")).toBe("avatar");
+    expect(thumb()).not.toBeNull();
+  });
+
   test("a new item starts over: avatar view, and Unity tried again after the last item fell back", () => {
     const view = render(<ItemPreview item={item()} renderer="full" />);
     fromPreview({ type: "error", payload: { message: "unity failed" } });
