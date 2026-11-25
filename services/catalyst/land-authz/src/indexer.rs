@@ -50,6 +50,7 @@ impl From<RpcError> for IndexError {
             RpcError::Budget { upper, requests } => Self::Budget { upper, requests },
             RpcError::Transport(message) => Self::Transport(message),
             RpcError::Rpc(message) | RpcError::Malformed(message) => Self::Rpc(message),
+            RpcError::Provider(error) => Self::Transport(error.to_string()),
         }
     }
 }
