@@ -330,7 +330,7 @@ async fn serve_graph(up: Arc<FakeGraph>) -> String {
     format!("http://{addr}/")
 }
 
-async fn job_ctx(jobs: &crate::jobs::Jobs) -> crate::jobs::JobContext {
+pub(super) async fn job_ctx(jobs: &crate::jobs::Jobs) -> crate::jobs::JobContext {
     let (tx, rx) = tokio::sync::oneshot::channel();
     jobs.spawn("ctx", move |ctx| async move {
         let _ = tx.send(ctx);
@@ -483,6 +483,66 @@ async fn cleanup_mirror(pool: &PgPool, contracts: &[String]) {
 }
 
 #[tokio::test]
+async fn upgrading_a_completed_mainnet_mirror_keeps_the_catalogue_available() {
+    let url = format!("{}missing", serve_graph(FakeGraph::new()).await);
+    let Some((state, own)) = state_over_own(&url, true).await else {
+        return;
+    };
+    sqlx::query("INSERT INTO shop.mirror_state(mirror,network,source_url,last_complete_pass_at,last_complete_pass_rows,cursor_id)
+                 VALUES ('items','matic',$1,timezone('UTC',now()),17,'old-key'),
+                        ('collections','ethereum','https://subgraph.decentraland.org/collections-ethereum-mainnet',timezone('UTC',now()),19,'key')")
+        .bind(&url).execute(&state.pool).await.unwrap();
+    sqlx::raw_sql(include_str!(concat!(
+        env!("DCL_ONE_ROOT"),
+        "/schemas/migrations/0070_shop_mirror_chain.sql"
+    )))
+    .execute(&state.pool)
+    .await
+    .unwrap();
+    assert!(
+        super::nft_index::mirror_complete(&state.pool, super::chain_walk::ChainNet::Ethereum, 1)
+            .await
+    );
+    sqlx::query("UPDATE shop.mirror_state SET pass_started_at=last_complete_pass_at+interval '1 second' WHERE mirror='items'")
+        .execute(&state.pool).await.unwrap();
+    let before = mirrors::load(
+        &state.pool,
+        mirrors::Mirror::Items,
+        super::graph::Network::Matic,
+    )
+    .await
+    .unwrap()
+    .unwrap();
+    // The first page at the custom mainnet source fails. The already served
+    // copy and the keyset for its in-progress pass must survive a retry.
+    let jobs = crate::jobs::Jobs::new();
+    let ctx = job_ctx(&jobs).await;
+    assert!(
+        mirrors::run_tick(&state, mirrors::Mirror::Items, &ctx)
+            .await
+            .is_err()
+    );
+    let after = mirrors::load(
+        &state.pool,
+        mirrors::Mirror::Items,
+        super::graph::Network::Matic,
+    )
+    .await
+    .unwrap()
+    .unwrap();
+    assert_eq!(after.chain_id, Some(137));
+    assert_eq!(after.last_complete_pass_at, before.last_complete_pass_at);
+    assert_eq!(after.last_complete_pass_rows, Some(17));
+    assert_eq!(after.cursor_id.as_deref(), Some("old-key"));
+    assert!(
+        mirrors::require_ready(&state, mirrors::Mirror::Items)
+            .await
+            .is_ok()
+    );
+    own.drop().await;
+}
+
+#[tokio::test]
 async fn the_mirrors_walk_the_subgraph_and_every_market_route_answers_over_them() {
     let up = FakeGraph::new();
     let url = serve_graph(up.clone()).await;
@@ -490,6 +550,7 @@ async fn the_mirrors_walk_the_subgraph_and_every_market_route_answers_over_them(
         return;
     };
     let pool = state.pool.clone();
+    super::trade_events::tests::publish_cursors(&pool).await;
     let t = tag();
     let (c1, c2, c_nft) = (contract_of(&t, 1), contract_of(&t, 2), contract_of(&t, 3));
     let v3_minter = listings::offchain_marketplace_v3(137).unwrap().address;
@@ -1767,6 +1828,394 @@ fn opts(item_id: Option<&str>) -> lists::GetListsOptions<'_> {
     }
 }
 
+/// What the stub contract wallet answers to `isValidSignature`.
+#[derive(Clone, Copy)]
+enum ContractWallet {
+    Accepts,
+    Refuses,
+    Unreachable,
+}
+
+struct StubEip1654(ContractWallet);
+
+#[async_trait::async_trait]
+impl crate::auth::eip1654::Eip1654Validator for StubEip1654 {
+    /// It asks the contract on every call, as the RPC validator does.
+    fn fresh_validator(&self) -> Option<&dyn crate::auth::eip1654::Eip1654Validator> {
+        Some(self)
+    }
+
+    async fn validate_signature(
+        &self,
+        _contract_address: &str,
+        _hash: &[u8],
+        _signature: &[u8],
+    ) -> Result<bool, crate::auth::AuthError> {
+        match self.0 {
+            ContractWallet::Accepts => Ok(true),
+            ContractWallet::Refuses => Ok(false),
+            ContractWallet::Unreachable => Err(crate::auth::AuthError::Eip1654ValidationFailed(
+                "rpc unavailable".into(),
+            )),
+        }
+    }
+}
+
+/// A contract wallet's chain for `method path`: SIGNER (the contract), its
+/// EIP-1654 ephemeral delegation, and the request payload the ephemeral key
+/// signs.
+async fn contract_wallet_headers(contract: &str, method: &str, path: &str) -> HeaderMap {
+    contract_wallet_headers_with(contract, method, path, "{}").await
+}
+
+/// [`contract_wallet_headers`] signing `metadata`.
+async fn contract_wallet_headers_with(
+    contract: &str,
+    method: &str,
+    path: &str,
+    metadata: &str,
+) -> HeaderMap {
+    use alloy::signers::Signer as _;
+    let ephemeral = alloy::signers::local::PrivateKeySigner::random();
+    let timestamp = chrono::Utc::now().timestamp_millis().to_string();
+    let expiration =
+        (chrono::Utc::now() + chrono::Duration::hours(1)).format("%Y-%m-%dT%H:%M:%S%.3fZ");
+    let payload = crate::shared::signed_fetch::build_payload_v6(method, path, &timestamp, metadata);
+    let signature = ephemeral
+        .sign_message(payload.as_bytes())
+        .await
+        .unwrap()
+        .to_string();
+    let links = [
+        json!({"type": "SIGNER", "payload": contract, "signature": ""}),
+        json!({"type": "ECDSA_EIP_1654_EPHEMERAL",
+            "payload": format!("Decentraland Login\nEphemeral address: {:#x}\nExpiration: {expiration}", ephemeral.address()),
+            "signature": format!("0x{}", "11".repeat(65))}),
+        json!({"type": "ECDSA_SIGNED_ENTITY", "payload": payload, "signature": signature}),
+    ];
+    let mut headers = HeaderMap::new();
+    for (index, link) in links.iter().enumerate() {
+        headers.insert(
+            axum::http::HeaderName::try_from(format!("x-identity-auth-chain-{index}")).unwrap(),
+            link.to_string().parse().unwrap(),
+        );
+    }
+    headers.insert("x-identity-timestamp", timestamp.parse().unwrap());
+    headers.insert("x-identity-metadata", metadata.parse().unwrap());
+    headers
+}
+
+/// A contract wallet (EIP-1654) picks an item and reads its picks as an EOA
+/// does, through the node's validator (`isValidSignature`), as upstream's
+/// crypto middleware verified it. A contract that refuses the signature is a
+/// 401, and a check that cannot run (the RPC failed) is a 503: never the
+/// signer, on the required (POST) and the optional (GET) route alike.
+#[tokio::test]
+async fn a_contract_wallet_picks_through_the_eip1654_validator() {
+    let Some(mut state) = state_with_db(Settings {
+        data_writes_enabled: true,
+        ..Settings::for_tests()
+    })
+    .await
+    else {
+        return;
+    };
+    let pool = state.pool.clone();
+    let t = tag();
+    let contract = format!("0x{:0>40}", "c0de1").to_lowercase();
+    let item = format!("{}-0", contract_of(&t, 7));
+    mirrors::items::upsert(
+        &pool,
+        super::graph::Network::Matic,
+        137,
+        &[mirrors::items::fixture(
+            &contract_of(&t, 7),
+            "0",
+            "wearable_v2",
+            "Picked by a contract",
+        )],
+    )
+    .await
+    .unwrap();
+    let path = format!("/v1/picks/{item}");
+    let with = |state: &mut SharedState, wallet| {
+        Arc::get_mut(state).expect("an unshared state").eip1654 =
+            Some(Arc::new(StubEip1654(wallet)));
+    };
+
+    with(&mut state, ContractWallet::Accepts);
+    let (status, body) = call(
+        market_router(state.clone()),
+        "POST",
+        &path,
+        contract_wallet_headers(&contract, "post", &path).await,
+        Some(json!({ "pickedFor": [lists::DEFAULT_LIST_ID] })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["data"]["pickedByUser"], true, "{body}");
+    let (status, body) = call(
+        market_router(state.clone()),
+        "GET",
+        &path,
+        contract_wallet_headers(&contract, "get", &path).await,
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(
+        body["data"]["results"][0]["userAddress"], contract,
+        "the caller (the contract) first: {body}"
+    );
+
+    for (wallet, code) in [
+        (ContractWallet::Refuses, StatusCode::UNAUTHORIZED),
+        (ContractWallet::Unreachable, StatusCode::SERVICE_UNAVAILABLE),
+    ] {
+        with(&mut state, wallet);
+        let (status, body) = call(
+            market_router(state.clone()),
+            "POST",
+            &path,
+            contract_wallet_headers(&contract, "post", &path).await,
+            Some(json!({ "pickedFor": [lists::DEFAULT_LIST_ID] })),
+        )
+        .await;
+        assert_eq!(status, code, "POST: {body}");
+        let (status, body) = call(
+            market_router(state.clone()),
+            "GET",
+            &path,
+            contract_wallet_headers(&contract, "get", &path).await,
+            None,
+        )
+        .await;
+        assert_eq!(status, code, "GET: {body}");
+    }
+
+    // `/v1/activity` (its own refusal codes, a marketplace signer required):
+    // the contract's own activity when it accepts, the 503 when the check
+    // cannot run, never a 400 that blames the request.
+    let activity = format!("/v1/activity?address={contract}");
+    let marketplace = r#"{"signer":"dcl:marketplace"}"#;
+    for (wallet, code) in [
+        (ContractWallet::Accepts, StatusCode::OK),
+        (ContractWallet::Refuses, StatusCode::UNAUTHORIZED),
+        (ContractWallet::Unreachable, StatusCode::SERVICE_UNAVAILABLE),
+    ] {
+        with(&mut state, wallet);
+        let (status, body) = call(
+            market_router(state.clone()),
+            "GET",
+            &activity,
+            contract_wallet_headers_with(&contract, "get", "/v1/activity", marketplace).await,
+            None,
+        )
+        .await;
+        assert_eq!(status, code, "/v1/activity: {body}");
+    }
+
+    // Without a validator the chain is the 501 it was before.
+    Arc::get_mut(&mut state).expect("an unshared state").eip1654 = None;
+    let (status, _) = call(
+        market_router(state.clone()),
+        "POST",
+        &path,
+        contract_wallet_headers(&contract, "post", &path).await,
+        Some(json!({ "pickedFor": [lists::DEFAULT_LIST_ID] })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::NOT_IMPLEMENTED);
+    sqlx::query("DELETE FROM shop.picks WHERE user_address = $1")
+        .bind(&contract)
+        .execute(&pool)
+        .await
+        .unwrap();
+}
+
+/// A contract that refuses every signature and counts the `isValidSignature`
+/// calls it was asked.
+#[derive(Default)]
+struct CountingRefusal(std::sync::atomic::AtomicUsize);
+
+#[async_trait::async_trait]
+impl crate::auth::eip1654::Eip1654Validator for CountingRefusal {
+    async fn validate_signature(
+        &self,
+        _contract_address: &str,
+        _hash: &[u8],
+        _signature: &[u8],
+    ) -> Result<bool, crate::auth::AuthError> {
+        self.0.fetch_add(1, Ordering::SeqCst);
+        Ok(false)
+    }
+}
+
+/// The public reads that verify an optional contract-wallet chain spend the
+/// node's RPC quota per request, so each client source may start only the
+/// `/forward-blockchain` pre-auth budget of checks a minute: past it the
+/// answer is a 429 before any `isValidSignature` call, and another source
+/// keeps its own budget.
+#[tokio::test]
+async fn contract_wallet_checks_are_admitted_per_source_before_any_rpc_call() {
+    let Some(mut state) = state_with_db(Settings::for_tests()).await else {
+        return;
+    };
+    let counter = Arc::new(CountingRefusal::default());
+    Arc::get_mut(&mut state).expect("an unshared state").eip1654 = Some(counter.clone());
+    let contract = format!("0x{:0>40}", "c0de2").to_lowercase();
+    let path = format!("/v1/picks/{}-0", contract_of(&tag(), 8));
+    let get_from = |peer: &'static str| {
+        let (app, path, contract) = (market_router(state.clone()), path.clone(), contract.clone());
+        async move {
+            let mut req = Request::builder().uri(&path).body(Body::empty()).unwrap();
+            *req.headers_mut() = contract_wallet_headers(&contract, "get", &path).await;
+            req.extensions_mut()
+                .insert(axum::extract::ConnectInfo::<std::net::SocketAddr>(
+                    peer.parse().unwrap(),
+                ));
+            app.oneshot(req).await.unwrap().status()
+        }
+    };
+    let mut tripped = None;
+    for sent in 0..200 {
+        let before = counter.0.load(Ordering::SeqCst);
+        let status = get_from("203.0.113.77:40000").await;
+        if status == StatusCode::TOO_MANY_REQUESTS {
+            tripped = Some((sent, before, counter.0.load(Ordering::SeqCst)));
+            break;
+        }
+        assert_eq!(status, StatusCode::UNAUTHORIZED, "a refused contract");
+    }
+    let (sent, before, after) = tripped.expect("the source's budget trips");
+    assert!(
+        (super::tips::PREAUTH_PER_MINUTE as usize..=super::tips::PREAUTH_PER_MINUTE as usize + 5)
+            .contains(&sent),
+        "the /forward-blockchain pre-auth budget: {sent}"
+    );
+    assert_eq!(
+        before, after,
+        "no isValidSignature call once the budget is spent"
+    );
+    assert_eq!(
+        get_from("198.51.100.9:40000").await,
+        StatusCode::UNAUTHORIZED,
+        "another source keeps its own budget"
+    );
+}
+
+/// The shared cache within its acceptance TTL after a contract wallet's
+/// owner was removed: the cached answer still accepts, the contract (the
+/// fresh path) refuses.
+struct StaleAcceptance(StubEip1654);
+
+#[async_trait::async_trait]
+impl crate::auth::eip1654::Eip1654Validator for StaleAcceptance {
+    fn fresh_validator(&self) -> Option<&dyn crate::auth::eip1654::Eip1654Validator> {
+        Some(&self.0)
+    }
+
+    async fn validate_signature(
+        &self,
+        _contract_address: &str,
+        _hash: &[u8],
+        _signature: &[u8],
+    ) -> Result<bool, crate::auth::AuthError> {
+        Ok(true)
+    }
+}
+
+/// A write asks the contract itself (`signed::fresh`), so a delegation stops
+/// authorizing the moment its owner is removed; a read keeps the shared
+/// cache. The optional signer of the public reads (catalog `pickedBy`, the
+/// suggested feed) verifies a contract wallet too, and a check that cannot
+/// run is a 503 there, never an anonymous visitor.
+#[tokio::test]
+async fn writes_ask_the_contract_and_optional_reads_fail_closed() {
+    let Some(mut state) = state_with_db(Settings {
+        data_writes_enabled: true,
+        ..Settings::for_tests()
+    })
+    .await
+    else {
+        return;
+    };
+    let pool = state.pool.clone();
+    let t = tag();
+    let contract = format!("0x{:0>40}", "c0de3").to_lowercase();
+    let item = format!("{}-0", contract_of(&t, 9));
+    mirrors::items::upsert(
+        &pool,
+        super::graph::Network::Matic,
+        137,
+        &[mirrors::items::fixture(
+            &contract_of(&t, 9),
+            "0",
+            "wearable_v2",
+            "Stale",
+        )],
+    )
+    .await
+    .unwrap();
+    Arc::get_mut(&mut state).expect("an unshared state").eip1654 = Some(Arc::new(StaleAcceptance(
+        StubEip1654(ContractWallet::Refuses),
+    )));
+    let path = format!("/v1/picks/{item}");
+    let (status, body) = call(
+        market_router(state.clone()),
+        "POST",
+        &path,
+        contract_wallet_headers(&contract, "post", &path).await,
+        Some(json!({ "pickedFor": [lists::DEFAULT_LIST_ID] })),
+    )
+    .await;
+    assert_eq!(
+        status,
+        StatusCode::UNAUTHORIZED,
+        "a write asks the contract: {body}"
+    );
+    let (status, body) = call(
+        market_router(state.clone()),
+        "GET",
+        &path,
+        contract_wallet_headers(&contract, "get", &path).await,
+        None,
+    )
+    .await;
+    assert_eq!(
+        status,
+        StatusCode::OK,
+        "a read keeps the cached answer: {body}"
+    );
+
+    use super::wire::ApiError;
+    let optional = |wallet| {
+        let contract = contract.clone();
+        async move {
+            let headers = contract_wallet_headers(&contract, "get", "/v1/catalog").await;
+            super::signed::optional_signer(
+                Some(&StubEip1654(wallet)),
+                &headers,
+                "get",
+                "/v1/catalog",
+            )
+            .await
+        }
+    };
+    assert_eq!(
+        optional(ContractWallet::Accepts).await.unwrap(),
+        Some(contract.clone())
+    );
+    assert!(matches!(
+        optional(ContractWallet::Refuses).await,
+        Err(ApiError::Http { code: 401, .. })
+    ));
+    assert!(matches!(
+        optional(ContractWallet::Unreachable).await,
+        Err(ApiError::Http { code: 503, .. })
+    ));
+}
+
 #[tokio::test]
 async fn favorites_lists_and_picks_keep_the_old_authorization_and_counting_rules() {
     let Some(state) = state_with_db(Settings {
@@ -2195,6 +2644,7 @@ async fn a_signed_item_order_is_stored_once_and_only_behind_the_write_switch() {
         return;
     };
     let pool = state.pool.clone();
+    super::trade_events::tests::publish_cursors(&pool).await;
     let t = tag();
     let contract = contract_of(&t, 9);
     let marketplace = listings::offchain_marketplace_v3(137).unwrap();
@@ -2607,6 +3057,24 @@ async fn a_second_open_order_or_bid_on_the_same_asset_is_refused() {
         err.to_string(),
         "There is already an open order for this Item"
     );
+    // A first order without a verified V3 digest is left out of the
+    // listings, but still counts: it may still execute on chain, or be
+    // verified later, and two open orders would then be listed.
+    sqlx::query("INSERT INTO shop.trade_chain_state (trade_id, network, status, folded_block, digest_failed_at) VALUES ($1::uuid, 'matic', 'open', 10, timezone('UTC', now()))")
+        .bind(&first)
+        .execute(&pool)
+        .await
+        .unwrap();
+    let marked = create(signed(item_order_json(&signer, &contract), "0x03")).await;
+    assert!(
+        matches!(marked, Err(listings::TradeCreationError::DuplicateOpen(_))),
+        "{marked:?}"
+    );
+    sqlx::query("DELETE FROM shop.trade_chain_state WHERE trade_id = $1::uuid")
+        .bind(&first)
+        .execute(&pool)
+        .await
+        .unwrap();
     // Once the first order is closed, the item can be listed again.
     sqlx::query("UPDATE shop.trades SET expires_at = '2000-01-01' WHERE id = $1::uuid")
         .bind(&first)
@@ -2733,6 +3201,7 @@ async fn a_stored_malformed_token_id_does_not_break_the_bid_or_listing_reads() {
         return;
     };
     let pool = state.pool.clone();
+    super::trade_events::tests::publish_cursors(&pool).await;
     let t = tag();
     let contract = contract_of(&t, 3);
     let marketplace = listings::offchain_marketplace_v3(137).unwrap();
@@ -2812,6 +3281,7 @@ async fn a_read_naming_a_contract_keeps_the_rows_of_the_whole_read() {
         return;
     };
     let pool = state.pool.clone();
+    super::trade_events::tests::publish_cursors(&pool).await;
     let t = tag();
     let (c1, c2) = (contract_of(&t, 1), contract_of(&t, 2));
     for (c, item) in [(&c1, "0"), (&c1, "1"), (&c2, "0")] {
@@ -3420,6 +3890,7 @@ async fn an_open_listing_stays_only_while_its_signer_holds_that_token() {
         return;
     };
     let pool = state.pool.clone();
+    super::trade_events::tests::publish_cursors(&pool).await;
     let t = tag();
     let c = contract_of(&t, 7);
     let unindexed = contract_of(&t, 8);
@@ -3587,6 +4058,7 @@ async fn a_sold_listing_stays_out_through_a_rewind_and_its_refill() {
         return;
     };
     let pool = state.pool.clone();
+    super::trade_events::tests::publish_cursors(&pool).await;
     let c = contract_of(&tag(), 9);
     let token = (alloy_primitives::U256::from(3u64) << 216u32 | alloy_primitives::U256::from(1u64))
         .to_string();
@@ -3713,6 +4185,7 @@ async fn shop_feed_totals_survive_exact_and_past_end_offsets() {
     let Some(db) = crate::test_db::OwnDatabase::create("shop_page_totals").await else {
         return;
     };
+    super::trade_events::tests::publish_cursors(&db.pool).await;
     // Prices, names, timestamps, relevance and discount each induce a different order.
     let fixture = tag();
     for (id, name, price, created) in [
@@ -3897,6 +4370,7 @@ async fn the_mirror_walks_ethereum_while_the_index_owns_polygon_then_takes_polyg
         &pool,
         super::graph::Network::Matic,
         137,
+        false,
         &[mirrors::collections::fixture(
             &native, "Native", CREATOR, true,
         )],
@@ -4012,4 +4486,439 @@ async fn the_mirror_walks_ethereum_while_the_index_owns_polygon_then_takes_polyg
     .unwrap();
     assert_eq!(generation, 2);
     own.drop().await;
+}
+
+#[tokio::test]
+async fn land_pages_read_the_published_catalogue_and_enrich_the_same_snapshot() {
+    use crate::land_authz::LAND_MAINNET;
+    let Some(db) = super::tests::support::OwnDb::create("land_nft_pages").await else {
+        return;
+    };
+    let names = super::nft_index::DCL_REGISTRAR;
+    let graph = FakeGraph::new();
+    let url = serve_graph(graph.clone()).await;
+    let app = |network: &str, walker: bool, trades_upstream: Option<String>| {
+        let mut settings = Settings::for_tests();
+        settings.eth_network = network.into();
+        settings.market.indexes.nft_enabled = walker;
+        settings.trades_sync_upstream_url = trades_upstream;
+        settings.marketplace_subgraph_url = Some(url.clone());
+        let state = super::MarketplaceState::new(
+            db.pool.clone(),
+            crate::http::Outbound::for_tests(),
+            settings,
+        );
+        state.test_allow_loopback.store(true, Ordering::Relaxed);
+        market_router(Arc::new(state))
+    };
+    let walker = app("mainnet", true, None);
+    let land = LAND_MAINNET.land_registry;
+    let estate = LAND_MAINNET.estate_registry;
+    let parcel = (alloy_primitives::U256::from((-102_i128) as u128) << 128_usize)
+        | alloy_primitives::U256::from((-10_i128) as u128);
+    sqlx::raw_sql(sqlx::AssertSqlSafe(format!(
+        "INSERT INTO land_authz.index_cursor(network,land_registry,estate_registry,last_block,folded_block,folded_at,full_replay_started)
+         VALUES ('ethereum-mainnet','{land}','{estate}',20,20,timezone('UTC',now()),true);
+         INSERT INTO shop.chain_cursor(indexer,network,start_block,last_block,folded_block,folded_at,full_history,chain_id)
+         VALUES ('nft','ethereum',0,20,20,timezone('UTC',now()),true,1), ('nft','matic',0,20,20,timezone('UTC',now()),true,137), ('rentals','ethereum',0,20,20,timezone('UTC',now()),true,1);
+         INSERT INTO shop.mirror_state(mirror,network,source_url,last_complete_pass_at)
+         VALUES ('items','ethereum','test',now()),('items','matic','test',now());
+         INSERT INTO land_authz.token_right(token_address,token_id,owner,x,y,updated_block,updated_log)
+         VALUES ('{land}',{parcel},'{WALLET_A}',-102,-10,10,0),('{estate}',42,'{WALLET_A}',NULL,NULL,11,1);
+         INSERT INTO land_authz.estate_land VALUES({parcel},42,11,2);
+         INSERT INTO shop.nft(network,contract_address,token_id,owner,ens_subdomain,minted_block,minted_at,transferred_block,transferred_log,transferred_at)
+         VALUES('ethereum','{names}',9,'{WALLET_A}','alice',1,1,1,0,1);
+         INSERT INTO shop.land_data VALUES('{estate}',42,'North estate','Two words',12,1);
+         INSERT INTO shop.nft_order(network,contract_address,token_id,order_id,marketplace_address,status,seller,price,expires_at,created_at,updated_at,updated_block,updated_log)
+         VALUES('ethereum','{estate}',42,'order-42','{CREATOR}','open','{WALLET_A}',25,4102444800000,1,2,13,0)"
+    ))).execute(&db.pool).await.unwrap();
+    let rental = crate::rentals::index::tests::seed_listing(
+        &db.pool, estate, "42", ["0"; 3], "0x42", WALLET_A, CREATOR,
+    )
+    .await;
+    let (code, result) = get(
+        walker.clone(),
+        &format!("/v1/nfts?contractAddress={estate}&tokenId=42"),
+    )
+    .await;
+    assert_eq!(code, StatusCode::OK, "{result}");
+    assert_eq!(result["total"], 1);
+    let item = &result["data"][0];
+    assert_eq!(item["nft"]["name"], "North estate");
+    assert_eq!(item["nft"]["owner"], WALLET_A);
+    assert_eq!(item["nft"]["data"]["estate"]["size"], 1);
+    assert_eq!(
+        item["nft"]["data"]["estate"]["parcels"],
+        json!([{"x":-102,"y":-10}])
+    );
+    assert_eq!(item["order"]["id"], "order-42");
+    assert_eq!(item["rental"]["id"], rental.to_string());
+    let (code, result) = get(walker.clone(), "/v1/nfts?isLand=true&isOnRent=true").await;
+    assert_eq!(code, StatusCode::OK, "{result}");
+    assert_eq!(result["total"], 1);
+    assert_eq!(result["data"][0]["nft"]["tokenId"], "42");
+    let (code, result) = get(
+        walker.clone(),
+        "/v1/nfts?category=parcel&minDistanceToPlaza=9&maxDistanceToPlaza=9",
+    )
+    .await;
+    assert_eq!(code, StatusCode::OK, "{result}");
+    assert_eq!(result["data"][0]["nft"]["tokenId"], parcel.to_string());
+    let (code, result) = get(
+        walker.clone(),
+        &format!("/v1/nfts?owner={WALLET_A}&contractAddress={estate}&contractAddress={names}"),
+    )
+    .await;
+    assert_eq!(code, StatusCode::OK, "{result}");
+    assert_eq!(result["total"], 2);
+    assert!(
+        result["data"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|item| item["nft"]["name"] == "alice")
+    );
+    assert!(
+        result["data"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|item| item["nft"]["name"] == "North estate")
+    );
+    for skip in [0, 1, 5001] {
+        let (code, result) = get(
+            walker.clone(),
+            &format!("/v1/nfts?owner={WALLET_A}&first=1&skip={skip}"),
+        )
+        .await;
+        assert_eq!(code, StatusCode::OK, "{result}");
+        assert_eq!(result["total"], 3);
+        assert_eq!(
+            result["data"].as_array().unwrap().len(),
+            usize::from(skip < 2)
+        );
+    }
+
+    let unavailable_trades = app("mainnet", true, Some(url.clone()));
+    for query in [
+        "isOnSale=true".to_owned(),
+        format!("contractAddress={land}&tokenId={parcel}"),
+    ] {
+        let (code, result) = get(unavailable_trades.clone(), &format!("/v1/nfts?{query}")).await;
+        assert_eq!(code, StatusCode::SERVICE_UNAVAILABLE, "{result}");
+        assert_eq!(result["source"], "trades-mirror");
+    }
+    let (code, result) = get(unavailable_trades, "/v1/nfts?first=24").await;
+    assert_eq!(code, StatusCode::OK, "{result}");
+    assert_eq!(result["total"], 3);
+    // The node's own trades are readable (no upstream, writes on), but the
+    // trade-events verdicts are not published: both readers of a page's v3
+    // orders on the LAND snapshot answer that index's envelope instead of
+    // dropping the orders; once it publishes on both networks they serve.
+    let local_trades = {
+        let mut settings = Settings::for_tests();
+        settings.eth_network = "mainnet".into();
+        settings.market.indexes.nft_enabled = true;
+        settings.data_writes_enabled = true;
+        settings.marketplace_subgraph_url = Some(url.clone());
+        let state = super::MarketplaceState::new(
+            db.pool.clone(),
+            crate::http::Outbound::for_tests(),
+            settings,
+        );
+        state.test_allow_loopback.store(true, Ordering::Relaxed);
+        market_router(Arc::new(state))
+    };
+    let order_reads = [
+        "isOnSale=true".to_owned(),
+        format!("contractAddress={land}&tokenId={parcel}"),
+    ];
+    for query in &order_reads {
+        let (code, result) = get(local_trades.clone(), &format!("/v1/nfts?{query}")).await;
+        assert_eq!(code, StatusCode::SERVICE_UNAVAILABLE, "{query}: {result}");
+        assert_eq!(result["source"], "trade-events-index", "{query}");
+    }
+    super::trade_events::tests::publish_cursors(&db.pool).await;
+    for query in &order_reads {
+        let (code, result) = get(local_trades.clone(), &format!("/v1/nfts?{query}")).await;
+        assert_eq!(code, StatusCode::OK, "{query}: {result}");
+    }
+    let mixed_contracts = format!("/v1/nfts?contractAddress={estate}&contractAddress={WALLET_B}");
+    let (code, result) = get(walker.clone(), &mixed_contracts).await;
+    assert_eq!(code, StatusCode::OK, "{result}");
+    assert_eq!(result["total"], 1);
+    sqlx::query("UPDATE shop.chain_cursor SET folded_block=NULL WHERE network='matic'")
+        .execute(&db.pool)
+        .await
+        .unwrap();
+    let (code, result) = get(walker.clone(), &mixed_contracts).await;
+    assert_eq!(code, StatusCode::SERVICE_UNAVAILABLE, "{result}");
+    assert_eq!(result["source"], "nft-index");
+    sqlx::query("UPDATE shop.chain_cursor SET folded_block=last_block WHERE network='matic'")
+        .execute(&db.pool)
+        .await
+        .unwrap();
+
+    // A missing rental table must not manufacture an empty rental result.
+    sqlx::query("ALTER TABLE signatures.rental_periods RENAME TO held_periods")
+        .execute(&db.pool)
+        .await
+        .unwrap();
+    for query in ["category=estate", "category=estate&isOnRent=true"] {
+        let (code, _) = get(walker.clone(), &format!("/v1/nfts?{query}")).await;
+        assert_eq!(code, StatusCode::INTERNAL_SERVER_ERROR);
+    }
+    sqlx::query("ALTER TABLE signatures.held_periods RENAME TO rental_periods")
+        .execute(&db.pool)
+        .await
+        .unwrap();
+
+    // Hold the final rental lookup after the LAND/NFT snapshot is established.
+    let mut writer = db.pool.begin().await.unwrap();
+    sqlx::query("LOCK TABLE signatures.rentals IN ACCESS EXCLUSIVE MODE")
+        .execute(&mut *writer)
+        .await
+        .unwrap();
+    let pid: i32 = sqlx::query_scalar("SELECT pg_backend_pid()")
+        .fetch_one(&mut *writer)
+        .await
+        .unwrap();
+    let request = tokio::spawn(get(walker.clone(), "/v1/nfts?category=estate"));
+    tokio::time::timeout(Duration::from_secs(5), async {
+        loop {
+            let waiting: bool = sqlx::query_scalar("SELECT EXISTS(SELECT FROM pg_stat_activity WHERE datname=current_database() AND $1=ANY(pg_blocking_pids(pid)) AND query LIKE '%FROM signatures.rentals%')")
+                .bind(pid).fetch_one(&db.pool).await.unwrap();
+            if waiting { break; }
+            tokio::task::yield_now().await;
+        }
+    }).await.expect("page reached the rental enrichment");
+    sqlx::query("UPDATE signatures.rentals SET status='cancelled' WHERE id=$1")
+        .bind(rental)
+        .execute(&mut *writer)
+        .await
+        .unwrap();
+    sqlx::query("UPDATE land_authz.index_cursor SET folded_block=NULL")
+        .execute(&mut *writer)
+        .await
+        .unwrap();
+    writer.commit().await.unwrap();
+    let (code, result) = request.await.unwrap();
+    assert_eq!(code, StatusCode::OK, "{result}");
+    assert_eq!(result["data"][0]["rental"]["id"], rental.to_string());
+    for query in [
+        format!("owner={WALLET_A}"),
+        "first=24".into(),
+        "category=estate&isOnRent=true".into(),
+    ] {
+        let (code, result) = get(walker.clone(), &format!("/v1/nfts?{query}")).await;
+        assert_eq!(code, StatusCode::SERVICE_UNAVAILABLE, "{result}");
+        assert_eq!(result["source"], "land-authz-index");
+    }
+    sqlx::query("UPDATE land_authz.index_cursor SET folded_block=last_block")
+        .execute(&db.pool)
+        .await
+        .unwrap();
+    sqlx::query("UPDATE shop.chain_cursor SET folded_block=NULL WHERE network='ethereum'")
+        .execute(&db.pool)
+        .await
+        .unwrap();
+    let (code, result) = get(walker.clone(), "/v1/nfts?category=parcel").await;
+    assert_eq!(code, StatusCode::SERVICE_UNAVAILABLE, "{result}");
+    assert_eq!(result["source"], "nft-index");
+    assert!(graph.requests.lock().unwrap().is_empty());
+
+    for (network, enabled) in [("mainnet", false), ("sepolia", true)] {
+        let (code, result) = get(app(network, enabled, None), "/v1/nfts?category=parcel").await;
+        assert_eq!(code, StatusCode::OK, "{result}");
+        assert_eq!(result["total"], 0);
+        assert!(!std::mem::take(&mut *graph.requests.lock().unwrap()).is_empty());
+    }
+    drop(walker);
+    db.drop().await;
+}
+
+#[tokio::test]
+async fn owner_pages_include_only_current_unclaimed_land_before_pagination() {
+    use crate::land_authz::LAND_MAINNET;
+    use crate::rentals::index::RENTALS_MAINNET as VENUE;
+
+    let Some(db) = super::tests::support::OwnDb::create("owner_rented_land").await else {
+        return;
+    };
+    let mut settings = Settings::for_tests();
+    settings.eth_network = "mainnet".into();
+    settings.market.indexes.nft_enabled = true;
+    let state = Arc::new(super::MarketplaceState::new(
+        db.pool.clone(),
+        crate::http::Outbound::for_tests(),
+        settings,
+    ));
+    let app = market_router(state.clone());
+    let run = |sql: String| async {
+        sqlx::raw_sql(sqlx::AssertSqlSafe(sql))
+            .execute(&db.pool)
+            .await
+            .unwrap();
+    };
+    let land = LAND_MAINNET.land_registry;
+    let estate = LAND_MAINNET.estate_registry;
+    let owner_url = format!("/v1/nfts?owner={WALLET_A}");
+    run(format!(
+        "INSERT INTO land_authz.index_cursor(network,land_registry,estate_registry,last_block,folded_block,folded_at,full_replay_started)
+         VALUES ('ethereum-mainnet','{land}','{estate}',40,40,timezone('UTC',now()),true);
+         INSERT INTO shop.chain_cursor(indexer,network,start_block,last_block,folded_block,folded_at,full_history,chain_id)
+         VALUES ('nft','ethereum',0,40,40,timezone('UTC',now()),true,1),
+                ('nft','matic',0,40,40,timezone('UTC',now()),true,137),
+                ('rentals','ethereum',0,38,30,timezone('UTC',now()),true,1);
+         INSERT INTO shop.mirror_state(mirror,network,source_url,last_complete_pass_at)
+         VALUES ('items','ethereum','test',now()),('items','matic','test',now());
+         INSERT INTO land_authz.token_right(token_address,token_id,owner,x,y,updated_block,updated_log)
+         VALUES ('{land}',1,'{WALLET_A}',0,1,10,0),('{land}',2,'{VENUE}',0,2,12,0),('{estate}',3,'{VENUE}',NULL,NULL,15,1);
+         INSERT INTO land_authz.estate_land VALUES (801,3,14,1);
+         INSERT INTO land_authz.authz_event(token_address,token_id,kind,block_number,log_index,block_time,account)
+         VALUES ('{land}',1,'transfer',10,0,100,'{WALLET_A}'),('{land}',2,'transfer',12,0,120,'{VENUE}'),
+                ('{estate}',3,'transfer',15,1,150,'{VENUE}');"
+    )).await;
+    let rent = |contract: &str, id: i32, block: i64, log: i32, signer: &str, extension: bool| {
+        format!(
+        "INSERT INTO shop.rental_event(network,rentals_address,kind,contract_address,token_id,block_number,log_index,block_time,signer,tenant,rental_days,price_per_day,is_extension,signature,tx_hash)
+         VALUES ('ethereum','{VENUE}','rented','{contract}',{id},{block},{log},100,'{signer}','{WALLET_B}',1,1,{extension},'0x01','0x02')"
+    )
+    };
+    run(rent(land, 2, 12, 1, WALLET_A, false)).await;
+    run(rent(land, 2, 14, 0, WALLET_A, true)).await;
+    run(rent(estate, 3, 15, 2, WALLET_A, false)).await;
+    // Rentals has walked to 38 but published through 30. The owner page
+    // stays available and the event at 35 cannot change its published answer.
+    run(rent(land, 2, 35, 0, WALLET_B, false)).await;
+    let mut tokens = std::collections::BTreeMap::new();
+    for skip in 0..3 {
+        let (code, result) = get(app.clone(), &format!("{owner_url}&first=1&skip={skip}")).await;
+        assert_eq!(code, StatusCode::OK, "{result}");
+        assert_eq!(result["total"], 3);
+        let nft = &result["data"][0]["nft"];
+        tokens.insert(
+            nft["tokenId"].as_str().unwrap().to_owned(),
+            nft["owner"].clone(),
+        );
+    }
+    assert_eq!(tokens.len(), 3);
+    assert_eq!(tokens["1"], WALLET_A);
+    assert_eq!(tokens["2"], VENUE);
+    assert_eq!(tokens["3"], VENUE);
+    let listing = crate::rentals::index::tests::seed_listing(
+        &db.pool, land, "2", ["0"; 3], "0xabb1", WALLET_A, VENUE,
+    )
+    .await;
+    sqlx::query("UPDATE signatures.rentals SET status='executed' WHERE id=$1")
+        .bind(listing)
+        .execute(&db.pool)
+        .await
+        .unwrap();
+    for (status, total) in [("executed", 1), ("open", 0)] {
+        let (code, result) = get(
+            app.clone(),
+            &format!("{owner_url}&category=parcel&isOnRent=true&rentalStatus={status}"),
+        )
+        .await;
+        assert_eq!(code, StatusCode::OK, "{result}");
+        assert_eq!(result["total"], total);
+        if total == 1 {
+            assert_eq!(result["data"][0]["nft"]["tokenId"], "2");
+            assert_eq!(result["data"][0]["rental"]["id"], listing.to_string());
+        }
+    }
+    let claim = |block: i64, log: i32| {
+        format!(
+        "INSERT INTO shop.rental_event(network,rentals_address,kind,contract_address,token_id,block_number,log_index,block_time,tx_hash)
+         VALUES ('ethereum','{VENUE}','claimed','{land}',2,{block},{log},200,'0x03')"
+    )
+    };
+    run(claim(20, 0)).await;
+    let (code, result) = get(app.clone(), &owner_url).await;
+    assert_eq!(code, StatusCode::OK, "{result}");
+    assert_eq!(result["total"], 2, "a claim removes the parcel");
+    let transfer = |block: i64, log: i32, owner: &str| {
+        format!(
+        "INSERT INTO land_authz.authz_event(token_address,token_id,kind,block_number,log_index,block_time,account)
+         VALUES ('{land}',2,'transfer',{block},{log},200,'{owner}');
+         UPDATE land_authz.token_right SET owner='{owner}',updated_block={block},updated_log={log} WHERE token_address='{land}' AND token_id=2"
+    )
+    };
+    // LAND catches up with the claim: the parcel returns through direct ownership.
+    run(transfer(20, 1, WALLET_A)).await;
+    let (code, result) = get(app.clone(), &owner_url).await;
+    assert_eq!(code, StatusCode::OK, "{result}");
+    assert_eq!(result["total"], 3);
+    run(transfer(20, 2, VENUE)).await;
+    run(rent(land, 2, 20, 3, WALLET_B, false)).await;
+    let (code, result) = get(
+        app.clone(),
+        &format!("/v1/nfts?owner={WALLET_B}&category=parcel"),
+    )
+    .await;
+    assert_eq!(code, StatusCode::OK, "{result}");
+    assert_eq!(result["total"], 1);
+    assert_eq!(result["data"][0]["nft"]["tokenId"], "2");
+
+    // The new arrival has no published lessor yet. An owner with no rent
+    // history cannot safely be answered either.
+    run(format!(
+        "INSERT INTO land_authz.authz_event(token_address,token_id,kind,block_number,log_index,block_time,account)
+         VALUES ('{land}',2,'transfer',36,1,360,'{VENUE}');
+         UPDATE land_authz.token_right SET updated_block=36,updated_log=1 WHERE token_address='{land}' AND token_id=2"
+    )).await;
+    for owner in [
+        WALLET_A,
+        WALLET_B,
+        "0xcccccccccccccccccccccccccccccccccccccccc",
+    ] {
+        let (code, result) = get(app.clone(), &format!("/v1/nfts?owner={owner}")).await;
+        assert_eq!(code, StatusCode::SERVICE_UNAVAILABLE, "{result}");
+        assert_eq!(result["source"], "rentals-index");
+    }
+    run(
+        "UPDATE shop.chain_cursor SET last_block=40,folded_block=40 WHERE indexer='rentals'".into(),
+    )
+    .await;
+    // The latest rent for B preceded the new arrival, even with a rent
+    // earlier in the same block. A later log reestablishes custody.
+    run(rent(land, 2, 36, 0, WALLET_B, false)).await;
+    let url_b = format!("/v1/nfts?owner={WALLET_B}&category=parcel");
+    let (code, result) = get(app.clone(), &url_b).await;
+    assert_eq!(code, StatusCode::OK, "{result}");
+    assert_eq!(result["total"], 0);
+    run(rent(land, 2, 36, 2, WALLET_B, false)).await;
+    let (code, result) = get(app.clone(), &url_b).await;
+    assert_eq!(code, StatusCode::OK, "{result}");
+    assert_eq!(result["total"], 1);
+    run(format!("INSERT INTO shop.rental_event(network,rentals_address,kind,contract_address,token_id,block_number,log_index,block_time,tx_hash)
+        VALUES ('ethereum','{VENUE}','claimed','{estate}',3,38,1,380,'0x04')")).await;
+    let (code, result) = get(app.clone(), &format!("{owner_url}&category=estate")).await;
+    assert_eq!(code, StatusCode::OK, "{result}");
+    assert_eq!(result["total"], 0);
+    run("UPDATE shop.chain_cursor SET folded_block=NULL WHERE indexer='rentals'".into()).await;
+    let (code, result) = get(app.clone(), &owner_url).await;
+    assert_eq!(code, StatusCode::SERVICE_UNAVAILABLE, "{result}");
+    assert_eq!(result["source"], "rentals-index");
+    let (code, result) = get(app.clone(), "/v1/nfts?category=parcel").await;
+    assert_eq!(code, StatusCode::OK, "{result}");
+    // The switch controls the writer. Without a cursor the reader cannot
+    // establish LAND custody, while a wearable-only page still has all its sources.
+    assert!(
+        super::chain_jobs::expected_cursors(
+            &state,
+            super::chain_walk::ChainNet::Ethereum,
+            Some(false)
+        )
+        .iter()
+        .all(|(index, _)| index.indexer() != "rentals")
+    );
+    run("DELETE FROM shop.chain_cursor WHERE indexer='rentals'".into()).await;
+    let (code, result) = get(app.clone(), &owner_url).await;
+    assert_eq!(code, StatusCode::SERVICE_UNAVAILABLE, "{result}");
+    assert_eq!(result["source"], "rentals-index");
+    let (code, result) = get(app.clone(), &format!("{owner_url}&category=wearable")).await;
+    assert_eq!(code, StatusCode::OK, "{result}");
+    db.drop().await;
 }

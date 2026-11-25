@@ -9,10 +9,9 @@ pub const ESTATE_REGISTRY_SEPOLIA: &str = "0x369a7fbe718c870c79f99fb423882e8dd8b
 
 /// The block the LAND registry was deployed in: where a full replay starts.
 pub const LAND_START_BLOCK_MAINNET: u64 = 4_944_642;
-/// The Sepolia registries' deployment block is not recorded in the old
-/// crate; a replay from genesis costs empty ranges only (the endpoint's
-/// range hints bound them), and `LAND_AUTHZ_START_BLOCK` overrides it.
-pub const LAND_START_BLOCK_SEPOLIA: u64 = 0;
+/// First Sepolia LAND proxy block, from marketplace-squid-core
+/// 85c6832e96e5459b37f0f315b8e384693684e12d, src/eth/data/contracts/start-blocks.ts.
+pub const LAND_START_BLOCK_SEPOLIA: u64 = 3_831_219;
 
 /// `index_cursor.network` values.
 pub const NETWORK_MAINNET: &str = "ethereum-mainnet";

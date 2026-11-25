@@ -762,6 +762,7 @@ mod tests {
             &pool,
             Network::Matic,
             137,
+            false,
             &[mirrors::collections::fixture(
                 MIRRORED_ONLY,
                 "Mirror",
@@ -868,7 +869,7 @@ mod tests {
             false,
         )];
         assert_eq!(
-            mirrors::collections::upsert(&pool, Network::Matic, 137, &page)
+            mirrors::collections::upsert(&pool, Network::Matic, 137, false, &page)
                 .await
                 .unwrap(),
             0
@@ -887,7 +888,7 @@ mod tests {
         );
         assert_eq!(catalogue(&pool).await, before);
         assert_eq!(
-            mirrors::collections::upsert(&pool, Network::Ethereum, 1, &page)
+            mirrors::collections::upsert(&pool, Network::Ethereum, 1, false, &page)
                 .await
                 .unwrap(),
             1
