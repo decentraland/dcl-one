@@ -164,17 +164,19 @@ pub fn runner_section(section: &RunnerSection) -> String {
                 signed_hundredths(change.exceptions_per_run - base.exceptions_per_run),
                 exceptions_verdict_text(comparison.exceptions_per_run_verdict)
             );
-            if change.cpu_hiccup_count_run_count > 0 || base.cpu_hiccup_count_run_count > 0 {
+            if change.cpu_hiccups_per_run.run_count > 0 || base.cpu_hiccups_per_run.run_count > 0 {
                 let _ = writeln!(
                     out,
                     "| {} | {} | {} | {} | {} |",
                     CPU_HICCUPS_METRIC,
                     cpu_hiccups_cell(base),
                     cpu_hiccups_cell(change),
-                    if change.cpu_hiccup_count_run_count > 0 && base.cpu_hiccup_count_run_count > 0
+                    if change.cpu_hiccups_per_run.run_count > 0
+                        && base.cpu_hiccups_per_run.run_count > 0
                     {
                         signed_hundredths(f64::from(
-                            change.cpu_hiccups_per_run.median - base.cpu_hiccups_per_run.median,
+                            change.cpu_hiccups_per_run.value.median
+                                - base.cpu_hiccups_per_run.value.median,
                         ))
                     } else {
                         "-".to_owned()
@@ -182,15 +184,17 @@ pub fn runner_section(section: &RunnerSection) -> String {
                     hiccups_verdict_text(comparison.cpu_hiccups_per_run_verdict)
                 );
             }
-            if change.peak_memory_run_count > 0 || base.peak_memory_run_count > 0 {
+            if change.peak_memory_mib.run_count > 0 || base.peak_memory_mib.run_count > 0 {
                 let _ = writeln!(
                     out,
                     "| {} | {} | {} | {} | {} |",
                     PEAK_MEMORY_METRIC,
-                    peak_memory_cell(base),
-                    peak_memory_cell(change),
-                    if change.peak_memory_run_count > 0 && base.peak_memory_run_count > 0 {
-                        signed_mib(change.peak_memory_mib.median - base.peak_memory_mib.median)
+                    measured_cell(&base.peak_memory_mib, "MiB", 1.0, 0),
+                    measured_cell(&change.peak_memory_mib, "MiB", 1.0, 0),
+                    if change.peak_memory_mib.run_count > 0 && base.peak_memory_mib.run_count > 0 {
+                        signed_mib(
+                            change.peak_memory_mib.value.median - base.peak_memory_mib.value.median,
+                        )
                     } else {
                         "-".to_owned()
                     },
@@ -210,8 +214,8 @@ pub fn runner_section(section: &RunnerSection) -> String {
                 let _ = writeln!(
                     out,
                     "| {name} | {} | {} | {delta} | {} |",
-                    load_time_cell(base),
-                    load_time_cell(change),
+                    measured_cell(base, "s", 1000.0, 1),
+                    measured_cell(change, "s", 1000.0, 1),
                     frame_time_verdict_text(comparison.load_time_verdicts[m])
                 );
             }
@@ -232,18 +236,18 @@ pub fn runner_section(section: &RunnerSection) -> String {
                 "| {EXCEPTIONS_METRIC} | {} |",
                 hundredths(change.exceptions_per_run)
             );
-            if change.cpu_hiccup_count_run_count > 0 {
+            if change.cpu_hiccups_per_run.run_count > 0 {
                 let _ = writeln!(
                     out,
                     "| {CPU_HICCUPS_METRIC} | {} |",
                     cpu_hiccups_cell(change)
                 );
             }
-            if change.peak_memory_run_count > 0 {
+            if change.peak_memory_mib.run_count > 0 {
                 let _ = writeln!(
                     out,
                     "| {PEAK_MEMORY_METRIC} | {} |",
-                    peak_memory_cell(change)
+                    measured_cell(&change.peak_memory_mib, "MiB", 1.0, 0)
                 );
             }
             for (m, name) in LOAD_TIME_METRICS.iter().enumerate() {
@@ -251,7 +255,7 @@ pub fn runner_section(section: &RunnerSection) -> String {
                     let _ = writeln!(
                         out,
                         "| {name} | {} |",
-                        load_time_cell(&change.load_time_ms[m])
+                        measured_cell(&change.load_time_ms[m], "s", 1000.0, 1)
                     );
                 }
             }
@@ -510,10 +514,10 @@ fn top_scope_names<'a>(change: &'a [(String, f32)], base: &'a [(String, f32)]) -
 
 /// The hiccup count's median and range, with the threshold in effect.
 fn cpu_hiccups_cell(build: &BuildBenchmarkRunsStatistics) -> String {
-    if build.cpu_hiccup_count_run_count == 0 {
+    if build.cpu_hiccups_per_run.run_count == 0 {
         return "-".to_owned();
     }
-    let MedianAndRange { median, min, max } = build.cpu_hiccups_per_run;
+    let MedianAndRange { median, min, max } = build.cpu_hiccups_per_run.value;
     let threshold = build
         .cpu_hiccup_threshold_ms
         .map_or(String::new(), |ms| format!(" over {ms:.0} ms"));
@@ -524,29 +528,18 @@ fn cpu_hiccups_cell(build: &BuildBenchmarkRunsStatistics) -> String {
     }
 }
 
-fn peak_memory_cell(build: &BuildBenchmarkRunsStatistics) -> String {
-    if build.peak_memory_run_count == 0 {
-        return "-".to_owned();
-    }
-    let MedianAndRange { median, min, max } = build.peak_memory_mib;
-    if max - min < 0.5 {
-        format!("{median:.0} MiB")
-    } else {
-        format!("{median:.0} MiB ({min:.0}–{max:.0})")
-    }
-}
-
-/// A load time in seconds, with the range when the runs differ.
-fn load_time_cell(runs: &MeasuredRuns) -> String {
+/// The median in `unit`, the measured value divided by `per_unit`, at `decimals`, with the range
+/// when the runs differ at that precision.
+fn measured_cell(runs: &MeasuredRuns, unit: &str, per_unit: f32, decimals: usize) -> String {
     if runs.run_count == 0 {
         return "-".to_owned();
     }
     let MedianAndRange { median, min, max } = runs.value;
-    let (median, min, max) = (median / 1000.0, min / 1000.0, max / 1000.0);
-    if max - min < 0.05 {
-        format!("{median:.1} s")
+    let (median, min, max) = (median / per_unit, min / per_unit, max / per_unit);
+    if max - min < 0.5 / 10f32.powi(decimals as i32) {
+        format!("{median:.decimals$} {unit}")
     } else {
-        format!("{median:.1} s ({min:.1}–{max:.1})")
+        format!("{median:.decimals$} {unit} ({min:.decimals$}–{max:.decimals$})")
     }
 }
 

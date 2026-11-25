@@ -93,16 +93,12 @@ struct BuildBenchmarkRunsStatistics {
     /// Per run, not in total: after a crash or an exclusion the builds have different run counts.
     exceptions_per_run: f64,
     exception_kinds: ExceptionKindCounts,
-    /// The runs whose summary measured the hiccup count, which its row comes from.
-    cpu_hiccup_count_run_count: usize,
-    /// Frames over the hiccup threshold per run, across those runs.
-    cpu_hiccups_per_run: MedianAndRange,
+    /// Frames over the hiccup threshold per run, across the runs whose summary measured it.
+    cpu_hiccups_per_run: MeasuredRuns,
     /// The threshold in effect, the median across those runs.
     cpu_hiccup_threshold_ms: Option<f32>,
-    /// The runs whose summary measured the peak memory, which its row comes from.
-    peak_memory_run_count: usize,
-    /// Peak engine memory per run, MiB, across those runs.
-    peak_memory_mib: MedianAndRange,
+    /// Peak engine memory per run, MiB, across the runs whose summary measured it.
+    peak_memory_mib: MeasuredRuns,
     /// Self time per run, ms, of the scopes the summaries name, over every run with a summary
     /// (0 in a run whose top rows leave the scope out), highest first.
     scope_self_ms_per_run: Vec<(String, f32)>,
@@ -551,12 +547,12 @@ fn compare_builds(
             change_runs >= MIN_MEASURED_RUNS && base_runs >= MIN_MEASURED_RUNS
         };
         let cpu_hiccups_per_run_verdict = if measured_by_both(
-            change.cpu_hiccup_count_run_count,
-            base.cpu_hiccup_count_run_count,
+            change.cpu_hiccups_per_run.run_count,
+            base.cpu_hiccups_per_run.run_count,
         ) {
             stats::hiccups_per_run_verdict(
-                &change.cpu_hiccups_per_run,
-                &base.cpu_hiccups_per_run,
+                &change.cpu_hiccups_per_run.value,
+                &base.cpu_hiccups_per_run.value,
                 change.cpu_hiccup_threshold_ms,
                 base.cpu_hiccup_threshold_ms,
                 incomparable,
@@ -564,16 +560,18 @@ fn compare_builds(
         } else {
             IncidentsPerRunVerdict::Withheld(TOO_FEW_MEASURED_RUNS)
         };
-        let peak_memory_verdict =
-            if measured_by_both(change.peak_memory_run_count, base.peak_memory_run_count) {
-                stats::peak_memory_verdict(
-                    &change.peak_memory_mib,
-                    &base.peak_memory_mib,
-                    incomparable,
-                )
-            } else {
-                PeakMemoryVerdict::Withheld(TOO_FEW_MEASURED_RUNS)
-            };
+        let peak_memory_verdict = if measured_by_both(
+            change.peak_memory_mib.run_count,
+            base.peak_memory_mib.run_count,
+        ) {
+            stats::peak_memory_verdict(
+                &change.peak_memory_mib.value,
+                &base.peak_memory_mib.value,
+                incomparable,
+            )
+        } else {
+            PeakMemoryVerdict::Withheld(TOO_FEW_MEASURED_RUNS)
+        };
         let load_time_verdicts = std::array::from_fn(|m| {
             let (change, base) = (&change.load_time_ms[m], &base.load_time_ms[m]);
             if measured_by_both(change.run_count, base.run_count) {
@@ -713,8 +711,7 @@ fn build_benchmark_runs_statistics(runs: &[BuildBenchmarkRun]) -> BuildBenchmark
             exceptions as f64 / runs.len() as f64
         },
         exception_kinds: ExceptionKindCounts::combine(runs.iter().map(|run| &run.exception_kinds)),
-        cpu_hiccup_count_run_count: cpu_hiccup_counts.len(),
-        cpu_hiccups_per_run: stats::median_and_range(cpu_hiccup_counts),
+        cpu_hiccups_per_run: MeasuredRuns::of(cpu_hiccup_counts),
         cpu_hiccup_threshold_ms: {
             let thresholds: Vec<f32> = summaries
                 .iter()
@@ -722,8 +719,7 @@ fn build_benchmark_runs_statistics(runs: &[BuildBenchmarkRun]) -> BuildBenchmark
                 .collect();
             (!thresholds.is_empty()).then(|| stats::median_and_range(thresholds).median)
         },
-        peak_memory_run_count: peak_memories_mib.len(),
-        peak_memory_mib: stats::median_and_range(peak_memories_mib),
+        peak_memory_mib: MeasuredRuns::of(peak_memories_mib),
         scope_self_ms_per_run,
         load_time_ms: std::array::from_fn(|m| {
             MeasuredRuns::of(runs.iter().filter_map(|run| run.load_time_ms[m]).collect())
