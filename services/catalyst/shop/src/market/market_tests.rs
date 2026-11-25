@@ -330,7 +330,7 @@ async fn serve_graph(up: Arc<FakeGraph>) -> String {
     format!("http://{addr}/")
 }
 
-async fn job_ctx(jobs: &crate::jobs::Jobs) -> crate::jobs::JobContext {
+pub(super) async fn job_ctx(jobs: &crate::jobs::Jobs) -> crate::jobs::JobContext {
     let (tx, rx) = tokio::sync::oneshot::channel();
     jobs.spawn("ctx", move |ctx| async move {
         let _ = tx.send(ctx);
@@ -480,6 +480,66 @@ async fn cleanup_mirror(pool: &PgPool, contracts: &[String]) {
         .execute(pool)
         .await
         .unwrap();
+}
+
+#[tokio::test]
+async fn upgrading_a_completed_mainnet_mirror_keeps_the_catalogue_available() {
+    let url = format!("{}missing", serve_graph(FakeGraph::new()).await);
+    let Some((state, own)) = state_over_own(&url, true).await else {
+        return;
+    };
+    sqlx::query("INSERT INTO shop.mirror_state(mirror,network,source_url,last_complete_pass_at,last_complete_pass_rows,cursor_id)
+                 VALUES ('items','matic',$1,timezone('UTC',now()),17,'old-key'),
+                        ('collections','ethereum','https://subgraph.decentraland.org/collections-ethereum-mainnet',timezone('UTC',now()),19,'key')")
+        .bind(&url).execute(&state.pool).await.unwrap();
+    sqlx::raw_sql(include_str!(concat!(
+        env!("DCL_ONE_ROOT"),
+        "/schemas/migrations/0070_shop_mirror_chain.sql"
+    )))
+    .execute(&state.pool)
+    .await
+    .unwrap();
+    assert!(
+        super::nft_index::mirror_complete(&state.pool, super::chain_walk::ChainNet::Ethereum, 1)
+            .await
+    );
+    sqlx::query("UPDATE shop.mirror_state SET pass_started_at=last_complete_pass_at+interval '1 second' WHERE mirror='items'")
+        .execute(&state.pool).await.unwrap();
+    let before = mirrors::load(
+        &state.pool,
+        mirrors::Mirror::Items,
+        super::graph::Network::Matic,
+    )
+    .await
+    .unwrap()
+    .unwrap();
+    // The first page at the custom mainnet source fails. The already served
+    // copy and the keyset for its in-progress pass must survive a retry.
+    let jobs = crate::jobs::Jobs::new();
+    let ctx = job_ctx(&jobs).await;
+    assert!(
+        mirrors::run_tick(&state, mirrors::Mirror::Items, &ctx)
+            .await
+            .is_err()
+    );
+    let after = mirrors::load(
+        &state.pool,
+        mirrors::Mirror::Items,
+        super::graph::Network::Matic,
+    )
+    .await
+    .unwrap()
+    .unwrap();
+    assert_eq!(after.chain_id, Some(137));
+    assert_eq!(after.last_complete_pass_at, before.last_complete_pass_at);
+    assert_eq!(after.last_complete_pass_rows, Some(17));
+    assert_eq!(after.cursor_id.as_deref(), Some("old-key"));
+    assert!(
+        mirrors::require_ready(&state, mirrors::Mirror::Items)
+            .await
+            .is_ok()
+    );
+    own.drop().await;
 }
 
 #[tokio::test]

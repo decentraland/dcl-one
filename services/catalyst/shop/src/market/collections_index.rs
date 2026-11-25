@@ -1008,12 +1008,9 @@ pub async fn write_seeds(pool: &PgPool, net: ChainNet, seeds: &[Seed]) -> anyhow
 /// it back (a window that walks a collection the filter lacks still fails).
 pub async fn gate(pool: &PgPool, rpc: &Rpc<'_>) -> anyhow::Result<Option<String>> {
     let net = ChainNet::Matic;
-    super::ensure_chain(
-        &chain_walk::RpcSource::new(*rpc),
-        chain_walk::mainnet_chain(net),
-    )
-    .await
-    .context("collections matic: the endpoint's chain")?;
+    super::ensure_chain(&chain_walk::RpcSource::new(*rpc), net.chain_id())
+        .await
+        .context("collections matic: the endpoint's chain")?;
     let finalized = rpc
         .finalized_header()
         .await
