@@ -753,9 +753,10 @@ def testnet_env(config, refuse_exposed_relayer=True):
         'MARKETPLACE_INDEX_INTERVAL_SECS': '5',
         'MARKETPLACE_INDEX_CHAIN_ID_MATIC': '80002',
         'MARKETPLACE_INDEX_CHAIN_ID_ETHEREUM': '11155111',
-        # This testnet stack uses its configured graph readers.
+        # The local dev profile serves the catalogue immediately through its configured
+        # graph readers. A testnet mirror with the NFT walk enabled waits for the local folds.
         'MARKETPLACE_NFT_INDEX_ENABLED': 'false',
-        # The Rentals contract is mainnet's; there is no chain-1 endpoint here.
+        # This non-walking dev profile uses the graph for rental assets.
         'SHOP_RENTALS_INDEX_ENABLED': 'false',
         # The Committee contracts are Polygon mainnet's; RPC_ENDPOINT_POLYGON is Amoy here.
         'MARKETPLACE_COMMITTEE_INDEX_ENABLED': 'false',

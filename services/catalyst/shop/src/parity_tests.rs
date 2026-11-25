@@ -141,9 +141,15 @@ async fn seed_item(pool: &PgPool, contract: &str, item_id: &str, creator: &str) 
     .unwrap();
     let mut item = mirrors::items::fixture(contract, item_id, "wearable_v2", "Seeded item");
     item["creator"] = json!(creator);
-    mirrors::items::upsert(pool, super::market::graph::Network::Matic, 137, &[item])
-        .await
-        .unwrap();
+    mirrors::items::upsert(
+        pool,
+        super::market::graph::Network::Matic,
+        137,
+        false,
+        &[item],
+    )
+    .await
+    .unwrap();
 }
 
 async fn cleanup_mirror(pool: &PgPool, contracts: &[String]) {
