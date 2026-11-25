@@ -50,7 +50,7 @@ pub const INDEXER_COMMITTEE: &str = "committee";
 pub const INDEXER_NFT: &str = "nft";
 pub const INDEXER_SALES: &str = "sales";
 pub const INDEXER_TRADE_EVENTS: &str = "trade_events";
-pub const INDEXER_THIRD_PARTY_REGISTRY: &str = "third_party_registry";
+pub const INDEXER_THIRD_PARTY_REGISTRY: &str = crate::chain_index::third_party_index::INDEXER;
 
 /// How old a publish may be before readers stop trusting it (a stopped job).
 pub const READY_WINDOW: ChronoDuration = ChronoDuration::minutes(30);
