@@ -2548,18 +2548,20 @@ fold record, a publish and a rewind; the table stays at a dozen rows.
 A catalogue database serves one Ethereum/Polygon pair. The NFT worker uses
 `MARKETPLACE_INDEX_CHAIN_ID_ETHEREUM` and `MARKETPLACE_INDEX_CHAIN_ID_MATIC`
 to select mainnet (1/137) or Sepolia/Amoy (11155111/80002). Its RPC must
-serve that chain. A cursor bound to a different chain is quarantined.
+serve that chain. At startup the catalogue writer checks the pair against
+`ETH_NETWORK` and the database binding. Each database can have independent
+Ethereum and Sepolia Rentals histories.
 Step `0070_shop_mirror_chain` records the chain of each collections/items
-mirror pass in `shop.mirror_state.chain_id`. A source URL or chain change
-restarts pagination. Step 0070 retains established mainnet posture markers.
-A custom mainnet source at the same URL retains its published copy while
-pagination restarts. A testnet source starts a proven pass from page one. The NFT walk waits for a complete collections pass for its chain
-and takes addresses only from collection rows bearing that chain ID.
-A testnet mirror with a catalogue RPC checks the block hash returned alongside each graph page
-against its chain-checked RPC before saving the page. Graph-only testnet
-passes have no chain binding. A writer without the RPC leaves a verified pass
-alone. A lagging RPC retries the graph page on the next tick. A change of chain
-pair requires a separate database: the mirrors upsert and retain prior rows.
+pass. Existing mainnet passes at the same URL retain their keyset and
+publication. A new source starts from page one. For testnets the mirror
+checks the graph head on the configured chain by comparing a confirmed block
+hash against the chain-checked RPC. Both mirrors persist that hash with their
+keyset and read every page at that block. Collections supply contract addresses
+and items supply their metadata. A mirror writer can provide this proof even
+when the NFT walker runs on another node. A writer without a catalogue RPC
+leaves a bound pass untouched. The NFT walk requires a complete collections
+pass for its chain. On testnet it selects addresses from rows the verified
+pass actually fetched. Rows retained from a graph-only source carry no proof.
 An empty verified pass covers the chain's
 fixed contracts. The Sepolia/Amoy pair omits the mainnet-only sales,
 committee, collections, third-party registry and MANA transfer walks, even
@@ -2704,8 +2706,9 @@ retried. A row in quarantine is not walked, rewound or published.
 - `folded_at` is within 30 minutes;
 - it is bound to the chain the reader expects and is out of quarantine.
 
-Every index but `trade_events` reads mainnet only, so its readers expect
-chain 1 or 137. The readers of `trade_events` expect the chain the node
+The NFT and trade-events walks use the configured catalogue pair. The
+Rentals histories have separate mainnet and Sepolia cursors. The other
+walks expect chain 1 or 137. The readers of `trade_events` expect the chain the node
 configures (`MARKETPLACE_INDEX_CHAIN_ID_*`): the Rust readers and the
 notification producers pass it, and its verdict fragments in the listing
 SQL read the chains the process serves (`catalog::served_chains`). The
@@ -3250,9 +3253,8 @@ builds it from its own indexes.
   `signatures.rentals` rows of both registries signed for the grid's chain
   and its Rentals contract, with their periods.
 - **Readiness:** the land-authz index published for the configured
-  registries; the grid's chain being Ethereum mainnet, the only chain the
-  nft index walks (a Sepolia LAND index reports the nft index as not
-  ready); the nft index published on Ethereum and bound to chain 1
+  registries; the grid's chain being Ethereum mainnet, the chain this grid
+  reader currently covers; the nft index published on Ethereum and bound to chain 1
   (`shop.chain_cursor`, `chain_walk::ready_sql`); and `shop.trades`
   readable (a recent complete trades-mirror pass read in the snapshot, or
   local authority); and the trade-events index current on Ethereum, whose

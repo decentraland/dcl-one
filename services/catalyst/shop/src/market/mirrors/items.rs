@@ -31,8 +31,8 @@ use super::super::wire;
 use super::{Mirror, Page, walk};
 
 const QUERY: &str = r#"
-query items($idFrom: ID!, $first: Int!, $verifyChain: Boolean!) {
-  items(first: $first, orderBy: id, orderDirection: asc, where: { id_gt: $idFrom }) {
+query items($idFrom: ID!, $first: Int!, $verifyChain: Boolean!, $block: Block_height) {
+  items(block: $block, first: $first, orderBy: id, orderDirection: asc, where: { id_gt: $idFrom }) {
     id
     blockchainId
     collection { id }
@@ -59,7 +59,7 @@ query items($idFrom: ID!, $first: Int!, $verifyChain: Boolean!) {
       emote { name description category bodyShapes loop hasSound hasGeometry }
     }
   }
-  _meta @include(if: $verifyChain) { block { number hash } }
+  _meta(block: $block) @include(if: $verifyChain) { block { number hash } }
 }"#;
 
 pub const ITEM_TYPES: [&str; 4] = [
@@ -77,6 +77,7 @@ pub(super) async fn run_pass(
 ) -> anyhow::Result<()> {
     let pool = state.pool.clone();
     let chain_id = state.settings.market.indexes.chain_id(network.into()) as i32;
+    let verified = super::verify_testnet(state, network.into());
     walk(
         state,
         ctx,
@@ -84,8 +85,8 @@ pub(super) async fn run_pass(
         network,
         url,
         false,
-        |_, id| async move {
-            let data = super::read_catalogue_page(state, network, url, QUERY, id).await?;
+        |_, id, hash| async move {
+            let data = super::read_catalogue_page(state, url, QUERY, id, hash).await?;
             let rows = super::super::readers::rows(&data, "items");
             let last_id = rows
                 .last()
@@ -100,7 +101,7 @@ pub(super) async fn run_pass(
         },
         |rows| {
             let pool = pool.clone();
-            async move { upsert(&pool, network, chain_id, &rows).await }
+            async move { upsert(&pool, network, chain_id, verified, &rows).await }
         },
     )
     .await
@@ -216,6 +217,7 @@ pub async fn upsert(
     pool: &PgPool,
     network: Network,
     chain_id: i32,
+    verified: bool,
     rows: &[Value],
 ) -> Result<i64, sqlx::Error> {
     let records = recordset(rows, network);
@@ -228,12 +230,12 @@ pub async fn upsert(
               max_supply, available, price, image, name, description, category, body_shapes, is_smart, emote_loop, \
               emote_has_sound, emote_has_geometry, emote_outcome_type, search_is_store_minter, \
               search_is_collection_approved, created_at, updated_at, reviewed_at, sold_at, first_listed_at, mirrored_at, \
-              search_text) \
+              search_text, testnet_verified) \
          SELECT $1, r.contract_address, r.item_id::numeric, $2, r.item_type, r.urn, r.creator, r.beneficiary, r.rarity, \
                 r.total_supply::numeric, r.max_supply::numeric, r.available::numeric, r.price::numeric, r.image, r.name, \
                 r.description, r.category, r.body_shapes, r.is_smart, r.emote_loop, r.emote_has_sound, \
                 r.emote_has_geometry, r.emote_outcome_type, r.search_is_store_minter, r.search_is_collection_approved, \
-                r.created_at, r.updated_at, r.reviewed_at, r.sold_at, r.first_listed_at, $3, r.search_text \
+                r.created_at, r.updated_at, r.reviewed_at, r.sold_at, r.first_listed_at, $3, r.search_text, $5 \
          FROM jsonb_to_recordset($4) AS r(contract_address text, item_id text, item_type text, urn text, creator text, \
               beneficiary text, rarity text, total_supply text, max_supply text, available text, price text, image text, \
               name text, description text, category text, body_shapes text[], is_smart boolean, emote_loop boolean, \
@@ -241,7 +243,7 @@ pub async fn upsert(
               search_is_store_minter boolean, search_is_collection_approved boolean, created_at bigint, \
               updated_at bigint, reviewed_at bigint, sold_at bigint, first_listed_at bigint, search_text text) \
          ON CONFLICT (network, contract_address, item_id) DO UPDATE SET \
-             chain_id = EXCLUDED.chain_id, item_type = EXCLUDED.item_type, urn = EXCLUDED.urn, \
+             testnet_verified = EXCLUDED.testnet_verified, chain_id = EXCLUDED.chain_id, item_type = EXCLUDED.item_type, urn = EXCLUDED.urn, \
              creator = EXCLUDED.creator, beneficiary = EXCLUDED.beneficiary, rarity = EXCLUDED.rarity, \
              total_supply = EXCLUDED.total_supply, max_supply = EXCLUDED.max_supply, available = EXCLUDED.available, \
              price = EXCLUDED.price, image = EXCLUDED.image, name = EXCLUDED.name, description = EXCLUDED.description, \
@@ -258,6 +260,7 @@ pub async fn upsert(
     .bind(chain_id)
     .bind(now_utc())
     .bind(Value::Array(records))
+    .bind(verified)
     .execute(pool)
     .await?;
     Ok(done.rows_affected() as i64)

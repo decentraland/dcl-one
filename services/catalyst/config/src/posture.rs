@@ -136,7 +136,7 @@ fn set(lookup: &Lookup, key: &str) -> Option<String> {
     lookup(key).filter(|v| !v.trim().is_empty())
 }
 
-/// The chain endpoints and contracts the mirror preset knows are mainnet's.
+/// Some mirror preset jobs and endpoints cover only mainnet.
 fn mainnet(lookup: &Lookup) -> bool {
     lookup("ETH_NETWORK").is_none_or(|n| n.trim().is_empty() || n.trim() == "mainnet")
 }

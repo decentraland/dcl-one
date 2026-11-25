@@ -98,6 +98,14 @@ impl ChainNet {
         }
     }
 
+    pub fn testnet_chain_id(self) -> i64 {
+        use crate::types::ChainId;
+        match self {
+            Self::Ethereum => ChainId::SEPOLIA.0 as i64,
+            Self::Matic => ChainId::AMOY.0 as i64,
+        }
+    }
+
     /// Blocks the walk stays behind the head: a reorg shallower than this
     /// never reaches the log (Ethereum finalizes in two epochs; Polygon's
     /// milestones finalize in seconds, its historical reorgs ran deeper).
@@ -225,12 +233,18 @@ impl IndexSettings {
         for (net, allowed, var) in [
             (
                 ChainNet::Ethereum,
-                [1, 11_155_111],
+                [
+                    ChainNet::Ethereum.chain_id(),
+                    ChainNet::Ethereum.testnet_chain_id(),
+                ],
                 "MARKETPLACE_INDEX_CHAIN_ID_ETHEREUM",
             ),
             (
                 ChainNet::Matic,
-                [137, 80_002],
+                [
+                    ChainNet::Matic.chain_id(),
+                    ChainNet::Matic.testnet_chain_id(),
+                ],
                 "MARKETPLACE_INDEX_CHAIN_ID_MATIC",
             ),
         ] {
@@ -245,13 +259,58 @@ impl IndexSettings {
             }
         }
         if self.nft_enabled
-            && !matches!(
-                (self.chain_id_ethereum, self.chain_id_matic),
-                (1, 137) | (11_155_111, 80_002)
-            )
+            && ((self.chain_id_ethereum == ChainNet::Ethereum.chain_id())
+                != (self.chain_id_matic == ChainNet::Matic.chain_id()))
         {
             return Err("the NFT catalogue requires the Ethereum/Polygon mainnet pair (1/137) or Sepolia/Amoy (11155111/80002)".into());
         }
+        Ok(())
+    }
+
+    /// All catalogue writers sharing this DB must agree before starting jobs.
+    /// The independently keyed Rentals histories may coexist on either pair.
+    pub async fn check_catalogue_db(
+        &self,
+        pool: &PgPool,
+        writes_catalogue: bool,
+    ) -> anyhow::Result<()> {
+        let mut tx = pool.begin().await?;
+        let pair = vec![
+            self.chain_id_ethereum.to_string(),
+            self.chain_id_matic.to_string(),
+        ];
+        if writes_catalogue {
+            sqlx::query(
+                "INSERT INTO shop.worker_progress(worker, scope, key_position)
+                         VALUES ('nft_catalogue_pair',0,$1) ON CONFLICT (worker,scope) DO NOTHING",
+            )
+            .bind(&pair)
+            .execute(&mut *tx)
+            .await?;
+        }
+        let bound: Option<Vec<String>> = sqlx::query_scalar(
+            "SELECT key_position FROM shop.worker_progress
+              WHERE worker='nft_catalogue_pair' AND scope=0",
+        )
+        .fetch_optional(&mut *tx)
+        .await?;
+        anyhow::ensure!(
+            bound.as_ref().is_none_or(|b| b == &pair),
+            "marketplace catalogue chain pair {pair:?} conflicts with database binding {bound:?}"
+        );
+        let wrong: Option<(String, String, i64)> = sqlx::query_as(
+            "SELECT source, network, chain_id FROM (
+                 SELECT indexer AS source, network, chain_id FROM shop.chain_cursor
+                   WHERE indexer NOT IN ('rentals','rentals_sepolia')
+                 UNION ALL SELECT mirror, network, chain_id FROM shop.mirror_state
+             ) AS bindings WHERE chain_id <> CASE network WHEN 'ethereum' THEN $1::bigint ELSE $2::bigint END LIMIT 1")
+             .bind(self.chain_id_ethereum).bind(self.chain_id_matic).fetch_optional(&mut *tx).await?;
+        if let Some((source, network, id)) = wrong {
+            anyhow::bail!(
+                "marketplace catalogue chain pair {pair:?} conflicts with {source}/{network} already bound to chain {id}"
+            );
+        }
+        tx.commit().await?;
         Ok(())
     }
 

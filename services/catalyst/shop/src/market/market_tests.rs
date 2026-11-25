@@ -330,7 +330,7 @@ async fn serve_graph(up: Arc<FakeGraph>) -> String {
     format!("http://{addr}/")
 }
 
-async fn job_ctx(jobs: &crate::jobs::Jobs) -> crate::jobs::JobContext {
+pub(super) async fn job_ctx(jobs: &crate::jobs::Jobs) -> crate::jobs::JobContext {
     let (tx, rx) = tokio::sync::oneshot::channel();
     jobs.spawn("ctx", move |ctx| async move {
         let _ = tx.send(ctx);
@@ -502,6 +502,8 @@ async fn upgrading_a_completed_mainnet_mirror_keeps_the_catalogue_available() {
         super::nft_index::mirror_complete(&state.pool, super::chain_walk::ChainNet::Ethereum, 1)
             .await
     );
+    sqlx::query("UPDATE shop.mirror_state SET pass_started_at=last_complete_pass_at+interval '1 second' WHERE mirror='items'")
+        .execute(&state.pool).await.unwrap();
     let before = mirrors::load(
         &state.pool,
         mirrors::Mirror::Items,
@@ -511,7 +513,7 @@ async fn upgrading_a_completed_mainnet_mirror_keeps_the_catalogue_available() {
     .unwrap()
     .unwrap();
     // The first page at the custom mainnet source fails. The already served
-    // copy must remain published through a full rescan and any retry.
+    // copy and the keyset for its in-progress pass must survive a retry.
     let jobs = crate::jobs::Jobs::new();
     let ctx = job_ctx(&jobs).await;
     assert!(
@@ -530,7 +532,7 @@ async fn upgrading_a_completed_mainnet_mirror_keeps_the_catalogue_available() {
     assert_eq!(after.chain_id, Some(137));
     assert_eq!(after.last_complete_pass_at, before.last_complete_pass_at);
     assert_eq!(after.last_complete_pass_rows, Some(17));
-    assert!(after.cursor_id.is_none());
+    assert_eq!(after.cursor_id.as_deref(), Some("old-key"));
     assert!(
         mirrors::require_ready(&state, mirrors::Mirror::Items)
             .await
@@ -1990,6 +1992,7 @@ async fn favorites_lists_and_picks_keep_the_old_authorization_and_counting_rules
         &pool,
         super::graph::Network::Matic,
         137,
+        false,
         &[mirrors::items::fixture(
             &contract_of(&t, 1),
             "0",

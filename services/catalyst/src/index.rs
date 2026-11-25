@@ -28,10 +28,19 @@ pub async fn run(mut config: Config) -> anyhow::Result<()> {
         config.content.connections_max_idle,
     ))?;
     let jobs = jobs_from_config(&config, &pool);
+    let settings = market_settings(&config, &content::own_hosts(&config))?;
+    settings
+        .market
+        .indexes
+        .check_catalogue_db(
+            &pool,
+            settings.market.indexes.nft_enabled || settings.market.mirrors_enabled,
+        )
+        .await?;
     let market = Arc::new(shop::market::MarketplaceState::new(
         pool.clone(),
         http.clone(),
-        market_settings(&config, &content::own_hosts(&config))?,
+        settings,
     ));
     market.spawn_index_jobs(&jobs, config.shop.shop_rentals_index_enabled);
     let land = Arc::new(land_authz::LandAuthzState::new(

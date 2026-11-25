@@ -791,9 +791,10 @@ impl NftIndex {
         ) {
             return Ok((c, w));
         }
-        let rows = sqlx::query("SELECT contract_address, created_at FROM shop.collections WHERE network = $1 AND chain_id = $2 ORDER BY created_at, contract_address")
+        let rows = sqlx::query("SELECT contract_address, created_at FROM shop.collections WHERE network = $1 AND chain_id = $2 AND ($3 OR testnet_verified) ORDER BY created_at, contract_address")
             .bind(self.net.db_name())
             .bind(self.deployments.chain_id as i32)
+            .bind(self.deployments.chain_id == self.net.chain_id())
             .fetch_all(pool)
             .await?;
         let collections: Vec<Collection> = rows
@@ -1239,7 +1240,7 @@ pub async fn status(pool: &PgPool, settings: &chain_walk::IndexSettings) -> serd
         .unwrap_or(0);
         out.insert(net.db_name().to_string(), json!(c.map(|c| json!({
             "lastBlock": c.last_block, "foldedBlock": c.folded_block, "fullHistory": c.full_history,
-            "ready": chain_walk::fresh_fold_on(&c, settings.chain_id(net), chrono::Utc::now()).is_some(), "reorgRewinds": c.reorg_rewinds, "divergedAt": c.diverged_at, "backfillsOwed": owed,
+            "ready": chain_walk::is_ready_on(&c, settings.chain_id(net), chrono::Utc::now()), "reorgRewinds": c.reorg_rewinds, "divergedAt": c.diverged_at, "backfillsOwed": owed,
         }))));
     }
     serde_json::Value::Object(out)

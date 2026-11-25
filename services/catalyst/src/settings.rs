@@ -28,7 +28,7 @@ pub(crate) fn market_settings(
     config: &Config,
     self_hosts: &[String],
 ) -> anyhow::Result<shop::market::Settings> {
-    Ok(shop::market::Settings::from_config(
+    let settings = shop::market::Settings::from_config(
         config,
         &shop::market::Upstreams {
             eth_collections_subgraph_url: config
@@ -112,7 +112,29 @@ pub(crate) fn market_settings(
             config.marketplace.marketplace_tip_max_pending,
         )?)
         .with_trusted_proxies(config.node.http_trusted_proxy_cidrs.clone()),
-    ))
+    );
+    let indexes = &settings.market.indexes;
+    // A graph-only node can keep its existing trade-specific configuration.
+    if indexes.nft_enabled || settings.market.mirrors_enabled {
+        let network = land_authz::land_network(&config.node.eth_network)
+            .context("ETH_NETWORK names no supported catalogue")?;
+        for net in shop::market::chain_walk::ChainNet::ALL {
+            let expected = if network == land_authz::LAND_SEPOLIA {
+                net.testnet_chain_id()
+            } else {
+                net.chain_id()
+            };
+            anyhow::ensure!(
+                indexes.chain_id(net) == expected,
+                "ETH_NETWORK={} requires the {} catalogue chain {}, configured {}",
+                config.node.eth_network,
+                net.db_name(),
+                expected,
+                indexes.chain_id(net)
+            );
+        }
+    }
+    Ok(settings)
 }
 
 fn checked_indexes(
@@ -227,6 +249,28 @@ mod tests {
                 })
                 .collect();
             assert_eq!(names, ["nft", "trade_events"]);
+        }
+    }
+
+    #[test]
+    fn catalogue_pair_must_match_eth_network_even_on_a_separate_mirror_writer() {
+        for switch in [
+            "MARKETPLACE_NFT_INDEX_ENABLED",
+            "MARKETPLACE_MIRRORS_ENABLED",
+        ] {
+            let config = Config::parse_env_for_tests([
+                ("DATABASE_URL", "postgres:///catalyst"),
+                ("ETH_NETWORK", "sepolia"),
+                (switch, "true"),
+            ])
+            .unwrap();
+            assert!(
+                market_settings(&config, &[])
+                    .err()
+                    .unwrap()
+                    .to_string()
+                    .contains("ETH_NETWORK=sepolia")
+            );
         }
     }
 

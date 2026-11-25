@@ -22,14 +22,14 @@ impl Deployments {
     pub fn mainnet(net: ChainNet) -> Self {
         match net {
             ChainNet::Ethereum => Self {
-                chain_id: 1,
+                chain_id: net.chain_id(),
                 start: LAND_MAINNET.start_block,
                 land: Some(LAND_MAINNET),
                 markets: &[("0x8e5660b4ab70168b5a6feea0e0315cb49c8cd539", 6_496_012)],
                 registrar: Some((DCL_REGISTRAR, 9_412_979)),
             },
             ChainNet::Matic => Self {
-                chain_id: 137,
+                chain_id: net.chain_id(),
                 start: 15_202_000,
                 land: None,
                 markets: &[
@@ -44,14 +44,14 @@ impl Deployments {
     pub fn for_chain(net: ChainNet, chain_id: i64) -> Option<Self> {
         Some(match (net, chain_id) {
             (_, id) if id == net.chain_id() => Self::mainnet(net),
-            (ChainNet::Ethereum, 11_155_111) => Self {
+            (ChainNet::Ethereum, id) if id == net.testnet_chain_id() => Self {
                 chain_id,
                 start: LAND_SEPOLIA.start_block,
                 land: Some(LAND_SEPOLIA),
                 markets: &[("0xccf0c17da6cd68041b1bf0f7e015767242077d8c", 3_831_225)],
                 registrar: Some((REGISTRAR_SEPOLIA, 3_831_239)),
             },
-            (ChainNet::Matic, 80_002) => Self {
+            (ChainNet::Matic, id) if id == net.testnet_chain_id() => Self {
                 chain_id,
                 start: 5_706_656,
                 land: None,

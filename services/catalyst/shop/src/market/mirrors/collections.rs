@@ -16,8 +16,8 @@ use super::super::readers::{bool_of, int_of, opt_int_of, str_of, strings_of};
 use super::{Mirror, Page, walk};
 
 const QUERY: &str = r#"
-query collections($idFrom: ID!, $first: Int!, $verifyChain: Boolean!) {
-  collections(first: $first, orderBy: id, orderDirection: asc, where: { id_gt: $idFrom }) {
+query collections($idFrom: ID!, $first: Int!, $verifyChain: Boolean!, $block: Block_height) {
+  collections(block: $block, first: $first, orderBy: id, orderDirection: asc, where: { id_gt: $idFrom }) {
     id
     name
     symbol
@@ -37,7 +37,7 @@ query collections($idFrom: ID!, $first: Int!, $verifyChain: Boolean!) {
     searchIsStoreMinter
     searchText
   }
-  _meta @include(if: $verifyChain) { block { number hash } }
+  _meta(block: $block) @include(if: $verifyChain) { block { number hash } }
 }"#;
 
 pub(super) async fn run_pass(
@@ -48,6 +48,7 @@ pub(super) async fn run_pass(
 ) -> anyhow::Result<()> {
     let pool = state.pool.clone();
     let chain_id = state.settings.market.indexes.chain_id(network.into()) as i32;
+    let verified = super::verify_testnet(state, network.into());
     walk(
         state,
         ctx,
@@ -55,8 +56,8 @@ pub(super) async fn run_pass(
         network,
         url,
         false,
-        |_, id| async move {
-            let data = super::read_catalogue_page(state, network, url, QUERY, id).await?;
+        |_, id, hash| async move {
+            let data = super::read_catalogue_page(state, url, QUERY, id, hash).await?;
             let rows = super::super::readers::rows(&data, "collections");
             let last_id = rows
                 .last()
@@ -71,7 +72,7 @@ pub(super) async fn run_pass(
         },
         |rows| {
             let pool = pool.clone();
-            async move { upsert(&pool, network, chain_id, &rows).await }
+            async move { upsert(&pool, network, chain_id, verified, &rows).await }
         },
     )
     .await
@@ -118,6 +119,7 @@ pub async fn upsert(
     pool: &PgPool,
     network: Network,
     chain_id: i32,
+    verified: bool,
     rows: &[Value],
 ) -> Result<i64, sqlx::Error> {
     let records = recordset(rows);
@@ -128,16 +130,16 @@ pub async fn upsert(
         "INSERT INTO shop.collections \
              (network, contract_address, chain_id, name, symbol, creator, owner, urn, is_completed, is_approved, \
               is_editable, items_count, minters, managers, search_is_store_minter, search_text, created_at, \
-              updated_at, reviewed_at, first_listed_at, mirrored_at) \
+              updated_at, reviewed_at, first_listed_at, mirrored_at, testnet_verified) \
          SELECT $1, r.contract_address, $2, r.name, r.symbol, r.creator, r.owner, r.urn, r.is_completed, \
                 r.is_approved, r.is_editable, r.items_count, r.minters, r.managers, r.search_is_store_minter, \
-                r.search_text, r.created_at, r.updated_at, r.reviewed_at, r.first_listed_at, $3 \
+                r.search_text, r.created_at, r.updated_at, r.reviewed_at, r.first_listed_at, $3, $5 \
          FROM jsonb_to_recordset($4) AS r(contract_address text, name text, symbol text, creator text, owner text, \
               urn text, is_completed boolean, is_approved boolean, is_editable boolean, items_count integer, \
               minters text[], managers text[], search_is_store_minter boolean, search_text text, \
               created_at bigint, updated_at bigint, reviewed_at bigint, first_listed_at bigint) \
          ON CONFLICT (network, contract_address) DO UPDATE SET \
-             chain_id = EXCLUDED.chain_id, name = EXCLUDED.name, symbol = EXCLUDED.symbol, \
+             testnet_verified = EXCLUDED.testnet_verified, chain_id = EXCLUDED.chain_id, name = EXCLUDED.name, symbol = EXCLUDED.symbol, \
              creator = EXCLUDED.creator, owner = EXCLUDED.owner, urn = EXCLUDED.urn, \
              is_completed = EXCLUDED.is_completed, is_approved = EXCLUDED.is_approved, \
              is_editable = EXCLUDED.is_editable, items_count = EXCLUDED.items_count, \
@@ -151,6 +153,7 @@ pub async fn upsert(
     .bind(chain_id)
     .bind(now_utc())
     .bind(Value::Array(records))
+    .bind(verified)
     .execute(pool)
     .await?;
     Ok(done.rows_affected() as i64)

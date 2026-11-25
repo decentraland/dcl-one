@@ -877,10 +877,7 @@ impl MarketplaceState {
         }
         let land = self.land_network()?;
         let expected = if land == crate::land_authz::LAND_SEPOLIA {
-            match net {
-                chain_walk::ChainNet::Ethereum => 11_155_111,
-                chain_walk::ChainNet::Matic => 80_002,
-            }
+            net.testnet_chain_id()
         } else {
             net.chain_id()
         };

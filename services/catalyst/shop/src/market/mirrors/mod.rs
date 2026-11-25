@@ -96,6 +96,7 @@ pub struct Cursor {
     pub network: Network,
     pub source_url: String,
     pub chain_id: Option<i64>,
+    pub pass_block_hash: Option<String>,
     pub pass_started_at: Option<NaiveDateTime>,
     pub cursor_updated_at: Option<i64>,
     pub cursor_id: Option<String>,
@@ -114,6 +115,7 @@ impl Cursor {
             network,
             source_url: source_url.to_string(),
             chain_id: None,
+            pass_block_hash: None,
             pass_started_at: None,
             cursor_updated_at: None,
             cursor_id: None,
@@ -142,7 +144,7 @@ pub async fn load(
     network: Network,
 ) -> Result<Option<Cursor>, sqlx::Error> {
     let row = sqlx::query(
-        "SELECT source_url, chain_id, pass_started_at, cursor_updated_at, cursor_id, pages_fetched, rows_upserted, \
+        "SELECT source_url, chain_id, pass_block_hash, pass_started_at, cursor_updated_at, cursor_id, pages_fetched, rows_upserted, \
                 last_complete_pass_at, last_complete_pass_rows, last_error, updated_at \
          FROM shop.mirror_state WHERE mirror = $1 AND network = $2",
     )
@@ -155,6 +157,7 @@ pub async fn load(
         network,
         source_url: r.get("source_url"),
         chain_id: r.get("chain_id"),
+        pass_block_hash: r.get("pass_block_hash"),
         pass_started_at: r.get("pass_started_at"),
         cursor_updated_at: r.get("cursor_updated_at"),
         cursor_id: r.get("cursor_id"),
@@ -171,10 +174,10 @@ pub async fn save(pool: &PgPool, c: &Cursor) -> Result<(), sqlx::Error> {
     sqlx::query(
         "INSERT INTO shop.mirror_state \
              (mirror, network, source_url, pass_started_at, cursor_updated_at, cursor_id, pages_fetched, \
-              rows_upserted, last_complete_pass_at, last_complete_pass_rows, last_error, chain_id, updated_at) \
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, timezone('UTC', now())) \
+              rows_upserted, last_complete_pass_at, last_complete_pass_rows, last_error, chain_id, pass_block_hash, updated_at) \
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, timezone('UTC', now())) \
          ON CONFLICT (mirror, network) DO UPDATE SET \
-             source_url = EXCLUDED.source_url, chain_id = EXCLUDED.chain_id, pass_started_at = EXCLUDED.pass_started_at, \
+             source_url = EXCLUDED.source_url, chain_id = EXCLUDED.chain_id, pass_block_hash = EXCLUDED.pass_block_hash, pass_started_at = EXCLUDED.pass_started_at, \
              cursor_updated_at = EXCLUDED.cursor_updated_at, cursor_id = EXCLUDED.cursor_id, \
              pages_fetched = EXCLUDED.pages_fetched, rows_upserted = EXCLUDED.rows_upserted, \
              last_complete_pass_at = EXCLUDED.last_complete_pass_at, \
@@ -193,6 +196,7 @@ pub async fn save(pool: &PgPool, c: &Cursor) -> Result<(), sqlx::Error> {
     .bind(c.last_complete_pass_rows)
     .bind(&c.last_error)
     .bind(c.chain_id)
+    .bind(&c.pass_block_hash)
     .execute(pool)
     .await?;
     Ok(())
@@ -206,46 +210,65 @@ fn verify_testnet(state: &MarketplaceState, net: super::chain_walk::ChainNet) ->
         && state.catalogue_rpc_url(net).is_some()
 }
 
+/// Pin the pass below the graph head on the configured chain. Persisting the
+/// hash with the keyset lets later ticks and replacement workers resume it.
+pub(super) async fn catalogue_pass_hash(
+    state: &MarketplaceState,
+    net: super::chain_walk::ChainNet,
+    url: &str,
+) -> Result<String, String> {
+    use super::chain_walk::LogSource;
+    use serde_json::json;
+    let head =
+        super::readers::query(state, url, "{ _meta { block { number } } }", json!({})).await?;
+    let number = head["_meta"]["block"]["number"]
+        .as_u64()
+        .ok_or("collections graph has no block number")?
+        .saturating_sub(net.confirmations());
+    let data = super::readers::query(state, url,
+        "query CatalogueBlock($number: Int!) { _meta(block: {number: $number}) { block { number hash } } }",
+        json!({"number":number})).await?;
+    let block = &data["_meta"]["block"];
+    if block["number"].as_u64() != Some(number) {
+        return Err(format!("collections graph did not return block {number}"));
+    }
+    let hash = block["hash"]
+        .as_str()
+        .ok_or("collections graph has no block hash")?;
+    let endpoint = state
+        .catalogue_rpc_url(net)
+        .ok_or("no RPC for the configured catalogue chain")?;
+    let source =
+        super::chain_walk::RpcSource::new(crate::chain_index::rpc::Rpc::at(&state.http, &endpoint));
+    super::ensure_chain(&source, state.settings.market.indexes.chain_id(net))
+        .await
+        .map_err(|e| e.to_string())?;
+    let header = source.header(number).await.map_err(|e| e.to_string())?;
+    if header.value.number != number || !header.value.hash.eq_ignore_ascii_case(hash) {
+        return Err(format!(
+            "collections graph block {number} differs from the configured chain"
+        ));
+    }
+    Ok(header.value.hash)
+}
+
 pub(super) async fn read_catalogue_page(
     state: &MarketplaceState,
-    network: Network,
     url: &str,
     query: &str,
     from: Option<String>,
+    hash: Option<String>,
 ) -> Result<Value, String> {
-    let net = network.into();
-    let verify = verify_testnet(state, net);
-    let data = super::readers::query(
-        state,
-        url,
-        query,
-        serde_json::json!({
-            "idFrom": from.unwrap_or_default(), "first": PAGE_SIZE, "verifyChain": verify,
-        }),
-    )
-    .await?;
-    if verify {
-        let block = &data["_meta"]["block"];
-        let number = block["number"]
-            .as_u64()
-            .ok_or("collections graph has no block number")?;
-        let hash = block["hash"]
+    let data = super::readers::query(state, url, query, serde_json::json!({
+        "idFrom": from.unwrap_or_default(), "first": PAGE_SIZE,
+        "verifyChain": hash.is_some(), "block": hash.as_ref().map(|h| serde_json::json!({"hash":h}))
+    })).await?;
+    if let Some(expected) = hash {
+        let actual = data["_meta"]["block"]["hash"]
             .as_str()
             .ok_or("collections graph has no block hash")?;
-        let endpoint = state
-            .catalogue_rpc_url(net)
-            .ok_or("no RPC for the configured catalogue chain")?;
-        let rpc = crate::chain_index::rpc::Rpc::at(&state.http, &endpoint);
-        let source = super::chain_walk::RpcSource::new(rpc);
-        super::ensure_chain(&source, state.settings.market.indexes.chain_id(net))
-            .await
-            .map_err(|e| e.to_string())?;
-        use super::chain_walk::LogSource;
-        let header = source.header(number).await.map_err(|e| e.to_string())?;
-        if !header.value.hash.eq_ignore_ascii_case(hash) {
-            return Err(format!(
-                "collections graph block {number} differs from the configured chain"
-            ));
+        if !actual.eq_ignore_ascii_case(&expected) {
+            return Err("collections graph page differs from the pinned block".into());
         }
     }
     Ok(data)
@@ -254,7 +277,7 @@ pub(super) async fn read_catalogue_page(
 /// The cursor a pass starts from: the persisted row for this source, a fresh
 /// one when the source changed (the old keyset means nothing against a
 /// different subgraph) or there is none.
-async fn cursor_for(
+pub(super) async fn cursor_for(
     pool: &PgPool,
     mirror: Mirror,
     network: Network,
@@ -268,13 +291,15 @@ async fn cursor_for(
                 && c.chain_id.is_none()
                 && chain_id == Some(super::chain_walk::ChainNet::from(network).chain_id()) =>
         {
-            // The same legacy mainnet source may be a custom deployment.
-            // Keep its serving watermark while the first bound pass rescans.
-            Cursor {
-                last_complete_pass_at: c.last_complete_pass_at,
-                last_complete_pass_rows: c.last_complete_pass_rows,
-                ..Cursor::fresh(mirror, network, url)
-            }
+            // The old writer stamped every row with this network's mainnet ID.
+            Cursor { chain_id, ..c }
+        }
+        Some(c)
+            if c.chain_id
+                .zip(chain_id)
+                .is_some_and(|(old, new)| old != new) =>
+        {
+            anyhow::bail!("catalogue mirror is already bound to a different chain");
         }
         Some(c) if c.chain_id.is_some() && chain_id.is_none() => {
             anyhow::bail!("a verified catalogue mirror requires its chain RPC to continue");
@@ -313,7 +338,7 @@ pub(super) async fn walk<F, FF, U, UF>(
     upsert: U,
 ) -> anyhow::Result<()>
 where
-    F: Fn(Option<i64>, Option<String>) -> FF,
+    F: Fn(Option<i64>, Option<String>, Option<String>) -> FF,
     FF: std::future::Future<Output = Result<Page, String>>,
     U: Fn(Vec<Value>) -> UF,
     UF: std::future::Future<Output = Result<i64, sqlx::Error>>,
@@ -326,6 +351,7 @@ where
     let mut c = cursor_for(pool, mirror, network, url, binding).await?;
     c.chain_id = binding;
     if !c.in_progress() {
+        c.pass_block_hash = None;
         c.pass_started_at = Some(now_utc());
         c.pages_fetched = 0;
         c.rows_upserted = 0;
@@ -343,6 +369,17 @@ where
     } else {
         tracing::info!(mirror = mirror.name(), network = network.db_name(), cursor = ?c.cursor_id, "mirror pass resumes at the persisted cursor");
     }
+    if verify_testnet(state, net) && c.pass_block_hash.is_none() {
+        match catalogue_pass_hash(state, net, url).await {
+            Ok(hash) => c.pass_block_hash = Some(hash),
+            Err(error) => {
+                c.last_error = Some(error.clone());
+                save(pool, &c).await?;
+                anyhow::bail!("{error}");
+            }
+        }
+        save(pool, &c).await?;
+    }
     let budget = state.settings.market.mirror_pages_per_tick.max(1);
     for _ in 0..budget {
         if ctx.is_cancelled() {
@@ -353,7 +390,13 @@ where
             ));
             return Ok(());
         }
-        let page = match fetch(c.cursor_updated_at, c.cursor_id.clone()).await {
+        let page = match fetch(
+            c.cursor_updated_at,
+            c.cursor_id.clone(),
+            c.pass_block_hash.clone(),
+        )
+        .await
+        {
             Ok(p) => p,
             Err(e) => {
                 c.last_error = Some(e.clone());
