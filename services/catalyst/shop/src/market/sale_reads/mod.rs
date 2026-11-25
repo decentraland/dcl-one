@@ -31,7 +31,9 @@ macro_rules! sales_query {
 }
 
 mod proceeds;
+mod royalties;
 pub(crate) use proceeds::{proceeds_page, proceeds_summary};
+pub(super) use royalties::get as get_royalties;
 
 fn db_error(error: impl Into<anyhow::Error>) -> Response {
     let error = error.into();
@@ -151,7 +153,7 @@ pub(super) async fn top_owners(
                 .await
                 .map_err(db_error)?;
             let (Json(data), total) =
-                sales_query!(nets, scope "top_owner_scope.sql"; "top_owners.sql")
+                sales_query!(nets, scope "creator_sales_scope.sql"; "top_owners.sql")
                     .bind(creator)
                     .bind(sort)
                     .bind(ascending)

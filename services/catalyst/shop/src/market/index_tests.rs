@@ -14858,4 +14858,6 @@ mod compare_sources_tests {
 
 mod sale_accounting;
 
+mod cancelled_trades;
+mod royalties;
 mod sale_routes;

@@ -1,6 +1,6 @@
 -- Ethereum v1 Issue logs identify an item by wearable ID inside its collection.
 -- Polygon v2 token IDs carry the item ID directly. Retain burned Ethereum
--- tokens because past purchases still count toward a current holder's spend.
+-- tokens because past sales still count in creator reports.
 , creator_items AS MATERIALIZED (
     SELECT network, contract_address, item_id, urn
     FROM shop.items
@@ -14,7 +14,7 @@
     WHERE i.network = 'ethereum' AND c.chain_id = 1 AND i.urn = c.urn || ':' || n.wearable_id
 ), scoped_assets AS NOT MATERIALIZED (
     -- Keep the creator's item keys on the outside of the sale index probes.
-    -- Flattening these joins can scan a holder's unrelated purchase history.
+    -- This bounds sale reads to the creator's catalogue before aggregation.
     SELECT a.*
     FROM creator_items i
     CROSS JOIN LATERAL (
