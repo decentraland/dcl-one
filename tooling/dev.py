@@ -690,6 +690,12 @@ def runtime_env(config, refuse_exposed_relayer=True):
             'MARKETPLACE_SUBGRAPH_URL': 'https://subgraph.decentraland.org/marketplace',
             'MARKETPLACE_NFT_INDEX_ENABLED': 'true', 'LAND_AUTHZ_INDEX_ENABLED': 'true',
             'SHOP_RENTALS_INDEX_ENABLED': 'true',
+            # The Shop's listings wait for the trade-events index to be current on both networks (its
+            # verdicts close sold and cancelled trades), over the same tagged endpoints as the other indexes.
+            # A fresh stack walks Polygon's off-chain marketplaces from 2024 first: about half an hour.
+            'MARKETPLACE_TRADE_EVENTS_INDEX_ENABLED': 'true',
+            'TRADE_RPC_URLS': '1=https://rpc.decentraland.org/mainnet?project=dcl-one-dev,'
+                              '137=https://rpc.decentraland.org/polygon?project=dcl-one-dev',
             # Builder's curation committee: the Polygon Committee contracts over RPC_ENDPOINT_POLYGON.
             'MARKETPLACE_COMMITTEE_INDEX_ENABLED': 'true',
             # The mirror posture's pause between index passes: a pass makes its eth_getLogs calls whether or not a
@@ -747,8 +753,7 @@ def testnet_env(config, refuse_exposed_relayer=True):
         'MARKETPLACE_INDEX_INTERVAL_SECS': '5',
         'MARKETPLACE_INDEX_CHAIN_ID_MATIC': '80002',
         'MARKETPLACE_INDEX_CHAIN_ID_ETHEREUM': '11155111',
-        # The NFT index walks chains 1/137 only, with no chain-id check: Matic has no endpoint here, and Ethereum
-        # would read Sepolia through ETH_RPC_URL and store its logs as mainnet rows.
+        # This testnet stack uses its configured graph readers.
         'MARKETPLACE_NFT_INDEX_ENABLED': 'false',
         # The Rentals contract is mainnet's; there is no chain-1 endpoint here.
         'SHOP_RENTALS_INDEX_ENABLED': 'false',

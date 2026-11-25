@@ -1312,9 +1312,7 @@ pub(super) async fn land_page_snapshot(
 ) -> Result<ReadConn, Response> {
     let mut conn = read_conn(&state.pool, state.land_network(), f, sources).await?;
     if needs_orders(f) {
-        super::trades::readiness_on(state, &mut conn, Utc::now())
-            .await
-            .map_err(super::trades::not_ready_response)?;
+        super::trades::ready_on(state, &mut conn, Utc::now()).await?;
     }
     Ok(conn)
 }
@@ -2005,6 +2003,13 @@ mod tests {
             return;
         };
         let pool = own.pool.clone();
+        let now = 1_700_000_000_000;
+        // Current at the reads' fixed clock.
+        crate::market::trade_events::tests::publish_cursors_at(
+            &pool,
+            chrono::DateTime::from_timestamp_millis(now).map(|t| t.naive_utc()),
+        )
+        .await;
         let c = "0x00000000000000000000000000000000000000c1";
         let a = "0x00000000000000000000000000000000000000aa";
         let b = "0x00000000000000000000000000000000000000bb";
@@ -2051,7 +2056,6 @@ mod tests {
         .await
         .unwrap();
         let land = Some(LAND_MAINNET);
-        let now = 1_700_000_000_000;
         let ids = |rows: &[sqlx::postgres::PgRow]| -> Vec<(String, String)> {
             rows.iter()
                 .map(|r| (r.get("contract_address"), r.get("token_text")))
@@ -2062,7 +2066,8 @@ mod tests {
             vec![],
             vec![("category", "wearable")],
             vec![("isOnSale", "true")],
-            vec![("minPrice", "12")],
+            // 12 wei, in MANA as the route reads it.
+            vec![("minPrice", "0.000000000000000012")],
             vec![("owner", a)],
             vec![("emoteOutcomeType", "so")],
             vec![("isOnSale", "false")],

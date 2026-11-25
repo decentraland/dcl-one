@@ -28,10 +28,24 @@ pub async fn run(mut config: Config) -> anyhow::Result<()> {
         config.content.connections_max_idle,
     ))?;
     let jobs = jobs_from_config(&config, &pool);
+    let settings = market_settings(&config, &content::own_hosts(&config))?;
+    settings.check_writer_pair()?;
+    settings
+        .market
+        .indexes
+        .check_catalogue_db(
+            &pool,
+            settings.market.indexes.nft_enabled || settings.market.mirrors_enabled,
+            [
+                settings.eth_collections_subgraph_url.as_deref(),
+                settings.matic_collections_subgraph_url.as_deref(),
+            ],
+        )
+        .await?;
     let market = Arc::new(shop::market::MarketplaceState::new(
         pool.clone(),
         http.clone(),
-        market_settings(&config, &content::own_hosts(&config))?,
+        settings,
     ));
     market.spawn_index_jobs(&jobs, config.shop.shop_rentals_index_enabled);
     let land = Arc::new(land_authz::LandAuthzState::new(
@@ -64,6 +78,7 @@ fn registry() -> anyhow::Result<dcl_metrics::Registry> {
         crate::jobs::FAMILIES,
         crate::chain_index::portal::FAMILIES,
         crate::chain_index::graph::FAMILIES,
+        crate::shop::market::SALES_REPAIR_METRICS,
         metrics::FAMILIES,
     ])
 }

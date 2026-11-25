@@ -2228,6 +2228,35 @@ target (no unearned tier on the next write), and a completed single badge
 reads its target as reached. The rest of upstream's
 catalog reaches it through the TS database import.
 
+### Historical marketplace sale inputs
+
+The Ethereum sales cursor watches accepted bids at the ERC721Bid contract, purchases at both names controllers, and changes to venue fees and recipients in `shop.sale_fee_change`. An accepted bid occupies one row in `shop.sale_event`. Each `NameBought` occupies one row in `shop.name_purchase` with its caller, beneficiary, name and fee in MANA base units. The original controller burns the price. The second pays its configured fee collector. Multiple purchases in one transaction have distinct log positions. The walk inserts its rows with its cursor advance. A rewind deletes all three tables' Ethereum rows above the retained block in the same transaction.
+
+On Ethereum and Polygon, `shop.sale_event.bid_fee` records the integer emitted by `BidAccepted`. Older rows can have a null fee. Replaying the original event fills it, including an emitted zero. The off-chain marketplace walk keeps each executed asset's `extra` bytes in `shop.trade_event.assets`. On Polygon the MANA leg can carry the royalty recipients chosen during execution. A replay of the same transaction and signature fills these bytes on older rows.
+
+On a populated deployment, the schema object pass creates the successful-order and accepted-bid indexes on the event tables. To keep writes available during the build, run these statements outside a transaction before `catalyst schema migrate`.
+
+```sql
+CREATE INDEX CONCURRENTLY IF NOT EXISTS nft_event_successful_order
+ON shop.nft_event (network, block_number) WHERE kind = 'order_successful';
+CREATE INDEX CONCURRENTLY IF NOT EXISTS sale_event_bid_accepted
+ON shop.sale_event (network, block_number) WHERE kind = 'bid_accepted';
+```
+
+A Polygon store purchase ends at its `Bought` log. Each explicitly priced line matches one preceding `Issue` with the same transaction, collection, item and beneficiary, after the previous purchase in that transaction. Repeated copies keep their line order. After a complete replay of the purchase and its issuers, an unmatched line retains the explicit payment and has no indexed NFT sale. The sales cursor records historical changes to venue rates and recipients in `shop.sale_fee_change`. Rates take effect at their log position.
+
+On an existing sale-event table, step `0064` creates the bid-fee check with `NOT VALID` to avoid a historical table scan under the migration lock. It enforces the check on every new or updated row. After the migration commits, validate historical rows in a separate transaction with `ALTER TABLE shop.sale_event VALIDATE CONSTRAINT sale_event_bid_fee_check`.
+
+The accounting job reads three mainnet cursors per network. Step `0064_shop_sale_accounting` leaves their new decoder version and verified height empty on upgraded databases. After the live walk catches up, each cursor owner uses spare request budget for historical windows of up to 10,000 blocks. It checks the stored tip hash around each window. When the log provider narrows a range until the request budget runs out, the cursor saves the smaller upper bound for the next attempt. Incomplete economic evidence withholds sales coverage at that window while the primary index continues to advance. A Polygon repair reads Issues only from named factory collections in the Polygon catalogue. Raw Bought lines remain available for replay when a late collection is discovered. The sale fold uses the same membership check before deriving executions, payments or seller attribution. A rewind clips the verified height. A repair changes the history revision even if the tip stays at the same height.
+
+`shop.sale_execution` stores one row per store purchase, accepted bid, successful order, off-chain execution or NAME fee. `shop.sale_asset` and `shop.sale_payment` store the ordered asset and consideration legs. The asset ID combines the network, transaction hash, execution number in that transaction and asset ordinal. A block or log position can change when the same transaction is included on a replacement branch. Store line prices and single-asset prices with one currency support per-item counts. A catalogue-only bundle without per-asset prices retains the ordered assets and consideration for reconciliation. Its payments and payouts are excluded from public sales totals. Trades containing foreign NFTs remain in the primary trade event log. NAME fees have their own payment and no asset sale.
+
+`shop.sale_payout` records the integer amount and recipient of each matched payment leg. Receipts are checked against their transaction, block hash and venue log. The split covers seller, creator royalty, venue fee, store fee and any division remainder retained by an off-chain payer. A missing receipt or ambiguous match leaves `settled` false. A missing receipt is retried. A trade consisting only of existing ERC-721 tokens has its token IDs in the trade event and needs no receipt. A trade that mints an item still reads the receipt for its issued token ID, even when there is no payment. Store mints read collection creatorship at the receipt block and reverse later changes in the same block to identify the seller separately from the payee.
+
+The fold groups payments by currency. UTC-day rows keep gross volume, counts, NAME fees, creator earnings, venue fees, store fees and burns. The original NAME controller and fees paid to the registered Ethereum MANA burners contribute to burns separately from venue fees. Item and wallet rows keep priced activity per day. Wallet totals use the wallet's days, and first-purchase rows date the first buyer, seller and item relationship for cumulative distinct counts. Recomputing a day replaces its rows and recomputes all affected wallets. A rewind or same-height repair records the earliest affected block. The fold keeps the preceding executions and replaces groups for both removed and replacement UTC days. A newly backfilled collection keeps the prefix before the earliest late collection. A change of source identity or a loss of collection coverage requires a new proof from the start. When no prefix can be reused, the first refold transaction removes the old executions and rebuilds every affected day and wallet total. Its locks and WAL volume grow with the previous history. Later passes replay the replacement history in bounded windows. [Full-refold follow-up](https://github.com/decentraland/dcl-one/issues/2287)
+
+`shop.sale_publication` records the common block and hash and the three source identities and revisions. All three source tips must match the RPC branch. The accounting job locks and rechecks the input cursors before committing the facts and their marker together. Readers can obtain a read-only repeatable-read transaction for one network or both. Each requested network needs a recent whole-history publication, no newly owed history, matching source revisions and a recent accounting marker. The earliest of those freshness deadlines bounds use of the snapshot. A capped ordinary advance retains the previous freshness deadline until a near-head prefix earns a new one. Excluding an unlisted store issuer requires a complete Polygon factory cursor through the purchase. The fold saves the verified exclusion height on the factory cursor under the publication locks. A factory rewind clips that height to the surviving prefix. A rebuild clears it. A newly discovered issuer reopens repair even below a saved exclusion. The saved set in `shop.sale_covered_collection` bounds the next historical refold to additions, removals or changed backfill heights since that marker.
+
 ### Badge processor
 
 The writers of evaluated progress are four leased jobs
@@ -2545,6 +2574,48 @@ fold record, a publish and a rewind; the table stays at a dozen rows.
 `shop.chain_checkpoint` holds each projection's recovery points (see
 "Reorgs").
 
+A catalogue database serves one Ethereum/Polygon pair. The NFT worker uses
+`MARKETPLACE_INDEX_CHAIN_ID_ETHEREUM` and `MARKETPLACE_INDEX_CHAIN_ID_MATIC`
+to select mainnet (1/137) or Sepolia/Amoy (11155111/80002). Its RPC must
+serve that chain. At startup the catalogue writer checks the pair against
+`ETH_NETWORK` and the database binding. The API process leaves the binding
+to the index writer, even when they share settings. Each database can have independent
+Ethereum and Sepolia Rentals histories.
+The `nft_catalogue_pair` row in `shop.worker_progress` identifies the pair.
+`shop.mirror_state.chain_id` identifies each mirror's completed chain-bound
+copy. A new source starts from page one. For testnets the mirror
+checks the graph head on the configured chain by comparing a confirmed block
+hash against the chain-checked RPC. Both mirrors persist that hash with their
+keyset and read every page at that block. Collections supply contract addresses
+and items supply their metadata. A mirror writer can provide this proof even
+when the NFT walker runs on another node. A writer without a catalogue RPC
+leaves a bound pass untouched. A transient read failure retries its pinned block. A graph that rejects the
+block, or a pass that reaches a day in age, restarts from a new confirmed block. Descriptive readers can use the last
+completed copy during this retry. The NFT walk requires a complete collections
+pass for its chain. On testnet it selects addresses from rows the verified
+pass actually fetched. Rows retained from a graph-only source carry no proof.
+An empty verified pass covers the chain's
+fixed contracts. The Sepolia/Amoy pair omits the mainnet-only sales,
+committee, collections, third-party registry and MANA transfer walks, even
+when the mirror posture enables them and mainnet RPCs are available. The
+separately keyed Ethereum Rentals histories keep their own endpoints.
+
+A Sepolia catalogue whose mirrors are bound to the mainnet default URLs
+can be rebound when it has a Sepolia LAND cursor. Check the intended database
+and the URLs in `shop.mirror_state`, stop its catalogue writers, and
+configure the Sepolia and Amoy graph and RPC sources. Run
+`PGOPTIONS="-c rebind.confirm_testnet=yes" psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f tooling/migration/rebind-legacy-catalogue-to-testnet.sql`
+on that database, then restart its writers. The command logs the rebind,
+clears both descriptive mirrors and their publication, and records the
+testnet pair in one transaction. A database with an existing pair binding,
+NFT history, or other mirror sources refuses the operation. A catalogue
+writer always refuses a conflicting pair on ordinary startup.
+
+On Sepolia the NFT and LAND authorization walks start at LAND proxy
+deployment block 3,831,219. On Amoy the NFT walk starts at marketplace V2
+block 5,706,656, before the collection factory. The historical estate
+repair below runs only on Ethereum mainnet.
+
 `shop.land_data` stores the latest parcel Update and the latest valid estate
 document. A malformed parcel Update clears the fields at its log position.
 The Ethereum NFT walk reads estate names at creation and on update. After
@@ -2678,8 +2749,10 @@ retried. A row in quarantine is not walked, rewound or published.
 - `folded_at` is within 30 minutes;
 - it is bound to the chain the reader expects and is out of quarantine.
 
-Every index but `trade_events` reads mainnet only, so its readers expect
-chain 1 or 137. The readers of `trade_events` expect the chain the node
+The NFT and trade-events walks use the configured catalogue pair. NFT reader and
+status readiness expect mainnet publications (1/137). The
+Rentals histories have separate mainnet and Sepolia cursors. The other
+walks expect chain 1 or 137. The readers of `trade_events` expect the chain the node
 configures (`MARKETPLACE_INDEX_CHAIN_ID_*`): the Rust readers and the
 notification producers pass it, and its verdict fragments in the listing
 SQL read the chains the process serves (`catalog::served_chains`). The
@@ -2781,7 +2854,8 @@ pass claims the projection again and acts.
 
   It then walks and folds again; the other network and the other
   projections are untouched. Trade events also drop their derived verdict
-  rows, so every digest is recomputed from the stored trades.
+  rows, so every digest is settled again from the stored trades (see "Shop
+  trade verdicts").
 
   A rebuild keeps the projection's chain and start block. It is refused in
   three cases: the cursor's history is from another chain; it starts at
@@ -2821,12 +2895,54 @@ An older writer can advance past missing creations, or rewind and replay
 to the very same height and hash. On upgrade, a checkpoint or rewind-count
 mismatch automatically reopens the historical prefix through that tip.
 
+## Shop trade verdicts
+
+Workload: each trade-events fold, every pass of the walk on each network.
+It first settles the V3 digests, then folds every touched trade into
+`shop.trade_chain_state`. Every route over `shop.trades` reads the verdicts.
+
+A V3 marketplace keys a cancellation on the trade's EIP-712 digest.
+`shop.trades.trade_digest` stores the digest the signature was verified
+over: `POST /v1/trades` writes it, and the marketplace-server import copies
+upstream's. The mirror cannot copy it, because upstream's API does not
+expose it.
+
+The digest step selects at most 2,000 V3 trades of the network per
+statement: those without a verdict row, and those whose row has no digest
+and no failure newer than 10 minutes. For each trade it takes the stored
+digest when the signature recovers the signer over it. Otherwise it rebuilds
+the digest from the row on the same condition. A trade that gains a digest
+is refolded (`folded_block = -1`). A trade that cannot get one is marked
+`digest_failed_at`.
+
+Invariants:
+
+- A digest in `trade_chain_state` recovers the trade's signer. A verified
+  digest is never overwritten (`WHERE digest IS NULL`).
+- `digest_failed_at` is set only while `digest` is NULL (a CHECK). A database
+  error during the step aborts the fold and marks nothing.
+- Each statement's trades leave the candidate set, with a digest or a failure
+  newer than the backoff, so the step's loop ends. A permanent failure costs
+  one rebuild per trade every 10 minutes.
+- The open-listing reads (`unified_trades`, `/v1/bids`) list a trade only
+  while its network's trade-events cursor holds a publish
+  (`chain_walk::published_sql_on`: a fold published within 30 minutes; a
+  pass in progress keeps the previous publish), in the same statement. A
+  trade that is sold, cancelled or marked is not listed. A marked trade
+  still counts in the duplicate-listing refusal: it may still execute, or
+  be verified later. The routes that list, price or report
+  the status of trades refuse with the `trade-events-index` envelope until
+  the index is current on both networks. `/v1/trades` and
+  `/v1/trades/{id}` serve the stored records, which carry no status, so
+  they wait for the trades mirror only.
+
 ## Curation committee
 
 Builder's committee routes (the drafts and items of every wallet, another
 wallet's collections and items, the curation console's committee list)
 admit `BUILDER_ADMIN_ADDRESSES` and the current members of the Polygon
-curation committee. Shop's `committee` index
+curation committee. The testnet pair schedules no committee walk. Builder
+uses the configured admin addresses there. Shop's mainnet `committee` index
 (`MARKETPLACE_COMMITTEE_INDEX_ENABLED`) walks the two Committee contracts'
 `MemberSet` logs from the first one's deployment into `shop.committee_event`
 over the `TRADE_RPC_URLS` 137 entry, else on mainnet `RPC_ENDPOINT_POLYGON`,
@@ -3184,14 +3300,12 @@ builds it from its own indexes.
   `signatures.rentals` rows of both registries signed for the grid's chain
   and its Rentals contract, with their periods.
 - **Readiness:** the land-authz index published for the configured
-  registries; the grid's chain being Ethereum mainnet, the only chain the
-  nft index walks (a Sepolia LAND index reports the nft index as not
-  ready); the nft index published on Ethereum and bound to chain 1
+  registries; the grid's chain being Ethereum mainnet, the chain this grid reader covers; the nft index published on Ethereum and bound to chain 1
   (`shop.chain_cursor`, `chain_walk::ready_sql`); and `shop.trades`
   readable (a recent complete trades-mirror pass read in the snapshot, or
-  local authority). The trade-events verdicts (`shop.trade_chain_state`)
-  close a sold or cancelled trade while that index is published on
-  Ethereum, as in the Shop's own listings. A source that is not ready fails
+  local authority); and the trade-events index current on Ethereum, whose
+  verdicts (`shop.trade_chain_state`) close a sold or cancelled trade, as in
+  the Shop's own listings, which fail closed the same way. A source that is not ready fails
   the pass, naming it in the marker's `last_error`, and nothing is built.
   The held grid keeps serving. Until a grid exists, every map route answers
   the unavailable envelope (503, `Retry-After: 60`, `no-store`, no
@@ -4151,15 +4265,18 @@ feed's bids legs read Polygon's legacy bids (ERC721BidV2) from
 `services/catalyst/shop/src/market/bids.rs`. Ethereum's legacy bids still
 come from the collections subgraph reader.
 
-Each read runs on one `REPEATABLE READ, READ ONLY` snapshot. Each statement
-is bounded by the `/v1/nfts` statement timeout. The snapshot checks:
+Each read runs on one `REPEATABLE READ, READ ONLY` snapshot, at one instant
+taken once the snapshot is established. Each statement is bounded by the
+`/v1/nfts` statement timeout. The snapshot checks:
 
 - the Polygon `sales` cursor is published: its whole history, a fold
-  within 30 minutes, bound to chain 137, out of quarantine. Otherwise the
-  read answers the `sales-index` envelope. `folded_block` is not compared
-  with `last_block`, as for the nft index's readers: a pass advances the
-  latter before it folds;
-- the nft index is fresh on Polygon (otherwise the `nft-index` envelope);
+  within 30 minutes, bound to the chain the node serves on Polygon
+  (`IndexSettings::chain_id`), out of quarantine. Otherwise the read answers
+  the `sales-index` envelope. `folded_block` is not compared with
+  `last_block`, as for the nft index's readers: a pass advances the latter
+  before it folds;
+- the nft index is fresh on Polygon, on that same chain (otherwise the
+  `nft-index` envelope);
 - every bid in the request's scope (its filters but the seller's) has a
   seller.
 

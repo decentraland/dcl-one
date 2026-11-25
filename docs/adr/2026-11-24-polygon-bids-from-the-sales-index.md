@@ -22,10 +22,11 @@ subgraph kept it `open`, but it can no longer be accepted.
 Each read runs on one `REPEATABLE READ, READ ONLY` snapshot that checks:
 
 - the Polygon sales cursor is published: its whole history, a fold within
-  30 minutes, chain 137, out of quarantine. As for the nft index's
-  readers, `folded_block` is not compared with `last_block`, which every
-  pass advances before it folds;
-- the nft index is fresh on Polygon;
+  30 minutes, bound to the chain the node serves on Polygon
+  (`MARKETPLACE_INDEX_CHAIN_ID_MATIC`), out of quarantine. As for the nft
+  index's readers, `folded_block` is not compared with `last_block`, which
+  every pass advances before it folds;
+- the nft index is fresh on Polygon, on that same chain;
 - every bid in the request's scope (its filters but the seller's) has a
   seller.
 

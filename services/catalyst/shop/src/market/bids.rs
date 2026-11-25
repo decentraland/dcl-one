@@ -1,7 +1,9 @@
 //! `/v1/bids`: off-chain bids from the trades mirror (`type = 'bid'`, open
 //! unless expired or cancelled here; `sold` or `cancelled` by the chain's
-//! verdict once the network's trade-events index is published,
-//! `trade_events::chain_status_sql`) merged with the legacy on-chain bids.
+//! verdict, `trade_events::chain_status_sql`; only while the network's
+//! trade-events index is current, and never a V3 bid whose cancellation
+//! digest could not be established, `trade_events::unverifiable_sql`) merged
+//! with the legacy on-chain bids.
 //! A mirror bid's seller is the item's creator when the bid is on an item and
 //! the nft's current owner (the nft index, or land_authz for LAND and
 //! estates) when it is on an nft; empty while no index holds the token.
@@ -211,7 +213,7 @@ const TRADES_BIDS_SQL: &str = "SELECT t.id::text AS id, t.contract AS trade_cont
  LEFT JOIN shop.nft n ON recv_erc721.token_id IS NOT NULL AND n.network = lower(t.network) AND n.contract_address = recv.contract_address \
       AND n.token_id = TOKEN_NUM \
  LEFT JOIN land_authz.token_right tr ON recv_erc721.token_id IS NOT NULL AND tr.token_address = recv.contract_address AND tr.token_id = TOKEN_NUM \
- WHERE t.type = 'bid' AND t.expires_at > $1 AND COUNTED AND SERVED_CHAIN \
+ WHERE t.type = 'bid' AND t.expires_at > $1 AND COUNTED AND SERVED_CHAIN AND CHAIN_CURRENT \
    AND (recv_erc721.asset_id IS NULL OR TOKEN_NUM IS NOT NULL) AND (recv_item.asset_id IS NULL OR ITEM_NUM IS NOT NULL)";
 
 /// The bids leg's `(id, status)` over every mirrored bid, for the index tests.
@@ -237,6 +239,14 @@ fn trades_bids_sql(extra: &str) -> String {
         .replace(
             "CHAIN_STATUS",
             &super::trade_events::chain_status_sql("t", "$1"),
+        )
+        .replace(
+            "CHAIN_CURRENT",
+            &format!(
+                "{} AND NOT {}",
+                super::trade_events::verdicts_current_sql("t", "$1"),
+                super::trade_events::unverifiable_sql("t")
+            ),
         );
     format!("SELECT * FROM ({sql}) b WHERE TRUE{extra} ORDER BY b.created_at DESC LIMIT 1000")
 }
@@ -452,13 +462,14 @@ pub fn polygon_book_here(state: &MarketplaceState) -> bool {
 
 /// Whether the Polygon sales cursor `c` is published at `now` as the bid
 /// book trusts it: its whole history walked and a fold published within
-/// [`READY_WINDOW`], bound to chain 137 and out of quarantine.
+/// [`READY_WINDOW`], bound to `chain_id` (the chain the node serves on
+/// Polygon, `IndexSettings::chain_id`) and out of quarantine.
 /// `shop.nft_bid` changes only in a fold's commit and in a rewind, which
 /// clears the marker, so, as `owned_items::fresh` for the nft index, this
 /// does not compare `folded_block` with `last_block`: each pass advances
 /// `last_block` before it folds, so that equality is false for part of
 /// every pass while the table holds a published fold.
-pub fn sales_published(c: &Cursor, now: DateTime<Utc>) -> bool {
+pub fn sales_published(c: &Cursor, chain_id: i64, now: DateTime<Utc>) -> bool {
     let Some(folded_at) = c.folded_at else {
         return false;
     };
@@ -467,7 +478,7 @@ pub fn sales_published(c: &Cursor, now: DateTime<Utc>) -> bool {
         && c.full_history
         && c.folded_block.is_some()
         && c.quarantined_at.is_none()
-        && c.chain_id == Some(chain_walk::mainnet_chain(ChainNet::Matic))
+        && c.chain_id == Some(chain_id)
         && age >= ChronoDuration::zero()
         && age <= READY_WINDOW
 }
@@ -483,12 +494,15 @@ struct SellerBounds {
     recheck_from: Option<i64>,
 }
 
-/// The read-only snapshot Polygon's bid book reads on, and what a seller is
-/// read against on it. `Err` is the unavailable envelope naming the index
-/// that is not ready, or a 500.
+/// The read-only snapshot Polygon's bid book reads on, what a seller is
+/// read against on it, and the request's instant: taken once the snapshot
+/// is established, so a fold the snapshot sees was published before it, and
+/// shared by the checks and the reads. The sales and nft cursors must carry
+/// the chain the node serves on Polygon. `Err` is the unavailable envelope
+/// naming the index that is not ready, or a 500.
 async fn polygon_snapshot(
     state: &MarketplaceState,
-) -> Result<(Transaction<'static, Postgres>, SellerBounds), Response> {
+) -> Result<(Transaction<'static, Postgres>, SellerBounds, DateTime<Utc>), Response> {
     let db = |e: sqlx::Error| ApiError::internal(e.to_string()).into_response();
     let mut tx = state.pool.begin().await.map_err(db)?;
     sqlx::query("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ, READ ONLY")
@@ -503,19 +517,29 @@ async fn polygon_snapshot(
         .execute(&mut *tx)
         .await
         .map_err(db)?;
+    // The statement above established the snapshot.
     let now = Utc::now();
+    let indexes = &state.settings.market.indexes;
+    let chain = indexes.chain_id(ChainNet::Matic);
     let sales = chain_walk::cursor(&mut *tx, INDEXER_SALES, ChainNet::Matic)
         .await
         .map_err(db)?;
-    if !sales.is_some_and(|c| sales_published(&c, now)) {
+    if !sales.is_some_and(|c| sales_published(&c, chain, now)) {
         return Err(unavailable(
             Source::SalesIndex,
             "the matic sales index is not published (catching up, rewound after a reorg, stopped, or MARKETPLACE_SALES_INDEX_ENABLED off)",
         ));
     }
-    owned_items::check(&mut tx, &[ChainNet::Matic], Rule::Fresh, false, now)
-        .await
-        .map_err(|e| e.into_response(|m| ApiError::internal(m.to_string()).into_response()))?;
+    owned_items::check_on(
+        &mut tx,
+        &[ChainNet::Matic],
+        |net| indexes.chain_id(net),
+        Rule::Fresh,
+        false,
+        now,
+    )
+    .await
+    .map_err(|e| e.into_response(|m| ApiError::internal(m.to_string()).into_response()))?;
     let nft = chain_walk::cursor(&mut *tx, INDEXER_NFT, ChainNet::Matic)
         .await
         .map_err(db)?
@@ -532,6 +556,7 @@ async fn polygon_snapshot(
             nft_last: nft.last_block,
             recheck_from,
         },
+        now,
     ))
 }
 
@@ -635,8 +660,8 @@ pub async fn polygon_leg(
     if f.item_id.is_some() || f.network_db_filter.as_ref().is_some_and(|n| n.is_empty()) {
         return Ok((Vec::new(), 0));
     }
-    let (mut tx, bounds) = polygon_snapshot(state).await?;
-    let read = polygon_rows(&mut tx, f, window, &bounds).await;
+    let (mut tx, bounds, now) = polygon_snapshot(state).await?;
+    let read = polygon_rows(&mut tx, f, window, &bounds, now.timestamp_millis()).await;
     tx.rollback().await.ok();
     match read {
         Ok(Some(rows)) => Ok(rows),
@@ -654,9 +679,10 @@ async fn polygon_rows(
     f: &BidFilters,
     window: i64,
     bounds: &SellerBounds,
+    now_ms: i64,
 ) -> Result<Option<(Vec<Bid>, i64)>, sqlx::Error> {
     let mut binds = Vec::new();
-    let Some(scope) = polygon_scope(f, readers::now_ms(), &mut binds) else {
+    let Some(scope) = polygon_scope(f, now_ms, &mut binds) else {
         return Ok(Some((Vec::new(), 0)));
     };
     let bind_all = |sql: String, binds: &[String]| {
@@ -944,10 +970,10 @@ mod tests {
             diverged_at: None,
         };
         assert!(
-            sales_published(&published, now),
+            sales_published(&published, 137, now),
             "a pass that advanced last_block past the fold it has not folded yet"
         );
-        let not = |c: Cursor| !sales_published(&c, now);
+        let not = |c: Cursor| !sales_published(&c, 137, now);
         assert!(not(Cursor {
             folded_block: None,
             ..published.clone()
@@ -960,6 +986,14 @@ mod tests {
             chain_id: Some(80002),
             ..published.clone()
         }));
+        let amoy = Cursor {
+            chain_id: Some(80002),
+            ..published.clone()
+        };
+        assert!(
+            sales_published(&amoy, 80002, now),
+            "a node serving Amoy takes Amoy's fold"
+        );
         assert!(not(Cursor {
             quarantined_at: Some(now.naive_utc()),
             ..published.clone()
