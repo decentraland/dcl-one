@@ -5065,9 +5065,10 @@ async fn sepolia_v1_upgrade_rebuilds_once_and_fences_the_old_trade_writer() {
     let Some(db) = ScratchDb::create().await else {
         return;
     };
-    const MIGRATION: &str = include_str!(
-        "../../../../../schemas/migrations/0071_shop_testnet_sale_and_trade_venues.sql"
-    );
+    const MIGRATION: &str = include_str!(concat!(
+        env!("DCL_ONE_ROOT"),
+        "/schemas/migrations/0071_shop_testnet_sale_and_trade_venues.sql"
+    ));
     let seed_sql = "INSERT INTO shop.chain_cursor (indexer,network,start_block,last_block,folded_block,folded_at,full_history,chain_id)
                       VALUES ('trade_events','ethereum',9455328,9455350,9455350,timezone('UTC',now()),true,$1)
                       ON CONFLICT (indexer,network) DO UPDATE SET owner_generation = shop.chain_cursor.owner_generation + 1";
@@ -5177,6 +5178,17 @@ async fn sepolia_v1_upgrade_rebuilds_once_and_fences_the_old_trade_writer() {
         .unwrap()
         .unwrap();
     assert!(cur.folded_block.is_some() && cur.rebuild_requested_at.is_none());
+    // Operator revalidation clears the chain binding. The same canonical
+    // checkpoint proves this already-rebuilt V1 history without a second replay.
+    sqlx::query("UPDATE shop.chain_cursor SET chain_id=NULL WHERE indexer='trade_events' AND network='ethereum'").execute(&db.pool).await.unwrap();
+    let outcome = pass(&st, &url, &ix).await;
+    assert!(outcome.published && !outcome.rebuilt, "{outcome:?}");
+    let rebound = chain_walk::cursor(&db.pool, INDEXER_TRADE_EVENTS, eth)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(rebound.chain_id, Some(ix.chain_id));
+    assert!(rebound.rebuild_requested_at.is_none());
     db.drop().await;
 }
 

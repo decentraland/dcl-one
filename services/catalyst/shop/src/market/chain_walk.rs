@@ -1373,13 +1373,13 @@ async fn bind(
     match proof {
         Ok(()) => {
             if owner.indexer == INDEXER_TRADE_EVENTS && owner.chain_id == 11_155_111 {
-                sqlx::query(
+                let requested = sqlx::query(
                     "UPDATE shop.chain_cursor SET chain_id = $6, sepolia_trade_v1 = true, \
                          start_block = CASE WHEN start_block = 9455328 THEN 6770056 ELSE start_block END, \
                          last_block = CASE WHEN last_block < start_block AND start_block = 9455328 THEN 6770055 ELSE last_block END, \
                          rebuild_requested_at = timezone('UTC', now()), folded_at = NULL, folded_block = NULL, \
                          owner_generation = owner_generation + 1 \
-                     WHERE indexer = $1 AND network = $2 AND owner_generation = $3 AND chain_id IS NULL \
+                     WHERE indexer = $1 AND network = $2 AND owner_generation = $3 AND chain_id IS NULL AND NOT sepolia_trade_v1 \
                        AND quarantine_reason IS NULL AND last_block = $4 AND last_block_hash IS NOT DISTINCT FROM $5",
                 )
                 .bind(owner.indexer)
@@ -1389,10 +1389,12 @@ async fn bind(
                 .bind(checkpoint)
                 .bind(owner.chain_id)
                 .execute(pool)
-                .await?;
-                return Err(owner
-                    .fenced("recheck the adopted Sepolia cursor before its V1 rebuild".into())
-                    .into());
+                .await?.rows_affected();
+                if requested == 1 {
+                    return Err(owner
+                        .fenced("recheck the adopted Sepolia cursor before its V1 rebuild".into())
+                        .into());
+                }
             }
             let adopted = sqlx::query(
                 "UPDATE shop.chain_cursor SET chain_id = $6 \
