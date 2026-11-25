@@ -2625,7 +2625,8 @@ the old Sepolia trade publication once. Its worker rebuilds from the V1
 deployment at block 6,770,056. V2 and V3 trade verdicts share the same
 publication and answer the trade-events-index unavailable envelope during
 catch-up. The migration fences the old owner. Binaries without the V1
-filter cannot claim this cursor. A partial replay with a custom start keeps that
+filter cannot claim this cursor after a rollback. Restart a V1-capable writer
+to resume the Sepolia trade walk. A partial replay with a custom start keeps that
 start and needs the matching configured override. A revalidation of V1 history
 reuses its canonical checkpoint. Mainnet and Amoy trade histories keep
 their existing publication.
