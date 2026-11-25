@@ -76,7 +76,7 @@ describe('finding controls', () => {
     ])
   })
 
-  it('names a switch that is a native checkbox by the label that wraps it, and reads its state', () => {
+  it('names a switch that is a native checkbox by the label that wraps it', () => {
     const root = render('<label><span>Auto</span><span><input type="checkbox" role="switch" checked></span></label>')
     place(root.querySelector('input')!, 0, 0)
     expect(listControls()).toEqual([{ role: 'switch', name: 'Auto' }])

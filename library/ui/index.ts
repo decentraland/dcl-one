@@ -35,7 +35,7 @@ export { default as SiteLayout, useSiteLayout } from './components/AppChrome/Sit
 export type { SiteLayoutProps } from './components/AppChrome/SiteLayout'
 
 export { Button } from './components/Button/Button'
-export type { ButtonHudSize, ButtonHudVariant, ButtonProps } from './components/Button/Button'
+export type { ButtonProps } from './components/Button/Button'
 
 export * from './components/AnimatedBackground/AnimatedBackground'
 export { FRAGMENT_SHADER, VERTEX_SHADER } from './components/AnimatedBackground/shaders'

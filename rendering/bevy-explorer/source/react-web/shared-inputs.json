@@ -10425,7 +10425,7 @@
     },
     {
       "path": "library/explorer-core/test/hudAutomation.test.ts",
-      "sha256": "68302e9849a2cce73b6906543ea557cd09d29fbff1c19227741b97af5973d7eb"
+      "sha256": "563915913305a645de635883a24b1fb59e9ddc4200c082ffd1dc9d7010f5204f"
     },
     {
       "path": "library/explorer-core/test/hudScale.test.ts",
@@ -12525,7 +12525,7 @@
     },
     {
       "path": "library/ui/apps/hud/features/chat/buttonSounds.test.ts",
-      "sha256": "d2892cbb724df0103e7889200acb59d4295b70ae65d3cc92cad51f994a665f5c"
+      "sha256": "78514611aee50fba8d43ff350e4673b3031cc87da9ffa7d4fb8cac9fa0cd7e74"
     },
     {
       "path": "library/ui/apps/hud/features/chat/buttonSounds.ts",
@@ -14309,7 +14309,7 @@
     },
     {
       "path": "library/ui/apps/hud/test/profile.passport.test.tsx",
-      "sha256": "df0cf5c809e281b904b8988c640d79b46b7dfa95ad3d4b192e95eb664ce467b4"
+      "sha256": "2732c011812a7cff43834b2ff75c2d025c22843b9d26b9a62a0d8532187bba58"
     },
     {
       "path": "library/ui/apps/hud/test/profile.passportCreations.test.tsx",
@@ -14317,7 +14317,7 @@
     },
     {
       "path": "library/ui/apps/hud/test/profileCard.test.tsx",
-      "sha256": "516443497824b81d18c953f5b8d2254e8b8a8d4f66ff05d6fe91ba6b50fbb624"
+      "sha256": "c30ad3cf1b68e7ebe8fd73fde6c9222ce145c0ac9a9bf76fb6537f686e18b720"
     },
     {
       "path": "library/ui/apps/hud/test/profileStore.test.ts",
@@ -16089,7 +16089,7 @@
     },
     {
       "path": "library/ui/components/Button/Button.module.css",
-      "sha256": "c639bfaf6ab573d84bc531a16367ead4519e3c5717a9beb5a0d619fa6a36ee43"
+      "sha256": "6b8fe078d68c478cb3a0cb3331af609d0c9e4552bef2c66bfd4cb1d42fe9b150"
     },
     {
       "path": "library/ui/components/Button/Button.module.css.d.ts",
@@ -16097,7 +16097,7 @@
     },
     {
       "path": "library/ui/components/Button/Button.tsx",
-      "sha256": "739cff43aaf543f3f8a3e2b080db60410bd966d5331e9efcc4b7113d3db5779e"
+      "sha256": "5c488c6ea1c45e3c8053a1ce39f24a939d4b7a952d823364608ce4e5196b6df3"
     },
     {
       "path": "library/ui/components/CardActionButton/CardActionButton.module.css",
@@ -16361,7 +16361,7 @@
     },
     {
       "path": "library/ui/components/Switch/Switch.module.css",
-      "sha256": "5678744d90f00909ca0ba01a41d829808bf5760b6e46d7c9fc34449344a9ceed"
+      "sha256": "f8ff73ff9ce457a087e0107255cc6fd24459c76ada484ae93f2f21b7c2bfefbb"
     },
     {
       "path": "library/ui/components/Switch/Switch.tsx",
@@ -16413,7 +16413,7 @@
     },
     {
       "path": "library/ui/components/Toast/Toast.module.css",
-      "sha256": "7b8f025d62ab909552e8c579fbd8e89a351d312145b4a4978fb07ab2916f1a0b"
+      "sha256": "e2c8f3c1c90597a72ec159daac0a6c52ab3febd93fbd7a108115cb388b94b451"
     },
     {
       "path": "library/ui/components/Toast/Toast.tsx",
@@ -16549,7 +16549,7 @@
     },
     {
       "path": "library/ui/index.ts",
-      "sha256": "19a9120b9487dd02687ecd670d6fb59b8783eba8fa2c051e309f8563ace9a6e0"
+      "sha256": "4b17d7b577de1dca7541b160e3ee81890499181c923749a633bb8143a3d4ad8d"
     },
     {
       "path": "library/ui/link.helpers.ts",

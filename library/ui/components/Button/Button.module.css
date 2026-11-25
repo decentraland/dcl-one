@@ -273,9 +273,15 @@
     transform: translateY(1px);
   }
 
-  .hud:disabled:where(:not([data-size='bare'])) {
+  .hud:disabled:where(:not([data-size='bare'])),
+  .hud[data-disabled]:where(:not([data-size='bare'])) {
     opacity: 0.45;
     cursor: not-allowed;
+  }
+
+  /* A disabled link: `:disabled` does not match an anchor, so it takes no pointer and none of the states. */
+  .hud[data-disabled] {
+    pointer-events: none;
   }
 
   /* sizes */
@@ -341,7 +347,7 @@
     font-weight: 600;
     letter-spacing: 0;
   }
-  :where(.hud)[data-size='modal']:disabled {
+  :where(.hud)[data-size='modal']:is(:disabled, [data-disabled]) {
     opacity: 0.5;
   }
 
@@ -356,7 +362,7 @@
     line-height: 1.25;
     letter-spacing: 0.5px;
   }
-  :where(.hud)[data-size='dialog']:disabled {
+  :where(.hud)[data-size='dialog']:is(:disabled, [data-disabled]) {
     opacity: 0.4;
   }
 
@@ -369,7 +375,7 @@
     font-weight: 600;
     letter-spacing: 0;
   }
-  :where(.hud)[data-size='cta']:disabled {
+  :where(.hud)[data-size='cta']:is(:disabled, [data-disabled]) {
     opacity: 0.5;
   }
 
@@ -382,7 +388,7 @@
     font-weight: 600;
     letter-spacing: 0;
   }
-  :where(.hud)[data-size='start']:disabled {
+  :where(.hud)[data-size='start']:is(:disabled, [data-disabled]) {
     opacity: 0.5;
   }
 

@@ -140,6 +140,7 @@ describe('TabsBar', () => {
       await userEvent.keyboard('{ArrowRight}')
       expect(screen.getByRole('tab', { name: 'Wearables', selected: true })).toHaveFocus()
       await userEvent.keyboard('{End}')
+      expect(screen.getByRole('tab', { name: 'Emotes', selected: true })).toHaveFocus()
       expect(picked).toEqual(['emotes', 'wearables', 'emotes'])
     })
 

@@ -168,8 +168,22 @@ export const feedbackEntries: GalleryEntry[] = [
         title: 'Explorer HUD: a notice, an error and a notice with an action',
         render: () => (
           <div className={layout.stack}>
-            <Toast appearance="hud" placement="inline" duration={0}>
-              <b>Mojito</b> is online
+            <Toast
+              appearance="hud"
+              placement="inline"
+              duration={0}
+              icon={
+                <ProfilePic
+                  appearance="hud"
+                  name={people.ada.name}
+                  src={people.ada.picture}
+                  nameColor={people.ada.color}
+                  size={28}
+                  alt=""
+                />
+              }
+            >
+              <b>{people.ada.name}</b> is online
             </Toast>
             <Toast appearance="hud" placement="inline" variant="error" duration={0}>
               Something went wrong.
@@ -194,7 +208,8 @@ export const feedbackEntries: GalleryEntry[] = [
   {
     name: 'Tooltip',
     group: 'Feedback',
-    summary: 'A short label or note beside its anchor, shown on hover and keyboard focus.',
+    summary:
+      'A short label or note beside its anchor, shown on hover and keyboard focus; the HUD tip opens with the pointer alone.',
     components: ['Tooltip'],
     examples: [
       {

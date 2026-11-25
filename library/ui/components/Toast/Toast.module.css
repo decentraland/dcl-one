@@ -68,7 +68,9 @@
 
 
   /* Not in Figma: the Explorer HUD's notice (`appearance="hud"`). It takes the pointer only when it holds an
-     action or a close button. Its 10px gap and padding and its 480px width have no token. */
+     action or a close button. Its 10px gap and padding and its 480px width have no token; its font stack, its
+     600 weight for bold text and its 140ms are the HUD's --font-family, --fw-semibold and --dur-fast, written
+     as values. */
   .toast[data-appearance='hud'] {
     display: flex;
     gap: 10px;

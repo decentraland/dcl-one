@@ -131,7 +131,7 @@ function HudButton({
   }
   const content = children === undefined ? label : children
   if (typeof native.href === 'string') {
-    const { href, target, rel, ...anchor } = native
+    const { href, target, rel, onClick, ...anchor } = native
     return (
       <a
         {...anchor}
@@ -140,7 +140,12 @@ function HudButton({
         href={disabled ? undefined : href}
         target={target}
         rel={secureRel(target, rel)}
+        role={disabled ? (anchor.role ?? 'link') : anchor.role}
         aria-disabled={disabled || anchor['aria-disabled']}
+        data-disabled={disabled || undefined}
+        onClick={
+          disabled ? (event: MouseEvent<HTMLAnchorElement>) => event.preventDefault() : onClick
+        }
       >
         {content}
       </a>

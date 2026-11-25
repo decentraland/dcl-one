@@ -215,7 +215,10 @@
     .track,
     .track::after,
     .hud .track,
-    .hud .track::after {
+    .hud .track::after,
+    .hud:hover .input:not(:disabled) + .track,
+    .hud .input:disabled + .track,
+    .hud .input:disabled + .track::after {
       transition: none;
     }
   }

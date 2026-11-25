@@ -634,6 +634,32 @@ describe('when a Button takes the hud appearance', () => {
       expect(screen.getByRole('button', { name: 'Retry' })).toBeInTheDocument()
     })
 
+    it('should hand its element to a ref', () => {
+      const ref = createRef<HTMLButtonElement>()
+      render(
+        <Button appearance="hud" ref={ref}>
+          Save
+        </Button>
+      )
+      expect(ref.current).toBe(screen.getByRole('button', { name: 'Save' }))
+    })
+
+    it('should submit its form only as a submit button', async () => {
+      const submit = preventSubmit()
+      render(
+        <form onSubmit={submit}>
+          <Button appearance="hud">Plain</Button>
+          <Button appearance="hud" type="submit">
+            Send
+          </Button>
+        </form>
+      )
+      await userEvent.click(screen.getByRole('button', { name: 'Plain' }))
+      expect(submit).not.toHaveBeenCalled()
+      await userEvent.click(screen.getByRole('button', { name: 'Send' }))
+      expect(submit).toHaveBeenCalledTimes(1)
+    })
+
     it('should not answer a click while disabled', async () => {
       const onClick = vi.fn()
       render(
@@ -684,6 +710,32 @@ describe('when a Button takes the hud appearance', () => {
         'rel',
         'noopener noreferrer'
       )
+    })
+
+    it('should keep a disabled link a link that answers no click', () => {
+      const onClick = vi.fn()
+      render(
+        <Button appearance="hud" href="/shop" disabled onClick={onClick}>
+          Shop
+        </Button>
+      )
+      const link = screen.getByRole('link', { name: 'Shop' })
+      expect(link).toHaveAttribute('data-disabled')
+      expect(fireEvent.click(link)).toBe(false)
+      expect(onClick).not.toHaveBeenCalled()
+    })
+
+    it('should run the click of an enabled link and mark it with no disabled hook', async () => {
+      const onClick = vi.fn((event: { preventDefault: () => void }) => event.preventDefault())
+      render(
+        <Button appearance="hud" href="/shop" onClick={onClick}>
+          Shop
+        </Button>
+      )
+      const link = screen.getByRole('link', { name: 'Shop' })
+      expect(link).not.toHaveAttribute('data-disabled')
+      await userEvent.click(link)
+      expect(onClick).toHaveBeenCalledTimes(1)
     })
 
     it('should drop the destination of a disabled link', () => {
