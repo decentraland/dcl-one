@@ -184,6 +184,7 @@ fn counted(verdict: Result<Address, SocketAuthError>) -> Result<String, SocketAu
 }
 
 async fn verify(state: &State, paths: &[String], frame: &str) -> Result<String, SocketAuthError> {
+    crate::shared::eip1654_budget::debug_assert_scoped("the social stream socket");
     counted(crate::rpc::auth::verify_frame(state, paths, frame).await)
 }
 
@@ -227,8 +228,11 @@ pub async fn ws_upgrade(
     } else {
         None
     };
-    ws.max_message_size(state.settings.stream.max_payload_bytes)
-        .on_upgrade(move |socket| async move {
+    // A first-frame handshake verifies after the upgrade, in the task it
+    // spawns: it keeps the request's client source for the EIP-1654 budget.
+    crate::shared::eip1654_budget::on_upgrade(
+        ws.max_message_size(state.settings.stream.max_payload_bytes),
+        move |socket| async move {
             let mut socket = Socket::new(socket, "social_stream");
             let max = state.settings.ws_max_concurrent_connections;
             let Some(slot) = state.ctx.open_socket(Protocol::Stream, max) else {
@@ -246,8 +250,8 @@ pub async fn ws_upgrade(
                 "other".into()
             };
             dcl_metrics::counter!("stream_ws_close_codes", "code" => label).increment(1);
-        })
-        .into_response()
+        },
+    )
 }
 
 /// The per-connection token bucket of incoming application frames.

@@ -1176,6 +1176,97 @@ async fn toolkit_body_writes_keep_contract_wallet_signature_validation() {
     }
 }
 
+/// The node's validator (`eip1654_budget`, behind the layer that names each
+/// request's client source) lets a source start only the pre-auth budget of
+/// contract-wallet checks a minute: past it the gatekeeper answers 429 before
+/// any `isValidSignature` call, and another source keeps its own budget.
+#[tokio::test]
+async fn contract_wallet_checks_are_budgeted_per_source_before_any_rpc_call() {
+    use crate::shared::eip1654_budget::{SourceBudgeted, scope_client_source};
+    use crate::shared::limits::PREAUTH_PER_MINUTE;
+    use std::sync::atomic::{AtomicUsize, Ordering::SeqCst};
+
+    struct Refusing(AtomicUsize);
+    #[async_trait::async_trait]
+    impl crate::auth::eip1654::Eip1654Validator for Refusing {
+        async fn validate_signature(
+            &self,
+            _: &str,
+            _: &[u8],
+            _: &[u8],
+        ) -> Result<bool, crate::auth::AuthError> {
+            self.0.fetch_add(1, SeqCst);
+            Ok(false)
+        }
+    }
+
+    let meta = metadata("MiXeD.dcl.eth", "SceneB", "1,1");
+    let mut headers = signed(KEY, "POST", "/scene-admin", &meta.to_string()).await;
+    let mut link: Value =
+        serde_json::from_str(headers["x-identity-auth-chain-1"].to_str().unwrap()).unwrap();
+    link["type"] = json!("ECDSA_EIP_1654_SIGNED_ENTITY");
+    headers.insert(
+        "x-identity-auth-chain-1",
+        HeaderValue::from_str(&link.to_string()).unwrap(),
+    );
+    let calls = Arc::new(Refusing(AtomicUsize::new(0)));
+    let mut state = comms_state(lazy_pool(), Settings::for_tests());
+    state.scenes = Arc::new(ToolkitScenes);
+    state.eip1654 = Some(Arc::new(SourceBudgeted::new(calls.clone())));
+    let app = scope_client_source(super::super::router(Arc::new(state)), Vec::new());
+    let send = |peer: &str| {
+        let mut request = Request::builder()
+            .method("POST")
+            .uri("/scene-admin")
+            .body(Body::from(
+                json!({"admin": address_of(OUTSIDER_KEY)}).to_string(),
+            ))
+            .unwrap();
+        request.headers_mut().extend(headers.clone());
+        request
+            .extensions_mut()
+            .insert(axum::extract::ConnectInfo::<std::net::SocketAddr>(
+                peer.parse().unwrap(),
+            ));
+        let app = app.clone();
+        async move { app.oneshot(request).await.unwrap().status() }
+    };
+    let started = std::time::Instant::now();
+    let mut refused = 0;
+    loop {
+        match send("203.0.113.90:5000").await {
+            StatusCode::UNAUTHORIZED => refused += 1,
+            StatusCode::TOO_MANY_REQUESTS => break,
+            other => panic!("unexpected {other}"),
+        }
+        assert!(
+            refused <= 2 * PREAUTH_PER_MINUTE,
+            "the source's budget trips"
+        );
+    }
+    let spent = calls.0.load(SeqCst);
+    assert!(refused > 0, "refused contracts first");
+    let admitted = crate::shared::eip1654_budget::admitted_within(started.elapsed());
+    assert!(
+        admitted.contains(&spent),
+        "the pre-auth budget of isValidSignature calls: {spent}, {admitted:?}"
+    );
+    assert_eq!(
+        send("203.0.113.90:5000").await,
+        StatusCode::TOO_MANY_REQUESTS
+    );
+    assert_eq!(
+        calls.0.load(SeqCst),
+        spent,
+        "no isValidSignature call past the budget"
+    );
+    assert_eq!(
+        send("198.51.100.90:5000").await,
+        StatusCode::UNAUTHORIZED,
+        "another source keeps its own budget"
+    );
+}
+
 #[tokio::test]
 async fn toolkit_all_writes_persist_get_state_and_target_canonical_metadata_and_connected_ban_fixture()
  {
