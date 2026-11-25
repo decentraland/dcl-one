@@ -544,7 +544,7 @@
       "candidate": [
         {
           "path": "services/catalyst/social/src/rpc/metrics.rs",
-          "line": 153,
+          "line": 163,
           "kind": "counter",
           "scope": "production_file_inline_test_possible",
           "labels": [
@@ -575,7 +575,7 @@
       "candidate": [
         {
           "path": "services/catalyst/social/src/rpc/metrics.rs",
-          "line": 155,
+          "line": 165,
           "kind": "histogram",
           "scope": "production_file_inline_test_possible",
           "labels": [
@@ -606,7 +606,7 @@
       "candidate": [
         {
           "path": "services/catalyst/social/src/rpc/metrics.rs",
-          "line": 146,
+          "line": 156,
           "kind": "histogram",
           "scope": "production_file_inline_test_possible",
           "labels": [
@@ -637,7 +637,7 @@
       "candidate": [
         {
           "path": "services/catalyst/social/src/rpc/metrics.rs",
-          "line": 183,
+          "line": 193,
           "kind": "histogram",
           "scope": "production_file_inline_test_possible",
           "labels": [
@@ -658,7 +658,7 @@
       "candidate": [
         {
           "path": "services/catalyst/social/src/rpc/metrics.rs",
-          "line": 204,
+          "line": 214,
           "kind": "counter",
           "scope": "production_file_inline_test_possible",
           "labels": [
