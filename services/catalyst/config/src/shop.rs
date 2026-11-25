@@ -542,6 +542,10 @@ pub struct ShopConfig {
     #[arg(long, env = "CREDITS_REVOKER_KEY", hide_env_values = true)]
     pub credits_revoker_key: Option<String>,
 
+    /// The EXTERNAL_CALL_SIGNER_ROLE signer of the createCollection call a publication credit pays for (`_FILE` only); unset, the publication authorization answers 503.
+    #[arg(long, env = "CREDITS_EXTERNAL_CALL_SIGNER_KEY", hide_env_values = true)]
+    pub credits_external_call_signer_key: Option<String>,
+
     /// A closed trial of on-chain credits: only CREDITS_TRIAL_BUYERS get new credit
     /// authorizations, the MANA top-up routes refuse, and the node refuses to start with a card
     /// rail, a mock card, a relay fallback, an uncapped relay or no revoker. The relay's writes

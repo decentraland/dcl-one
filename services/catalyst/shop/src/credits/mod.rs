@@ -218,6 +218,8 @@ pub struct RawSettings {
     pub credit_buffer_bps: u32,
     /// `CREDITS_REVOKER_KEY_FILE` (the plain variable is refused): the `CREDITS_REVOKER_ROLE` signer of `revokeCredits`; unset, revocations queue and wait.
     pub credits_revoker_key: Option<String>,
+    /// `CREDITS_EXTERNAL_CALL_SIGNER_KEY_FILE` (the plain variable is refused): the `EXTERNAL_CALL_SIGNER_ROLE` signer of the `createCollection` call a publication credit pays for; unset, the publication authorization answers 503.
+    pub credits_external_call_signer_key: Option<String>,
     /// `CREDITS_TRIAL_MODE` (false): a closed trial (`trial.rs`).
     pub trial_mode: bool,
     /// `CREDITS_TRIAL_BUYERS` (or `_FILE`): the trial's buyers.
@@ -272,6 +274,7 @@ impl Default for RawSettings {
             credit_cap_headroom_pct: batch::DEFAULT_CAP_HEADROOM_PCT,
             credit_buffer_bps: batch::DEFAULT_ORACLE_BUFFER_BPS,
             credits_revoker_key: None,
+            credits_external_call_signer_key: None,
             trial_mode: false,
             trial_buyers: None,
             shop_base_url: crate::subscriptions::DEFAULT_SHOP_BASE_URL.to_string(),
@@ -316,6 +319,7 @@ pub struct Settings {
     pub credit_cap_headroom_pct: u32,
     pub credit_buffer_bps: u32,
     pub credits_revoker_key: Option<String>,
+    pub credits_external_call_signer_key: Option<String>,
     /// `Some` under `CREDITS_TRIAL_MODE`: only these buyers get new credit authorizations, and
     /// the MANA top-up routes refuse.
     pub trial: Option<trial::TrialBuyers>,
@@ -583,6 +587,7 @@ impl Settings {
             credit_cap_headroom_pct: raw.credit_cap_headroom_pct,
             credit_buffer_bps: raw.credit_buffer_bps,
             credits_revoker_key,
+            credits_external_call_signer_key: non_empty(raw.credits_external_call_signer_key),
             trial,
             shop_base_url: non_empty(Some(raw.shop_base_url))
                 .unwrap_or_else(|| crate::subscriptions::DEFAULT_SHOP_BASE_URL.to_string())
