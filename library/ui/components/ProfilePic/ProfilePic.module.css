@@ -116,7 +116,8 @@
 }
 
 /* Not in Figma: the Explorer HUD's picture (`appearance="hud"`), sized by the caller. Its half-white border, the
-   rail's ring, the online green and the 1.65px inset have no token. */
+   rail's ring, the online green and the 1.65px inset have no token. The dot's ring is outside its size: the
+   component sets that box model on the element, because a host's own reset outranks a rule in this layer. */
 @layer dcl.components {
   .hud {
     position: relative;
@@ -166,7 +167,6 @@
     z-index: var(--avatar-dot-z, auto);
     right: 0;
     bottom: 0;
-    box-sizing: content-box;
     border: var(--avatar-dot-ring, 2px) solid var(--dcl-neutrals-shadow);
     border-radius: var(--dcl-radius-full);
   }

@@ -263,7 +263,6 @@
   /* sidebar rail — sRGB equivalents of the reference's linear-space blends */
   --rail-bg: rgba(0, 0, 0, 0.7); /* a navigation button's circle */
   --rail-divider: rgba(255, 255, 255, 0.2);
-  --rail-avatar-ring: rgba(255, 255, 255, 0.47);
   --rail-me-ring: rgba(255, 255, 255, 0.7); /* the ring inside the Me button */
   --shadow-rail-button: 2px 2px 2.5px rgba(0, 0, 0, 0.25);
   --shadow-rail-button-selected: 2px 2px 5px rgba(0, 0, 0, 0.25); /* a selected bar button */

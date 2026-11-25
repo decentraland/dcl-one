@@ -156,6 +156,8 @@ describe('when a ProfilePic takes the hud appearance', () => {
     )
     const dots = [...container.children].map((node) => node.querySelector('span') as HTMLElement | null)
     expect(dots.map((dot) => dot?.style.width)).toEqual(['7px', '6px', '6px', undefined])
+    // The ring is outside the dot's size whatever reset the host loads.
+    expect(dots.slice(0, 3).map((dot) => dot?.style.boxSizing)).toEqual(['content-box', 'content-box', 'content-box'])
     expect(dots[0]!.className).toMatch(/hudOnline/)
     expect(dots[1]!.className).toMatch(/hudOffline/)
     expect(dots[1]!.className).toMatch(/hudDotTop/)
