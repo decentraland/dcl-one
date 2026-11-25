@@ -1,0 +1,160 @@
+//! Marketplace asset reader for nodes that do not walk the Ethereum NFT index.
+
+use super::nft::{LandNft, NftReadError};
+use crate::land_authz::LandNetwork;
+use crate::market::{MarketplaceState, graph::graph_query};
+use crate::shared::cache::TtlMap;
+use serde_json::{Value, json};
+use std::time::Duration;
+
+pub(super) type Cache = TtlMap<(String, String), Option<LandNft>>;
+
+pub(super) fn cache() -> Cache {
+    Cache::bounded(Duration::from_secs(30), 10_000)
+}
+
+const QUERY: &str = r#"
+query nft($contract: Bytes!, $tokenId: BigInt!) {
+  _meta { block { number timestamp } }
+  nfts(first: 1, where: { contractAddress: $contract, tokenId: $tokenId }) {
+    contractAddress tokenId category owner { id } searchText searchDistanceToPlaza
+    searchAdjacentToRoad searchEstateSize createdAt updatedAt transferredAt
+  }
+}"#;
+
+fn integer(value: &Value) -> Option<i64> {
+    value.as_i64().or_else(|| value.as_str()?.parse().ok())
+}
+
+fn parse(
+    data: &Value,
+    contract: &str,
+    token: &str,
+    estate: bool,
+) -> Result<Option<LandNft>, NftReadError> {
+    let incomplete = || NftReadError::Subgraph("incomplete listing asset response".into());
+    let rows = data["nfts"].as_array().ok_or_else(incomplete)?;
+    let Some(nft) = rows.first() else {
+        return Ok(None);
+    };
+    let category = if estate { "estate" } else { "parcel" };
+    if nft["contractAddress"]
+        .as_str()
+        .is_none_or(|address| !contract.eq_ignore_ascii_case(address))
+        || nft["tokenId"].as_str() != Some(token)
+        || nft["category"].as_str() != Some(category)
+    {
+        return Err(incomplete());
+    }
+    let time = |key: &str| integer(&nft[key]).filter(|v| *v > 0).ok_or_else(incomplete);
+    let updated_at = time("updatedAt")?;
+    let metadata_block = integer(&data["_meta"]["block"]["number"])
+        .filter(|block| *block >= 0)
+        .ok_or_else(incomplete)?;
+    let owner = nft["owner"]["id"]
+        .as_str()
+        .filter(|address| crate::market::is_valid_eth_address(address))
+        .ok_or_else(incomplete)?;
+    Ok(Some(LandNft {
+        nft_id: format!("{contract}-{token}"),
+        category: category.into(),
+        owner_address: owner.to_ascii_lowercase(),
+        search_text: nft["searchText"].as_str().unwrap_or_default().into(),
+        distance_to_plaza: integer(&nft["searchDistanceToPlaza"]).and_then(|v| v.try_into().ok()),
+        adjacent_to_road: nft["searchAdjacentToRoad"].as_bool(),
+        estate_size: integer(&nft["searchEstateSize"]).and_then(|v| v.try_into().ok()),
+        created_at: time("createdAt")?,
+        updated_at,
+        transferred_at: time("transferredAt")?,
+        transfer_block: None,
+        membership_block: if estate { metadata_block } else { 0 },
+        metadata_block,
+        membership_checked_at: if estate {
+            Some(
+                integer(&data["_meta"]["block"]["timestamp"])
+                    .filter(|t| *t > 0)
+                    .ok_or_else(incomplete)?,
+            )
+        } else {
+            None
+        },
+        land_cursor_updated_at: None,
+    }))
+}
+
+pub(super) async fn read(
+    market: &MarketplaceState,
+    cache: &Cache,
+    net: LandNetwork,
+    address: &str,
+    token: &str,
+) -> Result<Option<LandNft>, NftReadError> {
+    let url = market
+        .settings
+        .marketplace_subgraph_url
+        .as_deref()
+        .ok_or_else(|| NftReadError::Subgraph("MARKETPLACE_SUBGRAPH_URL is unset".into()))?;
+    let contract = address.to_ascii_lowercase();
+    let estate = contract == net.estate_registry;
+    if !estate && contract != net.land_registry {
+        return Ok(None);
+    }
+    // Graph BigInt results use canonical decimals even for a zero-padded input.
+    let decimal = token.trim_start_matches('0');
+    let token = if decimal.is_empty() { "0" } else { decimal };
+    cache
+        .get_or_fetch((contract.clone(), token.into()), || async {
+            let data = graph_query(
+                &market.index,
+                url,
+                QUERY,
+                json!({"contract": contract, "tokenId": token}),
+            )
+            .await
+            .map_err(NftReadError::Subgraph)?;
+            parse(&data, &contract, token, estate)
+        })
+        .await
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn listing_metadata_requires_the_requested_nft_and_a_versioned_snapshot() {
+        let registry = crate::land_authz::LAND_SEPOLIA.estate_registry;
+        let response = json!({
+            "_meta": {"block": {"number": 22, "timestamp": 220}},
+            "nfts": [{"contractAddress": registry, "tokenId": "7", "category": "estate",
+                "owner": {"id": registry}, "createdAt": "10", "updatedAt": "100", "transferredAt": "90"}]
+        });
+        let asset = parse(&response, registry, "7", true).unwrap().unwrap();
+        assert_eq!(asset.metadata_block, 22);
+        assert_eq!(asset.membership_checked_at, Some(220));
+        for (field, value) in [
+            (
+                "contractAddress",
+                crate::land_authz::LAND_SEPOLIA.land_registry,
+            ),
+            ("tokenId", "8"),
+            ("category", "parcel"),
+        ] {
+            let mut other = response.clone();
+            other["nfts"][0][field] = json!(value);
+            assert!(
+                matches!(
+                    parse(&other, registry, "7", true),
+                    Err(NftReadError::Subgraph(_))
+                ),
+                "{field}"
+            );
+        }
+        let mut missing_block = response;
+        missing_block["_meta"] = json!({});
+        assert!(matches!(
+            parse(&missing_block, registry, "7", true),
+            Err(NftReadError::Subgraph(_))
+        ));
+    }
+}

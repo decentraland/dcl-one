@@ -3835,3 +3835,406 @@ async fn shop_feed_totals_survive_exact_and_past_end_offsets() {
     }
     db.drop().await;
 }
+
+#[tokio::test]
+async fn land_pages_read_the_published_catalogue_and_enrich_the_same_snapshot() {
+    use crate::land_authz::LAND_MAINNET;
+    let Some(db) = super::tests::support::OwnDb::create("land_nft_pages").await else {
+        return;
+    };
+    let names = super::nft_index::DCL_REGISTRAR;
+    let graph = FakeGraph::new();
+    let url = serve_graph(graph.clone()).await;
+    let app = |network: &str, walker: bool, trades_upstream: Option<String>| {
+        let mut settings = Settings::for_tests();
+        settings.eth_network = network.into();
+        settings.market.indexes.nft_enabled = walker;
+        settings.trades_sync_upstream_url = trades_upstream;
+        settings.marketplace_subgraph_url = Some(url.clone());
+        let state = super::MarketplaceState::new(
+            db.pool.clone(),
+            crate::http::Outbound::for_tests(),
+            settings,
+        );
+        state.test_allow_loopback.store(true, Ordering::Relaxed);
+        market_router(Arc::new(state))
+    };
+    let walker = app("mainnet", true, None);
+    let land = LAND_MAINNET.land_registry;
+    let estate = LAND_MAINNET.estate_registry;
+    let parcel = (alloy_primitives::U256::from((-102_i128) as u128) << 128_usize)
+        | alloy_primitives::U256::from((-10_i128) as u128);
+    sqlx::raw_sql(sqlx::AssertSqlSafe(format!(
+        "INSERT INTO land_authz.index_cursor(network,land_registry,estate_registry,last_block,folded_block,folded_at,full_replay_started)
+         VALUES ('ethereum-mainnet','{land}','{estate}',20,20,timezone('UTC',now()),true);
+         INSERT INTO shop.chain_cursor(indexer,network,start_block,last_block,folded_block,folded_at,full_history,chain_id)
+         VALUES ('nft','ethereum',0,20,20,timezone('UTC',now()),true,1), ('nft','matic',0,20,20,timezone('UTC',now()),true,137), ('rentals','ethereum',0,20,20,timezone('UTC',now()),true,1);
+         INSERT INTO shop.mirror_state(mirror,network,source_url,last_complete_pass_at)
+         VALUES ('items','ethereum','test',now()),('items','matic','test',now());
+         INSERT INTO land_authz.token_right(token_address,token_id,owner,x,y,updated_block,updated_log)
+         VALUES ('{land}',{parcel},'{WALLET_A}',-102,-10,10,0),('{estate}',42,'{WALLET_A}',NULL,NULL,11,1);
+         INSERT INTO land_authz.estate_land VALUES({parcel},42,11,2);
+         INSERT INTO shop.nft(network,contract_address,token_id,owner,ens_subdomain,minted_block,minted_at,transferred_block,transferred_log,transferred_at)
+         VALUES('ethereum','{names}',9,'{WALLET_A}','alice',1,1,1,0,1);
+         INSERT INTO shop.land_data VALUES('{estate}',42,'North estate','Two words',12,1);
+         INSERT INTO shop.nft_order(network,contract_address,token_id,order_id,marketplace_address,status,seller,price,expires_at,created_at,updated_at,updated_block,updated_log)
+         VALUES('ethereum','{estate}',42,'order-42','{CREATOR}','open','{WALLET_A}',25,4102444800000,1,2,13,0)"
+    ))).execute(&db.pool).await.unwrap();
+    let rental = crate::rentals::index::tests::seed_listing(
+        &db.pool, estate, "42", ["0"; 3], "0x42", WALLET_A, CREATOR,
+    )
+    .await;
+    let (code, result) = get(
+        walker.clone(),
+        &format!("/v1/nfts?contractAddress={estate}&tokenId=42"),
+    )
+    .await;
+    assert_eq!(code, StatusCode::OK, "{result}");
+    assert_eq!(result["total"], 1);
+    let item = &result["data"][0];
+    assert_eq!(item["nft"]["name"], "North estate");
+    assert_eq!(item["nft"]["owner"], WALLET_A);
+    assert_eq!(item["nft"]["data"]["estate"]["size"], 1);
+    assert_eq!(
+        item["nft"]["data"]["estate"]["parcels"],
+        json!([{"x":-102,"y":-10}])
+    );
+    assert_eq!(item["order"]["id"], "order-42");
+    assert_eq!(item["rental"]["id"], rental.to_string());
+    let (code, result) = get(walker.clone(), "/v1/nfts?isLand=true&isOnRent=true").await;
+    assert_eq!(code, StatusCode::OK, "{result}");
+    assert_eq!(result["total"], 1);
+    assert_eq!(result["data"][0]["nft"]["tokenId"], "42");
+    let (code, result) = get(
+        walker.clone(),
+        "/v1/nfts?category=parcel&minDistanceToPlaza=9&maxDistanceToPlaza=9",
+    )
+    .await;
+    assert_eq!(code, StatusCode::OK, "{result}");
+    assert_eq!(result["data"][0]["nft"]["tokenId"], parcel.to_string());
+    let (code, result) = get(
+        walker.clone(),
+        &format!("/v1/nfts?owner={WALLET_A}&contractAddress={estate}&contractAddress={names}"),
+    )
+    .await;
+    assert_eq!(code, StatusCode::OK, "{result}");
+    assert_eq!(result["total"], 2);
+    assert!(
+        result["data"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|item| item["nft"]["name"] == "alice")
+    );
+    assert!(
+        result["data"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|item| item["nft"]["name"] == "North estate")
+    );
+    for skip in [0, 1, 5001] {
+        let (code, result) = get(
+            walker.clone(),
+            &format!("/v1/nfts?owner={WALLET_A}&first=1&skip={skip}"),
+        )
+        .await;
+        assert_eq!(code, StatusCode::OK, "{result}");
+        assert_eq!(result["total"], 3);
+        assert_eq!(
+            result["data"].as_array().unwrap().len(),
+            usize::from(skip < 2)
+        );
+    }
+
+    let unavailable_trades = app("mainnet", true, Some(url.clone()));
+    for query in [
+        "isOnSale=true".to_owned(),
+        format!("contractAddress={land}&tokenId={parcel}"),
+    ] {
+        let (code, result) = get(unavailable_trades.clone(), &format!("/v1/nfts?{query}")).await;
+        assert_eq!(code, StatusCode::SERVICE_UNAVAILABLE, "{result}");
+        assert_eq!(result["source"], "trades-mirror");
+    }
+    let (code, result) = get(unavailable_trades, "/v1/nfts?first=24").await;
+    assert_eq!(code, StatusCode::OK, "{result}");
+    assert_eq!(result["total"], 3);
+    let mixed_contracts = format!("/v1/nfts?contractAddress={estate}&contractAddress={WALLET_B}");
+    let (code, result) = get(walker.clone(), &mixed_contracts).await;
+    assert_eq!(code, StatusCode::OK, "{result}");
+    assert_eq!(result["total"], 1);
+    sqlx::query("UPDATE shop.chain_cursor SET folded_block=NULL WHERE network='matic'")
+        .execute(&db.pool)
+        .await
+        .unwrap();
+    let (code, result) = get(walker.clone(), &mixed_contracts).await;
+    assert_eq!(code, StatusCode::SERVICE_UNAVAILABLE, "{result}");
+    assert_eq!(result["source"], "nft-index");
+    sqlx::query("UPDATE shop.chain_cursor SET folded_block=last_block WHERE network='matic'")
+        .execute(&db.pool)
+        .await
+        .unwrap();
+
+    // A missing rental table must not manufacture an empty rental result.
+    sqlx::query("ALTER TABLE signatures.rental_periods RENAME TO held_periods")
+        .execute(&db.pool)
+        .await
+        .unwrap();
+    for query in ["category=estate", "category=estate&isOnRent=true"] {
+        let (code, _) = get(walker.clone(), &format!("/v1/nfts?{query}")).await;
+        assert_eq!(code, StatusCode::INTERNAL_SERVER_ERROR);
+    }
+    sqlx::query("ALTER TABLE signatures.held_periods RENAME TO rental_periods")
+        .execute(&db.pool)
+        .await
+        .unwrap();
+
+    // Hold the final rental lookup after the LAND/NFT snapshot is established.
+    let mut writer = db.pool.begin().await.unwrap();
+    sqlx::query("LOCK TABLE signatures.rentals IN ACCESS EXCLUSIVE MODE")
+        .execute(&mut *writer)
+        .await
+        .unwrap();
+    let pid: i32 = sqlx::query_scalar("SELECT pg_backend_pid()")
+        .fetch_one(&mut *writer)
+        .await
+        .unwrap();
+    let request = tokio::spawn(get(walker.clone(), "/v1/nfts?category=estate"));
+    tokio::time::timeout(Duration::from_secs(5), async {
+        loop {
+            let waiting: bool = sqlx::query_scalar("SELECT EXISTS(SELECT FROM pg_stat_activity WHERE datname=current_database() AND $1=ANY(pg_blocking_pids(pid)) AND query LIKE '%FROM signatures.rentals%')")
+                .bind(pid).fetch_one(&db.pool).await.unwrap();
+            if waiting { break; }
+            tokio::task::yield_now().await;
+        }
+    }).await.expect("page reached the rental enrichment");
+    sqlx::query("UPDATE signatures.rentals SET status='cancelled' WHERE id=$1")
+        .bind(rental)
+        .execute(&mut *writer)
+        .await
+        .unwrap();
+    sqlx::query("UPDATE land_authz.index_cursor SET folded_block=NULL")
+        .execute(&mut *writer)
+        .await
+        .unwrap();
+    writer.commit().await.unwrap();
+    let (code, result) = request.await.unwrap();
+    assert_eq!(code, StatusCode::OK, "{result}");
+    assert_eq!(result["data"][0]["rental"]["id"], rental.to_string());
+    for query in [
+        format!("owner={WALLET_A}"),
+        "first=24".into(),
+        "category=estate&isOnRent=true".into(),
+    ] {
+        let (code, result) = get(walker.clone(), &format!("/v1/nfts?{query}")).await;
+        assert_eq!(code, StatusCode::SERVICE_UNAVAILABLE, "{result}");
+        assert_eq!(result["source"], "land-authz-index");
+    }
+    sqlx::query("UPDATE land_authz.index_cursor SET folded_block=last_block")
+        .execute(&db.pool)
+        .await
+        .unwrap();
+    sqlx::query("UPDATE shop.chain_cursor SET folded_block=NULL WHERE network='ethereum'")
+        .execute(&db.pool)
+        .await
+        .unwrap();
+    let (code, result) = get(walker.clone(), "/v1/nfts?category=parcel").await;
+    assert_eq!(code, StatusCode::SERVICE_UNAVAILABLE, "{result}");
+    assert_eq!(result["source"], "nft-index");
+    assert!(graph.requests.lock().unwrap().is_empty());
+
+    for (network, enabled) in [("mainnet", false), ("sepolia", true)] {
+        let (code, result) = get(app(network, enabled, None), "/v1/nfts?category=parcel").await;
+        assert_eq!(code, StatusCode::OK, "{result}");
+        assert_eq!(result["total"], 0);
+        assert!(!std::mem::take(&mut *graph.requests.lock().unwrap()).is_empty());
+    }
+    drop(walker);
+    db.drop().await;
+}
+
+#[tokio::test]
+async fn owner_pages_include_only_current_unclaimed_land_before_pagination() {
+    use crate::land_authz::LAND_MAINNET;
+    use crate::rentals::index::RENTALS_MAINNET as VENUE;
+
+    let Some(db) = super::tests::support::OwnDb::create("owner_rented_land").await else {
+        return;
+    };
+    let mut settings = Settings::for_tests();
+    settings.eth_network = "mainnet".into();
+    settings.market.indexes.nft_enabled = true;
+    let state = Arc::new(super::MarketplaceState::new(
+        db.pool.clone(),
+        crate::http::Outbound::for_tests(),
+        settings,
+    ));
+    let app = market_router(state.clone());
+    let run = |sql: String| async {
+        sqlx::raw_sql(sqlx::AssertSqlSafe(sql))
+            .execute(&db.pool)
+            .await
+            .unwrap();
+    };
+    let land = LAND_MAINNET.land_registry;
+    let estate = LAND_MAINNET.estate_registry;
+    let owner_url = format!("/v1/nfts?owner={WALLET_A}");
+    run(format!(
+        "INSERT INTO land_authz.index_cursor(network,land_registry,estate_registry,last_block,folded_block,folded_at,full_replay_started)
+         VALUES ('ethereum-mainnet','{land}','{estate}',40,40,timezone('UTC',now()),true);
+         INSERT INTO shop.chain_cursor(indexer,network,start_block,last_block,folded_block,folded_at,full_history,chain_id)
+         VALUES ('nft','ethereum',0,40,40,timezone('UTC',now()),true,1),
+                ('nft','matic',0,40,40,timezone('UTC',now()),true,137),
+                ('rentals','ethereum',0,38,30,timezone('UTC',now()),true,1);
+         INSERT INTO shop.mirror_state(mirror,network,source_url,last_complete_pass_at)
+         VALUES ('items','ethereum','test',now()),('items','matic','test',now());
+         INSERT INTO land_authz.token_right(token_address,token_id,owner,x,y,updated_block,updated_log)
+         VALUES ('{land}',1,'{WALLET_A}',0,1,10,0),('{land}',2,'{VENUE}',0,2,12,0),('{estate}',3,'{VENUE}',NULL,NULL,15,1);
+         INSERT INTO land_authz.estate_land VALUES (801,3,14,1);
+         INSERT INTO land_authz.authz_event(token_address,token_id,kind,block_number,log_index,block_time,account)
+         VALUES ('{land}',1,'transfer',10,0,100,'{WALLET_A}'),('{land}',2,'transfer',12,0,120,'{VENUE}'),
+                ('{estate}',3,'transfer',15,1,150,'{VENUE}');"
+    )).await;
+    let rent = |contract: &str, id: i32, block: i64, log: i32, signer: &str, extension: bool| {
+        format!(
+        "INSERT INTO shop.rental_event(network,rentals_address,kind,contract_address,token_id,block_number,log_index,block_time,signer,tenant,rental_days,price_per_day,is_extension,signature,tx_hash)
+         VALUES ('ethereum','{VENUE}','rented','{contract}',{id},{block},{log},100,'{signer}','{WALLET_B}',1,1,{extension},'0x01','0x02')"
+    )
+    };
+    run(rent(land, 2, 12, 1, WALLET_A, false)).await;
+    run(rent(land, 2, 14, 0, WALLET_A, true)).await;
+    run(rent(estate, 3, 15, 2, WALLET_A, false)).await;
+    // Rentals has walked to 38 but published through 30. The owner page
+    // stays available and the event at 35 cannot change its published answer.
+    run(rent(land, 2, 35, 0, WALLET_B, false)).await;
+    let mut tokens = std::collections::BTreeMap::new();
+    for skip in 0..3 {
+        let (code, result) = get(app.clone(), &format!("{owner_url}&first=1&skip={skip}")).await;
+        assert_eq!(code, StatusCode::OK, "{result}");
+        assert_eq!(result["total"], 3);
+        let nft = &result["data"][0]["nft"];
+        tokens.insert(
+            nft["tokenId"].as_str().unwrap().to_owned(),
+            nft["owner"].clone(),
+        );
+    }
+    assert_eq!(tokens.len(), 3);
+    assert_eq!(tokens["1"], WALLET_A);
+    assert_eq!(tokens["2"], VENUE);
+    assert_eq!(tokens["3"], VENUE);
+    let listing = crate::rentals::index::tests::seed_listing(
+        &db.pool, land, "2", ["0"; 3], "0xabb1", WALLET_A, VENUE,
+    )
+    .await;
+    sqlx::query("UPDATE signatures.rentals SET status='executed' WHERE id=$1")
+        .bind(listing)
+        .execute(&db.pool)
+        .await
+        .unwrap();
+    for (status, total) in [("executed", 1), ("open", 0)] {
+        let (code, result) = get(
+            app.clone(),
+            &format!("{owner_url}&category=parcel&isOnRent=true&rentalStatus={status}"),
+        )
+        .await;
+        assert_eq!(code, StatusCode::OK, "{result}");
+        assert_eq!(result["total"], total);
+        if total == 1 {
+            assert_eq!(result["data"][0]["nft"]["tokenId"], "2");
+            assert_eq!(result["data"][0]["rental"]["id"], listing.to_string());
+        }
+    }
+    let claim = |block: i64, log: i32| {
+        format!(
+        "INSERT INTO shop.rental_event(network,rentals_address,kind,contract_address,token_id,block_number,log_index,block_time,tx_hash)
+         VALUES ('ethereum','{VENUE}','claimed','{land}',2,{block},{log},200,'0x03')"
+    )
+    };
+    run(claim(20, 0)).await;
+    let (code, result) = get(app.clone(), &owner_url).await;
+    assert_eq!(code, StatusCode::OK, "{result}");
+    assert_eq!(result["total"], 2, "a claim removes the parcel");
+    let transfer = |block: i64, log: i32, owner: &str| {
+        format!(
+        "INSERT INTO land_authz.authz_event(token_address,token_id,kind,block_number,log_index,block_time,account)
+         VALUES ('{land}',2,'transfer',{block},{log},200,'{owner}');
+         UPDATE land_authz.token_right SET owner='{owner}',updated_block={block},updated_log={log} WHERE token_address='{land}' AND token_id=2"
+    )
+    };
+    // LAND catches up with the claim: the parcel returns through direct ownership.
+    run(transfer(20, 1, WALLET_A)).await;
+    let (code, result) = get(app.clone(), &owner_url).await;
+    assert_eq!(code, StatusCode::OK, "{result}");
+    assert_eq!(result["total"], 3);
+    run(transfer(20, 2, VENUE)).await;
+    run(rent(land, 2, 20, 3, WALLET_B, false)).await;
+    let (code, result) = get(
+        app.clone(),
+        &format!("/v1/nfts?owner={WALLET_B}&category=parcel"),
+    )
+    .await;
+    assert_eq!(code, StatusCode::OK, "{result}");
+    assert_eq!(result["total"], 1);
+    assert_eq!(result["data"][0]["nft"]["tokenId"], "2");
+
+    // The new arrival has no published lessor yet. An owner with no rent
+    // history cannot safely be answered either.
+    run(format!(
+        "INSERT INTO land_authz.authz_event(token_address,token_id,kind,block_number,log_index,block_time,account)
+         VALUES ('{land}',2,'transfer',36,1,360,'{VENUE}');
+         UPDATE land_authz.token_right SET updated_block=36,updated_log=1 WHERE token_address='{land}' AND token_id=2"
+    )).await;
+    for owner in [
+        WALLET_A,
+        WALLET_B,
+        "0xcccccccccccccccccccccccccccccccccccccccc",
+    ] {
+        let (code, result) = get(app.clone(), &format!("/v1/nfts?owner={owner}")).await;
+        assert_eq!(code, StatusCode::SERVICE_UNAVAILABLE, "{result}");
+        assert_eq!(result["source"], "rentals-index");
+    }
+    run(
+        "UPDATE shop.chain_cursor SET last_block=40,folded_block=40 WHERE indexer='rentals'".into(),
+    )
+    .await;
+    // The latest rent for B preceded the new arrival, even with a rent
+    // earlier in the same block. A later log reestablishes custody.
+    run(rent(land, 2, 36, 0, WALLET_B, false)).await;
+    let url_b = format!("/v1/nfts?owner={WALLET_B}&category=parcel");
+    let (code, result) = get(app.clone(), &url_b).await;
+    assert_eq!(code, StatusCode::OK, "{result}");
+    assert_eq!(result["total"], 0);
+    run(rent(land, 2, 36, 2, WALLET_B, false)).await;
+    let (code, result) = get(app.clone(), &url_b).await;
+    assert_eq!(code, StatusCode::OK, "{result}");
+    assert_eq!(result["total"], 1);
+    run(format!("INSERT INTO shop.rental_event(network,rentals_address,kind,contract_address,token_id,block_number,log_index,block_time,tx_hash)
+        VALUES ('ethereum','{VENUE}','claimed','{estate}',3,38,1,380,'0x04')")).await;
+    let (code, result) = get(app.clone(), &format!("{owner_url}&category=estate")).await;
+    assert_eq!(code, StatusCode::OK, "{result}");
+    assert_eq!(result["total"], 0);
+    run("UPDATE shop.chain_cursor SET folded_block=NULL WHERE indexer='rentals'".into()).await;
+    let (code, result) = get(app.clone(), &owner_url).await;
+    assert_eq!(code, StatusCode::SERVICE_UNAVAILABLE, "{result}");
+    assert_eq!(result["source"], "rentals-index");
+    let (code, result) = get(app.clone(), "/v1/nfts?category=parcel").await;
+    assert_eq!(code, StatusCode::OK, "{result}");
+    // The switch controls the writer. Without a cursor the reader cannot
+    // establish LAND custody, while a wearable-only page still has all its sources.
+    assert!(
+        super::chain_jobs::expected_cursors(
+            &state,
+            super::chain_walk::ChainNet::Ethereum,
+            Some(false)
+        )
+        .iter()
+        .all(|(index, _)| index.indexer() != "rentals")
+    );
+    run("DELETE FROM shop.chain_cursor WHERE indexer='rentals'".into()).await;
+    let (code, result) = get(app.clone(), &owner_url).await;
+    assert_eq!(code, StatusCode::SERVICE_UNAVAILABLE, "{result}");
+    assert_eq!(result["source"], "rentals-index");
+    let (code, result) = get(app.clone(), &format!("{owner_url}&category=wearable")).await;
+    assert_eq!(code, StatusCode::OK, "{result}");
+    db.drop().await;
+}

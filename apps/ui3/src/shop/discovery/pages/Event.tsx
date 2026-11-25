@@ -6,7 +6,7 @@
 import { useEffect } from "react";
 import { Navigate } from "react-router";
 
-import Spinner from "../../../atoms/Spinner";
+import { Spinner } from "@dcl/one-ui";
 import { SHOP_BASE } from "../../routes";
 import CampaignBanner from "../components/CampaignBanner";
 import { useCampaign, useCampaignContracts } from "../hooks";
@@ -39,7 +39,7 @@ export default function Event() {
     return (
       <div className="page-loading" aria-busy="true" data-testid="event-loading" style={{ display: "grid", placeItems: "center", minHeight: "60vh" }}>
         <span style={{ marginTop: 14, display: "inline-flex" }}>
-          <Spinner size={30} aria-label={t("event.loading")} />
+          <Spinner variant="light" label={t("event.loading")} />
         </span>
       </div>
     );

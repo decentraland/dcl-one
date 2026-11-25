@@ -53,6 +53,8 @@ metadata) nor player reports, so `social.user_settings` and
 Native `scene_stream_access.admin_place_key` is preserved on re-import. New
 imports leave it NULL because the source does not establish an exact bound
 scene namespace; unresolved cleanup resolves current applicable authority.
+The table's insert guard (`scene_stream_access_scene_place`) checks only rows
+with `admin_place_key` set, so imported rows pass it.
 
 New cleanup intents initialize `notification_started=false`. Re-import keeps
 native delivery decisions, recipient snapshots and cursor progress unchanged.

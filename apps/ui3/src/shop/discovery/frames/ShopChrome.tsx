@@ -10,7 +10,7 @@
 import { useMemo, type ReactNode } from "react";
 import { Link, useLocation } from "react-router";
 
-import ShopChrome, { ShopNavigation, type ShopNavTab, type ShopNavSet, type ShopSection } from "@dcl/one-ui/apps/shop/ShopChrome";
+import { ShopChrome, ShopNavigation, type ShopNavTab, type ShopNavSet, type ShopSection, type TabsBarLinkProps } from "@dcl/one-ui";
 import { shopCartDrawer } from "../../cart/drawer";
 import { useCart } from "../../cart/store";
 import CartDrawer from "../../checkout/components/CartDrawer";
@@ -66,7 +66,8 @@ export function sectionFor(pathname: string, signedIn = true): ShopSection | und
 export function shopTabs({ iap, eventLabel, set = "shop" }: { iap: boolean; eventLabel: string | null; set?: ShopNavSet }): ShopNavTab[] {
   const tabs: ShopNavTab[] = [];
   if (set === "shop" || !iap) tabs.push({ id: "overview", label: t("nav.overview"), href: `${SHOP_BASE}/overview` });
-  if (eventLabel && (set === "shop" || !iap)) tabs.push({ id: "event", label: eventLabel, href: `${SHOP_BASE}/event` });
+  const label = eventLabel?.trim();
+  if (label && (set === "shop" || !iap)) tabs.push({ id: "event", label, accent: "campaign", href: `${SHOP_BASE}/event` });
   tabs.push({ id: "collectibles", label: t("nav.collectibles"), href: `${SHOP_BASE}/items` });
   if (set === "marketplace") {
     if (!iap) {
@@ -83,6 +84,10 @@ export function shopTabs({ iap, eventLabel, set = "shop" }: { iap: boolean; even
   return tabs;
 }
 
+function RouteLink({ href, ...props }: TabsBarLinkProps) {
+  return <Link to={href} {...props} />;
+}
+
 function ShopSubnav({ tabs, active, iap, signedIn, set }: { tabs: ShopNavTab[]; active: ShopSection | undefined; iap: boolean; signedIn: boolean; set: ShopNavSet }) {
   const count = useCart((s) => s.lines.reduce((n, l) => n + l.quantity, 0));
   const { pathname } = useLocation();
@@ -91,8 +96,15 @@ function ShopSubnav({ tabs, active, iap, signedIn, set }: { tabs: ShopNavTab[]; 
   const market = set === "marketplace";
   const creditsCta = !iap && !market && !isLandPath(pathname);
   return (
-    <ShopNavigation tabs={tabs} active={active} iap={iap} set={set} label={t("nav.sections")} Link={Link}>
-      {hidesSearch || market ? null : <SearchDropdown />}
+    <ShopNavigation
+      tabs={tabs}
+      active={active}
+      iap={iap}
+      set={set}
+      label={t("nav.sections")}
+      Link={RouteLink}
+      search={hidesSearch || market ? null : <SearchDropdown />}
+    >
       {signedIn ? <ShopHeldCredits /> : null}
       {!creditsCta ? null : (
         <Link className="shop-subnav__credits shop-buy-ring" to={`${SHOP_BASE}/credits`}>
@@ -139,7 +151,7 @@ export default function ShopChromeHost({ children, topbar, footer }: { children?
   const wallet = useShopWallet();
   const iap = isIapMode();
   const { campaign } = useCampaign();
-  const eventLabel = campaign?.mainTag ? (localized(campaign.tabName, toContentfulLocale("en")) ?? campaign.name ?? null) : null;
+  const eventLabel = campaign?.mainTag ? (localized(campaign.tabName, toContentfulLocale("en"))?.trim() || campaign.name?.trim() || null) : null;
   // The Marketplace's tabs (LAND, ...) only for a visitor who has it (market/access.tsx): anyone else stays on the
   // Shop's, and its pages send them to the overview anyway.
   const marketplace = useMarketplace();

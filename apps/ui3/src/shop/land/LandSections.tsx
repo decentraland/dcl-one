@@ -5,7 +5,7 @@
 // Copyright 2020 Metaverse Holdings Ltd. Licensed under the Apache License, Version 2.0.
 import { useMemo, useState } from "react";
 
-import Button from "../../atoms/Button";
+import { Button } from "@dcl/one-ui";
 import type { NftResult } from "@catalyst-api/market/NftResult";
 import { shortAddress } from "@shop/model/address";
 import type { ShopClient } from "@shop/api/shop";
@@ -131,7 +131,7 @@ export function EstateParcels({ parcels, total }: { parcels: { x: number; y: num
         ))}
       </ul>
       {parcels.length > 16 ? (
-        <Button size="sm" variant="ghost" onClick={() => setAll((a) => !a)} aria-expanded={all}>
+        <Button size="sm" variant="outline" onClick={() => setAll((a) => !a)} aria-expanded={all}>
           {all ? "Show less" : `Show ${parcels.length - 16} more`}
         </Button>
       ) : null}
