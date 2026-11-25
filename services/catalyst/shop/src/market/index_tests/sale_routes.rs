@@ -560,6 +560,14 @@ async fn deep_sales_pages_keep_equal_timestamps_in_id_order_across_networks() {
             .bind(net.db_name()).execute(&db.pool).await.unwrap();
         expected.extend((0..count).map(|i| (i / 3, format!("{}-0x{i:064x}-0-0", net.db_name()))));
     }
+    sqlx::query("ANALYZE shop.sale_execution")
+        .execute(&db.pool)
+        .await
+        .unwrap();
+    sqlx::query("ANALYZE shop.sale_asset")
+        .execute(&db.pool)
+        .await
+        .unwrap();
     let router = market_router(state_over(
         db.pool.clone(),
         "http://127.0.0.1",
@@ -638,12 +646,7 @@ async fn deep_sales_pages_keep_equal_timestamps_in_id_order_across_networks() {
         SELECT network,block_number,log_index,ordinal,0,'seller',$1,gross FROM payments")
         .bind(BOB).execute(&db.pool).await.unwrap();
     // Bulk seeding above runs before autovacuum can collect normal planner statistics.
-    for analyze in [
-        "ANALYZE shop.sale_asset",
-        "ANALYZE shop.sale_execution",
-        "ANALYZE shop.sale_payment",
-        "ANALYZE shop.sale_payout",
-    ] {
+    for analyze in ["ANALYZE shop.sale_payment", "ANALYZE shop.sale_payout"] {
         sqlx::query(analyze).execute(&db.pool).await.unwrap();
     }
     for (route, count_field, wei_field) in [

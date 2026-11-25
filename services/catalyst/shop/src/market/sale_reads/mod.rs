@@ -357,6 +357,12 @@ async fn sale_page(
     } else {
         sales_query!(nets, "list.sql")
     };
+    // A generic plan cannot distinguish a token lookup from a wide page
+    // when the predicates are optional. Keep the index paths parameter-aware.
+    sqlx::query("SET LOCAL plan_cache_mode = force_custom_plan")
+        .execute(&mut *snap.transaction)
+        .await
+        .map_err(db_error)?;
     let (total, incomplete, rows): (i64, bool, Value) = query
         .bind(f.sale_type.map(|t| t.as_str()))
         .bind(&f.buyer)
