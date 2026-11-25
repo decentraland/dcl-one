@@ -16,6 +16,9 @@ macro_rules! sales_query {
         sales_query!(@query $nets, concat!(", requested_wallet AS (SELECT ", $param, "::text AS address)",
             include_str!("wallet_assets.sql")); $($path),+)
     };
+    ($nets:expr, scope $file:literal; $($path:literal),+) => {
+        sales_query!(@query $nets, include_str!($file); $($path),+)
+    };
     ($nets:expr, $($path:literal),+) => {
         sales_query!(@query $nets, ", scoped_assets AS NOT MATERIALIZED (SELECT * FROM shop.sale_asset)"; $($path),+)
     };
@@ -96,6 +99,75 @@ pub(crate) fn ensure_fresh(expires_at: DateTime<Utc>) -> Result<(), Response> {
     Ok(())
 }
 
+pub(super) async fn top_owners(
+    state: &MarketplaceState,
+    creator: &str,
+    sort: &str,
+    ascending: bool,
+    first: i64,
+    skip: i64,
+) -> Result<super::wire::DataTotal<super::owners::TopOwner>, Response> {
+    if !super::owned_items::walks_here(state) {
+        return Err(super::owned_items::not_ready(
+            "this node does not walk the nft index",
+        ));
+    }
+    // The sales snapshot requires a fresh, full NFT publication on both
+    // chains. The owner and spend reads share the same snapshot.
+    let (mut snap, nets) = snapshot(state, None).await?;
+    let nft =
+        super::owned_items::Publications::read(&mut snap.transaction, state.settings.catalogue())
+            .await
+            .map_err(db_error)?;
+    let items = require_metadata(&mut snap, nets, "items", Source::ItemsMirror).await?;
+    let collections = require_metadata(
+        &mut snap,
+        &[ChainNet::Ethereum],
+        "collections",
+        Source::CollectionsMirror,
+    )
+    .await?;
+    // Native catalogue rows can advance while their history revision and
+    // the sales publication stay the same.
+    let projections: Vec<(String, i64, Option<i64>)> = sqlx::query_as(
+        "SELECT network, generation, projected_through FROM shop.collection_projection
+         WHERE owned_at IS NOT NULL ORDER BY network",
+    )
+    .fetch_all(&mut *snap.transaction)
+    .await
+    .map_err(db_error)?;
+    let key = format!(
+        "published-top-owners/{creator}/{sort}/{ascending}/{first}/{skip}/{nft:?}/{items:?}/{collections:?}/{projections:?}/{:?}/{:?}",
+        snap.generations, snap.published_through,
+    );
+    let (data, total) = cached_analytics(
+        state,
+        &state.top_owners_slots,
+        key,
+        snap.expires_at,
+        async {
+            sqlx::query("SET LOCAL statement_timeout = '5s'")
+                .execute(&mut *snap.transaction)
+                .await
+                .map_err(db_error)?;
+            let (Json(data), total) =
+                sales_query!(nets, scope "top_owner_scope.sql"; "top_owners.sql")
+                    .bind(creator)
+                    .bind(sort)
+                    .bind(ascending)
+                    .bind(first)
+                    .bind(skip)
+                    .bind(nft_index::ZERO_ADDRESS)
+                    .fetch_one(&mut *snap.transaction)
+                    .await
+                    .map_err(db_error)?;
+            Ok((data, total))
+        },
+    )
+    .await?;
+    Ok(super::wire::DataTotal { data, total })
+}
+
 pub(crate) async fn seller_slot(
     state: &MarketplaceState,
 ) -> Result<tokio::sync::SemaphorePermit<'_>, Response> {
@@ -115,8 +187,10 @@ pub(crate) async fn seller_slot(
     }
 }
 
-fn enabled(state: &MarketplaceState) -> bool {
-    state.settings.market.indexes.sales_enabled && state.settings.eth_network.trim() == "mainnet"
+pub(crate) fn enabled(state: &MarketplaceState) -> bool {
+    state.settings.market.indexes.sales_enabled
+        && crate::shared::network::ChainPair::from_eth_network(&state.settings.eth_network)
+            == Some(crate::shared::network::ChainPair::Mainnet)
 }
 
 pub(crate) async fn snapshot(

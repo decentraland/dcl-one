@@ -1,12 +1,6 @@
-import {
-  BorderRect,
-  engine,
-  IEngine,
-  LastWriteWinElementSetComponentDefinition,
-  PBUiCanvasInformation,
-  UiCanvasInformation as engineUiCanvasInformation
-} from '@dcl/ecs'
-import { EntityPropTypes, ScaleContext, ScaleUnit, ScaleUnits } from './types'
+import type { BorderRect, IEngine, LastWriteWinElementSetComponentDefinition, PBUiCanvasInformation } from '@dcl/ecs'
+import { engine, UiCanvasInformation as engineUiCanvasInformation } from '@dcl/ecs'
+import type { EntityPropTypes, ScaleContext, ScaleUnit, ScaleUnits } from './types'
 import { parseUiBackground } from './uiBackground'
 import { parseUiTransform } from './uiTransform'
 

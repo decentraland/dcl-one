@@ -12,7 +12,13 @@ import { AuthServerProvider } from '../../../lib/auth';
 import { createTestStore, type TestStore } from '../../../../tests/utils/testStore';
 import { actions as aiActions } from '../ai';
 import { FeatureFlag } from '../featureFlags/types';
-import { actions, canManageSharing, selectSharingView, shouldShareTurn } from './slice';
+import {
+  actions,
+  BACKOFF_JITTER,
+  canManageSharing,
+  selectSharingView,
+  shouldShareTurn,
+} from './slice';
 
 vi.mock('../../../lib/aiSharingApi', () => ({
   isConfigured: vi.fn(() => true),
@@ -747,7 +753,7 @@ describe('when the service asks to wait', () => {
     expect(backoffOf(store).nextUploadAt).toBeGreaterThanOrEqual(Date.now() + 3599 * 1000);
   });
 
-  it('should wait no longer than the longest backoff, whatever Retry-After says', async () => {
+  it('should wait no longer than the longest backoff and its spread, whatever Retry-After says', async () => {
     vi.mocked(api.getConsent).mockResolvedValue(ok(serverSays(true, granted.decidedAt)));
     vi.mocked(aiSharing.peek).mockResolvedValue([record('a')]);
     vi.mocked(api.uploadTurns).mockResolvedValue({ ...fail(503), retryAfterSeconds: 86_400 });
@@ -755,7 +761,26 @@ describe('when the service asks to wait', () => {
 
     await store.dispatch(actions.flush());
 
-    expect(backoffOf(store).nextUploadAt).toBeLessThanOrEqual(Date.now() + 3_600_000);
+    expect(backoffOf(store).nextUploadAt).toBeLessThanOrEqual(
+      Date.now() + 3_600_000 * (1 + BACKOFF_JITTER),
+    );
+  });
+
+  it('should spread clients that failed together, never retrying before Retry-After', () => {
+    const waits = [0, 0.5, 0.999].map(draw => {
+      const random = vi.spyOn(Math, 'random').mockReturnValue(draw);
+      const store = setup({ consent: granted });
+      const before = Date.now();
+      store.dispatch(actions.uploadFailed({ wallet: ADDRESS, retryAfterSeconds: 600 }));
+      random.mockRestore();
+      return backoffOf(store).nextUploadAt - before;
+    });
+
+    expect(waits[0]).toBeGreaterThanOrEqual(600_000);
+    expect(waits[1]).toBeGreaterThanOrEqual(660_000);
+    expect(waits[2]).toBeGreaterThanOrEqual(719_000);
+    expect(waits[2]).toBeLessThanOrEqual(720_000 + 50);
+    expect(new Set(waits.map(w => Math.round(w / 1000))).size).toBe(3);
   });
 
   it('should honour Retry-After on a failed conversation erasure', async () => {
@@ -863,6 +888,38 @@ describe('when the service rate-limits an upload', () => {
 
     expect(aiSharing.ack).not.toHaveBeenCalled();
     expect(backoffOf(store).nextUploadAt).toBeGreaterThanOrEqual(Date.now() + 599_000);
+  });
+
+  it('should send the same records once the wait is over, and drop them only once accepted', async () => {
+    vi.mocked(api.getConsent).mockResolvedValue(ok(serverSays(true, granted.decidedAt)));
+    // The queue holds both until they are acknowledged.
+    let queued = [record('a'), record('b')];
+    vi.mocked(aiSharing.peek).mockImplementation(async () => queued);
+    vi.mocked(aiSharing.ack).mockImplementation(async () => {
+      queued = [];
+    });
+    vi.mocked(api.uploadTurns)
+      .mockResolvedValueOnce({ ...fail(429), retryAfterSeconds: 600 })
+      .mockResolvedValueOnce(ok({ accepted: 2, rejected: [] }));
+    const store = setup({ consent: granted });
+
+    await store.dispatch(actions.flush());
+    expect(aiSharing.ack).not.toHaveBeenCalled();
+    // Still waiting: nothing is sent.
+    await store.dispatch(actions.flush());
+    expect(api.uploadTurns).toHaveBeenCalledTimes(1);
+
+    const later = Date.now() + 2 * 3_600_000;
+    const now = vi.spyOn(Date, 'now').mockReturnValue(later);
+    await store.dispatch(actions.flush());
+    now.mockRestore();
+
+    expect(api.uploadTurns).toHaveBeenCalledTimes(2);
+    const ids = (call: number) =>
+      (vi.mocked(api.uploadTurns).mock.calls[call][1] as AiTurnRecord[]).map(r => r.recordId);
+    // The same record ids: the service counts a resent id as already stored, never twice.
+    expect(ids(1)).toEqual(ids(0));
+    expect(aiSharing.ack).toHaveBeenCalledWith(['a', 'b']);
   });
 });
 

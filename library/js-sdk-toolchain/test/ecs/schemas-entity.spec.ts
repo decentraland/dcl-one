@@ -1,4 +1,5 @@
-import { Entity, EntityUtils, Schemas } from '../../packages/@dcl/ecs/src'
+import type { Entity } from '../../packages/@dcl/ecs/src'
+import { EntityUtils, Schemas } from '../../packages/@dcl/ecs/src'
 import { ReadWriteByteBuffer } from '../../packages/@dcl/ecs/src/serialization/ByteBuffer'
 
 /** An id whose version has pushed it past the signed 32-bit range. */

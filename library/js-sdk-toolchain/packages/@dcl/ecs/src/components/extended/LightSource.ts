@@ -1,5 +1,6 @@
-import { IEngine, LastWriteWinElementSetComponentDefinition } from '../../engine'
-import { LightSource, PBLightSource_Point, PBLightSource_Spot, PBLightSource } from '../generated/index.gen'
+import type { IEngine, LastWriteWinElementSetComponentDefinition } from '../../engine'
+import type { PBLightSource_Point, PBLightSource_Spot, PBLightSource } from '../generated/index.gen'
+import { LightSource } from '../generated/index.gen'
 import {} from '../generated/LightSource.gen'
 
 /**
