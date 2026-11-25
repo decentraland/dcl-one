@@ -166,6 +166,62 @@ fn groups(owner: &Owner) -> Vec<LogGroup> {
     groups
 }
 
+// A provider may narrow the interval repeatedly before the request budget
+// ends. Keep its last upper bound for the next pass, including after restart.
+async fn remember_upper(
+    pool: &PgPool,
+    owner: &Owner,
+    from: u64,
+    to: u64,
+    upper: u64,
+) -> anyhow::Result<()> {
+    let upper = if upper < to {
+        upper
+    } else {
+        from + (to - from) / 2
+    };
+    let mut tx = pool.begin().await?;
+    owner.check(&mut tx).await?;
+    sqlx::query(
+        "UPDATE shop.chain_cursor SET sale_repair_upper=$3
+        WHERE indexer=$1 AND network=$2",
+    )
+    .bind(owner.indexer)
+    .bind(owner.net.db_name())
+    .bind(i64::try_from(upper)?)
+    .execute(&mut *tx)
+    .await?;
+    tx.commit().await?;
+    Ok(())
+}
+
+// Keep every log of an accepted block together, and only as many blocks
+// missing timestamps as the caller can afford to fetch.
+fn trim_for_times(window: &mut chain_walk::Window, from: u64, requests: usize) -> bool {
+    let missing: BTreeSet<_> = window
+        .logs
+        .iter()
+        .filter(|l| {
+            l.block_timestamp
+                .as_deref()
+                .and_then(crate::chain_index::rpc::hex_to_i64)
+                .is_none()
+        })
+        .map(|l| chain_walk::log_position(l).0)
+        .collect();
+    let capacity = requests.saturating_mul(crate::chain_index::rpc::HEADER_BATCH);
+    if let Some(&block) = missing.iter().nth(capacity) {
+        if block as u64 == from {
+            return false;
+        }
+        window.reached = block as u64 - 1;
+        window
+            .logs
+            .retain(|l| chain_walk::log_position(l).0 < block);
+    }
+    true
+}
+
 pub async fn repair(
     pool: &PgPool,
     source: &dyn LogSource,
@@ -195,7 +251,16 @@ pub async fn repair(
     if width == 0 {
         return Ok(used);
     }
-    let to = anchor.min(from.saturating_add(width as u64 - 1));
+    let upper: Option<i64> = sqlx::query_scalar(
+        "SELECT sale_repair_upper FROM shop.chain_cursor WHERE indexer=$1 AND network=$2",
+    )
+    .bind(owner.indexer)
+    .bind(owner.net.db_name())
+    .fetch_one(pool)
+    .await?;
+    let to = anchor
+        .min(from.saturating_add(width as u64 - 1))
+        .min(upper.filter(|u| *u >= next).map_or(anchor, |u| u as u64));
     ensure!(from <= to, "sales repair moved beyond its cursor");
     let before = source.header(anchor).await?;
     used.read(before.requests);
@@ -204,7 +269,8 @@ pub async fn repair(
         .await
     {
         Ok(window) => window,
-        Err(RpcError::Budget { requests, .. }) => {
+        Err(RpcError::Budget { upper, requests }) => {
+            remember_upper(pool, owner, from, to, upper).await?;
             used.read(requests);
             return Ok(used);
         }
@@ -224,20 +290,33 @@ pub async fn repair(
             }
         }
         let candidates: BTreeSet<_> = by_block.values().flatten().cloned().collect();
-        let listed: BTreeSet<String> = sqlx::query_scalar::<_,String>(
-            "SELECT contract_address FROM shop.collections WHERE network='matic' AND chain_id=137 AND contract_address=ANY($1)")
+        let listed: BTreeMap<String,i64> = sqlx::query_as(
+            "SELECT contract_address,created_at FROM shop.collections WHERE network='matic' AND chain_id=137 AND contract_address=ANY($1)")
             .bind(candidates.into_iter().collect::<Vec<_>>()).fetch_all(pool).await?.into_iter().collect();
+        let mut block_times = std::collections::HashMap::new();
+        if !listed.is_empty() {
+            if !trim_for_times(&mut window, from, budget.saturating_sub(used.charge + 2)) {
+                return Ok(used);
+            }
+            let times = source.block_times(&window.logs).await?;
+            used.read(times.requests);
+            block_times = times.value;
+            by_block.retain(|b, _| *b <= window.reached as i64);
+        }
         // Keep whole blocks. A hot window can name more issuers than fit in
         // the remaining address chunks. Its suffix belongs to the next pass.
         let max_addresses = budget
             .saturating_sub(used.charge + 2)
             .saturating_mul((*chunk).max(1));
         let mut addresses = BTreeSet::new();
-        for (block, names) in by_block {
-            let extra = names
-                .intersection(&listed)
-                .filter(|a| !addresses.contains(*a))
-                .count();
+        for (block, mut names) in by_block {
+            names.retain(|name| {
+                listed
+                    .get(name)
+                    .zip(block_times.get(&block))
+                    .is_some_and(|(created, purchased)| created <= purchased)
+            });
+            let extra = names.iter().filter(|a| !addresses.contains(*a)).count();
             if addresses.len() + extra > max_addresses {
                 if block as u64 == from {
                     return Ok(used);
@@ -248,7 +327,7 @@ pub async fn repair(
                     .retain(|l| chain_walk::log_position(l).0 < block);
                 break;
             }
-            addresses.extend(names.intersection(&listed).cloned());
+            addresses.extend(names);
         }
         issuers_read = addresses.into_iter().collect();
         if !issuers_read.is_empty() {
@@ -267,7 +346,8 @@ pub async fn repair(
                 .await
             {
                 Ok(window) => window,
-                Err(RpcError::Budget { requests, .. }) => {
+                Err(RpcError::Budget { upper, requests }) => {
+                    remember_upper(pool, owner, from, window.reached, upper).await?;
                     used.read(requests);
                     return Ok(used);
                 }
@@ -281,34 +361,14 @@ pub async fn repair(
             window.logs.extend(issues.logs);
             window.logs.sort_by_key(chain_walk::log_position);
         }
-    }
-    // A source can narrow its chunk and spend more than the initial estimate.
-    // Before any further RPC, trim to the block-time batches this pass can pay.
-    let time_capacity = budget
-        .saturating_sub(used.charge + 1)
-        .saturating_mul(crate::chain_index::rpc::HEADER_BATCH);
-    let missing_times: BTreeSet<_> = window
-        .logs
-        .iter()
-        .filter(|l| {
-            l.block_timestamp
-                .as_deref()
-                .and_then(crate::chain_index::rpc::hex_to_i64)
-                .is_none()
-        })
-        .map(|l| chain_walk::log_position(l).0)
-        .collect();
-    if used.charge >= budget {
-        return Ok(used);
-    }
-    if let Some(&block) = missing_times.iter().nth(time_capacity) {
-        if block as u64 == from {
-            return Ok(used);
+        for log in &mut window.logs {
+            if let Some(time) = block_times.get(&chain_walk::log_position(log).0) {
+                log.block_timestamp = Some(format!("0x{time:x}"));
+            }
         }
-        window.reached = block as u64 - 1;
-        window
-            .logs
-            .retain(|l| chain_walk::log_position(l).0 < block);
+    }
+    if used.charge >= budget || !trim_for_times(&mut window, from, budget - used.charge - 1) {
+        return Ok(used);
     }
     let times = source.block_times(&window.logs).await?;
     used.read(times.requests);
@@ -363,7 +423,9 @@ pub async fn repair(
             "UPDATE shop.store_sale_line s SET issue_checked=true
             FROM unnest($1::bigint[],$2::int[],$3::text[]) b(block,idx,hash)
             WHERE (s.block_number,s.bought_log,s.tx_hash)=(b.block,b.idx,b.hash)
-              AND s.issue_log IS NULL AND NOT s.issue_checked AND s.contract_address=ANY($4)",
+              AND s.issue_log IS NULL AND NOT s.issue_checked AND s.contract_address=ANY($4)
+              AND EXISTS (SELECT FROM shop.verified_store_sale_line v
+                  WHERE (v.block_number,v.bought_log,v.ordinal)=(s.block_number,s.bought_log,s.ordinal))",
         )
         .bind(blocks)
         .bind(indices)
@@ -373,7 +435,7 @@ pub async fn repair(
         .await?;
     }
     let count = sqlx::query(
-        "UPDATE shop.chain_cursor SET sale_input_version = $3,
+        "UPDATE shop.chain_cursor SET sale_input_version = $3, sale_repair_upper=NULL,
           sale_verified_through = CASE WHEN sale_input_version IS DISTINCT FROM $3 OR sale_covered_rewinds IS DISTINCT FROM reorg_rewinds THEN $4 ELSE greatest(sale_verified_through, $4) END,
           sale_covered_rewinds = reorg_rewinds, sale_dirty_from = least(sale_dirty_from,$7), sale_history_revision = sale_history_revision + 1
          WHERE indexer = $1 AND network = $2 AND last_block = $5 AND last_block_hash = $6

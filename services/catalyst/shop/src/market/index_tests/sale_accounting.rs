@@ -598,6 +598,16 @@ async fn sales_history_repair_resumes_at_the_next_window_and_discovers_store_iss
         "Factory collection",
     )
     .await;
+    // A catalogue entry created after the purchase cannot attest to its issuer.
+    seed_collection(
+        &db.pool,
+        "matic",
+        DAVE,
+        b + 1,
+        "future-collection",
+        "Future collection",
+    )
+    .await;
     let tip = b + 15;
     let hash = format!("0x{:064x}", 317);
     let mut one = sales_index::tests::issue_log(
@@ -793,36 +803,77 @@ async fn sales_history_repair_resumes_at_the_next_window_and_discovers_store_iss
             .unwrap()
             .is_some()
     );
-    sqlx::query(
-        "UPDATE shop.chain_cursor SET folded_at=timezone('UTC',now())-interval '21 minutes'
-        WHERE indexer='collections'",
-    )
-    .execute(&db.pool)
-    .await
-    .unwrap();
-    let snapshot =
-        crate::market::sale_fold::snapshot(&db.pool, &[ChainNet::Matic], chrono::Utc::now())
-            .await
-            .unwrap()
-            .unwrap();
-    assert!(snapshot.expires_at < chrono::Utc::now() + chrono::Duration::minutes(10));
-    drop(snapshot);
-    sqlx::query(
-        "UPDATE shop.chain_cursor SET reorg_rewinds=reorg_rewinds+1 WHERE indexer='collections'",
-    )
-    .execute(&db.pool)
-    .await
-    .unwrap();
-    assert!(
-        crate::market::sale_fold::snapshot(&db.pool, &[ChainNet::Matic], chrono::Utc::now())
-            .await
-            .unwrap()
-            .is_none(),
-        "an independent change to factory history withdraws the old proof"
-    );
-    crate::market::sale_fold::pass(&db.pool, &rpc, ChainNet::Matic)
+    let generation: uuid::Uuid = sqlx::query_scalar("SELECT generation FROM shop.sale_publication")
+        .fetch_one(&db.pool)
         .await
         .unwrap();
+    let proof: i64 = sqlx::query_scalar(
+        "SELECT sale_verified_through FROM shop.chain_cursor WHERE indexer='collections'",
+    )
+    .fetch_one(&db.pool)
+    .await
+    .unwrap();
+    assert_eq!(proof, b as i64);
+    let net = ChainNet::Matic;
+    for (old, target, ready) in [(tip, b + 1, true), (b + 1, b - 1, false)] {
+        let mut tx = db.pool.begin().await.unwrap();
+        chain_walk::rewind(
+            &mut tx,
+            "collections",
+            net,
+            (old as i64, Some(&chain.hash_of(old))),
+            target as i64,
+            Some((&chain.hash_of(target), time_of(target))),
+        )
+        .await
+        .unwrap();
+        tx.commit().await.unwrap();
+        // A tip rewind withdraws the factory cursor. Only a rewind reaching
+        // the excluded purchase withdraws the sales proof.
+        assert_eq!(
+            crate::market::sale_fold::snapshot(&db.pool, &[net], chrono::Utc::now())
+                .await
+                .unwrap()
+                .is_some(),
+            ready
+        );
+        crate::market::sale_fold::pass(&db.pool, &rpc, net)
+            .await
+            .unwrap();
+        assert_eq!(
+            sqlx::query_scalar::<_, uuid::Uuid>("SELECT generation FROM shop.sale_publication")
+                .fetch_one(&db.pool)
+                .await
+                .unwrap(),
+            generation
+        );
+    }
+    sqlx::query(
+        "UPDATE shop.chain_cursor SET last_block=$1,last_block_hash=$2,
+         folded_block=$1,folded_at=timezone('UTC',now()) WHERE indexer='collections'",
+    )
+    .bind(tip as i64)
+    .bind(&anchor)
+    .execute(&db.pool)
+    .await
+    .unwrap();
+    crate::market::sale_fold::pass(&db.pool, &rpc, net)
+        .await
+        .unwrap();
+    assert!(
+        crate::market::sale_fold::snapshot(&db.pool, &[net], chrono::Utc::now())
+            .await
+            .unwrap()
+            .is_some()
+    );
+    assert_eq!(
+        sqlx::query_scalar::<_, uuid::Uuid>("SELECT generation FROM shop.sale_publication")
+            .fetch_one(&db.pool)
+            .await
+            .unwrap(),
+        generation,
+        "revalidation preserves settled history"
+    );
     let canonical: (i64, i64, String) = sqlx::query_as(
         "SELECT (SELECT count(*) FROM shop.sale_execution),
         (SELECT count(*) FROM shop.sale_asset),sum(gross)::text FROM shop.sale_payment",
@@ -844,6 +895,25 @@ async fn sales_history_repair_resumes_at_the_next_window_and_discovers_store_iss
     assert_eq!(
         sale_history::pending(&db.pool, &SalesIndex).await.unwrap(),
         None
+    );
+    // Historical discovery behind that attested prefix reopens the line.
+    sqlx::query(
+        "UPDATE shop.collections SET created_at=$2 WHERE network='matic' AND contract_address=$1",
+    )
+    .bind(DAVE)
+    .bind(time_of(b))
+    .execute(&db.pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        sale_history::pending(&db.pool, &SalesIndex).await.unwrap(),
+        Some(b as i64)
+    );
+    assert!(
+        crate::market::sale_fold::snapshot(&db.pool, &[net], chrono::Utc::now())
+            .await
+            .unwrap()
+            .is_none()
     );
     db.drop().await;
 }
@@ -1318,4 +1388,54 @@ async fn a_pending_sales_replay_leaves_budget_for_ethereum_estate_repair() {
         "{progress:?}"
     );
     db.drop().await;
+}
+
+#[tokio::test]
+async fn archive_repair_carries_a_narrowed_range_across_passes() {
+    let Some(db) = ScratchDb::create().await else {
+        return;
+    };
+    let first = SalesIndex.start_block();
+    let tip = first + 500;
+    let chain = FakeChain::new(tip + 64, vec![], 1, 100);
+    chain.omit_range_hint.store(true, Ordering::SeqCst);
+    let url = serve(chain.clone()).await;
+    let settings = index_settings(100, 100_000);
+    let st = state_over(db.pool.clone(), &url, settings.clone(), false);
+    let hash = chain.hash_of(tip);
+    sqlx::query("INSERT INTO shop.chain_cursor(indexer,network,chain_id,start_block,last_block,last_block_hash,full_history)
+        VALUES('sales','matic',137,$1,$2,$3,true)")
+        .bind(first as i64).bind(tip as i64).bind(&hash).execute(&db.pool).await.unwrap();
+    let source = chain_walk::RpcSource::new(Rpc::at(&st.http, &url));
+    let mut previous = tip as i64;
+    for _ in 0..8 {
+        let owner = chain_walk::test_owner(&db.pool, &SalesIndex, &settings).await;
+        let spent = crate::market::sale_history::repair(
+            &db.pool,
+            &source,
+            &SalesIndex,
+            &owner,
+            Some((tip, &hash)),
+            7,
+            &mut 100,
+        )
+        .await
+        .unwrap();
+        assert!(spent.charge <= 7);
+        let (hint, through): (Option<i64>, Option<i64>) =
+            sqlx::query_as("SELECT sale_repair_upper,sale_verified_through FROM shop.chain_cursor")
+                .fetch_one(&db.pool)
+                .await
+                .unwrap();
+        if through.is_some() {
+            assert!(previous < tip as i64);
+            assert_eq!((hint, through), (None, Some(first as i64)));
+            db.drop().await;
+            return;
+        }
+        let hint = hint.expect("next pass retains a smaller archive interval");
+        assert!(hint < previous);
+        previous = hint;
+    }
+    panic!("a one-block window must make progress on this budget");
 }

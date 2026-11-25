@@ -32,8 +32,8 @@ struct FactoryProof {
     hash: String,
     epoch: Uuid,
     revision: i64,
-    folded_at: NaiveDateTime,
     required_from: i64,
+    required_to: i64,
 }
 
 struct Inputs {
@@ -50,19 +50,11 @@ impl Inputs {
     }
 
     fn epochs(&self) -> Vec<Uuid> {
-        self.rows
-            .iter()
-            .map(|r| r.epoch)
-            .chain(self.factory.iter().map(|f| f.epoch))
-            .collect()
+        self.rows.iter().map(|r| r.epoch).collect()
     }
 
     fn revisions(&self) -> Vec<i64> {
-        self.rows
-            .iter()
-            .map(|r| r.revision)
-            .chain(self.factory.iter().map(|f| f.revision))
-            .collect()
+        self.rows.iter().map(|r| r.revision).collect()
     }
 
     fn reusable_prefix(&self, marker: &Marker) -> Option<i64> {
@@ -73,12 +65,6 @@ impl Inputs {
             return None;
         }
         let mut prefix = marker.block_number.min(self.common());
-        if let Some(f) = &self.factory
-            && (marker.input_epochs.get(self.rows.len()) != Some(&f.epoch)
-                || marker.input_revisions.get(self.rows.len()) != Some(&f.revision))
-        {
-            prefix = prefix.min(f.required_from.checked_sub(1)?);
-        }
         if let Some(from) = self.first_backfill {
             prefix = prefix.min(from.checked_sub(1)?);
         }
@@ -92,8 +78,8 @@ impl Inputs {
 
     fn covers(&self, marker: &Marker) -> bool {
         marker.input_version == sale_history::VERSION
-            && marker.input_epochs == self.epochs()
-            && marker.input_revisions == self.revisions()
+            && marker.input_epochs.starts_with(&self.epochs())
+            && marker.input_revisions.starts_with(&self.revisions())
             && marker.late_collections == self.late_collections
             && self.collection_changes.is_empty()
             && marker.block_number <= self.common()
@@ -123,6 +109,7 @@ async fn inputs(
     c: &mut PgConnection,
     net: ChainNet,
     now: DateTime<Utc>,
+    through: Option<i64>,
 ) -> anyhow::Result<Option<Inputs>> {
     let rows: Vec<Input> = sqlx::query_as(include_str!("inputs.sql"))
         .bind(net.db_name())
@@ -173,7 +160,8 @@ async fn inputs(
     let factory = if net == ChainNet::Matic {
         let (needs_issue, first, last): (bool, Option<i64>, Option<i64>) =
             sqlx::query_as(include_str!("store_coverage.sql"))
-                .bind(common)
+                .bind(through.unwrap_or(common).min(common))
+                .bind(sale_history::VERSION)
                 .fetch_one(&mut *c)
                 .await?;
         if needs_issue {
@@ -181,7 +169,7 @@ async fn inputs(
         }
         if let (Some(first), Some(last)) = (first, last) {
             let proof:Option<FactoryProof>=sqlx::query_as("SELECT last_block,last_block_hash AS hash,
-                sale_input_epoch AS epoch,reorg_rewinds::bigint AS revision,folded_at,$4::bigint AS required_from
+                sale_input_epoch AS epoch,reorg_rewinds::bigint AS revision,$4::bigint AS required_from,$2::bigint AS required_to
                 FROM shop.chain_cursor WHERE indexer='collections' AND network='matic'
                   AND chain_id=137 AND full_history AND start_block<=$1 AND folded_block>=$2
                   AND folded_at BETWEEN $3::timestamp - interval '30 minutes' AND $3 AND last_block_hash IS NOT NULL
@@ -234,16 +222,16 @@ pub async fn snapshot(
     let mut deadline = now + chain_walk::READY_WINDOW;
     let mut generations = Vec::with_capacity(nets.len());
     for &net in nets {
-        let Some(inputs) = inputs(&mut tx, net, now).await? else {
+        let Some(marker) = marker(&mut tx, net).await? else {
             return Ok(None);
         };
-        let Some(marker) = marker(&mut tx, net).await? else {
+        let Some(inputs) = inputs(&mut tx, net, now, Some(marker.block_number)).await? else {
             return Ok(None);
         };
         let Some(at) = marker.published_at else {
             return Ok(None);
         };
-        if !inputs.covers(&marker) || at > now.naive_utc() {
+        if inputs.factory.is_some() || !inputs.covers(&marker) || at > now.naive_utc() {
             return Ok(None);
         }
         generations.push((net, marker.generation));
@@ -251,7 +239,6 @@ pub async fn snapshot(
             .rows
             .iter()
             .map(|r| r.folded_at)
-            .chain(inputs.factory.iter().map(|f| f.folded_at))
             .fold(at, std::cmp::min);
         deadline = deadline.min(earliest.and_utc() + chain_walk::READY_WINDOW);
     }
@@ -358,7 +345,7 @@ async fn rollups(c: &mut PgConnection, net: ChainNet, days: &[i64]) -> anyhow::R
 
 pub(super) async fn pass(pool: &PgPool, rpc: &Rpc<'_>, net: ChainNet) -> anyhow::Result<()> {
     let mut c = pool.acquire().await?;
-    let Some(start) = inputs(&mut c, net, Utc::now()).await? else {
+    let Some(start) = inputs(&mut c, net, Utc::now(), None).await? else {
         return Ok(());
     };
     let previous = marker(&mut c, net).await?;
@@ -490,7 +477,7 @@ pub(super) async fn pass(pool: &PgPool, rpc: &Rpc<'_>, net: ChainNet) -> anyhow:
     // A rewind or a repair committed during the fold changes this comparison.
     sqlx::query("SELECT indexer FROM shop.chain_cursor WHERE network=$1 AND indexer IN ('nft','sales','trade_events','collections') ORDER BY indexer FOR UPDATE")
         .bind(net.db_name()).fetch_all(&mut *tx).await?;
-    let end = inputs(&mut tx, net, Utc::now())
+    let end = inputs(&mut tx, net, Utc::now(), Some(start.common()))
         .await?
         .context("sales inputs withdrawn during fold")?;
     ensure!(
@@ -505,6 +492,28 @@ pub(super) async fn pass(pool: &PgPool, rpc: &Rpc<'_>, net: ChainNet) -> anyhow:
         marker(&mut tx, net).await? == previous,
         "another sales fold committed"
     );
+    // The factory attests only to the absence of a creation through the
+    // purchased block. Its cursor clips this prefix on rewind and clears it
+    // on rebuild. A newly discovered issuer always reopens Issue repair.
+    match (&start.factory, &end.factory) {
+        (Some(a), Some(b))
+            if (a.epoch, a.revision) == (b.epoch, b.revision)
+                && a.required_from == b.required_from
+                && a.required_to == b.required_to =>
+        {
+            sqlx::query(
+                "UPDATE shop.chain_cursor SET sale_input_version=$1,
+                sale_verified_through=CASE WHEN sale_input_version=$1 THEN greatest(sale_verified_through,$2) ELSE $2 END
+                WHERE indexer='collections' AND network='matic'",
+            )
+            .bind(sale_history::VERSION)
+            .bind(a.required_to)
+            .execute(&mut *tx)
+            .await?;
+        }
+        (None, None) => {}
+        _ => anyhow::bail!("store factory history changed during fold"),
+    }
     // Acknowledging the earliest affected block is atomic with replacing the
     // suffix and recording the revisions. Owners use the same locked cursors.
     sqlx::query(

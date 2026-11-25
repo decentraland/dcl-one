@@ -382,6 +382,7 @@ CREATE TABLE shop.chain_cursor (
     sale_input_version integer,
     sale_verified_through bigint,
     sale_dirty_from bigint,
+    sale_repair_upper bigint,
     sale_history_revision bigint NOT NULL DEFAULT 0,
     full_history boolean NOT NULL,
     reorg_rewinds integer NOT NULL DEFAULT 0,

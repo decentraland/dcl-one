@@ -152,6 +152,7 @@ struct FakeChain {
     receipts: Mutex<HashMap<String, Value>>,
     creators_at_hash: Mutex<HashMap<(String, String), String>>,
     max_span: u64,
+    omit_range_hint: std::sync::atomic::AtomicBool,
     max_addresses: usize,
     forks: Mutex<HashMap<u64, String>>,
     requests: AtomicUsize,
@@ -250,6 +251,7 @@ impl FakeChain {
             reorg_on_logs: std::sync::atomic::AtomicBool::new(false),
             logs: Mutex::new(logs.iter().map(log_json).collect()),
             max_span,
+            omit_range_hint: Default::default(),
             max_addresses,
             forks: Mutex::new(HashMap::new()),
             requests: AtomicUsize::new(0),
@@ -548,6 +550,9 @@ fn answer(chain: &FakeChain, body: &Value) -> Value {
                     .insert(to, format!("0x{}", "ee".repeat(32)));
             }
             if to - from + 1 > chain.max_span {
+                if chain.omit_range_hint.load(Ordering::SeqCst) {
+                    return refuse("range too wide".into());
+                }
                 return refuse(format!(
                     "range {} exceeds limit of {}",
                     to - from + 1,
