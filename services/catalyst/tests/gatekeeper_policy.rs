@@ -1057,7 +1057,7 @@ mod stream_access {
              WHERE old.entity_id IN (SELECT entity_id FROM content.active_pointers WHERE pointer = ANY($3))",
         )
         .bind(entity_id)
-        .bind(sqlx::types::Json(serde_json::json!({ "scene": { "base": parcel, "parcels": [parcel] } })))
+        .bind(sqlx::types::Json(serde_json::json!({ "v": { "scene": { "base": parcel, "parcels": [parcel] } } })))
         .bind(vec![parcel.to_string()])
         .execute(pool)
         .await
@@ -3254,7 +3254,7 @@ mod relay_authority_policy {
              timezone('UTC', now()), '[]'::json)",
         )
         .bind(&scene)
-        .bind(sqlx::types::Json(serde_json::json!({ "scene": { "base": parcel } })))
+        .bind(sqlx::types::Json(serde_json::json!({ "v": { "scene": { "base": parcel } } })))
         .bind(vec![parcel.clone()])
         .execute(&pool)
         .await

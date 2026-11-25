@@ -73,6 +73,7 @@ pub(crate) fn market_settings(
             third_party_registry_enabled: config
                 .marketplace
                 .marketplace_third_party_registry_index_enabled,
+            collections_enabled: config.marketplace.marketplace_collections_index_enabled,
             interval: Duration::from_secs(
                 config.marketplace.marketplace_index_interval_secs.max(1),
             ),

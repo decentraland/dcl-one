@@ -291,9 +291,15 @@ async fn rate_limiter_ttl_and_size() {
     small.record(&p("a"));
     small.record(&p("b"));
     small.record(&p("c"));
-    assert!(
-        small.is_limited(&p("unrelated")),
+    assert_eq!(
+        small.limit(&p("unrelated")),
+        Some("max_size"),
         "over max_size trips bucket"
+    );
+    assert_eq!(
+        small.limit(&p("a")),
+        Some("ttl"),
+        "a pointer hit is named first"
     );
 }
 
@@ -303,8 +309,9 @@ fn a_reservation_holds_its_pointers_until_released() {
     let ptrs = vec!["0,0".to_string(), "0,1".to_string(), "0,0".to_string()];
 
     let held = rl.reserve("scene", &ptrs, false).unwrap();
-    assert!(
-        rl.reserve("scene", &ptrs[1..2], false).is_none(),
+    assert_eq!(
+        rl.reserve("scene", &ptrs[1..2], false).err(),
+        Some("ttl"),
         "a held pointer refuses a second reservation"
     );
     held.release();
@@ -330,8 +337,9 @@ fn a_reservation_holds_its_pointers_until_released() {
         .unwrap()
         .entries
         .clear();
-    assert!(
-        rl.reserve("profile", &profile, true).is_none(),
+    assert_eq!(
+        rl.reserve("profile", &profile, true).err(),
+        Some("unchanged_ttl"),
         "the unchanged bucket refuses on its own"
     );
     assert!(
@@ -592,6 +600,45 @@ async fn two_concurrent_deploys_of_one_entity_both_answer_its_stored_timestamp()
     assert_eq!(first, second);
     assert_eq!(deployer.deployed_timestamp(&id).await.unwrap(), Some(first));
     assert!(deployer.is_rate_limited("scene", &pointers[0]));
+    let _ = std::fs::remove_dir_all(&tmp);
+}
+
+/// A deploy to a pointer its window still holds is refused and counted by the
+/// window that refused it.
+#[tokio::test]
+async fn a_rate_limited_deploy_is_counted_by_its_window() {
+    let Some(pool) = test_pool(4).await else {
+        return;
+    };
+    let recorder = crate::series::test_support::recorder();
+    let _metrics = dcl_metrics::set_default_local_recorder(&recorder);
+    let (storage, tmp) = temp_storage("rate-limited-count").await;
+    let deployer =
+        WriteDeployer::with_partial_validation_for_tests(pool, storage, Some(Arc::new(NoEip1654)));
+    let pointers = Scope::new().pointers(&["9,9"]);
+    let now_ms = chrono::Utc::now().timestamp_millis();
+    let (bytes, id, chain) = signed_scene(&pointers, now_ms).await;
+    deployer
+        .deploy_entity(vec![bytes], &id, chain, "LOCAL")
+        .await
+        .unwrap();
+    let (bytes, id, chain) = signed_scene(&pointers, now_ms + 1).await;
+    let err = deployer
+        .deploy_entity(vec![bytes], &id, chain, "LOCAL")
+        .await
+        .unwrap_err();
+    assert!(
+        matches!(err, DeployFailure::Rejected(RejectionKind::RateLimited, _)),
+        "{err:?}"
+    );
+    assert_eq!(
+        crate::series::test_support::sample(
+            &recorder.handle().render(),
+            crate::series::RATE_LIMITED.descriptor.name,
+            &[("entity_type", "scene"), ("reason", "ttl")]
+        ),
+        Some(1.0)
+    );
     let _ = std::fs::remove_dir_all(&tmp);
 }
 
@@ -927,7 +974,21 @@ fn is_content_unchanged_metadata_compare() {
 
 #[test]
 fn rate_limiter_per_type_defaults() {
-    let rl = DeployRateLimiter::with_reference_defaults();
+    let recorder = crate::series::test_support::recorder();
+    let rl =
+        dcl_metrics::with_local_recorder(&recorder, DeployRateLimiter::with_reference_defaults);
+    let rendered = recorder.handle().render();
+    for &(etype, _, max) in REFERENCE_RATE_LIMITS.iter() {
+        assert_eq!(
+            crate::series::test_support::sample(
+                &rendered,
+                crate::series::RATE_LIMITER_MAX_SIZE.descriptor.name,
+                &[("entity_type", etype)]
+            ),
+            Some(max as f64),
+            "{etype}"
+        );
+    }
     let ptrs = vec!["0,0".to_string()];
     assert!(!rl.is_rate_limited("scene", &ptrs));
     rl.record("scene", &ptrs);

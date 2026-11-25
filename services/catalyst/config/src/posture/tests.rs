@@ -1002,6 +1002,7 @@ fn island_and_journey_refuse_every_follower_switch() {
         .map(|r| r.key)
         .collect();
     followers.push("MARKETPLACE_MANA_TRANSFERS_INDEX_ENABLED");
+    followers.push("MARKETPLACE_COLLECTIONS_INDEX_ENABLED");
     assert!(followers.contains(&"PRICE_POLL_ENABLED") && followers.len() >= 14);
     for posture in ["island", "journey"] {
         for key in &followers {

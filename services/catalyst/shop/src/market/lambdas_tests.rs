@@ -2171,6 +2171,43 @@ async fn names_and_lands_serve_stale_on_outage_and_ownership_does_not() {
     assert_eq!(get(&state, &lands_uri).await, (StatusCode::OK, lands));
 }
 
+/// `/users/{a}/names` on a node whose NAME source is the subgraph counts
+/// each read of the per-owner memo: the first a `miss`, the next a `hit`.
+#[tokio::test(flavor = "current_thread")]
+async fn names_from_the_subgraph_count_owner_memo_reads() {
+    let recorder = dcl_metrics::Registry::new(&[super::lambdas_metrics::FAMILIES])
+        .unwrap()
+        .builder(dcl_metrics::PrometheusBuilder::new())
+        .unwrap()
+        .build_recorder();
+    let handle = recorder.handle();
+    let _recording = dcl_metrics::set_default_local_recorder(&recorder);
+    let pool = PgPool::connect_lazy("postgres://postgres@127.0.0.1:1/postgres").unwrap();
+    pool.close().await;
+    let state = Arc::new(MarketplaceState::new(
+        pool,
+        crate::http::Outbound::for_tests(),
+        Settings {
+            marketplace_subgraph_url: Some(serve_graph_vars(marketplace_reader).await),
+            ..Settings::for_tests()
+        },
+    ));
+    state
+        .test_allow_loopback
+        .store(true, std::sync::atomic::Ordering::Relaxed);
+    for _ in 0..2 {
+        let (status, body) = get(&state, &format!("/lambdas/users/{OWNER}/names")).await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+    }
+    let rendered = handle.render();
+    for line in [
+        "dcl_lambdas_owner_memo_reads_total{result=\"miss\"} 1",
+        "dcl_lambdas_owner_memo_reads_total{result=\"hit\"} 1",
+    ] {
+        assert!(rendered.contains(line), "missing {line}:\n{rendered}");
+    }
+}
+
 /// The nft leg of `/v1/prices` reads after its gate; if the land index
 /// stops being ready in between, the route answers the land index's
 /// envelope, as `/v1/nfts` does, and any other failure stays internal.
