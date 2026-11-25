@@ -3,7 +3,7 @@
 // running.md ("Test commands") describes it. Specs never see which transport carries the line.
 import { mkdir, writeFile } from 'node:fs/promises'
 import path from 'node:path'
-import { CONSOLE_SPACE, type Console, ConsoleError, redact, redactLine, replaceSecrets, secretsOf } from './console.ts'
+import { type Console, ConsoleError, quoteWord, redact, redactLine, replaceSecrets, secretsOf } from './console.ts'
 import { type AuthIdentity, encodeIdentity } from './identity.ts'
 import { type Selector, describeSelector, selectorArg, toSelectorObject } from './selectors.ts'
 import { sleep, until } from './wait.ts'
@@ -530,12 +530,6 @@ export const PROFILE_DEPLOY_BURST = { count: 5, spanMs: 61_000 }
 export const KEYBOARD_TIMEOUT_MS = 10_000
 
 export type MouseButton = 'left' | 'right' | 'middle'
-
-/** A console word the engine splits back into the same argument (`crates/console/src/line.rs`):
- *  quoted when it is empty or holds whitespace or a double quote. */
-export function quoteWord(word: string): string {
-  return word === '' || word.includes('"') || CONSOLE_SPACE.test(word) ? `"${word.replace(/[\\"]/g, '\\$&')}"` : word
-}
 
 /** `/screenshot` options; any of them makes the reply JSON (`CapturedShot`). The engine has no
  *  flag for the JSON reply alone, so `screenshot({})` sends `--max-width 1920`: a frame wider

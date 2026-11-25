@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { describe, test } from 'node:test'
 import { ConsoleError, FakeConsole, commandOf, redactLine } from '../driver/console.ts'
-import { type CaptureSequence, type CommandRecord, Explorer, parseLiveScenes, parsePortables, parseSmartWearables, quoteWord, saveCaptureFrames, type WorldState } from '../driver/explorer.ts'
+import { type CaptureSequence, type CommandRecord, Explorer, parseLiveScenes, parsePortables, parseSmartWearables, saveCaptureFrames, type WorldState } from '../driver/explorer.ts'
 import { enterWorld } from '../driver/session.ts'
 
 function world(overrides: Partial<WorldState> = {}): string {
@@ -514,16 +514,6 @@ describe('Explorer', () => {
     const started = Date.now()
     await explorer.profileDeployWindow()
     assert.ok(Date.now() - started >= 350, 'two deployments between reads fill a burst of two')
-  })
-
-  test('quoteWord quotes what the engine would split or unquote', () => {
-    assert.equal(quoteWord('plain'), 'plain')
-    assert.equal(quoteWord(''), '""')
-    assert.equal(quoteWord('a b'), '"a b"')
-    assert.equal(quoteWord('a\u0085b'), '"a\u0085b"')
-    assert.equal(quoteWord('say "hi"'), '"say \\"hi\\""')
-    assert.equal(quoteWord('C:\\frames'), 'C:\\frames')
-    assert.equal(quoteWord('C:\\my frames'), '"C:\\\\my frames"')
   })
 
   test('screenshot({}) asks for the JSON reply with the widest frame; the bare call stays raw', async () => {
