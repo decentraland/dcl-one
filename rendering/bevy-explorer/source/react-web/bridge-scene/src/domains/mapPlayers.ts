@@ -1,14 +1,14 @@
-// The map's nearby players: the avatars the engine has in the world (PlayerIdentityData +
-// Transform), read a few times a second while the page's map shows its People layer.
+// The map's People layer uses scene identities and positions filtered by last known Pulse membership.
 import { engine, PlayerIdentityData, Transform } from '@dcl/sdk/ecs'
 import { getPlayer } from '@dcl/sdk/players'
 import type { MapPlayer } from '@explorer-core/engine/protocol'
 import type { Ctx } from '../bridge'
+import type { AvatarModifierSnapshot } from './avatarModifiers'
 import { throttleByDt } from '../system-helpers'
 
 const PLAYERS_INTERVAL = 0.25
 
-export function registerMapPlayers(ctx: Ctx): void {
+export function registerMapPlayers(ctx: Ctx, avatarModifiers: () => AvatarModifierSnapshot): void {
   let watching = false
   let lastKey = ''
   ctx.on('watchMapPlayers', (msg) => {
@@ -24,9 +24,11 @@ export function registerMapPlayers(ctx: Ctx): void {
     throttleByDt(PLAYERS_INTERVAL, () => {
       if (!watching) return
       const me = getPlayer()?.userId?.toLowerCase()
+      const { pulseAbsent } = avatarModifiers()
       const players: MapPlayer[] = []
       for (const [entity, data] of engine.getEntitiesWith(PlayerIdentityData)) {
-        if (data.address === '' || data.address.toLowerCase() === me) continue
+        const address = data.address.toLowerCase()
+        if (address === '' || address === me || pulseAbsent.has(address)) continue
         const position = Transform.getOrNull(entity)?.position
         if (position == null) continue
         players.push({ address: data.address, x: position.x, z: position.z })

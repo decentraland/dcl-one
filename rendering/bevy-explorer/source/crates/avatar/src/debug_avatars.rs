@@ -139,6 +139,7 @@ impl Plugin for DebugAvatarsPlugin {
                     ("Shown (not hidden by the cap)", "shown"),
                     ("Drawn in a view this frame", "drawn"),
                     ("Max avatars this session", "cap"),
+                    ("Catalog wearables", "catalog"),
                 ],
                 actions: &[
                     ("Show every avatar", "/avatar_demo cap all"),
@@ -260,6 +261,8 @@ fn clear_on_logout(
 struct Creator {
     male_only: bool,
     wearables: Vec<String>,
+    /// While not empty, random looks draw their wearables from these URNs, not the base ones.
+    catalog: Vec<String>,
     emote: Option<String>,
     layout: DemoLayout,
     /// With a seed, the avatar at each index always gets the same look.
@@ -273,17 +276,25 @@ fn look_seed(seed: u64, index: u64) -> u64 {
     seed ^ index.wrapping_mul(0x9E37_79B9_7F4A_7C15)
 }
 
-/// A random demo avatar's look: whether it is male, and eight base wearables.
-fn random_look(rng: &mut impl Rng, male_only: bool) -> (bool, Vec<String>) {
+/// Eight random wearables: from the catalog when it has any, else the base ones.
+fn random_wearables(rng: &mut impl Rng, catalog: &[String]) -> Vec<String> {
+    if catalog.is_empty() {
+        base_wearables::base_wearable_urns()
+            .iter()
+            .skip(2)
+            .choose_multiple(rng, 8)
+            .into_iter()
+            .map(ToString::to_string)
+            .collect()
+    } else {
+        catalog.iter().cloned().choose_multiple(rng, 8)
+    }
+}
+
+/// A random demo avatar's look: whether it is male, and eight wearables.
+fn random_look(rng: &mut impl Rng, male_only: bool, catalog: &[String]) -> (bool, Vec<String>) {
     let male = male_only || rng.gen_bool(0.5);
-    let wearables = base_wearables::base_wearable_urns()
-        .iter()
-        .skip(2)
-        .choose_multiple(rng, 8)
-        .into_iter()
-        .map(ToString::to_string)
-        .collect();
-    (male, wearables)
+    (male, random_wearables(rng, catalog))
 }
 
 /// Create local rendered avatars, configure their look or remove only the test population.
@@ -304,6 +315,11 @@ enum DemoAction {
         enabled: bool,
     },
     Wearables {
+        #[arg(value_delimiter = ',')]
+        urns: Vec<String>,
+    },
+    /// Add wearable URNs to the catalog random looks draw from; no URNs empties it.
+    Catalog {
         #[arg(value_delimiter = ',')]
         urns: Vec<String>,
     },
@@ -360,6 +376,15 @@ fn demo_command(
             }
             creator.wearables = wearables;
         }
+        Some(DemoAction::Catalog { urns }) => {
+            if urns.is_empty() {
+                creator.catalog.clear();
+            } else {
+                creator
+                    .catalog
+                    .extend(urns.into_iter().filter(|s| !s.is_empty()));
+            }
+        }
         Some(DemoAction::Cap { max }) => {
             // with the session's settings, not in the config: a change to the config is written
             // to the stored one
@@ -391,15 +416,8 @@ fn demo_command(
             }
         }
         Some(DemoAction::Randomize) => {
-            let catalog = base_wearables::base_wearable_urns();
             for (_, mut selection) in &mut demos {
-                selection.shape.0.wearables = catalog
-                    .iter()
-                    .skip(2)
-                    .choose_multiple(&mut rng, 8)
-                    .into_iter()
-                    .map(ToString::to_string)
-                    .collect();
+                selection.shape.0.wearables = random_wearables(&mut rng, &creator.catalog);
             }
         }
         Some(action @ (DemoAction::Spawn { .. } | DemoAction::Male | DemoAction::Female)) => {
@@ -423,8 +441,9 @@ fn demo_command(
                         Some(seed) => random_look(
                             &mut StdRng::seed_from_u64(look_seed(seed, index)),
                             creator.male_only,
+                            &creator.catalog,
                         ),
-                        None => random_look(&mut rng, creator.male_only),
+                        None => random_look(&mut rng, creator.male_only, &creator.catalog),
                     }
                 } else {
                     (
@@ -512,7 +531,7 @@ fn demo_command(
             }
         }
     }
-    cmd.reply_ok(json!({"count":count, "built":built, "shown":shown, "drawn":drawn, "cap":cap_json(session.max_avatars(&config)), "sessionCap":session.max_avatars.map(cap_json), "layout":creator.layout.name(), "seed":creator.seed, "maleOnly":creator.male_only, "wearables":creator.wearables.join(","), "emote":creator.emote.as_deref().unwrap_or("none")}).to_string());
+    cmd.reply_ok(json!({"count":count, "built":built, "shown":shown, "drawn":drawn, "cap":cap_json(session.max_avatars(&config)), "sessionCap":session.max_avatars.map(cap_json), "layout":creator.layout.name(), "seed":creator.seed, "maleOnly":creator.male_only, "wearables":creator.wearables.join(","), "catalog":creator.catalog.len(), "emote":creator.emote.as_deref().unwrap_or("none")}).to_string());
 }
 
 /// Temporarily render a fetched profile's appearance on the local player.
@@ -626,7 +645,7 @@ mod tests {
 
     #[test]
     fn a_seed_gives_each_index_the_same_look() {
-        let look = |seed: u64| random_look(&mut StdRng::seed_from_u64(seed), false);
+        let look = |seed: u64| random_look(&mut StdRng::seed_from_u64(seed), false, &[]);
         assert_eq!(look(7), look(7));
         assert_eq!(look(7).1.len(), 8);
         // and different indexes differ

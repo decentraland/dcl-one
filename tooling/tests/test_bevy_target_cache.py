@@ -49,7 +49,7 @@ class KeyTest(unittest.TestCase):
             self.addCleanup(patcher.stop)
 
     def git(self, *args):
-        return subprocess.check_output(['git', '-c', 'user.name=CI', '-c', 'user.email=ci@example.invalid', *args],
+        return subprocess.check_output(['git', '-c', 'user.name=CI', '-c', 'user.email=ci@example.invalid', '-c', 'commit.gpgsign=false', *args],
                                        cwd=self.root, text=True).strip()
 
     def write(self, name, text):
@@ -75,9 +75,17 @@ class KeyTest(unittest.TestCase):
         # The cleanup keeps the newest cache of each prefix on a ref; the prefix ends with the platform.
         cleanup = (ROOT / '.github/workflows/closed-pr-cache.yml').read_text()
         family = re.search(r"r'\|\^(bevy-native-[^']+)'", cleanup).group(1)
-        for lane, system, arch in (('test', 'Linux', 'X64'), ('clippy', 'macOS', 'ARM64'), ('headless', 'Windows', 'X64')):
-            exact = self.key(lane, {**ENV, 'RUNNER_OS': system, 'RUNNER_ARCH': arch})[0]
-            self.assertEqual(re.match(family, exact).group(0), exact[:-67])
+        workflow = (ROOT / '.github/workflows/bevy-explorer-ci.yml').read_text()
+        lanes = re.findall(r'bevy-target-cache\.py" key --lane ([a-z0-9-]+)\n', workflow)
+        self.assertTrue(lanes)
+        self.assertEqual(len(lanes), workflow.count('bevy-target-cache.py" key'))
+        # Every lane runs on Linux; only the test lane also runs on Windows and macOS.
+        keys = [(lane, 'Linux', 'X64') for lane in lanes] + [('test', 'macOS', 'ARM64'), ('test', 'Windows', 'X64')]
+        for lane, system, arch in keys:
+            with self.subTest(lane=lane, system=system):
+                exact = self.key(lane, {**ENV, 'RUNNER_OS': system, 'RUNNER_ARCH': arch})[0]
+                match = re.match(family, exact)
+                self.assertEqual(match and match.group(0), exact[:-67])
 
     def test_the_tool_environment_changes_the_tools_digest_only(self):
         exact, fallbacks = self.key()

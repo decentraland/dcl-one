@@ -1711,6 +1711,11 @@ impl std::str::FromStr for PortableExperiencesToggle {
 #[derive(Component)]
 pub struct NearbyVoiceDisabled;
 
+/// On the scene whose request to turn nearby voice off the player is visiting: the answer of
+/// the `DisableVoice` permission, `None` until there is one. Removed when the player leaves.
+#[derive(Component)]
+pub struct VoiceOffAnswer(pub Option<bool>);
+
 /// On the root of a scene loaded as a portable experience whose scene.json also declares
 /// `isPortableExperience: true`: the only scenes whose `MapPin`s are read.
 #[derive(Component)]
@@ -2274,7 +2279,8 @@ pub struct MicState {
     /// through [`MicState::set_scene_disabled`] and [`MicState::set_scene_banned`].
     #[serde(default)]
     scene_blocked: bool,
-    /// The scene the player stands in turns nearby voice off.
+    /// The scene the player stands in turns nearby voice off, and the player's `DisableVoice`
+    /// permission allows it.
     #[serde(skip)]
     scene_disabled: bool,
     /// The current scene's room refused the player as banned.

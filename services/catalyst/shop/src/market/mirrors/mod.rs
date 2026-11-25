@@ -60,6 +60,7 @@ pub const PAGE_SIZE: i64 = 1000;
 /// Retry transient errors at the same keyset. An old failing pin may have
 /// been pruned or orphaned, so the next tick starts a new verified pass.
 const MAX_PIN_AGE: chrono::Duration = chrono::Duration::days(1);
+const MAX_FAILED_PIN_AGE: chrono::Duration = chrono::Duration::hours(1);
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum Mirror {
@@ -184,10 +185,10 @@ pub async fn save(pool: &PgPool, c: &Cursor) -> Result<(), sqlx::Error> {
     sqlx::query(
         "INSERT INTO shop.mirror_state \
              (mirror, network, source_url, pass_started_at, cursor_updated_at, cursor_id, pages_fetched, \
-              rows_upserted, last_complete_pass_at, last_complete_pass_rows, last_error, chain_id, pass_block_hash, updated_at) \
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, timezone('UTC', now())) \
+              rows_upserted, last_complete_pass_at, last_complete_pass_rows, last_error, chain_id, pass_block_hash, marks_item_rows, updated_at) \
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, timezone('UTC', now())) \
          ON CONFLICT (mirror, network) DO UPDATE SET \
-             source_url = EXCLUDED.source_url, chain_id = EXCLUDED.chain_id, pass_block_hash = EXCLUDED.pass_block_hash, pass_started_at = EXCLUDED.pass_started_at, \
+             source_url = EXCLUDED.source_url, marks_item_rows = EXCLUDED.marks_item_rows, chain_id = EXCLUDED.chain_id, pass_block_hash = EXCLUDED.pass_block_hash, pass_started_at = EXCLUDED.pass_started_at, \
              cursor_updated_at = EXCLUDED.cursor_updated_at, cursor_id = EXCLUDED.cursor_id, \
              pages_fetched = EXCLUDED.pages_fetched, rows_upserted = EXCLUDED.rows_upserted, \
              last_complete_pass_at = EXCLUDED.last_complete_pass_at, \
@@ -207,6 +208,7 @@ pub async fn save(pool: &PgPool, c: &Cursor) -> Result<(), sqlx::Error> {
     .bind(&c.last_error)
     .bind(c.chain_id)
     .bind(&c.pass_block_hash)
+    .bind(c.mirror == Mirror::Items && (c.pass_block_hash.is_some() || c.chain_id == Some(super::chain_walk::ChainNet::from(c.network).testnet_chain_id())))
     .execute(pool)
     .await?;
     Ok(())
@@ -262,23 +264,33 @@ pub(super) async fn catalogue_pass_hash(
     Ok(header.value.hash)
 }
 
+#[derive(Debug, thiserror::Error)]
+pub(super) enum PageReadError {
+    #[error("{0}")]
+    Fetch(String),
+    #[error("collections graph page has no block hash")]
+    MissingHash,
+    #[error("collections graph page differs from the pinned block")]
+    HashMismatch,
+}
+
 pub(super) async fn read_catalogue_page(
     state: &MarketplaceState,
     url: &str,
     query: &str,
     from: Option<String>,
     hash: Option<String>,
-) -> Result<Value, String> {
+) -> Result<Value, PageReadError> {
     let data = super::readers::query(state, url, query, serde_json::json!({
         "idFrom": from.unwrap_or_default(), "first": PAGE_SIZE,
         "verifyChain": hash.is_some(), "block": hash.as_ref().map(|h| serde_json::json!({"hash":h}))
-    })).await?;
+    })).await.map_err(PageReadError::Fetch)?;
     if let Some(expected) = hash {
         let actual = data["_meta"]["block"]["hash"]
             .as_str()
-            .ok_or("collections graph has no block hash")?;
+            .ok_or(PageReadError::MissingHash)?;
         if !actual.eq_ignore_ascii_case(&expected) {
-            return Err("collections graph page differs from the pinned block".into());
+            return Err(PageReadError::HashMismatch);
         }
     }
     Ok(data)
@@ -372,7 +384,7 @@ pub(super) async fn walk<F, FF, U, UF>(
 ) -> anyhow::Result<()>
 where
     F: Fn(Option<i64>, Option<String>, Option<String>) -> FF,
-    FF: std::future::Future<Output = Result<Page, String>>,
+    FF: std::future::Future<Output = Result<Page, PageReadError>>,
     U: Fn(Vec<Value>, i32, bool) -> UF,
     UF: std::future::Future<Output = Result<i64, sqlx::Error>>,
 {
@@ -446,18 +458,11 @@ where
         {
             Ok(p) => p,
             Err(e) => {
-                c.last_error = Some(e.clone());
-                let message = e.to_ascii_lowercase();
+                c.last_error = Some(e.to_string());
                 if c.pass_block_hash.is_some()
-                    && [
-                        "block not found",
-                        "unknown block",
-                        "no block with",
-                        "no block found",
-                        "differs from the pinned block",
-                    ]
-                    .iter()
-                    .any(|reason| message.contains(reason))
+                    && (matches!(e, PageReadError::MissingHash | PageReadError::HashMismatch)
+                        || c.pass_started_at
+                            .is_some_and(|start| now_utc() - start >= MAX_FAILED_PIN_AGE))
                 {
                     tracing::warn!(
                         mirror = mirror.name(),
@@ -549,6 +554,19 @@ pub async fn run_tick(
         let Some(url) = network.url(&state.index) else {
             continue;
         };
+        // A network the collections index owns is not mirrored (its pages
+        // would not be written either: `collections::upsert`).
+        if let Some(net) = super::chain_walk::ChainNet::parse(network.db_name()) {
+            let mut conn = state.pool.acquire().await?;
+            if super::collections_projection::owned(&mut conn, net).await? {
+                tracing::info!(
+                    mirror = mirror.name(),
+                    network = network.db_name(),
+                    "the collections index owns this network's rows; the mirror skips it"
+                );
+                continue;
+            }
+        }
         let result = match mirror {
             Mirror::Collections => collections::run_pass(state, ctx, network, url).await,
             Mirror::Items => items::run_pass(state, ctx, network, url).await,
@@ -610,37 +628,43 @@ pub async fn ready(
     if networks.is_empty() {
         return Ok(None);
     }
-    state
-        .mirror_ready
-        .get_or_fetch(mirror, || async move {
-            let done: Vec<(String, NaiveDateTime)> = sqlx::query_as(
-                "SELECT network, last_complete_pass_at FROM shop.mirror_state WHERE mirror = $1 AND last_complete_pass_at IS NOT NULL",
-            )
-            .bind(mirror.name())
-            .fetch_all(&state.pool)
-            .await?;
-            Ok::<_, sqlx::Error>(oldest_pass(&networks, &done))
-        })
-        .await
+    copy_for_chain(state, mirror, &networks).await
 }
 
-/// The copy the tables hold with no subgraph configured: the oldest last
-/// complete pass of the networks `shop.mirror_state` records; `None` when
-/// no pass ever completed. Cached 10 s beside [`ready`] (the configuration
-/// is fixed for the process, so one key serves either).
-async fn recorded(
+/// Includes every stored publication in the chain check because a route may
+/// query rows from both networks even when only one graph URL is configured.
+/// An unbound legacy copy remains available to descriptive graph readers.
+async fn copy_for_chain(
     state: &MarketplaceState,
     mirror: Mirror,
+    networks: &[Network],
 ) -> Result<Option<NaiveDateTime>, sqlx::Error> {
+    let pair = crate::land_authz::land_network(&state.settings.eth_network)
+        .map(super::nft_index::Catalogue::from_land);
     state
         .mirror_ready
         .get_or_fetch(mirror, || async move {
-            sqlx::query_scalar::<_, Option<NaiveDateTime>>(
-                "SELECT min(last_complete_pass_at) FROM shop.mirror_state WHERE mirror = $1",
-            )
-            .bind(mirror.name())
-            .fetch_one(&state.pool)
-            .await
+            let rows: Vec<(String, Option<NaiveDateTime>, Option<i64>)> = sqlx::query_as(
+            "SELECT network, last_complete_pass_at, chain_id FROM shop.mirror_state WHERE mirror=$1"
+        ).bind(mirror.name()).fetch_all(&state.pool).await?;
+            let mut done = Vec::new();
+            for (network, at, chain) in rows {
+                if let Some(id) = chain {
+                    let expected = super::chain_walk::ChainNet::parse(&network)
+                        .and_then(|net| pair.map(|pair| pair.chain_id(net)));
+                    if Some(id) != expected {
+                        return Ok(None);
+                    }
+                }
+                if let Some(at) = at {
+                    done.push((network, at));
+                }
+            }
+            Ok(if networks.is_empty() {
+                done.iter().map(|(_, at)| *at).min()
+            } else {
+                oldest_pass(networks, &done)
+            })
         })
         .await
 }
@@ -662,7 +686,7 @@ fn oldest_pass(networks: &[Network], done: &[(String, NaiveDateTime)]) -> Option
 /// (and the answer is stamped with the copy's `as_of`), `Err` the envelope
 /// to answer instead. A descriptive read serves any copy the tables hold:
 /// with no subgraph configured, the networks `shop.mirror_state` records
-/// ([`recorded`]).
+/// ([`copy_for_chain`]).
 pub async fn require_ready(state: &MarketplaceState, mirror: Mirror) -> Result<(), Response> {
     ready_at(state, mirror, Accept::Recorded).await.map(|_| ())
 }
@@ -684,7 +708,7 @@ async fn ready_at(
     if state.settings.collection_networks().is_empty() {
         let recorded = match accept {
             Accept::Configured => None,
-            Accept::Recorded => recorded(state, mirror).await.map_err(|e| {
+            Accept::Recorded => copy_for_chain(state, mirror, &[]).await.map_err(|e| {
                 tracing::error!(error = %e, "mirror_state read failed");
                 super::internal_server_error()
             })?,

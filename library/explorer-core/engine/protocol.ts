@@ -397,7 +397,7 @@ export interface FocusChatMessage {
   kind: 'focusChat'
 }
 
-/** A nearby player (from the scene's PlayerIdentityData set). */
+/** A player from the scene's PlayerIdentityData set. The roster filters remote players by last known Pulse membership. */
 export interface NearbyMember {
   address: string
   name: string
@@ -885,7 +885,8 @@ export interface MicMessage {
   kind: 'mic'
   enabled: boolean
   available: boolean
-  /** The scene the player stands in turns nearby voice off. */
+  /** Nearby voice is off where the player stands: the scene turns it off with the player's
+   *  `DisableVoice` permission, or its room refused the player as banned. */
   sceneBlocked?: boolean
   /** Counts the mic opens the scene refused. */
   refusals?: number
@@ -2094,7 +2095,7 @@ export interface WatchMapPlayersRequest {
   on: boolean
 }
 
-/** The players near enough for the engine to hold (scene → page), while the page watches. */
+/** Nearby scene players filtered by last known Pulse membership, while the page watches. */
 export interface MapPlayersMessage {
   kind: 'mapPlayers'
   players: MapPlayer[]

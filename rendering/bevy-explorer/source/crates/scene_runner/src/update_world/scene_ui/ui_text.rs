@@ -86,6 +86,24 @@ impl From<PbUiText> for UiText {
     }
 }
 
+/// Space outside a scene label's text box, in UI px. Every label carries the same margin and
+/// [`LABEL_PADDING`] whichever way it is laid out, so giving a label a size changes where its
+/// box sits, never the spacing around its text.
+const LABEL_MARGIN: UiRect = UiRect {
+    top: Val::Px(4.0),
+    right: Val::Px(4.0),
+    bottom: Val::Px(2.0),
+    left: Val::Px(2.0),
+};
+
+/// Space between a scene label's text box and its glyphs, in UI px. See [`LABEL_MARGIN`].
+const LABEL_PADDING: UiRect = UiRect {
+    top: Val::Px(4.0),
+    right: Val::Px(2.0),
+    bottom: Val::Px(4.0),
+    left: Val::Px(1.0),
+};
+
 #[derive(Component)]
 pub struct UiTextMarker;
 
@@ -185,63 +203,58 @@ pub fn set_ui_text(
                 .try_insert(UiTextFontPending(family));
         }
 
-        // with text nodes the axis sizes are unusual.
-        // a) if either size axis is NOT NONE, (explicit or auto), we want auto to size appropriately for the content.
-        // b) if both axes are NONE, we want to size to zero.
-        // a) - we tackle this by using a nested position-type: relative node which will size it's parent appropriately, and default the parent to Auto
-        //    - for alignment we use align-items and justify-content
-        // b) - we use a nested position-type: absolute node, and default the parent to auto
-        //    - for alignment we use align-items and justify-content as above, and we also set left/right/top/bottom to 50% if required
+        // text lays out in one of three ways:
+        // a) an axis is auto (react-ecs sends every node's width as auto): the text sizes the entity
+        //    and flows as an ordinary child, placed by the entity's own justify-content and
+        //    align-items, so a label in a start-aligned column starts at the left edge; the text
+        //    alignment acts only inside the text's box.
+        // b) neither axis is given: the text takes no space; an absolute node holds it, aligned
+        //    about the entity's centre by the text alignment.
+        // c) otherwise (px or % on an axis, the other px, % or unset): the entity is a box the
+        //    text aligns inside, by justify-content and align-items; an unset axis follows the
+        //    content.
+        // all three give the text's own box the same margin and padding.
+        let axes = [ui_transform.size.width, ui_transform.size.height];
+        let content_sized = axes.contains(&Some(Val::Auto));
+        let no_size = axes.iter().all(Option::is_none);
 
-        let any_axis_specified = [ui_transform.size.width, ui_transform.size.height]
-            .iter()
-            .any(Option::is_some);
-
-        let inner_style = if any_axis_specified {
+        let inner_style = if content_sized {
             Node {
                 position_type: PositionType::Relative,
-                margin: UiRect::all(Val::Px(ui_text.font_size * 0.5)),
+                margin: LABEL_MARGIN,
+                padding: LABEL_PADDING,
+                ..Default::default()
+            }
+        } else if no_size {
+            let half_if = |edge: bool| if edge { Val::Percent(50.0) } else { Val::Auto };
+            Node {
+                position_type: PositionType::Absolute,
+                left: half_if(ui_text.h_align == JustifyText::Left),
+                right: half_if(ui_text.h_align == JustifyText::Right),
+                top: half_if(ui_text.v_align == VAlign::Top),
+                bottom: half_if(ui_text.v_align == VAlign::Bottom),
+                margin: LABEL_MARGIN,
+                padding: LABEL_PADDING,
                 ..Default::default()
             }
         } else {
             Node {
-                position_type: PositionType::Absolute,
-                left: if ui_text.h_align == JustifyText::Left {
-                    Val::Percent(50.0)
-                } else {
-                    Val::Auto
-                },
-                right: if ui_text.h_align == JustifyText::Right {
-                    Val::Percent(50.0)
-                } else {
-                    Val::Auto
-                },
-                top: if ui_text.v_align == VAlign::Top {
-                    Val::Percent(50.0)
-                } else {
-                    Val::Auto
-                },
-                bottom: if ui_text.v_align == VAlign::Bottom {
-                    Val::Percent(50.0)
-                } else {
-                    Val::Auto
-                },
+                position_type: PositionType::Relative,
+                margin: LABEL_MARGIN,
+                padding: LABEL_PADDING,
                 ..Default::default()
             }
         };
 
-        // we need to set size for the first inner element depending
-        // on how the outer was specified
-        let width = match ui_transform.size.width {
-            Some(Val::Px(px)) => Val::Px(px),
-            Some(Val::Percent(_)) => Val::Percent(100.0),
+        // content-sized text (a) takes its own size; otherwise the text's node takes the
+        // entity's size on each given axis
+        let axis_size = |v: Option<Val>| match v {
+            Some(Val::Px(px)) if !content_sized => Val::Px(px),
+            Some(Val::Percent(_)) if !content_sized => Val::Percent(100.0),
             _ => Val::Auto,
         };
-        let height = match ui_transform.size.height {
-            Some(Val::Px(px)) => Val::Px(px),
-            Some(Val::Percent(_)) => Val::Percent(100.0),
-            _ => Val::Auto,
-        };
+        let width = axis_size(ui_transform.size.width);
+        let height = axis_size(ui_transform.size.height);
 
         let text_element = ent_cmds
             .commands()
@@ -261,9 +274,18 @@ pub fn set_ui_text(
                     },
                     width,
                     height,
-                    align_self: AlignSelf::FlexStart,
-                    // elements are horizontally centered by default
-                    margin: UiRect::horizontal(Val::Auto),
+                    // content-sized text follows the entity's own flex layout (a above);
+                    // otherwise the text's node is horizontally centred in its entity
+                    align_self: if content_sized {
+                        AlignSelf::Auto
+                    } else {
+                        AlignSelf::FlexStart
+                    },
+                    margin: if content_sized {
+                        UiRect::ZERO
+                    } else {
+                        UiRect::horizontal(Val::Auto)
+                    },
                     ..Default::default()
                 },
                 UiTextMarker,
