@@ -428,7 +428,7 @@ CREATE TABLE shop.chain_cursor (
     PRIMARY KEY (indexer, network),
     CONSTRAINT chain_cursor_indexer_known CHECK (indexer IN ('nft', 'trade_events', 'rentals', 'mana_transfers', 'sales', 'committee', 'rentals_sepolia', 'third_party_registry', 'collections')),
     CONSTRAINT chain_cursor_sepolia_trade_v1 CHECK (
-        indexer <> 'trade_events' OR chain_id IS DISTINCT FROM 11155111 OR sepolia_trade_v1),
+        indexer <> 'trade_events' OR chain_id IS DISTINCT FROM 11155111 OR sepolia_trade_v1 OR quarantined_at IS NOT NULL),
     CONSTRAINT chain_cursor_network_known CHECK (network IN ('ethereum', 'matic')),
     CONSTRAINT chain_cursor_fold_within_indexed CHECK (fold_through IS NULL OR fold_through <= last_block),
     CONSTRAINT chain_cursor_folded_within_indexed CHECK (folded_block IS NULL OR folded_block <= last_block),
@@ -17222,8 +17222,8 @@ CREATE TABLE shop.bid_seller_recheck (
 
 -- The venues a sale's royalties are computed for, with the cut the pinned
 -- contracts charge (`royaltiesCutPerMillion()`, read once at start and
--- compared: a difference is a warning, never a rewrite). Four rows on
--- Polygon: the legacy marketplace and the store charge no royalties.
+-- compared: a difference is a warning, never a rewrite). Polygon and Amoy
+-- use separate venue addresses. The legacy marketplace and stores charge no royalties.
 CREATE TABLE shop.sale_venue (
     network text NOT NULL,
     address varchar(42) NOT NULL,

@@ -840,28 +840,6 @@ impl ChainIndex for TradeEventsIndex {
     }
 }
 
-/// The networks whose trade verdicts readers may use at `now`, each read on
-/// the chain `indexes` configures for it.
-pub async fn ready_networks(
-    pool: &PgPool,
-    indexes: &chain_walk::IndexSettings,
-    now: chrono::DateTime<Utc>,
-) -> Vec<ChainNet> {
-    let mut out = Vec::new();
-    for net in ChainNet::ALL {
-        if chain_walk::cursor(pool, INDEXER_TRADE_EVENTS, net)
-            .await
-            .ok()
-            .flatten()
-            .and_then(|c| chain_walk::fresh_fold_on(&c, indexes.chain_id(net), now))
-            .is_some()
-        {
-            out.push(net);
-        }
-    }
-    out
-}
-
 /// The SQL predicate "the chain closed trade `t`", with the readiness rule
 /// inline (a bound `now_p`): a verdict of a network whose index is not
 /// published, or is bound to another chain than this process serves, is

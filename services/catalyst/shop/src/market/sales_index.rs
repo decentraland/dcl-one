@@ -748,14 +748,21 @@ pub async fn check_venues(
 }
 
 /// Whether the bids may be trusted at `now` (the cursor is published).
-pub async fn ready(pool: &PgPool, now: DateTime<Utc>) -> bool {
-    chain_walk::ready_cursor(pool, INDEXER_SALES, ChainNet::Matic, now)
+pub async fn ready(
+    pool: &PgPool,
+    indexes: &chain_walk::IndexSettings,
+    net: ChainNet,
+    now: DateTime<Utc>,
+) -> bool {
+    chain_walk::cursor(pool, INDEXER_SALES, net)
         .await
-        .is_some()
+        .ok()
+        .flatten()
+        .is_some_and(|c| chain_walk::fresh_fold_on(&c, indexes.chain_id(net), now).is_some())
 }
 
-/// Per-network publication for the catalogue served by this process.
-pub async fn status(pool: &PgPool, settings: &chain_walk::IndexSettings) -> Value {
+/// The index's state for the status route and the tests.
+pub async fn status(pool: &PgPool, indexes: &chain_walk::IndexSettings) -> Value {
     let mut out = serde_json::Map::new();
     let now = Utc::now();
     for net in ChainNet::ALL {
@@ -765,7 +772,7 @@ pub async fn status(pool: &PgPool, settings: &chain_walk::IndexSettings) -> Valu
             .flatten();
         out.insert(net.db_name().into(),json!(cursor.map(|c| json!({
             "lastBlock": c.last_block, "foldedBlock": c.folded_block, "fullHistory": c.full_history,
-            "ready": chain_walk::fresh_fold_on(&c,settings.chain_id(net), now).is_some(), "reorgRewinds": c.reorg_rewinds, "divergedAt": c.diverged_at,
+            "ready": chain_walk::fresh_fold_on(&c, indexes.chain_id(net), now).is_some(), "reorgRewinds": c.reorg_rewinds, "divergedAt": c.diverged_at,
         }))));
     }
     Value::Object(out)
