@@ -1629,9 +1629,8 @@ mod tests {
         vertical: bool,
         public_base: Option<&str>,
     ) -> (String, String, Vec<u8>) {
-        if super::super::profiles::local_profile(pool, None, &address())
+        if super::super::profiles::test_support::held_profile(pool, &address())
             .await
-            .unwrap()
             .is_none()
         {
             super::super::profiles::test_support::deploy_profile(pool, &address(), json!({})).await;
@@ -1744,9 +1743,8 @@ mod tests {
     /// `withAuthProfile()`: the test wallet needs a profile this node holds to
     /// create events and RSVP.
     async fn ensure_profile(pool: &sqlx::PgPool) {
-        if super::super::profiles::local_profile(pool, None, &address())
+        if super::super::profiles::test_support::held_profile(pool, &address())
             .await
-            .unwrap()
             .is_none()
         {
             super::super::profiles::test_support::deploy_profile(pool, &address(), json!({})).await;
