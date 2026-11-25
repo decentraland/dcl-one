@@ -4266,8 +4266,13 @@ feed's bids legs read Polygon's legacy bids (ERC721BidV2) from
 come from the collections subgraph reader.
 
 Each read runs on one `REPEATABLE READ, READ ONLY` snapshot, at one instant
-taken once the snapshot is established. Each statement is bounded by the
-`/v1/nfts` statement timeout. The snapshot checks:
+taken once the snapshot is established: the trades mirror's bids are read on
+it too, and the subgraph's Ethereum bids are filtered at that instant. Each
+statement is bounded by the `/v1/nfts` statement timeout. The snapshot
+checks:
+
+- the trades mirror and its trade-events verdicts are ready (otherwise their
+  envelopes);
 
 - the Polygon `sales` cursor is published: its whole history, a fold
   within 30 minutes, bound to the chain the node serves on Polygon
@@ -4280,10 +4285,19 @@ taken once the snapshot is established. Each statement is bounded by the
 - every bid in the request's scope (its filters but the seller's) has a
   seller.
 
+The scope, the page and the total hold only bids on the catalogue the nft
+index walks on the served chain: a `shop.collections` row of that
+`chain_id`, `testnet_verified` on a testnet. The bid contract takes any
+ERC721, and the collections subgraph kept no bid on an asset it had not
+catalogued; the nft walk never reads such a token's transfers.
+
 A bid's seller is the one the fold stored, unless an nft rewind the fold
 has not rechecked yet (`shop.bid_seller_recheck`) lies before the bid and
 no acceptance named it. Otherwise it is the token's latest transfer before
-the bid in `shop.nft_event`, when the nft walk's log reaches the bid's block.
+the bid in `shop.nft_event`, when the nft walk's log reaches the bid's block
+and no backfill of the contract below its walk is owed
+(`shop.nft_contract`, the fold's own rule): a transfer the backfill has yet
+to add may be the latest.
 A bid with neither fails the read closed with the `nft-index` envelope,
 rather than being served without its seller or left out of a `seller`
 filter. That happens while the sales walk is ahead of the nft walk.

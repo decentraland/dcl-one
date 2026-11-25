@@ -4771,9 +4771,11 @@ async fn state_with_the_bid_book(url: &str) -> Option<(SharedState, super::tests
 /// another acceptance dropped reads `cancelled`), behind the sales index's
 /// and the nft index's envelopes. A bid the fold left without a seller is
 /// served with the token's owner at the bid once the nft walk's log reaches
-/// its block; until then any read whose scope holds it fails closed, even
-/// with both cursors fresh and the sales one ahead, and a read whose filters
-/// leave it out answers.
+/// its block and holds the contract's whole history; until then any read
+/// whose scope holds it fails closed, even with both cursors fresh and the
+/// sales one ahead, and a read whose filters leave it out answers. Bids on
+/// an asset outside the walked catalogue are out of every scope: they
+/// neither fail a read nor appear in a page or a total.
 #[tokio::test]
 async fn polygon_bids_come_from_the_bid_book_and_never_without_their_seller() {
     let up = FakeGraph::new();
@@ -4786,6 +4788,44 @@ async fn polygon_bids_come_from_the_bid_book_and_never_without_their_seller() {
     let pool = state.pool.clone();
     let c = contract_of(&tag(), 5);
     const CARL: &str = "0xdddddddddddddddddddddddddddddddddddddddd";
+    let catalogue = |contract: String| {
+        let pool = pool.clone();
+        async move {
+            sqlx::query(
+                "INSERT INTO shop.collections (network, contract_address, chain_id, name, creator, owner, urn, is_completed, is_approved, is_editable, created_at, updated_at, reviewed_at, mirrored_at) \
+                 SELECT 'matic', $1, 137, 'Pirates', $2, $2, 'urn:decentraland:matic:collections-v2:' || $1, true, true, false, 1, 1, 1, timezone('UTC', now())",
+            )
+            .bind(contract)
+            .bind(CREATOR)
+            .execute(&pool)
+            .await
+            .unwrap();
+        }
+    };
+    catalogue(c.clone()).await;
+    // Bids on an ERC721 the catalogue does not hold, which the bid contract
+    // takes and the nft walk never reads: one the fold left without a
+    // seller, below the nft walk, and an acceptance with its seller.
+    let stray = contract_of(&tag(), 6);
+    for (bidder, seller, status, block) in [
+        (CARL, None, "open", 20i64),
+        (WALLET_B, Some(WALLET_A), "accepted", 21),
+    ] {
+        sqlx::query(
+            "INSERT INTO shop.nft_bid (network, contract_address, token_id, bidder, bid_id, seller, price, expires_at, status, \
+                 created_block, created_log_index, created_at, updated_block, updated_log_index, updated_at) \
+             VALUES ('matic', $1, 1, $2, '0x' || lpad(to_hex($5), 64, '0'), $3, 1000, $6, $4, $5, 0, $5, $5, 0, $5)",
+        )
+        .bind(&stray)
+        .bind(bidder)
+        .bind(seller)
+        .bind(status)
+        .bind(block)
+        .bind(chrono::Utc::now().timestamp() + 86_400)
+        .execute(&pool)
+        .await
+        .unwrap();
+    }
     let now_s = chrono::Utc::now().timestamp();
     let bid = |token: i64,
                bidder: &'static str,
@@ -4895,7 +4935,11 @@ async fn polygon_bids_come_from_the_bid_book_and_never_without_their_seller() {
         "a seller filter cannot tell whether bid 7 is its: {body}"
     );
     let (status, body) = get(app(), &format!("{polygon}&bidder={WALLET_B}")).await;
-    assert_eq!(status, StatusCode::OK, "bid 7 is out of this scope: {body}");
+    assert_eq!(
+        status,
+        StatusCode::OK,
+        "bid 7 is out of this scope, as is the stray acceptance: {body}"
+    );
     assert_eq!(
         ids(&body),
         vec![
@@ -4936,6 +4980,7 @@ async fn polygon_bids_come_from_the_bid_book_and_never_without_their_seller() {
         "{body}"
     );
     // The nft walk reaches block 150: bid 7's seller is the owner at its block.
+    // The stray bid without a seller does not fail the read.
     set_cursor("nft", 200).await;
     let (status, body) = get(app(), polygon).await;
     assert_eq!(status, StatusCode::OK, "{body}");
@@ -4954,6 +4999,13 @@ async fn polygon_bids_come_from_the_bid_book_and_never_without_their_seller() {
         body["data"]["total"], 2,
         "a dropped bid counts as cancelled: {body}"
     );
+    let (_, body) = get(app(), "/v1/bids?network=MATIC&status=sold").await;
+    assert_eq!(
+        ids(&body),
+        vec![("2".into(), "sold".into(), WALLET_A.into())],
+        "the stray acceptance is neither listed nor counted: {body}"
+    );
+    assert_eq!(body["data"]["total"], 1, "{body}");
     // An nft rewind the sales fold has not rechecked yet: the stored seller
     // of an open bid created past it is set aside and read again from the
     // rewound log, as the next fold will; an acceptance's seller stands.
@@ -4999,6 +5051,132 @@ async fn polygon_bids_come_from_the_bid_book_and_never_without_their_seller() {
     assert_eq!(
         (status, body["data"]["total"].as_i64()),
         (StatusCode::OK, Some(6)),
+        "{body}"
+    );
+    // A contract added to the walk late, its backfill done through block 40
+    // of the 99 below its walk: the log holds a transfer at 35 but not yet
+    // the one at 60, so the owner before a bid at 70 is not known.
+    let late = contract_of(&tag(), 7);
+    catalogue(late.clone()).await;
+    sqlx::query(
+        "INSERT INTO shop.nft_contract (network, contract_address, walked_from_block, backfill_from_block, backfilled_to_block) \
+         VALUES ('matic', $1, 100, 10, 40)",
+    )
+    .bind(&late)
+    .execute(&pool)
+    .await
+    .unwrap();
+    let transfer = |block: i64, to: &'static str| {
+        let (pool, late) = (pool.clone(), late.clone());
+        async move {
+            sqlx::query(
+                "INSERT INTO shop.nft_event (network, block_number, log_index, block_time, kind, emitter, contract_address, token_id, from_address, to_address) \
+                 VALUES ('matic', $1, 0, $1, 'transfer', $2, $2, 1, '0x0000000000000000000000000000000000000000', $3)",
+            )
+            .bind(block)
+            .bind(late)
+            .bind(to)
+            .execute(&pool)
+            .await
+            .unwrap();
+        }
+    };
+    transfer(35, WALLET_A).await;
+    sqlx::query(
+        "INSERT INTO shop.nft_bid (network, contract_address, token_id, bidder, bid_id, seller, price, expires_at, status, \
+             created_block, created_log_index, created_at, updated_block, updated_log_index, updated_at) \
+         VALUES ('matic', $1, 1, $2, '0x' || lpad(to_hex(70), 64, '0'), NULL, 1000, $3, 'open', 70, 0, 70, 70, 0, 70)",
+    )
+    .bind(&late)
+    .bind(CARL)
+    .bind(later)
+    .execute(&pool)
+    .await
+    .unwrap();
+    let of_late = |seller: &str| format!("/v1/bids?network=MATIC&contractAddress={late}&seller={seller}");
+    let (status, body) = get(app(), &of_late(WALLET_A)).await;
+    assert_eq!(
+        (status, body["source"].as_str()),
+        (StatusCode::SERVICE_UNAVAILABLE, Some("nft-index")),
+        "the transfer at 35 is not the owner before the bid while the backfill is owed: {body}"
+    );
+    transfer(60, CREATOR).await;
+    sqlx::query("UPDATE shop.nft_contract SET backfilled_to_block = 99 WHERE network = 'matic' AND contract_address = $1")
+        .bind(&late)
+        .execute(&pool)
+        .await
+        .unwrap();
+    let (status, body) = get(app(), &of_late(WALLET_A)).await;
+    assert_eq!(
+        (status, body["data"]["total"].as_i64()),
+        (StatusCode::OK, Some(0)),
+        "{body}"
+    );
+    let (status, body) = get(app(), &of_late(CREATOR)).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(
+        ids(&body),
+        vec![("1".into(), "open".into(), CREATOR.into())],
+        "{body}"
+    );
+    own.drop().await;
+}
+
+/// The bids of a node that walks the indexes read one snapshot: the trades
+/// mirror's readiness and its bids are read on it, so a trade-events rewind
+/// that lands between them neither drops nor keeps a bid against what the
+/// check saw; the next read answers the envelope.
+#[tokio::test]
+async fn the_bids_legs_read_the_snapshot_their_readiness_checked() {
+    let url = serve_empty_graph().await;
+    let Some((state, own)) = state_with_the_bid_book(&url).await else {
+        return;
+    };
+    super::trade_events::tests::publish_cursors(&state.pool).await;
+    let pool = state.pool.clone();
+    let c = contract_of(&tag(), 8);
+    let (trade, _) = insert_trade(
+        &pool,
+        "bid",
+        WALLET_B,
+        Asset {
+            asset_type: 1,
+            contract: "0x2222222222222222222222222222222222222222".into(),
+            value: "9000000000000000000".into(),
+        },
+        Asset {
+            asset_type: 3,
+            contract: c.clone(),
+            value: "1".into(),
+        },
+    )
+    .await;
+    let f = super::bids::parse_filters(&[("network".to_string(), "MATIC".to_string())]).unwrap();
+    let (mut tx, bounds, now) = match super::bids::bids_snapshot(&state, false).await {
+        Ok(snapshot) => snapshot,
+        Err(r) => panic!("the trades mirror is ready: {}", r.status()),
+    };
+    assert!(bounds.is_none());
+    sqlx::query(
+        "UPDATE shop.chain_cursor SET quarantined_at = timezone('UTC', now()), quarantine_reason = 'test' \
+         WHERE indexer = 'trade_events' AND network = 'matic'",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+    let rows = super::bids::trades_rows(&mut tx, &state, &f, now)
+        .await
+        .unwrap();
+    tx.rollback().await.unwrap();
+    assert_eq!(
+        rows.iter().map(|b| b.id.as_str()).collect::<Vec<_>>(),
+        vec![trade.as_str()],
+        "the rows are the checked snapshot's"
+    );
+    let (status, body) = get(market_router(state.clone()), "/v1/bids?network=MATIC").await;
+    assert_eq!(
+        (status, body["source"].as_str()),
+        (StatusCode::SERVICE_UNAVAILABLE, Some("trade-events-index")),
         "{body}"
     );
     own.drop().await;
