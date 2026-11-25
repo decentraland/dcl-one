@@ -244,6 +244,9 @@ impl Report {
 pub fn index_for(indexer: &str, net: ChainNet) -> anyhow::Result<Box<dyn ChainIndex>> {
     Ok(match (indexer, net) {
         (chain_walk::INDEXER_NFT, _) => Box::new(super::nft_index::NftIndex::new(net)),
+        (chain_walk::INDEXER_SALES, ChainNet::Ethereum) => {
+            Box::new(super::ethereum_sales::EthereumSalesIndex)
+        }
         (chain_walk::INDEXER_SALES, ChainNet::Matic) => Box::new(super::sales_index::POLYGON),
         (chain_walk::INDEXER_TRADE_EVENTS, _) => Box::new(super::trade_events::TradeEventsIndex {
             net,

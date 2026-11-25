@@ -71,6 +71,7 @@ pub mod committee_index;
 pub mod compare_sources;
 pub mod contracts;
 pub mod definitions;
+pub mod ethereum_sales;
 pub mod features;
 pub mod federation;
 pub mod items;
@@ -100,12 +101,17 @@ pub mod rankings;
 pub mod readers;
 pub mod rentals;
 pub mod royalty_notices;
+pub mod sale_fold;
+pub(crate) mod sale_history;
+pub use sale_history::FAMILIES as SALES_REPAIR_METRICS;
 pub mod sale_notices;
+mod sale_terms;
 pub mod sales;
 pub mod sales_index;
 pub mod search;
 pub mod shop;
 pub mod signed;
+mod store_sales;
 pub mod third_party;
 pub mod third_party_registry;
 pub mod tips;
@@ -875,6 +881,9 @@ impl MarketplaceState {
         if let Some(url) = self.settings.market.trade_rpc_urls.for_chain(id) {
             return Some(url.to_string());
         }
+        if id == net.chain_id() {
+            return self.chain_rpc_url(net);
+        }
         let land = self.land_network()?;
         let expected = if land == crate::land_authz::LAND_SEPOLIA {
             net.testnet_chain_id()
@@ -1018,7 +1027,7 @@ async fn get_index_status(
     axum::extract::State(state): axum::extract::State<SharedState>,
 ) -> Json<Value> {
     Json(json!({
-        "nft": nft_index::status(&state.pool, &state.settings.market.indexes).await,
+        "nft": nft_index::status(&state.pool).await,
         "tradeEvents": trade_events::status(&state.pool, &state.settings.market.indexes).await,
         "manaTransfers": mana_transfers::status(&state.pool).await,
         "sales": sales_index::status(&state.pool).await,

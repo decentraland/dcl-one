@@ -27,7 +27,7 @@
 //! with no backfill owed, and a fold that still owes one clears the publish
 //! marker in the transaction that commits its rows.
 
-mod deployments;
+pub(crate) mod deployments;
 mod estate_repair;
 
 use deployments::Deployments;
@@ -44,8 +44,6 @@ use sqlx::{PgConnection, PgPool, Row};
 
 use super::chain_walk::{self, ChainIndex, ChainNet, INDEXER_NFT, LogGroup};
 use crate::chain_index::rpc::RpcLog;
-#[cfg(test)]
-use crate::land_authz::LAND_REGISTRY_MAINNET;
 use crate::land_authz::events::{TOPIC_CREATE_ESTATE, parse_estate_data};
 use crate::land_authz::{ESTATE_REGISTRY_MAINNET, ESTATE_REGISTRY_SEPOLIA};
 
@@ -80,20 +78,6 @@ pub const KIND_LAND_DATA: &str = "land_data";
 
 pub const DCL_REGISTRAR: &str = "0x2a187453064356c898cae034eaed119e1663acb8";
 pub const ZERO_ADDRESS: &str = "0x0000000000000000000000000000000000000000";
-
-/// The legacy Marketplace deployments per network with their deployment
-/// block (`eth_getCode` bisection, 2026-09-25; the squid's address books).
-pub fn legacy_marketplaces(net: ChainNet) -> &'static [(&'static str, u64)] {
-    Deployments::mainnet(net).markets
-}
-
-pub fn fixed_contracts(net: ChainNet) -> Vec<(&'static str, u64)> {
-    Deployments::mainnet(net).fixed_contracts()
-}
-
-pub fn start_block(net: ChainNet) -> u64 {
-    Deployments::mainnet(net).start
-}
 
 fn collection_topics(net: ChainNet) -> serde_json::Value {
     match net {
@@ -354,7 +338,7 @@ pub fn parse_land_data(raw: &str) -> Option<(Option<String>, Option<String>)> {
     Some((field(1), field(2)))
 }
 
-/// Appends a window's rows; a row already kept only gains a missing `tx_hash`.
+/// Replays fill missing transaction hashes and incomplete successful order details.
 pub async fn insert_events(
     conn: &mut PgConnection,
     net: ChainNet,
@@ -368,8 +352,21 @@ pub async fn insert_events(
              SELECT $1, b, i, t, k, em, c, tok::numeric, f, tt, a::numeric, x, d, h \
              FROM UNNEST($2::bigint[], $3::int[], $4::bigint[], $5::text[], $6::text[], $7::text[], $8::text[], $9::text[], $10::text[], $11::text[], $12::bigint[], $13::text[], $14::text[]) \
                   AS u(b, i, t, k, em, c, tok, f, tt, a, x, d, h) \
-             ON CONFLICT (network, block_number, log_index) DO UPDATE SET tx_hash = EXCLUDED.tx_hash \
-             WHERE shop.nft_event.tx_hash IS NULL AND EXCLUDED.tx_hash IS NOT NULL",
+             ON CONFLICT (network, block_number, log_index) DO UPDATE SET
+                 tx_hash = EXCLUDED.tx_hash,
+                 from_address = CASE WHEN EXCLUDED.kind = 'order_successful' THEN COALESCE(shop.nft_event.from_address, EXCLUDED.from_address) ELSE shop.nft_event.from_address END,
+                 to_address = CASE WHEN EXCLUDED.kind = 'order_successful' THEN COALESCE(shop.nft_event.to_address, EXCLUDED.to_address) ELSE shop.nft_event.to_address END,
+                 block_time = CASE WHEN EXCLUDED.kind = 'order_successful' AND shop.nft_event.block_time = 0 THEN EXCLUDED.block_time ELSE shop.nft_event.block_time END
+             WHERE shop.nft_event.kind = EXCLUDED.kind AND EXCLUDED.tx_hash IS NOT NULL
+               AND ((EXCLUDED.kind <> 'order_successful' AND shop.nft_event.tx_hash IS NULL)
+                 OR (EXCLUDED.kind = 'order_successful'
+               AND (shop.nft_event.emitter,shop.nft_event.contract_address,shop.nft_event.token_id)
+                   = (EXCLUDED.emitter,EXCLUDED.contract_address,EXCLUDED.token_id)
+               AND (shop.nft_event.tx_hash IS NULL OR shop.nft_event.tx_hash = EXCLUDED.tx_hash)
+               AND (shop.nft_event.tx_hash IS NULL
+                 OR (shop.nft_event.from_address IS NULL AND EXCLUDED.from_address IS NOT NULL)
+                 OR (shop.nft_event.to_address IS NULL AND EXCLUDED.to_address IS NOT NULL)
+                 OR (shop.nft_event.block_time = 0 AND EXCLUDED.block_time > 0))))",
         )
         .bind(net.db_name())
         .bind(chunk.iter().map(|r| r.block_number).collect::<Vec<_>>())
@@ -998,7 +995,7 @@ impl ChainIndex for NftIndex {
         previous: (i64, Option<&str>),
         end: &crate::chain_index::rpc::BlockHeader,
     ) -> anyhow::Result<()> {
-        if self.chain_id() == 1 {
+        if self.chain_id() == ChainNet::Ethereum.chain_id() {
             estate_repair::record(conn, previous, (end.number as i64, Some(&end.hash))).await?;
         }
         Ok(())
@@ -1038,7 +1035,7 @@ impl ChainIndex for NftIndex {
         // out would otherwise keep a row past the cursor. The rebuild below
         // restores the rows of every key that still has one.
         if self.net == ChainNet::Ethereum {
-            if self.chain_id() == 1 {
+            if self.chain_id() == ChainNet::Ethereum.chain_id() {
                 estate_repair::rewind(conn, to).await?;
             }
             sqlx::query(
@@ -1098,7 +1095,7 @@ impl ChainIndex for NftIndex {
         window_blocks: u64,
         remaining: usize,
     ) -> anyhow::Result<usize> {
-        if self.chain_id() == 1 {
+        if self.chain_id() == ChainNet::Ethereum.chain_id() {
             estate_repair::step(pool, source, owner, window_blocks, remaining).await
         } else {
             Ok(0)
@@ -1223,7 +1220,7 @@ impl ChainIndex for NftIndex {
 }
 
 /// The index's state for the operator status route and the tests.
-pub async fn status(pool: &PgPool, settings: &chain_walk::IndexSettings) -> serde_json::Value {
+pub async fn status(pool: &PgPool) -> serde_json::Value {
     let mut out = serde_json::Map::new();
     for net in ChainNet::ALL {
         let c = chain_walk::cursor(pool, INDEXER_NFT, net)
@@ -1240,7 +1237,7 @@ pub async fn status(pool: &PgPool, settings: &chain_walk::IndexSettings) -> serd
         .unwrap_or(0);
         out.insert(net.db_name().to_string(), json!(c.map(|c| json!({
             "lastBlock": c.last_block, "foldedBlock": c.folded_block, "fullHistory": c.full_history,
-            "ready": chain_walk::is_ready_on(&c, settings.chain_id(net), chrono::Utc::now()), "reorgRewinds": c.reorg_rewinds, "divergedAt": c.diverged_at, "backfillsOwed": owed,
+            "ready": chain_walk::is_ready(&c, chrono::Utc::now()), "reorgRewinds": c.reorg_rewinds, "divergedAt": c.diverged_at, "backfillsOwed": owed,
         }))));
     }
     serde_json::Value::Object(out)
@@ -1266,6 +1263,7 @@ pub async fn ready_networks(
 #[cfg(test)]
 pub(crate) mod tests {
     use super::*;
+    use crate::land_authz::LAND_REGISTRY_MAINNET;
     use alloy_primitives::{Address, FixedBytes, U256, keccak256};
     use alloy_sol_types::SolValue;
     use std::str::FromStr;
@@ -1437,7 +1435,7 @@ pub(crate) mod tests {
                 Some("pixelgolf")
             )
         );
-        let market = legacy_marketplaces(ChainNet::Ethereum)[0].0;
+        let market = Deployments::mainnet(ChainNet::Ethereum).markets[0].0;
         let nft = Address::from_str(LAND_REGISTRY_MAINNET).unwrap();
         let id = FixedBytes::<32>::repeat_byte(0x42);
         let created = log(

@@ -203,7 +203,6 @@ CREATE TABLE shop.items (
     mirrored_at timestamp without time zone NOT NULL,
     -- The subgraph `Item.searchText`, for the lambdas catalog's `textSearch`.
     search_text text,
-    testnet_verified boolean NOT NULL DEFAULT false,
     PRIMARY KEY (network, contract_address, item_id),
     CONSTRAINT items_urn_key UNIQUE (urn),
     CONSTRAINT items_network_known CHECK (network IN ('ethereum', 'matic')),
@@ -389,6 +388,13 @@ CREATE TABLE shop.chain_cursor (
     fold_through bigint,
     folded_block bigint,
     folded_at timestamp without time zone,
+    sale_input_epoch uuid NOT NULL DEFAULT gen_random_uuid(),
+    sale_covered_rewinds integer,
+    sale_input_version integer,
+    sale_verified_through bigint,
+    sale_dirty_from bigint,
+    sale_repair_upper bigint,
+    sale_history_revision bigint NOT NULL DEFAULT 0,
     full_history boolean NOT NULL,
     reorg_rewinds integer NOT NULL DEFAULT 0,
     updated_at timestamp without time zone NOT NULL DEFAULT timezone('UTC', now()),
@@ -514,6 +520,9 @@ CREATE TABLE shop.nft_event (
 -- The fold's per-token legs (DISTINCT ON (contract_address, token_id) ORDER
 -- BY block_number, log_index) and a refold's "events of these tokens".
 CREATE INDEX nft_event_token_idx ON shop.nft_event (network, contract_address, token_id, block_number, log_index);
+
+-- Successful marketplace fills by network and block range.
+CREATE INDEX nft_event_successful_order ON shop.nft_event(network,block_number) WHERE kind='order_successful';
 
 -- The ownership fold of the collections' and names' transfers: owner is the
 -- latest Transfer's `to` (NULL once burned), the mint the first; item_id and
@@ -16910,6 +16919,200 @@ CREATE TABLE shop.tip_claim (
 CREATE INDEX tip_claim_sender ON shop.tip_claim (sender);
 CREATE INDEX tip_claim_created_at ON shop.tip_claim (created_at);
 
+-- A canonical execution ends at the venue log, independently of the number
+-- of NFTs or payments. NAME registration fees participate in earnings only.
+CREATE TABLE shop.sale_execution (
+    network text NOT NULL CHECK (network IN ('ethereum', 'matic')),
+    block_number bigint NOT NULL,
+    log_index integer NOT NULL,
+    tx_hash text NOT NULL CHECK (tx_hash ~ '^0x[0-9a-f]{64}$'),
+    venue text NOT NULL,
+    kind text NOT NULL CHECK (kind IN ('store', 'order', 'bid', 'trade', 'name_fee')),
+    receipt_read boolean NOT NULL DEFAULT false,
+    receipt_attempted_at timestamp without time zone,
+    creator_attempted_at timestamp without time zone,
+    creator_checked boolean NOT NULL DEFAULT false,
+    block_time bigint NOT NULL,
+    PRIMARY KEY (network, block_number, log_index)
+);
+CREATE INDEX sale_execution_tx ON shop.sale_execution (network, tx_hash, log_index);
+CREATE INDEX sale_execution_day ON shop.sale_execution (network, ((block_time / 86400) * 86400));
+CREATE INDEX sale_execution_pending_creator ON shop.sale_execution (network, creator_attempted_at NULLS FIRST, block_number) WHERE kind='store' AND NOT creator_checked;
+CREATE INDEX sale_execution_pending_receipt ON shop.sale_execution (network, receipt_attempted_at NULLS FIRST, block_number) WHERE NOT receipt_read;
+
+-- Issued items and transferred NFTs in venue order. A multi-asset trade
+-- may have one gross consideration without any individual asset prices.
+CREATE TABLE shop.sale_asset (
+    network text NOT NULL,
+    block_number bigint NOT NULL,
+    log_index integer NOT NULL,
+    ordinal integer NOT NULL,
+    public_id text NOT NULL UNIQUE,
+    beneficiary text NOT NULL,
+    kind text NOT NULL CHECK (kind IN ('mint', 'bid', 'order')),
+    contract_address text NOT NULL,
+    token_id numeric(78,0),
+    item_id numeric(78,0),
+    seller text,
+    buyer text NOT NULL,
+    price numeric,
+    currency text,
+    CHECK ((price IS NULL) = (currency IS NULL)),
+    PRIMARY KEY (network, block_number, log_index, ordinal),
+    FOREIGN KEY (network, block_number, log_index)
+       REFERENCES shop.sale_execution ON DELETE CASCADE
+);
+
+CREATE INDEX sale_asset_priced_buyer ON shop.sale_asset(network,buyer,seller,contract_address,currency) WHERE price>0 AND seller IS NOT NULL;
+
+-- One row per consideration leg, including the explicit price of each
+-- store line. Source-proven gross can be available before payee attribution.
+CREATE TABLE shop.sale_payment (
+    network text NOT NULL,
+    block_number bigint NOT NULL,
+    log_index integer NOT NULL,
+    ordinal integer NOT NULL,
+    currency text NOT NULL,
+    gross numeric(78,0) NOT NULL CHECK (gross >= 0),
+    payer text,
+    beneficiary text,
+    bid_fee numeric(78,0),
+    consideration boolean NOT NULL DEFAULT true,
+    settled boolean NOT NULL DEFAULT false,
+    PRIMARY KEY (network, block_number, log_index, ordinal),
+    FOREIGN KEY (network, block_number, log_index)
+       REFERENCES shop.sale_execution ON DELETE CASCADE
+);
+CREATE TABLE shop.sale_payout (
+    network text NOT NULL,
+    block_number bigint NOT NULL,
+    log_index integer NOT NULL,
+    payment_ordinal integer NOT NULL,
+    ordinal integer NOT NULL,
+    role text NOT NULL CHECK (role IN ('seller','royalty','venue_fee','store_fee','name_fee','burn','retained')),
+    recipient text NOT NULL,
+    amount numeric(78,0) NOT NULL CHECK (amount >= 0),
+    PRIMARY KEY (network, block_number, log_index, payment_ordinal, ordinal),
+    FOREIGN KEY (network, block_number, log_index, payment_ordinal)
+       REFERENCES shop.sale_payment ON DELETE CASCADE
+);
+
+-- Rollups use UTC day starts (Unix seconds) and the consideration currency.
+-- Keep incomplete payment splits visible to callers that require proceeds.
+CREATE TABLE shop.sale_analytics_day (
+    network text NOT NULL, day bigint NOT NULL, currency text NOT NULL,
+    sales bigint NOT NULL, volume numeric NOT NULL, name_fees numeric NOT NULL,
+    creator_earnings numeric NOT NULL, venue_fees numeric NOT NULL,
+    store_fees numeric NOT NULL, burn_fees numeric NOT NULL,
+    unknown_splits bigint NOT NULL, unallocated_executions bigint NOT NULL,
+    PRIMARY KEY(network, day, currency)
+);
+CREATE TABLE shop.sale_item_day (
+    network text NOT NULL, day bigint NOT NULL, currency text NOT NULL,
+    contract_address text NOT NULL, item_id numeric(78,0) NOT NULL,
+    sales bigint NOT NULL, volume numeric NOT NULL,
+    PRIMARY KEY(network, day, currency, contract_address, item_id)
+);
+CREATE TABLE shop.sale_account_day (
+    network text NOT NULL, day bigint NOT NULL, currency text NOT NULL, address text NOT NULL,
+    sales bigint NOT NULL, purchases bigint NOT NULL, spent numeric NOT NULL,
+    gross_sold numeric NOT NULL, net_sold numeric NOT NULL, unknown_proceeds bigint NOT NULL,
+    received numeric NOT NULL, royalties numeric NOT NULL, fees_received numeric NOT NULL,
+    PRIMARY KEY(network, address, currency, day)
+);
+CREATE INDEX sale_account_day_by_day ON shop.sale_account_day(network,day);
+CREATE TABLE shop.sale_account_total (
+    network text NOT NULL, currency text NOT NULL, address text NOT NULL,
+    sales bigint NOT NULL, purchases bigint NOT NULL, spent numeric NOT NULL,
+    gross_sold numeric NOT NULL, net_sold numeric NOT NULL, unknown_proceeds bigint NOT NULL,
+    received numeric NOT NULL, royalties numeric NOT NULL, fees_received numeric NOT NULL,
+    PRIMARY KEY(network, address, currency)
+);
+
+-- The earliest UTC day for an observed buyer/seller/item relationship.
+-- A period-end distinct count uses first_day <= the period's last day.
+-- Rarity and collection membership can be joined in the reader snapshot.
+CREATE TABLE shop.sale_first_purchase (
+    network text NOT NULL, currency text NOT NULL, buyer text NOT NULL, seller text,
+    contract_address text NOT NULL, item_id numeric(78,0), first_day bigint NOT NULL,
+    UNIQUE NULLS NOT DISTINCT (network,currency,buyer,seller,contract_address,item_id)
+);
+CREATE INDEX sale_first_day ON shop.sale_first_purchase(network,first_day);
+
+-- One common source prefix per network. Capture each dependency's revision
+-- independently so that withdrawals invalidate reads at the same height.
+CREATE TABLE shop.sale_publication (
+    network text PRIMARY KEY CHECK (network IN ('ethereum', 'matic')),
+    block_number bigint NOT NULL,
+    block_hash text NOT NULL CHECK (block_hash ~ '^0x[0-9a-f]{64}$'),
+    input_version integer NOT NULL,
+    generation uuid NOT NULL DEFAULT gen_random_uuid(),
+    input_epochs uuid[] NOT NULL,
+    input_revisions bigint[] NOT NULL,
+    late_collections bigint NOT NULL,
+    published_at timestamp without time zone
+);
+
+-- Sparse fee configuration changes. Look up the last event before a
+-- particular execution, including a change earlier in the same block.
+CREATE TABLE shop.sale_fee_change (
+    network text NOT NULL,
+    venue varchar(42) NOT NULL,
+    field text NOT NULL CHECK (field IN ('collector', 'fee_ppm', 'royalty_ppm')),
+    block_number bigint NOT NULL,
+    log_index integer NOT NULL,
+    value text NOT NULL,
+    PRIMARY KEY (network, venue, field, block_number, log_index)
+);
+
+-- Polygon CollectionStore.Bought lines. A missing Issue can be recovered
+-- once the named issuer is in the Polygon collection catalogue.
+CREATE TABLE shop.store_sale_line (
+    block_number bigint NOT NULL,
+    bought_log integer NOT NULL,
+    block_time bigint NOT NULL,
+    issue_checked boolean NOT NULL DEFAULT false,
+    ordinal integer NOT NULL CHECK (ordinal >= 0),
+    tx_hash varchar(66) NOT NULL CHECK (tx_hash ~ '^0x[0-9a-f]{64}$'),
+    contract_address varchar(42) NOT NULL,
+    item_id numeric(78,0) NOT NULL,
+    beneficiary varchar(42) NOT NULL,
+    price numeric(78,0) NOT NULL CHECK (price >= 0),
+    issue_log integer CHECK (issue_log >= 0 AND issue_log < bought_log),
+    PRIMARY KEY (block_number, bought_log, ordinal),
+    UNIQUE (block_number, issue_log)
+);
+CREATE INDEX store_sale_unmatched ON shop.store_sale_line (block_number) WHERE issue_log IS NULL AND NOT issue_checked;
+
+-- Only factory collections in the Polygon catalogue are issuers for accounting.
+-- Keeping the raw store line allows a late collection to be replayed on discovery.
+CREATE VIEW shop.verified_store_sale_line AS
+    SELECT l.* FROM shop.store_sale_line l JOIN shop.collections c
+      ON c.network='matic' AND c.chain_id=137 AND c.contract_address=l.contract_address
+      AND c.created_at<=l.block_time;
+
+-- The late collections represented by the current network sale publication.
+CREATE TABLE shop.sale_covered_collection (
+    network text NOT NULL, contract_address varchar(42) NOT NULL, backfill_from_block bigint NOT NULL,
+    PRIMARY KEY(network,contract_address)
+);
+
+-- Fees paid at Ethereum's names controller, keyed by the log so one
+-- transaction may buy several names. The sales walk removes the suffix
+-- on rewind; analytics attributes the fee to the block's UTC day.
+CREATE TABLE shop.name_purchase (
+    venue varchar(42) NOT NULL,
+    block_number bigint NOT NULL,
+    log_index integer NOT NULL,
+    block_time bigint NOT NULL,
+    caller varchar(42) NOT NULL CHECK (caller ~ '^0x[0-9a-f]{40}$'),
+    beneficiary varchar(42) NOT NULL CHECK (beneficiary ~ '^0x[0-9a-f]{40}$'),
+    price numeric(78,0) NOT NULL CHECK (price >= 0),
+    name text NOT NULL,
+    tx_hash varchar(66) NOT NULL CHECK (tx_hash ~ '^0x[0-9a-f]{64}$'),
+    PRIMARY KEY (block_number, log_index)
+);
+
 -- The sales log on Polygon (the `sales` chain index,
 -- src/shop/market/sales_index.rs): a primary mint through the
 -- CollectionStore (`mint`: a mirrored collection's Issue whose `_caller` is
@@ -16940,6 +17143,7 @@ CREATE TABLE shop.sale_event (
     price numeric(78,0),
     expires_at bigint,
     tx_hash varchar(66) NOT NULL,
+    bid_fee numeric(78,0) CHECK (bid_fee IS NULL OR (bid_fee >= 0 AND kind = 'bid_accepted')),
     PRIMARY KEY (network, block_number, log_index),
     CONSTRAINT sale_event_network_known CHECK (network IN ('ethereum', 'matic')),
     CONSTRAINT sale_event_kind_known CHECK (kind IN ('mint', 'bid_created', 'bid_accepted', 'bid_cancelled')),
@@ -16950,6 +17154,7 @@ CREATE TABLE shop.sale_event (
     CONSTRAINT sale_event_bid_accepted_fields CHECK (kind <> 'bid_accepted' OR (price IS NOT NULL AND seller IS NOT NULL)),
     CONSTRAINT sale_event_tx_hash_shape CHECK (tx_hash ~ '^0x[0-9a-f]{64}$')
 );
+CREATE INDEX sale_event_bid_accepted ON shop.sale_event(network,block_number) WHERE kind='bid_accepted';
 
 -- The fold's legs: a bidder's events over a token (DISTINCT ON
 -- (contract_address, token_id, buyer) ORDER BY block_number, log_index).

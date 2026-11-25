@@ -107,6 +107,8 @@ pub struct SaleEvent {
     pub buyer: String,
     pub seller: Option<String>,
     pub price: Option<String>,
+    /// The fee emitted by BidAccepted, in payment-token base units.
+    pub bid_fee: Option<String>,
     /// The bid's expiry, unix seconds.
     pub expires_at: Option<i64>,
     pub tx_hash: String,
@@ -180,6 +182,7 @@ fn decode_sale(
         buyer,
         seller: None,
         price: None,
+        bid_fee: None,
         expires_at: None,
         tx_hash: tx_hash.clone(),
     };
@@ -212,7 +215,7 @@ fn decode_sale(
             }
         }
         KIND_BID_ACCEPTED => {
-            let (id, bidder, price, _fee) = <(
+            let (id, bidder, price, fee) = <(
                 sol_data::FixedBytes<32>,
                 sol_data::Address,
                 sol_data::Uint<256>,
@@ -222,6 +225,7 @@ fn decode_sale(
             SaleEvent {
                 bid_id: Some(format!("{id:#x}")),
                 seller: Some(addr(3)?),
+                bid_fee: Some(fee.to_string()),
                 price: Some(price.to_string()),
                 ..base(addr(1)?, word(2)?, format!("{bidder:#x}"))
             }
@@ -246,7 +250,10 @@ pub fn decode_bought(log: &RpcLog) -> Result<Option<(String, Vec<BoughtItem>)>, 
     bought_at(STORE_MATIC, log)
 }
 
-fn bought_at(store: &str, log: &RpcLog) -> Result<Option<(String, Vec<BoughtItem>)>, DecodeError> {
+pub(super) fn bought_at(
+    store: &str,
+    log: &RpcLog,
+) -> Result<Option<(String, Vec<BoughtItem>)>, DecodeError> {
     let (block, index) = chain_walk::log_position(log);
     let err = |why: String| DecodeError {
         block,
@@ -268,7 +275,11 @@ fn bought_at(store: &str, log: &RpcLog) -> Result<Option<(String, Vec<BoughtItem
         .transaction_hash
         .as_deref()
         .map(str::to_ascii_lowercase)
-        .ok_or_else(|| err("missing transaction hash".into()))?;
+        .filter(|h| {
+            h.strip_prefix("0x")
+                .is_some_and(|word| word.len() == 64 && word.bytes().all(|c| c.is_ascii_hexdigit()))
+        })
+        .ok_or_else(|| err("missing or invalid transaction hash".into()))?;
     let data = hex::decode(log.data.trim_start_matches("0x")).map_err(|e| err(e.to_string()))?;
     type Items = sol_data::Array<(
         sol_data::Address,
@@ -294,54 +305,26 @@ fn bought_at(store: &str, log: &RpcLog) -> Result<Option<(String, Vec<BoughtItem
     Ok(Some((tx, out)))
 }
 
-/// Prices each mint by its transaction's `Bought` item of the same
-/// collection, item and beneficiary, each item used once; a mint without one keeps no price.
-pub fn price_mints(rows: &mut [SaleEvent], logs: &[RpcLog]) {
-    price_at(STORE_MATIC, rows, logs)
-}
-
-fn price_at(store: &str, rows: &mut [SaleEvent], logs: &[RpcLog]) {
-    let mut bought: HashMap<String, Vec<Option<BoughtItem>>> = HashMap::new();
-    for log in logs {
-        match bought_at(store, log) {
-            Ok(Some((tx, items))) => bought
-                .entry(tx)
-                .or_default()
-                .extend(items.into_iter().map(Some)),
-            Ok(None) => {}
-            Err(e) => tracing::warn!(error = %e, "sales index: skipping a Bought it cannot decode"),
-        }
-    }
-    for row in rows.iter_mut().filter(|r| r.kind == KIND_MINT) {
-        let Some(items) = bought.get_mut(&row.tx_hash) else {
-            continue;
-        };
-        let item = row.item_id.as_deref().unwrap_or_default();
-        if let Some(slot) = items.iter_mut().find(|i| {
-            i.as_ref().is_some_and(|(c, id, b, _)| {
-                *c == row.contract_address && id == item && *b == row.buyer
-            })
-        }) {
-            row.price = slot.take().map(|(_, _, _, price)| price);
-        }
-    }
-}
-
 pub async fn insert_events(
     conn: &mut PgConnection,
+    net: ChainNet,
     rows: &[SaleEvent],
 ) -> Result<usize, sqlx::Error> {
     let mut written = 0;
     for chunk in rows.chunks(1_000) {
         let r = sqlx::query(
             "INSERT INTO shop.sale_event \
-                 (network, block_number, log_index, block_time, kind, emitter, contract_address, token_id, item_id, bid_id, buyer, seller, price, expires_at, tx_hash) \
-             SELECT $1, b, i, t, k, em, c, tok::numeric, it::numeric, bid, by, se, p::numeric, x, h \
-             FROM UNNEST($2::bigint[], $3::int[], $4::bigint[], $5::text[], $6::text[], $7::text[], $8::text[], $9::text[], $10::text[], $11::text[], $12::text[], $13::text[], $14::bigint[], $15::text[]) \
-                  AS u(b, i, t, k, em, c, tok, it, bid, by, se, p, x, h) \
-             ON CONFLICT (network, block_number, log_index) DO NOTHING",
+                 (network, block_number, log_index, block_time, kind, emitter, contract_address, token_id, item_id, bid_id, buyer, seller, price, expires_at, tx_hash, bid_fee) \
+             SELECT $1, b, i, t, k, em, c, tok::numeric, it::numeric, bid, by, se, p::numeric, x, h, fee::numeric \
+             FROM UNNEST($2::bigint[], $3::int[], $4::bigint[], $5::text[], $6::text[], $7::text[], $8::text[], $9::text[], $10::text[], $11::text[], $12::text[], $13::text[], $14::bigint[], $15::text[], $16::text[]) \
+                  AS u(b, i, t, k, em, c, tok, it, bid, by, se, p, x, h, fee) \
+             ON CONFLICT (network, block_number, log_index) DO UPDATE \
+             SET bid_fee = COALESCE(sale_event.bid_fee, EXCLUDED.bid_fee), price = COALESCE(sale_event.price, EXCLUDED.price) \
+             WHERE sale_event.tx_hash = EXCLUDED.tx_hash AND sale_event.kind = EXCLUDED.kind \
+               AND ((sale_event.bid_fee IS NULL AND EXCLUDED.bid_fee IS NOT NULL) \
+                 OR (sale_event.price IS NULL AND EXCLUDED.price IS NOT NULL))",
         )
-        .bind(ChainNet::Matic.db_name())
+        .bind(net.db_name())
         .bind(chunk.iter().map(|r| r.block_number).collect::<Vec<_>>())
         .bind(chunk.iter().map(|r| r.log_index).collect::<Vec<_>>())
         .bind(chunk.iter().map(|r| r.block_time).collect::<Vec<_>>())
@@ -356,6 +339,7 @@ pub async fn insert_events(
         .bind(chunk.iter().map(|r| r.price.clone()).collect::<Vec<_>>())
         .bind(chunk.iter().map(|r| r.expires_at).collect::<Vec<_>>())
         .bind(chunk.iter().map(|r| r.tx_hash.clone()).collect::<Vec<_>>())
+        .bind(chunk.iter().map(|r| r.bid_fee.clone()).collect::<Vec<_>>())
         .execute(&mut *conn)
         .await?;
         written += r.rows_affected() as usize;
@@ -519,7 +503,7 @@ impl ChainIndex for SalesIndex {
     fn start_block(&self) -> u64 {
         match self.chain {
             80_002 => 5_706_656,
-            _ => nft_index::start_block(ChainNet::Matic),
+            _ => nft_index::deployments::Deployments::mainnet(ChainNet::Matic).start,
         }
     }
 
@@ -558,6 +542,9 @@ impl ChainIndex for SalesIndex {
                 topics: json!([[TOPIC_BID_CREATED, TOPIC_BID_ACCEPTED, TOPIC_BID_CANCELLED]]),
             });
         }
+        if self.chain == POLYGON.chain {
+            groups.push(super::sale_terms::group(self.net()));
+        }
         Ok(groups)
     }
 
@@ -573,17 +560,29 @@ impl ChainIndex for SalesIndex {
             match decode_sale(*self, log, times.get(&block).copied().unwrap_or(0)) {
                 Ok(Some(row)) => rows.push(row),
                 Ok(None) => {}
-                // A malformed log is logged and skipped, never a stalled walk.
+                // Keep valid rows in this window. The walker withholds sales
+                // coverage when an accounting event cannot be decoded.
                 Err(e) => {
                     tracing::warn!(error = %e, "sales index: skipping a log it cannot decode")
                 }
             }
         }
-        price_at(self.store, &mut rows, logs);
-        Ok(insert_events(conn, &rows).await?)
+        let lines = super::store_sales::pair(self.store, &mut rows, logs)?;
+        if self.chain == POLYGON.chain {
+            super::sale_terms::write(conn, self.net(), logs).await?;
+            super::store_sales::write(conn, &lines, times).await?;
+        }
+        Ok(insert_events(conn, self.net(), &rows).await?)
     }
 
     async fn rewind(&self, conn: &mut PgConnection, to: i64) -> anyhow::Result<()> {
+        if self.chain == POLYGON.chain {
+            super::sale_terms::rewind(conn, self.net(), to).await?;
+            sqlx::query("DELETE FROM shop.store_sale_line WHERE block_number > $1")
+                .bind(to)
+                .execute(&mut *conn)
+                .await?;
+        }
         // The deleted rows' bids are dropped (a mint keys no bid, so none
         // comes back); the cleared fold marker makes the next fold a rebuild,
         // which restores the ones with a remaining creation from the log that
@@ -722,16 +721,19 @@ pub async fn ready(pool: &PgPool, now: DateTime<Utc>) -> bool {
 
 /// The index's state for the status route and the tests.
 pub async fn status(pool: &PgPool) -> Value {
-    let c = chain_walk::cursor(pool, INDEXER_SALES, ChainNet::Matic)
-        .await
-        .ok()
-        .flatten();
-    json!({
-        "matic": c.map(|c| json!({
+    let mut out = serde_json::Map::new();
+    let now = Utc::now();
+    for net in ChainNet::ALL {
+        let cursor = chain_walk::cursor(pool, INDEXER_SALES, net)
+            .await
+            .ok()
+            .flatten();
+        out.insert(net.db_name().into(), json!(cursor.map(|c| json!({
             "lastBlock": c.last_block, "foldedBlock": c.folded_block, "fullHistory": c.full_history,
-            "ready": chain_walk::is_ready(&c, Utc::now()), "reorgRewinds": c.reorg_rewinds, "divergedAt": c.diverged_at,
-        })),
-    })
+            "ready": chain_walk::is_ready(&c, now), "reorgRewinds": c.reorg_rewinds, "divergedAt": c.diverged_at,
+        }))));
+    }
+    Value::Object(out)
 }
 
 #[cfg(test)]
@@ -1009,7 +1011,7 @@ pub(crate) mod tests {
                 "9".to_string()
             )
         );
-        price_mints(&mut rows, &[bought]);
+        crate::market::store_sales::pair(STORE_MATIC, &mut rows, &[bought]).unwrap();
         let prices: Vec<_> = rows.iter().map(|r| r.price.as_deref()).collect();
         assert_eq!(
             prices,
@@ -1062,6 +1064,7 @@ pub(crate) mod tests {
                 buyer: ALICE.into(),
                 seller: None,
                 price: None,
+                bid_fee: None,
                 expires_at: None,
                 tx_hash: format!("0x{:064x}", 10_001),
             }
@@ -1128,6 +1131,7 @@ pub(crate) mod tests {
                 accepted.seller.as_deref(),
                 accepted.price.as_deref(),
                 accepted.bid_id.as_deref(),
+                accepted.bid_fee.as_deref(),
             ),
             (
                 KIND_BID_ACCEPTED,
@@ -1135,6 +1139,7 @@ pub(crate) mod tests {
                 Some(ALICE),
                 Some("700"),
                 Some(format!("0x{}", "11".repeat(32)).as_str()),
+                Some("17"),
             )
         );
         let cancelled = decode_log(&bid_cancelled_log(COLLECTION, token, BOB, 0x11, 202, 0), 8)

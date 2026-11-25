@@ -148,7 +148,7 @@ pub struct MarketplaceConfig {
     /// Tip forwards waiting for the MANA transfer index, across every sender.
     #[arg(long, env = "MARKETPLACE_TIP_MAX_PENDING", default_value_t = 2_000)]
     pub marketplace_tip_max_pending: u64,
-    /// Walk the store's primary mints and the ERC721BidV2 bids on Polygon.
+    /// Walk Polygon store mints and bids, and Ethereum accepted bids and NAME purchase fees.
     #[arg(long, env = "MARKETPLACE_SALES_INDEX_ENABLED", default_value_t = false, action = clap::ArgAction::Set)]
     pub marketplace_sales_index_enabled: bool,
 
@@ -376,7 +376,8 @@ pub struct EconomyConfig {
     #[arg(long, env = "RELAYER_PRIVATE_KEY", hide_env_values = true)]
     pub relayer_private_key: Option<String>,
 
-    /// The upstream transactions-api the relay forwards to when it has no signer of its own (public https).
+    /// The upstream transactions-api a testnet relay forwards to when it has no signer of its own (public
+    /// https). A Polygon mainnet relay (COLLECTIONS_CHAIN_ID=137) refuses to start with it.
     #[arg(long, env = "TRANSACTIONS_UPSTREAM_URL")]
     pub transactions_upstream_url: Option<String>,
 

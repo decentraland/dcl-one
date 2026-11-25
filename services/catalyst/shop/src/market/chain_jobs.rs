@@ -1480,6 +1480,15 @@ fn visit_projections(
             market_cfg(),
         );
     }
+    if settings.sales_enabled && net == ChainNet::Ethereum && mainnet {
+        add(
+            "sales-index",
+            state.chain_rpc_url(net),
+            Arc::new(|| Arc::new(super::ethereum_sales::EthereumSalesIndex)),
+            None,
+            market_cfg(),
+        );
+    }
     if settings.sales_enabled && net == ChainNet::Matic {
         let index = super::sales_index::SalesIndex::for_chain(chain_id)
             .expect("validated sales index chain");
@@ -1604,6 +1613,25 @@ fn visit_projections(
 pub fn spawn_jobs(state: &Arc<MarketplaceState>, jobs: &Jobs, rentals: Option<bool>) {
     log_switches(state, rentals);
     for net in ChainNet::ALL {
+        if state.settings.market.indexes.sales_enabled
+            && state.settings.market.indexes.chain_id(net) == net.chain_id()
+            && let Some(url) = state.chain_rpc_url(net)
+        {
+            let state = state.clone();
+            let cfg = PeriodicCfg::every(state.settings.market.indexes.interval)
+                .with_error_backoff(Duration::from_secs(60));
+            jobs.spawn_periodic_leased(
+                format!("sales-accounting-{}", net.db_name()),
+                cfg,
+                move |_| {
+                    let (state, url) = (state.clone(), url.clone());
+                    async move {
+                        let rpc = crate::chain_index::rpc::Rpc::at(&state.http, &url);
+                        super::sale_fold::pass(&state.pool, &rpc, net).await
+                    }
+                },
+            );
+        }
         let projections = projections(state, net, rentals);
         if projections.is_empty() {
             continue;
@@ -1713,11 +1741,18 @@ fn log_switches(state: &Arc<MarketplaceState>, rentals: Option<bool>) {
             job = "sales-index",
             "marketplace chain index off: its routes answer the unavailable envelope"
         );
-    } else if state.catalogue_rpc_url(ChainNet::Matic).is_none() {
-        tracing::warn!(
-            job = "sales-index",
-            "marketplace chain index enabled but no JSON-RPC endpoint is configured for the selected Polygon chain: it stays off"
-        );
+    } else {
+        for net in ChainNet::ALL {
+            if (net == ChainNet::Matic || settings.chain_id(net) == net.chain_id())
+                && state.catalogue_rpc_url(net).is_none()
+            {
+                tracing::warn!(
+                    job = "sales-index",
+                    network = net.db_name(),
+                    "sales index enabled without an RPC endpoint for this network"
+                );
+            }
+        }
     }
     for (enabled, job, has_url) in [
         (
