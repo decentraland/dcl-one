@@ -3370,9 +3370,13 @@ Invariants:
 - A held row is moved only to a current scene (one with an identity), and
   revoked only while LiveKit reports its ingress idle.
 - Rollout: stop the old API replicas before the new binaries serve. An old
-  replica stores a world key under the world's catalogue place and replaces
-  by place, so during a mixed rollout two active keys can stream into one
-  room; the one the new binaries do not answer stays live until it expires.
+  replica stores a world key under the world's catalogue place, with its
+  scene in `admin_place_key`; the `BEFORE INSERT` trigger
+  `scene_stream_access_scene_place` refuses a `w1:` room row whose
+  `admin_place_key` is set and differs from `place_id`, so its mint fails
+  instead of adding a second key to the room. Imported rows (`admin_place_key`
+  NULL), updates and stored rows are untouched. Drop the trigger before
+  rolling back to an older binary.
 
 ## Stream key notifications
 

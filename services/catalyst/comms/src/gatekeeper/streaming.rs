@@ -1620,6 +1620,59 @@ mod scene_key_tests {
         assert_eq!(ok.status(), StatusCode::NO_CONTENT, "its replaced key");
     }
 
+    /// An older binary's world key, under the catalogue place with its scene
+    /// saved, is refused on insert; per-scene, imported and Genesis rows are not.
+    #[tokio::test]
+    async fn a_world_key_under_another_place_than_its_scene_is_refused() {
+        let Some(pool) = crate::db::scratch::pool(2).await else {
+            return;
+        };
+        let tag = Uuid::new_v4().simple().to_string();
+        let world = WorldName::parse(&format!("fence{}.dcl.eth", &tag[..10])).unwrap();
+        let insert = |place: String, room: String, admin: Option<String>| {
+            let pool = pool.clone();
+            async move {
+                sqlx::query(
+                    "INSERT INTO social.scene_stream_access \
+                         (place_id, streaming_url, streaming_key, ingress_id, room_id, generated_by, admin_place_key) \
+                     VALUES ($1, 'rtmp://example.org', $2, '', $3, 'test', $4)",
+                )
+                .bind(place)
+                .bind(Uuid::new_v4().to_string())
+                .bind(room)
+                .bind(admin)
+                .execute(&pool)
+                .await
+            }
+        };
+        let refused = insert(
+            format!("c-{tag}"),
+            room(&world, "SceneA"),
+            Some(format!("s-{tag}")),
+        )
+        .await
+        .unwrap_err();
+        let code = refused.as_database_error().and_then(|e| e.code());
+        assert_eq!(code.as_deref(), Some("23514"));
+        insert(
+            format!("s-{tag}"),
+            room(&world, "SceneA"),
+            Some(format!("s-{tag}")),
+        )
+        .await
+        .unwrap();
+        insert(format!("i-{tag}"), room(&world, "SceneB"), None)
+            .await
+            .unwrap();
+        insert(
+            format!("g-{tag}"),
+            format!("scene:main:{tag}"),
+            Some(format!("0,0-{tag}")),
+        )
+        .await
+        .unwrap();
+    }
+
     /// A world scene reads the key streaming into its room, its own first,
     /// else one under another place (the world's, from before keys were per
     /// scene); a key under its place streaming elsewhere is not its own.

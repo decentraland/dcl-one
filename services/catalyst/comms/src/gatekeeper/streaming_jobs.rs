@@ -2013,8 +2013,11 @@ mod tests {
             &crate::world_identity::SceneId::parse("fanout-scene").unwrap(),
         );
         let id = Uuid::new_v4();
-        sqlx::query("INSERT INTO social.scene_stream_access(id,place_id,room_id,streaming_url,streaming_key,generated_by,admin_place_key) VALUES ($1,$2,$3,'rtmp://example.invalid/live','test','test',CASE WHEN $4 THEN (SELECT identity::text FROM explore.world_scene_place WHERE world_name=$5 AND entity_id='fanout-scene') END)")
-            .bind(id).bind(&place).bind(&room).bind(saved_key).bind(&name).execute(&state.pool).await.unwrap();
+        // A legacy key under the catalogue place: stored, then given its scene.
+        sqlx::query("INSERT INTO social.scene_stream_access(id,place_id,room_id,streaming_url,streaming_key,generated_by) VALUES ($1,$2,$3,'rtmp://example.invalid/live','test','test')")
+            .bind(id).bind(&place).bind(&room).execute(&state.pool).await.unwrap();
+        sqlx::query("UPDATE social.scene_stream_access SET admin_place_key=CASE WHEN $2 THEN (SELECT identity::text FROM explore.world_scene_place WHERE world_name=$3 AND entity_id='fanout-scene') END WHERE id=$1")
+            .bind(id).bind(saved_key).bind(&name).execute(&state.pool).await.unwrap();
         let mut locked = state.pool.begin().await.unwrap();
         sqlx::query("LOCK explore.place IN ACCESS EXCLUSIVE MODE")
             .execute(&mut *locked)
