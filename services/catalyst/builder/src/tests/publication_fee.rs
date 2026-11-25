@@ -261,7 +261,7 @@ async fn only_the_drafts_creator_may_have_its_publication_priced() {
 }
 
 #[tokio::test]
-async fn a_published_deployed_or_locked_collection_is_refused() {
+async fn a_published_or_deployed_collection_is_refused_and_a_locked_one_is_not() {
     let Some(node) = node().await else { return };
     let owner = address(OWNER_KEY);
 
@@ -307,23 +307,11 @@ async fn a_published_deployed_or_locked_collection_is_refused() {
         .execute(&node.pool)
         .await
         .unwrap();
-    assert_eq!(
-        refusal(&node, OWNER_KEY, &locked.data()).await.0,
-        423,
-        "its owner's lock holds"
-    );
-    sqlx::query(
-        "UPDATE builder.collections SET lock = timezone('UTC', now()) - interval '25 hours' WHERE id = $1",
-    )
-    .bind(locked.id)
-    .execute(&node.pool)
-    .await
-    .unwrap();
     assert!(
         for_call(&node.state, &signer(&owner), &locked.data())
             .await
             .is_ok(),
-        "a lock older than a day holds nothing"
+        "a first transaction may have reverted, so its owner retries under the lock"
     );
 }
 

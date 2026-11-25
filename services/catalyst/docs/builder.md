@@ -365,8 +365,9 @@ the relay or from the wallet.
 
 The node authorizes only what it can check. The call must be the one that
 deploys an unpublished standard collection the signer owns, at the address
-that collection's row holds; a collection that is published, deployed, being
-published by the node or under its owner's lock is refused. The fee is the
+that collection's row holds; a collection that is published, deployed or being
+published by the node is refused. A collection under its owner's lock is
+not: a first transaction may have reverted, and its owner retries. The fee is the
 sum of the items' rarity prices in USD, rounded up to a cent, and a request
 naming another amount answers 409. The credit holds the fee's MANA at the
 node's rate plus `CREDITS_ORACLE_BUFFER_BPS`, lasts `CREDITS_TTL_SECONDS`, and
