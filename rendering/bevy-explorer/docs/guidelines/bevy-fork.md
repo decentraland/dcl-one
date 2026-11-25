@@ -235,6 +235,12 @@ across workers:
   `PropagateTransforms` instance this behaves like upstream's `is_changed() && !is_added()`; it
   stays as a guard, because with a second instance of the systems upstream's check stops each
   instance at the other's marks, and a subtree changed between the passes is never propagated.
+- `propagate_parent_transforms` (parallel) writes a dirty root's `GlobalTransform` with
+  `set_if_neq`, as it already writes descendants. Upstream writes the root unconditionally, which
+  marks it changed and makes every direct child recompute whenever anything in the tree moves; a
+  scene root has hundreds of direct children. A just-added global still reads as changed, so its
+  children still propagate. The `plugins.rs` tests fail a pass that marks a hierarchy global
+  changed without changing its value.
 - `GlobalTransform::from(Transform)` and `mul_transform` sanitise the affine: a zero scale
   component becomes `f32::EPSILON` and non-finite parts fall back to identity. A singular
   affine decomposes to a NaN rotation, which reached colliders as NaN AABBs and crashed parry's
