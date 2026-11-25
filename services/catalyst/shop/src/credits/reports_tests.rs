@@ -46,8 +46,9 @@ fn bearer() -> HeaderMap {
     h
 }
 
-/// A take-photo credit for `address` in season 1, with `consumed` wei of it spent on chain.
-async fn goal_credit(pool: &sqlx::PgPool, address: &str, wei: &str, consumed: &str) -> String {
+/// A take-photo credit for `address` in season 1, with each of `consumed`
+/// spent on chain in its own CreditUsed log.
+async fn goal_credit(pool: &sqlx::PgPool, address: &str, wei: &str, consumed: &[&str]) -> String {
     sqlx::query("INSERT INTO credits.seasons(id,name,start_date,end_date,max_mana_wei) VALUES(1,'Season One',timezone('UTC',now())-interval '1 day',timezone('UTC',now())+interval '30 days',0) ON CONFLICT DO NOTHING")
         .execute(pool).await.unwrap();
     sqlx::query("INSERT INTO credits.season_goals(season_id,goal_id,title,thumbnail,total_steps,reward_wei,start_week,end_week) VALUES(1,'take-photo','Take a photo','p.png',1,0,1,20) ON CONFLICT DO NOTHING")
@@ -63,16 +64,19 @@ async fn goal_credit(pool: &sqlx::PgPool, address: &str, wei: &str, consumed: &s
     let contract = "0x00000000000000000000000000000000000000cc";
     sqlx::query("INSERT INTO credits.goal_grants(address,season_id,week_id,goal_id,salt,chain_id,contract,credit_hash,amount_wei,signature,created_at,expires_at) VALUES($1,1,1,'take-photo',$2,137,$3,$2,$4::numeric,'0xsig',$5,$5 + interval '30 days')")
         .bind(address).bind(&salt).bind(contract).bind(wei).bind(now()).execute(pool).await.unwrap();
-    sqlx::query("INSERT INTO credits.usages(chain_id,block_number,log_index,contract,tx_hash,sender,credit_id,salt,credit_value,credit_expires_at,value_wei) VALUES(137,1,0,$1,$2,$3,$2,$4,$5::numeric,0,$6::numeric)")
-        .bind(contract)
-        .bind(format!("0x{}", "ab".repeat(32)))
-        .bind(address)
-        .bind(&salt)
-        .bind(wei)
-        .bind(consumed)
-        .execute(pool)
-        .await
-        .unwrap();
+    for (i, part) in consumed.iter().enumerate() {
+        sqlx::query("INSERT INTO credits.usages(chain_id,block_number,log_index,contract,tx_hash,sender,credit_id,salt,credit_value,credit_expires_at,value_wei) VALUES(137,1,$1,$2,$3,$4,$3,$5,$6::numeric,0,$7::numeric)")
+            .bind(i as i32)
+            .bind(contract)
+            .bind(format!("0x{}", "ab".repeat(32)))
+            .bind(address)
+            .bind(&salt)
+            .bind(wei)
+            .bind(*part)
+            .execute(pool)
+            .await
+            .unwrap();
+    }
     salt
 }
 
@@ -114,7 +118,7 @@ async fn the_reports_answer_read_admins_in_the_old_row_shape() {
         .await
         .unwrap();
     let earner = scratch_wallet();
-    let salt = goal_credit(&pool, &earner.address, "5000", "1200").await;
+    let salt = goal_credit(&pool, &earner.address, "5000", &["700", "500"]).await;
 
     // Neither the bearer nor an admin wallet: the old 401.
     let (status, _, _) = send(&app, "GET", "/credits/credits", HeaderMap::new(), None).await;
@@ -291,4 +295,171 @@ async fn the_canonical_mount_binds_its_own_route() {
             "{path} must not accept a signature over {foreign}"
         );
     }
+}
+
+/// A grant made with a wallet signature (its audit actor is an address).
+async fn wallet_grant(pool: &sqlx::PgPool, to: &str, granter: &str, credits: &str, reason: &str) {
+    sqlx::query("WITH a AS (INSERT INTO ops.admin_audit (actor, domain, action, target, detail) VALUES ($1, 'credits', 'grant', $2, jsonb_build_object('reason', $4::text)) RETURNING id) INSERT INTO credits.ledger (address, kind, amount, bucket, admin_audit_id) SELECT $2, 'grant', $3::numeric, 'paid', a.id FROM a")
+        .bind(granter)
+        .bind(to)
+        .bind(credits)
+        .bind(reason)
+        .execute(pool)
+        .await
+        .unwrap();
+}
+
+#[tokio::test]
+async fn migrated_grants_filters_and_pages() {
+    let Some(pool) = crate::db::scratch::isolated_pool(4).await else {
+        return;
+    };
+    let admin = scratch_wallet();
+    let app = app(reports_state(pool.clone(), &admin.address));
+    let (a, b, c) = (scratch_wallet(), scratch_wallet(), scratch_wallet());
+    let granter = "0x00000000000000000000000000000000000000aa";
+    wallet_grant(&pool, &a.address, granter, "10", "alpha").await;
+    wallet_grant(&pool, &b.address, granter, "20", "beta").await;
+    wallet_grant(&pool, &c.address, "token:SOMETHING", "30", "gamma").await;
+    // A grant the migration loaded: kind grant, no audit row.
+    sqlx::query("INSERT INTO credits.ledger (address, kind, amount, bucket, tx_ref) VALUES ($1, 'grant', 5, 'paid', 'credits-server:credit:x')")
+        .bind(&a.address)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    // The default view is the operator's grants: the migrated row is not one of them.
+    let (_, _, v) = send(&app, "GET", "/credits/credits", bearer(), None).await;
+    assert_eq!(v["total"], 3, "{v}");
+    // It is listed under its own source, without a goal, reason or granter.
+    let (_, _, v) = send(
+        &app,
+        "GET",
+        "/credits/credits?source=migrated",
+        bearer(),
+        None,
+    )
+    .await;
+    assert_eq!(v["total"], 1, "{v}");
+    assert_eq!(v["data"][0]["usdCents"], 50);
+    assert_eq!(v["data"][0]["reason"], Value::Null);
+    assert_eq!(v["data"][0]["granterAddress"], Value::Null);
+
+    // A wallet granter is listed and filters; a bearer grant has none.
+    let (_, _, v) = send(
+        &app,
+        "GET",
+        &format!(
+            "/credits/credits?granter_address={}",
+            granter.to_uppercase().replace("0X", "0x")
+        ),
+        bearer(),
+        None,
+    )
+    .await;
+    assert_eq!(v["total"], 2, "{v}");
+    assert!(
+        v["data"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|r| r["granterAddress"] == granter)
+    );
+    let (_, _, v) = send(&app, "GET", "/credits/credits?reason=gamma", bearer(), None).await;
+    assert_eq!(v["total"], 1, "{v}");
+    assert_eq!(v["data"][0]["userAddress"], c.address);
+    assert_eq!(v["data"][0]["granterAddress"], Value::Null);
+
+    // Ordering across pages is stable and covers every row once (amount is NULL on USD rows).
+    let mut seen = Vec::new();
+    for offset in 0..3 {
+        let (_, _, v) = send(
+            &app,
+            "GET",
+            &format!("/credits/credits?limit=1&offset={offset}&order_direction=ASC"),
+            bearer(),
+            None,
+        )
+        .await;
+        assert_eq!(v["total"], 3, "{v}");
+        seen.extend(ids(&v));
+    }
+    let mut unique = seen.clone();
+    unique.sort();
+    unique.dedup();
+    assert_eq!(unique.len(), 3, "every row on exactly one page: {seen:?}");
+    let (_, _, v) = send(
+        &app,
+        "GET",
+        "/credits/credits?order_direction=ASC",
+        bearer(),
+        None,
+    )
+    .await;
+    assert_eq!(
+        v["data"][0]["userAddress"], a.address,
+        "uppercase ASC is ascending: {v}"
+    );
+
+    // A season filter matches goal credits only.
+    let earner = scratch_wallet();
+    goal_credit(&pool, &earner.address, "9", &["1"]).await;
+    let (_, _, v) = send(
+        &app,
+        "GET",
+        "/credits/credits?season_id=1&source=goal",
+        bearer(),
+        None,
+    )
+    .await;
+    assert_eq!(v["total"], 1, "{v}");
+    let (_, _, v) = send(
+        &app,
+        "GET",
+        "/credits/credits?season_id=2&source=goal",
+        bearer(),
+        None,
+    )
+    .await;
+    assert_eq!(v["total"], 0, "{v}");
+
+    // The old pagination: a non-numeric limit falls back, and the cap is 100.
+    let (status, _, v) = send(&app, "GET", "/credits/credits?limit=abc", bearer(), None).await;
+    assert_eq!(status, StatusCode::OK, "{v}");
+    assert_eq!(v["data"].as_array().unwrap().len(), 3);
+
+    // Reasons past the first page.
+    let (_, _, v) = send(
+        &app,
+        "GET",
+        "/credits/credit-reasons?limit=1&offset=1",
+        bearer(),
+        None,
+    )
+    .await;
+    assert_eq!(v, json!({ "data": ["beta"], "total": 3 }));
+}
+
+/// An admin's routine balance call (`/credits/users/{admin}/credits`) ends
+/// with `/credits`; replaying its signed headers with that path as the
+/// proxy's `x-original-path` must not open the cross-wallet list.
+#[tokio::test]
+async fn a_replayed_balance_signature_does_not_open_the_list() {
+    let Some(pool) = crate::db::scratch::isolated_pool(4).await else {
+        return;
+    };
+    let admin = scratch_wallet();
+    let app = app(reports_state(pool, &admin.address));
+
+    let balance = format!("/credits/users/{}/credits", admin.address);
+    let mut headers = signed_headers(&admin, "get", &balance).await;
+    headers.insert("x-original-path", balance.parse().unwrap());
+    let (status, _, _) = send(&app, "GET", "/credits/credits", headers, None).await;
+    assert_eq!(status, StatusCode::UNAUTHORIZED);
+
+    // The credits host's own rewrite: signed over `/credits`, forwarded with it.
+    let mut headers = signed_headers(&admin, "get", "/credits").await;
+    headers.insert("x-original-path", "/credits".parse().unwrap());
+    let (status, _, v) = send(&app, "GET", "/credits/credits", headers, None).await;
+    assert_eq!(status, StatusCode::OK, "{v}");
 }

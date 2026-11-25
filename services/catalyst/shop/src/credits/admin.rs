@@ -16,6 +16,7 @@ use serde_json::{Value, json};
 
 use super::SharedState;
 use super::errors::ApiError;
+use crate::shared::signed_fetch::ORIGINAL_PATH_HEADER;
 
 pub const ADMIN_TOKEN_ENV: &str = "CATALYRST_CREDITS_ADMIN_TOKEN";
 
@@ -80,7 +81,21 @@ pub(crate) async fn require_read_admin(
     if state.settings.read_admin_addresses.is_empty() {
         return Err(ApiError::unauthorized(REFUSED));
     }
-    let signer = super::handlers::signer_from(state, headers, "GET", route_path, original)
+    // The shared path rule admits a proxy `x-original-path` that merely ENDS
+    // with the route, and a bare `/credits` is also the tail of every wallet's
+    // own balance route (`/credits/users/{address}/credits`), which an admin
+    // signs routinely. A replayed signature over that path must not open the
+    // cross-wallet list, so here the header counts only when it IS the route.
+    let mut headers = headers.clone();
+    let foreign = headers.get(ORIGINAL_PATH_HEADER).is_some_and(|v| {
+        v.to_str().map_or(true, |raw| {
+            raw.split('?').next().unwrap_or(raw) != route_path
+        })
+    });
+    if foreign {
+        headers.remove(ORIGINAL_PATH_HEADER);
+    }
+    let signer = super::handlers::signer_from(state, &headers, "GET", route_path, original)
         .await
         .map_err(|_| ApiError::unauthorized(REFUSED))?;
     if state

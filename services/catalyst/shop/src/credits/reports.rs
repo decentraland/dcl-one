@@ -4,19 +4,29 @@
 //!
 //! - an operator grant (`credits.ledger` kind `grant` with its
 //!   `ops.admin_audit` row): a USD row, source `grant` (`studio_grant` when
-//!   the audit names a studio), goal `on-demand-granted-credits`, its
-//!   reason and annotation from the audit detail, and the granter when the
-//!   audit actor is a wallet;
+//!   the audit names a studio), goal `on-demand-granted-credits`, its reason
+//!   and annotation from the audit detail, and the granter when the audit
+//!   actor is a wallet (a bearer grant records `token:<VARIABLE>`, so it has
+//!   no granter, and no grant path writes an annotation yet);
+//! - a grant migrated from the old server (kind `grant`, no audit row): a USD
+//!   row, source `migrated`, no goal, reason or granter. The migration folded
+//!   every positive non-purchase credit (grants, studio grants, IAP, sale
+//!   proceeds and royalties, won disputes) into `grant` without its source,
+//!   so these rows are not claimed as the operator's grants;
 //! - a pack purchase (`credits.ledger` kind `purchase`): a USD row, source
 //!   `purchase`;
 //! - a goal credit (`credits.goal_grants`): a MANA row with its season,
 //!   contract, signature and expiry, source `goal`, and the MANA its salt
 //!   has consumed on chain (`credits.usages`).
 //!
-//! A USD row's `usdCents` is its credits × 10 (1 credit = 10 cents); its
-//! `amount`, `contract` and `signature` are null and its `expiresAt` is
-//! `"0"`, since a USD credit has no on-chain credit and does not expire. As
-//! in the old server, an amount bound (MANA wei) only ever matches MANA rows.
+//! A USD row's `usdCents` is its credits × 10 (1 credit = 10 cents), null
+//! when that is not a whole number of cents within a bigint; its `amount`,
+//! `contract` and `signature` are null and its `expiresAt` is `"0"`, since a
+//! USD credit has no on-chain credit and does not expire. As in the old
+//! server, an amount bound (MANA wei) only ever matches MANA rows. The other
+//! sources the old server wrote (`on_demand`, `iap`, `refund`,
+//! `dispute_won`, `sale_proceeds`, `sale_royalty`) are accepted as filters
+//! and match nothing: this node keeps no rows with them.
 
 use sqlx::Row;
 
@@ -91,22 +101,25 @@ pub struct CreditListRow {
 
 /// The three row sources in one shape. `amount` stays numeric so the amount
 /// bounds and the amount order compare numbers, not strings.
-const CREDIT_ROWS: &str = "\
+fn credit_rows() -> String {
+    format!(
+        "\
     SELECT 'usd:' || l.id::text AS id, l.address AS user_address, \
            NULL::numeric AS amount, NULL::text AS contract, l.created_at, \
            NULL::text AS signature, 'USD'::text AS denomination, \
-           (l.amount * 10) AS usd_cents, NULL::integer AS season_id, \
+           {USD_CENTS} AS usd_cents, NULL::integer AS season_id, \
            NULL::text AS season_name, NULL::timestamp AS expires_at, \
-           CASE WHEN a.actor ~ '^0x[0-9a-f]{40}$' THEN a.actor END AS granter_address, \
+           CASE WHEN a.actor ~ '^0x[0-9a-f]{{40}}$' THEN a.actor END AS granter_address, \
            a.detail->>'reason' AS reason, a.detail->>'annotation' AS annotation, \
            0::numeric AS total_consumed, \
-           CASE WHEN a.detail ? 'studioName' THEN 'studio_grant' ELSE 'grant' END AS source, \
-           'on-demand-granted-credits'::text AS goal_id \
-    FROM credits.ledger l JOIN ops.admin_audit a ON a.id = l.admin_audit_id \
+           CASE WHEN a.id IS NULL THEN 'migrated' \
+                WHEN a.detail ? 'studioName' THEN 'studio_grant' ELSE 'grant' END AS source, \
+           CASE WHEN a.id IS NOT NULL THEN 'on-demand-granted-credits' END AS goal_id \
+    FROM credits.ledger l LEFT JOIN ops.admin_audit a ON a.id = l.admin_audit_id \
     WHERE l.kind = 'grant' \
     UNION ALL \
     SELECT 'purchase:' || l.id::text, l.address, NULL::numeric, NULL::text, l.created_at, \
-           NULL::text, 'USD'::text, (l.amount * 10), NULL::integer, NULL::text, NULL::timestamp, \
+           NULL::text, 'USD'::text, {USD_CENTS}, NULL::integer, NULL::text, NULL::timestamp, \
            NULL::text, NULL::text, NULL::text, 0::numeric, 'purchase'::text, NULL::text \
     FROM credits.ledger l WHERE l.kind = 'purchase' \
     UNION ALL \
@@ -115,7 +128,13 @@ const CREDIT_ROWS: &str = "\
            NULL::text, NULL::text, NULL::text, \
            COALESCE((SELECT SUM(u.value_wei) FROM credits.usages u WHERE u.salt = g.salt), 0), \
            'goal'::text, g.goal_id \
-    FROM credits.goal_grants g LEFT JOIN credits.seasons s ON s.id = g.season_id";
+    FROM credits.goal_grants g LEFT JOIN credits.seasons s ON s.id = g.season_id"
+    )
+}
+
+/// A ledger amount in cents, or NULL when that is not a whole number of
+/// cents that fits a bigint (one absurd row must not fail every page).
+const USD_CENTS: &str = "CASE WHEN l.amount * 10 = trunc(l.amount * 10) AND l.amount * 10 < 9e18 THEN (l.amount * 10) END";
 
 const CREDIT_WHERE: &str = "\
     WHERE ($1::text IS NULL OR user_address = $1) \
@@ -139,10 +158,12 @@ impl Credits {
     ) -> Result<(Vec<CreditListRow>, i64), ApiError> {
         // Every interpolated piece is a constant or comes from a closed enum, never from the request.
         let direction = if descending { "DESC" } else { "ASC" };
-        let nulls_last = if order == CreditOrder::Amount {
-            " NULLS LAST"
-        } else {
+        // Nullable columns sort their nulls last either way, and ties break on time,
+        // then on the id, so a page boundary is stable across requests.
+        let nulls_last = if order == CreditOrder::Timestamp {
             ""
+        } else {
+            " NULLS LAST"
         };
         let page_sql = format!(
             "SELECT id, user_address, amount::text AS amount, contract, \
@@ -150,12 +171,16 @@ impl Credits {
                     signature, denomination, usd_cents::bigint AS usd_cents, season_id, season_name, \
                     COALESCE(extract(epoch FROM expires_at)::bigint, 0) AS expires_at_secs, \
                     granter_address, reason, annotation, total_consumed::text AS total_consumed \
-             FROM ({CREDIT_ROWS}) c {CREDIT_WHERE} \
-             ORDER BY {col} {direction}{nulls_last}, id {direction} \
+             FROM ({rows}) c {CREDIT_WHERE} \
+             ORDER BY {col} {direction}{nulls_last}, created_at {direction}, id {direction} \
              LIMIT $9 OFFSET $10",
             col = order.column(),
+            rows = credit_rows(),
         );
-        let count_sql = format!("SELECT count(*) FROM ({CREDIT_ROWS}) c {CREDIT_WHERE}");
+        let count_sql = format!(
+            "SELECT count(*) FROM ({rows}) c {CREDIT_WHERE}",
+            rows = credit_rows()
+        );
 
         // The page and its total read one snapshot, so the count describes the page's view.
         let mut tx = self.read_snapshot().await?;

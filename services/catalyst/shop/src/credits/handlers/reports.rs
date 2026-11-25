@@ -12,7 +12,7 @@ use axum::http::HeaderMap;
 use serde::{Deserialize, Serialize};
 
 use crate::credits::SharedState;
-use crate::credits::admin::{paginate, require_read_admin};
+use crate::credits::admin::require_read_admin;
 use crate::credits::errors::ApiError;
 use crate::credits::reports::{CreditFilters, CreditListRow, CreditOrder, ON_DEMAND_GOAL};
 
@@ -28,6 +28,8 @@ const KNOWN_SOURCES: &[&str] = &[
     "sale_royalty",
     "grant",
     "studio_grant",
+    // This node's own: a grant the migration loaded without its old source.
+    "migrated",
 ];
 
 /// Every goal the old server knew; any other `goal_id` is ignored, as it was.
@@ -44,8 +46,8 @@ const KNOWN_GOALS: &[&str] = &[
 
 #[derive(Debug, Deserialize, Default)]
 pub struct CreditListQuery {
-    limit: Option<i64>,
-    offset: Option<i64>,
+    limit: Option<String>,
+    offset: Option<String>,
     order_by: Option<String>,
     order_direction: Option<String>,
     source: Option<String>,
@@ -123,7 +125,10 @@ pub(crate) fn credit_filters(q: &CreditListQuery) -> (CreditFilters, CreditOrder
         max_amount: amount_bound(q.max_amount.clone()),
     };
     let order = CreditOrder::parse(q.order_by.as_deref()).unwrap_or(CreditOrder::Timestamp);
-    let descending = !matches!(q.order_direction.as_deref(), Some("asc"));
+    let descending = !q
+        .order_direction
+        .as_deref()
+        .is_some_and(|d| d.trim().eq_ignore_ascii_case("asc"));
     (filters, order, descending)
 }
 
@@ -179,7 +184,7 @@ async fn list_credits_at(
 ) -> Result<Json<Paginated<CreditRecordOut>>, ApiError> {
     require_read_admin(state, headers, route, original).await?;
     let (filters, order, descending) = credit_filters(q);
-    let (limit, offset) = paginate(q.limit, q.offset);
+    let (limit, offset) = legacy_page(q.limit.as_deref(), q.offset.as_deref());
     let (rows, total) = state
         .credits
         .report_list_credits(&filters, order, descending, limit, offset)
@@ -192,8 +197,24 @@ async fn list_credits_at(
 
 #[derive(Debug, Deserialize, Default)]
 pub struct ReasonsQuery {
-    limit: Option<i64>,
-    offset: Option<i64>,
+    limit: Option<String>,
+    offset: Option<String>,
+}
+
+/// The old server's pagination (`@dcl/http-commons`): `limit` defaults to and
+/// is capped at 100, `offset` defaults to 0, and a value that is not a
+/// number falls back to the default instead of failing the request.
+pub(crate) fn legacy_page(limit: Option<&str>, offset: Option<&str>) -> (i64, i64) {
+    const MAX: i64 = 100;
+    let limit = limit
+        .and_then(|l| l.trim().parse::<i64>().ok())
+        .filter(|l| *l > 0)
+        .map_or(MAX, |l| l.min(MAX));
+    let offset = offset
+        .and_then(|o| o.trim().parse::<i64>().ok())
+        .filter(|o| *o >= 0)
+        .unwrap_or(0);
+    (limit, offset)
 }
 
 /// The credits host's `GET /credit-reasons`.
@@ -224,7 +245,7 @@ async fn credit_reasons_at(
     route: &str,
 ) -> Result<Json<Paginated<String>>, ApiError> {
     require_read_admin(state, headers, route, original).await?;
-    let (limit, offset) = paginate(q.limit, q.offset);
+    let (limit, offset) = legacy_page(q.limit.as_deref(), q.offset.as_deref());
     let (data, total) = state.credits.report_credit_reasons(limit, offset).await?;
     Ok(Json(Paginated { data, total }))
 }
@@ -252,6 +273,25 @@ mod tests {
             }
         }
         q
+    }
+
+    #[test]
+    fn pagination_follows_the_old_server() {
+        assert_eq!(legacy_page(None, None), (100, 0));
+        assert_eq!(legacy_page(Some("25"), Some("50")), (25, 50));
+        assert_eq!(legacy_page(Some("500"), None), (100, 0), "capped at 100");
+        assert_eq!(
+            legacy_page(Some("abc"), Some("-3")),
+            (100, 0),
+            "garbage falls back"
+        );
+        assert_eq!(legacy_page(Some("0"), None), (100, 0));
+    }
+
+    #[test]
+    fn direction_is_case_insensitive() {
+        let (_, _, desc) = credit_filters(&query(&[("order_direction", "ASC")]));
+        assert!(!desc);
     }
 
     #[test]
