@@ -9,7 +9,7 @@ use crate::{
     avatar_movement::{
         ActivePlayerComponent, AvatarLocomotionSettings, AvatarMovement, AvatarMovementInfo,
     },
-    camera_collision::CameraCollision,
+    camera_collision::{CameraCollision, CameraCollisionState},
 };
 
 pub(super) struct InputDebugPanelPlugin;
@@ -126,11 +126,11 @@ fn camera_collisions(
 
 fn camera_state(
     mut cmd: ConsoleCommand<CameraState>,
-    camera: Query<(&PrimaryCamera, &Projection)>,
+    camera: Query<(&PrimaryCamera, &Projection, &CameraCollisionState)>,
     collision: Res<CameraCollision>,
 ) {
     let Some(Ok(_)) = cmd.take() else { return };
-    let Ok((camera, projection)) = camera.single() else {
+    let Ok((camera, projection, state)) = camera.single() else {
         cmd.reply_failed("player camera unavailable");
         return;
     };
@@ -146,10 +146,10 @@ fn camera_state(
             "fov": fov,
             "override": camera.scene_override.is_some(),
             "collisions": collision.enabled,
-            "desiredDistance": collision.desired_distance,
-            "collidedDistance": collision.collided_distance,
-            "occluded": collision.occluded,
-            "dampTime": collision.damp_time,
+            "desiredDistance": state.desired_distance,
+            "collidedDistance": state.collided_distance,
+            "occluded": state.occluded,
+            "dampTime": state.damp_time,
         })
         .to_string(),
     );
@@ -233,5 +233,37 @@ mod tests {
         assert_eq!(report["requested"], json!([0.0, 0.0, 0.0]));
         assert_eq!(report["actual"], json!([0.0, 0.0, 0.0]));
         assert!(report["external"].is_null());
+    }
+
+    #[test]
+    fn a_primary_camera_reports_its_collision_state() {
+        let mut app = App::new();
+        app.add_event::<ConsoleCommandEntered>()
+            .add_event::<PrintConsoleLine>()
+            .init_resource::<CameraCollision>()
+            .add_systems(Update, camera_state);
+        crate::require_camera_collision_state(&mut app);
+        let camera = app
+            .world_mut()
+            .spawn((PrimaryCamera::default(), Projection::default()))
+            .id();
+        app.world_mut()
+            .get_mut::<CameraCollisionState>(camera)
+            .expect("update_camera_position requires the state on the camera")
+            .collided_distance = 2.5;
+        let (tx, rx) = mpsc::channel();
+        app.world_mut().send_event(ConsoleCommandEntered {
+            command_name: "/camera_state".into(),
+            args: vec![],
+            responder: Some(Arc::new(move |result| tx.send(result).unwrap())),
+        });
+        app.update();
+        let reply = rx.try_recv().unwrap().unwrap();
+        let report: serde_json::Value = serde_json::from_str(&reply).unwrap();
+        assert_eq!(report["collisions"], json!(true));
+        assert_eq!(report["desiredDistance"], json!(0.0));
+        assert_eq!(report["collidedDistance"], json!(2.5));
+        assert_eq!(report["occluded"], json!(false));
+        assert_eq!(report["dampTime"], json!(0.0));
     }
 }

@@ -26,21 +26,11 @@ const LOG_NEGLIGIBLE_RESIDUAL: f32 = -4.605_170_2;
 #[derive(Resource)]
 pub struct CameraCollision {
     pub enabled: bool,
-    pub desired_distance: f32,
-    pub collided_distance: f32,
-    pub occluded: bool,
-    pub damp_time: f32,
 }
 
 impl Default for CameraCollision {
     fn default() -> Self {
-        Self {
-            enabled: true,
-            desired_distance: 0.0,
-            collided_distance: 0.0,
-            occluded: false,
-            damp_time: 0.0,
-        }
+        Self { enabled: true }
     }
 }
 
@@ -162,13 +152,16 @@ impl CameraObstacles<'_> {
     }
 }
 
-#[derive(Default)]
+#[derive(Component, Default)]
 pub struct CameraCollisionState {
+    pub desired_distance: f32,
+    pub collided_distance: f32,
+    pub occluded: bool,
+    pub damp_time: f32,
     valid: bool,
     previous_raw_position: Vec3,
     previous_displacement: Vec3,
     previous_camera_offset: Vec3,
-    previous_damp_time: f32,
     smoothed_distance: f32,
     smoothed_time: f32,
     /// None takes the next target at once
@@ -270,7 +263,7 @@ pub fn resolve(
             DAMPING
         };
         if disp_sqr < EPSILON {
-            damp_time = state.previous_damp_time - damp(state.previous_damp_time, damp_time, dt);
+            damp_time = state.damp_time - damp(state.damp_time, damp_time, dt);
         }
         if damp_time > 0.0 {
             let previous = look_at + bypass * state.previous_camera_offset - raw;
@@ -282,7 +275,7 @@ pub fn resolve(
     state.previous_raw_position = raw;
     state.previous_displacement = displacement;
     state.previous_camera_offset = position - look_at;
-    state.previous_damp_time = damp_time;
+    state.damp_time = damp_time;
     state.valid = true;
 
     Resolved {

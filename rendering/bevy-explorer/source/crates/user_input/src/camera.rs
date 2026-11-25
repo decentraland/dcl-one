@@ -153,6 +153,7 @@ pub fn update_camera_position(
             &PrimaryCamera,
             &mut Projection,
             Option<&mut SystemTween>,
+            &mut CameraCollisionState,
         ),
         Without<PhotoMode>,
     >,
@@ -174,12 +175,18 @@ pub fn update_camera_position(
     containing_scene: ContainingScene,
     mut scene_colliders: Query<&mut SceneColliderData, Without<GlobalGroundCollider>>,
     mut ground_colliders: Query<&mut SceneColliderData, With<GlobalGroundCollider>>,
-    mut collision: ResMut<CameraCollision>,
-    mut collision_state: Local<CameraCollisionState>,
+    collision: Res<CameraCollision>,
 ) {
     let (
         Ok((player_transform, dynamic_state, is_oow, mut head_sync, emotes)),
-        Ok((camera_ent, camera_transform, options, mut projection, maybe_tween)),
+        Ok((
+            camera_ent,
+            camera_transform,
+            options,
+            mut projection,
+            maybe_tween,
+            mut collision_state,
+        )),
     ) = (player.single_mut(), camera.single_mut())
     else {
         return;
@@ -333,24 +340,17 @@ pub fn update_camera_position(
             );
             let collided_distance = resolved.position.distance(pivot);
             target_transform.translation = resolved.position;
-            *collision = CameraCollision {
-                desired_distance: distance,
-                collided_distance,
-                occluded: resolved.occluded,
-                damp_time: resolved.damp_time,
-                ..*collision
-            };
+            collision_state.desired_distance = distance;
+            collision_state.collided_distance = collided_distance;
+            collision_state.occluded = resolved.occluded;
             distance = collided_distance;
         } else {
             collision_state.invalidate();
             target_transform.translation = orbit + head_offset * distance.clamp(0.0, 3.0);
-            *collision = CameraCollision {
-                desired_distance: distance,
-                collided_distance: distance,
-                occluded: false,
-                damp_time: 0.0,
-                ..*collision
-            };
+            collision_state.desired_distance = distance;
+            collision_state.collided_distance = distance;
+            collision_state.occluded = false;
+            collision_state.damp_time = 0.0;
         }
 
         commands

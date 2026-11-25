@@ -54,10 +54,15 @@ impl Plugin for UserInputPlugin {
         app.init_resource::<EngineMovementControl>()
             .init_resource::<CursorLocks>()
             .init_resource::<camera_collision::CameraCollision>();
+        require_camera_collision_state(app);
         app.add_preview_console_command::<NoClipCommand, _>(no_clip);
         app.add_preview_console_command::<SpeedCommand, _>(speed_cmd);
         app.add_preview_console_command::<JumpCommand, _>(jump_cmd);
     }
+}
+
+fn require_camera_collision_state(app: &mut App) {
+    app.register_required_components::<PrimaryCamera, camera_collision::CameraCollisionState>();
 }
 
 fn manage_player_visibility(
