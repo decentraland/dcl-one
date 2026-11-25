@@ -31,6 +31,8 @@ on:
       - '.github/workflows/bevy-explorer-benchmark.yml'
       # tooling/tests/test_dev_workflow.py reads its label logic
       - '.github/workflows/creator-hub-ci.yml'
+      # tooling/tests/test_dev_workflow.py and test_image_cache.py run its sweep script
+      - '.github/workflows/closed-pr-cache.yml'
       - '!**/*.md'
       - '!docs/**'
       - '!services/catalyst/docs/**'

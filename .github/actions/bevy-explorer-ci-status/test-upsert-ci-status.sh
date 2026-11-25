@@ -342,6 +342,19 @@ grep -q 'OLD-BUILD' <<< "$BODY" && fail "crlf: stale content still rendered"
 grep -q $'\r' <<< "$BODY" && fail "crlf: body still carries CR"
 pass "CRLF body replaced in place, no duplicate fences"
 
+# --- 10b. IF_SECTION_HAS writes only over a section that has the text -------------------------
+reset_store
+(cd "$WORK" && SECTION=build SECTION_BODY=NEW IF_SECTION_HAS=OLD bash "$UPSERT") >/dev/null
+[ "$(count)" = 0 ] || fail "if-has: wrote a comment that was not there"
+run_upsert build "OLD run 1" >/dev/null
+(cd "$WORK" && SECTION=tests SECTION_BODY=NEW IF_SECTION_HAS=OLD bash "$UPSERT") >/dev/null
+grep -q 'NEW' <<< "$(body_of)" && fail "if-has: wrote a section that does not have the text"
+(cd "$WORK" && SECTION=build SECTION_BODY=NEW IF_SECTION_HAS=OLD bash "$UPSERT") >/dev/null
+BODY="$(body_of)"
+grep -q 'NEW' <<< "$BODY" || fail "if-has: did not write a section that has the text"
+grep -q 'OLD' <<< "$BODY" && fail "if-has: the old content stays"
+pass "IF_SECTION_HAS writes only over a section that has the text"
+
 reset_store
 code=0
 (cd "$WORK" && SECTION=build SECTION_BODY=READ-FAILURE GH_FAIL_READ_EXIT=41 bash "$UPSERT") > "$WORK/read-failure.log" 2>&1 || code=$?
@@ -425,7 +438,8 @@ rm -rf "$WORK/empty" "$WORK/lint" "$WORK/spaced" && mkdir -p "$WORK/empty" "$WOR
 printf 'X\n' > "$WORK/lint/lint.md"
 printf 'X\n' > "$WORK/spaced/build tests.md"
 for spec in "empty||No section files in" "lint||Unknown section 'lint'" "spaced||Unknown section 'build tests'" \
-    "two|SECTION=build|not both" "two|SECTION_BODY=X|not both" "two|SECTION_BODY_FILE=x|not both"; do
+    "two|SECTION=build|not both" "two|SECTION_BODY=X|not both" "two|SECTION_BODY_FILE=x|not both" \
+    "two|IF_SECTION_HAS=x|SECTION only"; do
   IFS='|' read -r dir extra want <<< "$spec"
   reset_store
   rm -f "$WORK/calls"

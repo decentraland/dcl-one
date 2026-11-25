@@ -28,7 +28,8 @@
 # Environment: REPO (owner/name), PR_NUMBER, SECTION, COMMENT (bevy-explorer when unset), and the
 # body in SECTION_BODY or, for a body too large to pass comfortably through the environment, in
 # the file SECTION_BODY_FILE. SECTIONS_DIR instead of SECTION writes each <section>.md in it, all
-# in one read-modify-write.
+# in one read-modify-write. With IF_SECTION_HAS set (SECTION only), the script writes only over a
+# section that has that text, and writes nothing when the comment or the section is not there.
 set -euo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/retry.sh"
 
@@ -57,6 +58,10 @@ NAMES=()
 if [ -n "${SECTIONS_DIR:-}" ]; then
   if [ -n "${SECTION:-}${SECTION_BODY:-}${SECTION_BODY_FILE:-}" ]; then
     echo "::error::Give SECTION with its body, or SECTIONS_DIR, not both."
+    exit 2
+  fi
+  if [ -n "${IF_SECTION_HAS:-}" ]; then
+    echo "::error::IF_SECTION_HAS works with SECTION only, not with SECTIONS_DIR."
     exit 2
   fi
   for file in "$SECTIONS_DIR"/*.md; do
@@ -102,7 +107,7 @@ section_default() {
     automation) printf '![Automation](https://img.shields.io/badge/Automation-Waiting-lightgrey?logo=github&logoColor=white&style=for-the-badge)\n\n_Waiting for the automation suite…_' ;;
     sdk) printf '![SDK](https://img.shields.io/badge/SDK-Waiting-lightgrey?logo=npm&logoColor=white&style=for-the-badge)\n\n_Waiting for the SDK preview packages…_' ;;
     inworld) printf '![InWorld](https://img.shields.io/badge/InWorld-Waiting-lightgrey?logo=github&logoColor=white&style=for-the-badge)\n\n_Waiting for the InWorld suite…_' ;;
-    desktop) printf '![Desktop app](https://img.shields.io/badge/Desktop%%20app-Not%%20built-lightgrey?logo=electron&logoColor=white&style=for-the-badge)\n\n_To build the desktop app, add the `ci:desktop` label, then push or reopen._' ;;
+    desktop) printf '![Desktop app](https://img.shields.io/badge/Desktop%%20app-Not%%20built-lightgrey?logo=electron&logoColor=white&style=for-the-badge)\n\n_To build the desktop app, add the `ci:desktop` label, or `ci:linux` for Linux alone, then push or reopen._' ;;
     inspector) printf '![Inspector](https://img.shields.io/badge/Inspector-Waiting-lightgrey?logo=npm&logoColor=white&style=for-the-badge)\n\n_Waiting for the inspector package…_' ;;
     asset-packs) printf '![Asset packs](https://img.shields.io/badge/Asset%%20packs-Waiting-lightgrey?logo=npm&logoColor=white&style=for-the-badge)\n\n_Waiting for the asset packs package…_' ;;
   esac
@@ -255,6 +260,11 @@ for ((attempt=1; attempt<=COMMENT_WRITE_ATTEMPTS; attempt++)); do
     CURRENT_BODY="${CURRENT_BODY//$'\r'/}"
   else
     CURRENT_BODY=""
+  fi
+
+  if [ -n "${IF_SECTION_HAS:-}" ] && ! grep -qF -- "$IF_SECTION_HAS" <<< "$(extract_section "$CURRENT_BODY" "$SECTION")"; then
+    echo "Section '$SECTION' does not have '$IF_SECTION_HAS'; not written."
+    exit 0
   fi
 
   # No comment yet: start from the full skeleton. A comment that lacks one of our fences predates

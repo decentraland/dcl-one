@@ -35,7 +35,7 @@ pub async fn run(mut config: Config) -> anyhow::Result<()> {
         .indexes
         .check_catalogue_db(
             &pool,
-            settings.market.indexes.nft_enabled || settings.market.mirrors_enabled,
+            settings.writes_catalogue(),
             [
                 settings.eth_collections_subgraph_url.as_deref(),
                 settings.matic_collections_subgraph_url.as_deref(),
