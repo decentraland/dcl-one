@@ -1062,7 +1062,7 @@ async fn get_index_status(
         "nft": nft_index::status(&state.pool).await,
         "tradeEvents": trade_events::status(&state.pool, &state.settings.market.indexes).await,
         "manaTransfers": mana_transfers::status(&state.pool).await,
-        "sales": sales_index::status(&state.pool).await,
+        "sales": sales_index::status(&state.pool, &state.settings.market.indexes).await,
         "neighbours": neighbours::status(&state.pool).await,
     }))
 }

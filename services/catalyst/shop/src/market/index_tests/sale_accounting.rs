@@ -161,13 +161,13 @@ async fn ethereum_sales_walk_withdraws_name_fees_on_a_reorg_and_publishes_the_re
     let st = state_over(db.pool.clone(), &url, index_settings(100, 10), false);
     assert!(publish(&st, &url, &ix).await.published);
     assert_eq!(
-        sales_index::status(&db.pool).await["ethereum"]["ready"],
+        sales_index::status(&db.pool, &IndexSettings::default()).await["ethereum"]["ready"],
         true
     );
     chain.fork(block, 0xee, vec![purchase(200)]);
     assert!(pass(&st, &url, &ix).await.reorg_rewound_to.is_some());
     assert_eq!(
-        sales_index::status(&db.pool).await["ethereum"]["ready"],
+        sales_index::status(&db.pool, &IndexSettings::default()).await["ethereum"]["ready"],
         false
     );
     let count: i64 = sqlx::query_scalar("SELECT count(*) FROM shop.name_purchase")

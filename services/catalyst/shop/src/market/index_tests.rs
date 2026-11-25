@@ -5403,6 +5403,23 @@ async fn amoy_sales_use_the_local_store_bid_and_collection_chain() {
     let state = state_over(db.pool.clone(), &url, settings, false);
     let outcome = pass(&state, &url, &index).await;
     assert!(outcome.published, "{outcome:?}");
+    let amoy = IndexSettings {
+        chain_id_matic: index.chain_id(),
+        ..IndexSettings::default()
+    };
+    sqlx::query("UPDATE shop.chain_cursor SET last_block=last_block+1 WHERE indexer='sales'")
+        .execute(&db.pool)
+        .await
+        .unwrap();
+    assert!(sales_index::ready(&db.pool, &amoy, ChainNet::Matic, chrono::Utc::now()).await);
+    assert_eq!(
+        sales_index::status(&db.pool, &amoy).await["matic"]["ready"],
+        true
+    );
+    assert_eq!(
+        sales_index::status(&db.pool, &IndexSettings::default()).await["matic"]["ready"],
+        false
+    );
     // The schema's object pass seeded only the four Polygon venues on an
     // upgraded node. The Amoy gate installs the missing pins on its first pass.
     sqlx::query("DELETE FROM shop.sale_venue WHERE address=$1")
@@ -5622,6 +5639,133 @@ async fn sepolia_v1_upgrade_rebuilds_once_and_fences_the_old_trade_writer() {
 }
 
 #[tokio::test]
+async fn revalidating_quarantined_sepolia_trades_replays_v1() {
+    let Some(db) = ScratchDb::create().await else {
+        return;
+    };
+    let eth = ChainNet::Ethereum;
+    let ix = TradeEventsIndex {
+        net: eth,
+        chain_id: eth.testnet_chain_id(),
+    };
+    let start = ix.start_block();
+    let legacy_start = 9_455_328_u64;
+    let legacy_tip = legacy_start + 10;
+    let v1 = trade_events::deployments(ix.chain_id)[0].0;
+    let chain = FakeChain::new(
+        start + 50,
+        vec![trade_events::tests::traded_log(
+            start + 1,
+            0,
+            v1,
+            ALICE,
+            BOB,
+            "0xabcd",
+            1,
+            false,
+        )],
+        1000,
+        100,
+    );
+    chain.chain_id.store(ix.chain_id as u64, Ordering::SeqCst);
+    let old_hash = chain.hash_of(legacy_tip);
+    let url = serve(chain.clone()).await;
+    let state = state_over(db.pool.clone(), &url, index_settings(100, 1000), false);
+    sqlx::raw_sql("ALTER TABLE shop.chain_cursor DROP CONSTRAINT chain_cursor_sepolia_trade_v1")
+        .execute(&db.pool)
+        .await
+        .unwrap();
+    sqlx::query("INSERT INTO shop.chain_cursor(indexer,network,chain_id,start_block,last_block,last_block_hash,
+            fold_through,full_history,quarantined_at,quarantine_reason)
+        VALUES ('trade_events','ethereum',$1,$2,$3,$4,$3,true,timezone('UTC',now()),'wrong endpoint')")
+        .bind(ix.chain_id).bind(legacy_start as i64).bind(legacy_tip as i64).bind(old_hash)
+        .execute(&db.pool).await.unwrap();
+
+    let migration = include_str!(concat!(
+        env!("DCL_ONE_ROOT"),
+        "/schemas/migrations/0071_shop_testnet_sale_and_trade_venues.sql"
+    ));
+    sqlx::raw_sql(migration).execute(&db.pool).await.unwrap();
+    let cursor = || chain_walk::cursor(&db.pool, INDEXER_TRADE_EVENTS, eth);
+    let quarantined = cursor().await.unwrap().unwrap();
+    assert_eq!(quarantined.start_block, legacy_start as i64);
+    assert_eq!(quarantined.last_block, legacy_tip as i64);
+    assert!(quarantined.rebuild_requested_at.is_none());
+    assert!(pass(&state, &url, &ix).await.quarantined.is_some());
+    assert_eq!(chain.get_logs.load(Ordering::SeqCst), 0);
+
+    // The documented Revalidate operation keeps the history and its checkpoint.
+    sqlx::query(
+        "UPDATE shop.chain_cursor SET quarantined_at=NULL, quarantine_reason=NULL, chain_id=NULL,
+        owner_generation=owner_generation+1
+        WHERE indexer='trade_events' AND network='ethereum' AND quarantined_at IS NOT NULL",
+    )
+    .execute(&db.pool)
+    .await
+    .unwrap();
+    let error = try_pass(&state, &url, &ix).await.unwrap_err();
+    assert!(
+        error.downcast_ref::<chain_walk::Fenced>().is_some(),
+        "{error:#}"
+    );
+    let scheduled = cursor().await.unwrap().unwrap();
+    assert_eq!(scheduled.start_block, start as i64);
+    assert_eq!(scheduled.last_block, legacy_tip as i64);
+    assert!(scheduled.rebuild_requested_at.is_some() && scheduled.folded_block.is_none());
+    assert!(pass(&state, &url, &ix).await.rebuilt);
+    assert!(pass(&state, &url, &ix).await.published);
+    let events: Vec<(String, i64)> =
+        sqlx::query_as("SELECT marketplace_address,block_number FROM shop.trade_event")
+            .fetch_all(&db.pool)
+            .await
+            .unwrap();
+    assert_eq!(events, [(v1.to_owned(), start as i64 + 1)]);
+    db.drop().await;
+}
+
+#[tokio::test]
+async fn a_pending_sepolia_rebuild_binds_an_unbound_cursor_at_its_custom_start() {
+    let Some(db) = ScratchDb::create().await else {
+        return;
+    };
+    let eth = ChainNet::Ethereum;
+    let ix = TradeEventsIndex {
+        net: eth,
+        chain_id: eth.testnet_chain_id(),
+    };
+    let start = ix.start_block() - 1;
+    let tip = start + 10;
+    let chain = FakeChain::new(start + 50, vec![], 1000, 100);
+    chain.chain_id.store(ix.chain_id as u64, Ordering::SeqCst);
+    let hash = chain.hash_of(tip);
+    let url = serve(chain).await;
+    let mut settings = index_settings(100, 1000);
+    settings.start_block_ethereum = Some(start);
+    let state = state_over(db.pool.clone(), &url, settings, false);
+    sqlx::query("INSERT INTO shop.chain_cursor(indexer,network,start_block,last_block,last_block_hash,rebuild_requested_at)
+        VALUES ('trade_events','ethereum',$1,$2,$3,timezone('UTC',now()))")
+        .bind(start as i64).bind(tip as i64).bind(hash).execute(&db.pool).await.unwrap();
+
+    let outcome = pass(&state, &url, &ix).await;
+    assert!(outcome.rebuilt, "{outcome:?}");
+    let row: (i64, i64, bool, Option<i64>, bool) = sqlx::query_as(
+        "SELECT start_block,last_block,sepolia_trade_v1,chain_id,full_history FROM shop.chain_cursor WHERE indexer='trade_events' AND network='ethereum'"
+    ).fetch_one(&db.pool).await.unwrap();
+    assert_eq!(
+        row,
+        (
+            start as i64,
+            start as i64 - 1,
+            true,
+            Some(ix.chain_id),
+            true
+        )
+    );
+    assert!(pass(&state, &url, &ix).await.published);
+    db.drop().await;
+}
+
+#[tokio::test]
 async fn the_sales_walk_keeps_store_mints_folds_the_bids_and_checks_the_venues() {
     let Some(db) = ScratchDb::create().await else {
         return;
@@ -5710,8 +5854,16 @@ async fn the_sales_walk_keeps_store_mints_folds_the_bids_and_checks_the_venues()
         "the sellers the nft walk reached are filled"
     );
     assert!(publish(&st, &url, &POLYGON_SALES).await.published);
-    assert!(sales_index::ready(&db.pool, chrono::Utc::now()).await);
-    let status = sales_index::status(&db.pool).await;
+    assert!(
+        sales_index::ready(
+            &db.pool,
+            &IndexSettings::default(),
+            ChainNet::Matic,
+            chrono::Utc::now()
+        )
+        .await
+    );
+    let status = sales_index::status(&db.pool, &IndexSettings::default()).await;
     assert_eq!(status["matic"]["ready"], true, "{status}");
 
     let kinds: Vec<(String, i64)> = sqlx::query_as(
@@ -6123,7 +6275,13 @@ async fn a_sales_reorg_rewinds_and_the_refold_follows_the_new_chain() {
     let rewound = pass(&st, &url, &POLYGON_SALES).await;
     assert_eq!(rewound.reorg_rewound_to, Some(kept), "{rewound:?}");
     assert!(
-        !sales_index::ready(&db.pool, chrono::Utc::now()).await,
+        !sales_index::ready(
+            &db.pool,
+            &IndexSettings::default(),
+            ChainNet::Matic,
+            chrono::Utc::now()
+        )
+        .await,
         "a rewind unpublishes"
     );
     assert!(publish(&st, &url, &POLYGON_SALES).await.published);

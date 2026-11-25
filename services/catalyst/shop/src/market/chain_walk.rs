@@ -1632,6 +1632,7 @@ async fn rebuild(
         "UPDATE shop.chain_cursor SET last_block = $3, last_block_hash = NULL, last_block_time = NULL, \
              sale_input_epoch = gen_random_uuid(), sale_repair_upper = NULL, sale_dirty_from = NULL, sale_input_version = NULL, sale_verified_through = NULL, sale_history_revision = sale_history_revision + 1, \
              fold_through = NULL, folded_block = NULL, folded_at = NULL, full_history = $4, chain_id = $5, \
+             sepolia_trade_v1 = sepolia_trade_v1 OR ($1 = 'trade_events' AND $5 = 11155111), \
              quarantined_at = NULL, quarantine_reason = NULL, rebuild_requested_at = NULL, diverged_at = NULL, \
              updated_at = timezone('UTC', now()) \
          WHERE indexer = $1 AND network = $2",
