@@ -77,6 +77,8 @@ describe('the gateway option', () => {
       'https://gateway.decentraland.org:8443',
       // a decentraland.org session never moves onto zone's gateway unprompted
       'https://gateway.decentraland.zone',
+      // the apex is the website, not a gateway
+      'https://decentraland.org',
       `${window.location.origin}/_scene/game.example`
     ]) {
       const m = await load(false, `/?gateway=${encodeURIComponent(gateway)}`)

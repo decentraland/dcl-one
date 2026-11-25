@@ -89,8 +89,13 @@ pub fn gateway_signed_path(raw: &str) -> anyhow::Result<Option<String>> {
     }
 }
 
+/// A base domain as [`set`] latches it: trimmed and lowercased.
+pub fn normalize(domain: &str) -> String {
+    domain.trim().to_ascii_lowercase()
+}
+
 pub fn set(domain: &str) -> Result<(), String> {
-    let d = domain.trim().to_ascii_lowercase();
+    let d = normalize(domain);
     // ascii labels only: the value is spliced into http::Uri authorities, which reject
     // anything else (unwrapped at the composition sites, so a bad value must stop here)
     let label_ok =

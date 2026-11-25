@@ -6282,7 +6282,7 @@
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/src/test/baseDomain.test.ts",
-      "sha256": "e0b54bd790142f5b1c33fcc8f0acabc870247293c8e1db65349594dc86dceeae"
+      "sha256": "5155315f7ce33416803e708f796754f415bd495bda4fc0561afb80c5b9d18b8f"
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/src/test/benchmarkSwitches.test.tsx",
@@ -7052,7 +7052,7 @@
     },
     {
       "path": "library/explorer-core/lib/gateway.ts",
-      "sha256": "9301889d0eda694131aa5a62fa773ee4895692cf11e1203c54b587ff6298b6ae"
+      "sha256": "ed5fb00f2c9bbdbd6b08bac1fd3e29fce82dbb964e8a0db77aefd13ac9a6723b"
     },
     {
       "path": "library/explorer-core/lib/gpu.test.ts",
@@ -7216,7 +7216,7 @@
     },
     {
       "path": "library/explorer-core/test/gateway.test.ts",
-      "sha256": "fbd2c410e6cc8de4f3888f2ab11ddc625474a0ffaa71bfe6bccb3484a1ae7807"
+      "sha256": "0794d5e63c81e8ab06444696ea0704a91134539a80ea067ddf734b9e3960a4ce"
     },
     {
       "path": "library/explorer-core/test/giftItem.test.ts",

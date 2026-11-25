@@ -36,10 +36,10 @@ export const DECENTRALAND_DOMAINS: readonly string[] = ['decentraland.org', 'dec
 
 /**
  * Whether a link may select this gateway with no prompt, for a session on `baseDomain`
- * (`Gateway::parse_link`): the page's own origin, or `https://gateway.<baseDomain>` or
- * `https://<baseDomain>` with no port or path when that is one of Decentraland's own deployments.
- * A path is never trusted: a node proxies other hosts under one (`/_scene/<host>`) with the
- * request's signature headers.
+ * (`Gateway::parse_link`): the page's own origin, or `https://gateway.<baseDomain>` with no port
+ * or path when that is one of Decentraland's own deployments. Their apex is the website, not a
+ * gateway. A path is never trusted: a node proxies other hosts under one (`/_scene/<host>`) with
+ * the request's signature headers.
  */
 export function isTrustedGatewayPrefix(prefix: string, baseDomain: string, ownOrigin: string | null = null): boolean {
   if (prefix === ownOrigin) return true
@@ -49,7 +49,7 @@ export function isTrustedGatewayPrefix(prefix: string, baseDomain: string, ownOr
     url.port === '' &&
     url.pathname === '/' &&
     DECENTRALAND_DOMAINS.includes(baseDomain) &&
-    (url.hostname === baseDomain || url.hostname === `gateway.${baseDomain}`)
+    url.hostname === `gateway.${baseDomain}`
   )
 }
 
@@ -57,7 +57,7 @@ export function isTrustedGatewayPrefix(prefix: string, baseDomain: string, ownOr
 export function gatewayLaunchWarning(gateway: Gateway | null): string {
   return gateway != null
     ? 'Sends sign-in, profiles, comms admission and every other Decentraland API request through this server. Whoever runs it would see your signed requests and choose the answers.'
-    : 'Is not an http(s) base url, so the Explorer ignores it and reaches every service directly. Check the link if you meant to use a gateway.'
+    : 'Is not an http(s) base url without credentials, query or fragment, so the Explorer ignores it and reaches every service directly. Check the link if you meant to use a gateway.'
 }
 
 /**
@@ -131,7 +131,9 @@ export function gatewaySignedPath(gateway: Gateway, raw: string, serviceBases: I
   const mount = gateway.prefix.slice(target.origin.length)
   if (mount !== '' && !mount.startsWith('/')) return null
   // the browser resolves dot segments before sending, and the proxy decodes separators first
-  const authorityAndPath = raw.slice(raw.indexOf('://') + 3)
+  const sep = raw.indexOf('://')
+  if (sep < 0) throw new Error('ambiguous gateway signing path')
+  const authorityAndPath = raw.slice(sep + 3)
   const publicTarget = authorityAndPath.split(/[?#]/)[0]
   const slash = publicTarget.indexOf('/')
   const rawPath = slash < 0 ? '/' : publicTarget.slice(slash)

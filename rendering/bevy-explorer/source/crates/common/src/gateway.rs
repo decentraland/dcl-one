@@ -35,8 +35,8 @@ impl Gateway {
     }
 
     /// A gateway a `decentraland://` link may select for a session on `base_domain`, when that is
-    /// one of Decentraland's own deployments: `https://gateway.<base_domain>` or
-    /// `https://<base_domain>`, with no port or path; a node proxies other hosts under a path
+    /// one of Decentraland's own deployments: `https://gateway.<base_domain>`, with no port or
+    /// path. Its apex is the website, not a gateway, and a node proxies other hosts under a path
     /// (`/_scene/<host>`). A link reaches the native client with no prompt, so any other gateway
     /// takes `--gateway`.
     pub fn parse_link(raw: &str, base_domain: &str) -> Result<Self, String> {
@@ -47,11 +47,11 @@ impl Gateway {
             && url.port().is_none()
             && url.path() == "/"
             && crate::base_domain::DECENTRALAND_DOMAINS.contains(&base_domain)
-            && (host == base_domain || host.strip_prefix("gateway.") == Some(base_domain));
+            && host.strip_prefix("gateway.") == Some(base_domain);
         if !trusted {
             return Err(format!(
-                "a link's gateway must be https://gateway.{base_domain} or https://{base_domain} \
-                 on a Decentraland deployment; pass --gateway for `{raw}`"
+                "a link's gateway must be https://gateway.{base_domain} on a Decentraland \
+                 deployment; pass --gateway for `{raw}`"
             ));
         }
         Ok(gateway)
@@ -379,7 +379,7 @@ mod gateway_tests {
     fn a_link_selects_only_its_decentraland_deployments_gateway_or_apex() {
         for (raw, domain) in [
             ("https://gateway.decentraland.org", "decentraland.org"),
-            ("https://decentraland.zone/", "decentraland.zone"),
+            ("https://gateway.decentraland.zone/", "decentraland.zone"),
         ] {
             assert_eq!(
                 Gateway::parse_link(raw, domain),
@@ -392,6 +392,8 @@ mod gateway_tests {
             "https://gateway.decentraland.org:8443",
             "https://gateway.decentraland.org/_scene/x",
             "https://decentraland.org/mount",
+            // the apex is the website, not a gateway
+            "https://decentraland.org",
             "https://cdn.decentraland.org",
             "https://gateway.decentraland.zone",
             "https://gateway.example.test",

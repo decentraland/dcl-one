@@ -74,7 +74,7 @@ and `--reels https://example.org/reels` when needed.
 The web client takes the same gateway as `?gateway=<url>`. Both HUD hosts route their own requests
 with the segments from the engine's service table (`library/explorer-core/lib/gateway.ts`) and
 hand the gateway to the engine; both sign the paths a `gateway.` host forwards. A link with any
-gateway other than `https://gateway.<base>` or `https://<base>`, with no port or path, for a
+gateway other than `https://gateway.<base>`, with no port or path, for a
 session on `decentraland.org` or `decentraland.zone`, stops on the untrusted-launch prompt; on
 `/play`, the page's own origin is trusted too. A gateway with a path is never trusted,
 since a node proxies other hosts under `/_scene/<host>`. A `decentraland://` link selects one with

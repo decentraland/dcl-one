@@ -290,12 +290,12 @@ fn apply_place_link(
     launch.base_domain = launch.base_domain.take().or(place.base_domain);
     if launch.gateway.is_none() {
         if let Some(gateway) = place.gateway {
-            let base_domain = launch
-                .base_domain
-                .as_deref()
-                .unwrap_or(common::base_domain::DEFAULT)
-                .trim()
-                .to_ascii_lowercase();
+            let base_domain = common::base_domain::normalize(
+                launch
+                    .base_domain
+                    .as_deref()
+                    .unwrap_or(common::base_domain::DEFAULT),
+            );
             common::gateway::Gateway::parse_link(&gateway, &base_domain)?;
             launch.gateway = Some(gateway);
         }

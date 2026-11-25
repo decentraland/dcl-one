@@ -75,6 +75,8 @@ describe('?gateway=', () => {
       ['https://gateway.decentraland.org/_scene/x', ['gateway']],
       ['http://gateway.decentraland.org', ['gateway']],
       ['https://gateway.decentraland.zone', ['gateway']],
+      // the apex is the website, not a gateway
+      ['https://decentraland.org', ['gateway']],
       // a value the engine would refuse is put to the user, not dropped silently
       ['ftp://gateway.decentraland.org', ['gateway']],
       ['https://gateway.decentraland.org/?', ['gateway']]

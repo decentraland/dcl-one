@@ -68,7 +68,9 @@ describe('gatewayProfileImage', () => {
 describe('isTrustedGatewayPrefix', () => {
   it("trusts the page's origin and an https origin of the session's Decentraland deployment", () => {
     expect(isTrustedGatewayPrefix('https://gateway.decentraland.org', 'decentraland.org')).toBe(true)
-    expect(isTrustedGatewayPrefix('https://decentraland.zone', 'decentraland.zone')).toBe(true)
+    expect(isTrustedGatewayPrefix('https://gateway.decentraland.zone', 'decentraland.zone')).toBe(true)
+    // the apex is the website, not a gateway
+    expect(isTrustedGatewayPrefix('https://decentraland.org', 'decentraland.org')).toBe(false)
     expect(isTrustedGatewayPrefix('http://node.example.test', 'node.example.test', 'http://node.example.test')).toBe(true)
     for (const [prefix, domain] of [
       ['https://gateway.decentraland.org/_scene/x', 'decentraland.org'],
@@ -105,6 +107,10 @@ describe('gatewaySignedPath', () => {
       expect(sign(`https://gateway.example.test/mount/${target}`), target).toBe(expected)
     }
     expect(sign('https://user@GATEWAY.example.test:443/mount/social-api/v1/search')).toBe('/v1/search')
+  })
+
+  it('refuses a url without `//`, as the engine does', () => {
+    expect(() => sign('https:gateway.example.test/mount/places/api/places')).toThrow()
   })
 
   it('keeps the public path elsewhere', () => {

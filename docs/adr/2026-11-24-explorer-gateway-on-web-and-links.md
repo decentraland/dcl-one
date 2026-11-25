@@ -31,10 +31,11 @@ Trust follows the base domain:
 
 - Only an origin is trusted, never a path under one: a node proxies other hosts under
   `/_scene/<host>` with the request's signature headers.
-- On web, any gateway other than `https://gateway.<base>` or `https://<base>`, with no port or
+- On web, any gateway other than `https://gateway.<base>`, with no port or
   path, where `<base>` is the session's base domain and one of `decentraland.org` and
   `decentraland.zone`, stops the boot on the untrusted-launch prompt. `/play` also trusts its own
-  origin.
+  origin. The apex of those domains is the website, not a gateway, so it is not trusted; an apex
+  gateway elsewhere takes `--gateway` or the prompt.
 - The native client takes from a link only such a gateway, because a link starts it without a
   prompt. A link with any other gateway stops the launch with a usage error rather than starting
   without it, so the session never runs against a destination the link did not name. Any other
