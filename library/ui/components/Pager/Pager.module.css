@@ -1,7 +1,7 @@
 @layer dcl.reset, dcl.foundations, dcl.components;
 
-/* Not in Figma: the Explorer HUD's pager. Its violet washes and the white hover of the `shop` arrows have no
-   token. */
+/* Not in Figma: the Explorer HUD's pager. Its violet washes, the white hover of the `shop` arrows and the 10px
+   corners of the `shop` current page have no token. */
 @layer dcl.components {
   .root {
     display: flex;
@@ -28,7 +28,7 @@
   .arrow {
     width: 26px;
     height: 26px;
-    background: rgba(161, 75, 243, 0.28); /* = HUD --pager-idle */
+    background: rgba(161, 75, 243, 0.28);
   }
   .arrow:hover {
     background: #a14bf3; /* = HUD --slot-edge */
@@ -46,11 +46,11 @@
     width: 34px;
     height: 34px;
     background: transparent;
-    font-size: 15px;
+    font-size: var(--dcl-font-size-button-lg);
     font-weight: 600;
   }
   .page:hover {
-    background: rgba(161, 75, 243, 0.28); /* = HUD --pager-idle */
+    background: rgba(161, 75, 243, 0.28);
   }
   .current,
   .current:hover {
@@ -87,7 +87,7 @@
     align-items: center;
     justify-content: center;
     color: var(--dcl-neutrals-snow);
-    font-size: 15px;
+    font-size: var(--dcl-font-size-button-lg);
     font-weight: 600;
   }
 }

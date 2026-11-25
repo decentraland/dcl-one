@@ -73,7 +73,8 @@ describe('image metadata gate', () => {
     expect(files.filter((file) => file.startsWith(SHARED_ASSETS) && /\.webp$/.test(file))).toEqual([
       'library/ui/assets/custom-welcome-background.webp',
       'library/ui/assets/logo-pattern.webp',
-      'library/ui/assets/skeleton-sweep.webp'
+      'library/ui/assets/skeleton-sweep.webp',
+      'library/ui/assets/slider-handle.webp'
     ])
   })
 
