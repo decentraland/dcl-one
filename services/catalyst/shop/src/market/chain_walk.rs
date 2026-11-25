@@ -53,7 +53,7 @@ pub use crate::chain_index::catalogue::INDEXER_COLLECTIONS;
 pub const INDEXER_NFT: &str = "nft";
 pub const INDEXER_SALES: &str = "sales";
 pub const INDEXER_TRADE_EVENTS: &str = "trade_events";
-pub const INDEXER_THIRD_PARTY_REGISTRY: &str = "third_party_registry";
+pub const INDEXER_THIRD_PARTY_REGISTRY: &str = crate::chain_index::third_party_index::INDEXER;
 
 /// The indexers whose projection triggers in `schemas/30_shop.sql` require
 /// writers to lock the cursor before touching the triggered rows.

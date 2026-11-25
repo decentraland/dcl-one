@@ -1,7 +1,7 @@
 //! Polygon Third Party Registry snapshots, versioned by event position so
 //! readers can stay on the published cursor while another window is indexed.
 
-use std::collections::{BTreeSet, HashMap};
+use std::collections::HashMap;
 
 use alloy_primitives::{Address, B256, U256, hex};
 use alloy_sol_types::{SolEvent, sol};
@@ -10,7 +10,6 @@ use axum::Json;
 use axum::extract::{Path, State};
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
-use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use sqlx::types::Json as SqlJson;
 use sqlx::{PgConnection, PgPool};
@@ -21,6 +20,7 @@ use super::chain_walk::{
 use super::third_party::{ThirdPartyProvider, TpContract};
 use super::{MarketplaceState, SharedState, Source, lambdas_error, unavailable};
 use crate::chain_index::rpc::{RpcLog, hex_to_i64};
+use crate::chain_index::third_party_index::{self, Metadata, Provider, Receipt};
 
 pub const CONTRACT: &str = "0x1c436c1efb4608dffdc8bace99d2b03c314f3348";
 pub const START_BLOCK: u64 = 26_860_700;
@@ -53,85 +53,61 @@ const TOPICS: [B256; 7] = [
     Registry::ItemSlotsConsumed::SIGNATURE_HASH,
 ];
 
-#[derive(Deserialize, Serialize)]
-struct Metadata {
-    name: String,
-    description: String,
-    contracts: Vec<TpContract>,
+fn refresh_metadata(provider: &mut Provider, raw: String, resolver: String) {
+    provider.resolver =
+        (resolver.starts_with("https://") || resolver.starts_with("http://")).then_some(resolver);
+    provider.raw_metadata = raw;
+    let parts = provider.raw_metadata.split(':').collect::<Vec<_>>();
+    let (name, description, contracts) = match parts.as_slice() {
+        ["tp", _, name, description] => (name, description, None),
+        ["tp", _, name, description, contracts] => (name, description, Some(*contracts)),
+        _ => {
+            provider.metadata = None;
+            return;
+        }
+    };
+    let contracts = match contracts {
+        Some(raw) => raw
+            .split(';')
+            .filter_map(
+                |part| match part.split('-').collect::<Vec<_>>().as_slice() {
+                    [network, address] if !network.is_empty() && !address.is_empty() => {
+                        Some(TpContract {
+                            network: network.to_lowercase(),
+                            address: address.to_lowercase(),
+                        })
+                    }
+                    _ => None,
+                },
+            )
+            .collect(),
+        None => provider
+            .metadata
+            .take()
+            .map(|m| m.contracts)
+            .unwrap_or_default(),
+    };
+    provider.metadata = Some(Metadata {
+        name: (*name).to_owned(),
+        description: (*description).to_owned(),
+        contracts,
+    });
 }
 
-#[derive(Deserialize, Serialize)]
-struct Provider {
-    id: String,
-    approved: bool,
-    root: Option<String>,
-    resolver: Option<String>,
-    raw_metadata: String,
-    metadata: Option<Metadata>,
-    managers: BTreeSet<String>,
-    programmatic: bool,
-    max_items: String,
-    consumed_slots: String,
-}
-
-impl Provider {
-    fn refresh_metadata(&mut self, raw: String, resolver: String) {
-        self.resolver = (resolver.starts_with("https://") || resolver.starts_with("http://"))
-            .then_some(resolver);
-        self.raw_metadata = raw;
-        let parts = self.raw_metadata.split(':').collect::<Vec<_>>();
-        let (name, description, contracts) = match parts.as_slice() {
-            ["tp", _, name, description] => (name, description, None),
-            ["tp", _, name, description, contracts] => (name, description, Some(*contracts)),
-            _ => {
-                self.metadata = None;
-                return;
-            }
-        };
-        // The optional contract field replaces the previous linked list when supplied.
-        let contracts = match contracts {
-            Some(raw) => raw
-                .split(';')
-                .filter_map(
-                    |part| match part.split('-').collect::<Vec<_>>().as_slice() {
-                        [network, address] if !network.is_empty() && !address.is_empty() => {
-                            Some(TpContract {
-                                network: network.to_lowercase(),
-                                address: address.to_lowercase(),
-                            })
-                        }
-                        _ => None,
-                    },
-                )
-                .collect(),
-            None => self
-                .metadata
-                .take()
-                .map(|m| m.contracts)
-                .unwrap_or_default(),
-        };
-        self.metadata = Some(Metadata {
-            name: (*name).to_owned(),
-            description: (*description).to_owned(),
-            contracts,
-        });
-    }
-
-    fn details(&self) -> anyhow::Result<Value> {
-        let max: U256 = self.max_items.parse()?;
-        let consumed: U256 = self.consumed_slots.parse()?;
-        Ok(json!({
-            "id": self.id,
-            "name": self.metadata.as_ref().map(|m| &m.name),
-            "description": self.metadata.as_ref().map(|m| &m.description),
-            "managers": self.managers,
-            "isApproved": self.approved,
-            "isProgrammatic": self.programmatic,
-            "maxItems": self.max_items,
-            "consumedSlots": self.consumed_slots,
-            "availableSlots": max.saturating_sub(consumed).to_string(),
-        }))
-    }
+fn view(provider: &Provider) -> anyhow::Result<Value> {
+    let max: U256 = provider.max_items.parse()?;
+    let consumed: U256 = provider.consumed_slots.parse()?;
+    Ok(json!({
+        "id": provider.id,
+        "name": provider.metadata.as_ref().map(|m| &m.name),
+        "description": provider.metadata.as_ref().map(|m| &m.description),
+        "managers": provider.managers,
+        "isApproved": provider.approved,
+        "isProgrammatic": provider.programmatic,
+        "maxItems": provider.max_items,
+        "consumedSlots": provider.consumed_slots,
+        "availableSlots": max.saturating_sub(consumed).to_string(),
+    }))
 }
 
 enum Change {
@@ -157,14 +133,6 @@ struct Event {
     index: i32,
     id: String,
     change: Change,
-}
-
-#[derive(Serialize)]
-struct Receipt {
-    hash: String,
-    quantity: String,
-    signer: String,
-    curator: String,
 }
 
 fn decode(log: &RpcLog) -> anyhow::Result<Event> {
@@ -311,7 +279,7 @@ fn apply(
                 max_items: slots.to_string(),
                 consumed_slots: "0".into(),
             };
-            provider.refresh_metadata(metadata, resolver);
+            refresh_metadata(&mut provider, metadata, resolver);
             return Ok(Some((provider, None)));
         }
         change => change,
@@ -335,7 +303,7 @@ fn apply(
                     provider.managers.remove(&manager);
                 }
             }
-            provider.refresh_metadata(event.metadata, event.resolver);
+            refresh_metadata(&mut provider, event.metadata, event.resolver);
             add_slots(&mut provider.max_items, event.slots)?;
         }
         Change::Bought(slots) => add_slots(&mut provider.max_items, slots)?,
@@ -474,42 +442,8 @@ pub(super) fn enabled(state: &MarketplaceState) -> bool {
     state.settings.market.indexes.third_party_registry_enabled
 }
 
-async fn read(
-    pool: &PgPool,
-    id: Option<&str>,
-    manager: Option<&str>,
-    approved: bool,
-) -> anyhow::Result<Option<Vec<Provider>>> {
-    let result = sqlx::query_scalar::<_, Option<SqlJson<Vec<Provider>>>>(
-        "WITH published AS (
-           SELECT folded_block FROM shop.chain_cursor
-           WHERE indexer = $1 AND network = 'matic' AND chain_id = 137 AND full_history
-             AND quarantined_at IS NULL AND diverged_at IS NULL AND folded_block IS NOT NULL
-             AND folded_at BETWEEN timezone('UTC', now()) - interval '30 minutes' AND timezone('UTC', now())
-         ), latest AS (
-           SELECT DISTINCT ON (e.provider_id) e.provider_id, e.state
-           FROM shop.third_party_registry_event e CROSS JOIN published p
-           WHERE e.block_number <= p.folded_block AND ($2::text IS NULL OR e.provider_id = $2)
-           ORDER BY e.provider_id, e.block_number DESC, e.log_index DESC
-         )
-         SELECT CASE WHEN EXISTS (SELECT 1 FROM published)
-           THEN coalesce(jsonb_agg(state ORDER BY provider_id), '[]'::jsonb)
-         END
-         FROM latest
-         WHERE ($3::text IS NULL OR state->'managers' ? $3)
-           AND (NOT $4 OR state->'approved' = 'true'::jsonb)",
-    )
-    .bind(INDEXER_THIRD_PARTY_REGISTRY)
-    .bind(id)
-    .bind(manager)
-    .bind(approved)
-    .fetch_one(pool)
-    .await?;
-    Ok(result.map(|rows| rows.0))
-}
-
 pub(super) async fn approved_providers(pool: &PgPool) -> Result<Vec<ThirdPartyProvider>, String> {
-    let providers = read(pool, None, None, true)
+    let providers = third_party_index::providers(pool, None, None, true)
         .await
         .map_err(|err| format!("third-party registry index: {err}"))?
         .ok_or_else(|| "third-party registry index has no current publication".to_owned())?;
@@ -545,11 +479,11 @@ async fn details(
             "The third-party registry index is disabled",
         ));
     }
-    match read(&state.pool, id, manager, false)
+    match third_party_index::providers(&state.pool, id, manager, false)
         .await
         .and_then(|providers| {
             providers
-                .map(|providers| providers.iter().map(Provider::details).collect())
+                .map(|providers| providers.iter().map(view).collect())
                 .transpose()
         }) {
         Ok(Some(providers)) => Ok(providers),
@@ -1239,6 +1173,14 @@ mod tests {
             })
         );
 
+        let consumed = format!("{:#x}", B256::repeat_byte(2));
+        assert_eq!(
+            third_party_index::receipts(pool, ID, &consumed)
+                .await
+                .unwrap(),
+            Some(vec![]),
+            "a receipt above the published block is not read"
+        );
         sqlx::query("UPDATE shop.chain_cursor SET folded_block = last_block WHERE indexer = $1")
             .bind(INDEXER_THIRD_PARTY_REGISTRY)
             .execute(pool)
@@ -1272,15 +1214,22 @@ mod tests {
             get(&state, integrations).await.1,
             json!({"data": [{"urn": LEGACY_ID}]})
         );
-        let receipt: Value = sqlx::query_scalar(
-            "SELECT receipt FROM shop.third_party_registry_event WHERE block_number = $1 AND receipt IS NOT NULL",
-        ).bind(START + 1).fetch_one(pool).await.unwrap();
         assert_eq!(
-            receipt,
-            json!({
-                "hash": format!("{:#x}", B256::repeat_byte(2)), "quantity": "3",
-                "signer": format!("{NEW_MANAGER:#x}"), "curator": format!("{MANAGER:#x}"),
-            })
+            third_party_index::receipts(pool, ID, &consumed)
+                .await
+                .unwrap(),
+            Some(vec![Receipt {
+                hash: consumed.clone(),
+                quantity: "3".into(),
+                signer: format!("{NEW_MANAGER:#x}"),
+                curator: format!("{MANAGER:#x}"),
+            }])
+        );
+        assert_eq!(
+            third_party_index::receipts(pool, LEGACY_ID, &consumed)
+                .await
+                .unwrap(),
+            Some(vec![])
         );
 
         let mut tx = pool.begin().await.unwrap();
@@ -1319,6 +1268,12 @@ mod tests {
             "UPDATE shop.chain_cursor SET folded_at = timezone('UTC', now()) - interval '31 minutes' WHERE indexer = $1",
         ).bind(INDEXER_THIRD_PARTY_REGISTRY).execute(pool).await.unwrap();
         assert_eq!(get(&state, &path).await.0, StatusCode::SERVICE_UNAVAILABLE);
+        assert_eq!(
+            third_party_index::receipts(pool, ID, &consumed)
+                .await
+                .unwrap(),
+            None
+        );
         drop(fallback_state);
         drop(state);
         db.drop().await;

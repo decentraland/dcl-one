@@ -129,11 +129,7 @@ impl Default for Caches {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, serde::Deserialize, serde::Serialize)]
-pub struct TpContract {
-    pub network: String,
-    pub address: String,
-}
+pub use crate::chain_index::third_party_index::Contract as TpContract;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ThirdPartyProvider {
