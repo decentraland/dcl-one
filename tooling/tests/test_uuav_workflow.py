@@ -75,19 +75,27 @@ class UuavWorkflowTest(unittest.TestCase):
         self.assertIn('name: uuav-windows-x86_64\n', windows)
         self.assertIn('--example smoke --target x86_64-pc-windows-gnu', windows)
         self.assertIn('UUAV_FORCE_SW_DECODE=1 timeout 300 ./smoke.exe', windows)
+        # The AV1 clip is a file of this tree, so the smoke needs no other host for it.
+        self.assertIn('UUAV_SMOKE_NO_AUDIO=1 timeout 300 ./smoke.exe "$GITHUB_WORKSPACE/$AV1_SAMPLE"', windows)
+        sample = re.search(r'^  AV1_SAMPLE: (\S+)$', WORKFLOW.read_text(), re.M).group(1)
+        self.assertTrue((ROOT / sample).is_file(), sample)
         # build.sh is the developer path: its set is checked, and the smoke takes the downloaded one.
         developer = next(s for s in steps(windows) if 'bash build.sh' in s)
         self.assertIn('stage-dist.py host "$RUNNER_TEMP/developer-set"', developer)
         smoke = next(s for s in steps(windows) if './smoke.exe' in s)
         self.assertIn('cd "$RUNNER_TEMP/dist" &&', smoke)
         self.assertIn('path: ${{ runner.temp }}/dist\n', windows)
+        # The tests run on the native prefix first, then on the downloaded libraries that ship.
+        shipped = next(s for s in steps(windows) if 'UUAV_EXPECT_TRIMMED_FFMPEG' in s)
+        self.assertIn('PATH="$(cygpath -u "$RUNNER_TEMP/dist"):$PATH" cargo test --workspace --target x86_64-pc-windows-gnu', shipped)
+        self.assertLess(windows.index('name: uuav-windows-x86_64\n'), windows.index('UUAV_EXPECT_TRIMMED_FFMPEG'))
         self.assertEqual(jobs()['nix'].count('name: uuav-windows-x86_64\n'), 1)
 
     def test_the_windows_ffmpeg_pin_is_a_month_end_release_with_a_hash(self):
         pin = json.loads((ROOT / 'tooling/uuav/ffmpeg-windows.json').read_text())
         year, month, day = map(int, re.fullmatch(r'autobuild-(\d{4})-(\d{2})-(\d{2})-\d{2}-\d{2}', pin['release_tag']).groups())
         self.assertEqual(day, calendar.monthrange(year, month)[1])
-        self.assertRegex(pin['asset'], r'^ffmpeg-n8\.1(\.\d+)?(-\d+-g[0-9a-f]+)?-win64-lgpl-shared-8\.1\.zip$')
+        self.assertRegex(pin['asset'], r'^ffmpeg-n9\.0(\.\d+)?(-\d+-g[0-9a-f]+)?-win64-lgpl-shared-9\.0\.zip$')
         self.assertEqual(pin['url'], f"{pin['repo']}/releases/download/{pin['release_tag']}/{pin['asset']}")
         self.assertRegex(pin['sha256'], r'^[0-9a-f]{64}$')
 

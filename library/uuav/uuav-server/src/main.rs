@@ -152,6 +152,9 @@ fn parse_args() -> anyhow::Result<Args> {
 fn main() -> anyhow::Result<()> {
     let args = parse_args()?;
 
+    // TLS roots come from the OS store, which the sandbox denies: read now.
+    let trust = uuav_core::trust::init();
+
     // Lock down before adopting the channel or parsing any input. Fail
     // closed: on error the helper exits and the client sees channel EOF.
     #[cfg(target_os = "macos")]
@@ -200,6 +203,21 @@ fn main() -> anyhow::Result<()> {
     channel.send(&protocol::ToClient::Log {
         sink: protocol::LogSink::Log,
         line: format!("uuav-helper: seccomp active, {}", sandboxed.landlock),
+    })?;
+    let unreadable = if trust.load_errors.is_empty() {
+        String::new()
+    } else {
+        format!(": {}", trust.load_errors.join("; "))
+    };
+    channel.send(&protocol::ToClient::Log {
+        sink: protocol::LogSink::Log,
+        line: format!(
+            "uuav-helper: tls roots: {} from the system store, {} bundled, {} unreadable{}",
+            trust.system_roots,
+            trust.bundled_roots,
+            trust.load_errors.len(),
+            unreadable
+        ),
     })?;
 
     adapter::run(
