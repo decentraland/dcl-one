@@ -1203,6 +1203,11 @@ async fn catalog_inner(
         Ok(filters) => filters,
         Err(e) => return e.into_response(),
     };
+    // The signer check may call the chain (EIP-1654): before the snapshot
+    // opens, so no connection waits on it; its failure answers after the
+    // gate's.
+    let route = if is_v2 { "/v2/catalog" } else { "/v1/catalog" };
+    let picked_by = optional_signer(state.eip1654.as_deref(), &headers, "get", route).await;
     // Every row carries the item's minter price: the money rule.
     let mut read = match catalogue::begin(
         &state,
@@ -1221,8 +1226,7 @@ async fn catalog_inner(
     if is_v2 && let Err(envelope) = read.trades_ready(&state).await {
         return envelope;
     }
-    let route = if is_v2 { "/v2/catalog" } else { "/v1/catalog" };
-    let picked_by = match optional_signer(state.eip1654.as_deref(), &headers, "get", route).await {
+    let picked_by = match picked_by {
         Ok(s) => s,
         Err(e) => return e.into_response(),
     };

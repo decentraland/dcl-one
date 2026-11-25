@@ -116,6 +116,19 @@ async fn call(
     (status, value)
 }
 
+/// Whether the catalogue gate lets a descriptive read of the items through.
+async fn items_ready(state: &super::MarketplaceState) -> Result<(), axum::response::Response> {
+    super::catalogue::begin(
+        state,
+        super::catalogue::Purpose::Describe,
+        &[mirrors::Mirror::Items],
+        None,
+        super::catalogue::Access::ReadOnly,
+    )
+    .await
+    .map(|_| ())
+}
+
 async fn get(router: Router, uri: &str) -> (StatusCode, Value) {
     call(router, "GET", uri, HeaderMap::new(), None).await
 }
@@ -534,11 +547,7 @@ async fn upgrading_a_completed_mainnet_mirror_keeps_the_catalogue_available() {
     assert_eq!(after.last_complete_pass_at, before.last_complete_pass_at);
     assert_eq!(after.last_complete_pass_rows, Some(17));
     assert_eq!(after.cursor_id.as_deref(), Some("old-key"));
-    assert!(
-        mirrors::require_ready(&state, mirrors::Mirror::Items)
-            .await
-            .is_ok()
-    );
+    assert!(items_ready(&state).await.is_ok());
     own.drop().await;
 }
 
@@ -693,7 +702,6 @@ async fn the_mirrors_walk_the_subgraph_and_every_market_route_answers_over_them(
     .execute(&pool)
     .await
     .unwrap();
-    state.mirror_ready.clear();
 
     // A native (USD-pegged) primary listing, a MANA nft resale and a bid over the mirrored items.
     let (primary_id, primary_hash) = insert_trade(
@@ -2628,6 +2636,94 @@ async fn seed_item_row(pool: &PgPool, contract: &str, item_id: &str, creator: &s
     .execute(pool)
     .await
     .unwrap();
+}
+
+/// The routes that read the sales reader (a per-network subgraph query) or
+/// the signer's EIP-1654 call make that call before their catalogue snapshot
+/// opens: with the subgraph hanging, the requests waiting on it hold no pooled
+/// connection, and the other catalogue routes keep answering on a pool of two.
+#[tokio::test]
+async fn a_hanging_subgraph_holds_no_catalogue_connection() {
+    let Some(pool) = crate::db::scratch::isolated_pool(4).await else {
+        return;
+    };
+    super::trade_events::tests::publish_cursors(&pool).await;
+    sqlx::query(
+        "INSERT INTO shop.mirror_state (mirror, network, source_url, last_complete_pass_at) \
+         SELECT m, n, 'test', timezone('UTC', now()) \
+         FROM unnest(ARRAY['collections', 'items']) m CROSS JOIN unnest(ARRAY['ethereum', 'matic']) n",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+    sqlx::query("INSERT INTO economy.price_snapshots (source, mana_usd, taken_at) VALUES ('coingecko', 0.02, timezone('UTC', now()))")
+        .execute(&pool)
+        .await
+        .unwrap();
+    // A subgraph that accepts and never answers.
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let hanging = format!("http://{}/subgraph", listener.local_addr().unwrap());
+    let held = tokio::spawn(async move {
+        let mut sockets = Vec::new();
+        while let Ok((socket, _)) = listener.accept().await {
+            sockets.push(socket);
+        }
+    });
+    let narrow = sqlx::postgres::PgPoolOptions::new()
+        .max_connections(2)
+        .acquire_timeout(Duration::from_secs(3))
+        .connect_with((*pool.connect_options()).clone())
+        .await
+        .unwrap();
+    let state = Arc::new(super::MarketplaceState::new(
+        narrow.clone(),
+        crate::http::Outbound::for_tests(),
+        Settings {
+            eth_collections_subgraph_url: Some(hanging.clone()),
+            matic_collections_subgraph_url: Some(hanging),
+            data_writes_enabled: true,
+            ..Settings::for_tests()
+        },
+    ));
+    state.test_allow_loopback.store(true, Ordering::Relaxed);
+    let waiting: Vec<_> = [
+        "/v1/trendings",
+        "/v1/trendings",
+        "/v3/catalog/trending?first=3",
+        "/v3/catalog/creators",
+        "/v3/catalog/suggested?first=2",
+        "/v3/catalog/suggest?search=hat",
+    ]
+    .into_iter()
+    .map(|uri| {
+        let state = state.clone();
+        tokio::spawn(async move { get(market_router(state), uri).await })
+    })
+    .collect();
+    tokio::time::sleep(Duration::from_millis(500)).await;
+    for task in &waiting {
+        assert!(!task.is_finished(), "a route answered without its subgraph");
+    }
+    for uri in [
+        "/v1/collections?first=1",
+        "/v1/contracts?first=1",
+        "/v1/catalog?first=1",
+    ] {
+        let (status, body) = tokio::time::timeout(
+            Duration::from_secs(10),
+            get(market_router(state.clone()), uri),
+        )
+        .await
+        .unwrap_or_else(|_| panic!("{uri} waited behind the hanging subgraph"));
+        assert_eq!(status, StatusCode::OK, "{uri}: {body}");
+    }
+    for task in waiting {
+        task.abort();
+    }
+    held.abort();
+    drop(state);
+    narrow.close().await;
+    pool.close().await;
 }
 
 /// The pages of one read are read at its instant: a native listing and a
@@ -4784,11 +4880,8 @@ async fn the_mirror_walks_ethereum_while_the_index_owns_polygon_then_takes_polyg
             .await
             .unwrap()
     );
-    state.mirror_ready.clear();
     assert_eq!(contracts("matic").await, Vec::<String>::new());
-    let err = mirrors::require_ready(&state, mirrors::Mirror::Items)
-        .await
-        .unwrap_err();
+    let err = items_ready(&state).await.unwrap_err();
     assert_eq!(
         err.status(),
         StatusCode::SERVICE_UNAVAILABLE,
@@ -4803,12 +4896,7 @@ async fn the_mirror_walks_ethereum_while_the_index_owns_polygon_then_takes_polyg
     assert_eq!((owned, generation), (false, 2));
 
     tick().await;
-    state.mirror_ready.clear();
-    assert!(
-        mirrors::require_ready(&state, mirrors::Mirror::Items)
-            .await
-            .is_ok()
-    );
+    assert!(items_ready(&state).await.is_ok());
     assert_eq!(
         contracts("matic").await,
         vec![mirrored.clone()],
@@ -5055,6 +5143,195 @@ async fn lambdas_never_read_a_subgraph_for_a_network_the_index_owns() {
     assert_eq!(code, StatusCode::OK, "{body}");
     assert!(asked() > 0, "the graph answered for the mirrors");
     own.drop().await;
+}
+
+/// Every gated route follows an owned network's publication: all answer a
+/// fresh one; a publication older than the money window refuses the priced
+/// and authorizing routes (`collections-index`) while the descriptive ones
+/// answer; a rewind refuses them all. The creator directory is filed under
+/// the sources that serve each network, so a hand-back files it anew.
+#[tokio::test]
+async fn every_gated_route_follows_an_owned_networks_publication() {
+    use super::readers::Ttl;
+    let Some(pool) = crate::db::scratch::isolated_pool(4).await else {
+        return;
+    };
+    let state = Arc::new(super::MarketplaceState::new(
+        pool.clone(),
+        crate::http::Outbound::for_tests(),
+        market_settings("http://127.0.0.1:9", "http://127.0.0.1:9", true),
+    ));
+    super::trade_events::tests::publish_cursors(&pool).await;
+    let polygon = contract_of(&tag(), 1);
+    seed_item_row(&pool, &polygon, "0", CREATOR).await;
+    sqlx::query("UPDATE shop.items SET search_is_collection_approved = true")
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query(
+        "INSERT INTO shop.mirror_state (mirror, network, source_url, last_complete_pass_at) \
+         SELECT m, n, 'test', timezone('UTC', now()) \
+         FROM unnest(ARRAY['collections', 'items']) m CROSS JOIN unnest(ARRAY['ethereum', 'matic']) n",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+    sqlx::query("INSERT INTO economy.price_snapshots (source, mana_usd, taken_at) VALUES ('coingecko', 0.25, timezone('UTC', now()))")
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query(
+        "INSERT INTO shop.chain_cursor (indexer, network, start_block, last_block, last_block_hash, \
+                full_history, chain_id, folded_block, folded_at) \
+         VALUES ('collections', 'matic', 1, 100, '0xabababababababababababababababababababababababababababababababab', true, 137, 100, timezone('UTC', now()))",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+    sqlx::query(
+        "INSERT INTO shop.collection_projection (network, owned_at, projected_through, pending, generation) \
+         VALUES ('matic', timezone('UTC', now()), 100, 0, 1)",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+    let app = || market_router(state.clone());
+    let priced = [
+        "/v1/catalog?first=1".to_string(),
+        "/v2/catalog?first=1".to_string(),
+        "/v1/items?first=1".to_string(),
+        "/v3/catalog/items?first=1".to_string(),
+        format!("/v1/prices?contractAddress={polygon}&category=wearable"),
+        "/v3/catalog/shop".to_string(),
+        "/v3/catalog/legacy".to_string(),
+        "/v3/catalog/unified?groupBy=item".to_string(),
+        format!("/v3/catalog/importable?seller={CREATOR}"),
+        "/v3/catalog/suggest?search=item".to_string(),
+    ];
+    let descriptive = [
+        "/v1/collections".to_string(),
+        "/v1/contracts?first=10".to_string(),
+        "/v3/catalog/creators/search?search=cc".to_string(),
+    ];
+    let import = || async {
+        let path = crate::import::CHECK_PATH;
+        call(
+            app(),
+            "POST",
+            path,
+            signed_headers("post", path, "{}", true).await,
+            Some(json!({ "chainId": 137, "contractAddress": polygon, "itemId": "0" })),
+        )
+        .await
+    };
+    let answer = |status: StatusCode, body: &Value| -> Option<String> {
+        (status != StatusCode::OK).then(|| body["source"].as_str().unwrap_or("?").to_string())
+    };
+    let mut got = Vec::new();
+    for uri in priced.iter().chain(&descriptive) {
+        let (status, body) = get(app(), uri).await;
+        got.push((uri.clone(), answer(status, &body), body));
+    }
+    let (status, body) = import().await;
+    got.push(("import".into(), answer(status, &body), body));
+    for (uri, refused, body) in &got {
+        assert_eq!(refused, &None, "a fresh publication: {uri}: {body}");
+    }
+
+    sqlx::query("UPDATE shop.chain_cursor SET folded_at = timezone('UTC', now()) - interval '2 hours' WHERE indexer = 'collections'")
+        .execute(&pool)
+        .await
+        .unwrap();
+    for uri in &priced {
+        let (status, body) = get(app(), uri).await;
+        assert_eq!(
+            answer(status, &body).as_deref(),
+            Some("collections-index"),
+            "an old publication: {uri}: {body}"
+        );
+    }
+    let (status, body) = import().await;
+    assert_eq!(
+        answer(status, &body).as_deref(),
+        Some("collections-index"),
+        "{body}"
+    );
+    for uri in &descriptive {
+        let (status, body) = get(app(), uri).await;
+        assert_eq!(
+            status,
+            StatusCode::OK,
+            "a description of an old publication: {uri}: {body}"
+        );
+    }
+
+    sqlx::query("UPDATE shop.chain_cursor SET folded_block = NULL, folded_at = NULL WHERE indexer = 'collections'")
+        .execute(&pool)
+        .await
+        .unwrap();
+    for uri in priced.iter().chain(&descriptive) {
+        let (status, body) = get(app(), uri).await;
+        assert_eq!(
+            answer(status, &body).as_deref(),
+            Some("collections-index"),
+            "a rewind: {uri}: {body}"
+        );
+    }
+    let (status, body) = import().await;
+    assert_eq!(
+        answer(status, &body).as_deref(),
+        Some("collections-index"),
+        "{body}"
+    );
+
+    // The creator directory: filed under the index serving Polygon, then
+    // anew under the mirrors once Polygon is handed back.
+    sqlx::query("UPDATE shop.chain_cursor SET folded_block = 100, folded_at = timezone('UTC', now()) WHERE indexer = 'collections'")
+        .execute(&pool)
+        .await
+        .unwrap();
+    let filed = |sources: &'static str| {
+        let state = state.clone();
+        async move {
+            let key = super::search::directory_key(sources);
+            tokio::time::timeout(Duration::from_secs(20), async {
+                while !state.readers.holds(Ttl::M15, &key) {
+                    tokio::time::sleep(Duration::from_millis(20)).await;
+                }
+            })
+            .await
+            .is_ok()
+        }
+    };
+    let (status, body) = get(app(), "/v3/catalog/unified?groupBy=item&first=3").await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert!(filed("mirror|index:matic").await);
+    assert!(
+        !state
+            .readers
+            .holds(Ttl::M15, &super::search::directory_key("mirror"))
+    );
+    assert!(
+        super::collections_projection::hand_back(&pool, super::chain_walk::ChainNet::Matic)
+            .await
+            .unwrap()
+    );
+    sqlx::query(
+        "INSERT INTO shop.mirror_state (mirror, network, source_url, last_complete_pass_at) \
+         SELECT m, 'matic', 'test', timezone('UTC', now()) FROM unnest(ARRAY['collections', 'items']) m \
+         ON CONFLICT (mirror, network) DO UPDATE SET last_complete_pass_at = EXCLUDED.last_complete_pass_at",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+    let (status, body) = get(app(), "/v3/catalog/unified?groupBy=item&first=3").await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert!(
+        filed("mirror").await,
+        "an ownership change files the directory anew"
+    );
+    drop(state);
+    pool.close().await;
 }
 
 /// A catalogue route answers owned Polygon from the index's publication and

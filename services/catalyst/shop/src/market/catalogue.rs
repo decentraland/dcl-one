@@ -23,9 +23,12 @@
 //!   walked past the publication, so the fold is still every collection's
 //!   state.
 //!
-//! A network the mirrors serve keeps the mirrors' rule, unchanged
-//! ([`mirrors::require_ready`], [`mirrors::require_priced`]), over the
-//! configured networks the index does not own.
+//! A network the mirrors serve follows the mirrors' passes
+//! (`shop.mirror_state`): every stored pass bound to the chain this node
+//! serves, and a complete pass of each mirror the route reads for every
+//! network it may return rows of and every configured network the index does
+//! not own, the items one within its money budget for a priced read
+//! ([`mirrors::price_verdict`]).
 //!
 //! [`CatalogueRead::key`] names what was read (source, network and copy), so
 //! a memo filed under one read never answers for another: a mirror pass, a
@@ -233,7 +236,7 @@ pub struct NetworkState {
 }
 
 impl NetworkState {
-    /// `mirror`'s row for this network, as [`mirrors::copy_of`] reads it.
+    /// `mirror`'s row for this network, as [`mirrors::bound`] reads it.
     fn pass_row(&self, mirror: Mirror) -> mirrors::PassRow {
         match mirror {
             Mirror::Collections => (
@@ -338,17 +341,18 @@ struct MirrorScope<'a> {
 /// The mirrors' verdict for a read that may return rows of the networks the
 /// index does not own:
 /// - every mirror pass of those networks is bound to the chain this node
-///   serves ([`mirrors::bound`], main's rule over every stored publication,
-///   a network no subgraph is configured for included: its rows are read);
+///   serves ([`mirrors::bound`], over every stored publication, a network no
+///   subgraph is configured for included: its rows are read);
 /// - each network the read may return rows of (`returnable`), and with
 ///   subgraphs configured each one the index does not own (`served`), has a
 ///   complete pass of each mirror the read needs, the items one within its
-///   money budget for a priced read; each of those passes files the read
-///   (its key). A returnable network without a pass and without a subgraph
-///   names its subgraph: no pass can come;
+///   money budget for a priced read (an authorizing read takes any complete
+///   pass, as the import check always has); each of those passes files the
+///   read (its key). A returnable network without a pass and without a
+///   subgraph names its subgraph: no pass can come;
 /// - with no subgraph configured, a priced read names the subgraph of the
-///   first network no index owns, and so does a descriptive read when no
-///   network is owned and no pass is recorded.
+///   first network no index owns, and so does any other read when no network
+///   is owned and no pass is recorded.
 fn mirror_verdict(
     state: &MarketplaceState,
     scope: &MirrorScope<'_>,
@@ -389,7 +393,7 @@ fn mirror_verdict(
                 ),
             ));
         }
-        if !configured && purpose != Purpose::Describe {
+        if !configured && purpose == Purpose::Priced {
             return Err(missing_subgraph(*mirror));
         }
         let mut required: Vec<Network> = served.to_vec();
@@ -436,7 +440,7 @@ fn mirror_verdict(
                 }
             }
         }
-        if purpose != Purpose::Describe
+        if purpose == Purpose::Priced
             && *mirror == Mirror::Items
             && let Some(oldest) = passes.iter().map(|(_, at)| *at).min()
         {
@@ -1151,7 +1155,7 @@ mod tests {
     }
 
     /// The mirrors' rule binds every pass they serve to this node's chain
-    /// ([`mirrors::copy_of`]): one proven on another chain refuses a read of
+    /// ([`mirrors::bound`]): one proven on another chain refuses a read of
     /// a network they serve, and is ignored on a network the index owns.
     #[tokio::test]
     async fn a_mirror_pass_of_another_chain_refuses_only_where_the_mirror_serves() {

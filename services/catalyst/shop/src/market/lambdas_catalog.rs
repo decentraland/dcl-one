@@ -1032,31 +1032,45 @@ async fn catalog(
         query.last_id.as_deref().unwrap_or(""),
         query.filters
     );
-    let q = &query;
-    let page = state
-        .lambdas
-        .catalog
-        .get_or_fetch(key, || async move {
-            let urns = item_urns(
+    // A hit answers without the read. A miss reads its URNs on the read and
+    // releases it before entering the memo: a request waiting on another's
+    // fetch holds no connection, and the definitions are read through the
+    // pool.
+    let page = match state.lambdas.catalog.get_fresh(&key) {
+        Some(page) => {
+            drop(source);
+            Ok(page)
+        }
+        None => {
+            let urns = match item_urns(
                 state,
                 &mut source,
                 item_type_prefix,
-                &q.filters,
-                q.limit,
-                &q.last_id,
+                &query.filters,
+                query.limit,
+                &query.last_id,
             )
-            .await?;
-            // The definitions are read through the pool: the catalogue
-            // read's connection goes back first.
+            .await
+            {
+                Ok(urns) => urns,
+                Err(envelope) => return envelope,
+            };
             drop(source);
-            let pointers = urns.iter().map(|u| u.to_lowercase()).collect();
-            let definitions = definitions_for(state, pointers, extract)
+            let q = &query;
+            state
+                .lambdas
+                .catalog
+                .get_or_fetch(key, || async move {
+                    let pointers = urns.iter().map(|u| u.to_lowercase()).collect();
+                    let definitions = definitions_for(state, pointers, extract)
+                        .await
+                        .map_err(|()| lambdas_internal_error())?;
+                    let (items, next_last_id) = paginate(definitions, q.limit);
+                    Ok::<Value, Response>(json!({ "items": items, "next": next_last_id }))
+                })
                 .await
-                .map_err(|()| lambdas_internal_error())?;
-            let (items, next_last_id) = paginate(definitions, q.limit);
-            Ok::<Value, Response>(json!({ "items": items, "next": next_last_id }))
-        })
-        .await;
+        }
+    };
     let page = match page {
         Ok(p) => p,
         Err(resp) => return resp,
@@ -1147,7 +1161,7 @@ async fn mirrored_collections(
 /// collections and the mirrored ones; before the mirror's first complete pass
 /// the unavailable envelope.
 pub async fn nfts_collections(State(state): State<SharedState>) -> Response {
-    let mut read = match catalogue::begin(
+    let mut read = match catalogue::begin_checked(
         &state,
         Purpose::Describe,
         &[Mirror::Collections],
@@ -1157,31 +1171,33 @@ pub async fn nfts_collections(State(state): State<SharedState>) -> Response {
     .await
     {
         Ok(read) => read,
-        Err(envelope) => return envelope,
+        // An unreadable snapshot is lamb2's bare 500.
+        Err(refusal) if refusal.refused.is_none() => return lambdas_internal_error(),
+        Err(refusal) => return refusal.into_response(),
     };
     let key = read.key();
-    let conn = &mut *read.tx;
-    let cached = state
-        .lambdas
-        .collections
-        .get_or_fetch(key, || async move {
-            let mut collections = base_collections();
-            let items = mirrored_collections(conn).await?;
-            collections.extend(
-                items
-                    .into_iter()
-                    .map(|(urn, name)| json!({ "id": urn, "name": name })),
-            );
-            Ok::<Value, sqlx::Error>(json!({ "collections": collections }))
-        })
-        .await;
-    match cached {
-        Ok(v) => Json(v).into_response(),
+    // A hit answers without the read; a miss reads on its own connection and
+    // files the answer, so no request waits on another while holding one.
+    if let Some(v) = state.lambdas.collections.get_fresh(&key) {
+        return Json(v).into_response();
+    }
+    let items = match mirrored_collections(&mut read.tx).await {
+        Ok(items) => items,
         Err(e) => {
             tracing::error!(error = %e, "lambdas collections query failed");
-            lambdas_internal_error()
+            return lambdas_internal_error();
         }
-    }
+    };
+    drop(read);
+    let mut collections = base_collections();
+    collections.extend(
+        items
+            .into_iter()
+            .map(|(urn, name)| json!({ "id": urn, "name": name })),
+    );
+    let v = json!({ "collections": collections });
+    state.lambdas.collections.insert(key, v.clone());
+    Json(v).into_response()
 }
 
 /// `GET /lambdas/outfits/{address}`, `/outfits/{address}`: the address's

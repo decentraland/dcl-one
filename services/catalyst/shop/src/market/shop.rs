@@ -1214,18 +1214,18 @@ pub struct SaleSignal {
     pub volume: u128,
 }
 
+/// The trending rail over `sales` ([`recent_sales`], a subgraph call the
+/// caller makes before its snapshot opens).
 pub async fn trending_items(
     state: &MarketplaceState,
     read: &mut CatalogueRead,
     first: Option<i64>,
-    days: Option<i64>,
+    sales: &[Value],
     filters: &UnifiedCatalogFilters,
     rate: ManaUsdRate,
 ) -> Result<Vec<TrendingItem>, Response> {
     let first = trending_clamp_first(first);
-    let days = trending_clamp_days(days);
-    let sales = recent_sales(state, days).await?;
-    let signals = aggregate_sales(&sales);
+    let signals = aggregate_sales(sales);
     let ids: Vec<String> = signals.keys().cloned().collect();
     let items = items_by_ids(state, read, &ids, filters, rate)
         .await
@@ -1236,12 +1236,14 @@ pub async fn trending_items(
 /// Creators ranked by windowed revenue, attributing each sale to the item's
 /// creator (the reader's `item.creator`) so primary mints count; floors keep
 /// a thin window out of a revenue ranking and a one-hit month with nothing to
-/// browse off the rail.
+/// browse off the rail. `sales` is [`recent_sales`] over the clamped `days`,
+/// read before the snapshot opened; its failure answers only on a memo miss.
 pub async fn top_creators(
     state: &MarketplaceState,
     read: &mut CatalogueRead,
     first: Option<i64>,
     days: Option<i64>,
+    sales: Result<Vec<Value>, Response>,
 ) -> Result<Vec<TopCreator>, Response> {
     let first = top_creators_clamp_first(first);
     let days = top_creators_clamp_days(days);
@@ -1249,7 +1251,7 @@ pub async fn top_creators(
     let key = format!("creators:{first}:{days}:{}", read.key());
     let conn = &mut *read.tx;
     let value = cached(state, Ttl::M15, key, || async move {
-        let sales = recent_sales(state, days).await.map_err(|_| "sales reader unavailable".to_string())?;
+        let sales = sales.map_err(|_| "sales reader unavailable".to_string())?;
         let mut ranked: HashMap<String, (u128, i64)> = HashMap::new();
         for sale in &sales {
             let Some(creator) = readers::at(sale, "item/creator").and_then(Value::as_str) else { continue };
@@ -1505,24 +1507,27 @@ pub async fn get_trending_catalog(
     Query(pairs): Query<Vec<(String, String)>>,
 ) -> Response {
     let req = parse_trending_filters(&pairs);
-    // Read before the snapshot opens: no pool work waits while it holds its
-    // connection.
-    let rate = match mana_usd_rate(&state).await {
-        Ok(rate) => rate,
-        Err(envelope) => return envelope,
-    };
-    let mut read = match priced_read(&state, None).await {
-        Ok(read) => read,
-        Err(r) => return r,
-    };
     let (first, days) = (
         trending_clamp_first(req.first),
         trending_clamp_days(req.days),
     );
+    // Read before the snapshot opens: neither pool work nor a subgraph call
+    // runs while it holds its connection. A sales failure answers only on a
+    // memo miss, after the gate.
+    let rate = match mana_usd_rate(&state).await {
+        Ok(rate) => rate,
+        Err(envelope) => return envelope,
+    };
+    let sales = recent_sales(&state, days).await;
+    let mut read = match priced_read(&state, None).await {
+        Ok(read) => read,
+        Err(r) => return r,
+    };
     let (copy, sources) = (read.key(), read.sources());
     let (st, flt, rd) = (&*state, &req.filters, &mut read);
     let page = || async move {
-        let data = trending_items(st, rd, Some(first), Some(days), flt, rate).await?;
+        let sales = sales?;
+        let data = trending_items(st, rd, Some(first), &sales, flt, rate).await?;
         body_of(TrendingResponseBody { data }).map_err(IntoResponse::into_response)
     };
     // As the browse memo, only over the rails' filters: free text a client varies reads fresh.
@@ -1635,24 +1640,26 @@ pub async fn get_suggested_catalog(
     headers: HeaderMap,
     Query(pairs): Query<Vec<(String, String)>>,
 ) -> Response {
-    // Read before the snapshot opens: no pool work waits while it holds its
-    // connection.
+    // Read before the snapshot opens: neither pool work, the trending
+    // rail's subgraph call nor the signer's EIP-1654 call runs while it holds
+    // its connection. Their failures answer after the gate's.
     let rate = match mana_usd_rate(&state).await {
         Ok(rate) => rate,
         Err(envelope) => return envelope,
     };
-    let mut read = match priced_read(&state, None).await {
-        Ok(read) => read,
-        Err(r) => return r,
-    };
-    let verified = match super::signed::optional_signer(
+    let sales = recent_sales(&state, trending_clamp_days(None)).await;
+    let verified = super::signed::optional_signer(
         state.eip1654.as_deref(),
         &headers,
         "get",
         "/v3/catalog/suggested",
     )
-    .await
-    {
+    .await;
+    let mut read = match priced_read(&state, None).await {
+        Ok(read) => read,
+        Err(r) => return r,
+    };
+    let verified = match verified {
         Ok(v) => v.map(|a| a.to_lowercase()),
         Err(e) => return e.into_response(),
     };
@@ -1687,11 +1694,15 @@ pub async fn get_suggested_catalog(
     }
     let personalized = !data.is_empty();
     if data.len() < limit {
+        let sales = match sales {
+            Ok(sales) => sales,
+            Err(r) => return r,
+        };
         match trending_items(
             &state,
             &mut read,
             Some(limit as i64 * 2),
-            None,
+            &sales,
             &filters,
             rate,
         )
@@ -1745,19 +1756,20 @@ pub async fn get_top_creators(
     State(state): State<SharedState>,
     Query(pairs): Query<Vec<(String, String)>>,
 ) -> Response {
+    let p = Params::new(&pairs);
+    let (first, days) = (
+        finite_i64(p.get_number("first", None)),
+        finite_i64(p.get_number("days", None)),
+    );
+    // The sales are a subgraph call: read before the snapshot opens.
+    let sales = recent_sales(&state, top_creators_clamp_days(days)).await;
     let mut read = match priced_read(&state, None).await {
         Ok(read) => read,
         Err(r) => return r,
     };
-    let p = Params::new(&pairs);
     let sources = read.sources();
     let (ranked, directory) = tokio::join!(
-        top_creators(
-            &state,
-            &mut read,
-            finite_i64(p.get_number("first", None)),
-            finite_i64(p.get_number("days", None)),
-        ),
+        top_creators(&state, &mut read, first, days, sales),
         directory_snapshot(&state, &sources)
     );
     match ranked {

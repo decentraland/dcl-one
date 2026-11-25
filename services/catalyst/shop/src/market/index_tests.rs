@@ -1952,7 +1952,7 @@ fn estate_document(
 
 #[tokio::test]
 async fn descriptive_mirror_readers_check_the_chain_of_every_recorded_source() {
-    use super::mirrors::{self, Mirror};
+    use super::mirrors::Mirror;
     let Some(db) = ScratchDb::create().await else {
         return;
     };
@@ -1971,18 +1971,22 @@ async fn descriptive_mirror_readers_check_the_chain_of_every_recorded_source() {
             crate::http::Outbound::for_tests(),
             settings,
         );
-        let error = mirrors::require_ready(&state, Mirror::Collections)
-            .await
-            .unwrap_err();
+        let read = || {
+            super::catalogue::begin(
+                &state,
+                super::catalogue::Purpose::Describe,
+                &[Mirror::Collections],
+                None,
+                super::catalogue::Access::ReadOnly,
+            )
+        };
+        let error = read().await.err().unwrap();
         assert_eq!(error.status(), axum::http::StatusCode::SERVICE_UNAVAILABLE);
         sqlx::query("UPDATE shop.mirror_state SET chain_id=NULL WHERE network='ethereum'")
             .execute(&db.pool)
             .await
             .unwrap();
-        state.mirror_ready.clear();
-        mirrors::require_ready(&state, Mirror::Collections)
-            .await
-            .unwrap();
+        assert!(read().await.is_ok());
         sqlx::query("UPDATE shop.mirror_state SET chain_id=1 WHERE network='ethereum'")
             .execute(&db.pool)
             .await

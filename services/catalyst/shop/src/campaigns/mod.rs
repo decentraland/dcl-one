@@ -490,25 +490,63 @@ pub async fn put_collections(
     let Some(Json(body)) = body else {
         return ApiError::bad_request("contracts is required").into_response();
     };
-    let mut read = match catalogue::begin(
-        &state,
-        Purpose::Describe,
-        &[Mirror::Collections],
-        None,
-        Access::ReadWrite,
-    )
-    .await
-    {
-        Ok(read) => read,
-        Err(r) => return r,
-    };
-    match set_tag_collections(&mut read.tx, &campaign.main_tag, &body.contracts, &actor).await {
-        Ok(rows) => match read.tx.commit().await {
-            Ok(()) => (StatusCode::OK, ok(rows)).into_response(),
-            Err(e) => ApiError::from(e).into_response(),
-        },
-        Err(e) => e.into_response(),
+    match replace_tag_collections(&state, &campaign.main_tag, &body.contracts, &actor).await {
+        Ok(rows) => (StatusCode::OK, ok(rows)).into_response(),
+        Err(Replace::Refused(envelope)) => envelope,
+        Err(Replace::Failed(e)) => e.into_response(),
     }
+}
+
+/// Why a tag's set was not replaced: the catalogue gate's envelope, or the
+/// write's error.
+pub enum Replace {
+    Refused(Response),
+    Failed(ApiError),
+}
+
+/// [`set_tag_collections`] in a read-write catalogue read that commits. Two
+/// replacements of one tag at once conflict under `REPEATABLE READ` (40001):
+/// the one that loses starts again on a new snapshot, up to three attempts.
+pub async fn replace_tag_collections(
+    state: &MarketplaceState,
+    tag: &str,
+    contracts: &[String],
+    actor: &str,
+) -> Result<Vec<CampaignCollection>, Replace> {
+    const ATTEMPTS: usize = 3;
+    for attempt in 1..=ATTEMPTS {
+        let mut read = catalogue::begin(
+            state,
+            Purpose::Describe,
+            &[Mirror::Collections],
+            None,
+            Access::ReadWrite,
+        )
+        .await
+        .map_err(Replace::Refused)?;
+        let written = match set_tag_collections(&mut read.tx, tag, contracts, actor).await {
+            Ok(rows) => read
+                .tx
+                .commit()
+                .await
+                .map(|()| rows)
+                .map_err(ApiError::from),
+            Err(e) => Err(e),
+        };
+        match written {
+            Err(ApiError::Database(e)) if attempt < ATTEMPTS && serialization_failure(&e) => {
+                tracing::info!(tag, attempt, "campaign tag write conflicted; retrying");
+            }
+            written => return written.map_err(Replace::Failed),
+        }
+    }
+    unreachable!("the last attempt returns")
+}
+
+fn serialization_failure(e: &sqlx::Error) -> bool {
+    e.as_database_error()
+        .and_then(|d| d.code())
+        .is_some_and(|code| code == "40001")
 }
 
 /// The public routes, for `market::market_router` (both mounts).
@@ -546,6 +584,80 @@ pub fn builder_alias_router(state: SharedState) -> Router {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A tag write that conflicts with another committed meanwhile (40001
+    /// under `REPEATABLE READ`) starts again on a new snapshot and lands.
+    #[tokio::test]
+    async fn a_conflicting_tag_write_retries_on_a_new_snapshot() {
+        let Some(pool) = crate::db::scratch::isolated_pool(4).await else {
+            return;
+        };
+        let contract = "0x00000000000000000000000000000000000000c1";
+        super::super::market::mirrors::collections::upsert(
+            &pool,
+            super::super::market::graph::Network::Matic,
+            137,
+            false,
+            &[super::super::market::mirrors::collections::fixture(
+                contract, "C", contract, true,
+            )],
+        )
+        .await
+        .unwrap();
+        sqlx::query(
+            "INSERT INTO shop.mirror_state (mirror, network, source_url, last_complete_pass_at) \
+             SELECT m, 'matic', 'test', timezone('UTC', now()) FROM unnest(ARRAY['collections', 'items']) m",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        let state = std::sync::Arc::new(MarketplaceState::new(
+            pool.clone(),
+            crate::http::Outbound::for_tests(),
+            super::super::market::Settings::for_tests(),
+        ));
+        let wanted = vec![contract.to_string()];
+        replace_tag_collections(&state, "summer", &wanted, "first")
+            .await
+            .ok()
+            .unwrap();
+        // A first write holds the tag's rows; the second blocks on them with
+        // its snapshot taken, then conflicts when the first commits.
+        let mut first = catalogue::begin(
+            &state,
+            Purpose::Describe,
+            &[Mirror::Collections],
+            None,
+            Access::ReadWrite,
+        )
+        .await
+        .ok()
+        .unwrap();
+        set_tag_collections(&mut first.tx, "summer", &wanted, "first")
+            .await
+            .unwrap();
+        let second = {
+            let (state, wanted) = (state.clone(), wanted.clone());
+            tokio::spawn(async move {
+                replace_tag_collections(&state, "summer", &wanted, "second")
+                    .await
+                    .is_ok()
+            })
+        };
+        tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+        assert!(!second.is_finished(), "the second write waits on the rows");
+        first.tx.commit().await.unwrap();
+        assert!(second.await.unwrap(), "the second write retried and landed");
+        let by: Vec<String> = sqlx::query_scalar(
+            "SELECT added_by FROM shop.campaign_collections WHERE tag = 'summer'",
+        )
+        .fetch_all(&pool)
+        .await
+        .unwrap();
+        assert_eq!(by, ["second"]);
+        drop(state);
+        pool.close().await;
+    }
 
     #[test]
     fn ids_tags_and_windows_are_validated() {

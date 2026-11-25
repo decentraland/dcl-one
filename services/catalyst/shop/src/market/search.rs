@@ -526,11 +526,11 @@ pub struct SuggestedCollection {
 /// then by approved items, then by sales in the window, then name and
 /// address.
 pub async fn search_collections(
-    state: &MarketplaceState,
     conn: &mut sqlx::PgConnection,
     search: &str,
     first: usize,
     directory: &[CreatorEntry],
+    sales: &HashMap<String, i64>,
 ) -> Result<Vec<SuggestedCollection>, ApiError> {
     let terms = query_terms(search);
     if terms.is_empty() {
@@ -551,7 +551,6 @@ pub async fn search_collections(
     .bind(&patterns)
     .fetch_all(&mut *conn)
     .await?;
-    let sales = collection_sales(state).await;
     let query = forms(&terms.join(" "));
     let mut hits: Vec<(u8, SuggestedCollection)> = rows
         .iter()
@@ -587,7 +586,8 @@ pub async fn search_collections(
 }
 
 /// Sales per collection in the window, from the sales reader; an
-/// unreachable reader costs the tiebreak, not the answer.
+/// unreachable reader costs the tiebreak, not the answer. A subgraph call:
+/// read before the catalogue's snapshot opens.
 async fn collection_sales(state: &MarketplaceState) -> HashMap<String, i64> {
     let mut out = HashMap::new();
     if let Ok(sales) = items::recent_sales(state, COLLECTION_SALES_WINDOW_DAYS).await {
@@ -637,12 +637,13 @@ pub async fn get_search_suggest(
     if query_terms(&search).is_empty() {
         return ([(CACHE_CONTROL, SUGGEST_CACHE)], Json(empty)).into_response();
     }
-    // Read before the snapshot opens: no pool work waits while it holds its
-    // connection.
+    // Read before the snapshot opens: neither pool work nor a subgraph call
+    // runs while it holds its connection.
     let rate = match items::mana_usd_rate(&state).await {
         Ok(rate) => rate,
         Err(envelope) => return envelope,
     };
+    let sales = collection_sales(&state).await;
     // One snapshot answers the three sections: the items carry prices.
     let mut read = match items::priced_read(&state, None).await {
         Ok(read) => read,
@@ -658,7 +659,7 @@ pub async fn get_search_suggest(
     ];
     let items_page = items::catalog_items_page(&state, &mut read, &item_pairs, rate).await;
     let collections =
-        search_collections(&state, &mut read.tx, &search, collections_first, &directory).await;
+        search_collections(&mut read.tx, &search, collections_first, &directory, &sales).await;
     let (item_rows, total) = match items_page {
         Ok(page) => page,
         Err(r) => return r,

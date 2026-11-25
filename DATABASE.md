@@ -3289,28 +3289,48 @@ with the sales index.
   the search suggest, credits pricing, and the coupon favourites job;
 - authorizing: the import check.
 
-In that transaction the reader reads per network the ownership marker, the
-`collections` cursor, the projection's row and the mirrors' passes. It decides
+In that transaction the reader reads, in one statement per request, per
+network: the ownership marker, the `collections` cursor, the projection's
+row, the mirrors' passes, whether the catalogue holds rows of the network,
+and whether a collections event was walked past the publication. It decides
 readiness by the source that owns each network, then reads its rows in the
 same snapshot, so a rewind, a republication or a hand-back that commits
 meanwhile never splits an answer. A reader that joins the open trades
 (credits pricing included) reads their pass and verdicts in the same
 snapshot, at the read's instant. That instant also decides the rows' open
-trades, trade floor and coupon window, on every page of the read. The
-transaction holds a pooled connection, so a reader
-releases it before any pool work that reads no catalogue row, and reuses it
-for what does.
+trades, trade floor and coupon window, on every page of the read.
 
-The other readers of these tables still read them as the mirrors left them:
-- the relay contract allowlist;
-- the sale, bid and royalty notices' catalogue start;
+The statement is uncached and probes primary keys only:
+`collection_projection (network)`, `chain_cursor (indexer, network)`,
+`mirror_state (mirror, network)`, the first row of `collections` and of
+`items` by their `(network, …)` keys, and the first `collection_event` past
+the publication by `(network, block_number, log_index)`.
+
+The transaction holds a pooled connection. So a reader makes its external
+calls (the sales reader's subgraph query, the EIP-1654 signer check) and any
+pool work that reads no catalogue row before it opens the transaction or
+after it releases it, and reuses the transaction for what does read the
+catalogue. A memo hit answers without waiting, and a request never waits on
+another's memo fetch while it holds the connection.
+
+These readers of the same tables are outside the gate, and read whichever
+source wrote the rows:
+- the relay contract allowlist and `/v1/contracts/{address}`;
+- the sale, bid and royalty notices;
 - the owned-items pass check;
 - the MANA facts and quote;
 - the policy entry's facts;
-- the NFT pages' catalogue joins and the lists, listings, users, neighbours,
-  stores, coupons and subscriptions reads;
-- the sales index's reads that join them (public sales, item rankings,
-  collection counts, seller evidence and wallet assets).
+- the NFT pages' catalogue joins, and the bids, lists, listings, users,
+  neighbours, stores, coupons and subscriptions reads;
+- the NFT walk's contract set;
+- the sales index: its walk's contract set, `sale_fold`, `sale_history` and
+  the reads that join the catalogue (public sales, item rankings, collection
+  counts, seller evidence and wallet assets);
+- the trade-events walk's item metadata;
+- the explorer lambdas (`lambdas_explorer.rs`) and explore's OpenSea metadata
+  (`explore/src/opensea.rs`);
+- Social's badge jobs (deployments, recount and sales);
+- the storage collector's image references.
 
 A network the index owns follows the publish marker. A pass walks before it
 folds and publishes, so `folded_block = last_block` would refuse every read
@@ -3334,24 +3354,28 @@ between), `projected_through` is ahead of `folded_block`, and the network
 refuses reads until the publication.
 
 The mirrors' rule covers every network the index does not own that a read
-may return rows of. Every one of their passes there must be bound to the
-chain this node serves, a network with no subgraph configured now included,
-since its rows are read too. Each network the read may return rows of (the
-catalogue holds rows of it), configured or not, needs a complete pass of each
-mirror the route reads, the items one within its money budget for a priced
-read; so does each configured network the index does not own. A network
-holding rows with no pass and no subgraph configured names its subgraph, since
-no pass can come. With no subgraph configured, a network an index owns still
-answers. A read for every network then names the
-subgraph of the network without a source. The lambdas catalogue falls back
-to asking the subgraphs only when the mirrors refused and the index owns no
-network; it never stands in for a network the index owns.
+may return rows of. Every stored pass there must be bound to the chain this
+node serves, a network with no subgraph configured included, since its rows
+are read too. Each network the read may return rows of (the catalogue holds
+rows of it), configured or not, needs a complete pass of each mirror the
+route reads; so does each configured network the index does not own. A
+priced read needs the items pass within its money budget. A descriptive or
+authorizing read (the import check) takes any complete pass. A network
+holding rows with no pass and no subgraph configured names its subgraph,
+since no pass can come.
+
+With no subgraph configured, a network an index owns answers. An unscoped
+priced read names the subgraph of the network without a source; a
+descriptive or authorizing read serves the passes the tables record. The
+lambdas catalogue falls back to asking the subgraphs only when the mirrors
+refused and the index owns no network; it never stands in for a network the
+index owns.
 
 A memo over catalogue rows is filed under what its read saw: each mirror's
 pass on each network it may take rows from, configured or not (the oldest
 alone would not move when a newer network's pass does), and each owned
-network's publication and projection generation. The creator directory is a display aggregate that
-keeps its stated staleness (15 minutes, kept up to an hour), so it is filed
+network's publication and projection generation. The creator directory is a
+display aggregate that keeps its stated staleness (15 minutes, kept up to an hour), so it is filed
 under which source serves each network: an ownership change files it anew.
 
 **Switching a network from the mirror.** Run this only once three things

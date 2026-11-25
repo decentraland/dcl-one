@@ -1183,6 +1183,13 @@ pub async fn get_trendings(
         .unwrap_or(TRENDING_DEFAULT_SIZE);
     let include_social_emotes =
         p.get_string("includeSocialEmotes", None).as_deref() != Some("false");
+    // The sales are a subgraph call: read before the snapshot opens, so no
+    // connection waits on it; the gate's refusal still answers first.
+    let sales = if size > 0 {
+        recent_sales(&state, TRENDING_WINDOW_DAYS).await
+    } else {
+        Ok(Vec::new())
+    };
     let mut read = match priced_read(&state, None).await {
         Ok(read) => read,
         Err(envelope) => return envelope,
@@ -1191,7 +1198,7 @@ pub async fn get_trendings(
     if size <= 0 {
         return (cache_control, Json(json!({ "data": [] }))).into_response();
     }
-    let sales = match recent_sales(&state, TRENDING_WINDOW_DAYS).await {
+    let sales = match sales {
         Ok(s) => s,
         Err(envelope) => return envelope,
     };
