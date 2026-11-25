@@ -8,6 +8,7 @@
 
 pub mod dao;
 pub mod item_coverage;
+pub mod metrics;
 pub mod orchestrator;
 pub mod pointer_changes;
 pub mod repository;

@@ -1,11 +1,12 @@
 // @vitest-environment node
 import './test/setup'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { generateTree, verifyProof } from '@dcl/content-hash-tree'
 import { MappingType } from '@dcl/schemas'
+import type { Hex } from 'viem'
 import { ApprovalError } from './approveCollection'
 import { BuilderServerError } from './builder'
 import { computeLinkedItemContentHash } from './catalystEntity'
+import { generateTree, hashPair, leafOf } from './contentHashTree'
 import {
   deployLinkedItems,
   getReviewThreshold,
@@ -141,8 +142,7 @@ describe('prepareLinkedApproval', () => {
     for (const id of ['1', '2']) {
       const { index, proof, entityHash } = plan.proofOf(id)
       expect(entityHash).toBe(data.contentHashes[id])
-      const buffers = proof.map(node => Buffer.from(node.slice(2), 'hex'))
-      expect(verifyProof(index, entityHash, buffers, Buffer.from(plan.merkleRoot.slice(2), 'hex'))).toBe(true)
+      expect((proof as Hex[]).reduce(hashPair, leafOf(index, entityHash))).toBe(plan.merkleRoot)
     }
   })
 

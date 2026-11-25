@@ -23,7 +23,8 @@ otherwise the scene's least parcel by `x`, then `y`, in canonical `x,y` form.
 Places' `base_position` is the declared base, so the import does not use it
 as is. The scene is the active content deployment (`content.active_pointers`)
 standing on one of the place's parcels and declaring the same base as the
-place; without one (content not yet synced, or the place is stale), the
+place (content stores the metadata as `{"v": metadata}`, so the base is read
+at `v.scene.base`); without one (content not yet synced, or the place is stale), the
 place's own `positions`, or `base_position` alone when it lists none. The
 rule is the same SQL in each of the three loads.
 

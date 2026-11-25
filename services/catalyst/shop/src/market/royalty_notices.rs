@@ -465,7 +465,9 @@ mod tests {
         sale(&pool, 101, 3, MARKETPLACE_V2, "1", "20000000000000000000").await;
         sale(&pool, 101, 7, MARKETPLACE_V2, "2", "1000000000000000000").await;
         sale(&pool, 101, 9, MARKETPLACE_V2, "3", "1000000000000000000").await;
-        let v1 = super::super::nft_index::legacy_marketplaces(ChainNet::Matic)[0].0;
+        let v1 = super::super::nft_index::deployments::Deployments::mainnet(ChainNet::Matic)
+            .markets[0]
+            .0;
         sale(&pool, 102, 0, v1, "1", "5000000000000000000").await;
         sale(&pool, 102, 1, MARKETPLACE_V2, "9", "5000000000000000000").await;
         sale(&pool, 105, 0, MARKETPLACE_V2, "2", "1000000000000000000").await;

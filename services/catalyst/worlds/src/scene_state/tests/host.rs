@@ -292,7 +292,7 @@ async fn a_genesis_scene_loads_by_id_and_by_parcel_into_the_main_scope() {
          VALUES ('0x0', 'v3', 'scene', $1, $2::json, timezone('UTC', now()), $3, timezone('UTC', now()), '[]'::json) RETURNING id",
     )
     .bind(&id)
-    .bind(serde_json::json!({ "main": "bin/game.js", "scene": { "base": p2 } }))
+    .bind(serde_json::json!({ "v": { "main": "bin/game.js", "scene": { "base": p2 } } }))
     .bind(vec![p1.clone(), p2.clone()])
     .fetch_one(&h.state.pool)
     .await
@@ -359,6 +359,92 @@ async fn a_genesis_scene_loads_by_id_and_by_parcel_into_the_main_scope() {
         }
     );
     assert!(h.state.scenes.is_empty());
+}
+
+/// Content's deploy path, not a hand-written row, stores the scene, so the
+/// metadata shape the resolver and the loader read is the one content writes:
+/// the declared base and title, the main file and the `authoritativeMultiplayer`
+/// opt-in all come back from a synced Genesis deployment.
+#[tokio::test]
+async fn a_genesis_scene_stored_by_the_content_deployer_resolves_with_its_metadata() {
+    use crate::content::sync_deployer::{LiveSyncDeployer, SyncValidation};
+    use crate::content::sync_types::DeploymentContext;
+
+    let Some(h) = host(false).await else { return };
+    let pool = &h.state.pool;
+    let x = 30_000 + (Uuid::new_v4().as_u128() % 10_000) as i32;
+    let parcels = [format!("{x},7"), format!("{x},8"), format!("{},7", x + 1)];
+    let declared = parcels[2].clone();
+    // The flush writes a deployment only while the store holds its files.
+    let code_hash = store(&h.state, Uuid::new_v4().as_bytes()).await;
+    let entity = serde_json::to_vec(&serde_json::json!({
+        "version": "v3",
+        "type": "scene",
+        "pointers": parcels,
+        "timestamp": 1_700_000_000_000_i64,
+        "content": [{ "file": "bin/game.js", "hash": code_hash }],
+        "metadata": {
+            "main": "bin/game.js",
+            "authoritativeMultiplayer": true,
+            "scene": { "base": declared, "parcels": parcels },
+            "display": { "title": "Deployed Genesis" }
+        }
+    }))
+    .unwrap();
+    let id = store(&h.state, &entity).await;
+    let chain = serde_json::from_value(
+        create_simple_auth_chain(&Wallet::from_hex(VISITOR_KEY).unwrap(), &id).unwrap(),
+    )
+    .unwrap();
+    let deployer = LiveSyncDeployer::new(
+        pool.clone(),
+        h.state.storage.clone(),
+        1,
+        SyncValidation::AuthChainOnly,
+    );
+    deployer
+        .deploy_entity(&entity, &id, &chain, DeploymentContext::Synced, None, None)
+        .await
+        .unwrap();
+    deployer.flush().await.unwrap();
+
+    let least = Parcel::parse(&parcels[0]).unwrap();
+    for key in [
+        SceneKey::GenesisParcel(least),
+        SceneKey::Genesis(SceneId::parse(&id).unwrap()),
+    ] {
+        let resolved = loader::resolve(&h.state, &key).await.unwrap().unwrap();
+        assert_eq!(
+            resolved.deployment.base.canonical(),
+            declared,
+            "the declared base, not {least}"
+        );
+        assert_eq!(
+            resolved.deployment.title.as_deref(),
+            Some("Deployed Genesis")
+        );
+        assert_eq!(resolved.code_hash, code_hash);
+        assert!(resolved.authoritative);
+    }
+
+    sqlx::query("DELETE FROM content.active_pointers WHERE entity_id = $1")
+        .bind(&id)
+        .execute(pool)
+        .await
+        .unwrap();
+    sqlx::query(
+        "DELETE FROM content.content_files WHERE deployment IN \
+         (SELECT id FROM content.deployments WHERE entity_id = $1)",
+    )
+    .bind(&id)
+    .execute(pool)
+    .await
+    .unwrap();
+    sqlx::query("DELETE FROM content.deployments WHERE entity_id = $1")
+        .bind(&id)
+        .execute(pool)
+        .await
+        .unwrap();
 }
 
 type Ws =
@@ -1197,9 +1283,9 @@ async fn seed_genesis(h: &Host, parcels: &[String], opt_in: bool) -> String {
     let id = format!("bafyG{}", Uuid::new_v4().simple());
     let code_hash = store(&h.state, b"").await;
     let mut metadata =
-        serde_json::json!({ "main": "bin/game.js", "scene": { "base": parcels[0] } });
+        serde_json::json!({ "v": { "main": "bin/game.js", "scene": { "base": parcels[0] } } });
     if opt_in {
-        metadata["authoritativeMultiplayer"] = true.into();
+        metadata["v"]["authoritativeMultiplayer"] = true.into();
     }
     let dep_id: i32 = sqlx::query_scalar(
         "INSERT INTO content.deployments (deployer_address, version, entity_type, entity_id, entity_metadata, entity_timestamp, entity_pointers, local_timestamp, auth_chain) \
@@ -1358,7 +1444,7 @@ async fn seed_parked_genesis(h: &Host, id: &str, parcels: &[String]) {
          VALUES ('0x0', 'v3', 'scene', $1, $2::json, timezone('UTC', now()), $3, timezone('UTC', now()), '[]'::json) RETURNING id",
     )
     .bind(id)
-    .bind(serde_json::json!({ "main": "bin/game.js", "scene": { "base": parcels[0] } }))
+    .bind(serde_json::json!({ "v": { "main": "bin/game.js", "scene": { "base": parcels[0] } } }))
     .bind(parcels.to_vec())
     .fetch_one(&h.state.pool)
     .await

@@ -774,6 +774,7 @@ fn spawn_failed_deployment_jobs(
         );
         let bootstrapped = deps.bootstrapped.clone();
         jobs.spawn_scoped(ctx, "retry-failed", move |ctx| async move {
+            let _exported = retry.export_failed_deployments().await;
             wait_to_start(&ctx, "retry-failed", bootstrapped, None).await;
             let trace = ctx.clone();
             retry

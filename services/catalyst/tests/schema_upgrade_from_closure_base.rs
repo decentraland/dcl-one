@@ -78,23 +78,31 @@ fn expected_pending_steps() -> Vec<&'static str> {
             "0060_shop_third_party_registry_index",
             "0061_content_processed_snapshot_types",
             "0062_shop_estate_repair_reset",
-            "0063_builder_scenes_retired",
-            "0064_shop_items_content_hash",
-            "0065_builder_collection_flags_retired",
-            "0066_builder_collection_listings",
-            "0067_builder_item_contents_order",
-            "0068_builder_item_contents_named_by",
-            "0069_builder_item_video_named_by",
-            "0070_builder_collection_lock",
-            "0071_builder_collection_forum",
-            "0072_builder_collection_forum_claim",
-            "0073_builder_linked_publications_retired",
-            "0074_builder_uploaded_video_size",
-            "0075_builder_validation_retry",
-            "0076_builder_slot_cheques_outlive_collections",
-            "0077_builder_uploaded_video_checked",
-            "0078_builder_collection_contract_lowercase",
-            "0079_credits_publication_fee_line",
+            "0063_shop_collections_index",
+            "0064_shop_sale_accounting",
+            "0065_shop_collections_projection",
+            "0067_rental_asset_membership_block",
+            "0069_shop_trade_digest",
+            "0070_shop_mirror_chain",
+            "0071_shop_testnet_sale_and_trade_venues",
+            "0072_shop_verified_item_rows",
+            "0073_builder_scenes_retired",
+            "0074_shop_items_content_hash",
+            "0075_builder_collection_flags_retired",
+            "0076_builder_collection_listings",
+            "0077_builder_item_contents_order",
+            "0078_builder_item_contents_named_by",
+            "0079_builder_item_video_named_by",
+            "0080_builder_collection_lock",
+            "0081_builder_collection_forum",
+            "0082_builder_collection_forum_claim",
+            "0083_builder_linked_publications_retired",
+            "0084_builder_uploaded_video_size",
+            "0085_builder_validation_retry",
+            "0086_builder_slot_cheques_outlive_collections",
+            "0087_builder_uploaded_video_checked",
+            "0088_builder_collection_contract_lowercase",
+            "0089_credits_publication_fee_line",
         ])
         .collect()
 }
@@ -454,6 +462,53 @@ async fn assert_client_events_sequenced(pool: &PgPool, filenode_before: i64) {
         .await
         .unwrap();
     assert!(cursors && gaps && seq_idx && moves_idx && owned);
+}
+
+#[tokio::test]
+async fn sale_accounting_upgrade_preserves_unverified_historical_rows() {
+    let Some(old) = prepared_v2(None).await else {
+        return;
+    };
+    // This captured schema predates the sale event table. Install its legacy
+    // accounting inputs before applying the real incremental step.
+    sqlx::raw_sql("CREATE TABLE shop.sale_event(kind text NOT NULL, price numeric);
+        INSERT INTO shop.sale_event VALUES ('bid_accepted', 150), ('mint', 250);
+        INSERT INTO shop.chain_cursor(indexer,network,start_block,last_block,folded_block,full_history)
+        VALUES('nft','matic',1,99,99,true)")
+        .execute(&old.pool).await.unwrap();
+    let migration = include_str!(concat!(
+        env!("DCL_ONE_ROOT"),
+        "/schemas/migrations/0064_shop_sale_accounting.sql"
+    ));
+    sqlx::raw_sql(migration).execute(&old.pool).await.unwrap();
+    let values: Vec<(String, Option<String>)> =
+        sqlx::query_as("SELECT price::text, bid_fee::text FROM shop.sale_event ORDER BY price")
+            .fetch_all(&old.pool)
+            .await
+            .unwrap();
+    assert_eq!(values, [("150".into(), None), ("250".into(), None)]);
+    let cursor: (i64, Option<i32>, Option<i64>) = sqlx::query_as(
+        "SELECT folded_block,sale_input_version,sale_verified_through FROM shop.chain_cursor WHERE network='matic' AND indexer='nft'")
+        .fetch_one(&old.pool).await.unwrap();
+    assert_eq!(cursor, (99, None, None));
+    assert!(
+        sqlx::query("UPDATE shop.sale_event SET bid_fee=1 WHERE kind='mint'")
+            .execute(&old.pool)
+            .await
+            .is_err()
+    );
+    let validated = || {
+        sqlx::query_scalar::<_, bool>(
+        "SELECT convalidated FROM pg_constraint WHERE conrelid='shop.sale_event'::regclass AND conname='sale_event_bid_fee_check'")
+        .fetch_one(&old.pool)
+    };
+    assert!(!validated().await.unwrap());
+    sqlx::query("ALTER TABLE shop.sale_event VALIDATE CONSTRAINT sale_event_bid_fee_check")
+        .execute(&old.pool)
+        .await
+        .unwrap();
+    assert!(validated().await.unwrap());
+    old.drop().await;
 }
 
 #[tokio::test]
@@ -1959,11 +2014,22 @@ async fn the_logs_permissions_release_waits_for_the_decoded_function_then_drops_
             "the object pass keeps {index}"
         );
     }
+    // A database the previous binary migrated also holds the decoded index
+    // on the unwrapped metadata path, which no query reads.
+    let unwrapped = "content.deployments_scene_logs_permissions_decoded_idx";
+    sqlx::query(
+        "CREATE INDEX deployments_scene_logs_permissions_decoded_idx ON content.deployments
+             USING gin (worlds.logs_permissions_decoded((entity_metadata -> 'logsPermissions')::text))
+             WHERE entity_type = 'scene' AND deleter_deployment IS NULL",
+    )
+    .execute(pool)
+    .await
+    .unwrap();
     // An invalid decoded index, as a failed concurrent build leaves, is refused.
     let set_valid = |valid: bool| async move {
         sqlx::query(
             "UPDATE pg_index SET indisvalid = $1
-             WHERE indexrelid = 'content.deployments_scene_logs_permissions_decoded_idx'::regclass",
+             WHERE indexrelid = 'content.deployments_scene_v_logs_permissions_decoded_idx'::regclass",
         )
         .bind(valid)
         .execute(pool)
@@ -1976,7 +2042,7 @@ async fn the_logs_permissions_release_waits_for_the_decoded_function_then_drops_
     set_valid(true).await;
     release_statements(pool, &release).await.unwrap();
     assert!(!has_function("worlds.logs_permissions(text)").await);
-    for index in old_objects {
+    for index in old_objects.into_iter().chain([unwrapped]) {
         assert!(!has_relation(pool, index).await, "{index} is dropped");
     }
     assert!(has_function("worlds.logs_permissions_decoded(text)").await);
@@ -1984,7 +2050,7 @@ async fn the_logs_permissions_release_waits_for_the_decoded_function_then_drops_
     assert!(
         has_relation(
             pool,
-            "content.deployments_scene_logs_permissions_decoded_idx"
+            "content.deployments_scene_v_logs_permissions_decoded_idx"
         )
         .await
     );
@@ -2028,7 +2094,7 @@ async fn uploads(pool: &PgPool) -> Vec<String> {
         .unwrap()
 }
 
-const BUILDER_SCENES_STEP: &str = "0063_builder_scenes_retired";
+const BUILDER_SCENES_STEP: &str = "0073_builder_scenes_retired";
 
 async fn assert_release_refused(pool: &PgPool, release: &str, why: &str) {
     assert!(release_result(pool, release).await.is_err(), "{why}");
@@ -2182,7 +2248,7 @@ const BUILDER_COLLECTION_FLAGS_RETIRED: &str = include_str!(concat!(
     "/schemas/releases/builder-collection-flags-retired.sql"
 ));
 
-const BUILDER_COLLECTION_FLAGS_STEP: &str = "0065_builder_collection_flags_retired";
+const BUILDER_COLLECTION_FLAGS_STEP: &str = "0075_builder_collection_flags_retired";
 
 fn linked_forum_release() -> String {
     include_str!(concat!(
@@ -2396,7 +2462,7 @@ const BUILDER_ITEM_DOCUMENTS_AND_UPLOADERS: &str = include_str!(concat!(
     "/schemas/releases/builder-item-documents-and-uploaders.sql"
 ));
 
-const BUILDER_ITEM_CONTENTS_STEP: &str = "0067_builder_item_contents_order";
+const BUILDER_ITEM_CONTENTS_STEP: &str = "0077_builder_item_contents_order";
 
 fn scenes_release() -> String {
     BUILDER_SCENES_RETIRED.replace("\\set ON_ERROR_STOP on\n", "")
@@ -2548,7 +2614,7 @@ async fn the_builder_item_documents_release_waits_for_its_step_then_retypes_them
     old.drop().await;
 }
 
-const BUILDER_NAMED_BY_STEP: &str = "0068_builder_item_contents_named_by";
+const BUILDER_NAMED_BY_STEP: &str = "0078_builder_item_contents_named_by";
 
 #[tokio::test]
 async fn the_builder_named_by_step_attributes_each_name_to_the_writer_the_file_routes_counted() {
@@ -2567,7 +2633,7 @@ async fn the_builder_named_by_step_attributes_each_name_to_the_writer_the_file_r
     sqlx::raw_sql(
         "ALTER TABLE builder.item_contents DROP CONSTRAINT item_contents_named_by_check; \
          ALTER TABLE builder.item_contents DROP COLUMN named_by; \
-         DELETE FROM meta.schema_steps WHERE step = '0068_builder_item_contents_named_by'; \
+         DELETE FROM meta.schema_steps WHERE step = '0078_builder_item_contents_named_by'; \
          INSERT INTO builder.collections (id, name, eth_address, contract_address) VALUES \
            ('11111111-1111-4111-8111-000000000101', 'On chain', '0x' || repeat('0', 39) || '1', '0x' || repeat('c', 40)); \
          INSERT INTO builder.collections (id, name, eth_address, third_party_id, urn_suffix) VALUES \
@@ -2625,7 +2691,7 @@ async fn the_builder_named_by_step_attributes_each_name_to_the_writer_the_file_r
     assert_eq!(steps, [BUILDER_NAMED_BY_STEP]);
 }
 
-const BUILDER_VIDEO_NAMED_BY_STEP: &str = "0069_builder_item_video_named_by";
+const BUILDER_VIDEO_NAMED_BY_STEP: &str = "0079_builder_item_video_named_by";
 
 #[tokio::test]
 async fn the_builder_video_named_by_step_attributes_each_kept_video_to_its_entrys_writer() {
@@ -2645,7 +2711,7 @@ async fn the_builder_video_named_by_step_attributes_each_kept_video_to_its_entry
         "ALTER TABLE builder.items DROP CONSTRAINT items_video_named_by_check; \
          DROP INDEX builder.items_video_idx; \
          ALTER TABLE builder.items DROP COLUMN video_named_by; \
-         DELETE FROM meta.schema_steps WHERE step = '0069_builder_item_video_named_by'; \
+         DELETE FROM meta.schema_steps WHERE step = '0079_builder_item_video_named_by'; \
          INSERT INTO builder.items (id, eth_address, name, type, video) VALUES \
            ('33333333-3333-4333-8333-000000000101', '0x' || repeat('0', 39) || '1', 'Named', 'wearable', 'bafkvideo'), \
            ('33333333-3333-4333-8333-000000000102', '0x' || repeat('0', 39) || '1', 'Unnamed', 'wearable', 'bafkkept'), \
@@ -2696,7 +2762,7 @@ const BUILDER_ITEM_CURATION_RETIRED: &str = include_str!(concat!(
     "/schemas/releases/builder-item-curation-retired.sql"
 ));
 
-const BUILDER_COLLECTION_FORUM_STEP: &str = "0071_builder_collection_forum";
+const BUILDER_COLLECTION_FORUM_STEP: &str = "0081_builder_collection_forum";
 
 fn item_curation_release() -> String {
     let stop_on_error = "\\set ON_ERROR_STOP on\n";

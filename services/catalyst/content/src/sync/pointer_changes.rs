@@ -243,6 +243,16 @@ pub(super) async fn fetch_page(
     client: &Client,
     url: &str,
 ) -> Result<(Vec<serde_json::Value>, bool), SyncError> {
+    let started = std::time::Instant::now();
+    let page = fetch_page_body(client, url).await;
+    crate::sync::metrics::pointer_changes_page(url, started.elapsed());
+    page
+}
+
+async fn fetch_page_body(
+    client: &Client,
+    url: &str,
+) -> Result<(Vec<serde_json::Value>, bool), SyncError> {
     let resp = client.get(url).send().await?.error_for_status()?;
     let resp = crate::sync_types::refuse_redirect(resp, &format!("pointer-changes page {url}"))?;
     let body = crate::http::read_peer_body_capped(resp, MAX_PAGE_BYTES)
@@ -447,6 +457,7 @@ where
             }
 
             delivered.record_delivered(&deployment);
+            report.record_streamed(&deployment.entity_type);
             deployer
                 .schedule_entity_deployment(deployment, &advertisers, Some(report))
                 .await?;

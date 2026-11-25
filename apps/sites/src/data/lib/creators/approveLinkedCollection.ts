@@ -18,6 +18,7 @@ import {
   getLinkedEntityContent,
   type LinkedMerkleProof
 } from './catalystEntity'
+import { generateTree } from './contentHashTree'
 import { CurationStatus, type Collection } from './collections'
 import type { ItemCuration } from './linkedItemStatus'
 import { VIDEO_PATH, type Item } from './items'
@@ -87,14 +88,6 @@ export function matchesReviewedContent(
 
 const sameRoot = (a: string | null, b: string) => a?.toLowerCase() === b.toLowerCase()
 
-/** Only reached from the approval flow: the tree package and the Node Buffer it expects stay out of the first load. */
-async function generateTree(hashes: string[]) {
-  const scope = globalThis as { Buffer?: unknown }
-  if (!scope.Buffer) scope.Buffer = (await import('buffer')).Buffer
-  const { generateTree } = await import('@dcl/content-hash-tree')
-  return generateTree(hashes)
-}
-
 /** The node's 409 for pending items whose content differs from what was submitted: only the creator can fix it. */
 function refuseUnsubmitted(error: unknown): never {
   const itemIds =
@@ -147,7 +140,8 @@ export async function prepareLinkedApproval(
         pendingIds.has(id) || (curations.get(id)?.status === CurationStatus.APPROVED && deployedHashes.get(id) === hash)
     )
     .map(([, hash]) => hash)
-  const tree = await generateTree(leaves)
+  const tree = generateTree(leaves)
+  // A root the registry already holds was set by an earlier attempt, which consumed the cheque with it.
   const needsRoot = !sameRoot(registryRoot || approvalData.root, tree.merkleRoot)
   if (needsRoot && !approvalData.chequeWasConsumed && approvalData.cheque.qty < newItems) {
     throw new ApprovalError('invalid_cheque', `The cheque covers ${approvalData.cheque.qty} items, ${newItems} are new`)

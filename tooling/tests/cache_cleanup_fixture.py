@@ -21,11 +21,11 @@ def cache_cleanup_api(pages, states=None, remaining=(1000,), listing_error=None,
             # Only both flags make gh return every page as one JSON array.
             if '--paginate' not in args or '--slurp' not in args:
                 raise AssertionError(f'Listing without --paginate --slurp: {args}')
-            if listing_error:
+            if listing_error is not None:
                 return CompletedProcess(args, 1, stdout='', stderr=listing_error)
             body = pages
         elif args[2] == 'graphql':
-            if states_error:
+            if states_error is not None:
                 return CompletedProcess(args, 1, stdout='', stderr=states_error)
             query = next(arg for arg in args if arg.startswith('query='))
             # GitHub answers under each alias the state of the PR its argument names, whatever the alias says.

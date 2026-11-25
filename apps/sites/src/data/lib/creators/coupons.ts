@@ -11,8 +11,16 @@ import {
   type ContractData,
   type MarketplaceName
 } from './chain/contracts'
-import { StandardMerkleTree } from '@openzeppelin/merkle-tree'
-import { encodeAbiParameters, numberToHex, parseAbiParameters, recoverTypedDataAddress, toHex, type Hex } from 'viem'
+import {
+  encodeAbiParameters,
+  keccak256,
+  numberToHex,
+  parseAbiParameters,
+  recoverTypedDataAddress,
+  toHex,
+  type Hex
+} from 'viem'
+import { hashPair } from './contentHashTree'
 import { signedFetch, type ContractCall, type TypedDataDomain, type TypedDataTypes } from './auth'
 import { OFFCHAIN_MARKETPLACE_TYPES, getOffchainMarketplaceContract, marketplaceUrl, toTypedChecks } from './trades'
 import { isWalletRejection, isWalletStateError } from './walletErrors'
@@ -124,16 +132,20 @@ export function normalizeCollections(collections: string[]): string[] {
 }
 
 /**
- * The Merkle root the coupon is signed over, laid out with OpenZeppelin's StandardMerkleTree: marketplace-server
- * rebuilds it the same way, and a different layout would make it reject the coupon.
+ * The Merkle root the coupon is signed over, as OpenZeppelin's StandardMerkleTree gives it for rows of one address:
+ * marketplace-server builds the tree with that library, and a different layout would make it reject the coupon.
+ * Each leaf is hashed two times. The sorted leaves fill the end of the array, last first, and node `i` hashes
+ * nodes `2i + 1` and `2i + 2`.
  */
 export function collectionsRoot(collections: string[]): string {
   const unique = normalizeCollections(collections)
   if (unique.length === 0) throw new DiscountInputError('collections')
-  return StandardMerkleTree.of(
-    unique.map(collection => [collection]),
-    ['address']
-  ).root
+  const leaves = unique
+    .map(collection => keccak256(keccak256(encodeAbiParameters([{ type: 'address' }], [collection as Hex]))))
+    .sort()
+  const tree = [...new Array<Hex>(leaves.length - 1), ...leaves.reverse()]
+  for (let i = leaves.length - 2; i >= 0; i--) tree[i] = hashPair(tree[2 * i + 1], tree[2 * i + 2])
+  return tree[0]
 }
 
 /** `abi.encode(CollectionDiscountCouponData)`: what the creator signs and the contract decodes. */

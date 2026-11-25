@@ -136,3 +136,34 @@ describe("when the root loader names the Segment user", () => {
     expect((await loadWith(`dcl_wallet_verified=${A}`, true)).analyticsUserId).toBeNull();
   });
 });
+
+describe("when a signed-in visitor's wallet reaches the root loader", () => {
+  const WALLET = "0x00000000000000000000000000000000000000aa";
+  let context: RouterContextProvider;
+  const request = (path: string) =>
+    new Request(`https://example.test${path}`, { headers: { cookie: `dcl_wallet=${WALLET}` } });
+
+  beforeEach(() => { context = new RouterContextProvider(); });
+
+  it("should hand a private page the wallet", async () => {
+    const response = await loader({ request: request("/events"), params: {}, context } as never);
+    expect(response.wallet).toBe(WALLET);
+  });
+
+  describe("and the response is shared-cacheable", () => {
+    let response: Awaited<ReturnType<typeof loader>>;
+
+    beforeEach(async () => {
+      markPublicResponse(context);
+      response = await loader({ request: request("/docs/"), params: {}, context } as never);
+    });
+
+    it("should omit the wallet", () => {
+      expect(response.wallet).toBeNull();
+    });
+
+    it("should carry the address nowhere in the data", () => {
+      expect(JSON.stringify(response)).not.toContain(WALLET);
+    });
+  });
+});

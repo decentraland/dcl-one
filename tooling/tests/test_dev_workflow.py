@@ -462,6 +462,9 @@ class DevelopmentWorkflowTest(unittest.TestCase):
         prefix = 'foundation-dev-v2-smoke-decentraland/dcl-one-Linux-X64-'
         deps = 'v0-rust-dev-tests-'
         bevy = 'v0-rust-bevy-explorer-native-ci-test-test-Linux-x64-'
+
+        def native(lane, generation):
+            return f'bevy-native-v1-{lane}-Linux-X64-' + '-'.join(['0' * 16] * 3 + [generation * 16])
         caches = [
             {'id': 1, 'ref': 'refs/heads/main', 'key': prefix + 'old'},
             {'id': 2, 'ref': 'refs/heads/main', 'key': prefix + 'new'},
@@ -487,6 +490,14 @@ class DevelopmentWorkflowTest(unittest.TestCase):
             {'id': 22, 'ref': 'refs/pull/11/merge', 'key': 'bevy-web-unopt-v1-pr-' + 'a' * 64},
             {'id': 23, 'ref': 'refs/pull/11/merge', 'key': 'bevy-web-unopt-v1-pr-' + 'c' * 64},
             {'id': 24, 'ref': 'refs/pull/10/merge', 'key': 'bevy-web-unopt-v1-pr-' + 'a' * 64},
+            # A hyphenated lane is one family per ref, apart from the other lanes of the same platform.
+            {'id': 25, 'ref': 'refs/heads/main', 'key': native('relay-wake', '1')},
+            {'id': 26, 'ref': 'refs/heads/main', 'key': native('relay-wake', '2')},
+            {'id': 27, 'ref': 'refs/heads/main', 'key': native('relay-wake', '3')},
+            {'id': 28, 'ref': 'refs/heads/main', 'key': native('test', '1')},
+            {'id': 29, 'ref': 'refs/heads/main', 'key': native('test', '2')},
+            {'id': 30, 'ref': 'refs/pull/11/merge', 'key': native('relay-wake', '1')},
+            {'id': 31, 'ref': 'refs/pull/11/merge', 'key': native('relay-wake', '2')},
         ]
         with patch.dict(os.environ, {'GITHUB_EVENT_NAME': 'schedule', 'PR_NUMBER': '',
                                      'GITHUB_REPOSITORY': 'decentraland/dcl-one'}), \
@@ -503,6 +514,10 @@ class DevelopmentWorkflowTest(unittest.TestCase):
             'repos/decentraland/dcl-one/actions/caches/20',
             'repos/decentraland/dcl-one/actions/caches/22',
             'repos/decentraland/dcl-one/actions/caches/24',
+            'repos/decentraland/dcl-one/actions/caches/25',
+            'repos/decentraland/dcl-one/actions/caches/26',
+            'repos/decentraland/dcl-one/actions/caches/28',
+            'repos/decentraland/dcl-one/actions/caches/30',
         ])
         self.assertEqual(sum('graphql' in call.args[0] for call in cli.call_args_list), 1)
 
