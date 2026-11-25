@@ -44,7 +44,8 @@ export type AiSharingRating = 'up' | 'down' | null;
 /** What Assistant Insights made of one of the wallet's conversations. */
 export type AiSharingDigest = {
   conversationId: string;
-  goal: string;
+  /** Null when the service dropped the digest's notes (a copy or a secret). */
+  goal: string | null;
   outcome: 'achieved' | 'partial' | 'not_achieved' | 'abandoned' | 'unclear';
   frictions: { kind: string }[];
   createdAt: string;
