@@ -17,10 +17,10 @@ use scene_runner::{
         LiveScenes, PointerResult, SceneHash, SceneLoading, ScenePointers, SuperUserScene,
         PARCEL_SIZE,
     },
-    load_timing::scene_is_halted,
+    load_timing::scene_has_loaded,
     permissions::Permission,
-    renderer_context::{RendererSceneContext, STARTUP_TICKS},
-    update_world::{gltf_container::GLTF_LOADING, mesh_collider::SceneColliderData},
+    renderer_context::RendererSceneContext,
+    update_world::mesh_collider::SceneColliderData,
     OutOfWorld,
 };
 use wallet::Wallet;
@@ -297,16 +297,12 @@ pub(crate) fn handle_out_of_world(
         // "ready" on its own, so don't keep the player out-of-world behind the loading screen. Do
         // still wait for gltfs though: they keep processing renderer-side while the scene is frozen,
         // and releasing early would drop the player in before the ground colliders exist.
-        let halted = scene_is_halted(context)
-            && (context.broken() || !context.blocked.contains(GLTF_LOADING));
         // A broken scene (hung past the not-responding timeout, errored, or unreachable) will
         // never become ready; stop holding the player behind the loading screen and let them
-        // into the world. An inspected scene never gates the player at all: it's a debugging
+        // into the world. `scene_has_loaded` is that rule, the one the settling commands stop
+        // waiting on. An inspected scene never gates the player at all: it's a debugging
         // session, and it may sit at a breakpoint (or paused before its first tick) forever.
-        if !halted
-            && !context.inspected
-            && (context.tick_number <= STARTUP_TICKS || !context.blocked.is_empty())
-        {
+        if !scene_has_loaded(context) && !context.inspected {
             debug!("scene not ready");
         } else {
             if context.broken() {

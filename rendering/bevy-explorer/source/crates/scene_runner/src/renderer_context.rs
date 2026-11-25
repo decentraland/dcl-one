@@ -175,22 +175,24 @@ pub const SUPER_USER_SCENE_NOT_RESPONDING_TIMEOUT: std::time::Duration =
 pub const SCENE_NOT_RESPONDING_DISPLAY_AFTER: std::time::Duration =
     std::time::Duration::from_secs(2);
 
-/// The ticks a scene runs before its content counts as shown: it is shown, and the teleport
-/// releases the player onto it, once it has run past this many.
-pub const STARTUP_TICKS: u32 = 5;
+/// The ticks a scene runs before it counts as started ([`RendererSceneContext::started`]): its
+/// content is shown, and the teleport releases the player onto it, once it has run past this many.
+pub(crate) const STARTUP_TICKS: u32 = 5;
 
 impl RendererSceneContext {
     pub fn broken(&self) -> bool {
         matches!(self.state, SceneState::Broken)
     }
 
-    /// The scene's content is on screen: it has run past its first ticks with nothing blocking
-    /// it (its glTFs loaded), or it is broken or frozen and never will. Its stand-ins (an
-    /// imposter tile, a near LOD) go when this holds.
+    /// The scene has run past its [`STARTUP_TICKS`] with nothing blocking it (its glTFs loaded).
+    pub fn started(&self) -> bool {
+        self.tick_number > STARTUP_TICKS && self.blocked.is_empty()
+    }
+
+    /// The scene's content is on screen: it has [`started`](Self::started), or it is broken or
+    /// frozen and never will. Its stand-ins (an imposter tile, a near LOD) go when this holds.
     pub fn content_shown(&self) -> bool {
-        self.broken()
-            || self.blocked.contains(FROZEN_BLOCK)
-            || (self.tick_number > STARTUP_TICKS && self.blocked.is_empty())
+        self.broken() || self.blocked.contains(FROZEN_BLOCK) || self.started()
     }
 
     pub fn sender(&self) -> Option<&tokio::sync::mpsc::UnboundedSender<RendererResponse>> {
