@@ -19,7 +19,13 @@ export { readTurnInfo, type TurnInfo };
 let outbox: Outbox | null = null;
 
 export function getOutbox(): Outbox {
-  outbox ??= new Outbox(path.join(getUserDataPath(), 'ai-sharing', 'outbox'));
+  outbox ??= new Outbox(
+    path.join(getUserDataPath(), 'ai-sharing', 'outbox'),
+    ({ expired, overLimit }) =>
+      log.warn(
+        `[AI sharing] dropped queued turns that were never shared: ${expired} older than 7 days, ${overLimit} past the queue's limits`,
+      ),
+  );
   return outbox;
 }
 
