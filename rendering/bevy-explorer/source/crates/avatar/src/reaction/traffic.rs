@@ -4,7 +4,6 @@
 
 use std::collections::VecDeque;
 
-use alloy_core::primitives::Address;
 use bevy::prelude::*;
 use comms::chat_reaction::atlas_index_to_emoji;
 use dcl_component::proto_components::kernel::comms::rfc4;
@@ -173,24 +172,14 @@ impl ReactionGuard {
 
 /// A sender's reactions waiting to play, one at a time: on the sender while any wait and until
 /// the gap after the last has run out, so one that follows it waits the gap out too.
-#[derive(Component)]
+#[derive(Component, Default)]
 pub struct ReactionQueue {
-    /// Who the wire said sent them.
-    pub from: Address,
     waiting: VecDeque<&'static str>,
     /// Seconds until the next plays.
     timer: f32,
 }
 
 impl ReactionQueue {
-    pub fn new(from: Address) -> Self {
-        Self {
-            from,
-            waiting: VecDeque::new(),
-            timer: 0.0,
-        }
-    }
-
     /// Queue `emoji` `count` times. Returns how many older reactions gave way.
     pub fn push(&mut self, emoji: &'static str, count: u32) -> u32 {
         let mut dropped = 0;
@@ -414,7 +403,7 @@ mod tests {
 
     #[test]
     fn reactions_play_one_at_a_time() {
-        let mut queue = ReactionQueue::new(Address::ZERO);
+        let mut queue = ReactionQueue::default();
         assert_eq!(queue.push("👍", 3), 0);
         // the first plays at once
         assert_eq!(queue.tick(0.0), ["👍"]);
@@ -430,7 +419,7 @@ mod tests {
 
     #[test]
     fn a_reaction_that_follows_the_last_waits_out_the_gap() {
-        let mut queue = ReactionQueue::new(Address::ZERO);
+        let mut queue = ReactionQueue::default();
         queue.push("🔥", 1);
         assert_eq!(queue.tick(0.0), ["🔥"]);
         // nothing waits, and the gap has only begun
@@ -448,7 +437,7 @@ mod tests {
 
     #[test]
     fn a_full_queue_keeps_the_newest() {
-        let mut queue = ReactionQueue::new(Address::ZERO);
+        let mut queue = ReactionQueue::default();
         assert_eq!(queue.push("👍", MAX_QUEUED as u32), 0);
         assert_eq!(queue.push("🔥", 2), 2);
         assert_eq!(queue.len(), MAX_QUEUED);

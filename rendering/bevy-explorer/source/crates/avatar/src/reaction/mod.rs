@@ -22,7 +22,7 @@ use common::{
 };
 use comms::{
     broadcast_to,
-    chat_reaction::{atlas_index_to_emoji, canonical_emoji, emoji_atlas_tile},
+    chat_reaction::{atlas_index_to_emoji, picked_emoji_tile},
     global_crdt::{process_transport_updates, ForeignPlayer, ReactionEvent},
     BlockedOrBanned, BroadcastTarget, Transport,
 };
@@ -48,7 +48,9 @@ impl Plugin for ReactionPlugin {
                 (
                     accept_local_reactions,
                     receive_reactions.run_if(on_event::<ReactionEvent>),
-                    play_queued_reactions,
+                    // asks who is blocked, which only an app that keeps the lists can answer: it runs
+                    // while a sender has a queue
+                    play_queued_reactions.run_if(any_with_component::<ReactionQueue>),
                     flush_reactions,
                     pipe_reactions_to_scene,
                 )
@@ -82,7 +84,7 @@ struct ReactionPlayed {
 struct ReactionStats {
     /// The local user's picks that were no emoji the wire can carry, or had no one to send them.
     refused_picks: u32,
-    /// Messages sent, one per emoji per send.
+    /// Messages put on a room's transport, one per emoji per send.
     sent: u32,
     /// Peers' messages, before any is dropped.
     received: u32,
@@ -121,9 +123,8 @@ fn accept_local_reactions(
         };
         // what plays is the emoji the wire carries for the pick, so the local user sees what
         // the others will
-        let reaction = canonical_emoji(picked)
-            .and_then(|emoji| emoji_atlas_tile(&emoji))
-            .and_then(|tile| Some((tile, atlas_index_to_emoji(tile)?)));
+        let reaction =
+            picked_emoji_tile(picked).and_then(|tile| Some((tile, atlas_index_to_emoji(tile)?)));
         let (Some((tile, emoji)), Some(from), Ok((player, mut outbox))) =
             (reaction, wallet.address(), local.single_mut())
         else {
@@ -189,10 +190,7 @@ fn receive_reactions(
         };
         stats.dropped.queue_full += match queue {
             Some(mut queue) => queue.push(emoji, count),
-            None => started
-                .entry(event.sender)
-                .or_insert_with(|| ReactionQueue::new(event.from))
-                .push(emoji, count),
+            None => started.entry(event.sender).or_default().push(emoji, count),
         };
     }
     for (sender, queue) in started {
@@ -205,18 +203,34 @@ fn receive_reactions(
 fn play_queued_reactions(
     mut commands: Commands,
     time: Res<Time>,
-    mut queues: Query<(Entity, &mut ReactionQueue, Has<BlockedOrBanned>)>,
+    wallet: Res<Wallet>,
+    ban_block: BanBlock,
+    mut queues: Query<(
+        Entity,
+        &mut ReactionQueue,
+        Option<&ForeignPlayer>,
+        Has<BlockedOrBanned>,
+    )>,
     mut played: EventWriter<ReactionPlayed>,
     mut stats: ResMut<ReactionStats>,
 ) {
-    for (player, mut queue, blocked) in &mut queues {
-        // blocked since they were queued
-        if blocked {
+    for (player, mut queue, peer, blocked) in &mut queues {
+        // a peer is who comms heard them as; the one other player a queue is put on is the local
+        // user, by the console
+        let from = peer
+            .map(|peer| peer.address)
+            .or_else(|| wallet.address())
+            .unwrap_or_default();
+        // blocked or banned since they were queued: asked by address as at intake, as the
+        // marker follows by a frame or two
+        if blocked
+            || ban_block.is_blocked_either_way(from)
+            || ban_block.is_addr_banned_in_scene(from)
+        {
             stats.dropped.blocked += queue.len() as u32;
             commands.entity(player).try_remove::<ReactionQueue>();
             continue;
         }
-        let from = queue.from;
         for emoji in queue.tick(time.delta_secs()) {
             played.write(ReactionPlayed {
                 player,
@@ -239,6 +253,11 @@ fn flush_reactions(
     transports: Query<&Transport>,
     mut stats: ResMut<ReactionStats>,
 ) {
+    let rooms = BroadcastTarget::WEBSOCKET | BroadcastTarget::LIVEKIT;
+    // with no room to carry it a message goes nowhere, and is not counted as sent
+    let carried = transports
+        .iter()
+        .any(|transport| rooms.includes(&transport.transport_type));
     for mut outbox in &mut outboxes {
         if outbox.waiting() == 0 {
             continue;
@@ -246,14 +265,14 @@ fn flush_reactions(
         for outgoing in outbox.tick(time.delta_secs(), uptime.elapsed_secs()) {
             broadcast_to(
                 transports.iter(),
-                BroadcastTarget::WEBSOCKET | BroadcastTarget::LIVEKIT,
+                rooms,
                 false,
                 &rfc4::Packet {
                     message: Some(rfc4::packet::Message::Reaction(outgoing.into())),
                     protocol_version: 100,
                 },
             );
-            stats.sent += 1;
+            stats.sent += u32::from(carried);
         }
     }
 }

@@ -11,7 +11,7 @@ const PEER: Address = Address::repeat_byte(0xab);
 const FRAME: f32 = 0.05;
 
 /// The plugin in an app of its own, with a signed-in local player and a stream to the HUD.
-struct World {
+struct Harness {
     app: App,
     local: Entity,
     me: Address,
@@ -22,7 +22,7 @@ struct World {
 #[derive(Resource, Default)]
 struct Reported(Vec<i32>);
 
-fn world() -> World {
+fn harness() -> Harness {
     let mut wallet = Wallet::default();
     wallet.finalize_as_guest_with_seed([3; 32]);
     let me = wallet.address().unwrap();
@@ -62,7 +62,7 @@ fn world() -> World {
         .send_event(SystemApi::GetReactionStream(sender));
     app.update();
 
-    World {
+    Harness {
         app,
         local,
         me,
@@ -70,14 +70,16 @@ fn world() -> World {
     }
 }
 
-impl World {
+impl Harness {
     fn pick(&mut self, emoji: &str) {
         self.app
             .world_mut()
             .send_event(SystemApi::SendReaction(emoji.to_owned()));
     }
 
-    /// A stand-in for a peer: what the comms decode gives every player it hears from.
+    /// A stand-in for a peer: what the comms decode gives every player it hears from, but for
+    /// the `ForeignPlayer` that only comms can make. With none, its reactions play under the
+    /// local user's address.
     fn peer(&mut self) -> Entity {
         self.app.world_mut().spawn(ReactionGuard::default()).id()
     }
@@ -146,50 +148,62 @@ fn sent(wire: &mut mpsc::Receiver<NetworkMessage>) -> Vec<bool> {
 
 #[test]
 fn a_pick_plays_at_once_and_is_sent_once_the_picks_stop() {
-    let mut world = world();
-    let mut wire = world.transport(TransportType::Livekit);
-    let me = format!("{:#x}", world.me);
+    let mut harness = harness();
+    let mut wire = harness.transport(TransportType::Livekit);
+    let me = format!("{:#x}", harness.me);
 
-    world.pick("👍");
-    world.app.update();
+    harness.pick("👍");
+    harness.app.update();
     assert_eq!(
-        world.played(),
+        harness.played(),
         [ReactionPlayed {
-            player: world.local,
-            from: world.me,
+            player: harness.local,
+            from: harness.me,
             emoji: "👍",
         }]
     );
-    assert_eq!(world.streamed(), [(me.clone(), "👍".to_owned())]);
+    assert_eq!(harness.streamed(), [(me.clone(), "👍".to_owned())]);
     assert!(sent(&mut wire).is_empty());
 
-    world.pick("👍");
-    world.pick("🔥");
-    world.app.update();
-    assert_eq!(world.streamed().len(), 2);
+    harness.pick("👍");
+    harness.pick("🔥");
+    harness.app.update();
+    assert_eq!(harness.streamed().len(), 2);
     assert!(sent(&mut wire).is_empty());
 
     // one reliable message for each emoji
-    world.run(0.3);
+    harness.run(0.3);
     assert_eq!(sent(&mut wire), [false, false]);
-    assert_eq!(world.stats().sent, 2);
-    world.run(1.0);
+    assert_eq!(harness.stats().sent, 2);
+    harness.run(1.0);
     assert!(sent(&mut wire).is_empty());
 
     // each pick is reported once, as the index it is sent as
     let (thumb, fire) = (emoji_to_atlas_index("👍"), emoji_to_atlas_index("🔥"));
-    assert_eq!(world.reported(), [thumb, thumb, fire]);
+    assert_eq!(harness.reported(), [thumb, thumb, fire]);
+}
+
+#[test]
+fn a_pick_with_no_room_to_carry_it_plays_and_is_not_counted_as_sent() {
+    let mut harness = harness();
+    // a transport reactions do not go by
+    let mut island = harness.transport(TransportType::Archipelago);
+    harness.pick("👍");
+    harness.run(0.5);
+    assert_eq!(harness.stats().played, 1);
+    assert_eq!(harness.stats().sent, 0);
+    assert!(sent(&mut island).is_empty());
 }
 
 #[test]
 fn picks_go_where_nearby_chat_goes() {
-    let mut world = world();
-    let mut room = world.transport(TransportType::Livekit);
-    let mut socket = world.transport(TransportType::WebsocketRoom);
-    let mut island = world.transport(TransportType::Archipelago);
-    let mut pulse = world.transport(TransportType::Pulse);
-    world.pick("👍");
-    world.run(0.5);
+    let mut harness = harness();
+    let mut room = harness.transport(TransportType::Livekit);
+    let mut socket = harness.transport(TransportType::WebsocketRoom);
+    let mut island = harness.transport(TransportType::Archipelago);
+    let mut pulse = harness.transport(TransportType::Pulse);
+    harness.pick("👍");
+    harness.run(0.5);
     assert_eq!(sent(&mut room).len(), 1);
     assert_eq!(sent(&mut socket).len(), 1);
     assert!(sent(&mut island).is_empty());
@@ -198,150 +212,160 @@ fn picks_go_where_nearby_chat_goes() {
 
 #[test]
 fn an_emoji_the_wire_does_not_carry_does_nothing_anywhere() {
-    let mut world = world();
-    let mut wire = world.transport(TransportType::Livekit);
+    let mut harness = harness();
+    let mut wire = harness.transport(TransportType::Livekit);
     for picked in ["🇬🇧", "thumbs up", "", "👍👍"] {
-        world.pick(picked);
+        harness.pick(picked);
     }
-    world.run(1.0);
-    assert!(world.streamed().is_empty());
+    harness.run(1.0);
+    assert!(harness.streamed().is_empty());
     assert!(sent(&mut wire).is_empty());
-    assert!(world.reported().is_empty());
-    assert_eq!(world.stats().refused_picks, 4);
-    assert_eq!(world.stats().played, 0);
+    assert!(harness.reported().is_empty());
+    assert_eq!(harness.stats().refused_picks, 4);
+    assert_eq!(harness.stats().played, 0);
 }
 
 #[test]
 fn what_plays_is_the_emoji_the_others_will_see() {
-    let mut world = world();
+    let mut harness = harness();
     // the picker's heart has no variation selector; the wire's does
-    world.pick("\u{2764}");
-    world.app.update();
-    assert_eq!(world.played()[0].emoji, "\u{2764}\u{fe0f}");
+    harness.pick("\u{2764}");
+    harness.app.update();
+    assert_eq!(harness.played()[0].emoji, "\u{2764}\u{fe0f}");
 }
 
 #[test]
 fn no_one_signed_in_reacts_as_no_one() {
-    let mut world = world();
-    world.app.world_mut().resource_mut::<Wallet>().disconnect();
-    world.pick("👍");
-    world.app.update();
-    assert!(world.played().is_empty());
-    assert_eq!(world.stats().refused_picks, 1);
+    let mut harness = harness();
+    harness
+        .app
+        .world_mut()
+        .resource_mut::<Wallet>()
+        .disconnect();
+    harness.pick("👍");
+    harness.app.update();
+    assert!(harness.played().is_empty());
+    assert_eq!(harness.stats().refused_picks, 1);
 }
 
 #[test]
 fn a_peers_reactions_play_one_at_a_time() {
-    let mut world = world();
-    let peer = world.peer();
-    world.hear(peer, "🔥", 7.0, 3);
-    world.app.update();
+    let mut harness = harness();
+    let peer = harness.peer();
+    harness.hear(peer, "🔥", 7.0, 3);
+    harness.app.update();
     // the first at once, on the peer
     assert_eq!(
-        world.played(),
-        [ReactionPlayed {
-            player: peer,
-            from: PEER,
-            emoji: "🔥",
-        }]
+        harness
+            .played()
+            .iter()
+            .map(|played| (played.player, played.emoji))
+            .collect::<Vec<_>>(),
+        [(peer, "🔥")]
     );
-    assert!(world.app.world().get::<ReactionQueue>(peer).is_some());
+    assert!(harness.app.world().get::<ReactionQueue>(peer).is_some());
 
-    world.run(0.5);
-    let peer_address = format!("{PEER:#x}");
-    assert_eq!(world.streamed(), vec![(peer_address, "🔥".to_owned()); 3]);
-    assert_eq!(world.stats().played, 3);
+    harness.run(0.5);
+    assert_eq!(
+        harness
+            .streamed()
+            .into_iter()
+            .map(|(_, emoji)| emoji)
+            .collect::<Vec<_>>(),
+        ["🔥"; 3]
+    );
+    assert_eq!(harness.stats().played, 3);
     // nothing is kept on a peer once the gap after their last has run out
-    world.run(0.3);
-    assert!(world.app.world().get::<ReactionQueue>(peer).is_none());
+    harness.run(0.3);
+    assert!(harness.app.world().get::<ReactionQueue>(peer).is_none());
 }
 
 #[test]
 fn messages_of_one_reaction_each_play_a_gap_apart_too() {
-    let mut world = world();
-    let peer = world.peer();
+    let mut harness = harness();
+    let peer = harness.peer();
     // a message a frame, each with a stamp of its own
     for message in 0..4 {
-        world.hear(peer, "🔥", 1.0 + message as f32, 1);
-        world.app.update();
+        harness.hear(peer, "🔥", 1.0 + message as f32, 1);
+        harness.app.update();
         // the first at once; the next two arrive inside its gap and wait
         if message < 3 {
-            assert_eq!(world.stats().played, 1);
+            assert_eq!(harness.stats().played, 1);
         }
     }
     // then one for each gap that runs out
-    world.run(0.15);
-    assert_eq!(world.stats().played, 2);
+    harness.run(0.15);
+    assert_eq!(harness.stats().played, 2);
     for played in 3..=4 {
-        world.run(0.2);
-        assert_eq!(world.stats().played, played);
+        harness.run(0.2);
+        assert_eq!(harness.stats().played, played);
     }
 }
 
 #[test]
 fn several_messages_in_a_frame_share_their_senders_queue() {
-    let mut world = world();
-    let peer = world.peer();
-    world.hear(peer, "🔥", 1.0, 1);
-    world.hear(peer, "👍", 2.0, 1);
+    let mut harness = harness();
+    let peer = harness.peer();
+    harness.hear(peer, "🔥", 1.0, 1);
+    harness.hear(peer, "👍", 2.0, 1);
     // the copy that came by the other room
-    world.hear(peer, "🔥", 1.0, 1);
-    world.run(1.0);
+    harness.hear(peer, "🔥", 1.0, 1);
+    harness.run(1.0);
     assert_eq!(
-        world
+        harness
             .streamed()
             .into_iter()
             .map(|(_, emoji)| emoji)
             .collect::<Vec<_>>(),
         ["🔥", "👍"]
     );
-    assert_eq!(world.stats().received, 3);
-    assert_eq!(world.stats().dropped.duplicate, 1);
+    assert_eq!(harness.stats().received, 3);
+    assert_eq!(harness.stats().dropped.duplicate, 1);
 }
 
 #[test]
 fn a_blocked_sender_plays_nothing() {
-    let mut world = world();
-    let peer = world.peer();
-    world
+    let mut harness = harness();
+    let peer = harness.peer();
+    harness
         .app
         .world_mut()
         .entity_mut(peer)
         .insert(BlockedOrBanned);
-    world.hear(peer, "🔥", 1.0, 5);
-    world.run(1.0);
-    assert!(world.streamed().is_empty());
-    assert_eq!(world.stats().dropped.blocked, 1);
+    harness.hear(peer, "🔥", 1.0, 5);
+    harness.run(1.0);
+    assert!(harness.streamed().is_empty());
+    assert_eq!(harness.stats().dropped.blocked, 1);
 }
 
 #[test]
 fn a_sender_blocked_while_their_reactions_wait_plays_no_more() {
-    let mut world = world();
-    let peer = world.peer();
-    world.hear(peer, "🔥", 1.0, 5);
-    world.app.update();
-    assert_eq!(world.streamed().len(), 1);
+    let mut harness = harness();
+    let peer = harness.peer();
+    harness.hear(peer, "🔥", 1.0, 5);
+    harness.app.update();
+    assert_eq!(harness.streamed().len(), 1);
 
-    world
+    harness
         .app
         .world_mut()
         .entity_mut(peer)
         .insert(BlockedOrBanned);
-    world.run(2.0);
-    assert!(world.streamed().is_empty());
-    assert!(world.app.world().get::<ReactionQueue>(peer).is_none());
-    assert_eq!(world.stats().dropped.blocked, 4);
+    harness.run(2.0);
+    assert!(harness.streamed().is_empty());
+    assert!(harness.app.world().get::<ReactionQueue>(peer).is_none());
+    assert_eq!(harness.stats().dropped.blocked, 4);
 }
 
 #[test]
 fn a_sender_who_leaves_takes_their_waiting_reactions() {
-    let mut world = world();
-    let peer = world.peer();
-    world.hear(peer, "🔥", 1.0, 5);
-    world.app.update();
-    world.app.world_mut().despawn(peer);
+    let mut harness = harness();
+    let peer = harness.peer();
+    harness.hear(peer, "🔥", 1.0, 5);
+    harness.app.update();
+    harness.app.world_mut().despawn(peer);
     // a message of theirs still on its way in finds no one
-    world.hear(peer, "👍", 2.0, 1);
-    world.run(2.0);
-    assert_eq!(world.streamed().len(), 1);
+    harness.hear(peer, "👍", 2.0, 1);
+    harness.run(2.0);
+    assert_eq!(harness.streamed().len(), 1);
 }

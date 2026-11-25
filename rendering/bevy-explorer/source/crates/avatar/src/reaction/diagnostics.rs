@@ -4,7 +4,7 @@ use bevy::prelude::*;
 use bevy_console::ConsoleCommand;
 use common::{structs::PrimaryPlayerRes, util::AsH160};
 use comms::{
-    chat_reaction::{canonical_emoji, emoji_atlas_tile},
+    chat_reaction::picked_emoji_tile,
     global_crdt::{ForeignPlayer, ReactionEvent},
 };
 use console::DebugSection;
@@ -51,13 +51,14 @@ pub const SECTION: DebugSection = DebugSection {
 };
 
 /// Report the reactions as JSON: `outbox` (the local user's picks not yet sent), `refusedPicks`
-/// (their picks that were no emoji the wire carries, or had no wallet to send them), `sent` and
-/// `received` (messages, one per emoji per send), `queued` (the reactions waiting to play, and
-/// the senders with any waiting or inside the gap after their last), `played`, `streamed` (the
-/// reactions passed to the HUD) to `subscribers` streams, and `dropped`, by cause:
-/// `blocked` (messages and waiting reactions of a sender blocked or banned), `duplicate` (a
-/// message's copy by another room), `unknownEmoji`, `rateLimited` (messages) and `queueFull`
-/// (reactions that gave way to newer ones). The counts are of this session.
+/// (their picks that were no emoji the wire carries, or had no wallet to send them), `sent`
+/// (messages put on a room's transport, one per emoji per send: none with no room to carry
+/// it), `received` (peers' messages), `queued` (the reactions waiting to play, and the senders
+/// with any waiting or inside the gap after their last), `played`, `streamed` (the reactions
+/// passed to the HUD) to `subscribers` streams, and `dropped`, by cause: `blocked` (messages
+/// and waiting reactions of a sender blocked or banned), `duplicate` (a message's copy by
+/// another room), `unknownEmoji`, `rateLimited` (messages) and `queueFull` (reactions that gave
+/// way to newer ones). The counts are of this session.
 #[derive(clap::Parser, ConsoleCommand)]
 #[command(name = "/reaction_state")]
 pub struct ReactionStateCommand;
@@ -140,8 +141,7 @@ pub fn reaction_simulate(
     let Some(Ok(command)) = cmd.take() else {
         return;
     };
-    let Some(index) = canonical_emoji(&command.emoji).and_then(|emoji| emoji_atlas_tile(&emoji))
-    else {
+    let Some(index) = picked_emoji_tile(&command.emoji) else {
         cmd.reply_failed("not an emoji the wire carries");
         return;
     };
@@ -178,7 +178,7 @@ pub fn reaction_simulate(
     // the local player has no messages of their own to guard against
     commands
         .entity(sender)
-        .insert_if_new(ReactionGuard::default());
+        .try_insert_if_new(ReactionGuard::default());
     events.write(ReactionEvent {
         sender,
         from,
