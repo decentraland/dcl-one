@@ -47,6 +47,19 @@ function applied(update: Record<string, unknown>): Record<string, unknown> {
   return { ...Object.fromEntries(params()), ...update };
 }
 
+/** document.hidden under the test's control, with the event a real tab sends when it changes. */
+function hiddenPage(hidden: boolean) {
+  let state = hidden;
+  Object.defineProperty(document, "hidden", { configurable: true, get: () => state });
+  const set = (next: boolean) => {
+    state = next;
+    act(() => {
+      document.dispatchEvent(new Event("visibilitychange"));
+    });
+  };
+  return { show: () => set(false), hide: () => set(true), restore: () => delete (document as { hidden?: boolean }).hidden };
+}
+
 afterEach(() => {
   cleanup();
   vi.useRealTimers();
@@ -231,6 +244,34 @@ describe("a mount that stays silent", () => {
     expect(onError).not.toHaveBeenCalled();
     act(() => vi.advanceTimersByTime(5_000));
     expect(onError).toHaveBeenCalledTimes(1);
+  });
+
+  test("counts only the time the page is visible, where the preview can draw", () => {
+    vi.useFakeTimers();
+    const page = hiddenPage(true);
+    try {
+      const { onError } = mount({ urns: [HOODIE], ...UNITY }, 45_000);
+      act(() => vi.advanceTimersByTime(10 * 60_000));
+      expect(onError).not.toHaveBeenCalled();
+
+      page.show();
+      act(() => vi.advanceTimersByTime(30_000));
+      page.hide();
+      act(() => vi.advanceTimersByTime(10 * 60_000));
+      page.show();
+      act(() => vi.advanceTimersByTime(14_999));
+      expect(onError).not.toHaveBeenCalled();
+      act(() => vi.advanceTimersByTime(1));
+      expect(onError).toHaveBeenCalledTimes(1);
+
+      // Spent: hiding and showing the page again does not time it once more.
+      page.hide();
+      page.show();
+      act(() => vi.advanceTimersByTime(60_000));
+      expect(onError).toHaveBeenCalledTimes(1);
+    } finally {
+      page.restore();
+    }
   });
 
   test("without a timeout, waits as long as it takes", () => {
