@@ -22,17 +22,34 @@ function findPackageJsonFiles(dir, fileList = []) {
 
 const DEPENDENCY_FIELDS = ['dependencies', 'devDependencies', 'peerDependencies', 'optionalDependencies', 'overrides']
 
-// Only what the registry resolves: a version, a range or a dist-tag. Anything else (a path, a tarball,
-// a link, a workspace, a URL, a git or `user/repo` source, an `npm:` alias) names something unpublished
-// or not under its own name.
+// Only what the registry resolves: a version, a range or a dist-tag. Anything else (a path, a
+// tarball, a link, a workspace, a URL, a git or `user/repo` source) names something unpublished.
+// An `npm:` alias is a PR preview's sibling: the same package name under the scope passed as
+// `--preview-scope`, at the checked package's exact version. Without that argument, a release
+// build, no alias passes.
 const PUBLISHED_TYPES = ['version', 'range', 'tag']
 
-function unpublishedReason(name, spec) {
+const previewScopeArg = process.argv.indexOf('--preview-scope')
+const PREVIEW_SCOPE = previewScopeArg === -1 ? null : process.argv[previewScopeArg + 1]
+
+function aliasReason(name, parsed, owner) {
+  const target = parsed.subSpec
+  if (!PREVIEW_SCOPE) return `aliases ${target.raw}; a release may not alias a dependency`
+  const sibling = `${PREVIEW_SCOPE}/${name.split('/').pop()}`
+  if (target.name !== sibling || target.type !== 'version' || target.fetchSpec !== owner.version) {
+    return `aliases ${target.raw}; a preview may alias only ${sibling}@${owner.version}`
+  }
+  return null
+}
+
+function unpublishedReason(name, spec, owner) {
   if (typeof spec !== 'string') return `is not a version string: ${JSON.stringify(spec)}`
   // an override's `$name` reuses that direct dependency's spec, which is checked on its own
   if (spec.startsWith('$')) return null
   try {
-    const { type } = npa.resolve(name, spec)
+    const parsed = npa.resolve(name, spec)
+    if (parsed.type === 'alias') return aliasReason(name, parsed, owner)
+    const type = parsed.type
     return PUBLISHED_TYPES.includes(type) ? null : `is a ${type} dependency, not a published version: ${spec}`
   } catch (error) {
     return `is not a valid dependency spec (${error.message}): ${spec}`
@@ -62,7 +79,7 @@ function checkNoLocalPackages(packageJsonPath) {
       if (!deps) continue
 
       for (const [label, name, spec] of dependencyEntries(field, deps)) {
-        const reason = unpublishedReason(name, spec)
+        const reason = unpublishedReason(name, spec, packageJson)
         if (reason) errors.push(`${field}: ${label} ${reason}`)
       }
     }

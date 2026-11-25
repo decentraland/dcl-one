@@ -27,6 +27,19 @@ export default tseslint.config(
   },
   ...tseslint.configs.recommended,
   {
+    files: ['**/*.{ts,tsx,mts,cts}'],
+    rules: {
+      '@typescript-eslint/consistent-type-imports': [
+        'error',
+        {
+          prefer: 'type-imports',
+          fixStyle: 'separate-type-imports',
+          disallowTypeAnnotations: false
+        }
+      ]
+    }
+  },
+  {
     files: ['figma/review/src/**/*.{ts,tsx}', 'gallery/src/**/*.{ts,tsx}'],
     ...reactHooks.configs.flat.recommended
   }

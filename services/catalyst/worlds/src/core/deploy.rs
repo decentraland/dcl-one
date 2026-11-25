@@ -644,10 +644,25 @@ async fn authenticate(
     .await
     {
         Ok(()) => Address::parse(&signer).map_err(|_| refused(format!("Invalid signer: {signer}"))),
-        Err(AuthError::Eip1654ValidationFailed(e)) => Err(unavailable(format!(
+        Err(e) => Err(chain_refusal(e, &chain, entity_id, refused)),
+    }
+}
+
+/// A chain the verifier did not pass: 503 when a contract-wallet check could
+/// not run, 429 when the client source's budget refused one before the RPC,
+/// otherwise `refused` with `@dcl/crypto`'s words.
+fn chain_refusal(
+    err: AuthError,
+    chain: &AuthChain,
+    entity_id: &str,
+    refused: impl FnOnce(String) -> Refusal,
+) -> Refusal {
+    match err {
+        AuthError::Eip1654ValidationFailed(e) => unavailable(format!(
             "The auth chain could not be verified right now: {e}"
-        ))),
-        Err(e) => Err(refused(crypto_message(&chain, entity_id, &e))),
+        )),
+        e @ AuthError::Eip1654RateLimited => Refusal(StatusCode::TOO_MANY_REQUESTS, e.to_string()),
+        e => refused(crypto_message(chain, entity_id, &e)),
     }
 }
 
@@ -1289,6 +1304,34 @@ mod tests {
     use serde_json::json;
 
     const NOW_MS: i64 = 1_700_000_000_000;
+
+    /// A contract-wallet check that could not run is a 503, one the client
+    /// source's budget refused a 429, and any other failure the refusal.
+    #[test]
+    fn a_chain_refusal_keeps_unverifiable_and_rate_limited_apart() {
+        let refusal = |err: AuthError| {
+            let Refusal(status, message) = chain_refusal(err, &AuthChain::new(), "bafy", failed);
+            (status, message)
+        };
+        assert_eq!(
+            refusal(AuthError::Eip1654ValidationFailed("rpc down".into())).0,
+            StatusCode::SERVICE_UNAVAILABLE
+        );
+        assert_eq!(
+            refusal(AuthError::Eip1654RateLimited),
+            (
+                StatusCode::TOO_MANY_REQUESTS,
+                "Too many contract-wallet signature checks from this client; retry later".into()
+            )
+        );
+        assert_eq!(
+            refusal(AuthError::Eip1654Rejected {
+                contract: "0x00000000000000000000000000000000000c0de1".into()
+            })
+            .0,
+            StatusCode::BAD_REQUEST
+        );
+    }
 
     #[test]
     fn upload_precheck_compares_against_the_wire_cap() {

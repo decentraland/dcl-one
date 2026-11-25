@@ -1,4 +1,5 @@
-import arg, { Result } from 'arg'
+import type { Result } from 'arg'
+import arg from 'arg'
 import i18next from 'i18next'
 
 import { CliError } from './error'

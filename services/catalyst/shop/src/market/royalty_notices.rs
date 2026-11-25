@@ -21,7 +21,7 @@
 use std::time::Duration;
 
 use serde_json::{Value, json};
-use sqlx::PgPool;
+use sqlx::{FromRow, PgPool, Row};
 use uuid::Uuid;
 
 use super::chain_walk::{self, ChainNet, INDEXER_NFT, INDEXER_SALES};
@@ -89,8 +89,9 @@ impl Venue {
         }
     }
 
-    /// `$1` network, `$2`/`$3` cursor, `$4` published block, `$5` emitter,
-    /// `$6` cut per million, `$7` the zero address, `$8` page size.
+    /// `$1` network, `$2`/`$3` cursor, `$4` initial ceiling, `$5` emitter,
+    /// `$6` cut per million, `$7` zero address, `$8` page size, `$9` clock,
+    /// `$10` indexer. The bound row survives an empty event page.
     fn sql(self) -> String {
         let (key, from, price, item, kind) = match self {
             Venue::Orders => (
@@ -114,15 +115,26 @@ impl Venue {
             ),
         };
         format!(
-            "SELECT {key} AS id_key, e.block_number, e.log_index, e.block_time, e.contract_address, e.token_id::text AS token_id, \
+            "WITH bound AS (SELECT LEAST(c.folded_block, $4::bigint) AS upto FROM shop.chain_cursor c \
+                WHERE c.network = $1 AND c.indexer = $10 AND {ready} \
+                  AND c.folded_block <= c.last_block AND c.folded_at <= $9) \
+             SELECT bound.upto, page.* FROM bound LEFT JOIN LATERAL ( \
+             SELECT {key} AS id_key, e.block_number, e.log_index, e.block_time, e.contract_address, e.token_id::text AS token_id, \
                     div({price} * $6, 1000000)::text AS cut, \
                     lower(CASE WHEN i.beneficiary IS NOT NULL AND i.beneficiary <> $7 THEN i.beneficiary ELSE i.creator END) AS collector, \
                     i.image, i.name, i.rarity, i.item_type, i.item_id IS NOT NULL AS mirrored \
              FROM {from} \
              LEFT JOIN shop.items i ON {item} \
-             WHERE e.network = $1 AND (e.block_number, e.log_index) > ($2, $3) AND e.block_number <= $4 \
+             WHERE e.network = $1 AND (e.block_number, e.log_index) > ($2, $3) AND e.block_number <= bound.upto \
                AND e.kind = '{kind}' AND e.emitter = $5 \
-             ORDER BY e.block_number, e.log_index LIMIT $8"
+             ORDER BY e.block_number, e.log_index LIMIT $8) page ON true \
+             ORDER BY page.block_number, page.log_index",
+            ready = chain_walk::published_sql_on(
+                "c",
+                "$9",
+                ChainNet::Ethereum.chain_id(),
+                NET.chain_id()
+            ),
         )
     }
 }
@@ -210,20 +222,21 @@ async fn drain(
     venue: Venue,
     items_mirror_enabled: bool,
 ) -> anyhow::Result<Pass> {
-    let now = chrono::Utc::now().timestamp();
-    let Some(published) = chain_walk::ready_cursor(pool, venue.indexer(), NET, chrono::Utc::now())
-        .await
-        .and_then(|c| c.folded_block)
+    let now = chrono::Utc::now();
+    let Some(published) =
+        chain_walk::published_block(pool, venue.indexer(), NET, NET.chain_id(), now).await?
     else {
         return Ok(Pass::NotReady);
     };
     let producer = venue.producer();
     notice_cursor::seed(pool, producer, None, published, i32::MAX).await?;
+    let page_sql = venue.sql();
     let mut emitted = 0;
     loop {
         let mut txn = pool.begin().await?;
         let (_, since_block, since_log) = notice_cursor::lock(&mut txn, producer).await?;
-        let rows: Vec<SaleRow> = sqlx::query_as(sqlx::AssertSqlSafe(venue.sql()))
+        let now = chrono::Utc::now();
+        let page = sqlx::query(sqlx::AssertSqlSafe(page_sql.as_str()))
             .bind(NET.db_name())
             .bind(since_block)
             .bind(since_log)
@@ -232,8 +245,26 @@ async fn drain(
             .bind(ROYALTIES_CUT_PER_MILLION)
             .bind(super::nft_index::ZERO_ADDRESS)
             .bind(PAGE_SIZE)
+            .bind(now.naive_utc())
+            .bind(venue.indexer())
             .fetch_all(&mut *txn)
             .await?;
+        let Some(first) = page.first() else {
+            txn.rollback().await?;
+            return Ok(if emitted == 0 {
+                Pass::NotReady
+            } else {
+                Pass::Emitted(emitted)
+            });
+        };
+        let published: i64 = first.try_get("upto")?;
+        let rows = if first.try_get::<Option<i64>, _>("block_number")?.is_none() {
+            Vec::new()
+        } else {
+            page.iter()
+                .map(SaleRow::from_row)
+                .collect::<Result<Vec<_>, _>>()?
+        };
         // A bid sale of an item the mirror lacks holds the cursor, as the
         // badge processor's do, while `item_awaited`.
         let items_pass: Option<i64> = sqlx::query_scalar(
@@ -247,7 +278,12 @@ async fn drain(
         let held = rows.iter().position(|row| {
             venue == Venue::Bids
                 && !row.mirrored
-                && item_awaited(items_mirror_enabled, items_pass, row.block_time, now)
+                && item_awaited(
+                    items_mirror_enabled,
+                    items_pass,
+                    row.block_time,
+                    now.timestamp(),
+                )
         });
         let ready = &rows[..held.unwrap_or(rows.len())];
         let batch: Vec<NewNotification> = ready
@@ -472,6 +508,12 @@ mod tests {
         sale(&pool, 102, 1, MARKETPLACE_V2, "9", "5000000000000000000").await;
         sale(&pool, 105, 0, MARKETPLACE_V2, "2", "1000000000000000000").await;
         publish(&pool, 103).await;
+        sqlx::query(
+            "UPDATE shop.chain_cursor SET last_block=105 WHERE indexer='nft' AND network='matic'",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
         assert_eq!(run_once(&pool, BASE).await.unwrap(), Pass::Emitted(3));
         assert_eq!(
             run_once(&pool, BASE).await.unwrap(),
@@ -645,7 +687,7 @@ mod tests {
         bid_sale(&pool, 104, &token(3), seller, "4000000000000000000").await;
         // An item the mirror does not hold yet holds the cursor.
         bid_sale(&pool, 105, &token(7), seller, "4000000000000000000").await;
-        sqlx::query("UPDATE shop.chain_cursor SET last_block = 106, fold_through = 106, folded_block = 106 WHERE indexer = 'sales'")
+        sqlx::query("UPDATE shop.chain_cursor SET last_block = 110, fold_through = 106, folded_block = 106 WHERE indexer = 'sales'")
             .execute(&pool)
             .await
             .unwrap();

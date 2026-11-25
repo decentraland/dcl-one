@@ -1,14 +1,5 @@
-import {
-  EasingFunction,
-  Engine,
-  Entity,
-  IEngine,
-  PBTween,
-  TweenComponentDefinitionExtended,
-  TweenLoop,
-  TweenStateStatus,
-  components
-} from '../../../packages/@dcl/ecs/src'
+import type { Entity, IEngine, PBTween, TweenComponentDefinitionExtended } from '../../../packages/@dcl/ecs/src'
+import { EasingFunction, Engine, TweenLoop, TweenStateStatus, components } from '../../../packages/@dcl/ecs/src'
 import { createTweenSystem } from '../../../packages/@dcl/ecs/src/systems/tween'
 import { Quaternion, Vector2, Vector3 } from '../../../packages/@dcl/sdk/math'
 

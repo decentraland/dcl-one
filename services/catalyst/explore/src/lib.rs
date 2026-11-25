@@ -476,6 +476,7 @@ impl ExploreState {
                 E::CatalystUnavailable(_) => {
                     ApiError::service_unavailable("Signature verification unavailable")
                 }
+                E::RateLimited => ApiError::http(429, e.to_string()),
             }
         })
     }
