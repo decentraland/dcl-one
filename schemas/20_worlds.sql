@@ -22,8 +22,9 @@
 --
 -- Authority. Mirrored rows are distinguishable from local publishes by
 -- `mirror_source` (the upstream URL) being NOT NULL; a local publish writes
--- NULL. The mirror never touches a world that holds a local scene, and only
--- retires scenes it wrote itself; it never writes owner, access, permissions
+-- NULL. The mirror replaces a world's local scenes only when the upstream
+-- deployed last, retiring them as a newer publish would; otherwise it only
+-- retires scenes it wrote itself. It never writes owner, access, permissions
 -- or storage rows, so a mirrored world grants nobody deploy, stream or host
 -- authority here. The zero-address `deployer` on mirrored scenes is kept for
 -- the wire (the old /scenes shape and the old marker).
@@ -785,8 +786,9 @@ CREATE INDEX worlds_owner_idx ON worlds.worlds (owner) WHERE owner IS NOT NULL;
 -- per-parcel undeploy (`world_undeployment`, `world_scenes_undeployment`),
 -- a settings edit (`world_settings_changed`, plus
 -- `world_spawn_coordinate_set` when the spawn moved) and an access edit
--- (`world_settings_changed`). The worlds mirror, peer sync and the TS import
--- never write it. Append-only; the `worlds-change-log-retention` job deletes
+-- (`world_settings_changed`). The worlds mirror records only the
+-- `world_scenes_undeployment` of the local scenes a newer upstream deployment
+-- retires; peer sync and the TS import never write it. Append-only; the `worlds-change-log-retention` job deletes
 -- rows older than 30 days.
 --
 -- Workload: a handful of rows per local publish, undeploy or settings edit

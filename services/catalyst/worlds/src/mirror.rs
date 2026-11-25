@@ -27,12 +27,26 @@
 //! Resumable: the scenes walk persists its cursor (the last world name
 //! completed) after every batch in `worlds.mirror_passes`, so a restart
 //! continues there; a pass is complete when the cursor is cleared and
-//! `pass_completed_at` stamped with the pass counts. Local authority: a world
-//! holding a scene with `mirror_source IS NULL` (a local publish) is refused,
-//! never overwritten (the write re-checks under the world row's lock, so a
-//! publish landing mid-download wins too), and only scenes the mirror wrote
-//! are ever retired: those of a refused world at once, since the mirror never
-//! refreshes them again.
+//! `pass_completed_at` stamped with the pass counts. Last deploy wins: a world
+//! holding a scene with `mirror_source IS NULL` (a local publish) is mirrored
+//! only when the upstream's newest scene is newer than the newest local one,
+//! the whole world compared. A deployment counts at its entity timestamp, never
+//! later than its write (the local row's update, the upstream's listed deploy
+//! time) nor than now, and a tie goes to the byte-wise greater entity id; the
+//! same entity on both sides keeps the world local, as does an upstream scene
+//! listed without a deploy time, a blocked world and one with a publish queued
+//! for forwarding. The newer upstream then
+//! takes the world as a newer publish takes a mirrored one: every local scene
+//! is retired (`worlds.retired_world_scenes`, its place identity kept only by
+//! an upstream scene covering its whole footprint) and the world row is marked
+//! mirrored, in the transaction that
+//! writes the upstream's scenes, and the change feed records their
+//! undeployment. Otherwise the world is refused and only the
+//! scenes the mirror wrote there are retired, since it never refreshes them
+//! again. The listing's timestamps spare a refused world every download; the
+//! write decides again on the fetched entities under the world row's lock, so
+//! a publish landing mid-download is compared too. A read-through
+//! ([`mirror_one`]) never replaces a local publish.
 //!
 //! A read-through fill ([`mirror_one`]) takes the same path with [`Verify`]: it takes each
 //! scene's deployment auth chain from its row of that listing (the chain at most
@@ -140,6 +154,8 @@ pub struct ScenesOutcome {
     pub synced: usize,
     pub unchanged: usize,
     pub refused: usize,
+    /// Local scenes a newer upstream deployment retired.
+    pub superseded_local: u64,
     pub skipped: usize,
     pub failed: usize,
     pub retired_scenes: u64,
@@ -210,16 +226,19 @@ async fn record_error(pool: &PgPool, mirror: &str, source: &str, error: &str) ->
 }
 
 /// A world this run did not mirror is not automatically a failure: refusing
-/// to overwrite a local publish is the mirror working, an unreachable
+/// to overwrite a newer local publish is the mirror working, an unreachable
 /// upstream is the mirror broken. A refusal counts the mirrored scenes it
 /// retired from beside the local publish.
 enum Outcome {
     Synced {
         scenes: usize,
         new_blobs: usize,
+        /// Local scenes the upstream's newer deployment retired.
+        superseded: u64,
     },
     Unchanged,
-    /// A local publish, or on a read-through a local or blocked world.
+    /// A local publish the upstream did not outdate, or on a read-through any local publish
+    /// or a blocked world.
     RefusedLocalPublish {
         retired: u64,
     },
@@ -332,10 +351,18 @@ async fn scenes_pass(
         for (name, result) in results {
             out.processed += 1;
             match result {
-                Ok(Outcome::Synced { scenes, new_blobs }) => {
+                Ok(Outcome::Synced {
+                    scenes,
+                    new_blobs,
+                    superseded,
+                }) => {
                     out.synced += 1;
                     out.scenes += scenes;
                     out.new_blobs += new_blobs;
+                    out.superseded_local += superseded;
+                    if superseded > 0 {
+                        tracing::info!(world = %name, superseded, "the upstream deployed last: its scenes replace the local publish");
+                    }
                     mark_world(pool, &name, None).await?;
                 }
                 Ok(Outcome::Unchanged) => {
@@ -345,8 +372,8 @@ async fn scenes_pass(
                 Ok(Outcome::RefusedLocalPublish { retired }) => {
                     out.refused += 1;
                     out.retired_scenes += retired;
-                    tracing::warn!(world = %name, "refused: published to this node; the mirror never replaces a local publish");
-                    mark_world(pool, &name, Some("published locally; not mirrored")).await?;
+                    tracing::info!(world = %name, "refused: a scene published to this node stands (newer than the upstream's, being forwarded, or the world is blocked)");
+                    mark_world(pool, &name, Some("a local publish stands; not mirrored")).await?;
                 }
                 Ok(Outcome::NothingUpstream(why)) => {
                     out.skipped += 1;
@@ -402,8 +429,8 @@ async fn scenes_pass(
         .execute(pool)
         .await?;
         ctx.progress(format!(
-            "scenes pass complete: {} worlds, {} synced, {} unchanged, {} refused, {} failed",
-            out.processed, out.synced, out.unchanged, out.refused, out.failed
+            "scenes pass complete: {} worlds, {} synced, {} unchanged, {} refused, {} failed, {} local scenes superseded",
+            out.processed, out.synced, out.unchanged, out.refused, out.failed, out.superseded_local
         ));
     } else {
         tracing::info!(

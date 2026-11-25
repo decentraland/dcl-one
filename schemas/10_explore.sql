@@ -1371,7 +1371,16 @@ BEGIN
         IF TG_OP <> 'DELETE' THEN RETURN NULL; END IF;
         snapshot := OLD;
         effective_reason := COALESCE((SELECT reason FROM explore.place_moderation WHERE place_id = place_key AND disabled IS NOT NULL), OLD.raw->>'disabled_reason');
-        now_removed := effective_reason IS DISTINCT FROM 'opt_out';
+        -- A local world row pruned because the worlds mirror took the world
+        -- over is not a removal while a scene place of it is active: its place
+        -- ids live on. A blocked world, or one with no active scene, is.
+        now_removed := effective_reason IS DISTINCT FROM 'opt_out' AND NOT (
+            TG_TABLE_NAME = 'place_world_local' AND OLD.world
+            AND EXISTS (SELECT 1 FROM worlds.worlds
+                        WHERE name = lower(COALESCE(OLD.world_name, OLD.id))
+                          AND mirror_source IS NOT NULL AND blocked_since IS NULL)
+            AND EXISTS (SELECT 1 FROM explore.world_scene_place
+                        WHERE world_name = lower(COALESCE(OLD.world_name, OLD.id)) AND active));
     ELSE
         effective_reason := COALESCE((SELECT reason FROM explore.place_moderation WHERE place_id = place_key AND disabled IS NOT NULL), snapshot.raw->>'disabled_reason');
         now_removed := snapshot.disabled AND effective_reason IS DISTINCT FROM 'opt_out';

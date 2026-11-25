@@ -1,7 +1,17 @@
 //! Worlds mirror reconcile.
 use super::*;
 
-/// A world with a local publish holds no mirrored scene: the mirror never
+/// Whether `world` (its key) holds a locally published scene.
+async fn has_local_publish(conn: &mut sqlx::PgConnection, world: &str) -> sqlx::Result<bool> {
+    sqlx::query_scalar(
+        "SELECT EXISTS(SELECT 1 FROM worlds.world_scenes WHERE world_name = $1 AND mirror_source IS NULL)",
+    )
+    .bind(world)
+    .fetch_one(conn)
+    .await
+}
+
+/// A world whose local publish stands holds no mirrored scene: the mirror never
 /// refreshes it again, so what it wrote there before is retired and the world
 /// row says local, as a publish leaves it (core::store::deploy_scene).
 async fn retire_beside_local(pool: &PgPool, name: &str) -> Result<u64> {
@@ -299,14 +309,12 @@ pub(super) async fn mirror_world(
     verify: Option<&Verify<'_>>,
 ) -> Result<Outcome> {
     let source = settings.source.as_str();
-    let locally_published: bool = sqlx::query_scalar(
-        "SELECT EXISTS(SELECT 1 FROM worlds.world_scenes WHERE world_name = lower($1) AND mirror_source IS NULL)",
-    )
-    .bind(name)
-    .fetch_one(pool)
-    .await
-    .with_context(|| format!("checking local publish for {name}"))?;
-    if locally_published {
+    let world_key = name.to_lowercase();
+    let locally_published = has_local_publish(&mut *pool.acquire().await?, &world_key)
+        .await
+        .with_context(|| format!("checking local publish for {name}"))?;
+    // A read-through never replaces a local publish; a pass does when the upstream deployed last.
+    if locally_published && verify.is_some() {
         let retired = retire_beside_local(pool, name).await?;
         return Ok(Outcome::RefusedLocalPublish { retired });
     }
@@ -321,7 +329,7 @@ pub(super) async fn mirror_world(
     .fetch_all(pool)
     .await
     .with_context(|| format!("reading the scenes held for {name}"))?;
-    if holds_every_scene(catalogue_scene_ids, &held) {
+    if !locally_published && holds_every_scene(catalogue_scene_ids, &held) {
         // Every file, not only the entities: a read-through fill leaves all but the scene
         // host's to be read through, and the pass fetches them.
         let files: Vec<String> = sqlx::query_scalar(
@@ -398,6 +406,24 @@ pub(super) async fn mirror_world(
     let listed = listed_scenes(client, source, name).await?;
     if listed.is_empty() {
         return Ok(Outcome::NothingUpstream("upstream world has no scenes"));
+    }
+    // A local publish the listing does not outdate keeps the world before anything is fetched;
+    // the write decides again on the fetched entities, under the world row's lock.
+    if locally_published {
+        let newest = newest_deployment(listed.iter().map(|scene| {
+            (
+                scene.timestamp,
+                scene.created_at,
+                scene.updated_at,
+                scene.id.as_str(),
+            )
+        }));
+        let mut conn = pool.acquire().await?;
+        if crate::core::store::local_scene_stands(&mut conn, &world_key, newest).await? {
+            drop(conn);
+            let retired = retire_beside_local(pool, name).await?;
+            return Ok(Outcome::RefusedLocalPublish { retired });
+        }
     }
     // A scene held here and missing from the listing is retired, with its storage identity. One
     // the source still lists by id means the listing moved under the pages (a redeploy shifts
@@ -627,19 +653,62 @@ pub(super) async fn mirror_world(
     }
     // The upsert holds the world row, which a local publish takes first
     // (core::store::deploy_scene), so this fresh read sees any publish that
-    // landed during the download and none can land before the commit.
-    let published_meanwhile: bool = sqlx::query_scalar(
-        "SELECT EXISTS(SELECT 1 FROM worlds.world_scenes WHERE world_name = lower($1) AND mirror_source IS NULL)",
-    )
-    .bind(name)
-    .fetch_one(&mut *tx)
-    .await
+    // landed during the download and none can land before the commit. A
+    // read-through refuses any; a pass refuses one its newest scene does not
+    // outdate and otherwise retires them all, as a newer publish retires the
+    // mirrored scenes (last deploy wins, the whole world).
+    let cids: Vec<&str> = records.iter().map(|r| r.cid.as_str()).collect();
+    let local_stands = match verify {
+        Some(_) => has_local_publish(&mut tx, &world_key).await,
+        None => {
+            let newest = newest_deployment(records.iter().map(|r| {
+                (
+                    crate::core::store::entity_timestamp_number(&r.entity),
+                    r.created_at,
+                    r.updated_at,
+                    r.cid.as_str(),
+                )
+            }));
+            crate::core::store::local_scene_stands(&mut tx, &world_key, newest).await
+        }
+    }
     .with_context(|| format!("re-checking local publish for {name}"))?;
-    if published_meanwhile {
+    if local_stands {
         tx.rollback().await.context("rollback tx")?;
         let retired = retire_beside_local(pool, name).await?;
         return Ok(Outcome::RefusedLocalPublish { retired });
     }
+    // A local scene the upstream lists too becomes the mirrored row below. The retired ones
+    // were this node's publishes, so the change feed announces their undeployment.
+    let superseded = crate::core::store::retire_local_scenes(&mut tx, &world_key, &cids)
+        .await
+        .with_context(|| format!("retire the local scenes of {name}"))?;
+    if !superseded.is_empty() {
+        let emitted_at = crate::core::change_log::emission_clock(&mut tx).await?;
+        crate::core::change_log::record_scenes_undeployment(
+            &mut tx,
+            &world,
+            emitted_at,
+            &superseded,
+        )
+        .await
+        .with_context(|| format!("change log of {name}"))?;
+        crate::explore::places::derive::mark_world_dirty(&mut tx, &world_key).await?;
+    }
+    // Read before the assignments below rebind them.
+    let must_cover: Vec<uuid::Uuid> = if superseded.is_empty() {
+        Vec::new()
+    } else {
+        let retired: Vec<&str> = superseded.iter().map(|s| s.entity_id.as_str()).collect();
+        sqlx::query_scalar(
+            "SELECT identity FROM explore.world_scene_place WHERE world_name = $1 AND active AND entity_id = ANY($2::text[])",
+        )
+        .bind(&world_key)
+        .bind(&retired)
+        .fetch_all(&mut *tx)
+        .await
+        .with_context(|| format!("identities of the retired local scenes of {name}"))?
+    };
     replace_mirrored_access(&mut tx, &world, &access, holder.as_ref())
         .await
         .with_context(|| format!("access setting of {name}"))?;
@@ -649,7 +718,6 @@ pub(super) async fn mirror_world(
         apply_settings(&mut tx, &world, &copied, holder.as_ref()).await?;
     }
 
-    let cids: Vec<&str> = records.iter().map(|r| r.cid.as_str()).collect();
     let entities: Vec<Value> = records.iter().map(|r| r.entity.clone()).collect();
     let parcels: Vec<Value> = records
         .iter()
@@ -693,6 +761,15 @@ pub(super) async fn mirror_world(
     .execute(&mut *tx)
     .await
     .with_context(|| format!("upsert {} scenes of {name}", records.len()))?;
+    // Active again: a (world, entity) is active or retired, never both.
+    sqlx::query(
+        "DELETE FROM worlds.retired_world_scenes WHERE world_name = lower($1) AND entity_id = ANY($2::text[])",
+    )
+    .bind(name)
+    .bind(&cids)
+    .execute(&mut *tx)
+    .await
+    .with_context(|| format!("reactivate the scenes of {name}"))?;
     // Each row keeps its deployment's times upstream (`/about` takes the newest, `/scenes` pages
     // by them, `/worlds` sorts by them); a row the listing gave none keeps this node's.
     sqlx::query(
@@ -721,10 +798,11 @@ pub(super) async fn mirror_world(
     .execute(&mut *tx)
     .await
     .with_context(|| format!("retire the scenes {name} no longer lists upstream"))?;
-    let world = name.to_lowercase();
+    let world = world_key;
     // Apply the overlap rule in deployment order:
     // a replacement must inherit its predecessor before a later scene takes
     // a parcel that predecessor vacated. CID breaks timestamp ties stably.
+    // A retired local scene's identity passes only to a scene covering its whole footprint.
     let mut chronological: Vec<_> = records.iter().collect();
     chronological.sort_by(|a, b| {
         let ts =
@@ -734,7 +812,7 @@ pub(super) async fn mirror_world(
             .then_with(|| a.cid.cmp(&b.cid))
     });
     for record in chronological {
-        scene_identity::assign(&mut tx, &world, &record.cid, &record.parcels)
+        scene_identity::assign_covering(&mut tx, &world, &record.cid, &record.parcels, &must_cover)
             .await
             .with_context(|| format!("storage identity of {} in {name}", record.cid))?;
     }
@@ -746,5 +824,6 @@ pub(super) async fn mirror_world(
     Ok(Outcome::Synced {
         scenes: records.len(),
         new_blobs,
+        superseded: superseded.len() as u64,
     })
 }

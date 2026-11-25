@@ -292,6 +292,14 @@ A difference not listed here is a gap, not a decision.
 - **Newer-entity check** compares against the lower of the stored entity's
   timestamp and its row's update time, so a future-dated mirrored or
   imported entity cannot block redeploys.
+- **Last deploy wins against the mirror.** A scheduled mirror pass replaces
+  a world published here when the upstream's newest scene is newer than the
+  newest local one, compared over the whole world, with each time capped the
+  same way and ties to the greater entity id. Otherwise the world stays
+  local. An upstream scene keeps a replaced local scene's storage identity
+  only when it covers that scene's whole footprint. A read-through fill never
+  replaces a local publish
+  ([ADR](../../../docs/adr/2026-11-23-worlds-mirror-last-deploy-wins.md)).
 - **Validation errors** report the first failure only, and scene schema
   errors name the failing path.
 - **Scene pointers** are capped at 90,601 (every in-bounds parcel once); a
@@ -354,7 +362,9 @@ A difference not listed here is a gap, not a decision.
   `<PUBLIC_URL>/worlds-content-server`) as its content server and settings
   thumbnails link under it. The timestamp is the database clock after the
   world's row lock, not the time of publication. Mirrored worlds, access
-  allow-list, permission and block changes are not recorded, and a
+  allow-list, permission and block changes are not recorded (a mirror pass
+  records only the `WorldScenesUndeploymentEvent` of the local scenes a newer
+  upstream deployment replaces), and a
   whole-world undeploy records `WorldUndeploymentEvent` only when it removed
   a scene published here (upstream announces every one). A publish forwarded
   to `WORLDS_FORWARD_UPSTREAM_URL` is recorded too: the upstream announces
@@ -379,8 +389,9 @@ A difference not listed here is a gap, not a decision.
   row that sets parcels alone leaves the allowance in force. As upstream, an
   ENS world's size cap is `ENS_MAX_SIZE` whatever its override row says.
 - **Retired scenes.** Replaced and undeployed scenes are kept for
-  `SCENE_EVICTION_TTL_MS` and removed by an hourly sweep. Scenes a mirror
-  pass retires are deleted at once.
+  `SCENE_EVICTION_TTL_MS` and removed by an hourly sweep, local scenes a
+  newer upstream deployment replaces included. Mirrored scenes a mirror pass
+  retires are deleted at once.
 - **`/gc`** reports `removedBytes`. A dry run reclaims no expired partial
   upload and reports `expiredUploads: null`. Every `/admin/*` route answers
   401 for a missing or wrong token. The bearer is

@@ -8,7 +8,8 @@
 //! properties and consumers drop an event that fails validation. Each
 //! event's `timestamp` is the database clock read once per transaction,
 //! after the world's row lock, so the events of one world are timestamped in
-//! commit order. The worlds mirror and the TS import never write here.
+//! commit order. The TS import never writes here; the worlds mirror records
+//! only the undeployment of local scenes a newer upstream deployment retires.
 //! Access grants, permissions and blocks are not carried.
 //!
 //! The route takes its own bearer, `WORLDS_CHANGE_FEED_TOKEN` (unset refuses
