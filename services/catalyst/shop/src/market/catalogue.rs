@@ -32,6 +32,7 @@
 //! projection (every one raises the generation, a same-height repair and a
 //! hand-back too) or an ownership change gives a new key.
 
+use axum::response::Response;
 use chrono::{DateTime, NaiveDateTime, Utc};
 use sqlx::{Postgres, Row, Transaction};
 
@@ -53,34 +54,54 @@ pub enum Purpose {
     Authorize,
 }
 
-/// Whether the read's transaction may write (an import that records what
-/// it checked in the same snapshot).
+/// Whether the read's transaction may write (a campaign whose approval
+/// check and tag write share one snapshot).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Access {
     ReadOnly,
     ReadWrite,
 }
 
-/// The copy a network's rows were read from.
+/// The index's published fold an owned network is read at, and the
+/// projection's generation.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Copy {
-    /// The mirrors' oldest last complete pass over the networks they serve.
-    Mirror { pass_at: NaiveDateTime },
-    /// The index's published fold, and the projection's generation.
-    Index {
-        folded_block: i64,
-        folded_at: NaiveDateTime,
-        generation: i64,
-    },
+pub struct Publication {
+    pub folded_block: i64,
+    pub folded_at: NaiveDateTime,
+    pub generation: i64,
 }
 
-/// A read the gate allowed: its transaction, and the copies it covers.
+/// What the read takes from the mirrors: the pass of each mirror it needs on
+/// each network that participates, and the oldest of them.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+struct MirrorCopy {
+    /// `(mirror, network, pass)`.
+    passes: Vec<(Mirror, String, NaiveDateTime)>,
+}
+
+impl MirrorCopy {
+    fn oldest(&self, mirror: Option<Mirror>) -> Option<NaiveDateTime> {
+        self.passes
+            .iter()
+            .filter(|(m, _, _)| mirror.is_none_or(|w| w == *m))
+            .map(|(_, _, at)| *at)
+            .min()
+    }
+}
+
+/// A read the gate allowed: its transaction, its clock, and the copies it
+/// covers.
 pub struct CatalogueRead {
     pub tx: Transaction<'static, Postgres>,
-    /// The mirrors' copy, when the read covers a network they serve.
-    mirror: Option<Copy>,
-    /// The networks the index owns that the read covers, with their copy.
-    owned: Vec<(Network, Copy)>,
+    /// The gate's clock: the trades check and the reads' trade cutoff use it
+    /// too, so one instant decides them all.
+    pub now: DateTime<Utc>,
+    /// The mirrors' copy, when the read may return rows of a network they
+    /// serve.
+    mirror: Option<MirrorCopy>,
+    /// The networks the index owns that the read covers, with their
+    /// publication.
+    owned: Vec<(Network, Publication)>,
 }
 
 impl CatalogueRead {
@@ -89,25 +110,29 @@ impl CatalogueRead {
         self.owned.iter().any(|(n, _)| *n == network)
     }
 
-    /// The identity of what was read, for a memo key: the mirrors' pass and
-    /// each owned network's publication and generation.
+    /// The identity of what was read, for a memo key: every mirror pass on
+    /// every network the read takes from the mirrors (not only the oldest,
+    /// which a newer network's pass does not move), and each owned network's
+    /// publication and generation.
     pub fn key(&self) -> String {
         let mut parts = Vec::new();
-        if let Some(Copy::Mirror { pass_at }) = self.mirror {
-            parts.push(format!("mirror@{}", pass_at.and_utc().timestamp_micros()));
+        if let Some(mirror) = &self.mirror {
+            let passes: Vec<String> = mirror
+                .passes
+                .iter()
+                .map(|(m, network, at)| {
+                    format!("{}:{network}@{}", m.name(), at.and_utc().timestamp_micros())
+                })
+                .collect();
+            parts.push(format!("mirror[{}]", passes.join(",")));
         }
-        for (network, copy) in &self.owned {
-            if let Copy::Index {
-                folded_block,
-                generation,
-                ..
-            } = copy
-            {
-                parts.push(format!(
-                    "{}:index@{folded_block}#{generation}",
-                    network.db_name()
-                ));
-            }
+        for (network, p) in &self.owned {
+            parts.push(format!(
+                "{}:index@{}#{}",
+                network.db_name(),
+                p.folded_block,
+                p.generation
+            ));
         }
         parts.join("|")
     }
@@ -130,13 +155,42 @@ impl CatalogueRead {
     /// The oldest copy the read covers, for the answer's `as_of`.
     pub fn as_of(&self) -> Option<NaiveDateTime> {
         self.mirror
-            .iter()
-            .chain(self.owned.iter().map(|(_, c)| c))
-            .map(|c| match c {
-                Copy::Mirror { pass_at } => *pass_at,
-                Copy::Index { folded_at, .. } => *folded_at,
-            })
+            .as_ref()
+            .and_then(|m| m.oldest(None))
+            .into_iter()
+            .chain(self.owned.iter().map(|(_, p)| p.folded_at))
             .min()
+    }
+
+    /// The trades mirror's pass and the trade-events verdicts, read in this
+    /// snapshot at the gate's clock: a read that joins the open trades
+    /// decides on the trade state its rows come from.
+    pub async fn trades_ready(&mut self, state: &MarketplaceState) -> Result<(), Response> {
+        super::trades::ready_on(state, &mut self.tx, self.now)
+            .await
+            .map(|_| ())
+    }
+}
+
+/// Why the gate refused a read.
+#[derive(Debug)]
+pub struct Refusal {
+    /// The source that cannot answer and why; `None` when the snapshot
+    /// could not be read (an internal error).
+    pub refused: Option<(Source, String)>,
+    /// The index refused: a network it owns cannot answer.
+    pub by_index: bool,
+    /// The networks the index owned in the refusing snapshot.
+    pub owned: Vec<Network>,
+}
+
+impl Refusal {
+    /// The unavailable envelope naming the source, or the internal error.
+    pub fn into_response(self) -> Response {
+        match self.refused {
+            Some((source, message)) => unavailable(source, &message),
+            None => super::internal_server_error(),
+        }
     }
 }
 
@@ -179,24 +233,27 @@ impl NetworkState {
     }
 }
 
-/// The index's verdict on an owned network for `purpose` at `now`: its copy,
-/// or why it cannot answer.
+/// The index's verdict on an owned network for `purpose` at `now`, the
+/// network expected on `chain` (the chain this node serves for it; `None`
+/// when it serves none the index walks): its publication, or why it cannot
+/// answer.
 pub fn index_verdict(
     s: &NetworkState,
     net: ChainNet,
+    chain: Option<i64>,
     purpose: Purpose,
     now: DateTime<Utc>,
-) -> Result<Copy, String> {
+) -> Result<Publication, String> {
     let name = net.db_name();
     if s.last_block.is_none() {
         return Err(format!(
             "the collections index owns {name}'s catalogue and has no cursor there"
         ));
     }
-    if s.chain_id != Some(net.chain_id()) {
+    if !chain.is_some_and(|c| s.chain_id == Some(c)) {
         return Err(format!(
-            "the collections index on {name} is not bound to chain {}",
-            net.chain_id()
+            "the collections index on {name} is not bound to the chain this node serves ({})",
+            chain.map_or("none".to_string(), |c| c.to_string())
         ));
     }
     if s.quarantined {
@@ -243,75 +300,111 @@ pub fn index_verdict(
             "the collections index on {name} has walked catalogue events it has not published yet"
         ));
     }
-    Ok(Copy::Index {
+    Ok(Publication {
         folded_block,
         folded_at,
         generation: s.generation,
     })
 }
 
-/// The mirrors' verdict over the networks they serve (`served`, the
-/// configured networks the index does not own), by the rule
-/// [`mirrors::require_ready`] and [`mirrors::require_priced`] apply
-/// ([`mirrors::copy_of`]: every pass bound to the served chain, then the
-/// oldest last complete pass of each mirror the read needs) over the rows of
-/// the networks the index does not own; with no subgraph configured, a
-/// descriptive read serves the passes the tables record.
+/// The networks a mirror verdict covers.
+struct MirrorScope<'a> {
+    /// Every network the index does not own, with its state.
+    unowned: &'a [&'a NetworkState],
+    /// The configured networks the index does not own.
+    served: &'a [Network],
+    /// Whether any subgraph is configured.
+    configured: bool,
+    /// The networks the index owns.
+    owned: &'a [Network],
+}
+
+/// The mirrors' verdict for a read that may return rows of the networks the
+/// index does not own (`unowned`):
+/// - every mirror pass of those networks is bound to the chain this node
+///   serves ([`mirrors::bound`], main's rule over every stored publication,
+///   a network no subgraph is configured for included: its rows are read);
+/// - with subgraphs configured, each one the index does not own (`served`)
+///   has a complete pass of each mirror the read needs, the items one within
+///   its money budget for a priced read;
+/// - with none configured, a descriptive read serves the passes the tables
+///   record; a priced read names the subgraph of the first network no index
+///   owns.
 fn mirror_verdict(
     state: &MarketplaceState,
-    states: &[NetworkState],
-    served: &[Network],
-    configured: bool,
+    scope: &MirrorScope<'_>,
     needs: &[Mirror],
     purpose: Purpose,
     now: DateTime<Utc>,
-) -> Result<Copy, axum::response::Response> {
-    let mut oldest: Option<NaiveDateTime> = None;
+) -> Result<MirrorCopy, (Source, String)> {
+    let MirrorScope {
+        unowned,
+        served,
+        configured,
+        owned: owned_networks,
+    } = *scope;
+    let missing_subgraph = |mirror: Mirror| {
+        let missing = [Network::Matic, Network::Ethereum]
+            .into_iter()
+            .find(|n| !owned_networks.contains(n))
+            .unwrap_or(Network::Matic);
+        (
+            Source::CollectionsSubgraph(missing),
+            format!(
+                "no collections subgraph is configured, so the {} mirror has nothing to walk on {}",
+                mirror.name(),
+                missing.db_name()
+            ),
+        )
+    };
+    let mut copy = MirrorCopy::default();
     for mirror in needs {
-        let rows: Vec<mirrors::PassRow> = states
-            .iter()
-            .filter(|s| !s.owned)
-            .map(|s| s.pass_row(*mirror))
-            .collect();
-        let at = if configured {
-            if served.is_empty() {
-                None
-            } else {
-                mirrors::copy_of(state, &rows, served)
-            }
-        } else if purpose == Purpose::Describe {
-            mirrors::copy_of(state, &rows, &[])
-        } else {
-            None
-        };
-        let Some(at) = at else {
-            return Err(if configured {
-                mirrors::not_ready(state, *mirror, true)
-            } else {
-                // Nothing configured: name the subgraph of the first network
-                // no index owns, the one without a source.
-                let missing = [Network::Matic, Network::Ethereum]
-                    .into_iter()
-                    .find(|n| !states.iter().any(|s| s.owned && s.network == n.db_name()))
-                    .unwrap_or(Network::Matic);
-                unavailable(
-                    Source::CollectionsSubgraph(missing),
-                    &format!(
-                        "no collections subgraph is configured, so the {} mirror has nothing to walk on {}",
-                        mirror.name(),
-                        missing.db_name()
-                    ),
-                )
-            });
-        };
-        if purpose != Purpose::Describe && *mirror == Mirror::Items {
-            mirrors::price_verdict(at, now, mirrors::price_max_age(&state.settings))
-                .map_err(|why| unavailable(Mirror::Items.source(), &why))?;
+        let rows: Vec<mirrors::PassRow> = unowned.iter().map(|s| s.pass_row(*mirror)).collect();
+        if !mirrors::bound(state, &rows) {
+            return Err((
+                mirror.source(),
+                format!(
+                    "a {} mirror pass in this database was read from another chain than this node serves",
+                    mirror.name()
+                ),
+            ));
         }
-        oldest = Some(oldest.map_or(at, |o| o.min(at)));
+        let passes: Vec<(String, NaiveDateTime)> = if configured {
+            let mut passes = Vec::new();
+            for network in served {
+                match rows
+                    .iter()
+                    .find(|(n, _, _)| n == network.db_name())
+                    .and_then(|(_, at, _)| *at)
+                {
+                    Some(at) => passes.push((network.db_name().to_string(), at)),
+                    None => return Err(mirrors::not_ready_reason(state, *mirror, true)),
+                }
+            }
+            passes
+        } else if purpose == Purpose::Describe {
+            let passes: Vec<(String, NaiveDateTime)> = rows
+                .iter()
+                .filter_map(|(n, at, _)| Some((n.clone(), (*at)?)))
+                .collect();
+            if passes.is_empty() {
+                return Err(missing_subgraph(*mirror));
+            }
+            passes
+        } else {
+            return Err(missing_subgraph(*mirror));
+        };
+        if purpose != Purpose::Describe
+            && *mirror == Mirror::Items
+            && let Some(oldest) = passes.iter().map(|(_, at)| *at).min()
+        {
+            mirrors::price_verdict(oldest, now, mirrors::price_max_age(&state.settings))
+                .map_err(|why| (Mirror::Items.source(), why))?;
+        }
+        copy.passes
+            .extend(passes.into_iter().map(|(n, at)| (*mirror, n, at)));
     }
-    let pass_at = oldest.expect("a read needs at least one mirror");
-    Ok(Copy::Mirror { pass_at })
+    Ok(copy)
 }
 
 /// The networks' states in the snapshot `tx` holds.
@@ -363,21 +456,44 @@ async fn read_states(
         .collect()
 }
 
-/// Opens the read of the catalogue a route answers from: the snapshot, the
-/// verdict of each source it covers for `purpose`, and the transaction to
-/// read the rows in. `needs` names the mirrors whose tables the route
-/// reads; `scope` the network it asks for (`None`: every network, the
-/// configured ones and the ones the index owns).
+/// [`begin_checked`], answering a refusal with its envelope.
 pub async fn begin(
     state: &MarketplaceState,
     purpose: Purpose,
     needs: &[Mirror],
     scope: Option<Network>,
     access: Access,
-) -> Result<CatalogueRead, axum::response::Response> {
+) -> Result<CatalogueRead, Response> {
+    begin_checked(state, purpose, needs, scope, access)
+        .await
+        .map_err(Refusal::into_response)
+}
+
+/// Opens the read of the catalogue a route answers from: the snapshot, the
+/// verdict of each source it covers for `purpose`, and the transaction to
+/// read the rows in. `needs` names the mirrors whose tables the route
+/// reads; `scope` the network it asks for (`None`: every network). A read
+/// covers each owned network in scope by the index's rule, and every other
+/// network it may return rows of by the mirrors' rule.
+///
+/// The transaction holds a pooled connection until it is dropped: a route
+/// releases it before any pool work that does not read the catalogue, and
+/// reuses it for what does, so a request never waits on a second
+/// connection while it holds the first.
+pub async fn begin_checked(
+    state: &MarketplaceState,
+    purpose: Purpose,
+    needs: &[Mirror],
+    scope: Option<Network>,
+    access: Access,
+) -> Result<CatalogueRead, Refusal> {
     let failed = |e: sqlx::Error| {
         tracing::error!(error = %e, "catalogue snapshot read failed");
-        super::internal_server_error()
+        Refusal {
+            refused: None,
+            by_index: false,
+            owned: Vec::new(),
+        }
     };
     let mut tx = state.pool.begin().await.map_err(failed)?;
     sqlx::query(match access {
@@ -395,6 +511,15 @@ pub async fn begin(
         .filter(|s| s.owned)
         .filter_map(|s| Network::parse_db(&s.network))
         .collect();
+    let refused = |source: Source, message: String, by_index: bool| Refusal {
+        refused: Some((source, message)),
+        by_index,
+        owned: owned_networks.clone(),
+    };
+    // The chain this node serves for each network (a testnet reader serves
+    // Sepolia and Amoy), as the mirrors' rule binds their passes.
+    let pair = crate::land_authz::land_network(&state.settings.eth_network)
+        .map(super::nft_index::Catalogue::from_land);
     let mut owned = Vec::new();
     for network in owned_networks
         .iter()
@@ -406,44 +531,57 @@ pub async fn begin(
             .iter()
             .find(|s| s.network == network.db_name())
             .expect("every network is read");
-        let copy = index_verdict(s, net, purpose, now)
-            .map_err(|why| unavailable(Source::CollectionsIndex, &why))?;
-        owned.push((*network, copy));
+        let publication = index_verdict(s, net, pair.map(|p| p.chain_id(net)), purpose, now)
+            .map_err(|why| refused(Source::CollectionsIndex, why, true))?;
+        owned.push((*network, publication));
     }
-    // The mirrors serve the configured networks the index does not own; a
-    // read scoped to an owned network reads no mirror row.
-    let served: Vec<Network> = configured
+    // Every network the index does not own that the read may return rows
+    // of: the one asked for, or both. The mirrors serve the configured ones.
+    let unowned: Vec<&NetworkState> = states
         .iter()
-        .copied()
-        .filter(|n| !owned_networks.contains(n))
+        .filter(|s| !s.owned)
+        .filter(|s| scope.is_none_or(|n| n.db_name() == s.network))
         .collect();
-    let reads_mirror = match scope {
-        Some(n) => !owned_networks.contains(&n),
-        None => !served.is_empty() || configured.is_empty(),
-    };
-    let mirror = if reads_mirror {
-        Some(mirror_verdict(
-            state,
-            &states,
-            &served,
-            !configured.is_empty(),
-            needs,
-            purpose,
-            now,
-        )?)
-    } else {
+    let mirror = if unowned.is_empty() {
         None
+    } else {
+        let all_unowned: Vec<&NetworkState> = states.iter().filter(|s| !s.owned).collect();
+        let served: Vec<Network> = configured
+            .iter()
+            .copied()
+            .filter(|n| !owned_networks.contains(n))
+            .collect();
+        Some(
+            mirror_verdict(
+                state,
+                &MirrorScope {
+                    unowned: &all_unowned,
+                    served: &served,
+                    configured: !configured.is_empty(),
+                    owned: &owned_networks,
+                },
+                needs,
+                purpose,
+                now,
+            )
+            .map_err(|(source, why)| refused(source, why, false))?,
+        )
     };
-    let read = CatalogueRead { tx, mirror, owned };
-    for mirror_needed in needs {
-        if let Some(Copy::Mirror { pass_at }) = read.mirror {
-            mirrors::note_copy_at(state, *mirror_needed, pass_at);
+    let read = CatalogueRead {
+        tx,
+        now,
+        mirror,
+        owned,
+    };
+    if let Some(mirror) = &read.mirror {
+        for needed in needs {
+            if let Some(at) = mirror.oldest(Some(*needed)) {
+                mirrors::note_copy_at(state, *needed, at);
+            }
         }
     }
-    for (_, copy) in &read.owned {
-        if let Copy::Index { folded_at, .. } = copy {
-            mirrors::note_index_copy(*folded_at);
-        }
+    for (_, p) in &read.owned {
+        mirrors::note_index_copy(p.folded_at);
     }
     Ok(read)
 }
@@ -459,9 +597,8 @@ pub(crate) async fn begin_unchecked(state: &MarketplaceState) -> CatalogueRead {
         .unwrap();
     CatalogueRead {
         tx,
-        mirror: Some(Copy::Mirror {
-            pass_at: DateTime::<Utc>::UNIX_EPOCH.naive_utc(),
-        }),
+        now: Utc::now(),
+        mirror: Some(MirrorCopy::default()),
         owned: Vec::new(),
     }
 }
@@ -501,8 +638,8 @@ mod tests {
         let s = ready_state(now);
         for purpose in PURPOSES {
             assert_eq!(
-                index_verdict(&s, ChainNet::Matic, purpose, now),
-                Ok(Copy::Index {
+                index_verdict(&s, ChainNet::Matic, Some(137), purpose, now),
+                Ok(Publication {
                     folded_block: 100,
                     folded_at: s.folded_at.unwrap(),
                     generation: 7
@@ -523,17 +660,32 @@ mod tests {
             ..ready_state(now)
         };
         for purpose in PURPOSES {
-            assert!(index_verdict(&walking, ChainNet::Matic, purpose, now).is_ok());
+            assert!(index_verdict(&walking, ChainNet::Matic, Some(137), purpose, now).is_ok());
         }
         let walked_events = NetworkState {
             walked_past: true,
             ..walking
         };
-        assert!(index_verdict(&walked_events, ChainNet::Matic, Purpose::Priced, now).is_ok());
         assert!(
-            index_verdict(&walked_events, ChainNet::Matic, Purpose::Authorize, now)
-                .unwrap_err()
-                .contains("not published")
+            index_verdict(
+                &walked_events,
+                ChainNet::Matic,
+                Some(137),
+                Purpose::Priced,
+                now
+            )
+            .is_ok()
+        );
+        assert!(
+            index_verdict(
+                &walked_events,
+                ChainNet::Matic,
+                Some(137),
+                Purpose::Authorize,
+                now
+            )
+            .unwrap_err()
+            .contains("not published")
         );
     }
 
@@ -544,10 +696,10 @@ mod tests {
             folded_at: Some(now.naive_utc() - Duration::days(2)),
             ..ready_state(now)
         };
-        assert!(index_verdict(&old, ChainNet::Matic, Purpose::Describe, now).is_ok());
+        assert!(index_verdict(&old, ChainNet::Matic, Some(137), Purpose::Describe, now).is_ok());
         for purpose in [Purpose::Priced, Purpose::Authorize] {
             assert!(
-                index_verdict(&old, ChainNet::Matic, purpose, now)
+                index_verdict(&old, ChainNet::Matic, Some(137), purpose, now)
                     .unwrap_err()
                     .contains("past the")
             );
@@ -603,7 +755,7 @@ mod tests {
         for s in &broken {
             for purpose in PURPOSES {
                 assert!(
-                    index_verdict(s, ChainNet::Matic, purpose, now).is_err(),
+                    index_verdict(s, ChainNet::Matic, Some(137), purpose, now).is_err(),
                     "{s:?} {purpose:?}"
                 );
             }
@@ -872,6 +1024,121 @@ mod tests {
         assert_eq!(source_of(refused).await, "items-mirror");
     }
 
+    /// The index is read only on the chain this node serves: a testnet
+    /// reader (Amoy expected) refuses a projection bound to Polygon mainnet,
+    /// and a node that serves no chain the index walks refuses it too.
+    #[test]
+    fn the_index_answers_only_on_the_chain_this_node_serves() {
+        let now = Utc::now();
+        let s = ready_state(now);
+        for purpose in PURPOSES {
+            assert!(index_verdict(&s, ChainNet::Matic, Some(80002), purpose, now).is_err());
+            assert!(index_verdict(&s, ChainNet::Matic, None, purpose, now).is_err());
+        }
+    }
+
+    /// A priced read joins the open trades: their pass marker is read in the
+    /// catalogue's snapshot, so a trades pass committed after the snapshot
+    /// opened does not stand for the trade state its rows come from.
+    #[tokio::test]
+    async fn the_trades_check_reads_the_catalogues_snapshot() {
+        let Some((pool, base)) = owned_polygon().await else {
+            return;
+        };
+        crate::market::trade_events::tests::publish_cursors(&pool).await;
+        let state = std::sync::Arc::new(crate::market::MarketplaceState::new(
+            pool.clone(),
+            crate::http::Outbound::for_tests(),
+            crate::market::Settings {
+                trades_sync_upstream_url: Some("https://trades.example".into()),
+                ..base.settings.clone()
+            },
+        ));
+        sqlx::query(
+            "INSERT INTO shop.trades_mirror (id, upstream_url) VALUES (1, 'https://trades.example')",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        let mut held = open(&state, Purpose::Priced).await.unwrap();
+        sqlx::query("UPDATE shop.trades_mirror SET completed_at = timezone('UTC', now())")
+            .execute(&pool)
+            .await
+            .unwrap();
+        let refused = held.trades_ready(&state).await.err().unwrap();
+        assert_eq!(source_of(refused).await, "trades-mirror");
+        drop(held);
+        let mut read = open(&state, Purpose::Priced).await.unwrap();
+        assert!(read.trades_ready(&state).await.is_ok());
+    }
+
+    /// A memo key names every mirror pass a read takes, not only the oldest:
+    /// a newer pass on one network gives a new key while `as_of` stays.
+    #[tokio::test]
+    async fn a_newer_pass_on_either_network_gives_a_new_key() {
+        let Some((pool, state)) = owned_polygon().await else {
+            return;
+        };
+        sqlx::query("UPDATE shop.collection_projection SET owned_at = NULL")
+            .execute(&pool)
+            .await
+            .unwrap();
+        let pass = |network: &'static str, minutes_ago: i32| {
+            let pool = pool.clone();
+            async move {
+                sqlx::query(
+                    "UPDATE shop.mirror_state SET last_complete_pass_at = \
+                       date_trunc('second', timezone('UTC', now())) - make_interval(mins => $2) \
+                     WHERE network = $1",
+                )
+                .bind(network)
+                .bind(minutes_ago)
+                .execute(&pool)
+                .await
+                .unwrap();
+            }
+        };
+        pass("ethereum", 3).await;
+        pass("matic", 2).await;
+        let first = open(&state, Purpose::Describe).await.unwrap();
+        pass("matic", 1).await;
+        let second = open(&state, Purpose::Describe).await.unwrap();
+        assert_ne!(first.key(), second.key());
+        assert_eq!(
+            first.as_of(),
+            second.as_of(),
+            "the oldest pass is Ethereum's"
+        );
+    }
+
+    /// A testnet reader serves Amoy on Polygon: an owned projection bound to
+    /// Polygon mainnet does not answer for it.
+    #[tokio::test]
+    async fn a_testnet_reader_refuses_a_mainnet_projection() {
+        let Some((pool, base)) = owned_polygon().await else {
+            return;
+        };
+        let state = std::sync::Arc::new(crate::market::MarketplaceState::new(
+            pool.clone(),
+            crate::http::Outbound::for_tests(),
+            crate::market::Settings {
+                eth_network: "sepolia".into(),
+                ..base.settings.clone()
+            },
+        ));
+        let refused = begin(
+            &state,
+            Purpose::Describe,
+            &[Mirror::Collections],
+            Some(Network::Matic),
+            Access::ReadOnly,
+        )
+        .await
+        .err()
+        .unwrap();
+        assert_eq!(source_of(refused).await, "collections-index");
+    }
+
     #[test]
     fn a_publication_ahead_of_the_clock_past_the_skew_is_refused() {
         let now = Utc::now();
@@ -879,11 +1146,11 @@ mod tests {
             folded_at: Some(now.naive_utc() + MAX_CLOCK_SKEW + Duration::minutes(1)),
             ..ready_state(now)
         };
-        assert!(index_verdict(&ahead, ChainNet::Matic, Purpose::Priced, now).is_err());
+        assert!(index_verdict(&ahead, ChainNet::Matic, Some(137), Purpose::Priced, now).is_err());
         let within = NetworkState {
             folded_at: Some(now.naive_utc() + Duration::minutes(1)),
             ..ready_state(now)
         };
-        assert!(index_verdict(&within, ChainNet::Matic, Purpose::Priced, now).is_ok());
+        assert!(index_verdict(&within, ChainNet::Matic, Some(137), Purpose::Priced, now).is_ok());
     }
 }

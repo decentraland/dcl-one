@@ -480,6 +480,16 @@ pub async fn put_collections(
         Ok(a) => a,
         Err(r) => return r,
     };
+    // The campaign and the body first, on the pool: the catalogue read below
+    // holds its connection until it commits.
+    let campaign = match get_campaign(&state.pool, &id).await {
+        Ok(Some(c)) => c,
+        Ok(None) => return ApiError::not_found("campaign not found").into_response(),
+        Err(e) => return e.into_response(),
+    };
+    let Some(Json(body)) = body else {
+        return ApiError::bad_request("contracts is required").into_response();
+    };
     let mut read = match catalogue::begin(
         &state,
         Purpose::Describe,
@@ -491,14 +501,6 @@ pub async fn put_collections(
     {
         Ok(read) => read,
         Err(r) => return r,
-    };
-    let campaign = match get_campaign(&state.pool, &id).await {
-        Ok(Some(c)) => c,
-        Ok(None) => return ApiError::not_found("campaign not found").into_response(),
-        Err(e) => return e.into_response(),
-    };
-    let Some(Json(body)) = body else {
-        return ApiError::bad_request("contracts is required").into_response();
     };
     match set_tag_collections(&mut read.tx, &campaign.main_tag, &body.contracts, &actor).await {
         Ok(rows) => match read.tx.commit().await {

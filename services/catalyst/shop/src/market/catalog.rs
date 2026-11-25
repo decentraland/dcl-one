@@ -31,7 +31,6 @@ use axum::Json;
 use axum::extract::{Query, State};
 use axum::http::HeaderMap;
 use axum::response::{IntoResponse, Response};
-use chrono::Utc;
 use serde::Serialize;
 use serde::ser::{SerializeSeq, SerializeStruct, Serializer};
 use sqlx::Arguments;
@@ -1168,7 +1167,8 @@ pub async fn fetch_page(
     f: &CatalogFilters,
     is_v2: bool,
 ) -> Result<(Vec<CatalogItem>, i64), ApiError> {
-    let now = Utc::now().naive_utc();
+    // The read's clock: the trades check decided on the same instant.
+    let now = read.now.naive_utc();
     let since = super::trades::mirrored_since(&state.settings, now);
     let (sql, args) = build_catalog_query(f, is_v2, now, since, false);
     let rows = sqlx::query_with(sqlx::AssertSqlSafe(sql), args)
@@ -1218,7 +1218,7 @@ async fn catalog_inner(
     };
     // The v2 legs (price, isOnSale, tradeId, the listing counts) are computed
     // from shop.trades: a partial mirror is not the order book.
-    if is_v2 && let Err(envelope) = super::trades::require_ready(&state).await {
+    if is_v2 && let Err(envelope) = read.trades_ready(&state).await {
         return envelope;
     }
     let route = if is_v2 { "/v2/catalog" } else { "/v1/catalog" };
@@ -1239,6 +1239,9 @@ async fn catalog_inner(
         Ok(p) => p,
         Err(e) => return e.into_response(),
     };
+    // The picks are no catalogue rows: the read's connection goes back first,
+    // so their pool read never waits on the one this request holds.
+    drop(read);
     let ids: Vec<String> = page.0.iter().map(|i| i.id.clone()).collect();
     let stats: Vec<PickStats> = match picked_by.as_deref() {
         Some(user) => match picks_stats(&state.pool, &ids, Some(user)).await {

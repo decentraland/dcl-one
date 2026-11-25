@@ -637,6 +637,12 @@ pub async fn get_search_suggest(
     if query_terms(&search).is_empty() {
         return ([(CACHE_CONTROL, SUGGEST_CACHE)], Json(empty)).into_response();
     }
+    // Read before the snapshot opens: no pool work waits while it holds its
+    // connection.
+    let rate = match items::mana_usd_rate(&state).await {
+        Ok(rate) => rate,
+        Err(envelope) => return envelope,
+    };
     // One snapshot answers the three sections: the items carry prices.
     let mut read = match items::priced_read(&state, None).await {
         Ok(read) => read,
@@ -650,7 +656,7 @@ pub async fn get_search_suggest(
         ("search".to_string(), search.clone()),
         ("first".to_string(), items_first.to_string()),
     ];
-    let items_page = items::catalog_items_page(&state, &mut read, &item_pairs).await;
+    let items_page = items::catalog_items_page(&state, &mut read, &item_pairs, rate).await;
     let collections =
         search_collections(&state, &mut read.tx, &search, collections_first, &directory).await;
     let (item_rows, total) = match items_page {

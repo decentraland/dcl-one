@@ -11,7 +11,6 @@ use std::collections::BTreeMap;
 use axum::Json;
 use axum::extract::{Query, State};
 use axum::response::{IntoResponse, Response};
-use chrono::Utc;
 use serde::Serialize;
 use serde_json::Value;
 use sqlx::Row;
@@ -182,11 +181,12 @@ pub async fn prices(
         Access::ReadOnly,
     )
     .await?;
-    super::trades::require_ready(state).await?;
+    read.trades_ready(state).await?;
     let key = format!("prices:{f:?}:{}", read.key());
+    // The read's clock: the trades check decided on the same instant.
+    let now = read.now.naive_utc();
     let conn = &mut *read.tx;
     let value = cached(state, Ttl::M5, key, || async move {
-        let now = Utc::now().naive_utc();
         let since = super::trades::mirrored_since(&state.settings, now);
         let (sql, args) = build_prices_query(f, now, since);
         let rows = sqlx::query_with(sqlx::AssertSqlSafe(sql), args)

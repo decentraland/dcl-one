@@ -653,6 +653,20 @@ async fn copy_for_chain(
         .await
 }
 
+/// Whether every pass in a mirror's `rows` that names its chain names the
+/// one this node serves for that network (an unbound legacy pass counts).
+pub(crate) fn bound(state: &MarketplaceState, rows: &[PassRow]) -> bool {
+    let pair = crate::land_authz::land_network(&state.settings.eth_network)
+        .map(super::nft_index::Catalogue::from_land);
+    rows.iter().all(|(network, _, chain)| {
+        chain.is_none_or(|id| {
+            super::chain_walk::ChainNet::parse(network)
+                .and_then(|net| pair.map(|pair| pair.chain_id(net)))
+                == Some(id)
+        })
+    })
+}
+
 /// One network's row of a mirror's `shop.mirror_state`: its last complete
 /// pass and the chain the pass was proven on.
 pub(crate) type PassRow = (String, Option<NaiveDateTime>, Option<i64>);
@@ -667,21 +681,13 @@ pub(crate) fn copy_of(
     rows: &[PassRow],
     networks: &[Network],
 ) -> Option<NaiveDateTime> {
-    let pair = crate::land_authz::land_network(&state.settings.eth_network)
-        .map(super::nft_index::Catalogue::from_land);
-    let mut done = Vec::new();
-    for (network, at, chain) in rows {
-        if let Some(id) = chain {
-            let expected = super::chain_walk::ChainNet::parse(network)
-                .and_then(|net| pair.map(|pair| pair.chain_id(net)));
-            if Some(*id) != expected {
-                return None;
-            }
-        }
-        if let Some(at) = at {
-            done.push((network.clone(), *at));
-        }
+    if !bound(state, rows) {
+        return None;
     }
+    let done: Vec<(String, NaiveDateTime)> = rows
+        .iter()
+        .filter_map(|(network, at, _)| Some((network.clone(), (*at)?)))
+        .collect();
     if networks.is_empty() {
         done.iter().map(|(_, at)| *at).min()
     } else {
@@ -756,27 +762,37 @@ async fn ready_at(
 /// (`configured` false: nothing says which networks a pass must cover), the
 /// job off on this node, or a configured network without a complete pass.
 pub(crate) fn not_ready(state: &MarketplaceState, mirror: Mirror, configured: bool) -> Response {
+    let (source, message) = not_ready_reason(state, mirror, configured);
+    unavailable(source, &message)
+}
+
+/// The source and message of [`not_ready`].
+pub(crate) fn not_ready_reason(
+    state: &MarketplaceState,
+    mirror: Mirror,
+    configured: bool,
+) -> (Source, String) {
     if !configured {
-        return unavailable(
+        return (
             Source::CollectionsSubgraph(Network::Matic),
-            &format!(
+            format!(
                 "no collections subgraph is configured, so the {} mirror has nothing to walk",
                 mirror.name()
             ),
         );
     }
     if !state.settings.market.mirrors_enabled {
-        return unavailable(
+        return (
             mirror.source(),
-            &format!(
+            format!(
                 "the {} mirror has no complete pass in this database and the mirror job is not enabled on this node",
                 mirror.name()
             ),
         );
     }
-    unavailable(
+    (
         mirror.source(),
-        &format!(
+        format!(
             "the {} mirror has no complete pass yet for every configured network",
             mirror.name()
         ),

@@ -445,9 +445,15 @@ fn with_trades(
     b.push(" ");
 }
 
-/// The trades floor of a feed read now ([`super::super::trades::mirrored_since`]).
-pub(super) fn since(state: &MarketplaceState) -> Option<chrono::NaiveDateTime> {
-    super::super::trades::mirrored_since(&state.settings, Utc::now().naive_utc())
+/// The trades floor of a feed read at `now`
+/// ([`super::super::trades::mirrored_since`]): a catalogue read's clock, so
+/// the trades check and the floor its rows are read with decide on one
+/// instant.
+pub(super) fn since_at(
+    state: &MarketplaceState,
+    now: chrono::DateTime<Utc>,
+) -> Option<chrono::NaiveDateTime> {
+    super::super::trades::mirrored_since(&state.settings, now.naive_utc())
 }
 
 fn compare_at_credits_expr(alias: &str) -> String {

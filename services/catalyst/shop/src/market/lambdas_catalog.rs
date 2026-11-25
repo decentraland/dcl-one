@@ -556,8 +556,12 @@ impl UrnSource {
     }
 }
 
+/// Where the URNs come from: the catalogue, read through its gate; the
+/// subgraphs only where the mirrors refused and no network belongs to the
+/// collections index (the legacy path the mirrors had, which never stands
+/// in for the index: a network it owns answers from it, or the envelope).
 async fn urn_source(state: &MarketplaceState) -> Result<UrnSource, Response> {
-    match catalogue::begin(
+    match catalogue::begin_checked(
         state,
         Purpose::Describe,
         &[Mirror::Items],
@@ -567,8 +571,18 @@ async fn urn_source(state: &MarketplaceState) -> Result<UrnSource, Response> {
     .await
     {
         Ok(read) => Ok(UrnSource::Catalogue(Box::new(read))),
-        Err(_) if graph::any_collections_reader(&state.index) => Ok(UrnSource::Subgraphs),
-        Err(envelope) => Err(envelope),
+        // The snapshot could not be read: nothing says which networks the
+        // index owns, so no subgraph stands in; lamb2's own 500.
+        Err(refusal) if refusal.refused.is_none() => Err(lambdas_internal_error()),
+        Err(refusal)
+            if refusal.refused.is_some()
+                && !refusal.by_index
+                && refusal.owned.is_empty()
+                && graph::any_collections_reader(&state.index) =>
+        {
+            Ok(UrnSource::Subgraphs)
+        }
+        Err(refusal) => Err(refusal.into_response()),
     }
 }
 
@@ -977,6 +991,9 @@ async fn catalog_wearables_with_base(state: &MarketplaceState, query: CatalogQue
         Ok(u) => u,
         Err(resp) => return resp,
     };
+    // The definitions are read through the pool: the catalogue read's
+    // connection goes back first.
+    drop(source);
     let remaining = limit - off_chain.len() as i64;
     let mut on_chain_defs = Vec::new();
     if want_on_chain && remaining >= 0 {
@@ -1018,24 +1035,28 @@ async fn catalog(
         query.last_id.as_deref().unwrap_or(""),
         query.filters
     );
+    let q = &query;
     let page = state
         .lambdas
         .catalog
-        .get_or_fetch(key, || async {
+        .get_or_fetch(key, || async move {
             let urns = item_urns(
                 state,
                 &mut source,
                 item_type_prefix,
-                &query.filters,
-                query.limit,
-                &query.last_id,
+                &q.filters,
+                q.limit,
+                &q.last_id,
             )
             .await?;
+            // The definitions are read through the pool: the catalogue
+            // read's connection goes back first.
+            drop(source);
             let pointers = urns.iter().map(|u| u.to_lowercase()).collect();
             let definitions = definitions_for(state, pointers, extract)
                 .await
                 .map_err(|()| lambdas_internal_error())?;
-            let (items, next_last_id) = paginate(definitions, query.limit);
+            let (items, next_last_id) = paginate(definitions, q.limit);
             Ok::<Value, Response>(json!({ "items": items, "next": next_last_id }))
         })
         .await;

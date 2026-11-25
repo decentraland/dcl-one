@@ -171,6 +171,18 @@ pub struct LocalMarket {
     pub max_staleness_secs: i64,
 }
 
+/// A refused catalogue read as the credits error: the source it names (the
+/// items mirror, a subgraph or the collections index), its `configure` and
+/// the envelope's Retry-After kept ([`ApiError::SourceUnavailable`]).
+fn catalogue_refused(refusal: crate::market::catalogue::Refusal) -> ApiError {
+    match refusal.refused {
+        Some((source, message)) => {
+            ApiError::source_unavailable(source.name(), source.configure().unwrap_or(""), message)
+        }
+        None => ApiError::Internal("the item catalogue could not be read".into()),
+    }
+}
+
 fn envelope_message(resp: axum::response::Response) -> String {
     let status = resp.status();
     format!("marketplace source unavailable ({status})")
@@ -191,8 +203,9 @@ impl Market for LocalMarket {
             ));
         };
         // What the credits charge is a price: the catalogue's priced read,
-        // whose snapshot the items are read in.
-        let mut read = crate::market::catalogue::begin(
+        // whose snapshot the items are read in. A refusal keeps the source it
+        // names (the mirror or the collections index) and its Retry-After.
+        let mut read = crate::market::catalogue::begin_checked(
             market,
             crate::market::catalogue::Purpose::Priced,
             &[crate::market::mirrors::Mirror::Items],
@@ -200,7 +213,7 @@ impl Market for LocalMarket {
             crate::market::catalogue::Access::ReadOnly,
         )
         .await
-        .map_err(|r| ApiError::service_unavailable(envelope_message(r)))?;
+        .map_err(catalogue_refused)?;
         let mut ids: Vec<String> = Vec::new();
         for (collection, item_id) in pairs {
             let id = format!("{}-{}", collection.to_ascii_lowercase(), item_id);
@@ -213,7 +226,7 @@ impl Market for LocalMarket {
             first: Some((ids.len() * 2).clamp(1, 100) as i64),
             ..Default::default()
         };
-        let (items, _) = crate::market::items::list_items(market, &mut read.tx, &filters)
+        let (items, _) = crate::market::items::list_items(market, &mut read, &filters)
             .await
             .map_err(|e| ApiError::Internal(format!("items mirror read failed: {e}")))?;
         let mut by_key: HashMap<(String, String), Vec<ItemInfo>> = HashMap::new();
@@ -936,6 +949,36 @@ mod ts_peg_export {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A credits price the catalogue cannot give answers the source that
+    /// refused (an owned network's collections index here), its `configure`
+    /// and Retry-After, as the catalogue's own envelope does.
+    #[tokio::test]
+    async fn a_refused_catalogue_read_keeps_its_source() {
+        use axum::response::IntoResponse;
+        let refusal = crate::market::catalogue::Refusal {
+            refused: Some((
+                crate::market::Source::CollectionsIndex,
+                "the collections index on matic has no published fold".into(),
+            )),
+            by_index: true,
+            owned: vec![crate::market::graph::Network::Matic],
+        };
+        let response = catalogue_refused(refusal).into_response();
+        assert_eq!(
+            response.status(),
+            axum::http::StatusCode::SERVICE_UNAVAILABLE
+        );
+        assert_eq!(response.headers()[axum::http::header::RETRY_AFTER], "60");
+        let body: serde_json::Value = serde_json::from_slice(
+            &axum::body::to_bytes(response.into_body(), 1 << 16)
+                .await
+                .unwrap(),
+        )
+        .unwrap();
+        assert_eq!(body["source"], "collections-index");
+        assert_eq!(body["configure"], "MARKETPLACE_COLLECTIONS_INDEX_ENABLED");
+    }
 
     #[test]
     fn a_snapshot_ages_from_its_earlier_timestamp() {

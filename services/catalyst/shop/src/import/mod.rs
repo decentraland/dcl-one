@@ -493,16 +493,6 @@ async fn check_inner(
     .map_err(IntoResponse::into_response)?;
     let signer =
         EvmAddress::parse(&signer_text).map_err(|_| bad("the signer is not an address"))?;
-    // Eligibility authorizes a listing: the catalogue's authorize read, whose
-    // snapshot the facts are read in.
-    let mut read = catalogue::begin(
-        state,
-        Purpose::Authorize,
-        &[Mirror::Collections, Mirror::Items],
-        None,
-        Access::ReadOnly,
-    )
-    .await?;
     let listing = match &body.old_trade_id {
         Some(id) => {
             let listing = stored_listing(&state.pool, id)
@@ -555,9 +545,22 @@ async fn check_inner(
         return Err(bad("the listing sends no asset"));
     };
     let item_id = (first.asset_type == TradeAssetType::CollectionItem).then_some(first.value);
-    let facts = mirror_facts(&mut read.tx, chain_id, first.contract, item_id)
-        .await
-        .map_err(IntoResponse::into_response)?;
+    // Eligibility authorizes a listing: the catalogue's authorize read, whose
+    // snapshot the facts are read in. It opens after the listing's own read
+    // and closes before the rate's, so no pool work waits on its connection.
+    let facts = {
+        let mut read = catalogue::begin(
+            state,
+            Purpose::Authorize,
+            &[Mirror::Collections, Mirror::Items],
+            None,
+            Access::ReadOnly,
+        )
+        .await?;
+        mirror_facts(&mut read.tx, chain_id, first.contract, item_id)
+            .await
+            .map_err(IntoResponse::into_response)?
+    };
     let Some(trade) = proposed_trade(chain_id, signer, sent) else {
         return Err(bad(format!(
             "no off-chain marketplace is deployed on chain {}",

@@ -828,13 +828,15 @@ fn key_fixed_rows(f: &ItemFilters) -> Option<i64> {
 /// first page came back short, one key-only count when it is full.
 async fn run_items(
     state: &MarketplaceState,
-    conn: &mut sqlx::PgConnection,
+    read: &mut CatalogueRead,
     f: &ItemFilters,
     rate: Option<&str>,
     catalog: Option<&CatalogItemsParams>,
 ) -> Result<(Vec<sqlx::postgres::PgRow>, i64), ApiError> {
-    let now = Utc::now().naive_utc();
+    // The read's clock: the trades check decided on the same instant.
+    let now = read.now.naive_utc();
     let since = super::trades::mirrored_since(&state.settings, now);
+    let conn = &mut *read.tx;
     let whole = key_fixed_rows(f).map(|rows| ItemFilters {
         first: Some(rows),
         skip: None,
@@ -872,13 +874,13 @@ async fn run_items(
     Ok((rows, total))
 }
 
-/// The items `f` selects, read in `conn` (a catalogue read's snapshot).
+/// The items `f` selects, read in `read`'s snapshot.
 pub async fn list_items(
     state: &MarketplaceState,
-    conn: &mut sqlx::PgConnection,
+    read: &mut CatalogueRead,
     f: &ItemFilters,
 ) -> Result<(Vec<Item>, i64), ApiError> {
-    let (rows, total) = run_items(state, conn, f, None, None).await?;
+    let (rows, total) = run_items(state, read, f, None, None).await?;
     Ok((rows.iter().map(row_to_item).collect(), total))
 }
 
@@ -942,13 +944,14 @@ pub async fn mana_usd_rate(state: &MarketplaceState) -> Result<ManaUsdRate, Resp
 
 /// The read an items route answers from: the catalogue (every row carries
 /// the minter price and `available`, so priced: [`catalogue::begin`]) over
-/// `scope`, and the trades mirror's pass (the open item trade every row
-/// carries: `tradeId`, the trade price, `isOnSale`).
+/// `scope`, and the trades mirror's pass and verdicts (the open item trade
+/// every row carries: `tradeId`, the trade price, `isOnSale`), read in the
+/// same snapshot at the same instant.
 pub(crate) async fn priced_read(
     state: &MarketplaceState,
     scope: Option<Network>,
 ) -> Result<CatalogueRead, Response> {
-    let read = catalogue::begin(
+    let mut read = catalogue::begin(
         state,
         Purpose::Priced,
         &[Mirror::Items],
@@ -956,7 +959,7 @@ pub(crate) async fn priced_read(
         Access::ReadOnly,
     )
     .await?;
-    super::trades::require_ready(state).await?;
+    read.trades_ready(state).await?;
     Ok(read)
 }
 
@@ -972,7 +975,7 @@ pub async fn get_items(
         Ok(read) => read,
         Err(envelope) => return envelope,
     };
-    match list_items(&state, &mut read.tx, &filters).await {
+    match list_items(&state, &mut read, &filters).await {
         Ok((data, total)) => Json(DataTotal { data, total }).into_response(),
         Err(e) => e.into_response(),
     }
@@ -982,15 +985,18 @@ pub async fn get_items(
 /// response a source that cannot answer gives (the search dropdown reads
 /// the same grid).
 #[allow(clippy::result_large_err)]
+/// `rate` is read before the catalogue read opens: no pool work waits while
+/// the read holds its connection.
 pub async fn catalog_items_page(
     state: &MarketplaceState,
     read: &mut CatalogueRead,
     pairs: &[(String, String)],
+    rate: ManaUsdRate,
 ) -> Result<(Vec<CreditCatalogItem>, i64), Response> {
     let filters = parse_filters(pairs).map_err(IntoResponse::into_response)?;
     let catalog = parse_catalog_items_params(pairs);
-    let rate = rate_to_numeric_string(mana_usd_rate(state).await?);
-    let (rows, total) = run_items(state, &mut read.tx, &filters, Some(&rate), Some(&catalog))
+    let rate = rate_to_numeric_string(rate);
+    let (rows, total) = run_items(state, read, &filters, Some(&rate), Some(&catalog))
         .await
         .map_err(IntoResponse::into_response)?;
     let data = rows
@@ -1011,11 +1017,15 @@ pub async fn get_catalog_items(
         Ok(f) => f.network,
         Err(e) => return e.into_response(),
     };
+    let rate = match mana_usd_rate(&state).await {
+        Ok(rate) => rate,
+        Err(envelope) => return envelope,
+    };
     let mut read = match priced_read(&state, scope).await {
         Ok(read) => read,
         Err(envelope) => return envelope,
     };
-    match catalog_items_page(&state, &mut read, &pairs).await {
+    match catalog_items_page(&state, &mut read, &pairs, rate).await {
         Ok((data, total)) => Json(DataTotal { data, total }).into_response(),
         Err(r) => r,
     }
@@ -1208,7 +1218,7 @@ pub async fn get_trendings(
         include_social_emotes,
         ..Default::default()
     };
-    let got = match list_items(&state, &mut read.tx, &filters).await {
+    let got = match list_items(&state, &mut read, &filters).await {
         Ok((items, _)) => items,
         Err(e) => return e.into_response(),
     };
