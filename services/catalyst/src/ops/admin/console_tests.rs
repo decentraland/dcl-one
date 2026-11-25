@@ -18,6 +18,8 @@ use super::router;
 use super::tests::{admin_state, audit_rows, cleanup, lazy_pool, send, session_cookie, wallet};
 use crate::content::{ContentState, Settings as ContentSettings};
 use crate::http::Outbound;
+use crate::shop::credits::escrow::ManaPaymentVerification;
+use crate::shop::credits::test_support::{TopupBroker, fresh_tx_hash, mana_payment_from};
 use crate::storage::Storage;
 
 const TOKEN: &str = "console-test-bearer";
@@ -310,6 +312,232 @@ async fn credits_calls_record_the_wallet_in_the_ledgers_own_audit_row() {
         linked >= 1,
         "the grant's ledger row links an audit row naming the console wallet"
     );
+    cleanup(&pool, &actor).await;
+}
+
+/// A console grant under a top-up key goes through the bearer route's recovery: an unbooked transfer is
+/// verified first (no economy here, so it is refused and books nothing), a malformed hash is refused, and a
+/// booked recovery replays.
+#[tokio::test]
+async fn a_console_grant_recovers_a_top_up_like_the_bearer_route() {
+    let Some(pool) = crate::db::scratch::pool(4).await else {
+        return;
+    };
+    let cs = Arc::new(crate::shop::credits::State::new(
+        pool.clone(),
+        Outbound::for_tests(),
+        crate::shop::credits::Settings {
+            writes_enabled: true,
+            admin_token: Some("credits-tok".into()),
+            ..crate::shop::credits::Settings::for_tests()
+        },
+        crate::shop::credits::Sources {
+            market: None,
+            price: None,
+            economy: None,
+        },
+        None,
+    ));
+    let (app, actor, cookie) = console(
+        &pool,
+        true,
+        Domains {
+            credits: Some(cs.clone()),
+            ..Default::default()
+        },
+    )
+    .await;
+    let (user, booked_user) = (random_address(), random_address());
+    let (unbooked, booked) = (fresh_tx_hash(), fresh_tx_hash());
+    let (status, body) = post(
+        &app,
+        &cookie,
+        "/admin/api/credits/grant",
+        json!({ "address": user, "amount": "5", "idempotencyKey": format!("MANA-TOPUP:{unbooked}") }),
+    )
+    .await;
+    assert_eq!(
+        status,
+        StatusCode::NOT_IMPLEMENTED,
+        "verified first: {body}"
+    );
+    let (status, body) = post(
+        &app,
+        &cookie,
+        "/admin/api/credits/grant",
+        json!({ "address": user, "amount": "5", "idempotencyKey": "mana-topup:0x12" }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
+    let booked_rows: i64 = sqlx::query_scalar(
+        "SELECT (SELECT count(*) FROM credits.ledger WHERE address = $1) \
+         + (SELECT count(*) FROM credits.idempotency WHERE address = $1 OR idempotency_key = $2)",
+    )
+    .bind(&user)
+    .bind(format!("mana-topup:{unbooked}"))
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(booked_rows, 0, "the refused grants booked nothing");
+
+    let key = format!("mana-topup:{booked}");
+    cs.credits
+        .admin_grant_credits(crate::shop::credits::admin_store::GrantRequest {
+            address: &booked_user,
+            amount: "5",
+            kind: "purchase",
+            reason: None,
+            actor: None,
+            idempotency_key: Some(&key),
+            detail: &json!({}),
+            studio_name: None,
+        })
+        .await
+        .unwrap();
+    let (status, body) = post(
+        &app,
+        &cookie,
+        "/admin/api/credits/grant",
+        json!({ "address": booked_user, "amount": "5", "idempotencyKey": key.to_uppercase().replace("0X", "0x") }),
+    )
+    .await;
+    assert_eq!(
+        (status, body["body"]["replayed"].as_bool()),
+        (StatusCode::OK, Some(true)),
+        "a booked recovery replays: {body}"
+    );
+    for address in [&user, &booked_user] {
+        cleanup_credit_wallet(&pool, address).await;
+    }
+    cleanup(&pool, &actor).await;
+}
+
+/// Removes the rows a console credits test booked for `address`, its flag included.
+async fn cleanup_credit_wallet(pool: &PgPool, address: &str) {
+    for sql in [
+        "DELETE FROM credits.wallet_flags WHERE address = $1",
+        "DELETE FROM credits.ledger WHERE address = $1",
+        "DELETE FROM credits.purchases WHERE address = $1",
+        "DELETE FROM credits.idempotency WHERE address = $1",
+        "DELETE FROM ops.admin_audit WHERE domain = 'credits' AND target = $1",
+        "DELETE FROM credits.wallets WHERE address = $1",
+    ] {
+        sqlx::query(sql).bind(address).execute(pool).await.unwrap();
+    }
+}
+
+/// A console recovery of a top-up the wallet paid is booked as a purchase, so it credits a flagged wallet
+/// the console refuses a plain grant; a key naming no payment is refused and moves nothing.
+#[tokio::test]
+async fn a_console_recovery_of_a_paid_top_up_is_a_purchase_even_for_a_flagged_wallet() {
+    let Some(pool) = crate::db::scratch::pool(4).await else {
+        return;
+    };
+    let user = random_address();
+    let (paid, unpaid) = (fresh_tx_hash(), fresh_tx_hash());
+    let settings = crate::shop::credits::Settings {
+        writes_enabled: true,
+        admin_token: Some("credits-tok".into()),
+        ..crate::shop::credits::Settings::for_tests()
+    };
+    let market = Arc::new(crate::shop::credits::pricing::LocalMarket {
+        pool: pool.clone(),
+        market: None,
+        price: None,
+        max_staleness_secs: settings.mana_price_max_staleness_secs,
+    });
+    let cs = Arc::new(crate::shop::credits::State::with_sources(
+        pool.clone(),
+        Outbound::for_tests(),
+        settings,
+        market,
+        Arc::new(TopupBroker {
+            verifications: [
+                (paid.clone(), mana_payment_from(&user, 64)),
+                (unpaid.clone(), ManaPaymentVerification::NoPayment),
+            ]
+            .into(),
+        }),
+        None,
+    ));
+    cs.credits
+        .admin_flag_wallets(
+            std::slice::from_ref(&user),
+            "explorer_ip_multi_accounting",
+            None,
+            "console-test",
+            &json!({}),
+        )
+        .await
+        .unwrap();
+    let (app, actor, cookie) = console(
+        &pool,
+        true,
+        Domains {
+            credits: Some(cs.clone()),
+            ..Default::default()
+        },
+    )
+    .await;
+    let grant = |key: String| json!({ "address": user, "amount": "5", "idempotencyKey": key });
+
+    let (status, body) = post(
+        &app,
+        &cookie,
+        "/admin/api/credits/grant",
+        grant(format!("console-{}", uuid::Uuid::new_v4().simple())),
+    )
+    .await;
+    assert_eq!(
+        status,
+        StatusCode::CONFLICT,
+        "a plain grant is refused: {body}"
+    );
+    assert!(
+        body["body"]["message"]
+            .as_str()
+            .unwrap_or_default()
+            .contains("flagged (explorer_ip_multi_accounting)"),
+        "refused for the flag: {body}"
+    );
+    let (status, body) = post(
+        &app,
+        &cookie,
+        "/admin/api/credits/grant",
+        grant(format!("mana-topup:{unpaid}")),
+    )
+    .await;
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{body}");
+    let (status, body) = post(
+        &app,
+        &cookie,
+        "/admin/api/credits/grant",
+        grant(format!("MANA-TOPUP:{paid}")),
+    )
+    .await;
+    assert_eq!(
+        (status, body["body"]["replayed"].as_bool()),
+        (StatusCode::OK, Some(false)),
+        "the paid recovery is booked: {body}"
+    );
+    let booked: (Vec<String>, Vec<String>) = sqlx::query_as(
+        "SELECT ARRAY(SELECT DISTINCT kind FROM credits.ledger WHERE address = $1), \
+                ARRAY(SELECT idempotency_key FROM credits.idempotency WHERE address = $1)",
+    )
+    .bind(&user)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        booked,
+        (
+            vec!["purchase".to_string()],
+            vec![format!("mana-topup:{paid}")]
+        ),
+        "only the paid recovery is booked, a purchase under the claim's own key"
+    );
+
+    cleanup_credit_wallet(&pool, &user).await;
     cleanup(&pool, &actor).await;
 }
 

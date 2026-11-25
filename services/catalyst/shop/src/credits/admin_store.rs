@@ -262,7 +262,9 @@ impl Credits {
     /// A paid-bucket credit: an operator grant, a Stripe purchase, a MANA
     /// top-up or a mock. The wallet row is upserted (an unenrolled wallet
     /// stays `has_started_program = false`), the ledger row names the audit
-    /// row, and the idempotency snapshot lands in the same statement.
+    /// row, and the idempotency snapshot lands in the same statement. A
+    /// `kind = "grant"` to a flagged wallet (`credits.wallet_flags`) answers
+    /// 409 and books nothing.
     pub(crate) async fn admin_grant_credits_in_tx(
         &self,
         tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
@@ -327,6 +329,20 @@ impl Credits {
                     applied: prior.get("amount"),
                     replayed: true,
                 });
+            }
+        }
+
+        // The flag refuses free grants only: a purchase or refund still credits; a replay above answers first.
+        if kind == "grant" {
+            let source: Option<String> =
+                sqlx::query_scalar("SELECT source FROM credits.wallet_flags WHERE address = $1")
+                    .bind(address)
+                    .fetch_optional(&mut **tx)
+                    .await?;
+            if let Some(source) = source {
+                return Err(ApiError::conflict(format!(
+                    "Wallet {address} is flagged ({source}) and cannot receive granted credits"
+                )));
             }
         }
 

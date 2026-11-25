@@ -4,8 +4,9 @@
 //! console calls them with the session wallet and the grant, revoke or block
 //! records that wallet in its own `ops.admin_audit` row, in the same
 //! transaction as the ledger write (`credits::admin_store`); the console's
-//! row records the call. The input rules are the credits admin routes'
-//! (`credits::admin` validators). As in the old console, every call needs
+//! row records the call. The input rules and the grant's key and kind are
+//! the credits admin routes' (`credits::admin` validators and
+//! `operator_grant_key`). As in the old console, every call needs
 //! `CATALYRST_CREDITS_ADMIN_TOKEN` configured (403
 //! `credits-admin-token-not-configured` otherwise, like every other console
 //! family): the credits operator credential is what enables the console to
@@ -32,8 +33,8 @@ use super::console::{
 };
 use crate::shared::writes::DataWrites;
 use crate::shop::credits::admin::{
-    normalize_address, validate_idempotency_key, validate_positive_amount, validated_reason,
-    validated_studio_name,
+    normalize_address, operator_grant_key, validate_idempotency_key, validate_positive_amount,
+    validated_reason, validated_studio_name,
 };
 use crate::shop::credits::admin_store::GrantRequest;
 use crate::shop::credits::errors::ApiError as CreditsError;
@@ -82,6 +83,12 @@ pub async fn credits_grant(
         let reason = validated_reason(&opt_string(&body, "reason"))?;
         let idempotency_key = validate_idempotency_key(&opt_string(&body, "idempotencyKey"))?;
         let studio_name = validated_studio_name(&opt_string(&body, "studioName"))?;
+        let (idempotency_key, kind) = operator_grant_key(
+            &cs,
+            idempotency_key,
+            &address,
+        )
+        .await?;
         let mut detail = json!({ "address": address, "amount": amount, "reason": reason, "idempotencyKey": idempotency_key, "via": "console" });
         if let Some(studio) = &studio_name {
             detail["studioName"] = json!(studio);
@@ -91,7 +98,7 @@ pub async fn credits_grant(
             .admin_grant_credits(GrantRequest {
                 address: &address,
                 amount: &amount,
-                kind: "grant",
+                kind,
                 reason: reason.as_deref(),
                 actor: Some(&actor),
                 idempotency_key: idempotency_key.as_deref(),

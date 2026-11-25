@@ -16,9 +16,9 @@ use serde_json::{Value as JsonValue, json};
 
 use crate::credits::SharedState;
 use crate::credits::admin::{
-    FlagBody, RequireAdmin, normalize_address, paginate, validate_currency, validate_escrow_ref,
-    validate_idempotency_key, validate_positive_amount, validate_price_cents, validated_reason,
-    validated_studio_name,
+    FlagBody, RequireAdmin, normalize_address, operator_grant_key, paginate, validate_currency,
+    validate_escrow_ref, validate_idempotency_key, validate_positive_amount, validate_price_cents,
+    validated_reason, validated_studio_name,
 };
 use crate::credits::admin_store::{GrantRequest, PackAdminRow, PackSpec};
 use crate::credits::errors::ApiError;
@@ -108,18 +108,8 @@ async fn grant_credits(
     let amount = validate_positive_amount(&b.amount)?;
     let reason = validated_reason(&b.reason)?;
     let studio_name = validated_studio_name(&b.studio_name)?;
-    let mut idempotency_key = validate_idempotency_key(&b.idempotency_key)?;
-    // A recovered MANA top-up takes the claim's own key and is paid for, like the claim.
-    let topup = match idempotency_key
-        .as_deref()
-        .and_then(super::topup::recovered_topup_key)
-    {
-        Some(key) => {
-            idempotency_key = Some(key?);
-            true
-        }
-        None => false,
-    };
+    let idempotency_key = validate_idempotency_key(&b.idempotency_key)?;
+    let (idempotency_key, kind) = operator_grant_key(&state, idempotency_key, &address).await?;
     let actor = admin.audit_actor_description();
     let mut detail = json!({ "address": address, "amount": amount, "reason": reason, "idempotencyKey": idempotency_key });
     if let Some(studio) = &studio_name {
@@ -130,7 +120,7 @@ async fn grant_credits(
         .admin_grant_credits(GrantRequest {
             address: &address,
             amount: &amount,
-            kind: if topup { "purchase" } else { "grant" },
+            kind,
             reason: reason.as_deref(),
             actor: Some(&actor),
             idempotency_key: idempotency_key.as_deref(),
