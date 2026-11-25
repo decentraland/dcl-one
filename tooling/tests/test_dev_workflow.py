@@ -372,7 +372,7 @@ class DevelopmentWorkflowTest(unittest.TestCase):
         policy = WORKFLOW.parents[2] / 'tooling/repo-actions-policy.sh'
         self.assertIn("patterns_allowed[]=nix-community/cache-nix-action@*", policy.read_text())
         installs = 0
-        for name in ('development.yml', 'social-voice-release.yml'):
+        for name in ('development.yml', 'social-voice-release.yml', 'sdk.yml'):
             jobs = WORKFLOW.with_name(name).read_text().split('\njobs:\n', 1)[1]
             for job in re.split(r'(?m)^  (?=[\w-]+:\n)', jobs):
                 steps = re.split(r'(?m)^      - ', job)
@@ -396,7 +396,7 @@ class DevelopmentWorkflowTest(unittest.TestCase):
                     self.assertIn('nix flake archive --json', roots)
                     for command in re.findall(r'nix develop(?: \.#\w+)?', job):
                         self.assertEqual(command, 'nix develop .#ci' if shell == 'ci' else 'nix develop', name)
-        self.assertEqual(installs, 6)
+        self.assertEqual(installs, 7)
 
     def test_smoke_snapshots_are_saved_only_from_passing_main_pushes(self):
         def allowed(event, ref, platform, passed=True, hit=False):

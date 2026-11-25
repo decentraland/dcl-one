@@ -15,7 +15,7 @@ on:
       - 'tooling/tests/**'
       - 'tooling/migration/**'
       - 'services/catalyst/**'
-      # the node never links the scene CLI, but the workspace reads its manifest
+      # the node never links the scene CLI, but the workspace reads its manifest; sdk.yml lints its sources
       - 'apps/dcl-scene-cli/Cargo.toml'
       - 'library/**'
       - '.cargo/**'
