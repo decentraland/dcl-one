@@ -8,21 +8,19 @@
 use std::sync::{Arc, Mutex};
 
 use axum::Router;
-use axum::body::Body;
-use axum::http::Request;
 use axum::response::IntoResponse;
 use serde_json::{Value, json};
 use sqlx::PgPool;
-use tower::ServiceExt;
 use uuid::Uuid;
 
 use super::support::{
-    FakeCommittee, FakeRegistry, OWNER_KEY, on_chain, registry_index, signed_map, temp_storage,
-    wallet,
+    FakeCommittee, FakeRegistry, OWNER_KEY, address, call, on_chain, own_pool, registry_index,
+    temp_storage,
 };
 use crate::curation::transitions::{
     self, Actor, Change, Curation, Refusal, Request as Asked, Status,
 };
+use crate::shared::signed_fetch::test_support::signer;
 
 const STRANGER_KEY: &str = "0x2222222222222222222222222222222222222222222222222222222222222222";
 const COMMITTEE_KEY: &str = "0x3333333333333333333333333333333333333333333333333333333333333333";
@@ -31,10 +29,6 @@ const ADMIN_KEY: &str = "0x88888888888888888888888888888888888888888888888888888
 const NEW_CREATOR_KEY: &str = "0x9999999999999999999999999999999999999999999999999999999999999999";
 const PROVIDER: &str = "urn:decentraland:matic:collections-thirdparty:curation";
 const TOKEN: &str = "xoxb-example123";
-
-fn address(key: &str) -> String {
-    format!("{:#x}", wallet(key).address())
-}
 
 fn hash(n: u8) -> String {
     format!("{n:02x}").repeat(32)
@@ -174,57 +168,6 @@ async fn node_over(pool: PgPool, options: Options) -> Node {
 
 async fn node(options: Options) -> Option<Node> {
     Some(node_over(super::support::scratch_pool(8).await?, options).await)
-}
-
-/// A database of the test's own with a fresh pass of the copy, for a fake
-/// Slack that reads what the node committed.
-async fn own_pool() -> Option<PgPool> {
-    let pool = crate::db::scratch::isolated_pool(6).await?;
-    sqlx::query(
-        "INSERT INTO shop.mirror_state (mirror, network, source_url, last_complete_pass_at, pass_started_at) \
-         VALUES ('collections', 'matic', 'https://subgraph.example', timezone('UTC', now()), timezone('UTC', now()))",
-    )
-    .execute(&pool)
-    .await
-    .unwrap();
-    crate::tests::support::publish_registry_index(&mut pool.acquire().await.unwrap(), false).await;
-    Some(pool)
-}
-
-async fn call(
-    app: &Router,
-    key: Option<&str>,
-    method: &str,
-    path: &str,
-    body: Option<Value>,
-) -> (u16, Value) {
-    let mut request = Request::builder().method(method).uri(path);
-    if let Some(key) = key {
-        let signed = path.split('?').next().unwrap();
-        for (name, value) in signed_map(key, &method.to_lowercase(), signed, "{}", false).await {
-            request = request.header(name, value);
-        }
-    }
-    let body = match body {
-        Some(body) => {
-            request = request.header("content-type", "application/json");
-            Body::from(body.to_string())
-        }
-        None => Body::empty(),
-    };
-    let response = app
-        .clone()
-        .oneshot(request.body(body).unwrap())
-        .await
-        .unwrap();
-    let status = response.status().as_u16();
-    let bytes = axum::body::to_bytes(response.into_body(), 16 << 20)
-        .await
-        .unwrap();
-    (
-        status,
-        serde_json::from_slice(&bytes).unwrap_or(Value::Null),
-    )
 }
 
 /// A standard collection of the owner's on chain, unapproved, named `name`.
@@ -849,7 +792,7 @@ async fn a_former_committee_member_and_an_admin_address_get_no_curation() {
 #[tokio::test]
 async fn a_registry_that_cant_be_read_answers_503_to_third_party_curations() {
     let registry = FakeRegistry::up();
-    let Some(pool) = own_pool().await else {
+    let Some(pool) = own_pool(6).await else {
         return;
     };
     let n = node_over(
@@ -957,7 +900,7 @@ async fn concurrent_curators_end_in_one_consistent_state() {
 /// a refused write sends none; Slack answering 500 fails no request.
 #[tokio::test]
 async fn slack_hears_of_a_decision_only_after_it_is_committed() {
-    let Some(pool) = own_pool().await else {
+    let Some(pool) = own_pool(6).await else {
         return;
     };
     let slack = FakeSlack::default();
@@ -1038,7 +981,7 @@ async fn slack_hears_of_a_decision_only_after_it_is_committed() {
 /// Without a Slack channel the writes answer as before and nothing is sent.
 #[tokio::test]
 async fn without_slack_nothing_is_sent_and_nothing_fails() {
-    let Some(pool) = own_pool().await else {
+    let Some(pool) = own_pool(6).await else {
         return;
     };
     let slack = FakeSlack::default();
@@ -1310,22 +1253,7 @@ async fn a_role_lost_after_the_decision_writes_nothing() {
     };
     let id = standard(&n.pool, "Lost").await;
     collection_curation(&n.pool, id, "approved").await;
-    let path = format!("/v1/collections/{id}/curation");
-    let mut headers = axum::http::HeaderMap::new();
-    for (name, value) in signed_map(OWNER_KEY, "post", &path, "{}", false).await {
-        headers.insert(
-            axum::http::HeaderName::from_bytes(name.as_bytes()).unwrap(),
-            value.parse().unwrap(),
-        );
-    }
-    let owner = crate::auth::require_signer(
-        &headers,
-        "post",
-        &crate::auth::SignedPath::local(path),
-        None,
-    )
-    .await
-    .unwrap();
+    let owner = signer(&address(OWNER_KEY));
     let curator = crate::access::curate_collection(
         &n.state,
         &owner,
@@ -1357,7 +1285,7 @@ async fn a_role_lost_after_the_decision_writes_nothing() {
 /// of, whoever the row first named.
 #[tokio::test]
 async fn the_chains_creator_on_the_committee_asks_for_a_review_as_its_creator() {
-    let Some(pool) = own_pool().await else {
+    let Some(pool) = own_pool(6).await else {
         return;
     };
     let slack = FakeSlack::default();
@@ -1419,31 +1347,12 @@ async fn a_creator_reads_its_curations_whatever_case_the_copy_holds_its_address_
     assert_eq!((status, listed), (200, true), "{answer}");
 }
 
-/// The signer `key` as a signed `PATCH` of `path` proves it.
-pub(super) async fn signer_of(key: &str, path: &str) -> crate::shared::signed_fetch::Signer {
-    let mut headers = axum::http::HeaderMap::new();
-    for (name, value) in signed_map(key, "patch", path, "{}", false).await {
-        headers.insert(
-            axum::http::HeaderName::from_bytes(name.as_bytes()).unwrap(),
-            value.parse().unwrap(),
-        );
-    }
-    crate::auth::require_signer(
-        &headers,
-        "patch",
-        &crate::auth::SignedPath::local(path.to_string()),
-        None,
-    )
-    .await
-    .unwrap()
-}
-
 /// A curator, or an assignee, the collections subgraph drops after the
 /// decision writes nothing, even one that still holds a role on the
 /// collection: the write reads the committee again inside its transaction.
 #[tokio::test]
 async fn a_committee_member_dropped_after_the_decision_writes_nothing() {
-    let Some(pool) = own_pool().await else {
+    let Some(pool) = own_pool(6).await else {
         return;
     };
     let committee = FakeCommittee::with(&[
@@ -1463,10 +1372,9 @@ async fn a_committee_member_dropped_after_the_decision_writes_nothing() {
     let drop_member = |key: &str| committee.remove(&address(key));
     let id = standard(&n.pool, "Dropped").await;
     collection_curation(&n.pool, id, "pending").await;
-    let path = format!("/v1/collections/{id}/curation");
     let assigning = crate::access::curate_collection(
         &n.state,
-        &signer_of(COMMITTEE_KEY, &path).await,
+        &signer(&address(COMMITTEE_KEY)),
         &id.to_string(),
         crate::kept::Since::write(),
     )
@@ -1474,7 +1382,7 @@ async fn a_committee_member_dropped_after_the_decision_writes_nothing() {
     .unwrap();
     let rejecting = crate::access::curate_collection(
         &n.state,
-        &signer_of(FORMER_KEY, &path).await,
+        &signer(&address(FORMER_KEY)),
         &id.to_string(),
         crate::kept::Since::write(),
     )
@@ -1484,7 +1392,7 @@ async fn a_committee_member_dropped_after_the_decision_writes_nothing() {
         &n.state,
         crate::access::curate_collection(
             &n.state,
-            &signer_of(OWNER_KEY, &path).await,
+            &signer(&address(OWNER_KEY)),
             &id.to_string(),
             crate::kept::Since::write(),
         )
@@ -1493,21 +1401,14 @@ async fn a_committee_member_dropped_after_the_decision_writes_nothing() {
     )
     .await
     .unwrap();
-    let comments = format!("/v1/collections/{id}/comments");
-    let commenting = crate::access::review_member(
-        &n.state,
-        &signer_of(FORMER_KEY, &comments).await,
-        &id.to_string(),
-    )
-    .await
-    .unwrap();
-    let owner_commenting = crate::access::review_member(
-        &n.state,
-        &signer_of(OWNER_KEY, &comments).await,
-        &id.to_string(),
-    )
-    .await
-    .unwrap();
+    let commenting =
+        crate::access::review_member(&n.state, &signer(&address(FORMER_KEY)), &id.to_string())
+            .await
+            .unwrap();
+    let owner_commenting =
+        crate::access::review_member(&n.state, &signer(&address(OWNER_KEY)), &id.to_string())
+            .await
+            .unwrap();
     let assign = || crate::curation::writes::Update {
         assignee: Some(Some(address(ADMIN_KEY))),
         ..Default::default()

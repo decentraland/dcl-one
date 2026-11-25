@@ -6,18 +6,16 @@
 //! four routes answer as absent and nothing changes. Each test has a
 //! database of its own and drives the node's clock.
 
-use axum::body::Body;
-use axum::http::Request;
 use chrono::Duration;
 use serde_json::{Value, json};
 use sqlx::PgPool;
 use uuid::Uuid;
 
-use super::support::{FakeCommittee, OWNER_KEY, signed_map, unique};
+use super::support::{FakeCommittee, OWNER_KEY, address, call, unique};
 use super::validator::{
-    Node, Options, address, advance, call, claim, clock, contract_of, copy_holds, draft, json_of,
-    node, node_over, own_pool, publish, published, requests, resave, result_of, review_state, send,
-    set_clock, sweep, verdict,
+    Node, Options, advance, claim, clock, contract_of, copy_holds, draft, node, node_over,
+    own_pool, publish, published, requests, resave, result_of, review_state, set_clock, sweep,
+    verdict,
 };
 
 const CURATOR_KEY: &str = "0x2222222222222222222222222222222222222222222222222222222222222222";
@@ -141,17 +139,8 @@ async fn post(node: &Node, key: &str, id: Uuid, route: &str, body: Value) -> (u1
 
 /// `GET /v1/collections/:id/events` with `query`, signed over the path.
 async fn timeline(node: &Node, key: Option<&str>, id: Uuid, query: &str) -> (u16, Value) {
-    let signed = path(id, "events");
-    let mut request = Request::builder()
-        .method("GET")
-        .uri(format!("{signed}{query}"));
-    if let Some(key) = key {
-        for (name, value) in signed_map(key, "get", &signed, "{}", false).await {
-            request = request.header(name, value);
-        }
-    }
-    let (status, body) = send(&node.app, request.body(Body::empty()).unwrap()).await;
-    (status, json_of(&body))
+    let uri = format!("{}{query}", path(id, "events"));
+    call(&node.app, key, "GET", &uri, None).await
 }
 
 fn link(id: Uuid, name: &str) -> String {
@@ -1513,13 +1502,9 @@ async fn on_chain_unapproved(pool: &PgPool, collections: &[Uuid]) {
 }
 
 async fn listed(node: &Node, query: &str) -> Vec<String> {
-    let mut request = Request::builder().uri(format!("/v1/collections?{query}"));
-    for (name, value) in signed_map(CURATOR_KEY, "get", "/v1/collections", "{}", false).await {
-        request = request.header(name, value);
-    }
-    let (status, body) = send(&node.app, request.body(Body::empty()).unwrap()).await;
-    assert_eq!(status, 200, "{query}: {body}");
-    let answer = json_of(&body);
+    let uri = format!("/v1/collections?{query}");
+    let (status, answer) = call(&node.app, Some(CURATOR_KEY), "GET", &uri, None).await;
+    assert_eq!(status, 200, "{query}: {answer}");
     let rows = answer["data"].get("results").unwrap_or(&answer["data"]);
     let mut names: Vec<String> = rows
         .as_array()
@@ -1725,13 +1710,9 @@ async fn item_curation_at(pool: &PgPool, collection: Uuid, status: &str, at: &st
 /// The names `GET {path}?{query}` answers `key`, in the order answered, and
 /// the body.
 async fn ordered(node: &Node, key: &str, path: &str, query: &str) -> (Vec<String>, Value) {
-    let mut request = Request::builder().uri(format!("{path}?{query}"));
-    for (name, value) in signed_map(key, "get", path, "{}", false).await {
-        request = request.header(name, value);
-    }
-    let (status, body) = send(&node.app, request.body(Body::empty()).unwrap()).await;
-    assert_eq!(status, 200, "{query}: {body}");
-    let answer = json_of(&body);
+    let uri = format!("{path}?{query}");
+    let (status, answer) = call(&node.app, Some(key), "GET", &uri, None).await;
+    assert_eq!(status, 200, "{query}: {answer}");
     let rows = answer["data"].get("results").unwrap_or(&answer["data"]);
     let names = rows
         .as_array()

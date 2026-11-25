@@ -18,8 +18,8 @@ use tower::ServiceExt;
 use uuid::Uuid;
 
 use super::support::{
-    FakeCommittee, OWNER_KEY, committee_index, on_chain, save_collection, saved_item, signed_map,
-    temp_storage, unique, wallet,
+    FakeCommittee, OWNER_KEY, address, committee_index, on_chain, request, save_collection,
+    saved_item, temp_storage, unique,
 };
 use crate::items::video::{self, VIDEO_FILE};
 use crate::storage::Storage;
@@ -29,10 +29,6 @@ const COMMITTEE_KEY: &str = "0x8202020202020202020202020202020202020202020202020
 const MANAGER_KEY: &str = "0x8303030303030303030303030303030303030303030303030303030303030303";
 const OTHER_KEY: &str = "0x8404040404040404040404040404040404040404040404040404040404040404";
 const BOUNDARY: &str = "videoboundary";
-
-fn address(key: &str) -> String {
-    format!("{:#x}", wallet(key).address())
-}
 
 /// A playable MP4 container's top-level boxes around `label`: `ftyp`, a
 /// `moov` and an `mdat` carrying the label, so every video hashes apart.
@@ -162,15 +158,7 @@ async fn node_over(
 
 /// A node on a database of its own, whose totals no other test moves.
 async fn isolated_node(configure: impl FnOnce(&mut crate::State)) -> Option<Node> {
-    let pool = crate::db::scratch::isolated_pool(8).await?;
-    sqlx::query(
-        "INSERT INTO shop.mirror_state (mirror, network, source_url, last_complete_pass_at, pass_started_at) \
-         VALUES ('collections', 'matic', 'https://subgraph.example', timezone('UTC', now()), timezone('UTC', now()))",
-    )
-    .execute(&pool)
-    .await
-    .unwrap();
-    crate::tests::support::publish_registry_index(&mut pool.acquire().await.unwrap(), false).await;
+    let pool = super::support::own_pool(8).await?;
     node_on(pool, configure, true).await
 }
 
@@ -214,15 +202,10 @@ async fn node() -> Option<Node> {
 /// `body` as a multipart upload of `path`, signed by `key` unless `None`,
 /// from the source address `ip` if any.
 async fn post(key: Option<&str>, path: &str, ip: Option<&str>, body: Body) -> Request<Body> {
-    let mut request = Request::builder().method("POST").uri(path).header(
+    let mut request = request(key, "POST", path).await.header(
         header::CONTENT_TYPE,
         format!("multipart/form-data; boundary={BOUNDARY}"),
     );
-    if let Some(key) = key {
-        for (name, value) in signed_map(key, "post", path, "{}", false).await {
-            request = request.header(name, value);
-        }
-    }
     if let Some(ip) = ip {
         request = request.header("x-real-ip", ip);
     }
@@ -299,12 +282,7 @@ async fn read(
     range: Option<&str>,
 ) -> (u16, String, String, Vec<u8>) {
     let path = format!("/v1/storage/contents/{hash}");
-    let mut request = Request::builder().uri(&path);
-    if let Some(key) = key {
-        for (name, value) in signed_map(key, "get", &path, "{}", false).await {
-            request = request.header(name, value);
-        }
-    }
+    let mut request = request(key, "GET", &path).await;
     if let Some(range) = range {
         request = request.header(header::RANGE, range);
     }
@@ -665,15 +643,10 @@ async fn nobody_without_a_right_to_the_item_makes_the_node_read_a_byte() {
         ("a validator-signed caller", None, validator),
     ] {
         let (body, polled) = untouchable();
-        let mut request = Request::builder().method("POST").uri(&path).header(
+        let mut request = request(key, "POST", &path).await.header(
             header::CONTENT_TYPE,
             format!("multipart/form-data; boundary={BOUNDARY}"),
         );
-        if let Some(key) = key {
-            for (name, value) in signed_map(key, "post", &path, "{}", false).await {
-                request = request.header(name, value);
-            }
-        }
         for (name, value) in extra {
             request = request.header(name, value);
         }
@@ -1954,20 +1927,7 @@ async fn a_wallet_at_its_storage_bound_is_refused_the_next_upload_until_it_delet
         );
     }
 
-    let mut request = Request::builder()
-        .method("DELETE")
-        .uri(format!("/v1/items/{a}"));
-    for (name, value) in signed_map(
-        BOUNDED_KEY,
-        "delete",
-        &format!("/v1/items/{a}"),
-        "{}",
-        false,
-    )
-    .await
-    {
-        request = request.header(name, value);
-    }
+    let request = request(Some(BOUNDED_KEY), "DELETE", &format!("/v1/items/{a}")).await;
     let deleted = answer(
         node.app
             .clone()

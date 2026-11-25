@@ -5,23 +5,16 @@
 use std::sync::Arc;
 
 use axum::Router;
-use axum::body::Body;
-use axum::http::Request;
-use chrono::Utc;
 use serde_json::{Value, json};
 use sqlx::PgPool;
-use tower::ServiceExt;
 use uuid::Uuid;
 
-use crate::shared::signed_fetch::test_support::signed_headers_by;
-use crate::tests::support::{FakeCommittee, FakeRegistry, registry_index, temp_storage, wallet};
+use crate::tests::support::{
+    FakeCommittee, FakeRegistry, address, call, registry_index, temp_storage,
+};
 
 const MANAGER_KEY: &str = "0x9101010101010101010101010101010101010101010101010101010101010101";
 const OWNER_KEY: &str = "0x9202020202020202020202020202020202020202020202020202020202020202";
-
-fn address(key: &str) -> String {
-    format!("{:#x}", wallet(key).address())
-}
 
 struct Node {
     pool: PgPool,
@@ -37,14 +30,7 @@ async fn node() -> Option<Node> {
 
 /// A node that is its own content authority when `own`.
 async fn node_with(own: bool) -> Option<Node> {
-    let pool = crate::db::scratch::isolated_pool(4).await?;
-    sqlx::query(
-        "INSERT INTO shop.mirror_state (mirror, network, source_url, last_complete_pass_at, pass_started_at) \
-         VALUES ('collections', 'matic', 'https://subgraph.example', timezone('UTC', now()), timezone('UTC', now()))",
-    )
-    .execute(&pool)
-    .await
-    .unwrap();
+    let pool = crate::tests::support::own_pool(4).await?;
     let committee = FakeCommittee::with(&[]);
     let registry = FakeRegistry::up();
     let provider = format!(
@@ -78,25 +64,9 @@ async fn node_with(own: bool) -> Option<Node> {
 }
 
 async fn read(node: &Node, key: &str, path: &str) -> Value {
-    let now = Utc::now().timestamp_millis().to_string();
-    let mut request = Request::builder().method("GET").uri(path);
-    for (name, value) in signed_headers_by(&wallet(key), "get", path, "{}", true, &now)
-        .await
-        .iter()
-    {
-        request = request.header(name, value);
-    }
-    let response = node
-        .app
-        .clone()
-        .oneshot(request.body(Body::empty()).unwrap())
-        .await
-        .unwrap();
-    assert_eq!(response.status(), 200, "{path}");
-    let bytes = axum::body::to_bytes(response.into_body(), 1 << 22)
-        .await
-        .unwrap();
-    serde_json::from_slice::<Value>(&bytes).unwrap()["data"].clone()
+    let (status, body) = call(&node.app, Some(key), "GET", path, None).await;
+    assert_eq!(status, 200, "{path}");
+    body["data"].clone()
 }
 
 /// A third-party collection of the node's provider with one item at `urn`.
@@ -341,31 +311,7 @@ async fn save(node: &Node, collection: Uuid, id: Uuid, urn: &str) -> (u16, Value
             "contents": { "model.glb": dcl_auth::hash_bytes_v1(b"held helmet") } }),
     )
     .await;
-    let now = Utc::now().timestamp_millis().to_string();
-    let mut request = Request::builder()
-        .method("PUT")
-        .uri(&path)
-        .header("content-type", "application/json");
-    for (name, value) in signed_headers_by(&wallet(MANAGER_KEY), "put", &path, "{}", true, &now)
-        .await
-        .iter()
-    {
-        request = request.header(name, value);
-    }
-    let response = node
-        .app
-        .clone()
-        .oneshot(request.body(Body::from(body.to_string())).unwrap())
-        .await
-        .unwrap();
-    let status = response.status().as_u16();
-    let bytes = axum::body::to_bytes(response.into_body(), 1 << 22)
-        .await
-        .unwrap();
-    (
-        status,
-        serde_json::from_slice(&bytes).unwrap_or(Value::Null),
-    )
+    call(&node.app, Some(MANAGER_KEY), "PUT", &path, Some(body)).await
 }
 
 async fn stored(pool: &PgPool, id: Uuid) -> bool {

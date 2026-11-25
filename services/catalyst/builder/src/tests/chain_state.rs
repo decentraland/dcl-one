@@ -4,18 +4,15 @@
 //! can't tell.
 
 use axum::Router;
-use axum::body::Body;
-use axum::http::{Request, StatusCode, header};
+use axum::http::StatusCode;
 use chrono::{SubsecRound, TimeDelta, Utc};
 use serde_json::{Value, json};
 use sqlx::{PgConnection, PgPool};
-use tower::ServiceExt;
 use uuid::Uuid;
 
 use crate::chain_state::{self, CollectionFacts, STALE_AFTER};
-use crate::shared::signed_fetch::test_support::signed_headers_by;
 
-use super::support::{OWNER_KEY, temp_storage, wallet};
+use super::support::{OWNER_KEY, address, temp_storage};
 
 fn random_address() -> String {
     format!("0x{}", Uuid::new_v4().simple().to_string()[..20].repeat(2))
@@ -423,42 +420,9 @@ async fn a_collection_is_published_by_the_copy_its_own_receipt_or_a_minted_item(
 }
 
 async fn send(app: &Router, method: &str, path: &str, body: Value) -> (StatusCode, Value) {
-    let timestamp = Utc::now().timestamp_millis().to_string();
-    let mut request = Request::builder()
-        .method(method)
-        .uri(path)
-        .header(header::CONTENT_TYPE, "application/json");
-    for (name, value) in signed_headers_by(
-        &wallet(OWNER_KEY),
-        &method.to_lowercase(),
-        path,
-        "{}",
-        true,
-        &timestamp,
-    )
-    .await
-    .iter()
-    {
-        request = request.header(name, value);
-    }
-    let body = if body.is_null() {
-        Body::empty()
-    } else {
-        Body::from(body.to_string())
-    };
-    let response = app
-        .clone()
-        .oneshot(request.body(body).unwrap())
-        .await
-        .unwrap();
-    let status = response.status();
-    let bytes = axum::body::to_bytes(response.into_body(), 1 << 20)
-        .await
-        .unwrap();
-    (
-        status,
-        serde_json::from_slice(&bytes).unwrap_or(Value::Null),
-    )
+    let body = (!body.is_null()).then_some(body);
+    let (status, body) = super::support::call(app, Some(OWNER_KEY), method, path, body).await;
+    (StatusCode::from_u16(status).unwrap(), body)
 }
 
 /// Every route that reads derived state, on a database whose copy never
@@ -471,7 +435,7 @@ async fn no_route_reads_or_writes_derived_state_while_the_copy_cannot_tell() {
         return;
     };
     super::support::publish_registry_index(&mut pool.acquire().await.unwrap(), false).await;
-    let owner = format!("{:#x}", wallet(OWNER_KEY).address());
+    let owner = address(OWNER_KEY);
     let (collection, item, created, created_item) = (
         Uuid::new_v4(),
         Uuid::new_v4(),
@@ -517,7 +481,7 @@ async fn no_route_reads_or_writes_derived_state_while_the_copy_cannot_tell() {
         format!("/v1/collections/{collection}"),
         format!("/v1/collections/{collection}/publication"),
     ];
-    let owner = format!("{:#x}", wallet(OWNER_KEY).address());
+    let owner = address(OWNER_KEY);
     let new_collection =
         super::support::collection_body(json!({ "id": created, "name": "Created" }), &owner);
     let item_body = |id: Uuid, name: &str| {

@@ -6,29 +6,21 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use axum::Router;
-use axum::body::Body;
-use axum::http::{Request, StatusCode};
-use chrono::Utc;
+use axum::http::StatusCode;
 use serde_json::{Value, json};
 use sqlx::PgPool;
-use tower::ServiceExt;
 use uuid::Uuid;
 
 use super::support::{
-    FakeCommittee, committee_index, on_chain, scratch_pool, temp_storage, wallet,
+    FakeCommittee, address, committee_index, on_chain, own_pool, scratch_pool, temp_storage,
 };
 use crate::curation::forum::fake::{API_USERNAME, FakeForum};
-use crate::shared::signed_fetch::test_support::signed_headers_by;
 
 const OWNER_KEY: &str = super::support::OWNER_KEY;
 const STRANGER_KEY: &str = "0x2222222222222222222222222222222222222222222222222222222222222222";
 const COMMITTEE_KEY: &str = "0x3333333333333333333333333333333333333333333333333333333333333333";
 const NAMED_KEY: &str = "0x7777777777777777777777777777777777777777777777777777777777777777";
 const PROVIDER: &str = "urn:decentraland:matic:collections-thirdparty:forum";
-
-fn address(key: &str) -> String {
-    format!("{:#x}", wallet(key).address())
-}
 
 struct Env {
     pool: PgPool,
@@ -80,32 +72,8 @@ async fn env() -> Option<Env> {
 }
 
 async fn send(app: &Router, key: Option<&str>, path: &str, body: Value) -> (StatusCode, Value) {
-    let mut request = Request::builder()
-        .method("POST")
-        .uri(path)
-        .header("content-type", "application/json");
-    if let Some(key) = key {
-        let now = Utc::now().timestamp_millis().to_string();
-        for (name, value) in signed_headers_by(&wallet(key), "post", path, "{}", true, &now)
-            .await
-            .iter()
-        {
-            request = request.header(name, value);
-        }
-    }
-    let response = app
-        .clone()
-        .oneshot(request.body(Body::from(body.to_string())).unwrap())
-        .await
-        .unwrap();
-    let status = response.status();
-    let bytes = axum::body::to_bytes(response.into_body(), 1 << 20)
-        .await
-        .unwrap();
-    (
-        status,
-        serde_json::from_slice(&bytes).unwrap_or(Value::Null),
-    )
+    let (status, body) = super::support::call(app, key, "POST", path, Some(body)).await;
+    (StatusCode::from_u16(status).unwrap(), body)
 }
 
 async fn standard(pool: &PgPool, name: &str, published: bool) -> (Uuid, Option<String>) {
@@ -530,12 +498,9 @@ async fn two_requests_at_once_make_one_topic() {
 
 #[tokio::test]
 async fn simultaneous_claims_decide_under_the_collection_lock() {
-    let Some(pool) = crate::db::scratch::isolated_pool(4).await else {
+    let Some(pool) = own_pool(4).await else {
         return;
     };
-    sqlx::query("INSERT INTO shop.mirror_state (mirror, network, source_url, last_complete_pass_at, pass_started_at) VALUES ('collections', 'matic', 'https://subgraph.example', timezone('UTC', now()), timezone('UTC', now()))")
-        .execute(&pool).await.unwrap();
-    crate::tests::support::publish_registry_index(&mut pool.acquire().await.unwrap(), false).await;
     let e = env_with(pool, true).await;
     let (id, _) = standard(&e.pool, "Simultaneous", true).await;
     sqlx::raw_sql("CREATE FUNCTION builder.delay_forum_claim() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN PERFORM pg_sleep(0.2); RETURN NEW; END $$; CREATE TRIGGER delay_forum_claim BEFORE UPDATE OF forum_claimed_at ON builder.collections FOR EACH ROW EXECUTE FUNCTION builder.delay_forum_claim();")
@@ -558,17 +523,7 @@ async fn a_forum_claim_rechecks_the_managers_current_access() {
         return;
     };
     let (id, contract) = standard(&e.pool, "Rechecked", true).await;
-    let path = format!("/v1/collections/{id}/post");
-    let now = Utc::now().timestamp_millis().to_string();
-    let headers = signed_headers_by(&wallet(OWNER_KEY), "post", &path, "{}", true, &now).await;
-    let signer = crate::auth::require_signer(
-        &headers,
-        "post",
-        &crate::auth::SignedPath::local(&path),
-        None,
-    )
-    .await
-    .unwrap();
+    let signer = crate::shared::signed_fetch::test_support::signer(&address(OWNER_KEY));
     let grant = crate::access::manage_collection(&e.state, &signer, &id.to_string())
         .await
         .unwrap();
@@ -748,17 +703,9 @@ async fn an_attempt_whose_store_waits_on_another_stored_link_answers_the_stored_
 
 #[tokio::test]
 async fn no_connection_is_held_while_the_forum_answers() {
-    let Some(pool) = crate::db::scratch::isolated_pool(1).await else {
+    let Some(pool) = own_pool(1).await else {
         return;
     };
-    sqlx::query(
-        "INSERT INTO shop.mirror_state (mirror, network, source_url, last_complete_pass_at, pass_started_at) \
-         VALUES ('collections', 'matic', 'https://subgraph.example', timezone('UTC', now()), timezone('UTC', now()))",
-    )
-    .execute(&pool)
-    .await
-    .unwrap();
-    crate::tests::support::publish_registry_index(&mut pool.acquire().await.unwrap(), false).await;
     let e = env_with(pool, true).await;
     let (id, _) = standard(&e.pool, "Pooled", true).await;
     e.forum.hold();
