@@ -31,10 +31,10 @@ CREATE TABLE signatures.rental_assets (
     nft_created_at timestamp without time zone NOT NULL,
     nft_updated_at timestamp without time zone NOT NULL,
     fetched_at timestamp without time zone NOT NULL,
-    -- Source block for the latest metadata snapshot; imported rows start at zero.
-    metadata_block bigint NOT NULL DEFAULT 0,
     -- Published LAND block for estate membership, zero on imported rows and parcels.
     membership_block bigint NOT NULL DEFAULT 0,
+    -- Source block for the latest metadata snapshot; imported rows start at zero.
+    metadata_block bigint NOT NULL DEFAULT 0,
     PRIMARY KEY (contract_address, token_id),
     CONSTRAINT rental_assets_contract_lowercase CHECK (contract_address = lower(contract_address)),
     CONSTRAINT rental_assets_category_known CHECK (category IN ('parcel', 'estate'))

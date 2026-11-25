@@ -116,3 +116,45 @@ pub(super) async fn read(
         })
         .await
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn listing_metadata_requires_the_requested_nft_and_a_versioned_snapshot() {
+        let registry = crate::land_authz::LAND_SEPOLIA.estate_registry;
+        let response = json!({
+            "_meta": {"block": {"number": 22, "timestamp": 220}},
+            "nfts": [{"contractAddress": registry, "tokenId": "7", "category": "estate",
+                "owner": {"id": registry}, "createdAt": "10", "updatedAt": "100", "transferredAt": "90"}]
+        });
+        let asset = parse(&response, registry, "7", true).unwrap().unwrap();
+        assert_eq!(asset.metadata_block, 22);
+        assert_eq!(asset.membership_checked_at, Some(220));
+        for (field, value) in [
+            (
+                "contractAddress",
+                crate::land_authz::LAND_SEPOLIA.land_registry,
+            ),
+            ("tokenId", "8"),
+            ("category", "parcel"),
+        ] {
+            let mut other = response.clone();
+            other["nfts"][0][field] = json!(value);
+            assert!(
+                matches!(
+                    parse(&other, registry, "7", true),
+                    Err(NftReadError::Subgraph(_))
+                ),
+                "{field}"
+            );
+        }
+        let mut missing_block = response;
+        missing_block["_meta"] = json!({});
+        assert!(matches!(
+            parse(&missing_block, registry, "7", true),
+            Err(NftReadError::Subgraph(_))
+        ));
+    }
+}

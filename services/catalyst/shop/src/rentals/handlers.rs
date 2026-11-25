@@ -1,6 +1,6 @@
 //! The four routes: the listing page and the price histogram read the local
-//! tables. Create and refresh read the listing asset from a published
-//! land-authz snapshot and return its unavailable envelope until ready.
+//! tables. Create and refresh read the published LAND and NFT indexes on
+//! mainnet NFT walkers and the configured marketplace subgraph elsewhere.
 //! Both writes require `DATA_WRITES_ENABLED`. Creation also requires signed fetch.
 
 use std::collections::HashMap;

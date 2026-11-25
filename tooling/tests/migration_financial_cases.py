@@ -49,21 +49,21 @@ class FinancialMigrationCases:
             INSERT INTO stripe_payment_refunds VALUES ('refunded',10,10);''')
         self.sql(db, 'CREATE TEMP TABLE stage AS ' + extract + ';' + load)
 
-    def test_rental_asset_import_resets_membership_block_only_when_upstream_wins(self):
+    def test_rental_asset_import_resets_source_blocks_only_when_upstream_wins(self):
         db = self.fresh_db('rental_asset_membership')
         self.sql(db, (ROOT / 'schemas/32_signatures.sql').read_text())
         step = self.financial_step('signatures-server', 'rental_assets')
         stage = self.financial_stage(step)
         row = """INSERT INTO stage VALUES ('asset',1,'estate-1','ethereum',1,'estate','name',
                  2,true,3,'2026-01-01','2026-01-01','2026-01-02');"""
-        block = 'SELECT membership_block FROM signatures.rental_assets'
+        blocks = 'SELECT membership_block, metadata_block FROM signatures.rental_assets'
         self.sql(db, stage + row + step.load.read_text())
-        self.assertEqual(self.sql(db, block).strip(), '0')
-        self.sql(db, "UPDATE signatures.rental_assets SET membership_block=120, fetched_at='2026-01-03'")
+        self.assertEqual(self.sql(db, blocks).split(), ['0', '0'])
+        self.sql(db, "UPDATE signatures.rental_assets SET membership_block=120, metadata_block=115, fetched_at='2026-01-03'")
         self.sql(db, stage + row + step.load.read_text())
-        self.assertEqual(self.sql(db, block).strip(), '120')
+        self.assertEqual(self.sql(db, blocks).split(), ['120', '115'])
         self.sql(db, stage + row.replace('2026-01-02', '2026-01-04') + step.load.read_text())
-        self.assertEqual(self.sql(db, block).strip(), '0')
+        self.assertEqual(self.sql(db, blocks).split(), ['0', '0'])
 
     def test_when_rental_parent_is_newer_it_should_preserve_listing_and_periods(self):
         db = self.fresh_db('financial_fix_rentals')

@@ -1907,12 +1907,11 @@ changed since the listing was created. It writes `dissolved` for an estate
 without parcels once the index head is newer than the listing. The index
 reads run only on a published land-authz snapshot. The refresh route
 (`PATCH /v1/rentals-listings/{id}`) applies the fold and the same cancellation
-rules to one listing, using the asset row from the published land-authz
-snapshot. A transfer is actionable only when its own block time is newer
-than the stored asset time. Dissolution requires a LAND observation later than
-both the listing creation and its stored asset time. The
-route then writes the row to `signatures.rental_assets` only when it is no
-older than the stored one, so a lagging reader replaces no metadata.
+rules to one listing. A third-party transfer must postdate listing creation.
+Dissolution requires a membership observation after listing creation whose
+block is at least the stored membership block. The refresh also compares the
+metadata source block before using the asset to close a listing or update
+its metadata.
 
 Create and refresh bind the asset read to the signed or stored listing chain.
 On mainnet nodes with the NFT walk enabled, they read the NFT index
@@ -1920,19 +1919,27 @@ publication and LAND rights in one database snapshot.
 Incomplete mint or transfer times, an unavailable publication, or a document
 beyond the LAND fold returns the unavailable envelope. A transfer beyond the
 NFT publication also waits for metadata to catch up. The NFT index publishes
-Ethereum mainnet metadata. A listing by a lessor whose asset is in Rentals
+Ethereum mainnet metadata. Mainnet create requires the Rentals publication.
+During an outage an existing open listing still returns 409. A listing by a lessor whose asset is in Rentals
 custody requires a published Rentals cursor and a rent at or after the LAND
 transfer into custody. PATCH rechecks a current custody observation when a
 later Rentals publication names the lessor, even if its first refresh already
 saved the transfer time. The status job reads the Rentals publication and
 the rent in its LAND snapshot. A dissolution write locks the asset and
-rechecks its membership version before closing the listing.
+rechecks its membership version before closing the listing. The periodic job can
+establish a third-party transfer or dissolution from published LAND alone.
+Only a transfer verdict based on venue custody requires the Rentals publication.
+Writes hold shared locks on the observed cursor rows until commit, so a concurrent
+rewind or ordinary cursor update waits for the write transaction.
 
 Nodes that do not walk the NFT index, including Sepolia, read listing assets
 from the configured marketplace subgraph. The subgraph reports transfer time
 in seconds and the block number and time of its estate membership snapshot. A missing or
 unavailable subgraph returns the marketplace-subgraph unavailable envelope.
-A walking node always uses its local publications.
+A walking node always uses its local publications. Each indexed asset lookup
+reads the LAND and NFT publications in a single snapshot, probes the token,
+its document and its first and latest transfers, and reads parcel proximity.
+For an estate it also scans its member parcels to compute size and proximity.
 
 Workload: mainnet holds thousands of listings, of which hundreds are open
 (an estimate, not a measurement). Each pass does the following:

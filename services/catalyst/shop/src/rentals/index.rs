@@ -56,6 +56,7 @@ impl RentalsChain {
     pub(super) fn from_land_network(network: &str) -> Option<Self> {
         match network {
             "ethereum" | "ethereum-mainnet" => Some(Self::Mainnet),
+            "ethereum-sepolia" => Some(Self::Sepolia),
             _ => None,
         }
     }

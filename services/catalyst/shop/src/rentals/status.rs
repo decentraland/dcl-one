@@ -215,20 +215,22 @@ pub async fn cancel_moved(
     let Some(chain) = index::RentalsChain::from_land_network(land.network) else {
         return Ok(None);
     };
-    let rentals_cursor = crate::market::chain_walk::cursor(
-        &mut *snapshot.tx,
-        chain.indexer(),
-        crate::market::chain_walk::ChainNet::Ethereum,
-    )
-    .await?;
-    let Some(rentals_cursor) = rentals_cursor
+    // Only mainnet folds Rentals logs into listings. LAND can establish
+    // a third-party transfer or an empty estate without a Rentals cursor.
+    let rentals_cursor = if matches!(chain, index::RentalsChain::Mainnet) {
+        crate::market::chain_walk::cursor(
+            &mut *snapshot.tx,
+            chain.indexer(),
+            crate::market::chain_walk::ChainNet::Ethereum,
+        )
+        .await?
         .filter(|cursor| crate::market::chain_walk::is_ready_on(cursor, chain.id(), now))
-    else {
-        return Ok(None);
+    } else {
+        None
     };
-    let Some(rentals_head) = rentals_cursor.folded_block else {
-        return Ok(None);
-    };
+    let rentals_head = rentals_cursor
+        .as_ref()
+        .and_then(|cursor| cursor.folded_block);
     let rows = sqlx::query(OWNERSHIP_SQL)
         .bind(land.land_registry.to_ascii_lowercase())
         .bind(land.estate_registry.to_ascii_lowercase())
@@ -239,93 +241,63 @@ pub async fn cancel_moved(
         .bind(chain.id())
         .fetch_all(&mut *snapshot.tx)
         .await?;
-    let cancels: Vec<(Uuid, &'static str)> = rows
-        .iter()
-        .filter_map(|r| {
-            let lessor: String = r.get("lessor");
-            let venue: String = r.get("rental_contract_address");
-            let owner: Option<String> = r.get("owner");
-            let moved: bool = r.get("moved");
-            let custody: Option<String> = r.get("custody_lessor");
-            // A burned token (no owner) after the listing is a transfer away.
-            let owner = match (owner, moved) {
-                (_, false) => None,
-                (Some(o), true) => Some(o),
-                (None, true) => Some(alloy_primitives::Address::ZERO.to_string()),
-            };
-            let custody = if owner
-                .as_deref()
-                .is_some_and(|owner| owner.eq_ignore_ascii_case(&venue))
-                && r.get::<bool, _>("custody_known")
-                && custody.is_none()
+    let mut land_cancels = Vec::new();
+    let mut custody_cancels = Vec::new();
+    for row in rows {
+        let lessor: &str = row.get("lessor");
+        let venue: &str = row.get("rental_contract_address");
+        // A burn is a transfer away. Only a post-listing transfer can close it.
+        let owner = row.get::<bool, _>("moved").then(|| {
+            row.get::<Option<String>, _>("owner")
+                .unwrap_or_else(|| alloy_primitives::Address::ZERO.to_string())
+        });
+        let custody = row.get::<bool, _>("custody_known").then(|| {
+            row.get::<Option<&str>, _>("custody_lessor")
+                .unwrap_or_default()
+        });
+        if let Some(reason) = cancel_reason(
+            false,
+            row.get("dissolved"),
+            owner.as_deref(),
+            lessor,
+            venue,
+            custody,
+        ) {
+            let verdict = (row.get("id"), reason);
+            if reason == REASON_TRANSFERRED
+                && owner
+                    .as_deref()
+                    .is_some_and(|o| o.eq_ignore_ascii_case(venue))
             {
-                Some(String::new())
+                custody_cancels.push(verdict);
             } else {
-                custody
-            };
-            cancel_reason(
-                false,
-                r.get("dissolved"),
-                owner.as_deref(),
-                &lessor,
-                &venue,
-                custody.as_deref(),
-            )
-            .map(|reason| (r.get("id"), reason))
-        })
-        .collect();
-    // Reacquire both publication rows in the write transaction. If either
-    // cursor changed since the evidence snapshot (including a rewind), discard
-    // the decision and let the next pass read its new publication.
+                land_cancels.push(verdict);
+            }
+        }
+    }
     snapshot.tx.rollback().await?;
-    let cursors = PublishedCursorSnapshot {
-        land,
-        land_cursor: &snapshot.cursor,
-        rentals_chain: chain,
-        rentals_cursor: &rentals_cursor,
-    };
-    cancel_if_published_snapshot(
-        pool,
-        &cursors,
-        &cancels,
-        head_time.map(|time| (folded, time)),
-        now,
-        now.naive_utc(),
-    )
-    .await
-}
-
-struct PublishedCursorSnapshot<'a> {
-    land: LandNetwork,
-    land_cursor: &'a crate::land_authz::indexer::Cursor,
-    rentals_chain: index::RentalsChain,
-    rentals_cursor: &'a crate::market::chain_walk::Cursor,
-}
-
-async fn cancel_if_published_snapshot(
-    pool: &PgPool,
-    snapshot: &PublishedCursorSnapshot<'_>,
-    cancels: &[(Uuid, &'static str)],
-    membership: Option<(i64, i64)>,
-    now: DateTime<Utc>,
-    updated_at: NaiveDateTime,
-) -> Result<Option<u64>, sqlx::Error> {
-    if cancels.is_empty() {
+    if land_cancels.is_empty() && custody_cancels.is_empty() {
         return Ok(Some(0));
     }
+
+    // Fence each decision against the publications it used through commit.
     let mut tx = pool.begin().await?;
-    let current_land = lock_land_publication(&mut tx, snapshot.land).await?;
-    let land_matches = current_land.as_ref() == Some(snapshot.land_cursor);
-    let current_rentals = index::lock_cursor(&mut tx, snapshot.rentals_chain).await?;
-    let rentals_matches = current_rentals.as_ref().is_some_and(|cursor| {
-        cursor == snapshot.rentals_cursor
-            && crate::market::chain_walk::is_ready_on(cursor, snapshot.rentals_chain.id(), now)
-    });
-    if !land_matches || !rentals_matches {
-        tx.rollback().await?;
+    if lock_land_publication(&mut tx, land).await?.as_ref() != Some(&snapshot.cursor) {
         return Ok(None);
     }
-    let written = cancel_on(&mut tx, cancels, membership, updated_at).await?;
+    if !custody_cancels.is_empty() {
+        let current = index::lock_cursor(&mut tx, chain).await?;
+        if current.as_ref().is_some_and(|cursor| {
+            Some(cursor) == rentals_cursor.as_ref()
+                && crate::market::chain_walk::is_ready_on(cursor, chain.id(), now)
+        }) {
+            land_cancels.append(&mut custody_cancels);
+        } else if land_cancels.is_empty() {
+            return Ok(None);
+        }
+    }
+    let membership = head_time.map(|time| (folded, time));
+    let written = cancel_on(&mut tx, &land_cancels, membership, now.naive_utc()).await?;
     tx.commit().await?;
     Ok(Some(written))
 }
@@ -550,7 +522,7 @@ pub fn spawn(state: &Arc<MarketplaceState>, jobs: &Jobs) {
                 ctx.progress(match pass.moved {
                     Some(m) => format!("{} expired, {m} transferred or dissolved cancelled", pass.expired),
                     None => format!(
-                        "{} expired cancelled; transfers wait for the land-authz index",
+                        "{} expired cancelled; ownership decisions wait for a current published snapshot",
                         pass.expired
                     ),
                 });
@@ -735,16 +707,16 @@ mod tests {
         .execute(pool)
         .await
         .unwrap();
-        publish_rentals_index(pool).await;
+
         let pass = run_pass(pool, Some(LAND_MAINNET), Utc::now())
             .await
             .unwrap();
-        assert_eq!(pass.moved, Some(3));
+        assert_eq!(pass.moved, Some(2));
         assert_eq!(
             state_of(pool, transferred).await,
             cancelled(REASON_TRANSFERRED)
         );
-        assert_eq!(state_of(pool, custody).await, cancelled(REASON_TRANSFERRED));
+        assert_eq!(state_of(pool, custody).await, open());
         assert_eq!(state_of(pool, dissolved).await, cancelled(REASON_DISSOLVED));
         for id in [trailing, kept, unindexed, whole] {
             assert_eq!(state_of(pool, id).await, open(), "{id}");
@@ -1101,7 +1073,7 @@ mod tests {
             "INSERT INTO land_authz.token_right (token_address, token_id, owner, updated_block, updated_log) VALUES ($1, 34, $2, 5, 0)",
         )
         .bind(LAND_MAINNET.land_registry)
-        .bind(OTHER)
+        .bind(RENTALS)
         .execute(pool)
         .await
         .unwrap();
@@ -1110,7 +1082,7 @@ mod tests {
         )
         .bind(Utc::now().timestamp() + 3600)
         .bind(LAND_MAINNET.land_registry)
-        .bind(OTHER)
+        .bind(RENTALS)
         .execute(pool)
         .await
         .unwrap();
@@ -1280,10 +1252,32 @@ mod tests {
         .unwrap();
         assert_eq!(
             cancel_moved(pool, LAND_SEPOLIA, Utc::now()).await.unwrap(),
-            None,
-            "the status job has no Sepolia Rentals source yet"
+            Some(0),
+            "there is no custody evidence for the venue"
         );
         assert_eq!(state_of(pool, id).await, open());
+        // A transfer away from the venue is established by LAND alone.
+        sqlx::query(
+            "UPDATE land_authz.token_right SET owner=$1, updated_block=41 WHERE token_id=55",
+        )
+        .bind(OTHER)
+        .execute(pool)
+        .await
+        .unwrap();
+        sqlx::query("INSERT INTO land_authz.authz_event (block_number, log_index, block_time, token_address, token_id, account, kind) VALUES (41, 0, $1, $2, 55, $3, 'transfer')")
+            .bind(now + 61).bind(LAND_SEPOLIA.land_registry).bind(OTHER).execute(pool).await.unwrap();
+        sqlx::query(
+            "UPDATE land_authz.index_cursor SET last_block=41, folded_block=41 WHERE network=$1",
+        )
+        .bind(LAND_SEPOLIA.network)
+        .execute(pool)
+        .await
+        .unwrap();
+        assert_eq!(
+            cancel_moved(pool, LAND_SEPOLIA, Utc::now()).await.unwrap(),
+            Some(1)
+        );
+        assert_eq!(state_of(pool, id).await, cancelled(REASON_TRANSFERRED));
         db.drop().await;
     }
 
@@ -1342,7 +1336,7 @@ mod tests {
         let pass = run_pass(pool, Some(LAND_MAINNET), Utc::now())
             .await
             .unwrap();
-        assert_eq!(pass.moved, None, "the rentals index is not published");
+        assert_eq!(pass.moved, Some(0), "no published custody evidence");
         assert_eq!(state_of(pool, rented_by_other).await, open());
 
         publish_rentals_index(pool).await;
