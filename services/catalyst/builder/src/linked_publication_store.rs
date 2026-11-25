@@ -60,7 +60,7 @@ fn prepare(snapshot: &Value, signer: &str) -> Result<LinkedPublicationPreparatio
         .urn
         .ok_or_else(|| ApiError::bad_request("Choose a linked collection"))?;
     let Some((provider, _)) = urn.rsplit_once(':') else {
-        return Err(ApiError::bad_request("Choose a linked collection"));
+        return Err(ApiError::bad_request("Invalid linked collection URN"));
     };
     if collection["third_party_id"].as_str() != Some(provider) {
         return Err(ApiError::bad_request(
