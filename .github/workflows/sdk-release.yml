@@ -30,11 +30,9 @@ env:
   PNPM: corepack pnpm@12.21.0
 jobs:
   check:
-    name: Decide what to publish
+    name: Check the release version
     runs-on: ${{ vars.RUNNER_LINUX_X86 || 'ubuntu-26.04' }}
     timeout-minutes: 5
-    outputs:
-      publish: ${{ steps.changed.outputs.publish }}
     steps:
       - name: The release version is valid and new
         if: github.event_name == 'workflow_dispatch'
@@ -55,23 +53,6 @@ jobs:
             echo "@dcl/sdk@$VERSION already exists; pick a new version" >&2
             exit 1
           fi
-      - name: The push changed what the packages ship
-        id: changed
-        # the other paths that start this workflow change the SDK's tests, not its packages
-        env:
-          GH_TOKEN: ${{ github.token }}
-          BEFORE: ${{ github.event.before }}
-        run: |
-          publish=true
-          if [ "$GITHUB_EVENT_NAME" = push ]; then
-            # the comparison lists at most 300 files; a push that large, or one with no parent, publishes
-            files=$(gh api "repos/$GITHUB_REPOSITORY/compare/$BEFORE...$GITHUB_SHA" --jq '.files[].filename' || true)
-            if [ -n "$files" ] && [ "$(wc -l <<< "$files")" -lt 300 ] \
-              && ! grep -qE '^(library/js-sdk-toolchain|library/protocol)/' <<< "$files"; then
-              publish=false
-            fi
-          fi
-          echo "publish=$publish" >> "$GITHUB_OUTPUT"
   build:
     needs: check
     uses: ./.github/workflows/sdk.yml
@@ -85,7 +66,7 @@ jobs:
   publish:
     name: Publish to npm
     needs: [check, build]
-    if: github.ref == 'refs/heads/main' && needs.check.outputs.publish == 'true'
+    if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-26.04
     timeout-minutes: 15
     environment: npm-release
