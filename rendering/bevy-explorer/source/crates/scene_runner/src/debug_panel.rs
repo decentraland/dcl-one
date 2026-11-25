@@ -815,9 +815,11 @@ mod tests {
         // an on-time reply, then a late one, which is dispatched again
         assert!(!updates.movement_redispatch_due(&context, &reply(6, 6), true, 1.0));
         assert!(updates.movement_redispatch_due(&context, &reply(6, 7), true, 1.0));
+        // counted once sent
+        assert_eq!(updates.movement_ticks.redispatches, 0);
         updates
             .movement_ticks
-            .record_redispatch_rotation(Quat::from_rotation_y(30f32.to_radians()));
+            .record_redispatch(Quat::from_rotation_y(30f32.to_radians()));
         app.world_mut().entity_mut(scene).insert(context);
 
         let report = read_command(&mut app, "/movement_redispatch_state");

@@ -25,7 +25,7 @@ pub(crate) struct MovementTickTimes {
     samples: VecDeque<Duration>,
     /// Replies that landed in a later frame than their dispatch.
     pub(crate) late_replies: u64,
-    /// Re-dispatches queued on a late reply.
+    /// Re-dispatches sent on a late reply.
     pub(crate) redispatches: u64,
     /// The player's yaw (degrees) sent with the last re-dispatch.
     pub(crate) last_redispatch_yaw: Option<f32>,
@@ -43,7 +43,9 @@ impl MovementTickTimes {
         self.samples.len()
     }
 
-    pub(crate) fn record_redispatch_rotation(&mut self, rotation: bevy::math::Quat) {
+    /// Counts a re-dispatch sent with the player's `rotation`.
+    pub(crate) fn record_redispatch(&mut self, rotation: bevy::math::Quat) {
+        self.redispatches += 1;
         self.last_redispatch_yaw =
             Some(rotation.to_euler(bevy::math::EulerRot::YXZ).0.to_degrees());
     }
@@ -99,9 +101,7 @@ impl SceneUpdates {
             return false;
         }
         let left = self.loop_end_time.saturating_duration_since(Instant::now());
-        let due = ticks.redispatch_fits(left, first_poll);
-        ticks.redispatches += u64::from(due);
-        due
+        ticks.redispatch_fits(left, first_poll)
     }
 }
 

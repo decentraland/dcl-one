@@ -1848,7 +1848,7 @@ fn send_scene_updates(
         {
             updates
                 .movement_ticks
-                .record_redispatch_rotation(player_transform.rotation);
+                .record_redispatch(player_transform.rotation);
         }
         tick_timing.sent = Some(renderer_context::SentTiming {
             at: Instant::now(),
