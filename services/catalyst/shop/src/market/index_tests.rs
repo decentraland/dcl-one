@@ -5742,8 +5742,8 @@ async fn a_pending_sepolia_rebuild_binds_an_unbound_cursor_at_its_custom_start()
     let mut settings = index_settings(100, 1000);
     settings.start_block_ethereum = Some(start);
     let state = state_over(db.pool.clone(), &url, settings, false);
-    sqlx::query("INSERT INTO shop.chain_cursor(indexer,network,start_block,last_block,last_block_hash,rebuild_requested_at)
-        VALUES ('trade_events','ethereum',$1,$2,$3,timezone('UTC',now()))")
+    sqlx::query("INSERT INTO shop.chain_cursor(indexer,network,start_block,last_block,last_block_hash,rebuild_requested_at,full_history)
+        VALUES ('trade_events','ethereum',$1,$2,$3,timezone('UTC',now()),true)")
         .bind(start as i64).bind(tip as i64).bind(hash).execute(&db.pool).await.unwrap();
 
     let outcome = pass(&state, &url, &ix).await;
