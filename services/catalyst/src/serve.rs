@@ -460,6 +460,7 @@ pub async fn serve(mut config: Config) -> anyhow::Result<()> {
         explore::ExploreState::new(pool.clone(), explore_settings, eip1654.clone())
             .with_storage(storage.clone())
             .with_outbound(http_client.clone())
+            .with_read_through(read_through.clone())
             .with_cors(explore_cors),
     );
     explore.spawn_jobs(&jobs, http_client.clone());
