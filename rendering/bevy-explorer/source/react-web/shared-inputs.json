@@ -5239,6 +5239,10 @@
           "kind": "regular"
         },
         {
+          "name": "searchField.test.tsx",
+          "kind": "regular"
+        },
+        {
           "name": "selectDirection.test.ts",
           "kind": "regular"
         },
@@ -12497,7 +12501,7 @@
     },
     {
       "path": "library/ui/apps/hud/features/chat/EmojiPicker.module.css",
-      "sha256": "7ad5f06733930f3e52ee7e632b7e26d9eda96aa104616faf4d49b0dec3e6e657"
+      "sha256": "31ed0f3db143363f878c21dbaba53bab26f029c6695bfa318ab6fdd4b6db195b"
     },
     {
       "path": "library/ui/apps/hud/features/chat/EmojiPicker.tsx",
@@ -14338,6 +14342,10 @@
     {
       "path": "library/ui/apps/hud/test/scrollThumb.test.tsx",
       "sha256": "f42eb2bbbce51ced93f92b6131ed20ff06ce23601a390114527ead4e980d208c"
+    },
+    {
+      "path": "library/ui/apps/hud/test/searchField.test.tsx",
+      "sha256": "187ba926eb34cae807051251b3ac64c9625c16a5499f3b7923f215bdb0794ce3"
     },
     {
       "path": "library/ui/apps/hud/test/selectDirection.test.ts",
@@ -16317,11 +16325,11 @@
     },
     {
       "path": "library/ui/components/SearchBar/SearchBar.module.css",
-      "sha256": "6629d1b4b574409b92a613f1c6eccac5110e935bd9fcdd5b9ac10baa292f4838"
+      "sha256": "395f2a0327e42dcf9751ea9494ec3ae31bade6485ae552115d8fdc47096b408b"
     },
     {
       "path": "library/ui/components/SearchBar/SearchBar.tsx",
-      "sha256": "a9ac5d2505466e2ebe5ee1a0b677bbffb760719939eab6e25915125d9fc6e444"
+      "sha256": "985766844c98a24ff0e2167a74d82a1cb414833b43a930dc79249bc70f3351b5"
     },
     {
       "path": "library/ui/components/ShopCard/ShopCard.module.css",
@@ -51584,6 +51592,21 @@
       "kind": "test:runtime"
     },
     {
+      "from": "library/ui/apps/hud/test/searchField.test.tsx",
+      "to": "library/ui/apps/hud/design/index.ts",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/searchField.test.tsx",
+      "to": "library/ui/apps/hud/design/index.ts",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/searchField.test.tsx",
+      "to": "library/ui/apps/hud/design/index.ts",
+      "kind": "test:runtime"
+    },
+    {
       "from": "library/ui/apps/hud/test/selectDirection.test.ts",
       "to": "library/ui/apps/hud/design/Select.tsx",
       "kind": "native:runtime"
@@ -67891,6 +67914,11 @@
     {
       "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
       "to": "library/ui/apps/hud/test/scrollThumb.test.tsx",
+      "kind": "type"
+    },
+    {
+      "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
+      "to": "library/ui/apps/hud/test/searchField.test.tsx",
       "kind": "type"
     },
     {

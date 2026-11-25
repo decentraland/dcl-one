@@ -51,6 +51,16 @@ function HudSearchBarDemo({
       value={value}
       onValueChange={setValue}
       onClear={() => setValue('')}
+      clearIcon={
+        <svg viewBox="0 0 10 10" width="10" height="10">
+          <path
+            d="M1.5 1.5l7 7M8.5 1.5l-7 7"
+            stroke="currentColor"
+            strokeWidth="1.6"
+            strokeLinecap="round"
+          />
+        </svg>
+      }
       leading={
         <svg viewBox="0 0 16 16" width="15" height="15">
           <circle cx="7" cy="7" r="5" fill="none" stroke="currentColor" strokeWidth="1.6" />
