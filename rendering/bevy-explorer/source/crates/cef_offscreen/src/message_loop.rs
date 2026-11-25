@@ -115,7 +115,12 @@ impl Default for MessageLoopPlugin {
 struct CefCacheDir(std::path::PathBuf);
 
 fn cef_cache_dir() -> std::path::PathBuf {
-    std::env::temp_dir().join(format!("{}{}", cef_cache_prefix(), std::process::id()))
+    // CEF rejects relative cache paths and otherwise falls back to its shared profile.
+    // A relative TMPDIR is valid for the scene worker's short Unix socket paths.
+    std::path::absolute(
+        std::env::temp_dir().join(format!("{}{}", cef_cache_prefix(), std::process::id())),
+    )
+    .expect("CEF temporary profile needs an absolute path")
 }
 
 fn cef_cache_prefix() -> String {
