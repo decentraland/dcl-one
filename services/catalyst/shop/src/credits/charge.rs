@@ -24,12 +24,16 @@ pub struct AuthorizedCharge {
     pub status: &'static str,
 }
 
-/// credits-server's three states: `pending` while the credit is live
-/// (`authorized`), `settled` once consumed on chain, `expired` once it can no
-/// longer be spent or the buyer gave it up (`retired`, `released`, `expired`).
+/// credits-server's three states, read from what the credit can still do on
+/// this node: `pending` while it can still be spent (`authorized`, and
+/// `retired`: a buyer's cancel keeps a signed credit spendable until it
+/// expires, so its payload still debits `usd_cents` if submitted, as the
+/// history reports it), `settled` once consumed on chain, `expired` once it
+/// can no longer be spent (`released`, `expired`). credits-server answered
+/// `expired` after a cancel because its cancel made the intent unspendable.
 fn charge_status(status: &str) -> &'static str {
     match status {
-        "authorized" => "pending",
+        "authorized" | "retired" => "pending",
         "consumed" => "settled",
         _ => "expired",
     }
@@ -72,8 +76,13 @@ mod tests {
     #[test]
     fn the_lifecycle_reads_as_credits_server_names_it() {
         assert_eq!(charge_status("authorized"), "pending");
+        assert_eq!(
+            charge_status("retired"),
+            "pending",
+            "a cancelled credit still debits until it expires"
+        );
         assert_eq!(charge_status("consumed"), "settled");
-        for gone in ["retired", "released", "expired"] {
+        for gone in ["released", "expired"] {
             assert_eq!(charge_status(gone), "expired", "{gone}");
         }
     }

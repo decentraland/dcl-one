@@ -10898,6 +10898,23 @@ async fn the_charge_lookup_answers_what_the_signers_credit_debits() {
         v,
         json!({ "salt": single, "usdCents": 700, "lines": 1, "status": "settled" })
     );
+    // A buyer's cancel keeps a signed credit spendable until it expires: it still debits.
+    let cancelled = format!("0x{}", super::handlers::random_32_hex());
+    authorization_fixture(&pool, &cancelled, &buyer.address, 500, "retired", 0, 0).await;
+    let (status, v) = call(
+        &app,
+        &buyer,
+        "get",
+        &format!("/credits/credits/authorize/{cancelled}"),
+        &[],
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{v}");
+    assert_eq!(
+        v,
+        json!({ "salt": cancelled, "usdCents": 500, "lines": 1, "status": "pending" })
+    );
 
     let (status, v) = call(
         &app,
