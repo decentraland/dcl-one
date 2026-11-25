@@ -1,11 +1,12 @@
 import { InputAction } from '../components/generated/pb/decentraland/sdk/components/common/input_action.gen'
 import { InteractionType } from '../components/generated/pb/decentraland/sdk/components/common/input_action.gen'
-import { PBPointerEventsResult } from '../components/generated/pb/decentraland/sdk/components/pointer_events_result.gen'
+import type { PBPointerEventsResult } from '../components/generated/pb/decentraland/sdk/components/pointer_events_result.gen'
 import { PointerEventType } from '../components/generated/pb/decentraland/sdk/components/common/input_action.gen'
 import * as components from '../components'
-import { IEngine } from '../engine/types'
-import { Entity, EntityState } from '../engine/entity'
-import { IInputSystem } from '../engine/input'
+import type { IEngine } from '../engine/types'
+import type { Entity } from '../engine/entity'
+import { EntityState } from '../engine/entity'
+import type { IInputSystem } from '../engine/input'
 import { __DEV__, checkNotThenable } from '../runtime/invariant'
 
 /**

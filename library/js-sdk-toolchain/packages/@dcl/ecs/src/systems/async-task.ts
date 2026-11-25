@@ -1,4 +1,4 @@
-import { IEngine } from '../engine'
+import type { IEngine } from '../engine'
 
 export type Task<T = unknown> = () => Promise<T>
 

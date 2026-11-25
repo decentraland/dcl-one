@@ -1,16 +1,9 @@
-import {
-  Engine,
-  IEngine,
-  Schemas,
-  components,
-  ExplorerUi,
-  PBExplorerItemPurchaseResult,
-  PBExplorerUiEventsResult
-} from '../../../packages/@dcl/ecs/src'
+import type { IEngine, PBExplorerItemPurchaseResult, PBExplorerUiEventsResult } from '../../../packages/@dcl/ecs/src'
+import { Engine, Schemas, components, ExplorerUi } from '../../../packages/@dcl/ecs/src'
 import { AppendValueOperation } from '../../../packages/@dcl/ecs/src/serialization/crdt/appendValue'
 import { DeleteEntity } from '../../../packages/@dcl/ecs/src/serialization/crdt/deleteEntity'
 import { ReadWriteByteBuffer } from '../../../packages/@dcl/ecs/src/serialization/ByteBuffer'
-import { Transport } from '../../../packages/@dcl/ecs/src/systems/crdt/types'
+import type { Transport } from '../../../packages/@dcl/ecs/src/systems/crdt/types'
 // Type-only: erased at runtime, so it does not evaluate the `~system` mock factory before
 // `mockOpenExplorerUi` is initialized.
 import type { Channel, CorrelatedEvent, WaitOutcome } from '../../../packages/@dcl/sdk/src/explorer-ui'

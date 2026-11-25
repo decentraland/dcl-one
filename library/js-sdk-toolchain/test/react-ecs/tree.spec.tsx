@@ -1,4 +1,5 @@
-import { Entity, MAX_U16 } from '../../packages/@dcl/ecs/src/engine/entity'
+import type { Entity } from '../../packages/@dcl/ecs/src/engine/entity'
+import { MAX_U16 } from '../../packages/@dcl/ecs/src/engine/entity'
 import { components } from '../../packages/@dcl/ecs/src'
 import { ReactEcs, UiEntity } from '../../packages/@dcl/react-ecs/src'
 import { CANVAS_ROOT_ENTITY } from '../../packages/@dcl/react-ecs/src/components/uiTransform'
