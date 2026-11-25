@@ -236,7 +236,7 @@ pub struct Settings {
     /// local writes (signed trades, lists and picks, cancellations,
     /// moderation; the economy, signatures and presence writes read it too).
     pub data_writes_enabled: bool,
-    pub historical_api_token: Option<String>,
+    pub historical_admin_token: Option<String>,
     /// The stage-5 market surface's own knobs (`MarketSettings`); `main.rs`
     /// fills them with [`Settings::with_market`], the defaults keep the
     /// mirrors off and the admin routes disabled.
@@ -466,9 +466,9 @@ impl Settings {
             trades_serve_partial: upstreams.trades_serve_partial,
             request_timeout: content.request_timeout,
             data_writes_enabled: config.writes.data_writes_enabled,
-            historical_api_token: config
+            historical_admin_token: config
                 .marketplace
-                .historical_api_token
+                .historical_admin_token
                 .clone()
                 .filter(|token| !token.is_empty()),
             market: MarketSettings::default(),
@@ -575,7 +575,7 @@ impl Settings {
             trades_serve_partial: false,
             request_timeout: None,
             data_writes_enabled: false,
-            historical_api_token: None,
+            historical_admin_token: None,
             market: MarketSettings::default(),
         }
     }
@@ -1410,7 +1410,7 @@ pub fn market_router(state: SharedState) -> Router {
         .route("/v1/admin/audit", get(admin::list_audit))
         .route("/v1/activity", get(activity::get_activity))
         .merge(historical::routes(
-            state.settings.historical_api_token.is_some(),
+            state.settings.historical_admin_token.is_some(),
         ))
         .merge(super::market_extensions())
         .layer(axum::middleware::from_fn(mirrors::stamp_copies))

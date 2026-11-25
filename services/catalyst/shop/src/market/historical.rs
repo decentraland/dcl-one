@@ -135,7 +135,7 @@ impl Failure {
 }
 
 async fn respond(state: SharedState, req: Request, resource: Resource) -> Response {
-    let Some(expected) = state.settings.historical_api_token.as_deref() else {
+    let Some(expected) = state.settings.historical_admin_token.as_deref() else {
         return StatusCode::NOT_FOUND.into_response();
     };
     if !bearer_token(req.headers())

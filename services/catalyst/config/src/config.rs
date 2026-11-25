@@ -213,7 +213,7 @@ impl Config {
         "CATALYRST_WORLDS_ADMIN_TOKEN",
         "SCENE_HOST_ADMIN_TOKEN",
         "MARKET_ADMIN_TOKEN",
-        "HISTORICAL_API_TOKEN",
+        "HISTORICAL_ADMIN_TOKEN",
         "PRICE_ADMIN_TOKEN",
         "CATALYRST_ECONOMY_ADMIN_TOKEN",
         "CATALYRST_CREDITS_ADMIN_TOKEN",
@@ -439,8 +439,8 @@ impl Config {
                 &mut self.marketplace.market_admin_token,
             ),
             (
-                "HISTORICAL_API_TOKEN",
-                &mut self.marketplace.historical_api_token,
+                "HISTORICAL_ADMIN_TOKEN",
+                &mut self.marketplace.historical_admin_token,
             ),
             ("PRICE_ADMIN_TOKEN", &mut self.price.price_admin_token),
             ("RELAYER_PRIVATE_KEY", &mut self.economy.relayer_private_key),
@@ -1309,7 +1309,7 @@ mod tests {
         for var in [
             "SEGMENT_SIGNING_KEY",
             "MARKET_ADMIN_TOKEN",
-            "HISTORICAL_API_TOKEN",
+            "HISTORICAL_ADMIN_TOKEN",
             "PRICE_ADMIN_TOKEN",
             "RELAYER_PRIVATE_KEY",
             "OZ_RELAYER_API_KEY",
