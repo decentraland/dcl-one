@@ -1800,12 +1800,22 @@ impl crate::auth::eip1654::Eip1654Validator for StubEip1654 {
 /// EIP-1654 ephemeral delegation, and the request payload the ephemeral key
 /// signs.
 async fn contract_wallet_headers(contract: &str, method: &str, path: &str) -> HeaderMap {
+    contract_wallet_headers_with(contract, method, path, "{}").await
+}
+
+/// [`contract_wallet_headers`] signing `metadata`.
+async fn contract_wallet_headers_with(
+    contract: &str,
+    method: &str,
+    path: &str,
+    metadata: &str,
+) -> HeaderMap {
     use alloy::signers::Signer as _;
     let ephemeral = alloy::signers::local::PrivateKeySigner::random();
     let timestamp = chrono::Utc::now().timestamp_millis().to_string();
     let expiration =
         (chrono::Utc::now() + chrono::Duration::hours(1)).format("%Y-%m-%dT%H:%M:%S%.3fZ");
-    let payload = crate::shared::signed_fetch::build_payload_v6(method, path, &timestamp, "{}");
+    let payload = crate::shared::signed_fetch::build_payload_v6(method, path, &timestamp, metadata);
     let signature = ephemeral
         .sign_message(payload.as_bytes())
         .await
@@ -1826,7 +1836,7 @@ async fn contract_wallet_headers(contract: &str, method: &str, path: &str) -> He
         );
     }
     headers.insert("x-identity-timestamp", timestamp.parse().unwrap());
-    headers.insert("x-identity-metadata", "{}".parse().unwrap());
+    headers.insert("x-identity-metadata", metadata.parse().unwrap());
     headers
 }
 
@@ -1916,6 +1926,28 @@ async fn a_contract_wallet_picks_through_the_eip1654_validator() {
         )
         .await;
         assert_eq!(status, code, "GET: {body}");
+    }
+
+    // `/v1/activity` (its own refusal codes, a marketplace signer required):
+    // the contract's own activity when it accepts, the 503 when the check
+    // cannot run, never a 400 that blames the request.
+    let activity = format!("/v1/activity?address={contract}");
+    let marketplace = r#"{"signer":"dcl:marketplace"}"#;
+    for (wallet, code) in [
+        (ContractWallet::Accepts, StatusCode::OK),
+        (ContractWallet::Refuses, StatusCode::UNAUTHORIZED),
+        (ContractWallet::Unreachable, StatusCode::SERVICE_UNAVAILABLE),
+    ] {
+        with(&mut state, wallet);
+        let (status, body) = call(
+            market_router(state.clone()),
+            "GET",
+            &activity,
+            contract_wallet_headers_with(&contract, "get", "/v1/activity", marketplace).await,
+            None,
+        )
+        .await;
+        assert_eq!(status, code, "/v1/activity: {body}");
     }
 
     // Without a validator the chain is the 501 it was before.

@@ -223,7 +223,11 @@ pub async fn get_activity(
 
 /// The old route's own wording and codes, stage by stage: a missing chain or
 /// timestamp is a 400 before the signer allow-list, an expired or failing
-/// signature a 401, an EIP-1654 chain a 501, anything else malformed a 400.
+/// signature a 401 (a contract wallet's chain is checked with the node's
+/// EIP-1654 validator; one its contract refuses is a failing signature), an
+/// EIP-1654 chain on a node without a validator a 501, a contract-wallet
+/// check that cannot run (the RPC failed) a 503, never accepted, anything
+/// else malformed a 400.
 fn refusal(e: SignedFetchError) -> ApiError {
     match e {
         SignedFetchError::Expired { .. } => ApiError::unauthorized("Expired signature"),
@@ -231,6 +235,10 @@ fn refusal(e: SignedFetchError) -> ApiError {
         SignedFetchError::EipNotImplemented => {
             ApiError::http(501, "EIP-1654 not supported on this route")
         }
+        SignedFetchError::CatalystUnavailable(_) => ApiError::http(
+            503,
+            "The contract-wallet signature cannot be checked right now",
+        ),
         _ => ApiError::bad_request("Invalid Auth Chain"),
     }
 }
