@@ -20,6 +20,28 @@ use super::money::CreditAmount;
 use super::store::{AuditEntry, Credits, SYSTEM_ACTOR};
 use crate::types::UsdCents;
 
+/// A `revoke` audit row's detail: `base` plus what was charged back,
+/// removed and left uncovered; `amount` is what was removed.
+pub(crate) fn revoke_detail(
+    base: &serde_json::Value,
+    tx_ref: &str,
+    charged_back: &str,
+    removed: &str,
+    shortfall: &str,
+    reason: &str,
+) -> serde_json::Value {
+    let mut detail = base.clone();
+    if let serde_json::Value::Object(map) = &mut detail {
+        map.insert("txRef".into(), json!(tx_ref));
+        map.insert("chargedBack".into(), json!(charged_back));
+        map.insert("removed".into(), json!(removed));
+        map.insert("shortfall".into(), json!(shortfall));
+        map.insert("reason".into(), json!(reason));
+        map.insert("amount".into(), json!(removed));
+    }
+    detail
+}
+
 #[derive(Debug, Clone)]
 pub struct GrantOutcome {
     pub available: String,
@@ -444,6 +466,10 @@ impl Credits {
     /// reported as `shortfall`, and the debit is split PAID-FIRST (a purchase
     /// grants paid credits, so a charged-back pack does not eat credits earned
     /// by playing) as `consume` rows so the signed ledger sum keeps matching.
+    #[allow(
+        clippy::too_many_arguments,
+        reason = "the reversal's fields and its audit actor, each used once"
+    )]
     pub(crate) async fn revoke_in_tx(
         &self,
         tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
@@ -452,6 +478,7 @@ impl Credits {
         tx_ref: &str,
         reason: &str,
         detail: &serde_json::Value,
+        actor: &str,
     ) -> Result<RevokeOutcome, ApiError> {
         let amount = CreditAmount::parse_positive(amount)?;
         let amount = amount.as_str();
@@ -465,21 +492,15 @@ impl Credits {
         .await?;
 
         let Some(before) = before else {
-            let mut detail = detail.clone();
+            let mut detail = revoke_detail(detail, tx_ref, amount, "0", amount, reason);
             if let serde_json::Value::Object(map) = &mut detail {
-                map.insert("txRef".into(), json!(tx_ref));
-                map.insert("chargedBack".into(), json!(amount));
-                map.insert("removed".into(), json!("0"));
-                map.insert("shortfall".into(), json!(amount));
                 map.insert("walletRow".into(), json!("missing"));
-                map.insert("reason".into(), json!(reason));
-                map.insert("amount".into(), json!("0"));
             }
             Self::audit(
                 &mut **tx,
                 AuditEntry {
                     action: "revoke",
-                    actor: SYSTEM_ACTOR,
+                    actor,
                     target: Some(address),
                     detail: &detail,
                 },
@@ -503,6 +524,8 @@ impl Credits {
                 removed: "0".to_string(),
                 shortfall: amount.to_string(),
                 has_shortfall: true,
+                uncovered: true,
+                uncovered_amount: amount.to_string(),
             });
         };
         let available_before: String = before.get("available");
@@ -528,7 +551,8 @@ impl Credits {
                        (($3::numeric - available) - ($4::numeric - earned_available))::text AS paid_removed, \
                        GREATEST($2::numeric - ($3::numeric - available), 0)::text AS shortfall, \
                        ($2::numeric > $3::numeric - available) AS has_shortfall, \
-                       ($2::numeric > $3::numeric - (SELECT credits FROM held)) AS uncovered",
+                       ($2::numeric > $3::numeric - (SELECT credits FROM held)) AS uncovered, \
+                       GREATEST($2::numeric - GREATEST($3::numeric - (SELECT credits FROM held), 0), 0)::text AS uncovered_amount",
         )
         .bind(address)
         .bind(amount)
@@ -541,6 +565,13 @@ impl Credits {
         let blocked: bool = row.get("uncovered");
         if blocked {
             tracing::error!(address = %address, tx_ref = %tx_ref, "fiat reversal exceeds the unpledged balance: wallet blocked from spending credits");
+            // This reversal relies on the block too: an earlier App Store refund no longer lifts it alone.
+            sqlx::query(
+                "UPDATE credits.iap_transactions SET raised_block = false WHERE address = $1 AND raised_block",
+            )
+            .bind(address)
+            .execute(&mut **tx)
+            .await?;
         }
         let available: String = row.get("available");
         let removed: String = row.get("removed");
@@ -548,16 +579,11 @@ impl Credits {
         let paid_removed: String = row.get("paid_removed");
         let shortfall: String = row.get("shortfall");
         let has_shortfall: bool = row.get("has_shortfall");
+        let uncovered_amount: String = row.get("uncovered_amount");
 
-        let mut detail = detail.clone();
+        let mut detail = revoke_detail(detail, tx_ref, amount, &removed, &shortfall, reason);
         if let serde_json::Value::Object(map) = &mut detail {
-            map.insert("txRef".into(), json!(tx_ref));
-            map.insert("chargedBack".into(), json!(amount));
             map.insert("blocked".into(), json!(blocked));
-            map.insert("removed".into(), json!(removed));
-            map.insert("shortfall".into(), json!(shortfall));
-            map.insert("reason".into(), json!(reason));
-            map.insert("amount".into(), json!(removed));
         }
         sqlx::query(LEDGER_SPLIT_INSERT_WITH_AUDIT)
             .bind(address)
@@ -566,7 +592,7 @@ impl Credits {
             .bind(tx_ref)
             .bind("consume")
             .bind("revoke")
-            .bind(SYSTEM_ACTOR)
+            .bind(actor)
             .bind(&detail)
             .execute(&mut **tx)
             .await?;
@@ -576,6 +602,8 @@ impl Credits {
             removed,
             shortfall,
             has_shortfall,
+            uncovered: blocked,
+            uncovered_amount,
         })
     }
 }
@@ -590,4 +618,8 @@ pub struct RevokeOutcome {
     /// Whether `shortfall` is strictly positive, decided by PostgreSQL in
     /// NUMERIC (the text form may render as "0.00").
     pub has_shortfall: bool,
+    /// The reversal exceeds the balance net of live pledges: the wallet was blocked.
+    pub uncovered: bool,
+    /// How much of the reversal the balance net of live pledges could not cover.
+    pub uncovered_amount: String,
 }

@@ -8,7 +8,7 @@ use serde_json::Value as JsonValue;
 use sqlx::Row;
 
 use super::errors::ApiError;
-use super::store::Credits;
+use super::store::{Credits, SYSTEM_ACTOR};
 
 pub(crate) fn validate_sku(raw: &str) -> Result<String, ApiError> {
     let s = raw.trim();
@@ -764,6 +764,7 @@ impl Credits {
                 &format!("stripe:{}", event_id),
                 "stripe payment reversed (refund/dispute)",
                 &detail,
+                SYSTEM_ACTOR,
             )
             .await?;
         Ok(ReversalOutcome::Reversed {

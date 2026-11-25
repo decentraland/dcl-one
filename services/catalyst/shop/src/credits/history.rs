@@ -145,8 +145,9 @@ impl Credits {
         Ok(PurchasesOut { total, purchases })
     }
 
-    /// The wallet's pack orders newest first: one row per `credits.purchases`
-    /// row of the card flows (a Checkout Session order or a PaymentIntent).
+    /// The wallet's credit orders newest first: one row per `credits.purchases`
+    /// row of the card flows (a Checkout Session order or a PaymentIntent)
+    /// and one per App Store purchase this node credited to it (`credits.iap_transactions`).
     pub async fn credit_orders_history(
         &self,
         address: &str,
@@ -154,14 +155,23 @@ impl Credits {
         offset: i64,
     ) -> Result<CreditOrdersOut, ApiError> {
         let total: i64 = sqlx::query_scalar(
-            "SELECT count(*) FROM credits.purchases WHERE address = $1 AND method = 'card'",
+            "SELECT (SELECT count(*) FROM credits.purchases WHERE address = $1 AND method = 'card') \
+                  + (SELECT count(*) FROM credits.iap_transactions WHERE address = $1 AND credited_by IS NOT NULL)",
         )
         .bind(address)
         .fetch_one(&self.pool)
         .await?;
         let rows = sqlx::query(
-            "SELECT id, order_id, stripe_payment_intent, sku, floor(credits)::bigint AS credits, amount_cents, refunded_cents, status, created_at \
-             FROM credits.purchases WHERE address = $1 AND method = 'card' ORDER BY id DESC LIMIT $2 OFFSET $3",
+            "SELECT * FROM ( \
+                 SELECT 'stripe' AS provider, id, order_id, stripe_payment_intent, NULL::text AS transaction_id, sku, \
+                        floor(credits)::bigint AS credits, amount_cents, refunded_cents, status, created_at \
+                 FROM credits.purchases WHERE address = $1 AND method = 'card' \
+                 UNION ALL \
+                 SELECT 'apple', NULL, NULL, NULL, transaction_id, product_id, \
+                        floor(credits)::bigint, amount_cents, \
+                        refunded_cents, status, created_at \
+                 FROM credits.iap_transactions WHERE address = $1 AND credited_by IS NOT NULL \
+             ) o ORDER BY created_at DESC, id DESC NULLS LAST, transaction_id DESC LIMIT $2 OFFSET $3",
         )
         .bind(address)
         .bind(limit)
@@ -171,17 +181,26 @@ impl Credits {
         let orders = rows
             .into_iter()
             .map(|r| {
+                let provider: String = r.get("provider");
                 let order_id: Option<String> = r.get("order_id");
                 let pi: Option<String> = r.get("stripe_payment_intent");
-                let row_id: i64 = r.get("id");
+                let transaction_id: Option<String> = r.get("transaction_id");
+                let row_id: Option<i64> = r.get("id");
                 let status: String = r.get("status");
                 let amount_cents: i64 = r.get("amount_cents");
                 let refunded: i64 = r.get("refunded_cents");
+                let (provider, id) = match transaction_id {
+                    Some(t) if provider == "apple" => ("apple", format!("apple:{t}")),
+                    _ => (
+                        "stripe",
+                        order_id
+                            .or(pi.map(|p| format!("pi:{p}")))
+                            .unwrap_or_else(|| format!("purchase:{}", row_id.unwrap_or_default())),
+                    ),
+                };
                 CreditOrderOut {
-                    id: order_id
-                        .or(pi.map(|p| format!("pi:{p}")))
-                        .unwrap_or_else(|| format!("purchase:{row_id}")),
-                    provider: "stripe",
+                    id,
+                    provider,
                     status: order_status(&status, amount_cents, refunded),
                     credits: r.get("credits"),
                     usd_cents: amount_cents,

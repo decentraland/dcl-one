@@ -23,9 +23,9 @@ tables it leaves to the node. `blobs` copies the blobs of the sources it knows
 need an external copy that fills the same records.
 
 Known limitations after a cutover: MANA-denominated credits stay spendable
-on-chain until they expire but are in no node balance, and credits from Apple
-in-app purchases cannot be clawed back by a later Apple refund
-(`sources/credits-server/MAPPING.md`).
+on-chain until they expire but are in no node balance, and MANA credits from
+Apple in-app purchases cannot be clawed back by a later Apple refund (USD ones
+are charged back, `sources/credits-server/MAPPING.md`).
 
 ## Before a cutover run
 

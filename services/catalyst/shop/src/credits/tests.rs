@@ -306,26 +306,28 @@ fn lazy_pool() -> PgPool {
         .expect("lazy pool")
 }
 
-async fn pool() -> Option<PgPool> {
+pub(super) async fn pool() -> Option<PgPool> {
     crate::db::scratch::pool(8).await
 }
 
 pub(super) use crate::test_db::OwnDatabase;
 
-struct StateCfg {
-    mock_card: bool,
-    fulfillment_mode: &'static str,
-    stripe_webhook_secret: Option<&'static str>,
-    stripe_secret_key: Option<&'static str>,
-    onchain_authorize_enabled: bool,
-    require_purchase_intent: bool,
-    admin_token: Option<&'static str>,
-    writes_enabled: bool,
+pub(super) struct StateCfg {
+    pub(super) iap: Option<Arc<super::iap::Iap>>,
+    pub(super) mock_card: bool,
+    pub(super) fulfillment_mode: &'static str,
+    pub(super) stripe_webhook_secret: Option<&'static str>,
+    pub(super) stripe_secret_key: Option<&'static str>,
+    pub(super) onchain_authorize_enabled: bool,
+    pub(super) require_purchase_intent: bool,
+    pub(super) admin_token: Option<&'static str>,
+    pub(super) writes_enabled: bool,
 }
 
 impl Default for StateCfg {
     fn default() -> Self {
         Self {
+            iap: None,
             mock_card: false,
             fulfillment_mode: "secondary",
             stripe_webhook_secret: None,
@@ -339,7 +341,7 @@ impl Default for StateCfg {
 }
 
 fn state_with(pool: PgPool, cfg: StateCfg, market: FakeMarket, broker: MockBroker) -> SharedState {
-    let settings = Settings::parse(RawSettings {
+    let mut settings = Settings::parse(RawSettings {
         writes_enabled: cfg.writes_enabled,
         mock_card: cfg.mock_card,
         // The mock card runs only on Amoy (Settings::parse); the HTTP routes under test do not read the chain.
@@ -359,6 +361,7 @@ fn state_with(pool: PgPool, cfg: StateCfg, market: FakeMarket, broker: MockBroke
         ..RawSettings::default()
     })
     .unwrap();
+    settings.iap = cfg.iap;
     Arc::new(State::with_sources(
         pool,
         Outbound::for_tests(),
@@ -369,12 +372,12 @@ fn state_with(pool: PgPool, cfg: StateCfg, market: FakeMarket, broker: MockBroke
     ))
 }
 
-fn test_state(pool: PgPool, cfg: StateCfg) -> SharedState {
+pub(super) fn test_state(pool: PgPool, cfg: StateCfg) -> SharedState {
     state_with(pool, cfg, FakeMarket::default(), MockBroker::configured())
 }
 
 pub(super) struct Wallet {
-    signer: PrivateKeySigner,
+    pub(super) signer: PrivateKeySigner,
     pub(super) address: String,
 }
 
@@ -6834,6 +6837,29 @@ async fn cart_reads_and_writes_keep_their_totals_and_the_checkout_records_its_le
         .fetch_one(&pool)
         .await
         .unwrap();
+    let (old_notice, kept_notice) = (unique("iap-old"), unique("iap-kept"));
+    let kept_for = chrono::Duration::seconds(super::apple::NOTIFICATION_RECORD_SECS);
+    let max_age = chrono::Duration::seconds(super::apple::NOTIFICATION_MAX_AGE_SECS);
+    for (uuid, signed_at) in [
+        (
+            &old_notice,
+            super::store::now() - kept_for - chrono::Duration::minutes(1),
+        ),
+        // Past the accepted age but within the margin: a node with a slower clock may still accept it.
+        (
+            &kept_notice,
+            super::store::now() - max_age - chrono::Duration::hours(1),
+        ),
+    ] {
+        sqlx::query(
+            "INSERT INTO credits.iap_notifications (notification_uuid, signed_at) VALUES ($1, $2)",
+        )
+        .bind(uuid)
+        .bind(signed_at)
+        .execute(&pool)
+        .await
+        .unwrap();
+    }
     let idle = state_with(
         pool.clone(),
         StateCfg::default(),
@@ -6842,6 +6868,18 @@ async fn cart_reads_and_writes_keep_their_totals_and_the_checkout_records_its_le
     );
     let processed = idle.outbox_worker().run_once().await.unwrap();
     assert_eq!(processed, 0, "no broker: the pending lines idle");
+    let notices: Vec<String> = sqlx::query_scalar(
+        "SELECT notification_uuid FROM credits.iap_notifications WHERE notification_uuid = ANY($1)",
+    )
+    .bind(vec![old_notice.clone(), kept_notice.clone()])
+    .fetch_all(&pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        notices,
+        vec![kept_notice],
+        "the tick purges notification records signed past the accepted age plus a day"
+    );
     let auth_status: String =
         sqlx::query_scalar("SELECT status FROM credits.authorizations WHERE id = $1")
             .bind(&stale_auth)

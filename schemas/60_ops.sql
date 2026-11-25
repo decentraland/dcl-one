@@ -238,6 +238,116 @@ CREATE TABLE credits.payment_reversals (
     CONSTRAINT payment_reversals_refunded_check CHECK (refunded_cents >= 0)
 );
 
+-- One row per App Store transaction (`transaction_id`, Apple's id, the
+-- idempotency key of the grant and of the refund). `paid` is credited by
+-- this node (`credited_by`): it holds the wallet, the credits granted and
+-- their USD value. `held` is a paid purchase not credited yet
+-- (`held_reason`: a wallet cap, the node's daily ceiling, an unknown
+-- product or quantity, an account token naming no wallet); `address` is
+-- the wallet it is meant for when known, and a later delivery or an
+-- operator credit turns it `paid`. `imported` was credited upstream before
+-- cutover, with its wallet, value and time, so it counts toward the caps.
+-- `refunded` is either a refunded credit (`credited_by` set) or a refund of
+-- a transaction never credited, which keeps a later delivery from being
+-- credited. `revoked_credits` is what the refund actually charged back
+-- (what a reversed refund grants again), bounded by the grant.
+CREATE TABLE credits.iap_transactions (
+    transaction_id text NOT NULL,
+    original_transaction_id text,
+    product_id text NOT NULL,
+    address text,
+    credits numeric,
+    amount_cents bigint,
+    status text NOT NULL,
+    -- notification | device | operator: the path that credited it.
+    credited_by text,
+    held_reason text,
+    quantity bigint,
+    -- A held purchase whose account token names no wallet keeps the token.
+    app_account_token text,
+    revoked_credits numeric NOT NULL DEFAULT 0,
+    -- The USD value Apple refunded (all of it, or its revocationPercentage share).
+    refunded_cents bigint NOT NULL DEFAULT 0,
+    refund_ref text,
+    refund_reason text,
+    -- A refund of an `imported` row keeps its status; `refunded_at` marks it.
+    refunded_at timestamp without time zone,
+    -- Every refund reference applied (notification uuid or operator refund id), kept across reversals.
+    refund_refs text[] NOT NULL DEFAULT '{}',
+    -- The refund blocked the wallet; its reversal lifts that block once the balance covers the live pledges.
+    -- An operator's block or unblock, or a later uncovered reversal, clears it.
+    raised_block boolean NOT NULL DEFAULT false,
+    created_at timestamp without time zone NOT NULL DEFAULT timezone('UTC', now()),
+    updated_at timestamp without time zone NOT NULL DEFAULT timezone('UTC', now()),
+    CONSTRAINT iap_transactions_pkey PRIMARY KEY (transaction_id),
+    CONSTRAINT iap_transactions_address_check CHECK (address IS NULL OR address ~ '^0x[0-9a-f]{40}$'),
+    CONSTRAINT iap_transactions_status_check CHECK (status IN ('paid', 'held', 'imported', 'refunded')),
+    CONSTRAINT iap_transactions_value_check CHECK ((credits IS NULL) = (amount_cents IS NULL)),
+    CONSTRAINT iap_transactions_credited_check
+        CHECK (credited_by IS NULL OR (address IS NOT NULL AND credits IS NOT NULL)),
+    CONSTRAINT iap_transactions_paid_check CHECK (status <> 'paid' OR credited_by IS NOT NULL),
+    CONSTRAINT iap_transactions_held_check
+        CHECK ((status = 'held') = (held_reason IS NOT NULL) AND (status <> 'held' OR credited_by IS NULL)),
+    CONSTRAINT iap_transactions_imported_check
+        CHECK (status <> 'imported' OR (credited_by IS NULL AND address IS NOT NULL AND credits IS NOT NULL)),
+    CONSTRAINT iap_transactions_credited_by_check CHECK (credited_by IN ('notification', 'device', 'operator')),
+    CONSTRAINT iap_transactions_amount_check CHECK (credits IS NULL OR (credits > 0 AND amount_cents > 0)),
+    CONSTRAINT iap_transactions_revoked_check
+        CHECK (revoked_credits >= 0 AND (credits IS NULL OR revoked_credits <= credits)),
+    CONSTRAINT iap_transactions_refunded_check
+        CHECK (refunded_cents >= 0 AND refunded_cents <= COALESCE(amount_cents, 0))
+);
+
+-- A wallet's App Store purchases (the credit-order history, newest first,
+-- and the per-wallet caps over its rows), the node's daily total, and the
+-- held purchases an operator lists.
+CREATE INDEX iap_transactions_address_idx ON credits.iap_transactions (address, created_at DESC)
+    WHERE address IS NOT NULL;
+CREATE INDEX iap_transactions_created_idx ON credits.iap_transactions (created_at) WHERE address IS NOT NULL;
+CREATE INDEX iap_transactions_held_idx ON credits.iap_transactions (created_at) WHERE status = 'held';
+
+-- The wallet behind an App Store `appAccountToken`: the token is a one-way
+-- derivation of the wallet (`credits::apple::account_token`), recorded when
+-- the signed-in wallet registers or quotes, so a server notification that
+-- carries only the token can be credited to it.
+CREATE TABLE credits.iap_account_tokens (
+    token text NOT NULL,
+    address text NOT NULL,
+    created_at timestamp without time zone NOT NULL DEFAULT timezone('UTC', now()),
+    CONSTRAINT iap_account_tokens_pkey PRIMARY KEY (token),
+    CONSTRAINT iap_account_tokens_token_check
+        CHECK (token ~ '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'),
+    CONSTRAINT iap_account_tokens_address_check CHECK (address ~ '^0x[0-9a-f]{40}$')
+);
+
+-- One row per App Store server notification applied (`notificationUUID`),
+-- written in the transaction of its effects, so a redelivery applies nothing.
+-- A notification signed more than 7 days ago is refused
+-- (`credits::apple::NOTIFICATION_MAX_AGE_SECS`), so the outbox tick deletes
+-- rows by `signed_at` past that age plus a day (`NOTIFICATION_RECORD_SECS`).
+CREATE TABLE credits.iap_notifications (
+    notification_uuid text NOT NULL,
+    signed_at timestamp without time zone NOT NULL,
+    created_at timestamp without time zone NOT NULL DEFAULT timezone('UTC', now()),
+    CONSTRAINT iap_notifications_pkey PRIMARY KEY (notification_uuid)
+);
+
+CREATE INDEX iap_notifications_signed_idx ON credits.iap_notifications (signed_at);
+
+-- Apple's latest refund decision per transaction (a `REFUND` or a
+-- `REFUND_REVERSED` notification, by `signedDate`), written under the
+-- transaction lock even when no purchase row exists yet; a refund or reversal
+-- signed before it applies nothing. Kept as long as the transaction's row.
+CREATE TABLE credits.iap_refund_decisions (
+    transaction_id text NOT NULL,
+    decision text NOT NULL,
+    signed_at timestamp without time zone NOT NULL,
+    notification_uuid text NOT NULL,
+    updated_at timestamp without time zone NOT NULL DEFAULT timezone('UTC', now()),
+    CONSTRAINT iap_refund_decisions_pkey PRIMARY KEY (transaction_id),
+    CONSTRAINT iap_refund_decisions_decision_check CHECK (decision IN ('refund', 'reversal'))
+);
+
 -- One open cart per wallet; the address is the natural key.
 CREATE TABLE credits.carts (
     id bigint GENERATED ALWAYS AS IDENTITY,
@@ -476,10 +586,12 @@ CREATE INDEX usage_settlements_authorization_idx ON credits.usage_settlements (a
 -- (docs/shop/CONTRACTS.md: as soon as a credit's first CreditUsed is
 -- indexed, and on a refund), drained by the `credits-revocations` job with
 -- the `CREDITS_REVOKER_KEY_FILE` signer when one is configured. The row is
--- written in the transaction that decides the revocation; the broadcast
--- runs outside it, `tx_hash` is stored before `eth_sendRawTransaction`
--- (a kill between the two leaves a pollable row; re-sending revokeCredits
--- for an already revoked hash is a no-op on chain).
+-- written in the transaction that decides the revocation; the job claims a
+-- `pending` row (`attempts + 1`, given back once it is sent; `attempts`
+-- counts failures) before its broadcast, which runs outside it, and stores
+-- `tx_hash` once `eth_sendRawTransaction` answers (a kill between the two
+-- leaves a claimed `pending` row the next pass sends again; re-sending
+-- revokeCredits for an already revoked hash is a no-op on chain).
 CREATE TABLE credits.revocations (
     credit_hash text NOT NULL,
     authorization_id text NOT NULL,

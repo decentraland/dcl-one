@@ -27,18 +27,25 @@ Not migrated, by reason:
   de-duplication and reconciliation state of upstream's endpoint; their
   outcome is folded into purchases.refunded_cents/revoked_credits and the
   refund ledger rows.
-- iap_credits, iap_account_tokens (App Store state; the node has no IAP),
-  seasons, goals, season_goals, user_progress (the seasons domain is gone),
+- seasons, goals, season_goals, user_progress (the seasons domain is gone),
   sale_proceeds, proceeds_cursor, proceeds_abandoned_fills, studios,
   studio_operators, studio_budget_entries, shop_daily_summaries,
   usd_purchase_alerts (no target; their money effects are user_credits rows).
+- iap_credits beyond their transaction ids, wallets, cents and times: their
+  Credits are user_credits rows. A USD-rail id lands as an 'imported'
+  credits.iap_transactions row (counted by the per-wallet caps), any other
+  as a wallet-less 'refunded' row, so the node never credits it again;
+  iap_account_tokens are copied. iap_transaction reads upstream after its
+  App Store routes stop writing, and APPLE_BUNDLE_ID is set on the node
+  only after the import.
 - Node-only state left to the node: packs (upstream packs are code), idempotency,
   captcha_challenges, carts, cart_items, checkouts, fulfillment_outbox,
   authorizations, authorization_lines, usage_settlements, revocations, usages,
-  usage_index_cursor.
+  usage_index_cursor, iap_notifications, iap_refund_decisions.
 
 No step has a watermark; every run re-scans and the loads are idempotent
-(ledger rows by tx_ref, purchases by order_id, wallets and flags by address).
+(ledger rows by tx_ref, purchases by order_id, wallets and flags by address,
+App Store rows by transaction id and token).
 A row the node changed later (a purchase with a newer updated_at, a flag
 lifted by an operator) is kept.
 """
@@ -118,5 +125,31 @@ columns = [
   { name = "tx_ref", type = "text" },
   { name = "kind", type = "text" },
   { name = "amount", type = "numeric" },
+  { name = "created_at", type = "timestamptz" },
+]
+
+[[step]]
+name = "iap_transaction"
+targets = ["credits.iap_transactions"]
+extract = "iap_transaction.extract.sql"
+load = "iap_transaction.load.sql"
+key = ["transaction_id"]
+columns = [
+  { name = "transaction_id", type = "text" },
+  { name = "product_id", type = "text" },
+  { name = "address", type = "text" },
+  { name = "amount_cents", type = "bigint" },
+  { name = "created_at", type = "timestamptz" },
+]
+
+[[step]]
+name = "iap_account_token"
+targets = ["credits.iap_account_tokens"]
+extract = "iap_account_token.extract.sql"
+load = "iap_account_token.load.sql"
+key = ["token"]
+columns = [
+  { name = "token", type = "text" },
+  { name = "address", type = "text" },
   { name = "created_at", type = "timestamptz" },
 ]

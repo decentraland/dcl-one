@@ -1,8 +1,8 @@
 //! `/admin/reconcile`: the invariants the ledger design rests on, asserted
 //! in SQL. `available` and `earned_available` must equal the signed ledger
 //! sums per wallet (a `FULL OUTER JOIN` of the per-address sums against
-//! `credits.wallets`), paid purchases must equal the granted `purchase`
-//! rows, a fulfilled checkout's total must equal its confirmed lines, and
+//! `credits.wallets`), paid purchases (Stripe and App Store) must equal the
+//! granted `purchase` rows, a fulfilled checkout's total must equal its confirmed lines, and
 //! every confirmed line must have its escrow lease (`shop.usage_grants`,
 //! a local table now). Drift is never tolerated: `realign_ledger_to_balances`
 //! records it as an explicit adjustment row, walked in keyset chunks so the
@@ -166,7 +166,7 @@ impl Credits {
             tracing::error!(
                 invariant = "paid_purchases==purchase_ledger",
                 count = purchase_grant_mismatches.len(),
-                "RECONCILE ALERT: paid Stripe purchases do not equal granted 'purchase' Credits"
+                "RECONCILE ALERT: paid Stripe and App Store purchases do not equal granted 'purchase' Credits"
             );
         }
         if !checkout_fulfillment_mismatches.is_empty() {
@@ -404,9 +404,12 @@ impl Credits {
     async fn reconcile_purchase_grant(&self) -> Result<Vec<PurchaseGrantDiff>, ApiError> {
         let rows = sqlx::query(
             "WITH paid AS ( \
-                 SELECT address, SUM(credits) AS c \
-                 FROM credits.purchases \
-                 WHERE status IN ('paid','refunded','disputed') GROUP BY address \
+                 SELECT address, SUM(credits) AS c FROM ( \
+                     SELECT address, credits FROM credits.purchases \
+                     WHERE status IN ('paid','refunded','disputed') \
+                     UNION ALL \
+                     SELECT address, credits FROM credits.iap_transactions WHERE credited_by IS NOT NULL \
+                 ) p GROUP BY address \
              ), granted AS ( \
                  SELECT address, SUM(amount) AS g \
                  FROM credits.ledger WHERE kind = 'purchase' GROUP BY address \
