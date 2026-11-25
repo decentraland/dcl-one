@@ -1017,6 +1017,15 @@ impl ScenePointers {
             .or_else(|| self.all_scenes_known.then_some(&PointerResult::NOTHING))
     }
 
+    /// The hash of the scene on `parcel`, or why the parcel has none (yet).
+    pub fn scene_hash(&self, parcel: IVec2) -> Result<&str, NoParcelScene> {
+        match self.get(parcel) {
+            Some(PointerResult::Exists { hash, .. }) => Ok(hash),
+            Some(PointerResult::Nothing) => Err(NoParcelScene::Empty),
+            None => Err(NoParcelScene::Unresolved),
+        }
+    }
+
     /// The realm's listed scenes are placed: parcels none of them covers are empty from now on.
     pub fn set_all_scenes_known(&mut self) {
         if !self.all_scenes_known {
@@ -1234,6 +1243,29 @@ pub enum PointerResult {
 
 impl PointerResult {
     const NOTHING: Self = Self::Nothing;
+}
+
+/// Why a parcel has no live scene (yet): what [`ScenePointers::scene_hash`] and
+/// `ContainingScene::parcel_scene` answer instead of one.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum NoParcelScene {
+    /// The parcel's pointer has not resolved.
+    Unresolved,
+    /// The parcel has no scene.
+    Empty,
+    /// The parcel's scene is known and has not spawned.
+    NotSpawned,
+}
+
+impl NoParcelScene {
+    /// The reason, as the scene readouts print it.
+    pub fn reason(self) -> &'static str {
+        match self {
+            Self::Unresolved => "Waiting for the parcel's scene definition.",
+            Self::Empty => "There is no scene on this parcel.",
+            Self::NotSpawned => "Waiting for the parcel scene to load.",
+        }
+    }
 }
 
 impl PointerResult {

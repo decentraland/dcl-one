@@ -69,7 +69,7 @@ use common::partition::PartitionData;
 
 use self::{
     initialize_scene::{
-        LiveScenes, PointerResult, SceneLifecyclePlugin, SceneLoading, ScenePointers, PARCEL_SIZE,
+        LiveScenes, NoParcelScene, SceneLifecyclePlugin, SceneLoading, ScenePointers, PARCEL_SIZE,
     },
     renderer_context::{RendererSceneContext, SceneState, SCENE_FIRST_DISPATCH_TICK},
     update_scene::SceneInputPlugin,
@@ -787,15 +787,24 @@ impl ContainingScene<'_, '_> {
             || self.portable_scenes.is_changed()
     }
 
+    /// The hash of the scene on `parcel`, or why the parcel has none (yet).
+    pub fn parcel_hash(&self, parcel: IVec2) -> Result<&str, NoParcelScene> {
+        self.pointers.scene_hash(parcel)
+    }
+
+    /// The live scene on `parcel`, or why there is none (yet).
+    pub fn parcel_scene(&self, parcel: IVec2) -> Result<Entity, NoParcelScene> {
+        let hash = self.pointers.scene_hash(parcel)?;
+        self.live_scenes
+            .scenes
+            .get(hash)
+            .copied()
+            .ok_or(NoParcelScene::NotSpawned)
+    }
+
     // just the parcel at the position
     pub fn get_parcel_position(&self, position: Vec3) -> Option<Entity> {
-        let parcel = vec3_to_parcel(position);
-
-        if let Some(PointerResult::Exists { hash, .. }) = self.pointers.get(parcel) {
-            self.live_scenes.scenes.get(hash).copied()
-        } else {
-            None
-        }
+        self.parcel_scene(vec3_to_parcel(position)).ok()
     }
 
     // just the parcel at the entity's position
@@ -819,18 +828,8 @@ impl ContainingScene<'_, '_> {
 
     // the parcel at the position, plus any global scenes
     pub fn get_position(&self, position: Vec3) -> HashSet<Entity> {
-        let parcel = (position.xz() * Vec2::new(1.0, -1.0) / PARCEL_SIZE)
-            .floor()
-            .as_ivec2();
-
         let mut results = HashSet::default();
-
-        if let Some(PointerResult::Exists { hash, .. }) = self.pointers.get(parcel) {
-            if let Some(scene) = self.live_scenes.scenes.get(hash) {
-                results.insert(*scene);
-            }
-        }
-
+        results.extend(self.get_parcel_position(position));
         results.extend(self.get_portables(false));
         results
     }
@@ -895,13 +894,7 @@ impl ContainingScene<'_, '_> {
 
         for parcel_x in min_parcel.x..=max_parcel.x {
             for parcel_y in min_parcel.y..=max_parcel.y {
-                if let Some(PointerResult::Exists { hash, .. }) =
-                    self.pointers.get(IVec2::new(parcel_x, parcel_y))
-                {
-                    if let Some(scene) = self.live_scenes.scenes.get(hash).copied() {
-                        results.insert(scene);
-                    }
-                }
+                results.extend(self.parcel_scene(IVec2::new(parcel_x, parcel_y)).ok());
             }
         }
 
@@ -977,6 +970,7 @@ impl ContainingScene<'_, '_> {
 #[cfg(test)]
 mod get_ray_tests {
     use super::*;
+    use crate::initialize_scene::PointerResult;
     use bevy::ecs::system::RunSystemOnce;
 
     #[test]
@@ -1841,19 +1835,16 @@ fn update_scene_room(
             return None;
         }
         let (transform, out_of_world) = containing_scene.transforms.get(player).ok()?;
-        let Some(PointerResult::Exists { hash, .. }) = containing_scene
-            .pointers
-            .get(vec3_to_parcel(transform.translation()))
-        else {
-            return None;
-        };
+        let hash = containing_scene
+            .parcel_hash(vec3_to_parcel(transform.translation()))
+            .ok()?;
         // A banned parcel has no live scene to identify it. Its pointer must select the room
         // even when the player arrives from another scene, so fresh admission can restore it.
         let banned = bans.is_banned(hash);
         let previous = last.as_ref().is_some_and(|previous| {
             previous.realm_about_url == realm.about_url && previous.scene_id == *hash
         });
-        (banned || (!out_of_world && previous)).then_some(hash.as_str())
+        (banned || (!out_of_world && previous)).then_some(hash)
     });
     let (Some(realm_name), Some(scene_id)) = (realm.config.realm_name.as_ref(), scene_id) else {
         if last.take().is_some() {
