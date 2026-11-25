@@ -156,27 +156,32 @@ export default function PreviewFrame({ options, replay = 0, loadTimeoutMs, onLoa
 
   useEffect(() => {
     if (loadTimeoutMs === undefined) return;
+    // The visible time left, and whether the timeout has run: a page hidden just as the time ran out, before the
+    // timeout could run, still has it to run (at once) when it is shown again; one that has run never runs again.
+    // Visible time is measured on the monotonic clock, so a change to the wall clock neither spends nor extends it.
     let left = loadTimeoutMs;
+    let expired = false;
     let since = 0;
     let timer: number | undefined;
     const expire = () => {
       timer = undefined;
-      left = 0;
+      expired = true;
       const now = live.current;
       if (now.n === mount.n && !now.answered) callbacks.current.onError("The preview did not load in time.");
     };
     const run = () => {
-      since = Date.now();
+      since = performance.now();
       timer = window.setTimeout(expire, left);
     };
     const pause = () => {
       window.clearTimeout(timer);
       timer = undefined;
-      left = Math.max(0, left - (Date.now() - since));
+      left = Math.max(0, left - (performance.now() - since));
     };
     const onVisibility = () => {
-      if (document.hidden && timer !== undefined) pause();
-      else if (!document.hidden && timer === undefined && left > 0) run();
+      if (document.hidden) {
+        if (timer !== undefined) pause();
+      } else if (timer === undefined && !expired) run();
     };
     if (!document.hidden) run();
     document.addEventListener("visibilitychange", onVisibility);

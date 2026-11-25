@@ -57,7 +57,12 @@ function hiddenPage(hidden: boolean) {
       document.dispatchEvent(new Event("visibilitychange"));
     });
   };
-  return { show: () => set(false), hide: () => set(true), restore: () => delete (document as { hidden?: boolean }).hidden };
+  // Without act: for a change queued on the fake clock, which runs inside the test's own act.
+  const now = (next: boolean) => {
+    state = next;
+    document.dispatchEvent(new Event("visibilitychange"));
+  };
+  return { show: () => set(false), hide: () => set(true), now, restore: () => delete (document as { hidden?: boolean }).hidden };
 }
 
 afterEach(() => {
@@ -268,6 +273,29 @@ describe("a mount that stays silent", () => {
       page.hide();
       page.show();
       act(() => vi.advanceTimersByTime(60_000));
+      expect(onError).toHaveBeenCalledTimes(1);
+    } finally {
+      page.restore();
+    }
+  });
+
+  test("a page hidden just as the visible time runs out, before the timeout runs, has it run as soon as it is shown", () => {
+    vi.useFakeTimers();
+    const page = hiddenPage(false);
+    try {
+      // Queued before the mount, so at 45 s it runs ahead of the frame's own timeout.
+      setTimeout(() => page.now(true), 45_000);
+      const { onError } = mount({ urns: [HOODIE], ...UNITY }, 45_000);
+      act(() => vi.advanceTimersByTime(45_000));
+      expect(onError).not.toHaveBeenCalled();
+
+      page.show();
+      act(() => vi.advanceTimersByTime(0));
+      expect(onError).toHaveBeenCalledTimes(1);
+      act(() => vi.advanceTimersByTime(100_000));
+      page.hide();
+      page.show();
+      act(() => vi.advanceTimersByTime(100_000));
       expect(onError).toHaveBeenCalledTimes(1);
     } finally {
       page.restore();
