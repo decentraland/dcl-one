@@ -45,6 +45,7 @@ test("the ticked items go on a default mannequin through Unity's builder mode, a
   const posted = vi.spyOn(win, "postMessage");
   act(() => {
     window.dispatchEvent(new MessageEvent("message", { data: { type: "ready" }, source: win, origin: PREVIEW }));
+    window.dispatchEvent(new MessageEvent("message", { data: { type: "load", payload: { renderer: "unity" } }, source: win, origin: PREVIEW }));
   });
   fireEvent.click(screen.getByRole("checkbox", { name: /Hat/ }));
   expect(frame().contentWindow).toBe(win);

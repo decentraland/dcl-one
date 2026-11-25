@@ -153,6 +153,20 @@ describe("coming back to options seen before", () => {
 });
 
 describe("changes", () => {
+  test("under Unity two quick changes: the first scene's answer does not uncover the second", () => {
+    const { change } = stage();
+    fromPreview({ type: "ready" });
+    fromPreview({ type: "load", payload: { renderer: "unity" } });
+    expect(cover()).toBeNull();
+
+    change({ ...OUTFIT, urns: [HAT] });
+    change({ ...OUTFIT, urns: [HOODIE, HAT] });
+    fromPreview({ type: "load", payload: { renderer: "unity" } });
+    expect(cover()).not.toBeNull();
+    fromPreview({ type: "load", payload: { renderer: "unity" } });
+    expect(cover()).toBeNull();
+  });
+
   test("a new Unity mode is a new frame, covered until it draws", () => {
     const view = render(<AvatarStage options={OUTFIT} unityMode="builder" cover={<span data-testid="cover" />} />);
     const first = frame()!.contentWindow;

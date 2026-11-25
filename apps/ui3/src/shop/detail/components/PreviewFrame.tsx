@@ -4,7 +4,7 @@
 
 import { useEffect, useRef, useState } from "react";
 
-import "./previewframe.css";
+import styles from "./PreviewFrame.module.css";
 
 const MAINNET_PREVIEW = "https://wearable-preview.decentraland.org";
 const TESTNET_PREVIEW = "https://wearable-preview.decentraland.zone";
@@ -108,8 +108,29 @@ function updateFor(mount: Mount, options: PreviewFrameOptions): Record<string, u
   return update;
 }
 
-/** What one mounted iframe has said and been told. A new mount starts a new one, so the retired iframe's are dropped. */
-type Live = { n: number; ready: boolean; answered: boolean; delivered: string; held: Set<string> };
+/**
+ * How long an update under Unity waits for the answer to the scene before it. Unity answers every reload with a `load`,
+ * a superseded one included (Babylon drops those itself), so it is sent one scene at a time to tell which scene an answer
+ * is for. A change only to the camera reloads nothing and gets no answer, and a slow scene should not hold the next one
+ * for long: past this the update goes anyway.
+ */
+export const UNITY_ANSWER_WAIT_MS = 3_000;
+
+/**
+ * What one mounted iframe has said and been told. A new mount starts a new one, so the retired iframe's are dropped.
+ * `awaiting`: the options of the scene Unity is drawing and has not answered for, sent at `sentAt`.
+ */
+type Live = { n: number; ready: boolean; answered: boolean; delivered: string; held: Set<string>; awaiting: string | null; sentAt: number };
+
+const liveFor = (n: number, serialized: string, options: PreviewFrameOptions): Live => ({
+  n,
+  ready: false,
+  answered: false,
+  delivered: serialized,
+  held: setKeys(options),
+  awaiting: serialized,
+  sentAt: performance.now(),
+});
 
 type Props = {
   options: PreviewFrameOptions;
@@ -134,9 +155,14 @@ export default function PreviewFrame({ options, replay = 0, loadTimeoutMs, onLoa
   const [mount, setMount] = useState(() => mountWith(0, options));
   const origin = new URL(mount.base).origin;
   // `held`: the options a Unity preview holds a value for, the mount URL's plus every one an update has set since.
-  const live = useRef<Live>({ n: 0, ready: false, answered: false, delivered: serialized, held: setKeys(options) });
+  const live = useRef<Live>(liveFor(0, serialized, options));
+  // The options the page shows now: an answer counts only for them.
+  const latest = useRef(serialized);
+  latest.current = serialized;
   const callbacks = useRef({ onLoad, onError });
   callbacks.current = { onLoad, onError };
+  const retry = useRef<number | undefined>(undefined);
+  useEffect(() => () => window.clearTimeout(retry.current), []);
 
   const post = (type: string, payload: unknown) => frame.current?.contentWindow?.postMessage({ type, payload }, origin);
   const push = useRef(() => undefined as void);
@@ -145,12 +171,26 @@ export default function PreviewFrame({ options, replay = 0, loadTimeoutMs, onLoa
     if (now.n !== mount.n || now.delivered === serialized) return;
     if (needsMount(mount, now.held, options)) {
       // The iframe retires here, not when React replaces it: nothing it says from now on is the new mount's.
-      live.current = { n: mount.n + 1, ready: false, answered: false, delivered: serialized, held: setKeys(options) };
+      live.current = liveFor(mount.n + 1, serialized, options);
       setMount(mountWith(mount.n + 1, options));
       return;
     }
     if (!now.ready) return;
+    if (mount.options.unity === true && now.awaiting !== null) {
+      // Unity applies no update before its first scene has loaded, so until that scene answers (or the load timeout
+      // gives up on it) an update waits for it however long it takes.
+      if (!now.answered) return;
+      const waited = performance.now() - now.sentAt;
+      if (waited < UNITY_ANSWER_WAIT_MS) {
+        // Sent once the scene before it answers, or once the wait is over.
+        window.clearTimeout(retry.current);
+        retry.current = window.setTimeout(() => push.current(), UNITY_ANSWER_WAIT_MS - waited);
+        return;
+      }
+    }
     now.delivered = serialized;
+    now.awaiting = serialized;
+    now.sentAt = performance.now();
     const update = updateFor(mount, options);
     for (const key of setKeys(update as PreviewFrameOptions)) now.held.add(key);
     post("update", { options: update });
@@ -164,17 +204,26 @@ export default function PreviewFrame({ options, replay = 0, loadTimeoutMs, onLoa
       const { type, payload } = (event.data ?? {}) as { type?: string; payload?: { renderer?: string; message?: string } };
       if (type === "ready") {
         // Every boot, the first or a reload of the frame, starts again from the URL: what it has lost goes again.
+        // What it draws first is the mount URL's scene.
         now.ready = true;
         now.delivered = mount.serialized;
         now.held = setKeys(mount.options);
+        now.awaiting = mount.serialized;
+        now.sentAt = performance.now();
         push.current();
-      } else if (type === "load") {
+      } else if (type === "load" || type === "error") {
         now.answered = true;
-        const renderer = payload?.renderer;
-        callbacks.current.onLoad(renderer === "unity" || renderer === "babylon" ? renderer : undefined);
-      } else if (type === "error") {
-        now.answered = true;
-        callbacks.current.onError(payload?.message ?? "");
+        // Under Unity an answer is for the scene it was drawing; one for options the page has moved on from is not the
+        // page's. Babylon answers only for the scene it was last sent (Preview.tsx drops a superseded one).
+        const answeredFor = now.awaiting;
+        now.awaiting = null;
+        if (mount.options.unity !== true || answeredFor === null || answeredFor === latest.current) {
+          if (type === "load") {
+            const renderer = payload?.renderer;
+            callbacks.current.onLoad(renderer === "unity" || renderer === "babylon" ? renderer : undefined);
+          } else callbacks.current.onError(payload?.message ?? "");
+        }
+        push.current();
       }
     };
     window.addEventListener("message", onMessage);
@@ -229,5 +278,5 @@ export default function PreviewFrame({ options, replay = 0, loadTimeoutMs, onLoa
     if (live.current.n === mount.n && live.current.ready) post("controller_request", { id: `shop-item-preview-${replay}`, namespace: "emote", method: "play", params: [] });
   }, [replay]);
 
-  return <iframe key={mount.n} ref={frame} className="shop-preview__frame" src={mount.src} allow="autoplay" title="3D preview" />;
+  return <iframe key={mount.n} ref={frame} className={styles.frame} src={mount.src} allow="autoplay" title="3D preview" />;
 }

@@ -5,7 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createShopClient } from "@shop/api/shop";
 import { shopCart } from "../../cart/store";
 import { catalogClient, catalogTransport, COLLECTION, defaultAnswers, ShopHarness, type CatalogAnswers, type CatalogScenario } from "../fixtures";
-import OutfitDetail from "./OutfitDetail";
+import OutfitDetail, { readEmoteDefinition } from "./OutfitDetail";
 
 const OUTFIT = {
   id: "0f1e2d3c-4b5a-4968-8778-695a4b3c2d1e",
@@ -156,5 +156,40 @@ describe("the outfit's 3D preview", () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+});
+
+describe("reading an outfit emote's definition", () => {
+  it("fails past its deadline rather than answer null, so the query keeps nothing for the next visit", async () => {
+    vi.useFakeTimers();
+    try {
+      preview.stall = true;
+      const read = readEmoteDefinition("urn:decentraland:matic:collections-v2:0x0:8", new AbortController().signal);
+      const settled = read.then(
+        () => null,
+        (error: unknown) => error,
+      );
+      await vi.advanceTimersByTimeAsync(5_000);
+      const error = (await settled) as Error | null;
+      expect(preview.aborted).toBe(true);
+      expect(error).toBeInstanceOf(Error);
+      // The query waits on an AbortError instead of ending (query.ts): this must not be one.
+      expect(error!.name).not.toBe("AbortError");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("answers what the read answers when it is in time, and null when the query itself cancels it", async () => {
+    const read = readEmoteDefinition("urn:decentraland:matic:collections-v2:0x0:8", new AbortController().signal);
+    await waitFor(() => expect(preview.emote).not.toBeNull());
+    preview.emote!({ base64: "e30=", loop: true });
+    await expect(read).resolves.toEqual({ base64: "e30=", loop: true });
+
+    preview.stall = true;
+    const query = new AbortController();
+    const cancelled = readEmoteDefinition("urn:decentraland:matic:collections-v2:0x0:8", query.signal);
+    query.abort();
+    await expect(cancelled).resolves.toBeNull();
   });
 });

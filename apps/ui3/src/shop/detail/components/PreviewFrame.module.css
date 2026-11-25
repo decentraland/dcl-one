@@ -1,5 +1,5 @@
 /* The wearable-preview iframe fills the stage it is placed in, which positions it; its scene draws without a background. */
-.shop-preview__frame {
+.frame {
   position: absolute;
   inset: 0;
   width: 100%;

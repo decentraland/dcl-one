@@ -61,16 +61,26 @@ const COPY = {
 // The emote's definition is optional: past this the outfit draws with the emote's urn alone rather than wait on it.
 const EMOTE_DEFINITION_TIMEOUT_MS = 5_000;
 
-/** The emote's definition, or null when it cannot be read in time; the query's own signal still cancels it. */
-async function readEmoteDefinition(urn: string, signal: AbortSignal) {
+/**
+ * The emote's definition; the query's own signal still cancels it. A read past the deadline fails rather than answer
+ * null, so that answer is not kept for the next visit: the read is tried again then.
+ */
+export async function readEmoteDefinition(urn: string, signal: AbortSignal) {
   const deadline = new AbortController();
   const follow = () => deadline.abort();
   if (signal.aborted) follow();
   else signal.addEventListener("abort", follow, { once: true });
-  const timer = setTimeout(follow, EMOTE_DEFINITION_TIMEOUT_MS);
+  let late = false;
+  const timer = setTimeout(() => {
+    late = true;
+    deadline.abort();
+  }, EMOTE_DEFINITION_TIMEOUT_MS);
   try {
     // A read cut short, by the deadline or the query, comes back null (fetchEmoteBase64).
-    return await fetchEmoteBase64(urn, undefined, deadline.signal);
+    const playback = await fetchEmoteBase64(urn, undefined, deadline.signal);
+    // Not an AbortError: the query keeps waiting on those (query.ts), and this one should end the wait.
+    if (late) throw new Error("The emote's definition did not arrive in time.");
+    return playback;
   } finally {
     clearTimeout(timer);
     signal.removeEventListener("abort", follow);
@@ -278,6 +288,7 @@ function OutfitContent({ outfit }: { outfit: Outfit }) {
   // time leaves the emote's urn alone, where Babylon can still find it.
   const playbackQ = useShopQuery(emoteUrn ? ["emote-base64", emoteUrn] : null, (signal) => readEmoteDefinition(emoteUrn!, signal), { staleMs: 30 * 60_000 });
   const playback = playbackQ.data ?? null;
+  // Failed or late, the outfit draws with the emote's urn alone (isLoading is false once the read has failed).
   const emotePending = !!emoteUrn && playbackQ.isLoading;
   const thumb = thumbnailUrl(outfit.thumbnailHash);
   const [webgl, setWebgl] = useState(false);
