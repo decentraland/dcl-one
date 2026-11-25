@@ -530,10 +530,11 @@ async fn serve_control_positions(shared: &Shared, client: &async_nats::Client) {
         let enabled = shared.control_enabled.notified();
         tokio::pin!(enabled);
         enabled.as_mut().enable();
-        match shared.control.lock() {
-            Ok(control) if control.is_enabled() => break,
-            Ok(_) => {}
-            Err(_) => return,
+        let enabled_now = shared.control.lock().ok().map(|c| c.is_enabled());
+        match enabled_now {
+            Some(true) => break,
+            Some(false) => {}
+            None => return control_poisoned().await,
         }
         enabled.await;
     }
@@ -554,24 +555,32 @@ async fn serve_control_positions(shared: &Shared, client: &async_nats::Client) {
         use crate::protocol::bus::control_position::{ControlPosition, LegacyRoomIntent};
         match message.subject.as_str() {
             crate::protocol::bus::control_position::SUBJECT => {
-                if let Some(update) = ControlPosition::decode(&message.payload) {
-                    let Ok(mut control) = shared.control.lock() else {
-                        return;
-                    };
-                    control.ingest(update);
+                if let Some(update) = ControlPosition::decode(&message.payload)
+                    && shared.control.lock().map(|mut c| c.ingest(update)).is_err()
+                {
+                    return control_poisoned().await;
                 }
             }
             LegacyRoomIntent::SUBJECT => {
-                if let Some(update) = LegacyRoomIntent::decode(&message.payload) {
-                    let Ok(mut control) = shared.control.lock() else {
-                        return;
-                    };
-                    control.ingest_intent(update);
+                if let Some(update) = LegacyRoomIntent::decode(&message.payload)
+                    && shared
+                        .control
+                        .lock()
+                        .map(|mut c| c.ingest_intent(update))
+                        .is_err()
+                {
+                    return control_poisoned().await;
                 }
             }
             _ => {}
         }
     }
+}
+
+// Park instead of returning so the other feed tasks keep the link up.
+async fn control_poisoned() {
+    tracing::error!("control positions lock poisoned; ingest stopped");
+    std::future::pending().await
 }
 
 fn snapshot_change(
