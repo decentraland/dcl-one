@@ -637,14 +637,19 @@ pub async fn get_search_suggest(
     if query_terms(&search).is_empty() {
         return ([(CACHE_CONTROL, SUGGEST_CACHE)], Json(empty)).into_response();
     }
-    // Read before the snapshot opens: neither pool work nor a subgraph call
-    // runs while it holds its connection.
+    // Pool work first: the read below holds its connection.
     let rate = match items::mana_usd_rate(&state).await {
         Ok(rate) => rate,
         Err(envelope) => return envelope,
     };
+    // The gate first, on a short read: a refusal answers without waiting on
+    // the sales reader's subgraph call, which runs with no connection held.
+    if let Err(envelope) = items::priced_read(&state, None).await {
+        return envelope;
+    }
     let sales = collection_sales(&state).await;
-    // One snapshot answers the three sections: the items carry prices.
+    // One snapshot answers the three sections: the items carry prices. It is
+    // opened again, so its readiness is checked again.
     let mut read = match items::priced_read(&state, None).await {
         Ok(read) => read,
         Err(envelope) => return envelope,

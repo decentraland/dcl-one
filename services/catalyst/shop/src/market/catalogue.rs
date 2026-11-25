@@ -61,7 +61,11 @@ pub enum Purpose {
 /// check and tag write share one snapshot).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Access {
+    /// `REPEATABLE READ, READ ONLY`.
     ReadOnly,
+    /// `SERIALIZABLE`: two writers that each read and replace the same rows
+    /// (a tag's set, even an empty one) cannot both commit; one fails with
+    /// 40001 and the caller starts it again.
     ReadWrite,
 }
 
@@ -547,7 +551,7 @@ pub async fn begin_checked(
     let mut tx = state.pool.begin().await.map_err(failed)?;
     sqlx::query(match access {
         Access::ReadOnly => "SET TRANSACTION ISOLATION LEVEL REPEATABLE READ, READ ONLY",
-        Access::ReadWrite => "SET TRANSACTION ISOLATION LEVEL REPEATABLE READ",
+        Access::ReadWrite => "SET TRANSACTION ISOLATION LEVEL SERIALIZABLE",
     })
     .execute(&mut *tx)
     .await

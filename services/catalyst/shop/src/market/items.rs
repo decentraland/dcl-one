@@ -1183,23 +1183,22 @@ pub async fn get_trendings(
         .unwrap_or(TRENDING_DEFAULT_SIZE);
     let include_social_emotes =
         p.get_string("includeSocialEmotes", None).as_deref() != Some("false");
-    // The sales are a subgraph call: read before the snapshot opens, so no
-    // connection waits on it; the gate's refusal still answers first.
-    let sales = if size > 0 {
-        recent_sales(&state, TRENDING_WINDOW_DAYS).await
-    } else {
-        Ok(Vec::new())
-    };
-    let mut read = match priced_read(&state, None).await {
-        Ok(read) => read,
-        Err(envelope) => return envelope,
-    };
+    // The gate first, on a short read: a refusal answers without waiting on
+    // the sales reader's subgraph call, which runs with no connection held;
+    // the read is then opened again, rechecked, for the rows.
+    if let Err(envelope) = priced_read(&state, None).await {
+        return envelope;
+    }
     let cache_control = [(CACHE_CONTROL, "public,max-age=3600,s-maxage=3600")];
     if size <= 0 {
         return (cache_control, Json(json!({ "data": [] }))).into_response();
     }
-    let sales = match sales {
+    let sales = match recent_sales(&state, TRENDING_WINDOW_DAYS).await {
         Ok(s) => s,
+        Err(envelope) => return envelope,
+    };
+    let mut read = match priced_read(&state, None).await {
+        Ok(read) => read,
         Err(envelope) => return envelope,
     };
     let mut counts: HashMap<(String, String), i64> = HashMap::new();

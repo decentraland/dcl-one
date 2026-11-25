@@ -3306,12 +3306,21 @@ The statement is uncached and probes primary keys only:
 `items` by their `(network, …)` keys, and the first `collection_event` past
 the publication by `(network, block_number, log_index)`.
 
-The transaction holds a pooled connection. So a reader makes its external
-calls (the sales reader's subgraph query, the EIP-1654 signer check) and any
-pool work that reads no catalogue row before it opens the transaction or
-after it releases it, and reuses the transaction for what does read the
-catalogue. A memo hit answers without waiting, and a request never waits on
-another's memo fetch while it holds the connection.
+The transaction holds a pooled connection, so a reader never waits on
+anything else while it holds it:
+- pool work that reads no catalogue row runs before the transaction opens or
+  after it is released; what does read the catalogue reuses the transaction;
+- a route with an external call (the sales reader's subgraph query, the
+  EIP-1654 signer check) first opens a short read for the gate and its page
+  memo, so a refusal or a warm page answers at once. On a miss it releases
+  the read for the call, then opens it again, checking readiness again, and
+  files the page under the copy that read saw;
+- a request never waits on another's memo fetch while it holds the
+  connection.
+
+A read that writes (the campaign tags) runs `SERIALIZABLE`: two replacements
+of one tag's set cannot both commit, even when the tag was empty, and the one
+that fails starts again on a new snapshot.
 
 These readers of the same tables are outside the gate, and read whichever
 source wrote the rows:

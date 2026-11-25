@@ -505,8 +505,10 @@ pub enum Replace {
 }
 
 /// [`set_tag_collections`] in a read-write catalogue read that commits. Two
-/// replacements of one tag at once conflict under `REPEATABLE READ` (40001):
-/// the one that loses starts again on a new snapshot, up to three attempts.
+/// replacements of one tag at once conflict under `SERIALIZABLE` (40001, on a
+/// write or at commit), whether or not the tag held rows: the one that loses
+/// starts again on a new snapshot, up to three attempts, so the stored set is
+/// always one request's whole set.
 pub async fn replace_tag_collections(
     state: &MarketplaceState,
     tag: &str,
@@ -584,6 +586,93 @@ pub fn builder_alias_router(state: SharedState) -> Router {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Two replacements of an empty tag with disjoint sets: neither deletes a
+    /// row, so only `SERIALIZABLE` makes them conflict. The stored set is one
+    /// request's whole set, never their union.
+    #[tokio::test]
+    async fn disjoint_replacements_of_an_empty_tag_keep_one_whole_set() {
+        let Some(pool) = crate::db::scratch::isolated_pool(4).await else {
+            return;
+        };
+        let (a, b) = (
+            "0x00000000000000000000000000000000000000a1".to_string(),
+            "0x00000000000000000000000000000000000000b2".to_string(),
+        );
+        super::super::market::mirrors::collections::upsert(
+            &pool,
+            super::super::market::graph::Network::Matic,
+            137,
+            false,
+            &[
+                super::super::market::mirrors::collections::fixture(&a, "A", &a, true),
+                super::super::market::mirrors::collections::fixture(&b, "B", &b, true),
+            ],
+        )
+        .await
+        .unwrap();
+        sqlx::query(
+            "INSERT INTO shop.mirror_state (mirror, network, source_url, last_complete_pass_at) \
+             SELECT m, 'matic', 'test', timezone('UTC', now()) FROM unnest(ARRAY['collections', 'items']) m",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        let state = std::sync::Arc::new(MarketplaceState::new(
+            pool.clone(),
+            crate::http::Outbound::for_tests(),
+            super::super::market::Settings::for_tests(),
+        ));
+        let stored = |tag: &'static str| {
+            let pool = pool.clone();
+            async move {
+                sqlx::query_scalar::<_, String>(
+                    "SELECT contract_address FROM shop.campaign_collections WHERE tag = $1 ORDER BY 1",
+                )
+                .bind(tag)
+                .fetch_all(&pool)
+                .await
+                .unwrap()
+            }
+        };
+
+        // By hand: the first writes A and holds it uncommitted while the
+        // second replaces the set with B whole; the first cannot commit.
+        let mut first = catalogue::begin(
+            &state,
+            Purpose::Describe,
+            &[Mirror::Collections],
+            None,
+            Access::ReadWrite,
+        )
+        .await
+        .ok()
+        .unwrap();
+        set_tag_collections(&mut first.tx, "fresh", std::slice::from_ref(&a), "first")
+            .await
+            .unwrap();
+        assert!(
+            replace_tag_collections(&state, "fresh", std::slice::from_ref(&b), "second")
+                .await
+                .is_ok()
+        );
+        let err = first.tx.commit().await.unwrap_err();
+        assert!(serialization_failure(&err), "{err}");
+        assert_eq!(stored("fresh").await, std::slice::from_ref(&b));
+
+        // Through the retrying writer, at once: each round keeps one set.
+        for tag in ["r0", "r1", "r2", "r3", "r4", "r5"] {
+            let (x, y) = tokio::join!(
+                replace_tag_collections(&state, tag, std::slice::from_ref(&a), "x"),
+                replace_tag_collections(&state, tag, std::slice::from_ref(&b), "y"),
+            );
+            assert!(x.is_ok() && y.is_ok(), "{tag}: both requests land");
+            let set = stored(tag).await;
+            assert!(set == [a.clone()] || set == [b.clone()], "{tag}: {set:?}");
+        }
+        drop(state);
+        pool.close().await;
+    }
 
     /// A tag write that conflicts with another committed meanwhile (40001
     /// under `REPEATABLE READ`) starts again on a new snapshot and lands.

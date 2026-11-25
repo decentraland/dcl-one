@@ -162,10 +162,12 @@ fn bearer(token: &str) -> HeaderMap {
 /// One GraphQL endpoint answering every entity the mirrors and readers ask
 /// for from canned rows: `items` and `collections` by their keysets, the
 /// rest by `first`/`skip`/`id_gt`. `fail_next_items_page` makes every
-/// items page past the first answer 500 (through the client's retries) until cleared.
+/// items page past the first answer 500 (through the client's retries) until cleared;
+/// `hang` makes every request wait without an answer.
 struct FakeGraph {
     rows: std::sync::Mutex<BTreeMap<&'static str, Vec<Value>>>,
     fail_next_items_page: AtomicBool,
+    hang: AtomicBool,
     requests: std::sync::Mutex<Vec<String>>,
 }
 
@@ -174,6 +176,7 @@ impl FakeGraph {
         Arc::new(Self {
             rows: std::sync::Mutex::new(BTreeMap::new()),
             fail_next_items_page: AtomicBool::new(false),
+            hang: AtomicBool::new(false),
             requests: std::sync::Mutex::new(Vec::new()),
         })
     }
@@ -328,6 +331,9 @@ async fn serve_graph(up: Arc<FakeGraph>) -> String {
         State(up): State<Arc<FakeGraph>>,
         axum::Json(body): axum::Json<Value>,
     ) -> axum::response::Response {
+        if up.hang.load(Ordering::SeqCst) {
+            std::future::pending::<()>().await;
+        }
         let query = body.get("query").and_then(Value::as_str).unwrap_or("");
         let vars = body.get("variables").cloned().unwrap_or(json!({}));
         match up.answer(query, &vars) {
@@ -2654,8 +2660,8 @@ async fn seed_item_row(pool: &PgPool, contract: &str, item_id: &str, creator: &s
 }
 
 /// The routes that read the sales reader (a per-network subgraph query) or
-/// the signer's EIP-1654 call make that call before their catalogue snapshot
-/// opens: with the subgraph hanging, the requests waiting on it hold no pooled
+/// the signer's EIP-1654 call make that call with no catalogue read open:
+/// with the subgraph hanging, the requests waiting on it hold no pooled
 /// connection, and the other catalogue routes keep answering on a pool of two.
 #[tokio::test]
 async fn a_hanging_subgraph_holds_no_catalogue_connection() {
@@ -5160,29 +5166,38 @@ async fn lambdas_never_read_a_subgraph_for_a_network_the_index_owns() {
     own.drop().await;
 }
 
-/// Every gated route follows an owned network's publication: all answer a
-/// fresh one; a publication older than the money window refuses the priced
-/// and authorizing routes (`collections-index`) while the descriptive ones
-/// answer; a rewind refuses them all. The creator directory is filed under
-/// the sources that serve each network, so a hand-back files it anew.
-#[tokio::test]
-async fn every_gated_route_follows_an_owned_networks_publication() {
-    use super::readers::Ttl;
-    let Some(pool) = crate::db::scratch::isolated_pool(4).await else {
-        return;
-    };
+/// A catalogue whose Polygon the collections index owns, published now at
+/// block 100: one approved Polygon item, both mirrors' passes, local trades,
+/// a MANA price, and both subgraph readers on `up` (one sale of the item).
+async fn owned_polygon_market(up: &Arc<FakeGraph>) -> Option<(PgPool, SharedState, String)> {
+    let pool = crate::db::scratch::isolated_pool(4).await?;
+    let url = serve_graph(up.clone()).await;
     let state = Arc::new(super::MarketplaceState::new(
         pool.clone(),
         crate::http::Outbound::for_tests(),
-        market_settings("http://127.0.0.1:9", "http://127.0.0.1:9", true),
+        market_settings(&url, &url, true),
     ));
+    state.test_allow_loopback.store(true, Ordering::Relaxed);
     super::trade_events::tests::publish_cursors(&pool).await;
     let polygon = contract_of(&tag(), 1);
     seed_item_row(&pool, &polygon, "0", CREATOR).await;
-    sqlx::query("UPDATE shop.items SET search_is_collection_approved = true")
-        .execute(&pool)
-        .await
-        .unwrap();
+    up.set(
+        "sales",
+        vec![json!({
+            "id": "sale-1", "searchItemId": "0", "searchContractAddress": polygon,
+            "price": "1000000000000000000", "timestamp": "1", "type": "mint",
+            "seller": CREATOR, "buyer": WALLET_A,
+            "item": { "id": format!("{polygon}-0"), "creator": CREATOR }
+        })],
+    );
+    // On sale in the store, so the trending rail has its row.
+    sqlx::query(
+        "UPDATE shop.items SET search_is_collection_approved = true, search_is_store_minter = true, \
+                price = 1000000000000000000",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
     sqlx::query(
         "INSERT INTO shop.mirror_state (mirror, network, source_url, last_complete_pass_at) \
          SELECT m, n, 'test', timezone('UTC', now()) \
@@ -5210,6 +5225,86 @@ async fn every_gated_route_follows_an_owned_networks_publication() {
     .execute(&pool)
     .await
     .unwrap();
+    Some((pool, state, polygon))
+}
+
+/// The routes that call the sales reader or the signer check decide the gate
+/// and their page memo first, on a short read: with the subgraph stalled and
+/// the sales memo lapsed, a warm page answers from its memo and an unready
+/// publication answers the index's 503, well inside a short request deadline.
+#[tokio::test]
+async fn a_stalled_sales_read_never_masks_the_gate_or_a_warm_page() {
+    use super::readers::Ttl;
+    let up = FakeGraph::new();
+    let Some((pool, state, _)) = owned_polygon_market(&up).await else {
+        return;
+    };
+    let app = || market_router(state.clone());
+    let within = |uri: &'static str| {
+        let app = app();
+        async move {
+            tokio::time::timeout(Duration::from_secs(3), get(app, uri))
+                .await
+                .unwrap_or_else(|_| panic!("{uri} waited on the stalled subgraph"))
+        }
+    };
+    let warm = ["/v3/catalog/creators", "/v3/catalog/trending?first=3"];
+    let mut pages = Vec::new();
+    for uri in warm {
+        let (status, body) = get(app(), uri).await;
+        assert_eq!(status, StatusCode::OK, "{uri}: {body}");
+        pages.push(body);
+    }
+    assert_eq!(
+        pages[1]["data"].as_array().map(Vec::len),
+        Some(1),
+        "{}",
+        pages[1]
+    );
+
+    up.hang.store(true, Ordering::SeqCst);
+    state.readers.forget_all(Ttl::M10);
+    for (uri, page) in warm.into_iter().zip(&pages) {
+        let (status, body) = within(uri).await;
+        assert_eq!(status, StatusCode::OK, "{uri}: {body}");
+        assert_eq!(body["data"], page["data"], "{uri} answers its warm page");
+    }
+
+    sqlx::query("UPDATE shop.chain_cursor SET folded_block = NULL, folded_at = NULL WHERE indexer = 'collections'")
+        .execute(&pool)
+        .await
+        .unwrap();
+    for uri in [
+        "/v1/trendings",
+        "/v3/catalog/trending?first=3",
+        "/v3/catalog/creators",
+        "/v3/catalog/suggested?first=2",
+        "/v3/catalog/suggest?search=item",
+        "/v1/catalog?first=1",
+    ] {
+        let (status, body) = within(uri).await;
+        assert_eq!(
+            (status, body["source"].as_str()),
+            (StatusCode::SERVICE_UNAVAILABLE, Some("collections-index")),
+            "{uri}: {body}"
+        );
+    }
+    drop(state);
+    pool.close().await;
+}
+
+/// Every gated route follows an owned network's publication: all answer a
+/// fresh one; a publication older than the money window refuses the priced
+/// and authorizing routes (503 `collections-index`) while the descriptive
+/// ones answer; a rewind refuses them all. The creator directory is filed
+/// under the sources that serve each network, so a hand-back files it anew.
+#[tokio::test]
+async fn every_gated_route_follows_an_owned_networks_publication() {
+    use super::readers::Ttl;
+    let up = FakeGraph::new();
+    let Some((pool, state, polygon)) = owned_polygon_market(&up).await else {
+        return;
+    };
     let app = || market_router(state.clone());
     let priced = [
         "/v1/catalog?first=1".to_string(),
@@ -5222,6 +5317,10 @@ async fn every_gated_route_follows_an_owned_networks_publication() {
         "/v3/catalog/unified?groupBy=item".to_string(),
         format!("/v3/catalog/importable?seller={CREATOR}"),
         "/v3/catalog/suggest?search=item".to_string(),
+        "/v1/trendings".to_string(),
+        "/v3/catalog/trending?first=3".to_string(),
+        "/v3/catalog/suggested?first=2".to_string(),
+        "/v3/catalog/creators".to_string(),
     ];
     let descriptive = [
         "/v1/collections".to_string(),
@@ -5239,19 +5338,22 @@ async fn every_gated_route_follows_an_owned_networks_publication() {
         )
         .await
     };
-    let answer = |status: StatusCode, body: &Value| -> Option<String> {
-        (status != StatusCode::OK).then(|| body["source"].as_str().unwrap_or("?").to_string())
-    };
-    let mut got = Vec::new();
+    let index = (
+        StatusCode::SERVICE_UNAVAILABLE,
+        Some("collections-index".to_string()),
+    );
+    let refused =
+        |status: StatusCode, body: &Value| (status, body["source"].as_str().map(str::to_string));
     for uri in priced.iter().chain(&descriptive) {
         let (status, body) = get(app(), uri).await;
-        got.push((uri.clone(), answer(status, &body), body));
+        assert_eq!(status, StatusCode::OK, "a fresh publication: {uri}: {body}");
     }
     let (status, body) = import().await;
-    got.push(("import".into(), answer(status, &body), body));
-    for (uri, refused, body) in &got {
-        assert_eq!(refused, &None, "a fresh publication: {uri}: {body}");
-    }
+    assert_eq!(
+        status,
+        StatusCode::OK,
+        "a fresh publication: import: {body}"
+    );
 
     sqlx::query("UPDATE shop.chain_cursor SET folded_at = timezone('UTC', now()) - interval '2 hours' WHERE indexer = 'collections'")
         .execute(&pool)
@@ -5260,16 +5362,16 @@ async fn every_gated_route_follows_an_owned_networks_publication() {
     for uri in &priced {
         let (status, body) = get(app(), uri).await;
         assert_eq!(
-            answer(status, &body).as_deref(),
-            Some("collections-index"),
+            refused(status, &body),
+            index,
             "an old publication: {uri}: {body}"
         );
     }
     let (status, body) = import().await;
     assert_eq!(
-        answer(status, &body).as_deref(),
-        Some("collections-index"),
-        "{body}"
+        refused(status, &body),
+        index,
+        "an old publication: import: {body}"
     );
     for uri in &descriptive {
         let (status, body) = get(app(), uri).await;
@@ -5286,18 +5388,10 @@ async fn every_gated_route_follows_an_owned_networks_publication() {
         .unwrap();
     for uri in priced.iter().chain(&descriptive) {
         let (status, body) = get(app(), uri).await;
-        assert_eq!(
-            answer(status, &body).as_deref(),
-            Some("collections-index"),
-            "a rewind: {uri}: {body}"
-        );
+        assert_eq!(refused(status, &body), index, "a rewind: {uri}: {body}");
     }
     let (status, body) = import().await;
-    assert_eq!(
-        answer(status, &body).as_deref(),
-        Some("collections-index"),
-        "{body}"
-    );
+    assert_eq!(refused(status, &body), index, "a rewind: import: {body}");
 
     // The creator directory: filed under the index serving Polygon, then
     // anew under the mirrors once Polygon is handed back.

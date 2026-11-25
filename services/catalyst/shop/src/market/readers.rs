@@ -201,6 +201,12 @@ impl Caches {
         self.map(ttl).get_fresh(&key.to_string()).is_some()
     }
 
+    /// Drops every answer under `ttl`, as their expiry would.
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn forget_all(&self, ttl: Ttl) {
+        self.map(ttl).clear();
+    }
+
     #[cfg(any(test, feature = "test-support"))]
     pub fn clear(&self) {
         for m in [&self.s30, &self.s60, &self.m5, &self.m10, &self.m15] {

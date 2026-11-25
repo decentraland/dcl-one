@@ -1237,21 +1237,20 @@ pub async fn trending_items(
 /// creator (the reader's `item.creator`) so primary mints count; floors keep
 /// a thin window out of a revenue ranking and a one-hit month with nothing to
 /// browse off the rail. `sales` is [`recent_sales`] over the clamped `days`,
-/// read before the snapshot opened; its failure answers only on a memo miss.
+/// read with no connection held.
 pub async fn top_creators(
     state: &MarketplaceState,
     read: &mut CatalogueRead,
     first: Option<i64>,
     days: Option<i64>,
-    sales: Result<Vec<Value>, Response>,
+    sales: Vec<Value>,
 ) -> Result<Vec<TopCreator>, Response> {
+    let key = top_creators_key(first, days, &read.key());
     let first = top_creators_clamp_first(first);
     let days = top_creators_clamp_days(days);
     let min_sales = top_creators_min_sales(days);
-    let key = format!("creators:{first}:{days}:{}", read.key());
     let conn = &mut *read.tx;
     let value = cached(state, Ttl::M15, key, || async move {
-        let sales = sales.map_err(|_| "sales reader unavailable".to_string())?;
         let mut ranked: HashMap<String, (u128, i64)> = HashMap::new();
         for sale in &sales {
             let Some(creator) = readers::at(sale, "item/creator").and_then(Value::as_str) else { continue };
@@ -1283,7 +1282,20 @@ pub async fn top_creators(
     })
     .await
     .map_err(|e| readers::upstream_failed("/v3/catalog/creators", &e))?;
-    serde_json::from_value((*value).clone()).map_err(|_| super::internal_server_error())
+    creators_of(&value)
+}
+
+/// The creators memo's key for a read of `copy`.
+fn top_creators_key(first: Option<i64>, days: Option<i64>, copy: &str) -> String {
+    format!(
+        "creators:{}:{}:{copy}",
+        top_creators_clamp_first(first),
+        top_creators_clamp_days(days)
+    )
+}
+
+fn creators_of(value: &Value) -> Result<Vec<TopCreator>, Response> {
+    serde_json::from_value(value.clone()).map_err(|_| super::internal_server_error())
 }
 
 pub async fn get_shop_catalog(
@@ -1511,37 +1523,57 @@ pub async fn get_trending_catalog(
         trending_clamp_first(req.first),
         trending_clamp_days(req.days),
     );
-    // Read before the snapshot opens: neither pool work nor a subgraph call
-    // runs while it holds its connection. A sales failure answers only on a
-    // memo miss, after the gate.
+    // Pool work first: the reads below hold their connection.
     let rate = match mana_usd_rate(&state).await {
         Ok(rate) => rate,
         Err(envelope) => return envelope,
     };
-    let sales = recent_sales(&state, days).await;
-    let mut read = match priced_read(&state, None).await {
+    // As the browse memo, only over the rails' filters: free text a client varies reads fresh.
+    let key_of = |copy: String| {
+        rail_filters(&req.filters.base)
+            .then(|| format!("trending:{first}:{days}:{:?}:{copy}", req.filters))
+    };
+    // The gate and the page memo first, on a short read: a refusal or a warm
+    // page answers without waiting on the sales reader's subgraph call.
+    let read = match priced_read(&state, None).await {
         Ok(read) => read,
         Err(r) => return r,
     };
-    let (copy, sources) = (read.key(), read.sources());
-    let (st, flt, rd) = (&*state, &req.filters, &mut read);
-    let page = || async move {
-        let sales = sales?;
-        let data = trending_items(st, rd, Some(first), &sales, flt, rate).await?;
-        body_of(TrendingResponseBody { data }).map_err(IntoResponse::into_response)
+    let (key, sources) = (key_of(read.key()), read.sources());
+    drop(read);
+    let warm = key
+        .as_deref()
+        .and_then(|key| state.readers.fresh(Ttl::S30, key));
+    let (body, directory) = match warm {
+        Some(body) => (Ok(body), directory_snapshot(&state, &sources).await),
+        None => {
+            // A miss: the sales without a connection, then the read again,
+            // rechecked, and the page filed under the copy it read.
+            let sales = match recent_sales(&state, days).await {
+                Ok(sales) => sales,
+                Err(r) => return r,
+            };
+            let mut read = match priced_read(&state, None).await {
+                Ok(read) => read,
+                Err(r) => return r,
+            };
+            let (key, sources) = (key_of(read.key()), read.sources());
+            let (st, flt, rd, sales) = (&*state, &req.filters, &mut read, &sales);
+            let page = || async move {
+                let data = trending_items(st, rd, Some(first), sales, flt, rate).await?;
+                body_of(TrendingResponseBody { data }).map_err(IntoResponse::into_response)
+            };
+            tokio::join!(
+                async {
+                    match key {
+                        Some(key) => memoized(&state, Ttl::S30, key, page).await,
+                        None => page().await.map(Arc::new),
+                    }
+                },
+                directory_snapshot(&state, &sources)
+            )
+        }
     };
-    // As the browse memo, only over the rails' filters: free text a client varies reads fresh.
-    let key = rail_filters(&req.filters.base)
-        .then(|| format!("trending:{first}:{days}:{:?}:{copy}", req.filters));
-    let (body, directory) = tokio::join!(
-        async {
-            match key {
-                Some(key) => memoized(&state, Ttl::S30, key, page).await,
-                None => page().await.map(Arc::new),
-            }
-        },
-        directory_snapshot(&state, &sources)
-    );
     match body {
         Ok(body) => with_creator_profiles(&state, body, directory.as_deref(), Some(brief_cache())),
         Err(r) => r,
@@ -1640,28 +1672,30 @@ pub async fn get_suggested_catalog(
     headers: HeaderMap,
     Query(pairs): Query<Vec<(String, String)>>,
 ) -> Response {
-    // Read before the snapshot opens: neither pool work, the trending
-    // rail's subgraph call nor the signer's EIP-1654 call runs while it holds
-    // its connection. Their failures answer after the gate's.
+    // Pool work first: the reads below hold their connection.
     let rate = match mana_usd_rate(&state).await {
         Ok(rate) => rate,
         Err(envelope) => return envelope,
     };
-    let sales = recent_sales(&state, trending_clamp_days(None)).await;
-    let verified = super::signed::optional_signer(
+    // The gate first, on a short read: a refusal answers without waiting on
+    // the signer's EIP-1654 call, which runs with no connection held.
+    if let Err(r) = priced_read(&state, None).await {
+        return r;
+    }
+    let verified = match super::signed::optional_signer(
         state.eip1654.as_deref(),
         &headers,
         "get",
         "/v3/catalog/suggested",
     )
-    .await;
+    .await
+    {
+        Ok(v) => v.map(|a| a.to_lowercase()),
+        Err(e) => return e.into_response(),
+    };
     let mut read = match priced_read(&state, None).await {
         Ok(read) => read,
         Err(r) => return r,
-    };
-    let verified = match verified {
-        Ok(v) => v.map(|a| a.to_lowercase()),
-        Err(e) => return e.into_response(),
     };
     let p = Params::new(&pairs);
     let first = finite_i64(p.get_number("first", None));
@@ -1694,8 +1728,15 @@ pub async fn get_suggested_catalog(
     }
     let personalized = !data.is_empty();
     if data.len() < limit {
-        let sales = match sales {
+        // The trending rail needs the sales reader's subgraph call: the read
+        // is released for it and opened again, rechecked.
+        drop(read);
+        let sales = match recent_sales(&state, trending_clamp_days(None)).await {
             Ok(sales) => sales,
+            Err(r) => return r,
+        };
+        let mut read = match priced_read(&state, None).await {
+            Ok(read) => read,
             Err(r) => return r,
         };
         match trending_items(
@@ -1761,17 +1802,43 @@ pub async fn get_top_creators(
         finite_i64(p.get_number("first", None)),
         finite_i64(p.get_number("days", None)),
     );
-    // The sales are a subgraph call: read before the snapshot opens.
-    let sales = recent_sales(&state, top_creators_clamp_days(days)).await;
-    let mut read = match priced_read(&state, None).await {
+    // The gate and the ranking memo first, on a short read: a refusal or a
+    // warm ranking answers without waiting on the sales reader's subgraph
+    // call.
+    let read = match priced_read(&state, None).await {
         Ok(read) => read,
         Err(r) => return r,
     };
-    let sources = read.sources();
-    let (ranked, directory) = tokio::join!(
-        top_creators(&state, &mut read, first, days, sales),
-        directory_snapshot(&state, &sources)
-    );
+    let (key, sources) = (top_creators_key(first, days, &read.key()), read.sources());
+    drop(read);
+    let (ranked, directory) = match state.readers.fresh(Ttl::M15, &key) {
+        Some(value) => (
+            creators_of(&value),
+            directory_snapshot(&state, &sources).await,
+        ),
+        None => {
+            // A miss: the sales without a connection, then the read again,
+            // rechecked; the ranking is filed under the copy it read.
+            let sales = match recent_sales(&state, top_creators_clamp_days(days)).await {
+                Ok(sales) => sales,
+                Err(_) => {
+                    return readers::upstream_failed(
+                        "/v3/catalog/creators",
+                        "sales reader unavailable",
+                    );
+                }
+            };
+            let mut read = match priced_read(&state, None).await {
+                Ok(read) => read,
+                Err(r) => return r,
+            };
+            let sources = read.sources();
+            tokio::join!(
+                top_creators(&state, &mut read, first, days, sales),
+                directory_snapshot(&state, &sources)
+            )
+        }
+    };
     match ranked {
         Ok(mut data) => {
             let Some(directory) = directory.as_deref() else {
