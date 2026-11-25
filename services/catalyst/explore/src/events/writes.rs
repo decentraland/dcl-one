@@ -1670,6 +1670,57 @@ mod tests {
         (local, png)
     }
 
+    /// The `data.url` an upload answers is served by the routes serve merges
+    /// at the root (#1614).
+    #[tokio::test]
+    async fn an_uploaded_poster_is_served_at_the_url_the_upload_returns() {
+        let Some(pool) = crate::db::scratch::pool(6).await else {
+            return;
+        };
+        let dir = std::env::temp_dir().join(format!("poster-roundtrip-{}", uuid::Uuid::new_v4()));
+        let storage = Arc::new(crate::storage::Storage::from_config(&dir).await.unwrap());
+        let content = Arc::new(crate::content::ContentState::new(
+            pool.clone(),
+            crate::content::Settings::for_tests(),
+            storage.clone(),
+        ));
+        let api = crate::api::State::new(
+            crate::api::Settings::for_tests(crate::api::Sources::defaults()),
+            pool.clone(),
+            crate::http::Outbound::for_tests(),
+            content,
+        )
+        .await
+        .unwrap();
+        for public_url in [None, Some("http://localhost:8080")] {
+            let settings = Settings {
+                configured_public_base: Settings::configured_public_base_for(public_url),
+                user_writes_enabled: true,
+                ..Settings::for_tests()
+            };
+            let app = router(Arc::new(
+                ExploreState::new(pool.clone(), settings, None).with_storage(storage.clone()),
+            ))
+            .merge(crate::api::router(api.clone()));
+            for vertical in [false, true] {
+                let (local, png) = upload_native_poster(&pool, &app, vertical, public_url).await;
+                let path = format!("/events-assets-099ac00{local}");
+                let response = app
+                    .clone()
+                    .oneshot(Request::get(&path).body(Body::empty()).unwrap())
+                    .await
+                    .unwrap();
+                assert_eq!(response.status(), StatusCode::OK, "{path}");
+                assert_eq!(response.headers()["content-type"], "image/png");
+                let body = axum::body::to_bytes(response.into_body(), 1 << 20)
+                    .await
+                    .unwrap();
+                assert_eq!(body.as_ref(), png.as_slice(), "{path}");
+            }
+        }
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
     /// `withAuthProfile()`: the test wallet needs a profile this node holds to
     /// create events and RSVP.
     async fn ensure_profile(pool: &sqlx::PgPool) {
