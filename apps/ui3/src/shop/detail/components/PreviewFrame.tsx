@@ -1,8 +1,10 @@
-// The item page's avatar in the wearable-preview iframe, the page decentraland.org's Shop and Sites' creators preview
-// also embed. Its options travel in the URL it mounts with, and later changes as `update` messages (the
-// @dcl/schemas preview protocol), so a change of view reloads the scene in place instead of the iframe.
+// The Shop's avatars in the wearable-preview iframe, the page decentraland.org's Shop and Sites' creators preview also
+// embed. Its options travel in the URL it mounts with, and later changes as `update` messages (the @dcl/schemas
+// preview protocol), so a change of view or of items reloads the scene in place instead of the iframe.
 
 import { useEffect, useRef, useState } from "react";
+
+import "./previewframe.css";
 
 const MAINNET_PREVIEW = "https://wearable-preview.decentraland.org";
 const TESTNET_PREVIEW = "https://wearable-preview.decentraland.zone";
@@ -11,19 +13,34 @@ export type PreviewRendererName = "unity" | "babylon";
 
 export type PreviewFrameOptions = {
   urns: string[];
+  /** Item definitions sent whole, for what the preview cannot name: a published emote (lib/emoteBase64). */
+  base64s?: string[];
   profile?: string;
   bodyShape?: string;
+  skin?: string;
+  hair?: string;
+  eyes?: string;
   type?: "avatar" | "wearable";
   emote?: string;
   disableBackground?: boolean;
+  disableDefaultEmotes?: boolean;
+  disableFadeEffect?: boolean;
   wheelZoom?: number;
   wheelStart?: number;
   unity?: boolean;
-  unityMode?: "marketplace";
+  /** Unity's mode: `marketplace` for an item on an avatar, `builder` for a mannequin dressed in a set of items. */
+  unityMode?: "marketplace" | "builder";
 };
 
 // The option each prop travels as in the URL, where its name differs (decentraland-ui2's WearablePreview).
-const PARAM_NAMES: Record<string, string> = { urns: "urn", unityMode: "mode" };
+const PARAM_NAMES: Record<string, string> = { urns: "urn", base64s: "base64", unityMode: "mode" };
+
+/**
+ * How long Unity may go without drawing or failing before the page falls back to Babylon: when it cannot read its config
+ * it shows the error on its own canvas and tells the page nothing. The three.js preview it replaced allowed a load the
+ * same 45 seconds.
+ */
+export const UNITY_LOAD_TIMEOUT_MS = 45_000;
 
 /** The preview that resolves these items: a testnet item is only on the testnet peers the .zone preview reads. */
 export function previewBase(urns: string[]): string {

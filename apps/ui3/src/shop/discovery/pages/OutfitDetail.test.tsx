@@ -1,5 +1,5 @@
 
-import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { createShopClient } from "@shop/api/shop";
@@ -21,7 +21,20 @@ const OUTFIT = {
   published: true,
 };
 
+const preview = vi.hoisted(() => ({ emote: null as null | ((playback: { base64: string; loop: boolean } | null) => void) }));
+vi.mock("../../detail/lib/pickRenderer", () => ({ pickRenderer: () => ({ renderer: "full", reason: "connection-ok" }) }));
+vi.mock("../../detail/lib/emoteBase64", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../../detail/lib/emoteBase64")>()),
+  fetchEmoteBase64: () => new Promise((resolve) => (preview.emote = resolve)),
+}));
+vi.mock("../../../wearable-preview/WearablePreview", () => ({
+  default: () => {
+    throw new Error("the outfit page must not draw the three.js scene");
+  },
+}));
+
 beforeEach(() => {
+  preview.emote = null;
   vi.stubGlobal("fetch", vi.fn(async () => new Response("{}", { status: 200 })));
   shopCart.clear();
 });
@@ -89,5 +102,25 @@ describe("an outfit", () => {
   it("a node without the outfits service (legacy mode: no alias) says so instead of failing", async () => {
     outfit(undefined, "ok", true);
     expect(await screen.findByTestId("outfit-unavailable")).toHaveTextContent("Outfits are not served by this node yet.");
+  });
+});
+
+describe("the outfit's 3D preview", () => {
+  it("waits for the outfit's emote, then mounts once with it sent whole and the default emote off for a play-once clip", async () => {
+    vi.stubGlobal("WebGLRenderingContext", class {});
+    outfit();
+    await waitFor(() => expect(preview.emote).not.toBeNull());
+    expect(screen.queryByTitle("3D preview")).toBeNull();
+
+    act(() => preview.emote!({ base64: "eyJlbW90ZSI6dHJ1ZX0=", loop: false }));
+    const frame = (await screen.findByTitle("3D preview")) as HTMLIFrameElement;
+    const params = new URL(frame.src).searchParams;
+    const urns = params.getAll("urn");
+    expect(urns).toHaveLength(2);
+    expect(urns.every((urn) => urn.startsWith(`urn:decentraland:matic:collections-v2:${COLLECTION}:`))).toBe(true);
+    expect(params.getAll("base64")).toEqual(["eyJlbW90ZSI6dHJ1ZX0="]);
+    expect(params.has("emote")).toBe(false);
+    expect(params.get("disableDefaultEmotes")).toBe("true");
+    expect(params.get("profile")).toBe("default");
   });
 });
