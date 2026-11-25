@@ -8,14 +8,16 @@
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
-use alloy::signers::{Signer as _, local::PrivateKeySigner};
+use alloy::signers::local::PrivateKeySigner;
+use axum::Router;
+use axum::body::Body;
+use axum::http::{HeaderMap, Request, request};
+use serde_json::Value;
+use tower::ServiceExt;
 use uuid::Uuid;
 
 use crate::items::ItemsComponent;
-use crate::shared::signed_fetch::{
-    AUTH_CHAIN_HEADER_PREFIX, AUTH_METADATA_HEADER, AUTH_TIMESTAMP_HEADER, build_legacy_payload,
-    build_payload_v6,
-};
+use crate::shared::signed_fetch::test_support::signed_headers_by;
 use crate::storage::Storage;
 
 /// `0x19e7e376e7c213b7e7e7e46cc70a5dd086daff2a`, the wallet of the old
@@ -43,22 +45,39 @@ pub async fn temp_storage() -> Arc<Storage> {
     Arc::new(Storage::from_config(&dir).await.unwrap())
 }
 
-/// The process's scratch database with a fresh complete pass of the
-/// Polygon collections copy, so derived chain state answers, and a current
-/// publication of the third-party registry index; `None` (skip)
-/// without `CATALYST_TEST_DATABASE_URL`.
-pub async fn scratch_pool(max_connections: u32) -> Option<sqlx::PgPool> {
-    let pool = crate::db::scratch::pool(max_connections).await?;
+/// A complete pass of the Polygon collections copy that ended `minutes_ago`.
+pub async fn copy_pass(pool: &sqlx::PgPool, minutes_ago: i64) {
     sqlx::query(
         "INSERT INTO shop.mirror_state (mirror, network, source_url, last_complete_pass_at, pass_started_at) \
-         VALUES ('collections', 'matic', 'https://subgraph.example', timezone('UTC', now()), timezone('UTC', now())) \
+         VALUES ('collections', 'matic', 'https://subgraph.example', $1, $1) \
          ON CONFLICT (mirror, network) DO UPDATE SET last_complete_pass_at = EXCLUDED.last_complete_pass_at, \
            pass_started_at = EXCLUDED.pass_started_at, cursor_id = NULL",
     )
-    .execute(&pool)
+    .bind(chrono::Utc::now().naive_utc() - chrono::TimeDelta::minutes(minutes_ago))
+    .execute(pool)
     .await
     .unwrap();
+}
+
+/// [`copy_pass`] and a current publication of the third-party registry
+/// index, so derived chain state and the registry answer.
+pub async fn fresh_pass(pool: &sqlx::PgPool, minutes_ago: i64) {
+    copy_pass(pool, minutes_ago).await;
     publish_registry_index(&mut pool.acquire().await.unwrap(), false).await;
+}
+
+/// The process's scratch database after a [`fresh_pass`]; `None` (skip)
+/// without `CATALYST_TEST_DATABASE_URL`.
+pub async fn scratch_pool(max_connections: u32) -> Option<sqlx::PgPool> {
+    let pool = crate::db::scratch::pool(max_connections).await?;
+    fresh_pass(&pool, 0).await;
+    Some(pool)
+}
+
+/// [`scratch_pool`] over a database of the test's own.
+pub async fn own_pool(max_connections: u32) -> Option<sqlx::PgPool> {
+    let pool = crate::db::scratch::isolated_pool(max_connections).await?;
+    fresh_pass(&pool, 0).await;
     Some(pool)
 }
 
@@ -372,41 +391,59 @@ pub fn wallet(key: &str) -> PrivateKeySigner {
     key.parse().unwrap()
 }
 
-/// The two-link chain (SIGNER + ECDSA_SIGNED_ENTITY) an explorer signs over
-/// `method:path:timestamp:metadata`, in the 6.x or the legacy payload shape,
-/// as a header map.
-pub async fn signed_map(
-    key: &str,
-    method: &str,
-    path: &str,
-    metadata: &str,
-    legacy: bool,
-) -> BTreeMap<String, String> {
-    let timestamp = chrono::Utc::now().timestamp_millis().to_string();
-    let payload = if legacy {
-        build_legacy_payload(method, path, &timestamp, metadata)
-    } else {
-        build_payload_v6(method, path, &timestamp, metadata)
-    };
-    let wallet = wallet(key);
-    let signature = wallet
-        .sign_message(payload.as_bytes())
+/// The lowercase `0x` address of `key`'s wallet.
+pub fn address(key: &str) -> String {
+    format!("{:#x}", wallet(key).address())
+}
+
+/// The headers `key`'s wallet signs now for `method path`.
+pub async fn signed(key: &str, method: &str, path: &str) -> HeaderMap {
+    let now = chrono::Utc::now().timestamp_millis().to_string();
+    signed_headers_by(&wallet(key), method, path, "{}", true, &now).await
+}
+
+/// A `method uri` request, signed by `key`, when given, over the path
+/// without its query.
+pub async fn request(key: Option<&str>, method: &str, uri: &str) -> request::Builder {
+    let mut request = Request::builder().method(method).uri(uri);
+    if let Some(key) = key {
+        let path = uri.split('?').next().unwrap_or_default();
+        for (name, value) in &signed(key, &method.to_lowercase(), path).await {
+            request = request.header(name, value);
+        }
+    }
+    request
+}
+
+/// The status and JSON body, null when it is none, `app` answers `request`.
+pub async fn answer(app: &Router, request: Request<Body>) -> (u16, Value) {
+    let response = app.clone().oneshot(request).await.unwrap();
+    let status = response.status().as_u16();
+    let bytes = axum::body::to_bytes(response.into_body(), 64 << 20)
         .await
-        .unwrap()
-        .to_string();
-    let mut map = BTreeMap::from([
-        (AUTH_TIMESTAMP_HEADER.to_string(), timestamp),
-        (AUTH_METADATA_HEADER.to_string(), metadata.to_string()),
-    ]);
-    map.insert(
-        format!("{AUTH_CHAIN_HEADER_PREFIX}0"),
-        serde_json::json!({ "type": "SIGNER", "payload": format!("{:#x}", wallet.address()), "signature": "" }).to_string(),
-    );
-    map.insert(
-        format!("{AUTH_CHAIN_HEADER_PREFIX}1"),
-        serde_json::json!({ "type": "ECDSA_SIGNED_ENTITY", "payload": payload, "signature": signature }).to_string(),
-    );
-    map
+        .unwrap();
+    (
+        status,
+        serde_json::from_slice(&bytes).unwrap_or(Value::Null),
+    )
+}
+
+/// What `app` answers [`request`] with `body`, when given, as JSON.
+pub async fn call(
+    app: &Router,
+    key: Option<&str>,
+    method: &str,
+    uri: &str,
+    body: Option<Value>,
+) -> (u16, Value) {
+    let request = request(key, method, uri).await;
+    let request = match body {
+        Some(body) => request
+            .header("content-type", "application/json")
+            .body(Body::from(body.to_string())),
+        None => request.body(Body::empty()),
+    };
+    answer(app, request.unwrap()).await
 }
 
 pub(crate) fn lazy_pool() -> sqlx::PgPool {

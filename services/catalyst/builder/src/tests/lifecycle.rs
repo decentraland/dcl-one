@@ -7,7 +7,6 @@ use std::sync::Arc;
 
 use axum::Router;
 use axum::body::Body;
-use axum::http::Request;
 use chrono::{DateTime, Utc};
 use serde_json::{Value, json};
 use sqlx::PgPool;
@@ -15,8 +14,8 @@ use tower::ServiceExt;
 use uuid::Uuid;
 
 use super::support::{
-    FakeCommittee, FakeOracle, OWNER_KEY, committee_index, contents_of, save_collection,
-    saved_item, signed_map, temp_storage, unique, upload, wallet,
+    FakeCommittee, FakeOracle, OWNER_KEY, address, call, committee_index, contents_of, own_pool,
+    request, save_collection, saved_item, temp_storage, unique, upload,
 };
 
 const STRANGER_KEY: &str = "0x2222222222222222222222222222222222222222222222222222222222222222";
@@ -28,10 +27,6 @@ const PROVIDER: &str = "urn:decentraland:matic:collections-thirdparty:lifecycle"
 /// A collection name unique to `id`.
 fn short(label: &str, id: Uuid) -> String {
     format!("{label} {}", &id.simple().to_string()[..12])
-}
-
-fn address(key: &str) -> String {
-    format!("{:#x}", wallet(key).address())
 }
 
 fn at(iso: &str) -> DateTime<Utc> {
@@ -128,56 +123,6 @@ async fn node_over(pool: PgPool, options: Options) -> Node {
 
 async fn node(options: Options) -> Option<Node> {
     Some(node_over(super::support::scratch_pool(8).await?, options).await)
-}
-
-/// A database of the test's own with a fresh pass of the copy: the terms
-/// forward's pass reads every due row, so a test of it holds them alone.
-async fn own_pool() -> Option<PgPool> {
-    let pool = crate::db::scratch::isolated_pool(6).await?;
-    sqlx::query(
-        "INSERT INTO shop.mirror_state (mirror, network, source_url, last_complete_pass_at, pass_started_at) \
-         VALUES ('collections', 'matic', 'https://subgraph.example', timezone('UTC', now()), timezone('UTC', now()))",
-    )
-    .execute(&pool)
-    .await
-    .unwrap();
-    crate::tests::support::publish_registry_index(&mut pool.acquire().await.unwrap(), false).await;
-    Some(pool)
-}
-
-async fn call(
-    app: &Router,
-    key: Option<&str>,
-    method: &str,
-    path: &str,
-    body: Option<Value>,
-) -> (u16, Value) {
-    let mut request = Request::builder().method(method).uri(path);
-    if let Some(key) = key {
-        for (name, value) in signed_map(key, &method.to_lowercase(), path, "{}", false).await {
-            request = request.header(name, value);
-        }
-    }
-    let body = match body {
-        Some(body) => {
-            request = request.header("content-type", "application/json");
-            Body::from(body.to_string())
-        }
-        None => Body::empty(),
-    };
-    let response = app
-        .clone()
-        .oneshot(request.body(body).unwrap())
-        .await
-        .unwrap();
-    let status = response.status().as_u16();
-    let bytes = axum::body::to_bytes(response.into_body(), 1 << 20)
-        .await
-        .unwrap();
-    (
-        status,
-        serde_json::from_slice(&bytes).unwrap_or(Value::Null),
-    )
 }
 
 /// A standard draft of the owner's, with `items` items created in order, each
@@ -570,21 +515,8 @@ async fn a_lock_refuses_saves_creations_and_deletes_for_a_day_and_never_uploads(
         .await
         .unwrap();
     let boundary = "lifecycle-boundary";
-    let mut request = Request::builder()
-        .method("POST")
-        .uri(format!("/v1/items/{item}/files"));
-    for (name, value) in signed_map(
-        OWNER_KEY,
-        "post",
-        &format!("/v1/items/{item}/files"),
-        "{}",
-        false,
-    )
-    .await
-    {
-        request = request.header(name, value);
-    }
-    let upload = request
+    let upload = request(Some(OWNER_KEY), "POST", &format!("/v1/items/{item}/files"))
+        .await
         .header(
             "content-type",
             format!("multipart/form-data; boundary={boundary}"),
@@ -985,7 +917,7 @@ async fn pending_terms(pool: &PgPool, collection: Uuid) -> Vec<(bool, i32)> {
 #[tokio::test]
 async fn accepted_terms_are_stored_and_forwarded_to_the_warehouse() {
     let warehouse = FakeWarehouse::default();
-    let Some(pool) = own_pool().await else {
+    let Some(pool) = own_pool(6).await else {
         return;
     };
     let node = node_over(
@@ -1030,7 +962,7 @@ async fn a_failed_forward_keeps_the_acceptance_and_a_later_pass_delivers_it_once
     warehouse
         .failing
         .store(true, std::sync::atomic::Ordering::SeqCst);
-    let Some(pool) = own_pool().await else {
+    let Some(pool) = own_pool(6).await else {
         return;
     };
     let node = node_over(
@@ -1081,7 +1013,7 @@ async fn a_failed_forward_keeps_the_acceptance_and_a_later_pass_delivers_it_once
 
 #[tokio::test]
 async fn an_acceptance_is_stored_without_a_warehouse_and_attempts_are_bounded() {
-    let Some(pool) = own_pool().await else {
+    let Some(pool) = own_pool(6).await else {
         return;
     };
     let unconfigured = node_over(pool.clone(), Options::default()).await;
@@ -1514,7 +1446,7 @@ async fn publish_reads_the_copy_when_it_holds_the_collection() {
 /// kept, and a later publish answers them.
 #[tokio::test]
 async fn publish_answers_its_items_within_the_bounds_of_the_items_listing() {
-    let Some(pool) = own_pool().await else {
+    let Some(pool) = own_pool(6).await else {
         return;
     };
     let bounded = node_over(
@@ -1914,25 +1846,7 @@ async fn a_terms_acceptance_rechecks_the_signers_role_when_it_writes() {
         return;
     };
     let (id, _, _) = draft(&node, 0).await;
-    let path = format!("/v1/collections/{id}/tos");
-    let now = chrono::Utc::now().timestamp_millis().to_string();
-    let headers = crate::shared::signed_fetch::test_support::signed_headers_by(
-        &super::support::wallet(OWNER_KEY),
-        "post",
-        &path,
-        "{}",
-        true,
-        &now,
-    )
-    .await;
-    let signer = crate::auth::require_signer(
-        &headers,
-        "post",
-        &crate::auth::SignedPath::local(&path),
-        None,
-    )
-    .await
-    .unwrap();
+    let signer = crate::shared::signed_fetch::test_support::signer(&address(OWNER_KEY));
     let grant = crate::access::manage_collection(&node.state, &signer, &id.to_string())
         .await
         .unwrap();
@@ -1954,7 +1868,7 @@ async fn a_terms_acceptance_rechecks_the_signers_role_when_it_writes() {
 /// warehouse nor touches a row; once they are on again it delivers.
 #[tokio::test]
 async fn the_terms_forward_waits_while_creator_writes_are_off() {
-    let Some(pool) = own_pool().await else {
+    let Some(pool) = own_pool(6).await else {
         return;
     };
     let warehouse = FakeWarehouse::default();
@@ -2016,7 +1930,7 @@ async fn an_acceptance_waiting_for_the_warehouse_keeps_every_batch_it_covers() {
     warehouse
         .failing
         .store(true, std::sync::atomic::Ordering::SeqCst);
-    let Some(pool) = own_pool().await else {
+    let Some(pool) = own_pool(6).await else {
         return;
     };
     let node = node_over(
@@ -2126,10 +2040,9 @@ async fn a_committee_member_dropped_before_the_publish_writes_nothing() {
         let (id, _, _) = draft(&node, 1).await;
         let contract = contract_of(&node.pool, id).await;
         copy_holds(&node.pool, &contract, &address(OWNER_KEY), &[], &[0]).await;
-        let path = format!("/v1/collections/{id}/publish");
         let sync = crate::access::sync_collection(
             &node.state,
-            &super::curation_routes::signer_of(COMMITTEE_KEY, &path).await,
+            &crate::shared::signed_fetch::test_support::signer(&address(COMMITTEE_KEY)),
             &id.to_string(),
         )
         .await

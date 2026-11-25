@@ -15,8 +15,7 @@ use std::sync::Arc;
 
 use axum::Router;
 use axum::body::Body;
-use axum::http::{Request, StatusCode, header};
-use chrono::Utc;
+use axum::http::{StatusCode, header};
 use serde_json::{Value, json};
 use sqlx::PgPool;
 use tower::ServiceExt;
@@ -24,8 +23,9 @@ use uuid::Uuid;
 
 use alloy::signers::SignerSync;
 
-use super::support::{FakeCommittee, FakeRegistry, registry_index, temp_storage, unique, wallet};
-use crate::shared::signed_fetch::test_support::signed_headers_by;
+use super::support::{
+    FakeCommittee, FakeRegistry, address, registry_index, request, temp_storage, unique, wallet,
+};
 use crate::storage::Storage;
 
 const MANAGER_KEY: &str = "0x7101010101010101010101010101010101010101010101010101010101010101";
@@ -68,10 +68,6 @@ impl Caller {
     fn address(self) -> String {
         self.key().map(address).unwrap_or_default()
     }
-}
-
-fn address(key: &str) -> String {
-    format!("{:#x}", wallet(key).address())
 }
 
 /// The provider of the fixture's collection.
@@ -131,13 +127,7 @@ struct Fixture {
 
 async fn world() -> Option<World> {
     let pool = super::cells::world_pool(8).await?;
-    sqlx::query(
-        "INSERT INTO shop.mirror_state (mirror, network, source_url, last_complete_pass_at, pass_started_at) \
-         VALUES ('collections', 'matic', 'https://subgraph.example', timezone('UTC', now()), timezone('UTC', now()))",
-    )
-    .execute(&pool)
-    .await
-    .unwrap();
+    super::support::copy_pass(&pool, 0).await;
     let committee = FakeCommittee::with(&[&Committee.address()]);
     let registry = FakeRegistry::up();
     registry.put(
@@ -349,23 +339,7 @@ async fn call_with(
     path: &str,
     body: Option<(String, Vec<u8>)>,
 ) -> (StatusCode, Value) {
-    let mut request = Request::builder().method(method).uri(path);
-    if let Some(key) = caller.key() {
-        let now = Utc::now().timestamp_millis().to_string();
-        for (name, value) in signed_headers_by(
-            &wallet(key),
-            &method.to_lowercase(),
-            path.split('?').next().unwrap(),
-            "{}",
-            true,
-            &now,
-        )
-        .await
-        .iter()
-        {
-            request = request.header(name, value);
-        }
-    }
+    let mut request = request(caller.key(), method, path).await;
     let body = match body {
         Some((kind, bytes)) => {
             request = request.header(header::CONTENT_TYPE, kind);
@@ -759,15 +733,7 @@ async fn a_manager_the_registry_stops_listing_is_refused_its_next_write_and_its_
     let as_former = |path: String| {
         let app = w.app.clone();
         async move {
-            let now = Utc::now().timestamp_millis().to_string();
-            let mut request = Request::builder().method("GET").uri(&path);
-            for (name, value) in
-                signed_headers_by(&wallet(FORMER_KEY), "get", &path, "{}", true, &now)
-                    .await
-                    .iter()
-            {
-                request = request.header(name, value);
-            }
+            let request = request(Some(FORMER_KEY), "GET", &path).await;
             app.oneshot(request.body(Body::empty()).unwrap())
                 .await
                 .unwrap()
@@ -792,17 +758,9 @@ async fn a_manager_the_registry_stops_listing_is_refused_its_next_write_and_its_
     let mut body = body.unwrap();
     body["cheque"] = json!({ "qty": 1, "salt": salt, "signature": format!("0x{}", hex::encode(signature.as_bytes())) });
     let before = snapshot(&w.pool).await;
-    let now = Utc::now().timestamp_millis().to_string();
-    let mut request = Request::builder()
-        .method("POST")
-        .uri(&publish)
-        .header(header::CONTENT_TYPE, "application/json");
-    for (name, value) in signed_headers_by(&wallet(FORMER_KEY), "post", &publish, "{}", true, &now)
+    let request = request(Some(FORMER_KEY), "POST", &publish)
         .await
-        .iter()
-    {
-        request = request.header(name, value);
-    }
+        .header(header::CONTENT_TYPE, "application/json");
     let status = w
         .app
         .clone()

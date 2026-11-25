@@ -15,7 +15,7 @@ use axum::http::{HeaderMap, Request};
 use tower::ServiceExt;
 use uuid::Uuid;
 
-use super::support::{OWNER_KEY, lazy_pool, signed_map, temp_storage};
+use super::support::{OWNER_KEY, lazy_pool, temp_storage};
 
 const DAPP: &str = "https://create.decentraland.example";
 const APEX: &str = "https://decentraland.example";
@@ -251,10 +251,7 @@ async fn a_signed_request_from_any_origin_is_answered_as_without_one() {
     ] {
         let mut answers = Vec::new();
         for origin in [None, Some(DAPP), Some(FOREIGN)] {
-            let mut request = Request::builder().uri(&path);
-            for (name, value) in signed_map(OWNER_KEY, "get", &path, "{}", false).await {
-                request = request.header(name, value);
-            }
+            let mut request = super::support::request(Some(OWNER_KEY), "GET", &path).await;
             if let Some(origin) = origin {
                 request = request.header("origin", origin);
             }

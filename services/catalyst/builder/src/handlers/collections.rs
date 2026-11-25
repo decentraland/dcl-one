@@ -223,22 +223,17 @@ mod tests {
 
     use axum::Router;
     use axum::body::Body;
-    use axum::http::{Request, StatusCode};
+    use axum::http::StatusCode;
     use serde_json::Value;
     use tower::ServiceExt;
 
-    use crate::shared::signed_fetch::test_support::signed_headers_by;
     use crate::tests::support::{
-        FakeCommittee, OWNER_KEY, cleanup, committee_index, temp_storage, wallet,
+        FakeCommittee, OWNER_KEY, address, cleanup, committee_index, request, temp_storage,
     };
 
     const STRANGER_KEY: &str = "0x2222222222222222222222222222222222222222222222222222222222222222";
     const COMMITTEE_KEY: &str =
         "0x3333333333333333333333333333333333333333333333333333333333333333";
-
-    fn address_of(key: &str) -> String {
-        format!("{:#x}", wallet(key).address())
-    }
 
     async fn state(committee: &str) -> Option<SharedState> {
         let pool = crate::tests::support::scratch_pool(4).await?;
@@ -259,17 +254,7 @@ mod tests {
     }
 
     async fn get(app: &Router, path: &str, key: Option<&str>) -> (StatusCode, Value) {
-        let mut request = Request::get(path);
-        if let Some(key) = key {
-            let now = chrono::Utc::now().timestamp_millis().to_string();
-            let local = path.split('?').next().unwrap();
-            for (name, value) in signed_headers_by(&wallet(key), "get", local, "{}", true, &now)
-                .await
-                .iter()
-            {
-                request = request.header(name, value);
-            }
-        }
+        let request = request(key, "GET", path).await;
         let response = app
             .clone()
             .oneshot(request.body(Body::empty()).unwrap())
@@ -323,9 +308,9 @@ mod tests {
     #[tokio::test]
     async fn listings_are_visible_to_the_owner_and_the_committee_only() {
         let (owner, stranger, committee) = (
-            address_of(OWNER_KEY),
-            address_of(STRANGER_KEY),
-            address_of(COMMITTEE_KEY),
+            address(OWNER_KEY),
+            address(STRANGER_KEY),
+            address(COMMITTEE_KEY),
         );
         let Some(state) = state(&committee).await else {
             eprintln!("skipping: CATALYST_TEST_DATABASE_URL not set");
@@ -546,7 +531,7 @@ mod tests {
     /// the node answers: none is accepted and silently ignored.
     #[tokio::test]
     async fn every_listing_parameter_upstream_reads_is_applied_or_deliberately_ignored() {
-        let (owner, committee) = (address_of(OWNER_KEY), address_of(COMMITTEE_KEY));
+        let (owner, committee) = (address(OWNER_KEY), address(COMMITTEE_KEY));
         let Some(state) = state(&committee).await else {
             return;
         };
