@@ -1,6 +1,39 @@
 use super::*;
 
 #[tokio::test]
+async fn sales_replay_backfills_only_the_transaction_hash_on_a_transfer() {
+    let Some(db) = ScratchDb::create().await else {
+        return;
+    };
+    let mut conn = db.pool.acquire().await.unwrap();
+    let log = nft_index::tests::transfer_log(CARL, ALICE, BOB, U256::from(12), 100, 2);
+    let mut row = nft_index::decode_log(&log, 0).unwrap().unwrap();
+    row.tx_hash = None;
+    nft_index::insert_events(&mut conn, ChainNet::Matic, std::slice::from_ref(&row))
+        .await
+        .unwrap();
+    row.tx_hash = Some(format!("0x{:064x}", 2));
+    row.block_time = 200;
+    row.to_address = Some(DAVE.into());
+    for count in [1, 0] {
+        assert_eq!(
+            nft_index::insert_events(&mut conn, ChainNet::Matic, std::slice::from_ref(&row))
+                .await
+                .unwrap(),
+            count
+        );
+    }
+    let kept: (String, i64, String) =
+        sqlx::query_as("SELECT tx_hash,block_time,to_address FROM shop.nft_event")
+            .fetch_one(&mut *conn)
+            .await
+            .unwrap();
+    assert_eq!(kept, (row.tx_hash.unwrap(), 0, BOB.into()));
+    drop(conn);
+    db.drop().await;
+}
+
+#[tokio::test]
 async fn sales_trade_replay_completes_old_payment_data_only_for_the_same_execution() {
     let Some(db) = ScratchDb::create().await else {
         return;
@@ -366,6 +399,8 @@ async fn sales_accounting_replays_fees_in_log_order_and_removes_empty_reorg_grou
     let sale_price: U256 = U256::from(1u8) << 190;
     let tx_hash = format!("0x{:064x}", 73);
     let asset = "0x1234000000000000000000000000000000000000";
+    sqlx::query("INSERT INTO shop.nft_contract(network,contract_address,walked_from_block) VALUES($1,$2,$3)")
+        .bind(net.db_name()).bind(asset).bind(block as i64).execute(&db.pool).await.unwrap();
     let market_event = |seller: &str, token_id: u64, log| {
         log_at(
             venue,
@@ -932,7 +967,7 @@ async fn sales_history_repair_resumes_at_the_next_window_and_discovers_store_iss
 }
 
 #[tokio::test]
-async fn sales_accounting_bundles_preserve_order_and_gross_once_per_currency() {
+async fn sales_accounting_keeps_unallocated_evidence_out_of_public_totals() {
     let Some(db) = ScratchDb::create().await else {
         return;
     };
@@ -951,6 +986,8 @@ async fn sales_accounting_bundles_preserve_order_and_gross_once_per_currency() {
     }
     let venue = trade_events::marketplaces(net)[0].0;
     let mana = listings::mana_token(net.chain_id()).unwrap();
+    sqlx::query("INSERT INTO shop.nft_contract(network,contract_address,walked_from_block) VALUES($1,$2,$3)")
+        .bind(net.db_name()).bind(DAVE).bind(b as i64).execute(&db.pool).await.unwrap();
     let asset = |ty: &str, contract: &str, value: &str, beneficiary: &str| json!({"assetType":ty,"contractAddress":contract,"value":value,"beneficiary":beneficiary,"extra":"0x"});
     let mut log = trade_events::tests::traded_log(b, 8, venue, BOB, ALICE, "0x01", 1, false);
     let hash = format!("0x{:064x}", 431);
@@ -963,59 +1000,55 @@ async fn sales_accounting_bundles_preserve_order_and_gross_once_per_currency() {
         "received":[asset("1",mana,"115",DAVE),asset("2",mana,"8",ALICE),asset("1",CARL,"99",ALICE),asset("2",DAVE,"10",ALICE)],"uses":"1"}),
     );
     let mut c = db.pool.acquire().await.unwrap();
-    trade_events::insert_events(&mut c, net, &[event])
+    // Source rows remain available to the primary indexes even when their
+    // NFT contract is outside the economic catalogue.
+    let mut outside = event.clone();
+    outside.log_index = 9;
+    outside.tx_hash = format!("0x{:064x}", 432);
+    outside.assets = Some(json!({"sent":[asset("4", CARL, "1", BOB)],
+        "received":[asset("1",mana,"500",ALICE)],"uses":"1"}));
+    let mut mixed = outside.clone();
+    mixed.log_index = 12;
+    mixed.tx_hash = format!("0x{:064x}", 433);
+    mixed.assets = Some(
+        json!({"sent":[asset("3",DAVE,"2",BOB),asset("3",CARL,"4",BOB)],
+        "received":[asset("1",mana,"255",ALICE)],"uses":"1"}),
+    );
+    let mut bundled = mixed.clone();
+    bundled.log_index = 13;
+    bundled.tx_hash = format!("0x{:064x}", 434);
+    bundled.assets.as_mut().unwrap()["sent"][1]["contractAddress"] = json!(DAVE);
+    sqlx::query("INSERT INTO shop.nft_event(network,block_number,log_index,block_time,kind,emitter,contract_address,token_id,from_address,to_address,amount,tx_hash)
+        VALUES('ethereum',$1,10,86400,'order_successful',$2,$3,1,$3,$4,500,$5)")
+        .bind(b as i64).bind(nft_index::legacy_marketplaces(net)[0].0).bind(CARL).bind(BOB).bind(&outside.tx_hash)
+        .execute(&mut *c).await.unwrap();
+    sqlx::query("INSERT INTO shop.sale_event(network,block_number,log_index,block_time,kind,emitter,contract_address,token_id,bid_id,buyer,seller,price,tx_hash)
+        VALUES('ethereum',$1,11,86400,'bid_accepted',$2,$3,1,$5,$4,$3,500,$5)")
+        .bind(b as i64).bind(crate::market::ethereum_sales::ERC721_BID).bind(CARL).bind(BOB).bind(&outside.tx_hash)
+        .execute(&mut *c).await.unwrap();
+    trade_events::insert_events(&mut c, net, &[event, outside, mixed, bundled])
         .await
         .unwrap();
     drop(c);
     crate::market::sale_fold::pass(&db.pool, &rpc, net)
         .await
         .unwrap();
-    let rows:Vec<(String,String,String,String,Option<String>)>=sqlx::query_as("SELECT public_id,seller,buyer,token_id::text,price::text FROM shop.sale_asset ORDER BY ordinal")
-        .fetch_all(&db.pool).await.unwrap();
-    assert_eq!(
-        rows,
-        [
-            (
-                format!("ethereum-{hash}-0-0"),
-                ALICE.into(),
-                CARL.into(),
-                "12".into(),
-                None
-            ),
-            (
-                format!("ethereum-{hash}-0-1"),
-                ALICE.into(),
-                BOB.into(),
-                "13".into(),
-                None
-            )
-        ]
-    );
-    let amounts:Vec<(String,String,i64,i64,i64)>=sqlx::query_as(
-        "SELECT currency,volume::text,sales,unallocated_executions,unknown_splits FROM shop.sale_analytics_day ORDER BY currency")
-        .fetch_all(&db.pool).await.unwrap();
-    assert_eq!(
-        amounts,
-        [
-            (mana.into(), "123".into(), 0, 1, 2),
-            (CARL.into(), "99".into(), 0, 1, 1),
-            ("usd".into(), "10".into(), 0, 1, 1)
-        ]
-    );
-    let legs: Vec<(String, String)> =
-        sqlx::query_as("SELECT payer,beneficiary FROM shop.sale_payment ORDER BY ordinal")
+    let executions: Vec<i32> =
+        sqlx::query_scalar("SELECT log_index FROM shop.sale_execution ORDER BY log_index")
             .fetch_all(&db.pool)
             .await
             .unwrap();
     assert_eq!(
-        legs,
-        [
-            (BOB.into(), DAVE.into()),
-            (BOB.into(), ALICE.into()),
-            (BOB.into(), ALICE.into()),
-            (BOB.into(), ALICE.into())
-        ]
+        executions,
+        [8, 13],
+        "only catalogue-only executions are normalized"
     );
+    let counts: (i64,i64,i64,i64,i64,i64) = sqlx::query_as("SELECT
+         (SELECT count(*) FROM shop.trade_event), (SELECT count(*) FROM shop.sale_asset WHERE price>0),
+         (SELECT count(*) FROM shop.sale_payment),(SELECT count(*) FROM shop.sale_analytics_day),
+         (SELECT count(*) FROM shop.sale_account_day),(SELECT count(*) FROM shop.sale_item_day)")
+        .fetch_one(&db.pool).await.unwrap();
+    assert_eq!(counts, (4, 0, 5, 0, 0, 0));
     db.drop().await;
 }
 
@@ -1053,6 +1086,8 @@ async fn sales_delayed_receipt_corrects_checkout_buyer_and_first_purchase_day() 
         "0x{}",
         hex::encode((true, U256::ZERO, Vec::<Address>::new()).abi_encode_params())
     );
+    sqlx::query("INSERT INTO shop.nft_contract(network,contract_address,walked_from_block) VALUES($1,$2,$3)")
+        .bind(net.db_name()).bind(DAVE).bind((b-2) as i64).execute(&db.pool).await.unwrap();
     let tx_hash = |block: u64| format!("0x{block:064x}");
     let traded = |block| {
         let mut log =
@@ -1586,6 +1621,8 @@ async fn a_store_purchase_and_order_in_one_receipt_settle_after_a_failed_batch()
     .execute(&db.pool)
     .await
     .unwrap();
+    sqlx::query("INSERT INTO shop.nft_contract(network,contract_address,walked_from_block) VALUES($1,$2,$3)")
+        .bind(net.db_name()).bind(CARL).bind(block as i64).execute(&db.pool).await.unwrap();
     let movement = |to, amount: u64, index| {
         log_at(
             mana,

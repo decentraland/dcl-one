@@ -262,6 +262,14 @@ async fn write_rows(c: &mut PgConnection, net: ChainNet, from: i64, to: i64) -> 
         ChainNet::Ethereum => ethereum_sales::ERC721_BID,
         ChainNet::Matic => sales_index::BID_V2_MATIC,
     };
+    let registry_assets: &[&str] = match net {
+        ChainNet::Ethereum => &[
+            crate::land_authz::LAND_REGISTRY_MAINNET,
+            crate::land_authz::ESTATE_REGISTRY_MAINNET,
+            nft_index::DCL_REGISTRAR,
+        ],
+        ChainNet::Matic => &[],
+    };
     sqlx::query(include_str!("executions.sql"))
         .bind(net.db_name())
         .bind(from)
@@ -271,6 +279,7 @@ async fn write_rows(c: &mut PgConnection, net: ChainNet, from: i64, to: i64) -> 
         .bind(sales_index::STORE_MATIC)
         .bind(&ethereum_sales::NAME_CONTROLLERS[..])
         .bind(trades)
+        .bind(registry_assets)
         .execute(&mut *c)
         .await?;
     sqlx::query(include_str!("legs.sql"))

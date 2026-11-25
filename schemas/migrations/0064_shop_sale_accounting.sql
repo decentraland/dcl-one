@@ -1,7 +1,10 @@
 -- BidAccepted carries the fee paid in base units. A NULL in an old row
 -- distinguishes an unobserved fee from a zero fee.
-ALTER TABLE IF EXISTS shop.sale_event ADD COLUMN IF NOT EXISTS bid_fee numeric(78,0)
-    CHECK (bid_fee IS NULL OR (bid_fee >= 0 AND kind = 'bid_accepted'));
+ALTER TABLE IF EXISTS shop.sale_event ADD COLUMN IF NOT EXISTS bid_fee numeric(78,0);
+-- A node upgraded from before sale_event existed gets the validated check
+-- from the schema object pass. Existing rows have no historical fee yet.
+ALTER TABLE IF EXISTS shop.sale_event ADD CONSTRAINT sale_event_bid_fee_check
+    CHECK (bid_fee IS NULL OR (bid_fee >= 0 AND kind = 'bid_accepted')) NOT VALID;
 
 -- Existing publications predate the sale input decoders. Only a checked
 -- replay or a contiguous window written by those decoders advances proof.

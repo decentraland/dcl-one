@@ -6,7 +6,10 @@ WITH execution AS MATERIALIZED (
     SELECT a.*,e.day,e.kind AS venue_kind FROM execution e JOIN shop.sale_asset a USING (network,block_number,log_index)
     WHERE a.price>0
 ), money AS MATERIALIZED (
-    SELECT p.*,e.day,e.kind,e.venue FROM execution e JOIN shop.sale_payment p USING (network,block_number,log_index) WHERE p.consideration
+    SELECT p.*,e.day,e.kind,e.venue FROM execution e JOIN shop.sale_payment p USING (network,block_number,log_index)
+    WHERE p.consideration AND (e.kind <> 'trade' OR EXISTS (
+        SELECT FROM priced a WHERE (a.network,a.block_number,a.log_index,a.currency) =
+                                   (p.network,p.block_number,p.log_index,p.currency)))
 ), payout AS MATERIALIZED (
     SELECT po.*,p.currency,p.day,p.kind,p.venue FROM money p JOIN shop.sale_payout po
       ON (p.network,p.block_number,p.log_index,p.ordinal)=(po.network,po.block_number,po.log_index,po.payment_ordinal)
@@ -18,9 +21,7 @@ WITH execution AS MATERIALIZED (
     SELECT day,currency,0,coalesce(sum(gross) FILTER (WHERE kind<>'name_fee'),0),
         coalesce(sum(gross) FILTER (WHERE kind='name_fee'),0),0,0,0,
         coalesce(sum(gross) FILTER (WHERE kind='name_fee' AND venue=$3),0),
-        count(*) FILTER (WHERE NOT settled),count(DISTINCT (p.block_number,p.log_index)) FILTER (
-            WHERE kind='trade' AND NOT EXISTS (SELECT FROM priced a WHERE a.block_number=p.block_number AND a.log_index=p.log_index)
-              AND gross>0)
+        count(*) FILTER (WHERE NOT settled),0::bigint
     FROM money p GROUP BY day,currency
     UNION ALL
     SELECT day,currency,0,0,0,

@@ -17014,7 +17014,6 @@ CREATE TABLE shop.sale_first_purchase (
     contract_address text NOT NULL, item_id numeric(78,0), first_day bigint NOT NULL,
     UNIQUE NULLS NOT DISTINCT (network,currency,buyer,seller,contract_address,item_id)
 );
-CREATE INDEX sale_first_purchase_by_day ON shop.sale_first_purchase(network,first_day);
 CREATE INDEX sale_first_day ON shop.sale_first_purchase(network,first_day);
 
 -- One common source prefix per network. Capture each dependency's revision

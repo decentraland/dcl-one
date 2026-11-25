@@ -217,18 +217,25 @@ struct Split {
     legs: Vec<Leg>,
 }
 
-fn store(rows: &[Payment], moves: &[Transfer]) -> Option<Vec<Split>> {
+fn store<'a>(
+    rows: &[Payment],
+    moves: &[Transfer],
+    prices: impl IntoIterator<Item = &'a str>,
+) -> Option<Vec<Split>> {
     let first = rows.first()?;
     let mut observed = moves.iter().filter(|m| m.currency == first.currency);
     let mut total_fee = U256::ZERO;
     let mut lines = Vec::new();
     let mut payer = None;
-    for p in rows {
-        let gross = U256::from_str_radix(&p.gross, 10).ok()?;
+    // Every Bought line consumes its position in the receipt, including a
+    // foreign collection. Only indexed payments receive a split.
+    let mut indexed = rows.iter().peekable();
+    for (ordinal, price) in prices.into_iter().enumerate() {
+        let gross = U256::from_str_radix(price, 10).ok()?;
         let fee = if gross == U256::ZERO {
             U256::ZERO
         } else {
-            cut(gross, p.rate?)?
+            cut(gross, first.rate?)?
         };
         let payee = if gross != U256::ZERO {
             let t = observed.next()?;
@@ -241,7 +248,15 @@ fn store(rows: &[Payment], moves: &[Transfer]) -> Option<Vec<Split>> {
             None
         };
         total_fee = total_fee.checked_add(fee)?;
-        lines.push((payee, gross - fee, fee));
+        if let Some(p) = indexed.next_if(|p| usize::try_from(p.ordinal).ok() == Some(ordinal)) {
+            if p.gross != price {
+                return None;
+            }
+            lines.push((payee, gross - fee, fee));
+        }
+    }
+    if indexed.next().is_some() {
+        return None;
     }
     let fee_move = if total_fee != U256::ZERO {
         let t = observed.next()?;
@@ -294,10 +309,6 @@ static BURNERS: LazyLock<[String; 2]> = LazyLock::new(|| {
 });
 
 fn classify(net: ChainNet, rows: &[Payment], moves: &[Transfer]) -> Option<Vec<Split>> {
-    let first = rows.first()?;
-    if first.kind == "store" {
-        return store(rows, moves);
-    }
     let mut out = Vec::new();
     let currencies: BTreeSet<_> = rows.iter().map(|p| p.currency.as_str()).collect();
     let mut movements = moves
@@ -660,7 +671,19 @@ pub(super) async fn write(
                             issued_tokens(conn, net, execution, &issue_logs).await?;
                         }
                         if let Some(slice) = payments.get(&(execution.block, index))
-                            && let Some(splits) = classify(net, slice, &moves)
+                            && let Some(splits) = if kind == "store" {
+                                sales_index::decode_bought(log).ok().flatten().and_then(
+                                    |(_, lines)| {
+                                        store(
+                                            slice,
+                                            &moves,
+                                            lines.iter().map(|line| line.3.as_str()),
+                                        )
+                                    },
+                                )
+                            } else {
+                                classify(net, slice, &moves)
+                            }
                         {
                             for (p, split) in slice.iter().zip(splits) {
                                 save(conn, net, p, split).await?;
@@ -817,9 +840,9 @@ mod tests {
         let mut p = payment("store");
         p.gross = "0".into();
         p.rate = None;
-        let split = classify(ChainNet::Matic, &[p], &[]).unwrap();
+        let split = store(&[p], &[], ["0"]).unwrap();
         assert!(split[0].legs.is_empty() && split[0].payer.is_none());
-        assert!(classify(ChainNet::Matic, &[payment("store")], &[]).is_none());
+        assert!(store(&[payment("store")], &[], ["503"]).is_none());
     }
 
     #[test]
@@ -837,11 +860,15 @@ mod tests {
             tx("payer", "second-payee", 18),
             tx("payer", "collector", 6),
         ];
-        let split = classify(ChainNet::Matic, &rows, &moves).unwrap();
+        let split = store(&rows, &moves, ["51", "19"]).unwrap();
         assert_eq!(split[0].payer.as_deref(), Some("payer"));
         assert_eq!(split[0].payee.as_deref(), Some("creator-payee"));
         assert_eq!(split[0].legs[1].amount, U256::from(5));
         assert_eq!(split[1].legs[1].amount, U256::from(1));
-        assert!(classify(ChainNet::Matic, &rows, &moves[..2]).is_none());
+        assert!(store(&rows, &moves[..2], ["51", "19"]).is_none());
+        let known = store(&rows[1..], &moves, ["51", "19"]).unwrap();
+        assert_eq!(known.len(), 1);
+        assert_eq!(known[0].payee.as_deref(), Some("second-payee"));
+        assert_eq!(known[0].legs[1].amount, U256::from(1));
     }
 }

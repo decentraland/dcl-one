@@ -365,7 +365,7 @@ pub fn parse_land_data(raw: &str) -> Option<(Option<String>, Option<String>)> {
     Some((field(1), field(2)))
 }
 
-/// Appends a window's rows; a row already kept only gains a missing `tx_hash`.
+/// Replays fill missing transaction hashes and incomplete successful order details.
 pub async fn insert_events(
     conn: &mut PgConnection,
     net: ChainNet,
@@ -381,18 +381,19 @@ pub async fn insert_events(
                   AS u(b, i, t, k, em, c, tok, f, tt, a, x, d, h) \
              ON CONFLICT (network, block_number, log_index) DO UPDATE SET
                  tx_hash = EXCLUDED.tx_hash,
-                 from_address = COALESCE(shop.nft_event.from_address, EXCLUDED.from_address),
-                 to_address = COALESCE(shop.nft_event.to_address, EXCLUDED.to_address),
-                 block_time = CASE WHEN shop.nft_event.block_time = 0 THEN EXCLUDED.block_time ELSE shop.nft_event.block_time END
-             WHERE shop.nft_event.kind = 'order_successful' AND EXCLUDED.kind = 'order_successful'
+                 from_address = CASE WHEN EXCLUDED.kind = 'order_successful' THEN COALESCE(shop.nft_event.from_address, EXCLUDED.from_address) ELSE shop.nft_event.from_address END,
+                 to_address = CASE WHEN EXCLUDED.kind = 'order_successful' THEN COALESCE(shop.nft_event.to_address, EXCLUDED.to_address) ELSE shop.nft_event.to_address END,
+                 block_time = CASE WHEN EXCLUDED.kind = 'order_successful' AND shop.nft_event.block_time = 0 THEN EXCLUDED.block_time ELSE shop.nft_event.block_time END
+             WHERE shop.nft_event.kind = EXCLUDED.kind AND EXCLUDED.tx_hash IS NOT NULL
+               AND ((EXCLUDED.kind <> 'order_successful' AND shop.nft_event.tx_hash IS NULL)
+                 OR (EXCLUDED.kind = 'order_successful'
                AND (shop.nft_event.emitter,shop.nft_event.contract_address,shop.nft_event.token_id)
                    = (EXCLUDED.emitter,EXCLUDED.contract_address,EXCLUDED.token_id)
-               AND EXCLUDED.tx_hash IS NOT NULL
                AND (shop.nft_event.tx_hash IS NULL OR shop.nft_event.tx_hash = EXCLUDED.tx_hash)
                AND (shop.nft_event.tx_hash IS NULL
                  OR (shop.nft_event.from_address IS NULL AND EXCLUDED.from_address IS NOT NULL)
                  OR (shop.nft_event.to_address IS NULL AND EXCLUDED.to_address IS NOT NULL)
-                 OR (shop.nft_event.block_time = 0 AND EXCLUDED.block_time > 0))",
+                 OR (shop.nft_event.block_time = 0 AND EXCLUDED.block_time > 0))))",
         )
         .bind(net.db_name())
         .bind(chunk.iter().map(|r| r.block_number).collect::<Vec<_>>())
