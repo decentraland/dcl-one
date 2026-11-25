@@ -205,11 +205,19 @@ tag (name, badges, distance, opacity, scale) and `/nametag_bubble` shows a test 
       ring. A message said in a **community** chat by a player standing nearby shows the community's
       name on a smaller, dimmer row above their name, cut short with an ellipsis (and over your own
       head for your own); a **DM** shows a green `DM` tag after the name, and your own names who it is
-      for when they are around. The Chat bubbles setting (All / Nearby only / None) picks which show.
+      for when they are around. The Chat bubbles and reactions setting (All / Nearby only / None) picks which show.
       A translated message replaces the bubble's text. `<b>` and `<i>` tags are left out of the
       bubble, which shows the words between them unstyled; a tag that styles no text (`<b></b>`, a
       closing tag with nothing open) is shown as typed, in the bubble and in chat, and a link next
       to a tag is coloured as chat links it.
+- [ ] **Reactions**: a reaction (`/reaction_send <emoji>` in the console) rises from just over your
+      nametag: it pops in small, rises about a metre while it sways, swells once and is gone within
+      a second, drawn over the nametag and over whatever stands in front of it. Sent one after
+      another, each rises. Another player's rise over their avatar, a burst of them one every
+      0.2 s. None shows over an avatar a scene hides, over a blocked player, with nametags off, or,
+      for other players, farther than 25 m from the camera; with the Chat bubbles and reactions
+      setting at None none shows over anyone. The debug panel's "Situational reactions" section
+      counts them and its buttons play one.
 - [ ] **Voice badges**: a talking player's tag shows three green bars swinging; your own shows three
       dots while your microphone is open and you are quiet. While a player whose nearby voice you muted
       (profile menu, Hush) is talking, their tag shows the red hushed icon in place of the bars, and

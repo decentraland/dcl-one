@@ -2,7 +2,10 @@
 
 use bevy::prelude::*;
 use bevy_console::ConsoleCommand;
-use common::{structs::PrimaryPlayerRes, util::AsH160};
+use common::{
+    structs::{AppConfig, ChatBubbleVisibility, PrimaryPlayerRes},
+    util::AsH160,
+};
 use comms::{
     chat_reaction::picked_emoji_tile,
     global_crdt::{ForeignPlayer, ReactionEvent},
@@ -15,19 +18,22 @@ use wallet::Wallet;
 
 use super::{
     traffic::{ReactionGuard, ReactionOutbox, ReactionQueue},
-    ReactionStats,
+    ReactionAssets, ReactionParticle, ReactionStats,
 };
 
 pub const SECTION: DebugSection = DebugSection {
     title: "Situational reactions",
     query: "/reaction_state",
     fields: &[
+        ("Shown over avatars (chat bubbles setting)", "world"),
         ("Picks waiting to be sent", "outbox"),
         ("Picks refused", "refusedPicks"),
         ("Messages sent", "sent"),
         ("Messages received", "received"),
         ("Waiting to play (reactions / senders)", "queued"),
         ("Played", "played"),
+        ("Particles (alive / drawn / awaiting glyphs)", "particles"),
+        ("Glyph atlas (colour px)", "atlas"),
         ("Passed to the HUD", "streamed"),
         ("HUD streams", "subscribers"),
         ("Dropped: sender blocked or banned", "dropped.blocked"),
@@ -35,6 +41,10 @@ pub const SECTION: DebugSection = DebugSection {
         ("Dropped: unknown emoji", "dropped.unknownEmoji"),
         ("Dropped: sender over their rate", "dropped.rateLimited"),
         ("Dropped: sender's queue full", "dropped.queueFull"),
+        (
+            "Played with no particle: too many alive",
+            "dropped.particleCap",
+        ),
     ],
     actions: &[
         ("React with a heart", "/reaction_send \u{2665}\u{fe0f}"),
@@ -50,15 +60,19 @@ pub const SECTION: DebugSection = DebugSection {
     inputs: &[],
 };
 
-/// Report the reactions as JSON: `outbox` (the local user's picks not yet sent), `refusedPicks`
-/// (their picks that were no emoji the wire carries, or had no wallet to send them), `sent`
-/// (messages put on a room's transport, one per emoji per send: none with no room to carry
-/// it), `received` (peers' messages), `queued` (the reactions waiting to play, and the senders
-/// with any waiting or inside the gap after their last), `played`, `streamed` (the reactions
-/// passed to the HUD) to `subscribers` streams, and `dropped`, by cause: `blocked` (messages
-/// and waiting reactions of a sender blocked or banned), `duplicate` (a message's copy by
-/// another room), `unknownEmoji`, `rateLimited` (messages) and `queueFull` (reactions that gave
-/// way to newer ones). The counts are of this session.
+/// Report the reactions as JSON: `world` (the chat bubbles setting lets them show over
+/// avatars), `outbox` (the local user's picks not yet sent), `refusedPicks` (their picks that
+/// were no emoji the wire carries, or had no wallet to send them), `sent` (messages put on a
+/// room's transport, one per emoji per send: none with no room to carry it), `received` (peers'
+/// messages), `queued` (the reactions waiting to play, and the senders with any waiting or
+/// inside the gap after their last), `played`, `particles` (those alive, those of them drawn as
+/// of the last frame, and those waiting for their emoji's glyphs), `atlas` (the size in pixels
+/// of the glyph atlas page the emoji are drawn from, 0 before the first), `streamed` (the
+/// reactions passed to the HUD) to `subscribers` streams, and `dropped`, by cause: `blocked`
+/// (messages and waiting reactions of a sender blocked or banned), `duplicate` (a message's
+/// copy by another room), `unknownEmoji`, `rateLimited` (messages), `queueFull` (reactions that
+/// gave way to newer ones) and `particleCap` (reactions that played with no particle, as many
+/// as may be being alive). The counts are of this session.
 #[derive(clap::Parser, ConsoleCommand)]
 #[command(name = "/reaction_state")]
 pub struct ReactionStateCommand;
@@ -66,14 +80,24 @@ pub struct ReactionStateCommand;
 pub fn reaction_state(
     mut cmd: ConsoleCommand<ReactionStateCommand>,
     stats: Res<ReactionStats>,
+    config: Res<AppConfig>,
     outboxes: Query<&ReactionOutbox>,
     queues: Query<&ReactionQueue>,
+    assets: Res<ReactionAssets>,
+    particles: Query<(&ReactionParticle, &Visibility)>,
 ) {
     let Some(Ok(_)) = cmd.take() else {
         return;
     };
+    let count = |test: fn(&ReactionParticle, &Visibility, u32) -> bool| {
+        particles
+            .iter()
+            .filter(|(particle, visibility)| test(particle, visibility, assets.generation))
+            .count()
+    };
     cmd.reply_ok(
         json!({
+            "world": config.chat_bubble_visibility != ChatBubbleVisibility::None,
             "outbox": outboxes.iter().map(ReactionOutbox::waiting).sum::<u32>(),
             "refusedPicks": stats.refused_picks,
             "sent": stats.sent,
@@ -83,6 +107,12 @@ pub fn reaction_state(
                 queues.iter().count(),
             ],
             "played": stats.played,
+            "particles": [
+                count(|_, _, _| true),
+                count(|_, visibility, _| *visibility != Visibility::Hidden),
+                count(|particle, _, generation| particle.built != Some(generation)),
+            ],
+            "atlas": assets.bound.map_or(0, |(_, size)| size),
             "streamed": stats.streamed,
             "subscribers": stats.subscribers,
             "dropped": {
@@ -91,6 +121,7 @@ pub fn reaction_state(
                 "unknownEmoji": stats.dropped.unknown_emoji,
                 "rateLimited": stats.dropped.rate_limited,
                 "queueFull": stats.dropped.queue_full,
+                "particleCap": stats.dropped.particle_cap,
             },
         })
         .to_string(),

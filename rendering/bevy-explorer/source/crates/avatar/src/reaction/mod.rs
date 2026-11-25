@@ -5,8 +5,15 @@
 //! their other picks into one message per emoji. A peer's message is held to what its sender
 //! may send, then its reactions play one at a time. Each one played is passed to the HUD on a
 //! stream.
+//!
+//! Over an avatar a reaction is a particle: an entity of its own in the world, drawn by one
+//! shared material (reaction.wgsl) with the emoji's mesh, whose glyphs are in a glyph atlas of
+//! the reactions' own. It rises from the player's nametag anchor and goes when its life is
+//! over, or when its player does.
 
 mod diagnostics;
+mod material;
+mod particle;
 mod traffic;
 
 #[cfg(test)]
@@ -14,11 +21,22 @@ mod tests;
 
 use alloy_core::primitives::Address;
 use ban_block::{BanBlock, PlatformBanStatus};
-use bevy::{platform::collections::HashMap, prelude::*};
+use bevy::{
+    ecs::system::SystemParam,
+    pbr::NotShadowCaster,
+    platform::collections::HashMap,
+    prelude::*,
+    render::{mesh::MeshTag, primitives::Aabb},
+    text::{CosmicFontSystem, LineBreak, TextPipeline},
+};
 use common::{
     rpc::RpcStreamSender,
-    sets::SceneSets,
-    structs::{PlayerReacted, PrimaryUser},
+    sets::{PostUpdateSets, SceneSets},
+    structs::{
+        AppConfig, AttachPoints, ChatBubbleVisibility, PlayerModifiers, PlayerReacted,
+        PrimaryCamera, PrimaryUser,
+    },
+    util::DespawnWith,
 };
 use comms::{
     broadcast_to,
@@ -28,49 +46,92 @@ use comms::{
 };
 use console::{AddDebugSection, DoAddConsoleCommand};
 use dcl_component::proto_components::kernel::comms::rfc4;
+use scene_runner::update_world::text_shape::{
+    glyph_quads, layout_text, AtlasGlyphUse, AtlasKey, GlyphAtlas, GlyphAtlasMaintenance,
+    GlyphAtlases, LaidOutText, Page, TextSpanData,
+};
 use system_bridge::{ReactionData, SystemApi};
+use ui_core::{FontName, WeightName, FONTS};
 use wallet::Wallet;
 
-use self::traffic::{ReactionGuard, ReactionOutbox, ReactionQueue, Refused};
+use self::{
+    material::{emoji_mesh, opacity_tag, ReactionMaterial},
+    particle::Particle,
+    traffic::{ReactionGuard, ReactionOutbox, ReactionQueue, Refused},
+};
+use crate::{
+    dynamic_nametag::{avatar_units, dynamic_nametag_position, NametagsVisible},
+    BeyondMaxAvatars,
+};
+
+/// The glyph atlas the emoji are drawn from: what peers pick fills it, and its rebuild moves
+/// no other feature's glyphs.
+const ATLAS: AtlasKey = AtlasKey::Engine("reaction");
+/// The size an emoji is laid out and rastered at, whatever size it is drawn.
+const RASTER_FONT_SIZE: f32 = 64.0;
+/// Glyphs a frame may send to be rastered.
+const RASTERS_PER_FRAME: usize = 2;
+/// The most particles alive at once, and over one player.
+const MAX_PARTICLES: usize = 1023;
+const MAX_PARTICLES_PER_PLAYER: usize = 15;
+/// How far over the nametag anchor a reaction starts, in the avatar's units.
+const ANCHOR_RISE: f32 = 0.15;
+/// A player's reactions are drawn while their anchor is this near the camera, in metres.
+const DRAW_DISTANCE: f32 = 25.0;
 
 pub struct ReactionPlugin;
 
 impl Plugin for ReactionPlugin {
     fn build(&self, app: &mut App) {
-        app.add_event::<ReactionPlayed>()
-            // read by analytics, which registers it too
-            .add_event::<PlayerReacted>()
-            .init_resource::<ReactionStats>()
-            .register_required_components::<ForeignPlayer, ReactionGuard>()
-            .register_required_components::<PrimaryUser, ReactionOutbox>()
-            .add_systems(
-                Update,
-                (
-                    accept_local_reactions,
-                    // a peer's reactions are taken only where the block and ban lists are
-                    // kept: an app without them (the offline avatar renderer) hears no one
-                    receive_reactions.run_if(
-                        on_event::<ReactionEvent>.and(resource_exists::<PlatformBanStatus>),
-                    ),
-                    // asks who is blocked, which only an app that keeps the lists can answer: it runs
-                    // while a sender has a queue
-                    play_queued_reactions.run_if(any_with_component::<ReactionQueue>),
-                    flush_reactions,
-                    pipe_reactions_to_scene,
-                )
-                    .chain()
-                    .in_set(SceneSets::PostLoop)
-                    // a sender first heard from this frame has its entity by now
-                    .after(process_transport_updates),
+        // blended and never a shadow caster: the prepass and the shadow passes draw none of it
+        app.add_plugins(MaterialPlugin::<ReactionMaterial> {
+            prepass_enabled: false,
+            shadows_enabled: false,
+            ..default()
+        })
+        .add_event::<ReactionPlayed>()
+        // read by analytics, which registers it too
+        .add_event::<PlayerReacted>()
+        .init_resource::<ReactionStats>()
+        .init_resource::<ReactionAssets>()
+        .init_resource::<ReactionGlyphs>()
+        .register_required_components::<ForeignPlayer, ReactionGuard>()
+        .register_required_components::<PrimaryUser, ReactionOutbox>()
+        .add_systems(
+            Update,
+            (
+                accept_local_reactions,
+                // a peer's reactions are taken only where the block and ban lists are
+                // kept: an app without them (the offline avatar renderer) hears no one
+                receive_reactions
+                    .run_if(on_event::<ReactionEvent>.and(resource_exists::<PlatformBanStatus>)),
+                // asks who is blocked, which only an app that keeps the lists can answer: it runs
+                // while a sender has a queue
+                play_queued_reactions.run_if(any_with_component::<ReactionQueue>),
+                flush_reactions,
+                spawn_reaction_particles.run_if(on_event::<ReactionPlayed>),
+                pipe_reactions_to_scene,
+                build_reaction_glyphs,
             )
-            .add_console_command::<diagnostics::ReactionStateCommand, _>(
-                diagnostics::reaction_state,
-            )
-            .add_console_command::<diagnostics::ReactionSendCommand, _>(diagnostics::reaction_send)
-            .add_console_command::<diagnostics::ReactionSimulateCommand, _>(
-                diagnostics::reaction_simulate,
-            )
-            .add_debug_section(diagnostics::SECTION);
+                .chain()
+                .in_set(SceneSets::PostLoop)
+                // a sender first heard from this frame has its entity by now
+                .after(process_transport_updates)
+                // a rebuilt atlas has moved every glyph: build from where they are now
+                .after(GlyphAtlasMaintenance),
+        )
+        .add_systems(
+            PostUpdate,
+            simulate_reaction_particles
+                .in_set(PostUpdateSets::Nametag)
+                .after(dynamic_nametag_position),
+        )
+        .add_console_command::<diagnostics::ReactionStateCommand, _>(diagnostics::reaction_state)
+        .add_console_command::<diagnostics::ReactionSendCommand, _>(diagnostics::reaction_send)
+        .add_console_command::<diagnostics::ReactionSimulateCommand, _>(
+            diagnostics::reaction_simulate,
+        )
+        .add_debug_section(diagnostics::SECTION);
     }
 }
 
@@ -116,6 +177,150 @@ struct Dropped {
     rate_limited: u32,
     /// Reactions that gave way to newer ones in a full queue.
     queue_full: u32,
+    /// Reactions that played with no particle: as many as may be were alive already.
+    particle_cap: u32,
+}
+
+/// On a reaction's particle. Its player is the one it is [`DespawnWith`].
+#[derive(Component)]
+struct ReactionParticle {
+    emoji: &'static str,
+    motion: Particle,
+    /// The generation of the glyph atlas its mesh samples; it is drawn while that is the
+    /// atlas' own.
+    built: Option<u32>,
+}
+
+#[derive(Resource)]
+struct ReactionAssets {
+    material: Handle<ReactionMaterial>,
+    /// The atlas page the material binds, and its size.
+    bound: Option<(AssetId<Image>, u32)>,
+    /// The atlas' generation as of the last build.
+    generation: u32,
+}
+
+impl FromWorld for ReactionAssets {
+    fn from_world(world: &mut World) -> Self {
+        Self {
+            material: world
+                .resource_mut::<Assets<ReactionMaterial>>()
+                .add(ReactionMaterial { bitmap: None }),
+            bound: None,
+            generation: 0,
+        }
+    }
+}
+
+/// What drawing each emoji played so far takes.
+#[derive(Resource, Default)]
+struct ReactionGlyphs {
+    /// The font the emoji are laid out in: any does, as each is drawn from the colour font
+    /// every text falls back to. The built-in fonts are made at startup, after this is.
+    font: Option<Handle<Font>>,
+    emoji: HashMap<&'static str, EmojiGlyphs>,
+}
+
+struct EmojiGlyphs {
+    /// `None` for an emoji that can't be laid out.
+    text: Option<LaidOutText>,
+    /// Its mesh, and the generation of the atlas the mesh samples.
+    mesh: Option<(Handle<Mesh>, u32)>,
+}
+
+/// Lays emoji out and makes their meshes from the reactions' atlas.
+#[derive(SystemParam)]
+struct EmojiShaper<'w> {
+    pipeline: ResMut<'w, TextPipeline>,
+    fonts: Res<'w, Assets<Font>>,
+    font_system: ResMut<'w, CosmicFontSystem>,
+    atlases: ResMut<'w, GlyphAtlases>,
+    images: ResMut<'w, Assets<Image>>,
+    meshes: ResMut<'w, Assets<Mesh>>,
+    glyphs: ResMut<'w, ReactionGlyphs>,
+}
+
+impl EmojiShaper<'_> {
+    /// What keeps the emoji's glyphs in the atlas while a particle shows it. `None` for an
+    /// emoji that can't be laid out, or before there is a font to lay it out in.
+    fn glyph_use(&mut self, emoji: &'static str) -> Option<AtlasGlyphUse> {
+        let Self {
+            pipeline,
+            fonts,
+            font_system,
+            glyphs,
+            ..
+        } = self;
+        let ReactionGlyphs { font, emoji: laid } = &mut **glyphs;
+        if font.is_none() {
+            *font = FONTS
+                .get()
+                .and_then(|fonts| fonts.get(&(FontName::Sans, WeightName::Regular)))
+                .cloned();
+        }
+        // nothing is laid out before the built-in fonts are made
+        let font = font.clone()?;
+        let glyphs = laid.entry(emoji).or_insert_with(|| {
+            let font = TextFont {
+                font,
+                font_size: RASTER_FONT_SIZE,
+                ..default()
+            };
+            let spans: [TextSpanData; 1] =
+                [(TextSpan::new(emoji), font, TextColor(Color::WHITE), None)];
+            let text = layout_text(
+                Entity::PLACEHOLDER,
+                &spans,
+                JustifyText::Left,
+                LineBreak::NoWrap,
+                None,
+                None,
+                RASTER_FONT_SIZE,
+                false,
+                pipeline,
+                fonts,
+                font_system,
+            )
+            .inspect_err(|err| warn!("can't lay out the reaction {emoji:?}: {err}"))
+            .ok();
+            EmojiGlyphs { text, mesh: None }
+        });
+        glyphs
+            .text
+            .as_ref()
+            .map(|text| AtlasGlyphUse::new(ATLAS, [text]))
+    }
+
+    fn atlas(&mut self) -> &GlyphAtlas {
+        let images = &mut *self.images;
+        self.atlases.get_or_create(ATLAS, images)
+    }
+
+    /// The emoji's mesh for the atlas as it is now. `None` while its glyphs are being
+    /// rastered (as `budget` allows them to be sent), and for an emoji with nothing to draw.
+    fn mesh(&mut self, emoji: &'static str, budget: &mut usize) -> Option<Handle<Mesh>> {
+        let images = &mut *self.images;
+        let atlas = self.atlases.get_or_create(ATLAS, images);
+        let generation = atlas.generation();
+        let glyphs = self.glyphs.emoji.get_mut(emoji)?;
+        if let Some((mesh, built)) = &glyphs.mesh {
+            if *built == generation {
+                return Some(mesh.clone());
+            }
+        }
+        let (_, colour) = glyph_quads(
+            glyphs.text.as_ref()?,
+            atlas,
+            images,
+            &mut self.font_system,
+            budget,
+            false,
+        )
+        .ok()?;
+        let mesh = self.meshes.add(emoji_mesh(&colour)?);
+        glyphs.mesh = Some((mesh.clone(), generation));
+        Some(mesh)
+    }
 }
 
 /// The local user's picks: each plays at once and waits in the outbox to be sent.
@@ -274,6 +479,68 @@ fn flush_reactions(
     }
 }
 
+/// Each reaction played gets a particle, unless the user has chat bubbles, and reactions with
+/// them, off, or as many particles as may be are alive already.
+fn spawn_reaction_particles(
+    mut commands: Commands,
+    mut played: EventReader<ReactionPlayed>,
+    config: Res<AppConfig>,
+    assets: Res<ReactionAssets>,
+    players: Query<(), With<AttachPoints>>,
+    particles: Query<&DespawnWith, With<ReactionParticle>>,
+    mut shaper: EmojiShaper,
+    mut stats: ResMut<ReactionStats>,
+) {
+    if config.chat_bubble_visibility == ChatBubbleVisibility::None {
+        played.clear();
+        return;
+    }
+    let mut alive = particles.iter().count();
+    let mut alive_over = HashMap::<Entity, usize>::default();
+    let mut rng = rand::thread_rng();
+    for reaction in played.read() {
+        // a player with no avatar has nowhere for it to rise from
+        if !players.contains(reaction.player) {
+            continue;
+        }
+        let over_player = alive_over.entry(reaction.player).or_insert_with(|| {
+            particles
+                .iter()
+                .filter(|owner| owner.0 == reaction.player)
+                .count()
+        });
+        if alive >= MAX_PARTICLES || *over_player >= MAX_PARTICLES_PER_PLAYER {
+            stats.dropped.particle_cap += 1;
+            continue;
+        }
+        let Some(glyph_use) = shaper.glyph_use(reaction.emoji) else {
+            continue;
+        };
+        commands.spawn((
+            ReactionParticle {
+                emoji: reaction.emoji,
+                motion: Particle::new(&mut rng),
+                built: None,
+            },
+            DespawnWith(reaction.player),
+            glyph_use,
+            Mesh3d::default(),
+            MeshMaterial3d(assets.material.clone()),
+            MeshTag(0),
+            Transform::default(),
+            Visibility::Hidden,
+            // a cube: the quad faces the camera wherever that is
+            Aabb::from_min_max(
+                Vec3::splat(-std::f32::consts::FRAC_1_SQRT_2),
+                Vec3::splat(std::f32::consts::FRAC_1_SQRT_2),
+            ),
+            NotShadowCaster,
+        ));
+        alive += 1;
+        *over_player += 1;
+    }
+}
+
 /// Every reaction played, the local user's included, goes to the HUD on each stream it opened.
 fn pipe_reactions_to_scene(
     mut played: EventReader<ReactionPlayed>,
@@ -310,5 +577,127 @@ fn pipe_reactions_to_scene(
             let _ = sender.send(data.clone());
         }
         stats.streamed += 1;
+    }
+}
+
+/// Give each particle the mesh of its emoji for the glyph atlas as it is now, and the material
+/// the atlas' page. A particle whose glyphs are still being rastered waits, undrawn.
+fn build_reaction_glyphs(
+    mut shaper: EmojiShaper,
+    mut assets: ResMut<ReactionAssets>,
+    mut materials: ResMut<Assets<ReactionMaterial>>,
+    mut particles: Query<(&mut ReactionParticle, &mut Mesh3d)>,
+) {
+    if particles.is_empty() {
+        return;
+    }
+    let atlas = shaper.atlas();
+    let generation = atlas.generation();
+    let page = atlas
+        .page_image(Page::Color)
+        .map(|(image, size)| (image.clone(), size));
+    let bound = page.as_ref().map(|(image, size)| (image.id(), *size));
+    if assets.bound != bound {
+        assets.bound = bound;
+        if let Some(material) = materials.get_mut(&assets.material) {
+            material.bitmap = page.map(|(image, _)| image);
+        }
+    }
+    if assets.generation != generation {
+        assets.generation = generation;
+    }
+
+    let mut budget = RASTERS_PER_FRAME;
+    for (mut particle, mut mesh) in &mut particles {
+        if particle.built == Some(generation) {
+            continue;
+        }
+        if let Some(built) = shaper.mesh(particle.emoji, &mut budget) {
+            mesh.0 = built;
+            particle.built = Some(generation);
+        }
+    }
+}
+
+/// Move each particle on from its player's anchor as the avatar stands this frame, and show
+/// it where its player's nametag would show: not over an avatar that is hidden, blocked or one
+/// too many, nor with the nametags off, nor far from the camera unless it is the local user's.
+fn simulate_reaction_particles(
+    mut commands: Commands,
+    time: Res<Time>,
+    nametags: Res<NametagsVisible>,
+    assets: Res<ReactionAssets>,
+    camera: Query<&GlobalTransform, With<PrimaryCamera>>,
+    players: Query<(
+        &AttachPoints,
+        Has<PrimaryUser>,
+        Has<BeyondMaxAvatars>,
+        Has<BlockedOrBanned>,
+        Option<&PlayerModifiers>,
+        Option<&InheritedVisibility>,
+    )>,
+    globals: Query<&GlobalTransform>,
+    anchors: Query<&Transform, Without<ReactionParticle>>,
+    mut particles: Query<(
+        Entity,
+        &DespawnWith,
+        &mut ReactionParticle,
+        &mut Transform,
+        &mut MeshTag,
+        &mut Mesh3d,
+        &mut Visibility,
+    )>,
+) {
+    let camera = camera.single().ok().map(GlobalTransform::translation);
+    for (entity, owner, mut particle, mut transform, mut tag, mut mesh, mut visibility) in
+        &mut particles
+    {
+        // where its player's reactions rise from, and whether they show there
+        let place = players.get(owner.0).ok().and_then(
+            |(attach_points, is_local, beyond_max, blocked, modifiers, drawn)| {
+                let avatar = globals.get(attach_points.position).ok()?;
+                // an avatar scaled to nothing has no place for one
+                let (scale, _) = avatar_units(avatar)?;
+                let nametag = anchors.get(attach_points.nametag).ok()?;
+                let anchor =
+                    avatar.transform_point(nametag.translation) + Vec3::Y * ANCHOR_RISE * scale;
+                let shown = nametags.0
+                    && !beyond_max
+                    && !blocked
+                    && !modifiers.is_some_and(|modifiers| modifiers.hide)
+                    && drawn.is_none_or(|drawn| drawn.get())
+                    && (is_local
+                        || camera.is_some_and(|camera| camera.distance(anchor) <= DRAW_DISTANCE));
+                Some((anchor, shown))
+            },
+        );
+
+        if !particle
+            .motion
+            .tick(time.delta_secs(), place.map(|(anchor, _)| anchor))
+        {
+            commands.entity(entity).try_despawn();
+            continue;
+        }
+
+        let pose = particle.motion.pose().filter(|_| {
+            place.is_some_and(|(_, shown)| shown) && particle.built == Some(assets.generation)
+        });
+        let Some(pose) = pose else {
+            if *visibility != Visibility::Hidden {
+                *visibility = Visibility::Hidden;
+            }
+            continue;
+        };
+        *transform = Transform::from_translation(pose.position).with_scale(Vec3::splat(pose.size));
+        let opacity = opacity_tag(pose.opacity);
+        if tag.0 != opacity {
+            tag.0 = opacity;
+            // bevy's mesh extraction doesn't watch MeshTag (0.16); Mesh3d is on its list
+            mesh.set_changed();
+        }
+        if *visibility != Visibility::Inherited {
+            *visibility = Visibility::Inherited;
+        }
     }
 }
