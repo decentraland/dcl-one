@@ -599,6 +599,26 @@ fn compile_function_is_disabled() {
     });
 }
 
+#[test]
+fn serialize_and_deserialize_are_disabled() {
+    run_in_child("serialize_and_deserialize_are_disabled", || {
+        let mut runtime = client_runtime();
+        let err = eval(
+            &mut runtime,
+            r#"
+            const { op_serialize, op_deserialize } = Deno.core.ops;
+            const brand = Symbol.for("Deno.core.hostObject");
+            const bytes = op_serialize({ [brand]: () => ({ type: "x" }) });
+            op_deserialize(bytes, undefined, undefined, {}, false)
+            "#
+            .to_owned(),
+        )
+        .unwrap_err();
+        assert!(err.contains("disabled"), "{err}");
+        err
+    });
+}
+
 /// deno_core's timer clock reads at the same 2 ms resolution as `performance.now()`, both
 /// called directly and through the timer fields a prototype setter can observe.
 #[test]
